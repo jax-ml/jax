@@ -782,9 +782,9 @@ def check_user_dtype_supported(dtype, fun_name=None):
       int2,
       int4,
       uint2,
-      uint4,
+      uint4
   ]
-  if np_dtype.kind not in "biufc" and not is_custom_dtype:
+  if np_dtype.kind not in "biufc" and not is_custom_dtype and not dtype == float0:
     msg = f"JAX only supports number and bool dtypes, got dtype {dtype}"
     msg += f" in {fun_name}" if fun_name else ""
     raise TypeError(msg)

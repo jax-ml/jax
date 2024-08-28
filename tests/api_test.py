@@ -7700,27 +7700,28 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(tangents, 2 * jnp.arange(3., dtype='float32'))
 
   def test_float0(self):
+    scalar_float0 = jnp.zeros((), dtype=float0)
     @jax.custom_jvp
     def f(x, y):
       return x, y
     def f_jvp(primals, _):
-      # we need a defined (non-float0) tangent to trigger the rule
-      return primals, (2., 1)
+      return primals, (2., scalar_float0)
     f.defjvp(f_jvp)
 
     primals = (2., 3)
-    tangents = (np.ones(()), np.zeros((), float0),)
-    expected_tangents = (2., np.zeros((), float0))
+    tangents = (np.ones(()), scalar_float0)
+    expected_tangents = (2., scalar_float0)
     self.assertAllClose(api.jvp(f, primals, tangents),
                         (primals, expected_tangents))
 
   def test_float0_initial_style(self):
+    scalar_float0 = jnp.zeros((), dtype=float0)
     @jax.custom_jvp
     def f(x, y):
       return x, y
     def f_jvp(primals, _):
       x, y = primals
-      return (x, y), (2., 1)
+      return (x, y), (2., scalar_float0)
     f.defjvp(f_jvp)
 
     def foo(x, y):
@@ -7728,8 +7729,9 @@ class CustomJVPTest(jtu.JaxTestCase):
       return out
 
     primals = (2., 3)
-    tangents = (np.ones(()), np.zeros((), float0),)
-    expected_tangents = (2., np.zeros((), float0))
+    tangents = (np.ones(()), scalar_float0)
+    expected_tangents = (2., scalar_float0)
+
     self.assertAllClose(api.jvp(foo, primals, tangents),
                         (primals, expected_tangents))
 

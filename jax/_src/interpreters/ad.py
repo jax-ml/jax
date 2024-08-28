@@ -164,19 +164,6 @@ def unpair_pval(pval):
     aval_1, aval_2 = aval
     return (aval_1, const_1), (aval_2, const_2)
 
-def replace_float0s(primal, tangent):
-  if dtype(tangent) == float0:
-    return zeros_like_jaxval(primal)
-  else:
-    return tangent
-
-def recast_to_float0(primal, tangent):
-  if core.primal_dtype_to_tangent_dtype(dtype(primal)) == float0:
-    return Zero.from_primal_value(primal)
-  else:
-    return tangent
-
-
 # NOTE: The FIXMEs below are caused by primal/tangent mixups (type
 # errors if you will)
 def backward_pass(jaxpr: core.Jaxpr, transform_stack,
@@ -369,7 +356,6 @@ class JVPTrace(Trace):
     with core.set_current_trace(self.parent_trace):
       if not symbolic_zeros:
         tangents_in = map(instantiate_zeros, tangents_in)
-        tangents_in = map(replace_float0s, primals_in, tangents_in)
       else:
         tangents_in = map(replace_internal_symbolic_zeros, tangents_in)
     with core.set_current_trace(self):
@@ -396,7 +382,7 @@ class JVPTrace(Trace):
     res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
     primals_out = map(self.primal_part, primals_out)
     res = map(self.primal_part, res)
-    avals_out = [raise_to_shaped(core.get_aval(x)) for x in primals_out]
+    avals_out = [Zero.from_primal_value(x) for x in primals_out]
     # TODO(frostig,mattjj): avoid instantiating zeros when we don't have to!
     with core.set_current_trace(self.parent_trace):
       tangents_in = map(instantiate_zeros, tangents_in)
@@ -405,7 +391,6 @@ class JVPTrace(Trace):
         *res, *tangents_in, num_res=res_tree.num_leaves, bwd=bwd,
         out_avals=avals_out, symbolic_zeros=symbolic_zeros)
     tangents_out = map(self.primal_part, tangents_out)
-    tangents_out = map(recast_to_float0, primals_out, tangents_out)
     return map(partial(JVPTracer, self), primals_out, tangents_out)
 
   def process_custom_transpose(self, prim, call, tracers, **params):
@@ -673,7 +658,7 @@ def _jvp_jaxpr(jaxpr, nonzeros, instantiate):
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
   f_jvp, out_nonzeros = f_jvp_traceable(jvp(f, instantiate=instantiate, transform_stack=False),
                                         nonzeros)
-  tangent_avals = [aval for aval, nz in zip(jaxpr.in_avals, nonzeros) if nz]
+  tangent_avals = [core.primal_aval_to_tangent_aval(aval) for aval, nz in zip(jaxpr.in_avals, nonzeros) if nz]
   avals_in = list(it.chain(jaxpr.in_avals, tangent_avals))
   jaxpr_out, avals_out, literals_out, () = pe.trace_to_jaxpr_dynamic(f_jvp, avals_in)
   return core.ClosedJaxpr(jaxpr_out, literals_out), out_nonzeros()
