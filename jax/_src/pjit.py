@@ -279,12 +279,10 @@ def _get_fastpath_data(
         else s
         for s, a in zip(executable._in_shardings, executable.in_avals)
     ]
-    in_dlls = pxla.get_layouts_for_fasthpath_data(
-        executable._in_layouts, in_shardings, executable.in_avals)
     fastpath_data = pxla.MeshExecutableFastpathData(
         executable.xla_executable, out_tree, in_shardings,
         executable._out_shardings, out_avals, out_committed, kept_var_bitvec,
-        in_dlls)
+        executable._dispatch_in_layouts)
   else:
     fastpath_data = None
   return fastpath_data
@@ -1479,10 +1477,17 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
   resolved_in_layouts = []
   for arg, jit_in_l, rs, aval in safe_zip(
       args, jit_in_layouts, resolved_in_shardings, in_avals):
-    arg_layout, committed = (
-        pxla._maybe_get_default_layout(getattr(arg, 'layout', None), jit_in_l,
-                                       rs, aval),
-        getattr(arg, '_committed', True))
+    committed = getattr(arg, '_committed', True)
+    # `arg_layout` is only used for checking purposes in the `else` branch
+    # below. We cannot replace default layout with None to raise nicer errors.
+    # `dispatch_arg_layout` replaces default layouts with `None` to simplify
+    # dispatch and lowering logic downstream.
+    if hasattr(arg, 'layout'):
+      arg_layout = arg.layout.device_local_layout
+      dispatch_arg_layout = (None if pxla.is_default_layout(arg_layout, rs, aval)
+                             else arg_layout)
+    else:
+      arg_layout, dispatch_arg_layout = None, None
     # Sharding can be unspecified when array is committed if it's a PmapSharding.
     is_pmap_sharding = (is_unspecified(rs) or
                         isinstance(getattr(arg, 'sharding', None), PmapSharding))
@@ -1491,7 +1496,7 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
         if is_pmap_sharding:
           resolved_in_layouts.append(None)
         else:
-          resolved_in_layouts.append(arg_layout)
+          resolved_in_layouts.append(dispatch_arg_layout)
       else:
         resolved_in_layouts.append(None)
     else:

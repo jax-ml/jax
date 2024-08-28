@@ -751,8 +751,7 @@ def make_array_from_callback(
       and sharding.is_fully_replicated
       and first_value.is_fully_replicated
       and first_value.sharding._device_assignment == tuple(devices)
-      and (first_value.layout.device_local_layout ==
-           pxla._maybe_get_default_layout(Layout(dll, sharding), None, sharding, aval))):
+      and first_value.layout.device_local_layout == dll):
     return first_value
 
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
@@ -1105,11 +1104,6 @@ def _sharding_indices_and_eq(src_sharding, shape, dst_sharding):
   dst_indices = dst_sharding.addressable_devices_indices_map(shape).values()
   return dst_indices, tuple(src_indices) == tuple(dst_indices)
 
-def _layout_eq(x, dst_layout, sharding):
-  if pxla.is_default_layout(dst_layout, sharding, x.aval):
-    return True
-  return x.layout.device_local_layout == dst_layout
-
 
 def _array_shard_arg(xs, shardings, layouts):
   results = []
@@ -1118,7 +1112,8 @@ def _array_shard_arg(xs, shardings, layouts):
   for i, (x, sharding, layout) in enumerate(safe_zip(xs, shardings, layouts)):
     x._check_if_deleted()
     indices, same_indices = _sharding_indices_and_eq(x.sharding, x.shape, sharding)
-    same_layout = _layout_eq(x, layout, sharding)
+    same_layout = (True if layout is None else
+                   x.layout.device_local_layout == layout)
 
     if not x.is_fully_addressable:
       if same_indices and same_layout:
