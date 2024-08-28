@@ -1,9 +1,9 @@
-# `jax.debug.print` and `jax.debug.breakpoint`
+# Compiled prints and breakpoints
 
 <!--* freshness: { reviewed: '2024-03-13' } *-->
 
 The {mod}`jax.debug` package offers some useful tools for inspecting values
-inside of JIT-ted functions.
+inside of compiled functions.
 
 ## Debugging with `jax.debug.print` and other debugging callbacks
 
@@ -27,7 +27,6 @@ f(2.)
 # 🤯 0.9092974662780762 🤯
 ```
 
-<!-- mattjj added this line -->
 With some transformations, like `jax.grad` and `jax.vmap`, you can use Python's builtin `print` function to print out numerical values. But `print` won't work with `jax.jit` or `jax.pmap` because those transformations delay numerical evaluation. So use `jax.debug.print` instead!
 
 Semantically, `jax.debug.print` is roughly equivalent to the following Python function
