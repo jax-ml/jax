@@ -645,5 +645,78 @@ class IndexerOpsInterpretTest(IndexerOpsTest):
   INTERPRET = True
 
 
+# TODO(ayx): Fix all test cases here
+_ADVANCED_INDEXER_TEST_CASES = [
+    ((8, 2), lambda arr, a, b, c, d: arr[2]),
+    ((16, 3, 6, 2), lambda arr, a, b, c, d: arr[::4, a, 1::2, b]),
+    ((16, 3), lambda arr, a, b, c, d: arr[a, a]),
+    ((16, 16), lambda arr, a, b, c, d: arr[::4, ::4]),
+    ((16, 16), lambda arr, a, b, c, d: arr[1:14:2, 2:13:4]),
+    ((16, 3), lambda arr, a, b, c, d: arr[a, :]),
+    # ((16, 3), lambda arr, a, b, c, d: arr[:, a]),
+    ((16, 3), lambda arr, a, b, c, d: arr[a, ::4]),
+    # ((16, 3), lambda arr, a, b, c, d: arr[::4, a]),
+    # ((8, 8, 3), lambda arr, a, b, c, d: arr[::4, ::2, a]),
+    # ((8, 8, 3), lambda arr, a, b, c, d: arr[::4, a, ::2]),
+    # ((8, 8, 3, 7), lambda arr, a, b, c, d: arr[::4, b, ::2, ::2]),
+    # ((8, 8, 3, 7), lambda arr, a, b, c, d: arr[b, ::4, ::2, ::2]),
+    # ((8, 8, 3, 7), lambda arr, a, b, c, d: arr[b, ::4, a, ::2]),
+    # ((3, 8, 8, 7), lambda arr, a, b, c, d: arr[b, a, ::4, ::2]),
+    # ((8, 8, 3, 7), lambda arr, a, b, c, d: arr[::4, b, a, ::2]),
+    # ((8, 8, 3, 6), lambda arr, a, b, c, d: arr[b, ::4, a, c]),
+    ((8, 6, 4), lambda arr, a, b, c, d: arr[a]),
+    ((6, 8, 4), lambda arr, a, b, c, d: arr[c, c]),
+    ((6, 8, 4), lambda arr, a, b, c, d: arr[c, ::3]),
+    # ((8, 6, 4), lambda arr, a, b, c, d: arr[::3, c]),
+    # ((6, 2), lambda arr, a, b, c, d: arr[d]),
+    # ((8, 6), lambda arr, a, b, c, d: arr[::4, d]),
+]
+
+
+class AdvancedIndexerOpsTest(PallasBaseTest):
+
+  def setUp(self):
+    if jtu.test_device_matches(["tpu"]):
+      self.skipTest("Advanced indexers are not supported on TPU")
+
+    # 4 arrays that are used in test cases of advanced indexing
+    self.a = jnp.array([1, 1, 1, 1, 1], dtype=jnp.int32)
+    self.b = jnp.array([1, 2, 2, 2, 2], dtype=jnp.int32)
+    self.c = jnp.array([1, 0, 2, 2, -1, 1], dtype=jnp.int32)
+    self.d = jnp.array([1, 0, 0, 0, 0, 1], dtype=jnp.bool_)
+
+    super().setUp()
+
+  @parameterized.parameters(_ADVANCED_INDEXER_TEST_CASES)
+  def test_advanced_indexer(self, in_shape: tuple[int, ...], indexing_func):
+    a, b, c, d = self.a, self.b, self.c, self.d
+
+    x = jnp.arange(np.prod(in_shape), dtype=jnp.float32).reshape(in_shape)
+    y = indexing_func(x, a, b, c, d)
+
+    # `a_ref`, `b_ref`, `c_ref` and `d_ref` are for testing purposes.
+    # We have them here because we need to have a unified function signature
+    # for all test cases, even if the arrays are actually not used in any
+    # computation.
+    def kernel(x_ref, a_ref, b_ref, c_ref, d_ref, o_ref):
+      a = a_ref[...]
+      b = b_ref[...]
+      c = c_ref[...]
+      d = d_ref[...]
+      o = indexing_func(x_ref, a, b, c, d)
+      o_ref[...] = o
+
+    y_ = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(y.shape, jnp.float32),
+    )(x, a, b, c, d)
+
+    np.testing.assert_array_equal(y_, y)
+
+
+class AdvancedIndexerOpsInterpretTest(AdvancedIndexerOpsTest):
+  INTERPRET = True
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
