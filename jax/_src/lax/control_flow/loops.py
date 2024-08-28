@@ -50,9 +50,9 @@ from jax._src.lax.control_flow.common import (
     _abstractify, _avals_short, _initial_style_jaxpr,
     _initial_style_jaxpr_attrs, _make_closed_jaxpr_attrs, _prune_zeros,
     _typecheck_param)
+from jax._src.lax.other import logaddexp
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.numpy.ufuncs import logaddexp
 from jax._src.state import discharge as state_discharge
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import equality_errors
@@ -2170,7 +2170,7 @@ def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype, 
   new_keys = jax.lax.dynamic_update_index_in_dim(keys, new_key, 0, axis=0)
   return (new_keys, bits), (0, 0)
 
-batching.primitive_batchers[lax.rng_bit_generator_p] = _rng_bit_generator_batching_rule
+batching.primitive_batchers[lax.rng_bit_generator_p] = _rng_bit_generator_batching_rule  # type: ignore[has-type]
 
 ### associative_scan
 

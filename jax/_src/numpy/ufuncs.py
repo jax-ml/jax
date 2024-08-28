@@ -29,6 +29,7 @@ from jax._src import dtypes
 from jax._src.api import jit
 from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax
+from jax._src.lax import other as lax_other
 from jax._src.typing import Array, ArrayLike
 from jax._src.numpy.util import (
    check_arraylike, promote_args, promote_args_inexact,
@@ -857,21 +858,30 @@ def _pow_int_int(x1, x2):
   return acc
 
 
-@custom_jvp
-@implements(np.logaddexp, module='numpy')
 @jit
 def logaddexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  """Compute ``log(exp(x1) + exp(x2))`` avoiding overflow.
+
+  JAX implementation of :func:`numpy.logaddexp`
+
+  Args:
+    x1: input array
+    x2: input array
+
+  Returns:
+    array containing the result.
+
+  Examples:
+
+  >>> x1 = jnp.array([1, 2, 3])
+  >>> x2 = jnp.array([4, 5, 6])
+  >>> result1 = jnp.logaddexp(x1, x2)
+  >>> result2 = jnp.log(jnp.exp(x1) + jnp.exp(x2))
+  >>> print(jnp.allclose(result1, result2))
+  True
+  """
   x1, x2 = promote_args_inexact("logaddexp", x1, x2)
-  amax = lax.max(x1, x2)
-  if dtypes.issubdtype(x1.dtype, np.floating):
-    delta = lax.sub(x1, x2)
-    return lax.select(lax._isnan(delta),
-                      lax.add(x1, x2),  # NaNs or infinities of the same sign.
-                      lax.add(amax, lax.log1p(lax.exp(lax.neg(lax.abs(delta))))))
-  else:
-    delta = lax.sub(lax.add(x1, x2), lax.mul(amax, _constant_like(amax, 2)))
-    out = lax.add(amax, lax.log1p(lax.exp(delta)))
-    return lax.complex(lax.real(out), _wrap_between(lax.imag(out), np.pi))
+  return lax_other.logaddexp(x1, x2)
 
 
 def _wrap_between(x, _a):
@@ -882,17 +892,6 @@ def _wrap_between(x, _a):
   rem = lax.rem(lax.add(x, a), two_a)
   rem = lax.select(lax.lt(rem, zero), lax.add(rem, two_a), rem)
   return lax.sub(rem, a)
-
-
-@logaddexp.defjvp
-def _logaddexp_jvp(primals, tangents):
-  x1, x2 = primals
-  t1, t2 = tangents
-  x1, x2, t1, t2 = promote_args_inexact("logaddexp_jvp", x1, x2, t1, t2)
-  primal_out = logaddexp(x1, x2)
-  tangent_out = lax.add(lax.mul(t1, exp(lax.sub(_replace_inf(x1), _replace_inf(primal_out)))),
-                        lax.mul(t2, exp(lax.sub(_replace_inf(x2), _replace_inf(primal_out)))))
-  return primal_out, tangent_out
 
 
 @custom_jvp
