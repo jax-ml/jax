@@ -566,7 +566,7 @@ def bench_repeated_static_slicing(state):
   while state:
     jax.block_until_ready([x[i:i + 2] for i in range(0, 1000, 2)])
 
-def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit, use_aot=False):
+def pjit_simple_benchmark(state, num_devices, num_args, use_aot=False):
   spec = jax.sharding.PartitionSpec('x')
   mesh = create_mesh((num_devices,), ('x',), state)
   if mesh is None:
@@ -601,8 +601,7 @@ def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit, use_aot=False):
 @google_benchmark.option.args([10])
 @google_benchmark.option.args([100])
 def pjit_simple_1_device(state):
-  pjit_simple_benchmark(
-      state, num_devices=1, num_args=state.range(0), cpp_jit=state.range(1))
+  pjit_simple_benchmark(state, num_devices=1, num_args=state.range(0))
 
 @google_benchmark.register
 @google_benchmark.option.arg_names(['num_args'])
@@ -610,8 +609,7 @@ def pjit_simple_1_device(state):
 @google_benchmark.option.args([10])
 @google_benchmark.option.args([100])
 def pjit_simple_4_device(state):
-  pjit_simple_benchmark(
-      state, num_devices=4, num_args=state.range(0), cpp_jit=state.range(1))
+  pjit_simple_benchmark(state, num_devices=4, num_args=state.range(0))
 
 @google_benchmark.register
 @google_benchmark.option.arg_names(['num_args'])
@@ -619,8 +617,7 @@ def pjit_simple_4_device(state):
 @google_benchmark.option.args([10])
 @google_benchmark.option.args([100])
 def pjit_simple_4000_device(state):
-  pjit_simple_benchmark(
-      state, num_devices=4000, num_args=state.range(0), cpp_jit=state.range(1))
+  pjit_simple_benchmark(state, num_devices=4000, num_args=state.range(0))
 
 
 @google_benchmark.register
@@ -633,7 +630,6 @@ def pjit_aot_1_device(state):
       state,
       num_devices=1,
       num_args=state.range(0),
-      cpp_jit=state.range(1),
       use_aot=True)
 
 
@@ -647,7 +643,6 @@ def pjit_aot_4_device(state):
       state,
       num_devices=4,
       num_args=state.range(0),
-      cpp_jit=state.range(1),
       use_aot=True)
 
 
@@ -661,7 +656,6 @@ def pjit_aot_4000_device(state):
       state,
       num_devices=4000,
       num_args=state.range(0),
-      cpp_jit=state.range(1),
       use_aot=True)
 
 
@@ -697,6 +691,8 @@ def device_put_from_numpy_array(state):
 @google_benchmark.option.args([100])
 @google_benchmark.option.args([1000])
 def device_put_from_jax_array(state):
+  if len(jax.devices()) < 2:
+    state.skip_with_error('requires 2 devices')
   x = [np.array(1, np.int32)] * state.range(0)
   x = jax.block_until_ready(jax.device_put(x, device=jax.devices()[0]))
   d = jax.devices()[1]
