@@ -19,9 +19,11 @@ import math
 from typing import Any
 
 import jax
-from jax._src.numpy import lax_numpy as jnp
+from jax._src import dtypes
 from jax._src.lax import lax
 from jax._src.lax import convolution
+from jax._src import util
+import numpy as np
 
 DType = Any
 
@@ -88,7 +90,7 @@ def conv_general_dilated_patches(
     (`np.prod(filter_shape) * lhs.shape[lhs_spec.index('C')]`).
 
   """
-  lhs_array = jnp.asarray(lhs)
+  lhs_array = lax.asarray(lhs)
   filter_shape = tuple(filter_shape)
   dimension_numbers = convolution.conv_dimension_numbers(
       lhs_array.shape, (1, 1) + filter_shape, dimension_numbers)
@@ -99,11 +101,10 @@ def conv_general_dilated_patches(
   n_channels = lhs_array.shape[lhs_spec[1]]
 
   # Move separate `lhs` spatial locations into separate `rhs` channels.
-  rhs = jnp.eye(spatial_size, dtype=lhs_array.dtype).reshape(filter_shape * 2)
-
-  rhs = rhs.reshape((spatial_size, 1) + filter_shape)
-  rhs = jnp.tile(rhs, (n_channels,) + (1,) * (rhs.ndim - 1))
-  rhs = jnp.moveaxis(rhs, (0, 1), (rhs_spec[0], rhs_spec[1]))
+  rhs = lax._eye(lhs_array.dtype, shape=(spatial_size, spatial_size), offset=0)
+  rhs = lax.broadcast_in_dim(rhs, (n_channels, spatial_size, spatial_size), (1, 2))
+  rhs = lax.reshape(rhs, (n_channels * spatial_size, 1, *filter_shape))
+  rhs = util.moveaxis(rhs, (0, 1), (rhs_spec[0], rhs_spec[1]))
 
   out = convolution.conv_general_dilated(
       lhs=lhs_array,
@@ -200,7 +201,7 @@ def conv_general_dilated_local(
   If `dimension_numbers` is `None`, the default is `('NCHW', 'OIHW', 'NCHW')`
   (for a 2D convolution).
   """
-  lhs_array = jnp.asarray(lhs)
+  lhs_array = lax.asarray(lhs)
 
   c_precision = lax.canonicalize_precision(precision)
   lhs_precision = (
@@ -234,5 +235,52 @@ def conv_general_dilated_local(
 
   dn = ((lhs_c_dims, rhs_c_dims), (lhs_b_dims, rhs_b_dims))
   out = lax.dot_general(patches, rhs, dimension_numbers=dn, precision=precision)
-  out = jnp.moveaxis(out, (-2, -1), (out_spec[0], out_spec[1]))
+  out = util.moveaxis(out, (-2, -1), (out_spec[0], out_spec[1]))
   return out
+
+
+def _wrap_between(x, _a):
+  """Wraps `x` between `[-a, a]`."""
+  a = lax._const(x, _a)
+  two_a = lax._const(x, 2 * _a)
+  zero = lax._const(x, 0)
+  rem = lax.rem(lax.add(x, a), two_a)
+  rem = lax.select(lax.lt(rem, zero), lax.add(rem, two_a), rem)
+  return lax.sub(rem, a)
+
+
+def _replace_inf(x: jax.Array) -> jax.Array:
+  re_x = lax.real(x) if dtypes.issubdtype(x.dtype, np.complexfloating) else x
+  inf = lax._const(re_x, float('inf'))
+  return lax.select(lax.eq(re_x, inf), lax._zeros(x), x)
+
+
+@jax.custom_jvp
+def logaddexp(x1: jax.typing.ArrayLike, x2: jax.typing.ArrayLike, /) -> jax.Array:
+  """Compute log(exp(x1) + exp(x2)) avoiding overflow."""
+  x1_arr = lax.asarray(x1)
+  x2_arr = lax.asarray(x2)
+  assert x1_arr.dtype == x2_arr.dtype
+
+  amax = lax.max(x1_arr, x2_arr)
+  if dtypes.isdtype(x1_arr.dtype, "real floating"):
+    delta = lax.sub(x1_arr, x2_arr)
+    return lax.select(lax._isnan(delta),
+                      lax.add(x1_arr, x2_arr),  # NaNs or infinities of the same sign.
+                      lax.add(amax, lax.log1p(lax.exp(lax.neg(lax.abs(delta))))))
+  elif dtypes.isdtype(x1_arr.dtype, "complex floating"):
+    delta = lax.sub(lax.add(x1, x2), lax.mul(amax, lax._const(amax, 2)))
+    out = lax.add(amax, lax.log1p(lax.exp(delta)))
+    return lax.complex(lax.real(out), _wrap_between(lax.imag(out), np.pi))
+  else:
+    raise ValueError(f"logaddexp requires floating-point or complex inputs; got {x1_arr.dtype}")
+
+
+@logaddexp.defjvp
+def _logaddexp_jvp(primals, tangents):
+  x1, x2 = primals
+  t1, t2 = tangents
+  primal_out = logaddexp(x1, x2)
+  tangent_out = lax.add(lax.mul(t1, lax.exp(lax.sub(_replace_inf(x1), _replace_inf(primal_out)))),
+                        lax.mul(t2, lax.exp(lax.sub(_replace_inf(x2), _replace_inf(primal_out)))))
+  return primal_out, tangent_out
