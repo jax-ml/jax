@@ -46,7 +46,6 @@ from jax._src.interpreters import xla
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import gpu_prng
 from jax._src.lib import xla_client as xc
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.array_methods import (
@@ -467,11 +466,12 @@ xla.pytype_aval_mappings[PRNGKeyArray] = lambda x: x.aval
 xla.canonicalize_dtype_handlers[PRNGKeyArray] = lambda x: x
 
 
-def key_array_shard_arg_handler(xs: Sequence[PRNGKeyArray], shardings):
+def key_array_shard_arg_handler(xs: Sequence[PRNGKeyArray], shardings, layouts):
   arrs = [x._base_array for x in xs]
   phys_shardings = [physical_sharding(x.aval, sharding)
                     for x, sharding in zip(xs, shardings)]
-  return pxla.shard_args(phys_shardings, arrs)
+  # TODO(yashkatariya): `layouts` should be converted to physical layouts.
+  return pxla.shard_args(phys_shardings, layouts, arrs)
 
 
 pxla.shard_arg_handlers[PRNGKeyArray] = key_array_shard_arg_handler
@@ -901,16 +901,6 @@ def _threefry2x32_gpu_lowering_rule(lowering_func, ctx, k1, k2, x1, x2):
   if not config.threefry_gpu_kernel_lowering.value:  # back to default lowering
     return _threefry2x32_lowering_rule(ctx, k1, k2, x1, x2)
 
-  # TODO(b/338022728): when we export, use the old custom call target for now.
-  # Make forward_compatibility_mode False after 3 weeks.
-  # TODO(b/350111820): figure out why we cannot use the new cu_threefry2x32_ffi
-  # in Kokoro tests. For now, use the old cu_threefry2x32.
-  # lowering_parameters = ctx.module_context.lowering_parameters
-  # forward_compatibility_mode = (
-  #     lowering_parameters.for_export and
-  #     not lowering_parameters.export_ignore_forward_compatibility)
-  forward_compatibility_mode = True
-
   aval_out, aval_out_2 = ctx.avals_out
   assert aval_out == aval_out_2
   k1_aval, k2_aval, x1_aval, x2_aval = ctx.avals_in
@@ -933,17 +923,13 @@ def _threefry2x32_gpu_lowering_rule(lowering_func, ctx, k1, k2, x1, x2):
     length = int(out_len)  # will be passed statically
     output_shape = None
 
-  if jaxlib_version >= (0, 4, 31):
-    return lowering_func(
-        (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
-        (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval)), length,
-        output_shape,
-        forward_compatibility_mode)
-  else:
-    return lowering_func(
-            (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
-            (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval)), length,
-            output_shape)
+  return lowering_func(
+      (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
+      (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval)), length,
+      output_shape,
+      False,  # forward_compatibility_mode
+  )
+
 
 threefry2x32_p = core.Primitive("threefry2x32")
 threefry2x32_p.multiple_results = True

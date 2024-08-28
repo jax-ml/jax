@@ -41,6 +41,7 @@ VMEM = tpu_core.TPUMemorySpace.VMEM
 DMA = tpu_core.SemaphoreType.DMA
 REF = tpu_core.MemoryRef
 SemaphoreType = tpu_core.SemaphoreType
+SemaphoreTuple = jax.Array
 ArrayRef = Union[REF, jax.Array]
 
 GridIndices = tuple[jax.Array, ...]
@@ -71,6 +72,7 @@ def _broadcast_pytree_to(from_pytree, to_pytree):
   return tree_util.tree_unflatten(treedef, broadcast_leaves)
 
 
+@jax_util.cache(trace_context_in_key=False)
 def _get_tpu_generation() -> int:
   kind = jax.devices()[0].device_kind
   if kind.endswith(' lite'):
@@ -156,6 +158,8 @@ def _grid_size(grid):
 
 def _get_indices(step, grid, offsets):
   """Get indices for a given step and grid."""
+  # TODO(enriqueps): Implement using bitwise ops, avoid div/rem since they are
+  # expensive.
   extended_grid = grid + (1,)
   strides = tuple(
       itertools.accumulate(extended_grid[::-1], func=operator.mul))[::-1]
@@ -171,6 +175,7 @@ class BufferType(enum.Enum):
   INPUT = 1
   OUTPUT = 2
   ACCUMULATOR = 3
+  INPUT_OUTPUT = 4
 
 
 @tree_util.register_pytree_node_class
@@ -189,9 +194,8 @@ class BufferedRef:
     accum_ref: accumulating buffer used by accumulator BufferedRefs.
     current_slot: current slot index to the working buffer.
     next_slot: slot that will point to the working buffer in the next iteration.
-    sem_recv: semaphore for input DMAs.
-    sem_send: semaphore for output DMAs.
-
+    sem_recvs: Double buffered semaphores for input DMAs.
+    sem_sends: Double buffered semaphores for output DMAs.
     block_shape: passthrough property for the BlockSpec's block_shape.
     compute_index: passthrough property for the BlockSpec's compute_index.
     memory_space: passthrough property for the BlockSpec's memory_space.
@@ -199,6 +203,8 @@ class BufferedRef:
     is_input: whether this BufferedRef acts as a pipeline input.
     is_output: whether this BufferedRef acts as a pipeline output.
     is_accumulator: whether this BufferedRef is an accumulator.
+    is_input_output: whether this BufferedRef is an input/output without
+      automatic accumulation.
   """
   spec: pl.BlockSpec       # static metadata
   dtype: Any               # static metadata
@@ -207,12 +213,12 @@ class BufferedRef:
   accum_ref: REF | None
   current_slot: ArrayRef | None
   next_slot: ArrayRef | None
-  sem_recv: SemaphoreType | None
-  sem_send: SemaphoreType | None
+  sem_recvs: SemaphoreTuple | None
+  sem_sends: SemaphoreTuple | None
 
   def tree_flatten(self):
     return ((self.vmem_ref, self.accum_ref, self.current_slot,
-             self.next_slot, self.sem_recv, self.sem_send),
+             self.next_slot, self.sem_recvs, self.sem_sends),
             (self.spec, self.dtype, self.buffer_type))
 
   @classmethod
@@ -232,31 +238,46 @@ class BufferedRef:
     Returns:
       Initialized BufferedRef
     """
-    block_shape = tuple([1 if x is None else x for x in spec.block_shape])
+    block_shape = tuple(1 if x is None else x for x in spec.block_shape)
+    if buffer_type is BufferType.ACCUMULATOR:
+      accum_ref = VMEM(block_shape, dtype)
+    else:
+      accum_ref = None
     if spec.memory_space == VMEM:
       # We don't need to do any double-buffering in the case that our pipeline
       # reference is already in VMEM, we just need allocate the accumulation
       # buffer and we will refer to the original reference slices directly.
       return cls(
-          spec=spec, dtype=dtype,
+          spec=spec,
+          dtype=dtype,
           buffer_type=buffer_type,
           vmem_ref=None,  # to be bound to existing ref by the pipeline routine
-          accum_ref=(VMEM(block_shape, dtype)
-                     if buffer_type is BufferType.ACCUMULATOR else None),
-          current_slot=None, next_slot=None, sem_recv=None, sem_send=None)
+          accum_ref=accum_ref,
+          current_slot=None,
+          next_slot=None,
+          sem_recvs=None,
+          sem_sends=None,
+      )
     else:
       return cls(
-          spec=spec, dtype=dtype,
+          spec=spec,
+          dtype=dtype,
           buffer_type=buffer_type,
           vmem_ref=VMEM((2,) + block_shape, dtype),
-          accum_ref=(VMEM(block_shape, dtype)
-                     if buffer_type is BufferType.ACCUMULATOR else None),
+          accum_ref=accum_ref,
           current_slot=SMEM((1,), jnp.int32),
           next_slot=SMEM((1,), jnp.int32),
-          sem_recv=(None if buffer_type is BufferType.OUTPUT
-                    else SemaphoreType.DMA),
-          sem_send=(None if buffer_type is BufferType.INPUT
-                    else SemaphoreType.DMA),)
+          sem_recvs=(
+              None
+              if buffer_type is BufferType.OUTPUT
+              else SemaphoreType.DMA((2,))
+          ),
+          sem_sends=(
+              None
+              if buffer_type is BufferType.INPUT
+              else SemaphoreType.DMA((2,))
+          ),
+      )
 
   @classmethod
   def input(cls, spec, dtype):
@@ -270,13 +291,17 @@ class BufferedRef:
   def accumulator(cls, spec, dtype):
     return cls.create(spec, dtype, BufferType.ACCUMULATOR)
 
+  @classmethod
+  def input_output(cls, spec, dtype):
+    return cls.create(spec, dtype, BufferType.INPUT_OUTPUT)
+
   @property
   def block_shape(self):
     return self.spec.block_shape
 
   @property
   def compute_index(self):
-    return self.spec.compute_index
+    return self.spec.index_map
 
   @property
   def memory_space(self):
@@ -285,7 +310,7 @@ class BufferedRef:
   @property
   def current_ref(self):
     buffer_slice = tuple(
-        [0 if x is None else slice(None) for x in self.block_shape])
+        0 if x is None else slice(None) for x in self.block_shape)
     if self.memory_space == VMEM:
       return self.vmem_ref.at[buffer_slice]
     else:
@@ -293,15 +318,27 @@ class BufferedRef:
 
   @property
   def is_input(self):
-    return self.buffer_type in [BufferType.INPUT, BufferType.ACCUMULATOR]
+    return self.buffer_type in [
+        BufferType.INPUT,
+        BufferType.ACCUMULATOR,
+        BufferType.INPUT_OUTPUT,
+    ]
 
   @property
   def is_output(self):
-    return self.buffer_type in [BufferType.OUTPUT, BufferType.ACCUMULATOR]
+    return self.buffer_type in [
+        BufferType.OUTPUT,
+        BufferType.ACCUMULATOR,
+        BufferType.INPUT_OUTPUT,
+    ]
 
   @property
   def is_accumulator(self):
     return self.buffer_type == BufferType.ACCUMULATOR
+
+  @property
+  def is_input_output(self):
+    return self.buffer_type == BufferType.INPUT_OUTPUT
 
   def bind_existing_ref(self, vmem_ref, indices):
     """For handling VMEM references, the pipeline aliases the existing ref."""
@@ -312,7 +349,7 @@ class BufferedRef:
 
   def compute_slice(self, grid_indices):
     """Compute DMA slice from grid indices."""
-    block_shape = tuple([1 if x is None else x for x in self.block_shape])
+    block_shape = tuple(1 if x is None else x for x in self.block_shape)
     indices = self.compute_index(*grid_indices)
     return jax.tree.map(_make_ds, indices, block_shape)
 
@@ -395,7 +432,7 @@ class BufferedRef:
     tpu_primitives.make_async_copy(
         src_ref.at[src_slice],
         self.vmem_ref.at[next_slot].at[dst_slice],
-        self.sem_recv).start()
+        self.sem_recvs.at[next_slot]).start()
 
   def copy_out(self, dst_ref, grid_indices):
     """Starts copy of HBM dma slice from the current slot."""
@@ -408,7 +445,7 @@ class BufferedRef:
     tpu_primitives.make_async_copy(
         self.vmem_ref.at[slot].at[src_slice],
         dst_ref.at[dst_slice],
-        self.sem_send).start()
+        self.sem_sends.at[slot]).start()
 
   def wait_in(self, src_ref, grid_indices):
     """Waits for input copy to finish."""
@@ -416,10 +453,11 @@ class BufferedRef:
     if self.memory_space == VMEM: return
     src_slice = self.get_dma_slice(src_ref.shape, src_ref.dtype, grid_indices)
     dst_slice = tuple(pl.ds(0, s.size) for s in src_slice)
+    current_slot = self.current_slot[0]
     tpu_primitives.make_async_copy(
         src_ref.at[src_slice],                   # nb: doesn't matter
-        self.vmem_ref.at[self.current_slot[0]].at[dst_slice],  # only dst shape is important
-        self.sem_recv).wait()
+        self.vmem_ref.at[current_slot].at[dst_slice],  # only dst shape is important
+        self.sem_recvs.at[current_slot]).wait()
 
   def wait_out(self, dst_ref, grid_indices):
     """Waits for output copy to finish."""
@@ -431,7 +469,7 @@ class BufferedRef:
     tpu_primitives.make_async_copy(
         self.vmem_ref.at[prev_slot].at[src_slice],  # nb: doesn't matter
         dst_ref.at[dst_slice],        # only dst shape is important
-        self.sem_send).wait()
+        self.sem_sends.at[prev_slot]).wait()
 
   # Accumulator methods
   #
@@ -732,7 +770,7 @@ def skip_input_copies_when_init_accumulators(schedule) -> Any:
 
     def new_pred(original_pred_fn, *a):
       pred = original_pred_fn(*a)
-      if a[1].is_accumulator:
+      if a[1].is_accumulator or a[1].is_input_output:
         pred &= ~a[0].init_accumulators
       return pred
 
@@ -1034,8 +1072,8 @@ def emit_pipeline(
 
       # loop input handling phase
       map_brefs(scheduler.initialize, brefs, refs, schedule)
-      map_brefs(scheduler.wait_in, brefs, refs, schedule)
       map_brefs(scheduler.copy_in, brefs, refs, schedule)
+      map_brefs(scheduler.wait_in, brefs, refs, schedule)
 
       # prefetch inputs for the *next* invocation of this pipeline
       with jax.named_scope("ep_prefetch"):
@@ -1051,6 +1089,7 @@ def emit_pipeline(
           body(*current_refs, *scratches)
 
       # loop output handling phase
+      map_brefs(scheduler.copy_out, brefs, refs, schedule)
       map_brefs(scheduler.wait_out, brefs, refs, schedule)
       # handle writes for the *last* invocation of this pipeline's outputs
       with jax.named_scope("ep_postyeet"):
@@ -1058,7 +1097,6 @@ def emit_pipeline(
           lax.cond(step == 0,
                   lambda: postyeet(*brefs, scheduler),
                   lambda: None)
-      map_brefs(scheduler.copy_out, brefs, refs, schedule)
       map_brefs(scheduler.finalize, brefs, refs, schedule)
 
       return ()

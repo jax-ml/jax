@@ -18,6 +18,7 @@ import contextlib
 import ctypes
 import dataclasses
 import functools
+import hashlib
 import itertools
 import math
 import os
@@ -92,11 +93,19 @@ def _mosaic_gpu_abstract_eval(*_, module, out_types, gmem_scratch_bytes):
   return [jax._src.core.ShapedArray(t.shape, t.dtype) for t in out_types]
 
 # TODO(apaszke): Implement a proper system for managing kernel lifetimes
-kernel_idx = itertools.count()
+KNOWN_KERNELS = {}
 
 def _mosaic_gpu_lowering_rule(ctx, *args, module, out_types, gmem_scratch_bytes):
   del out_types  # Unused.
-  idx_bytes = next(kernel_idx).to_bytes(8, byteorder="little")
+  kernel_id = hashlib.sha256(module).digest()
+  # Note that this is technically only a half measure. Someone might load a
+  # compiled module with a hash collision from disk. But that's so unlikely with
+  # SHA256 that it shouldn't be a problem.
+  if (kernel_text := KNOWN_KERNELS.get(kernel_id, None)) is not None:
+    if kernel_text != module:
+      raise RuntimeError("Hash collision!")
+  else:
+    KNOWN_KERNELS[kernel_id] = module
   op = mlir.custom_call(
       "mosaic_gpu",
       result_types=[
@@ -106,8 +115,10 @@ def _mosaic_gpu_lowering_rule(ctx, *args, module, out_types, gmem_scratch_bytes)
           ),
       ],
       operands=args,
-      backend_config=idx_bytes
-      + module.operation.get_asm(binary=True, enable_debug_info=True),
+      operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
+      result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out]
+      + [[0]],
+      backend_config=kernel_id + module,
   )
   return op.results[:-1]  # Skip the scratch space.
 
@@ -143,7 +154,13 @@ class TileTransform(MemRefTransform):
     tiling_rank = len(self.tiling)
     tiled_rank = untiled_rank + tiling_rank
     for t, d in zip(self.tiling[::-1], range(untiled_rank)[::-1]):
-      ref = utils.memref_unfold(ref, d, (None, t))
+      s = ir.MemRefType(ref.type).shape[d]
+      if s % t and s > t:
+        raise ValueError(
+            f"Dimension {d} must have size smaller or a multiple of its tiling"
+            f" {t}, but got {s}"
+        )
+      ref = utils.memref_unfold(ref, d, (None, min(t, s)))
     permutation = (
         *range(untiled_rank - tiling_rank),
         *range(untiled_rank - tiling_rank, tiled_rank, 2),
@@ -173,8 +190,10 @@ class TileTransform(MemRefTransform):
     for size, tile_size in zip(shape[-tiling_rank:], self.tiling):
       if size % tile_size:
         raise ValueError(
-            f"Expected GMEM slice shape {shape} suffix to be a multiple"
-            f" of tiling {self.tiling}"
+            f"Expected GMEM slice shape {shape} suffix to be a multiple of"
+            f" tiling {self.tiling}.\nIf you're using padded async copies, your"
+            " slice might need to extend out of bounds of the GMEM buffer (OOB"
+            " accesses will be skipped)."
         )
     return (
         *shape[:-tiling_rank],
@@ -323,7 +342,7 @@ class LaunchContext:
       swizzle: int | None = None,
       arrive: bool | None = None,
       uniform: bool = True,
-      collective: gpu.Dimension | None = None,
+      collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
   ):
     index = ir.IndexType.get()
     i16 = ir.IntegerType.get_signless(16)
@@ -386,7 +405,11 @@ class LaunchContext:
 
     dyn_base_indices = list(dyn_base_indices)
     slice_shape = list(slice_shape)
-    collective_size = 1 if collective is None else self.cluster_size[collective]
+    collective_size = 1
+    if collective is not None:
+      if isinstance(collective, gpu.Dimension):
+        collective = (collective,)
+      collective_size = math.prod(self.cluster_size[d] for d in collective)
     if collective_size > 1:
       def partition_dim(dim: int, idx: ir.Value, num_chunks: int):
         nonlocal smem_ref
@@ -397,18 +420,28 @@ class LaunchContext:
             smem_ref,
             (slice(None),) * dim + (utils.ds(block_offset, slice_shape[dim]),)
         )
-      idx = gpu.cluster_block_id(collective)
+      stride = 1
+      idx = c(0, index)
+      for d in sorted(collective):
+        if self.cluster_size[d] == 1:  # Optimize a multiply by 0.
+          continue
+        idx = arith.addi(idx, arith.muli(gpu.cluster_block_id(d), c(stride, index)))
+        stride *= self.cluster_size[d]
       rem_collective_size = collective_size
       for dim, slice_size in enumerate(slice_shape[:-1]):
         if slice_size % rem_collective_size == 0:
           partition_dim(dim, idx, rem_collective_size)
+          rem_collective_size = 1
           break
-        elif collective_size % slice_size == 0:
+        elif rem_collective_size % slice_size == 0:
           dim_idx = arith.remui(idx, c(slice_size, index))
           partition_dim(dim, dim_idx, slice_size)
           idx = arith.divui(idx, c(slice_size, index))
           rem_collective_size //= slice_size
-      else:
+        else:
+          break  # We failed to partition the leading dimensions.
+      del idx  # We overwrote the block index in the loop.
+      if rem_collective_size > 1:
         raise ValueError(
             "None of the leading dimensions in the transformed slice shape"
             f" {slice_shape} is divisible by the collective size"
@@ -440,6 +473,16 @@ class LaunchContext:
     rank = len(slice_shape)
     if rank > 5:  # TODO: apaszke - Implement stride compression
       raise ValueError("Async copies only support striding up to 5 dimensions")
+    if max(slice_shape) > 256:
+      raise ValueError(
+          "Async copies only support copying <=256 elements along each"
+          " dimension"
+      )
+    if (zeroth_bw := slice_shape[-1] * element_bytewidth) % 16 != 0:
+      raise ValueError(
+          "Async copies require the number of bytes copied along the last"
+          f" dimension to be divisible by 16, but got {zeroth_bw}"
+      )
     if swizzle is not None and slice_shape[-1] != swizzle // element_bytewidth:
       raise ValueError(
           f"Async copies with {swizzle=} require last dimension of the slice to"
@@ -471,8 +514,7 @@ class LaunchContext:
       self, allow_groups: int, await_read_only: bool = False
   ):
     nvvm.cp_async_bulk_wait_group(allow_groups, read=await_read_only)
-    # TODO(apaszke): Use a warpgroup barrier!!!
-    gpu.barrier()  # Groups are supposedly tracked per-thread
+    utils.warpgroup_barrier()
 
 
 # ShapeTrees currently can not contain unions.
@@ -688,6 +730,7 @@ def _lower_as_gpu_kernel(
     in_shapes: tuple[Any, ...],
     out_shape,
     smem_scratch_shape: ShapeTree | Union[ShapeTree],
+    module_name: str,
     prof_spec: profiler.ProfilerSpec | None = None,
 ):
   ptr_ty = ir.Type.parse("!llvm.ptr")
@@ -712,6 +755,8 @@ def _lower_as_gpu_kernel(
     out_ref_tys.append(prof_spec.mlir_buffer_type(grid, block))
 
   module = ir.Module.create()
+  attrs = module.operation.attributes
+  attrs["sym_name"] = ir.StringAttr.get(module_name)
   with ir.InsertionPoint(module.body):
     _declare_runtime_functions()
     gmem_scratch_bytes = 0
@@ -770,6 +815,7 @@ def as_gpu_kernel(
     smem_scratch_shape: ShapeTree | Union[ShapeTree],
     prof_spec: profiler.ProfilerSpec | None = None,
     cluster: tuple[int, int, int] = (1, 1, 1),
+    module_name: str = "unknown",
 ):
   if isinstance(in_shape, list):
     in_shape = tuple(in_shape)
@@ -778,7 +824,8 @@ def as_gpu_kernel(
 
   module, out_shape, gmem_scratch_bytes, unwrap_output_tuple = (
       _lower_as_gpu_kernel(
-          body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape, prof_spec
+          body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape,
+          module_name, prof_spec
       )
   )
 
@@ -791,11 +838,12 @@ def as_gpu_kernel(
           f" {arg_treedef}, ({args=})"
       )
 
+  module_asm = module.operation.get_asm(binary=True, enable_debug_info=True)
   def bind(*args):
     return mosaic_gpu_p.bind(
         *args,
         out_types=out_shape,
-        module=module,
+        module=module_asm,
         gmem_scratch_bytes=gmem_scratch_bytes,
     )
 

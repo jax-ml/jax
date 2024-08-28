@@ -300,21 +300,25 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     """Test typing error messages for while."""
     tuple_treedef = jax.tree.structure((1., 1.))
     leaf_treedef = jax.tree.structure(0.)
-    with self.assertRaisesRegex(TypeError,
+    with self.assertRaisesRegex(
+        TypeError,
         re.escape(f"cond_fun must return a boolean scalar, but got pytree {tuple_treedef}.")):
       lax.while_loop(lambda c: (1., 1.), lambda c: c, 0.)
-    with  self.assertRaisesRegex(TypeError,
+    with  self.assertRaisesRegex(
+        TypeError,
         re.escape("cond_fun must return a boolean scalar, but got output type(s) [ShapedArray(float32[])].")):
       lax.while_loop(lambda c: np.float32(1.), lambda c: c, np.float32(0.))
-    with self.assertRaisesRegex(TypeError,
-        re.escape("body_fun output and input must have same type structure, "
-                  f"got {tuple_treedef} and {leaf_treedef}.")):
+    with self.assertRaisesRegex(
+        TypeError,
+        re.escape("while_loop body function carry input and carry output must "
+                  "have the same pytree structure, but they differ:\n\n"
+                  "The input carry c is a")):
       lax.while_loop(lambda c: True, lambda c: (1., 1.), 0.)
-    with self.assertRaisesWithLiteralMatch(TypeError,
-        ("body_fun output and input must have identical types, got\n"
-         "('ShapedArray(bool[])', "
-         "'DIFFERENT ShapedArray(bool[]) vs. "
-         "ShapedArray(float32[])').")):
+    with self.assertRaisesRegex(
+        TypeError,
+        r"The input carry component c\[1\] has type float32\[\] but the "
+        r"corresponding output carry component has type bool\[\], so the "
+        "dtypes do not match."):
       lax.while_loop(lambda c: True, lambda c: (True, True),
                      (np.bool_(True), np.float32(0.)))
 
@@ -1882,39 +1886,39 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def testScanBodyCarryPytreeMismatchErrors(self):
     with self.assertRaisesRegex(
         TypeError,
-        re.escape("Scanned function carry input and carry output must have "
-                  "the same pytree structure, but they differ:\n"
-                  "  * the input carry c is a tuple of length 2")):
+        re.escape("function carry input and carry output must have "
+                  "the same pytree structure, but they differ:\n\n"
+                  "The input carry c is a tuple of length 2")):
       lax.scan(lambda c, x: ((0, 0, 0), x), (1, (2, 3)), jnp.arange(5.))
 
     with self.assertRaisesRegex(
         TypeError,
-        re.escape("Scanned function carry input and carry output must have the "
-                  "same pytree structure, but they differ:\n"
-                  "  * the input carry x is a tuple of length 2")):
+        re.escape("function carry input and carry output must have the "
+                  "same pytree structure, but they differ:\n\n"
+                  "The input carry x is a tuple of length 2")):
       lax.scan(lambda x, _: ((x[0].astype('float32'),), None),
                (jnp.array(0, 'int32'),) * 2, None, length=1)
 
     with self.assertRaisesRegex(
         TypeError,
-        re.escape("Scanned function carry input and carry output must have the "
-                  "same pytree structure, but they differ:\n"
-                  "  * the input carry x is a <class 'tuple'> but the corres")):
+        re.escape("function carry input and carry output must have the "
+                  "same pytree structure, but they differ:\n\n"
+                  "The input carry x is a <class 'tuple'> but the corres")):
       jax.lax.scan(lambda x, _: ([x[0].astype('float32'),] * 2, None),
                    (jnp.array(0, 'int32'),) * 2, None, length=1)
 
     with self.assertRaisesRegex(
         TypeError,
-        re.escape("Scanned function carry input and carry output must have the "
-                  "same pytree structure, but they differ:\n"
-                  "  * the input carry x is a <class 'dict'> with 1 child but")):
+        re.escape("function carry input and carry output must have the "
+                  "same pytree structure, but they differ:\n\n"
+                  "The input carry x is a <class 'dict'> with 1 child but")):
       jax.lax.scan(lambda x, _: ({'a': x['a'], 'b': x['a']}, None),
                    {'a': jnp.array(0, 'int32')}, None, length=1)
 
     with self.assertRaisesRegex(
         TypeError,
-        re.escape("Scanned function carry input and carry output must have the "
-                  "same pytree structure, but they differ:\n"
+        re.escape("function carry input and carry output must have the "
+                  "same pytree structure, but they differ:\n\n"
                   "  * the input carry component x[0] is a <class 'dict'> with "
                   "1 child but the corresponding component of the carry "
                   "output is a <class 'dict'> with 2 children")):
@@ -1924,9 +1928,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def testScanBodyCarryTypeMismatchErrors(self):
     with self.assertRaisesRegex(
         TypeError,
-        re.escape("Scanned function carry input and carry output must have equal "
-                  "types (e.g. shapes and dtypes of arrays), but they differ:\n"
-                  "  * the input carry x has type int32[] but the corresponding "
+        re.escape("function carry input and carry output must have equal "
+                  "types (e.g. shapes and dtypes of arrays), but they differ:\n\n"
+                  "The input carry x has type int32[] but the corresponding "
                   "output carry component has type float32[], so the dtypes do "
                   "not match"
                   )):
@@ -1935,9 +1939,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         TypeError,
-        re.escape("Scanned function carry input and carry output must have equal "
-                  "types (e.g. shapes and dtypes of arrays), but they differ:\n"
-                  "  * the input carry component x[1] has type int32[] but the "
+        re.escape("function carry input and carry output must have equal "
+                  "types (e.g. shapes and dtypes of arrays), but they differ:\n\n"
+                  "The input carry component x[1] has type int32[] but the "
                   "corresponding output carry component has type float32[], "
                   "so the dtypes do not match"
                   )):
@@ -1946,14 +1950,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         TypeError,
-        re.escape("Scanned function carry input and carry output must have equal "
-                  "types (e.g. shapes and dtypes of arrays), but they differ:\n"
+        re.escape("function carry input and carry output must have equal "
+                  "types (e.g. shapes and dtypes of arrays), but they differ:\n\n"
                   "  * the input carry component x[0] has type int32[] but the "
                   "corresponding output carry component has type float32[], "
-                  "so the dtypes do not match\n\n"
+                  "so the dtypes do not match;\n"
                   "  * the input carry component x[1] has type int32[] but the "
                   "corresponding output carry component has type float32[1,1], "
-                  "so the dtypes do not match and also the shapes do not match"
+                  "so the dtypes do not match and also the shapes do not match."
                   )):
       jax.lax.scan(lambda x, _: ((x[0].astype('float32'),
                                   x[1].astype('float32').reshape(1, 1),
@@ -2587,7 +2591,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def g(x):
       return x + 2
 
-    with jtu.count_jit_and_pmap_compiles() as count:
+    with jtu.count_jit_and_pmap_lowerings() as count:
       for x in range(10):
         lax.cond(x, f, g, x)
     # Should observe a maximum of 4 compiles: convert_element_type, f, g, cond
@@ -2946,6 +2950,25 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     init = np.array(np.arange(b * i * i), dtype=np.float32).reshape((b, i, i))
     hlo_text = fn.lower(init).as_text('hlo')
     self.assertNotIn('4,1,2,2', hlo_text)
+
+  def test_scan_length_concrete_error(self):
+    f = jax.jit(lambda n, x: jax.lax.scan(lambda c, z: (c, z), x, (), n))
+
+    with self.assertRaisesRegex(
+        core.ConcretizationTypeError,
+        "The `length` argument to `scan` expects a concrete `int` value.*"):
+      f(3, 1.)
+
+  def test_scan_unroll_concrete_error(self):
+    f = jax.jit(lambda n, x: jax.lax.scan(
+        lambda c, z: (c, z), x, (), 10, unroll=n))
+
+    msg = ("The `unroll` argument to `scan` expects a concrete `int` or "
+           "`bool` value.*")
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(3, 1.)
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(True, 1.)
 
   def test_cond_vmap_forwarding_doesnt_promote(self):
     def f(x, y):

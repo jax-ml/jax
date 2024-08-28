@@ -51,7 +51,7 @@ union SparseConst {
 };
 
 SparseConst ConstZero(gpuDataType type);
-SparseConst ConstOne(gpuDataType type);
+absl::StatusOr<SparseConst> ConstOne(gpuDataType type);
 
 struct SparseMatDescriptor {
   gpuDataType value_type;

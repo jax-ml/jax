@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.1
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   language: python
@@ -130,7 +130,6 @@ It is not recommended to use iterators in any JAX function you want to `jit` or 
 :outputId: 52d885fd-0239-4a08-f5ce-0c38cc008903
 
 import jax.numpy as jnp
-import jax.lax as lax
 from jax import make_jaxpr
 
 # lax.fori_loop
@@ -158,7 +157,7 @@ iter_operand = iter(range(10))
 
 +++ {"id": "oBdKtkVW8Lha"}
 
-## 🔪 In-Place Updates
+## 🔪 In-place updates
 
 +++ {"id": "JffAqnEW4JEb"}
 
@@ -268,7 +267,7 @@ For more details on indexed array updates, see the [documentation for the `.at` 
 
 +++ {"id": "oZ_jE2WAypdL"}
 
-## 🔪 Out-of-Bounds Indexing
+## 🔪 Out-of-bounds indexing
 
 +++ {"id": "btRFwEVzypdN"}
 
@@ -385,7 +384,7 @@ jnp.sum(jnp.array(x))
 
 +++ {"id": "MUycRNh6e50W"}
 
-## 🔪 Random Numbers
+## 🔪 Random numbers
 
 +++ {"id": "O8vvaVt3MRG2"}
 
@@ -395,7 +394,7 @@ jnp.sum(jnp.array(x))
 
 +++ {"id": "Qikt9pPW9L5K"}
 
-### RNGs and State
+### RNGs and state
 You're used to _stateful_ pseudorandom number generators (PRNGs) from numpy and other libraries, which helpfully hide a lot of details under the hood to give you a ready fountain of pseudorandomness:
 
 ```{code-cell} ipython3
@@ -471,7 +470,6 @@ The random state is described by a special array element that we call a __key__:
 :id: yPHE7KTWgAWs
 :outputId: ae8af0ee-f19e-474e-81b6-45e894eb2fc3
 
-from jax import random
 key = random.key(0)
 key
 ```
@@ -504,8 +502,8 @@ Instead, we __split__ the PRNG to get usable __subkeys__ every time we need a ne
 print("old key", key)
 key, subkey = random.split(key)
 normal_pseudorandom = random.normal(subkey, shape=(1,))
-print("    \---SPLIT --> new key   ", key)
-print("             \--> new subkey", subkey, "--> normal", normal_pseudorandom)
+print(r"    \---SPLIT --> new key   ", key)
+print(r"             \--> new subkey", subkey, "--> normal", normal_pseudorandom)
 ```
 
 +++ {"id": "tqtFVE4MthO3"}
@@ -519,8 +517,8 @@ We propagate the __key__ and make new __subkeys__ whenever we need a new random 
 print("old key", key)
 key, subkey = random.split(key)
 normal_pseudorandom = random.normal(subkey, shape=(1,))
-print("    \---SPLIT --> new key   ", key)
-print("             \--> new subkey", subkey, "--> normal", normal_pseudorandom)
+print(r"    \---SPLIT --> new key   ", key)
+print(r"             \--> new subkey", subkey, "--> normal", normal_pseudorandom)
 ```
 
 +++ {"id": "0KLYUluz3lN3"}
@@ -538,11 +536,11 @@ for subkey in subkeys:
 
 +++ {"id": "rg4CpMZ8c3ri"}
 
-## 🔪 Control Flow
+## 🔪 Control flow
 
 +++ {"id": "izLTvT24dAq0"}
 
-### ✔ python control_flow + autodiff ✔
+### ✔ Python control_flow + autodiff ✔
 
 If you just want to apply `grad` to your python functions, you can use regular python control-flow constructs with no problems, as if you were using [Autograd](https://github.com/hips/autograd) (or Pytorch or TF Eager).
 
@@ -562,7 +560,7 @@ print(grad(f)(4.))  # ok!
 
 +++ {"id": "hIfPT7WMmZ2H"}
 
-### python control flow + JIT
+### Python control flow + JIT
 
 Using control flow with `jit` is more complicated, and by default it has more constraints.
 
@@ -805,7 +803,7 @@ def while_loop(cond_fun, body_fun, init_val):
 :outputId: 552fe42f-4d32-4e25-c8c2-b951160a3f4e
 
 init_val = 0
-cond_fun = lambda x: x<10
+cond_fun = lambda x: x < 10
 body_fun = lambda x: x+1
 lax.while_loop(cond_fun, body_fun, init_val)
 # --> array(10, dtype=int32)
@@ -865,7 +863,7 @@ $\ast$ = argument-<b>value</b>-independent loop condition - unrolls the loop
 
 +++ {"id": "OxLsZUyRt_kF"}
 
-## 🔪 Dynamic Shapes
+## 🔪 Dynamic shapes
 
 +++ {"id": "1tKXcAMduDR1"}
 
@@ -1130,7 +1128,7 @@ x.dtype # --> dtype('float64')
 
 +++ {"id": "WAHjmL0E2XwO"}
 
-## 🔪 Miscellaneous Divergences from NumPy
+## 🔪 Miscellaneous divergences from NumPy
 
 While `jax.numpy` makes every attempt to replicate the behavior of numpy's API, there do exist corner cases where the behaviors differ.
 Many such cases are discussed in detail in the sections above; here we list several other known places where the APIs diverge.

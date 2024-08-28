@@ -5,14 +5,14 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.1
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   language: python
   name: python3
 ---
 
-# Distributed data loading in a multi-host/multi-process environment
+# Distributed data loading in multi-host / multi-process environments
 
 <!--* freshness: { reviewed: '2024-05-16' } *-->
 

@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.1
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   language: python
@@ -315,7 +315,7 @@ print("jacrev result, with shape", J.shape)
 print(J)
 ```
 
-These two functions compute the same values (up to machine numerics), but differ in their implementation: {func}`jax.jacfwd` uses forward-mode automatic differentiation, which is more efficient for "tall" Jacobian matrices, while {func}`jax.jacrev` uses reverse-mode, which is more efficient for "wide" Jacobian matrices. For matrices that are near-square, {func}`jax.jacfwd` probably has an edge over {func}`jax.jacrev`.
+These two functions compute the same values (up to machine numerics), but differ in their implementation: {func}`jax.jacfwd` uses forward-mode automatic differentiation, which is more efficient for "tall" Jacobian matrices (more outputs than inputs), while {func}`jax.jacrev` uses reverse-mode, which is more efficient for "wide" Jacobian matrices (more inputs than outputs). For matrices that are near-square, {func}`jax.jacfwd` probably has an edge over {func}`jax.jacrev`.
 
 You can also use {func}`jax.jacfwd` and {func}`jax.jacrev` with container types:
 
@@ -590,7 +590,7 @@ def vmap_mjp(f, x, M):
     outs, = vmap(vjp_fun)(M)
     return outs
 
-key = random.PRNGKey(0)
+key = random.key(0)
 num_covecs = 128
 U = random.normal(key, (num_covecs,) + y.shape)
 
@@ -640,7 +640,7 @@ def our_jacrev(f):
         y, vjp_fun = vjp(f, x)
         # Use vmap to do a matrix-Jacobian product.
         # Here, the matrix is the Euclidean basis, so we get all
-        # entries in the Jacobian at once. 
+        # entries in the Jacobian at once.
         J, = vmap(vjp_fun, in_axes=0)(jnp.eye(len(y)))
         return J
     return jacfun
@@ -654,7 +654,7 @@ from jax import jacfwd as builtin_jacfwd
 def our_jacfwd(f):
     def jacfun(x):
         _jvp = lambda s: jvp(f, (x,), (s,))[1]
-        Jt =vmap(_jvp, in_axes=1)(jnp.eye(len(x)))
+        Jt = vmap(_jvp, in_axes=1)(jnp.eye(len(x)))
         return jnp.transpose(Jt)
     return jacfun
 
@@ -714,7 +714,7 @@ Here's a check:
 
 ```{code-cell}
 def check(seed):
-  key = random.PRNGKey(seed)
+  key = random.key(seed)
 
   # random coeffs for u and v
   key, subkey = random.split(key)
@@ -768,7 +768,7 @@ Here's a check of the VJP rules:
 
 ```{code-cell}
 def check(seed):
-  key = random.PRNGKey(seed)
+  key = random.key(seed)
 
   # random coeffs for u and v
   key, subkey = random.split(key)

@@ -63,7 +63,7 @@ class PallasCallVmapTest(PallasBaseTest):
   def setUp(self):
     super().setUp()
     if jtu.test_device_matches(["tpu"]):
-      # TODO: most tests fail on TPU in non-interpreter mode
+      # TODO: most tests fail on TPU in non-interpret mode
       self.skipTest("On TPU the test works only in interpret mode")
 
   def test_vmap_of_simple_kernel(self):
@@ -131,7 +131,6 @@ class PallasCallVmapTest(PallasBaseTest):
     np.testing.assert_allclose(out, out_ref)
 
   def test_vmap_with_hoisted_consts(self):
-    # to_store will be hoisted as a constant. Choose distinct shapes from in/outs.
     to_store = np.arange(128, dtype=np.float32).reshape((1, 128))
     x = np.arange(4 * 16 * 128, dtype=np.float32).reshape((4, 16, 128))
 
@@ -146,9 +145,10 @@ class PallasCallVmapTest(PallasBaseTest):
     def kernel(src, dst):
       dst[0:1] = to_store
 
-    res = kernel(x)
-    for i in range(x.shape[0]):
-      self.assertAllClose(res[i, 0:1], to_store)
+    with self.assertRaisesRegex(
+        ValueError,
+        "The kernel function .* captures constants"):
+      kernel(x)
 
   def test_vmap_of_kernel_with_input_output_aliases(self):
     @functools.partial(
@@ -250,7 +250,7 @@ class PallasCallVmapTest(PallasBaseTest):
     np.testing.assert_allclose(out, out_ref)
 
 
-class PallasCallVmapInterpreterTest(PallasCallVmapTest):
+class PallasCallVmapInterpretTest(PallasCallVmapTest):
   INTERPRET = True
 
   def setUp(self):

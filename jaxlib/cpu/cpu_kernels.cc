@@ -18,7 +18,6 @@ limitations under the License.
 
 #include <complex>
 
-#include "jaxlib/cpu/lapack.h"
 #include "jaxlib/cpu/lapack_kernels.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
@@ -142,6 +141,14 @@ JAX_CPU_REGISTER_HANDLER(lapack_sgesdd_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_dgesdd_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_cgesdd_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_zgesdd_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_ssyevd_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_dsyevd_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_cheevd_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_zheevd_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_sgeev_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_dgeev_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_cgeev_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_zgeev_ffi);
 
 #undef JAX_CPU_REGISTER_HANDLER
 

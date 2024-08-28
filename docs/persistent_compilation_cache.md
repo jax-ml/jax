@@ -1,4 +1,4 @@
-# Persistent Compilation Cache
+# Persistent compilation cache
 
 <!--* freshness: { reviewed: '2024-04-09' } *-->
 

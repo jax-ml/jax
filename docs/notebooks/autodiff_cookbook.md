@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.1
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   language: python
@@ -276,7 +276,7 @@ print(J)
 
 +++ {"id": "iZDL-n_AvgBt"}
 
-These two functions compute the same values (up to machine numerics), but differ in their implementation: `jacfwd` uses forward-mode automatic differentiation, which is more efficient for "tall" Jacobian matrices, while `jacrev` uses reverse-mode, which is more efficient for "wide" Jacobian matrices. For matrices that are near-square, `jacfwd` probably has an edge over `jacrev`.
+These two functions compute the same values (up to machine numerics), but differ in their implementation: `jacfwd` uses forward-mode automatic differentiation, which is more efficient for "tall" Jacobian matrices (more outputs than inputs), while `jacrev` uses reverse-mode, which is more efficient for "wide" Jacobian matrices (more inputs than outputs). For matrices that are near-square, `jacfwd` probably has an edge over `jacrev`.
 
 +++ {"id": "zeKlr7Xz8bfm"}
 
@@ -675,7 +675,7 @@ def our_jacrev(f):
         y, vjp_fun = vjp(f, x)
         # Use vmap to do a matrix-Jacobian product.
         # Here, the matrix is the Euclidean basis, so we get all
-        # entries in the Jacobian at once. 
+        # entries in the Jacobian at once.
         J, = vmap(vjp_fun, in_axes=0)(jnp.eye(len(y)))
         return J
     return jacfun
@@ -691,7 +691,7 @@ from jax import jacfwd as builtin_jacfwd
 def our_jacfwd(f):
     def jacfun(x):
         _jvp = lambda s: jvp(f, (x,), (s,))[1]
-        Jt =vmap(_jvp, in_axes=1)(jnp.eye(len(x)))
+        Jt = vmap(_jvp, in_axes=1)(jnp.eye(len(x)))
         return jnp.transpose(Jt)
     return jacfun
 

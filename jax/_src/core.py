@@ -1434,7 +1434,7 @@ def canonicalize_dim(d: DimSize, context: str="") -> DimSize:
   """Canonicalizes and checks for errors in a user-provided shape dimension value.
 
   Args:
-    f: a Python value that represents a dimension.
+    d: a Python value that represents a dimension.
 
   Returns:
     A canonical dimension value.
@@ -1690,6 +1690,7 @@ class DArray:
     assert data.shape == pad_shape
     self._aval = aval
     self._data = data
+
   shape = property(lambda self: self._aval.shape)
   dtype = property(lambda self: self._aval.dtype)
   aval = property(lambda self: self._aval)
@@ -1700,20 +1701,37 @@ class DArray:
 
     dtypestr = _short_dtype_name(self._aval.dtype)
     shapestr = ','.join(map(str, self.shape))
-    slices = tuple(slice(int(d._data)) if type(d) is DArray and
-                   type(d.dtype) is bint else slice(None) for d in self.shape)
-    data = self._data[slices]
+    data = self.data
     return f'{dtypestr}[{shapestr}] with value: {data}'
+
   def __hash__(self) -> int:
     if not self.shape:
       return hash((self._aval, int(self._data)))
     raise TypeError("unhashable type: DArray")
+
   def __eq__(self, other):
     if isinstance(other, DArray) and self._aval == other._aval:
       return self._data == other._data
     return False
+
   def __len__(self):
     return self.shape[0]
+
+  @property
+  def data(self):
+    if not self.shape and type(self.dtype) is bint:
+      # special-case scalar bints
+      return self._data
+
+    slices = tuple(
+        slice(int(d._data))
+        if type(d) is DArray and type(d.dtype) is bint
+        else slice(None)
+        for d in self.shape
+    )
+    data = self._data[slices]
+    return data
+
 
 pytype_aval_mappings[DArray] = \
     lambda x: DConcreteArray(x._aval.shape, x._aval.dtype, x._aval.weak_type,
@@ -1927,20 +1945,24 @@ def min_dim(d1: DimSize, d2: DimSize) -> DimSize:
   d1_is_constant = is_constant_dim(d1)
   if d1_is_constant and is_constant_dim(d2):
     return min(d1, d2)
+  d1 = concrete_dim_or_error(d1, "argument `d1` of `core.min_dim`")
+  d2 = concrete_dim_or_error(d2, "argument `d2` of `core.min_dim`")
   if d1_is_constant:
-    return d2.rmin(d1)  # type: ignore[union-attr]
+    return d2.rmin(d1)
   else:
-    return d1.min(d2)  # type: ignore[union-attr]
+    return d1.min(d2)
 
 def max_dim(d1: DimSize, d2: DimSize) -> DimSize:
   """Like max(d1, d2) but for both constant and symbolic dimensions."""
   d1_is_constant = is_constant_dim(d1)
   if d1_is_constant and is_constant_dim(d2):
       return max(d1, d2)
+  d1 = concrete_dim_or_error(d1, "argument `d1` of `core.max_dim`")
+  d2 = concrete_dim_or_error(d2, "argument `d2` of `core.max_dim`")
   if d1_is_constant:
-    return d2.rmax(d1)  # type: ignore[union-attr]
+    return d2.rmax(d1)
   else:
-    return d1.max(d2)  # type: ignore[union-attr]
+    return d1.max(d2)
 
 def dimension_as_value(d: DimSize):
   """Turns a dimension size into a JAX array.

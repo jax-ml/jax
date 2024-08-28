@@ -2182,8 +2182,7 @@ class DebugInfo(NamedTuple):
 def debug_info(fn: Callable, in_tree: PyTreeDef | None,
                out_tree_thunk: Callable[[], PyTreeDef] | None,
                has_kwargs: bool, traced_for: str) -> DebugInfo:
-  try: sig = inspect.signature(fn)
-  except (ValueError, TypeError): sig = None
+  sig = api_util.fun_signature(fn)
   src_info = fun_sourceinfo(fn)
   return DebugInfo(src_info, sig, in_tree, out_tree_thunk, has_kwargs,
                    traced_for)
@@ -2518,7 +2517,7 @@ class BoundedAxisSize(NamedTuple):
   bound: int
 
 def _eval_jaxpr_padded(
-    jaxpr: Jaxpr, consts: list[Const], *args: DynamicJaxprTracer
+    jaxpr: Jaxpr, consts: Sequence[Const], *args: DynamicJaxprTracer
   ) -> list[Const | DynamicJaxprTracer]:
   env: dict[Var, Val] = {}
 
@@ -2642,7 +2641,7 @@ def inline_jaxpr_into_trace(
   tracer_env: dict[Var, Any] = dict(zip([*jaxpr.constvars, *jaxpr.invars],
                                         [*consts, *arg_tracers]))
   def new_tracer(atom):
-    tracer = DynamicJaxprTracer(trace, atom.aval, src)
+    tracer = tracer_env[atom] = DynamicJaxprTracer(trace, atom.aval, src)
     trace.frame.tracers.append(tracer)
     trace.frame.tracer_to_var[id(tracer)] = env[atom]
     return tracer

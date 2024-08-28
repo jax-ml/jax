@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.1
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   language: python
@@ -34,7 +34,7 @@ limitations under the License.
 
 +++ {"id": "B_XlLLpcWjkA"}
 
-# Training a Simple Neural Network, with tensorflow/datasets Data Loading
+# Training a simple neural network, with tensorflow/datasets data loading
 
 <!--* freshness: { reviewed: '2024-05-03' } *-->
 
@@ -104,7 +104,7 @@ def predict(params, image):
   for w, b in params[:-1]:
     outputs = jnp.dot(w, activations) + b
     activations = relu(outputs)
-  
+
   final_w, final_b = params[-1]
   logits = jnp.dot(final_w, activations) + final_b
   return logits - logsumexp(logits)
@@ -164,7 +164,7 @@ At this point, we have all the ingredients we need to define our neural network 
 def one_hot(x, k, dtype=jnp.float32):
   """Create a one-hot encoding of x of size k."""
   return jnp.array(x[:, None] == jnp.arange(k), dtype)
-  
+
 def accuracy(params, images, targets):
   target_class = jnp.argmax(targets, axis=1)
   predicted_class = jnp.argmax(batched_predict(params, images), axis=1)
@@ -183,7 +183,7 @@ def update(params, x, y):
 
 +++ {"id": "umJJGZCC2oKl"}
 
-## Data Loading with `tensorflow/datasets`
+## Data loading with `tensorflow/datasets`
 
 JAX is laser-focused on program transformations and accelerator-backed NumPy, so we don't include data loading or munging in the JAX library. There are already a lot of great data loaders out there, so let's just use them instead of reinventing anything. We'll use the `tensorflow/datasets` data loader.
 
@@ -229,7 +229,7 @@ print('Test:', test_images.shape, test_labels.shape)
 
 +++ {"id": "xxPd6Qw3Z98v"}
 
-## Training Loop
+## Training loop
 
 ```{code-cell} ipython3
 :id: X2DnZo3iYj18

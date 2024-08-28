@@ -268,6 +268,13 @@ def clock():
   )
 
 
+def smid():
+  i32 = ir.IntegerType.get_signless(32)
+  return llvm.inline_asm(
+      i32, [], "mov.u32  $0,%smid;", "=r", asm_dialect=0
+  )
+
+
 def globaltimer(kind: Literal["low", "high"] | None = None):
   if kind is None:
     i64 = ir.IntegerType.get_signless(64)
@@ -302,6 +309,8 @@ ds = DynamicSlice
 def memref_slice(ref: ir.Value, index) -> ir.Value:
   ref_ty = ir.MemRefType(ref.type)
   base_indices, slice_shape, is_squeezed = parse_indices(index, ref_ty.shape)
+  # TODO(apaszke): Check that slice is within the memref (indices might be
+  # dynamic, but we can at least catch some OOB slices).
 
   memref_strides, offset = ref_ty.get_strides_and_offset()
   new_offset = offset
@@ -496,9 +505,22 @@ def parse_indices(
 
 
 def commit_shared():
-  gpu.barrier()
+  warpgroup_barrier()
   nvvm.fence_proxy(
       nvvm.ProxyKind.async_shared, space=nvvm.SharedSpace.shared_cta
+  )
+
+
+def warpgroup_barrier():
+  # gpu.barrier() uses barrier number 0, and it would be unsafe to reuse it,
+  # so we shift the warpgroup index by 1.
+  i32 = ir.IntegerType.get_signless(32)
+  llvm.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [arith.addi(warpgroup_idx(sync=False), c(1, i32))],
+      f"bar.sync $0, {WARPGROUP_SIZE};",
+      "r",
+      has_side_effects=True,
   )
 
 
@@ -556,6 +578,7 @@ class BarrierRef:
     parity = arith.extui(i32, parity)
     if expect_wait:
       nvvm.mbarrier_try_wait_parity_shared(address, parity, ticks)
+      return
     barrier_ready = llvm.inline_asm(
         i1,
         [address, parity],
@@ -614,21 +637,27 @@ class CollectiveBarrierRef:
   def initialize(
       address: ir.Value,
       num_barriers: int,
-      dims: Sequence[gpu.Dimension],
+      dims: Sequence[gpu.Dimension | Sequence[gpu.Dimension]],
       cluster_shape: tuple[int, int, int],
   ) -> "CollectiveBarrierRef":
     i32 = ir.IntegerType.get_signless(32)
     # With the exception of the current device, each pair of slices along
     # collective dims is disjoint. Since the current device is overcounted,
     # we must decrease the arrival count a little.
-    arrival_count = sum(cluster_shape[d] for d in dims) - len(dims) + 1
-    if math.prod(cluster_shape[d] for d in dims) == 1:
+    dims_shape = [
+        cluster_shape[d]
+        if isinstance(d, gpu.Dimension)
+        else math.prod(cluster_shape[dd] for dd in d)
+        for d in dims
+    ]
+    arrival_count = sum(dims_shape) - len(dims) + 1
+    if arrival_count == 1:
+      assert all(s == 1 for s in dims_shape)
       cluster_mask = None
-      assert arrival_count == 1
     else:
       cluster_mask = c(0, i32)
-      for d in dims:
-        if cluster_shape[d] == 1:
+      for d, size in zip(dims, dims_shape):
+        if size == 1:
           # Only the current device is in this mask, but it will also be
           # present in one of the non-trivial cluster dims.
           continue
@@ -685,8 +714,11 @@ class CollectiveBarrierRef:
         has_side_effects=True,
     )
 
-  def wait(self):
-    self.barrier.wait()
+  def wait(self, *args, **kwargs):
+    self.barrier.wait(*args, **kwargs)
+
+  def wait_parity(self, *args, **kwargs):
+    self.barrier.wait_parity(*args, **kwargs)
 
 
 class Partition:
@@ -879,8 +911,11 @@ def memref_ptr(memref_arg, memory_space=None):
 
 
 def cluster_collective_mask(
-    cluster_shape: tuple[int, int, int], collective: gpu.Dimension
+    cluster_shape: tuple[int, int, int],
+    collective: Sequence[gpu.Dimension] | gpu.Dimension,
 ):
+  if isinstance(collective, gpu.Dimension):
+    collective = (collective,)
   # We first compute the linearized index of the slice along the collective
   # dim that contains the current block. Then, the mask is a sequence of 1s
   # strided by the position of the collective dim, shifted left by the linear
@@ -888,20 +923,20 @@ def cluster_collective_mask(
   # TODO(apaszke): Make sure this gets hoisted outside of any loops.
   # If not, we might need to do it manually.
   i32 = ir.IntegerType.get_signless(32)
-  stride = 1
   mask_shift = c(0, i32)
-  collective_stride = None
-  for cluster_dim in gpu.Dimension:
-    if cluster_dim != collective:
-      if cluster_shape[cluster_dim] != 1:  # Constant-fold multiply by 0.
-        dim_idx = arith.index_castui(i32, gpu.cluster_block_id(cluster_dim))
-        mask_shift = arith.addi(
-            mask_shift, arith.muli(dim_idx, c(stride, i32)),
-        )
-    else:
-      collective_stride = stride
-    stride *= cluster_shape[cluster_dim]
+  # NOTE: GPU dimensions are minor-to-major.
+  cluster_strides = get_contiguous_strides(cluster_shape[::-1])[::-1]
+  for stride, cluster_dim in zip(cluster_strides, gpu.Dimension):
+    if cluster_dim in collective:
+      continue
+    if cluster_shape[cluster_dim] != 1:  # Constant-fold multiply by 0.
+      dim_idx = arith.index_castui(i32, gpu.cluster_block_id(cluster_dim))
+      mask_shift = arith.addi(
+          mask_shift, arith.muli(dim_idx, c(stride, i32)),
+      )
   mask_unshifted = 0
-  for i in range(cluster_shape[collective]):
-    mask_unshifted |= 1 << (i * collective_stride)
+  collective_strides = [cluster_strides[d] for d in collective]
+  collective_shape = tuple(cluster_shape[d] for d in collective)
+  for idx in np.ndindex(collective_shape):
+    mask_unshifted |= 1 << sum(i * s for i, s in zip(idx, collective_strides))
   return arith.shli(c(mask_unshifted, i32), mask_shift)

@@ -47,7 +47,9 @@ from .utils import (
     thread_idx,
     tile_shape,
     warp_idx,
+    warpgroup_barrier,
     warpgroup_idx,
+    when,
 )
 from .wgmma import (
     WGMMAAccumulator,

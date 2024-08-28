@@ -520,7 +520,7 @@ def gmm(
       (lhs_bytes * tiles_n) + (rhs_bytes * max_active_tiles) + out_bytes
   )
   flops = 2 * m * k * n
-  cost_estimate = pltpu.CostEstimate(
+  cost_estimate = pl.CostEstimate(
       flops=flops, bytes_accessed=bytes_accessed, transcendentals=0
   )
   call_gmm = pl.pallas_call(
@@ -538,13 +538,10 @@ def gmm(
           scratch_shapes=[pltpu.VMEM((tm, tn), jnp.float32)],
       ),
       input_output_aliases=input_output_aliases,
-      compiler_params=dict(
-          mosaic=dict(
-              dimension_semantics=("parallel", "arbitrary", "arbitrary"),
-              cost_estimate=cost_estimate,
-          )
-      ),
+      compiler_params=pltpu.TPUCompilerParams(
+              dimension_semantics=("parallel", "arbitrary", "arbitrary")),
       interpret=interpret,
+      cost_estimate=cost_estimate,
   )
 
   out = call_gmm(
@@ -759,7 +756,7 @@ def tgmm(
       (lhs_bytes * tiles_n) + (rhs_bytes * tiles_k) + out_bytes
   )
   flops = 2 * m * k * n
-  cost_estimate = pltpu.CostEstimate(
+  cost_estimate = pl.CostEstimate(
       flops=flops, bytes_accessed=bytes_accessed, transcendentals=0
   )
   lhs = lhs.swapaxes(0, 1)
@@ -780,13 +777,10 @@ def tgmm(
           scratch_shapes=[pltpu.VMEM((tk, tn), jnp.float32)],
       ),
       input_output_aliases=input_output_aliases,
-      compiler_params=dict(
-          mosaic=dict(
-              dimension_semantics=("parallel", "arbitrary", "arbitrary"),
-              cost_estimate=cost_estimate,
-          )
-      ),
+      compiler_params=pltpu.TPUCompilerParams(
+              dimension_semantics=("parallel", "arbitrary", "arbitrary")),
       interpret=interpret,
+      cost_estimate=cost_estimate,
   )
 
   out = call_gmm(

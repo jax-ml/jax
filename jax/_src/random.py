@@ -197,9 +197,10 @@ def key(seed: int | ArrayLike, *,
         impl: PRNGSpecDesc | None = None) -> KeyArray:
   """Create a pseudo-random number generator (PRNG) key given an integer seed.
 
-  The result is a scalar array with a key that indicates the default PRNG
-  implementation, as determined by the optional ``impl`` argument or,
-  otherwise, by the ``jax_default_prng_impl`` config flag.
+  The result is a scalar array containing a key, whose dtype indicates
+  the default PRNG implementation, as determined by the optional
+  ``impl`` argument or, otherwise, by the ``jax_default_prng_impl``
+  config flag at the time when this function is called.
 
   Args:
     seed: a 64- or 32-bit integer used as the value of the key.
@@ -214,11 +215,20 @@ def key(seed: int | ArrayLike, *,
 
 def PRNGKey(seed: int | ArrayLike, *,
             impl: PRNGSpecDesc | None = None) -> KeyArray:
-  """Create a pseudo-random number generator (PRNG) key given an integer seed.
+  """Create a legacy PRNG key given an integer seed.
 
-  The resulting key carries the default PRNG implementation, as
-  determined by the optional ``impl`` argument or, otherwise, by the
-  ``jax_default_prng_impl`` config flag.
+  This function produces old-style legacy PRNG keys, which are arrays
+  of dtype ``uint32``. For more, see the note in the `PRNG keys
+  <https://jax.readthedocs.io/en/latest/jax.random.html#prng-keys>`_
+  section. When possible, :func:`jax.random.key` is recommended for
+  use instead.
+
+  The resulting key does not carry a PRNG implementation. The returned
+  key matches the implementation given by the optional ``impl``
+  argument or, otherwise, determined by the ``jax_default_prng_impl``
+  config flag. Callers must ensure that same implementation is set as
+  the default when passing this key as an argument to other functions
+  (such as ``jax.random.split`` and ``jax.random.normal``).
 
   Args:
     seed: a 64- or 32-bit integer used as the value of the key.
@@ -514,24 +524,6 @@ def _randint(key, shape, minval, maxval, dtype) -> Array:
                           lax.rem(lower_bits, span))
   random_offset = lax.rem(random_offset, span)
   return lax.add(minval, lax.convert_element_type(random_offset, dtype))
-
-
-def shuffle(key: KeyArrayLike, x: ArrayLike, axis: int = 0) -> Array:
-  """Shuffle the elements of an array uniformly at random along an axis.
-
-  Args:
-    key: a PRNG key used as the random key.
-    x: the array to be shuffled.
-    axis: optional, an int axis along which to shuffle (default 0).
-
-  Returns:
-    A shuffled version of x.
-  """
-  msg = ("jax.random.shuffle is deprecated and will be removed in a future release. "
-         "Use jax.random.permutation with independent=True.")
-  warnings.warn(msg, FutureWarning)
-  key, _ = _check_prng_key("shuffle", key)
-  return _shuffle(key, x, axis)
 
 
 def permutation(key: KeyArrayLike,

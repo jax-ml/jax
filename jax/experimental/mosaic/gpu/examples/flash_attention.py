@@ -287,10 +287,7 @@ def build_kernel(
 
       with ctx.named_region("Acc store"):
         acc.astype(f16).store_tiled(qo_smem, swizzle=128)
-        gpu.barrier()
-        nvvm.fence_proxy(
-            nvvm.ProxyKind.async_shared, space=nvvm.SharedSpace.shared_cta
-        )  # Make sure the store is visible to the TMA.
+        commit_shared()  # Make sure the store is visible to the TMA.
 
       with ctx.named_region("GMEM store"):
         ctx.async_copy(

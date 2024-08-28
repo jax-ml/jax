@@ -23,7 +23,7 @@ Here is a suggested investigation strategy:
  2. Hourly recompilation while keeping XLA and JAX in sync.
  3. Final verification: maybe a manual check of a few commits (or a git bisect).
 
-## Nightly investigation.
+## Nightly investigation
 
 This can be done by using [JAX-Toolbox nightly
 containers](https://github.com/NVIDIA/JAX-Toolbox).
@@ -128,7 +128,7 @@ investigate hourly between 8-24 and 8-26. There was a smaller slowdown
 earlier, lets ignore it for this example. It would be only another
 hourly investigation between those dates.
 
-## Hourly investigation.
+## Hourly investigation
 
 This does a checkout of JAX and XLA at each hour between the 2 dates,
 rebuilds everything and runs the test.  The scripts are structured

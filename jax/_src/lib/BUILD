@@ -22,7 +22,7 @@ load(
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//:__subpackages__"],
+    default_visibility = ["//jax:internal"],
 )
 
 py_library_providing_imports_info(

@@ -477,6 +477,7 @@ struct LinalgVectorizationPass
     // contract ops will help to sustain the structure through various
     // transformations.
     vector::populateVectorReductionToContractPatterns(patterns);
+    vector::populateSinkVectorOpsPatterns(patterns);
     // Pull in patterns to canonicalize transfer ops.
     vector::populateVectorTransferPermutationMapLoweringPatterns(patterns);
     vector::TransferReadOp::getCanonicalizationPatterns(patterns, ctx);

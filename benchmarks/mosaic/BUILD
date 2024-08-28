@@ -49,8 +49,8 @@ jax_test(
     disable_configs = DISABLED_CONFIGS,
     tags = ["notap"],
     deps = [
+        "//jax:mosaic_gpu",
+        "//jax/experimental/mosaic/gpu/examples:matmul",
         "//third_party/py/google_benchmark",
-        "//third_party/py/jax:mosaic_gpu",
-        "//third_party/py/jax/experimental/mosaic/gpu/examples:matmul",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )

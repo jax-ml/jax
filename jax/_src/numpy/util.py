@@ -111,19 +111,12 @@ def _parse_parameters(body: str) -> dict[str, str]:
   return {p.partition(' : ')[0].partition(', ')[0]: p for p in parameters}
 
 
-def _parse_extra_params(extra_params: str) -> dict[str, str]:
-  """Parse the extra parameters passed to implements()"""
-  parameters = _parameter_break.split(extra_params.strip('\n'))
-  return {p.partition(' : ')[0].partition(', ')[0]: p for p in parameters}
-
-
 def implements(
     original_fun: Callable[..., Any] | None,
     update_doc: bool = True,
     lax_description: str = "",
     sections: Sequence[str] = ('Parameters', 'Returns', 'References'),
     skip_params: Sequence[str] = (),
-    extra_params: str | None = None,
     module: str | None = None,
 ) -> Callable[[_T], _T]:
   """Decorator for JAX functions which implement a specified NumPy function.
@@ -145,9 +138,6 @@ def implements(
       ["Parameters", "Returns", "References"]
     skip_params: a list of strings containing names of parameters accepted by the
       function that should be skipped in the parameter list.
-    extra_params: an optional string containing additional parameter descriptions.
-      When ``update_doc=True``, these will be added to the list of parameter
-      descriptions in the updated doc.
     module: an optional string specifying the module from which the original function
       is imported. This is useful for objects such as ufuncs, where the module cannot
       be determined from the original function itself.
@@ -176,8 +166,6 @@ def implements(
           code = getattr(getattr(wrapped_fun, "__wrapped__", wrapped_fun), "__code__", None)
           # Remove unrecognized parameter descriptions.
           parameters = _parse_parameters(parsed.sections['Parameters'])
-          if extra_params:
-            parameters.update(_parse_extra_params(extra_params))
           parameters = {p: desc for p, desc in parameters.items()
                         if (code is None or p in code.co_varnames)
                         and p not in skip_params}

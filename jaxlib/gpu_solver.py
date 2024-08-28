@@ -57,7 +57,10 @@ for cuda_module_name in [".cuda", "jax_cuda12_plugin"]:
 
 if _cusolver:
   for _name, _value in _cusolver.registrations().items():
-    xla_client.register_custom_call_target(_name, _value, platform="CUDA")
+    # TODO(danfm): Clean up after all legacy custom calls are ported.
+    api_version = 1 if _name.endswith("_ffi") else 0
+    xla_client.register_custom_call_target(_name, _value, platform="CUDA",
+                                           api_version=api_version)
 
 try:
   from .rocm import _blas as _hipblas  # pytype: disable=import-error
@@ -72,7 +75,7 @@ except ImportError:
 
 if _hipblas:
   for _name, _value in _hipblas.registrations().items():
-      xla_client.register_custom_call_target(_name, _value, platform="ROCM")
+    xla_client.register_custom_call_target(_name, _value, platform="ROCM")
 
 for rocm_module_name in [".rocm", "jax_rocm60_plugin"]:
   try:
@@ -86,13 +89,17 @@ for rocm_module_name in [".rocm", "jax_rocm60_plugin"]:
 
 if _hipsolver:
   for _name, _value in _hipsolver.registrations().items():
-      xla_client.register_custom_call_target(_name, _value, platform="ROCM")
+    # TODO(danfm): Clean up after all legacy custom calls are ported.
+    api_version = 1 if _name.endswith("_ffi") else 0
+    xla_client.register_custom_call_target(_name, _value, platform="ROCM",
+                                           api_version=api_version)
 
 def _real_type(dtype):
   """Returns the real equivalent of 'dtype'."""
   return np.finfo(dtype).dtype
 
 
+# TODO(b/357034884): Remove this function after the forward compat window.
 def _getrf_hlo(platform, gpu_blas, gpu_solver, dtype, a):
   """LU decomposition."""
   a_type = ir.RankedTensorType(a.type)
@@ -101,11 +108,13 @@ def _getrf_hlo(platform, gpu_blas, gpu_solver, dtype, a):
   m, n = dims[-2:]
   batch_dims = tuple(dims[:-2])
   num_bd = len(batch_dims)
-  batch = math.prod(batch_dims)
+  i32_type = ir.IntegerType.get_signless(32)
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
 
   if not gpu_blas:
     raise GpuLibNotLinkedError()
 
+  batch = math.prod(batch_dims)
   if batch > 1 and m == n and m // batch <= 128:
     lwork, opaque = gpu_blas.build_getrf_batched_descriptor(
       np.dtype(dtype), batch, m)
@@ -117,8 +126,6 @@ def _getrf_hlo(platform, gpu_blas, gpu_solver, dtype, a):
     workspace = ir.RankedTensorType.get([lwork], a_type.element_type)
     kernel = f"{platform}solver_getrf"
 
-  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
-  i32_type = ir.IntegerType.get_signless(32)
   out = custom_call(
       kernel,
       result_types=[
@@ -138,6 +145,7 @@ def _getrf_hlo(platform, gpu_blas, gpu_solver, dtype, a):
       ],
       operand_output_aliases={0: 0}).results
   return out[:3]
+
 
 cuda_getrf = partial(_getrf_hlo, "cu", _cublas, _cusolver)
 rocm_getrf = partial(_getrf_hlo, "hip", _hipblas, _hipsolver)
@@ -320,7 +328,10 @@ def _syevd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a, *,
     kernel = f"{platform}solver_syevd"
     lwork, opaque = gpu_solver.build_syevd_descriptor(
         np.dtype(dtype), lower, batch_int, n)
-    assert lwork > 0
+    # TODO(Ruturaj4): Currently, hipsolverSsyevd sets lwork to 0 if n==0.
+    # Remove if this behavior changes in then new ROCm release.
+    if n > 0 or platform != "hip":
+      assert lwork > 0
 
   if ir.ComplexType.isinstance(a_type.element_type):
     eigvals_type = ir.ComplexType(a_type.element_type).element_type

@@ -28,6 +28,7 @@ import jax
 from jax import jit, custom_jvp
 from jax import lax
 
+from jax._src import deprecations
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.lax import PrecisionLike
 from jax._src.lax import linalg as lax_linalg
@@ -408,6 +409,8 @@ def matrix_rank(
       smaller than `rtol * largest_singular_value` are considered to be zero. If
       ``rtol`` is None (the default), a reasonable default is chosen based the
       floating point precision of the input.
+    tol: deprecated alias of the ``rtol`` argument. Will result in a
+      :class:`DeprecationWarning` if used.
 
   Returns:
     array of shape ``a.shape[-2]`` giving the matrix rank.
@@ -433,11 +436,11 @@ def matrix_rank(
   if not isinstance(tol, DeprecatedArg):
     rtol = tol
     del tol
-    warnings.warn(
-      "The tol argument for linalg.matrix_rank is deprecated using it will soon raise "
-      "an error. To prepare for future releases, and suppress this warning, "
-      "please use rtol instead.",
-      DeprecationWarning, stacklevel=2
+    deprecations.warn(
+      "jax-numpy-linalg-matrix_rank-tol",
+      ("The tol argument for linalg.matrix_rank is deprecated. "
+       "Please use rtol instead."),
+      stacklevel=2
     )
   M, = promote_dtypes_inexact(jnp.asarray(M))
   if M.ndim < 2:
@@ -659,6 +662,19 @@ def _det_3x3(a: Array) -> Array:
 
 
 @custom_jvp
+def _det(a):
+  sign, logdet = slogdet(a)
+  return sign * ufuncs.exp(logdet).astype(sign.dtype)
+
+
+@_det.defjvp
+def _det_jvp(primals, tangents):
+  x, = primals
+  g, = tangents
+  y, z = _cofactor_solve(x, g)
+  return y, jnp.trace(z, axis1=-1, axis2=-2)
+
+
 @jit
 def det(a: ArrayLike) -> Array:
   """
@@ -689,19 +705,10 @@ def det(a: ArrayLike) -> Array:
   elif len(a_shape) >= 2 and a_shape[-1] == 3 and a_shape[-2] == 3:
     return _det_3x3(a)
   elif len(a_shape) >= 2 and a_shape[-1] == a_shape[-2]:
-    sign, logdet = slogdet(a)
-    return sign * ufuncs.exp(logdet).astype(sign.dtype)
+    return _det(a)
   else:
     msg = "Argument to _det() must have shape [..., n, n], got {}"
     raise ValueError(msg.format(a_shape))
-
-
-@det.defjvp
-def _det_jvp(primals, tangents):
-  x, = primals
-  g, = tangents
-  y, z = _cofactor_solve(x, g)
-  return y, jnp.trace(z, axis1=-1, axis2=-2)
 
 
 def eig(a: ArrayLike) -> tuple[Array, Array]:
@@ -891,6 +898,8 @@ def pinv(a: ArrayLike, rtol: ArrayLike | None = None,
       determined based on the floating point precision of the dtype.
     hermitian: if True, then the input is assumed to be Hermitian, and a more
       efficient algorithm is used (default: False)
+    rcond: deprecated alias of the ``rtol`` argument. Will result in a
+      :class:`DeprecationWarning` if used.
 
   Returns:
     An array of shape ``(..., N, M)`` containing the pseudo-inverse of ``a``.
@@ -921,11 +930,11 @@ def pinv(a: ArrayLike, rtol: ArrayLike | None = None,
   if not isinstance(rcond, DeprecatedArg):
     rtol = rcond
     del rcond
-    warnings.warn(
-      "The rcond argument for linalg.pinv is deprecated using it will soon "
-      "raise an error. To prepare for future releases, and suppress this "
-      "warning, please use rtol instead.",
-      DeprecationWarning, stacklevel=2
+    deprecations.warn(
+      "jax-numpy-linalg-pinv-rcond",
+      ("The rcond argument for linalg.pinv is deprecated. "
+       "Please use rtol instead."),
+       stacklevel=2
     )
 
   return _pinv(a, rtol, hermitian)

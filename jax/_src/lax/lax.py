@@ -22,7 +22,7 @@ from functools import partial
 import itertools
 import math
 import operator
-from typing import Any, ClassVar, TypeVar, Union, cast as type_cast, overload, TYPE_CHECKING
+from typing import Any, TypeVar, Union, cast as type_cast, overload
 import warnings
 
 import numpy as np
@@ -84,8 +84,9 @@ T = TypeVar("T")
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
-def _clip_int_to_valid_range(val: DimSize, dtype) -> int:
+def _clip_int_to_valid_range(val: DimSize, dtype, where: str) -> int:
   info = np.iinfo(dtype)
+  val = core.concrete_dim_or_error(val, where)
   return core.max_dim(info.min, core.min_dim(val, info.max))
 
 def _validate_shapes(shapes: Sequence[Shape]):
@@ -633,64 +634,42 @@ def concatenate(operands: Array | Sequence[ArrayLike], dimension: int) -> Array:
 
 _precision_strings: dict[Any, Precision] = {}
 
-# TODO(b/333851820): pytype does not properly handle _missing_ in enums.
-# We work around that by defining `Precision` as a normal class.
-if TYPE_CHECKING:
+class Precision(enum.Enum):
+  """Precision enum for lax matrix multiply related functions.
 
-  class Precision:
-    DEFAULT: ClassVar[Precision]
-    HIGH: ClassVar[Precision]
-    HIGHEST: ClassVar[Precision]
+  The device-dependent `precision` argument to JAX functions generally
+  controls the tradeoff between speed and accuracy for array computations on
+  accelerator backends, (i.e. TPU and GPU). Has no impact on CPU backends.
+  This only has an effect on float32 computations, and does not affect the
+  input/output datatypes. Members are:
 
-    def __new__(cls, value: Precision | int | str | None) -> Precision:
-      raise NotImplementedError
+  DEFAULT:
+    Fastest mode, but least accurate. On TPU: performs float32 computations in
+    bfloat16. On GPU: uses tensorfloat32 if available (e.g. on A100 and H100
+    GPUs), otherwise standard float32 (e.g. on V100 GPUs). Aliases:
+    ``'default'``, ``'fastest'``.
+  HIGH:
+    Slower but more accurate. On TPU: performs float32 computations in 3
+    bfloat16 passes. On GPU: uses tensorfloat32 where available, otherwise
+    float32. Aliases: ``'high'``..
+  HIGHEST:
+    Slowest but most accurate. On TPU: performs float32 computations in 6
+    bfloat16. Aliases: ``'highest'``. On GPU: uses float32.
+  """
 
-    @property
-    def name(self) -> str:
-      raise NotImplementedError
+  DEFAULT = 0
+  HIGH = 1
+  HIGHEST = 2
 
-    @property
-    def value(self) -> int:
-      raise NotImplementedError
+  @classmethod
+  def _missing_(cls, value: object) -> Precision | None:
+    return _precision_strings.get(value)
 
-else:
+  def __repr__(self) -> str:
+    return f'{self.__class__.__name__}.{self.name}'
 
-  class Precision(enum.Enum):
-    """Precision enum for lax matrix multiply related functions.
-
-    The device-dependent `precision` argument to JAX functions generally
-    controls the tradeoff between speed and accuracy for array computations on
-    accelerator backends, (i.e. TPU and GPU). Has no impact on CPU backends.
-    This only has an effect on float32 computations, and does not affect the
-    input/output datatypes. Members are:
-
-    DEFAULT:
-      Fastest mode, but least accurate. On TPU: performs float32 computations in
-      bfloat16. On GPU: uses tensorfloat32 if available (e.g. on A100 and H100
-      GPUs), otherwise standard float32 (e.g. on V100 GPUs). Aliases:
-      ``'default'``, ``'fastest'``.
-    HIGH:
-      Slower but more accurate. On TPU: performs float32 computations in 3
-      bfloat16 passes. On GPU: uses tensorfloat32 where available, otherwise
-      float32. Aliases: ``'high'``..
-    HIGHEST:
-      Slowest but most accurate. On TPU: performs float32 computations in 6
-      bfloat16. Aliases: ``'highest'``. On GPU: uses float32.
-    """
-
-    DEFAULT = 0
-    HIGH = 1
-    HIGHEST = 2
-
-    @classmethod
-    def _missing_(cls, value: object) -> Precision | None:
-      return _precision_strings.get(value)
-
-    def __repr__(self) -> str:
-      return f'{self.__class__.__name__}.{self.name}'
-
-    def __str__(self) -> str:
-      return self.name
+  def __str__(self) -> str:
+    return self.name
 
 
 _precision_strings['highest'] = Precision.HIGHEST
@@ -720,7 +699,7 @@ def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
   <https://www.tensorflow.org/xla/operation_semantics#dot>`_
   operator.
 
-  For more general contraction, see the `dot_general` operator.
+  For more general contraction, see the :func:`jax.lax.dot_general` operator.
 
   Args:
     lhs: an array of dimension 1 or 2.
@@ -1350,7 +1329,8 @@ def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int) -> Array:
 
 def _eye(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
   """Like numpy.eye, create a 2D array with ones on a diagonal."""
-  offset = _clip_int_to_valid_range(offset, np.int32)
+  offset = _clip_int_to_valid_range(offset, np.int32,
+                                    "argument `offset` of jax.numpy.eye")
   dtype = dtypes.canonicalize_dtype(dtype)
   bool_eye = eq(add(broadcasted_iota(np.int32, shape, 0), np.int32(offset)),
                 broadcasted_iota(np.int32, shape, 1))
@@ -1372,7 +1352,8 @@ def _delta(dtype: DTypeLike, shape: Shape, axes: Sequence[int]) -> Array:
 
 def _tri(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
   """Like numpy.tri, create a 2D array with ones below a diagonal."""
-  offset = _clip_int_to_valid_range(offset, np.int32)
+  offset = _clip_int_to_valid_range(offset, np.int32,
+                                    "argument `offset` of jax.numpy.tri")
   dtype = dtypes.canonicalize_dtype(dtype)
   bool_tri = ge(add(broadcasted_iota(np.int32, shape, 0),
                     asarray(core.dimension_as_value(offset)).astype(np.int32)),
@@ -2264,11 +2245,6 @@ def _add_transpose(t, x, y):
   else:
     return [_unbroadcast(x_aval, t), _unbroadcast(y_aval, t)]
 
-def _add_inverse(r, x, y):
-  xr = r - y
-  yr = r - x
-  return xr, yr
-
 # TODO(slebedev): Why does mypy fail to infer the type here?
 add_p: Primitive = standard_naryop([_num, _num], 'add')
 ad.primitive_jvps[add_p] = _add_jvp
@@ -2317,11 +2293,6 @@ def _mul_transpose(ct, x, y):
       return [None, ad_util.Zero(y.aval)]
     else:
       return [None, _unbroadcast(y.aval, mul(x, ct))]
-
-def _mul_inverse(r, x, y):
-  xr = r / y
-  yr = r / x
-  return xr, yr
 
 mul_p = standard_naryop([_num, _num], 'mul')
 ad.defjvp(mul_p,
@@ -3060,30 +3031,28 @@ def _ragged_dot_jvp_rule(
   return primal_out, tangent_out
 
 
+def _ragged_to_dense(x, y, group_sizes):
+  shape = (y.shape[0], x.shape[0], x.shape[1])
+  x = broadcast_in_dim(x, shape, [1, 2])
+  iota = broadcasted_iota(group_sizes.dtype, shape, 1)
+  group_ends = jax.lax.cumsum(group_sizes)
+  group_starts = concatenate(
+      [_zeros(group_sizes)[:1], group_ends[:-1]],
+      dimension=0,
+  )
+  group_ends = broadcast_in_dim(group_ends, shape, (0,))
+  group_starts = broadcast_in_dim(group_starts, shape, (0,))
+  mask = bitwise_and(group_starts <= iota, iota < group_ends)
+  x = select(mask, x, _zeros(x))
+  return x
+
+
 def _ragged_dot_transpose_rule(
     ct, *operands, precision, preferred_element_type, group_offset
 ):
   x, y, gs = operands
   if group_offset is not None:
     raise NotImplementedError('Unimplemented group_offset support.')
-
-  def ragged_to_dense(x, group_sizes):
-    group_count = group_sizes.shape[0]
-    shape = (group_count, x.shape[0], x.shape[1])
-    x_broadcasted = jax.lax.broadcast_in_dim(x, shape, (1, 2))
-    iota = jax.lax.broadcasted_iota(group_sizes.dtype, shape, 1)
-    group_ends = jax.lax.cumsum(group_sizes)
-    group_starts = concatenate(
-        [
-            np.zeros_like([group_ends[0]], dtype=group_sizes.dtype),
-            group_ends[:-1],
-        ],
-        0,
-    )
-    group_ends = jax.lax.broadcast_in_dim(group_ends, shape, (0,))
-    group_starts = jax.lax.broadcast_in_dim(group_starts, shape, (0,))
-    mask = (group_starts <= iota) & (iota < group_ends)
-    return jax.numpy.where(mask, x_broadcasted, 0)
 
   if ad.is_undefined_primal(y):
     grad_x = None
@@ -3100,8 +3069,9 @@ def _ragged_dot_transpose_rule(
   if ad.is_undefined_primal(x):
     grad_y = None
   else:
-    x_dense = ragged_to_dense(x, gs)
-    ct_dense = ragged_to_dense(ct, gs)
+    y = y.aval if ad.is_undefined_primal(y) else y
+    x_dense = _ragged_to_dense(x, y, group_sizes=gs)
+    ct_dense = _ragged_to_dense(ct, y, group_sizes=gs)
     dimension_numbers = (([1], [1]), ([0], [0]))
     grad_y = jax.lax.dot_general(
         x_dense,
@@ -3130,17 +3100,7 @@ def _ragged_dot_impl(
     ) -> Array:
   if group_offset is not None:
     raise NotImplementedError("Unimplemented group_offset support.")
-  shape = (rhs.shape[0], lhs.shape[0], lhs.shape[1])
-  lhs = broadcast_in_dim(lhs, shape, [1, 2])
-  iota = broadcasted_iota(group_sizes.dtype, shape, 1)
-  group_ends = jax.lax.cumsum(group_sizes)
-  group_starts = concatenate(
-      [_zeros(group_sizes)[:1], group_ends[:-1]], dimension=0,
-  )
-  group_ends = broadcast_in_dim(group_ends, shape, (0,))
-  group_starts = broadcast_in_dim(group_starts, shape, (0,))
-  mask = bitwise_and(group_starts <= iota, iota < group_ends)
-  lhs = select(mask, lhs, _zeros(lhs))
+  lhs = _ragged_to_dense(lhs, rhs, group_sizes=group_sizes)
   return dot_general(
       lhs,
       rhs,
@@ -3341,15 +3301,6 @@ def _broadcast_in_dim_lower(ctx, x, *dyn_shape, shape, broadcast_dimensions) -> 
   return [mlir.broadcast_in_dim(ctx, x, aval_out,
                                 broadcast_dimensions=broadcast_dimensions)]
 
-def _broadcast_in_dim_pp_rule(eqn, context, settings):
-  # Don't print shape or trivial broadcast_dimensions in params, since it can be
-  # inferred from the let-binder's type annotation.
-  printed_params = {}
-  if eqn.params['broadcast_dimensions']:
-    printed_params['broadcast_dimensions'] = eqn.params['broadcast_dimensions']
-  new_eqn = eqn.replpace(params=printed_params, invars=eqn.invars[:1])
-  return core._pp_eqn(new_eqn, context, settings)
-
 def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions):
   if (not dyn_shape and
       not any(isinstance(d, core.DArray) and
@@ -3374,8 +3325,6 @@ pe.custom_staging_rules[broadcast_in_dim_p] = _broadcast_in_dim_staging_rule
 pe.padding_rules[broadcast_in_dim_p] = _broadcast_in_dim_padding_rule
 core.custom_typechecks[broadcast_in_dim_p] = _broadcast_in_dim_typecheck_rule
 mlir.register_lowering(broadcast_in_dim_p, _broadcast_in_dim_lower)
-# TODO(mattjj): un-comment the next line
-# core.pp_eqn_rules[broadcast_in_dim_p] = _broadcast_in_dim_pp_rule
 
 
 def _clamp_shape_rule(min, operand, max):
@@ -4149,9 +4098,6 @@ batching.defreducer(reduce_prod_p, _get_prod_identity)
 pe.padding_rules[reduce_prod_p] = partial(_reducer_padding, _reduce_prod,
                                           _get_prod_identity)
 
-
-def _reduce_chooser_shape_rule(operand, *, axes):
-  return tuple(np.delete(operand.shape, axes))
 
 def _reduce_chooser_jvp_rule(g, ans, operand, *, axes):
   # TODO(mattjj): an alternative is to use variadic reduce to compute the chosen
@@ -4978,13 +4924,6 @@ def _iota_batching_rule(in_vals, in_dims, *, dtype, shape, dimension):
   return iota, batching.RaggedAxis(ax, ((ragged_axis+1, segment_lengths),))
 batching.primitive_batchers[iota_p] = _iota_batching_rule
 
-def _iota_pp_rule(eqn, context, settings):
-  printed_params = {}
-  if len(eqn.params['shape']) > 1:
-    printed_params['dimension'] = eqn.params['dimension']
-  return core._pp_eqn(eqn.replace(params=printed_params), context, settings)
-# core.pp_eqn_rules[iota_p] = _iota_pp_rule
-
 def _iota_padding_rule(in_avals, out_avals, *dyn_shape, dtype, shape, dimension):
   out_aval, = out_avals
   new_shape = []
@@ -5047,13 +4986,15 @@ def padtype_to_pads(in_shape, window_shape, window_strides, padding):
                  for d in (out_shape - 1) * window_strides +
                           window_shape - in_shape)
     if padding == PaddingType.SAME:
-      return [
+      pads = [
           (pad_size // 2, pad_size - pad_size // 2) for pad_size in pad_sizes
       ]
     else:
-      return [
+      pads = [
           (pad_size - pad_size // 2, pad_size // 2) for pad_size in pad_sizes
       ]
+    # Avoids verbose numpy scalars in jaxprs.
+    return [p.item() if isinstance(p, np.generic) else p for p in pads]
   elif padding == PaddingType.VALID:
     return [(0, 0)] * len(in_shape)
   else:

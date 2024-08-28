@@ -25,7 +25,6 @@ import operator
 import numpy as np
 
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src.api import jit
 from jax._src.custom_derivatives import custom_jvp
@@ -53,9 +52,48 @@ def _replace_inf(x: ArrayLike) -> Array:
 def _to_bool(x: Array) -> Array:
   return x if x.dtype == bool else lax.ne(x, _lax_const(x, 0))
 
-@implements(np.fabs, module='numpy')
+
 @partial(jit, inline=True)
 def fabs(x: ArrayLike, /) -> Array:
+  """Compute the element-wise absolute values of the real-valued input.
+
+  JAX implementation of :func:`numpy.fabs`.
+
+  Args:
+    x: input array or scalar. Must not have a complex dtype.
+
+  Returns:
+    An array with same shape as ``x`` and dtype float, containing the element-wise
+    absolute values.
+
+  See also:
+    - :func:`jax.numpy.absolute`: Computes the absolute values of the input including
+      complex dtypes.
+    - :func:`jax.numpy.abs`: Computes the absolute values of the input including
+      complex dtypes.
+
+  Examples:
+    For integer inputs:
+
+    >>> x = jnp.array([-5, -9, 1, 10, 15])
+    >>> jnp.fabs(x)
+    Array([ 5.,  9.,  1., 10., 15.], dtype=float32)
+
+    For float type inputs:
+
+    >>> x1 = jnp.array([-1.342, 5.649, 3.927])
+    >>> jnp.fabs(x1)
+    Array([1.342, 5.649, 3.927], dtype=float32)
+
+    For boolean inputs:
+
+    >>> x2 = jnp.array([True, False])
+    >>> jnp.fabs(x2)
+    Array([1., 0.], dtype=float32)
+  """
+  check_arraylike('fabs', x)
+  if dtypes.issubdtype(dtypes.dtype(x), np.complexfloating):
+    raise TypeError("ufunc 'fabs' does not support complex dtypes")
   return lax.abs(*promote_args_inexact('fabs', x))
 
 @implements(getattr(np, 'bitwise_invert', np.invert), module='numpy')
@@ -253,8 +291,8 @@ def subtract(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 @implements(np.arctan2, module='numpy')
 @partial(jit, inline=True)
-def arctan2(x: ArrayLike, y: ArrayLike, /) -> Array:
-  return lax.atan2(*promote_args_inexact("arctan2", x, y))
+def arctan2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  return lax.atan2(*promote_args_inexact("arctan2", x1, x2))
 
 @implements(np.minimum, module='numpy')
 @partial(jit, inline=True)
@@ -358,9 +396,9 @@ def atanh(x: ArrayLike, /) -> Array:
   return arctanh(*promote_args('atanh', x))
 
 @partial(jit, inline=True)
-def atan2(x: ArrayLike, y: ArrayLike, /) -> Array:
+def atan2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arctan2`"""
-  return arctan2(*promote_args('atan2', x, y))
+  return arctan2(*promote_args('atan2', x1, x2))
 
 @jit
 def bitwise_count(x: ArrayLike, /) -> Array:
@@ -1132,9 +1170,6 @@ def heaviside(x1: ArrayLike, x2: ArrayLike, /) -> Array:
                 _where(lax.gt(x1, zero), _lax_const(x1, 1), x2))
 
 
-deprecations.register("jax-numpy-hypot-complex")
-
-
 @implements(np.hypot, module='numpy')
 @jit
 def hypot(x1: ArrayLike, x2: ArrayLike, /) -> Array:
@@ -1143,13 +1178,9 @@ def hypot(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   # TODO(micky774): Promote to ValueError when deprecation is complete
   # (began 2024-4-14).
   if dtypes.issubdtype(x1.dtype, np.complexfloating):
-    deprecations.warn(
-      "jax-numpy-hypot-complex",
-      "Passing complex-valued inputs to hypot is deprecated and will raise a "
-      "ValueError in the future. Please convert to real values first, such as "
-      "by using jnp.real or jnp.imag to take the real or imaginary components "
-      "respectively.",
-      stacklevel=2)
+    raise ValueError(
+      "jnp.hypot is not well defined for complex-valued inputs. "
+      "Please convert to real values first, such as by using abs(x)")
   x1, x2 = lax.abs(x1), lax.abs(x2)
   idx_inf = lax.bitwise_or(isposinf(x1), isposinf(x2))
   x1, x2 = maximum(x1, x2), minimum(x1, x2)

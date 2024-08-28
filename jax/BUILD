@@ -57,20 +57,6 @@ config_setting(
     },
 )
 
-# When `build_cuda_plugin_from_source` is true, it assumes running `bazel test` without preinstalled
-# cuda plugin.
-bool_flag(
-    name = "build_cuda_plugin_from_source",
-    build_setting_default = False,
-)
-
-config_setting(
-    name = "enable_build_cuda_plugin_from_source",
-    flag_values = {
-        ":build_cuda_plugin_from_source": "True",
-    },
-)
-
 exports_files([
     "LICENSE",
     "version.py",
@@ -90,39 +76,32 @@ package_group(
     packages = [
         # Intentionally avoid jax dependencies on jax.extend.
         # See https://jax.readthedocs.io/en/latest/jep/15856-jex.html
-        "//third_party/py/jax/tests/...",
+        "//tests/...",
     ] + jax_extend_internal_users,
 )
 
 package_group(
     name = "mosaic_users",
-    packages = [
-        "//...",
-    ] + mosaic_internal_users,
+    includes = [":internal"],
+    packages = mosaic_internal_users,
 )
 
 package_group(
     name = "pallas_gpu_users",
-    packages = [
-        "//...",
-        "//learning/brain/research/jax",
-    ] + pallas_gpu_internal_users,
+    includes = [":internal"],
+    packages = pallas_gpu_internal_users,
 )
 
 package_group(
     name = "pallas_tpu_users",
-    packages = [
-        "//...",
-        "//learning/brain/research/jax",
-    ] + pallas_tpu_internal_users,
+    includes = [":internal"],
+    packages = pallas_tpu_internal_users,
 )
 
 package_group(
     name = "mosaic_gpu_users",
-    packages = [
-        "//...",
-        "//learning/brain/research/jax",
-    ] + mosaic_gpu_internal_users,
+    includes = [":internal"],
+    packages = mosaic_gpu_internal_users,
 )
 
 # JAX-private test utilities.
@@ -993,7 +972,9 @@ pytype_library(
         ],
     ),
     visibility = [":internal"] + jax_visibility("array_api"),
-    deps = [":jax"],
+    deps = [
+        ":jax",
+    ],
 )
 
 pytype_library(

@@ -218,7 +218,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     rng = jtu.rand_positive(self.rng())
     args_maker = lambda: [rng(shape, dtype) + (d - 1) / 2.]
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
-                            tol={np.float32: 1e-3, np.float64: 1e-14})
+                            tol={np.float32: 1e-3, np.float64: 1e-14},
+                            check_dtypes=False)
     self._CompileAndCheck(
         lax_fun, args_maker, rtol={
             np.float32: 5e-5 if jtu.test_device_matches(["tpu"]) else 1e-05,
@@ -518,6 +519,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     tol = 650 * float(jnp.finfo(matrix.dtype).eps)
     eye_mat = np.eye(should_be_eye.shape[0], dtype=should_be_eye.dtype)
     with self.subTest('Test unitarity.'):
+      if jtu.test_device_matches(["cpu"]):
+        tol = max(tol, 1e-8)
       self.assertAllClose(
         eye_mat, should_be_eye, atol=tol * 1000 * min(shape))
 

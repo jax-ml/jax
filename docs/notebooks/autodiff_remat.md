@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.1
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   name: python3
@@ -370,8 +370,6 @@ Notice also that by providing a policy, we didn't need to edit the code defining
 Some policies can refer to values named with `jax.ad_checkpoint.checkpoint_name`:
 
 ```{code-cell}
-from jax.ad_checkpoint import checkpoint_name
-
 def predict(params, x):
   *Ws, Wlast = params
   for i, W in enumerate(Ws):

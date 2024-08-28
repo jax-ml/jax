@@ -1,4 +1,4 @@
-# Copyright 2023 The JAX Authors.
+# Copyright 2024 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ruff: noqa: F403
+import enum
+from typing import ClassVar
 
-import warnings
-warnings.warn("jax.extend.mlir.dialects.mhlo is deprecated and will be removed "
-              "from a future release of JAX. Use stablehlo instead.",
-              DeprecationWarning)
 
-from jaxlib.mlir.dialects.mhlo import *
+class ComputationMode(enum.Enum):
+  kComputeEigenvectors: ClassVar[ComputationMode] = ...
+  kNoEigenvectors: ClassVar[ComputationMode] = ...

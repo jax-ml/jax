@@ -21,10 +21,12 @@ https://jax.readthedocs.io/en/latest/pallas.html.
 from jax._src.deprecations import register as _register_deprecation
 from jax._src.pallas.core import Blocked
 from jax._src.pallas.core import BlockSpec
+from jax._src.pallas.core import CostEstimate
 from jax._src.pallas.core import IndexingMode
 from jax._src.pallas.core import no_block_spec
 from jax._src.pallas.core import Unblocked
 from jax._src.pallas.core import unblocked
+from jax._src.pallas.core import GridSpec
 from jax._src.pallas.pallas_call import pallas_call
 from jax._src.pallas.pallas_call import pallas_call_p
 from jax._src.pallas.primitives import atomic_add

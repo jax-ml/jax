@@ -162,7 +162,7 @@ possible. The `git rebase -i` command might be useful to this end.
 
 (linting-and-type-checking)=
 
-### Linting and Type-checking
+### Linting and type-checking
 
 JAX uses [mypy](https://mypy.readthedocs.io/) and
 [ruff](https://docs.astral.sh/ruff/) to statically test code quality; the
@@ -186,7 +186,7 @@ fix the issues you can push new commits to your branch.
 
 ### Restricted test suite
 
-Once your PR has been reviewed, a JAX maintainer will mark it as `Pull Ready`. This
+Once your PR has been reviewed, a JAX maintainer will mark it as `pull ready`. This
 will trigger a larger set of tests, including tests on GPU and TPU backends that are
 not available via standard GitHub CI. Detailed results of these tests are not publicly
 viewable, but the JAX maintainer assigned to your PR will communicate with you regarding

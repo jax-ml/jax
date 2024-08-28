@@ -65,6 +65,7 @@ from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax._src import sharding
+from jax._src.mesh import AbstractMesh
 from jax._src.sharding_impls import (
     NamedSharding, GSPMDSharding,
     SingleDeviceSharding, PmapSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
@@ -165,7 +166,6 @@ class PjitInfo(NamedTuple):
   keep_unused: bool
   inline: bool
   abstracted_axes: Any | None
-  has_explicit_sharding: bool
   use_resource_env: bool  # False for jit, True for pjit
 
   # Hash and compare PjitInfo by identity when used as a cache key.
@@ -282,8 +282,7 @@ def _get_fastpath_data(
     fastpath_data = pxla.MeshExecutableFastpathData(
         executable.xla_executable, out_tree, in_shardings,
         executable._out_shardings, out_avals, out_committed, kept_var_bitvec,
-        executable.unsafe_call.in_handler.local_devices,
-        executable.unsafe_call.in_handler.input_indices)
+        executable._dispatch_in_layouts)
   else:
     fastpath_data = None
   return fastpath_data
@@ -302,9 +301,7 @@ def _read_most_recent_pjit_call_executable(jaxpr):
 
 
 def _read_pgle_profiler(jaxpr):
-  return _most_recent_pjit_call_executable.weak_pgle_profiler_dict.get(
-      jaxpr, None
-  )
+  return _most_recent_pjit_call_executable.weak_pgle_profiler_dict.get(jaxpr, None)
 
 def _cpp_pjit_evict_fn(self):
   self._clear_cache()
@@ -315,20 +312,48 @@ def _cpp_pjit_evict_fn(self):
 # The entries are doubled here from the default 4096 because _pjit_call_impl
 # also has a cpp dispatch path and that would double the number of entries in
 # the global shared cache.
-_cpp_pjit_cache = xc._xla.PjitFunctionCache(capacity=8192)
+# This cache is only used for jit's with only fun. For example: jax.jit(f)
+_cpp_pjit_cache_fun_only = xc._xla.PjitFunctionCache(capacity=8192)
+
+# This cache is used for jit where extra arguments are defined other than the
+# fun. For example: jax.jit(f, donate_argnums=...) OR
+# jax.jit(f, out_shardings=...), etc. We don't use the same cache because the
+# capacity might get full very fast because of all the jitted function in JAX
+# which might evict train_step for example.
+_cpp_pjit_cache_explicit_attributes = xc._xla.PjitFunctionCache(capacity=8192)
 
 
-def _get_cpp_global_cache(pjit_has_explicit_sharding):
-  if pjit_has_explicit_sharding:
-    return xc._xla.PjitFunctionCache()
-  else:
-    return _cpp_pjit_cache
+if xla_extension_version < 283:
+  def _get_cpp_global_cache(pjit_has_explicit_sharding):
+    if pjit_has_explicit_sharding:
+      return xc._xla.PjitFunctionCache()
+    else:
+      return _cpp_pjit_cache_fun_only
+
+  def _pjit_explicit_sharding_and_layout(
+    in_shardings_flat, out_shardings_flat, in_layouts_flat, out_layouts_flat,
+    device, backend) -> bool:
+    return (device is not None or
+            backend is not None or
+            any(not is_unspecified(i) for i in in_shardings_flat) or
+            any(not is_unspecified(o) for o in out_shardings_flat) or
+            any(i is not None for i in in_layouts_flat) or
+            any(o is not None for o in out_layouts_flat))
+else:
+  def _get_cpp_global_cache(contains_explicit_attributes: bool):  # type: ignore
+    if contains_explicit_attributes:
+      return _cpp_pjit_cache_explicit_attributes
+    else:
+      return _cpp_pjit_cache_fun_only
 
 
 def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 
   @api_boundary
   def cache_miss(*args, **kwargs):
+    if config.no_tracing.value:
+      raise RuntimeError(f"re-tracing function {jit_info.fun_sourceinfo} for "
+                         "`jit`, but 'no_tracing' is set")
     outs, out_flat, out_tree, args_flat, jaxpr, attrs_tracked = _python_pjit_helper(
         fun, jit_info, *args, **kwargs)
     executable = _read_most_recent_pjit_call_executable(jaxpr)
@@ -340,27 +365,40 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 
     return outs, maybe_fastpath_data, _need_to_rebuild_with_fdo(pgle_profiler)
 
-  cpp_pjit_f = xc._xla.pjit(
-    fun_name(fun),
-    fun, cache_miss, jit_info.static_argnums, jit_info.static_argnames,
-    jit_info.donate_argnums, tree_util.dispatch_registry,
-    lambda x, sharding: pxla.shard_args([sharding], [x])[0],
-    _get_cpp_global_cache(jit_info.has_explicit_sharding))
+  if xla_extension_version >= 283:
+    cache_key = pxla.JitGlobalCppCacheKeys(
+        donate_argnums=jit_info.donate_argnums,
+        donate_argnames=jit_info.donate_argnames,
+        device=jit_info.device, backend=jit_info.backend,
+        in_shardings_treedef=jit_info.in_shardings_treedef,
+        in_shardings_leaves=jit_info.in_shardings_leaves,
+        out_shardings_treedef=jit_info.out_shardings_treedef,
+        out_shardings_leaves=jit_info.out_shardings_leaves,
+        in_layouts_treedef=jit_info.in_layouts_treedef,
+        in_layouts_leaves=jit_info.in_layouts_leaves,
+        out_layouts_treedef=jit_info.out_layouts_treedef,
+        out_layouts_leaves=jit_info.out_layouts_leaves,
+        use_resource_env=jit_info.use_resource_env)
+    cpp_pjit_f = xc._xla.pjit(
+        fun_name(fun), fun, cache_miss, jit_info.static_argnums,
+        jit_info.static_argnames, cache_key, tree_util.dispatch_registry,  # type: ignore
+        pxla.cc_shard_arg,
+        _get_cpp_global_cache(cache_key.contains_explicit_attributes))
+  else:
+    has_explicit_sharding = _pjit_explicit_sharding_and_layout(
+        jit_info.in_shardings_leaves, jit_info.out_shardings_leaves,
+        jit_info.in_layouts_leaves, jit_info.out_layouts_leaves,
+        jit_info.device, jit_info.backend)
+    cpp_pjit_f = xc._xla.pjit(
+        fun_name(fun), fun, cache_miss, jit_info.static_argnums,
+        jit_info.static_argnames, jit_info.donate_argnums,
+        tree_util.dispatch_registry, pxla.cc_shard_arg,
+        _get_cpp_global_cache(has_explicit_sharding))
 
   cpp_pjitted_f = wraps(fun)(cpp_pjit_f)
   cpp_pjitted_f._fun = fun
   type(cpp_pjitted_f).clear_cache = _cpp_pjit_evict_fn
   return cpp_pjitted_f
-
-
-def _pjit_explicit_sharding(in_shardings, out_shardings, device,
-                            backend) -> bool:
-  in_shardings_flat, _ = tree_flatten(in_shardings)
-  out_shardings_flat, _ = tree_flatten(out_shardings)
-  return (device is not None or
-          backend is not None or
-          any(not is_unspecified(i) for i in in_shardings_flat) or
-          any(not is_unspecified(i) for i in out_shardings_flat))
 
 
 def _split_layout_and_sharding(entries):
@@ -446,9 +484,6 @@ def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
       fun, fun_signature, donate_argnums, donate_argnames, static_argnums,
       static_argnames)
 
-  has_explicit_sharding = _pjit_explicit_sharding(
-      in_shardings, out_shardings, device, backend)
-
   return PjitInfo(
         fun_sourceinfo=fun_sourceinfo,
         fun_signature=fun_signature,
@@ -466,7 +501,6 @@ def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
         donate_argnames=donate_argnames, device=device, backend=backend,
         keep_unused=keep_unused, inline=inline,
         abstracted_axes=abstracted_axes,
-        has_explicit_sharding=has_explicit_sharding,
         use_resource_env=use_resource_env)
 
 
@@ -714,7 +748,7 @@ def _infer_params(
     resource_env = None
     pjit_mesh = None
 
-  skip_cache = xla_extension_version < 273 or config.dynamic_shapes.value
+  skip_cache = config.dynamic_shapes.value
   if not skip_cache:
     signature, dynargs = jax_jit.parse_arguments(
         args, tuple(kwargs.values()), tuple(kwargs.keys()), ji.static_argnums,
@@ -1443,10 +1477,17 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
   resolved_in_layouts = []
   for arg, jit_in_l, rs, aval in safe_zip(
       args, jit_in_layouts, resolved_in_shardings, in_avals):
-    arg_layout, committed = (
-        pxla._maybe_get_default_layout(getattr(arg, 'layout', None), jit_in_l,
-                                       rs, aval),
-        getattr(arg, '_committed', True))
+    committed = getattr(arg, '_committed', True)
+    # `arg_layout` is only used for checking purposes in the `else` branch
+    # below. We cannot replace default layout with None to raise nicer errors.
+    # `dispatch_arg_layout` replaces default layouts with `None` to simplify
+    # dispatch and lowering logic downstream.
+    if hasattr(arg, 'layout'):
+      arg_layout = arg.layout.device_local_layout
+      dispatch_arg_layout = (None if pxla.is_default_layout(arg_layout, rs, aval)
+                             else arg_layout)
+    else:
+      arg_layout, dispatch_arg_layout = None, None
     # Sharding can be unspecified when array is committed if it's a PmapSharding.
     is_pmap_sharding = (is_unspecified(rs) or
                         isinstance(getattr(arg, 'sharding', None), PmapSharding))
@@ -1455,7 +1496,7 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
         if is_pmap_sharding:
           resolved_in_layouts.append(None)
         else:
-          resolved_in_layouts.append(arg_layout)
+          resolved_in_layouts.append(dispatch_arg_layout)
       else:
         resolved_in_layouts.append(None)
     else:
@@ -1724,14 +1765,27 @@ def _pjit_call_impl(*args, jaxpr,
   f = _get_jaxpr_as_fun(
       jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
       resource_env, donated_invars, name, keep_unused, inline)
-  donated_argnums = [i for i, d in enumerate(donated_invars) if d]
-  has_explicit_sharding = _pjit_explicit_sharding(
-      in_shardings, out_shardings, None, None)
-  return xc._xla.pjit(
-      name, f, call_impl_cache_miss, [], [], donated_argnums,
-      tree_util.dispatch_registry,
-      lambda x, sharding: pxla.shard_args([sharding], [x])[0],
-      _get_cpp_global_cache(has_explicit_sharding))(*args)
+  donated_argnums = tuple(i for i, d in enumerate(donated_invars) if d)
+  if xla_extension_version >= 283:
+    cache_key = pxla.JitGlobalCppCacheKeys(
+        donate_argnums=donated_argnums, donate_argnames=None,
+        device=None, backend=None,
+        in_shardings_treedef=None, in_shardings_leaves=in_shardings,
+        out_shardings_treedef=None, out_shardings_leaves=out_shardings,
+        in_layouts_treedef=None, in_layouts_leaves=in_layouts,
+        out_layouts_treedef=None, out_layouts_leaves=out_layouts,
+        use_resource_env=resource_env is not None)
+    return xc._xla.pjit(
+        name, f, call_impl_cache_miss, [], [], cache_key,
+        tree_util.dispatch_registry, pxla.cc_shard_arg,
+        _get_cpp_global_cache(cache_key.contains_explicit_attributes))(*args)
+  else:
+    has_explicit_sharding = _pjit_explicit_sharding_and_layout(
+        in_shardings, out_shardings, in_layouts, out_layouts, None, None)
+    return xc._xla.pjit(
+        name, f, call_impl_cache_miss, [], [], donated_argnums,
+        tree_util.dispatch_registry, pxla.cc_shard_arg,
+        _get_cpp_global_cache(has_explicit_sharding))(*args)
 
 pjit_p.def_impl(_pjit_call_impl)
 
@@ -1756,20 +1810,12 @@ def _pjit_lower_cached(
     lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
     pgle_profiler: profiler.PGLEProfiler | None):
-  if resource_env is not None:
-    mesh = resource_env.physical_mesh
-    api_name = 'pjit'
-  else:
-    # resource_env is `None` in the jit wrapper around pjit.
-    mesh = None
-    api_name = 'jit'
-
+  mesh, api_name = ((resource_env.physical_mesh, 'pjit')
+                    if resource_env is not None else (None, 'jit'))
   return pxla.lower_sharding_computation(
       jaxpr, api_name, name, in_shardings, out_shardings,
       in_layouts, out_layouts, tuple(donated_invars),
-      keep_unused=keep_unused,
-      devices_from_context=(
-          None if mesh is None or mesh.empty else list(mesh.devices.flat)),
+      keep_unused=keep_unused, context_mesh=mesh,
       lowering_platforms=lowering_platforms,
       lowering_parameters=lowering_parameters,
       pgle_profiler=pgle_profiler)
@@ -1998,6 +2044,9 @@ def _pjit_batcher_for_sharding(
   if spmd_axis_name is None:
     if sharding_impls.is_op_sharding_replicated(hlo_s):
       return s
+    if isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):
+      parsed_pspec = s._parsed_pspec.insert_axis_partitions(dim, None)
+      return NamedSharding._from_parsed_pspec(s.mesh, parsed_pspec)
     new_op = hlo_s.to_proto().clone()
     tad = list(new_op.tile_assignment_dimensions)
     tad.insert(dim, 1)
@@ -2007,6 +2056,9 @@ def _pjit_batcher_for_sharding(
         _device_list=getattr(s, '_internal_device_list', None))
     return pxla._get_out_sharding_from_orig_sharding([new_gs], [None], s, None)[0]
   else:
+    if isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):
+      parsed_pspec = s._parsed_pspec.insert_axis_partitions(dim, spmd_axis_name)
+      return NamedSharding._from_parsed_pspec(s.mesh, parsed_pspec)
     if isinstance(s, NamedSharding):
       mesh = s.mesh
     if mesh is None or mesh.empty:
@@ -2472,6 +2524,27 @@ def _identity_fn(x): return x
 
 def _sharding_constraint_impl(x, sharding, layout, resource_env,
                               unconstrained_dims):
+  if (isinstance(sharding, NamedSharding) and
+      isinstance(sharding.mesh, AbstractMesh)):
+    aval = shaped_abstractify(x)
+    if not hasattr(x, 'sharding'):
+      raise ValueError(
+          'Target sharding contains a `jax.sharding.AbstractMesh` which'
+          ' requires the input passed should be a `jax.Array`. Got'
+          f' {type(x)} with shape {aval.str_short()}')
+    if not isinstance(x.sharding, NamedSharding):
+      raise TypeError(
+          'The sharding on the input must be a `NamedSharding` since the target'
+          ' sharding has an `AbstractMesh` in it. Got sharding type'
+          f' {type(x.sharding)} for shape {aval.str_short()}')
+    if x.sharding.mesh.shape_tuple != sharding.mesh.shape_tuple:
+      raise ValueError(
+          f'Mesh shape of the input {x.sharding.mesh.shape_tuple} does not'
+          ' match the mesh shape of the target sharding'
+          f' {sharding.mesh.shape_tuple} for shape {aval.str_short()}')
+    sharding = NamedSharding._from_parsed_pspec(
+        x.sharding.mesh, sharding._parsed_pspec)
+
   if layout is None:
     if hasattr(x, 'sharding') and x.sharding.is_equivalent_to(sharding, x.ndim):
       return x

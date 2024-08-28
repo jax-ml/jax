@@ -19,6 +19,7 @@ import os
 import platform
 import subprocess
 import sys
+import tempfile
 import textwrap
 import unittest
 
@@ -74,37 +75,45 @@ class LoggingTest(jtu.JaxTestCase):
     if sys.executable is None:
       raise self.skipTest("test requires access to python binary")
 
-    program = textwrap.dedent("""
-      import jax
-      jax.device_count()
-      f = jax.jit(lambda x: x + 1)
-      f(1)
-      f(2)
-      jax.numpy.add(1, 1)
-    """)
-    python = sys.executable
-    assert "python" in python
-    env_variables = {"TF_CPP_MIN_LOG_LEVEL": "1"}
-    if os.getenv("PYTHONPATH"):
-      env_variables["PYTHONPATH"] = os.getenv("PYTHONPATH")
-    if os.getenv("LD_LIBRARY_PATH"):
-      env_variables["LD_LIBRARY_PATH"] = os.getenv("LD_LIBRARY_PATH")
-    # Make sure C++ logging is at default level for the test process.
-    proc = subprocess.run(
-        [python, "-c", program],
-        capture_output=True,
-        env=env_variables,
-    )
+    # Save script in file to fix the problem with
+    # `tsl::Env::Default()->GetExecutablePath()` not working properly with
+    # command flag.
+    with tempfile.NamedTemporaryFile(
+        mode="w+", encoding="utf-8", suffix=".py"
+    ) as f:
+      f.write(textwrap.dedent("""
+        import jax
+        jax.device_count()
+        f = jax.jit(lambda x: x + 1)
+        f(1)
+        f(2)
+        jax.numpy.add(1, 1)
+    """))
+      python = sys.executable
+      assert "python" in python
+      env_variables = {"TF_CPP_MIN_LOG_LEVEL": "1"}
+      if os.getenv("PYTHONPATH"):
+        env_variables["PYTHONPATH"] = os.getenv("PYTHONPATH")
+      if os.getenv("LD_LIBRARY_PATH"):
+        env_variables["LD_LIBRARY_PATH"] = os.getenv("LD_LIBRARY_PATH")
+      # Make sure C++ logging is at default level for the test process.
+      proc = subprocess.run(
+          [python, f.name],
+          capture_output=True,
+          env=env_variables,
+      )
 
-    lines = proc.stdout.split(b"\n")
-    lines.extend(proc.stderr.split(b"\n"))
-    allowlist = [
-        b"",
-        b"An NVIDIA GPU may be present on this machine, but a CUDA-enabled "
-        b"jaxlib is not installed. Falling back to cpu.",
-    ]
-    lines = [l for l in lines if l not in allowlist]
-    self.assertEmpty(lines)
+      lines = proc.stdout.split(b"\n")
+      lines.extend(proc.stderr.split(b"\n"))
+      allowlist = [
+          b"",
+          (
+              b"An NVIDIA GPU may be present on this machine, but a"
+              b" CUDA-enabled jaxlib is not installed. Falling back to cpu."
+          ),
+      ]
+      lines = [l for l in lines if l not in allowlist]
+      self.assertEmpty(lines)
 
   def test_debug_logging(self):
     # Warmup so we don't get "No GPU/TPU" warning later.

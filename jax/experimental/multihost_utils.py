@@ -32,7 +32,6 @@ from jax._src import sharding_impls
 from jax._src.interpreters import pxla
 from jax.interpreters import xla
 from jax._src import pjit as pjit_lib
-from jax.experimental.pjit import pjit
 from jax.sharding import PartitionSpec as P
 from jax._src import distributed
 from jax._src.util import safe_zip
@@ -101,7 +100,7 @@ def _handle_array_process_allgather(inp, tiled):
   if isinstance(inp, array.ArrayImpl) and not inp.is_fully_addressable:
     reps = sharding_impls.GSPMDSharding.get_replicated(
         inp.sharding._device_assignment)
-    out = pjit(_identity_fn, out_shardings=reps)(inp)
+    out = jax.jit(_identity_fn, out_shardings=reps)(inp)
   else:
     # All inputs here will be fully addressable.
     if jax.process_count() == 1:
@@ -124,8 +123,8 @@ def _handle_array_process_allgather(inp, tiled):
     bufs = [jax.device_put(host_np_arr, d) for d in jax.local_devices()]
     global_arr = array.make_array_from_single_device_arrays(
         global_aval.shape, s, bufs)
-    with global_mesh:
-      out = pjit(_identity_fn, out_shardings=None)(global_arr)
+    out = jax.jit(_identity_fn,
+                  out_shardings=jax.NamedSharding(global_mesh, P()))(global_arr)
 
   return np.asarray(out.addressable_data(0))
 

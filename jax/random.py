@@ -242,7 +242,6 @@ from jax._src.random import (
   randint as randint,
   random_gamma_p as random_gamma_p,
   rayleigh as rayleigh,
-  shuffle as _deprecated_shuffle,
   split as split,
   t as t,
   triangular as triangular,
@@ -254,16 +253,16 @@ from jax._src.random import (
 )
 
 _deprecations = {
-    # Added November 6, 2023; but has been raising a FutureWarning since JAX 0.1.66
+    # Finalized Jul 26 2024; remove after Nov 2024.
     "shuffle": (
         "jax.random.shuffle is deprecated. Use jax.random.permutation with independent=True.",
-        _deprecated_shuffle,
+        None,
     )
 }
 
 import typing
 if typing.TYPE_CHECKING:
-  shuffle = _deprecated_shuffle
+  pass
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)

@@ -75,17 +75,41 @@ There are two ways to build `jaxlib` with CUDA support: (1) use
 `python build/build.py --enable_cuda` to generate a jaxlib wheel with cuda
 support, or (2) use
 `python build/build.py --enable_cuda --build_gpu_plugin --gpu_plugin_cuda_version=12`
-to generate three wheels (jaxlib without cuda, jax-cuda-plugin,
-and jax-cuda-pjrt). You can set `gpu_plugin_cuda_version` to 11 or 12.
+to generate three wheels (jaxlib without cuda, jax-cuda-plugin, and
+jax-cuda-pjrt).
 
-See `python build/build.py --help` for configuration options, including ways to
-specify the paths to CUDA and CUDNN, which you must have installed. Here
+See `python build/build.py --help` for configuration options. Here
 `python` should be the name of your Python 3 interpreter; on some systems, you
 may need to use `python3` instead. Despite calling the script with `python`,
 Bazel will always use its own hermetic Python interpreter and dependencies, only
 the `build/build.py` script itself will be processed by your system Python
 interpreter. By default, the wheel is written to the `dist/` subdirectory of the
 current directory.
+
+*  JAX versions starting from v.0.4.32: you can provide custom CUDA and CUDNN 
+   versions in the configuration options. Bazel will download them and use as
+   target dependencies.
+
+   To download the specific versions of CUDA/CUDNN redistributions, you can use
+   the following command:
+
+   ```bash
+   python build/build.py --enable_cuda \
+   --cuda_version=12.3.2 --cudnn_version=9.1.1
+   ```
+
+   To point to CUDA/CUDNN/NCCL redistributions on local file system, you can use
+   the following command:
+
+   ```bash
+   python build/build.py --enable_cuda \
+   --bazel_options=--repo_env=LOCAL_CUDA_PATH="/foo/bar/nvidia/cuda" \
+   --bazel_options=--repo_env=LOCAL_CUDNN_PATH="/foo/bar/nvidia/cudnn" \
+   --bazel_options=--repo_env=LOCAL_NCCL_PATH="/foo/bar/nvidia/nccl"
+   ```
+
+*  JAX versions prior v.0.4.32: you must have CUDA and CUDNN installed and
+   provide paths to them using configuration options.
 
 ### Building jaxlib from source with a modified XLA repository.
 
@@ -112,11 +136,10 @@ particular before each `jaxlib` release.
 
 ### Additional Notes for Building `jaxlib` from source on Windows
 
+Note: JAX does not support CUDA on Windows; use WSL2 for CUDA support.
+
 On Windows, follow [Install Visual Studio](https://docs.microsoft.com/en-us/visualstudio/install/install-visual-studio?view=vs-2019)
 to set up a C++ toolchain. Visual Studio 2019 version 16.5 or newer is required.
-If you need to build with CUDA enabled, follow the
-[CUDA Installation Guide](https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html)
-to set up a CUDA environment.
 
 JAX builds use symbolic links, which require that you activate
 [Developer Mode](https://docs.microsoft.com/en-us/windows/apps/get-started/enable-your-device-for-development).
@@ -139,16 +162,10 @@ Once coreutils is installed, the realpath command should be present in your shel
 
 Once everything is installed. Open PowerShell, and make sure MSYS2 is in the
 path of the current session. Ensure `bazel`, `patch` and `realpath` are
-accessible. Activate the conda environment. The following command builds with
-CUDA enabled, adjust it to whatever suitable for you:
+accessible. Activate the conda environment.
 
 ```
-python .\build\build.py `
-  --enable_cuda `
-  --cuda_path='C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v10.1' `
-  --cudnn_path='C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v10.1' `
-  --cuda_version='10.1' `
-  --cudnn_version='7.6.5'
+python .\build\build.py
 ```
 
 To build with debug information, add the flag `--bazel_options='--copt=/Z7'`.
@@ -336,17 +353,24 @@ sudo apt-get install libopenblas-dev -y
    has `custom_python_interpreter()` entry there, pointing to the version of
    Python you want to build.
 
-3) Run `bazel build @python_dev//:python_dev` to build Python interpreter. By default it will
-   be built with GCC compiler. If you wish to build with clang, you need to set
-   corresponding env variables to do so (
+3) Run `bazel build @python_dev//:python_dev -repo_env=HERMETIC_PYTHON_VERSION=3.12`
+   to build Python interpreter. Note, it is easy to confuse Python version used
+   to conduct the build (which is needed for technical reasons and is defined by
+   `HERMETIC_PYTHON_VERSION=3.12`) and the version of Python you are building
+   (defined by whichever version you specified in `custom_python_interpreter()`
+   on step 2). For build to succeed, please make sure that hermetic Python you
+   choose to conduct the build already exists in your configuraiton (the actual
+   version does not matter, as long as it is a working one). By default, Python
+   binary will be built with GCC compiler. If you wish to build it with clang,
+   you need to set corresponding env variables to do so (
    e.g. `--repo_env=CC=/usr/lib/llvm-17/bin/clang --repo_env=CXX=/usr/lib/llvm-17/bin/clang++`).
 
 4) Check the output of the previous command. At the very end of it you will find
    a code snippet for `python_register_toolchains()` entry with your newly built
    Python in it. Copy that code snippet in your `WORKSPACE` file either right
    after  `python_init_toolchains()` entry (to add the new version of Python) or
-   instead of it (to replace an existing version, like replacing 3.12 with
-   custom built variant of 3.12). The code snippet is generated to match your
+   instead of it (to replace an existing version, like replacing `3.12` with
+   custom built variant of `3.12`). The code snippet is generated to match your
    actual setup, so it should work as is, but you can customize it if you choose
    so (for example to change location of Python's `.tgz` file so it could be
    downloaded remotely instead of being on local machine).
@@ -354,7 +378,11 @@ sudo apt-get install libopenblas-dev -y
 5) Make sure there is an entry for your Python's version in `requirements`
    parameter for `python_init_repositories()` in your WORKSPACE file. For
    example for `Python 3.13` it should have something
-   like `"3.13": "//build:requirements_lock_3_13.txt"`.
+   like `"3.13": "//build:requirements_lock_3_13.txt"`. Note, the key in the
+   `requirements` parameter must always be in `"major.minor"` version format, so
+   even if you are building Python version `3.13.0rc1` the corresponding 
+   `requirements` entry must still be `"3.13": "//build:requirements_lock_3_13.txt"`,
+   **not** `"3.13.0rc1": "//build:requirements_lock_3_13_0rc1.txt"`.
 
 6) For unstable versions of Python, optionally (but highly recommended)
    run `bazel build //build:all_py_deps --repo_env=HERMETIC_PYTHON_VERSION="3.13"`,

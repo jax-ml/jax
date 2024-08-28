@@ -84,8 +84,8 @@ _ROCM_VISIBLE_DEVICES = config.string_flag(
     'Restricts the set of ROCM devices that JAX will use. Either "all", or a '
     'comma-separate list of integer device IDs.')
 
-_MOCK_NUM_PROCESSES = config.int_flag(
-    name="mock_num_processes",
+_MOCK_NUM_GPU_PROCESSES = config.int_flag(
+    name="mock_num_gpu_processes",
     default=0,
     help="Mock number of JAX processes in GPU client. Value zero turns "
          "off mocking.",
@@ -108,11 +108,9 @@ CPU_COLLECTIVES_IMPLEMENTATION = config.enum_flag(
     ),
 )
 
-# TODO(yueshengys): turn default back to True after resolving memory increase
-# issue.
 _CPU_ENABLE_ASYNC_DISPATCH = config.bool_flag(
     name="jax_cpu_enable_async_dispatch",
-    default=False,
+    default=True,
     help="Only applies to non-parallel computations. If False, run computations"
     "inline without async dispatch.",
 )
@@ -381,7 +379,7 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
       # versions:
       # https://docs.nvidia.com/deeplearning/cudnn/developer-guide/index.html#api-compat
       scale_for_comparison=100,
-      min_supported_version=9000
+      min_supported_version=9100
   )
   _version_check("cuFFT", cuda_versions.cufft_get_version,
                  cuda_versions.cufft_build_version,
@@ -433,9 +431,9 @@ def make_gpu_client(
   if visible_devices != "all":
     allowed_devices = {int(x) for x in visible_devices.split(",")}
 
-  use_mock_gpu_client = _MOCK_NUM_PROCESSES.value > 0
+  use_mock_gpu_client = _MOCK_NUM_GPU_PROCESSES.value > 0
   num_nodes = (
-      _MOCK_NUM_PROCESSES.value
+      _MOCK_NUM_GPU_PROCESSES.value
       if use_mock_gpu_client
       else distributed.global_state.num_processes
   )
@@ -633,10 +631,10 @@ def _options_from_jax_configs(plugin_name):
     visible_devices = CUDA_VISIBLE_DEVICES.value
     if visible_devices != 'all':
       options['visible_devices'] = [int(x) for x in visible_devices.split(',')]
-    mock_processes = _MOCK_NUM_PROCESSES.value
-    options['enable_mock_nccl'] = mock_processes > 0
+    mock_gpu_processes = _MOCK_NUM_GPU_PROCESSES.value
+    options['enable_mock_nccl'] = mock_gpu_processes > 0
     if options['enable_mock_nccl']:
-      options['num_nodes'] = mock_processes
+      options['num_nodes'] = mock_gpu_processes
 
   return options
 
@@ -881,6 +879,9 @@ def backends() -> dict[str, xla_client.Client]:
     default_priority = -1000
     for platform, priority, fail_quietly in platform_registrations:
       try:
+        if platform == "cuda" and not hardware_utils.has_visible_nvidia_gpu():
+          continue
+
         backend = _init_backend(platform)
         _backends[platform] = backend
 
@@ -918,12 +919,7 @@ def _suggest_missing_backends():
 
   assert _default_backend is not None
   default_platform = _default_backend.platform
-  nvidia_gpu_devices = [
-    "/dev/nvidia0",
-    "/dev/dxg",  # WSL2
-  ]
-  if ("cuda" not in _backends and
-      any(os.path.exists(d) for d in nvidia_gpu_devices)):
+  if "cuda" not in _backends and hardware_utils.has_visible_nvidia_gpu():
     if hasattr(xla_extension, "GpuAllocatorConfig") and "cuda" in _backend_errors:
       err = _backend_errors["cuda"]
       warning_msg = f"CUDA backend failed to initialize: {err}."
@@ -952,7 +948,7 @@ def _clear_backends() -> None:
   global _backend_errors
   global _default_backend
 
-  logger.info("Clearing JAX backend caches.")
+  logger.debug("Clearing JAX backend caches.")
   with _backend_lock:
     _backends = {}
     _backend_errors = {}
@@ -1191,15 +1187,30 @@ def host_count(backend: str | xla_client.Client | None = None) -> int:
   return process_count(backend)
 
 
+def process_indices(
+    backend: str | xla_client.Client | None = None
+) -> list[int]:
+  """Returns the list of all JAX process indices associated with the backend.
+
+  Args:
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend: ``'cpu'``, ``'gpu'``, or
+      ``'tpu'``.
+
+  Returns:
+    List of integer process indices.
+  """
+  return list(range(process_count(backend)))
+
+
 # TODO: remove this sometime after jax 0.2.13 is released
 def host_ids(
     backend: str | xla_client.Client | None = None
 ) -> list[int]:
   warnings.warn(
-      "jax.host_ids has been deprecated; please use range(jax.process_count()) "
-      "instead. jax.host_ids will eventually be removed; please update your "
-      "code.")
-  return list(range(process_count(backend)))
+      "jax.host_ids has been renamed to jax.process_indices. This alias "
+      "will eventually be removed; please update your code.")
+  return process_indices(backend)
 
 
 def using_pjrt_c_api(backend=None):

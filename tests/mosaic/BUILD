@@ -47,6 +47,7 @@ jax_test(
     srcs = ["gpu_test.py"],
     disable_backends = DISABLED_BACKENDS,
     disable_configs = DISABLED_CONFIGS,
+    enable_configs = ["gpu_h100_2gpu"],
     shard_count = 4,
     deps = [
         "//jax:mosaic_gpu",
@@ -58,19 +59,19 @@ jax_test(
     srcs = ["matmul_test.py"],
     disable_backends = DISABLED_BACKENDS,
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 16,
+    shard_count = 5,
     deps = [
         "//jax:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:matmul",
-    ] + py_deps("absl/testing") + py_deps("numpy"),
+    ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
 )
 
 jax_test(
     name = "flash_attention",
-    srcs = ["//third_party/py/jax/experimental/mosaic/gpu/examples:flash_attention.py"],
+    srcs = ["//jax/experimental/mosaic/gpu/examples:flash_attention.py"],
     disable_backends = DISABLED_BACKENDS,
     disable_configs = DISABLED_CONFIGS,
-    main = "//third_party/py/jax/experimental/mosaic/gpu/examples:flash_attention.py",
+    main = "//jax/experimental/mosaic/gpu/examples:flash_attention.py",
     tags = ["notap"],
     deps = [
         "//jax:mosaic_gpu",

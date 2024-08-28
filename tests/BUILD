@@ -234,6 +234,11 @@ jax_test(
         "tpu": ["notsan"],  # Times out under tsan.
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
+    enable_configs = [
+        "gpu_2gpu_shardy",
+        "tpu_df_2x2_shardy",
+        "tpu_pf_2x2_shardy",
+    ],
     shard_count = {
         "cpu": 5,
         "gpu": 5,
@@ -688,6 +693,14 @@ jax_test(
 jax_test(
     name = "nn_test",
     srcs = ["nn_test.py"],
+    backend_tags = {
+        "gpu": [
+            "noasan",  # Times out under asan.
+        ],
+        "tpu": [
+            "noasan",  # Times out under asan.
+        ],
+    },
     shard_count = {
         "cpu": 10,
         "tpu": 10,
@@ -1188,6 +1201,7 @@ jax_test(
     shard_count = {
         "tpu": 5,
     },
+    tags = ["noasan"],  # Times out
     deps = [
         "//jax:experimental",
         "//jax:experimental_host_callback",
@@ -1203,6 +1217,7 @@ jax_test(
     shard_count = {
         "gpu": 5,
     },
+    tags = ["noasan"],  # Times out
     deps = [
         "//jax:experimental",
         "//jax:experimental_host_callback",
@@ -1552,6 +1567,6 @@ filegroup(
         exclude = [],
     ) + ["BUILD"],
     visibility = [
-        "//:__subpackages__",
+        "//jax:internal",
     ],
 )

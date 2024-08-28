@@ -6,18 +6,71 @@ see {ref}`pallas-changelog`.
 
 <!--
 Remember to align the itemized text with the first line of an item within a list.
+
+When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
-## jax 0.4.31
+## jax 0.4.32
+
+* Changes
+  * `jax_enable_memories` flag is set to `True` by default.
+  * {mod}`jax.numpy` now supports v2023.12 of the Python Array API Standard.
+    See {ref}`python-array-api` for more information.
+  * Computations on the CPU backend may now be dispatched asynchronously in
+    more cases. Previously non-parallel computations were always dispatched
+    synchronously. You can recover the old behavior by setting
+    `jax.config.update('jax_cpu_enable_async_dispatch', False)`.
+  * Added new {func}`jax.process_indices` function to replace the
+    `jax.host_ids()` function that was deprecated in JAX v0.2.13.
+  * To align with the behavior of `numpy.fabs`, `jax.numpy.fabs` has been
+    modified to no longer support `complex dtypes`.
+
+* Breaking changes
+  * The MHLO MLIR dialect (`jax.extend.mlir.mhlo`) has been removed. Use the
+    `stablehlo` dialect instead.
+
+* Deprecations
+  * Complex inputs to {func}`jax.numpy.clip` and {func}`jax.numpy.hypot` are
+    no longer allowed, after being deprecated since JAX v0.4.27.
+  * Deprecated the following APIs:
+    * `jax.lib.xla_bridge.xla_client`: use {mod}`jax.lib.xla_client` directly.
+    * `jax.lib.xla_bridge.get_backend`: use {func}`jax.extend.backend.get_backend`.
+    * `jax.lib.xla_bridge.default_backend`: use {func}`jax.extend.backend.default_backend`.
+  * The `jax.experimental.array_api` module is deprecated, and importing it is no
+    longer required to use the Array API. `jax.numpy` supports the array API
+    directly; see {ref}`python-array-api` for more information.
+  * The internal utilities `jax.core.check_eqn`, `jax.core.check_type`, and
+    `jax.core.check_valid_jaxtype` are now deprecated, and will be removed in
+    the future.
+
+## jaxlib 0.4.32
+
+* Breaking changes
+  * Hermetic CUDA support is added.
+    Hermetic CUDA uses a specific downloadable version of CUDA instead of the
+    user’s locally installed CUDA. Bazel will download CUDA, CUDNN and NCCL
+    distributions, and then use CUDA libraries and tools as dependencies in
+    various Bazel targets. This enables more reproducible builds for JAX and its
+    supported CUDA versions.
+
+* Changes
+  * SparseCore profiling is added.
+    * JAX now supports profiling [SparseCore](https://cloud.google.com/tpu/docs/system-architecture-tpu-vm#sparsecore) on TPUv5p chips. These traces will be viewable in Tensorboard Profiler's [TraceViewer](https://www.tensorflow.org/guide/profiler#trace_viewer).
+
+## jax 0.4.31 (July 29, 2024)
 
 * Deletion
   * xmap has been deleted. Please use {func}`shard_map` as the replacement.
 
 * Changes
+  * The minimum CuDNN version is v9.1. This was true in previous releases also,
+    but we now declare this version constraint formally.
   * The minimum Python version is now 3.10. 3.10 will remain the minimum
     supported version until July 2025.
   * The minimum NumPy version is now 1.24. NumPy 1.24 will remain the minimum
     supported version until December 2024.
+  * The minimum SciPy version is now 1.10. SciPy 1.10 will remain the minimum
+    supported version until January 2025.
   * {func}`jax.numpy.ceil`, {func}`jax.numpy.floor` and {func}`jax.numpy.trunc` now return the output
     of the same dtype as the input, i.e. no longer upcast integer or boolean inputs to floating point.
   * `libdevice.10.bc` is no longer bundled with CUDA wheels. It must be
@@ -41,8 +94,10 @@ Remember to align the itemized text with the first line of an item within a list
     or `enable_xla=False` is now deprecated and this support will be removed in
     a future version.
     Native serialization has been the default since JAX 0.4.16 (September 2023).
+  * The previously-deprecated function `jax.random.shuffle` has been removed;
+    instead use `jax.random.permutation` with `independent=True`.
 
-## jaxlib 0.4.31
+## jaxlib 0.4.31 (July 29, 2024)
 
 * Bug fixes
   * Fixed a bug that meant that negative static_argnums to a jit were mishandled

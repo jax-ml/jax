@@ -15,6 +15,7 @@
 import contextlib
 import math
 from functools import partial
+import unittest
 from absl.testing import absltest
 import numpy as np
 
@@ -41,11 +42,13 @@ def tearDownModule():
 class LayoutTest(jtu.JaxTestCase):
 
   def setUp(self):
-    if not jtu.test_device_matches(['tpu']):
-      self.skipTest("Layouts do not work on CPU and GPU backends yet.")
+    if not jtu.test_device_matches(['tpu', 'gpu']):
+      self.skipTest("Layouts do not work on CPU backend yet.")
     super().setUp()
 
   def test_auto_layout(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("This test does not work on GPU backend.")
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     shape1 = (128, 128)
     shape2 = (128, 128)
@@ -111,6 +114,8 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertArraysEqual(apply_out[1], (np_inp2 * 2).T)
 
   def test_default_layout(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("This test does not work on GPU backend.")
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     shape = (4, 4, 2)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -150,6 +155,8 @@ class LayoutTest(jtu.JaxTestCase):
               out_shardings=DLL.AUTO).lower(sds).compile()
 
   def test_in_layouts_out_layouts(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("This test does not work on GPU backend.")
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     shape = (8, 8)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -174,6 +181,8 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('y', 'x')))
 
   def test_sharding_and_layouts(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("This test does not work on GPU backend.")
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     shape = (4, 8)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -236,6 +245,8 @@ class LayoutTest(jtu.JaxTestCase):
     compiled(*arrs)
 
   def test_aot_layout_mismatch(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("This test does not work on GPU backend.")
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     shape = (256, 4, 2)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -405,8 +416,8 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, inp.T)
 
   def test_device_put_user_concrete_layout(self):
-    if xla_extension_version < 274:
-      self.skipTest('Requires xla_extension_version >= 274')
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("This test does not work on GPU backend.")
 
     shape = (8, 128)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -437,9 +448,6 @@ class LayoutTest(jtu.JaxTestCase):
                      custom_dll.major_to_minor)
 
   def test_compatible_aval_error(self):
-    if xla_extension_version < 274:
-      self.skipTest('Requires xla_extension_version >= 274')
-
     custom_dll = DLL(major_to_minor=(0, 1, 2))
     l = Layout(custom_dll, SingleDeviceSharding(jax.devices()[0]))
     inp = np.arange(8)
@@ -454,9 +462,6 @@ class LayoutTest(jtu.JaxTestCase):
       f(inp)
 
   def test_incompatible_aval_error_device_put(self):
-    if xla_extension_version < 274:
-      self.skipTest('Requires xla_extension_version >= 274')
-
     custom_dll = DLL(major_to_minor=(0, 1, 2))
     l = Layout(custom_dll, SingleDeviceSharding(jax.devices()[0]))
     inp = np.arange(8)
@@ -467,6 +472,8 @@ class LayoutTest(jtu.JaxTestCase):
       jax.device_put(inp, l)
 
   def test_concrete_layout_in_shardings(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("This test does not work on GPU backend.")
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
     shape = (16, 128)
@@ -494,6 +501,97 @@ class LayoutTest(jtu.JaxTestCase):
         ValueError,
         'Layout passed to jit does not match the layout on the respective arg'):
       g(arr)
+
+  @unittest.skipIf(xla_extension_version < 282,
+                   "Requires xla_extension_version >= 282")
+  def test_in_layouts_jit_jnp_input(self):
+    major_last_layout = DLL(major_to_minor=(1, 0))
+    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+
+    f = jax.jit(lambda x: x + 1,
+                in_shardings=Layout(major_last_layout, sharding))
+
+    arr = jnp.arange(8 * 128).reshape(8, 128)
+    out = f(arr)
+    self.assertArraysEqual(out, arr + 1)
+
+    # cpp dispatch should call into shard_args from cpp.
+    out2 = f(arr)
+    self.assertArraysEqual(out2, arr + 1)
+
+    np_inp = np.arange(8 * 128).reshape(8, 128)
+    out3 = f(np_inp)
+    self.assertArraysEqual(out3, np_inp + 1)
+
+    # cpp dispatch should call into shard_args from cpp.
+    out4 = f(np_inp)
+    self.assertArraysEqual(out4, np_inp + 1)
+
+  def test_layout_donation(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    shape = (16, 128)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+
+    custom_dll = DLL(major_to_minor=(0, 1))
+    arr = jax.device_put(np_inp, Layout(custom_dll, s))
+
+    @partial(jax.jit, in_shardings=Layout(custom_dll, s), donate_argnums=0)
+    def f(x):
+      return x
+
+    f(arr)
+    self.assertTrue(arr.is_deleted())
+
+  def test_layout_donation_auto(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    shape = (128, 16)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+
+    arr = jax.device_put(np_inp, s)
+
+    @partial(jax.jit, out_shardings=Layout(DLL.AUTO), donate_argnums=0)
+    def f(x):
+      return x * x
+
+    f(arr)
+    self.assertTrue(arr.is_deleted())
+
+  def test_layout_donation_matching_in_and_out(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    shape = (128, 16)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+
+    custom_dll = DLL(major_to_minor=(0, 1))
+    l = Layout(custom_dll, s)
+    arr = jax.device_put(np_inp, l)
+
+    @partial(jax.jit, in_shardings=l, out_shardings=l, donate_argnums=0)
+    def f(x):
+      return x * x
+
+    f(arr)
+    self.assertTrue(arr.is_deleted())
+
+  def test_layout_donation_mismatching_in_and_out_fails(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    shape = (16*2, 32016*2)
+    np_inp = np.arange(math.prod(shape), dtype=jnp.bfloat16).reshape(shape)
+
+    custom_dll1 = DLL(major_to_minor=(1, 0), _tiling=((8,128), (2,1)))
+    l1 = Layout(custom_dll1, s)
+    arr = jax.device_put(np_inp, s)
+
+    @partial(jax.jit, out_shardings=l1, donate_argnums=0)
+    def f(x):
+      return x * x
+
+    sds = jax.ShapeDtypeStruct(np_inp.shape, np_inp.dtype, sharding=s)
+    f.lower(sds).compile()(arr)
+    self.assertFalse(arr.is_deleted())
 
 
 if __name__ == '__main__':
