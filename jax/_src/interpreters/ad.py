@@ -382,7 +382,8 @@ class JVPTrace(Trace):
     res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
     primals_out = map(self.primal_part, primals_out)
     res = map(self.primal_part, res)
-    avals_out = [Zero.from_primal_value(x) for x in primals_out]
+    avals_out = [core.primal_aval_to_tangent_aval(raise_to_shaped(core.get_aval(x)))
+                 for x in primals_out]
     # TODO(frostig,mattjj): avoid instantiating zeros when we don't have to!
     with core.set_current_trace(self.parent_trace):
       tangents_in = map(instantiate_zeros, tangents_in)
