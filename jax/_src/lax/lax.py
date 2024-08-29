@@ -65,7 +65,7 @@ from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.sharding_impls import PmapSharding
+from jax._src.sharding_impls import PmapSharding, NamedSharding, PartitionSpec
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
 from jax._src.util import (cache, safe_zip, safe_map, canonicalize_axis,
                            split_list, NumpyComplexWarning)
@@ -1709,13 +1709,54 @@ def broadcasting_shape_rule(name, *avals):
   return tuple(result_shape)
 
 
+def broadcasting_sharding_rule(name, *avals):
+  shapes = [aval.shape for aval in avals if aval.shape]
+  if not shapes:
+    return ()
+  if len({len(shape) for shape in shapes}) != 1:
+    msg = '{}: arrays must have same number of dimensions, got {}.'
+    raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
+
+  specs = [a.sharding.spec for a in avals if a.shape]
+
+  mesh = None
+  for a in avals:
+    if a.shape:
+      mesh = a.sharding.mesh
+      if mesh is not None and mesh != a.sharding.mesh:
+        raise ValueError(
+            f'Mesh for all inputs should be equal. Got one mesh: {mesh} and'
+            f' another mesh: {a.sharding.mesh}')
+  assert mesh is not None
+
+  result_specs = []
+  for ss, ds in zip(zip(*specs), zip(*shapes)):
+    if all(s == ss[0] for s in ss[1:]):
+      # if all dimension shardings are same, the resulting dimension sharding is
+      # the same.
+      result_specs.append(ss[0])
+    else:
+      non_trivial_s = [s for s, d in zip(ss, ds)
+                       if not (core.definitely_equal(d, 1) and s is None)]
+      if not non_trivial_s:
+        result_specs.append(None)
+      elif all(non_trivial_s[0] == s for s in non_trivial_s[1:]):
+        result_specs.append(non_trivial_s[0])
+      else:
+        raise TypeError(f'{name} got incompatible shardings for broadcasting: '
+                        f'{", ".join(map(str, map(tuple, specs)))}.')
+  return NamedSharding(mesh, PartitionSpec(*result_specs))
+
+
 def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
            require_same_dtypes=False):
   dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name,
                        allow_extended_dtype=allow_extended_dtype,
                        require_same=require_same_dtypes)
   shape_rule = partial(broadcasting_shape_rule, name)
-  prim = standard_primitive(shape_rule, dtype_rule, name)
+  sharding_rule = partial(broadcasting_sharding_rule, name)
+  prim = standard_primitive(shape_rule, dtype_rule, name,
+                            sharding_rule=sharding_rule)
   batching.defbroadcasting(prim)
   pe.def_trivial_padding(prim)
   return prim
@@ -1772,6 +1813,20 @@ def broadcast_hlo(
     out.append(arg)
   return out
 
+def multi_sharding_in_dim(ctx, ops, in_avals, out_aval):
+  out = []
+  for op, in_aval in zip(ops, in_avals):
+    if in_aval.sharding == out_aval.sharding or in_aval.sharding is None:
+      out.append(op)
+    else:
+      # TODO(yashkatariya, dougalm): If `in_aval.sharding` contains
+      # CompilerShardingAxis, then specify `unspecified_dims` via
+      # `wrap_with_sharding_op`.
+      sp = in_aval.sharding._to_xla_hlo_sharding(in_aval.ndim).to_proto()
+      out.append(mlir.wrap_with_sharding_op(ctx, op, out_aval, sp))
+  return out
+
+
 def _nary_lower_hlo(op: Callable, ctx,
                     *args: ir.Value,
                     explicit_type=False, **params) -> Sequence[ir.Value]:
@@ -1782,13 +1837,19 @@ def _nary_lower_hlo(op: Callable, ctx,
   """
   del params
   avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
-  broadcasted_args = mlir.multi_broadcast_in_dim(
-      ctx, args, avals_in, aval_out.shape)
+  args = mlir.multi_broadcast_in_dim(ctx, args, avals_in, aval_out.shape)  # type: ignore
+  if config.sharding_in_types.value:
+    args = multi_sharding_in_dim(ctx, args, avals_in, aval_out)
 
   if explicit_type:
-    return [op(mlir.aval_to_ir_type(aval_out), *broadcasted_args)]
+    out = op(mlir.aval_to_ir_type(aval_out), *args)
   else:
-    return [op(*broadcasted_args)]
+    out = op(*args)
+  if config.sharding_in_types.value:
+    out_sp = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
+    return [mlir.wrap_with_sharding_op(ctx, out, aval_out, out_sp)]
+  else:
+    return [out]
 
 
 _float = {np.floating}
@@ -2445,6 +2506,10 @@ def _convert_element_type_shape_rule(operand, *, new_dtype, weak_type,
                                      sharding):
   return operand.shape
 
+def _convert_element_type_sharding_rule(operand, *, new_dtype, weak_type,
+                                        sharding):
+  return sharding
+
 def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type,
                                      sharding):
   if (operand.dtype != new_dtype and
@@ -2538,7 +2603,8 @@ convert_element_type_p.def_impl(partial(dispatch.apply_primitive, convert_elemen
 convert_element_type_p.def_abstract_eval(
     partial(standard_abstract_eval, convert_element_type_p,
             _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
-            _convert_element_type_weak_type_rule))
+            _convert_element_type_weak_type_rule,
+            _convert_element_type_sharding_rule))
 ad.defjvp(convert_element_type_p, _convert_element_type_jvp_rule)
 ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 batching.defvectorized(convert_element_type_p)

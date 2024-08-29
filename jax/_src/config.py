@@ -213,6 +213,7 @@ def trace_context():
           default_device.value, random_seed_offset.value,
           threefry_partitionable.value,
           threefry_gpu_kernel_lowering.value,
+          sharding_in_types.value,
           softmax_custom_jvp.value,
           enable_memories.value,
           disable_jit.value,
@@ -826,6 +827,7 @@ class _GlobalExtraJitContext(NamedTuple):
   random_seed_offset: int = 0
   threefry_partitionable: bool = False
   threefry_gpu_kernel_lowering: bool = False
+  sharding_in_types: bool = False
   softmax_custom_jvp: bool = False
   xla_profile_version: int = 0
   pgle_profiling_runs: int = 0
@@ -864,6 +866,7 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   random_seed_offset: int | None = None
   threefry_partitionable: bool | None = None
   threefry_gpu_kernel_lowering: bool | None = None
+  sharding_in_types: bool | None = None
   softmax_custom_jvp: bool | None = None
   xla_profile_version: int | None = None
   pgle_profiling_runs: int | None = None
@@ -1138,6 +1141,16 @@ threefry_gpu_kernel_lowering = bool_state(
         threefry_gpu_kernel_lowering=val),
     update_thread_local_hook=lambda val: update_thread_local_jit_state(
         threefry_gpu_kernel_lowering=val))
+
+sharding_in_types = bool_state(
+    name='jax_sharding_in_types',
+    default=False,
+    help=('When True, enables forward only sharding propagation in JAX and '
+          'avals have sharding on them.'),
+    update_global_hook=lambda val: _update_global_jit_state(
+        sharding_in_types=val),
+    update_thread_local_hook=lambda val: update_thread_local_jit_state(
+        sharding_in_types=val))
 
 
 softmax_custom_jvp = bool_state(
