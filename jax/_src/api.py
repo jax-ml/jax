@@ -2970,8 +2970,7 @@ def clear_backends():
   pjit._infer_params_cached.cache_clear()
   pjit._pjit_lower_cached.cache_clear()
   pjit._create_pjit_jaxpr.cache_clear()  # pytype: disable=attribute-error
-  pjit._cpp_pjit_cache_fun_only.clear()
-  pjit._cpp_pjit_cache_explicit_attributes.clear()
+  pjit._cpp_pjit_cache.clear()
   xc._xla.PjitFunctionCache.clear_all()
 
 @atexit.register
@@ -2999,8 +2998,7 @@ def clear_caches():
   util.clear_all_weakref_lru_caches()
 
   # Clear all C++ compiled executable caches for pjit
-  pjit._cpp_pjit_cache_fun_only.clear()
-  pjit._cpp_pjit_cache_explicit_attributes.clear()
+  pjit._cpp_pjit_cache.clear()
   pjit._infer_params_cached.cache_clear()
   xc._xla.PjitFunctionCache.clear_all()
 
