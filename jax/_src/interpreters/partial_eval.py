@@ -2038,13 +2038,14 @@ class DynamicJaxprTrace(core.Trace):
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, symbolic_zeros):
     tracers = map(self.to_jaxpr_tracer, tracers)
     in_avals = [t.aval for t in tracers]
+    in_tangent_avals = [core.primal_aval_to_tangent_aval(t) for t in in_avals]
     fun_jaxpr, out_avals, consts, () = trace_to_jaxpr_dynamic(fun, in_avals)
     closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
 
     # @_memoize
     def jvp_jaxpr_thunk(*in_zeros):
       for store in jvp.stores: store and store.reset()
-      nz_tangent_avals, zero_avals = partition_list(in_zeros, in_avals)
+      nz_tangent_avals, zero_avals = partition_list(in_zeros, in_tangent_avals)
       jvp_, out_zeros = _jvp_jaxpr_zeros(jvp, in_zeros, tuple(zero_avals))
       in_avals_ = (*in_avals, *nz_tangent_avals)
       jaxpr, _, out_consts, () = trace_to_jaxpr_dynamic(jvp_, in_avals_)
