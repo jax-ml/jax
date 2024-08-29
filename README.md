@@ -2,7 +2,7 @@
 <img src="https://raw.githubusercontent.com/google/jax/main/images/jax_logo_250px.png" alt="logo"></img>
 </div>
 
-# JAX: Autograd and XLA
+# Pushing back the limits on numerical computing
 
 ![Continuous integration](https://github.com/google/jax/actions/workflows/ci-build.yaml/badge.svg)
 ![PyPI version](https://img.shields.io/pypi/v/jax)
