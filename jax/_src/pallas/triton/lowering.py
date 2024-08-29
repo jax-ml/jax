@@ -404,6 +404,21 @@ def lower_jaxpr_to_triton_ir(
   return map(read_env, jaxpr.outvars)
 
 
+def lower_fun(
+    fun: Callable[..., Any], *, multiple_results: bool
+) -> Callable[..., Any]:
+  fn = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
+
+  def f_lowered(ctx: LoweringRuleContext, *args, **params):
+    wrapped_fun = lu.wrap_init(fn, params)
+    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
+    jaxpr = jax_core.ClosedJaxpr(jaxpr, consts)
+    out = _closed_call_lowering_rule(ctx, *args, call_jaxpr=jaxpr)
+    return out if multiple_results else out[0]
+
+  return f_lowered
+
+
 # # Primitive lowering rules
 # ## Programming model primitives
 
@@ -978,6 +993,27 @@ triton_lowering_rules.update({
             _Extern(["float64", "float64"], "__ocml_nextafter_f64", "float64"),
         ],
     ),
+    lax.erf_inv_p: _make_dispatch_table(
+        "erf_inv",
+        cuda=[
+            _Fallback(
+                ["float32"],
+                lower_fun(
+                    pallas_utils.erf_inv_32_lowering_helper,
+                    multiple_results=False,
+                ),
+            ),
+        ],
+        rocm=[
+            _Fallback(
+                ["float32"],
+                lower_fun(
+                    pallas_utils.erf_inv_32_lowering_helper,
+                    multiple_results=False,
+                ),
+            ),
+        ],
+    ),
 })
 
 
@@ -1253,21 +1289,6 @@ def _integer_pow_rule(ctx: LoweringRuleContext, x, *, y: int):
     return  _truediv(_full(acc.type, 1), acc, signed=signed)
   else:
     return acc
-
-
-def lower_fun(
-    fun: Callable[..., Any], *, multiple_results: bool
-) -> Callable[..., Any]:
-  fn = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
-
-  def f_lowered(ctx: LoweringRuleContext, *args, **params):
-    wrapped_fun = lu.wrap_init(fn, params)
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
-    jaxpr = jax_core.ClosedJaxpr(jaxpr, consts)
-    out = _closed_call_lowering_rule(ctx, *args, call_jaxpr=jaxpr)
-    return out if multiple_results else out[0]
-
-  return f_lowered
 
 
 _JAX_FN_MAPPING = {
