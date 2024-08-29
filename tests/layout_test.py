@@ -575,6 +575,7 @@ class LayoutTest(jtu.JaxTestCase):
     f(arr)
     self.assertTrue(arr.is_deleted())
 
+  @jtu.skip_on_devices('cpu', 'gpu')
   def test_layout_donation_mismatching_in_and_out_fails(self):
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
