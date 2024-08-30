@@ -226,9 +226,7 @@ struct OrthogonalQr {
 
   static ::xla::ffi::Error Kernel(::xla::ffi::Buffer<dtype> x,
                                   ::xla::ffi::Buffer<dtype> tau,
-                                  ::xla::ffi::ResultBuffer<dtype> x_out,
-                                  ::xla::ffi::ResultBuffer<LapackIntDtype> info,
-                                  ::xla::ffi::ResultBuffer<dtype> work);
+                                  ::xla::ffi::ResultBuffer<dtype> x_out);
 
   static int64_t GetWorkspaceSize(lapack_int x_rows, lapack_int x_cols,
                                   lapack_int tau_size);
