@@ -24,6 +24,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `jax.host_ids()` function that was deprecated in JAX v0.2.13.
   * To align with the behavior of `numpy.fabs`, `jax.numpy.fabs` has been
     modified to no longer support `complex dtypes`.
+  * ``jax.tree_util.register_dataclass`` now checks that ``data_fields``
+    and ``meta_fields`` includes all dataclass fields with ``init=True``
+    and only them, if ``nodetype`` is a dataclass.
 
 * Breaking changes
   * The MHLO MLIR dialect (`jax.extend.mlir.mhlo`) has been removed. Use the
