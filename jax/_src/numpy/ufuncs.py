@@ -112,19 +112,147 @@ def bitwise_not(x: ArrayLike, /) -> Array:
 def invert(x: ArrayLike, /) -> Array:
   return lax.bitwise_not(*promote_args('invert', x))
 
-@implements(np.negative, module='numpy')
+
 @partial(jit, inline=True)
 def negative(x: ArrayLike, /) -> Array:
+  """Return element-wise negative values of the input.
+
+  JAX implementation of :obj:`numpy.negative`.
+
+  Args:
+    x: input array or scalar.
+
+  Returns:
+    An array with same shape and dtype as ``x`` containing ``-x``.
+
+  See also:
+    - :func:`jax.numpy.positive`: Returns element-wise positive values of the input.
+    - :func:`jax.numpy.sign`: Returns element-wise indication of sign of the input.
+
+  Note:
+    ``jnp.negative``, when applied over ``unsigned integer``, produces the result
+    of their two's complement negation, which typically results in unexpected
+    large positive values due to integer underflow.
+
+  Examples:
+    For real-valued inputs:
+
+    >>> x = jnp.array([0., -3., 7])
+    >>> jnp.negative(x)
+    Array([-0.,  3., -7.], dtype=float32)
+
+    For complex inputs:
+
+    >>> x1 = jnp.array([1-2j, -3+4j, 5-6j])
+    >>> jnp.negative(x1)
+    Array([-1.+2.j,  3.-4.j, -5.+6.j], dtype=complex64)
+
+    For unit32:
+
+    >>> x2 = jnp.array([5, 0, -7]).astype(jnp.uint32)
+    >>> x2
+    Array([         5,          0, 4294967289], dtype=uint32)
+    >>> jnp.negative(x2)
+    Array([4294967291,          0,          7], dtype=uint32)
+  """
   return lax.neg(*promote_args('negative', x))
 
-@implements(np.positive, module='numpy')
+
 @partial(jit, inline=True)
 def positive(x: ArrayLike, /) -> Array:
+  """Return element-wise positive values of the input.
+
+  JAX implementation of :obj:`numpy.positive`.
+
+  Args:
+    x: input array or scalar
+
+  Returns:
+    An array of same shape and dtype as ``x`` containing ``+x``.
+
+  Note:
+    ``jnp.positive`` is equivalent to ``x.copy()`` and is defined only for the
+    types that support arithmetic operations.
+
+  See also:
+    - :func:`jax.numpy.negative`: Returns element-wise negative values of the input.
+    - :func:`jax.numpy.sign`: Returns element-wise indication of sign of the input.
+
+  Examples:
+    For real-valued inputs:
+
+    >>> x = jnp.array([-5, 4, 7., -9.5])
+    >>> jnp.positive(x)
+    Array([-5. ,  4. ,  7. , -9.5], dtype=float32)
+    >>> x.copy()
+    Array([-5. ,  4. ,  7. , -9.5], dtype=float32)
+
+    For complex inputs:
+
+    >>> x1 = jnp.array([1-2j, -3+4j, 5-6j])
+    >>> jnp.positive(x1)
+    Array([ 1.-2.j, -3.+4.j,  5.-6.j], dtype=complex64)
+    >>> x1.copy()
+    Array([ 1.-2.j, -3.+4.j,  5.-6.j], dtype=complex64)
+
+    For uint32:
+
+    >>> x2 = jnp.array([6, 0, -4]).astype(jnp.uint32)
+    >>> x2
+    Array([         6,          0, 4294967292], dtype=uint32)
+    >>> jnp.positive(x2)
+    Array([         6,          0, 4294967292], dtype=uint32)
+  """
   return lax.asarray(*promote_args('positive', x))
 
-@implements(np.sign, module='numpy')
+
 @partial(jit, inline=True)
 def sign(x: ArrayLike, /) -> Array:
+  r"""Return an element-wise indication of sign of the input.
+
+  JAX implementation of :obj:`numpy.sign`.
+
+  The sign of ``x`` for real-valued input is:
+
+  .. math::
+    \mathrm{sign}(x) = \begin{cases}
+      1, & x > 0\\
+      0, & x = 0\\
+      -1, & x < 0
+    \end{cases}
+
+  For complex valued input, ``jnp.sign`` returns a unit vector repesenting the
+  phase. For generalized case, the sign of ``x`` is given by:
+
+  .. math::
+    \mathrm{sign}(x) = \begin{cases}
+      \frac{x}{abs(x)}, & x \ne 0\\
+      0, & x = 0
+    \end{cases}
+
+  Args:
+    x: input array or scalar.
+
+  Returns:
+    An array with same shape and dtype as ``x`` containing the sign indication.
+
+  See also:
+    - :func:`jax.numpy.positive`: Returns element-wise positive values of the input.
+    - :func:`jax.numpy.negative`: Returns element-wise negative values of the input.
+
+  Examples:
+    For Real-valued inputs:
+
+    >>> x = jnp.array([0., -3., 7.])
+    >>> jnp.sign(x)
+    Array([ 0., -1.,  1.], dtype=float32)
+
+    For complex-inputs:
+
+    >>> x1 = jnp.array([1, 3+4j, 5j])
+    >>> jnp.sign(x1)
+    Array([1. +0.j , 0.6+0.8j, 0. +1.j ], dtype=complex64)
+  """
   return lax.sign(*promote_args('sign', x))
 
 
