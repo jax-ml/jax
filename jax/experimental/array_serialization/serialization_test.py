@@ -556,7 +556,7 @@ class CheckpointTest(jtu.JaxTestCase):
     arr = jax.device_put(np_inp, s)
 
     out_layout = jax.jit(lambda x: x.T, out_shardings=Layout(DLL.AUTO)).lower(
-        arr).compile().output_layouts()
+        arr).compile().output_layouts
     self.assertEqual(arr.layout.device_local_layout.major_to_minor,
                      out_layout.device_local_layout.major_to_minor[::-1])
 
