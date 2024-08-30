@@ -115,6 +115,8 @@ ignore = [
     "C408",
     # Unnecessary map usage
     "C417",
+    # Unnecessary dict comprehension for iterable 
+    "C420",
     # Object names too complex
     "C901",
     # Local variable is assigned to but never used
@@ -141,7 +143,16 @@ max-complexity = 18
 
 [tool.ruff.lint.per-file-ignores]
 # F811: Redefinition of unused name.
+# F821: Undefined name.
 "docs/autodidax.py" = ["F811"]
+"docs/pallas/tpu/matmul.ipynb" = ["F811"]
+"docs/pallas/tpu/distributed.ipynb" = ["F811"]
+"docs/pallas/quickstart.ipynb" = ["F811"]
+"docs/notebooks/autodiff_cookbook.ipynb" = ["F811", "F821"]
+"docs/notebooks/autodiff_remat.ipynb" = ["F811", "F821"]
+"docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb" = ["F811"]
+"docs/jep/9407-type-promotion.ipynb" = ["F811"]
+"docs/autodidax.ipynb" = ["F811"]
 # Note: we don't use jax/*.py because this matches contents of jax/_src
 "__init__.py" = ["F401"]
 "jax/abstract_arrays.py" = ["F401"]

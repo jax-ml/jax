@@ -337,8 +337,10 @@ absl::StatusOr<std::unique_ptr<mlir::ExecutionEngine>> Compile(
   }
   // Create a transformer to run all LLVM optimization passes at the
   // specified optimization level.
+  auto transformer = mlir::makeOptimizingTransformer(
+      /*optLevel=*/3, /*sizeLevel=*/0, /*targetMachine=*/nullptr);
   mlir::ExecutionEngineOptions options;
-  options.transformer = mlir::makeOptimizingTransformer(3, 0, nullptr);
+  options.transformer = transformer;
   options.jitCodeGenOptLevel = llvm::CodeGenOptLevel::Aggressive;
   options.sharedLibPaths = runtime_lib;
   auto maybe_execution_engine = mlir::ExecutionEngine::create(module, options);

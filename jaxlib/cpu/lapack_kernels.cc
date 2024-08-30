@@ -408,34 +408,34 @@ template struct Orgqr<std::complex<double>>;
 template <ffi::DataType dtype>
 ffi::Error OrthogonalQr<dtype>::Kernel(ffi::Buffer<dtype> x,
                                        ffi::Buffer<dtype> tau,
-                                       ffi::ResultBuffer<dtype> x_out,
-                                       ffi::ResultBuffer<LapackIntDtype> info,
-                                       ffi::ResultBuffer<dtype> work) {
+                                       ffi::ResultBuffer<dtype> x_out) {
   FFI_ASSIGN_OR_RETURN((auto [batch_count, x_rows, x_cols]),
                        SplitBatch2D(x.dimensions()));
   auto* tau_data = tau.typed_data();
   auto* x_out_data = x_out->typed_data();
-  auto* info_data = info->typed_data();
-  auto* work_data = work->typed_data();
+  lapack_int info;
 
   CopyIfDiffBuffer(x, x_out);
 
-  FFI_ASSIGN_OR_RETURN(auto tau_size_v, MaybeCastNoOverflow<lapack_int>(
-                                            tau.dimensions().back()));
+  // Prepare LAPACK workspaces.
+  int64_t work_size = GetWorkspaceSize(x_rows, x_cols, tau.dimensions().back());
+  FFI_ASSIGN_OR_RETURN(auto work_size_v,
+                       MaybeCastNoOverflow<lapack_int>(work_size));
+  auto work_data = AllocateScratchMemory<dtype>(work_size);
+
   FFI_ASSIGN_OR_RETURN(auto x_rows_v, MaybeCastNoOverflow<lapack_int>(x_rows));
   FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<lapack_int>(x_cols));
-  FFI_ASSIGN_OR_RETURN(auto workspace_dim_v, MaybeCastNoOverflow<lapack_int>(
-                                                 work->dimensions().back()));
+  FFI_ASSIGN_OR_RETURN(auto tau_size_v, MaybeCastNoOverflow<lapack_int>(
+                                            tau.dimensions().back()));
   auto x_leading_dim_v = x_rows_v;
 
   const int64_t x_out_step{x_rows * x_cols};
   const int64_t tau_step{tau_size_v};
   for (int64_t i = 0; i < batch_count; ++i) {
     fn(&x_rows_v, &x_cols_v, &tau_size_v, x_out_data, &x_leading_dim_v,
-       tau_data, work_data, &workspace_dim_v, info_data);
+       tau_data, work_data.get(), &work_size_v, &info);
     x_out_data += x_out_step;
     tau_data += tau_step;
-    ++info_data;
   }
   return ffi::Error::Success();
 }
@@ -1007,6 +1007,11 @@ ffi::Error EigenvalueDecompositionSymmetric<dtype>::Kernel(
     fn(&mode_v, &uplo_v, &x_cols_v, x_out_data, &x_leading_dim_v,
        eigenvalues_data, work_data.get(), &work_size_v, iwork_data.get(),
        &iwork_size_v, info_data);
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_out_data,
+                                        sizeof(*x_out_data) * x_cols * x_cols);
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigenvalues_data,
+                                        sizeof(*eigenvalues_data) * x_cols);
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(info_data, sizeof(lapack_int));
     x_out_data += x_out_step;
     eigenvalues_data += eigenvalues_step;
     ++info_data;
@@ -1380,8 +1385,7 @@ ffi::Error EigenvalueDecompositionComplex<dtype>::Kernel(
     if (is_finite(x_copy.get(), x_size)) {
       fn(&compute_left_v, &compute_right_v, &x_cols_v, x_copy.get(), &x_cols_v,
          eigvals_data, eigvecs_left_data, &x_cols_v, eigvecs_right_data,
-         &x_cols_v, work_data.get(), &work_size_v, rwork_data.get(),
-         info_data);
+         &x_cols_v, work_data.get(), &work_size_v, rwork_data.get(), info_data);
       ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_copy.get(), x_size_bytes);
       ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvals_data, x_cols_bytes);
       ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvecs_left_data, x_size_bytes);
@@ -1716,15 +1720,13 @@ template struct Sytrd<std::complex<double>>;
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/) \
           .Ret<::xla::ffi::Buffer<data_type>>(/*tau*/))
 
-#define JAX_CPU_DEFINE_ORGQR(name, data_type)                \
-  XLA_FFI_DEFINE_HANDLER_SYMBOL(                             \
-      name, OrthogonalQr<data_type>::Kernel,                 \
-      ::xla::ffi::Ffi::Bind()                                \
-          .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)         \
-          .Arg<::xla::ffi::Buffer<data_type>>(/*tau*/)       \
-          .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)     \
-          .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*info*/) \
-          .Ret<::xla::ffi::Buffer<data_type>>(/*work*/))
+#define JAX_CPU_DEFINE_ORGQR(name, data_type)          \
+  XLA_FFI_DEFINE_HANDLER_SYMBOL(                       \
+      name, OrthogonalQr<data_type>::Kernel,           \
+      ::xla::ffi::Ffi::Bind()                          \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)   \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*tau*/) \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/))
 
 #define JAX_CPU_DEFINE_POTRF(name, data_type)            \
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                         \

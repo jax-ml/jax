@@ -41,7 +41,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension as xe
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    PmapSharding, SingleDeviceSharding,
+    PmapSharding, SingleDeviceSharding, NamedSharding,
     device_replica_id_map, hashed_index, num_addressable_indices, local_to_global_shape)  # pyformat: disable
 from jax._src.typing import ArrayLike, DLDeviceType
 from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method, cache
@@ -751,8 +751,7 @@ def make_array_from_callback(
       and sharding.is_fully_replicated
       and first_value.is_fully_replicated
       and first_value.sharding._device_assignment == tuple(devices)
-      and (first_value.layout.device_local_layout ==
-           pxla._maybe_get_default_layout(Layout(dll, sharding), None, sharding, aval))):
+      and first_value.layout.device_local_layout == dll):
     return first_value
 
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
@@ -1013,7 +1012,13 @@ def make_array_from_single_device_arrays(
 core.pytype_aval_mappings[ArrayImpl] = abstract_arrays.canonical_concrete_aval
 xla.pytype_aval_mappings[ArrayImpl] = op.attrgetter('aval')
 xla.canonicalize_dtype_handlers[ArrayImpl] = pxla.identity
-api_util._shaped_abstractify_handlers[ArrayImpl] = op.attrgetter('aval')
+def _get_aval_array(self):
+  if config.sharding_in_types.value and isinstance(self.sharding, NamedSharding):
+    return self.aval.update(sharding=NamedSharding(
+        self.sharding.mesh.abstract_mesh, self.sharding.spec))
+  else:
+    return self.aval
+api_util._shaped_abstractify_handlers[ArrayImpl] = _get_aval_array
 # TODO(jakevdp) replace this with true inheritance at the C++ level.
 basearray.Array.register(ArrayImpl)
 
@@ -1105,11 +1110,6 @@ def _sharding_indices_and_eq(src_sharding, shape, dst_sharding):
   dst_indices = dst_sharding.addressable_devices_indices_map(shape).values()
   return dst_indices, tuple(src_indices) == tuple(dst_indices)
 
-def _layout_eq(x, dst_layout, sharding):
-  if pxla.is_default_layout(dst_layout, sharding, x.aval):
-    return True
-  return x.layout.device_local_layout == dst_layout
-
 
 def _array_shard_arg(xs, shardings, layouts):
   results = []
@@ -1118,7 +1118,8 @@ def _array_shard_arg(xs, shardings, layouts):
   for i, (x, sharding, layout) in enumerate(safe_zip(xs, shardings, layouts)):
     x._check_if_deleted()
     indices, same_indices = _sharding_indices_and_eq(x.sharding, x.shape, sharding)
-    same_layout = _layout_eq(x, layout, sharding)
+    same_layout = (True if layout is None else
+                   x.layout.device_local_layout == layout)
 
     if not x.is_fully_addressable:
       if same_indices and same_layout:

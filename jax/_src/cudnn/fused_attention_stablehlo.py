@@ -284,8 +284,8 @@ def check_layout(query, key, value, bias, q_seqlen, kv_seqlen, layout):
       raise ValueError(f"kv_seqlen must have same batch as Q, got {kv_seq_b}")
 
 def check_is_flash_attention(
-    query, key, layout, cudnn_version, has_bias, is_training):
-  if layout == AttentionLayout.BNTH:
+    query, key, layout: int, cudnn_version, has_bias, is_training):
+  if layout == AttentionLayout.BNTH.value:
     _, _, T, H = query.shape
     _, _, S, _ = key.shape
   else:
@@ -760,7 +760,7 @@ def _dot_product_attention_fwd_partition(
     scale, seed, dropout_rate, variadic_args, mask_type, layout, is_training,
     mesh, arg_shapes, result_shape):
   # args sharding
-  arg_shardings = tuple([arg_i.sharding for arg_i in arg_shapes])
+  arg_shardings = tuple(arg_i.sharding for arg_i in arg_shapes)
   out_shardings = _infer_fwd_output_sharding(
     mesh, arg_shapes, variadic_args, is_training)
   impl = functools.partial(
@@ -810,7 +810,7 @@ def _dot_product_attention_bwd_partition(
     arg_shapes, result_shape):
   out_shardings = _infer_bwd_output_sharding(mesh, arg_shapes, variadic_args)
   # args sharding
-  arg_shardings = tuple([arg_i.sharding for arg_i in arg_shapes])
+  arg_shardings = tuple(arg_i.sharding for arg_i in arg_shapes)
   def sharded_impl(*args):
     impl = functools.partial(
       _dot_product_attention_bwd_impl,

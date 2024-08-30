@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import collections
 from collections.abc import Callable, Hashable, Iterable, Sequence
+import dataclasses
 from dataclasses import dataclass
 import difflib
 import functools
@@ -925,7 +926,10 @@ def register_pytree_with_keys_class(cls: Typ) -> Typ:
 
 @export
 def register_dataclass(
-    nodetype: Typ, data_fields: Sequence[str], meta_fields: Sequence[str]
+    nodetype: Typ,
+    data_fields: Sequence[str],
+    meta_fields: Sequence[str],
+    drop_fields: Sequence[str] = (),
 ) -> Typ:
   """Extends the set of types that are considered internal nodes in pytrees.
 
@@ -941,16 +945,14 @@ def register_dataclass(
       attributes represent the whole of the object state, and can be passed
       as keywords to the class constructor to create a copy of the object.
       All defined attributes should be listed among ``meta_fields`` or ``data_fields``.
+    meta_fields: auxiliary data field names. These fields *must* contain static,
+      hashable, immutable objects, as these objects are used to generate JIT cache
+      keys. In particular, ``meta_fields`` cannot contain :class:`jax.Array` or
+      :class:`numpy.ndarray` objects.
     data_fields: data field names. These fields *must* be JAX-compatible objects
       such as arrays (:class:`jax.Array` or :class:`numpy.ndarray`), scalars, or
-      pytrees whose leaves are arrays or scalars. Note that ``None`` is valid, as
-      this is recognized by JAX as an empty pytree.
-    meta_fields: auxiliary data field names. These fields will be considered static
-      within JAX transformations such as :func:`jax.jit`. The listed fields *must*
-      contain static, hashable, immutable objects, as these objects are used to
-      generate JIT cache keys: for example strings, Python scalars, or array shapes
-      and dtypes. In particular, ``meta_fields`` cannot contain :class:`jax.Array`
-      or :class:`numpy.ndarray` objects, as they are not hashable.
+      pytrees whose leaves are arrays or scalars. Note that ``data_fields`` may be
+      ``None``, as this is recognized by JAX as an empty pytree.
 
   Returns:
     The input class ``nodetype`` is returned unchanged after being added to JAX's
@@ -1002,6 +1004,23 @@ def register_dataclass(
   # caller were to pass in lists that are later mutated.
   meta_fields = tuple(meta_fields)
   data_fields = tuple(data_fields)
+
+  if dataclasses.is_dataclass(nodetype):
+    init_fields = {f.name for f in dataclasses.fields(nodetype) if f.init}
+    init_fields.difference_update(*drop_fields)
+    if {*meta_fields, *data_fields} != init_fields:
+      msg = (
+          "data_fields and meta_fields must include all dataclass fields with"
+          " ``init=True`` and only them."
+      )
+      if missing := init_fields - {*meta_fields, *data_fields}:
+        msg += (
+            f" Missing fields: {missing}. Add them to drop_fields to suppress"
+            " this error."
+        )
+      if unexpected := {*meta_fields, *data_fields} - init_fields:
+        msg += f" Unexpected fields: {unexpected}."
+      raise ValueError(msg)
 
   def flatten_with_keys(x):
     meta = tuple(getattr(x, name) for name in meta_fields)

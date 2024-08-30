@@ -100,6 +100,10 @@ class PrimitiveTest(jtu.JaxTestCase):
   )
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_prim(self, harness: test_harnesses.Harness):
+    if "eigh_" in harness.fullname:
+      self.skipTest("Eigenvalues are sorted and it is not correct to compare "
+                    "decompositions for equality.")
+
     if (jtu.device_under_test() == "gpu"
         and _known_failures_gpu.search(harness.fullname)):
       self.skipTest("failure to be investigated")

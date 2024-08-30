@@ -42,7 +42,7 @@ def main():
 def highest_for_file(sofile):
     output = subprocess.check_output(["objdump", "-T", sofile])
 
-    r = re.compile("\(GLIBC_(.*)\)")
+    r = re.compile(r"\(GLIBC_(.*)\)")
     versions = {}
 
     for line in output.decode("utf-8").split("\n"):

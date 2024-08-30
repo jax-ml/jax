@@ -30,9 +30,9 @@ from jax._src.interpreters import mlir
 from jax._src.lax import convolution
 from jax._src.lax import lax
 from jax._src.lax import slicing
+from jax._src.lax.other import logaddexp
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.numpy.ufuncs import logaddexp
 from jax._src.typing import Array
 import numpy as np
 from jax._src.core import ClosedJaxpr

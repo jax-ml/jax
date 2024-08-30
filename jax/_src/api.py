@@ -2693,10 +2693,11 @@ class ShapeDtypeStruct:
     dtype: a dtype-like object
     sharding: (optional) a :class:`jax.Sharding` object
   """
-  __slots__ = ["shape", "dtype", "sharding", "_dll"]
+  __slots__ = ["shape", "dtype", "sharding", "_dll", "weak_type"]
   named_shape = {}  # type: ignore
 
-  def __init__(self, shape, dtype, named_shape=None, sharding=None):
+  def __init__(self, shape, dtype, named_shape=None, sharding=None,
+               weak_type=False):
     del named_shape  # ignored, vestigial
     self.shape = tuple(shape)
     if dtype is None:
@@ -2714,6 +2715,7 @@ class ShapeDtypeStruct:
           f" layout in a `ShapeDtypeStruct`. Got {sharding}")
     self.sharding = sharding.sharding if isinstance(sharding, Layout) else sharding
     self._dll = sharding.device_local_layout if isinstance(sharding, Layout) else None
+    self.weak_type = weak_type
 
   size = property(lambda self: math.prod(self.shape))
   ndim = property(lambda self: len(self.shape))
@@ -2731,8 +2733,9 @@ class ShapeDtypeStruct:
   def __repr__(self):
     sh = f", sharding={self.sharding}" if self.sharding is not None else ""
     l = f", layout={self.layout}" if self._dll is not None else ""
+    wt = f", weak_type={self.weak_type}" if self.weak_type else ""
     return (f"{type(self).__name__}(shape={self.shape}, "
-            f"dtype={self.dtype.name}{sh}{l})")
+            f"dtype={self.dtype.name}{sh}{l}{wt})")
 
   __str__ = __repr__
 
@@ -2740,17 +2743,19 @@ class ShapeDtypeStruct:
     if not isinstance(other, ShapeDtypeStruct):
       return False
     else:
-      return ((other.shape, other.dtype, other.sharding, other.layout) ==
-              (self.shape, self.dtype, self.sharding, self.layout))
+      return ((self.shape, self.dtype, self.sharding, self.layout, self.weak_type) ==
+              (other.shape, other.dtype, other.sharding, other.layout, other.weak_type))
 
   def __hash__(self):
     # TODO(frostig): avoid the conversion from dict by addressing
     # https://github.com/google/jax/issues/8182
-    return hash((self.shape, self.dtype, self.sharding, self.layout))
+    return hash((self.shape, self.dtype, self.sharding, self.layout, self.weak_type))
 
-core.pytype_aval_mappings[ShapeDtypeStruct] = (
-    lambda x: ShapedArray(x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
-                          weak_type=False))
+def _sds_aval_mapping(x):
+  return ShapedArray(
+      x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
+      weak_type=x.weak_type)
+core.pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
 
 
 @api_boundary
@@ -2965,8 +2970,7 @@ def clear_backends():
   pjit._infer_params_cached.cache_clear()
   pjit._pjit_lower_cached.cache_clear()
   pjit._create_pjit_jaxpr.cache_clear()  # pytype: disable=attribute-error
-  pjit._cpp_pjit_cache_fun_only.clear()
-  pjit._cpp_pjit_cache_explicit_attributes.clear()
+  pjit._cpp_pjit_cache.clear()
   xc._xla.PjitFunctionCache.clear_all()
 
 @atexit.register
@@ -2994,8 +2998,7 @@ def clear_caches():
   util.clear_all_weakref_lru_caches()
 
   # Clear all C++ compiled executable caches for pjit
-  pjit._cpp_pjit_cache_fun_only.clear()
-  pjit._cpp_pjit_cache_explicit_attributes.clear()
+  pjit._cpp_pjit_cache.clear()
   pjit._infer_params_cached.cache_clear()
   xc._xla.PjitFunctionCache.clear_all()
 

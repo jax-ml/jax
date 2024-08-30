@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.1
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   name: python3
@@ -73,9 +73,6 @@ Here, define a {class}`~jax.sharding.NamedSharding`, which specifies an N-dimens
 :outputId: 0b397dba-3ddc-4aca-f002-2beab7e6b8a5
 
 # Pardon the boilerplate; constructing a sharding will become easier in future!
-from jax.sharding import Mesh
-from jax.sharding import PartitionSpec
-from jax.sharding import NamedSharding
 from jax.experimental import mesh_utils
 
 P = jax.sharding.PartitionSpec

@@ -615,7 +615,9 @@ def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
   out_aval = ctx.avals_out[0]
   batch_dims = operand_aval.shape[:-2]
   op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-  w, vl, vr, info = lapack.geev_hlo(operand_aval.dtype, operand,
+  # TODO(b/344892332): Remove the conditional after the compatibility period.
+  ctx_args = (ctx,) if jaxlib_version >= (0, 4, 32) else ()
+  w, vl, vr, info = lapack.geev_hlo(*ctx_args, operand_aval.dtype, operand,
                                     input_shape_vals=op_shape_vals,
                                     jobvl=compute_left_eigenvectors,
                                     jobvr=compute_right_eigenvectors)
@@ -801,7 +803,8 @@ def _eigh_abstract_eval(operand, *, lower, sort_eigenvalues, subset_by_index):
 
 
 def _eigh_cpu_gpu_lowering(
-    syevd_impl, ctx, operand, *, lower, sort_eigenvalues, subset_by_index
+    syevd_impl, ctx, operand, *, lower, sort_eigenvalues, subset_by_index,
+    platform=None
 ):
   del sort_eigenvalues  # The CPU/GPU implementations always sort.
   operand_aval, = ctx.avals_in
@@ -821,7 +824,12 @@ def _eigh_cpu_gpu_lowering(
     raise NotImplementedError("subset_by_index not implemented for CPU and GPU")
 
   op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-  v, w, info = syevd_impl(operand_aval.dtype, operand,
+  cpu_args = []
+  if platform == "cpu":
+    # TODO(b/344892332): Remove the conditional after the compatibility period.
+    ctx_args = (ctx,) if jaxlib_version >= (0, 4, 32) else ()
+    cpu_args.extend(ctx_args)
+  v, w, info = syevd_impl(*cpu_args, operand_aval.dtype, operand,
                           a_shape_vals=op_shape_vals, lower=lower)
 
   zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
@@ -955,15 +963,17 @@ ad.primitive_jvps[eigh_p] = _eigh_jvp_rule
 batching.primitive_batchers[eigh_p] = _eigh_batching_rule
 
 mlir.register_lowering(
-    eigh_p, partial(_eigh_cpu_gpu_lowering, lapack.syevd_hlo),
+    eigh_p, partial(_eigh_cpu_gpu_lowering, lapack.syevd_hlo, platform='cpu'),
     platform='cpu')
 
 if gpu_solver is not None:
   mlir.register_lowering(
-    eigh_p, partial(_eigh_cpu_gpu_lowering, gpu_solver.cuda_syevd),
+    eigh_p, partial(_eigh_cpu_gpu_lowering, gpu_solver.cuda_syevd,
+                    platform='cuda'),
     platform='cuda')
   mlir.register_lowering(
-    eigh_p, partial(_eigh_cpu_gpu_lowering, gpu_solver.rocm_syevd),
+    eigh_p, partial(_eigh_cpu_gpu_lowering, gpu_solver.rocm_syevd,
+                    platform='rocm'),
     platform='rocm')
 
 mlir.register_lowering(

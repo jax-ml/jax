@@ -22,7 +22,6 @@ from collections import namedtuple
 from collections.abc import Callable, Sequence, Iterable, Iterator
 import dataclasses
 from functools import partial, lru_cache, cached_property
-import functools
 import itertools as it
 import logging
 import math
@@ -90,7 +89,6 @@ unsafe_map, map = map, safe_map  # type: ignore
 logger = logging.getLogger(__name__)
 
 Index = Union[int, slice, tuple[Union[int, slice], ...]]
-PyTreeDef = tree_util.PyTreeDef
 
 NoSharding = sharding_specs.NoSharding
 Chunked = sharding_specs.Chunked
@@ -150,7 +148,7 @@ shard_arg_handlers: dict[
 
 @lru_cache(maxsize=2048)
 def is_default_layout(curr_layout, sharding, aval):
-  if curr_layout is None or sharding is None:
+  if curr_layout is None or sharding is None or is_unspecified(sharding):
     return True
   if (aval is core.abstract_token or aval.dtype == dtypes.float0 or
       dtypes.issubdtype(aval.dtype, dtypes.extended)):
@@ -191,7 +189,7 @@ def _shard_np_array(xs, shardings, layouts):
     if x.dtype == dtypes.float0:
       x = np.zeros(x.shape, dtype=np.dtype(bool))
     aval = api_util.shaped_abstractify(x)
-    if not is_default_layout(layout, sharding, aval):
+    if layout is not None:
       results.append(api.device_put(x, Layout(layout, sharding)))
     else:
       if sharding.is_fully_replicated:
@@ -1884,35 +1882,6 @@ def _raise_warnings_or_errors_for_jit_of_pmap(
         "extra data movement anyway, so maybe you don't want it after all).")
 
 
-@lru_cache(maxsize=2048)
-def _maybe_get_default_layout(arg_layout, jit_in_layout, sharding, aval
-                              ) -> DeviceLocalLayout | None:
-  if is_unspecified_or_auto(sharding):
-    return None
-  # TODO(yashkatariya): Figure out how layouts work with extended dtypes.
-  if aval is core.abstract_token or dtypes.issubdtype(aval.dtype, dtypes.extended):
-    return None
-  if not core.is_constant_shape(aval.shape):
-    return None
-  shard_shape = sharding.shard_shape(aval.shape)
-  d = sharding._device_assignment[0]
-  # If a backend doesn't implement `get_default_layout` return `None` to avoid
-  # cache misses. This can happen when you have `jit(f, in_shardings=s)`. On
-  # first call you pass it a sharded array with layout and on second call you
-  # pass a numpy array. The layouts should be the same to get cache hits.
-  try:
-    al = DeviceLocalLayout.from_pjrt_layout(
-        d.client.get_default_layout(aval.dtype, shard_shape, d))
-  except:
-    return None
-  # argument does not have `.layout` property. ShapedArray, numpy array, etc
-  # are some examples.
-  if arg_layout is None:
-    return al if jit_in_layout is None else arg_layout  # arg_layout is None
-  # If arg has a `.layout` property, then return device_local_layout as is.
-  return arg_layout.device_local_layout
-
-
 @weakref_lru_cache
 def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
                             semantic_in_shardings, semantic_out_shardings,
@@ -2775,13 +2744,14 @@ class UnloadedMeshExecutable:
   kept_var_idx: set[int]
   mut: MutationData | None
   auto_spmd_lowering: bool
-  in_layouts: Sequence[DeviceLocalLayout | None]
-  out_layouts: Sequence[DeviceLocalLayout | None]
+  xla_in_layouts: Sequence[DeviceLocalLayout | None]
+  dispatch_in_layouts: Sequence[DeviceLocalLayout | None]
+  xla_out_layouts: Sequence[DeviceLocalLayout | None]
   all_args_info: AllArgsInfo | None
   pgle_profiler: profiler.PGLEProfiler | None
 
   def build_unsafe_call(self):
-    handle_args = InputsHandler(self.input_shardings, self.in_layouts)
+    handle_args = InputsHandler(self.input_shardings, self.dispatch_in_layouts)
     handle_outs = global_avals_to_results_handler(
         self.output_avals, self.output_shardings, self.committed)
 
@@ -2797,8 +2767,8 @@ class UnloadedMeshExecutable:
                           self.input_avals, self.output_avals,
                           self.input_shardings, self.output_shardings,
                           self.auto_spmd_lowering, self.kept_var_idx,
-                          self.in_layouts, self.out_layouts,
-                          self.all_args_info, self)
+                          self.xla_in_layouts, self.dispatch_in_layouts,
+                          self.xla_out_layouts, self.all_args_info, self)
 
   @staticmethod
   def from_hlo(name: str,
@@ -2881,8 +2851,18 @@ class UnloadedMeshExecutable:
         in_shardings, out_shardings, committed, da = _get_metadata_jit_pmap(
             xla_executable.local_devices(), len(in_shardings), len(out_shardings))
 
-    in_layouts, out_layouts = _get_layouts_from_executable(
+    # xla_in_layouts are all either None or DeviceLocalLayout. Even default
+    # layout are concrete layouts and they are used in `compiled.input_layouts`
+    # to return concrete layouts to users.
+    # `dispatch_in_layouts` replaces default layouts with `None` to simplify
+    # dispatch logic downstream.
+    xla_in_layouts, xla_out_layouts = _get_layouts_from_executable(
         xla_executable, in_layouts, out_layouts, len(ordered_effects))
+    del in_layouts, out_layouts
+    dispatch_in_layouts = [
+        None if is_default_layout(l, s, a) else l
+        for l, s, a, in safe_zip(xla_in_layouts, in_shardings, global_in_avals)
+    ]
 
     out_shardings = maybe_recover_user_shardings(
         in_shardings, out_shardings, global_in_avals, global_out_avals,
@@ -2907,8 +2887,9 @@ class UnloadedMeshExecutable:
         kept_var_idx=kept_var_idx,
         mut=mut,
         auto_spmd_lowering=auto_spmd_lowering,
-        in_layouts=in_layouts,
-        out_layouts=out_layouts,
+        xla_in_layouts=xla_in_layouts,
+        dispatch_in_layouts=dispatch_in_layouts,
+        xla_out_layouts=xla_out_layouts,
         all_args_info=all_args_info,
         pgle_profiler=pgle_profiler).load()
 
@@ -2924,33 +2905,6 @@ class MeshExecutableFastpathData(NamedTuple):
   in_device_local_layouts: Sequence[DeviceLocalLayout | None]
 
 
-@dataclasses.dataclass(frozen=True)
-class JitGlobalCppCacheKeys:
-  donate_argnums: tuple[int, ...] | None = None
-  donate_argnames: tuple[str, ...] | None = None
-  device: xc.Device | None = None
-  backend: str | None = None
-  in_shardings_treedef: PyTreeDef | None = None
-  in_shardings_leaves: tuple[Any, ...] | None = None
-  out_shardings_treedef: PyTreeDef | None = None
-  out_shardings_leaves: tuple[Any, ...] | None = None
-  in_layouts_treedef: PyTreeDef | None = None
-  in_layouts_leaves: tuple[Any, ...] | None = None
-  out_layouts_treedef: PyTreeDef | None = None
-  out_layouts_leaves: tuple[Any, ...] | None = None
-
-  @functools.cached_property
-  def contains_explicit_attributes(self):
-    return (self.donate_argnums is not None or
-            self.donate_argnames is not None or
-            self.device is not None or
-            self.backend is not None or
-            any(not is_unspecified(i) for i in self.in_shardings_leaves) or
-            any(not is_unspecified(o) for o in self.out_shardings_leaves) or
-            any(i is not None for i in self.in_layouts_leaves) or
-            any(o is not None for o in self.out_layouts_leaves))
-
-
 def reflatten_outputs_for_dispatch(out_tree, out_flat):
   # We arrive at dispatch having flattened according to the default
   # pytree registry, but we want to re-flatten according to our
@@ -2963,13 +2917,13 @@ class MeshExecutable(stages.XlaExecutable):
   __slots__ = [
       "xla_executable", "_unsafe_call", "build_unsafe_call", "in_avals",
       "out_avals", "_in_shardings", "_out_shardings", "_auto_spmd_lowering",
-      "_kept_var_idx", "_in_layouts", "_out_layouts", "_all_args_info",
-      "_unloaded_executable",
+      "_kept_var_idx", "_xla_in_layouts", "_dispatch_in_layouts",
+      "_xla_out_layouts", "_all_args_info", "_unloaded_executable",
   ]
 
   def __init__(self, xla_executable, build_unsafe_call, in_avals, out_avals,
                in_shardings, out_shardings, auto_spmd_lowering, kept_var_idx,
-               in_layouts, out_layouts,
+               xla_in_layouts, dispatch_in_layouts, xla_out_layouts,
                all_args_info: AllArgsInfo | None = None,
                unloaded_executable=None):
     self.xla_executable = xla_executable
@@ -2983,8 +2937,9 @@ class MeshExecutable(stages.XlaExecutable):
     self._out_shardings = out_shardings
     self._auto_spmd_lowering = auto_spmd_lowering
     self._kept_var_idx = kept_var_idx
-    self._in_layouts = in_layouts
-    self._out_layouts = out_layouts
+    self._xla_in_layouts = xla_in_layouts
+    self._dispatch_in_layouts = dispatch_in_layouts
+    self._xla_out_layouts = xla_out_layouts
     self._all_args_info = all_args_info
     self._unloaded_executable = unloaded_executable
 
@@ -3012,9 +2967,8 @@ class MeshExecutable(stages.XlaExecutable):
 
     all_arg_avals = map(xla.abstractify, kept_args)
     check_arg_avals_for_call(ref_avals, all_arg_avals, debug_info)
-    # Check the GDA sharding and the input sharding.
     check_array_xla_sharding_layout_match(
-        args_after_dce, self._in_shardings, self._in_layouts, debug_info,
+        args_after_dce, self._in_shardings, self._xla_in_layouts, debug_info,
         self._kept_var_idx)
     return self.unsafe_call(*args)  # pylint: disable=not-callable
 
@@ -3026,11 +2980,11 @@ class MeshExecutable(stages.XlaExecutable):
 
   def input_layouts(self):
     return [Layout(l, s)
-            for l, s in safe_zip(self._in_layouts, self._in_shardings)]
+            for l, s in safe_zip(self._xla_in_layouts, self._in_shardings)]
 
   def output_layouts(self):
     return [Layout(l, s)
-            for l, s in safe_zip(self._out_layouts, self._out_shardings)]
+            for l, s in safe_zip(self._xla_out_layouts, self._out_shardings)]
 
   def create_cpp_call(self, no_kwargs, in_tree, out_tree):
     if not (isinstance(self.unsafe_call, ExecuteReplicated) and
@@ -3056,24 +3010,17 @@ class MeshExecutable(stages.XlaExecutable):
             else s
             for s, a in zip(self._in_shardings, self.in_avals)
         ]
-        in_dlls = get_layouts_for_fasthpath_data(
-            self._in_layouts, in_shardings, self.in_avals)
         fastpath_data = MeshExecutableFastpathData(
             self.xla_executable, out_tree_dispatch, in_shardings,
             self._out_shardings, out_avals, out_committed, kept_var_bitvec,
-            in_dlls)
+            self._dispatch_in_layouts)
       else:
         fastpath_data = None
       return outs, fastpath_data, False  # Do not remove cache entry
 
-    if xla_extension_version >= 283:
-      return xc._xla.pjit(
-          self.unsafe_call.name, None, aot_cache_miss, [], [],
-          JitGlobalCppCacheKeys(), tree_util.dispatch_registry, cc_shard_arg)
-    else:
-      return xc._xla.pjit(
-          self.unsafe_call.name, None, aot_cache_miss, [], [], [],
-          tree_util.dispatch_registry, cc_shard_arg)
+    return xc._xla.pjit(
+        self.unsafe_call.name, None, aot_cache_miss, [], [], [],
+        tree_util.dispatch_registry, cc_shard_arg)
 
 if xla_extension_version < 282:
   def cc_shard_arg(x, sharding):
@@ -3081,16 +3028,6 @@ if xla_extension_version < 282:
 else:
   def cc_shard_arg(x, sharding, layout):  # type: ignore
     return shard_args([sharding], [layout], [x])[0]
-
-
-def get_layouts_for_fasthpath_data(in_layouts, in_shardings, in_avals):
-  in_dlls = []
-  for l, s, a in zip(in_layouts, in_shardings, in_avals):
-    if is_default_layout(l, s, a):
-      in_dlls.append(None)
-    else:
-      in_dlls.append(l)
-  return in_dlls
 
 
 def check_arg_avals_for_call(ref_avals, arg_avals,

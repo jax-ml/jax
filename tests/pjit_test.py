@@ -653,16 +653,18 @@ class PJitTest(jtu.BufferDonationTestCase):
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testAutodiffCache(self):
-    f = pjit(lambda x: jnp.sin(x).sum(), in_shardings=P('x'), out_shardings=None)
+    f = pjit(
+        lambda x: jnp.sin(x).sum(), in_shardings=P('x'), out_shardings=None
+    )
     x = jnp.arange(16, dtype=jnp.float32)
-
     jax.grad(f)(x)  # Warm up the cache.
-    with jtu.count_pjit_cpp_cache_miss() as count:
-      jax.grad(f)(x)
-    if xla_extension_version >= 283:
-      self.assertEqual(count[0], 0)  # no cache miss i.e. cache hit
-    else:
-      self.assertEqual(count[0], 2)
+    before = pjit_lib._pjit_lower_cached.cache_info()
+    jax.grad(f)(x)
+    after = pjit_lib._pjit_lower_cached.cache_info()
+
+    # One hit for the forward pass, one hit for backward.
+    self.assertEqual(after.hits, before.hits + 2)
+    self.assertEqual(after.misses, before.misses)
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testEvalJaxpr(self):
@@ -4536,23 +4538,38 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ' match the mesh shape of the target sharding.*'):
       with_sharding_constraint(arr, NamedSharding(abs_mesh2, P('y')))
 
-  @unittest.skipIf(xla_extension_version < 283,
-                   "Requires xla_extension_version >= 283")
-  def test_global_jit_cpp_cache_hit_out_shardings(self):
-    mesh = jtu.create_global_mesh((2,), 'x')
-    s = NamedSharding(mesh, P('x'))
-
-    def f(x):
-      return x * 2
-
-    with jtu.count_pjit_cpp_cache_miss() as count:
-      jax.jit(f, out_shardings=s)(np.arange(8))
-      jax.jit(f, out_shardings=s)(np.arange(8))
-    self.assertEqual(count[0], 1)
-
 
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
+
+
+class ShardingInTypesTest(jtu.JaxTestCase):
+
+  @config.sharding_in_types(True)
+  def test_basic_mul(self):
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    @jax.jit
+    def f(x):
+      self.assertEqual(x.sharding.spec, s.spec)
+      x = x * 2
+      self.assertEqual(x.sharding.spec, s.spec)
+      x = x * x
+      self.assertEqual(x.sharding.spec, s.spec)
+      return x
+
+    out = f(arr)
+    self.assertEqual(out.sharding, s)
+    self.assertArraysEqual(out, (np_inp * 2) * (np_inp * 2))
+
+    lowered_text = f.lower(arr).as_text()
+    if config.use_shardy_partitioner.value:
+      self.assertIn('sdy.sharding_constraint', lowered_text)
+    else:
+      self.assertEqual(lowered_text.count('@Sharding'), 2)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

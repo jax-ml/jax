@@ -20,6 +20,7 @@ from functools import partial
 
 from jax._src import core
 from jax._src import dispatch
+from jax._src import config
 from jax._src import dtypes
 from jax._src.util import safe_zip
 from jax._src.lib import xla_client
@@ -37,19 +38,19 @@ def _argnum_weak_type(*argnums):
   return lambda *args, **_: all(args[i].weak_type for i in argnums)
 
 def standard_primitive(shape_rule, dtype_rule, name,
-                       weak_type_rule=None):
+                       weak_type_rule=None, sharding_rule=None):
   weak_type_rule = weak_type_rule or _standard_weak_type_rule
   prim = core.Primitive(name)
   prim.def_impl(partial(dispatch.apply_primitive, prim))
   prim.def_abstract_eval(
       partial(standard_abstract_eval, prim, shape_rule, dtype_rule,
-              weak_type_rule))
+              weak_type_rule, sharding_rule))
   return prim
 
 def _get_array_abstraction_level(a): return a.array_abstraction_level
 
 def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
-                           *avals, **kwargs):
+                           sharding_rule, *avals, **kwargs):
   assert all(isinstance(aval, core.UnshapedArray) for aval in avals), avals
   assert not prim.multiple_results
   weak_type = weak_type_rule(*avals, **kwargs)
@@ -58,8 +59,11 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
     out = prim.impl(*[x.val for x in avals], **kwargs)
     return core.ConcreteArray(out.dtype, out, weak_type=weak_type)
   elif least_specialized is core.ShapedArray:
+    out_sharding = (sharding_rule(*avals, **kwargs)
+                    if config.sharding_in_types.value else None)
     return core.ShapedArray(shape_rule(*avals, **kwargs),
-                            dtype_rule(*avals, **kwargs), weak_type=weak_type)
+                            dtype_rule(*avals, **kwargs), weak_type=weak_type,
+                            sharding=out_sharding)
   elif least_specialized is core.DShapedArray:
     shape = shape_rule(*avals, **kwargs)
     ty = (core.ShapedArray if all(type(d) is int for d in shape)

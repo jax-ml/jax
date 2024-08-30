@@ -540,7 +540,7 @@ class LayoutTest(jtu.JaxTestCase):
     def f(x):
       return x
 
-    out = f(arr)
+    f(arr)
     self.assertTrue(arr.is_deleted())
 
   def test_layout_donation_auto(self):
@@ -555,7 +555,7 @@ class LayoutTest(jtu.JaxTestCase):
     def f(x):
       return x * x
 
-    out = f(arr)
+    f(arr)
     self.assertTrue(arr.is_deleted())
 
   def test_layout_donation_matching_in_and_out(self):
@@ -572,8 +572,27 @@ class LayoutTest(jtu.JaxTestCase):
     def f(x):
       return x * x
 
-    out = f(arr)
+    f(arr)
     self.assertTrue(arr.is_deleted())
+
+  @jtu.skip_on_devices('cpu', 'gpu')
+  def test_layout_donation_mismatching_in_and_out_fails(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    shape = (16*2, 32016*2)
+    np_inp = np.arange(math.prod(shape), dtype=jnp.bfloat16).reshape(shape)
+
+    custom_dll1 = DLL(major_to_minor=(1, 0), _tiling=((8,128), (2,1)))
+    l1 = Layout(custom_dll1, s)
+    arr = jax.device_put(np_inp, s)
+
+    @partial(jax.jit, out_shardings=l1, donate_argnums=0)
+    def f(x):
+      return x * x
+
+    sds = jax.ShapeDtypeStruct(np_inp.shape, np_inp.dtype, sharding=s)
+    f.lower(sds).compile()(arr)
+    self.assertFalse(arr.is_deleted())
 
 
 if __name__ == '__main__':

@@ -2497,37 +2497,10 @@ lowering_rules[lax.shift_right_logical_p] = _shift_right_logical_lowering_rules
 skip_mlir_conversions.add(lax.shift_right_logical_p)
 
 
-# based on https://github.com/openxla/xla/blob/a7a09d56c3599123f8148bbf3e44c9ebc04624b9/xla/mlir_hlo/mhlo/transforms/chlo_legalize_to_hlo/chlo_legalize_to_hlo.cc#L644-L802
-def _erf_inv_32_helper(x):
-  k_degree = 9
-  w_lt_5_constants = [
-    2.81022636e-08,  3.43273939e-07, -3.5233877e-06,
-    -4.39150654e-06, 0.00021858087,  -0.00125372503,
-    -0.00417768164,  0.246640727,    1.50140941,
-  ]
-  w_gt_5_constants = [
-    -0.000200214257, 0.000100950558, 0.00134934322,
-    -0.00367342844,  0.00573950773,  -0.0076224613,
-    0.00943887047,   1.00167406,     2.83297682,
-  ]
-
-  w = -jnp.log1p(x * -x)
-  w_lt_5 = w < 5.0
-
-  w = jnp.where(w_lt_5, w - 2.5, jnp.sqrt(w) - 3.0)
-
-  p = jnp.where(w_lt_5, w_lt_5_constants[0], w_gt_5_constants[0])
-  for i in range(1, k_degree):
-    c = jnp.where(w_lt_5, w_lt_5_constants[i], w_gt_5_constants[i])
-    p = c + p * w
-
-  return jnp.where(jnp.abs(x) == 1.0, jnp.inf * x, p * x)
-
-
 def _erf_inv_lowering_rule(ctx: LoweringRuleContext, x):
   (x_aval,) = ctx.avals_in
   if x_aval.dtype == jnp.float32:
-    return lower_fun(_erf_inv_32_helper, multiple_results=False)(ctx, x)
+    return lower_fun(pallas_utils.erf_inv_32_lowering_helper, multiple_results=False)(ctx, x)
   else:
     raise NotImplementedError
 
@@ -2546,7 +2519,9 @@ def _bitcast_convert_type_lowering_rule(
     ctx: LoweringRuleContext, x, *, new_dtype):
   (in_aval, ) = ctx.avals_in
   (out_aval,) = ctx.avals_out
-  if in_aval.dtype.itemsize != new_dtype.itemsize:
+  old_bitwidth = pallas_utils.dtype_bitwidth(in_aval.dtype)
+  new_bitwidth = pallas_utils.dtype_bitwidth(new_dtype)
+  if old_bitwidth != new_bitwidth:
     raise NotImplementedError("Changing bitwidths not supported.")
   return tpu.BitcastOp(aval_to_ir_type(out_aval), x).result
 lowering_rules[lax.bitcast_convert_type_p] = _bitcast_convert_type_lowering_rule

@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.1
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   language: python
@@ -908,7 +908,6 @@ display.HTML(table.to_html())
 :tags: [hide-input]
 
 # @title
-from jax import dtypes
 import jax
 import jax.numpy as jnp
 import pandas as pd
@@ -963,7 +962,6 @@ display.HTML(table.to_html())
 :tags: [hide-input]
 
 # @title
-from jax import dtypes
 import jax
 import jax.numpy as jnp
 import pandas as pd

@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.1
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   name: python3
@@ -410,7 +410,6 @@ This lets us call into `scipy.special.jv` from transformed JAX code, including w
 ```{code-cell}
 :id: f4e46670f4e4
 
-from functools import partial
 j1 = partial(jv, 1)
 z = jnp.arange(5.0)
 ```

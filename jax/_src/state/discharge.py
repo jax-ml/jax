@@ -158,6 +158,62 @@ def _is_trivial_indexer(indexer: indexing.NDIndexer):
       return False
   return True
 
+
+def _maybe_convert_to_slice(
+    indexer: indexing.NDIndexer
+) -> list[tuple[int, int, int]] | None:
+  args = []
+
+  for i in indexer.indices:
+    if not isinstance(i, indexing.Slice):
+      return None
+
+    start = i.start
+    end = i.start + i.size * i.stride
+    stride = i.stride
+
+    # cannot convert to static `slice` if `start` or `end` is dynamic
+    if not isinstance(start, int) or not isinstance(end, int):
+      return None
+
+    args.append((start, end, stride))
+
+  return args
+
+
+def _maybe_convert_to_dynamic_slice(
+    indexer: indexing.NDIndexer,
+) -> (
+    tuple[tuple[Array | int, ...], tuple[Array | int, ...], tuple[int, ...]]
+    | None
+):
+  # An NDIndexer only corresponds to a `dynamic_slice` or `dynamic_update_slice`
+  # if each of the indexers is a `Slice` or a ()-shaped value.
+  if not all(isinstance(i, indexing.Slice) or not np.shape(i)
+             for i in indexer.indices):
+    return None
+
+  # `lax.dynamic_slice` does not handle striding
+  for i in indexer.indices:
+    if isinstance(i, indexing.Slice) and i.stride > 1:
+      return None
+
+  _convert_i32 = lambda x: lax.convert_element_type(x, np.dtype("int32"))
+  starts = tuple(
+      _convert_i32(i.start) if isinstance(i, indexing.Slice)
+      else _convert_i32(i) for i in indexer.indices
+  )
+  sizes = tuple(
+      i.size if isinstance(i, indexing.Slice) else 1 for i in indexer.indices
+  )
+  squeeze_dims = tuple(
+      i
+      for i, idx in enumerate(indexer.indices)
+      if not isinstance(idx, indexing.Slice)
+  )
+  return starts, sizes, squeeze_dims
+
+
 def _convert_to_array_indexer(indexer: indexing.NDIndexer
                               ) -> tuple[int | Array, ...]:
   # This is the general gather case. We need to create the gather arrays.
@@ -177,7 +233,7 @@ def _convert_to_array_indexer(indexer: indexing.NDIndexer
       assert isinstance(idx, indexing.Slice)
       slice_indices = lax.broadcasted_iota(
           np.dtype("int32"), total_shape, next(slice_dim_iter)
-      ) + idx.start
+      ) * idx.stride + idx.start
       slice_indexer.append(slice_indices)
       integer_indexer = tuple(
           lax.expand_dims(idx, (-1,)) for idx in integer_indexer
@@ -185,37 +241,6 @@ def _convert_to_array_indexer(indexer: indexing.NDIndexer
       continue
   assert next(slice_dim_iter, None) is None
   return tuple(merge_lists(is_integer_indexer, slice_indexer, integer_indexer))
-
-
-def _maybe_convert_to_dynamic_slice(
-    indexer: indexing.NDIndexer,
-) -> (
-    tuple[tuple[Array | int, ...], tuple[Array | int, ...], tuple[int, ...]]
-    | None
-):
-  # An NDIndexer only corresponds to a `dynamic_slice` or `dynamic_update_slice`
-  # if each of the indexers is a `Slice` or a ()-shaped value.
-  if not all(isinstance(i, indexing.Slice) or not np.shape(i)
-             for i in indexer.indices):
-    return None
-  # TODO(b/329733289): support strided load/store in interpret mode.
-  for i in indexer.indices:
-    if isinstance(i, indexing.Slice) and i.stride > 1:
-      raise NotImplementedError("Unimplemented stride support.")
-  _convert_i32 = lambda x: lax.convert_element_type(x, np.dtype("int32"))
-  starts = tuple(
-      _convert_i32(i.start) if isinstance(i, indexing.Slice)
-      else _convert_i32(i) for i in indexer.indices
-  )
-  sizes = tuple(
-      i.size if isinstance(i, indexing.Slice) else 1 for i in indexer.indices
-  )
-  squeeze_dims = tuple(
-      i
-      for i, idx in enumerate(indexer.indices)
-      if not isinstance(idx, indexing.Slice)
-  )
-  return starts, sizes, squeeze_dims
 
 
 @register_discharge_rule(get_p)
@@ -249,10 +274,15 @@ def index_array(x, indexers):
       continue
     if indexer is None:
       continue
+
+    # Try the three APIs in the following order: `lax.slice`,
+    # `lax.dynamic_slice` and gather
+    if maybe_slice := _maybe_convert_to_slice(indexer):
+      result = lax_slicing.slice(result, *zip(*maybe_slice))
     # If everything in the indexer is a slice or ()-shaped, we can also
     # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
     # We need to squeeze out the 1-sized slices at the end.
-    if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
+    elif maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
       starts, sizes, squeeze_dims = maybe_slice
       y = lax_slicing.dynamic_slice(result, starts, sizes)
       result = lax.squeeze(y, squeeze_dims)

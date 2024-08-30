@@ -465,9 +465,36 @@ def result_type(*args: Any) -> DType:
   return dtypes.result_type(*args)
 
 
-@util.implements(np.trunc, module='numpy')
 @jit
 def trunc(x: ArrayLike) -> Array:
+  """Round input to the nearest integer towards zero.
+
+  JAX implementation of :func:`numpy.trunc`.
+
+  Args:
+    x: input array or scalar.
+
+  Returns:
+    An array with same shape and dtype as ``x`` containing the rounded values.
+
+  See also:
+    - :func:`jax.numpy.fix`: Rounds the input to the nearest integer towards zero.
+    - :func:`jax.numpy.ceil`: Rounds the input up to the nearest integer.
+    - :func:`jax.numpy.floor`: Rounds the input down to the nearest integer.
+
+  Examples:
+    >>> key = jax.random.key(42)
+    >>> x = jax.random.uniform(key, (3, 3), minval=-10, maxval=10)
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...     print(x)
+    [[ 2.88 -3.55 -6.13]
+     [ 7.73  4.49 -6.16]
+     [-3.1  -4.95  2.64]]
+    >>> jnp.trunc(x)
+    Array([[ 2., -3., -6.],
+           [ 7.,  4., -6.],
+           [-3., -4.,  2.]], dtype=float32)
+  """
   util.check_arraylike('trunc', x)
   if dtypes.isdtype(dtypes.dtype(x), ('integral', 'bool')):
     return lax_internal.asarray(x)
@@ -2653,9 +2680,37 @@ around = round
 round_ = round
 
 
-@util.implements(np.fix, skip_params=['out'])
 @jit
 def fix(x: ArrayLike, out: None = None) -> Array:
+  """Round input to the nearest integer towards zero.
+
+  JAX implementation of :func:`numpy.fix`.
+
+  Args:
+    x: input array.
+    out: unused by JAX.
+
+  Returns:
+    An array with same shape and dtype as ``x`` containing the rounded values.
+
+  See also:
+    - :func:`jax.numpy.trunc`: Rounds the input to nearest integer towards zero.
+    - :func:`jax.numpy.ceil`: Rounds the input up to the nearest integer.
+    - :func:`jax.numpy.floor`: Rounds the input down to the nearest integer.
+
+  Examples:
+    >>> key = jax.random.key(0)
+    >>> x = jax.random.uniform(key, (3, 3), minval=-5, maxval=5)
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...     print(x)
+    [[-1.45  1.04 -0.72]
+     [-2.69  1.74 -0.6 ]
+     [-2.49 -2.23  2.68]]
+    >>> jnp.fix(x)
+    Array([[-1.,  1., -0.],
+           [-2.,  1., -0.],
+           [-2., -2.,  2.]], dtype=float32)
+  """
   util.check_arraylike("fix", x)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.fix is not supported.")
@@ -6417,7 +6472,7 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
   JAX implementation of :func:`numpy.matmul`.
 
   Args:
-    a: first input array, of shape ``(..., N)``.
+    a: first input array, of shape ``(N,)`` or ``(..., K, N)``.
     b: second input array. Must have shape ``(N,)`` or ``(..., N, M)``.
       In the multi-dimensional case, leading dimensions must be broadcast-compatible
       with the leading dimensions of ``a``.
@@ -9111,9 +9166,43 @@ def _gcd_body_fn(xs: tuple[Array, Array]) -> tuple[Array, Array]:
             where(x2 != 0, lax.rem(x1, x2), _lax_const(x2, 0)))
   return (where(x1 < x2, x2, x1), where(x1 < x2, x1, x2))
 
-@util.implements(np.gcd, module='numpy')
 @jit
 def gcd(x1: ArrayLike, x2: ArrayLike) -> Array:
+  """Compute the greatest common divisor of two arrays.
+
+  JAX implementation of :func:`numpy.gcd`.
+
+  Args:
+    x1: First input array. The elements must have integer dtype.
+    x2: Second input array. The elements must have integer dtype.
+
+  Returns:
+    An array containing the greatest common divisors of the corresponding
+    elements from the absolute values of `x1` and `x2`.
+
+  See also:
+    - :func:`jax.numpy.lcm`: compute the least common multiple of two arrays.
+
+  Examples:
+    Scalar inputs:
+
+    >>> jnp.gcd(12, 18)
+    Array(6, dtype=int32, weak_type=True)
+
+    Array inputs:
+
+    >>> x1 = jnp.array([12, 18, 24])
+    >>> x2 = jnp.array([5, 10, 15])
+    >>> jnp.gcd(x1, x2)
+    Array([1, 2, 3], dtype=int32)
+
+    Broadcasting:
+
+    >>> x1 = jnp.array([12])
+    >>> x2 = jnp.array([6, 9, 12])
+    >>> jnp.gcd(x1, x2)
+    Array([ 6,  3, 12], dtype=int32)
+  """
   util.check_arraylike("gcd", x1, x2)
   x1, x2 = util.promote_dtypes(x1, x2)
   if not issubdtype(_dtype(x1), integer):
@@ -9123,9 +9212,43 @@ def gcd(x1: ArrayLike, x2: ArrayLike) -> Array:
   return gcd
 
 
-@util.implements(np.lcm, module='numpy')
 @jit
 def lcm(x1: ArrayLike, x2: ArrayLike) -> Array:
+  """Compute the least common multiple of two arrays.
+
+  JAX implementation of :func:`numpy.lcm`.
+
+  Args:
+    x1: First input array. The elements must have integer dtype.
+    x2: Second input array. The elements must have integer dtype.
+
+  Returns:
+    An array containing the least common multiple of the corresponding
+    elements from the absolute values of `x1` and `x2`.
+
+  See also:
+    - :func:`jax.numpy.gcd`: compute the greatest common divisor of two arrays.
+
+  Examples:
+    Scalar inputs:
+
+    >>> jnp.lcm(12, 18)
+    Array(36, dtype=int32, weak_type=True)
+
+    Array inputs:
+
+    >>> x1 = jnp.array([12, 18, 24])
+    >>> x2 = jnp.array([5, 10, 15])
+    >>> jnp.lcm(x1, x2)
+    Array([ 60,  90, 120], dtype=int32)
+
+    Broadcasting:
+
+    >>> x1 = jnp.array([12])
+    >>> x2 = jnp.array([6, 9, 12])
+    >>> jnp.lcm(x1, x2)
+    Array([12, 36, 12], dtype=int32)
+  """
   util.check_arraylike("lcm", x1, x2)
   x1, x2 = util.promote_dtypes(x1, x2)
   x1, x2 = ufuncs.abs(x1), ufuncs.abs(x2)

@@ -681,8 +681,7 @@ def _export_lowered(
 def _module_to_bytecode(module: ir.Module) -> bytes:
   mlir_str = mlir.module_to_bytecode(module)
   # `target_version` is used to manage situations when a StableHLO producer
-  # (in this case, jax2tf) and a StableHLO consumer were built using
-  # different versions of StableHLO.
+  # and a StableHLO consumer were built using different versions of StableHLO.
   #
   # Each StableHLO version `producer_version` has a compatibility window,
   # i.e. range of versions [`consumer_version_min`, `consumer_version_max`],
@@ -691,12 +690,19 @@ def _module_to_bytecode(module: ir.Module) -> bytes:
   # See https://github.com/openxla/stablehlo/blob/main/docs/compatibility.md
   # for the exact extent of these compatibility guarantees.
   #
-  # `hlo.get_minimum_version()` returns `consumer_version_min`
-  # for the current version of StableHLO. We are using it here to maximize
-  # forward compatibility, i.e. to maximize how far into the past we can go
-  # and still have the payloads produced by `serialize_portable_artifact`
-  # compatible with potential consumers from the past.
-  target_version = hlo.get_minimum_version()
+  # `hlo.get_version_from_compatibility_requirement(WEEK_4)` returns a version
+  # of StableHLO >= 4w old. This allows new StableHLO features to be used after
+  # ~4w and be compatible with any consumer that is updated on at least a
+  # monthly cadence.
+  #
+  # Note that this does not verify any JAX custom calls, which are only
+  # guaranteed 3w of forward compatibility, and only prevents use of new
+  # StableHLO features from failing on older hardware.
+  if hlo.get_api_version() < 9:
+    target_version = hlo.get_minimum_version()
+  else:
+    target_version = hlo.get_version_from_compatibility_requirement(
+      hlo.StablehloCompatibilityRequirement.WEEK_4)
   module_serialized = xla_client._xla.mlir.serialize_portable_artifact(  # type: ignore
       mlir_str, target_version)
   return module_serialized
@@ -923,22 +929,12 @@ def _check_lowering(lowering) -> None:
         "\n".join(not_implemented_msgs))
 
 _CPU_FFI_KERNELS = [
-    "lapack_spotrf_ffi",
-    "lapack_dpotrf_ffi",
-    "lapack_cpotrf_ffi",
-    "lapack_zpotrf_ffi",
-    "lapack_sgeqrf_ffi",
-    "lapack_dgeqrf_ffi",
-    "lapack_cgeqrf_ffi",
-    "lapack_zgeqrf_ffi",
-    "lapack_sgesdd_ffi",
-    "lapack_dgesdd_ffi",
-    "lapack_cgesdd_ffi",
-    "lapack_zgesdd_ffi",
-    "lapack_sgetrf_ffi",
-    "lapack_dgetrf_ffi",
-    "lapack_cgetrf_ffi",
-    "lapack_zgetrf_ffi",
+    "lapack_spotrf_ffi", "lapack_dpotrf_ffi", "lapack_cpotrf_ffi", "lapack_zpotrf_ffi",
+    "lapack_sgeqrf_ffi", "lapack_dgeqrf_ffi", "lapack_cgeqrf_ffi", "lapack_zgeqrf_ffi",
+    "lapack_ssyevd_ffi", "lapack_dsyevd_ffi", "lapack_cheevd_ffi", "lapack_zheevd_ffi",
+    "lapack_sgeev_ffi", "lapack_dgeev_ffi", "lapack_cgeev_ffi", "lapack_zgeev_ffi",
+    "lapack_sgesdd_ffi", "lapack_dgesdd_ffi", "lapack_cgesdd_ffi", "lapack_zgesdd_ffi",
+    "lapack_sgetrf_ffi", "lapack_dgetrf_ffi", "lapack_cgetrf_ffi", "lapack_zgetrf_ffi",
 ]
 # These are the JAX custom call target names that are guaranteed to be stable.
 # Their backwards compatibility is tested by back_compat_test.py.

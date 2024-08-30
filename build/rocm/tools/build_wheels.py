@@ -101,7 +101,7 @@ def build_jax_wheel(jax_path, python_version):
     env["PATH"] = "%s:%s" % (py_bin, env["PATH"])
 
     LOG.info("Running %r from cwd=%r" % (cmd, jax_path))
-    pattern = re.compile("Successfully built jax-.+ and (jax-.+\.whl)\n")
+    pattern = re.compile(r"Successfully built jax-.+ and (jax-.+\.whl)\n")
 
     _run_scan_for_output(cmd, pattern, env=env, cwd=jax_path, capture="stdout")
 

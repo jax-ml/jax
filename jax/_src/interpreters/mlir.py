@@ -1053,6 +1053,7 @@ def lower_jaxpr_to_module(
     result_memory_kinds = (map(_get_mem_kind, result_shardings)
                           if result_shardings is not None else None)
 
+  # TODO(yashkatariya): Simplify the donation logic.
   xla_donated_args = None
   platforms_with_donation = [p for p in platforms
                              if p in _platforms_with_donation]
@@ -1071,9 +1072,6 @@ def lower_jaxpr_to_module(
       input_output_aliases, donated_args, xla_donated_args = _set_up_aliases(
           input_output_aliases, in_avals, out_avals, donated_args,
           arg_memory_kinds, result_memory_kinds, in_layouts, out_layouts)
-  unlowerable_effects = lowerable_effects.filter_not_in(jaxpr.effects)
-  if unlowerable_effects:
-    raise ValueError(f'Cannot lower jaxpr with effects: {jaxpr.effects}')
   if any(donated_args):
     unused_donations = [str(a) for a, d in zip(in_avals, donated_args) if d]
     msg = "See an explanation at https://jax.readthedocs.io/en/latest/faq.html#buffer-donation."
@@ -1082,9 +1080,12 @@ def lower_jaxpr_to_module(
     if unused_donations:
       warnings.warn("Some donated buffers were not usable:"
                     f" {', '.join(unused_donations)}.\n{msg}")
-
   # Delete donated_args by default here, since it's not needed beyond this point
   del donated_args
+
+  unlowerable_effects = lowerable_effects.filter_not_in(jaxpr.effects)
+  if unlowerable_effects:
+    raise ValueError(f'Cannot lower jaxpr with effects: {jaxpr.effects}')
 
   # HLO channels need to start at 1
   channel_iter = itertools.count(1)
@@ -1167,8 +1168,7 @@ def lower_jaxpr_to_module(
 
 
 def _set_up_aliases(input_output_aliases, avals_in, avals_out,
-                    donated_args,
-                    arg_memory_kinds, result_memory_kinds,
+                    donated_args, arg_memory_kinds, result_memory_kinds,
                     in_layouts, out_layouts):
   if input_output_aliases is None:
     input_output_aliases = [None] * len(avals_in)
@@ -1207,15 +1207,14 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
     if donations.get(key, ()):
       input_id = donations[key].popleft()
       out_donated_args[input_id] = False
+      # We can alias if XLA performs layout assignment because XLA will
+      # respect the aliases when assigning layouts. Its only for two
+      # mismatched explicitly assigned layouts that XLA will certainly fail.
       if (in_layouts is None or
           out_layouts is None or
           in_layouts[input_id] == out_layouts[i] or
-          # We can alias if XLA performs layout assignment because XLA will
-          # respect the aliases when assigning layouts. Its only for two
-          # mismatched explicitly assigned layouts that XLA will certainly
-          # fail.
-          isinstance(in_layouts[input_id], (AutoLayout, type(None))) or
-          isinstance(out_layouts[i], (AutoLayout, type(None)))):
+          isinstance(in_layouts[input_id], AutoLayout) or
+          isinstance(out_layouts[i], AutoLayout)):
         input_output_aliases[input_id] = i
       else:
         # Fallback to xla donation if layouts don't match.

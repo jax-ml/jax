@@ -4099,6 +4099,18 @@ class APITest(jtu.JaxTestCase):
     a2 = jnp.array(((x, x), [x, x]))
     self.assertAllClose(np.array(((1, 1), (1, 1))), a2)
 
+  def test_eval_shape_weak_type(self):
+    # https://github.com/google/jax/issues/23302
+    arr = jax.numpy.array(1)
+
+    with jtu.count_jit_tracing_cache_miss() as count:
+      jax.eval_shape(jax.numpy.array, 1)
+      out = jax.eval_shape(jax.numpy.array, 1)
+
+    self.assertEqual(count[0], 1)
+    self.assertTrue(out.weak_type)
+    self.assertEqual(out.weak_type, arr.weak_type)
+
   def test_dunder_jax_array_bug(self):
     @jax.tree_util.register_pytree_node_class
     class A:
