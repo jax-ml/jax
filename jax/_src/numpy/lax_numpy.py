@@ -6472,7 +6472,7 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
   JAX implementation of :func:`numpy.matmul`.
 
   Args:
-    a: first input array, of shape ``(..., N)``.
+    a: first input array, of shape ``(N,)`` or ``(..., K, N)``.
     b: second input array. Must have shape ``(N,)`` or ``(..., N, M)``.
       In the multi-dimensional case, leading dimensions must be broadcast-compatible
       with the leading dimensions of ``a``.
