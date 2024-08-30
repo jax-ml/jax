@@ -35,7 +35,6 @@ jax_test(
     name = "api_test",
     srcs = ["api_test.py"],
     shard_count = 10,
-    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
@@ -339,7 +338,6 @@ jax_test(
 jax_test(
     name = "infeed_test",
     srcs = ["infeed_test.py"],
-    tags = ["test_cpu_thunks"],
     deps = [
         "//jax:experimental_host_callback",
     ],
@@ -349,7 +347,6 @@ jax_test(
     name = "jax_jit_test",
     srcs = ["jax_jit_test.py"],
     main = "jax_jit_test.py",
-    tags = ["test_cpu_thunks"],
 )
 
 py_test(
@@ -440,7 +437,6 @@ jax_test(
         "gpu": 30,
         "tpu": 40,
     },
-    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
@@ -451,7 +447,6 @@ jax_test(
         "gpu": 20,
         "tpu": 20,
     },
-    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
@@ -472,7 +467,6 @@ jax_test(
         "gpu": 10,
         "tpu": 10,
     },
-    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
@@ -483,13 +477,11 @@ jax_test(
         "gpu": 10,
         "tpu": 10,
     },
-    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
     name = "lax_numpy_vectorize_test",
     srcs = ["lax_numpy_vectorize_test.py"],
-    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
@@ -554,7 +546,6 @@ jax_test(
         "gpu": 40,
         "tpu": 40,
     },
-    tags = ["test_cpu_thunks"],
     deps = [
         "//jax:internal_test_util",
         "//jax:lax_reference",
@@ -584,7 +575,6 @@ jax_test(
         "gpu": 40,
         "tpu": 20,
     },
-    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
@@ -595,7 +585,6 @@ jax_test(
         "gpu": 40,
         "tpu": 40,
     },
-    tags = ["test_cpu_thunks"],
     deps = ["//jax:internal_test_util"] + py_deps("numpy") + py_deps("absl/testing"),
 )
 
@@ -607,7 +596,6 @@ jax_test(
         "gpu": 40,
         "tpu": 40,
     },
-    tags = ["test_cpu_thunks"],
     deps = ["//jax:internal_test_util"] + py_deps("numpy") + py_deps("absl/testing"),
 )
 
@@ -650,7 +638,6 @@ jax_test(
         "gpu": 40,
         "tpu": 40,
     },
-    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
@@ -1169,7 +1156,6 @@ py_test(
 jax_test(
     name = "compilation_cache_test",
     srcs = ["compilation_cache_test.py"],
-    tags = ["test_cpu_thunks"],
     deps = [
         "//jax:compilation_cache_internal",
         "//jax:compiler",
