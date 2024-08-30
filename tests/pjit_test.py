@@ -4566,7 +4566,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, (np_inp * 2) * (np_inp * 2))
 
     lowered_text = f.lower(arr).as_text()
-    self.assertEqual(lowered_text.count('@Sharding'), 2)
+    if config.use_shardy_partitioner.value:
+      self.assertIn('sdy.sharding_constraint', lowered_text)
+    else:
+      self.assertEqual(lowered_text.count('@Sharding'), 2)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
