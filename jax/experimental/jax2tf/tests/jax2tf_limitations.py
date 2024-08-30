@@ -1435,10 +1435,29 @@ class Jax2TfLimitation(test_harnesses.Limitation):
 
   @classmethod
   def tan(cls, harness):
+
+    def custom_assert(tst, result_jax, result_tf, *, args, tol, err_msg):
+      operand, = args
+      tst.assertAllClose(
+          np.tan(operand), result_jax, atol=tol, rtol=tol, err_msg=err_msg)
+
     return [
         custom_numeric(dtypes=[np.complex64], devices="tpu", tol=1e-4),
         custom_numeric(dtypes=[np.complex64], devices=("cpu", "gpu"), tol=1e-3),
-        custom_numeric(dtypes=[np.complex128], devices=("cpu", "gpu"), tol=1e-12)
+        custom_numeric(dtypes=[np.complex128], devices=("cpu", "gpu"), tol=1e-12),
+        custom_numeric(
+            description=(
+                "TF2XLA impl for tan doesn't properly handle large "
+                "complex types, native serialization more closely matches "
+                "numpy numerics."
+            ),
+            dtypes=[np.complex64],
+            devices=("tpu"),
+            tol=1e-5,
+            custom_assert=custom_assert,
+            modes=("eager", "graph", "compiled"),
+            native_serialization=Jax2TfLimitation.FOR_NATIVE,
+        ),
     ]
 
   @classmethod
