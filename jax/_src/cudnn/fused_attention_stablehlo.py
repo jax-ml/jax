@@ -109,6 +109,7 @@ def create_dot_product_attention_backend_config(batch,
                                                 dropout_rate,
                                                 mask_type,
                                                 layout,
+                                                sliding_window_length,
                                                 is_bwd):
   # Q, K, V: query, key, value in shape of BT(S)NH or BNT(S)H
   # P: BMM1 output in shape of BNTS
@@ -119,7 +120,8 @@ def create_dot_product_attention_backend_config(batch,
   # BMM1Grad2: dP @ K -> dQ
   # BMM2Grad1: P @ dO -> dV
   # BMM2Grad2: dO @ V -> dP
-
+  if sliding_window_length is None:
+    sliding_window_length = 0
   cudnn_fmha_backend_config = {
     "algorithm": {
       "algo_id": "0",
@@ -151,6 +153,7 @@ def create_dot_product_attention_backend_config(batch,
     "seed": seed,
     "is_flash_attention": True,
     "mask_type": convert_mask_type_to_string(mask_type),
+    "sliding_window_length": sliding_window_length,
   }
 
   # We define the contracting and batch dims in the format of
@@ -319,34 +322,38 @@ def check_compute_capability(capability):
 
 def _dot_product_attention_fwd(
     query, key, value, bias, q_seqlen, kv_seqlen, scale, seed,
-    dropout_rate, variadic_args, mask_type, layout, cudnn_version):
+    dropout_rate, variadic_args, mask_type, layout,
+    sliding_window_length, cudnn_version):
   # check if flash attention is supported for this attention pattern
   check_is_flash_attention(
       query, key, layout, cudnn_version, bias is not None, False)
   outputs = _dot_product_attention_fwd_p_wrapper.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, scale=scale,
       seed=seed, dropout_rate=dropout_rate, variadic_args=variadic_args,
-      mask_type=mask_type, layout=layout, is_training=False)
+      mask_type=mask_type, layout=layout,
+      sliding_window_length=sliding_window_length, is_training=False)
   output = outputs[0]
   return output
 
 def _dot_product_attention_fwd_rule(
     query, key, value, bias, q_seqlen, kv_seqlen, scale, seed,
-    dropout_rate, variadic_args, mask_type, layout, cudnn_version):
+    dropout_rate, variadic_args, mask_type, layout,
+    sliding_window_length, cudnn_version):
   # check if flash attention is supported for this attention pattern
   check_is_flash_attention(
       query, key, layout, cudnn_version, bias is not None, True)
   outputs = _dot_product_attention_fwd_p_wrapper.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, scale=scale,
       seed=seed, dropout_rate=dropout_rate, variadic_args=variadic_args,
-      mask_type=mask_type, layout=layout, is_training=True)
+      mask_type=mask_type, layout=layout,
+      sliding_window_length=sliding_window_length, is_training=True)
   res = (query, key, value, bias, q_seqlen, kv_seqlen,
          outputs[1], outputs[0])
   return outputs[0], res
 
 def _dot_product_attention_bwd_rule(
-    scale, seed, dropout_rate, variadic_args, mask_type, layout, is_training,
-    res, grad_output):
+    scale, seed, dropout_rate, variadic_args, mask_type, layout,
+    sliding_window_length, is_training, res, grad_output):
   (query, key, value, bias, q_seqlen, kv_seqlen, activation,
    fwd_output) = res
   grads = _dot_product_attention_bwd_p_wrapper.bind(
@@ -354,33 +361,39 @@ def _dot_product_attention_bwd_rule(
       fwd_output, grad_output, scale=scale, seed=seed,
       dropout_rate=dropout_rate, variadic_args=variadic_args,
       mask_type=mask_type, layout=layout,
+      sliding_window_length=sliding_window_length
   )
   grads = (*grads,) + (None,) * (6 - len(grads))
   return grads
 
 def _dot_product_attention_fwd_impl(
     query, key, value, bias, q_seqlen, kv_seqlen, scale, seed,
-    dropout_rate, variadic_args, mask_type, layout, is_training):
+    dropout_rate, variadic_args, mask_type, layout,
+    sliding_window_length, is_training):
   # args: {Q, K, V, mask*, bias*}
   outputs = _dot_product_attention_fwd_p.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, scale=scale,
       seed=seed, dropout_rate=dropout_rate, variadic_args=variadic_args,
-      mask_type=mask_type, layout=layout, is_training=is_training)
+      mask_type=mask_type, layout=layout,
+      sliding_window_length=sliding_window_length, is_training=is_training)
   return outputs
 
 def _dot_product_attention_bwd_impl(
     query, key, value, bias, q_seqlen, kv_seqlen, activation, fwd_output,
-    grad_output, scale, seed, dropout_rate, variadic_args, mask_type, layout):
+    grad_output, scale, seed, dropout_rate, variadic_args, mask_type, layout,
+    sliding_window_length):
   grads = _dot_product_attention_bwd_p.bind(
       query, key, value, bias, q_seqlen, kv_seqlen, activation,
       fwd_output, grad_output, scale=scale, seed=seed,
       dropout_rate=dropout_rate, variadic_args=variadic_args,
-      mask_type=mask_type, layout=layout)
+      mask_type=mask_type, layout=layout,
+      sliding_window_length=sliding_window_length)
   return grads
 
 def _dot_product_attention_fwd_abstract(
     query, key, value, bias, q_seqlen, kv_seqlen, *, scale, seed,
-    dropout_rate, variadic_args, mask_type, layout, is_training):
+    dropout_rate, variadic_args, mask_type, layout,
+    sliding_window_length, is_training):
   query_dtype = dtypes.canonicalize_dtype(query.dtype)
   if layout == AttentionLayout.BNTH.value:
     B, N, T, _ = query.shape
@@ -404,7 +417,7 @@ def _dot_product_attention_fwd_abstract(
 def _dot_product_attention_bwd_abstract(
     query, key, value, bias, q_seqlen, kv_seqlen, activation, fwd_output,
     grad_output, *, scale, seed, dropout_rate, variadic_args, mask_type,
-    layout):
+    layout, sliding_window_length):
   query_dtype = dtypes.canonicalize_dtype(query.dtype)
   key_dtype = dtypes.canonicalize_dtype(key.dtype)
   value_dtype = dtypes.canonicalize_dtype(value.dtype)
@@ -442,7 +455,8 @@ def _dot_product_attention_bwd_abstract(
 
 def _dot_product_attention_fwd_cuda_lowering(
     ctx, query, key, value, bias, q_seqlen, kv_seqlen, scale, seed,
-    dropout_rate, variadic_args, mask_type, layout, is_training):
+    dropout_rate, variadic_args, mask_type, layout,
+    sliding_window_length, is_training):
   query_type = ir.RankedTensorType(query.type)
   query_shape = query_type.shape
   key_type = ir.RankedTensorType(key.type)
@@ -465,7 +479,7 @@ def _dot_product_attention_fwd_cuda_lowering(
   workspace_type = ir.IntegerType.get_unsigned(8)
   backend_config = create_dot_product_attention_backend_config(
       B, N, T, S, query_type.element_type, scale, seed, dropout_rate,
-      mask_type, layout, is_bwd=False,
+      mask_type, layout, sliding_window_length, is_bwd=False,
   )
   # {Q, K, V, bias*, q_seqlen*, kv_seqlen*}
   # {output, activation*, workspace}
@@ -512,7 +526,7 @@ def _dot_product_attention_fwd_cuda_lowering(
 def _dot_product_attention_bwd_cuda_lowering(
     ctx, query, key, value, bias, q_seqlen, kv_seqlen, activation,
     fwd_output, grad_output, scale, seed, dropout_rate, variadic_args,
-    mask_type, layout):
+    mask_type, layout, sliding_window_length):
   query_type = ir.RankedTensorType(query.type)
   query_shape = query_type.shape
   key_type = ir.RankedTensorType(key.type)
@@ -538,7 +552,7 @@ def _dot_product_attention_bwd_cuda_lowering(
   grad_value_shape = (B, k_N, S, H)
   backend_config = create_dot_product_attention_backend_config(
       B, q_N, T, S, query_type.element_type, scale, seed, dropout_rate,
-      mask_type, layout, is_bwd=True,
+      mask_type, layout, sliding_window_length, is_bwd=True,
   )
   # {Q, K, V, activation, dO, bias*, O, q_seqlen*, kv_seqlen*}
   # {dQ, dK, dV, dbias*, workspace}
@@ -601,7 +615,7 @@ def _check_valid_batch_dims(bdims):
 
 def _dot_product_attention_fwd_batcher(
     batched_args, batch_dims, *, scale, seed, dropout_rate, variadic_args,
-    mask_type, layout, is_training):
+    mask_type, layout, sliding_window_length, is_training):
   _check_valid_batch_dims(batch_dims)
   query, key, value, bias, q_seqlen, kv_seqlen = batched_args
   query_bdim = batch_dims[0]
@@ -646,7 +660,7 @@ def _dot_product_attention_fwd_batcher(
 
 def _dot_product_attention_bwd_batcher(
      batched_args, batch_dims, *, scale, seed, dropout_rate, variadic_args,
-     mask_type, layout):
+     mask_type, layout, sliding_window_length):
   _check_valid_batch_dims(batch_dims)
   query, key, value, bias, q_seqlen, \
     kv_seqlen, activation, fwd_output, grad_output = batched_args
@@ -749,16 +763,16 @@ def _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args, is_training):
   return [out_sharding]
 
 _dot_product_attention_fwd_lower = custom_partitioning(
-    _dot_product_attention_fwd_impl, static_argnums=(6, 7, 8, 9, 10, 11, 12))
+    _dot_product_attention_fwd_impl, static_argnums=(6, 7, 8, 9, 10, 11, 12, 13))
 
 def _dot_product_attention_fwd_infer_sharding_from_operands(
-    scale, seed, dropout_rate, variadic_args, mask_type, layout, is_training,
-    mesh, arg_shapes, result_shape):
+    scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length,
+    is_training, mesh, arg_shapes, result_shape):
   return _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args, is_training)
 
 def _dot_product_attention_fwd_partition(
-    scale, seed, dropout_rate, variadic_args, mask_type, layout, is_training,
-    mesh, arg_shapes, result_shape):
+    scale, seed, dropout_rate, variadic_args, mask_type, layout, sliding_window_length,
+    is_training, mesh, arg_shapes, result_shape):
   # args sharding
   arg_shardings = tuple(arg_i.sharding for arg_i in arg_shapes)
   out_shardings = _infer_fwd_output_sharding(
@@ -771,6 +785,7 @@ def _dot_product_attention_fwd_partition(
       variadic_args=variadic_args,
       mask_type=mask_type,
       layout=layout,
+      sliding_window_length=sliding_window_length,
       is_training=is_training,
   )
   return mesh, impl, out_shardings, arg_shardings
@@ -797,17 +812,17 @@ def _infer_bwd_output_sharding(mesh, arg_shapes, variadic_args):
   return out_shardings
 
 _dot_product_attention_bwd_lower = custom_partitioning(
-    _dot_product_attention_bwd_impl, static_argnums=(9, 10, 11, 12, 13, 14)
+    _dot_product_attention_bwd_impl, static_argnums=(9, 10, 11, 12, 13, 14, 15)
 )
 
 def _dot_product_attention_bwd_infer_sharding_from_operands(
-    scale, seed, dropout_rate, variadic_args, mask_type, layout, mesh,
-    arg_shapes, result_shape):
+    scale, seed, dropout_rate, variadic_args, mask_type, layout,
+    sliding_window_length, mesh, arg_shapes, result_shape):
   return _infer_bwd_output_sharding(mesh, arg_shapes, variadic_args)
 
 def _dot_product_attention_bwd_partition(
-    scale, seed, dropout_rate, variadic_args, mask_type, layout, mesh,
-    arg_shapes, result_shape):
+    scale, seed, dropout_rate, variadic_args, mask_type, layout,
+    sliding_window_length, mesh, arg_shapes, result_shape):
   out_shardings = _infer_bwd_output_sharding(mesh, arg_shapes, variadic_args)
   # args sharding
   arg_shardings = tuple(arg_i.sharding for arg_i in arg_shapes)
@@ -820,6 +835,7 @@ def _dot_product_attention_bwd_partition(
       variadic_args=variadic_args,
       mask_type=mask_type,
       layout=layout,
+      sliding_window_length=sliding_window_length,
     )
     grads = impl(*args)
     _, has_dbias = variadic_args
@@ -917,7 +933,7 @@ dispatch.prim_requires_devices_during_lowering.add(
 )
 
 
-@functools.partial(jax.custom_vjp, nondiff_argnums=(6, 7, 8, 9, 10, 11, 12))
+@functools.partial(jax.custom_vjp, nondiff_argnums=(6, 7, 8, 9, 10, 11, 12, 13))
 def _dot_product_attention(query: Array,
                            key: Array,
                            value: Array,
@@ -930,11 +946,13 @@ def _dot_product_attention(query: Array,
                            variadic_args: tuple[bool, ...],
                            mask_type: bool,
                            layout: int,
+                           sliding_window_length: int | None,
                            cudnn_version: int):
   output = _dot_product_attention_fwd(
       query, key, value, bias, q_seqlen, kv_seqlen, scale=scale,
       seed=seed, dropout_rate=dropout_rate, variadic_args=variadic_args,
-      mask_type=mask_type, layout=layout, cudnn_version=cudnn_version)
+      mask_type=mask_type, layout=layout, sliding_window_length=sliding_window_length,
+      cudnn_version=cudnn_version)
   return output
 
 # _dot_product_attention_fwd must have the same func signature as _dot_product_attention
@@ -953,7 +971,8 @@ def dot_product_attention(query: Array,
                           mask_type: MaskType = MaskType.NO_MASK,
                           seed: int = 42,
                           dropout_rate: float = 0.,
-                          qkv_layout: str = "BTNH"):
+                          qkv_layout: str = "BTNH",
+                          sliding_window_length: int | None = None):
   """Computes dot-product attention given query (Q), key (K), and value (V).
 
   This function serves as the core operation for applying attention
@@ -984,7 +1003,11 @@ def dot_product_attention(query: Array,
     scale: Scale for the query.
     dropout_rate: Dropout rate.
     qkv_layout: Layout string, with supported formats being BTNH, BNTH, BSNH,
-                BNSH.
+      BNSH.
+    sliding_window_length: Window size to make attention only attend to each
+      token's left local window (pos - sliding_window_length, pos] where `pos`
+      is the index of each token. E.g., if sliding_window_length == 3 and the
+      sequence is [0, 1, 2, 3, c, 4, 5], token `c` can attend to [4, 5, c].
 
   Returns:
     Output of the same shape as the query.
@@ -997,6 +1020,9 @@ def dot_product_attention(query: Array,
   layout = _normalize_layout(qkv_layout)
   if has_padding(mask_type) and (q_seqlen is None or kv_seqlen is None):
     raise ValueError("Require q_seqlen and kv_seqlen to generate padding mask")
+  if sliding_window_length is not None and sliding_window_length <= 0:
+    raise ValueError(
+      f"Require sliding_window_length > 0, got {sliding_window_length}")
 
   if bias is not None:
     # reshape bias to have 4D shape
@@ -1032,6 +1058,6 @@ def dot_product_attention(query: Array,
     kv_seqlen = jnp.zeros(0, dtype=query.dtype)
   output = _dot_product_attention(
       query, key, value, bias, q_seqlen, kv_seqlen, scale, seed,
-      dropout_rate, variadic_args, mask_type, layout.value, cudnn_version
-  )
+      dropout_rate, variadic_args, mask_type, layout.value, sliding_window_length,
+      cudnn_version)
   return output
