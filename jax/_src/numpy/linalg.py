@@ -501,7 +501,7 @@ def slogdet(a: ArrayLike, *, method: str | None = None) -> SlogdetResult:
   """
   Compute the sign and (natural) logarithm of the determinant of an array.
 
-  JAX implementation of :func:`numpy.linalg.slotdet`.
+  JAX implementation of :func:`numpy.linalg.slogdet`.
 
   Args:
     a: array of shape ``(..., M, M)`` for which to compute the sign and log determinant.
