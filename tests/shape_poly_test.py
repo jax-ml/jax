@@ -3452,6 +3452,11 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
       if 0 < shape[-1] <= 32:
         harness.check_result = False
 
+    if harness.group_name == "vmap_eigh":
+      raise unittest.SkipTest(
+          "Should not compare eigendecompositions for equality directly"
+          "because eigenvalues are sorted.")
+
     if harness.group_name == "vmap_tan":
       # Tan (b/274462307) require support for custom call stablehlo.tan.
       raise unittest.SkipTest(

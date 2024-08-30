@@ -119,6 +119,11 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         device == "tpu"):
       raise unittest.SkipTest("b/264716764: error on tf.cast from c64 to f32")
 
+    if ("eigh" == harness.group_name and
+        device == "cpu"):
+      raise unittest.SkipTest(
+          "Equality comparisons on eigendecompositions are not stable.")
+
     if (config.jax2tf_default_native_serialization.value and
         device == "gpu" and
         "lu" in harness.fullname):
