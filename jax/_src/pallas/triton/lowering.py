@@ -580,6 +580,7 @@ class _Extern:
       return False
     return all(
         aval.dtype == jnp.dtype(arg_type)
+        or (aval.weak_type and aval.dtype.kind == jnp.dtype(arg_type).kind)
         for aval, arg_type in zip(avals, self.arg_types)
     )
 
