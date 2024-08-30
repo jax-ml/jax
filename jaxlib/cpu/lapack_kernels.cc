@@ -1007,6 +1007,11 @@ ffi::Error EigenvalueDecompositionSymmetric<dtype>::Kernel(
     fn(&mode_v, &uplo_v, &x_cols_v, x_out_data, &x_leading_dim_v,
        eigenvalues_data, work_data.get(), &work_size_v, iwork_data.get(),
        &iwork_size_v, info_data);
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_out_data,
+                                        sizeof(*x_out_data) * x_cols * x_cols);
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigenvalues_data,
+                                        sizeof(*eigenvalues_data) * x_cols);
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(info_data, sizeof(lapack_int));
     x_out_data += x_out_step;
     eigenvalues_data += eigenvalues_step;
     ++info_data;
