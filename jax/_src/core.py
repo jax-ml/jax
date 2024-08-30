@@ -1733,7 +1733,7 @@ def _invalid_shape_error(shape: Shape, context: str=""):
   return TypeError(msg)
 
 class ShapedArray(UnshapedArray):
-  __slots__ = ['shape', 'dtype', 'weak_type', 'sharding']
+  __slots__ = ['shape', 'sharding']  # inherits slots from parent
   array_abstraction_level = 2
   named_shape = {}  # type: ignore
 
