@@ -1198,10 +1198,10 @@ class PallasControlFlowTest(PallasBaseTest):
         opcode = program_ref[i]
         state = jax.lax.switch(
             opcode,
-            (lambda state, params, i: state + params[i, 0] * 2.**i * x,
-             lambda state, params, i: state + params[i, 1] * 2.**i * x,
-             lambda state, params, i: state + params[i, 2] * 2.**i * x,
-             lambda state, params, i: state + params[i, 1] * 2.**i * x,
+            (lambda state, params, i: state + params[i, 0] * (2**i).astype(jnp.float32) * x,
+             lambda state, params, i: state + params[i, 1] * (2**i).astype(jnp.float32) * x,
+             lambda state, params, i: state + params[i, 2] * (2**i).astype(jnp.float32) * x,
+             lambda state, params, i: state + params[i, 1] * (2**i).astype(jnp.float32) * x,
              ),
             state, params_ref, i)
         return state, program_ref, params_ref
@@ -1252,11 +1252,11 @@ class PallasControlFlowTest(PallasBaseTest):
         state = jax.lax.switch(
             opcode,
             (lambda state, *_: state,
-             lambda state, i: state + params_ref[i, 0] * 2.**i * x,
-             lambda state, i: state + params_ref[i, 1] * 2.**i * x,
-             lambda state, i: state + params_ref[i, 2] * 2.**i * x,
-             lambda state, i: state + params_ref[i, 1] * 2.**i * x,
-             ),
+             lambda state, i: state + params_ref[i, 0] * (2**i).astype(jnp.float32) * x,
+             lambda state, i: state + params_ref[i, 1] * (2**i).astype(jnp.float32) * x,
+             lambda state, i: state + params_ref[i, 2] * (2**i).astype(jnp.float32) * x,
+             lambda state, i: state + params_ref[i, 1] * (2**i).astype(jnp.float32) * x,
+            ),
             state, i)
         return state, program_ref, params_ref
       out_ref[...] = jax.lax.fori_loop(
