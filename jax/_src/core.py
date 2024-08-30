@@ -2804,11 +2804,6 @@ def clean_up_dead_vars(eqn: JaxprEqn, env: dict[Var, Any],
 def get_trace_state():
   return thread_local_state.trace_state
 
-# Prefer to use `take_current_trace` instead. That avoids having both an implicit
-# trace and an explicit one around at the same time, which are easily mixed up.
-def find_cur_trace():
-  return get_trace_state().trace
-
 class NotATrace: pass
 
 

@@ -39,10 +39,12 @@ Pytree = Any
 register = api_util.register_class_with_attrs
 
 def jax_getattr(obj: Any, attr: str):
-  return core.find_cur_trace().process_getattr(obj, attr)
+  with core.take_current_trace() as t:
+    return t.process_getattr(obj, attr)
 
 def jax_setattr(obj: Any, attr: str, val: Pytree):
-  return core.find_cur_trace().process_setattr(obj, attr, val)
+  with core.take_current_trace() as t:
+    return t.process_setattr(obj, attr, val)
 
 def _getattr_impl(_, obj, attr):
   return getattr(obj, attr)
@@ -109,32 +111,32 @@ class JVPTag: pass
 
 @lu.transformation
 def jvpfun2(primals, tangents):
-  parent_trace = core.find_cur_trace()
   tag = JVPTag()
   tangents = [Zero.from_primal_value(t) if not isinstance(t, Zero)
               and dtype(t) == float0 else t for t in tangents]
   ctx = source_info_util.transform_name_stack('jvp')
   with ctx:
-    out_primals, out_tangents, tangent_attrs_out = yield (parent_trace, tag, primals, tangents), {}
+    out_primals, out_tangents, tangent_attrs_out = yield (tag, primals, tangents), {}
   yield out_primals, out_tangents, tangent_attrs_out
 
 @lu.transformation
-def jvp_subtrace2(parent_trace, tag, primals, tangents):
-  trace = ad.JVPTrace(parent_trace, tag)
-  tag.attrs_tracked = []  # attrs written to
-  in_tracers = [ad.JVPTracer(trace, x, t) if type(t) is not ad.Zero else x
-                for x, t in zip(primals, tangents)]
-  with core.set_current_trace(trace):
-    ans = yield in_tracers, {}
-    out_primals, out_tangents = unzip2(map(trace.to_primal_tangent_pair, ans))
-    tangent_attrs_out = []
-    for (obj, name) in tag.attrs_tracked:
-      primal, tangent = trace.to_primal_tangent_pair(jax_getattr(obj, name))
-      jax_setattr(obj, name, primal)
-      if type(tangent) is not ad.Zero:
-        tangent_attrs_out.append((obj, name, tangent))
-  del tag.attrs_tracked
-  yield out_primals, out_tangents, tangent_attrs_out
+def jvp_subtrace2(tag, primals, tangents):
+  with core.take_current_trace() as parent_trace:
+    trace = ad.JVPTrace(parent_trace, tag)
+    tag.attrs_tracked = []  # attrs written to
+    in_tracers = [ad.JVPTracer(trace, x, t) if type(t) is not ad.Zero else x
+                  for x, t in zip(primals, tangents)]
+    with core.set_current_trace(trace):
+      ans = yield in_tracers, {}
+      out_primals, out_tangents = unzip2(map(trace.to_primal_tangent_pair, ans))
+      tangent_attrs_out = []
+      for (obj, name) in tag.attrs_tracked:
+        primal, tangent = trace.to_primal_tangent_pair(jax_getattr(obj, name))
+        jax_setattr(obj, name, primal)
+        if type(tangent) is not ad.Zero:
+          tangent_attrs_out.append((obj, name, tangent))
+    del tag.attrs_tracked
+    yield out_primals, out_tangents, tangent_attrs_out
 
 def _setattr_jvp(trace, obj, attr, maybe_tracer):
   primal, tangent = trace.to_primal_tangent_pair(maybe_tracer)
