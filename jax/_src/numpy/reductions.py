@@ -30,7 +30,6 @@ from jax._src import api
 from jax._src import core
 from jax._src import deprecations
 from jax._src import dtypes
-from jax._src.numpy import ufuncs
 from jax._src.numpy.util import (
     _broadcast_to, check_arraylike, _complex_elem_type,
     promote_dtypes_inexact, promote_dtypes_numeric, _where, implements)
@@ -2039,9 +2038,9 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
   a_shape = a.shape
 
   if squash_nans:
-    a = _where(ufuncs.isnan(a), np.nan, a) # Ensure nans are positive so they sort to the end.
+    a = _where(lax_internal._isnan(a), np.nan, a) # Ensure nans are positive so they sort to the end.
     a = lax.sort(a, dimension=axis)
-    counts = sum(ufuncs.logical_not(ufuncs.isnan(a)), axis=axis, dtype=q.dtype, keepdims=keepdims)
+    counts = sum(lax_internal.bitwise_not(lax_internal._isnan(a)), axis=axis, dtype=q.dtype, keepdims=keepdims)
     shape_after_reduction = counts.shape
     q = lax.expand_dims(
       q, tuple(range(q_ndim, len(shape_after_reduction) + q_ndim)))
@@ -2067,7 +2066,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     index[axis] = high
     high_value = a[tuple(index)]
   else:
-    a = _where(any(ufuncs.isnan(a), axis=axis, keepdims=True), np.nan, a)
+    a = _where(any(lax_internal._isnan(a), axis=axis, keepdims=True), np.nan, a)
     a = lax.sort(a, dimension=axis)
     n = lax.convert_element_type(a_shape[axis], lax_internal._dtype(q))
     q = lax.mul(q, n - 1)
@@ -2223,7 +2222,8 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
     Array([1.5, 3. , 4.5], dtype=float32)
   """
   check_arraylike("nanpercentile", a, q)
-  q = ufuncs.true_divide(q, 100.0)
+  q, = promote_dtypes_inexact(q)
+  q = q / 100
   if not isinstance(interpolation, DeprecatedArg):
     deprecations.warn(
       "jax-numpy-quantile-interpolation",

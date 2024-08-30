@@ -27,6 +27,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * ``jax.tree_util.register_dataclass`` now checks that ``data_fields``
     and ``meta_fields`` includes all dataclass fields with ``init=True``
     and only them, if ``nodetype`` is a dataclass.
+  * Several {mod}`jax.numpy` functions now have full {class}`~jax.numpy.ufunc`
+    interfaces, including {obj}`~jax.numpy.add`, {obj}`~jax.numpy.multiply`,
+    {obj}`~jax.numpy.bitwise_and`, {obj}`~jax.numpy.bitwise_or`,
+    {obj}`~jax.numpy.bitwise_xor`, {obj}`~jax.numpy.logical_and`,
+    {obj}`~jax.numpy.logical_and`, and {obj}`~jax.numpy.logical_and`.
+    In future releases we plan to expand these to other ufuncs.
 
 * Breaking changes
   * The MHLO MLIR dialect (`jax.extend.mlir.mhlo`) has been removed. Use the
