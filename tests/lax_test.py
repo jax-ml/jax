@@ -19,6 +19,7 @@ import math
 import operator
 import platform
 import types
+import typing
 import unittest
 from unittest import SkipTest
 
@@ -1106,6 +1107,24 @@ class LaxTest(jtu.JaxTestCase):
     )
     self.assertArraysAllClose(
         dot_general_result, dot_general_result_upcasted, rtol=1e-3, atol=1e-3)
+
+  def testDotMetadata(self):
+    class AndysCoolMetadata(typing.NamedTuple):
+      meta: str
+      def to_str(self): return self.meta
+      def transpose_lhs(self): return AndysCoolMetadata(self.meta[-1:] + self.meta[:-1])
+      def transpose_rhs(self): return AndysCoolMetadata(self.meta[::-1])
+
+    meta = AndysCoolMetadata('roy')
+    x, y = jnp.ones((3, 4)), jnp.ones((4, 5))
+
+    @jax.jit
+    def f(x, y):
+      return jax.lax.dot_general(x, y, dimension_numbers=[((), ()), ([1], [0])],
+                                 _xla_metadata=meta).sum()
+    self.assertIn('roy', f.lower(x, y).compiler_ir('hlo').as_hlo_text())
+    self.assertIn('yro', jax.jit(jax.grad(f, 0)).lower(x, y).compiler_ir('hlo').as_hlo_text())
+    self.assertIn('yor', jax.jit(jax.grad(f, 1)).lower(x, y).compiler_ir('hlo').as_hlo_text())
 
   @jtu.sample_product(
       [

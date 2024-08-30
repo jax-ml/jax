@@ -544,7 +544,7 @@ _BCOO_STANDARD_PRIMITIVES = {
   lax.broadcast_in_dim_p: sparse.bcoo_broadcast_in_dim,
   lax.concatenate_p: lambda *a, **k: sparse.bcoo_concatenate(a, **k),
   lax.conv_general_dilated_p: sparse.bcoo_conv_general_dilated,
-  lax.dot_general_p: sparse.bcoo_dot_general,
+  lax.dot_general_p: lambda *a, xla_meta, **k: sparse.bcoo_dot_general(*a, **k),
   lax.dynamic_slice_p: lambda *a, **k: sparse.bcoo_dynamic_slice(a[0], a[1:], **k),
   lax.reshape_p: sparse.bcoo_reshape,
   lax.rev_p: sparse.bcoo_rev,
@@ -556,7 +556,7 @@ for prim, bcoo_impl in _BCOO_STANDARD_PRIMITIVES.items():
   sparse_rules_bcoo[prim] = _standard_sparse_rule(prim, bcoo_impl)
 
 _BCSR_STANDARD_PRIMITIVES = {
-  lax.dot_general_p: sparse.bcsr_dot_general,
+    lax.dot_general_p: lambda *a, xla_meta, **k: sparse.bcsr_dot_general(*a, **k),
   lax.broadcast_in_dim_p: sparse.bcsr_broadcast_in_dim,
   lax.concatenate_p: lambda *a, **k: sparse.bcsr_concatenate(a, **k),
 }

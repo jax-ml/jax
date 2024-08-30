@@ -22,7 +22,7 @@ from functools import partial
 import itertools
 import math
 import operator
-from typing import Any, TypeVar, Union, cast as type_cast, overload
+from typing import Any, TypeVar, Union, cast as type_cast, overload, Protocol
 import warnings
 
 import numpy as np
@@ -731,9 +731,18 @@ def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
 DotDimensionNumbers = tuple[tuple[Sequence[int], Sequence[int]],
                             tuple[Sequence[int], Sequence[int]]]
 
+class XLADotMeta(Protocol):
+  def __hash__(self, other): assert False
+  def __eq__(self, other): assert False
+  def to_str(self) -> str: assert False
+  def transpose_lhs(self) -> XLADotMeta: assert False
+  def transpose_rhs(self) -> XLADotMeta: assert False
+
 def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionNumbers,
                 precision: PrecisionLike = None,
-                preferred_element_type: DTypeLike | None = None) -> Array:
+                preferred_element_type: DTypeLike | None = None,
+                _xla_metadata: XLADotMeta | None = None,
+                ) -> Array:
   """General dot product/contraction operator.
 
   Wraps XLA's `DotGeneral
@@ -777,7 +786,8 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
   return dot_general_p.bind(lhs, rhs,
                             dimension_numbers=(cdims, bdims),
                             precision=canonicalize_precision(precision),
-                            preferred_element_type=preferred_element_type)
+                            preferred_element_type=preferred_element_type,
+                            xla_meta=_xla_metadata)
 
 
 def ragged_dot(
@@ -2713,8 +2723,7 @@ def _validate_preferred_element_type(input_dtype, preferred_element_type):
                     "original type.")
 
 
-def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision,
-                            preferred_element_type: DTypeLike | None):
+def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, **_):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   if not all(np.all(np.greater_equal(d, 0)) and np.all(np.less(d, lhs.ndim))
              for d in (lhs_contracting, lhs_batch)):
@@ -2790,10 +2799,12 @@ def tuple_delete(tup, idx):
 
 
 def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
-                            preferred_element_type: DTypeLike | None):
+                            preferred_element_type: DTypeLike | None,
+                            xla_meta: XLADotMeta | None):
   # We're mostly matching XLA's logic here, namely in shape_inference.cc and
   # primitive_util.h's HigherPrecisionType, e.g.
   # https://github.com/openxla/xla/blob/ea3a841768d0dcf192e5820c9b25c34c73f2226a/xla/primitive_util.h#L329
+  del xla_meta  # Unused.
   def type_properties(dt):
     c = _real_dtype(dt) if dtypes.issubdtype(dt, np.complexfloating) else dt
     return (dtypes.issubdtype(dt, np.complexfloating),
@@ -2835,6 +2846,7 @@ def _maybe_upcast(result_dtype, preferred_element_type):
 
 def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
                                preferred_element_type: DTypeLike | None,
+                               xla_meta: XLADotMeta | None,
                                swap_ans=False):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   x_ndim = x.aval.ndim
@@ -2842,33 +2854,31 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
   y_kept = remaining(range(np.ndim(y)), y_contract, y_batch)
   if swap_ans:
     ans_batch, ans_y, _ = ranges_like(x_batch, y_kept, x_kept)
+    xla_meta = xla_meta and xla_meta.transpose_rhs()
   else:
     ans_batch, _, ans_y = ranges_like(x_batch, x_kept, y_kept)
+    xla_meta = xla_meta and xla_meta.transpose_lhs()
   dims = ((ans_y, y_kept), (ans_batch, y_batch))
   x_contract_sorted_by_y = list(np.take(x_contract, np.argsort(y_contract)))
   out_axes = np.argsort(list(x_batch) + x_kept + x_contract_sorted_by_y)
   x_bar = transpose(dot_general(g, y, dims, precision=precision,
-                                preferred_element_type=preferred_element_type),
+                                preferred_element_type=preferred_element_type,
+                                _xla_metadata=xla_meta),
                     tuple(out_axes))
   if x_bar.dtype != x.aval.dtype:
     x_bar = _convert_element_type(x_bar, x.aval.dtype, x.aval.weak_type)
   return x_bar
 
-def _dot_general_transpose_rhs(g, x, y, *, dimension_numbers, precision,
-                               preferred_element_type: DTypeLike | None):
+def _dot_general_transpose_rhs(g, x, y, *, dimension_numbers, **params):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   swapped_dimension_numbers = ((y_contract, x_contract), (y_batch, x_batch))
   y_bar = _dot_general_transpose_lhs(
-    g, y, x, dimension_numbers=swapped_dimension_numbers, precision=precision,
-    preferred_element_type=preferred_element_type,
-    swap_ans=True)
+    g, y, x, dimension_numbers=swapped_dimension_numbers, **params, swap_ans=True)
   if y_bar.dtype != y.aval.dtype:
     y_bar = _convert_element_type(y_bar, y.aval.dtype, y.aval.weak_type)
   return y_bar
 
-def _dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers,
-                            precision,
-                            preferred_element_type: DTypeLike | None):
+def _dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers, **params):
   lhs, rhs = batched_args
   lbd, rbd = batch_dims
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
@@ -2892,9 +2902,8 @@ def _dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers,
     rhs_shape = batching.bdim_as_shape(rbd, rhs.shape)
   else:
     rhs_shape = np.shape(rhs)
-  batched_out = dot_general(lhs, rhs, new_dimension_numbers,
-                            precision=precision,
-                            preferred_element_type=preferred_element_type)
+  batched_out = dot_general_p.bind(
+      lhs, rhs, dimension_numbers=new_dimension_numbers, **params)
   result_batch_dim = batching.shape_as_bdim(
       result_stack_dim,
       _dot_general_shape_computation(lhs_shape, rhs_shape, new_dimension_numbers))
@@ -2964,8 +2973,8 @@ def _dot_general_padding_rule(in_avals, out_avals, lhs, rhs, *,
   return [dot_general(lhs_, rhs, dimension_numbers=dimension_numbers, **params)]
 
 def _dot_general_pp_rule(eqn, context, settings) -> pp.Doc:
-  # * suppress printing precision or preferred_element_type when None.
-  # * print dimension_numbers as list-of-lists to be shorter.
+  # * suppress printing options like precision or preferred_element_type if None
+  # * print dimension_numbers as list-of-lists to be shorter
   printed_params = {k: v for k, v in eqn.params.items() if v is not None}
   (lhs_cont, rhs_cont), (lhs_batch, rhs_batch) = eqn.params['dimension_numbers']
   printed_params['dimension_numbers'] = (
@@ -2993,7 +3002,8 @@ def precision_attr(precision: Precision) -> ir.ArrayAttr:
 
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                        precision, preferred_element_type: np.dtype | None,
-                       platform: str = "default"):
+                       platform: str = "default",
+                       xla_meta: XLADotMeta | None):
   def _is_fp8_mixed_precision_matmul(_lhs_dtypes, _rhs_dtypes):
     fp8_dtypes = (dtypes.float8_e4m3fn, dtypes.float8_e5m2,
                   dtypes.float8_e5m2fnuz, dtypes.float8_e4m3fnuz)
@@ -3034,14 +3044,13 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
       rhs_batching_dimensions=list(rhs_batch),
       lhs_contracting_dimensions=list(lhs_contracting),
       rhs_contracting_dimensions=list(rhs_contracting))
-  return [
-      hlo.dot_general(
-          mlir.aval_to_ir_type(aval_out),
-          lhs,
-          rhs,
-          dot_dnums,
-          precision_config=precision_attr(precision))
-  ]
+
+  op = hlo.DotGeneralOp(mlir.aval_to_ir_type(aval_out), lhs, rhs, dot_dnums,
+                        precision_config=precision_attr(precision))
+  if xla_meta:
+    op.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
+        {'meta': ir.StringAttr.get(xla_meta.to_str())})
+  return op.results
 
 mlir.register_lowering(dot_general_p, _dot_general_lower)
 
@@ -3065,11 +3074,12 @@ def _ragged_dot_shape_rule(lhs: Array, rhs: Array, group_sizes: Array, **_) -> S
 _RAGGED_DOT_DOT_DIMENSION_NUMBERS: DotDimensionNumbers = (([2, 0], [1, 0]), ([], []))
 
 def _ragged_dot_dtype_rule(lhs: Array, rhs: Array, group_sizes: Array,
-                           precision,                          preferred_element_type: DTypeLike | None, **_) -> np.dtype:
+                           precision, preferred_element_type: DTypeLike | None, **_) -> np.dtype:
   if not dtypes.issubdtype(group_sizes.dtype, np.integer):
     raise TypeError("ragged_dot requires that group_sizes.dtype is subtype of np.integer.")
   # defer the output dtype to dot_general, which is part of the _ragged_dot_impl.
-  return _dot_general_dtype_rule(lhs, rhs, dimension_numbers=_RAGGED_DOT_DOT_DIMENSION_NUMBERS, precision=precision, preferred_element_type=preferred_element_type)
+  return _dot_general_dtype_rule(lhs, rhs, dimension_numbers=_RAGGED_DOT_DOT_DIMENSION_NUMBERS, precision=precision,
+                                 preferred_element_type=preferred_element_type, xla_meta=None)
 
 
 def _ragged_dot_jvp_rule(
