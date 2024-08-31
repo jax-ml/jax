@@ -30,11 +30,13 @@ from jax._src.api import jit
 from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax
 from jax._src.lax import other as lax_other
-from jax._src.typing import Array, ArrayLike
+from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.numpy.util import (
    check_arraylike, promote_args, promote_args_inexact,
    promote_args_numeric, promote_dtypes_inexact, promote_dtypes_numeric,
    promote_shapes, _where, implements, check_no_float0s)
+from jax._src.numpy.ufunc_api import ufunc
+from jax._src.numpy import reductions
 
 _lax_const = lax._const
 
@@ -501,31 +503,81 @@ def sqrt(x: ArrayLike, /) -> Array:
 def cbrt(x: ArrayLike, /) -> Array:
   return lax.cbrt(*promote_args_inexact('cbrt', x))
 
-@implements(np.add, module='numpy')
 @partial(jit, inline=True)
-def add(x: ArrayLike, y: ArrayLike, /) -> Array:
+def _add(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Add two arrays element-wise.
+
+  JAX implementation of :obj:`numpy.add`. This is a universal function,
+  and supports the additional APIs described at :class:`jax.numpy.ufunc`.
+
+  Args:
+    x, y: arrays to add. Must be broadcastable to a common shape.
+
+  Returns:
+    Array containing the result of the element-wise addition.
+  """
   x, y = promote_args("add", x, y)
   return lax.add(x, y) if x.dtype != bool else lax.bitwise_or(x, y)
 
-@implements(np.multiply, module='numpy')
 @partial(jit, inline=True)
-def multiply(x: ArrayLike, y: ArrayLike, /) -> Array:
+def _multiply(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Multiply two arrays element-wise.
+
+  JAX implementation of :obj:`numpy.multiply`. This is a universal function,
+  and supports the additional APIs described at :class:`jax.numpy.ufunc`.
+
+  Args:
+    x, y: arrays to multiply. Must be broadcastable to a common shape.
+
+  Returns:
+    Array containing the result of the element-wise multiplication.
+  """
   x, y = promote_args("multiply", x, y)
   return lax.mul(x, y) if x.dtype != bool else lax.bitwise_and(x, y)
 
-@implements(np.bitwise_and, module='numpy')
 @partial(jit, inline=True)
-def bitwise_and(x: ArrayLike, y: ArrayLike, /) -> Array:
+def _bitwise_and(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Compute the bitwise AND operation elementwise.
+
+  JAX implementation of :obj:`numpy.bitwise_and`. This is a universal function,
+  and supports the additional APIs described at :class:`jax.numpy.ufunc`.
+
+  Args:
+    x, y: integer or boolean arrays. Must be broadcastable to a common shape.
+
+  Returns:
+    Array containing the result of the element-wise bitwise AND.
+  """
   return lax.bitwise_and(*promote_args("bitwise_and", x, y))
 
-@implements(np.bitwise_or, module='numpy')
 @partial(jit, inline=True)
-def bitwise_or(x: ArrayLike, y: ArrayLike, /) -> Array:
+def _bitwise_or(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Compute the bitwise OR operation elementwise.
+
+  JAX implementation of :obj:`numpy.bitwise_or`. This is a universal function,
+  and supports the additional APIs described at :class:`jax.numpy.ufunc`.
+
+  Args:
+    x, y: integer or boolean arrays. Must be broadcastable to a common shape.
+
+  Returns:
+    Array containing the result of the element-wise bitwise OR.
+  """
   return lax.bitwise_or(*promote_args("bitwise_or", x, y))
 
-@implements(np.bitwise_xor, module='numpy')
 @partial(jit, inline=True)
-def bitwise_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
+def _bitwise_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Compute the bitwise XOR operation elementwise.
+
+  JAX implementation of :obj:`numpy.bitwise_xor`. This is a universal function,
+  and supports the additional APIs described at :class:`jax.numpy.ufunc`.
+
+  Args:
+    x, y: integer or boolean arrays. Must be broadcastable to a common shape.
+
+  Returns:
+    Array containing the result of the element-wise bitwise XOR.
+  """
   return lax.bitwise_xor(*promote_args("bitwise_xor", x, y))
 
 @implements(np.left_shift, module='numpy')
@@ -579,19 +631,49 @@ def nextafter(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.nextafter(*promote_args_inexact("nextafter", x, y))
 
 # Logical ops
-@implements(np.logical_and, module='numpy')
 @partial(jit, inline=True)
-def logical_and(x: ArrayLike, y: ArrayLike, /) -> Array:
+def _logical_and(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Compute the logical AND operation elementwise.
+
+  JAX implementation of :obj:`numpy.logical_and`. This is a universal function,
+  and supports the additional APIs described at :class:`jax.numpy.ufunc`.
+
+  Args:
+    x, y: input arrays. Must be broadcastable to a common shape.
+
+  Returns:
+    Array containing the result of the element-wise logical AND.
+  """
   return lax.bitwise_and(*map(_to_bool, promote_args("logical_and", x, y)))
 
-@implements(np.logical_or, module='numpy')
 @partial(jit, inline=True)
-def logical_or(x: ArrayLike, y: ArrayLike, /) -> Array:
+def _logical_or(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Compute the logical OR operation elementwise.
+
+  JAX implementation of :obj:`numpy.logical_or`. This is a universal function,
+  and supports the additional APIs described at :class:`jax.numpy.ufunc`.
+
+  Args:
+    x, y: input arrays. Must be broadcastable to a common shape.
+
+  Returns:
+    Array containing the result of the element-wise logical OR.
+  """
   return lax.bitwise_or(*map(_to_bool, promote_args("logical_or", x, y)))
 
-@implements(np.logical_xor, module='numpy')
 @partial(jit, inline=True)
-def logical_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
+def _logical_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Compute the logical XOR operation elementwise.
+
+  JAX implementation of :obj:`numpy.logical_xor`. This is a universal function,
+  and supports the additional APIs described at :class:`jax.numpy.ufunc`.
+
+  Args:
+    x, y: input arrays. Must be broadcastable to a common shape.
+
+  Returns:
+    Array containing the result of the element-wise logical XOR.
+  """
   return lax.bitwise_xor(*map(_to_bool, promote_args("logical_xor", x, y)))
 
 @implements(np.logical_not, module='numpy')
@@ -1513,3 +1595,38 @@ def _sinc_maclaurin(k, x):
 def _sinc_maclaurin_jvp(k, primals, tangents):
   (x,), (t,) = primals, tangents
   return _sinc_maclaurin(k, x), _sinc_maclaurin(k + 1, x) * t
+
+
+def _logical_and_reduce(a: ArrayLike, axis: int = 0, dtype: DTypeLike | None = None,
+                        out: None = None, keepdims: bool = False, initial: ArrayLike | None = None,
+                        where: ArrayLike | None = None):
+  if initial is not None:
+    raise ValueError("initial argument not supported in jnp.logical_and.reduce()")
+  result = reductions.all(a, axis=axis, out=out, keepdims=keepdims, where=where)
+  return result if dtype is None else result.astype(dtype)
+
+
+def _logical_or_reduce(a: ArrayLike, axis: int = 0, dtype: DTypeLike | None = None,
+                       out: None = None, keepdims: bool = False, initial: ArrayLike | None = None,
+                       where: ArrayLike | None = None):
+  if initial is not None:
+    raise ValueError("initial argument not supported in jnp.logical_or.reduce()")
+  result = reductions.any(a, axis=axis, out=out, keepdims=keepdims, where=where)
+  return result if dtype is None else result.astype(dtype)
+
+
+# Generate ufunc interfaces for several common binary functions.
+# We start with binary ufuncs that have well-defined identities.'
+# TODO(jakevdp): wrap more ufuncs. Possibly define a decorator for convenience?
+# TODO(jakevdp): optimize some implementations.
+# - define add.at/multiply.at in terms of scatter_add/scatter_mul
+# - define add.reduceat/multiply.reduceat in terms of segment_sum/segment_prod
+# - define all monoidal reductions in terms of lax.reduce
+add = ufunc(_add, name="add", nin=2, nout=1, identity=0, call=_add, reduce=reductions.sum, accumulate=reductions.cumsum)
+multiply = ufunc(_multiply, name="multiply", nin=2, nout=1, identity=1, call=_multiply, reduce=reductions.prod, accumulate=reductions.cumprod)
+bitwise_and = ufunc(_bitwise_and, name="bitwise_and", nin=2, nout=1, identity=-1, call=_bitwise_and)
+bitwise_or = ufunc(_bitwise_or, name="bitwise_or", nin=2, nout=1, identity=0, call=_bitwise_or)
+bitwise_xor = ufunc(_bitwise_xor, name="bitwise_xor", nin=2, nout=1, identity=0, call=_bitwise_xor)
+logical_and = ufunc(_logical_and, name="logical_and", nin=2, nout=1, identity=True, call=_logical_and, reduce=_logical_and_reduce)
+logical_or = ufunc(_logical_or, name="logical_or", nin=2, nout=1, identity=False, call=_logical_or, reduce=_logical_or_reduce)
+logical_xor = ufunc(_logical_xor, name="logical_xor", nin=2, nout=1, identity=False, call=_logical_xor)
