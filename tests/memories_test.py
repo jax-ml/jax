@@ -559,7 +559,6 @@ class DevicePutTest(jtu.JaxTestCase):
     self.assertArraysEqual(out_host, np_inp)
     self.assertEqual(out_host.sharding, s_host)
 
-  @jtu.skip_on_devices("gpu")
   def test_parameter_streaming_inside_scan(self):
     mesh = jtu.create_global_mesh((1, 1, 2), ("x", "y", "z"))
     np_inp = np.arange(4096.0).reshape(16, 16, 16)
@@ -1440,7 +1439,6 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
       if jtu.pjrt_c_api_version_at_least(0, 43):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
-  @jtu.skip_on_devices("gpu")
   def test_remat_scan_jaxpr_offloadable(self):
     mesh = jtu.create_global_mesh((2,), ("x",))
     shape = (256, 128)
