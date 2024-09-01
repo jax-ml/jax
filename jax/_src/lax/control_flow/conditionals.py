@@ -23,7 +23,6 @@ import itertools
 import operator
 from typing import Any, TypeVar
 
-import jax
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import ad_util
 from jax._src import config
@@ -275,12 +274,8 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   num_consts = len(consts)
   out_ = iter(out)
 
-  def _cast_to_array(x):
-    _copy = isinstance(x, np.bool_)
-    return jax.numpy.asarray(x, copy=_copy)
-
   out = [
-    next(out_) if fwd is None else _cast_to_array(ops[fwd - num_consts])
+    next(out_) if fwd is None else lax.asarray(ops[fwd - num_consts])
     for fwd in in_fwd
   ]
   assert next(out_, None) is None

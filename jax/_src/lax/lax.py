@@ -27,7 +27,6 @@ import warnings
 
 import numpy as np
 
-import jax
 from jax import tree_util
 from jax.sharding import Sharding
 from jax.tree_util import tree_map
@@ -42,6 +41,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
+from jax._src import pjit
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src import state
@@ -83,6 +83,10 @@ T = TypeVar("T")
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
+
+def _matrix_transpose(x: Array) -> Array:
+  assert x.ndim >= 2
+  return transpose(x, [*range(x.ndim - 2), x.ndim - 1, x.ndim - 2])
 
 def _clip_int_to_valid_range(val: DimSize, dtype, where: str) -> int:
   info = np.iinfo(dtype)
@@ -1327,7 +1331,7 @@ def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int) -> Array:
   return iota_p.bind(*dynamic_shape, dtype=dtype, shape=tuple(static_shape),
                      dimension=dimension)
 
-def _eye(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
+def _eye(dtype: DTypeLike, shape: Shape, offset: DimSize = 0) -> Array:
   """Like numpy.eye, create a 2D array with ones on a diagonal."""
   offset = _clip_int_to_valid_range(offset, np.int32,
                                     "argument `offset` of jax.numpy.eye")
@@ -2180,7 +2184,11 @@ pow_p = naryop(_pow_dtype_rule, [_float | _complex, _int | _float | _complex],
 
 def _pow_jvp_lhs(g, ans, x, y):
   y_dtype = dtypes.dtype(y)
-  x, y = jax._src.numpy.util.promote_dtypes_numeric(x, y)  # TODO replace this
+  result_dtype = dtypes.result_type(x, y)
+  if result_dtype == bool:
+    result_dtype = 'int32'
+  x = convert_element_type(x, result_dtype)
+  y = convert_element_type(y, result_dtype)
   if dtypes.issubdtype(y_dtype, np.integer):
     if x.shape != y.shape:
       shape = broadcast_shapes(x.shape, y.shape)
@@ -2602,7 +2610,7 @@ def _convert_element_type_bind(operand, *, new_dtype, weak_type, sharding):
                                 new_dtype=new_dtype, weak_type=weak_type,
                                 sharding=sharding)
   if sharding is not None:
-    operand = jax.lax.with_sharding_constraint(operand, sharding)
+    operand = pjit.with_sharding_constraint(operand, sharding)
   return operand
 convert_element_type_p.def_custom_bind(_convert_element_type_bind)
 convert_element_type_p.def_impl(partial(dispatch.apply_primitive, convert_element_type_p))
@@ -3093,7 +3101,7 @@ def _ragged_dot_jvp_rule(
           preferred_element_type=preferred_element_type,
       )
       if type(dx) is not ad_util.Zero
-      else jax.numpy.zeros_like(primal_out)
+      else _zeros(primal_out)
   )
   dy_out = (
       ragged_dot(
@@ -3104,7 +3112,7 @@ def _ragged_dot_jvp_rule(
           preferred_element_type=preferred_element_type,
       )
       if type(dy) is not ad_util.Zero
-      else jax.numpy.zeros_like(primal_out)
+      else _zeros(primal_out)
   )
   tangent_out = dx_out + dy_out
 
@@ -3112,10 +3120,11 @@ def _ragged_dot_jvp_rule(
 
 
 def _ragged_to_dense(x, y, group_sizes):
+  from jax._src.lax import control_flow  # avoid circular imports
   shape = (y.shape[0], x.shape[0], x.shape[1])
   x = broadcast_in_dim(x, shape, [1, 2])
   iota = broadcasted_iota(group_sizes.dtype, shape, 1)
-  group_ends = jax.lax.cumsum(group_sizes)
+  group_ends = control_flow.cumsum(group_sizes)
   group_starts = concatenate(
       [_zeros(group_sizes)[:1], group_ends[:-1]],
       dimension=0,
@@ -3137,7 +3146,7 @@ def _ragged_dot_transpose_rule(
   if ad.is_undefined_primal(y):
     grad_x = None
   else:
-    y_t = jax.numpy.matrix_transpose(y)
+    y_t = _matrix_transpose(y)
     grad_x = ragged_dot(
         ct,
         y_t,
@@ -3153,7 +3162,7 @@ def _ragged_dot_transpose_rule(
     x_dense = _ragged_to_dense(x, y, group_sizes=gs)
     ct_dense = _ragged_to_dense(ct, y, group_sizes=gs)
     dimension_numbers = (([1], [1]), ([0], [0]))
-    grad_y = jax.lax.dot_general(
+    grad_y = dot_general(
         x_dense,
         ct_dense,
         dimension_numbers,
@@ -4382,7 +4391,7 @@ def _canonicalize_float_for_sort(x):
   # and NaNs in the output.
 
   result = select(eq(x, _zero(x)), _zeros(x), x)
-  with jax.debug_nans(False):
+  with config.debug_nans(False):
     result = select(_isnan(x), full_like(result, np.nan), result)
 
   return result
@@ -4897,7 +4906,7 @@ def _copy_impl_pmap_sharding(sharded_dim, *args, **kwargs):
 # method on jax.Array so that we can bypass the XLA compilation here.
 def _copy_impl(prim, *args, **kwargs):
   a, = args
-  if isinstance(a, jax.Array) and isinstance(a.sharding, PmapSharding):
+  if isinstance(a, Array) and isinstance(a.sharding, PmapSharding):
     sharded_dim = _which_dim_sharded(a.sharding)
     if sharded_dim is None:
       return dispatch.apply_primitive(prim, *args, **kwargs)
