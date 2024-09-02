@@ -74,9 +74,9 @@ cycler==0.12.1 \
     --hash=sha256:85cef7cff222d8644161529808465972e51340599459b8ac3ccbac5a854e0d30 \
     --hash=sha256:88bb128f02ba341da8ef447245a9e138fae777f6a23943da4540077d3601eb1c
     # via matplotlib
-etils[epath,epy]==1.8.0 \
-    --hash=sha256:f31d7f27a889457eaa44eab18ce836d24fd6d40dbbb167d38879b7296f6456ea \
-    --hash=sha256:fb478f57fec202e260e54c9192b317692fd63db2d11d993e70bcdffa29cccd58
+etils[epath,epy]==1.9.3 \
+    --hash=sha256:aa3b7a845de3c1b69b30ca07046e8c4fd2e85ecbe604aa4bf18ea93e7b3184f0 \
+    --hash=sha256:cef675afed8af2abb62b9573d18f46095e120c11b3f87b08b7f87101735b32c1
     # via -r build/requirements.in
 execnet==2.1.1 \
     --hash=sha256:26dee51f1b80cebd6d0ca8e74dd8745419761d3bef34163928cbebbdc4749fdc \
