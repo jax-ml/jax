@@ -281,10 +281,11 @@ def geqrf_hlo(
 
 
 # # ?orgqr: product of elementary Householder reflectors:
-def orgqr_hlo(dtype, a: ir.Value, tau, *,
+def orgqr_hlo(ctx, dtype, a: ir.Value, tau, *,
               a_shape_vals: tuple[DimensionSize, ...],
               tau_shape_vals: tuple[DimensionSize, ...]):
-  _lapack.initialize()
+  fn_base = "un" if dtype == np.complex64 or dtype == np.complex128 else "or"
+  fn_base = prepare_lapack_call(fn_base=fn_base + "gqr", dtype=dtype)
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
   dims_vals = a_shape_vals
@@ -294,55 +295,75 @@ def orgqr_hlo(dtype, a: ir.Value, tau, *,
   assert n != ir.ShapedType.get_dynamic_size()
   batch_dims_vals = dims_vals[:-2]
   num_bd = len(batch_dims_vals)
-  batch_size_val = hlo_s32(1)
-  for b_v in batch_dims_vals:
-    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
-
   k = tau_shape_vals[-1]
   assert type(k) is int
-
-  if dtype == np.float32:
-    fn = "lapack_sorgqr"
-    lwork = _lapack.lapack_sorgqr_workspace(m, n, k)
-  elif dtype == np.float64:
-    fn = "lapack_dorgqr"
-    lwork = _lapack.lapack_dorgqr_workspace(m, n, k)
-  elif dtype == np.complex64:
-    fn = "lapack_cungqr"
-    lwork = _lapack.lapack_cungqr_workspace(m, n, k)
-  elif dtype == np.complex128:
-    fn = "lapack_zungqr"
-    lwork = _lapack.lapack_zungqr_workspace(m, n, k)
-  else:
-    raise NotImplementedError(f"Unsupported dtype {dtype}")
-
-  scalar_layout = []
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
   i32_type = ir.IntegerType.get_signless(32)
+
+  if ctx.is_forward_compat():
+    fn = fn_base
+    batch_size_val = hlo_s32(1)
+    for b_v in batch_dims_vals:
+      batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
+
+    if dtype == np.float32:
+      lwork = _lapack.lapack_sorgqr_workspace(m, n, k)
+    elif dtype == np.float64:
+      lwork = _lapack.lapack_dorgqr_workspace(m, n, k)
+    elif dtype == np.complex64:
+      lwork = _lapack.lapack_cungqr_workspace(m, n, k)
+    elif dtype == np.complex128:
+      lwork = _lapack.lapack_zungqr_workspace(m, n, k)
+    else:
+      raise NotImplementedError(f"Unsupported dtype {dtype}")
+
+    scalar_layout = []
+    shape_type_pairs: Sequence[ShapeTypePair] = [
+        (a_shape_vals, a_type.element_type),
+        (batch_dims_vals, i32_type),
+        ([lwork], a_type.element_type),
+    ]
+    result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
+    return custom_call(
+        fn,
+        result_types=result_types,
+        operands=[batch_size_val, hlo_s32(m), hlo_s32(n), hlo_s32(k),
+        hlo_s32(lwork), a, tau],
+        operand_layouts=[scalar_layout] * 5 + [
+          layout,
+          tuple(range(num_bd, -1, -1)),
+        ],
+        result_layouts=[
+          layout,
+          tuple(range(num_bd - 1, -1, -1)),
+          [0],
+        ],
+        operand_output_aliases={5: 0},
+        result_shapes=result_shapes,
+    ).results[:2]
+  fn = fn_base + "_ffi"
   shape_type_pairs: Sequence[ShapeTypePair] = [
       (a_shape_vals, a_type.element_type),
-      (batch_dims_vals, i32_type),
-      ([lwork], a_type.element_type),
   ]
   result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
-  out = custom_call(
+  return custom_call(
       fn,
       result_types=result_types,
-      operands=[batch_size_val, hlo_s32(m), hlo_s32(n), hlo_s32(k),
-       hlo_s32(lwork), a, tau],
-      operand_layouts=[scalar_layout] * 5 + [
+      operands=[
+       a, tau
+      ],
+      operand_layouts=[
         layout,
         tuple(range(num_bd, -1, -1)),
       ],
       result_layouts=[
         layout,
-        tuple(range(num_bd - 1, -1, -1)),
-        [0],
       ],
-      operand_output_aliases={5: 0},
+      operand_output_aliases={0: 0},
       result_shapes=result_shapes,
+      backend_config={},
+      api_version=4,
   ).results
-  return out[:2]
 
 
 # ?potrf: Cholesky decomposition

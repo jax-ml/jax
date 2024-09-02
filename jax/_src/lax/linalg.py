@@ -1759,11 +1759,21 @@ def _householder_product_cpu_gpu_lowering(orgqr_impl, ctx, a, taus, *,
           f"on GPU is not implemented; b/261671778; {a_aval.shape}")
     a, info_orgqr = orgqr_impl(a_aval.dtype, a, taus)
   else:
+    # TODO(b/344892332): Remove the conditional after the compatibility period
+    ctx_args = (
+        (ctx,) if platform == "cpu" and jaxlib_version >= (0, 4, 32) else ()
+    )
     a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, a_aval.shape)
     tau_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, taus_aval.shape)
-    a, info_orgqr = orgqr_impl(a_aval.dtype, a, taus,
-                               a_shape_vals=a_shape_vals,
-                               tau_shape_vals=tau_shape_vals)
+    a, *maybe_info_orgqr = orgqr_impl(*ctx_args, a_aval.dtype, a, taus,
+                                      a_shape_vals=a_shape_vals,
+                                      tau_shape_vals=tau_shape_vals)
+    if not ctx.is_forward_compat():
+      # Skip the info parameter verification for the FFI kernel.
+      return [a]
+    # TODO(b/344892332): This parameter will no longer be needed after
+    #                    the forward compatibility period
+    info_orgqr = maybe_info_orgqr[0]
   zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
   ok = mlir.compare_hlo(info_orgqr, zeros, "EQ", "SIGNED")
   select_a_aval = ShapedArray(batch_dims + [1, 1], np.dtype(np.bool_))
