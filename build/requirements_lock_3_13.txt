@@ -84,7 +84,7 @@ pytest-xdist==3.5.0
     # via -r build/test-requirements.txt
 python-dateutil==2.9.0.post0
     # via matplotlib
-rich==13.7.1
+rich==13.8.0
     # via -r build/test-requirements.txt
 scipy==1.13.1
     # via -r build/requirements.in
