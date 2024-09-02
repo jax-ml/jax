@@ -871,6 +871,7 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   xla_profile_version: int | None = None
   pgle_profiling_runs: int | None = None
   enable_pgle: bool | None = None
+  use_shardy_partitioner: bool | None = None
 
 
 class _ThreadLocalStateCache(threading.local):
