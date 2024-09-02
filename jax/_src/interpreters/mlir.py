@@ -1823,7 +1823,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
         tokens = tokens.update_tokens(tokens_out)
 
     try:
-      out_nodes = tuple(ans)
+      out_nodes: IrValues = ans[0] if len(ans) == 1 else tuple(ans)
     except TypeError as e:
       raise ValueError("Output of translation rule must be iterable: "
                        f"{eqn}, got output {ans}") from e
