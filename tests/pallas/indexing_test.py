@@ -219,7 +219,7 @@ class IndexerTest(jtu.JaxTestCase):
 
     indices = (ds(0, 2), np.arange(5)[:, None], np.arange(4)[None])
     indexer = NDIndexer.from_indices_shape(indices, shape)
-    self.assertTupleEqual(indexer.get_indexer_shape(), (5, 4, 2))
+    self.assertTupleEqual(indexer.get_indexer_shape(), (2, 5, 4))
 
   @hp.given(hps.data())
   def test_ndindexer(self, data):
