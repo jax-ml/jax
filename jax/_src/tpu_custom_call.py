@@ -71,6 +71,7 @@ tpu_custom_call_p.multiple_results = True
 class MemorySpace(enum.Enum):
   HBM = enum.auto()
   VMEM = enum.auto()
+  SEMAPHORE_MEM = enum.auto()
 
   @property
   def color(self) -> int:
@@ -78,6 +79,8 @@ class MemorySpace(enum.Enum):
       return 0
     elif self == MemorySpace.VMEM:
       return 1
+    elif self == MemorySpace.SEMAPHORE_MEM:
+      return 2
     else:
       raise ValueError("invalid memory space: " + str(self))
 
