@@ -658,7 +658,7 @@ def trace_to_jaxpr_nounits(
   current_name_stack = source_info_util.current_name_stack()
   with core.take_current_trace() as parent_trace:
     trace = JaxprTrace(parent_trace, current_name_stack, JaxprTraceTag())
-    with core.new_trace(trace):
+    with core.ensure_no_leaks(trace):
       fun = trace_to_subjaxpr_nounits(fun, trace, instantiate)
       with core.set_current_trace(trace):
         jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
@@ -2237,7 +2237,7 @@ def trace_to_jaxpr_dynamic(
   frame.debug_info = debug_info
 
   trace = DynamicJaxprTrace(frame)
-  with core.new_trace(trace), source_info_util.reset_name_stack():
+  with core.ensure_no_leaks(trace), source_info_util.reset_name_stack():
     in_tracers = _input_type_to_tracers(trace.new_arg, in_avals)
     in_tracers = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
     with core.set_current_trace(trace):
@@ -2256,7 +2256,7 @@ def trace_to_jaxpr_dynamic2(
   ) -> tuple[Jaxpr, OutputType, list[Any]]:
 
   trace = DynamicJaxprTrace(JaxprStackFrame())
-  with core.new_trace(trace), source_info_util.reset_name_stack():
+  with core.ensure_no_leaks(trace), source_info_util.reset_name_stack():
     trace.frame.debug_info = debug_info
     in_avals, keep_inputs = unzip2(fun.in_type)
     in_tracers = _input_type_to_tracers(trace.new_arg, in_avals)

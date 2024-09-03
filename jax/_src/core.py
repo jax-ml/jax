@@ -895,35 +895,117 @@ class EvalTrace(Trace):
     with concrete_eval():
       return fun.call_wrapped(*tracers)
 
-
-eval_trace = EvalTrace()
+# -------------------- axis env --------------------
 
 AxisName = Hashable
 
+@dataclass(frozen=True)
+class AxisEnv:
+  axis_sizes : Dict[AxisName, int]
+
+  def axis_size(self, axis_name):
+    return self.axis_sizes[axis_name]
+
+  def axis_exists(self, axis_name):
+    return axis_name in self.axis_sizes
+
+  def current_axes(self):
+    return tuple(k for k in self.axis_size)
+
+  def pop_pure(self, axis_name):
+    new_sizes = self.axis_sizes.copy()
+    new_sizes.pop(axis_namename)
+    return AxisEnv(new_sizes)
+
+  def extend_pure(self, name_size_pairs):
+    new_sizes = self.axis_sizes.copy()
+    new_sizes.update((name, size) for name, size in name_size_pairs
+                    if name is not no_axis_name)
+    return AxisEnv(new_sizes)
+
+  def as_hashable_key(self):
+    return tuple(f for f in self.axis_sizes if f is not no_axis_name)
+
 no_axis_name = object()
 
-class TraceState:
+# -------------------- global tracing context --------------------
+
+eval_trace = EvalTrace()
+top_axis_env = AxisEnv({})
+
+class TracingContext(threading.local):
   trace: Trace | None
-  axis_env : Dict[AxisName, int]
+  axis_env : AxisEnv
 
-  def __init__(self) -> None:
-    self.trace = eval_trace
-    self.axis_env = {}
-
-def _update_thread_local_jit_state(dynamic):
-  state = (dynamic.level, dynamic.trace_type)
-  config.update_thread_local_jit_state(dynamic_trace_state=state)
-
-
-# The global state of the tracer is accessed by a thread-local object.
-# This allows concurrent tracing in separate threads; passing traced objects
-# between threads is forbidden.
-class ThreadLocalState(threading.local):
   def __init__(self):
-    self.trace_state = TraceState()
+    self.trace = eval_trace
+    self.axis_env = top_axis_env
 
-thread_local_state = ThreadLocalState()
+  def is_top_level(self) -> bool:
+    return (self.trace is eval_trace and
+            self.axis_env is top_axis_env)
 
+  @contextmanager
+  def set_trace(self, trace):
+    try:
+      prev = self.trace
+      self.trace = trace
+      self.update_thread_local_jit_state()
+      yield
+    finally:
+      self.trace = prev
+      self.update_thread_local_jit_state()
+
+  @contextmanager
+  def set_axis_env(self, axis_env):
+    try:
+      prev = self.axis_env
+      self.axis_env = axis_env
+      self.update_thread_local_jit_state()
+      yield
+    finally:
+      self.axis_env = prev
+      self.update_thread_local_jit_state()
+
+  def update_thread_local_jit_state(self):
+    config.update_thread_local_jit_state(
+      trace_state=self.trace,
+      axis_env_state=self.axis_env.as_hashable_key())
+
+trace_ctx = TracingContext()
+
+@contextmanager
+def take_current_trace():
+  trace = trace_ctx.trace
+  with trace_ctx.set_trace(None):
+    yield trace
+
+@contextmanager
+def set_current_trace(trace):
+  with trace_ctx.set_trace(trace):
+    yield
+
+@contextmanager
+def extend_axis_env(name_size_pairs : list[tuple[AxisName, int]]):
+  with trace_ctx.set_axis_env(trace_ctx.axis_env.extend_pure(name_size_pairs)):
+    yield
+
+@contextmanager
+def pop_axis_name(name : AxisName):
+  with trace_ctx.set_axis_env(trace_ctx.axis_env.pop_pure(name)):
+    yield
+
+def get_axis_env():
+  return trace_ctx.axis_env
+
+def reset_trace_state() -> bool:
+  """Resets the global trace state and returns True if it was already clean."""
+  if not trace_ctx.is_top_level():
+    trace_ctx.__init__()
+    trace_ctx.update_thread_local_jit_state()
+    return False
+  else:
+    return True
 
 def _initialize_jax_jit_thread_local_state():
   """Initializes the C++ thread-local context.
@@ -937,23 +1019,10 @@ def _initialize_jax_jit_thread_local_state():
   tls = jax_jit.thread_local_state()
 
   if tls.extra_jit_context is None:
-    dynamic = isinstance(get_trace_state().trace, EvalTrace)
-    config.update_thread_local_jit_state(dynamic_trace_state=dynamic)
+    trace_ctx.update_thread_local_jit_state()
 
 jax_jit.set_thread_local_state_initialization_callback(
     _initialize_jax_jit_thread_local_state)
-
-def trace_state_clean() -> bool:
-  trace_state = thread_local_state.trace_state
-  return (trace_state.trace is eval_trace and trace_state.axis_env == {})
-
-def reset_trace_state() -> bool:
-  """Resets the global trace state and returns True if it was already clean."""
-  if not trace_state_clean():
-    thread_local_state.trace_state.__init__()
-    return False
-  else:
-    return True
 
 TRACER_LEAK_DEBUGGER_WARNING = """\
 JAX check_tracer_leaks behavior can trigger false positives when used with a debugger.
@@ -963,6 +1032,19 @@ the following:
   import threading
   threading.current_thread().pydev_do_not_trace = True
 """
+
+@contextmanager
+def ensure_no_leaks(trace:Trace):
+  yield
+  trace.invalidate()
+  if config.check_tracer_leaks.value:
+    trace_ref = ref(trace)
+    del trace
+    live_trace = trace_ref()
+    if live_trace is not None:
+      leaked_tracers = maybe_find_leaked_tracers(live_trace)
+      if leaked_tracers:
+        raise leaked_tracer_error("trace", live_trace, leaked_tracers)
 
 def maybe_find_leaked_tracers(trace: Trace) -> list[Tracer]:
   """Find the leaked tracers holding a reference to the Trace
@@ -1100,13 +1182,8 @@ def ensure_compile_time_eval():
 
   But in some cases it can be more convenient to use this context manager.
   """
-  try:
-    ts = get_trace_state()
-    prev = ts.trace
-    ts.trace = eval_trace
+  with set_current_trace(eval_trace):
     yield
-  finally:
-    ts.trace = prev
 
 eval_context = ensure_compile_time_eval  # alias, backward compatibility
 
@@ -2798,84 +2875,6 @@ def clean_up_dead_vars(eqn: JaxprEqn, env: dict[Var, Any],
     if last_used[v] is eqn:
       # Delete ref to variable when it is no longer needed by next equations.
       del env[v]
-
-# =================== new stuff ==============
-
-def get_trace_state():
-  return thread_local_state.trace_state
-
-class NotATrace: pass
-
-
-# to avoid leak checker false positives, ensure there are no remaining refs to
-# the trace before leaving the context.
-@contextmanager
-def new_trace(trace:Trace):
-  yield
-  trace.invalidate()
-  if config.check_tracer_leaks.value:
-    trace_ref = ref(trace)
-    del trace
-    live_trace = trace_ref()
-    if live_trace is not None:
-      leaked_tracers = maybe_find_leaked_tracers(live_trace)
-      if leaked_tracers:
-        raise leaked_tracer_error("trace", live_trace, leaked_tracers)
-
-@contextmanager
-def take_current_trace():
-  try:
-    ts = get_trace_state()
-    prev = ts.trace
-    assert isinstance(prev, Trace)
-    ts.trace = NotATrace()
-    yield prev
-  finally:
-    ts.trace = prev
-
-@contextmanager
-def set_current_trace(t):
-  try:
-    ts = get_trace_state()
-    prev = ts.trace
-    ts.trace = t
-    yield
-  finally:
-    ts.trace = prev
-
-@contextmanager
-def extend_axis_env(name_size_pairs : list[tuple[AxisName, int]]):
-  env = get_trace_state().axis_env
-  name_size_pairs = [(name, size) for name, size in name_size_pairs if name is not no_axis_name]
-  prev = {name: env[name] for name, _ in name_size_pairs if name in env}
-  try:
-    env.update(name_size_pairs)
-    yield
-  finally:
-    for name, _ in name_size_pairs:
-      env.pop(name)
-    env.update(prev)
-
-@contextmanager
-def pop_axis_name(name : AxisName):
-  state = get_trace_state()
-  prev_env = state.axis_env
-  new_env = prev_env.copy()
-  new_env.pop(name)
-  try:
-    state.axis_env = new_env
-    yield
-  finally:
-    state.axis_env = prev_env
-
-def get_axis_size(axis_name:AxisName):
-  return get_trace_state().axis_env[axis_name]
-
-def axis_exists(axis_name:AxisName):
-  return axis_name in get_trace_state().axis_env
-
-def get_current_axes() -> list[AxisName]:
-  return tuple(k for k in get_trace_state().axis_env)
 
 # When a mapped function is given no axis name, we generate a name object based
 # on the id of the function object. Collisions aren't important because this

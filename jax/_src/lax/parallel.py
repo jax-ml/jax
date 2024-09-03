@@ -134,7 +134,7 @@ def psum(x, axis_name, *, axis_index_groups=None):
       assert not pos_axes
       size = len(axis_index_groups[0])
     else:
-      size = math.prod([core.get_axis_size(name) for name in named_axes])
+      size = math.prod([core.get_axis_env().axis_size(name) for name in named_axes])
     out_flat = tuple(lax._const(leaf, size) * pos_reduce(leaf) for leaf in leaves)
   else:
     out_flat = psum_p.bind(
@@ -1445,7 +1445,7 @@ def _axis_index_lowering(ctx, *, axis_name):
                                          ctx.module_context.axis_env)]
 
 def _axis_index_effectful_abstract_eval(*, axis_name):
-  size = core.get_axis_size(axis_name)
+  size = core.get_axis_env().axis_size(axis_name)
   out_aval = ShapedArray((), np.int32, named_shape={axis_name: size})
   return out_aval, set()
 
