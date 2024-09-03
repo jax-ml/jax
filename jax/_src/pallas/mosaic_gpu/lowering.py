@@ -20,7 +20,7 @@ from collections.abc import Sequence
 import dataclasses
 import functools
 import math
-from typing import Any, cast
+from typing import Any, Literal, TypedDict, cast
 
 import jax
 from jax._src import core as jax_core
@@ -33,6 +33,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
+from jax._src.lib.mlir.dialects import scf as scf_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
 from jax._src.state import primitives as sp
@@ -136,7 +137,7 @@ class LoweringError(Exception):  # pylint: disable=g-bad-exception-name
 
 
 def _eval_index_map(
-    ctx: ModuleContext, idx, block_mapping: pallas_core.BlockMapping
+    ctx: ModuleContext, idx: ir.Value, block_mapping: pallas_core.BlockMapping
 ) -> Sequence[ir.Value]:
   block_indices = lower_jaxpr_to_mosaic_gpu(
       ctx, block_mapping.index_map_jaxpr.jaxpr, idx
@@ -151,6 +152,11 @@ def _eval_index_map(
   return tuple(result)
 
 
+class Params(TypedDict, total=False):
+  num_stages: int
+  dimension_semantics: Sequence[Literal["sequential", "parallel"]]
+
+
 def lower_jaxpr_to_module(
     grid_mapping: pallas_core.GridMapping,
     jaxpr: jax_core.Jaxpr,
@@ -159,6 +165,8 @@ def lower_jaxpr_to_module(
     cost_estimate: pallas_core.CostEstimate | None,
 ) -> LoweringResult:
   del cost_estimate  # Unused.
+
+  block_mappings = grid_mapping.block_mappings
 
   assert len(jaxpr.outvars) == 0
   assert not grid_mapping.vmapped_dims
@@ -175,8 +183,7 @@ def lower_jaxpr_to_module(
         "Scalar prefetch not supported in Mosaic GPU lowering."
     )
   if not all(
-      isinstance(bm.indexing_mode, pallas_core.Blocked)
-      for bm in grid_mapping.block_mappings
+      isinstance(bm.indexing_mode, pallas_core.Blocked) for bm in block_mappings
   ):
     raise NotImplementedError(
         "Only Blocked indexing mode is supported in Mosaic GPU lowering."
@@ -192,19 +199,31 @@ def lower_jaxpr_to_module(
     grid += (1,) * (3 - len(grid))
   block = (128,) + (1,) * (len(grid) - 1)
 
+  params = Params(**compiler_params.get("mosaic_gpu", {}))
+  num_stages = params.get("num_stages", 1)
+  dimension_semantics = params.get(
+      "dimension_semantics", ["parallel"] * len(grid_mapping.grid)
+  )
+  assert len(dimension_semantics) == len(grid_mapping.grid)
+  sequential_axes = tuple(
+      i for i, s in enumerate(dimension_semantics) if s == "sequential"
+  )
+  assert all(grid[axis] for axis in sequential_axes)
+  assert all(block[axis] == 1 for axis in sequential_axes)
+
   in_structs_gmem = [*grid_mapping.in_shapes]
   in_structs_smem = [
-      jax.ShapeDtypeStruct(bm.block_shape, s.dtype)
+      jax.ShapeDtypeStruct([num_stages, *bm.block_shape], s.dtype)
       for bm, s in zip(
-          grid_mapping.block_mappings[: grid_mapping.num_inputs],
+          block_mappings[: grid_mapping.num_inputs],
           grid_mapping.in_shapes,
       )
   ]
   out_structs_gmem = [*grid_mapping.out_shapes]
   out_structs_smem = [
-      jax.ShapeDtypeStruct(bm.block_shape, s.dtype)
+      jax.ShapeDtypeStruct([num_stages, *bm.block_shape], s.dtype)
       for bm, s in zip(
-          grid_mapping.block_mappings[grid_mapping.num_inputs :],
+          block_mappings[grid_mapping.num_inputs :],
           grid_mapping.out_shapes,
       )
   ]
@@ -219,56 +238,117 @@ def lower_jaxpr_to_module(
         buffers_smem, [grid_mapping.num_inputs]
     )
 
-    [barrier] = cast(mgpu.BarrierRef, barriers)
-
     module_ctx = ModuleContext(
         name_and_src_info.name, grid_mapping, runtime_smem, smem_used_bytes=0
     )
     program_ids = map(_program_id, range(len(grid_mapping.grid)))
     start_indices = map(
         functools.partial(_eval_index_map, module_ctx, program_ids),
-        grid_mapping.block_mappings,
+        block_mappings,
     )
     in_start_indices, out_start_indices = util.split_list(
         start_indices, [grid_mapping.num_inputs]
     )
 
-    with mgpu.single_thread():
+    def gmem_slice(
+        start_indices: Sequence[ir.Value],
+        step: ir.Value,
+        shape: Sequence[int],
+    ) -> ir.Value:
+      return tuple(
+          mgpu.ds(
+              arith_dialect.addi(
+                  start_index, arith_dialect.muli(step, _as_index(dim))
+              )
+              if axis in sequential_axes
+              else start_index,
+              dim,
+          )
+          for axis, (start_index, dim) in enumerate(zip(start_indices, shape))
+      )
+
+    @mgpu.single_thread()
+    def fetch(step: ir.Value, slot: ir.Value) -> None:
       for start_indices, b_gmem, b_smem in zip(
           in_start_indices, in_buffers_gmem, in_buffers_smem
       ):
         # TODO(slebedev): Support 128-byte swizzling, once we can lower matmuls.
+        b_smem_shape = ir.MemRefType(b_smem.type).shape[1:]
         launch_ctx.async_copy(
             src_ref=b_gmem,
-            dst_ref=b_smem,
-            gmem_slice=tuple(
-                map(mgpu.ds, start_indices, ir.MemRefType(b_smem.type).shape)
-            ),
-            barrier=barrier,
+            dst_ref=mgpu.memref_slice(b_smem, slot),
+            gmem_slice=gmem_slice(start_indices, step, b_smem_shape),
+            barrier=barriers[slot],
             swizzle=None,
             arrive=True,
             uniform=False,
         )
 
-    if grid_mapping.num_inputs:
-      # Only wait if async copies were issued.
-      barrier.wait()
+    @mgpu.single_thread()
+    def store(step: ir.Value, slot: ir.Value) -> None:
+      for start_indices, b_gmem, b_smem in zip(
+          out_start_indices, out_buffers_gmem, out_buffers_smem
+      ):
+        # TODO(slebedev): Support 128-byte swizzling, once we can lower matmuls.
+        b_smem_shape = ir.MemRefType(b_smem.type).shape[1:]
+        launch_ctx.async_copy(
+            src_ref=mgpu.memref_slice(b_smem, slot),
+            dst_ref=b_gmem,
+            gmem_slice=gmem_slice(start_indices, step, b_smem_shape),
+            swizzle=None,
+            uniform=False,
+        )
 
-    _ = lower_jaxpr_to_mosaic_gpu(module_ctx, jaxpr, buffers_smem)
-    mgpu.commit_shared()
+    # Compute the number of steps along each sequential axis.
+    if sequential_axes:
+      # TODO(slebedev): Support multiple sequential axes.
+      if len(sequential_axes) > 1:
+        raise NotImplementedError(
+            "Multiple sequential axes are not supported in Mosaic GPU lowering."
+        )
+      [sequential_axis] = sequential_axes
+      if any(
+          b_gmem.shape[sequential_axis] % b_smem.shape[1 + sequential_axis]
+          for b_gmem, b_smem in zip(in_structs_gmem, in_structs_smem)
+      ):
+        raise ValueError(
+            "Array dimensions along the sequential axis must be divisible by"
+            " the corresponding block dimensions."
+        )
+      [num_steps] = {
+          b_gmem.shape[sequential_axis] // b_smem.shape[1 + sequential_axis]
+          for b_gmem, b_smem in zip(in_structs_gmem, in_structs_smem)
+      }
+    else:
+      num_steps = 1
 
-    for start_indices, b_gmem, b_smem in zip(
-        out_start_indices, out_buffers_gmem, out_buffers_smem
-    ):
-      # TODO(slebedev): Support 128-byte swizzling, once we can lower matmuls.
-      launch_ctx.async_copy(
-          src_ref=b_smem,
-          dst_ref=b_gmem,
-          gmem_slice=tuple(
-              map(mgpu.ds, start_indices, ir.MemRefType(b_smem.type).shape)
-          ),
-          swizzle=None,
+    for slot in range(num_stages):
+      fetch(_as_index(slot), _as_index(slot))
+
+    @mgpu.fori(_as_index(num_steps), ())
+    def _(step, _):
+      slot = arith_dialect.remui(step, _as_index(num_stages))
+      if grid_mapping.num_inputs:
+        # Only wait if async copies were issued.
+        barriers[slot].wait()
+
+      _ = lower_jaxpr_to_mosaic_gpu(
+          module_ctx,
+          jaxpr,
+          [mgpu.memref_slice(b_smem, slot) for b_smem in buffers_smem],
       )
+      mgpu.commit_shared()
+      store(step, slot)
+
+      next_step = arith_dialect.addi(step, _as_index(num_stages))
+      next_step_in_bounds = arith_dialect.cmpi(
+          arith_dialect.CmpIPredicate.ult, next_step, _as_index(num_steps)
+      )
+      with ir.InsertionPoint(scf_dialect.IfOp(next_step_in_bounds).then_block):
+        fetch(next_step, slot)
+        scf_dialect.yield_([])
+
+      return ()
 
     launch_ctx.await_async_copy(0)
 
@@ -292,7 +372,10 @@ def lower_jaxpr_to_module(
               *in_structs_smem,
               *out_structs_smem,
               *extra_smem_scratch,
-              mgpu.TMABarrier(),
+              mgpu.Barrier(
+                  arrival_count=len(in_structs_gmem),
+                  num_barriers=num_stages,
+              ),
           ),
           module_name=name_and_src_info.name,
       )
@@ -547,6 +630,10 @@ def _ir_constant(v: object, t: ir.Type) -> ir.Value:
       v = float(v)
     return arith_dialect.constant(t, v)
   raise NotImplementedError(f"Unsupported constant: {v!r}")
+
+
+def _i32_constant(v: object) -> ir.Value:
+  return _ir_constant(v, ir.IntegerType.get_signless(32))
 
 
 def _as_index(v: int | ir.Value) -> ir.Value:

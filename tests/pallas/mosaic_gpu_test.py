@@ -52,6 +52,18 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x + 1.0)
 
+  def test_add_xy(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = x_ref[...] + y_ref[...]
+
+    x = jnp.arange(256).astype(jnp.float32)
+    y = x + 1
+    np.testing.assert_array_equal(kernel(x, y), x + y)
+
   def test_add_one_grid(self):
     @functools.partial(
         pl.pallas_call,
@@ -64,6 +76,27 @@ class PallasCallTest(PallasTest):
       o_ref[...] = x_ref[...] + 1.0
 
     x = jnp.arange(128 * 2).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x + 1.0)
+
+  @parameterized.product(num_stages=[1, 2, 3])
+  def test_add_one_grid_pipelined(self, num_stages):
+    @functools.partial(
+        pl.pallas_call,
+        in_specs=[pl.BlockSpec((128, 16), lambda i, j: (i, j))],
+        out_specs=pl.BlockSpec((128, 16), lambda i, j: (i, j)),
+        out_shape=jax.ShapeDtypeStruct([128 * 2, 64], jnp.float32),
+        compiler_params=dict(
+            mosaic_gpu=dict(
+                dimension_semantics=["parallel", "sequential"],
+                num_stages=num_stages,
+            ),
+        ),
+        grid=(2, 1),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1.0
+
+    x = jnp.arange(128 * 2 * 64).reshape((128 * 2, 64)).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x + 1.0)
 
   def test_add_doubled_sum(self):
