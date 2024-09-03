@@ -523,7 +523,7 @@ class MapTrace(core.Trace):
         (jax.lax.axis_index, axis_name))
     fake_primitive = FakePrimitive(multiple_results=False, bind=bind)
     with core.eval_context():
-      range = jax.lax.iota(np.int32, core.get_axis_size(axis_name))
+      range = jax.lax.iota(np.int32, core.get_axis_env().axis_size(axis_name))
     dummy_tracer = MapTracer(self, range, {axis_name: 0})
     return self.process_primitive(fake_primitive, (dummy_tracer,), {})
 
