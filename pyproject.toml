@@ -67,6 +67,9 @@ filterwarnings = [
     # TODO(slebedev): Remove once we bump the minimum TensorFlow version.
     "default:The key path API is deprecated .*",
     "default:jax.xla_computation is deprecated.*:DeprecationWarning",
+
+    # TODO(slebedev): Remove once we drop the legacy DLPack import path.
+    "default:.*from_dlpack with a DLPack tensor is deprecated.*:DeprecationWarning",
 ]
 doctest_optionflags = [
     "NUMBER",
@@ -115,7 +118,7 @@ ignore = [
     "C408",
     # Unnecessary map usage
     "C417",
-    # Unnecessary dict comprehension for iterable 
+    # Unnecessary dict comprehension for iterable
     "C420",
     # Object names too complex
     "C901",

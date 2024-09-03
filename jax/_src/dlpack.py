@@ -16,14 +16,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from jax._src.api import device_put
 from jax import numpy as jnp
 from jax._src import array
+from jax._src import deprecations
 from jax._src import xla_bridge
+from jax._src.api import device_put
 from jax._src.lax.lax import _array_copy
 from jax._src.lib import xla_client
-from jax._src.typing import Array, DLDeviceType
 from jax._src.sharding import Sharding
+from jax._src.typing import Array
+from jax._src.typing import DLDeviceType
+
 
 DLPACK_VERSION = (0, 8)
 MIN_DLPACK_VERSION = (0, 5)
@@ -237,21 +240,19 @@ def from_dlpack(external_array,
   device transfer or copy was requested.
 
   Args:
-    external_array: An array object that has __dlpack__ and __dlpack_device__
-      methods, or a DLPack tensor on either CPU or GPU (legacy API).
-
+    external_array: An array object that has ``__dlpack__` and
+      ``__dlpack_device__`` methods.
     device: The (optional) :py:class:`Device`, representing the device on which
-      the returned array should be placed. If given, then the result is committed
-      to the device. If unspecified, the resulting array will be unpacked onto the
-      same device it originated from. Setting ``device`` to a device different from
-      the source of ``external_array`` will require a copy, meaning ``copy`` must be
-      set to either ``True`` or ``None``.
-
+      the returned array should be placed. If given, then the result is
+      committed to the device. If unspecified, the resulting array will be
+      unpacked onto the same device it originated from. Setting ``device`` to a
+      device different from the source of ``external_array`` will require a
+      copy, meaning ``copy`` must be set to either ``True`` or ``None``.
     copy: An (optional) boolean, controlling whether or not a copy is performed.
-      If ``copy=True`` then a copy is always performed, even if unpacked onto the
-      same device. If ``copy=False`` then the copy is never performed and will raise
-      an error if necessary. When ``copy=None`` then a copy may be performed if
-      needed for a device transfer.
+      If ``copy=True`` then a copy is always performed, even if unpacked onto
+      the same device. If ``copy=False`` then the copy is never performed and
+      will raise an error if necessary. When ``copy=None`` then a copy may be
+      performed if needed for a device transfer.
 
   Returns:
     A jax.Array
@@ -274,5 +275,15 @@ def from_dlpack(external_array,
   if hasattr(external_array, "__dlpack__"):
     return _from_dlpack(external_array, device, copy)
 
-  # Legacy path
+  # Deprecated legacy path.
+  # TODO(slebedev): Remove on or after December 3rd 2023.
+  deprecations.warn(
+      "jax-dlpack-import-legacy",
+      (
+          "Calling from_dlpack with a DLPack tensor is deprecated. The argument"
+          " to from_dlpack should be an array from another framework that"
+          " implements the __dlpack__ protocol."
+      ),
+      stacklevel=2,
+  )
   return _legacy_from_dlpack(external_array, device, copy)

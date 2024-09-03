@@ -53,6 +53,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     the future.
   * `jax.numpy.round_` has been deprecated, following removal of the corresponding
     API in NumPy 2.0. Use {func}`jax.numpy.round` instead.
+  * Passing a DLPack capsule to {func}`jax.dlpack.from_dlpack` is deprecated.
+    The argument to {func}`jax.dlpack.from_dlpack` should be an array from
+    another framework that implements the ``__dlpack__`` protocol.
 
 ## jaxlib 0.4.32
 
