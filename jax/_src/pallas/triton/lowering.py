@@ -1708,74 +1708,53 @@ def _compute_pointers_from_indices(
       index = _i32_constant(0)
     else:
       index = next(indexer_iter)
-    if isinstance(index, primitives.Slice):
-      if index.is_dynamic_start:
-        # Compute the offset as start + range(0, size).
-        ptr_dim_offset = _add(
-            _bcast_to(index.start, [index.size]),
-            _ir_cast(_make_range(0, index.size), index.start.type, signed=False),
-        )
-      elif index.stride > 1:
-        # Compute the offset as start + range(0, size) * stride.
-        iota = _make_range(0, index.size)
-        ptr_dim_offset = _add(
-            _bcast_to(_i32_constant(index.start), [index.size]),
-            _mul(iota, _full(iota.type, index.stride)),
-        )
-      else:
-        ptr_dim_offset = _make_range(index.start, index.start + index.size)
 
-      # We need to add broadcastable dimensions for the advanced int indexing
-      # and for previous slices
-      num_left_expand_dims = len(int_indexer_shape) + other_shape_idx
-      num_right_expand_dims = len(other_shape) - other_shape_idx - 1
+    if isinstance(index, slice):
+      index = primitives.Slice.from_slice(index, dim_block_size)
+
+    if isinstance(index, primitives.Slice):
+      if index.is_dynamic_start or (index.stride != 1):
+        start = index.start
+        if not index.is_dynamic_start:
+          start = _i32_constant(start)
+
+        iota = _ir_cast(_make_range(0, index.size), start.type, signed=False)
+        if index.stride != 1:
+          iota = _mul(iota, _full(iota.type, index.stride))
+        dim_offsets = _add(_bcast_to(start, [index.size]), iota)
+      else:
+        dim_offsets = _make_range(index.start, index.start + index.size)
+
       other_shape_idx += 1
-    elif isinstance(index, slice):
-      if index != slice(None):
-        raise NotImplementedError("Only `slice(None)` allowed.")
-      ptr_dim_offset = _make_range(0, dim_block_size)
-      num_left_expand_dims = len(int_indexer_shape) + other_shape_idx
-      num_right_expand_dims = len(other_shape) - other_shape_idx - 1
-      other_shape_idx += 1
+      for _ in other_shape[other_shape_idx:]:
+        rank = ir.RankedTensorType(dim_offsets.type).rank
+        dim_offsets = _expand_dims(dim_offsets, rank)
     else:
       # indexer is either a *scalar* or an array of size `int_indexer_shape`
-      ptr_dim_offset = _ensure_ir_value(
-          index, jax_core.ShapedArray((), jnp.int32)
-      )
-      num_left_expand_dims = 0
-      num_right_expand_dims = len(other_shape)
-      if not ir.RankedTensorType.isinstance(ptr_dim_offset.type):
-        num_left_expand_dims = max(len(indexer_shape) - 1, 0)
-      else:
-        num_right_expand_dims = len(other_shape)
+      dim_offsets = _ensure_ir_value(index, jax_core.ShapedArray((), jnp.int32))
 
-    if indexer_shape and not ir.RankedTensorType.isinstance(ptr_dim_offset.type):
-      ptr_dim_offset = _splat(ptr_dim_offset, [1] * len(indexer_shape))
-    else:
-      for _ in range(num_left_expand_dims):
-        ptr_dim_offset = _expand_dims(ptr_dim_offset, 0)
-      for _ in range(num_right_expand_dims):
-        ndim = len(getattr(ptr_dim_offset.type, "shape", []))
-        ptr_dim_offset = _expand_dims(ptr_dim_offset, ndim)
+      if ir.RankedTensorType.isinstance(dim_offsets.type):
+        for _ in other_shape:
+          rank = ir.RankedTensorType(dim_offsets.type).rank
+          dim_offsets = _expand_dims(dim_offsets, rank)
 
-    ptr_dim_offset = _bcast_to(ptr_dim_offset, indexer_shape)
-    index_type = ir.IntegerType(_element_type(ptr_dim_offset.type))
+    if ir.RankedTensorType.isinstance(dim_offsets.type):
+      rank = ir.RankedTensorType(dim_offsets.type).rank
+      for _ in range(len(indexer_shape) - rank):
+        dim_offsets = _expand_dims(dim_offsets, 0)
+      dim_offsets = _bcast_to(dim_offsets, indexer_shape)
+    elif indexer_shape:
+      dim_offsets = _splat(dim_offsets, indexer_shape)
+
     if start_offset is not None:
-      start_offset = _ir_cast(start_offset, index_type, signed=False)
-      ptr_dim_offset = _add(
-          ptr_dim_offset, _bcast_to(start_offset, indexer_shape)
-      )
+      offset_type = _element_type(dim_offsets.type)
+      start_offset = _ir_cast(start_offset, offset_type, signed=False)
+      dim_offsets = _add(dim_offsets, _bcast_to(start_offset, indexer_shape))
 
-    if index_type.width == 32:
-      stride_size = _i32_constant(dim_stride)
-    else:
-      stride_size = _i64_constant(dim_stride)
-    stride_size = _splat(stride_size, indexer_shape)
-    bcast_indices.append(_mul(ptr_dim_offset, stride_size))
+    bcast_indices.append(_mul(dim_offsets, _full(dim_offsets.type, dim_stride)))
 
-  return functools.reduce(
-      _add, bcast_indices, _bcast_to(root_ptr, indexer_shape)
-  )
+  ptrs = _bcast_to(root_ptr, indexer_shape)
+  return functools.reduce(_add, bcast_indices, ptrs)
 
 
 @register_lowering(sp.get_p)
