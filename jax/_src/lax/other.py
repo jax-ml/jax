@@ -18,17 +18,18 @@ from collections.abc import Sequence
 import math
 from typing import Any
 
-import jax
+from jax._src.custom_derivatives import custom_jvp
 from jax._src import dtypes
 from jax._src.lax import lax
 from jax._src.lax import convolution
 from jax._src import util
+from jax._src.typing import Array, ArrayLike
 import numpy as np
 
 DType = Any
 
 def conv_general_dilated_patches(
-    lhs: jax.typing.ArrayLike,
+    lhs: ArrayLike,
     filter_shape: Sequence[int],
     window_strides: Sequence[int],
     padding: str | Sequence[tuple[int, int]],
@@ -37,7 +38,7 @@ def conv_general_dilated_patches(
     dimension_numbers: convolution.ConvGeneralDilatedDimensionNumbers | None = None,
     precision: lax.Precision | None = None,
     preferred_element_type: DType | None = None,
-) -> jax.Array:
+) -> Array:
   """Extract patches subject to the receptive field of `conv_general_dilated`.
 
   Runs the input through a convolution with given parameters. The kernel of the
@@ -101,7 +102,7 @@ def conv_general_dilated_patches(
   n_channels = lhs_array.shape[lhs_spec[1]]
 
   # Move separate `lhs` spatial locations into separate `rhs` channels.
-  rhs = lax._eye(lhs_array.dtype, shape=(spatial_size, spatial_size), offset=0)
+  rhs = lax._eye(lhs_array.dtype, shape=(spatial_size, spatial_size))
   rhs = lax.broadcast_in_dim(rhs, (n_channels, spatial_size, spatial_size), (1, 2))
   rhs = lax.reshape(rhs, (n_channels * spatial_size, 1, *filter_shape))
   rhs = util.moveaxis(rhs, (0, 1), (rhs_spec[0], rhs_spec[1]))
@@ -123,8 +124,8 @@ def conv_general_dilated_patches(
 
 
 def conv_general_dilated_local(
-    lhs: jax.typing.ArrayLike,
-    rhs: jax.typing.ArrayLike,
+    lhs: ArrayLike,
+    rhs: ArrayLike,
     window_strides: Sequence[int],
     padding: str | Sequence[tuple[int, int]],
     filter_shape: Sequence[int],
@@ -132,7 +133,7 @@ def conv_general_dilated_local(
     rhs_dilation: Sequence[int] | None = None,
     dimension_numbers: convolution.ConvGeneralDilatedDimensionNumbers | None = None,
     precision: lax.PrecisionLike = None
-) -> jax.Array:
+) -> Array:
   """General n-dimensional unshared convolution operator with optional dilation.
 
   Also known as locally connected layer, the operation is equivalent to
@@ -249,14 +250,14 @@ def _wrap_between(x, _a):
   return lax.sub(rem, a)
 
 
-def _replace_inf(x: jax.Array) -> jax.Array:
+def _replace_inf(x: Array) -> Array:
   re_x = lax.real(x) if dtypes.issubdtype(x.dtype, np.complexfloating) else x
   inf = lax._const(re_x, float('inf'))
   return lax.select(lax.eq(re_x, inf), lax._zeros(x), x)
 
 
-@jax.custom_jvp
-def logaddexp(x1: jax.typing.ArrayLike, x2: jax.typing.ArrayLike, /) -> jax.Array:
+@custom_jvp
+def logaddexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """Compute log(exp(x1) + exp(x2)) avoiding overflow."""
   x1_arr = lax.asarray(x1)
   x2_arr = lax.asarray(x2)

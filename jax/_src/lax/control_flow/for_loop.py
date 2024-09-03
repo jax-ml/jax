@@ -20,7 +20,6 @@ import functools
 import operator
 from typing import Any, Generic, TypeVar
 
-import jax.numpy as jnp
 from jax import lax
 from jax.api_util import flatten_fun_nokwargs
 from jax._src.interpreters import ad
@@ -46,6 +45,7 @@ from jax._src.util import (partition_list, merge_lists, safe_map, safe_zip,
                            split_list, split_dict, weakref_lru_cache)
 from jax._src.lax.control_flow import loops
 from jax._src.lax.control_flow.common import _abstractify, _initial_style_jaxpr
+import numpy as np
 
 ## JAX utilities
 
@@ -132,7 +132,7 @@ def for_loop(nsteps: int | Sequence[int],
   nsteps, = nsteps
   flat_state, state_tree = tree_flatten(init_state)
   state_avals = map(state_utils.val_to_ref_aval, flat_state)
-  idx_aval = core.ShapedArray((), dtypes.canonicalize_dtype(jnp.int64))
+  idx_aval = core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))
   jaxpr, consts, out_tree = _trace_to_jaxpr_with_refs(
       body, state_tree, [idx_aval, *state_avals])
   if out_tree != tree_structure(None):
@@ -202,7 +202,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     return jaxpr, out_tree
   jaxpr, out_tree = _create_jaxpr(init)
   _, ys_avals = tree_unflatten(out_tree, jaxpr.out_avals)
-  ys = tree_map(lambda aval: jnp.zeros([length, *aval.shape], aval.dtype),
+  ys = tree_map(lambda aval: lax.full([length, *aval.shape], 0, aval.dtype),
                 ys_avals)
   def for_body(i, refs):
     carry_refs, xs_refs, ys_refs = refs
@@ -251,7 +251,7 @@ def _for_impl(*args, jaxpr, nsteps, reverse, which_linear, unroll):
 
 def _for_impl_unrolled(body, nsteps, unroll, *args):
   remainder = nsteps % unroll
-  i = jnp.astype(0, dtypes.canonicalize_dtype(jnp.int64))
+  i = lax.full((), 0, dtypes.canonicalize_dtype(np.int64))
   state = list(args)
 
   for _ in range(remainder):
@@ -748,7 +748,7 @@ def discharged_for_loop(nsteps, body, init_state, *, reverse: bool = False):
   """
   flat_state, state_tree = tree_flatten(init_state)
   state_avals = map(state_utils.val_to_ref_aval, flat_state)
-  idx_aval = core.ShapedArray((), dtypes.canonicalize_dtype(jnp.int64))
+  idx_aval = core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))
   jaxpr, consts, out_tree = _trace_to_jaxpr_with_refs(
       body, state_tree, [idx_aval, *state_avals])
   if out_tree != tree_structure(None):
@@ -756,7 +756,7 @@ def discharged_for_loop(nsteps, body, init_state, *, reverse: bool = False):
   discharged_jaxpr, discharged_consts = discharge_state(jaxpr, consts)
 
   def fori_body(i, carry):
-    i = jnp.astype(i, dtypes.canonicalize_dtype(jnp.int64))
+    i = lax.convert_element_type(i, dtypes.canonicalize_dtype(np.int64))
     if reverse:
       i = nsteps - i - 1
     out_flat = core.eval_jaxpr(discharged_jaxpr, discharged_consts,

@@ -30,15 +30,16 @@ from __future__ import annotations
 from functools import partial
 from typing import NamedTuple
 
-import jax
-import jax._src.numpy.lax_numpy as jnp
-import jax._src.numpy.linalg as jnp_linalg
-from jax._src.numpy import reductions
-from jax._src.numpy import ufuncs
+from jax._src import api
+from jax._src import config
+from jax._src import dtypes
 from jax import lax
 from jax._src.lax import qdwh
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lax.stack import Stack
+from jax._src.lax import lax as lax_internal
+from jax._src.typing import Array
+import numpy as np
 
 
 # QDWH-eigh is a recursive algorithm where the structure of the recursion
@@ -52,19 +53,45 @@ from jax._src.lax.stack import Stack
 def _round_up(i, n):
   return ((i+n-1) // n) * n
 
+def _norm(x, axis=None):
+  return lax.sqrt((abs(x) ** 2).sum(axis=axis))
+
+def _broadcast_to(x: Array, shape: tuple[int, ...]) -> Array:
+  assert x.ndim <= len(shape)
+  return lax.broadcast_in_dim(x, shape, range(len(shape) - x.ndim, len(shape)))
+
+def _construct_diagonal(s: Array) -> Array:
+  """Construct a (batched) diagonal matrix"""
+  # signature: (...,n)->(...,n,n)
+  i = lax.iota('int32', s.shape[-1])
+  return lax.full((*s.shape, s.shape[-1]), 0, s.dtype).at[..., i, i].set(s)
+
+def _extract_diagonal(s: Array) -> Array:
+  """Extract the diagonal from a batched matrix"""
+  # signature: (...,n,m)->(...k) where k=min(n,m)
+  i = lax.iota('int32', min(s.shape[-2], s.shape[-1]))
+  return s[..., i, i]
+
 def _mask(x, dims, alternative=0):
   """Masks `x` up to the dynamic shape `dims`.
 
   Replaces values outside those dimensions with `alternative`. `alternative` is
   broadcast with `x`.
   """
-  assert jnp.ndim(x) == len(dims)
+  assert np.ndim(x) == len(dims)
   mask = None
   for i, d in enumerate(dims):
     if d is not None:
-      mask_dim_i = lax.broadcasted_iota(jnp.int32, x.shape, i) < d
+      mask_dim_i = lax.broadcasted_iota(np.int32, x.shape, i) < d
       mask = mask_dim_i if mask is None else (mask & mask_dim_i)
-  return x if mask is None else jnp.where(mask, x, alternative)
+
+  alternative = _broadcast_to(lax_internal.asarray(alternative), x.shape).astype(x.dtype)
+  return x if mask is None else lax.select(mask, x, alternative)
+
+def _nanmedian(vals):
+  # note: NaNs will be sorted to the end.
+  num_nans = lax_internal._isnan(vals).sum()
+  return lax.sort(vals.ravel())[(vals.size - num_nans) // 2]
 
 def _slice(operand, start_indices, dynamic_slice_sizes, static_slice_sizes,
            fill_value=0):
@@ -87,9 +114,9 @@ def _slice(operand, start_indices, dynamic_slice_sizes, static_slice_sizes,
   # We must pad the input array so the dynamic_slice is guaranteed to fall
   # entirely in bounds.
   padded = lax.pad(operand,
-                   jnp.array(0, operand.dtype),
+                   np.array(0, operand.dtype),
                    [(0, d, 0) for d in static_slice_sizes])
-  out = lax.dynamic_slice(padded, tuple(jnp.int32(i) for i in start_indices),
+  out = lax.dynamic_slice(padded, tuple(lax.convert_element_type(i, 'int32') for i in start_indices),
                           static_slice_sizes)
   return _mask(out, dynamic_slice_sizes, fill_value)
 
@@ -106,9 +133,9 @@ def _update_slice(operand, update, start_indices, update_dims):
     inside the rectangle given by `update_dims` will be overwritten."""
   operand_shape = operand.shape
   operand = lax.pad(operand,
-                    jnp.array(0, operand.dtype),
+                    np.array(0, operand.dtype),
                     [(0, d, 0) for d in update.shape])
-  start_indices = tuple(jnp.int32(i) for i in start_indices)
+  start_indices = tuple(lax.convert_element_type(i, 'int32') for i in start_indices)
   t = lax.dynamic_slice(operand, start_indices, update.shape)
   t = _mask(update, update_dims, t)
   operand = lax.dynamic_update_slice(operand, t, start_indices)
@@ -140,45 +167,45 @@ def _projector_subspace(P, H, n, rank, maxiter=2, swap=False):
   """
   # Choose an initial guess: the `rank` largest-norm columns of P.
   N, _ = P.shape
-  negative_column_norms = -jnp_linalg.norm(P, axis=1)
-  # `jnp.argsort` ensures NaNs sort last, so set masked-out column norms to NaN.
-  negative_column_norms = _mask(negative_column_norms, (n,), jnp.nan)
-  sort_idxs = jnp.argsort(negative_column_norms)
+  negative_column_norms = -_norm(P, axis=1)
+  # `sort_key_val` ensures NaNs sort last, so set masked-out column norms to NaN.
+  negative_column_norms = _mask(negative_column_norms, (n,), np.nan)
+  _, sort_idxs = lax.sort_key_val(negative_column_norms, lax.iota('int32', len(negative_column_norms)))
   X = P[:, sort_idxs]
   # X = X[:, :rank]
   X = _mask(X, (n, rank))
 
-  H_norm = jnp_linalg.norm(H)
-  thresh = 10.0 * float(jnp.finfo(X.dtype).eps) * H_norm
+  H_norm = _norm(H)
+  thresh = 10.0 * float(dtypes.finfo(X.dtype).eps) * H_norm
 
   # First iteration skips the matmul.
   def body_f_after_matmul(X):
-    Q, _ = jnp_linalg.qr(X, mode="complete")
+    Q, _ = lax_linalg.qr(X)
     # V1 = Q[:, :rank]
     # V2 = Q[:, rank:]
     V1 = _mask(Q, (n, rank))
     V2 = _slice(Q, (0, rank), (n, n - rank), (N, N))
 
     # TODO: might be able to get away with lower precision here
-    error_matrix = jnp.dot(V2.conj().T, H)
-    error_matrix = jnp.dot(error_matrix, V1)
-    error = jnp_linalg.norm(error_matrix)
+    error_matrix = V2.conj().T @ H
+    error_matrix = error_matrix @ V1
+    error = _norm(error_matrix)
     return V1, V2, error
 
   def cond_f(args):
     _, _, j, error = args
     still_counting = j < maxiter
     unconverged = error > thresh
-    return ufuncs.logical_and(still_counting, unconverged)[0]
+    return lax.bitwise_and(still_counting, unconverged)[0]
 
   def body_f(args):
     V1, _, j, _ = args
-    X = jnp.dot(P, V1)
+    X = P @ V1
     V1, V2, error = body_f_after_matmul(X)
     return V1, V2, j + 1, error
 
   V1, V2, error = body_f_after_matmul(X)
-  one = jnp.ones(1, dtype=jnp.int32)
+  one = lax.full((1,), 1, np.dtype('int32'))
   V1, V2, _, error = lax.while_loop(cond_f, body_f, (V1, V2, one, error))
   if swap:
     return V2, V1
@@ -210,11 +237,11 @@ def split_spectrum(H, n, split_point, V0=None):
     rank: The dynamic size of the m subblock.
   """
   N, _ = H.shape
-  H_shift = H - (split_point * jnp.eye(N, dtype=split_point.dtype)).astype(H.dtype)
+  H_shift = H - (split_point * lax_internal._eye(split_point.dtype, (N, N))).astype(H.dtype)
   U, _, _, _ = qdwh.qdwh(H_shift, is_hermitian=True, dynamic_shape=(n, n))
-  I = _mask(jnp.eye(N, dtype=H.dtype), (n, n))
+  I = _mask(lax_internal._eye(H.dtype, (N, N)), (n, n))
   P_minus = -0.5 * (U - I)
-  rank_minus = jnp.round(jnp.trace(ufuncs.real(P_minus))).astype(jnp.int32)
+  rank_minus = lax.round(_extract_diagonal(P_minus.real).sum(-1)).astype(np.int32)
   P_plus = 0.5 * (U + I)
   rank_plus = n - rank_minus
 
@@ -232,8 +259,8 @@ def split_spectrum(H, n, split_point, V0=None):
   H_minus = (V_minus.conj().T @ H) @ V_minus
   H_plus = (V_plus.conj().T @ H) @ V_plus
   if V0 is not None:
-    V_minus = jnp.dot(V0, V_minus)
-    V_plus = jnp.dot(V0, V_plus)
+    V_minus = lax.dot(V0, V_minus)
+    V_plus = lax.dot(V0, V_plus)
   return H_minus, V_minus, H_plus, V_plus, rank_minus
 
 
@@ -258,7 +285,7 @@ def split_spectrum(H, n, split_point, V0=None):
 #     H, V: The result of the projection.
 #   """
 #   if H.shape[0] <= termination_size:
-#     evals, evecs = jnp_linalg.eigh(H)
+#     evals, evecs = jnp.linalg.eigh(H)
 #     if V is not None:
 #       evecs = jnp.dot(V, evecs)
 #     return evals, evecs
@@ -279,13 +306,13 @@ class _Subproblem(NamedTuple):
   in the workspace.
   """
   # The row offset of the block in the matrix of blocks.
-  offset: jax.Array
+  offset: Array
 
   # The size of the block.
-  size: jax.Array
+  size: Array
 
 
-@partial(jax.jit, static_argnames=('termination_size', 'subset_by_index'))
+@partial(api.jit, static_argnames=('termination_size', 'subset_by_index'))
 def _eigh_work(H, n, termination_size, subset_by_index):
   """ The main work loop performing the symmetric eigendecomposition of H.
   Each step recursively computes a projector into the space of eigenvalues
@@ -308,20 +335,21 @@ def _eigh_work(H, n, termination_size, subset_by_index):
   # We turn what was originally a recursive algorithm into an iterative
   # algorithm with an explicit stack.
   N, _ = H.shape
-  n = jnp.asarray(n, jnp.int32)
+  n = n.astype('int32')
+  zero = lax.full((), 0, 'int32')
   agenda = Stack.create(
-    N + 1, _Subproblem(jnp.array(0, jnp.int32), jnp.array(0, jnp.int32)))
-  agenda = agenda.push(_Subproblem(offset=jnp.int32(0), size=n))
+    N + 1, _Subproblem(zero, zero))
+  agenda = agenda.push(_Subproblem(offset=zero, size=n))
 
   # eigenvectors is the array in which we build the output eigenvectors.
   # We initialize it with the identity matrix so the initial matrix
   # multiplications in_split_spectrum_jittable are the identity.
-  eigenvectors = jnp.eye(N, dtype=H.dtype)
+  eigenvectors = lax_internal._eye(H.dtype, (N, N))
 
   # Keep a copy of the initial matrix Frobenius norm, so we know when to stop
   # recursing. When the sub-matrix norm is less than eps*H0_norm, the contents are
   # pure numerical noise, and we should just stop.
-  H0_norm = jnp_linalg.norm(_mask(H, (n, n)))
+  H0_norm = _norm(_mask(H, (n, n)))
 
   # blocks is an array representing a stack of Hermitian matrix blocks that we
   # need to recursively decompose. Subproblems are different sizes, so the stack
@@ -368,7 +396,7 @@ def _eigh_work(H, n, termination_size, subset_by_index):
     eig_vecs, eig_vals = lax.linalg.eigh(H, sort_eigenvalues=False)
     eig_vecs = _mask(eig_vecs, (b, b))
     eig_vals = _mask(eig_vals, (b,))
-    eig_vecs = jnp.dot(V, eig_vecs)
+    eig_vecs = lax.dot(V, eig_vecs)
 
     eig_vals = eig_vals.astype(eig_vecs.dtype)
     blocks = _update_slice(blocks, eig_vals[:, None], (offset, 0), (b, 1))
@@ -381,7 +409,7 @@ def _eigh_work(H, n, termination_size, subset_by_index):
     H = _slice(blocks, (offset, 0), (b, b), (B, B))
 
     def nearly_diagonal_case(agenda, blocks, eigenvectors):
-      blocks = _update_slice(blocks, jnp.diag(H)[:, None], (offset, 0), (b, 1))
+      blocks = _update_slice(blocks, _extract_diagonal(H)[:, None], (offset, 0), (b, 1))
       return agenda, blocks, eigenvectors
 
     def should_update_range(start, end, subset_by_index):
@@ -394,7 +422,7 @@ def _eigh_work(H, n, termination_size, subset_by_index):
     def default_case(agenda, blocks, eigenvectors):
       V = _slice(eigenvectors, (0, offset), (n, b), (N, B))
       # TODO: Improve this?
-      split_point = reductions.nanmedian(_mask(jnp.diag(ufuncs.real(H)), (b,), jnp.nan))
+      split_point = _nanmedian(_mask(_extract_diagonal(H.real), (b,), np.nan))
       H_minus, V_minus, H_plus, V_plus, rank = split_spectrum(
           H, b, split_point, V0=V)
 
@@ -439,11 +467,11 @@ def _eigh_work(H, n, termination_size, subset_by_index):
     # the original input matrix,, terminate the execution. This is necessary to
     # handle matrices with clusters of eigenvalues, including rank deficient
     # matrices. See Nakatsukasa and Higham section 5.2.
-    norm = jnp_linalg.norm(H)
-    eps = jnp.asarray(jnp.finfo(H.dtype).eps, dtype=norm.dtype)
-    off_diag_norm = jnp_linalg.norm(
-        H - jnp.diag(jnp.diag(ufuncs.real(H)).astype(H.dtype)))
-    nearly_diagonal = off_diag_norm <= 5 * eps * norm
+    norm = _norm(H)
+    eps = np.asarray(dtypes.finfo(H.dtype).eps, dtype=norm.dtype)
+    off_diag_norm = _norm(
+        H - _construct_diagonal(_extract_diagonal(H.real).astype(H.dtype)))
+    nearly_diagonal = off_diag_norm <= 5 * (eps * norm)
     tiny = norm < eps * H0_norm
     return lax.cond(
         nearly_diagonal | tiny,
@@ -482,13 +510,13 @@ def _eigh_work(H, n, termination_size, subset_by_index):
       buckets.append(bucket_size)
       branches.append(partial(recursive_case, bucket_size))
       i = i // 2
-  buckets = jnp.array(buckets, dtype='int32')
+  buckets = np.array(buckets, dtype='int32')
 
   def loop_body(state):
     agenda, blocks, eigenvectors = state
     (offset, b), agenda = agenda.pop()
-    which = jnp.where(buckets < b, jnp.iinfo(jnp.int32).max, buckets)
-    choice = jnp.argmin(which)
+    which = lax.select(buckets < b, lax.full_like(buckets, np.iinfo(np.int32).max), buckets)
+    choice = lax.argmin(which, 0, 'int32')
     return lax.switch(choice, branches, offset, b, agenda, blocks, eigenvectors)
 
   _, blocks, eigenvectors = lax.while_loop(
@@ -557,13 +585,13 @@ def eigh(
     return eig_vals, eig_vecs
 
   n = N if n is None else n
-  with jax.default_matmul_precision(precision):
+  with config.default_matmul_precision(precision):
     eig_vals, eig_vecs = _eigh_work(
         H, n, termination_size=termination_size, subset_by_index=subset_by_index
     )
-  eig_vals = _mask(ufuncs.real(eig_vals), (n,), jnp.nan)
+  eig_vals = _mask(eig_vals.real, (n,), np.nan)
   if sort_eigenvalues or compute_slice:
-    sort_idxs = jnp.argsort(eig_vals)
+    _, sort_idxs = lax.sort_key_val(eig_vals, lax.iota('int32', len(eig_vals)))
     if compute_slice:
       sort_idxs = sort_idxs[subset_by_index[0] : subset_by_index[1]]
     eig_vals = eig_vals[sort_idxs]
