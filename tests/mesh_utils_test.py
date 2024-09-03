@@ -24,7 +24,7 @@ from absl.testing import parameterized
 from jax._src import mesh as mesh_lib
 from jax._src import test_util
 from jax._src.sharding_impls import NamedSharding, PartitionSpec, local_to_global_shape
-from jax.experimental import mesh_utils
+from jax._src import mesh_utils
 from jax.sharding import Mesh  # pylint: disable=g-importing-member
 import numpy as np
 

@@ -4352,7 +4352,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, s)
 
   def test_jnp_array_sharding(self):
-    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    if jax.device_count() < 4:
+      self.skipTest('Requires >=4 devices')
+    mesh = jax.make_mesh((2, 2), ('x', 'y'), devices=jax.devices()[:4])
     s = NamedSharding(mesh, P('x', 'y'))
     inp = np.arange(16).reshape(8, 2)
 
@@ -4361,7 +4363,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, s)
 
   def test_jnp_array_inside_jit_sharding(self):
-    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    if jax.device_count() < 4:
+      self.skipTest('Requires >=4 devices')
+    mesh = jax.make_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
     inp = np.arange(16).reshape(8, 2)
 

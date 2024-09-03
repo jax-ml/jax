@@ -274,6 +274,7 @@ py_library_providing_imports_info(
         ":dtypes",
         ":effects",
         ":environment_info",
+        ":internal_mesh_utils",
         ":jaxpr_util",
         ":layout",
         ":lazy_loader",
@@ -784,6 +785,7 @@ pytype_strict_library(
     deps = [
         ":config",
         ":core",
+        ":internal_mesh_utils",
         ":mesh",
         ":op_shardings",
         ":partition_spec",
@@ -805,6 +807,14 @@ pytype_strict_library(
         ":util",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
+)
+
+pytype_library(
+    name = "internal_mesh_utils",
+    srcs = ["_src/mesh_utils.py"],
+    deps = [
+        ":xla_bridge",
+    ],
 )
 
 pytype_strict_library(
@@ -1064,7 +1074,7 @@ pytype_library(
     srcs = ["experimental/mesh_utils.py"],
     visibility = ["//visibility:public"],
     deps = [
-        ":xla_bridge",
+        ":internal_mesh_utils",
     ],
 )
 

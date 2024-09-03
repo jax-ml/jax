@@ -31,6 +31,7 @@ from jax._src import sharding_specs
 from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge
+from jax._src.mesh_utils import create_device_mesh
 from jax._src.lib import xla_client as xc
 from jax._src.op_shardings import (
     are_op_shardings_equal, get_num_ways_dim_sharded, is_op_sharding_replicated)
@@ -1679,3 +1680,56 @@ def _gspmd_to_named_sharding_via_mesh(
   return create_mesh_pspec_sharding(
       mesh, parsed_pspec.get_partition_spec(), parsed_pspec,
       out_s.memory_kind)
+
+
+def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
+              *, devices: Sequence[xc.Device] | None = None) -> mesh_lib.Mesh:
+  """Creates an efficient mesh with the shape and axis names specified.
+
+  This function attempts to automatically compute a good mapping from a set of
+  logical axes to a physical mesh. For example, on a TPU v3 with 8 devices:
+
+  >>> mesh = jax.make_mesh((8,), ('x'))  # doctest: +SKIP
+  >>> [d.id for d in mesh.devices.flat]  # doctest: +SKIP
+  [0, 1, 2, 3, 6, 7, 4, 5]
+
+  The above ordering takes into account the physical topology of TPU v3.
+  It orders the devices into a ring, which yields efficient all-reduces on a
+  TPU v3.
+
+  Now, let's see another example with 16 devices of TPU v3:
+
+  >>> mesh = jax.make_mesh((2, 8), ('x', 'y'))  # doctest: +SKIP
+  >>> [d.id for d in mesh.devices.flat]  # doctest: +SKIP
+  [0, 1, 2, 3, 6, 7, 4, 5, 8, 9, 10, 11, 14, 15, 12, 13]
+  >>> mesh = jax.make_mesh((4, 4), ('x', 'y'))  # doctest: +SKIP
+  >>> [d.id for d in mesh.devices.flat]  # doctest: +SKIP
+  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+
+  As you can see, logical axes (`axis_shapes`) affect the ordering of the
+  devices.
+
+  You can use `jax.experimental.mesh_utils.create_device_mesh` if you want to
+  use the extra arguments it provides like `contiguous_submeshes` and
+  `allow_split_physical_axes`.
+
+  Args:
+    axis_shapes: Shape of the mesh. For example, axis_shape=(4, 2)
+    axis_names: Names of the mesh axes. For example, axis_names=('x', 'y')
+    devices: Optional keyword only argument, that allows you to specify the
+      devices you want to create a mesh with.
+
+  Returns:
+    A `jax.sharding.Mesh` object.
+  """
+  if devices is None:
+    devices = xla_bridge.devices()
+  axis_size = math.prod(axis_shapes)
+  if axis_size > len(devices):
+    raise ValueError(
+        f'Number of devices {len(devices)} must be >= the product '
+        f'of mesh_shape {axis_shapes}')
+  elif axis_size < len(devices):
+    devices = devices[:axis_size]
+  mesh_devices = create_device_mesh(axis_shapes, devices)
+  return mesh_lib.Mesh(mesh_devices, axis_names)
