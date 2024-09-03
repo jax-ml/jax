@@ -49,7 +49,6 @@ jax_test(
     disable_configs = DISABLED_CONFIGS,
     enable_configs = ["gpu_h100_2gpu"],
     shard_count = 4,
-    tags = ["notap"],  # Broken at head.
     deps = [
         "//jax:mosaic_gpu",
     ] + py_deps("absl/testing") + py_deps("numpy"),
@@ -61,7 +60,6 @@ jax_test(
     disable_backends = DISABLED_BACKENDS,
     disable_configs = DISABLED_CONFIGS,
     shard_count = 5,
-    tags = ["notap"],  # Broken at head.
     deps = [
         "//jax:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:matmul",
