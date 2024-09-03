@@ -31,6 +31,7 @@ from jax._src import prng
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.interpreters import mlir
+from jax._src.lib.mlir.dialects import hlo
 
 jax.config.parse_flags_with_absl()
 
@@ -150,6 +151,22 @@ class FfiTest(jtu.JaxTestCase):
               expected = expected_builder(param)
             self.assertEqual(type(config["param"]), type(expected))
             self.assertTrue(expected.type.isinstance(config["param"].type))
+            return
+    self.fail("No custom_call found in the lowered IR")
+
+  def testToken(self):
+    def fun():
+      token = lax.create_token()
+      return jex.ffi.ffi_call("test_ffi", core.abstract_token, token)
+
+    # Ensure that token inputs and outputs are translated to the correct type
+    module = jax.jit(fun).lower().compiler_ir("stablehlo")
+    for func in module.body.operations:
+      for block in func.body.blocks:
+        for op in block.operations:
+          if op.OPERATION_NAME == "stablehlo.custom_call":
+            self.assertTrue(hlo.TokenType.isinstance(op.operands[0].type))
+            self.assertTrue(hlo.TokenType.isinstance(op.results[0].type))
             return
     self.fail("No custom_call found in the lowered IR")
 
