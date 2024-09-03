@@ -20,13 +20,16 @@ _GOOGLE_PCI_VENDOR_ID = '0x1ae0'
 _TPU_PCI_DEVICE_IDS = [
     # TPU v2, v3
     '0x0027',
+    # No public name (plc)
+    '0x0056',
     # TPU v4
     '0x005e',
+    # TPU v5p
+    '0x0062',
     # TPU v5e
     '0x0063',
-    # Testing only
-    '0x0056',
-    '0x0062',
+    # TPU v6e
+    '0x006f',
 ]
 
 _TPU_ENHANCED_BARRIER_SUPPORTED = [
