@@ -70,7 +70,7 @@ doctest_optionflags = [
     "NUMBER",
     "NORMALIZE_WHITESPACE"
 ]
-addopts = "--doctest-glob='*.rst'"
+addopts = "--doctest-glob='*.rst' --ignore='examples/ffi'"
 
 [tool.pylint.master]
 extension-pkg-whitelist = "numpy"
