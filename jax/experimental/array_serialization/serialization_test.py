@@ -52,7 +52,7 @@ class CheckpointTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices('cpu')
   def test_memory_consumption(self):
-    global_mesh = jtu.create_global_mesh((2, 4), ('x', 'y'))
+    global_mesh = jtu.create_mesh((2, 4), ('x', 'y'))
     inp_shape = (2_048, 4_096)
     pspec = P('x', 'y')
     num = math.prod(inp_shape)
@@ -97,7 +97,7 @@ class CheckpointTest(jtu.JaxTestCase):
     tm.stop()
 
   def test_memory_consumption_for_save(self):
-    global_mesh = jtu.create_global_mesh((1, 1), ('x', 'y'))
+    global_mesh = jtu.create_mesh((1, 1), ('x', 'y'))
     inp_shape = (16 * 1024, 16 * 1024)
     pspec = P('x', 'y')
     num = math.prod(inp_shape)
@@ -132,7 +132,7 @@ class CheckpointTest(jtu.JaxTestCase):
       tm.stop()
 
   def test_checkpointing_with_path_variant(self):
-    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     inp_shape = (8, 2)
     pspec = P('x', 'y')
     num = math.prod(inp_shape)
@@ -164,7 +164,7 @@ class CheckpointTest(jtu.JaxTestCase):
     self.assertEqual(m1.dtype, np.int32)
 
   def test_checkpointing_jax_array(self):
-    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     inp_shape = (8, 2)
     pspec = P('x', 'y')
     num = math.prod(inp_shape)
@@ -188,7 +188,7 @@ class CheckpointTest(jtu.JaxTestCase):
     # Third Array
     def cb3(_):
       return np.array([], dtype=np.float32)
-    global_mesh1d = jtu.create_global_mesh((8,), ('x',))
+    global_mesh1d = jtu.create_mesh((8,), ('x',))
     a3 = array.make_array_from_callback(
         (0,), NamedSharding(global_mesh1d, P(None)), cb3)
     ckpt_path3 = pathlib.Path(self.create_tempdir(f'{ckpt_dir}/third').full_path)
@@ -232,7 +232,7 @@ class CheckpointTest(jtu.JaxTestCase):
     self.assertEqual(m3.dtype, np.float32)
 
   def test_checkpointing_ocdbt_transaction(self):
-    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    global_mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     inp_shape = (8, 2)
     pspec = P('x', 'y')
     num = math.prod(inp_shape)
@@ -262,7 +262,7 @@ class CheckpointTest(jtu.JaxTestCase):
     def cb3(_):
       return np.array([], dtype=np.float32)
 
-    global_mesh1d = jtu.create_global_mesh((8,), ('x',))
+    global_mesh1d = jtu.create_mesh((8,), ('x',))
     a3 = array.make_array_from_callback(
         (0,), NamedSharding(global_mesh1d, P(None)), cb3
     )
@@ -327,7 +327,7 @@ class CheckpointTest(jtu.JaxTestCase):
 
   @parameterized.product(input_dtype=[np.int32, jnp.bfloat16])
   def test_checkpointing_with_bigger_shape_jax_array(self, input_dtype):
-    global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    global_mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     global_input_shape = (8, 2)
     num = math.prod(global_input_shape)
 
@@ -349,7 +349,8 @@ class CheckpointTest(jtu.JaxTestCase):
         on_commit_callback=partial(self._on_commit_callback, ckpt_dir, ckpt_dir))
     manager.wait_until_finished()
 
-    ds = NamedSharding(jtu.create_global_mesh((4, 2), ('x', 'y')), P('x', 'y'))
+    ds = NamedSharding(jtu.create_mesh((4, 2), ('x', 'y'), iota_order=True),
+                       P('x', 'y'))
 
     m1, = serialization.run_deserialization([ds], tspecs, [(12, 2)],
                                             [np.float32])
@@ -375,7 +376,7 @@ class CheckpointTest(jtu.JaxTestCase):
 
   @parameterized.product(input_dtype=[jnp.int4, jnp.int8])
   def test_checkpointing_with_int4(self, input_dtype):
-    global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    global_mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     global_input_shape = (8, 2)
     num = math.prod(global_input_shape)
 
@@ -397,7 +398,8 @@ class CheckpointTest(jtu.JaxTestCase):
         on_commit_callback=partial(self._on_commit_callback, ckpt_dir, ckpt_dir))
     manager.wait_until_finished()
 
-    ds = NamedSharding(jtu.create_global_mesh((4, 2), ('x', 'y')), P('x', 'y'))
+    ds = NamedSharding(jtu.create_mesh((4, 2), ('x', 'y'), iota_order=True),
+                       P('x', 'y'))
 
     target_dtype = jnp.dtype('int4')
     m1, = serialization.run_deserialization([ds], tspecs, [(12, 2)],
@@ -424,7 +426,7 @@ class CheckpointTest(jtu.JaxTestCase):
       self.assertArraysEqual(l.data, global_input_data.astype(target_dtype))
 
   def test_checkpointing_scalar_jax_array(self):
-    global_mesh = jtu.create_global_mesh((2,), ('x'))
+    global_mesh = jtu.create_mesh((2,), ('x'))
     global_input_shape = ()
     data = np.array(4)
     s = NamedSharding(global_mesh, P(None))
@@ -441,7 +443,7 @@ class CheckpointTest(jtu.JaxTestCase):
         on_commit_callback=partial(self._on_commit_callback, ckpt_dir, ckpt_dir))
     manager.wait_until_finished()
 
-    ds = NamedSharding(jtu.create_global_mesh((2,), ('x')), P(None))
+    ds = NamedSharding(jtu.create_mesh((2,), ('x')), P(None))
 
     m1, = serialization.run_deserialization(
         [ds],
@@ -454,7 +456,7 @@ class CheckpointTest(jtu.JaxTestCase):
       self.assertArraysEqual(np.asarray(l.data), data.astype(np.float32))
 
   def test_deserialize_tensorstore_array_jax_array(self):
-    global_mesh = jtu.create_global_mesh((2,), ('x'))
+    global_mesh = jtu.create_mesh((2,), ('x'))
     data = np.arange(1024)
     tspec = ts.array(data).spec()
     m1, = serialization.run_deserialization(
@@ -550,7 +552,7 @@ class CheckpointTest(jtu.JaxTestCase):
     if not jtu.test_device_matches(['tpu']):
       self.skipTest('Layouts are only supported on TPUs')
 
-    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     np_inp = np.arange(32).reshape(8, 4)
     s = NamedSharding(mesh, P('x', 'y'))
     arr = jax.device_put(np_inp, s)

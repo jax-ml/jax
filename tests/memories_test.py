@@ -47,7 +47,7 @@ def get_memory_kinds_from_executable(f, args):
 
 
 def _create_inputs(shape, pspec, mem_kind=None):
-  mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
+  mesh = jtu.create_mesh((2, 2), ("x", "y"))
   np_inp = np.arange(math.prod(shape)).reshape(shape)
   s = NamedSharding(mesh, pspec, memory_kind=mem_kind)
   inp = jax.device_put(np_inp, s)
@@ -71,7 +71,7 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
   )
   def test_canonicalize_memory_kind(self, name):
     if name == "named_sharding":
-      mesh = jtu.create_global_mesh((1,), "x")
+      mesh = jtu.create_mesh((1,), "x")
       ns = NamedSharding(mesh, P("x"))
       self.assertEqual(ns.memory_kind, self._default_memory_kind)
     elif name == "positional_sharding":
@@ -96,7 +96,7 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
       with self.assertRaisesRegex(
           ValueError, "Could not find memory addressable by device.*"
       ):
-        mesh = jtu.create_global_mesh((1,), ("x",))
+        mesh = jtu.create_mesh((1,), ("x",))
         NamedSharding(mesh, P("x"), memory_kind="hbm")
     elif name == "positional_sharding":
       with self.assertRaisesRegex(
@@ -128,7 +128,7 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
       self.skipTest("TPU memory kind test.")
 
     if name == "named_sharding":
-      mesh = jtu.create_global_mesh((1,), ("x",))
+      mesh = jtu.create_mesh((1,), ("x",))
       NamedSharding(mesh, P("x"), memory_kind=self._default_memory_kind)
     elif name == "positional_sharding":
       PositionalSharding(jax.devices(), memory_kind=self._default_memory_kind)
@@ -146,7 +146,7 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
   )
   def test_sharding_eq(self, name):
     if name == "named_sharding":
-      mesh = jtu.create_global_mesh((1,), ("x",))
+      mesh = jtu.create_mesh((1,), ("x",))
       s1 = NamedSharding(mesh, P("x"))
       s2 = NamedSharding(mesh, P("x"), memory_kind=self._default_memory_kind)
       self.assertEqual(s1, s2)
@@ -164,7 +164,7 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
       self.assertEqual(s1, s2)
 
   def test_sharding_equivalent(self):
-    mesh = jtu.create_global_mesh((1,), ("x",))
+    mesh = jtu.create_mesh((1,), ("x",))
     ndim = 2
     ns1 = NamedSharding(mesh, P("x"))
     gs1 = GSPMDSharding(
@@ -215,7 +215,7 @@ class DevicePutTest(jtu.JaxTestCase):
   def test_device_put_host_to_hbm(self, host_memory_kind: str):
     if jtu.test_device_matches(["gpu"]) and host_memory_kind == "unpinned_host":
       self.skipTest("unpinned_host does not work on GPU backend.")
-    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
+    mesh = jtu.create_mesh((2, 2), ("x", "y"))
     s_host = NamedSharding(mesh, P("y"), memory_kind=host_memory_kind)
     np_inp = np.arange(16).reshape(8, 2)
 
@@ -231,7 +231,7 @@ class DevicePutTest(jtu.JaxTestCase):
   def test_device_put_hbm_to_host(self, host_memory_kind: str):
     if jtu.test_device_matches(["gpu"]) and host_memory_kind == "unpinned_host":
       self.skipTest("unpinned_host does not work on GPU backend.")
-    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
+    mesh = jtu.create_mesh((2, 2), ("x", "y"))
     s_host = NamedSharding(mesh, P("y"), memory_kind=host_memory_kind)
     inp = jnp.arange(16).reshape(8, 2)
 
@@ -314,7 +314,7 @@ class DevicePutTest(jtu.JaxTestCase):
 
   # TODO(yashkatariya): Enable this once we can compute on host.
   # def test_device_put_resharding(self):
-  #   mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
+  #   mesh = jtu.create_mesh((2, 2), ("x", "y"))
   #   s_host = NamedSharding(mesh, P("x", "y"), memory_kind="unpinned_host")
   #   s_hbm = s_host.with_memory_kind("device")
   #   np_inp = np.arange(16).reshape(8, 2)
@@ -341,7 +341,7 @@ class DevicePutTest(jtu.JaxTestCase):
   def test_device_put_numpy_array(self, host_memory_kind: str):
     if jtu.test_device_matches(["gpu"]) and host_memory_kind == "unpinned_host":
       self.skipTest("unpinned_host does not work on GPU backend.")
-    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
+    mesh = jtu.create_mesh((2, 2), ("x", "y"))
     np_inp = np.arange(16).reshape(8, 2)
     s_hbm = NamedSharding(mesh, P(("x", "y")), memory_kind="device")
     s_host = s_hbm.with_memory_kind(host_memory_kind)
@@ -462,7 +462,7 @@ class DevicePutTest(jtu.JaxTestCase):
   def test_parameter_streaming_with_scalar_and_constant(self):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("This test does not work on GPU backend.")
-    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
+    mesh = jtu.create_mesh((2, 2), ("x", "y"))
     scalar_inp = 1
     s_host = NamedSharding(mesh, P(), memory_kind="pinned_host")
 
@@ -488,7 +488,7 @@ class DevicePutTest(jtu.JaxTestCase):
   def test_parameter_and_output_streaming_with_array(self):
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
       self.skipTest("This test requires an xla_version >= 2.")
-    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
+    mesh = jtu.create_mesh((2, 2), ("x", "y"))
     np_inp = np.arange(16).reshape(8, 2)
     s_host = NamedSharding(mesh, P("x", "y"), memory_kind="pinned_host")
     inp_host = jax.device_put(np_inp, s_host)
@@ -540,7 +540,7 @@ class DevicePutTest(jtu.JaxTestCase):
     )
 
   def test_identity_jit_host_to_device_and_vice_versa(self):
-    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
+    mesh = jtu.create_mesh((2, 2), ("x", "y"))
     np_inp = np.arange(16).reshape(8, 2)
     s_host = NamedSharding(mesh, P('x', 'y'), memory_kind='pinned_host')
     s_dev = s_host.with_memory_kind('device')
@@ -560,7 +560,7 @@ class DevicePutTest(jtu.JaxTestCase):
     self.assertEqual(out_host.sharding, s_host)
 
   def test_parameter_streaming_inside_scan(self):
-    mesh = jtu.create_global_mesh((1, 1, 2), ("x", "y", "z"))
+    mesh = jtu.create_mesh((1, 1, 2), ("x", "y", "z"))
     np_inp = np.arange(4096.0).reshape(16, 16, 16)
     s_host = NamedSharding(mesh, P("x", "y", "z"), memory_kind="pinned_host")
     arr_host = jax.device_put(np_inp, s_host)
@@ -582,7 +582,7 @@ class DevicePutTest(jtu.JaxTestCase):
   def test_output_streaming(self):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("This test is flaky on GPU backend.")
-    mesh = jtu.create_global_mesh((1, 1), ("x", "y"))
+    mesh = jtu.create_mesh((1, 1), ("x", "y"))
     np_inp = np.arange(16.0).reshape(8, 2)
     s_hbm = NamedSharding(mesh, P("x", "y"), memory_kind="device")
     s_host = NamedSharding(mesh, P("x", "y"), memory_kind="pinned_host")
@@ -619,7 +619,7 @@ class DevicePutTest(jtu.JaxTestCase):
       self.skipTest("This test does not work on GPU backend.")
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
       self.skipTest("This test requires an xla_version >= 2.")
-    mesh = jtu.create_global_mesh((1, 1, 2), ("x", "y", "z"))
+    mesh = jtu.create_mesh((1, 1, 2), ("x", "y", "z"))
     np_inp = np.arange(4096).reshape(16, 16, 16)
     s_hbm = NamedSharding(mesh, P(None, "y", "z"), memory_kind="device")
     arr_hbm = jax.device_put(np_inp, s_hbm)
@@ -680,7 +680,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(executable_kind, expected_kind)
 
   def test_compute_no_inputs(self):
-    mesh = jtu.create_global_mesh((4,), ('data'))
+    mesh = jtu.create_mesh((4,), ('data'))
 
     tpu_sharding = NamedSharding(mesh, P('data'))
     cpu_sharding = NamedSharding(mesh, P('data'), memory_kind='pinned_host')
@@ -698,7 +698,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
   def test_compute_no_inputs_host_replicated(self):
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 3:
       self.skipTest("This test requires an xla_version >= 3.")
-    mesh = jtu.create_global_mesh((4,), ('data'))
+    mesh = jtu.create_mesh((4,), ('data'))
 
     tpu_sharding = NamedSharding(mesh, P('data'))
     cpu_sharding = NamedSharding(mesh, P(), memory_kind='pinned_host')
@@ -843,7 +843,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertLen(out, 2)
 
   def test_nested_no_op_compute(self):
-    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
     np_inp = np.arange(16).reshape(8, 2)
     arr = jax.device_put(np_inp, s)
@@ -868,7 +868,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(out.sharding, s)
 
   def test_sharded_compute_on_host(self):
-    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
     np_inp = np.arange(16).reshape(8, 2)
     arr = jax.device_put(np_inp, s)
@@ -921,7 +921,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
   def test_host_offload_in_custom_vjp_sharded(self):
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
       self.skipTest("This test requires an xla_version >= 2.")
-    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
+    mesh = jtu.create_mesh((2, 2), ("x", "y"))
     s = NamedSharding(mesh, P('x'))
 
     @jax.custom_vjp
@@ -1005,7 +1005,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
   def test_pure_host_data_and_compute(self):
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
       self.skipTest("This test requires an xla_version >= 2.")
-    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'), memory_kind='pinned_host')
     np_inp = np.arange(16).reshape(8, 2)
     arr_host = jax.device_put(np_inp, s)
@@ -1032,7 +1032,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysAllClose(out, jnp.sin(inp * 2))
 
   def test_compute_per_annotation(self):
-    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
+    mesh = jtu.create_mesh((2, 2), ("x", "y"))
     s = NamedSharding(mesh, P("x", "y"))
     np_inp = np.arange(16.).reshape(8, 2)
     arr = jax.device_put(np_inp, s)
@@ -1223,7 +1223,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(out2, np_inp2 @ np_inp2.T)
 
   def test_sharding_devices_indices_map_cache_hit(self):
-    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
+    mesh = jtu.create_mesh((2, 2), ("x", "y"))
     shape = (8, 2)
     s1 = NamedSharding(mesh, P("x", "y"))
     s2 = NamedSharding(mesh, P("x", "y"), memory_kind="device")
@@ -1238,7 +1238,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
   def test_no_donation_across_memory_kinds(self):
     if xb.using_pjrt_c_api():
       raise unittest.SkipTest("GetOutputShardings not supported in PJRT C API")
-    mesh = jtu.create_global_mesh((2, 1), ("x", "y"))
+    mesh = jtu.create_mesh((2, 1), ("x", "y"))
     np_inp = np.arange(16).reshape(8, 2)
     s_hbm = NamedSharding(mesh, P("x"))
     s_host = s_hbm.with_memory_kind("pinned_host")
@@ -1257,7 +1257,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertNotDeleted(inp)
 
   def test_single_mem_kind_donation_default_mem_kind(self):
-    mesh = jtu.create_global_mesh((2,), "x")
+    mesh = jtu.create_mesh((2,), "x")
     s = NamedSharding(mesh, P())
 
     @functools.partial(jax.jit, out_shardings=s, donate_argnums=0)
@@ -1273,7 +1273,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertDeleted(x)
 
   def test_compute_offload_inside_shmap(self):
-    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
     np_inp = np.arange(16).reshape(8, 2)
     arr = jax.device_put(np_inp, s)
@@ -1327,7 +1327,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysAllClose(out, expected_out, rtol=1e-3)
 
   def test_mem_kind_donation_pinned_host(self):
-    mesh = jtu.create_global_mesh((2,), "x")
+    mesh = jtu.create_mesh((2,), "x")
     s = NamedSharding(mesh, P(), memory_kind='pinned_host')
     s_dev = s.with_memory_kind('device')
 
@@ -1349,7 +1349,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
   @parameterized.parameters("pinned_host", "device")
   def test_identity_mem_kind_donation(self, mem_kind):
-    mesh = jtu.create_global_mesh((2,), "x")
+    mesh = jtu.create_mesh((2,), "x")
     s = NamedSharding(mesh, P(), memory_kind=mem_kind)
 
     @functools.partial(jax.jit, out_shardings=s, donate_argnums=0)
@@ -1367,7 +1367,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
   @jtu.run_on_devices('tpu')
   def test_aot_device_implicit_transfer(self):
-    mesh = jtu.create_global_mesh((1,), 'x')
+    mesh = jtu.create_mesh((1,), 'x')
     np_inp = np.arange(8)
     arr = jax.device_put(np_inp, NamedSharding(mesh, P()))
 
@@ -1397,7 +1397,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
     super().setUp()
 
   def test_remat_jaxpr_offloadable(self):
-    mesh = jtu.create_global_mesh((2,), ("x",))
+    mesh = jtu.create_mesh((2,), ("x",))
     inp = jax.device_put(np.arange(16.), NamedSharding(mesh, P("x")))
 
     def policy(prim, *avals, **params):
@@ -1440,7 +1440,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
   def test_remat_scan_jaxpr_offloadable(self):
-    mesh = jtu.create_global_mesh((2,), ("x",))
+    mesh = jtu.create_mesh((2,), ("x",))
     shape = (256, 128)
     np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     s = NamedSharding(mesh, P("x"))
@@ -1498,7 +1498,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
   def test_remat_scan_layout_change_offloadable(self):
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Remat scan does not work on GPU backend.")
-    mesh = jtu.create_global_mesh((2,), ("x",))
+    mesh = jtu.create_mesh((2,), ("x",))
     shape = (256, 128)
     np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     s = NamedSharding(mesh, P("x"))

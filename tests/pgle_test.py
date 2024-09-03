@@ -54,7 +54,7 @@ class PgleTest(jtu.JaxTestCase):
 
   @unittest.skip("Test failing in CI")
   def testPGLEProfilerGetFDOProfile(self):
-    mesh = jtu.create_global_mesh((2,), ('x',))
+    mesh = jtu.create_mesh((2,), ('x',))
 
     @partial(
         jax.jit,
@@ -83,7 +83,7 @@ class PgleTest(jtu.JaxTestCase):
 
   @unittest.skip("Test failing in CI")
   def testPGLEProfilerGetFDOProfileLarge(self):
-    mesh = jtu.create_global_mesh((2,), ('x',))
+    mesh = jtu.create_mesh((2,), ('x',))
     its = 500
 
     @partial(
@@ -112,7 +112,7 @@ class PgleTest(jtu.JaxTestCase):
     self.assertEqual(fdo_profile.count(b'custom'), its)
 
   def testAutoPgle(self):
-    mesh = jtu.create_global_mesh((2,), ('x',))
+    mesh = jtu.create_mesh((2,), ('x',))
 
     @partial(
         jax.jit,
@@ -245,7 +245,7 @@ class PgleTest(jtu.JaxTestCase):
         self.assertFalse(pgle_profiler.is_fdo_consumed())
 
   def testPassingFDOProfile(self):
-    mesh = jtu.create_global_mesh((2,), ('x',))
+    mesh = jtu.create_mesh((2,), ('x',))
 
     @partial(
         jax.jit,
