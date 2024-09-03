@@ -97,7 +97,7 @@ def _num_programs_bind_with_trace(trace, _, params):
   frame = pallas_core.axis_frame()
   size = frame.size(axis)
   if size is pallas_core.dynamic_grid_dim:
-    return jax_core.Primitive.bind(num_programs_p, (), dict(axis=axis))
+    return jax_core.Primitive.bind_with_trace(num_programs_p, trace, (), dict(axis=axis))
   return size
 num_programs_p.bind_with_trace = _num_programs_bind_with_trace
 
