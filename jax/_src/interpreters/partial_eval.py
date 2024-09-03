@@ -1881,12 +1881,10 @@ class DynamicJaxprTrace(core.Trace):
   def to_jaxpr_tracer(self, x):
     as_local_var = self.frame.tracer_to_var.get(id(x))
     if as_local_var is None:
-      # either
-      #  literal (not a tracer) "pure"
-      #  someone else's tracer "lift"
-      #  my tracer from a different scope "sublift"
       if hasattr(x, "dimension_as_value"):  # Used for shape_poly._DimExpr
-        return self.to_jaxpr_tracer(x.dimension_as_value())
+        with core.set_current_trace(self):
+          x = x.dimension_as_value()
+        return self.to_jaxpr_tracer(x)
       else:
         return self.new_const(x)
     else:
