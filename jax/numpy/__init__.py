@@ -212,7 +212,6 @@ from jax._src.numpy.lax_numpy import (
     rollaxis as rollaxis,
     rot90 as rot90,
     round as round,
-    round_ as round_,
     save as save,
     savez as savez,
     searchsorted as searchsorted,
@@ -466,6 +465,11 @@ del register_jax_array_methods
 
 
 _deprecations = {
+  # Deprecated 03 Sept 2024
+  "round_": (
+    "jnp.round_ is deprecated; use jnp.round instead.",
+    round
+  ),
   # Deprecated 18 Sept 2023 and removed 06 Feb 2024
   "trapz": (
     "jnp.trapz is deprecated; use jnp.trapezoid instead.",
@@ -473,6 +477,11 @@ _deprecations = {
   ),
 }
 
-from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-__getattr__ = _deprecation_getattr(__name__, _deprecations)
-del _deprecation_getattr
+import typing
+if typing.TYPE_CHECKING:
+  round_ = round
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del typing
