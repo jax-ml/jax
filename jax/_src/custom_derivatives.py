@@ -1518,7 +1518,7 @@ def _remat_opt_jvp(
       [len(consts_dot), len(tangents)], [num_res, num_out], [num_res, num_out])
   fwd_jaxpr_jvp = pe.close_jaxpr(pe.convert_constvars_jaxpr(fwd_jaxpr_jvp_.jaxpr))
 
-  @pe._memoize
+  # @pe._memoize
   def fun_jvp_jaxpr_thunk():
     fun_jaxpr = core.ClosedJaxpr(*fun_jaxpr_thunk())
     in_nz = [True] * len(primals)

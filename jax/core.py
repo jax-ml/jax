@@ -99,6 +99,7 @@ from jax._src.core import (
   subjaxprs as subjaxprs,
   substitute_vars_in_output_ty as substitute_vars_in_output_ty,
   trace_ctx as trace_ctx,
+  trace_state_clean as trace_state_clean,
   traverse_jaxpr_params as traverse_jaxpr_params,
   typecheck as typecheck,
   typecompat as typecompat,

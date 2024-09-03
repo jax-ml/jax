@@ -1003,6 +1003,9 @@ def pop_axis_name(name : AxisName):
 def get_axis_env():
   return trace_ctx.axis_env
 
+def trace_state_clean() -> bool:
+  return trace_ctx.is_top_level()
+
 def reset_trace_state() -> bool:
   """Resets the global trace state and returns True if it was already clean."""
   if not trace_ctx.is_top_level():
