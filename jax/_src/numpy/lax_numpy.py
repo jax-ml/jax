@@ -2189,7 +2189,7 @@ def where(condition, x=None, y=None, /, *, size=None, fill_value=None):
   Returns:
     An array of dtype ``jnp.result_type(x, y)`` with values drawn from ``x`` where ``condition``
     is True, and from ``y`` where condition is ``False``. If ``x`` and ``y`` are ``None``, the
-    function behaves differently; see `:func:`jax.numpy.nonzero` for a description of the return
+    function behaves differently; see :func:`jax.numpy.nonzero` for a description of the return
     type.
 
   See Also:
