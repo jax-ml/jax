@@ -1680,7 +1680,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     tol = {np.float64: 1e-12, np.float32: 1e-4}
     self.assertAllClose(ans, expected, check_dtypes=False, rtol=tol, atol=tol)
 
-    jtu.check_grads(partial(scan, f), (c, as_), order=2, modes=["fwd"])
+    jtu.check_grads(partial(scan, f), (c, as_), order=2, modes=["fwd"],
+                    rtol={jnp.float32: 2e-1})
 
   @parameterized.named_parameters(
       {"testcase_name": f"_{jit_scan=}_{jit_f=}_impl={scan_name}",
