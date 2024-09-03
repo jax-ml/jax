@@ -28,33 +28,11 @@ from __future__ import annotations
 
 import functools
 
-from jax._src import api
-from jax._src import config
+import jax
+import jax.numpy as jnp
+from jax import lax
 from jax._src import core
-from jax._src import dtypes
-from jax._src.lax.control_flow import loops
-from jax._src.lax import lax
 from jax._src.lax import linalg as lax_linalg
-from jax._src.lax import slicing
-from jax._src.typing import Array
-import numpy as np
-
-
-def _norm(x, axis=None):
-  return lax.sqrt((abs(x) ** 2).sum(axis=axis))
-
-def _one_norm(x):
-  assert x.ndim == 2
-  return abs(x).sum(0).max()
-
-def _inf_norm(x):
-  assert x.ndim == 2
-  return abs(x).sum(1).max()
-
-
-def _broadcast_to(x: Array, shape: tuple[int, ...]) -> Array:
-  assert x.ndim <= len(shape)
-  return lax.broadcast_in_dim(x, shape, range(len(shape) - x.ndim, len(shape)))
 
 
 # Helpers for working with padded shapes
@@ -64,26 +42,24 @@ def _mask(x, dims, alternative=0):
   Replaces values outside those dimensions with `alternative`. `alternative` is
   broadcast with `x`.
   """
-  assert np.ndim(x) == len(dims)
+  assert jnp.ndim(x) == len(dims)
   mask = None
   for i, d in enumerate(dims):
     if d is not None:
-      mask_dim_i = lax.broadcasted_iota(np.int32, x.shape, i) < d
+      mask_dim_i = lax.broadcasted_iota(jnp.int32, x.shape, i) < d
       mask = mask_dim_i if mask is None else (mask & mask_dim_i)
-
-  alternative = _broadcast_to(lax.asarray(alternative), x.shape).astype(x.dtype)
-  return x if mask is None else lax.select(mask, x, alternative)
+  return x if mask is None else jnp.where(mask, x, alternative)
 
 def _pad_in_dim(x, low=0, high=0, interior=0, fill_value=0, axis=0):
   pads = [(0, 0, 0)] * x.ndim
   pads[axis] = (low, high, interior)
-  return lax.pad(x, lax.convert_element_type(fill_value, x.dtype), pads)
+  return lax.pad(x, jnp.array(fill_value, x.dtype), pads)
 
 def _dynamic_concat(a, b, m, axis=0):
   "Concatenates padded arrays `a` and `b` where the true size of `a` is `m`."
   if m is None:
-    return lax.concatenate([a, b], dimension=axis)
-  return slicing.dynamic_update_slice_in_dim(
+    return jnp.concatenate([a, b], axis=axis)
+  return lax.dynamic_update_slice_in_dim(
       _pad_in_dim(a, high=b.shape[axis], axis=axis), b, m, axis)
 
 
@@ -98,12 +74,12 @@ def _use_qr(u, m, n, params):
   a_minus_e_by_sqrt_c, sqrt_c, e = params
   M, N = u.shape
 
-  y = _dynamic_concat(sqrt_c * u, lax._eye(np.dtype(u), (N, N)), m)
+  y = _dynamic_concat(sqrt_c * u, jnp.eye(N, dtype=jnp.dtype(u)), m)
   q, _ = lax_linalg.qr(y, full_matrices=False)
   # q1 = q[:m, :]
-  q1 = _mask(slicing.slice(q, (0, 0), (M, N)), (m, n))
+  q1 = _mask(lax.slice(q, (0, 0), (M, N)), (m, n))
   # q2 = (q[m:, :]).T.conj()
-  q2 = slicing.dynamic_slice_in_dim(q, m, N, axis=0)
+  q2 = lax.dynamic_slice_in_dim(q, m, N, axis=0)
   q2 = _mask(q2, (n, n)).T.conj()
   return e * u + a_minus_e_by_sqrt_c * (q1 @ q2)
 
@@ -118,11 +94,11 @@ def _use_cholesky(u, m, n, params):
   """
   a_minus_e, c, e = params
   _, N = u.shape
-  x = c * (u.T.conj() @ u) + lax._eye(np.dtype(u), (N, N))
+  x = c * (u.T.conj() @ u) + jnp.eye(N, dtype=jnp.dtype(u))
   # Pads the lower-right corner with the identity matrix to prevent the Cholesky
   # decomposition from failing due to the matrix not being PSD if padded with
   # zeros.
-  x = _mask(x, (n, n), lax._eye(x.dtype, (N, N)))
+  x = _mask(x, (n, n), jnp.eye(N, dtype=x.dtype))
 
   # `y` is lower triangular.
   y = lax_linalg.cholesky(x, symmetrize_input=False)
@@ -143,18 +119,18 @@ def _qdwh(x, m, n, max_iterations, eps):
   # norm(x, 2) such that `alpha >= norm(x, 2)` and `beta` is a lower bound for
   # the smallest singular value of x.
   if eps is None:
-    eps = float(dtypes.finfo(x.dtype).eps)
-  one_norm = _one_norm(x)
-  inf_norm = _inf_norm(x)
+    eps = float(jnp.finfo(x.dtype).eps)
+  one_norm = jnp.linalg.norm(x, ord=1)
+  inf_norm = jnp.linalg.norm(x, ord=jnp.inf)
   alpha_inverse = lax.rsqrt(one_norm) * lax.rsqrt(inf_norm)
-  alpha_inverse = lax.select(one_norm == 0, lax._ones(alpha_inverse), alpha_inverse)
+  alpha_inverse = jnp.where(one_norm == 0, 1, alpha_inverse)
   u = x * alpha_inverse.astype(x.dtype)
 
   l = eps
 
   # Iteration tolerances.
   tol_l = 10.0 * eps / 2.0
-  tol_norm = lax.cbrt(tol_l)
+  tol_norm = jnp.cbrt(tol_l)
 
   def get_qr_params(a, b, c):
     e = b / c
@@ -193,22 +169,22 @@ def _qdwh(x, m, n, max_iterations, eps):
       # As l → 1, the coefficients a, b, c → 3, 1, 3, which is Halley's method.
       params = get_chol_params(3, 1, 3)
     else:
-      params = slicing.dynamic_index_in_dim(coefs, k, keepdims=False)
+      params = lax.dynamic_index_in_dim(coefs, k, keepdims=False)
 
     u_prev = u
     u = update_fn(u, m, n, params)
 
     is_not_converged = True
     if test_convergence:
-      is_not_converged = _norm(u - u_prev) > tol_norm
+      is_not_converged = jnp.linalg.norm(u - u_prev) > tol_norm
     return u, is_not_converged
 
   def iterate(u, coefs, **kwargs):
     if not coefs:
       return u, True
-    coefs = np.array(coefs).astype(x.dtype)
+    coefs = jnp.array(coefs).astype(x.dtype)
     body = functools.partial(iteration, coefs=coefs, **kwargs)
-    return loops.fori_loop(0, len(coefs), body, (u, True))
+    return lax.fori_loop(0, len(coefs), body, (u, True))
 
   u, _ = iterate(
       u, coefs=qr_coefs, update_fn=_use_qr, test_convergence=False
@@ -221,7 +197,7 @@ def _qdwh(x, m, n, max_iterations, eps):
   # (coef = None) until convergence.
   def cond_fun(state):
     k, _, is_not_converged = state
-    return lax.bitwise_and(is_not_converged, k < max_iterations)
+    return jnp.logical_and(is_not_converged, k < max_iterations)
 
   def body_fun(state):
     k, u, is_not_converged = state
@@ -235,7 +211,7 @@ def _qdwh(x, m, n, max_iterations, eps):
     return k + 1, u, is_not_converged
 
   k = len(qr_coefs) + len(chol_coefs)
-  num_iters, u, is_not_converged = loops.while_loop(
+  num_iters, u, is_not_converged = lax.while_loop(
       cond_fun, body_fun, (k, u, is_not_converged)
   )
 
@@ -246,14 +222,14 @@ def _qdwh(x, m, n, max_iterations, eps):
   h = (h + h.T.conj()) / 2
 
   # Converged within the maximum number of iterations.
-  is_converged = lax.bitwise_not(is_not_converged)
+  is_converged = jnp.logical_not(is_not_converged)
 
   return u, h, num_iters, is_converged
 
 
 # TODO: Add pivoting.
 @functools.partial(
-    api.jit, static_argnames=('is_hermitian', 'max_iterations', 'eps')
+    jax.jit, static_argnames=('is_hermitian', 'max_iterations', 'eps')
 )
 def qdwh(
     x,
@@ -303,7 +279,7 @@ def qdwh(
   else:
     m, n = M, N
 
-  with config.default_matmul_precision('float32'):
+  with jax.default_matmul_precision('float32'):
     u, h, num_iters, is_converged = _qdwh(x, m, n, max_iterations, eps)
 
   return u, h, num_iters, is_converged
