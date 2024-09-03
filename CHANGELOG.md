@@ -51,6 +51,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The internal utilities `jax.core.check_eqn`, `jax.core.check_type`, and
     `jax.core.check_valid_jaxtype` are now deprecated, and will be removed in
     the future.
+  * `jax.numpy.round_` has been deprecated, following removal of the corresponding
+    API in NumPy 2.0. Use {func}`jax.numpy.round` instead.
 
 ## jaxlib 0.4.32
 

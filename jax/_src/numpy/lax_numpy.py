@@ -2722,12 +2722,6 @@ def around(a: ArrayLike, decimals: int = 0, out: None = None) -> Array:
   return round(a, decimals, out)
 
 
-@partial(jit, static_argnames=('decimals',))
-def round_(a: ArrayLike, decimals: int = 0, out: None = None) -> Array:
-  """Alias of :func:`jax.numpy.round`"""
-  return round(a, decimals, out)
-
-
 @jit
 def fix(x: ArrayLike, out: None = None) -> Array:
   """Round input to the nearest integer towards zero.
