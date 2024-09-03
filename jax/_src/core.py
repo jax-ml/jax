@@ -545,6 +545,9 @@ class Trace(Generic[TracerType]):
            "to handle custom_vjp primitives")
     raise NotImplementedError(msg)
 
+  def as_hashable_key(self):
+    return ref(self)
+
 def escaped_tracer_error(tracer, detail=None):
   num_frames = _TRACER_ERROR_NUM_TRACEBACK_FRAMES.value
   msg = ('Encountered an unexpected tracer. A function transformed by JAX '
@@ -970,7 +973,7 @@ class TracingContext(threading.local):
 
   def update_thread_local_jit_state(self):
     config.update_thread_local_jit_state(
-      trace_state=self.trace,
+      trace_state=self.trace.as_hashable_key() if self.trace is not None else None,
       axis_env_state=self.axis_env.as_hashable_key())
 
 trace_ctx = TracingContext()
