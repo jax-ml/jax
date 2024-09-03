@@ -912,12 +912,12 @@ class AxisEnv:
   def axis_exists(self, axis_name):
     return axis_name in self.axis_sizes
 
-  def current_axes(self):
-    return tuple(k for k in self.axis_size)
+  def axis_names(self):
+    return tuple(k for k in self.axis_sizes)
 
   def pop_pure(self, axis_name):
     new_sizes = self.axis_sizes.copy()
-    new_sizes.pop(axis_namename)
+    new_sizes.pop(axis_name)
     return AxisEnv(new_sizes)
 
   def extend_pure(self, name_size_pairs):

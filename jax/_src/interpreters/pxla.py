@@ -459,7 +459,7 @@ class MapTrace(core.Trace):
     tracers = map(self.to_map_tracer, tracers)
     vals, shard_axes = unzip2([(t.val, t.shard_axes) for t in tracers])
     info = self.emap_info
-    names = core.get_current_axes()
+    names = core.get_axis_env().axis_names()
     all_axes = tuple(_map_schedule(map(s.get, names)) for s in shard_axes)  # pytype: disable=wrong-arg-types  # always-use-return-annotations
     f = HashableFunction(lambda *args: primitive.bind(*args, **params),
                          (primitive, tuple(params.items())))
