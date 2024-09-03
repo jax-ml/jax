@@ -924,7 +924,8 @@ class AxisEnv:
     return AxisEnv(new_sizes)
 
   def as_hashable_key(self):
-    return tuple(f for f in self.axis_sizes if f is not no_axis_name)
+    return tuple((name, size) for (name, size) in self.axis_sizes.items()
+                 if name is not no_axis_name)
 
 no_axis_name = object()
 
