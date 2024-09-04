@@ -425,7 +425,7 @@ class Primitive:
 
   def bind(self, *args, **params):
     for arg in args:
-      if isinstance(arg, Tracer) and arg._trace.is_valid():
+      if isinstance(arg, Tracer) and not arg._trace.is_valid():
         raise UnexpectedTracerError(escaped_tracer_error(arg))
     with take_current_trace() as cur_trace:
       return self.bind_with_trace(cur_trace, args, params)
@@ -514,7 +514,7 @@ class Trace(Generic[TracerType]):
     self._invalidated = True
 
   def is_valid(self):
-    return hasattr(self, "_invalidated")
+    return not hasattr(self, "_invalidated")
 
   def __repr__(self):
     return '{}'.format(self.__class__.__name__)
