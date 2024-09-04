@@ -49,7 +49,7 @@ class LayoutTest(jtu.JaxTestCase):
   def test_auto_layout(self):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("This test does not work on GPU backend.")
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     shape1 = (128, 128)
     shape2 = (128, 128)
     s1 = NamedSharding(mesh, P('x', 'y'))
@@ -116,7 +116,7 @@ class LayoutTest(jtu.JaxTestCase):
   def test_default_layout(self):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("This test does not work on GPU backend.")
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     shape = (4, 4, 2)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
     s = NamedSharding(mesh, P('x', 'y'))
@@ -157,7 +157,7 @@ class LayoutTest(jtu.JaxTestCase):
   def test_in_layouts_out_layouts(self):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("This test does not work on GPU backend.")
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     shape = (8, 8)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
     s = NamedSharding(mesh, P('x', 'y'))
@@ -183,7 +183,7 @@ class LayoutTest(jtu.JaxTestCase):
   def test_sharding_and_layouts(self):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("This test does not work on GPU backend.")
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     shape = (4, 8)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
     s = NamedSharding(mesh, P('x', 'y'))
@@ -247,7 +247,7 @@ class LayoutTest(jtu.JaxTestCase):
   def test_aot_layout_mismatch(self):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("This test does not work on GPU backend.")
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     shape = (256, 4, 2)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
     s = NamedSharding(mesh, P('x'))
@@ -283,7 +283,7 @@ class LayoutTest(jtu.JaxTestCase):
         out_cpu, out_cpu).compile()  # doesn't crash
 
   def test_device_put_concrete_layout(self):
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     shape = (8, 128)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
     s = NamedSharding(mesh, P('x', 'y'))
@@ -370,7 +370,7 @@ class LayoutTest(jtu.JaxTestCase):
           np_inp.shape, Layout(None, None), lambda idx: np_inp[idx])
 
   def test_wsc_concrete_layout(self):
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     shape = (16, 128)
     s = NamedSharding(mesh, P('x'))
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -393,7 +393,7 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_inp.T)
 
   def test_wsc_bfloat16_concrete_layout(self):
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     shape = (16, 128)
     s = NamedSharding(mesh, P('x'))
     inp = jnp.arange(math.prod(shape), dtype=jnp.bfloat16).reshape(shape)
@@ -430,7 +430,7 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_inp)
 
   def test_concrete_layout_jit(self):
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     shape = (16, 128)
     s = NamedSharding(mesh, P('x'))
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -474,7 +474,7 @@ class LayoutTest(jtu.JaxTestCase):
   def test_concrete_layout_in_shardings(self):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("This test does not work on GPU backend.")
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     s = NamedSharding(mesh, P('x', 'y'))
     shape = (16, 128)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -528,7 +528,7 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertArraysEqual(out4, np_inp + 1)
 
   def test_layout_donation(self):
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     s = NamedSharding(mesh, P('x', 'y'))
     shape = (16, 128)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -544,7 +544,7 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertTrue(arr.is_deleted())
 
   def test_layout_donation_auto(self):
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     s = NamedSharding(mesh, P('x', 'y'))
     shape = (128, 16)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -559,7 +559,7 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertTrue(arr.is_deleted())
 
   def test_layout_donation_matching_in_and_out(self):
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     s = NamedSharding(mesh, P('x', 'y'))
     shape = (128, 16)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -577,7 +577,7 @@ class LayoutTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices('cpu', 'gpu')
   def test_layout_donation_mismatching_in_and_out_fails(self):
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     s = NamedSharding(mesh, P('x', 'y'))
     shape = (16*2, 32016*2)
     np_inp = np.arange(math.prod(shape), dtype=jnp.bfloat16).reshape(shape)

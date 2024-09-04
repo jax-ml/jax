@@ -2342,7 +2342,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       pjit(lambda *x: x)(a, b)
 
   def test_pjit_pytree_inp_device_assignment_mismatch(self):
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     a = jax.device_put(np.array([1, 2, 3]), jax.devices()[0])
     b = jax.device_put(np.array([4, 5, 6]), jax.devices()[1])
     c = jax.device_put(np.arange(16).reshape(8, 2),
@@ -2495,7 +2495,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
         out_s._to_xla_hlo_sharding(out.ndim)))
 
   def test_jit_with_sharding_constraint_committed_inp_error(self):
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
 
     s = NamedSharding(mesh, P('x', 'y'))
 
@@ -2529,7 +2529,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
   @jtu.ignore_warning(category=DeprecationWarning,
                       message="backend and device argument")
   def test_jit_device_with_sharding_constraint_error(self):
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
 
     @partial(jax.jit, static_argnums=(0, 1), device=jax.devices()[0])
     def sharded_zeros(shape, pspec):

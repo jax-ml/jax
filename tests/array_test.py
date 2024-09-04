@@ -496,7 +496,7 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertEqual(out.sharding.shard_shape(out.shape), shard_shape)
       self.assertNotIsInstance(out.sharding, jax.sharding.SingleDeviceSharding)
 
-    global_mesh = jtu.create_mesh((2, 2, 2), ('x', 'y', 'z'))
+    global_mesh = jtu.create_mesh((2, 2, 2), ('x', 'y', 'z'), iota_order=True)
     input_shape = (4, 4, 2)
     arr, np_inp = create_array(
         input_shape, jax.sharding.NamedSharding(global_mesh, P('x', 'y', 'z')))
@@ -756,7 +756,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertEqual(x_bytes, y_bytes)
 
   def test_array_copy_to_host_async(self):
-    global_mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    global_mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     x = pjit(lambda: jnp.arange(8.),
              out_shardings=jax.sharding.NamedSharding(global_mesh, P(None)))()
     self.assertLen(x.sharding.device_set, 4)
@@ -1039,7 +1039,8 @@ class ShardingTest(jtu.JaxTestCase):
   def test_positional_sharding_from_op_sharding(self, mesh_shape, pspec):
     ndim = len(mesh_shape)
     mesh = jtu.create_mesh(
-        mesh_shape, ('x', 'y') if ndim == 2 else ('x', 'y', 'z'))
+        mesh_shape, ('x', 'y') if ndim == 2 else ('x', 'y', 'z'),
+        iota_order=True)
     mps = jax.sharding.NamedSharding(mesh, pspec)
     original_op_sharding = mps._to_xla_hlo_sharding(ndim)
     ps = _op_sharding_to_pos_sharding(original_op_sharding,
@@ -1049,29 +1050,30 @@ class ShardingTest(jtu.JaxTestCase):
         original_op_sharding, out_op_sharding))
 
   @parameterized.named_parameters(
-      ("2d_mesh_x",                (1, 1), P("x", "y")),
-      ("2d_mesh_x_y",              (4, 2), P("x", "y")),
-      ("2d_mesh_empty",            (2, 1), P()),
-      ("2d_mesh_p_none",           (2, 1), P(None)),
-      ("2d_mesh_none_none",        (2, 1), P(None, None)),
-      ("2d_mesh_tuple_empty",      (2, 1), P((),)),
-      ("2d_mesh_x_none",           (2, 1), P(('x',), None)),
-      ("2d_mesh_xy_none",          (2, 1), P(('x', 'y'), None)),
-      ("2d_mesh_none",             (2, 1), None),
-      ("2d_mesh_x_tuple_empty",    (2, 1), P('x', (), (), ())),
-      ("2d_mesh_3_tuple_empty",    (2, 1), P((), (), ())),
-      ("3d_mesh2_x_none_none",     (1, 2, 4), P('x', None, None)),
-      ("3d_mesh2_x_y_none",        (1, 1, 4), P('x', 'y', None)),
-      ("3d_mesh2_xy_none",         (1, 1, 4), P(('x', 'y'), None)),
+      ("2d_mesh_x",                (1, 1), P("x", "y"), False),
+      ("2d_mesh_x_y",              (4, 2), P("x", "y"), False),
+      ("2d_mesh_empty",            (2, 1), P(), False),
+      ("2d_mesh_p_none",           (2, 1), P(None), False),
+      ("2d_mesh_none_none",        (2, 1), P(None, None), False),
+      ("2d_mesh_tuple_empty",      (2, 1), P((),), False),
+      ("2d_mesh_x_none",           (2, 1), P(('x',), None), False),
+      ("2d_mesh_xy_none",          (2, 1), P(('x', 'y'), None), False),
+      ("2d_mesh_none",             (2, 1), None, False),
+      ("2d_mesh_x_tuple_empty",    (2, 1), P('x', (), (), ()), False),
+      ("2d_mesh_3_tuple_empty",    (2, 1), P((), (), ()), False),
+      ("3d_mesh2_x_none_none",     (1, 2, 4), P('x', None, None), True),
+      ("3d_mesh2_x_y_none",        (1, 1, 4), P('x', 'y', None), True),
+      ("3d_mesh2_xy_none",         (1, 1, 4), P(('x', 'y'), None), True),
   )
-  def test_is_fully_replicated_named_sharding(self, mesh_shape, pspec):
+  def test_is_fully_replicated_named_sharding(self, mesh_shape, pspec,
+                                              iota_order):
     if len(mesh_shape) == 2:
       axis_names = ('x', 'y')
     elif len(mesh_shape) == 3:
       axis_names = ('x', 'y', 'z')
     else:
       axis_names = ('x',)
-    mesh = jtu.create_mesh(mesh_shape, axis_names)
+    mesh = jtu.create_mesh(mesh_shape, axis_names, iota_order=iota_order)
     mps = jax.sharding.NamedSharding(mesh, pspec)
     shape = (8, 2, 4)
     mps_op_sharding = mps._to_xla_hlo_sharding(len(shape))
@@ -1196,7 +1198,7 @@ class ShardingTest(jtu.JaxTestCase):
 
   def test_devices_indices_map_good_error_message(self):
     shape = (1, 2)
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     s = jax.sharding.NamedSharding(mesh, P('x', 'y'))
     with self.assertRaisesRegex(
         ValueError,
@@ -1222,13 +1224,13 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertIs(mesh1, mesh2)
 
   def test_mesh_str(self):
-    mesh = jtu.create_mesh((2, 2, 2), ('x', 'y', 'z'))
+    mesh = jtu.create_mesh((2, 2, 2), ('x', 'y', 'z'), iota_order=True)
     self.assertEqual(str(mesh), "Mesh('x': 2, 'y': 2, 'z': 2)")
 
   def test_make_array_from_callback_error(self):
     mesh_shape = (2, 3)
     global_shape = tuple(np.square(mesh_shape))
-    mesh = jtu.create_mesh(mesh_shape, ('x', 'y'))
+    mesh = jtu.create_mesh(mesh_shape, ('x', 'y'), iota_order=True)
     pspec = P('x', 'y')
     sharding = jax.sharding.NamedSharding(mesh, pspec)
     n = math.prod(global_shape)
@@ -1306,7 +1308,8 @@ class ShardingTest(jtu.JaxTestCase):
 class ShardyShardingTest(jtu.JaxTestCase):
 
   def test_long_axis_names(self):
-    mesh = jtu.create_mesh((2, 2, 2), ('sequence', 'data', 'model'))
+    mesh = jtu.create_mesh((2, 2, 2), ('sequence', 'data', 'model'),
+                           iota_order=True)
     s = jax.sharding.NamedSharding(mesh, P(('sequence', 'data'), 'model'))
     sdy_sharding = s._to_sdy_sharding(3)
     self.assertEqual(
@@ -1323,7 +1326,7 @@ class ShardyShardingTest(jtu.JaxTestCase):
           '#sdy.sharding<@mesh, [{"sequence", "data"}, {"model"}, {}]>')
 
   def test_unconstrained(self):
-    mesh = jtu.create_mesh((8,), ('x',))
+    mesh = jtu.create_mesh((8,), ('x',), iota_order=True)
     s = jax.sharding.NamedSharding(mesh, P(None, P.UNCONSTRAINED, 'x'))
     sdy_sharding = s._to_sdy_sharding(3)
     self.assertEqual(
@@ -1375,7 +1378,7 @@ class RngShardingTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"_{mesh_shape}_{pspec}",
        "mesh_shape": mesh_shape, "pspec": pspec}
-      for mesh_shape in [(3, 2), (4, 2), (2, 3)]
+      for mesh_shape in [((3, 2), True), ((4, 2), False), ((2, 3), True)]
       for pspec in [P('x', None), P(None, 'y'), P('x', 'y')])
   @jtu.skip_on_devices("gpu")
   def test_random_bits_is_pure_map_2d(self, mesh_shape, pspec):
@@ -1385,9 +1388,9 @@ class RngShardingTest(jtu.JaxTestCase):
                                        32, x.shape)
       return bits + x
 
-    global_shape = tuple(np.square(mesh_shape))
+    global_shape = tuple(np.square(mesh_shape[0]))
 
-    mesh = jtu.create_mesh(mesh_shape, ('x', 'y'))
+    mesh = jtu.create_mesh(mesh_shape[0], ('x', 'y'), iota_order=mesh_shape[1])
     s = jax.sharding.NamedSharding(mesh, pspec)
 
     n = math.prod(global_shape)

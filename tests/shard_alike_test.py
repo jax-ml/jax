@@ -51,7 +51,7 @@ class ShardAlikeTest(jtu.JaxTestCase):
     super().setUp()
 
   def test_basic(self):
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     np_inp = np.arange(16).reshape(8, 2)
     s = NamedSharding(mesh, P('x', 'y'))
     inp = jax.device_put(np_inp, s)
@@ -113,7 +113,7 @@ class ShardAlikeTest(jtu.JaxTestCase):
       f(inp)
 
   def test_double_shard_alike(self):
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     np_inp = np.arange(16).reshape(8, 2)
     s = NamedSharding(mesh, P('x', 'y'))
     inp = jax.device_put(np_inp, s)
@@ -237,7 +237,7 @@ class ShardAlikeTest(jtu.JaxTestCase):
     self.assertEqual(out2.sharding, s)
 
   def test_vmap_one_mapped(self):
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     np_inp = np.arange(2)
     s = NamedSharding(mesh, P('y'))
     inp = jax.device_put(np_inp, s)
@@ -256,7 +256,7 @@ class ShardAlikeTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np.tile(np_inp, [8, 1]))
 
   def test_vmap_both_mapped(self):
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     np_inp = np.arange(16).reshape(8, 2)
     s = NamedSharding(mesh, P('x', 'y'))
     inp1 = jax.device_put(np_inp, s)
