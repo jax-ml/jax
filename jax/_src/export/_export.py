@@ -58,7 +58,7 @@ map = util.safe_map
 zip = util.safe_zip
 
 DType = Any
-Shape = jax._src.core.Shape
+Shape = core.Shape
 # The values of input and output sharding from the lowering.
 LoweringSharding = Union[sharding.Sharding, pxla.UnspecifiedValue]
 HloSharding = xla_client.HloSharding

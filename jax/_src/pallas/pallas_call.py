@@ -36,7 +36,8 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas.primitives import uninitialized_value
+from jax._src.pallas import primitives
+from jax._src.pallas import utils as pallas_utils
 from jax._src.state import discharge as state_discharge
 from jax._src.util import (
     safe_map,
@@ -111,13 +112,15 @@ def _pad_values_to_block_dimension(value,
   )
   if padded_shape != value.shape:
     pad_width = tuple((0, a-b) for a, b in zip(padded_shape, value.shape))
-    pad_value = uninitialized_value(shape=(), dtype=value.dtype)
+    pad_value = primitives.uninitialized_value(shape=(), dtype=value.dtype)
     value = jnp.pad(value, pad_width, constant_values=pad_value)
   return value
 
 def _initialize_scratch_vals(scratch_avals) -> tuple[jax.Array, ...]:
   scratch_avals = (jax_core.raise_to_shaped(x) for x in scratch_avals)
-  return tuple(uninitialized_value(a.shape, a.dtype) for a in scratch_avals)
+  return tuple(
+      primitives.uninitialized_value(a.shape, a.dtype) for a in scratch_avals
+  )
 
 def _initialize_output_vals(
     block_mappings_output: Iterable[BlockMapping],
@@ -128,8 +131,9 @@ def _initialize_output_vals(
     if i in oi_map:
       output_vals.append(input_args[oi_map[i]])
     else:
-      output_vals.append(uninitialized_value(bm.array_shape_dtype.shape,
-                                             bm.array_shape_dtype.dtype))
+      output_vals.append(primitives.uninitialized_value(
+          bm.array_shape_dtype.shape,
+          bm.array_shape_dtype.dtype))
   return output_vals
 
 def _logical_to_interpret_mode_dtype(dtype):
@@ -212,7 +216,7 @@ def _pallas_call_impl_interpret(
       if padding is not None and any(p != (0, 0) for p in padding):
         if input_output_aliases:
           raise NotImplementedError("Padding with aliasing not supported.")
-        pad_value = uninitialized_value(shape=(), dtype=x.dtype)
+        pad_value = primitives.uninitialized_value(shape=(), dtype=x.dtype)
         x = lax.pad(x, pad_value, [(*p, 0) for p in padding])
     carry.append(x)
 
@@ -872,9 +876,9 @@ def _pallas_call_batching_rule(
     val_at_ragged_dim = first_block_mapping.block_shape[ragged_axis_dim]
 
     def when_wrapped_kernel(lengths_ref, *args, **kwargs):
-      b_idx = jax.experimental.pallas.program_id(stacked_axis)
+      b_idx = primitives.program_id(stacked_axis)
       i_idx = (
-          jax.experimental.pallas.program_id(ragged_axis_dim)
+          primitives.program_id(ragged_axis_dim)
           * val_at_ragged_dim
       )
       b_len = lengths_ref[b_idx]
@@ -883,7 +887,7 @@ def _pallas_call_batching_rule(
       # b_len_mod = jnp.equal(jnp.mod(b_len, val_at_ragged_dim), 0)
       # checkify.check(b_len_mod, "b_len % val_at_ragged_dim != 0")
 
-      @jax.experimental.pallas.when(i_idx < b_len)
+      @pallas_utils.when(i_idx < b_len)
       def f():
         # Important! This allows us to trace the inner kernel with the correct
         # grid to preserve user program_id semantics. Ex: program_id(0) will
@@ -893,7 +897,7 @@ def _pallas_call_batching_rule(
 
       if debug_zero_fill_counterfactual:
 
-        @jax.experimental.pallas.when(i_idx >= b_len)
+        @pallas_utils.when(i_idx >= b_len)
         def g():
           for arg_ref in args:
             arg_ref[...] = jnp.zeros_like(arg_ref)

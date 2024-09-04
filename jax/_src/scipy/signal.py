@@ -27,8 +27,9 @@ import jax
 import jax.numpy.fft
 import jax.numpy as jnp
 from jax import lax
-from jax._src.api_util import _ensure_index_tuple
+from jax._src import core
 from jax._src import dtypes
+from jax._src.api_util import _ensure_index_tuple
 from jax._src.lax.lax import PrecisionLike
 from jax._src.numpy import linalg
 from jax._src.numpy.util import (
@@ -655,8 +656,7 @@ def _spectral_helper(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0,
         f"Unknown boundary option '{boundary}', "
         f"must be one of: {list(boundary_funcs.keys())}")
 
-  axis = jax.core.concrete_or_error(operator.index, axis,
-                                    "axis of windowed-FFT")
+  axis = core.concrete_or_error(operator.index, axis, "axis of windowed-FFT")
   axis = canonicalize_axis(axis, x.ndim)
 
   if y is None:
@@ -686,8 +686,8 @@ def _spectral_helper(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0,
   noverlap_int: int = 0
 
   if nperseg is not None:  # if specified by user
-    nperseg_int = jax.core.concrete_or_error(int, nperseg,
-                                             "nperseg of windowed-FFT")
+    nperseg_int = core.concrete_or_error(
+        int, nperseg, "nperseg of windowed-FFT")
     if nperseg_int < 1:
       raise ValueError('nperseg must be a positive integer')
   # parse window; if array like, then set nperseg = win.shape
@@ -698,14 +698,13 @@ def _spectral_helper(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0,
   if noverlap is None:
     noverlap_int = nperseg_int // 2
   else:
-    noverlap_int = jax.core.concrete_or_error(int, noverlap,
-                                              "noverlap of windowed-FFT")
+    noverlap_int = core.concrete_or_error(
+        int, noverlap, "noverlap of windowed-FFT")
 
   if nfft is None:
     nfft_int = nperseg_int
   else:
-    nfft_int = jax.core.concrete_or_error(int, nfft,
-                                          "nfft of windowed-FFT")
+    nfft_int = core.concrete_or_error(int, nfft, "nfft of windowed-FFT")
 
   # Special cases for size == 0
   if y is None:
@@ -1015,8 +1014,8 @@ def _overlap_and_add(x: Array, step_size: int) -> Array:
     An array with `(..., output_size)`-shape containing overlapped signal.
   """
   check_arraylike("_overlap_and_add", x)
-  step_size = jax.core.concrete_or_error(int, step_size,
-                                        "step_size for overlap_and_add")
+  step_size = core.concrete_or_error(
+      int, step_size, "step_size for overlap_and_add")
   if x.ndim < 2:
     raise ValueError('Input must have (..., frames, frame_length) shape.')
 
@@ -1114,7 +1113,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
   n_default = (2 * (Zxx.shape[freq_axis] - 1) if input_onesided
                else Zxx.shape[freq_axis])
 
-  nperseg_int = jax.core.concrete_or_error(int, nperseg or n_default,
+  nperseg_int = core.concrete_or_error(int, nperseg or n_default,
                                            "nperseg: segment length of STFT")
   if nperseg_int < 1:
     raise ValueError('nperseg must be a positive integer')
@@ -1125,13 +1124,13 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
     if input_onesided and nperseg_int == n_default + 1:
       nfft_int += 1  # Odd nperseg, no FFT padding
   else:
-    nfft_int = jax.core.concrete_or_error(int, nfft, "nfft of STFT")
+    nfft_int = core.concrete_or_error(int, nfft, "nfft of STFT")
   if nfft_int < nperseg_int:
     raise ValueError(
         f'FFT length ({nfft_int}) must be longer than nperseg ({nperseg_int}).')
 
-  noverlap_int = jax.core.concrete_or_error(int, noverlap or nperseg_int // 2,
-                                            "noverlap of STFT")
+  noverlap_int = core.concrete_or_error(
+      int, noverlap or nperseg_int // 2, "noverlap of STFT")
   if noverlap_int >= nperseg_int:
     raise ValueError('noverlap must be less than nperseg.')
   nstep = nperseg_int - noverlap_int
