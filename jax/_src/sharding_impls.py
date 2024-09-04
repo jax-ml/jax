@@ -31,7 +31,7 @@ from jax._src import sharding_specs
 from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge
-from jax._src.mesh_utils import create_device_mesh
+from jax._src import mesh_utils
 from jax._src.lib import xla_client as xc
 from jax._src.op_shardings import (
     are_op_shardings_equal, get_num_ways_dim_sharded, is_op_sharding_replicated)
@@ -1731,5 +1731,10 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
         f'of mesh_shape {axis_shapes}')
   elif axis_size < len(devices):
     devices = devices[:axis_size]
-  mesh_devices = create_device_mesh(axis_shapes, devices)
+  if devices[0].device_kind == mesh_utils._TPU_V5_LITE:
+    allow_split_physical_axes = True
+  else:
+    allow_split_physical_axes = False
+  mesh_devices = mesh_utils.create_device_mesh(
+      axis_shapes, devices, allow_split_physical_axes=allow_split_physical_axes)
   return mesh_lib.Mesh(mesh_devices, axis_names)

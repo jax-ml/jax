@@ -2351,7 +2351,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     msg = ("Received incompatible devices for pjitted computation. Got "
            r"argument {} of.*<lambda> with shape int.*\[3\] and device ids "
            r"\[0\].*and argument {} of.*<lambda> with shape int.*\[8,2\] and "
-           r"device ids \[0, 1, 2, 3\].*")
+           r"device ids.*")
 
     with self.assertRaisesRegex(
         ValueError, msg.format(r'tuple_inp\[0\]', r'tuple_inp\[1\]\[0\]')):
@@ -2509,7 +2509,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ValueError,
         "Received incompatible devices for jitted computation. Got argument "
         r"inp of.*sharded_inp with shape bfloat16\[8,2\] and device ids \[0\].*"
-        r"sharding_constraint inside jit with device ids \[0, 1, 2, 3\].*"):
+        r"sharding_constraint inside jit with device ids.*"):
       sharded_inp(committed_inp)
 
     @pjit
@@ -2523,7 +2523,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ValueError,
         "Received incompatible devices for pjitted computation. Got argument "
         r"inp1 of.*my_nested_pjit with shape bfloat16\[8,2\] and device ids \[0\].*"
-        r"pjit inside pjit with device ids \[0, 1, 2, 3\].*"):
+        r"pjit inside pjit with device ids.*"):
       my_nested_pjit(committed_inp, committed_inp, committed_inp)
 
   @jtu.ignore_warning(category=DeprecationWarning,
@@ -2540,7 +2540,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ValueError,
         "Received incompatible devices for jitted computation. Got explicit "
         r"output sharding with device ids \[0\].*sharding_constraint inside "
-        r"jit with device ids \[0, 1, 2, 3\].*"):
+        r"jit with device ids.*"):
       sharded_zeros((4096, 3072), P('x', 'y'))
 
   def test_concurrent_pjit(self):
