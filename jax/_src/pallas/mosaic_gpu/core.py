@@ -14,13 +14,32 @@
 
 """Contains GPU-specific Pallas abstractions."""
 
+from collections.abc import Sequence
 import dataclasses
 import enum
+from typing import ClassVar, Literal
 from jax import core as jax_core
 from jax._src.pallas import core as pallas_core
 import jax.numpy as jnp
 
 AbstractMemoryRef = pallas_core.AbstractMemoryRef
+
+
+@dataclasses.dataclass(frozen=True)
+class GPUCompilerParams(pallas_core.CompilerParams):
+  """Mosaic GPU compiler parameters.
+
+  Attributes:
+    dimension_semantics: A list of dimension semantics for each grid
+      dimension of the kernel. Either "parallel" for dimensions that can
+      execute in any order, or "sequential" for dimensions that must be
+      executed sequentially.
+    num_stages: The number of pipline stages in the kernel. Defaults to 1,
+      meaning no pipelining is done.
+  """
+  PLATFORM: ClassVar[str] = "mosaic_gpu"
+  dimension_semantics: Sequence[Literal["parallel", "sequential"]] | None = None
+  num_stages: int = 1
 
 
 class GPUMemorySpace(enum.Enum):

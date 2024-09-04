@@ -23,7 +23,7 @@ import enum
 import functools
 import itertools
 import threading
-from typing import Any, ClassVar, Hashable, Union
+from typing import Any, ClassVar, Hashable, Protocol, Union, runtime_checkable
 import warnings
 
 import jax
@@ -66,10 +66,14 @@ OriginStr = str  # The origin of a block spec, e.g. input[2]["field"]
 SEMAPHORE_INTERPRET_DTYPE = jnp.int16
 
 
-@dataclasses.dataclass(frozen=True)
-class CompilerParams:
+@runtime_checkable
+class CompilerParams(Protocol):
   """Base class for compiler parameters."""
-  PLATFORM: ClassVar[str] = "unspecified"
+  PLATFORM: ClassVar[str]
+
+  # Subclasses must be dataclasses.
+  __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]
+
 
 @dataclasses.dataclass(frozen=True)
 class NameAndSrcInfo:

@@ -80,16 +80,15 @@ class PallasCallTest(PallasTest):
 
   @parameterized.product(num_stages=[1, 2, 3])
   def test_add_one_grid_pipelined(self, num_stages):
+
     @functools.partial(
         pl.pallas_call,
         in_specs=[pl.BlockSpec((128, 16), lambda i, j: (i, j))],
         out_specs=pl.BlockSpec((128, 16), lambda i, j: (i, j)),
         out_shape=jax.ShapeDtypeStruct([128 * 2, 64], jnp.float32),
-        compiler_params=dict(
-            mosaic_gpu=dict(
-                dimension_semantics=["parallel", "sequential"],
-                num_stages=num_stages,
-            ),
+        compiler_params=plgpu.GPUCompilerParams(
+            dimension_semantics=["parallel", "sequential"],
+            num_stages=num_stages,
         ),
         grid=(2, 1),
     )

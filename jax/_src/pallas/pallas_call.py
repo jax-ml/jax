@@ -1291,7 +1291,7 @@ def pallas_call(
   if compiler_params is None:
     compiler_params = {}
   if isinstance(compiler_params, pallas_core.CompilerParams):
-    if compiler_params.PLATFORM not in ["mosaic", "triton"]:
+    if compiler_params.PLATFORM not in ["mosaic", "mosaic_gpu", "triton"]:
       raise ValueError(
           f"Unknown platform in compiler params: {compiler_params.PLATFORM}")
     compiler_params = {

@@ -20,7 +20,7 @@ from collections.abc import Sequence
 import dataclasses
 import functools
 import math
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, cast
 
 import jax
 from jax._src import core as jax_core
@@ -152,11 +152,6 @@ def _eval_index_map(
   return tuple(result)
 
 
-class Params(TypedDict, total=False):
-  num_stages: int
-  dimension_semantics: Sequence[Literal["sequential", "parallel"]]
-
-
 def lower_jaxpr_to_module(
     grid_mapping: pallas_core.GridMapping,
     jaxpr: jax_core.Jaxpr,
@@ -199,7 +194,7 @@ def lower_jaxpr_to_module(
     grid += (1,) * (3 - len(grid))
   block = (128,) + (1,) * (len(grid) - 1)
 
-  params = Params(**compiler_params.get("mosaic_gpu", {}))
+  params = compiler_params.get("mosaic_gpu", {})
   num_stages = params.get("num_stages", 1)
   dimension_semantics = params.get(
       "dimension_semantics", ["parallel"] * len(grid_mapping.grid)
