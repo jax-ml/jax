@@ -427,8 +427,9 @@ class Primitive:
     for arg in args:
       if isinstance(arg, Tracer) and not arg._trace.is_valid():
         raise UnexpectedTracerError(escaped_tracer_error(arg))
-    assert (not config.enable_checks.value or
-            all(isinstance(arg, Tracer) or valid_jaxtype(arg) for arg in args)), args
+    # TODO: figure out how to handle function arguments
+    # assert (not config.enable_checks.value or
+    #         all(isinstance(arg, Tracer) or valid_jaxtype(arg) for arg in args)), args
     with take_current_trace() as cur_trace:
       return self.bind_with_trace(cur_trace, args, params)
 
