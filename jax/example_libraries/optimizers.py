@@ -16,7 +16,7 @@
 
 You likely do not mean to import this module! The optimizers in this library
 are intended as examples only. If you are looking for a fully featured optimizer
-library, two good options are JAXopt_ and Optax_.
+library, consider Optax_.
 
 This module contains some convenient optimizer definitions, specifically
 initialization and update functions, which can be used with ndarrays or
@@ -85,8 +85,7 @@ Example Usage:
     value, opt_state = step(i, opt_state)
 
 
-.. _JAXopt: https://github.com/google/jaxopt
-.. _Optax: https://github.com/deepmind/optax
+.. _Optax: https://github.com/google-deepmind/optax
 """
 
 from __future__ import annotations
