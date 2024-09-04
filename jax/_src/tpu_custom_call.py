@@ -113,7 +113,7 @@ class CustomCallBackendConfig:
   allow_input_fusion: list[bool] | None
   serialization_format: int | None
   internal_scratch_in_bytes: int | None
-  output_memory_spaces: tuple[MemorySpace, ...] | None
+  output_memory_spaces: tuple[MemorySpace | None, ...] | None
 
   # We omit the body while printing, because primitive params get embedded
   # in HLO metadata, and the body blows up its size.
@@ -161,7 +161,8 @@ class CustomCallBackendConfig:
       for i, memory_space in enumerate(self.output_memory_spaces):
         if i:
           config.write(b",")
-        config.write(str(memory_space.color).encode("ascii"))
+        color = memory_space.color if memory_space is not None else -1
+        config.write(str(color).encode("ascii"))
       config.write(b"]")
     config.write(b"}")  # End of custom_call_config.
     if self.device_type is not None:
@@ -446,7 +447,7 @@ def _lower_to_custom_call_config(
     internal_scratch_in_bytes: int | None,
     collective_id: int | None,
     serialization_format: int | None,
-    output_memory_spaces: tuple[MemorySpace, ...] | None = None,
+    output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
 ) -> CustomCallBackendConfig:
   lowered_module_asm, (
       has_communication,
@@ -491,7 +492,7 @@ def _lowered_to_custom_call_config(
     needs_hlo_passes: bool,
     needs_layout_passes: bool,
     device_type: str | None,
-    output_memory_spaces: tuple[MemorySpace, ...] | None = None,
+    output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
 ):
   if has_custom_barrier:
     if collective_id is None:
@@ -541,7 +542,7 @@ def lower_module_to_custom_call(
     internal_scratch_in_bytes: int | None,
     collective_id: int | None,
     serialization_format: int | None,
-    output_memory_spaces: tuple[MemorySpace, ...] | None,
+    output_memory_spaces: tuple[MemorySpace | None, ...] | None,
     device_type: str | None,
 ) -> Sequence[ir.Value]:
   config = _lower_to_custom_call_config(
@@ -582,7 +583,7 @@ def as_tpu_kernel(
     internal_scratch_in_bytes: int | None = None,
     collective_id: int | None = None,
     serialization_format: int | None = 1,
-    output_memory_spaces: tuple[MemorySpace, ...] | None = None,
+    output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
   config = _lower_to_custom_call_config(
