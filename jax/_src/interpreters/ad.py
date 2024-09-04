@@ -351,7 +351,7 @@ class JVPTrace(Trace):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if all(type(t) is Zero for t in tangents_in):
       return prim.bind_with_trace(self.parent_trace, (fun, f_jvp) + tuple(primals_in),
-                                    dict(symbolic_zeros=symbolic_zeros))
+                                  dict(symbolic_zeros=symbolic_zeros))
 
     with core.set_current_trace(self.parent_trace):
       if not symbolic_zeros:

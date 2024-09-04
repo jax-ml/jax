@@ -725,7 +725,7 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
 
   def __index__(self):
     check_integer_conversion(self)
-    raise self.aval._index(self)
+    return self.aval._index(self)
 
   # raises a useful error on attempts to pickle a Tracer.
   def __reduce__(self):

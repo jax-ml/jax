@@ -797,6 +797,7 @@ def _pow_int_int(x1, x2):
   return acc
 
 
+@implements(np.logaddexp, module='numpy')
 def logaddexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   x1, x2 = promote_args_inexact("logaddexp", x1, x2)
   return _logaddexp(x1, x2)
