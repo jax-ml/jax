@@ -868,10 +868,7 @@ class EvalTrace(Trace):
     else:
       for t in tracers:
         if isinstance(t, Tracer):
-          if t._trace.is_valid():
-            raise UnexpectedTracerError(f"Unexpected tracer: {t}")
-          else:
-            raise UnexpectedTracerError(escaped_tracer_error(t))
+          raise UnexpectedTracerError(escaped_tracer_error(t))
       with set_current_trace(eval_trace):
         return primitive.impl(*tracers, **params)
 
