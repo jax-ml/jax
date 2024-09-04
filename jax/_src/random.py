@@ -146,11 +146,17 @@ class PRNGSpec:
   def __init__(self, impl):
     self._impl = impl
 
-  def __str__(self)  -> str: return str(self._impl)
-  def __hash__(self) -> int: return hash(self._impl)
+  def __repr__(self) -> str:
+    return f"PRNGSpec({self._impl.name!r})"
+
+  def __str__(self)  -> str:
+    return str(self._impl)
+
+  def __hash__(self) -> int:
+    return hash(self._impl)
 
   def __eq__(self, other) -> bool:
-    return self._impl == other._impl
+    return isinstance(other, PRNGSpec) and self._impl == other._impl
 
 
 # TODO(frostig,vanderplas): remove PRNGImpl from this union when it's

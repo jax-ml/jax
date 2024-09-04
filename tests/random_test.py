@@ -1119,6 +1119,12 @@ class KeyArrayTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, 'unrecognized type .* PRNG'):
       jax.random.key(42, impl=A())
 
+  @jtu.sample_product(name=[name for name, _ in PRNG_IMPLS])
+  def test_key_spec_repr(self, name):
+    key = jax.random.key(42, impl=name)
+    spec = jax.random.key_impl(key)
+    self.assertEqual(repr(spec), f"PRNGSpec({name!r})")
+
   def test_keyarray_custom_vjp(self):
     # Regression test for https://github.com/google/jax/issues/18442
     @jax.custom_vjp
