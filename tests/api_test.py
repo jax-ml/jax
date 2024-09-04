@@ -8922,7 +8922,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     def f_fwd(x):
       return x, (2., x)
     def f_rev(*_):
-      return ((2., 1),)
+      return ((2., jnp.zeros(shape=(), dtype=float0)),)
     f.defvjp(f_fwd, f_rev)
 
     def foo(x, y):

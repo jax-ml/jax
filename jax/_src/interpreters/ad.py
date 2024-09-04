@@ -376,7 +376,6 @@ class JVPTrace(Trace):
     # TODO(frostig,mattjj): avoid instantiating zeros when we don't have to!
     with core.set_current_trace(self.parent_trace):
       tangents_in = map(instantiate_zeros, tangents_in)
-    with core.set_current_trace(self):
       tangents_out = custom_lin_p.bind(
         *res, *tangents_in, num_res=res_tree.num_leaves, bwd=bwd,
         out_avals=avals_out, symbolic_zeros=symbolic_zeros)
