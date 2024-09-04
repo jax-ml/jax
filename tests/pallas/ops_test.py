@@ -996,7 +996,7 @@ class OpsExtraTest(PallasBaseTest):
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
         grid=1,
-        compiler_params=dict(triton=dict(num_warps=1, num_stages=1))
+        compiler_params=plgpu.TritonCompilerParams(num_warps=1, num_stages=1)
     )
     def kernel(x_ref, o_ref):
       pl.debug_print("It works!")
@@ -1016,7 +1016,7 @@ class OpsExtraTest(PallasBaseTest):
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
         grid=1,
-        compiler_params=dict(triton=dict(num_warps=1, num_stages=1))
+        compiler_params=plgpu.TritonCompilerParams(num_warps=1, num_stages=1)
     )
     def kernel(x_ref, o_ref):
       pl.debug_print("x[0] =", x_ref[0])

@@ -650,9 +650,9 @@ pytype_strict_library(
         ":pallas_gpu_users",
     ],
     deps = [
-        ":pallas",
         "//jax/_src/pallas/mosaic_gpu:core",  # build_cleaner: keep
         "//jax/_src/pallas/mosaic_gpu:pallas_call_registration",  # build_cleaner: keep
+        "//jax/_src/pallas/triton:core",
         "//jax/_src/pallas/triton:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/triton:primitives",
     ],

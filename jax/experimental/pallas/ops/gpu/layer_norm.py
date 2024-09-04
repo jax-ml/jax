@@ -24,6 +24,7 @@ import jax.numpy as jnp
 from jax._src.lax.control_flow.for_loop import for_loop
 
 from jax.experimental import pallas as pl
+from jax.experimental.pallas import gpu as plgpu
 
 def layer_norm_forward_kernel(
     x_ref, weight_ref, bias_ref, # Input arrays
@@ -282,9 +283,8 @@ def layer_norm(
   out_shape = jax.ShapeDtypeStruct(shape=(n,), dtype=x.dtype)
   method = pl.pallas_call(
       kernel,
-      compiler_params=dict(
-          triton=dict(num_warps=num_warps, num_stages=num_stages)
-      ),
+      compiler_params=plgpu.TritonCompilerParams(
+          num_warps=num_warps, num_stages=num_stages),
       grid=(),
       out_shape=out_shape,
       debug=False,
