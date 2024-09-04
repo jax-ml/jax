@@ -2466,11 +2466,11 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
           "Not implemented: Only native tiling with offset (0, 0) is supported "
           "when concatenation along tiling dims.");
     }
-    // Check if shapes of src and res are aligned to native tiling.
+    // Check if the concat dim size of src and res is aligned to native tiling.
     auto check_aligned = [&](const VectorType &vty) {
+      auto i = dimension - res_ty.getRank();
       return vty.getRank() >= 2 &&
-             *(vty.getShape().end() - 2) % *(layout.tiling().end() - 2) == 0 &&
-             *(vty.getShape().end() - 1) % *(layout.tiling().end() - 1) == 0;
+             *(vty.getShape().end() + i) % *(layout.tiling().end() + i) == 0;
     };
     bool is_aligned = check_aligned(res_ty);
     int op_idx = 0;
