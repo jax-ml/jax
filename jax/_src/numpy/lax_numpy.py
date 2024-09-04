@@ -99,16 +99,6 @@ def canonicalize_shape(shape: Any, context: str="") -> core.Shape:
   else:
     return core.canonicalize_shape(shape, context)
 
-# Common docstring additions:
-
-_PRECISION_DOC = """\
-In addition to the original NumPy arguments listed below, also supports
-``precision`` for extra control over matrix-multiplication precision
-on supported devices. ``precision`` may be set to ``None``, which means
-default precision for the backend, a :class:`~jax.lax.Precision` enum value
-(``Precision.DEFAULT``, ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple
-of two :class:`~jax.lax.Precision` enums indicating separate precision for each argument.
-"""
 
 # Some objects below rewrite their __module__ attribute to this name.
 _PUBLIC_MODULE_NAME = "jax.numpy"
