@@ -54,7 +54,7 @@ class ExamplesTest(parameterized.TestCase):
     kernel = lambda x, y: jnp.dot(x, y)
     np.testing.assert_allclose(kernel_lsq.gram(kernel, xs), jnp.dot(xs, xs.T), atol=1E-5)
 
-  @jax.default_matmul_precision("float32")
+  @jax.config.update("jax_default_matmul_precision", "float32")
   def testKernelRegressionTrainAndPredict(self):
     n, d = 100, 20
     truth = self.rng.normal(size=d)
@@ -63,7 +63,6 @@ class ExamplesTest(parameterized.TestCase):
     kernel = lambda x, y: jnp.dot(x, y)
     predict = kernel_lsq.train(kernel, xs, ys)
     np.testing.assert_allclose(predict(xs), ys, atol=1e-3, rtol=1e-3)
-
 
 if __name__ == "__main__":
   absltest.main()
