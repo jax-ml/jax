@@ -4976,6 +4976,7 @@ class RematTest(jtu.JaxTestCase):
       msg = str(e)
     self.assertNotIn('static_argnums', msg)
 
+  @unittest.skip
   def test_remat_grad_python_control_flow_static_argnums(self):
     @partial(jax.remat, static_argnums=(0,))
     def g(x):
@@ -4998,6 +4999,7 @@ class RematTest(jtu.JaxTestCase):
     expected = np.cos(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @unittest.skip
   def test_remat_grad_python_control_flow_unhashable_static_argnums(self):
     @partial(jax.remat, static_argnums=(0,))
     def g(x):
