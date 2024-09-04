@@ -865,7 +865,7 @@ def _custom_vjp_call_jaxpr_vmap(
   out_dims1 = [0 if b else not_mapped for b in out_batched]
   out_dims2 = []
 
-  # @pe._memoize
+  @pe._memoize
   def batched_fwd_jaxpr_thunk(*zeros):
     fwd_jaxpr = core.ClosedJaxpr(*fwd_jaxpr_thunk(*zeros))  # consts can be tracers
     batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(
@@ -1418,7 +1418,7 @@ def optimize_remat_of_custom_vjp_fwd(
           f"functions with side effects, but {fwd_name} has the following "
           f"effects: {fwd_jaxpr.effects}")
 
-    # @pe._memoize
+    @pe._memoize
     def fun_jaxpr_thunk():
       jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
       return jaxpr, consts
@@ -1479,7 +1479,7 @@ def _remat_opt_vmap(
 
   _, prim_batched = split_list(in_batched, [num_consts])
 
-  # @pe._memoize
+  @pe._memoize
   def batched_fun_jaxpr_thunk():
     fun_jaxpr = core.ClosedJaxpr(*fun_jaxpr_thunk())
     batched_fun_jaxpr, out_batched = batching.batch_jaxpr(

@@ -2040,7 +2040,7 @@ class DynamicJaxprTrace(core.Trace):
     fun_jaxpr, out_avals, consts, () = trace_to_jaxpr_dynamic(fun, in_avals)
     closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
 
-    # @_memoize
+    @_memoize
     def jvp_jaxpr_thunk(*in_zeros):
       for store in jvp.stores: store and store.reset()
       nz_tangent_avals, zero_avals = partition_list(in_zeros, in_tangent_avals)
@@ -2070,7 +2070,7 @@ class DynamicJaxprTrace(core.Trace):
     fun_jaxpr, out_avals, consts, _ = trace_to_jaxpr_dynamic(fun, in_avals, debug_info)
     closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
 
-    # @_memoize
+    @_memoize
     def fwd_jaxpr_from_zeros(*zeros):
       for store in fwd.stores: store and store.reset()
       fwd_ = _interleave_fun(fwd, zeros)
@@ -2110,7 +2110,7 @@ class DynamicJaxprTrace(core.Trace):
         lu.wrap_init(transpose), treedef_tuple((res_tree, out_tree)))
 
     # the following thunk evaluates to a pair: transpose_jaxpr, transpose_consts
-    # @_memoize
+    @_memoize
     def transpose_jaxpr_thunk():
       for store in transpose_flat.stores: store.reset()
       jaxpr, _, consts, () = trace_to_jaxpr_dynamic(transpose_flat, in_avals_t)
@@ -2138,19 +2138,14 @@ def _interleave_fun(every_others, *args, **kwargs):
   args_ = [x for pair in zip(args, every_others) for x in pair]
   yield (yield (args_, kwargs))
 
+# what about context??
 def _memoize(fn):
   cells = {}
-  saved_state = core.thread_local_state.trace_state.copy()
   sentinel = object()
   def memoized(*args):
     out = cells.get(args, sentinel)
     if out is sentinel:
-      prev_state = core.thread_local_state.trace_state
-      core.thread_local_state.trace_state = saved_state
-      try:
-        out = cells[args] = fn(*args)
-      finally:
-        core.thread_local_state.trace_state = prev_state
+      out = cells[args] = fn(*args)
     return out
   return memoized
 
