@@ -2047,6 +2047,11 @@ def orthogonal(
 
   Returns:
     A random array of shape `(*shape, n, n)` and specified dtype.
+
+  References:
+    .. [1] Mezzadri, Francesco. (2007). "How to generate random matrices from
+           the classical compact groups". Notices of the American Mathematical
+           Society, 54(5), 592-604. https://arxiv.org/abs/math-ph/0609050.
   """
   shape = core.canonicalize_shape(shape)
   key, _ = _check_prng_key("orthogonal", key)
