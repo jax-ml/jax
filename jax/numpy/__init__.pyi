@@ -272,10 +272,10 @@ def cross(
     axis: int | None = ...,
 ) -> Array: ...
 csingle: Any
-def cumprod(a: ArrayLike, axis: _Axis = ..., dtype: DTypeLike = ...,
+def cumprod(a: ArrayLike, axis: int | None = ..., dtype: DTypeLike = ...,
             out: None = ...) -> Array: ...
 cumproduct = cumprod
-def cumsum(a: ArrayLike, axis: _Axis = ..., dtype: DTypeLike = ...,
+def cumsum(a: ArrayLike, axis: int | None = ..., dtype: DTypeLike = ...,
            out: None = ...) -> Array: ...
 def cumulative_sum(x: ArrayLike, /, *, axis: int | None = ...,
                    dtype: DTypeLike | None = ...,
@@ -633,9 +633,9 @@ def nanargmin(
     out: None = ...,
     keepdims: builtins.bool | None = ...,
 ) -> Array: ...
-def nancumprod(a: ArrayLike, axis: _Axis = ..., dtype: DTypeLike = ...,
+def nancumprod(a: ArrayLike, axis: int | None = ..., dtype: DTypeLike = ...,
                out: None = ...) -> Array: ...
-def nancumsum(a: ArrayLike, axis: _Axis = ..., dtype: DTypeLike = ...,
+def nancumsum(a: ArrayLike, axis: int | None = ..., dtype: DTypeLike = ...,
                out: None = ...) -> Array: ...
 def nanmax(a: ArrayLike, axis: _Axis = ..., out: None = ...,
            keepdims: builtins.bool = ..., initial: ArrayLike | None = ...,

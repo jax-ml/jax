@@ -1787,73 +1787,253 @@ class CumulativeReduction(Protocol):
                dtype: DTypeLike | None = None, out: None = None) -> Array: ...
 
 
-# TODO(jakevdp): should we change these semantics to match those of numpy?
-CUML_REDUCTION_LAX_DESCRIPTION = """
-Unlike the numpy counterpart, when ``dtype`` is not specified the output dtype will always
-match the dtype of the input.
-"""
+def _cumulative_reduction(
+    name: str, reduction: Callable[..., Array],
+    a: ArrayLike, axis: int | None, dtype: DTypeLike | None, out: None,
+    fill_nan: bool = False, fill_value: ArrayLike = 0,
+    promote_integers: bool = False) -> Array:
+  """Helper function for implementing cumulative reductions."""
+  check_arraylike(name, a)
+  if out is not None:
+    raise NotImplementedError(f"The 'out' argument to jnp.{name} is not supported")
+  dtypes.check_user_dtype_supported(dtype, name)
 
-def _make_cumulative_reduction(np_reduction: Any, reduction: Callable[..., Array],
-                               fill_nan: bool = False, fill_value: ArrayLike = 0,
-                               promote_integers: bool = False) -> CumulativeReduction:
-  @implements(np_reduction, skip_params=['out'],
-          lax_description=CUML_REDUCTION_LAX_DESCRIPTION)
-  def cumulative_reduction(a: ArrayLike, axis: Axis = None,
-                           dtype: DTypeLike | None = None, out: None = None) -> Array:
-    return _cumulative_reduction(a, _ensure_optional_axes(axis), dtype, out)
+  if axis is None or _isscalar(a):
+    a = lax.reshape(a, (np.size(a),))
+  if axis is None:
+    axis = 0
 
-  @partial(api.jit, static_argnames=('axis', 'dtype'))
-  def _cumulative_reduction(a: ArrayLike, axis: Axis = None,
-                            dtype: DTypeLike | None = None, out: None = None) -> Array:
-    check_arraylike(np_reduction.__name__, a)
-    if out is not None:
-      raise NotImplementedError(f"The 'out' argument to jnp.{np_reduction.__name__} "
-                                f"is not supported.")
-    dtypes.check_user_dtype_supported(dtype, np_reduction.__name__)
+  a_shape = list(np.shape(a))
+  num_dims = len(a_shape)
+  axis = _canonicalize_axis(axis, num_dims)
 
-    if axis is None or _isscalar(a):
-      a = lax.reshape(a, (np.size(a),))
-    if axis is None:
-      axis = 0
+  if fill_nan:
+    a = _where(lax_internal._isnan(a), _lax_const(a, fill_value), a)
 
-    a_shape = list(np.shape(a))
-    num_dims = len(a_shape)
-    axis = _canonicalize_axis(axis, num_dims)
+  result_type: DTypeLike = dtypes.dtype(dtype or a)
+  if dtype is None and promote_integers or dtypes.issubdtype(result_type, np.bool_):
+    result_type = _promote_integer_dtype(result_type)
+  result_type = dtypes.canonicalize_dtype(result_type)
 
-    if fill_nan:
-      a = _where(lax_internal._isnan(a), _lax_const(a, fill_value), a)
+  a = lax.convert_element_type(a, result_type)
+  result = reduction(a, axis)
 
-    result_type: DTypeLike = dtypes.dtype(dtype or a)
-    if dtype is None and promote_integers or dtypes.issubdtype(result_type, np.bool_):
-      result_type = _promote_integer_dtype(result_type)
-    result_type = dtypes.canonicalize_dtype(result_type)
-
-    a = lax.convert_element_type(a, result_type)
-    result = reduction(a, axis)
-
-    # We downcast to boolean because we accumulate in integer types
-    if dtypes.issubdtype(dtype, np.bool_):
-      result = lax.convert_element_type(result, np.bool_)
-    return result
-
-  return cumulative_reduction
+  # We downcast to boolean because we accumulate in integer types
+  if dtypes.issubdtype(dtype, np.bool_):
+    result = lax.convert_element_type(result, np.bool_)
+  return result
 
 
-cumsum = _make_cumulative_reduction(np.cumsum, lax.cumsum, fill_nan=False)
-cumprod = _make_cumulative_reduction(np.cumprod, lax.cumprod, fill_nan=False)
-nancumsum = _make_cumulative_reduction(np.nancumsum, lax.cumsum,
-                                       fill_nan=True, fill_value=0)
-nancumprod = _make_cumulative_reduction(np.nancumprod, lax.cumprod,
-                                        fill_nan=True, fill_value=1)
-_cumsum_with_promotion = _make_cumulative_reduction(
-  np.cumsum, lax.cumsum, fill_nan=False, promote_integers=True
-)
+@partial(api.jit, static_argnames=('axis', 'dtype'))
+def cumsum(a: ArrayLike, axis: int | None = None,
+           dtype: DTypeLike | None = None, out: None = None) -> Array:
+  """Cumulative sum of elements along an axis.
 
-@implements(getattr(np, 'cumulative_sum', None))
+  JAX implementation of :func:`numpy.cumsum`.
+
+  Args:
+    a: N-dimensional array to be accumulated.
+    axis: integer axis along which to accumulate. If None (default), then
+      array will be flattened and accumulated along the flattened axis.
+    dtype: optionally specify the dtype of the output. If not specified,
+      then the output dtype will match the input dtype.
+    out: unused by JAX
+
+  Returns:
+    An array containing the accumulated sum along the given axis.
+
+  See also:
+    - :func:`jax.numpy.cumulative_sum`: cumulative sum via the array API standard.
+    - :meth:`jax.numpy.add.accumulate`: cumulative sum via ufunc methods.
+    - :func:`jax.numpy.nancumsum`: cumulative sum ignoring NaN values.
+    - :func:`jax.numpy.sum`: sum along axis
+
+  Examples:
+    >>> x = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6]])
+    >>> jnp.cumsum(x)  # flattened cumulative sum
+    Array([ 1,  3,  6, 10, 15, 21], dtype=int32)
+    >>> jnp.cumsum(x, axis=1)  # cumulative sum along axis 1
+    Array([[ 1,  3,  6],
+           [ 4,  9, 15]], dtype=int32)
+  """
+  return _cumulative_reduction("cumsum", lax.cumsum, a, axis, dtype, out)
+
+
+@partial(api.jit, static_argnames=('axis', 'dtype'))
+def cumprod(a: ArrayLike, axis: int | None = None,
+            dtype: DTypeLike | None = None, out: None = None) -> Array:
+  """Cumulative product of elements along an axis.
+
+  JAX implementation of :func:`numpy.cumprod`.
+
+  Args:
+    a: N-dimensional array to be accumulated.
+    axis: integer axis along which to accumulate. If None (default), then
+      array will be flattened and accumulated along the flattened axis.
+    dtype: optionally specify the dtype of the output. If not specified,
+      then the output dtype will match the input dtype.
+    out: unused by JAX
+
+  Returns:
+    An array containing the accumulated product along the given axis.
+
+  See also:
+    - :meth:`jax.numpy.multiply.accumulate`: cumulative product via ufunc methods.
+    - :func:`jax.numpy.nancumprod`: cumulative product ignoring NaN values.
+    - :func:`jax.numpy.prod`: product along axis
+
+  Examples:
+    >>> x = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6]])
+    >>> jnp.cumprod(x)  # flattened cumulative product
+    Array([  1,   2,   6,  24, 120, 720], dtype=int32)
+    >>> jnp.cumprod(x, axis=1)  # cumulative product along axis 1
+    Array([[  1,   2,   6],
+           [  4,  20, 120]], dtype=int32)
+  """
+  return _cumulative_reduction("cumprod", lax.cumprod, a, axis, dtype, out)
+
+
+@partial(api.jit, static_argnames=('axis', 'dtype'))
+def nancumsum(a: ArrayLike, axis: int | None = None,
+              dtype: DTypeLike | None = None, out: None = None) -> Array:
+  """Cumulative sum of elements along an axis, ignoring NaN values.
+
+  JAX implementation of :func:`numpy.nancumsum`.
+
+  Args:
+    a: N-dimensional array to be accumulated.
+    axis: integer axis along which to accumulate. If None (default), then
+      array will be flattened and accumulated along the flattened axis.
+    dtype: optionally specify the dtype of the output. If not specified,
+      then the output dtype will match the input dtype.
+    out: unused by JAX
+
+  Returns:
+    An array containing the accumulated sum along the given axis.
+
+  See also:
+    - :func:`jax.numpy.cumsum`: cumulative sum without ignoring NaN values.
+    - :func:`jax.numpy.cumulative_sum`: cumulative sum via the array API standard.
+    - :meth:`jax.numpy.add.accumulate`: cumulative sum via ufunc methods.
+    - :func:`jax.numpy.sum`: sum along axis
+
+  Examples:
+    >>> x = jnp.array([[1., 2., jnp.nan],
+    ...                [4., jnp.nan, 6.]])
+
+    The standard cumulative sum will propagate NaN values:
+
+    >>> jnp.cumsum(x)
+    Array([ 1.,  3., nan, nan, nan, nan], dtype=float32)
+
+    :func:`~jax.numpy.nancumsum` will ignore NaN values, effectively replacing
+    them with zeros:
+
+    >>> jnp.nancumsum(x)
+    Array([ 1.,  3.,  3.,  7.,  7., 13.], dtype=float32)
+
+    Cumulative sum along axis 1:
+
+    >>> jnp.nancumsum(x, axis=1)
+    Array([[ 1.,  3.,  3.],
+           [ 4.,  4., 10.]], dtype=float32)
+  """
+  return _cumulative_reduction("nancumsum", lax.cumsum, a, axis, dtype, out,
+                               fill_nan=True, fill_value=0)
+
+
+@partial(api.jit, static_argnames=('axis', 'dtype'))
+def nancumprod(a: ArrayLike, axis: int | None = None,
+               dtype: DTypeLike | None = None, out: None = None) -> Array:
+  """Cumulative product of elements along an axis, ignoring NaN values.
+
+  JAX implementation of :func:`numpy.nancumprod`.
+
+  Args:
+    a: N-dimensional array to be accumulated.
+    axis: integer axis along which to accumulate. If None (default), then
+      array will be flattened and accumulated along the flattened axis.
+    dtype: optionally specify the dtype of the output. If not specified,
+      then the output dtype will match the input dtype.
+    out: unused by JAX
+
+  Returns:
+    An array containing the accumulated product along the given axis.
+
+  See also:
+    - :func:`jax.numpy.cumprod`: cumulative product without ignoring NaN values.
+    - :meth:`jax.numpy.multiply.accumulate`: cumulative product via ufunc methods.
+    - :func:`jax.numpy.prod`: product along axis
+
+  Examples:
+    >>> x = jnp.array([[1., 2., jnp.nan],
+    ...                [4., jnp.nan, 6.]])
+
+    The standard cumulative product will propagate NaN values:
+
+    >>> jnp.cumprod(x)
+    Array([ 1.,  2., nan, nan, nan, nan], dtype=float32)
+
+    :func:`~jax.numpy.nancumprod` will ignore NaN values, effectively replacing
+    them with ones:
+
+    >>> jnp.nancumprod(x)
+    Array([ 1.,  2.,  2.,  8.,  8., 48.], dtype=float32)
+
+    Cumulative product along axis 1:
+
+    >>> jnp.nancumprod(x, axis=1)
+    Array([[ 1.,  2.,  2.],
+           [ 4.,  4., 24.]], dtype=float32)
+  """
+  return _cumulative_reduction("nancumprod", lax.cumprod, a, axis, dtype, out,
+                               fill_nan=True, fill_value=1)
+
+
+@partial(api.jit, static_argnames=('axis', 'dtype'))
+def _cumsum_with_promotion(a: ArrayLike, axis: int | None = None,
+           dtype: DTypeLike | None = None, out: None = None) -> Array:
+  """Utility function to compute cumsum with integer promotion."""
+  return _cumulative_reduction("_cumsum_with_promotion", lax.cumsum,
+                               a, axis, dtype, out, promote_integers=True)
+
+
 def cumulative_sum(
     x: ArrayLike, /, *, axis: int | None = None,
     dtype: DTypeLike | None = None,
     include_initial: bool = False) -> Array:
+  """Cumulative sum along the axis of an array.
+
+  JAX implementation of :func:`numpy.cumulative_sum`.
+
+  Args:
+    x: N-dimensional array
+    axis: integer axis along which to accumulate. If ``x`` is one-dimensional,
+      this argument is optional.
+    dtype: optional dtype of the output.
+    include_initial: if True, then include the initial value in the cumulative
+      sum. Default is False.
+
+  Returns:
+    An array containing the accumulated values.
+
+  See Also:
+    - :func:`jax.numpy.cumsum`: alternative API for cumulative sum.
+    - :func:`jax.numpy.nancumsum`: cumulative sum while ignoring NaN values.
+    - :func:`jax.numpy.add.accumulate`: cumulative sum via the ufunc API.
+
+  Examples:
+    >>> x = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6]])
+    >>> jnp.cumulative_sum(x, axis=1)
+    Array([[ 1,  3,  6],
+           [ 4,  9, 15]], dtype=int32)
+    >>> jnp.cumulative_sum(x, axis=1, include_initial=True)
+    Array([[ 0,  1,  3,  6],
+           [ 0,  4,  9, 15]], dtype=int32)
+  """
   check_arraylike("cumulative_sum", x)
   x = lax_internal.asarray(x)
   if x.ndim == 0:
