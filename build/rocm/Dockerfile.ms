@@ -3,10 +3,10 @@ FROM ubuntu:20.04 AS rocm_base
 ################################################################################
 
 RUN --mount=type=cache,target=/var/cache/apt \
-    apt-get update && apt-get install -y python3
+    apt-get update && apt-get install -y python3 python-is-python3
 
 # Add target file to help determine which device(s) to build for
-ARG GPU_DEVICE_TARGETS="gfx900 gfx906 gfx908 gfx90a gfx940 gfx941 gfx942 gfx1030 gfx1100"
+ARG GPU_DEVICE_TARGETS="gfx908 gfx90a gfx940 gfx941 gfx942 gfx1030 gfx1100"
 ENV GPU_DEVICE_TARGETS=${GPU_DEVICE_TARGETS}
 
 # Install ROCM
@@ -16,6 +16,7 @@ ENV ROCM_PATH=${ROCM_PATH}
 ARG ROCM_BUILD_JOB
 ARG ROCM_BUILD_NUM
 RUN --mount=type=bind,source=build/rocm/tools/get_rocm.py,target=get_rocm.py \
+    --mount=type=cache,target=/var/cache/apt \
     python3 get_rocm.py --rocm-version=$ROCM_VERSION --job-name=$ROCM_BUILD_JOB --build-num=$ROCM_BUILD_NUM
 
 # Set up paths
@@ -42,14 +43,30 @@ RUN git clone https://github.com/pyenv/pyenv.git /pyenv
 ENV PYENV_ROOT /pyenv
 ENV PATH $PYENV_ROOT/shims:$PYENV_ROOT/bin:$PATH
 RUN pyenv install $PYTHON_VERSION
-RUN eval "$(pyenv init -)" && \
+RUN --mount=type=cache,mode=0755,target=/root/.cache/pip \
+    eval "$(pyenv init -)" && \
     pyenv local ${PYTHON_VERSION} && \
     pip3 install --upgrade --force-reinstall setuptools pip && \
-    pip install \
-        numpy setuptools build wheel six auditwheel scipy \
-        pytest pytest-html pytest_html_merger pytest-reportlog \
-        pytest-rerunfailures cloudpickle portpicker matplotlib absl-py \
-        flatbuffers hypothesis pytest-json-report pytest-csv
+    pip3 install \
+        "numpy<2" \
+        build \
+        wheel \
+        six \
+        auditwheel \
+        scipy \
+        pytest \
+        pytest-html \
+        pytest_html_merger \
+        pytest-reportlog \
+        pytest-rerunfailures \
+        pytest-json-report \
+        pytest-csv \
+        cloudpickle \
+        portpicker \
+        matplotlib \
+        absl-py \
+        flatbuffers \
+        hypothesis
 
 ################################################################################
 FROM rocm_base AS rt_build
@@ -65,6 +82,7 @@ LABEL com.amdgpu.rocm_version="$ROCM_VERSION" \
       com.amdgpu.jax_commit="$JAX_COMMIT" \
       com.amdgpu.xla_commit="$XLA_COMMIT"
 
-RUN --mount=type=bind,source=wheelhouse,target=/wheelhouse \
+RUN --mount=type=cache,mode=0755,target=/root/.cache/pip \
+    --mount=type=bind,source=wheelhouse,target=/wheelhouse \
     pip install --find-links /wheelhouse jax jaxlib jax_rocm60_plugin jax_rocm60_pjrt
 

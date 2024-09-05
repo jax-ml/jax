@@ -129,6 +129,7 @@ from jax._src.api import vjp as vjp
 from jax._src.api import vmap as vmap
 from jax._src.api import xla_computation as _deprecated_xla_computation
 from jax._src.sharding_impls import NamedSharding as NamedSharding
+from jax._src.sharding_impls import make_mesh as make_mesh
 
 # Force import, allowing jax.interpreters.* to be used after import jax.
 from jax.interpreters import ad, batching, mlir, partial_eval, pxla, xla

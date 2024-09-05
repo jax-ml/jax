@@ -21,7 +21,6 @@ import itertools as it
 from functools import partial
 from typing import Any
 
-import jax
 from jax._src import config
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe

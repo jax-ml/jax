@@ -1098,7 +1098,7 @@ class InspectShardingTest(jtu.JaxTestCase):
       return jnp.square(x)
 
     f = jax.jit(f_)
-    mesh = jtu.create_global_mesh((2,), ('x'))
+    mesh = jtu.create_mesh((2,), ('x'))
     s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
     arr = jax.device_put(np.arange(8).reshape(2, 2, 2), s)
 
@@ -1114,7 +1114,7 @@ class InspectShardingTest(jtu.JaxTestCase):
       return jnp.square(x)
 
     f = pjit.pjit(f_)
-    mesh = jtu.create_global_mesh((2,), ('x'))
+    mesh = jtu.create_mesh((2,), ('x'))
     s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
     arr = jax.device_put(np.arange(8).reshape(2, 2, 2), s)
 

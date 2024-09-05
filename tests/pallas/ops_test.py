@@ -739,6 +739,17 @@ class OpsExtraTest(PallasBaseTest):
       x = jnp.array([0.42, 2.4]).astype(dtype)
       np.testing.assert_allclose(kernel(x), fn(x), rtol=1e-6)
 
+  def test_abs_weak_type(self):
+    # see https://github.com/google/jax/issues/23191
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4, 4), jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.abs(x_ref[...])
+
+    x = jnp.broadcast_to(-3.2, (4, 4))  # sets `weak_type` to `True`
+    np.testing.assert_allclose(kernel(x), jnp.abs(x), rtol=1e-6)
+
   @parameterized.parameters(
       ("float32", "int32"),
       ("float64", "int32"),
@@ -961,6 +972,22 @@ class OpsExtraTest(PallasBaseTest):
     x = jnp.arange(256).astype(jnp.float16)
     np.testing.assert_allclose(kernel(x), jnp.tanh(x), atol=5e-3, rtol=5e-3)
 
+  def test_debug_barrier(self):
+    if self.INTERPRET:
+      self.skipTest("debug_barrier is not supported in interpret mode")
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
+        grid=1,
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+      plgpu.debug_barrier()
+
+    x = jnp.array([4.2, 2.4]).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x)
+
   def test_debug_print(self):
     # TODO: this test flakes on gpu
     if jtu.test_device_matches(["gpu"]):
@@ -969,7 +996,7 @@ class OpsExtraTest(PallasBaseTest):
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
         grid=1,
-        compiler_params=dict(triton=dict(num_warps=1, num_stages=1))
+        compiler_params=plgpu.TritonCompilerParams(num_warps=1, num_stages=1)
     )
     def kernel(x_ref, o_ref):
       pl.debug_print("It works!")
@@ -989,7 +1016,7 @@ class OpsExtraTest(PallasBaseTest):
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
         grid=1,
-        compiler_params=dict(triton=dict(num_warps=1, num_stages=1))
+        compiler_params=plgpu.TritonCompilerParams(num_warps=1, num_stages=1)
     )
     def kernel(x_ref, o_ref):
       pl.debug_print("x[0] =", x_ref[0])
@@ -1502,6 +1529,21 @@ class OpsExtraTest(PallasBaseTest):
       y_ref = jnp.cumsum(x, axis=axis)
       np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2, err_msg=i)
 
+  @parameterized.parameters([-3.2, -1.0, -0.4, 0., 0.72, 1.0, 2.4])
+  def test_erf_inv(self, x):
+    @functools.partial(
+        self.pallas_call,
+        # TODO(ayx): add float64 support for `erf_inv`
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = lax.erf_inv(x_ref[...])
+
+    x = jnp.full((8, 128), x)
+    out = kernel(x)
+    expected = lax.erf_inv(x)
+    np.testing.assert_array_equal(out, expected)
+
 
 class OpsExtraInterpretTest(OpsExtraTest):
   INTERPRET = True
@@ -1571,22 +1613,6 @@ class TpuOpsTest(PallasBaseTest):
       self.skipTest("Test requires TPU device.")
 
     super().setUp()
-
-  @parameterized.parameters([-3.2, -1.0, -0.4, 0., 0.72, 1.0, 2.4])
-  def test_erf_inv(self, x):
-    @jax.jit
-    @functools.partial(
-        pl.pallas_call,
-        # TODO(ayx): add float64 support for `erf_inv`
-        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-    )
-    def kernel(x_ref, o_ref):
-      o_ref[...] = lax.erf_inv(x_ref[...])
-
-    x = jnp.full((8, 128), x)
-    out = kernel(x)
-    expected = lax.erf_inv(x)
-    np.testing.assert_array_equal(out, expected)
 
   SIGN_PARAMS = [
     (jnp.int32, (-3, 0, 5)),

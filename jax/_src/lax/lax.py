@@ -27,7 +27,6 @@ import warnings
 
 import numpy as np
 
-import jax
 from jax import tree_util
 from jax.sharding import Sharding
 from jax.tree_util import tree_map
@@ -42,6 +41,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
+from jax._src import pjit
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src import state
@@ -65,7 +65,7 @@ from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.sharding_impls import PmapSharding
+from jax._src.sharding_impls import PmapSharding, NamedSharding, PartitionSpec
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
 from jax._src.util import (cache, safe_zip, safe_map, canonicalize_axis,
                            split_list, NumpyComplexWarning)
@@ -83,6 +83,10 @@ T = TypeVar("T")
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
+
+def _matrix_transpose(x: Array) -> Array:
+  assert x.ndim >= 2
+  return transpose(x, [*range(x.ndim - 2), x.ndim - 1, x.ndim - 2])
 
 def _clip_int_to_valid_range(val: DimSize, dtype, where: str) -> int:
   info = np.iinfo(dtype)
@@ -1327,7 +1331,7 @@ def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int) -> Array:
   return iota_p.bind(*dynamic_shape, dtype=dtype, shape=tuple(static_shape),
                      dimension=dimension)
 
-def _eye(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
+def _eye(dtype: DTypeLike, shape: Shape, offset: DimSize = 0) -> Array:
   """Like numpy.eye, create a 2D array with ones on a diagonal."""
   offset = _clip_int_to_valid_range(offset, np.int32,
                                     "argument `offset` of jax.numpy.eye")
@@ -1709,13 +1713,54 @@ def broadcasting_shape_rule(name, *avals):
   return tuple(result_shape)
 
 
+def broadcasting_sharding_rule(name, *avals):
+  shapes = [aval.shape for aval in avals if aval.shape]
+  if not shapes:
+    return ()
+  if len({len(shape) for shape in shapes}) != 1:
+    msg = '{}: arrays must have same number of dimensions, got {}.'
+    raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
+
+  specs = [a.sharding.spec for a in avals if a.shape]
+
+  mesh = None
+  for a in avals:
+    if a.shape:
+      mesh = a.sharding.mesh
+      if mesh is not None and mesh != a.sharding.mesh:
+        raise ValueError(
+            f'Mesh for all inputs should be equal. Got one mesh: {mesh} and'
+            f' another mesh: {a.sharding.mesh}')
+  assert mesh is not None
+
+  result_specs = []
+  for ss, ds in zip(zip(*specs), zip(*shapes)):
+    if all(s == ss[0] for s in ss[1:]):
+      # if all dimension shardings are same, the resulting dimension sharding is
+      # the same.
+      result_specs.append(ss[0])
+    else:
+      non_trivial_s = [s for s, d in zip(ss, ds)
+                       if not (core.definitely_equal(d, 1) and s is None)]
+      if not non_trivial_s:
+        result_specs.append(None)
+      elif all(non_trivial_s[0] == s for s in non_trivial_s[1:]):
+        result_specs.append(non_trivial_s[0])
+      else:
+        raise TypeError(f'{name} got incompatible shardings for broadcasting: '
+                        f'{", ".join(map(str, map(tuple, specs)))}.')
+  return NamedSharding(mesh, PartitionSpec(*result_specs))
+
+
 def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
            require_same_dtypes=False):
   dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name,
                        allow_extended_dtype=allow_extended_dtype,
                        require_same=require_same_dtypes)
   shape_rule = partial(broadcasting_shape_rule, name)
-  prim = standard_primitive(shape_rule, dtype_rule, name)
+  sharding_rule = partial(broadcasting_sharding_rule, name)
+  prim = standard_primitive(shape_rule, dtype_rule, name,
+                            sharding_rule=sharding_rule)
   batching.defbroadcasting(prim)
   pe.def_trivial_padding(prim)
   return prim
@@ -1772,6 +1817,23 @@ def broadcast_hlo(
     out.append(arg)
   return out
 
+def multi_sharding_in_dim(ctx, ops, in_avals, out_aval):
+  out = []
+  for op, in_aval in zip(ops, in_avals):
+    if in_aval.sharding == out_aval.sharding or in_aval.sharding is None:
+      out.append(op)
+    else:
+      # TODO(yashkatariya, dougalm): If `in_aval.sharding` contains
+      # CompilerShardingAxis, then specify `unspecified_dims` via
+      # `wrap_with_sharding_op`.
+      if config.use_shardy_partitioner.value:
+        sp = in_aval.sharding._to_sdy_sharding(in_aval.ndim)
+      else:
+        sp = in_aval.sharding._to_xla_hlo_sharding(in_aval.ndim).to_proto()
+      out.append(mlir.wrap_with_sharding_op(ctx, op, out_aval, sp))
+  return out
+
+
 def _nary_lower_hlo(op: Callable, ctx,
                     *args: ir.Value,
                     explicit_type=False, **params) -> Sequence[ir.Value]:
@@ -1782,13 +1844,22 @@ def _nary_lower_hlo(op: Callable, ctx,
   """
   del params
   avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
-  broadcasted_args = mlir.multi_broadcast_in_dim(
-      ctx, args, avals_in, aval_out.shape)
+  args = mlir.multi_broadcast_in_dim(ctx, args, avals_in, aval_out.shape)  # type: ignore
+  if config.sharding_in_types.value:
+    args = multi_sharding_in_dim(ctx, args, avals_in, aval_out)
 
   if explicit_type:
-    return [op(mlir.aval_to_ir_type(aval_out), *broadcasted_args)]
+    out = op(mlir.aval_to_ir_type(aval_out), *args)
   else:
-    return [op(*broadcasted_args)]
+    out = op(*args)
+  if config.sharding_in_types.value:
+    if config.use_shardy_partitioner.value:
+      out_sp = aval_out.sharding._to_sdy_sharding(aval_out.ndim)
+    else:
+      out_sp = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
+    return [mlir.wrap_with_sharding_op(ctx, out, aval_out, out_sp)]
+  else:
+    return [out]
 
 
 _float = {np.floating}
@@ -2113,7 +2184,11 @@ pow_p = naryop(_pow_dtype_rule, [_float | _complex, _int | _float | _complex],
 
 def _pow_jvp_lhs(g, ans, x, y):
   y_dtype = dtypes.dtype(y)
-  x, y = jax._src.numpy.util.promote_dtypes_numeric(x, y)  # TODO replace this
+  result_dtype = dtypes.result_type(x, y)
+  if result_dtype == bool:
+    result_dtype = 'int32'
+  x = convert_element_type(x, result_dtype)
+  y = convert_element_type(y, result_dtype)
   if dtypes.issubdtype(y_dtype, np.integer):
     if x.shape != y.shape:
       shape = broadcast_shapes(x.shape, y.shape)
@@ -2445,6 +2520,10 @@ def _convert_element_type_shape_rule(operand, *, new_dtype, weak_type,
                                      sharding):
   return operand.shape
 
+def _convert_element_type_sharding_rule(operand, *, new_dtype, weak_type,
+                                        sharding):
+  return sharding
+
 def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type,
                                      sharding):
   if (operand.dtype != new_dtype and
@@ -2526,11 +2605,22 @@ def _convert_elt_type_pp_rule(eqn, context, settings):
   return core._pp_eqn(eqn.replace(params=params), context, settings)
 
 convert_element_type_p = Primitive('convert_element_type')
+
+# def _convert_element_type_bind(operand, *, new_dtype, weak_type, sharding):
+#   operand = core.Primitive.bind(convert_element_type_p, operand,
+#                                 new_dtype=new_dtype, weak_type=weak_type,
+#                                 sharding=sharding)
+#   if sharding is not None:
+#     operand = pjit.with_sharding_constraint(operand, sharding)
+#   return operand
+# convert_element_type_p.def_custom_bind(_convert_element_type_bind)
+
 convert_element_type_p.def_impl(partial(dispatch.apply_primitive, convert_element_type_p))
 convert_element_type_p.def_abstract_eval(
     partial(standard_abstract_eval, convert_element_type_p,
             _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
-            _convert_element_type_weak_type_rule))
+            _convert_element_type_weak_type_rule,
+            _convert_element_type_sharding_rule))
 ad.defjvp(convert_element_type_p, _convert_element_type_jvp_rule)
 ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 batching.defvectorized(convert_element_type_p)
@@ -3013,7 +3103,7 @@ def _ragged_dot_jvp_rule(
           preferred_element_type=preferred_element_type,
       )
       if type(dx) is not ad_util.Zero
-      else jax.numpy.zeros_like(primal_out)
+      else _zeros(primal_out)
   )
   dy_out = (
       ragged_dot(
@@ -3024,7 +3114,7 @@ def _ragged_dot_jvp_rule(
           preferred_element_type=preferred_element_type,
       )
       if type(dy) is not ad_util.Zero
-      else jax.numpy.zeros_like(primal_out)
+      else _zeros(primal_out)
   )
   tangent_out = dx_out + dy_out
 
@@ -3032,10 +3122,11 @@ def _ragged_dot_jvp_rule(
 
 
 def _ragged_to_dense(x, y, group_sizes):
+  from jax._src.lax import control_flow  # avoid circular imports
   shape = (y.shape[0], x.shape[0], x.shape[1])
   x = broadcast_in_dim(x, shape, [1, 2])
   iota = broadcasted_iota(group_sizes.dtype, shape, 1)
-  group_ends = jax.lax.cumsum(group_sizes)
+  group_ends = control_flow.cumsum(group_sizes)
   group_starts = concatenate(
       [_zeros(group_sizes)[:1], group_ends[:-1]],
       dimension=0,
@@ -3057,7 +3148,7 @@ def _ragged_dot_transpose_rule(
   if ad.is_undefined_primal(y):
     grad_x = None
   else:
-    y_t = jax.numpy.matrix_transpose(y)
+    y_t = _matrix_transpose(y)
     grad_x = ragged_dot(
         ct,
         y_t,
@@ -3073,7 +3164,7 @@ def _ragged_dot_transpose_rule(
     x_dense = _ragged_to_dense(x, y, group_sizes=gs)
     ct_dense = _ragged_to_dense(ct, y, group_sizes=gs)
     dimension_numbers = (([1], [1]), ([0], [0]))
-    grad_y = jax.lax.dot_general(
+    grad_y = dot_general(
         x_dense,
         ct_dense,
         dimension_numbers,
@@ -4302,7 +4393,7 @@ def _canonicalize_float_for_sort(x):
   # and NaNs in the output.
 
   result = select(eq(x, _zero(x)), _zeros(x), x)
-  with jax.debug_nans(False):
+  with config.debug_nans(False):
     result = select(_isnan(x), full_like(result, np.nan), result)
 
   return result
@@ -4817,7 +4908,7 @@ def _copy_impl_pmap_sharding(sharded_dim, *args, **kwargs):
 # method on jax.Array so that we can bypass the XLA compilation here.
 def _copy_impl(prim, *args, **kwargs):
   a, = args
-  if isinstance(a, jax.Array) and isinstance(a.sharding, PmapSharding):
+  if isinstance(a, Array) and isinstance(a.sharding, PmapSharding):
     sharded_dim = _which_dim_sharded(a.sharding)
     if sharded_dim is None:
       return dispatch.apply_primitive(prim, *args, **kwargs)

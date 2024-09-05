@@ -166,8 +166,8 @@ struct MosaicSerdePass : public impl::MosaicSerdePassBase<MosaicSerdePass> {
         return;
       }
       if (version_attr.getInt() > kVersion) {
-        module->emitError("Unsupported Mosaic version: ")
-            << version_attr.getInt();
+        module->emitError("Unsupported Mosaic version:  expected <= ")
+            << kVersion << " but got " << version_attr.getInt();
         signalPassFailure();
         return;
       }

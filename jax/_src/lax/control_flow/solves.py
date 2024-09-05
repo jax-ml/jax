@@ -16,11 +16,12 @@ import collections
 from functools import partial
 import operator
 
-import jax
 from jax.tree_util import (tree_flatten, treedef_children, tree_leaves,
                            tree_unflatten, treedef_tuple)
 from jax._src import ad_util
+from jax._src import api
 from jax._src import core
+from jax._src import custom_derivatives
 from jax._src import linear_util as lu
 from jax._src.core import raise_to_shaped
 from jax._src.interpreters import ad
@@ -99,7 +100,7 @@ def custom_root(f, initial_guess, solve, tangent_solve, has_aux=False):
   _check_tree("solve", "initial_guess", solution_tree, in_tree, has_aux)
 
   def linearize_and_solve(x, b):
-    unchecked_zeros, f_jvp = jax.linearize(f, x)
+    unchecked_zeros, f_jvp = api.linearize(f, x)
     return tangent_solve(f_jvp, b)
 
   l_and_s_jaxpr, l_and_s_consts, out_tree = _initial_style_jaxpr(
@@ -115,7 +116,7 @@ def custom_root(f, initial_guess, solve, tangent_solve, has_aux=False):
   return tree_unflatten(solution_tree, solution_flat)
 
 
-@partial(jax.custom_jvp, nondiff_argnums=(0, 1))
+@partial(custom_derivatives.custom_jvp, nondiff_argnums=(0, 1))
 def _custom_root(const_lengths, jaxprs, *args):
   params, initial_guess = _split_root_args(args, const_lengths)
   solution = core.jaxpr_as_fun(jaxprs.solve)(*(params.solve + initial_guess))
@@ -169,7 +170,7 @@ def _split_linear_solve_args(args, const_lengths):
 
 
 def _transpose_one_output(linear_fun, primals):
-  transpose_fun = jax.linear_transpose(linear_fun, primals)
+  transpose_fun = api.linear_transpose(linear_fun, primals)
   def transposed_fun(x):
     (y,) = transpose_fun(x)
     return y

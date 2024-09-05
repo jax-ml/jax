@@ -354,7 +354,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
 
   def test_pjit_gda_multi_input_multi_output(self):
     jax.distributed.initialize()
-    global_mesh = jtu.create_global_mesh((8, 2), ("x", "y"))
+    global_mesh = jtu.create_mesh((8, 2), ("x", "y"))
     global_input_shape = (16, 2)
     global_input_data = np.arange(
         util.prod(global_input_shape)).reshape(global_input_shape)
@@ -558,7 +558,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
   def test_pjit_gda_eval_shape(self):
     jax.distributed.initialize()
 
-    with jtu.create_global_mesh((16,), ("x")):
+    with jtu.create_mesh((16,), ("x")):
 
       @functools.partial(pjit.pjit,
                          in_shardings=jax.sharding.PartitionSpec(None),

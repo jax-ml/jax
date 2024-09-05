@@ -957,7 +957,7 @@ class KeyArrayTest(jtu.JaxTestCase):
   def test_make_array_from_callback(self):
     devices = jax.devices()
     shape = (len(devices),)
-    mesh = jtu.create_global_mesh((len(devices),), ('x',))
+    mesh = jtu.create_mesh((len(devices),), ('x',))
     sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
     def callback(index):
       i = jnp.arange(len(devices))[index[0]]
@@ -969,7 +969,7 @@ class KeyArrayTest(jtu.JaxTestCase):
   def test_make_array_from_single_device_arrays(self):
     devices = jax.devices()
     shape = (len(devices),)
-    mesh = jtu.create_global_mesh((len(devices),), ('x',))
+    mesh = jtu.create_mesh((len(devices),), ('x',))
     sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
     keys = random.split(random.key(0), len(devices))
     arrays = [jax.device_put(keys[i:i + 1], device) for i, device in enumerate(devices)]
@@ -1118,6 +1118,12 @@ class KeyArrayTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(TypeError, 'unrecognized type .* PRNG'):
       jax.random.key(42, impl=A())
+
+  @jtu.sample_product(name=[name for name, _ in PRNG_IMPLS])
+  def test_key_spec_repr(self, name):
+    key = jax.random.key(42, impl=name)
+    spec = jax.random.key_impl(key)
+    self.assertEqual(repr(spec), f"PRNGSpec({name!r})")
 
   def test_keyarray_custom_vjp(self):
     # Regression test for https://github.com/google/jax/issues/18442

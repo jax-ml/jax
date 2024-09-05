@@ -25,7 +25,7 @@ Here is a suggested investigation strategy:
 
 ## Nightly investigation
 
-This can be done by using [JAX-Toolbox nightly
+This can be done by using the [NVIDIA JAX-Toolbox nightly
 containers](https://github.com/NVIDIA/JAX-Toolbox).
 
 - Some days, bugs prevent the container from being built, or there are temporary regressions. Just discard those days.

@@ -14,7 +14,7 @@ kernelspec:
   name: python3
 ---
 
-# SPMD multi-device parallelism with `shard_map`
+# Manual parallelism with `shard_map`
 
 <!--* freshness: { reviewed: '2024-04-08' } *-->
 

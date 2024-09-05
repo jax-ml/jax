@@ -70,6 +70,5 @@ def pallas_call_lowering(
       ctx,
       *args,
       module=module.operation.get_asm(binary=True, enable_debug_info=True),
-      gmem_scratch_bytes=lowering_result.gmem_scratch_bytes,
       out_types=lowering_result.out_structs,
   )

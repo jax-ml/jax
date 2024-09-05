@@ -24,6 +24,15 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `jax.host_ids()` function that was deprecated in JAX v0.2.13.
   * To align with the behavior of `numpy.fabs`, `jax.numpy.fabs` has been
     modified to no longer support `complex dtypes`.
+  * ``jax.tree_util.register_dataclass`` now checks that ``data_fields``
+    and ``meta_fields`` includes all dataclass fields with ``init=True``
+    and only them, if ``nodetype`` is a dataclass.
+  * Several {mod}`jax.numpy` functions now have full {class}`~jax.numpy.ufunc`
+    interfaces, including {obj}`~jax.numpy.add`, {obj}`~jax.numpy.multiply`,
+    {obj}`~jax.numpy.bitwise_and`, {obj}`~jax.numpy.bitwise_or`,
+    {obj}`~jax.numpy.bitwise_xor`, {obj}`~jax.numpy.logical_and`,
+    {obj}`~jax.numpy.logical_and`, and {obj}`~jax.numpy.logical_and`.
+    In future releases we plan to expand these to other ufuncs.
 
 * Breaking changes
   * The MHLO MLIR dialect (`jax.extend.mlir.mhlo`) has been removed. Use the
@@ -42,6 +51,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The internal utilities `jax.core.check_eqn`, `jax.core.check_type`, and
     `jax.core.check_valid_jaxtype` are now deprecated, and will be removed in
     the future.
+  * `jax.numpy.round_` has been deprecated, following removal of the corresponding
+    API in NumPy 2.0. Use {func}`jax.numpy.round` instead.
+  * Passing a DLPack capsule to {func}`jax.dlpack.from_dlpack` is deprecated.
+    The argument to {func}`jax.dlpack.from_dlpack` should be an array from
+    another framework that implements the ``__dlpack__`` protocol.
 
 ## jaxlib 0.4.32
 

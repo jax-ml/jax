@@ -201,9 +201,10 @@ build:rbe_linux --host_linkopt=-lm
 # https://github.com/bazelbuild/bazel/issues/13623
 build:rbe_cpu_linux_base --config=rbe_linux
 build:rbe_cpu_linux_base --config=cuda_clang
-build:rbe_cpu_linux_base --host_crosstool_top="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_cuda//crosstool:toolchain"
-build:rbe_cpu_linux_base --crosstool_top="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_cuda//crosstool:toolchain"
-build:rbe_cpu_linux_base --extra_toolchains="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_cuda//crosstool:toolchain-linux-x86_64"
+build:rbe_cpu_linux_base --host_crosstool_top="@local_config_cuda//crosstool:toolchain"
+build:rbe_cpu_linux_base --crosstool_top="@local_config_cuda//crosstool:toolchain"
+build:rbe_cpu_linux_base --extra_toolchains="@local_config_cuda//crosstool:toolchain-linux-x86_64"
+build:rbe_cpu_linux_base --repo_env=TF_SYSROOT="/dt9"
 build:rbe_cpu_linux_base --extra_execution_platforms="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_platform//:platform"
 build:rbe_cpu_linux_base --host_platform="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_platform//:platform"
 build:rbe_cpu_linux_base --platforms="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_platform//:platform"
@@ -223,9 +224,10 @@ build:rbe_linux_cuda12.3_nvcc_base --config=rbe_linux_cuda_base
 build:rbe_linux_cuda12.3_nvcc_base --config=nvcc_clang
 build:rbe_linux_cuda12.3_nvcc_base --repo_env=HERMETIC_CUDA_VERSION="12.3.2"
 build:rbe_linux_cuda12.3_nvcc_base --repo_env=HERMETIC_CUDNN_VERSION="9.1.1"
-build:rbe_linux_cuda12.3_nvcc_base --host_crosstool_top="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_cuda//crosstool:toolchain"
-build:rbe_linux_cuda12.3_nvcc_base --crosstool_top="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_cuda//crosstool:toolchain"
-build:rbe_linux_cuda12.3_nvcc_base --extra_toolchains="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_cuda//crosstool:toolchain-linux-x86_64"
+build:rbe_linux_cuda12.3_nvcc_base --host_crosstool_top="@local_config_cuda//crosstool:toolchain"
+build:rbe_linux_cuda12.3_nvcc_base --crosstool_top="@local_config_cuda//crosstool:toolchain"
+build:rbe_linux_cuda12.3_nvcc_base --extra_toolchains="@local_config_cuda//crosstool:toolchain-linux-x86_64"
+build:rbe_linux_cuda12.3_nvcc_base --repo_env=TF_SYSROOT="/dt9"
 build:rbe_linux_cuda12.3_nvcc_base --extra_execution_platforms="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_platform//:platform"
 build:rbe_linux_cuda12.3_nvcc_base --host_platform="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_platform//:platform"
 build:rbe_linux_cuda12.3_nvcc_base --platforms="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_platform//:platform"

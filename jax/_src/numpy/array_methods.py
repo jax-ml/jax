@@ -90,13 +90,12 @@ def _argmin(self: Array, axis: int | None = None, out: None = None,
   """
   return lax_numpy.argmin(self, axis=axis, out=out, keepdims=keepdims)
 
-def _argpartition(self: Array, kth: int, axis: int = -1,
-                  kind: str = 'introselect', order: None = None) -> Array:
+def _argpartition(self: Array, kth: int, axis: int = -1) -> Array:
   """Return the indices that partially sort the array.
 
   Refer to :func:`jax.numpy.argpartition` for the full documentation.
   """
-  return lax_numpy.argpartition(self, kth=kth, axis=axis, kind=kind, order=order)
+  return lax_numpy.argpartition(self, kth=kth, axis=axis)
 
 def _argsort(self: Array, axis: int | None = -1, *, kind: None = None, order: None = None,
              stable: bool = True, descending: bool = False) -> Array:
@@ -123,7 +122,7 @@ def _choose(self: Array, choices: Sequence[ArrayLike], out: None = None, mode: s
 
   Refer to :func:`jax.numpy.choose` for the full documentation.
   """
-  return lax_numpy.choose(self, choices=choices)
+  return lax_numpy.choose(self, choices=choices, out=out, mode=mode)
 
 def _clip(self: Array, min: ArrayLike | None = None, max: ArrayLike | None = None) -> Array:
   """Return an array whose values are limited to a specified range.
@@ -163,16 +162,16 @@ def _copy(self: Array) -> Array:
   """
   return lax_numpy.copy(self)
 
-def _cumprod(self: Array, axis: int | Sequence[int] | None = None,
-             dtype: DTypeLike | None = None, out: None = None) -> Array:
+def _cumprod(self: Array, axis: reductions.Axis = None, dtype: DTypeLike | None = None,
+             out: None = None) -> Array:
   """Return the cumulative product of the array.
 
   Refer to :func:`jax.numpy.cumprod` for the full documentation.
   """
   return reductions.cumprod(self, axis=axis, dtype=dtype, out=out)
 
-def _cumsum(self: Array, axis: int | Sequence[int] | None = None,
-            dtype: DTypeLike | None = None, out: None = None) -> Array:
+def _cumsum(self: Array, axis: reductions.Axis = None, dtype: DTypeLike | None = None,
+            out: None = None) -> Array:
   """Return the cumulative sum of the array.
 
   Refer to :func:`jax.numpy.cumsum` for the full documentation.
@@ -337,7 +336,7 @@ def _sort(self: Array, axis: int | None = -1, *, kind: None = None,
   return lax_numpy.sort(self, axis=axis, kind=kind, order=order,
                         stable=stable, descending=descending)
 
-def _squeeze(self: Array, axis: int | Sequence[int] | None = None) -> Array:
+def _squeeze(self: Array, axis: reductions.Axis = None) -> Array:
   """Remove one or more length-1 axes from array.
 
   Refer to :func:`jax.numpy.squeeze` for full documentation.

@@ -1257,5 +1257,63 @@ class TreeAliasTest(jtu.JaxTestCase):
     )
 
 
+class RegistrationTest(jtu.JaxTestCase):
+
+  def test_register_dataclass_missing_fields(self):
+    @dataclasses.dataclass
+    class Foo:
+      x: int
+      y: int
+      z: float = dataclasses.field(init=False)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "data_fields and meta_fields must include all dataclass fields.*"
+        "Missing fields: {'y'}",
+    ):
+      tree_util.register_dataclass(Foo, data_fields=["x"], meta_fields=[])
+
+    # ``z`` is not required, because it's not included in ``__init__``.
+    tree_util.register_dataclass(Foo, data_fields=["x"], meta_fields=["y"])
+
+  def test_register_dataclass_unexpected_fields(self):
+    @dataclasses.dataclass
+    class Foo:
+      x: int
+      y: float
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "data_fields and meta_fields must include all dataclass fields.*"
+        "Unexpected fields: {'z'}",
+    ):
+      tree_util.register_dataclass(
+          Foo, data_fields=["x"], meta_fields=["y", "z"]
+      )
+
+  def test_register_dataclass_drop_fields(self):
+    @dataclasses.dataclass
+    class Foo:
+      x: int
+      y: int = dataclasses.field(default=42)
+
+    # ``y`` is explicitly excluded.
+    tree_util.register_dataclass(
+        Foo, data_fields=["x"], meta_fields=[], drop_fields=["y"]
+    )
+
+  def test_register_dataclass_invalid_plain_class(self):
+    class Foo:
+      x: int
+      y: int
+
+      def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+    # ``y`` is missing, but no validation is done for plain classes.
+    tree_util.register_dataclass(Foo, data_fields=["x"], meta_fields=[])
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

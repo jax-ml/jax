@@ -71,10 +71,10 @@ jax::RealGees<double>::FnType dgees_;
 jax::ComplexGees<std::complex<float>>::FnType cgees_;
 jax::ComplexGees<std::complex<double>>::FnType zgees_;
 
-jax::Gehrd<float>::FnType sgehrd_;
-jax::Gehrd<double>::FnType dgehrd_;
-jax::Gehrd<std::complex<float>>::FnType cgehrd_;
-jax::Gehrd<std::complex<double>>::FnType zgehrd_;
+jax::HessenbergDecomposition<ffi::DataType::F32>::FnType sgehrd_;
+jax::HessenbergDecomposition<ffi::DataType::F64>::FnType dgehrd_;
+jax::HessenbergDecomposition<ffi::DataType::C64>::FnType cgehrd_;
+jax::HessenbergDecomposition<ffi::DataType::C128>::FnType zgehrd_;
 
 jax::Sytrd<float>::FnType ssytrd_;
 jax::Sytrd<double>::FnType dsytrd_;
@@ -211,6 +211,22 @@ static_assert(
         jax::EigenvalueDecompositionComplex<ffi::DataType::C128>::FnType,
         jax::ComplexGeev<std::complex<double>>::FnType>,
     JAX_KERNEL_FNTYPE_MISMATCH_MSG);
+static_assert(
+    std::is_same_v<jax::HessenbergDecomposition<ffi::DataType::F32>::FnType,
+                   jax::Gehrd<float>::FnType>,
+    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
+static_assert(
+    std::is_same_v<jax::HessenbergDecomposition<ffi::DataType::F64>::FnType,
+                   jax::Gehrd<double>::FnType>,
+    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
+static_assert(
+    std::is_same_v<jax::HessenbergDecomposition<ffi::DataType::C64>::FnType,
+                   jax::Gehrd<std::complex<float>>::FnType>,
+    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
+static_assert(
+    std::is_same_v<jax::HessenbergDecomposition<ffi::DataType::C128>::FnType,
+                   jax::Gehrd<std::complex<double>>::FnType>,
+    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
 
 #undef JAX_KERNEL_FNTYPE_MISMATCH_MSG
 
@@ -314,6 +330,11 @@ static auto init = []() -> int {
   AssignKernelFn<EigenvalueDecomposition<ffi::DataType::F64>>(dgeev_);
   AssignKernelFn<EigenvalueDecompositionComplex<ffi::DataType::C64>>(cgeev_);
   AssignKernelFn<EigenvalueDecompositionComplex<ffi::DataType::C128>>(zgeev_);
+
+  AssignKernelFn<HessenbergDecomposition<ffi::DataType::F32>>(sgehrd_);
+  AssignKernelFn<HessenbergDecomposition<ffi::DataType::F64>>(dgehrd_);
+  AssignKernelFn<HessenbergDecomposition<ffi::DataType::C64>>(cgehrd_);
+  AssignKernelFn<HessenbergDecomposition<ffi::DataType::C128>>(zgehrd_);
 
   return 0;
 }();

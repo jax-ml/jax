@@ -61,11 +61,14 @@ def pallas_call_lowering(
     )
   triton_params = compiler_params.get("triton", compiler_params)
   num_warps = triton_params.pop("num_warps", 4)
+  num_warps = 4 if num_warps is None else num_warps
   [lowering_platform] = ctx.platforms or ctx.module_context.platforms
   if lowering_platform == "rocm":
     num_stages = triton_params.pop("num_stages", 1)
+    num_stages = 1 if num_stages is None else num_stages
   else:
     num_stages = triton_params.pop("num_stages", 3)
+    num_stages = 3 if num_stages is None else num_stages
 
   if debug:
     print(f"\nThe kernel jaxpr for pallas_call {name_and_src_info}:")
@@ -101,9 +104,10 @@ def pallas_call_lowering(
   )
   if "serialized_metadata" in (triton_params or {}):
     # This field is unstable and may be removed in the future.
-    backend_config["serialized_metadata"] = ir.StringAttr.get(
-        triton_params["serialized_metadata"]
-    )
+    if triton_params["serialized_metadata"] is not None:
+      backend_config["serialized_metadata"] = ir.StringAttr.get(
+          triton_params["serialized_metadata"]
+      )
   return mlir.custom_call(
       call_target_name="__gpu$xla.gpu.triton",
       result_types=out_types,
