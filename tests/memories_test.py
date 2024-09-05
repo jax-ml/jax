@@ -1420,6 +1420,22 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(x_out, x1 * x1)
     self.assertArraysEqual(y_out, y1 + y1)
 
+  def test_compute_on_cache_miss(self):
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    inp = jnp.arange(10)
+    with jtu.count_jit_tracing_cache_miss() as count:
+      with compute_on('device_host'):
+        f(inp)
+
+      with compute_on('device'):
+        f(inp)
+
+    # 2 for `f` and `2` for `mul` (compute type changes for `mul`)
+    self.assertEqual(count[0], 4)
+
 
 class ActivationOffloadingTest(jtu.JaxTestCase):
 
