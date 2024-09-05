@@ -555,6 +555,7 @@ class PmapSharding(sharding.Sharding):
   def shard_shape(self, global_shape: Shape) -> Shape:
     sharded_dim = None
     sharded_dim_size = None
+    sharded_shape = None
     for i, s in enumerate(self.sharding_spec.sharding):
       if isinstance(s, sharding_specs.Unstacked):
         sharded_dim = i
@@ -575,6 +576,7 @@ class PmapSharding(sharding.Sharding):
           f'devices passed to PmapSharding. Got sharded dimension {sharded_dim} '
           f'with value {global_shape[sharded_dim]} in shape {global_shape} and '
           f'the number of devices={len(self._device_assignment)}')
+    assert sharded_shape is not None
     return sharded_shape
 
 
@@ -1266,6 +1268,7 @@ def unflatten_superdims(assignment):
   dims = []
   while flat_assignment.size > 1:
     stride = flat_assignment[1]
+    i = 0
     for i in range(len(flat_assignment)):
       if flat_assignment[i] != i * stride: break
     else:
