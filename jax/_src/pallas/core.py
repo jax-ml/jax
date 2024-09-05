@@ -607,6 +607,7 @@ def _convert_block_spec_to_block_mapping(
     index_map_func = lambda *args: (0,) * len(array_aval.shape)
   else:
     index_map_func = block_spec.index_map
+  block_shape: tuple[int | None, ...]
   if block_spec.block_shape is None:
     block_shape = array_aval.shape
   else:
@@ -644,8 +645,7 @@ def _convert_block_spec_to_block_mapping(
     jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(flat_index_map_fun,
                                                              index_map_avals,
                                                              debug_info=debug)
-  mapped_block_shape = tuple(
-      mapped if s is None else s for s in block_shape)
+  mapped_block_shape = tuple(mapped if s is None else s for s in block_shape)
   if len(out_avals) != len(block_shape):
     raise ValueError(
         f"Index map function {index_map_src_info} for "
@@ -667,7 +667,7 @@ def _convert_block_spec_to_block_mapping(
   array_aval_shape = _max_shape_from_aval(array_aval)
 
   mapping = BlockMapping(
-      block_shape=mapped_block_shape,
+      block_shape=mapped_block_shape,  # type: ignore[arg-type]
       block_aval=block_aval,
       index_map_jaxpr=jax_core.ClosedJaxpr(jaxpr, consts),
       index_map_src_info=index_map_src_info,

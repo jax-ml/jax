@@ -1427,6 +1427,20 @@ class AbstractValue:
   def str_short(self, short_dtypes=False):
     return str(self)
 
+  @property
+  def dtype(self) -> np.dtype:
+    raise AttributeError(
+        f"{type(self).__name__} has no dtype. Please open an issue at "
+        "https://github.com/google/jax/issues."
+    )
+
+  @property
+  def shape(self) -> tuple[Any, ...]:
+    raise AttributeError(
+        f"{type(self).__name__} has no shape. Please open an issue at "
+        "https://github.com/google/jax/issues."
+    )
+
 
 # For type signatures involving dynamic shapes, we use lists of abstract values
 # which may contain (reverse) de Bruijn indices in their shapes.
@@ -1658,13 +1672,6 @@ class UnshapedArray(AbstractValue):
     """Returns a copy of the aval with weak_type=False."""
     return self.update(weak_type=False)
 
-  @property
-  def shape(self):
-    msg = ("UnshapedArray has no shape. Please open an issue at "
-           "https://github.com/google/jax/issues because it's unexpected for "
-           "UnshapedArray instances to ever be produced.")
-    raise TypeError(msg)
-
 def _canonicalize_dimension(dim: DimSize) -> DimSize:
   # Dimensions are most commonly integral (by far), so we check that first.
   try:
@@ -1892,7 +1899,7 @@ def primal_dtype_to_tangent_dtype(primal_dtype):
 # it's kind of convenient!
 class DShapedArray(UnshapedArray):
   __slots__ = ['shape']
-  shape: tuple[AxisSize, ...]  # noqa: F821
+  shape: tuple[AxisSize, ...]  # noqa: F821  # type: ignore
   array_abstraction_level: int = 3
 
   def __init__(self, shape, dtype, weak_type=False):

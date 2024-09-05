@@ -999,7 +999,7 @@ def _to_xla_layout(layout: DeviceLocalLayout | None | AutoLayout,
     return "auto"
   if aval is core.abstract_token:
     return "default"
-  return str(layout._to_xla_layout(aval.dtype))  # type: ignore
+  return str(layout._to_xla_layout(aval.dtype))
 
 
 def _get_mem_kind(s: JSharding | None) -> str | None:
@@ -2130,17 +2130,17 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
   # broadcast_dimension[i] is the axis of the result where the axis i of
   # op is broadcast.
   # Lower a possibly-dynamic broadcast_in_dim
-  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):  # type: ignore
-    elt_shape = aval_out.dtype._rules.physical_element_aval(  # type: ignore
-        aval_out.dtype).shape                                 # type: ignore
-    trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]  # type: ignore
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
+    elt_shape = aval_out.dtype._rules.physical_element_aval(
+        aval_out.dtype).shape
+    trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]
     broadcast_dimensions = [*broadcast_dimensions, *trailing_dims]
     physical_aval_out = core.physical_aval(aval_out)
     return broadcast_in_dim(
         ctx, op, physical_aval_out, broadcast_dimensions=broadcast_dimensions)
   else:
-    if not core.is_constant_shape(aval_out.shape):  # type: ignore
-      shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
+    if not core.is_constant_shape(aval_out.shape):
+      shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
       out = hlo.dynamic_broadcast_in_dim(
           aval_to_ir_type(aval_out), op,
           shape,
@@ -2148,7 +2148,7 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
       )
     else:
       assert all(d != ir.ShapedType.get_dynamic_size()
-                 for d in aval_out.shape), aval_out  # type: ignore
+                 for d in aval_out.shape), aval_out
       out = hlo.broadcast_in_dim(
           aval_to_ir_type(aval_out), op,
           dense_int_array(broadcast_dimensions))
@@ -2162,21 +2162,21 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
   """Broadcasts multiple ops to the out_shape."""
   out = []
   for op, op_aval in zip(ops, ops_avals):
-    op_aval_shape = op_aval.shape  # type: ignore
+    op_aval_shape = op_aval.shape
     if core.definitely_equal_shape(op_aval_shape, out_shape):
       out.append(op)
     else:
       assert len(op_aval_shape) <= len(out_shape), (op_aval_shape, out_shape)
       broadcast_dimensions = list(range(len(out_shape) - len(op_aval_shape), len(out_shape)))
       out.append(broadcast_in_dim(ctx, op,
-                                  core.ShapedArray(out_shape, op_aval.dtype),  # type: ignore
+                                  core.ShapedArray(out_shape, op_aval.dtype),
                                   broadcast_dimensions=broadcast_dimensions))
   return out
 
 def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Value:
   aval_out = core.physical_aval(aval_out)
-  if not core.is_constant_shape(aval_out.shape):  # type: ignore
-    shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
+  if not core.is_constant_shape(aval_out.shape):
+    shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
     return hlo.dynamic_reshape(
         aval_to_ir_type(aval_out), op, shape,
     )
@@ -2218,7 +2218,7 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
         aval_out.dtype).shape
     index_avals = ctx.avals_in[1:]
     dtype = dtypes.canonicalize_dtype(
-        index_avals[0].dtype if index_avals else 'int64')  # type: ignore
+        index_avals[0].dtype if index_avals else 'int64')
     trailing_zeros = [ir_constant(np.array(0, dtype))] * len(elt_shape)
     start_indices = (*start_indices, *trailing_zeros)
     aval_out = core.physical_aval(aval_out)
@@ -2234,7 +2234,7 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
       shape_tensor([0] * len(start_indices)),
       shape_tensor(start_indices),
       hlo.subtract(
-        eval_dynamic_shape_as_tensor(ctx, x_aval.shape),  # type: ignore
+        eval_dynamic_shape_as_tensor(ctx, x_aval.shape),
         slice_sizes))
     return hlo.real_dynamic_slice(
         aval_to_ir_type(aval_out), x,
@@ -2252,7 +2252,7 @@ def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
         aval_out.dtype).shape
     index_avals = ctx.avals_in[2:]
     dtype = dtypes.canonicalize_dtype(
-        index_avals[0].dtype if index_avals else 'int64')  # type: ignore
+        index_avals[0].dtype if index_avals else 'int64')
     zeros = [ir_constant(np.array(0, dtype=dtype))] * len(elt_shape)
     start_indices = (*start_indices, *zeros)
     physical_aval_out = core.physical_aval(aval_out)
@@ -2375,7 +2375,7 @@ def _wrap_with_spmd_op(name: str,
     backend_config = ""
   result_type = aval_to_ir_type(aval_out)
   assert isinstance(result_type, ir.Type), result_type
-  out_shape = core.physical_aval(aval_out).shape  # type: ignore
+  out_shape = core.physical_aval(aval_out).shape
   if core.is_constant_shape(out_shape):
     result_shapes = None
   else:
@@ -2425,7 +2425,7 @@ def wrap_with_layout_op(ctx: LoweringRuleContext,
                         aval_in: core.AbstractValue):
   result_type = aval_to_ir_type(aval_out)
   assert isinstance(result_type, ir.Type), result_type
-  out_shape = core.physical_aval(aval_out).shape  # type: ignore
+  out_shape = core.physical_aval(aval_out).shape
   if core.is_constant_shape(out_shape):
     result_shapes = None
   else:
