@@ -2580,18 +2580,6 @@ def _sharding_constraint_batcher(
 batching.fancy_primitive_batchers[sharding_constraint_p] = _sharding_constraint_batcher
 
 
-def _resource_typing_sharding_constraint(avals, params, source_info,
-                                         resource_env, named_axis_resources):
-  aval, = avals
-  parsed_pspec = None
-  if isinstance(params['sharding'], NamedSharding):
-    parsed_pspec = params['sharding']._parsed_pspec
-  else:
-    if not resource_env.physical_mesh.empty:
-      parsed_pspec = parse_flatten_op_sharding(
-          params['sharding']._to_xla_hlo_sharding(aval.ndim),
-          resource_env.physical_mesh)[0]
-
 
 # -------------------- helpers --------------------
 
