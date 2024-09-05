@@ -2591,9 +2591,6 @@ def _resource_typing_sharding_constraint(avals, params, source_info,
       parsed_pspec = parse_flatten_op_sharding(
           params['sharding']._to_xla_hlo_sharding(aval.ndim),
           resource_env.physical_mesh)[0]
-  if parsed_pspec is not None:
-    _check_resources_against_named_axes(
-      "with_sharding_constraint input", aval, parsed_pspec, named_axis_resources)
 
 
 # -------------------- helpers --------------------
