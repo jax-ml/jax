@@ -2579,8 +2579,6 @@ def _sharding_constraint_batcher(
   return y, d
 batching.fancy_primitive_batchers[sharding_constraint_p] = _sharding_constraint_batcher
 
-
-
 # -------------------- helpers --------------------
 
 def get_unconstrained_dims(sharding: NamedSharding):
