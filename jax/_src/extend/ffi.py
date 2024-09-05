@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 import ctypes
 import functools
 import os
@@ -27,12 +27,14 @@ from jax._src.callback import _check_shape_dtype, callback_batching_rule
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.layout import DeviceLocalLayout
 from jax._src.lib import jaxlib
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
-from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, Shape
+from jax._src.typing import Array, ArrayLike, DuckTypedArray, Shape
 
 map, unsafe_map = util.safe_map, map
+FfiLayoutOptions = Sequence[int] | DeviceLocalLayout | None
 
 
 def register_ffi_target(
@@ -104,15 +106,24 @@ def _aval_shape(aval: core.AbstractValue) -> Shape:
   return () if aval is core.abstract_token else aval.shape  # pytype: disable=attribute-error
 
 
-def _default_layouts(avals: Iterable[core.AbstractValue]) -> list[list[DimSize]]:
-  return [list(reversed(range(len(_aval_shape(aval))))) for aval in avals]
+def _convert_layout(aval: core.AbstractValue,
+                    layout: FfiLayoutOptions = None) -> Sequence[int]:
+  """Convert a layout to the minor-to-major order used by the custom call API."""
+  if layout is None:
+    return list(reversed(range(len(_aval_shape(aval)))))
+  elif isinstance(layout, DeviceLocalLayout):
+    if layout._tiling is not None:
+      raise ValueError("The FFI does not support layouts with tiling")
+    return layout.major_to_minor[::-1]
+  else:
+    return layout
 
 
 def ffi_lowering(
     call_target_name: str,
     *,
-    operand_layouts: Sequence[Sequence[DimSize]] | None = None,
-    result_layouts: Sequence[Sequence[DimSize]] | None = None,
+    operand_layouts: Sequence[FfiLayoutOptions] | None = None,
+    result_layouts: Sequence[FfiLayoutOptions] | None = None,
     backend_config: Mapping[str, ir.Attribute] | None = None,
     **lowering_args: Any
 ) -> mlir.LoweringRule:
@@ -147,13 +158,15 @@ def ffi_lowering(
     if "result_types" not in kwargs:
       kwargs["result_types"] = [mlir.aval_to_ir_type(aval) for aval in ctx.avals_out]
     if operand_layouts is None:
-      kwargs["operand_layouts"] = _default_layouts(ctx.avals_in)
+      kwargs["operand_layouts"] = map(_convert_layout, ctx.avals_in)
     else:
-      kwargs["operand_layouts"] = operand_layouts
+      kwargs["operand_layouts"] = [
+          _convert_layout(*args) for args in zip(ctx.avals_in, operand_layouts)]
     if result_layouts is None:
-      kwargs["result_layouts"] = _default_layouts(ctx.avals_out)
+      kwargs["result_layouts"] = map(_convert_layout, ctx.avals_out)
     else:
-      kwargs["result_layouts"] = result_layouts
+      kwargs["result_layouts"] = [
+          _convert_layout(*args) for args in zip(ctx.avals_out, result_layouts)]
     if "result_shapes" not in kwargs and not all(
         core.is_constant_shape(_aval_shape(aval)) for aval in ctx.avals_out):
       kwargs["result_shapes"] = [
