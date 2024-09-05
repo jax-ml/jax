@@ -88,14 +88,14 @@ mosaic_gpu_p.multiple_results = True
 
 
 @mosaic_gpu_p.def_abstract_eval
-def _mosaic_gpu_abstract_eval(*_, module, out_types, gmem_scratch_bytes):
-  del module, gmem_scratch_bytes  # Unused.
+def _mosaic_gpu_abstract_eval(*_, module, out_types):
+  del module # Unused.
   return [jax._src.core.ShapedArray(t.shape, t.dtype) for t in out_types]
 
 # TODO(apaszke): Implement a proper system for managing kernel lifetimes
 KNOWN_KERNELS = {}
 
-def _mosaic_gpu_lowering_rule(ctx, *args, module, out_types, gmem_scratch_bytes):
+def _mosaic_gpu_lowering_rule(ctx, *args, module, out_types):
   del out_types  # Unused.
   kernel_id = hashlib.sha256(module).digest()
   # Note that this is technically only a half measure. Someone might load a
@@ -108,19 +108,13 @@ def _mosaic_gpu_lowering_rule(ctx, *args, module, out_types, gmem_scratch_bytes)
     KNOWN_KERNELS[kernel_id] = module
   op = mlir.custom_call(
       "mosaic_gpu",
-      result_types=[
-          *(mlir.aval_to_ir_type(aval) for aval in ctx.avals_out),
-          mlir.aval_to_ir_type(
-              jax_core.ShapedArray((gmem_scratch_bytes,), np.uint8)
-          ),
-      ],
+      result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
       operands=args,
       operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
-      result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out]
-      + [[0]],
+      result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
       backend_config=kernel_id + module,
   )
-  return op.results[:-1]  # Skip the scratch space.
+  return op.results
 
 mlir.register_lowering(mosaic_gpu_p, _mosaic_gpu_lowering_rule, "cuda")
 
@@ -766,8 +760,8 @@ def _lower_as_gpu_kernel(
         ir.Attribute.parse("#llvm.linkage<external>"),
         addr_space=ir.IntegerAttr.get(i32, 4),  # GPU constant memory.
     )
-    @func.FuncOp.from_py_func(ptr_ty, ptr_ty, ptr_ty)
-    def main(token_ptr, buffers, gmem_scratch_ptr):
+    @func.FuncOp.from_py_func(ptr_ty, ptr_ty)
+    def main(token_ptr, buffers):
       nonlocal gmem_scratch_bytes
       token = builtin.unrealized_conversion_cast([token_ty], [token_ptr])
       arg_refs = []
@@ -803,7 +797,7 @@ def _lower_as_gpu_kernel(
   sym_tab.insert(global_scratch)
   module.operation.verify()
 
-  return module, out_shape, gmem_scratch_bytes, unwrap_output_tuple
+  return module, out_shape, unwrap_output_tuple
 
 
 def as_gpu_kernel(
@@ -822,7 +816,7 @@ def as_gpu_kernel(
   elif not isinstance(in_shape, tuple):
     in_shape = (in_shape,)
 
-  module, out_shape, gmem_scratch_bytes, unwrap_output_tuple = (
+  module, out_shape, unwrap_output_tuple = (
       _lower_as_gpu_kernel(
           body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape,
           module_name, prof_spec
@@ -844,7 +838,6 @@ def as_gpu_kernel(
         *args,
         out_types=out_shape,
         module=module_asm,
-        gmem_scratch_bytes=gmem_scratch_bytes,
     )
 
   if prof_spec is not None:
