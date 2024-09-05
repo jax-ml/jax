@@ -306,7 +306,7 @@ from jax.interpreters import mlir
 mlir.register_lowering(multiply_add_p, multiply_add_lowering, platform='cpu')
 ```
 
-You will now succeed to apply `jax.jit`. Notice below that JAX first evaluates the function abstractly, which triggers the `multiply_add_abstract_eval` function, and  then compiles the set of primitives it has encountered, including `multiply_add`. At this point JAX invokes `multiply_add_xla_translation`.
+You will now succeed to apply `jax.jit`. Notice below that JAX first evaluates the function abstractly, which triggers the `multiply_add_abstract_eval` function, and  then compiles the set of primitives it has encountered, including `multiply_add`. At this point JAX invokes `multiply_add_lowering`.
 
 ```{code-cell}
 assert api.jit(lambda x, y: square_add_prim(x, y))(2., 10.) == 14.
