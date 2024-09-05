@@ -119,6 +119,7 @@ Operators
     ne
     neg
     nextafter
+    optimization_barrier
     pad
     platform_dependent
     polygamma
