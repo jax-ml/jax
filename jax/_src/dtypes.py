@@ -320,7 +320,7 @@ def coerce_to_array(x: Any, dtype: DTypeLike | None = None) -> np.ndarray:
   """
   if dtype is None and type(x) in python_scalar_dtypes:
     dtype = _scalar_type_to_dtype(type(x), x)
-  return np.array(x).astype(dtype)
+  return np.asarray(x, dtype)
 
 iinfo = ml_dtypes.iinfo
 finfo = ml_dtypes.finfo
