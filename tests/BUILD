@@ -1523,6 +1523,20 @@ py_test(
     ],
 )
 
+jax_test(
+    name = "cudnn_fusion_test",
+    srcs = ["cudnn_fusion_test.py"],
+    disable_backends = [
+        "cpu",
+        "tpu",
+    ],
+    enable_configs = [
+        "gpu_a100",
+        "gpu_h100",
+    ],
+    tags = ["multiaccelerator"],
+)
+
 exports_files(
     [
         "api_test.py",
