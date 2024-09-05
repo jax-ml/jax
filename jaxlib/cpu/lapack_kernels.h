@@ -192,9 +192,9 @@ struct QrFactorization {
 
   inline static FnType* fn = nullptr;
 
-  static ::xla::ffi::Error Kernel(
-      ::xla::ffi::Buffer<dtype> x, ::xla::ffi::ResultBuffer<dtype> x_out,
-      ::xla::ffi::ResultBuffer<dtype> tau);
+  static ::xla::ffi::Error Kernel(::xla::ffi::Buffer<dtype> x,
+                                  ::xla::ffi::ResultBuffer<dtype> x_out,
+                                  ::xla::ffi::ResultBuffer<dtype> tau);
 
   static int64_t GetWorkspaceSize(lapack_int x_rows, lapack_int x_cols);
 };
@@ -444,8 +444,7 @@ struct EigenvalueDecompositionHermitian {
       ::xla::ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
       ::xla::ffi::ResultBuffer<dtype> x_out,
       ::xla::ffi::ResultBuffer<::xla::ffi::ToReal(dtype)> eigenvalues,
-      ::xla::ffi::ResultBuffer<LapackIntDtype> info,
-      eig::ComputationMode mode);
+      ::xla::ffi::ResultBuffer<LapackIntDtype> info, eig::ComputationMode mode);
 };
 
 // lapack geev
@@ -579,6 +578,27 @@ struct real_type<std::complex<T>> {
   typedef T type;
 };
 
+// FFI Kernel
+
+template <::xla::ffi::DataType dtype>
+struct HessenbergDecomposition {
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using FnType = void(lapack_int* n, lapack_int* ilo, lapack_int* ihi,
+                      ValueType* a, lapack_int* lda, ValueType* tau,
+                      ValueType* work, lapack_int* lwork, lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+
+  static ::xla::ffi::Error Kernel(
+      ::xla::ffi::Buffer<dtype> x, lapack_int low, lapack_int high,
+      ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ResultBuffer<dtype> tau,
+      ::xla::ffi::ResultBuffer<LapackIntDtype> info);
+
+  static int64_t GetWorkspaceSize(lapack_int x_rows, lapack_int x_cols,
+                                  lapack_int low, lapack_int high);
+};
+
 //== Tridiagonal Reduction                                           ==//
 //== Reduces a Symmetric/Hermitian square matrix to tridiagonal form ==//
 
@@ -630,6 +650,10 @@ XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sgeev_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dgeev_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cgeev_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_zgeev_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sgehrd_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dgehrd_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cgehrd_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_zgehrd_ffi);
 
 }  // namespace jax
 

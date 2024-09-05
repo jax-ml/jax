@@ -142,6 +142,10 @@ void GetLapackKernelsFromScipy() {
   AssignKernelFn<Gehrd<double>>(lapack_ptr("dgehrd"));
   AssignKernelFn<Gehrd<std::complex<float>>>(lapack_ptr("cgehrd"));
   AssignKernelFn<Gehrd<std::complex<double>>>(lapack_ptr("zgehrd"));
+  AssignKernelFn<HessenbergDecomposition<DataType::F32>>(lapack_ptr("sgehrd"));
+  AssignKernelFn<HessenbergDecomposition<DataType::F64>>(lapack_ptr("dgehrd"));
+  AssignKernelFn<HessenbergDecomposition<DataType::C64>>(lapack_ptr("cgehrd"));
+  AssignKernelFn<HessenbergDecomposition<DataType::C128>>(lapack_ptr("zgehrd"));
 
   AssignKernelFn<Sytrd<float>>(lapack_ptr("ssytrd"));
   AssignKernelFn<Sytrd<double>>(lapack_ptr("dsytrd"));
@@ -253,6 +257,10 @@ nb::dict Registrations() {
   dict["lapack_dgeev_ffi"] = EncapsulateFunction(lapack_dgeev_ffi);
   dict["lapack_cgeev_ffi"] = EncapsulateFunction(lapack_cgeev_ffi);
   dict["lapack_zgeev_ffi"] = EncapsulateFunction(lapack_zgeev_ffi);
+  dict["lapack_sgehrd_ffi"] = EncapsulateFunction(lapack_sgehrd_ffi);
+  dict["lapack_dgehrd_ffi"] = EncapsulateFunction(lapack_dgehrd_ffi);
+  dict["lapack_cgehrd_ffi"] = EncapsulateFunction(lapack_cgehrd_ffi);
+  dict["lapack_zgehrd_ffi"] = EncapsulateFunction(lapack_zgehrd_ffi);
 
   return dict;
 }
