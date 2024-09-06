@@ -922,10 +922,7 @@ def _pbroadcast_batcher(vals_in, dims_in, *, axes, axis_index_groups):
   vals_out = pbroadcast_p.bind(*vals_in, axes=axes,
                                axis_index_groups=axis_index_groups)
   return vals_out, dims_in
-def _pbroadcast_axis_batcher(size, name, trace_type, vals_in, dims_in, *, axes,
-                             groups):
-  raise NotImplementedError  # vmap with axis name involved in this primitive
-batching.fancy_primitive_batchers[pbroadcast_p] = _pbroadcast_axis_batcher
+batching.primitive_batchers[pbroadcast_p] = _pbroadcast_batcher
 ad.deflinear2(pbroadcast_p,
               lambda cts, *_, axes, axis_index_groups:
               psum2_p.bind(*cts, axes=axes, axis_index_groups=axis_index_groups))
@@ -1256,35 +1253,31 @@ def _shard_map_batch(
     check_rep: bool,
     rewrite: bool,
     auto: frozenset) -> Sequence[batching.BatchTracer]:
-  raise NotImplementedError
-  # in_vals, in_dims = unzip2((t.val, t.batch_dim) for t in in_tracers)
-  # if all(bdim is batching.not_mapped for bdim in in_dims):
-  #   return prim.bind(fun, *in_vals, mesh=mesh, in_names=in_names,
-  #                    out_names_thunk=out_names_thunk, check_rep=check_rep,
-  #                    rewrite=rewrite, auto=auto)
-  # if any(isinstance(d, batching.RaggedAxis) for d in in_dims):
-  #   raise NotImplementedError
-  # fun, out_dims = batching.batch_subtrace(fun, trace.main, tuple(in_dims))
-  # new_in_names = [{ax + (d is not batching.not_mapped and d <= ax): names[ax]  # type: ignore
-  #                  for ax in names} for names, d in zip(in_names, in_dims)]
-  # spmd_axis_name = trace.spmd_axis_name
-  # if spmd_axis_name is not None:
-  #   used = {n for names in in_names for ns in names.values() for n in ns}
-  #   if not config.disable_vmap_shmap_error.value and set(spmd_axis_name) & used:
-  #     raise ValueError("vmap spmd_axis_name cannot appear in shard_map in_specs")
-  #   new_in_names = [{**ns, d:spmd_axis_name} if d is not batching.not_mapped  # type: ignore
-  #                   else ns for ns, d in zip(new_in_names, in_dims)]
-  # @as_hashable_function(closure=out_names_thunk)
-  # def new_out_names_thunk():
-  #   return _batch_out_names(spmd_axis_name, out_dims(), out_names_thunk())
+  in_vals, in_dims = unzip2(map(trace.to_batch_info, in_tracers))
+  if any(isinstance(d, batching.RaggedAxis) for d in in_dims):
+    raise NotImplementedError
+  fun, out_dims = batching.batch_subtrace(fun, trace.tag, trace.axis_data, tuple(in_dims))
+  new_in_names = [{ax + (d is not batching.not_mapped and d <= ax): names[ax]  # type: ignore
+                   for ax in names} for names, d in zip(in_names, in_dims)]
+  spmd_axis_name = trace.axis_data.spmd_name
+  if spmd_axis_name is not None:
+    used = {n for names in in_names for ns in names.values() for n in ns}
+    if not config.disable_vmap_shmap_error.value and set(spmd_axis_name) & used:
+      raise ValueError("vmap spmd_axis_name cannot appear in shard_map in_specs")
+    new_in_names = [{**ns, d:spmd_axis_name} if d is not batching.not_mapped  # type: ignore
+                    else ns for ns, d in zip(new_in_names, in_dims)]
+  @as_hashable_function(closure=out_names_thunk)
+  def new_out_names_thunk():
+    return _batch_out_names(spmd_axis_name, out_dims(), out_names_thunk())
 
-  # new_params = dict(mesh=mesh, in_names=new_in_names,
-  #                   out_names_thunk=new_out_names_thunk, check_rep=check_rep,
-  #                   rewrite=rewrite, auto=auto)
-  # out_vals = prim.bind(fun, *in_vals, **new_params)
-  # make_tracer = partial(batching.BatchTracer, trace,
-  #                       source_info=source_info_util.current())
-  # return map(make_tracer, out_vals, out_dims())
+  new_params = dict(mesh=mesh, in_names=new_in_names,
+                    out_names_thunk=new_out_names_thunk, check_rep=check_rep,
+                    rewrite=rewrite, auto=auto)
+  with core.set_current_trace(trace.parent_trace):
+    out_vals = prim.bind(fun, *in_vals, **new_params)
+  make_tracer = partial(batching.BatchTracer, trace,
+                        source_info=source_info_util.current())
+  return map(make_tracer, out_vals, out_dims())
 batching.BatchTrace.process_shard_map = _shard_map_batch
 
 def _batch_out_names(spmd_axis_name, dims, out_names):
@@ -1452,18 +1445,6 @@ def _shard_map_transpose(out_cts, *args, jaxpr, mesh, in_names, out_names,
       auto=auto)
   return tree_unflatten(out_tree(), out_flat)
 ad.primitive_transposes[shard_map_p] = _shard_map_transpose
-
-def _shard_map_axis_subst(params, subst, traverse):
-  raise NotImplementedError
-  # if 'jaxpr' not in params:
-  #   return params
-  # if not traverse:
-  #   return params
-  # def shadowed_subst(name):
-  #   return (name,) if name in params['mesh'].shape else subst(name)
-  # with core.extend_axis_env(params['mesh'].shape.items()):
-  #   new_jaxpr = core.subst_axis_names_jaxpr(params['jaxpr'], shadowed_subst)
-  # return dict(params, jaxpr=new_jaxpr)
 
 # Remat
 
