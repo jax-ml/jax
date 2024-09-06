@@ -697,9 +697,6 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
   def aval(self):
     raise NotImplementedError("must override")
 
-  def _assert_live(self) -> None:
-    pass  # Override for liveness checking
-
   def get_referent(self) -> Any:
     return self  # Override for object equivalence checking
 
