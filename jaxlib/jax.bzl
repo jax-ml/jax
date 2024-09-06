@@ -297,3 +297,6 @@ def jax_generate_backend_suites(backends = []):
     )
 
 jax_test_file_visibility = []
+
+def xla_py_proto_library(*args, **kw):  # buildifier: disable=unused-variable
+    pass
