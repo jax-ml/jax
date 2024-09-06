@@ -55,6 +55,7 @@ from jax._src.lib import jax_jit
 from jax._src import traceback_util
 from jax._src.typing import Array, DimSize, Shape
 from jax._src import typing
+from jax._src import xla_metadata as xla_metadata_lib
 
 traceback_util.register_exclusion(__file__)
 
@@ -261,12 +262,15 @@ def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
 
 class JaxprEqnContext:
 
-  def __init__(self, compute_type: str | None, threefry_partitionable: bool):
+  def __init__(self, compute_type: str | None, threefry_partitionable: bool,
+               xla_metadata=None):
     self.compute_type = compute_type
     self.threefry_partitionable = threefry_partitionable
+    self.xla_metadata = xla_metadata
     self._managers = [
         (compute_on.extend_compute_type, self.compute_type),
         (config.threefry_partitionable.__call__, self.threefry_partitionable),
+        (xla_metadata_lib.set_xla_metadata, self.xla_metadata),
     ]
 
   @property
@@ -278,8 +282,11 @@ class JaxprEqnContext:
       yield
 
   def __repr__(self):
-    return (f"JaxprEqnContext(compute_type={self.compute_type},"
-            f"threefry_partitionable={self.threefry_partitionable})")
+    return (
+        f"JaxprEqnContext(compute_type={self.compute_type},"
+        f"threefry_partitionable={self.threefry_partitionable}),"
+        f"xla_metadata={self.xla_metadata}"
+    )
 
 
 class JaxprEqn:
@@ -333,8 +340,11 @@ class JaxprEqn:
 def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
                   ctx=None):
   source_info = source_info or source_info_util.new_source_info()
-  ctx = ctx or JaxprEqnContext(compute_on.current_compute_type(),
-                               config.threefry_partitionable.value)
+  ctx = ctx or JaxprEqnContext(
+      compute_on.current_compute_type(),
+      config.threefry_partitionable.value,
+      xla_metadata_lib.current_xla_metadata(),
+  )
   if config.enable_checks.value:
     assert all(isinstance(x, (Var, Literal)) for x in  invars)
     assert all(isinstance(v,  Var)           for v in outvars)

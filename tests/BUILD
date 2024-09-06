@@ -1505,6 +1505,12 @@ jax_test(
     tags = ["multiaccelerator"],
 )
 
+jax_test(
+    name = "xla_metadata_test",
+    srcs = ["xla_metadata_test.py"],
+    deps = ["//jax:experimental"],
+)
+
 py_test(
     name = "pretty_printer_test",
     srcs = ["pretty_printer_test.py"],

@@ -202,16 +202,20 @@ def trace_context():
   tls = jax_jit.thread_local_state()
   axis_env_state = ()
   mesh_context_manager = ()
+  xla_metadata_context_manager = ()
   compute_on_context_manager = ()
+
   context: Any = tls.extra_jit_context
   if context and context.axis_env_state is not None:
     axis_env_state = context.axis_env_state
   if context and context.mesh_context_manager:
     mesh_context_manager = context.mesh_context_manager
+  if context and context.xla_metadata_context_manager:
+    xla_metadata_context_manager = context.xla_metadata_context_manager
   if context and context.compute_on_context_manager:
     compute_on_context_manager = context.compute_on_context_manager
-  return (axis_env_state, mesh_context_manager, compute_on_context_manager,
-          enable_x64.value,
+  return (axis_env_state, mesh_context_manager, xla_metadata_context_manager,
+          compute_on_context_manager, enable_x64.value,
           numpy_rank_promotion.value, default_matmul_precision.value,
           dynamic_shapes.value, numpy_dtype_promotion.value,
           default_device.value, random_seed_offset.value,
@@ -858,6 +862,7 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   axis_env_state: Hashable = ()
   mesh_context_manager: Hashable = ()
   compute_on_context_manager: Hashable = ()
+  xla_metadata_context_manager: Hashable = ()
 
   # Values set by _StateContextManager context managers.
   # CAUTION: these must be initialized to `None`! The state context manager
