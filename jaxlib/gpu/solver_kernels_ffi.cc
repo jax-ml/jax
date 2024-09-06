@@ -17,6 +17,8 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <string_view>
 
 #include "absl/status/status.h"
@@ -29,6 +31,8 @@ limitations under the License.
 #include "jaxlib/gpu/solver_handle_pool.h"
 #include "jaxlib/gpu/vendor.h"
 #include "xla/ffi/api/ffi.h"
+
+XLA_FFI_REGISTER_ENUM_ATTR_DECODING(jax::JAX_GPU_NAMESPACE::SyevdAlgorithm);
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
@@ -48,6 +52,21 @@ inline absl::StatusOr<T*> AllocateWorkspace(ffi::ScratchAllocator& scratch,
   }
   return static_cast<T*>(maybe_workspace.value());
 }
+
+template <typename T>
+struct RealType {
+  using Type = T;
+};
+
+template <>
+struct RealType<gpuComplex> {
+  using Type = float;
+};
+
+template <>
+struct RealType<gpuDoubleComplex> {
+  using Type = double;
+};
 }  // namespace
 
 #define SOLVER_DISPATCH_IMPL(impl, ...)         \
@@ -206,7 +225,8 @@ ffi::Error GetrfDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
     SOLVER_DISPATCH_IMPL(GetrfImpl, batch, rows, cols, stream, scratch, a, out,
                          ipiv, info);
   }
-  return ffi::Error::InvalidArgument("Unsupported element type for getrf");
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in getrf", absl::FormatStreamed(dataType)));
 }
 }  // namespace
 
@@ -362,7 +382,8 @@ ffi::Error GeqrfDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
     SOLVER_DISPATCH_IMPL(GeqrfImpl, batch, rows, cols, stream, scratch, a, out,
                          tau);
   }
-  return ffi::Error::InvalidArgument("Unsupported element type for geqrf");
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in geqrf", absl::FormatStreamed(dataType)));
 }
 }  // namespace
 
@@ -468,7 +489,8 @@ ffi::Error OrgqrDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
       CheckShape(out->dimensions(), {batch, rows, cols}, "out", "orgqr"));
   SOLVER_DISPATCH_IMPL(OrgqrImpl, batch, rows, cols, size, stream, scratch, a,
                        tau, out);
-  return ffi::Error::InvalidArgument("Unsupported element type for orgqr");
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in orgqr", absl::FormatStreamed(dataType)));
 }
 }  // namespace
 
@@ -481,8 +503,211 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(OrgqrFfi, OrgqrDispatch,
                                   .Ret<ffi::AnyBuffer>()  // out
 );
 
-#undef SOLVER_DISPATCH_IMPL
+// Symmetric (Hermitian) eigendecomposition:
+// * Jacobi algorithm: syevj/heevj (batches of matrices up to 32)
+// * QR algorithm: syevd/heevd
+// For historical reasons, the target is called "syevd" even though it
+// dispatches dynamically to both syevd and syevj depending on the problem
+// size and the algorithm selected by the user via the `algorithm` attribute.
 
+namespace {
+#define SYEVJ_KERNEL_IMPL(type, name)                                          \
+  template <>                                                                  \
+  struct SyevjKernel<type> {                                                   \
+    static absl::StatusOr<int> BufferSize(gpusolverDnHandle_t handle,          \
+                                          gpusolverEigMode_t jobz,             \
+                                          gpusolverFillMode_t uplo, int n,     \
+                                          gpuSyevjInfo_t params) {             \
+      int lwork;                                                               \
+      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(                                       \
+          name##_bufferSize(handle, jobz, uplo, n, /*A=*/nullptr, /*lda=*/n,   \
+                            /*w=*/nullptr, &lwork, params)));                  \
+      return lwork;                                                            \
+    }                                                                          \
+    static absl::Status Run(gpusolverDnHandle_t handle,                        \
+                            gpusolverEigMode_t jobz, gpusolverFillMode_t uplo, \
+                            int n, type* a, RealType<type>::Type* w,           \
+                            type* workspace, int lwork, int* info,             \
+                            gpuSyevjInfo_t params) {                           \
+      return JAX_AS_STATUS(name(handle, jobz, uplo, n, a, n, w, workspace,     \
+                                lwork, info, params));                         \
+    }                                                                          \
+  }
+
+template <typename T>
+struct SyevjKernel;
+SYEVJ_KERNEL_IMPL(float, gpusolverDnSsyevj);
+SYEVJ_KERNEL_IMPL(double, gpusolverDnDsyevj);
+SYEVJ_KERNEL_IMPL(gpuComplex, gpusolverDnCheevj);
+SYEVJ_KERNEL_IMPL(gpuDoubleComplex, gpusolverDnZheevj);
+#undef SYEVJ_KERNEL_IMPL
+
+#define SYEVJ_BATCHED_KERNEL_IMPL(type, name)                                  \
+  template <>                                                                  \
+  struct SyevjBatchedKernel<type> {                                            \
+    static absl::StatusOr<int> BufferSize(gpusolverDnHandle_t handle,          \
+                                          gpusolverEigMode_t jobz,             \
+                                          gpusolverFillMode_t uplo, int n,     \
+                                          gpuSyevjInfo_t params, int batch) {  \
+      int lwork;                                                               \
+      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(                                       \
+          name##_bufferSize(handle, jobz, uplo, n, /*A=*/nullptr, /*lda=*/n,   \
+                            /*w=*/nullptr, &lwork, params, batch)));           \
+      return lwork;                                                            \
+    }                                                                          \
+    static absl::Status Run(gpusolverDnHandle_t handle,                        \
+                            gpusolverEigMode_t jobz, gpusolverFillMode_t uplo, \
+                            int n, type* a, RealType<type>::Type* w,           \
+                            type* workspace, int lwork, int* info,             \
+                            gpuSyevjInfo_t params, int batch) {                \
+      return JAX_AS_STATUS(name(handle, jobz, uplo, n, a, n, w, workspace,     \
+                                lwork, info, params, batch));                  \
+    }                                                                          \
+  }
+
+template <typename T>
+struct SyevjBatchedKernel;
+SYEVJ_BATCHED_KERNEL_IMPL(float, gpusolverDnSsyevjBatched);
+SYEVJ_BATCHED_KERNEL_IMPL(double, gpusolverDnDsyevjBatched);
+SYEVJ_BATCHED_KERNEL_IMPL(gpuComplex, gpusolverDnCheevjBatched);
+SYEVJ_BATCHED_KERNEL_IMPL(gpuDoubleComplex, gpusolverDnZheevjBatched);
+#undef SYEVJ_BATCHED_KERNEL_IMPL
+
+#define SYEVD_KERNEL_IMPL(type, name)                                          \
+  template <>                                                                  \
+  struct SyevdKernel<type> {                                                   \
+    static absl::StatusOr<int> BufferSize(gpusolverDnHandle_t handle,          \
+                                          gpusolverEigMode_t jobz,             \
+                                          gpusolverFillMode_t uplo, int n) {   \
+      int lwork;                                                               \
+      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(                                       \
+          name##_bufferSize(handle, jobz, uplo, n, /*A=*/nullptr, /*lda=*/n,   \
+                            /*w=*/nullptr, &lwork)));                          \
+      return lwork;                                                            \
+    }                                                                          \
+    static absl::Status Run(gpusolverDnHandle_t handle,                        \
+                            gpusolverEigMode_t jobz, gpusolverFillMode_t uplo, \
+                            int n, type* a, RealType<type>::Type* w,           \
+                            type* workspace, int lwork, int* info) {           \
+      return JAX_AS_STATUS(                                                    \
+          name(handle, jobz, uplo, n, a, n, w, workspace, lwork, info));       \
+    }                                                                          \
+  }
+
+template <typename T>
+struct SyevdKernel;
+SYEVD_KERNEL_IMPL(float, gpusolverDnSsyevd);
+SYEVD_KERNEL_IMPL(double, gpusolverDnDsyevd);
+SYEVD_KERNEL_IMPL(gpuComplex, gpusolverDnCheevd);
+SYEVD_KERNEL_IMPL(gpuDoubleComplex, gpusolverDnZheevd);
+#undef SYEVD_KERNEL_IMPL
+
+template <typename T>
+ffi::Error SyevdImpl(int64_t batch, int64_t size, gpuStream_t stream,
+                     ffi::ScratchAllocator& scratch, SyevdAlgorithm algorithm,
+                     bool lower, ffi::AnyBuffer a,
+                     ffi::Result<ffi::AnyBuffer> out,
+                     ffi::Result<ffi::AnyBuffer> w,
+                     ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int>(size));
+  FFI_ASSIGN_OR_RETURN(auto handle, SolverHandlePool::Borrow(stream));
+
+  gpusolverEigMode_t jobz = GPUSOLVER_EIG_MODE_VECTOR;
+  gpusolverFillMode_t uplo =
+      lower ? GPUSOLVER_FILL_MODE_LOWER : GPUSOLVER_FILL_MODE_UPPER;
+
+  auto a_data = static_cast<T*>(a.untyped_data());
+  auto out_data = static_cast<T*>(out->untyped_data());
+  auto w_data = static_cast<RealType<T>::Type*>(w->untyped_data());
+  auto info_data = info->typed_data();
+  if (a_data != out_data) {
+    FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuMemcpyAsync(
+        out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream)));
+  }
+  if (algorithm == SyevdAlgorithm::kJacobi ||
+      (algorithm == SyevdAlgorithm::kDefault && size <= 32)) {
+    gpuSyevjInfo_t params;
+    FFI_RETURN_IF_ERROR_STATUS(
+        JAX_AS_STATUS(gpusolverDnCreateSyevjInfo(&params)));
+    std::unique_ptr<gpuSyevjInfo, void (*)(gpuSyevjInfo_t)> params_cleanup(
+        params, [](gpuSyevjInfo_t p) { gpusolverDnDestroySyevjInfo(p); });
+
+    if (batch == 1) {
+      FFI_ASSIGN_OR_RETURN(int lwork, SyevjKernel<T>::BufferSize(
+                                          handle.get(), jobz, uplo, n, params));
+      FFI_ASSIGN_OR_RETURN(auto workspace,
+                           AllocateWorkspace<T>(scratch, lwork, "syevj"));
+      FFI_RETURN_IF_ERROR_STATUS(
+          SyevjKernel<T>::Run(handle.get(), jobz, uplo, n, out_data, w_data,
+                              workspace, lwork, info_data, params));
+    } else {
+      FFI_ASSIGN_OR_RETURN(
+          int lwork, SyevjBatchedKernel<T>::BufferSize(handle.get(), jobz, uplo,
+                                                       n, params, batch));
+      FFI_ASSIGN_OR_RETURN(
+          auto workspace,
+          AllocateWorkspace<T>(scratch, lwork, "syevj_batched"));
+      FFI_RETURN_IF_ERROR_STATUS(SyevjBatchedKernel<T>::Run(
+          handle.get(), jobz, uplo, n, out_data, w_data, workspace, lwork,
+          info_data, params, batch));
+    }
+  } else {
+    FFI_ASSIGN_OR_RETURN(
+        int lwork, SyevdKernel<T>::BufferSize(handle.get(), jobz, uplo, n));
+    FFI_ASSIGN_OR_RETURN(auto workspace,
+                         AllocateWorkspace<T>(scratch, lwork, "syevd"));
+    int out_step = n * n;
+    for (auto i = 0; i < batch; ++i) {
+      FFI_RETURN_IF_ERROR_STATUS(
+          SyevdKernel<T>::Run(handle.get(), jobz, uplo, n, out_data, w_data,
+                              workspace, lwork, info_data));
+      out_data += out_step;
+      w_data += n;
+      ++info_data;
+    }
+  }
+  return ffi::Error::Success();
+}
+
+ffi::Error SyevdDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
+                         SyevdAlgorithm algorithm, bool lower, ffi::AnyBuffer a,
+                         ffi::Result<ffi::AnyBuffer> out,
+                         ffi::Result<ffi::AnyBuffer> w,
+                         ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  auto dataType = a.element_type();
+  if (dataType != out->element_type() ||
+      ffi::ToReal(dataType) != w->element_type()) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to syevd must have the same element type");
+  }
+  FFI_ASSIGN_OR_RETURN((auto [batch, rows, cols]),
+                       SplitBatch2D(a.dimensions()));
+  if (rows != cols) {
+    return ffi::Error::InvalidArgument(
+        "The input matrix to syevd must be square");
+  }
+  FFI_RETURN_IF_ERROR(
+      CheckShape(out->dimensions(), {batch, rows, cols}, "out", "syevd"));
+  FFI_RETURN_IF_ERROR(CheckShape(w->dimensions(), {batch, cols}, "w", "syevd"));
+  FFI_RETURN_IF_ERROR(CheckShape(info->dimensions(), batch, "info", "syevd"));
+  SOLVER_DISPATCH_IMPL(SyevdImpl, batch, cols, stream, scratch, algorithm,
+                       lower, a, out, w, info);
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in syevd", absl::FormatStreamed(dataType)));
+}
+}  // namespace
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(SyevdFfi, SyevdDispatch,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Attr<SyevdAlgorithm>("algorithm")
+                                  .Attr<bool>("lower")
+                                  .Arg<ffi::AnyBuffer>()         // a
+                                  .Ret<ffi::AnyBuffer>()         // out
+                                  .Ret<ffi::AnyBuffer>()         // w
+                                  .Ret<ffi::Buffer<ffi::S32>>()  // info
+);
 
 #define SYRK_KERNEL_IMPL(type, fn)                                             \
   template <>                                                                  \
@@ -589,6 +814,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(SyrkFfi, SyrkDispatch,
                                   .Arg<ffi::AnyBuffer>()  // beta
                                   .Ret<ffi::AnyBuffer>());  // c_matrix_out
 
+#undef SOLVER_DISPATCH_IMPL
+#undef SOLVER_BLAS_DISPATCH_IMPL
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax
