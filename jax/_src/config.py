@@ -1647,6 +1647,7 @@ default_matmul_precision = optional_enum_state(
           'the name of a :class:`~jax.lax.DotAlgorithmPreset`.\n\n'),
     include_in_jit_key=True)
 
+
 traceback_filtering = enum_state(
     name = 'jax_traceback_filtering',
     enum_values=["off", "tracebackhide", "remove_frames", "quiet_remove_frames",
@@ -1913,14 +1914,6 @@ array_garbage_collection_guard = optional_enum_state(
     ),
 )
 
-def _update_debug_log_modules(module_names_str: str | None):
-  logging_config.disable_all_debug_logging()
-  if not module_names_str:
-    return
-  module_names = module_names_str.split(',')
-  for module_name in module_names:
-    logging_config.enable_debug_logging(module_name)
-
 # Don't define a context manager since this isn't threadsafe.
 string_state(
     name='jax_debug_log_modules',
@@ -1928,7 +1921,20 @@ string_state(
     help=('Comma-separated list of module names (e.g. "jax" or '
           '"jax._src.xla_bridge,jax._src.dispatch") to enable debug logging '
           'for.'),
-    update_global_hook=_update_debug_log_modules)
+    update_global_hook=logging_config.update_debug_log_modules)
+
+# Don't define a context manager since this isn't threadsafe.
+optional_enum_state(
+    name='jax_logging_level',
+    enum_values=['NOTSET', 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+    default=logging.getLevelName(logging.getLogger("jax").level),
+    help=('Set the corresponding logging level on all jax loggers. Only string'
+          ' values from ["NOTSET", "DEBUG", "INFO", "WARNING", "ERROR",'
+          ' "CRITICAL"] are accepted. If None, the logging level will not be'
+          ' set. Includes C++ logging.'),
+    update_global_hook=lambda logging_level: \
+      logging_config.update_logging_level_global(logging_level=logging_level)
+)
 
 pmap_no_rank_reduction = bool_state(
     name='jax_pmap_no_rank_reduction',

@@ -70,11 +70,11 @@ cc.set_cache_dir("/tmp/jax_cache")
 * `jax_persistent_cache_min_entry_size_bytes`: The minimum size (in bytes)
    of an entry that will be cached in the persistent compilation cache:
 
-   *  `-1`: disable the size restriction and prevent overrides. 
+   *  `-1`: disable the size restriction and prevent overrides.
 
    *  Leave at default (`0`) to allow for overrides. The override will
       typically ensure that the minimum size is optimal for the file system
-      being used for the cache. 
+      being used for the cache.
 
    *  `> 0`: the actual minimum size desired; no overrides.
 
@@ -155,7 +155,14 @@ import os
 os.environ["JAX_DEBUG_LOG_MODULES"] = "jax._src.compiler,jax._src.lru_cache"
 ```
 
-on the top of the script.
+on the top of the script. Alternatively, you can change the global jax logging level with
+
+```python
+import os
+os.environ["JAX_LOGGING_LEVEL"] = "DEBUG"
+# or locally with
+jax.config.update("jax_logging_level", "DEBUG")
+```
 
 ### Examining cache misses
 
