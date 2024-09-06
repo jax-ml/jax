@@ -803,19 +803,16 @@ class ShardMapTrace(core.Trace):
         "a feature request at https://github.com/google/jax/issues !")
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
-    raise NotImplementedError
-    # # Since ShardMapTrace is only used as a base main, we can drop the jvp.
-    # if symbolic_zeros:
-    #   msg = ("custom_jvp symbolic_zeros support with shard_map is not "
-    #          "implemented; please open an issue at "
-    #          "https://github.com/google/jax/issues")
-    #   raise NotImplementedError(msg)
-    # del prim, jvp, symbolic_zeros
-    # in_vals, in_rep = unzip2((t.val, t.rep) for t in tracers)
-    # fun, out_rep = _shmap_subtrace(fun, self.main, in_rep)
-    # with core.new_sublevel():
-    #   out_vals = fun.call_wrapped(*in_vals)
-    # return map(partial(ShardMapTracer, self), out_rep(), out_vals)
+    # Since ShardMapTrace is only used as a base main, we can drop the jvp.
+    if symbolic_zeros:
+      msg = ("custom_jvp symbolic_zeros support with shard_map is not "
+             "implemented; please open an issue at "
+             "https://github.com/google/jax/issues")
+      raise NotImplementedError(msg)
+    del prim, jvp, symbolic_zeros
+    in_vals, in_rep = unzip2(map(self.to_val_rep_pair, tracers))
+    out_vals, out_rep = _run_shmap(fun, self.mesh, in_vals, in_rep, self.check)
+    return map(partial(ShardMapTracer, self), out_rep, out_vals)
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
                               symbolic_zeros):
