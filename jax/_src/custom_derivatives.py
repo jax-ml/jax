@@ -358,8 +358,7 @@ class CustomJVPCallPrimitive(core.Primitive):
     return trace.process_custom_jvp_call(self, fun, jvp, tracers, **params)
 
   def impl(self, fun, _, *args):
-    with core.new_sublevel():
-      return fun.call_wrapped(*args)
+    raise NotImplementedError
 
   def get_bind_params(self, params):
     new_params = dict(params)
@@ -831,7 +830,7 @@ def _custom_vjp_call_jaxpr_jvp(
   _, args = split_list(primals, [num_consts])
   consts_dot, args_dot = split_list(tangents, [num_consts])
   if any(type(t) is not Zero for t in consts_dot):
-    raise ad.CustomVJPException()
+    raise Exception
   zeros = [type(t) is not Zero for t in args_dot]
   fwd_jaxpr, fwd_consts = fwd_jaxpr_thunk(*zeros)  # consts can be tracers!
   _, res_tree = out_trees()

@@ -723,12 +723,6 @@ def _cond_transpose(cts, *args, branches):
   assert next(out_iter, None) is None
   return [None] + out
 
-def _cond_axis_substitution(params, subst, traverse):
-  if not traverse:
-    return params
-  branches = tuple(core.subst_axis_names_jaxpr(jaxpr, subst) for jaxpr in params['branches'])
-  return dict(params, branches=branches)
-
 def _cond_typecheck(bind_time, *in_atoms, branches):
   if not bind_time:
     _, *in_atoms = in_atoms

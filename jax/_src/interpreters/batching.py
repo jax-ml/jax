@@ -571,8 +571,9 @@ def vtile(f_flat: lu.WrappedFun,
     outputs_flat = yield map(tile_axis(tile_size=tile_size_), args_flat, in_axes_flat), {}
     yield map(untile_axis, outputs_flat, out_axes_flat)
 
+  axis_data = AxisData(axis_name, tile_size, None)
   return _map_to_tile(batch(
-      f_flat, axis_name, tile_size, in_axes_flat, out_axes_flat, main_type=main_type))
+      f_flat, axis_data, in_axes_flat, out_axes_flat, main_type=main_type))
 
 ### API for batching functions with jaxpr type inputs and outputs
 

@@ -426,7 +426,7 @@ class Primitive:
   def bind(self, *args, **params):
     for arg in args:
       if isinstance(arg, Tracer) and not arg._trace.is_valid():
-        raise UnexpectedTracerError(escaped_tracer_error(arg))
+        raise escaped_tracer_error(arg)
     # TODO: figure out how to handle function arguments
     # assert (not config.enable_checks.value or
     #         all(isinstance(arg, Tracer) or valid_jaxtype(arg) for arg in args)), args
@@ -532,7 +532,8 @@ class Trace(Generic[TracerType]):
            "primitives")
     raise NotImplementedError(msg)
 
-  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, symbolic_zeros):
+  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, *,
+                              symbolic_zeros):
     msg = (f"{type(self)} must override process_custom_jvp_call "
            "to handle custom_jvp primitives")
     raise NotImplementedError(msg)
@@ -871,7 +872,7 @@ class EvalTrace(Trace):
     else:
       for t in tracers:
         if isinstance(t, Tracer):
-          raise UnexpectedTracerError(escaped_tracer_error(t))
+          raise escaped_tracer_error(t)
       with set_current_trace(eval_trace):
         return primitive.impl(*tracers, **params)
 
@@ -901,11 +902,12 @@ class EvalTrace(Trace):
 
 # -------------------- axis env --------------------
 
+ParamDict = dict[str, Any]
 AxisName = Hashable
 
 @dataclass(frozen=True)
 class AxisEnv:
-  axis_sizes : Dict[AxisName, int]
+  axis_sizes : dict[AxisName, int]
 
   def axis_size(self, axis_name):
     return self.axis_sizes[axis_name]
@@ -952,8 +954,8 @@ class TracingContext(threading.local):
 
   @contextmanager
   def set_trace(self, trace):
+    prev = self.trace
     try:
-      prev = self.trace
       self.trace = trace
       self.update_thread_local_jit_state()
       yield
@@ -963,8 +965,8 @@ class TracingContext(threading.local):
 
   @contextmanager
   def set_axis_env(self, axis_env):
+    prev = self.axis_env
     try:
-      prev = self.axis_env
       self.axis_env = axis_env
       self.update_thread_local_jit_state()
       yield
