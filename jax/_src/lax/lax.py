@@ -5346,3 +5346,59 @@ class BIntRules:
 
 
 core.bint._rules = BIntRules
+
+
+def optimization_barrier(operand, /):
+  """Prevents the compiler from moving operations across the barrier.
+
+  Optimization barriers have a number of possible uses:
+
+  * An optimization barrier ensures that all inputs are evaluated before any
+    operators that depend on the barrier's outputs. This can be used to enforce
+    a particular order of operations.
+  * An optimization barrier prevents common subexpression elimination. This is
+    used by JAX to implement rematerialization.
+  * Optimization barriers prevent compiler fusions. That is, operations before
+    the barrier may not be fused into the same kernel as operations after the
+    barrier by the compiler.
+
+  JAX does not define derivative or batching rules for an optimization barrier.
+
+  Optimization barriers have no effect outside a compiled function.
+
+  Args:
+    operand: a pytree of JAX values.
+
+  Returns:
+    A pytree of JAX values, with the same structure and contents as ``operand``.
+
+  Examples:
+    Prevents common-subexpression elimination between the two calls to `sin`:
+
+    >>> def f(x):
+    ...   return jax.lax.optimization_barrier(jax.lax.sin(x)) + jax.lax.sin(x)
+    >>> jax.jit(f)(0.)
+    Array(0., dtype=float32, weak_type=True)
+  """
+  flat_args, treedef = tree_util.tree_flatten(operand)
+  return tree_util.tree_unflatten(
+    treedef, optimization_barrier_p.bind(*flat_args))
+
+
+def _optimization_barrier_abstract_eval(*args):
+  return args
+
+def _optimization_barrier_lowering_rule(ctx, *args):
+  barrier_types = map(mlir.aval_to_ir_type, ctx.avals_in)
+  flat_args = mlir.flatten_ir_values(args)
+  barrier_op = hlo.OptimizationBarrierOp(flat_args)
+  return mlir.unflatten_ir_values_like_types(barrier_op.results, barrier_types)
+
+
+optimization_barrier_p = core.Primitive('optimization_barrier')
+optimization_barrier_p.multiple_results = True
+optimization_barrier_p.def_impl(
+    partial(dispatch.apply_primitive, optimization_barrier_p))
+optimization_barrier_p.def_abstract_eval(_optimization_barrier_abstract_eval)
+mlir.register_lowering(optimization_barrier_p,
+                       _optimization_barrier_lowering_rule)

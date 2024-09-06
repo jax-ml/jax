@@ -3093,6 +3093,10 @@ class LaxTest(jtu.JaxTestCase):
     with jax.transfer_guard('disallow'):
       jax.jit(asarray_closure)()
 
+  def testOptimizationBarrier(self):
+    x = lax.optimization_barrier((2, 3))
+    self.assertEqual((2, 3), x)
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):

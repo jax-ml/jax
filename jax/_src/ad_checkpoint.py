@@ -27,7 +27,6 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import config
 from jax._src import core
-from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import effects
@@ -755,7 +754,7 @@ def remat_expansion(*args, jaxpr: core.Jaxpr, prevent_cse: bool,
   return api.named_call(translation_rule, name="checkpoint")(*args, jaxpr=jaxpr)
 
 def _remat_translation_using_opt_barrier(*args, jaxpr: core.Jaxpr):
-  args = _optimization_barrier(args)
+  args = lax_internal.optimization_barrier(args)
   return core.eval_jaxpr(jaxpr, (), *args)
 
 # TODO(mattjj): add core utility for 'create dummy value for this type'?
@@ -837,27 +836,6 @@ mlir.register_lowering(remat_p, _remat_lowering)
 mlir.register_lowering(remat_p, partial(_remat_lowering, is_gpu_platform=True),
                        platform="gpu")
 
-def _optimization_barrier_abstract_eval(*args):
-  return args
-
-def _optimization_barrier_lowering_rule(ctx, *args):
-  barrier_types = map(mlir.aval_to_ir_type, ctx.avals_in)
-  flat_args = mlir.flatten_ir_values(args)
-  barrier_op = hlo.OptimizationBarrierOp(flat_args)
-  return mlir.unflatten_ir_values_like_types(barrier_op.results, barrier_types)
-
-def _optimization_barrier(arg):
-  flat_args, treedef = tree_flatten(arg)
-  return tree_unflatten(treedef, optimization_barrier_p.bind(*flat_args))
-
-optimization_barrier_p = core.Primitive('optimization_barrier')
-optimization_barrier_p.multiple_results = True
-optimization_barrier_p.def_impl(
-    partial(dispatch.apply_primitive, optimization_barrier_p))
-optimization_barrier_p.def_abstract_eval(_optimization_barrier_abstract_eval)
-mlir.register_lowering(optimization_barrier_p,
-                       _optimization_barrier_lowering_rule)
-
 
 def checkpoint_name(x, name):
   return name_p.bind(x, name=name)
@@ -936,3 +914,6 @@ def checkpoint_wrapper(
     raise NotImplementedError(msg)
   return checkpoint(fun, prevent_cse=prevent_cse, policy=policy,
                     static_argnums=static_argnums)
+
+# TODO(phawkins): update users to refer to the public name.
+_optimization_barrier = lax_internal.optimization_barrier
