@@ -37,7 +37,7 @@ from jax._src import source_info_util
 from jax._src import compute_on
 from jax._src.api_util import (flattened_fun_in_tree, flatten_fun_nokwargs,
                                fun_sourceinfo)
-from jax._src.core import (Trace, Tracer, Jaxpr, Literal, get_aval,
+from jax._src.core import (Trace, Tracer, TraceTag, Jaxpr, Literal, get_aval,
                            AbstractValue, ClosedJaxpr, new_jaxpr_eqn,
                            ConcreteArray, Var, DropVar, raise_to_shaped, Atom,
                            JaxprEqn, Primitive, ShapedArray, DShapedArray,
@@ -140,15 +140,9 @@ class PartialVal(tuple):
       return self[0]
 
 
-class JaxprTraceTag:
-  def __hash__(self):
-    return hash(JaxprTraceTag)
-  def __eq__(self, other):
-    return isinstance(other, JaxprTraceTag)
-
 class JaxprTrace(Trace['JaxprTracer']):
 
-  def __init__(self, parent_trace:Trace, name_stack: source_info_util.NameStack, tag:JaxprTraceTag):
+  def __init__(self, parent_trace:Trace, name_stack: source_info_util.NameStack, tag:TraceTag):
     self.name_stack = name_stack
     self.tag = tag
     self.parent_trace = parent_trace
@@ -653,7 +647,7 @@ def trace_to_jaxpr_nounits(
   ) -> tuple[Jaxpr, list[PartialVal], list[core.Value]]:
   current_name_stack = source_info_util.current_name_stack()
   with core.take_current_trace() as parent_trace:
-    trace = JaxprTrace(parent_trace, current_name_stack, JaxprTraceTag())
+    trace = JaxprTrace(parent_trace, current_name_stack, TraceTag())
     with core.ensure_no_leaks(trace):
       fun = trace_to_subjaxpr_nounits(fun, trace, instantiate)
       with core.set_current_trace(trace):
@@ -677,10 +671,10 @@ def trace_to_subjaxpr_nounits(
 
 @lu.transformation
 def trace_to_subjaxpr_nounits2(
-    tag: JaxprTraceTag,
+    tag: TraceTag,
     instantiate: bool | Sequence[bool],
     in_pvals: Sequence[PartialVal]):
-  assert isinstance(tag, JaxprTraceTag)
+  assert isinstance(tag, TraceTag)
   assert all(isinstance(pv, PartialVal) for pv in in_pvals), in_pvals
   current_name_stack = source_info_util.current_name_stack()
   with core.take_current_trace() as parent_trace:
@@ -716,7 +710,7 @@ def _trace_to_subjaxpr_nounits(trace:JaxprTrace, instantiate, in_pvals):
 # TODO(mattjj): update all callers to use this version, delete other version.
 @lu.transformation
 def trace_to_subjaxpr_nounits_fwd(
-    tag: JaxprTraceTag,
+    tag: TraceTag,
     instantiate: bool | Sequence[bool],
     in_pvals: Sequence[PartialVal]):
   assert all(isinstance(pv, PartialVal) for pv in in_pvals), in_pvals
@@ -744,7 +738,7 @@ def trace_to_subjaxpr_nounits_fwd(
 #     than passed as redundant outputs.
 @lu.transformation
 def trace_to_subjaxpr_nounits_fwd2(
-    tag: JaxprTraceTag,
+    tag: TraceTag,
     instantiate: bool | Sequence[bool],
     in_pvals: Sequence[PartialVal]):
   assert all(isinstance(pv, PartialVal) for pv in in_pvals), in_pvals

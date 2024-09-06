@@ -900,6 +900,9 @@ class EvalTrace(Trace):
     with concrete_eval():
       return fun.call_wrapped(*tracers)
 
+
+class TraceTag: pass
+
 # -------------------- axis env --------------------
 
 ParamDict = dict[str, Any]

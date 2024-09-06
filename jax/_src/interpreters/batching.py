@@ -29,7 +29,7 @@ from jax._src import linear_util as lu
 from jax._src.ad_util import (Zero, instantiate, SymbolicZero,
                               replace_rule_output_symbolic_zeros,
                               add_jaxvals, add_jaxvals_p)
-from jax._src.core import raise_to_shaped, Trace, Tracer, AxisName
+from jax._src.core import raise_to_shaped, Trace, Tracer, TraceTag, AxisName
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_unflatten, tree_flatten,
                                 register_pytree_node)
@@ -370,7 +370,7 @@ class BatchTracer(Tracer):
     else:  # TODO(mattjj): could handle the RaggedAxis case?
       return self
 
-class BatchTag: pass
+class TraceTag: pass
 
 # TODO(dougalm): pass this around instead of splatting the components everywhere
 @dataclasses.dataclass(frozen=True)
@@ -519,7 +519,7 @@ def batch(fun: lu.WrappedFun, axis_data,
 
 @lu.transformation
 def _batch_outer(axis_data, in_dims, _main_type, *in_vals):
-  tag = BatchTag()
+  tag = TraceTag()
   with source_info_util.transform_name_stack('vmap'):
     outs = yield (tag, in_dims, *in_vals), {}
   yield outs
@@ -769,7 +769,7 @@ def _batch_jaxpr_outer(axis_data, in_dims, main_type, *in_vals):
   in_dims = in_dims() if callable(in_dims) else in_dims
   in_dims = [canonicalize_axis(ax, np.ndim(x)) if isinstance(ax, int)
              else ax for x, ax in unsafe_zip(in_vals, in_dims)]
-  tag = BatchTag()
+  tag = TraceTag()
   out_vals = yield (tag, in_dims, *in_vals), {}
   yield out_vals
 

@@ -478,30 +478,29 @@ def _shard_map_staging(
     rewrite: bool,
     auto: frozenset,
   ) -> Sequence[pe.DynamicJaxprTracer]:
-  raise NotImplementedError
-  # in_tracers = map(trace.to_jaxpr_tracer, in_tracers)
-  # in_avals = [t.aval for t in in_tracers]
-  # in_avals_ = map(partial(_shard_aval, mesh), in_names, in_avals)
-  # with core.extend_axis_env(mesh.shape.items()):
-  #   jaxpr, out_avals_, consts, () = pe.trace_to_jaxpr_dynamic(f, in_avals_)
-  # out_avals = map(_check_shapedarray, out_avals_)
-  # out_avals = map(partial(_unshard_aval, mesh), out_names_thunk(), out_avals)
-  # # TODO check_rep
-  # source_info = source_info_util.current()
-  # out_tracers = [pe.DynamicJaxprTracer(trace, a, source_info) for a in out_avals]
-  # invars = map(trace.getvar, in_tracers)
-  # constvars = map(trace.getvar, map(trace.to_jaxpr_tracer, consts))
-  # outvars = map(trace.makevar, out_tracers)
-  # in_names_staged = ({},) * len(consts) + tuple(in_names)  # type: ignore
-  # with core.extend_axis_env(mesh.shape.items()):
-  #   jaxpr = pe.convert_constvars_jaxpr(jaxpr)
-  # params = dict(mesh=mesh, in_names=in_names_staged,
-  #               out_names=tuple(out_names_thunk()), jaxpr=jaxpr,
-  #               check_rep=check_rep, rewrite=rewrite, auto=auto)
-  # eqn = pe.new_jaxpr_eqn([*constvars, *invars], outvars, prim, params,
-  #                        jaxpr.effects, source_info)
-  # trace.frame.add_eqn(eqn)
-  # return out_tracers
+  in_tracers = map(trace.to_jaxpr_tracer, in_tracers)
+  in_avals = [t.aval for t in in_tracers]
+  in_avals_ = map(partial(_shard_aval, mesh), in_names, in_avals)
+  with core.extend_axis_env(mesh.shape.items()):
+    jaxpr, out_avals_, consts, () = pe.trace_to_jaxpr_dynamic(f, in_avals_)
+  out_avals = map(_check_shapedarray, out_avals_)
+  out_avals = map(partial(_unshard_aval, mesh), out_names_thunk(), out_avals)
+  # TODO check_rep
+  source_info = source_info_util.current()
+  out_tracers = [pe.DynamicJaxprTracer(trace, a, source_info) for a in out_avals]
+  invars = map(trace.getvar, in_tracers)
+  constvars = map(trace.getvar, map(trace.to_jaxpr_tracer, consts))
+  outvars = map(trace.makevar, out_tracers)
+  in_names_staged = ({},) * len(consts) + tuple(in_names)  # type: ignore
+  with core.extend_axis_env(mesh.shape.items()):
+    jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+  params = dict(mesh=mesh, in_names=in_names_staged,
+                out_names=tuple(out_names_thunk()), jaxpr=jaxpr,
+                check_rep=check_rep, rewrite=rewrite, auto=auto)
+  eqn = pe.new_jaxpr_eqn([*constvars, *invars], outvars, prim, params,
+                         jaxpr.effects, source_info)
+  trace.frame.add_eqn(eqn)
+  return out_tracers
 pe.DynamicJaxprTrace.process_shard_map = _shard_map_staging
 
 def _check_shapedarray(aval: core.AbstractValue) -> core.ShapedArray:
@@ -1734,22 +1733,21 @@ class RewriteTrace(core.Trace):
     # return map(partial(RewriteTracer, self), out_reps(), out_vals)
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
-    raise NotImplementedError
-    # if symbolic_zeros:
-    #   msg = ("Please open an issue at https://github.com/google/jax/issues and "
-    #          "as a temporary workaround pass the check_rep=False argument to "
-    #          "shard_map")
-    #   raise NotImplementedError(msg)
-    # in_vals, in_reps = unzip2((t.val, t.rep) for t in tracers)
-    # fun, out_reps1 = _rewrite_subtrace(fun, self.main, in_reps)
-    # jvp, out_reps2 = _rewrite_subtrace(jvp, self.main, in_reps * 2)
-    # with core.new_dynamic(self.dyna):
-    #   out_vals = prim.bind(fun, jvp, *in_vals, symbolic_zeros=symbolic_zeros)
-    # fst, out_reps = lu.merge_linear_aux(out_reps1, out_reps2)
-    # if not fst:
-    #   assert out_reps == out_reps[:len(out_reps) // 2] * 2
-    #   out_reps = out_reps[:len(out_reps) // 2]
-    # return map(partial(RewriteTracer, self), out_reps, out_vals)
+    if symbolic_zeros:
+      msg = ("Please open an issue at https://github.com/google/jax/issues and "
+             "as a temporary workaround pass the check_rep=False argument to "
+             "shard_map")
+      raise NotImplementedError(msg)
+    in_vals, in_reps = unzip2((t.val, t.rep) for t in tracers)
+    fun, out_reps1 = _rewrite_subtrace(fun, self.main, in_reps)
+    jvp, out_reps2 = _rewrite_subtrace(jvp, self.main, in_reps * 2)
+    with core.new_dynamic(self.dyna):
+      out_vals = prim.bind(fun, jvp, *in_vals, symbolic_zeros=symbolic_zeros)
+    fst, out_reps = lu.merge_linear_aux(out_reps1, out_reps2)
+    if not fst:
+      assert out_reps == out_reps[:len(out_reps) // 2] * 2
+      out_reps = out_reps[:len(out_reps) // 2]
+    return map(partial(RewriteTracer, self), out_reps, out_vals)
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
                               symbolic_zeros):
