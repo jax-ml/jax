@@ -1697,12 +1697,11 @@ class RewriteTrace(core.Trace):
     return out_tracers if prim.multiple_results else out_tracers[0]
 
   def process_call(self, call_primitive, f, in_tracers, params):
-    raise NotImplementedError
-    # in_vals, in_reps = unzip2((t.val, t.rep) for t in in_tracers)
-    # f, out_reps = _rewrite_subtrace(f, self.main, tuple(in_reps))
-    # with core.new_dynamic(self.dyna):
-    #   out_vals = call_primitive.bind(f, *in_vals, **params)
-    # return map(partial(RewriteTracer, self), out_reps(), out_vals)
+    in_vals, in_reps = unzip2(map(self.to_val_rep_pair, in_tracers))
+    f, out_reps = _rewrite_subtrace(f, self.tag, self.mesh, tuple(in_reps))
+    with core.set_current_trace(self.parent_trace):
+      out_vals = call_primitive.bind(f, *in_vals, **params)
+    return map(partial(RewriteTracer, self), out_reps(), out_vals)
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
     if symbolic_zeros:
