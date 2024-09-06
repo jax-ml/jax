@@ -685,7 +685,7 @@ def get_mesh_from_args(args_flat, mesh):
   assert isinstance(mesh, Mesh)
   return mesh
 
-def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
+def _shard_map_impl(_, prim, fun, args, *, mesh, in_names, out_names_thunk,
                     check_rep, rewrite, auto):
   if auto: raise NotImplementedError
   del prim, auto
@@ -693,27 +693,22 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
     mesh = get_mesh_from_args(args, mesh)
   args = map(partial(_unmatch_spec, mesh), in_names, args)
   in_rep = map(partial(_in_names_to_rep, mesh), in_names)
-
-  trace = ShardMapTrace(mesh, check_rep)
-  fun, out_rep = _shmap_subtrace(fun, trace, in_rep)
-  with core.set_current_trace(trace):
-    outs = fun.call_wrapped(*args)
+  outs, out_rep = _run_shmap(fun, mesh, args, in_rep, check_rep)
   out_avals = [core.mapped_aval(x.shape[0], 0, core.get_aval(x)) for x in outs]
   _check_names(out_names_thunk(), out_avals)  # pytype: disable=wrong-arg-types
   if check_rep:
-    _check_reps(mesh, out_names_thunk(), out_rep())
+    _check_reps(mesh, out_names_thunk(), out_rep)
   pspecs = map(_names_to_pspec, out_names_thunk())
   return map(partial(_match_spec, mesh, check_rep), pspecs, outs)
 core.EvalTrace.process_shard_map = _shard_map_impl
 
-@lu.transformation_with_aux
-def _shmap_subtrace(t, in_rep, *in_vals):
-  in_tracers = map(partial(ShardMapTracer, t), in_rep, in_vals)
-  ans = yield in_tracers, {}
-  out_tracers = map(t.to_shard_map_tracer, ans)
-  outs, out_rep = unzip2((t.val, t.rep) for t in out_tracers)
-  del t, in_tracers, ans, out_tracers
-  yield outs, out_rep
+def _run_shmap(f, mesh, args, reps, check_rep):
+  trace = ShardMapTrace(mesh, check_rep)
+  in_tracers = map(partial(ShardMapTracer, trace), reps, args)
+  with core.set_current_trace(trace):
+    ans = f.call_wrapped(*in_tracers)
+    outs, out_rep = unzip2(map(trace.to_val_rep_pair, ans))
+  return outs, out_rep
 
 def _names_to_pspec(names: AxisNames) -> PartitionSpec:
   ndmin = max(names) + 1 if names else 0
@@ -769,18 +764,17 @@ class ShardMapTrace(core.Trace):
     self.mesh = mesh
     self.check = check
 
-  def to_shard_map_tracer(self, val):
+  def to_val_rep_pair(self, val):
     if isinstance(val, ShardMapTracer):
-      return val
+      return val.val, val.rep
     elif isinstance(val, Tracer):
       raise Exception("Shouldn't have any non-shard_map tracers")
     else:
       val_ = _unmatch_spec(self.mesh, {}, val)
-      return ShardMapTracer(self, None, val_)
+      return val_, None
 
   def process_primitive(self, prim, tracers, params):
-    tracers = map(self.to_shard_map_tracer, tracers)
-    in_vals, in_rep = unzip2((t.val, t.rep) for t in tracers)
+    in_vals, in_rep = unzip2(map(self.to_val_rep_pair, tracers))
     eager_rule = eager_rules.get(prim)
     if eager_rule:
       out_vals = eager_rule(self.mesh, *in_vals, **params)
@@ -825,19 +819,15 @@ class ShardMapTrace(core.Trace):
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
                               symbolic_zeros):
-    raise NotImplementedError
-    # # Since ShardMapTrace is only used as a base main, we can drop the jvp.
-    # if symbolic_zeros:
-    #   msg = ("custom_vjp symbolic_zeros support with shard_map is not "
-    #          "implemented; please open an issue at "
-    #          "https://github.com/google/jax/issues")
-    #   raise NotImplementedError(msg)
-    # del prim, fwd, bwd, out_trees, symbolic_zeros
-    # in_vals, in_rep = unzip2((t.val, t.rep) for t in tracers)
-    # fun, out_rep = _shmap_subtrace(fun, self.main, in_rep)
-    # with core.new_sublevel():
-    #   out_vals = fun.call_wrapped(*in_vals)
-    # return map(partial(ShardMapTracer, self), out_rep(), out_vals)
+    if symbolic_zeros:
+      msg = ("custom_vjp symbolic_zeros support with shard_map is not "
+             "implemented; please open an issue at "
+             "https://github.com/google/jax/issues")
+      raise NotImplementedError(msg)
+    del prim, fwd, bwd, out_trees, symbolic_zeros
+    in_vals, in_rep = unzip2(map(self.to_val_rep_pair, tracers))
+    out_vals, out_rep = _run_shmap(fun, self.mesh, in_vals, in_rep, self.check)
+    return map(partial(ShardMapTracer, self), out_rep, out_vals)
 
 
 class ShardMapTracer(core.Tracer):
@@ -1710,17 +1700,16 @@ class RewriteTrace(core.Trace):
     self.tag = tag
     self.mesh = mesh
 
-  def to_rewrite_tracer(self, val):
+  def to_val_rep_pair(self, val):
     # TODO: add a tag to tell if self
     if isinstance(val, RewriteTracer) and val._trace.tag is self.tag:
-      return RewriteTracer(self, val.rep, val.val)
+      return val.val, val.rep
     else:
-      return RewriteTracer(self, set(self.mesh.axis_names), val)
+      return val, set(self.mesh.axis_names)
 
   def process_primitive(self, prim, in_tracers, params):
     rule = _rewrite_rules.get(prim, partial(_rule_missing, prim))
-    in_tracers = map(self.to_rewrite_tracer, in_tracers)
-    in_vals, in_reps = unzip2((t.val, t.rep) for t in in_tracers)
+    in_vals, in_reps = unzip2(map(self.to_val_rep_pair, in_tracers))
     with core.set_current_trace(self.parent_trace):
       out_vals, out_reps = rule(self.mesh, in_reps, *in_vals, **params)
     out_tracers = map(partial(RewriteTracer, self), out_reps, out_vals)
@@ -1740,7 +1729,7 @@ class RewriteTrace(core.Trace):
              "as a temporary workaround pass the check_rep=False argument to "
              "shard_map")
       raise NotImplementedError(msg)
-    in_vals, in_reps = unzip2((t.val, t.rep) for t in tracers)
+    in_vals, in_reps = unzip2(map(self.to_val_rep_pair, tracers))
     fun, out_reps1 = _rewrite_subtrace(fun, self.tag, self.mesh, in_reps)
     jvp, out_reps2 = _rewrite_subtrace(jvp, self.tag, self.mesh, in_reps * 2)
     with core.set_current_trace(self.parent_trace):
@@ -1753,25 +1742,24 @@ class RewriteTrace(core.Trace):
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
                               symbolic_zeros):
-    raise NotImplementedError
-    # if symbolic_zeros:
-    #   msg = ("Please open an issue at https://github.com/google/jax/issues and "
-    #          "as a temporary workaround pass the check_rep=False argument to "
-    #          "shard_map")
-    #   raise NotImplementedError(msg)
-    # in_vals, in_reps = unzip2((t.val, t.rep) for t in tracers)
-    # fun, out_reps1 = _rewrite_subtrace(fun, self.main, in_reps)
-    # fwd_in_reps = [r_ for r in in_reps for r_ in [r, set(self.mesh.axis_names)]]
-    # fwd, out_reps2 = _rewrite_subtrace(fwd, self.main, fwd_in_reps)
-    # bwd = _rewrite_bwd(bwd, self.mesh, out_reps2, in_reps)
-    # with core.new_dynamic(self.dyna):
-    #   out_vals = prim.bind(fun, fwd, bwd, *in_vals, out_trees=out_trees,
-    #                       symbolic_zeros=symbolic_zeros)
-    # fst, out_reps = lu.merge_linear_aux(out_reps1, out_reps2)
-    # if not fst:
-    #   _, res_tree = out_trees()
-    #   _, out_reps = split_list(out_reps, [res_tree.num_leaves])
-    # return map(partial(RewriteTracer, self), out_reps, out_vals)
+    if symbolic_zeros:
+      msg = ("Please open an issue at https://github.com/google/jax/issues and "
+             "as a temporary workaround pass the check_rep=False argument to "
+             "shard_map")
+      raise NotImplementedError(msg)
+    in_vals, in_reps = unzip2(map(self.to_val_rep_pair, tracers))
+    fun, out_reps1 = _rewrite_subtrace(fun, self.tag, self.mesh, in_reps)
+    fwd_in_reps = [r_ for r in in_reps for r_ in [r, set(self.mesh.axis_names)]]
+    fwd, out_reps2 = _rewrite_subtrace(fwd, self.tag, self.mesh, fwd_in_reps)
+    bwd = _rewrite_bwd(bwd, self.mesh, out_reps2, in_reps)
+    with core.set_current_trace(self.parent_trace):
+      out_vals = prim.bind(fun, fwd, bwd, *in_vals, out_trees=out_trees,
+                          symbolic_zeros=symbolic_zeros)
+    fst, out_reps = lu.merge_linear_aux(out_reps1, out_reps2)
+    if not fst:
+      _, res_tree = out_trees()
+      _, out_reps = split_list(out_reps, [res_tree.num_leaves])
+    return map(partial(RewriteTracer, self), out_reps, out_vals)
 
   # TODO process_axis_index
 
@@ -1789,9 +1777,8 @@ def _efficient_transpose_rewrite_nomatch(mesh, in_reps, *args):
     in_tracers = map(partial(RewriteTracer, t), in_reps, args)
     with core.set_current_trace(t):
       ans = yield in_tracers, {}
-    out_tracers = map(t.to_rewrite_tracer, ans)
-    out_vals, out_reps = unzip2((t.val, t.rep) for t in out_tracers)
-    del t, in_tracers, out_tracers, ans
+    out_vals, out_reps = unzip2(map(t.to_val_rep_pair, ans))
+    del t, in_tracers, ans
   yield out_vals, out_reps
 
 @lu.transformation
@@ -1836,20 +1823,16 @@ def _rewrite_subtrace(tag, mesh, in_reps, *in_vals):
     in_tracers = map(partial(RewriteTracer, t), in_reps, in_vals)
     with core.set_current_trace(t):
       outs = yield in_tracers, {}
-    out_tracers = map(t.to_rewrite_tracer, outs)
-    out_vals, out_reps = unzip2((t.val, t.rep) for t in out_tracers)
-    yield out_vals, out_reps
+    ans = unzip2(map(t.to_val_rep_pair, outs))
+    yield ans
 
 def _rewrite_bwd(bwd, mesh, in_reps, reps_dst):
-  raise NotImplementedError
-  # def new_bwd(*args):
-  #   lvl = core.dynamic_level()
-  #   with core.new_main(RewriteTrace, dynamic=True, mesh=mesh, dyna=lvl) as main:
-  #     bwd_, reps_thunk = _rewrite_subtrace(lu.wrap_init(bwd), main, in_reps())
-  #     out = bwd_.call_wrapped(*args)
-  #     del main
-  #   return map(_match_replication, reps_thunk(), reps_dst, out)
-  # return new_bwd
+  def new_bwd(*args):
+    tag = core.TraceTag()
+    bwd_, reps_thunk = _rewrite_subtrace(lu.wrap_init(bwd), tag, mesh, in_reps())
+    out = bwd_.call_wrapped(*args)
+    return map(_match_replication, reps_thunk(), reps_dst, out)
+  return new_bwd
 
 def _match_replication(src, dst, x):
   if dst - src:
