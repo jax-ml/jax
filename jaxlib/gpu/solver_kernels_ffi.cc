@@ -483,5 +483,112 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(OrgqrFfi, OrgqrDispatch,
 
 #undef SOLVER_DISPATCH_IMPL
 
+
+#define SYRK_KERNEL_IMPL(type, fn)                                             \
+  template <>                                                                  \
+  struct SyrkKernel<type> {                                                    \
+    static absl::Status Run(gpublasHandle_t handle, std::int64_t n,            \
+                            std::int64_t k, bool transpose,                    \
+                            const type* alpha, const type* beta,               \
+                            const type* a_matrix, type* c_matrix) {            \
+      gpublasOperation_t op = transpose ? GPUBLAS_OP_N : GPUBLAS_OP_T;         \
+      gpublasFillMode_t uplo = GPUSOLVER_FILL_MODE_UPPER;                      \
+      int lda = transpose ? n : k;                                             \
+      return JAX_AS_STATUS(fn(handle, uplo, op, n, k,                          \
+                              alpha, a_matrix, lda, beta,                      \
+                              c_matrix, n));                                   \
+    }                                                                          \
+  }
+
+template <typename T>
+struct SyrkKernel;
+
+SYRK_KERNEL_IMPL(float, gpublasSsyrk);
+SYRK_KERNEL_IMPL(double, gpublasDsyrk);
+SYRK_KERNEL_IMPL(gpublasComplex, gpublasCsyrk);
+SYRK_KERNEL_IMPL(gpublasDoubleComplex, gpublasZsyrk);
+#undef SYRK_KERNEL_IMPL
+
+template <typename T>
+ffi::Error SyrkImpl(gpuStream_t stream,
+                    ffi::AnyBuffer a_matrix,
+                    ffi::AnyBuffer c_matrix,
+                    bool transpose,
+                    ffi::AnyBuffer alpha,
+                    ffi::AnyBuffer beta,
+                    ffi::Result<ffi::AnyBuffer> c_matrix_out) {
+  FFI_ASSIGN_OR_RETURN((auto [batch, rows, cols]),
+                       SplitBatch2D(a_matrix.dimensions()));
+  FFI_ASSIGN_OR_RETURN((auto [batch_c, rows_c, cols_c]),
+                       SplitBatch2D(c_matrix.dimensions()));
+  FFI_ASSIGN_OR_RETURN((auto [batch_out, rows_out, cols_out]),
+                       SplitBatch2D(c_matrix_out->dimensions()));
+  if (batch != batch_c || batch != batch_out) {
+    return ffi::Error(ffi::ErrorCode::kInvalidArgument,
+                      "a_matrix, c_matrix and c_matrix_out must have the same "
+                      "batch size.");
+  }
+  int n = transpose ? cols : rows;
+  int k = transpose ? rows : cols;
+
+  FFI_RETURN_IF_ERROR(
+    CheckShape(c_matrix_out->dimensions().last(2), {n, n}, "out", "Syrk"));
+  FFI_RETURN_IF_ERROR(
+    CheckShape(c_matrix.dimensions().last(2), {n, n}, "C", "Syrk"));
+
+  const T* a_data = static_cast<const T*>(a_matrix.untyped_data());
+  T* c_data = static_cast<T*>(c_matrix.untyped_data());
+  T* c_out_data = static_cast<T*>(c_matrix_out->untyped_data());
+
+  // with alpha or beta provided as device_pointers, cublas<T>syrk will SIGSEGV
+  T host_alpha;
+  FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuMemcpyAsync(
+    &host_alpha, alpha.untyped_data(), sizeof(T), gpuMemcpyDeviceToHost,
+    stream)));
+
+  T host_beta;
+  FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuMemcpyAsync(
+    &host_beta, beta.untyped_data(), sizeof(T), gpuMemcpyDeviceToHost,
+    stream)));
+
+  if (c_data != c_out_data) {
+    FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuMemcpyAsync(
+        c_out_data, c_data, c_matrix.size_bytes(), gpuMemcpyDeviceToDevice,
+        stream)));
+  }
+  FFI_ASSIGN_OR_RETURN(auto handle, BlasHandlePool::Borrow(stream));
+  for (int i = 0; i < batch; ++i) {
+    FFI_RETURN_IF_ERROR_STATUS(SyrkKernel<T>::Run(
+        handle.get(), n, k, transpose, &host_alpha, &host_beta,
+        a_data + i * k * n, c_out_data + i * n * n));
+  }
+  return ffi::Error::Success();
+}
+
+ffi::Error SyrkDispatch(
+    gpuStream_t stream,
+    ffi::AnyBuffer a_matrix,
+    ffi::AnyBuffer c_matrix,
+    bool transpose,
+    ffi::AnyBuffer alpha,
+    ffi::AnyBuffer beta,
+    ffi::Result<ffi::AnyBuffer> c_matrix_out) {
+  auto dataType = a_matrix.element_type();
+  SOLVER_BLAS_DISPATCH_IMPL(SyrkImpl, stream, a_matrix, c_matrix, transpose,
+                            alpha, beta, c_matrix_out);
+  return ffi::Error::InvalidArgument("Unsupported element type for Syrk");
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(SyrkFfi, SyrkDispatch,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Arg<ffi::AnyBuffer>()  // a_matrix
+                                  .Arg<ffi::AnyBuffer>()  // c_matrix
+                                  .Attr<bool>("transpose")  // transpose
+                                  .Arg<ffi::AnyBuffer>()  // alpha
+                                  .Arg<ffi::AnyBuffer>()  // beta
+                                  .Ret<ffi::AnyBuffer>());  // c_matrix_out
+
+
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

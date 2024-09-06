@@ -57,6 +57,9 @@ typedef cuDoubleComplex gpublasDoubleComplex;
 typedef cublasFillMode_t gpusolverFillMode_t;
 typedef cublasStatus_t gpublasStatus_t;
 typedef cublasHandle_t gpublasHandle_t;
+typedef cublasOperation_t gpublasOperation_t;
+typedef cublasFillMode_t gpublasFillMode_t;
+
 typedef CUcontext gpuContext_t;
 typedef CUstreamCaptureMode gpustreamCaptureMode_t;
 typedef CUstreamCaptureStatus gpustreamCaptureStatus_t;
@@ -100,6 +103,11 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpublasDgetrfBatched cublasDgetrfBatched
 #define gpublasCgetrfBatched cublasCgetrfBatched
 #define gpublasZgetrfBatched cublasZgetrfBatched
+
+#define gpublasSsyrk cublasSsyrk
+#define gpublasDsyrk cublasDsyrk
+#define gpublasCsyrk cublasCsyrk
+#define gpublasZsyrk cublasZsyrk
 
 #define GPUBLAS_STATUS_SUCCESS CUBLAS_STATUS_SUCCESS
 
@@ -189,6 +197,10 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUSOLVER_FILL_MODE_UPPER CUBLAS_FILL_MODE_UPPER
 #define GPUSOLVER_EIG_MODE_VECTOR CUSOLVER_EIG_MODE_VECTOR
 #define GPUSOLVER_STATUS_SUCCESS CUSOLVER_STATUS_SUCCESS
+
+#define GPUBLAS_OP_N CUBLAS_OP_N
+#define GPUBLAS_OP_T CUBLAS_OP_T
+#define GPUBLAS_OP_C CUBLAS_OP_C
 
 #define gpusparseCooSetStridedBatch cusparseCooSetStridedBatch
 #define gpusparseCreate cusparseCreate
@@ -330,6 +342,7 @@ typedef hipsolverHandle_t gpusolverDnHandle_t;
 typedef hipblasFillMode_t gpublasFillMode_t;
 typedef hipsolverFillMode_t gpusolverFillMode_t;
 typedef hipblasHandle_t gpublasHandle_t;
+typedef hipblasOperation_t gpublasOperation_t;
 typedef hipblasStatus_t gpublasStatus_t;
 typedef hipCtx_t gpuContext_t;
 typedef hipStreamCaptureMode gpustreamCaptureMode_t;
@@ -371,6 +384,11 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpublasDgetrfBatched hipblasDgetrfBatched
 #define gpublasCgetrfBatched hipblasCgetrfBatched
 #define gpublasZgetrfBatched hipblasZgetrfBatched
+
+#define gpublasSsyrk hipblasSsyrk
+#define gpublasDsyrk hipblasDsyrk
+#define gpublasCsyrk hipblasCsyrk
+#define gpublasZsyrk hipblasZsyrk
 
 #define GPUBLAS_STATUS_SUCCESS HIPBLAS_STATUS_SUCCESS
 
@@ -455,6 +473,10 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUSOLVER_FILL_MODE_UPPER HIPSOLVER_FILL_MODE_UPPER
 #define GPUSOLVER_EIG_MODE_VECTOR HIPSOLVER_EIG_MODE_VECTOR
 #define GPUSOLVER_STATUS_SUCCESS HIPSOLVER_STATUS_SUCCESS
+
+#define GPUBLAS_OP_N HIPBLAS_OP_N
+#define GPUBLAS_OP_T HIPBLAS_OP_T
+#define GPUBLAS_OP_C HIPBLAS_OP_C
 
 #define gpusparseCooSetStridedBatch hipsparseCooSetStridedBatch
 #define gpusparseCreate hipsparseCreate

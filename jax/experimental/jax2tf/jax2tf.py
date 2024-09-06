@@ -1548,6 +1548,7 @@ tf_not_yet_impl = [
     "consume",
     "ragged_dot",
     "cholesky_update",
+    "symmetric_update",
     # Pallas TPU primitives
     "bitcast",
     "repeat",
