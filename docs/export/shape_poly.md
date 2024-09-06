@@ -353,7 +353,7 @@ symbolic constraints:
     E.g., `floordiv(a, b) == c` works by replacing all
     occurences of `floordiv(a, b)` with `c`.
     Equality constraints must not contain addition or
-    subtraction at the top-leve on the left-hand-side. Examples of
+    subtraction at the top-level on the left-hand-side. Examples of
     valid left-hand-sides are `a * b`, or `4 * a`, or
     `floordiv(a + c, b)`.
 
@@ -530,7 +530,7 @@ Array([[ 9,  8,  7],
 >>> k, = export.symbolic_shape("k", constraints=["k <= 10"])
 >>> export.export(jax.jit(my_top_k, static_argnums=0))(k, x)  # doctest: +IGNORE_EXCEPTION_DETAIL
 Traceback (most recent call last):
-KeyError: "Encountered dimension variable 'k' that is not appearing in the shapes of the function arguments
+UnexpectedDimVar: "Encountered dimension variable 'k' that is not appearing in the shapes of the function arguments
 
 ```
 

@@ -23,6 +23,7 @@ import math
 
 import numpy as np
 
+from jax._src import core
 from jax._src.export import shape_poly
 from jax._src.export.shape_poly import (
   _DimExpr, _DimTerm, _DimFactor,
@@ -84,7 +85,10 @@ class _DecisionByElimination:
     # the result (albeit, for now, without a good feedback loop to understand
     # how the order matters for inequalities).
     for constr in self.scope._explicit_constraints:
-      self.add_implicit_constraints_expr(constr.diff)
+      if not core.is_constant_dim(constr.e1):
+        self.add_implicit_constraints_expr(constr.e1)  # type: ignore
+      if not core.is_constant_dim(constr.e2):
+        self.add_implicit_constraints_expr(constr.e2)  # type: ignore
       # The equality constraints are not needed for inequality decisions,
       # because the LHS should always be rewritten in terms of the RHS.
       # In fact, adding them may break the assumption that if we eliminate
@@ -92,7 +96,7 @@ class _DecisionByElimination:
       # may appear in the rest and may be rewritten to something larger.
       # However, we want to add the implicit constraints within.
       if constr.cmp == Comparator.GEQ:
-        self.combine_and_add_constraint(constr.cmp, constr.diff, 0,
+        self.combine_and_add_constraint(constr.cmp, constr.e1 - constr.e2, 0,
                                         constr.debug_str)
 
 
