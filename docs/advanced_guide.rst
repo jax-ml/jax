@@ -29,3 +29,4 @@ operations.
    :maxdepth: 1
 
    notebooks/convolutions
+   xla_flags
