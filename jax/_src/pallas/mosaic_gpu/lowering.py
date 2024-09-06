@@ -33,7 +33,6 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
-from jax._src.lib.mlir.dialects import scf as scf_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
 from jax._src.state import primitives as sp
@@ -128,7 +127,6 @@ class LoweringRuleContext:
 class LoweringResult:
   module: ir.Module
   grid: tuple[int, ...]
-  gmem_scratch_bytes: int
   out_structs: tuple[jax.ShapeDtypeStruct, ...]
 
 
@@ -199,7 +197,11 @@ def lower_jaxpr_to_module(
   dimension_semantics = params.get(
       "dimension_semantics", ["parallel"] * len(grid_mapping.grid)
   )
-  assert len(dimension_semantics) == len(grid_mapping.grid)
+  if len(dimension_semantics) != len(grid_mapping.grid):
+    raise ValueError(
+        "dimension_semantics must have an entrey for each grid dimension:"
+        f" {len(dimension_semantics)=}, but len(grid={grid_mapping.grid})."
+    )
   sequential_axes = tuple(
       i for i, s in enumerate(dimension_semantics) if s == "sequential"
   )
@@ -310,14 +312,20 @@ def lower_jaxpr_to_module(
             "Array dimensions along the sequential axis must be divisible by"
             " the corresponding block dimensions."
         )
-      [num_steps] = {
+      num_steps, *rest = {
           b_gmem.shape[sequential_axis] // b_smem.shape[1 + sequential_axis]
           for b_gmem, b_smem in zip(in_structs_gmem, in_structs_smem)
       }
+      if rest:
+        raise ValueError(
+            "Array dimensions along the sequential axis must produce the same"
+            " number of steps when devided by the corresponding block"
+            " dimensions."
+        )
     else:
       num_steps = 1
 
-    for slot in range(num_stages):
+    for slot in range(min(num_stages, num_steps)):
       fetch(_as_index(slot), _as_index(slot))
 
     @mgpu.fori(_as_index(num_steps), ())
@@ -339,9 +347,8 @@ def lower_jaxpr_to_module(
       next_step_in_bounds = arith_dialect.cmpi(
           arith_dialect.CmpIPredicate.ult, next_step, _as_index(num_steps)
       )
-      with ir.InsertionPoint(scf_dialect.IfOp(next_step_in_bounds).then_block):
+      with mgpu.when(next_step_in_bounds):
         fetch(next_step, slot)
-        scf_dialect.yield_([])
 
       return ()
 
@@ -355,28 +362,26 @@ def lower_jaxpr_to_module(
           dtype=np.int8,
       )
   ]
-  module, out_structs_smem, gmem_scratch_bytes, _ = (
-      mosaic_gpu._lower_as_gpu_kernel(
-          body,
-          grid=grid,
-          cluster=(),
-          block=block,
-          in_shapes=in_structs_gmem,
-          out_shape=out_structs_gmem,
-          smem_scratch_shape=(
-              *in_structs_smem,
-              *out_structs_smem,
-              *extra_smem_scratch,
-              mgpu.Barrier(
-                  arrival_count=len(in_structs_gmem),
-                  num_barriers=num_stages,
-              ),
+  module, out_structs_smem, _ = mosaic_gpu._lower_as_gpu_kernel(
+      body,
+      grid=grid,
+      cluster=(),
+      block=block,
+      in_shapes=in_structs_gmem,
+      out_shape=out_structs_gmem,
+      smem_scratch_shape=(
+          *in_structs_smem,
+          *out_structs_smem,
+          *extra_smem_scratch,
+          mgpu.Barrier(
+              arrival_count=len(in_structs_gmem),
+              num_barriers=num_stages,
           ),
-          module_name=name_and_src_info.name,
-      )
+      ),
+      module_name=name_and_src_info.name,
   )
 
-  return LoweringResult(module, grid, gmem_scratch_bytes, out_structs_smem)
+  return LoweringResult(module, grid, out_structs_smem)
 
 
 mosaic_lowering_rules = {}
