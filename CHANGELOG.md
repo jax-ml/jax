@@ -12,6 +12,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## jax 0.4.32
 
+* New Functionality
+  * Added {func}`jax.extend.ffi.ffi_call` and {func}`jax.extend.ffi.ffi_lowering`
+    to support the use of the new {ref}`ffi-tutorial` to interface with custom
+    C++ and CUDA code from JAX.
+
 * Changes
   * `jax_enable_memories` flag is set to `True` by default.
   * {mod}`jax.numpy` now supports v2023.12 of the Python Array API Standard.
