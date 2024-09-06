@@ -1702,16 +1702,18 @@ class RewriteTracer(core.Tracer):
 
 class RewriteTrace(core.Trace):
   parent_trace : core.Trace
+  tag : core.TraceTag
   mesh: Mesh
 
-  def __init__(self, parent_trace, mesh):
+  def __init__(self, parent_trace, tag, mesh):
     self.parent_trace = parent_trace
+    self.tag = tag
     self.mesh = mesh
 
   def to_rewrite_tracer(self, val):
     # TODO: add a tag to tell if self
-    if isinstance(val, RewriteTracer):
-      return val
+    if isinstance(val, RewriteTracer) and val._trace.tag is self.tag:
+      return RewriteTracer(self, val.rep, val.val)
     else:
       return RewriteTracer(self, set(self.mesh.axis_names), val)
 
@@ -1739,9 +1741,9 @@ class RewriteTrace(core.Trace):
              "shard_map")
       raise NotImplementedError(msg)
     in_vals, in_reps = unzip2((t.val, t.rep) for t in tracers)
-    fun, out_reps1 = _rewrite_subtrace(fun, self.main, in_reps)
-    jvp, out_reps2 = _rewrite_subtrace(jvp, self.main, in_reps * 2)
-    with core.new_dynamic(self.dyna):
+    fun, out_reps1 = _rewrite_subtrace(fun, self.tag, self.mesh, in_reps)
+    jvp, out_reps2 = _rewrite_subtrace(jvp, self.tag, self.mesh, in_reps * 2)
+    with core.set_current_trace(self.parent_trace):
       out_vals = prim.bind(fun, jvp, *in_vals, symbolic_zeros=symbolic_zeros)
     fst, out_reps = lu.merge_linear_aux(out_reps1, out_reps2)
     if not fst:
@@ -1782,7 +1784,8 @@ def _efficient_transpose_rewrite(fun, mesh, in_names, out_names_thunk):
 @lu.transformation_with_aux
 def _efficient_transpose_rewrite_nomatch(mesh, in_reps, *args):
   with core.take_current_trace() as parent:
-    t = RewriteTrace(parent_trace = parent, mesh=mesh)
+    tag = core.TraceTag()
+    t = RewriteTrace(parent_trace = parent, tag = tag, mesh=mesh)
     in_tracers = map(partial(RewriteTracer, t), in_reps, args)
     with core.set_current_trace(t):
       ans = yield in_tracers, {}
@@ -1826,16 +1829,16 @@ def _replication_rewrite_nomatch(
   return core.ClosedJaxpr(jaxpr_, consts), out_rep()
 
 @lu.transformation_with_aux
-def _rewrite_subtrace(main, in_reps, *in_vals):
-  raise NotImplementedError
-  # assert len(in_reps) == len(in_vals), (len(in_reps), len(in_vals))
-  # t = main.with_cur_sublevel()
-  # in_tracers = map(partial(RewriteTracer, t), in_reps, in_vals)
-  # with core.new_dynamic(main.level):
-  #   outs = yield in_tracers, {}
-  # out_tracers = map(t.full_raise, outs)
-  # out_vals, out_reps = unzip2((t.val, t.rep) for t in out_tracers)
-  # yield out_vals, out_reps
+def _rewrite_subtrace(tag, mesh, in_reps, *in_vals):
+  with core.take_current_trace() as parent_trace:
+    assert len(in_reps) == len(in_vals), (len(in_reps), len(in_vals))
+    t = RewriteTrace(parent_trace, tag, mesh)
+    in_tracers = map(partial(RewriteTracer, t), in_reps, in_vals)
+    with core.set_current_trace(t):
+      outs = yield in_tracers, {}
+    out_tracers = map(t.to_rewrite_tracer, outs)
+    out_vals, out_reps = unzip2((t.val, t.rep) for t in out_tracers)
+    yield out_vals, out_reps
 
 def _rewrite_bwd(bwd, mesh, in_reps, reps_dst):
   raise NotImplementedError
