@@ -995,6 +995,16 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual(_bounds(a), (10, np.inf))
     self.assertEqual(_bounds(b), (1, 10))
 
+  def test_constraint_eq_0(self):
+    a, b, c, d = shape_poly.symbolic_shape(
+        "a, b, c, d",
+        constraints=("b == a", "c == a + b", "d == 5"))
+    # Check that we have already applied the normalizaton rules
+    self.assertEqual(a._to_var(), "a")
+    self.assertEqual(b._to_var(), "a")
+    self.assertEqual(c._to_single_term(), (0, 2, a._to_term()))
+    self.assertIs(d, 5)
+
   def test_constraints_eq_1(self):
     # Some constaints override other
     a, b, c = shape_poly.symbolic_shape("a, b, c",
@@ -1073,6 +1083,20 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual(128 * (t1_ceil // 128), t1_ceil)
     self.assertEqual(128 * b1 * (t1_ceil // 128), b1 * t1_ceil)
 
+  def test_constraints_eq_bug_23456(self):
+    b, = jax.export.symbolic_shape('b', constraints=['b==5'])
+    jax.eval_shape(lambda k: jnp.tile(k, 3), jax.ShapeDtypeStruct((b,), jnp.float32))
+
+  def test_constraints_eq_bug_23437(self):
+    def f1(x, y):
+      return x + y
+
+    x = jnp.ones((4,), dtype=jnp.int32)
+    y = jnp.ones((4,), dtype=jnp.int32)
+    args_specs = jax.export.symbolic_args_specs((x, y), ("a*2", "b*2"), constraints=("a==b",))
+    exp = jax.export.export(jax.jit(f1))(*args_specs)
+    self.assertEqual(exp.in_avals[0], exp.in_avals[1])
+
   def test_constraints_eq_threefry(self):
     # Test equalities that arise out of the threefree lowering
     # x : i32[a]  # a may be even or odd
@@ -1106,12 +1130,9 @@ class DimExprTest(jtu.JaxTestCase):
     assumptions1 = ["m1 >= 0", "m1 <= 3", "a1 == 4*d1 + m1"]
     scope1 = shape_poly.SymbolicScope(assumptions1)
     a1, d1, m1 = shape_poly.symbolic_shape("a1, d1, m1", scope=scope1)
-    # TODO: The incompleteness is due to the way we combine external constraints
     self.assertEqual(_bounds(a1 - 4*d1), (1, 3))  # a - 4d = m >= 1
     self.assertEqual(_bounds(a1 - 2*d1), (3, np.inf))  # a - 2d = m + 2d >= 3
-    # TODO: The incompleteness is due to the way we combine external constraints
-    self.assertEqual(_bounds(a1),
-                     _expect(best=(5, np.inf), current=(-np.inf, np.inf)))  # a >= 4d + m >= 5
+    self.assertEqual(_bounds(a1), (5, np.inf))  # a >= 4d + m >= 5
 
   def test_constraints_error_msg(self):
     a, b = shape_poly.symbolic_shape("a, b",
@@ -1642,8 +1663,7 @@ class ShapePolyTest(jtu.JaxTestCase):
     _ = export.export(jax.jit(f))(
         jax.ShapeDtypeStruct(export.symbolic_shape("a, b"), np.int32))
 
-
-  def test_constraints_compile_time_check(self):
+  def test_constraints_ge_compile_time_check(self):
     def f(x):  # x: i32[a]
       a = x.shape[0]
       assert _bounds(a) == (2, 4)
@@ -1669,8 +1689,44 @@ class ShapePolyTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        re.escape("Expected '- a + 4' to be greater or equal to 0, but found -1")):
+        re.escape("Expected '4 - a' to be greater or equal to 0, but found -1")):
       exp.call(np.arange(5, dtype=np.int32))
+
+  def test_constraints_eq_0_compile_time_check(self):
+    def f(x):  # x: i32[a, b]
+      return x
+
+    x_spec = jax.ShapeDtypeStruct(
+        export.symbolic_shape("a, b",
+                              constraints=["max(a, b) == b"]), np.int32)
+    exp = export.export(jax.jit(f))(x_spec)
+    with self.assertRaisesRegex(
+        ValueError,
+        re.escape("Expected 'max(a, b) - b' to be equal to 0, but found 1")):
+      exp.call(np.ones((3, 2), dtype=np.int32))
+
+  def test_constraints_eq_1_compile_time_check(self):
+    def f(x):  # x: i32[a, b]
+      return x
+
+    x_spec = jax.ShapeDtypeStruct(
+        export.symbolic_shape("a, b",
+                              constraints=["a == b"]), np.int32)
+    exp = export.export(jax.jit(f))(x_spec)
+    exp.call(np.ones((3, 3), dtype=np.int32))
+
+  def test_constraints_eq_2_compile_time_check(self):
+    def f(x):  # x: i32[a, b]
+      return x
+
+    x_spec = jax.ShapeDtypeStruct(
+        export.symbolic_shape("a, b",
+                              constraints=["max(a, b) == 4", "a == b"]), np.int32)
+    exp = export.export(jax.jit(f))(x_spec)
+    with self.assertRaisesRegex(
+        ValueError,
+        re.escape("Expected 'max(a, b) - 4' to be equal to 0, but found -1")):
+      exp.call(np.ones((3, 3), dtype=np.int32))
 
   def test_caching_with_scopes(self):
     f_tracing_count = 0

@@ -1253,7 +1253,7 @@ class TensorFlowTracer(core.Tracer):
             # We have a TF value with known shape, and the abstract shape is a shape variable.
             try:
               aval_int = int(_eval_shape([aval_dim]))  # type: ignore
-            except (TypeError, KeyError):
+            except (TypeError, KeyError, shape_poly.UnexpectedDimVar):
               continue
             assert aval_int == val_dim, f"expected {phys_aval.shape} == {val_shape}. Found {aval_int} != {val_dim}."
 
