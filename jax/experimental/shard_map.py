@@ -706,8 +706,9 @@ def _run_shmap(f, mesh, args, reps, check_rep):
   trace = ShardMapTrace(mesh, check_rep)
   in_tracers = map(partial(ShardMapTracer, trace), reps, args)
   with core.set_current_trace(trace):
-    ans = f.call_wrapped(*in_tracers)
-    outs, out_rep = unzip2(map(trace.to_val_rep_pair, ans))
+    with core.extend_axis_env(mesh.shape.items()):
+      ans = f.call_wrapped(*in_tracers)
+      outs, out_rep = unzip2(map(trace.to_val_rep_pair, ans))
   return outs, out_rep
 
 def _names_to_pspec(names: AxisNames) -> PartitionSpec:
