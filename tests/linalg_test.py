@@ -16,6 +16,7 @@
 
 from functools import partial
 import itertools
+import unittest
 
 import numpy as np
 import scipy
@@ -2193,6 +2194,9 @@ class LaxLinalgTest(jtu.JaxTestCase):
       symmetrize_output=[True, False],
   )
   @jtu.skip_on_devices("tpu")
+  @unittest.skipIf(
+      jax._src.lib.version < (0, 4, 32), "requires jaxlib >= 0.4.32"
+  )
   def testSymmetricProduct(self, shape, dtype, symmetrize_output):
     rng = jtu.rand_default(self.rng())
     batch_size = 10
