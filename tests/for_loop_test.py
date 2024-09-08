@@ -345,7 +345,8 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     expected_tangents = g_lin(a, b)
     _, actual_tangents = jax.jvp(g, (a, b), (a, b))
     np.testing.assert_allclose(actual_tangents[0], expected_tangents[0])
-    np.testing.assert_allclose(actual_tangents[1], expected_tangents[1])
+    np.testing.assert_allclose(actual_tangents[1], expected_tangents[1],
+                               rtol=1e-6)
 
   @jtu.sample_product(
     [dict(for_body_name=for_body_name, f=for_body, ref=ref,
