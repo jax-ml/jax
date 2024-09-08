@@ -14,8 +14,8 @@
 
 from collections.abc import Callable
 
+import functools
 import jax
-import numpy as np
 from jax import numpy as jnp
 from jax import random as jax_api_random
 from jax._src import blocked_sampler
@@ -37,15 +37,13 @@ FOLD_IN_ROUNDS = 128
 
 def to_pallas_key(key: jax_prng.PRNGKeyArray) -> jax_prng.PRNGKeyArray:
   """Helper function for converting non-Pallas PRNG keys into Pallas keys."""
-  batch_dims = key.shape
-  key_data = jax_api_random.key_data(key)
-  pallas_key_size = np.prod(tpu_key_impl.key_shape)
-  if np.prod(key_data.shape[len(batch_dims):]) < pallas_key_size:
-    raise ValueError(f"Key data must be at least {pallas_key_size} bytes.")
-  pallas_key_data = jnp.reshape(
-      key_data, batch_dims + (-1,))[..., :pallas_key_size]
-  pallas_key_data = jnp.reshape(pallas_key_data,
-                                batch_dims + tpu_key_impl.key_shape)
+  generate_key = functools.partial(
+      jax.random.bits, shape=tpu_key_impl.key_shape, dtype=jnp.uint32
+  )
+  if len(key.shape) == 0:
+    pallas_key_data = generate_key(key)
+  else:
+    pallas_key_data = (jax.vmap(generate_key))(key)
   return jax_api_random.wrap_key_data(pallas_key_data, impl="pallas_tpu")
 
 def _seed_func(seed: jnp.int32):

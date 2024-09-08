@@ -7,7 +7,7 @@ Using JAX requires installing two packages: `jax`, which is pure Python and
 cross-platform, and `jaxlib` which contains compiled binaries, and requires
 different builds for different operating systems and accelerators.
 
-**TL;DR** For most users, a typical JAX installation may look something like this:
+**Summary:** For most users, a typical JAX installation may look something like this:
 
 * **CPU-only (Linux/macOS/Windows)**
   ```

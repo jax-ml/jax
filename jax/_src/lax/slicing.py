@@ -24,9 +24,8 @@ import weakref
 
 import numpy as np
 
-import jax
-
 from jax._src import ad_util
+from jax._src import api
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -1401,7 +1400,7 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
                                   inserted_window_dims=(),
                                   scatter_dims_to_operand_dims=dims)
   index, index_bdim = _batch_dynamic_slice_indices(start_idx, start_idx_bd)
-  return jax.vmap(
+  return api.vmap(
     partial(scatter, dimension_numbers=dnums,
             indices_are_sorted=True, unique_indices=True,
             mode=GatherScatterMode.CLIP),

@@ -26,6 +26,7 @@ import jax.numpy as jnp
 from jax._src.lax.control_flow.for_loop import for_loop
 
 from jax.experimental import pallas as pl
+from jax.experimental.pallas import gpu as plgpu
 
 def rms_norm_forward_kernel(
     x_ref, weight_ref, bias_ref, # Input arrays
@@ -83,7 +84,7 @@ def rms_norm_forward(
   ]
   method = pl.pallas_call(
       kernel,
-      compiler_params=dict(triton=dict(num_warps=num_warps)),
+      compiler_params=plgpu.TritonCompilerParams(num_warps=num_warps),
       grid=(),
       out_shape=out_shape,
       debug=False,

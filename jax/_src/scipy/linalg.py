@@ -951,7 +951,7 @@ def _solve(a: ArrayLike, b: ArrayLike, assume_a: str, lower: bool) -> Array:
   factors = cho_factor(lax.stop_gradient(a), lower=lower)
   custom_solve = partial(
       lax.custom_linear_solve,
-      lambda x: lax_linalg._matvec_multiply(a, x),
+      lambda x: lax_linalg._broadcasted_matvec(a, x),
       solve=lambda _, x: cho_solve(factors, x),
       symmetric=True)
   if a.ndim == b.ndim + 1:

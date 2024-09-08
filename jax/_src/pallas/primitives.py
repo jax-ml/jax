@@ -707,7 +707,7 @@ debug_print_p = jax_core.Primitive("debug_print")
 debug_print_p.multiple_results = True
 
 
-def debug_print(fmt: str, *args: jax.ArrayLike):
+def debug_print(fmt: str, *args: jax.typing.ArrayLike):
   """Prints scalar values from inside a Pallas kernel.
 
   Args:
@@ -732,7 +732,7 @@ def debug_print(fmt: str, *args: jax.ArrayLike):
 
 
 def check_debug_print_format(
-    fmt: str, *args: jax.ArrayLike
+    fmt: str, *args: jax.typing.ArrayLike
 ):
   n_placeholders = 0
   for _, field, spec, conversion in string.Formatter().parse(fmt):

@@ -116,7 +116,7 @@ cc_library(
     hdrs = ["triton_dialect_capi.h"],
     deps = [
         "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:CAPIIR",
+        "@llvm-project//mlir:CAPIIRObjects",
         "@llvm-project//mlir:IR",
         "@triton//:TritonDialects",
     ],

@@ -654,7 +654,13 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     shift_rng = jtu.rand_int(self.rng(), high=max(info.bits, shift_info.bits))
     args_maker = lambda: (x_rng(shapes[0], dtype), shift_rng(shapes[1], shift_dtype))
 
-    np_op = getattr(np, op.__name__)
+    if jtu.numpy_version() < (2, 0, 0) and op.__name__ in ("bitwise_left_shift", "bitwise_right_shift"):
+      # numpy < 2.0.0 does not have bitwise shift functions.
+      op_name = op.__name__.removeprefix("bitwise_")
+    else:
+      op_name = op.__name__
+
+    np_op = getattr(np, op_name)
 
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CompileAndCheck(op, args_maker)

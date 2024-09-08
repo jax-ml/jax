@@ -21,6 +21,7 @@ from typing import Any
 import jax
 from jax import lax
 from jax.experimental import pallas as pl
+from jax.experimental.pallas import gpu as plgpu
 import jax.numpy as jnp
 import numpy as np
 
@@ -216,9 +217,8 @@ def mha(
       out_specs=pl.BlockSpec(
           (None, block_q, None, head_dim), lambda i, j, k: (j, i, k, 0)
       ),
-      compiler_params=dict(
-          triton=dict(num_warps=num_warps_, num_stages=num_stages)
-      ),
+      compiler_params=plgpu.TritonCompilerParams(
+          num_warps=num_warps_, num_stages=num_stages),
       out_shape=out_shape,
       debug=debug,
       interpret=interpret,

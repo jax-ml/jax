@@ -14,6 +14,7 @@
 
 """Tests for jax.numpy.ufunc and its methods."""
 
+import itertools
 from functools import partial
 
 from absl.testing import absltest
@@ -22,7 +23,6 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax._src import test_util as jtu
-from jax._src.numpy.ufunc_api import get_if_single_primitive
 
 jax.config.parse_flags_with_absl()
 
@@ -54,18 +54,21 @@ SCALAR_FUNCS = [
   {'func': scalar_sub, 'nin': 2, 'nout': 1, 'identity': None},
 ]
 
-FASTPATH_FUNCS = [
-  {'func': jnp.add, 'nin': 2, 'nout': 1, 'identity': 0,
-   'reducer': jax.lax.reduce_sum_p, 'accumulator': jax.lax.cumsum_p},
-  {'func': jnp.multiply, 'nin': 2, 'nout': 1, 'identity': 1,
-   'reducer': jax.lax.reduce_prod_p, 'accumulator': jax.lax.cumprod_p},
+def _jnp_ufunc_props(name):
+  jnp_func = getattr(jnp, name)
+  assert isinstance(jnp_func, jnp.ufunc)
+  np_func = getattr(np, name)
+  dtypes = [np.dtype(c) for c in "Ffi?" if f"{c}{c}->{c}" in np_func.types]
+  return [dict(name=name, dtype=dtype) for dtype in dtypes]
+
+
+JAX_NUMPY_UFUNCS = [
+  name for name in dir(jnp) if isinstance(getattr(jnp, name), jnp.ufunc)
 ]
 
-NON_FASTPATH_FUNCS = [
-  {'func': lambda a, b: jnp.add(a, a), 'nin': 2, 'nout': 1, 'identity': 0},
-  {'func': lambda a, b: jnp.multiply(b, a), 'nin': 2, 'nout': 1, 'identity': 1},
-  {'func': jax.jit(lambda a, b: jax.jit(jnp.multiply)(b, a)), 'nin': 2, 'nout': 1, 'identity': 1},
-]
+JAX_NUMPY_UFUNCS_WITH_DTYPES = list(itertools.chain.from_iterable(
+  _jnp_ufunc_props(name) for name in JAX_NUMPY_UFUNCS
+))
 
 broadcast_compatible_shapes = [(), (1,), (3,), (1, 3), (4, 1), (4, 3)]
 nonscalar_shapes = [(3,), (4,), (4, 3)]
@@ -80,23 +83,40 @@ def cast_outputs(fun):
 class LaxNumpyUfuncTests(jtu.JaxTestCase):
 
   @jtu.sample_product(SCALAR_FUNCS)
-  def test_ufunc_properties(self, func, nin, nout, identity):
+  def test_frompyfunc_properties(self, func, nin, nout, identity):
     jnp_fun = jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity)
     self.assertEqual(jnp_fun.identity, identity)
     self.assertEqual(jnp_fun.nin, nin)
     self.assertEqual(jnp_fun.nout, nout)
     self.assertEqual(jnp_fun.nargs, nin)
 
+  @jtu.sample_product(name=JAX_NUMPY_UFUNCS)
+  def test_ufunc_properties(self, name):
+    jnp_fun = getattr(jnp, name)
+    np_fun = getattr(np, name)
+    self.assertEqual(jnp_fun.identity, np_fun.identity)
+    self.assertEqual(jnp_fun.nin, np_fun.nin)
+    self.assertEqual(jnp_fun.nout, np_fun.nout)
+    self.assertEqual(jnp_fun.nargs, np_fun.nargs - 1)  # -1 because NumPy accepts `out`
+
   @jtu.sample_product(SCALAR_FUNCS)
-  def test_ufunc_properties_readonly(self, func, nin, nout, identity):
+  def test_frompyfunc_properties_readonly(self, func, nin, nout, identity):
     jnp_fun = jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity)
-    for attr in ['nargs', 'nin', 'nout', 'identity', '_func', '_call']:
+    for attr in ['nargs', 'nin', 'nout', 'identity', '_func']:
+      getattr(jnp_fun, attr)  # no error on attribute access.
+      with self.assertRaises(AttributeError):
+        setattr(jnp_fun, attr, None)  # error when trying to mutate.
+
+  @jtu.sample_product(name=JAX_NUMPY_UFUNCS)
+  def test_ufunc_properties_readonly(self, name):
+    jnp_fun = getattr(jnp, name)
+    for attr in ['nargs', 'nin', 'nout', 'identity', '_func']:
       getattr(jnp_fun, attr)  # no error on attribute access.
       with self.assertRaises(AttributeError):
         setattr(jnp_fun, attr, None)  # error when trying to mutate.
 
   @jtu.sample_product(SCALAR_FUNCS)
-  def test_ufunc_hash(self, func, nin, nout, identity):
+  def test_frompyfunc_hash(self, func, nin, nout, identity):
     jnp_fun = jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity)
     jnp_fun_2 = jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity)
     self.assertEqual(jnp_fun, jnp_fun_2)
@@ -113,10 +133,25 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
       dtype=jtu.dtypes.floating,
   )
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
-  def test_call(self, func, nin, nout, identity, lhs_shape, rhs_shape, dtype):
+  def test_frompyfunc_call(self, func, nin, nout, identity, lhs_shape, rhs_shape, dtype):
     jnp_fun = jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity)
     np_fun = cast_outputs(np.frompyfunc(func, nin=nin, nout=nout, identity=identity))
 
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+
+    self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+      JAX_NUMPY_UFUNCS_WITH_DTYPES,
+      lhs_shape=broadcast_compatible_shapes,
+      rhs_shape=broadcast_compatible_shapes,
+  )
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  def test_ufunc_call(self, name, dtype, lhs_shape, rhs_shape):
+    jnp_fun = getattr(jnp, name)
+    np_fun = getattr(np, name)
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
 
@@ -129,7 +164,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
       rhs_shape=broadcast_compatible_shapes,
       dtype=jtu.dtypes.floating,
   )
-  def test_outer(self, func, nin, nout, identity, lhs_shape, rhs_shape, dtype):
+  def test_frompyfunc_outer(self, func, nin, nout, identity, lhs_shape, rhs_shape, dtype):
     if (nin, nout) != (2, 1):
       self.skipTest(f"outer requires (nin, nout)=(2, 1); got {(nin, nout)=}")
     jnp_fun = jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity).outer
@@ -142,13 +177,30 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
+      JAX_NUMPY_UFUNCS_WITH_DTYPES,
+      lhs_shape=broadcast_compatible_shapes,
+      rhs_shape=broadcast_compatible_shapes,
+  )
+  def test_ufunc_outer(self, name, lhs_shape, rhs_shape, dtype):
+    jnp_fun = getattr(jnp, name)
+    np_fun = getattr(np, name)
+    if (jnp_fun.nin, jnp_fun.nout) != (2, 1):
+      self.skipTest(f"outer requires (nin, nout)=(2, 1); got {(jnp_fun.nin, jnp_fun.nout)=}")
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+
+    self._CheckAgainstNumpy(jnp_fun.outer, np_fun.outer, args_maker)
+    self._CompileAndCheck(jnp_fun.outer, args_maker)
+
+  @jtu.sample_product(
       SCALAR_FUNCS,
       [{'shape': shape, 'axis': axis}
        for shape in nonscalar_shapes
        for axis in [None, *range(-len(shape), len(shape))]],
       dtype=jtu.dtypes.floating,
   )
-  def test_reduce(self, func, nin, nout, identity, shape, axis, dtype):
+  def test_frompyfunc_reduce(self, func, nin, nout, identity, shape, axis, dtype):
     if (nin, nout) != (2, 1):
       self.skipTest(f"reduce requires (nin, nout)=(2, 1); got {(nin, nout)=}")
     jnp_fun = partial(jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity).reduce, axis=axis)
@@ -161,13 +213,33 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
+      JAX_NUMPY_UFUNCS_WITH_DTYPES,
+      [{'shape': shape, 'axis': axis}
+       for shape in nonscalar_shapes
+       for axis in [None, *range(-len(shape), len(shape))]],
+  )
+  def test_ufunc_reduce(self, name, shape, axis, dtype):
+    jnp_fun = getattr(jnp, name)
+    np_fun = getattr(np, name)
+    if (jnp_fun.nin, jnp_fun.nout) != (2, 1):
+      self.skipTest(f"reduce requires (nin, nout)=(2, 1); got {(jnp_fun.nin, jnp_fun.nout)=}")
+    jnp_fun_reduce = partial(jnp_fun.reduce, axis=axis)
+    np_fun_reduce = partial(np_fun.reduce, axis=axis)
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+
+    self._CheckAgainstNumpy(jnp_fun_reduce, np_fun_reduce, args_maker)
+    self._CompileAndCheck(jnp_fun_reduce, args_maker)
+
+  @jtu.sample_product(
       SCALAR_FUNCS,
       [{'shape': shape, 'axis': axis}
        for shape in nonscalar_shapes
        for axis in [None, *range(-len(shape), len(shape))]],
       dtype=jtu.dtypes.floating,
   )
-  def test_reduce_where(self, func, nin, nout, identity, shape, axis, dtype):
+  def test_frompyfunc_reduce_where(self, func, nin, nout, identity, shape, axis, dtype):
     if (nin, nout) != (2, 1):
       self.skipTest(f"reduce requires (nin, nout)=(2, 1); got {(nin, nout)=}")
 
@@ -194,42 +266,28 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-      FASTPATH_FUNCS,
+      JAX_NUMPY_UFUNCS_WITH_DTYPES,
       [{'shape': shape, 'axis': axis}
        for shape in nonscalar_shapes
-       for axis in range(-len(shape), len(shape))],
-      dtype=jtu.dtypes.floating,
+       for axis in [None, *range(-len(shape), len(shape))]],
   )
-  def test_reduce_fastpath(self, func, nin, nout, identity, shape, axis, dtype, reducer, accumulator):
-    del accumulator  # unused
-    if (nin, nout) != (2, 1):
-      self.skipTest(f"reduce requires (nin, nout)=(2, 1); got {(nin, nout)=}")
+  def test_ufunc_reduce_where(self, name, shape, axis, dtype):
+    jnp_fun = getattr(jnp, name)
+    np_fun = getattr(np, name)
+    if (jnp_fun.nin, jnp_fun.nout) != (2, 1):
+      self.skipTest(f"reduce requires (nin, nout)=(2, 1); got {(jnp_fun.nin, jnp_fun.nout)=}")
+    if jnp_fun.identity is None:
+      self.skipTest("reduce with where requires identity")
+
+    jnp_fun_reduce = lambda a, where: jnp_fun.reduce(a, axis=axis, where=where)
+    np_fun_reduce = lambda a, where: np_fun.reduce(a, axis=axis, where=where)
+
     rng = jtu.rand_default(self.rng())
-    args = (rng(shape, dtype),)
-    jnp_fun = partial(jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity).reduce, axis=axis)
-    self.assertEqual(get_if_single_primitive(jnp_fun, *args), reducer)
+    rng_where = jtu.rand_bool(self.rng())
+    args_maker = lambda: [rng(shape, dtype), rng_where(shape, bool)]
 
-  @jtu.sample_product(
-      NON_FASTPATH_FUNCS,
-      [{'shape': shape, 'axis': axis}
-       for shape in nonscalar_shapes
-       for axis in range(-len(shape), len(shape))],
-      dtype=jtu.dtypes.floating,
-  )
-  def test_non_fastpath(self, func, nin, nout, identity, shape, axis, dtype):
-    if (nin, nout) != (2, 1):
-      self.skipTest(f"reduce requires (nin, nout)=(2, 1); got {(nin, nout)=}")
-    rng = jtu.rand_default(self.rng())
-    args = (rng(shape, dtype),)
-
-    _ = func(0, 0)  # function should not error.
-
-    reduce_fun = partial(jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity).reduce, axis=axis)
-    self.assertIsNone(get_if_single_primitive(reduce_fun, *args))
-
-    accum_fun = partial(jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity).accumulate, axis=axis)
-    self.assertIsNone(get_if_single_primitive(accum_fun, *args))
-
+    self._CheckAgainstNumpy(jnp_fun_reduce, np_fun_reduce, args_maker)
+    self._CompileAndCheck(jnp_fun_reduce, args_maker)
 
   @jtu.sample_product(
       SCALAR_FUNCS,
@@ -238,7 +296,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
        for axis in range(-len(shape), len(shape))],
       dtype=jtu.dtypes.floating,
   )
-  def test_accumulate(self, func, nin, nout, identity, shape, axis, dtype):
+  def test_frompyfunc_accumulate(self, func, nin, nout, identity, shape, axis, dtype):
     if (nin, nout) != (2, 1):
       self.skipTest(f"accumulate requires (nin, nout)=(2, 1); got {(nin, nout)=}")
     jnp_fun = partial(jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity).accumulate, axis=axis)
@@ -251,20 +309,28 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-      FASTPATH_FUNCS,
+      JAX_NUMPY_UFUNCS_WITH_DTYPES,
       [{'shape': shape, 'axis': axis}
        for shape in nonscalar_shapes
-       for axis in range(-len(shape), len(shape))],
-      dtype=jtu.dtypes.floating,
+       for axis in range(-len(shape), len(shape))]
   )
-  def test_accumulate_fastpath(self, func, nin, nout, identity, shape, axis, dtype, reducer, accumulator):
-    del reducer  # unused
-    if (nin, nout) != (2, 1):
-      self.skipTest(f"reduce requires (nin, nout)=(2, 1); got {(nin, nout)=}")
+  def test_ufunc_accumulate(self, name, shape, axis, dtype):
+    jnp_fun = getattr(jnp, name)
+    np_fun = getattr(np, name)
+    if (jnp_fun.nin, jnp_fun.nout) != (2, 1):
+      self.skipTest(f"accumulate requires (nin, nout)=(2, 1); got {(jnp_fun.nin, jnp_fun.nout)=}")
+
     rng = jtu.rand_default(self.rng())
-    args = (rng(shape, dtype),)
-    jnp_fun = partial(jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity).accumulate, axis=axis)
-    self.assertEqual(get_if_single_primitive(jnp_fun, *args), accumulator)
+    args_maker = lambda: [rng(shape, dtype)]
+
+    jnp_fun_accumulate = partial(jnp_fun.accumulate, axis=axis)
+    def np_fun_accumulate(x):
+      # numpy accumulate has different dtype casting behavior.
+      result = np_fun.accumulate(x, axis=axis)
+      return result if x.dtype == bool else result.astype(x.dtype)
+
+    self._CheckAgainstNumpy(jnp_fun_accumulate, np_fun_accumulate, args_maker)
+    self._CompileAndCheck(jnp_fun_accumulate, args_maker)
 
   @jtu.sample_product(
       SCALAR_FUNCS,
@@ -272,7 +338,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
       idx_shape=[(), (2,)],
       dtype=jtu.dtypes.floating,
   )
-  def test_at(self, func, nin, nout, identity, shape, idx_shape, dtype):
+  def test_frompyfunc_at(self, func, nin, nout, identity, shape, idx_shape, dtype):
     if (nin, nout) != (2, 1):
       self.skipTest(f"accumulate requires (nin, nout)=(2, 1); got {(nin, nout)=}")
     jnp_fun = partial(jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity).at, inplace=False)
@@ -288,7 +354,31 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  def test_at_broadcasting(self):
+  @jtu.sample_product(
+      JAX_NUMPY_UFUNCS_WITH_DTYPES,
+      shape=nonscalar_shapes,
+      idx_shape=[(), (2,)],
+  )
+  def test_ufunc_at(self, name, shape, idx_shape, dtype):
+    jnp_fun = getattr(jnp, name)
+    np_fun = getattr(np, name)
+    if (jnp_fun.nin, jnp_fun.nout) != (2, 1):
+      self.skipTest(f"accumulate requires (nin, nout)=(2, 1); got {(jnp_fun.nin, jnp_fun.nout)=}")
+
+    rng = jtu.rand_default(self.rng())
+    idx_rng = jtu.rand_int(self.rng(), low=-shape[0], high=shape[0])
+    args_maker = lambda: [rng(shape, dtype), idx_rng(idx_shape, 'int32'), rng(idx_shape[1:], dtype)]
+
+    jnp_fun_at = partial(jnp_fun.at, inplace=False)
+    def np_fun_at(x, idx, y):
+      x_copy = x.copy()
+      np_fun.at(x_copy, idx, y)
+      return x_copy
+
+    self._CheckAgainstNumpy(jnp_fun_at, np_fun_at, args_maker)
+    self._CompileAndCheck(jnp_fun_at, args_maker)
+
+  def test_frompyfunc_at_broadcasting(self):
     # Regression test for https://github.com/google/jax/issues/18004
     args_maker = lambda: [np.ones((5, 3)), np.array([0, 4, 2]),
                           np.arange(9.0).reshape(3, 3)]
@@ -309,7 +399,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
       idx_shape=[(0,), (3,), (5,)],
       dtype=jtu.dtypes.floating,
   )
-  def test_reduceat(self, func, nin, nout, identity, shape, axis, idx_shape, dtype):
+  def test_frompyfunc_reduceat(self, func, nin, nout, identity, shape, axis, idx_shape, dtype):
     if (nin, nout) != (2, 1):
       self.skipTest(f"accumulate requires (nin, nout)=(2, 1); got {(nin, nout)=}")
     jnp_fun = partial(jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity).reduceat, axis=axis)
@@ -321,6 +411,33 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+      JAX_NUMPY_UFUNCS_WITH_DTYPES,
+      [{'shape': shape, 'axis': axis}
+       for shape in nonscalar_shapes
+       for axis in [*range(-len(shape), len(shape))]],
+      idx_shape=[(0,), (3,), (5,)],
+  )
+  def test_ufunc_reduceat(self, name, shape, axis, idx_shape, dtype):
+    jnp_fun = getattr(jnp, name)
+    np_fun = getattr(np, name)
+    if (jnp_fun.nin, jnp_fun.nout) != (2, 1):
+      self.skipTest(f"accumulate requires (nin, nout)=(2, 1); got {(jnp_fun.nin, jnp_fun.nout)=}")
+    if name in ['add', 'multiply'] and dtype == bool:
+      # TODO(jakevdp): figure out how to fix thest cases.
+      self.skipTest(f"known failure for {name}.reduceat with {dtype=}")
+
+    rng = jtu.rand_default(self.rng())
+    idx_rng = jtu.rand_int(self.rng(), low=0, high=shape[axis])
+    args_maker = lambda: [rng(shape, dtype), idx_rng(idx_shape, 'int32')]
+
+    def np_fun_reduceat(x, i):
+      # Numpy has different casting behavior.
+      return np_fun.reduceat(x, i).astype(x.dtype)
+
+    self._CheckAgainstNumpy(jnp_fun.reduceat, np_fun_reduceat, args_maker)
+    self._CompileAndCheck(jnp_fun.reduceat, args_maker)
 
 
 if __name__ == "__main__":

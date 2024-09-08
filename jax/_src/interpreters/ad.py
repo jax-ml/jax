@@ -21,7 +21,6 @@ import itertools as it
 from functools import partial
 from typing import Any
 
-import jax
 from jax._src import config
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
@@ -389,6 +388,9 @@ class JVPTrace(Trace):
 
   def process_custom_vjp_call(self, _, __, fwd, bwd, tracers, out_trees,
                               symbolic_zeros):
+    # Local import to prevent an import cycle.
+    from jax._src.lax import lax
+
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
     fwd_in = [(core.full_lower(p), type(t) is not Zero)
               for p, t in zip(primals_in, tangents_in)]
@@ -402,7 +404,7 @@ class JVPTrace(Trace):
     tangents_out = custom_lin_p.bind(
         *res, *tangents_in, num_res=res_tree.num_leaves, bwd=bwd,
         out_avals=avals_out, symbolic_zeros=symbolic_zeros)
-    tangents_out = map(jax._src.lax.lax.tie_p.bind, primals_out, tangents_out)
+    tangents_out = map(lax.tie_p.bind, primals_out, tangents_out)
     tangents_out = map(recast_to_float0, primals_out, tangents_out)
     return map(partial(JVPTracer, self), primals_out, tangents_out)
 

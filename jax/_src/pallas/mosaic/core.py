@@ -19,14 +19,14 @@ from collections.abc import Sequence
 import dataclasses
 import enum
 import functools
-from typing import Any, ClassVar, Hashable
+from typing import Any, ClassVar, Hashable, Literal
 
 import jax
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import util
-import jax.numpy as jnp
 from jax._src.pallas import core as pallas_core
+import jax.numpy as jnp
 import numpy as np
 
 map, unsafe_map = util.safe_map, map
@@ -68,7 +68,7 @@ class TPUCompilerParams(pallas_core.CompilerParams):
     device_type: The device type to compile for.
   """
   PLATFORM: ClassVar[str] = "mosaic"
-  dimension_semantics: Sequence[str] | None = None
+  dimension_semantics: Sequence[Literal["parallel", "arbitrary"]] | None = None
   allow_input_fusion: Sequence[bool] | None = None
   vmem_limit_bytes: int | None = None
   collective_id: int | None = None

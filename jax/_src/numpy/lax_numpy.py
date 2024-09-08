@@ -99,16 +99,6 @@ def canonicalize_shape(shape: Any, context: str="") -> core.Shape:
   else:
     return core.canonicalize_shape(shape, context)
 
-# Common docstring additions:
-
-_PRECISION_DOC = """\
-In addition to the original NumPy arguments listed below, also supports
-``precision`` for extra control over matrix-multiplication precision
-on supported devices. ``precision`` may be set to ``None``, which means
-default precision for the backend, a :class:`~jax.lax.Precision` enum value
-(``Precision.DEFAULT``, ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple
-of two :class:`~jax.lax.Precision` enums indicating separate precision for each argument.
-"""
 
 # Some objects below rewrite their __module__ attribute to this name.
 _PUBLIC_MODULE_NAME = "jax.numpy"
@@ -971,9 +961,65 @@ def matrix_transpose(x: ArrayLike, /) -> Array:
   return lax.transpose(x, axes)
 
 
-@util.implements(np.rot90, lax_description=_ARRAY_VIEW_DOC)
 @partial(jit, static_argnames=('k', 'axes'))
 def rot90(m: ArrayLike, k: int = 1, axes: tuple[int, int] = (0, 1)) -> Array:
+  """Rotate an array by 90 degrees counterclockwise in the plane specified by axes.
+
+  JAX implementation of :func:`numpy.rot90`.
+
+  Args:
+    m: input array. Must have ``m.ndim >= 2``.
+    k: int, optional, default=1. Specifies the number of times the array is rotated.
+      For negative values of ``k``, the array is rotated in clockwise direction.
+    axes: tuple of 2 integers, optional, default= (0, 1). The axes define the plane
+      in which the array is rotated. Both the axes must be different.
+
+  Returns:
+    An array containing the copy of the input, ``m`` rotated by 90 degrees.
+
+  See also:
+    - :func:`jax.numpy.flip`: reverse the order along the given axis
+    - :func:`jax.numpy.fliplr`: reverse the order along axis 1 (left/right)
+    - :func:`jax.numpy.flipud`: reverse the order along axis 0 (up/down)
+
+  Examples:
+    >>> m = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6]])
+    >>> jnp.rot90(m)
+    Array([[3, 6],
+           [2, 5],
+           [1, 4]], dtype=int32)
+    >>> jnp.rot90(m, k=2)
+    Array([[6, 5, 4],
+           [3, 2, 1]], dtype=int32)
+
+    ``jnp.rot90(m, k=1, axes=(1, 0))`` is equivalent to
+    ``jnp.rot90(m, k=-1, axes(0,1))``.
+
+    >>> jnp.rot90(m, axes=(1, 0))
+    Array([[4, 1],
+           [5, 2],
+           [6, 3]], dtype=int32)
+    >>> jnp.rot90(m, k=-1, axes=(0, 1))
+    Array([[4, 1],
+           [5, 2],
+           [6, 3]], dtype=int32)
+
+    when input array has ``ndim>2``:
+
+    >>> m1 = jnp.array([[[1, 2, 3],
+    ...                  [4, 5, 6]],
+    ...                 [[7, 8, 9],
+    ...                  [10, 11, 12]]])
+    >>> jnp.rot90(m1, k=1, axes=(2, 1))
+    Array([[[ 4,  1],
+            [ 5,  2],
+            [ 6,  3]],
+    <BLANKLINE>
+           [[10,  7],
+            [11,  8],
+            [12,  9]]], dtype=int32)
+  """
   util.check_arraylike("rot90", m)
   if np.ndim(m) < 2:
     raise ValueError("rot90 requires its first argument to have ndim at least "
@@ -2189,7 +2235,7 @@ def where(condition, x=None, y=None, /, *, size=None, fill_value=None):
   Returns:
     An array of dtype ``jnp.result_type(x, y)`` with values drawn from ``x`` where ``condition``
     is True, and from ``y`` where condition is ``False``. If ``x`` and ``y`` are ``None``, the
-    function behaves differently; see `:func:`jax.numpy.nonzero` for a description of the return
+    function behaves differently; see :func:`jax.numpy.nonzero` for a description of the return
     type.
 
   See Also:
@@ -2644,9 +2690,47 @@ def clip(
     arr = ufuncs.minimum(max, arr)
   return asarray(arr)
 
-@util.implements(np.around, skip_params=['out'])
+
 @partial(jit, static_argnames=('decimals',))
 def round(a: ArrayLike, decimals: int = 0, out: None = None) -> Array:
+  """Round input evenly to the given number of decimals.
+
+  JAX implementation of :func:`numpy.round`.
+
+  Args:
+    a: input array or scalar.
+    decimals: int, default=0. Number of decimal points to which the input needs
+      to be rounded. It must be specified statically. Not implemented for
+      ``decimals < 0``.
+    out: Unused by JAX.
+
+  Returns:
+    An array containing the rounded values to the specified ``decimals`` with
+    same shape and dtype as ``a``.
+
+  Note:
+    ``jnp.round`` rounds to the nearest even integer for the values exactly halfway
+    between rounded decimal values.
+
+  See also:
+    - :func:`jax.numpy.floor`: Rounds the input to the nearest integer downwards.
+    - :func:`jax.numpy.ceil`: Rounds the input to the nearest integer upwards.
+    - :func:`jax.numpy.fix` and :func:numpy.trunc`: Rounds the input to the
+      nearest integer towards zero.
+
+  Examples:
+    >>> x = jnp.array([1.532, 3.267, 6.149])
+    >>> jnp.round(x)
+    Array([2., 3., 6.], dtype=float32)
+    >>> jnp.round(x, decimals=2)
+    Array([1.53, 3.27, 6.15], dtype=float32)
+
+    For values exactly halfway between rounded values:
+
+    >>> x1 = jnp.array([10.5, 21.5, 12.5, 31.5])
+    >>> jnp.round(x1)
+    Array([10., 22., 12., 32.], dtype=float32)
+  """
   util.check_arraylike("round", a)
   decimals = core.concrete_or_error(operator.index, decimals, "'decimals' argument of jnp.round")
   if out is not None:
@@ -2676,8 +2760,12 @@ def round(a: ArrayLike, decimals: int = 0, out: None = None) -> Array:
     return lax.complex(_round_float(lax.real(a)), _round_float(lax.imag(a)))
   else:
     return _round_float(a)
-around = round
-round_ = round
+
+
+@partial(jit, static_argnames=('decimals',))
+def around(a: ArrayLike, decimals: int = 0, out: None = None) -> Array:
+  """Alias of :func:`jax.numpy.round`"""
+  return round(a, decimals, out)
 
 
 @jit

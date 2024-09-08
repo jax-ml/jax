@@ -21,9 +21,9 @@ This section introduces you to a set of built-in JAX debugging methods — {func
 
 Let's begin with {func}`jax.debug.print`.
 
-## JAX `debug.print` for high-level
+## `jax.debug.print` for simple inspection
 
-**TL;DR** Here is a rule of thumb:
+Here is a rule of thumb:
 
 - Use {func}`jax.debug.print` for traced (dynamic) array values with {func}`jax.jit`, {func}`jax.vmap` and others.
 - Use Python {func}`print` for static values, such as dtypes and array shapes.
@@ -111,9 +111,9 @@ f(1, 2)
 To learn more about {func}`jax.debug.print` and its Sharp Bits, refer to {ref}`advanced-debugging`.
 
 
-## JAX `debug.breakpoint` for `pdb`-like debugging
+## `jax.debug.breakpoint` for `pdb`-like debugging
 
-**TL;DR** Use {func}`jax.debug.breakpoint` to pause the execution of your JAX program to inspect values.
+**Summary:** Use {func}`jax.debug.breakpoint` to pause the execution of your JAX program to inspect values.
 
 To pause your compiled JAX program during certain points during debugging, you can use {func}`jax.debug.breakpoint`. The prompt is similar to Python `pdb`, and it allows you to inspect the values in the call stack. In fact, {func}`jax.debug.breakpoint` is an application of {func}`jax.debug.callback` that captures information about the call stack.
 
@@ -160,7 +160,7 @@ f(2., 1.) # ==> No breakpoint
 f(2., 0.) # ==> Pauses during execution
 ```
 
-## JAX `debug.callback` for more control during debugging
+## `jax.debug.callback` for more control during debugging
 
 Both {func}`jax.debug.print` and {func}`jax.debug.breakpoint` are implemented using
 the more flexible {func}`jax.debug.callback`, which gives greater control over the

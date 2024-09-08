@@ -353,20 +353,16 @@ absl::StatusOr<std::unique_ptr<mlir::ExecutionEngine>> Compile(
 class CompiledKernel {
  public:
   CompiledKernel(std::unique_ptr<mlir::ExecutionEngine> engine, void* ctx,
-                 void* scratch_addr, MosaicHostFunc* host_launch)
-      : engine_(std::move(engine)),
-        ctx_(ctx),
-        scratch_addr_(scratch_addr),
-        host_launch_(host_launch) {}
+                 MosaicHostFunc* host_launch)
+      : engine_(std::move(engine)), ctx_(ctx), host_launch_(host_launch) {}
 
-  std::tuple<void*, void*, MosaicHostFunc*> GetHostLaunch() {
-    return std::make_tuple(ctx_, scratch_addr_, host_launch_);
+  std::tuple<void*, MosaicHostFunc*> GetHostLaunch() {
+    return std::make_tuple(ctx_, host_launch_);
   }
 
  private:
   std::unique_ptr<mlir::ExecutionEngine> engine_;
   void* ctx_;  // TODO(apaszke): Destroy this properly
-  void* scratch_addr_;
   MosaicHostFunc* host_launch_;
 };
 
@@ -384,7 +380,7 @@ GetKernelCache() {
 // Each compiled kernel has a unique init func, and each kernel is used from
 // a single HLO module. So it should be safe to not include the CUDA context
 // in the key.
-absl::StatusOr<std::tuple<void*, void*, MosaicHostFunc*>> CompileAndInit(
+absl::StatusOr<std::tuple<void*, MosaicHostFunc*>> CompileAndInit(
     CacheKey key, const char* module) {
   auto cache_and_mutex = GetKernelCache();
   auto* cache = cache_and_mutex.first;
@@ -426,10 +422,8 @@ absl::StatusOr<std::tuple<void*, void*, MosaicHostFunc*>> CompileAndInit(
     void*** init_args[2] = {&module_ptr_ptr, &kernel_ptr_ptr};
     reinterpret_cast<MosaicInitFunc*>(*init)(init_args);
     cache->insert_or_assign(
-        key,
-        CompiledKernel(std::move(*maybe_engine), kernel_ptr,
-                       nullptr,  // TODO(apaszke): Clean this up.
-                       reinterpret_cast<MosaicHostFunc*>(*main)));
+        key, CompiledKernel(std::move(*maybe_engine), kernel_ptr,
+                            reinterpret_cast<MosaicHostFunc*>(*main)));
   }
   return cache->at(key).GetHostLaunch();
 }
@@ -454,9 +448,8 @@ void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
                                   ctx_and_kernel.status().message().size());
     return;
   }
-  void* args[4] = {&std::get<0>(*ctx_and_kernel), &stream, &buffers,
-                   &std::get<1>(*ctx_and_kernel)};
-  std::get<2>(*ctx_and_kernel)(args);
+  void* args[4] = {&std::get<0>(*ctx_and_kernel), &stream, &buffers};
+  std::get<1>(*ctx_and_kernel)(args);
 }
 
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("mosaic_gpu", &MosaicGPUCustomCall,

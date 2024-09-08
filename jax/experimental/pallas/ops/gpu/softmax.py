@@ -18,6 +18,7 @@ import functools
 import jax
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
+from jax.experimental.pallas import gpu as plgpu
 
 
 def _vmappable_softmax_kernel(
@@ -79,7 +80,8 @@ def softmax(
   kernel = functools.partial(_vmappable_softmax_kernel, block_row=block_row)
   f = pl.pallas_call(
       kernel,
-      compiler_params=dict(triton=dict(num_warps=num_warps, num_stages=1)),
+      compiler_params=plgpu.TritonCompilerParams(
+          num_warps=num_warps, num_stages=1),
       grid=(),
       out_shape=out_shape,
       debug=debug,

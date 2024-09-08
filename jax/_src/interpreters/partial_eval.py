@@ -35,6 +35,7 @@ from jax._src import linear_util as lu
 from jax._src import profiler
 from jax._src import source_info_util
 from jax._src import compute_on
+from jax._src import xla_metadata as xla_metadata_lib
 from jax._src.api_util import (flattened_fun_in_tree, flatten_fun_nokwargs,
                                fun_sourceinfo)
 from jax._src.core import (Trace, Tracer, Jaxpr, Literal, get_aval,
@@ -898,8 +899,11 @@ def new_eqn_recipe(in_tracers: Sequence[JaxprTracer],
     assert ("donated_invars" in params and
             len(params["donated_invars"]) == len(params["call_jaxpr"].invars))
   out_avals = [core.raise_to_shaped(t.aval) for t in out_tracers]
-  ctx = ctx or JaxprEqnContext(compute_on.current_compute_type(),
-                               config.threefry_partitionable.value)
+  ctx = ctx or JaxprEqnContext(
+      compute_on.current_compute_type(),
+      config.threefry_partitionable.value,
+      xla_metadata_lib.current_xla_metadata(),
+  )
   return JaxprEqnRecipe(object(), tuple(in_tracers), map(ref, out_tracers),
                         out_avals, primitive, params, effects, source_info,
                         ctx)

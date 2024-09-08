@@ -274,6 +274,7 @@ py_library_providing_imports_info(
         ":dtypes",
         ":effects",
         ":environment_info",
+        ":internal_mesh_utils",
         ":jaxpr_util",
         ":layout",
         ":lazy_loader",
@@ -298,6 +299,7 @@ py_library_providing_imports_info(
         ":version",
         ":xla",
         ":xla_bridge",
+        ":xla_metadata",
         "//jax/_src/lib",
     ] + py_deps("numpy") + py_deps("scipy") + py_deps("opt_einsum") + py_deps("flatbuffers") + jax_extra_deps,
 )
@@ -450,6 +452,7 @@ pytype_strict_library(
         ":tree_util",
         ":typing",
         ":util",
+        ":xla_metadata",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
@@ -649,9 +652,9 @@ pytype_strict_library(
         ":pallas_gpu_users",
     ],
     deps = [
-        ":pallas",
         "//jax/_src/pallas/mosaic_gpu:core",  # build_cleaner: keep
         "//jax/_src/pallas/mosaic_gpu:pallas_call_registration",  # build_cleaner: keep
+        "//jax/_src/pallas/triton:core",
         "//jax/_src/pallas/triton:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/triton:primitives",
     ],
@@ -702,6 +705,7 @@ pytype_strict_library(
         ":state_types",
         ":tree_util",
         ":util",
+        ":xla_metadata",
     ] + py_deps("numpy"),
 )
 
@@ -764,7 +768,15 @@ pytype_strict_library(
 pytype_strict_library(
     name = "compute_on",
     srcs = ["_src/compute_on.py"],
-    deps = [],
+    deps = [":config"],
+)
+
+pytype_strict_library(
+    name = "xla_metadata",
+    srcs = ["_src/xla_metadata.py"],
+    deps = [
+        ":config",
+    ],
 )
 
 pytype_strict_library(
@@ -784,6 +796,7 @@ pytype_strict_library(
     deps = [
         ":config",
         ":core",
+        ":internal_mesh_utils",
         ":mesh",
         ":op_shardings",
         ":partition_spec",
@@ -805,6 +818,14 @@ pytype_strict_library(
         ":util",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
+)
+
+pytype_library(
+    name = "internal_mesh_utils",
+    srcs = ["_src/mesh_utils.py"],
+    deps = [
+        ":xla_bridge",
+    ],
 )
 
 pytype_strict_library(
@@ -1064,7 +1085,7 @@ pytype_library(
     srcs = ["experimental/mesh_utils.py"],
     visibility = ["//visibility:public"],
     deps = [
-        ":xla_bridge",
+        ":internal_mesh_utils",
     ],
 )
 

@@ -1,4 +1,4 @@
-# Using JAX in multi-host and multi-process environments
+# Multi-host and multi-process environments
 
 <!--* freshness: { reviewed: '2024-06-10' } *-->
 

@@ -35,7 +35,6 @@ from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.numpy import lax_numpy
 from jax._src.util import (canonicalize_axis, moveaxis, safe_map, safe_zip,
                            unzip2)
 import numpy as np
@@ -231,7 +230,10 @@ def pargmax(x, axis_name):
 
 def _axis_index_of_val(x, val, axis_name):
   idx = axis_index(axis_name)
-  validx = lax_numpy.where(val == x, idx, dtypes.iinfo(dtypes.dtype(idx)).max)
+  mask = (val == x)
+  validx = lax.select(mask,
+                      lax.full(mask.shape, idx),
+                      lax.full(mask.shape, dtypes.iinfo(dtypes.dtype(idx)).max, dtype=idx.dtype))
   return pmin(validx, axis_name)
 
 def _validate_reduce_axis_index_groups(axis_index_groups):
@@ -779,7 +781,7 @@ def _ppermute_batcher(axis_size, frame_name, _, vals_in, dims_in, axis_name, per
   perm_indices = np.zeros(axis_size, dtype=int)
   for src, dst in perm:
     perm_indices[dst] = src
-  return lax_numpy.take(v, perm_indices, d), d
+  return v.take(perm_indices, d), d
 
 def _collective_batcher(prim, args, dims, **params):
   return prim.bind(*args, **params), dims if prim.multiple_results else dims[0]
@@ -795,7 +797,7 @@ core.axis_substitution_rules[ppermute_p] = partial(_subst_all_names_in_param, 'a
 def _pbroadcast_transpose_rule(t, x, source, axis_name):
   is_source = axis_index(axis_name) == source
   tsum = psum(t, axis_name)
-  return [lax_numpy.where(is_source, tsum, lax_numpy.zeros_like(t))]
+  return [lax.select(is_source, lax.full_like(t, tsum), lax.full_like(t, 0))]
 
 def _pbroadcast_batcher(axis_size, frame_name, _, vals_in, dims_in, axis_name, source):
   (v,), (d,) = vals_in, dims_in
@@ -810,7 +812,7 @@ def _pbroadcast_batcher(axis_size, frame_name, _, vals_in, dims_in, axis_name, s
     return pbroadcast_p.bind(v, source=source, axis_name=remaining_axes), d
   if d is batching.not_mapped:
     return v, d
-  return lax_numpy.take(v, [source] * axis_size, d), d
+  return v.take([source] * axis_size, d), d
 
 def _pbroadcast_lowering(ctx, x, *, axis_name, source):
   replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name, None)

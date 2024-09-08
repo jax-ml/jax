@@ -1505,6 +1505,12 @@ jax_test(
     tags = ["multiaccelerator"],
 )
 
+jax_test(
+    name = "xla_metadata_test",
+    srcs = ["xla_metadata_test.py"],
+    deps = ["//jax:experimental"],
+)
+
 py_test(
     name = "pretty_printer_test",
     srcs = ["pretty_printer_test.py"],
@@ -1521,6 +1527,20 @@ py_test(
         "//jax",
         "//jax:test_util",
     ],
+)
+
+jax_test(
+    name = "cudnn_fusion_test",
+    srcs = ["cudnn_fusion_test.py"],
+    disable_backends = [
+        "cpu",
+        "tpu",
+    ],
+    enable_configs = [
+        "gpu_a100",
+        "gpu_h100",
+    ],
+    tags = ["multiaccelerator"],
 )
 
 exports_files(

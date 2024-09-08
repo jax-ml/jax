@@ -972,6 +972,22 @@ class OpsExtraTest(PallasBaseTest):
     x = jnp.arange(256).astype(jnp.float16)
     np.testing.assert_allclose(kernel(x), jnp.tanh(x), atol=5e-3, rtol=5e-3)
 
+  def test_debug_barrier(self):
+    if self.INTERPRET:
+      self.skipTest("debug_barrier is not supported in interpret mode")
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
+        grid=1,
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+      plgpu.debug_barrier()
+
+    x = jnp.array([4.2, 2.4]).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x)
+
   def test_debug_print(self):
     # TODO: this test flakes on gpu
     if jtu.test_device_matches(["gpu"]):
@@ -980,7 +996,7 @@ class OpsExtraTest(PallasBaseTest):
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
         grid=1,
-        compiler_params=dict(triton=dict(num_warps=1, num_stages=1))
+        compiler_params=plgpu.TritonCompilerParams(num_warps=1, num_stages=1)
     )
     def kernel(x_ref, o_ref):
       pl.debug_print("It works!")
@@ -1000,7 +1016,7 @@ class OpsExtraTest(PallasBaseTest):
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
         grid=1,
-        compiler_params=dict(triton=dict(num_warps=1, num_stages=1))
+        compiler_params=plgpu.TritonCompilerParams(num_warps=1, num_stages=1)
     )
     def kernel(x_ref, o_ref):
       pl.debug_print("x[0] =", x_ref[0])

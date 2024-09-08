@@ -14,7 +14,9 @@
 
 """PagedAttention TPU kernel."""
 
+from collections.abc import Sequence
 import functools
+from typing import Literal
 
 import jax
 from jax import lax
@@ -516,6 +518,7 @@ def paged_attention(
       )
     q_dtype_for_kernel_launch = q.dtype
 
+  dimension_semantics: Sequence[Literal["parallel", "arbitrary"]]
   if inline_seq_dim:
     kernel = paged_flash_attention_kernel_inline_seq_dim
     grid = (
@@ -525,7 +528,7 @@ def paged_attention(
         if megacore_mode == "kv_head"
         else num_kv_heads,
     )
-    dimension_sematics = ("parallel", "arbitrary", "arbitrary")
+    dimension_semantics = ("parallel", "arbitrary", "arbitrary")
   else:
     kernel = paged_flash_attention_kernel
     grid = (
@@ -536,7 +539,7 @@ def paged_attention(
         else num_kv_heads,
         pages_per_sequence // pages_per_compute_block,
     )  # type: ignore
-    dimension_sematics = ("parallel", "arbitrary", "arbitrary", "arbitrary")  # type: ignore
+    dimension_semantics = ("parallel", "arbitrary", "arbitrary", "arbitrary")
 
   if k_scales_pages is not None and v_scales_pages is not None:
     in_specs = [
@@ -641,7 +644,7 @@ def paged_attention(
           scratch_shapes=scratch_shapes,
       ),
       compiler_params=pltpu.TPUCompilerParams(
-          dimension_semantics=dimension_sematics),
+          dimension_semantics=dimension_semantics),
       out_shape=[
           jax.ShapeDtypeStruct(q.shape, q_dtype_for_kernel_launch),
           jax.ShapeDtypeStruct((*q.shape[:-1], 1), jnp.float32),

@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Hashable, Sequence
+from collections.abc import Sequence
 from functools import partial
 import math
 from operator import index
@@ -146,11 +146,17 @@ class PRNGSpec:
   def __init__(self, impl):
     self._impl = impl
 
-  def __str__(self)  -> str: return str(self._impl)
-  def __hash__(self) -> int: return hash(self._impl)
+  def __repr__(self) -> str:
+    return f"PRNGSpec({self._impl.name!r})"
+
+  def __str__(self)  -> str:
+    return str(self._impl)
+
+  def __hash__(self) -> int:
+    return hash(self._impl)
 
   def __eq__(self, other) -> bool:
-    return self._impl == other._impl
+    return isinstance(other, PRNGSpec) and self._impl == other._impl
 
 
 # TODO(frostig,vanderplas): remove PRNGImpl from this union when it's
@@ -292,7 +298,7 @@ def _key_impl(keys: KeyArray) -> PRNGImpl:
   keys_dtype = typing.cast(prng.KeyTy, keys.dtype)
   return keys_dtype._impl
 
-def key_impl(keys: KeyArrayLike) -> Hashable:
+def key_impl(keys: KeyArrayLike) -> PRNGSpec:
   typed_keys, _ = _check_prng_key("key_impl", keys, allow_batched=True)
   return PRNGSpec(_key_impl(typed_keys))
 
@@ -2041,6 +2047,11 @@ def orthogonal(
 
   Returns:
     A random array of shape `(*shape, n, n)` and specified dtype.
+
+  References:
+    .. [1] Mezzadri, Francesco. (2007). "How to generate random matrices from
+           the classical compact groups". Notices of the American Mathematical
+           Society, 54(5), 592-604. https://arxiv.org/abs/math-ph/0609050.
   """
   shape = core.canonicalize_shape(shape)
   key, _ = _check_prng_key("orthogonal", key)
