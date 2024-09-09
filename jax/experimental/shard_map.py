@@ -1255,14 +1255,14 @@ def _shard_map_batch(
   if any(isinstance(d, batching.RaggedAxis) for d in in_dims):
     raise NotImplementedError
   fun, out_dims = batching.batch_subtrace(fun, trace.tag, trace.axis_data, tuple(in_dims))
-  new_in_names = [{ax + (d is not batching.not_mapped and d <= ax): names[ax]  # type: ignore
+  new_in_names = [{ax + (d is not batching.not_mapped and d <= ax): names[ax]
                    for ax in names} for names, d in zip(in_names, in_dims)]
   spmd_axis_name = trace.axis_data.spmd_name
   if spmd_axis_name is not None:
     used = {n for names in in_names for ns in names.values() for n in ns}
     if not config.disable_vmap_shmap_error.value and set(spmd_axis_name) & used:
       raise ValueError("vmap spmd_axis_name cannot appear in shard_map in_specs")
-    new_in_names = [{**ns, d:spmd_axis_name} if d is not batching.not_mapped  # type: ignore
+    new_in_names = [{**ns, d:spmd_axis_name} if d is not batching.not_mapped
                     else ns for ns, d in zip(new_in_names, in_dims)]
   @as_hashable_function(closure=out_names_thunk)
   def new_out_names_thunk():
