@@ -67,6 +67,7 @@ _TRANSPOSE_TRICKS: dict[
 _TRAY_RING_ORDER = (0, 1, 2, 3, 6, 7, 4, 5)
 _TRAY_2x2_RING_ORDER = (0, 1, 3, 2)
 _TRAY_4x4_RING_ORDER = (0, 1, 2, 3, 7, 6, 5, 9, 10, 11, 15, 14, 13, 12, 8, 4)
+_V5E_TRAY_RING_ORDER = (0, 1, 2, 3, 7, 6, 5, 4)
 
 def _tpu_v2_v3_create_device_mesh(
     mesh_shape: Sequence[int],
@@ -96,7 +97,7 @@ def _tpu_v2_v3_create_device_mesh(
     return np.asarray(devices).reshape(mesh_shape)
 
 
-def _vlc_create_device_mesh(
+def _v5e_create_device_mesh(
     mesh_shape: Sequence[int], devices: Sequence[Any], **unused_kwargs
 ) -> np.ndarray | None:
   """Creates rotated pincer device assignment for selected topologies.
@@ -118,13 +119,19 @@ def _vlc_create_device_mesh(
       devices,
       key=lambda d: tuple(reversed(getattr(d, "coords", (0, 0, 0)))))
 
-  if bound_x == bound_y == 2 and bound_z == 1 and len(devices) == 4:  # VLC2x2
+  if bound_x == bound_y == 2 and bound_z == 1 and len(devices) == 4:
     device_mesh = np.asarray(sequential_devices)
     device_mesh = device_mesh[np.array(_TRAY_2x2_RING_ORDER)]
     device_mesh = device_mesh.reshape(mesh_shape)
     return device_mesh
 
-  if bound_x == bound_y == 4 and bound_z == 1 and len(devices) == 16:  # VLP4x4
+  if len(devices) == 8:
+    device_mesh = np.asarray(sequential_devices)
+    device_mesh = device_mesh[np.array(_V5E_TRAY_RING_ORDER)]
+    device_mesh = device_mesh.reshape(mesh_shape)
+    return device_mesh
+
+  if bound_x == bound_y == 4 and bound_z == 1 and len(devices) == 16:  # v5e4x4
     # Only uses ring order if the whole mesh is a replica group.
     if max(mesh_shape) == len(devices):
       device_mesh = np.asarray(sequential_devices)
@@ -144,7 +151,7 @@ device_kind_handler_dict: dict[
 ] = {
     _TPU_V2: _tpu_v2_v3_create_device_mesh,
     _TPU_V3: _tpu_v2_v3_create_device_mesh,
-    _TPU_V5_LITE: _vlc_create_device_mesh,
+    _TPU_V5_LITE: _v5e_create_device_mesh,
 }
 
 
