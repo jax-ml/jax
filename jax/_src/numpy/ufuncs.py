@@ -753,14 +753,123 @@ def subtract(x: ArrayLike, y: ArrayLike, /) -> Array:
 def arctan2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   return lax.atan2(*promote_args_inexact("arctan2", x1, x2))
 
-@implements(np.minimum, module='numpy')
+
 @partial(jit, inline=True)
 def minimum(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Return element-wise minimum of the input arrays.
+
+  JAX implementation of :obj:`numpy.minimum`.
+
+  Args:
+    x: input array or scalar.
+    y: input array or scalar. Both ``x`` and ``y`` should either have same shape
+      or be broadcast compatible.
+
+  Returns:
+    An array containing the element-wise minimum of ``x`` and ``y``.
+
+  Note:
+    For each pair of elements, ``jnp.minimum`` returns:
+      - smaller of the two if both elements are finite numbers.
+      - ``nan`` if one element is ``nan``.
+
+  See also:
+    - :func:`jax.numpy.maximum`: Returns element-wise maximum of the input arrays.
+    - :func:`jax.numpy.fmin`: Returns element-wise minimum of the input arrays,
+      ignoring NaNs.
+    - :func:`jax.numpy.amin`: Returns the minimum of array elements along a given
+      axis.
+    - :func:`jax.numpy.nanmin`: Returns the minimum of the array elements along
+      a given axis, ignoring NaNs.
+
+  Examples:
+    Inputs with ``x.shape == y.shape``:
+
+    >>> x = jnp.array([2, 3, 5, 1])
+    >>> y = jnp.array([-3, 6, -4, 7])
+    >>> jnp.minimum(x, y)
+    Array([-3,  3, -4,  1], dtype=int32)
+
+    Inputs having broadcast compatibility:
+
+    >>> x1 = jnp.array([[1, 5, 2],
+    ...                 [-3, 4, 7]])
+    >>> y1 = jnp.array([-2, 3, 6])
+    >>> jnp.minimum(x1, y1)
+    Array([[-2,  3,  2],
+           [-3,  3,  6]], dtype=int32)
+
+    Inputs with ``nan``:
+
+    >>> nan = jnp.nan
+    >>> x2 = jnp.array([[2.5, nan, -2],
+    ...                 [nan, 5, 6],
+    ...                 [-4, 3, 7]])
+    >>> y2 = jnp.array([1, nan, 5])
+    >>> jnp.minimum(x2, y2)
+    Array([[ 1., nan, -2.],
+           [nan, nan,  5.],
+           [-4., nan,  5.]], dtype=float32)
+  """
   return lax.min(*promote_args("minimum", x, y))
 
-@implements(np.maximum, module='numpy')
+
 @partial(jit, inline=True)
 def maximum(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Return element-wise maximum of the input arrays.
+
+  JAX implementation of :obj:`numpy.maximum`.
+
+  Args:
+    x: input array or scalar.
+    y: input array or scalar. Both ``x`` and ``y`` should either have same shape
+      or be broadcast compatible.
+
+  Returns:
+    An array containing the element-wise maximum of ``x`` and ``y``.
+
+  Note:
+    For each pair of elements, ``jnp.maximum`` returns:
+      - larger of the two if both elements are finite numbers.
+      - ``nan`` if one element is ``nan``.
+
+  See also:
+    - :func:`jax.numpy.minimum`: Returns element-wise minimum of the input
+      arrays.
+    - :func:`jax.numpy.fmax`: Returns element-wise maximum of the input arrays,
+      ignoring NaNs.
+    - :func:`jax.numpy.amax`: Retruns the maximum of array elements along a given
+      axis.
+    - :func:`jax.numpy.nanmax`: Returns the maximum of the array elements along
+      a given axis, ignoring NaNs.
+
+  Examples:
+    Inputs with ``x.shape == y.shape``:
+
+    >>> x = jnp.array([1, -5, 3, 2])
+    >>> y = jnp.array([-2, 4, 7, -6])
+    >>> jnp.maximum(x, y)
+    Array([1, 4, 7, 2], dtype=int32)
+
+    Inputs with broadcast compatibility:
+
+    >>> x1 = jnp.array([[-2, 5, 7, 4],
+    ...                 [1, -6, 3, 8]])
+    >>> y1 = jnp.array([-5, 3, 6, 9])
+    >>> jnp.maximum(x1, y1)
+    Array([[-2,  5,  7,  9],
+           [ 1,  3,  6,  9]], dtype=int32)
+
+    Inputs having ``nan``:
+
+    >>> nan = jnp.nan
+    >>> x2 = jnp.array([nan, -3, 9])
+    >>> y2 = jnp.array([[4, -2, nan],
+    ...                 [-3, -5, 10]])
+    >>> jnp.maximum(x2, y2)
+    Array([[nan, -2., nan],
+          [nan, -3., 10.]], dtype=float32)
+  """
   return lax.max(*promote_args("maximum", x, y))
 
 @implements(np.float_power, module='numpy')
