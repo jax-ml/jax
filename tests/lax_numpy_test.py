@@ -6289,6 +6289,7 @@ class NumpyDocTests(jtu.JaxTestCase):
     unimplemented = ['fromfile', 'fromiter']
     aliases = ['abs', 'acos', 'acosh', 'asin', 'asinh', 'atan', 'atanh', 'atan2',
                'amax', 'amin', 'around', 'bitwise_right_shift', 'divide', 'round_']
+    skip_args_check = ['vsplit', 'hsplit', 'dsplit', 'array_split']
 
     for name in dir(jnp):
       if name.startswith('_') or name in unimplemented:
@@ -6313,7 +6314,7 @@ class NumpyDocTests(jtu.JaxTestCase):
             raise Exception(f"jnp.{name} does not have a wrapped docstring.")
       elif name in aliases:
         assert "Alias of" in obj.__doc__
-      else:
+      elif name not in skip_args_check:
         # Other functions should have nontrivial docs including "Args" and "Returns".
         doc = obj.__doc__
         self.assertNotEmpty(doc)
