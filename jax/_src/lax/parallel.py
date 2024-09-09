@@ -1447,18 +1447,33 @@ def _axis_index_lowering(ctx, *, axis_name):
                                          ctx.module_context.axis_env)]
 
 def _axis_index_effectful_abstract_eval(*, axis_name):
-  size = core.get_axis_env().axis_size(axis_name)
-  out_aval = ShapedArray((), np.int32, named_shape={axis_name: size})
+  out_aval = ShapedArray((), np.int32)
   return out_aval, set()
 
 def _axis_index_batcher(axis_data, _, vals_in, dims_in, *, axis_name):
   return lax.iota(np.int32, axis_data.size), 0
 
+def _axis_index_bind_with_trace(trace, _args, params):
+  axis_name = params.pop('axis_name')
+  def name_idx(name):
+    return core.Primitive.bind_with_trace(axis_index_p, trace, (), dict(axis_name=name))
+
+  if not isinstance(axis_name, (tuple, list)):
+    return name_idx(axis_name)
+  else:
+    inner_size = 1
+    index = 0
+    with core.set_current_trace(trace):
+      for name in reversed(axis_name):
+        index += name_idx(name) * inner_size
+        inner_size *= psum(1, name)
+      return index
+
 axis_index_p = core.Primitive('axis_index')
 mlir.register_lowering(axis_index_p, _axis_index_lowering)
 axis_index_p.def_effectful_abstract_eval(_axis_index_effectful_abstract_eval)
 batching.fancy_primitive_batchers[axis_index_p] = _axis_index_batcher
-
+axis_index_p.bind_with_trace = _axis_index_bind_with_trace
 
 def _pgather_impl(src, idx, *, axes):
   assert all(isinstance(axis, int) for axis in axes)
