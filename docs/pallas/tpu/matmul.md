@@ -167,8 +167,8 @@ def matmul(
                 pl.BlockSpec((bk, bn), lambda i, j, k: (k, j))],
       out_specs=pl.BlockSpec((bm, bn), lambda i, j, k: (i, j)),
       grid=(m // bm, n // bn, k // bk),
-      compiler_params=dict(mosaic=dict(
-          dimension_semantics=("parallel", "parallel", "arbitrary"))),
+      compiler_params=pltpu.TPUCompilerParams(
+          dimension_semantics=("parallel", "parallel", "arbitrary")),
   )(x, y)
 ```
 
@@ -321,8 +321,8 @@ def matmul(
         grid=(m // bm, n // bn, k // bk),
       ),
       out_shape=jax.ShapeDtypeStruct((m, n), x.dtype),
-      compiler_params=dict(mosaic=dict(
-          dimension_semantics=("parallel", "parallel", "arbitrary"))),
+      compiler_params=pltpu.TPUCompilerParams(
+          dimension_semantics=("parallel", "parallel", "arbitrary")),
   )(x, y)
 ```
 
@@ -489,8 +489,8 @@ def matmul(
         grid=(m // bm, n // bn, k // bk),
       ),
       out_shape=jax.ShapeDtypeStruct((m, n), x.dtype),
-      compiler_params=dict(mosaic=dict(
-          dimension_semantics=("parallel", "parallel", "arbitrary"))),
+      compiler_params=pltpu.TPUCompilerParams(
+          dimension_semantics=("parallel", "parallel", "arbitrary")),
   )(x, y)
 ```
 
@@ -613,8 +613,8 @@ def matmul(
           grid=(m // bm, n // bn, k // bk),
       ),
       out_shape=jax.ShapeDtypeStruct((m, n), x.dtype),
-      compiler_params=dict(mosaic=dict(
-          dimension_semantics=("parallel", "parallel", "arbitrary"))),
+      compiler_params=pltpu.TPUCompilerParams(
+          dimension_semantics=("parallel", "parallel", "arbitrary")),
   )(x, y)
 ```
 

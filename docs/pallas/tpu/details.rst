@@ -148,10 +148,8 @@ grid axes over cores. This is an opt-in procedure. To allow that,
 ..
   pallas_call(
       ...,
-      compiler_params=dict(
-          mosaic=dict(
-              dimension_semantics=["parallel", "parallel", "arbitrary"]
-          )
+      compiler_params=pltpu.TPUCompilerParams(
+          dimension_semantics=["parallel", "parallel", "arbitrary"]
       ),
     )
 
