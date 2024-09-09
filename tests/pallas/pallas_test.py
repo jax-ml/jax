@@ -768,7 +768,7 @@ class ApiErrorTest(PallasBaseTest):
                          in_specs=[pl.BlockSpec((4,), my_index_map)])
     with self.assertRaisesRegex(
         ValueError,
-        f"Index map function my_index_map at .*{os.sep}pallas_test.py:.* for "
+        "Index map function my_index_map at .*pallas_test.py:.* for "
         "x_ref must return 1 values to match .*"
         "Currently returning 2 values."):
       f(a)
@@ -783,7 +783,7 @@ class ApiErrorTest(PallasBaseTest):
                          in_specs=[pl.BlockSpec((4,), my_index_map)])
     with self.assertRaisesRegex(
         ValueError,
-        f"Index map function my_index_map at .*{os.sep}pallas_test.py:.* for "
+        "Index map function my_index_map at .*pallas_test.py:.* for "
         "x_ref must return integer scalars. Output\\[0\\] has "
         "type .*float"):
       f(a)
@@ -798,7 +798,7 @@ class ApiErrorTest(PallasBaseTest):
                          in_specs=[pl.BlockSpec((4,), my_index_map)])
     with self.assertRaisesRegex(
         ValueError,
-        f"Index map function my_index_map at .*{os.sep}pallas_test.py:.* for "
+        "Index map function my_index_map at .*pallas_test.py:.* for "
         "x_ref must return integer scalars. Output\\[0\\] has "
         "type .*int32\\[4\\]"):
       f(a)

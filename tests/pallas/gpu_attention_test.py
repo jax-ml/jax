@@ -21,7 +21,10 @@ import jax
 from jax import random
 from jax._src import config
 from jax._src import test_util as jtu
-from jax.experimental.pallas.ops.gpu import decode_attention
+if sys.platform != "win32":
+  from jax.experimental.pallas.ops.gpu import decode_attention
+else:
+  decode_attention = None
 import jax.numpy as jnp
 import numpy as np
 

@@ -28,10 +28,16 @@ from jax._src import test_util as jtu
 from jax._src.lax.control_flow.for_loop import for_loop
 from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax.experimental import pallas as pl
-from jax.experimental.pallas.ops.gpu import attention
-from jax.experimental.pallas.ops.gpu import layer_norm
-from jax.experimental.pallas.ops.gpu import rms_norm
-from jax.experimental.pallas.ops.gpu import softmax
+if sys.platform != "win32":
+  from jax.experimental.pallas.ops.gpu import attention
+  from jax.experimental.pallas.ops.gpu import layer_norm
+  from jax.experimental.pallas.ops.gpu import rms_norm
+  from jax.experimental.pallas.ops.gpu import softmax
+else:
+  attention = None
+  layer_norm = None
+  rms_norm = None
+  softmax = None
 import jax.numpy as jnp
 import numpy as np
 
