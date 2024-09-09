@@ -487,6 +487,9 @@ jax_test(
 jax_test(
     name = "lax_scipy_test",
     srcs = ["lax_scipy_test.py"],
+    disable_configs = [
+        "tpu_v6e",  # TODO(b/364258243): compiler crashes on v6e
+    ],
     shard_count = {
         "cpu": 20,
         "gpu": 20,
