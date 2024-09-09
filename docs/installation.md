@@ -269,22 +269,26 @@ for more details.
 Nightly releases reflect the state of the main JAX repository at the time they are
 built, and may not pass the full test suite.
 
+Unlike the instructions for installing a JAX release, here we name all of JAX's
+packages explicitly on the command line, so `pip` will upgrade them if a newer
+version is available.
+
 - CPU only:
 
 ```bash
-pip install -U --pre jax -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
+pip install -U --pre jax jaxlib -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
 ```
 
 - Google Cloud TPU:
 
 ```bash
-pip install -U --pre jax[tpu] -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+pip install -U --pre jax[tpu] jaxlib libtpu-nightly -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 ```
 
 - NVIDIA GPU (CUDA 12):
 
 ```bash
-pip install -U --pre jax[cuda12] -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
+pip install -U --pre jax[cuda12] jaxlib jax-cuda12-plugin jax-cuda12-pjrt -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
 ```
 
 - NVIDIA GPU (CUDA 12) legacy:
