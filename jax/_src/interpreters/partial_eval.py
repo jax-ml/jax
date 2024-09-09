@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections import namedtuple
 from collections.abc import Callable, Sequence, Hashable
-from contextlib import contextmanager, AbstractContextManager
+from contextlib import contextmanager
 from functools import partial
 import inspect
 import itertools as it
@@ -171,7 +171,7 @@ class JaxprTrace(Trace['JaxprTracer']):
       # shape = [self.new_instantiated_const(d)
       #          if isinstance(d, Tracer) and d._trace.level < self.level else d
       #          for d in aval.shape]
-      aval = aval.update(shape=tuple(shape))
+      # aval = aval.update(shape=tuple(shape))
     return JaxprTracer(self, PartialVal.unknown(aval), ConstVar(val))
 
   def new_arg(self, pval: PartialVal) -> JaxprTracer:

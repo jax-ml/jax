@@ -14,9 +14,8 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict, deque, namedtuple
-from collections.abc import (Callable, Collection, Generator, Hashable,
-                             Iterable, Iterator, Set, Sequence, MutableSet,
-                             MutableMapping)
+from collections.abc import (Callable, Hashable, Iterable, Iterator, Sequence,
+                             MutableSet, MutableMapping)
 from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass
 import functools
@@ -29,7 +28,7 @@ import operator
 import threading
 import types
 from typing import (Any, ClassVar, Generic, NamedTuple, TypeVar,
-                    cast, overload, Union)
+                    overload, Union)
 import warnings
 from weakref import ref
 
@@ -47,7 +46,7 @@ from jax._src import linear_util as lu
 
 from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
-                           tuple_delete, as_hashable_function,
+                           tuple_delete,
                            HashableFunction, HashableWrapper, weakref_lru_cache,
                            partition_list, StrictABCMeta)
 import jax._src.pretty_printer as pp

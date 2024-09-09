@@ -46,13 +46,13 @@ __ = pe.PartialVal.unknown(ShapedArray((), np.float32))
 def call(f, *args):
   return jit(f)(*args)
 
-def core_call(f, *args):
+def _core_call(f, *args):
   args, in_tree = jax.tree.flatten(args)
   f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f), in_tree)
   out = core.call_p.bind(f, *args)
   return jax.tree.unflatten(out_tree(), out)
-call = core_call
-core_call = util.curry(core_call)
+call = _core_call
+core_call = util.curry(_core_call)
 
 @util.curry
 def core_closed_call(f, *args):

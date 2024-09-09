@@ -64,14 +64,12 @@ data must be immutable, because it will be stored in function memoization tables
 from __future__ import annotations
 
 from collections.abc import Callable
-from functools import partial
 from typing import Any, NamedTuple
 import weakref
 
 from jax._src import config
 from jax._src import core
 from jax._src import traceback_util
-from jax._src.tree_util import tree_map
 from jax._src.util import curry, cache_clearing_funs
 
 

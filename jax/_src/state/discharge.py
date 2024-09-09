@@ -24,7 +24,6 @@ import numpy as np
 
 from jax._src import api_util
 from jax._src import ad_util
-from jax._src import config
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import source_info_util

@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import enum
-from contextlib import contextmanager
 import collections
 from collections import namedtuple
 from collections.abc import Callable, Sequence, Iterable, Iterator

@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 from functools import partial
 from typing import Any, Union
@@ -34,7 +34,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_unflatten, tree_flatten,
                                 register_pytree_node)
 from jax._src.typing import Array
-from jax._src.util import (unzip2, unzip3, safe_map, safe_zip, split_list,
+from jax._src.util import (unzip2, safe_map, safe_zip, split_list,
                            canonicalize_axis, moveaxis, as_hashable_function,
                            curry, memoize, weakref_lru_cache)
 
@@ -369,8 +369,6 @@ class BatchTracer(Tracer):
       return core.get_referent(self.val)
     else:  # TODO(mattjj): could handle the RaggedAxis case?
       return self
-
-class TraceTag: pass
 
 # TODO(dougalm): pass this around instead of splatting the components everywhere
 @dataclasses.dataclass(frozen=True)
