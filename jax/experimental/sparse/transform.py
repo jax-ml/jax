@@ -283,6 +283,8 @@ class SparseTracer(core.Tracer):
 
   @property
   def spenv(self):
+    if not hasattr(self._trace, 'spenv'):
+      raise RuntimeError("Internal: trace does not have spenv defined.")
     return self._trace.spenv
 
   @property
