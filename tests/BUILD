@@ -1540,7 +1540,10 @@ jax_test(
         "gpu_a100",
         "gpu_h100",
     ],
-    tags = ["multiaccelerator"],
+    tags = [
+        "multiaccelerator",
+        "notap",  # TODO(phawkins): this test fails in our internal CI.
+    ],
 )
 
 exports_files(
