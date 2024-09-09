@@ -31,6 +31,7 @@ from jax._src import prng
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.interpreters import mlir
+from jax._src.layout import DeviceLocalLayout
 from jax._src.lib.mlir.dialects import hlo
 
 jax.config.parse_flags_with_absl()
@@ -97,33 +98,50 @@ class RandomTest(jtu.JaxTestCase):
 
 class FfiTest(jtu.JaxTestCase):
 
+  def find_custom_call_in_module(self, module):
+    for func in module.body.operations:
+      for block in func.body.blocks:
+        for op in block.operations:
+          if op.OPERATION_NAME == "stablehlo.custom_call":
+            return op
+    self.fail("No custom_call found in the lowered IR")
+
   def testHeadersExist(self):
     base_dir = os.path.join(jex.ffi.include_dir(), "xla", "ffi", "api")
     for header in ["c_api.h", "api.h", "ffi.h"]:
       self.assertTrue(os.path.exists(os.path.join(base_dir, header)))
 
-  def testLoweringLayouts(self):
+  @parameterized.parameters([
+    (tuple(range(3)), tuple(range(3))),
+    (None, tuple(reversed(range(3)))),
+    (DeviceLocalLayout(tuple(range(3))), tuple(reversed(range(3)))),
+  ])
+  def testLoweringLayouts(self, layout_spec, expected_layout):
     # Regression test to ensure that the lowering rule properly captures
     # layouts.
     def lowering_rule(ctx, x):
       aval, = ctx.avals_in
       ndim = len(aval.shape)
-      layout = tuple(range(ndim))
-      return jex.ffi.ffi_lowering("test_ffi", operand_layouts=[layout],
-                                  result_layouts=[layout])(ctx, x)
+      return jex.ffi.ffi_lowering("test_ffi", operand_layouts=[layout_spec],
+                                  result_layouts=[layout_spec])(ctx, x)
     prim = core.Primitive("test_ffi")
     prim.def_impl(lambda x: x)
     prim.def_abstract_eval(lambda x: x)
     mlir.register_lowering(prim, lowering_rule)
-    x = jnp.linspace(0, 1, 5)
+
+    x = jnp.ones((3,) * len(expected_layout))
     lowered = jax.jit(prim.bind).lower(x)
     module = lowered.compiler_ir("stablehlo")
-    for func in module.body.operations:
-      for block in func.body.blocks:
-        for op in block.operations:
-          if op.OPERATION_NAME == "stablehlo.custom_call":
-            self.assertIn("operand_layouts", op.attributes)
-            self.assertIn("result_layouts", op.attributes)
+    op = self.find_custom_call_in_module(module)
+    self.assertIn("operand_layouts", op.attributes)
+    self.assertIn("result_layouts", op.attributes)
+
+    text = lowered.as_text()
+    expected = ", ".join(map(str, expected_layout))
+    pattern = rf"operand_layouts = \[dense<\[{expected}\]>"
+    self.assertRegex(text, pattern)
+    pattern = rf"result_layouts = \[dense<\[{expected}\]>"
+    self.assertRegex(text, pattern)
 
   @parameterized.parameters([
       (True, mlir.ir.BoolAttr.get),
@@ -140,19 +158,14 @@ class FfiTest(jtu.JaxTestCase):
     # Here we inspect the lowered IR to test that the parameter has been
     # serialized with the appropriate type.
     module = jax.jit(fun).lower(0.5).compiler_ir("stablehlo")
-    for func in module.body.operations:
-      for block in func.body.blocks:
-        for op in block.operations:
-          if op.OPERATION_NAME == "stablehlo.custom_call":
-            config = op.attributes["mhlo.backend_config"]
-            self.assertIsInstance(config, mlir.ir.DictAttr)
-            self.assertIn("param", config)
-            with mlir.make_ir_context(), mlir.ir.Location.unknown():
-              expected = expected_builder(param)
-            self.assertEqual(type(config["param"]), type(expected))
-            self.assertTrue(expected.type.isinstance(config["param"].type))
-            return
-    self.fail("No custom_call found in the lowered IR")
+    op = self.find_custom_call_in_module(module)
+    config = op.attributes["mhlo.backend_config"]
+    self.assertIsInstance(config, mlir.ir.DictAttr)
+    self.assertIn("param", config)
+    with mlir.make_ir_context(), mlir.ir.Location.unknown():
+      expected = expected_builder(param)
+    self.assertEqual(type(config["param"]), type(expected))
+    self.assertTrue(expected.type.isinstance(config["param"].type))
 
   def testToken(self):
     def fun():
@@ -161,14 +174,9 @@ class FfiTest(jtu.JaxTestCase):
 
     # Ensure that token inputs and outputs are translated to the correct type
     module = jax.jit(fun).lower().compiler_ir("stablehlo")
-    for func in module.body.operations:
-      for block in func.body.blocks:
-        for op in block.operations:
-          if op.OPERATION_NAME == "stablehlo.custom_call":
-            self.assertTrue(hlo.TokenType.isinstance(op.operands[0].type))
-            self.assertTrue(hlo.TokenType.isinstance(op.results[0].type))
-            return
-    self.fail("No custom_call found in the lowered IR")
+    op = self.find_custom_call_in_module(module)
+    self.assertTrue(hlo.TokenType.isinstance(op.operands[0].type))
+    self.assertTrue(hlo.TokenType.isinstance(op.results[0].type))
 
   @jtu.sample_product(
     shape=[(1,), (4,), (5,)],

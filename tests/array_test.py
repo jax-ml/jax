@@ -1228,7 +1228,7 @@ class ShardingTest(jtu.JaxTestCase):
   def test_make_array_from_callback_error(self):
     mesh_shape = (2, 3)
     global_shape = tuple(np.square(mesh_shape))
-    mesh = jtu.create_mesh(mesh_shape, ('x', 'y'))
+    mesh = jtu.create_mesh(mesh_shape, ('x', 'y'), iota_order=True)
     pspec = P('x', 'y')
     sharding = jax.sharding.NamedSharding(mesh, pspec)
     n = math.prod(global_shape)
@@ -1387,7 +1387,7 @@ class RngShardingTest(jtu.JaxTestCase):
 
     global_shape = tuple(np.square(mesh_shape))
 
-    mesh = jtu.create_mesh(mesh_shape, ('x', 'y'))
+    mesh = jtu.create_mesh(mesh_shape, ('x', 'y'), iota_order=True)
     s = jax.sharding.NamedSharding(mesh, pspec)
 
     n = math.prod(global_shape)

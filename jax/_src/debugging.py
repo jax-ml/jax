@@ -265,6 +265,10 @@ def debug_callback(callback: Callable[..., None], *args: Any,
 
 class _DebugPrintFormatChecker(string.Formatter):
 
+  def format_field(self, value, format_spec):
+    del value, format_spec
+    return ""  # No formatting is done.
+
   def check_unused_args(self, used_args, args, kwargs):
     unused_args = [arg for i, arg in enumerate(args) if i not in used_args]
     unused_kwargs = [k for k in kwargs if k not in used_args]
@@ -314,7 +318,7 @@ def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
     **kwargs: Additional keyword arguments to be formatted, as if passed to
       ``fmt.format``.
   """
-  # Check that we provide the correct arguments to be formatted
+  # Check that we provide the correct arguments to be formatted.
   formatter.format(fmt, *args, **kwargs)
 
   debug_callback(functools.partial(_format_print_callback, fmt), *args,

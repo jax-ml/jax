@@ -988,6 +988,10 @@ class OpsExtraTest(PallasBaseTest):
     x = jnp.array([4.2, 2.4]).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x)
 
+  @unittest.skipIf(
+      sys.platform == "win32",
+      "plgpu.TritonCompilerParams unavailable on Windows",
+  )
   def test_debug_print(self):
     # TODO: this test flakes on gpu
     if jtu.test_device_matches(["gpu"]):
@@ -1008,6 +1012,10 @@ class OpsExtraTest(PallasBaseTest):
 
     self.assertIn("It works!", output())
 
+  @unittest.skipIf(
+      sys.platform == "win32",
+      "plgpu.TritonCompilerParams unavailable on Windows",
+  )
   def test_debug_print_with_values(self):
     # TODO: this test flakes on gpu
     if jtu.test_device_matches(["gpu"]):

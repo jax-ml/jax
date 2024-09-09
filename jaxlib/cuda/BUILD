@@ -351,6 +351,7 @@ cc_library(
     hdrs = ["//jaxlib/gpu:linalg_kernels.h"],
     features = ["-use_header_modules"],
     deps = [
+        ":cuda_blas_handle_pool",
         ":cuda_gpu_kernel_helpers",
         ":cuda_linalg_kernels_impl",
         ":cuda_vendor",
@@ -363,6 +364,7 @@ cc_library(
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_status",
+        "@xla//xla/tsl/cuda:cublas",
     ],
 )
 
@@ -373,6 +375,8 @@ cuda_library(
     deps = [
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
+        "//jaxlib:ffi_helpers",
+        "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_status",
     ],

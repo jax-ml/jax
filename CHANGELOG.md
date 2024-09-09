@@ -33,6 +33,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {obj}`~jax.numpy.bitwise_xor`, {obj}`~jax.numpy.logical_and`,
     {obj}`~jax.numpy.logical_and`, and {obj}`~jax.numpy.logical_and`.
     In future releases we plan to expand these to other ufuncs.
+  * Added {func}`jax.lax.optimization_barrier`, which allows users to prevent
+    compiler optimizations such as common-subexpression elimination and to
+    control scheduling.
 
 * Breaking changes
   * The MHLO MLIR dialect (`jax.extend.mlir.mhlo`) has been removed. Use the

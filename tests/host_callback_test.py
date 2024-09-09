@@ -2240,7 +2240,7 @@ class HostCallbackCallTest(jtu.JaxTestCase):
   def test_call_cond(self):
     def f_outside(args):
       x, y = args
-      return x * y
+      return x * y.astype(np.float32)
 
     def loop(x, use_outside=True):
       def body(i, acc):
@@ -2253,8 +2253,8 @@ class HostCallbackCallTest(jtu.JaxTestCase):
 
       return lax.fori_loop(0, 18, body, x)
 
-    res_inside = loop(1.2, use_outside=False)
-    self.assertAllClose(res_inside, jax.jit(loop)(1.2))
+    res_inside = loop(np.float32(1.2), use_outside=False)
+    self.assertAllClose(res_inside, jax.jit(loop)(np.float32(1.2)))
 
   def test_call_jit_scan_call(self):
     def f_outside(x):

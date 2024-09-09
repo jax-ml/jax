@@ -54,6 +54,7 @@ from jax._src.lib import jax_jit
 from jax._src import traceback_util
 from jax._src.typing import Array, DimSize, Shape
 from jax._src import typing
+from jax._src import xla_metadata as xla_metadata_lib
 
 traceback_util.register_exclusion(__file__)
 
@@ -260,12 +261,15 @@ def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
 
 class JaxprEqnContext:
 
-  def __init__(self, compute_type: str | None, threefry_partitionable: bool):
+  def __init__(self, compute_type: str | None, threefry_partitionable: bool,
+               xla_metadata=None):
     self.compute_type = compute_type
     self.threefry_partitionable = threefry_partitionable
+    self.xla_metadata = xla_metadata
     self._managers = [
         (compute_on.extend_compute_type, self.compute_type),
         (config.threefry_partitionable.__call__, self.threefry_partitionable),
+        (xla_metadata_lib.set_xla_metadata, self.xla_metadata),
     ]
 
   @property
@@ -277,8 +281,11 @@ class JaxprEqnContext:
       yield
 
   def __repr__(self):
-    return (f"JaxprEqnContext(compute_type={self.compute_type},"
-            f"threefry_partitionable={self.threefry_partitionable})")
+    return (
+        f"JaxprEqnContext(compute_type={self.compute_type},"
+        f"threefry_partitionable={self.threefry_partitionable}),"
+        f"xla_metadata={self.xla_metadata}"
+    )
 
 
 class JaxprEqn:
@@ -332,8 +339,11 @@ class JaxprEqn:
 def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
                   ctx=None):
   source_info = source_info or source_info_util.new_source_info()
-  ctx = ctx or JaxprEqnContext(compute_on.current_compute_type(),
-                               config.threefry_partitionable.value)
+  ctx = ctx or JaxprEqnContext(
+      compute_on.current_compute_type(),
+      config.threefry_partitionable.value,
+      xla_metadata_lib.current_xla_metadata(),
+  )
   if config.enable_checks.value:
     assert all(isinstance(x, (Var, Literal)) for x in  invars)
     assert all(isinstance(v,  Var)           for v in outvars)
@@ -1560,8 +1570,6 @@ class ShapedArray(UnshapedArray):
     self.weak_type = weak_type
     if config.sharding_in_types.value:
       self.sharding = sharding
-    else:
-      self.sharding = None
 
   def update(self, shape=None, dtype=None, weak_type=None, named_shape=None,
              sharding=None):
@@ -1573,7 +1581,7 @@ class ShapedArray(UnshapedArray):
     if weak_type is None:
       weak_type = self.weak_type
     if sharding is None:
-      sharding = self.sharding
+      sharding = getattr(self, 'sharding', None)
     return ShapedArray(shape, dtype, weak_type, sharding=sharding)
 
   ndim = property(lambda self: len(self.shape))
@@ -1590,13 +1598,14 @@ class ShapedArray(UnshapedArray):
     return (type(self) is type(other)
             and self.dtype == other.dtype and self.shape == other.shape
             and self.weak_type == other.weak_type
-            and self.sharding == other.sharding)
+            and getattr(self, 'sharding', None) == getattr(other, 'sharding', None))
 
   def __hash__(self):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
     # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
-    return hash((self.shape, self.dtype, self.weak_type, self.sharding))
+    return hash((self.shape, self.dtype, self.weak_type,
+                 getattr(self, 'sharding', None)))
 
   def at_least_vspace(self):
     return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
@@ -1615,10 +1624,10 @@ class ShapedArray(UnshapedArray):
     dt_str =  _short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
     dt_str = dt_str.replace('void', 'float0')
     shapestr = ','.join(map(str, self.shape))
-    if self.sharding is None:
-      return f'{dt_str}[{shapestr}]'
-    else:
+    if hasattr(self, 'sharding'):
       return f'{dt_str}[{shapestr}]({self.sharding})'
+    else:
+      return f'{dt_str}[{shapestr}]'
 
   def _len(self, ignored_tracer):
     try:

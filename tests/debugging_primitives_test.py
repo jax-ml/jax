@@ -106,6 +106,16 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
 
+  def test_can_stage_out_debug_print_with_formatting(self):
+    @jax.jit
+    def f(x):
+      debug_print('x: {x:.2f}', x=x)
+
+    with jtu.capture_stdout() as output:
+      f(2)
+      jax.effects_barrier()
+    self.assertEqual(output(), "x: 2.00\n")
+
   @jtu.device_supports_buffer_donation()
   def test_can_stage_out_debug_print_with_donate_argnums(self):
     def f(x, y):

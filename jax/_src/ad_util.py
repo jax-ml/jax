@@ -31,7 +31,6 @@ T = TypeVar('T')
 map = safe_map
 
 def add_jaxvals(x: ArrayLike, y: ArrayLike) -> Array:
-  dtype = core.get_aval(x).dtype
   return add_jaxvals_p.bind(x, y)
 
 add_jaxvals_p = Primitive('add_any')

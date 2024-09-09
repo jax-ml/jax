@@ -210,6 +210,20 @@ def cholesky_update(r_matrix: ArrayLike, w_vector: ArrayLike) -> Array:
   return cholesky_update_p.bind(r_matrix, w_vector)
 
 
+def symmetric_product(
+    a_matrix: ArrayLike, c_matrix: ArrayLike,
+    alpha: float = 1., beta: float = 0.,
+    symmetrize_output=False):
+  """Computes C = alpha * A @ A.T + beta * C (where C is symmetric)."""
+  result = symmetric_product_p.bind(a_matrix, c_matrix, alpha=alpha, beta=beta)
+  if symmetrize_output:
+    upper_half = lax.transpose(
+        _tril(result, k=-1),
+        (*range(result.ndim - 2), result.ndim - 1, result.ndim - 2))
+    result = _tril(result, k=0) + upper_half
+  return result
+
+
 def lu_pivots_to_permutation(pivots: ArrayLike, permutation_size: int) -> Array:
   """Converts the pivots (row swaps) returned by LU to a permutation.
 
@@ -592,6 +606,7 @@ def _cholesky_update_jax_fn(R, z):
     R = R.at[k, :].set(row_k)
   return R
 
+
 cholesky_update_p = Primitive('cholesky_update')
 cholesky_update_p.multiple_results = False
 cholesky_update_p.def_abstract_eval(_cholesky_update_abstract_eval)
@@ -603,6 +618,68 @@ mlir.register_lowering(
 mlir.register_lowering(
     cholesky_update_p,
     mlir.lower_fun(_cholesky_update_jax_fn, multiple_results=False))
+
+# symmetric_update
+
+def _symmetric_product_abstract_eval(a, c, *, alpha, beta):
+  a_dtype = dtypes.canonicalize_dtype(a.dtype)
+  c_dtype = dtypes.canonicalize_dtype(c.dtype)
+  if not (a_dtype == c_dtype and a_dtype in (np.float32, np.float64)):
+    raise NotImplementedError(
+        "Symmetric update is only implemented for float32 and float64.")
+  if not (a.ndim >= 2 and c.ndim >= 2
+          and a.shape[-2] == c.shape[-1]
+          and c.shape[-1] == c.shape[-2]):
+    raise ValueError(
+        "Symmetric update takes (maybe batched) matrices of matching shapes. "
+        "Got shapes {}, {} instead".format(a.shape, c.shape))
+  return ShapedArray(c.shape, c.dtype)
+
+
+def _symmetric_product_batching_rule(batched_args, batch_dims, *, alpha, beta):
+  a_tensor, c_tensor = batched_args
+  a_bd, c_bd = batch_dims
+  a_tensor = batching.moveaxis(a_tensor, a_bd, 0)
+  c_tensor = batching.moveaxis(c_tensor, c_bd, 0)
+  return (
+      symmetric_product_p.bind(a_tensor, c_tensor, alpha=alpha, beta=beta), 0)
+
+symmetric_product_p = Primitive('symmetric_update')
+symmetric_product_p.multiple_results = False
+symmetric_product_p.def_abstract_eval(_symmetric_product_abstract_eval)
+symmetric_product_p.def_impl(
+    partial(dispatch.apply_primitive, symmetric_product_p))
+batching.primitive_batchers[
+    symmetric_product_p] = _symmetric_product_batching_rule
+
+
+def _symmetric_product_gpu_lowering(
+    platform, ctx, a_tensor, c_tensor, alpha, beta):
+  a_aval, c_aval = ctx.avals_in[:2]
+  dtype = a_aval.dtype
+  alpha_aval = beta_aval = ShapedArray((), dtype)
+
+  alpha_array = mlir.full_like_aval(ctx, alpha, alpha_aval)
+  beta_array = mlir.full_like_aval(ctx, beta, beta_aval)
+
+  rule = ffi.ffi_lowering(f"{platform}solver_syrk_ffi",
+                          operand_output_aliases={1: 0})
+  ctx = ctx.replace(avals_in=[a_aval, c_aval, alpha_aval, beta_aval])
+  return rule(ctx, a_tensor, c_tensor, alpha_array, beta_array, transpose=False)
+
+
+def _symmetric_product_jax_fn(a, c, *, alpha, beta):
+  a_T = lax.transpose(a, (*range(a.ndim - 2), a.ndim - 1, a.ndim - 2))
+  return alpha * lax.batch_matmul(
+      a, a_T, precision=lax.Precision.HIGHEST) + beta * c
+
+
+mlir.register_lowering(
+    symmetric_product_p,
+    partial(_symmetric_product_gpu_lowering, 'cu'), platform='cuda')
+mlir.register_lowering(
+    symmetric_product_p,
+    mlir.lower_fun(_symmetric_product_jax_fn, multiple_results=False))
 
 # Asymmetric eigendecomposition
 

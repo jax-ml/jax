@@ -33,7 +33,6 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
-from jax._src.lib.mlir.dialects import scf as scf_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
 from jax._src.state import primitives as sp
@@ -128,7 +127,6 @@ class LoweringRuleContext:
 class LoweringResult:
   module: ir.Module
   grid: tuple[int, ...]
-  gmem_scratch_bytes: int
   out_structs: tuple[jax.ShapeDtypeStruct, ...]
 
 
@@ -199,7 +197,11 @@ def lower_jaxpr_to_module(
   dimension_semantics = params.get(
       "dimension_semantics", ["parallel"] * len(grid_mapping.grid)
   )
-  assert len(dimension_semantics) == len(grid_mapping.grid)
+  if len(dimension_semantics) != len(grid_mapping.grid):
+    raise ValueError(
+        "dimension_semantics must have an entrey for each grid dimension:"
+        f" {len(dimension_semantics)=}, but len(grid={grid_mapping.grid})."
+    )
   sequential_axes = tuple(
       i for i, s in enumerate(dimension_semantics) if s == "sequential"
   )
@@ -249,7 +251,7 @@ def lower_jaxpr_to_module(
         start_indices: Sequence[ir.Value],
         step: ir.Value,
         shape: Sequence[int],
-    ) -> ir.Value:
+    ) -> Sequence[mgpu.DynamicSlice]:
       return tuple(
           mgpu.ds(
               arith_dialect.addi(
@@ -262,37 +264,35 @@ def lower_jaxpr_to_module(
           for axis, (start_index, dim) in enumerate(zip(start_indices, shape))
       )
 
-    @mgpu.single_thread()
-    def fetch(step: ir.Value, slot: ir.Value) -> None:
-      for start_indices, b_gmem, b_smem in zip(
-          in_start_indices, in_buffers_gmem, in_buffers_smem
-      ):
-        # TODO(slebedev): Support 128-byte swizzling, once we can lower matmuls.
-        b_smem_shape = ir.MemRefType(b_smem.type).shape[1:]
-        launch_ctx.async_copy(
-            src_ref=b_gmem,
-            dst_ref=mgpu.memref_slice(b_smem, slot),
-            gmem_slice=gmem_slice(start_indices, step, b_smem_shape),
-            barrier=barriers[slot],
-            swizzle=None,
-            arrive=True,
-            uniform=False,
-        )
+    def fetch(idx: int, step: ir.Value, slot: ir.Value) -> None:
+      # TODO(slebedev): Support 128-byte swizzling, once we can lower matmuls.
+      launch_ctx.async_copy(
+          src_ref=in_buffers_gmem[idx],
+          dst_ref=mgpu.memref_slice(in_buffers_smem[idx], slot),
+          gmem_slice=gmem_slice(
+              in_start_indices[idx],
+              step,
+              ir.MemRefType(in_buffers_smem[idx].type).shape[1:],
+          ),
+          barrier=barriers[slot],
+          swizzle=None,
+          arrive=True,
+          uniform=False,
+      )
 
-    @mgpu.single_thread()
-    def store(step: ir.Value, slot: ir.Value) -> None:
-      for start_indices, b_gmem, b_smem in zip(
-          out_start_indices, out_buffers_gmem, out_buffers_smem
-      ):
-        # TODO(slebedev): Support 128-byte swizzling, once we can lower matmuls.
-        b_smem_shape = ir.MemRefType(b_smem.type).shape[1:]
-        launch_ctx.async_copy(
-            src_ref=mgpu.memref_slice(b_smem, slot),
-            dst_ref=b_gmem,
-            gmem_slice=gmem_slice(start_indices, step, b_smem_shape),
-            swizzle=None,
-            uniform=False,
-        )
+    def store(idx: int, step: ir.Value, slot: ir.Value) -> None:
+      # TODO(slebedev): Support 128-byte swizzling, once we can lower matmuls.
+      launch_ctx.async_copy(
+          src_ref=mgpu.memref_slice(out_buffers_smem[idx], slot),
+          dst_ref=out_buffers_gmem[idx],
+          gmem_slice=gmem_slice(
+              out_start_indices[idx],
+              step,
+              ir.MemRefType(out_buffers_smem[idx].type).shape[1:],
+          ),
+          swizzle=None,
+          uniform=False,
+      )
 
     # Compute the number of steps along each sequential axis.
     if sequential_axes:
@@ -310,15 +310,23 @@ def lower_jaxpr_to_module(
             "Array dimensions along the sequential axis must be divisible by"
             " the corresponding block dimensions."
         )
-      [num_steps] = {
+      num_steps, *rest = {
           b_gmem.shape[sequential_axis] // b_smem.shape[1 + sequential_axis]
           for b_gmem, b_smem in zip(in_structs_gmem, in_structs_smem)
       }
+      if rest:
+        raise ValueError(
+            "Array dimensions along the sequential axis must produce the same"
+            " number of steps when devided by the corresponding block"
+            " dimensions."
+        )
     else:
       num_steps = 1
 
-    for slot in range(num_stages):
-      fetch(_as_index(slot), _as_index(slot))
+    with mgpu.single_thread():
+      for slot in range(min(num_stages, num_steps)):
+        for idx in range(grid_mapping.num_inputs):
+          fetch(idx, _as_index(slot), _as_index(slot))
 
     @mgpu.fori(_as_index(num_steps), ())
     def _(step, _):
@@ -333,15 +341,18 @@ def lower_jaxpr_to_module(
           [mgpu.memref_slice(b_smem, slot) for b_smem in buffers_smem],
       )
       mgpu.commit_shared()
-      store(step, slot)
+
+      with mgpu.single_thread():
+        for idx in range(grid_mapping.num_outputs):
+          store(idx, step, slot)
 
       next_step = arith_dialect.addi(step, _as_index(num_stages))
       next_step_in_bounds = arith_dialect.cmpi(
           arith_dialect.CmpIPredicate.ult, next_step, _as_index(num_steps)
       )
-      with ir.InsertionPoint(scf_dialect.IfOp(next_step_in_bounds).then_block):
-        fetch(next_step, slot)
-        scf_dialect.yield_([])
+      with mgpu.when(next_step_in_bounds), mgpu.single_thread():
+        for idx in range(grid_mapping.num_inputs):
+          fetch(idx, next_step, slot)
 
       return ()
 
@@ -355,28 +366,26 @@ def lower_jaxpr_to_module(
           dtype=np.int8,
       )
   ]
-  module, out_structs_smem, gmem_scratch_bytes, _ = (
-      mosaic_gpu._lower_as_gpu_kernel(
-          body,
-          grid=grid,
-          cluster=(),
-          block=block,
-          in_shapes=in_structs_gmem,
-          out_shape=out_structs_gmem,
-          smem_scratch_shape=(
-              *in_structs_smem,
-              *out_structs_smem,
-              *extra_smem_scratch,
-              mgpu.Barrier(
-                  arrival_count=len(in_structs_gmem),
-                  num_barriers=num_stages,
-              ),
+  module, out_structs_smem, _ = mosaic_gpu._lower_as_gpu_kernel(
+      body,
+      grid=grid,
+      cluster=(),
+      block=block,
+      in_shapes=in_structs_gmem,
+      out_shape=out_structs_gmem,
+      smem_scratch_shape=(
+          *in_structs_smem,
+          *out_structs_smem,
+          *extra_smem_scratch,
+          mgpu.Barrier(
+              arrival_count=len(in_structs_gmem),
+              num_barriers=num_stages,
           ),
-          module_name=name_and_src_info.name,
-      )
+      ),
+      module_name=name_and_src_info.name,
   )
 
-  return LoweringResult(module, grid, gmem_scratch_bytes, out_structs_smem)
+  return LoweringResult(module, grid, out_structs_smem)
 
 
 mosaic_lowering_rules = {}

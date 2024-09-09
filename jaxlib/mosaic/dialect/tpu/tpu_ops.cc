@@ -493,8 +493,9 @@ class CanonicalizeAddOfMatmul : public OpRewritePattern<AddOp> {
       }
       return failure();
     };
-    return success(succeeded(try_canonicalize(op.getLhs(), op.getRhs())) ||
-                   succeeded(try_canonicalize(op.getLhs(), op.getRhs())));
+    // We tried try_canonicalize(op.getRhs(), op.getLhs()) and it caused
+    // worrying numerical differences in some of kernels.
+    return try_canonicalize(op.getLhs(), op.getRhs());
   }
 };
 

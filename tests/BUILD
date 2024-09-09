@@ -235,8 +235,8 @@ jax_test(
     },
     enable_configs = [
         "gpu_2gpu_shardy",
-        "tpu_df_2x2_shardy",
-        "tpu_pf_2x2_shardy",
+        "tpu_v3_2x2_shardy",
+        "tpu_v4_2x2_shardy",
     ],
     shard_count = {
         "cpu": 5,
@@ -1426,7 +1426,7 @@ jax_test(
     name = "export_test",
     srcs = ["export_test.py"],
     enable_configs = [
-        "tpu_df_2x2",
+        "tpu_v3_2x2",
     ],
     tags = [],
     deps = [
@@ -1505,6 +1505,12 @@ jax_test(
     tags = ["multiaccelerator"],
 )
 
+jax_test(
+    name = "xla_metadata_test",
+    srcs = ["xla_metadata_test.py"],
+    deps = ["//jax:experimental"],
+)
+
 py_test(
     name = "pretty_printer_test",
     srcs = ["pretty_printer_test.py"],
@@ -1520,6 +1526,23 @@ py_test(
     deps = [
         "//jax",
         "//jax:test_util",
+    ],
+)
+
+jax_test(
+    name = "cudnn_fusion_test",
+    srcs = ["cudnn_fusion_test.py"],
+    disable_backends = [
+        "cpu",
+        "tpu",
+    ],
+    enable_configs = [
+        "gpu_a100",
+        "gpu_h100",
+    ],
+    tags = [
+        "multiaccelerator",
+        "notap",  # TODO(phawkins): this test fails in our internal CI.
     ],
 )
 

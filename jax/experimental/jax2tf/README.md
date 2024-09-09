@@ -880,7 +880,7 @@ is unsound.
 ### Division of symbolic dimensions is partially supported
 
 JAX will attempt to simplify division and modulo operations,
-e.g., `(a * b + a) // (b + 1) == a` and `6*a + 4 % 3 == 1`.
+e.g., `(a * b + a) // (b + 1) == a` and `(6 * a + 4) % 3 == 1`.
 In particular, JAX will handle the cases when either (a) there
 is no remainder, or (b) the divisor is a constant
 in which case there may be a constant remainder.
