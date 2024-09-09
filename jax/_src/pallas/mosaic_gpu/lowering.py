@@ -16,10 +16,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Sequence, Set
 import dataclasses
 import functools
-import itertools as it
 import math
 from typing import Any, cast
 
@@ -192,6 +191,12 @@ def _eval_index_map(
   return tuple(result)
 
 
+def _unused_jaxpr_inputs(jaxpr: jax_core.Jaxpr) -> Set[int, ...]:
+  # TODO(slebedev): Find a more efficient way to do this.
+  _, used_inputs = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars))
+  return {idx for idx, used in enumerate(used_inputs) if not used}
+
+
 def lower_jaxpr_to_module(
     grid_mapping: pallas_core.GridMapping,
     jaxpr: jax_core.Jaxpr,
@@ -273,11 +278,23 @@ def lower_jaxpr_to_module(
       else None,
       grid_mapping.block_mappings[: grid_mapping.num_inputs],
   )
+  # Infer which outputs are invariant wrt sequential axes and thus
+  # don't need pipelined stores.
+  out_is_pipelined = [
+      not (
+          (unused := _unused_jaxpr_inputs(bm.index_map_jaxpr.jaxpr))
+          and unused >= {*sequential_axes}
+      )
+      for bm in block_mappings[grid_mapping.num_inputs :]
+  ]
   out_structs_gmem = [*grid_mapping.out_shapes]
   # TODO(justinfu): Implement output Memref transforms
   out_structs_smem = [
-      jax.ShapeDtypeStruct([num_stages, *bm.block_shape], s.dtype)
-      for bm, s in zip(
+      jax.ShapeDtypeStruct(
+          [num_stages if is_pipelined else 1, *bm.block_shape], s.dtype
+      )
+      for is_pipelined, bm, s in zip(
+          out_is_pipelined,
           block_mappings[grid_mapping.num_inputs :],
           grid_mapping.out_shapes,
       )
@@ -408,26 +425,29 @@ def lower_jaxpr_to_module(
         # Only wait if async copies were issued.
         barriers[slot].wait()
 
-      args = [
-          mgpu.memref_slice(b_smem, slot)
-          for b_smem in it.chain(in_buffers_smem, out_buffers_smem)
-      ]
+      args = [mgpu.memref_slice(b_smem, slot) for b_smem in in_buffers_smem]
+      args.extend(
+          mgpu.memref_slice(
+              b_smem, slot if out_is_pipelined[idx] else _as_index(0)
+          )
+          for idx, b_smem in enumerate(out_buffers_smem)
+      )
       args.extend(scratch_buffers_smem)
       _ = lower_jaxpr_to_mosaic_gpu(module_ctx, jaxpr, args)
       mgpu.commit_shared()
 
       with mgpu.single_thread():
         for idx in range(grid_mapping.num_outputs):
-          store(idx, step, slot)
+          store(idx, step, slot if out_is_pipelined[idx] else _as_index(0))
 
       next_step = arith_dialect.addi(step, _as_index(num_stages))
       next_step_in_bounds = arith_dialect.cmpi(
           arith_dialect.CmpIPredicate.ult, next_step, _as_index(num_steps)
       )
       with mgpu.when(next_step_in_bounds), mgpu.single_thread():
+        barriers[slot].arrive_expect_tx(in_transfer_bytes)
         for idx in range(grid_mapping.num_inputs):
           fetch(idx, next_step, slot)
-        barriers[slot].arrive_expect_tx(in_transfer_bytes)
 
       return ()
 

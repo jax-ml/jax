@@ -116,6 +116,27 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128 * 2 * 64).reshape((128 * 2, 64)).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x + 1.0)
 
+  def test_add_one_grid_pipelined_invariant_output(self):
+
+    @functools.partial(
+        pl.pallas_call,
+        in_specs=[pl.BlockSpec((128, 16), lambda i, j: (i, j))],
+        out_specs=pl.BlockSpec((128, 16), lambda i, j: (i, 0)),
+        out_shape=jax.ShapeDtypeStruct([128 * 2, 64], jnp.float32),
+        compiler_params=plgpu.GPUCompilerParams(
+            dimension_semantics=["parallel", "sequential"],
+            num_stages=2,
+        ),
+        grid=(2, 1),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1.0
+
+    # Note that we compare the first 16 elements only, because the rest are
+    # never written to by the above kernel.
+    x = jnp.arange(128 * 2 * 64).reshape((128 * 2, 64)).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x)[:, 16:], x[:, 16:] + 1.0)
+
   def test_add_doubled_sum(self):
     @functools.partial(
         pl.pallas_call,
