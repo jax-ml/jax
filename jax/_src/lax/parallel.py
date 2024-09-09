@@ -599,7 +599,7 @@ def _replica_groups_hlo(replica_groups: Sequence[Sequence[int]]
 def _allreduce_impl(pos_reducer, *args, axes, axis_index_groups):
   assert axis_index_groups is None
   if not all(isinstance(axis, int) for axis in axes):
-    breakpoint()  # TODO TODO DO NOT SUBMIT
+    raise NotImplementedError # TODO
   assert all(isinstance(axis, int) for axis in axes)
   return [pos_reducer(arg, axes) for arg in args]
 
@@ -1161,7 +1161,7 @@ def _all_gather_batched_collective(axis_data, _, vals_in, dims_in,
         axis_size=axis_size, tiled=tiled)
   if axis_index_groups is not None:
     raise NotImplementedError("axis_index_groups not supported in vmap")
-  assert axis_size == frame_size, breakpoint() or "axis size doesn't match"
+  assert axis_size == frame_size, "axis size doesn't match"
   if not isinstance(axis_name, tuple):
     axis_name = (axis_name,)
   if len(axis_name) > 1:
