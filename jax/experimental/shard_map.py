@@ -481,7 +481,7 @@ def _shard_map_staging(
   in_tracers = map(trace.to_jaxpr_tracer, in_tracers)
   in_avals = [t.aval for t in in_tracers]
   in_avals_ = map(partial(_shard_aval, mesh), in_names, in_avals)
-  with core.extend_axis_env(mesh.shape.items()):
+  with core.extend_axis_env(list(mesh.shape.items())):
     jaxpr, out_avals_, consts, () = pe.trace_to_jaxpr_dynamic(f, in_avals_)
   out_avals = map(_check_shapedarray, out_avals_)
   out_avals = map(partial(_unshard_aval, mesh), out_names_thunk(), out_avals)
@@ -492,7 +492,7 @@ def _shard_map_staging(
   constvars = map(trace.getvar, map(trace.to_jaxpr_tracer, consts))
   outvars = map(trace.makevar, out_tracers)
   in_names_staged = ({},) * len(consts) + tuple(in_names)  # type: ignore
-  with core.extend_axis_env(mesh.shape.items()):
+  with core.extend_axis_env(list(mesh.shape.items())):
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
   params = dict(mesh=mesh, in_names=in_names_staged,
                 out_names=tuple(out_names_thunk()), jaxpr=jaxpr,
