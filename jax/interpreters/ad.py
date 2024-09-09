@@ -65,7 +65,6 @@ from jax._src.interpreters.ad import (
   vjp as vjp,
   zero_jvp as zero_jvp,
   zeros_like_aval as zeros_like_aval,
-  zeros_like_jaxval as zeros_like_jaxval,
   zeros_like_p as zeros_like_p,
 )
 
