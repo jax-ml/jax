@@ -397,7 +397,7 @@ def lower_jaxpr_to_module(
 
     launch_ctx.await_async_copy(0)
 
-  smem_scratch_bytes = compiler_params.get("smem_scratch_bytes"),
+  smem_scratch_bytes = compiler_params.get("smem_scratch_bytes")
   if smem_scratch_bytes is None:
     smem_scratch_bytes = _estimate_smem_scratch_bytes(jaxpr)
   extra_smem_scratch = [
