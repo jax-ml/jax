@@ -333,6 +333,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     dtype=float_dtypes,
   )
   def testLpmn(self, l_max, shape, dtype):
+    if jtu.is_device_tpu(6, "e"):
+      self.skipTest("TODO(b/364258243): fails on TPU v6e")
     rng = jtu.rand_uniform(self.rng(), low=-0.2, high=0.9)
     args_maker = lambda: [rng(shape, dtype)]
 
@@ -442,6 +444,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testSphHarmForJitAndAgainstNumpy(self, l_max, num_z, dtype):
     """Tests against JIT compatibility and Numpy."""
+    if jtu.is_device_tpu(6, "e"):
+      self.skipTest("TODO(b/364258243): fails on TPU v6e")
     n_max = l_max
     shape = (num_z,)
     rng = jtu.rand_int(self.rng(), -l_max, l_max + 1)

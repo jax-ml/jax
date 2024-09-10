@@ -506,6 +506,8 @@ def is_device_tpu(version: int | None = None, variant: str = "") -> bool:
   # Special case v5e until the name is updated in device_kind
   if expected_version == "v5e":
     return "v5 lite" in device_kind
+  elif expected_version == "v6e":
+    return "v6 lite" in device_kind
   return expected_version in device_kind
 
 def is_cuda_compute_capability_at_least(capability: str) -> bool:
