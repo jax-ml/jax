@@ -43,7 +43,7 @@ if __name__ == "__main__":
 
     print("Entering interactive bash session")
     # Enter interactive bash session
-    subprocess.run(["/bin/bash", "-i"])
+    subprocess.run(["bash", "-i"])
 
     print("Exiting interactive bash session")
     with lock:
