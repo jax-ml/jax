@@ -131,7 +131,7 @@ class PallasBaseTest(jtu.JaxTestCase):
     if (jtu.test_device_matches(["cuda"]) and
         not jtu.is_cuda_compute_capability_at_least("8.0")):
       self.skipTest("Only works on GPU with capability >= sm80")
-    if sys.platform == "win32" and not self.INTERPRET:
+    if sys.platform == "win32":
       self.skipTest("Only works on non-Windows platforms")
 
     super().setUp()
