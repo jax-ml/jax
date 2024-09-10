@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import atexit
 from collections.abc import Sequence
 import logging
 import os
@@ -234,7 +233,6 @@ def initialize(coordinator_address: str | None = None,
                           initialization_timeout, coordinator_bind_address)
 
 
-@atexit.register
 def shutdown():
   """Shuts down the distributed system.
 

@@ -49,6 +49,7 @@ from jax._src import dispatch
 from jax._src import effects
 from jax._src import array
 from jax._src import basearray
+from jax._src import distributed
 from jax._src import dtypes
 from jax._src import sharding_impls
 from jax._src import sharding_specs
@@ -2957,7 +2958,6 @@ def block_until_ready(x):
 
   return x
 
-
 def clear_backends():
   """
   Clear all backend clients so that new backend clients can be created later.
@@ -2975,9 +2975,10 @@ def clear_backends():
 
 @atexit.register
 def clean_up():
-  db = xb._default_backend
-  if db is not None and db.platform == "cpu":  # pytype: disable=attribute-error
+  if xb._default_backend is not None:
     clear_backends()
+  # Shut down distributed system if it exists. Otherwise, this is a no-op.
+  distributed.shutdown()
 
 def live_arrays(platform=None):
   """Return all live arrays in the backend for `platform`.
