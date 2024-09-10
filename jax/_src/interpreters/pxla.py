@@ -2217,7 +2217,7 @@ def lower_sharding_computation(
   if config.use_shardy_partitioner.value or prim_requires_devices:
     for sharding in it.chain(in_shardings, out_shardings,
                              [js for js, _ in unique_intermediate_shardings]):
-      if isinstance(sharding, sharding_impls.NamedSharding):
+      if isinstance(sharding, (sharding_impls.NamedSharding, sharding_impls.AUTO)):
         if (mesh_shape_tuple is not None and
             mesh_shape_tuple != sharding.mesh.shape_tuple):
           raise ValueError(

@@ -5288,9 +5288,9 @@ class SdyIntegrationTest(jtu.JaxTestCase):
   def test_compile_with_inferred_out_sharding(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     x = jax.device_put(np.arange(8 * 4).reshape(8, 4),
-                         jax.sharding.NamedSharding(mesh, P('x', 'y')))
+                       NamedSharding(mesh, P('x', 'y')))
     y = jax.device_put(np.arange(4 * 16).reshape(4, 16),
-                         jax.sharding.NamedSharding(mesh, P('y')))
+                       NamedSharding(mesh, P('y')))
 
     @jax.jit
     def f(x, y):
@@ -5298,7 +5298,18 @@ class SdyIntegrationTest(jtu.JaxTestCase):
 
     out = f(x, y)
     self.assertArraysEqual(out, x @ y)
-    self.assertEqual(out.sharding, jax.sharding.NamedSharding(mesh, P('x')))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+  def test_fully_automatic_sharding(self):
+    mesh = jtu.create_mesh((8,), ('x',))
+    x = jax.ShapeDtypeStruct((128, 128), jnp.float32)
+
+    @jax.jit
+    def f(x, y):
+      return x @ y
+
+    lowered_str = jax.jit(f, in_shardings=[AUTO(mesh), AUTO(mesh)]).lower(x, x).as_text()
+    self.assertIn('sdy.mesh @mesh = <["x"=8]>', lowered_str)
 
 
 if __name__ == '__main__':
