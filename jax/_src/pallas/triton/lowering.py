@@ -1359,15 +1359,9 @@ def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
   return _floordiv(x, y, signed=signed)
 
 
-@register_lowering(lax.sign_p)
-def _sign_lowering_rule(ctx: LoweringRuleContext, x):
-  [x_aval] = ctx.avals_in
-  signed = jnp.issubdtype(x_aval.dtype, jnp.signedinteger)
-  zero = _full(x.type, 0)
-  return _sub(
-      _cast(_greater_than(x, zero, signed=signed), jnp.bool_, x_aval.dtype),
-      _cast(_less_than(x, zero, signed=signed), jnp.bool_, x_aval.dtype),
-  )
+register_lowering(lax.sign_p)(
+    lower_fun(pallas_utils.sign_lowering_helper, multiple_results=False)
+)
 
 
 @register_lowering(lax.iota_p)

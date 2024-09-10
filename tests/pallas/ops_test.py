@@ -669,6 +669,38 @@ class OpsTest(PallasBaseTest):
       actual = run(False)
       self.assertAllClose(actual, expected)
 
+  SIGN_PARAMS = [
+    (jnp.int32, (-3, 0, 5)),
+    (jnp.uint32, (0, 5)),
+    (jnp.float32, (-3.2, -0., 0., 5.1, jnp.nan, jnp.inf, -jnp.inf)),
+    (jnp.float64, (-3.2, -0., 0., 5.1, jnp.nan, jnp.inf, -jnp.inf)),
+  ]
+
+  @parameterized.named_parameters(
+      (f"{dtype.__name__}_{value}", dtype, value)
+      for dtype, values in SIGN_PARAMS
+      for value in values
+  )
+  def test_sign(self, dtype, value):
+    if jtu.test_device_matches(["tpu"]) and dtype == jnp.float64:
+      self.skipTest("float64 is not supported on TPU")
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 128), dtype),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.sign(x_ref[...])
+
+    with contextlib.ExitStack() as stack:
+      if jnp.dtype(dtype).itemsize == 8:
+        stack.enter_context(config.enable_x64(True))
+
+      x = jnp.full((8, 128,), value, dtype=dtype)
+      out = kernel(x)
+      expected = jnp.sign(x)
+      np.testing.assert_array_equal(out, expected)
+
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True
@@ -1612,40 +1644,6 @@ class PallasPrimitivesTest(PallasBaseTest):
 
 class PallasPrimitivesInterpretTest(PallasPrimitivesTest):
   INTERPRET = True
-
-
-class TpuOpsTest(PallasBaseTest):
-
-  def setUp(self):
-    if not jtu.test_device_matches(["tpu"]):
-      self.skipTest("Test requires TPU device.")
-
-    super().setUp()
-
-  SIGN_PARAMS = [
-    (jnp.int32, (-3, 0, 5)),
-    (jnp.uint32, (0, 5)),
-    (jnp.float32, (-3.2, -0., 0., 5.1, jnp.nan, jnp.inf, -jnp.inf)),
-  ]
-
-  @parameterized.named_parameters(
-      (f"{dtype.__name__}_{value}", dtype, value)
-      for dtype, values in SIGN_PARAMS
-      for value in values
-  )
-  def test_sign(self, dtype, value):
-    @jax.jit
-    @functools.partial(
-        pl.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((8, 128), dtype),
-    )
-    def kernel(x_ref, o_ref):
-      o_ref[...] = jnp.sign(x_ref[...])
-
-    x = jnp.full((8, 128,), value, dtype=dtype)
-    out = kernel(x)
-    expected = jnp.sign(x)
-    np.testing.assert_array_equal(out, expected)
 
 
 if __name__ == "__main__":
