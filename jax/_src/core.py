@@ -457,6 +457,10 @@ class Primitive:
     self.abstract_eval = effectful_abstract_eval
     return effectful_abstract_eval
 
+  def def_bind_with_trace(self, bind_with_trace):
+    self.bind_with_trace = bind_with_trace
+    return bind_with_trace
+
   def impl(self, *args, **params):
     raise NotImplementedError("Evaluation rule for '{}' not implemented"
                               .format(self.name))

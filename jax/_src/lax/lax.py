@@ -2615,7 +2615,7 @@ def _convert_element_type_bind_with_trace(trace, args, params):
     with core.set_current_trace(trace):
       operand = pjit.with_sharding_constraint(operand, sharding)
   return operand
-convert_element_type_p.bind_with_trace = _convert_element_type_bind_with_trace
+convert_element_type_p.def_bind_with_trace(_convert_element_type_bind_with_trace)
 
 convert_element_type_p.def_impl(partial(dispatch.apply_primitive, convert_element_type_p))
 convert_element_type_p.def_abstract_eval(

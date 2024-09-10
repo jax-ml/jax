@@ -1473,7 +1473,7 @@ axis_index_p = core.Primitive('axis_index')
 mlir.register_lowering(axis_index_p, _axis_index_lowering)
 axis_index_p.def_effectful_abstract_eval(_axis_index_effectful_abstract_eval)
 batching.fancy_primitive_batchers[axis_index_p] = _axis_index_batcher
-axis_index_p.bind_with_trace = _axis_index_bind_with_trace
+axis_index_p.def_bind_with_trace(_axis_index_bind_with_trace)
 
 def _pgather_impl(src, idx, *, axes):
   assert all(isinstance(axis, int) for axis in axes)

@@ -75,7 +75,7 @@ def program_id_bind_with_trace(trace, _, params):
   _ = frame.size(axis)
   return jax_core.Primitive.bind_with_trace(program_id_p, trace, (), dict(axis=axis))
 # TODO(dougalm): figure out how put the grid_env contest on the relevant trace
-program_id_p.bind_with_trace = program_id_bind_with_trace
+program_id_p.def_bind_with_trace(program_id_bind_with_trace)
 
 @program_id_p.def_abstract_eval
 def _program_id_abstract_eval(**_):
@@ -99,7 +99,7 @@ def _num_programs_bind_with_trace(trace, _, params):
   if size is pallas_core.dynamic_grid_dim:
     return jax_core.Primitive.bind_with_trace(num_programs_p, trace, (), dict(axis=axis))
   return size
-num_programs_p.bind_with_trace = _num_programs_bind_with_trace
+num_programs_p.def_bind_with_trace(_num_programs_bind_with_trace)
 
 @num_programs_p.def_abstract_eval
 def _num_programs_abstract_eval(**_):
