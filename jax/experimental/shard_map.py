@@ -484,7 +484,7 @@ def _shard_map_staging(
   with core.extend_axis_env(list(mesh.shape.items())):
     jaxpr, out_avals_, consts, () = pe.trace_to_jaxpr_dynamic(f, in_avals_)
   out_avals = map(_check_shapedarray, out_avals_)
-  out_avals = map(partial(_unshard_aval, mesh), out_names_thunk(), out_avals)
+  out_avals = [_unshard_aval(mesh, names, aval) for names, aval in zip(out_names_thunk(), out_avals)]
   # TODO check_rep
   source_info = source_info_util.current()
   out_tracers = [pe.DynamicJaxprTracer(trace, a, source_info) for a in out_avals]
