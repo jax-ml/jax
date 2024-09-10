@@ -3629,9 +3629,53 @@ def pad(array: ArrayLike, pad_width: PadValueLike[int | Array | np.ndarray],
 ### Array-creation functions
 
 
-@util.implements(np.stack, skip_params=['out'])
 def stack(arrays: np.ndarray | Array | Sequence[ArrayLike],
           axis: int = 0, out: None = None, dtype: DTypeLike | None = None) -> Array:
+  """Join arrays along a new axis.
+
+  JAX implementation of :func:`numpy.stack`.
+
+  Args:
+    arrays: a sequence of arrays to stack; each must have the same shape. If a
+      single array is given it will be treated equivalently to
+      `arrays = unstack(arrays)`, but the implementation will avoid explicit
+      unstacking.
+    axis: specify the axis along which to stack.
+    out: unused by JAX
+    dtype: optional dtype of the resulting array. If not specified, the dtype
+      will be determined via type promotion rules described in :ref:`type-promotion`.
+
+  Returns:
+    the stacked result.
+
+  See also:
+    - :func:`jax.numpy.unstack`: inverse of ``stack``.
+    - :func:`jax.numpy.concatenate`: concatenation along existing axes.
+    - :func:`jax.numpy.vstack`: stack vertically, i.e. along axis 0.
+    - :func:`jax.numpy.hstack`: stack horizontally, i.e. along axis 1.
+    - :func:`jax.numpy.dstack`: stack depth-wise, i.e. along axis 2.
+    - :func:`jax.numpy.column_stack`: stack columns.
+
+  Examples:
+    >>> x = jnp.array([1, 2, 3])
+    >>> y = jnp.array([4, 5, 6])
+    >>> jnp.stack([x, y])
+    Array([[1, 2, 3],
+           [4, 5, 6]], dtype=int32)
+    >>> jnp.stack([x, y], axis=1)
+    Array([[1, 4],
+           [2, 5],
+           [3, 6]], dtype=int32)
+
+    :func:`~jax.numpy.unstack` performs the inverse operation:
+
+    >>> arr = jnp.stack([x, y], axis=1)
+    >>> x, y = jnp.unstack(arr, axis=1)
+    >>> x
+    Array([1, 2, 3], dtype=int32)
+    >>> y
+    Array([4, 5, 6], dtype=int32)
+  """
   if not len(arrays):
     raise ValueError("Need at least one array to stack.")
   if out is not None:
@@ -3650,9 +3694,38 @@ def stack(arrays: np.ndarray | Array | Sequence[ArrayLike],
       new_arrays.append(expand_dims(a, axis))
     return concatenate(new_arrays, axis=axis, dtype=dtype)
 
-@util.implements(getattr(np, 'unstack', None))
+
 @partial(jit, static_argnames="axis")
 def unstack(x: ArrayLike, /, *, axis: int = 0) -> tuple[Array, ...]:
+  """Unstack an array along an axis.
+
+  JAX implementation of :func:`array_api.unstack`.
+
+  Args:
+    x: array to unstack. Must have ``x.ndim >= 1``.
+    axis: integer axis along which to unstack. Must satisfy
+      ``-x.ndim <= axis < x.ndim``.
+
+  Returns:
+    tuple of unstacked arrays.
+
+  See also:
+    - :func:`jax.numpy.stack`: inverse of ``unstack``
+    - :func:`jax.numpy.split`: split array into batches along an axis.
+
+  Examples:
+    >>> arr = jnp.array([[1, 2, 3],
+    ...                  [4, 5, 6]])
+    >>> arrs = jnp.unstack(arr)
+    >>> print(*arrs)
+    [1 2 3] [4 5 6]
+
+    :func:`~jax.numpy.stack` provides the inverse of this:
+
+    >>> jnp.stack(arrs)
+    Array([[1, 2, 3],
+           [4, 5, 6]], dtype=int32)
+  """
   util.check_arraylike("unstack", x)
   x = asarray(x)
   if x.ndim == 0:
@@ -3694,9 +3767,46 @@ def _concatenate_array(arr: ArrayLike, axis: int | None,
   dimensions = [*range(1, axis + 1), 0, *range(axis + 1, arr.ndim)]
   return lax.reshape(arr, shape, dimensions)
 
-@util.implements(np.concatenate)
+
 def concatenate(arrays: np.ndarray | Array | Sequence[ArrayLike],
                 axis: int | None = 0, dtype: DTypeLike | None = None) -> Array:
+  """Join arrays along an existing axis.
+
+  JAX implementation of :func:`numpy.concatenate`.
+
+  Args:
+    arrays: a sequence of arrays to concatenate; each must have the same shape
+      except along the specified axis. If a single array is given it will be
+      treated equivalently to `arrays = unstack(arrays)`, but the implementation
+      will avoid explicit unstacking.
+    axis: specify the axis along which to concatenate.
+    dtype: optional dtype of the resulting array. If not specified, the dtype
+      will be determined via type promotion rules described in :ref:`type-promotion`.
+
+  Returns:
+    the concatenated result.
+
+  See also:
+    - :func:`jax.lax.concatenate`: XLA concatenation API.
+    - :func:`jax.numpy.concat`: Array API version of this function.
+    - :func:`jax.numpy.stack`: concatenate arrays along a new axis.
+
+  Examples:
+    One-dimensional concatenation:
+
+    >>> x = jnp.arange(3)
+    >>> y = jnp.zeros(3, dtype=int)
+    >>> jnp.concatenate([x, y])
+    Array([0, 1, 2, 0, 0, 0], dtype=int32)
+
+    Two-dimensional concatenation:
+
+    >>> x = jnp.ones((2, 3))
+    >>> y = jnp.zeros((2, 1))
+    >>> jnp.concatenate([x, y], axis=1)
+    Array([[1., 1., 1., 0.],
+           [1., 1., 1., 0.]], dtype=float32)
+  """
   if isinstance(arrays, (np.ndarray, Array)):
     return _concatenate_array(arrays, axis, dtype=dtype)
   util.check_arraylike("concatenate", *arrays)
@@ -3721,15 +3831,96 @@ def concatenate(arrays: np.ndarray | Array | Sequence[ArrayLike],
   return arrays_out[0]
 
 
-@util.implements(getattr(np, "concat", None))
 def concat(arrays: Sequence[ArrayLike], /, *, axis: int | None = 0) -> Array:
+  """Join arrays along an existing axis.
+
+  JAX implementation of :func:`array_api.concat`.
+
+  Args:
+    arrays: a sequence of arrays to concatenate; each must have the same shape
+      except along the specified axis. If a single array is given it will be
+      treated equivalently to `arrays = unstack(arrays)`, but the implementation
+      will avoid explicit unstacking.
+    axis: specify the axis along which to concatenate.
+
+  Returns:
+    the concatenated result.
+
+  See also:
+    - :func:`jax.lax.concatenate`: XLA concatenation API.
+    - :func:`jax.numpy.concatenate`: NumPy version of this function.
+    - :func:`jax.numpy.stack`: concatenate arrays along a new axis.
+
+  Examples:
+    One-dimensional concatenation:
+
+    >>> x = jnp.arange(3)
+    >>> y = jnp.zeros(3, dtype=int)
+    >>> jnp.concat([x, y])
+    Array([0, 1, 2, 0, 0, 0], dtype=int32)
+
+    Two-dimensional concatenation:
+
+    >>> x = jnp.ones((2, 3))
+    >>> y = jnp.zeros((2, 1))
+    >>> jnp.concat([x, y], axis=1)
+    Array([[1., 1., 1., 0.],
+           [1., 1., 1., 0.]], dtype=float32)
+  """
   util.check_arraylike("concat", *arrays)
   return jax.numpy.concatenate(arrays, axis=axis)
 
 
-@util.implements(np.vstack)
 def vstack(tup: np.ndarray | Array | Sequence[ArrayLike],
            dtype: DTypeLike | None = None) -> Array:
+  """Vertically stack arrays.
+
+  JAX implementation of :func:`numpy.vstack`.
+
+  For arrays of two or more dimensions, this is equivalent to
+  :func:`jax.numpy.concatenate` with ``axis=0``.
+
+  Args:
+    tup: a sequence of arrays to stack; each must have the same shape along all
+      but the first axis. If a single array is given it will be treated
+      equivalently to `tup = unstack(tup)`, but the implementation will avoid
+      explicit unstacking.
+    dtype: optional dtype of the resulting array. If not specified, the dtype
+      will be determined via type promotion rules described in :ref:`type-promotion`.
+
+  Returns:
+    the stacked result.
+
+  See also:
+    - :func:`jax.numpy.stack`: stack along arbitrary axes
+    - :func:`jax.numpy.concatenate`: concatenation along existing axes.
+    - :func:`jax.numpy.hstack`: stack horizontally, i.e. along axis 1.
+    - :func:`jax.numpy.dstack`: stack depth-wise, i.e. along axis 2.
+
+  Examples:
+    Scalar values:
+
+    >>> jnp.vstack([1, 2, 3])
+    Array([[1],
+           [2],
+           [3]], dtype=int32, weak_type=True)
+
+    1D arrays:
+
+    >>> x = jnp.arange(4)
+    >>> y = jnp.ones(4)
+    >>> jnp.vstack([x, y])
+    Array([[0., 1., 2., 3.],
+           [1., 1., 1., 1.]], dtype=float32)
+
+    2D arrays:
+
+    >>> x = x.reshape(1, 4)
+    >>> y = y.reshape(1, 4)
+    >>> jnp.vstack([x, y])
+    Array([[0., 1., 2., 3.],
+           [1., 1., 1., 1.]], dtype=float32)
+  """
   arrs: Array | list[Array]
   if isinstance(tup, (np.ndarray, Array)):
     arrs = jax.vmap(atleast_2d)(tup)
@@ -3740,9 +3931,54 @@ def vstack(tup: np.ndarray | Array | Sequence[ArrayLike],
   return concatenate(arrs, axis=0, dtype=dtype)
 
 
-@util.implements(np.hstack)
 def hstack(tup: np.ndarray | Array | Sequence[ArrayLike],
            dtype: DTypeLike | None = None) -> Array:
+  """Horizontally stack arrays.
+
+  JAX implementation of :func:`numpy.hstack`.
+
+  For arrays of one or more dimensions, this is equivalent to
+  :func:`jax.numpy.concatenate` with ``axis=1``.
+
+  Args:
+    tup: a sequence of arrays to stack; each must have the same shape along all
+      but the second axis. Input arrays will be promoted to at least rank 1.
+      If a single array is given it will be treated equivalently to
+      `tup = unstack(tup)`, but the implementation will avoid explicit unstacking.
+    dtype: optional dtype of the resulting array. If not specified, the dtype
+      will be determined via type promotion rules described in :ref:`type-promotion`.
+
+  Returns:
+    the stacked result.
+
+  See also:
+    - :func:`jax.numpy.stack`: stack along arbitrary axes
+    - :func:`jax.numpy.concatenate`: concatenation along existing axes.
+    - :func:`jax.numpy.vstack`: stack vertically, i.e. along axis 0.
+    - :func:`jax.numpy.dstack`: stack depth-wise, i.e. along axis 2.
+
+  Examples:
+    Scalar values:
+
+    >>> jnp.hstack([1, 2, 3])
+    Array([1, 2, 3], dtype=int32, weak_type=True)
+
+    1D arrays:
+
+    >>> x = jnp.arange(3)
+    >>> y = jnp.ones(3)
+    >>> jnp.hstack([x, y])
+    Array([0., 1., 2., 1., 1., 1.], dtype=float32)
+
+    2D arrays:
+
+    >>> x = x.reshape(3, 1)
+    >>> y = y.reshape(3, 1)
+    >>> jnp.hstack([x, y])
+    Array([[0., 1.],
+           [1., 1.],
+           [2., 1.]], dtype=float32)
+  """
   arrs: Array | list[Array]
   if isinstance(tup, (np.ndarray, Array)):
     arrs = jax.vmap(atleast_1d)(tup)
@@ -3755,9 +3991,56 @@ def hstack(tup: np.ndarray | Array | Sequence[ArrayLike],
   return concatenate(arrs, axis=0 if arr0_ndim == 1 else 1, dtype=dtype)
 
 
-@util.implements(np.dstack)
 def dstack(tup: np.ndarray | Array | Sequence[ArrayLike],
            dtype: DTypeLike | None = None) -> Array:
+  """Stack arrays depth-wise.
+
+  JAX implementation of :func:`numpy.dstack`.
+
+  For arrays of three or more dimensions, this is equivalent to
+  :func:`jax.numpy.concatenate` with ``axis=2``.
+
+  Args:
+    tup: a sequence of arrays to stack; each must have the same shape along all
+      but the third axis. Input arrays will be promoted to at least rank 3. If a
+      single array is given it will be treated equivalently to `tup = unstack(tup)`,
+      but the implementation will avoid explicit unstacking.
+    dtype: optional dtype of the resulting array. If not specified, the dtype
+      will be determined via type promotion rules described in :ref:`type-promotion`.
+
+  Returns:
+    the stacked result.
+
+  See also:
+    - :func:`jax.numpy.stack`: stack along arbitrary axes
+    - :func:`jax.numpy.concatenate`: concatenation along existing axes.
+    - :func:`jax.numpy.vstack`: stack vertically, i.e. along axis 0.
+    - :func:`jax.numpy.hstack`: stack horizontally, i.e. along axis 1.
+
+  Examples:
+    Scalar values:
+
+    >>> jnp.dstack([1, 2, 3])
+    Array([[[1, 2, 3]]], dtype=int32, weak_type=True)
+
+    1D arrays:
+
+    >>> x = jnp.arange(3)
+    >>> y = jnp.ones(3)
+    >>> jnp.dstack([x, y])
+    Array([[[0., 1.],
+            [1., 1.],
+            [2., 1.]]], dtype=float32)
+
+    2D arrays:
+
+    >>> x = x.reshape(1, 3)
+    >>> y = y.reshape(1, 3)
+    >>> jnp.dstack([x, y])
+    Array([[[0., 1.],
+            [1., 1.],
+            [2., 1.]]], dtype=float32)
+  """
   arrs: Array | list[Array]
   if isinstance(tup, (np.ndarray, Array)):
     arrs = jax.vmap(atleast_3d)(tup)
@@ -3768,8 +4051,56 @@ def dstack(tup: np.ndarray | Array | Sequence[ArrayLike],
   return concatenate(arrs, axis=2, dtype=dtype)
 
 
-@util.implements(np.column_stack)
 def column_stack(tup: np.ndarray | Array | Sequence[ArrayLike]) -> Array:
+  """Stack arrays column-wise.
+
+  JAX implementation of :func:`numpy.column_stack`.
+
+  For arrays of two or more dimensions, this is equivalent to
+  :func:`jax.numpy.concatenate` with ``axis=1``.
+
+  Args:
+    tup: a sequence of arrays to stack; each must have the same leading dimension.
+      Input arrays will be promoted to at least rank 2. If a single array is given
+      it will be treated equivalently to `tup = unstack(tup)`, but the implementation
+      will avoid explicit unstacking.
+    dtype: optional dtype of the resulting array. If not specified, the dtype
+      will be determined via type promotion rules described in :ref:`type-promotion`.
+
+  Returns:
+    the stacked result.
+
+  See also:
+    - :func:`jax.numpy.stack`: stack along arbitrary axes
+    - :func:`jax.numpy.concatenate`: concatenation along existing axes.
+    - :func:`jax.numpy.vstack`: stack vertically, i.e. along axis 0.
+    - :func:`jax.numpy.hstack`: stack horizontally, i.e. along axis 1.
+    - :func:`jax.numpy.hstack`: stack depth=wise, i.e. along axis 2.
+
+  Examples:
+    Scalar values:
+
+    >>> jnp.column_stack([1, 2, 3])
+    Array([[1, 2, 3]], dtype=int32, weak_type=True)
+
+    1D arrays:
+
+    >>> x = jnp.arange(3)
+    >>> y = jnp.ones(3)
+    >>> jnp.column_stack([x, y])
+    Array([[0., 1.],
+           [1., 1.],
+           [2., 1.]], dtype=float32)
+
+    2D arrays:
+
+    >>> x = x.reshape(3, 1)
+    >>> y = y.reshape(3, 1)
+    >>> jnp.column_stack([x, y])
+    Array([[0., 1.],
+           [1., 1.],
+           [2., 1.]], dtype=float32)
+  """
   arrs: Array | list[Array] | np.ndarray
   if isinstance(tup, (np.ndarray, Array)):
     arrs = jax.vmap(lambda x: atleast_2d(x).T)(tup) if tup.ndim < 3 else tup
@@ -3777,7 +4108,7 @@ def column_stack(tup: np.ndarray | Array | Sequence[ArrayLike]) -> Array:
     # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
     util.check_arraylike("column_stack", *tup, emit_warning=True)
     arrs = [atleast_2d(arr).T if arr.ndim < 2 else arr for arr in map(asarray, tup)]
-  return concatenate(arrs, 1)
+  return concatenate(arrs, axis=1)
 
 
 @util.implements(np.choose, skip_params=['out'])
