@@ -114,7 +114,7 @@ def conv_general_dilated(
   - the input and output feature dimensions in rhs with the characters 'I'
     and 'O' respectively, and
   - spatial dimension correspondences between lhs, rhs, and the output using
-    any distinct characters.
+    any distinct characters. The examples below use 'W' and 'H'.
 
   For example, to indicate dimension numbers consistent with the ``conv``
   function with two spatial dimensions, one could use ``('NCHW', 'OIHW',
