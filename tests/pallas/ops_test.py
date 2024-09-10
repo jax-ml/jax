@@ -701,6 +701,24 @@ class OpsTest(PallasBaseTest):
       expected = jnp.sign(x)
       np.testing.assert_array_equal(out, expected)
 
+  @parameterized.product(
+      dtype=[jnp.float32],
+      value=[-3.2, -1.0, -0.4, 0., 0.72, 1.0, 2.4],
+  )
+  def test_erf_inv(self, dtype, value):
+    @functools.partial(
+        self.pallas_call,
+        # TODO(ayx): add float64 support for `erf_inv`
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = lax.erf_inv(x_ref[...])
+
+    x = jnp.full((8, 128), value, dtype=dtype)
+    out = kernel(x)
+    expected = lax.erf_inv(x)
+    np.testing.assert_array_equal(out, expected)
+
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True
@@ -1568,21 +1586,6 @@ class OpsExtraTest(PallasBaseTest):
       y = reduce(x)
       y_ref = jnp.cumsum(x, axis=axis)
       np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2, err_msg=i)
-
-  @parameterized.parameters([-3.2, -1.0, -0.4, 0., 0.72, 1.0, 2.4])
-  def test_erf_inv(self, x):
-    @functools.partial(
-        self.pallas_call,
-        # TODO(ayx): add float64 support for `erf_inv`
-        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-    )
-    def kernel(x_ref, o_ref):
-      o_ref[...] = lax.erf_inv(x_ref[...])
-
-    x = jnp.full((8, 128), x)
-    out = kernel(x)
-    expected = lax.erf_inv(x)
-    np.testing.assert_array_equal(out, expected)
 
 
 class OpsExtraInterpretTest(OpsExtraTest):
