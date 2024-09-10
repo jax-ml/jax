@@ -913,6 +913,16 @@ def _all_to_all_batched_collective(axis_data, _, vals_in, dims_in,
   axis_size, frame_name = axis_data.size, axis_data.name
   if axis_index_groups is not None:
     raise NotImplementedError("Please open a feature request!")
+
+  if isinstance(axis_name, (list, tuple)):
+    axes_names = axis_name
+  else:
+    axes_names = [axis_name]
+  if axis_data.name not in axes_names:
+    return _all_to_all_batcher(
+      vals_in, dims_in, axis_name=axis_name, split_axis=split_axis,
+      concat_axis=concat_axis, axis_index_groups=axis_index_groups, tiled=tiled)
+
   x, = vals_in
   d, = dims_in
   if d is batching.not_mapped:
