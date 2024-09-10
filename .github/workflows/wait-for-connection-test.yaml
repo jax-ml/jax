@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: ["arc-linux-x86-n2-64","arc-linux-arm64-t2a-48"]
+        runner: ["linux-x86-n2-64","linux-arm64-t2a-48"]
         instances: ["1"]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
