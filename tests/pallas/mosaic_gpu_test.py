@@ -118,7 +118,6 @@ class PallasCallTest(PallasTest):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
-        compiler_params={"smem_scratch_bytes": 4 * 4},
     )
     def layer_norm(x_ref, o_ref):
       x_mean = jnp.mean(x_ref[...])
