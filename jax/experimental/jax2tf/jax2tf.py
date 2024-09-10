@@ -826,16 +826,17 @@ def _interpret_fun_jax(
     extra_name_stack: str | None,
     fresh_constant_cache: bool = False,
 ) -> tuple[tuple[TfVal, ...], tuple[core.ShapedArray, ...]]:
-  with core.new_base_main(TensorFlowTrace) as main:
-    subtrace_fun = _interpret_subtrace(lu.wrap_init(fun_jax), main, args_avals)
-    with _extended_name_stack(extra_name_stack):
-      with core.new_sublevel():
-        out_vals: Sequence[tuple[TfVal, core.ShapedArray]] = \
-            _call_wrapped_with_new_constant_cache(subtrace_fun, args_tf,
-                                                  fresh_constant_cache=fresh_constant_cache)
-      del main
+  raise NotImplementedError
+  # with core.new_base_main(TensorFlowTrace) as main:
+  #   subtrace_fun = _interpret_subtrace(lu.wrap_init(fun_jax), main, args_avals)
+  #   with _extended_name_stack(extra_name_stack):
+  #     with core.new_sublevel():
+  #       out_vals: Sequence[tuple[TfVal, core.ShapedArray]] = \
+  #           _call_wrapped_with_new_constant_cache(subtrace_fun, args_tf,
+  #                                                 fresh_constant_cache=fresh_constant_cache)
+  #     del main
 
-  return util.unzip2(out_vals)
+  # return util.unzip2(out_vals)
 
 
 def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
@@ -1017,20 +1018,20 @@ def _convert_jax_impl(impl_jax: Callable, *,
   return wrapped_tf
 
 
-@lu.transformation
-def _interpret_subtrace(main: core.MainTrace,
-                        in_avals: Sequence[core.ShapedArray],
-                        *in_vals: TfVal):
-  trace = TensorFlowTrace(main, core.cur_sublevel())
-  in_tracers = tuple(
-      TensorFlowTracer(trace, val, aval)
-      for val, aval in zip(in_vals, in_avals))
-  outs = yield in_tracers, {}  # type: Sequence[TfVal]
-  out_tracers: Iterable[TensorFlowTracer] = (
-      map(trace.full_raise, outs))
-  out_vals_with_avals: Sequence[tuple[TfVal, core.ShapedArray]] = (
-      tuple((t.val, t.aval) for t in out_tracers))
-  yield out_vals_with_avals
+# @lu.transformation
+# def _interpret_subtrace(main: core.MainTrace,
+#                         in_avals: Sequence[core.ShapedArray],
+#                         *in_vals: TfVal):
+#   trace = TensorFlowTrace(main, core.cur_sublevel())
+#   in_tracers = tuple(
+#       TensorFlowTracer(trace, val, aval)
+#       for val, aval in zip(in_vals, in_avals))
+#   outs = yield in_tracers, {}  # type: Sequence[TfVal]
+#   out_tracers: Iterable[TensorFlowTracer] = (
+#       map(trace.full_raise, outs))
+#   out_vals_with_avals: Sequence[tuple[TfVal, core.ShapedArray]] = (
+#       tuple((t.val, t.aval) for t in out_tracers))
+#   yield out_vals_with_avals
 
 
 def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args_tf: TfVal,
@@ -1405,39 +1406,19 @@ class TensorFlowTrace(core.Trace):
 
   def process_call(self, call_primitive: core.Primitive, fun: lu.WrappedFun,
                    tracers: Sequence[TensorFlowTracer], params):
-    assert call_primitive.multiple_results
-    vals: Sequence[TfVal] = [t.val for t in tracers]
-    avals: Sequence[core.ShapedArray] = tuple(t.aval for t in tracers)
-    interpreted_fun = _interpret_subtrace(fun, self.main, avals)
-    extra_name_stack = None
-    with _extended_name_stack(extra_name_stack):
-      with core.new_sublevel():
-        vals_out = interpreted_fun.call_wrapped(*vals)
-    return [TensorFlowTracer(self, v, a) for v, a in vals_out]
-
-  def post_process_call(self, call_primitive: core.Primitive,
-                        out_tracers: Sequence[TensorFlowTracer], params):
-    # We encountered a call primitive whose result (out_tracers) include
-    # TensorFlowTracer that were not passed through its arguments (captured from
-    # the environment).
-    vals = tuple(t.val for t in out_tracers)
-    main = self.main
-
-    def todo(vals: Sequence[TfVal]):
-      # TODO: is name_stack correct?
-      trace = TensorFlowTrace(main, core.cur_sublevel())
-      return [
-          TensorFlowTracer(trace, v, out_tracer.aval)
-          for v, out_tracer in zip(vals, out_tracers)
-      ]
-
-    return vals, todo
+    raise NotImplementedError
+    # assert call_primitive.multiple_results
+    # vals: Sequence[TfVal] = [t.val for t in tracers]
+    # avals: Sequence[core.ShapedArray] = tuple(t.aval for t in tracers)
+    # interpreted_fun = _interpret_subtrace(fun, self.main, avals)
+    # extra_name_stack = None
+    # with _extended_name_stack(extra_name_stack):
+    #   with core.new_sublevel():
+    #     vals_out = interpreted_fun.call_wrapped(*vals)
+    # return [TensorFlowTracer(self, v, a) for v, a in vals_out]
 
   def process_map(self, map_primitive, f, tracers, params):
     raise NotImplementedError("process_map")
-
-  def post_process_map(self, map_primitive, out_tracers, params):
-    raise NotImplementedError("post_process_map")
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
     # Drop the custom differentiation rule and act like a call primitive. This
@@ -1446,9 +1427,6 @@ class TensorFlowTrace(core.Trace):
     del jvp, symbolic_zeros  # Unused.
     return self.process_call(core.call_p, fun, tracers, {})
 
-  def post_process_custom_jvp_call(self, out_tracers, _):
-    assert False  # unreachable assuming jax2tf runs with clean trace state
-
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
                               symbolic_zeros):
     # Drop the custom differentiation rule and act like a call primitive. This
@@ -1456,12 +1434,6 @@ class TensorFlowTrace(core.Trace):
     # there are no more JAX differentiation transformations to be applied.
     del fwd, bwd, out_trees, symbolic_zeros  # Unused.
     return self.process_call(core.call_p, fun, tracers, {})
-
-  def post_process_custom_vjp_call(self, out_tracers, _):
-    assert False  # unreachable assuming jax2tf runs with clean trace state
-
-  def post_process_custom_vjp_call_fwd(self, *_, **__):
-    assert False  # unreachable assuming jax2tf runs with clean trace state
 
   def get_primitive_impl(self, p: core.Primitive) -> tuple[Callable, bool]:
     # Returns the primitive implementation and whether the implementation
