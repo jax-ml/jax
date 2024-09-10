@@ -381,7 +381,7 @@ def convert(fun_jax: Callable,
       # It is Ok to nest convert when we are inside a call_tf
       raise ValueError(
           "convert must be used outside all JAX transformations." +
-          f"Trace state: {core.thread_local_state.trace_state.trace_stack}")
+          f"Trace state: {core.trace_ctx}")
 
     global _has_registered_tf_source_path
     if not _has_registered_tf_source_path:
