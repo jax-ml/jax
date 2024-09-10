@@ -958,6 +958,9 @@ class TracingContext(threading.local):
   axis_env : AxisEnv
 
   def __init__(self):
+    self.reset()
+
+  def reset(self):
     self.trace = eval_trace
     self.axis_env = top_axis_env
 
@@ -1024,7 +1027,7 @@ def trace_state_clean() -> bool:
 def reset_trace_state() -> bool:
   """Resets the global trace state and returns True if it was already clean."""
   if not trace_ctx.is_top_level():
-    trace_ctx.__init__()
+    trace_ctx.reset()
     trace_ctx.update_thread_local_jit_state()
     return False
   else:
