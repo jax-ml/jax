@@ -39,6 +39,7 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import api
+from jax._src import array
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -381,6 +382,25 @@ def count_jit_and_pmap_lowerings():
     yield count
   finally:
     mlir.lower_jaxpr_to_module = mlir_lower
+
+
+@contextmanager
+def count_jax_array_shard_arg_calls():
+  # No need to clear any caches since we generally jit and pmap fresh callables
+  # in tests.
+
+  array_shard_arg = array._array_shard_arg
+  count = [0]
+
+  def array_shard_arg_and_count(*args, **kwargs):
+    count[0] += 1
+    return array_shard_arg(*args, **kwargs)
+
+  pxla.shard_arg_handlers[array.ArrayImpl] = array_shard_arg_and_count
+  try:
+    yield count
+  finally:
+    pxla.shard_arg_handlers[array.ArrayImpl] = array_shard_arg
 
 
 @contextmanager
@@ -1965,7 +1985,7 @@ class numpy_with_mpmath:
       # On branch cut, mpmath.mp.asin returns different value compared
       # to mpmath.fp.asin and numpy.arcsin (see
       # mpmath/mpmath#786). The following if-block ensures
-      # compatibiliy with numpy.arcsin.
+      # compatibility with numpy.arcsin.
       if x.real > 1 and x.imag == 0:
         return ctx.asin(x).conjugate()
 
@@ -1997,7 +2017,7 @@ class numpy_with_mpmath:
         return ctx.make_mpc((real._mpf_, (-sign_imag * inf)._mpf_))
       # On branch cut, mpmath.mp.acos returns different value
       # compared to mpmath.fp.acos and numpy.arccos. The
-      # following if-block ensures compatibiliy with
+      # following if-block ensures compatibility with
       # numpy.arccos.
       if x.imag == 0 and x.real > 1:
         return -ctx.acos(x)
@@ -2026,7 +2046,7 @@ class numpy_with_mpmath:
       # On branch cut, mpmath.mp.asinh returns different value
       # compared to mpmath.fp.asinh and numpy.arcsinh (see
       # mpmath/mpmath#786).  The following if-block ensures
-      # compatibiliy with numpy.arcsinh.
+      # compatibility with numpy.arcsinh.
       if x.real == 0 and x.imag < -1:
         return (-ctx.asinh(x)).conjugate()
     return ctx.asinh(x)
