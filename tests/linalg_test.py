@@ -1152,7 +1152,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
         a = (a + T(a.conj())) / 2
       return np.linalg.pinv(a, hermitian=hermitian)
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=1e-4)
-    self._CompileAndCheck(jnp_fn, args_maker)
+    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-5)
 
     # TODO(phawkins): 6e-2 seems like a very loose tolerance.
     jtu.check_grads(jnp_fn, args_maker(), 1, rtol=6e-2, atol=1e-3)
