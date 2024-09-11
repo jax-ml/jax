@@ -23,6 +23,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     C++ and CUDA code from JAX.
 
 * Changes
+  * `jax_pmap_no_rank_reduction` flag is set to `True` by default.
+    * array[0] on a pmap result now introduces a reshape (use array[0:1]
+      instead).
+    * The per-shard shape (accessable via jax_array.addressable_shards or
+      jax_array.addressable_data(0)) now has a leading (1, ...). Update code
+      that directly accesses shards accordingly. The rank of the per-shard-shape
+      now matches that of the global shape which is the same behavior as jit.
+      This avoids costly reshapes when passing results from pmap into jit.
   * `jax_enable_memories` flag is set to `True` by default.
   * {mod}`jax.numpy` now supports v2023.12 of the Python Array API Standard.
     See {ref}`python-array-api` for more information.
