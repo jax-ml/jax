@@ -2,7 +2,7 @@
 <img src="https://raw.githubusercontent.com/google/jax/main/images/jax_logo_250px.png" alt="logo"></img>
 </div>
 
-# Scalable, transformable, high-performance machine learning
+# Transformable numerical computing at scale
 
 ![Continuous integration](https://github.com/google/jax/actions/workflows/ci-build.yaml/badge.svg)
 ![PyPI version](https://img.shields.io/pypi/v/jax)
