@@ -1396,8 +1396,7 @@ class TensorFlowTrace(core.Trace):
     interpreted_fun = _interpret_subtrace(fun, avals)
     extra_name_stack = None
     with _extended_name_stack(extra_name_stack):
-      with core.new_sublevel():
-        vals_out = interpreted_fun.call_wrapped(*vals)
+      vals_out = interpreted_fun.call_wrapped(*vals)
     return [TensorFlowTracer(self, v, a) for v, a in vals_out]
 
   def process_map(self, map_primitive, f, tracers, params):
