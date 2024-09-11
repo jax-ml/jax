@@ -1005,24 +1005,186 @@ def _complex_comparison(lax_op: Callable[[ArrayLike, ArrayLike], Array],
                       lax_op(x.real, y.real))
   return lax_op(x, y)
 
-@implements(np.greater_equal, module='numpy')
 @partial(jit, inline=True)
 def greater_equal(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Return element-wise truth value of ``x >= y``.
+
+  JAX implementation of :obj:`numpy.greater_equal`.
+
+  Args:
+    x: input array or scalar.
+    y: input array or scalar. ``x`` and ``y`` must either have same shape or be
+      broadcast compatible.
+
+  Returns:
+    An array containing boolean values. ``True`` if the elements of ``x >= y``,
+    and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.less_equal`: Returns element-wise truth value of ``x <= y``.
+    - :func:`jax.numpy.greater`: Returns element-wise truth value of ``x > y``.
+    - :func:`jax.numpy.less`: Returns element-wise truth value of ``x < y``.
+
+  Examples:
+    Scalar inputs:
+
+    >>> jnp.greater_equal(4, 7)
+    Array(False, dtype=bool, weak_type=True)
+
+    Inputs with same shape:
+
+    >>> x = jnp.array([2, 5, -1])
+    >>> y = jnp.array([-6, 4, 3])
+    >>> jnp.greater_equal(x, y)
+    Array([ True,  True, False], dtype=bool)
+
+    Inputs with broadcast compatibility:
+
+    >>> x1 = jnp.array([[3, -1, 4],
+    ...                 [5, 9, -6]])
+    >>> y1 = jnp.array([-1, 4, 2])
+    >>> jnp.greater_equal(x1, y1)
+    Array([[ True, False,  True],
+           [ True,  True, False]], dtype=bool)
+  """
   return _complex_comparison(lax.ge, *promote_args("greater_equal", x, y))
 
-@implements(np.greater, module='numpy')
+
 @partial(jit, inline=True)
 def greater(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Return element-wise truth value of ``x > y``.
+
+  JAX implementation of :obj:`numpy.greater`.
+
+  Args:
+    x: input array or scalar.
+    y: input array or scalar. ``x`` and ``y`` must either have same shape or be
+      broadcast compatible.
+
+  Returns:
+    An array containing boolean values. ``True`` if the elements of ``x > y``,
+    and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.less`: Returns element-wise truth value of ``x < y``.
+    - :func:`jax.numpy.greater_equal`: Returns element-wise truth value of
+      ``x >= y``.
+    - :func:`jax.numpy.less_equal`: Returns element-wise truth value of ``x <= y``.
+
+  Examples:
+    Scalar inputs:
+
+    >>> jnp.greater(5, 2)
+    Array(True, dtype=bool, weak_type=True)
+
+    Inputs with same shape:
+
+    >>> x = jnp.array([5, 9, -2])
+    >>> y = jnp.array([4, -1, 6])
+    >>> jnp.greater(x, y)
+    Array([ True,  True, False], dtype=bool)
+
+    Inputs with broadcast compatibility:
+
+    >>> x1 = jnp.array([[5, -6, 7],
+    ...                 [-2, 5, 9]])
+    >>> y1 = jnp.array([-4, 3, 10])
+    >>> jnp.greater(x1, y1)
+    Array([[ True, False, False],
+           [ True,  True, False]], dtype=bool)
+  """
   return _complex_comparison(lax.gt, *promote_args("greater", x, y))
 
-@implements(np.less_equal, module='numpy')
+
 @partial(jit, inline=True)
 def less_equal(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Return element-wise truth value of ``x <= y``.
+
+  JAX implementation of :obj:`numpy.less_equal`.
+
+  Args:
+    x: input array or scalar.
+    y: input array or scalar. ``x`` and ``y`` must have either same shape or be
+      broadcast compatible.
+
+  Returns:
+    An array containing the boolean values. ``True`` if the elements of ``x <= y``,
+    and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.greater_equal`: Returns element-wise truth value of
+      ``x >= y``.
+    - :func:`jax.numpy.greater`: Returns element-wise truth value of ``x > y``.
+    - :func:`jax.numpy.less`: Returns element-wise truth value of ``x < y``.
+
+  Examples:
+    Scalar inputs:
+
+    >>> jnp.less_equal(6, -2)
+    Array(False, dtype=bool, weak_type=True)
+
+    Inputs with same shape:
+
+    >>> x = jnp.array([-4, 1, 7])
+    >>> y = jnp.array([2, -3, 8])
+    >>> jnp.less_equal(x, y)
+    Array([ True, False,  True], dtype=bool)
+
+    Inputs with broadcast compatibility:
+
+    >>> x1 = jnp.array([2, -5, 9])
+    >>> y1 = jnp.array([[1, -6, 5],
+    ...                 [-2, 4, -6]])
+    >>> jnp.less_equal(x1, y1)
+    Array([[False, False, False],
+           [False,  True, False]], dtype=bool)
+  """
   return _complex_comparison(lax.le, *promote_args("less_equal", x, y))
 
-@implements(np.less, module='numpy')
+
 @partial(jit, inline=True)
 def less(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Return element-wise truth value of ``x < y``.
+
+  JAX implementation of :obj:`numpy.less`.
+
+  Args:
+    x: input array or scalar.
+    y: input array or scalar. ``x`` and ``y`` must either have same shape or be
+      broadcast compatible.
+
+  Returns:
+    An array containing boolean values. ``True`` if the elements of ``x < y``,
+    and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.greater`: Returns element-wise truth value of ``x > y``.
+    - :func:`jax.numpy.greater_equal`: Returns element-wise truth value of
+      ``x >= y``.
+    - :func:`jax.numpy.less_equal`: Returns element-wise truth value of ``x <= y``.
+
+  Examples:
+    Scalar inputs:
+
+    >>> jnp.less(3, 7)
+    Array(True, dtype=bool, weak_type=True)
+
+    Inputs with same shape:
+
+    >>> x = jnp.array([5, 9, -3])
+    >>> y = jnp.array([1, 6, 4])
+    >>> jnp.less(x, y)
+    Array([False, False,  True], dtype=bool)
+
+    Inputs with broadcast compatibility:
+
+    >>> x1 = jnp.array([[2, -4, 6, -8],
+    ...                 [-1, 5, -3, 7]])
+    >>> y1 = jnp.array([0, 3, -5, 9])
+    >>> jnp.less(x1, y1)
+    Array([[False,  True, False,  True],
+           [ True, False, False,  True]], dtype=bool)
+  """
   return _complex_comparison(lax.lt, *promote_args("less", x, y))
 
 # Array API aliases
