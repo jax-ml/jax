@@ -34,17 +34,23 @@ DISABLED_BACKENDS = [
 ]
 
 DISABLED_CONFIGS = [
-    "gpu",
     "gpu_a100",
+    "gpu_a100_x32",
     "gpu_p100",
     "gpu_p100_x32",
-    "gpu_x32",
     "gpu_pjrt_c_api",
+    "gpu_x32",
+    "gpu",
 ]
 
 jax_test(
     name = "gpu_test",
     srcs = ["gpu_test.py"],
+    config_tags_overrides = {
+        "gpu_h100_2gpu": {
+            "ondemand": False,  # Include in presubmit.
+        },
+    },
     disable_backends = DISABLED_BACKENDS,
     disable_configs = DISABLED_CONFIGS,
     enable_configs = ["gpu_h100_2gpu"],
