@@ -64,6 +64,7 @@ OriginStr = str  # The origin of a block spec, e.g. input[2]["field"]
 # identifiable in kernels.
 # TODO(justinfu): Handle semaphores with a custom extended dtype.
 SEMAPHORE_INTERPRET_DTYPE = jnp.int16
+SEMAPHORE_MAX_VALUE = jnp.iinfo(SEMAPHORE_INTERPRET_DTYPE).max
 
 
 @runtime_checkable
