@@ -225,6 +225,26 @@ class PallasCallTest(PallasTest):
         jnp.full([256], 2, dtype=jnp.int32),
     )
 
+  def test_swizzled_blockspec_shapes(self):
+    @functools.partial(
+        pl.pallas_call,
+        in_specs=[
+            plgpu.GPUBlockSpec(
+                (128, 64), lambda *i: i, tiling=(64, 64), swizzle=128
+            ),
+        ],
+        out_specs=pl.BlockSpec((2, 1, 64, 64), lambda i, j: (i, j, 64, 64)),
+        out_shape=jax.ShapeDtypeStruct((4, 2, 64, 64), jnp.float16),
+        grid=(2, 2),
+    )
+    def kernel(x_ref, o_ref):
+      assert x_ref.shape == (2, 1, 64, 64), x_ref.shape
+      o_ref[...] = x_ref[...]
+
+    x = jnp.zeros((256, 128), dtype=jnp.float16)
+    result = kernel(x)
+    self.assertEqual(result.shape, (4, 2, 64, 64))
+
 
 if __name__ == "__main__":
   absltest.main()

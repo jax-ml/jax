@@ -35,6 +35,7 @@ from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
+from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.state import primitives as sp
 from jax.experimental.mosaic import gpu as mosaic_gpu
 from jax.experimental.mosaic.gpu import dsl as mgpu
@@ -231,6 +232,7 @@ def lower_jaxpr_to_module(
     grid += (1,) * (3 - len(grid))
   block = (128,) + (1,) * (len(grid) - 1)
 
+  num_inputs = grid_mapping.num_inputs
   params = compiler_params.get("mosaic_gpu", {})
   num_stages = params.get("num_stages", 1)
   dimension_semantics = params.get(
@@ -248,14 +250,28 @@ def lower_jaxpr_to_module(
   assert all(block[axis] == 1 for axis in sequential_axes)
 
   in_structs_gmem = [*grid_mapping.in_shapes]
-  in_structs_smem = [
-      jax.ShapeDtypeStruct([num_stages, *bm.block_shape], s.dtype)
-      for bm, s in zip(
-          block_mappings[: grid_mapping.num_inputs],
-          grid_mapping.in_shapes,
-      )
+  in_block_shapes = [
+      bm.block_shape
+      for bm in grid_mapping.block_mappings[:num_inputs]
   ]
+  in_structs_smem = [
+      jax.ShapeDtypeStruct(
+          [num_stages,
+           *bm.ref_aval.inner_aval.shape],  # pytype: disable=attribute-error
+          bm.ref_aval.inner_aval.dtype)  # pytype: disable=attribute-error
+      for bm in block_mappings[:num_inputs]
+  ]
+  in_gmem_transforms = [
+    bm.transforms for bm in grid_mapping.block_mappings[:num_inputs]
+  ]
+  _get_swizzle = (
+      lambda bm: bm.swizzle
+      if isinstance(bm, gpu_core.GPUBlockMapping)
+      else None
+  )
+  in_swizzles = map(_get_swizzle, grid_mapping.block_mappings[:num_inputs])
   out_structs_gmem = [*grid_mapping.out_shapes]
+  # TODO(justinfu): Implement output Memref transforms
   out_structs_smem = [
       jax.ShapeDtypeStruct([num_stages, *bm.block_shape], s.dtype)
       for bm, s in zip(
@@ -264,7 +280,7 @@ def lower_jaxpr_to_module(
       )
   ]
 
-  def body(launch_ctx: mosaic_gpu.LaunchContext, *buffers):
+  def body(launch_ctx: mosaic_gpu.LaunchContext, *buffers: ir.Value):
     *buffers_gmem, (*buffers_smem, runtime_smem, barriers) = buffers
     assert len(buffers_gmem) == len(buffers_smem)
     in_buffers_gmem, out_buffers_gmem = util.split_list(
@@ -305,16 +321,18 @@ def lower_jaxpr_to_module(
 
     def fetch(idx: int, step: ir.Value, slot: ir.Value) -> None:
       # TODO(slebedev): Support 128-byte swizzling, once we can lower matmuls.
+      gmem_transforms = (x.to_gpu_transform() for x in in_gmem_transforms[idx])
       launch_ctx.async_copy(
           src_ref=in_buffers_gmem[idx],
           dst_ref=mgpu.memref_slice(in_buffers_smem[idx], slot),
           gmem_slice=gmem_slice(
               in_start_indices[idx],
               step,
-              ir.MemRefType(in_buffers_smem[idx].type).shape[1:],
+              in_block_shapes[idx],
           ),
           barrier=barriers[slot],
-          swizzle=None,
+          gmem_transform=tuple(gmem_transforms),
+          swizzle=in_swizzles[idx],
           arrive=True,
           uniform=False,
       )
