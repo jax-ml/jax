@@ -108,6 +108,8 @@ current directory.
    --bazel_options=--repo_env=LOCAL_NCCL_PATH="/foo/bar/nvidia/nccl"
    ```
 
+   Please see the full list of instructions in [XLA documentation](https://github.com/openxla/xla/blob/main/docs/hermetic_cuda.md).
+
 *  JAX versions prior v.0.4.32: you must have CUDA and CUDNN installed and
    provide paths to them using configuration options.
 
