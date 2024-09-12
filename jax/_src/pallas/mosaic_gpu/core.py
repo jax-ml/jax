@@ -17,7 +17,7 @@
 from collections.abc import Sequence
 import dataclasses
 import enum
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, Protocol
 from jax import core as jax_core
 from jax._src import core
 from jax._src import tree_util
@@ -59,8 +59,13 @@ class GPUMemorySpace(enum.Enum):
     return MemoryRef(shape, dtype, self)
 
 
-class TilingTransform(pallas_core.MemrefTransform):
-  """Represents a tiling transformation for Memrefs.
+class MemoryRefTransform(pallas_core.MemoryRefTransform, Protocol):
+  def to_gpu_transform(self) -> mosaic_gpu.MemRefTransform:
+    ...
+
+
+class TilingTransform(MemoryRefTransform):
+  """Represents a tiling transformation for memory refs.
 
   A tiling of (X, Y) on an array of shape (M, N) will result in a transformed
   shape of (M // X, N // Y, X, Y). Ex. A (256, 256) block that is tiled with a
@@ -125,7 +130,7 @@ class GPUBlockSpec(pallas_core.BlockSpec):
         grid=grid,
         mapped_dims=mapped_dims,
     )
-    transforms: tuple[pallas_core.MemrefTransform, ...] = ()
+    transforms: tuple[pallas_core.MemoryRefTransform, ...] = ()
     if self.tiling is not None:
       transforms += (TilingTransform(self.tiling),)
     return GPUBlockMapping(

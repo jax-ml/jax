@@ -262,7 +262,8 @@ def lower_jaxpr_to_module(
       for bm in block_mappings[:num_inputs]
   ]
   in_gmem_transforms = [
-    bm.transforms for bm in grid_mapping.block_mappings[:num_inputs]
+      cast(gpu_core.MemoryRefTransform, bm.transforms)
+      for bm in grid_mapping.block_mappings[:num_inputs]
   ]
   _get_swizzle = (
       lambda bm: bm.swizzle

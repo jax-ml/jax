@@ -430,11 +430,10 @@ no_block_spec = NoBlockSpec()
 BlockSpecTree = Any
 
 
-class MemrefTransform(Protocol):
-  """Represents a transformation applied to a Memref on load or store."""
+class MemoryRefTransform(Protocol):
+  """Transforms a memory reference on load or store."""
 
   def __call__(self, block_aval: AbstractMemoryRef) -> AbstractMemoryRef:
-    """Returns the transformed aval given an input aval."""
     raise NotImplementedError("Abstract evaluation not implemented.")
 
 
@@ -451,9 +450,7 @@ class BlockMapping:
   indexing_mode: IndexingMode
   array_shape_dtype: jax.ShapeDtypeStruct  # The whole array
   origin: OriginStr
-  transforms: Sequence[MemrefTransform] = dataclasses.field(
-      default_factory=tuple
-  )
+  transforms: Sequence[MemoryRefTransform] = ()
 
   def check_invariants(self) -> None:
     if not config.enable_checks.value: return
