@@ -911,7 +911,20 @@ class EvalTrace(Trace):
       return fun.call_wrapped(*tracers)
 
 
-class TraceTag: pass
+class TraceTag:
+  # TODO: this works for surprisingly subtle reasons. Function transformations
+  # like `jvp_subtrace` are parameterized by a tag that identifies the set of
+  # pre-existing tracers we want to unpack during the transformation. A function
+  # defined in an outer scope can't have any closed-over traces, so the tag is
+  # irrelevant. A function defined in the current scope may have closed-over
+  # traces, but the tag will never change so we'll never get a spurious cache
+  # hit. The plan is to do away with `lu.cache` altogether, and use a simpler
+  # caching scheme that only caches top-level functions. Then we can remove this
+  # hack.
+  def __hash__(self):
+    return hash(TraceTag)
+  def __eq__(self, other):
+    return isinstance(other, TraceTag)
 
 # -------------------- axis env --------------------
 
