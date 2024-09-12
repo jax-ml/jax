@@ -3798,7 +3798,8 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     size_im = 11
     atol = None
 
-    if name in {"arccos", "arcsin", "arcsinh", "arccosh", "arctan", "arctanh"}:
+    if (name in {"arccos", "arcsin", "arcsinh", "arccosh"}
+        or name in {"arctan", "arctanh"} and jax._src.lib.version > (0, 4, 31)):
       # TODO(pearu): eliminate this if-block when a fix to mpmath#787
       # becomes available
       extra_prec_multiplier = 20
