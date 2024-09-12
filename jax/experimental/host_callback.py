@@ -1902,7 +1902,9 @@ def _initialize_outfeed_receiver(
         _callback_handler_data.on_exit = True
         _deprecated_barrier_wait("at_exit")
 
-    atexit.register(exit_handler)  # We wait as long as we have callbacks
+    # Wait for all pending callbacks to finish before letting Jax clean up the
+    # backend to prevent illegal memory access.
+    api.register_cleanup_prehook(exit_handler)
     _callback_handler_data.initialized = True
 
 

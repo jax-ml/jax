@@ -2732,12 +2732,27 @@ def clear_backends():
   pjit._cpp_pjit_cache.clear()
   xc._xla.PjitFunctionCache.clear_all()
 
+_CLEANUP_PRE_HOOKS = []
+_CLEANUP_POST_HOOKS = []
+
+def register_cleanup_prehook(callback):
+  """Register atexit handlers to be invoked before backend is cleaned up."""
+  _CLEANUP_PRE_HOOKS.append(callback)
+
+def register_cleanup_posthook(callback):
+  """Register atexit handlers to be invoked after backend is cleaned up."""
+  _CLEANUP_POST_HOOKS.append(callback)
+
 @atexit.register
 def clean_up():
+  for callback in _CLEANUP_PRE_HOOKS:
+    callback()
   if xb._default_backend is not None:
     clear_backends()
   # Shut down distributed system if it exists. Otherwise, this is a no-op.
   distributed.shutdown()
+  for callback in _CLEANUP_POST_HOOKS:
+    callback()
 
 def live_arrays(platform=None):
   """Return all live arrays in the backend for `platform`.

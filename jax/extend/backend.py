@@ -17,6 +17,7 @@
 
 from jax._src.api import (
   clear_backends as clear_backends,
+  register_cleanup_posthook as register_cleanup_posthook,
 )
 from jax._src.xla_bridge import (
   backends as backends,
