@@ -12,7 +12,15 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## jax 0.4.33
 
-* Deletion:
+* Changes
+  * `jax_pmap_no_rank_reduction` flag is set to `True` by default.
+    * array[0] on a pmap result now introduces a reshape (use array[0:1]
+      instead).
+    * The per-shard shape (accessable via jax_array.addressable_shards or
+      jax_array.addressable_data(0)) now has a leading (1, ...). Update code
+      that directly accesses shards accordingly. The rank of the per-shard-shape
+      now matches that of the global shape which is the same behavior as jit.
+      This avoids costly reshapes when passing results from pmap into jit.
   * `jax.xla_computation` is deleted. It's been 3 months since it's deprecation
     in 0.4.30 JAX release.
     Please use the AOT APIs to get the same functionality as `jax.xla_computation`.
@@ -23,6 +31,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     * For cross-backend lowering, you can replace
       `jax.xla_computation(fn, backend='tpu')(*args, **kwargs)` with
       `jax.jit(fn).trace(*args, **kwargs).lower(lowering_platforms=('tpu',)).compiler_ir('hlo')`.
+  * `jax.tree.map(f, None, non-None)`, which previously emitted a
+    `DeprecationWarning`, now raises an error in a future version of jax. `None`
+    is only a tree-prefix of itself. To preserve the current behavior, you can
+    ask `jax.tree.map` to treat `None` as a leaf value by writing:
+    `jax.tree.map(lambda x, y: None if x is None else f(x, y), a, b, is_leaf=lambda x: x is None)`.
+
 
 ## jaxlib 0.4.33
 
@@ -35,14 +49,6 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     C++ and CUDA code from JAX.
 
 * Changes
-  * `jax_pmap_no_rank_reduction` flag is set to `True` by default.
-    * array[0] on a pmap result now introduces a reshape (use array[0:1]
-      instead).
-    * The per-shard shape (accessable via jax_array.addressable_shards or
-      jax_array.addressable_data(0)) now has a leading (1, ...). Update code
-      that directly accesses shards accordingly. The rank of the per-shard-shape
-      now matches that of the global shape which is the same behavior as jit.
-      This avoids costly reshapes when passing results from pmap into jit.
   * `jax_enable_memories` flag is set to `True` by default.
   * {mod}`jax.numpy` now supports v2023.12 of the Python Array API Standard.
     See {ref}`python-array-api` for more information.
