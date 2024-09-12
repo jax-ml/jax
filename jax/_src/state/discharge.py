@@ -169,7 +169,7 @@ def _maybe_convert_to_slice(
       return None
 
     start = i.start
-    end = i.start + i.size * i.stride
+    end = i.start + (i.size - 1) * i.stride + 1
     stride = i.stride
 
     # cannot convert to static `slice` if `start` or `end` is dynamic
