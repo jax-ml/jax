@@ -50,7 +50,6 @@ from jax._src import array
 from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
-from jax._src import deprecations
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
@@ -60,7 +59,6 @@ from jax._src.ad_checkpoint import saved_residuals
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
-from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
@@ -2904,74 +2902,6 @@ class APITest(jtu.JaxTestCase):
        r"sub-dtype of np.floating\), but got complex.*"),
       lambda: dfn(3. + 1j))
 
-  def test_xla_computation(self):
-    # these tests basically check the examples in the xla_computation docstring
-
-    def e(x):
-      return jnp.sin(jnp.cos(x))
-    c = api.xla_computation(e)(2.)
-    self.assertIn('cosine', c.as_hlo_text())
-    self.assertIn('sine', c.as_hlo_text())
-
-    def f(x):
-      return x - lax.psum(x, 'i')
-    axis_env = [('i', 4)]
-    c = api.xla_computation(f, axis_env=axis_env)(2)
-    self.assertIn('all-reduce', c.as_hlo_text())
-    self.assertIn('replica_groups={{0,1,2,3}}', c.as_hlo_text())
-
-    def g(x):
-      rowsum = lax.psum(x, 'i')
-      colsum = lax.psum(x, 'j')
-      allsum = lax.psum(x, ('i', 'j'))
-      return rowsum, colsum, allsum
-    axis_env = [('i', 4), ('j', 2)]
-    c = api.xla_computation(g, axis_env=axis_env)(5.)
-    self.assertIn('all-reduce', c.as_hlo_text())
-    self.assertIn('replica_groups={{0,2,4,6},{1,3,5,7}}', c.as_hlo_text())
-    self.assertIn('replica_groups={{0,1},{2,3},{4,5},{6,7}}', c.as_hlo_text())
-    self.assertIn('replica_groups={{0,1,2,3,4,5,6,7}}', c.as_hlo_text())
-
-    def h(x):
-      rowsum = lax.psum(x, 'i', axis_index_groups=[[0, 1], [2, 3]])
-      colsum = lax.psum(x, 'j')
-      return rowsum, colsum
-    axis_env = [('i', 4), ('j', 2)]
-    c = api.xla_computation(h, axis_env=axis_env)(5.)
-    self.assertIn('all-reduce', c.as_hlo_text())
-    self.assertIn('replica_groups={{0,2},{4,6},{1,3},{5,7}}', c.as_hlo_text())
-    self.assertIn('replica_groups={{0,1},{2,3},{4,5},{6,7}}', c.as_hlo_text())
-
-  def test_xla_computation_args(self):
-    def foo(x, y, z):
-      return x + y + z
-
-    c = api.xla_computation(foo)(1., 2., 3.)
-    self.assertEqual(len(c.program_shape().parameter_shapes()), 3)
-
-    c = api.xla_computation(foo, tuple_args=True)(1., 2., 3.)
-    param_shapes = c.program_shape().parameter_shapes()
-    self.assertEqual(len(param_shapes), 1)
-    self.assertEqual(param_shapes[0].xla_element_type(),
-                     xla_client.PrimitiveType.TUPLE)
-
-  def test_xla_computation_duck_typing(self):
-    def foo(x, y, z):
-      return x + y + z
-
-    x = jax.ShapeDtypeStruct((), np.float32)
-    y = jax.ShapeDtypeStruct((), np.float32)
-    z = jax.ShapeDtypeStruct((), np.float32)
-
-    c = api.xla_computation(foo)(x, y, z)
-    self.assertEqual(len(c.program_shape().parameter_shapes()), 3)
-
-    c = api.xla_computation(foo, tuple_args=True)(1., 2., 3.)
-    param_shapes = c.program_shape().parameter_shapes()
-    self.assertEqual(len(param_shapes), 1)
-    self.assertEqual(param_shapes[0].xla_element_type(),
-                     xla_client.PrimitiveType.TUPLE)
-
   def test_compiler_ir(self):
     # TODO(phawkins): merge these tests with the `xla_computation` tests.
     def e(x):
@@ -2982,72 +2912,6 @@ class APITest(jtu.JaxTestCase):
     stablehlo = str(api.jit(e).lower(2.).compiler_ir(dialect="stablehlo"))
     self.assertIn("stablehlo.cosine", stablehlo)
     self.assertIn("stablehlo.sine", stablehlo)
-
-  def test_staging_out_multi_replica(self):
-    def f(x):
-      return api.pmap(jnp.mean)(x)
-    xla_comp = api.xla_computation(f)
-    xla_comp(jnp.arange(8)).as_hlo_text()  # doesn't crash
-
-  def test_xla_computation_instantiate_constant_outputs(self):
-    def f():
-      return jnp.zeros((3, 4))
-
-    xla_comp = api.xla_computation(f)()
-    out_shape, = xla_comp.program_shape().result_shape().tuple_shapes()
-    self.assertEqual(out_shape.dimensions(), (3, 4))
-
-  def test_xla_computation_static_argnums(self):
-    def f(x, y):
-      return x + y
-
-    xla_comp = api.xla_computation(f, static_argnums=(1,))(2, 3)
-    hlo_text = xla_comp.as_hlo_text()
-    self.assertIn("constant(3)", hlo_text)
-    # The static arguments should be removed from the function being compiled,
-    # thus the function should have only a single argument.
-    self.assertIn("parameter(0)", hlo_text)
-    self.assertNotIn("parameter(1)", hlo_text)
-
-  def test_xla_computation_return_shape(self):
-    _, shape_tree = api.xla_computation(lambda x: (x + 1, jnp.zeros(2, jnp.float32)),
-                                        return_shape=True)(np.int32(1))
-    expected = (api.ShapeDtypeStruct(shape=(), dtype=jnp.int32),
-                api.ShapeDtypeStruct(shape=(2,), dtype=jnp.float32))
-    self.assertEqual(shape_tree, expected)
-
-  def test_xla_computation_psum_constant(self):
-    f = lambda: jax.lax.psum(1, "i")
-    api.xla_computation(f, axis_env=[("i", 2)])()  # doesn't crash
-
-  @jtu.ignore_warning(message="Some donated buffers were not usable")
-  def test_xla_computation_donate_argnums(self):
-    api.xla_computation(lambda x: None, donate_argnums=(0,))(3)  # doesn't crash
-
-  def test_xla_computation_lower_fun_axis_env(self):
-    axis_name = 'i'
-    def fn(x):
-      y = lax.all_gather(
-              x, axis_name=axis_name)
-      return y * lax.axis_index(axis_name).astype(jnp.float32)
-
-    input_x = jnp.ones((5,6,4), dtype=jnp.float32)
-    axis_env = [(axis_name, jax.local_device_count())]
-    _ = api.xla_computation(fn, axis_env=axis_env, backend='cpu')(input_x)
-
-  @jtu.ignore_warning(category=DeprecationWarning, message='jax.xla_computation is deprecated')
-  def test_xla_computation_axis_env(self):
-    is_accelerated = deprecations.is_accelerated_attribute(jax, 'xla_computation')
-    xla_computation = api.xla_computation if is_accelerated else jax.xla_computation
-
-    def fn(x):
-      z = x * jax.lax.axis_index('i').astype(jnp.float32)
-      def inner_fn(carry, a):
-        return carry + a, ()
-      return jax.lax.scan(inner_fn, jnp.zeros_like(z[0]), z)
-
-    x = jnp.ones((5, 6, 4), dtype=jnp.float32)
-    _ = xla_computation(fn, axis_env=(('i', 8),), backend='cpu')(x)
 
   def test_concurrent_device_get_and_put(self):
     def f(x):
@@ -3678,7 +3542,7 @@ class APITest(jtu.JaxTestCase):
       return x + y + y
 
     x = np.array([1, 2], dtype=np.float32)
-    hlo_lines = jax.xla_computation(f)(x).as_hlo_text().split('\n')
+    hlo_lines = jax.jit(f).lower(x).as_text('hlo').split('\n')
     hlo_lines = {s.strip() for s in hlo_lines}
     self.assertIn('constant.1 = f32[2]{0} constant({7, 14})', hlo_lines)
     self.assertNotIn('constant.2 = f32[2]{0} constant({7, 14})', hlo_lines)
@@ -3804,11 +3668,6 @@ class APITest(jtu.JaxTestCase):
     msg = r"on the value of the argument y"
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       g(1)
-
-  def test_xla_computation_zeros_doesnt_device_put(self):
-    with jtu.count_device_put() as count:
-      api.xla_computation(lambda: jnp.zeros(3))()
-    self.assertEqual(count[0], 0)
 
   def test_join_concrete_arrays_with_omnistaging(self):
     # https://github.com/google/jax/issues/4622
@@ -5532,13 +5391,12 @@ class RematTest(jtu.JaxTestCase):
       x, _ = g(x)
       return x
 
-    c = api.xla_computation(f)(2.)
-    self.assertNotIn('while', c.as_hlo_text())
-    self.assertNotIn('conditional', c.as_hlo_text())
-    self.assertNotIn('opt-barrier', c.as_hlo_text())
+    text = jax.jit(f).lower(2.).as_text('hlo')
+    self.assertNotIn('while', text)
+    self.assertNotIn('conditional', text)
+    self.assertNotIn('opt-barrier', text)
 
-    c = api.xla_computation(grad(f))(2.)
-    text = c.as_hlo_text()
+    text = jax.jit(grad(f)).lower(2.).as_text('hlo')
     self.assertTrue('while' in text or 'conditional' in text
                     or 'opt-barrier' in text)
 
@@ -5557,13 +5415,13 @@ class RematTest(jtu.JaxTestCase):
       x, _ = g(x)
       return x
 
-    c = api.xla_computation(f)(2.)
-    self.assertNotIn('while', c.as_hlo_text())
-    self.assertNotIn('conditional', c.as_hlo_text())
+    text = jax.jit(f).lower(2.).as_text('hlo')
+    self.assertNotIn('while', text)
+    self.assertNotIn('conditional', text)
 
-    c = api.xla_computation(grad(f))(2.)
-    self.assertNotIn('while', c.as_hlo_text())
-    self.assertNotIn('conditional', c.as_hlo_text())
+    text = jax.jit(grad(f)).lower(2.).as_text('hlo')
+    self.assertNotIn('while', text)
+    self.assertNotIn('conditional', text)
 
   @parameterized.named_parameters(
       {"testcase_name": f"_{policy_name}_{remat_name}", "remat": remat,
@@ -6679,7 +6537,7 @@ class JaxprTest(jtu.JaxTestCase):
     self.assertLen(jaxpr.jaxpr.eqns, 0)
 
   def test_convert_element_type_literal_constant_folding(self):
-    # this convert_elemnt_type is nontrivial, but because it's on a scalar we
+    # this convert_element_type is nontrivial, but because it's on a scalar we
     # constant-fold it
     cet = partial(lax.convert_element_type, new_dtype='float16')
     jaxpr = api.make_jaxpr(lambda: cet(3.))()
@@ -10965,25 +10823,6 @@ class BufferDonationTest(jtu.BufferDonationTestCase):
 
 
 class NamedCallTest(jtu.JaxTestCase):
-
-  @jtu.ignore_warning(category=DeprecationWarning, message='jax.xla_computation is deprecated')
-  def test_default_name(self):
-    is_accelerated = deprecations.is_accelerated_attribute(jax, 'xla_computation')
-    xla_computation = api.xla_computation if is_accelerated else jax.xla_computation
-
-    @api.named_call
-    def my_test_function(x):
-      return x**2
-
-    @jax.jit
-    def f(x):
-      return my_test_function(x)
-
-    c = xla_computation(f)(2)
-    print_opts = xla_client._xla.HloPrintOptions.short_parsable()
-    print_opts.print_metadata = True
-    hlo_text = c.as_hlo_module().to_string(print_opts)
-    self.assertIn("my_test_function", hlo_text)
 
   def test_non_jaxtype_arg(self):
     # For the test to fail without the invalid JaxType filter we need to pass

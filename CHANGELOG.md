@@ -12,6 +12,18 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## jax 0.4.33
 
+* Deletion:
+  * `jax.xla_computation` is deleted. It's been 3 months since it's deprecation
+    in 0.4.30 JAX release.
+    Please use the AOT APIs to get the same functionality as `jax.xla_computation`.
+    * `jax.xla_computation(fn)(*args, **kwargs)` can be replaced with
+      `jax.jit(fn).lower(*args, **kwargs).compiler_ir('hlo')`.
+    * You can also use `.out_info` property of `jax.stages.Lowered` to get the
+      output information (like tree structure, shape and dtype).
+    * For cross-backend lowering, you can replace
+      `jax.xla_computation(fn, backend='tpu')(*args, **kwargs)` with
+      `jax.jit(fn).trace(*args, **kwargs).lower(lowering_platforms=('tpu',)).compiler_ir('hlo')`.
+
 ## jaxlib 0.4.33
 
 
