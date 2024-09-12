@@ -1283,11 +1283,68 @@ def angle(z: ArrayLike, deg: bool = False) -> Array:
   return ufuncs.degrees(result) if deg else result
 
 
-@util.implements(np.diff)
 @partial(jit, static_argnames=('n', 'axis'))
 def diff(a: ArrayLike, n: int = 1, axis: int = -1,
          prepend: ArrayLike | None = None,
          append: ArrayLike | None = None) -> Array:
+  """Calculate n-th order difference between array elements along a given axis.
+
+  JAX implementation of :func:`numpy.diff`.
+
+  The first order difference is computed by ``a[i+1] - a[i]``, and the n-th order
+  difference is computed ``n`` times recursively.
+
+  Args:
+    a: input array. Must have ``a.ndim >= 1``.
+    n: int, optional, default=1. Order of the difference. Specifies the number
+      of times the difference is computed. If n=0, no difference is computed and
+      input is returned as is.
+    axis: int, optional, default=-1. Specifies the axis along which the difference
+      is computed. The difference is computed along ``axis -1`` by default.
+    prepend: scalar or array, optional, defualt=None. Specifies the values to be
+      prepended along ``axis`` before computing the difference.
+    append: scalar or array, optional, defualt=None. Specifies the values to be
+      appended along ``axis`` before computing the difference.
+
+  Returns:
+    An array containing the n-th order difference between the elements of ``a``.
+
+  See also:
+    - :func:`jax.numpy.ediff1d`: Computes the differences between consecutive
+      elements of an array.
+    - :func:`jax.numpy.cumsum`: Computes the cumulative sum of the elements of
+      the array along a given axis.
+    - :func:`jax.numpy.gradient`: Computes the gradient of an N-dimensional array.
+
+  Examples:
+    ``jnp.diff`` computes the first order difference along ``axis``, by default.
+
+    >>> a = jnp.array([[1, 5, 2, 9],
+    ...                [3, 8, 7, 4]])
+    >>> jnp.diff(a)
+    Array([[ 4, -3,  7],
+           [ 5, -1, -3]], dtype=int32)
+
+    When ``n = 2``, second order difference is computed along ``axis``.
+
+    >>> jnp.diff(a, n=2)
+    Array([[-7, 10],
+           [-6, -2]], dtype=int32)
+
+    When ``prepend = 2``, it is prepended to ``a`` along ``axis`` before computing
+    the difference.
+
+    >>> jnp.diff(a, prepend=2)
+    Array([[-1,  4, -3,  7],
+           [ 1,  5, -1, -3]], dtype=int32)
+
+    When ``append = jnp.array([[3],[1]])``, it is appended to ``a`` along ``axis``
+    before computing the difference.
+  
+    >>> jnp.diff(a, append=jnp.array([[3],[1]]))
+    Array([[ 4, -3,  7, -6],
+           [ 5, -1, -3, -3]], dtype=int32)
+  """
   util.check_arraylike("diff", a)
   arr = asarray(a)
   n = core.concrete_or_error(operator.index, n, "'n' argument of jnp.diff")
@@ -1337,16 +1394,58 @@ def diff(a: ArrayLike, n: int = 1, axis: int = -1,
 
   return arr
 
-_EDIFF1D_DOC = """\
-Unlike NumPy's implementation of ediff1d, :py:func:`jax.numpy.ediff1d` will not
-issue an error if casting ``to_end`` or ``to_begin`` to the type of ``ary``
-loses precision.
-"""
 
-@util.implements(np.ediff1d, lax_description=_EDIFF1D_DOC)
 @jit
 def ediff1d(ary: ArrayLike, to_end: ArrayLike | None = None,
             to_begin: ArrayLike | None = None) -> Array:
+  """Compute the differences of the elements of the flattened array.
+
+  JAX implementation of :func:`numpy.ediff1d`.
+
+  Args:
+    ary: input array or scalar.
+    to_end: scalar or array, optional, default=None. Specifies the numbers to
+      append to the resulting array.
+    to_begin: scalar or array, optional, default=None. Specifies the numbers to
+      prepend to the resulting array.
+
+  Returns:
+    An array containing the differences between the elements of the input array.
+
+  Note:
+    Unlike NumPy's implementation of ediff1d, :py:func:`jax.numpy.ediff1d` will
+    not issue an error if casting ``to_end`` or ``to_begin`` to the type of
+    ``ary`` loses precision.
+
+  See also:
+    - :func:`jax.numpy.diff`: Computes the n-th order difference between elements
+      of the array along a given axis.
+    - :func:`jax.numpy.cumsum`: Computes the cumulative sum of the elements of
+      the array along a given axis.
+    - :func:`jax.numpy.gradient`: Computes the gradient of an N-dimensional array.
+
+  Examples:
+    >>> a = jnp.array([2, 3, 5, 9, 1, 4])
+    >>> jnp.ediff1d(a)
+    Array([ 1,  2,  4, -8,  3], dtype=int32)
+    >>> jnp.ediff1d(a, to_begin=-10)
+    Array([-10,   1,   2,   4,  -8,   3], dtype=int32)
+    >>> jnp.ediff1d(a, to_end=jnp.array([20, 30]))
+    Array([ 1,  2,  4, -8,  3, 20, 30], dtype=int32)
+    >>> jnp.ediff1d(a, to_begin=-10, to_end=jnp.array([20, 30]))
+    Array([-10,   1,   2,   4,  -8,   3,  20,  30], dtype=int32)
+
+    For array with ``ndim > 1``, the differences are computed after flattening
+    the input array.
+
+    >>> a1 = jnp.array([[2, -1, 4, 7],
+    ...                 [3, 5, -6, 9]])
+    >>> jnp.ediff1d(a1)
+    Array([ -3,   5,   3,  -4,   2, -11,  15], dtype=int32)
+    >>> a2 = jnp.array([2, -1, 4, 7, 3, 5, -6, 9])
+    >>> jnp.ediff1d(a2)
+    Array([ -3,   5,   3,  -4,   2, -11,  15], dtype=int32)
+  """
   util.check_arraylike("ediff1d", ary)
   arr = ravel(ary)
   result = lax.sub(arr[1:], arr[:-1])
