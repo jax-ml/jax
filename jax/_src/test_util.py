@@ -2074,6 +2074,51 @@ class numpy_with_mpmath:
         return ctx.make_mpc((inf._mpf_, imag._mpf_))
     return ctx.acosh(x)
 
+  def arctan(self, x):
+    ctx = x.context
+
+    if isinstance(x, ctx.mpc):
+      # Workaround mpmath 1.3 bug in atan(+-inf+-infj) evaluation
+      # (see mpmath/mpmath#775 with the fix).
+      # TODO(pearu): remove the if-block below when mpmath 1.4 or
+      # newer will be the required test dependency.
+      pi = ctx.pi
+      zero = ctx.zero
+      if ctx.isinf(x.real) or ctx.isinf(x.imag):
+        if x.real < 0:
+          return ctx.make_mpc(((-pi / 2)._mpf_, zero._mpf_))
+        return ctx.make_mpc(((pi / 2)._mpf_, zero._mpf_))
+
+      # On branch cut, mpmath.mp.atan returns different value compared
+      # to mpmath.fp.atan and numpy.arctan (see mpmath/mpmath#865).
+      # The following if-block ensures compatibility with
+      # numpy.arctan.
+      if x.real == 0 and x.imag < -1:
+        return (-ctx.atan(x)).conjugate()
+    return ctx.atan(x)
+
+  def arctanh(self, x):
+    ctx = x.context
+
+    if isinstance(x, ctx.mpc):
+      # Workaround mpmath 1.3 bug in atanh(+-inf+-infj) evaluation
+      # (see mpmath/mpmath#775 with the fix).
+      # TODO(pearu): remove the if-block below when mpmath 1.4 or
+      # newer will be the required test dependency.
+      pi = ctx.pi
+      zero = ctx.zero
+      if ctx.isinf(x.real) or ctx.isinf(x.imag):
+        if x.imag < 0:
+          return ctx.make_mpc((zero._mpf_, (-pi / 2)._mpf_))
+        return ctx.make_mpc((zero._mpf_, (pi / 2)._mpf_))
+
+      # On branch cut, mpmath.mp.atanh returns different value
+      # compared to mpmath.fp.atanh and numpy.arctanh.  The following
+      # if-block ensures compatibility with numpy.arctanh.
+      if x.imag == 0 and x.real > 1:
+        return ctx.atanh(x).conjugate()
+    return ctx.atanh(x)
+
   def normalize(self, exact, reference, value):
     """Normalize reference and value using precision defined by the
     difference of exact and reference.
