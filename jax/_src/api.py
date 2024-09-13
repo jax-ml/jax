@@ -34,7 +34,7 @@ from typing import (Any, Literal, NamedTuple, TypeVar, overload,
 import weakref
 
 import numpy as np
-from contextlib import contextmanager, ExitStack
+from contextlib import contextmanager
 
 from jax._src import linear_util as lu
 from jax._src import stages
