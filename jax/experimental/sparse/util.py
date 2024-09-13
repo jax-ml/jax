@@ -113,4 +113,5 @@ def _dot_general_validated_shape(
   rhs = core.ShapedArray(rhs_shape, np.float32)
   return _dot_general_shape_rule(
     lhs, rhs, dimension_numbers=dimension_numbers,
-    precision=None, preferred_element_type=None)
+    precision=None, preferred_element_type=None, algorithm=None,
+    transpose_algorithm=None)

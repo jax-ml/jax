@@ -609,7 +609,8 @@ mlir.register_lowering(bcoo_transpose_p, mlir.lower_fun(
 bcoo_dot_general_p = core.Primitive('bcoo_dot_general')
 
 def bcoo_dot_general(lhs: BCOO | Array, rhs: BCOO | Array, *, dimension_numbers: DotDimensionNumbers,
-                     precision: None = None, preferred_element_type: None = None) -> BCOO | Array:
+                     precision: None = None, preferred_element_type: None = None,
+                     algorithm: None = None, transpose_algorithm: None = None) -> BCOO | Array:
   """A general contraction operation.
 
   Args:
@@ -620,6 +621,8 @@ def bcoo_dot_general(lhs: BCOO | Array, rhs: BCOO | Array, *, dimension_numbers:
       (lhs_batch_dims, rhs_batch_dims))`.
     precision: unused
     preferred_element_type: unused
+    algorithm: unused
+    transpose_algorithm: unused
 
   Returns:
     An ndarray or BCOO-format sparse array containing the result. If both inputs
@@ -627,7 +630,7 @@ def bcoo_dot_general(lhs: BCOO | Array, rhs: BCOO | Array, *, dimension_numbers:
     the result will be dense, of type ndarray.
   """
   # TODO(jakevdp) make use of these?
-  del precision  # unused
+  del precision, algorithm, transpose_algorithm  # unused
   if isinstance(lhs, BCOO) and isinstance(rhs, BCOO):
     shape = _dot_general_validated_shape(lhs.shape, rhs.shape,
                                          dimension_numbers)
@@ -1053,7 +1056,9 @@ def _bcoo_dot_general_sampled_transpose(ct, A, B, indices, *, dimension_numbers)
   indices, ct = _bcoo_extract_transpose(ct, indices, mat, assume_unique=True)
   kwds = {'dimension_numbers': dimension_numbers,
           'precision': None,
-          'preferred_element_type': None}
+          'preferred_element_type': None,
+          'algorithm': None,
+          'transpose_algorithm': None}
   A, B = ad.get_primitive_transpose(lax.dot_general_p)(ct, A, B, **kwds)
   return A, B, indices
 
