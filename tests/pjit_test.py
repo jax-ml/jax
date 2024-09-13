@@ -4486,6 +4486,35 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   @unittest.skipIf(xla_extension_version < 281,
                    'Requires xla_extension_version >= 281')
+  def test_wsc_no_propagation_abstract_mesh(self):
+    self.skipTest('https://github.com/google/jax/issues/23634')
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
+
+    # Replacing  abstract_mesh with the actual mesh makes this test pass, but
+    # leaving as abstract_mesh causes this test to fail.
+    abstract_mesh = jax.sharding.AbstractMesh(mesh.shape_tuple)
+
+    def f(x):
+      # This breaks the data dependency on x.
+      x = with_sharding_constraint(
+          jnp.ones(shape=x.shape, dtype=x.dtype),
+          NamedSharding(abstract_mesh, P('x')),
+      )
+      return x * 2
+
+    out = jax.jit(f)(arr)
+    self.assertArraysEqual(out, np.ones_like(arr) * 2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+    out_eager = f(arr)
+    self.assertArraysEqual(out_eager, np.ones_like(arr) * 2)
+    self.assertEqual(out_eager.sharding, NamedSharding(mesh, P('x')))
+
+  @unittest.skipIf(
+      xla_extension_version < 281, 'Requires xla_extension_version >= 281'
+  )
   def test_wsc_sds_abstract_mesh(self):
     mesh = jtu.create_mesh((2,), 'x')
     s = NamedSharding(mesh, P())
