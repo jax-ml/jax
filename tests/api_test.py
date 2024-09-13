@@ -2984,9 +2984,11 @@ class APITest(jtu.JaxTestCase):
     with jax.enable_checks(False):
       with self.assertRaisesRegex(TypeError, ".*not a valid JAX array type.*"):
         lax.add(jnp.array(7), np.array("hello"))
-    with jax.enable_checks(True):
-      with self.assertRaises(AssertionError):
-        lax.add(jnp.array(7), np.array("hello"))
+    # TODO(dougalm): re-enable checks at the beginning of `bind`. We just
+    # need to know which arguments to a generic primitive are ordinary operands vs functions.
+    # with jax.enable_checks(True):
+    #   with self.assertRaises(AssertionError):
+    #     lax.add(jnp.array(7), np.array("hello"))
 
   def test_vmap_preserves_docstr(self):
     def superfun(a):
