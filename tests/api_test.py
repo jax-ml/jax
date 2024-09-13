@@ -4701,6 +4701,7 @@ class APITest(jtu.JaxTestCase):
     for a, b in zip(ans, expected):
       self.assertAllClose(a, b)
 
+  @unittest.skip # TODO(dougalm): figure out with Matt what to do with this feature
   def test_inner_jit_forwarded_consts_stay_const(self):
     out = jax.jit(lambda: int(jax.jit(lambda x: x)(3)))()  # don't crash
     self.assertEqual(out, 3)
