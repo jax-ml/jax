@@ -97,8 +97,9 @@ def _reduce_sum_smem_estimator(x_aval: jax_core.ShapedArray, *, axes) -> int:
 class ModuleContext:
   name: str
   grid_mapping: pallas_core.GridMapping
+  approx_math: bool
   runtime_smem: ir.Value  # ir.MemRefType
-  smem_used_bytes: int
+  smem_used_bytes: int = 0
 
   # TODO(cperivol): Only return the shapes and figure out the sizes when freeing.
   def scratch_view(
@@ -233,11 +234,12 @@ def lower_jaxpr_to_module(
     grid += (1,) * (3 - len(grid))
   block = (128,) + (1,) * (len(grid) - 1)
   params = compiler_params.get("mosaic_gpu", {})
+  approx_math = params.get("approx_math", False)
   num_stages = params.get("num_stages", 1)
-  dimension_semantics = params.get(
-      "dimension_semantics", ["parallel"] * len(grid_mapping.grid)
-  )
-  if len(dimension_semantics) != len(grid_mapping.grid):
+  dimension_semantics = params.get("dimension_semantics")
+  if dimension_semantics is None:
+    dimension_semantics = ["parallel"] * len(grid_mapping.grid)
+  elif len(dimension_semantics) != len(grid_mapping.grid):
     raise ValueError(
         "dimension_semantics must have an entrey for each grid dimension:"
         f" {len(dimension_semantics)=}, but len(grid={grid_mapping.grid})."
@@ -295,7 +297,7 @@ def lower_jaxpr_to_module(
     )
 
     module_ctx = ModuleContext(
-        name_and_src_info.name, grid_mapping, runtime_smem, smem_used_bytes=0
+        name_and_src_info.name, grid_mapping, approx_math, runtime_smem
     )
     program_ids = map(_program_id, range(len(grid_mapping.grid)))
     start_indices = map(
@@ -622,7 +624,7 @@ def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
 
 @register_lowering_rule(lax.rsqrt_p)
 def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):
-  return _ensure_fa(x, *ctx.avals_in).rsqrt()
+  return _ensure_fa(x, *ctx.avals_in).rsqrt(ctx.module_context.approx_math)
 
 
 @register_lowering_rule(lax.reduce_sum_p)
