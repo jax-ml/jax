@@ -78,6 +78,14 @@ LogicalResult specializeMemorySpace(TypedValue<MemRefType> value,
       updateResultFrom(op, op.getInput().getType());
       continue;
     }
+    if (auto op = dyn_cast<tpu::MemRefBitcastOp>(some_op)) {
+      updateResultFrom(op, op.getInput().getType());
+      continue;
+    }
+    if (auto op = dyn_cast<tpu::MemRefReshapeOp>(some_op)) {
+      updateResultFrom(op, op.getInput().getType());
+      continue;
+    }
     if (auto op = dyn_cast<tpu::EraseLayoutOp>(some_op)) {
       updateResultFrom(op, op.getOperand().getType());
       continue;
