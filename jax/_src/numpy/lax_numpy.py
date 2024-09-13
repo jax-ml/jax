@@ -5305,8 +5305,31 @@ def fromfunction(function: Callable[..., Array], shape: Any,
   return function(*(arange(s, dtype=dtype) for s in shape), **kwargs)
 
 
-@util.implements(np.fromstring)
 def fromstring(string: str, dtype: DTypeLike = float, count: int = -1, *, sep: str) -> Array:
+  """Convert a string of text into 1-D JAX array.
+
+  JAX implementation of :func:`numpy.fromstring`.
+
+  Args:
+    string: input string containing the data.
+    dtype: optional. Desired data type for the array. Default is ``float``.
+    count: optional integer specifying the number of items to read from the string.
+      If -1 (default), all items are read.
+    sep: the string used to separate values in the input string.
+
+  Returns:
+    A 1-D JAX array containing the parsed data from the input string.
+
+  See also:
+    - :func:`jax.numpy.frombuffer`: construct a JAX array from an object
+      that implements the buffer interface.
+
+  Examples:
+    >>> jnp.fromstring("1 2 3", dtype=int, sep=" ")
+    Array([1, 2, 3], dtype=int32)
+    >>> jnp.fromstring("0.1, 0.2, 0.3", dtype=float, count=2, sep=",")
+    Array([0.1, 0.2], dtype=float32)
+  """
   return asarray(np.fromstring(string=string, dtype=dtype, count=count, sep=sep))
 
 
