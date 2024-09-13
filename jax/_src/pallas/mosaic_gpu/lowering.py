@@ -306,6 +306,15 @@ def lower_jaxpr_to_module(
         start_indices, [grid_mapping.num_inputs]
     )
 
+    # Precompute the total number of bytes transferred from GMEM to SMEM,
+    # so that we can do a single arrive instruction for all of the inputs.
+    in_transfer_bytes = 0
+    for b_smem in in_buffers_smem:
+      b_smem_type = ir.MemRefType(b_smem.type)
+      in_transfer_bytes += math.prod(b_smem_type.shape[1:]) * mgpu.bytewidth(
+          b_smem_type.element_type
+      )
+
     def gmem_slice(
         start_indices: Sequence[ir.Value],
         step: ir.Value,
@@ -337,7 +346,7 @@ def lower_jaxpr_to_module(
           barrier=barriers[slot],
           gmem_transform=tuple(gmem_transforms),
           swizzle=in_swizzles[idx],
-          arrive=True,
+          arrive=False,  # The caller must do ``arrive_expect_tx`` manually!
           uniform=False,
       )
 
@@ -386,6 +395,7 @@ def lower_jaxpr_to_module(
 
     with mgpu.single_thread():
       for slot in range(min(num_stages, num_steps)):
+        barriers[slot].arrive_expect_tx(in_transfer_bytes)
         for idx in range(grid_mapping.num_inputs):
           fetch(idx, _as_index(slot), _as_index(slot))
 
@@ -415,6 +425,7 @@ def lower_jaxpr_to_module(
       with mgpu.when(next_step_in_bounds), mgpu.single_thread():
         for idx in range(grid_mapping.num_inputs):
           fetch(idx, next_step, slot)
+        barriers[slot].arrive_expect_tx(in_transfer_bytes)
 
       return ()
 
@@ -452,10 +463,7 @@ def lower_jaxpr_to_module(
           *in_structs_smem,
           *out_structs_smem,
           *extra_smem_scratch,
-          mgpu.Barrier(
-              arrival_count=len(in_structs_gmem),
-              num_barriers=num_stages,
-          ),
+          mgpu.Barrier(arrival_count=1, num_barriers=num_stages),
       ),
       module_name=name_and_src_info.name,
   )
