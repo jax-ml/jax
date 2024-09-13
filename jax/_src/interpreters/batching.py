@@ -537,6 +537,8 @@ def _batch_inner(axis_data, out_dim_dests, tag, in_dims, *in_vals):
   out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
   out_vals = map(partial(from_elt, trace, axis_data.size), range(len(outs)),
                  outs, out_dim_dests)
+
+  with core.ensure_no_leaks(trace): del trace
   yield out_vals
 
 # NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.
