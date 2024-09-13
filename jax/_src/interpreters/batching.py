@@ -519,7 +519,8 @@ def batch(fun: lu.WrappedFun, axis_data,
 def _batch_outer(axis_data, in_dims, _main_type, *in_vals):
   tag = TraceTag()
   with source_info_util.transform_name_stack('vmap'):
-    outs = yield (tag, in_dims, *in_vals), {}
+    outs, trace = yield (tag, in_dims, *in_vals), {}
+  with core.ensure_no_leaks(trace): del trace
   yield outs
 
 @lu.transformation
@@ -538,8 +539,7 @@ def _batch_inner(axis_data, out_dim_dests, tag, in_dims, *in_vals):
   out_vals = map(partial(from_elt, trace, axis_data.size), range(len(outs)),
                  outs, out_dim_dests)
 
-  with core.ensure_no_leaks(trace): del trace
-  yield out_vals
+  yield out_vals, trace
 
 # NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.
 def vtile(f_flat: lu.WrappedFun,
