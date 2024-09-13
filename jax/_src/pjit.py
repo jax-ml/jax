@@ -474,16 +474,7 @@ def _make_jit_wrapper(fun: Callable, jit_info: PjitInfo):
 
   @api_boundary
   def lower(*args, **kwargs):
-    traced = trace(*args, **kwargs)
-    try:
-      return traced.lower()
-    except pxla.DeviceAssignmentMismatchError as e:
-      fails, = e.args
-      fun_name = getattr(fun, '__qualname__',
-                         getattr(fun, '__name__', str(fun)))
-      msg = _device_assignment_mismatch_error(
-          fun_name, fails, traced._args_flat, 'jit', traced._arg_names)
-      raise ValueError(msg) from None
+    return trace(*args, **kwargs).lower()
 
   @api_boundary
   def eval_shape(*args, **kwargs):
@@ -503,7 +494,7 @@ def _make_jit_wrapper(fun: Callable, jit_info: PjitInfo):
     lower_callable = partial(_resolve_and_lower, args_flat, **p.params,
                              pgle_profiler=None)
     return stages.Traced(
-        p.params['jaxpr'], args_info, p.params["name"],p.out_tree,
+        p.params['jaxpr'], args_info, p.params["name"], p.out_tree,
         lower_callable, args_flat, p.arg_names, p.num_consts)
 
   wrapped = _cpp_pjit(fun, jit_info)
