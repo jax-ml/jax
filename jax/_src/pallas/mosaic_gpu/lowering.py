@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import dataclasses
 import functools
+import itertools as it
 import math
 from typing import Any, cast
 
@@ -231,8 +232,6 @@ def lower_jaxpr_to_module(
   if len(grid) < 3:
     grid += (1,) * (3 - len(grid))
   block = (128,) + (1,) * (len(grid) - 1)
-
-  num_inputs = grid_mapping.num_inputs
   params = compiler_params.get("mosaic_gpu", {})
   num_stages = params.get("num_stages", 1)
   dimension_semantics = params.get(
@@ -252,25 +251,26 @@ def lower_jaxpr_to_module(
   in_structs_gmem = [*grid_mapping.in_shapes]
   in_block_shapes = [
       bm.block_shape
-      for bm in grid_mapping.block_mappings[:num_inputs]
+      for bm in grid_mapping.block_mappings[: grid_mapping.num_inputs]
   ]
   in_structs_smem = [
       jax.ShapeDtypeStruct(
-          [num_stages,
-           *bm.ref_aval.inner_aval.shape],  # pytype: disable=attribute-error
-          bm.ref_aval.inner_aval.dtype)  # pytype: disable=attribute-error
-      for bm in block_mappings[:num_inputs]
+          [num_stages, *bm.ref_aval.inner_aval.shape],
+          bm.ref_aval.inner_aval.dtype,
+      )
+      for bm in block_mappings[: grid_mapping.num_inputs]
   ]
   in_gmem_transforms = [
-      cast(gpu_core.MemoryRefTransform, bm.transforms)
-      for bm in grid_mapping.block_mappings[:num_inputs]
+        cast(gpu_core.MemoryRefTransform, bm.transforms)
+
+      for bm in grid_mapping.block_mappings[: grid_mapping.num_inputs]
   ]
-  _get_swizzle = (
+  in_swizzles = map(
       lambda bm: bm.swizzle
       if isinstance(bm, gpu_core.GPUBlockMapping)
-      else None
+      else None,
+      grid_mapping.block_mappings[: grid_mapping.num_inputs],
   )
-  in_swizzles = map(_get_swizzle, grid_mapping.block_mappings[:num_inputs])
   out_structs_gmem = [*grid_mapping.out_shapes]
   # TODO(justinfu): Implement output Memref transforms
   out_structs_smem = [
@@ -283,12 +283,15 @@ def lower_jaxpr_to_module(
 
   def body(launch_ctx: mosaic_gpu.LaunchContext, *buffers: ir.Value):
     *buffers_gmem, (*buffers_smem, runtime_smem, barriers) = buffers
-    assert len(buffers_gmem) == len(buffers_smem)
+    assert (
+        len(buffers_gmem)
+        == len(buffers_smem) - grid_mapping.num_scratch_operands
+    )
     in_buffers_gmem, out_buffers_gmem = util.split_list(
         buffers_gmem, [grid_mapping.num_inputs]
     )
-    in_buffers_smem, out_buffers_smem = util.split_list(
-        buffers_smem, [grid_mapping.num_inputs]
+    in_buffers_smem, out_buffers_smem, scratch_buffers_smem = util.split_list(
+        buffers_smem, [grid_mapping.num_inputs, grid_mapping.num_outputs]
     )
 
     module_ctx = ModuleContext(
@@ -393,11 +396,12 @@ def lower_jaxpr_to_module(
         # Only wait if async copies were issued.
         barriers[slot].wait()
 
-      _ = lower_jaxpr_to_mosaic_gpu(
-          module_ctx,
-          jaxpr,
-          [mgpu.memref_slice(b_smem, slot) for b_smem in buffers_smem],
-      )
+      args = [
+          mgpu.memref_slice(b_smem, slot)
+          for b_smem in it.chain(in_buffers_smem, out_buffers_smem)
+      ]
+      args.extend(scratch_buffers_smem)
+      _ = lower_jaxpr_to_mosaic_gpu(module_ctx, jaxpr, args)
       mgpu.commit_shared()
 
       with mgpu.single_thread():
@@ -416,12 +420,27 @@ def lower_jaxpr_to_module(
 
     launch_ctx.await_async_copy(0)
 
+  scratch_avals = [
+      var.aval for var in jaxpr.invars[grid_mapping.slice_scratch_ops]
+  ]
+  if not all(
+      isinstance(aval, pallas_core.AbstractMemoryRef)
+      and aval.memory_space is gpu_core.SMEM
+      for aval in scratch_avals
+  ):
+    raise TypeError(
+        f"All scratch operands must be in SMEM, but got: {scratch_avals}"
+    )
+  extra_smem_scratch = [
+      jax.ShapeDtypeStruct(aval.shape, aval.dtype) for aval in scratch_avals
+  ]
   smem_scratch_bytes = compiler_params.get("smem_scratch_bytes")
   if smem_scratch_bytes is None:
     smem_scratch_bytes = _estimate_smem_scratch_bytes(jaxpr)
-  extra_smem_scratch = [
+  extra_smem_scratch.append(
       jax.ShapeDtypeStruct(shape=[smem_scratch_bytes], dtype=np.int8)
-  ]
+  )
+
   module, out_structs_smem, _ = mosaic_gpu._lower_as_gpu_kernel(
       body,
       grid=grid,

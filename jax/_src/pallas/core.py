@@ -126,12 +126,9 @@ zip, unsafe_zip = util.safe_zip, zip
 class AbstractMemoryRef(state.AbstractRef):
   __slots__ = ["inner_aval", "memory_space"]
 
-  def __init__(self, inner_aval: jax_core.AbstractValue,
-               memory_space: Any):
+  inner_aval: jax_core.ShapedArray
 
-    assert isinstance(
-        inner_aval, jax_core.ShapedArray
-    ), f"Illegal ref, got {type(inner_aval)}"
+  def __init__(self, inner_aval: jax_core.ShapedArray, memory_space: Any):
     self.inner_aval = inner_aval
     self.memory_space = memory_space
 
