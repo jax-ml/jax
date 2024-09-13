@@ -732,10 +732,7 @@ that live in jaxlib):
         from jax._src.lib import version as jaxlib_version
 
         def my_lowering_rule(ctx: LoweringRuleContext, ...):
-          lowering_parameters = ctx.module_context.lowering_parameters
-          forward_compat_mode = (lowering_parameters.for_export and
-                                 not lowering_parameters.export_ignore_forward_compatibility)
-          if forward_compat_mode or jaxlib_version < (0, 4, 31):
+          if ctx.is_forward_compat() or jaxlib_version < (0, 4, 31):
             # this is the old lowering, using target T, while we
             # are in forward compatibility mode for T, or we
             # are in OSS and are using an old jaxlib.
