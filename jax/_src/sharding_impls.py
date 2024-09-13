@@ -1030,6 +1030,8 @@ class ParsedPartitionSpec:
     return hash((self.partitions, self.sync))
 
   def __eq__(self, other):
+    if not isinstance(other, ParsedPartitionSpec):
+      return False
     return (self.partitions == other.partitions and
             self.sync == other.sync)
 
