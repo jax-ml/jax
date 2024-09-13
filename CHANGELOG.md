@@ -23,6 +23,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     * For cross-backend lowering, you can replace
       `jax.xla_computation(fn, backend='tpu')(*args, **kwargs)` with
       `jax.jit(fn).trace(*args, **kwargs).lower(lowering_platforms=('tpu',)).compiler_ir('hlo')`.
+  * {class}`jax.ShapeDtypeStruct` no longer accepts the `named_shape` argument.
+    The argument was only used by `xmap` which was removed in 0.4.31.
 
 ## jaxlib 0.4.33
 

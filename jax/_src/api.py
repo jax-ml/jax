@@ -2454,11 +2454,8 @@ class ShapeDtypeStruct:
     sharding: (optional) a :class:`jax.Sharding` object
   """
   __slots__ = ["shape", "dtype", "sharding", "_dll", "weak_type"]
-  named_shape = {}  # type: ignore
 
-  def __init__(self, shape, dtype, named_shape=None, sharding=None,
-               weak_type=False):
-    del named_shape  # ignored, vestigial
+  def __init__(self, shape, dtype, sharding=None, weak_type=False):
     self.shape = tuple(shape)
     if dtype is None:
       raise ValueError("ShapeDtypeStruct: dtype must be specified.")

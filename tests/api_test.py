@@ -2715,26 +2715,6 @@ class APITest(jtu.JaxTestCase):
     out_shape = api.eval_shape(lambda x: x, x)  # doesn't crash
     self.assertEqual(out_shape.shape, (3,))
 
-  def test_eval_shape_names(self):
-    raise unittest.SkipTest("named shape are deprecated")
-
-    def fun(x, y):
-      return lax.psum(x, 'i') + y
-
-    class MyArgArray:
-      def __init__(self, shape, dtype, named_shape):
-        self.shape = shape
-        self.dtype = jnp.dtype(dtype)
-        self.named_shape = named_shape
-
-    x = MyArgArray((3, 2), jnp.float32, {'i': 10})
-    y = MyArgArray((3, 2), jnp.float32, {'j': 5})
-    with core.extend_axis_env('i', 10, None):
-      with core.extend_axis_env('j', 5, None):
-        out_shape = api.eval_shape(fun, x, y)
-
-    self.assertEqual(out_shape.named_shape, {'j': 5})
-
   def test_issue_871(self):
     T = jnp.array([[1., 2.], [3., 4.], [5., 6.]])
     x = jnp.array([1, 2, 3])
@@ -6464,49 +6444,6 @@ class JaxprTest(jtu.JaxTestCase):
     def f(x):
       return x - lax.psum(x, 'i')
     jaxpr = api.make_jaxpr(f, axis_env=[('i', 4)])(2)
-    self.assertIn('psum', str(jaxpr))
-
-  def test_make_jaxpr_named(self):
-    raise unittest.SkipTest("named shape are deprecated")
-    def f(x):
-      return x - lax.psum(x, 'i')
-
-    x = api.ShapeDtypeStruct(
-        shape=(2, 3), dtype=jnp.dtype(jnp.float32), named_shape={'i': 10})
-    jaxpr = api.make_jaxpr(f, axis_env=[('i', 10)])(x)
-    named_shapes = [v.aval.named_shape for v in jaxpr.jaxpr.eqns[1].invars]
-    self.assertEqual(named_shapes, [{'i': 10}, {}])
-
-  @parameterized.parameters(True, False)
-  def test_vjp_reduce_axes_jaxpr(self, gy_batched):
-    raise unittest.SkipTest("reduce_axes autodiff is removed")
-    def f(w, x):
-      return jnp.sin(jnp.dot(x, w))
-
-    w = api.ShapeDtypeStruct(
-        shape=(3, 4), dtype=jnp.float32, named_shape={})
-    x = api.ShapeDtypeStruct(
-        shape=(3,), dtype=jnp.float32, named_shape={'batch': 2})
-    gy = api.ShapeDtypeStruct(
-        shape=(4,), dtype=jnp.float32,
-        named_shape={'batch': 2} if gy_batched else {})
-
-    # per-example
-    jaxpr, shapes = api.make_jaxpr(
-        lambda w, x, gy: api.vjp(f, w, x)[1](gy), axis_env=[('batch', 2)],
-        return_shape=True)(w, x, gy)
-    expected = (api.ShapeDtypeStruct(
-        shape=(3, 4), dtype=jnp.float32, named_shape={'batch': 2}), x)
-    self.assertEqual(shapes, expected)
-    self.assertNotIn('psum', str(jaxpr))
-
-    # reduced
-    jaxpr, shapes = api.make_jaxpr(
-        lambda w, x, gy: api.vjp(f, w, x, reduce_axes=('batch',))[1](gy),
-        axis_env=[('batch', 2)],
-        return_shape=True)(w, x, gy)
-    expected = (w, x)
-    self.assertEqual(shapes, expected)
     self.assertIn('psum', str(jaxpr))
 
   def test_weak_type_jit_invariance(self):
