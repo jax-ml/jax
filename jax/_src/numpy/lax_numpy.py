@@ -1340,7 +1340,7 @@ def diff(a: ArrayLike, n: int = 1, axis: int = -1,
 
     When ``append = jnp.array([[3],[1]])``, it is appended to ``a`` along ``axis``
     before computing the difference.
-  
+
     >>> jnp.diff(a, append=jnp.array([[3],[1]]))
     Array([[ 4, -3,  7, -6],
            [ 5, -1, -3, -3]], dtype=int32)
