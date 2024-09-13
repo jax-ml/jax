@@ -2455,7 +2455,7 @@ class ShapeDtypeStruct:
   """
   __slots__ = ["shape", "dtype", "sharding", "_dll", "weak_type"]
 
-  def __init__(self, shape, dtype, sharding=None, weak_type=False):
+  def __init__(self, shape, dtype, *, sharding=None, weak_type=False):
     self.shape = tuple(shape)
     if dtype is None:
       raise ValueError("ShapeDtypeStruct: dtype must be specified.")
