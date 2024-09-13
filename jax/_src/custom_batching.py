@@ -288,3 +288,21 @@ def sequential_vmap(f):
     return out, out_batched
 
   return f
+
+def broadcasting_vmap(f, *, expand=True):
+  f = custom_vmap(f)
+
+  @f.def_vmap
+  def rule(axis_size, in_batched, *args):
+    # If expand is True, then we broadcast the unbatched inputs to have a new
+    # axis with size `axis_size` at the front. If expand is False, we just
+    # insert a new axis (of size 1) into each unbatched input.
+    size = axis_size if expand else 1
+    batched_args = tree_map(
+        lambda x, b: x if b else lax.broadcast(x, (size,)), args,
+        tuple(in_batched))
+    out = f(*batched_args)
+    out_batched = tree_map(lambda _: True, out)
+    return out, out_batched
+
+  return f

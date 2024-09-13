@@ -10684,6 +10684,29 @@ class CustomVmapTest(jtu.JaxTestCase):
 
     self.assertEqual(str(jaxpr), str(jaxpr_ref))
 
+  def test_broadcasting_vmap_basic(self):
+    @jax.custom_batching.broadcasting_vmap
+    def f(x, y):
+      print(x.shape)
+      self.assertEqual(x.shape, y.shape)
+      return x + y
+
+    xs = jnp.arange(3.)
+    y = 4.
+    api.vmap(f, in_axes=(0, None))(xs, y)
+
+  def test_broadcasting_vmap_pytree(self):
+    @jax.custom_batching.broadcasting_vmap
+    def f(x, y):
+      shape = x.shape
+      if shape:
+        tree_util.tree_map(lambda a: self.assertEqual(a.shape[0], shape[0]), y)
+      return x
+
+    xs = jnp.ones(3)
+    y = {"a": 5., "b": jnp.ones((2, 3))}
+    api.vmap(f, in_axes=(0, {"a": None, "b": 1}))(xs, y)
+
   @parameterized.named_parameters(
     ("1", 1),
     ("8", 4),
