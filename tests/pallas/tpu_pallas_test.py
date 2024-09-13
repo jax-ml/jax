@@ -16,6 +16,7 @@
 
 import contextlib
 import functools
+import gc
 import io
 import math
 import re
@@ -1421,6 +1422,9 @@ class PallasCallDMATest(PallasBaseTest):
   def test_large_array_indexing(self):
     n = 6
     dtype = jnp.bfloat16
+    # This test sometimes OOMs on smaller chips. We garbage collect
+    # to increase the chance there is 6GB memory available.
+    gc.collect()
     x = jax.lax.broadcasted_iota(dtype, (n, 1024 * 1024, 512), 0)
 
     def kernel(index, x, y, sem):

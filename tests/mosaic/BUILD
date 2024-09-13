@@ -34,20 +34,29 @@ DISABLED_BACKENDS = [
 ]
 
 DISABLED_CONFIGS = [
-    "gpu",
     "gpu_a100",
+    "gpu_a100_x32",
     "gpu_p100",
     "gpu_p100_x32",
-    "gpu_x32",
     "gpu_pjrt_c_api",
+    "gpu_x32",
+    "gpu",
 ]
 
 jax_test(
     name = "gpu_test",
     srcs = ["gpu_test.py"],
+    config_tags_overrides = {
+        "gpu_h100": {
+            "ondemand": False,  # Include in presubmit.
+        },
+    },
     disable_backends = DISABLED_BACKENDS,
     disable_configs = DISABLED_CONFIGS,
-    enable_configs = ["gpu_h100_2gpu"],
+    enable_configs = [
+        "gpu_h100",
+        "gpu_h100_2gpu",
+    ],
     shard_count = 4,
     deps = [
         "//jax:mosaic_gpu",

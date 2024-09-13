@@ -2164,6 +2164,19 @@ class ShardMapTest(jtu.JaxTestCase):
     with config.disable_vmap_shmap_error():
       _ = jax.vmap(f, in_axes=(0, None), spmd_axis_name='i')(xs, y)
 
+  def test_in_spec_none_hashability(self):
+    mesh = jtu.create_mesh((2,), ('i',))
+
+    class A:
+      def __hash__(self):
+        raise Exception
+
+    @partial(shard_map, mesh=mesh, in_specs=(None,), out_specs=())
+    def f(a):
+      return ()
+
+    f(A())  # don't crash
+
 
 class FunSpec(NamedTuple):
   name: str

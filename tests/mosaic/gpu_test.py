@@ -1243,6 +1243,8 @@ class FragmentedArrayTest(TestCase):
           (lambda x: mgpu.FragmentedArray.cos(x, approx=True), np.cos, True),
           (lambda x: mgpu.FragmentedArray.rsqrt(x), jax.lax.rsqrt, False),
           (lambda x: mgpu.FragmentedArray.rsqrt(x, approx=True), jax.lax.rsqrt, True),
+          (lambda x: -x, jax.lax.neg, False),
+          (lambda x: x + 42.0, lambda x: x + 42.0, False),
       ),
       m=(64, 128),
       n=(8, 16, 32, 64, 80, 128, 256),

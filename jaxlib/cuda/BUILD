@@ -228,6 +228,22 @@ cc_library(
 )
 
 cc_library(
+    name = "cusolver_interface",
+    srcs = ["//jaxlib/gpu:solver_interface.cc"],
+    hdrs = ["//jaxlib/gpu:solver_interface.h"],
+    deps = [
+        ":cuda_gpu_kernel_helpers",
+        ":cuda_vendor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@xla//xla/tsl/cuda:cublas",
+        "@xla//xla/tsl/cuda:cudart",
+        "@xla//xla/tsl/cuda:cusolver",
+    ],
+)
+
+cc_library(
     name = "cusolver_kernels_ffi",
     srcs = ["//jaxlib/gpu:solver_kernels_ffi.cc"],
     hdrs = ["//jaxlib/gpu:solver_kernels_ffi.h"],
@@ -237,6 +253,7 @@ cc_library(
         ":cuda_make_batch_pointers",
         ":cuda_solver_handle_pool",
         ":cuda_vendor",
+        ":cusolver_interface",
         "//jaxlib:ffi_helpers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

@@ -71,6 +71,9 @@ pytype_strict_library(
     srcs = ["core.py"],
     deps = [
         "//jax",
+        "//jax:core",
+        "//jax:mosaic_gpu",
+        "//jax:tree_util",
         "//jax/_src/pallas",
-    ],
+    ] + py_deps("numpy"),
 )

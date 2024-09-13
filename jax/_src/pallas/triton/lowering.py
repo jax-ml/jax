@@ -1002,27 +1002,6 @@ triton_lowering_rules.update({
             ),
         ],
     ),
-    lax.erf_inv_p: _make_dispatch_table(
-        "erf_inv",
-        cuda=[
-            _Fallback(
-                [jnp.float32],
-                lower_fun(
-                    pallas_utils.erf_inv_32_lowering_helper,
-                    multiple_results=False,
-                ),
-            ),
-        ],
-        rocm=[
-            _Fallback(
-                [jnp.float32],
-                lower_fun(
-                    pallas_utils.erf_inv_32_lowering_helper,
-                    multiple_results=False,
-                ),
-            ),
-        ],
-    ),
 })
 
 
@@ -1361,6 +1340,11 @@ def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
 
 register_lowering(lax.sign_p)(
     lower_fun(pallas_utils.sign_lowering_helper, multiple_results=False)
+)
+
+
+register_lowering(lax.erf_inv_p)(
+    lower_fun(pallas_utils.erf_inv_32_lowering_helper, multiple_results=False)
 )
 
 

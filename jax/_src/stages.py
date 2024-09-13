@@ -734,12 +734,22 @@ class Traced(Stage):
 
   def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
             _private_parameters: mlir.LoweringParameters | None = None):
+    from jax._src.interpreters import pxla
+    from jax._src import pjit
+
     if _private_parameters is None:
       _private_parameters = mlir.LoweringParameters()
     new_callable = functools.partial(
         self._lower_callable, lowering_platforms=lowering_platforms,
         lowering_parameters=_private_parameters)
-    return Lowered(new_callable(), self.args_info, self._out_tree)
+    try:
+      lowering = new_callable()
+    except pxla.DeviceAssignmentMismatchError as e:
+      fails, = e.args
+      msg = pjit._device_assignment_mismatch_error(
+          self.fun_name, fails, self._args_flat, 'jit', self._arg_names)
+      raise ValueError(msg) from None
+    return Lowered(lowering, self.args_info, self._out_tree)
 
 
 @runtime_checkable

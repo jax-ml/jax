@@ -615,14 +615,15 @@ def dma_start_discharge_rule(in_avals, out_avals,
 
   # Update semaphore values.
   # TODO(justinfu): Potentially handle asymmetric copy sizes.
-  recv_size = jnp.array(updates.size, dtype=pl_core.SEMAPHORE_INTERPRET_DTYPE)
+  recv_size = jnp.minimum(updates.size, pl_core.SEMAPHORE_MAX_VALUE)
+  recv_size = jnp.array(recv_size, dtype=pl_core.SEMAPHORE_INTERPRET_DTYPE)
   dst_sem_value = _index_semaphore(dst_sem, dst_sem_indexers, dst_sem_aval)
   _, new_dst_sem = state_discharge.index_swap_array(
       dst_sem, dst_sem_indexers, dst_sem_value + recv_size
   )
   if is_remote:
-    send_size = jnp.array(
-        local_src.size, dtype=pl_core.SEMAPHORE_INTERPRET_DTYPE)
+    send_size = jnp.minimum(local_src.size, pl_core.SEMAPHORE_MAX_VALUE)
+    send_size = jnp.array(send_size, dtype=pl_core.SEMAPHORE_INTERPRET_DTYPE)
     src_sem_value = _index_semaphore(src_sem, src_sem_indexers, src_sem_aval)
     _, new_src_sem = state_discharge.index_swap_array(
         src_sem, src_sem_indexers, src_sem_value + send_size
@@ -685,7 +686,8 @@ def dma_wait_discharge_rule(in_avals, out_avals,
   num_sem_indexers = len(tree_util.tree_leaves(sem_indexers_avals))
   num_indexers = len(tree_util.tree_leaves(ref_indexers_avals))
   updates = state_discharge.index_array(ref, ref_indexers)
-  copy_size = jnp.array(updates.size, dtype=pl_core.SEMAPHORE_INTERPRET_DTYPE)
+  copy_size = jnp.minimum(updates.size, pl_core.SEMAPHORE_MAX_VALUE)
+  copy_size = jnp.array(copy_size, dtype=pl_core.SEMAPHORE_INTERPRET_DTYPE)
   sem_value = _index_semaphore(sem, sem_indexers, sem_aval)
   _, new_sem = state_discharge.index_swap_array(
       sem, sem_indexers, sem_value - copy_size

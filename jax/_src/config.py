@@ -1347,6 +1347,16 @@ compilation_cache_max_size = int_state(
           'size to grow indefinitely.'),
 )
 
+remove_custom_partitioning_ptr_from_cache_key = bool_state(
+    name='jax_remove_custom_partitioning_ptr_from_cache_key',
+    default=False,
+    help=('If set to True, remove the custom partitioning pointer '
+          'present in the precompiled stableHLO before hashing  '
+          'during cache key computation. This is a potentially '
+          'unsafe flag to set and only users who are sure of '
+          'what they are trying to achieve should set it.'),
+)
+
 default_dtype_bits = enum_state(
     name='jax_default_dtype_bits',
     enum_values=['32', '64'],
@@ -1710,10 +1720,8 @@ string_state(
 
 pmap_no_rank_reduction = bool_state(
     name='jax_pmap_no_rank_reduction',
-    default=False,
-    help=(
-        "If True, pmap shards have a the same rank as their enclosing array."
-    )
+    default=True,
+    help='If True, pmap shards have a the same rank as their enclosing array.',
 )
 
 use_shardy_partitioner = bool_state(

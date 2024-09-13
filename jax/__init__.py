@@ -127,7 +127,6 @@ from jax._src.api import ShapeDtypeStruct as ShapeDtypeStruct
 from jax._src.api import value_and_grad as value_and_grad
 from jax._src.api import vjp as vjp
 from jax._src.api import vmap as vmap
-from jax._src.api import xla_computation as _deprecated_xla_computation
 from jax._src.sharding_impls import NamedSharding as NamedSharding
 from jax._src.sharding_impls import make_mesh as make_mesh
 
@@ -224,20 +223,18 @@ _deprecations = {
     "jax.clear_backends is deprecated.",
     _deprecated_clear_backends
   ),
-  # Added Jun 16, 2024
+  # Remove after jax 0.4.35 release.
   "xla_computation": (
-      "jax.xla_computation is deprecated. Please use the AOT APIs; see "
+      "jax.xla_computation is deleted. Please use the AOT APIs; see "
       "https://jax.readthedocs.io/en/latest/aot.html. For example, replace "
       "xla_computation(f)(*xs) with jit(f).lower(*xs).compiler_ir('hlo'). See "
-      "CHANGELOG.md for 0.4.30 for more examples.",
-      _deprecated_xla_computation
+      "CHANGELOG.md for 0.4.30 for more examples.", None
   ),
 }
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
   from jax._src.api import clear_backends as clear_backends
-  from jax._src.api import xla_computation as xla_computation
   from jax._src.tree_util import treedef_is_leaf as treedef_is_leaf
   from jax._src.tree_util import tree_flatten as tree_flatten
   from jax._src.tree_util import tree_leaves as tree_leaves

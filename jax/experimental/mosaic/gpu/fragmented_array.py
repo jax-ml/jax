@@ -245,7 +245,9 @@ class FragmentedArray:
     other_arrs = []
     for o in other:
       if not isinstance(o, FragmentedArray):
-        if not isinstance(o, ir.Value):
+        if isinstance(o, (float, int)):
+          o = utils.c(o, self.mlir_dtype)
+        elif not isinstance(o, ir.Value):
           raise NotImplementedError(o)
 
         o = FragmentedArray.splat(o, shape=self.shape, layout=self.layout)
@@ -266,6 +268,14 @@ class FragmentedArray:
     for idx, reg in np.ndenumerate(self.registers):
       new_regs[idx] = op(reg, *(o.registers[idx] for o in other_arrs))
     return FragmentedArray(_registers=new_regs, _layout=self.layout)
+
+  def __neg__(self):
+    if ir.FloatType.isinstance(self.mlir_dtype):
+      return self._pointwise(arith.negf)
+    elif ir.IntegerType.isinstance(self.mlir_dtype):
+      return self._pointwise(arith.negsi)
+    else:
+      raise NotImplementedError(self.mlir_dtype)
 
   def __add__(self, other):
     if ir.FloatType.isinstance(self.mlir_dtype):
