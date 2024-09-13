@@ -1743,17 +1743,20 @@ def _invalid_shape_error(shape: Shape, context: str=""):
   return TypeError(msg)
 
 class ShapedArray(UnshapedArray):
-  __slots__ = ['shape', 'sharding']  # inherits slots from parent
+  __slots__ = ['shape', 'sharding', 'memory_space']  # inherits slots from parent
   array_abstraction_level = 2
 
-  def __init__(self, shape, dtype, weak_type=False, sharding=None):
+  def __init__(self, shape, dtype, weak_type=False, sharding=None,
+               memory_space=None):
     self.shape = canonicalize_shape(shape)
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
     if config.sharding_in_types.value:
       self.sharding = sharding
+    self.memory_space = memory_space
 
-  def update(self, shape=None, dtype=None, weak_type=None, sharding=None):
+  def update(self, shape=None, dtype=None, weak_type=None, sharding=None,
+             memory_space=None):
     if shape is None:
       shape = self.shape
     if dtype is None:
@@ -1762,7 +1765,10 @@ class ShapedArray(UnshapedArray):
       weak_type = self.weak_type
     if sharding is None:
       sharding = getattr(self, 'sharding', None)
-    return ShapedArray(shape, dtype, weak_type, sharding=sharding)
+    if memory_space is None:
+      memory_space = self.memory_space
+    return ShapedArray(shape, dtype, weak_type, sharding=sharding,
+                       memory_space=memory_space)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self:
@@ -1805,9 +1811,13 @@ class ShapedArray(UnshapedArray):
     dt_str = dt_str.replace('void', 'float0')
     shapestr = ','.join(map(str, self.shape))
     if hasattr(self, 'sharding'):
-      return f'{dt_str}[{shapestr}]({self.sharding})'
+      sharding_str = f'{dt_str}[{shapestr}]({self.sharding})'
     else:
-      return f'{dt_str}[{shapestr}]'
+      sharding_str = ''
+    memoryspace_str = (
+        '' if self.memory_space is None else f'{self.memory_space}>'
+    )
+    return f'{dt_str}{memoryspace_str}[{shapestr}]{sharding_str}'
 
   def _len(self, ignored_tracer):
     try:
