@@ -836,7 +836,8 @@ def _custom_vjp_call_jaxpr_jvp(
   _, res_tree = out_trees()
   res_and_primals_out = core.eval_jaxpr(fwd_jaxpr, fwd_consts, *args)
   res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
-  avals_out = [raise_to_shaped(core.get_aval(x)) for x in primals_out]
+  avals_out = [core.primal_aval_to_tangent_aval(raise_to_shaped(core.get_aval(x)))
+               for x in primals_out]
   args_dot = map(ad.instantiate_zeros, args_dot)
   tangents_out = ad.custom_lin_p.bind(
       *res, *args_dot, num_res=res_tree.num_leaves, bwd=bwd,
