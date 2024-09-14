@@ -40,7 +40,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import for_loop
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import func
@@ -448,20 +447,10 @@ def lower_jaxpr_to_module(
               f"and index_map returning {bm.index_map_jaxpr.jaxpr.outvars}, in "
               f"memory space {bm.block_aval.memory_space}."
               "\nSee details at https://jax.readthedocs.io/en/latest/pallas/grid_blockspec.html#pallas-blockspec")
-    if lowering_context.is_forward_compat() or jaxlib_version < (0, 4, 32):
-      # TODO(b/356116061): Remove the old rank condition
-      if rank < 2:
-        raise ValueError(
-            "The Pallas TPU lowering currently supports only blocks of "
-            "rank >= 2 for blocks, except those in the SMEM memory space "
-            "having the same block shape as the array shape and a "
-            "trivial index_map (returning all 0s). " + err_details())
-    else:
-      if rank < 1:
-        raise ValueError(
-            "The Pallas TPU lowering currently supports only blocks of "
-            "rank >= 1. " + err_details())
-
+    if rank < 1:
+      raise ValueError(
+          "The Pallas TPU lowering currently supports only blocks of "
+          "rank >= 1. " + err_details())
 
     if (bm.block_aval.memory_space == tpu_core.TPUMemorySpace.ANY and
         not bm.has_trivial_window()):
@@ -476,34 +465,17 @@ def lower_jaxpr_to_module(
       bs1, as1 = unmapped_bs[-2], bm.array_shape_dtype.shape[-2]
     else:
       bs1, as1 = 1, 1
-    if lowering_context.is_forward_compat():
-      # TODO(b/356116061): Remove the old divisibility condition
-      # With shape polymorphism block_shape is static, but the array shape may
-      # be symbolic. Write the divisibility comparisons to defer inequality
-      # comparisons on dimensions as much as possible.
+
+    if rank >= 2:
       evenly_divisible = (
-          (bs0 % 128 == 0 or (bs0 == as0 and as0 < 128)) and
-          (bs1 % 8 == 0 or (bs1 == as1 and as1 < 8))
+          (bs0 == as0 or bs0 % 128 == 0) and
+          (bs1 == as1 or bs1 % 8 == 0)
       )
-      if not evenly_divisible:
-        raise ValueError(
-            "The Pallas TPU lowering currently requires that the last two "
-            "dimensions of your block shape are divisible by 8 and 128 "
-            "respectively, if the respective dimensions of the overall array "
-            "are larger than the respective factors. If array dimensions are "
-            "smaller, the block should span the full array dimension. "
-            + err_details())
     else:
-      if rank >= 2:
-        evenly_divisible = (
-            (bs0 == as0 or bs0 % 128 == 0) and
-            (bs1 == as1 or bs1 % 8 == 0)
-        )
-      else:
-        assert rank == 1
-        # TODO(necula): test this for bool. What should it do?
-        tiling_size = 128 * (32 // lax_internal._bit_width(bm.array_shape_dtype.dtype))
-        evenly_divisible = (bs0 == as0 or bs0 % tiling_size == 0)
+      assert rank == 1
+      # TODO(necula): test this for bool. What should it do?
+      tiling_size = 128 * (32 // lax_internal._bit_width(bm.array_shape_dtype.dtype))
+      evenly_divisible = (bs0 == as0 or bs0 % tiling_size == 0)
 
     if not evenly_divisible:
       raise ValueError(
