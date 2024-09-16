@@ -7203,9 +7203,10 @@ class CustomJVPTest(jtu.JaxTestCase):
         TypeError,
         re.escape(
             "Custom JVP rule must produce primal and tangent outputs "
-            "with equal shapes and dtypes, but got float32[] and float32[1] "
-            "respectively."),
+            "with corresponding shapes and dtypes. "
+            "Expected float32[] (tangent type of float32[]) but got float32[1]."),
         lambda: api.jvp(f, (jnp.float32(2.),), (jnp.float32(1.),)))
+
 
   def test_jvp_rule_doesnt_return_pair_error_message(self):
     # https://github.com/google/jax/issues/2516

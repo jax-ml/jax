@@ -327,24 +327,27 @@ def _flatten_jvp(primal_name, jvp_name, in_tree, maybe_out_type, *args):
            "shapes/dtypes of:\n"
            f"""    {str(ty_tree_).replace("'", "")}""")
       raise TypeError(m)
-  # TODO(mattjj): compare primals' tangent types to tangent objects' types
-  primal_avals_out = [raise_to_shaped(core.get_aval(x), weak_type=False)
-                      for x in primals_out]
+  primal_avals_out = [raise_to_shaped(core.get_aval(x), weak_type=False) for x in primals_out]
+  expected_tangent_avals_out = [
+    raise_to_shaped(core.get_aval(x), weak_type=False).to_tangent_aval()
+    for x in primals_out]
   tangent_avals_out = [raise_to_shaped(core.get_aval(t), weak_type=False)
                        if type(t) is not SymbolicZero else t.aval.strip_weak_type()
                        for t in tangents_out]
-  if primal_avals_out != tangent_avals_out:
-    if len(primal_avals_out) == 1:
-      (av1,), (av2,) = primal_avals_out, tangent_avals_out
+  if expected_tangent_avals_out != tangent_avals_out:
+    if len(expected_tangent_avals_out) == 1:
+      (av_p,), (av_et,), (av_t,) = primal_avals_out, expected_tangent_avals_out, tangent_avals_out
       msg = ("Custom JVP rule must produce primal and tangent outputs with "
-             "equal shapes and dtypes, but got {} and {} respectively.")
-      raise TypeError(msg.format(av1.str_short(), av2.str_short()))
+             "corresponding shapes and dtypes. Expected {} (tangent type of {}) but got {}.")
+      raise TypeError(msg.format(av_et.str_short(), av_p.str_short(), av_t.str_short()))
     else:
       msg = ("Custom JVP rule must produce primal and tangent outputs with "
-             "equal shapes and dtypes, but got:\n{}")
+             "corresponding shapes and dtypes, but got:\n{}")
       disagreements = (
-          f"  primal {av1.str_short()} for tangent {av2.str_short()}"
-          for av1, av2 in zip(primal_avals_out, tangent_avals_out) if av1 != av2)
+          f"  primal {av_p.str_short()} with tangent {av_t.str_short()}, expecting tangent {av_et}"
+          for av_p, av_et, av_t in zip(primal_avals_out, expected_tangent_avals_out, tangent_avals_out)
+          if av_et != av_t)
+
       raise TypeError(msg.format('\n'.join(disagreements)))
   yield primals_out + tangents_out, (out_tree, primal_avals)
 
@@ -908,7 +911,7 @@ def _custom_vjp_call_jaxpr_jvp(
   _, res_tree = out_trees()
   res_and_primals_out = core.eval_jaxpr(fwd_jaxpr, fwd_consts, *args)
   res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
-  avals_out = [raise_to_shaped(core.get_aval(x)) for x in primals_out]
+  avals_out = [raise_to_shaped(core.get_aval(x)).to_tangent_aval() for x in primals_out]
   args_dot = map(ad.instantiate_zeros, args_dot)
   # Cast float0 to zeros with the primal dtype because custom vjp rules don't
   # currently handle float0s

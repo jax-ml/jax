@@ -398,7 +398,7 @@ class JVPTrace(Trace):
     res_and_primals_out = fwd.call_wrapped(*fwd_in)
     _, res_tree = out_trees()
     res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
-    avals_out = [raise_to_shaped(core.get_aval(x)) for x in primals_out]
+    avals_out = [raise_to_shaped(core.get_aval(x)).to_tangent_aval() for x in primals_out]
     # TODO(frostig,mattjj): avoid instantiating zeros when we don't have to!
     tangents_in = map(instantiate_zeros, tangents_in)
     tangents_out = custom_lin_p.bind(
@@ -695,7 +695,7 @@ def _jvp_jaxpr(jaxpr, nonzeros, instantiate):
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
   f_jvp, out_nonzeros = f_jvp_traceable(jvp(f, instantiate=instantiate, transform_stack=False),
                                         nonzeros)
-  tangent_avals = [aval for aval, nz in zip(jaxpr.in_avals, nonzeros) if nz]
+  tangent_avals = [aval.to_tangent_aval() for aval, nz in zip(jaxpr.in_avals, nonzeros) if nz]
   avals_in = list(it.chain(jaxpr.in_avals, tangent_avals))
   jaxpr_out, avals_out, literals_out, () = pe.trace_to_jaxpr_dynamic(f_jvp, avals_in)
   return core.ClosedJaxpr(jaxpr_out, literals_out), out_nonzeros()
