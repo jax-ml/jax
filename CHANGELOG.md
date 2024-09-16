@@ -10,7 +10,24 @@ Remember to align the itemized text with the first line of an item within a list
 When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
-## jax 0.4.32
+## jax 0.4.33
+
+This is a patch release on top of jax 0.4.32, that fixes two bugs found in that
+release.
+
+A TPU-only data corruption bug was found in the version of libtpu pinned by
+JAX 0.4.32, which manifested only if multiple TPU slices were present in the
+same job, for example, if training on multiple v5e slices.
+This release fixes that issue by pinning a fixed version of `libtpu`.
+
+## jaxlib 0.4.33
+
+This release fixes an inaccurate result for F64 tanh on CPU (#23590).
+
+## jax 0.4.32 (September 11, 2024)
+
+Note: This release was yanked from PyPi because of a data corruption bug on TPU.
+See the 0.4.33 release notes for more details.
 
 * New Functionality
   * Added {func}`jax.extend.ffi.ffi_call` and {func}`jax.extend.ffi.ffi_lowering`
@@ -65,7 +82,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     The argument to {func}`jax.dlpack.from_dlpack` should be an array from
     another framework that implements the ``__dlpack__`` protocol.
 
-## jaxlib 0.4.32
+## jaxlib 0.4.32 (September 11, 2024)
+
+Note: This release was yanked from PyPi because of a data corruption bug on TPU.
+See the 0.4.33 release notes for more details.
 
 * Breaking changes
   * Hermetic CUDA support is added.
