@@ -399,8 +399,14 @@ class JaxprTrace(Trace['JaxprTracer']):
     return source_info_util.current_name_stack()[len(self.name_stack):]
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, symbolic_zeros):
-    # We assume partial evaluation is only performed to build linear functions,
-    # and hence we don't need to keep the custom JVP rule around anymore.
+    tracers = map(self.to_jaxpr_tracer, tracers)
+    if all(t.is_known() for t in tracers):
+      with core.set_current_trace(self.parent_trace):
+        vals = [t.pval[1] for t in tracers]
+        return prim.bind(fun, jvp, *vals, symbolic_zeros=symbolic_zeros)
+    # We assume non-trivial partial evaluation is only performed to build linear
+    # functions, and hence we don't need to keep the custom JVP rule around
+    # anymore.
     del jvp, symbolic_zeros
     with core.set_current_trace(self):
       return fun.call_wrapped(*tracers)
