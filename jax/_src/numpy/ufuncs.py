@@ -1476,6 +1476,20 @@ def divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.true_divide`."""
   return true_divide(x1, x2)
 
+@jit
+def divide_no_nan(x1: ArrayLike, x2: ArrayLike) -> Array:
+  """Safe element-wise division which returns 0 where the denominator is 0.
+
+  Args:
+      x1: Input array, the dividend
+      x2: Input array, the divisor
+
+  Returns:
+      The quotient `x1/x2`, element-wise, with zero where x2 is zero.
+  """
+  safe_x2 = _where(x2 == 0, 1, x2)
+  return _where(x2 == 0, 0, divide(x1, safe_x2))
+
 
 @jit
 def floor_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:

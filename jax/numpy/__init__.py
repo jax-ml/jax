@@ -384,6 +384,7 @@ from jax._src.numpy.ufuncs import (
     deg2rad as deg2rad,
     degrees as degrees,
     divide as divide,
+    divide_no_nan as divide_no_nan,
     divmod as divmod,
     equal as equal,
     exp as exp,

@@ -70,6 +70,7 @@ MAIN_NAMESPACE = {
   'cosh',
   'cumulative_sum',
   'divide',
+  'divide_no_nan',
   'e',
   'empty',
   'empty_like',
