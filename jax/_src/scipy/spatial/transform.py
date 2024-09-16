@@ -167,12 +167,12 @@ class Rotation(typing.NamedTuple):
     """Represent as rotation vectors."""
     return _as_rotvec(self.quat, degrees)
 
-  def as_quat(self, canonical: bool=False) -> jax.Array:
+  def as_quat(self, canonical: bool=False, scalar_first: bool=False) -> jax.Array:
     """Represent as quaternions."""
-    if canonical:
-      return _make_canonical(self.quat)
-    else:
-      return self.quat
+    quat = _make_canonical(self.quat) if canonical else self.quat
+    if scalar_first:
+        return jnp.roll(quat, shift=1, axis=-1)
+    return quat
 
   def inv(self):
     """Invert this rotation."""
