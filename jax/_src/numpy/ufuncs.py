@@ -1585,8 +1585,61 @@ def _float_divmod(x1: ArrayLike, x2: ArrayLike) -> tuple[Array, Array]:
   return lax.round(div), mod
 
 
-@implements(np.power, module='numpy')
 def power(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  """Calculate element-wise base ``x1`` exponential of ``x2``.
+
+  JAX implementation of :obj:`numpy.power`.
+
+  Args:
+    x1: scalar or array. Specifies the bases.
+    x2: scalar or array. Specifies the exponent. ``x1`` and ``x2`` should either
+      have same shape or be broadcast compatible.
+
+  Returns:
+    An array containing the base ``x1`` exponentials of ``x2`` with same dtype
+    as input.
+
+  Note:
+    - When ``x2`` is a concrete integer scalar, ``jnp.power`` lowers to
+      :func:`jax.lax.integer_pow`.
+    - When ``x2`` is a traced scalar or an array, ``jnp.power`` lowers to
+      :func:`jax.lax.pow`.
+    - ``jnp.power`` raises a ``TypeError`` for integer type raised to negative
+      integer power.
+    - ``jnp.power`` returns ``nan`` for negative value raised to the power of
+      non-integer values.
+
+  See also:
+    - :func:`jax.lax.pow`: Computes element-wise power, :math:`x^y`.
+    - :func:`jax.lax.integer_pow`: Computes element-wise power :math:`x^y`, where
+      :math:`y` is a fixed integer.
+    - :func:`jax.numpy.float_power`: Computes the first array raised to the power
+      of second array, element-wise, by promoting to the inexact dtype.
+    - :func:`jax.numpy.pow`: Computes the first array raised to the power of second
+      array, element-wise.
+
+  Examples:
+    Inputs with scalar integers:
+
+    >>> jnp.power(4, 3)
+    Array(64, dtype=int32, weak_type=True)
+
+    Inputs with same shape:
+
+    >>> x1 = jnp.array([2, 4, 5])
+    >>> x2 = jnp.array([3, 0.5, 2])
+    >>> jnp.power(x1, x2)
+    Array([ 8.,  2., 25.], dtype=float32)
+
+    Inputs with broadcast compatibility:
+
+    >>> x3 = jnp.array([-2, 3, 1])
+    >>> x4 = jnp.array([[4, 1, 6],
+    ...                 [1.3, 3, 5]])
+    >>> jnp.power(x3, x4)
+    Array([[16.,  3.,  1.],
+           [nan, 27.,  1.]], dtype=float32)
+  """
   check_arraylike("power", x1, x2)
   check_no_float0s("power", x1, x2)
 
@@ -1616,8 +1669,9 @@ def power(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   # Handle cases #2 and #3 under a jit:
   return _power(x1, x2)
 
-# Array API alias
-pow = power
+def pow(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  """Alias of :func:`jax.numpy.power`"""
+  return power(x1, x2)
 
 @partial(jit, inline=True)
 def _power(x1: ArrayLike, x2: ArrayLike) -> Array:
