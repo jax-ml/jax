@@ -1744,11 +1744,39 @@ def _wrap_between(x, _a):
   return lax.sub(rem, a)
 
 
-@custom_jvp
-@implements(np.logaddexp2, module='numpy')
 @jit
 def logaddexp2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  """Logarithm of the sum of exponentials of inputs in base-2 avoiding overflow.
+
+  JAX implementation of :obj:`numpy.logaddexp2`.
+
+  Args:
+    x1: input array or scalar.
+    x2: input array or scalar. ``x1`` and ``x2`` should either have same shape or
+      be broadcast compatible.
+
+  Returns:
+    An array containing the result, :math:`log_2(2^{x1}+2^{x2})`, element-wise.
+
+  See also:
+    - :func:`jax.numpy.logaddexp`: Computes ``log(exp(x1) + exp(x2))``, element-wise.
+    - :func:`jax.numpy.log2`: Calculates the base-2 logarithm of ``x`` element-wise.
+
+  Examples:
+    >>> x1 = jnp.array([[3, -1, 4],
+    ...                 [8, 5, -2]])
+    >>> x2 = jnp.array([2, 3, -5])
+    >>> result1 = jnp.logaddexp2(x1, x2)
+    >>> result2 = jnp.log2(jnp.exp2(x1) + jnp.exp2(x2))
+    >>> jnp.allclose(result1, result2)
+    Array(True, dtype=bool)
+  """
   x1, x2 = promote_args_inexact("logaddexp2", x1, x2)
+  return _logaddexp2(x1, x2)
+
+
+@custom_jvp
+def _logaddexp2(x1, x2):
   amax = lax.max(x1, x2)
   if dtypes.issubdtype(x1.dtype, np.floating):
     delta = lax.sub(x1, x2)
@@ -1762,7 +1790,7 @@ def logaddexp2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     return lax.complex(lax.real(out), _wrap_between(lax.imag(out), np.pi / np.log(2)))
 
 
-@logaddexp2.defjvp
+@_logaddexp2.defjvp
 def _logaddexp2_jvp(primals, tangents):
   x1, x2 = primals
   t1, t2 = tangents
@@ -1775,7 +1803,7 @@ def _logaddexp2_jvp(primals, tangents):
 
 @partial(jit, inline=True)
 def log2(x: ArrayLike, /) -> Array:
-  """Calculates the base-2 logarithm of x element-wise
+  """Calculates the base-2 logarithm of ``x`` element-wise.
 
   JAX implementation of :obj:`numpy.log2`.
 
