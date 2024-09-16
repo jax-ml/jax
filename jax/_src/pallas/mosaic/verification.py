@@ -550,13 +550,17 @@ def _pretend_abstract_eval(*_, **params):
 
 def _pretend_lowering(ctx: lowering.LoweringRuleContext, *flat_args, tree):
   if ctx.lowering_context.for_verification:
-    (base_read_refs, indexers) = tree_util.tree_unflatten(tree, flat_args)
+    (base_read_refs, transforms) = tree_util.tree_unflatten(tree, flat_args)
     read_ref_avals, _ = tree_util.tree_unflatten(tree, ctx.avals_in)
     block_shapes, _ = tree_util.tree_unflatten(tree, ctx.block_shapes)
     read_refs = [
         lowering._index_ref(ref, aval, block_shape, indexer)[0]
         for ref, aval, block_shape, indexer in zip(
-            base_read_refs, read_ref_avals, block_shapes, indexers, strict=True,
+            base_read_refs,
+            read_ref_avals,
+            block_shapes,
+            transforms,
+            strict=True,
         )
     ]
     ir.Operation.create("verification.pretend", operands=read_refs)
@@ -565,8 +569,10 @@ def _pretend_lowering(ctx: lowering.LoweringRuleContext, *flat_args, tree):
 lowering.lowering_rules[pretend_p] = _pretend_lowering  # type: ignore
 
 def pretend(read_refs):
-  refs, indexers = unzip2(primitives._get_ref_and_indexers(r) for r in read_refs)
-  flat_args, tree = tree_util.tree_flatten((refs, indexers))
+  refs, transforms = unzip2(
+      primitives._get_ref_and_transforms(r) for r in read_refs
+  )
+  flat_args, tree = tree_util.tree_flatten((refs, transforms))
   return pretend_p.bind(*flat_args, tree=tree)
 
 

@@ -18,9 +18,6 @@ from functools import partial
 import types
 from typing import Any, Union
 
-import numpy as np
-
-
 from jax._src import ad_util
 from jax._src import core
 from jax._src import dispatch
@@ -28,14 +25,22 @@ from jax._src import pretty_printer as pp
 from jax._src import tree_util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
-from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
-from jax._src.typing import Array
 from jax._src.state import indexing
-from jax._src.state.types import (AbstractRef, RefView, ReadEffect, WriteEffect,
-                                  AccumEffect)
+from jax._src.state.types import (
+    AbstractRef,
+    AccumEffect,
+    ReadEffect,
+    RefBitcaster,
+    Transform,
+    TransformedRef,
+    WriteEffect,
+)
+from jax._src.typing import Array
 from jax._src.util import safe_map, safe_zip
+import numpy as np
 
 
 ## General utilities
@@ -59,29 +64,29 @@ get_p.def_impl(partial(dispatch.apply_primitive, get_p))
 
 Indexer = tuple[Union[int, slice, Array, types.EllipsisType], ...]
 
-def get_ref_and_indexers(
+def get_ref_and_transforms(
     ref_or_view: Any, idx: Indexer | None, function_name: str
-) -> tuple[Any, tuple[indexing.NDIndexer, ...]]:
-  if isinstance(ref_or_view, RefView):
-    ref, indexers = ref_or_view.ref, ref_or_view.indexers
+) -> tuple[Any, tuple[Transform, ...]]:
+  if isinstance(ref_or_view, TransformedRef):
+    ref, transforms = ref_or_view.ref, ref_or_view.transforms
   else:
-    ref, indexers = ref_or_view, ()
+    ref, transforms = ref_or_view, ()
   ref_aval = core.get_aval(ref)
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"Can only call `{function_name}` on a `Ref`: {ref}.")
   if not isinstance(ref_aval.inner_aval, core.ShapedArray):
     return ref, ()
   if idx is None:
-    return ref, indexers
+    return ref, transforms
   nd_indexer = indexing.NDIndexer.from_indices_shape(idx, ref_or_view.shape)
-  return ref, (*indexers, nd_indexer)
+  return ref, (*transforms, nd_indexer)
 
 
 def ref_get(ref_or_view: Any, idx: Indexer | None = None) -> Array:
   """Reads a value from a `Ref`, a.k.a. value <- ref[idx]."""
-  ref, indexers = get_ref_and_indexers(ref_or_view, idx, "ref_get")
-  flat_indexers, tree = tree_util.tree_flatten(indexers)
-  return get_p.bind(ref, *flat_indexers, tree=tree)
+  ref, transforms = get_ref_and_transforms(ref_or_view, idx, "ref_get")
+  flat_transforms, tree = tree_util.tree_flatten(transforms)
+  return get_p.bind(ref, *flat_transforms, tree=tree)
 
 # `swap` mutates a `Ref`, setting its value and returns its previous value.
 # b = swap_p.bind(x, a)
@@ -102,14 +107,22 @@ def ref_get(ref_or_view: Any, idx: Indexer | None = None) -> Array:
 swap_p = core.Primitive("swap")
 swap_p.def_impl(partial(dispatch.apply_primitive, swap_p))
 
-def ref_swap(ref_or_view: AbstractRef | RefView, idx: Indexer | None, value: Array,
-             _function_name: str = "ref_swap") -> Array:
-  """Sets a `Ref`'s value and returns the original value."""
-  ref, indexers = get_ref_and_indexers(ref_or_view, idx, _function_name)
-  flat_indexers, tree = tree_util.tree_flatten(indexers)
-  return swap_p.bind(ref, value, *flat_indexers, tree=tree)
 
-def ref_set(ref_or_view: AbstractRef | RefView, idx: Indexer | None, value: Array) -> None:
+def ref_swap(
+    ref_or_view: AbstractRef | TransformedRef,
+    idx: Indexer | None,
+    value: Array,
+    _function_name: str = "ref_swap",
+) -> Array:
+  """Sets a `Ref`'s value and returns the original value."""
+  ref, transforms = get_ref_and_transforms(ref_or_view, idx, _function_name)
+  flat_transforms, tree = tree_util.tree_flatten(transforms)
+  return swap_p.bind(ref, value, *flat_transforms, tree=tree)
+
+
+def ref_set(
+    ref_or_view: AbstractRef | TransformedRef, idx: Indexer | None, value: Array
+) -> None:
   """Sets a `Ref`'s value, a.k.a. ref[idx] <- value."""
   ref_swap(ref_or_view, idx, value, _function_name="ref_set")
 
@@ -130,34 +143,50 @@ addupdate_p.def_impl(partial(dispatch.apply_primitive, addupdate_p))
 
 def ref_addupdate(ref_or_view: AbstractRef, idx: Indexer | None, x: Array) -> None:
   """Mutates a ref with an additive update i.e. `ref[idx] += x`."""
-  ref, indexers = get_ref_and_indexers(ref_or_view, idx, "ref_addupdate")
-  flat_indexers, tree = tree_util.tree_flatten(indexers)
-  return addupdate_p.bind(ref, x, *flat_indexers, tree=tree)
+  ref, transforms = get_ref_and_transforms(ref_or_view, idx, "ref_addupdate")
+  flat_transforms, tree = tree_util.tree_flatten(transforms)
+  return addupdate_p.bind(ref, x, *flat_transforms, tree=tree)
 
 ## get/set/addupdate abstract evaluation rules
 
 
-def _shape_after_indexing(
-    shape: tuple[int | Array, ...], indexers: tuple[indexing.NDIndexer, ...]
+def _shape_after_transforming(
+    shape: tuple[int | Array, ...], transforms: tuple[Transform, ...]
 ) -> tuple[int | Array, ...]:
-  for indexer in indexers:
-    # Run some simple checks that all the indexers have consistent shapes
-    if not indexer.is_dynamic_size:
-      assert indexer.shape == shape, (indexer.shape, shape)
-    shape = indexer.get_indexer_shape()
+  for transform in transforms:
+    match transform:
+      case indexing.NDIndexer():
+        # Run some simple checks that all the indexers have consistent shapes
+        if not transform.is_dynamic_size:
+          assert transform.shape == shape, (transform.shape, shape)
+        shape = transform.get_indexer_shape()
+      case RefBitcaster():
+        shape = transform.shape
+      case _:
+        raise ValueError(f"Unsupported transform: {transform}")
   return shape
+
+
+def _dtype_after_transforming(
+    dtype: Any, transforms: tuple[Transform, ...]
+) -> Any:
+  for transform in reversed(transforms):
+    if isinstance(transform, RefBitcaster):
+      return transform.dtype
+  return dtype
 
 
 def _get_abstract_eval(ref_aval: AbstractRef, *args,
                        tree):
-  indexers = tree_util.tree_unflatten(tree, args)
+  transforms = tree_util.tree_unflatten(tree, args)
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`get` must be called on `Ref` types: {ref_aval}.")
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
-    out_shape = _shape_after_indexing(ref_aval.shape, indexers)
-    out_aval = ref_aval.inner_aval.update(shape=out_shape)
+    out_shape = _shape_after_transforming(ref_aval.shape, transforms)
+    out_dtype = _dtype_after_transforming(ref_aval.dtype, transforms)
+    out_aval = ref_aval.inner_aval.update(shape=out_shape, dtype=out_dtype)
   else:
-    if indexers:
+    if transforms:
       raise ValueError("Cannot index non-shaped array with nontrivial indices.")
     out_aval = ref_aval.inner_aval
   return (out_aval, {ReadEffect(0)})
@@ -166,27 +195,30 @@ get_p.def_effectful_abstract_eval(_get_abstract_eval)
 def _swap_abstract_eval(ref_aval: AbstractRef,
                         val_aval: core.AbstractValue,
                         *args: Any, tree):
-  indexers = tree_util.tree_unflatten(tree, args)
+  transforms = tree_util.tree_unflatten(tree, args)
   out_aval: core.AbstractValue
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`swap` must be called on `Ref` types: {ref_aval}.")
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
     val_aval = core.raise_to_shaped(val_aval)
     assert isinstance(val_aval, core.ShapedArray)
-    expected_out_shape = _shape_after_indexing(ref_aval.shape, indexers)
+    expected_out_shape = _shape_after_transforming(ref_aval.shape, transforms)
+    expected_out_dtype = _dtype_after_transforming(ref_aval.dtype, transforms)
     if expected_out_shape != val_aval.shape:
       raise ValueError("Invalid shape for `swap`. "
                        f"Ref shape: {ref_aval.shape}. "
                        f"Expected shape: {expected_out_shape}. "
                        f"Value shape: {val_aval.shape}. "
-                       f"Indices: {indexers}. ")
-    if ref_aval.dtype != val_aval.dtype and not val_aval.weak_type:
-      raise ValueError("Invalid dtype for `swap`. "
-                       f"Ref dtype: {ref_aval.dtype}. "
-                       f"Value dtype: {val_aval.dtype}. ")
-    out_aval = core.ShapedArray(expected_out_shape, ref_aval.dtype)
+                       f"Transforms: {transforms}. ")
+    if expected_out_dtype != val_aval.dtype and not val_aval.weak_type:
+      raise ValueError(
+          "Invalid dtype for `swap`. "
+          f"Ref dtype: {expected_out_dtype}. "
+          f"Value dtype: {val_aval.dtype}. "
+      )
+    out_aval = core.ShapedArray(expected_out_shape, expected_out_dtype)
   else:
-    if indexers:
+    if transforms:
       raise ValueError("Cannot index non-shaped array with nontrivial indices.")
     out_aval = ref_aval.inner_aval
   return (out_aval, {WriteEffect(0)})
@@ -196,26 +228,29 @@ swap_p.def_effectful_abstract_eval(_swap_abstract_eval)
 def _addupdate_abstract_eval(ref_aval: AbstractRef,
                              val_aval: core.AbstractValue,
                              *args: Any, tree):
-  indexers = tree_util.tree_unflatten(tree, args)
+  transforms = tree_util.tree_unflatten(tree, args)
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`addupdate` must be called on `Ref` types: {ref_aval}.")
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
     val_aval = core.raise_to_shaped(val_aval)
-    slice_shape = _shape_after_indexing(ref_aval.shape, indexers)
+    out_shape = _shape_after_transforming(ref_aval.shape, transforms)
+    out_dtype = _dtype_after_transforming(ref_aval.dtype, transforms)
     assert isinstance(val_aval, core.ShapedArray)
-    if slice_shape != val_aval.shape:
-      raise ValueError("Invalid shape for `addupdate`. "
-                       f"Ref shape: {ref_aval.shape}. "
-                       f"Slice shape: {slice_shape}. "
-                       f"Value shape: {val_aval.shape}. "
-                       f"Indices: {indexers}. ")
-    if ref_aval.dtype != val_aval.dtype:
+    if out_shape != val_aval.shape:
+      raise ValueError(
+          "Invalid shape for `addupdate`. "
+          f"Ref shape: {ref_aval.shape}. "
+          f"Expected shape: {out_shape}. "
+          f"Value shape: {val_aval.shape}. "
+          f"Transforms: {transforms}. "
+      )
+    if out_dtype != val_aval.dtype:
       raise ValueError("Invalid dtype for `addupdate`. "
                        f"Ref dtype: {ref_aval.dtype}. "
                        f"Value shape: {val_aval.dtype}. ")
   else:
-    # Check that the indexers are valid
-    if indexers:
+    # Check that the transforms are valid
+    if transforms:
       raise ValueError("Cannot index non-shaped array with nontrivial indices.")
   return [], {AccumEffect(0)}
 addupdate_p.def_effectful_abstract_eval(_addupdate_abstract_eval)
@@ -261,52 +296,73 @@ def pp_indexer(context: core.JaxprPpContext,indexer: indexing.NDIndexer
       indices.append(core.pp_var(idx, context))  # type: ignore
   return pp.concat([pp.text("["), pp.text(','.join(indices)), pp.text("]")])
 
-def _pp_indexers(
-    context: core.JaxprPpContext, indexers: tuple[indexing.NDIndexer, ...],
-):
-  if not indexers:
-    return pp.text("[...]")
-  return pp.concat(
-      [pp_indexer(context, indexer) for indexer in indexers]
+
+def pp_bitcaster(
+    context: core.JaxprPpContext, bitcaster: RefBitcaster
+) -> pp.Doc:
+  del context
+  return pp.text(
+      f"[bitcast({bitcaster.dtype}[{','.join(str(d) for d in bitcaster.shape)}])]"
   )
 
-def pp_ref_indexers(context: core.JaxprPpContext, ref, indexers):
+
+def pp_transform(context: core.JaxprPpContext, transform: Transform) -> pp.Doc:
+  match transform:
+    case indexing.NDIndexer():
+      return pp_indexer(context, transform)
+    case RefBitcaster():
+      return pp_bitcaster(context, transform)
+    case _:
+      raise ValueError(f"Unsupported transform: {transform}")
+
+
+def _pp_transforms(
+    context: core.JaxprPpContext,
+    transforms: tuple[Transform, ...],
+):
+  if not transforms:
+    return pp.text("[...]")
+  return pp.concat(
+      [pp_transform(context, transform) for transform in transforms]
+  )
+
+
+def pp_ref_transforms(context: core.JaxprPpContext, ref, transforms):
   return pp_ref_var(
       pp.concat([
           pp.text(core.pp_var(ref, context)),
-          _pp_indexers(context, indexers),
+          _pp_transforms(context, transforms),
       ])
   )
+
 
 def _get_pp_rule(eqn, context, settings) -> pp.Doc:
   # Pretty prints `a = get x i` as `x[i] <- a`
   y, = eqn.outvars
   x, *flat_idx = eqn.invars
-  indexers = tree_util.tree_unflatten(eqn.params["tree"], flat_idx)
+  transforms = tree_util.tree_unflatten(eqn.params["tree"], flat_idx)
   lhs = core.pp_vars([y], context, print_shapes=settings.print_shapes)
-  return pp.concat([
-      lhs,
-      pp.text(' <- '),
-      pp_ref_indexers(context, x, indexers)
-  ])
+  return pp.concat(
+      [lhs, pp.text(" <- "), pp_ref_transforms(context, x, transforms)]
+  )
 core.pp_eqn_rules[get_p] = _get_pp_rule
 
 def _swap_pp_rule(eqn, context, settings) -> pp.Doc:
   y, = eqn.outvars
   x, v, *flat_idx = eqn.invars
-  indexers = tree_util.tree_unflatten(eqn.params["tree"], flat_idx)
+  transforms = tree_util.tree_unflatten(eqn.params["tree"], flat_idx)
   if type(y) is core.DropVar:
     # In the case of a set (ignored return value),
     # pretty print `_ = swap x v i` as `x[i] <- v`
     del y
     return pp.concat([
-        pp_ref_indexers(context, x, indexers),
-        pp.text(' <- '),
-        pp.text(core.pp_var(v, context))
-        ])
+        pp_ref_transforms(context, x, transforms),
+        pp.text(" <- "),
+        pp.text(core.pp_var(v, context)),
+    ])
   else:
     # pretty-print `y:T = swap x v i` as `y:T, x[i] <- x[i], v`
-    x_i = pp_ref_indexers(context, x, indexers)
+    x_i = pp_ref_transforms(context, x, transforms)
     y = core.pp_vars([y], context, print_shapes=settings.print_shapes)
     return pp.concat([y, pp.text(', '), x_i, pp.text(' <- '),
                       x_i, pp.text(', '),
@@ -318,11 +374,12 @@ def _addupdate_pp_rule(eqn, context, settings) -> pp.Doc:
   # pretty-print ` = addupdate x i v` as `x[i] += v`
   () = eqn.outvars
   x, v, *flat_idx = eqn.invars
-  indexers = tree_util.tree_unflatten(eqn.params["tree"], flat_idx)
+  transforms = tree_util.tree_unflatten(eqn.params["tree"], flat_idx)
   return pp.concat([
-    pp_ref_indexers(context, x, indexers),
-    pp.text(' += '),
-    pp.text(core.pp_var(v, context))])
+      pp_ref_transforms(context, x, transforms),
+      pp.text(" += "),
+      pp.text(core.pp_var(v, context)),
+  ])
 core.pp_eqn_rules[addupdate_p] = _addupdate_pp_rule
 
 ## get/swap/addupdate JVP rules

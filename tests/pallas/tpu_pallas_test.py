@@ -31,6 +31,7 @@ from jax._src import test_util as jtu
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_extension
 from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
+from jax._src.state import utils as state_utils
 from jax.experimental import mesh_utils
 from jax.experimental import mosaic
 from jax.experimental import pallas as pl
@@ -1924,6 +1925,100 @@ class PallasCallDynamicDMATest(PallasBaseTest):
     )(size, x, o)
     expected = o.at[:4].set(x.at[:4].get())
     np.testing.assert_array_equal(out, expected)
+
+
+class PallasCallRefTransformTest(PallasBaseTest):
+
+  @parameterized.product(slice_first=[True, False])
+  def test_dma_bitcasted_ref(self, slice_first):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('DMAs not supported on TPU generations <= 3')
+
+    def kernel(x_hbm_ref, y_hbm_ref):
+      def body(sem):
+        ref = (
+            x_hbm_ref.at[:8, :, :128].bitcast(jnp.int16)
+            if slice_first
+            else x_hbm_ref.bitcast(jnp.int16).at[:8, :, :128]
+        )
+        pltpu.async_copy(ref, y_hbm_ref.at[...], sem).wait()
+
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
+
+    x = jnp.arange(4 * 8 * 128, dtype=jnp.int32).reshape((16, 1, 256))
+    y = self.pallas_call(
+        kernel,
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        out_shape=jax.ShapeDtypeStruct((8, 2, 128), jnp.int16),
+    )(x)
+    expected = (
+        state_utils.bitcast(x[:8, :, :128], jnp.int16)
+        if slice_first
+        else state_utils.bitcast(x, jnp.int16)[:8, :, :128]
+    )
+    np.testing.assert_array_equal(y, expected)
+
+  @parameterized.product(slice_first=[True, False])
+  def test_load_bitcasted_ref(self, slice_first: bool):
+    def kernel(x_ref, y_ref):
+      ref = (
+          x_ref.at[:8, :128].bitcast(jnp.int16)
+          if slice_first
+          else x_ref.bitcast(jnp.int16).at[:16, :128]
+      )
+      y_ref[...] = ref[...]
+
+    x = jnp.arange(4 * 8 * 128, dtype=jnp.int32).reshape((16, 256))
+    y = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((16, 128), jnp.int16),
+    )(x)
+    expected = (
+        state_utils.bitcast(x[:8, :128], jnp.int16)
+        if slice_first
+        else state_utils.bitcast(x, jnp.int16)[:16, :128]
+    )
+    np.testing.assert_array_equal(y, expected)
+
+  @parameterized.product(slice_first=[True, False])
+  def test_store_bitcasted_ref(self, slice_first):
+    def kernel(x_ref, y_ref):
+      ref = (
+          y_ref.at[:8, :128].bitcast(jnp.bfloat16)
+          if slice_first
+          else y_ref.bitcast(jnp.bfloat16).at[:16, :128]
+      )
+      ref[...] = x_ref[...]
+
+    x = jnp.arange(16 * 128, dtype=jnp.bfloat16).reshape((16, 128))
+    y = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((16, 256), jnp.int32),
+    )(x)
+    expected = state_utils.bitcast(x, jnp.int32)
+    np.testing.assert_array_equal(y[:8, :128], expected)
+
+  def test_multiple_ref_transforms(self):
+
+    def kernel(x_ref, y_ref):
+      ref = (
+          x_ref.at[:8, :256]
+          .bitcast(jnp.int16)
+          .bitcast(jnp.float16)
+          .at[:, :128]
+          .bitcast(jnp.int32)
+      )
+      y_ref[...] = ref[...]
+
+    x = jnp.arange(4 * 8 * 128, dtype=jnp.int32).reshape((16, 256))
+    y = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.int32),
+    )(x)
+    np.testing.assert_array_equal(y, x[:8, :128])
 
 
 class PallasCallPrintTest(PallasBaseTest):

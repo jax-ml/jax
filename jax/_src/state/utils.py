@@ -13,14 +13,18 @@
 # limitations under the License.
 """Utilities for tracing stateful functions."""
 
+from functools import partial
 from typing import Callable
 
-from jax._src.interpreters import partial_eval as pe
+import jax
 from jax._src import core
+from jax._src import dtypes
 from jax._src import linear_util as lu
+from jax._src.interpreters import partial_eval as pe
 from jax._src.state import AbstractRef
-from jax._src.util import split_list, safe_map, safe_zip
 from jax._src.state.primitives import ref_get
+from jax._src.typing import DTypeLike
+from jax._src.util import safe_map, safe_zip, split_list
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -79,3 +83,41 @@ def val_to_ref_aval(x) -> AbstractRef:
   if type(aval) is not core.ShapedArray:
     raise TypeError(f"can't make ref from {x}")
   return AbstractRef(aval)
+
+
+def dtype_bitwidth(dtype: DTypeLike) -> int:
+  if dtypes.isdtype(dtype, "integral"):
+    return dtypes.iinfo(dtype).bits
+  return dtypes.dtype(dtype).itemsize * 8
+
+
+def bitcast(x, dtype: DTypeLike):
+  x_bitwidth = dtype_bitwidth(x.dtype)
+  y_bitwidth = dtype_bitwidth(dtype)
+  shape = list(x.shape)
+  if x_bitwidth != y_bitwidth:
+    if len(shape) < 2:
+      raise NotImplementedError(
+          "Bitcast 1D ref with bitwidth change is not supported."
+      )
+    # Note: this is only valid on TPU.
+    if shape[-2] * x_bitwidth % y_bitwidth != 0:
+      raise ValueError(
+          "Expected input and output shapes are the same after multiplying"
+          " the second-minor dimension by the bitwidths."
+      )
+  shape[-2] = shape[-2] * x_bitwidth // y_bitwidth
+  if x_bitwidth < y_bitwidth:
+    ratio = y_bitwidth // x_bitwidth
+    x = x.reshape(*x.shape[:-2], x.shape[-2] // ratio, ratio, -1).swapaxes(
+        -1, -2
+    )
+  y = jax.lax.bitcast_convert_type(x, dtype)
+  if x_bitwidth > y_bitwidth:
+    y = y.swapaxes(-1, -2).reshape(shape)
+  return y
+
+
+def eval_bitcast_shape(x, dtype: DTypeLike):
+  f = partial(bitcast, dtype=dtype)
+  return jax.eval_shape(f, jax.ShapeDtypeStruct(x.shape, x.dtype)).shape

@@ -177,8 +177,10 @@ def _atomic_abstract_eval(*avals_flat, args_tree, atomic_type: AtomicOpType):
 
 def _atomic_rmw(x_ref_or_view, idx, val, *, mask: Any | None = None,
                 atomic_type: AtomicOpType):
-  x_ref, indexers = sp.get_ref_and_indexers(x_ref_or_view, idx, "atomic_rmw")
-  args_flat, args_tree = tree_util.tree_flatten((x_ref, indexers, val, mask))
+  x_ref, transforms = sp.get_ref_and_transforms(
+      x_ref_or_view, idx, "atomic_rmw"
+  )
+  args_flat, args_tree = tree_util.tree_flatten((x_ref, transforms, val, mask))
   return atomic_rmw_p.bind(
       *args_flat, args_tree=args_tree, atomic_type=atomic_type
   )
@@ -379,7 +381,7 @@ def _load_pp_rule(eqn, context, settings):
   result = [
       lhs,
       pp.text(' <- '),
-      sp.pp_ref_indexers(context, x, indexers)
+      sp.pp_ref_transforms(context, x, indexers)
   ]
   if mask is not None:
     result += [
@@ -529,7 +531,7 @@ def _swap_pp_rule(eqn, context, settings):
   # Pretty prints `_ = swap x v i` as `x[i] <- v`
   y, = eqn.outvars
   x, indexers, val, mask = eqn.params["args_tree"].unflatten(eqn.invars)
-  x_i = sp.pp_ref_indexers(context, x, indexers)
+  x_i = sp.pp_ref_transforms(context, x, indexers)
   if isinstance(y, jax_core.DropVar):
     return pp.concat([
         x_i,
@@ -638,8 +640,10 @@ def load(x_ref_or_view, idx, *, mask=None, other=None, cache_modifier=None,
     eviction_policy: TO BE DOCUMENTED.
     volatile: TO BE DOCUMENTED.
   """
-  x_ref, indexers = sp.get_ref_and_indexers(x_ref_or_view, idx, "load")
-  args_flat, args_tree = tree_util.tree_flatten((x_ref, indexers, mask, other))
+  x_ref, transforms = sp.get_ref_and_transforms(x_ref_or_view, idx, "load")
+  args_flat, args_tree = tree_util.tree_flatten(
+      (x_ref, transforms, mask, other)
+  )
   return load_p.bind(
       *args_flat,
       args_tree=args_tree,
@@ -657,8 +661,10 @@ def swap(x_ref_or_view, idx, val, *, mask=None, eviction_policy=None,
   Returns:
     The value stored in the ref prior to the swap.
   """
-  x_ref, indexers = sp.get_ref_and_indexers(x_ref_or_view, idx, _function_name)
-  args_flat, args_tree = tree_util.tree_flatten((x_ref, indexers, val, mask))
+  x_ref, transforms = sp.get_ref_and_transforms(
+      x_ref_or_view, idx, _function_name
+  )
+  args_flat, args_tree = tree_util.tree_flatten((x_ref, transforms, val, mask))
   return swap_p.bind(
       *args_flat, args_tree=args_tree, eviction_policy=eviction_policy
   )

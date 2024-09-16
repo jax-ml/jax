@@ -47,8 +47,8 @@ from jax._src.lib.mlir.dialects import math
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
-from jax._src.pallas import pallas_call
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
@@ -57,6 +57,9 @@ from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
+from jax._src.state.types import RefBitcaster
+from jax._src.state.utils import dtype_bitwidth
+from jax._src.typing import DTypeLike
 from jax._src.util import safe_map
 from jax._src.util import safe_zip
 from jax._src.util import split_list
@@ -957,11 +960,12 @@ def _indexer_to_start_size_stride(
   )
 
 
-def _slice_memref(ref: ir.Value, ref_aval: state.AbstractRef,
-                  indexer: NDIndexer,
-                  ref_block_shape: tuple[int | pallas_core.Mapped, ...]
-                  ) -> tuple[ir.Value, tuple[int | pallas_core.Mapped, ...],
-                             tuple[int | pallas_core.Mapped, ...]]:
+def _slice_memref(
+    ref: ir.Value,
+    indexer: NDIndexer,
+    ref_dtype: DTypeLike,
+    ref_block_shape: tuple[int | pallas_core.Mapped, ...],
+) -> tuple[ir.Value, tuple[int | pallas_core.Mapped, ...]]:
   assert ref_block_shape is not None
   target_shape = indexer.get_indexer_shape()
   starts, sizes, strides, squeeze_dims, ref_block_shape = (
@@ -978,25 +982,78 @@ def _slice_memref(ref: ir.Value, ref_aval: state.AbstractRef,
   static_sizes = tuple(s if not isinstance(s, ir.Value)
                        else ir_dynamic_size for s in sizes)
   target_ref_ty = ir.MemRefType.get(
-      static_sizes, _dtype_to_ir_type(ref_aval.dtype),
-      memory_space=ref.type.memory_space)
+      static_sizes,
+      _dtype_to_ir_type(ref_dtype),
+      memory_space=ref.type.memory_space,
+  )
   out = tpu.MemRefSliceOp(target_ref_ty, ref, starts, dynamic_sizes).result
   if any(squeeze_dims):
     # We need to squeeze out some dimensions
     static_sizes = tuple(s if not isinstance(s, ir.Value)
                          else ir_dynamic_size for s in target_shape)
     squeezed_ref_ty = ir.MemRefType.get(
-        static_sizes, _dtype_to_ir_type(ref_aval.dtype),
-        memory_space=ref.type.memory_space)
+        static_sizes,
+        _dtype_to_ir_type(ref_dtype),
+        memory_space=ref.type.memory_space,
+    )
     out = tpu.MemRefSqueezeOp(squeezed_ref_ty, out).result
   return out, ref_block_shape
 
 
-def _index_ref(ref, ref_aval, ref_block_shape, indexers):
-  for indexer in indexers:
-    ref, ref_block_shape = _slice_memref(ref, ref_aval, indexer,
-                                         ref_block_shape)
+def _bitcast_memref(
+    ref: ir.Value,
+    bitcaster: RefBitcaster,
+    ref_dtype: DTypeLike,
+    ref_block_shape: tuple[int | pallas_core.Mapped, ...],
+) -> tuple[ir.Value, DTypeLike, tuple[int | pallas_core.Mapped, ...]]:
+  src_bitwidth = dtype_bitwidth(ref_dtype)
+  dst_bitwidth = dtype_bitwidth(bitcaster.dtype)
+  if src_bitwidth != dst_bitwidth:
+    if len(ref_block_shape) < 2:
+      raise NotImplementedError(
+          "Bitcast 1D ref with bitwidth change is not supported."
+      )
+    if ref_block_shape[-2] is pallas_core.mapped:
+      raise NotImplementedError(
+          "Bitcast a ref whose 2nd minormost dimension is squeezed when"
+          " bitwidth changes."
+      )
+  new_ref_dtype = bitcaster.dtype
+  target_ref_ty = ir.MemRefType.get(
+      bitcaster.shape,
+      _dtype_to_ir_type(new_ref_dtype),
+      memory_space=ref.type.memory_space,
+  )
+  new_ref_block_shape = list(ref_block_shape)
+  if (
+      len(new_ref_block_shape) >= 2
+      and new_ref_block_shape[-2] is not pallas_core.mapped
+  ):
+    new_ref_block_shape[-2] = (
+        new_ref_block_shape[-2] * src_bitwidth // dst_bitwidth
+    )
+  return (
+      tpu.memref_bitcast(target_ref_ty, ref),
+      new_ref_dtype,
+      tuple(new_ref_block_shape),
+  )
+
+
+def _transform_ref(ref, ref_dtype, ref_block_shape, transforms):
+  for transform in transforms:
+    match transform:
+      case NDIndexer():
+        ref, ref_block_shape = _slice_memref(
+            ref, transform, ref_dtype, ref_block_shape
+        )
+      case RefBitcaster():
+        ref, ref_dtype, ref_block_shape = _bitcast_memref(
+            ref, transform, ref_dtype, ref_block_shape
+        )
+      case _:
+        raise NotImplementedError(f"Unsupported transform: {transform}")
   return ref, ref_block_shape
+
 
 @dataclasses.dataclass(frozen=True)
 class KeyScalarBundle:
@@ -1016,21 +1073,21 @@ class KeyScalarBundle:
   scalars: list[ir.OpResult]
 
 def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
-  ref, indexers, mask, _ = args_tree.unflatten(args_flat)
-  ref_aval, indexers_avals, _, _ = args_tree.unflatten(ctx.avals_in)
-  (*slice_indexers, idx) = indexers
+  ref, transforms, mask, _ = args_tree.unflatten(args_flat)
+  ref_aval, transforms_avals, _, _ = args_tree.unflatten(ctx.avals_in)
+  (*prev_transforms, idx) = transforms
   # Select last aval, which is the one that will be used for the load.
-  (*_, idx_aval) = indexers_avals
+  (*_, idx_aval) = transforms_avals
 
   if mask is not None:
     raise NotImplementedError
 
   ref_block_shape, *_ = ctx.block_shapes
-  ref, ref_block_shape = _index_ref(
-      ref, ref_aval, ref_block_shape, slice_indexers)
+  ref, ref_block_shape = _transform_ref(
+      ref, ref_aval.dtype, ref_block_shape, prev_transforms
+  )
   ref_type = ir.MemRefType(ref.type)
   is_smem_load = str(ref_type.memory_space) == "#tpu.memory_space<smem>"
-  ref_aval, *_ = ctx.avals_in
   (aval_out,) = ctx.avals_out
   if isinstance(aval_out.dtype, prng.KeyTy):
     if not is_smem_load:
@@ -1064,7 +1121,7 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
     raise ValueError(
         "Loads are only allowed on VMEM and SMEM references." + extra
     )
-  load_aval = jax_core.ShapedArray(sizes, dtype=ref_aval.dtype)
+  load_aval = jax_core.ShapedArray(sizes, dtype=aval_out.dtype)
   if need_stride:
     load_val = tpu.StridedLoadOp(
       aval_to_ir_type(load_aval, is_kernel_boundary=True), ref, starts, strides
@@ -1159,17 +1216,18 @@ def _maybe_cast_store_to_memref_type(
 def _masked_swap_lowering_rule(
     ctx: LoweringRuleContext, *args_flat, args_tree, **_
 ):
-  ref, indexers, val, mask = args_tree.unflatten(args_flat)
-  ref_aval, indexers_avals, val_aval, _ = args_tree.unflatten(ctx.avals_in)
-  (*slice_indexers, idx) = indexers
-  (*_, idx_aval) = indexers_avals
+  ref, transforms, val, mask = args_tree.unflatten(args_flat)
+  ref_aval, transforms_avals, val_aval, _ = args_tree.unflatten(ctx.avals_in)
+  (*prev_transforms, idx) = transforms
+  (*_, idx_aval) = transforms_avals
 
   if mask is not None:
     raise NotImplementedError
 
   ref_block_shape, *_ = ctx.block_shapes
-  ref, ref_block_shape = _index_ref(
-      ref, ref_aval, ref_block_shape, slice_indexers)
+  ref, ref_block_shape = _transform_ref(
+      ref, ref_aval.dtype, ref_block_shape, prev_transforms
+  )
 
   ref_type = ir.MemRefType(ref.type)
   is_smem_store = str(ref_type.memory_space) == "#tpu.memory_space<smem>"
@@ -2553,8 +2611,8 @@ def _semaphore_read_lowering_rule(
     args_tree,
 ):
   sem_aval, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
-  sem, indexers = tree_util.tree_unflatten(args_tree, args)
-  sem, _ = _index_ref(sem, sem_aval, sem_aval.shape, indexers)
+  sem, transforms = tree_util.tree_unflatten(args_tree, args)
+  sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, transforms)
   return tpu.SemaphoreReadOp(sem).result
 
 
@@ -2567,8 +2625,10 @@ def _semaphore_signal_lowering_rule(
     device_id_type: tpu_primitives.DeviceIdType,
 ):
   sem_aval, _, _, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
-  sem, indexers, value, device_id, core_index = tree_util.tree_unflatten(args_tree, args)
-  sem, _ = _index_ref(sem, sem_aval, sem_aval.shape, indexers)
+  sem, transforms, value, device_id, core_index = tree_util.tree_unflatten(
+      args_tree, args
+  )
+  sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, transforms)
   if device_id is not None:
     device_id = _device_id_to_logical(ctx, device_id, device_id_type)
   return tpu.SemaphoreSignalOp(
@@ -2582,8 +2642,8 @@ lowering_rules[tpu_primitives.semaphore_signal_p] = (
 
 def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   sem_aval, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
-  sem, indexers, value = tree_util.tree_unflatten(args_tree, args)
-  sem, _ = _index_ref(sem, sem_aval, sem_aval.shape, indexers)
+  sem, transforms, value = tree_util.tree_unflatten(args_tree, args)
+  sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, transforms)
   return tpu.SemaphoreWaitOp(sem, value).results
 lowering_rules[tpu_primitives.semaphore_wait_p] = _semaphore_wait_lowering_rule
 
@@ -2591,13 +2651,13 @@ def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree,
                              device_id_type: tpu_primitives.DeviceIdType):
   (
       src_ref,
-      src_indexers,
+      src_transforms,
       dst_ref,
-      dst_indexers,
+      dst_transforms,
       sem,
-      sem_indexers,
+      sem_transforms,
       src_sem,
-      src_sem_indexers,
+      src_sem_transforms,
       device_id,
   ) = tree_util.tree_unflatten(tree, args)
   (src_ref_aval, _, dst_ref_aval, _, sem_aval, _, src_sem_aval, _, _) = (
@@ -2607,16 +2667,17 @@ def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree,
     raise NotImplementedError("DMAs with bool dtypes are not supported.")
   block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)
   src_ref_block_shape, dst_ref_block_shape = block_shapes[0], block_shapes[2]
-  src_ref, _ = _index_ref(
-      src_ref, src_ref_aval, src_ref_block_shape, src_indexers
+  src_ref, _ = _transform_ref(
+      src_ref, src_ref_aval.dtype, src_ref_block_shape, src_transforms
   )
   if src_sem is not None:
-    src_sem, _ = _index_ref(
-        src_sem, src_sem_aval, src_sem_aval.shape, src_sem_indexers)
-  dst_ref, _ = _index_ref(
-      dst_ref, dst_ref_aval, dst_ref_block_shape, dst_indexers
+    src_sem, _ = _transform_ref(
+        src_sem, src_sem_aval.dtype, src_sem_aval.shape, src_sem_transforms
+    )
+  dst_ref, _ = _transform_ref(
+      dst_ref, dst_ref_aval.dtype, dst_ref_block_shape, dst_transforms
   )
-  sem, _ = _index_ref(sem, sem_aval, sem_aval.shape, sem_indexers)
+  sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
   if device_id is not None:
     device_id = _device_id_to_logical(ctx, device_id, device_id_type)
   return tpu.EnqueueDMAOp(src_ref, dst_ref, sem, source_semaphore=src_sem,
@@ -2627,14 +2688,12 @@ lowering_rules[tpu_primitives.dma_start_p] = _dma_start_lowering_rule
 def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
                             device_id_type: tpu_primitives.DeviceIdType):
   del device_id_type
-  sem, sem_indexers, ref, indexers = tree_util.tree_unflatten(tree, args)
+  sem, sem_transforms, ref, transforms = tree_util.tree_unflatten(tree, args)
   sem_aval, _, ref_aval, _ = tree_util.tree_unflatten(tree, ctx.avals_in)
   block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)
   ref_block_shape = block_shapes[2]
-  ref, _ = _index_ref(
-      ref, ref_aval, ref_block_shape, indexers
-  )
-  sem, _ = _index_ref(sem, sem_aval, sem_aval.shape, sem_indexers)
+  ref, _ = _transform_ref(ref, ref_aval.dtype, ref_block_shape, transforms)
+  sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
   return tpu.WaitDMAOp(sem, ref).results
 lowering_rules[tpu_primitives.dma_wait_p] = _dma_wait_lowering_rule
 
