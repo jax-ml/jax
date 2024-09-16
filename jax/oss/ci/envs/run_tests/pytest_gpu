@@ -1,0 +1,25 @@
+# Inherit default JAXCI environment variables.
+source ci/envs/default
+
+# Enable GPU Pytests
+export JAXCI_RUN_PYTEST_GPU=1
+
+# Install jaxlib, jax-cuda-plugin, and jax-cuda-pjrt wheels locally.
+export JAXCI_INSTALL_WHEELS_LOCALLY=1
+
+# Only Linux x86 runs local GPU tests at the moment.
+export JAXCI_DOCKER_IMAGE="gcr.io/tensorflow-testing/nosla-cuda${JAXCI_DOCKER_CUDA_VERSION}-cudnn9.1-ubuntu20.04-manylinux2014-multipython"
+export JAXCI_DOCKER_ARGS="--shm-size=16g --gpus all"
+
+# TODO(srnitin): Figure out where this gets used
+export JAX_CUDA_VERSION=12
+export JAX_CUDA_FULL_VERSION=12.3
+export JAX_DOCKER_CUDA_FULL_VERSION=12.1
+export JAX_CUDNN_VERSION=9.1
+export JAX_CUDA_PLUGIN='True'
+
+# Disable x64 mode
+export JAX_ENABLE_X64=0
+
+# Clone XLA at HEAD.
+export JAXCI_CLONE_MAIN_XLA=1

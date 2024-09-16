@@ -1,0 +1,46 @@
+# Inherit default JAXCI environment variables.
+source ci/envs/default
+
+# Enable jaxlib build.
+export JAXCI_BUILD_JAXLIB_ENABLE="1"
+
+os=$(uname -s | awk '{print tolower($0)}')
+arch=$(uname -m)
+
+# Linux x86 specifc settings
+if [[ $os == "linux" ]] && [[ $arch == "x86_64" ]]; then
+  # Enable wheel audit to check for manylinux compliance.
+  export JAXCI_WHEEL_AUDIT_ENABLE=1
+
+  # Note Python version of the container does not matter. JAX supports hermetic
+  # Python and thus the actual Python version of the artifact is controlled by
+  # the value set in `HERMETIC_PYTHON_VERSION`
+  export JAXCI_DOCKER_IMAGE="us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/build:670606426-python3.9"
+fi
+
+# Linux Aarch64 specifc settings
+if [[ $os == "linux" ]] && [[ $arch == "aarch64" ]]; then
+  # Enable wheel audit to check for manylinux compliance.
+  export JAXCI_WHEEL_AUDIT_ENABLE=1
+  export JAXCI_DOCKER_IMAGE="us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/build-arm64:jax-"
+fi
+
+# Windows specific settings
+if [[ $os =~ "msys_nt" ]]; then
+  export JAXCI_DOCKER_IMAGE="gcr.io/tensorflow-testing/tf-win2019-rbe@sha256:1082ef4299a72e44a84388f192ecefc81ec9091c146f507bc36070c089c0edcc"
+fi
+
+# Mac specific settings
+if [[ $os == "macos" ]]; then
+  # Mac builds do not run in Docker.
+  export JAXCI_RUN_DOCKER_CONTAINER=0
+fi
+
+# When building artifacts for running tests, we need to disable x64 mode and
+# clone XLA at HEAD.
+if [[ $JAXCI_SETUP_TEST_ENVIRONMENT == 1 ]]; then
+  # Disable x64 mode
+  export JAX_ENABLE_X64=0
+  # Clone XLA at HEAD.
+  export JAXCI_CLONE_MAIN_XLA=1
+fi

@@ -1,0 +1,10 @@
+# Inherit default JAXCI environment variables.
+source ci/envs/default
+
+# Build JAX artifact.
+export JAXCI_BUILD_JAX_ENABLE="1"
+
+# Note Python version of the container does not matter. JAX supports hermetic
+# Python and thus the actual Python version of the artifact is controlled by
+# the value set in `HERMETIC_PYTHON_VERSION`
+export JAXCI_DOCKER_IMAGE="us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/build:670606426-python3.9"

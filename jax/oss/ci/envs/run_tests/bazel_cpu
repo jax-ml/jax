@@ -1,0 +1,24 @@
+# Inherit default JAXCI environment variables.
+source ci/envs/default
+
+os=$(uname -s | awk '{print tolower($0)}')
+arch=$(uname -m)
+
+# Enable Bazel CPU tests.
+export JAXCI_RUN_BAZEL_TEST_CPU=1
+
+# Linux x86 specifc settings
+if [[ $os == "linux" ]] && [[ $arch == "x86_64" ]]; then
+  export JAXCI_DOCKER_IMAGE="gcr.io/tensorflow-testing/nosla-cuda12.3-cudnn9.1-ubuntu20.04-manylinux2014-multipython"
+fi
+
+# Linux Aarch64 specifc settings
+if [[ $os == "linux" ]] && [[ $arch == "aarch64" ]]; then
+  export JAXCI_DOCKER_IMAGE="us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/build-arm64:tf-2-18-multi-python"
+fi
+
+# Disable x64 mode
+export JAX_ENABLE_X64=0
+
+# Clone XLA at HEAD.
+export JAXCI_CLONE_MAIN_XLA=1

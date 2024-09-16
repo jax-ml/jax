@@ -1,0 +1,12 @@
+# Inherit default JAXCI environment variables.
+source ci/envs/default
+
+export JAXCI_INSTALL_WHEELS_LOCALLY=1
+
+export JAXCI_RUN_PYTEST_TPU=1
+
+# Disable x64 mode
+export JAX_ENABLE_X64=0
+
+# Clone XLA at HEAD.
+export JAXCI_CLONE_MAIN_XLA=1

@@ -1,0 +1,14 @@
+# Inherit default JAXCI environment variables.
+source ci/envs/default
+
+# Enable CPU Pytests
+export JAXCI_RUN_PYTEST_CPU=1
+
+# Install jaxlib wheel locally.
+export JAXCI_INSTALL_WHEELS_LOCALLY=1
+
+# Disable x64 mode
+export JAX_ENABLE_X64=0
+
+# Clone XLA at HEAD.
+export JAXCI_CLONE_MAIN_XLA=1
