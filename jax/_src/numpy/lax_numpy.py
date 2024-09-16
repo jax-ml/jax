@@ -4497,14 +4497,6 @@ def _supports_buffer_protocol(obj):
     return True
 
 
-_ARRAY_DOC = """
-This function will create arrays on JAX's default device. For control of the
-device placement of data, see :func:`jax.device_put`. More information is
-available in the JAX FAQ at :ref:`faq-data-placement` (full FAQ at
-https://jax.readthedocs.io/en/latest/faq.html).
-"""
-
-
 def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
           order: str | None = "K", ndmin: int = 0,
           *, device: xc.Device | Sharding | None = None) -> Array:
