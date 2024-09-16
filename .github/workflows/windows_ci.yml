@@ -6,6 +6,10 @@ on:
   pull_request:
     types: [ labeled ] # allow force-windows-run label
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 env:
   DISTUTILS_USE_SDK: 1
   MSSdk: 1
@@ -23,10 +27,6 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Cancel Previous Runs
-        uses: styfle/cancel-workflow-action@85880fa0301c86cca9da44039ee3bb12d3bedbfa # ratchet: styfle/cancel-workflow-action@0.12.1
-        with:
-          access_token: ${{ github.token }}
 
       - name: Install LLVM/Clang
         run: choco install llvm --version=18.1.4 --yes --no-progress --allow-downgrade
