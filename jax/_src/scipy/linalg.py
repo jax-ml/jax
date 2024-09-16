@@ -608,7 +608,7 @@ def inv(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> A
 def lu_factor(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> tuple[Array, Array]:
   """Factorization for LU-based linear solves
 
-  JAX implementation of :func:`scipy.linalg.lu_factor`.
+  JAX implementation of :func:`scipy.linalg.lu_factor`, without partial pivoting.
 
   This function returns a result suitable for use with :func:`jax.scipy.linalg.lu_solve`.
   For direct LU decompositions, prefer :func:`jax.scipy.linalg.lu`.
@@ -661,8 +661,8 @@ def lu_solve(lu_and_piv: tuple[Array, ArrayLike], b: ArrayLike, trans: int = 0,
              overwrite_b: bool = False, check_finite: bool = True) -> Array:
   """Solve a linear system using an LU factorization
 
-  JAX implementation of :func:`scipy.linalg.lu_solve`. Uses the output
-  of :func:`jax.scipy.linalg.lu_factor`.
+  JAX implementation of :func:`scipy.linalg.lu_solve`, without partial pivoting. 
+  Uses the output of :func:`jax.scipy.linalg.lu_factor`.
 
   Args:
     lu_and_piv: ``(lu, piv)``, output of :func:`~jax.scipy.linalg.lu_factor`.
@@ -754,7 +754,7 @@ def lu(a: ArrayLike, permute_l: bool = False, overwrite_a: bool = False,
        check_finite: bool = True) -> tuple[Array, Array] | tuple[Array, Array, Array]:
   """Compute the LU decomposition
 
-  JAX implementation of :func:`scipy.linalg.lu`.
+  JAX implementation of :func:`scipy.linalg.lu`, without partial pivoting.
 
   The LU decomposition of a matrix `A` is:
 
