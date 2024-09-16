@@ -1127,7 +1127,7 @@ def _get_vjp_fun(primal_fun: Callable, *,
 
   vjp_in_avals = list(
       itertools.chain(in_avals,
-                      map(lambda a: a.at_least_vspace(), out_avals)))
+                      map(lambda a: a.to_tangent_aval(), out_avals)))
 
   if apply_jit:
     assert device_assignment is not None

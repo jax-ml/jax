@@ -373,7 +373,7 @@ def _approx_top_k_jvp(primals, tangents, *, k, reduction_dimension,
                                     reduction_input_size_override,
                                     aggregate_to_topk)
   if type(tangent) is ad_util.Zero:
-    tangent_out = ad_util.Zero.from_value(val_out)
+    tangent_out = ad_util.Zero.from_primal_value(val_out)
   else:
     arg_shape = arg_out.shape
     rank = len(arg_shape)
@@ -385,7 +385,7 @@ def _approx_top_k_jvp(primals, tangents, *, k, reduction_dimension,
     idx = tuple(
         arg_out if i == reduction_dimension else iotas[i] for i in range(rank))
     tangent_out = tangent[idx]
-  return (val_out, arg_out), (tangent_out, ad_util.Zero.from_value(arg_out))
+  return (val_out, arg_out), (tangent_out, ad_util.Zero.from_primal_value(arg_out))
 
 
 approx_top_k_p = core.Primitive('approx_top_k')

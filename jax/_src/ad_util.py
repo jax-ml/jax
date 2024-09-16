@@ -65,7 +65,7 @@ class Zero:
   def __repr__(self) -> str:
     return f'Zero({self.aval})'
   @staticmethod
-  def from_value(val: Any) -> Zero:
+  def from_primal_value(val: Any) -> Zero:
     return Zero(raise_to_shaped(get_aval(val)))
 
 register_pytree_node(Zero, lambda z: ((), z.aval), lambda aval, _: Zero(aval))
@@ -107,6 +107,10 @@ class SymbolicZero:
         return types.MethodType(attr.fun, self)
       else:
         return attr
+
+  @staticmethod
+  def from_primal_value(val: Any) -> Zero:
+    return SymbolicZero(get_aval(val).to_tangent_aval())
 
 JaxTypeOrTracer = Any
 

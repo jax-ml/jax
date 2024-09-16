@@ -67,7 +67,7 @@ def _sum_tangents(_, x, *xs):
   return reduce(ad.add_tangents, xs, x)
 
 def _zeros_like_pytree(x):
-  return tree_map(Zero.from_value, x)
+  return tree_map(Zero.from_primal_value, x)
 
 _stop_gradient = partial(
     tree_map,
@@ -392,7 +392,7 @@ def lift_jvp(num_consts: int, jvp_jaxpr_thunk: Callable) -> lu.WrappedFun:
     out = core.eval_jaxpr(jvp_jaxpr, jvp_consts, *primals, *nonzero_tangents)
     out_primals, nz_out_tangents = split_list(out, [len(out_zeros)])
     nz_out_tangents_ = iter(nz_out_tangents)
-    out_tangents = [SymbolicZero(core.get_aval(p).at_least_vspace())
+    out_tangents = [SymbolicZero(core.get_aval(p).to_tangent_aval())
                     if z else next(nz_out_tangents_)
                     for p, z in zip(out_primals, out_zeros)]
     assert next(nz_out_tangents_, None) is None
@@ -780,10 +780,10 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
     raise TypeError(msg.format(in_tree2, in_tree)) from None
   results = []
   for kp, a, ct in zip(keypaths, in_avals, cts_in_flat):
-    if ct is zero or a != a.at_least_vspace():
-      results.append(Zero(a.at_least_vspace()))
+    if ct is zero or a != a.to_tangent_aval():
+      results.append(Zero(a.to_tangent_aval()))
     elif type(ct) is SymbolicZero:
-      if not core.typecompat(a.at_least_vspace(), a_ := ct.aval):
+      if not core.typecompat(a.to_tangent_aval(), a_ := ct.aval):
         msg = ("Custom VJP bwd rule produced a SymbolicZero with a shape/dtype "
                "that does not match the corresponding input tangent shape/dtype: "
                f"at output{keystr(kp)} the SymbolicZero had shape/dtype "
@@ -794,7 +794,7 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
         raise ValueError(msg)
       results.append(Zero(ct.aval))
     else:
-      if (not core.typecompat(a.at_least_vspace(), a_ := core.get_aval(ct))
+      if (not core.typecompat(a.to_tangent_aval(), a_ := core.get_aval(ct))
           and not (_temporary_dtype_exception(a, a_) or
                    _temporary_shape_exception(a, a_))):
         msg = ("Custom VJP bwd rule must produce an output with the same "
@@ -1039,7 +1039,7 @@ def custom_gradient(fun):
     ans, rule = fun(*args, **kwargs)
     ans_flat, out_tree = tree_flatten((ans,))
     rule, in_tree = flatten_fun_nokwargs(lu.wrap_init(rule), out_tree)
-    ans_avals = [core.get_aval(x).at_least_vspace() for x in ans_flat]
+    ans_avals = [core.get_aval(x).to_tangent_aval() for x in ans_flat]
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(rule, ans_avals)
     return ans, Residuals(jaxpr, in_tree(), out_tree, consts)
 
@@ -1153,7 +1153,7 @@ def _maybe_perturbed(x: Any) -> bool:
   elif isinstance(x, pe.DynamicJaxprTracer):
     # If x is a DynamicJaxprTracer then we're staging out; differentiation could
     # happen later, but some types always have trivial tangents.
-    vspace = x.aval.at_least_vspace()
+    vspace = x.aval.to_tangent_aval()
     return not (vspace is core.abstract_token or
                 getattr(vspace, 'dtype', None) == dtypes.float0)
   elif not isinstance(x, ad.JVPTracer):
@@ -1420,7 +1420,7 @@ def custom_vjp_by_custom_transpose(fun, fwd, bwd):
   @fun.defjvp
   def jvp(primals, tangents):
     outs, residuals = fwd(*primals)
-    tan_out_types = tree_map(lambda o: core.get_aval(o).at_least_vspace(), outs)
+    tan_out_types = tree_map(lambda o: core.get_aval(o).to_tangent_aval(), outs)
     tan_fn = custom_transpose(partial(disallow_jvp, out_avals=tan_out_types))
     tan_fn.def_transpose(bwd)
     return outs, tan_fn(tan_out_types, residuals, tangents)

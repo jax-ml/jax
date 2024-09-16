@@ -980,7 +980,7 @@ def lift_jvp(num_errs, num_consts, jvp_jaxpr_thunk):
     out = core.eval_jaxpr(jvp_jaxpr, jvp_consts, *primals, *nonzero_tangents)
     out_primals, nz_out_tangents = split_list(out, [len(out_zeros)])
     nz_out_tangents_ = iter(nz_out_tangents)
-    out_tangents = [SymbolicZero(core.get_aval(p).at_least_vspace())
+    out_tangents = [SymbolicZero(core.get_aval(p).to_tangent_aval())
                     if z else next(nz_out_tangents_)
                     for p, z in zip(out_primals, out_zeros)]
     assert next(nz_out_tangents_, None) is None

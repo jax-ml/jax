@@ -237,8 +237,8 @@ class AbstractRef(core.AbstractValue):
   def __repr__(self) -> str:
     return f'Ref{{{self.inner_aval.str_short()}}}'
 
-  def at_least_vspace(self):
-    return AbstractRef(self.inner_aval.at_least_vspace())
+  def to_tangent_aval(self):
+    return AbstractRef(self.inner_aval.to_tangent_aval())
 
   def __eq__(self, other):
     return (type(self) is type(other) and self.inner_aval == other.inner_aval)

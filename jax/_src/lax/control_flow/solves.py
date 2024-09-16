@@ -316,7 +316,7 @@ def _tangent_linear_map(func, params, params_dot, *x):
   this function computes ``∂A @ x``.
   """
   assert any(type(p) is not ad_util.Zero for p in params_dot)
-  zeros = _map(ad_util.Zero.from_value, x)
+  zeros = _map(ad_util.Zero.from_primal_value, x)
   _, out_tangent = ad.jvp(lu.wrap_init(func)).call_wrapped(
       params + list(x), params_dot + zeros)
   return out_tangent
@@ -352,7 +352,7 @@ def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs):
   # split into x tangents and aux tangents (these become zero)
   dx_leaves, daux_leaves = split_list(x_dot, [num_x_leaves])
 
-  daux_leaves = _map(ad_util.Zero.from_value, daux_leaves)
+  daux_leaves = _map(ad_util.Zero.from_primal_value, daux_leaves)
 
   x_dot = dx_leaves + daux_leaves
 
