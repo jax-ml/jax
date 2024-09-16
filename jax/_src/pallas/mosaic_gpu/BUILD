@@ -34,6 +34,7 @@ py_library(
     deps = [
         ":core",
         ":pallas_call_registration",
+        ":primitives",
     ],
 )
 
@@ -72,8 +73,22 @@ pytype_strict_library(
     deps = [
         "//jax",
         "//jax:core",
+        "//jax:dtypes",
         "//jax:mosaic_gpu",
         "//jax:tree_util",
         "//jax/_src/pallas",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "primitives",
+    srcs = ["primitives.py"],
+    deps = [
+        ":core",
+        ":lowering",
+        "//jax",
+        "//jax:core",
+        "//jax:mosaic_gpu",
+        "//jax/_src/pallas",
+    ],
 )

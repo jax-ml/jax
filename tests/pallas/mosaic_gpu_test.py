@@ -19,7 +19,7 @@ from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import test_util as jtu
-import jax._src.pallas.mosaic_gpu.core as plgpu
+import jax._src.pallas.mosaic_gpu as plgpu
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -114,6 +114,45 @@ class PallasCallTest(PallasTest):
       o_ref[...] = x_ref[...] + 1.0
 
     x = jnp.arange(128 * 2 * 64).reshape((128 * 2, 64)).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x + 1.0)
+
+  def test_add_one_with_async_copy_smem_to_gmem(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
+        grid_spec=plgpu.GPUGridSpec(
+            out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+            scratch_shapes=[plgpu.SMEM((128,), jnp.float32)],
+        ),
+    )
+    def kernel(x_ref, o_ref_gmem, scratch_ref):
+      scratch_ref[...] = x_ref[...] + 1
+      plgpu.async_copy_smem_to_gmem(scratch_ref, o_ref_gmem)
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jnp.arange(128).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x + 1.0)
+
+  def test_add_one_with_async_copy_gmem_to_smem(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
+        grid_spec=plgpu.GPUGridSpec(
+            in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
+            scratch_shapes=[
+                plgpu.SMEM((128,), jnp.float32),
+                plgpu.Barrier(num_arrivals=1),
+            ],
+        ),
+    )
+    def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
+      plgpu.async_copy_gmem_to_smem(
+          x_ref_gmem, scratch_ref, barrier=barrier_ref
+      )
+      plgpu.wait(barrier_ref)
+      o_ref[...] = scratch_ref[...] + 1
+
+    x = jnp.arange(128).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x + 1.0)
 
   def test_add_doubled_sum(self):
