@@ -4304,10 +4304,44 @@ def atleast_1d(x: ArrayLike, /) -> Array:
 @overload
 def atleast_1d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
   ...
-@util.implements(np.atleast_1d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 @jit
 def atleast_1d(*arys: ArrayLike) -> Array | list[Array]:
-  # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
+  """Convert inputs to arrays with at least 1 dimension.
+
+  JAX implementation of :func:`numpy.atleast_1d`.
+
+  Args:
+    zero or more arraylike arguments.
+
+  Returns:
+    an array or list of arrays corresponding to the input values. Arrays
+    of shape ``()`` are converted to shape ``(1,)``, and arrays with other
+    shapes are returned unchanged.
+
+  See also:
+    - :func:`jax.numpy.asarray`
+    - :func:`jax.numpy.atleast_2d`
+    - :func:`jax.numpy.atleast_3d`
+
+  Examples:
+    Scalar arguments are converted to 1D, length-1 arrays:
+
+    >>> x = jnp.float32(1.0)
+    >>> jnp.atleast_1d(x)
+    Array([1.], dtype=float32)
+
+    Higher dimensional inputs are returned unchanged:
+
+    >>> y = jnp.arange(4)
+    >>> jnp.atleast_1d(y)
+    Array([0, 1, 2, 3], dtype=int32)
+
+    Multiple arguments can be passed to the function at once, in which
+    case a list of results is returned:
+
+    >>> jnp.atleast_1d(x, y)
+    [Array([1.], dtype=float32), Array([0, 1, 2, 3], dtype=int32)]
+  """
   util.check_arraylike("atleast_1d", *arys, emit_warning=True)
   if len(arys) == 1:
     return array(arys[0], copy=False, ndmin=1)
@@ -4324,9 +4358,52 @@ def atleast_2d(x: ArrayLike, /) -> Array:
 @overload
 def atleast_2d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
   ...
-@util.implements(np.atleast_2d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 @jit
 def atleast_2d(*arys: ArrayLike) -> Array | list[Array]:
+  """Convert inputs to arrays with at least 2 dimensions.
+
+  JAX implementation of :func:`numpy.atleast_2d`.
+
+  Args:
+    zero or more arraylike arguments.
+
+  Returns:
+    an array or list of arrays corresponding to the input values. Arrays
+    of shape ``()`` are converted to shape ``(1, 1)``, 1D arrays of shape
+    ``(N,)`` are converted to shape ``(1, N)``, and arrays of all other
+    shapes are returned unchanged.
+
+  See also:
+    - :func:`jax.numpy.asarray`
+    - :func:`jax.numpy.atleast_1d`
+    - :func:`jax.numpy.atleast_3d`
+
+  Examples:
+    Scalar arguments are converted to 2D, size-1 arrays:
+
+    >>> x = jnp.float32(1.0)
+    >>> jnp.atleast_2d(x)
+    Array([[1.]], dtype=float32)
+
+    One-dimensional arguments have a unit dimension prepended to the shape:
+
+    >>> y = jnp.arange(4)
+    >>> jnp.atleast_2d(y)
+    Array([[0, 1, 2, 3]], dtype=int32)
+
+    Higher dimensional inputs are returned unchanged:
+
+    >>> z = jnp.ones((2, 3))
+    >>> jnp.atleast_2d(z)
+    Array([[1., 1., 1.],
+           [1., 1., 1.]], dtype=float32)
+
+    Multiple arguments can be passed to the function at once, in which
+    case a list of results is returned:
+
+    >>> jnp.atleast_2d(x, y)
+    [Array([[1.]], dtype=float32), Array([[0, 1, 2, 3]], dtype=int32)]
+  """
   # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
   util.check_arraylike("atleast_2d", *arys, emit_warning=True)
   if len(arys) == 1:
@@ -4344,9 +4421,58 @@ def atleast_3d(x: ArrayLike, /) -> Array:
 @overload
 def atleast_3d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
   ...
-@util.implements(np.atleast_3d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 @jit
 def atleast_3d(*arys: ArrayLike) -> Array | list[Array]:
+  """Convert inputs to arrays with at least 3 dimensions.
+
+  JAX implementation of :func:`numpy.atleast_3d`.
+
+  Args:
+    zero or more arraylike arguments.
+
+  Returns:
+    an array or list of arrays corresponding to the input values. Arrays
+    of shape ``()`` are converted to shape ``(1, 1, 1)``, 1D arrays of
+    shape ``(N,)`` are converted to shape ``(1, N, 1)``, 2D arrays of
+    shape ``(M, N)`` are converted to shape ``(M, N, 1)``, and arrays
+    of all other shapes are returned unchanged.
+
+  See also:
+    - :func:`jax.numpy.asarray`
+    - :func:`jax.numpy.atleast_1d`
+    - :func:`jax.numpy.atleast_2d`
+
+  Examples:
+    Scalar arguments are converted to 3D, size-1 arrays:
+
+    >>> x = jnp.float32(1.0)
+    >>> jnp.atleast_3d(x)
+    Array([[[1.]]], dtype=float32)
+
+    1D arrays have a unit dimension prepended and appended:
+
+    >>> y = jnp.arange(4)
+    >>> jnp.atleast_3d(y).shape
+    (1, 4, 1)
+
+    2D arrays have a unit dimension appended:
+
+    >>> z = jnp.ones((2, 3))
+    >>> jnp.atleast_3d(z).shape
+    (2, 3, 1)
+
+    Multiple arguments can be passed to the function at once, in which
+    case a list of results is returned:
+
+    >>> x3, y3 = jnp.atleast_3d(x, y)
+    >>> print(x3)
+    [[[1.]]]
+    >>> print(y3)
+    [[[0]
+      [1]
+      [2]
+      [3]]]
+  """
   # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
   util.check_arraylike("atleast_3d", *arys, emit_warning=True)
   if len(arys) == 1:
