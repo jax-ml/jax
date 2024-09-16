@@ -10,7 +10,7 @@ Remember to align the itemized text with the first line of an item within a list
 When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
-## jax 0.4.33
+## jax 0.4.34
 
 * Deletion:
   * `jax.xla_computation` is deleted. It's been 3 months since it's deprecation
@@ -26,10 +26,23 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {class}`jax.ShapeDtypeStruct` no longer accepts the `named_shape` argument.
     The argument was only used by `xmap` which was removed in 0.4.31.
 
-## jaxlib 0.4.33
 
+## jax 0.4.33 (September 16, 2024)
+
+This is a patch release on top of jax 0.4.32, that fixes two bugs found in that
+release.
+
+A TPU-only data corruption bug was found in the version of libtpu pinned by
+JAX 0.4.32, which manifested only if multiple TPU slices were present in the
+same job, for example, if training on multiple v5e slices.
+This release fixes that issue by pinning a fixed version of `libtpu`.
+
+This release fixes an inaccurate result for F64 tanh on CPU (#23590).
 
 ## jax 0.4.32 (September 11, 2024)
+
+Note: This release was yanked from PyPi because of a data corruption bug on TPU.
+See the 0.4.33 release notes for more details.
 
 * New Functionality
   * Added {func}`jax.extend.ffi.ffi_call` and {func}`jax.extend.ffi.ffi_lowering`
@@ -93,6 +106,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     another framework that implements the ``__dlpack__`` protocol.
 
 ## jaxlib 0.4.32 (September 11, 2024)
+
+Note: This release was yanked from PyPi because of a data corruption bug on TPU.
+See the 0.4.33 release notes for more details.
 
 * Breaking changes
   * Hermetic CUDA support is added.
