@@ -166,18 +166,6 @@ def unpair_pval(pval):
     aval_1, aval_2 = aval
     return (aval_1, const_1), (aval_2, const_2)
 
-def replace_float0s(primal, tangent):
-  if dtype(tangent) == float0:
-    return zeros_like_jaxval(primal)
-  else:
-    return tangent
-
-def recast_to_float0(primal, tangent):
-  if core.primal_dtype_to_tangent_dtype(dtype(primal)) == float0:
-    return Zero(get_aval(primal).to_tangent_aval())
-  else:
-    return tangent
-
 
 # NOTE: The FIXMEs below are caused by primal/tangent mixups (type
 # errors if you will)
@@ -295,11 +283,11 @@ def nonzero_tangent_outputs(*args, **kwargs):
 class JVPTrace(Trace):
 
   def pure(self, val):
-    tangent_zero = Zero(get_aval(val).to_tangent_aval())
+    tangent_zero = Zero.from_primal_value(val)
     return JVPTracer(self, val, tangent_zero)
 
   def lift(self, val):
-    tangent_zero = Zero(get_aval(val).to_tangent_aval())
+    tangent_zero = Zero.from_primal_value(val)
     return JVPTracer(self, val, tangent_zero)
 
   def sublift(self, val):
@@ -343,7 +331,7 @@ class JVPTrace(Trace):
     result = call_primitive.bind(_update_annotation(f_jvp, f.in_type, which_nz),
                                  *args, **new_params)
     primal_out, tangent_out = tree_unflatten(out_tree(), result)
-    tangent_out = [Zero(get_aval(p).to_tangent_aval()) if t is None else t
+    tangent_out = [Zero.from_primal_value(p) if t is None else t
                    for p, t in zip(primal_out, tangent_out)]
     return [JVPTracer(self, p, t) for p, t in zip(primal_out, tangent_out)]
 
@@ -374,13 +362,11 @@ class JVPTrace(Trace):
     primals_in = map(core.full_lower, primals_in)
     if not symbolic_zeros:
       tangents_in = map(instantiate_zeros, tangents_in)
-      tangents_in = map(replace_float0s, primals_in, tangents_in)
     else:
       tangents_in = map(replace_internal_symbolic_zeros, tangents_in)
     outs = f_jvp.call_wrapped(*it.chain(primals_in, tangents_in))
     primals_out, tangents_out = split_list(outs, [len(outs) // 2])
     tangents_out = map(replace_rule_output_symbolic_zeros, tangents_out)
-    tangents_out = map(recast_to_float0, primals_out, tangents_out)
     return map(partial(JVPTracer, self), primals_out, tangents_out)
 
   def post_process_custom_jvp_call(self, out_tracers, _):
@@ -405,7 +391,6 @@ class JVPTrace(Trace):
         *res, *tangents_in, num_res=res_tree.num_leaves, bwd=bwd,
         out_avals=avals_out, symbolic_zeros=symbolic_zeros)
     tangents_out = map(lax.tie_p.bind, primals_out, tangents_out)
-    tangents_out = map(recast_to_float0, primals_out, tangents_out)
     return map(partial(JVPTracer, self), primals_out, tangents_out)
 
   def post_process_custom_vjp_call(self, out_tracers, _):
@@ -591,7 +576,7 @@ def instantiate_zeros(tangent):
 @lu.transformation_with_aux
 def traceable(in_tree, *primals_and_tangents):
   primals, tangents = tree_unflatten(in_tree, primals_and_tangents)
-  tangents = [Zero(get_aval(p).to_tangent_aval()) if t is None else t
+  tangents = [Zero.from_primal_value(p) if t is None else t
               for p, t in zip(primals, tangents)]
   primals_out, tangents_out = yield (primals, tangents), {}
   tangents_out = [None if type(t) is Zero else t for t in tangents_out]
