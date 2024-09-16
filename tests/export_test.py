@@ -473,7 +473,8 @@ class JaxExportTest(jtu.JaxTestCase):
 
     # Native JAX 1st order vjp
     (f_outi, f_outf), f_vjp = jax.vjp(f, xi, xf)
-    f_outi_ct = np.ones(f_outi.shape, dtype=f_outi.dtype)
+    f_outi_ct = np.ones(f_outi.shape,
+                        dtype=core.primal_dtype_to_tangent_dtype(f_outi.dtype))
     f_outf_ct = np.ones(f_outf.shape, dtype=f_outf.dtype)
     xi_ct, xf_ct = f_vjp((f_outi_ct, f_outf_ct))
 
