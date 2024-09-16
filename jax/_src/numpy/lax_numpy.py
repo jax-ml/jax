@@ -10493,7 +10493,7 @@ def _searchsorted_via_scan(unrolled: bool, sorted_arr: Array, query: Array, side
 def _searchsorted_via_sort(sorted_arr: Array, query: Array, side: str, dtype: type) -> Array:
   working_dtype = int32 if sorted_arr.size + query.size < np.iinfo(np.int32).max else int64
   def _rank(x):
-    idx = lax.iota(working_dtype, len(x))
+    idx = lax.iota(working_dtype, x.shape[0])
     return zeros_like(idx).at[argsort(x)].set(idx)
   query_flat = query.ravel()
   if side == 'left':
@@ -10586,8 +10586,8 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
   a, v = util.promote_dtypes(a, v)
   if sorter is not None:
     a = a[sorter]
-  dtype = int32 if len(a) <= np.iinfo(np.int32).max else int64
-  if len(a) == 0:
+  dtype = int32 if a.shape[0] <= np.iinfo(np.int32).max else int64
+  if a.shape[0] == 0:
     return zeros_like(v, dtype=dtype)
   impl = {
       'scan': partial(_searchsorted_via_scan, False),
@@ -10597,9 +10597,11 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
   }[method]
   return impl(asarray(a), asarray(v), side, dtype)  # type: ignore
 
-@util.implements(np.digitize)
-@partial(jit, static_argnames=('right',))
-def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False) -> Array:
+@util.implements(np.digitize, lax_description=_dedent("""
+    Optionally, the ``method`` argument can be used to configure the
+    underlying :func:`jax.numpy.searchsorted` algorithm."""))
+@partial(jit, static_argnames=('right', 'method'))
+def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False, *, method: str = 'scan') -> Array:
   util.check_arraylike("digitize", x, bins)
   right = core.concrete_or_error(bool, right, "right argument of jnp.digitize()")
   bins_arr = asarray(bins)
@@ -10610,8 +10612,8 @@ def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False) -> Array:
   side = 'right' if not right else 'left'
   return where(
     bins_arr[-1] >= bins_arr[0],
-    searchsorted(bins_arr, x, side=side),
-    len(bins_arr) - searchsorted(bins_arr[::-1], x, side=side)
+    searchsorted(bins_arr, x, side=side, method=method),
+    bins_arr.shape[0] - searchsorted(bins_arr[::-1], x, side=side, method=method)
   )
 
 
