@@ -1826,7 +1826,7 @@ def _lift_linearized(jaxpr, primal_avals, io_tree, out_pvals, consts, *py_args):
   def fun(*tangents):
     tangent_avals = list(map(core.get_aval, tangents))
     for primal_aval, tangent_aval in zip(primal_avals, tangent_avals):
-      if not core.typecompat(primal_aval.at_least_vspace(), tangent_aval):
+      if not core.typecompat(primal_aval.to_tangent_aval(), tangent_aval):
         raise ValueError("linearized function called on tangent values inconsistent with "
                          "the original primal values: "
                          f"got {tangent_aval} for primal aval {primal_aval}")
@@ -1869,7 +1869,7 @@ def _vjp_pullback_wrapper(name, out_primal_avals, io_tree, fun, *py_args_):
                      f"got {in_tree}, but expected to match {in_tree_expected}")
   for arg, aval in zip(args, out_primal_avals):
     ct_aval = shaped_abstractify(arg)
-    ct_aval_expected = aval.at_least_vspace()
+    ct_aval_expected = aval.to_tangent_aval()
     if (not core.typecompat(ct_aval, ct_aval_expected) and
         not _temporary_dtype_exception(ct_aval, ct_aval_expected)):
       raise ValueError(

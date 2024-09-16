@@ -434,7 +434,7 @@ def _cond_jvp(primals, tangents, branches):
   out = cond_p.bind(index, *ops, *ops_dot, branches=branches_jvp)
   out_primals, out_tangents = split_list(out, [len(out_nz)])
   out_tangents_iter = iter(out_tangents)
-  out_tangents = [next(out_tangents_iter) if nz else ad_util.Zero.from_value(p)
+  out_tangents = [next(out_tangents_iter) if nz else ad_util.Zero.from_primal_value(p)
                   for p, nz in zip(out_primals, out_nz)]
   return out_primals, out_tangents
 
