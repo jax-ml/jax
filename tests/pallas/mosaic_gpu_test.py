@@ -127,6 +127,19 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x + x.sum()*2)
 
+  @parameterized.parameters(False, True)
+  def test_rsqrt(self, approx_math):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
+        compiler_params=plgpu.GPUCompilerParams(approx_math=approx_math),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jax.lax.rsqrt(x_ref[...])
+
+    x = jnp.arange(128).astype(jnp.float32)
+    np.testing.assert_allclose(kernel(x), jax.lax.rsqrt(x))
+
   @parameterized.product(input_factor=[0.001, 1, 10, 100, 100])
   def test_layer_norm(self, input_factor):
     eps = 1e-5

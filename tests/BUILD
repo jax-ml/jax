@@ -1187,7 +1187,10 @@ jax_test(
     shard_count = {
         "tpu": 5,
     },
-    tags = ["noasan"],  # Times out
+    tags = [
+        "noasan",  # Times out.
+        "notsan",  # TODO(b/309111150): Re-enable after rolling forward cl/666056414.
+    ],
     deps = [
         "//jax:experimental",
         "//jax:experimental_host_callback",

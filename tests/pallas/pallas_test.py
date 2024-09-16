@@ -33,7 +33,6 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax.control_flow.for_loop import for_loop
-from jax._src.lib import version as jaxlib_version
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax.experimental import pallas as pl
@@ -371,17 +370,10 @@ class PallasCallTest(PallasBaseTest):
 
     test_context = contextlib.nullcontext()
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
-      if jaxlib_version < (0, 4, 32):
-        # TODO(b/356116061): Remove the old rank condition
-        if rank < 2:
-          test_context = self.assertRaisesRegex(
-              ValueError,
-              "TPU lowering currently supports only blocks of rank >= 2")
-      else:
-        if rank < 1:
-          test_context = self.assertRaisesRegex(
-              ValueError,
-              "TPU lowering currently supports only blocks of rank >= 1")
+      if rank < 1:
+        test_context = self.assertRaisesRegex(
+            ValueError,
+            "TPU lowering currently supports only blocks of rank >= 1")
 
       if rank >= 1:
         bs0, as0 = block_shape[-1], shape[-1]

@@ -47,6 +47,9 @@ class LayoutTest(jtu.JaxTestCase):
     super().setUp()
 
   def test_auto_layout(self):
+    # Remove this condition when xla_extension_version >= 285
+    if jtu.test_device_matches(["gpu"]) and xla_extension_version < 285:
+      self.skipTest("Requires xla_extension_version >= 285 for GPU backend.")
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     shape1 = (128, 128)
     shape2 = (128, 128)
@@ -112,6 +115,9 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertArraysEqual(apply_out[1], (np_inp2 * 2).T)
 
   def test_default_layout(self):
+    # Remove this condition when xla_extension_version >= 285
+    if jtu.test_device_matches(["gpu"]) and xla_extension_version < 285:
+      self.skipTest("Requires xla_extension_version >= 285 for GPU backend.")
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     shape = (4, 4, 2)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -151,6 +157,9 @@ class LayoutTest(jtu.JaxTestCase):
               out_shardings=DLL.AUTO).lower(sds).compile()
 
   def test_in_layouts_out_layouts(self):
+    # Remove this condition when xla_extension_version >= 285
+    if jtu.test_device_matches(["gpu"]) and xla_extension_version < 285:
+      self.skipTest("Requires xla_extension_version >= 285 for GPU backend.")
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     shape = (8, 8)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -175,6 +184,9 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('y', 'x')))
 
   def test_sharding_and_layouts(self):
+    # Remove this condition when xla_extension_version >= 285
+    if jtu.test_device_matches(["gpu"]) and xla_extension_version < 285:
+      self.skipTest("Requires xla_extension_version >= 285 for GPU backend.")
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     shape = (4, 8)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -466,6 +478,9 @@ class LayoutTest(jtu.JaxTestCase):
       jax.device_put(inp, l)
 
   def test_concrete_layout_in_shardings(self):
+    # Remove this condition when xla_extension_version >= 285
+    if jtu.test_device_matches(["gpu"]) and xla_extension_version < 285:
+      self.skipTest("Requires xla_extension_version >= 285 for GPU backend.")
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
     shape = (16, 128)

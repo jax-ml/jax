@@ -28,6 +28,7 @@ from jax._src import api_util
 from jax._src import basearray
 from jax._src import config
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
@@ -115,6 +116,16 @@ def _reconstruct_array(fun, args, arr_state, aval_state):
   np_value = fun(*args)
   np_value.__setstate__(arr_state)
   jnp_value = api.device_put(np_value)
+  # TODO(slebedev): Remove this branch after December 10th 2024.
+  if "named_shape" in aval_state:
+    deprecations.warn(
+        "jax-aval-named-shape",
+        "Pickled array contains an aval with a named_shape attribute. This is"
+        " deprecated and the code path supporting such avals will be removed."
+        " Please re-pickle the array.",
+        stacklevel=2,
+    )
+    del aval_state["named_shape"]
   jnp_value.aval = jnp_value.aval.update(**aval_state)
   return jnp_value
 

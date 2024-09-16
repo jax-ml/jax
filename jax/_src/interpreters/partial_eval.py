@@ -1442,6 +1442,18 @@ def _prune_closed_jaxpr_outputs(
 def dce_jaxpr(jaxpr: Jaxpr, used_outputs: Sequence[bool],
               instantiate: bool | Sequence[bool] = False,
               ) -> tuple[Jaxpr, list[bool]]:
+  """Runs dead-code elementation on a given jaxpr.
+
+  Args:
+    jaxpr: The jaxpr to DCE.
+    used_outputs: A list of bools indicating which outputs are used.
+    instantiate: A bool or a list of bools indicating which inputs should be
+      considered used, regardless of whether they are actually used in a jaxpr.
+      If a bool, the same value is used for all inputs.
+
+  Returns:
+    A tuple of ``(new_jaxpr, used_inputs)``.
+  """
   if type(instantiate) is bool:
     instantiate = (instantiate,) * len(jaxpr.invars)
   return _dce_jaxpr(jaxpr, tuple(used_outputs), tuple(instantiate))
@@ -1451,7 +1463,7 @@ def dce_jaxpr_consts(jaxpr: Jaxpr, used_outputs: Sequence[bool],
                      instantiate: bool | Sequence[bool] = False,
                      ) -> tuple[Jaxpr, list[bool], list[bool]]:
   jaxpr_ = convert_constvars_jaxpr(jaxpr)
-  new_jaxpr, used_inputs_ = dce_jaxpr(jaxpr_, used_outputs)
+  new_jaxpr, used_inputs_ = dce_jaxpr(jaxpr_, used_outputs, instantiate)
   used_consts, used_inputs = split_list(used_inputs_, [len(jaxpr.constvars)])
   if sum(used_consts):
     new_jaxpr = convert_invars_to_constvars(new_jaxpr, sum(used_consts))
@@ -1936,11 +1948,9 @@ class DynamicJaxprTrace(core.Trace):
   def default_process_primitive(self, primitive, tracers, params):
     avals = [t.aval for t in tracers]
     out_avals, effects = primitive.abstract_eval(*avals, **params)
-    # == serve as a "not xor" here.
-    if not (isinstance(out_avals, (tuple,list)) == primitive.multiple_results):
-      raise ValueError(f"{primitive}.abstract_eval() method should return"
-                       f" a tuple or a list if {primitive}.multiple_results"
-                       " is true. Otherwise it shouldn't.")
+    if isinstance(out_avals, (tuple, list)) != primitive.multiple_results:
+      raise ValueError(f"{primitive}.abstract_eval() method should return "
+                       f"a tuple or a list iff {primitive}.multiple_results.")
     out_avals = [out_avals] if not primitive.multiple_results else out_avals
     source_info = source_info_util.current()
     out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]

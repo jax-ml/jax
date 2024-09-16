@@ -29,11 +29,13 @@ import jax.numpy as jnp
 AbstractMemoryRef = pallas_core.AbstractMemoryRef
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class GPUCompilerParams(pallas_core.CompilerParams):
   """Mosaic GPU compiler parameters.
 
   Attributes:
+    approx_math: If True, the compiler is allowed to use approximate
+      implementations of some math operations, e.g. ``exp``. Defaults to False.
     dimension_semantics: A list of dimension semantics for each grid
       dimension of the kernel. Either "parallel" for dimensions that can
       execute in any order, or "sequential" for dimensions that must be
@@ -42,6 +44,7 @@ class GPUCompilerParams(pallas_core.CompilerParams):
       meaning no pipelining is done.
   """
   PLATFORM: ClassVar[str] = "mosaic_gpu"
+  approx_math: bool = False
   dimension_semantics: Sequence[Literal["parallel", "sequential"]] | None = None
   num_stages: int = 1
 
