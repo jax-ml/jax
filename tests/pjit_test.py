@@ -56,7 +56,6 @@ from jax._src.interpreters import pxla
 from jax._src.lib.mlir import dialects
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib import xla_extension
 from jax._src.util import curry, unzip2
 
@@ -4433,8 +4432,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
         "Compiled object called with input sharding.*does not match"):
       compiled(cpu_arr)
 
-  @unittest.skipIf(xla_extension_version < 281,
-                   'Requires xla_extension_version >= 281')
   def test_different_devices_wsc_abstract_mesh_cache_hit(self):
     if jax.device_count() < 4:
       self.skipTest('Requires >=4 devices')
@@ -4463,8 +4460,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(lowering_count[0], 1)
     self.assertEqual(compilation_count[0], 2)  # 2 misses since devices differ.
 
-  @unittest.skipIf(xla_extension_version < 281,
-                   'Requires xla_extension_version >= 281')
   def test_wsc_abstract_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     np_inp = np.arange(16).reshape(8, 2)
@@ -4484,8 +4479,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(out_eager, np_inp * 2)
     self.assertEqual(out_eager.sharding, NamedSharding(mesh, P('x')))
 
-  @unittest.skipIf(xla_extension_version < 281,
-                   'Requires xla_extension_version >= 281')
   def test_wsc_sds_abstract_mesh(self):
     mesh = jtu.create_mesh((2,), 'x')
     s = NamedSharding(mesh, P())
@@ -4499,8 +4492,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     sds = jax.ShapeDtypeStruct((8, 2), np.float32, sharding=s)
     f.eval_shape(sds)  # doesn't crash
 
-  @unittest.skipIf(xla_extension_version < 281,
-                   'Requires xla_extension_version >= 281')
   def test_wsc_vmap_abstract_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
@@ -4517,8 +4508,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out2 = jax.jit(jax.vmap(f, spmd_axis_name='y'))(arr)
     self.assertEqual(out2.sharding, NamedSharding(mesh, P('y', 'x')))
 
-  @unittest.skipIf(xla_extension_version < 281,
-                   'Requires xla_extension_version >= 281')
   def test_wsc_abstract_mesh_errors(self):
     mesh = jtu.create_mesh((2,), ('x',))
     np_inp = np.arange(8)
