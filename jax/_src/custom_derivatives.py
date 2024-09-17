@@ -327,26 +327,27 @@ def _flatten_jvp(primal_name, jvp_name, in_tree, maybe_out_type, *args):
            "shapes/dtypes of:\n"
            f"""    {str(ty_tree_).replace("'", "")}""")
       raise TypeError(m)
-  # TODO(mattjj): compare primals' tangent types to tangent objects' types
+  primal_avals_out = [raise_to_shaped(core.get_aval(x), weak_type=False) for x in primals_out]
   expected_tangent_avals_out = [
-    core.primal_aval_to_tangent_aval(raise_to_shaped(core.get_aval(x), weak_type=False))
+    raise_to_shaped(core.get_aval(x), weak_type=False).to_tangent_aval()
     for x in primals_out]
-  tangent_avals_out = [
-    raise_to_shaped(core.get_aval(t), weak_type=False)
-    if type(t) is not SymbolicZero else t.aval.strip_weak_type()
-    for t in tangents_out]
+  tangent_avals_out = [raise_to_shaped(core.get_aval(t), weak_type=False)
+                       if type(t) is not SymbolicZero else t.aval.strip_weak_type()
+                       for t in tangents_out]
   if expected_tangent_avals_out != tangent_avals_out:
     if len(expected_tangent_avals_out) == 1:
-      (av1,), (av2,) = expected_tangent_avals_out, tangent_avals_out
+      (av_p,), (av_et,), (av_t,) = primal_avals_out, expected_tangent_avals_out, tangent_avals_out
       msg = ("Custom JVP rule must produce primal and tangent outputs with "
-             "equal shapes and dtypes, but got {} and {} respectively.")
-      raise TypeError(msg.format(av1.str_short(), av2.str_short()))
+             "corresponding shapes and dtypes. Expected {} (tangent type of {}) but got {}.")
+      raise TypeError(msg.format(av_et.str_short(), av_p.str_short(), av_t.str_short()))
     else:
       msg = ("Custom JVP rule must produce primal and tangent outputs with "
-             "equal shapes and dtypes, but got:\n{}")
+             "corresponding shapes and dtypes, but got:\n{}")
       disagreements = (
-          f"  primal {av1.str_short()} for tangent {av2.str_short()}"
-          for av1, av2 in zip(expected_tangent_avals_out, tangent_avals_out) if av1 != av2)
+          f"  primal {av_p.str_short()} with tangent {av_t.str_short()}, expecting tangent {av_et}"
+          for av_p, av_et, av_t in zip(primal_avals_out, expected_tangent_avals_out, tangent_avals_out)
+          if av_et != av_t)
+
       raise TypeError(msg.format('\n'.join(disagreements)))
   yield primals_out + tangents_out, (out_tree, primal_avals)
 
@@ -381,7 +382,7 @@ def lift_jvp(num_consts: int, jvp_jaxpr_thunk: Callable) -> lu.WrappedFun:
     out = core.eval_jaxpr(jvp_jaxpr, jvp_consts, *primals, *nonzero_tangents)
     out_primals, nz_out_tangents = split_list(out, [len(out_zeros)])
     nz_out_tangents_ = iter(nz_out_tangents)
-    out_tangents = [SymbolicZero(core.get_aval(p).at_least_vspace())
+    out_tangents = [SymbolicZero(core.get_aval(p).to_tangent_aval())
                     if z else next(nz_out_tangents_)
                     for p, z in zip(out_primals, out_zeros)]
     assert next(nz_out_tangents_, None) is None
@@ -751,10 +752,10 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
     raise TypeError(msg.format(in_tree2, in_tree)) from None
   results = []
   for kp, a, ct in zip(keypaths, in_avals, cts_in_flat):
-    if ct is zero or a != a.at_least_vspace():
-      results.append(Zero(a.at_least_vspace()))
+    if ct is zero or a != a.to_tangent_aval():
+      results.append(Zero(a.to_tangent_aval()))
     elif type(ct) is SymbolicZero:
-      if not core.typecompat(a.at_least_vspace(), a_ := ct.aval):
+      if not core.typecompat(a.to_tangent_aval(), a_ := ct.aval):
         msg = ("Custom VJP bwd rule produced a SymbolicZero with a shape/dtype "
                "that does not match the corresponding input tangent shape/dtype: "
                f"at output{keystr(kp)} the SymbolicZero had shape/dtype "
@@ -765,7 +766,7 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
         raise ValueError(msg)
       results.append(Zero(ct.aval))
     else:
-      if (not core.typecompat(a.at_least_vspace(), a_ := core.get_aval(ct))
+      if (not core.typecompat(a.to_tangent_aval(), a_ := core.get_aval(ct))
           and not (_temporary_dtype_exception(a, a_) or
                    _temporary_shape_exception(a, a_))):
         msg = ("Custom VJP bwd rule must produce an output with the same "
@@ -836,8 +837,7 @@ def _custom_vjp_call_jaxpr_jvp(
   _, res_tree = out_trees()
   res_and_primals_out = core.eval_jaxpr(fwd_jaxpr, fwd_consts, *args)
   res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
-  avals_out = [core.primal_aval_to_tangent_aval(raise_to_shaped(core.get_aval(x)))
-               for x in primals_out]
+  avals_out = [raise_to_shaped(core.get_aval(x)).to_tangent_aval() for x in primals_out]
   args_dot = map(ad.instantiate_zeros, args_dot)
   tangents_out = ad.custom_lin_p.bind(
       *res, *args_dot, num_res=res_tree.num_leaves, bwd=bwd,
@@ -965,7 +965,7 @@ def custom_gradient(fun):
     ans, rule = fun(*args, **kwargs)
     ans_flat, out_tree = tree_flatten((ans,))
     rule, in_tree = flatten_fun_nokwargs(lu.wrap_init(rule), out_tree)
-    ans_avals = [core.get_aval(x).at_least_vspace() for x in ans_flat]
+    ans_avals = [core.get_aval(x).to_tangent_aval() for x in ans_flat]
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(rule, ans_avals)
     return ans, Residuals(jaxpr, in_tree(), out_tree, consts)
 
@@ -1080,7 +1080,7 @@ def _maybe_perturbed(x: Any) -> bool:
   elif isinstance(x, pe.DynamicJaxprTracer):
     # If x is a DynamicJaxprTracer then we're staging out; differentiation could
     # happen later, but some types always have trivial tangents.
-    vspace = x.aval.at_least_vspace()
+    vspace = x.aval.to_tangent_aval()
     return not (vspace is core.abstract_token or
                 getattr(vspace, 'dtype', None) == dtypes.float0)
   elif not isinstance(x, ad.JVPTracer):
@@ -1347,7 +1347,7 @@ def custom_vjp_by_custom_transpose(fun, fwd, bwd):
   @fun.defjvp
   def jvp(primals, tangents):
     outs, residuals = fwd(*primals)
-    tan_out_types = tree_map(lambda o: core.get_aval(o).at_least_vspace(), outs)
+    tan_out_types = tree_map(lambda o: core.get_aval(o).to_tangent_aval(), outs)
     tan_fn = custom_transpose(partial(disallow_jvp, out_avals=tan_out_types))
     tan_fn.def_transpose(bwd)
     return outs, tan_fn(tan_out_types, residuals, tangents)

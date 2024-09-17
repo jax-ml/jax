@@ -68,11 +68,7 @@ class Zero:
 
   @staticmethod
   def from_primal_value(val: Any) -> Zero:
-    return Zero.from_primal_aval(get_aval(val))
-
-  @staticmethod
-  def from_primal_aval(aval: Any) -> Zero:
-    return Zero(core.primal_aval_to_tangent_aval(raise_to_shaped(aval)))
+    return Zero(raise_to_shaped(get_aval(val)).to_tangent_aval())
 
 register_pytree_node(Zero, lambda z: ((), z.aval), lambda aval, _: Zero(aval))
 
@@ -88,7 +84,7 @@ stop_gradient_p.def_impl(_stop_gradient_impl)
 stop_gradient_p.def_abstract_eval(lambda x: x)
 
 
-# User-facing version of Zero
+# User-facing version of `Zero`
 class SymbolicZero:
   def __init__(self, aval: core.AbstractValue) -> None:
     self.aval = aval
@@ -114,6 +110,10 @@ class SymbolicZero:
         return types.MethodType(attr.fun, self)
       else:
         return attr
+
+  @staticmethod
+  def from_primal_value(val: Any) -> SymbolicZero:
+    return SymbolicZero(get_aval(val).to_tangent_aval())
 
 JaxTypeOrTracer = Any
 

@@ -145,9 +145,9 @@ class AbstractMemoryRef(state.AbstractRef):
     memory_space = self.memory_space if memory_space is None else memory_space
     return AbstractMemoryRef(inner_aval, memory_space)
 
-  def at_least_vspace(self):
+  def to_tangent_aval(self):
     return AbstractMemoryRef(
-        self.inner_aval.at_least_vspace(), self.memory_space)
+        self.inner_aval.to_tangent_aval(), self.memory_space)
 
   def __eq__(self, other):
     return (type(self) is type(other) and self.inner_aval == other.inner_aval

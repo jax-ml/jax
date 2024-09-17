@@ -57,7 +57,7 @@ def _update_annotation(
   # Implicit arguments never have tangents, so generate the tangent part of the
   # type annotation from explicit arguments only.
   explicit_avals = [aval for aval, explicit in orig_type if explicit]
-  tan_types = [(aval.at_least_vspace(), True)
+  tan_types = [(aval.to_tangent_aval(), True)
                for nz, aval in zip(explicit_nonzeros, explicit_avals) if nz]
   return lu.annotate(f, (*orig_type, *tan_types))
 
@@ -113,7 +113,7 @@ def linearize(traceable, *primals, **kwargs):
     jvpfun, aux = jvp(traceable, has_aux=True)
 
   in_pvals = (tuple(pe.PartialVal.known(p) for p in primals)
-              + tuple(pe.PartialVal.unknown(get_aval(p).at_least_vspace())
+              + tuple(pe.PartialVal.unknown(get_aval(p).to_tangent_aval())
                       for p in primals))
   _, in_tree = tree_flatten(((primals, primals), {}))
   jvpfun_flat, out_tree = flatten_fun(jvpfun, in_tree)
@@ -179,7 +179,7 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
     #   assert v.aval.strip_weak_type() == joined_aval, (prim, v.aval, ct_aval)
 
   def read_cotangent(v):
-    return ct_env.pop(v, Zero(v.aval.at_least_vspace()))
+    return ct_env.pop(v, Zero(v.aval.to_tangent_aval()))
 
   def read_primal(v):
     if type(v) is Literal:
@@ -362,8 +362,7 @@ class JVPTrace(Trace):
 
     _, res_tree = out_trees()
     res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
-    avals_out = [core.primal_aval_to_tangent_aval(raise_to_shaped(core.get_aval(x)))
-                 for x in primals_out]
+    avals_out = [raise_to_shaped(core.get_aval(x)).to_tangent_aval() for x in primals_out]
     # TODO(frostig,mattjj): avoid instantiating zeros when we don't have to!
     with core.set_current_trace(self.parent_trace):
       tangents_in = map(instantiate_zeros, tangents_in)
@@ -643,7 +642,7 @@ def _jvp_jaxpr(jaxpr, nonzeros, instantiate):
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
   f_jvp, out_nonzeros = f_jvp_traceable(jvp(f, instantiate=instantiate, transform_stack=False),
                                         nonzeros)
-  tangent_avals = [core.primal_aval_to_tangent_aval(aval) for aval, nz in zip(jaxpr.in_avals, nonzeros) if nz]
+  tangent_avals = [aval.to_tangent_aval() for aval, nz in zip(jaxpr.in_avals, nonzeros) if nz]
   avals_in = list(it.chain(jaxpr.in_avals, tangent_avals))
   jaxpr_out, avals_out, literals_out, () = pe.trace_to_jaxpr_dynamic(f_jvp, avals_in)
   return core.ClosedJaxpr(jaxpr_out, literals_out), out_nonzeros()

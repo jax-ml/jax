@@ -2035,7 +2035,7 @@ class DynamicJaxprTrace(core.Trace):
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, symbolic_zeros):
     tracers = map(self.to_jaxpr_tracer, tracers)
     in_avals = [t.aval for t in tracers]
-    in_tangent_avals = [core.primal_aval_to_tangent_aval(t) for t in in_avals]
+    in_tangent_avals = [t.to_tangent_aval() for t in in_avals]
     fun_jaxpr, out_avals, consts, () = trace_to_jaxpr_dynamic(fun, in_avals)
     closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
 

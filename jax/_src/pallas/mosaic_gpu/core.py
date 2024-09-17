@@ -18,8 +18,9 @@ from collections.abc import Sequence
 import dataclasses
 import enum
 from typing import Any, ClassVar, Literal, Protocol
-from jax import core as jax_core
-from jax._src import core
+
+from jax._src import core as jax_core
+from jax._src import dtypes
 from jax._src import tree_util
 from jax._src.pallas import core as pallas_core
 from jax.experimental.mosaic import gpu as mosaic_gpu
@@ -118,9 +119,9 @@ class GPUBlockSpec(pallas_core.BlockSpec):
   def to_block_mapping(
       self,
       origin: pallas_core.OriginStr,
-      array_aval: core.ShapedArray,
+      array_aval: jax_core.ShapedArray,
       *,
-      index_map_avals: Sequence[core.AbstractValue],
+      index_map_avals: Sequence[jax_core.AbstractValue],
       index_map_tree: tree_util.PyTreeDef,
       grid: pallas_core.GridMappingGrid,
       mapped_dims: tuple[int, ...],
@@ -163,8 +164,8 @@ class GPUGridSpec(pallas_core.GridSpec):
     super().__init__(grid, in_specs, out_specs)
     self.scratch_shapes = tuple(scratch_shapes)
 
-  def _make_scratch_aval(self, obj: object) -> core.AbstractValue:
-    if isinstance(obj, MemoryRef):
+  def _make_scratch_aval(self, obj: object) -> jax_core.AbstractValue:
+    if isinstance(obj, (MemoryRef, Barrier)):
       return obj.get_aval()
     raise TypeError(f"Cannot convert {obj} to an abstract value")
 
@@ -186,3 +187,30 @@ class MemoryRef:
 GMEM = GPUMemorySpace.GMEM
 SMEM = GPUMemorySpace.SMEM
 REGS = GPUMemorySpace.REGS
+
+
+class barrier_dtype(dtypes.extended):
+  pass
+
+
+@dataclasses.dataclass(frozen=True)
+class BarrierType(dtypes.ExtendedDType):
+  type: ClassVar[Any] = barrier_dtype
+  name: ClassVar[str] = "barrier"
+
+  num_arrivals: int
+
+  def __str__(self):
+    return self.name
+
+
+@dataclasses.dataclass(frozen=True)
+class Barrier:
+  num_arrivals: int
+  num_barriers: int = 1
+
+  def get_aval(self) -> AbstractMemoryRef:
+    aval = jax_core.ShapedArray(
+        [self.num_barriers], BarrierType(self.num_arrivals)
+    )
+    return AbstractMemoryRef(aval, SMEM)

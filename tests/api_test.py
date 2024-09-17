@@ -7206,9 +7206,10 @@ class CustomJVPTest(jtu.JaxTestCase):
         TypeError,
         re.escape(
             "Custom JVP rule must produce primal and tangent outputs "
-            "with equal shapes and dtypes, but got float32[] and float32[1] "
-            "respectively."),
+            "with corresponding shapes and dtypes. "
+            "Expected float32[] (tangent type of float32[]) but got float32[1]."),
         lambda: api.jvp(f, (jnp.float32(2.),), (jnp.float32(1.),)))
+
 
   def test_jvp_rule_doesnt_return_pair_error_message(self):
     # https://github.com/google/jax/issues/2516
@@ -9662,12 +9663,12 @@ class _custom_transpose:
 # an option of inferring output types.
 def custom_transpose(example_out):
   if isinstance(example_out, Callable):
-    out_type = core.get_aval(0.).at_least_vspace()
+    out_type = core.get_aval(0.).to_tangent_aval()
     return _custom_transpose(out_type, example_out)
   return partial(
       _custom_transpose,
       jax.tree.map(
-          lambda x: core.get_aval(x).at_least_vspace(), example_out))
+          lambda x: core.get_aval(x).to_tangent_aval(), example_out))
 
 
 class CustomTransposeTest(jtu.JaxTestCase):
