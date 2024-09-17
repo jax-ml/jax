@@ -78,7 +78,6 @@ _on_exit = False
 
 ### op-by-op execution
 
-# shouldn't read current trace
 def apply_primitive(prim, *args, **params):
   """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
   fun = xla_primitive_callable(prim, **params)
