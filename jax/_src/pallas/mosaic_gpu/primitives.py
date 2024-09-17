@@ -100,6 +100,6 @@ def wait_smem_to_gmem(allow_groups: int) -> None:
   wait_p.bind(allow_groups=allow_groups)
 
 
-def wait(barrier: pallas_core.AbstractMemoryRef) -> None:
+def wait_barrier(barrier: pallas_core.AbstractMemoryRef) -> None:
   """Waits on the given barrier."""
   wait_p.bind(barrier)

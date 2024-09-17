@@ -149,7 +149,7 @@ class PallasCallTest(PallasTest):
       plgpu.async_copy_gmem_to_smem(
           x_ref_gmem, scratch_ref, barrier=barrier_ref
       )
-      plgpu.wait(barrier_ref)
+      plgpu.wait_barrier(barrier_ref)
       o_ref[...] = scratch_ref[...] + 1
 
     x = jnp.arange(128).astype(jnp.float32)
