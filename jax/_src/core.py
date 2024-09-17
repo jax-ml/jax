@@ -343,8 +343,7 @@ def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
   ctx = ctx or JaxprEqnContext(
       compute_on.current_compute_type(),
       config.threefry_partitionable.value,
-      xla_metadata_lib.current_xla_metadata(),
-  )
+      xla_metadata_lib.current_xla_metadata())
   if config.enable_checks.value:
     assert all(isinstance(x, (Var, Literal)) for x in  invars)
     assert all(isinstance(v,  Var)           for v in outvars)

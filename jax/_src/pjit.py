@@ -1800,13 +1800,11 @@ def pjit_staging_rule(trace, *args, **params):
       params['jaxpr'], params['out_shardings'], params['out_layouts'])
   params = dict(params, jaxpr=jaxpr, out_shardings=out_shardings,
                 out_layouts=out_layouts)
-
   if (params["inline"] and
       all(is_unspecified(i) for i in params["in_shardings"]) and
       all(is_unspecified(o) for o in params["out_shardings"]) and
       all(i is None for i in params["in_layouts"]) and
       all(o is None for o in params["out_layouts"])):
-
     if config.dynamic_shapes.value:
       # Inline jaxpr doesn't handle dynamic shapes when inlining. If dynamic
       # shapes are enabled, use eval_jaxpr, which uses the tracing machinery,

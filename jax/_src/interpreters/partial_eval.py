@@ -2828,8 +2828,7 @@ def inline_jaxpr_into_trace(
     outvars = [Var('', v.aval) for v in eqn.outvars]
     src_ = (src if not eqn.source_info.name_stack else
             src.replace(name_stack=src.name_stack + eqn.source_info.name_stack))
-    trace.frame.add_eqn(core.new_jaxpr_eqn(invars, outvars, eqn.primitive,
-                                           eqn.params, eqn.effects, src_))
+    trace.frame.add_eqn(eqn.replace(invars, outvars, source_info=src_))  # type: ignore
     map(env.setdefault, eqn.outvars, outvars)
 
   tracer_env: dict[Var, Any] = dict(zip([*jaxpr.constvars, *jaxpr.invars],
