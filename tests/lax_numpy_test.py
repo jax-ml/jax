@@ -4295,14 +4295,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertArraysEqual(jnp.argsort(x), argsorted_stable)
     self.assertArraysEqual(jnp.argsort(x, descending=True), argsorted_rev_stable)
 
-  @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
-      for shape in one_dim_array_shapes
-      for axis in [None]
-    ],
-    dtype=all_dtypes,
-  )
-  def testSortComplex(self, dtype, shape, axis):
+  @jtu.sample_product(shape=nonzerodim_shapes, dtype=all_dtypes)
+  def testSortComplex(self, shape, dtype):
     rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(np.sort_complex, jnp.sort_complex, args_maker,

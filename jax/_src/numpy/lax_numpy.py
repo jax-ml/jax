@@ -8844,7 +8844,8 @@ def sort_complex(a: ArrayLike) -> Array:
     a: input array. If dtype is not complex, the array will be upcast to complex.
 
   Returns:
-    A sorted array of the same shape and complex dtype as the input.
+    A sorted array of the same shape and complex dtype as the input. If ``a``
+    is multi-dimensional, it is sorted along the last axis.
 
   See also:
     - :func:`jax.numpy.sort`: Return a sorted copy of an array.
@@ -8853,9 +8854,17 @@ def sort_complex(a: ArrayLike) -> Array:
     >>> a = jnp.array([1+2j, 2+4j, 3-1j, 2+3j])
     >>> jnp.sort_complex(a)
     Array([1.+2.j, 2.+3.j, 2.+4.j, 3.-1.j], dtype=complex64)
+
+    Multi-dimensional arrays are sorted along the last axis:
+
+    >>> a = jnp.array([[5, 3, 4],
+    ...                [6, 9, 2]])
+    >>> jnp.sort_complex(a)
+    Array([[3.+0.j, 4.+0.j, 5.+0.j],
+           [2.+0.j, 6.+0.j, 9.+0.j]], dtype=complex64)
   """
   util.check_arraylike("sort_complex", a)
-  a = lax.sort(asarray(a), dimension=0)
+  a = lax.sort(asarray(a))
   return lax.convert_element_type(a, dtypes.to_complex_dtype(a.dtype))
 
 @util.implements(np.lexsort)
