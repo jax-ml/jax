@@ -1745,20 +1745,15 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape', 'sharding']  # inherits slots from parent
   array_abstraction_level = 2
-  named_shape = {}  # type: ignore
 
-  def __init__(self, shape, dtype, weak_type=False, named_shape=None,
-               sharding=None):
-    del named_shape  # unused, vestigial
+  def __init__(self, shape, dtype, weak_type=False, sharding=None):
     self.shape = canonicalize_shape(shape)
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
     if config.sharding_in_types.value:
       self.sharding = sharding
 
-  def update(self, shape=None, dtype=None, weak_type=None, named_shape=None,
-             sharding=None):
-    del named_shape  # unused, vestigial
+  def update(self, shape=None, dtype=None, weak_type=None, sharding=None):
     if shape is None:
       shape = self.shape
     if dtype is None:

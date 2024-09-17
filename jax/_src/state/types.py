@@ -21,11 +21,13 @@ import math
 from typing import Any, Union
 
 from jax._src import core
+from jax._src import dtypes
 from jax._src import effects
 from jax._src import pretty_printer as pp
+from jax._src import tree_util
 from jax._src.state import indexing
-from jax._src.util import safe_map, safe_zip
 from jax._src.typing import Array
+from jax._src.util import safe_map, safe_zip
 
 ## JAX utilities
 
@@ -72,7 +74,39 @@ effects.control_flow_allowed_effects.add_type(RefEffect)
 
 StateEffect = Union[ReadEffect, WriteEffect, AccumEffect]
 
+
 # ## `Ref`s
+@tree_util.register_pytree_node_class
+@dataclasses.dataclass(frozen=True)
+class RefBitcaster:
+  dtype: dtypes.DType
+  shape: tuple[int, ...]
+
+  @classmethod
+  def from_ref_new_dtype(cls, ref_or_view: Any, dtype) -> RefBitcaster:
+    if isinstance(ref_or_view, TransformedRef):
+      if ref_or_view.is_dynamic_size:
+        raise NotImplementedError(
+            "Bitcast ref with dynamic size is not supported."
+        )
+    from jax._src.state.utils import eval_bitcast_shape  # pytype: disable=import-error
+    dtype = dtypes.dtype(dtype)
+    return cls(dtype, eval_bitcast_shape(ref_or_view, dtype))
+
+  @property
+  def is_dynamic_size(self):
+    return False
+
+  def tree_flatten(self):
+    return (), (self.dtype, self.shape)
+
+  @classmethod
+  def tree_unflatten(cls, metadata, arrays):
+    assert not arrays
+    return cls(*metadata)
+
+
+Transform = indexing.NDIndexer | RefBitcaster
 
 @dataclasses.dataclass
 class RefIndexer:
@@ -82,36 +116,46 @@ class RefIndexer:
     if not isinstance(slc, tuple):
       slc = (slc,)
     indexer = indexing.NDIndexer.from_indices_shape(slc, self.ref_or_view.shape)
-    if isinstance(self.ref_or_view, RefView):
+    if isinstance(self.ref_or_view, TransformedRef):
       view = self.ref_or_view
-      return RefView(view.ref, (*view.indexers, indexer))
-    return RefView(self.ref_or_view, (indexer,))
+      return TransformedRef(view.ref, (*view.transforms, indexer))
+    return TransformedRef(self.ref_or_view, (indexer,))
 
-Indexer = Any
 
 @dataclasses.dataclass
-class RefView:
+class TransformedRef:
   ref: Any
-  indexers: tuple[indexing.NDIndexer, ...]
+  transforms: tuple[Transform, ...]
 
   @property
   def is_dynamic_size(self):
-    return self.indexers[-1].is_dynamic_size
+    return self.transforms[-1].is_dynamic_size
 
   @property
   def shape(self) -> tuple[int | Array, ...]:
     assert (
-        len(self.indexers) > 0
-    ), "Should not be able to create a trivial RefView"
-    return self.indexers[-1].get_indexer_shape()
+        len(self.transforms) > 0
+    ), "Should not be able to create a trivial TransformedRef"
+    if isinstance(self.transforms[-1], indexing.NDIndexer):
+      return self.transforms[-1].get_indexer_shape()
+    return self.transforms[-1].shape
 
   @property
   def dtype(self):
+    for transform in reversed(self.transforms):
+      if isinstance(transform, RefBitcaster):
+        return transform.dtype
     return self.ref.dtype
 
   @property
   def at(self) -> RefIndexer:
     return RefIndexer(self)
+
+  def bitcast(self, dtype):
+    return TransformedRef(
+        self.ref,
+        (*self.transforms, RefBitcaster.from_ref_new_dtype(self, dtype)),
+    )
 
   def __getattr__(self, name):
     return getattr(self.ref, name)
@@ -165,6 +209,10 @@ class AbstractRef(core.AbstractValue):
   @core.aval_property
   def at(self):
     return RefIndexer(self)
+
+  @core.aval_method
+  def bitcast(self, dtype):
+    return TransformedRef(self, (RefBitcaster.from_ref_new_dtype(self, dtype),))
 
   @core.aval_method
   @staticmethod

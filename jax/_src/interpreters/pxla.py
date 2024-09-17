@@ -61,7 +61,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.layout import DeviceLocalLayout, AutoLayout, Layout
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
@@ -2217,7 +2216,7 @@ def lower_sharding_computation(
   if config.use_shardy_partitioner.value or prim_requires_devices:
     for sharding in it.chain(in_shardings, out_shardings,
                              [js for js, _ in unique_intermediate_shardings]):
-      if isinstance(sharding, sharding_impls.NamedSharding):
+      if isinstance(sharding, (sharding_impls.NamedSharding, sharding_impls.AUTO)):
         if (mesh_shape_tuple is not None and
             mesh_shape_tuple != sharding.mesh.shape_tuple):
           raise ValueError(
@@ -3022,12 +3021,8 @@ class MeshExecutable(stages.XlaExecutable):
         self.unsafe_call.name, None, aot_cache_miss, [], [], [],
         tree_util.dispatch_registry, cc_shard_arg)
 
-if xla_extension_version < 282:
-  def cc_shard_arg(x, sharding):
-    return shard_args([sharding], [None], [x])[0]
-else:
-  def cc_shard_arg(x, sharding, layout):  # type: ignore
-    return shard_args([sharding], [layout], [x])[0]
+def cc_shard_arg(x, sharding, layout):
+  return shard_args([sharding], [layout], [x])[0]
 
 
 def check_arg_avals_for_call(ref_avals, arg_avals,

@@ -669,6 +669,56 @@ class OpsTest(PallasBaseTest):
       actual = run(False)
       self.assertAllClose(actual, expected)
 
+  SIGN_PARAMS = [
+    (jnp.int32, (-3, 0, 5)),
+    (jnp.uint32, (0, 5)),
+    (jnp.float32, (-3.2, -0., 0., 5.1, jnp.nan, jnp.inf, -jnp.inf)),
+    (jnp.float64, (-3.2, -0., 0., 5.1, jnp.nan, jnp.inf, -jnp.inf)),
+  ]
+
+  @parameterized.named_parameters(
+      (f"{dtype.__name__}_{value}", dtype, value)
+      for dtype, values in SIGN_PARAMS
+      for value in values
+  )
+  def test_sign(self, dtype, value):
+    if jtu.test_device_matches(["tpu"]) and dtype == jnp.float64:
+      self.skipTest("float64 is not supported on TPU")
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 128), dtype),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.sign(x_ref[...])
+
+    with contextlib.ExitStack() as stack:
+      if jnp.dtype(dtype).itemsize == 8:
+        stack.enter_context(config.enable_x64(True))
+
+      x = jnp.full((8, 128,), value, dtype=dtype)
+      out = kernel(x)
+      expected = jnp.sign(x)
+      np.testing.assert_array_equal(out, expected)
+
+  @parameterized.product(
+      dtype=[jnp.float32],
+      value=[-3.2, -1.0, -0.4, 0., 0.72, 1.0, 2.4],
+  )
+  def test_erf_inv(self, dtype, value):
+    @functools.partial(
+        self.pallas_call,
+        # TODO(ayx): add float64 support for `erf_inv`
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = lax.erf_inv(x_ref[...])
+
+    x = jnp.full((8, 128), value, dtype=dtype)
+    out = kernel(x)
+    expected = lax.erf_inv(x)
+    np.testing.assert_array_equal(out, expected)
+
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True
@@ -988,6 +1038,10 @@ class OpsExtraTest(PallasBaseTest):
     x = jnp.array([4.2, 2.4]).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x)
 
+  @unittest.skipIf(
+      sys.platform == "win32",
+      "plgpu.TritonCompilerParams unavailable on Windows",
+  )
   def test_debug_print(self):
     # TODO: this test flakes on gpu
     if jtu.test_device_matches(["gpu"]):
@@ -1008,6 +1062,10 @@ class OpsExtraTest(PallasBaseTest):
 
     self.assertIn("It works!", output())
 
+  @unittest.skipIf(
+      sys.platform == "win32",
+      "plgpu.TritonCompilerParams unavailable on Windows",
+  )
   def test_debug_print_with_values(self):
     # TODO: this test flakes on gpu
     if jtu.test_device_matches(["gpu"]):
@@ -1529,21 +1587,6 @@ class OpsExtraTest(PallasBaseTest):
       y_ref = jnp.cumsum(x, axis=axis)
       np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2, err_msg=i)
 
-  @parameterized.parameters([-3.2, -1.0, -0.4, 0., 0.72, 1.0, 2.4])
-  def test_erf_inv(self, x):
-    @functools.partial(
-        self.pallas_call,
-        # TODO(ayx): add float64 support for `erf_inv`
-        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-    )
-    def kernel(x_ref, o_ref):
-      o_ref[...] = lax.erf_inv(x_ref[...])
-
-    x = jnp.full((8, 128), x)
-    out = kernel(x)
-    expected = lax.erf_inv(x)
-    np.testing.assert_array_equal(out, expected)
-
 
 class OpsExtraInterpretTest(OpsExtraTest):
   INTERPRET = True
@@ -1604,40 +1647,6 @@ class PallasPrimitivesTest(PallasBaseTest):
 
 class PallasPrimitivesInterpretTest(PallasPrimitivesTest):
   INTERPRET = True
-
-
-class TpuOpsTest(PallasBaseTest):
-
-  def setUp(self):
-    if not jtu.test_device_matches(["tpu"]):
-      self.skipTest("Test requires TPU device.")
-
-    super().setUp()
-
-  SIGN_PARAMS = [
-    (jnp.int32, (-3, 0, 5)),
-    (jnp.uint32, (0, 5)),
-    (jnp.float32, (-3.2, -0., 0., 5.1, jnp.nan, jnp.inf, -jnp.inf)),
-  ]
-
-  @parameterized.named_parameters(
-      (f"{dtype.__name__}_{value}", dtype, value)
-      for dtype, values in SIGN_PARAMS
-      for value in values
-  )
-  def test_sign(self, dtype, value):
-    @jax.jit
-    @functools.partial(
-        pl.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((8, 128), dtype),
-    )
-    def kernel(x_ref, o_ref):
-      o_ref[...] = jnp.sign(x_ref[...])
-
-    x = jnp.full((8, 128,), value, dtype=dtype)
-    out = kernel(x)
-    expected = jnp.sign(x)
-    np.testing.assert_array_equal(out, expected)
 
 
 if __name__ == "__main__":

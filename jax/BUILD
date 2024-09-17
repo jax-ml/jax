@@ -848,6 +848,7 @@ pytype_strict_library(
     ],
     deps = [
         ":core",
+        ":dtypes",
         ":effects",
         ":pretty_printer",
         ":tree_util",

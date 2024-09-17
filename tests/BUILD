@@ -235,8 +235,8 @@ jax_test(
     },
     enable_configs = [
         "gpu_2gpu_shardy",
-        "tpu_df_2x2_shardy",
-        "tpu_pf_2x2_shardy",
+        "tpu_v3_2x2_shardy",
+        "tpu_v4_2x2_shardy",
     ],
     shard_count = {
         "cpu": 5,
@@ -1187,7 +1187,10 @@ jax_test(
     shard_count = {
         "tpu": 5,
     },
-    tags = ["noasan"],  # Times out
+    tags = [
+        "noasan",  # Times out.
+        "notsan",  # TODO(b/309111150): Re-enable after rolling forward cl/666056414.
+    ],
     deps = [
         "//jax:experimental",
         "//jax:experimental_host_callback",
@@ -1426,7 +1429,7 @@ jax_test(
     name = "export_test",
     srcs = ["export_test.py"],
     enable_configs = [
-        "tpu_df_2x2",
+        "tpu_v3_2x2",
     ],
     tags = [],
     deps = [
@@ -1540,7 +1543,10 @@ jax_test(
         "gpu_a100",
         "gpu_h100",
     ],
-    tags = ["multiaccelerator"],
+    tags = [
+        "multiaccelerator",
+        "notap",  # TODO(phawkins): this test fails in our internal CI.
+    ],
 )
 
 exports_files(

@@ -753,24 +753,196 @@ def subtract(x: ArrayLike, y: ArrayLike, /) -> Array:
 def arctan2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   return lax.atan2(*promote_args_inexact("arctan2", x1, x2))
 
-@implements(np.minimum, module='numpy')
+
 @partial(jit, inline=True)
 def minimum(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Return element-wise minimum of the input arrays.
+
+  JAX implementation of :obj:`numpy.minimum`.
+
+  Args:
+    x: input array or scalar.
+    y: input array or scalar. Both ``x`` and ``y`` should either have same shape
+      or be broadcast compatible.
+
+  Returns:
+    An array containing the element-wise minimum of ``x`` and ``y``.
+
+  Note:
+    For each pair of elements, ``jnp.minimum`` returns:
+      - smaller of the two if both elements are finite numbers.
+      - ``nan`` if one element is ``nan``.
+
+  See also:
+    - :func:`jax.numpy.maximum`: Returns element-wise maximum of the input arrays.
+    - :func:`jax.numpy.fmin`: Returns element-wise minimum of the input arrays,
+      ignoring NaNs.
+    - :func:`jax.numpy.amin`: Returns the minimum of array elements along a given
+      axis.
+    - :func:`jax.numpy.nanmin`: Returns the minimum of the array elements along
+      a given axis, ignoring NaNs.
+
+  Examples:
+    Inputs with ``x.shape == y.shape``:
+
+    >>> x = jnp.array([2, 3, 5, 1])
+    >>> y = jnp.array([-3, 6, -4, 7])
+    >>> jnp.minimum(x, y)
+    Array([-3,  3, -4,  1], dtype=int32)
+
+    Inputs having broadcast compatibility:
+
+    >>> x1 = jnp.array([[1, 5, 2],
+    ...                 [-3, 4, 7]])
+    >>> y1 = jnp.array([-2, 3, 6])
+    >>> jnp.minimum(x1, y1)
+    Array([[-2,  3,  2],
+           [-3,  3,  6]], dtype=int32)
+
+    Inputs with ``nan``:
+
+    >>> nan = jnp.nan
+    >>> x2 = jnp.array([[2.5, nan, -2],
+    ...                 [nan, 5, 6],
+    ...                 [-4, 3, 7]])
+    >>> y2 = jnp.array([1, nan, 5])
+    >>> jnp.minimum(x2, y2)
+    Array([[ 1., nan, -2.],
+           [nan, nan,  5.],
+           [-4., nan,  5.]], dtype=float32)
+  """
   return lax.min(*promote_args("minimum", x, y))
 
-@implements(np.maximum, module='numpy')
+
 @partial(jit, inline=True)
 def maximum(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Return element-wise maximum of the input arrays.
+
+  JAX implementation of :obj:`numpy.maximum`.
+
+  Args:
+    x: input array or scalar.
+    y: input array or scalar. Both ``x`` and ``y`` should either have same shape
+      or be broadcast compatible.
+
+  Returns:
+    An array containing the element-wise maximum of ``x`` and ``y``.
+
+  Note:
+    For each pair of elements, ``jnp.maximum`` returns:
+      - larger of the two if both elements are finite numbers.
+      - ``nan`` if one element is ``nan``.
+
+  See also:
+    - :func:`jax.numpy.minimum`: Returns element-wise minimum of the input
+      arrays.
+    - :func:`jax.numpy.fmax`: Returns element-wise maximum of the input arrays,
+      ignoring NaNs.
+    - :func:`jax.numpy.amax`: Retruns the maximum of array elements along a given
+      axis.
+    - :func:`jax.numpy.nanmax`: Returns the maximum of the array elements along
+      a given axis, ignoring NaNs.
+
+  Examples:
+    Inputs with ``x.shape == y.shape``:
+
+    >>> x = jnp.array([1, -5, 3, 2])
+    >>> y = jnp.array([-2, 4, 7, -6])
+    >>> jnp.maximum(x, y)
+    Array([1, 4, 7, 2], dtype=int32)
+
+    Inputs with broadcast compatibility:
+
+    >>> x1 = jnp.array([[-2, 5, 7, 4],
+    ...                 [1, -6, 3, 8]])
+    >>> y1 = jnp.array([-5, 3, 6, 9])
+    >>> jnp.maximum(x1, y1)
+    Array([[-2,  5,  7,  9],
+           [ 1,  3,  6,  9]], dtype=int32)
+
+    Inputs having ``nan``:
+
+    >>> nan = jnp.nan
+    >>> x2 = jnp.array([nan, -3, 9])
+    >>> y2 = jnp.array([[4, -2, nan],
+    ...                 [-3, -5, 10]])
+    >>> jnp.maximum(x2, y2)
+    Array([[nan, -2., nan],
+          [nan, -3., 10.]], dtype=float32)
+  """
   return lax.max(*promote_args("maximum", x, y))
 
-@implements(np.float_power, module='numpy')
+
 @partial(jit, inline=True)
 def float_power(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Calculate element-wise base ``x`` exponential of ``y``.
+
+  JAX implementation of :obj:`numpy.float_power`.
+
+  Args:
+    x: scalar or array. Specifies the bases.
+    y: scalar or array. Specifies the exponents. ``x`` and ``y`` should either
+      have same shape or be broadcast compatible.
+
+  Returns:
+    An array containing the base ``x`` exponentials of ``y``, promoting to the
+    inexact dtype.
+
+  See also:
+    - :func:`jax.numpy.exp`: Calculates element-wise exponential of the input.
+    - :func:`jax.numpy.exp2`: Calculates base-2 exponential of each element of
+      the input.
+
+  Examples:
+    Inputs with same shape:
+
+    >>> x = jnp.array([3, 1, -5])
+    >>> y = jnp.array([2, 4, -1])
+    >>> jnp.float_power(x, y)
+    Array([ 9. ,  1. , -0.2], dtype=float32)
+
+    Inputs with broacast compatibility:
+
+    >>> x1 = jnp.array([[2, -4, 1],
+    ...                 [-1, 2, 3]])
+    >>> y1 = jnp.array([-2, 1, 4])
+    >>> jnp.float_power(x1, y1)
+    Array([[ 0.25, -4.  ,  1.  ],
+           [ 1.  ,  2.  , 81.  ]], dtype=float32)
+
+    ``jnp.float_power`` produces ``nan`` for negative values raised to a non-integer
+    values.
+
+    >>> jnp.float_power(-3, 1.7)
+    Array(nan, dtype=float32, weak_type=True)
+  """
   return lax.pow(*promote_args_inexact("float_power", x, y))
 
-@implements(np.nextafter, module='numpy')
+
 @partial(jit, inline=True)
 def nextafter(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Return element-wise next floating point value after ``x`` towards ``y``.
+
+  JAX implementation of :obj:`numpy.nextafter`.
+
+  Args:
+    x: scalar or array. Specifies the value after which the next number is found.
+    y: scalar or array. Specifies the direction towards which the next number is
+      found. ``x`` and ``y`` should either have same shape or be broadcast
+      compatible.
+
+  Returns:
+    An array containing the next representable number of ``x`` in the direction
+    of ``y``.
+
+  Examples:
+    >>> jnp.nextafter(2, 1)  # doctest: +SKIP
+    Array(1.9999999, dtype=float32, weak_type=True)
+    >>> x = jnp.array([3, -2, 1])
+    >>> y = jnp.array([2, -1, 2])
+    >>> jnp.nextafter(x, y)  # doctest: +SKIP
+    Array([ 2.9999998, -1.9999999,  1.0000001], dtype=float32)
+  """
   return lax.nextafter(*promote_args_inexact("nextafter", x, y))
 
 # Logical ops
@@ -833,24 +1005,186 @@ def _complex_comparison(lax_op: Callable[[ArrayLike, ArrayLike], Array],
                       lax_op(x.real, y.real))
   return lax_op(x, y)
 
-@implements(np.greater_equal, module='numpy')
 @partial(jit, inline=True)
 def greater_equal(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Return element-wise truth value of ``x >= y``.
+
+  JAX implementation of :obj:`numpy.greater_equal`.
+
+  Args:
+    x: input array or scalar.
+    y: input array or scalar. ``x`` and ``y`` must either have same shape or be
+      broadcast compatible.
+
+  Returns:
+    An array containing boolean values. ``True`` if the elements of ``x >= y``,
+    and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.less_equal`: Returns element-wise truth value of ``x <= y``.
+    - :func:`jax.numpy.greater`: Returns element-wise truth value of ``x > y``.
+    - :func:`jax.numpy.less`: Returns element-wise truth value of ``x < y``.
+
+  Examples:
+    Scalar inputs:
+
+    >>> jnp.greater_equal(4, 7)
+    Array(False, dtype=bool, weak_type=True)
+
+    Inputs with same shape:
+
+    >>> x = jnp.array([2, 5, -1])
+    >>> y = jnp.array([-6, 4, 3])
+    >>> jnp.greater_equal(x, y)
+    Array([ True,  True, False], dtype=bool)
+
+    Inputs with broadcast compatibility:
+
+    >>> x1 = jnp.array([[3, -1, 4],
+    ...                 [5, 9, -6]])
+    >>> y1 = jnp.array([-1, 4, 2])
+    >>> jnp.greater_equal(x1, y1)
+    Array([[ True, False,  True],
+           [ True,  True, False]], dtype=bool)
+  """
   return _complex_comparison(lax.ge, *promote_args("greater_equal", x, y))
 
-@implements(np.greater, module='numpy')
+
 @partial(jit, inline=True)
 def greater(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Return element-wise truth value of ``x > y``.
+
+  JAX implementation of :obj:`numpy.greater`.
+
+  Args:
+    x: input array or scalar.
+    y: input array or scalar. ``x`` and ``y`` must either have same shape or be
+      broadcast compatible.
+
+  Returns:
+    An array containing boolean values. ``True`` if the elements of ``x > y``,
+    and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.less`: Returns element-wise truth value of ``x < y``.
+    - :func:`jax.numpy.greater_equal`: Returns element-wise truth value of
+      ``x >= y``.
+    - :func:`jax.numpy.less_equal`: Returns element-wise truth value of ``x <= y``.
+
+  Examples:
+    Scalar inputs:
+
+    >>> jnp.greater(5, 2)
+    Array(True, dtype=bool, weak_type=True)
+
+    Inputs with same shape:
+
+    >>> x = jnp.array([5, 9, -2])
+    >>> y = jnp.array([4, -1, 6])
+    >>> jnp.greater(x, y)
+    Array([ True,  True, False], dtype=bool)
+
+    Inputs with broadcast compatibility:
+
+    >>> x1 = jnp.array([[5, -6, 7],
+    ...                 [-2, 5, 9]])
+    >>> y1 = jnp.array([-4, 3, 10])
+    >>> jnp.greater(x1, y1)
+    Array([[ True, False, False],
+           [ True,  True, False]], dtype=bool)
+  """
   return _complex_comparison(lax.gt, *promote_args("greater", x, y))
 
-@implements(np.less_equal, module='numpy')
+
 @partial(jit, inline=True)
 def less_equal(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Return element-wise truth value of ``x <= y``.
+
+  JAX implementation of :obj:`numpy.less_equal`.
+
+  Args:
+    x: input array or scalar.
+    y: input array or scalar. ``x`` and ``y`` must have either same shape or be
+      broadcast compatible.
+
+  Returns:
+    An array containing the boolean values. ``True`` if the elements of ``x <= y``,
+    and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.greater_equal`: Returns element-wise truth value of
+      ``x >= y``.
+    - :func:`jax.numpy.greater`: Returns element-wise truth value of ``x > y``.
+    - :func:`jax.numpy.less`: Returns element-wise truth value of ``x < y``.
+
+  Examples:
+    Scalar inputs:
+
+    >>> jnp.less_equal(6, -2)
+    Array(False, dtype=bool, weak_type=True)
+
+    Inputs with same shape:
+
+    >>> x = jnp.array([-4, 1, 7])
+    >>> y = jnp.array([2, -3, 8])
+    >>> jnp.less_equal(x, y)
+    Array([ True, False,  True], dtype=bool)
+
+    Inputs with broadcast compatibility:
+
+    >>> x1 = jnp.array([2, -5, 9])
+    >>> y1 = jnp.array([[1, -6, 5],
+    ...                 [-2, 4, -6]])
+    >>> jnp.less_equal(x1, y1)
+    Array([[False, False, False],
+           [False,  True, False]], dtype=bool)
+  """
   return _complex_comparison(lax.le, *promote_args("less_equal", x, y))
 
-@implements(np.less, module='numpy')
+
 @partial(jit, inline=True)
 def less(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Return element-wise truth value of ``x < y``.
+
+  JAX implementation of :obj:`numpy.less`.
+
+  Args:
+    x: input array or scalar.
+    y: input array or scalar. ``x`` and ``y`` must either have same shape or be
+      broadcast compatible.
+
+  Returns:
+    An array containing boolean values. ``True`` if the elements of ``x < y``,
+    and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.greater`: Returns element-wise truth value of ``x > y``.
+    - :func:`jax.numpy.greater_equal`: Returns element-wise truth value of
+      ``x >= y``.
+    - :func:`jax.numpy.less_equal`: Returns element-wise truth value of ``x <= y``.
+
+  Examples:
+    Scalar inputs:
+
+    >>> jnp.less(3, 7)
+    Array(True, dtype=bool, weak_type=True)
+
+    Inputs with same shape:
+
+    >>> x = jnp.array([5, 9, -3])
+    >>> y = jnp.array([1, 6, 4])
+    >>> jnp.less(x, y)
+    Array([False, False,  True], dtype=bool)
+
+    Inputs with broadcast compatibility:
+
+    >>> x1 = jnp.array([[2, -4, 6, -8],
+    ...                 [-1, 5, -3, 7]])
+    >>> y1 = jnp.array([0, 3, -5, 9])
+    >>> jnp.less(x1, y1)
+    Array([[False,  True, False,  True],
+           [ True, False, False,  True]], dtype=bool)
+  """
   return _complex_comparison(lax.lt, *promote_args("less", x, y))
 
 # Array API aliases
@@ -1251,8 +1585,61 @@ def _float_divmod(x1: ArrayLike, x2: ArrayLike) -> tuple[Array, Array]:
   return lax.round(div), mod
 
 
-@implements(np.power, module='numpy')
 def power(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  """Calculate element-wise base ``x1`` exponential of ``x2``.
+
+  JAX implementation of :obj:`numpy.power`.
+
+  Args:
+    x1: scalar or array. Specifies the bases.
+    x2: scalar or array. Specifies the exponent. ``x1`` and ``x2`` should either
+      have same shape or be broadcast compatible.
+
+  Returns:
+    An array containing the base ``x1`` exponentials of ``x2`` with same dtype
+    as input.
+
+  Note:
+    - When ``x2`` is a concrete integer scalar, ``jnp.power`` lowers to
+      :func:`jax.lax.integer_pow`.
+    - When ``x2`` is a traced scalar or an array, ``jnp.power`` lowers to
+      :func:`jax.lax.pow`.
+    - ``jnp.power`` raises a ``TypeError`` for integer type raised to negative
+      integer power.
+    - ``jnp.power`` returns ``nan`` for negative value raised to the power of
+      non-integer values.
+
+  See also:
+    - :func:`jax.lax.pow`: Computes element-wise power, :math:`x^y`.
+    - :func:`jax.lax.integer_pow`: Computes element-wise power :math:`x^y`, where
+      :math:`y` is a fixed integer.
+    - :func:`jax.numpy.float_power`: Computes the first array raised to the power
+      of second array, element-wise, by promoting to the inexact dtype.
+    - :func:`jax.numpy.pow`: Computes the first array raised to the power of second
+      array, element-wise.
+
+  Examples:
+    Inputs with scalar integers:
+
+    >>> jnp.power(4, 3)
+    Array(64, dtype=int32, weak_type=True)
+
+    Inputs with same shape:
+
+    >>> x1 = jnp.array([2, 4, 5])
+    >>> x2 = jnp.array([3, 0.5, 2])
+    >>> jnp.power(x1, x2)
+    Array([ 8.,  2., 25.], dtype=float32)
+
+    Inputs with broadcast compatibility:
+
+    >>> x3 = jnp.array([-2, 3, 1])
+    >>> x4 = jnp.array([[4, 1, 6],
+    ...                 [1.3, 3, 5]])
+    >>> jnp.power(x3, x4)
+    Array([[16.,  3.,  1.],
+           [nan, 27.,  1.]], dtype=float32)
+  """
   check_arraylike("power", x1, x2)
   check_no_float0s("power", x1, x2)
 
@@ -1282,8 +1669,9 @@ def power(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   # Handle cases #2 and #3 under a jit:
   return _power(x1, x2)
 
-# Array API alias
-pow = power
+def pow(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  """Alias of :func:`jax.numpy.power`"""
+  return power(x1, x2)
 
 @partial(jit, inline=True)
 def _power(x1: ArrayLike, x2: ArrayLike) -> Array:
@@ -1356,11 +1744,39 @@ def _wrap_between(x, _a):
   return lax.sub(rem, a)
 
 
-@custom_jvp
-@implements(np.logaddexp2, module='numpy')
 @jit
 def logaddexp2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  """Logarithm of the sum of exponentials of inputs in base-2 avoiding overflow.
+
+  JAX implementation of :obj:`numpy.logaddexp2`.
+
+  Args:
+    x1: input array or scalar.
+    x2: input array or scalar. ``x1`` and ``x2`` should either have same shape or
+      be broadcast compatible.
+
+  Returns:
+    An array containing the result, :math:`log_2(2^{x1}+2^{x2})`, element-wise.
+
+  See also:
+    - :func:`jax.numpy.logaddexp`: Computes ``log(exp(x1) + exp(x2))``, element-wise.
+    - :func:`jax.numpy.log2`: Calculates the base-2 logarithm of ``x`` element-wise.
+
+  Examples:
+    >>> x1 = jnp.array([[3, -1, 4],
+    ...                 [8, 5, -2]])
+    >>> x2 = jnp.array([2, 3, -5])
+    >>> result1 = jnp.logaddexp2(x1, x2)
+    >>> result2 = jnp.log2(jnp.exp2(x1) + jnp.exp2(x2))
+    >>> jnp.allclose(result1, result2)
+    Array(True, dtype=bool)
+  """
   x1, x2 = promote_args_inexact("logaddexp2", x1, x2)
+  return _logaddexp2(x1, x2)
+
+
+@custom_jvp
+def _logaddexp2(x1, x2):
   amax = lax.max(x1, x2)
   if dtypes.issubdtype(x1.dtype, np.floating):
     delta = lax.sub(x1, x2)
@@ -1374,7 +1790,7 @@ def logaddexp2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     return lax.complex(lax.real(out), _wrap_between(lax.imag(out), np.pi / np.log(2)))
 
 
-@logaddexp2.defjvp
+@_logaddexp2.defjvp
 def _logaddexp2_jvp(primals, tangents):
   x1, x2 = primals
   t1, t2 = tangents
@@ -1387,7 +1803,7 @@ def _logaddexp2_jvp(primals, tangents):
 
 @partial(jit, inline=True)
 def log2(x: ArrayLike, /) -> Array:
-  """Calculates the base-2 logarithm of x element-wise
+  """Calculates the base-2 logarithm of ``x`` element-wise.
 
   JAX implementation of :obj:`numpy.log2`.
 

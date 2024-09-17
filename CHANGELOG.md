@@ -10,9 +10,54 @@ Remember to align the itemized text with the first line of an item within a list
 When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
-## jax 0.4.32
+## jax 0.4.34
+
+* Deletion:
+  * `jax.xla_computation` is deleted. It's been 3 months since it's deprecation
+    in 0.4.30 JAX release.
+    Please use the AOT APIs to get the same functionality as `jax.xla_computation`.
+    * `jax.xla_computation(fn)(*args, **kwargs)` can be replaced with
+      `jax.jit(fn).lower(*args, **kwargs).compiler_ir('hlo')`.
+    * You can also use `.out_info` property of `jax.stages.Lowered` to get the
+      output information (like tree structure, shape and dtype).
+    * For cross-backend lowering, you can replace
+      `jax.xla_computation(fn, backend='tpu')(*args, **kwargs)` with
+      `jax.jit(fn).trace(*args, **kwargs).lower(lowering_platforms=('tpu',)).compiler_ir('hlo')`.
+  * {class}`jax.ShapeDtypeStruct` no longer accepts the `named_shape` argument.
+    The argument was only used by `xmap` which was removed in 0.4.31.
+
+
+## jax 0.4.33 (September 16, 2024)
+
+This is a patch release on top of jax 0.4.32, that fixes two bugs found in that
+release.
+
+A TPU-only data corruption bug was found in the version of libtpu pinned by
+JAX 0.4.32, which manifested only if multiple TPU slices were present in the
+same job, for example, if training on multiple v5e slices.
+This release fixes that issue by pinning a fixed version of `libtpu`.
+
+This release fixes an inaccurate result for F64 tanh on CPU (#23590).
+
+## jax 0.4.32 (September 11, 2024)
+
+Note: This release was yanked from PyPi because of a data corruption bug on TPU.
+See the 0.4.33 release notes for more details.
+
+* New Functionality
+  * Added {func}`jax.extend.ffi.ffi_call` and {func}`jax.extend.ffi.ffi_lowering`
+    to support the use of the new {ref}`ffi-tutorial` to interface with custom
+    C++ and CUDA code from JAX.
 
 * Changes
+  * `jax_pmap_no_rank_reduction` flag is set to `True` by default.
+    * array[0] on a pmap result now introduces a reshape (use array[0:1]
+      instead).
+    * The per-shard shape (accessable via jax_array.addressable_shards or
+      jax_array.addressable_data(0)) now has a leading (1, ...). Update code
+      that directly accesses shards accordingly. The rank of the per-shard-shape
+      now matches that of the global shape which is the same behavior as jit.
+      This avoids costly reshapes when passing results from pmap into jit.
   * `jax_enable_memories` flag is set to `True` by default.
   * {mod}`jax.numpy` now supports v2023.12 of the Python Array API Standard.
     See {ref}`python-array-api` for more information.
@@ -60,7 +105,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     The argument to {func}`jax.dlpack.from_dlpack` should be an array from
     another framework that implements the ``__dlpack__`` protocol.
 
-## jaxlib 0.4.32
+## jaxlib 0.4.32 (September 11, 2024)
+
+Note: This release was yanked from PyPi because of a data corruption bug on TPU.
+See the 0.4.33 release notes for more details.
 
 * Breaking changes
   * Hermetic CUDA support is added.

@@ -45,7 +45,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src import linear_util as lu
 from jax._src import tree_util
 import jax.numpy as jnp
-from jax._src.lib import xla_extension_version
 
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax.experimental.shard_map import shard_map
@@ -777,8 +776,6 @@ class ShardMapTest(jtu.JaxTestCase):
     # is over an axis of size 2. This is a problem at the moment.
     jax.make_jaxpr(mapped)(x, y).jaxpr
 
-  @unittest.skipIf(xla_extension_version < 281,
-                   'Requires xla_extension_version >= 281')
   def test_shard_map_abstract_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     np_inp = np.arange(16).reshape(8, 2)
@@ -803,8 +800,6 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertArraysEqual(out2, np_inp)
     self.assertEqual(out2.sharding, NamedSharding(mesh, P('x')))
 
-  @unittest.skipIf(xla_extension_version < 281,
-                   'Requires xla_extension_version >= 281')
   def test_different_devices_shmap_abstract_mesh_cache_hit(self):
     if jax.device_count() < 4:
       self.skipTest('Requires >=4 devices')
@@ -835,8 +830,6 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(lowering_count[0], 1)
     self.assertEqual(compilation_count[0], 2)  # 2 misses since devices differ.
 
-  @unittest.skipIf(xla_extension_version < 281,
-                   'Requires xla_extension_version >= 281')
   def test_shmap_abstract_mesh_errors(self):
     mesh = jtu.create_mesh((2,), ('x',))
     np_inp = np.arange(8)
@@ -1544,6 +1537,9 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(e2.primitive.name, 'pbroadcast')
 
   def test_check_rep_false_grads(self):
+    if jtu.is_device_tpu(5, 'e'):
+      self.skipTest('TODO(b/307508823): Test currently fails on TPU v5e')
+
     # This test is redundant with the systematic tests below, but it serves as a
     # direct regression test for a bug.
     mesh = jtu.create_mesh((4,), ('heads',))
@@ -2160,6 +2156,19 @@ class ShardMapTest(jtu.JaxTestCase):
 
     with config.disable_vmap_shmap_error():
       _ = jax.vmap(f, in_axes=(0, None), spmd_axis_name='i')(xs, y)
+
+  def test_in_spec_none_hashability(self):
+    mesh = jtu.create_mesh((2,), ('i',))
+
+    class A:
+      def __hash__(self):
+        raise Exception
+
+    @partial(shard_map, mesh=mesh, in_specs=(None,), out_specs=())
+    def f(a):
+      return ()
+
+    f(A())  # don't crash
 
 
 class FunSpec(NamedTuple):

@@ -183,10 +183,6 @@ Some common causes of the above include:
 - If DMAs are started but the semaphores are not waited on, the program may crash due to non-zero semaphore states.
 - If two devices copy to the same destination, you may encounter non-deterministic results due to a race condition, or crashing due to  non-zero semaphore states.
 
-### Megacore
-
-Certain TPUs contain multiple cores in a [Megacore](https://jax.readthedocs.io/en/latest/pallas/tpu/pipelining.html#tpus-in-megacore-configuration) configuration. In this configuration, our general recommendation is to only initiate DMAs from a single core, and only perform HBM-HBM transfers. To do this, set one of the grid axes to the number of cores (can be obtained via `jax.devices()[0].num_cores`) and the dimension_semantics to `"parallel"`. Then, you can use `core_index = lax.axis_index(name)` to obtain the core index along that axis, and use `@pl.when(core_index==i)` to execute code specific to that core.
-
 +++ {"id": "vpGSN1Sui0Bu"}
 
 ### Example: Right Permute (`lax.ppermute`)
@@ -498,7 +494,7 @@ When using barrier semaphores, the `collective_id` compiler parameter must be pa
 kernel = pl.pallas_call(
       example_kernel,
       ...,
-      compiler_params=dict(mosaic=dict(collective_id=0)),
+      compiler_params=pltpu.TPUCompilerParams(collective_id=0),
 )
 ```
 
@@ -709,7 +705,7 @@ kernel = pl.pallas_call(
     all_reduce_kernel,
     out_shape=out_shape,
     grid_spec=grid_spec,
-    compiler_params=dict(mosaic=dict(collective_id=0)),
+    compiler_params=pltpu.TPUCompilerParams(collective_id=0),
 )
 
 pallas_result = jax.jit(
@@ -1042,7 +1038,7 @@ def pallas_reduce_scatter(input_arr):
       reduce_scatter_kernel,
       out_shape=out_shape,
       grid_spec=grid_spec,
-      compiler_params=dict(mosaic=dict(collective_id=0)),
+      compiler_params=pltpu.TPUCompilerParams(collective_id=0),
   )(input_arr)[0]
 
 
@@ -1460,7 +1456,7 @@ def pallas_reduce_scatter(input_arr):
       reduce_scatter_kernel,
       out_shape=out_shape,
       grid_spec=grid_spec,
-      compiler_params=dict(mosaic=dict(collective_id=0)),
+      compiler_params=pltpu.TPUCompilerParams(collective_id=0),
   )(input_arr)[0]
 
 
@@ -1517,6 +1513,10 @@ print(
 +++ {"id": "zz5AFbriliyv"}
 
 ## Final Notes
+
+### Megacore
+
+Certain TPUs contain multiple cores in a [Megacore](https://jax.readthedocs.io/en/latest/pallas/tpu/pipelining.html#tpus-in-megacore-configuration) configuration. In this configuration, our general recommendation is to only initiate DMAs from a single core, and only perform HBM-HBM transfers. To do this, set one of the grid axes to the number of cores (can be obtained via `jax.devices()[0].num_cores`) and the dimension_semantics to `"parallel"`. Then, you can use `core_index = pl.program_id(axis)` to obtain the core index along that axis, and use `@pl.when(core_index==i)` to execute code specific to that core.
 
 ### Interaction with XLA
 

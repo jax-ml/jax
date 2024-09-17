@@ -69,7 +69,6 @@ Just-in-time compilation (:code:`jit`)
     jit
     disable_jit
     ensure_compile_time_eval
-    xla_computation
     make_jaxpr
     eval_shape
     ShapeDtypeStruct

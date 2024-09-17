@@ -558,7 +558,7 @@ def entr(x: ArrayLike) -> Array:
      \mathrm{entr}(x) = \begin{cases}
        -x\log(x) & x > 0 \\
        0 & x = 0\\
-       -\infty & x > 0
+       -\infty & \mathrm{otherwise}
      \end{cases}
 
   Args:

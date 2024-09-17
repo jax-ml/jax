@@ -182,9 +182,8 @@ jax_test(
         "mosaic_gpu_test.py",
     ],
     config_tags_overrides = {
-        # TODO(slebedev): Switch to False once Mosaic GPU is unconditionally enabled.
         "gpu_h100_x32": {
-            "ondemand": True,  # Include in presubmit.
+            "ondemand": False,  # Include in presubmit.
         },
     },
     disable_backends = [
