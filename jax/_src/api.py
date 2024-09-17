@@ -1785,7 +1785,7 @@ def linearize(fun: Callable, *primals, has_aux: bool = False
   >>> def f(x): return 3. * jnp.sin(x) + jnp.cos(x / 2.)
   ...
   >>> jax.jvp(f, (2.,), (3.,))
-  (Array(3.2681944, dtype=float32, weak_type=True), Array(-5.007528, dtype=float32))
+  (Array(3.2681944, dtype=float32, weak_type=True), Array(-5.007528, dtype=float32, weak_type=True))
   >>> y, f_jvp = jax.linearize(f, 2.)
   >>> print(y)
   3.2681944
