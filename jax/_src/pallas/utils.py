@@ -72,7 +72,7 @@ def next_power_of_2(x: int) -> int:
   return 1 if x == 0 else 2 ** (x - 1).bit_length()
 
 def dtype_bitwidth(dtype: np.dtype | jnp.dtype) -> int:
-  if isinstance(dtype, jnp.integer):
+  if jnp.issubdtype(dtype, jnp.integer):
     return jnp.iinfo(dtype).bits
   return np.dtype(dtype).itemsize * 8
 
