@@ -1176,7 +1176,12 @@ def _closure_convert_for_avals(fun, in_tree, in_avals):
     args, hoisted_consts = split_list(args_hconsts, [num_args])
     consts = merge(closure_consts, hoisted_consts)
     all_args, in_tree2 = tree_flatten(tuple(args))
-    assert in_tree == in_tree2
+    if in_tree != in_tree2:
+      msg = ("The inputs to the closure produced by closure_convert must have "
+             "the same Pytree structure as the example arguments passed when "
+             f"closure_convert was called. Expected {in_tree}, but got "
+             f"{in_tree2}")
+      raise TypeError(msg)
     out_flat = core.eval_jaxpr(jaxpr, consts, *all_args)
     return tree_unflatten(out_tree, out_flat)
 

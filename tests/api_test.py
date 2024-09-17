@@ -8988,6 +8988,19 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(g_c, 42. * c, check_dtypes=False)
     self.assertAllClose(g_x, 17. * x, check_dtypes=False)
 
+  def test_closure_convert_pytree_mismatch(self):
+    # See https://github.com/google/jax/issues/23588
+    def f(x, z):
+      return z * x
+
+    x, z = 2.0, 3.0
+    _, vjp = api.vjp(f, x, z)
+    vjp_pure, vjp_aux_args = jax.closure_convert(vjp, x)
+    vjp_pure(x, *vjp_aux_args)
+    with self.assertRaisesRegex(
+        TypeError, "The inputs to the closure produced by closure_convert"):
+      vjp_pure(x, vjp_aux_args)
+
   def test_float0_cotangents_automatically_handled(self):
     @jax.custom_vjp
     def f(x, y):
