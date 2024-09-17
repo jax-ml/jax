@@ -31,23 +31,33 @@ guidance on pip installation (e.g., for GPU and TPU support).
 
 ### Building `jaxlib` from source
 
+```{warning}
+While it should typically be possible to compile `jaxlib` from source using
+most modern compilers, the builds are only tested using clang. Pull requests
+are welcomed to improve support for different toolchains, but other compilers
+are not actively supported.
+```
+
 To build `jaxlib` from source, you must also install some prerequisites:
 
-- a C++ compiler (g++, clang, or MSVC)
+- A C++ compiler:
 
-  On Ubuntu or Debian you can install the necessary prerequisites with:
+  As mentioned in the box above, it is best to use a recent version of clang
+  (at the time of writing, the version we test is 18), but other compilers (e.g.
+  g++ or MSVC) may work.
 
-  ```
-  sudo apt install g++ python python3-dev
-  ```
+  On Ubuntu or Debian you can follow the instructions from the
+  [LLVM](https://apt.llvm.org/) documentation to install the latest stable
+  version of clang.
 
   If you are building on a Mac, make sure XCode and the XCode command line tools
   are installed.
 
   See below for Windows build instructions.
 
-- there is no need to install Python dependencies locally, as your system
-  Python will be ignored during the build; please check
+- Python: for running the build helper script. Note that there is no need to
+  install Python dependencies locally, as your system Python will be ignored
+  during the build; please check
   [Managing hermetic Python](#managing-hermetic-python) for details.
 
 To build `jaxlib` for CPU or TPU, you can run:
@@ -86,7 +96,7 @@ the `build/build.py` script itself will be processed by your system Python
 interpreter. By default, the wheel is written to the `dist/` subdirectory of the
 current directory.
 
-*  JAX versions starting from v.0.4.32: you can provide custom CUDA and CUDNN 
+*  JAX versions starting from v.0.4.32: you can provide custom CUDA and CUDNN
    versions in the configuration options. Bazel will download them and use as
    target dependencies.
 
@@ -259,8 +269,8 @@ together with their corresponding hashes are specified in
 `build/requirements_lock_<python version>.txt` files (
 e.g. `build/requirements_lock_3_12.txt` for `Python 3.12`).
 
-To update the lock files, make sure `build/requirements.in` contains the desired 
-direct dependencies list and then execute the following command (which will call 
+To update the lock files, make sure `build/requirements.in` contains the desired
+direct dependencies list and then execute the following command (which will call
 [pip-compile](https://pypi.org/project/pip-tools/) under the hood):
 
 ```
@@ -382,7 +392,7 @@ sudo apt-get install libopenblas-dev -y
    example for `Python 3.13` it should have something
    like `"3.13": "//build:requirements_lock_3_13.txt"`. Note, the key in the
    `requirements` parameter must always be in `"major.minor"` version format, so
-   even if you are building Python version `3.13.0rc1` the corresponding 
+   even if you are building Python version `3.13.0rc1` the corresponding
    `requirements` entry must still be `"3.13": "//build:requirements_lock_3_13.txt"`,
    **not** `"3.13.0rc1": "//build:requirements_lock_3_13_0rc1.txt"`.
 
