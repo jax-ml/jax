@@ -57,6 +57,7 @@ from jax._src.lib.mlir import dialects
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -652,18 +653,16 @@ class PJitTest(jtu.BufferDonationTestCase):
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testAutodiffCache(self):
-    f = pjit(
-        lambda x: jnp.sin(x).sum(), in_shardings=P('x'), out_shardings=None
-    )
+    f = pjit(lambda x: jnp.sin(x).sum(), in_shardings=P('x'), out_shardings=None)
     x = jnp.arange(16, dtype=jnp.float32)
-    jax.grad(f)(x)  # Warm up the cache.
-    before = pjit_lib._pjit_lower_cached.cache_info()
-    jax.grad(f)(x)
-    after = pjit_lib._pjit_lower_cached.cache_info()
 
-    # One hit for the forward pass, one hit for backward.
-    self.assertEqual(after.hits, before.hits + 2)
-    self.assertEqual(after.misses, before.misses)
+    jax.grad(f)(x)  # Warm up the cache.
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      jax.grad(f)(x)
+    if xla_extension_version >= 286:
+      self.assertEqual(count[0], 0)  # no cache miss i.e. cache hit
+    else:
+      self.assertEqual(count[0], 2)
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testEvalJaxpr(self):
@@ -4530,6 +4529,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
         'Mesh shape of the input.*does not'
         ' match the mesh shape of the target sharding.*'):
       with_sharding_constraint(arr, NamedSharding(abs_mesh2, P('y')))
+
+  @unittest.skipIf(xla_extension_version < 286,
+                   "Requires xla_extension_version >= 286")
+  def test_global_jit_cpp_cache_hit_out_shardings(self):
+    mesh = jtu.create_mesh((2,), 'x')
+    s = NamedSharding(mesh, P('x'))
+
+    def f(x):
+      return x * 2
+
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      jax.jit(f, out_shardings=s)(np.arange(8))
+      jax.jit(f, out_shardings=s)(np.arange(8))
+    self.assertEqual(count[0], 1)
 
 
 def spec_regex(s):
