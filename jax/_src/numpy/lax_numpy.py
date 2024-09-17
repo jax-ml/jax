@@ -8519,9 +8519,41 @@ def argwhere(
   return result.reshape(result.shape[0], ndim(a))
 
 
-@util.implements(np.argmax, skip_params=['out'])
 def argmax(a: ArrayLike, axis: int | None = None, out: None = None,
            keepdims: bool | None = None) -> Array:
+  """Return the index of the maximum value of an array.
+
+  JAX implementation of :func:`numpy.argmax`.
+
+  Args:
+    a: input array
+    axis: optional integer specifying the axis along which to find the maximum
+      value. If ``axis`` is not specified, ``a`` will be flattened.
+    out: unused by JAX
+    keepdims: if True, then return an array with the same number of dimensions
+      as ``a``.
+
+  Returns:
+    an array containing the index of the maximum value along the specified axis.
+
+  See also:
+    - :func:`jax.numpy.argmin`: return the index of the minimum value.
+    - :func:`jax.numpy.nanargmax`: compute ``argmax`` while ignoring NaN values.
+
+  Examples:
+    >>> x = jnp.array([1, 3, 5, 4, 2])
+    >>> jnp.argmax(x)
+    Array(2, dtype=int32)
+
+    >>> x = jnp.array([[1, 3, 2],
+    ...                [5, 4, 1]])
+    >>> jnp.argmax(x, axis=1)
+    Array([1, 0], dtype=int32)
+
+    >>> jnp.argmax(x, axis=1, keepdims=True)
+    Array([[1],
+           [0]], dtype=int32)
+  """
   util.check_arraylike("argmax", a)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.argmax is not supported.")
@@ -8541,9 +8573,42 @@ def _argmax(a: Array, axis: int | None = None, keepdims: bool = False) -> Array:
   result = lax.argmax(a, _canonicalize_axis(axis, a.ndim), dtypes.canonicalize_dtype(int_))
   return expand_dims(result, dims) if keepdims else result
 
-@util.implements(np.argmin, skip_params=['out'])
+
 def argmin(a: ArrayLike, axis: int | None = None, out: None = None,
            keepdims: bool | None = None) -> Array:
+  """Return the index of the minimum value of an array.
+
+  JAX implementation of :func:`numpy.argmax`.
+
+  Args:
+    a: input array
+    axis: optional integer specifying the axis along which to find the maximum
+      value. If ``axis`` is not specified, ``a`` will be flattened.
+    out: unused by JAX
+    keepdims: if True, then return an array with the same number of dimensions
+      as ``a``.
+
+  Returns:
+    an array containing the index of the maximum value along the specified axis.
+
+  See also:
+    - :func:`jax.numpy.argmax`: return the index of the maximum value.
+    - :func:`jax.numpy.nanargmin`: compute ``argmin`` while ignoring NaN values.
+
+  Examples:
+    >>> x = jnp.array([1, 3, 5, 4, 2])
+    >>> jnp.argmin(x)
+    Array(0, dtype=int32)
+
+    >>> x = jnp.array([[1, 3, 2],
+    ...                [5, 4, 1]])
+    >>> jnp.argmin(x, axis=1)
+    Array([0, 2], dtype=int32)
+
+    >>> jnp.argmin(x, axis=1, keepdims=True)
+    Array([[0],
+           [2]], dtype=int32)
+  """
   util.check_arraylike("argmin", a)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.argmin is not supported.")
@@ -8564,19 +8629,57 @@ def _argmin(a: Array, axis: int | None = None, keepdims: bool = False) -> Array:
   return expand_dims(result, dims) if keepdims else result
 
 
-_NANARG_DOC = """\
-Warning: jax.numpy.arg{} returns -1 for all-NaN slices and does not raise
-an error.
-"""
-
-
-@util.implements(np.nanargmax, lax_description=_NANARG_DOC.format("max"), skip_params=['out'])
 def nanargmax(
     a: ArrayLike,
     axis: int | None = None,
     out: None = None,
     keepdims: bool | None = None,
 ) -> Array:
+  """Return the index of the maximum value of an array, ignoring NaNs.
+
+  JAX implementation of :func:`numpy.nanargmax`.
+
+  Args:
+    a: input array
+    axis: optional integer specifying the axis along which to find the maximum
+      value. If ``axis`` is not specified, ``a`` will be flattened.
+    out: unused by JAX
+    keepdims: if True, then return an array with the same number of dimensions
+      as ``a``.
+
+  Returns:
+    an array containing the index of the maximum value along the specified axis.
+
+  Note:
+    In the case of an axis with all-NaN values, the returned index will be -1.
+    This differs from the behavior of :func:`numpy.nanargmax`, which raises an error.
+
+  See also:
+    - :func:`jax.numpy.argmax`: return the index of the maximum value.
+    - :func:`jax.numpy.nanargmin`: compute ``argmin`` while ignoring NaN values.
+
+  Examples:
+    >>> x = jnp.array([1, 3, 5, 4, jnp.nan])
+
+    Using a standard :func:`~jax.numpy.argmax` leads to potentially unexpected results:
+
+    >>> jnp.argmax(x)
+    Array(4, dtype=int32)
+
+    Using ``nanargmax`` returns the index of the maximum non-NaN value.
+
+    >>> jnp.nanargmax(x)
+    Array(2, dtype=int32)
+
+    >>> x = jnp.array([[1, 3, jnp.nan],
+    ...                [5, 4, jnp.nan]])
+    >>> jnp.nanargmax(x, axis=1)
+    Array([1, 0], dtype=int32)
+
+    >>> jnp.nanargmax(x, axis=1, keepdims=True)
+    Array([[1],
+           [0]], dtype=int32)
+  """
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanargmax is not supported.")
   return _nanargmax(a, None if axis is None else operator.index(axis), keepdims=bool(keepdims))
@@ -8593,13 +8696,50 @@ def _nanargmax(a, axis: int | None = None, keepdims: bool = False):
   return where(reductions.all(nan_mask, axis=axis, keepdims=keepdims), -1, res)
 
 
-@util.implements(np.nanargmin, lax_description=_NANARG_DOC.format("min"),  skip_params=['out'])
 def nanargmin(
     a: ArrayLike,
     axis: int | None = None,
     out: None = None,
     keepdims: bool | None = None,
 ) -> Array:
+
+  """Return the index of the minimum value of an array, ignoring NaNs.
+
+  JAX implementation of :func:`numpy.nanargmin`.
+
+  Args:
+    a: input array
+    axis: optional integer specifying the axis along which to find the maximum
+      value. If ``axis`` is not specified, ``a`` will be flattened.
+    out: unused by JAX
+    keepdims: if True, then return an array with the same number of dimensions
+      as ``a``.
+
+  Returns:
+    an array containing the index of the minimum value along the specified axis.
+
+  Note:
+    In the case of an axis with all-NaN values, the returned index will be -1.
+    This differs from the behavior of :func:`numpy.nanargmin`, which raises an error.
+
+  See also:
+    - :func:`jax.numpy.argmin`: return the index of the minimum value.
+    - :func:`jax.numpy.nanargmax`: compute ``argmax`` while ignoring NaN values.
+
+  Examples:
+    >>> x = jnp.array([jnp.nan, 3, 5, 4, 2])
+    >>> jnp.nanargmin(x)
+    Array(4, dtype=int32)
+
+    >>> x = jnp.array([[1, 3, jnp.nan],
+    ...                [5, 4, jnp.nan]])
+    >>> jnp.nanargmin(x, axis=1)
+    Array([0, 1], dtype=int32)
+
+    >>> jnp.nanargmin(x, axis=1, keepdims=True)
+    Array([[0],
+           [1]], dtype=int32)
+  """
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanargmin is not supported.")
   return _nanargmin(a, None if axis is None else operator.index(axis), keepdims=bool(keepdims))
