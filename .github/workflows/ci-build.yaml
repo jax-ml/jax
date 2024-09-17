@@ -20,16 +20,15 @@ permissions:
   contents: read  # to fetch code
   actions: write  # to cancel previous workflows
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint_and_typecheck:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Cancel previous
-        uses: styfle/cancel-workflow-action@85880fa0301c86cca9da44039ee3bb12d3bedbfa # ratchet: styfle/cancel-workflow-action@0.12.1
-        with:
-          access_token: ${{ github.token }}
-        if: ${{github.ref != 'refs/heads/main'}}
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
       - name: Set up Python 3.11
         uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # ratchet:actions/setup-python@v5
@@ -58,11 +57,6 @@ jobs:
             prng-upgrade: 0
             num_generated_cases: 1
     steps:
-    - name: Cancel previous
-      uses: styfle/cancel-workflow-action@85880fa0301c86cca9da44039ee3bb12d3bedbfa # ratchet: styfle/cancel-workflow-action@0.12.1
-      with:
-        access_token: ${{ github.token }}
-      if: ${{github.ref != 'refs/heads/main'}}
     - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # ratchet:actions/setup-python@v5
@@ -110,11 +104,6 @@ jobs:
       matrix:
         python-version: ['3.10']
     steps:
-    - name: Cancel previous
-      uses: styfle/cancel-workflow-action@85880fa0301c86cca9da44039ee3bb12d3bedbfa # ratchet: styfle/cancel-workflow-action@0.12.1
-      with:
-        access_token: ${{ github.token }}
-      if: ${{github.ref != 'refs/heads/main'}}
     - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # ratchet:actions/setup-python@v5
@@ -152,11 +141,6 @@ jobs:
       matrix:
         python-version: ['3.10']
     steps:
-    - name: Cancel previous
-      uses: styfle/cancel-workflow-action@85880fa0301c86cca9da44039ee3bb12d3bedbfa # ratchet: styfle/cancel-workflow-action@0.12.1
-      with:
-        access_token: ${{ github.token }}
-      if: ${{github.ref != 'refs/heads/main'}}
     - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # ratchet:actions/setup-python@v5
@@ -193,11 +177,6 @@ jobs:
             enable-x64: 0
             num_generated_cases: 10
     steps:
-    - name: Cancel previous
-      uses: styfle/cancel-workflow-action@85880fa0301c86cca9da44039ee3bb12d3bedbfa # ratchet: styfle/cancel-workflow-action@0.12.1
-      with:
-        access_token: ${{ github.token }}
-      if: ${{github.ref != 'refs/heads/main'}}
     - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # ratchet:actions/setup-python@v5
