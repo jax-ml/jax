@@ -283,9 +283,9 @@ class JaxprEqnContext:
 
   def __repr__(self):
     return (
-        f"JaxprEqnContext(compute_type={self.compute_type},"
-        f"threefry_partitionable={self.threefry_partitionable}),"
-        f"xla_metadata={self.xla_metadata}"
+        f"JaxprEqnContext(compute_type={self.compute_type}, "
+        f"threefry_partitionable={self.threefry_partitionable}, "
+        f"xla_metadata={self.xla_metadata})"
     )
 
 
