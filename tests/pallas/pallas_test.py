@@ -2318,5 +2318,19 @@ class PallasCallNamedGridInterpretTest(PallasCallNamedGridTest):
   INTERPRET = True
 
 
+class PallasExtendedDtypeTest(PallasBaseTest):
+  INTERPRET = True
+
+  def test_call_with_keys(self):
+    def kernel(key_ref, o_ref):
+      o_ref[...] = key_ref[...]
+    keys = random.split(random.key(0), (5, 5))
+    out_shape = jax.ShapeDtypeStruct((5, 5), keys.dtype)
+    pallas_call = self.pallas_call(kernel,
+                                   out_shape=out_shape)
+    result = jax.jit(pallas_call)(keys)
+    self.assertEqual(keys.shape, result.shape)
+
+
 if __name__ == "__main__":
   absltest.main()

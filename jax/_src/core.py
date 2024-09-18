@@ -1596,13 +1596,21 @@ def physical_aval(aval: DShapedArray) -> DShapedArray: ...
 def physical_aval(aval: AbstractValue) -> AbstractValue: ...
 
 def physical_aval(aval):
+  # TODO(justinfu,frostig): need a cleaner way of handling Pallas Refs. this
+  # hasattr check is essentially isinstance(aval, pallas.core.AbstractMemoryRef)
+  if hasattr(aval, 'inner_aval'):
+    physical_inner_aval = physical_aval(aval.inner_aval)
+    return aval.update(inner_aval=physical_inner_aval)
+
   if (isinstance(aval, (ShapedArray, DShapedArray)) and
       isinstance(aval.dtype, dtypes.ExtendedDType)):
     elt_aval = physical_element_aval(aval.dtype)
     if isinstance(aval, ShapedArray):
       return ShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype)
-    return DShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype)
-  return aval
+    else:
+      return DShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype)
+  else:
+    return aval
 
 def physical_element_aval(edtype: dtypes.ExtendedDType) -> ShapedArray:
   duck = edtype._rules.physical_element_aval(edtype)  # type: ignore

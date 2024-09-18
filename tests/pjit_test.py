@@ -4208,6 +4208,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       h = jax.jit(g)
 
       self.assertNotEqual(f(1), g(1))
+      self.assertNotEqual(f(1), h(1))
       self.assertEqual(g(1), h(1))
 
   def test_wsc_vmap_unconstrained_spmd_axis_name(self):

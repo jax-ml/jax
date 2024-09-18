@@ -36,6 +36,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import jaxpr_passes
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
@@ -1503,6 +1504,58 @@ def _pallas_call_lowering(
 
 mlir.register_lowering(pallas_call_p, _pallas_call_lowering)
 
+def _pallas_call_edtype_rule(ctx: jaxpr_passes.ResolveEdtypesContext,
+                                  *args,
+                                  jaxpr: jax_core.Jaxpr,
+                                  grid_mapping: GridMapping,
+                                  **kwargs
+                                  ):
+  del ctx
+  closed_jaxpr = pe.close_jaxpr(jaxpr)
+  physical_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(closed_jaxpr)
+  new_block_mappings = []
+  for i, bm in enumerate(grid_mapping.block_mappings):
+    inner_aval = bm.block_aval.inner_aval
+    if jaxpr_passes.is_extended(inner_aval):
+      physical_elt_aval = inner_aval.dtype._rules.physical_element_aval(inner_aval.dtype)
+      new_block_shape = bm.block_shape + physical_elt_aval.shape
+      new_block_aval = bm.block_aval.update(inner_aval=jax_core.ShapedArray(
+                                            inner_aval.shape + physical_elt_aval.shape,
+                                            dtype=physical_elt_aval.dtype
+                                           ))
+      def _index_map(*args):
+        idx = jax_core.eval_jaxpr(bm.index_map_jaxpr.jaxpr,
+                                  bm.index_map_jaxpr.consts,
+                                  *args)
+        trailing_zeros = (0,) * len(physical_elt_aval.shape)
+        return tuple(idx) + trailing_zeros
+      with grid_mapping.trace_env():
+        idx_avals = bm.index_map_jaxpr.in_avals
+        new_index_map_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
+            lu.wrap_init(_index_map), idx_avals)
+        new_index_map_jaxpr = jax_core.ClosedJaxpr(new_index_map_jaxpr,
+                                                   consts)
+      new_block_mappings.append(
+        dataclasses.replace(bm,
+                            block_shape=new_block_shape,
+                            block_aval=new_block_aval,
+                            index_map_jaxpr=new_index_map_jaxpr,
+                            array_shape_dtype=jax.ShapeDtypeStruct(
+                              shape=bm.array_shape_dtype.shape + physical_elt_aval.shape,
+                              dtype=physical_elt_aval.dtype
+                            )
+                            )
+      )
+    else:
+      new_block_mappings.append(bm)
+  physical_grid_mapping = dataclasses.replace(grid_mapping,
+                            block_mappings=new_block_mappings)
+  return pallas_call_p.bind(*args,
+                            jaxpr=physical_jaxpr.jaxpr,
+                            grid_mapping=physical_grid_mapping,
+                            **kwargs)
+
+jaxpr_passes.register_edtype_rule(pallas_call_p, _pallas_call_edtype_rule)
 
 def _pallas_custom_str_eqn_compact(
     prim: jax_core.Primitive, params: dict[Any, Any]

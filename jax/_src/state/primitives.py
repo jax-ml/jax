@@ -14,6 +14,7 @@
 """Module for state primitives."""
 from __future__ import annotations
 
+import dataclasses
 from functools import partial
 import types
 from typing import Any, Union
@@ -28,6 +29,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import jaxpr_passes
 from jax._src.lax import lax
 from jax._src.state import indexing
 from jax._src.state.types import (
@@ -640,3 +642,55 @@ def _broadcast_to_abstract_eval(aval, *, shape):
 mlir.register_lowering(
     broadcast_to_p, mlir.lower_fun(_broadcast_to_impl, False)
 )
+
+def _get_edtype_rule(ctx: jaxpr_passes.ResolveEdtypesContext,
+                          ref, *args, tree):
+  ref_aval = ctx.avals_in[0]
+  transforms = tree_util.tree_unflatten(tree, args)
+  if len(transforms) > 1:
+    raise NotImplementedError("Multiple transforms not implemented.")
+  indexer = transforms[0]
+  physical_elt = ref_aval.dtype._rules.physical_element_aval(ref_aval.dtype)
+  elt_slices = tuple(indexing.Slice(0, size, 1) for size in physical_elt.shape)
+  new_indexer = dataclasses.replace(
+    indexer,
+    indices=tuple(indexer.indices) + elt_slices,
+    shape=indexer.shape + physical_elt.shape
+  )
+  flat_args, flat_tree = tree_util.tree_flatten((new_indexer,))
+  return get_p.bind(ref, *flat_args, tree=flat_tree)
+
+jaxpr_passes.register_edtype_rule(get_p, _get_edtype_rule)
+
+def _swap_edtype_rule(ctx: jaxpr_passes.ResolveEdtypesContext,
+                           src_ref, val_ref, *args, tree):
+  transforms = tree_util.tree_unflatten(tree, args)
+  ref_aval = ctx.avals_in[0]
+  transforms = tree_util.tree_unflatten(tree, args)
+  if len(transforms) > 1:
+    raise NotImplementedError("Multiple transforms not implemented.")
+  indexer = transforms[0]
+  physical_elt = ref_aval.dtype._rules.physical_element_aval(ref_aval.dtype)
+  elt_slices = tuple(indexing.Slice(0, size, 1) for size in physical_elt.shape)
+  new_indexer = dataclasses.replace(
+    indexer,
+    indices=tuple(indexer.indices) + elt_slices,
+    shape=indexer.shape + physical_elt.shape
+  )
+  flat_args, flat_tree = tree_util.tree_flatten((new_indexer,))
+  return swap_p.bind(src_ref, val_ref,
+                     *flat_args, tree=flat_tree)
+
+jaxpr_passes.register_edtype_rule(swap_p, _swap_edtype_rule)
+
+def _addupdate_edtype_rule(ctx: jaxpr_passes.ResolveEdtypesContext,
+                                   *args, **kwargs):
+  raise NotImplementedError()
+
+jaxpr_passes.register_edtype_rule(addupdate_p, _addupdate_edtype_rule)
+
+def _broadcast_to_edtype_rule(ctx: jaxpr_passes.ResolveEdtypesContext,
+                                   a, *, shape):
+  raise NotImplementedError()
+
+jaxpr_passes.register_edtype_rule(broadcast_to_p, _broadcast_to_edtype_rule)

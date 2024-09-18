@@ -35,6 +35,7 @@ from jax._src import traceback_util
 from jax._src.api_util import flatten_fun, shaped_abstractify
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
+from jax._src.interpreters import jaxpr_passes
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
@@ -836,6 +837,22 @@ mlir.register_lowering(remat_p, _remat_lowering)
 mlir.register_lowering(remat_p, partial(_remat_lowering, is_gpu_platform=True),
                        platform="gpu")
 
+def _remat_edtype_rule(ctx: jaxpr_passes.ResolveEdtypesContext,
+                       *args,
+                       jaxpr,
+                       **kwargs):
+  del ctx
+  phys_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(pe.close_jaxpr(jaxpr))
+  if phys_jaxpr.consts:
+    new_jaxpr = pe.convert_constvars_jaxpr(phys_jaxpr.jaxpr)
+    args = tuple(phys_jaxpr.consts) + args
+  else:
+    new_jaxpr = phys_jaxpr.jaxpr
+  return remat_p.bind(*args,
+                      jaxpr=new_jaxpr,
+                      **kwargs)
+jaxpr_passes.register_edtype_rule(remat_p, _remat_edtype_rule,
+                                  always_invoke=True)
 
 def checkpoint_name(x, name):
   return name_p.bind(x, name=name)

@@ -53,6 +53,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import jaxpr_passes
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
 from jax._src.interpreters.batching import RaggedAxis
@@ -1732,9 +1733,10 @@ def stop_gradient(x: T) -> T:
   """
   def stop(x):
     # only bind primitive on inexact dtypes, to avoid some staging
-    if dtypes.issubdtype(core.get_aval(x).dtype, dtypes.extended):
-      return x
-    elif (dtypes.issubdtype(_dtype(x), np.floating) or
+    # TODO(justinfu): Can we just comment this out?
+    #if dtypes.issubdtype(core.get_aval(x).dtype, dtypes.extended):
+    #  return x
+    if (dtypes.issubdtype(_dtype(x), np.floating) or
         dtypes.issubdtype(_dtype(x), np.complexfloating)):
       return ad_util.stop_gradient_p.bind(x)
     else:
@@ -2787,45 +2789,13 @@ ad.defjvp_zero(shift_right_logical_p)
 mlir.register_lowering(shift_right_logical_p,
                        partial(_nary_lower_hlo, hlo.shift_right_logical))
 
-def _opaque_comparison_hlo(direction, reduction_op, identity, ctx,
-                           avals_in, aval_out, x, y):
-  aval_x, aval_y = avals_in
-  base_aval_x = core.physical_aval(aval_x)
-  base_aval_y = core.physical_aval(aval_y)
-  base_aval_out = core.ShapedArray(base_aval_x.shape, aval_out.dtype)
-  reduce_axes = tuple(range(aval_out.ndim, base_aval_out.ndim))
-  res, = mlir.delegate_lowering(
-      ctx, partial(_compare_lower_hlo, direction, False),
-      x, y, avals_in=[base_aval_x, base_aval_y], avals_out=[base_aval_out])
-  return mlir.delegate_lowering(
-      ctx, partial(_unary_reduce_lower, reduction_op, identity,
-                   axes=reduce_axes),
-      res, avals_in=[base_aval_out], avals_out=[aval_out])
-
-_opaque_eq_hlo = partial(
-    _opaque_comparison_hlo, 'EQ', hlo.AndOp, _get_bitwise_and_identity)
-_opaque_ne_hlo = partial(
-    _opaque_comparison_hlo, 'NE', hlo.OrOp, _get_bitwise_or_identity)
-
-def _compare_lower_hlo_opaque(direction: str, ctx, avals_in, aval_out, x, y):
-  broadcast_avals_in = tuple(
-      core.ShapedArray(aval_out.shape, aval.dtype) for aval in avals_in)
-  if direction == 'EQ':
-    return _opaque_eq_hlo(ctx, broadcast_avals_in, aval_out, x, y)
-  elif direction == 'NE':
-    return _opaque_ne_hlo(ctx, broadcast_avals_in, aval_out, x, y)
-  else:
-    raise NotImplementedError(
-        f"HLO comparison {direction} for extended dtype {avals_in[0].dtype}")
-
 
 def _compare_lower_hlo(direction: str, total_order: bool, ctx, x, y):
   avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
   x_dtype = avals_in[0].dtype
   x, y = mlir.multi_broadcast_in_dim(ctx, (x, y), avals_in, aval_out.shape)
   if dtypes.issubdtype(x_dtype, dtypes.extended):
-    assert not total_order
-    return _compare_lower_hlo_opaque(direction, ctx, avals_in, aval_out, x, y)
+    assert False
   if dtypes.issubdtype(x_dtype, np.inexact):
     compare_type = "TOTALORDER" if total_order else "FLOAT"
   elif dtypes.issubdtype(x_dtype, np.signedinteger):
@@ -2834,14 +2804,54 @@ def _compare_lower_hlo(direction: str, total_order: bool, ctx, x, y):
     compare_type = "UNSIGNED"
   return [mlir.compare_hlo(x, y, direction, compare_type)]
 
+def _compare_edtype_rule(direction: str,
+                              total_order: bool,
+                              ctx: jaxpr_passes.ResolveEdtypesContext, x, y):
+  assert not total_order
+  aval_x, aval_y = ctx.avals_in
+  aval_out, = ctx.avals_out
+  base_aval_x = core.physical_aval(aval_x)
+  base_aval_y = core.physical_aval(aval_y)
+  elt_shape = aval_x.dtype._rules.physical_element_aval(  # type: ignore
+      aval_x.dtype).shape                                 # type: ignore
+  out_shape = aval_out.shape + elt_shape
+  base_aval_out = core.ShapedArray(out_shape, aval_out.dtype)
+  reduce_axes = tuple(range(aval_out.ndim, base_aval_out.ndim))
+
+  x_and_y = []
+  for op, op_aval in zip([x, y], [base_aval_x, base_aval_y]):
+    op_aval_shape = op_aval.shape  # type: ignore
+    if core.definitely_equal_shape(op_aval_shape, out_shape):
+      x_and_y.append(op)
+    else:
+      assert len(op_aval_shape) <= len(out_shape), (op_aval_shape, out_shape)
+      broadcast_dimensions = list(range(len(out_shape) - len(op_aval_shape), len(out_shape)))
+      x_and_y.append(broadcast_in_dim(op,
+                                  out_shape,
+                                  broadcast_dimensions=broadcast_dimensions))
+  x, y = x_and_y
+
+  if direction == 'EQ':
+    result = eq_p.bind(x, y)
+    reduction_op = reduce_and_p
+  elif direction == 'NE':
+    result = ne_p.bind(x, y)
+    reduction_op = reduce_or_p
+  else:
+    raise NotImplementedError(
+        f"HLO comparison {direction} for extended dtype {aval_x.dtype}")
+  return reduction_op.bind(result, axes=reduce_axes)
+
 eq_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'eq', allow_extended_dtype=True)
 ad.defjvp_zero(eq_p)
 mlir.register_lowering(eq_p, partial(_compare_lower_hlo, "EQ", False))
+jaxpr_passes.register_edtype_rule(eq_p, partial(_compare_edtype_rule, "EQ", False))
 batching.ragged_prop_rules[eq_p] = batching.ragged_mask_elementwise_rule
 
 ne_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'ne', allow_extended_dtype=True)
 ad.defjvp_zero(ne_p)
 mlir.register_lowering(ne_p, partial(_compare_lower_hlo, "NE", False))
+jaxpr_passes.register_edtype_rule(ne_p, partial(_compare_edtype_rule, "NE", False))
 
 ge_p = naryop(_fixed_dtype(np.bool_), [_ordered, _ordered], 'ge')
 ad.defjvp_zero(ge_p)
@@ -2952,6 +2962,25 @@ def _convert_elt_type_pp_rule(eqn, context, settings):
     del params['sharding']  # don't show trivial case
   return core._pp_eqn(eqn.replace(params=params), context, settings)
 
+def _convert_element_type_edtype_rule(ctx, operand, *, new_dtype, weak_type,
+                                     sharding):
+  aval_in, = ctx.avals_in
+  if (aval_in.dtype != new_dtype and
+      ((dtypes.issubdtype(aval_in.dtype, dtypes.extended) and
+        not aval_in.dtype._rules.convert_from(aval_in.dtype, new_dtype)) or
+       (dtypes.issubdtype(new_dtype, dtypes.extended) and
+        not new_dtype._rules.convert_to(aval_in.dtype, new_dtype)))):
+    raise ValueError(
+        f"Cannot convert_element_type from {dtype_to_string(aval_in.dtype)} "
+        f"to {dtype_to_string(new_dtype)}")
+  aval_out, = ctx.avals_out
+  physical_out_dtype = core.physical_aval(aval_out).dtype
+  return convert_element_type_p.bind(operand,
+                                     new_dtype=physical_out_dtype,
+                                     weak_type=weak_type,
+                                     sharding=sharding)
+
+
 convert_element_type_p = Primitive('convert_element_type')
 def _convert_element_type_bind(operand, *, new_dtype, weak_type, sharding):
   operand = core.Primitive.bind(convert_element_type_p, operand,
@@ -2974,6 +3003,7 @@ pe.const_fold_rules[convert_element_type_p] = _convert_elt_type_folding_rule
 pe.forwarding_rules[convert_element_type_p] = _convert_elt_type_fwd_rule
 pe.def_trivial_padding(convert_element_type_p)
 core.pp_eqn_rules[convert_element_type_p] = _convert_elt_type_pp_rule
+jaxpr_passes.register_edtype_rule(convert_element_type_p, _convert_element_type_edtype_rule)
 batching.ragged_prop_rules[convert_element_type_p] = (
     batching.ragged_mask_elementwise_rule
 )
@@ -4096,11 +4126,30 @@ def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions):
   # TODO(mattjj): unify DShapedArray with ShapedArray, and remove this code
   return core.DShapedArray(_merge_dyn_shape(shape, dyn_shape), x.dtype, x.weak_type)
 
-
 def _broadcast_in_dim_ragged_prop_rule(invar_raggedness, outvars):
   assert len(invar_raggedness) == 1
   assert not isinstance(invar_raggedness[0], core.Var)
   return invar_raggedness, [None] * len(outvars)
+
+def broadcast_in_dim_edtype_rule(
+    ctx,
+    *args,
+    broadcast_dimensions,
+    shape,
+):
+  del shape
+  aval_out, = ctx.avals_out
+  arg, = args
+  aval_in, = ctx.avals_in
+  assert dtypes.issubdtype(aval_out.dtype, dtypes.extended), aval_out.dtype
+  assert aval_in.dtype == aval_out.dtype, aval_in.dtype
+  elt_shape = core.physical_element_aval(aval_out.dtype).shape        # type: ignore
+  trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]  # type: ignore
+  broadcast_dimensions = [*broadcast_dimensions, *trailing_dims]
+  physical_aval_out = core.physical_aval(aval_out)
+  return broadcast_in_dim(arg,
+                          shape=physical_aval_out.shape,
+                          broadcast_dimensions=broadcast_dimensions)
 
 
 broadcast_in_dim_p = standard_primitive(
@@ -4115,6 +4164,7 @@ pe.custom_staging_rules[broadcast_in_dim_p] = _broadcast_in_dim_staging_rule
 pe.padding_rules[broadcast_in_dim_p] = _broadcast_in_dim_padding_rule
 core.custom_typechecks[broadcast_in_dim_p] = _broadcast_in_dim_typecheck_rule
 mlir.register_lowering(broadcast_in_dim_p, _broadcast_in_dim_lower)
+jaxpr_passes.register_edtype_rule(broadcast_in_dim_p, broadcast_in_dim_edtype_rule)
 batching.ragged_prop_rules[broadcast_in_dim_p] = (
     _broadcast_in_dim_ragged_prop_rule
 )
@@ -4478,6 +4528,16 @@ def _reshape_staging_rule(
   av = core.DShapedArray(_merge_dyn_shape(new_sizes, dyn), x.dtype, x.weak_type)
   return _dyn_shape_staging_rule(trace, reshape_p, av, x, *dyn, **params)
 
+def _reshape_edtype_rule(ctx, x, *dyn_shape, new_sizes, dimensions):
+  aval_out, = ctx.avals_out
+  elt_shape = aval_out.dtype._rules.physical_element_aval(
+      aval_out.dtype).shape
+  out_shape = _merge_dyn_shape(new_sizes, dyn_shape)
+  new_sizes = (*out_shape, *elt_shape)
+  if dimensions is not None:
+    dimensions = (*dimensions, len(dimensions))
+  return reshape(x, new_sizes, dimensions)
+
 reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
                                'reshape')
 ad.deflinear2(reshape_p, _reshape_transpose_rule)
@@ -4485,6 +4545,7 @@ batching.primitive_batchers[reshape_p] = _reshape_batch_rule
 mlir.register_lowering(reshape_p, _reshape_lower)
 core.custom_typechecks[reshape_p] = _reshape_typecheck_rule
 pe.custom_staging_rules[reshape_p] = _reshape_staging_rule
+jaxpr_passes.register_edtype_rule(reshape_p, _reshape_edtype_rule)
 
 
 def _rev_shape_rule(operand, *, dimensions):
@@ -4537,10 +4598,16 @@ def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
 def _transpose_lower(ctx, x, *, permutation):
   aval_out, = ctx.avals_out
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    elt_shape = core.physical_element_aval(aval_out.dtype).shape
-    trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]
-    permutation = [*permutation, *trailing_dims]
+    assert False
   return [hlo.transpose(x, mlir.dense_int_array(permutation))]
+
+def _transpose_edtype_rule(ctx, x, *, permutation):
+  aval_out, = ctx.avals_out
+  elt_shape = core.physical_element_aval(aval_out.dtype).shape
+  trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]
+  permutation = [*permutation, *trailing_dims]
+  return transpose_p.bind(x, permutation=permutation)
+
 
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
                                  'transpose')
@@ -4549,6 +4616,7 @@ ad.deflinear2(transpose_p,
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
 mlir.register_lowering(transpose_p, _transpose_lower)
 pe.def_trivial_padding(transpose_p)
+jaxpr_passes.register_edtype_rule(transpose_p, _transpose_edtype_rule)
 
 
 def _select_shape_rule(which, *cases):
@@ -4644,34 +4712,12 @@ def _select_jvp(primals, tangents):
     out_dot = select_n(which, *case_tangents)
   return out, out_dot
 
-def _select_hlo_lowering_opaque(ctx, which, *cases):
-  avals_in = ctx.avals_in
-  aval_out, = ctx.avals_out
-  assert all(aval_case == aval_out for aval_case in avals_in[1:])
-  select_lower = _select_hlo_lowering
-
-  physical_aval_out = core.physical_aval(aval_out)
-  physical_avals_cases = [physical_aval_out] * (len(avals_in) - 1)
-  aval_which = avals_in[0]
-  aval_which_bcast = physical_aval_out.update(dtype=aval_which.dtype)
-  assert aval_which_bcast.shape[:aval_which.ndim] == aval_which.shape
-
-  bcast_dims = list(range(aval_which.ndim))
-  which_bcast = mlir.broadcast_in_dim(
-      ctx, which, aval_which_bcast, broadcast_dimensions=bcast_dims)
-
-  return mlir.delegate_lowering(
-      ctx, select_lower, which_bcast, *cases,
-      avals_in=[aval_which_bcast, *physical_avals_cases],
-      avals_out=[physical_aval_out])[0]
-
-
 def _select_hlo_lowering(ctx, which, *cases):
   which_aval = ctx.avals_in[0]
   aval_out, = ctx.avals_out
 
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    return [_select_hlo_lowering_opaque(ctx, which, *cases)]
+    assert False
 
   if which_aval.dtype == np.dtype(np.bool_):
     assert len(cases) <= 2
@@ -4697,6 +4743,30 @@ def _select_hlo_lowering(ctx, which, *cases):
 
   return [_select(0, cases)]
 
+def _select_edtype_rule(ctx, which, *cases):
+  avals_in = ctx.avals_in
+  aval_out, = ctx.avals_out
+  assert all(aval_case == aval_out for aval_case in avals_in[1:])
+
+  physical_aval_out = core.physical_aval(aval_out)
+  # physical_avals_cases = [physical_aval_out] * (len(avals_in) - 1)
+  aval_which = avals_in[0]
+  aval_which_bcast = physical_aval_out.update(dtype=aval_which.dtype)
+  assert aval_which_bcast.shape[:aval_which.ndim] == aval_which.shape
+
+  bcast_dims = list(range(aval_which.ndim))
+  which_bcast = broadcast_in_dim(which, aval_which_bcast.shape, bcast_dims)
+  return select_n_p.bind(which_bcast, *cases)
+  """
+  which_bcast = mlir.broadcast_in_dim(
+      ctx, which, aval_which_bcast, broadcast_dimensions=bcast_dims)
+
+  return mlir.delegate_lowering(
+      ctx, select_lower, which_bcast, *cases,
+      avals_in=[aval_which_bcast, *physical_avals_cases],
+      avals_out=[physical_aval_out])[0]
+  """
+
 select_n_p = standard_primitive(
     _select_shape_rule, _select_dtype_rule, 'select_n',
     weak_type_rule=_select_weak_type_rule)
@@ -4705,6 +4775,7 @@ ad.primitive_transposes[select_n_p] = _select_transpose_rule
 batching.primitive_batchers[select_n_p] = _select_batch_rule
 mlir.register_lowering(select_n_p, _select_hlo_lowering)
 pe.def_trivial_padding(select_n_p)
+jaxpr_passes.register_edtype_rule(select_n_p, _select_edtype_rule)
 
 
 def _reduce_shape_rule(*avals, computation, jaxpr, dimensions):
@@ -6027,10 +6098,19 @@ def empty(dtype):
 empty_p = core.Primitive('empty')
 empty_p.def_abstract_eval(lambda *, dtype: core.ShapedArray((), dtype))
 def _empty_lower(ctx, *, dtype):
+  if dtypes.issubdtype(dtype, dtypes.extended):
+    assert False
+  dtype = np.dtype(dtype)
+  return [mlir.ir_constant(np.zeros((), dtype))]
+mlir.register_lowering(empty_p, _empty_lower)
+
+def _empty_edtype_rule(ctx, *, dtype):
+  del ctx
   dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
   phys_aval = core.physical_aval(core.ShapedArray((), dtype))
-  return mlir.ir_constant(np.zeros(phys_aval.shape, phys_aval.dtype)),
-mlir.register_lowering(empty_p, _empty_lower)
+  return zeros_like_array(phys_aval)
+jaxpr_passes.register_edtype_rule(empty_p, _empty_edtype_rule)
+
 
 
 tie_p = core.Primitive('tie')

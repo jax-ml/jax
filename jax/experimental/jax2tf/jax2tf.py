@@ -2909,11 +2909,14 @@ def _gather(operand, start_indices, *, dimension_numbers, slice_sizes: core.Shap
   operand_aval = _in_avals[0]
   start_indices = _maybe_cast_to_int64(start_indices)
   if dtypes.issubdtype(operand_aval.dtype, dtypes.extended):
+    assert False # TODO
+    """
     opaque_shape = _jax_physical_aval(operand_aval).shape[len(operand_aval.shape):]
     trailing_offset_dims = [len(_out_aval.shape) + i for i in range(len(opaque_shape))]
     dimension_numbers = dimension_numbers._replace(
         offset_dims=(*dimension_numbers.offset_dims, *trailing_offset_dims))
     slice_sizes = (*slice_sizes, *opaque_shape)
+    """
   proto = _gather_dimensions_proto(start_indices.shape, dimension_numbers)
   slice_sizes_tf = _eval_shape(slice_sizes)
   out = tfxla.gather(operand, start_indices, proto, slice_sizes_tf,
@@ -2950,6 +2953,7 @@ def _dynamic_slice(operand, *start_indices, slice_sizes: core.Shape,
   start_indices = _maybe_cast_to_int64(tf.stack(start_indices))
   operand_aval = _in_avals[0]
   if dtypes.issubdtype(operand_aval.dtype, dtypes.extended):
+    assert False #TODO
     opaque_shape = _jax_physical_aval(operand_aval).shape[len(operand_aval.shape):]
     slice_sizes = (*slice_sizes, *opaque_shape)
     start_indices = tf.concat([start_indices, tf.zeros((len(opaque_shape),),
@@ -2972,6 +2976,7 @@ def _dynamic_update_slice(operand, update, *start_indices,
   start_indices = _maybe_cast_to_int64(tf.stack(start_indices))
   operand_aval = _in_avals[0]
   if dtypes.issubdtype(operand_aval.dtype, dtypes.extended):
+    assert False # TODO
     opaque_shape = _jax_physical_aval(operand_aval).shape[len(operand_aval.shape):]
     start_indices = tf.concat([start_indices, tf.zeros((len(opaque_shape),),
                                                        dtype=start_indices.dtype)],
