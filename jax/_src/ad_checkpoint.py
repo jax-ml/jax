@@ -733,7 +733,7 @@ def remat_dce(used_outputs: list[bool], eqn: core.JaxprEqn
 pe.dce_rules[remat_p] = remat_dce
 
 def _has_effects(effects) -> bool:
-  return bool(effects)
+  return bool({e for e in effects if not isinstance(e, core.NamedAxisEffect)})
 
 
 def remat_expansion(*args, jaxpr: core.Jaxpr, prevent_cse: bool,

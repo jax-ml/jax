@@ -1134,7 +1134,7 @@ def _partial_eval_jaxpr_custom_cached(
     return x
 
   def has_effects(effects) -> bool:
-    return bool(effects)
+    return bool({e for e in effects if not isinstance(e, core.NamedAxisEffect)})
 
   newvar = core.gensym(suffix='_offload')
   known_eqns, staged_eqns = [], []
@@ -1484,6 +1484,7 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
       env[x] = read(x) or b
 
   def has_effects(eqn: JaxprEqn) -> bool:
+    effs = {e for e in eqn.effects if not isinstance(e, core.NamedAxisEffect)}
     return bool(eqn.effects) or core.primitive_uses_outfeed(eqn.primitive, eqn.params)
 
   new_eqns = []

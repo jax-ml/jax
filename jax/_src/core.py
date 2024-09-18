@@ -2297,6 +2297,32 @@ aval_mapping_handlers: dict[type, AvalMapHandlerPair] = {
     AbstractToken: (lambda _, __, a: a, lambda _, __, ___, a: a)
 }
 
+
+@dataclass(frozen=True)
+class NamedAxisEffect(effects.Effect):
+  """A side-effect introducing a new named axis into the current scope."""
+
+  name: AxisName
+
+
+effects.control_flow_allowed_effects.add_type(NamedAxisEffect)
+effects.custom_derivatives_allowed_effects.add_type(NamedAxisEffect)
+effects.lowerable_effects.add_type(NamedAxisEffect)
+effects.remat_allowed_effects.add_type(NamedAxisEffect)
+
+def filter_named_axis_effects(
+    effects: Effects, names: Collection[AxisName]
+) -> Effects:
+  return {e for e in effects
+          if not isinstance(e, NamedAxisEffect) or e.name not in names}
+
+def remove_named_axis_effects(
+    jaxpr: Jaxpr, names: Collection[AxisName]
+) -> Jaxpr:
+  if not names or not jaxpr.effects:
+    return jaxpr
+  return jaxpr.replace(effects=filter_named_axis_effects(jaxpr.effects, names))
+
 def replace_jaxpr_effects(jaxpr: ClosedJaxpr, effects: Effects):
   return _replace_jaxpr_effects(jaxpr, frozenset(effects))
 
@@ -2468,6 +2494,9 @@ def _check_jaxpr(
             raise JaxprTypeError(
                 "Invalid `JaxprInputEffect`: must be present in jaxpr. "
                 f"{jaxpr_effect} is not in {jaxpr.effects}.")
+        elif isinstance(eff, NamedAxisEffect):
+          # It is valid for a primitive to discharge the named axis effect.
+          continue
         elif eff not in jaxpr.effects:
           raise JaxprTypeError("Equation effect not present in jaxpr effects. "
                                f"Equation effect: {eff}. "

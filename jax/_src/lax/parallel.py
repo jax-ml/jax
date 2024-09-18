@@ -613,7 +613,7 @@ def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
   out_avals = [
       ShapedArray(lax._reduce_op_shape_rule(raise_to_shaped(arg), axes=pos_axes),
                   arg.dtype) for arg in args]
-  return out_avals, set()
+  return out_avals, {core.NamedAxisEffect(axis) for axis in named_axes}
 
 def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
   if axis_index_groups is not None and ("tpu" in ctx.module_context.platforms):
@@ -990,7 +990,8 @@ def _all_to_all_effectful_abstract_eval(
   shape[split_axis] //= axis_size
   shape[concat_axis] *= axis_size
   out_aval = input_aval.update(shape=tuple(shape), weak_type=False)
-  return out_aval, set()
+  effects = {*map(core.NamedAxisEffect, axis_name)}
+  return out_aval, effects
 
 
 all_to_all_p = core.Primitive('all_to_all')
@@ -1135,7 +1136,7 @@ def _all_gather_effectful_abstract_eval(
     new_shape[all_gather_dimension] *= axis_size
   else:
     new_shape.insert(all_gather_dimension, axis_size)
-  return x_aval.update(shape=new_shape), set()
+  return x_aval.update(shape=new_shape), {*map(core.NamedAxisEffect, axis_name)}
 
 def _all_gather_transpose_rule(cts, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
   return (psum_scatter(cts, axis_name=axis_name,
@@ -1270,7 +1271,7 @@ def _reduce_scatter_effectful_abstract_eval(
                        f"{scatter_dim_input_size} must match shard count "
                        f"{axis_size}")
     del new_shape[scatter_dimension]
-  return x_aval.update(shape=new_shape), set()
+  return x_aval.update(shape=new_shape), {*map(core.NamedAxisEffect, axis_name)}
 
 
 def _reduce_scatter_transpose_rule(cts, x, *, axis_name, scatter_dimension,
@@ -1457,8 +1458,7 @@ def _axis_index_lowering(ctx, *, axis_name):
                                          ctx.module_context.axis_env)]
 
 def _axis_index_effectful_abstract_eval(*, axis_name):
-  out_aval = ShapedArray((), np.int32)
-  return out_aval, set()
+  return out_aval, {core.NamedAxisEffect(axis_name)}
 
 def _axis_index_batcher(axis_data, _, vals_in, dims_in, *, axis_name):
   return lax.iota(np.int32, axis_data.size), 0
