@@ -7018,7 +7018,7 @@ def diagflat(v: ArrayLike, k: int = 0) -> Array:
   return res
 
 
-def trim_zeros(filt, trim='fb'):
+def trim_zeros(filt: ArrayLike, trim: str ='fb') -> Array:
   """Trim leading and/or trailing zeros of the input array.
 
   JAX implementation of :func:`numpy.trim_zeros`.
@@ -7040,14 +7040,26 @@ def trim_zeros(filt, trim='fb'):
     >>> jnp.trim_zeros(x)
     Array([2, 0, 1, 4, 3], dtype=int32)
   """
-  filt = core.concrete_or_error(asarray, filt,
-    "Error arose in the `filt` argument of trim_zeros()")
-  nz = (filt == 0)
+  # Non-array inputs are deprecated 2024-09-11
+  util.check_arraylike("trim_zeros", filt, emit_warning=True)
+  core.concrete_or_error(None, filt,
+                         "Error arose in the `filt` argument of trim_zeros()")
+  filt_arr = jax.numpy.asarray(filt)
+  del filt
+  if filt_arr.ndim != 1:
+    # Added on 2024-09-11
+    if deprecations.is_accelerated("jax-numpy-trimzeros-not-1d-array"):
+      raise TypeError(f"'filt' must be 1-D array, but received {filt_arr.ndim}-D array.")
+    warnings.warn(
+      "Passing arrays with ndim != 1 to jnp.trim_zeros() is deprecated. Currently, it "
+      "works with Arrays having ndim != 1. In the future this will result in an error.",
+      DeprecationWarning, stacklevel=2)
+  nz = (filt_arr == 0)
   if reductions.all(nz):
-    return empty(0, _dtype(filt))
-  start = argmin(nz) if 'f' in trim.lower() else 0
-  end = argmin(nz[::-1]) if 'b' in trim.lower() else 0
-  return filt[start:len(filt) - end]
+    return empty(0, filt_arr.dtype)
+  start: Array | int = argmin(nz) if 'f' in trim.lower() else 0
+  end: Array | int = argmin(nz[::-1]) if 'b' in trim.lower() else 0
+  return filt_arr[start:len(filt_arr) - end]
 
 
 def trim_zeros_tol(filt, tol, trim='fb'):
