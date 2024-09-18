@@ -2737,6 +2737,9 @@ lowering_rules[tpu_primitives.delay_p] = _delay_rule
 def _debug_print_rule(
     ctx: LoweringRuleContext, *args, fmt: str, has_placeholders: bool
 ):
+  if any(aval.shape for aval in ctx.avals_in):
+    raise NotImplementedError("Only scalar values are supported")
+
   primitives.check_debug_print_format(fmt, *args)
   if has_placeholders:
     if not all(

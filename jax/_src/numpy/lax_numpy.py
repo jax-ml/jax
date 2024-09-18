@@ -7018,7 +7018,7 @@ def diagflat(v: ArrayLike, k: int = 0) -> Array:
   return res
 
 
-def trim_zeros(filt, trim='fb'):
+def trim_zeros(filt: ArrayLike, trim: str ='fb') -> Array:
   """Trim leading and/or trailing zeros of the input array.
 
   JAX implementation of :func:`numpy.trim_zeros`.
@@ -7040,14 +7040,26 @@ def trim_zeros(filt, trim='fb'):
     >>> jnp.trim_zeros(x)
     Array([2, 0, 1, 4, 3], dtype=int32)
   """
-  filt = core.concrete_or_error(asarray, filt,
-    "Error arose in the `filt` argument of trim_zeros()")
-  nz = (filt == 0)
+  # Non-array inputs are deprecated 2024-09-11
+  util.check_arraylike("trim_zeros", filt, emit_warning=True)
+  core.concrete_or_error(None, filt,
+                         "Error arose in the `filt` argument of trim_zeros()")
+  filt_arr = jax.numpy.asarray(filt)
+  del filt
+  if filt_arr.ndim != 1:
+    # Added on 2024-09-11
+    if deprecations.is_accelerated("jax-numpy-trimzeros-not-1d-array"):
+      raise TypeError(f"'filt' must be 1-D array, but received {filt_arr.ndim}-D array.")
+    warnings.warn(
+      "Passing arrays with ndim != 1 to jnp.trim_zeros() is deprecated. Currently, it "
+      "works with Arrays having ndim != 1. In the future this will result in an error.",
+      DeprecationWarning, stacklevel=2)
+  nz = (filt_arr == 0)
   if reductions.all(nz):
-    return empty(0, _dtype(filt))
-  start = argmin(nz) if 'f' in trim.lower() else 0
-  end = argmin(nz[::-1]) if 'b' in trim.lower() else 0
-  return filt[start:len(filt) - end]
+    return empty(0, filt_arr.dtype)
+  start: Array | int = argmin(nz) if 'f' in trim.lower() else 0
+  end: Array | int = argmin(nz[::-1]) if 'b' in trim.lower() else 0
+  return filt_arr[start:len(filt_arr) - end]
 
 
 def trim_zeros_tol(filt, tol, trim='fb'):
@@ -7397,20 +7409,17 @@ def dot(a: ArrayLike, b: ArrayLike, *,
   batch_dims = ((), ())
   a_ndim, b_ndim = ndim(a), ndim(b)
   if a_ndim == 0 or b_ndim == 0:
-    # TODO(jakevdp): lower this case to dot_general as well?
-    # Currently, doing so causes issues in remat tests due to #16805
-    if preferred_element_type is not None:
-      a = a.astype(preferred_element_type)
-      b = b.astype(preferred_element_type)
-    result = lax.mul(a, b)
+    contract_dims: tuple[tuple[int, ...], tuple[int, ...]] = ((), ())
   else:
     if b_ndim == 1:
       contract_dims = ((a_ndim - 1,), (0,))
     else:
       contract_dims = ((a_ndim - 1,), (b_ndim - 2,))
-    result = lax.dot_general(a, b, dimension_numbers=(contract_dims, batch_dims),
-                             precision=precision, preferred_element_type=preferred_element_type)
-  return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
+  result = lax.dot_general(a, b, dimension_numbers=(contract_dims, batch_dims),
+                           precision=precision,
+                           preferred_element_type=preferred_element_type)
+  return lax_internal._convert_element_type(result, preferred_element_type,
+                                            output_weak_type)
 
 
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
@@ -8819,11 +8828,40 @@ def sort(
   return lax.rev(result, dimensions=[dimension]) if descending else result
 
 
-@util.implements(np.sort_complex)
 @jit
 def sort_complex(a: ArrayLike) -> Array:
+  """Return a sorted copy of complex array.
+
+  JAX implementation of :func:`numpy.sort_complex`.
+
+  Complex numbers are sorted lexicographically, meaning by their real part
+  first, and then by their imaginary part if real parts are equal.
+
+  Args:
+    a: input array. If dtype is not complex, the array will be upcast to complex.
+
+  Returns:
+    A sorted array of the same shape and complex dtype as the input. If ``a``
+    is multi-dimensional, it is sorted along the last axis.
+
+  See also:
+    - :func:`jax.numpy.sort`: Return a sorted copy of an array.
+
+  Examples:
+    >>> a = jnp.array([1+2j, 2+4j, 3-1j, 2+3j])
+    >>> jnp.sort_complex(a)
+    Array([1.+2.j, 2.+3.j, 2.+4.j, 3.-1.j], dtype=complex64)
+
+    Multi-dimensional arrays are sorted along the last axis:
+
+    >>> a = jnp.array([[5, 3, 4],
+    ...                [6, 9, 2]])
+    >>> jnp.sort_complex(a)
+    Array([[3.+0.j, 4.+0.j, 5.+0.j],
+           [2.+0.j, 6.+0.j, 9.+0.j]], dtype=complex64)
+  """
   util.check_arraylike("sort_complex", a)
-  a = lax.sort(asarray(a), dimension=0)
+  a = lax.sort(asarray(a))
   return lax.convert_element_type(a, dtypes.to_complex_dtype(a.dtype))
 
 @util.implements(np.lexsort)
@@ -10770,11 +10808,46 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
   }[method]
   return impl(asarray(a), asarray(v), side, dtype)  # type: ignore
 
-@util.implements(np.digitize, lax_description=_dedent("""
-    Optionally, the ``method`` argument can be used to configure the
-    underlying :func:`jax.numpy.searchsorted` algorithm."""))
+
 @partial(jit, static_argnames=('right', 'method'))
-def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False, *, method: str = 'scan') -> Array:
+def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False,
+             *, method: str | None = None) -> Array:
+  """Convert an array to bin indices.
+
+  JAX implementation of :func:`numpy.digitize`.
+
+  Args:
+    x: array of values to digitize.
+    bins: 1D array of bin edges. Must be monotonically increasing or decreasing.
+    right: if true, the intervals include the right bin edges. If false (default)
+      the intervals include the left bin edges.
+    method: optional method argument to be passed to :func:`~jax.numpy.searchsorted`.
+      See that function for available options.
+
+  Returns:
+    An integer array of the same shape as ``x`` indicating the bin number that
+    the values are in.
+
+  See also:
+    - :func:`jax.numpy.searchsorted`: find insertion indices for values in a
+      sorted array.
+    - :func:`jax.numpy.histogram`: compute frequency of array values within
+      specified bins.
+
+  Examples:
+    >>> x = jnp.array([1.0, 2.0, 2.5, 1.5, 3.0, 3.5])
+    >>> bins = jnp.array([1, 2, 3])
+    >>> jnp.digitize(x, bins)
+    Array([1, 2, 2, 1, 3, 3], dtype=int32)
+    >>> jnp.digitize(x, bins, right=True)
+    Array([0, 1, 2, 1, 2, 3], dtype=int32)
+
+    ``digitize`` supports reverse-ordered bins as well:
+
+    >>> bins = jnp.array([3, 2, 1])
+    >>> jnp.digitize(x, bins)
+    Array([2, 1, 1, 2, 0, 0], dtype=int32)
+  """
   util.check_arraylike("digitize", x, bins)
   right = core.concrete_or_error(bool, right, "right argument of jnp.digitize()")
   bins_arr = asarray(bins)
@@ -10783,10 +10856,11 @@ def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False, *, method: str 
   if bins_arr.shape[0] == 0:
     return zeros_like(x, dtype=int32)
   side = 'right' if not right else 'left'
+  kwds: dict[str, str] = {} if method is None else {'method': method}
   return where(
     bins_arr[-1] >= bins_arr[0],
-    searchsorted(bins_arr, x, side=side, method=method),
-    bins_arr.shape[0] - searchsorted(bins_arr[::-1], x, side=side, method=method)
+    searchsorted(bins_arr, x, side=side, **kwds),
+    bins_arr.shape[0] - searchsorted(bins_arr[::-1], x, side=side, **kwds)
   )
 
 

@@ -62,6 +62,7 @@ BlockSpec = pallas_core.BlockSpec
 BlockSpecTree = pallas_core.BlockSpecTree
 NoBlockSpec = pallas_core.NoBlockSpec
 no_block_spec = pallas_core.no_block_spec
+ScratchShapeTree = pallas_core.ScratchShapeTree
 CostEstimate = pallas_core.CostEstimate
 
 # See the docstring for GridMapping for the calling convention
@@ -1233,6 +1234,7 @@ def pallas_call(
     grid: TupleGrid = (),
     in_specs: BlockSpecTree = no_block_spec,
     out_specs: BlockSpecTree = no_block_spec,
+    scratch_shapes: ScratchShapeTree = (),
     input_output_aliases: dict[int, int] = {},
     debug: bool = False,
     interpret: bool = False,
@@ -1250,8 +1252,9 @@ def pallas_call(
       corresponding ``in_specs`` and ``out_specs``.
     out_shape: a PyTree of :class:`jax.ShapeDtypeStruct` describing the shape
       and dtypes of the outputs.
-    grid_spec: An alternative way to specify ``grid``, ``in_specs``, and
-      ``out_specs``. If given, those other parameters must not be also given.
+    grid_spec: An alternative way to specify ``grid``, ``in_specs``,
+      ``out_specs`` and ``scratch_shapes``. If given, those other parameters
+      must not be also given.
     grid: the iteration space, as a tuple of integers. The kernel is executed
       as many times as ``prod(grid)``.
       See details at :ref:`pallas_grid`.
@@ -1265,6 +1268,9 @@ def pallas_call(
       The default value for ``out_specs`` specifies the whole array,
       e.g., as ``pl.BlockSpec(x.shape, lambda *indices: (0,) * x.ndim)``.
       See details at :ref:`pallas_blockspec`.
+    scratch_shapes: a PyTree of backend-specific temporary objects required
+      by the kernel, such as temporary buffers, synchronization primitives,
+      etc.
     input_output_aliases: a dictionary mapping the index of some inputs to
       the index of the output that aliases them. These indices are in the
       flattened inputs and outputs.
@@ -1305,7 +1311,7 @@ def pallas_call(
     }
 
   if grid_spec is None:
-    grid_spec = GridSpec(grid, in_specs, out_specs)
+    grid_spec = GridSpec(grid, in_specs, out_specs, scratch_shapes)
   else:
     if grid:
       raise ValueError(
@@ -1319,6 +1325,10 @@ def pallas_call(
       raise ValueError(
           "If `grid_spec` is specified, then `out_specs` must "
           f"be `no_block_spec`. It is {out_specs}")
+    if scratch_shapes:
+      raise ValueError(
+          "If `grid_spec` is specified, then `scratch_shapes` must "
+          f"be `()`. It is {scratch_shapes}")
   del grid, in_specs, out_specs
   grid_spec, dynamic_grid_bounds = pallas_core.unzip_dynamic_grid_bounds(grid_spec)
   # TODO(necula): this canonicalization may be convenient for some usage

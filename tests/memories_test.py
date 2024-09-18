@@ -742,6 +742,29 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(out2, inp * 6)
     self.assertEqual(out2.sharding.memory_kind, 'pinned_host')
 
+  def test_compute_on_basic_inline(self):
+    @compute_on('device_host')
+    @jax.jit
+    def g(x):
+      return x * 2
+
+    @functools.partial(jax.jit, inline=True)
+    def h(x):
+      y = g(x)
+      return y * 3
+
+    @jax.jit
+    def f(x):
+      return h(x)
+
+    inp = jnp.arange(8)
+    out = f(inp)
+    self.assertArraysEqual(out, inp * 6)
+
+    lowered_text = f.lower(jnp.arange(8)).as_text('hlo')
+    self.assertRegex(lowered_text,
+                     'to_apply=g.*frontend_attributes={_xla_compute_type="host"}')
+
   def test_compute_on_reduction(self):
     out_s = SingleDeviceSharding(jax.devices()[0], memory_kind='pinned_host')
 

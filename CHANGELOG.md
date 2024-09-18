@@ -12,6 +12,15 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## jax 0.4.34
 
+* New Functionality
+  * This release includes wheels for Python 3.13. Free-threading mode is not yet
+    supported.
+
+* Deprecations
+  * In {func}`jax.numpy.trim_zeros`, non-arraylike arguments or arraylike
+    arguments with `ndim != 1` are now deprecated, and in the future will result
+    in an error.
+
 * Deletion:
   * `jax.xla_computation` is deleted. It's been 3 months since it's deprecation
     in 0.4.30 JAX release.

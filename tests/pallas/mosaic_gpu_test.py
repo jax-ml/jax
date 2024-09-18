@@ -79,15 +79,14 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x), x + 1.0)
 
   def test_add_one_grid_with_scratch(self):
+
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([128 * 2], jnp.float32),
-        grid_spec=plgpu.GPUGridSpec(
-            in_specs=[pl.BlockSpec((128,), lambda *i: i)],
-            out_specs=pl.BlockSpec((128,), lambda *i: i),
-            scratch_shapes=[plgpu.SMEM((128,), jnp.float32)],
-            grid=2,
-        ),
+        in_specs=[pl.BlockSpec((128,), lambda *i: i)],
+        out_specs=pl.BlockSpec((128,), lambda *i: i),
+        scratch_shapes=[plgpu.SMEM((128,), jnp.float32)],
+        grid=2,
     )
     def kernel(x_ref, o_ref, scratch_ref):
       scratch_ref[...] = x_ref[...] + 1
@@ -120,10 +119,8 @@ class PallasCallTest(PallasTest):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
-        grid_spec=plgpu.GPUGridSpec(
-            out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
-            scratch_shapes=[plgpu.SMEM((128,), jnp.float32)],
-        ),
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        scratch_shapes=[plgpu.SMEM((128,), jnp.float32)],
     )
     def kernel(x_ref, o_ref_gmem, scratch_ref):
       scratch_ref[...] = x_ref[...] + 1
@@ -134,16 +131,15 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x), x + 1.0)
 
   def test_add_one_with_async_copy_gmem_to_smem(self):
+
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
-        grid_spec=plgpu.GPUGridSpec(
-            in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
-            scratch_shapes=[
-                plgpu.SMEM((128,), jnp.float32),
-                plgpu.Barrier(num_arrivals=1),
-            ],
-        ),
+        in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
+        scratch_shapes=[
+            plgpu.SMEM((128,), jnp.float32),
+            plgpu.Barrier(num_arrivals=1),
+        ],
     )
     def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
       plgpu.async_copy_gmem_to_smem(
