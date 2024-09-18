@@ -112,6 +112,11 @@ class DebuggerFrame:
       # then we subtract it off from the `lineno` and don't need to subtract 1
       # since both start and lineno are 1-indexed.
       offset = frame_info.lineno - max(start, 1)
+      if offset >= len(source):
+        # Sometimes we don't get a valid source/offset pair. This seems to
+        # happen sometimes when code uses eval(). If that happens, give up.
+        source = []
+        offset = None
     except OSError:
       source = []
       offset = None
