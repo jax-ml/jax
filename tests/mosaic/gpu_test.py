@@ -19,6 +19,7 @@ from functools import partial
 import itertools
 import math
 import operator
+import unittest
 
 from absl.testing import absltest, parameterized
 import jax
@@ -1387,6 +1388,29 @@ class ProfilerTest(TestCase):
     # Make sure we can invoke the same program on different devices.
     for xd in (jax.device_put(x, d) for d in jax.devices()[:2]):
       jax.block_until_ready(f(xd))
+
+
+class TorchTest(TestCase):
+
+  @classmethod
+  def setUpClass(cls):
+    try:
+      import torch
+    except ImportError:
+      raise unittest.SkipTest("Test requires PyTorch")
+    cls.torch = torch
+
+  def test_basic(self):
+    def kernel(ctx, i_gmem, o_gmem, _):
+      x = mgpu.FragmentedArray.load_strided(i_gmem)
+      (x + x).store_untiled(o_gmem)
+
+    ty = jax.ShapeDtypeStruct((128, 128), jnp.float32)
+    x = self.torch.randn((128, 128), dtype=self.torch.float, device='cuda')
+    f = mosaic_gpu.as_torch_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), ty, ty, ())
+    y = f(x)
+    np.testing.assert_allclose(y.cpu(), x.cpu() * 2)
+    del y  # Make sure the destructor runs successfully.
 
 
 if __name__ == "__main__":
