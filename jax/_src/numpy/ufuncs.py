@@ -117,7 +117,7 @@ def invert(x: ArrayLike, /) -> Array:
 
 
 @partial(jit, inline=True)
-def negative(x: ArrayLike, /) -> Array:
+def _negative(x: ArrayLike, /) -> Array:
   """Return element-wise negative values of the input.
 
   JAX implementation of :obj:`numpy.negative`.
@@ -2615,3 +2615,4 @@ bitwise_xor = ufunc(_bitwise_xor, name="bitwise_xor", nin=2, nout=1, identity=0,
 logical_and = ufunc(_logical_and, name="logical_and", nin=2, nout=1, identity=True, call=_logical_and, reduce=_logical_and_reduce)
 logical_or = ufunc(_logical_or, name="logical_or", nin=2, nout=1, identity=False, call=_logical_or, reduce=_logical_or_reduce)
 logical_xor = ufunc(_logical_xor, name="logical_xor", nin=2, nout=1, identity=False, call=_logical_xor)
+negative = ufunc(_negative, name="negative", nin=1, nout=1, call=_negative)
