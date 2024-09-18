@@ -494,6 +494,8 @@ class FragmentedArray:
       convert = arith.sitofp
     elif from_float and to_integer:
       convert = arith.fptosi
+    else:
+      raise NotImplementedError(f"Unsupported conversion {cur_dtype} -> {new_dtype}")
     new_registers = np.empty_like(self.registers)
     match self.layout:
       case WGMMAFragLayout():
