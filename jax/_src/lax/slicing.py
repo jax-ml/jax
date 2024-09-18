@@ -1362,7 +1362,7 @@ def _dynamic_update_slice_jvp(primals, tangents):
   g_operand, g_update = tangents[:2]
   val_out = dynamic_update_slice_p.bind(operand, update, *start_indices)
   if type(g_operand) is ad_util.Zero and type(g_update) is ad_util.Zero:
-    tangent_out = ad_util.Zero.from_value(val_out)
+    tangent_out = ad_util.Zero.from_primal_value(val_out)
   else:
     g_operand = ad.instantiate_zeros(g_operand)
     g_update = ad.instantiate_zeros(g_update)
@@ -2000,7 +2000,7 @@ def _scatter_add_jvp(primals, tangents, *, update_jaxpr, update_consts,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
       mode=mode)
   if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
-    tangent_out = ad_util.Zero.from_value(val_out)
+    tangent_out = ad_util.Zero.from_primal_value(val_out)
   else:
     g_operand = ad.instantiate_zeros(g_operand)
     g_updates = ad.instantiate_zeros(g_updates)
@@ -2180,7 +2180,7 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
       unique_indices=unique_indices, mode=mode)
 
   if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
-    tangent_out = ad_util.Zero.from_value(val_out)
+    tangent_out = ad_util.Zero.from_primal_value(val_out)
   else:
     g_operand = ad.instantiate_zeros(g_operand)
     g_updates = ad.instantiate_zeros(g_updates)
@@ -2294,7 +2294,7 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
       update_consts=update_consts, dimension_numbers=dnums,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
       mode=mode)
-    return val_out, ad_util.Zero.from_value(val_out)
+    return val_out, ad_util.Zero.from_primal_value(val_out)
 
   g_operand = ad.instantiate_zeros(g_operand)
   g_updates = ad.instantiate_zeros(g_updates)

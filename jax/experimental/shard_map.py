@@ -1405,7 +1405,7 @@ def _shard_map_jvp(trace, shard_map_p, f, tracers, mesh, in_names,
   f_jvp, out_tree = ad.traceable(f_jvp, in_tree)
   result = shard_map_p.bind(f_jvp, *args, **params)
   primal_out, tangent_out = tree_unflatten(out_tree(), result)
-  tangent_out = [ad.Zero(core.get_aval(p).at_least_vspace()) if t is None else t
+  tangent_out = [ad.Zero(core.get_aval(p).to_tangent_aval()) if t is None else t
                  for p, t in zip(primal_out, tangent_out)]
   return [ad.JVPTracer(trace, p, t) for p, t in zip(primal_out, tangent_out)]
 ad.JVPTrace.process_shard_map = _shard_map_jvp

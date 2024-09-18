@@ -1414,8 +1414,12 @@ def definitely_equal(x, y):
 class AbstractValue:
   __slots__: list[str] = []
 
-  def at_least_vspace(self):
+  def to_tangent_aval(self):
     raise NotImplementedError("must override")
+
+  # TODO(dougalm): deprecate this alias
+  def at_least_vspace(self):
+    return self.to_tangent_aval()
 
   def __repr__(self):
     try:
@@ -1524,6 +1528,12 @@ def get_aval(x):
   else:
     return concrete_aval(x)
 
+def get_type(x):
+  aval = get_aval(x)
+  if isinstance(aval, ConcreteArray):
+    return raise_to_shaped(aval)
+  else:
+    return aval
 
 def concretization_function_error(fun, suggest_astype=False):
   fname = getattr(fun, "__name__", fun)
@@ -1647,7 +1657,7 @@ class UnshapedArray(AbstractValue):
   _oct     = concretization_function_error(oct)
   _index   = concretization_function_error(operator.index)
 
-  def at_least_vspace(self) -> AbstractValue:
+  def to_tangent_aval(self) -> AbstractValue:
     return UnshapedArray(primal_dtype_to_tangent_dtype(self.dtype),
                          self.weak_type)
 
@@ -1786,7 +1796,7 @@ class ShapedArray(UnshapedArray):
     return hash((self.shape, self.dtype, self.weak_type,
                  getattr(self, 'sharding', None)))
 
-  def at_least_vspace(self):
+  def to_tangent_aval(self):
     return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
                        self.weak_type)
 
@@ -1945,7 +1955,7 @@ class DShapedArray(UnshapedArray):
     else:
       raise TypeError(self, other)
 
-  def at_least_vspace(self):
+  def to_tangent_aval(self):
     return DShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
                         self.weak_type)
 
@@ -2076,7 +2086,7 @@ class AbstractToken(AbstractValue):
     else:
       assert False, f"Cannot join {self} with {other}"
   def str_short(self, short_dtypes=False): return 'Tok'
-  def at_least_vspace(self): return self
+  def to_tangent_aval(self): return self
 abstract_token: AbstractToken = AbstractToken()
 
 # Singleton shaped array used by all abstract tokens when shape/dtype is needed.

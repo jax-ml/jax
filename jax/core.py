@@ -85,6 +85,7 @@ from jax._src.core import (
   full_lower as full_lower,
   gensym as gensym,
   get_aval as get_aval,
+  get_type as get_type,
   get_referent as get_referent,
   is_constant_dim as is_constant_dim,
   is_constant_shape as is_constant_shape,

@@ -7203,9 +7203,10 @@ class CustomJVPTest(jtu.JaxTestCase):
         TypeError,
         re.escape(
             "Custom JVP rule must produce primal and tangent outputs "
-            "with equal shapes and dtypes, but got float32[] and float32[1] "
-            "respectively."),
+            "with corresponding shapes and dtypes. "
+            "Expected float32[] (tangent type of float32[]) but got float32[1]."),
         lambda: api.jvp(f, (jnp.float32(2.),), (jnp.float32(1.),)))
+
 
   def test_jvp_rule_doesnt_return_pair_error_message(self):
     # https://github.com/google/jax/issues/2516
@@ -7536,12 +7537,12 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(tangents, 2 * jnp.arange(3., dtype='float32'))
 
   def test_float0(self):
+    scalar_float0 = jnp.zeros((), dtype=float0)
     @jax.custom_jvp
     def f(x, y):
       return x, y
     def f_jvp(primals, _):
-      # we need a defined (non-float0) tangent to trigger the rule
-      return primals, (2., 1)
+      return primals, (2., scalar_float0)
     f.defjvp(f_jvp)
 
     primals = (2., 3)
@@ -7551,12 +7552,13 @@ class CustomJVPTest(jtu.JaxTestCase):
                         (primals, expected_tangents))
 
   def test_float0_initial_style(self):
+    scalar_float0 = jnp.zeros((), dtype=float0)
     @jax.custom_jvp
     def f(x, y):
       return x, y
     def f_jvp(primals, _):
       x, y = primals
-      return (x, y), (2., 1)
+      return (x, y), (2., scalar_float0)
     f.defjvp(f_jvp)
 
     def foo(x, y):
@@ -7564,8 +7566,9 @@ class CustomJVPTest(jtu.JaxTestCase):
       return out
 
     primals = (2., 3)
-    tangents = (np.ones(()), np.zeros((), float0),)
-    expected_tangents = (2., np.zeros((), float0))
+    tangents = (np.ones(()), scalar_float0)
+    expected_tangents = (2., scalar_float0)
+
     self.assertAllClose(api.jvp(foo, primals, tangents),
                         (primals, expected_tangents))
 
@@ -8730,7 +8733,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     def f_fwd(x):
       return x, (2., x)
     def f_rev(*_):
-      return ((2., 1),)
+      return ((2., jnp.zeros(shape=(), dtype=float0)),)
     f.defvjp(f_fwd, f_rev)
 
     def foo(x, y):
@@ -9670,12 +9673,12 @@ class _custom_transpose:
 # an option of inferring output types.
 def custom_transpose(example_out):
   if isinstance(example_out, Callable):
-    out_type = core.get_aval(0.).at_least_vspace()
+    out_type = core.get_aval(0.).to_tangent_aval()
     return _custom_transpose(out_type, example_out)
   return partial(
       _custom_transpose,
       jax.tree.map(
-          lambda x: core.get_aval(x).at_least_vspace(), example_out))
+          lambda x: core.get_aval(x).to_tangent_aval(), example_out))
 
 
 class CustomTransposeTest(jtu.JaxTestCase):
