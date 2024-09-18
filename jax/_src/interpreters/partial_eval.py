@@ -2827,12 +2827,12 @@ def inline_jaxpr_into_trace(
     invars = [x if isinstance(x, Literal) else env[x] for x in eqn.invars]
     outvars = [Var('', v.aval) for v in eqn.outvars]
     src_ = (src if not eqn.source_info.name_stack else
-            src.replace(name_stack=src.name_stack + eqn.source_info.name_stack))
+            src.replace(name_stack=src.name_stack + eqn.source_info.name_stack)) 
     trace.frame.add_eqn(eqn.replace(invars, outvars, source_info=src_))  # type: ignore
     map(env.setdefault, eqn.outvars, outvars)
 
   tracer_env: dict[Var, Any] = dict(zip([*jaxpr.constvars, *jaxpr.invars],
-                                        [*consts, *arg_tracers]))
+                                        [*consts, *arg_tracers])) 
   def new_tracer(atom):
     tracer = tracer_env[atom] = DynamicJaxprTracer(trace, atom.aval, src)
     trace.frame.tracers.append(tracer)
