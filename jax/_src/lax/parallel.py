@@ -1458,7 +1458,7 @@ def _axis_index_lowering(ctx, *, axis_name):
                                          ctx.module_context.axis_env)]
 
 def _axis_index_effectful_abstract_eval(*, axis_name):
-  return out_aval, {core.NamedAxisEffect(axis_name)}
+  return ShapedArray((), np.int32), {core.NamedAxisEffect(axis_name)}
 
 def _axis_index_batcher(axis_data, _, vals_in, dims_in, *, axis_name):
   return lax.iota(np.int32, axis_data.size), 0
