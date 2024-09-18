@@ -951,7 +951,7 @@ class LoweringResult(NamedTuple):
   shape_poly_state: ShapePolyLoweringState
 
 
-_platforms_with_donation = ["cpu", "cuda", "rocm", "tpu"]
+_platforms_with_donation = ["cpu", "cuda", "rocm", "tpu", "neuron"]
 
 
 def add_manual_axes(axis_ctx: sharding_impls.SPMDAxisContext, sharding, ndim):
