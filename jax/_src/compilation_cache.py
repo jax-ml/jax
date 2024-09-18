@@ -72,7 +72,7 @@ def is_cache_used(backend: xla_client.Client) -> bool:
       # backend that supports serialization of executables.
       # TODO(skye): add warning when initializing cache on unsupported default
       # platform
-      supported_platforms = ["tpu", "gpu", "cpu"]
+      supported_platforms = ["tpu", "gpu", "cpu", "neuron"]
 
       if not _is_cache_enabled():
         monitoring.record_event('/jax/compilation_cache/task_disabled_cache')
