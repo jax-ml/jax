@@ -19,17 +19,21 @@ Remember to align the itemized text with the first line of an item within a list
     to be scalars. The restrictions on the arguments are backend-specific:
     Non-scalar arguments are currently only supported on GPU, when using Triton.
 
+* Deprecations
+
+* New functionality
+
+  * {func}`jax.experimental.pallas.pallas_call` now accepts `scratch_shapes`,
+    a PyTree specifying backend-specific temporary objects needed by the
+    kernel, for example, buffers, synchronization primitives etc.
+
 ## Released with jax 0.4.33 (September 16, 2024)
 
 ## Released with jax 0.4.32 (September 11, 2024)
 
-## Released with jax 0.4.32
-
 * Changes
   * The kernel function is not allowed to close over constants. Instead, all the needed arrays
     must be passed as inputs, with proper block specs ({jax-issue}`#22746`).
-
-* Deprecations
 
 * New functionality
   * Improved error messages for mistakes in the signature of the index map functions,
@@ -55,10 +59,6 @@ Remember to align the itemized text with the first line of an item within a list
     and should not be depended on.
   * Previously it was possible to import many APIs that are meant to be
     private, as `jax.experimental.pallas.pallas`. This is not possible anymore.
-
-
-* Deprecations
-
 
 * New Functionality
   * Added documentation for BlockSpec: {ref}`pallas_grids_and_blockspecs`.

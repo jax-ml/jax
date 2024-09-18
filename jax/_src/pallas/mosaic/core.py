@@ -19,7 +19,7 @@ from collections.abc import Sequence
 import dataclasses
 import enum
 import functools
-from typing import Any, ClassVar, Hashable, Literal
+from typing import Any, ClassVar, Literal
 
 import jax
 from jax._src import core as jax_core
@@ -39,6 +39,7 @@ BlockSpec = pallas_core.BlockSpec
 BlockSpecTree = pallas_core.BlockSpecTree
 GridMapping = pallas_core.GridMapping
 NoBlockSpec = pallas_core.NoBlockSpec
+ScratchShapeTree = pallas_core.ScratchShapeTree
 AbstractMemoryRef = pallas_core.AbstractMemoryRef
 no_block_spec = pallas_core.no_block_spec
 _convert_block_spec_to_block_mapping = pallas_core._convert_block_spec_to_block_mapping
@@ -174,14 +175,9 @@ class MemoryRef:
         jax_core.ShapedArray(self.shape, self.dtype), self.memory_space)
 
 
-@dataclasses.dataclass(init=False, unsafe_hash=True)
+@dataclasses.dataclass(init=False, kw_only=True, unsafe_hash=True)
 class PrefetchScalarGridSpec(pallas_core.GridSpec):
-  grid: TupleGrid
-  grid_names: tuple[Hashable, ...] | None
   num_scalar_prefetch: int
-  in_specs: pallas_core.BlockSpecTree
-  out_specs: pallas_core.BlockSpecTree
-  scratch_shapes: tuple[Any, ...]
 
   def __init__(
       self,
@@ -189,23 +185,15 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
       grid: Grid = (),
       in_specs: BlockSpecTree = no_block_spec,
       out_specs: BlockSpecTree = no_block_spec,
-      scratch_shapes: Any | Sequence[Any] = ()
+      scratch_shapes: ScratchShapeTree = ()
   ):
-    super().__init__(grid, in_specs, out_specs)
+    super().__init__(grid, in_specs, out_specs, scratch_shapes)
     self.num_scalar_prefetch = num_scalar_prefetch
     self.scratch_shapes = tuple(scratch_shapes)
 
   def _make_scalar_ref_aval(self, aval):
     return AbstractMemoryRef(jax_core.ShapedArray(aval.shape, aval.dtype),
                              TPUMemorySpace.SMEM)
-
-  def _make_scratch_aval(self, obj: object) -> jax_core.AbstractValue:
-    if isinstance(obj, MemoryRef):
-      return obj.get_aval()
-    if isinstance(obj, SemaphoreType):
-      return obj.get_aval()
-    raise ValueError(f"No registered conversion for {type(obj)}. "
-                     "Only VMEM and SemaphoreType are supported.")
 
 
 @dataclasses.dataclass(frozen=True)

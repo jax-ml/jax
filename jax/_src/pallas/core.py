@@ -728,7 +728,16 @@ def _convert_block_spec_to_block_mapping(
 
 index_map_grid_aval = jax_core.ShapedArray((), jnp.int32)
 
-@dataclasses.dataclass(init=False)
+
+class ScratchShape(Protocol):
+  def get_aval(self) -> jax_core.AbstractValue:
+    ...
+
+
+ScratchShapeTree = Sequence[Union[ScratchShape, "ScratchShapeTree"]]
+
+
+@dataclasses.dataclass(init=False, kw_only=True)
 class GridSpec:
   """Encodes the grid parameters for :func:`jax.experimental.pallas.pallas_call`.
 
@@ -741,12 +750,14 @@ class GridSpec:
   grid_names: tuple[Hashable, ...] | None
   in_specs: BlockSpecTree
   out_specs: BlockSpecTree
+  scratch_shapes: ScratchShapeTree = ()
 
   def __init__(
       self,
       grid: Grid = (),
       in_specs: BlockSpecTree = no_block_spec,
       out_specs: BlockSpecTree = no_block_spec,
+      scratch_shapes: ScratchShapeTree = (),
   ):
     # Be more lenient for in/out_specs
     if isinstance(in_specs, list):
@@ -758,6 +769,7 @@ class GridSpec:
 
     self.in_specs = in_specs
     self.out_specs = out_specs
+    self.scratch_shapes = tuple(scratch_shapes)
 
     grid_names = None
     if isinstance(grid, int):
@@ -772,9 +784,6 @@ class GridSpec:
       )
     self.grid = grid  # type: ignore
     self.grid_names = grid_names
-
-  def _make_scratch_aval(self, obj: object) -> jax_core.AbstractValue:
-    assert False  # Not needed in GridSpec
 
   def _make_scalar_ref_aval(self, aval):
     assert False  # Not needed in GridSpec
@@ -820,12 +829,10 @@ def get_grid_mapping(
   else:
     num_flat_scalar_prefetch = 0
     jaxpr_scalar_ref_avals = ()
-
-  scratch_shapes: tuple[Any, ...] = getattr(grid_spec, "scratch_shapes", ())
-  if scratch_shapes:
+  if grid_spec.scratch_shapes:
     flat_scratch_shapes, scratch_tree = tree_util.tree_flatten(
-        scratch_shapes)
-    flat_scratch_avals = map(grid_spec._make_scratch_aval, flat_scratch_shapes)
+        grid_spec.scratch_shapes)
+    flat_scratch_avals = map(lambda s: s.get_aval(), flat_scratch_shapes)
     num_flat_scratch_operands = len(flat_scratch_avals)
     jaxpr_scratch_avals = tree_util.tree_unflatten(
         scratch_tree, flat_scratch_avals)

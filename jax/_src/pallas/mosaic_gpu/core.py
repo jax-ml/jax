@@ -150,26 +150,6 @@ class GPUBlockSpec(pallas_core.BlockSpec):
     )
 
 
-@dataclasses.dataclass(init=False, kw_only=True)
-class GPUGridSpec(pallas_core.GridSpec):
-  scratch_shapes: Sequence[Any]
-
-  def __init__(
-      self,
-      grid: pallas_core.Grid = (),
-      in_specs: pallas_core.BlockSpecTree = pallas_core.no_block_spec,
-      out_specs: pallas_core.BlockSpecTree = pallas_core.no_block_spec,
-      scratch_shapes: Sequence[Any] = ()
-  ):
-    super().__init__(grid, in_specs, out_specs)
-    self.scratch_shapes = tuple(scratch_shapes)
-
-  def _make_scratch_aval(self, obj: object) -> jax_core.AbstractValue:
-    if isinstance(obj, (MemoryRef, Barrier)):
-      return obj.get_aval()
-    raise TypeError(f"Cannot convert {obj} to an abstract value")
-
-
 # TODO(b/354568887): Cosolidate this with TPU's MemoryRef.
 @dataclasses.dataclass(frozen=True)
 class MemoryRef:
