@@ -189,7 +189,7 @@ class BufferedRef:
     dtype: dtype for buffers.
     buffer_type: enum indicating whether this is an input, output, or in/out
       accumulator buffered reference.
-    vmem_ref: a double-buffer to hold a working buffer and a dirty buffer used
+    window_ref: a double-buffer to hold a working buffer and a dirty buffer used
       to copy into and out of.  In the case of a BufferedRef targeting a VMEM
       reference, this simply points to the existing ref.
     accum_ref: accumulating buffer used by accumulator BufferedRefs.
@@ -210,7 +210,7 @@ class BufferedRef:
   spec: pl.BlockSpec       # static metadata
   dtype: Any               # static metadata
   buffer_type: BufferType  # static metadata
-  vmem_ref: REF | None
+  window_ref: REF | None
   accum_ref: REF | None
   current_slot: ArrayRef | None
   next_slot: ArrayRef | None
@@ -218,9 +218,17 @@ class BufferedRef:
   sem_sends: SemaphoreTuple | None
 
   def tree_flatten(self):
-    return ((self.vmem_ref, self.accum_ref, self.current_slot,
-             self.next_slot, self.sem_recvs, self.sem_sends),
-            (self.spec, self.dtype, self.buffer_type))
+    return (
+        (
+            self.window_ref,
+            self.accum_ref,
+            self.current_slot,
+            self.next_slot,
+            self.sem_recvs,
+            self.sem_sends,
+        ),
+        (self.spec, self.dtype, self.buffer_type),
+    )
 
   @classmethod
   def tree_unflatten(cls, meta, data):
@@ -252,7 +260,7 @@ class BufferedRef:
           spec=spec,
           dtype=dtype,
           buffer_type=buffer_type,
-          vmem_ref=None,  # to be bound to existing ref by the pipeline routine
+          window_ref=None,  # to be bound to existing ref by the pipeline routine
           accum_ref=accum_ref,
           current_slot=None,
           next_slot=None,
@@ -260,11 +268,12 @@ class BufferedRef:
           sem_sends=None,
       )
     else:
+      memory_space = SMEM if spec.memory_space == SMEM else VMEM
       return cls(
           spec=spec,
           dtype=dtype,
           buffer_type=buffer_type,
-          vmem_ref=VMEM((2,) + block_shape, dtype),
+          window_ref=memory_space((2,) + block_shape, dtype),
           accum_ref=accum_ref,
           current_slot=SMEM((1,), jnp.int32),
           next_slot=SMEM((1,), jnp.int32),
@@ -313,9 +322,9 @@ class BufferedRef:
     buffer_slice = tuple(
         0 if x is None else slice(None) for x in self.block_shape)
     if self.memory_space == VMEM:
-      return self.vmem_ref.at[buffer_slice]
+      return self.window_ref.at[buffer_slice]
     else:
-      return self.vmem_ref.at[(self.current_slot[0], *buffer_slice)]
+      return self.window_ref.at[(self.current_slot[0], *buffer_slice)]
 
   @property
   def is_input(self):
@@ -341,11 +350,12 @@ class BufferedRef:
   def is_input_output(self):
     return self.buffer_type == BufferType.INPUT_OUTPUT
 
-  def bind_existing_ref(self, vmem_ref, indices):
+  def bind_existing_ref(self, window_ref, indices):
     """For handling VMEM references, the pipeline aliases the existing ref."""
     if self.memory_space == VMEM:
       return dataclasses.replace(
-          self, vmem_ref=vmem_ref.at[self.compute_slice(indices)])
+          self, window_ref=window_ref.at[self.compute_slice(indices)]
+      )
     return self
 
   def compute_slice(self, grid_indices):
@@ -432,8 +442,9 @@ class BufferedRef:
     dst_slice = tuple(pl.ds(0, s.size) for s in src_slice)
     tpu_primitives.make_async_copy(
         src_ref.at[src_slice],
-        self.vmem_ref.at[next_slot].at[dst_slice],
-        self.sem_recvs.at[next_slot]).start()
+        self.window_ref.at[next_slot].at[dst_slice],
+        self.sem_recvs.at[next_slot],
+    ).start()
 
   def copy_out(self, dst_ref, grid_indices):
     """Starts copy of HBM dma slice from the current slot."""
@@ -444,9 +455,10 @@ class BufferedRef:
     dst_slice = self.get_dma_slice(dst_ref.shape, dst_ref.dtype, grid_indices)
     src_slice = tuple(pl.ds(0, s.size) for s in dst_slice)
     tpu_primitives.make_async_copy(
-        self.vmem_ref.at[slot].at[src_slice],
+        self.window_ref.at[slot].at[src_slice],
         dst_ref.at[dst_slice],
-        self.sem_sends.at[slot]).start()
+        self.sem_sends.at[slot],
+    ).start()
 
   def wait_in(self, src_ref, grid_indices):
     """Waits for input copy to finish."""
@@ -456,9 +468,12 @@ class BufferedRef:
     dst_slice = tuple(pl.ds(0, s.size) for s in src_slice)
     current_slot = self.current_slot[0]
     tpu_primitives.make_async_copy(
-        src_ref.at[src_slice],                   # nb: doesn't matter
-        self.vmem_ref.at[current_slot].at[dst_slice],  # only dst shape is important
-        self.sem_recvs.at[current_slot]).wait()
+        src_ref.at[src_slice],  # nb: doesn't matter
+        self.window_ref.at[current_slot].at[
+            dst_slice
+        ],  # only dst shape is important
+        self.sem_recvs.at[current_slot],
+    ).wait()
 
   def wait_out(self, dst_ref, grid_indices):
     """Waits for output copy to finish."""
@@ -468,9 +483,10 @@ class BufferedRef:
     dst_slice = self.get_dma_slice(dst_ref.shape, dst_ref.dtype, grid_indices)
     src_slice = tuple(pl.ds(0, s.size) for s in dst_slice)
     tpu_primitives.make_async_copy(
-        self.vmem_ref.at[prev_slot].at[src_slice],  # nb: doesn't matter
-        dst_ref.at[dst_slice],        # only dst shape is important
-        self.sem_sends.at[prev_slot]).wait()
+        self.window_ref.at[prev_slot].at[src_slice],  # nb: doesn't matter
+        dst_ref.at[dst_slice],  # only dst shape is important
+        self.sem_sends.at[prev_slot],
+    ).wait()
 
   # Accumulator methods
   #
@@ -498,14 +514,14 @@ class BufferedRef:
     assert self.is_accumulator
     if self.accum_ref is not None:
       accum_dtype = jnp.float32
-      if self.vmem_ref.dtype == jnp.int32:
+      if self.window_ref.dtype == jnp.int32:
         accum_dtype = jnp.int32
       # TODO(levskaya): we could generalize init and reduction functions,
       # could it ever be useful to support more generic monoids?
       self.current_ref[...] = (
-          self.current_ref[...].astype(accum_dtype) +
-          self.accum_ref[...].astype(accum_dtype)
-      ).astype(self.vmem_ref.dtype)
+          self.current_ref[...].astype(accum_dtype)
+          + self.accum_ref[...].astype(accum_dtype)
+      ).astype(self.window_ref.dtype)
 
 
 # Helper to tree map over BufferedRefs as leaves.
