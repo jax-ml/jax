@@ -732,6 +732,7 @@ def get_pmap_jaxpr(
       in_axes, out_axes_thunk, avals)
   with core.extend_axis_env([(axis_name, axis_size)]):
     jaxpr, consts, replicas, shards = stage_parallel_callable(pci, fun)
+  jaxpr = core.remove_named_axis_effects(jaxpr, {axis_name})
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   return closed_jaxpr, backend, replicas, shards, pci
 

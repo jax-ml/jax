@@ -14,8 +14,8 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict, deque, namedtuple
-from collections.abc import (Callable, Hashable, Iterable, Iterator, Sequence,
-                             MutableSet, MutableMapping)
+from collections.abc import (Callable, Collection, Hashable, Iterable, Iterator,
+                             Sequence, MutableSet, MutableMapping)
 from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass
 import functools
@@ -2650,7 +2650,7 @@ def _check_map(ctx_factory, prim, in_avals, params):
   out_avals = [unmapped_aval(axis_size, axis_name, out_axis, aval)
                if out_axis is not None else aval
                for aval, out_axis in zip(mapped_out_avals, out_axes)]
-  return out_avals, call_jaxpr.effects
+  return out_avals, filter_named_axis_effects(call_jaxpr.effects, {axis_name})
 
 
 # ------------------- Jaxpr printed representation -------------------
