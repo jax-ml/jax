@@ -1992,9 +1992,8 @@ class DynamicJaxprTrace(core.Trace):
     if update_params:
       new_params = update_params(new_params, [True] * len(explicit_tracers),
                                  len(consts) + len(implicit_tracers))
-    effs = core.filter_named_axis_effects(jaxpr.effects, {axis_name})
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars, call_primitive,
-                        new_params, effs, source_info)
+                        new_params, new_params['call_jaxpr'].effects, source_info)
     self.frame.add_eqn(eqn)
     return [t for t, (_, keep) in zip(out_tracers, out_type) if keep]
 
@@ -2029,8 +2028,9 @@ class DynamicJaxprTrace(core.Trace):
       update_params = call_param_updaters.get(map_primitive)
       if update_params:
         new_params = update_params(new_params, [True] * len(tracers), len(consts))
+      effs = core.filter_named_axis_effects(jaxpr.effects, {axis_name})
       eqn = new_jaxpr_eqn([*constvars, *invars], outvars, map_primitive,
-                          new_params, jaxpr.effects, source_info)
+                          new_params, effs, source_info)
       self.frame.add_eqn(eqn)
     return out_tracers
 
