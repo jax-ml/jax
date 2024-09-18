@@ -82,7 +82,7 @@ class TilingTransform(MemoryRefTransform):
   def __call__(
       self, block_aval: pallas_core.AbstractMemoryRef
   ) -> pallas_core.AbstractMemoryRef:
-    block_shape = block_aval.inner_aval.shape  # pytype: disable=attribute-error
+    block_shape = block_aval.shape
     old_tiled_dims = block_shape[-len(self.tiling) :]
     num_tiles = tuple(
         block_dim // tiling_dim

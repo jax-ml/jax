@@ -516,8 +516,7 @@ def _convert_outputs_to_writes(
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
       eval_jaxpr, [*in_avals, *res_ref_avals])
   assert not consts
-  return jaxpr, [core.ShapedArray(a.inner_aval.shape, a.inner_aval.dtype)  # pytype: disable=attribute-error
-                 for a in res_ref_avals]
+  return jaxpr, [core.ShapedArray(a.shape, a.dtype) for a in res_ref_avals]
 
 def _convert_inputs_to_reads(num_res: int, jaxpr: core.Jaxpr) -> core.Jaxpr:
   assert not jaxpr.constvars, "Jaxpr should not have constvars"

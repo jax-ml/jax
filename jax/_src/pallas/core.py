@@ -659,9 +659,10 @@ class GridMapping:
   @property
   def in_shapes(self) -> Iterable[jax.ShapeDtypeStruct]:
     """The shapes of *index, *inputs."""
-    index_shapes = (jax.ShapeDtypeStruct(ia.inner_aval.shape,
-                                         ia.inner_aval.dtype)
-                    for ia in self.index_map_avals[len(self.grid):])
+    index_shapes = (
+        jax.ShapeDtypeStruct(ia.shape, ia.dtype)
+        for ia in self.index_map_avals[len(self.grid) :]
+    )
     inputs_shapes = (
         bm.array_shape_dtype
         for bm in self.block_mappings[:self.num_inputs])

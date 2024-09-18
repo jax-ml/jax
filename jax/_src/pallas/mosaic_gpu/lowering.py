@@ -268,10 +268,7 @@ def lower_jaxpr_to_module(
       for bm in grid_mapping.block_mappings[: grid_mapping.num_inputs]
   ]
   in_structs_smem = [
-      jax.ShapeDtypeStruct(
-          [num_stages, *bm.ref_aval.inner_aval.shape],
-          bm.ref_aval.inner_aval.dtype,
-      )
+      jax.ShapeDtypeStruct([num_stages, *bm.ref_aval.shape], bm.ref_aval.dtype)
       if in_smem
       else None
       for bm, in_smem in zip(
