@@ -419,7 +419,7 @@ def main(_):
   print_ir(jnp.bfloat16(0))(lax.sqrt)
 
   # CHECK-LABEL: TEST: tan float16[]
-  # CHECK: hlo.tan
+  # CHECK: chlo.tan
   # CHECK-SAME: tensor<f16>
   print_ir(np.float16(0))(lax.tan)
 
