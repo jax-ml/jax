@@ -53,17 +53,6 @@ _COMPILER_DETAILED_LOGGING_MIN_OPS = config.int_flag(
     ),
 )
 
-_ENABLE_COMPILER_REMAT_OPTIMIZATION_PASS = config.bool_flag(
-    "jax_compiler_enable_remat_pass",
-    config.bool_env('JAX_COMPILER_ENABLE_REMAT_PASS', False),
-    help=(
-      'Config to enable the rematerialization HLO pass. '
-      'Useful to allow XLA to automatically trade off memory and '
-      'compute when encountering OOM errors. However, you are '
-      'likely to get better results manually with jax.checkpoint'
-    )
-)
-
 # The special XLA-AutoFDO profile version that indicates that a profile is not
 # available and retrieval should not be attempted.
 _NO_PROFILE_DONT_RETRIEVE = -1
@@ -211,7 +200,7 @@ def get_compile_options(
     debug_options.xla_llvm_disable_expensive_passes = True
     debug_options.xla_test_all_input_layouts = False
   
-  if not _ENABLE_COMPILER_REMAT_OPTIMIZATION_PASS.value:
+  if not config.enable_remat_opt_pass.value:
     debug_options.xla_disable_hlo_passes = "rematerialization"
 
   # XLA-AutoFDO profile version: precedence order is:
