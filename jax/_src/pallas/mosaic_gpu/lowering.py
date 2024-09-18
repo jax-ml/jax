@@ -693,8 +693,9 @@ def _debug_print_lowering_rule(
     fmt,
     has_placeholders: bool,
 ):
-  del ctx
-  del has_placeholders
+  del has_placeholders  # Unused.
+  if any(aval.shape for aval in ctx.avals_in):
+    raise NotImplementedError("Only scalar values are supported")
   primitives.check_debug_print_format(fmt, *args)
   mgpu.debug_print(fmt, *args)
   return ()

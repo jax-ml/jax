@@ -11,6 +11,18 @@ For the overall JAX change log see [here](https://jax.readthedocs.io/en/latest/c
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
+## Released with jax 0.4.34
+
+* Changes
+
+  * {func}`jax.experimental.pallas.debug_print` no longer requires all arguments
+    to be scalars. The restrictions on the arguments are backend-specific:
+    Non-scalar arguments are currently only supported on GPU, when using Triton.
+
+## Released with jax 0.4.33 (September 16, 2024)
+
+## Released with jax 0.4.32 (September 11, 2024)
+
 ## Released with jax 0.4.32
 
 * Changes
@@ -19,7 +31,7 @@ Remember to align the itemized text with the first line of an item within a list
 
 * Deprecations
 
-* New functionality:
+* New functionality
   * Improved error messages for mistakes in the signature of the index map functions,
     to include the name and source location of the index map.
 
@@ -73,7 +85,3 @@ Remember to align the itemized text with the first line of an item within a list
   * Added checkify support for {func}`jax.experimental.pallas.pallas_call` in
     interpret mode ({jax-issue}`#21862`).
   * Improved support for PRNG keys for TPU kernels ({jax-issue}`#21773`).
-
-
-
-

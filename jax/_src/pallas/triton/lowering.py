@@ -1202,7 +1202,14 @@ def debug_print_lowering_rule(
         "pl.debug_print() does not support placeholders when lowering to Triton"
     )
 
-  tt_dialect.print_(f" {fmt} ", hex=False, args=args)
+  tt_dialect.print_(
+      f" {fmt} ",
+      hex=False,
+      args=args,
+      is_signed=ir.DenseI32ArrayAttr.get([
+          jnp.issubdtype(aval.dtype, jnp.signedinteger) for aval in ctx.avals_in
+      ]),
+  )
   return ()
 
 
