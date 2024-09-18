@@ -4497,14 +4497,6 @@ def _supports_buffer_protocol(obj):
     return True
 
 
-_ARRAY_DOC = """
-This function will create arrays on JAX's default device. For control of the
-device placement of data, see :func:`jax.device_put`. More information is
-available in the JAX FAQ at :ref:`faq-data-placement` (full FAQ at
-https://jax.readthedocs.io/en/latest/faq.html).
-"""
-
-
 def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
           order: str | None = "K", ndmin: int = 0,
           *, device: xc.Device | Sharding | None = None) -> Array:
@@ -5320,9 +5312,50 @@ def array_equiv(a1: ArrayLike, a2: ArrayLike) -> Array:
 
 # General np.from* style functions mostly delegate to numpy.
 
-@util.implements(np.frombuffer)
 def frombuffer(buffer: bytes | Any, dtype: DTypeLike = float,
                count: int = -1, offset: int = 0) -> Array:
+  r"""Convert a buffer into a 1-D JAX array.
+
+  JAX implementation of :func:`numpy.frombuffer`.
+
+  Args:
+    buffer: an object containing the data. It must be either a bytes object with
+      a length that is an integer multiple of the dtype element size, or
+      it must be an object exporting the `Python buffer interface`_.
+    dtype: optional. Desired data type for the array. Default is ``float64``.
+      This specifes the dtype used to parse the buffer, but note that after parsing,
+      64-bit values will be cast to 32-bit JAX arrays if the ``jax_enable_x64``
+      flag is set to ``False``.
+    count: optional integer specifying the number of items to read from the buffer.
+      If -1 (default), all items from the buffer are read.
+    offset: optional integer specifying the number of bytes to skip at the beginning
+      of the buffer. Default is 0.
+
+  Returns:
+    A 1-D JAX array representing the interpreted data from the buffer.
+
+  See also:
+    - :func:`jax.numpy.fromstring`: convert a string of text into 1-D JAX array.
+
+  Examples:
+    Using a bytes buffer:
+
+    >>> buf = b"\x00\x01\x02\x03\x04"
+    >>> jnp.frombuffer(buf, dtype=jnp.uint8)
+    Array([0, 1, 2, 3, 4], dtype=uint8)
+    >>> jnp.frombuffer(buf, dtype=jnp.uint8, offset=1)
+    Array([1, 2, 3, 4], dtype=uint8)
+
+    Constructing a JAX array via the Python buffer interface, using Python's
+    built-in :mod:`array` module.
+
+    >>> from array import array
+    >>> pybuffer = array('i', [0, 1, 2, 3, 4])
+    >>> jnp.frombuffer(pybuffer, dtype=jnp.int32)
+    Array([0, 1, 2, 3, 4], dtype=int32)
+
+  .. _Python buffer interface: https://docs.python.org/3/c-api/buffer.html
+  """
   return asarray(np.frombuffer(buffer=buffer, dtype=dtype, count=count, offset=offset))
 
 
@@ -6985,7 +7018,7 @@ def diagflat(v: ArrayLike, k: int = 0) -> Array:
   return res
 
 
-def trim_zeros(filt, trim='fb'):
+def trim_zeros(filt: ArrayLike, trim: str ='fb') -> Array:
   """Trim leading and/or trailing zeros of the input array.
 
   JAX implementation of :func:`numpy.trim_zeros`.
@@ -7007,14 +7040,26 @@ def trim_zeros(filt, trim='fb'):
     >>> jnp.trim_zeros(x)
     Array([2, 0, 1, 4, 3], dtype=int32)
   """
-  filt = core.concrete_or_error(asarray, filt,
-    "Error arose in the `filt` argument of trim_zeros()")
-  nz = (filt == 0)
+  # Non-array inputs are deprecated 2024-09-11
+  util.check_arraylike("trim_zeros", filt, emit_warning=True)
+  core.concrete_or_error(None, filt,
+                         "Error arose in the `filt` argument of trim_zeros()")
+  filt_arr = jax.numpy.asarray(filt)
+  del filt
+  if filt_arr.ndim != 1:
+    # Added on 2024-09-11
+    if deprecations.is_accelerated("jax-numpy-trimzeros-not-1d-array"):
+      raise TypeError(f"'filt' must be 1-D array, but received {filt_arr.ndim}-D array.")
+    warnings.warn(
+      "Passing arrays with ndim != 1 to jnp.trim_zeros() is deprecated. Currently, it "
+      "works with Arrays having ndim != 1. In the future this will result in an error.",
+      DeprecationWarning, stacklevel=2)
+  nz = (filt_arr == 0)
   if reductions.all(nz):
-    return empty(0, _dtype(filt))
-  start = argmin(nz) if 'f' in trim.lower() else 0
-  end = argmin(nz[::-1]) if 'b' in trim.lower() else 0
-  return filt[start:len(filt) - end]
+    return empty(0, filt_arr.dtype)
+  start: Array | int = argmin(nz) if 'f' in trim.lower() else 0
+  end: Array | int = argmin(nz[::-1]) if 'b' in trim.lower() else 0
+  return filt_arr[start:len(filt_arr) - end]
 
 
 def trim_zeros_tol(filt, tol, trim='fb'):
@@ -7364,20 +7409,17 @@ def dot(a: ArrayLike, b: ArrayLike, *,
   batch_dims = ((), ())
   a_ndim, b_ndim = ndim(a), ndim(b)
   if a_ndim == 0 or b_ndim == 0:
-    # TODO(jakevdp): lower this case to dot_general as well?
-    # Currently, doing so causes issues in remat tests due to #16805
-    if preferred_element_type is not None:
-      a = a.astype(preferred_element_type)
-      b = b.astype(preferred_element_type)
-    result = lax.mul(a, b)
+    contract_dims: tuple[tuple[int, ...], tuple[int, ...]] = ((), ())
   else:
     if b_ndim == 1:
       contract_dims = ((a_ndim - 1,), (0,))
     else:
       contract_dims = ((a_ndim - 1,), (b_ndim - 2,))
-    result = lax.dot_general(a, b, dimension_numbers=(contract_dims, batch_dims),
-                             precision=precision, preferred_element_type=preferred_element_type)
-  return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
+  result = lax.dot_general(a, b, dimension_numbers=(contract_dims, batch_dims),
+                           precision=precision,
+                           preferred_element_type=preferred_element_type)
+  return lax_internal._convert_element_type(result, preferred_element_type,
+                                            output_weak_type)
 
 
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
@@ -8486,9 +8528,41 @@ def argwhere(
   return result.reshape(result.shape[0], ndim(a))
 
 
-@util.implements(np.argmax, skip_params=['out'])
 def argmax(a: ArrayLike, axis: int | None = None, out: None = None,
            keepdims: bool | None = None) -> Array:
+  """Return the index of the maximum value of an array.
+
+  JAX implementation of :func:`numpy.argmax`.
+
+  Args:
+    a: input array
+    axis: optional integer specifying the axis along which to find the maximum
+      value. If ``axis`` is not specified, ``a`` will be flattened.
+    out: unused by JAX
+    keepdims: if True, then return an array with the same number of dimensions
+      as ``a``.
+
+  Returns:
+    an array containing the index of the maximum value along the specified axis.
+
+  See also:
+    - :func:`jax.numpy.argmin`: return the index of the minimum value.
+    - :func:`jax.numpy.nanargmax`: compute ``argmax`` while ignoring NaN values.
+
+  Examples:
+    >>> x = jnp.array([1, 3, 5, 4, 2])
+    >>> jnp.argmax(x)
+    Array(2, dtype=int32)
+
+    >>> x = jnp.array([[1, 3, 2],
+    ...                [5, 4, 1]])
+    >>> jnp.argmax(x, axis=1)
+    Array([1, 0], dtype=int32)
+
+    >>> jnp.argmax(x, axis=1, keepdims=True)
+    Array([[1],
+           [0]], dtype=int32)
+  """
   util.check_arraylike("argmax", a)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.argmax is not supported.")
@@ -8508,9 +8582,42 @@ def _argmax(a: Array, axis: int | None = None, keepdims: bool = False) -> Array:
   result = lax.argmax(a, _canonicalize_axis(axis, a.ndim), dtypes.canonicalize_dtype(int_))
   return expand_dims(result, dims) if keepdims else result
 
-@util.implements(np.argmin, skip_params=['out'])
+
 def argmin(a: ArrayLike, axis: int | None = None, out: None = None,
            keepdims: bool | None = None) -> Array:
+  """Return the index of the minimum value of an array.
+
+  JAX implementation of :func:`numpy.argmax`.
+
+  Args:
+    a: input array
+    axis: optional integer specifying the axis along which to find the maximum
+      value. If ``axis`` is not specified, ``a`` will be flattened.
+    out: unused by JAX
+    keepdims: if True, then return an array with the same number of dimensions
+      as ``a``.
+
+  Returns:
+    an array containing the index of the maximum value along the specified axis.
+
+  See also:
+    - :func:`jax.numpy.argmax`: return the index of the maximum value.
+    - :func:`jax.numpy.nanargmin`: compute ``argmin`` while ignoring NaN values.
+
+  Examples:
+    >>> x = jnp.array([1, 3, 5, 4, 2])
+    >>> jnp.argmin(x)
+    Array(0, dtype=int32)
+
+    >>> x = jnp.array([[1, 3, 2],
+    ...                [5, 4, 1]])
+    >>> jnp.argmin(x, axis=1)
+    Array([0, 2], dtype=int32)
+
+    >>> jnp.argmin(x, axis=1, keepdims=True)
+    Array([[0],
+           [2]], dtype=int32)
+  """
   util.check_arraylike("argmin", a)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.argmin is not supported.")
@@ -8531,19 +8638,57 @@ def _argmin(a: Array, axis: int | None = None, keepdims: bool = False) -> Array:
   return expand_dims(result, dims) if keepdims else result
 
 
-_NANARG_DOC = """\
-Warning: jax.numpy.arg{} returns -1 for all-NaN slices and does not raise
-an error.
-"""
-
-
-@util.implements(np.nanargmax, lax_description=_NANARG_DOC.format("max"), skip_params=['out'])
 def nanargmax(
     a: ArrayLike,
     axis: int | None = None,
     out: None = None,
     keepdims: bool | None = None,
 ) -> Array:
+  """Return the index of the maximum value of an array, ignoring NaNs.
+
+  JAX implementation of :func:`numpy.nanargmax`.
+
+  Args:
+    a: input array
+    axis: optional integer specifying the axis along which to find the maximum
+      value. If ``axis`` is not specified, ``a`` will be flattened.
+    out: unused by JAX
+    keepdims: if True, then return an array with the same number of dimensions
+      as ``a``.
+
+  Returns:
+    an array containing the index of the maximum value along the specified axis.
+
+  Note:
+    In the case of an axis with all-NaN values, the returned index will be -1.
+    This differs from the behavior of :func:`numpy.nanargmax`, which raises an error.
+
+  See also:
+    - :func:`jax.numpy.argmax`: return the index of the maximum value.
+    - :func:`jax.numpy.nanargmin`: compute ``argmin`` while ignoring NaN values.
+
+  Examples:
+    >>> x = jnp.array([1, 3, 5, 4, jnp.nan])
+
+    Using a standard :func:`~jax.numpy.argmax` leads to potentially unexpected results:
+
+    >>> jnp.argmax(x)
+    Array(4, dtype=int32)
+
+    Using ``nanargmax`` returns the index of the maximum non-NaN value.
+
+    >>> jnp.nanargmax(x)
+    Array(2, dtype=int32)
+
+    >>> x = jnp.array([[1, 3, jnp.nan],
+    ...                [5, 4, jnp.nan]])
+    >>> jnp.nanargmax(x, axis=1)
+    Array([1, 0], dtype=int32)
+
+    >>> jnp.nanargmax(x, axis=1, keepdims=True)
+    Array([[1],
+           [0]], dtype=int32)
+  """
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanargmax is not supported.")
   return _nanargmax(a, None if axis is None else operator.index(axis), keepdims=bool(keepdims))
@@ -8560,13 +8705,50 @@ def _nanargmax(a, axis: int | None = None, keepdims: bool = False):
   return where(reductions.all(nan_mask, axis=axis, keepdims=keepdims), -1, res)
 
 
-@util.implements(np.nanargmin, lax_description=_NANARG_DOC.format("min"),  skip_params=['out'])
 def nanargmin(
     a: ArrayLike,
     axis: int | None = None,
     out: None = None,
     keepdims: bool | None = None,
 ) -> Array:
+
+  """Return the index of the minimum value of an array, ignoring NaNs.
+
+  JAX implementation of :func:`numpy.nanargmin`.
+
+  Args:
+    a: input array
+    axis: optional integer specifying the axis along which to find the maximum
+      value. If ``axis`` is not specified, ``a`` will be flattened.
+    out: unused by JAX
+    keepdims: if True, then return an array with the same number of dimensions
+      as ``a``.
+
+  Returns:
+    an array containing the index of the minimum value along the specified axis.
+
+  Note:
+    In the case of an axis with all-NaN values, the returned index will be -1.
+    This differs from the behavior of :func:`numpy.nanargmin`, which raises an error.
+
+  See also:
+    - :func:`jax.numpy.argmin`: return the index of the minimum value.
+    - :func:`jax.numpy.nanargmax`: compute ``argmax`` while ignoring NaN values.
+
+  Examples:
+    >>> x = jnp.array([jnp.nan, 3, 5, 4, 2])
+    >>> jnp.nanargmin(x)
+    Array(4, dtype=int32)
+
+    >>> x = jnp.array([[1, 3, jnp.nan],
+    ...                [5, 4, jnp.nan]])
+    >>> jnp.nanargmin(x, axis=1)
+    Array([0, 1], dtype=int32)
+
+    >>> jnp.nanargmin(x, axis=1, keepdims=True)
+    Array([[0],
+           [1]], dtype=int32)
+  """
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanargmin is not supported.")
   return _nanargmin(a, None if axis is None else operator.index(axis), keepdims=bool(keepdims))
@@ -8646,11 +8828,40 @@ def sort(
   return lax.rev(result, dimensions=[dimension]) if descending else result
 
 
-@util.implements(np.sort_complex)
 @jit
 def sort_complex(a: ArrayLike) -> Array:
+  """Return a sorted copy of complex array.
+
+  JAX implementation of :func:`numpy.sort_complex`.
+
+  Complex numbers are sorted lexicographically, meaning by their real part
+  first, and then by their imaginary part if real parts are equal.
+
+  Args:
+    a: input array. If dtype is not complex, the array will be upcast to complex.
+
+  Returns:
+    A sorted array of the same shape and complex dtype as the input. If ``a``
+    is multi-dimensional, it is sorted along the last axis.
+
+  See also:
+    - :func:`jax.numpy.sort`: Return a sorted copy of an array.
+
+  Examples:
+    >>> a = jnp.array([1+2j, 2+4j, 3-1j, 2+3j])
+    >>> jnp.sort_complex(a)
+    Array([1.+2.j, 2.+3.j, 2.+4.j, 3.-1.j], dtype=complex64)
+
+    Multi-dimensional arrays are sorted along the last axis:
+
+    >>> a = jnp.array([[5, 3, 4],
+    ...                [6, 9, 2]])
+    >>> jnp.sort_complex(a)
+    Array([[3.+0.j, 4.+0.j, 5.+0.j],
+           [2.+0.j, 6.+0.j, 9.+0.j]], dtype=complex64)
+  """
   util.check_arraylike("sort_complex", a)
-  a = lax.sort(asarray(a), dimension=0)
+  a = lax.sort(asarray(a))
   return lax.convert_element_type(a, dtypes.to_complex_dtype(a.dtype))
 
 @util.implements(np.lexsort)
@@ -10493,7 +10704,7 @@ def _searchsorted_via_scan(unrolled: bool, sorted_arr: Array, query: Array, side
 def _searchsorted_via_sort(sorted_arr: Array, query: Array, side: str, dtype: type) -> Array:
   working_dtype = int32 if sorted_arr.size + query.size < np.iinfo(np.int32).max else int64
   def _rank(x):
-    idx = lax.iota(working_dtype, len(x))
+    idx = lax.iota(working_dtype, x.shape[0])
     return zeros_like(idx).at[argsort(x)].set(idx)
   query_flat = query.ravel()
   if side == 'left':
@@ -10586,8 +10797,8 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
   a, v = util.promote_dtypes(a, v)
   if sorter is not None:
     a = a[sorter]
-  dtype = int32 if len(a) <= np.iinfo(np.int32).max else int64
-  if len(a) == 0:
+  dtype = int32 if a.shape[0] <= np.iinfo(np.int32).max else int64
+  if a.shape[0] == 0:
     return zeros_like(v, dtype=dtype)
   impl = {
       'scan': partial(_searchsorted_via_scan, False),
@@ -10597,9 +10808,46 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
   }[method]
   return impl(asarray(a), asarray(v), side, dtype)  # type: ignore
 
-@util.implements(np.digitize)
-@partial(jit, static_argnames=('right',))
-def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False) -> Array:
+
+@partial(jit, static_argnames=('right', 'method'))
+def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False,
+             *, method: str | None = None) -> Array:
+  """Convert an array to bin indices.
+
+  JAX implementation of :func:`numpy.digitize`.
+
+  Args:
+    x: array of values to digitize.
+    bins: 1D array of bin edges. Must be monotonically increasing or decreasing.
+    right: if true, the intervals include the right bin edges. If false (default)
+      the intervals include the left bin edges.
+    method: optional method argument to be passed to :func:`~jax.numpy.searchsorted`.
+      See that function for available options.
+
+  Returns:
+    An integer array of the same shape as ``x`` indicating the bin number that
+    the values are in.
+
+  See also:
+    - :func:`jax.numpy.searchsorted`: find insertion indices for values in a
+      sorted array.
+    - :func:`jax.numpy.histogram`: compute frequency of array values within
+      specified bins.
+
+  Examples:
+    >>> x = jnp.array([1.0, 2.0, 2.5, 1.5, 3.0, 3.5])
+    >>> bins = jnp.array([1, 2, 3])
+    >>> jnp.digitize(x, bins)
+    Array([1, 2, 2, 1, 3, 3], dtype=int32)
+    >>> jnp.digitize(x, bins, right=True)
+    Array([0, 1, 2, 1, 2, 3], dtype=int32)
+
+    ``digitize`` supports reverse-ordered bins as well:
+
+    >>> bins = jnp.array([3, 2, 1])
+    >>> jnp.digitize(x, bins)
+    Array([2, 1, 1, 2, 0, 0], dtype=int32)
+  """
   util.check_arraylike("digitize", x, bins)
   right = core.concrete_or_error(bool, right, "right argument of jnp.digitize()")
   bins_arr = asarray(bins)
@@ -10608,10 +10856,11 @@ def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False) -> Array:
   if bins_arr.shape[0] == 0:
     return zeros_like(x, dtype=int32)
   side = 'right' if not right else 'left'
+  kwds: dict[str, str] = {} if method is None else {'method': method}
   return where(
     bins_arr[-1] >= bins_arr[0],
-    searchsorted(bins_arr, x, side=side),
-    len(bins_arr) - searchsorted(bins_arr[::-1], x, side=side)
+    searchsorted(bins_arr, x, side=side, **kwds),
+    bins_arr.shape[0] - searchsorted(bins_arr[::-1], x, side=side, **kwds)
   )
 
 

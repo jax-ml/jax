@@ -15,7 +15,6 @@
 import contextlib
 import math
 from functools import partial
-import unittest
 from absl.testing import absltest
 import numpy as np
 
@@ -511,8 +510,6 @@ class LayoutTest(jtu.JaxTestCase):
         'Layout passed to jit does not match the layout on the respective arg'):
       g(arr)
 
-  @unittest.skipIf(xla_extension_version < 282,
-                   "Requires xla_extension_version >= 282")
   def test_in_layouts_jit_jnp_input(self):
     major_last_layout = DLL(major_to_minor=(1, 0))
     sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])

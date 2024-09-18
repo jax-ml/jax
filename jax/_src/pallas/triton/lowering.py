@@ -277,6 +277,10 @@ def lower_jaxpr_to_triton_module(
     raise NotImplementedError(
         "scalar prefetch not implemented in the Triton backend"
     )
+  if jaxpr.invars[grid_mapping.slice_scratch_ops]:
+    raise NotImplementedError(
+        "scratch memory not implemented in the Triton backend"
+    )
   with grid_mapping.trace_env():
     jaxpr, _ = pe.dce_jaxpr(
         jaxpr, [True] * len(jaxpr.outvars), instantiate=True
@@ -1202,7 +1206,14 @@ def debug_print_lowering_rule(
         "pl.debug_print() does not support placeholders when lowering to Triton"
     )
 
-  tt_dialect.print_(f" {fmt} ", hex=False, args=args)
+  tt_dialect.print_(
+      f" {fmt} ",
+      hex=False,
+      args=args,
+      is_signed=ir.DenseI32ArrayAttr.get([
+          jnp.issubdtype(aval.dtype, jnp.signedinteger) for aval in ctx.avals_in
+      ]),
+  )
   return ()
 
 

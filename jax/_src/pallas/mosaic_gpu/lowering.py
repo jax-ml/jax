@@ -268,10 +268,7 @@ def lower_jaxpr_to_module(
       for bm in grid_mapping.block_mappings[: grid_mapping.num_inputs]
   ]
   in_structs_smem = [
-      jax.ShapeDtypeStruct(
-          [num_stages, *bm.ref_aval.inner_aval.shape],
-          bm.ref_aval.inner_aval.dtype,
-      )
+      jax.ShapeDtypeStruct([num_stages, *bm.ref_aval.shape], bm.ref_aval.dtype)
       if in_smem
       else None
       for bm, in_smem in zip(
@@ -693,8 +690,9 @@ def _debug_print_lowering_rule(
     fmt,
     has_placeholders: bool,
 ):
-  del ctx
-  del has_placeholders
+  del has_placeholders  # Unused.
+  if any(aval.shape for aval in ctx.avals_in):
+    raise NotImplementedError("Only scalar values are supported")
   primitives.check_debug_print_format(fmt, *args)
   mgpu.debug_print(fmt, *args)
   return ()

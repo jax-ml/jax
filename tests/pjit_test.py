@@ -56,8 +56,8 @@ from jax._src.interpreters import pxla
 from jax._src.lib.mlir import dialects
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -653,18 +653,16 @@ class PJitTest(jtu.BufferDonationTestCase):
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testAutodiffCache(self):
-    f = pjit(
-        lambda x: jnp.sin(x).sum(), in_shardings=P('x'), out_shardings=None
-    )
+    f = pjit(lambda x: jnp.sin(x).sum(), in_shardings=P('x'), out_shardings=None)
     x = jnp.arange(16, dtype=jnp.float32)
-    jax.grad(f)(x)  # Warm up the cache.
-    before = pjit_lib._pjit_lower_cached.cache_info()
-    jax.grad(f)(x)
-    after = pjit_lib._pjit_lower_cached.cache_info()
 
-    # One hit for the forward pass, one hit for backward.
-    self.assertEqual(after.hits, before.hits + 2)
-    self.assertEqual(after.misses, before.misses)
+    jax.grad(f)(x)  # Warm up the cache.
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      jax.grad(f)(x)
+    if xla_extension_version >= 286:
+      self.assertEqual(count[0], 0)  # no cache miss i.e. cache hit
+    else:
+      self.assertEqual(count[0], 2)
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testEvalJaxpr(self):
@@ -4433,8 +4431,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
         "Compiled object called with input sharding.*does not match"):
       compiled(cpu_arr)
 
-  @unittest.skipIf(xla_extension_version < 281,
-                   'Requires xla_extension_version >= 281')
   def test_different_devices_wsc_abstract_mesh_cache_hit(self):
     if jax.device_count() < 4:
       self.skipTest('Requires >=4 devices')
@@ -4463,8 +4459,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(lowering_count[0], 1)
     self.assertEqual(compilation_count[0], 2)  # 2 misses since devices differ.
 
-  @unittest.skipIf(xla_extension_version < 281,
-                   'Requires xla_extension_version >= 281')
   def test_wsc_abstract_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     np_inp = np.arange(16).reshape(8, 2)
@@ -4484,8 +4478,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(out_eager, np_inp * 2)
     self.assertEqual(out_eager.sharding, NamedSharding(mesh, P('x')))
 
-  @unittest.skipIf(xla_extension_version < 281,
-                   'Requires xla_extension_version >= 281')
   def test_wsc_sds_abstract_mesh(self):
     mesh = jtu.create_mesh((2,), 'x')
     s = NamedSharding(mesh, P())
@@ -4499,8 +4491,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     sds = jax.ShapeDtypeStruct((8, 2), np.float32, sharding=s)
     f.eval_shape(sds)  # doesn't crash
 
-  @unittest.skipIf(xla_extension_version < 281,
-                   'Requires xla_extension_version >= 281')
   def test_wsc_vmap_abstract_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
@@ -4517,8 +4507,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out2 = jax.jit(jax.vmap(f, spmd_axis_name='y'))(arr)
     self.assertEqual(out2.sharding, NamedSharding(mesh, P('y', 'x')))
 
-  @unittest.skipIf(xla_extension_version < 281,
-                   'Requires xla_extension_version >= 281')
   def test_wsc_abstract_mesh_errors(self):
     mesh = jtu.create_mesh((2,), ('x',))
     np_inp = np.arange(8)
@@ -4541,6 +4529,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
         'Mesh shape of the input.*does not'
         ' match the mesh shape of the target sharding.*'):
       with_sharding_constraint(arr, NamedSharding(abs_mesh2, P('y')))
+
+  @unittest.skipIf(xla_extension_version < 286,
+                   "Requires xla_extension_version >= 286")
+  def test_global_jit_cpp_cache_hit_out_shardings(self):
+    mesh = jtu.create_mesh((2,), 'x')
+    s = NamedSharding(mesh, P('x'))
+
+    def f(x):
+      return x * 2
+
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      jax.jit(f, out_shardings=s)(np.arange(8))
+      jax.jit(f, out_shardings=s)(np.arange(8))
+    self.assertEqual(count[0], 1)
 
 
 def spec_regex(s):

@@ -282,13 +282,13 @@ pip install -U --pre jax jaxlib -f https://storage.googleapis.com/jax-releases/j
 - Google Cloud TPU:
 
 ```bash
-pip install -U --pre jax[tpu] jaxlib libtpu-nightly -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+pip install -U --pre jax jaxlib libtpu-nightly requests -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 ```
 
 - NVIDIA GPU (CUDA 12):
 
 ```bash
-pip install -U --pre jax[cuda12] jaxlib jax-cuda12-plugin jax-cuda12-pjrt -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
+pip install -U --pre jax jaxlib jax-cuda12-plugin[with_cuda] jax-cuda12-pjrt -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
 ```
 
 - NVIDIA GPU (CUDA 12) legacy:

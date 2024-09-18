@@ -80,3 +80,9 @@ pytype_strict_library(
     srcs = ["ffi.py"],
     deps = ["//jax"],
 )
+
+pytype_strict_library(
+    name = "ifrt_programs",
+    srcs = ["ifrt_programs.py"],
+    deps = ["//jax/_src/lib"],
+)

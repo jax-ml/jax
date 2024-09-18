@@ -514,11 +514,7 @@ def _cholesky_cpu_lowering(ctx, operand):
   out_aval, = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
   op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-  # TODO(b/344892332): Remove the check after the compatibility period.
-  if jaxlib_version < (0, 4, 31):
-    ctx_arg = ()
-  else:
-    ctx_arg = (ctx,)
+  ctx_arg = (ctx,)
   result, info = lapack.potrf_hlo(*ctx_arg, operand_aval.dtype, operand,
                                   lower=True, a_shape_vals=op_shape_vals)
 
@@ -556,7 +552,7 @@ def _cholesky_update_abstract_eval(r_matrix, w_vector):
 
 def _cholesky_update_gpu_lowering_rule(target_name_prefix, ctx, r_matrix, w_vector):
   # TODO(b/360781533): Remove guard after 3 week forward compatibility period.
-  if ctx.is_forward_compat() or jaxlib_version < (0, 4, 32):
+  if ctx.is_forward_compat():
     r_matrix_aval, _ = ctx.avals_in
     try:
       [platform] = ctx.module_context.platforms
@@ -726,8 +722,7 @@ def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
   out_aval = ctx.avals_out[0]
   batch_dims = operand_aval.shape[:-2]
   op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-  # TODO(b/344892332): Remove the conditional after the compatibility period.
-  ctx_args = (ctx,) if jaxlib_version >= (0, 4, 32) else ()
+  ctx_args = (ctx,)
   w, vl, vr, info = lapack.geev_hlo(*ctx_args, operand_aval.dtype, operand,
                                     input_shape_vals=op_shape_vals,
                                     jobvl=compute_left_eigenvectors,
@@ -937,8 +932,7 @@ def _eigh_cpu_gpu_lowering(
   op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
   cpu_args = []
   if platform == "cpu":
-    # TODO(b/344892332): Remove the conditional after the compatibility period.
-    ctx_args = (ctx,) if jaxlib_version >= (0, 4, 32) else ()
+    ctx_args = (ctx,)
     cpu_args.extend(ctx_args)
   v, w, info = syevd_impl(*cpu_args, operand_aval.dtype, operand,
                           a_shape_vals=op_shape_vals, lower=lower)
@@ -1511,9 +1505,9 @@ def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand, *, platform: str,
   info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
   m = operand_aval.shape[-2]
 
-  # TODO(b/357034884): Remove version gate once jaxlib 0.4.32 is the minimum
-  # version and the forward compat flag after the 3 week compatibility window.
-  if jaxlib_version < (0, 4, 32) or ctx.is_forward_compat():
+  # TODO(b/357034884): Remove version gate on the forward compat flag after the
+  # 3 week compatibility window.
+  if ctx.is_forward_compat():
     if not is_constant_shape(operand_aval.shape[-2:]):
       raise NotImplementedError(
         "Shape polymorphism for native lowering for lu on CPU and GPU is "
@@ -1757,9 +1751,8 @@ def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a, *,
       a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a)
     else:
       a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, a_aval.shape)
-      # TODO(b/344892332): Remove the conditional after the compatibility period
       ctx_args = (
-          (ctx,) if platform == "cpu" and jaxlib_version >= (0, 4, 32) else ()
+          (ctx,) if platform == "cpu" else ()
       )
       a_out, taus, *maybe_info_geqrf = geqrf_impl(
           *ctx_args, a_aval.dtype, a, a_shape_vals=a_shape_vals
@@ -1881,9 +1874,8 @@ def _householder_product_cpu_gpu_lowering(orgqr_impl, ctx, a, taus, *,
           f"on GPU is not implemented; b/261671778; {a_aval.shape}")
     a, info_orgqr = orgqr_impl(a_aval.dtype, a, taus)
   else:
-    # TODO(b/344892332): Remove the conditional after the compatibility period
     ctx_args = (
-        (ctx,) if platform == "cpu" and jaxlib_version >= (0, 4, 32) else ()
+        (ctx,) if platform == "cpu" else ()
     )
     a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, a_aval.shape)
     tau_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, taus_aval.shape)
@@ -2152,8 +2144,7 @@ def _svd_cpu_gpu_lowering(
                                 compute_uv=compute_uv)
   else:
     a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-    # TODO(b/344892332): Remove the conditional after the compatibility period.
-    ctx_args = (ctx,) if jaxlib_version >= (0, 4, 32) else ()
+    ctx_args = (ctx,)
     s, u, vt, info = gesvd_impl(*ctx_args, operand_aval.dtype, operand,
                                 full_matrices=full_matrices,
                                 compute_uv=compute_uv,

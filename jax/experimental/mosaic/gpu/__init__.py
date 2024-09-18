@@ -27,6 +27,7 @@ import subprocess
 import tempfile
 import time
 from typing import Any, Generic, TypeVar
+import weakref
 
 import jax
 from jax._src import config
@@ -800,6 +801,21 @@ def _lower_as_gpu_kernel(
   return module, out_shape, unwrap_output_tuple
 
 
+def _declare_runtime_functions():
+  """Declares the runtime functions that can be used by the generated code."""
+  ptr_ty = ir.Type.parse("!llvm.ptr")
+  i64 = ir.IntegerType.get_signless(64)
+  arg_tys = [ptr_ty, ptr_ty, i64, i64, ptr_ty, ptr_ty, i64, ptr_ty]
+  init_tma_desc_type = ir.FunctionType.get(arg_tys, [])
+  func.FuncOp(
+      "mosaic_gpu_init_tma_desc", init_tma_desc_type, visibility="private"
+  )
+  memcpy_async_type = ir.FunctionType.get([ptr_ty, ptr_ty, i64, ptr_ty], [])
+  func.FuncOp(
+      "mosaic_gpu_memcpy_async_h2d", memcpy_async_type, visibility="private"
+  )
+
+
 def as_gpu_kernel(
     body,
     grid: tuple[int, int, int],
@@ -867,16 +883,97 @@ def as_gpu_kernel(
     return kernel
 
 
-def _declare_runtime_functions():
-  """Declares the runtime functions that can be used by the generated code."""
-  ptr_ty = ir.Type.parse("!llvm.ptr")
-  i64 = ir.IntegerType.get_signless(64)
-  arg_tys = [ptr_ty, ptr_ty, i64, i64, ptr_ty, ptr_ty, i64, ptr_ty]
-  init_tma_desc_type = ir.FunctionType.get(arg_tys, [])
-  func.FuncOp(
-      "mosaic_gpu_init_tma_desc", init_tma_desc_type, visibility="private"
+def as_torch_gpu_kernel(
+    body,
+    grid: tuple[int, int, int],
+    block: tuple[int, int, int],
+    in_shape,
+    out_shape,
+    smem_scratch_shape: ShapeTree | Union[ShapeTree],
+    prof_spec: profiler.ProfilerSpec | None = None,
+    cluster: tuple[int, int, int] = (1, 1, 1),
+    module_name: str = "unknown",
+):
+  try:
+    import torch
+  except ImportError:
+    raise RuntimeError("as_torch_gpu_kernel requires PyTorch")
+  torch.cuda.init()  # Make sure CUDA context is set up.
+
+  if isinstance(in_shape, list):
+    in_shape = tuple(in_shape)
+  elif not isinstance(in_shape, tuple):
+    in_shape = (in_shape,)
+
+  flat_out_types, out_treedef = jax.tree.flatten(out_shape)
+  expected_arg_treedef = jax.tree.structure(in_shape)
+
+  module, out_shape, unwrap_output_tuple = (
+      _lower_as_gpu_kernel(
+          body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape,
+          module_name, prof_spec
+      )
   )
-  memcpy_async_type = ir.FunctionType.get([ptr_ty, ptr_ty, i64, ptr_ty], [])
-  func.FuncOp(
-      "mosaic_gpu_memcpy_async_h2d", memcpy_async_type, visibility="private"
-  )
+
+  # Get our hands on the compilation and unload functions
+  try:
+    import jax_plugins.xla_cuda12 as cuda_plugin
+  except ImportError:
+    raise RuntimeError("as_torch_gpu_kernel only works with recent jaxlib builds "
+                       "that use backend plugins")
+  dll = ctypes.CDLL(cuda_plugin._get_library_path())
+  compile_func = dll.MosaicGpuCompile
+  compile_func.argtypes = [ctypes.c_void_p]
+  compile_func.restype = ctypes.POINTER(ctypes.c_void_p)
+  unload_func = dll.MosaicGpuUnload
+  unload_func.argtypes = [compile_func.restype]
+  unload_func.restype = None
+
+  module_asm = module.operation.get_asm(binary=True, enable_debug_info=True)
+  compiled = compile_func(ctypes.c_char_p(module_asm))
+  if compiled is None:
+    raise RuntimeError("Failed to compile the module")
+  ctx, launch_ptr = compiled[0], compiled[1]
+  ctx_ptr_ptr = ctypes.pointer(ctypes.c_void_p(ctx))
+  launch = ctypes.CFUNCTYPE(None, ctypes.c_void_p)(launch_ptr)
+
+  def as_torch_dtype(dtype):
+    # torch contains NumPy-compatible dtypes in its top namespace
+    return getattr(torch, np.dtype(dtype).name)
+
+  def apply(*args):
+    flat_args, arg_treedef = jax.tree.flatten(args)
+    if arg_treedef != expected_arg_treedef:
+      raise ValueError(
+          f"Invalid argument structure: expected {expected_arg_treedef}, got"
+          f" {arg_treedef}, ({args=})"
+      )
+
+    # Construct a device pointer list like in the XLA calling convention
+    buffers = (ctypes.c_void_p * (arg_treedef.num_leaves + out_treedef.num_leaves))()
+    i = -1  # Define i in case there are no args
+    device = 'cuda'
+    for i, arg in enumerate(flat_args):
+      buffers[i] = arg.data_ptr()
+      device = arg.device
+    flat_outs = []
+    for i, t in enumerate(flat_out_types, i + 1):
+      out = torch.empty(t.shape, dtype=as_torch_dtype(t.dtype), device=device)
+      flat_outs.append(out)
+      buffers[i] = out.data_ptr()
+    # Allocate another buffer for args of the host-side program. This is sadly
+    # the default MLIR calling convention.
+    args_ptr = (ctypes.POINTER(ctypes.c_void_p) * 3)()
+    args_ptr[0] = ctx_ptr_ptr
+    args_ptr[1] = ctypes.pointer(torch.cuda.default_stream(device)._as_parameter_)
+    args_ptr[2] = ctypes.cast(ctypes.pointer(ctypes.pointer(buffers)),
+                              ctypes.POINTER(ctypes.c_void_p))
+    launch(args_ptr)
+    return jax.tree.unflatten(out_treedef, flat_outs)
+
+  # Unload the compiled code when the Python function is destroyed.
+  def unload(_):
+    unload_func(compiled)
+  apply.destructor = weakref.ref(apply, unload)
+
+  return apply

@@ -80,7 +80,7 @@ def write_setup_cfg(sources_path, cpu):
 license_files = LICENSE.txt
 
 [bdist_wheel]
-plat-name={tag}
+plat_name={tag}
 python-tag=py3
 """
     )

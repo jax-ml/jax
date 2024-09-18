@@ -2384,7 +2384,7 @@ def _scatter_transpose_rule(t, operand, indices, updates, *,
                             update_jaxpr, update_consts, dimension_numbers,
                             indices_are_sorted, unique_indices, mode):
   if not unique_indices:
-    raise NotImplementedError("scatter transpose is only implemented where"
+    raise NotImplementedError("scatter transpose is only implemented where "
                               "unique_indices=True")
   assert not ad.is_undefined_primal(indices)
   if ad.is_undefined_primal(updates):

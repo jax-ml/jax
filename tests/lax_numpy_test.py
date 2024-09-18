@@ -1478,6 +1478,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = lambda arg1: jnp.trim_zeros(arg1, trim)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
 
+  def testTrimZerosNotOneDArray(self):
+    # TODO: make this an error after the deprecation period.
+    with self.assertWarnsRegex(DeprecationWarning,
+                               r"Passing arrays with ndim != 1 to jnp.trim_zeros\(\)"):
+      jnp.trim_zeros(jnp.array([[0.0, 1.0, 0.0],[2.0, 4.5, 0.0]]))
+
   @jtu.sample_product(
     rank=(1, 2),
     dtype=default_dtypes,
@@ -2797,6 +2803,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(xshape, dtype), jnp.sort(rng(binshape, dtype))[order]]
     np_fun = lambda x, bins: np.digitize(x, bins, right=right).astype('int32')
     jnp_fun = lambda x, bins: jnp.digitize(x, bins, right=right)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    xshape=[(20,), (5, 4)],
+    binshape=[(0,), (1,), (5,)],
+    right=[True, False],
+    method=['scan', 'scan_unrolled', 'sort', 'compare_all'],
+    reverse=[True, False],
+    dtype=default_dtypes,
+  )
+  def testDigitizeMethod(self, xshape, binshape, right, method, reverse, dtype):
+    order = jnp.index_exp[::-1] if reverse else jnp.index_exp[:]
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(xshape, dtype), jnp.sort(rng(binshape, dtype))[order]]
+    np_fun = lambda x, bins: np.digitize(x, bins, right=right).astype('int32')
+    jnp_fun = lambda x, bins: jnp.digitize(x, bins, right=right, method=method)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -4272,14 +4295,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertArraysEqual(jnp.argsort(x), argsorted_stable)
     self.assertArraysEqual(jnp.argsort(x, descending=True), argsorted_rev_stable)
 
-  @jtu.sample_product(
-    [dict(shape=shape, axis=axis)
-      for shape in one_dim_array_shapes
-      for axis in [None]
-    ],
-    dtype=all_dtypes,
-  )
-  def testSortComplex(self, dtype, shape, axis):
+  @jtu.sample_product(shape=nonzerodim_shapes, dtype=all_dtypes)
+  def testSortComplex(self, shape, dtype):
     rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(np.sort_complex, jnp.sort_complex, args_maker,

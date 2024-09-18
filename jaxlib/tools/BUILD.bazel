@@ -64,11 +64,12 @@ py_test(
 cc_binary(
     name = "pjrt_c_api_gpu_plugin.so",
     linkopts = [
-        "-Wl,--version-script,$(location @xla//xla/pjrt/c:pjrt_c_api_gpu_version_script.lds)",
+        "-Wl,--version-script,$(location :gpu_version_script.lds)",
         "-Wl,--no-undefined",
     ],
     linkshared = True,
     deps = [
+        ":gpu_version_script.lds",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu_version_script.lds",
         "@xla//xla/service:gpu_plugin",

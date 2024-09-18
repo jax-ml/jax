@@ -62,35 +62,15 @@ namespace jax {
   FFI_ASSIGN_OR_RETURN_CONCAT_INNER_(x, y)
 
 // All the macros below here are to handle the case in FFI_ASSIGN_OR_RETURN
-// where the LHS is wrapped in parentheses.
-#define FFI_ASSIGN_OR_RETURN_EAT(...)
-#define FFI_ASSIGN_OR_RETURN_REM(...) __VA_ARGS__
-#define FFI_ASSIGN_OR_RETURN_EMPTY()
-
-#define FFI_ASSIGN_OR_RETURN_IS_EMPTY_INNER(...) \
-  FFI_ASSIGN_OR_RETURN_IS_EMPTY_INNER_HELPER((__VA_ARGS__, 0, 1))
-#define FFI_ASSIGN_OR_RETURN_IS_EMPTY_INNER_HELPER(args) \
-  FFI_ASSIGN_OR_RETURN_IS_EMPTY_INNER_I args
-#define FFI_ASSIGN_OR_RETURN_IS_EMPTY_INNER_I(e0, e1, is_empty, ...) is_empty
-
-#define FFI_ASSIGN_OR_RETURN_IS_EMPTY(...) \
-  FFI_ASSIGN_OR_RETURN_IS_EMPTY_I(__VA_ARGS__)
-#define FFI_ASSIGN_OR_RETURN_IS_EMPTY_I(...) \
-  FFI_ASSIGN_OR_RETURN_IS_EMPTY_INNER(_, ##__VA_ARGS__)
-
-#define FFI_ASSIGN_OR_RETURN_IF_1(_Then, _Else) _Then
-#define FFI_ASSIGN_OR_RETURN_IF_0(_Then, _Else) _Else
-#define FFI_ASSIGN_OR_RETURN_IF(_Cond, _Then, _Else) \
-  FFI_ASSIGN_OR_RETURN_CONCAT_(FFI_ASSIGN_OR_RETURN_IF_, _Cond)(_Then, _Else)
-
-#define FFI_ASSIGN_OR_RETURN_IS_PARENTHESIZED(...) \
-  FFI_ASSIGN_OR_RETURN_IS_EMPTY(FFI_ASSIGN_OR_RETURN_EAT __VA_ARGS__)
-
-#define FFI_ASSIGN_OR_RETURN_UNPARENTHESIZE_IF_PARENTHESIZED(...)             \
-  FFI_ASSIGN_OR_RETURN_IF(FFI_ASSIGN_OR_RETURN_IS_PARENTHESIZED(__VA_ARGS__), \
-                          FFI_ASSIGN_OR_RETURN_REM,                           \
-                          FFI_ASSIGN_OR_RETURN_EMPTY())                       \
-  __VA_ARGS__
+// where the LHS is wrapped in parentheses. See a more detailed discussion at
+// https://stackoverflow.com/a/62984543
+#define FFI_ASSIGN_OR_RETURN_UNPARENTHESIZE_IF_PARENTHESIZED(X) \
+  FFI_ASSIGN_OR_RETURN_ESCAPE(FFI_ASSIGN_OR_RETURN_EMPTY X)
+#define FFI_ASSIGN_OR_RETURN_EMPTY(...) FFI_ASSIGN_OR_RETURN_EMPTY __VA_ARGS__
+#define FFI_ASSIGN_OR_RETURN_ESCAPE(...) \
+  FFI_ASSIGN_OR_RETURN_ESCAPE_(__VA_ARGS__)
+#define FFI_ASSIGN_OR_RETURN_ESCAPE_(...) FFI_ASSIGN_OR_RETURN_##__VA_ARGS__
+#define FFI_ASSIGN_OR_RETURN_FFI_ASSIGN_OR_RETURN_EMPTY
 
 template <typename T>
 inline absl::StatusOr<T> MaybeCastNoOverflow(

@@ -282,9 +282,9 @@ class JaxprEqnContext:
 
   def __repr__(self):
     return (
-        f"JaxprEqnContext(compute_type={self.compute_type},"
-        f"threefry_partitionable={self.threefry_partitionable}),"
-        f"xla_metadata={self.xla_metadata}"
+        f"JaxprEqnContext(compute_type={self.compute_type}, "
+        f"threefry_partitionable={self.threefry_partitionable}, "
+        f"xla_metadata={self.xla_metadata})"
     )
 
 
@@ -342,8 +342,7 @@ def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
   ctx = ctx or JaxprEqnContext(
       compute_on.current_compute_type(),
       config.threefry_partitionable.value,
-      xla_metadata_lib.current_xla_metadata(),
-  )
+      xla_metadata_lib.current_xla_metadata())
   if config.enable_checks.value:
     assert all(isinstance(x, (Var, Literal)) for x in  invars)
     assert all(isinstance(v,  Var)           for v in outvars)
@@ -1253,6 +1252,10 @@ class AbstractValue:
   def to_tangent_aval(self):
     raise NotImplementedError("must override")
 
+  # TODO(dougalm): deprecate this alias
+  def at_least_vspace(self):
+    return self.to_tangent_aval()
+
   def __repr__(self):
     try:
       kv_pairs = (f'{k}={v}' for k, v in self.__dict__.items())
@@ -1360,6 +1363,12 @@ def get_aval(x):
   else:
     return concrete_aval(x)
 
+def get_type(x):
+  aval = get_aval(x)
+  if isinstance(aval, ConcreteArray):
+    return raise_to_shaped(aval)
+  else:
+    return aval
 
 def concretization_function_error(fun, suggest_astype=False):
   fname = getattr(fun, "__name__", fun)

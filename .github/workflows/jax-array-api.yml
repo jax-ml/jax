@@ -9,6 +9,10 @@ on:
       - '**workflows/jax-array-api.yml'
       - '**experimental/array_api/**'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
 

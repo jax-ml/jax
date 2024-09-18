@@ -2843,11 +2843,6 @@ _POLY_SHAPE_TEST_HARNESSES = [
           ((2, 3, 8, 4), "b1, b2, ..."),
           ((2, 3, 4, 5), "b1, b2, m, n"),
       ]
-      # TODO(danfm): Remove once jaxlib v0.4.32 is the minimum version.
-      # jaxlib versions before 0.4.32 require a static shape for the non-batch
-      # dimensions because these are used for computing the "permuation_size"
-      # which is passed to lu_pivots_to_permutation.
-      if jaxlib_version >= (0, 4, 32) or not poly.endswith("m, n")
     ],
     [
       # The random primitive tests, with threefry (both partitionable and

@@ -46,6 +46,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import NamedSharding, parse_flatten_op_sharding
+from jax._src.api_util import shaped_abstractify
 from jax._src.state import discharge as state_discharge
 
 logger = logging.getLogger(__name__)
@@ -256,12 +257,29 @@ def debug_callback(callback: Callable[..., None], *args: Any,
     raise TypeError("first argument to jax.debug.callback must be callable, "
                     f"but got an object of type {type(callback)}")
   flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
-  effect = ordered_debug_effect if ordered else debug_effect
-  def _flat_callback(*flat_args):
-    args, kwargs = tree_util.tree_unflatten(in_tree, flat_args)
+  static_args, dyn_args = {}, []
+  for i, a in enumerate(flat_args):
+    try:
+      shaped_abstractify(a)
+      dyn_args.append(a)
+    except (AssertionError, TypeError):
+      static_args[i] = a
+
+  def _flat_callback(*dyn_args):
+    all_args = [None] * (len(static_args) + len(dyn_args))
+    di = iter(dyn_args)
+    for i in range(len(all_args)):
+      if i in static_args:
+        all_args[i] = static_args[i]
+      else:
+        all_args[i] = next(di)
+    assert next(di, None) is None
+    args, kwargs = tree_util.tree_unflatten(in_tree, all_args)
     callback(*args, **kwargs)
     return ()
-  debug_callback_p.bind(*flat_args, callback=_flat_callback, effect=effect)
+
+  effect = ordered_debug_effect if ordered else debug_effect
+  debug_callback_p.bind(*dyn_args, callback=_flat_callback, effect=effect)
 
 class _DebugPrintFormatChecker(string.Formatter):
 
