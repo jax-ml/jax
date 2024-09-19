@@ -24,18 +24,19 @@ import math
 from typing import Any, cast
 
 import jax
+from jax import lax
 from jax._src import core as jax_core
 from jax._src import pjit
 from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.lax import lax
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
+from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.state import primitives as sp
 from jax.experimental.mosaic import gpu as mosaic_gpu
@@ -320,7 +321,7 @@ def lower_jaxpr_to_module(
     )
     program_ids = map(_program_id, range(len(grid_mapping.grid)))
     start_indices = map(
-        functools.partial(_eval_index_map, module_ctx, launch_ctx, program_ids),
+        partial(_eval_index_map, module_ctx, launch_ctx, program_ids),
         block_mappings,
     )
     in_start_indices, out_start_indices = util.split_list(
@@ -718,6 +719,80 @@ def _run_scoped_lowering_rule(
   return outs
 
 
+def _lower_jaxpr_to_for_loop(
+    ctx: LoweringRuleContext,
+    jaxpr: jax_core.Jaxpr,
+    start: ir.Value,
+    length: ir.Value,
+    consts,
+    *args,
+    has_loop_index: bool,
+):
+
+  @mgpu.fori(length, [*args])
+  def loop(loop_index, body_args):
+    if has_loop_index:
+      loop_index = arith_dialect.addi(loop_index, start)
+      jaxpr_args = [*consts, loop_index, *body_args]
+    else:
+      jaxpr_args = [*consts, *body_args]
+    return lower_jaxpr_to_mosaic_gpu(
+        ctx.module_ctx, ctx.launch_ctx, jaxpr, jaxpr_args
+    )
+
+  return loop.results
+
+
+@register_lowering_rule(lax.scan_p)
+def _scan_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    jaxpr: jax_core.ClosedJaxpr,
+    linear: tuple[bool, ...],
+    length: int,
+    reverse: bool,
+    unroll: bool | int,
+    num_consts: int,
+    num_carry: int,
+    _split_transpose: bool,
+):
+  # Can only handle fori_loop-like scans.
+  if (
+      (num_extensive := len(args) - num_consts - num_carry)
+      or reverse
+      or unroll != 1
+  ):
+    raise NotImplementedError
+  del linear, num_extensive, reverse, unroll
+
+  jaxpr, jaxpr_consts = jaxpr.jaxpr, jaxpr.consts
+  if jaxpr_consts:
+    raise NotImplementedError
+  del jaxpr_consts
+
+  jaxpr, has_loop_index = pallas_utils.pattern_match_scan_to_fori_loop(
+      jaxpr, num_consts, num_carry
+  )
+  consts, args = util.split_list(args, [num_consts])
+  _consts_avals, arg_avals = util.split_list(ctx.avals_in, [num_consts])
+  if has_loop_index:
+    start, *args = args
+    index_aval, *_arg_avals = arg_avals
+    start = _ensure_ir_value(start, index_aval)
+    length = _ir_constant(length, start.type)
+  else:
+    start = _i32_constant(0)
+    length = _i32_constant(length)
+  for_out = _lower_jaxpr_to_for_loop(
+      ctx, jaxpr, start, length, consts, *args, has_loop_index=has_loop_index
+  )
+  if has_loop_index:
+    # Need to return the final loop index value if the outer scan expects
+    # it as an output.
+    return [length, *for_out]
+  return for_out
+
+
 def _bcast(
     x: ir.Value,
     y: ir.Value,
@@ -750,8 +825,16 @@ def _ensure_fa(x: object, dtype: jnp.dtype) -> mgpu.FragmentedArray:
         _ir_constant(x, mlir.dtype_to_ir_type(dtype)), ()
     )
   elif isinstance(x, ir.Value):
-    if isinstance(x.type, (ir.IntegerType, ir.FloatType)):
+    if isinstance(x.type, (ir.IntegerType, ir.FloatType, ir.IndexType)):
       return mgpu.FragmentedArray.splat(x, ())
+  raise NotImplementedError(f"Unsupported type: {type(x)}")
+
+
+def _ensure_ir_value(x: object, aval: jax_core.ShapedArray) -> ir.Value:
+  if isinstance(x, ir.Value):
+    return x
+  elif isinstance(x, (np.number, np.ndarray, int, float)):
+    return _ir_constant(x, mlir.dtype_to_ir_type(aval.dtype))
   raise NotImplementedError(f"Unsupported type: {type(x)}")
 
 
@@ -766,8 +849,12 @@ def _ir_constant(v: object, t: ir.Type) -> ir.Value:
   raise NotImplementedError(f"Unsupported constant: {v!r}")
 
 
-def _i32_constant(v: object) -> ir.Value:
-  return _ir_constant(v, ir.IntegerType.get_signless(32))
+def _i32_constant(v: int) -> ir.Value:
+  return arith_dialect.constant(ir.IntegerType.get_signless(32), v)
+
+
+def _i64_constant(v: int) -> ir.Value:
+  return arith_dialect.constant(ir.IntegerType.get_signless(64), v)
 
 
 def _as_index(v: int | ir.Value) -> ir.Value:

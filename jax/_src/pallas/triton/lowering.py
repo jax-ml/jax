@@ -2365,10 +2365,8 @@ def _lower_jaxpr_to_for_loop(
     else:
       jaxpr_args = [*consts, *for_body_args]
     all_out = lower_jaxpr_to_triton_ir(
-        ctx.context,
-        jaxpr,
-        ctx.block_infos,
-        *jaxpr_args)
+        ctx.context, jaxpr, ctx.block_infos, *jaxpr_args
+    )
     scf_dialect.yield_(all_out)
 
   return list(for_op.results_)
@@ -2405,11 +2403,9 @@ def _scan_lowering_rule(
   args = map(_ensure_ir_value, args, ctx.avals_in)
   consts, args = util.split_list(args, [num_consts])
   if has_loop_index:
-    lb, *args = args
-    lower_bound = lb
-    ub = _add(lb, _ir_constant(length, lb.type))
-    upper_bound = ub
-    bound_type = ub.type
+    lower_bound, *args = args
+    upper_bound = _add(lower_bound, _ir_constant(length, lower_bound.type))
+    bound_type = lower_bound.type
   else:
     lower_bound = _i32_constant(0)
     upper_bound = _i32_constant(length)
