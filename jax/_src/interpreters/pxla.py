@@ -1339,10 +1339,11 @@ def _pmap_dce_rule(used_outputs, eqn):
   if not any(used_inputs) and not any(used_outputs) and not new_jaxpr.effects:
     return used_inputs, None
   else:
+    effs = core.filter_named_axis_effects(new_jaxpr.effects, {axis_name})
     new_eqn = pe.new_jaxpr_eqn(
         [v for v, used in zip(eqn.invars, used_inputs) if used],
         [v for v, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info)
+        eqn.primitive, new_params, effs, eqn.source_info)
     return used_inputs, new_eqn
 
 
