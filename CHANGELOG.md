@@ -120,6 +120,12 @@ Note: This release was yanked from PyPi because of a data corruption bug on TPU.
 See the 0.4.33 release notes for more details.
 
 * Breaking changes
+  * This release of jaxlib switched to a new version of the CPU backend, which
+    should compile faster and leverage parallelism better. If you experience
+    any problems due to this change, you can temporarily enable the old CPU
+    backend by setting the environment variable
+    `XLA_FLAGS=--xla_cpu_use_thunk_runtime=false`. If you need to do this,
+    please file a JAX bug with instructions to reproduce.
   * Hermetic CUDA support is added.
     Hermetic CUDA uses a specific downloadable version of CUDA instead of the
     user’s locally installed CUDA. Bazel will download CUDA, CUDNN and NCCL

@@ -1378,6 +1378,15 @@ numpy_dtype_promotion = enum_state(
     update_thread_local_hook=lambda val: \
       update_thread_local_jit_state(numpy_dtype_promotion=val))
 
+disallow_mesh_context_manager = bool_state(
+    name='jax_disallow_mesh_context_manager',
+    default=False,
+    help=(
+        'If set to True, trying to use a mesh as a context manager will'
+        ' result in a RuntimeError.'
+    ),
+)
+
 def _update_x64_global(val):
   lib.jax_jit.global_state().enable_x64 = val
 

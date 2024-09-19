@@ -134,6 +134,7 @@ exclude_patterns = [
     'pallas/quickstart.md',
     'pallas/tpu/pipelining.md',
     'pallas/tpu/distributed.md',
+    'pallas/tpu/sparse.md',
     'pallas/tpu/matmul.md',
     'jep/9407-type-promotion.md',
     'autodidax.md',
@@ -224,6 +225,7 @@ nb_execution_excludepatterns = [
     'pallas/quickstart.*',
     'pallas/tpu/pipelining.*',
     'pallas/tpu/distributed.*',
+    'pallas/tpu/sparse.*',
     'pallas/tpu/matmul.*',
     'sharded-computation.*',
     'distributed_data_loading.*'

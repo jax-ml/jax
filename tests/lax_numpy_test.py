@@ -2134,6 +2134,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @jtu.sample_product(dtype=inexact_dtypes, equal_nan=[True, False])
+  @jtu.ignore_warning(
+      category=RuntimeWarning, message='invalid value encountered in cast'
+  )
   def testUniqueEqualNan(self, dtype, equal_nan):
     shape = (20,)
     rng = jtu.rand_some_nan(self.rng())

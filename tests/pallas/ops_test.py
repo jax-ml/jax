@@ -702,22 +702,28 @@ class OpsTest(PallasBaseTest):
       np.testing.assert_array_equal(out, expected)
 
   @parameterized.product(
-      dtype=[jnp.float32],
-      value=[-3.2, -1.0, -0.4, 0., 0.72, 1.0, 2.4],
+      dtype=[jnp.float32, jnp.float64],
+      value=[-3.2, -1.0, -0.999517, -0.4, 0., 0.72, 0.999517, 1.0, 2.4],
   )
   def test_erf_inv(self, dtype, value):
+    if jtu.test_device_matches(["tpu"]) and dtype == jnp.float64:
+      self.skipTest("float64 is not supported on TPU")
+
     @functools.partial(
         self.pallas_call,
-        # TODO(ayx): add float64 support for `erf_inv`
-        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        out_shape=jax.ShapeDtypeStruct((8, 128), dtype),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = lax.erf_inv(x_ref[...])
 
-    x = jnp.full((8, 128), value, dtype=dtype)
-    out = kernel(x)
-    expected = lax.erf_inv(x)
-    np.testing.assert_array_equal(out, expected)
+    with contextlib.ExitStack() as stack:
+      if jnp.dtype(dtype).itemsize == 8:
+        stack.enter_context(config.enable_x64(True))
+
+      x = jnp.full((8, 128), value, dtype=dtype)
+      out = kernel(x)
+      expected = lax.erf_inv(x)
+      np.testing.assert_array_equal(out, expected)
 
 
 class OpsInterpretTest(OpsTest):
