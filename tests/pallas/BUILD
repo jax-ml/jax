@@ -423,6 +423,20 @@ jax_test(
 )
 
 jax_test(
+    name = "tpu_pallas_async_test",
+    srcs = ["tpu_pallas_async_test.py"],
+    disable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    tags = [
+    ],
+    deps = [
+        "//jax:pallas_tpu",
+    ],
+)
+
+jax_test(
     name = "tpu_pallas_mesh_test",
     srcs = ["tpu_pallas_mesh_test.py"],
     disable_backends = [

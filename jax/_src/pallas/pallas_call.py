@@ -168,8 +168,12 @@ def _get_next_indices(grid, indices):
     next_indices.append(jnp.where(carry, 0, i))
   return tuple(reversed(next_indices))
 
-def _pallas_call_impl(*args, **kwargs):
-  assert False  # We always jit a pallas call, we only need the lowering rule
+def _pallas_call_impl(*args, **params):
+  # Call the lowering path
+  @partial(jax.jit, inline=True)
+  def _jit_run(*args):
+    return pallas_call_p.bind(*args, **params)
+  return _jit_run(*args)
 
 
 def _pallas_call_impl_interpret(
@@ -181,8 +185,9 @@ def _pallas_call_impl_interpret(
     grid_mapping: GridMapping,
     compiler_params: Any,
     cost_estimate: CostEstimate,
+    out_avals: tuple[jax_core.AbstractValue, ...],
 ):
-  del compiler_params, cost_estimate
+  del compiler_params, cost_estimate, out_avals
   # If we're in interpret mode, we *scan* over the grid and eval the
   # discharged jaxpr.
   dynamic_grid_args, args = split_list(  # type: ignore
@@ -324,10 +329,14 @@ def _pallas_call_impl_interpret(
 
 pallas_call_p.def_impl(_pallas_call_impl)
 
-def _pallas_call_abstract_eval(*avals, grid_mapping: GridMapping, **_):
-  return tuple(jax_core.ShapedArray(bm.array_shape_dtype.shape,
-                                    bm.array_shape_dtype.dtype)
-               for bm in grid_mapping.block_mappings_output)
+
+def _pallas_call_abstract_eval(
+    *avals, out_avals: tuple[jax_core.AbstractValue, ...], **_
+):
+  del avals
+  return out_avals
+
+
 pallas_call_p.def_abstract_eval(_pallas_call_abstract_eval)
 
 
@@ -343,6 +352,7 @@ def _pallas_call_jvp_rule(
     interpret,
     compiler_params: Any,
     cost_estimate: CostEstimate | None,
+    out_avals: tuple[jax_core.AbstractValue, ...],
 ):
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError("interpret with dynamic grid bounds unsupported")
@@ -406,6 +416,7 @@ def _pallas_call_jvp_rule(
       input_output_aliases=(),
       compiler_params=compiler_params,
       cost_estimate=jvp_cost_estimate,
+      out_avals=(*out_avals, *out_avals)
   )
   out_primals, out_tangents = split_list(out_flat, [len(out_flat) // 2])
   return out_primals, out_tangents
@@ -539,6 +550,7 @@ def _batch_with_explicit_loop(
     interpret: bool,
     compiler_params: Any,
     cost_estimate: CostEstimate | None,
+    out_avals: tuple[jax_core.AbstractValue, ...],
 ):
   """Batch the pallas_call by calling it in loop over the batch size.
 
@@ -605,6 +617,7 @@ def _batch_with_explicit_loop(
         interpret=interpret,
         compiler_params=compiler_params,
         cost_estimate=cost_estimate,
+        out_avals=out_avals,
     )
     for i, batch_out_array in enumerate(batch_out):
       state[i] = jax.lax.dynamic_update_index_in_dim(
@@ -643,6 +656,7 @@ def _pallas_call_batching_rule(
     interpret: bool,
     compiler_params: Any,
     cost_estimate: CostEstimate | None,
+    out_avals: tuple[jax_core.AbstractValue, ...],
 ):
   def _maybe_squeeze_out_bdim(
       x: jax.Array, bdim: int | batching.NotMapped
@@ -685,6 +699,7 @@ def _pallas_call_batching_rule(
         interpret=interpret,
         compiler_params=compiler_params,
         cost_estimate=cost_estimate,
+        out_avals=out_avals,
     )
     return [jnp.expand_dims(x, 0) for x in out], (0,) * len(out)
 
@@ -717,6 +732,7 @@ def _pallas_call_batching_rule(
         interpret=interpret,
         compiler_params=compiler_params,
         cost_estimate=cost_estimate,
+        out_avals=out_avals,
     )
   else:
     pass  # No dynamic grid dimensions
@@ -750,6 +766,7 @@ def _pallas_call_batching_rule(
           interpret=interpret,
           compiler_params=compiler_params,
           cost_estimate=cost_estimate,
+          out_avals=out_avals,
       )
 
   if not dims:
@@ -923,7 +940,11 @@ def _pallas_call_batching_rule(
 
     assert ragged_axis_length is not None
     args = (ragged_axis_length, *args)
-
+  assert all(isinstance(aval, jax_core.ShapedArray) for aval in out_avals)
+  batched_out_avals = tuple(
+      aval.update(shape=tuple_insert(aval.shape, 0, axis_size))
+      for aval in out_avals
+  )
   out = pallas_call_p.bind(
       *dynamic_grid_args,
       *args,
@@ -937,6 +958,7 @@ def _pallas_call_batching_rule(
       interpret=interpret,
       compiler_params=compiler_params,
       cost_estimate=batched_cost_estimate,
+      out_avals=batched_out_avals,
   )
   return out, (0,) * len(out)
 
@@ -966,6 +988,7 @@ def pallas_call_checkify_rule(error: checkify.Error,
                               interpret: bool,
                               input_output_aliases: tuple[tuple[int, int], ...],
                               grid_mapping: GridMapping,
+                              out_avals: tuple[jax_core.AbstractValue, ...],
                               **kwargs):
   # We implement the checkify rule in 4 steps:
   # 1) First, trace the kernel body to get the expected error shapes.
@@ -1092,11 +1115,13 @@ def pallas_call_checkify_rule(error: checkify.Error,
       (i+num_scalars, i) for i in range(num_err_vals)) + input_output_aliases
 
   new_vals_in = [*scalars, *err_vals, *args]
+  new_out_avals = (*shaped_err_avals, *out_avals)
   result = pallas_call_p.bind(*dynamic_grid_bounds, *new_vals_in,
     jaxpr=final_jaxpr,
     interpret=interpret,
     grid_mapping=grid_mapping_with_error,
     input_output_aliases=input_output_aliases_with_error,
+    out_avals=new_out_avals,
     **kwargs)
   errors, results = split_list(result, [num_err_vals])
   # TODO(b/350593266): Remove line below once we support ()-shaped scalars.
@@ -1225,6 +1250,17 @@ def _pallas_call_typecheck_rule(*in_avals, grid_mapping, **params):
     )
 jax_core.custom_typechecks[pallas_call_p] = _pallas_call_typecheck_rule
 
+def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
+  match out_shape:
+    case jax.ShapeDtypeStruct():
+      return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype)
+    case pallas_core.MemoryRef():
+      return out_shape.get_array_aval()
+    case _:
+      if not (hasattr(out_shape, "shape") and hasattr(out_shape, "dtype")):
+        raise ValueError(f"Invalid out_shape type: {type(out_shape)}")
+      return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype)
+
 
 def pallas_call(
     kernel: Callable[..., None],
@@ -1338,17 +1374,15 @@ def pallas_call(
     out_shape = tuple(out_shape)
   flat_out_shapes_with_paths, out_tree = tree_util.tree_flatten_with_path(out_shape)
   out_paths, flat_out_shapes = unzip2(flat_out_shapes_with_paths)
-  flat_out_shapes = [jax.ShapeDtypeStruct(x.shape, x.dtype)  # type: ignore
-                     for x in flat_out_shapes]
 
-  @jax.jit
+  @partial(jax.jit, inline=True)
   def wrapped(*args):
     flat_args_with_paths, in_tree = tree_util.tree_flatten_with_path(args)
     in_paths, flat_args = unzip2(flat_args_with_paths)
     flat_in_avals = tuple(jax_core.raise_to_shaped(jax_core.get_aval(a))
                           for a in flat_args)
 
-    flat_out_avals = tuple(jax_core.ShapedArray(v.shape, v.dtype)
+    flat_out_avals = tuple(_convert_out_shape_to_aval(v)
                            for v in flat_out_shapes)
 
     kernel_fun_sig = api_util.fun_signature(kernel)
@@ -1403,6 +1437,7 @@ def pallas_call(
           *dynamic_grid_bounds,
           *index_args,
           *rest_args,
+          out_avals=flat_out_avals,
           jaxpr=jaxpr,
           name_and_src_info=name_and_src_info,
           debug=debug,

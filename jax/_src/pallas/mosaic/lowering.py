@@ -424,24 +424,23 @@ class MeshInfo:
   axis_names: list[str]
   mesh_strides: tuple[int, ...]
 
-def lower_jaxpr_to_module(
+
+def _check_block_mappings(
+    block_mappings: tuple[pallas_core.BlockMapping, ...],
     lowering_context: mlir.LoweringRuleContext,
-    ctx: ir.Context,
-    grid_mapping: pallas_core.GridMapping,
-    jaxpr: jax_core.Jaxpr,
-    *,
-    dimension_semantics: tuple[str | None, ...] | None,
     name_and_src_info: pallas_core.NameAndSrcInfo,
-    mesh: mesh_lib.Mesh | None = None,
-    for_verification: bool = False,
-) -> tuple[Module, tuple[Any, ...]]:
-  for bm in grid_mapping.block_mappings:
+) -> None:
+  del lowering_context  # originally needed for forward compat
+  for bm in block_mappings:
     rank = len(bm.block_shape)
     # TODO(necula): add tests for SMEM blocks with trivial windowing
     # We support scalars too
     if (bm.block_aval.memory_space == tpu_core.TPUMemorySpace.SMEM and
         bm.has_trivial_window()):
       continue
+    if bm.block_aval.memory_space == tpu_core.TPUMemorySpace.SEMAPHORE:
+      continue
+
     def err_details():
       return (f"Block spec for {bm.origin} in pallas_call {name_and_src_info} "
               "has block shape "
@@ -482,11 +481,28 @@ def lower_jaxpr_to_module(
 
     if not evenly_divisible:
       raise ValueError(
-            "The Pallas TPU lowering currently requires that the last two "
-            "dimensions of your block shape are divisible by 8 and 128 "
-            "respectively, or be equal to the respective dimensions of the "
-            "overall array. "
-            + err_details())
+          "The Pallas TPU lowering currently requires that the last two "
+          "dimensions of your block shape are divisible by 8 and 128 "
+          "respectively, or be equal to the respective dimensions of the "
+          "overall array. "
+          + err_details()
+      )
+
+
+def lower_jaxpr_to_module(
+    lowering_context: mlir.LoweringRuleContext,
+    ctx: ir.Context,
+    grid_mapping: pallas_core.GridMapping,
+    jaxpr: jax_core.Jaxpr,
+    *,
+    dimension_semantics: tuple[str | None, ...] | None,
+    name_and_src_info: pallas_core.NameAndSrcInfo,
+    mesh: mesh_lib.Mesh | None = None,
+    for_verification: bool = False,
+) -> tuple[Module, tuple[Any, ...]]:
+  # Verify that we have legal block mappings to catch errors early.
+  _check_block_mappings(grid_mapping.block_mappings, lowering_context,
+                        name_and_src_info)
 
   mosaic_grid_mapping = MosaicGridMapping(
       jaxpr, grid_mapping, dimension_semantics, mesh)

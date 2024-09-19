@@ -828,7 +828,7 @@ def run_scoped(f: Callable[..., Any], *types, **kw_types) -> Any:
 
   flat_types, in_tree = tree_util.tree_flatten((types, kw_types))
   flat_fun, out_tree_thunk = api_util.flatten_fun(lu.wrap_init(f), in_tree)
-  avals = [t.get_aval() for t in flat_types]
+  avals = [t.get_ref_aval() for t in flat_types]
   # Turn the function into a jaxpr. The body of run_scoped may have
   # effects (IO) on constvars (i.e. variables inherited from the
   # parent scope). Jax can't reason about effects to references that
