@@ -1719,12 +1719,6 @@ class ConcreteArray(ShapedArray):
   _complex = concretization_function_error(complex, True)
 
 
-def primal_aval_to_tangent_aval(primal_aval):
-  if isinstance(primal_aval, ShapedArray):
-    return ShapedArray(primal_aval.shape, primal_dtype_to_tangent_dtype(primal_aval.dtype))
-  else:
-    return primal_aval  # TODO
-
 def primal_dtype_to_tangent_dtype(primal_dtype):
   if isinstance(primal_dtype, dtypes.ExtendedDType):
     return primal_dtype._rules.tangent_dtype(primal_dtype)
