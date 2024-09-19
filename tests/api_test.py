@@ -7542,7 +7542,8 @@ class CustomJVPTest(jtu.JaxTestCase):
     def f(x, y):
       return x, y
     def f_jvp(primals, _):
-      return primals, (2., scalar_float0)
+      x, y = primals
+      return (x, y), (2., custom_derivatives_public.zero_from_primal(y))
     f.defjvp(f_jvp)
 
     primals = (2., 3)
@@ -7558,7 +7559,7 @@ class CustomJVPTest(jtu.JaxTestCase):
       return x, y
     def f_jvp(primals, _):
       x, y = primals
-      return (x, y), (2., scalar_float0)
+      return (x, y), (2., custom_derivatives_public.zero_from_primal(y))
     f.defjvp(f_jvp)
 
     def foo(x, y):
