@@ -62,6 +62,7 @@ from jax._src.lax.utils import (
   standard_multi_result_abstract_eval, standard_primitive)
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -2012,19 +2013,17 @@ mlir.register_lowering(cos_p, _cos_lowering)
 def _tan_impl(x):
   return div(sin(x), cos(x))
 
-def _tan_lowering(ctx, x):
-  # TODO(b/368011034): Remove after jaxlib 0.4.34 release. In 0.4.33, this
-  # lowering is supported, but export doesn't target a sufficiently up-to-date
-  # StableHLO version, and the compatibility updates from
-  # https://github.com/openxla/xla/pull/16649 aren't included in the 0.4.33
-  # release.
-  if ctx.is_forward_compat():
-    return _nary_lower_hlo(chlo.tan, ctx, x)
-  return _nary_lower_hlo(hlo.tan, ctx, x)
-
 tan_p = standard_unop(_float | _complex, 'tan')
 ad.defjvp2(tan_p, lambda g, ans, x: mul(g, _const(x, 1) + square(ans)))
-mlir.register_lowering(tan_p, _tan_lowering)
+# TODO(b/368011034): Remove after jaxlib 0.4.34 release. In 0.4.33, this
+# lowering is mostly supported, but it fails on export or with the PJRT plugin
+# because those modes target an older StableHLO version, and the
+# compatibility updates from https://github.com/openxla/xla/pull/16649 aren't
+# included in the 0.4.33 release.
+if jaxlib_version <= (0, 4, 33):
+  mlir.register_lowering(tan_p, partial(_nary_lower_hlo, chlo.tan))
+else:
+  mlir.register_lowering(tan_p, partial(_nary_lower_hlo, hlo.tan))
 
 def asin_impl(x):
   if dtypes.issubdtype(_dtype(x), np.complexfloating):
