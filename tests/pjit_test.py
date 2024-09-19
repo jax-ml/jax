@@ -3051,10 +3051,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     sds = jax.ShapeDtypeStruct((4, 2), np.int32)
     inp = np.arange(8).reshape(4, 2)
 
-    with self.assertRaisesRegex(
-        TypeError,
-        r"Argument 'x\['b'\]\['c'\]' of shape int32\[4,2\] of "
-        "type.*ShapeDtypeStruct.*is not a valid JAX type."):
+    with self.assertRaisesRegex(TypeError, r".*is not a valid JAX type."):
       jax.jit(lambda x: x)({'a': inp, 'b': {'c': sds}})
 
   def test_pjit_device_backend_both_error(self):
@@ -3796,8 +3793,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   def test_shape_dtype_struct_as_const_error(self):
     const = jax.ShapeDtypeStruct((8,), jnp.int32)
-    with self.assertRaisesRegex(TypeError,
-                                r"Argument.*is not a valid JAX type"):
+    with self.assertRaisesRegex(TypeError, r".*is not a valid JAX type"):
       jax.jit(lambda x: (x, const))(jnp.arange(8))
 
   def test_jit_out_shardings_none(self):

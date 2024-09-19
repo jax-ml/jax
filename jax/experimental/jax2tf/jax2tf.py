@@ -592,7 +592,8 @@ class GraphSerializationImpl(SerializationImpl):
     args_specs_flat, self.in_tree = tree_util.tree_flatten(
         (self.args_specs, self.kwargs_specs))
     self.args_avals_flat = tuple(
-        map(lambda a: core.raise_to_shaped(core.get_aval(a)), args_specs_flat))
+        map(lambda a: core.raise_to_shaped(api_util.shaped_abstractify(a)),
+            args_specs_flat))
     dim_vars = shape_poly.all_dim_vars(self.args_avals_flat)
     dim_values, _ = _interpret_fun_jax(
         partial(shape_poly.compute_dim_vars_from_arg_shapes,

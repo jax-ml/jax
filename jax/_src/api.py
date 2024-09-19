@@ -2508,11 +2508,12 @@ class ShapeDtypeStruct:
     # https://github.com/google/jax/issues/8182
     return hash((self.shape, self.dtype, self.sharding, self.layout, self.weak_type))
 
+# Register ShapeDtypeStruct in _shaped_abstractify_handlers for performance.
 def _sds_aval_mapping(x):
   return ShapedArray(
       x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
       weak_type=x.weak_type)
-core.pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
+api_util._shaped_abstractify_handlers[ShapeDtypeStruct] = _sds_aval_mapping
 
 
 @api_boundary
