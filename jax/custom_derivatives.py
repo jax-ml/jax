@@ -34,5 +34,6 @@ from jax._src.custom_derivatives import (
 )
 
 from jax._src.ad_util import (
-  SymbolicZero as SymbolicZero
+  SymbolicZero as SymbolicZero,
+  zero_from_primal as zero_from_primal
 )

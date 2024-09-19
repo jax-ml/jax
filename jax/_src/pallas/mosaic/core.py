@@ -90,7 +90,7 @@ class TPUMemorySpace(enum.Enum):
 
   def __call__(self, shape: tuple[int, ...], dtype: jnp.dtype):
     # A convenience function for constructing MemoryRef types.
-    return MemoryRef(shape, dtype, self)
+    return pallas_core.MemoryRef(shape, dtype, self)
 
 class semaphore_dtype(dtypes.extended): pass
 class semaphore(semaphore_dtype): pass
@@ -101,6 +101,10 @@ class AbstractSemaphoreTyRules:
   @staticmethod
   def pallas_interpret_element_aval(_) -> jax_core.ShapedArray:
     return jax_core.ShapedArray((), pallas_core.SEMAPHORE_INTERPRET_DTYPE)
+
+  @staticmethod
+  def physical_element_aval(_) -> jax_core.ShapedArray:
+    return jax_core.ShapedArray((), jnp.int32)
 
 class AbstractSemaphoreTy(dtypes.ExtendedDType):
   name: str
@@ -144,10 +148,13 @@ class SemaphoreType(enum.Enum):
       dtype = SemaphoreTy()
     if pallas_core.is_interpret_mode():
       dtype = pallas_core.SEMAPHORE_INTERPRET_DTYPE
-    return MemoryRef(shape, dtype, TPUMemorySpace.SEMAPHORE)
+    return pallas_core.MemoryRef(shape, dtype, TPUMemorySpace.SEMAPHORE)
 
-  def get_aval(self) -> AbstractMemoryRef:
-    return self(()).get_aval()
+  def get_array_aval(self) -> pallas_core.ShapedArrayWithMemorySpace:
+    return self(()).get_array_aval()
+
+  def get_ref_aval(self) -> AbstractMemoryRef:
+    return self(()).get_ref_aval()
 
 @dataclasses.dataclass(frozen=True)
 class AbstractSemaphore(jax_core.AbstractValue):
@@ -161,18 +168,6 @@ class AbstractSemaphore(jax_core.AbstractValue):
     return self
 
 jax_core.raise_to_shaped_mappings[AbstractSemaphore] = lambda aval, _: aval
-
-
-@dataclasses.dataclass(frozen=True)
-class MemoryRef:
-  """Like jax.ShapeDtypeStruct but with memory spaces."""
-  shape: tuple[int, ...]
-  dtype: jnp.dtype
-  memory_space: TPUMemorySpace = TPUMemorySpace.ANY
-
-  def get_aval(self) -> AbstractMemoryRef:
-    return AbstractMemoryRef(
-        jax_core.ShapedArray(self.shape, self.dtype), self.memory_space)
 
 
 @dataclasses.dataclass(init=False, kw_only=True, unsafe_hash=True)

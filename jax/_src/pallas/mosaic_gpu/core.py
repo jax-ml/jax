@@ -60,7 +60,7 @@ class GPUMemorySpace(enum.Enum):
 
   def __call__(self, shape: tuple[int, ...], dtype: jnp.dtype):
     # A convenience function for constructing MemoryRef types.
-    return MemoryRef(shape, dtype, memory_space=self)
+    return pallas_core.MemoryRef(shape, dtype, memory_space=self)
 
 
 class MemoryRefTransform(pallas_core.MemoryRefTransform, Protocol):
@@ -150,20 +150,6 @@ class GPUBlockSpec(pallas_core.BlockSpec):
     )
 
 
-# TODO(b/354568887): Cosolidate this with TPU's MemoryRef.
-@dataclasses.dataclass(frozen=True)
-class MemoryRef:
-  """Like jax.ShapeDtypeStruct but with memory spaces."""
-
-  shape: tuple[int, ...]
-  dtype: jnp.dtype
-  memory_space: GPUMemorySpace = dataclasses.field(kw_only=True)
-
-  def get_aval(self) -> AbstractMemoryRef:
-    return AbstractMemoryRef(
-        jax_core.ShapedArray(self.shape, self.dtype), self.memory_space
-    )
-
 GMEM = GPUMemorySpace.GMEM
 SMEM = GPUMemorySpace.SMEM
 REGS = GPUMemorySpace.REGS
@@ -189,7 +175,7 @@ class Barrier:
   num_arrivals: int
   num_barriers: int = 1
 
-  def get_aval(self) -> AbstractMemoryRef:
+  def get_ref_aval(self) -> AbstractMemoryRef:
     aval = jax_core.ShapedArray(
         [self.num_barriers], BarrierType(self.num_arrivals)
     )

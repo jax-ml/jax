@@ -154,9 +154,8 @@ def fori(bound, carrys):
   flat_carrys, carry_treedef = jax.tree.flatten(carrys)
 
   def wrapper(f):
-    index = ir.IndexType.get()
-    c0 = arith.ConstantOp(index, ir.IntegerAttr.get(index, 0))
-    c1 = arith.ConstantOp(index, ir.IntegerAttr.get(index, 1))
+    c0 = arith.constant(bound.type, 0)
+    c1 = arith.constant(bound.type, 1)
     for_op = scf.ForOp(c0, bound, c1, flat_carrys)
     with ir.InsertionPoint(for_op.body):
       i = for_op.induction_variable

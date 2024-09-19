@@ -40,7 +40,7 @@ import numpy as np
 SMEM = tpu_core.TPUMemorySpace.SMEM
 VMEM = tpu_core.TPUMemorySpace.VMEM
 DMA = tpu_core.SemaphoreType.DMA
-REF = tpu_core.MemoryRef
+REF = pallas_core.MemoryRef
 SemaphoreType = tpu_core.SemaphoreType
 SemaphoreTuple = jax.Array
 ArrayRef = Union[REF, jax.Array]

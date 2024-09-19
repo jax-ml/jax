@@ -98,13 +98,13 @@ jax_test(
     disable_configs = [
         "gpu",
         "gpu_x32",
-        "gpu_a100",
         "gpu_p100",
         "gpu_p100_x32",
-        "gpu_h100",
     ],
     enable_configs = [
+        "gpu_a100",
         "gpu_a100_x32",
+        "gpu_h100",
         "gpu_h100_x32",
     ],
     shard_count = {
@@ -420,6 +420,20 @@ jax_test(
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
     ] + py_deps("hypothesis"),
+)
+
+jax_test(
+    name = "tpu_pallas_async_test",
+    srcs = ["tpu_pallas_async_test.py"],
+    disable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    tags = [
+    ],
+    deps = [
+        "//jax:pallas_tpu",
+    ],
 )
 
 jax_test(

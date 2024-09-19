@@ -49,8 +49,9 @@ def pallas_call_lowering(
     grid_mapping: pallas_core.GridMapping,
     compiler_params: dict[str, Any],
     cost_estimate: pallas_core.CostEstimate | None,
+    out_avals: tuple[jax_core.AbstractValue, ...],
 ):
-  del interpret
+  del interpret, out_avals
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(
         "dynamic grid bounds not supported in the Triton backend"

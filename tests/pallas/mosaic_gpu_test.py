@@ -311,6 +311,18 @@ class PallasCallTest(PallasTest):
     result = kernel(x)
     self.assertEqual(result.shape, (4, 2, 64, 64))
 
+  def test_fori_loop(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      # Equivalent to x_ref[...] + 2 + 3.
+      o_ref[...] = jax.lax.fori_loop(2, 4, lambda i, x: x + i, x_ref[...])
+
+    x = jnp.arange(256).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x + 2.0 + 3.0)
+
 
 if __name__ == "__main__":
   absltest.main()
