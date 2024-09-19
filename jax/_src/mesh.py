@@ -217,6 +217,8 @@ class Mesh(contextlib.ContextDecorator):
     super().__setattr__(name, value)
 
   def __enter__(self):
+    if jax_config.disallow_mesh_context_manager.value:
+      raise RuntimeError("Mesh context manager is disabled.")
     new_env = thread_resources.stack[-1].with_mesh(self)
     thread_resources.stack.append(new_env)
     thread_resources.env = new_env
