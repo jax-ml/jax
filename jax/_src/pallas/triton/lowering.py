@@ -1355,7 +1355,7 @@ register_lowering(lax.sign_p)(
 
 
 register_lowering(lax.erf_inv_p)(
-    lower_fun(pallas_utils.erf_inv_32_lowering_helper, multiple_results=False)
+    lower_fun(pallas_utils.erf_inv_lowering_helper, multiple_results=False)
 )
 
 
