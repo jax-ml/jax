@@ -161,7 +161,7 @@ class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
     else:
       sharding_str = ""
     memoryspace_str = (
-        "" if self.memory_space is None else f"{self.memory_space}>"
+        "" if self.memory_space is None else f"<{self.memory_space}>"
     )
     return f"{dt_str}{memoryspace_str}[{shapestr}]{sharding_str}"
 
@@ -206,8 +206,10 @@ class MemoryRef:
     )
 
   def get_ref_aval(self) -> AbstractMemoryRef:
+    # TODO(sharadmv): Clean this up. ShapedArrayWithMemorySpace fails when we
+    # try to apply JAX ops to it.
     return AbstractMemoryRef(
-        ShapedArrayWithMemorySpace(self.shape, self.dtype), self.memory_space)
+        jax_core.ShapedArray(self.shape, self.dtype), self.memory_space)
 
 
 class AbstractMemoryRef(state.AbstractRef):

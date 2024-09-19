@@ -334,7 +334,13 @@ def _pallas_call_abstract_eval(
     *avals, out_avals: tuple[jax_core.AbstractValue, ...], **_
 ):
   del avals
-  return out_avals
+  # Make sure we don't return ShapedArrayWithMemorySpace to the outside world.
+  return [
+      jax_core.ShapedArray(a.shape, a.dtype, a.weak_type)
+      if isinstance(a, pallas_core.ShapedArrayWithMemorySpace)
+      else a
+      for a in out_avals
+  ]
 
 
 pallas_call_p.def_abstract_eval(_pallas_call_abstract_eval)
