@@ -5208,11 +5208,6 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual(recovered_parsed_pspec[0].get_partition_spec(),
                      P('x', 'y'))
 
-    out_of_sync_parsed_pspec = sharding_impls.ParsedPartitionSpec(
-        P('x', 'y'), ('x', 'y'), sharding_impls.SpecSync.OUT_OF_SYNC)
-    self.assertEqual(out_of_sync_parsed_pspec.get_partition_spec(),
-                     P('x', 'y'))
-
   def test_mesh_with_list_devices(self):
     mesh = jax.sharding.Mesh(jax.devices(), ('x',))
     self.assertIsInstance(mesh.devices, np.ndarray)

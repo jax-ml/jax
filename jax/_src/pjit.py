@@ -1041,8 +1041,8 @@ def _create_sharding_for_array(mesh, x, name, api_name):
         ' then the mesh context manager is not required.')
   # A nice user error is raised in prepare_axis_resources.
   assert x is None or isinstance(x, ParsedPartitionSpec), x
-  return (pxla.create_mesh_pspec_sharding(mesh, x)
-          if x is None else pxla.create_mesh_pspec_sharding(mesh, x.user_spec, x))
+  return (pxla.create_mesh_pspec_sharding(mesh, x) if x is None else
+          pxla.create_mesh_pspec_sharding(mesh, x.get_partition_spec(), x))
 
 
 def _create_sharding_with_device_backend(device, backend):
