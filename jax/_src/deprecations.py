@@ -124,7 +124,6 @@ def warn(deprecation_id: str, message: str, stacklevel: int) -> None:
 register('jax-aval-named-shape')
 register('jax-dlpack-import-legacy')
 register("jax-numpy-astype-complex-to-real")
-register("jax-numpy-array-none")
 register('jax-scipy-beta-args')
 register('tracer-hash')
 register('jax-numpy-reshape-newshape')

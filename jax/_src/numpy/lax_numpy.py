@@ -4618,14 +4618,8 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
                     if hasattr(leaf, "__jax_array__") else leaf, object)
   leaves = tree_leaves(object, is_leaf=lambda x: x is None)
   if any(leaf is None for leaf in leaves):
-    # Added Nov 16 2023
-    if deprecations.is_accelerated("jax-numpy-array-none"):
-      raise TypeError("None is not a valid value for jnp.array")
-    warnings.warn(
-      "None encountered in jnp.array(); this is currently treated as NaN. "
-      "In the future this will result in an error.",
-      FutureWarning, stacklevel=2)
-    leaves = tree_leaves(object)
+    raise TypeError("None is not a valid value for jnp.array")
+
   if dtype is None:
     # Use lattice_result_type rather than result_type to avoid canonicalization.
     # Otherwise, weakly-typed inputs would have their dtypes canonicalized.

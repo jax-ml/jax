@@ -3707,9 +3707,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with self.assertRaisesRegex(OverflowError, "Python int too large.*"):
       jnp.array([0, val])
 
-  def testArrayNoneWarning(self):
+  def testArrayNoneError(self):
     # TODO(jakevdp): make this an error after the deprecation period.
-    with self.assertWarnsRegex(FutureWarning, r"None encountered in jnp.array\(\)"):
+    with self.assertRaisesRegex(TypeError, r"None is not a valid value for jnp.array"):
       jnp.array([0.0, None])
 
   def testIssue121(self):
