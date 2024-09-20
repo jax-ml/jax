@@ -33,7 +33,6 @@ or deployed codebases.
    :maxdepth: 1
    :caption: Custom operations
 
-   notebooks/external_callbacks
    pallas/index
    ffi
 
