@@ -308,11 +308,18 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testGelu(self, approximate):
     def gelu_reference(x):
       return x * scipy.stats.norm.cdf(x)
-    rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng((4, 5, 6), jnp.float32)]
+    args_maker = lambda: [jnp.linspace(-12, 5, 10000, dtype=jnp.float32)]
+    rtol = 2e-5
+    atol = 1e-3 if approximate else 0
     self._CheckAgainstNumpy(
-      gelu_reference, partial(nn.gelu, approximate=approximate), args_maker,
-      check_dtypes=False, tol=1e-3 if approximate else None)
+        gelu_reference,
+        partial(nn.gelu, approximate=approximate),
+        args_maker,
+        check_dtypes=False,
+        tol=0,
+        rtol=rtol,
+        atol=atol,
+    )
 
   @parameterized.parameters(*itertools.product(
       (jnp.float32, jnp.bfloat16, jnp.float16),
