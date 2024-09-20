@@ -12,13 +12,18 @@ message(STATUS "XLA include directory: ${XLA_DIR}")
 
 find_package(nanobind CONFIG REQUIRED)
 
-nanobind_add_module(_rms_norm NB_STATIC "src/jax_ffi_example/rms_norm.cc")
-target_include_directories(_rms_norm PUBLIC ${XLA_DIR})
-install(TARGETS _rms_norm LIBRARY DESTINATION ${SKBUILD_PROJECT_NAME})
+set(
+  JAX_FFI_EXAMPLE_PROJECTS
+  "rms_norm"
+  "attrs"
+  "counter"
+)
 
-nanobind_add_module(_attrs NB_STATIC "src/jax_ffi_example/attrs.cc")
-target_include_directories(_attrs PUBLIC ${XLA_DIR})
-install(TARGETS _attrs LIBRARY DESTINATION ${SKBUILD_PROJECT_NAME})
+foreach(PROJECT ${JAX_FFI_EXAMPLE_PROJECTS})
+  nanobind_add_module("_${PROJECT}" NB_STATIC "src/jax_ffi_example/${PROJECT}.cc")
+  target_include_directories("_${PROJECT}" PUBLIC ${XLA_DIR})
+  install(TARGETS "_${PROJECT}" LIBRARY DESTINATION ${SKBUILD_PROJECT_NAME})
+endforeach()
 
 if(JAX_FFI_EXAMPLE_ENABLE_CUDA)
   enable_language(CUDA)
