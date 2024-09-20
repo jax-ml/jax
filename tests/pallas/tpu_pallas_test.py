@@ -2425,9 +2425,7 @@ class MiscellaneousTest(PallasBaseTest):
     )(x)
     np.testing.assert_array_equal(out, np.reshape(x, (1, 256, 8, 128)))
 
-  @only_passes_in_interpret()
   def test_lane_to_chunk_broadcast_fp32(self):
-    """b/348033362"""
     x = np.arange(256 * 128, dtype=jnp.float32).reshape(1, 256, 128)
 
     def kernel(x_ref, out_ref):
@@ -2524,9 +2522,7 @@ class MiscellaneousTest(PallasBaseTest):
 
     np.testing.assert_array_equal(out, np.reshape(x[:, 7, :], (1, 8, 128)))
 
-  @only_passes_in_interpret()
   def test_sublane_adding_shape_cast_f32(self):
-    """b/352833257"""
     x = np.arange(8 * 128, dtype=jnp.float32).reshape(8, 128)
 
     def kernel(x_ref, out_ref):
