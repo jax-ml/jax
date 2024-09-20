@@ -48,7 +48,7 @@ setup(
     author_email="jax-dev@google.com",
     packages=packages,
     install_requires=[],
-    url="https://github.com/google/jax",
+    url="https://github.com/jax-ml/jax",
     license="Apache-2.0",
     classifiers=[
         "Development Status :: 3 - Alpha",
