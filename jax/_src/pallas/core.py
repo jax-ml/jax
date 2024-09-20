@@ -258,6 +258,7 @@ class MemorySpace(enum.Enum):
   Each memory space will be translated to a device-specific memory
   type during lowering.
   """
+  ANY = "any"  # Unrestricted memory space (usually HBM)
   ERROR = "error"  # Memory space for checkify errors.
   INDEX = "index"  # Memory space for scalar prefetch arguments.
 

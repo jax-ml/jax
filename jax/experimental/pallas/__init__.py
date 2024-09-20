@@ -28,6 +28,7 @@ from jax._src.pallas.core import IndexingMode
 from jax._src.pallas.core import no_block_spec
 from jax._src.pallas.core import Unblocked
 from jax._src.pallas.core import unblocked
+from jax._src.pallas.core import MemorySpace
 from jax._src.pallas.pallas_call import pallas_call
 from jax._src.pallas.pallas_call import pallas_call_p
 from jax._src.pallas.primitives import atomic_add
@@ -56,6 +57,9 @@ from jax._src.state.indexing import ds
 from jax._src.state.indexing import dslice
 from jax._src.state.indexing import Slice
 from jax._src.state.primitives import broadcast_to
+
+ANY = MemorySpace.ANY
+
 
 _register_deprecation("pallas-block-spec-order")
 del _register_deprecation
