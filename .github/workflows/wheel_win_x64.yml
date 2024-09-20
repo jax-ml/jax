@@ -45,7 +45,7 @@ jobs:
             --bazel_options=--config=win_clang `
             --verbose
 
-      - uses: actions/upload-artifact@834a144ee995460fba8ed112a2fc961b36a5ec5a # ratchet: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # ratchet: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}-${{ matrix.pyver }}
           path: ${{ github.workspace }}\dist\*.whl
