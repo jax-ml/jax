@@ -53,7 +53,6 @@ def core_call(f, *args):
   out = core.call_p.bind(f, *args)
   return jax.tree.unflatten(out_tree(), out)
 
-
 @util.curry
 def core_closed_call(f, *args):
   args, in_tree = jax.tree.flatten(args)

@@ -294,8 +294,6 @@ class SparseTracer(core.Tracer):
   def full_lower(self):
     return self
 
-class SparseTag: pass
-
 class SparseTrace(core.Trace):
 
   def __init__(self, parent_trace, tag, spenv):
@@ -354,7 +352,7 @@ def sparsify_subtrace(tag, spenv, spvalues, *bufs):
     yield buffers, [out._spvalue for out in out_traces]
 
 def sparsify_fun(wrapped_fun, args: list[ArrayOrSparse]):
-  tag = SparseTag()
+  tag = core.TraceTag()
   spenv = SparsifyEnv()
   spvalues = arrays_to_spvalues(spenv, args)
   in_bufs = spenv._buffers

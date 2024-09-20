@@ -15,7 +15,6 @@ from functools import partial
 
 from absl.testing import absltest
 from absl.testing import parameterized
-import unittest
 
 import numpy as np
 
@@ -224,8 +223,7 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     [dict(for_impl=for_impl, impl_name=impl_name)
      for for_impl, impl_name in FOR_LOOP_IMPLS],
   )
-  @unittest.skip("timeout?")  # TODO(dougalm): investigate
-  # @jtu.skip_on_devices("gpu")  # TODO(mattjj,sharadmv): timeouts?
+  @jtu.skip_on_devices("gpu", "cpu")  # TODO(mattjj,sharadmv, dougalm): timeouts?
   def test_for_jvp(self, f, ref, body_shapes, n, for_impl, for_body_name,
                    impl_name):
     for_ = for_impl
@@ -257,8 +255,7 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     [dict(for_impl=for_impl, impl_name=impl_name)
      for for_impl, impl_name in FOR_LOOP_IMPLS],
   )
-  @unittest.skip("timeout?")  # TODO(dougalm): investigate
-  # @jtu.skip_on_devices("gpu")  # TODO(mattjj,sharadmv): timeouts?
+  @jtu.skip_on_devices("gpu", "cpu")  # TODO(mattjj,sharadmv, dougalm): timeouts?
   def test_for_linearize(self, f, ref, body_shapes, n, for_impl, for_body_name,
                          impl_name):
     for_ = for_impl
