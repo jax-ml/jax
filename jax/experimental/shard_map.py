@@ -2011,3 +2011,13 @@ def _match_replication(src, dst, x):
   if src - dst:
     x = pbroadcast(x, tuple(n for n in src if n not in dst))
   return x
+
+# TODO(parkers,mattjj): change implementation when we have sharding-in-types.
+def get_replication(x: jax.Array) -> set[AxisName]:
+  """For a jax.Array, return what axes it is known to be replicated along."""
+
+  if isinstance(x, RewriteTracer):
+    return x.rep
+  if isinstance(x, batching.BatchTracer):
+    return get_replication(x.val)
+  raise ValueError("get_replication not defined on %s" % repr(type(x)))
