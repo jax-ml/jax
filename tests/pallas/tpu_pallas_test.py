@@ -2464,9 +2464,7 @@ class MiscellaneousTest(PallasBaseTest):
     )(x)
     np.testing.assert_array_equal(out, np.broadcast_to(x, (256, 512)))
 
-  @only_passes_in_interpret(unless_generation=4)
   def test_bfloat16_to_uint32_bitcast(self):
-    """b/347771903"""
     x = np.arange(16 * 2 * 256, dtype=jnp.bfloat16).reshape(16, 2, 256)
 
     def kernel(x_ref, out_ref):
@@ -2475,7 +2473,7 @@ class MiscellaneousTest(PallasBaseTest):
     out = self.pallas_call(
         kernel, out_shape=jax.ShapeDtypeStruct((16, 1, 256), jnp.uint32)
     )(x)
-    # FIXME: Add correctness test for result.
+    np.testing.assert_array_equal(out, state_utils.bitcast(x, jnp.uint32))
 
   @only_passes_in_interpret()
   def test_roll_partial(self):
@@ -2548,9 +2546,7 @@ class MiscellaneousTest(PallasBaseTest):
 
     np.testing.assert_array_equal(out, np.reshape(x, (8, 1, 128)))
 
-  @only_passes_in_interpret()
   def test_mixed_strides(self):
-    """b/352841329"""
     x = np.zeros((8, 128), dtype=jnp.float32)
     y = np.zeros((8, 2, 128), dtype=jnp.bfloat16)
 
