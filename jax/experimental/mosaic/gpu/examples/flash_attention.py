@@ -24,9 +24,8 @@ import jax
 from jax import random
 from jax._src.interpreters import mlir
 from jax._src import test_util as jtu
-from jax.experimental.mosaic import gpu as mosaic_gpu
 from jax.experimental.mosaic.gpu import profiler
-from jax.experimental.mosaic.gpu.dsl import *  # noqa: F403
+from jax.experimental.mosaic.gpu import *  # noqa: F403
 import jax.numpy as jnp
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
@@ -144,7 +143,7 @@ def build_kernel(
     return _utils_c(value, ty)
 
   def tma_wg_kernel(
-      ctx: mosaic_gpu.LaunchContext,
+      ctx: LaunchContext,
       q_gmem,
       k_gmem,
       v_gmem,
@@ -190,7 +189,7 @@ def build_kernel(
         ctx.async_copy(
             src_ref=q_gmem,
             gmem_slice=(q_head_idx, ds(q_seq_base, blocks.q)),
-            gmem_transform=mosaic_gpu.TileTransform(tiling),
+            gmem_transform=TileTransform(tiling),
             dst_ref=qo_smem,
             barrier=q_barriers[wg_idx],
             swizzle=128,
@@ -294,7 +293,7 @@ def build_kernel(
             src_ref=qo_smem,
             dst_ref=out_gmem,
             gmem_slice=(q_head_idx, ds(q_seq_base, blocks.q)),
-            gmem_transform=mosaic_gpu.TileTransform(tiling),
+            gmem_transform=TileTransform(tiling),
             swizzle=128,
         )
         ctx.await_async_copy(0)
@@ -304,10 +303,9 @@ def build_kernel(
       nvvm.setmaxregister(40, nvvm.SetMaxRegisterAction.decrease)
       with single_thread(per_block=False):
         k_tr = (
-            mosaic_gpu.TileTransform(tiling),
-            mosaic_gpu.TransposeTransform((0, 2, 1, 3, 4)),
+            TileTransform(tiling), TransposeTransform((0, 2, 1, 3, 4)),
         )
-        v_tr = mosaic_gpu.TileTransform(tiling)
+        v_tr = TileTransform(tiling)
         kv_head_idx = arith.divui(q_head_idx, c(q_heads_per_kv_head))
         def start_kv_copy(slot, kv_seq_base, smem, gmem, barrier, transform):
           ctx.async_copy(
@@ -350,7 +348,7 @@ def build_kernel(
       scf.yield_([])
 
   def compute_only_kernel(
-      ctx: mosaic_gpu.LaunchContext,
+      ctx: LaunchContext,
       q_gmem,
       k_gmem,
       v_gmem,
@@ -388,7 +386,7 @@ def build_kernel(
       ctx.async_copy(
           src_ref=q_gmem,
           gmem_slice=(q_head_idx, ds(q_seq_base, blocks.q)),
-          gmem_transform=mosaic_gpu.TileTransform(tiling),
+          gmem_transform=TileTransform(tiling),
           dst_ref=qo_smem,
           barrier=barriers[q_barrier],
           swizzle=128,
@@ -401,10 +399,10 @@ def build_kernel(
         txcount = 2 * blocks.kv * head_dim * bytewidth(f16)
         barriers[slot].arrive_expect_tx(txcount)
         k_tr = (
-            mosaic_gpu.TileTransform(tiling),
-            mosaic_gpu.TransposeTransform((0, 2, 1, 3, 4)),
+            TileTransform(tiling),
+            TransposeTransform((0, 2, 1, 3, 4)),
         )
-        v_tr = mosaic_gpu.TileTransform(tiling)
+        v_tr = TileTransform(tiling)
         for smem, gmem, t in ((k_smem, k_gmem, k_tr), (v_smem, v_gmem, v_tr)):
           ctx.async_copy(
               dst_ref=memref_slice(smem, slot),
@@ -526,7 +524,7 @@ def build_kernel(
           src_ref=qo_smem,
           dst_ref=out_gmem,
           gmem_slice=(q_head_idx, ds(q_seq_base, blocks.q)),
-          gmem_transform=mosaic_gpu.TileTransform(tiling),
+          gmem_transform=TileTransform(tiling),
           swizzle=128,
       )
       ctx.await_async_copy(0)
@@ -551,7 +549,7 @@ def build_kernel(
           Barrier(arrival_count=256, num_barriers=2),
           Barrier(arrival_count=256, num_barriers=1),
       )
-  return mosaic_gpu.as_gpu_kernel(
+  return as_gpu_kernel(
       kernel, grid, block, in_shape, out_shape, smem_scratch_shape, prof_spec
   )
 

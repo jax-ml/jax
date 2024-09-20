@@ -22,17 +22,14 @@ from typing import Any
 import jax
 from jax import random
 from jax._src.interpreters import mlir
-from jax.experimental.mosaic import gpu as mosaic_gpu
 from jax.experimental.mosaic.gpu import profiler
-from jax.experimental.mosaic.gpu.dsl import *  # noqa: F403
+from jax.experimental.mosaic.gpu import *  # noqa: F403
 import jax.numpy as jnp
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import gpu
-from jaxlib.mlir.dialects import memref
 from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import scf
-from jaxlib.mlir.dialects import vector
 import numpy as np
 
 # mypy: ignore-errors
@@ -190,7 +187,7 @@ def build_kernel(
       wgmma_impl.smem_shape_extra(block_tiling, tma_tiling, lhs_dtype, rhs_dtype, rhs_transpose),
   )
   epilogue_scratch_shape = jax.ShapeDtypeStruct(out_tile.shape, out_tile.dtype)
-  smem_shape = mosaic_gpu.Union([compute_scratch_shape, epilogue_scratch_shape])
+  smem_shape = Union([compute_scratch_shape, epilogue_scratch_shape])
 
   def _main(ctx, a_device, b_device, c_device, smem):
     ((lhs_smem, rhs_smem, impl_smem), epilogue_smem), *barriers = smem
@@ -218,15 +215,15 @@ def build_kernel(
             src_ref=a_device,
             dst_ref=memref_slice(lhs_smem, slot),
             gmem_slice=(ds(m_start, block_tiling.m), ds(k_start, block_tiling.k)),
-            gmem_transform=mosaic_gpu.TileTransform(tma_tiling.mk),
+            gmem_transform=TileTransform(tma_tiling.mk),
             collective=(gpu.Dimension.x, gpu.Dimension.z),
             **common_copy_args,
         )
         rhs_slice = (ds(k_start, block_tiling.k), ds(n_start, block_tiling.n))
-        rhs_transform = (mosaic_gpu.TileTransform(tma_tiling.kn),)
+        rhs_transform = (TileTransform(tma_tiling.kn),)
         if rhs_transpose:
           rhs_slice = rhs_slice[::-1]
-          rhs_transform += (mosaic_gpu.TransposeTransform((1, 0, 2, 3)),)
+          rhs_transform += (TransposeTransform((1, 0, 2, 3)),)
           assert tma_tiling.n == tma_tiling.k, block_tiling  # No need to flip the tiling.
         ctx.async_copy(
             src_ref=b_device,
@@ -292,7 +289,7 @@ def build_kernel(
           src_ref=epilogue_smem,
           dst_ref=c_device,
           gmem_slice=(ds(m_start, tile_m), ds(n_start, tile_n)),
-          gmem_transform=mosaic_gpu.TileTransform(out_tiling),
+          gmem_transform=TileTransform(out_tiling),
           swizzle=out_swizzle,
       )
       ctx.await_async_copy(0)
@@ -304,7 +301,7 @@ def build_kernel(
         f" {grid_tile_n=})"
     )
   cluster = (cluster_tile_n, cluster_m, cluster_n // cluster_tile_n)
-  return mosaic_gpu.as_gpu_kernel(
+  return as_gpu_kernel(
       _main,
       grid,
       block,

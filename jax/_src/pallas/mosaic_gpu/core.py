@@ -23,7 +23,7 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import tree_util
 from jax._src.pallas import core as pallas_core
-from jax.experimental.mosaic import gpu as mosaic_gpu
+import jax.experimental.mosaic.gpu as mgpu
 import jax.numpy as jnp
 
 
@@ -64,7 +64,7 @@ class GPUMemorySpace(enum.Enum):
 
 
 class MemoryRefTransform(pallas_core.MemoryRefTransform, Protocol):
-  def to_gpu_transform(self) -> mosaic_gpu.MemRefTransform:
+  def to_gpu_transform(self) -> mgpu.MemRefTransform:
     ...
 
 
@@ -101,8 +101,8 @@ class TilingTransform(MemoryRefTransform):
         inner_aval=block_aval.inner_aval.update(shape=new_block_shape)
     )
 
-  def to_gpu_transform(self) -> mosaic_gpu.MemRefTransform:
-    return mosaic_gpu.TileTransform(self.tiling)
+  def to_gpu_transform(self) -> mgpu.MemRefTransform:
+    return mgpu.TileTransform(self.tiling)
 
 
 @dataclasses.dataclass(frozen=True)
