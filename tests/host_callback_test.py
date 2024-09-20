@@ -335,7 +335,6 @@ class HostCallbackTapTest(jtu.JaxTestCase):
                                  testing_stream.output)
 
   def test_tap_with_device(self):
-    self.supported_only_in_legacy_mode()
     def func2(x):
       x1 = hcb_id_print((x * 2., x * 3.), result=x * 4.,
                         output_stream=testing_stream,
@@ -1468,7 +1467,6 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     testing_stream.reset()
 
   def test_tap_pmap(self):
-    self.supported_only_in_legacy_mode()
     if len(local_devices()) < 2:
       raise SkipTest("test requires at least 2 devices")
 
@@ -2312,7 +2310,6 @@ class HostCallbackCallTest(jtu.JaxTestCase):
     helper_print_optimized_hlo(fun2, m)
 
   def test_call_with_device(self):
-    self.supported_only_in_legacy_mode()
     def callback_func(x, device=None):
       testing_stream.write(f"device: {device}\n Called with {x}")
       return x
@@ -2328,7 +2325,6 @@ class HostCallbackCallTest(jtu.JaxTestCase):
          Called with 3.00""")
 
   def test_call_pmap(self):
-    self.supported_only_in_legacy_mode()
     # Works for 1 or 2 devices
     def callback_func(x, device=None):
       testing_stream.write(f"device: {device}\n Called with {x}")

@@ -511,6 +511,7 @@ import math
 import threading
 import traceback
 from typing import Any, cast
+import warnings
 
 import jax
 from jax._src import api
@@ -575,6 +576,10 @@ _HOST_CALLBACK_LEGACY = config.bool_flag(
         'See https://github.com/google/jax/issues/20385.'
     )
 )
+
+# TODO(b/330820108): Remove after deleting jax.experimental.host_callback.
+# Value below is different externally and internally.
+_host_callback_with_device_is_error = lambda: True
 
 logger = logging.getLogger(__name__)
 
@@ -815,7 +820,9 @@ class _CallbackWrapper:
     self.callback_func = callback_func
     self.identity = identity
     self.call_with_device = call_with_device
-    if not _HOST_CALLBACK_LEGACY.value and call_with_device:
+    if (not _HOST_CALLBACK_LEGACY.value and
+        call_with_device and
+        _host_callback_with_device_is_error()):
       raise NotImplementedError(
           "When using JAX_HOST_CALLBACK_LEGACY=False, the host_callback APIs"
           " do not support `tap_with_device` and `call_with_device`. "
@@ -830,15 +837,25 @@ class _CallbackWrapper:
             self.call_with_device == other.call_with_device)
 
   def __call__(self, *args, **kwargs):
+    assert not kwargs, kwargs
     if _HOST_CALLBACK_LEGACY.value:
-      return self._call_legacy(*args, **kwargs)
+      # We are calling from the old host_callback implementation.
+      arg, device, transforms = args
     else:
-      if self.identity:
-        # For id_tap, we pass empty transforms, for backwards compatibility
-        return self.callback_func(args[0], ())
-      return self.callback_func(*args, **kwargs)
+      # We are calling from the new io_callback implementation.
+      arg, = args
+      device = jax.devices()[0]
+      if self.call_with_device:
+        warnings.warn(
+            "When using JAX_HOST_CALLBACK_LEGACY=False, the host_callback APIs"
+            " do not support `tap_with_device` and `call_with_device`. "
+            "See https://github.com/google/jax/issues/20385. "
+            "In this instance, the device passed to the callback is "
+            "the first device irrespective of the actual device from which "
+            "the callback originates."
+        )
+      transforms = ()
 
-  def _call_legacy(self, arg, device, transforms):
     if self.identity:
       # For id_tap, we pass the transforms, for backwards compatibility
       if self.call_with_device:
@@ -913,7 +930,7 @@ def _call(callback_func: Callable,
     else:
       call_res = io_callback(callback_func, result_shape, arg,
                              sharding=sharding,
-                             ordered=True)
+                             ordered=not call_with_device)
     return call_res if not identity else arg
 
 
