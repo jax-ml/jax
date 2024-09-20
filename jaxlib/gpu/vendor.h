@@ -78,6 +78,8 @@ typedef cusolverStatus_t gpusolverStatus_t;
 typedef cusolverEigMode_t gpusolverEigMode_t;
 typedef syevjInfo gpuSyevjInfo;
 typedef syevjInfo_t gpuSyevjInfo_t;
+typedef gesvdjInfo gpuGesvdjInfo;
+typedef gesvdjInfo_t gpuGesvdjInfo_t;
 typedef cusparseIndexType_t gpusparseIndexType_t;
 typedef cusparseHandle_t gpusparseHandle_t;
 typedef cusparseOperation_t gpusparseOperation_t;
@@ -120,6 +122,8 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpusolverDnSetStream cusolverDnSetStream
 #define gpusolverDnCreateSyevjInfo cusolverDnCreateSyevjInfo
 #define gpusolverDnDestroySyevjInfo cusolverDnDestroySyevjInfo
+#define gpusolverDnCreateGesvdjInfo cusolverDnCreateGesvdjInfo
+#define gpusolverDnDestroyGesvdjInfo cusolverDnDestroyGesvdjInfo
 #define gpusolverDnSgeqrf cusolverDnSgeqrf
 #define gpusolverDnDgeqrf cusolverDnDgeqrf
 #define gpusolverDnCgeqrf cusolverDnCgeqrf
@@ -184,6 +188,22 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
   cusolverDnCgesvd_bufferSize(h, m, n, lwork)
 #define gpusolverDnZgesvd_bufferSize(h, jobu, jobvt, m, n, lwork) \
   cusolverDnZgesvd_bufferSize(h, m, n, lwork)
+#define gpusolverDnSgesvdj cusolverDnSgesvdj
+#define gpusolverDnDgesvdj cusolverDnDgesvdj
+#define gpusolverDnCgesvdj cusolverDnCgesvdj
+#define gpusolverDnZgesvdj cusolverDnZgesvdj
+#define gpusolverDnSgesvdj_bufferSize cusolverDnSgesvdj_bufferSize
+#define gpusolverDnDgesvdj_bufferSize cusolverDnDgesvdj_bufferSize
+#define gpusolverDnCgesvdj_bufferSize cusolverDnCgesvdj_bufferSize
+#define gpusolverDnZgesvdj_bufferSize cusolverDnZgesvdj_bufferSize
+#define gpusolverDnSgesvdjBatched cusolverDnSgesvdjBatched
+#define gpusolverDnDgesvdjBatched cusolverDnDgesvdjBatched
+#define gpusolverDnCgesvdjBatched cusolverDnCgesvdjBatched
+#define gpusolverDnZgesvdjBatched cusolverDnZgesvdjBatched
+#define gpusolverDnSgesvdjBatched_bufferSize cusolverDnSgesvdjBatched_bufferSize
+#define gpusolverDnDgesvdjBatched_bufferSize cusolverDnDgesvdjBatched_bufferSize
+#define gpusolverDnCgesvdjBatched_bufferSize cusolverDnCgesvdjBatched_bufferSize
+#define gpusolverDnZgesvdjBatched_bufferSize cusolverDnZgesvdjBatched_bufferSize
 #define gpusolverDnSsytrd_bufferSize cusolverDnSsytrd_bufferSize
 #define gpusolverDnDsytrd_bufferSize cusolverDnDsytrd_bufferSize
 #define gpusolverDnChetrd_bufferSize cusolverDnChetrd_bufferSize
@@ -196,6 +216,7 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUSOLVER_FILL_MODE_LOWER CUBLAS_FILL_MODE_LOWER
 #define GPUSOLVER_FILL_MODE_UPPER CUBLAS_FILL_MODE_UPPER
 #define GPUSOLVER_EIG_MODE_VECTOR CUSOLVER_EIG_MODE_VECTOR
+#define GPUSOLVER_EIG_MODE_NOVECTOR CUSOLVER_EIG_MODE_NOVECTOR
 #define GPUSOLVER_STATUS_SUCCESS CUSOLVER_STATUS_SUCCESS
 
 #define GPUBLAS_OP_N CUBLAS_OP_N
@@ -311,6 +332,22 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuGetDeviceProperties cudaGetDeviceProperties
 #define gpuLaunchCooperativeKernel cudaLaunchCooperativeKernel
 
+#define JAX_GPU_64_BIT 1
+
+#define GPU_R_32F CUDA_R_32F
+#define GPU_R_64F CUDA_R_64F
+#define GPU_C_32F CUDA_C_32F
+#define GPU_C_64F CUDA_C_64F
+
+typedef cudaDataType gpuDataType;
+typedef cusolverDnParams gpusolverDnParams;
+typedef cusolverDnParams_t gpusolverDnParams_t;
+#define gpusolverDnCreateParams cusolverDnCreateParams
+#define gpusolverDnDestroyParams cusolverDnDestroyParams
+
+#define gpusolverDnXgesvd_bufferSize cusolverDnXgesvd_bufferSize
+#define gpusolverDnXgesvd cusolverDnXgesvd
+
 namespace jax::JAX_GPU_NAMESPACE {
 namespace {
 constexpr uint32_t kNumThreadsPerWarp = 32;
@@ -331,6 +368,7 @@ constexpr uint32_t kNumThreadsPerWarp = 32;
 #define JAX_GPU_PREFIX "hip"
 
 #define JAX_GPU_HAVE_SPARSE 1
+#define JAX_GPU_64_BIT 0
 #define JAX_GPU_HAVE_FP8 0
 
 typedef hipFloatComplex gpuComplex;
@@ -472,6 +510,7 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUSOLVER_FILL_MODE_LOWER HIPSOLVER_FILL_MODE_LOWER
 #define GPUSOLVER_FILL_MODE_UPPER HIPSOLVER_FILL_MODE_UPPER
 #define GPUSOLVER_EIG_MODE_VECTOR HIPSOLVER_EIG_MODE_VECTOR
+#define GPUSOLVER_EIG_MODE_NOVECTOR HIPSOLVER_EIG_MODE_NOVECTOR
 #define GPUSOLVER_STATUS_SUCCESS HIPSOLVER_STATUS_SUCCESS
 
 #define GPUBLAS_OP_N HIPBLAS_OP_N
