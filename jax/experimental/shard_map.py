@@ -470,8 +470,7 @@ shard_map_p = ShardMapPrimitive('shard_map')
 
 def _shard_map_staging(
     trace: pe.DynamicJaxprTrace, prim: core.Primitive, f: lu.WrappedFun,
-    in_tracers: Sequence[Any], *,
-    mesh: Mesh,
+    in_tracers: Sequence[Any], *, mesh: Mesh,
     in_names: tuple[AxisNames, ...],
     out_names_thunk: Callable[[], tuple[AxisNames, ...]],
     check_rep: bool,
@@ -486,7 +485,6 @@ def _shard_map_staging(
   out_avals = map(_check_shapedarray, out_avals_)
   out_avals = [_check_shapedarray(_unshard_aval(mesh, names, aval))
                for names, aval in zip(out_names_thunk(), out_avals)]
-  # TODO check_rep
   source_info = source_info_util.current()
   out_tracers = [pe.DynamicJaxprTracer(trace, a, source_info) for a in out_avals]
   invars = map(trace.getvar, in_tracers)
@@ -1301,9 +1299,7 @@ def _shard_map_jvp(trace, shard_map_p, f, tracers, mesh, in_names,
   which_nz = [     type(t) is not ad.Zero           for t in tangents]
   tangents = [t if type(t) is not ad.Zero else None for t in tangents]
   args, in_tree = tree_flatten((primals, tangents))
-
   f_jvp = ad.jvp_subtrace(f, trace.tag)
-
   f_jvp, which_nz_out = ad.nonzero_tangent_outputs(f_jvp)
   tangent_in_names = [ax for ax, nz in zip(in_names, which_nz) if nz]
 

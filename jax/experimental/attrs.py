@@ -107,11 +107,9 @@ def _set_attrs(attrs, attr_vals, *args):
 def _jvp(fun: lu.WrappedFun):
   return jvpfun2(jvp_subtrace2(fun))
 
-class JVPTag: pass
-
 @lu.transformation
 def jvpfun2(primals, tangents):
-  tag = JVPTag()
+  tag = core.TraceTag()
   tangents = [Zero.from_primal_value(t) if not isinstance(t, Zero)
               and dtype(t) == float0 else t for t in tangents]
   ctx = source_info_util.transform_name_stack('jvp')

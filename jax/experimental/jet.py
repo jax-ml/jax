@@ -152,7 +152,7 @@ def jet(fun, primals, series):
 
 @lu.transformation
 def jet_fun(order, primals, series):
-  tag = JetTag
+  tag = core.TraceTag()
   out_primals, out_terms = yield (tag, order, primals, series), {}
   out_terms = [[jnp.zeros_like(p)] * order if s is zero_series else s
                for p, s in zip(out_primals, out_terms)]
@@ -195,8 +195,6 @@ class JetTracer(core.Tracer):
       return core.full_lower(self.primal)
     else:
       return self
-
-class JetTag: pass
 
 class JetTrace(core.Trace):
 
