@@ -1783,7 +1783,7 @@ def _gather_lower_opaque(ctx, operand, indices, *,
                          indices_are_sorted, mode, fill_value) -> ir.Value:
   aval_x, aval_indices = ctx.avals_in
   aval_y, = ctx.avals_out
-  elt_shape = aval_x.dtype._rules.physical_element_aval(aval_x.dtype).shape
+  elt_shape = core.physical_element_aval(aval_x.dtype).shape
   trailing_offset_dims = [aval_y.ndim + i for i in range(len(elt_shape))]
   dimension_numbers = dimension_numbers._replace(
       offset_dims=(*dimension_numbers.offset_dims, *trailing_offset_dims))
@@ -2436,7 +2436,7 @@ def _scatter_lower_opaque(ctx, operand, indices, updates, *,
                           unique_indices, indices_are_sorted, mode):
   aval_x, aval_indices, aval_updates = ctx.avals_in
   aval_y, = ctx.avals_out
-  elt_shape = aval_x.dtype._rules.physical_element_aval(aval_x.dtype).shape
+  elt_shape = core.physical_element_aval(aval_x.dtype).shape
   trailing_window_dims = [aval_updates.ndim + i for i in range(len(elt_shape))]
   dimension_numbers = dimension_numbers._replace(
       update_window_dims=(*dimension_numbers.update_window_dims,

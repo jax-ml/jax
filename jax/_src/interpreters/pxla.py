@@ -1429,7 +1429,7 @@ def _hlo_shard(aval, axis_env, x, in_axis):
     return x
   elif isinstance(aval, core.ShapedArray):
     if dtypes.issubdtype(aval.dtype, dtypes.extended):
-      aval = aval.dtype._rules.physical_element_aval(aval.dtype)
+      aval = core.physical_element_aval(aval.dtype)
     dims = list(aval.shape)
     zero = mlir.ir_constant(np.zeros((), dtype=np.uint32))
     idxs = [zero] * len(dims)
