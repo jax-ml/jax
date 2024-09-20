@@ -65,7 +65,6 @@ class Zero:
     self.aval = aval
   def __repr__(self) -> str:
     return f'Zero({self.aval})'
-
   @staticmethod
   def from_primal_value(val: Any) -> Zero:
     return Zero(raise_to_shaped(get_aval(val)).to_tangent_aval())

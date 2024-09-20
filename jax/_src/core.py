@@ -925,10 +925,10 @@ class TraceTag:
   def __eq__(self, other):
     return isinstance(other, TraceTag)
 
-# -------------------- axis env --------------------
-
 ParamDict = dict[str, Any]
 AxisName = Hashable
+
+no_axis_name = object()
 
 @dataclass(frozen=True)
 class AxisEnv:
@@ -957,10 +957,6 @@ class AxisEnv:
   def as_hashable_key(self):
     return tuple((name, size) for (name, size) in self.axis_sizes.items()
                  if name is not no_axis_name)
-
-no_axis_name = object()
-
-# -------------------- global tracing context --------------------
 
 eval_trace = EvalTrace()
 top_axis_env = AxisEnv({})
@@ -1033,18 +1029,6 @@ def pop_axis_name(name : AxisName):
 def get_axis_env():
   return trace_ctx.axis_env
 
-def trace_state_clean() -> bool:
-  return trace_ctx.is_top_level()
-
-def reset_trace_state() -> bool:
-  """Resets the global trace state and returns True if it was already clean."""
-  if not trace_ctx.is_top_level():
-    trace_ctx.reset()
-    trace_ctx.update_thread_local_jit_state()
-    return False
-  else:
-    return True
-
 def _initialize_jax_jit_thread_local_state():
   """Initializes the C++ thread-local context.
 
@@ -1061,6 +1045,18 @@ def _initialize_jax_jit_thread_local_state():
 
 jax_jit.set_thread_local_state_initialization_callback(
     _initialize_jax_jit_thread_local_state)
+
+def trace_state_clean() -> bool:
+  return trace_ctx.is_top_level()
+
+def reset_trace_state() -> bool:
+  """Resets the global trace state and returns True if it was already clean."""
+  if not trace_ctx.is_top_level():
+    trace_ctx.reset()
+    trace_ctx.update_thread_local_jit_state()
+    return False
+  else:
+    return True
 
 TRACER_LEAK_DEBUGGER_WARNING = """\
 JAX check_tracer_leaks behavior can trigger false positives when used with a debugger.
@@ -2300,6 +2296,30 @@ aval_mapping_handlers: dict[type, AvalMapHandlerPair] = {
     AbstractToken: (lambda _, __, a: a, lambda _, __, ___, a: a)
 }
 
+# When a mapped function is given no axis name, we generate a name object based
+# on the id of the function object. Collisions aren't important because this
+# name can't be used in collectives, as user code never gets a ref to this
+# object. We don't want to use the function object itself because that might
+# persist references to the function object.
+# TODO(mattjj): revisit this unique axis name strategy
+@total_ordering
+class _TempAxisName:
+
+  def __init__(self, obj):
+    self.id = id(obj)
+
+  def __repr__(self):
+    return f'<axis {hex(self.id)}>'
+
+  def __hash__(self):
+    return hash(self.id)
+
+  def __eq__(self, other):
+    return type(other) is _TempAxisName and self.id == other.id
+
+  def __lt__(self, other):
+    return type(other) is _TempAxisName and self.id < other.id
+
 
 @dataclass(frozen=True)
 class NamedAxisEffect(effects.Effect):
@@ -2313,11 +2333,13 @@ effects.custom_derivatives_allowed_effects.add_type(NamedAxisEffect)
 effects.lowerable_effects.add_type(NamedAxisEffect)
 effects.remat_allowed_effects.add_type(NamedAxisEffect)
 
+
 def filter_named_axis_effects(
     effects: Effects, names: Collection[AxisName]
 ) -> Effects:
   return {e for e in effects
           if not isinstance(e, NamedAxisEffect) or e.name not in names}
+
 
 def remove_named_axis_effects(
     jaxpr: Jaxpr, names: Collection[AxisName]
@@ -2952,30 +2974,6 @@ def clean_up_dead_vars(eqn: JaxprEqn, env: dict[Var, Any],
     if last_used[v] is eqn:
       # Delete ref to variable when it is no longer needed by next equations.
       del env[v]
-
-# When a mapped function is given no axis name, we generate a name object based
-# on the id of the function object. Collisions aren't important because this
-# name can't be used in collectives, as user code never gets a ref to this
-# object. We don't want to use the function object itself because that might
-# persist references to the function object.
-# TODO(mattjj): revisit this unique axis name strategy
-@total_ordering
-class _TempAxisName:
-
-  def __init__(self, obj):
-    self.id = id(obj)
-
-  def __repr__(self):
-    return f'<axis {hex(self.id)}>'
-
-  def __hash__(self):
-    return hash(self.id)
-
-  def __eq__(self, other):
-    return type(other) is _TempAxisName and self.id == other.id
-
-  def __lt__(self, other):
-    return type(other) is _TempAxisName and self.id < other.id
 
 concrete_eval = ensure_compile_time_eval
 
