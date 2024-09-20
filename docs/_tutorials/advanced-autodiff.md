@@ -77,7 +77,7 @@ def meta_loss_fn(params, data):
 meta_grads = jax.grad(meta_loss_fn)(params, data)
 ```
 
-
+(stopping-gradients)=
 ### Stopping gradients
 
 Autodiff enables automatic computation of the gradient of a function with respect to its inputs. Sometimes, however, you might want some additional control: for instance, you might want to avoid backpropagating gradients through some subset of the computational graph.
