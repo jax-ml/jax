@@ -255,9 +255,9 @@ class JaxprTrace(Trace['JaxprTracer']):
     # which were unknown to the first call (corresponding to in_avals).
 
     # Wrap f to perform the partial evaluation and plumb out aux data.
-    f_ = trace_to_subjaxpr_nounits_fwd(f, self.main, False)
-    f_, aux = partial_eval_wrapper_nounits(f_, tuple(in_knowns),
-                                           tuple(in_avals))
+    f_ = trace_to_subjaxpr_nounits_fwd(f, self.tag, False)
+    f_, aux = partial_eval_wrapper_nounits(f_, tuple(in_knowns), tuple(in_avals))
+
     # Adjust parameters (e.g. donated_invars) for the call to be evaluated now.
     const_params = update_params(params, in_knowns, 0)
 
