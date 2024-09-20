@@ -1549,6 +1549,8 @@ tf_not_yet_impl = [
     "ragged_dot",
     "cholesky_update",
     "symmetric_update",
+    "from_edtype",
+    "to_edtype",
     # Pallas TPU primitives
     "bitcast",
     "repeat",
