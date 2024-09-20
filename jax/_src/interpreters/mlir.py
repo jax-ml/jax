@@ -537,7 +537,7 @@ def dump_module_to_file(module: ir.Module, stage_name: str) -> str | None:
   sym_name = module.operation.attributes['sym_name']
   module_name = ir.StringAttr(sym_name).value
 
-  name = f"jax_ir{id}_{_make_string_safe_for_filename(module_name)}_{stage_name}.mlir"
+  name = f"jax_ir{id:04d}_{_make_string_safe_for_filename(module_name)}_{stage_name}.mlir"
 
   out_dir = path.Path(out_dir_name)
   out_dir.mkdir(parents=True, exist_ok=True)
