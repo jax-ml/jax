@@ -783,7 +783,7 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
     raise TypeError(msg.format(in_tree2, in_tree)) from None
   results = []
   for kp, a, ct in zip(keypaths, in_avals, cts_in_flat):
-    if ct is zero or a != a.to_tangent_aval():
+    if ct is zero or getattr(a.to_tangent_aval(), 'dtype') == dtypes.float0:
       results.append(Zero(a.to_tangent_aval()))
     elif type(ct) is SymbolicZero:
       if not core.typecompat(a.to_tangent_aval(), a_ := ct.aval):
