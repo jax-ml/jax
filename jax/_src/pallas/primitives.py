@@ -59,6 +59,8 @@ def program_id(axis: int) -> jax.Array:
   grid coordinates `(1, 2)`,
   `program_id(axis=0)` returns `1` and `program_id(axis=1)` returns `2`.
 
+  The returned value is an array of shape `()` and dtype `int32`.
+
   Args:
     axis: the axis of the grid along which to count the program.
   """
