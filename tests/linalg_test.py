@@ -329,7 +329,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cpu")
   def testEigvalsInf(self):
-    # https://github.com/google/jax/issues/2661
+    # https://github.com/jax-ml/jax/issues/2661
     x = jnp.array([[jnp.inf]])
     self.assertTrue(jnp.all(jnp.isnan(jnp.linalg.eigvals(x))))
 
@@ -1004,7 +1004,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("tpu")
   def testQrInvalidDtypeCPU(self, shape=(5, 6), dtype=np.float16):
-    # Regression test for https://github.com/google/jax/issues/10530
+    # Regression test for https://github.com/jax-ml/jax/issues/10530
     rng = jtu.rand_default(self.rng())
     arr = rng(shape, dtype)
     if jtu.test_device_matches(['cpu']):
@@ -1422,7 +1422,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.parameters(lax_linalg.lu, lax_linalg._lu_python)
   def testLuOnZeroMatrix(self, lu):
-    # Regression test for https://github.com/google/jax/issues/19076
+    # Regression test for https://github.com/jax-ml/jax/issues/19076
     x = jnp.zeros((2, 2), dtype=np.float32)
     x_lu, _, _ = lu(x)
     self.assertArraysEqual(x_lu, x)

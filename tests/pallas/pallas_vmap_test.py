@@ -209,7 +209,7 @@ class PallasCallVmapTest(PallasBaseTest):
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   @jtu.skip_on_devices("cpu")  # Test is very slow on CPU
   def test_small_large_vmap(self):
-    # Catches https://github.com/google/jax/issues/18361
+    # Catches https://github.com/jax-ml/jax/issues/18361
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
         grid=(2,))

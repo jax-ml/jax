@@ -1334,7 +1334,7 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_grad_sharding_different_mesh(self):
     # Export and serialize with two similar meshes, the only difference being
     # the order of the devices. grad and serialization should not fail.
-    # https://github.com/google/jax/issues/21314
+    # https://github.com/jax-ml/jax/issues/21314
     def f(x):
       return jnp.sum(x * 2.)
 

@@ -105,7 +105,7 @@ def _bcoo_set_nse(mat: BCOO, nse: int) -> BCOO:
               unique_indices=mat.unique_indices)
 
 # TODO(jakevdp) this can be problematic when used with autodiff; see
-# https://github.com/google/jax/issues/10163. Should this be a primitive?
+# https://github.com/jax-ml/jax/issues/10163. Should this be a primitive?
 # Alternatively, maybe roll this into bcoo_sum_duplicates as an optional argument.
 def bcoo_eliminate_zeros(mat: BCOO, nse: int | None = None) -> BCOO:
   data, indices, shape = mat.data, mat.indices, mat.shape
@@ -1140,7 +1140,7 @@ def _bcoo_spdot_general_unbatched(lhs_data, lhs_indices, rhs_data, rhs_indices, 
   out_indices = out_indices.at[:, :, lhs_j.shape[-1]:].set(rhs_j[None, :])
   out_indices = out_indices.reshape(len(out_data), out_indices.shape[-1])
   # Note: we do not eliminate zeros here, because it can cause issues with autodiff.
-  # See https://github.com/google/jax/issues/10163.
+  # See https://github.com/jax-ml/jax/issues/10163.
   return _bcoo_sum_duplicates(out_data, out_indices, spinfo=SparseInfo(shape=out_shape), nse=out_nse)
 
 @bcoo_spdot_general_p.def_impl
@@ -1537,7 +1537,7 @@ def _bcoo_sum_duplicates_jvp(primals, tangents, *, spinfo, nse):
                         nse, *data.shape[props.n_batch + 1:]), dtype=data.dtype)
   data_dot_out = data_out
   # This check is because scatter-add on zero-sized arrays has poorly defined
-  # semantics; see https://github.com/google/jax/issues/13656.
+  # semantics; see https://github.com/jax-ml/jax/issues/13656.
   if data_out.size:
     permute = lambda x, i, y: x.at[i].add(y, mode='drop')
   else:

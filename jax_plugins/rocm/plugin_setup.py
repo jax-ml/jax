@@ -51,7 +51,7 @@ setup(
     packages=[package_name],
     python_requires=">=3.9",
     install_requires=[f"jax-rocm{rocm_version}-pjrt=={__version__}"],
-    url="https://github.com/google/jax",
+    url="https://github.com/jax-ml/jax",
     license="Apache-2.0",
     classifiers=[
         "Development Status :: 3 - Alpha",

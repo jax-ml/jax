@@ -1035,7 +1035,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
         ( 5.00 2 )""", testing_stream.output)
 
   def test_tap_grad_float0_result(self):
-    # https://github.com/google/jax/issues/7340
+    # https://github.com/jax-ml/jax/issues/7340
     # x is a Tuple[f32[2], s32[3]]
     x = (np.array([.7, .8], dtype=np.float32),
          np.array([11, 12, 13], dtype=np.int32))
@@ -1058,7 +1058,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
         ( [0.70 0.80] [11 12 13] )""", testing_stream.output)
 
   def test_tap_higher_order_grad_float0_result(self):
-    # https://github.com/google/jax/issues/7340
+    # https://github.com/jax-ml/jax/issues/7340
     # x is a Tuple[f32[2], s32[3]]
     x = (np.array([.7, .8], dtype=np.float32),
          np.array([11, 12, 13], dtype=np.int32))
@@ -1935,7 +1935,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       hcb.id_tap(func, 1, y=2)
 
   def test_tap_id_tap_random_key(self):
-    # See https://github.com/google/jax/issues/13949
+    # See https://github.com/jax-ml/jax/issues/13949
     with jax.enable_custom_prng():
       @jax.jit
       def f(x):

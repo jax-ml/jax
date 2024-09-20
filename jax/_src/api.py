@@ -956,7 +956,7 @@ def vmap(fun: F,
     # list: if in_axes is not a leaf, it must be a tuple of trees. However,
     # in cases like these users expect tuples and lists to be treated
     # essentially interchangeably, so we canonicalize lists to tuples here
-    # rather than raising an error. https://github.com/google/jax/issues/2367
+    # rather than raising an error. https://github.com/jax-ml/jax/issues/2367
     in_axes = tuple(in_axes)
 
   if not (in_axes is None or type(in_axes) in {int, tuple, *batching.spec_types}):
@@ -2505,7 +2505,7 @@ class ShapeDtypeStruct:
 
   def __hash__(self):
     # TODO(frostig): avoid the conversion from dict by addressing
-    # https://github.com/google/jax/issues/8182
+    # https://github.com/jax-ml/jax/issues/8182
     return hash((self.shape, self.dtype, self.sharding, self.layout, self.weak_type))
 
 def _sds_aval_mapping(x):

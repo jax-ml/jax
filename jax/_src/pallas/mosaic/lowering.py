@@ -833,7 +833,7 @@ def jaxpr_subcomp(
         raise NotImplementedError(
             "Unimplemented primitive in Pallas TPU lowering: "
             f"{eqn.primitive.name}. "
-            "Please file an issue on https://github.com/google/jax/issues.")
+            "Please file an issue on https://github.com/jax-ml/jax/issues.")
       if eqn.primitive.multiple_results:
         map(write_env, eqn.outvars, ans)
       else:

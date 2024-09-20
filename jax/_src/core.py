@@ -935,7 +935,7 @@ aval_method = namedtuple("aval_method", ["fun"])
 
 
 class EvalTrace(Trace):
-  # See comments in https://github.com/google/jax/pull/3370
+  # See comments in https://github.com/jax-ml/jax/pull/3370
   def pure(self, x): return x
   lift = sublift = pure
 
@@ -998,7 +998,7 @@ class MainTrace:
     return self.trace_type(self, cur_sublevel(), **self.payload)
 
 class TraceStack:
-  # See comments in https://github.com/google/jax/pull/3370
+  # See comments in https://github.com/jax-ml/jax/pull/3370
   stack: list[MainTrace]
   dynamic: MainTrace
 
@@ -1167,7 +1167,7 @@ def _why_alive(ignore_ids: set[int], x: Any) -> str:
     # parent->child jump. We do that by setting `parent` here to be a
     # grandparent (or great-grandparent) of `child`, and then handling that case
     # in _why_alive_container_info. See example:
-    #  https://github.com/google/jax/pull/13022#discussion_r1008456599
+    #  https://github.com/jax-ml/jax/pull/13022#discussion_r1008456599
     # To prevent this collapsing behavior, just comment out this code block.
     if (isinstance(parent, dict) and
         getattr(parents(parent)[0], '__dict__', None) is parents(child)[0]):
@@ -1213,7 +1213,7 @@ def _why_alive_container_info(container, obj_id) -> str:
 @contextmanager
 def new_main(trace_type: type[Trace], dynamic: bool = False,
              **payload) -> Generator[MainTrace, None, None]:
-  # See comments in https://github.com/google/jax/pull/3370
+  # See comments in https://github.com/jax-ml/jax/pull/3370
   stack = thread_local_state.trace_state.trace_stack
   level = stack.next_level()
   main = MainTrace(level, trace_type, **payload)
@@ -1254,7 +1254,7 @@ def dynamic_level() -> int:
 @contextmanager
 def new_base_main(trace_type: type[Trace],
                   **payload) -> Generator[MainTrace, None, None]:
-  # See comments in https://github.com/google/jax/pull/3370
+  # See comments in https://github.com/jax-ml/jax/pull/3370
   stack = thread_local_state.trace_state.trace_stack
   main = MainTrace(0, trace_type, **payload)
   prev_dynamic, stack.dynamic = stack.dynamic, main
@@ -1319,7 +1319,7 @@ def ensure_compile_time_eval():
       else:
         return jnp.cos(x)
 
-  Here's a real-world example from https://github.com/google/jax/issues/3974::
+  Here's a real-world example from https://github.com/jax-ml/jax/issues/3974::
 
     import jax
     import jax.numpy as jnp
@@ -1680,7 +1680,7 @@ class UnshapedArray(AbstractValue):
   @property
   def shape(self):
     msg = ("UnshapedArray has no shape. Please open an issue at "
-           "https://github.com/google/jax/issues because it's unexpected for "
+           "https://github.com/jax-ml/jax/issues because it's unexpected for "
            "UnshapedArray instances to ever be produced.")
     raise TypeError(msg)
 

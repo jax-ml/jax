@@ -549,7 +549,7 @@ def lower_jaxpr_to_mosaic_gpu(
       raise NotImplementedError(
           "Unimplemented primitive in Pallas Mosaic GPU lowering: "
           f"{eqn.primitive.name}. "
-          "Please file an issue on https://github.com/google/jax/issues."
+          "Please file an issue on https://github.com/jax-ml/jax/issues."
       )
     rule = mosaic_lowering_rules[eqn.primitive]
     rule_ctx = LoweringRuleContext(

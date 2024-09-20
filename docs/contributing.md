@@ -5,22 +5,22 @@
 Everyone can contribute to JAX, and we value everyone's contributions. There are several
 ways to contribute, including:
 
-- Answering questions on JAX's [discussions page](https://github.com/google/jax/discussions)
+- Answering questions on JAX's [discussions page](https://github.com/jax-ml/jax/discussions)
 - Improving or expanding JAX's [documentation](http://jax.readthedocs.io/)
-- Contributing to JAX's [code-base](http://github.com/google/jax/)
-- Contributing in any of the above ways to the broader ecosystem of [libraries built on JAX](https://github.com/google/jax#neural-network-libraries)
+- Contributing to JAX's [code-base](http://github.com/jax-ml/jax/)
+- Contributing in any of the above ways to the broader ecosystem of [libraries built on JAX](https://github.com/jax-ml/jax#neural-network-libraries)
 
 The JAX project follows [Google's Open Source Community Guidelines](https://opensource.google/conduct/).
 
 ## Ways to contribute
 
 We welcome pull requests, in particular for those issues marked with
-[contributions welcome](https://github.com/google/jax/issues?q=is%3Aopen+is%3Aissue+label%3A%22contributions+welcome%22) or
-[good first issue](https://github.com/google/jax/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22).
+[contributions welcome](https://github.com/jax-ml/jax/issues?q=is%3Aopen+is%3Aissue+label%3A%22contributions+welcome%22) or
+[good first issue](https://github.com/jax-ml/jax/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22).
 
 For other proposals, we ask that you first open a GitHub
-[Issue](https://github.com/google/jax/issues/new/choose) or
-[Discussion](https://github.com/google/jax/discussions)
+[Issue](https://github.com/jax-ml/jax/issues/new/choose) or
+[Discussion](https://github.com/jax-ml/jax/discussions)
 to seek feedback on your planned contribution.
 
 ## Contributing code using pull requests
@@ -33,7 +33,7 @@ Follow these steps to contribute code:
    For more information, see the Pull Request Checklist below.
 
 2. Fork the JAX repository by clicking the **Fork** button on the
-   [repository page](http://www.github.com/google/jax). This creates
+   [repository page](http://www.github.com/jax-ml/jax). This creates
    a copy of the JAX repository in your own account.
 
 3. Install Python >= 3.10 locally in order to run tests.
@@ -52,7 +52,7 @@ Follow these steps to contribute code:
    changes.
 
    ```bash
-   git remote add upstream https://www.github.com/google/jax
+   git remote add upstream https://www.github.com/jax-ml/jax
    ```
 
 6. Create a branch where you will develop from:

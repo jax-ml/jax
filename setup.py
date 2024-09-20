@@ -104,7 +104,7 @@ setup(
           f"jax-cuda12-plugin=={_current_jaxlib_version}",
         ],
     },
-    url='https://github.com/google/jax',
+    url='https://github.com/jax-ml/jax',
     license='Apache-2.0',
     classifiers=[
         "Programming Language :: Python :: 3.10",

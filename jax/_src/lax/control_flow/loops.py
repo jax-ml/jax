@@ -715,7 +715,7 @@ def _scan_transpose(cts, *args, reverse, length, num_consts,
   if xs_lin != [True] * (len(xs_lin) - num_eres) + [False] * num_eres:
     raise NotImplementedError
   if not all(init_lin):
-    pass  # TODO(mattjj): error check https://github.com/google/jax/issues/1963
+    pass  # TODO(mattjj): error check https://github.com/jax-ml/jax/issues/1963
 
   consts, _, xs = split_list(args, [num_consts, num_carry])
   ires, _ = split_list(consts, [num_ires])
@@ -1169,7 +1169,7 @@ def _scan_state_discharge_rule(in_avals, out_avals, *args, jaxpr, num_consts,
   if discharged_consts:
     raise NotImplementedError("Discharged jaxpr has consts. If you see this, "
                               "please open an issue at "
-                              "https://github.com/google/jax/issues")
+                              "https://github.com/jax-ml/jax/issues")
   def wrapped(*wrapped_args):
     val_consts, ref_consts_in, carry_in, val_xs, ref_xs_in = split_list_checked(wrapped_args,
       [n_val_consts, n_ref_consts, n_carry, n_val_xs, n_ref_xs])
@@ -1838,7 +1838,7 @@ def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
   if body_jaxpr_consts:
     raise NotImplementedError("Body jaxpr has consts. If you see this error, "
                               "please open an issue at "
-                              "https://github.com/google/jax/issues")
+                              "https://github.com/jax-ml/jax/issues")
   # body_jaxpr has the signature (*body_consts, *carry) -> carry.
   # Some of these body_consts are actually `Ref`s so when we discharge
   # them, they also turn into outputs, effectively turning those consts into

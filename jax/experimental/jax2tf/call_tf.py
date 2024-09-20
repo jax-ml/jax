@@ -19,7 +19,7 @@ This module introduces the function :func:`call_tf` that allows JAX to call
 TensorFlow functions.
 
 For examples and details, see
-https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax.
+https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax.
 
 """
 
@@ -93,7 +93,7 @@ def call_tf(
 
   For an example and more details see the
   `README
-  <https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax>`_.
+  <https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax>`_.
 
   Args:
     callable_tf: a TensorFlow Callable that can take a pytree of TensorFlow
@@ -460,7 +460,7 @@ def _call_tf_abstract_eval(
   msg = ("call_tf cannot call functions whose output has dynamic shape. "
     f"Found output shapes: {concrete_function_flat_tf.output_shapes}. "
     "Consider using the `output_shape_dtype` argument to call_tf. "
-    "\nSee https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf"
+    "\nSee https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf"
       " for a discussion.")
   raise ValueError(msg)
 
@@ -499,7 +499,7 @@ def _call_tf_lowering(
     msg = (
         "call_tf works best with a TensorFlow function that does not capture "
         "variables or tensors from the context. "
-        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion. "
+        "See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion. "
         f"The following captures were found {concrete_function_flat_tf.captured_inputs}")
     logging.warning(msg)
     for inp in concrete_function_flat_tf.captured_inputs:
@@ -544,7 +544,7 @@ def _call_tf_lowering(
              "\ncall_tf can used " +
               "in a staged context (under jax.jit, lax.scan, etc.) only with " +
               "compilable functions with static output shapes.\n" +
-              "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion." +
+              "See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion." +
              "\n\nCaught TensorFlow exception: " + str(e))
       raise ValueError(msg) from e
 
@@ -557,7 +557,7 @@ def _call_tf_lowering(
              f"{res_shape}. call_tf can used " +
              "in a staged context (under jax.jit, lax.scan, etc.) only with " +
              "compilable functions with static output shapes. " +
-             "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion.")
+             "See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion.")
       raise ValueError(msg)
 
     res_dtype = res_shape.numpy_dtype()

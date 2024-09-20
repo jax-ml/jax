@@ -425,7 +425,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     if (shape in [()] + scalar_shapes and
         dtype in [jnp.int16, jnp.uint16] and
         jnp_op in [jnp.min, jnp.max]):
-      self.skipTest("Known XLA failure; see https://github.com/google/jax/issues/4971.")
+      self.skipTest("Known XLA failure; see https://github.com/jax-ml/jax/issues/4971.")
     rng = rng_factory(self.rng())
     is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
     # Do not pass where via args_maker as that is incompatible with _promote_like_jnp.
@@ -582,7 +582,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     size=[0, 1, 2]
   )
   def testStdOrVarLargeDdofReturnsNan(self, jnp_fn, size):
-    # test for https://github.com/google/jax/issues/21330
+    # test for https://github.com/jax-ml/jax/issues/21330
     x = jnp.arange(size)
     self.assertTrue(np.isnan(jnp_fn(x, ddof=size)))
     self.assertTrue(np.isnan(jnp_fn(x, ddof=size + 1)))
@@ -622,7 +622,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
                             atol=tol)
 
   def testNanStdGrad(self):
-    # Regression test for https://github.com/google/jax/issues/8128
+    # Regression test for https://github.com/jax-ml/jax/issues/8128
     x = jnp.arange(5.0).at[0].set(jnp.nan)
     y = jax.grad(jnp.nanvar)(x)
     self.assertAllClose(y, jnp.array([0.0, -0.75, -0.25, 0.25, 0.75]), check_dtypes=False)
@@ -740,7 +740,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
   @unittest.skipIf(not config.enable_x64.value, "test requires X64")
   @jtu.run_on_devices("cpu")  # test is for CPU float64 precision
   def testPercentilePrecision(self):
-    # Regression test for https://github.com/google/jax/issues/8513
+    # Regression test for https://github.com/jax-ml/jax/issues/8513
     x = jnp.float64([1, 2, 3, 4, 7, 10])
     self.assertEqual(jnp.percentile(x, 50), 3.5)
 
@@ -778,14 +778,14 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, rtol=tol)
 
   def testMeanLargeArray(self):
-    # https://github.com/google/jax/issues/15068
+    # https://github.com/jax-ml/jax/issues/15068
     raise unittest.SkipTest("test is slow, but it passes!")
     x = jnp.ones((16, 32, 1280, 4096), dtype='int8')
     self.assertEqual(1.0, jnp.mean(x))
     self.assertEqual(1.0, jnp.mean(x, where=True))
 
   def testStdLargeArray(self):
-    # https://github.com/google/jax/issues/15068
+    # https://github.com/jax-ml/jax/issues/15068
     raise unittest.SkipTest("test is slow, but it passes!")
     x = jnp.ones((16, 32, 1280, 4096), dtype='int8')
     self.assertEqual(0.0, jnp.std(x))

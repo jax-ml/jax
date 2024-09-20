@@ -6,7 +6,7 @@
 First, obtain the JAX source code:
 
 ```
-git clone https://github.com/google/jax
+git clone https://github.com/jax-ml/jax
 cd jax
 ```
 
@@ -26,7 +26,7 @@ If you're only modifying Python portions of JAX, we recommend installing
 pip install jaxlib
 ```
 
-See the [JAX readme](https://github.com/google/jax#installation) for full
+See the [JAX readme](https://github.com/jax-ml/jax#installation) for full
 guidance on pip installation (e.g., for GPU and TPU support).
 
 ### Building `jaxlib` from source
@@ -621,7 +621,7 @@ pytest --doctest-modules jax/_src/numpy/lax_numpy.py
 
 Keep in mind that there are several files that are marked to be skipped when the
 doctest command is run on the full package; you can see the details in
-[`ci-build.yaml`](https://github.com/google/jax/blob/main/.github/workflows/ci-build.yaml)
+[`ci-build.yaml`](https://github.com/jax-ml/jax/blob/main/.github/workflows/ci-build.yaml)
 
 ## Type checking
 
@@ -712,7 +712,7 @@ jupytext --sync docs/notebooks/thinking_in_jax.ipynb
 ```
 
 The jupytext version should match that specified in
-[.pre-commit-config.yaml](https://github.com/google/jax/blob/main/.pre-commit-config.yaml).
+[.pre-commit-config.yaml](https://github.com/jax-ml/jax/blob/main/.pre-commit-config.yaml).
 
 To check that the markdown and ipynb files are properly synced, you may use the
 [pre-commit](https://pre-commit.com/) framework to perform the same check used
@@ -740,12 +740,12 @@ desired formats, and which the `jupytext --sync` command recognizes when invoked
 Some of the notebooks are built automatically as part of the pre-submit checks and
 as part of the [Read the docs](https://jax.readthedocs.io/en/latest) build.
 The build will fail if cells raise errors. If the errors are intentional, you can either catch them,
-or tag the cell with `raises-exceptions` metadata ([example PR](https://github.com/google/jax/pull/2402/files)).
+or tag the cell with `raises-exceptions` metadata ([example PR](https://github.com/jax-ml/jax/pull/2402/files)).
 You have to add this metadata by hand in the `.ipynb` file. It will be preserved when somebody else
 re-saves the notebook.
 
 We exclude some notebooks from the build, e.g., because they contain long computations.
-See `exclude_patterns` in [conf.py](https://github.com/google/jax/blob/main/docs/conf.py).
+See `exclude_patterns` in [conf.py](https://github.com/jax-ml/jax/blob/main/docs/conf.py).
 
 ### Documentation building on `readthedocs.io`
 
@@ -772,7 +772,7 @@ I saw in the Readthedocs logs:
 mkvirtualenv jax-docs  # A new virtualenv
 mkdir jax-docs  # A new directory
 cd jax-docs
-git clone --no-single-branch --depth 50 https://github.com/google/jax
+git clone --no-single-branch --depth 50 https://github.com/jax-ml/jax
 cd jax
 git checkout --force origin/test-docs
 git clean -d -f -f

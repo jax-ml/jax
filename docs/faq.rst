@@ -372,7 +372,7 @@ device.
 Jitted functions behave like any other primitive operations—they will follow the
 data and will show errors if invoked on data committed on more than one device.
 
-(Before `PR #6002 <https://github.com/google/jax/pull/6002>`_ in March 2021
+(Before `PR #6002 <https://github.com/jax-ml/jax/pull/6002>`_ in March 2021
 there was some laziness in creation of array constants, so that
 ``jax.device_put(jnp.zeros(...), jax.devices()[1])`` or similar would actually
 create the array of zeros on ``jax.devices()[1]``, instead of creating the
@@ -385,7 +385,7 @@ and its use is not recommended.)
 
 For a worked-out example, we recommend reading through
 ``test_computation_follows_data`` in
-`multi_device_test.py <https://github.com/google/jax/blob/main/tests/multi_device_test.py>`_.
+`multi_device_test.py <https://github.com/jax-ml/jax/blob/main/tests/multi_device_test.py>`_.
 
 .. _faq-benchmark:
 
@@ -691,7 +691,7 @@ The inner ``jnp.where`` may be needed in addition to the original one, e.g.::
 
 Additional reading:
 
-  * `Issue: gradients through jnp.where when one of branches is nan <https://github.com/google/jax/issues/1052#issuecomment-514083352>`_.
+  * `Issue: gradients through jnp.where when one of branches is nan <https://github.com/jax-ml/jax/issues/1052#issuecomment-514083352>`_.
   * `How to avoid NaN gradients when using where <https://github.com/tensorflow/probability/blob/master/discussion/where-nan.pdf>`_.
 
 

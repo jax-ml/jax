@@ -546,7 +546,7 @@ def remat_partial_eval(trace, *tracers, jaxpr, **params):
 
   # To avoid precision mismatches in fwd and bwd passes due to XLA excess
   # precision, insert explicit x = reduce_precision(x, **finfo(x.dtype)) calls
-  # on producers of any residuals. See https://github.com/google/jax/pull/22244.
+  # on producers of any residuals. See https://github.com/jax-ml/jax/pull/22244.
   jaxpr_known_ = _insert_reduce_precision(jaxpr_known, num_res)
 
   # compute known outputs and residuals (hoisted out of remat primitive)

@@ -697,7 +697,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     self.assertIsInstance(jax.jit(operator.mul)(b, a), MyArray)
 
   def testI0Grad(self):
-    # Regression test for https://github.com/google/jax/issues/11479
+    # Regression test for https://github.com/jax-ml/jax/issues/11479
     dx = jax.grad(jax.numpy.i0)(0.0)
     self.assertArraysEqual(dx, 0.0)
 

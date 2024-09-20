@@ -335,7 +335,7 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected_ans, check_dtypes=False)
 
   def testJacobianIssue54(self):
-    # test modeling the code in https://github.com/google/jax/issues/54
+    # test modeling the code in https://github.com/jax-ml/jax/issues/54
 
     def func(xs):
       return jnp.array(list(xs))
@@ -345,7 +345,7 @@ class BatchingTest(jtu.JaxTestCase):
     jacfwd(func)(xs)  # don't crash
 
   def testAny(self):
-    # test modeling the code in https://github.com/google/jax/issues/108
+    # test modeling the code in https://github.com/jax-ml/jax/issues/108
 
     ans = vmap(jnp.any)(jnp.array([[True, False], [False, False]]))
     expected = jnp.array([True, False])
@@ -368,7 +368,7 @@ class BatchingTest(jtu.JaxTestCase):
 
   def testDynamicSlice(self):
     # test dynamic_slice via numpy indexing syntax
-    # see https://github.com/google/jax/issues/1613 for an explanation of why we
+    # see https://github.com/jax-ml/jax/issues/1613 for an explanation of why we
     # need to use np rather than np to create x and idx
     x = jnp.arange(30).reshape((10, 3))
 
@@ -933,7 +933,7 @@ class BatchingTest(jtu.JaxTestCase):
                         rtol=jtu.default_gradient_tolerance)
 
   def testIssue387(self):
-    # https://github.com/google/jax/issues/387
+    # https://github.com/jax-ml/jax/issues/387
     R = self.rng().rand(100, 2)
 
     def dist_sq(R):
@@ -951,7 +951,7 @@ class BatchingTest(jtu.JaxTestCase):
 
   @jax.legacy_prng_key('allow')
   def testIssue489(self):
-    # https://github.com/google/jax/issues/489
+    # https://github.com/jax-ml/jax/issues/489
     def f(key):
       def body_fn(uk):
         key = uk[1]
@@ -1131,7 +1131,7 @@ class BatchingTest(jtu.JaxTestCase):
       x - np.arange(x.shape[0], dtype='int32'))
 
   def testVmapKwargs(self):
-    # https://github.com/google/jax/issues/912
+    # https://github.com/jax-ml/jax/issues/912
 
     def f(a, b):
       return (2*a, 3*b)
@@ -1242,7 +1242,7 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertEqual(jax.vmap(f)(jnp.ones((2, 3))).shape, (2, 3))
 
   def testPpermuteBatcherTrivial(self):
-    # https://github.com/google/jax/issues/8688
+    # https://github.com/jax-ml/jax/issues/8688
     def ppermute(input):
       return jax.lax.ppermute(input, axis_name="i", perm=[[0, 1], [1, 0]])
 
@@ -1255,7 +1255,7 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, jnp.ones(2), check_dtypes=False)
 
   def testBatchingPreservesWeakType(self):
-    # Regression test for https://github.com/google/jax/issues/10025
+    # Regression test for https://github.com/jax-ml/jax/issues/10025
     x = jnp.ravel(1)
     self.assertTrue(dtypes.is_weakly_typed(x))
     @vmap

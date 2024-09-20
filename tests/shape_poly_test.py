@@ -2973,7 +2973,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                             (2, x.shape[0]), (1, 1), "VALID"),
                 arg_descriptors=[RandArg((3, 8), _f32)],
                 polymorphic_shapes=["b, ..."]),
-    # https://github.com/google/jax/issues/11804
+    # https://github.com/jax-ml/jax/issues/11804
     # Use the reshape trick to simulate a polymorphic dimension of 16*b.
     # (See test "conv_general_dilated.1d_1" above for more details.)
     PolyHarness("reduce_window", "add_monoid_strides_window_size=static",

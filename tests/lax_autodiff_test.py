@@ -424,7 +424,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     assert "Precision.HIGHEST" in s
 
   def testDotPreferredElementType(self):
-    # https://github.com/google/jax/issues/10818
+    # https://github.com/jax-ml/jax/issues/10818
     x = jax.numpy.ones((), jax.numpy.float16)
     def f(x):
       return jax.lax.dot_general(x, x, (((), ()), ((), ())),
@@ -513,7 +513,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                 rtol={np.float32: 3e-3})
 
   def testPowSecondDerivative(self):
-    # https://github.com/google/jax/issues/12033
+    # https://github.com/jax-ml/jax/issues/12033
     x, y = 4.0, 0.0
     expected = ((0.0, 1/x), (1/x, np.log(x) ** 2))
 
@@ -528,18 +528,18 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     with self.subTest("zero to the zero"):
       result = jax.grad(lax.pow)(0.0, 0.0)
       # TODO(jakevdp) special-case zero in a way that doesn't break other cases
-      # See https://github.com/google/jax/pull/12041#issuecomment-1222766191
+      # See https://github.com/jax-ml/jax/pull/12041#issuecomment-1222766191
       # self.assertEqual(result, 0.0)
       self.assertAllClose(result, np.nan)
 
   def testPowIntPowerAtZero(self):
-    # https://github.com/google/jax/issues/14397
+    # https://github.com/jax-ml/jax/issues/14397
     ans = jax.grad(jax.jit(lambda x, n: x ** n))(0., 0)
     self.assertAllClose(ans, 0., check_dtypes=False)
 
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises mixed type promotion
   def testPowIntPowerAtZero2(self):
-    # https://github.com/google/jax/issues/17995
+    # https://github.com/jax-ml/jax/issues/17995
     a = lambda z: jax.numpy.sum(z**jax.numpy.arange(0, 2, dtype=int))
     b = lambda z: jax.numpy.sum(z**jax.numpy.arange(0, 2, dtype=float))
     c = lambda z: 1 + z
@@ -634,7 +634,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(dus, (update,), 2, ["fwd", "rev"], eps=1.)
 
   def testDynamicSliceValueAndGrad(self):
-    # Regression test for https://github.com/google/jax/issues/10984
+    # Regression test for https://github.com/jax-ml/jax/issues/10984
     # Issue arose due to an out-of-range negative index.
     rng = jtu.rand_default(self.rng())
     shape = (5, 5)
@@ -649,7 +649,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     self.assertAllClose(result1, result2)
 
   def testDynamicUpdateSliceValueAndGrad(self):
-    # Regression test for https://github.com/google/jax/issues/10984
+    # Regression test for https://github.com/jax-ml/jax/issues/10984
     # Issue arose due to an out-of-range negative index.
     rng = jtu.rand_default(self.rng())
     shape = (5, 5)
@@ -1004,7 +1004,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(scatter, (x, y), 2, ["fwd", "rev"], 1e-2, 1e-2, 1.)
 
   def testScatterGradSymbolicZeroUpdate(self):
-    # https://github.com/google/jax/issues/1901
+    # https://github.com/jax-ml/jax/issues/1901
     def f(x):
       n = x.shape[0]
       y = np.arange(n, dtype=x.dtype)
@@ -1111,7 +1111,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(lax.rem, (x, y), 2, ["fwd", "rev"])
 
   def testHigherOrderGradientOfReciprocal(self):
-    # Regression test for https://github.com/google/jax/issues/3136
+    # Regression test for https://github.com/jax-ml/jax/issues/3136
     def inv(x):
       # N.B.: intentionally written as 1/x, not x ** -1 or reciprocal(x)
       return 1 / x
@@ -1150,7 +1150,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       jax.jacrev(f)(x)
 
   def testPowShapeMismatch(self):
-    # Regression test for https://github.com/google/jax/issues/17294
+    # Regression test for https://github.com/jax-ml/jax/issues/17294
     x = lax.iota('float32', 4)
     y = 2
     actual = jax.jacrev(jax.jit(jax.lax.pow))(x, y)  # no error

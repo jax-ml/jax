@@ -798,7 +798,7 @@ class OpsExtraTest(PallasBaseTest):
       np.testing.assert_allclose(kernel(x), fn(x), rtol=1e-6)
 
   def test_abs_weak_type(self):
-    # see https://github.com/google/jax/issues/23191
+    # see https://github.com/jax-ml/jax/issues/23191
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((4, 4), jnp.float32),
     )
@@ -999,7 +999,7 @@ class OpsExtraTest(PallasBaseTest):
 
     x = jnp.asarray([-1, 0.42, 0.24, 1]).astype(dtype)
     # We upcast to float32 because NumPy <2.0 does not handle custom dtypes
-    # properly. See https://github.com/google/jax/issues/11014.
+    # properly. See https://github.com/jax-ml/jax/issues/11014.
     np.testing.assert_allclose(
         kernel(x).astype(jnp.float32),
         jnp.tanh(x).astype(jnp.float32),
@@ -1260,7 +1260,7 @@ class OpsExtraTest(PallasBaseTest):
     np.testing.assert_array_equal(out, o_new)
 
   def test_strided_load(self):
-    # Reproducer from https://github.com/google/jax/issues/20895.
+    # Reproducer from https://github.com/jax-ml/jax/issues/20895.
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((4,), jnp.float32),

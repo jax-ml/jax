@@ -508,7 +508,7 @@ def _randint(key, shape, minval, maxval, dtype) -> Array:
   span = lax.convert_element_type(maxval - minval, unsigned_dtype)
 
   # Ensure that span=1 when maxval <= minval, so minval is always returned;
-  # https://github.com/google/jax/issues/222
+  # https://github.com/jax-ml/jax/issues/222
   span = lax.select(maxval <= minval, lax.full_like(span, 1), span)
 
   # When maxval is out of range, the span has to be one larger.
@@ -2540,7 +2540,7 @@ def _binomial(key, count, prob, shape, dtype) -> Array:
     _btrs(key, count_btrs, q_btrs, shape, dtype, max_iters),
   )
   # ensure nan q always leads to nan output and nan or neg count leads to nan
-  # as discussed in https://github.com/google/jax/pull/16134#pullrequestreview-1446642709
+  # as discussed in https://github.com/jax-ml/jax/pull/16134#pullrequestreview-1446642709
   invalid = (q_l_0 | q_is_nan | count_nan_or_neg)
   samples = lax.select(
     invalid,

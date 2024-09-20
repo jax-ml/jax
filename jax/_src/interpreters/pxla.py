@@ -500,7 +500,7 @@ class MapTrace(core.Trace):
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
     if symbolic_zeros:
       msg = ("custom_jvp with symbolic_zeros=True not supported with eager pmap. "
-             "Please open an issue at https://github.com/google/jax/issues !")
+             "Please open an issue at https://github.com/jax-ml/jax/issues !")
       raise NotImplementedError(msg)
     del prim, jvp, symbolic_zeros  # always base main, can drop jvp
     in_vals, in_axes = unzip2((t.val, t.shard_axes) for t in tracers)
@@ -513,7 +513,7 @@ class MapTrace(core.Trace):
                               out_trees, symbolic_zeros):
     if symbolic_zeros:
       msg = ("custom_vjp with symbolic_zeros=True not supported with eager pmap. "
-             "Please open an issue at https://github.com/google/jax/issues !")
+             "Please open an issue at https://github.com/jax-ml/jax/issues !")
       raise NotImplementedError(msg)
     del primitive, fwd, bwd, out_trees, symbolic_zeros  # always base main, drop vjp
     in_vals, in_axes = unzip2((t.val, t.shard_axes) for t in tracers)
@@ -1869,7 +1869,7 @@ def _raise_warnings_or_errors_for_jit_of_pmap(
          "does not preserve sharded data representations and instead collects "
          "input and output arrays onto a single device. "
          "Consider removing the outer jit unless you know what you're doing. "
-         "See https://github.com/google/jax/issues/2926.")
+         "See https://github.com/jax-ml/jax/issues/2926.")
 
   if nreps > xb.device_count(backend):
     raise ValueError(

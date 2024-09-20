@@ -3953,7 +3953,7 @@ def concatenate(arrays: np.ndarray | Array | Sequence[ArrayLike],
     arrays_out = [asarray(arr, dtype=dtype) for arr in arrays]
   # lax.concatenate can be slow to compile for wide concatenations, so form a
   # tree of concatenations as a workaround especially for op-by-op mode.
-  # (https://github.com/google/jax/issues/653).
+  # (https://github.com/jax-ml/jax/issues/653).
   k = 16
   while len(arrays_out) > 1:
     arrays_out = [lax.concatenate(arrays_out[i:i+k], axis)
@@ -4645,7 +4645,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   if all(not isinstance(leaf, Array) for leaf in leaves):
     # TODO(jakevdp): falling back to numpy here fails to overflow for lists
     # containing large integers; see discussion in
-    # https://github.com/google/jax/pull/6047. More correct would be to call
+    # https://github.com/jax-ml/jax/pull/6047. More correct would be to call
     # coerce_to_array on each leaf, but this may have performance implications.
     out = np.asarray(object, dtype=dtype)
   elif isinstance(object, Array):
@@ -10150,11 +10150,11 @@ def _eliminate_deprecated_list_indexing(idx):
       if any(_should_unpack_list_index(i) for i in idx):
         msg = ("Using a non-tuple sequence for multidimensional indexing is not allowed; "
                "use `arr[tuple(seq)]` instead of `arr[seq]`. "
-               "See https://github.com/google/jax/issues/4564 for more information.")
+               "See https://github.com/jax-ml/jax/issues/4564 for more information.")
       else:
         msg = ("Using a non-tuple sequence for multidimensional indexing is not allowed; "
                "use `arr[array(seq)]` instead of `arr[seq]`. "
-               "See https://github.com/google/jax/issues/4564 for more information.")
+               "See https://github.com/jax-ml/jax/issues/4564 for more information.")
       raise TypeError(msg)
     else:
       idx = (idx,)

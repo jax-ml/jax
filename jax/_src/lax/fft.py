@@ -157,7 +157,7 @@ def _irfft_transpose(t, fft_lengths):
   out = scale * lax.expand_dims(mask, range(x.ndim - 1)) * x
   assert out.dtype == _complex_dtype(t.dtype), (out.dtype, t.dtype)
   # Use JAX's convention for complex gradients
-  # https://github.com/google/jax/issues/6223#issuecomment-807740707
+  # https://github.com/jax-ml/jax/issues/6223#issuecomment-807740707
   return lax.conj(out)
 
 def _fft_transpose_rule(t, operand, fft_type, fft_lengths):

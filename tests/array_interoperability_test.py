@@ -185,7 +185,7 @@ class DLPackTest(jtu.JaxTestCase):
 
   @unittest.skipIf(not tf, "Test requires TensorFlow")
   def testTensorFlowToJaxInt64(self):
-    # See https://github.com/google/jax/issues/11895
+    # See https://github.com/jax-ml/jax/issues/11895
     x = jax.dlpack.from_dlpack(
         tf.experimental.dlpack.to_dlpack(tf.ones((2, 3), tf.int64)))
     dtype_expected = jnp.int64 if config.enable_x64.value else jnp.int32

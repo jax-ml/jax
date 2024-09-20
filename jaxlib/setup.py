@@ -66,7 +66,7 @@ setup(
         'numpy>=1.24',
         'ml_dtypes>=0.2.0',
     ],
-    url='https://github.com/google/jax',
+    url='https://github.com/jax-ml/jax',
     license='Apache-2.0',
     classifiers=[
         "Programming Language :: Python :: 3.10",

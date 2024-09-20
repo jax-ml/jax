@@ -437,7 +437,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
   def test_grad_sharding_different_mesh(self):
     # Convert with two similar meshes, the only difference being
     # the order of the devices. grad should not fail.
-    # https://github.com/google/jax/issues/21314
+    # https://github.com/jax-ml/jax/issues/21314
     devices = jax.local_devices()[:2]
     if len(devices) < 2:
       raise unittest.SkipTest("Test requires 2 local devices")

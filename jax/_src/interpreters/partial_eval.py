@@ -1262,7 +1262,7 @@ def partial_eval_jaxpr_custom_rule_not_implemented(
     name: str, saveable: Callable[..., RematCases_], unks_in: Sequence[bool],
     inst_in: Sequence[bool], eqn: JaxprEqn) -> PartialEvalCustomResult:
   msg = (f'custom-policy remat rule not implemented for {name}, '
-         'open a feature request at https://github.com/google/jax/issues!')
+         'open a feature request at https://github.com/jax-ml/jax/issues!')
   raise NotImplementedError(msg)
 
 
@@ -2688,7 +2688,7 @@ def call_padding_rule(prim, in_avals, out_avals, *args, call_jaxpr, **params):
 
 
 # TODO(mattjj): the following are deprecated; update callers to _nounits version
-# See https://github.com/google/jax/pull/9498
+# See https://github.com/jax-ml/jax/pull/9498
 @lu.transformation
 def trace_to_subjaxpr(main: core.MainTrace, instantiate: bool | Sequence[bool],
                       pvals: Sequence[PartialVal]):

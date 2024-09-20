@@ -314,7 +314,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             rtol={np.float32: 2e-3, np.float64: 1e-4})
 
   def testBetaLogPdfZero(self):
-    # Regression test for https://github.com/google/jax/issues/7645
+    # Regression test for https://github.com/jax-ml/jax/issues/7645
     a = b = 1.
     x = np.array([0., 1.])
     self.assertAllClose(
@@ -539,7 +539,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CompileAndCheck(lax_fun, args_maker)
 
   def testGammaLogPdfZero(self):
-    # Regression test for https://github.com/google/jax/issues/7256
+    # Regression test for https://github.com/jax-ml/jax/issues/7256
     self.assertAllClose(
       osp_stats.gamma.pdf(0.0, 1.0), lsp_stats.gamma.pdf(0.0, 1.0), atol=1E-6)
 
@@ -710,7 +710,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CompileAndCheck(lax_fun, args_maker)
 
   def testLogisticLogpdfOverflow(self):
-    # Regression test for https://github.com/google/jax/issues/10219
+    # Regression test for https://github.com/jax-ml/jax/issues/10219
     self.assertAllClose(
       np.array([-100, -100], np.float32),
       lsp_stats.logistic.logpdf(np.array([-100, 100], np.float32)),
@@ -855,7 +855,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CompileAndCheck(lax_fun, args_maker)
 
   def testNormSfNearZero(self):
-    # Regression test for https://github.com/google/jax/issues/17199
+    # Regression test for https://github.com/jax-ml/jax/issues/17199
     value = np.array(10, np.float32)
     self.assertAllClose(osp_stats.norm.sf(value).astype('float32'),
                         lsp_stats.norm.sf(value),
@@ -1208,7 +1208,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CompileAndCheck(lax_fun, args_maker, rtol=tol, atol=tol)
 
   def testBinomPmfOutOfRange(self):
-    # Regression test for https://github.com/google/jax/issues/19150
+    # Regression test for https://github.com/jax-ml/jax/issues/19150
     self.assertEqual(lsp_stats.binom.pmf(k=6.5, n=5, p=0.8), 0.0)
 
   def testBinomLogPmfZerokZeron(self):

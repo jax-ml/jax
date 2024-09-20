@@ -1,10 +1,10 @@
 <div align="center">
-<img src="https://raw.githubusercontent.com/google/jax/main/images/jax_logo_250px.png" alt="logo"></img>
+<img src="https://raw.githubusercontent.com/jax-ml/jax/main/images/jax_logo_250px.png" alt="logo"></img>
 </div>
 
 # Transformable numerical computing at scale
 
-![Continuous integration](https://github.com/google/jax/actions/workflows/ci-build.yaml/badge.svg)
+![Continuous integration](https://github.com/jax-ml/jax/actions/workflows/ci-build.yaml/badge.svg)
 ![PyPI version](https://img.shields.io/pypi/v/jax)
 
 [**Quickstart**](#quickstart-colab-in-the-cloud)
@@ -50,7 +50,7 @@ parallel programming of multiple accelerators, with more to come.
 This is a research project, not an official Google product. Expect bugs and
 [sharp edges](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html).
 Please help by trying it out, [reporting
-bugs](https://github.com/google/jax/issues), and letting us know what you
+bugs](https://github.com/jax-ml/jax/issues), and letting us know what you
 think!
 
 ```python
@@ -84,16 +84,16 @@ perex_grads = jit(vmap(grad_loss, in_axes=(None, 0, 0)))  # fast per-example gra
 Jump right in using a notebook in your browser, connected to a Google Cloud GPU.
 Here are some starter notebooks:
 - [The basics: NumPy on accelerators, `grad` for differentiation, `jit` for compilation, and `vmap` for vectorization](https://jax.readthedocs.io/en/latest/quickstart.html)
-- [Training a Simple Neural Network, with TensorFlow Dataset Data Loading](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/neural_network_with_tfds_data.ipynb)
+- [Training a Simple Neural Network, with TensorFlow Dataset Data Loading](https://colab.research.google.com/github/jax-ml/jax/blob/main/docs/notebooks/neural_network_with_tfds_data.ipynb)
 
 **JAX now runs on Cloud TPUs.** To try out the preview, see the [Cloud TPU
-Colabs](https://github.com/google/jax/tree/main/cloud_tpu_colabs).
+Colabs](https://github.com/jax-ml/jax/tree/main/cloud_tpu_colabs).
 
 For a deeper dive into JAX:
 - [The Autodiff Cookbook, Part 1: easy and powerful automatic differentiation in JAX](https://jax.readthedocs.io/en/latest/notebooks/autodiff_cookbook.html)
 - [Common gotchas and sharp edges](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html)
 - See the [full list of
-notebooks](https://github.com/google/jax/tree/main/docs/notebooks).
+notebooks](https://github.com/jax-ml/jax/tree/main/docs/notebooks).
 
 ## Transformations
 
@@ -300,7 +300,7 @@ print(normalize(jnp.arange(4.)))
 # prints [0.         0.16666667 0.33333334 0.5       ]
 ```
 
-You can even [nest `pmap` functions](https://colab.research.google.com/github/google/jax/blob/main/cloud_tpu_colabs/Pmap_Cookbook.ipynb#scrollTo=MdRscR5MONuN) for more
+You can even [nest `pmap` functions](https://colab.research.google.com/github/jax-ml/jax/blob/main/cloud_tpu_colabs/Pmap_Cookbook.ipynb#scrollTo=MdRscR5MONuN) for more
 sophisticated communication patterns.
 
 It all composes, so you're free to differentiate through parallel computations:
@@ -333,9 +333,9 @@ When reverse-mode differentiating a `pmap` function (e.g. with `grad`), the
 backward pass of the computation is parallelized just like the forward pass.
 
 See the [SPMD
-Cookbook](https://colab.research.google.com/github/google/jax/blob/main/cloud_tpu_colabs/Pmap_Cookbook.ipynb)
+Cookbook](https://colab.research.google.com/github/jax-ml/jax/blob/main/cloud_tpu_colabs/Pmap_Cookbook.ipynb)
 and the [SPMD MNIST classifier from scratch
-example](https://github.com/google/jax/blob/main/examples/spmd_mnist_classifier_fromscratch.py)
+example](https://github.com/jax-ml/jax/blob/main/examples/spmd_mnist_classifier_fromscratch.py)
 for more.
 
 ## Current gotchas
@@ -349,7 +349,7 @@ Some standouts:
 1. [In-place mutating updates of
    arrays](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#in-place-updates), like `x[i] += y`, aren't supported, but [there are functional alternatives](https://jax.readthedocs.io/en/latest/jax.ops.html). Under a `jit`, those functional alternatives will reuse buffers in-place automatically.
 1. [Random numbers are
-   different](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#random-numbers), but for [good reasons](https://github.com/google/jax/blob/main/docs/jep/263-prng.md).
+   different](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#random-numbers), but for [good reasons](https://github.com/jax-ml/jax/blob/main/docs/jep/263-prng.md).
 1. If you're looking for [convolution
    operators](https://jax.readthedocs.io/en/latest/notebooks/convolutions.html),
    they're in the `jax.lax` package.
@@ -437,7 +437,7 @@ To cite this repository:
 @software{jax2018github,
   author = {James Bradbury and Roy Frostig and Peter Hawkins and Matthew James Johnson and Chris Leary and Dougal Maclaurin and George Necula and Adam Paszke and Jake Vander{P}las and Skye Wanderman-{M}ilne and Qiao Zhang},
   title = {{JAX}: composable transformations of {P}ython+{N}um{P}y programs},
-  url = {http://github.com/google/jax},
+  url = {http://github.com/jax-ml/jax},
   version = {0.3.13},
   year = {2018},
 }

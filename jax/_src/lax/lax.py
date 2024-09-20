@@ -1077,7 +1077,7 @@ def _reduction_jaxpr(computation, aval):
   if any(isinstance(c, core.Tracer) for c in consts):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "
-        "at https://github.com/google/jax.")
+        "at https://github.com/jax-ml/jax.")
   return jaxpr, tuple(consts)
 
 @cache()
@@ -1090,7 +1090,7 @@ def _variadic_reduction_jaxpr(computation, flat_avals, aval_tree):
   if any(isinstance(c, core.Tracer) for c in consts):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "
-        "at https://github.com/google/jax.")
+        "at https://github.com/jax-ml/jax.")
   return core.ClosedJaxpr(jaxpr, consts), out_tree()
 
 def _get_monoid_reducer(monoid_op: Callable,
@@ -4911,7 +4911,7 @@ def _copy_impl_pmap_sharding(sharded_dim, *args, **kwargs):
   return tree_util.tree_unflatten(p.out_tree(), out_flat)
 
 
-# TODO(https://github.com/google/jax/issues/13552): Look into making this a
+# TODO(https://github.com/jax-ml/jax/issues/13552): Look into making this a
 # method on jax.Array so that we can bypass the XLA compilation here.
 def _copy_impl(prim, *args, **kwargs):
   a, = args

@@ -310,7 +310,7 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertArraysEqual(data2, jnp.array([[1, 0], [5, 0], [9, 0]]))
 
   def test_bcoo_extract_batching(self):
-    # https://github.com/google/jax/issues/9431
+    # https://github.com/jax-ml/jax/issues/9431
     indices = jnp.zeros((4, 1, 1), dtype=int)
     mat = jnp.arange(4.).reshape((4, 1))
 
@@ -353,7 +353,7 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertEqual(hess.shape, data.shape + 2 * M.shape)
 
   def test_bcoo_extract_zero_nse(self):
-    # Regression test for https://github.com/google/jax/issues/13653
+    # Regression test for https://github.com/jax-ml/jax/issues/13653
 
     # (n_batch, n_sparse, n_dense) = (1, 0, 0), nse = 2
     args_maker = lambda: (jnp.zeros((3, 2, 0), dtype='int32'), jnp.arange(3))
@@ -974,7 +974,7 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertEqual(out.nse, expected_nse)
 
   def test_bcoo_spdot_general_ad_bug(self):
-    # Regression test for https://github.com/google/jax/issues/10163
+    # Regression test for https://github.com/jax-ml/jax/issues/10163
     A_indices = jnp.array([[0, 1], [0, 2], [1, 1], [1, 2], [1, 0]])
     A_values = jnp.array([-2.0, 1.0, -1.0, 0.5, 2.0])
     A_shape = (2, 3)
@@ -1287,7 +1287,7 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertEqual(y2.nse, x.nse)
 
   def test_bcoo_sum_duplicates_padding(self):
-    # Regression test for https://github.com/google/jax/issues/8163
+    # Regression test for https://github.com/jax-ml/jax/issues/8163
     size = 3
     data = jnp.array([1, 0, 0])
     indices = jnp.array([1, size, size])[:, None]
@@ -1606,7 +1606,7 @@ class BCOOTest(sptu.SparseTestCase):
       self._CheckAgainstDense(operator.mul, operator.mul, args_maker, tol=tol)
 
   def test_bcoo_mul_sparse_with_duplicates(self):
-    # Regression test for https://github.com/google/jax/issues/8888
+    # Regression test for https://github.com/jax-ml/jax/issues/8888
     indices = jnp.array([[0, 1, 0, 0, 1, 1],
                          [1, 0, 1, 2, 0, 2]]).T
     data = jnp.array([1, 2, 3, 4, 5, 6])
@@ -1940,7 +1940,7 @@ class BCSRTest(sptu.SparseTestCase):
       self._CheckGradsSparse(dense_func, sparse_func, args_maker)
 
   def test_bcoo_spdot_abstract_eval_bug(self):
-    # Regression test for https://github.com/google/jax/issues/21921
+    # Regression test for https://github.com/jax-ml/jax/issues/21921
     lhs = sparse.BCOO(
       (jnp.float32([[1]]), lax.broadcasted_iota(jnp.int32, (10, 1, 1), 0)),
       shape=(10, 10))

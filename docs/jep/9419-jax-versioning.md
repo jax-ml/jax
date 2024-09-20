@@ -58,11 +58,11 @@ These constraints imply the following rules for releases:
 * If a new `jaxlib` is released, a `jax` release must be made at the same time.
 
 These
-[version constraints](https://github.com/google/jax/blob/main/jax/version.py)
+[version constraints](https://github.com/jax-ml/jax/blob/main/jax/version.py)
 are currently checked by `jax` at import time, instead of being expressed as
 Python package version constraints. `jax` checks the `jaxlib` version at
 runtime rather than using a `pip` package version constraint because we
-[provide separate `jaxlib` wheels](https://github.com/google/jax#installation)
+[provide separate `jaxlib` wheels](https://github.com/jax-ml/jax#installation)
 for a variety of hardware and software versions (e.g, GPU, TPU, etc.). Since we
 do not know which is the right choice for any given user, we do not want `pip`
 to install a `jaxlib` package for us automatically.
@@ -119,7 +119,7 @@ no released `jax` version uses that API.
 ## How is the source to `jaxlib` laid out?
 
 `jaxlib` is split across two main repositories, namely the
-[`jaxlib/` subdirectory in the main JAX repository](https://github.com/google/jax/tree/main/jaxlib)
+[`jaxlib/` subdirectory in the main JAX repository](https://github.com/jax-ml/jax/tree/main/jaxlib)
 and in the
 [XLA source tree, which lives inside the XLA repository](https://github.com/openxla/xla).
 The JAX-specific pieces inside XLA are primarily in the
@@ -146,7 +146,7 @@ level.
 
 `jaxlib` is built using Bazel out of the `jax` repository. The pieces of
 `jaxlib` from the XLA repository are incorporated into the build
-[as a Bazel submodule](https://github.com/google/jax/blob/main/WORKSPACE).
+[as a Bazel submodule](https://github.com/jax-ml/jax/blob/main/WORKSPACE).
 To update the version of XLA used during the build, one must update the pinned
 version in the Bazel `WORKSPACE`. This is done manually on an
 as-needed basis, but can be overridden on a build-by-build basis.

@@ -968,7 +968,7 @@ def _var_promote_types(a_dtype: DTypeLike, dtype: DTypeLike | None) -> tuple[DTy
       msg = ("jax.numpy.var does not yet support real dtype parameters when "
              "computing the variance of an array of complex values. The "
              "semantics of numpy.var seem unclear in this case. Please comment "
-             "on https://github.com/google/jax/issues/2283 if this behavior is "
+             "on https://github.com/jax-ml/jax/issues/2283 if this behavior is "
              "important to you.")
       raise ValueError(msg)
     computation_dtype = dtype

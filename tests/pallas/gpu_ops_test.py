@@ -178,7 +178,7 @@ class FusedAttentionTest(PallasBaseTest):
               (1, 384, 8, 64, True, True, True, {}),
               (1, 384, 8, 64, True, True, False, {}),
               (2, 384, 8, 64, True, True, True, {}),
-              # regression test: https://github.com/google/jax/pull/17314
+              # regression test: https://github.com/jax-ml/jax/pull/17314
               (1, 384, 8, 64, True, False, False, {'block_q': 128, 'block_k': 64}),
           ]
       ]
@@ -419,7 +419,7 @@ class SoftmaxTest(PallasBaseTest):
     }[dtype]
 
     # We upcast to float32 because NumPy <2.0 does not handle custom dtypes
-    # properly. See https://github.com/google/jax/issues/11014.
+    # properly. See https://github.com/jax-ml/jax/issues/11014.
     np.testing.assert_allclose(
         softmax.softmax(x, axis=-1).astype(jnp.float32),
         jax.nn.softmax(x, axis=-1).astype(jnp.float32),

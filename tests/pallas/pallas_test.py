@@ -484,7 +484,7 @@ class PallasCallTest(PallasBaseTest):
     self.assertAllClose(pids[0:4], np.array([0] * 4, dtype=np.int32))
 
   def test_hoisted_consts(self):
-    # See https://github.com/google/jax/issues/21557.
+    # See https://github.com/jax-ml/jax/issues/21557.
     # to_store will be hoisted as a constant. Choose distinct shapes from in/outs.
     to_store = np.arange(128, dtype=np.float32).reshape((1, 128))
     x = np.arange(16 * 128, dtype=np.float32).reshape((16, 128))

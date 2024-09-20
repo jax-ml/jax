@@ -379,7 +379,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun_at, args_maker)
 
   def test_frompyfunc_at_broadcasting(self):
-    # Regression test for https://github.com/google/jax/issues/18004
+    # Regression test for https://github.com/jax-ml/jax/issues/18004
     args_maker = lambda: [np.ones((5, 3)), np.array([0, 4, 2]),
                           np.arange(9.0).reshape(3, 3)]
     def np_fun(x, idx, y):
