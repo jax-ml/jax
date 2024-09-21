@@ -794,14 +794,14 @@ def _pbroadcast_transpose_rule(t, x, source, axis_name):
   tsum = psum(t, axis_name)
   return [lax.select(is_source, lax.full_like(t, tsum), lax.full_like(t, 0))]
 
-def _pbroadcast_batcher(axis_size, frame_name, _, vals_in, dims_in, axis_name, source):
+def _pbroadcast_batcher(axis_data, vals_in, dims_in, axis_name, source):
   (v,), (d,) = vals_in, dims_in
   if not isinstance(axis_name, (tuple, list)):
     axis_name = (axis_name,)
-  remaining_axes = tuple(axis for axis in axis_name if axis != frame_name)
+  remaining_axes = tuple(axis for axis in axis_name if axis != axis_data.name)
   if remaining_axes:
     raise NotImplementedError("pbroadcast batcher only supports a single axis")
-  assert axis_name[0] == frame_name, "pbroadcast batcher called with a wrong axis!"
+  assert axis_name[0] == axis_data.name, "pbroadcast batcher called with a wrong axis!"
   assert source >= 0 and source < axis_size, "collective broadcast doesn't fit in the axis size!"
   if axis_size == 1 and remaining_axes:
     return pbroadcast_p.bind(v, source=source, axis_name=remaining_axes), d
@@ -1297,7 +1297,7 @@ def _reduce_scatter_batcher(vals_in, dims_in, *, scatter_dimension, axis_name,
       tiled=tiled)
   return result, d
 
-def _reduce_scatter_collective(axis_data, _, vals_in, dims_in,
+def _reduce_scatter_collective(axis_data, vals_in, dims_in,
                                scatter_dimension, axis_name,
                                axis_index_groups, axis_size, tiled):
   frame_size, frame_name = axis_data.size, axis_data.name
