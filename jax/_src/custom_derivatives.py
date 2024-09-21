@@ -1462,7 +1462,6 @@ def _remat_opt_vmap(
 ):
   args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
           else x for x, d in zip(args, in_dims)]
-  axis_name = axis_data.name
   in_batched = [d is not not_mapped for d in in_dims]
   batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(
       fwd_jaxpr, axis_data, in_batched, False)
