@@ -175,7 +175,7 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
 
 
   def test_save_grad_integers(self):
-    # https://github.com/google/jax/issues/7123
+    # https://github.com/jax-ml/jax/issues/7123
     # In the end this is a test that does not involve JAX at all
     batch_size = 5
     state = np.array([1], dtype=np.int32)  # Works if float32

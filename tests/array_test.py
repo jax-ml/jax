@@ -822,18 +822,12 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertEqual(out2.sharding, sharding2)
 
   def test_make_array_from_process_data_single_host_data_sharding(self):
-    data = np.ones((1, 512))
-    mesh = jtu.create_mesh((1, 1), ('x', 'unused'))
-    sharding_spec = jax.sharding.NamedSharding(
-        mesh, jax.sharding.PartitionSpec('x')
-    )
-    global_shape = data.shape
-    result = jax.make_array_from_process_local_data(
-        sharding_spec, data, global_shape
-    )
-    self.assertIsInstance(result, jax.Array)
-    self.assertEqual(result.shape, data.shape)
-    self.assertEqual(result.sharding, sharding_spec)
+    mesh = jtu.create_mesh((2, 1), ('x', 'y'))
+    data = np.ones((256, 512))
+    s = jax.NamedSharding(mesh, P('x'))
+    result = jax.make_array_from_process_local_data(s, data)
+    self.assertArraysEqual(result, data)
+    self.assertEqual(result.sharding, s)
 
 class ShardingTest(jtu.JaxTestCase):
 

@@ -15,7 +15,7 @@
 """Common functions for neural network libraries."""
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax.numpy import tanh as tanh
 from jax.nn import initializers as initializers

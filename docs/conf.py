@@ -168,7 +168,7 @@ html_theme = 'sphinx_book_theme'
 # documentation.
 html_theme_options = {
     'show_toc_level': 2,
-    'repository_url': 'https://github.com/google/jax',
+    'repository_url': 'https://github.com/jax-ml/jax',
     'use_repository_button': True,     # add a "link to repository" button
     'navigation_with_keys': False,
 }
@@ -345,7 +345,7 @@ def linkcode_resolve(domain, info):
     return None
   filename = os.path.relpath(filename, start=os.path.dirname(jax.__file__))
   lines = f"#L{linenum}-L{linenum + len(source)}" if linenum else ""
-  return f"https://github.com/google/jax/blob/main/jax/{filename}{lines}"
+  return f"https://github.com/jax-ml/jax/blob/main/jax/{filename}{lines}"
 
 # Generate redirects from deleted files to new sources
 rediraffe_redirects = {

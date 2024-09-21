@@ -29,7 +29,7 @@ except Exception as exc:
   # Defensively swallow any exceptions to avoid making jax unimportable
   from warnings import warn as _warn
   _warn(f"cloud_tpu_init failed: {exc!r}\n This a JAX bug; please report "
-        f"an issue at https://github.com/google/jax/issues")
+        f"an issue at https://github.com/jax-ml/jax/issues")
   del _warn
 del _cloud_tpu_init
 
@@ -38,7 +38,7 @@ import jax.core as _core
 del _core
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.basearray import Array as Array
 from jax import tree as tree

@@ -79,7 +79,7 @@ class TPUCompilerParams(pallas_core.CompilerParams):
   device_type: str | None = None
 
 class TPUMemorySpace(enum.Enum):
-  ANY = "any"
+  ANY = "any"  # TODO(b/368401328): Remove this and just use pl.ANY.
   VMEM = "vmem"
   SMEM = "smem"
   CMEM = "cmem"

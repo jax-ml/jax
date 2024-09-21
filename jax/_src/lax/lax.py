@@ -1077,7 +1077,7 @@ def _reduction_jaxpr(computation, aval):
   if any(isinstance(c, core.Tracer) for c in consts):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "
-        "at https://github.com/google/jax.")
+        "at https://github.com/jax-ml/jax.")
   return jaxpr, tuple(consts)
 
 @cache()
@@ -1090,7 +1090,7 @@ def _variadic_reduction_jaxpr(computation, flat_avals, aval_tree):
   if any(isinstance(c, core.Tracer) for c in consts):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "
-        "at https://github.com/google/jax.")
+        "at https://github.com/jax-ml/jax.")
   return core.ClosedJaxpr(jaxpr, consts), out_tree()
 
 def _get_monoid_reducer(monoid_op: Callable,
@@ -1373,18 +1373,43 @@ def stop_gradient(x: T) -> T:
   argument `x` unchanged. However, ``stop_gradient`` prevents the flow of
   gradients during forward or reverse-mode automatic differentiation. If there
   are multiple nested gradient computations, ``stop_gradient`` stops gradients
-  for all of them.
+  for all of them. For some discussion of where this is useful, refer to
+  :ref:`stopping-gradients`.
 
-  For example:
+  Args:
+    x: array or pytree of arrays
 
-  >>> jax.grad(lambda x: x**2)(3.)
-  Array(6., dtype=float32, weak_type=True)
-  >>> jax.grad(lambda x: jax.lax.stop_gradient(x)**2)(3.)
-  Array(0., dtype=float32, weak_type=True)
-  >>> jax.grad(jax.grad(lambda x: x**2))(3.)
-  Array(2., dtype=float32, weak_type=True)
-  >>> jax.grad(jax.grad(lambda x: jax.lax.stop_gradient(x)**2))(3.)
-  Array(0., dtype=float32, weak_type=True)
+  Returns:
+    input value is returned unchanged, but within autodiff will be treated as
+    a constant.
+
+  Examples:
+    Consider a simple function that returns the square of the input value:
+
+    >>> def f1(x):
+    ...   return x ** 2
+    >>> x = jnp.float32(3.0)
+    >>> f1(x)
+    Array(9.0, dtype=float32)
+    >>> jax.grad(f1)(x)
+    Array(6.0, dtype=float32)
+
+    The same function with ``stop_gradient`` around ``x`` will be equivalent
+    under normal evaluation, but return a zero gradient because ``x`` is
+    effectively treated as a constant:
+
+    >>> def f2(x):
+    ...   return jax.lax.stop_gradient(x) ** 2
+    >>> f2(x)
+    Array(9.0, dtype=float32)
+    >>> jax.grad(f2)(x)
+    Array(0.0, dtype=float32)
+
+    This is used in a number of places within the JAX codebase; for example
+    :func:`jax.nn.softmax` internally normalizes the input by its maximum
+    value, and this maximum value is wrapped in ``stop_gradient`` for
+    efficiency. Refer to :ref:`stopping-gradients` for more discussion of
+    the applicability of ``stop_gradient``.
   """
   def stop(x):
     # only bind primitive on inexact dtypes, to avoid some staging
@@ -4915,7 +4940,7 @@ def _copy_impl_pmap_sharding(sharded_dim, *args, **kwargs):
   return tree_util.tree_unflatten(p.out_tree(), out_flat)
 
 
-# TODO(https://github.com/google/jax/issues/13552): Look into making this a
+# TODO(https://github.com/jax-ml/jax/issues/13552): Look into making this a
 # method on jax.Array so that we can bypass the XLA compilation here.
 def _copy_impl(prim, *args, **kwargs):
   a, = args

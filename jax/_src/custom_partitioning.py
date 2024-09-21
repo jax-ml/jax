@@ -492,7 +492,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
     devices = axis_context.device_assignment
     if devices is None:
       raise AssertionError(
-          'Please file a bug at https://github.com/google/jax/issues')
+          'Please file a bug at https://github.com/jax-ml/jax/issues')
     if axis_context.mesh_shape is not None:
       ma, ms = list(zip(*axis_context.mesh_shape))
       mesh = mesh_lib.Mesh(np.array(devices).reshape(ms), ma)

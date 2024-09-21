@@ -260,7 +260,7 @@ class OptimizerTests(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testIssue758(self):
-    # code from https://github.com/google/jax/issues/758
+    # code from https://github.com/jax-ml/jax/issues/758
     # this is more of a scan + jacfwd/jacrev test, but it lives here to use the
     # optimizers.py code
 

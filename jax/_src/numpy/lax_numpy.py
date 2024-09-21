@@ -3953,7 +3953,7 @@ def concatenate(arrays: np.ndarray | Array | Sequence[ArrayLike],
     arrays_out = [asarray(arr, dtype=dtype) for arr in arrays]
   # lax.concatenate can be slow to compile for wide concatenations, so form a
   # tree of concatenations as a workaround especially for op-by-op mode.
-  # (https://github.com/google/jax/issues/653).
+  # (https://github.com/jax-ml/jax/issues/653).
   k = 16
   while len(arrays_out) > 1:
     arrays_out = [lax.concatenate(arrays_out[i:i+k], axis)
@@ -4645,7 +4645,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   if all(not isinstance(leaf, Array) for leaf in leaves):
     # TODO(jakevdp): falling back to numpy here fails to overflow for lists
     # containing large integers; see discussion in
-    # https://github.com/google/jax/pull/6047. More correct would be to call
+    # https://github.com/jax-ml/jax/pull/6047. More correct would be to call
     # coerce_to_array on each leaf, but this may have performance implications.
     out = np.asarray(object, dtype=dtype)
   elif isinstance(object, Array):
@@ -5973,19 +5973,53 @@ def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
   return output
 
 
-@custom_jvp
-@util.implements(np.i0)
 @jit
 def i0(x: ArrayLike) -> Array:
+  r"""Calculate modified Bessel function of first kind, zeroth order.
+
+  JAX implementation of :func:`numpy.i0`.
+
+  Modified Bessel function of first kind, zeroth order is defined by:
+
+  .. math::
+
+     \mathrm{i0}(x) = I_0(x) = \sum_{k=0}^{\infty} \frac{(x^2/4)^k}{(k!)^2}
+
+  Args:
+    x: scalar or array. Specifies the argument of Bessel function. Complex inputs
+      are not supported.
+
+  Returns:
+    An array containing the corresponding vlaues of the modified Bessel function
+    of ``x``.
+
+  See also:
+    - :func:`jax.scipy.special.i0`: Calculates the modified Bessel function of
+      zeroth order.
+    - :func:`jax.scipy.special.i1`: Calculates the modified Bessel function of
+      first order.
+    - :func:`jax.scipy.special.i0e`: Calculates the exponentially scaled modified
+      Bessel function of zeroth order.
+
+  Examples:
+    >>> x = jnp.array([-2, -1, 0, 1, 2])
+    >>> jnp.i0(x)
+    Array([2.2795851, 1.266066 , 1.0000001, 1.266066 , 2.2795851], dtype=float32)
+  """
   x_arr, = util.promote_args_inexact("i0", x)
   if not issubdtype(x_arr.dtype, np.floating):
     raise ValueError(f"Unsupported input type to jax.numpy.i0: {_dtype(x)}")
-  x_arr = lax.abs(x_arr)
-  return lax.mul(lax.exp(x_arr), lax.bessel_i0e(x_arr))
+  return _i0(x_arr)
 
-@i0.defjvp
+
+@custom_jvp
+def _i0(x):
+  abs_x = lax.abs(x)
+  return lax.mul(lax.exp(abs_x), lax.bessel_i0e(abs_x))
+
+@_i0.defjvp
 def _i0_jvp(primals, tangents):
-  primal_out, tangent_out = jax.jvp(i0.fun, primals, tangents)
+  primal_out, tangent_out = jax.jvp(_i0.fun, primals, tangents)
   return primal_out, where(primals[0] == 0, 0.0, tangent_out)
 
 def ix_(*args: ArrayLike) -> tuple[Array, ...]:
@@ -10150,11 +10184,11 @@ def _eliminate_deprecated_list_indexing(idx):
       if any(_should_unpack_list_index(i) for i in idx):
         msg = ("Using a non-tuple sequence for multidimensional indexing is not allowed; "
                "use `arr[tuple(seq)]` instead of `arr[seq]`. "
-               "See https://github.com/google/jax/issues/4564 for more information.")
+               "See https://github.com/jax-ml/jax/issues/4564 for more information.")
       else:
         msg = ("Using a non-tuple sequence for multidimensional indexing is not allowed; "
                "use `arr[array(seq)]` instead of `arr[seq]`. "
-               "See https://github.com/google/jax/issues/4564 for more information.")
+               "See https://github.com/jax-ml/jax/issues/4564 for more information.")
       raise TypeError(msg)
     else:
       idx = (idx,)
@@ -10328,8 +10362,28 @@ def _preprocess_slice(
   return start, step, slice_size
 
 
-@util.implements(np.blackman)
 def blackman(M: int) -> Array:
+  """Return a Blackman window of size M.
+
+  JAX implementation of :func:`numpy.blackman`.
+
+  Args:
+    M: The window size.
+
+  Returns:
+    An array of size M containing the Blackman window.
+
+  Examples:
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.blackman(4))
+    [-0.    0.63  0.63 -0.  ]
+
+  See also:
+    - :func:`jax.numpy.bartlett`: return a Bartlett window of size M.
+    - :func:`jax.numpy.hamming`: return a Hamming window of size M.
+    - :func:`jax.numpy.hanning`: return a Hanning window of size M.
+    - :func:`jax.numpy.kaiser`: return a Kaiser window of size M.
+  """
   M = core.concrete_or_error(int, M, "M argument of jnp.blackman")
   dtype = dtypes.canonicalize_dtype(float_)
   if M <= 1:
@@ -10338,8 +10392,28 @@ def blackman(M: int) -> Array:
   return 0.42 - 0.5 * ufuncs.cos(2 * pi * n / (M - 1)) + 0.08 * ufuncs.cos(4 * pi * n / (M - 1))
 
 
-@util.implements(np.bartlett)
 def bartlett(M: int) -> Array:
+  """Return a Bartlett window of size M.
+
+  JAX implementation of :func:`numpy.bartlett`.
+
+  Args:
+    M: The window size.
+
+  Returns:
+    An array of size M containing the Bartlett window.
+
+  Examples:
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.bartlett(4))
+    [0.   0.67 0.67 0.  ]
+
+  See also:
+    - :func:`jax.numpy.blackman`: return a Blackman window of size M.
+    - :func:`jax.numpy.hamming`: return a Hamming window of size M.
+    - :func:`jax.numpy.hanning`: return a Hanning window of size M.
+    - :func:`jax.numpy.kaiser`: return a Kaiser window of size M.
+  """
   M = core.concrete_or_error(int, M, "M argument of jnp.bartlett")
   dtype = dtypes.canonicalize_dtype(float_)
   if M <= 1:
@@ -10348,8 +10422,28 @@ def bartlett(M: int) -> Array:
   return 1 - ufuncs.abs(2 * n + 1 - M) / (M - 1)
 
 
-@util.implements(np.hamming)
 def hamming(M: int) -> Array:
+  """Return a Hamming window of size M.
+
+  JAX implementation of :func:`numpy.hamming`.
+
+  Args:
+    M: The window size.
+
+  Returns:
+    An array of size M containing the Hamming window.
+
+  Examples:
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.hamming(4))
+    [0.08 0.77 0.77 0.08]
+
+  See also:
+    - :func:`jax.numpy.bartlett`: return a Bartlett window of size M.
+    - :func:`jax.numpy.blackman`: return a Blackman window of size M.
+    - :func:`jax.numpy.hanning`: return a Hanning window of size M.
+    - :func:`jax.numpy.kaiser`: return a Kaiser window of size M.
+  """
   M = core.concrete_or_error(int, M, "M argument of jnp.hamming")
   dtype = dtypes.canonicalize_dtype(float_)
   if M <= 1:
@@ -10358,8 +10452,28 @@ def hamming(M: int) -> Array:
   return 0.54 - 0.46 * ufuncs.cos(2 * pi * n / (M - 1))
 
 
-@util.implements(np.hanning)
 def hanning(M: int) -> Array:
+  """Return a Hanning window of size M.
+
+  JAX implementation of :func:`numpy.hanning`.
+
+  Args:
+    M: The window size.
+
+  Returns:
+    An array of size M containing the Hanning window.
+
+  Examples:
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.hanning(4))
+    [0.   0.75 0.75 0.  ]
+
+  See also:
+    - :func:`jax.numpy.bartlett`: return a Bartlett window of size M.
+    - :func:`jax.numpy.blackman`: return a Blackman window of size M.
+    - :func:`jax.numpy.hamming`: return a Hamming window of size M.
+    - :func:`jax.numpy.kaiser`: return a Kaiser window of size M.
+  """
   M = core.concrete_or_error(int, M, "M argument of jnp.hanning")
   dtype = dtypes.canonicalize_dtype(float_)
   if M <= 1:
@@ -10368,8 +10482,29 @@ def hanning(M: int) -> Array:
   return 0.5 * (1 - ufuncs.cos(2 * pi * n / (M - 1)))
 
 
-@util.implements(np.kaiser)
 def kaiser(M: int, beta: ArrayLike) -> Array:
+  """Return a Kaiser window of size M.
+
+  JAX implementation of :func:`numpy.kaiser`.
+
+  Args:
+    M: The window size.
+    beta: The Kaiser window parameter.
+
+  Returns:
+    An array of size M containing the Kaiser window.
+
+  Examples:
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.kaiser(4, 1.5))
+    [0.61 0.95 0.95 0.61]
+
+  See also:
+    - :func:`jax.numpy.bartlett`: return a Bartlett window of size M.
+    - :func:`jax.numpy.blackman`: return a Blackman window of size M.
+    - :func:`jax.numpy.hamming`: return a Hamming window of size M.
+    - :func:`jax.numpy.hanning`: return a Hanning window of size M.
+  """
   M = core.concrete_or_error(int, M, "M argument of jnp.kaiser")
   dtype = dtypes.canonicalize_dtype(float_)
   if M <= 1:

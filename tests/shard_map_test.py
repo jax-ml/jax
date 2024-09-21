@@ -724,7 +724,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(e.params['out_names'], ({0: ('x', 'y',)},))
 
   def test_nested_vmap_with_capture_spmd_axis_name(self):
-    self.skipTest('https://github.com/google/jax/issues/23476')
+    self.skipTest('https://github.com/jax-ml/jax/issues/23476')
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
 
     def to_map_with_capture(x, y):
@@ -902,7 +902,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jax.legacy_prng_key('allow')
   def test_prngkeyarray_eager(self):
-    # https://github.com/google/jax/issues/15398
+    # https://github.com/jax-ml/jax/issues/15398
     mesh = jtu.create_mesh((4,), ('x',))
     sharding = jax.sharding.NamedSharding(mesh, P('x'))
 
@@ -1069,7 +1069,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(out, 1.)
 
   def test_jaxpr_shardings_with_no_outputs(self):
-    # https://github.com/google/jax/issues/15385
+    # https://github.com/jax-ml/jax/issues/15385
     mesh = jtu.create_mesh((4,), ('i',))
 
     @jax.jit
@@ -1109,7 +1109,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices('cpu', 'gpu', 'tpu')
   def test_key_array_with_replicated_last_tile_dim(self):
-    # See https://github.com/google/jax/issues/16137
+    # See https://github.com/jax-ml/jax/issues/16137
 
     mesh = jtu.create_mesh((2, 4), ('i', 'j'))
 
@@ -1690,7 +1690,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(grad, jnp.ones(4) * 4 * 4, check_dtypes=False)
 
   def test_repeated_psum_allowed(self):
-    # https://github.com/google/jax/issues/19175
+    # https://github.com/jax-ml/jax/issues/19175
     mesh = jtu.create_mesh((4,), 'i')
 
     @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P())
@@ -1927,7 +1927,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(jax.jit(f)(), jnp.zeros((2,)))
 
   def test_vmap_grad_shmap_spmd_axis_name_residuals(self):
-    # https://github.com/google/jax/pull/21032
+    # https://github.com/jax-ml/jax/pull/21032
     mesh = jtu.create_mesh((4, 2), ('i', 'j'))
 
     @partial(
@@ -1944,7 +1944,7 @@ class ShardMapTest(jtu.JaxTestCase):
     jax.vmap(jax.grad(lambda x: f(x).sum()), spmd_axis_name='i')(xs)  # don't crash
 
   def test_vmap_grad_remat_shmap_spmd_axis_name_residuals(self):
-    # https://github.com/google/jax/pull/21056
+    # https://github.com/jax-ml/jax/pull/21056
     mesh = jtu.create_mesh((4, 2), ('i', 'j'))
 
     @partial(jax.remat, policy=lambda *_, **__: True)
@@ -1962,7 +1962,7 @@ class ShardMapTest(jtu.JaxTestCase):
     jax.vmap(jax.grad(lambda x: f(x).sum()), spmd_axis_name='i')(xs)  # don't crash
 
   def test_grad_shmap_residuals_axis_names_in_mesh_order(self):
-    # https://github.com/google/jax/issues/21236
+    # https://github.com/jax-ml/jax/issues/21236
     mesh = jtu.create_mesh((4, 2, 1, 1), ('i', 'j', 'k', 'a'))
 
     @partial(
@@ -2108,7 +2108,7 @@ class ShardMapTest(jtu.JaxTestCase):
                     )((object(), object()), x)
 
   def test_custom_linear_solve_rep_rules(self):
-    # https://github.com/google/jax/issues/20162
+    # https://github.com/jax-ml/jax/issues/20162
     mesh = jtu.create_mesh((1,), ('i',))
     a = jnp.array(1).reshape(1, 1)
     b = jnp.array(1).reshape(1)
@@ -2150,6 +2150,34 @@ class ShardMapTest(jtu.JaxTestCase):
       return ()
 
     f(A())  # don't crash
+
+  def test_get_check_rep(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+
+    def f(x, reduce_along, use_jit):
+      out_spec = P(*(n for n in ('x', 'y') if n not in reduce_along))
+
+      @partial(shard_map, mesh=mesh, in_specs=P('x', 'y'), out_specs=out_spec)
+      def g(x):
+        result = lax.psum(x, axis_name=reduce_along)
+        def check_rep(result):
+          self.assertEqual(
+              jax.experimental.shard_map.get_replication(result),
+              set(reduce_along))
+          return result
+        result = check_rep(result)
+        result = jax.vmap(check_rep)(result)
+        return result
+      if use_jit:
+        return jax.jit(g)(x)
+      else:
+        return g(x)
+
+    for use_jit in [True, False]:
+      x = np.zeros((8, 8), dtype=np.float32)
+      f(x, reduce_along=('y',), use_jit=use_jit)
+      f(x, reduce_along=('x',), use_jit=use_jit)
+      f(x, reduce_along=('x', 'y'), use_jit=use_jit)
 
 
 class FunSpec(NamedTuple):

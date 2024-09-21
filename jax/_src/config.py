@@ -1170,7 +1170,7 @@ softmax_custom_jvp = bool_state(
     upgrade=True,
     help=('Use a new custom_jvp rule for jax.nn.softmax. The new rule should '
           'improve memory usage and stability. Set True to use new '
-          'behavior. See https://github.com/google/jax/pull/15677'),
+          'behavior. See https://github.com/jax-ml/jax/pull/15677'),
     update_global_hook=lambda val: _update_global_jit_state(
         softmax_custom_jvp=val),
     update_thread_local_hook=lambda val: update_thread_local_jit_state(

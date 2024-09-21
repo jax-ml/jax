@@ -1232,7 +1232,7 @@ def make_pjrt_tpu_topology(topology_name='', **kwargs):
     if library_path is None:
       raise RuntimeError(
           "JAX TPU support not installed; cannot generate TPU topology. See"
-          " https://github.com/google/jax#installation")
+          " https://github.com/jax-ml/jax#installation")
     c_api = xla_client.load_pjrt_plugin_dynamically("tpu", library_path)
     xla_client.profiler.register_plugin_profiler(c_api)
   assert xla_client.pjrt_plugin_loaded("tpu")

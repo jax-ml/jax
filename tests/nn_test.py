@@ -308,11 +308,18 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testGelu(self, approximate):
     def gelu_reference(x):
       return x * scipy.stats.norm.cdf(x)
-    rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng((4, 5, 6), jnp.float32)]
+    args_maker = lambda: [jnp.linspace(-12, 5, 10000, dtype=jnp.float32)]
+    rtol = 2e-5
+    atol = 1e-3 if approximate else 0
     self._CheckAgainstNumpy(
-      gelu_reference, partial(nn.gelu, approximate=approximate), args_maker,
-      check_dtypes=False, tol=1e-3 if approximate else None)
+        gelu_reference,
+        partial(nn.gelu, approximate=approximate),
+        args_maker,
+        check_dtypes=False,
+        tol=0,
+        rtol=rtol,
+        atol=atol,
+    )
 
   @parameterized.parameters(*itertools.product(
       (jnp.float32, jnp.bfloat16, jnp.float16),
@@ -325,12 +332,12 @@ class NNFunctionsTest(jtu.JaxTestCase):
     self.assertEqual(out.dtype, dtype)
 
   def testEluMemory(self):
-    # see https://github.com/google/jax/pull/1640
+    # see https://github.com/jax-ml/jax/pull/1640
     with jax.enable_checks(False):  # With checks we materialize the array
       jax.make_jaxpr(lambda: nn.elu(jnp.ones((10 ** 12,))))  # don't oom
 
   def testHardTanhMemory(self):
-    # see https://github.com/google/jax/pull/1640
+    # see https://github.com/jax-ml/jax/pull/1640
     with jax.enable_checks(False):  # With checks we materialize the array
       jax.make_jaxpr(lambda: nn.hard_tanh(jnp.ones((10 ** 12,))))  # don't oom
 
@@ -367,7 +374,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
   @parameterized.parameters([nn.softmax, nn.log_softmax])
   def testSoftmaxWhereGrad(self, fn):
-    # regression test for https://github.com/google/jax/issues/19490
+    # regression test for https://github.com/jax-ml/jax/issues/19490
     x = jnp.array([36., 10000.])
     mask = x < 1000
 
@@ -443,7 +450,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(actual, expected)
 
   def testOneHotConcretizationError(self):
-    # https://github.com/google/jax/issues/3654
+    # https://github.com/jax-ml/jax/issues/3654
     msg = r"in jax.nn.one_hot argument `num_classes`"
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       jax.jit(nn.one_hot)(3, 5)
@@ -463,7 +470,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     nn.tanh  # doesn't crash
 
   def testCustomJVPLeak(self):
-    # https://github.com/google/jax/issues/8171
+    # https://github.com/jax-ml/jax/issues/8171
     @jax.jit
     def fwd():
       a = jnp.array(1.)
@@ -479,7 +486,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
       fwd()  # doesn't crash
 
   def testCustomJVPLeak2(self):
-    # https://github.com/google/jax/issues/8171
+    # https://github.com/jax-ml/jax/issues/8171
     # The above test uses jax.nn.sigmoid, as in the original #8171, but that
     # function no longer actually has a custom_jvp! So we inline the old def.
 

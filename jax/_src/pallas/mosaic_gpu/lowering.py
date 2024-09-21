@@ -39,8 +39,7 @@ from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.state import primitives as sp
-from jax.experimental.mosaic import gpu as mosaic_gpu
-from jax.experimental.mosaic.gpu import dsl as mgpu
+import jax.experimental.mosaic.gpu as mgpu
 import jax.numpy as jnp
 import numpy as np
 
@@ -160,7 +159,7 @@ class ModuleContext:
 @dataclasses.dataclass(frozen=True)
 class LoweringRuleContext:
   module_ctx: ModuleContext
-  launch_ctx: mosaic_gpu.LaunchContext
+  launch_ctx: mgpu.LaunchContext
   avals_in: Sequence[jax_core.ShapedArray]
   avals_out: Sequence[jax_core.ShapedArray]
 
@@ -180,7 +179,7 @@ class LoweringError(Exception):  # pylint: disable=g-bad-exception-name
 
 def _eval_index_map(
     module_ctx: ModuleContext,
-    launch_ctx: mosaic_gpu.LaunchContext,
+    launch_ctx: mgpu.LaunchContext,
     idx: ir.Value,
     block_mapping: pallas_core.BlockMapping,
 ) -> Sequence[ir.Value]:
@@ -300,7 +299,7 @@ def lower_jaxpr_to_module(
       )
   ]
 
-  def body(launch_ctx: mosaic_gpu.LaunchContext, *buffers: ir.Value):
+  def body(launch_ctx: mgpu.LaunchContext, *buffers: ir.Value):
     *buffers_gmem, (
         buffers_smem,
         *scratch_buffers_smem,
@@ -494,7 +493,7 @@ def lower_jaxpr_to_module(
       jax.ShapeDtypeStruct(shape=[smem_scratch_bytes], dtype=np.int8)
   )
 
-  module, out_structs_smem, _ = mosaic_gpu._lower_as_gpu_kernel(
+  module, out_structs_smem, _ = mgpu._lower_as_gpu_kernel(
       body,
       grid=grid,
       cluster=(),
@@ -528,7 +527,7 @@ def register_lowering_rule(primitive: jax_core.Primitive):
 
 def lower_jaxpr_to_mosaic_gpu(
     module_ctx: ModuleContext,
-    launch_ctx: mosaic_gpu.LaunchContext,
+    launch_ctx: mgpu.LaunchContext,
     jaxpr: jax_core.Jaxpr,
     args: Sequence[ir.Value],
     consts=(),
@@ -549,7 +548,7 @@ def lower_jaxpr_to_mosaic_gpu(
       raise NotImplementedError(
           "Unimplemented primitive in Pallas Mosaic GPU lowering: "
           f"{eqn.primitive.name}. "
-          "Please file an issue on https://github.com/google/jax/issues."
+          "Please file an issue on https://github.com/jax-ml/jax/issues."
       )
     rule = mosaic_lowering_rules[eqn.primitive]
     rule_ctx = LoweringRuleContext(

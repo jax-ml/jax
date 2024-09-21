@@ -43,6 +43,7 @@ module = [
     "tensorstore.*",
     "web_pdb.*",
     "zstandard.*",
+    "kubernetes.*"
 ]
 ignore_missing_imports = true
 

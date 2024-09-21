@@ -430,8 +430,8 @@ def gelu(x: ArrayLike, approximate: bool = True) -> Array:
   If ``approximate=False``, computes the element-wise function:
 
   .. math::
-    \mathrm{gelu}(x) = \frac{x}{2} \left(1 + \mathrm{erf} \left(
-      \frac{x}{\sqrt{2}} \right) \right)
+    \mathrm{gelu}(x) = \frac{x}{2} \left(\mathrm{erfc} \left(
+      \frac{-x}{\sqrt{2}} \right) \right)
 
   If ``approximate=True``, uses the approximate formulation of GELU:
 
@@ -443,7 +443,7 @@ def gelu(x: ArrayLike, approximate: bool = True) -> Array:
   <https://arxiv.org/abs/1606.08415>`_, section 2.
 
   Args:
-    x : input array
+    x: input array
     approximate: whether to use the approximate or exact formulation.
   """
   [x_arr] = numpy_util.promote_args_inexact("gelu", x)
@@ -453,8 +453,10 @@ def gelu(x: ArrayLike, approximate: bool = True) -> Array:
     cdf = 0.5 * (1.0 + jnp.tanh(sqrt_2_over_pi * (x_arr + 0.044715 * (x_arr ** 3))))
     return x_arr * cdf
   else:
-    sqrt_2 = np.sqrt(2).astype(x_arr.dtype)
-    return jnp.array(x_arr * (lax.erf(x_arr / sqrt_2) + 1) / 2, dtype=x_arr.dtype)
+    sqrt_half = np.sqrt(0.5).astype(x_arr.dtype)
+    return jnp.array(
+        0.5 * x_arr * (lax.erfc(-x_arr * sqrt_half)), dtype=x_arr.dtype
+    )
 
 @partial(jax.jit, static_argnames=("axis",))
 def glu(x: ArrayLike, axis: int = -1) -> Array:
@@ -541,7 +543,7 @@ def log_softmax(x: ArrayLike,
 
 
 # TODO(phawkins): this jit was found to change numerics in a test. Debug this.
-#@partial(jax.jit, static_argnames=("axis",))
+# @partial(jax.jit, static_argnames=("axis",))
 def softmax(x: ArrayLike,
             axis: int | tuple[int, ...] | None = -1,
             where: ArrayLike | None = None,

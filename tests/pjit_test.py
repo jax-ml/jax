@@ -1510,7 +1510,7 @@ class CustomPartitionerTest(jtu.JaxTestCase):
   def test_custom_partitioner_with_scan(self):
     self.skip_if_custom_partitioning_not_supported()
 
-    # This is a reproducer from https://github.com/google/jax/issues/20864.
+    # This is a reproducer from https://github.com/jax-ml/jax/issues/20864.
 
     @custom_partitioning
     def f(x):
@@ -1921,7 +1921,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertArraysEqual(s.data, input_data)
 
   def test_sds_full_like(self):
-    # https://github.com/google/jax/issues/20390
+    # https://github.com/jax-ml/jax/issues/20390
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
     x = jax.ShapeDtypeStruct((4, 4), jnp.float32, sharding=s)
@@ -4113,7 +4113,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_spmd_preserves_input_sharding_vmap_grad(self):
     if config.use_shardy_partitioner.value:
       self.skipTest("Shardy doesn't support PositionalSharding")
-    # https://github.com/google/jax/issues/20710
+    # https://github.com/jax-ml/jax/issues/20710
     n_devices = jax.device_count()
     sharding = PositionalSharding(jax.devices())
 

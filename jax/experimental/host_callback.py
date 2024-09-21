@@ -17,7 +17,7 @@
   The host_callback APIs are deprecated as of March 20, 2024.
   The functionality is subsumed by the
   `new JAX external callbacks <https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html>`_
-  See https://github.com/google/jax/issues/20385.
+  See https://github.com/jax-ml/jax/issues/20385.
 
 This module introduces the host callback functions :func:`call`,
 :func:`id_tap`, and :func:`id_print`, that send their arguments from the device
@@ -363,11 +363,11 @@ using the :func:`jax.custom_vjp` mechanism.
 This is relatively easy to do, once one understands both the JAX custom VJP
 and the TensorFlow autodiff mechanisms.
 The code for how this can be done is shown in the ``call_tf_full_ad``
-function in `host_callback_to_tf_test.py <https://github.com/google/jax/blob/main/tests/host_callback_to_tf_test.py>`_.
+function in `host_callback_to_tf_test.py <https://github.com/jax-ml/jax/blob/main/tests/host_callback_to_tf_test.py>`_.
 This example supports arbitrary higher-order differentiation as well.
 
 Note that if you just want to call TensorFlow functions from JAX, you can also
-use the `jax2tf.call_tf function <https://github.com/google/jax/blob/main/jax/experimental/jax2tf/call_tf.py>`_.
+use the `jax2tf.call_tf function <https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/call_tf.py>`_.
 
 Using :func:`call` to call a JAX function on another device, with reverse-mode autodiff support
 ------------------------------------------------------------------------------------------------
@@ -378,7 +378,7 @@ the host, and then to the outside device on which the JAX host
 computation will run, and then the results are sent back to the original accelerator.
 
 The code for how this can be done is shown in the ``call_jax_other_device function``
-in `host_callback_test.py <https://github.com/google/jax/blob/main/tests/host_callback_test.py>`_.
+in `host_callback_test.py <https://github.com/jax-ml/jax/blob/main/tests/host_callback_test.py>`_.
 
 Low-level details and debugging
 -------------------------------
@@ -572,7 +572,7 @@ _HOST_CALLBACK_LEGACY = config.bool_flag(
     help=(
         'Use old implementation of host_callback, documented in the module docstring.'
         'If False, use the jax.experimental.io_callback implementation. '
-        'See https://github.com/google/jax/issues/20385.'
+        'See https://github.com/jax-ml/jax/issues/20385.'
     )
 )
 
@@ -592,7 +592,7 @@ def _raise_if_using_outfeed_with_pjrt_c_api(backend: xb.XlaBackend):
         "See https://jax.readthedocs.io/en/latest/debugging/index.html and "
         "https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html"
         " for alternatives. Please file a feature request at "
-        "https://github.com/google/jax/issues if none of the alternatives are "
+        "https://github.com/jax-ml/jax/issues if none of the alternatives are "
         "sufficient.")
 
 
@@ -608,7 +608,7 @@ DType = Any
 class CallbackFlavor(enum.Enum):
   """Specifies which flavor of callback to use under JAX_HOST_CALLBACK_LEGACY=False.
 
-  See https://github.com/google/jax/issues/20385.
+  See https://github.com/jax-ml/jax/issues/20385.
   """
   IO_CALLBACK = 1  # uses jax.experimental.io_callback
   PURE = 2  # uses jax.pure_callback
@@ -629,7 +629,7 @@ def _deprecated_id_tap(tap_func,
     The host_callback APIs are deprecated as of March 20, 2024.
     The functionality is subsumed by the
     `new JAX external callbacks <https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html>`_
-    See https://github.com/google/jax/issues/20385.
+    See https://github.com/jax-ml/jax/issues/20385.
 
   ``id_tap`` behaves semantically like the identity function but has the
   side-effect that a user-defined Python function is called with the runtime
@@ -655,7 +655,7 @@ def _deprecated_id_tap(tap_func,
       i.e., does not work on CPU unless --jax_host_callback_outfeed=True.
     callback_flavor: if running with `JAX_HOST_CALLBACK_LEGACY=False` specifies
        the flavor of callback to use.
-       See https://github.com/google/jax/issues/20385.
+       See https://github.com/jax-ml/jax/issues/20385.
 
   Returns:
     ``arg``, or ``result`` if given.
@@ -712,7 +712,7 @@ def _deprecated_id_print(arg,
     The host_callback APIs are deprecated as of March 20, 2024.
     The functionality is subsumed by the
     `new JAX external callbacks <https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html>`_
-    See https://github.com/google/jax/issues/20385.
+    See https://github.com/jax-ml/jax/issues/20385.
 
    On each invocation of the printing tap, the ``kwargs`` if present
    will be printed first (sorted by keys). Then arg will be printed,
@@ -730,7 +730,7 @@ def _deprecated_id_print(arg,
    * ``threshold`` is passed to ``numpy.array2string``.
    * ``callback_flavor``: if running with `JAX_HOST_CALLBACK_LEGACY=False` specifies
        the flavor of callback to use.
-       See https://github.com/google/jax/issues/20385.
+       See https://github.com/jax-ml/jax/issues/20385.
 
   For more details see the :mod:`jax.experimental.host_callback` module documentation.
   """
@@ -757,7 +757,7 @@ def _deprecated_call(callback_func: Callable, arg, *,
     The host_callback APIs are deprecated as of March 20, 2024.
     The functionality is subsumed by the
     `new JAX external callbacks <https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html>`_
-    See https://github.com/google/jax/issues/20385.
+    See https://github.com/jax-ml/jax/issues/20385.
 
   Args:
     callback_func: The Python function to invoke on the host as
@@ -787,7 +787,7 @@ def _deprecated_call(callback_func: Callable, arg, *,
       i.e., does not work on CPU unless --jax_host_callback_outfeed=True.
     callback_flavor: if running with `JAX_HOST_CALLBACK_LEGACY=False` specifies
        the flavor of callback to use.
-       See https://github.com/google/jax/issues/20385.
+       See https://github.com/jax-ml/jax/issues/20385.
 
   Returns:
     the result of the ``callback_func`` invocation.
@@ -800,7 +800,7 @@ def _deprecated_call(callback_func: Callable, arg, *,
     raise NotImplementedError(
         "When using JAX_HOST_CALLBACK_LEGACY=False you can use the `DEBUG` "
         "flavor of callback only when the `result_shape` is None. "
-        "See https://github.com/google/jax/issues/20385."
+        "See https://github.com/jax-ml/jax/issues/20385."
     )
   return _call(callback_func, arg, result_shape=result_shape,
                call_with_device=call_with_device, identity=False,
@@ -819,7 +819,7 @@ class _CallbackWrapper:
       raise NotImplementedError(
           "When using JAX_HOST_CALLBACK_LEGACY=False, the host_callback APIs"
           " do not support `tap_with_device` and `call_with_device`. "
-          "See https://github.com/google/jax/issues/20385.")
+          "See https://github.com/jax-ml/jax/issues/20385.")
 
   def __hash__(self):
     return hash((self.callback_func, self.identity, self.call_with_device))
@@ -2121,7 +2121,7 @@ def _deprecated_stop_outfeed_receiver():
 _deprecation_msg = (
     "The host_callback APIs are deprecated as of March 20, 2024. The functionality "
     "is subsumed by the new JAX external callbacks. "
-    "See https://github.com/google/jax/issues/20385.")
+    "See https://github.com/jax-ml/jax/issues/20385.")
 
 _deprecations = {
     # Added March 20, 2024

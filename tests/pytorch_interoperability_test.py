@@ -109,7 +109,7 @@ class DLPackTest(jtu.JaxTestCase):
         self.assertAllClose(np, y.cpu().numpy())
 
   def testTorchToJaxInt64(self):
-    # See https://github.com/google/jax/issues/11895
+    # See https://github.com/jax-ml/jax/issues/11895
     x = jax.dlpack.from_dlpack(
         torch.utils.dlpack.to_dlpack(torch.ones((2, 3), dtype=torch.int64)))
     dtype_expected = jnp.int64 if config.enable_x64.value else jnp.int32

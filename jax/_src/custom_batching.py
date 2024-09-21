@@ -191,7 +191,7 @@ def custom_vmap_jvp(primals, tangents, *, call, rule, in_tree, out_tree):
 
     # TODO(frostig): assert these also equal:
     #   treedef_tuple((in_tree, in_tree))
-    # once https://github.com/google/jax/issues/9066 is fixed
+    # once https://github.com/jax-ml/jax/issues/9066 is fixed
     assert tree_ps_ts == tree_ps_ts2
     del tree_ps_ts2
 

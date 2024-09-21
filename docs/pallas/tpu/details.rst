@@ -21,7 +21,7 @@ software emulation, and can slow down the computation.
 
   If you see unexpected outputs, please compare them against a kernel run with
   ``interpret=True`` passed in to ``pallas_call``. If the results diverge,
-  please file a `bug report <https://github.com/google/jax/issues/new/choose>`_.
+  please file a `bug report <https://github.com/jax-ml/jax/issues/new/choose>`_.
 
 What is a TPU?
 --------------

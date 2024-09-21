@@ -667,7 +667,7 @@ class TestPromotionTables(jtu.JaxTestCase):
       {"testcase_name": f"_{typ}", "typ": typ}
        for typ in [bool, int, float, complex])
   def testScalarWeakTypes(self, typ):
-    # Regression test for https://github.com/google/jax/issues/11377
+    # Regression test for https://github.com/jax-ml/jax/issues/11377
     val = typ(0)
 
     result1 = jnp.array(val)
@@ -806,7 +806,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     for weak_type in [True, False]
   )
   def testUnaryPromotion(self, dtype, weak_type):
-    # Regression test for https://github.com/google/jax/issues/6051
+    # Regression test for https://github.com/jax-ml/jax/issues/6051
     if dtype in intn_dtypes:
       self.skipTest("XLA support for int2 and int4 is incomplete.")
     x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
@@ -852,7 +852,7 @@ class TestPromotionTables(jtu.JaxTestCase):
       self.skipTest("XLA support for float8 is incomplete.")
     if dtype in intn_dtypes:
       self.skipTest("XLA support for int2 and int4 is incomplete.")
-    # Regression test for https://github.com/google/jax/issues/6051
+    # Regression test for https://github.com/jax-ml/jax/issues/6051
     x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     with jax.numpy_dtype_promotion(promotion):
       y = (x + x)

@@ -23,7 +23,7 @@ from jax import core as jax_core
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import lowering
-from jax.experimental.mosaic import gpu as mosaic_gpu
+import jax.experimental.mosaic.gpu.core as mosaic_core
 
 
 def pallas_call_lowering(
@@ -67,7 +67,7 @@ def pallas_call_lowering(
     print(lowering_result.module.operation)
 
   module = lowering_result.module
-  return mosaic_gpu._mosaic_gpu_lowering_rule(
+  return mosaic_core._mosaic_gpu_lowering_rule(
       ctx,
       *args,
       module=module.operation.get_asm(binary=True, enable_debug_info=True),

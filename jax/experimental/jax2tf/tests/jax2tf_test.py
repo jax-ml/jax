@@ -595,7 +595,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.sample_product(with_function=[False, True])
   def test_gradients_int_argument(self, with_function=False):
-    # https://github.com/google/jax/issues/6975
+    # https://github.com/jax-ml/jax/issues/6975
     # Also issue #6975.
     # An expanded version of test_gradients_unused_argument
     state = dict(
@@ -969,7 +969,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         self.assertIn("my_test_function_jax/jit__multiply_/Mul", graph_def)
 
   def test_bfloat16_constant(self):
-    # Re: https://github.com/google/jax/issues/3942
+    # Re: https://github.com/jax-ml/jax/issues/3942
     def jax_fn_scalar(x):
       x = x.astype(jnp.bfloat16)
       x *= 2.
@@ -990,7 +990,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_shared_constants(self):
     # Check that the constants are shared properly in converted functions
-    # See https://github.com/google/jax/issues/7992.
+    # See https://github.com/jax-ml/jax/issues/7992.
     if config.jax2tf_default_native_serialization.value:
       raise unittest.SkipTest("shared constants tests not interesting for native serialization")
     const = np.random.uniform(size=256).astype(np.float32)  # A shared constant
@@ -1002,7 +1002,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_shared_constants_under_cond(self):
     # Check that the constants are shared properly in converted functions
-    # See https://github.com/google/jax/issues/7992.
+    # See https://github.com/jax-ml/jax/issues/7992.
     if config.jax2tf_default_native_serialization.value:
       raise unittest.SkipTest("shared constants tests not interesting for native serialization")
     const_size = 512
@@ -1018,7 +1018,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertLen(f2_consts, len(f1_consts))
 
   def test_shared_constants_under_scan(self):
-    # See https://github.com/google/jax/issues/7992.
+    # See https://github.com/jax-ml/jax/issues/7992.
     if config.jax2tf_default_native_serialization.value:
       raise unittest.SkipTest("shared constants tests not interesting for native serialization")
     const_size = 512
@@ -1092,7 +1092,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.sample_product(with_function=[False, True])
   def test_kwargs(self, with_function=False):
-    # Re: https://github.com/google/jax/issues/6791
+    # Re: https://github.com/jax-ml/jax/issues/6791
     def f_jax(*, x):
       return jnp.sum(x)
     f_tf = jax2tf.convert(f_jax)
@@ -1104,7 +1104,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.sample_product(with_function=[False, True])
   def test_grad_kwargs(self, with_function=False):
-    # Re: https://github.com/google/jax/issues/6791
+    # Re: https://github.com/jax-ml/jax/issues/6791
     x = (np.zeros(3, dtype=np.float32),
          np.zeros(4, dtype=np.float32))
     def f_jax(*, x=(1., 2.)):

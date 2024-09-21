@@ -196,7 +196,7 @@ def _callback_op_sharding(axis_context, sharding: SingleDeviceSharding | None):
       device_assignment = axis_context.device_assignment
       if device_assignment is None:
         raise AssertionError(
-            "Please file a bug at https://github.com/google/jax/issues")
+            "Please file a bug at https://github.com/jax-ml/jax/issues")
       try:
         device_index = device_assignment.index(device)
       except IndexError as e:

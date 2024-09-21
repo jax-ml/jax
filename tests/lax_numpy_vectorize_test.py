@@ -258,7 +258,7 @@ class VectorizeTest(jtu.JaxTestCase):
       f(*args)
 
   def test_rank_promotion_error(self):
-    # Regression test for https://github.com/google/jax/issues/22305
+    # Regression test for https://github.com/jax-ml/jax/issues/22305
     f = jnp.vectorize(jnp.add, signature="(),()->()")
     rank2 = jnp.zeros((10, 10))
     rank1 = jnp.zeros(10)

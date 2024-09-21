@@ -621,7 +621,7 @@ class DynamicShapeStagingTest(jtu.JaxTestCase):
     self.assertLessEqual(len(jaxpr.jaxpr.eqns), 3)
 
   def test_shape_validation(self):
-    # Regression test for https://github.com/google/jax/issues/18937
+    # Regression test for https://github.com/jax-ml/jax/issues/18937
     msg = r"Shapes must be 1D sequences of integer scalars, got .+"
     with self.assertRaisesRegex(TypeError, msg):
       jax.make_jaxpr(jnp.ones)(5.0)

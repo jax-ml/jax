@@ -594,7 +594,7 @@ def _rule_missing(prim: core.Primitive, *_, **__):
   raise NotImplementedError(
       f"No replication rule for {prim}. As a workaround, pass the "
       "`check_rep=False` argument to `shard_map`. To get this fixed, open an "
-      "issue at https://github.com/google/jax/issues")
+      "issue at https://github.com/jax-ml/jax/issues")
 
 # Lowering
 
@@ -796,20 +796,20 @@ class ShardMapTrace(core.Trace):
         f"Eager evaluation of `{call_primitive}` inside a `shard_map` isn't "
         "yet supported. Put a `jax.jit` around the `shard_map`-decorated "
         "function, and open a feature request at "
-        "https://github.com/google/jax/issues !")
+        "https://github.com/jax-ml/jax/issues !")
 
   def process_map(self, map_primitive, fun, tracers, params):
     raise NotImplementedError(
         "Eager evaluation of `pmap` inside a `shard_map` isn't yet supported."
         "Put a `jax.jit` around the `shard_map`-decorated function, and open "
-        "a feature request at https://github.com/google/jax/issues !")
+        "a feature request at https://github.com/jax-ml/jax/issues !")
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
     # Since ShardMapTrace is only used as a base main, we can drop the jvp.
     if symbolic_zeros:
       msg = ("custom_jvp symbolic_zeros support with shard_map is not "
              "implemented; please open an issue at "
-             "https://github.com/google/jax/issues")
+             "https://github.com/jax-ml/jax/issues")
       raise NotImplementedError(msg)
     del prim, jvp, symbolic_zeros
     in_vals, in_rep = unzip2(map(self.to_val_rep_pair, tracers))
@@ -821,7 +821,7 @@ class ShardMapTrace(core.Trace):
     if symbolic_zeros:
       msg = ("custom_vjp symbolic_zeros support with shard_map is not "
              "implemented; please open an issue at "
-             "https://github.com/google/jax/issues")
+             "https://github.com/jax-ml/jax/issues")
       raise NotImplementedError(msg)
     del prim, fwd, bwd, out_trees, symbolic_zeros
     in_vals, in_rep = unzip2(map(self.to_val_rep_pair, tracers))
@@ -966,7 +966,7 @@ def _standard_check(prim, mesh, *in_rep, **__):
   if in_rep_ and not in_rep_[:-1] == in_rep_[1:]:
     raise Exception(f"Primitive {prim} requires argument replication types "
                     f"to match, but got {in_rep}. Please open an issue at "
-                    "https://github.com/google/jax/issues and as a temporary "
+                    "https://github.com/jax-ml/jax/issues and as a temporary "
                     "workaround pass the check_rep=False argument to shard_map")
   return in_rep_[0] if in_rep_ else None
 
@@ -981,7 +981,7 @@ def _standard_collective_check(prim, mesh, x_rep, *, axis_name, **params):
     raise Exception(f"Collective {prim} must be applied to a device-varying "
                     f"replication type, but got {x_rep} for collective acting "
                     f"over axis name {axis_name}. Please open an issue at "
-                    "https://github.com/google/jax/issues and as a temporary "
+                    "https://github.com/jax-ml/jax/issues and as a temporary "
                     "workaround pass the check_rep=False argument to shard_map")
   return x_rep
 
@@ -1038,7 +1038,7 @@ def _psum2_check(mesh, *in_rep, axes, axis_index_groups):
     raise Exception("Collective psum must be applied to a device-varying "
                     f"replication type, but got {in_rep} for collective acting "
                     f"over axis name {axes}. Please open an issue at "
-                    "https://github.com/google/jax/issues, and as a temporary "
+                    "https://github.com/jax-ml/jax/issues, and as a temporary "
                     "workaround pass the check_rep=False argument to shard_map")
   in_rep = tuple(set(mesh.axis_names) if r is None else r for r in in_rep)
   return [r | set(axes) for r in in_rep]
@@ -1053,7 +1053,7 @@ def _pbroadcast_check(mesh, *in_rep, axes, axis_index_groups):
                     "non-device-varying "
                     f"replication type, but got {in_rep} for collective acting "
                     f"over axis name {axes}. Please open an issue at "
-                    "https://github.com/google/jax/issues, and as a temporary "
+                    "https://github.com/jax-ml/jax/issues, and as a temporary "
                     "workaround pass the check_rep=False argument to shard_map")
   in_rep = tuple(set(mesh.axis_names) if r is None else r for r in in_rep)
   return [r - set(axes) for r in in_rep]
@@ -1140,7 +1140,7 @@ def _scan_check(mesh, *in_rep, jaxpr, num_consts, num_carry, **_):
   if not carry_rep_in == carry_rep_out:
     raise Exception("Scan carry input and output got mismatched replication "
                     f"types {carry_rep_in} and {carry_rep_out}. Please open an "
-                    "issue at https://github.com/google/jax/issues, and as a "
+                    "issue at https://github.com/jax-ml/jax/issues, and as a "
                     "temporary workaround pass the check_rep=False argument to "
                     "shard_map")
   return out_rep
@@ -1191,7 +1191,7 @@ def _custom_vjp_call_jaxpr_rewrite(
     mesh, in_rep, *args, fun_jaxpr, fwd_jaxpr_thunk, bwd, num_consts, out_trees,
     symbolic_zeros):
   if symbolic_zeros:
-    msg = ("Please open an issue at https://github.com/google/jax/issues and as"
+    msg = ("Please open an issue at https://github.com/jax-ml/jax/issues and as"
            " a temporary workaround pass the check_rep=False argument to "
            "shard_map")
     raise NotImplementedError(msg)
@@ -1227,7 +1227,7 @@ def _linear_solve_check(mesh, *in_rep, const_lengths, jaxprs):
   assert in_rep
   if not in_rep_[:-1] == in_rep_[1:]:
     msg = ("shard_map check_rep rewrite failed. Please open an issue at "
-           "https://github.com/google/jax/issues and as a workaround pass the "
+           "https://github.com/jax-ml/jax/issues and as a workaround pass the "
            "check_rep=False argument to shard_map")
     raise Exception(msg)
   return [in_rep_[0]] * len(jaxprs.solve.out_avals)
@@ -1710,7 +1710,7 @@ class RewriteTrace(core.Trace):
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
     if symbolic_zeros:
-      msg = ("Please open an issue at https://github.com/google/jax/issues and "
+      msg = ("Please open an issue at https://github.com/jax-ml/jax/issues and "
              "as a temporary workaround pass the check_rep=False argument to "
              "shard_map")
       raise NotImplementedError(msg)
@@ -1728,7 +1728,7 @@ class RewriteTrace(core.Trace):
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
                               symbolic_zeros):
     if symbolic_zeros:
-      msg = ("Please open an issue at https://github.com/google/jax/issues and "
+      msg = ("Please open an issue at https://github.com/jax-ml/jax/issues and "
              "as a temporary workaround pass the check_rep=False argument to "
              "shard_map")
       raise NotImplementedError(msg)
@@ -1826,3 +1826,13 @@ def _match_replication(src, dst, x):
   if src - dst:
     x = pbroadcast(x, tuple(n for n in src if n not in dst))
   return x
+
+# TODO(parkers,mattjj): change implementation when we have sharding-in-types.
+def get_replication(x: jax.Array) -> set[AxisName]:
+  """For a jax.Array, return what axes it is known to be replicated along."""
+
+  if isinstance(x, RewriteTracer):
+    return x.rep
+  if isinstance(x, batching.BatchTracer):
+    return get_replication(x.val)
+  raise ValueError("get_replication not defined on %s" % repr(type(x)))

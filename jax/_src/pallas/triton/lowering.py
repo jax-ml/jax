@@ -381,7 +381,7 @@ def lower_jaxpr_to_triton_ir(
       raise NotImplementedError(
           "Unimplemented primitive in Pallas GPU lowering: "
           f"{eqn.primitive.name}. "
-          "Please file an issue on https://github.com/google/jax/issues.")
+          "Please file an issue on https://github.com/jax-ml/jax/issues.")
     rule = triton_lowering_rules[eqn.primitive]
     avals_in = [v.aval for v in eqn.invars]
     avals_out = [v.aval for v in eqn.outvars]

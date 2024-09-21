@@ -1984,9 +1984,42 @@ def frexp(x: ArrayLike, /) -> tuple[Array, Array]:
   return _where(cond, x, x1), lax.convert_element_type(x2, np.int32)
 
 
-@implements(np.remainder, module='numpy')
 @jit
 def remainder(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  """Returns element-wise remainder of the division.
+
+  JAX implementation of :obj:`numpy.remainder`.
+
+  Args:
+    x1: scalar or array. Specifies the dividend.
+    x2: scalar or array. Specifies the divisor. ``x1`` and ``x2`` should either
+      have same shape or be broadcast compatible.
+
+  Returns:
+    An array containing the remainder of element-wise division of ``x1`` by
+    ``x2`` with same sign as the elements of ``x2``.
+
+  Note:
+    The result of ``jnp.remainder`` is equivalent to ``x1 - x2 * jnp.floor(x1 / x2)``.
+
+  See also:
+    - :func:`jax.numpy.mod`: Returns the element-wise remainder of the division.
+    - :func:`jax.numpy.fmod`: Calculates the element-wise floating-point modulo
+      operation.
+    - :func:`jax.numpy.divmod`: Calculates the integer quotient and remainder of
+      ``x1`` by ``x2``, element-wise.
+
+  Examples:
+    >>> x1 = jnp.array([[3, -1, 4],
+    ...                 [8, 5, -2]])
+    >>> x2 = jnp.array([2, 3, -5])
+    >>> jnp.remainder(x1, x2)
+    Array([[ 1,  2, -1],
+           [ 0,  2, -2]], dtype=int32)
+    >>> x1 - x2 * jnp.floor(x1 / x2)
+    Array([[ 1.,  2., -1.],
+           [ 0.,  2., -2.]], dtype=float32)
+  """
   x1, x2 = promote_args_numeric("remainder", x1, x2)
   zero = _constant_like(x1, 0)
   if dtypes.issubdtype(x2.dtype, np.integer):
@@ -1996,12 +2029,48 @@ def remainder(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   do_plus = lax.bitwise_and(
       lax.ne(lax.lt(trunc_mod, zero), lax.lt(x2, zero)), trunc_mod_not_zero)
   return lax.select(do_plus, lax.add(trunc_mod, x2), trunc_mod)
-mod = implements(np.mod, module='numpy')(remainder)
 
 
-@implements(np.fmod, module='numpy')
+def mod(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  """Alias of :func:`jax.numpy.remainder`"""
+  return remainder(x1, x2)
+
+
 @jit
 def fmod(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  """Calculate element-wise floating-point modulo operation.
+
+  JAX implementation of :obj:`numpy.fmod`.
+
+  Args:
+    x1: scalar or array. Specifies the dividend.
+    x2: scalar or array. Specifies the divisor. ``x1`` and ``x2`` should either
+       have same shape or be broadcast compatible.
+
+  Returns:
+    An array containing the result of the element-wise floating-point modulo
+    operation of ``x1`` and ``x2`` with same sign as the elements of ``x1``.
+
+  Note:
+    The result of ``jnp.fmod`` is equivalent to ``x1 - x2 * jnp.fix(x1 / x2)``.
+
+  See also:
+    - :func:`jax.numpy.mod` and :func:`jax.numpy.remainder`: Returns the element-wise
+      remainder of the division.
+    - :func:`jax.numpy.divmod`: Calculates the integer quotient and remainder of
+      ``x1`` by ``x2``, element-wise.
+
+  Examples:
+    >>> x1 = jnp.array([[3, -1, 4],
+    ...                 [8, 5, -2]])
+    >>> x2 = jnp.array([2, 3, -5])
+    >>> jnp.fmod(x1, x2)
+    Array([[ 1, -1,  4],
+           [ 0,  2, -2]], dtype=int32)
+    >>> x1 - x2 * jnp.fix(x1 / x2)
+    Array([[ 1., -1.,  4.],
+           [ 0.,  2., -2.]], dtype=float32)
+  """
   check_arraylike("fmod", x1, x2)
   if dtypes.issubdtype(dtypes.result_type(x1, x2), np.integer):
     x2 = _where(x2 == 0, lax._ones(x2), x2)
@@ -2016,22 +2085,82 @@ def square(x: ArrayLike, /) -> Array:
   return lax.integer_pow(x, 2)
 
 
-@implements(np.deg2rad, module='numpy')
 @partial(jit, inline=True)
 def deg2rad(x: ArrayLike, /) -> Array:
+  r"""Convert angles from degrees to radians.
+
+  JAX implementation of :obj:`numpy.deg2rad`.
+
+  The angle in degrees is converted to radians by:
+
+  .. math::
+
+     deg2rad(x) = x * \frac{pi}{180}
+
+  Args:
+    x: scalar or array. Specifies the angle in degrees.
+
+  Returns:
+    An array containing the angles in radians.
+
+  See also:
+    - :func:`jax.numpy.rad2deg` and :func:`jax.numpy.degrees`: Converts the angles
+      from radians to degrees.
+    - :func:`jax.numpy.radians`: Alias of ``deg2rad``.
+
+  Examples:
+    >>> x = jnp.array([60, 90, 120, 180])
+    >>> jnp.deg2rad(x)
+    Array([1.0471976, 1.5707964, 2.0943952, 3.1415927], dtype=float32)
+    >>> x * jnp.pi / 180
+    Array([1.0471976, 1.5707964, 2.0943952, 3.1415927],      dtype=float32, weak_type=True)
+  """
   x, = promote_args_inexact("deg2rad", x)
   return lax.mul(x, _lax_const(x, np.pi / 180))
 
 
-@implements(np.rad2deg, module='numpy')
 @partial(jit, inline=True)
 def rad2deg(x: ArrayLike, /) -> Array:
+  r"""Convert angles from radians to degrees.
+
+  JAX implementation of :obj:`numpy.rad2deg`.
+
+  The angle in radians is converted to degrees by:
+
+  .. math::
+
+     rad2deg(x) = x * \frac{180}{pi}
+
+  Args:
+    x: scalar or array. Specifies the angle in radians.
+
+  Returns:
+    An array containing the angles in degrees.
+
+  See also:
+    - :func:`jax.numpy.deg2rad` and :func:`jax.numpy.radians`: Converts the angles
+      from degrees to radians.
+    - :func:`jax.numpy.degrees`: Alias of ``rad2deg``.
+
+  Examples:
+    >>> pi = jnp.pi
+    >>> x = jnp.array([pi/4, pi/2, 2*pi/3])
+    >>> jnp.rad2deg(x)
+    Array([ 45.     ,  90.     , 120.00001], dtype=float32)
+    >>> x * 180 / pi
+    Array([ 45.,  90., 120.], dtype=float32)
+  """
   x, = promote_args_inexact("rad2deg", x)
   return lax.mul(x, _lax_const(x, 180 / np.pi))
 
 
-degrees = rad2deg
-radians = deg2rad
+def degrees(x: ArrayLike, /) -> Array:
+  """Alias of :func:`jax.numpy.rad2deg`"""
+  return rad2deg(x)
+
+def radians(x: ArrayLike, /) -> Array:
+  """Alias of :func:`jax.numpy.deg2rad`"""
+  return deg2rad(x)
 
 
 @implements(np.conjugate, module='numpy')
@@ -2176,7 +2305,7 @@ def sinc(x: ArrayLike, /) -> Array:
 def _sinc_maclaurin(k, x):
   # compute the kth derivative of x -> sin(x)/x evaluated at zero (since we
   # compute the monomial term in the jvp rule)
-  # TODO(mattjj): see https://github.com/google/jax/issues/10750
+  # TODO(mattjj): see https://github.com/jax-ml/jax/issues/10750
   if k % 2:
     return x * 0
   else:

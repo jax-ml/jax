@@ -279,7 +279,7 @@ See the 0.4.33 release notes for more details.
     which manifested as an incorrect output for cumulative reductions (#21403).
   * Fixed a bug where XLA:CPU miscompiled certain matmul fusions
     (https://github.com/openxla/xla/pull/13301).
-  * Fixes a compiler crash on GPU (https://github.com/google/jax/issues/21396).
+  * Fixes a compiler crash on GPU (https://github.com/jax-ml/jax/issues/21396).
 
 * Deprecations
   * `jax.tree.map(f, None, non-None)` now emits a `DeprecationWarning`, and will
@@ -401,7 +401,7 @@ See the 0.4.33 release notes for more details.
     branch consistent with that of NumPy 2.0.
   * The behavior of `lax.rng_bit_generator`, and in turn the `'rbg'`
     and `'unsafe_rbg'` PRNG implementations, under `jax.vmap` [has
-    changed](https://github.com/google/jax/issues/19085) so that
+    changed](https://github.com/jax-ml/jax/issues/19085) so that
     mapping over keys results in random generation only from the first
     key in the batch.
   * Docs now use `jax.random.key` for construction of PRNG key arrays
@@ -433,7 +433,7 @@ See the 0.4.33 release notes for more details.
   * JAX export does not support older serialization versions anymore. Version 9
     has been supported since October 27th, 2023 and has become the default
     since February 1, 2024.
-    See [a description of the versions](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions).
+    See [a description of the versions](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions).
     This change could break clients that set a specific
     JAX serialization version lower than 9.
 
@@ -506,7 +506,7 @@ See the 0.4.33 release notes for more details.
     * added the ability to specify symbolic constraints on the dimension variables.
       This makes shape polymorphism more expressive, and gives a way to workaround
       limitations in the reasoning about inequalities.
-      See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints.
+      See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints.
     * with the addition of symbolic constraints ({jax-issue}`#19235`) we now
       consider dimension variables from different scopes to be different, even
       if they have the same name. Symbolic expressions from different scopes
@@ -516,7 +516,7 @@ See the 0.4.33 release notes for more details.
       The scope of a symbolic expression `e` can be read with `e.scope` and passed
       into the above functions to direct them to construct symbolic expressions in
       a given scope.
-      See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints.
+      See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints.
     * simplified and faster equality comparisons, where we consider two symbolic dimensions
       to be equal if the normalized form of their difference reduces to 0
       ({jax-issue}`#19231`; note that this may result in user-visible behavior
@@ -535,7 +535,7 @@ See the 0.4.33 release notes for more details.
       strings for polymorphic shapes specifications ({jax-issue}`#19284`).
     * JAX default native serialization version is now 9. This is relevant
       for {mod}`jax.experimental.jax2tf` and {mod}`jax.experimental.export`.
-      See [description of version numbers](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions).
+      See [description of version numbers](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions).
   * Refactored the API for `jax.experimental.export`. Instead of
     `from jax.experimental.export import export` you should use now
     `from jax.experimental import export`. The old way of importing will
@@ -781,19 +781,19 @@ See the 0.4.33 release notes for more details.
   * When not running under IPython: when an exception is raised, JAX now filters out the
     entirety of its internal frames from tracebacks. (Without the "unfiltered stack trace"
     that previously appeared.) This should produce much friendlier-looking tracebacks. See
-    [here](https://github.com/google/jax/pull/16949) for an example.
+    [here](https://github.com/jax-ml/jax/pull/16949) for an example.
     This behavior can be changed by setting `JAX_TRACEBACK_FILTERING=remove_frames` (for two
     separate unfiltered/filtered tracebacks, which was the old behavior) or
     `JAX_TRACEBACK_FILTERING=off` (for one unfiltered traceback).
   * jax2tf default serialization version is now 7, which introduces new shape
-    [safety assertions](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism).
+    [safety assertions](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism).
   * Devices passed to `jax.sharding.Mesh` should be hashable. This specifically
     applies to mock devices or user created devices. `jax.devices()` are
     already hashable.
 
 * Breaking changes:
   * jax2tf now uses native serialization by default. See
-    the [jax2tf documentation](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md)
+    the [jax2tf documentation](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md)
     for details and for mechanisms to override the default.
   * The option `--jax_coordination_service` has been removed. It is now always
     `True`.
@@ -922,7 +922,7 @@ See the 0.4.33 release notes for more details.
     arguments will always resolve to the "common operands" `cond`
     behavior (as documented) if the second and third arguments are
     callable, even if other operands are callable as well. See
-    [#16413](https://github.com/google/jax/issues/16413).
+    [#16413](https://github.com/jax-ml/jax/issues/16413).
   * The deprecated config options `jax_array` and `jax_jit_pjit_api_merge`,
     which did nothing, have been removed. These options have been true by
     default for many releases.
@@ -933,7 +933,7 @@ See the 0.4.33 release notes for more details.
     serialization version ({jax-issue}`#16746`).
   * jax2tf in presence of shape polymorphism now generates code that checks
     certain shape constraints, if the serialization version is at least 7.
-    See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism.
+    See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism.
 
 ## jaxlib 0.4.14 (July 27, 2023)
 
@@ -1095,14 +1095,14 @@ See the 0.4.33 release notes for more details.
 
     {func}`jax.experimental.host_callback` is no longer supported on Cloud TPU
     with the new runtime component. Please file an issue on the [JAX issue
-    tracker](https://github.com/google/jax/issues) if the new `jax.debug` APIs
+    tracker](https://github.com/jax-ml/jax/issues) if the new `jax.debug` APIs
     are insufficient for your use case.
 
     The old runtime component will be available for at least the next three
     months by setting the environment variable
     `JAX_USE_PJRT_C_API_ON_TPU=false`. If you find you need to disable the new
     runtime for any reason, please let us know on the [JAX issue
-    tracker](https://github.com/google/jax/issues).
+    tracker](https://github.com/jax-ml/jax/issues).
 
 * Changes
   * The minimum jaxlib version has been bumped from 0.4.6 to 0.4.7.
@@ -1126,7 +1126,7 @@ See the 0.4.33 release notes for more details.
     StableHLO module for the entire JAX function instead of lowering each JAX
     primitive to a TensorFlow op. This simplifies the internals and increases
     the confidence that what you serialize matches the JAX native semantics.
-    See [documentation](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md).
+    See [documentation](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md).
     As part of this change the config flag `--jax2tf_default_experimental_native_lowering`
     has been renamed to `--jax2tf_native_serialization`.
   * JAX now depends on `ml_dtypes`, which contains definitions of NumPy types
@@ -1403,7 +1403,7 @@ Changes:
 ## jaxlib 0.3.22 (Oct 11, 2022)
 
 ## jax 0.3.21 (Sep 30, 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.20...jax-v0.3.21).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.3.20...jax-v0.3.21).
 * Changes
   * The persistent compilation cache will now warn instead of raising an
     exception on error ({jax-issue}`#12582`), so program execution can continue
@@ -1417,18 +1417,18 @@ Changes:
   * Fix incorrect `pip` url in `setup.py` comment ({jax-issue}`#12528`).
 
 ## jaxlib 0.3.20 (Sep 28, 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.15...jaxlib-v0.3.20).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jaxlib-v0.3.15...jaxlib-v0.3.20).
 * Bug fixes
   * Fixes support for limiting the visible CUDA devices via
    `jax_cuda_visible_devices` in distributed jobs. This functionality is needed for
    the JAX/SLURM integration on GPU ({jax-issue}`#12533`).
 
 ## jax 0.3.19 (Sep 27, 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.18...jax-v0.3.19).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.3.18...jax-v0.3.19).
 * Fixes required jaxlib version.
 
 ## jax 0.3.18 (Sep 26, 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.17...jax-v0.3.18).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.3.17...jax-v0.3.18).
 * Changes
   * Ahead-of-time lowering and compilation functionality (tracked in
     {jax-issue}`#7733`) is stable and public. See [the
@@ -1446,7 +1446,7 @@ Changes:
     would have been provided.
 
 ## jax 0.3.17 (Aug 31, 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.16...jax-v0.3.17).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.3.16...jax-v0.3.17).
 * Bugs
   * Fix corner case issue in gradient of `lax.pow` with an exponent of zero
     ({jax-issue}`12041`)
@@ -1462,7 +1462,7 @@ Changes:
   * `DeviceArray.to_py()` has been deprecated. Use `np.asarray(x)` instead.
 
 ## jax 0.3.16
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.15...main).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.3.15...main).
 * Breaking changes
   * Support for NumPy 1.19 has been dropped, per the
     [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
@@ -1486,7 +1486,7 @@ Changes:
     deprecated; see [JEP 11830](https://jax.readthedocs.io/en/latest/jep/11830-new-remat-checkpoint.html).
 
 ## jax 0.3.15 (July 22, 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.14...jax-v0.3.15).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.3.14...jax-v0.3.15).
 * Changes
   * `JaxTestCase` and `JaxTestLoader` have been removed from `jax.test_util`. These
     classes have been deprecated since v0.3.1 ({jax-issue}`#11248`).
@@ -1507,10 +1507,10 @@ Changes:
     following a similar deprecation in {func}`scipy.linalg.solve`.
 
 ## jaxlib 0.3.15 (July 22, 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.14...jaxlib-v0.3.15).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jaxlib-v0.3.14...jaxlib-v0.3.15).
 
 ## jax 0.3.14 (June 27, 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.13...jax-v0.3.14).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.3.13...jax-v0.3.14).
 * Breaking changes
   * {func}`jax.experimental.compilation_cache.initialize_cache` does not support
     `max_cache_size_  bytes` anymore and will not get that as an input.
@@ -1563,22 +1563,22 @@ Changes:
     coefficients have leading zeros ({jax-issue}`#11215`).
 
 ## jaxlib 0.3.14 (June 27, 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...jaxlib-v0.3.14).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jaxlib-v0.3.10...jaxlib-v0.3.14).
   * x86-64 Mac wheels now require Mac OS 10.14 (Mojave) or newer. Mac OS 10.14
     was released in 2018, so this should not be a very onerous requirement.
   * The bundled version of NCCL was updated to 2.12.12, fixing some deadlocks.
   * The Python flatbuffers package is no longer a dependency of jaxlib.
 
 ## jax 0.3.13 (May 16, 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.12...jax-v0.3.13).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.3.12...jax-v0.3.13).
 
 ## jax 0.3.12 (May 15, 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.11...jax-v0.3.12).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.3.11...jax-v0.3.12).
 * Changes
-  * Fixes [#10717](https://github.com/google/jax/issues/10717).
+  * Fixes [#10717](https://github.com/jax-ml/jax/issues/10717).
 
 ## jax 0.3.11 (May 15, 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.10...jax-v0.3.11).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.3.10...jax-v0.3.11).
 * Changes
   * {func}`jax.lax.eigh` now accepts an optional `sort_eigenvalues` argument
     that allows users to opt out of eigenvalue sorting on TPU.
@@ -1592,22 +1592,22 @@ Changes:
     scipy API, is deprecated. Use {func}`jax.scipy.linalg.polar` instead.
 
 ## jax 0.3.10 (May 3, 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.9...jax-v0.3.10).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.3.9...jax-v0.3.10).
 
 ## jaxlib 0.3.10 (May 3, 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.7...jaxlib-v0.3.10).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jaxlib-v0.3.7...jaxlib-v0.3.10).
 * Changes
   * [TF commit](https://github.com/tensorflow/tensorflow/commit/207d50d253e11c3a3430a700af478a1d524a779a)
     fixes an issue in the MHLO canonicalizer that caused constant folding to
     take a long time or crash for certain programs.
 
 ## jax 0.3.9 (May 2, 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.8...jax-v0.3.9).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.3.8...jax-v0.3.9).
 * Changes
   * Added support for fully asynchronous checkpointing for GlobalDeviceArray.
 
 ## jax 0.3.8 (April 29 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.7...jax-v0.3.8).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.3.7...jax-v0.3.8).
 * Changes
   * {func}`jax.numpy.linalg.svd` on TPUs uses a qdwh-svd solver.
   * {func}`jax.numpy.linalg.cond` on TPUs now accepts complex input.
@@ -1666,7 +1666,7 @@ Changes:
 
 ## jax 0.3.7 (April 15, 2022)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.3.6...jax-v0.3.7).
+  commits](https://github.com/jax-ml/jax/compare/jax-v0.3.6...jax-v0.3.7).
 * Changes:
   * Fixed a performance problem if the indices passed to
     {func}`jax.numpy.take_along_axis` were broadcasted ({jax-issue}`#10281`).
@@ -1684,17 +1684,17 @@ Changes:
 
 ## jax 0.3.6 (April 12, 2022)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.3.5...jax-v0.3.6).
+  commits](https://github.com/jax-ml/jax/compare/jax-v0.3.5...jax-v0.3.6).
 * Changes:
   * Upgraded libtpu wheel to a version that fixes a hang when initializing a TPU
-    pod. Fixes [#10218](https://github.com/google/jax/issues/10218).
+    pod. Fixes [#10218](https://github.com/jax-ml/jax/issues/10218).
 * Deprecations:
   * {mod}`jax.experimental.loops` is being deprecated. See {jax-issue}`#10278`
     for an alternative API.
 
 ## jax 0.3.5 (April 7, 2022)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.3.4...jax-v0.3.5).
+  commits](https://github.com/jax-ml/jax/compare/jax-v0.3.4...jax-v0.3.5).
 * Changes:
   * added {func}`jax.random.loggamma` & improved behavior of {func}`jax.random.beta`
     and {func}`jax.random.dirichlet` for small parameter values ({jax-issue}`#9906`).
@@ -1717,17 +1717,17 @@ Changes:
 
 ## jax 0.3.4 (March 18, 2022)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.3.3...jax-v0.3.4).
+  commits](https://github.com/jax-ml/jax/compare/jax-v0.3.3...jax-v0.3.4).
 
 
 ## jax 0.3.3 (March 17, 2022)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.3.2...jax-v0.3.3).
+  commits](https://github.com/jax-ml/jax/compare/jax-v0.3.2...jax-v0.3.3).
 
 
 ## jax 0.3.2 (March 16, 2022)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.3.1...jax-v0.3.2).
+  commits](https://github.com/jax-ml/jax/compare/jax-v0.3.1...jax-v0.3.2).
 * Changes:
   * The functions `jax.ops.index_update`, `jax.ops.index_add`, which were
     deprecated in 0.2.22, have been removed. Please use
@@ -1751,7 +1751,7 @@ Changes:
 
 ## jax 0.3.1 (Feb 18, 2022)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.3.0...jax-v0.3.1).
+  commits](https://github.com/jax-ml/jax/compare/jax-v0.3.0...jax-v0.3.1).
 
 * Changes:
   * `jax.test_util.JaxTestCase` and `jax.test_util.JaxTestLoader` are now deprecated.
@@ -1774,7 +1774,7 @@ Changes:
 
 ## jax 0.3.0 (Feb 10, 2022)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.2.28...jax-v0.3.0).
+  commits](https://github.com/jax-ml/jax/compare/jax-v0.2.28...jax-v0.3.0).
 
 * Changes
   * jax version has been bumped to 0.3.0. Please see the [design doc](https://jax.readthedocs.io/en/latest/design_notes/jax_versioning.html)
@@ -1788,7 +1788,7 @@ Changes:
 
 ## jax 0.2.28 (Feb 1, 2022)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.2.27...jax-v0.2.28).
+  commits](https://github.com/jax-ml/jax/compare/jax-v0.2.27...jax-v0.2.28).
   * `jax.jit(f).lower(...).compiler_ir()` now defaults to the MHLO dialect if no
     `dialect=` is passed.
   * The `jax.jit(f).lower(...).compiler_ir(dialect='mhlo')` now returns an MLIR
@@ -1813,7 +1813,7 @@ Changes:
   * The JAX jit cache requires two static arguments to have identical types for a cache hit (#9311).
 
 ## jax 0.2.27 (Jan 18 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.26...jax-v0.2.27).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.2.26...jax-v0.2.27).
 
 * Breaking changes:
   * Support for NumPy 1.18 has been dropped, per the
@@ -1858,7 +1858,7 @@ Changes:
 
 ## jax 0.2.26 (Dec 8, 2021)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.2.25...jax-v0.2.26).
+  commits](https://github.com/jax-ml/jax/compare/jax-v0.2.25...jax-v0.2.26).
 
 * Bug fixes:
   * Out-of-bounds indices to `jax.ops.segment_sum` will now be handled with
@@ -1875,7 +1875,7 @@ Changes:
 
 ## jax 0.2.25 (Nov 10, 2021)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.2.24...jax-v0.2.25).
+  commits](https://github.com/jax-ml/jax/compare/jax-v0.2.24...jax-v0.2.25).
 
 * New features:
   * (Experimental) `jax.distributed.initialize` exposes multi-host GPU backend.
@@ -1889,7 +1889,7 @@ Changes:
 
 ## jax 0.2.24 (Oct 19, 2021)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.2.22...jax-v0.2.24).
+  commits](https://github.com/jax-ml/jax/compare/jax-v0.2.22...jax-v0.2.24).
 
 * New features:
   * `jax.random.choice` and `jax.random.permutation` now support
@@ -1923,7 +1923,7 @@ Changes:
 
 ## jax 0.2.22 (Oct 12, 2021)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.2.21...jax-v0.2.22).
+  commits](https://github.com/jax-ml/jax/compare/jax-v0.2.21...jax-v0.2.22).
 * Breaking Changes
   * Static arguments to `jax.pmap` must now be hashable.
 
@@ -1958,13 +1958,13 @@ Changes:
     * Support for CUDA 10.2 and CUDA 10.1 has been dropped. Jaxlib now supports
       CUDA 11.1+.
   * Bug fixes:
-    * Fixes https://github.com/google/jax/issues/7461, which caused wrong
+    * Fixes https://github.com/jax-ml/jax/issues/7461, which caused wrong
       outputs on all platforms due to incorrect buffer aliasing inside the XLA
       compiler.
 
 ## jax 0.2.21 (Sept 23, 2021)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.2.20...jax-v0.2.21).
+  commits](https://github.com/jax-ml/jax/compare/jax-v0.2.20...jax-v0.2.21).
 * Breaking Changes
   * `jax.api` has been removed. Functions that were available as `jax.api.*`
     were aliases for functions in `jax.*`; please use the functions in
@@ -1992,7 +1992,7 @@ Changes:
 
 ## jax 0.2.20 (Sept 2, 2021)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.2.19...jax-v0.2.20).
+  commits](https://github.com/jax-ml/jax/compare/jax-v0.2.19...jax-v0.2.20).
 * Breaking Changes
   * `jnp.poly*` functions now require array-like inputs ({jax-issue}`#7732`)
   * `jnp.unique` and other set-like operations now require array-like inputs
@@ -2005,7 +2005,7 @@ Changes:
 
 ## jax 0.2.19 (Aug 12, 2021)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.2.18...jax-v0.2.19).
+  commits](https://github.com/jax-ml/jax/compare/jax-v0.2.18...jax-v0.2.19).
 * Breaking changes:
   * Support for NumPy 1.17 has been dropped, per the
     [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
@@ -2042,7 +2042,7 @@ Changes:
     called in sequence.
 
 ## jax 0.2.18 (July 21 2021)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.17...jax-v0.2.18).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.2.17...jax-v0.2.18).
 
 * Breaking changes:
   * Support for Python 3.6 has been dropped, per the
@@ -2065,7 +2065,7 @@ Changes:
 * Fix bugs in TFRT CPU backend that results in incorrect results.
 
 ## jax 0.2.17 (July 9 2021)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.16...jax-v0.2.17).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.2.16...jax-v0.2.17).
 * Bug fixes:
   * Default to the older "stream_executor" CPU runtime for jaxlib <= 0.1.68
     to work around #7229, which caused wrong outputs on CPU due to a concurrency
@@ -2082,12 +2082,12 @@ Changes:
 
 
 ## jax 0.2.16 (June 23 2021)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.15...jax-v0.2.16).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.2.15...jax-v0.2.16).
 
 ## jax 0.2.15 (June 23 2021)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.14...jax-v0.2.15).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.2.14...jax-v0.2.15).
 * New features:
-  * [#7042](https://github.com/google/jax/pull/7042) Turned on TFRT CPU backend
+  * [#7042](https://github.com/jax-ml/jax/pull/7042) Turned on TFRT CPU backend
     with significant dispatch performance improvements on CPU.
   * The {func}`jax2tf.convert` supports inequalities and min/max for booleans
     ({jax-issue}`#6956`).
@@ -2107,7 +2107,7 @@ Changes:
     CPU.
 
 ## jax 0.2.14 (June 10 2021)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.13...jax-v0.2.14).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.2.13...jax-v0.2.14).
 * New features:
   * The {func}`jax2tf.convert` now has support for `pjit` and `sharded_jit`.
   * A new configuration option JAX_TRACEBACK_FILTERING controls how JAX filters
@@ -2165,7 +2165,7 @@ Changes:
     {func}`jit` transformed functions.
 
 ## jax 0.2.13 (May 3 2021)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.12...jax-v0.2.13).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.2.12...jax-v0.2.13).
 * New features:
   * When combined with jaxlib 0.1.66, {func}`jax.jit` now supports static
     keyword arguments. A new `static_argnames` option has been added to specify
@@ -2209,7 +2209,7 @@ Changes:
 ## jaxlib 0.1.65 (April 7 2021)
 
 ## jax 0.2.12 (April 1 2021)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.11...v0.2.12).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.2.11...v0.2.12).
 * New features
   * New profiling APIs: {func}`jax.profiler.start_trace`,
     {func}`jax.profiler.stop_trace`, and {func}`jax.profiler.trace`
@@ -2222,7 +2222,7 @@ Changes:
     * `TraceContext` --> {func}`~jax.profiler.TraceAnnotation`
     * `StepTraceContext` --> {func}`~jax.profiler.StepTraceAnnotation`
     * `trace_function` --> {func}`~jax.profiler.annotate_function`
-  * Omnistaging can no longer be disabled. See [omnistaging](https://github.com/google/jax/blob/main/docs/design_notes/omnistaging.md)
+  * Omnistaging can no longer be disabled. See [omnistaging](https://github.com/jax-ml/jax/blob/main/docs/design_notes/omnistaging.md)
     for more information.
   * Python integers larger than the maximum `int64` value will now lead to an overflow
     in all cases, rather than being silently converted to `uint64` in some cases ({jax-issue}`#6047`).
@@ -2236,23 +2236,23 @@ Changes:
 ## jax 0.2.11 (March 23 2021)
 
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.2.10...jax-v0.2.11).
+  commits](https://github.com/jax-ml/jax/compare/jax-v0.2.10...jax-v0.2.11).
 * New features:
-  * [#6112](https://github.com/google/jax/pull/6112) added context managers:
+  * [#6112](https://github.com/jax-ml/jax/pull/6112) added context managers:
     `jax.enable_checks`, `jax.check_tracer_leaks`, `jax.debug_nans`,
     `jax.debug_infs`, `jax.log_compiles`.
-  * [#6085](https://github.com/google/jax/pull/6085) added `jnp.delete`
+  * [#6085](https://github.com/jax-ml/jax/pull/6085) added `jnp.delete`
 
 * Bug fixes:
-  * [#6136](https://github.com/google/jax/pull/6136) generalized
+  * [#6136](https://github.com/jax-ml/jax/pull/6136) generalized
     `jax.flatten_util.ravel_pytree` to handle integer dtypes.
-  * [#6129](https://github.com/google/jax/issues/6129) fixed a bug with handling
+  * [#6129](https://github.com/jax-ml/jax/issues/6129) fixed a bug with handling
     some constants like `enum.IntEnums`
-  * [#6145](https://github.com/google/jax/pull/6145) fixed batching issues with
+  * [#6145](https://github.com/jax-ml/jax/pull/6145) fixed batching issues with
     incomplete beta functions
-  * [#6014](https://github.com/google/jax/pull/6014) fixed H2D transfers during
+  * [#6014](https://github.com/jax-ml/jax/pull/6014) fixed H2D transfers during
     tracing
-  * [#6165](https://github.com/google/jax/pull/6165) avoids OverflowErrors when
+  * [#6165](https://github.com/jax-ml/jax/pull/6165) avoids OverflowErrors when
     converting some large Python integers to floats
 * Breaking changes:
   * The minimum jaxlib version is now 0.1.62.
@@ -2264,13 +2264,13 @@ Changes:
 
 ## jax 0.2.10 (March 5 2021)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.9...jax-v0.2.10).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.2.9...jax-v0.2.10).
 * New features:
   * {func}`jax.scipy.stats.chi2` is now available as a distribution with logpdf and pdf methods.
   * {func}`jax.scipy.stats.betabinom` is now available as a distribution with logpmf and pmf methods.
   * Added {func}`jax.experimental.jax2tf.call_tf` to call TensorFlow functions
     from JAX ({jax-issue}`#5627`)
-    and [README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax)).
+    and [README](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax)).
   * Extended the batching rule for `lax.pad` to support batching of the padding values.
 * Bug fixes:
   * {func}`jax.numpy.take` properly handles negative indices ({jax-issue}`#5768`)
@@ -2314,7 +2314,7 @@ Changes:
 
 ## jax 0.2.9 (January 26 2021)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.8...jax-v0.2.9).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.2.8...jax-v0.2.9).
 * New features:
   * Extend the {mod}`jax.experimental.loops` module with support for pytrees. Improved
     error checking and error messages.
@@ -2330,7 +2330,7 @@ Changes:
 
 ## jax 0.2.8 (January 12 2021)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.7...jax-v0.2.8).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.2.7...jax-v0.2.8).
 * New features:
   * Add {func}`jax.closure_convert` for use with higher-order custom
     derivative functions. ({jax-issue}`#5244`)
@@ -2362,7 +2362,7 @@ Changes:
 
 ## jax 0.2.7 (Dec 4 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.6...jax-v0.2.7).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.2.6...jax-v0.2.7).
 * New features:
   * Add `jax.device_put_replicated`
   * Add multi-host support to `jax.experimental.sharded_jit`
@@ -2382,14 +2382,14 @@ Changes:
 
 ## jax 0.2.6 (Nov 18 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.5...jax-v0.2.6).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.2.5...jax-v0.2.6).
 * New Features:
   * Add support for shape-polymorphic tracing for the jax.experimental.jax2tf converter.
-    See [README.md](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md).
+    See [README.md](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md).
 * Breaking change cleanup
 
   * Raise an error on non-hashable static arguments for jax.jit and
-    xla_computation.  See [cb48f42](https://github.com/google/jax/commit/cb48f42).
+    xla_computation.  See [cb48f42](https://github.com/jax-ml/jax/commit/cb48f42).
   * Improve consistency of type promotion behavior ({jax-issue}`#4744`):
     * Adding a complex Python scalar to a JAX floating point number respects the precision of
       the JAX float. For example, `jnp.float32(1) + 1j` now returns `complex64`, where previously
@@ -2441,15 +2441,15 @@ Changes:
 
 ## jax 0.2.5 (October 27 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.4...jax-v0.2.5).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.2.4...jax-v0.2.5).
 * Improvements:
   * Ensure that `check_jaxpr` does not perform FLOPS.  See {jax-issue}`#4650`.
   * Expanded the set of JAX primitives converted by jax2tf.
-    See [primitives_with_limited_support.md](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/primitives_with_limited_support.md).
+    See [primitives_with_limited_support.md](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/primitives_with_limited_support.md).
 
 ## jax 0.2.4 (October 19 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.3...jax-v0.2.4).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.2.3...jax-v0.2.4).
 * Improvements:
   * Add support for `remat` to jax.experimental.host_callback.  See {jax-issue}`#4608`.
 * Deprecations
@@ -2461,17 +2461,17 @@ Changes:
 
 ## jax 0.2.3 (October 14 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.2...jax-v0.2.3).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.2.2...jax-v0.2.3).
 * The reason for another release so soon is we need to temporarily roll back a
   new jit fastpath while we look into a performance degradation
 
 ## jax 0.2.2 (October 13 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.1...jax-v0.2.2).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.2.1...jax-v0.2.2).
 
 ## jax 0.2.1 (October 6 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.0...jax-v0.2.1).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.2.0...jax-v0.2.1).
 * Improvements:
   * As a benefit of omnistaging, the host_callback functions are executed (in program
     order) even if the result of the {py:func}`jax.experimental.host_callback.id_print`/
@@ -2479,10 +2479,10 @@ Changes:
 
 ## jax (0.2.0) (September 23 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.77...jax-v0.2.0).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.77...jax-v0.2.0).
 * Improvements:
   * Omnistaging on by default. See {jax-issue}`#3370` and
-    [omnistaging](https://github.com/google/jax/blob/main/docs/design_notes/omnistaging.md)
+    [omnistaging](https://github.com/jax-ml/jax/blob/main/docs/design_notes/omnistaging.md)
 
 ## jax (0.1.77) (September 15 2020)
 
@@ -2496,11 +2496,11 @@ Changes:
 
 ## jax 0.1.76 (September 8, 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.75...jax-v0.1.76).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.75...jax-v0.1.76).
 
 ## jax 0.1.75 (July 30, 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.74...jax-v0.1.75).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.74...jax-v0.1.75).
 * Bug Fixes:
   * make jnp.abs() work for unsigned inputs (#3914)
 * Improvements:
@@ -2508,7 +2508,7 @@ Changes:
 
 ## jax 0.1.74 (July 29, 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.73...jax-v0.1.74).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.73...jax-v0.1.74).
 * New Features:
   * BFGS (#3101)
   * TPU support for half-precision arithmetic (#3878)
@@ -2525,7 +2525,7 @@ Changes:
 
 ## jax 0.1.73 (July 22, 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.72...jax-v0.1.73).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.72...jax-v0.1.73).
 * The minimum jaxlib version is now 0.1.51.
 * New Features:
   * jax.image.resize. (#3703)
@@ -2563,14 +2563,14 @@ Changes:
 
 ## jax 0.1.72 (June 28, 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.71...jax-v0.1.72).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.71...jax-v0.1.72).
 * Bug fixes:
   * Fix an odeint bug introduced in the previous release, see
     {jax-issue}`#3587`.
 
 ## jax 0.1.71 (June 25, 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.70...jax-v0.1.71).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.70...jax-v0.1.71).
 * The minimum jaxlib version is now 0.1.48.
 * Bug fixes:
   * Allow `jax.experimental.ode.odeint` dynamics functions to close over
@@ -2606,7 +2606,7 @@ Changes:
 
 ## jax 0.1.70 (June 8, 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.69...jax-v0.1.70).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.69...jax-v0.1.70).
 * New features:
   * `lax.switch` introduces indexed conditionals with multiple
     branches, together with a generalization of the `cond`
@@ -2615,11 +2615,11 @@ Changes:
 
 ## jax 0.1.69 (June 3, 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.68...jax-v0.1.69).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.68...jax-v0.1.69).
 
 ## jax 0.1.68 (May 21, 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.67...jax-v0.1.68).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.67...jax-v0.1.68).
 * New features:
   * {func}`lax.cond` supports a single-operand form, taken as the argument
     to both branches
@@ -2630,7 +2630,7 @@ Changes:
 
 ## jax 0.1.67 (May 12, 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.66...jax-v0.1.67).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.66...jax-v0.1.67).
 * New features:
   * Support for reduction over subsets of a pmapped axis using `axis_index_groups`
     {jax-issue}`#2382`.
@@ -2648,7 +2648,7 @@ Changes:
 
 ## jax 0.1.66 (May 5, 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.65...jax-v0.1.66).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.65...jax-v0.1.66).
 * New features:
   * Support for `in_axes=None` on {func}`pmap`
     {jax-issue}`#2896`.
@@ -2661,7 +2661,7 @@ Changes:
 
 ## jax 0.1.65 (April 30, 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.64...jax-v0.1.65).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.64...jax-v0.1.65).
 * New features:
   * Differentiation of determinants of singular matrices
     {jax-issue}`#2809`.
@@ -2679,7 +2679,7 @@ Changes:
 
 ## jax 0.1.64 (April 21, 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.63...jax-v0.1.64).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.63...jax-v0.1.64).
 * New features:
   * Add syntactic sugar for functional indexed updates
     {jax-issue}`#2684`.
@@ -2706,7 +2706,7 @@ Changes:
 
 ## jax 0.1.63 (April 12, 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.62...jax-v0.1.63).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.62...jax-v0.1.63).
 * Added `jax.custom_jvp` and `jax.custom_vjp` from {jax-issue}`#2026`, see the [tutorial notebook](https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html). Deprecated `jax.custom_transforms` and removed it from the docs (though it still works).
 * Add `scipy.sparse.linalg.cg` {jax-issue}`#2566`.
 * Changed how Tracers are printed to show more useful information for debugging {jax-issue}`#2591`.
@@ -2727,7 +2727,7 @@ Changes:
 
 ## jax 0.1.62 (March 21, 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.61...jax-v0.1.62).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.61...jax-v0.1.62).
 * JAX has dropped support for Python 3.5. Please upgrade to Python 3.6 or newer.
 * Removed the internal function `lax._safe_mul`, which implemented the
   convention `0. * nan == 0.`. This change means some programs when
@@ -2745,13 +2745,13 @@ Changes:
 
 ## jax 0.1.61 (March 17, 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.60...jax-v0.1.61).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.60...jax-v0.1.61).
 * Fixes Python 3.5 support. This will be the last JAX or jaxlib release that
   supports Python 3.5.
 
 ## jax 0.1.60 (March 17, 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.59...jax-v0.1.60).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.59...jax-v0.1.60).
 * New features:
   * {py:func}`jax.pmap` has `static_broadcast_argnums` argument which allows
     the user to specify arguments that should be treated as compile-time
@@ -2777,7 +2777,7 @@ Changes:
 
 ## jax 0.1.59 (February 11, 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.58...jax-v0.1.59).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.58...jax-v0.1.59).
 * Breaking changes
 
   * The minimum jaxlib version is now 0.1.38.
@@ -2809,7 +2809,7 @@ Changes:
 
 ## jax 0.1.58 (January 28, 2020)
 
-* [GitHub commits](https://github.com/google/jax/compare/46014da21...jax-v0.1.58).
+* [GitHub commits](https://github.com/jax-ml/jax/compare/46014da21...jax-v0.1.58).
 * Breaking changes
 
   * JAX has dropped Python 2 support, because Python 2 reached its end of life on

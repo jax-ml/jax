@@ -459,7 +459,7 @@ def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
     # list: if in_axes is not a leaf, it must be a tuple of trees. However,
     # in cases like these users expect tuples and lists to be treated
     # essentially interchangeably, so we canonicalize lists to tuples here
-    # rather than raising an error. https://github.com/google/jax/issues/2367
+    # rather than raising an error. https://github.com/jax-ml/jax/issues/2367
     in_shardings = tuple(in_shardings)
 
   in_layouts, in_shardings = _split_layout_and_sharding(in_shardings)
@@ -1276,7 +1276,7 @@ def explain_tracing_cache_miss(
     return done()
 
   # we think this is unreachable...
-  p("explanation unavailable! please open an issue at https://github.com/google/jax")
+  p("explanation unavailable! please open an issue at https://github.com/jax-ml/jax")
   return done()
 
 @partial(lu.cache, explain=explain_tracing_cache_miss)
@@ -1701,7 +1701,7 @@ def _pjit_call_impl_python(
            "`jit` decorator, at the cost of losing optimizations. "
            "\n\n"
            "If you see this error, consider opening a bug report at "
-           "https://github.com/google/jax.")
+           "https://github.com/jax-ml/jax.")
     raise FloatingPointError(msg)
 
 

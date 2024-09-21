@@ -122,7 +122,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testDeviceBufferToArray(self):
     sda = self.pmap(lambda x: x)(jnp.ones((jax.device_count(), 2)))
 
-    # Changed in https://github.com/google/jax/pull/10584 not to access
+    # Changed in https://github.com/jax-ml/jax/pull/10584 not to access
     # sda.device_buffers, which isn't supported, and instead ensure fast slices
     # of the arrays returned by pmap are set up correctly.
     # buf = sda.device_buffers[-1]
@@ -336,7 +336,7 @@ class PythonPmapTest(jtu.JaxTestCase):
             compiler_options={"xla_embed_ir_in_executable": "invalid_value"}))
 
   def test_pmap_replicated_copy(self):
-    # https://github.com/google/jax/issues/17690
+    # https://github.com/jax-ml/jax/issues/17690
     inp = jnp.arange(jax.device_count())
     x = jax.pmap(lambda x: x, in_axes=0, out_axes=None)(inp)
     out = jnp.copy(x)
@@ -605,7 +605,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(y, ref)
 
   def testNestedPmapAxisSwap(self):
-    # Regression test for https://github.com/google/jax/issues/5757
+    # Regression test for https://github.com/jax-ml/jax/issues/5757
     if jax.device_count() < 8:
       raise SkipTest("test requires at least 8 devices")
     f = jax.pmap(jax.pmap(lambda x: x, in_axes=1, out_axes=0), in_axes=0,
@@ -1180,7 +1180,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       "`perm` does not represent a permutation: \\[1.*\\]", g)
 
   def testPpermuteWithZipObject(self):
-    # https://github.com/google/jax/issues/1703
+    # https://github.com/jax-ml/jax/issues/1703
     num_devices = jax.device_count()
     perm = [num_devices - 1] + list(range(num_devices - 1))
     f = self.pmap(lambda x: lax.ppermute(x, "i", zip(perm, range(num_devices))), "i")
@@ -1501,7 +1501,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertEqual(ans.shape, (13, N_DEVICES))
 
   def testVmapOfPmap3(self):
-    # https://github.com/google/jax/issues/3399
+    # https://github.com/jax-ml/jax/issues/3399
     device_count = jax.device_count()
     if device_count < 2:
       raise SkipTest("test requires at least two devices")
@@ -1661,7 +1661,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
   @ignore_jit_of_pmap_warning()
   def testIssue1065(self):
-    # from https://github.com/google/jax/issues/1065
+    # from https://github.com/jax-ml/jax/issues/1065
     device_count = jax.device_count()
 
     def multi_step_pmap(state, count):
@@ -1697,7 +1697,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   # replica.
   @unittest.skip("need eager multi-replica support")
   def testPostProcessMap(self):
-    # test came from https://github.com/google/jax/issues/1369
+    # test came from https://github.com/jax-ml/jax/issues/1369
     nrep = jax.device_count()
 
     def pmvm(a, b):
@@ -1730,7 +1730,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
   @jax.default_matmul_precision("float32")
   def testPostProcessMap2(self):
-    # code from https://github.com/google/jax/issues/2787
+    # code from https://github.com/jax-ml/jax/issues/2787
     def vv(x, y):
       """Vector-vector multiply"""
       return jnp.dot(x, y)
@@ -1758,7 +1758,7 @@ class PythonPmapTest(jtu.JaxTestCase):
           ('_new', new_checkpoint),
       ])
   def testAxisIndexRemat(self, remat):
-    # https://github.com/google/jax/issues/2716
+    # https://github.com/jax-ml/jax/issues/2716
     n = len(jax.devices())
 
     def f(key):
@@ -1769,7 +1769,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.pmap(remat(f), axis_name='i')(keys)
 
   def testPmapMapVmapCombinations(self):
-    # https://github.com/google/jax/issues/2822
+    # https://github.com/jax-ml/jax/issues/2822
     def vv(x, y):
       """Vector-vector multiply"""
       return jnp.dot(x, y)
@@ -1802,7 +1802,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(result1, result4, check_dtypes=False, atol=1e-3, rtol=1e-3)
 
   def testPmapAxisNameError(self):
-    # https://github.com/google/jax/issues/3120
+    # https://github.com/jax-ml/jax/issues/3120
     a = np.arange(4)[np.newaxis,:]
     def test(x):
       return jax.lax.psum(x, axis_name='batch')
@@ -1811,7 +1811,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       self.pmap(test)(a)
 
   def testPsumOnBooleanDtype(self):
-    # https://github.com/google/jax/issues/3123
+    # https://github.com/jax-ml/jax/issues/3123
     n = jax.device_count()
     if n > 1:
       x = jnp.array([True, False])
@@ -1889,7 +1889,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertIn("mhlo.num_partitions = 1", hlo)
 
   def testPsumZeroCotangents(self):
-    # https://github.com/google/jax/issues/3651
+    # https://github.com/jax-ml/jax/issues/3651
     def loss(params, meta_params):
       (net, mpo) = params
       return meta_params * mpo * net
@@ -1914,7 +1914,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
   @ignore_jit_of_pmap_warning()
   def test_issue_1062(self):
-    # code from https://github.com/google/jax/issues/1062 @shoyer
+    # code from https://github.com/jax-ml/jax/issues/1062 @shoyer
     # this tests, among other things, whether ShardedDeviceTuple constants work
     device_count = jax.device_count()
 
@@ -1938,7 +1938,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     # TODO(skye): fix backend caching so we always have multiple CPUs available
     if jax.device_count("cpu") < 4:
       self.skipTest("test requires 4 CPU device")
-    # https://github.com/google/jax/issues/4223
+    # https://github.com/jax-ml/jax/issues/4223
     def fn(indices):
       return jnp.equal(indices, jnp.arange(3)).astype(jnp.float32)
     mapped_fn = self.pmap(fn, axis_name='i', backend='cpu')
@@ -1982,7 +1982,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       for dtype in [np.float32, np.int32]
   )
   def testPmapDtype(self, dtype):
-    # Regression test for https://github.com/google/jax/issues/6022
+    # Regression test for https://github.com/jax-ml/jax/issues/6022
     @partial(self.pmap, axis_name='i')
     def func(_):
       return jax.lax.psum(dtype(0), axis_name='i')
@@ -1991,7 +1991,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertEqual(out_dtype, dtype)
 
   def test_num_replicas_with_switch(self):
-    # https://github.com/google/jax/issues/7411
+    # https://github.com/jax-ml/jax/issues/7411
     def identity(x):
       return x
 
@@ -2154,7 +2154,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cpu")
   def test_pmap_stack_size(self):
-    # Regression test for https://github.com/google/jax/issues/20428
+    # Regression test for https://github.com/jax-ml/jax/issues/20428
     # pmap isn't particularly important here, but it guarantees that the CPU
     # client runs the computation on a threadpool rather than inline.
     if jax.device_count() < 2:
@@ -2164,7 +2164,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     y.block_until_ready()  # doesn't crash
 
   def test_pmap_of_prng_key(self):
-    # Regression test for https://github.com/google/jax/issues/20392
+    # Regression test for https://github.com/jax-ml/jax/issues/20392
     keys = jax.random.split(jax.random.key(0), jax.device_count())
     result1 = jax.pmap(jax.random.bits)(keys)
     with jtu.ignore_warning(

@@ -304,7 +304,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(x * outer_var_array + 1., res, check_dtypes=False)
 
   def test_with_var_different_shape(self):
-    # See https://github.com/google/jax/issues/6050
+    # See https://github.com/jax-ml/jax/issues/6050
     v = tf.Variable((4., 2.), dtype=tf.float32)
 
     def tf_func(x):
@@ -428,7 +428,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(g_jax, g_tf)
 
   def test_grad_int_argument(self):
-    # Similar to https://github.com/google/jax/issues/6975
+    # Similar to https://github.com/jax-ml/jax/issues/6975
     # state is a pytree that contains an integer and a boolean.
     # The function returns an integer and a boolean.
     def f(param, state, x):

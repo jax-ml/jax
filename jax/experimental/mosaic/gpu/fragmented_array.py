@@ -29,7 +29,7 @@ from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import vector
 import numpy as np
 
-from . import dsl as mgpu
+import jax.experimental.mosaic.gpu as mgpu
 from . import utils
 
 # mypy: ignore-errors

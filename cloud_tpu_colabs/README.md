@@ -13,25 +13,25 @@ VM](https://cloud.google.com/tpu/docs/jax-quickstart-tpu-vm).
 
 The following notebooks showcase how to use and what you can do with Cloud TPUs on Colab:
 
-### [Pmap Cookbook](https://colab.research.google.com/github/google/jax/blob/main/cloud_tpu_colabs/Pmap_Cookbook.ipynb)
+### [Pmap Cookbook](https://colab.research.google.com/github/jax-ml/jax/blob/main/cloud_tpu_colabs/Pmap_Cookbook.ipynb)
 A guide to getting started with `pmap`, a transform for easily distributing SPMD
 computations across devices.
 
-### [Lorentz ODE Solver](https://colab.research.google.com/github/google/jax/blob/main/cloud_tpu_colabs/Lorentz_ODE_Solver.ipynb)
+### [Lorentz ODE Solver](https://colab.research.google.com/github/jax-ml/jax/blob/main/cloud_tpu_colabs/Lorentz_ODE_Solver.ipynb)
 Contributed by Alex Alemi (alexalemi@)
 
 Solve and plot parallel ODE solutions with `pmap`.
 
-<img src="https://raw.githubusercontent.com/google/jax/main/cloud_tpu_colabs/images/lorentz.png" width=65%></image>
+<img src="https://raw.githubusercontent.com/jax-ml/jax/main/cloud_tpu_colabs/images/lorentz.png" width=65%></image>
 
-### [Wave Equation](https://colab.research.google.com/github/google/jax/blob/main/cloud_tpu_colabs/Wave_Equation.ipynb)
+### [Wave Equation](https://colab.research.google.com/github/jax-ml/jax/blob/main/cloud_tpu_colabs/Wave_Equation.ipynb)
 Contributed by Stephan Hoyer (shoyer@)
 
 Solve the wave equation with `pmap`, and make cool movies! The spatial domain is partitioned across the 8 cores of a Cloud TPU.
 
-![](https://raw.githubusercontent.com/google/jax/main/cloud_tpu_colabs/images/wave_movie.gif)
+![](https://raw.githubusercontent.com/jax-ml/jax/main/cloud_tpu_colabs/images/wave_movie.gif)
 
-### [JAX Demo](https://colab.research.google.com/github/google/jax/blob/main/cloud_tpu_colabs/JAX_demo.ipynb)
+### [JAX Demo](https://colab.research.google.com/github/jax-ml/jax/blob/main/cloud_tpu_colabs/JAX_demo.ipynb)
 An overview of JAX presented at the [Program Transformations for ML workshop at NeurIPS 2019](https://program-transformations.github.io/) and the [Compilers for ML workshop at CGO 2020](https://www.c4ml.org/). Covers basic numpy usage, `grad`, `jit`, `vmap`, and `pmap`.
 
 ## Performance notes
@@ -53,7 +53,7 @@ By default\*, matrix multiplication in JAX on TPUs [uses bfloat16](https://cloud
 
 JAX also adds the `bfloat16` dtype, which you can use to explicitly cast arrays to bfloat16, e.g., `jax.numpy.array(x, dtype=jax.numpy.bfloat16)`.
 
-\* We might change the default precision in the future, since it is arguably surprising. Please comment/vote on [this issue](https://github.com/google/jax/issues/2161) if it affects you!
+\* We might change the default precision in the future, since it is arguably surprising. Please comment/vote on [this issue](https://github.com/jax-ml/jax/issues/2161) if it affects you!
 
 ## Running JAX on a Cloud TPU VM
 
@@ -65,8 +65,8 @@ documentation](https://cloud.google.com/tpu/docs/jax-quickstart-tpu-vm).
 If you run into Cloud TPU-specific issues (e.g. trouble creating a Cloud TPU
 VM), please email <cloud-tpu-support@google.com>, or <trc-support@google.com> if
 you are a [TRC](https://sites.research.google/trc/) member. You can also [file a
-JAX issue](https://github.com/google/jax/issues) or [ask a discussion
-question](https://github.com/google/jax/discussions) for any issues with these
+JAX issue](https://github.com/jax-ml/jax/issues) or [ask a discussion
+question](https://github.com/jax-ml/jax/discussions) for any issues with these
 notebooks or using JAX in general.
 
 If you have any other questions or comments regarding JAX on Cloud TPUs, please

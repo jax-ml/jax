@@ -44,7 +44,6 @@ from jax._src.lax import svd as lax_svd
 from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
     _input_dtype)
-from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
 from jax._src.lib import lapack
@@ -54,6 +53,9 @@ from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.typing import Array, ArrayLike
 
+# The following import is unused but needed to register the custom_call targets
+# in the gpu_linalg module.
+from jax._src.lib import gpu_linalg  # noqa: F401
 
 TFun = TypeVar('TFun', bound=Callable[..., Any])
 
@@ -551,21 +553,6 @@ def _cholesky_update_abstract_eval(r_matrix, w_vector):
   return ShapedArray(r_matrix.shape, r_matrix.dtype)
 
 def _cholesky_update_gpu_lowering_rule(target_name_prefix, ctx, r_matrix, w_vector):
-  # TODO(b/360781533): Remove guard after 3 week forward compatibility period.
-  if ctx.is_forward_compat():
-    r_matrix_aval, _ = ctx.avals_in
-    try:
-      [platform] = ctx.module_context.platforms
-    except ValueError:
-      raise ValueError(
-          "Can only lower cholesky_update on a single platform."
-      ) from None
-    if platform != "cuda":
-      raise NotImplementedError(
-          "Can only lower fast cholesky_update on CUDA."
-      )
-    return gpu_linalg.cuda_cholesky_update(
-        r_matrix, w_vector, r_matrix_aval.dtype)
   rule = ffi.ffi_lowering(f"{target_name_prefix}_cholesky_update_ffi",
                           operand_output_aliases={0: 0, 1: 1})
   sub_ctx = ctx.replace(avals_out=ctx.avals_in)
@@ -781,7 +768,7 @@ def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
     raise NotImplementedError(
         'The derivatives of eigenvectors are not implemented, only '
         'eigenvalues. See '
-        'https://github.com/google/jax/issues/2748 for discussion.')
+        'https://github.com/jax-ml/jax/issues/2748 for discussion.')
   # Formula for derivative of eigenvalues w.r.t. a is eqn 4.60 in
   # https://arxiv.org/abs/1701.00392
   a, = primals

@@ -1114,7 +1114,7 @@ def _why_alive(ignore_ids: set[int], x: Any) -> str:
     # parent->child jump. We do that by setting `parent` here to be a
     # grandparent (or great-grandparent) of `child`, and then handling that case
     # in _why_alive_container_info. See example:
-    #  https://github.com/google/jax/pull/13022#discussion_r1008456599
+    #  https://github.com/jax-ml/jax/pull/13022#discussion_r1008456599
     # To prevent this collapsing behavior, just comment out this code block.
     if (isinstance(parent, dict) and
         getattr(parents(parent)[0], '__dict__', None) is parents(child)[0]):
@@ -1189,7 +1189,7 @@ def ensure_compile_time_eval():
       else:
         return jnp.cos(x)
 
-  Here's a real-world example from https://github.com/google/jax/issues/3974::
+  Here's a real-world example from https://github.com/jax-ml/jax/issues/3974::
 
     import jax
     import jax.numpy as jnp
@@ -1511,7 +1511,7 @@ class UnshapedArray(AbstractValue):
   @property
   def shape(self):
     msg = ("UnshapedArray has no shape. Please open an issue at "
-           "https://github.com/google/jax/issues because it's unexpected for "
+           "https://github.com/jax-ml/jax/issues because it's unexpected for "
            "UnshapedArray instances to ever be produced.")
     raise TypeError(msg)
 

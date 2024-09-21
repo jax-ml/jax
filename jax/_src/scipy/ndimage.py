@@ -176,7 +176,7 @@ def map_coordinates(
 
   Note:
     Interpolation near boundaries differs from the scipy function, because JAX
-    fixed an outstanding bug; see https://github.com/google/jax/issues/11097.
+    fixed an outstanding bug; see https://github.com/jax-ml/jax/issues/11097.
     This function interprets the ``mode`` argument as documented by SciPy, but
     not as implemented by SciPy.
   """

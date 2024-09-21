@@ -1002,7 +1002,7 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(fun_via_grad, fun, args_maker)
 
   def testConvTransposePaddingList(self):
-    # Regression test for https://github.com/google/jax/discussions/8695
+    # Regression test for https://github.com/jax-ml/jax/discussions/8695
     a = jnp.ones((28,28))
     b = jnp.ones((3,3))
     c = lax.conv_general_dilated(a[None, None], b[None, None], (1,1), [(0,0),(0,0)], (1,1))
@@ -1280,7 +1280,7 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(op, args_maker)
 
   def testBroadcastInDimOperandShapeTranspose(self):
-    # Regression test for https://github.com/google/jax/issues/5276
+    # Regression test for https://github.com/jax-ml/jax/issues/5276
     def f(x):
       return lax.broadcast_in_dim(x, (2, 3, 4), broadcast_dimensions=(0, 1, 2)).sum()
     def g(x):
@@ -1681,7 +1681,7 @@ class LaxTest(jtu.JaxTestCase):
                             lax.dynamic_update_slice, args_maker)
 
   def testDynamicUpdateSliceBatched(self):
-    # Regression test for https://github.com/google/jax/issues/9083
+    # Regression test for https://github.com/jax-ml/jax/issues/9083
     x = jnp.arange(5)
     y = jnp.arange(6, 9)
     ind = jnp.arange(6)
@@ -2236,7 +2236,7 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual(shape, result.shape)
 
   def testReduceWindowWithEmptyOutput(self):
-    # https://github.com/google/jax/issues/10315
+    # https://github.com/jax-ml/jax/issues/10315
     shape = (5, 3, 2)
     operand, padding, strides = np.ones(shape), 'VALID', (1,) * len(shape)
     out = jax.eval_shape(lambda x: lax.reduce_window(x, 0., lax.add, padding=padding,
@@ -2859,13 +2859,13 @@ class LaxTest(jtu.JaxTestCase):
       op(2+3j, 4+5j)
 
   def test_population_count_booleans_not_supported(self):
-    # https://github.com/google/jax/issues/3886
+    # https://github.com/jax-ml/jax/issues/3886
     msg = "population_count does not accept dtype bool"
     with self.assertRaisesRegex(TypeError, msg):
       lax.population_count(True)
 
   def test_conv_general_dilated_different_input_ranks_error(self):
-    # https://github.com/google/jax/issues/4316
+    # https://github.com/jax-ml/jax/issues/4316
     msg = ("conv_general_dilated lhs and rhs must have the same number of "
            "dimensions")
     dimension_numbers = lax.ConvDimensionNumbers(lhs_spec=(0, 1, 2),
@@ -2885,7 +2885,7 @@ class LaxTest(jtu.JaxTestCase):
       lax.conv_general_dilated(lhs, rhs, **kwargs)
 
   def test_window_strides_dimension_shape_rule(self):
-    # https://github.com/google/jax/issues/5087
+    # https://github.com/jax-ml/jax/issues/5087
     msg = ("conv_general_dilated window and window_strides must have "
            "the same number of dimensions")
     lhs = jax.numpy.zeros((1, 1, 3, 3))
@@ -2894,7 +2894,7 @@ class LaxTest(jtu.JaxTestCase):
       jax.lax.conv(lhs, rhs, [1], 'SAME')
 
   def test_reduce_window_scalar_init_value_shape_rule(self):
-    # https://github.com/google/jax/issues/4574
+    # https://github.com/jax-ml/jax/issues/4574
     args = { "operand": np.ones((4, 4), dtype=np.int32)
            , "init_value": np.zeros((1,), dtype=np.int32)
            , "computation": lax.max
@@ -3045,7 +3045,7 @@ class LaxTest(jtu.JaxTestCase):
         np.array(lax.dynamic_slice(x, np.uint8([128]), (1,))), [128])
 
   def test_dot_general_batching_python_builtin_arg(self):
-    # https://github.com/google/jax/issues/16805
+    # https://github.com/jax-ml/jax/issues/16805
     @jax.remat
     def f(x):
       return jax.lax.dot_general(x, x, (([], []), ([], [])))
@@ -3053,7 +3053,7 @@ class LaxTest(jtu.JaxTestCase):
     jax.hessian(f)(1.0)  # don't crash
 
   def test_constant_folding_complex_to_real_scan_regression(self):
-    # regression test for github.com/google/jax/issues/19059
+    # regression test for github.com/jax-ml/jax/issues/19059
     def g(hiddens):
       hiddens_aug = jnp.vstack((hiddens[0], hiddens))
       new_hiddens = hiddens_aug.copy()
@@ -3088,7 +3088,7 @@ class LaxTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(asarray_closure)()
     self.assertLen(jaxpr.eqns, 0)
 
-    # Regression test for https://github.com/google/jax/issues/19334
+    # Regression test for https://github.com/jax-ml/jax/issues/19334
     # lax.asarray as a closure should not trigger transfer guard.
     with jax.transfer_guard('disallow'):
       jax.jit(asarray_closure)()
@@ -3254,7 +3254,7 @@ class LazyConstantTest(jtu.JaxTestCase):
   def testUnaryWeakTypes(self, op_name, rec_dtypes):
     """Test that all lax unary ops propagate weak_type information appropriately."""
     if op_name == "bitwise_not":
-      raise unittest.SkipTest("https://github.com/google/jax/issues/12066")
+      raise unittest.SkipTest("https://github.com/jax-ml/jax/issues/12066")
     # Find a valid dtype for the function.
     for dtype in [float, int, complex, bool]:
       dtype = dtypes.canonicalize_dtype(dtype)
@@ -3648,7 +3648,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     self.assertEqual(ys.shape, (3, 2, 1))
 
   def test_gather_batched_index_dtype(self):
-    # Regression test for https://github.com/google/jax/issues/16557
+    # Regression test for https://github.com/jax-ml/jax/issues/16557
     dtype = jnp.int8
     size = jnp.iinfo(dtype).max + 10
     indices = jnp.zeros(size, dtype=dtype)

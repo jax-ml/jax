@@ -174,7 +174,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
 
 
   def test_closed_over_values_device_placement(self):
-    # see https://github.com/google/jax/issues/1431
+    # see https://github.com/jax-ml/jax/issues/1431
     devices = self.get_devices()
 
     def f(): return lax.add(3., 4.)
