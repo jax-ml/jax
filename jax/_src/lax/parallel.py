@@ -795,6 +795,7 @@ def _pbroadcast_transpose_rule(t, x, source, axis_name):
   return [lax.select(is_source, lax.full_like(t, tsum), lax.full_like(t, 0))]
 
 def _pbroadcast_batcher(axis_data, vals_in, dims_in, axis_name, source):
+  axis_size = axis_data.size
   (v,), (d,) = vals_in, dims_in
   if not isinstance(axis_name, (tuple, list)):
     axis_name = (axis_name,)
