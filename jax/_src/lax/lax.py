@@ -3866,8 +3866,7 @@ def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
 def _transpose_lower(ctx, x, *, permutation):
   aval_out, = ctx.avals_out
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    elt_shape = aval_out.dtype._rules.physical_element_aval(
-        aval_out.dtype).shape
+    elt_shape = core.physical_element_aval(aval_out.dtype).shape
     trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]
     permutation = [*permutation, *trailing_dims]
   return [hlo.transpose(x, mlir.dense_int_array(permutation))]

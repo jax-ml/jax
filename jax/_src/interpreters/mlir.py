@@ -2158,8 +2158,7 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
   # op is broadcast.
   # Lower a possibly-dynamic broadcast_in_dim
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):  # type: ignore
-    elt_shape = aval_out.dtype._rules.physical_element_aval(  # type: ignore
-        aval_out.dtype).shape                                 # type: ignore
+    elt_shape = core.physical_element_aval(aval_out.dtype).shape  # type: ignore
     trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]  # type: ignore
     broadcast_dimensions = [*broadcast_dimensions, *trailing_dims]
     physical_aval_out = core.physical_aval(aval_out)
@@ -2213,8 +2212,7 @@ def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Va
 def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
              start_indices, limit_indices, strides) -> ir.Value:
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    elt_shape = aval_out.dtype._rules.physical_element_aval(
-        aval_out.dtype).shape
+    elt_shape = core.physical_element_aval(aval_out.dtype).shape
     trailing_zeros = [0] * len(elt_shape)
     trailing_ones  = [1] * len(elt_shape)
     start_indices = (*start_indices, *trailing_zeros)
@@ -2241,8 +2239,7 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
                   start_indices) -> ir.Value:
   x_aval = ctx.avals_in[0]
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    elt_shape = aval_out.dtype._rules.physical_element_aval(
-        aval_out.dtype).shape
+    elt_shape = core.physical_element_aval(aval_out.dtype).shape
     index_avals = ctx.avals_in[1:]
     dtype = dtypes.canonicalize_dtype(
         index_avals[0].dtype if index_avals else 'int64')  # type: ignore
@@ -2275,8 +2272,7 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
 def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
                          start_indices) -> ir.Value:
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    elt_shape = aval_out.dtype._rules.physical_element_aval(
-        aval_out.dtype).shape
+    elt_shape = core.physical_element_aval(aval_out.dtype).shape
     index_avals = ctx.avals_in[2:]
     dtype = dtypes.canonicalize_dtype(
         index_avals[0].dtype if index_avals else 'int64')  # type: ignore

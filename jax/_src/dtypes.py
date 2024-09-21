@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import abc
 import builtins
+import dataclasses
 import functools
+import types
 from typing import cast, overload, Any, Literal, Union
 import warnings
 
@@ -834,3 +836,23 @@ def safe_to_cast(input_dtype_or_value: Any,
   # We deliberately use output_dtype rather than output_dtype_or_value here:
   # this effectively treats the output dtype as always strongly-typed.
   return result_type(input_dtype_or_value, output_dtype) == output_dtype
+
+def primal_tangent_dtype(primal_dtype, tangent_dtype,
+                         name: str | None = None) -> ExtendedDType:
+  name_ = name or f'PTDtype{{{primal_dtype}:{tangent_dtype}}}'
+  rules = types.SimpleNamespace(
+      physical_element_aval=
+      lambda dtype: types.SimpleNamespace(shape=(), dtype=primal_dtype),
+      tangent_dtype=lambda dtype: tangent_dtype,
+      convert_from=lambda _, other: other == primal_dtype,
+      convert_to=lambda other, _: other == primal_dtype)
+
+  class primal_tangent_dtype_scalar(extended): ...
+
+  @dataclasses.dataclass(frozen=True)
+  class PrimalTangentDType(ExtendedDType):
+    name = name_
+    _rules = rules
+    type = primal_tangent_dtype_scalar
+
+  return PrimalTangentDType()
