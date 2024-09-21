@@ -1316,6 +1316,7 @@ class TensorFlowTrace(core.Trace):
   def process_primitive(self, primitive: core.Primitive,
                         tracers: Sequence[TensorFlowTracer],
                         params) -> TensorFlowTracer:
+    tracers = map(self.to_tf_tracer, tracers)
     impl, impl_needs_avals = self.get_primitive_impl(primitive)
     args_avals: Sequence[core.ShapedArray] = tuple(t.aval for t in tracers)
     # This is a bit conservative, doing abstract_eval even in op-by-op execution
