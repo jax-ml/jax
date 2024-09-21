@@ -1960,13 +1960,11 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
 mlir.register_lowering(pjit_p, _pjit_lowering)
 
 
-def _pjit_batcher(axis_data, main_type,
-                  vals_in, dims_in,
+def _pjit_batcher(axis_data, vals_in, dims_in,
                   jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
                   resource_env, donated_invars, name, keep_unused, inline):
   segment_lens, dims_in = batching.indirectify_ragged_axes(dims_in)
-  new_jaxpr, axes_out = batching.batch_jaxpr2(
-      jaxpr, axis_data, dims_in, main_type=main_type)
+  new_jaxpr, axes_out = batching.batch_jaxpr2(jaxpr, axis_data, dims_in)
 
   if resource_env is not None:
     mesh = resource_env.physical_mesh
@@ -2557,8 +2555,7 @@ mlir.register_lowering(sharding_constraint_p,
 
 
 def _sharding_constraint_batcher(
-    axis_data, main_type, vals_in,
-    dims_in, sharding, layout, resource_env, unconstrained_dims):
+    axis_data, vals_in, dims_in, sharding, layout, resource_env, unconstrained_dims):
   if axis_data.spmd_name is not None and isinstance(sharding, NamedSharding):
     used = {n for ns in sharding.spec
             for n in (ns if isinstance(ns, tuple) else (ns,))}

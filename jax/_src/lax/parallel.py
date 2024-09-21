@@ -552,7 +552,7 @@ def _reduction_batcher(prim, vals_in, dims_in, *, axes, axis_index_groups):
   return vals_out, [d if d is batching.not_mapped else 0 for d in dims_in]
 
 def _batched_reduction_collective(
-    prim, if_unmapped, axis_data, _, vals_in, dims_in, axes,
+    prim, if_unmapped, axis_data, vals_in, dims_in, axes,
     axis_index_groups):
   assert prim.multiple_results
   if all(d is None for d in dims_in):
@@ -761,7 +761,7 @@ def _ppermute_transpose_rule(t, x, perm, axis_name):
   inverse_perm = list(zip(dsts, srcs))
   return [ppermute(t, axis_name=axis_name, perm=inverse_perm)]
 
-def _ppermute_batcher(axis_data, _, vals_in, dims_in, axis_name, perm):
+def _ppermute_batcher(axis_data, vals_in, dims_in, axis_name, perm):
   axis_size, frame_name = axis_data.size, axis_data.name
   (v,), (d,) = vals_in, dims_in
   if not isinstance(axis_name, (tuple, list)):
@@ -907,7 +907,7 @@ def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis,
   )
   return result, d
 
-def _all_to_all_batched_collective(axis_data, _, vals_in, dims_in,
+def _all_to_all_batched_collective(axis_data, vals_in, dims_in,
                                    axis_name, split_axis, concat_axis,
                                    axis_index_groups, tiled):
   axis_size, frame_name = axis_data.size, axis_data.name
@@ -1161,7 +1161,7 @@ def _all_gather_batcher(vals_in, dims_in, *, all_gather_dimension, axis_name, ax
       tiled=tiled)
   return result, d
 
-def _all_gather_batched_collective(axis_data, _, vals_in, dims_in,
+def _all_gather_batched_collective(axis_data, vals_in, dims_in,
                                    all_gather_dimension, axis_name,
                                    axis_index_groups, axis_size, tiled):
   frame_size, frame_name = axis_data.size, axis_data.name
@@ -1460,7 +1460,7 @@ def _axis_index_lowering(ctx, *, axis_name):
 def _axis_index_effectful_abstract_eval(*, axis_name):
   return ShapedArray((), np.int32), {core.NamedAxisEffect(axis_name)}
 
-def _axis_index_batcher(axis_data, _, vals_in, dims_in, *, axis_name):
+def _axis_index_batcher(axis_data, vals_in, dims_in, *, axis_name):
   return lax.iota(np.int32, axis_data.size), 0
 
 def _axis_index_bind_with_trace(trace, _args, params):

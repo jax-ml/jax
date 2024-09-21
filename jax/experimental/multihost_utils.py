@@ -360,12 +360,10 @@ ad.deflinear2(host_local_array_to_global_array_p,
               lambda ct, _, **params: (
                   host_local_array_to_global_array_p.bind(ct, **params),))
 
-def ltg_batcher(insert_axis, spmd_axis_name, axis_size,
-                axis_name, main_type, vals_in, dims_in,
-                global_mesh, pspec):
+def ltg_batcher(insert_axis, axis_data, vals_in, dims_in, global_mesh, pspec):
   x, = vals_in
   d, = dims_in
-  new_parts = None if spmd_axis_name is None else spmd_axis_name
+  new_parts = None if axis_data.spmd_name is None else axis_data.spmd_name
   new_pspec = list(pspec)
   new_pspec.insert(d, new_parts)
   new_pspec = P(*new_pspec)
@@ -373,7 +371,7 @@ def ltg_batcher(insert_axis, spmd_axis_name, axis_size,
       x, global_mesh=global_mesh, pspec=new_pspec)
   return y, d
 batching.fancy_primitive_batchers[host_local_array_to_global_array_p] = partial(
-    ltg_batcher, False, None)
+    ltg_batcher, False)
 
 def _ltg_lowering(ctx, x, *, global_mesh, pspec):
   return [x]

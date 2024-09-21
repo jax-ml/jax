@@ -343,7 +343,7 @@ def _bcast_select_n(pred, *cases):
     pred = lax.broadcast_in_dim(pred, np.shape(cases[0]), idx)
   return lax.select_n(pred, *cases)
 
-def _cond_batching_rule(axis_data, main_type, args, dims, branches):
+def _cond_batching_rule(axis_data, args, dims, branches):
   index, *ops = args
   index_dim, *op_dims = dims
   # TODO(sharadmv): clean this up by adding a specific blocklist
@@ -371,9 +371,7 @@ def _cond_batching_rule(axis_data, main_type, args, dims, branches):
     out_batched = [True] * len(branches[0].out_avals)
 
     branches_batched = [
-        batching.batch_jaxpr(
-            jaxpr, axis_data.size, in_batched, out_batched, axis_data.name,
-            axis_data.spmd_name, main_type)[0]
+        batching.batch_jaxpr(jaxpr, axis_data, in_batched, out_batched)[0]
         for jaxpr in branches]
 
     branch_outs = []
@@ -391,13 +389,11 @@ def _cond_batching_rule(axis_data, main_type, args, dims, branches):
            for b, x, d in zip(ops_bat, ops, op_dims)]
 
     branches_out_bat = [
-        batching.batch_jaxpr(jaxpr, axis_data.size, ops_bat, False,
-                             axis_data.name, axis_data.spmd_name, main_type)[1]
+        batching.batch_jaxpr(jaxpr, axis_data, ops_bat, False)[1]
         for jaxpr in branches]
     out_bat = [any(bat) for bat in zip(*branches_out_bat)]
     branches_batched = tuple(
-        batching.batch_jaxpr(jaxpr, axis_data.size, ops_bat, out_bat,
-                             axis_data.name, axis_data.spmd_name, main_type)[0]
+        batching.batch_jaxpr(jaxpr, axis_data, ops_bat, out_bat)[0]
         for jaxpr in branches)
 
     out_dims = [0 if b else batching.not_mapped for b in out_bat]

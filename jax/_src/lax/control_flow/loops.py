@@ -885,7 +885,7 @@ def _transpose_scan_jaxpr(jaxpr, num_res1, num_c, num_res2,
                         b_ys_avals_stripped + res2_avals))
 
 
-def _scan_batching_rule(axis_data, main_type, args,
+def _scan_batching_rule(axis_data, args,
                         dims, reverse, length,
                         jaxpr, num_consts, num_carry, linear, unroll,
                         _split_transpose):
@@ -902,11 +902,8 @@ def _scan_batching_rule(axis_data, main_type, args,
   for _ in range(1 + len(carry_batched)):
     batched = const_batched + carry_batched + xs_batched
     jaxpr_batched, batched_out = batching.batch_jaxpr(
-        jaxpr, axis_data.size, batched,
-        instantiate=carry_batched + [False] * num_ys,
-        axis_name=axis_data.name,
-        spmd_axis_name=axis_data.spmd_name,
-        main_type=main_type)
+        jaxpr, axis_data, batched,
+        instantiate=carry_batched + [False] * num_ys)
     carry_batched_out, ys_batched = batched_out[:num_carry], batched_out[num_carry:]
     if carry_batched_out == carry_batched:
       break
@@ -1372,12 +1369,9 @@ def _while_loop_abstract_eval(*avals, cond_jaxpr, body_jaxpr, body_nconsts,
   return _map(raise_to_shaped, body_jaxpr.out_avals), joined_effects
 
 
-def _while_loop_batching_rule(axis_data, main_type,
-                              args, dims, cond_nconsts, cond_jaxpr,
+def _while_loop_batching_rule(axis_data, args, dims, cond_nconsts, cond_jaxpr,
                               body_nconsts, body_jaxpr):
   from jax._src.callback import _IOEffect, _OrderedIOEffect
-  axis_name, axis_size, spmd_axis_name = \
-      axis_data.name, axis_data.size, axis_data.spmd_name
   if any(_OrderedIOEffect in fn.effects for fn in [body_jaxpr, cond_jaxpr]):
     raise Exception("Ordered IO effects not supported in vmap.")
 
@@ -1393,8 +1387,7 @@ def _while_loop_batching_rule(axis_data, main_type,
   # reach a fixpoint.
   for _ in range(1 + len(carry_bat)):
     _, carry_bat_out = batching.batch_jaxpr(
-        body_jaxpr, axis_data.size, bconst_bat + carry_bat, instantiate=carry_bat,
-        axis_name=axis_data.size, spmd_axis_name=axis_data.spmd_name, main_type=main_type)
+        body_jaxpr, axis_data, bconst_bat + carry_bat, instantiate=carry_bat)
     if carry_bat == carry_bat_out:
       break
     carry_bat = safe_map(operator.or_, carry_bat, carry_bat_out)
@@ -1404,8 +1397,7 @@ def _while_loop_batching_rule(axis_data, main_type,
   # Knowing how the carry is batched now, we can determine if the predicate is
   # batched.
   _, (pred_bat,) = batching.batch_jaxpr(
-      cond_jaxpr, axis_size, cconst_bat + carry_bat, instantiate=False,
-      axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+      cond_jaxpr, axis_data, cconst_bat + carry_bat, instantiate=False)
 
   if pred_bat:
     # If the predicate is batched, we have to batch *all* of the carry
@@ -1416,13 +1408,9 @@ def _while_loop_batching_rule(axis_data, main_type,
     carry_bat = [True] * len(carry_bat)
     carry_dims = [0] * len(carry_bat)
     body_jaxpr_batched, _ = batching.batch_jaxpr_axes(
-        body_jaxpr, axis_size, bconst_dims + carry_dims,
-        carry_dims, axis_name=axis_name, spmd_axis_name=spmd_axis_name,
-        main_type=main_type)
+        body_jaxpr, axis_data, bconst_dims + carry_dims, carry_dims)
     cond_jaxpr_batched, _ = batching.batch_jaxpr_axes(
-        cond_jaxpr, axis_size, cconst_dims + carry_dims, [0],
-        axis_name=axis_name, spmd_axis_name=spmd_axis_name,
-        main_type=main_type)
+        cond_jaxpr, axis_data, cconst_dims + carry_dims, [0])
   else:
     # If the predicate is not batched, we can look at the `cond_jaxpr`'s out
     # shape to determine the rank of the predicate. From this rank we pick the
@@ -1432,13 +1420,11 @@ def _while_loop_batching_rule(axis_data, main_type,
     cond_rank = len(cond_jaxpr.out_avals[0].shape)
     carry_dims = [cond_rank if b else None for b in carry_bat]
     body_jaxpr_batched, _ = batching.batch_jaxpr_axes(
-        body_jaxpr, axis_size, bconst_dims + carry_dims, carry_dims,
-        axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+        body_jaxpr, axis_data, bconst_dims + carry_dims, carry_dims)
     # Now we need to rebatch the `cond_jaxpr` according to the new dims of the
     # carry.
     cond_jaxpr_batched, _ = batching.batch_jaxpr_axes(
-        cond_jaxpr, axis_size, cconst_dims + carry_dims, (None,),
-        axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+        cond_jaxpr, axis_data, cconst_dims + carry_dims, (None,))
 
   # To prepare the `init` to the `while_p`, we broadcast values if they are
   # unbatched and need to have an out axis. If their current batch axis does not
@@ -1447,7 +1433,7 @@ def _while_loop_batching_rule(axis_data, main_type,
   new_init = []
   for x, old_axis, new_axis in zip(init, init_dims, carry_dims):
     if old_axis is batching.not_mapped and new_axis is not batching.not_mapped:
-      new_init.append(batching.broadcast(x, axis_size, new_axis))
+      new_init.append(batching.broadcast(x, axis_data.size, new_axis))
     elif old_axis is batching.not_mapped and new_axis is batching.not_mapped:
       new_init.append(x)
     else:

@@ -370,7 +370,6 @@ class BatchTracer(Tracer):
     else:  # TODO(mattjj): could handle the RaggedAxis case?
       return self
 
-# TODO(dougalm): pass this around instead of splatting the components everywhere
 @dataclasses.dataclass(frozen=True)
 class AxisData:
   name : Any
@@ -393,13 +392,12 @@ class BatchTrace(Trace):
       return val, not_mapped
 
   def process_primitive(self, p, tracers, params):
-    trace_type = None
     if config.dynamic_shapes.value:
       p.abstract_eval(*(map(core.get_aval, tracers)), **params)
     vals_in, dims_in = unzip2(map(self.to_batch_info, tracers))
     if p in fancy_primitive_batchers:
       with core.set_current_trace(self.parent_trace):
-        val_out, dim_out = fancy_primitive_batchers[p](self.axis_data, trace_type, vals_in, dims_in, **params)
+        val_out, dim_out = fancy_primitive_batchers[p](self.axis_data, vals_in, dims_in, **params)
     elif p in primitive_batchers:
       if all(bdim is not_mapped for bdim in dims_in):
          # no-op shortcut
@@ -509,14 +507,13 @@ class BatchTrace(Trace):
 ### API for batching callables with vmappable inputs and outputs
 
 def batch(fun: lu.WrappedFun, axis_data,
-          in_dims, out_dim_dests, main_type: type[BatchTrace] = BatchTrace
-          ) -> lu.WrappedFun:
+          in_dims, out_dim_dests) -> lu.WrappedFun:
   # we split up _batch_inner and _batch_outer for the leak checker
   f = _batch_inner(fun, axis_data, out_dim_dests)
-  return _batch_outer(f, axis_data, in_dims, main_type)
+  return _batch_outer(f, axis_data, in_dims)
 
 @lu.transformation
-def _batch_outer(axis_data, in_dims, _main_type, *in_vals):
+def _batch_outer(axis_data, in_dims, *in_vals):
   tag = TraceTag()
   with source_info_util.transform_name_stack('vmap'):
     outs, trace = yield (tag, in_dims, *in_vals), {}
@@ -546,8 +543,7 @@ def vtile(f_flat: lu.WrappedFun,
           in_axes_flat: tuple[int | None, ...],
           out_axes_flat: tuple[int | None, ...],
           tile_size: int | None,
-          axis_name: AxisName,
-          main_type: type[BatchTrace] = BatchTrace):
+          axis_name: AxisName):
   @curry
   def tile_axis(arg, axis: int | None, tile_size):
     if axis is None:
@@ -572,8 +568,7 @@ def vtile(f_flat: lu.WrappedFun,
     yield map(untile_axis, outputs_flat, out_axes_flat)
 
   axis_data = AxisData(axis_name, tile_size, None)
-  return _map_to_tile(batch(
-      f_flat, axis_data, in_axes_flat, out_axes_flat, main_type=main_type))
+  return _map_to_tile(batch(f_flat, axis_data, in_axes_flat, out_axes_flat))
 
 ### API for batching functions with jaxpr type inputs and outputs
 
@@ -662,25 +657,23 @@ def batch_jaxpr2(
     closed_jaxpr: core.ClosedJaxpr,
     axis_data,
     in_axes: tuple[int | NotMapped | RaggedAxis, ...],
-    main_type: type[BatchTrace],
   ) -> tuple[core.ClosedJaxpr, tuple[int | NotMapped | RaggedAxis, ...]]:
   # This is only ever used in pjit.  The difference vs batch_jaxpr is that
   # batch_jaxpr2 lets the callee decide which outputs are batched and what
   # their batch axes are; whereas batch_jaxpr has to obey caller-imposed
   # consistency constraints, such as type-agreement across arms of a
   # `lax.cond`, or input-output agreement for the body of a `lax.scan`.
-  return _batch_jaxpr2(closed_jaxpr, axis_data, tuple(in_axes), main_type)
+  return _batch_jaxpr2(closed_jaxpr, axis_data, tuple(in_axes))
 
 @weakref_lru_cache
 def _batch_jaxpr2(
     closed_jaxpr: core.ClosedJaxpr,
     axis_data,
     in_axes: tuple[int | NotMapped | RaggedAxis, ...],
-    main_type: type[BatchTrace],
   ) -> tuple[core.ClosedJaxpr, tuple[int | NotMapped, ...]]:
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
   f, out_axes = _batch_jaxpr_inner(f, axis_data)
-  f = _batch_jaxpr_outer(f, axis_data, in_axes, main_type)
+  f = _batch_jaxpr_outer(f, axis_data, in_axes)
   in_axes2, avals_in = unzip2([
       handle_ragged(closed_jaxpr.in_avals, dim, aval)
       if isinstance(dim, RaggedAxis) else (dim, aval)
@@ -699,14 +692,11 @@ def handle_ragged(in_avals: list[core.AbstractValue], dim: RaggedAxis,
   new_aval = aval.update(shape=tuple(new_shape))
   return dim.stacked_axis, new_aval
 
-def batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name,
-                spmd_axis_name, main_type):
+def batch_jaxpr(closed_jaxpr, axis_data, in_batched, instantiate):
   inst = tuple(instantiate) if isinstance(instantiate, list) else instantiate
-  return _batch_jaxpr(closed_jaxpr, axis_size, tuple(in_batched), inst,
-                      axis_name, spmd_axis_name, main_type)
+  return _batch_jaxpr(closed_jaxpr, axis_data, tuple(in_batched), inst)
 
-def _batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name,
-                 spmd_axis_name, main_type):
+def _batch_jaxpr(closed_jaxpr, axis_data, in_batched, instantiate):
   assert (isinstance(instantiate, bool) or
           isinstance(instantiate, (list, tuple)) and
           all(isinstance(b, bool) for b in instantiate))
@@ -714,21 +704,17 @@ def _batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name,
     instantiate = [instantiate] * len(closed_jaxpr.out_avals)
   in_axes = [0 if b else not_mapped for b in in_batched]
   out_axes_dest = [0 if inst else zero_if_mapped for inst in instantiate]
-  return batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest,
-                          axis_name, spmd_axis_name, main_type)
+  return batch_jaxpr_axes(closed_jaxpr, axis_data, in_axes, out_axes_dest)
 
-def batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest, axis_name,
-                     spmd_axis_name, main_type):
-  axis_data = AxisData(axis_name, axis_size, spmd_axis_name)
-  return _batch_jaxpr_axes(closed_jaxpr, axis_data, tuple(in_axes),
-                           tuple(out_axes_dest), main_type)
+def batch_jaxpr_axes(closed_jaxpr, axis_data, in_axes, out_axes_dest):
+  return _batch_jaxpr_axes(closed_jaxpr, axis_data, tuple(in_axes), tuple(out_axes_dest))
 
 @weakref_lru_cache
-def _batch_jaxpr_axes(closed_jaxpr, axis_data, in_axes, out_axes_dest, main_type):
+def _batch_jaxpr_axes(closed_jaxpr, axis_data, in_axes, out_axes_dest):
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
   f, out_axes = _batch_jaxpr_inner(f, axis_data)
   f, out_batched = _match_axes_jaxpr(f, axis_data, out_axes_dest, out_axes)
-  f = _batch_jaxpr_outer(f, axis_data, in_axes, main_type)
+  f = _batch_jaxpr_outer(f, axis_data, in_axes)
   avals_in = [core.unmapped_aval(axis_data.size, axis_data.name, b, aval) if b is not not_mapped
               else aval for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes)]
   jaxpr_out, _, consts, () = pe.trace_to_jaxpr_dynamic(f, avals_in)
@@ -765,7 +751,7 @@ def _match_axes_jaxpr(axis_data, out_axes_dest, out_axes, trace, in_axes,
   yield out_vals, out_batched
 
 @lu.transformation
-def _batch_jaxpr_outer(axis_data, in_dims, main_type, *in_vals):
+def _batch_jaxpr_outer(axis_data, in_dims, *in_vals):
   in_dims = in_dims() if callable(in_dims) else in_dims
   in_dims = [canonicalize_axis(ax, np.ndim(x)) if isinstance(ax, int)
              else ax for x, ax in unsafe_zip(in_vals, in_dims)]
