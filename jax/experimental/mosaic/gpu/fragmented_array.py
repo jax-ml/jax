@@ -110,6 +110,17 @@ class WGStridedFragLayout:
     )
 
   def thread_vec_idxs(self):
+    index = ir.IndexType.get()
+    for v in self.linear_thread_vec_idxs():
+      res = []
+      for dim in reversed(self.shape):
+        dim = c(dim, index)
+        res.append(arith.remui(v, dim))
+        v = arith.divui(v, dim)
+      res.reverse()
+      yield res
+
+  def linear_thread_vec_idxs(self):
     """The indexes to be used for vector load/store WGStridedFragLayout.
 
     Yields:
@@ -122,7 +133,7 @@ class WGStridedFragLayout:
     tidx = arith.remui(gpu.thread_id(gpu.Dimension.x), c(WARPGROUP_SIZE, index))
     off = arith.muli(tidx, c(self.vec_size, tidx.type))
     for i in range(reg_num):
-      yield [arith.addi(off, c(i * WARPGROUP_SIZE * self.vec_size, tidx.type))]
+      yield arith.addi(off, c(i * WARPGROUP_SIZE * self.vec_size, tidx.type))
 
 
 FragmentedLayout = WGSplatFragLayout | WGStridedFragLayout | WGMMAFragLayout | WGMMARowFragLayout
@@ -182,7 +193,7 @@ class FragmentedArray:
     ref_1d = mgpu.memref_fold(ref, 0, len(ref_ty.shape))
     layout = WGStridedFragLayout.from_memref_type(ref_ty)
     vec_ty = ir.VectorType.get((layout.vec_size,), ref_ty.element_type)
-    vecs = [vector.load(vec_ty, ref_1d, vec_idx) for vec_idx in layout.thread_vec_idxs()]
+    vecs = [vector.load(vec_ty, ref_1d, [vec_idx]) for vec_idx in layout.linear_thread_vec_idxs()]
     return cls(_registers=np.array(vecs), _layout=layout)
 
   @classmethod
@@ -623,6 +634,17 @@ class FragmentedArray:
       )
     return FragmentedArray(_registers=new_regs, _layout=WGMMA_LAYOUT)
 
+  def foreach(self, fn: Callable[[ir.Value, tuple[ir.Value, ...]], None]):
+    """Call a function for each value and index."""
+    if not isinstance(self.layout, WGStridedFragLayout):
+      raise NotImplementedError(self.layout)
+    index = ir.IndexType.get()
+    for idx, reg in zip(self.layout.thread_vec_idxs(), self.registers.flat):
+      assert len(idx) == len(self.shape), (idx, self.shape)
+      for i in range(self.layout.vec_size):
+        i = c(i, index)
+        fn(vector.extractelement(reg, position=i), (*idx[:-1], arith.addi(idx[-1], i)))
+
   def store_untiled(self, ref: ir.Value):
     if not ir.MemRefType.isinstance(ref.type):
       raise ValueError(ref)
@@ -658,8 +680,8 @@ class FragmentedArray:
     if ref_shape != self.shape:
       raise ValueError((ref_shape, self.shape))
     smem_1d = mgpu.memref_fold(ref, 0, len(ref_ty.shape))
-    for idx, reg in zip(self.layout.thread_vec_idxs(), self.registers.flat):
-      vector.store(reg, smem_1d, idx)
+    for idx, reg in zip(self.layout.linear_thread_vec_idxs(), self.registers.flat):
+      vector.store(reg, smem_1d, [idx])
 
   def _store_untiled_wgmma(self, ref: ir.Value):
     """Stores accumulator to a 2D memref. Not optimized at the moment."""

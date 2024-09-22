@@ -695,10 +695,21 @@ def _debug_print_lowering_rule(
     has_placeholders: bool,
 ):
   del has_placeholders  # Unused.
-  if any(aval.shape for aval in ctx.avals_in):
-    raise NotImplementedError("Only scalar values are supported")
   primitives.check_debug_print_format(fmt, *args)
-  mgpu.debug_print(fmt, *args)
+  if not any(aval.shape for aval in ctx.avals_in):
+    mgpu.debug_print(fmt, *args)
+  elif len(ctx.avals_in) == 1:
+    @args[0].foreach
+    def _(val, idx):
+      idx_fmt = ", ".join(["{}"] * len(idx))
+      fmt_str = fmt.format(f"[{idx_fmt}]/{list(args[0].shape)}: {{}}")
+      mgpu.debug_print(fmt_str, *idx, val, uniform=False)
+  else:
+    raise NotImplementedError(
+        "debug_print only supports printing of scalar values, or a single array"
+        " value when using the Mosaic GPU backend."
+    )
+
   return ()
 
 
