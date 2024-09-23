@@ -178,6 +178,8 @@ class BufferType(enum.Enum):
   ACCUMULATOR = 3
   INPUT_OUTPUT = 4
 
+  MANUAL = 9
+
 
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
@@ -233,6 +235,10 @@ class BufferedRef:
   @classmethod
   def tree_unflatten(cls, meta, data):
     return cls(*meta, *data)
+
+  @staticmethod
+  def buffer_types() -> type[BufferType]:
+    return BufferType
 
   @classmethod
   def create(cls, spec, dtype, buffer_type) -> BufferedRef:
@@ -1034,6 +1040,7 @@ def emit_pipeline(
     prefetch=None,
     postyeet=None,
     schedule=None,
+    body_prologue=None,
   ):
     """
     Run the pipeline.
@@ -1056,6 +1063,8 @@ def emit_pipeline(
         Called during the outputs phase in the first inner step.
       schedule: manually specified pipeline schedules for brefs, None indicates
         default schedule.
+      body_prologue: For running code within the grid environment before the
+        body is run. Useful for updating manual refs.
     """
     if scratches is None:
       scratches = ()
@@ -1119,6 +1128,9 @@ def emit_pipeline(
                   lambda: None)
 
       # run the kernel!
+      if body_prologue is not None:
+        with scheduler.grid_env():
+          body_prologue()
       current_refs = map_brefs(lambda x: x.current_ref, brefs)
       with scheduler._named_scope("ep_run_kernel"):
         with scheduler.grid_env():

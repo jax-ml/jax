@@ -107,6 +107,7 @@ py_library(
         ":primitives",
         "//jax",
         "//jax:api_util",
+        "//jax:pallas",
         "//jax:util",
         "//jax/_src/pallas",
     ] + py_deps("numpy"),
