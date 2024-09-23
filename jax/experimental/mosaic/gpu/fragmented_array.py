@@ -15,6 +15,7 @@
 """Utilities for code generator."""
 
 import dataclasses
+import functools
 import math
 from typing import Callable
 
@@ -276,7 +277,11 @@ class FragmentedArray:
       case WGMMARowFragLayout() | WGSplatFragLayout():
         return reg_ty
 
-  def _pointwise(self, op, *other):
+  def _pointwise(self, op, *other, output_is_signed: bool | None = None):
+    is_signed = (
+        output_is_signed if output_is_signed is not None else self.is_signed
+    )
+
     other_arrs = []
     for o in other:
       if not isinstance(o, FragmentedArray):
@@ -286,7 +291,7 @@ class FragmentedArray:
           raise NotImplementedError(o)
 
         o = FragmentedArray.splat(
-            o, shape=self.shape, layout=self.layout, is_signed=self.is_signed
+            o, shape=self.shape, layout=self.layout, is_signed=is_signed
         )
 
       if isinstance(o.layout, WGSplatFragLayout):
@@ -296,7 +301,7 @@ class FragmentedArray:
             o.registers.flat[0],
             shape=self.shape,
             layout=self.layout,
-            is_signed=self.is_signed,
+            is_signed=is_signed,
         )
       else:
         if self.layout != o.layout:
@@ -310,7 +315,7 @@ class FragmentedArray:
     for idx, reg in np.ndenumerate(self.registers):
       new_regs[idx] = op(reg, *(o.registers[idx] for o in other_arrs))
     return FragmentedArray(
-        _registers=new_regs, _layout=self.layout, _is_signed=self.is_signed
+        _registers=new_regs, _layout=self.layout, _is_signed=is_signed
     )
 
   def __pos__(self):
@@ -371,6 +376,66 @@ class FragmentedArray:
     if not ir.FloatType.isinstance(self.mlir_dtype):
       raise NotImplementedError
     return self._pointwise(lambda s, o: arith.divf(o, s), other)
+
+  def __eq__(self, other):
+    return self._compare(
+        other,
+        f_pred=arith.CmpFPredicate.OEQ,
+        si_pred=arith.CmpIPredicate.eq,
+        ui_pred=arith.CmpIPredicate.eq,
+    )
+
+  def __ne__(self, other):
+    return self._compare(
+        other,
+        f_pred=arith.CmpFPredicate.UNE,
+        si_pred=arith.CmpIPredicate.ne,
+        ui_pred=arith.CmpIPredicate.ne,
+    )
+
+  def __lt__(self, other):
+    return self._compare(
+        other,
+        f_pred=arith.CmpFPredicate.OLT,
+        si_pred=arith.CmpIPredicate.slt,
+        ui_pred=arith.CmpIPredicate.ult,
+    )
+
+  def __le__(self, other):
+    return self._compare(
+        other,
+        f_pred=arith.CmpFPredicate.OLE,
+        si_pred=arith.CmpIPredicate.sle,
+        ui_pred=arith.CmpIPredicate.ule,
+    )
+
+  def __gt__(self, other):
+    return self._compare(
+        other,
+        f_pred=arith.CmpFPredicate.OGT,
+        si_pred=arith.CmpIPredicate.sgt,
+        ui_pred=arith.CmpIPredicate.ugt,
+    )
+
+  def __ge__(self, other):
+    return self._compare(
+        other,
+        f_pred=arith.CmpFPredicate.OGE,
+        si_pred=arith.CmpIPredicate.sge,
+        ui_pred=arith.CmpIPredicate.uge,
+    )
+
+  def _compare(self, other, *, f_pred, si_pred, ui_pred):
+    if ir.FloatType.isinstance(self.mlir_dtype):
+      pred = functools.partial(arith.cmpf, f_pred)
+    elif ir.IntegerType.isinstance(self.mlir_dtype):
+      if ir.IntegerType(self.mlir_dtype).is_signed:
+        pred = functools.partial(arith.cmpi, si_pred)
+      else:
+        pred = functools.partial(arith.cmpi, ui_pred)
+    else:
+      raise NotImplementedError
+    return self._pointwise(pred, other, output_is_signed=False)
 
   def max(self, other):
     if ir.FloatType.isinstance(self.mlir_dtype):
