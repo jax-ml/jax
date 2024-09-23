@@ -28,7 +28,6 @@ from jax import lax
 from jax._src import core as jax_core
 from jax._src import pjit
 from jax._src import util
-from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
@@ -40,6 +39,8 @@ from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.state import primitives as sp
 import jax.experimental.mosaic.gpu as mgpu
+from jax.experimental.mosaic.gpu import core as mgpu_core
+from jax.experimental.mosaic.gpu import utils as mgpu_utils
 import jax.numpy as jnp
 import numpy as np
 
@@ -137,7 +138,7 @@ class ModuleContext:
     for s in structs:
       scratch_ty = ir.MemRefType.get(
           s.shape,
-          mlir.dtype_to_ir_type(s.dtype),
+          mgpu_utils.dtype_to_ir_type(s.dtype),
           memory_space=smem,
       )
       views.append(
@@ -493,7 +494,7 @@ def lower_jaxpr_to_module(
       jax.ShapeDtypeStruct(shape=[smem_scratch_bytes], dtype=np.int8)
   )
 
-  module, out_structs_smem, _ = mgpu.core._lower_as_gpu_kernel(
+  module, out_structs_smem, _ = mgpu_core._lower_as_gpu_kernel(
       body,
       grid=grid,
       cluster=(),
@@ -598,20 +599,26 @@ def _num_programs_lowering_rule(ctx: LoweringRuleContext, axis):
 
 @register_lowering_rule(sp.get_p)
 def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *indexers, tree):
-  del ctx, tree  # Unused.
+  del tree  # Unused.
   if indexers:
     raise NotImplementedError("No support for indexers yet")
-  return mgpu.FragmentedArray.load_strided(x_smem)
+  [x_aval] = ctx.avals_in
+  return mgpu.FragmentedArray.load_strided(
+      x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
+  )
 
 
 @register_lowering_rule(sp.swap_p)
 def _swap_lowering_rule(
     ctx: LoweringRuleContext, x_smem, value, *indexers, tree
 ):
-  del ctx, tree  # Unused.
+  del tree  # Unused.
   if indexers:
     raise NotImplementedError("No support for indexers yet")
-  old_value = mgpu.FragmentedArray.load_strided(x_smem)
+  x_aval, _ = ctx.avals_in
+  old_value = mgpu.FragmentedArray.load_strided(
+      x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
+  )
   value.store_untiled(x_smem)
   return old_value
 
@@ -645,7 +652,9 @@ def _convert_element_type_lowering_rule(
 ):
   del weak_type, sharding
   [x_aval] = ctx.avals_in
-  return _ensure_fa(x, x_aval.dtype).astype(mlir.dtype_to_ir_type(new_dtype))
+  return _ensure_fa(x, x_aval.dtype).astype(
+      mgpu_utils.dtype_to_ir_type(new_dtype), is_signed=mgpu_utils.is_signed(new_dtype)
+  )
 
 
 def _binary_op_lowering_rule(ctx: LoweringRuleContext, x, y, *, impl):
@@ -673,7 +682,7 @@ def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
 @register_lowering_rule(lax.rsqrt_p)
 def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
-  return _ensure_fa(x, x_aval.dtype).rsqrt(ctx.module_ctx.approx_math)
+  return _ensure_fa(x, x_aval.dtype).rsqrt(approx=ctx.module_ctx.approx_math)
 
 
 @register_lowering_rule(lax.reduce_sum_p)
@@ -684,7 +693,9 @@ def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
   _, [scratch] = ctx.module_ctx.scratch_view(
       [jax.ShapeDtypeStruct(shape=(4,), dtype=x_aval.dtype)]
   )
-  return mgpu.FragmentedArray.splat(x.reduce_sum(scratch), ())
+  return mgpu.FragmentedArray.splat(
+      x.reduce_sum(scratch), (), is_signed=mgpu_utils.is_signed(x_aval.dtype)
+  )
 
 
 @register_lowering_rule(primitives.debug_print_p)
@@ -832,11 +843,13 @@ def _ensure_fa(x: object, dtype: jnp.dtype) -> mgpu.FragmentedArray:
     return x
   elif isinstance(x, (np.number, np.ndarray, int, float)):
     return mgpu.FragmentedArray.splat(
-        _ir_constant(x, mlir.dtype_to_ir_type(dtype)), ()
+        _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype)),
+        (),
+        is_signed=mgpu_utils.is_signed(dtype),
     )
   elif isinstance(x, ir.Value):
     if isinstance(x.type, (ir.IntegerType, ir.FloatType, ir.IndexType)):
-      return mgpu.FragmentedArray.splat(x, ())
+      return mgpu.FragmentedArray.splat(x, (), is_signed=mgpu_utils.is_signed(dtype))
   raise NotImplementedError(f"Unsupported type: {type(x)}")
 
 
@@ -844,7 +857,7 @@ def _ensure_ir_value(x: object, aval: jax_core.ShapedArray) -> ir.Value:
   if isinstance(x, ir.Value):
     return x
   elif isinstance(x, (np.number, np.ndarray, int, float)):
-    return _ir_constant(x, mlir.dtype_to_ir_type(aval.dtype))
+    return _ir_constant(x, mgpu_utils.dtype_to_ir_type(aval.dtype))
   raise NotImplementedError(f"Unsupported type: {type(x)}")
 
 
