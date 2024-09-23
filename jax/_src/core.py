@@ -2981,3 +2981,14 @@ concrete_eval = ensure_compile_time_eval
 # Used in shard_map for converting avals
 shard_aval_handlers = {}  # type: ignore
 unshard_aval_handlers = {}  # type: ignore
+
+# ----------- backwards compatibility shims. TODO: remove all these  -----------
+
+def find_top_trace(*_):
+  return trace_ctx.trace
+
+@dataclass
+class ThreadLocalStateShim:
+  trace_state : TracingContext
+
+thread_local_state = ThreadLocalStateShim(trace_ctx)
