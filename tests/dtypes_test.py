@@ -578,6 +578,34 @@ class DtypesTest(jtu.JaxTestCase):
     with self.assertWarnsRegex(DeprecationWarning, msg):
       jax.jit(dtypes.check_user_dtype_supported)(x)
 
+  @parameterized.parameters([True])  # TODO(mattjj): make jit=False work
+  def test_primal_tangent_dtype(self, jit):
+    dt = dtypes.primal_tangent_dtype(jnp.int8, jnp.bfloat16)
+
+    x = jax.random.uniform(jax.random.key(0), (3,), minval=0, maxval=10
+                           ).astype(jnp.int8)
+    g = jax.random.uniform(jax.random.key(0), (3,), minval=0, maxval=10
+                           ).astype(jnp.bfloat16)
+
+    @jax.custom_gradient
+    def f(x):
+      def bwd(g):
+        return 2 * g,
+      return jnp.int8(x).astype(g.dtype) * 2 + 1, bwd
+
+    def h():
+      result, bwd = jax.vjp(f, x.astype(dt))
+      bwd_result, = bwd(g)
+      return result, bwd_result
+
+    if jit:
+      h = jax.jit(h)
+
+    result, bwd_result = h()
+    self.assertEqual(result.dtype, jnp.bfloat16)
+    self.assertEqual(bwd_result.dtype, jnp.bfloat16)
+    self.assertAllClose(bwd_result, 2 * g)
+
 
 class EArrayTest(jtu.JaxTestCase):
 

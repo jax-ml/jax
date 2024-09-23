@@ -1568,6 +1568,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     contains_nans=[True, False],
     keepdims=[True, False]
   )
+  @jtu.ignore_warning(
+      category=RuntimeWarning,
+      message="One or more sample arguments is too small; all returned values will be NaN"
+  )
   def testMode(self, shape, dtype, axis, contains_nans, keepdims):
     if scipy_version < (1, 9, 0) and keepdims != True:
       self.skipTest("scipy < 1.9.0 only support keepdims == True")

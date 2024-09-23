@@ -38,10 +38,7 @@ JAX 201
    :maxdepth: 1
 
    parallelism
-   advanced-autodiff
-   gradient-checkpointing
    advanced-debugging
-   external-callbacks
    profiling-and-performance
 
 JAX 301
@@ -50,6 +47,4 @@ JAX 301
 .. toctree::
    :maxdepth: 1
 
-   jax-primitives
-   jaxpr
    advanced-compilation

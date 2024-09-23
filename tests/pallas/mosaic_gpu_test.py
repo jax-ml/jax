@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import functools
+import math
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -239,6 +240,22 @@ class PallasCallTest(PallasTest):
     with self.assertRaises(Exception):
       # TODO(slebedev): Remove assertRaises() once we support indexing.
       kernel(x)
+
+  def test_print_array(self):
+    in_shape = [2, 1, 64, 64]
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(in_shape, jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      del o_ref
+      pl.debug_print("x: {}", x_ref[...])
+
+    x = jnp.arange(math.prod(in_shape)).reshape(in_shape).astype(jnp.float32)
+    with jtu.capture_stdout() as output:
+      jax.block_until_ready(kernel(x))
+
+    self.assertIn(f"x: [1, 0, 43, 23]/{list(in_shape)}: 6871.000000\n", output())
 
   def test_scoped_allocation(self):
     def kernel(x_ref, o_ref):

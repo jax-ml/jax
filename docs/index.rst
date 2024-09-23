@@ -121,8 +121,6 @@ maintains an up-to-date list.
 
    installation
    quickstart
-   notebooks/Common_Gotchas_in_JAX
-   faq
 
 .. toctree::
    :hidden:
@@ -130,11 +128,14 @@ maintains an up-to-date list.
 
    tutorials
 
+   notebooks/Common_Gotchas_in_JAX
+
+   faq
 
 .. toctree::
    :hidden:
    :maxdepth: 2
-   :caption: Resources
+   :caption: More guides/resources
 
    user_guides
    advanced_guide

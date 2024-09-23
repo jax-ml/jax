@@ -15,6 +15,7 @@
 """Utilities for code generator."""
 
 import dataclasses
+import functools
 import math
 from typing import Callable
 
@@ -110,6 +111,17 @@ class WGStridedFragLayout:
     )
 
   def thread_vec_idxs(self):
+    index = ir.IndexType.get()
+    for v in self.linear_thread_vec_idxs():
+      res = []
+      for dim in reversed(self.shape):
+        dim = c(dim, index)
+        res.append(arith.remui(v, dim))
+        v = arith.divui(v, dim)
+      res.reverse()
+      yield res
+
+  def linear_thread_vec_idxs(self):
     """The indexes to be used for vector load/store WGStridedFragLayout.
 
     Yields:
@@ -122,7 +134,7 @@ class WGStridedFragLayout:
     tidx = arith.remui(gpu.thread_id(gpu.Dimension.x), c(WARPGROUP_SIZE, index))
     off = arith.muli(tidx, c(self.vec_size, tidx.type))
     for i in range(reg_num):
-      yield [arith.addi(off, c(i * WARPGROUP_SIZE * self.vec_size, tidx.type))]
+      yield arith.addi(off, c(i * WARPGROUP_SIZE * self.vec_size, tidx.type))
 
 
 FragmentedLayout = WGSplatFragLayout | WGStridedFragLayout | WGMMAFragLayout | WGMMARowFragLayout
@@ -133,48 +145,71 @@ WGMMA_ROW_LAYOUT = WGMMARowFragLayout()
 
 
 @jax.tree_util.register_pytree_node_class
+@dataclasses.dataclass(init=False, eq=False, frozen=True, slots=True)
 class FragmentedArray:
-  registers: np.ndarray  # of ir.Value, see checks in init for shapes.
+  # An array of ir.Value, see checks in init for shapes.
+  registers: np.ndarray = dataclasses.field(repr=False)
   layout: FragmentedLayout
+  is_signed: bool | None
 
-  def __init__(self, *, _registers: np.ndarray, _layout: FragmentedLayout):
-    self.registers = _registers
-    self.layout = _layout
+  def __init__(
+      self,
+      *,
+      _registers: np.ndarray,
+      _layout: FragmentedLayout,
+      _is_signed: bool | None,
+  ):
+    """Initializes a fragmented array.
+
+    This is a low-level API. Prefer using classmethods to construct fragmented
+    arrays instead.
+    """
+    # We need to use ``object.__setattr__`` here because of ``frozen=True``.
+    object.__setattr__(self, "registers", _registers)
+    object.__setattr__(self, "layout", _layout)
+    object.__setattr__(self, "is_signed", _is_signed)
+
+    if (_is_signed is not None) != ir.IntegerType.isinstance(self.mlir_dtype):
+      raise TypeError(
+          "is_signed must only be non-None if the MLIR type is an integer"
+          f" type, got {_is_signed=} for {self.mlir_dtype}"
+      )
 
     match self.layout:
       # Registers are [m_tiles, n_tiles, 2 rows, 1 cols] in WGMMA layout
       # Each element is a vector<2xdtype>
       case WGMMAFragLayout():
-        if self.registers.ndim != 4 or self.registers.shape[2:] != (2, 1):
-          raise ValueError("Invalid register array shape")
+        if _registers.ndim != 4 or _registers.shape[2:] != (2, 1):
+          raise ValueError(f"Invalid register array shape: {_registers.shape}")
 
       # Registers are [m_tiles, 2 rows] in WGMMA_ROW layout
       # Each element is a dtype scalar
       case WGMMARowFragLayout():
-        if self.registers.ndim != 2 or self.registers.shape[-1] != 2:
-          raise ValueError("Invalid register array shape")
+        if _registers.ndim != 2 or _registers.shape[-1] != 2:
+          raise ValueError(f"Invalid register array shape: {_registers.shape}")
 
       # Registers are flat
       case WGStridedFragLayout(shape):
-        (reg_size,) = ir.VectorType(_registers.flat[0].type).shape
-        if np.prod(shape) != np.prod(_registers.shape) * WARPGROUP_SIZE * reg_size:
-          raise ValueError((reg_size, shape, _registers.shape, WARPGROUP_SIZE), _registers.flat[0].type)
+        [reg_size] = ir.VectorType(_registers.flat[0].type).shape
+        if (
+            math.prod(shape)
+            != math.prod(_registers.shape) * WARPGROUP_SIZE * reg_size
+        ):
+          raise ValueError(
+              "Invalid register array shape: math.prod({_registers.shape}) *"
+              " {WARPGROUP_SIZE} * {reg_size}, want: math.prod({shape})"
+          )
 
       # Just a single register
       case WGSplatFragLayout():
         if _registers.size != 1:
-          raise ValueError(f"WGStridedFragLayout requires a single value {_registers.shape} ({_registers.size})")
+          raise ValueError(f"Invalid register array shape: {_registers.shape}")
 
       case _:
         raise NotImplementedError
 
-  def __repr__(self):
-    return (
-        f"FragmentedArray(layout={self.layout}, shape={self.shape})"
-    )
-
   @classmethod
-  def load_strided(cls, ref: ir.Value):
+  def load_strided(cls, ref: ir.Value, *, is_signed: bool | None = None):
     if not ir.MemRefType.isinstance(ref.type):
       raise TypeError(ref.type)
 
@@ -182,11 +217,11 @@ class FragmentedArray:
     ref_1d = mgpu.memref_fold(ref, 0, len(ref_ty.shape))
     layout = WGStridedFragLayout.from_memref_type(ref_ty)
     vec_ty = ir.VectorType.get((layout.vec_size,), ref_ty.element_type)
-    vecs = [vector.load(vec_ty, ref_1d, vec_idx) for vec_idx in layout.thread_vec_idxs()]
-    return cls(_registers=np.array(vecs), _layout=layout)
+    vecs = [vector.load(vec_ty, ref_1d, [vec_idx]) for vec_idx in layout.linear_thread_vec_idxs()]
+    return cls(_registers=np.array(vecs), _layout=layout, _is_signed=is_signed)
 
   @classmethod
-  def splat(cls, value, shape, layout=None):
+  def splat(cls, value, shape, layout=None, *, is_signed: bool | None = None):
     layout = layout or WGSplatFragLayout(shape)
     match layout:
       case WGMMARowFragLayout():
@@ -216,6 +251,7 @@ class FragmentedArray:
     return cls(
         _registers=np.full(reg_shape, value, dtype=object),
         _layout=layout,
+        _is_signed=is_signed,
     )
 
   @property
@@ -241,7 +277,11 @@ class FragmentedArray:
       case WGMMARowFragLayout() | WGSplatFragLayout():
         return reg_ty
 
-  def _pointwise(self, op, *other):
+  def _pointwise(self, op, *other, output_is_signed: bool | None = None):
+    is_signed = (
+        output_is_signed if output_is_signed is not None else self.is_signed
+    )
+
     other_arrs = []
     for o in other:
       if not isinstance(o, FragmentedArray):
@@ -250,12 +290,19 @@ class FragmentedArray:
         elif not isinstance(o, ir.Value):
           raise NotImplementedError(o)
 
-        o = FragmentedArray.splat(o, shape=self.shape, layout=self.layout)
+        o = FragmentedArray.splat(
+            o, shape=self.shape, layout=self.layout, is_signed=is_signed
+        )
 
       if isinstance(o.layout, WGSplatFragLayout):
         if not o.layout.can_broadcast_to(self.shape):
           raise ValueError("Can't broadcast shape.")
-        o = FragmentedArray.splat(o.registers.flat[0], shape=self.shape, layout=self.layout)
+        o = FragmentedArray.splat(
+            o.registers.flat[0],
+            shape=self.shape,
+            layout=self.layout,
+            is_signed=is_signed,
+        )
       else:
         if self.layout != o.layout:
           raise ValueError("Incompatible FragmentedArray layouts")
@@ -267,15 +314,20 @@ class FragmentedArray:
 
     for idx, reg in np.ndenumerate(self.registers):
       new_regs[idx] = op(reg, *(o.registers[idx] for o in other_arrs))
-    return FragmentedArray(_registers=new_regs, _layout=self.layout)
+    return FragmentedArray(
+        _registers=new_regs, _layout=self.layout, _is_signed=is_signed
+    )
+
+  def __pos__(self):
+    return self
 
   def __neg__(self):
     if ir.FloatType.isinstance(self.mlir_dtype):
       return self._pointwise(arith.negf)
     elif ir.IntegerType.isinstance(self.mlir_dtype):
-      return self._pointwise(arith.negsi)
+      return 0 - self
     else:
-      raise NotImplementedError(self.mlir_dtype)
+      return NotImplemented
 
   def __add__(self, other):
     if ir.FloatType.isinstance(self.mlir_dtype):
@@ -283,7 +335,7 @@ class FragmentedArray:
     elif ir.IntegerType.isinstance(self.mlir_dtype):
       return self._pointwise(arith.addi, other)
     else:
-      raise NotImplementedError(self.mlir_dtype)
+      return NotImplemented
 
   def __radd__(self, other):
     return self + other
@@ -294,20 +346,26 @@ class FragmentedArray:
     elif ir.IntegerType.isinstance(self.mlir_dtype):
       return self._pointwise(arith.muli, other)
     else:
-      raise NotImplementedError(self.mlir_dtype)
+      return NotImplemented
 
   def __rmul__(self, other):
     return self * other
 
   def __sub__(self, other):
-    if not ir.FloatType.isinstance(self.mlir_dtype):
-      raise NotImplementedError
-    return self._pointwise(arith.subf, other)
+    if ir.FloatType.isinstance(self.mlir_dtype):
+      return self._pointwise(arith.subf, other)
+    elif ir.IntegerType.isinstance(self.mlir_dtype):
+      return self._pointwise(arith.subi, other)
+    else:
+      return NotImplemented
 
   def __rsub__(self, other):
-    if not ir.FloatType.isinstance(self.mlir_dtype):
-      raise NotImplementedError
-    return self._pointwise(lambda s, o: arith.subf(o, s), other)
+    if ir.FloatType.isinstance(self.mlir_dtype):
+      return self._pointwise(lambda s, o: arith.subf(o, s), other)
+    elif ir.IntegerType.isinstance(self.mlir_dtype):
+      return self._pointwise(lambda s, o: arith.subi(o, s), other)
+    else:
+      return NotImplemented
 
   def __truediv__(self, other):
     if not ir.FloatType.isinstance(self.mlir_dtype):
@@ -319,12 +377,77 @@ class FragmentedArray:
       raise NotImplementedError
     return self._pointwise(lambda s, o: arith.divf(o, s), other)
 
-  def max(self, other):
-    if not ir.FloatType.isinstance(self.mlir_dtype):
-      raise NotImplementedError
-    return self._pointwise(arith.maximumf, other)
+  def __eq__(self, other):
+    return self._compare(
+        other,
+        f_pred=arith.CmpFPredicate.OEQ,
+        si_pred=arith.CmpIPredicate.eq,
+        ui_pred=arith.CmpIPredicate.eq,
+    )
 
-  def exp(self, approx: bool = False):
+  def __ne__(self, other):
+    return self._compare(
+        other,
+        f_pred=arith.CmpFPredicate.UNE,
+        si_pred=arith.CmpIPredicate.ne,
+        ui_pred=arith.CmpIPredicate.ne,
+    )
+
+  def __lt__(self, other):
+    return self._compare(
+        other,
+        f_pred=arith.CmpFPredicate.OLT,
+        si_pred=arith.CmpIPredicate.slt,
+        ui_pred=arith.CmpIPredicate.ult,
+    )
+
+  def __le__(self, other):
+    return self._compare(
+        other,
+        f_pred=arith.CmpFPredicate.OLE,
+        si_pred=arith.CmpIPredicate.sle,
+        ui_pred=arith.CmpIPredicate.ule,
+    )
+
+  def __gt__(self, other):
+    return self._compare(
+        other,
+        f_pred=arith.CmpFPredicate.OGT,
+        si_pred=arith.CmpIPredicate.sgt,
+        ui_pred=arith.CmpIPredicate.ugt,
+    )
+
+  def __ge__(self, other):
+    return self._compare(
+        other,
+        f_pred=arith.CmpFPredicate.OGE,
+        si_pred=arith.CmpIPredicate.sge,
+        ui_pred=arith.CmpIPredicate.uge,
+    )
+
+  def _compare(self, other, *, f_pred, si_pred, ui_pred):
+    if ir.FloatType.isinstance(self.mlir_dtype):
+      pred = functools.partial(arith.cmpf, f_pred)
+    elif ir.IntegerType.isinstance(self.mlir_dtype):
+      if ir.IntegerType(self.mlir_dtype).is_signed:
+        pred = functools.partial(arith.cmpi, si_pred)
+      else:
+        pred = functools.partial(arith.cmpi, ui_pred)
+    else:
+      raise NotImplementedError
+    return self._pointwise(pred, other, output_is_signed=False)
+
+  def max(self, other):
+    if ir.FloatType.isinstance(self.mlir_dtype):
+      return self._pointwise(arith.maximumf, other)
+    elif ir.IntegerType.isinstance(self.mlir_dtype):
+      return self._pointwise(
+          arith.maxsi if self.is_signed else arith.maxui, other
+      )
+    else:
+      return NotImplemented
+
+  def exp(self, *, approx: bool = False):
     if not ir.FloatType.isinstance(self.mlir_dtype):
       raise NotImplementedError
     if approx:
@@ -338,7 +461,7 @@ class FragmentedArray:
       return self._pointwise(self._lift_fast_unary(fast_exp))
     return self._pointwise(mlir_math.exp)
 
-  def sin(self, approx: bool = False):
+  def sin(self, *, approx: bool = False):
     if not ir.FloatType.isinstance(self.mlir_dtype):
       raise NotImplementedError
     if approx and self.mlir_dtype != ir.F32Type.get():
@@ -347,7 +470,7 @@ class FragmentedArray:
         self._lift_fast_unary("sin.approx.f32") if approx else mlir_math.sin
     )
 
-  def cos(self, approx: bool = False):
+  def cos(self, *, approx: bool = False):
     if not ir.FloatType.isinstance(self.mlir_dtype):
       raise NotImplementedError
     if approx and self.mlir_dtype != ir.F32Type.get():
@@ -356,7 +479,7 @@ class FragmentedArray:
         self._lift_fast_unary("cos.approx.f32") if approx else mlir_math.cos
     )
 
-  def rsqrt(self, approx: bool = False):
+  def rsqrt(self, *, approx: bool = False):
     if not ir.FloatType.isinstance(self.mlir_dtype):
       raise NotImplementedError
     if approx and self.mlir_dtype != ir.F32Type.get():
@@ -428,10 +551,12 @@ class FragmentedArray:
         base_idx[0] : base_idx[0] + slice_shape[0],
         base_idx[1] : base_idx[1] + slice_shape[1],
     ]
-    return FragmentedArray(_registers=new_regs, _layout=self.layout)
+    return FragmentedArray(
+        _registers=new_regs, _layout=self.layout, _is_signed=self.is_signed
+    )
 
   # TODO(apaszke): Support JAX dtypes here as well?
-  def astype(self, new_dtype: ir.Type):
+  def astype(self, new_dtype: ir.Type, *, is_signed: bool | None = None):
     i8 = ir.IntegerType.get_signless(8)
     i16 = ir.IntegerType.get_signless(16)
     i32 = ir.IntegerType.get_signless(32)
@@ -439,7 +564,11 @@ class FragmentedArray:
 
     cur_dtype = self.mlir_dtype
     if cur_dtype == new_dtype:
-      return self
+      if self.is_signed == is_signed:
+        return self
+      return FragmentedArray(
+          _registers=self.registers, _layout=self.layout, _is_signed=is_signed
+      )
     reg_type = self.registers.flat[0].type
     is_vector_reg = ir.VectorType.isinstance(reg_type)
     reg_shape = tuple(ir.VectorType(reg_type).shape) if is_vector_reg else ()
@@ -474,7 +603,9 @@ class FragmentedArray:
         new_registers[idx] = vector.bitcast(
             ir.VectorType.get((2,), new_dtype), new_vec
         )
-      return FragmentedArray(_registers=new_registers, _layout=self.layout)
+      return FragmentedArray(
+          _registers=new_registers, _layout=self.layout, _is_signed=is_signed
+      )
     # Generic path.
     from_float = ir.FloatType.isinstance(cur_dtype)
     to_float = ir.FloatType.isinstance(new_dtype)
@@ -508,7 +639,9 @@ class FragmentedArray:
         raise NotImplementedError(f"Unsupported layout {self.layout}")
     for idx, reg in np.ndenumerate(self.registers):
       new_registers[idx] = convert(new_reg_ty, reg)
-    return FragmentedArray(_registers=new_registers, _layout=self.layout)
+    return FragmentedArray(
+        _registers=new_registers, _layout=self.layout, _is_signed=is_signed
+    )
 
   def reduce_sum(self, scratch) -> ir.Value:
     index = ir.IndexType.get()
@@ -582,7 +715,9 @@ class FragmentedArray:
         )
         result = op(result, other_result)
       new_regs[row_tile, row_subtile] = result
-    return FragmentedArray(_registers=new_regs, _layout=WGMMA_ROW_LAYOUT)
+    return FragmentedArray(
+        _registers=new_regs, _layout=WGMMA_ROW_LAYOUT, _is_signed=self.is_signed
+    )
 
   def broadcast(self, shape):
     if not isinstance(self.layout, WGSplatFragLayout):
@@ -594,7 +729,11 @@ class FragmentedArray:
     if not self.layout.can_broadcast_to(shape):
       raise ValueError(f"Can't broadcast {self.shape} to {shape}")
 
-    return FragmentedArray(_registers=self.registers, _layout=WGSplatFragLayout(shape))
+    return FragmentedArray(
+        _registers=self.registers,
+        _layout=WGSplatFragLayout(shape),
+        _is_signed=self.is_signed,
+    )
 
   def reshape(self, shape):
     if self.shape == shape:
@@ -606,7 +745,11 @@ class FragmentedArray:
     if np.prod(shape) != np.prod(self.shape):
       raise ValueError(f"Can't reshape {self.shape} to {shape}")
 
-    return FragmentedArray(_registers=self.registers, _layout=WGSplatFragLayout(shape))
+    return FragmentedArray(
+        _registers=self.registers,
+        _layout=WGSplatFragLayout(shape),
+        _is_signed=self.is_signed,
+    )
 
   def broadcast_minor(self, n):
     if self.layout != WGMMA_ROW_LAYOUT:
@@ -621,7 +764,20 @@ class FragmentedArray:
       new_regs[row_tile, :, row_subtile, :] = vector.splat(
           ir.VectorType.get((2,), dtype), reg
       )
-    return FragmentedArray(_registers=new_regs, _layout=WGMMA_LAYOUT)
+    return FragmentedArray(
+        _registers=new_regs, _layout=WGMMA_LAYOUT, _is_signed=self.is_signed
+    )
+
+  def foreach(self, fn: Callable[[ir.Value, tuple[ir.Value, ...]], None]):
+    """Call a function for each value and index."""
+    if not isinstance(self.layout, WGStridedFragLayout):
+      raise NotImplementedError(self.layout)
+    index = ir.IndexType.get()
+    for idx, reg in zip(self.layout.thread_vec_idxs(), self.registers.flat):
+      assert len(idx) == len(self.shape), (idx, self.shape)
+      for i in range(self.layout.vec_size):
+        i = c(i, index)
+        fn(vector.extractelement(reg, position=i), (*idx[:-1], arith.addi(idx[-1], i)))
 
   def store_untiled(self, ref: ir.Value):
     if not ir.MemRefType.isinstance(ref.type):
@@ -649,6 +805,7 @@ class FragmentedArray:
         self.registers.flat[0],
         self.shape,
         layout=WGStridedFragLayout(shape=self.shape, vec_size=vec_size),
+        is_signed=self.is_signed,
     )
     fa.store_untiled(ref)
 
@@ -658,8 +815,8 @@ class FragmentedArray:
     if ref_shape != self.shape:
       raise ValueError((ref_shape, self.shape))
     smem_1d = mgpu.memref_fold(ref, 0, len(ref_ty.shape))
-    for idx, reg in zip(self.layout.thread_vec_idxs(), self.registers.flat):
-      vector.store(reg, smem_1d, idx)
+    for idx, reg in zip(self.layout.linear_thread_vec_idxs(), self.registers.flat):
+      vector.store(reg, smem_1d, [idx])
 
   def _store_untiled_wgmma(self, ref: ir.Value):
     """Stores accumulator to a 2D memref. Not optimized at the moment."""
@@ -706,7 +863,9 @@ class FragmentedArray:
       vector.store(get(self.registers), ref, idxs)
 
   @classmethod
-  def load_tiled(cls, ref, swizzle: int | None):
+  def load_tiled(
+      cls, ref, swizzle: int | None, *, is_signed: bool | None = None
+  ):
     ref_ty = ir.MemRefType(ref.type)
     dtype = ref_ty.element_type
     bw = mgpu.bytewidth(dtype)
@@ -722,7 +881,7 @@ class FragmentedArray:
     )
     for _, update, idxs in cls.transfer_tiled((m, n), dtype, swizzle):
       update(registers, vector.load(ir.VectorType.get((2,), dtype), ref, idxs))
-    return cls(_registers=registers, _layout=WGMMA_LAYOUT)
+    return cls(_registers=registers, _layout=WGMMA_LAYOUT, _is_signed=is_signed)
 
   @staticmethod
   def transfer_tiled(shape, dtype, swizzle: int | None):
@@ -809,10 +968,11 @@ class FragmentedArray:
             yield get_register, update_registers, idx
 
   def tree_flatten(self):
-    return list(self.registers.flat), (self.layout, self.registers.shape)
+    aux = self.layout, self.registers.shape, self.is_signed
+    return list(self.registers.flat), aux
 
   @classmethod
   def tree_unflatten(cls, aux, flat_registers):
-    layout, reg_shape = aux
+    layout, reg_shape, is_signed = aux
     registers = np.asarray(flat_registers, dtype=object).reshape(reg_shape)
-    return cls(_registers=registers, _layout=layout)
+    return cls(_registers=registers, _layout=layout, _is_signed=is_signed)

@@ -1509,7 +1509,7 @@ def num_addressable_indices(
 
 
 def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
-  elt_aval = aval.dtype._rules.physical_element_aval(aval.dtype)
+  elt_aval = core.physical_element_aval(aval.dtype)
   new_op_sharding = hlo_sharding.to_proto().clone()
   partitions, num_replicas = get_num_ways_dim_sharded(hlo_sharding)
   suffix = [] if num_replicas == 1 else [num_replicas]
@@ -1526,7 +1526,7 @@ def make_key_array_phys_sharding(aval, sharding):
   if is_single_device_sharding(sharding):
     return sharding
   elif isinstance(sharding, PmapSharding):
-    elt_aval = aval.dtype._rules.physical_element_aval(aval.dtype)
+    elt_aval = core.physical_element_aval(aval.dtype)
     trailing_sharding = [sharding_specs.NoSharding()] * elt_aval.ndim
     phys_sharding_spec = sharding_specs.ShardingSpec(
         sharding=(*sharding.sharding_spec.sharding, *trailing_sharding),
@@ -1534,7 +1534,7 @@ def make_key_array_phys_sharding(aval, sharding):
     return PmapSharding(devices=sharding.devices,
                         sharding_spec=phys_sharding_spec)
   elif isinstance(sharding, NamedSharding):
-    elt_aval = aval.dtype._rules.physical_element_aval(aval.dtype)
+    elt_aval = core.physical_element_aval(aval.dtype)
     trailing_spec = [None] * elt_aval.ndim
     return NamedSharding(
         sharding.mesh,
@@ -1551,7 +1551,7 @@ def physical_sharding(
 
 
 def get_logical_gspmd_sharding(aval, phys_sharding):
-  elt_aval = aval.dtype._rules.physical_element_aval(aval.dtype)
+  elt_aval = core.physical_element_aval(aval.dtype)
   phys_hlo_sharding = phys_sharding._to_xla_hlo_sharding(
       aval.ndim + elt_aval.ndim)
   partitions, num_replicas = get_num_ways_dim_sharded(phys_hlo_sharding)
@@ -1583,7 +1583,7 @@ def logical_sharding(aval, phys_sharding) -> sharding.Sharding:
   if is_single_device_sharding(phys_sharding):
     return phys_sharding
   elif isinstance(phys_sharding, PmapSharding):
-    elt_aval = aval.dtype._rules.physical_element_aval(aval.dtype)
+    elt_aval = core.physical_element_aval(aval.dtype)
     logical_sharding_spec = sharding_specs.ShardingSpec(
         sharding=phys_sharding.sharding_spec.sharding[:-elt_aval.ndim],
         mesh_mapping=phys_sharding.sharding_spec.mesh_mapping)

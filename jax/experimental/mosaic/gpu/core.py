@@ -594,7 +594,7 @@ def _construct_smem_reftree(
             cluster_shape,
         )
       case _:
-        mlir_dtype = mlir.dtype_to_ir_type(ref_ty.dtype)
+        mlir_dtype = utils.dtype_to_ir_type(ref_ty.dtype)
         tile_smem = memref.view(
             ir.MemRefType.get(ref_ty.shape, mlir_dtype, memory_space=smem),
             dynamic_smem, c(dynamic_smem_offset, index), [],
@@ -734,7 +734,7 @@ def _lower_as_gpu_kernel(
   i64 = ir.IntegerType.get_signless(64)
 
   def _shape_to_ref_ty(shape: jax.ShapeDtypeStruct) -> ir.MemRefType:
-    return ir.MemRefType.get(shape.shape, mlir.dtype_to_ir_type(shape.dtype))
+    return ir.MemRefType.get(shape.shape, utils.dtype_to_ir_type(shape.dtype))
 
   in_ref_tys = [_shape_to_ref_ty(t) for t in in_shapes]
 

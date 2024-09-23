@@ -317,7 +317,7 @@ def poly(seq_of_zeros: ArrayLike) -> Array:
     - :func:`jax.numpy.roots`: Computes the roots of a polynomial for given
       coefficients.
 
-  Example:
+  Examples:
 
     Scalar inputs:
 
@@ -407,7 +407,7 @@ def polyval(p: ArrayLike, x: ArrayLike, *, unroll: int = 16) -> Array:
     - :func:`jax.numpy.roots`: Computes the roots of a polynomial for given
       coefficients.
 
-  Example:
+  Examples:
     >>> p = jnp.array([2, 5, 1])
     >>> jnp.polyval(p, 3)
     Array(34., dtype=float32)
@@ -455,7 +455,7 @@ def polyadd(a1: ArrayLike, a2: ArrayLike) -> Array:
     - :func:`jax.numpy.polydiv`: Computes the quotient and remainder of polynomial
       division.
 
-  Example:
+  Examples:
     >>> x1 = jnp.array([2, 3])
     >>> x2 = jnp.array([5, 4, 1])
     >>> jnp.polyadd(x1, x2)
@@ -637,7 +637,7 @@ def polymul(a1: ArrayLike, a2: ArrayLike, *, trim_leading_zeros: bool = False) -
     - :func:`jax.numpy.polydiv`: Computes the quotient and remainder of polynomial
       division.
 
-  Example:
+  Examples:
     >>> x1 = np.array([2, 1, 0])
     >>> x2 = np.array([0, 5, 0, 3])
     >>> np.polymul(x1, x2)
@@ -702,7 +702,7 @@ def polydiv(u: ArrayLike, v: ArrayLike, *, trim_leading_zeros: bool = False) -> 
     - :func:`jax.numpy.polysub`: Computes the difference of two polynomials.
     - :func:`jax.numpy.polymul`: Computes the product of two polynomials.
 
-  Example:
+  Examples:
     >>> x1 = jnp.array([5, 7, 9])
     >>> x2 = jnp.array([4, 1])
     >>> np.polydiv(x1, x2)
@@ -755,7 +755,7 @@ def polysub(a1: ArrayLike, a2: ArrayLike) -> Array:
     - :func:`jax.numpy.polydiv`: Computes the quotient and remainder of polynomial
       division.
 
-  Example:
+  Examples:
     >>> x1 = jnp.array([2, 3])
     >>> x2 = jnp.array([5, 4, 1])
     >>> jnp.polysub(x1, x2)

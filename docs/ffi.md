@@ -311,7 +311,7 @@ Our implementation of `rms_norm` has the appropriate semantics, and it supports 
 np.testing.assert_allclose(jax.vmap(rms_norm)(x), jax.vmap(rms_norm_ref)(x), rtol=1e-5)
 ```
 
-We can inspect the [jaxpr](understanding-jaxprs) of the {func}`~jax.vmap` of `rms_norm` to confirm that it isn't being rewritten using {func}`~jax.lax.scan`:
+We can inspect the [jaxpr](jax-internals-jaxpr) of the {func}`~jax.vmap` of `rms_norm` to confirm that it isn't being rewritten using {func}`~jax.lax.scan`:
 
 ```{code-cell} ipython3
 jax.make_jaxpr(jax.vmap(rms_norm))(x)

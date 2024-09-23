@@ -6308,8 +6308,8 @@ class NumpyDocTests(jtu.JaxTestCase):
 
     unimplemented = ['fromfile', 'fromiter']
     aliases = ['abs', 'acos', 'acosh', 'asin', 'asinh', 'atan', 'atanh', 'atan2',
-               'amax', 'amin', 'around', 'bitwise_right_shift', 'degrees', 'divide',
-               'mod', 'pow', 'radians', 'round_']
+               'amax', 'amin', 'around', 'bitwise_right_shift', 'conj', 'degrees',
+               'divide', 'mod', 'pow', 'radians', 'round_']
     skip_args_check = ['vsplit', 'hsplit', 'dsplit', 'array_split']
 
     for name in dir(jnp):
@@ -6341,6 +6341,8 @@ class NumpyDocTests(jtu.JaxTestCase):
         self.assertNotEmpty(doc)
         self.assertIn("Args:", doc, msg=f"'Args:' not found in docstring of jnp.{name}")
         self.assertIn("Returns:", doc, msg=f"'Returns:' not found in docstring of jnp.{name}")
+        if name not in ["frompyfunc", "isdtype", "promote_types"]:
+          self.assertIn("Examples:", doc, msg=f"'Examples:' not found in docstring of jnp.{name}")
 
   @parameterized.named_parameters(
     {"testcase_name": "_jit" if jit else "", "jit": jit} for jit in [True, False])
