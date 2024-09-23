@@ -683,6 +683,146 @@ class PallasCallInterpretTest(PallasCallTest):
   INTERPRET = True
 
 
+class PallasCallUnblockedIndexingTest(PallasBaseTest):
+
+  def test_block_spec_unblocked(self):
+    def show_program_ids(
+        *, shape, block_shape, grid, indexing_mode: pl.IndexingMode
+    ):
+      def kernel(o1_ref):
+        assert o1_ref.shape == block_shape
+        o1_ref[...] = jnp.full(o1_ref.shape, pl.program_id(0))
+
+      return self.pallas_call(
+          kernel,
+          jax.ShapeDtypeStruct(shape, dtype=np.int32),
+          grid=grid,
+          out_specs=pl.BlockSpec(
+              block_shape, lambda i: (8 * i, 0), indexing_mode=indexing_mode
+          ),
+      )()
+
+    # No padding
+    pids = show_program_ids(
+        shape=(16, 128),
+        block_shape=(8, 128),
+        grid=(2,),
+        indexing_mode=pl.Unblocked(),
+    )
+    expected_pids = np.array([[0] * 128] * 8 + [[1] * 128] * 8, dtype=np.int32)
+    self.assertAllClose(pids, expected_pids)
+
+    if jtu.test_device_matches(["gpu"]) and not self.INTERPRET:
+      self.skipTest("TODO: padding not implemented on GPU yet")
+
+    # Only high padding
+    pids = show_program_ids(
+        shape=(14, 128),
+        block_shape=(8, 128),
+        grid=(2,),
+        indexing_mode=pl.Unblocked(((0, 2), (0, 0))),
+    )
+    expected_pids = np.array([[0] * 128] * 8 + [[1] * 128] * 6, dtype=np.int32)
+    self.assertAllClose(pids, expected_pids)
+
+    # Both low and high padding
+    self.skipTest("TODO: low padding not supported yet")
+    pids = show_program_ids(
+        shape=(11, 128),
+        block_shape=(8, 128),
+        grid=(2,),
+        indexing_mode=pl.Unblocked(((3, 2), (0, 0))),
+    )
+    expected_pids = np.array([[0] * 128] * 5 + [[1] * 128] * 6, dtype=np.int32)
+    self.assertAllClose(pids, expected_pids)
+
+  @parameterized.parameters("int32", "float32")
+  def test_block_spec_unblocked_padding_is_nan(self, dtype_name):
+    if not self.INTERPRET:
+      self.skipTest("Only applicable for the interpret mode")
+
+    dtype = np.dtype(dtype_name)
+
+    def copy_kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    res = self.pallas_call(
+        copy_kernel,
+        jax.ShapeDtypeStruct((6,), dtype=dtype),
+        grid=(1,),
+        in_specs=[
+            pl.BlockSpec(
+                (6,), lambda i: 0, indexing_mode=pl.Unblocked(((1, 2),))
+            )
+        ],
+    )(np.full((3,), 42, dtype=dtype))
+    expected_pad = {"int32": jnp.iinfo(np.int32).min, "float32": np.nan}[
+        dtype_name
+    ]
+    self.assertAllClose(
+        res,
+        np.array(
+            [expected_pad, 42, 42, 42, expected_pad, expected_pad], dtype=dtype
+        ),
+    )
+
+  def test_unblocked_indexing(self):
+    shape = (16 * 8, 128)
+    result_ty = jax.ShapeDtypeStruct((15 * 8, 128), jnp.float32)
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[pl.ds(0, 8)] + x_ref[pl.ds(8, 8)]
+
+    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    y = self.pallas_call(
+        kernel,
+        grid=(15,),
+        in_specs=(
+            pl.BlockSpec(
+                (2 * 8, 128), lambda i: (i * 8, 0), indexing_mode=pl.unblocked
+            ),
+        ),
+        out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+        out_shape=result_ty,
+    )(x)
+    ref = []
+    for i in range(15):
+      block = x[i * 8 : i * 8 + 2 * 8]
+      ref.append(block[0:8] + block[8:16])
+    ref = np.concatenate(ref, axis=0)
+    np.testing.assert_array_equal(y, ref)
+
+  def test_unblocked_indexing_with_padding(self):
+    if jtu.test_device_matches(["gpu"]) and not self.INTERPRET:
+      self.skipTest("TODO: padding not implemented on GPU yet")
+
+    shape = (8, 128)
+    result_ty = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[pl.ds(0, 8)]
+
+    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    y = self.pallas_call(
+        kernel,
+        grid=(1,),
+        in_specs=(
+            pl.BlockSpec(
+                (2 * 8, 128),
+                lambda i: (0, 0),
+                indexing_mode=pl.Unblocked(((0, 8), (0, 0))),
+            ),
+        ),
+        out_specs=pl.BlockSpec((8, 128), lambda i: (0, 0)),
+        out_shape=result_ty,
+    )(x)
+    np.testing.assert_array_equal(y, x)
+
+
+class PallasCallUnblockedIndexingInterpretTest(PallasCallUnblockedIndexingTest):
+  INTERPRET = True
+
+
 class ApiErrorTest(PallasBaseTest):
   def test_pallas_call_kernel_args_mismatch(self):
     a = np.arange(256, dtype=np.int32)

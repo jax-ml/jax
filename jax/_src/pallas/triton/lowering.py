@@ -121,6 +121,12 @@ def _eval_index_map(
       _ensure_ir_value(i, jax_core.ShapedArray((), jnp.int32))
       for i in block_indices
   )
+  if isinstance(block_mapping.indexing_mode, pallas_core.Unblocked):
+    if block_mapping.indexing_mode.padding is not None:
+      raise NotImplementedError(
+          "Unblocked indexing with padding is not supported in Triton lowering."
+      )
+    return tuple(block_indices)
   return tuple(
       i if b is pallas_core.mapped else _mul(i, _ir_constant(b, i.type))
       for i, b in zip(block_indices, block_mapping.block_shape)
@@ -323,11 +329,6 @@ def lower_jaxpr_to_triton_module(
       if grid_mapping.num_index_operands:
         raise NotImplementedError(
             "Scalar prefetch not supported in Triton lowering."
-        )
-      if not all(isinstance(bm.indexing_mode, Blocked)
-                 for bm in grid_mapping.block_mappings):
-        raise NotImplementedError(
-            "Only Blocked indexing mode is supported in Triton lowering."
         )
       start_indices = map(
           functools.partial(_eval_index_map, ctx, program_ids),
