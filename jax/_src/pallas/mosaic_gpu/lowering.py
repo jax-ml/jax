@@ -493,7 +493,7 @@ def lower_jaxpr_to_module(
       jax.ShapeDtypeStruct(shape=[smem_scratch_bytes], dtype=np.int8)
   )
 
-  module, out_structs_smem, _ = mgpu._lower_as_gpu_kernel(
+  module, out_structs_smem, _ = mgpu.core._lower_as_gpu_kernel(
       body,
       grid=grid,
       cluster=(),
