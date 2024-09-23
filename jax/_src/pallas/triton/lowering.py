@@ -2092,8 +2092,10 @@ def _dot_general_lowering(
     dimension_numbers,
     precision,
     preferred_element_type,
+    algorithm,
+    transpose_algorithm,
 ):
-  del preferred_element_type  # Unused.
+  del preferred_element_type, algorithm, transpose_algorithm  # Unused.
   ((a_contract_dim,), (b_contract_dim,)), batch_dims = dimension_numbers
   assert batch_dims == ((), ())
 
