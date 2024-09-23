@@ -408,7 +408,7 @@ ffi::Error SyevdImpl(int64_t batch, int64_t size, gpuStream_t stream,
 
   auto a_data = static_cast<T*>(a.untyped_data());
   auto out_data = static_cast<T*>(out->untyped_data());
-  auto w_data = static_cast<solver::RealType<T>::value*>(w->untyped_data());
+  auto w_data = static_cast<typename solver::RealType<T>::value*>(w->untyped_data());
   auto info_data = info->typed_data();
   if (a_data != out_data) {
     JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
@@ -692,7 +692,7 @@ ffi::Error GesvdImpl(int64_t batch, int64_t rows, int64_t cols,
                        AllocateWorkspace<T>(scratch, lwork, "gesvd"));
   auto a_data = static_cast<T*>(a.untyped_data());
   auto out_data = static_cast<T*>(out->untyped_data());
-  auto s_data = static_cast<solver::RealType<T>::value*>(s->untyped_data());
+  auto s_data = static_cast<typename solver::RealType<T>::value*>(s->untyped_data());
   auto u_data = compute_uv ? static_cast<T*>(u->untyped_data()) : nullptr;
   auto vt_data = compute_uv ? static_cast<T*>(vt->untyped_data()) : nullptr;
   auto info_data = info->typed_data();
