@@ -1461,6 +1461,9 @@ class OpsExtraTest(PallasBaseTest):
       (2, 1, 1),
   )
   def test_atomic_cas(self, init_value, cmp, new_value):
+    if jax.config.x64_enabled and jtu.test_device_matches(["gpu"]):
+      self.skipTest("Not supported on GPU in 64-bit mode")
+
     @functools.partial(
         self.pallas_call, out_shape=(
           jax.ShapeDtypeStruct((), intx),
@@ -1479,10 +1482,13 @@ class OpsExtraTest(PallasBaseTest):
     if self.INTERPRET:
       self.skipTest("While loop not supported in interpret mode.")
 
+    if jax.config.x64_enabled and jtu.test_device_matches(["gpu"]):
+      self.skipTest("Not supported on GPU in 64-bit mode")
+
     @functools.partial(
         self.pallas_call, out_shape=(
-          jax.ShapeDtypeStruct((), jnp.int32),
-          jax.ShapeDtypeStruct((), jnp.int32)),
+          jax.ShapeDtypeStruct((), intx),
+          jax.ShapeDtypeStruct((), intx)),
         input_output_aliases={0: 0, 1: 1},
         grid=(num_threads,))
     def increment(_, __, lock_ref, counter_ref):
