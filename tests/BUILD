@@ -1189,7 +1189,6 @@ jax_test(
     },
     tags = [
         "noasan",  # Times out.
-        "notsan",  # TODO(b/309111150): Re-enable after rolling forward cl/666056414.
     ],
     deps = [
         "//jax:experimental",
