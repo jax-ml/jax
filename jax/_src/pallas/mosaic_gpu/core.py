@@ -68,6 +68,7 @@ class MemoryRefTransform(pallas_core.MemoryRefTransform, Protocol):
     ...
 
 
+@dataclasses.dataclass(frozen=True)
 class TilingTransform(MemoryRefTransform):
   """Represents a tiling transformation for memory refs.
 
@@ -76,8 +77,7 @@ class TilingTransform(MemoryRefTransform):
   tiling of (64, 32) will be tiled as (4, 8, 64, 32).
   """
 
-  def __init__(self, tiling: tuple[int, ...]):
-    self.tiling = tiling
+  tiling: tuple[int, ...]
 
   def __call__(
       self, block_aval: pallas_core.AbstractMemoryRef

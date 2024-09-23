@@ -340,6 +340,44 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x + 2.0 + 3.0)
 
+  def test_wgmma(self):
+    dtype = jnp.float16
+    swizzle = 128
+    elems_128b = swizzle // jnp.dtype(dtype).itemsize
+    def kernel(a_ref, b_ref, o_ref):
+      acc = plgpu.zero_accumulator((64, 128), jnp.float32)
+      acc = plgpu.wgmma(acc, a_ref, b_ref, rhs_transpose=False)
+      plgpu.wgmma_wait(0)
+      # TODO(cperivol): turn acc into a reference so we can reason about effects.
+      o_ref[...] = acc.as_array()
+
+    key1, key2 = jax.random.split(jax.random.key(42), 2)
+    a = jax.random.uniform(key1, shape=(64, 128), dtype=dtype)
+    b = jax.random.uniform(key2, shape=(128, 128), dtype=dtype)
+
+    res = pl.pallas_call(
+        kernel,
+        in_specs=[
+            plgpu.GPUBlockSpec(
+                (64, 128),
+                lambda i, j: (i, j),
+                tiling=(64, elems_128b),
+                swizzle=128,
+            ),
+            plgpu.GPUBlockSpec(
+                (128, 128),
+                lambda *i: i,
+                tiling=(elems_128b, elems_128b),
+                swizzle=128,
+            ),
+        ],
+        out_specs=plgpu.GPUBlockSpec((64, 128), lambda *i: i),
+        out_shape=jax.ShapeDtypeStruct((64, 128), jnp.float32),
+        grid=(1, 1),
+    )(a, b)
+    np.testing.assert_allclose(
+        res, a @ b, rtol=1e-3
+    )
 
 if __name__ == "__main__":
   absltest.main()
