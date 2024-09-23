@@ -237,7 +237,7 @@ def dsd_kernel(idxs_i_ref, idxs_k_ref, # Scalar prefetch inputs.
                ):
   """A DSD (Dense = Sparse @ Dense) matmul kernel."""
   del idxs_k_ref
-  blk_idx = pl.program_id(1)
+  blk_idx = pl.program_id(0)
   is_start = blk_idx == 0
   changed_blocks = (idxs_i_ref[blk_idx] != idxs_i_ref[jnp.maximum(blk_idx-1, 0)])
   @pl.when(is_start | changed_blocks)
