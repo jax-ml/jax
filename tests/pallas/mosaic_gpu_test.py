@@ -379,5 +379,22 @@ class PallasCallTest(PallasTest):
         res, a @ b, rtol=1e-3
     )
 
+  def test_input_output_aliases(self):
+    # Note that we're writing to the input pointer, which should alias b_ptr.
+    def kernel(a_ref, b_ref):
+      del b_ref
+      a_ref[...] = jnp.ones_like(a_ref)
+
+    a = np.zeros((64, 64), dtype=jnp.float32)
+    b = pl.pallas_call(
+        kernel,
+        in_specs=[plgpu.GPUBlockSpec(memory_space=plgpu.GPUMemorySpace.GMEM)],
+        out_specs=plgpu.GPUBlockSpec(memory_space=plgpu.GPUMemorySpace.GMEM),
+        input_output_aliases={0: 0},
+        out_shape=a,
+    )(a)
+    np.testing.assert_array_equal(b, np.ones_like(a))
+
+
 if __name__ == "__main__":
   absltest.main()

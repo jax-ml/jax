@@ -44,10 +44,6 @@ def pallas_call_lowering(
     raise NotImplementedError(
         "dynamic grid bounds not supported in the Mosaic GPU backend"
     )
-  if input_output_aliases:
-    raise NotImplementedError(
-        "input_output_aliases not supported in the Mosaic GPU backend"
-    )
 
   if debug:
     print(f"\nThe kernel jaxpr for pallas_call {name_and_src_info}:")
@@ -72,4 +68,5 @@ def pallas_call_lowering(
       *args,
       module=module.operation.get_asm(binary=True, enable_debug_info=True),
       out_types=lowering_result.out_structs,
+      input_output_aliases=input_output_aliases,
   )
