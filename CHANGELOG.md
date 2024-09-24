@@ -35,6 +35,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {class}`jax.ShapeDtypeStruct` no longer accepts the `named_shape` argument.
     The argument was only used by `xmap` which was removed in 0.4.31.
 
+* Bug fixes
+  * Fixed a bug where {func}`jax.numpy.cumsum` would produce incorrect outputs
+    if a non-boolean input was provided and `dtype=bool` was specified.
 
 ## jax 0.4.33 (September 16, 2024)
 
