@@ -243,6 +243,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
       mock.patch.object(cc._get_cache(backend).__class__, "put") as mock_put,
       warnings.catch_warnings(record=True) as w,
     ):
+      warnings.simplefilter("always")
       mock_put.side_effect = RuntimeError("test error")
       self.assertEqual(f(2).item(), 4)
       if len(w) != 1:
@@ -265,6 +266,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
       mock.patch.object(cc._get_cache(backend).__class__, "get") as mock_get,
       warnings.catch_warnings(record=True) as w,
     ):
+      warnings.simplefilter("always")
       mock_get.side_effect = RuntimeError("test error")
       # Calling assertEqual with the jitted f will generate two PJIT
       # executables: Equal and the lambda function itself.
