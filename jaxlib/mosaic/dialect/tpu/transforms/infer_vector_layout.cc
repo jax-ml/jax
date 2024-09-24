@@ -196,12 +196,16 @@ class VectorLayoutInferer {
         auto out_ty = dyn_cast<VectorType>(op.getType());
         TPU_CHECK_OP(static_cast<bool>(in_ty) == static_cast<bool>(out_ty),
                      "Input and output are not both vectors?");
-        if (in_ty) {
-          TPU_CHECK_OP(in_ty.getElementTypeBitWidth() == 1,
-                       "Only extending i1 is supported");
-        }
-        if (inferElementwise(&any_op, /*check_bitwidth=*/false).failed()) {
-          return failure();
+        auto in_bitwidth = in_ty ? in_ty.getElementTypeBitWidth()
+                                 : op.getIn().getType().getIntOrFloatBitWidth();
+        if (in_bitwidth == 1) {
+          if (inferElementwise(&any_op, /*check_bitwidth=*/false).failed()) {
+            return failure();
+          }
+        } else {
+          if (inferExt(&any_op).failed()) {
+            return failure();
+          }
         }
       } else if (isa<arith::CmpIOp>(any_op) || isa<arith::CmpFOp>(any_op)) {
         Operation *op = &any_op;  // For TPU_CHECK_OP macros, which use the `op`
