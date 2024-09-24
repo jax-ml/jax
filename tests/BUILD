@@ -997,6 +997,7 @@ jax_multiplatform_test(
         "cpu": ["--jax_num_generated_cases=40"],
         "cpu_x32": ["--jax_num_generated_cases=40"],
         "gpu": ["--jax_num_generated_cases=40"],
+        "tpu": ["--jax_num_generated_cases=40"],
     },
     shard_count = {
         "cpu": 50,
