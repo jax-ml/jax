@@ -956,7 +956,7 @@ def vmap(fun: F,
     # list: if in_axes is not a leaf, it must be a tuple of trees. However,
     # in cases like these users expect tuples and lists to be treated
     # essentially interchangeably, so we canonicalize lists to tuples here
-    # rather than raising an error. https://github.com/google/jax/issues/2367
+    # rather than raising an error. https://github.com/jax-ml/jax/issues/2367
     in_axes = tuple(in_axes)
 
   if not (in_axes is None or type(in_axes) in {int, tuple, *batching.spec_types}):
@@ -1826,7 +1826,7 @@ def _lift_linearized(jaxpr, primal_avals, io_tree, out_pvals, consts, *py_args):
   def fun(*tangents):
     tangent_avals = list(map(core.get_aval, tangents))
     for primal_aval, tangent_aval in zip(primal_avals, tangent_avals):
-      if not core.typecompat(primal_aval.at_least_vspace(), tangent_aval):
+      if not core.typecompat(primal_aval.to_tangent_aval(), tangent_aval):
         raise ValueError("linearized function called on tangent values inconsistent with "
                          "the original primal values: "
                          f"got {tangent_aval} for primal aval {primal_aval}")
@@ -1869,7 +1869,7 @@ def _vjp_pullback_wrapper(name, out_primal_avals, io_tree, fun, *py_args_):
                      f"got {in_tree}, but expected to match {in_tree_expected}")
   for arg, aval in zip(args, out_primal_avals):
     ct_aval = shaped_abstractify(arg)
-    ct_aval_expected = aval.at_least_vspace()
+    ct_aval_expected = aval.to_tangent_aval()
     if (not core.typecompat(ct_aval, ct_aval_expected) and
         not _temporary_dtype_exception(ct_aval, ct_aval_expected)):
       raise ValueError(
@@ -2505,7 +2505,7 @@ class ShapeDtypeStruct:
 
   def __hash__(self):
     # TODO(frostig): avoid the conversion from dict by addressing
-    # https://github.com/google/jax/issues/8182
+    # https://github.com/jax-ml/jax/issues/8182
     return hash((self.shape, self.dtype, self.sharding, self.layout, self.weak_type))
 
 def _sds_aval_mapping(x):
@@ -2726,7 +2726,8 @@ def clear_backends():
   pjit._infer_params_cached.cache_clear()
   pjit._pjit_lower_cached.cache_clear()
   pjit._create_pjit_jaxpr.cache_clear()  # pytype: disable=attribute-error
-  pjit._cpp_pjit_cache.clear()
+  pjit._cpp_pjit_cache_fun_only.clear()
+  pjit._cpp_pjit_cache_explicit_attributes.clear()
   xc._xla.PjitFunctionCache.clear_all()
 
 @atexit.register
@@ -2755,7 +2756,8 @@ def clear_caches():
   util.clear_all_weakref_lru_caches()
 
   # Clear all C++ compiled executable caches for pjit
-  pjit._cpp_pjit_cache.clear()
+  pjit._cpp_pjit_cache_fun_only.clear()
+  pjit._cpp_pjit_cache_explicit_attributes.clear()
   pjit._infer_params_cached.cache_clear()
   xc._xla.PjitFunctionCache.clear_all()
 

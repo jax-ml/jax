@@ -30,7 +30,7 @@ Instead of writing this information as conditions inside one
 particular test, we write them as `Limitation` objects that can be reused in
 multiple tests and can also be used to generate documentation, e.g.,
 the report of [unsupported and partially-implemented JAX
-primitives](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md)
+primitives](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md)
 
 The limitations are used to filter out from tests the harnesses that are known
 to fail. A Limitation is specific to a harness.
@@ -515,7 +515,7 @@ def _make_convert_element_type_harness(name,
 for old_dtype in jtu.dtypes.all:
   # TODO(bchetioui): JAX behaves weirdly when old_dtype corresponds to floating
   # point numbers and new_dtype is an unsigned integer. See issue
-  # https://github.com/google/jax/issues/5082 for details.
+  # https://github.com/jax-ml/jax/issues/5082 for details.
   for new_dtype in (jtu.dtypes.all
                     if not (dtypes.issubdtype(old_dtype, np.floating) or
                             dtypes.issubdtype(old_dtype, np.complexfloating))
@@ -2336,7 +2336,7 @@ _make_select_and_scatter_add_harness("select_prim", select_prim=lax.le_p)
 # Validate padding
 for padding in [
     # TODO(bchetioui): commented out the test based on
-    # https://github.com/google/jax/issues/4690
+    # https://github.com/jax-ml/jax/issues/4690
     # ((1, 2), (2, 3), (3, 4)) # non-zero padding
     ((1, 1), (1, 1), (1, 1))  # non-zero padding
 ]:

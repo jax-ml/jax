@@ -404,7 +404,7 @@ class JetTest(jtu.JaxTestCase):
     self.assertArraysEqual(g_out_series, f_out_series)
 
   def test_add_any(self):
-    # https://github.com/google/jax/issues/5217
+    # https://github.com/jax-ml/jax/issues/5217
     f = lambda x, eps: x * eps + eps + x
     def g(eps):
       x = jnp.array(1.)
@@ -412,7 +412,7 @@ class JetTest(jtu.JaxTestCase):
     jet(g, (1.,), ([1.],))  # doesn't crash
 
   def test_scatter_add(self):
-    # very basic test from https://github.com/google/jax/issues/5365
+    # very basic test from https://github.com/jax-ml/jax/issues/5365
     def f(x):
       x0 = x[0]
       x1 = x[1]

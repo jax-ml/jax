@@ -578,6 +578,34 @@ class DtypesTest(jtu.JaxTestCase):
     with self.assertWarnsRegex(DeprecationWarning, msg):
       jax.jit(dtypes.check_user_dtype_supported)(x)
 
+  @parameterized.parameters([True])  # TODO(mattjj): make jit=False work
+  def test_primal_tangent_dtype(self, jit):
+    dt = dtypes.primal_tangent_dtype(jnp.int8, jnp.bfloat16)
+
+    x = jax.random.uniform(jax.random.key(0), (3,), minval=0, maxval=10
+                           ).astype(jnp.int8)
+    g = jax.random.uniform(jax.random.key(0), (3,), minval=0, maxval=10
+                           ).astype(jnp.bfloat16)
+
+    @jax.custom_gradient
+    def f(x):
+      def bwd(g):
+        return 2 * g,
+      return jnp.int8(x).astype(g.dtype) * 2 + 1, bwd
+
+    def h():
+      result, bwd = jax.vjp(f, x.astype(dt))
+      bwd_result, = bwd(g)
+      return result, bwd_result
+
+    if jit:
+      h = jax.jit(h)
+
+    result, bwd_result = h()
+    self.assertEqual(result.dtype, jnp.bfloat16)
+    self.assertEqual(bwd_result.dtype, jnp.bfloat16)
+    self.assertAllClose(bwd_result, 2 * g)
+
 
 class EArrayTest(jtu.JaxTestCase):
 
@@ -667,7 +695,7 @@ class TestPromotionTables(jtu.JaxTestCase):
       {"testcase_name": f"_{typ}", "typ": typ}
        for typ in [bool, int, float, complex])
   def testScalarWeakTypes(self, typ):
-    # Regression test for https://github.com/google/jax/issues/11377
+    # Regression test for https://github.com/jax-ml/jax/issues/11377
     val = typ(0)
 
     result1 = jnp.array(val)
@@ -806,7 +834,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     for weak_type in [True, False]
   )
   def testUnaryPromotion(self, dtype, weak_type):
-    # Regression test for https://github.com/google/jax/issues/6051
+    # Regression test for https://github.com/jax-ml/jax/issues/6051
     if dtype in intn_dtypes:
       self.skipTest("XLA support for int2 and int4 is incomplete.")
     x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
@@ -852,7 +880,7 @@ class TestPromotionTables(jtu.JaxTestCase):
       self.skipTest("XLA support for float8 is incomplete.")
     if dtype in intn_dtypes:
       self.skipTest("XLA support for int2 and int4 is incomplete.")
-    # Regression test for https://github.com/google/jax/issues/6051
+    # Regression test for https://github.com/jax-ml/jax/issues/6051
     x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     with jax.numpy_dtype_promotion(promotion):
       y = (x + x)

@@ -165,6 +165,49 @@ JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, Syevd);
 JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, Syrk);
 #undef JAX_GPU_SOLVER_Syrk_ARGS
 
+// Singular Value Decomposition: gesvd
+
+#define JAX_GPU_SOLVER_GesvdBufferSize_ARGS(Type, ...) \
+  gpusolverDnHandle_t handle, signed char job, int m, int n
+JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::StatusOr<int>, GesvdBufferSize);
+#undef JAX_GPU_SOLVER_GesvdBufferSize_ARGS
+
+#define JAX_GPU_SOLVER_Gesvd_ARGS(Type, Real)                                  \
+  gpusolverDnHandle_t handle, signed char job, int m, int n, Type *a, Real *s, \
+      Type *u, Type *vt, Type *workspace, int lwork, int *info
+JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, Gesvd);
+#undef JAX_GPU_SOLVER_Gesvd_ARGS
+
+#ifdef JAX_GPU_CUDA
+
+#define JAX_GPU_SOLVER_GesvdjBufferSize_ARGS(Type, ...)                       \
+  gpusolverDnHandle_t handle, gpusolverEigMode_t job, int econ, int m, int n, \
+      gesvdjInfo_t params
+JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::StatusOr<int>, GesvdjBufferSize);
+#undef JAX_GPU_SOLVER_GesvdjBufferSize_ARGS
+
+#define JAX_GPU_SOLVER_Gesvdj_ARGS(Type, Real)                                \
+  gpusolverDnHandle_t handle, gpusolverEigMode_t job, int econ, int m, int n, \
+      Type *a, Real *s, Type *u, Type *v, Type *workspace,   \
+      int lwork, int *info, gesvdjInfo_t params
+JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, Gesvdj);
+#undef JAX_GPU_SOLVER_Gesvdj_ARGS
+
+#define JAX_GPU_SOLVER_GesvdjBatchedBufferSize_ARGS(Type, ...)      \
+  gpusolverDnHandle_t handle, gpusolverEigMode_t job, int m, int n, \
+      gpuGesvdjInfo_t params, int batch
+JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::StatusOr<int>, GesvdjBatchedBufferSize);
+#undef JAX_GPU_SOLVER_GesvdjBatchedBufferSize_ARGS
+
+#define JAX_GPU_SOLVER_GesvdjBatched_ARGS(Type, Real)                         \
+  gpusolverDnHandle_t handle, gpusolverEigMode_t job, int m, int n, Type *a,  \
+      Real *s, Type *u, Type *v, Type *workspace, int lwork, \
+      int *info, gpuGesvdjInfo_t params, int batch
+JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, GesvdjBatched);
+#undef JAX_GPU_SOLVER_GesvdjBatched_ARGS
+
+#endif  // JAX_GPU_CUDA
+
 #undef JAX_GPU_SOLVER_EXPAND_DEFINITION
 
 }  // namespace solver

@@ -496,7 +496,7 @@ class IndexingTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_op_idx, args_maker)
 
   def testIndexApplyBatchingBug(self):
-    # https://github.com/google/jax/issues/16655
+    # https://github.com/jax-ml/jax/issues/16655
     arr = jnp.array([[1, 2, 3, 4, 5, 6]])
     ind = jnp.array([3])
     func = lambda a, i: a.at[i].apply(lambda x: x - 1)
@@ -505,7 +505,7 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, expected)
 
   def testIndexUpdateScalarBug(self):
-    # https://github.com/google/jax/issues/14923
+    # https://github.com/jax-ml/jax/issues/14923
     a = jnp.arange(10.)
     out = a.at[0].apply(jnp.cos)
     self.assertArraysEqual(out, a.at[0].set(1))
@@ -835,7 +835,7 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testBoolean1DIndexingWithEllipsis(self):
-    # Regression test for https://github.com/google/jax/issues/8412
+    # Regression test for https://github.com/jax-ml/jax/issues/8412
     x = np.arange(24).reshape(4, 3, 2)
     idx = (..., np.array([True, False]))
     ans = jnp.array(x)[idx]
@@ -843,7 +843,7 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testBoolean1DIndexingWithEllipsis2(self):
-    # Regression test for https://github.com/google/jax/issues/9050
+    # Regression test for https://github.com/jax-ml/jax/issues/9050
     x = np.arange(3)
     idx = (..., np.array([True, False, True]))
     ans = jnp.array(x)[idx]
@@ -936,7 +936,7 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
 
   def testTrivialGatherIsntGenerated(self):
-    # https://github.com/google/jax/issues/1621
+    # https://github.com/jax-ml/jax/issues/1621
     jaxpr = jax.make_jaxpr(lambda x: x[:, None])(np.arange(4))
     self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
     self.assertNotIn('gather', str(jaxpr))
@@ -988,14 +988,14 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testBooleanIndexingShapeMismatch(self):
-    # Regression test for https://github.com/google/jax/issues/7329
+    # Regression test for https://github.com/jax-ml/jax/issues/7329
     x = jnp.arange(4)
     idx = jnp.array([True, False])
     with self.assertRaisesRegex(IndexError, "boolean index did not match shape.*"):
       x[idx]
 
   def testBooleanIndexingWithNone(self):
-    # Regression test for https://github.com/google/jax/issues/18542
+    # Regression test for https://github.com/jax-ml/jax/issues/18542
     x = jnp.arange(6).reshape(2, 3)
     idx = (None, jnp.array([True, False]))
     ans = x[idx]
@@ -1003,7 +1003,7 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
   def testBooleanIndexingWithNoneAndEllipsis(self):
-    # Regression test for https://github.com/google/jax/issues/18542
+    # Regression test for https://github.com/jax-ml/jax/issues/18542
     x = jnp.arange(6).reshape(2, 3)
     mask = jnp.array([True, False, False])
     ans = x[None, ..., mask]
@@ -1011,7 +1011,7 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
   def testBooleanIndexingWithEllipsisAndNone(self):
-    # Regression test for https://github.com/google/jax/issues/18542
+    # Regression test for https://github.com/jax-ml/jax/issues/18542
     x = jnp.arange(6).reshape(2, 3)
     mask = jnp.array([True, False, False])
     ans = x[..., None, mask]
@@ -1038,7 +1038,7 @@ class IndexingTest(jtu.JaxTestCase):
       [(3, 4, 5), (3, 0)],
   )
   def testEmptyBooleanIndexing(self, x_shape, m_shape):
-    # Regression test for https://github.com/google/jax/issues/22886
+    # Regression test for https://github.com/jax-ml/jax/issues/22886
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(x_shape, np.int32), np.empty(m_shape, dtype=bool)]
 
@@ -1120,7 +1120,7 @@ class IndexingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, msg):
       jnp.zeros((2, 3))[:, 'abc']
 
-  def testIndexOutOfBounds(self):  # https://github.com/google/jax/issues/2245
+  def testIndexOutOfBounds(self):  # https://github.com/jax-ml/jax/issues/2245
     x = jnp.arange(5, dtype=jnp.int32) + 1
     self.assertAllClose(x, x[:10])
 
@@ -1613,7 +1613,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_fun, args_maker)
 
   def testIndexDtypeError(self):
-    # https://github.com/google/jax/issues/2795
+    # https://github.com/jax-ml/jax/issues/2795
     jnp.array(1)  # get rid of startup warning
     with self.assertNoWarnings():
       jnp.zeros(5).at[::2].set(1)
@@ -1647,13 +1647,13 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       x.at[normalize(idx)].set(0)
 
   def testIndexedUpdateAliasingBug(self):
-    # https://github.com/google/jax/issues/7461
+    # https://github.com/jax-ml/jax/issues/7461
     fn = lambda x: x.at[1:].set(1 + x[:-1])
     y = jnp.zeros(8)
     self.assertArraysEqual(fn(y), jax.jit(fn)(y))
 
   def testScatterValuesCastToTargetDType(self):
-    # https://github.com/google/jax/issues/15505
+    # https://github.com/jax-ml/jax/issues/15505
     a = jnp.zeros(1, dtype=jnp.uint32)
     val = 2**32 - 1  # too large for int32
 

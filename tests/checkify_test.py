@@ -23,6 +23,7 @@ import jax
 from jax import lax
 from jax.experimental import checkify
 from jax.experimental import pjit
+from jax.experimental import shard_map
 from jax.sharding import NamedSharding
 from jax._src import array
 from jax._src import config
@@ -538,6 +539,46 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     self.assertStartsWith(u_err.get(), "division by zero")
     self.assertIsNotNone(b_err.get())
     self.assertStartsWith(b_err.get(), "division by zero")
+
+  @parameterized.parameters(True, False)
+  def test_shard_map(self, check_rep):
+    def f(x):
+      # unary func
+      return jax.lax.axis_index("dev") * x / x
+
+    def g(x, y):
+      # binary func
+      return jax.lax.axis_index("dev") * x / y
+
+    devices = jax.local_devices()[:8] # Taking up to 8 devices
+    mesh = jax.sharding.Mesh(np.array(devices), ["dev"])
+    pspec = jax.sharding.PartitionSpec("dev")
+    ps = NamedSharding(mesh, pspec)
+    inp = np.tile(np.arange(4, dtype=np.int32), 2)
+    x = array.make_array_from_callback(inp.shape, ps, lambda idx: inp[idx])
+
+    f = shard_map.shard_map(
+        f, mesh, in_specs=pspec, out_specs=pspec, check_rep=check_rep
+    )
+    f = jax.jit(f, in_shardings=ps, out_shardings=ps)
+    f = checkify.checkify(f, errors=checkify.float_checks)
+    g = shard_map.shard_map(
+        g, mesh, in_specs=(pspec, pspec), out_specs=pspec, check_rep=check_rep
+    )
+    g = jax.jit(g, in_shardings=(ps, ps), out_shardings=ps)
+    g = checkify.checkify(g, errors=checkify.float_checks)
+    u_err, _ = f(x)
+    b_err, _ = g(x, x)
+
+    divbyzero = "division by zero"
+    expected_err = f"at mapped index 0: {divbyzero}"
+    if (next_device_with_zero := len(devices) // 2) != 0:
+      expected_err += f"\nat mapped index {next_device_with_zero}: {divbyzero}"
+
+    self.assertIsNotNone(u_err.get())
+    self.assertEqual(u_err.get(), expected_err)
+    self.assertIsNotNone(b_err.get())
+    self.assertEqual(b_err.get(), expected_err)
 
   def test_empty_enabled_errors(self):
     def multi_errors(x):

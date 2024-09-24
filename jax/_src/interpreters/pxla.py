@@ -22,6 +22,7 @@ from collections import namedtuple
 from collections.abc import Callable, Sequence, Iterable, Iterator
 import dataclasses
 from functools import partial, lru_cache, cached_property
+import functools
 import itertools as it
 import logging
 import math
@@ -61,6 +62,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.layout import DeviceLocalLayout, AutoLayout, Layout
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
@@ -88,6 +90,7 @@ unsafe_map, map = map, safe_map  # type: ignore
 logger = logging.getLogger(__name__)
 
 Index = Union[int, slice, tuple[Union[int, slice], ...]]
+PyTreeDef = tree_util.PyTreeDef
 
 NoSharding = sharding_specs.NoSharding
 Chunked = sharding_specs.Chunked
@@ -497,7 +500,7 @@ class MapTrace(core.Trace):
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
     if symbolic_zeros:
       msg = ("custom_jvp with symbolic_zeros=True not supported with eager pmap. "
-             "Please open an issue at https://github.com/google/jax/issues !")
+             "Please open an issue at https://github.com/jax-ml/jax/issues !")
       raise NotImplementedError(msg)
     del prim, jvp, symbolic_zeros  # always base main, can drop jvp
     in_vals, in_axes = unzip2((t.val, t.shard_axes) for t in tracers)
@@ -510,7 +513,7 @@ class MapTrace(core.Trace):
                               out_trees, symbolic_zeros):
     if symbolic_zeros:
       msg = ("custom_vjp with symbolic_zeros=True not supported with eager pmap. "
-             "Please open an issue at https://github.com/google/jax/issues !")
+             "Please open an issue at https://github.com/jax-ml/jax/issues !")
       raise NotImplementedError(msg)
     del primitive, fwd, bwd, out_trees, symbolic_zeros  # always base main, drop vjp
     in_vals, in_axes = unzip2((t.val, t.shard_axes) for t in tracers)
@@ -1426,7 +1429,7 @@ def _hlo_shard(aval, axis_env, x, in_axis):
     return x
   elif isinstance(aval, core.ShapedArray):
     if dtypes.issubdtype(aval.dtype, dtypes.extended):
-      aval = aval.dtype._rules.physical_element_aval(aval.dtype)
+      aval = core.physical_element_aval(aval.dtype)
     dims = list(aval.shape)
     zero = mlir.ir_constant(np.zeros((), dtype=np.uint32))
     idxs = [zero] * len(dims)
@@ -1866,7 +1869,7 @@ def _raise_warnings_or_errors_for_jit_of_pmap(
          "does not preserve sharded data representations and instead collects "
          "input and output arrays onto a single device. "
          "Consider removing the outer jit unless you know what you're doing. "
-         "See https://github.com/google/jax/issues/2926.")
+         "See https://github.com/jax-ml/jax/issues/2926.")
 
   if nreps > xb.device_count(backend):
     raise ValueError(
@@ -2904,6 +2907,34 @@ class MeshExecutableFastpathData(NamedTuple):
   in_device_local_layouts: Sequence[DeviceLocalLayout | None]
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class JitGlobalCppCacheKeys:
+  donate_argnums: tuple[int, ...] | None = None
+  donate_argnames: tuple[str, ...] | None = None
+  device: xc.Device | None = None
+  backend: str | None = None
+  in_shardings_treedef: PyTreeDef | None = None
+  in_shardings_leaves: tuple[Any, ...] | None = None
+  out_shardings_treedef: PyTreeDef | None = None
+  out_shardings_leaves: tuple[Any, ...] | None = None
+  in_layouts_treedef: PyTreeDef | None = None
+  in_layouts_leaves: tuple[Any, ...] | None = None
+  out_layouts_treedef: PyTreeDef | None = None
+  out_layouts_leaves: tuple[Any, ...] | None = None
+  use_resource_env: bool = False
+
+  @functools.cached_property
+  def contains_explicit_attributes(self):
+    return (self.donate_argnums is not None or
+            self.donate_argnames is not None or
+            self.device is not None or
+            self.backend is not None or
+            any(not is_unspecified(i) for i in self.in_shardings_leaves) or
+            any(not is_unspecified(o) for o in self.out_shardings_leaves) or
+            any(i is not None for i in self.in_layouts_leaves) or
+            any(o is not None for o in self.out_layouts_leaves))
+
+
 def reflatten_outputs_for_dispatch(out_tree, out_flat):
   # We arrive at dispatch having flattened according to the default
   # pytree registry, but we want to re-flatten according to our
@@ -3017,9 +3048,14 @@ class MeshExecutable(stages.XlaExecutable):
         fastpath_data = None
       return outs, fastpath_data, False  # Do not remove cache entry
 
-    return xc._xla.pjit(
-        self.unsafe_call.name, None, aot_cache_miss, [], [], [],
-        tree_util.dispatch_registry, cc_shard_arg)
+    if xla_extension_version >= 286:
+      return xc._xla.pjit(
+          self.unsafe_call.name, None, aot_cache_miss, [], [],
+          JitGlobalCppCacheKeys(), tree_util.dispatch_registry, cc_shard_arg)
+    else:
+      return xc._xla.pjit(
+          self.unsafe_call.name, None, aot_cache_miss, [], [], [],
+          tree_util.dispatch_registry, cc_shard_arg)
 
 def cc_shard_arg(x, sharding, layout):
   return shard_args([sharding], [layout], [x])[0]

@@ -103,7 +103,7 @@ Design and background
 **TLDR**: JAX PRNG = `Threefry counter PRNG <http://www.thesalmons.org/john/random123/papers/random123sc11.pdf>`_
 + a functional array-oriented `splitting model <https://dl.acm.org/citation.cfm?id=2503784>`_
 
-See `docs/jep/263-prng.md <https://github.com/google/jax/blob/main/docs/jep/263-prng.md>`_
+See `docs/jep/263-prng.md <https://github.com/jax-ml/jax/blob/main/docs/jep/263-prng.md>`_
 for more details.
 
 To summarize, among other requirements, the JAX PRNG aims to:
@@ -201,7 +201,7 @@ https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_
 """
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.random import (
   PRNGKey as PRNGKey,

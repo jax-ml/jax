@@ -21,7 +21,7 @@ exported at `jax.typing`. Until then, the contents here should be considered uns
 and may change without notice.
 
 To see the proposal that led to the development of these tools, see
-https://github.com/google/jax/pull/11859/.
+https://github.com/jax-ml/jax/pull/11859/.
 """
 
 from __future__ import annotations

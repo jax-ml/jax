@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.core import (
   AbstractToken as AbstractToken,
@@ -29,6 +29,7 @@ from jax._src.core import (
   Effect as Effect,
   Effects as Effects,
   EvalTrace as EvalTrace,
+  get_opaque_trace_state as get_opaque_trace_state,
   InDBIdx as InDBIdx,
   InconclusiveDimensionOperation as InconclusiveDimensionOperation,
   InputType as InputType,
@@ -41,6 +42,8 @@ from jax._src.core import (
   Literal as Literal,
   MainTrace as MainTrace,
   MapPrimitive as MapPrimitive,
+  nonempty_axis_env as nonempty_axis_env_DO_NOT_USE,
+  OpaqueTraceState as OpaqueTraceState,
   NameGatheringSubst as NameGatheringSubst,
   OutDBIdx as OutDBIdx,
   OutputType as OutputType,
@@ -55,6 +58,9 @@ from jax._src.core import (
   TraceStack as TraceStack,
   TraceState as TraceState,
   Tracer as Tracer,
+  unsafe_am_i_under_a_jit as unsafe_am_i_under_a_jit_DO_NOT_USE,
+  unsafe_am_i_under_a_vmap as unsafe_am_i_under_a_vmap_DO_NOT_USE,
+  unsafe_get_axis_names as unsafe_get_axis_names_DO_NOT_USE,
   UnshapedArray as UnshapedArray,
   Value as Value,
   Var as Var,
@@ -85,6 +91,7 @@ from jax._src.core import (
   full_lower as full_lower,
   gensym as gensym,
   get_aval as get_aval,
+  get_type as get_type,
   get_referent as get_referent,
   is_constant_dim as is_constant_dim,
   is_constant_shape as is_constant_shape,

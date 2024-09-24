@@ -148,7 +148,7 @@ class MultiBackendTest(jtu.JaxTestCase):
   @jtu.ignore_warning(category=DeprecationWarning,
                       message="backend and device argument")
   def test_closed_over_values_device_placement(self):
-    # see https://github.com/google/jax/issues/1431
+    # see https://github.com/jax-ml/jax/issues/1431
     def f(): return jnp.add(3., 4.)
     self.assertNotEqual(jax.jit(f)().devices(),
                         {jax.devices('cpu')[0]})
@@ -186,7 +186,7 @@ class MultiBackendTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("cpu")  # test only makes sense on non-cpu backends
   def test_indexing(self):
-    # https://github.com/google/jax/issues/2905
+    # https://github.com/jax-ml/jax/issues/2905
     cpus = jax.devices("cpu")
 
     x = jax.device_put(np.ones(2), cpus[0])
@@ -195,7 +195,7 @@ class MultiBackendTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("cpu")  # test only makes sense on non-cpu backends
   def test_sum(self):
-    # https://github.com/google/jax/issues/2905
+    # https://github.com/jax-ml/jax/issues/2905
     cpus = jax.devices("cpu")
 
     x = jax.device_put(np.ones(2), cpus[0])

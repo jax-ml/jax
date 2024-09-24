@@ -323,7 +323,7 @@ class cuSparseTest(sptu.SparseTestCase):
       self.assertAllClose(op(M) @ B, jit(matmat)(*args), rtol=sptu.MATMUL_TOL)
 
   def test_coo_matmat_layout(self):
-    # Regression test for https://github.com/google/jax/issues/7533
+    # Regression test for https://github.com/jax-ml/jax/issues/7533
     d = jnp.array([1.0, 2.0, 3.0, 4.0])
     i = jnp.array([0, 0, 1, 2])
     j = jnp.array([0, 2, 0, 0])

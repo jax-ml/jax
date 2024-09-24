@@ -52,4 +52,4 @@ questions answered are:
 .. _Flax: https://flax.readthedocs.io/
 .. _Haiku: https://dm-haiku.readthedocs.io/
 .. _JAX on StackOverflow: https://stackoverflow.com/questions/tagged/jax
-.. _JAX GitHub discussions: https://github.com/google/jax/discussions
+.. _JAX GitHub discussions: https://github.com/jax-ml/jax/discussions

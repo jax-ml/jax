@@ -377,10 +377,40 @@ GetKernelCache() {
   return std::make_pair(&context_cache, &mutex);
 }
 
+
+absl::StatusOr<CompiledKernel> CompileAndInit(const char* module) {
+  mlir::MLIRContext context(mlir::MLIRContext::Threading::DISABLED);
+  InitContext(&context);
+  mlir::ParserConfig parse_config(&context);
+  auto module_op =
+      mlir::parseSourceString<mlir::ModuleOp>(module, parse_config);
+  if (!module_op) {
+    return absl::InternalError("Failed to parse module");
+  }
+  auto maybe_engine = Compile(*module_op);
+  if (!maybe_engine.ok()) {
+    return maybe_engine.status();
+  }
+  mlir::ExecutionEngine* execution_engine = maybe_engine->get();
+  auto main = execution_engine->lookupPacked("_mlir_ciface_main");
+  auto init = execution_engine->lookupPacked("_mlir_ciface_main_init");
+  if (!init || !main) {
+    return absl::InternalError("Failed to retrieve kernel function");
+  }
+  void* module_ptr = nullptr;
+  void* kernel_ptr = nullptr;
+  void** module_ptr_ptr = &module_ptr;
+  void** kernel_ptr_ptr = &kernel_ptr;
+  void*** init_args[2] = {&module_ptr_ptr, &kernel_ptr_ptr};
+  reinterpret_cast<MosaicInitFunc*>(*init)(init_args);
+  return CompiledKernel(std::move(*maybe_engine), kernel_ptr,
+                          reinterpret_cast<MosaicHostFunc*>(*main));
+}
+
 // Each compiled kernel has a unique init func, and each kernel is used from
 // a single HLO module. So it should be safe to not include the CUDA context
 // in the key.
-absl::StatusOr<std::tuple<void*, MosaicHostFunc*>> CompileAndInit(
+absl::StatusOr<std::tuple<void*, MosaicHostFunc*>> CachedCompileAndInit(
     CacheKey key, const char* module) {
   auto cache_and_mutex = GetKernelCache();
   auto* cache = cache_and_mutex.first;
@@ -397,33 +427,11 @@ absl::StatusOr<std::tuple<void*, MosaicHostFunc*>> CompileAndInit(
   absl::MutexLock lock(mutex);
   // We released the reader lock, another thread might have initialized it.
   if (cache->find(key) == cache->end()) {
-    mlir::MLIRContext context(mlir::MLIRContext::Threading::DISABLED);
-    InitContext(&context);
-    mlir::ParserConfig parse_config(&context);
-    auto module_op =
-        mlir::parseSourceString<mlir::ModuleOp>(module, parse_config);
-    if (!module_op) {
-      return absl::InternalError("Failed to parse module");
+    auto compiled = CompileAndInit(module);
+    if (!compiled.ok()) {
+      return compiled.status();
     }
-    auto maybe_engine = Compile(*module_op);
-    if (!maybe_engine.ok()) {
-      return maybe_engine.status();
-    }
-    mlir::ExecutionEngine* execution_engine = maybe_engine->get();
-    auto main = execution_engine->lookupPacked("_mlir_ciface_main");
-    auto init = execution_engine->lookupPacked("_mlir_ciface_main_init");
-    if (!init || !main) {
-      return absl::InternalError("Failed to retrieve kernel function");
-    }
-    void* module_ptr = nullptr;
-    void* kernel_ptr = nullptr;
-    void** module_ptr_ptr = &module_ptr;
-    void** kernel_ptr_ptr = &kernel_ptr;
-    void*** init_args[2] = {&module_ptr_ptr, &kernel_ptr_ptr};
-    reinterpret_cast<MosaicInitFunc*>(*init)(init_args);
-    cache->insert_or_assign(
-        key, CompiledKernel(std::move(*maybe_engine), kernel_ptr,
-                            reinterpret_cast<MosaicHostFunc*>(*main)));
+    cache->insert_or_assign(key, std::move(*compiled));
   }
   return cache->at(key).GetHostLaunch();
 }
@@ -441,7 +449,7 @@ void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
     abort();
   }
   CacheKey key(hash, reinterpret_cast<uintptr_t>(ctx));
-  auto ctx_and_kernel = CompileAndInit(key, opaque + sizeof(KernelHash));
+  auto ctx_and_kernel = CachedCompileAndInit(key, opaque + sizeof(KernelHash));
   if (!ctx_and_kernel.ok()) {
     XlaCustomCallStatusSetFailure(status,
                                   ctx_and_kernel.status().message().data(),
@@ -456,3 +464,33 @@ XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("mosaic_gpu", &MosaicGPUCustomCall,
                                          "CUDA");
 
 }  // namespace
+
+extern "C" {
+
+__attribute__((visibility("default")))
+void** MosaicGpuCompile(const char* module) {
+  auto compiled = CompileAndInit(module);
+  if (!compiled.ok()) {
+    return nullptr;
+  }
+  auto [ctx, launch] = compiled->GetHostLaunch();
+  auto tuple_ptr = std::unique_ptr<void*>(new void*[3]);
+  if (!tuple_ptr) {
+    return nullptr;
+  }
+  tuple_ptr.get()[0] = ctx;
+  tuple_ptr.get()[1] = reinterpret_cast<void*>(launch);
+  tuple_ptr.get()[2] = new CompiledKernel(std::move(*compiled));
+  if (!tuple_ptr.get()[2]) {
+    return nullptr;
+  }
+  return tuple_ptr.release();
+}
+
+__attribute__((visibility("default")))
+void MosaicGpuUnload(void** tuple_ptr) {
+  delete reinterpret_cast<CompiledKernel*>(tuple_ptr[2]);
+  delete[] tuple_ptr;
+}
+
+}  // extern "C"

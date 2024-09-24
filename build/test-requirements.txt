@@ -12,4 +12,5 @@ portpicker
 pytest-xdist
 wheel
 rich
-setuptools
+# TODO(ybaturina): remove setuptools version
+setuptools<71.0.0

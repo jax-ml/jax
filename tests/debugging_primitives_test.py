@@ -80,6 +80,18 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
 
+  def test_static_args(self):
+    @jax.jit
+    def f(arr):
+      jax.debug.print("arr {array}, dtype: {dtype}, arr {array2}",
+                      array=arr, dtype=arr.dtype, array2=arr)
+    arr = jnp.array([1, 2, 3], dtype=jnp.float32)
+    with jtu.capture_stdout() as output:
+      f(arr)
+      jax.effects_barrier()
+    self.assertEqual(
+        output(), "arr [1. 2. 3.], dtype: float32, arr [1. 2. 3.]\n")
+
   def test_debug_print_works_with_named_format_strings(self):
     def f(x):
       debug_print('x: {x}', x=x)

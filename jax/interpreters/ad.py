@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from __future__ import annotations
 
@@ -59,9 +59,7 @@ from jax._src.interpreters.ad import (
   primitive_jvps as primitive_jvps,
   primitive_transposes as primitive_transposes,
   rearrange_binders as rearrange_binders,
-  recast_to_float0 as recast_to_float0,
   reducing_transposes as reducing_transposes,
-  replace_float0s as replace_float0s,
   standard_jvp as standard_jvp,
   standard_jvp2 as standard_jvp2,
   traceable as traceable,

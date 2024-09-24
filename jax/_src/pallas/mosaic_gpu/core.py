@@ -23,7 +23,7 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import tree_util
 from jax._src.pallas import core as pallas_core
-from jax.experimental.mosaic import gpu as mosaic_gpu
+import jax.experimental.mosaic.gpu as mgpu
 import jax.numpy as jnp
 
 
@@ -60,14 +60,15 @@ class GPUMemorySpace(enum.Enum):
 
   def __call__(self, shape: tuple[int, ...], dtype: jnp.dtype):
     # A convenience function for constructing MemoryRef types.
-    return MemoryRef(shape, dtype, memory_space=self)
+    return pallas_core.MemoryRef(shape, dtype, memory_space=self)
 
 
 class MemoryRefTransform(pallas_core.MemoryRefTransform, Protocol):
-  def to_gpu_transform(self) -> mosaic_gpu.MemRefTransform:
+  def to_gpu_transform(self) -> mgpu.MemRefTransform:
     ...
 
 
+@dataclasses.dataclass(frozen=True)
 class TilingTransform(MemoryRefTransform):
   """Represents a tiling transformation for memory refs.
 
@@ -76,13 +77,12 @@ class TilingTransform(MemoryRefTransform):
   tiling of (64, 32) will be tiled as (4, 8, 64, 32).
   """
 
-  def __init__(self, tiling: tuple[int, ...]):
-    self.tiling = tiling
+  tiling: tuple[int, ...]
 
   def __call__(
       self, block_aval: pallas_core.AbstractMemoryRef
   ) -> pallas_core.AbstractMemoryRef:
-    block_shape = block_aval.inner_aval.shape  # pytype: disable=attribute-error
+    block_shape = block_aval.shape
     old_tiled_dims = block_shape[-len(self.tiling) :]
     num_tiles = tuple(
         block_dim // tiling_dim
@@ -101,8 +101,8 @@ class TilingTransform(MemoryRefTransform):
         inner_aval=block_aval.inner_aval.update(shape=new_block_shape)
     )
 
-  def to_gpu_transform(self) -> mosaic_gpu.MemRefTransform:
-    return mosaic_gpu.TileTransform(self.tiling)
+  def to_gpu_transform(self) -> mgpu.MemRefTransform:
+    return mgpu.TileTransform(self.tiling)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -150,40 +150,6 @@ class GPUBlockSpec(pallas_core.BlockSpec):
     )
 
 
-@dataclasses.dataclass(init=False, kw_only=True)
-class GPUGridSpec(pallas_core.GridSpec):
-  scratch_shapes: Sequence[Any]
-
-  def __init__(
-      self,
-      grid: pallas_core.Grid = (),
-      in_specs: pallas_core.BlockSpecTree = pallas_core.no_block_spec,
-      out_specs: pallas_core.BlockSpecTree = pallas_core.no_block_spec,
-      scratch_shapes: Sequence[Any] = ()
-  ):
-    super().__init__(grid, in_specs, out_specs)
-    self.scratch_shapes = tuple(scratch_shapes)
-
-  def _make_scratch_aval(self, obj: object) -> jax_core.AbstractValue:
-    if isinstance(obj, (MemoryRef, Barrier)):
-      return obj.get_aval()
-    raise TypeError(f"Cannot convert {obj} to an abstract value")
-
-
-# TODO(b/354568887): Cosolidate this with TPU's MemoryRef.
-@dataclasses.dataclass(frozen=True)
-class MemoryRef:
-  """Like jax.ShapeDtypeStruct but with memory spaces."""
-
-  shape: tuple[int, ...]
-  dtype: jnp.dtype
-  memory_space: GPUMemorySpace = dataclasses.field(kw_only=True)
-
-  def get_aval(self) -> AbstractMemoryRef:
-    return AbstractMemoryRef(
-        jax_core.ShapedArray(self.shape, self.dtype), self.memory_space
-    )
-
 GMEM = GPUMemorySpace.GMEM
 SMEM = GPUMemorySpace.SMEM
 REGS = GPUMemorySpace.REGS
@@ -209,7 +175,7 @@ class Barrier:
   num_arrivals: int
   num_barriers: int = 1
 
-  def get_aval(self) -> AbstractMemoryRef:
+  def get_ref_aval(self) -> AbstractMemoryRef:
     aval = jax_core.ShapedArray(
         [self.num_barriers], BarrierType(self.num_arrivals)
     )

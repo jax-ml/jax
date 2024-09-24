@@ -1208,7 +1208,7 @@ class JaxTestCase(parameterized.TestCase):
     y = np.asarray(y)
 
     if (not allow_object_dtype) and (x.dtype == object or y.dtype == object):
-      # See https://github.com/google/jax/issues/17867
+      # See https://github.com/jax-ml/jax/issues/17867
       raise TypeError(
         "assertArraysEqual may be poorly behaved when np.asarray casts to dtype=object. "
         "If comparing PRNG keys, consider random_test.KeyArrayTest.assertKeysEqual. "

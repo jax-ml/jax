@@ -115,7 +115,7 @@ def _get_cmdclass(pkg_source_path):
         # missing or outdated. Because _write_version(...) modifies the copy of
         # this file in the build tree, re-building from the same JAX directory
         # would not automatically re-copy a clean version, and _write_version
-        # would fail without this deletion. See google/jax#18252.
+        # would fail without this deletion. See jax-ml/jax#18252.
         if os.path.isfile(this_file_in_build_dir):
           os.unlink(this_file_in_build_dir)
       super().run()

@@ -12,16 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import functools
-from functools import partial
 import importlib
-import numpy as np
-import operator
-
-import jaxlib.mlir.ir as ir
-
-from .hlo_helpers import custom_call
-from .gpu_common_utils import GpuLibNotLinkedError
 
 from jaxlib import xla_client
 
@@ -62,34 +53,3 @@ if _hip_linalg:
     xla_client.register_custom_call_target(
         _name, _value, platform="ROCM", api_version=api_version
     )
-
-_prod = lambda xs: functools.reduce(operator.mul, xs, 1)
-
-
-def _cholesky_update_hlo(platform, gpu_linalg, r_matrix, w_vector, dtype):
-  """Cholesky update."""
-  del platform
-  r_type = ir.RankedTensorType(r_matrix.type)
-  dims = r_type.shape
-  assert dims[0] == dims[1]
-  n = dims[0]
-
-  if not gpu_linalg:
-    raise GpuLibNotLinkedError()
-
-  np_type = np.dtype(dtype)
-  opaque = gpu_linalg.build_cholesky_update_descriptor(np_type, n)
-
-  return custom_call(
-      "cu_cholesky_update",
-      operands = [r_matrix, w_vector],
-      result_types=[
-          ir.RankedTensorType.get((n, n), r_type.element_type),
-          ir.RankedTensorType.get((n,), r_type.element_type),
-      ],
-      operand_output_aliases={0: 0, 1: 1},
-      backend_config=opaque,
-  ).results[:1]
-
-
-cuda_cholesky_update = partial(_cholesky_update_hlo, "cu", _cuda_linalg)

@@ -15,7 +15,7 @@
 load(
     "//jaxlib:jax.bzl",
     "jax_generate_backend_suites",
-    "jax_test",
+    "jax_multiplatform_test",
     "py_deps",
 )
 
@@ -43,7 +43,7 @@ DISABLED_CONFIGS = [
     "gpu",
 ]
 
-jax_test(
+jax_multiplatform_test(
     name = "gpu_test",
     srcs = ["gpu_test.py"],
     config_tags_overrides = {
@@ -63,7 +63,7 @@ jax_test(
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "matmul_test",
     srcs = ["matmul_test.py"],
     disable_backends = DISABLED_BACKENDS,
@@ -75,7 +75,7 @@ jax_test(
     ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "flash_attention",
     srcs = ["//jax/experimental/mosaic/gpu/examples:flash_attention.py"],
     disable_backends = DISABLED_BACKENDS,
@@ -87,7 +87,7 @@ jax_test(
     ] + py_deps("numpy"),
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "flash_attention_test",
     srcs = ["flash_attention_test.py"],
     disable_backends = DISABLED_BACKENDS,

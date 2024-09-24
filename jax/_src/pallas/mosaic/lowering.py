@@ -138,15 +138,29 @@ class LoweringRuleContext:
   replace = dataclasses.replace
 
 
-def _memory_space_to_tpu_memspace(memory_space: MemorySpace | None
-                                  ) -> ir.Attribute:
-  if memory_space is None:
-    memory_space = VMEM
-  elif memory_space == pallas_core.MemorySpace.ERROR:
-    memory_space = SMEM
-  elif memory_space == pallas_core.MemorySpace.INDEX:
-    memory_space = SMEM
-  return ir.Attribute.parse(f"#tpu.memory_space<{memory_space}>")
+def _memory_space_to_tpu_memory_space(memory_space: MemorySpace | None
+                                     ) -> TPUMemorySpace:
+  match memory_space:
+    case None:
+      # We pick VMEM as the default one when no memory space is
+      # specified
+      return TPUMemorySpace.VMEM
+    case pallas_core.MemorySpace.ANY:
+      # Map the general ANY memory space to TPU ANY memory space
+      return TPUMemorySpace.ANY
+    case pallas_core.MemorySpace.ERROR | pallas_core.MemorySpace.INDEX:
+      return TPUMemorySpace.SMEM
+    case TPUMemorySpace():
+      # Leave the memory space unchanged
+      return memory_space
+    case _:
+      raise ValueError("Invalid memory space: {memory_space}")
+
+
+def _memory_space_to_mosaic_attribute(memory_space: MemorySpace | None
+                                      ) -> ir.Attribute:
+  tpu_memory_space = _memory_space_to_tpu_memory_space(memory_space)
+  return ir.Attribute.parse(f"#tpu.memory_space<{tpu_memory_space}>")
 
 def _dtype_to_ir_type(dtype: jnp.dtype,
                       is_kernel_boundary: bool = False) -> ir.Type:
@@ -182,7 +196,7 @@ def aval_to_ir_type(aval,
       sem_type = ir.Type.parse("!tpu.semaphore")
     else:
       raise ValueError(f"Cannot allocate {aval.sem_type}.")
-    memspace = _memory_space_to_tpu_memspace(TPUMemorySpace.SEMAPHORE)
+    memspace = _memory_space_to_mosaic_attribute(TPUMemorySpace.SEMAPHORE)
     return ir.MemRefType.get((), sem_type, memory_space=memspace)
   if dtypes.issubdtype(aval.dtype, dtypes.prng_key):
     shape = aval.dtype._impl.key_shape
@@ -190,13 +204,13 @@ def aval_to_ir_type(aval,
       memory_space = TPUMemorySpace.SMEM
     if memory_space != TPUMemorySpace.SMEM:
       raise ValueError(f"PRNG keys must be stored in SMEM. Got {memory_space}")
-    memspace = _memory_space_to_tpu_memspace(memory_space)
+    memspace = _memory_space_to_mosaic_attribute(memory_space)
     return ir.MemRefType.get(shape, _dtype_to_ir_type(np.dtype(np.uint32)),
                              memory_space=memspace)
   if isinstance(aval, state.AbstractRef):
     if shape is None:
       shape = aval.shape
-    memspace = _memory_space_to_tpu_memspace(memory_space)
+    memspace = _memory_space_to_mosaic_attribute(memory_space)
     return ir.MemRefType.get(shape,
       _dtype_to_ir_type(aval.dtype, is_kernel_boundary=True),
       memory_space=memspace)
@@ -424,24 +438,23 @@ class MeshInfo:
   axis_names: list[str]
   mesh_strides: tuple[int, ...]
 
-def lower_jaxpr_to_module(
+
+def _check_block_mappings(
+    block_mappings: tuple[pallas_core.BlockMapping, ...],
     lowering_context: mlir.LoweringRuleContext,
-    ctx: ir.Context,
-    grid_mapping: pallas_core.GridMapping,
-    jaxpr: jax_core.Jaxpr,
-    *,
-    dimension_semantics: tuple[str | None, ...] | None,
     name_and_src_info: pallas_core.NameAndSrcInfo,
-    mesh: mesh_lib.Mesh | None = None,
-    for_verification: bool = False,
-) -> tuple[Module, tuple[Any, ...]]:
-  for bm in grid_mapping.block_mappings:
+) -> None:
+  del lowering_context  # originally needed for forward compat
+  for bm in block_mappings:
     rank = len(bm.block_shape)
     # TODO(necula): add tests for SMEM blocks with trivial windowing
     # We support scalars too
     if (bm.block_aval.memory_space == tpu_core.TPUMemorySpace.SMEM and
         bm.has_trivial_window()):
       continue
+    if bm.block_aval.memory_space == tpu_core.TPUMemorySpace.SEMAPHORE:
+      continue
+
     def err_details():
       return (f"Block spec for {bm.origin} in pallas_call {name_and_src_info} "
               "has block shape "
@@ -482,11 +495,28 @@ def lower_jaxpr_to_module(
 
     if not evenly_divisible:
       raise ValueError(
-            "The Pallas TPU lowering currently requires that the last two "
-            "dimensions of your block shape are divisible by 8 and 128 "
-            "respectively, or be equal to the respective dimensions of the "
-            "overall array. "
-            + err_details())
+          "The Pallas TPU lowering currently requires that the last two "
+          "dimensions of your block shape are divisible by 8 and 128 "
+          "respectively, or be equal to the respective dimensions of the "
+          "overall array. "
+          + err_details()
+      )
+
+
+def lower_jaxpr_to_module(
+    lowering_context: mlir.LoweringRuleContext,
+    ctx: ir.Context,
+    grid_mapping: pallas_core.GridMapping,
+    jaxpr: jax_core.Jaxpr,
+    *,
+    dimension_semantics: tuple[str | None, ...] | None,
+    name_and_src_info: pallas_core.NameAndSrcInfo,
+    mesh: mesh_lib.Mesh | None = None,
+    for_verification: bool = False,
+) -> tuple[Module, tuple[Any, ...]]:
+  # Verify that we have legal block mappings to catch errors early.
+  _check_block_mappings(grid_mapping.block_mappings, lowering_context,
+                        name_and_src_info)
 
   mosaic_grid_mapping = MosaicGridMapping(
       jaxpr, grid_mapping, dimension_semantics, mesh)
@@ -508,7 +538,9 @@ def lower_jaxpr_to_module(
     for i, bm in enumerate(grid_mapping.block_mappings):
       func_name = f"transform_{i}"
       # ANY operands don't support windowing and require empty window_params.
-      if bm.block_aval.memory_space == tpu_core.TPUMemorySpace.ANY:
+      tpu_memory_space = _memory_space_to_tpu_memory_space(
+          bm.block_aval.memory_space)
+      if tpu_memory_space == tpu_core.TPUMemorySpace.ANY:
         # We checked above that the block does not require windowing.
         window_params.append(ir.DictAttr.get())
         continue
@@ -801,7 +833,7 @@ def jaxpr_subcomp(
         raise NotImplementedError(
             "Unimplemented primitive in Pallas TPU lowering: "
             f"{eqn.primitive.name}. "
-            "Please file an issue on https://github.com/google/jax/issues.")
+            "Please file an issue on https://github.com/jax-ml/jax/issues.")
       if eqn.primitive.multiple_results:
         map(write_env, eqn.outvars, ans)
       else:
@@ -2516,11 +2548,9 @@ skip_mlir_conversions.add(lax.shift_right_logical_p)
 
 
 def _erf_inv_lowering_rule(ctx: LoweringRuleContext, x):
-  (x_aval,) = ctx.avals_in
-  if x_aval.dtype == jnp.float32:
-    return lower_fun(pallas_utils.erf_inv_32_lowering_helper, multiple_results=False)(ctx, x)
-  else:
-    raise NotImplementedError
+  return lower_fun(
+      pallas_utils.erf_inv_lowering_helper, multiple_results=False,
+  )(ctx, x)
 
 
 lowering_rules[lax.erf_inv_p] = _erf_inv_lowering_rule
@@ -2546,7 +2576,7 @@ lowering_rules[lax.bitcast_convert_type_p] = _bitcast_convert_type_lowering_rule
 
 def _alloc_value(aval: jax_core.AbstractValue) -> ir.Value:
   if isinstance(aval, pallas_core.AbstractMemoryRef):
-    memspace = _memory_space_to_tpu_memspace(aval.memory_space)
+    memspace = _memory_space_to_mosaic_attribute(aval.memory_space)
     if jnp.issubdtype(aval.dtype, tpu_core.semaphore_dtype):
       assert aval.memory_space == TPUMemorySpace.SEMAPHORE
       memref_type = aval_to_ir_type(aval, memory_space=TPUMemorySpace.SEMAPHORE)
@@ -2737,6 +2767,9 @@ lowering_rules[tpu_primitives.delay_p] = _delay_rule
 def _debug_print_rule(
     ctx: LoweringRuleContext, *args, fmt: str, has_placeholders: bool
 ):
+  if any(aval.shape for aval in ctx.avals_in):
+    raise NotImplementedError("Only scalar values are supported")
+
   primitives.check_debug_print_format(fmt, *args)
   if has_placeholders:
     if not all(
@@ -2888,9 +2921,10 @@ def _shard_map_discharge_rule(
   out = pallas_call.pallas_call(
       body,
       out_shape=in_avals,
-      in_specs=[pallas_core.BlockSpec(memory_space=tpu_core.TPUMemorySpace.ANY)]
+      in_specs=[pallas_core.BlockSpec(memory_space=pallas_core.MemorySpace.ANY)]
       * len(in_avals),
-      out_specs=[pallas_core.BlockSpec(memory_space=tpu_core.TPUMemorySpace.ANY)]
+      out_specs=[pallas_core.BlockSpec(
+          memory_space=pallas_core.MemorySpace.ANY)]
       * len(in_avals),
       input_output_aliases={i: i for i in range(len(in_avals))},
       grid=((core_axis_name, num_cores),),

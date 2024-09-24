@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import functools
+import math
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -79,15 +80,14 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x), x + 1.0)
 
   def test_add_one_grid_with_scratch(self):
+
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([128 * 2], jnp.float32),
-        grid_spec=plgpu.GPUGridSpec(
-            in_specs=[pl.BlockSpec((128,), lambda *i: i)],
-            out_specs=pl.BlockSpec((128,), lambda *i: i),
-            scratch_shapes=[plgpu.SMEM((128,), jnp.float32)],
-            grid=2,
-        ),
+        in_specs=[pl.BlockSpec((128,), lambda *i: i)],
+        out_specs=pl.BlockSpec((128,), lambda *i: i),
+        scratch_shapes=[plgpu.SMEM((128,), jnp.float32)],
+        grid=2,
     )
     def kernel(x_ref, o_ref, scratch_ref):
       scratch_ref[...] = x_ref[...] + 1
@@ -120,10 +120,8 @@ class PallasCallTest(PallasTest):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
-        grid_spec=plgpu.GPUGridSpec(
-            out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
-            scratch_shapes=[plgpu.SMEM((128,), jnp.float32)],
-        ),
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        scratch_shapes=[plgpu.SMEM((128,), jnp.float32)],
     )
     def kernel(x_ref, o_ref_gmem, scratch_ref):
       scratch_ref[...] = x_ref[...] + 1
@@ -134,16 +132,15 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x), x + 1.0)
 
   def test_add_one_with_async_copy_gmem_to_smem(self):
+
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
-        grid_spec=plgpu.GPUGridSpec(
-            in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
-            scratch_shapes=[
-                plgpu.SMEM((128,), jnp.float32),
-                plgpu.Barrier(num_arrivals=1),
-            ],
-        ),
+        in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
+        scratch_shapes=[
+            plgpu.SMEM((128,), jnp.float32),
+            plgpu.Barrier(num_arrivals=1),
+        ],
     )
     def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
       plgpu.async_copy_gmem_to_smem(
@@ -244,6 +241,22 @@ class PallasCallTest(PallasTest):
       # TODO(slebedev): Remove assertRaises() once we support indexing.
       kernel(x)
 
+  def test_print_array(self):
+    in_shape = [2, 1, 64, 64]
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(in_shape, jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      del o_ref
+      pl.debug_print("x: {}", x_ref[...])
+
+    x = jnp.arange(math.prod(in_shape)).reshape(in_shape).astype(jnp.float32)
+    with jtu.capture_stdout() as output:
+      jax.block_until_ready(kernel(x))
+
+    self.assertIn(f"x: [1, 0, 43, 23]/{list(in_shape)}: 6871.000000\n", output())
+
   def test_scoped_allocation(self):
     def kernel(x_ref, o_ref):
       def body(tmp_ref):
@@ -314,6 +327,73 @@ class PallasCallTest(PallasTest):
     x = jnp.zeros((256, 128), dtype=jnp.float16)
     result = kernel(x)
     self.assertEqual(result.shape, (4, 2, 64, 64))
+
+  def test_fori_loop(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      # Equivalent to x_ref[...] + 2 + 3.
+      o_ref[...] = jax.lax.fori_loop(2, 4, lambda i, x: x + i, x_ref[...])
+
+    x = jnp.arange(256).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x + 2.0 + 3.0)
+
+  def test_wgmma(self):
+    dtype = jnp.float16
+    swizzle = 128
+    elems_128b = swizzle // jnp.dtype(dtype).itemsize
+    def kernel(a_ref, b_ref, o_ref):
+      acc = plgpu.zero_accumulator((64, 128), jnp.float32)
+      acc = plgpu.wgmma(acc, a_ref, b_ref, rhs_transpose=False)
+      plgpu.wgmma_wait(0)
+      # TODO(cperivol): turn acc into a reference so we can reason about effects.
+      o_ref[...] = acc.as_array()
+
+    key1, key2 = jax.random.split(jax.random.key(42), 2)
+    a = jax.random.uniform(key1, shape=(64, 128), dtype=dtype)
+    b = jax.random.uniform(key2, shape=(128, 128), dtype=dtype)
+
+    res = pl.pallas_call(
+        kernel,
+        in_specs=[
+            plgpu.GPUBlockSpec(
+                (64, 128),
+                lambda i, j: (i, j),
+                tiling=(64, elems_128b),
+                swizzle=128,
+            ),
+            plgpu.GPUBlockSpec(
+                (128, 128),
+                lambda *i: i,
+                tiling=(elems_128b, elems_128b),
+                swizzle=128,
+            ),
+        ],
+        out_specs=plgpu.GPUBlockSpec((64, 128), lambda *i: i),
+        out_shape=jax.ShapeDtypeStruct((64, 128), jnp.float32),
+        grid=(1, 1),
+    )(a, b)
+    np.testing.assert_allclose(
+        res, a @ b, rtol=1e-3
+    )
+
+  def test_input_output_aliases(self):
+    # Note that we're writing to the input pointer, which should alias b_ptr.
+    def kernel(a_ref, b_ref):
+      del b_ref
+      a_ref[...] = jnp.ones_like(a_ref)
+
+    a = np.zeros((64, 64), dtype=jnp.float32)
+    b = pl.pallas_call(
+        kernel,
+        in_specs=[plgpu.GPUBlockSpec(memory_space=plgpu.GPUMemorySpace.GMEM)],
+        out_specs=plgpu.GPUBlockSpec(memory_space=plgpu.GPUMemorySpace.GMEM),
+        input_output_aliases={0: 0},
+        out_shape=a,
+    )(a)
+    np.testing.assert_array_equal(b, np.ones_like(a))
 
 
 if __name__ == "__main__":

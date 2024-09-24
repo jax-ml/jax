@@ -1,13 +1,12 @@
 name: JAX Array API
 
 on:
-  workflow_dispatch: # allows triggering the workflow run manually
-  pull_request:  # Automatically trigger on pull requests affecting particular files
+  push:
     branches:
       - main
-    paths:
-      - '**workflows/jax-array-api.yml'
-      - '**experimental/array_api/**'
+  pull_request:
+    branches:
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}

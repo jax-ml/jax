@@ -35,7 +35,7 @@ FRAME_PATTERN = re.compile(
 )
 MLIR_ERR_PREFIX = (
     'Pallas encountered an internal verification error.'
-    'Please file a bug at https://github.com/google/jax/issues. '
+    'Please file a bug at https://github.com/jax-ml/jax/issues. '
     'Error details: '
 )
 

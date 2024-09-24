@@ -20,11 +20,11 @@ body:
       * If you prefer a non-templated issue report, click [here][Raw report].
 
 
-      [Discussions]: https://github.com/google/jax/discussions
+      [Discussions]: https://github.com/jax-ml/jax/discussions
 
-      [issue search]: https://github.com/google/jax/search?q=is%3Aissue&type=issues
+      [issue search]: https://github.com/jax-ml/jax/search?q=is%3Aissue&type=issues
 
-      [Raw report]: http://github.com/google/jax/issues/new
+      [Raw report]: http://github.com/jax-ml/jax/issues/new
 - type: textarea
   attributes:
     label: Description

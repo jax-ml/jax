@@ -51,7 +51,7 @@ def log2(x):
 print(jax.make_jaxpr(log2)(3.0))
 ```
 
-The {ref}`understanding-jaxprs` section of the documentation provides more information on the meaning of the above output.
+The {ref}`jax-internals-jaxpr` section of the documentation provides more information on the meaning of the above output.
 
 Importantly, notice that the jaxpr does not capture the side-effect present in the function: there is nothing in it corresponding to `global_list.append(x)`.
 This is a feature, not a bug: JAX transformations are designed to understand side-effect-free (a.k.a. functionally pure) code.

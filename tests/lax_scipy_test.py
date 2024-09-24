@@ -165,7 +165,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(sign * np.exp(logsumexp).astype(x.dtype), expected_sumexp, rtol=tol)
 
   def testLogSumExpZeros(self):
-    # Regression test for https://github.com/google/jax/issues/5370
+    # Regression test for https://github.com/jax-ml/jax/issues/5370
     scipy_fun = lambda a, b: osp_special.logsumexp(a, b=b)
     lax_fun = lambda a, b: lsp_special.logsumexp(a, b=b)
     args_maker = lambda: [np.array([-1000, -2]), np.array([1, 0])]
@@ -173,14 +173,14 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lax_fun, args_maker)
 
   def testLogSumExpOnes(self):
-    # Regression test for https://github.com/google/jax/issues/7390
+    # Regression test for https://github.com/jax-ml/jax/issues/7390
     args_maker = lambda: [np.ones(4, dtype='float32')]
     with jax.debug_infs(True):
       self._CheckAgainstNumpy(osp_special.logsumexp, lsp_special.logsumexp, args_maker)
       self._CompileAndCheck(lsp_special.logsumexp, args_maker)
 
   def testLogSumExpNans(self):
-    # Regression test for https://github.com/google/jax/issues/7634
+    # Regression test for https://github.com/jax-ml/jax/issues/7634
     with jax.debug_nans(True):
       with jax.disable_jit():
         result = lsp_special.logsumexp(1.0)
@@ -246,7 +246,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(lsp_special.xlogy(0., 0.), 0., check_dtypes=False)
 
   def testGradOfXlogyAtZero(self):
-    # https://github.com/google/jax/issues/15598
+    # https://github.com/jax-ml/jax/issues/15598
     x0, y0 = 0.0, 3.0
     d_xlog1py_dx = jax.grad(lsp_special.xlogy, argnums=0)(x0, y0)
     self.assertAllClose(d_xlog1py_dx, lax.log(y0))
@@ -260,7 +260,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(lsp_special.xlog1py(0., -1.), 0., check_dtypes=False)
 
   def testGradOfXlog1pyAtZero(self):
-    # https://github.com/google/jax/issues/15598
+    # https://github.com/jax-ml/jax/issues/15598
     x0, y0 = 0.0, 3.0
     d_xlog1py_dx = jax.grad(lsp_special.xlog1py, argnums=0)(x0, y0)
     self.assertAllClose(d_xlog1py_dx, lax.log1p(y0))
@@ -284,7 +284,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
                     rtol=.1, eps=1e-3)
 
   def testGradOfEntrAtZero(self):
-    # https://github.com/google/jax/issues/15709
+    # https://github.com/jax-ml/jax/issues/15709
     self.assertEqual(jax.jacfwd(lsp_special.entr)(0.0), jnp.inf)
     self.assertEqual(jax.jacrev(lsp_special.entr)(0.0), jnp.inf)
 
@@ -523,8 +523,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     tol = 650 * float(jnp.finfo(matrix.dtype).eps)
     eye_mat = np.eye(should_be_eye.shape[0], dtype=should_be_eye.dtype)
     with self.subTest('Test unitarity.'):
-      if jtu.test_device_matches(["cpu"]):
-        tol = max(tol, 1e-8)
       self.assertAllClose(
         eye_mat, should_be_eye, atol=tol * 1000 * min(shape))
 

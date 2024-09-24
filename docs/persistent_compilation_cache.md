@@ -29,7 +29,7 @@ f(x)
 ### Setting cache directory
 
 The compilation cache is enabled when the
-[cache location](https://github.com/google/jax/blob/jax-v0.4.26/jax/_src/config.py#L1206)
+[cache location](https://github.com/jax-ml/jax/blob/jax-v0.4.26/jax/_src/config.py#L1206)
 is set. This should be done prior to the first compilation. Set the location as
 follows:
 
@@ -54,7 +54,7 @@ os.environ["JAX_COMPILATION_CACHE_DIR"] = "/tmp/jax_cache"
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 ```
 
-(3) Using [`set_cache_dir()`](https://github.com/google/jax/blob/jax-v0.4.26/jax/experimental/compilation_cache/compilation_cache.py#L18)
+(3) Using [`set_cache_dir()`](https://github.com/jax-ml/jax/blob/jax-v0.4.26/jax/experimental/compilation_cache/compilation_cache.py#L18)
 
 ```python
 from jax.experimental.compilation_cache import compilation_cache as cc

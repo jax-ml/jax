@@ -103,10 +103,10 @@ For more involved examples, please see examples involving:
 
    * SavedModel for archival ([examples below](#usage-saved-model)), including
      saving [batch-polymorphic functions](#shape-polymorphic-conversion),
-   * TensorFlow Lite ([examples](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/tflite/mnist/README.md)),
-   * TensorFlow.js ([examples](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/tf_js/quickdraw/README.md)),
+   * TensorFlow Lite ([examples](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/examples/tflite/mnist/README.md)),
+   * TensorFlow.js ([examples](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/examples/tf_js/quickdraw/README.md)),
    * TFX ([examples](https://github.com/tensorflow/tfx/blob/master/tfx/examples/penguin/README.md#instructions-for-using-flax)),
-   * TensorFlow Hub and Keras ([examples](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/README.md)).
+   * TensorFlow Hub and Keras ([examples](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/examples/README.md)).
 
 [TOC]
 
@@ -249,7 +249,7 @@ graph (they will be saved in a `variables` area of the model, which is not
 subject to the 2GB limitation).
 
 For examples of how to save a Flax model as a SavedModel see the
-[examples directory](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/README.md).
+[examples directory](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/examples/README.md).
 
 ### Saved model and differentiation
 
@@ -619,7 +619,7 @@ Cannot solve for values of dimension variables {'a', 'b'}. "
 We can only solve linear uni-variate constraints. "
 Using the following polymorphic shapes specifications: args[0].shape = (a + b,).
 Unprocessed specifications: 'a + b' for dimension size args[0].shape[0]. "
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#dimension-variables-must-be-solvable-from-the-input-shapes for more details.
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#dimension-variables-must-be-solvable-from-the-input-shapes for more details.
 ```
 
 ### Shape assertion errors
@@ -645,7 +645,7 @@ Input shapes do not match the polymorphic shapes specification.
 Division had remainder 1 when computing the value of 'd'.
 Using the following polymorphic shapes specifications: args[0].shape = (b, b, 2*d).
 Obtained dimension variables: 'b' = 3 from specification 'b' for dimension args[0].shape[0] (= 3).
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details.
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details.
 ```
 
 When using native serialization these are checked by the `tf.XlaCallModule`
@@ -869,7 +869,7 @@ leads to errors for the following expressions `b == a or b == b` or `b in [a, b]
 even though the error is avoided if we change the order of the comparisons.
 
 We attempted to retain soundness and hashability by creating both hashable and unhashable
-kinds of symbolic dimensions [PR #14200](https://github.com/google/jax/pull/14200),
+kinds of symbolic dimensions [PR #14200](https://github.com/jax-ml/jax/pull/14200),
 but it turned out to be very hard to diagnose hashing failures in user programs because
 often hashing is implicit when using sets or memo tables.
 
@@ -989,7 +989,7 @@ We list here a history of the serialization version numbers:
     June 13th, 2023 (JAX 0.4.13).
   * Version 7 adds support for `stablehlo.shape_assertion` operations and
     for `shape_assertions` specified in `disabled_checks`.
-    See [Errors in presence of shape polymorphism](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism). Supported by XlaCallModule
+    See [Errors in presence of shape polymorphism](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism). Supported by XlaCallModule
     since July 12th, 2023 (cl/547482522),
     available in JAX serialization since July 20th, 2023 (JAX 0.4.14),
     and the default since August 12th, 2023 (JAX 0.4.15).
@@ -1164,7 +1164,7 @@ self.assertAllClose(grad_jax.b, grad_tf[1])
 Applies to both native and non-native serialization.
 
 When JAX differentiates functions with integer or boolean arguments, the gradients will
-be zero-vectors with a special `float0` type (see PR 4039](https://github.com/google/jax/pull/4039)).
+be zero-vectors with a special `float0` type (see PR 4039](https://github.com/jax-ml/jax/pull/4039)).
 This type is translated to `int32` when lowering to TF.
 For example,
 
@@ -1441,7 +1441,7 @@ Operations like ``jax.numpy.cumsum`` are lowered by JAX differently based
 on the platform. For TPU, the lowering uses the [HLO ReduceWindow](https://www.tensorflow.org/xla/operation_semantics#reducewindow)
 operation, which has an efficient implementation for the cases when the
 reduction function is associative. For CPU and GPU, JAX uses an alternative
-lowering using [associative scans](https://github.com/google/jax/blob/f08bb50bfa9f6cf2de1f3f78f76e1aee4a78735d/jax/_src/lax/control_flow.py#L2801).
+lowering using [associative scans](https://github.com/jax-ml/jax/blob/f08bb50bfa9f6cf2de1f3f78f76e1aee4a78735d/jax/_src/lax/control_flow.py#L2801).
 jax2tf uses the TPU lowering (because it does not support backend-specific lowering)
 and hence it can be slow in some cases on CPU and GPU.
 
@@ -1502,7 +1502,7 @@ before conversion. (This is a hypothesis, we have not yet verified it extensivel
 
 There is one know case when the performance of the lowered code will be different.
 JAX programs use a [stateless
-deterministic PRNG](https://github.com/google/jax/blob/main/docs/design_notes/prng.md)
+deterministic PRNG](https://github.com/jax-ml/jax/blob/main/docs/design_notes/prng.md)
 and it has an internal JAX primitive for it.
 This primitive is at the moment lowered to a soup of tf.bitwise operations,
 which has a clear performance penalty. We plan to look into using the
@@ -1589,7 +1589,7 @@ Applies to non-native serialization only.
 There are a number of cases when the TensorFlow ops that are used by the
 `jax2tf` are not supported by TensorFlow for the same data types as in JAX.
 There is an
-[up-to-date list of unimplemented cases](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
+[up-to-date list of unimplemented cases](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
 
 If you try to lower and run in TensorFlow a program with partially supported primitives,
 you may see TensorFlow errors that
@@ -1626,7 +1626,7 @@ the function to a SavedModel, knowing that upon restore the
 jax2tf-lowered code will be compiled.
 
 For a more elaborate example, see the test `test_tf_mix_jax_with_uncompilable`
-in [savedmodel_test.py](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/tests/savedmodel_test.py).
+in [savedmodel_test.py](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/tests/savedmodel_test.py).
 
 # Calling TensorFlow functions from JAX
 
@@ -1704,7 +1704,7 @@ For a more elaborate example, including round-tripping from JAX
 to TensorFlow and back through a SavedModel, with support for
 custom gradients,
 see the test `test_round_trip_custom_grad_saved_model`
-in [call_tf_test.py](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/tests/call_tf_test.py).
+in [call_tf_test.py](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/tests/call_tf_test.py).
 
 All the metadata inserted by TF during tracing and compilation, e.g.,
 source location information and op names, is carried through to the
@@ -1901,7 +1901,7 @@ As of today, the tests are run using `tf_nightly==2.14.0.dev20230720`.
 
 To run jax2tf on GPU, both jaxlib and TensorFlow must be installed with support
 for CUDA. One must be mindful to install a version of CUDA that is compatible
-with both [jaxlib](https://github.com/google/jax/blob/main/README.md#pip-installation) and
+with both [jaxlib](https://github.com/jax-ml/jax/blob/main/README.md#pip-installation) and
 [TensorFlow](https://www.tensorflow.org/install/source#tested_build_configurations).
 
 ## Updating the limitations documentation
@@ -1913,9 +1913,9 @@ JAX primitive, data type, device type, and TensorFlow execution mode (`eager`,
 `graph`, or `compiled`). These limitations are also used
 to generate tables of limitations, e.g.,
 
-   * [List of primitives not supported in JAX](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md),
+   * [List of primitives not supported in JAX](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md),
      e.g., due to unimplemented cases in the XLA compiler, and
-   * [List of primitives not supported in jax2tf](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md),
+   * [List of primitives not supported in jax2tf](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md),
      e.g., due to unimplemented cases in TensorFlow. This list is incremental
      on top of the unsupported JAX primitives.
 

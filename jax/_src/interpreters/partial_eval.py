@@ -168,11 +168,6 @@ class JaxprTrace(Trace['JaxprTracer']):
 
   def new_instantiated_const(self, val) -> JaxprTracer:
     aval = get_aval(val)
-    if isinstance(aval, DShapedArray):
-      shape = [self.new_instantiated_const(d)
-               if isinstance(d, Tracer) and d._trace.level < self.level else d
-               for d in aval.shape]
-      aval = aval.update(shape=tuple(shape))
     return JaxprTracer(self, PartialVal.unknown(aval), ConstVar(val))
 
   def new_arg(self, pval: PartialVal) -> JaxprTracer:
@@ -258,15 +253,9 @@ class JaxprTrace(Trace['JaxprTracer']):
     # which were unknown to the first call (corresponding to in_avals).
 
     # Wrap f to perform the partial evaluation and plumb out aux data.
-    if not config.dynamic_shapes.value:
-      f_ = trace_to_subjaxpr_nounits_fwd(f, self.main, False)
-      f_, aux = partial_eval_wrapper_nounits(f_, tuple(in_knowns),
-                                             tuple(in_avals))
-    else:
-      if f.in_type is None:
-        f = lu.annotate(f, tuple((a, True) for a in in_avals))
-      f_, aux = trace_to_subjaxpr_nounits_dyn(f, self.main, tuple(in_knowns),
-                                              f.in_type, False)
+    f_ = trace_to_subjaxpr_nounits_fwd(f, self.main, False)
+    f_, aux = partial_eval_wrapper_nounits(f_, tuple(in_knowns),
+                                           tuple(in_avals))
     # Adjust parameters (e.g. donated_invars) for the call to be evaluated now.
     const_params = update_params(params, in_knowns, 0)
 
@@ -568,92 +557,6 @@ def partial_eval_wrapper_nounits(
   jaxpr, (*maybe_fwds, out_pvals, res, env) = yield (in_pvals,), {}
   out_knowns, out_avals, out_consts = partition_pvals(out_pvals)
   yield (*out_consts, *res), (*maybe_fwds, out_knowns, out_avals, jaxpr, env)
-
-@lu.transformation_with_aux
-def trace_to_subjaxpr_nounits_dyn(
-    main: core.MainTrace, in_knowns: Sequence[bool], in_type: InputType,
-    instantiate: bool | Sequence[bool],
-    *in_consts: Any):
-  trace = main.with_cur_sublevel()
-  in_avals, which_explicit = unzip2(in_type)
-
-  # To form input tracers from in_type, we need to first build ConstVar tracers
-  # for all axis sizes, so that we can then use those tracers in the shapes of
-  # avals for unknown inputs' tracers. We use ConstVar recipes for on-the-fly
-  # type agreement checking via get_referent.
-  in_consts_full: list[JaxprTracer | None] = [None] * len(in_type)
-  in_consts_iter, in_knowns_iter = iter(in_consts), iter(in_knowns)
-  for idx, (aval, explicit) in enumerate(in_type):
-    if explicit and next(in_knowns_iter):
-      constval = next(in_consts_iter)
-      if isinstance(aval, DShapedArray):
-        for i, d in enumerate(aval.shape):
-          if isinstance(d, DBIdx):
-            if in_consts_full[d.val] is None:
-              in_consts_full[d.val] = \
-                  JaxprTracer(trace, PartialVal.unknown(in_avals[d.val]),
-                              ConstVar(constval.shape[i]))
-            assert core.same_referent(constval.shape[i], in_consts_full[d.val])
-        shape = [in_consts_full[d.val] if type(d) is DBIdx else d
-                 for d in aval.shape]
-        aval = aval.update(shape=tuple(shape))
-      in_consts_full[idx] = JaxprTracer(trace, PartialVal.unknown(aval),
-                                        ConstVar(constval))
-  # Check that we covered all axis sizes with ConstVar tracers.
-  for idx, (aval, explicit) in enumerate(in_type):
-    if not explicit: assert in_consts_full[idx] is not None
-    if isinstance(aval, DShapedArray):
-      assert all(type(d) is not DBIdx or in_consts_full[d.val] is not None
-                 for d in aval.shape)
-
-  # Next, build tracers for all unknown inputs, using the in_consts_full list
-  # for axis size tracers when necessary.
-  in_tracers = []
-  in_knowns_iter = iter(in_knowns)
-  for aval, explicit in in_type:
-    if explicit and not next(in_knowns_iter):
-      if isinstance(aval, DShapedArray):
-        shape = [in_consts_full[d.val] if type(d) is DBIdx else d
-                 for d in aval.shape]
-        aval = aval.update(shape=tuple(shape))
-      tracer = JaxprTracer(trace, PartialVal.unknown(aval), LambdaBinding())
-      in_tracers.append(tracer)
-
-  # Merge in_consts and in_tracers and call wrapped fn with  explicit arguments.
-  in_args = merge_lists(in_knowns, in_tracers, in_consts)
-  ans = yield in_args, {}
-
-  # Instantiate outputs and build jaxpr.
-  if isinstance(instantiate, bool):
-    instantiate = [instantiate] * len(ans)
-  out_tracers = map(trace.full_raise, map(core.full_lower, ans))
-  out_tracers = [trace.instantiate_const(trace.full_raise(t)) if inst else t
-                 for inst, t in zip(instantiate, out_tracers)]
-
-  # Collect known outputs.
-  out_knowns: list[bool] = [t.is_known() for t in out_tracers]
-  out_consts: list[Any] = [t.pval.get_known() for t in out_tracers
-                           if t.is_known()]
-
-  # Build the jaxpr.
-  out_tracers = [t for t in out_tracers if not t.is_known()]
-  jaxpr, res, env = tracers_to_jaxpr(in_tracers, out_tracers)
-  out_avals = [v.aval for v in jaxpr.outvars]
-  idx_map = {v: InDBIdx(i)
-             for i, v in enumerate(it.chain(jaxpr.constvars, jaxpr.invars))}
-  out_type = [(a.update(shape=tuple(idx_map.get(d, d) for d in a.shape))  # type: ignore
-               if type(a) is DShapedArray else a, True) for a in out_avals]
-
-  # Which residuals are just forwarded inputs? Check obj id, then prune.
-  id_map = {id(c.recipe.val): i for i, c in enumerate(in_consts_full)  # type: ignore
-            if c is not None}
-  fwds: list[int | None] = [id_map.get(id(c)) for c in res]
-  res = tuple(c for c, fwd in zip(res, fwds) if fwd is None)
-
-  del main, in_consts, trace, in_consts_iter, in_knowns_iter, in_consts_full, \
-      in_tracers, in_args, ans, out_tracers, out_avals
-  yield (*out_consts, *res), (fwds, out_knowns, tuple(out_type), jaxpr, env)
-
 
 custom_partial_eval_rules: dict[Primitive, Callable] = {}
 call_partial_eval_rules: dict[Primitive, Callable] = {}
@@ -1359,7 +1262,7 @@ def partial_eval_jaxpr_custom_rule_not_implemented(
     name: str, saveable: Callable[..., RematCases_], unks_in: Sequence[bool],
     inst_in: Sequence[bool], eqn: JaxprEqn) -> PartialEvalCustomResult:
   msg = (f'custom-policy remat rule not implemented for {name}, '
-         'open a feature request at https://github.com/google/jax/issues!')
+         'open a feature request at https://github.com/jax-ml/jax/issues!')
   raise NotImplementedError(msg)
 
 
@@ -2158,6 +2061,7 @@ class DynamicJaxprTrace(core.Trace):
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
     in_avals = [t.aval for t in tracers]
+    in_tangent_avals = [t.to_tangent_aval() for t in in_avals]
     with core.new_sublevel():
       fun_jaxpr, out_avals, consts, () = trace_to_subjaxpr_dynamic(fun, self.main, in_avals)
     closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
@@ -2166,7 +2070,7 @@ class DynamicJaxprTrace(core.Trace):
     @_memoize
     def jvp_jaxpr_thunk(*in_zeros):
       for store in jvp.stores: store and store.reset()
-      nz_tangent_avals, zero_avals = partition_list(in_zeros, in_avals)
+      nz_tangent_avals, zero_avals = partition_list(in_zeros, in_tangent_avals)
       jvp_, out_zeros = _jvp_jaxpr_zeros(jvp, in_zeros, tuple(zero_avals))
       in_avals_ = (*in_avals, *nz_tangent_avals)
       jaxpr, _, out_consts, () = trace_to_subjaxpr_dynamic(jvp_, main_(), in_avals_)
@@ -2784,7 +2688,7 @@ def call_padding_rule(prim, in_avals, out_avals, *args, call_jaxpr, **params):
 
 
 # TODO(mattjj): the following are deprecated; update callers to _nounits version
-# See https://github.com/google/jax/pull/9498
+# See https://github.com/jax-ml/jax/pull/9498
 @lu.transformation
 def trace_to_subjaxpr(main: core.MainTrace, instantiate: bool | Sequence[bool],
                       pvals: Sequence[PartialVal]):
@@ -2828,8 +2732,7 @@ def inline_jaxpr_into_trace(
     outvars = [Var('', v.aval) for v in eqn.outvars]
     src_ = (src if not eqn.source_info.name_stack else
             src.replace(name_stack=src.name_stack + eqn.source_info.name_stack))
-    trace.frame.add_eqn(core.new_jaxpr_eqn(invars, outvars, eqn.primitive,
-                                           eqn.params, eqn.effects, src_))
+    trace.frame.add_eqn(eqn.replace(invars, outvars, source_info=src_))  # type: ignore
     map(env.setdefault, eqn.outvars, outvars)
 
   tracer_env: dict[Var, Any] = dict(zip([*jaxpr.constvars, *jaxpr.invars],

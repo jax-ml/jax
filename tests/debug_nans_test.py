@@ -127,7 +127,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
         ans.block_until_ready()
 
   def testDebugNansJitWithDonation(self):
-    # https://github.com/google/jax/issues/12514
+    # https://github.com/jax-ml/jax/issues/12514
     a = jnp.array(0.)
     with self.assertRaises(FloatingPointError):
       ans = jax.jit(lambda x: 0. / x, donate_argnums=(0,))(a)
@@ -214,7 +214,7 @@ class DebugInfsTest(jtu.JaxTestCase):
       f(1)
 
   def testDebugNansDoesntCorruptCaches(self):
-    # https://github.com/google/jax/issues/6614
+    # https://github.com/jax-ml/jax/issues/6614
     @jax.jit
     def f(x):
       return jnp.divide(x, x)

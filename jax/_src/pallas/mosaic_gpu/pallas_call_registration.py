@@ -23,7 +23,7 @@ from jax import core as jax_core
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import lowering
-from jax.experimental.mosaic import gpu as mosaic_gpu
+import jax.experimental.mosaic.gpu.core as mosaic_core
 
 
 def pallas_call_lowering(
@@ -37,15 +37,12 @@ def pallas_call_lowering(
     grid_mapping: pallas_core.GridMapping,
     compiler_params: dict[str, Any],
     cost_estimate: pallas_core.CostEstimate | None,
+    out_avals: tuple[jax_core.AbstractValue, ...],
 ):
-  del interpret
+  del interpret, out_avals
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(
         "dynamic grid bounds not supported in the Mosaic GPU backend"
-    )
-  if input_output_aliases:
-    raise NotImplementedError(
-        "input_output_aliases not supported in the Mosaic GPU backend"
     )
 
   if debug:
@@ -66,9 +63,10 @@ def pallas_call_lowering(
     print(lowering_result.module.operation)
 
   module = lowering_result.module
-  return mosaic_gpu._mosaic_gpu_lowering_rule(
+  return mosaic_core._mosaic_gpu_lowering_rule(
       ctx,
       *args,
       module=module.operation.get_asm(binary=True, enable_debug_info=True),
       out_types=lowering_result.out_structs,
+      input_output_aliases=input_output_aliases,
   )

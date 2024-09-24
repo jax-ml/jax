@@ -27,6 +27,7 @@ import logging
 import re
 import time
 from typing import Any
+import warnings
 from absl import flags
 
 import flax
@@ -70,7 +71,9 @@ def load_mnist(split: tfds.Split, batch_size: int):
   if _MOCK_DATA.value:
     with tfds.testing.mock_data(num_examples=batch_size):
       try:
-        ds = tfds.load("mnist", split=split)
+        with warnings.catch_warnings():
+          warnings.simplefilter("ignore")
+          ds = tfds.load("mnist", split=split)
       except Exception as e:
         m = re.search(r'metadata files were not found in (.+/)mnist/', str(e))
         if m:

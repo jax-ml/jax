@@ -21,13 +21,11 @@ import itertools
 import jax
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
-from jaxlib.mlir.dialects import builtin
 from jaxlib.mlir.dialects import llvm
-from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import vector
 import numpy as np
 
-from . import dsl as mgpu
+import jax.experimental.mosaic.gpu as mgpu
 from . import utils
 
 # mypy: ignore-errors
@@ -55,15 +53,19 @@ class WGMMAAccumulator:
       self.value = wgmma_fence(_value)
 
   @classmethod
-  def zero(cls, m, n, dtype=None):
+  def zero(cls, m, n, dtype=None, *, is_signed: bool | None = None):
     if m % 64 or n % 8:
       raise ValueError
+    if is_signed is False:
+      raise TypeError("PTX does not support unsigned WGMMA accumulators")
     f32 = ir.F32Type.get()
     if dtype is None:
       dtype = f32
     zero = arith.constant(dtype, ir.FloatAttr.get(dtype, 0.0))
     return cls(
-        _value=mgpu.FragmentedArray.splat(zero, (m, n), mgpu.WGMMA_LAYOUT)
+        _value=mgpu.FragmentedArray.splat(
+            zero, (m, n), mgpu.WGMMA_LAYOUT, is_signed=is_signed
+        )
     )
 
   @classmethod
@@ -432,7 +434,9 @@ def wgmma(
       )
   return WGMMAAccumulator(
       _value=mgpu.FragmentedArray(
-          _registers=new_acc_regs, _layout=mgpu.WGMMA_LAYOUT
+          _registers=new_acc_regs,
+          _layout=mgpu.WGMMA_LAYOUT,
+          _is_signed=acc.value.is_signed,
       ),
       _sync=False,
   )
@@ -492,7 +496,7 @@ def wgmma_fence(array: mgpu.FragmentedArray):
     registers = np.asarray(regs, dtype=object).reshape(array.registers.shape)
   else:
     raise NotImplementedError(dtype)
-  return mgpu.FragmentedArray(_registers=registers, _layout=array.layout)
+  return mgpu.FragmentedArray(_registers=registers, _layout=array.layout, _is_signed=array.is_signed)
 
 
 def _as_fragmented_reg_ndarray(flat_regs, dtype: ir.Type, shape: tuple[int, ...]):

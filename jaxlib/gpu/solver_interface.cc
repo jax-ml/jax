@@ -232,6 +232,91 @@ JAX_GPU_DEFINE_SYRK(gpublasComplex, gpublasCsyrk);
 JAX_GPU_DEFINE_SYRK(gpublasDoubleComplex, gpublasZsyrk);
 #undef JAX_GPU_DEFINE_SYRK
 
+// Singular Value Decomposition: gesvd
+
+#define JAX_GPU_DEFINE_GESVD(Type, Name)                                       \
+  template <>                                                                  \
+  absl::StatusOr<int> GesvdBufferSize<Type>(gpusolverDnHandle_t handle,        \
+                                            signed char job, int m, int n) {   \
+    int lwork;                                                                 \
+    JAX_RETURN_IF_ERROR(                                                       \
+        JAX_AS_STATUS(Name##_bufferSize(handle, job, job, m, n, &lwork)));     \
+    return lwork;                                                              \
+  }                                                                            \
+                                                                               \
+  template <>                                                                  \
+  absl::Status Gesvd<Type>(gpusolverDnHandle_t handle, signed char job, int m, \
+                           int n, Type *a, RealType<Type>::value *s, Type *u,  \
+                           Type *vt, Type *workspace, int lwork, int *info) {  \
+    return JAX_AS_STATUS(Name(handle, job, job, m, n, a, m, s, u, m, vt, n,    \
+                              workspace, lwork, /*rwork=*/nullptr, info));     \
+  }
+
+JAX_GPU_DEFINE_GESVD(float, gpusolverDnSgesvd);
+JAX_GPU_DEFINE_GESVD(double, gpusolverDnDgesvd);
+JAX_GPU_DEFINE_GESVD(gpuComplex, gpusolverDnCgesvd);
+JAX_GPU_DEFINE_GESVD(gpuDoubleComplex, gpusolverDnZgesvd);
+#undef JAX_GPU_DEFINE_GESVD
+
+#ifdef JAX_GPU_CUDA
+
+#define JAX_GPU_DEFINE_GESVDJ(Type, Name)                                      \
+  template <>                                                                  \
+  absl::StatusOr<int> GesvdjBufferSize<Type>(                                  \
+      gpusolverDnHandle_t handle, gpusolverEigMode_t job, int econ, int m,     \
+      int n, gpuGesvdjInfo_t params) {                                         \
+    int lwork;                                                                 \
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(Name##_bufferSize(                       \
+        handle, job, econ, m, n, /*a=*/nullptr, /*lda=*/m, /*s=*/nullptr,      \
+        /*u=*/nullptr, /*ldu=*/m, /*v=*/nullptr, /*ldv=*/n, &lwork, params))); \
+    return lwork;                                                              \
+  }                                                                            \
+                                                                               \
+  template <>                                                                  \
+  absl::Status Gesvdj<Type>(                                                   \
+      gpusolverDnHandle_t handle, gpusolverEigMode_t job, int econ, int m,     \
+      int n, Type *a, RealType<Type>::value *s, Type *u, Type *v,              \
+      Type *workspace, int lwork, int *info, gpuGesvdjInfo_t params) {         \
+    return JAX_AS_STATUS(Name(handle, job, econ, m, n, a, m, s, u, m, v, n,    \
+                              workspace, lwork, info, params));                \
+  }
+
+JAX_GPU_DEFINE_GESVDJ(float, gpusolverDnSgesvdj);
+JAX_GPU_DEFINE_GESVDJ(double, gpusolverDnDgesvdj);
+JAX_GPU_DEFINE_GESVDJ(gpuComplex, gpusolverDnCgesvdj);
+JAX_GPU_DEFINE_GESVDJ(gpuDoubleComplex, gpusolverDnZgesvdj);
+#undef JAX_GPU_DEFINE_GESVDJ
+
+#define JAX_GPU_DEFINE_GESVDJ_BATCHED(Type, Name)                             \
+  template <>                                                                 \
+  absl::StatusOr<int> GesvdjBatchedBufferSize<Type>(                          \
+      gpusolverDnHandle_t handle, gpusolverEigMode_t job, int m, int n,       \
+      gpuGesvdjInfo_t params, int batch) {                                    \
+    int lwork;                                                                \
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(                                        \
+        Name##_bufferSize(handle, job, m, n, /*a=*/nullptr, /*lda=*/m,        \
+                          /*s=*/nullptr, /*u=*/nullptr, /*ldu=*/m,            \
+                          /*v=*/nullptr, /*ldv=*/n, &lwork, params, batch))); \
+    return lwork;                                                             \
+  }                                                                           \
+                                                                              \
+  template <>                                                                 \
+  absl::Status GesvdjBatched<Type>(                                           \
+      gpusolverDnHandle_t handle, gpusolverEigMode_t job, int m, int n,       \
+      Type *a, RealType<Type>::value *s, Type *u, Type *v, Type *workspace,   \
+      int lwork, int *info, gpuGesvdjInfo_t params, int batch) {              \
+    return JAX_AS_STATUS(Name(handle, job, m, n, a, m, s, u, m, v, n,         \
+                              workspace, lwork, info, params, batch));        \
+  }
+
+JAX_GPU_DEFINE_GESVDJ_BATCHED(float, gpusolverDnSgesvdjBatched);
+JAX_GPU_DEFINE_GESVDJ_BATCHED(double, gpusolverDnDgesvdjBatched);
+JAX_GPU_DEFINE_GESVDJ_BATCHED(gpuComplex, gpusolverDnCgesvdjBatched);
+JAX_GPU_DEFINE_GESVDJ_BATCHED(gpuDoubleComplex, gpusolverDnZgesvdjBatched);
+#undef JAX_GPU_DEFINE_GESVDJ_BATCHED
+
+#endif  // JAX_GPU_CUDA
+
 }  // namespace solver
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

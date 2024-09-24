@@ -733,7 +733,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(fun(4), (8, 16))
 
   def testCondPredIsNone(self):
-    # see https://github.com/google/jax/issues/11574
+    # see https://github.com/jax-ml/jax/issues/11574
     def f(pred, x):
       return lax.cond(pred, lambda x: x + 1, lambda x: x + 2, x)
 
@@ -743,7 +743,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                            lambda: jax.jit(f)(None, 1.))
 
   def testCondTwoOperands(self):
-    # see https://github.com/google/jax/issues/8469
+    # see https://github.com/jax-ml/jax/issues/8469
     add, mul = lax.add, lax.mul
 
     def fun(x):
@@ -775,7 +775,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(fun(1), cfun(1))
 
   def testCondCallableOperands(self):
-    # see https://github.com/google/jax/issues/16413
+    # see https://github.com/jax-ml/jax/issues/16413
 
     @tree_util.register_pytree_node_class
     class Foo:
@@ -1560,7 +1560,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       {"testcase_name": f"_{name}", "cond": cond}
       for cond, name in COND_IMPLS)
   def testCondVmapGrad(self, cond):
-    # https://github.com/google/jax/issues/2264
+    # https://github.com/jax-ml/jax/issues/2264
     def f_1(x): return x ** 2
     def f_2(x): return x ** 3
 
@@ -1839,7 +1839,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def testIssue711(self, scan):
     # Tests reverse-mode differentiation through a scan for which the scanned
     # function also involves reverse-mode differentiation.
-    # See https://github.com/google/jax/issues/711
+    # See https://github.com/jax-ml/jax/issues/711
     def harmonic_bond(conf, params):
       return jnp.sum(conf * params)
 
@@ -2078,7 +2078,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(carry_out[0], jnp.array([2., 2., 2.]), check_dtypes = False)
 
   def testIssue757(self):
-    # code from https://github.com/google/jax/issues/757
+    # code from https://github.com/jax-ml/jax/issues/757
     def fn(a):
       return jnp.cos(a)
 
@@ -2107,7 +2107,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(actual, expected)
 
   def testMapEmpty(self):
-    # https://github.com/google/jax/issues/2412
+    # https://github.com/jax-ml/jax/issues/2412
     ans = lax.map(lambda x: x * x, jnp.array([]))
     expected = jnp.array([])
     self.assertAllClose(ans, expected)
@@ -2164,7 +2164,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     lax.while_loop(cond, body, 0)
 
   def test_caches_depend_on_axis_env(self):
-    # https://github.com/google/jax/issues/9187
+    # https://github.com/jax-ml/jax/issues/9187
     scanned_f = lambda _, __: (lax.psum(1, 'i'), None)
     f = lambda: lax.scan(scanned_f, 0, None, length=1)[0]
     ans = jax.vmap(f, axis_name='i', axis_size=2, out_axes=None)()
@@ -2443,7 +2443,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(h, length)
 
   def test_disable_jit_cond_with_vmap(self):
-    # https://github.com/google/jax/issues/3093
+    # https://github.com/jax-ml/jax/issues/3093
     def fn(t):
       return lax.cond(t > 0, 0, lambda x: 0, 0, lambda x: 1)
     fn = jax.vmap(fn)
@@ -2452,14 +2452,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       _ = fn(jnp.array([1]))  # doesn't crash
 
   def test_disable_jit_while_loop_with_vmap(self):
-    # https://github.com/google/jax/issues/2823
+    # https://github.com/jax-ml/jax/issues/2823
     def trivial_while(y):
       return lax.while_loop(lambda x: x < 10.0, lambda x: x + 1.0, y)
     with jax.disable_jit():
       jax.vmap(trivial_while)(jnp.array([3.0,4.0]))  # doesn't crash
 
   def test_vmaps_of_while_loop(self):
-    # https://github.com/google/jax/issues/3164
+    # https://github.com/jax-ml/jax/issues/3164
     def f(x, n): return lax.fori_loop(0, n, lambda _, x: x + 1, x)
     x, n = jnp.arange(3), jnp.arange(4)
     jax.vmap(jax.vmap(f, (None, 0)), (0, None))(x, n)  # doesn't crash
@@ -2567,7 +2567,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         lambda: core.check_jaxpr(jaxpr))
 
   def test_cond_transformation_rule_with_consts(self):
-    # https://github.com/google/jax/pull/9731
+    # https://github.com/jax-ml/jax/pull/9731
 
     @jax.custom_jvp
     def f(x):
@@ -2584,7 +2584,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jax.jvp(g, (x,), (x,))  # doesn't crash
 
   def test_cond_excessive_compilation(self):
-    # Regression test for https://github.com/google/jax/issues/14058
+    # Regression test for https://github.com/jax-ml/jax/issues/14058
     def f(x):
       return x + 1
 
@@ -2632,7 +2632,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
           ('new_remat', new_checkpoint),
       ])
   def test_scan_vjp_forwards_extensive_residuals(self, remat):
-    # https://github.com/google/jax/issues/4510
+    # https://github.com/jax-ml/jax/issues/4510
     def cumprod(x):
       s = jnp.ones((2, 32), jnp.float32)
       return lax.scan(lambda s, x: (x*s, s), s, x)
@@ -2671,7 +2671,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       (jnp.array([1.]), jnp.array([[0., 1., 2., 3., 4.]])), check_dtypes=False)
 
   def test_xla_cpu_gpu_loop_cond_bug(self):
-    # https://github.com/google/jax/issues/5900
+    # https://github.com/jax-ml/jax/issues/5900
     def deriv(f):
       return lambda x, *args: jax.linearize(lambda x: f(x, *args), x)[1](1.0)
 
@@ -2750,7 +2750,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jax.grad(f)(1.)  # doesn't crash
 
   def test_custom_jvp_tangent_cond_transpose(self):
-    # https://github.com/google/jax/issues/14026
+    # https://github.com/jax-ml/jax/issues/14026
     def mask_fun(arr, choice):
       out = (1 - choice) * arr.sum() +  choice * (1 - arr.sum())
       return out
@@ -2997,7 +2997,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertIsInstance(y, jax.Array)
 
   def test_cond_memory_leak(self):
-    # https://github.com/google/jax/issues/12719
+    # https://github.com/jax-ml/jax/issues/12719
 
     def leak():
       data = jax.device_put(np.zeros((1024), dtype=np.float32) + 1)

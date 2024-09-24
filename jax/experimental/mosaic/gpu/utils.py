@@ -23,13 +23,14 @@ import math
 from typing import Any, Literal
 
 import jax
+from jax import numpy as jnp
+from jax.interpreters import mlir
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import builtin
 from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import memref
-from jaxlib.mlir.dialects import nvgpu
 from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import scf
 from jaxlib.mlir.dialects import vector
@@ -154,9 +155,8 @@ def fori(bound, carrys):
   flat_carrys, carry_treedef = jax.tree.flatten(carrys)
 
   def wrapper(f):
-    index = ir.IndexType.get()
-    c0 = arith.ConstantOp(index, ir.IntegerAttr.get(index, 0))
-    c1 = arith.ConstantOp(index, ir.IntegerAttr.get(index, 1))
+    c0 = arith.constant(bound.type, 0)
+    c1 = arith.constant(bound.type, 1)
     for_op = scf.ForOp(c0, bound, c1, flat_carrys)
     with ir.InsertionPoint(for_op.body):
       i = for_op.induction_variable
@@ -940,3 +940,17 @@ def cluster_collective_mask(
   for idx in np.ndindex(collective_shape):
     mask_unshifted |= 1 << sum(i * s for i, s in zip(idx, collective_strides))
   return arith.shli(c(mask_unshifted, i32), mask_shift)
+
+
+def dtype_to_ir_type(dtype: jax.typing.DTypeLike) -> ir.Type:
+  dtype = jnp.dtype(dtype)
+  if jnp.issubdtype(dtype, jnp.integer):
+    # All integer types in Mosaic GPU are signless.
+    return ir.IntegerType.get_signless(dtype.itemsize * 8)
+  return mlir.dtype_to_ir_type(dtype)
+
+
+def is_signed(dtype: jax.typing.DTypeLike) -> bool | None:
+  if jnp.issubdtype(dtype, jnp.integer):
+    return jnp.issubdtype(dtype, jnp.signedinteger)
+  return None

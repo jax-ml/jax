@@ -61,7 +61,7 @@ def _ravel_list(lst):
 
   if all(dt == to_dtype for dt in from_dtypes):
     # Skip any dtype conversion, resulting in a dtype-polymorphic `unravel`.
-    # See https://github.com/google/jax/issues/7809.
+    # See https://github.com/jax-ml/jax/issues/7809.
     del from_dtypes, to_dtype
     raveled = jnp.concatenate([jnp.ravel(e) for e in lst])
     return raveled, HashablePartial(_unravel_list_single_dtype, indices, shapes)

@@ -196,15 +196,21 @@ class AbstractRef(core.AbstractValue):
 
   @property
   def shape(self):
-    if not isinstance(self.inner_aval, core.ShapedArray):
-      raise AttributeError(f"`Ref{{{self.inner_aval.str_short()}}} has no `shape`.")
-    return self.inner_aval.shape
+    try:
+      return self.inner_aval.shape  # pytype: disable=attribute-error
+    except AttributeError:
+      raise AttributeError(
+          f"`Ref{{{self.inner_aval.str_short()}}} has no `shape`."
+      ) from None
 
   @property
   def dtype(self):
-    if not isinstance(self.inner_aval, core.UnshapedArray):
-      raise AttributeError(f"`Ref{{{self.inner_aval.str_short()}}} has no `dtype`.")
-    return self.inner_aval.dtype
+    try:
+      return self.inner_aval.dtype  # pytype: disable=attribute-error
+    except AttributeError:
+      raise AttributeError(
+          f"`Ref{{{self.inner_aval.str_short()}}} has no `dtype`."
+      ) from None
 
   @core.aval_property
   def at(self):
@@ -237,8 +243,8 @@ class AbstractRef(core.AbstractValue):
   def __repr__(self) -> str:
     return f'Ref{{{self.inner_aval.str_short()}}}'
 
-  def at_least_vspace(self):
-    return AbstractRef(self.inner_aval.at_least_vspace())
+  def to_tangent_aval(self):
+    return AbstractRef(self.inner_aval.to_tangent_aval())
 
   def __eq__(self, other):
     return (type(self) is type(other) and self.inner_aval == other.inner_aval)

@@ -62,6 +62,7 @@ from jax._src.lax.utils import (
   standard_multi_result_abstract_eval, standard_primitive)
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -1076,7 +1077,7 @@ def _reduction_jaxpr(computation, aval):
   if any(isinstance(c, core.Tracer) for c in consts):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "
-        "at https://github.com/google/jax.")
+        "at https://github.com/jax-ml/jax.")
   return jaxpr, tuple(consts)
 
 @cache()
@@ -1089,7 +1090,7 @@ def _variadic_reduction_jaxpr(computation, flat_avals, aval_tree):
   if any(isinstance(c, core.Tracer) for c in consts):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "
-        "at https://github.com/google/jax.")
+        "at https://github.com/jax-ml/jax.")
   return core.ClosedJaxpr(jaxpr, consts), out_tree()
 
 def _get_monoid_reducer(monoid_op: Callable,
@@ -1372,18 +1373,43 @@ def stop_gradient(x: T) -> T:
   argument `x` unchanged. However, ``stop_gradient`` prevents the flow of
   gradients during forward or reverse-mode automatic differentiation. If there
   are multiple nested gradient computations, ``stop_gradient`` stops gradients
-  for all of them.
+  for all of them. For some discussion of where this is useful, refer to
+  :ref:`stopping-gradients`.
 
-  For example:
+  Args:
+    x: array or pytree of arrays
 
-  >>> jax.grad(lambda x: x**2)(3.)
-  Array(6., dtype=float32, weak_type=True)
-  >>> jax.grad(lambda x: jax.lax.stop_gradient(x)**2)(3.)
-  Array(0., dtype=float32, weak_type=True)
-  >>> jax.grad(jax.grad(lambda x: x**2))(3.)
-  Array(2., dtype=float32, weak_type=True)
-  >>> jax.grad(jax.grad(lambda x: jax.lax.stop_gradient(x)**2))(3.)
-  Array(0., dtype=float32, weak_type=True)
+  Returns:
+    input value is returned unchanged, but within autodiff will be treated as
+    a constant.
+
+  Examples:
+    Consider a simple function that returns the square of the input value:
+
+    >>> def f1(x):
+    ...   return x ** 2
+    >>> x = jnp.float32(3.0)
+    >>> f1(x)
+    Array(9.0, dtype=float32)
+    >>> jax.grad(f1)(x)
+    Array(6.0, dtype=float32)
+
+    The same function with ``stop_gradient`` around ``x`` will be equivalent
+    under normal evaluation, but return a zero gradient because ``x`` is
+    effectively treated as a constant:
+
+    >>> def f2(x):
+    ...   return jax.lax.stop_gradient(x) ** 2
+    >>> f2(x)
+    Array(9.0, dtype=float32)
+    >>> jax.grad(f2)(x)
+    Array(0.0, dtype=float32)
+
+    This is used in a number of places within the JAX codebase; for example
+    :func:`jax.nn.softmax` internally normalizes the input by its maximum
+    value, and this maximum value is wrapped in ``stop_gradient`` for
+    efficiency. Refer to :ref:`stopping-gradients` for more discussion of
+    the applicability of ``stop_gradient``.
   """
   def stop(x):
     # only bind primitive on inexact dtypes, to avoid some staging
@@ -2014,7 +2040,15 @@ def _tan_impl(x):
 
 tan_p = standard_unop(_float | _complex, 'tan')
 ad.defjvp2(tan_p, lambda g, ans, x: mul(g, _const(x, 1) + square(ans)))
-mlir.register_lowering(tan_p, partial(_nary_lower_hlo, chlo.tan))
+# TODO(b/368011034): Remove after jaxlib 0.4.34 release. In 0.4.33, this
+# lowering is mostly supported, but it fails on export or with the PJRT plugin
+# because those modes target an older StableHLO version, and the
+# compatibility updates from https://github.com/openxla/xla/pull/16649 aren't
+# included in the 0.4.33 release.
+if jaxlib_version <= (0, 4, 33):
+  mlir.register_lowering(tan_p, partial(_nary_lower_hlo, chlo.tan))
+else:
+  mlir.register_lowering(tan_p, partial(_nary_lower_hlo, hlo.tan))
 
 def asin_impl(x):
   if dtypes.issubdtype(_dtype(x), np.complexfloating):
@@ -2300,7 +2334,7 @@ def _add_jvp(primals, tangents):
   xdot, ydot = tangents
   primal_out = add(x, y)
   if type(xdot) is type(ydot) is ad_util.Zero:
-    return primal_out, ad_util.Zero.from_value(primal_out)
+    return primal_out, ad_util.Zero.from_primal_value(primal_out)
   if type(xdot) is ad_util.Zero:
     return primal_out, _maybe_broadcast(primal_out.shape, ydot)
   elif type(ydot) is ad_util.Zero:
@@ -2331,7 +2365,7 @@ def _sub_jvp(primals, tangents):
   xdot, ydot = tangents
   primal_out = sub(x, y)
   if type(xdot) is type(ydot) is ad_util.Zero:
-    return primal_out, ad_util.Zero.from_value(primal_out)
+    return primal_out, ad_util.Zero.from_primal_value(primal_out)
   if type(xdot) is ad_util.Zero:
     return primal_out, _maybe_broadcast(primal_out.shape, neg(ydot))
   elif type(ydot) is ad_util.Zero:
@@ -3355,7 +3389,7 @@ def _broadcast_in_dim_jvp_rule(primals, tangents, *, shape, broadcast_dimensions
   y = broadcast_in_dim_p.bind(operand, *dyn_shape, shape=shape,
                               broadcast_dimensions=broadcast_dimensions)
   if type(operand_dot) is ad_util.Zero:
-    y_dot = ad_util.Zero.from_value(y)
+    y_dot = ad_util.Zero.from_primal_value(y)
   else:
     y_dot = broadcast_in_dim_p.bind(operand_dot, *dyn_shape, shape=shape,
                                     broadcast_dimensions=broadcast_dimensions)
@@ -3832,8 +3866,7 @@ def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
 def _transpose_lower(ctx, x, *, permutation):
   aval_out, = ctx.avals_out
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    elt_shape = aval_out.dtype._rules.physical_element_aval(
-        aval_out.dtype).shape
+    elt_shape = core.physical_element_aval(aval_out.dtype).shape
     trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]
     permutation = [*permutation, *trailing_dims]
   return [hlo.transpose(x, mlir.dense_int_array(permutation))]
@@ -4525,7 +4558,7 @@ def _top_k_jvp(primals, tangents, *, k):
   tangent, = tangents
   primals_out = top_k(operand, k)
   if type(tangent) is ad_util.Zero:
-    tangent_out = ad_util.Zero.from_value(primals_out[0])
+    tangent_out = ad_util.Zero.from_primal_value(primals_out[0])
   else:
     _, k_idxs = primals_out
     idx_shape = k_idxs.shape
@@ -4544,7 +4577,7 @@ def _top_k_jvp(primals, tangents, *, k):
       collapsed_slice_dims=tuple(range(rank)),
       start_index_map=tuple(range(rank)))
     tangent_out = slicing.gather(tangent, gather_indices, dnums, slice_sizes)
-  return primals_out, (tangent_out, ad_util.Zero.from_value(primals_out[1]))
+  return primals_out, (tangent_out, ad_util.Zero.from_primal_value(primals_out[1]))
 
 def _top_k_batch_rule(batched_args, batch_dims, *, k):
   operand, = batched_args
@@ -4580,7 +4613,7 @@ batching.primitive_batchers[top_k_p] = _top_k_batch_rule
 def _stop_gradient_jvp_rule(primals, tangents):
   # if we don't call stop_gradient here, we'd only peel off one autodiff tracer
   x, = primals
-  return stop_gradient(x), ad_util.Zero.from_value(x)
+  return stop_gradient(x), ad_util.Zero.from_primal_value(x)
 
 def _stop_gradient_batch_rule(batched_args, batch_dims):
   x, = batched_args
@@ -4902,7 +4935,7 @@ def _copy_impl_pmap_sharding(sharded_dim, *args, **kwargs):
   return tree_util.tree_unflatten(p.out_tree(), out_flat)
 
 
-# TODO(https://github.com/google/jax/issues/13552): Look into making this a
+# TODO(https://github.com/jax-ml/jax/issues/13552): Look into making this a
 # method on jax.Array so that we can bypass the XLA compilation here.
 def _copy_impl(prim, *args, **kwargs):
   a, = args

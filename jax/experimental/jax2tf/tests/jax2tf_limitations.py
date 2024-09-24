@@ -1066,9 +1066,9 @@ class Jax2TfLimitation(test_harnesses.Limitation):
 
   @classmethod
   def qr(cls, harness: test_harnesses.Harness):
-    # See https://github.com/google/jax/pull/3775#issuecomment-659407824;
+    # See https://github.com/jax-ml/jax/pull/3775#issuecomment-659407824;
     #     # jit_compile=True breaks for complex types.
-    # TODO: see https://github.com/google/jax/pull/3775#issuecomment-659407824.
+    # TODO: see https://github.com/jax-ml/jax/pull/3775#issuecomment-659407824.
     # - for now, the performance of the HLO QR implementation called when
     #   compiling with TF is expected to have worse performance than the
     #   custom calls made in JAX.

@@ -726,8 +726,8 @@ class PallasCallDMATest(PallasBaseTest):
     x = jnp.ones((8, 128), dtype=jnp.float32)
     y = self.pallas_call(
         kernel,
-        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY)],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )(x)
     jax.block_until_ready(y)
@@ -1043,9 +1043,9 @@ class PallasCallDMATest(PallasBaseTest):
             kernel,
             grid_spec=pltpu.PrefetchScalarGridSpec(
                 num_scalar_prefetch=0,
-                in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY)],
+                in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
                 out_specs=[
-                    pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+                    pl.BlockSpec(memory_space=pl.ANY),
                     pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
                 ],
                 scratch_shapes=[pltpu.SemaphoreType.DMA],
@@ -1069,9 +1069,9 @@ class PallasCallDMATest(PallasBaseTest):
     y = self.pallas_call(
         kernel,
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )(x)
     np.testing.assert_array_equal(y, x)
@@ -1088,9 +1088,9 @@ class PallasCallDMATest(PallasBaseTest):
       self.pallas_call(
           kernel,
           in_specs=[
-              pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+              pl.BlockSpec(memory_space=pl.ANY),
           ],
-          out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
           out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
       )(x)
 
@@ -1105,9 +1105,9 @@ class PallasCallDMATest(PallasBaseTest):
     y = self.pallas_call(
         kernel,
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )(x)
     np.testing.assert_array_equal(y, x)
@@ -1126,9 +1126,9 @@ class PallasCallDMATest(PallasBaseTest):
     y = self.pallas_call(
         kernel,
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
         out_shape=jax.ShapeDtypeStruct((2, 8, 128), jnp.float32),
         grid=(2,),
     )(x)
@@ -1147,7 +1147,7 @@ class PallasCallDMATest(PallasBaseTest):
     y = self.pallas_call(
         kernel,
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )(x)
@@ -1164,7 +1164,7 @@ class PallasCallDMATest(PallasBaseTest):
     x = jnp.arange(8 * 128.).reshape((8, 128))
     y = self.pallas_call(
         kernel,
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )(x)
     np.testing.assert_allclose(y, x)
@@ -1184,8 +1184,8 @@ class PallasCallDMATest(PallasBaseTest):
     x = jnp.arange(8 * 128.).reshape((8, 128))
     y = self.pallas_call(
         kernel,
-        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY)],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )(x)
     np.testing.assert_allclose(y, x)
@@ -1202,7 +1202,7 @@ class PallasCallDMATest(PallasBaseTest):
     y = self.pallas_call(
         kernel,
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )(x)
@@ -1223,7 +1223,7 @@ class PallasCallDMATest(PallasBaseTest):
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
         out_shape=jax.ShapeDtypeStruct((1, 2), jnp.float32),
     )(x)
     expected = jnp.zeros_like(x[0:1, 0:2]).at[0, 1].set(x[4, 4])
@@ -1261,7 +1261,7 @@ class PallasCallDMATest(PallasBaseTest):
     y = self.pallas_call(
         kernel,
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
         out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
         out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
@@ -1284,7 +1284,7 @@ class PallasCallDMATest(PallasBaseTest):
     y = self.pallas_call(
         kernel,
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
         out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
         out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
@@ -1313,7 +1313,7 @@ class PallasCallDMATest(PallasBaseTest):
     y = self.pallas_call(
         kernel,
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
         out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
         out_shape=jax.ShapeDtypeStruct((3, 16, 128), jnp.float32),
@@ -1340,7 +1340,7 @@ class PallasCallDMATest(PallasBaseTest):
       _ = self.pallas_call(
           kernel,
           in_specs=[
-              pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+              pl.BlockSpec(memory_space=pl.ANY),
           ],
           out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
           out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
@@ -1410,7 +1410,7 @@ class PallasCallDMATest(PallasBaseTest):
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[
-                pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+                pl.BlockSpec(memory_space=pl.ANY),
             ],
             scratch_shapes=[pltpu.SemaphoreType.REGULAR,
                             pltpu.SemaphoreType.DMA],
@@ -1436,9 +1436,9 @@ class PallasCallDMATest(PallasBaseTest):
                              num_scalar_prefetch=1,
                              in_specs=[
                                  pl.BlockSpec(
-                                     memory_space=pltpu.TPUMemorySpace.ANY)],
+                                     memory_space=pl.ANY)],
                              out_specs=pl.BlockSpec(
-                                 memory_space=pltpu.TPUMemorySpace.ANY),
+                                 memory_space=pl.ANY),
                              scratch_shapes=[pltpu.SemaphoreType.DMA],
                              ),
                          out_shape=jax.ShapeDtypeStruct(x.shape[1:], dtype),
@@ -1480,7 +1480,7 @@ class PallasCallDMAInterpretTest(PallasCallDMATest):
     grid_spec = pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[
-                pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+                pl.BlockSpec(memory_space=pl.ANY),
             ],
             scratch_shapes=(
                 [pltpu.SemaphoreType.DMA(2,)]
@@ -1650,125 +1650,6 @@ class PallasCallTest(PallasBaseTest):
               internal_scratch_in_bytes=requested_bytes,
           ),
       )(x)
-
-
-class PallasCallUnblockedIndexingTest(PallasBaseTest):
-
-  def test_block_spec_unblocked(self):
-    def show_program_ids(*, shape, block_shape, grid,
-                         indexing_mode: pl.IndexingMode):
-      def kernel(o1_ref):
-        assert o1_ref.shape == block_shape
-        o1_ref[...] = jnp.full(o1_ref.shape, pl.program_id(0))
-
-      return self.pallas_call(kernel,
-                              jax.ShapeDtypeStruct(shape, dtype=np.int32),
-                              grid=grid,
-                              out_specs=pl.BlockSpec(block_shape,
-                                                     lambda i: (8 * i, 0),
-                                                     indexing_mode=indexing_mode))()
-    # No padding
-    pids = show_program_ids(shape=(16, 128), block_shape=(8, 128),
-                            grid=(2,),
-                            indexing_mode=pl.Unblocked())
-    expected_pids = np.array(
-        [[0] * 128] * 8 + [[1] * 128] * 8,
-        dtype=np.int32)
-    self.assertAllClose(pids, expected_pids)
-
-    # Only high padding
-    pids = show_program_ids(shape=(14, 128), block_shape=(8, 128),
-                            grid=(2,),
-                            indexing_mode=pl.Unblocked(((0, 2), (0, 0))))
-    expected_pids = np.array(
-        [[0] * 128] * 8 + [[1] * 128] * 6,
-        dtype=np.int32)
-    self.assertAllClose(pids, expected_pids)
-
-    # Both low and high padding
-    self.skipTest("TODO: TPU low padding not supported yet")
-    pids = show_program_ids(shape=(11, 128), block_shape=(8, 128),
-                            grid=(2,),
-                            indexing_mode=pl.Unblocked(((3, 2), (0, 0))))
-    expected_pids = np.array(
-        [[0] * 128] * 5 + [[1] * 128] * 6,
-        dtype=np.int32)
-    self.assertAllClose(pids, expected_pids)
-
-  @parameterized.parameters("int32", "float32")
-  def test_block_spec_unblocked_padding_is_nan(self, dtype_name):
-    if not self.INTERPRET:
-      self.skipTest("Only applicable for the interpret mode")
-
-    dtype = np.dtype(dtype_name)
-    def copy_kernel(x_ref, o_ref):
-      o_ref[...] = x_ref[...]
-    res = self.pallas_call(copy_kernel,
-                           jax.ShapeDtypeStruct((6,), dtype=dtype),
-                           grid=(1,),
-                           in_specs=[pl.BlockSpec((6,), lambda i: 0,
-                                                  indexing_mode=pl.Unblocked(((1, 2),)))])(
-        np.full((3,), 42, dtype=dtype)
-    )
-    expected_pad = {"int32": jnp.iinfo(np.int32).min,
-                    "float32": np.nan}[dtype_name]
-    self.assertAllClose(res, np.array([expected_pad, 42, 42,  42,
-                                       expected_pad, expected_pad], dtype=dtype))
-
-  def test_unblocked_indexing(self):
-    shape = (16 * 8, 128)
-    result_ty = jax.ShapeDtypeStruct((15 * 8, 128), jnp.float32)
-
-    def kernel(x_ref, o_ref):
-      o_ref[...] = x_ref[pl.ds(0, 8)] + x_ref[pl.ds(8, 8)]
-
-    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
-    y = self.pallas_call(
-        kernel,
-        grid=(15,),
-        in_specs=(
-            pl.BlockSpec(
-                (2 * 8, 128), lambda i: (i * 8, 0), indexing_mode=pl.unblocked
-            ),
-        ),
-        out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
-        out_shape=result_ty,
-    )(x)
-    ref = []
-    for i in range(15):
-      block = x[i * 8:i * 8 + 2 * 8]
-      ref.append(block[0:8] + block[8:16])
-    ref = np.concatenate(ref, axis=0)
-    np.testing.assert_array_equal(y, ref)
-
-  def test_unblocked_indexing_with_padding(self):
-    shape = (8, 128)
-    result_ty = jax.ShapeDtypeStruct((8, 128), jnp.float32)
-
-    def kernel(x_ref, y_ref):
-      y_ref[...] = x_ref[pl.ds(0, 8)]
-
-    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
-    y = self.pallas_call(
-        kernel,
-        grid=(1,),
-        in_specs=(
-            pl.BlockSpec(
-                (2 * 8, 128),
-                lambda i: (0, 0),
-                indexing_mode=pl.Unblocked(((0, 8), (0, 0))),
-            ),
-        ),
-        out_specs=pl.BlockSpec((8, 128), lambda i: (0, 0)),
-        out_shape=result_ty,
-    )(x)
-    np.testing.assert_array_equal(y, x)
-
-
-class PallasCallUnblockedIndexingInterpretTest(
-    PallasCallUnblockedIndexingTest
-):
-  INTERPRET = True
 
 
 class PallasUXTest(PallasBaseTest):
@@ -1949,9 +1830,9 @@ class PallasCallRefTransformTest(PallasBaseTest):
     y = self.pallas_call(
         kernel,
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
         out_shape=jax.ShapeDtypeStruct((8, 2, 128), jnp.int16),
     )(x)
     expected = (
@@ -2425,9 +2306,7 @@ class MiscellaneousTest(PallasBaseTest):
     )(x)
     np.testing.assert_array_equal(out, np.reshape(x, (1, 256, 8, 128)))
 
-  @only_passes_in_interpret()
   def test_lane_to_chunk_broadcast_fp32(self):
-    """b/348033362"""
     x = np.arange(256 * 128, dtype=jnp.float32).reshape(1, 256, 128)
 
     def kernel(x_ref, out_ref):
@@ -2466,9 +2345,7 @@ class MiscellaneousTest(PallasBaseTest):
     )(x)
     np.testing.assert_array_equal(out, np.broadcast_to(x, (256, 512)))
 
-  @only_passes_in_interpret(unless_generation=4)
   def test_bfloat16_to_uint32_bitcast(self):
-    """b/347771903"""
     x = np.arange(16 * 2 * 256, dtype=jnp.bfloat16).reshape(16, 2, 256)
 
     def kernel(x_ref, out_ref):
@@ -2477,7 +2354,7 @@ class MiscellaneousTest(PallasBaseTest):
     out = self.pallas_call(
         kernel, out_shape=jax.ShapeDtypeStruct((16, 1, 256), jnp.uint32)
     )(x)
-    # FIXME: Add correctness test for result.
+    np.testing.assert_array_equal(out, state_utils.bitcast(x, jnp.uint32))
 
   @only_passes_in_interpret()
   def test_roll_partial(self):
@@ -2524,9 +2401,7 @@ class MiscellaneousTest(PallasBaseTest):
 
     np.testing.assert_array_equal(out, np.reshape(x[:, 7, :], (1, 8, 128)))
 
-  @only_passes_in_interpret()
   def test_sublane_adding_shape_cast_f32(self):
-    """b/352833257"""
     x = np.arange(8 * 128, dtype=jnp.float32).reshape(8, 128)
 
     def kernel(x_ref, out_ref):
@@ -2552,9 +2427,7 @@ class MiscellaneousTest(PallasBaseTest):
 
     np.testing.assert_array_equal(out, np.reshape(x, (8, 1, 128)))
 
-  @only_passes_in_interpret()
   def test_mixed_strides(self):
-    """b/352841329"""
     x = np.zeros((8, 128), dtype=jnp.float32)
     y = np.zeros((8, 2, 128), dtype=jnp.bfloat16)
 

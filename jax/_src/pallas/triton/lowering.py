@@ -121,6 +121,12 @@ def _eval_index_map(
       _ensure_ir_value(i, jax_core.ShapedArray((), jnp.int32))
       for i in block_indices
   )
+  if isinstance(block_mapping.indexing_mode, pallas_core.Unblocked):
+    if block_mapping.indexing_mode.padding is not None:
+      raise NotImplementedError(
+          "Unblocked indexing with padding is not supported in Triton lowering."
+      )
+    return tuple(block_indices)
   return tuple(
       i if b is pallas_core.mapped else _mul(i, _ir_constant(b, i.type))
       for i, b in zip(block_indices, block_mapping.block_shape)
@@ -214,19 +220,18 @@ def _process_grid_to_3d_grid(grid_mapping: GridMapping):
   if len(collapse_dims) == 0:
     prog_ids = [None] * len(prog_id_dims)
     for i in range(len(prog_id_dims)):
-      out_idx = launch_grid_to_pallas_grid[i]
-      prog_ids[out_idx] = _program_id(i)
+      prog_ids[launch_grid_to_pallas_grid[i]] = _program_id(i, prog_id_dims)
 
     return prog_id_dims, prog_ids
-  else:
-    new_grid = [math.prod(collapse_dims), *prog_id_dims]
+
+  new_grid = [math.prod(collapse_dims), *prog_id_dims]
 
   assert new_grid[0] < 2**31 - 1, \
           "Cannot fix pallas kernel launch grid within CUDA limits"
 
   out_indices = [None] * len(grid_mapping.grid)
 
-  grid0 = _program_id(0)
+  grid0 = _program_id(0, new_grid)
   for i, s in enumerate(collapse_dims):
     out_idx = launch_grid_to_pallas_grid[i]
     s = _i32_constant(s)
@@ -235,7 +240,7 @@ def _process_grid_to_3d_grid(grid_mapping: GridMapping):
 
   for i in range(len(prog_id_dims)):
     out_idx = launch_grid_to_pallas_grid[num_collapse + i]
-    out_indices[out_idx] = _program_id(i + 1)
+    out_indices[out_idx] = _program_id(i + 1, new_grid)
 
   assert len(out_indices) == len(grid_mapping.grid)
   return new_grid, out_indices
@@ -276,6 +281,10 @@ def lower_jaxpr_to_triton_module(
   if grid_mapping.num_index_operands:
     raise NotImplementedError(
         "scalar prefetch not implemented in the Triton backend"
+    )
+  if jaxpr.invars[grid_mapping.slice_scratch_ops]:
+    raise NotImplementedError(
+        "scratch memory not implemented in the Triton backend"
     )
   with grid_mapping.trace_env():
     jaxpr, _ = pe.dce_jaxpr(
@@ -319,11 +328,6 @@ def lower_jaxpr_to_triton_module(
       if grid_mapping.num_index_operands:
         raise NotImplementedError(
             "Scalar prefetch not supported in Triton lowering."
-        )
-      if not all(isinstance(bm.indexing_mode, Blocked)
-                 for bm in grid_mapping.block_mappings):
-        raise NotImplementedError(
-            "Only Blocked indexing mode is supported in Triton lowering."
         )
       start_indices = map(
           functools.partial(_eval_index_map, ctx, program_ids),
@@ -377,7 +381,7 @@ def lower_jaxpr_to_triton_ir(
       raise NotImplementedError(
           "Unimplemented primitive in Pallas GPU lowering: "
           f"{eqn.primitive.name}. "
-          "Please file an issue on https://github.com/google/jax/issues.")
+          "Please file an issue on https://github.com/jax-ml/jax/issues.")
     rule = triton_lowering_rules[eqn.primitive]
     avals_in = [v.aval for v in eqn.invars]
     avals_out = [v.aval for v in eqn.outvars]
@@ -423,9 +427,11 @@ def lower_fun(
 # ## Programming model primitives
 
 
-def _program_id(axis: int) -> ir.Value:
+def _program_id(axis: int, launch_grid: Sequence[int]) -> ir.Value:
   if axis not in range(3):
     raise ValueError(f"axis must be in [0, 3), but got: {axis}")
+  if launch_grid[axis] == 1:
+    return _i32_constant(0)
   return tt_dialect.get_program_id(axis)
 
 
@@ -1202,7 +1208,14 @@ def debug_print_lowering_rule(
         "pl.debug_print() does not support placeholders when lowering to Triton"
     )
 
-  tt_dialect.print_(f" {fmt} ", hex=False, args=args)
+  tt_dialect.print_(
+      f" {fmt} ",
+      hex=False,
+      args=args,
+      is_signed=ir.DenseI32ArrayAttr.get([
+          jnp.issubdtype(aval.dtype, jnp.signedinteger) for aval in ctx.avals_in
+      ]),
+  )
   return ()
 
 
@@ -1344,7 +1357,7 @@ register_lowering(lax.sign_p)(
 
 
 register_lowering(lax.erf_inv_p)(
-    lower_fun(pallas_utils.erf_inv_32_lowering_helper, multiple_results=False)
+    lower_fun(pallas_utils.erf_inv_lowering_helper, multiple_results=False)
 )
 
 
@@ -2354,10 +2367,8 @@ def _lower_jaxpr_to_for_loop(
     else:
       jaxpr_args = [*consts, *for_body_args]
     all_out = lower_jaxpr_to_triton_ir(
-        ctx.context,
-        jaxpr,
-        ctx.block_infos,
-        *jaxpr_args)
+        ctx.context, jaxpr, ctx.block_infos, *jaxpr_args
+    )
     scf_dialect.yield_(all_out)
 
   return list(for_op.results_)
@@ -2394,11 +2405,9 @@ def _scan_lowering_rule(
   args = map(_ensure_ir_value, args, ctx.avals_in)
   consts, args = util.split_list(args, [num_consts])
   if has_loop_index:
-    lb, *args = args
-    lower_bound = lb
-    ub = _add(lb, _ir_constant(length, lb.type))
-    upper_bound = ub
-    bound_type = ub.type
+    lower_bound, *args = args
+    upper_bound = _add(lower_bound, _ir_constant(length, lower_bound.type))
+    bound_type = lower_bound.type
   else:
     lower_bound = _i32_constant(0)
     upper_bound = _i32_constant(length)

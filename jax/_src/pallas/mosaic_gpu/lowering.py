@@ -24,22 +24,23 @@ import math
 from typing import Any, cast
 
 import jax
+from jax import lax
 from jax._src import core as jax_core
 from jax._src import pjit
 from jax._src import util
-from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.lax import lax
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
+from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.state import primitives as sp
-from jax.experimental.mosaic import gpu as mosaic_gpu
-from jax.experimental.mosaic.gpu import dsl as mgpu
+import jax.experimental.mosaic.gpu as mgpu
+from jax.experimental.mosaic.gpu import core as mgpu_core
+from jax.experimental.mosaic.gpu import utils as mgpu_utils
 import jax.numpy as jnp
 import numpy as np
 
@@ -137,7 +138,7 @@ class ModuleContext:
     for s in structs:
       scratch_ty = ir.MemRefType.get(
           s.shape,
-          mlir.dtype_to_ir_type(s.dtype),
+          mgpu_utils.dtype_to_ir_type(s.dtype),
           memory_space=smem,
       )
       views.append(
@@ -159,7 +160,7 @@ class ModuleContext:
 @dataclasses.dataclass(frozen=True)
 class LoweringRuleContext:
   module_ctx: ModuleContext
-  launch_ctx: mosaic_gpu.LaunchContext
+  launch_ctx: mgpu.LaunchContext
   avals_in: Sequence[jax_core.ShapedArray]
   avals_out: Sequence[jax_core.ShapedArray]
 
@@ -179,7 +180,7 @@ class LoweringError(Exception):  # pylint: disable=g-bad-exception-name
 
 def _eval_index_map(
     module_ctx: ModuleContext,
-    launch_ctx: mosaic_gpu.LaunchContext,
+    launch_ctx: mgpu.LaunchContext,
     idx: ir.Value,
     block_mapping: pallas_core.BlockMapping,
 ) -> Sequence[ir.Value]:
@@ -268,10 +269,7 @@ def lower_jaxpr_to_module(
       for bm in grid_mapping.block_mappings[: grid_mapping.num_inputs]
   ]
   in_structs_smem = [
-      jax.ShapeDtypeStruct(
-          [num_stages, *bm.ref_aval.inner_aval.shape],
-          bm.ref_aval.inner_aval.dtype,
-      )
+      jax.ShapeDtypeStruct([num_stages, *bm.ref_aval.shape], bm.ref_aval.dtype)
       if in_smem
       else None
       for bm, in_smem in zip(
@@ -302,7 +300,7 @@ def lower_jaxpr_to_module(
       )
   ]
 
-  def body(launch_ctx: mosaic_gpu.LaunchContext, *buffers: ir.Value):
+  def body(launch_ctx: mgpu.LaunchContext, *buffers: ir.Value):
     *buffers_gmem, (
         buffers_smem,
         *scratch_buffers_smem,
@@ -323,7 +321,7 @@ def lower_jaxpr_to_module(
     )
     program_ids = map(_program_id, range(len(grid_mapping.grid)))
     start_indices = map(
-        functools.partial(_eval_index_map, module_ctx, launch_ctx, program_ids),
+        partial(_eval_index_map, module_ctx, launch_ctx, program_ids),
         block_mappings,
     )
     in_start_indices, out_start_indices = util.split_list(
@@ -496,7 +494,7 @@ def lower_jaxpr_to_module(
       jax.ShapeDtypeStruct(shape=[smem_scratch_bytes], dtype=np.int8)
   )
 
-  module, out_structs_smem, _ = mosaic_gpu._lower_as_gpu_kernel(
+  module, out_structs_smem, _ = mgpu_core._lower_as_gpu_kernel(
       body,
       grid=grid,
       cluster=(),
@@ -530,7 +528,7 @@ def register_lowering_rule(primitive: jax_core.Primitive):
 
 def lower_jaxpr_to_mosaic_gpu(
     module_ctx: ModuleContext,
-    launch_ctx: mosaic_gpu.LaunchContext,
+    launch_ctx: mgpu.LaunchContext,
     jaxpr: jax_core.Jaxpr,
     args: Sequence[ir.Value],
     consts=(),
@@ -551,7 +549,7 @@ def lower_jaxpr_to_mosaic_gpu(
       raise NotImplementedError(
           "Unimplemented primitive in Pallas Mosaic GPU lowering: "
           f"{eqn.primitive.name}. "
-          "Please file an issue on https://github.com/google/jax/issues."
+          "Please file an issue on https://github.com/jax-ml/jax/issues."
       )
     rule = mosaic_lowering_rules[eqn.primitive]
     rule_ctx = LoweringRuleContext(
@@ -601,20 +599,26 @@ def _num_programs_lowering_rule(ctx: LoweringRuleContext, axis):
 
 @register_lowering_rule(sp.get_p)
 def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *indexers, tree):
-  del ctx, tree  # Unused.
+  del tree  # Unused.
   if indexers:
     raise NotImplementedError("No support for indexers yet")
-  return mgpu.FragmentedArray.load_strided(x_smem)
+  [x_aval] = ctx.avals_in
+  return mgpu.FragmentedArray.load_strided(
+      x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
+  )
 
 
 @register_lowering_rule(sp.swap_p)
 def _swap_lowering_rule(
     ctx: LoweringRuleContext, x_smem, value, *indexers, tree
 ):
-  del ctx, tree  # Unused.
+  del tree  # Unused.
   if indexers:
     raise NotImplementedError("No support for indexers yet")
-  old_value = mgpu.FragmentedArray.load_strided(x_smem)
+  x_aval, _ = ctx.avals_in
+  old_value = mgpu.FragmentedArray.load_strided(
+      x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
+  )
   value.store_untiled(x_smem)
   return old_value
 
@@ -638,7 +642,8 @@ def _broadcast_in_dim_lowering_rule(
 ):
   if broadcast_dimensions:
     raise NotImplementedError
-  return _ensure_fa(x, ctx.avals_in[0]).broadcast(shape)
+  [x_aval] = ctx.avals_in
+  return _ensure_fa(x, x_aval.dtype).broadcast(shape)
 
 
 @register_lowering_rule(lax.convert_element_type_p)
@@ -646,7 +651,10 @@ def _convert_element_type_lowering_rule(
     ctx: LoweringRuleContext, x, *, new_dtype, weak_type, sharding
 ):
   del weak_type, sharding
-  return _ensure_fa(x, *ctx.avals_in).astype(mlir.dtype_to_ir_type(new_dtype))
+  [x_aval] = ctx.avals_in
+  return _ensure_fa(x, x_aval.dtype).astype(
+      mgpu_utils.dtype_to_ir_type(new_dtype), is_signed=mgpu_utils.is_signed(new_dtype)
+  )
 
 
 def _binary_op_lowering_rule(ctx: LoweringRuleContext, x, y, *, impl):
@@ -664,7 +672,8 @@ mosaic_lowering_rules.update({
 
 @register_lowering_rule(lax.integer_pow_p)
 def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
-  x = _ensure_fa(x, *ctx.avals_in)
+  [x_aval] = ctx.avals_in
+  x = _ensure_fa(x, x_aval.dtype)
   if y == 2:
     return x * x
   return NotImplementedError
@@ -672,7 +681,8 @@ def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
 
 @register_lowering_rule(lax.rsqrt_p)
 def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):
-  return _ensure_fa(x, *ctx.avals_in).rsqrt(ctx.module_ctx.approx_math)
+  [x_aval] = ctx.avals_in
+  return _ensure_fa(x, x_aval.dtype).rsqrt(approx=ctx.module_ctx.approx_math)
 
 
 @register_lowering_rule(lax.reduce_sum_p)
@@ -683,7 +693,9 @@ def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
   _, [scratch] = ctx.module_ctx.scratch_view(
       [jax.ShapeDtypeStruct(shape=(4,), dtype=x_aval.dtype)]
   )
-  return mgpu.FragmentedArray.splat(x.reduce_sum(scratch), ())
+  return mgpu.FragmentedArray.splat(
+      x.reduce_sum(scratch), (), is_signed=mgpu_utils.is_signed(x_aval.dtype)
+  )
 
 
 @register_lowering_rule(primitives.debug_print_p)
@@ -693,10 +705,22 @@ def _debug_print_lowering_rule(
     fmt,
     has_placeholders: bool,
 ):
-  del ctx
-  del has_placeholders
+  del has_placeholders  # Unused.
   primitives.check_debug_print_format(fmt, *args)
-  mgpu.debug_print(fmt, *args)
+  if not any(aval.shape for aval in ctx.avals_in):
+    mgpu.debug_print(fmt, *args)
+  elif len(ctx.avals_in) == 1:
+    @args[0].foreach
+    def _(val, idx):
+      idx_fmt = ", ".join(["{}"] * len(idx))
+      fmt_str = fmt.format(f"[{idx_fmt}]/{list(args[0].shape)}: {{}}")
+      mgpu.debug_print(fmt_str, *idx, val, uniform=False)
+  else:
+    raise NotImplementedError(
+        "debug_print only supports printing of scalar values, or a single array"
+        " value when using the Mosaic GPU backend."
+    )
+
   return ()
 
 
@@ -716,6 +740,80 @@ def _run_scoped_lowering_rule(
   return outs
 
 
+def _lower_jaxpr_to_for_loop(
+    ctx: LoweringRuleContext,
+    jaxpr: jax_core.Jaxpr,
+    start: ir.Value,
+    length: ir.Value,
+    consts,
+    *args,
+    has_loop_index: bool,
+):
+
+  @mgpu.fori(length, [*args])
+  def loop(loop_index, body_args):
+    if has_loop_index:
+      loop_index = arith_dialect.addi(loop_index, start)
+      jaxpr_args = [*consts, loop_index, *body_args]
+    else:
+      jaxpr_args = [*consts, *body_args]
+    return lower_jaxpr_to_mosaic_gpu(
+        ctx.module_ctx, ctx.launch_ctx, jaxpr, jaxpr_args
+    )
+
+  return loop.results
+
+
+@register_lowering_rule(lax.scan_p)
+def _scan_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    jaxpr: jax_core.ClosedJaxpr,
+    linear: tuple[bool, ...],
+    length: int,
+    reverse: bool,
+    unroll: bool | int,
+    num_consts: int,
+    num_carry: int,
+    _split_transpose: bool,
+):
+  # Can only handle fori_loop-like scans.
+  if (
+      (num_extensive := len(args) - num_consts - num_carry)
+      or reverse
+      or unroll != 1
+  ):
+    raise NotImplementedError
+  del linear, num_extensive, reverse, unroll
+
+  jaxpr, jaxpr_consts = jaxpr.jaxpr, jaxpr.consts
+  if jaxpr_consts:
+    raise NotImplementedError
+  del jaxpr_consts
+
+  jaxpr, has_loop_index = pallas_utils.pattern_match_scan_to_fori_loop(
+      jaxpr, num_consts, num_carry
+  )
+  consts, args = util.split_list(args, [num_consts])
+  _consts_avals, arg_avals = util.split_list(ctx.avals_in, [num_consts])
+  if has_loop_index:
+    start, *args = args
+    index_aval, *_arg_avals = arg_avals
+    start = _ensure_ir_value(start, index_aval)
+    length = _ir_constant(length, start.type)
+  else:
+    start = _i32_constant(0)
+    length = _i32_constant(length)
+  for_out = _lower_jaxpr_to_for_loop(
+      ctx, jaxpr, start, length, consts, *args, has_loop_index=has_loop_index
+  )
+  if has_loop_index:
+    # Need to return the final loop index value if the outer scan expects
+    # it as an output.
+    return [length, *for_out]
+  return for_out
+
+
 def _bcast(
     x: ir.Value,
     y: ir.Value,
@@ -723,22 +821,16 @@ def _bcast(
     y_aval: jax_core.ShapedArray,
     out_aval: jax_core.ShapedArray,
 ) -> ir.Value:
-  if isinstance(x, (np.ndarray, np.number, int, float)):
+  if not isinstance(x, mgpu.FragmentedArray):
     x_dtype = x_aval.dtype
     if x_aval.weak_type:
       x_dtype = y_aval.dtype
-    x = mgpu.FragmentedArray.splat(
-        _ir_constant(x, mlir.dtype_to_ir_type(x_dtype)), ()
-    )
-  if isinstance(y, (np.ndarray, np.number, int, float)):
+    x = _ensure_fa(x, x_dtype)
+  if not isinstance(y, mgpu.FragmentedArray):
     y_dtype = y_aval.dtype
     if y_aval.weak_type:
       y_dtype = x_aval.dtype
-    y = mgpu.FragmentedArray.splat(
-        _ir_constant(y, mlir.dtype_to_ir_type(y_dtype)), ()
-    )
-  assert isinstance(x, mgpu.FragmentedArray)
-  assert isinstance(y, mgpu.FragmentedArray)
+    y = _ensure_fa(y, y_dtype)
   if x_aval.shape != out_aval.shape:
     x = x.broadcast(out_aval.shape)
   if y_aval.shape != out_aval.shape:
@@ -746,17 +838,27 @@ def _bcast(
   return x, y
 
 
-def _ensure_fa(x: object, aval: jax_core.ShapedArray) -> mgpu.FragmentedArray:
+def _ensure_fa(x: object, dtype: jnp.dtype) -> mgpu.FragmentedArray:
   if isinstance(x, mgpu.FragmentedArray):
     return x
   elif isinstance(x, (np.number, np.ndarray, int, float)):
     return mgpu.FragmentedArray.splat(
-        _ir_constant(x, mlir.dtype_to_ir_type(aval.dtype)), ()
+        _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype)),
+        (),
+        is_signed=mgpu_utils.is_signed(dtype),
     )
   elif isinstance(x, ir.Value):
-    if isinstance(x.type, (ir.IntegerType, ir.FloatType)):
-      return mgpu.FragmentedArray.splat(x, ())
-  raise NotImplementedError
+    if isinstance(x.type, (ir.IntegerType, ir.FloatType, ir.IndexType)):
+      return mgpu.FragmentedArray.splat(x, (), is_signed=mgpu_utils.is_signed(dtype))
+  raise NotImplementedError(f"Unsupported type: {type(x)}")
+
+
+def _ensure_ir_value(x: object, aval: jax_core.ShapedArray) -> ir.Value:
+  if isinstance(x, ir.Value):
+    return x
+  elif isinstance(x, (np.number, np.ndarray, int, float)):
+    return _ir_constant(x, mgpu_utils.dtype_to_ir_type(aval.dtype))
+  raise NotImplementedError(f"Unsupported type: {type(x)}")
 
 
 def _ir_constant(v: object, t: ir.Type) -> ir.Value:
@@ -770,8 +872,12 @@ def _ir_constant(v: object, t: ir.Type) -> ir.Value:
   raise NotImplementedError(f"Unsupported constant: {v!r}")
 
 
-def _i32_constant(v: object) -> ir.Value:
-  return _ir_constant(v, ir.IntegerType.get_signless(32))
+def _i32_constant(v: int) -> ir.Value:
+  return arith_dialect.constant(ir.IntegerType.get_signless(32), v)
+
+
+def _i64_constant(v: int) -> ir.Value:
+  return arith_dialect.constant(ir.IntegerType.get_signless(64), v)
 
 
 def _as_index(v: int | ir.Value) -> ir.Value:

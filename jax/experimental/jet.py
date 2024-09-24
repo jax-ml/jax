@@ -45,11 +45,11 @@ r"""Jet is an experimental module for higher-order automatic differentiation
   and can thus be used for high-order
   automatic differentiation of :math:`f`.
   Details are explained in
-  `these notes <https://github.com/google/jax/files/6717197/jet.pdf>`__.
+  `these notes <https://github.com/jax-ml/jax/files/6717197/jet.pdf>`__.
 
   Note:
     Help improve :func:`jet` by contributing
-    `outstanding primitive rules <https://github.com/google/jax/issues/2431>`__.
+    `outstanding primitive rules <https://github.com/jax-ml/jax/issues/2431>`__.
 """
 
 from collections.abc import Callable

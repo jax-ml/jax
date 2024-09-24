@@ -819,11 +819,6 @@ def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
   return hist, bin_edges_by_dim
 
 
-_ARRAY_VIEW_DOC = """
-The JAX version of this function may in some cases return a copy rather than a
-view of the input.
-"""
-
 def transpose(a: ArrayLike, axes: Sequence[int] | None = None) -> Array:
   """Return a transposed version of an N-dimensional array.
 
@@ -3953,7 +3948,7 @@ def concatenate(arrays: np.ndarray | Array | Sequence[ArrayLike],
     arrays_out = [asarray(arr, dtype=dtype) for arr in arrays]
   # lax.concatenate can be slow to compile for wide concatenations, so form a
   # tree of concatenations as a workaround especially for op-by-op mode.
-  # (https://github.com/google/jax/issues/653).
+  # (https://github.com/jax-ml/jax/issues/653).
   k = 16
   while len(arrays_out) > 1:
     arrays_out = [lax.concatenate(arrays_out[i:i+k], axis)
@@ -4645,7 +4640,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   if all(not isinstance(leaf, Array) for leaf in leaves):
     # TODO(jakevdp): falling back to numpy here fails to overflow for lists
     # containing large integers; see discussion in
-    # https://github.com/google/jax/pull/6047. More correct would be to call
+    # https://github.com/jax-ml/jax/pull/6047. More correct would be to call
     # coerce_to_array on each leaf, but this may have performance implications.
     out = np.asarray(object, dtype=dtype)
   elif isinstance(object, Array):
@@ -5896,10 +5891,69 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
   return (result, delta) if retstep else result
 
 
-@util.implements(np.logspace)
 def logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: bool = True, base: ArrayLike = 10.0,
              dtype: DTypeLike | None = None, axis: int = 0) -> Array:
+  """Generate logarithmically-spaced values.
+
+  JAX implementation of :func:`numpy.logspace`.
+
+  Args:
+    start: scalar or array. Used to specify the start value. The start value is
+      ``base ** start``.
+    stop: scalar or array. Used to specify the stop value. The end value is
+      ``base ** stop``.
+    num: int, optional, default=50. Number of values to generate.
+    endpoint: bool, optional, default=True. If True, then include the ``stop`` value
+      in the result. If False, then exclude the ``stop`` value.
+    base: scalar or array, optional, default=10. Specifies the base of the logarithm.
+    dtype: optional. Specifies the dtype of the output.
+    axis: int, optional, default=0. Axis along which to generate the logspace.
+
+  Returns:
+    An array of logarithm.
+
+  See also:
+    - :func:`jax.numpy.arange`: Generate ``N`` evenly-spaced values given a starting
+      point and a step value.
+    - :func:`jax.numpy.linspace`: Generate evenly-spaced values.
+    - :func:`jax.numpy.geomspace`: Generate geometrically-spaced values.
+
+  Examples:
+    List 5 logarithmically spaced values between 1 (``10 ** 0``) and 100
+    (``10 ** 2``):
+
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.logspace(0, 2, 5)
+    Array([  1.   ,   3.162,  10.   ,  31.623, 100.   ], dtype=float32)
+
+    List 5 logarithmically-spaced values between 1(``10 ** 0``) and 100
+    (``10 ** 2``), excluding endpoint:
+
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.logspace(0, 2, 5, endpoint=False)
+    Array([ 1.   ,  2.512,  6.31 , 15.849, 39.811], dtype=float32)
+
+    List 7 logarithmically-spaced values between 1 (``2 ** 0``) and 4 (``2 ** 2``)
+    with base 2:
+
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.logspace(0, 2, 7, base=2)
+    Array([1.   , 1.26 , 1.587, 2.   , 2.52 , 3.175, 4.   ], dtype=float32)
+
+    Multi-dimensional logspace:
+
+    >>> start = jnp.array([0, 5])
+    >>> stop = jnp.array([5, 0])
+    >>> base = jnp.array([2, 3])
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.logspace(start, stop, 5, base=base)
+    Array([[  1.   , 243.   ],
+           [  2.378,  61.547],
+           [  5.657,  15.588],
+           [ 13.454,   3.948],
+           [ 32.   ,   1.   ]], dtype=float32)
+  """
   num = core.concrete_or_error(operator.index, num, "'num' argument of jnp.logspace")
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.logspace")
   return _logspace(start, stop, num, endpoint, base, dtype, axis)
@@ -5922,9 +5976,54 @@ def _logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
   return lax.convert_element_type(ufuncs.power(base, lin), dtype)
 
 
-@util.implements(np.geomspace)
 def geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool = True,
               dtype: DTypeLike | None = None, axis: int = 0) -> Array:
+  """Generate geometrically-spaced values.
+
+  JAX implementation of :func:`numpy.geomspace`.
+
+  Args:
+    start: scalar or array. Specifies the starting values.
+    stop: scalar or array. Specifies the stop values.
+    num: int, optional, default=50. Number of values to generate.
+    endpoint: bool, optional, default=True. If True, then include the ``stop`` value
+      in the result. If False, then exclude the ``stop`` value.
+    dtype: optional. Specifies the dtype of the output.
+    axis: int, optional, default=0. Axis along which to generate the geomspace.
+
+  Returns:
+    An array containing the geometrically-spaced values.
+
+  See also:
+    - :func:`jax.numpy.arange`: Generate ``N`` evenly-spaced values given a starting
+      point and a step value.
+    - :func:`jax.numpy.linspace`: Generate evenly-spaced values.
+    - :func:`jax.numpy.logspace`: Generate logarithmically-spaced values.
+
+  Examples:
+    List 5 geometrically-spaced values between 1 and 16:
+
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.geomspace(1, 16, 5)
+    Array([ 1.,  2.,  4.,  8., 16.], dtype=float32)
+
+    List 4 geomtrically-spaced values between 1 and 16, with ``endpoint=False``:
+
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.geomspace(1, 16, 4, endpoint=False)
+    Array([1., 2., 4., 8.], dtype=float32)
+
+    Multi-dimensional geomspace:
+
+    >>> start = jnp.array([1, 1000])
+    >>> stop = jnp.array([27, 1])
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.geomspace(start, stop, 4)
+    Array([[   1., 1000.],
+           [   3.,  100.],
+           [   9.,   10.],
+           [  27.,    1.]], dtype=float32)
+  """
   num = core.concrete_or_error(operator.index, num, "'num' argument of jnp.geomspace")
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.geomspace")
   return _geomspace(start, stop, num, endpoint, dtype, axis)
@@ -5951,9 +6050,67 @@ def _geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool 
   return lax.convert_element_type(res, dtype)
 
 
-@util.implements(np.meshgrid, lax_description=_ARRAY_VIEW_DOC)
 def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
              indexing: str = 'xy') -> list[Array]:
+  """Construct N-dimensional grid arrays from N 1-dimensional vectors.
+
+  JAX implementation of :func:`numpy.meshgrid`.
+
+  Args:
+    xi: N arrays to convert to a grid.
+    copy: whether to copy the input arrays. JAX supports only ``copy=True``,
+      though under JIT compilation the compiler may opt to avoid copies.
+    sparse: if False (default), then each returned arrays will be of shape
+      ``[len(x1), len(x2), ..., len(xN)]``. If False, then returned arrays
+      will be of shape ``[1, 1, ..., len(xi), ..., 1, 1]``.
+    indexing: options are ``'xy'`` for cartesian indexing (default) or ``'ij'``
+      for matrix indexing.
+
+  Returns:
+    A length-N list of grid arrays.
+
+  See also:
+    - :obj:`jax.numpy.mgrid`: create a meshgrid using indexing syntax.
+    - :obj:`jax.numpy.ogrid`: create an open meshgrid using indexing syntax.
+
+  Examples:
+    For the following examples, we'll use these 1D arrays as inputs:
+
+    >>> x = jnp.array([1, 2])
+    >>> y = jnp.array([10, 20, 30])
+
+    2D cartesian mesh grid:
+
+    >>> x_grid, y_grid = jnp.meshgrid(x, y)
+    >>> print(x_grid)
+    [[1 2]
+     [1 2]
+     [1 2]]
+    >>> print(y_grid)
+    [[10 10]
+     [20 20]
+     [30 30]]
+
+    2D sparse cartesian mesh grid:
+
+    >>> x_grid, y_grid = jnp.meshgrid(x, y, sparse=True)
+    >>> print(x_grid)
+    [[1 2]]
+    >>> print(y_grid)
+    [[10]
+     [20]
+     [30]]
+
+    2D matrix-index mesh grid:
+
+    >>> x_grid, y_grid = jnp.meshgrid(x, y, indexing='ij')
+    >>> print(x_grid)
+    [[1 1 1]
+     [2 2 2]]
+    >>> print(y_grid)
+    [[10 20 30]
+     [10 20 30]]
+  """
   util.check_arraylike("meshgrid", *xi)
   args = [asarray(x) for x in xi]
   if not copy:
@@ -5973,19 +6130,53 @@ def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
   return output
 
 
-@custom_jvp
-@util.implements(np.i0)
 @jit
 def i0(x: ArrayLike) -> Array:
+  r"""Calculate modified Bessel function of first kind, zeroth order.
+
+  JAX implementation of :func:`numpy.i0`.
+
+  Modified Bessel function of first kind, zeroth order is defined by:
+
+  .. math::
+
+     \mathrm{i0}(x) = I_0(x) = \sum_{k=0}^{\infty} \frac{(x^2/4)^k}{(k!)^2}
+
+  Args:
+    x: scalar or array. Specifies the argument of Bessel function. Complex inputs
+      are not supported.
+
+  Returns:
+    An array containing the corresponding vlaues of the modified Bessel function
+    of ``x``.
+
+  See also:
+    - :func:`jax.scipy.special.i0`: Calculates the modified Bessel function of
+      zeroth order.
+    - :func:`jax.scipy.special.i1`: Calculates the modified Bessel function of
+      first order.
+    - :func:`jax.scipy.special.i0e`: Calculates the exponentially scaled modified
+      Bessel function of zeroth order.
+
+  Examples:
+    >>> x = jnp.array([-2, -1, 0, 1, 2])
+    >>> jnp.i0(x)
+    Array([2.2795851, 1.266066 , 1.0000001, 1.266066 , 2.2795851], dtype=float32)
+  """
   x_arr, = util.promote_args_inexact("i0", x)
   if not issubdtype(x_arr.dtype, np.floating):
     raise ValueError(f"Unsupported input type to jax.numpy.i0: {_dtype(x)}")
-  x_arr = lax.abs(x_arr)
-  return lax.mul(lax.exp(x_arr), lax.bessel_i0e(x_arr))
+  return _i0(x_arr)
 
-@i0.defjvp
+
+@custom_jvp
+def _i0(x):
+  abs_x = lax.abs(x)
+  return lax.mul(lax.exp(abs_x), lax.bessel_i0e(abs_x))
+
+@_i0.defjvp
 def _i0_jvp(primals, tangents):
-  primal_out, tangent_out = jax.jvp(i0.fun, primals, tangents)
+  primal_out, tangent_out = jax.jvp(_i0.fun, primals, tangents)
   return primal_out, where(primals[0] == 0, 0.0, tangent_out)
 
 def ix_(*args: ArrayLike) -> tuple[Array, ...]:
@@ -7018,7 +7209,7 @@ def diagflat(v: ArrayLike, k: int = 0) -> Array:
   return res
 
 
-def trim_zeros(filt, trim='fb'):
+def trim_zeros(filt: ArrayLike, trim: str ='fb') -> Array:
   """Trim leading and/or trailing zeros of the input array.
 
   JAX implementation of :func:`numpy.trim_zeros`.
@@ -7040,14 +7231,26 @@ def trim_zeros(filt, trim='fb'):
     >>> jnp.trim_zeros(x)
     Array([2, 0, 1, 4, 3], dtype=int32)
   """
-  filt = core.concrete_or_error(asarray, filt,
-    "Error arose in the `filt` argument of trim_zeros()")
-  nz = (filt == 0)
+  # Non-array inputs are deprecated 2024-09-11
+  util.check_arraylike("trim_zeros", filt, emit_warning=True)
+  core.concrete_or_error(None, filt,
+                         "Error arose in the `filt` argument of trim_zeros()")
+  filt_arr = jax.numpy.asarray(filt)
+  del filt
+  if filt_arr.ndim != 1:
+    # Added on 2024-09-11
+    if deprecations.is_accelerated("jax-numpy-trimzeros-not-1d-array"):
+      raise TypeError(f"'filt' must be 1-D array, but received {filt_arr.ndim}-D array.")
+    warnings.warn(
+      "Passing arrays with ndim != 1 to jnp.trim_zeros() is deprecated. Currently, it "
+      "works with Arrays having ndim != 1. In the future this will result in an error.",
+      DeprecationWarning, stacklevel=2)
+  nz = (filt_arr == 0)
   if reductions.all(nz):
-    return empty(0, _dtype(filt))
-  start = argmin(nz) if 'f' in trim.lower() else 0
-  end = argmin(nz[::-1]) if 'b' in trim.lower() else 0
-  return filt[start:len(filt) - end]
+    return empty(0, filt_arr.dtype)
+  start: Array | int = argmin(nz) if 'f' in trim.lower() else 0
+  end: Array | int = argmin(nz[::-1]) if 'b' in trim.lower() else 0
+  return filt_arr[start:len(filt_arr) - end]
 
 
 def trim_zeros_tol(filt, tol, trim='fb'):
@@ -7397,20 +7600,17 @@ def dot(a: ArrayLike, b: ArrayLike, *,
   batch_dims = ((), ())
   a_ndim, b_ndim = ndim(a), ndim(b)
   if a_ndim == 0 or b_ndim == 0:
-    # TODO(jakevdp): lower this case to dot_general as well?
-    # Currently, doing so causes issues in remat tests due to #16805
-    if preferred_element_type is not None:
-      a = a.astype(preferred_element_type)
-      b = b.astype(preferred_element_type)
-    result = lax.mul(a, b)
+    contract_dims: tuple[tuple[int, ...], tuple[int, ...]] = ((), ())
   else:
     if b_ndim == 1:
       contract_dims = ((a_ndim - 1,), (0,))
     else:
       contract_dims = ((a_ndim - 1,), (b_ndim - 2,))
-    result = lax.dot_general(a, b, dimension_numbers=(contract_dims, batch_dims),
-                             precision=precision, preferred_element_type=preferred_element_type)
-  return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
+  result = lax.dot_general(a, b, dimension_numbers=(contract_dims, batch_dims),
+                           precision=precision,
+                           preferred_element_type=preferred_element_type)
+  return lax_internal._convert_element_type(result, preferred_element_type,
+                                            output_weak_type)
 
 
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
@@ -8431,11 +8631,51 @@ def kron(a: ArrayLike, b: ArrayLike) -> Array:
   return reshape(lax.mul(a_reshaped, b_reshaped), out_shape)
 
 
-@util.implements(np.vander)
 @partial(jit, static_argnames=('N', 'increasing'))
 def vander(
     x: ArrayLike, N: int | None = None, increasing: bool = False
 ) -> Array:
+  """Generate a Vandermonde matrix.
+
+  JAX implementation of :func:`numpy.vander`.
+
+  Args:
+    x: input array. Must have ``x.ndim == 1``.
+    N: int, optional, default=None. Specifies the number of the columns the
+      output matrix. If not specified, ``N = len(x)``.
+    increasing: bool, optional, default=False. Specifies the order of the powers
+      of the columns. If ``True``, the powers increase from left to right,
+      :math:`[x^0, x^1, ..., x^{(N-1)}]`. By default, the powers decrease from left to
+      right :math:`[x^{(N-1)}, ..., x^1, x^0]`.
+
+  Returns:
+    An array of shape ``[len(x), N]`` containing the generated Vandermonde matrix.
+
+  Examples:
+    >>> x = jnp.array([1, 2, 3, 4])
+    >>> jnp.vander(x)
+    Array([[ 1,  1,  1,  1],
+           [ 8,  4,  2,  1],
+           [27,  9,  3,  1],
+           [64, 16,  4,  1]], dtype=int32)
+
+    If ``N = 2``, generates a Vandermonde matrix with ``2`` columns.
+
+    >>> jnp.vander(x, N=2)
+    Array([[1, 1],
+           [2, 1],
+           [3, 1],
+           [4, 1]], dtype=int32)
+
+    Generates the Vandermonde matrix in increaing order of powers, when
+    ``increasing=True``.
+
+    >>> jnp.vander(x, increasing=True)
+    Array([[ 1,  1,  1,  1],
+           [ 1,  2,  4,  8],
+           [ 1,  3,  9, 27],
+           [ 1,  4, 16, 64]], dtype=int32)
+  """
   util.check_arraylike("vander", x)
   x = asarray(x)
   if x.ndim != 1:
@@ -8819,11 +9059,40 @@ def sort(
   return lax.rev(result, dimensions=[dimension]) if descending else result
 
 
-@util.implements(np.sort_complex)
 @jit
 def sort_complex(a: ArrayLike) -> Array:
+  """Return a sorted copy of complex array.
+
+  JAX implementation of :func:`numpy.sort_complex`.
+
+  Complex numbers are sorted lexicographically, meaning by their real part
+  first, and then by their imaginary part if real parts are equal.
+
+  Args:
+    a: input array. If dtype is not complex, the array will be upcast to complex.
+
+  Returns:
+    A sorted array of the same shape and complex dtype as the input. If ``a``
+    is multi-dimensional, it is sorted along the last axis.
+
+  See also:
+    - :func:`jax.numpy.sort`: Return a sorted copy of an array.
+
+  Examples:
+    >>> a = jnp.array([1+2j, 2+4j, 3-1j, 2+3j])
+    >>> jnp.sort_complex(a)
+    Array([1.+2.j, 2.+3.j, 2.+4.j, 3.-1.j], dtype=complex64)
+
+    Multi-dimensional arrays are sorted along the last axis:
+
+    >>> a = jnp.array([[5, 3, 4],
+    ...                [6, 9, 2]])
+    >>> jnp.sort_complex(a)
+    Array([[3.+0.j, 4.+0.j, 5.+0.j],
+           [2.+0.j, 6.+0.j, 9.+0.j]], dtype=complex64)
+  """
   util.check_arraylike("sort_complex", a)
-  a = lax.sort(asarray(a), dimension=0)
+  a = lax.sort(asarray(a))
   return lax.convert_element_type(a, dtypes.to_complex_dtype(a.dtype))
 
 @util.implements(np.lexsort)
@@ -10072,11 +10341,11 @@ def _eliminate_deprecated_list_indexing(idx):
       if any(_should_unpack_list_index(i) for i in idx):
         msg = ("Using a non-tuple sequence for multidimensional indexing is not allowed; "
                "use `arr[tuple(seq)]` instead of `arr[seq]`. "
-               "See https://github.com/google/jax/issues/4564 for more information.")
+               "See https://github.com/jax-ml/jax/issues/4564 for more information.")
       else:
         msg = ("Using a non-tuple sequence for multidimensional indexing is not allowed; "
                "use `arr[array(seq)]` instead of `arr[seq]`. "
-               "See https://github.com/google/jax/issues/4564 for more information.")
+               "See https://github.com/jax-ml/jax/issues/4564 for more information.")
       raise TypeError(msg)
     else:
       idx = (idx,)
@@ -10250,8 +10519,28 @@ def _preprocess_slice(
   return start, step, slice_size
 
 
-@util.implements(np.blackman)
 def blackman(M: int) -> Array:
+  """Return a Blackman window of size M.
+
+  JAX implementation of :func:`numpy.blackman`.
+
+  Args:
+    M: The window size.
+
+  Returns:
+    An array of size M containing the Blackman window.
+
+  Examples:
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.blackman(4))
+    [-0.    0.63  0.63 -0.  ]
+
+  See also:
+    - :func:`jax.numpy.bartlett`: return a Bartlett window of size M.
+    - :func:`jax.numpy.hamming`: return a Hamming window of size M.
+    - :func:`jax.numpy.hanning`: return a Hanning window of size M.
+    - :func:`jax.numpy.kaiser`: return a Kaiser window of size M.
+  """
   M = core.concrete_or_error(int, M, "M argument of jnp.blackman")
   dtype = dtypes.canonicalize_dtype(float_)
   if M <= 1:
@@ -10260,8 +10549,28 @@ def blackman(M: int) -> Array:
   return 0.42 - 0.5 * ufuncs.cos(2 * pi * n / (M - 1)) + 0.08 * ufuncs.cos(4 * pi * n / (M - 1))
 
 
-@util.implements(np.bartlett)
 def bartlett(M: int) -> Array:
+  """Return a Bartlett window of size M.
+
+  JAX implementation of :func:`numpy.bartlett`.
+
+  Args:
+    M: The window size.
+
+  Returns:
+    An array of size M containing the Bartlett window.
+
+  Examples:
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.bartlett(4))
+    [0.   0.67 0.67 0.  ]
+
+  See also:
+    - :func:`jax.numpy.blackman`: return a Blackman window of size M.
+    - :func:`jax.numpy.hamming`: return a Hamming window of size M.
+    - :func:`jax.numpy.hanning`: return a Hanning window of size M.
+    - :func:`jax.numpy.kaiser`: return a Kaiser window of size M.
+  """
   M = core.concrete_or_error(int, M, "M argument of jnp.bartlett")
   dtype = dtypes.canonicalize_dtype(float_)
   if M <= 1:
@@ -10270,8 +10579,28 @@ def bartlett(M: int) -> Array:
   return 1 - ufuncs.abs(2 * n + 1 - M) / (M - 1)
 
 
-@util.implements(np.hamming)
 def hamming(M: int) -> Array:
+  """Return a Hamming window of size M.
+
+  JAX implementation of :func:`numpy.hamming`.
+
+  Args:
+    M: The window size.
+
+  Returns:
+    An array of size M containing the Hamming window.
+
+  Examples:
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.hamming(4))
+    [0.08 0.77 0.77 0.08]
+
+  See also:
+    - :func:`jax.numpy.bartlett`: return a Bartlett window of size M.
+    - :func:`jax.numpy.blackman`: return a Blackman window of size M.
+    - :func:`jax.numpy.hanning`: return a Hanning window of size M.
+    - :func:`jax.numpy.kaiser`: return a Kaiser window of size M.
+  """
   M = core.concrete_or_error(int, M, "M argument of jnp.hamming")
   dtype = dtypes.canonicalize_dtype(float_)
   if M <= 1:
@@ -10280,8 +10609,28 @@ def hamming(M: int) -> Array:
   return 0.54 - 0.46 * ufuncs.cos(2 * pi * n / (M - 1))
 
 
-@util.implements(np.hanning)
 def hanning(M: int) -> Array:
+  """Return a Hanning window of size M.
+
+  JAX implementation of :func:`numpy.hanning`.
+
+  Args:
+    M: The window size.
+
+  Returns:
+    An array of size M containing the Hanning window.
+
+  Examples:
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.hanning(4))
+    [0.   0.75 0.75 0.  ]
+
+  See also:
+    - :func:`jax.numpy.bartlett`: return a Bartlett window of size M.
+    - :func:`jax.numpy.blackman`: return a Blackman window of size M.
+    - :func:`jax.numpy.hamming`: return a Hamming window of size M.
+    - :func:`jax.numpy.kaiser`: return a Kaiser window of size M.
+  """
   M = core.concrete_or_error(int, M, "M argument of jnp.hanning")
   dtype = dtypes.canonicalize_dtype(float_)
   if M <= 1:
@@ -10290,8 +10639,29 @@ def hanning(M: int) -> Array:
   return 0.5 * (1 - ufuncs.cos(2 * pi * n / (M - 1)))
 
 
-@util.implements(np.kaiser)
 def kaiser(M: int, beta: ArrayLike) -> Array:
+  """Return a Kaiser window of size M.
+
+  JAX implementation of :func:`numpy.kaiser`.
+
+  Args:
+    M: The window size.
+    beta: The Kaiser window parameter.
+
+  Returns:
+    An array of size M containing the Kaiser window.
+
+  Examples:
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.kaiser(4, 1.5))
+    [0.61 0.95 0.95 0.61]
+
+  See also:
+    - :func:`jax.numpy.bartlett`: return a Bartlett window of size M.
+    - :func:`jax.numpy.blackman`: return a Blackman window of size M.
+    - :func:`jax.numpy.hamming`: return a Hamming window of size M.
+    - :func:`jax.numpy.hanning`: return a Hanning window of size M.
+  """
   M = core.concrete_or_error(int, M, "M argument of jnp.kaiser")
   dtype = dtypes.canonicalize_dtype(float_)
   if M <= 1:
@@ -10666,7 +11036,7 @@ def _searchsorted_via_scan(unrolled: bool, sorted_arr: Array, query: Array, side
 def _searchsorted_via_sort(sorted_arr: Array, query: Array, side: str, dtype: type) -> Array:
   working_dtype = int32 if sorted_arr.size + query.size < np.iinfo(np.int32).max else int64
   def _rank(x):
-    idx = lax.iota(working_dtype, len(x))
+    idx = lax.iota(working_dtype, x.shape[0])
     return zeros_like(idx).at[argsort(x)].set(idx)
   query_flat = query.ravel()
   if side == 'left':
@@ -10759,8 +11129,8 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
   a, v = util.promote_dtypes(a, v)
   if sorter is not None:
     a = a[sorter]
-  dtype = int32 if len(a) <= np.iinfo(np.int32).max else int64
-  if len(a) == 0:
+  dtype = int32 if a.shape[0] <= np.iinfo(np.int32).max else int64
+  if a.shape[0] == 0:
     return zeros_like(v, dtype=dtype)
   impl = {
       'scan': partial(_searchsorted_via_scan, False),
@@ -10770,9 +11140,46 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
   }[method]
   return impl(asarray(a), asarray(v), side, dtype)  # type: ignore
 
-@util.implements(np.digitize)
-@partial(jit, static_argnames=('right',))
-def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False) -> Array:
+
+@partial(jit, static_argnames=('right', 'method'))
+def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False,
+             *, method: str | None = None) -> Array:
+  """Convert an array to bin indices.
+
+  JAX implementation of :func:`numpy.digitize`.
+
+  Args:
+    x: array of values to digitize.
+    bins: 1D array of bin edges. Must be monotonically increasing or decreasing.
+    right: if true, the intervals include the right bin edges. If false (default)
+      the intervals include the left bin edges.
+    method: optional method argument to be passed to :func:`~jax.numpy.searchsorted`.
+      See that function for available options.
+
+  Returns:
+    An integer array of the same shape as ``x`` indicating the bin number that
+    the values are in.
+
+  See also:
+    - :func:`jax.numpy.searchsorted`: find insertion indices for values in a
+      sorted array.
+    - :func:`jax.numpy.histogram`: compute frequency of array values within
+      specified bins.
+
+  Examples:
+    >>> x = jnp.array([1.0, 2.0, 2.5, 1.5, 3.0, 3.5])
+    >>> bins = jnp.array([1, 2, 3])
+    >>> jnp.digitize(x, bins)
+    Array([1, 2, 2, 1, 3, 3], dtype=int32)
+    >>> jnp.digitize(x, bins, right=True)
+    Array([0, 1, 2, 1, 2, 3], dtype=int32)
+
+    ``digitize`` supports reverse-ordered bins as well:
+
+    >>> bins = jnp.array([3, 2, 1])
+    >>> jnp.digitize(x, bins)
+    Array([2, 1, 1, 2, 0, 0], dtype=int32)
+  """
   util.check_arraylike("digitize", x, bins)
   right = core.concrete_or_error(bool, right, "right argument of jnp.digitize()")
   bins_arr = asarray(bins)
@@ -10781,10 +11188,11 @@ def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False) -> Array:
   if bins_arr.shape[0] == 0:
     return zeros_like(x, dtype=int32)
   side = 'right' if not right else 'left'
+  kwds: dict[str, str] = {} if method is None else {'method': method}
   return where(
     bins_arr[-1] >= bins_arr[0],
-    searchsorted(bins_arr, x, side=side),
-    len(bins_arr) - searchsorted(bins_arr[::-1], x, side=side)
+    searchsorted(bins_arr, x, side=side, **kwds),
+    bins_arr.shape[0] - searchsorted(bins_arr[::-1], x, side=side, **kwds)
   )
 
 

@@ -283,9 +283,9 @@ class JaxprEqnContext:
 
   def __repr__(self):
     return (
-        f"JaxprEqnContext(compute_type={self.compute_type},"
-        f"threefry_partitionable={self.threefry_partitionable}),"
-        f"xla_metadata={self.xla_metadata}"
+        f"JaxprEqnContext(compute_type={self.compute_type}, "
+        f"threefry_partitionable={self.threefry_partitionable}, "
+        f"xla_metadata={self.xla_metadata})"
     )
 
 
@@ -343,8 +343,7 @@ def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
   ctx = ctx or JaxprEqnContext(
       compute_on.current_compute_type(),
       config.threefry_partitionable.value,
-      xla_metadata_lib.current_xla_metadata(),
-  )
+      xla_metadata_lib.current_xla_metadata())
   if config.enable_checks.value:
     assert all(isinstance(x, (Var, Literal)) for x in  invars)
     assert all(isinstance(v,  Var)           for v in outvars)
@@ -936,7 +935,7 @@ aval_method = namedtuple("aval_method", ["fun"])
 
 
 class EvalTrace(Trace):
-  # See comments in https://github.com/google/jax/pull/3370
+  # See comments in https://github.com/jax-ml/jax/pull/3370
   def pure(self, x): return x
   lift = sublift = pure
 
@@ -999,7 +998,7 @@ class MainTrace:
     return self.trace_type(self, cur_sublevel(), **self.payload)
 
 class TraceStack:
-  # See comments in https://github.com/google/jax/pull/3370
+  # See comments in https://github.com/jax-ml/jax/pull/3370
   stack: list[MainTrace]
   dynamic: MainTrace
 
@@ -1168,7 +1167,7 @@ def _why_alive(ignore_ids: set[int], x: Any) -> str:
     # parent->child jump. We do that by setting `parent` here to be a
     # grandparent (or great-grandparent) of `child`, and then handling that case
     # in _why_alive_container_info. See example:
-    #  https://github.com/google/jax/pull/13022#discussion_r1008456599
+    #  https://github.com/jax-ml/jax/pull/13022#discussion_r1008456599
     # To prevent this collapsing behavior, just comment out this code block.
     if (isinstance(parent, dict) and
         getattr(parents(parent)[0], '__dict__', None) is parents(child)[0]):
@@ -1214,7 +1213,7 @@ def _why_alive_container_info(container, obj_id) -> str:
 @contextmanager
 def new_main(trace_type: type[Trace], dynamic: bool = False,
              **payload) -> Generator[MainTrace, None, None]:
-  # See comments in https://github.com/google/jax/pull/3370
+  # See comments in https://github.com/jax-ml/jax/pull/3370
   stack = thread_local_state.trace_state.trace_stack
   level = stack.next_level()
   main = MainTrace(level, trace_type, **payload)
@@ -1255,7 +1254,7 @@ def dynamic_level() -> int:
 @contextmanager
 def new_base_main(trace_type: type[Trace],
                   **payload) -> Generator[MainTrace, None, None]:
-  # See comments in https://github.com/google/jax/pull/3370
+  # See comments in https://github.com/jax-ml/jax/pull/3370
   stack = thread_local_state.trace_state.trace_stack
   main = MainTrace(0, trace_type, **payload)
   prev_dynamic, stack.dynamic = stack.dynamic, main
@@ -1320,7 +1319,7 @@ def ensure_compile_time_eval():
       else:
         return jnp.cos(x)
 
-  Here's a real-world example from https://github.com/google/jax/issues/3974::
+  Here's a real-world example from https://github.com/jax-ml/jax/issues/3974::
 
     import jax
     import jax.numpy as jnp
@@ -1415,8 +1414,12 @@ def definitely_equal(x, y):
 class AbstractValue:
   __slots__: list[str] = []
 
-  def at_least_vspace(self):
+  def to_tangent_aval(self):
     raise NotImplementedError("must override")
+
+  # TODO(dougalm): deprecate this alias
+  def at_least_vspace(self):
+    return self.to_tangent_aval()
 
   def __repr__(self):
     try:
@@ -1525,6 +1528,12 @@ def get_aval(x):
   else:
     return concrete_aval(x)
 
+def get_type(x):
+  aval = get_aval(x)
+  if isinstance(aval, ConcreteArray):
+    return raise_to_shaped(aval)
+  else:
+    return aval
 
 def concretization_function_error(fun, suggest_astype=False):
   fname = getattr(fun, "__name__", fun)
@@ -1587,16 +1596,17 @@ def physical_aval(aval: DShapedArray) -> DShapedArray: ...
 def physical_aval(aval: AbstractValue) -> AbstractValue: ...
 
 def physical_aval(aval):
-  aval_dtype = getattr(aval, 'dtype', None)
-  if aval_dtype and isinstance(aval_dtype, dtypes.ExtendedDType):
-    ctor = type(aval)
-    aval_shape = getattr(aval, 'shape', None)
-    assert aval_shape is not None, (ctor, aval)
-    elt_aval = aval_dtype._rules.physical_element_aval(aval_dtype)
-    assert type(elt_aval) is ShapedArray
-    return ctor((*aval_shape, *elt_aval.shape), elt_aval.dtype)  # pytype: disable=wrong-arg-count
-  else:
-    return aval
+  if (isinstance(aval, (ShapedArray, DShapedArray)) and
+      isinstance(aval.dtype, dtypes.ExtendedDType)):
+    elt_aval = physical_element_aval(aval.dtype)
+    if isinstance(aval, ShapedArray):
+      return ShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype)
+    return DShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype)
+  return aval
+
+def physical_element_aval(edtype: dtypes.ExtendedDType) -> ShapedArray:
+  duck = edtype._rules.physical_element_aval(edtype)  # type: ignore
+  return ShapedArray(duck.shape, dtypes.dtype(duck.dtype))
 
 def _short_dtype_name(dtype) -> str:
   if isinstance(dtype, dtypes.ExtendedDType):
@@ -1648,7 +1658,7 @@ class UnshapedArray(AbstractValue):
   _oct     = concretization_function_error(oct)
   _index   = concretization_function_error(operator.index)
 
-  def at_least_vspace(self) -> AbstractValue:
+  def to_tangent_aval(self) -> AbstractValue:
     return UnshapedArray(primal_dtype_to_tangent_dtype(self.dtype),
                          self.weak_type)
 
@@ -1671,7 +1681,7 @@ class UnshapedArray(AbstractValue):
   @property
   def shape(self):
     msg = ("UnshapedArray has no shape. Please open an issue at "
-           "https://github.com/google/jax/issues because it's unexpected for "
+           "https://github.com/jax-ml/jax/issues because it's unexpected for "
            "UnshapedArray instances to ever be produced.")
     raise TypeError(msg)
 
@@ -1787,7 +1797,7 @@ class ShapedArray(UnshapedArray):
     return hash((self.shape, self.dtype, self.weak_type,
                  getattr(self, 'sharding', None)))
 
-  def at_least_vspace(self):
+  def to_tangent_aval(self):
     return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
                        self.weak_type)
 
@@ -1946,7 +1956,7 @@ class DShapedArray(UnshapedArray):
     else:
       raise TypeError(self, other)
 
-  def at_least_vspace(self):
+  def to_tangent_aval(self):
     return DShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
                         self.weak_type)
 
@@ -2077,7 +2087,7 @@ class AbstractToken(AbstractValue):
     else:
       assert False, f"Cannot join {self} with {other}"
   def str_short(self, short_dtypes=False): return 'Tok'
-  def at_least_vspace(self): return self
+  def to_tangent_aval(self): return self
 abstract_token: AbstractToken = AbstractToken()
 
 # Singleton shaped array used by all abstract tokens when shape/dtype is needed.
@@ -3400,3 +3410,53 @@ def clean_up_dead_vars(eqn: JaxprEqn, env: dict[Var, Any],
 # Used in shard_map for converting avals
 shard_aval_handlers = {}  # type: ignore
 unshard_aval_handlers = {}  # type: ignore
+
+# ----------------- external APIs for querying tracing context -----------------
+
+# TODO(dougalm, jakevdp): expose these via jax.extend
+
+# Comparable object for checking whether JAX's trace state has changed.
+class OpaqueTraceState:
+  def __init__(self, trace_info, convention):
+    self._trace_info = trace_info
+    self._convention = convention
+
+  def __eq__(self, other):
+    if isinstance(other, OpaqueTraceState):
+      if self._convention in ["nnx"]:
+        return self._trace_info is other._trace_info
+      elif self._convention in ["haiku", "flax"]:
+        return self._trace_info == other._trace_info
+      else:
+        raise Exception(f"unrecognized convention: {self._convention}")
+
+
+# Each library has its own opinion about what the important fragment of jax's
+# internal state is. TODO: reconcile the differences and remove the flag.
+def get_opaque_trace_state(convention="flax"):
+  if convention == "flax":
+    trace_info = find_top_trace(()).level
+  elif convention == "haiku":
+    trace_stack = thread_local_state.trace_state.trace_stack.stack
+    top_type = trace_stack[0].trace_type
+    level = trace_stack[-1].level
+    sublevel = cur_sublevel()
+    trace_info =  (top_type, level, sublevel)
+  elif convention == "nnx":
+    trace_info = thread_local_state.trace_state.trace_stack.dynamic
+  else:
+    raise Exception(f"unrecognized convention: {convention}")
+
+  return OpaqueTraceState(trace_info, convention)
+
+def nonempty_axis_env() -> bool:
+  return bool(thread_local_state.trace_state.axis_env)
+
+def unsafe_am_i_under_a_jit() -> bool:
+  return 'DynamicJaxprTrace' in str(thread_local_state.trace_state.trace_stack)
+
+def unsafe_am_i_under_a_vmap() -> bool:
+  return 'BatchTrace' in str(thread_local_state.trace_state.trace_stack)
+
+def unsafe_get_axis_names() -> list[str]:
+  return [axis.name for axis in thread_local_state.trace_state.axis_env]

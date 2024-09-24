@@ -176,6 +176,8 @@ class CallToTFTest(jtu.JaxTestCase):
           testcase_name=f"_{ad=}",
           ad=ad)
       for ad in CALL_TF_IMPLEMENTATIONS.keys())
+  @jtu.ignore_warning(message="The host_callback APIs are deprecated",
+                      category=DeprecationWarning)
   def test_impl(self, ad="simple"):
     self.supported_only_in_legacy_mode()
     call_tf = CALL_TF_IMPLEMENTATIONS[ad]
@@ -197,6 +199,8 @@ class CallToTFTest(jtu.JaxTestCase):
           ad=ad)
       for ad in CALL_TF_IMPLEMENTATIONS.keys()
       if ad != "none")
+  @jtu.ignore_warning(message="The host_callback APIs are deprecated",
+                      category=DeprecationWarning)
   def test_grad(self, ad="simple"):
     self.supported_only_in_legacy_mode()
     call_tf = CALL_TF_IMPLEMENTATIONS[ad]
@@ -217,6 +221,8 @@ class CallToTFTest(jtu.JaxTestCase):
     self.assertAllClose(jax.grad(f_jax)(x), grad_f,
                         check_dtypes=False)
 
+  @jtu.ignore_warning(message="The host_callback APIs are deprecated",
+                      category=DeprecationWarning)
   def test_grad_pytree(self):
     self.supported_only_in_legacy_mode()
     call_tf = call_tf_full_ad
@@ -246,6 +252,8 @@ class CallToTFTest(jtu.JaxTestCase):
           testcase_name=f"_degree=_{degree}",
           degree=degree)
       for degree in [1, 2, 3, 4])
+  @jtu.ignore_warning(message="The host_callback APIs are deprecated",
+                      category=DeprecationWarning)
   def test_higher_order_grad(self, degree=4):
     self.supported_only_in_legacy_mode()
     call_tf = call_tf_full_ad

@@ -217,6 +217,8 @@ class Mesh(contextlib.ContextDecorator):
     super().__setattr__(name, value)
 
   def __enter__(self):
+    if jax_config.disallow_mesh_context_manager.value:
+      raise RuntimeError("Mesh context manager is disabled.")
     new_env = thread_resources.stack[-1].with_mesh(self)
     thread_resources.stack.append(new_env)
     thread_resources.env = new_env
@@ -331,7 +333,7 @@ class AbstractMesh:
   should use this as an input to the sharding passed to with_sharding_constraint
   and mesh passed to shard_map to avoid tracing and lowering cache misses when
   your mesh shape and names stay the same but the devices change.
-  See the description of https://github.com/google/jax/pull/23022 for more
+  See the description of https://github.com/jax-ml/jax/pull/23022 for more
   details.
   """
 

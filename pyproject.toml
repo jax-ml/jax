@@ -43,6 +43,7 @@ module = [
     "tensorstore.*",
     "web_pdb.*",
     "zstandard.*",
+    "kubernetes.*"
 ]
 ignore_missing_imports = true
 
@@ -53,9 +54,6 @@ markers = [
 ]
 filterwarnings = [
     "error",
-    "default:Error (reading|writing) persistent compilation cache entry for 'jit_equal'",
-    "default:Error (reading|writing) persistent compilation cache entry for 'jit__lambda_'",
-    "default:jax.extend.mlir.dialects.mhlo is deprecated.*:DeprecationWarning",
 
     # TODO(jakevdp): remove when array_api_tests stabilize
     "default:.*not machine-readable.*:UserWarning",
@@ -63,13 +61,10 @@ filterwarnings = [
     "default:.*is not JSON-serializable. Using the repr instead.*:UserWarning",
     "default:The .* method is good for exploring strategies.*",
 
-    # These are transitive warnings coming from TensorFlow dependencies.
-    # TODO(slebedev): Remove once we bump the minimum TensorFlow version.
-    "default:The key path API is deprecated .*",
-    "default:jax.xla_computation is deprecated.*:DeprecationWarning",
-
-    # TODO(slebedev): Remove once we drop the legacy DLPack import path.
-    "default:.*from_dlpack with a DLPack tensor is deprecated.*:DeprecationWarning",
+    # NOTE: this is probably not where you want to add code to suppress a
+    # warning. Only pytest tests look at this list, whereas Bazel tests also
+    # check for warnings and do not check this list. Most likely, you should
+    # add a @jtu.ignore_warning decorator to your test instead.
 ]
 doctest_optionflags = [
     "NUMBER",

@@ -334,7 +334,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       check_shape_poly(self, f_jax, arg_descriptors=[x],
                        polymorphic_shapes=["b"])
 
-
   @jtu.parameterized_filterable(
     kwargs=[
       dict(testcase_name=f"expr={name}", expr=expr)
@@ -933,7 +932,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     kwargs=[dict(with_function=v) for v in [True, False]]
   )
   def test_grad_int(self, with_function=False):
-    # https://github.com/google/jax/issues/7093
+    # https://github.com/jax-ml/jax/issues/7093
     # Also issue #6975.
     x_shape = (2, 3, 4)
     xi = np.arange(math.prod(x_shape), dtype=np.int16).reshape(x_shape)
@@ -941,7 +940,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     xi_yf = (xi, yf)
     zb = np.array([True, False], dtype=np.bool_)
     def f_jax(xi_yf, zb):  # xi: s16[2, 3, 4], yf: f32[2, 3, 4], zb: bool[2]
-                           # results: f32[2, 3, 4], s16[2, 3, 4], bool[2], f32[2, 3, 4]
+      # results: f32[2, 3, 4], s16[2, 3, 4], bool[2], f32[2, 3, 4]
       xi, yf = xi_yf
       # Return a tuple:
       #   (1) float constant, with 0 tangent;
@@ -1032,6 +1031,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         f_tf, input_signature=[tf.TensorSpec([None], x.dtype)])
     self.assertAllClose(f_jax(x), restored_f(x))
 
+  @jtu.ignore_warning(
+      message="jax2tf.convert with native_serialization=False is deprecated"
+  )
   def test_readme_examples(self):
     """Some of the examples from the README."""
 
@@ -2172,7 +2174,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                             (2, x.shape[0]), (1, 1), "VALID"),
                 arg_descriptors=[RandArg((3, 8), _f32)],
                 polymorphic_shapes=["b, ..."]),
-    # https://github.com/google/jax/issues/11804
+    # https://github.com/jax-ml/jax/issues/11804
     # Use the reshape trick to simulate a polymorphic dimension of 16*b.
     # (See test "conv_general_dilated.1d_1" above for more details.)
     PolyHarness("reduce_window", "add_monoid_strides_window_size=static",
