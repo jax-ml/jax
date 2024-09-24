@@ -221,6 +221,8 @@ class DLPackTest(jtu.JaxTestCase):
     x_np = np.from_dlpack(x_jax)
     self.assertAllClose(x_np, x_jax)
 
+  @jtu.ignore_warning(message="Calling from_dlpack.*",
+                      category=DeprecationWarning)
   def testNondefaultLayout(self):
     # Generate numpy array with nonstandard layout
     a = np.arange(4).reshape(2, 2)
