@@ -2844,9 +2844,10 @@ class LaxTest(jtu.JaxTestCase):
                                        (np.int32(1), np.int16(2))))
 
   def test_primitive_jaxtype_error(self):
+    err_str = ("Error interpreting argument to .* as an abstract array. The problematic "
+               r"value is of type .* and was passed to the function at path args\[1\].")
     with jax.enable_checks(False):
-      with self.assertRaisesRegex(
-          TypeError, "Argument .* of type .* is not a valid JAX type"):
+      with self.assertRaisesRegex(TypeError, err_str):
         lax.add(1, 'hi')
 
   def test_reduction_with_repeated_axes_error(self):
