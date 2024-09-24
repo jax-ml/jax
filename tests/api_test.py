@@ -733,13 +733,12 @@ class JitTest(jtu.BufferDonationTestCase):
     def f(x):
       return x
 
-    with self.assertRaisesRegex(
-        TypeError, r".* 'foo' of type <.*'str'> is not a valid JAX type"):
+    err_str = ("Error interpreting argument to .* as an abstract array. The problematic "
+               "value is of type .* and was passed to the function at path x.")
+    with self.assertRaisesRegex(TypeError, err_str):
       jit(f)("foo")
 
     # Jax type objects aren't valid data arguments.
-    err_str = "JAX scalar type .*int32.* cannot be interpreted as a JAX array."
-
     with self.assertRaisesRegex(TypeError, err_str):
       jit(f)(jnp.int32)
 
@@ -1576,13 +1575,14 @@ class APITest(jtu.JaxTestCase):
     def f(x):
       return x
 
-    self.assertRaisesRegex(
-      TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type",
-      lambda: grad(f)("foo"))
+    with self.assertRaisesRegex(TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type"):
+      grad(f)("foo")
 
-    self.assertRaisesRegex(
-      TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type",
-      lambda: jit(f)("foo"))
+
+    err_str = ("Error interpreting argument to .* as an abstract array. The problematic "
+               "value is of type .* and was passed to the function at path x.")
+    with self.assertRaisesRegex(TypeError, err_str):
+      jit(f)("foo")
 
   def test_grad_tuple_output(self):
     jtu.check_raises(lambda: grad(lambda x: (x,x))(1.0), TypeError,
@@ -2959,8 +2959,10 @@ class APITest(jtu.JaxTestCase):
                   lambda: jnp.arange(1.0).astype(int))
 
   def test_error_for_invalid_dtype(self):
+    err_str = ("Error interpreting argument to .* as an abstract array. The problematic "
+               r"value is of type .* and was passed to the function at path args\[1\].")
     with jax.enable_checks(False):
-      with self.assertRaisesRegex(TypeError, ".*not a valid JAX array type.*"):
+      with self.assertRaisesRegex(TypeError, err_str):
         lax.add(jnp.array(7), np.array("hello"))
     with jax.enable_checks(True):
       with self.assertRaises(AssertionError):
