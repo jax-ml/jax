@@ -56,7 +56,9 @@ def update_rocm_targets(rocm_path, targets):
     open(version_fp, "a").close()
 
 
-def build_jaxlib_wheel(jax_path, rocm_path, python_version, xla_path=None, compiler="gcc"):
+def build_jaxlib_wheel(
+    jax_path, rocm_path, python_version, xla_path=None, compiler="gcc"
+):
     use_clang = "true" if compiler == "clang" else "false"
     cmd = [
         "python",
