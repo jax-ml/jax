@@ -369,13 +369,29 @@ class FragmentedArray:
 
   def __truediv__(self, other):
     if not ir.FloatType.isinstance(self.mlir_dtype):
-      raise NotImplementedError
+      return NotImplemented
     return self._pointwise(arith.divf, other)
 
   def __rtruediv__(self, other):
     if not ir.FloatType.isinstance(self.mlir_dtype):
-      raise NotImplementedError
+      return NotImplemented
     return self._pointwise(lambda s, o: arith.divf(o, s), other)
+
+  def __mod__(self, other):
+    if not ir.IntegerType.isinstance(self.mlir_dtype):
+      return NotImplemented
+    if self.is_signed:
+      return self._pointwise(arith.remsi, other)
+    else:
+      return self._pointwise(arith.remui, other)
+
+  def __rmod__(self, other):
+    if not ir.IntegerType.isinstance(self.mlir_dtype):
+      return NotImplemented
+    if self.is_signed:
+      return self._pointwise(lambda s, o: arith.remsi(o, s), other)
+    else:
+      return self._pointwise(lambda s, o: arith.remui(o, s), other)
 
   def __eq__(self, other):
     return self._compare(
@@ -767,6 +783,14 @@ class FragmentedArray:
     return FragmentedArray(
         _registers=new_regs, _layout=WGMMA_LAYOUT, _is_signed=self.is_signed
     )
+
+  def select(self, x, y):
+    if (
+        not ir.IntegerType.isinstance(self.mlir_dtype)
+        or ir.IntegerType(self.mlir_dtype).width != 1
+    ):
+      raise NotImplementedError
+    return self._pointwise(arith.select, x, y)
 
   def foreach(self, fn: Callable[[ir.Value, tuple[ir.Value, ...]], None]):
     """Call a function for each value and index."""

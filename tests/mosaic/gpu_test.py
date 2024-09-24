@@ -1193,6 +1193,7 @@ class FragmentedArrayTest(TestCase):
           operator.mul,
           operator.sub,
           operator.truediv,
+          operator.mod,
           (lambda x, y: mgpu.FragmentedArray.max(x, y), np.maximum),
       ),
       dtype=[jnp.float32, jnp.int32, jnp.uint32],
@@ -1205,8 +1206,10 @@ class FragmentedArrayTest(TestCase):
     else:
       np_op = op
 
-    if not jnp.issubdtype(dtype, jnp.floating) and op is operator.truediv:
+    if jnp.issubdtype(dtype, jnp.integer) and op is operator.truediv:
       self.skipTest("Unsupported for integer types")
+    if jnp.issubdtype(dtype, jnp.floating) and op is operator.mod:
+      self.skipTest("Unsupported for floating types")
 
     for scalar_rhs in [None, 2]:
       def kernel(ctx, dst, _):
@@ -1268,6 +1271,19 @@ class FragmentedArrayTest(TestCase):
     )()
     x = np.arange(m * n, dtype=dtype).reshape(m, n)
     np.testing.assert_allclose(result, np_op(x), atol=2e-7, rtol=2e-7)
+
+  def test_select(self, m=64, n=32):
+
+    def kernel(ctx, dst, _):
+      iota = iota_tensor(m, n, jnp.int32)
+      (iota < 16).select(iota * 2, iota * 3).store_untiled(dst)
+
+    out_shape = jax.ShapeDtypeStruct((m, n), jnp.int32)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+    )()
+    x = np.arange(m * n, dtype=jnp.int32).reshape(m, n)
+    np.testing.assert_array_equal(result, np.where(x < 16, x * 2, x * 3))
 
   @parameterized.product(
       ops=[
