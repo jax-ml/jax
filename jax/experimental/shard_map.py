@@ -1050,6 +1050,10 @@ def register_standard_collective(prim):
   register_check(prim)(partial(_standard_collective_check, prim))
   register_rewrite(prim)(partial(_standard_collective_rewrite, prim))
 
+def register_reduction_collective(prim):
+  register_check(prim)(partial(_reduction_collective_check, prim))
+  register_rewrite(prim)(partial(_reduction_collective_rewrite, prim))
+
 def _standard_collective_check(prim, mesh, x_rep, *, axis_name, **params):
   # The standard collective check is varying -> varying over axis_name.
   del mesh, params
@@ -1070,6 +1074,28 @@ def _standard_collective_rewrite(prim, mesh, in_rep, x, axis_name, **params):
     x = pbroadcast(x, tuple(pbroadcast_axis_name))
   out_val = prim.bind(x, axis_name=axis_name, **params)
   return [out_val], [x_rep - axis_name_set]
+
+def _reduction_collective_check(prim, mesh, x_rep, *, axes, **params):
+  # The reduction collective check is varying -> replicated over axes.
+  del mesh, params
+  axes = (axes,) if not isinstance(axes, tuple) else axes
+  if x_rep is None or any(a in x_rep for a in axes):
+    raise Exception(f"Collective {prim} must be applied to a device-varying "
+                    f"replication type, but got {x_rep} for collective acting "
+                    f"over axis name {axes}. Please open an issue at "
+                    "https://github.com/jax-ml/jax/issues and as a temporary "
+                    "workaround pass the check_rep=False argument to shard_map")
+  return x_rep | set(axes)
+
+def _reduction_collective_rewrite(prim, mesh, in_rep, x, axes, **params):
+  # The standard collective rewrite may insert a pbroadcast on the input.
+  axes = (axes,) if not isinstance(axes, tuple) else axes
+  x_rep, = in_rep
+  axes_set = set(axes)
+  if pbroadcast_axes := axes_set & x_rep:
+    x = pbroadcast(x, tuple(pbroadcast_axes))
+  out_val, = prim.bind(x, axes=axes, **params)
+  return [out_val], [x_rep | axes_set]
 
 
 for o in it.chain(lax.__dict__.values(), slicing.__dict__.values(),
@@ -1140,6 +1166,8 @@ register_standard_collective(lax_parallel.all_gather_p)
 register_standard_collective(lax_parallel.all_to_all_p)
 register_standard_collective(lax_parallel.ppermute_p)
 register_standard_collective(lax_parallel.reduce_scatter_p)
+register_reduction_collective(lax_parallel.pmin_p)
+register_reduction_collective(lax_parallel.pmax_p)
 
 
 @register_check(lax_parallel.axis_index_p)
