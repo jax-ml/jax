@@ -218,7 +218,7 @@ def get_clang_path_or_exit():
     return str(pathlib.Path(which_clang_output).resolve())
   else:
     print(
-        "--use_clang set, but --clang_path is unset and clang cannot be found"
+        "--clang_path is unset and clang cannot be found"
         " on the PATH. Please pass --clang_path directly."
     )
     sys.exit(-1)
@@ -241,8 +241,9 @@ def write_bazelrc(*, remote_build,
                   cpu, cuda_compute_capabilities,
                   rocm_amdgpu_targets, target_cpu_features,
                   wheel_cpu, enable_mkl_dnn, use_clang, clang_path,
-                  clang_major_version, enable_cuda, enable_nccl, enable_rocm,
-                  python_version):
+                  clang_major_version, python_version,
+                  enable_cuda, enable_nccl, enable_rocm,
+                  use_cuda_nvcc):
 
   with open("../.jax_configure.bazelrc", "w") as f:
     if not remote_build:
@@ -283,11 +284,11 @@ def write_bazelrc(*, remote_build,
       f.write("build --config=mkl_open_source_only\n")
     if enable_cuda:
       f.write("build --config=cuda\n")
+      f.write(f"build --action_env=CLANG_CUDA_COMPILER_PATH={clang_path}\n")
       if not enable_nccl:
         f.write("build --config=nonccl\n")
-      if use_clang:
-        f.write("build --config=nvcc_clang\n")
-        f.write(f"build --action_env=CLANG_CUDA_COMPILER_PATH={clang_path}\n")
+      if use_cuda_nvcc:
+        f.write("build --config=cuda_nvcc\n")
       if cuda_version:
         f.write("build --repo_env HERMETIC_CUDA_VERSION=\"{cuda_version}\"\n"
                 .format(cuda_version=cuda_version))
@@ -392,15 +393,14 @@ def main():
       "use_clang",
       default = "true",
       help_str=(
-          "Should we build using clang as the host compiler? Requires "
-          "clang to be findable via the PATH, or a path to be given via "
-          "--clang_path."
+          "DEPRECATED: This flag is redundant because clang is "
+          "always used as default compiler."
       ),
   )
   parser.add_argument(
       "--clang_path",
       help=(
-          "Path to clang binary to use if --use_clang is set. The default is "
+          "Path to clang binary to use. The default is "
           "to find clang via the PATH."
       ),
   )
@@ -413,7 +413,18 @@ def main():
   add_boolean_argument(
       parser,
       "enable_cuda",
-      help_str="Should we build with CUDA enabled? Requires CUDA and CuDNN.")
+      help_str="Should we build with CUDA enabled? Requires CUDA and CuDNN."
+  )
+  add_boolean_argument(
+      parser,
+      "use_cuda_nvcc",
+      default=True,
+      help_str=(
+          "Should we build CUDA code using NVCC compiler driver? The default value "
+          "is true. If --nouse_cuda_nvcc flag is used then CUDA code is built "
+          "by clang compiler."
+      ),
+  )
   add_boolean_argument(
       parser,
       "build_gpu_plugin",
@@ -617,10 +628,11 @@ def main():
       use_clang=args.use_clang,
       clang_path=clang_path,
       clang_major_version=clang_major_version,
+      python_version=python_version,
       enable_cuda=args.enable_cuda,
       enable_nccl=args.enable_nccl,
       enable_rocm=args.enable_rocm,
-      python_version=python_version,
+      use_cuda_nvcc=args.use_cuda_nvcc,
   )
 
   if args.requirements_update or args.requirements_nightly_update:
