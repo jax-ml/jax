@@ -60,6 +60,11 @@ filterwarnings = [
     "default:Special cases found for .* but none were parsed.*:UserWarning",
     "default:.*is not JSON-serializable. Using the repr instead.*:UserWarning",
     "default:The .* method is good for exploring strategies.*",
+
+    # NOTE: this is probably not where you want to add code to suppress a
+    # warning. Only pytest tests look at this list, whereas Bazel tests also
+    # check for warnings and do not check this list. Most likely, you should
+    # add a @jtu.ignore_warning decorator to your test instead.
 ]
 doctest_optionflags = [
     "NUMBER",

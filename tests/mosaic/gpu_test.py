@@ -1200,6 +1200,8 @@ class FragmentedArrayTest(TestCase):
       m=(64, 128),
       n=(8, 16, 32, 64, 80, 128, 256),
   )
+  @jtu.ignore_warning(message="(invalid value|divide by zero)",
+                      category=RuntimeWarning)
   def test_binary(self, op, dtype, m=64, n=32):
     if isinstance(op, tuple):
       op, np_op = op
@@ -1294,6 +1296,7 @@ class FragmentedArrayTest(TestCase):
       ],
       approx=[False, True],
   )
+  @jtu.ignore_warning(message="overflow encountered", category=RuntimeWarning)
   def test_math(self, ops, approx, m=64, n=32):
     op, np_op = ops
     def kernel(ctx, dst, _):

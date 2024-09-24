@@ -973,6 +973,7 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertArraysAllClose(out.todense(), expected_out)
     self.assertEqual(out.nse, expected_nse)
 
+  @jtu.ignore_warning(message="bcoo_dot_general cusparse/hipsparse lowering not available")
   def test_bcoo_spdot_general_ad_bug(self):
     # Regression test for https://github.com/jax-ml/jax/issues/10163
     A_indices = jnp.array([[0, 1], [0, 2], [1, 1], [1, 2], [1, 0]])

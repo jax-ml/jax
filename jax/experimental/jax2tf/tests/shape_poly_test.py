@@ -334,7 +334,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       check_shape_poly(self, f_jax, arg_descriptors=[x],
                        polymorphic_shapes=["b"])
 
-
   @jtu.parameterized_filterable(
     kwargs=[
       dict(testcase_name=f"expr={name}", expr=expr)
@@ -941,7 +940,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     xi_yf = (xi, yf)
     zb = np.array([True, False], dtype=np.bool_)
     def f_jax(xi_yf, zb):  # xi: s16[2, 3, 4], yf: f32[2, 3, 4], zb: bool[2]
-                           # results: f32[2, 3, 4], s16[2, 3, 4], bool[2], f32[2, 3, 4]
+      # results: f32[2, 3, 4], s16[2, 3, 4], bool[2], f32[2, 3, 4]
       xi, yf = xi_yf
       # Return a tuple:
       #   (1) float constant, with 0 tangent;
@@ -1032,6 +1031,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         f_tf, input_signature=[tf.TensorSpec([None], x.dtype)])
     self.assertAllClose(f_jax(x), restored_f(x))
 
+  @jtu.ignore_warning(
+      message="jax2tf.convert with native_serialization=False is deprecated"
+  )
   def test_readme_examples(self):
     """Some of the examples from the README."""
 

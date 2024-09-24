@@ -76,6 +76,17 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
     super().setUpClass()
 
+  def setUp(self):
+    super().setUp()
+    self.warning_ctx = jtu.ignore_warning(
+        message="jax2tf.convert with native_serialization=False is deprecated"
+    )
+    self.warning_ctx.__enter__()
+
+  def tearDown(self):
+    self.warning_ctx.__exit__(None, None, None)
+    super().tearDown()
+
   def test_empty(self):
     f_jax = lambda x, y: x
     self.ConvertAndCompare(f_jax, 0.7, 1)
@@ -1621,6 +1632,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     res = jax2tf.convert(f_jax, native_serialization=True)(*many_args)
     self.assertAllClose(f_jax(*many_args), res)
 
+  @jtu.ignore_warning(message="Calling from_dlpack with a DLPack tensor",
+                      category=DeprecationWarning)
   def test_nested_convert(self):
     # Test call sequence: convert -> call_tf -> convert.
 
@@ -1677,6 +1690,17 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
 @jtu.with_config(jax_enable_custom_prng=True)
 class Jax2tfWithCustomPRNGTest(tf_test_util.JaxToTfTestCase):
+  def setUp(self):
+    super().setUp()
+    self.warning_ctx = jtu.ignore_warning(
+        message="jax2tf.convert with native_serialization=False is deprecated"
+    )
+    self.warning_ctx.__enter__()
+
+  def tearDown(self):
+    self.warning_ctx.__exit__(None, None, None)
+    super().tearDown()
+
   def test_key_argument(self):
     func = lambda key: jax.random.uniform(key, ())
     key = jax.random.PRNGKey(0)
@@ -1709,6 +1733,9 @@ class Jax2TfVersioningTest(tf_test_util.JaxToTfTestCase):
     self.use_max_serialization_version = False
     super().setUp()
 
+  @jtu.ignore_warning(
+      message="jax2tf.convert with native_serialization=False is deprecated"
+  )
   def test_simple(self):
     self.ConvertAndCompare(jnp.sin, 0.7)
 

@@ -16,7 +16,7 @@ load(
     "//jaxlib:jax.bzl",
     "cuda_library",
     "jax_generate_backend_suites",
-    "jax_test",
+    "jax_multiplatform_test",
 )
 
 licenses(["notice"])
@@ -28,7 +28,7 @@ package(
 
 jax_generate_backend_suites()
 
-jax_test(
+jax_multiplatform_test(
     name = "cuda_custom_call_test",
     srcs = ["cuda_custom_call_test.py"],
     data = [":foo"],

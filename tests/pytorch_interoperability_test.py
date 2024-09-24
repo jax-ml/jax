@@ -108,6 +108,8 @@ class DLPackTest(jtu.JaxTestCase):
       else:
         self.assertAllClose(np, y.cpu().numpy())
 
+  @jtu.ignore_warning(message="Calling from_dlpack with a DLPack tensor",
+                      category=DeprecationWarning)
   def testTorchToJaxInt64(self):
     # See https://github.com/jax-ml/jax/issues/11895
     x = jax.dlpack.from_dlpack(
@@ -116,6 +118,8 @@ class DLPackTest(jtu.JaxTestCase):
     self.assertEqual(x.dtype, dtype_expected)
 
   @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
+  @jtu.ignore_warning(message="Calling from_dlpack with a DLPack tensor",
+                      category=DeprecationWarning)
   def testTorchToJax(self, shape, dtype):
     if not config.enable_x64.value and dtype in [
         jnp.int64,

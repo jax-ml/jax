@@ -19,6 +19,7 @@ load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", 
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
 load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
 load("@rules_cc//cc:defs.bzl", _cc_proto_library = "cc_proto_library")
+load("@rules_python//python:defs.bzl", "py_test")
 load("@tsl//tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_cuda_tests_tags", _tf_exec_properties = "tf_exec_properties")
 load("@xla//xla/tsl:tsl.bzl", _if_windows = "if_windows", _pybind_extension = "tsl_pybind_extension_opensource")
 
@@ -222,7 +223,7 @@ def if_building_jaxlib(
     })
 
 # buildifier: disable=function-docstring
-def jax_test(
+def jax_multiplatform_test(
         name,
         srcs,
         args = [],
@@ -300,3 +301,12 @@ jax_test_file_visibility = []
 
 def xla_py_proto_library(*args, **kw):  # buildifier: disable=unused-variable
     pass
+
+def jax_py_test(
+        name,
+        env = {},
+        **kwargs):
+    env = dict(env)
+    if "PYTHONWARNINGS" not in env:
+        env["PYTHONWARNINGS"] = "error"
+    py_test(name = name, env = env, **kwargs)

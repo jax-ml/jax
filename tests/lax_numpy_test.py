@@ -2681,6 +2681,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       shape=all_shapes,
       dtype=default_dtypes,
   )
+  @jtu.ignore_warning(category=RuntimeWarning, message="overflow")
   def testFrexp(self, shape, dtype, rng_factory):
     # integer types are converted to float64 in numpy's implementation
     if (dtype not in [jnp.bfloat16, np.float16, np.float32]
@@ -6270,7 +6271,8 @@ def _dtypes_for_ufunc(name: str) -> Iterator[tuple[str, ...]]:
   for arg_dtypes in itertools.product(_available_numpy_dtypes, repeat=func.nin):
     args = (np.ones(1, dtype=dtype) for dtype in arg_dtypes)
     try:
-      with jtu.ignore_warning(category=RuntimeWarning, message="divide by zero"):
+      with jtu.ignore_warning(
+          category=RuntimeWarning, message="(divide by zero|invalid value)"):
         _ = func(*args)
     except TypeError:
       pass
@@ -6292,7 +6294,7 @@ class NumpyUfuncTests(jtu.JaxTestCase):
     jnp_op = getattr(jnp, name)
     np_op = getattr(np, name)
     np_op = jtu.ignore_warning(category=RuntimeWarning,
-                               message="divide by zero.*")(np_op)
+                               message="(divide by zero|invalid value)")(np_op)
     args_maker = lambda: tuple(np.ones(1, dtype=dtype) for dtype in arg_dtypes)
 
     with jtu.strict_promotion_if_dtypes_match(arg_dtypes):

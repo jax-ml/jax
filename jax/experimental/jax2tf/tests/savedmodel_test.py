@@ -30,6 +30,17 @@ jax.config.parse_flags_with_absl()
 
 class SavedModelTest(tf_test_util.JaxToTfTestCase):
 
+  def setUp(self):
+    super().setUp()
+    self.warning_ctx = jtu.ignore_warning(
+        message="jax2tf.convert with native_serialization=False is deprecated"
+    )
+    self.warning_ctx.__enter__()
+
+  def tearDown(self):
+    self.warning_ctx.__exit__(None, None, None)
+    super().tearDown()
+
   def test_eval(self):
     f_jax = jax.jit(lambda x: jnp.sin(jnp.cos(x)))
     model = tf.Module()

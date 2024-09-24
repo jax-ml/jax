@@ -110,6 +110,7 @@ class LaxTest(jtu.JaxTestCase):
           for shape_group in lax_test_util.compatible_shapes),
         dtype=rec.dtypes)
       for rec in lax_test_util.lax_ops()))
+  @jtu.ignore_warning(message="invalid value", category=RuntimeWarning)
   def testOpAgainstNumpy(self, op_name, rng_factory, shapes, dtype, tol):
     if (not config.enable_x64.value and op_name == "nextafter"
         and dtype == np.float64):
