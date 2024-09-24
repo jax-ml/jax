@@ -110,6 +110,7 @@ class LaxTest(jtu.JaxTestCase):
           for shape_group in lax_test_util.compatible_shapes),
         dtype=rec.dtypes)
       for rec in lax_test_util.lax_ops()))
+  @jtu.ignore_warning(message="invalid value", category=RuntimeWarning)
   def testOpAgainstNumpy(self, op_name, rng_factory, shapes, dtype, tol):
     if (not config.enable_x64.value and op_name == "nextafter"
         and dtype == np.float64):
@@ -2844,9 +2845,10 @@ class LaxTest(jtu.JaxTestCase):
                                        (np.int32(1), np.int16(2))))
 
   def test_primitive_jaxtype_error(self):
+    err_str = ("Error interpreting argument to .* as an abstract array. The problematic "
+               r"value is of type .* and was passed to the function at path args\[1\].")
     with jax.enable_checks(False):
-      with self.assertRaisesRegex(
-          TypeError, "Argument .* of type .* is not a valid JAX type"):
+      with self.assertRaisesRegex(TypeError, err_str):
         lax.add(1, 'hi')
 
   def test_reduction_with_repeated_axes_error(self):

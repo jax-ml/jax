@@ -861,6 +861,10 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       with self.assertRaisesRegex(ValueError, msg):
         jnp.cumulative_sum(x, include_initial=include_initial)
 
+  def testCumulativeSumBool(self):
+    out = jnp.cumulative_sum(jnp.array([[0.1], [0.1], [0.0]]), axis=-1,
+                             dtype=jnp.bool_)
+    np.testing.assert_array_equal(np.array([[True], [True], [False]]), out)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

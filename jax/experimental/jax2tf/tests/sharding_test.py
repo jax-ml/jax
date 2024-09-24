@@ -61,7 +61,8 @@ def setUpModule():
 
   global topology
   if jtu.test_device_matches(["tpu"]):
-    resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu='')
+    with jtu.ignore_warning(message="the imp module is deprecated"):
+      resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu='')
     tf.config.experimental_connect_to_cluster(resolver)
     # Do TPU init at beginning since it will wipe out all HBMs.
     topology = tf.tpu.experimental.initialize_tpu_system(resolver)
@@ -83,6 +84,15 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     if len(jax.devices()) < 2:
       raise unittest.SkipTest("Test requires at least 2 local devices")
     self.devices = np.array(jax.devices()[:2])  # use 2 devices
+
+    self.warning_ctx = jtu.ignore_warning(
+        message="jax2tf.convert with native_serialization=False is deprecated"
+    )
+    self.warning_ctx.__enter__()
+
+  def tearDown(self):
+    self.warning_ctx.__exit__(None, None, None)
+    super().tearDown()
 
   def log_jax_hlo(self, f_jax, args: Sequence[Any], *,
                   num_replicas=1, num_partitions=2):

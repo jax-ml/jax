@@ -15,7 +15,7 @@
 load(
     "//jaxlib:jax.bzl",
     "jax_generate_backend_suites",
-    "jax_test",
+    "jax_multiplatform_test",
     "py_deps",
 )
 
@@ -42,7 +42,7 @@ DISABLED_CONFIGS = [
     "gpu_pjrt_c_api",
 ]
 
-jax_test(
+jax_multiplatform_test(
     name = "matmul_bench",
     srcs = ["matmul_bench.py"],
     disable_backends = DISABLED_BACKENDS,

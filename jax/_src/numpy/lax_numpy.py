@@ -819,11 +819,6 @@ def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
   return hist, bin_edges_by_dim
 
 
-_ARRAY_VIEW_DOC = """
-The JAX version of this function may in some cases return a copy rather than a
-view of the input.
-"""
-
 def transpose(a: ArrayLike, axes: Sequence[int] | None = None) -> Array:
   """Return a transposed version of an N-dimensional array.
 
@@ -5896,10 +5891,69 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
   return (result, delta) if retstep else result
 
 
-@util.implements(np.logspace)
 def logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: bool = True, base: ArrayLike = 10.0,
              dtype: DTypeLike | None = None, axis: int = 0) -> Array:
+  """Generate logarithmically-spaced values.
+
+  JAX implementation of :func:`numpy.logspace`.
+
+  Args:
+    start: scalar or array. Used to specify the start value. The start value is
+      ``base ** start``.
+    stop: scalar or array. Used to specify the stop value. The end value is
+      ``base ** stop``.
+    num: int, optional, default=50. Number of values to generate.
+    endpoint: bool, optional, default=True. If True, then include the ``stop`` value
+      in the result. If False, then exclude the ``stop`` value.
+    base: scalar or array, optional, default=10. Specifies the base of the logarithm.
+    dtype: optional. Specifies the dtype of the output.
+    axis: int, optional, default=0. Axis along which to generate the logspace.
+
+  Returns:
+    An array of logarithm.
+
+  See also:
+    - :func:`jax.numpy.arange`: Generate ``N`` evenly-spaced values given a starting
+      point and a step value.
+    - :func:`jax.numpy.linspace`: Generate evenly-spaced values.
+    - :func:`jax.numpy.geomspace`: Generate geometrically-spaced values.
+
+  Examples:
+    List 5 logarithmically spaced values between 1 (``10 ** 0``) and 100
+    (``10 ** 2``):
+
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.logspace(0, 2, 5)
+    Array([  1.   ,   3.162,  10.   ,  31.623, 100.   ], dtype=float32)
+
+    List 5 logarithmically-spaced values between 1(``10 ** 0``) and 100
+    (``10 ** 2``), excluding endpoint:
+
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.logspace(0, 2, 5, endpoint=False)
+    Array([ 1.   ,  2.512,  6.31 , 15.849, 39.811], dtype=float32)
+
+    List 7 logarithmically-spaced values between 1 (``2 ** 0``) and 4 (``2 ** 2``)
+    with base 2:
+
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.logspace(0, 2, 7, base=2)
+    Array([1.   , 1.26 , 1.587, 2.   , 2.52 , 3.175, 4.   ], dtype=float32)
+
+    Multi-dimensional logspace:
+
+    >>> start = jnp.array([0, 5])
+    >>> stop = jnp.array([5, 0])
+    >>> base = jnp.array([2, 3])
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.logspace(start, stop, 5, base=base)
+    Array([[  1.   , 243.   ],
+           [  2.378,  61.547],
+           [  5.657,  15.588],
+           [ 13.454,   3.948],
+           [ 32.   ,   1.   ]], dtype=float32)
+  """
   num = core.concrete_or_error(operator.index, num, "'num' argument of jnp.logspace")
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.logspace")
   return _logspace(start, stop, num, endpoint, base, dtype, axis)
@@ -5922,9 +5976,54 @@ def _logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
   return lax.convert_element_type(ufuncs.power(base, lin), dtype)
 
 
-@util.implements(np.geomspace)
 def geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool = True,
               dtype: DTypeLike | None = None, axis: int = 0) -> Array:
+  """Generate geometrically-spaced values.
+
+  JAX implementation of :func:`numpy.geomspace`.
+
+  Args:
+    start: scalar or array. Specifies the starting values.
+    stop: scalar or array. Specifies the stop values.
+    num: int, optional, default=50. Number of values to generate.
+    endpoint: bool, optional, default=True. If True, then include the ``stop`` value
+      in the result. If False, then exclude the ``stop`` value.
+    dtype: optional. Specifies the dtype of the output.
+    axis: int, optional, default=0. Axis along which to generate the geomspace.
+
+  Returns:
+    An array containing the geometrically-spaced values.
+
+  See also:
+    - :func:`jax.numpy.arange`: Generate ``N`` evenly-spaced values given a starting
+      point and a step value.
+    - :func:`jax.numpy.linspace`: Generate evenly-spaced values.
+    - :func:`jax.numpy.logspace`: Generate logarithmically-spaced values.
+
+  Examples:
+    List 5 geometrically-spaced values between 1 and 16:
+
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.geomspace(1, 16, 5)
+    Array([ 1.,  2.,  4.,  8., 16.], dtype=float32)
+
+    List 4 geomtrically-spaced values between 1 and 16, with ``endpoint=False``:
+
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.geomspace(1, 16, 4, endpoint=False)
+    Array([1., 2., 4., 8.], dtype=float32)
+
+    Multi-dimensional geomspace:
+
+    >>> start = jnp.array([1, 1000])
+    >>> stop = jnp.array([27, 1])
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.geomspace(start, stop, 4)
+    Array([[   1., 1000.],
+           [   3.,  100.],
+           [   9.,   10.],
+           [  27.,    1.]], dtype=float32)
+  """
   num = core.concrete_or_error(operator.index, num, "'num' argument of jnp.geomspace")
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.geomspace")
   return _geomspace(start, stop, num, endpoint, dtype, axis)
@@ -5951,9 +6050,67 @@ def _geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool 
   return lax.convert_element_type(res, dtype)
 
 
-@util.implements(np.meshgrid, lax_description=_ARRAY_VIEW_DOC)
 def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
              indexing: str = 'xy') -> list[Array]:
+  """Construct N-dimensional grid arrays from N 1-dimensional vectors.
+
+  JAX implementation of :func:`numpy.meshgrid`.
+
+  Args:
+    xi: N arrays to convert to a grid.
+    copy: whether to copy the input arrays. JAX supports only ``copy=True``,
+      though under JIT compilation the compiler may opt to avoid copies.
+    sparse: if False (default), then each returned arrays will be of shape
+      ``[len(x1), len(x2), ..., len(xN)]``. If False, then returned arrays
+      will be of shape ``[1, 1, ..., len(xi), ..., 1, 1]``.
+    indexing: options are ``'xy'`` for cartesian indexing (default) or ``'ij'``
+      for matrix indexing.
+
+  Returns:
+    A length-N list of grid arrays.
+
+  See also:
+    - :obj:`jax.numpy.mgrid`: create a meshgrid using indexing syntax.
+    - :obj:`jax.numpy.ogrid`: create an open meshgrid using indexing syntax.
+
+  Examples:
+    For the following examples, we'll use these 1D arrays as inputs:
+
+    >>> x = jnp.array([1, 2])
+    >>> y = jnp.array([10, 20, 30])
+
+    2D cartesian mesh grid:
+
+    >>> x_grid, y_grid = jnp.meshgrid(x, y)
+    >>> print(x_grid)
+    [[1 2]
+     [1 2]
+     [1 2]]
+    >>> print(y_grid)
+    [[10 10]
+     [20 20]
+     [30 30]]
+
+    2D sparse cartesian mesh grid:
+
+    >>> x_grid, y_grid = jnp.meshgrid(x, y, sparse=True)
+    >>> print(x_grid)
+    [[1 2]]
+    >>> print(y_grid)
+    [[10]
+     [20]
+     [30]]
+
+    2D matrix-index mesh grid:
+
+    >>> x_grid, y_grid = jnp.meshgrid(x, y, indexing='ij')
+    >>> print(x_grid)
+    [[1 1 1]
+     [2 2 2]]
+    >>> print(y_grid)
+    [[10 20 30]
+     [10 20 30]]
+  """
   util.check_arraylike("meshgrid", *xi)
   args = [asarray(x) for x in xi]
   if not copy:

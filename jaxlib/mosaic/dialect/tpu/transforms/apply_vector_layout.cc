@@ -764,10 +764,10 @@ using rule_type = std::function<LogicalResult(
     RewriteContext &, Operation &, ArrayRef<Layout>, ArrayRef<Layout>)>;
 
 template <typename OpTy>
-LogicalResult ext_op_rule_impl(RewriteContext &ctx, OpTy op,
-                               const VectorLayout &layout_in,
-                               const VectorLayout &layout_out) {
-  ImplicitLocOpBuilder builder(op.getLoc(), op.getOperation());
+FailureOr<xla::Array<Value>> ext_op_rule_impl(RewriteContext &ctx,
+                                              OpBuilder &builder, OpTy op,
+                                              const VectorLayout &layout_in,
+                                              const VectorLayout &layout_out) {
   const auto result_ty = cast<VectorType>(op.getResult().getType());
   auto source = cast<TypedValue<VectorType>>(op.getIn());
   const auto source_ty = source.getType();
@@ -801,7 +801,7 @@ LogicalResult ext_op_rule_impl(RewriteContext &ctx, OpTy op,
       int64_t vreg_part = *(input_vreg_idxs.end() - 2) % packing;
       *(input_vreg_idxs.end() - 2) /= packing;
       *v = builder.create<UnpackSubelementsOp>(
-          res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part);
+          op.getLoc(), res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part);
     });
   } else {
     if (layout_in.tiling() != layout_out.tiling()) {
@@ -817,17 +817,13 @@ LogicalResult ext_op_rule_impl(RewriteContext &ctx, OpTy op,
       input_vreg_idxs.back() /= packing;
       const int64_t vreg_part = idxs.back() % packing;
       *v = builder.create<UnpackSubelementsOp>(
-          res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part);
+          op.getLoc(), res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part);
     });
   }
   if (layout_out.implicit_dim() != VectorLayout::ImplicitDim::kNone) {
     output_vregs.Reshape(output_vregs_shape);
   }
-  op.replaceAllUsesWith(assemble(builder, result_ty, layout_out,
-                                 std::move(output_vregs), ctx.target_shape)
-                            .getResult());
-  op.erase();
-  return success();
+  return output_vregs;
 }
 
 LogicalResult arith_extf_rule(RewriteContext &ctx, Operation &op,
@@ -842,8 +838,17 @@ LogicalResult arith_extf_rule(RewriteContext &ctx, Operation &op,
     return op.emitOpError(
         "Not implemented: Only 16-bit to 32-bit conversion supported");
   }
-  return ext_op_rule_impl(ctx, extf_op, *layouts_in.front(),
-                          *layouts_out.front());
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
+  FAILUREOR_ASSIGN_OR_RETURN(
+      xla::Array<Value> output_vregs,
+      ext_op_rule_impl(ctx, builder, extf_op, *layouts_in.front(),
+                       *layouts_out.front()));
+  const auto result_ty = cast<VectorType>(extf_op.getResult().getType());
+  extf_op.replaceAllUsesWith(assemble(builder, result_ty, *layouts_out.front(),
+                                 std::move(output_vregs), ctx.target_shape)
+                            .getResult());
+  extf_op.erase();
+  return success();
 }
 
 LogicalResult arith_extsi_rule(RewriteContext &ctx, Operation &op,
@@ -854,8 +859,69 @@ LogicalResult arith_extsi_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
   TPU_ASSERT_OP(layouts_out.front().has_value());
   auto extsi_op = cast<arith::ExtSIOp>(op);
-  return ext_op_rule_impl(ctx, extsi_op, *layouts_in.front(),
-                          *layouts_out.front());
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
+  FAILUREOR_ASSIGN_OR_RETURN(
+      xla::Array<Value> output_vregs,
+      ext_op_rule_impl(ctx, builder, extsi_op, *layouts_in.front(),
+                       *layouts_out.front()));
+  const auto result_ty = cast<VectorType>(extsi_op.getResult().getType());
+  extsi_op.replaceAllUsesWith(assemble(builder, result_ty, *layouts_out.front(),
+                                 std::move(output_vregs), ctx.target_shape)
+                            .getResult());
+  extsi_op.erase();
+  return success();
+}
+
+LogicalResult arith_extui_rule(RewriteContext &ctx, Operation &op,
+                               const ArrayRef<Layout> layouts_in,
+                               const ArrayRef<Layout> layouts_out) {
+  TPU_ASSERT_EQ_OP(layouts_in.size(), 1);
+  TPU_ASSERT_OP(layouts_in.front().has_value());
+  TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
+  TPU_ASSERT_OP(layouts_out.front().has_value());
+  auto extui_op = cast<arith::ExtUIOp>(op);
+  auto in_ty = dyn_cast<VectorType>(extui_op.getIn().getType());
+  auto out_ty = dyn_cast<VectorType>(extui_op.getType());
+  CHECK(in_ty && out_ty);
+  auto in_bitwidth = in_ty ? in_ty.getElementTypeBitWidth()
+                           : extui_op.getIn().getType().getIntOrFloatBitWidth();
+  if (in_bitwidth == 1) {
+    return elementwise_op_rule(ctx, op, layouts_in, layouts_out);
+  }
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
+  FAILUREOR_ASSIGN_OR_RETURN(
+      xla::Array<Value> output_vregs,
+      ext_op_rule_impl(ctx, builder, extui_op, *layouts_in.front(),
+                       *layouts_out.front()));
+  const auto source_ty = cast<VectorType>(extui_op.getIn().getType());
+  const auto result_ty = cast<VectorType>(extui_op.getResult().getType());
+  auto src_bitwidth = source_ty.getElementTypeBitWidth();
+  auto dst_bitwidth = result_ty.getElementTypeBitWidth();
+  // Generate a mask to mask out the sign extension. e.g., for u8 -> u16,
+  // the mask is 0x00ff00ff.
+  unsigned mask = (1 << src_bitwidth) - 1;
+  while (dst_bitwidth < 32) {
+    mask = (mask << dst_bitwidth) | mask;
+    dst_bitwidth *= 2;
+  }
+  const VectorType i32_vreg_ty =
+      getNativeVregType(builder.getI32Type(), ctx.target_shape);
+  auto mask_const = builder.create<arith::ConstantOp>(
+      op.getLoc(), i32_vreg_ty, DenseIntElementsAttr::get(i32_vreg_ty, {mask}));
+  const VectorType res_vreg_ty =
+      getNativeVregType(result_ty.getElementType(), ctx.target_shape);
+  output_vregs.Each([&](absl::Span<const int64_t> _, Value *v) {
+    Value unpacked =
+        builder.create<BitcastVregOp>(op.getLoc(), i32_vreg_ty, *v);
+    unpacked = builder.create<arith::AndIOp>(op.getLoc(), i32_vreg_ty, unpacked,
+                                             mask_const);
+    *v = builder.create<BitcastVregOp>(op.getLoc(), res_vreg_ty, unpacked);
+  });
+  extui_op.replaceAllUsesWith(assemble(builder, result_ty, *layouts_out.front(),
+                                 std::move(output_vregs), ctx.target_shape)
+                            .getResult());
+  extui_op.erase();
+  return success();
 }
 
 template <typename OpTy>
@@ -4352,6 +4418,7 @@ const llvm::StringMap<rule_type> &rules() {
       {arith::ConstantOp::getOperationName(), arith_constant_rule},
       {arith::ExtFOp::getOperationName(), arith_extf_rule},
       {arith::ExtSIOp::getOperationName(), arith_extsi_rule},
+      {arith::ExtUIOp::getOperationName(), arith_extui_rule},
       {arith::TruncFOp::getOperationName(), arith_truncf_rule},
       {arith::TruncIOp::getOperationName(), arith_trunci_rule},
       {func::ReturnOp::getOperationName(), func_return_rule},

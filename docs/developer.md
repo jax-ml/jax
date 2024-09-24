@@ -86,7 +86,8 @@ There are two ways to build `jaxlib` with CUDA support: (1) use
 support, or (2) use
 `python build/build.py --enable_cuda --build_gpu_plugin --gpu_plugin_cuda_version=12`
 to generate three wheels (jaxlib without cuda, jax-cuda-plugin, and
-jax-cuda-pjrt).
+jax-cuda-pjrt). By default all CUDA compilation steps performed by NVCC and 
+clang, but it can be restricted to clang via the `--nouse_cuda_nvcc` flag.
 
 See `python build/build.py --help` for configuration options. Here
 `python` should be the name of your Python 3 interpreter; on some systems, you

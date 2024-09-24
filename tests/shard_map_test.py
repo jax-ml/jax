@@ -2179,6 +2179,22 @@ class ShardMapTest(jtu.JaxTestCase):
       f(x, reduce_along=('x',), use_jit=use_jit)
       f(x, reduce_along=('x', 'y'), use_jit=use_jit)
 
+  def test_pmin(self):
+    mesh = jtu.create_mesh((4,), ('i',))
+    x = jnp.arange(8., dtype=np.float32)
+    y = shard_map(lambda x: jax.lax.pmin(x, 'i'),
+              mesh=mesh, in_specs=P('i'), out_specs=P()
+              )(x)  # don't crash
+    self.assertArraysEqual(y, np.array([0, 1], dtype=np.float32))
+
+  def test_pmax(self):
+    mesh = jtu.create_mesh((4,), ('i',))
+    x = jnp.arange(8., dtype=np.float32)
+    y = shard_map(lambda x: jax.lax.pmax(x, 'i'),
+              mesh=mesh, in_specs=P('i'), out_specs=P()
+              )(x)  # don't crash
+    self.assertArraysEqual(y, np.array([6, 7], dtype=np.float32))
+
 
 class FunSpec(NamedTuple):
   name: str

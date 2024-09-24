@@ -62,8 +62,6 @@ class CompatTest(bctu.CompatTestBase):
 
   @jax.default_matmul_precision("bfloat16")
   def test_mosaic_matmul(self):
-    if jtu.is_device_tpu(6, "e"):
-      self.skipTest("TODO(apaszke): Test fails on TPU v6e")
     dtype = jnp.float32
     def func():
       # Build the inputs here, to reduce the size of the golden inputs.
@@ -77,7 +75,7 @@ class CompatTest(bctu.CompatTestBase):
       # Keep only slices of the output, to reduce the size of the goldens.
       return res[::16, ::16]
 
-    data = self.load_testdata(mosaic_matmul.data_2023_09_22)
+    data = self.load_testdata(mosaic_matmul.data_2024_09_24)
     self.run_one_test(func, data, rtol=2e-7)
 
   def test_mosaic_semaphore_dma(self):

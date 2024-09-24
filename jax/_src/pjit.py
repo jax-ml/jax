@@ -645,6 +645,18 @@ def _infer_params_impl(
           "An overflow was encountered while parsing an argument to a jitted "
           f"computation, whose {arg_path}."
         ) from e
+      except TypeError as e:
+        arg_description = (f"path {dbg.arg_names[i]}" if dbg
+                           else f"flattened argument number {i}")
+        raise TypeError(
+          f"Error interpreting argument to {fun} as an abstract array."
+          f" The problematic value is of type {type(a)} and was passed to"
+          f" the function at {arg_description}.\n"
+          "This typically means that a jit-wrapped function was called with a non-array"
+          " argument, and this argument was not marked as static using the"
+          " static_argnums or static_argnames parameters of jax.jit."
+        ) from e
+
     in_type = in_avals = tuple(avals)
   else:
     in_type = in_avals

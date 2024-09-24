@@ -96,7 +96,14 @@ def _mosaic_gpu_abstract_eval(*_, module, out_types):
 # TODO(apaszke): Implement a proper system for managing kernel lifetimes
 KNOWN_KERNELS = {}
 
-def _mosaic_gpu_lowering_rule(ctx, *args, module, out_types):
+
+def _mosaic_gpu_lowering_rule(
+    ctx,
+    *args,
+    module,
+    out_types,
+    input_output_aliases: tuple[tuple[int, int], ...] = (),
+):
   del out_types  # Unused.
   kernel_id = hashlib.sha256(module).digest()
   # Note that this is technically only a half measure. Someone might load a
@@ -114,8 +121,10 @@ def _mosaic_gpu_lowering_rule(ctx, *args, module, out_types):
       operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
       result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
       backend_config=kernel_id + module,
+      operand_output_aliases=dict(input_output_aliases),
   )
   return op.results
+
 
 mlir.register_lowering(mosaic_gpu_p, _mosaic_gpu_lowering_rule, "cuda")
 

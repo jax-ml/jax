@@ -18,10 +18,13 @@ from jax._src.pallas.mosaic_gpu.core import Barrier
 from jax._src.pallas.mosaic_gpu.core import GPUBlockSpec
 from jax._src.pallas.mosaic_gpu.core import GPUCompilerParams
 from jax._src.pallas.mosaic_gpu.core import GPUMemorySpace
-from jax._src.pallas.mosaic_gpu.primitives import async_copy_smem_to_gmem
 from jax._src.pallas.mosaic_gpu.primitives import async_copy_gmem_to_smem
+from jax._src.pallas.mosaic_gpu.primitives import async_copy_smem_to_gmem
 from jax._src.pallas.mosaic_gpu.primitives import wait_barrier
 from jax._src.pallas.mosaic_gpu.primitives import wait_smem_to_gmem
+from jax._src.pallas.mosaic_gpu.primitives import zero_accumulator
+from jax._src.pallas.mosaic_gpu.primitives import wgmma
+from jax._src.pallas.mosaic_gpu.primitives import wgmma_wait
 
 GMEM = GPUMemorySpace.GMEM
 SMEM = GPUMemorySpace.SMEM

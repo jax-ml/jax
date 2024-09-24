@@ -3209,8 +3209,12 @@ class EagerPmapMixin:
     self.jit_disabled = config.disable_jit.value
     config.update('jax_disable_jit', True)
     config.update('jax_eager_pmap', True)
+    self.warning_ctx = jtu.ignore_warning(
+        message="Some donated buffers were not usable", category=UserWarning)
+    self.warning_ctx.__enter__()
 
   def tearDown(self):
+    self.warning_ctx.__exit__(None, None, None)
     config.update('jax_eager_pmap', self.eager_pmap_enabled)
     config.update('jax_disable_jit', self.jit_disabled)
     super().tearDown()

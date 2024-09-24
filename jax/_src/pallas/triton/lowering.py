@@ -121,6 +121,12 @@ def _eval_index_map(
       _ensure_ir_value(i, jax_core.ShapedArray((), jnp.int32))
       for i in block_indices
   )
+  if isinstance(block_mapping.indexing_mode, pallas_core.Unblocked):
+    if block_mapping.indexing_mode.padding is not None:
+      raise NotImplementedError(
+          "Unblocked indexing with padding is not supported in Triton lowering."
+      )
+    return tuple(block_indices)
   return tuple(
       i if b is pallas_core.mapped else _mul(i, _ir_constant(b, i.type))
       for i, b in zip(block_indices, block_mapping.block_shape)
@@ -214,19 +220,18 @@ def _process_grid_to_3d_grid(grid_mapping: GridMapping):
   if len(collapse_dims) == 0:
     prog_ids = [None] * len(prog_id_dims)
     for i in range(len(prog_id_dims)):
-      out_idx = launch_grid_to_pallas_grid[i]
-      prog_ids[out_idx] = _program_id(i)
+      prog_ids[launch_grid_to_pallas_grid[i]] = _program_id(i, prog_id_dims)
 
     return prog_id_dims, prog_ids
-  else:
-    new_grid = [math.prod(collapse_dims), *prog_id_dims]
+
+  new_grid = [math.prod(collapse_dims), *prog_id_dims]
 
   assert new_grid[0] < 2**31 - 1, \
           "Cannot fix pallas kernel launch grid within CUDA limits"
 
   out_indices = [None] * len(grid_mapping.grid)
 
-  grid0 = _program_id(0)
+  grid0 = _program_id(0, new_grid)
   for i, s in enumerate(collapse_dims):
     out_idx = launch_grid_to_pallas_grid[i]
     s = _i32_constant(s)
@@ -235,7 +240,7 @@ def _process_grid_to_3d_grid(grid_mapping: GridMapping):
 
   for i in range(len(prog_id_dims)):
     out_idx = launch_grid_to_pallas_grid[num_collapse + i]
-    out_indices[out_idx] = _program_id(i + 1)
+    out_indices[out_idx] = _program_id(i + 1, new_grid)
 
   assert len(out_indices) == len(grid_mapping.grid)
   return new_grid, out_indices
@@ -323,11 +328,6 @@ def lower_jaxpr_to_triton_module(
       if grid_mapping.num_index_operands:
         raise NotImplementedError(
             "Scalar prefetch not supported in Triton lowering."
-        )
-      if not all(isinstance(bm.indexing_mode, Blocked)
-                 for bm in grid_mapping.block_mappings):
-        raise NotImplementedError(
-            "Only Blocked indexing mode is supported in Triton lowering."
         )
       start_indices = map(
           functools.partial(_eval_index_map, ctx, program_ids),
@@ -427,9 +427,11 @@ def lower_fun(
 # ## Programming model primitives
 
 
-def _program_id(axis: int) -> ir.Value:
+def _program_id(axis: int, launch_grid: Sequence[int]) -> ir.Value:
   if axis not in range(3):
     raise ValueError(f"axis must be in [0, 3), but got: {axis}")
+  if launch_grid[axis] == 1:
+    return _i32_constant(0)
   return tt_dialect.get_program_id(axis)
 
 
