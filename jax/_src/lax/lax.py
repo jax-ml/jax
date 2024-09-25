@@ -137,7 +137,7 @@ def asarray(x: ArrayLike) -> Array:
   if isinstance(x, Array):
     return x
   if isinstance(x, (np.ndarray, np.generic, bool, int, float, builtins.complex)):
-    return _convert_element_type(x, weak_type=dtypes.is_weakly_typed(x))
+    return _convert_element_type(x, weak_type=dtypes.is_weakly_typed(x))  # type: ignore[unused-ignore,bad-return-type]
   else:
     raise TypeError(f"asarray: expected ArrayLike, got {x} of type {type(x)}.")
 
@@ -520,7 +520,7 @@ def convert_element_type(operand: ArrayLike,
   Returns:
     An array with the same shape as `operand`, cast elementwise to `new_dtype`.
   """
-  return _convert_element_type(operand, new_dtype, weak_type=False)
+  return _convert_element_type(operand, new_dtype, weak_type=False)  # type: ignore[unused-ignore,bad-return-type]
 
 def _convert_element_type(
     operand: ArrayLike,
@@ -530,17 +530,30 @@ def _convert_element_type(
   if hasattr(operand, '__jax_array__'):
     operand = operand.__jax_array__()
 
-  if (dtypes.issubdtype(new_dtype, dtypes.extended) or
-      dtypes.issubdtype(getattr(operand, 'dtype', None), dtypes.extended)):
-    return convert_element_type_p.bind(
-        operand, new_dtype=new_dtype, weak_type=bool(weak_type),
-        sharding=sharding)
-
-  new_dtype = type_cast(DTypeLike | None, new_dtype)
-
   # Don't canonicalize old_dtype because x64 context might cause
   # un-canonicalized operands to be passed in.
   old_dtype = dtypes.dtype(operand, canonicalize=False)
+
+  if (isinstance(new_dtype, dtypes.ExtendedDType) or
+      isinstance(old_dtype, dtypes.ExtendedDType)):
+    if sharding is not None or weak_type: raise NotImplementedError
+    if new_dtype == old_dtype: return operand
+    if (isinstance(new_dtype, dtypes.ExtendedDType) and
+        isinstance(old_dtype, dtypes.ExtendedDType)):
+      old_rep_dtype = core.physical_element_aval(old_dtype).dtype
+      new_rep_dtype = core.physical_element_aval(new_dtype).dtype
+      raise ValueError(
+          "cannot directly convert between extended dtypes: from "
+          f"{dtype_to_string(old_dtype)} to {dtype_to_string(new_dtype)}. "
+          "Instead, convert to and from their representation dtypes, e.g.:\n"
+          f"{dtype_to_string(old_dtype)} -> {dtype_to_string(old_rep_dtype)} "
+          f"-> {dtype_to_string(new_rep_dtype)} -> {dtype_to_string(new_dtype)}")
+    if isinstance(new_dtype, dtypes.ExtendedDType):
+      return to_edtype_p.bind(operand, edtype=new_dtype)
+    return from_edtype_p.bind(operand, dtype=np.dtype(new_dtype))
+
+  new_dtype = type_cast(DTypeLike | None, new_dtype)
+
   old_weak_type = dtypes.is_weakly_typed(operand)
   if new_dtype is None:
     new_dtype = old_dtype
@@ -2560,14 +2573,6 @@ def _convert_element_type_sharding_rule(operand, *, new_dtype, weak_type,
 
 def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type,
                                      sharding):
-  if (operand.dtype != new_dtype and
-      ((dtypes.issubdtype(operand.dtype, dtypes.extended) and
-        not operand.dtype._rules.convert_from(operand.dtype, new_dtype)) or
-       (dtypes.issubdtype(new_dtype, dtypes.extended) and
-        not new_dtype._rules.convert_to(operand.dtype, new_dtype)))):
-    raise ValueError(
-        f"Cannot convert_element_type from {dtype_to_string(operand.dtype)} "
-        f"to {dtype_to_string(new_dtype)}")
   return new_dtype
 
 def _convert_element_type_weak_type_rule(operand, *, new_dtype, weak_type,
@@ -2587,13 +2592,13 @@ def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type,
     return [convert_element_type_p.bind(
         ct, new_dtype=old_dtype, weak_type=old_weak_type, sharding=sharding)]
 
-def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype, weak_type,
-                                   sharding):
-  if core.primal_dtype_to_tangent_dtype(new_dtype) == dtypes.float0:
-    tangent_aval = core.raise_to_shaped(core.get_aval(tangent))
-    return ad_util.Zero(tangent_aval.update(dtype=dtypes.float0, weak_type=False))
+def _convert_element_type_jvp_rule(tangent, primal_result, operand, *,
+                                   new_dtype, weak_type, sharding):
+  new_tangent_dtype = core.primal_dtype_to_tangent_dtype(new_dtype)
+  if new_tangent_dtype == dtypes.float0:
+    return ad_util.Zero.from_primal_value(primal_result)
   else:
-    return convert_element_type_p.bind(tangent, new_dtype=new_dtype,
+    return convert_element_type_p.bind(tangent, new_dtype=new_tangent_dtype,
                                        weak_type=weak_type, sharding=sharding)
 
 def _convert_elt_type_folding_rule(consts, eqn):
@@ -2653,7 +2658,7 @@ convert_element_type_p.def_abstract_eval(
             _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
             _convert_element_type_weak_type_rule,
             _convert_element_type_sharding_rule))
-ad.defjvp(convert_element_type_p, _convert_element_type_jvp_rule)
+ad.defjvp2(convert_element_type_p, _convert_element_type_jvp_rule)
 ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 batching.defvectorized(convert_element_type_p)
 pe.const_fold_rules[convert_element_type_p] = _convert_elt_type_folding_rule
@@ -2674,6 +2679,91 @@ def _convert_element_type_lower(ctx, operand, *, new_dtype, weak_type,
   return [mlir.convert_hlo(ctx, operand, aval_in, aval_out)]
 
 mlir.register_lowering(convert_element_type_p, _convert_element_type_lower)
+
+
+def _to_edtype_abstract_eval(x, *, edtype):
+  assert (isinstance(edtype, dtypes.ExtendedDType) and
+          not isinstance(x.dtype, dtypes.ExtendedDType))
+  # For backward compatibility, if the edtype rules have a `convert_to` method,
+  # use that rather than looking for an `allow_conversion: bool` attribute.
+  if convert_to := getattr(edtype._rules, 'convert_to', None):
+    allow_conversion = convert_to(x.dtype, edtype)
+  else:
+    allow_conversion = edtype._rules.allow_conversion
+  if not allow_conversion:
+    raise ValueError(
+        f"Cannot convert_element_type from {dtype_to_string(x.dtype)} "
+        f"to {dtype_to_string(edtype)}")
+  rep_aval = core.physical_element_aval(edtype)
+  if x.dtype != rep_aval.dtype:
+    raise ValueError(
+        "can only convert to extended dtype from its representation dtype, "
+        f"but tried to convert from {dtype_to_string(x.dtype)} to "
+        f"{dtype_to_string(edtype)} which doesn't match the representation type "
+        f"{dtype_to_string(rep_aval.dtype)}.")
+  if x.ndim < rep_aval.ndim:
+    raise ValueError(
+        "can only convert to extended dtype from an array of its "
+        f"representation type, but the extended dtype {dtype_to_string(edtype)}"
+        f" has a representation shape {rep_aval.shape} (rank {rep_aval.ndim}) "
+        f"while the given representation array has shape {x.shape} (rank "
+        f"{x.ndim} < {rep_aval.ndim}).")
+  n = x.ndim - rep_aval.ndim
+  shape_prefix, shape_suffix = x.shape[:n], x.shape[n:]
+  if shape_suffix != rep_aval.shape:
+    raise ValueError(
+        "can only convert to extended dtype from an array of its "
+        f"representation type, but the extended dtype {dtype_to_string(edtype)}"
+        f" has a representation shape {rep_aval.shape} while the given "
+        f"representation array has shape {x.shape}, so the shape suffix "
+        f"does not match: given {shape_suffix} but required {rep_aval.shape}.")
+  return core.raise_to_shaped(x).update(shape=shape_prefix, dtype=edtype)
+
+to_edtype_p = Primitive('to_edtype')
+to_edtype_p.def_impl(partial(dispatch.apply_primitive, to_edtype_p))
+to_edtype_p.def_abstract_eval(_to_edtype_abstract_eval)
+ad.defjvp(to_edtype_p,
+          lambda t, x, edtype:
+          convert_element_type(t, core.primal_dtype_to_tangent_dtype(edtype)))
+ad.primitive_transposes[to_edtype_p] = \
+    lambda ct, x, edtype: [from_edtype_p.bind(ct, dtype=x.aval.dtype)]  # type: ignore
+batching.defvectorized(to_edtype_p)
+mlir.register_lowering(to_edtype_p, lambda _, x, **__: [x])
+
+
+def _from_edtype_abstract_eval(x, *, dtype):
+  assert (isinstance(x.dtype, dtypes.ExtendedDType) and
+          not isinstance(dtype, dtypes.ExtendedDType))
+  if convert_from := getattr(x.dtype._rules, 'convert_from', None):
+    allow_conversion = convert_from(x.dtype, dtype)
+  else:
+    allow_conversion = x.dtype._rules.allow_conversion
+  if not allow_conversion:
+    raise ValueError(
+        f"Cannot convert_element_type from {dtype_to_string(x.dtype)} "
+        f"to {dtype_to_string(dtype)}")
+  rep_aval = core.physical_element_aval(x.dtype)
+  if rep_aval.dtype != dtype:
+    raise ValueError(
+        "can only convert from extended dtype to its representation dtype, "
+        f"but tried to convert from {dtype_to_string(x.dtype)} to "
+        f"{dtype_to_string(dtype)} which doesn't match the representation type "
+        f"{dtype_to_string(rep_aval.dtype)}.")
+  if all(isinstance(d, int) for d in x.shape):
+    return core.ShapedArray(shape=(*x.shape, *rep_aval.shape), dtype=dtype)
+  else:
+    raise NotImplementedError
+
+from_edtype_p = Primitive('from_edtype')
+from_edtype_p.def_impl(partial(dispatch.apply_primitive, from_edtype_p))
+from_edtype_p.def_abstract_eval(_from_edtype_abstract_eval)
+ad.defjvp(from_edtype_p,
+          lambda t, x, dtype:
+          convert_element_type(t, core.primal_dtype_to_tangent_dtype(dtype)))
+ad.primitive_transposes[from_edtype_p] = \
+    lambda ct, x, dtype: [to_edtype_p.bind(ct, edtype=x.dtype)]
+batching.defvectorized(from_edtype_p)
+mlir.register_lowering(from_edtype_p, lambda _, x, **__: [x])
 
 
 def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
@@ -5343,6 +5433,8 @@ batching.defvectorized(tie_p)
 
 
 class BIntRules:
+  allow_conversion: bool = True
+
   @staticmethod
   def physical_element_aval(dtype) -> core.ShapedArray:
     return core.ShapedArray((), np.dtype('int32'))
@@ -5368,14 +5460,6 @@ class BIntRules:
     def handler(bufs):
       return core.DArray(aval, phys_handler(bufs))
     return handler
-
-  @staticmethod
-  def convert_from(bint_dtype, other_dtype) -> bool:
-    return other_dtype in (np.dtype('int32'), np.dtype('int64'))
-
-  @staticmethod
-  def convert_to(other_dtype, bint_dtype) -> bool:
-    return other_dtype in (np.dtype('int32'), np.dtype('int64'))
 
 
 core.bint._rules = BIntRules

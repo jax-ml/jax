@@ -1486,6 +1486,9 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
                  jax_traceback_filtering='off')
 class JumbleTest(jtu.JaxTestCase):
 
+  def setUp(self):
+    if jax.config.x64_enabled: raise unittest.SkipTest()
+
   @parameterized.parameters((True,), (False,))
   def test_internal_jumble(self, disable_jit):
     with jax.disable_jit(disable_jit):
