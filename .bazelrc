@@ -57,7 +57,6 @@ build:native_arch_posix --host_copt=-march=native
 
 build:mkl_open_source_only --define=tensorflow_mkldnn_contraction_kernel=1
 
-build:clang --action_env=CC="/usr/lib/llvm-18/bin/clang"
 # Disable clang extention that rejects type definitions within offsetof.
 # This was added in clang-16 by https://reviews.llvm.org/D133574.
 # Can be removed once upb is updated, since a type definition is used within
@@ -91,11 +90,13 @@ build:cuda --repo_env=HERMETIC_CUDNN_VERSION="9.1.1"
 #   acceptable, because the workaround is "remove the nvidia-..." pip packages.
 # The list of CUDA pip packages that JAX depends on are present in setup.py.
 build:cuda --linkopt=-Wl,--disable-new-dtags
-build:cuda --@local_config_cuda//:cuda_compiler=clang
-build:cuda --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 
 # This flag is needed to include CUDA libraries for bazel tests.
 test:cuda --@local_config_cuda//cuda:include_cuda_libs=true
+
+build:cuda_clang --config=clang
+build:cuda_clang --@local_config_cuda//:cuda_compiler=clang
+build:cuda_clang --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 
 # Build with NVCC for CUDA
 build:cuda_nvcc --config=cuda
@@ -202,7 +203,7 @@ build:rbe_linux --host_linkopt=-lm
 # Use the GPU toolchain until the CPU one is ready.
 # https://github.com/bazelbuild/bazel/issues/13623
 build:rbe_cpu_linux_base --config=rbe_linux
-build:rbe_cpu_linux_base --config=clang
+build:rbe_cpu_linux_base --config=cuda_clang
 build:rbe_cpu_linux_base --host_crosstool_top="@local_config_cuda//crosstool:toolchain"
 build:rbe_cpu_linux_base --crosstool_top="@local_config_cuda//crosstool:toolchain"
 build:rbe_cpu_linux_base --extra_toolchains="@local_config_cuda//crosstool:toolchain-linux-x86_64"
