@@ -473,7 +473,7 @@ def _saved_residuals(jaxpr, arg_info) -> list[tuple[core.AbstractValue, str]]:
       if v in res_vars:
         if eqn.primitive is name_p or v in named_vars and (eqn := named_vars[v]):
           results.append((v.aval, f"named '{eqn.params['name']}' from {src}"))
-        elif str(eqn.primitive) == 'xla_call':
+        elif str(eqn.primitive) == 'pjit':
           results.append((v.aval,
                           f"output of jitted function '{eqn.params['name']}' "
                           f"from {src}"))
