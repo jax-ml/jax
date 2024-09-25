@@ -798,12 +798,13 @@ def _scan_lowering_rule(
   _consts_avals, arg_avals = util.split_list(ctx.avals_in, [num_consts])
   if has_loop_index:
     start, *args = args
-    index_aval, *_arg_avals = arg_avals
-    start = _ensure_ir_value(start, index_aval)
+    index_aval, *arg_avals = arg_avals
+    start = _ensure_ir_value(start, index_aval.dtype)
     length = _ir_constant(length, start.type)
   else:
     start = _i32_constant(0)
     length = _i32_constant(length)
+  args = map(lambda arg, aval: _ensure_fa(arg, aval.dtype), args, arg_avals)
   for_out = _lower_jaxpr_to_for_loop(
       ctx, jaxpr, start, length, consts, *args, has_loop_index=has_loop_index
   )
@@ -853,11 +854,11 @@ def _ensure_fa(x: object, dtype: jnp.dtype) -> mgpu.FragmentedArray:
   raise NotImplementedError(f"Unsupported type: {type(x)}")
 
 
-def _ensure_ir_value(x: object, aval: jax_core.ShapedArray) -> ir.Value:
+def _ensure_ir_value(x: object, dtype: jnp.dtype) -> ir.Value:
   if isinstance(x, ir.Value):
     return x
   elif isinstance(x, (np.number, np.ndarray, int, float)):
-    return _ir_constant(x, mgpu_utils.dtype_to_ir_type(aval.dtype))
+    return _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype))
   raise NotImplementedError(f"Unsupported type: {type(x)}")
 
 

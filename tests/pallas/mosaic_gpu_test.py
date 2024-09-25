@@ -328,7 +328,7 @@ class PallasCallTest(PallasTest):
     result = kernel(x)
     self.assertEqual(result.shape, (4, 2, 64, 64))
 
-  def test_fori_loop(self):
+  def test_fori_loop_array(self):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
@@ -339,6 +339,21 @@ class PallasCallTest(PallasTest):
 
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x + 2.0 + 3.0)
+
+  def test_fori_loop_scalar(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+    )
+    def kernel(o_ref):
+      # Equivalent to 2 + 3.
+      o_ref[...] = jax.lax.broadcast(
+          jax.lax.fori_loop(2, 4, lambda i, x: x + i, 0.0), o_ref.shape
+      )
+
+    np.testing.assert_array_equal(
+        kernel(), jnp.full([256], 5.0, dtype=jnp.float32)
+    )
 
   def test_wgmma(self):
     dtype = jnp.float16
