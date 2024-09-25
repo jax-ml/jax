@@ -587,19 +587,127 @@ def tan(x: ArrayLike, /) -> Array:
   """
   return lax.tan(*promote_args_inexact('tan', x))
 
-@implements(np.arcsin, module='numpy')
+
 @partial(jit, inline=True)
 def arcsin(x: ArrayLike, /) -> Array:
+  r"""Compute element-wise inverse of trigonometric sine of input.
+
+  JAX implementation of :obj:`numpy.arcsin`.
+
+  Args:
+    x: input array or scalar.
+
+  Returns:
+    An array containing the inverse trigonometric sine of each element of ``x``
+    in radians in the range ``[-pi/2, pi/2]``, promoting to inexact dtype.
+
+  Note:
+    - ``jnp.arcsin`` returns ``nan`` when ``x`` is real-valued and not in the closed
+      interval ``[-1, 1]``.
+    - ``jnp.arcsin`` follows the branch cut convention of :func:`numpy.arcsin` for
+      complex inputs.
+
+  See also:
+    - :func:`jax.numpy.sin`: Computes a trigonometric sine of each element of input.
+    - :func:`jax.numpy.arccos` and :func:`jax.numpy.acos`: Computes the inverse of
+      trigonometric cosine of each element of input.
+    - :func:`jax.numpy.arctan` and :func:`jax.numpy.atan`: Computes the inverse of
+      trigonometric tangent of each element of input.
+
+  Examples:
+    >>> x = jnp.array([-2, -1, -0.5, 0, 0.5, 1, 2])
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.arcsin(x)
+    Array([   nan, -1.571, -0.524,  0.   ,  0.524,  1.571,    nan], dtype=float32)
+
+    For complex-valued inputs:
+
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.arcsin(3+4j)
+    Array(0.634+2.306j, dtype=complex64, weak_type=True)
+  """
   return lax.asin(*promote_args_inexact('arcsin', x))
 
-@implements(np.arccos, module='numpy')
+
 @partial(jit, inline=True)
 def arccos(x: ArrayLike, /) -> Array:
+  """Compute element-wise inverse of trigonometric cosine of input.
+
+  JAX implementation of :obj:`numpy.arccos`.
+
+  Args:
+    x: input array or scalar.
+
+  Returns:
+    An array containing the inverse trigonometric cosine of each element of ``x``
+    in radians in the range ``[0, pi]``, promoting to inexact dtype.
+
+  Note:
+    - ``jnp.arccos`` returns ``nan`` when ``x`` is real-valued and not in the closed
+      interval ``[-1, 1]``.
+    - ``jnp.arccos`` follows the branch cut convention of :func:`numpy.arccos` for
+      complex inputs.
+
+  See also:
+    - :func:`jax.numpy.cos`: Computes a trigonometric cosine of each element of
+      input.
+    - :func:`jax.numpy.arcsin` and :func:`jax.numpy.asin`: Computes the inverse of
+      trigonometric sine of each element of input.
+    - :func:`jax.numpy.arctan` and :func:`jax.numpy.atan`: Computes the inverse of
+      trigonometric tangent of each element of input.
+
+  Examples:
+    >>> x = jnp.array([-2, -1, -0.5, 0, 0.5, 1, 2])
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.arccos(x)
+    Array([  nan, 3.142, 2.094, 1.571, 1.047, 0.   ,   nan], dtype=float32)
+
+    For complex inputs:
+
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.arccos(4-1j)
+    Array(0.252+2.097j, dtype=complex64, weak_type=True)
+  """
   return lax.acos(*promote_args_inexact('arccos', x))
 
-@implements(np.arctan, module='numpy')
+
 @partial(jit, inline=True)
 def arctan(x: ArrayLike, /) -> Array:
+  """Compute element-wise inverse of trigonometric tangent of input.
+
+  JAX implement of :obj:`numpy.arctan`.
+
+  Args:
+    x: input array or scalar.
+
+  Returns:
+    An array containing the inverse trigonometric tangent of each element ``x``
+    in radians in the range ``[-pi/2, pi/2]``, promoting to inexact dtype.
+
+  Note:
+    ``jnp.arctan`` follows the branch cut convention of :func:`numpy.arctan` for
+    complex inputs.
+
+  See also:
+    - :func:`jax.numpy.tan`: Computes a trigonometric tangent of each element of
+      input.
+    - :func:`jax.numpy.arcsin` and :func:`jax.numpy.asin`: Computes the inverse of
+      trigonometric sine of each element of input.
+    - :func:`jax.numpy.arccos` and :func:`jax.numpy.atan`: Computes the inverse of
+      trigonometric cosine of each element of input.
+
+  Examples:
+    >>> x = jnp.array([-jnp.inf, -20, -1, 0, 1, 20, jnp.inf])
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.arctan(x)
+    Array([-1.571, -1.521, -0.785,  0.   ,  0.785,  1.521,  1.571], dtype=float32)
+
+    For complex-valued inputs:
+
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.arctan(2+7j)
+    Array(1.532+0.133j, dtype=complex64, weak_type=True)
+  """
   return lax.atan(*promote_args_inexact('arctan', x))
 
 @implements(np.sinh, module='numpy')
