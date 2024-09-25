@@ -5706,6 +5706,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(x.trace(), jnp.array(x).trace())
     self.assertAllClose(x.trace(), jax.jit(lambda y: y.trace())(x))
 
+  @jtu.ignore_warning(category=RuntimeWarning, message="divide by zero")
   def testIntegerPowersArePrecise(self):
     # See https://github.com/jax-ml/jax/pull/3036
     # Checks if the squares of float32 integers have no numerical errors.
