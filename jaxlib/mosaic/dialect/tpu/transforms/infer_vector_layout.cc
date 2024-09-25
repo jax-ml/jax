@@ -941,6 +941,13 @@ class VectorLayoutInferer {
     auto in_layout = getLayout(op.getInput());
     LayoutOffsets in_offsets = in_layout->offsets();
     auto implicit_dim = in_layout->implicit_dim();
+    // TODO(b/342235360): For now, we just reset offset to zero when
+    // offset does not fall within the first tile.
+    for (int i = 0; i < 2; ++i) {
+      if (in_offsets[i].value_or(0) >= in_layout->tiling()[0]) {
+        in_offsets[i] = 0;
+      }
+    }
     if (in_offsets[0].value_or(0) * in_bitwidth % out_bitwidth != 0) {
       // Force offset to zero if the input offset on the second minor dimension
       // is not a multiple of the ratio of output and input bitwidth.
