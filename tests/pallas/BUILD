@@ -39,7 +39,7 @@ jax_multiplatform_test(
         },
     },
     disable_configs = [
-        "gpu",
+        "gpu_v100",
         "gpu_x32",
         "gpu_p100",
         "gpu_p100_x32",
@@ -68,7 +68,7 @@ jax_multiplatform_test(
         "pallas_jumble_test.py",
     ],
     disable_configs = [
-        "gpu",
+        "gpu_v100",
         "gpu_x32",
         "gpu_a100",
         "gpu_p100",
@@ -96,7 +96,7 @@ jax_multiplatform_test(
         },
     },
     disable_configs = [
-        "gpu",
+        "gpu_v100",
         "gpu_x32",
         "gpu_p100",
         "gpu_p100_x32",
@@ -155,7 +155,7 @@ jax_multiplatform_test(
         },
     },
     disable_configs = [
-        "gpu",
+        "gpu_v100",
         "gpu_x32",
         "gpu_a100",
         "gpu_h100",
@@ -191,7 +191,7 @@ jax_multiplatform_test(
         "tpu",
     ],
     disable_configs = [
-        "gpu",
+        "gpu_v100",
         "gpu_x32",
         "gpu_a100",
         "gpu_a100_x32",
@@ -222,7 +222,7 @@ jax_multiplatform_test(
         },
     },
     disable_configs = [
-        "gpu",
+        "gpu_v100",
         "gpu_x32",
         "gpu_a100",
         "gpu_h100",
@@ -253,7 +253,7 @@ jax_multiplatform_test(
         },
     },
     disable_configs = [
-        "gpu",
+        "gpu_v100",
         "gpu_x32",
         "gpu_a100",
         "gpu_h100",
@@ -537,7 +537,7 @@ jax_multiplatform_test(
         "tpu",
     ],
     disable_configs = [
-        "gpu",
+        "gpu_v100",
         "gpu_x32",
         "gpu_p100",
         "gpu_p100_x32",
@@ -570,7 +570,7 @@ jax_multiplatform_test(
         "tpu",
     ],
     disable_configs = [
-        "gpu",
+        "gpu_v100",
         "gpu_x32",
         "gpu_a100",
         "gpu_h100",

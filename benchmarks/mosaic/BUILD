@@ -34,7 +34,7 @@ DISABLED_BACKENDS = [
 ]
 
 DISABLED_CONFIGS = [
-    "gpu",
+    "gpu_v100",
     "gpu_a100",
     "gpu_p100",
     "gpu_p100_x32",
