@@ -617,7 +617,7 @@ class BarrierRef:
       i32 = ir.IntegerType.get_signless(32)
       bytes = arith.index_cast(i32, bytes)
 
-    nvvm.mbarrier_arrive_expect_tx(self.get_ptr(), bytes)
+    nvvm.mbarrier_arrive_expect_tx_shared(self.get_ptr(), bytes)
 
   def get_ptr(self):
     ptr = ir.Type.parse("!llvm.ptr<3>")
