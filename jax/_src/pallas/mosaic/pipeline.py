@@ -512,7 +512,7 @@ class BufferedRef:
       def _init():
         self.accum_ref[...] = jnp.zeros_like(self.accum_ref[...])
       def _set():
-        self.accum_ref[...] = self.current_ref[...].astype(self.accum_ref)
+        self.accum_ref[...] = self.current_ref[...].astype(self.accum_ref.dtype)
       lax.cond(init, _init, _set)
 
   def accumulate(self):
