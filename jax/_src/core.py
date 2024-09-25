@@ -3020,4 +3020,4 @@ def unsafe_get_trace_stack(trace):
     return [trace]
 
 def unsafe_get_axis_names() -> list[str]:
-  return [axis for axis in trace_ctx.axis_env.axis_sizes]
+  return list(trace_ctx.axis_env.axis_sizes)
