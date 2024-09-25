@@ -364,12 +364,15 @@ tf_impl_no_xla[lax.conv_general_dilated_p] = _conv_general_dilated
 def _dot_general(lhs, rhs, *, dimension_numbers,
                  precision: tuple[PrecisionType, PrecisionType] | None,
                  preferred_element_type: DType | None,
+                 algorithm: Any, transpose_algorithm: Any,
                  _in_avals: Sequence[core.ShapedArray],
                  _out_aval: core.ShapedArray):
   """Implementation of lax.dot_general_p in terms of tf.linalg.einsum."""
   # Unused arguments.
   del precision
   del preferred_element_type
+  del algorithm
+  del transpose_algorithm
 
   lhs, rhs, convert_result = jax2tf._dot_general_convert_to_common_dtype(
     lhs, _in_avals[0], rhs, _in_avals[1], _out_aval)
