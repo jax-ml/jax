@@ -9824,8 +9824,6 @@ def take_along_axis(
   offset_dims = []
   start_index_map = []
   collapsed_slice_dims = []
-  operand_batching_dims = []
-  start_indices_batching_dims = []
   j = 0
   for i in range(rank):
     if i == axis_int:
@@ -9850,23 +9848,21 @@ def take_along_axis(
       collapsed_slice_dims.append(i)
       j += 1
     else:
-      # Otherwise, idx_shape[i] == arr_shape[i]. Mark the dimensions in both
-      # array and index as batching so corresponding elements are gathered.
-      if core.definitely_equal(arr_shape[i], 0):
-        slice_sizes.append(0)
-      else:
-        slice_sizes.append(1)
-      operand_batching_dims.append(i)
-      start_indices_batching_dims.append(j)
+      # Otherwise, idx_shape[i] == arr_shape[i]. Use an iota index so
+      # corresponding elements of array and index are gathered.
+      # TODO(mattjj): next line needs updating for dynamic shapes
+      iota = lax.broadcasted_iota(index_dtype, gather_index_shape, j)
+      gather_indices.append(iota)
+      slice_sizes.append(1)
+      start_index_map.append(i)
+      collapsed_slice_dims.append(i)
       j += 1
 
   gather_indices_arr = lax.concatenate(gather_indices, dimension=j)
   dnums = lax.GatherDimensionNumbers(
     offset_dims=tuple(offset_dims),
     collapsed_slice_dims=tuple(collapsed_slice_dims),
-    start_index_map=tuple(start_index_map),
-    operand_batching_dims=tuple(operand_batching_dims),
-    start_indices_batching_dims=tuple(start_indices_batching_dims))
+    start_index_map=tuple(start_index_map))
   return lax.gather(a, gather_indices_arr, dnums, tuple(slice_sizes),
                     mode="fill" if mode is None else mode, fill_value=fill_value)
 
