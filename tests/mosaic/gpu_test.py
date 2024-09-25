@@ -1312,6 +1312,36 @@ class FragmentedArrayTest(TestCase):
     np.testing.assert_allclose(result, np_op(x), atol=atol, rtol=rtol)
 
   @parameterized.product(
+      dtype=[jnp.float32, jnp.int32],
+      m=[128],
+      n=[32, 64],
+  )
+  def test_reduce_sum(self, dtype, m, n):
+    def kernel(ctx, src, dst, scratch):
+      src = mgpu.FragmentedArray.load_strided(
+          src, is_signed=utils.is_signed(dtype)
+      )
+      acc = mgpu.FragmentedArray.splat(
+          src.reduce_sum(scratch),
+          (m,),
+          is_signed=src.is_signed
+      )
+      acc.store_untiled(dst)
+
+    in_shape = jax.ShapeDtypeStruct((m, n), dtype)
+    out_shape = jax.ShapeDtypeStruct((m,), dtype)
+    kernel_fn = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        in_shape,
+        out_shape,
+        smem_scratch_shape=jax.ShapeDtypeStruct((4,), dtype),
+    )
+    x = np.arange(m * n, dtype=dtype).reshape(m, n)
+    np.testing.assert_array_equal(kernel_fn(x), jnp.full((m,), x.sum()))
+
+  @parameterized.product(
       op=(arith.addf, arith.maximumf),
       m=(64, 128),
       n=(8, 16, 32, 64, 80, 128, 256),
