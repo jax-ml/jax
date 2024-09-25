@@ -30,6 +30,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * In {func}`jax.numpy.trim_zeros`, non-arraylike arguments or arraylike
     arguments with `ndim != 1` are now deprecated, and in the future will result
     in an error.
+  * Internal pretty-printing tools `jax.core.pp_*` have been removed, after
+    being deprecated in JAX v0.4.30.
 
 * Deletion:
   * `jax.xla_computation` is deleted. It's been 3 months since it's deprecation
