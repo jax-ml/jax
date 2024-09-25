@@ -1072,7 +1072,7 @@ jax_multiplatform_test(
     srcs = ["checkify_test.py"],
     shard_count = {
         "gpu": 2,
-        "tpu": 2,
+        "tpu": 4,
     },
 )
 
