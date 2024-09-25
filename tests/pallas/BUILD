@@ -37,6 +37,9 @@ jax_multiplatform_test(
         "gpu_a100_x32": {
             "ondemand": False,  # Include in presubmit.
         },
+        "gpu_h100": {
+            "ondemand": False,  # Include in presubmit.
+        },
     },
     disable_configs = [
         "gpu",
@@ -92,6 +95,9 @@ jax_multiplatform_test(
     ],
     config_tags_overrides = {
         "gpu_a100_x32": {
+            "ondemand": False,  # Include in presubmit.
+        },
+        "gpu_h100": {
             "ondemand": False,  # Include in presubmit.
         },
     },
@@ -151,6 +157,9 @@ jax_multiplatform_test(
     ],
     config_tags_overrides = {
         "gpu_a100_x32": {
+            "ondemand": False,  # Include in presubmit.
+        },
+        "gpu_h100": {
             "ondemand": False,  # Include in presubmit.
         },
     },
@@ -220,6 +229,9 @@ jax_multiplatform_test(
         "gpu_a100_x32": {
             "ondemand": False,  # Include in presubmit.
         },
+        "gpu_h100": {
+            "ondemand": False,  # Include in presubmit.
+        },
     },
     disable_configs = [
         "gpu",
@@ -251,6 +263,9 @@ jax_multiplatform_test(
         "gpu_a100_x32": {
             "ondemand": False,  # Include in presubmit.
         },
+        "gpu_h100": {
+            "ondemand": False,  # Include in presubmit.
+        },
     },
     disable_configs = [
         "gpu",
@@ -277,6 +292,9 @@ jax_multiplatform_test(
     srcs = ["pallas_shape_poly_test.py"],
     config_tags_overrides = {
         "gpu_a100_x32": {
+            "ondemand": False,  # Include in presubmit.
+        },
+        "gpu_h100": {
             "ondemand": False,  # Include in presubmit.
         },
     },

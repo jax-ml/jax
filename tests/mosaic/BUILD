@@ -66,6 +66,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "matmul_test",
     srcs = ["matmul_test.py"],
+    config_tags_overrides = {
+        "gpu_h100": {
+            "ondemand": False,  # Include in presubmit.
+        },
+    },
     disable_backends = DISABLED_BACKENDS,
     disable_configs = DISABLED_CONFIGS,
     shard_count = 5,
@@ -78,6 +83,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "flash_attention",
     srcs = ["//jax/experimental/mosaic/gpu/examples:flash_attention.py"],
+    config_tags_overrides = {
+        "gpu_h100": {
+            "ondemand": False,  # Include in presubmit.
+        },
+    },
     disable_backends = DISABLED_BACKENDS,
     disable_configs = DISABLED_CONFIGS,
     main = "//jax/experimental/mosaic/gpu/examples:flash_attention.py",
@@ -90,6 +100,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "flash_attention_test",
     srcs = ["flash_attention_test.py"],
+    config_tags_overrides = {
+        "gpu_h100": {
+            "ondemand": False,  # Include in presubmit.
+        },
+    },
     disable_backends = DISABLED_BACKENDS,
     disable_configs = DISABLED_CONFIGS,
     deps = [
