@@ -708,12 +708,19 @@ def _debug_print_lowering_rule(
   del has_placeholders  # Unused.
   primitives.check_debug_print_format(fmt, *args)
   if not any(aval.shape for aval in ctx.avals_in):
-    mgpu.debug_print(fmt, *args)
+    mgpu.debug_print(
+        fmt,
+        *(
+            _ensure_ir_value(arg, aval.dtype)
+            for arg, aval in zip(args, ctx.avals_in)
+        ),
+    )
   elif len(ctx.avals_in) == 1:
-    @args[0].foreach
+    [arg] = args
+    @arg.foreach
     def _(val, idx):
       idx_fmt = ", ".join(["{}"] * len(idx))
-      fmt_str = fmt.format(f"[{idx_fmt}]/{list(args[0].shape)}: {{}}")
+      fmt_str = fmt.format(f"[{idx_fmt}]/{list(arg.shape)}: {{}}")
       mgpu.debug_print(fmt_str, *idx, val, uniform=False)
   else:
     raise NotImplementedError(
@@ -799,7 +806,7 @@ def _scan_lowering_rule(
   if has_loop_index:
     start, *args = args
     index_aval, *arg_avals = arg_avals
-    start = _ensure_ir_value(start, index_aval.dtype)
+    start: ir.Value = _ensure_ir_value(start, index_aval.dtype)
     length = _ir_constant(length, start.type)
   else:
     start = _i32_constant(0)
@@ -859,6 +866,9 @@ def _ensure_ir_value(x: object, dtype: jnp.dtype) -> ir.Value:
     return x
   elif isinstance(x, (np.number, np.ndarray, int, float)):
     return _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype))
+  elif isinstance(x, mgpu.FragmentedArray):
+    if isinstance(x.layout, mgpu.WGSplatFragLayout):
+      return x.registers.item()
   raise NotImplementedError(f"Unsupported type: {type(x)}")
 
 

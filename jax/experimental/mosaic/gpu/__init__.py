@@ -30,6 +30,7 @@ from .fragmented_array import (
     FragmentedLayout,
     WGMMA_LAYOUT,
     WGMMA_ROW_LAYOUT,
+    WGSplatFragLayout,
     WGStridedFragLayout,
 )
 from .utils import (
