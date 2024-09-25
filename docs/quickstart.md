@@ -16,7 +16,7 @@ kernelspec:
 
 <!--* freshness: { reviewed: '2024-06-13' } *-->
 
-**JAX a library for array-oriented numerical computation (*à la* [NumPy](https://numpy.org/)), with automatic differentiation and JIT compilation to enable high-performance machine learning research**.
+**JAX is a library for array-oriented numerical computation (*à la* [NumPy](https://numpy.org/)), with automatic differentiation and JIT compilation to enable high-performance machine learning research**.
 
 This document provides a quick overview of essential JAX features, so you can get started with JAX quickly:
 
@@ -88,8 +88,8 @@ _ = selu_jit(x)  # compiles on first call
 %timeit selu_jit(x).block_until_ready()
 ```
 
-The above timing represent execution on CPU, but the same code can be run on GPU or TPU,
-typically for an even greater speedup.
+The above timing represents execution on CPU, but the same code can be run on GPU or
+TPU, typically for an even greater speedup.
 
 For more on JIT compilation in JAX, check out {ref}`jit-compilation`.
 
@@ -183,7 +183,7 @@ print('Naively batched')
 %timeit naively_batched_apply_matrix(batched_x).block_until_ready()
 ```
 
-A programmer familiar with the the `jnp.dot` function might recognize that `apply_matrix` can
+A programmer familiar with the `jnp.dot` function might recognize that `apply_matrix` can
 be rewritten to avoid explicit looping, using the built-in batching semantics of `jnp.dot`:
 
 ```{code-cell}
