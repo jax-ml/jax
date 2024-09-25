@@ -134,7 +134,7 @@ def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
     Traceback (most recent call last):
        ...
     ConcretizationTypeError: Abstract tracer value encountered where concrete value is expected: traced array with shape int32[4].
-    The error occurred while tracing the function setdiff1d at /Users/vanderplas/github/google/jax/jax/_src/numpy/setops.py:64 for jit. This concrete value was not available in Python because it depends on the value of the argument ar1.
+    The error occurred while tracing the function setdiff1d at /Users/vanderplas/github/jax-ml/jax/jax/_src/numpy/setops.py:64 for jit. This concrete value was not available in Python because it depends on the value of the argument ar1.
 
     In order to ensure statically-known output shapes, you can pass a static ``size``
     argument:
@@ -217,7 +217,7 @@ def union1d(ar1: ArrayLike, ar2: ArrayLike,
     Traceback (most recent call last):
        ...
     ConcretizationTypeError: Abstract tracer value encountered where concrete value is expected: traced array with shape int32[4].
-    The error occurred while tracing the function union1d at /Users/vanderplas/github/google/jax/jax/_src/numpy/setops.py:101 for jit. This concrete value was not available in Python because it depends on the value of the argument ar1.
+    The error occurred while tracing the function union1d at /Users/vanderplas/github/jax-ml/jax/jax/_src/numpy/setops.py:101 for jit. This concrete value was not available in Python because it depends on the value of the argument ar1.
 
     In order to ensure statically-known output shapes, you can pass a static ``size``
     argument:

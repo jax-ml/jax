@@ -169,7 +169,7 @@ def linearize(f, *primals, attrs: list[tuple[Any, str]] = []):
 def _linearize(traceable: lu.WrappedFun, *primals):
   jvpfun, attrs = _split_attrs(_jvp(traceable))
   in_pvals = (tuple(pe.PartialVal.known(p) for p in primals)
-              + tuple(pe.PartialVal.unknown(core.get_aval(p).at_least_vspace())
+              + tuple(pe.PartialVal.unknown(core.get_aval(p).to_tangent_aval())
                       for p in primals))
   _, in_tree = tree_flatten((primals, primals))
   jvpfun_flat, out_tree = flatten_fun_nokwargs(jvpfun, in_tree)
@@ -211,7 +211,7 @@ def vjp(f, *primals, attrs: list[tuple[Any, str]] = []):
   f_, out_tree = flatten_fun_nokwargs(_set_attrs(lu.wrap_init(f), attrs), tree)
   primal_out, out_pvals, jaxpr, consts, attrs_out = _linearize(
       f_, *attr_primals, *primals_flat)
-  attr_avals = [core.raise_to_shaped(core.get_aval(jax_getattr(o, a))).at_least_vspace()
+  attr_avals = [core.raise_to_shaped(core.get_aval(jax_getattr(o, a))).to_tangent_aval()
                 for o, a in attrs_out]
   f_vjp = _vjp_wrap(jaxpr, consts, out_pvals, attr_avals, (in_tree, out_tree()),
                     attrs, attrs_out)

@@ -9,7 +9,7 @@ Let's first make a JAX issue.
 But if you can pinpoint the commit that triggered the regression, it will really help us.
 
 This document explains how we identified the commit that caused a
-[15% performance regression](https://github.com/google/jax/issues/17686).
+[15% performance regression](https://github.com/jax-ml/jax/issues/17686).
 
 ## Steps
 
@@ -34,7 +34,7 @@ containers](https://github.com/NVIDIA/JAX-Toolbox).
     - test_runner.sh: will start the containers and the test.
     - test.sh: will install missing dependencies and run the test
 
-Here are real example scripts used for the issue: https://github.com/google/jax/issues/17686
+Here are real example scripts used for the issue: https://github.com/jax-ml/jax/issues/17686
 - test_runner.sh:
 ```
   for m in 7 8 9; do

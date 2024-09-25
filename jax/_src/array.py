@@ -28,6 +28,7 @@ from jax._src import api_util
 from jax._src import basearray
 from jax._src import config
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
@@ -115,6 +116,16 @@ def _reconstruct_array(fun, args, arr_state, aval_state):
   np_value = fun(*args)
   np_value.__setstate__(arr_state)
   jnp_value = api.device_put(np_value)
+  # TODO(slebedev): Remove this branch after December 10th 2024.
+  if "named_shape" in aval_state:
+    deprecations.warn(
+        "jax-aval-named-shape",
+        "Pickled array contains an aval with a named_shape attribute. This is"
+        " deprecated and the code path supporting such avals will be removed."
+        " Please re-pickle the array.",
+        stacklevel=2,
+    )
+    del aval_state["named_shape"]
   jnp_value.aval = jnp_value.aval.update(**aval_state)
   return jnp_value
 
@@ -881,17 +892,20 @@ def make_array_from_process_local_data(
   setting it to (4, 4) in this case.
 
   Args:
-    sharding: sharding of the global tensor.
-    local_data: data on the host to be placed on local devices. Each
+    sharding: Sharding of the global array.
+    local_data: Data on the host to be placed on local devices. Each
       dimension should either match global_shape, or match
       num_addressable_indices(dim).
-    global_shape: the target shape of the global tensor. If None,
+    global_shape: The target shape of the global array. If None,
       will infer from local_data and sharding.
 
   Returns:
     Tensor that will have sharding=sharding and of shape global_shape.
   """
   # pyformat: enable
+  if xla_bridge.process_count() == 1:
+    return api.device_put(local_data, sharding)
+
   # TODO(sandler): consider supporting partially specified global_shape or
   # making local_to_global_shape available in the api.
   local_shape = local_data.shape

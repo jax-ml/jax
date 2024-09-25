@@ -10,8 +10,6 @@ that use or interface with JAX.
    :caption: Extensible JAX internals
    :maxdepth: 1
 
-   notebooks/How_JAX_primitives_work
-   jaxpr
    notebooks/Writing_custom_interpreters_in_Jax
    Custom_Operation_for_GPUs
    jax.extend

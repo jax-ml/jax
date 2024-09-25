@@ -198,7 +198,7 @@ class _ThreadLocalState(threading.local):
 
     # A cache for the tf.convert_to_tensor for constants. We try to preserve
     # sharing for constants, to enable tf.Graph to take advantage of it.
-    # See https://github.com/google/jax/issues/7992.
+    # See https://github.com/jax-ml/jax/issues/7992.
     self.constant_cache = None  # None means that we don't use a cache. We
     # may be outside a conversion scope.
 
@@ -249,7 +249,7 @@ def convert(fun_jax: Callable,
   """Allows calling a JAX function from a TensorFlow program.
 
   See
-  [README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md)
+  [README](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md)
   for more details about usage and common problems.
 
   Args:
@@ -291,12 +291,12 @@ def convert(fun_jax: Callable,
       polymorphic_shapes are only supported for positional arguments; shape
       polymorphism is not supported for keyword arguments.
 
-      See [the README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
+      See [the README](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
       for more details.
 
     polymorphic_constraints: a sequence of contraints on symbolic dimension expressions, of
       the form `e1 >= e2` or `e1 <= e2`.
-      See more details at https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints.
+      See more details at https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints.
     with_gradient: if set (default), add a tf.custom_gradient to the lowered
       function, by converting the ``jax.vjp(fun)``. This means that reverse-mode
       TensorFlow AD is supported for the output TensorFlow function, and the
@@ -1253,7 +1253,7 @@ class TensorFlowTracer(core.Tracer):
             # We have a TF value with known shape, and the abstract shape is a shape variable.
             try:
               aval_int = int(_eval_shape([aval_dim]))  # type: ignore
-            except (TypeError, KeyError):
+            except (TypeError, KeyError, shape_poly.UnexpectedDimVar):
               continue
             assert aval_int == val_dim, f"expected {phys_aval.shape} == {val_shape}. Found {aval_int} != {val_dim}."
 
@@ -1548,6 +1548,9 @@ tf_not_yet_impl = [
     "consume",
     "ragged_dot",
     "cholesky_update",
+    "symmetric_update",
+    "from_edtype",
+    "to_edtype",
     # Pallas TPU primitives
     "bitcast",
     "repeat",
@@ -2173,9 +2176,12 @@ tf_impl_with_avals[lax.conv_general_dilated_p] = _conv_general_dilated
 def _dot_general(lhs, rhs, *, dimension_numbers,
                  precision: tuple[PrecisionType, PrecisionType] | None,
                  preferred_element_type: DType | None,
+                 algorithm: Any, transpose_algorithm: Any,
                  _in_avals: Sequence[core.ShapedArray],
                  _out_aval: core.ShapedArray):
   """Implementation of lax.dot_general_p in terms of tf.linalg.einsum."""
+  del algorithm, transpose_algorithm  # unused
+
   # TODO(b/293247337): we ought to turn on this safety check, but this leads to
   # failures. Since we are going to turn on native serializaton soon, wait
   # until then to turn on this check.
@@ -3535,7 +3541,7 @@ def _shard_value(val: TfVal,
   if tf_context.executing_eagerly():
     raise ValueError(
         "A jit function with sharded arguments or results must be used under a `tf.function` context. "
-        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#support-for-partitioning for a discussion")
+        "See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#support-for-partitioning for a discussion")
 
   return xla_sharding.Sharding(proto=xla_sharding_proto).apply_to_tensor(
       val, use_sharding_op=True)

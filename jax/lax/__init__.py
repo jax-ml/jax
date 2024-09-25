@@ -13,12 +13,15 @@
 # limitations under the License.
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.lax.lax import (
   DotDimensionNumbers as DotDimensionNumbers,
   Precision as Precision,
   PrecisionLike as PrecisionLike,
+  DotAlgorithm as DotAlgorithm,
+  DotAlgorithmLike as DotAlgorithmLike,
+  DotTransposeAlgorithmLike as DotTransposeAlgorithmLike,
   RandomAlgorithm as RandomAlgorithm,
   RoundingMethod as RoundingMethod,
   abs as abs,
@@ -142,6 +145,8 @@ from jax._src.lax.lax import (
   nextafter as nextafter,
   nextafter_p as nextafter_p,
   not_p as not_p,
+  optimization_barrier as optimization_barrier,
+  optimization_barrier_p as optimization_barrier_p,
   or_p as or_p,
   outfeed as outfeed,
   outfeed_p as outfeed_p,

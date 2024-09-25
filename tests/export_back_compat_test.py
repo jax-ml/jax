@@ -66,7 +66,6 @@ from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib import cuda_versions
-from jax._src.lib import version as jaxlib_version
 
 config.parse_flags_with_absl()
 
@@ -190,14 +189,11 @@ class CompatTest(bctu.CompatTestBase):
     atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
 
     data = self.load_testdata(cpu_cholesky_lapack_potrf.data_2023_06_19[dtype_name])
-    # TODO(b/344892332): Remove the check after the compatibility period.
-    has_xla_ffi_support = jaxlib_version >= (0, 4, 31)
     self.run_one_test(func, data, rtol=rtol, atol=atol)
-    if has_xla_ffi_support:
-      with config.export_ignore_forward_compatibility(True):
-        # FFI Kernel test
-        data = self.load_testdata(cpu_cholesky_lapack_potrf.data_2024_05_31[dtype_name])
-        self.run_one_test(func, data, rtol=rtol, atol=atol)
+    with config.export_ignore_forward_compatibility(True):
+      # FFI Kernel test
+      data = self.load_testdata(cpu_cholesky_lapack_potrf.data_2024_05_31[dtype_name])
+      self.run_one_test(func, data, rtol=rtol, atol=atol)
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -258,14 +254,11 @@ class CompatTest(bctu.CompatTestBase):
 
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=check_eig_results)
-    # TODO(b/344892332): Remove the check after the compatibility period.
-    has_xla_ffi_support = jaxlib_version >= (0, 4, 32)
-    if has_xla_ffi_support:
-      with config.export_ignore_forward_compatibility(True):
-        # FFI Kernel test
-        data = self.load_testdata(cpu_eig_lapack_geev.data_2024_08_19[dtype_name])
-        self.run_one_test(func, data, rtol=rtol, atol=atol,
-                          check_results=check_eig_results)
+    with config.export_ignore_forward_compatibility(True):
+      # FFI Kernel test
+      data = self.load_testdata(cpu_eig_lapack_geev.data_2024_08_19[dtype_name])
+      self.run_one_test(func, data, rtol=rtol, atol=atol,
+                        check_results=check_eig_results)
 
   @staticmethod
   def eigh_input(shape, dtype):
@@ -316,14 +309,11 @@ class CompatTest(bctu.CompatTestBase):
     atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_eigh_results, operand))
-    # TODO(b/344892332): Remove the check after the compatibility period.
-    has_xla_ffi_support = jaxlib_version >= (0, 4, 32)
-    if has_xla_ffi_support:
-      # FFI Kernel test
-      with config.export_ignore_forward_compatibility(True):
-        data = self.load_testdata(cpu_eigh_lapack_syev.data_2024_08_19[dtype_name])
-        self.run_one_test(func, data, rtol=rtol, atol=atol,
-                          check_results=partial(self.check_eigh_results, operand))
+    # FFI Kernel test
+    with config.export_ignore_forward_compatibility(True):
+      data = self.load_testdata(cpu_eigh_lapack_syev.data_2024_08_19[dtype_name])
+      self.run_one_test(func, data, rtol=rtol, atol=atol,
+                        check_results=partial(self.check_eigh_results, operand))
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}_{variant}",
@@ -385,8 +375,6 @@ class CompatTest(bctu.CompatTestBase):
   def test_cuda_lu_lapack_getrf(self, dtype_name:str):
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
-    if jaxlib_version < (0, 4, 32):
-      self.skipTest("Not implemented in older versions of jaxlib")
     dtype = dict(f32=np.float32, f64=np.float64,
                  c64=np.complex64, c128=np.complex128)[dtype_name]
     shape = (3, 4)
@@ -416,15 +404,12 @@ class CompatTest(bctu.CompatTestBase):
     data = self.load_testdata(cpu_qr_lapack_geqrf.data_2023_03_17[dtype_name])
     rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     self.run_one_test(func, data, rtol=rtol)
-    # TODO(b/344892332): Remove the check after the compatibility period.
-    has_xla_ffi_support = jaxlib_version >= (0, 4, 32)
-    if has_xla_ffi_support:
-      with config.export_ignore_forward_compatibility(True):
-        # FFI Kernel test
-        data = self.load_testdata(
-            cpu_qr_lapack_geqrf.data_2024_08_22[dtype_name]
-        )
-        self.run_one_test(func, data, rtol=rtol)
+    with config.export_ignore_forward_compatibility(True):
+      # FFI Kernel test
+      data = self.load_testdata(
+          cpu_qr_lapack_geqrf.data_2024_08_22[dtype_name]
+      )
+      self.run_one_test(func, data, rtol=rtol)
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}_{batched}",
@@ -502,14 +487,11 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_lu_results, operand,
                                             dtype=dtype))
-    # TODO(b/344892332): Remove the check after the compatibility period.
-    has_xla_ffi_support = jaxlib_version >= (0, 4, 32)
-    if has_xla_ffi_support:
-      with config.export_ignore_forward_compatibility(True):
-        # FFI Kernel test
-        data = self.load_testdata(cpu_lu_lapack_getrf.data_2024_05_31[dtype_name])
-        self.run_one_test(func, data, rtol=rtol, atol=atol,
-                          check_results=partial(self.check_lu_results, operand,
+    with config.export_ignore_forward_compatibility(True):
+      # FFI Kernel test
+      data = self.load_testdata(cpu_lu_lapack_getrf.data_2024_05_31[dtype_name])
+      self.run_one_test(func, data, rtol=rtol, atol=atol,
+                        check_results=partial(self.check_lu_results, operand,
                                               dtype=dtype))
 
   def check_svd_results(self, input, res_run, res_exp,
@@ -629,16 +611,13 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_svd_results,
                                             input))
-    # TODO(b/344892332): Remove the check after the compatibility period.
-    has_xla_ffi_support = jaxlib_version >= (0, 4, 32)
-    if has_xla_ffi_support:
-      with config.export_ignore_forward_compatibility(True):
-        # FFI Kernel test
-        data = self.load_testdata(
-            cpu_svd_lapack_gesdd.data_2024_08_13[dtype_name]
-        )
-        self.run_one_test(func, data, rtol=rtol, atol=atol,
-                          check_results=partial(self.check_svd_results, input))
+    with config.export_ignore_forward_compatibility(True):
+      # FFI Kernel test
+      data = self.load_testdata(
+          cpu_svd_lapack_gesdd.data_2024_08_13[dtype_name]
+      )
+      self.run_one_test(func, data, rtol=rtol, atol=atol,
+                        check_results=partial(self.check_svd_results, input))
 
   @jtu.parameterized_filterable(
     kwargs=[

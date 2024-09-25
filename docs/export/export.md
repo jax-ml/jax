@@ -153,7 +153,7 @@ JAX runtime system that are:
   an inference system that is already deployed when the exporting is done.
 
 (The particular compatibility window lengths are the same that JAX
-[promised for jax2tf](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#usage-saved-model),
+[promised for jax2tf](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#usage-saved-model),
 and are based on [TensorFlow Compatibility](https://www.tensorflow.org/guide/versions#graph_and_checkpoint_compatibility_when_extending_tensorflow).
 The terminology “backward compatibility” is from the perspective of the consumer,
 e.g., the inference system.)
@@ -626,7 +626,7 @@ We list here a history of the calling convention version numbers:
     June 13th, 2023 (JAX 0.4.13).
   * Version 7 adds support for `stablehlo.shape_assertion` operations and
     for `shape_assertions` specified in `disabled_checks`.
-    See [Errors in presence of shape polymorphism](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism). Supported by XlaCallModule
+    See [Errors in presence of shape polymorphism](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism). Supported by XlaCallModule
     since July 12th, 2023 (cl/547482522),
     available in JAX serialization since July 20th, 2023 (JAX 0.4.14),
     and the default since August 12th, 2023 (JAX 0.4.15).
@@ -721,7 +721,7 @@ that live in jaxlib):
   2. Day “D”, we add the new custom call target `T_NEW`.
     We should create a new custom call target, and clean up the old
     target roughly after 6 months, rather than updating `T` in place:
-       * See the example [PR #20997](https://github.com/google/jax/pull/20997)
+       * See the example [PR #20997](https://github.com/jax-ml/jax/pull/20997)
          implementing the steps below.
        * We add the custom call target `T_NEW`.
        * We change the JAX lowering rules that were previous using `T`,
@@ -732,10 +732,7 @@ that live in jaxlib):
         from jax._src.lib import version as jaxlib_version
 
         def my_lowering_rule(ctx: LoweringRuleContext, ...):
-          lowering_parameters = ctx.module_context.lowering_parameters
-          forward_compat_mode = (lowering_parameters.for_export and
-                                 not lowering_parameters.export_ignore_forward_compatibility)
-          if forward_compat_mode or jaxlib_version < (0, 4, 31):
+          if ctx.is_forward_compat() or jaxlib_version < (0, 4, 31):
             # this is the old lowering, using target T, while we
             # are in forward compatibility mode for T, or we
             # are in OSS and are using an old jaxlib.

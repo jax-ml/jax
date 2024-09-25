@@ -66,13 +66,13 @@ setup(
           # dependency via, for example, cuSOLVER. NVIDIA's cuSOLVER packages
           # do not have a version constraint on their dependencies, so the
           # package doesn't get upgraded even though not doing that can cause
-          # problems (https://github.com/google/jax/issues/18027#issuecomment-1756305196)
+          # problems (https://github.com/jax-ml/jax/issues/18027#issuecomment-1756305196)
           # Until NVIDIA add version constraints, add a version constraint
           # here.
           "nvidia-nvjitlink-cu12>=12.1.105",
       ],
     },
-    url="https://github.com/google/jax",
+    url="https://github.com/jax-ml/jax",
     license="Apache-2.0",
     classifiers=[
         "Development Status :: 3 - Alpha",

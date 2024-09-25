@@ -218,7 +218,7 @@ Strict dtype promotion
 ----------------------
 In some contexts it can be useful to disable implicit type promotion behavior, and
 instead require all promotions to be explicit. This can be done in JAX by setting the
-``jax_numpy_dtype_promtion`` flag to ``'strict'``. Locally, it can be done with a\
+``jax_numpy_dtype_promotion`` flag to ``'strict'``. Locally, it can be done with a\
 context manager:
 
 .. code-block:: python

@@ -469,7 +469,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertTrue(dtypes.is_weakly_typed(x))
 
   def test_linear_solve_batching_via_jacrev(self):
-    # See https://github.com/google/jax/issues/14249
+    # See https://github.com/jax-ml/jax/issues/14249
     rng = np.random.RandomState(0)
     M = rng.randn(5, 5)
     A = np.dot(M, M.T)

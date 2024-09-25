@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@rules_python//python:defs.bzl", "py_library", "py_test")
-load("//jaxlib:jax.bzl", "py_deps")
+load("@rules_python//python:defs.bzl", "py_library")
+load("//jaxlib:jax.bzl", "jax_py_test", "py_deps")
 
 licenses(["notice"])
 
@@ -48,7 +48,7 @@ py_library(
     ],
 )
 
-py_test(
+jax_py_test(
     name = "run_matmul",
     srcs = ["matmul.py"],
     main = "matmul.py",

@@ -14,7 +14,12 @@
 
 # Shared CUDA/ROCM GPU kernels.
 
-load("//jaxlib:jax.bzl", "cc_proto_library")
+load(
+    "//jaxlib:jax.bzl",
+    "cc_proto_library",
+    "jax_visibility",
+    "xla_py_proto_library",
+)
 
 licenses(["notice"])
 
@@ -48,6 +53,8 @@ exports_files(srcs = [
     "solver.cc",
     "solver_handle_pool.cc",
     "solver_handle_pool.h",
+    "solver_interface.cc",
+    "solver_interface.h",
     "solver_kernels.cc",
     "solver_kernels.h",
     "solver_kernels_ffi.cc",
@@ -70,5 +77,12 @@ proto_library(
 
 cc_proto_library(
     name = "triton_cc_proto",
+    deps = [":triton_proto"],
+)
+
+xla_py_proto_library(
+    name = "triton_py_pb2",
+    api_version = 2,
+    visibility = jax_visibility("triton_proto_py_users"),
     deps = [":triton_proto"],
 )

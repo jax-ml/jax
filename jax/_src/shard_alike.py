@@ -44,7 +44,7 @@ def shard_alike(x, y):
       raise ValueError(
           'The leaves shapes of `x` and `y` should match. Got `x` leaf shape:'
           f' {x_aval.shape} and `y` leaf shape: {y_aval.shape}. File an issue at'
-          ' https://github.com/google/jax/issues if you want this feature.')
+          ' https://github.com/jax-ml/jax/issues if you want this feature.')
 
   outs = [shard_alike_p.bind(x_, y_) for x_, y_ in safe_zip(x_flat, y_flat)]
   x_out_flat, y_out_flat = zip(*outs)

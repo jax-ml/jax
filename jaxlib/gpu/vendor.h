@@ -57,6 +57,9 @@ typedef cuDoubleComplex gpublasDoubleComplex;
 typedef cublasFillMode_t gpusolverFillMode_t;
 typedef cublasStatus_t gpublasStatus_t;
 typedef cublasHandle_t gpublasHandle_t;
+typedef cublasOperation_t gpublasOperation_t;
+typedef cublasFillMode_t gpublasFillMode_t;
+
 typedef CUcontext gpuContext_t;
 typedef CUstreamCaptureMode gpustreamCaptureMode_t;
 typedef CUstreamCaptureStatus gpustreamCaptureStatus_t;
@@ -75,6 +78,8 @@ typedef cusolverStatus_t gpusolverStatus_t;
 typedef cusolverEigMode_t gpusolverEigMode_t;
 typedef syevjInfo gpuSyevjInfo;
 typedef syevjInfo_t gpuSyevjInfo_t;
+typedef gesvdjInfo gpuGesvdjInfo;
+typedef gesvdjInfo_t gpuGesvdjInfo_t;
 typedef cusparseIndexType_t gpusparseIndexType_t;
 typedef cusparseHandle_t gpusparseHandle_t;
 typedef cusparseOperation_t gpusparseOperation_t;
@@ -101,6 +106,11 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpublasCgetrfBatched cublasCgetrfBatched
 #define gpublasZgetrfBatched cublasZgetrfBatched
 
+#define gpublasSsyrk cublasSsyrk
+#define gpublasDsyrk cublasDsyrk
+#define gpublasCsyrk cublasCsyrk
+#define gpublasZsyrk cublasZsyrk
+
 #define GPUBLAS_STATUS_SUCCESS CUBLAS_STATUS_SUCCESS
 
 #define gpudnnCreate cudnnCreate
@@ -112,6 +122,8 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpusolverDnSetStream cusolverDnSetStream
 #define gpusolverDnCreateSyevjInfo cusolverDnCreateSyevjInfo
 #define gpusolverDnDestroySyevjInfo cusolverDnDestroySyevjInfo
+#define gpusolverDnCreateGesvdjInfo cusolverDnCreateGesvdjInfo
+#define gpusolverDnDestroyGesvdjInfo cusolverDnDestroyGesvdjInfo
 #define gpusolverDnSgeqrf cusolverDnSgeqrf
 #define gpusolverDnDgeqrf cusolverDnDgeqrf
 #define gpusolverDnCgeqrf cusolverDnCgeqrf
@@ -176,6 +188,22 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
   cusolverDnCgesvd_bufferSize(h, m, n, lwork)
 #define gpusolverDnZgesvd_bufferSize(h, jobu, jobvt, m, n, lwork) \
   cusolverDnZgesvd_bufferSize(h, m, n, lwork)
+#define gpusolverDnSgesvdj cusolverDnSgesvdj
+#define gpusolverDnDgesvdj cusolverDnDgesvdj
+#define gpusolverDnCgesvdj cusolverDnCgesvdj
+#define gpusolverDnZgesvdj cusolverDnZgesvdj
+#define gpusolverDnSgesvdj_bufferSize cusolverDnSgesvdj_bufferSize
+#define gpusolverDnDgesvdj_bufferSize cusolverDnDgesvdj_bufferSize
+#define gpusolverDnCgesvdj_bufferSize cusolverDnCgesvdj_bufferSize
+#define gpusolverDnZgesvdj_bufferSize cusolverDnZgesvdj_bufferSize
+#define gpusolverDnSgesvdjBatched cusolverDnSgesvdjBatched
+#define gpusolverDnDgesvdjBatched cusolverDnDgesvdjBatched
+#define gpusolverDnCgesvdjBatched cusolverDnCgesvdjBatched
+#define gpusolverDnZgesvdjBatched cusolverDnZgesvdjBatched
+#define gpusolverDnSgesvdjBatched_bufferSize cusolverDnSgesvdjBatched_bufferSize
+#define gpusolverDnDgesvdjBatched_bufferSize cusolverDnDgesvdjBatched_bufferSize
+#define gpusolverDnCgesvdjBatched_bufferSize cusolverDnCgesvdjBatched_bufferSize
+#define gpusolverDnZgesvdjBatched_bufferSize cusolverDnZgesvdjBatched_bufferSize
 #define gpusolverDnSsytrd_bufferSize cusolverDnSsytrd_bufferSize
 #define gpusolverDnDsytrd_bufferSize cusolverDnDsytrd_bufferSize
 #define gpusolverDnChetrd_bufferSize cusolverDnChetrd_bufferSize
@@ -188,7 +216,12 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUSOLVER_FILL_MODE_LOWER CUBLAS_FILL_MODE_LOWER
 #define GPUSOLVER_FILL_MODE_UPPER CUBLAS_FILL_MODE_UPPER
 #define GPUSOLVER_EIG_MODE_VECTOR CUSOLVER_EIG_MODE_VECTOR
+#define GPUSOLVER_EIG_MODE_NOVECTOR CUSOLVER_EIG_MODE_NOVECTOR
 #define GPUSOLVER_STATUS_SUCCESS CUSOLVER_STATUS_SUCCESS
+
+#define GPUBLAS_OP_N CUBLAS_OP_N
+#define GPUBLAS_OP_T CUBLAS_OP_T
+#define GPUBLAS_OP_C CUBLAS_OP_C
 
 #define gpusparseCooSetStridedBatch cusparseCooSetStridedBatch
 #define gpusparseCreate cusparseCreate
@@ -299,6 +332,22 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuGetDeviceProperties cudaGetDeviceProperties
 #define gpuLaunchCooperativeKernel cudaLaunchCooperativeKernel
 
+#define JAX_GPU_64_BIT 1
+
+#define GPU_R_32F CUDA_R_32F
+#define GPU_R_64F CUDA_R_64F
+#define GPU_C_32F CUDA_C_32F
+#define GPU_C_64F CUDA_C_64F
+
+typedef cudaDataType gpuDataType;
+typedef cusolverDnParams gpusolverDnParams;
+typedef cusolverDnParams_t gpusolverDnParams_t;
+#define gpusolverDnCreateParams cusolverDnCreateParams
+#define gpusolverDnDestroyParams cusolverDnDestroyParams
+
+#define gpusolverDnXgesvd_bufferSize cusolverDnXgesvd_bufferSize
+#define gpusolverDnXgesvd cusolverDnXgesvd
+
 namespace jax::JAX_GPU_NAMESPACE {
 namespace {
 constexpr uint32_t kNumThreadsPerWarp = 32;
@@ -319,6 +368,7 @@ constexpr uint32_t kNumThreadsPerWarp = 32;
 #define JAX_GPU_PREFIX "hip"
 
 #define JAX_GPU_HAVE_SPARSE 1
+#define JAX_GPU_64_BIT 0
 #define JAX_GPU_HAVE_FP8 0
 
 typedef hipFloatComplex gpuComplex;
@@ -330,6 +380,7 @@ typedef hipsolverHandle_t gpusolverDnHandle_t;
 typedef hipblasFillMode_t gpublasFillMode_t;
 typedef hipsolverFillMode_t gpusolverFillMode_t;
 typedef hipblasHandle_t gpublasHandle_t;
+typedef hipblasOperation_t gpublasOperation_t;
 typedef hipblasStatus_t gpublasStatus_t;
 typedef hipCtx_t gpuContext_t;
 typedef hipStreamCaptureMode gpustreamCaptureMode_t;
@@ -371,6 +422,11 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpublasDgetrfBatched hipblasDgetrfBatched
 #define gpublasCgetrfBatched hipblasCgetrfBatched
 #define gpublasZgetrfBatched hipblasZgetrfBatched
+
+#define gpublasSsyrk hipblasSsyrk
+#define gpublasDsyrk hipblasDsyrk
+#define gpublasCsyrk hipblasCsyrk
+#define gpublasZsyrk hipblasZsyrk
 
 #define GPUBLAS_STATUS_SUCCESS HIPBLAS_STATUS_SUCCESS
 
@@ -454,7 +510,12 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUSOLVER_FILL_MODE_LOWER HIPSOLVER_FILL_MODE_LOWER
 #define GPUSOLVER_FILL_MODE_UPPER HIPSOLVER_FILL_MODE_UPPER
 #define GPUSOLVER_EIG_MODE_VECTOR HIPSOLVER_EIG_MODE_VECTOR
+#define GPUSOLVER_EIG_MODE_NOVECTOR HIPSOLVER_EIG_MODE_NOVECTOR
 #define GPUSOLVER_STATUS_SUCCESS HIPSOLVER_STATUS_SUCCESS
+
+#define GPUBLAS_OP_N HIPBLAS_OP_N
+#define GPUBLAS_OP_T HIPBLAS_OP_T
+#define GPUBLAS_OP_C HIPBLAS_OP_C
 
 #define gpusparseCooSetStridedBatch hipsparseCooSetStridedBatch
 #define gpusparseCreate hipsparseCreate

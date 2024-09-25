@@ -31,6 +31,7 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import deprecations
+from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import state
@@ -64,6 +65,7 @@ OriginStr = str  # The origin of a block spec, e.g. input[2]["field"]
 # identifiable in kernels.
 # TODO(justinfu): Handle semaphores with a custom extended dtype.
 SEMAPHORE_INTERPRET_DTYPE = jnp.int16
+SEMAPHORE_MAX_VALUE = jnp.iinfo(SEMAPHORE_INTERPRET_DTYPE).max
 
 
 @runtime_checkable
@@ -113,24 +115,112 @@ class NameAndSrcInfo:
                           " ".join(src_info_parts[1:]))
 
 
-# Pytrees of jax.ShapeDtypeStruct
-ShapeDtypeStructTree = tuple[jax.ShapeDtypeStruct, ...]
-
 split_list = util.split_list
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 
+class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
+  __slots__ = ["memory_space"]
+
+  def __init__(self, shape, dtype, weak_type=False, sharding=None,
+               memory_space=None):
+    super().__init__(shape, dtype, weak_type=weak_type, sharding=sharding)
+    self.memory_space = memory_space
+
+  def __eq__(self, other):
+    return super().__eq__(other) and self.memory_space == other.memory_space
+
+  def __hash__(self):
+    return hash((
+        self.shape,
+        self.dtype,
+        self.weak_type,
+        getattr(self, "sharding", None),
+        self.memory_space,
+    ))
+
+  def at_least_vspace(self):
+    """Vector space method needed for AD."""
+    raise NotImplementedError
+
+  def join(self, other):
+    raise NotImplementedError
+
+  def str_short(self, short_dtypes=False):
+    dt_str = \
+        dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
+    dt_str = dt_str.replace("void", "float0")
+    shapestr = ",".join(map(str, self.shape))
+    if hasattr(self, "sharding"):
+      sharding_str = f"{dt_str}[{shapestr}]({self.sharding})"
+    else:
+      sharding_str = ""
+    memoryspace_str = (
+        "" if self.memory_space is None else f"<{self.memory_space}>"
+    )
+    return f"{dt_str}{memoryspace_str}[{shapestr}]{sharding_str}"
+
+  def update(
+      self,
+      shape=None,
+      dtype=None,
+      weak_type=None,
+      sharding=None,
+      memory_space=None,
+  ):
+    if shape is None:
+      shape = self.shape
+    if dtype is None:
+      dtype = self.dtype
+    if weak_type is None:
+      weak_type = self.weak_type
+    if sharding is None:
+      sharding = getattr(self, "sharding", None)
+    if memory_space is None:
+      memory_space = self.memory_space
+    return ShapedArrayWithMemorySpace(
+        shape, dtype, weak_type, sharding=sharding, memory_space=memory_space
+    )
+mlir.ir_type_handlers[ShapedArrayWithMemorySpace] = mlir._array_ir_types
+
+
+@dataclasses.dataclass(frozen=True)
+class MemoryRef:
+  """Like jax.ShapeDtypeStruct but with memory spaces."""
+  shape: tuple[int, ...]
+  dtype: jnp.dtype
+  # TODO(b/368122763): Unify memory space types across backends
+  memory_space: Any
+
+  def get_array_aval(self) -> jax_core.ShapedArray:
+    dtype = self.dtype
+    if not isinstance(dtype, (jnp.dtype, dtypes.ExtendedDType)):
+      dtype = jnp.dtype(dtype)
+    return ShapedArrayWithMemorySpace(
+        self.shape, dtype, memory_space=self.memory_space
+    )
+
+  def get_ref_aval(self) -> AbstractMemoryRef:
+    # TODO(sharadmv): Clean this up. ShapedArrayWithMemorySpace fails when we
+    # try to apply JAX ops to it.
+    return AbstractMemoryRef(
+        jax_core.ShapedArray(self.shape, self.dtype), self.memory_space)
+
+
 class AbstractMemoryRef(state.AbstractRef):
   __slots__ = ["inner_aval", "memory_space"]
 
-  def __init__(self, inner_aval: jax_core.AbstractValue,
-               memory_space: Any):
+  inner_aval: jax_core.ShapedArray
 
-    assert isinstance(
-        inner_aval, jax_core.ShapedArray
-    ), f"Illegal ref, got {type(inner_aval)}"
+  def __init__(self, inner_aval: jax_core.ShapedArray, memory_space: Any):
+    if isinstance(inner_aval, ShapedArrayWithMemorySpace):
+      if inner_aval.memory_space is not None:
+        assert inner_aval.memory_space == memory_space, (
+            f"Mismatched memory spaces: {inner_aval.memory_space=},"
+            f" {memory_space=}"
+        )
     self.inner_aval = inner_aval
     self.memory_space = memory_space
 
@@ -147,9 +237,9 @@ class AbstractMemoryRef(state.AbstractRef):
     memory_space = self.memory_space if memory_space is None else memory_space
     return AbstractMemoryRef(inner_aval, memory_space)
 
-  def at_least_vspace(self):
+  def to_tangent_aval(self):
     return AbstractMemoryRef(
-        self.inner_aval.at_least_vspace(), self.memory_space)
+        self.inner_aval.to_tangent_aval(), self.memory_space)
 
   def __eq__(self, other):
     return (type(self) is type(other) and self.inner_aval == other.inner_aval
@@ -160,11 +250,12 @@ class AbstractMemoryRef(state.AbstractRef):
 
 
 class MemorySpace(enum.Enum):
-  """ Logical, device-agnostic memory spaces.
+  """Logical, device-agnostic memory spaces.
 
   Each memory space will be translated to a device-specific memory
   type during lowering.
   """
+  ANY = "any"  # Unrestricted memory space (usually HBM)
   ERROR = "error"  # Memory space for checkify errors.
   INDEX = "index"  # Memory space for scalar prefetch arguments.
 
@@ -318,6 +409,105 @@ class BlockSpec:
     self.memory_space = memory_space
     self.indexing_mode = indexing_mode
 
+  def to_block_mapping(
+      self,
+      origin: OriginStr,
+      array_aval: jax_core.ShapedArray,
+      *,
+      # Inputs for the index_map
+      index_map_avals: Sequence[jax_core.AbstractValue],
+      index_map_tree: tree_util.PyTreeDef,
+      grid: GridMappingGrid,
+      mapped_dims: tuple[int, ...],
+  ) -> BlockMapping:
+    if self.index_map is None:
+      index_map_func = lambda *args: (0,) * len(array_aval.shape)
+    else:
+      index_map_func = self.index_map
+    if self.block_shape is None:
+      block_shape = array_aval.shape
+    else:
+      block_shape = self.block_shape
+      if len(array_aval.shape) != len(block_shape):
+        raise ValueError(
+            f"Block shape for {origin} (= {block_shape}) "
+            "must have the same number of dimensions as the "
+            f"array shape {array_aval.shape}."
+        )
+
+    unmapped_block_shape = tuple(s for s in block_shape if s is not None)
+    block_array_aval = array_aval.update(shape=unmapped_block_shape)
+    if isinstance(array_aval, jax_core.DShapedArray):
+      # Get the "max" shape for the ragged array.
+      block_array_aval = jax_core.ShapedArray(
+          block_array_aval.shape,
+          block_array_aval.dtype,
+          block_array_aval.weak_type,
+      )
+    block_aval = AbstractMemoryRef(block_array_aval, self.memory_space)
+
+    if not jax_core.is_constant_shape(block_aval.shape):
+      raise ValueError(
+          "shape polymorphism for Pallas does not support "
+          "dynamically-shaped blocks. "
+          f"Block spec for {origin} has block_shape: {block_aval.shape}"
+      )
+
+    flat_index_map_fun, index_map_out_tree_thunk = api_util.flatten_fun(
+        lu.wrap_init(index_map_func), index_map_tree
+    )
+    debug = pe.debug_info(
+        index_map_func,
+        index_map_tree,
+        index_map_out_tree_thunk,
+        False,
+        "pallas_call index_map",
+    )
+    index_map_src_info = NameAndSrcInfo.from_pallas_call(
+        None, debug.func_src_info
+    )
+    with tracing_grid_env(grid, mapped_dims):
+      jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(
+          flat_index_map_fun, index_map_avals, debug_info=debug
+      )
+    mapped_block_shape = tuple(mapped if s is None else s for s in block_shape)
+    if len(out_avals) != len(block_shape):
+      raise ValueError(
+          f"Index map function {index_map_src_info} for "
+          f"{origin} must return "
+          f"{len(block_shape)} values to match {block_shape=}. "
+          f"Currently returning {len(out_avals)} values."
+      )
+    for i, ov in enumerate(out_avals):
+      if ov.shape or ov.dtype not in [jnp.int32, jnp.int64]:
+        raise ValueError(
+            f"Index map function {index_map_src_info} for "
+            f"{origin} must return integer scalars. Output[{i}] has type "
+            f"{ov}."
+        )
+
+    if consts:
+      raise ValueError(
+          f"Index map function {index_map_src_info} for "
+          f"{origin} must not capture constants: {consts}"
+      )
+
+    array_aval_shape = _max_shape_from_aval(array_aval)
+
+    mapping = BlockMapping(
+        block_shape=mapped_block_shape,
+        block_aval=block_aval,
+        index_map_jaxpr=jax_core.ClosedJaxpr(jaxpr, consts),
+        index_map_src_info=index_map_src_info,
+        indexing_mode=self.indexing_mode,
+        array_shape_dtype=jax.ShapeDtypeStruct(
+            array_aval_shape, array_aval.dtype
+        ),
+        origin=origin,
+    )
+    mapping.check_invariants()
+    return mapping
+
 
 class NoBlockSpec:
   def __repr__(self):
@@ -328,6 +518,14 @@ no_block_spec = NoBlockSpec()
 # A PyTree of BlockSpec | NoBlockSpec.
 # BlockSpecTree = Sequence[BlockSpec | NoBlockSpec, ...] | NoBlockSpec
 BlockSpecTree = Any
+
+
+class MemoryRefTransform(Protocol):
+  """Transforms a memory reference on load or store."""
+
+  def __call__(self, block_aval: AbstractMemoryRef) -> AbstractMemoryRef:
+    raise NotImplementedError("Abstract evaluation not implemented.")
+
 
 @dataclasses.dataclass(frozen=True)
 class BlockMapping:
@@ -342,6 +540,7 @@ class BlockMapping:
   indexing_mode: IndexingMode
   array_shape_dtype: jax.ShapeDtypeStruct  # The whole array
   origin: OriginStr
+  transforms: Sequence[MemoryRefTransform] = ()
 
   def check_invariants(self) -> None:
     if not config.enable_checks.value: return
@@ -367,6 +566,14 @@ class BlockMapping:
     new_self = dataclasses.replace(self, **kwargs)
     new_self.check_invariants()
     return new_self
+
+  @property
+  def ref_aval(self) -> AbstractMemoryRef:
+    """Returns the abstract value of the Ref after transformations."""
+    block_aval = self.block_aval
+    for transform in self.transforms:
+      block_aval = transform(block_aval)
+    return block_aval
 
   def compute_start_indices_interpret(self, loop_idx, *args):
     discharged_jaxpr, discharged_consts = state_discharge.discharge_state(
@@ -545,9 +752,10 @@ class GridMapping:
   @property
   def in_shapes(self) -> Iterable[jax.ShapeDtypeStruct]:
     """The shapes of *index, *inputs."""
-    index_shapes = (jax.ShapeDtypeStruct(ia.inner_aval.shape,
-                                         ia.inner_aval.dtype)
-                    for ia in self.index_map_avals[len(self.grid):])
+    index_shapes = (
+        jax.ShapeDtypeStruct(ia.shape, ia.dtype)
+        for ia in self.index_map_avals[len(self.grid) :]
+    )
     inputs_shapes = (
         bm.array_shape_dtype
         for bm in self.block_mappings[:self.num_inputs])
@@ -603,86 +811,29 @@ def _convert_block_spec_to_block_mapping(
 ) -> BlockMapping:
   if block_spec is no_block_spec:
     block_spec = BlockSpec(None, None)
-  if block_spec.index_map is None:
-    index_map_func = lambda *args: (0,) * len(array_aval.shape)
-  else:
-    index_map_func = block_spec.index_map
-  if block_spec.block_shape is None:
-    block_shape = array_aval.shape
-  else:
-    block_shape = block_spec.block_shape
-    if len(array_aval.shape) != len(block_shape):
-      raise ValueError(
-          f"Block shape for {origin} (= {block_shape}) "
-          "must have the same number of dimensions as the "
-          f"array shape {array_aval.shape}.")
-
-  unmapped_block_shape = tuple(s for s in block_shape if s is not None)
-  block_array_aval = array_aval.update(shape=unmapped_block_shape)
-  if isinstance(array_aval, jax_core.DShapedArray):
-    # Get the "max" shape for the ragged array.
-    block_array_aval = jax_core.ShapedArray(
-        block_array_aval.shape,
-        block_array_aval.dtype,
-        block_array_aval.weak_type,
-    )
-  block_aval = AbstractMemoryRef(block_array_aval, block_spec.memory_space)
-
-  if not jax_core.is_constant_shape(block_aval.shape):
-    raise ValueError(
-        "shape polymorphism for Pallas does not support "
-        "dynamically-shaped blocks. "
-        f"Block spec for {origin} has block_shape: {block_aval.shape}")
-
-  flat_index_map_fun, index_map_out_tree_thunk = api_util.flatten_fun(
-      lu.wrap_init(index_map_func), index_map_tree)
-  debug = pe.debug_info(index_map_func, index_map_tree, index_map_out_tree_thunk,
-                        False, "pallas_call index_map")
-  index_map_src_info = NameAndSrcInfo.from_pallas_call(None,
-                                                       debug.func_src_info)
-  with tracing_grid_env(grid, mapped_dims):
-    jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(flat_index_map_fun,
-                                                             index_map_avals,
-                                                             debug_info=debug)
-  mapped_block_shape = tuple(
-      mapped if s is None else s for s in block_shape)
-  if len(out_avals) != len(block_shape):
-    raise ValueError(
-        f"Index map function {index_map_src_info} for "
-        f"{origin} must return "
-        f"{len(block_shape)} values to match {block_shape=}. "
-        f"Currently returning {len(out_avals)} values.")
-  for i, ov in enumerate(out_avals):
-    if ov.shape or ov.dtype not in [jnp.int32, jnp.int64]:
-      raise ValueError(
-          f"Index map function {index_map_src_info} for "
-          f"{origin} must return integer scalars. Output[{i}] has type "
-          f"{ov}.")
-
-  if consts:
-    raise ValueError(
-        f"Index map function {index_map_src_info} for "
-        f"{origin} must not capture constants: {consts}")
-
-  array_aval_shape = _max_shape_from_aval(array_aval)
-
-  mapping = BlockMapping(
-      block_shape=mapped_block_shape,
-      block_aval=block_aval,
-      index_map_jaxpr=jax_core.ClosedJaxpr(jaxpr, consts),
-      index_map_src_info=index_map_src_info,
-      indexing_mode=block_spec.indexing_mode,
-      array_shape_dtype=jax.ShapeDtypeStruct(
-          array_aval_shape, array_aval.dtype
-      ),
-      origin=origin,
+  return block_spec.to_block_mapping(
+      origin,
+      array_aval,
+      index_map_avals=index_map_avals,
+      index_map_tree=index_map_tree,
+      grid=grid,
+      mapped_dims=mapped_dims,
   )
-  mapping.check_invariants()
-  return mapping
 
 index_map_grid_aval = jax_core.ShapedArray((), jnp.int32)
 
-@dataclasses.dataclass(init=False)
+
+class ScratchShape(Protocol):
+  def get_array_aval(self) -> jax_core.AbstractValue:
+    ...
+  def get_ref_aval(self) -> state.AbstractRef:
+    ...
+
+
+ScratchShapeTree = Sequence[Union[ScratchShape, "ScratchShapeTree"]]
+
+
+@dataclasses.dataclass(init=False, kw_only=True)
 class GridSpec:
   """Encodes the grid parameters for :func:`jax.experimental.pallas.pallas_call`.
 
@@ -695,12 +846,14 @@ class GridSpec:
   grid_names: tuple[Hashable, ...] | None
   in_specs: BlockSpecTree
   out_specs: BlockSpecTree
+  scratch_shapes: ScratchShapeTree = ()
 
   def __init__(
       self,
       grid: Grid = (),
       in_specs: BlockSpecTree = no_block_spec,
       out_specs: BlockSpecTree = no_block_spec,
+      scratch_shapes: ScratchShapeTree = (),
   ):
     # Be more lenient for in/out_specs
     if isinstance(in_specs, list):
@@ -712,6 +865,7 @@ class GridSpec:
 
     self.in_specs = in_specs
     self.out_specs = out_specs
+    self.scratch_shapes = tuple(scratch_shapes)
 
     grid_names = None
     if isinstance(grid, int):
@@ -726,9 +880,6 @@ class GridSpec:
       )
     self.grid = grid  # type: ignore
     self.grid_names = grid_names
-
-  def _make_scratch_aval(self, obj: object) -> jax_core.AbstractValue:
-    assert False  # Not needed in GridSpec
 
   def _make_scalar_ref_aval(self, aval):
     assert False  # Not needed in GridSpec
@@ -774,12 +925,10 @@ def get_grid_mapping(
   else:
     num_flat_scalar_prefetch = 0
     jaxpr_scalar_ref_avals = ()
-
-  scratch_shapes: tuple[Any, ...] = getattr(grid_spec, "scratch_shapes", ())
-  if scratch_shapes:
+  if grid_spec.scratch_shapes:
     flat_scratch_shapes, scratch_tree = tree_util.tree_flatten(
-        scratch_shapes)
-    flat_scratch_avals = map(grid_spec._make_scratch_aval, flat_scratch_shapes)
+        grid_spec.scratch_shapes)
+    flat_scratch_avals = map(lambda s: s.get_ref_aval(), flat_scratch_shapes)
     num_flat_scratch_operands = len(flat_scratch_avals)
     jaxpr_scratch_avals = tree_util.tree_unflatten(
         scratch_tree, flat_scratch_avals)
@@ -846,11 +995,11 @@ def get_grid_mapping(
       num_scratch_operands=num_flat_scratch_operands,
   )
   grid_mapping.check_invariants()
-  in_ref_avals = [bm.block_aval for bm in in_block_mappings]
+  in_ref_avals = [bm.ref_aval for bm in in_block_mappings]
   jaxpr_in_ref_avals = tree_util.tree_unflatten(in_tree, in_ref_avals)
   jaxpr_in_avals = (*jaxpr_scalar_ref_avals,
                     *jaxpr_in_ref_avals)
-  out_ref_avals = [bm.block_aval for bm in out_block_mappings]
+  out_ref_avals = [bm.ref_aval for bm in out_block_mappings]
   jaxpr_out_avals = tree_util.tree_unflatten(out_tree, out_ref_avals)
   if not isinstance(jaxpr_out_avals, (tuple, list)):
     jaxpr_out_avals = (jaxpr_out_avals,)

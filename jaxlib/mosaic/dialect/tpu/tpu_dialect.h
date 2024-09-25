@@ -62,6 +62,7 @@ struct ApplyVectorLayoutContext {
   // mxu_shape = {contracting_size, non_contracting_size}
   std::array<int64_t, 2> mxu_shape = {128, 128};
   int64_t max_sublanes_in_scratch = 0;
+  int64_t vmem_banks = -1;  // -1 means "unspecified".
 };
 
 std::pair<bool, bool> mightCommunicateBetweenChips(Operation* op);

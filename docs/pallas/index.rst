@@ -33,6 +33,13 @@ See also the :class:`jax.experimental.pallas` module API documentation.
    tpu/index
 
 .. toctree::
+   :caption: Design Notes
+   :maxdepth: 1
+
+   async_note
+
+.. toctree::
+   :caption: Other
    :maxdepth: 1
 
    CHANGELOG

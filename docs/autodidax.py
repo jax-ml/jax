@@ -27,7 +27,7 @@
 # ---
 
 # [![Open in
-# Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/autodidax.ipynb)
+# Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jax-ml/jax/blob/main/docs/autodidax.ipynb)
 
 # # Autodidax: JAX core from scratch
 #
@@ -1396,7 +1396,7 @@ print(jaxpr)
 
 
 # This is precisely the issue that
-# [omnistaging](https://github.com/google/jax/pull/3370) fixed.
+# [omnistaging](https://github.com/jax-ml/jax/pull/3370) fixed.
 # We want to ensure that the `JaxprTrace` started by `make_jaxpr` is always
 # applied, regardless of whether any inputs to `bind` are boxed in corresponding
 # `JaxprTracer` instances. We can achieve this by employing the `dynamic_trace`

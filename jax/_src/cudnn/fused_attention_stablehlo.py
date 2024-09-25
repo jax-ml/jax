@@ -676,6 +676,11 @@ def _dot_product_attention_bwd_batcher(
     *_, S, _, _ = key.shape
   B = math.prod(Bs)
   has_bias, has_dbias = variadic_args
+  # Reset the has_dbias if the combined batch size is not 1, because cuDNN only
+  # supports dbias with a single batch. In this case, an all-zero dbias will be
+  # appended instead.
+  if B > 1:
+    variadic_args = (has_bias, False)
   original_query_shape = query.shape
   original_key_shape = key.shape
   original_value_shape = value.shape
@@ -708,7 +713,10 @@ def _dot_product_attention_bwd_batcher(
   grads[2] = jnp.reshape(grads[2], original_value_shape)
   if has_dbias:
     assert has_bias
-    grads[3] = jnp.reshape(grads[3], original_bias_shape)
+    if variadic_args[1]:
+      grads[3] = jnp.reshape(grads[3], original_bias_shape)
+    else:
+      grads.append(jnp.zeros(original_bias_shape, bias.dtype))
     out_bdims += (batch_dims[3],)
   return grads, out_bdims
 

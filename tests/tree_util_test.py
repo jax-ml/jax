@@ -24,6 +24,7 @@ from absl.testing import parameterized
 import jax
 from jax import flatten_util
 from jax import tree_util
+from jax._src.lib import xla_extension_version
 from jax._src import test_util as jtu
 from jax._src.tree_util import flatten_one_level, prefix_errors
 import jax.numpy as jnp
@@ -343,7 +344,7 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(h.args, (3,))
 
   def testPartialFuncAttributeHasStableHash(self):
-    # https://github.com/google/jax/issues/9429
+    # https://github.com/jax-ml/jax/issues/9429
     fun = functools.partial(print, 1)
     p1 = tree_util.Partial(fun, 2)
     p2 = tree_util.Partial(fun, 2)
@@ -359,7 +360,7 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual([c0, c1], tree.children())
 
   def testTreedefTupleFromChildren(self):
-    # https://github.com/google/jax/issues/7377
+    # https://github.com/jax-ml/jax/issues/7377
     tree = ((1, 2, (3, 4)), (5,))
     leaves, treedef1 = tree_util.tree_flatten(tree)
     treedef2 = tree_util.treedef_tuple(treedef1.children())
@@ -368,7 +369,7 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(treedef1.num_nodes, treedef2.num_nodes)
 
   def testTreedefTupleComparesEqual(self):
-    # https://github.com/google/jax/issues/9066
+    # https://github.com/jax-ml/jax/issues/9066
     self.assertEqual(tree_util.tree_structure((3,)),
                      tree_util.treedef_tuple((tree_util.tree_structure(3),)))
 
@@ -395,6 +396,7 @@ class TreeTest(jtu.JaxTestCase):
       ({"a": 1, "b": (2, 3)}, {"a": [7], "b": ([8], (9,))}, [[7], [8], (9,)]),
       ({"a": 1}, {"a": (7,)}, [(7,)]),
       ({"a": 1}, {"a": {"a": 7}}, [{"a": 7}]),
+      (None, None, [])
   )
   def testFlattenUpTo(self, tree, xs, expected):
     _, tree_def = tree_util.tree_flatten(tree)
@@ -482,6 +484,11 @@ class TreeTest(jtu.JaxTestCase):
           [AnObject(x=[1], y=(2,), z={"a": [1]})],
           [([1], (2,), {"a": [1]})],
           re.escape("Custom node type mismatch"),
+      ),
+      *(
+          []
+          if xla_extension_version < 288
+          else [(None, [2], re.escape("Expected None, got [2]."))]
       ),
   )
   def testFlattenUpToErrors(self, tree, xs, error):
@@ -978,7 +985,7 @@ class RavelUtilTest(jtu.JaxTestCase):
     self.assertAllClose(tree, tree_, atol=0., rtol=0.)
 
   def testDtypePolymorphicUnravel(self):
-    # https://github.com/google/jax/issues/7809
+    # https://github.com/jax-ml/jax/issues/7809
     x = jnp.arange(10, dtype=jnp.float32)
     x_flat, unravel = flatten_util.ravel_pytree(x)
     y = x_flat < 5.3
@@ -987,7 +994,7 @@ class RavelUtilTest(jtu.JaxTestCase):
 
   @jax.numpy_dtype_promotion('standard')  # Explicitly exercises implicit dtype promotion.
   def testDtypeMonomorphicUnravel(self):
-    # https://github.com/google/jax/issues/7809
+    # https://github.com/jax-ml/jax/issues/7809
     x1 = jnp.arange(10, dtype=jnp.float32)
     x2 = jnp.arange(10, dtype=jnp.int32)
     x_flat, unravel = flatten_util.ravel_pytree((x1, x2))

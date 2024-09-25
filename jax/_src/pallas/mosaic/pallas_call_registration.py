@@ -30,19 +30,24 @@ from jax._src import sharding_impls
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.pallas import core
+from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import lowering
 from jax._src.pallas.mosaic import verification
+from jax._src import tpu_custom_call
 from jax.experimental import mosaic
 from jax.experimental.mosaic.dialects import tpu
 from jax.experimental.pallas import tpu as pltpu
 
-def _maybe_cast_to_int(x: jax.Array | jax_core.ShapedArray):
+def _maybe_cast_to_int(x: jax.Array | jax_core.AbstractValue):
   """Casts boolean values to integers.
 
   We perform this cast because Mosaic does not directly support bool values
   for Memrefs. Instead, we load bools as integers and cast them to bools
   after loading from a memref inside of the kernel.
   """
+  assert isinstance(
+      x, (jax.Array, jax_core.ShapedArray, jax_core.DShapedArray)
+  ), type(x)
   if isinstance(x, jax.Array):
     if dtypes.issubdtype(x.dtype, jax.numpy.bool_):
       return x.astype(lowering.BOOL_MEMREF_TYPE)
@@ -63,6 +68,41 @@ _DUMP_PROMELA_TO = config.string_flag(
 )
 
 
+def _get_memory_space_from_aval(
+    out_aval: jax_core.AbstractValue,
+) -> tpu_custom_call.MemorySpace | None:
+  if not isinstance(out_aval, jax_core.ShapedArray):
+    raise ValueError('Memory spaces not defined for non-ShapedArrays')
+  if not isinstance(out_aval, core.ShapedArrayWithMemorySpace):
+    # If we are passed a regular old ShapedArray, we don't constrain the
+    # memory space
+    return None
+  # If we are passed an aval with an explicit memory space tag, we use it
+  # to constrain the memory space.
+  match out_aval.memory_space:
+    case None:
+      return None
+    case tpu_core.TPUMemorySpace.ANY:
+      return None
+    case tpu_core.TPUMemorySpace.VMEM:
+      return tpu_custom_call.MemorySpace.VMEM
+    case tpu_core.TPUMemorySpace.SEMAPHORE:
+      return tpu_custom_call.MemorySpace.SEMAPHORE_MEM
+  return None
+
+
+def _get_memory_spaces_from_avals(
+    out_avals: tuple[jax_core.AbstractValue, ...],
+) -> tuple[tpu_custom_call.MemorySpace | None, ...] | None:
+  output_memory_spaces = None
+  if any(
+      isinstance(out_aval, core.ShapedArrayWithMemorySpace)
+      for out_aval in out_avals
+  ):
+    output_memory_spaces = tuple(map(_get_memory_space_from_aval, out_avals))
+  return output_memory_spaces
+
+
 def pallas_call_tpu_lowering_rule(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
@@ -74,6 +114,7 @@ def pallas_call_tpu_lowering_rule(
     interpret: bool,
     compiler_params: dict[str, Any],
     cost_estimate: core.CostEstimate | None,
+    out_avals: tuple[jax_core.AbstractValue, ...],
 ):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
   del interpret
@@ -129,9 +170,6 @@ def pallas_call_tpu_lowering_rule(
       (a[0] + num_dyn_bounds + num_extra_args, a[1])
       for a in input_output_aliases
   )
-  out_avals = [jax_core.ShapedArray(bm.array_shape_dtype.shape,
-                                    bm.array_shape_dtype.dtype)
-               for bm in grid_mapping.block_mappings_output]
 
   if promela_dump_path := _DUMP_PROMELA_TO.value:
     num_devices = 1 if mesh is None else mesh.devices.size
@@ -174,7 +212,7 @@ def pallas_call_tpu_lowering_rule(
   def _maybe_cast_inputs(*args):
     args = [_maybe_cast_to_int(x) for x in args]
     return args
-  kernel_in_avals = [_maybe_cast_to_int(x) for x in ctx.avals_in]  # type: ignore
+  kernel_in_avals = [_maybe_cast_to_int(x) for x in ctx.avals_in]
   kernel_out_avals = [_maybe_cast_to_int(x) for x in out_avals]
   cast_ctx = ctx.replace(avals_out=kernel_in_avals)
   in_nodes = mlir.lower_fun(_maybe_cast_inputs)(cast_ctx, *in_nodes)
@@ -182,6 +220,7 @@ def pallas_call_tpu_lowering_rule(
   # Dynamic grid bounds have to go at the front.
   dynamic_grid_args, args = in_nodes[:num_dyn_bounds], in_nodes[num_dyn_bounds:]
   kernel_ctx = ctx.replace(avals_in=kernel_in_avals, avals_out=kernel_out_avals)
+  output_memory_spaces = _get_memory_spaces_from_avals(out_avals)
   if cost_estimate is not None:
     mosaic_cost_estimate = pltpu.CostEstimate(
         flops=cost_estimate.flops,
@@ -208,7 +247,7 @@ def pallas_call_tpu_lowering_rule(
       device_type=mosaic_params.get("device_type"),
       internal_scratch_in_bytes=mosaic_params.get("internal_scratch_in_bytes"),
       collective_id=mosaic_params.get("collective_id", None),
-      output_memory_spaces=None,  # TODO(apaszke,sharadmv): Implement this.
+      output_memory_spaces=output_memory_spaces,
   )
   _maybe_cast_to_bool = lambda x, aval: x.astype(
       jax.numpy.bool_) if aval.dtype == jax.numpy.bool_ else x

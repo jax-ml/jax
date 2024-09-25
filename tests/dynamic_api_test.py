@@ -621,7 +621,7 @@ class DynamicShapeStagingTest(jtu.JaxTestCase):
     self.assertLessEqual(len(jaxpr.jaxpr.eqns), 3)
 
   def test_shape_validation(self):
-    # Regression test for https://github.com/google/jax/issues/18937
+    # Regression test for https://github.com/jax-ml/jax/issues/18937
     msg = r"Shapes must be 1D sequences of integer scalars, got .+"
     with self.assertRaisesRegex(TypeError, msg):
       jax.make_jaxpr(jnp.ones)(5.0)
@@ -1485,6 +1485,9 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
 @jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow",
                  jax_traceback_filtering='off')
 class JumbleTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    if jax.config.x64_enabled: raise unittest.SkipTest()
 
   @parameterized.parameters((True,), (False,))
   def test_internal_jumble(self, disable_jit):

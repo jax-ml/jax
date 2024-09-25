@@ -85,6 +85,7 @@ extensions = [
 ]
 
 intersphinx_mapping = {
+    'array_api': ('https://data-apis.org/array-api/2023.12/', None),
     'python': ('https://docs.python.org/3/', None),
     'numpy': ('https://numpy.org/doc/stable/', None),
     'scipy': ('https://docs.scipy.org/doc/scipy/reference/', None),
@@ -133,6 +134,7 @@ exclude_patterns = [
     'pallas/quickstart.md',
     'pallas/tpu/pipelining.md',
     'pallas/tpu/distributed.md',
+    'pallas/tpu/sparse.md',
     'pallas/tpu/matmul.md',
     'jep/9407-type-promotion.md',
     'autodidax.md',
@@ -166,7 +168,7 @@ html_theme = 'sphinx_book_theme'
 # documentation.
 html_theme_options = {
     'show_toc_level': 2,
-    'repository_url': 'https://github.com/google/jax',
+    'repository_url': 'https://github.com/jax-ml/jax',
     'use_repository_button': True,     # add a "link to repository" button
     'navigation_with_keys': False,
 }
@@ -223,6 +225,7 @@ nb_execution_excludepatterns = [
     'pallas/quickstart.*',
     'pallas/tpu/pipelining.*',
     'pallas/tpu/distributed.*',
+    'pallas/tpu/sparse.*',
     'pallas/tpu/matmul.*',
     'sharded-computation.*',
     'distributed_data_loading.*'
@@ -342,7 +345,7 @@ def linkcode_resolve(domain, info):
     return None
   filename = os.path.relpath(filename, start=os.path.dirname(jax.__file__))
   lines = f"#L{linenum}-L{linenum + len(source)}" if linenum else ""
-  return f"https://github.com/google/jax/blob/main/jax/{filename}{lines}"
+  return f"https://github.com/jax-ml/jax/blob/main/jax/{filename}{lines}"
 
 # Generate redirects from deleted files to new sources
 rediraffe_redirects = {
@@ -357,4 +360,6 @@ rediraffe_redirects = {
     'jax-101/07-state.md': 'stateful-computations.md',
     'jax-101/08-pjit.rst': 'sharded-computation.md',
     'jax-101/index.rst': 'tutorials.rst',
+    'notebooks/external_callbacks.md': 'external-callbacks.md',
+    'notebooks/How_JAX_primitives_work.md': 'jax-primitives.md',
 }

@@ -77,7 +77,7 @@ def meta_loss_fn(params, data):
 meta_grads = jax.grad(meta_loss_fn)(params, data)
 ```
 
-
+(stopping-gradients)=
 ### Stopping gradients
 
 Autodiff enables automatic computation of the gradient of a function with respect to its inputs. Sometimes, however, you might want some additional control: for instance, you might want to avoid backpropagating gradients through some subset of the computational graph.
@@ -571,7 +571,7 @@ print("Naive full Hessian materialization")
 
 ### Jacobian-Matrix and Matrix-Jacobian products
 
-Now that you have {func}`jax.jvp` and {func}`jax.vjp` transformations that give you functions to push-forward or pull-back single vectors at a time, you can use JAX's {func}`jax.vmap` [transformation](https://github.com/google/jax#auto-vectorization-with-vmap) to push and pull entire bases at once. In particular, you can use that to write fast matrix-Jacobian and Jacobian-matrix products:
+Now that you have {func}`jax.jvp` and {func}`jax.vjp` transformations that give you functions to push-forward or pull-back single vectors at a time, you can use JAX's {func}`jax.vmap` [transformation](https://github.com/jax-ml/jax#auto-vectorization-with-vmap) to push and pull entire bases at once. In particular, you can use that to write fast matrix-Jacobian and Jacobian-matrix products:
 
 ```{code-cell}
 # Isolate the function from the weight matrix to the predictions

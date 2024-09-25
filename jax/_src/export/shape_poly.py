@@ -80,6 +80,8 @@ for more details.
     # https://github.com/python/mypy/issues/5887
     super().__init__(error_msg)
 
+class UnexpectedDimVar(Exception):
+  pass
 
 class Comparator(Enum):
   EQ = 1
@@ -87,12 +89,14 @@ class Comparator(Enum):
 
 @dataclasses.dataclass(frozen=True)
 class _SymbolicConstraint:
+  # Either e1 == e2 if cmp == Comparator.EQ else e1 >= e2
   cmp: Comparator
   debug_str: str  # The form in which the user expressed it, for error messages
-  diff: _DimExpr  # For GEQ: diff >= 0, and for EQ: diff == 0
+  e1: DimSize  # This has been normalized w.r.t. previous constraints only
+  e2: DimSize  # This has been normalized w.r.t. previous constraints only
 
   def __repr__(self):
-    return f"Constraint({self.debug_str}: {self.diff})"
+    return f"Constraint({self.debug_str})"
 
 
 class _DimFactor:
@@ -209,15 +213,22 @@ class _DimFactor:
     """Lexicographic comparison"""
     return self._syntactic_cmp(other) >= 0
 
-  def evaluate(self, env: DimVarEnv):
+  def evaluate(self, env: DimVarEnv, scope: SymbolicScope):
     if self.var is not None:
       try:
         return env[self.var]
       except KeyError:
+        # Perhaps there is a normalization rule for this variable
+        normalized_var = _DimExpr._from_var(self.var, scope)
+        if core.is_constant_dim(normalized_var):
+          return normalized_var
+        non_trivial_normalization = (v1 := normalized_var._to_var()) is None or v1 != self.var  # type: ignore
+        if non_trivial_normalization:
+          return normalized_var._evaluate(env)  # type: ignore
         err_msg = (
             f"Encountered dimension variable '{self.var}' that is not appearing in the shapes of the function arguments.\n"
             "Please see https://jax.readthedocs.io/en/latest/export/shape_poly.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details.")
-        raise KeyError(err_msg)
+        raise UnexpectedDimVar(err_msg)
     else:
       operand_values = [opnd._evaluate(env) for opnd in self.operands]
       if self.operation == _DimFactor.FLOORDIV:
@@ -370,11 +381,11 @@ class _DimTerm:
         raise InconclusiveDimensionOperation(f"Cannot divide {self} by {divisor}.")
     return _DimTerm(new_factors)
 
-  def evaluate(self, env: DimVarEnv):
+  def evaluate(self, env: DimVarEnv, scope: SymbolicScope):
     prod = lambda xs: functools.reduce(_evaluate_multiply, xs) if xs else core.dim_constant(1)
     def pow_opt(v, p: int):
       return v if p == 1 else prod([v] * p)
-    return prod([pow_opt(f.evaluate(env), exp) for f, exp in self._factors])
+    return prod([pow_opt(f.evaluate(env, scope), exp) for f, exp in self._factors])
 
   def __deepcopy__(self, memo):
     return _DimTerm(copy.deepcopy(self._factors, memo))
@@ -404,7 +415,7 @@ class _DimExpr:
   def __init__(self, sorted_terms: SortedTerms,
                scope: SymbolicScope):
     # Do not construct _DimExpr directly, unless you are sure that `terms` is
-    # normalized; Use _DimExpr.normalize.
+    # normalized; Use _DimExpr._normalize_sorted_terms.
     self._sorted_terms = tuple(sorted_terms) or ((_DimTerm_one, 0),)
     self._scope = scope
     self._hash = None
@@ -426,8 +437,8 @@ class _DimExpr:
     return _DimExpr._normalize_sorted_terms(((t, t_k),), scope)
 
   @staticmethod
-  def _from_var(v: str, scope: SymbolicScope) -> _DimExpr:
-    return _DimExpr(((_DimTerm.from_var(v), 1),), scope)
+  def _from_var(v: str, scope: SymbolicScope) -> DimSize:
+    return _DimExpr._normalize_sorted_terms(((_DimTerm.from_var(v), 1),), scope)
 
   @staticmethod
   def _from_operation(operation: str, *operands: DimSize,
@@ -475,8 +486,9 @@ class _DimExpr:
   def _normalize_term(t: _DimTerm, t_k: int,
                       scope: SymbolicScope) -> Sequence[tuple[_DimTerm, int]]:
     # If (t, t_k) is among the scope normalization rules, then return
-    # a list of updates to apply to the expression containing (t, t_k).
-    # Returns empty sequence if no normalizations are necessary.
+    # a list of `term * coefficient` to add to the expression containing (t, t_k).
+    # Returns the empty sequence if no normalizations are necessary.
+    if not scope._normalization_rules: return []
     updates = []
     after, t_k_after = scope._normalization_rules.get(t, (None, 0))
     if after is not None and t_k % t_k_after == 0:
@@ -899,7 +911,7 @@ class _DimExpr:
 
   def _evaluate(self, env: DimVarEnv):
     # Evaluates as a value of dtype=core.dim_value_dtype()
-    terms = [_evaluate_multiply(t.evaluate(env), core.dim_constant(t_k))
+    terms = [_evaluate_multiply(t.evaluate(env, self.scope), core.dim_constant(t_k))
              for t, t_k in self._sorted_terms]
     return functools.reduce(_evaluate_add, terms) if len(terms) > 1 else terms[0]
 
@@ -1046,8 +1058,6 @@ class SymbolicScope:
         raise ValueError(f"Unsatisfiable explicit constraint: {c_str}")
       return
 
-    constr = _SymbolicConstraint(debug_str=c_str, cmp=cmp, diff=diff)  # type: ignore[arg-type]
-    self._explicit_constraints.append(constr)
     if cmp == Comparator.EQ:
       if not isinstance(e1, _DimExpr):
         raise ValueError("Invalid equality constraint: {e1} == {e2}. "
@@ -1062,6 +1072,9 @@ class SymbolicScope:
         raise NotImplementedError(
             f"Found multiple equality constraints with the same left-hand-side: {before}")
       self._normalization_rules[before] = (after, before_k)
+
+    constr = _SymbolicConstraint(debug_str=c_str, cmp=cmp, e1=e1, e2=e2)
+    self._explicit_constraints.append(constr)
 
   def _check_same_scope(self, other: _DimExpr,
                         when: str = "",
@@ -2016,7 +2029,7 @@ def _solve_dim_equations(
   # Returns a shape environment and the shape constraints if it can solve all
   # dimension variables. Raises an exception if it cannot.
   shape_env: DimVarEnv = {}
-  solution_error_message_pieces: list[str | _DimExpr] = [
+  solution_error_message_pieces: list[str | DimSize] = [
     " Obtained dimension variables: "
   ]  # Error message describing the solution
   # Prepare error message piece describing the polymorphic shape specs
@@ -2050,8 +2063,8 @@ def _solve_dim_equations(
     for term, term_k in eqn.aval_dim_expr._sorted_terms:
       # Perhaps we can already evaluate this term (all vars solved)
       try:
-        term_value = term.evaluate(shape_env)
-      except KeyError:
+        term_value = term.evaluate(shape_env, scope)
+      except UnexpectedDimVar:
         # `mon` still uses some variables not yet solved. We handle only the
         # case when `mon` is a single variable.
         v = term.to_var()
@@ -2118,14 +2131,19 @@ def _solve_dim_equations(
     if not shape_env: return
     assert scope is not None
     for constr in scope._explicit_constraints:
-      c_value = constr.diff._evaluate(shape_env)
+      # We can't just construct constr.e1 - constr.e2 because for an equality
+      # constraint it would be reduced to 0.
+      c_e1 = constr.e1._evaluate(shape_env) if not core.is_constant_dim(constr.e1) else constr.e1  # type: ignore
+      c_e2 = constr.e2._evaluate(shape_env) if not core.is_constant_dim(constr.e2) else constr.e2  # type: ignore
+      c_diff = c_e1 - c_e2
       shape_constraints.add_constraint(
-          constr.cmp, c_value, 0,
+          constr.cmp, c_diff, 0,
           error_message_pieces=[
                 f"Input shapes do not match the symbolic shape constraint {constr.debug_str}. "
-                f"Expected '{constr.diff}' to be "
+                f"Expected '{constr.e1} - {constr.e2}' to be "
                 f"{'greater or equal' if constr.cmp == Comparator.GEQ else 'equal'} to 0, "
-                "but found ", c_value,
+                "but found ", c_diff,
+
                 ". " + poly_specs_err_msg
               ] + solution_error_message_pieces + [
               solution_err_msg_trailer_errors])

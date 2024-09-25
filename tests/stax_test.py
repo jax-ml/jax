@@ -216,7 +216,7 @@ class StaxTest(jtu.JaxTestCase):
 
   def testBatchNormShapeNCHW(self):
     key = random.PRNGKey(0)
-    # Regression test for https://github.com/google/jax/issues/461
+    # Regression test for https://github.com/jax-ml/jax/issues/461
     init_fun, apply_fun = stax.BatchNorm(axis=(0, 2, 3))
     input_shape = (4, 5, 6, 7)
 

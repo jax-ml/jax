@@ -119,6 +119,7 @@ Operators
     ne
     neg
     nextafter
+    optimization_barrier
     pad
     platform_dependent
     polygamma
@@ -248,6 +249,7 @@ Argument classes
 
 .. autoclass:: ConvDimensionNumbers
 .. autoclass:: ConvGeneralDilatedDimensionNumbers
+.. autoclass:: DotAlgorithm
 .. autoclass:: GatherDimensionNumbers
 .. autoclass:: GatherScatterMode
 .. autoclass:: Precision

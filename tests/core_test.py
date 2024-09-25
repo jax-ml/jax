@@ -349,7 +349,7 @@ class CoreTest(jtu.JaxTestCase):
       g_vmap(jnp.ones((1, )))
 
   def test_concrete_array_string_representation(self):
-    # https://github.com/google/jax/issues/5364
+    # https://github.com/jax-ml/jax/issues/5364
     self.assertEqual(
         str(core.ConcreteArray(np.dtype(np.int32),
                                np.array([1], dtype=np.int32))),
@@ -369,7 +369,7 @@ class CoreTest(jtu.JaxTestCase):
     self.assertEqual(dropvar.aval, aval)
 
   def test_input_residual_forwarding(self):
-    # https://github.com/google/jax/pull/11151
+    # https://github.com/jax-ml/jax/pull/11151
     x = jnp.arange(3 * 4.).reshape(3, 4)
     y = jnp.arange(4 * 3.).reshape(4, 3)
 

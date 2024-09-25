@@ -32,13 +32,6 @@ _TPU_PCI_DEVICE_IDS = [
     '0x006f',
 ]
 
-_TPU_ENHANCED_BARRIER_SUPPORTED = [
-    # TPU v2, v3
-    '0x0027',
-    # TPU v4
-    '0x005e',
-]
-
 _NVIDIA_GPU_DEVICES = [
     '/dev/nvidia0',
     '/dev/nvidiactl',  # Docker/Kubernetes
@@ -60,12 +53,6 @@ def num_available_tpu_chips_and_device_id():
       num_chips += 1
 
   return num_chips, device_id
-
-
-def tpu_enhanced_barrier_supported() -> bool:
-  """Returns if tpu_enhanced_barrier flag is supported on this TPU version."""
-  _, device_id = num_available_tpu_chips_and_device_id()
-  return device_id in _TPU_ENHANCED_BARRIER_SUPPORTED
 
 
 def has_visible_nvidia_gpu() -> bool:

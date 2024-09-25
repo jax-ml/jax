@@ -189,7 +189,7 @@ To fit the same model on sparse data, we can apply the :func:`sparsify` transfor
 """
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax.experimental.sparse.ad import (
     jacfwd as jacfwd,

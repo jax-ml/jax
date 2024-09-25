@@ -1,13 +1,16 @@
 name: JAX Array API
 
 on:
-  workflow_dispatch: # allows triggering the workflow run manually
-  pull_request:  # Automatically trigger on pull requests affecting particular files
+  push:
     branches:
       - main
-    paths:
-      - '**workflows/jax-array-api.yml'
-      - '**experimental/array_api/**'
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -25,11 +28,11 @@ jobs:
       with:
         repository: data-apis/array-api-tests
         # TODO(jakevdp) update this to a stable release/tag when available.
-        ref: 'db95e67b29235249e5776ca2b6bb4e77117e0690'  # Latest commit as of 2024-08-08
+        ref: 'b4c0823469c02d6ce6e512ad4c2bd8ba42b1b4b2'  # Latest commit as of 2024-09-09
         submodules: 'true'
         path: 'array-api-tests'
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # ratchet:actions/setup-python@v5
+      uses: actions/setup-python@f677139bbe7f9c59b41e40162b753c062f5d49a3 # ratchet:actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies

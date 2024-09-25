@@ -169,6 +169,21 @@ cc_library(
 )
 
 cc_library(
+    name = "hipsolver_interface",
+    srcs = ["//jaxlib/gpu:solver_interface.cc"],
+    hdrs = ["//jaxlib/gpu:solver_interface.h"],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@local_config_rocm//rocm:hipblas",
+        "@local_config_rocm//rocm:hipsolver",
+    ],
+)
+
+cc_library(
     name = "hipsolver_kernels_ffi",
     srcs = ["//jaxlib/gpu:solver_kernels_ffi.cc"],
     hdrs = ["//jaxlib/gpu:solver_kernels_ffi.h"],
@@ -178,6 +193,7 @@ cc_library(
         ":hip_make_batch_pointers",
         ":hip_solver_handle_pool",
         ":hip_vendor",
+        ":hipsolver_interface",
         "//jaxlib:ffi_helpers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

@@ -17,7 +17,7 @@
   The host_callback APIs are deprecated as of March 20, 2024.
   The functionality is subsumed by the
   `new JAX external callbacks <https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html>`_
-  See https://github.com/google/jax/issues/20385.
+  See https://github.com/jax-ml/jax/issues/20385.
 
 This module introduces the host callback functions :func:`call`,
 :func:`id_tap`, and :func:`id_print`, that send their arguments from the device
@@ -363,11 +363,11 @@ using the :func:`jax.custom_vjp` mechanism.
 This is relatively easy to do, once one understands both the JAX custom VJP
 and the TensorFlow autodiff mechanisms.
 The code for how this can be done is shown in the ``call_tf_full_ad``
-function in `host_callback_to_tf_test.py <https://github.com/google/jax/blob/main/tests/host_callback_to_tf_test.py>`_.
+function in `host_callback_to_tf_test.py <https://github.com/jax-ml/jax/blob/main/tests/host_callback_to_tf_test.py>`_.
 This example supports arbitrary higher-order differentiation as well.
 
 Note that if you just want to call TensorFlow functions from JAX, you can also
-use the `jax2tf.call_tf function <https://github.com/google/jax/blob/main/jax/experimental/jax2tf/call_tf.py>`_.
+use the `jax2tf.call_tf function <https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/call_tf.py>`_.
 
 Using :func:`call` to call a JAX function on another device, with reverse-mode autodiff support
 ------------------------------------------------------------------------------------------------
@@ -378,7 +378,7 @@ the host, and then to the outside device on which the JAX host
 computation will run, and then the results are sent back to the original accelerator.
 
 The code for how this can be done is shown in the ``call_jax_other_device function``
-in `host_callback_test.py <https://github.com/google/jax/blob/main/tests/host_callback_test.py>`_.
+in `host_callback_test.py <https://github.com/jax-ml/jax/blob/main/tests/host_callback_test.py>`_.
 
 Low-level details and debugging
 -------------------------------
@@ -536,6 +536,8 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
+from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 
 import numpy as np
@@ -570,7 +572,7 @@ _HOST_CALLBACK_LEGACY = config.bool_flag(
     help=(
         'Use old implementation of host_callback, documented in the module docstring.'
         'If False, use the jax.experimental.io_callback implementation. '
-        'See https://github.com/google/jax/issues/20385.'
+        'See https://github.com/jax-ml/jax/issues/20385.'
     )
 )
 
@@ -590,7 +592,7 @@ def _raise_if_using_outfeed_with_pjrt_c_api(backend: xb.XlaBackend):
         "See https://jax.readthedocs.io/en/latest/debugging/index.html and "
         "https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html"
         " for alternatives. Please file a feature request at "
-        "https://github.com/google/jax/issues if none of the alternatives are "
+        "https://github.com/jax-ml/jax/issues if none of the alternatives are "
         "sufficient.")
 
 
@@ -606,7 +608,7 @@ DType = Any
 class CallbackFlavor(enum.Enum):
   """Specifies which flavor of callback to use under JAX_HOST_CALLBACK_LEGACY=False.
 
-  See https://github.com/google/jax/issues/20385.
+  See https://github.com/jax-ml/jax/issues/20385.
   """
   IO_CALLBACK = 1  # uses jax.experimental.io_callback
   PURE = 2  # uses jax.pure_callback
@@ -627,7 +629,7 @@ def _deprecated_id_tap(tap_func,
     The host_callback APIs are deprecated as of March 20, 2024.
     The functionality is subsumed by the
     `new JAX external callbacks <https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html>`_
-    See https://github.com/google/jax/issues/20385.
+    See https://github.com/jax-ml/jax/issues/20385.
 
   ``id_tap`` behaves semantically like the identity function but has the
   side-effect that a user-defined Python function is called with the runtime
@@ -653,7 +655,7 @@ def _deprecated_id_tap(tap_func,
       i.e., does not work on CPU unless --jax_host_callback_outfeed=True.
     callback_flavor: if running with `JAX_HOST_CALLBACK_LEGACY=False` specifies
        the flavor of callback to use.
-       See https://github.com/google/jax/issues/20385.
+       See https://github.com/jax-ml/jax/issues/20385.
 
   Returns:
     ``arg``, or ``result`` if given.
@@ -710,7 +712,7 @@ def _deprecated_id_print(arg,
     The host_callback APIs are deprecated as of March 20, 2024.
     The functionality is subsumed by the
     `new JAX external callbacks <https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html>`_
-    See https://github.com/google/jax/issues/20385.
+    See https://github.com/jax-ml/jax/issues/20385.
 
    On each invocation of the printing tap, the ``kwargs`` if present
    will be printed first (sorted by keys). Then arg will be printed,
@@ -728,7 +730,7 @@ def _deprecated_id_print(arg,
    * ``threshold`` is passed to ``numpy.array2string``.
    * ``callback_flavor``: if running with `JAX_HOST_CALLBACK_LEGACY=False` specifies
        the flavor of callback to use.
-       See https://github.com/google/jax/issues/20385.
+       See https://github.com/jax-ml/jax/issues/20385.
 
   For more details see the :mod:`jax.experimental.host_callback` module documentation.
   """
@@ -755,7 +757,7 @@ def _deprecated_call(callback_func: Callable, arg, *,
     The host_callback APIs are deprecated as of March 20, 2024.
     The functionality is subsumed by the
     `new JAX external callbacks <https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html>`_
-    See https://github.com/google/jax/issues/20385.
+    See https://github.com/jax-ml/jax/issues/20385.
 
   Args:
     callback_func: The Python function to invoke on the host as
@@ -785,7 +787,7 @@ def _deprecated_call(callback_func: Callable, arg, *,
       i.e., does not work on CPU unless --jax_host_callback_outfeed=True.
     callback_flavor: if running with `JAX_HOST_CALLBACK_LEGACY=False` specifies
        the flavor of callback to use.
-       See https://github.com/google/jax/issues/20385.
+       See https://github.com/jax-ml/jax/issues/20385.
 
   Returns:
     the result of the ``callback_func`` invocation.
@@ -798,7 +800,7 @@ def _deprecated_call(callback_func: Callable, arg, *,
     raise NotImplementedError(
         "When using JAX_HOST_CALLBACK_LEGACY=False you can use the `DEBUG` "
         "flavor of callback only when the `result_shape` is None. "
-        "See https://github.com/google/jax/issues/20385."
+        "See https://github.com/jax-ml/jax/issues/20385."
     )
   return _call(callback_func, arg, result_shape=result_shape,
                call_with_device=call_with_device, identity=False,
@@ -817,7 +819,7 @@ class _CallbackWrapper:
       raise NotImplementedError(
           "When using JAX_HOST_CALLBACK_LEGACY=False, the host_callback APIs"
           " do not support `tap_with_device` and `call_with_device`. "
-          "See https://github.com/google/jax/issues/20385.")
+          "See https://github.com/jax-ml/jax/issues/20385.")
 
   def __hash__(self):
     return hash((self.callback_func, self.identity, self.call_with_device))
@@ -1085,7 +1087,6 @@ def _with_sharding_proto(builder, sharding_proto, op_fn, *args, **kwargs):
   finally:
     builder.clear_sharding()
 
-
 def _outside_call_translation_rule(ctx,
                                    avals_in,
                                    avals_out,
@@ -1185,8 +1186,123 @@ def _outside_call_translation_rule(ctx,
       f"identity = {identity}")
   return results + [next_token, next_itoken]
 
+if xla_extension_version < 287:
+  xla.register_translation(outside_call_p, _outside_call_translation_rule)
 
-xla.register_translation(outside_call_p, _outside_call_translation_rule)
+
+def _outside_call_outfeed_lowering(ctx: mlir.LoweringRuleContext,
+                                   *args_op,
+                                   identity,
+                                   device_index,
+                                   flat_results_aval=(),
+                                   **params):
+  # We expect the current tokens at the end, inserted by _rewrite_jaxpr.
+  current_token = args_op[-2]
+  current_itoken = args_op[-1]
+
+  args_to_outfeed = args_op[:-2]
+  # Some platforms refuse to infeed empty arrays. We generate constants
+  # instead.
+  non_empty_flat_results_aval = list(filter(lambda aval: not (_aval_is_empty(aval)),
+                                            flat_results_aval))
+  need_callback_results_on_device = (not identity and
+                                     len(non_empty_flat_results_aval) > 0)
+  send_infeed = need_callback_results_on_device
+  generated_infeed = False  # Keep track if we emitted an infeed op
+  for platform in ctx.module_context.platforms:
+    _raise_if_using_outfeed_with_pjrt_c_api(
+        xb.get_backend(platform)
+    )
+  callback_id = _register_callback(
+      functools.partial(
+          _outside_call_run_callback,
+          send_infeed=send_infeed,
+          identity=identity,
+          flat_results_aval=flat_results_aval,
+          **params))
+
+  outfeed_sharding = xla_client.OpSharding()
+  outfeed_sharding.type = xla_client.OpSharding.Type.MAXIMAL
+  outfeed_sharding.tile_assignment_dimensions = [1]
+  outfeed_sharding.tile_assignment_devices = [device_index]
+
+  # next_token = _callback_handler_data.receiver.add_outfeed(
+  #     comp, current_token, callback_id, args_to_outfeed, device_index)
+
+  xla_shapes = util.flatten(
+      xla.aval_to_xla_shapes(aval) for aval in ctx.avals_in[:-2])
+  _callback_handler_data.receiver.register_outfeed(callback_id, xla_shapes)
+  outfeed_header_start = 271828  # Must match kOutfeedHeaderStart in C++
+  header = mlir.ir_constant(np.array([outfeed_header_start, callback_id],
+                                     dtype=np.uint32))
+  header_outfeed = hlo.OutfeedOp([header], current_token,
+                                 outfeed_config=ir.StringAttr.get(''))
+  mlir.set_sharding(header_outfeed, outfeed_sharding)
+  next_token, = header_outfeed.results
+  data_outfeed = hlo.OutfeedOp(args_to_outfeed, next_token,
+                               outfeed_config=ir.StringAttr.get(''))
+  mlir.set_sharding(data_outfeed, outfeed_sharding)
+  next_token, = data_outfeed.results
+
+
+  if identity:
+    results = list(args_to_outfeed)
+    next_itoken = current_itoken
+  else:
+    empty_results = [
+        mlir.ir_constant(np.zeros(aval.shape, aval.dtype))
+        for aval in flat_results_aval
+        if _aval_is_empty(aval)
+    ]
+    if non_empty_flat_results_aval:
+      assert need_callback_results_on_device
+      after_outfeed_itoken = hlo.AfterAllOp([current_itoken, next_token])
+      # We shard the infeed as AssignedDevice(device_index). This must match the
+      # outfeed (from outfeed_receiver.cc). Since `lax.infeed` does not support
+      # this kind of sharding, we use a custom translation for infeed.
+      array_sharding_proto = xla_client.OpSharding()
+      array_sharding_proto.type = xla_client.OpSharding.Type.MAXIMAL
+      array_sharding_proto.tile_assignment_dimensions = [1]
+      array_sharding_proto.tile_assignment_devices = [device_index]
+
+      token_sharding_proto = xla_client.OpSharding()
+      token_sharding_proto.type = xla_client.OpSharding.Type.REPLICATED
+      infeed_sharding_proto = xla.tuple_sharding_proto(
+          [array_sharding_proto] * len(non_empty_flat_results_aval) +
+          [token_sharding_proto])
+
+      output_types = map(mlir.aval_to_ir_types, non_empty_flat_results_aval)
+      flat_output_types = util.flatten(output_types)
+
+      layouts = ir.ArrayAttr.get([
+          ir.ArrayAttr.get(
+              [mlir.i64_attr(i)
+              for i in range(len(aval.shape) - 1, -1, -1)])
+          for aval in non_empty_flat_results_aval
+      ])
+      infeed = hlo.InfeedOp(flat_output_types + [hlo.TokenType.get()],
+                            after_outfeed_itoken,
+                            infeed_config=ir.StringAttr.get(''),
+                            layout=layouts)
+      mlir.set_sharding(infeed, infeed_sharding_proto)
+      non_empty_results = list(infeed.results[:-1])
+      next_itoken = infeed.results[-1]
+      generated_infeed = True
+      results = [
+          empty_results.pop(0)
+          if _aval_is_empty(result_aval) else non_empty_results.pop(0)
+          for result_aval in flat_results_aval
+      ]
+    else:
+      results = empty_results
+      next_itoken = current_itoken
+
+  assert generated_infeed == send_infeed, (
+      f"generated_infeed ({generated_infeed}) != send_infeed ({send_infeed})")
+  assert identity or len(results) == len(flat_results_aval), (
+      f"got {len(results)} but expected {len(flat_results_aval)}. "
+      f"identity = {identity}")
+  return results + [next_token, next_itoken]
 
 
 def _outside_call_lowering(ctx: mlir.LoweringRuleContext,
@@ -1202,23 +1318,32 @@ def _outside_call_lowering(ctx: mlir.LoweringRuleContext,
   platform = ctx.module_context.platforms[0]
   use_outfeed = _use_outfeed(platform)
   if use_outfeed:
-    # Fall back to XLA path if we are using the outfeed
-    # TODO(sharadmv): update to use MLIR for this path as well and delete
-    #                 XLA lowering
-    return mlir.xla_fallback_lowering(outside_call_p)(
-        ctx,
-        *args,
-        has_token=has_token,
-        identity=identity,
-        flat_results_aval=flat_results_aval,
-        device_index=device_index,
-        **params)
+    if xla_extension_version < 287:
+      return mlir.xla_fallback_lowering(outside_call_p)(
+          ctx,
+          *args,
+          has_token=has_token,
+          identity=identity,
+          device_index=device_index,
+          flat_results_aval=flat_results_aval,
+          **params,
+      )
+    else:
+      return _outside_call_outfeed_lowering(
+          ctx, *args,
+          has_token=has_token,
+          identity=identity,
+          flat_results_aval=flat_results_aval,
+          device_index=device_index,
+          **params,
+      )
   else:
     # TODO(necula): It seems that on CPU, with custom call, the device_index
     # does not work, and the callback is always run on device_index=0
     if (device_index != 0 and "cpu" in ctx.module_context.platforms):
       raise ValueError(
           "The device_index feature on CPU works only when using outfeed.")
+
   # We expect the current tokens at the end, inserted by _rewrite_jaxpr.
   assert has_token
   current_token = args[-2]
@@ -1280,7 +1405,10 @@ def _outside_call_lowering(ctx: mlir.LoweringRuleContext,
       f"identity = {identity}")
   return list(results) + [next_token, next_itoken]
 
-mlir.register_lowering(outside_call_p, _outside_call_lowering, platform="cpu")
+if xla_extension_version < 287:
+  mlir.register_lowering(outside_call_p, _outside_call_lowering, platform="cpu")
+else:
+  mlir.register_lowering(outside_call_p, _outside_call_lowering)
 
 def _outside_call_run_callback(
     arrays, device, *,
@@ -1766,7 +1894,7 @@ id_p = core.Primitive("id")
 id_p.multiple_results = True
 id_p.def_impl(lambda *args: args)
 id_p.def_abstract_eval(lambda *args: args)
-xla.register_translation(id_p, lambda ctx, avals_in, avals_out, *args: args)
+mlir.register_lowering(id_p, lambda ctx, *args: args)
 
 dispatch.outfeed_rewriter = lambda j: _rewrite_jaxpr(j, False, False)
 
@@ -1993,7 +2121,7 @@ def _deprecated_stop_outfeed_receiver():
 _deprecation_msg = (
     "The host_callback APIs are deprecated as of March 20, 2024. The functionality "
     "is subsumed by the new JAX external callbacks. "
-    "See https://github.com/google/jax/issues/20385.")
+    "See https://github.com/jax-ml/jax/issues/20385.")
 
 _deprecations = {
     # Added March 20, 2024

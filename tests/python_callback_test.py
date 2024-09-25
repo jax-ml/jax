@@ -1245,7 +1245,7 @@ class IOCallbackTest(jtu.JaxTestCase):
       np.testing.assert_array_equal(shard[0] + 1, shard[1])
 
   def test_batching_with_side_effects(self):
-    # https://github.com/google/jax/issues/20628#issuecomment-2050800195
+    # https://github.com/jax-ml/jax/issues/20628#issuecomment-2050800195
     x_lst = []
     def append_x(x):
       nonlocal x_lst
@@ -1261,7 +1261,7 @@ class IOCallbackTest(jtu.JaxTestCase):
     self.assertAllClose(x_lst, [0., 1., 2., 0., 2., 4.], check_dtypes=False)
 
   def test_batching_with_side_effects_while_loop(self):
-    # https://github.com/google/jax/issues/20628#issuecomment-2050921219
+    # https://github.com/jax-ml/jax/issues/20628#issuecomment-2050921219
     x_lst = []
     def append_x(x):
       nonlocal x_lst

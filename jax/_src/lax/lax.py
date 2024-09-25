@@ -22,7 +22,7 @@ from functools import partial
 import itertools
 import math
 import operator
-from typing import Any, TypeVar, Union, cast as type_cast, overload
+from typing import Any, NamedTuple, TypeVar, Union, cast as type_cast, overload
 import warnings
 
 import numpy as np
@@ -62,6 +62,7 @@ from jax._src.lax.utils import (
   standard_multi_result_abstract_eval, standard_primitive)
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -136,7 +137,7 @@ def asarray(x: ArrayLike) -> Array:
   if isinstance(x, Array):
     return x
   if isinstance(x, (np.ndarray, np.generic, bool, int, float, builtins.complex)):
-    return _convert_element_type(x, weak_type=dtypes.is_weakly_typed(x))
+    return _convert_element_type(x, weak_type=dtypes.is_weakly_typed(x))  # type: ignore[unused-ignore,bad-return-type]
   else:
     raise TypeError(f"asarray: expected ArrayLike, got {x} of type {type(x)}.")
 
@@ -519,7 +520,7 @@ def convert_element_type(operand: ArrayLike,
   Returns:
     An array with the same shape as `operand`, cast elementwise to `new_dtype`.
   """
-  return _convert_element_type(operand, new_dtype, weak_type=False)
+  return _convert_element_type(operand, new_dtype, weak_type=False)  # type: ignore[unused-ignore,bad-return-type]
 
 def _convert_element_type(
     operand: ArrayLike,
@@ -529,17 +530,30 @@ def _convert_element_type(
   if hasattr(operand, '__jax_array__'):
     operand = operand.__jax_array__()
 
-  if (dtypes.issubdtype(new_dtype, dtypes.extended) or
-      dtypes.issubdtype(getattr(operand, 'dtype', None), dtypes.extended)):
-    return convert_element_type_p.bind(
-        operand, new_dtype=new_dtype, weak_type=bool(weak_type),
-        sharding=sharding)
-
-  new_dtype = type_cast(DTypeLike | None, new_dtype)
-
   # Don't canonicalize old_dtype because x64 context might cause
   # un-canonicalized operands to be passed in.
   old_dtype = dtypes.dtype(operand, canonicalize=False)
+
+  if (isinstance(new_dtype, dtypes.ExtendedDType) or
+      isinstance(old_dtype, dtypes.ExtendedDType)):
+    if sharding is not None or weak_type: raise NotImplementedError
+    if new_dtype == old_dtype: return operand
+    if (isinstance(new_dtype, dtypes.ExtendedDType) and
+        isinstance(old_dtype, dtypes.ExtendedDType)):
+      old_rep_dtype = core.physical_element_aval(old_dtype).dtype
+      new_rep_dtype = core.physical_element_aval(new_dtype).dtype
+      raise ValueError(
+          "cannot directly convert between extended dtypes: from "
+          f"{dtype_to_string(old_dtype)} to {dtype_to_string(new_dtype)}. "
+          "Instead, convert to and from their representation dtypes, e.g.:\n"
+          f"{dtype_to_string(old_dtype)} -> {dtype_to_string(old_rep_dtype)} "
+          f"-> {dtype_to_string(new_rep_dtype)} -> {dtype_to_string(new_dtype)}")
+    if isinstance(new_dtype, dtypes.ExtendedDType):
+      return to_edtype_p.bind(operand, edtype=new_dtype)
+    return from_edtype_p.bind(operand, dtype=np.dtype(new_dtype))
+
+  new_dtype = type_cast(DTypeLike | None, new_dtype)
+
   old_weak_type = dtypes.is_weakly_typed(operand)
   if new_dtype is None:
     new_dtype = old_dtype
@@ -695,8 +709,197 @@ PrecisionLike = Union[
     None,
 ]
 
+
+class DotAlgorithm(NamedTuple):
+  """Specify the algorithm used for computing dot products.
+
+  When used as input to :func:`~jax.lax.dot_general`, this data structure is
+  used for controlling the properties of the algorithm used for computing the
+  dot product. This API controls the precision used for the computation, and
+  allows users to access hardware-specific accelerations.
+
+  Support for these algorithms is platform dependent, and using an unsupported
+  algorithm will raise a Python exception when the computation is compiled. The
+  algorithms that are known to be supported on at least some platforms are
+  listed in the :class:`~jax.lax.DotAlgorithm.Preset` enum, and these are a
+  good starting point for experimenting with this API.
+
+  A "dot algorithm" is specified by the following parameters:
+
+  * ``lhs_precision_type`` and ``rhs_precision_type``, the data types that the
+    LHS and RHS of the operation are rounded to.
+  * ``accumulation_type`` the data type used for accumulation.
+  * ``lhs_component_count``, ``rhs_component_count``, and
+    ``num_primitive_operations`` apply to algorithms that decompose the LHS
+    and/or RHS into multiple components and execute multiple operations on
+    those values, usually to emulate a higher precision. For algorithms with no
+    decomposition, these values should be set to ``1``.
+  * ``allow_imprecise_accumulation`` to specify if accumulation in lower
+    precision is permitted for some steps (e.g.
+    ``CUBLASLT_MATMUL_DESC_FAST_ACCUM``).
+
+  The `StableHLO spec <https://openxla.org/stablehlo/spec#dot_general>`_ for
+  the dot operation doesn't require that the precision types be the same as the
+  storage types for the inputs or outputs, but some plaforms may require that
+  these types match. Furthermore, the return type of
+  :func:`~jax.lax.dot_general` is always defined by the ``accumulation_type``
+  parameter of the input algorithm, if specified.
+
+  Examples:
+
+    Accumulate two 16-bit floats using a 32-bit float accumulator:
+
+    >>> algorithm = DotAlgorithm(
+    ...     lhs_precision_type=np.float16,
+    ...     rhs_precision_type=np.float16,
+    ...     accumulation_type=np.float32,
+    ... )
+    >>> lhs = jnp.array([1.0, 2.0, 3.0, 4.0], dtype=np.float16)
+    >>> rhs = jnp.array([1.0, 2.0, 3.0, 4.0], dtype=np.float16)
+    >>> dot(lhs, rhs, algorithm=algorithm)  # doctest: +SKIP
+    array([ 1.,  4.,  9., 16.], dtype=float32)
+
+    Or, equivalently, using a preset:
+
+    >>> algorithm = DotAlgorithm.Preset.F16_F16_F32
+    >>> dot(lhs, rhs, algorithm=algorithm)  # doctest: +SKIP
+    array([ 1.,  4.,  9., 16.], dtype=float32)
+  """
+
+  lhs_precision_type: DTypeLike
+  rhs_precision_type: DTypeLike
+  accumulation_type: DTypeLike
+  lhs_component_count: int = 1
+  rhs_component_count: int = 1
+  num_primitive_operations: int = 1
+  allow_imprecise_accumulation: bool = False
+
+  def _convert_to_hlo_attr(self, lhs_dtype: DTypeLike,
+                           rhs_dtype: DTypeLike) -> hlo.DotAlgorithm:
+    del lhs_dtype, rhs_dtype  # unused
+    return hlo.DotAlgorithm.get(
+        mlir.dtype_to_ir_type(dtypes.dtype(self.lhs_precision_type)),
+        mlir.dtype_to_ir_type(dtypes.dtype(self.rhs_precision_type)),
+        mlir.dtype_to_ir_type(dtypes.dtype(self.accumulation_type)),
+        self.lhs_component_count,
+        self.rhs_component_count,
+        self.num_primitive_operations,
+        self.allow_imprecise_accumulation,
+    )
+
+  # mypy doesn't currently support nested classes in a NamedTuple definition.
+  class Preset(enum.Enum):  # type: ignore[misc]
+    DEFAULT = 0
+    ANY_F8_ANY_F8_F32 = 1
+    ANY_F8_ANY_F8_F32_FAST_ACCUM = 2
+    F16_F16_F16 = 3
+    F16_F16_F32 = 4
+    BF16_BF16_BF16 = 5
+    BF16_BF16_F32 = 6
+    BF16_BF16_F32_X3 = 7
+    BF16_BF16_F32_X6 = 8
+    TF32_TF32_F32 = 9
+    TF32_TF32_F32_X3 = 10
+    F32_F32_F32 = 11
+    F64_F64_F64 = 12
+
+    def __repr__(self) -> str:
+      return f'{self.__class__.__name__}.{self.name}'
+
+    def __str__(self) -> str:
+      return self.name
+
+    @property
+    def accumulation_type(self) -> DTypeLike:
+      match self:
+        case DotAlgorithm.Preset.DEFAULT:
+          raise TypeError(
+              "The default dot algorithm does not have an accumulation type.")
+        case DotAlgorithm.Preset.F16_F16_F16:
+          return np.float16
+        case DotAlgorithm.Preset.BF16_BF16_BF16:
+          return dtypes.bfloat16
+        case DotAlgorithm.Preset.F64_F64_F64:
+          return np.float64
+        case _:
+          return np.float32
+
+    def _convert_to_hlo_attr(self, lhs_dtype: DTypeLike,
+                            rhs_dtype: DTypeLike) -> hlo.DotAlgorithm | None:
+      if self == DotAlgorithm.Preset.DEFAULT:
+        return None
+
+      if self in (DotAlgorithm.Preset.ANY_F8_ANY_F8_F32,
+                  DotAlgorithm.Preset.ANY_F8_ANY_F8_F32_FAST_ACCUM):
+        fp8_dtypes = (np.dtype(dtypes.float8_e4m3b11fnuz),
+                      np.dtype(dtypes.float8_e4m3fn),
+                      np.dtype(dtypes.float8_e4m3fnuz),
+                      np.dtype(dtypes.float8_e5m2),
+                      np.dtype(dtypes.float8_e5m2fnuz))
+        if lhs_dtype not in fp8_dtypes or rhs_dtype not in fp8_dtypes:
+          raise ValueError(
+              f"The dot algorithm '{self}' requires both inputs to have float8 "
+              f"dtypes. Got {lhs_dtype} and {rhs_dtype} instead.")
+        lhs = mlir.dtype_to_ir_type(dtypes.dtype(lhs_dtype))
+        rhs = mlir.dtype_to_ir_type(dtypes.dtype(rhs_dtype))
+        acc = ir.F32Type.get()
+        return hlo.DotAlgorithm.get(
+            lhs, rhs, acc, 1, 1, 1,
+            self == DotAlgorithm.Preset.ANY_F8_ANY_F8_F32_FAST_ACCUM)
+
+      else:
+        f16 = ir.F16Type.get()
+        f32 = ir.F32Type.get()
+        f64 = ir.F64Type.get()
+        bf16 = ir.BF16Type.get()
+        tf32 = ir.FloatTF32Type.get()
+        match self:
+          case DotAlgorithm.Preset.F16_F16_F16:
+            return hlo.DotAlgorithm.get(f16, f16, f16, 1, 1, 1, False)
+          case DotAlgorithm.Preset.F16_F16_F32:
+            return hlo.DotAlgorithm.get(f16, f16, f32, 1, 1, 1, False)
+          case DotAlgorithm.Preset.BF16_BF16_BF16:
+            return hlo.DotAlgorithm.get(bf16, bf16, bf16, 1, 1, 1, False)
+          case DotAlgorithm.Preset.BF16_BF16_F32:
+            return hlo.DotAlgorithm.get(bf16, bf16, f32, 1, 1, 1, False)
+          case DotAlgorithm.Preset.BF16_BF16_F32_X3:
+            return hlo.DotAlgorithm.get(bf16, bf16, f32, 1, 1, 3, False)
+          case DotAlgorithm.Preset.BF16_BF16_F32_X6:
+            return hlo.DotAlgorithm.get(bf16, bf16, f32, 1, 1, 6, False)
+          case DotAlgorithm.Preset.TF32_TF32_F32:
+            return hlo.DotAlgorithm.get(tf32, tf32, f32, 1, 1, 1, False)
+          case DotAlgorithm.Preset.TF32_TF32_F32_X3:
+            return hlo.DotAlgorithm.get(tf32, tf32, f32, 1, 1, 3, False)
+          case DotAlgorithm.Preset.F32_F32_F32:
+            return hlo.DotAlgorithm.get(f32, f32, f32, 1, 1, 1, False)
+          case DotAlgorithm.Preset.F64_F64_F64:
+            return hlo.DotAlgorithm.get(f64, f64, f64, 1, 1, 1, False)
+          case _:
+            raise NotImplementedError("unreachable")
+
+
+DotAlgorithmLike = Union[
+    DotAlgorithm,
+    DotAlgorithm.Preset,
+    str,
+    None,
+]
+_DotAlgorithmLike = Union[
+    DotAlgorithm,
+    DotAlgorithm.Preset,
+    None,
+]
+DotTransposeAlgorithmLike = Union[
+    DotAlgorithmLike,
+    tuple[DotAlgorithmLike, DotAlgorithmLike],
+]
+DotTransposeAlgorithm = tuple[_DotAlgorithmLike, _DotAlgorithmLike]
+
+
 def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
-        preferred_element_type: DTypeLike | None = None) -> Array:
+        preferred_element_type: DTypeLike | None = None,
+        algorithm: DotAlgorithmLike = None,
+        transpose_algorithm: DotTransposeAlgorithmLike = None) -> Array:
   """Vector/vector, matrix/vector, and matrix/matrix multiplication.
 
   Wraps XLA's `Dot
@@ -715,6 +918,17 @@ def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
     preferred_element_type: Optional. Either ``None``, which means the default
       accumulation type for the input types, or a datatype, indicating to
       accumulate results to and return a result with that datatype.
+    algorithm: Optional. Specify the algorithm used for accumulating the dot
+      product. See :class:`~jax.lax.DotAlgorithm` for more details. This argument
+      cannot be used with ``precision`` or ``preferred_element_type``.
+    transpose_algorithm: Optional. This allows specifying the algorithm used when
+      this operation is transposed, typically as part of reverse-mode automatic
+      differentiation. This argument can either be a single
+      :class:`~jax.lax.DotAlgorithm` or a tuple of two
+      :class:`~jax.lax.DotAlgorithm`s, in which case the two elements define the
+      algorithm for transposing the LHS and RHS, respectively.
+      ``transpose_algorithm`` must be explicitly specified when transposing a
+      dot product where a specific ``algorithm`` was used on the forward pass.
 
   Returns:
     An array containing the product.
@@ -722,7 +936,9 @@ def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
   if 1 <= lhs.ndim <= 2 and 1 <= rhs.ndim <= 2 and core.definitely_equal(lhs.shape[-1], rhs.shape[0]):
     return dot_general(lhs, rhs, (((lhs.ndim - 1,), (0,)), ((), ())),
                        precision=precision,
-                       preferred_element_type=preferred_element_type)
+                       preferred_element_type=preferred_element_type,
+                       algorithm=algorithm,
+                       transpose_algorithm=transpose_algorithm)
   else:
     raise TypeError("Incompatible shapes for dot: got {} and {}.".format(
         lhs.shape, rhs.shape))
@@ -733,7 +949,9 @@ DotDimensionNumbers = tuple[tuple[Sequence[int], Sequence[int]],
 
 def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionNumbers,
                 precision: PrecisionLike = None,
-                preferred_element_type: DTypeLike | None = None) -> Array:
+                preferred_element_type: DTypeLike | None = None,
+                algorithm: DotAlgorithmLike = None,
+                transpose_algorithm: DotTransposeAlgorithmLike = None) -> Array:
   """General dot product/contraction operator.
 
   Wraps XLA's `DotGeneral
@@ -760,6 +978,17 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
     preferred_element_type: Optional. Either ``None``, which means the default
       accumulation type for the input types, or a datatype, indicating to
       accumulate results to and return a result with that datatype.
+    algorithm: Optional. Specify the algorithm used for accumulating the dot
+      product. See :class:`~jax.lax.DotAlgorithm` for more details. This argument
+      cannot be used with ``precision`` or ``preferred_element_type``.
+    transpose_algorithm: Optional. This allows specifying the algorithm used when
+      this operation is transposed, typically as part of reverse-mode automatic
+      differentiation. This argument can either be a single
+      :class:`~jax.lax.DotAlgorithm` or a tuple of two
+      :class:`~jax.lax.DotAlgorithm`s, in which case the two elements define the
+      algorithm for transposing the LHS and RHS, respectively.
+      ``transpose_algorithm`` must be explicitly specified when transposing a
+      dot product where a specific ``algorithm`` was used on the forward pass.
 
   Returns:
     An array whose first dimensions are the (shared) batch dimensions, followed by
@@ -777,7 +1006,9 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
   return dot_general_p.bind(lhs, rhs,
                             dimension_numbers=(cdims, bdims),
                             precision=canonicalize_precision(precision),
-                            preferred_element_type=preferred_element_type)
+                            preferred_element_type=preferred_element_type,
+                            algorithm=canonicalize_dot_algorithm(algorithm),
+                            transpose_algorithm=canonicalize_dot_transpose_algorithm(transpose_algorithm))
 
 
 def ragged_dot(
@@ -1076,7 +1307,7 @@ def _reduction_jaxpr(computation, aval):
   if any(isinstance(c, core.Tracer) for c in consts):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "
-        "at https://github.com/google/jax.")
+        "at https://github.com/jax-ml/jax.")
   return jaxpr, tuple(consts)
 
 @cache()
@@ -1089,7 +1320,7 @@ def _variadic_reduction_jaxpr(computation, flat_avals, aval_tree):
   if any(isinstance(c, core.Tracer) for c in consts):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "
-        "at https://github.com/google/jax.")
+        "at https://github.com/jax-ml/jax.")
   return core.ClosedJaxpr(jaxpr, consts), out_tree()
 
 def _get_monoid_reducer(monoid_op: Callable,
@@ -1372,18 +1603,43 @@ def stop_gradient(x: T) -> T:
   argument `x` unchanged. However, ``stop_gradient`` prevents the flow of
   gradients during forward or reverse-mode automatic differentiation. If there
   are multiple nested gradient computations, ``stop_gradient`` stops gradients
-  for all of them.
+  for all of them. For some discussion of where this is useful, refer to
+  :ref:`stopping-gradients`.
 
-  For example:
+  Args:
+    x: array or pytree of arrays
 
-  >>> jax.grad(lambda x: x**2)(3.)
-  Array(6., dtype=float32, weak_type=True)
-  >>> jax.grad(lambda x: jax.lax.stop_gradient(x)**2)(3.)
-  Array(0., dtype=float32, weak_type=True)
-  >>> jax.grad(jax.grad(lambda x: x**2))(3.)
-  Array(2., dtype=float32, weak_type=True)
-  >>> jax.grad(jax.grad(lambda x: jax.lax.stop_gradient(x)**2))(3.)
-  Array(0., dtype=float32, weak_type=True)
+  Returns:
+    input value is returned unchanged, but within autodiff will be treated as
+    a constant.
+
+  Examples:
+    Consider a simple function that returns the square of the input value:
+
+    >>> def f1(x):
+    ...   return x ** 2
+    >>> x = jnp.float32(3.0)
+    >>> f1(x)
+    Array(9.0, dtype=float32)
+    >>> jax.grad(f1)(x)
+    Array(6.0, dtype=float32)
+
+    The same function with ``stop_gradient`` around ``x`` will be equivalent
+    under normal evaluation, but return a zero gradient because ``x`` is
+    effectively treated as a constant:
+
+    >>> def f2(x):
+    ...   return jax.lax.stop_gradient(x) ** 2
+    >>> f2(x)
+    Array(9.0, dtype=float32)
+    >>> jax.grad(f2)(x)
+    Array(0.0, dtype=float32)
+
+    This is used in a number of places within the JAX codebase; for example
+    :func:`jax.nn.softmax` internally normalizes the input by its maximum
+    value, and this maximum value is wrapped in ``stop_gradient`` for
+    efficiency. Refer to :ref:`stopping-gradients` for more discussion of
+    the applicability of ``stop_gradient``.
   """
   def stop(x):
     # only bind primitive on inexact dtypes, to avoid some staging
@@ -2014,7 +2270,15 @@ def _tan_impl(x):
 
 tan_p = standard_unop(_float | _complex, 'tan')
 ad.defjvp2(tan_p, lambda g, ans, x: mul(g, _const(x, 1) + square(ans)))
-mlir.register_lowering(tan_p, partial(_nary_lower_hlo, chlo.tan))
+# TODO(b/368011034): Remove after jaxlib 0.4.34 release. In 0.4.33, this
+# lowering is mostly supported, but it fails on export or with the PJRT plugin
+# because those modes target an older StableHLO version, and the
+# compatibility updates from https://github.com/openxla/xla/pull/16649 aren't
+# included in the 0.4.33 release.
+if jaxlib_version <= (0, 4, 33):
+  mlir.register_lowering(tan_p, partial(_nary_lower_hlo, chlo.tan))
+else:
+  mlir.register_lowering(tan_p, partial(_nary_lower_hlo, hlo.tan))
 
 def asin_impl(x):
   if dtypes.issubdtype(_dtype(x), np.complexfloating):
@@ -2300,7 +2564,7 @@ def _add_jvp(primals, tangents):
   xdot, ydot = tangents
   primal_out = add(x, y)
   if type(xdot) is type(ydot) is ad_util.Zero:
-    return primal_out, ad_util.Zero.from_value(primal_out)
+    return primal_out, ad_util.Zero.from_primal_value(primal_out)
   if type(xdot) is ad_util.Zero:
     return primal_out, _maybe_broadcast(primal_out.shape, ydot)
   elif type(ydot) is ad_util.Zero:
@@ -2331,7 +2595,7 @@ def _sub_jvp(primals, tangents):
   xdot, ydot = tangents
   primal_out = sub(x, y)
   if type(xdot) is type(ydot) is ad_util.Zero:
-    return primal_out, ad_util.Zero.from_value(primal_out)
+    return primal_out, ad_util.Zero.from_primal_value(primal_out)
   if type(xdot) is ad_util.Zero:
     return primal_out, _maybe_broadcast(primal_out.shape, neg(ydot))
   elif type(ydot) is ad_util.Zero:
@@ -2526,14 +2790,6 @@ def _convert_element_type_sharding_rule(operand, *, new_dtype, weak_type,
 
 def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type,
                                      sharding):
-  if (operand.dtype != new_dtype and
-      ((dtypes.issubdtype(operand.dtype, dtypes.extended) and
-        not operand.dtype._rules.convert_from(operand.dtype, new_dtype)) or
-       (dtypes.issubdtype(new_dtype, dtypes.extended) and
-        not new_dtype._rules.convert_to(operand.dtype, new_dtype)))):
-    raise ValueError(
-        f"Cannot convert_element_type from {dtype_to_string(operand.dtype)} "
-        f"to {dtype_to_string(new_dtype)}")
   return new_dtype
 
 def _convert_element_type_weak_type_rule(operand, *, new_dtype, weak_type,
@@ -2553,13 +2809,13 @@ def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type,
     return [convert_element_type_p.bind(
         ct, new_dtype=old_dtype, weak_type=old_weak_type, sharding=sharding)]
 
-def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype, weak_type,
-                                   sharding):
-  if core.primal_dtype_to_tangent_dtype(new_dtype) == dtypes.float0:
-    tangent_aval = core.raise_to_shaped(core.get_aval(tangent))
-    return ad_util.Zero(tangent_aval.update(dtype=dtypes.float0, weak_type=False))
+def _convert_element_type_jvp_rule(tangent, primal_result, operand, *,
+                                   new_dtype, weak_type, sharding):
+  new_tangent_dtype = core.primal_dtype_to_tangent_dtype(new_dtype)
+  if new_tangent_dtype == dtypes.float0:
+    return ad_util.Zero.from_primal_value(primal_result)
   else:
-    return convert_element_type_p.bind(tangent, new_dtype=new_dtype,
+    return convert_element_type_p.bind(tangent, new_dtype=new_tangent_dtype,
                                        weak_type=weak_type, sharding=sharding)
 
 def _convert_elt_type_folding_rule(consts, eqn):
@@ -2619,7 +2875,7 @@ convert_element_type_p.def_abstract_eval(
             _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
             _convert_element_type_weak_type_rule,
             _convert_element_type_sharding_rule))
-ad.defjvp(convert_element_type_p, _convert_element_type_jvp_rule)
+ad.defjvp2(convert_element_type_p, _convert_element_type_jvp_rule)
 ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 batching.defvectorized(convert_element_type_p)
 pe.const_fold_rules[convert_element_type_p] = _convert_elt_type_folding_rule
@@ -2640,6 +2896,91 @@ def _convert_element_type_lower(ctx, operand, *, new_dtype, weak_type,
   return [mlir.convert_hlo(ctx, operand, aval_in, aval_out)]
 
 mlir.register_lowering(convert_element_type_p, _convert_element_type_lower)
+
+
+def _to_edtype_abstract_eval(x, *, edtype):
+  assert (isinstance(edtype, dtypes.ExtendedDType) and
+          not isinstance(x.dtype, dtypes.ExtendedDType))
+  # For backward compatibility, if the edtype rules have a `convert_to` method,
+  # use that rather than looking for an `allow_conversion: bool` attribute.
+  if convert_to := getattr(edtype._rules, 'convert_to', None):
+    allow_conversion = convert_to(x.dtype, edtype)
+  else:
+    allow_conversion = edtype._rules.allow_conversion
+  if not allow_conversion:
+    raise ValueError(
+        f"Cannot convert_element_type from {dtype_to_string(x.dtype)} "
+        f"to {dtype_to_string(edtype)}")
+  rep_aval = core.physical_element_aval(edtype)
+  if x.dtype != rep_aval.dtype:
+    raise ValueError(
+        "can only convert to extended dtype from its representation dtype, "
+        f"but tried to convert from {dtype_to_string(x.dtype)} to "
+        f"{dtype_to_string(edtype)} which doesn't match the representation type "
+        f"{dtype_to_string(rep_aval.dtype)}.")
+  if x.ndim < rep_aval.ndim:
+    raise ValueError(
+        "can only convert to extended dtype from an array of its "
+        f"representation type, but the extended dtype {dtype_to_string(edtype)}"
+        f" has a representation shape {rep_aval.shape} (rank {rep_aval.ndim}) "
+        f"while the given representation array has shape {x.shape} (rank "
+        f"{x.ndim} < {rep_aval.ndim}).")
+  n = x.ndim - rep_aval.ndim
+  shape_prefix, shape_suffix = x.shape[:n], x.shape[n:]
+  if shape_suffix != rep_aval.shape:
+    raise ValueError(
+        "can only convert to extended dtype from an array of its "
+        f"representation type, but the extended dtype {dtype_to_string(edtype)}"
+        f" has a representation shape {rep_aval.shape} while the given "
+        f"representation array has shape {x.shape}, so the shape suffix "
+        f"does not match: given {shape_suffix} but required {rep_aval.shape}.")
+  return core.raise_to_shaped(x).update(shape=shape_prefix, dtype=edtype)
+
+to_edtype_p = Primitive('to_edtype')
+to_edtype_p.def_impl(partial(dispatch.apply_primitive, to_edtype_p))
+to_edtype_p.def_abstract_eval(_to_edtype_abstract_eval)
+ad.defjvp(to_edtype_p,
+          lambda t, x, edtype:
+          convert_element_type(t, core.primal_dtype_to_tangent_dtype(edtype)))
+ad.primitive_transposes[to_edtype_p] = \
+    lambda ct, x, edtype: [from_edtype_p.bind(ct, dtype=x.aval.dtype)]  # type: ignore
+batching.defvectorized(to_edtype_p)
+mlir.register_lowering(to_edtype_p, lambda _, x, **__: [x])
+
+
+def _from_edtype_abstract_eval(x, *, dtype):
+  assert (isinstance(x.dtype, dtypes.ExtendedDType) and
+          not isinstance(dtype, dtypes.ExtendedDType))
+  if convert_from := getattr(x.dtype._rules, 'convert_from', None):
+    allow_conversion = convert_from(x.dtype, dtype)
+  else:
+    allow_conversion = x.dtype._rules.allow_conversion
+  if not allow_conversion:
+    raise ValueError(
+        f"Cannot convert_element_type from {dtype_to_string(x.dtype)} "
+        f"to {dtype_to_string(dtype)}")
+  rep_aval = core.physical_element_aval(x.dtype)
+  if rep_aval.dtype != dtype:
+    raise ValueError(
+        "can only convert from extended dtype to its representation dtype, "
+        f"but tried to convert from {dtype_to_string(x.dtype)} to "
+        f"{dtype_to_string(dtype)} which doesn't match the representation type "
+        f"{dtype_to_string(rep_aval.dtype)}.")
+  if all(isinstance(d, int) for d in x.shape):
+    return core.ShapedArray(shape=(*x.shape, *rep_aval.shape), dtype=dtype)
+  else:
+    raise NotImplementedError
+
+from_edtype_p = Primitive('from_edtype')
+from_edtype_p.def_impl(partial(dispatch.apply_primitive, from_edtype_p))
+from_edtype_p.def_abstract_eval(_from_edtype_abstract_eval)
+ad.defjvp(from_edtype_p,
+          lambda t, x, dtype:
+          convert_element_type(t, core.primal_dtype_to_tangent_dtype(dtype)))
+ad.primitive_transposes[from_edtype_p] = \
+    lambda ct, x, dtype: [to_edtype_p.bind(ct, edtype=x.dtype)]
+batching.defvectorized(from_edtype_p)
+mlir.register_lowering(from_edtype_p, lambda _, x, **__: [x])
 
 
 def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
@@ -2714,7 +3055,9 @@ def _validate_preferred_element_type(input_dtype, preferred_element_type):
 
 
 def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision,
-                            preferred_element_type: DTypeLike | None):
+                            preferred_element_type: DTypeLike | None,
+                            algorithm: _DotAlgorithmLike = None,
+                            transpose_algorithm: DotTransposeAlgorithm | None = None):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   if not all(np.all(np.greater_equal(d, 0)) and np.all(np.less(d, lhs.ndim))
              for d in (lhs_contracting, lhs_batch)):
@@ -2790,7 +3133,10 @@ def tuple_delete(tup, idx):
 
 
 def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
-                            preferred_element_type: DTypeLike | None):
+                            preferred_element_type: DTypeLike | None,
+                            algorithm: _DotAlgorithmLike = None,
+                            transpose_algorithm: DotTransposeAlgorithm | None = None):
+  del dimension_numbers, precision  # unused
   # We're mostly matching XLA's logic here, namely in shape_inference.cc and
   # primitive_util.h's HigherPrecisionType, e.g.
   # https://github.com/openxla/xla/blob/ea3a841768d0dcf192e5820c9b25c34c73f2226a/xla/primitive_util.h#L329
@@ -2811,6 +3157,21 @@ def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
       raise TypeError(
           f"lax.dot_general argument type error: {lhs.dtype}, {rhs.dtype}")
     result_dtype = lhs.dtype
+
+  if transpose_algorithm is not None and algorithm is None:
+    raise ValueError(
+        "When the algorithm argument to dot_general is None, the "
+        "transpose_algorithm argument is unused and must also be None.")
+
+  if algorithm is not None and algorithm != DotAlgorithm.Preset.DEFAULT:
+    if preferred_element_type is not None:
+      raise ValueError(
+          "The preferred_element_type and algorithm arguments to dot_general "
+          "cannot both be specified.")
+
+    # This is used to ensure that the output type is equal to the accumulation
+    # type whenever an algorithm is specified.
+    preferred_element_type = algorithm.accumulation_type
 
   return _maybe_upcast(result_dtype, preferred_element_type)
 
@@ -2835,6 +3196,8 @@ def _maybe_upcast(result_dtype, preferred_element_type):
 
 def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
                                preferred_element_type: DTypeLike | None,
+                               algorithm: _DotAlgorithmLike = None,
+                               transpose_algorithm: DotTransposeAlgorithm | None = None,
                                swap_ans=False):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   x_ndim = x.aval.ndim
@@ -2847,20 +3210,35 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
   dims = ((ans_y, y_kept), (ans_batch, y_batch))
   x_contract_sorted_by_y = list(np.take(x_contract, np.argsort(y_contract)))
   out_axes = np.argsort(list(x_batch) + x_kept + x_contract_sorted_by_y)
+  if algorithm is not None:
+    if transpose_algorithm is None or transpose_algorithm[0] is None:
+      raise ValueError(
+          "When a dot_general algorithm is specified on the forward pass, "
+          "transpose_algorithm must be specified for the backward pass.")
+    lhs_alg, rhs_alg = transpose_algorithm
+    transpose_algorithm = (algorithm, rhs_alg)
+    algorithm = lhs_alg
   x_bar = transpose(dot_general(g, y, dims, precision=precision,
-                                preferred_element_type=preferred_element_type),
+                                preferred_element_type=preferred_element_type,
+                                algorithm=algorithm,
+                                transpose_algorithm=transpose_algorithm),
                     tuple(out_axes))
   if x_bar.dtype != x.aval.dtype:
     x_bar = _convert_element_type(x_bar, x.aval.dtype, x.aval.weak_type)
   return x_bar
 
 def _dot_general_transpose_rhs(g, x, y, *, dimension_numbers, precision,
-                               preferred_element_type: DTypeLike | None):
+                               preferred_element_type: DTypeLike | None,
+                               algorithm: _DotAlgorithmLike = None,
+                               transpose_algorithm: DotTransposeAlgorithm | None = None):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   swapped_dimension_numbers = ((y_contract, x_contract), (y_batch, x_batch))
+  transpose_algorithm = None if transpose_algorithm is None else (
+      transpose_algorithm[1], transpose_algorithm[0])
   y_bar = _dot_general_transpose_lhs(
     g, y, x, dimension_numbers=swapped_dimension_numbers, precision=precision,
-    preferred_element_type=preferred_element_type,
+    preferred_element_type=preferred_element_type, algorithm=algorithm,
+    transpose_algorithm=transpose_algorithm,
     swap_ans=True)
   if y_bar.dtype != y.aval.dtype:
     y_bar = _convert_element_type(y_bar, y.aval.dtype, y.aval.weak_type)
@@ -2868,7 +3246,9 @@ def _dot_general_transpose_rhs(g, x, y, *, dimension_numbers, precision,
 
 def _dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers,
                             precision,
-                            preferred_element_type: DTypeLike | None):
+                            preferred_element_type: DTypeLike | None,
+                            algorithm: _DotAlgorithmLike = None,
+                            transpose_algorithm: DotTransposeAlgorithm | None = None):
   lhs, rhs = batched_args
   lbd, rbd = batch_dims
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
@@ -2894,7 +3274,9 @@ def _dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers,
     rhs_shape = np.shape(rhs)
   batched_out = dot_general(lhs, rhs, new_dimension_numbers,
                             precision=precision,
-                            preferred_element_type=preferred_element_type)
+                            preferred_element_type=preferred_element_type,
+                            algorithm=algorithm,
+                            transpose_algorithm=transpose_algorithm)
   result_batch_dim = batching.shape_as_bdim(
       result_stack_dim,
       _dot_general_shape_computation(lhs_shape, rhs_shape, new_dimension_numbers))
@@ -2991,9 +3373,19 @@ def precision_attr(precision: Precision) -> ir.ArrayAttr:
       [hlo.PrecisionAttr.get(str(p)) for p in full_precision])
 
 
+def dot_algorithm_attr(algorithm: _DotAlgorithmLike, lhs_dtype: DTypeLike,
+                       rhs_dtype: DTypeLike) -> hlo.DotAlgorithm | None:
+  if algorithm is None:
+    return None
+  return algorithm._convert_to_hlo_attr(lhs_dtype, rhs_dtype)
+
+
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                        precision, preferred_element_type: np.dtype | None,
+                       algorithm: _DotAlgorithmLike = None,
+                       transpose_algorithm: DotTransposeAlgorithm | None = None,
                        platform: str = "default"):
+  del transpose_algorithm  # unused
   def _is_fp8_mixed_precision_matmul(_lhs_dtypes, _rhs_dtypes):
     fp8_dtypes = (dtypes.float8_e4m3fn, dtypes.float8_e5m2,
                   dtypes.float8_e5m2fnuz, dtypes.float8_e4m3fnuz)
@@ -3034,13 +3426,30 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
       rhs_batching_dimensions=list(rhs_batch),
       lhs_contracting_dimensions=list(lhs_contracting),
       rhs_contracting_dimensions=list(rhs_contracting))
+
+  if algorithm is not None and precision not in {
+      None, Precision.DEFAULT, (Precision.DEFAULT, Precision.DEFAULT)}:
+    raise ValueError(
+        "The dot_general precision must be None or DEFAULT when an algorithm "
+        "is specified.")
+  if jaxlib_version <= (0, 4, 33):
+    if algorithm is not None:
+      raise ValueError(
+          "The dot_general algorithm parameter is only supported for jaxlib "
+          "versions larger than 0.4.33.")
+    algorithm_kwargs = {}
+  else:
+    algorithm_kwargs = {"algorithm": dot_algorithm_attr(algorithm, lhs_dtype,
+                                                        rhs_dtype)}
   return [
       hlo.dot_general(
           mlir.aval_to_ir_type(aval_out),
           lhs,
           rhs,
           dot_dnums,
-          precision_config=precision_attr(precision))
+          precision_config=precision_attr(precision),
+          **algorithm_kwargs,
+      )
   ]
 
 mlir.register_lowering(dot_general_p, _dot_general_lower)
@@ -3065,11 +3474,13 @@ def _ragged_dot_shape_rule(lhs: Array, rhs: Array, group_sizes: Array, **_) -> S
 _RAGGED_DOT_DOT_DIMENSION_NUMBERS: DotDimensionNumbers = (([2, 0], [1, 0]), ([], []))
 
 def _ragged_dot_dtype_rule(lhs: Array, rhs: Array, group_sizes: Array,
-                           precision,                          preferred_element_type: DTypeLike | None, **_) -> np.dtype:
+                           precision, preferred_element_type: DTypeLike | None, **_) -> np.dtype:
   if not dtypes.issubdtype(group_sizes.dtype, np.integer):
     raise TypeError("ragged_dot requires that group_sizes.dtype is subtype of np.integer.")
   # defer the output dtype to dot_general, which is part of the _ragged_dot_impl.
-  return _dot_general_dtype_rule(lhs, rhs, dimension_numbers=_RAGGED_DOT_DOT_DIMENSION_NUMBERS, precision=precision, preferred_element_type=preferred_element_type)
+  return _dot_general_dtype_rule(lhs, rhs, dimension_numbers=_RAGGED_DOT_DOT_DIMENSION_NUMBERS,
+                                 precision=precision, preferred_element_type=preferred_element_type,
+                                 algorithm=None, transpose_algorithm=None)
 
 
 def _ragged_dot_jvp_rule(
@@ -3355,7 +3766,7 @@ def _broadcast_in_dim_jvp_rule(primals, tangents, *, shape, broadcast_dimensions
   y = broadcast_in_dim_p.bind(operand, *dyn_shape, shape=shape,
                               broadcast_dimensions=broadcast_dimensions)
   if type(operand_dot) is ad_util.Zero:
-    y_dot = ad_util.Zero.from_value(y)
+    y_dot = ad_util.Zero.from_primal_value(y)
   else:
     y_dot = broadcast_in_dim_p.bind(operand_dot, *dyn_shape, shape=shape,
                                     broadcast_dimensions=broadcast_dimensions)
@@ -3832,8 +4243,7 @@ def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
 def _transpose_lower(ctx, x, *, permutation):
   aval_out, = ctx.avals_out
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    elt_shape = aval_out.dtype._rules.physical_element_aval(
-        aval_out.dtype).shape
+    elt_shape = core.physical_element_aval(aval_out.dtype).shape
     trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]
     permutation = [*permutation, *trailing_dims]
   return [hlo.transpose(x, mlir.dense_int_array(permutation))]
@@ -4525,7 +4935,7 @@ def _top_k_jvp(primals, tangents, *, k):
   tangent, = tangents
   primals_out = top_k(operand, k)
   if type(tangent) is ad_util.Zero:
-    tangent_out = ad_util.Zero.from_value(primals_out[0])
+    tangent_out = ad_util.Zero.from_primal_value(primals_out[0])
   else:
     _, k_idxs = primals_out
     idx_shape = k_idxs.shape
@@ -4544,7 +4954,7 @@ def _top_k_jvp(primals, tangents, *, k):
       collapsed_slice_dims=tuple(range(rank)),
       start_index_map=tuple(range(rank)))
     tangent_out = slicing.gather(tangent, gather_indices, dnums, slice_sizes)
-  return primals_out, (tangent_out, ad_util.Zero.from_value(primals_out[1]))
+  return primals_out, (tangent_out, ad_util.Zero.from_primal_value(primals_out[1]))
 
 def _top_k_batch_rule(batched_args, batch_dims, *, k):
   operand, = batched_args
@@ -4580,7 +4990,7 @@ batching.primitive_batchers[top_k_p] = _top_k_batch_rule
 def _stop_gradient_jvp_rule(primals, tangents):
   # if we don't call stop_gradient here, we'd only peel off one autodiff tracer
   x, = primals
-  return stop_gradient(x), ad_util.Zero.from_value(x)
+  return stop_gradient(x), ad_util.Zero.from_primal_value(x)
 
 def _stop_gradient_batch_rule(batched_args, batch_dims):
   x, = batched_args
@@ -4902,7 +5312,7 @@ def _copy_impl_pmap_sharding(sharded_dim, *args, **kwargs):
   return tree_util.tree_unflatten(p.out_tree(), out_flat)
 
 
-# TODO(https://github.com/google/jax/issues/13552): Look into making this a
+# TODO(https://github.com/jax-ml/jax/issues/13552): Look into making this a
 # method on jax.Array so that we can bypass the XLA compilation here.
 def _copy_impl(prim, *args, **kwargs):
   a, = args
@@ -5267,6 +5677,29 @@ def canonicalize_precision(precision: PrecisionLike) -> tuple[Precision, Precisi
         "a lax.Precision value or a tuple of two lax.Precision values or "
         f"strings; got {precision}.")
 
+def canonicalize_dot_algorithm(algorithm: DotAlgorithmLike) -> _DotAlgorithmLike:
+  if isinstance(algorithm, str):
+    algorithm = DotAlgorithm.Preset[algorithm]
+  if algorithm is None or algorithm == DotAlgorithm.Preset.DEFAULT:
+    return None
+  return algorithm
+
+def canonicalize_dot_transpose_algorithm(
+    algorithm: DotTransposeAlgorithmLike) -> DotTransposeAlgorithm | None:
+  if algorithm is None:
+    return None
+  elif isinstance(algorithm, DotAlgorithm):
+    return (algorithm, algorithm)
+  elif isinstance(algorithm, tuple):
+    if len(algorithm) != 2:
+      raise ValueError(
+          "The transpose_algorithm argument must be a single value or a tuple "
+          f"of two values; got {algorithm}.")
+    return (canonicalize_dot_algorithm(algorithm[0]),
+            canonicalize_dot_algorithm(algorithm[1]))
+  algorithm = canonicalize_dot_algorithm(algorithm)
+  return (algorithm, algorithm)
+
 def _balanced_eq(x, z, y):
   return div(select(_eq_meet(x, z), _ones(z), _zeros(z)),
              select(_eq_meet(y, z), _twos(z), _ones(z)))
@@ -5310,6 +5743,8 @@ batching.defvectorized(tie_p)
 
 
 class BIntRules:
+  allow_conversion: bool = True
+
   @staticmethod
   def physical_element_aval(dtype) -> core.ShapedArray:
     return core.ShapedArray((), np.dtype('int32'))
@@ -5336,13 +5771,61 @@ class BIntRules:
       return core.DArray(aval, phys_handler(bufs))
     return handler
 
-  @staticmethod
-  def convert_from(bint_dtype, other_dtype) -> bool:
-    return other_dtype in (np.dtype('int32'), np.dtype('int64'))
-
-  @staticmethod
-  def convert_to(other_dtype, bint_dtype) -> bool:
-    return other_dtype in (np.dtype('int32'), np.dtype('int64'))
-
 
 core.bint._rules = BIntRules
+
+
+def optimization_barrier(operand, /):
+  """Prevents the compiler from moving operations across the barrier.
+
+  Optimization barriers have a number of possible uses:
+
+  * An optimization barrier ensures that all inputs are evaluated before any
+    operators that depend on the barrier's outputs. This can be used to enforce
+    a particular order of operations.
+  * An optimization barrier prevents common subexpression elimination. This is
+    used by JAX to implement rematerialization.
+  * Optimization barriers prevent compiler fusions. That is, operations before
+    the barrier may not be fused into the same kernel as operations after the
+    barrier by the compiler.
+
+  JAX does not define derivative or batching rules for an optimization barrier.
+
+  Optimization barriers have no effect outside a compiled function.
+
+  Args:
+    operand: a pytree of JAX values.
+
+  Returns:
+    A pytree of JAX values, with the same structure and contents as ``operand``.
+
+  Examples:
+    Prevents common-subexpression elimination between the two calls to `sin`:
+
+    >>> def f(x):
+    ...   return jax.lax.optimization_barrier(jax.lax.sin(x)) + jax.lax.sin(x)
+    >>> jax.jit(f)(0.)
+    Array(0., dtype=float32, weak_type=True)
+  """
+  flat_args, treedef = tree_util.tree_flatten(operand)
+  return tree_util.tree_unflatten(
+    treedef, optimization_barrier_p.bind(*flat_args))
+
+
+def _optimization_barrier_abstract_eval(*args):
+  return args
+
+def _optimization_barrier_lowering_rule(ctx, *args):
+  barrier_types = map(mlir.aval_to_ir_type, ctx.avals_in)
+  flat_args = mlir.flatten_ir_values(args)
+  barrier_op = hlo.OptimizationBarrierOp(flat_args)
+  return mlir.unflatten_ir_values_like_types(barrier_op.results, barrier_types)
+
+
+optimization_barrier_p = core.Primitive('optimization_barrier')
+optimization_barrier_p.multiple_results = True
+optimization_barrier_p.def_impl(
+    partial(dispatch.apply_primitive, optimization_barrier_p))
+optimization_barrier_p.def_abstract_eval(_optimization_barrier_abstract_eval)
+mlir.register_lowering(optimization_barrier_p,
+                       _optimization_barrier_lowering_rule)

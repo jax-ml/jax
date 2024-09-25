@@ -291,7 +291,7 @@ class CustomLinearSolveTest(jtu.JaxTestCase):
 
     jtu.check_grads(linear_solve, (a, b), order=2, rtol=2e-3)
 
-    # regression test for https://github.com/google/jax/issues/1536
+    # regression test for https://github.com/jax-ml/jax/issues/1536
     jtu.check_grads(jax.jit(linear_solve), (a, b), order=2,
                     rtol={np.float32: 2e-3})
 
@@ -396,7 +396,7 @@ class CustomLinearSolveTest(jtu.JaxTestCase):
   def test_custom_linear_solve_pytree_with_aux(self):
     # Check that lax.custom_linear_solve handles
     # pytree inputs + has_aux=True
-    # https://github.com/google/jax/pull/13093
+    # https://github.com/jax-ml/jax/pull/13093
 
     aux_orig = {'a': 1, 'b': 2}
     b = {'c': jnp.ones(2), 'd': jnp.ones(3)}

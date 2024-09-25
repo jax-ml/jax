@@ -430,8 +430,8 @@ def gelu(x: ArrayLike, approximate: bool = True) -> Array:
   If ``approximate=False``, computes the element-wise function:
 
   .. math::
-    \mathrm{gelu}(x) = \frac{x}{2} \left(1 + \mathrm{erf} \left(
-      \frac{x}{\sqrt{2}} \right) \right)
+    \mathrm{gelu}(x) = \frac{x}{2} \left(\mathrm{erfc} \left(
+      \frac{-x}{\sqrt{2}} \right) \right)
 
   If ``approximate=True``, uses the approximate formulation of GELU:
 
@@ -443,7 +443,7 @@ def gelu(x: ArrayLike, approximate: bool = True) -> Array:
   <https://arxiv.org/abs/1606.08415>`_, section 2.
 
   Args:
-    x : input array
+    x: input array
     approximate: whether to use the approximate or exact formulation.
   """
   [x_arr] = numpy_util.promote_args_inexact("gelu", x)
@@ -453,8 +453,10 @@ def gelu(x: ArrayLike, approximate: bool = True) -> Array:
     cdf = 0.5 * (1.0 + jnp.tanh(sqrt_2_over_pi * (x_arr + 0.044715 * (x_arr ** 3))))
     return x_arr * cdf
   else:
-    sqrt_2 = np.sqrt(2).astype(x_arr.dtype)
-    return jnp.array(x_arr * (lax.erf(x_arr / sqrt_2) + 1) / 2, dtype=x_arr.dtype)
+    sqrt_half = np.sqrt(0.5).astype(x_arr.dtype)
+    return jnp.array(
+        0.5 * x_arr * (lax.erfc(-x_arr * sqrt_half)), dtype=x_arr.dtype
+    )
 
 @partial(jax.jit, static_argnames=("axis",))
 def glu(x: ArrayLike, axis: int = -1) -> Array:
@@ -541,7 +543,7 @@ def log_softmax(x: ArrayLike,
 
 
 # TODO(phawkins): this jit was found to change numerics in a test. Debug this.
-#@partial(jax.jit, static_argnames=("axis",))
+# @partial(jax.jit, static_argnames=("axis",))
 def softmax(x: ArrayLike,
             axis: int | tuple[int, ...] | None = -1,
             where: ArrayLike | None = None,
@@ -785,11 +787,23 @@ def _get_causal_mask(T, S):
   mask = jnp.tril(jnp.ones((T, S), dtype=jnp.bool_))
   return mask[None, None, :, :]
 
+def _get_window_mask(T: int, S: int, local_window_size: tuple[int, int]):
+  query_pos = jnp.array(range(T))
+  key_pos = jnp.array(range(S))
+  left_window, right_window = local_window_size
+  left_mask = query_pos[..., None] <= key_pos[..., None, :] + left_window
+  right_mask = query_pos[..., None] >= key_pos[..., None, :] - right_window
+  return jnp.logical_and(right_mask, left_mask)[None, None, :, :]
+
 def _get_padding_mask_logits(T, S, q_seqlen, kv_seqlen):
-  q_indices = jnp.arange(0, T)[None, :, None]
-  kv_indices = jnp.arange(0, S)[None, None, :]
-  q_mask = q_indices < q_seqlen[:, None, None]
-  kv_mask = kv_indices < kv_seqlen[:, None, None]
+  q_mask = True
+  kv_mask = True
+  if q_seqlen is not None:
+    q_indices = jnp.arange(0, T)[None, :, None]
+    q_mask = q_indices < q_seqlen[:, None, None]
+  if kv_seqlen is not None:
+    kv_indices = jnp.arange(0, S)[None, None, :]
+    kv_mask = kv_indices < kv_seqlen[:, None, None]
   mask = jnp.logical_and(q_mask, kv_mask)
   return mask[:, None, :, :]
 
@@ -798,7 +812,8 @@ def _get_padding_mask_encoded(T, q_seqlen):
   mask = q_indices < q_seqlen[:, None]
   return mask[:, :, None, None]
 
-def _apply_masks(logits, mask, is_causal, q_seqlen, kv_seqlen):
+def _apply_masks(logits, mask, is_causal, q_seqlen, kv_seqlen,
+                 local_window_size):
   if mask is None and not is_causal and q_seqlen is None and kv_seqlen is None:
     return logits
 
@@ -813,7 +828,11 @@ def _apply_masks(logits, mask, is_causal, q_seqlen, kv_seqlen):
     mask = _get_causal_mask(T, S)
     combined_mask = jnp.logical_and(combined_mask, mask)
 
-  if q_seqlen is not None and kv_seqlen is not None:
+  if local_window_size is not None:
+    mask = _get_window_mask(T, S, local_window_size)
+    combined_mask = jnp.logical_and(combined_mask, mask)
+
+  if q_seqlen is not None or kv_seqlen is not None:
     mask = _get_padding_mask_logits(T, S, q_seqlen, kv_seqlen)
     combined_mask = jnp.logical_and(combined_mask, mask)
 
@@ -822,7 +841,7 @@ def _apply_masks(logits, mask, is_causal, q_seqlen, kv_seqlen):
   return padded_logits
 
 def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
-                                scale, q_seqlen, kv_seqlen):
+                                scale, q_seqlen, kv_seqlen, local_window_size):
   logits_dtype = jnp.promote_types(query.dtype, jnp.float32)
   logits = jnp.einsum('BTNH,BSNH->BNTS', query, key,
                       preferred_element_type=logits_dtype)
@@ -832,7 +851,8 @@ def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
   if bias is not None:
     logits = (logits + bias).astype(logits.dtype)
 
-  padded_logits = _apply_masks(logits, mask, is_causal, q_seqlen, kv_seqlen)
+  padded_logits = _apply_masks(logits, mask, is_causal, q_seqlen, kv_seqlen,
+                               local_window_size)
 
   # Softmax and it is always carried out in fp32.
   padded_logits = padded_logits.astype(jnp.float32)
@@ -853,7 +873,8 @@ def _dot_product_attention_xla(
     is_causal: bool,
     scale: float,
     q_seqlen: Array | None,
-    kv_seqlen: Array | None):
+    kv_seqlen: Array | None,
+    local_window_size: tuple[int, int] | None):
 
   B, T, N, H = query.shape
   _, S, K, _ = key.shape
@@ -871,11 +892,13 @@ def _dot_product_attention_xla(
     return t
   bias = _reshape_to_grouped(bias)
   mask = _reshape_to_grouped(mask)
-  vmapped_fn = jax.vmap(_dot_product_attention_core,
-                        in_axes=(3, None, None, 2, 2, None, None, None, None),
-                        out_axes=3)
+  vmapped_fn = jax.vmap(
+      _dot_product_attention_core,
+      in_axes=(3, None, None, 2, 2, None, None, None, None, None),
+      out_axes=3,
+  )
   encoded = vmapped_fn(query, key, value, bias, mask, is_causal, scale,
-                       q_seqlen, kv_seqlen)
+                       q_seqlen, kv_seqlen, local_window_size)
   encoded = jnp.reshape(encoded, (B, T, N, H))
   return encoded
 
@@ -890,6 +913,7 @@ def dot_product_attention(
     is_causal: bool = False,
     query_seq_lengths: ArrayLike | None = None,
     key_value_seq_lengths: ArrayLike | None = None,
+    local_window_size: int | tuple[int, int] | None = None,
     implementation: Literal['xla', 'cudnn'] | None = None) -> Array:
   r"""Scaled dot product attention function.
 
@@ -939,6 +963,12 @@ def dot_product_attention(
       :code:`(B)`
     key_value_seq_lengths: `int32` array of sequence lengths for key and value;
       shape :code:`(B)`
+    local_window_size: Window sizes to make self attention to attend to each
+      token's local window. If set, this specifies the (left_window_size,
+      right_window_size) for each token. E.g., if local_window_size == (3, 2)
+      and the sequence is [0, 1, 2, 3, 4, 5, c, 7, 8, 9], token `c` can attend
+      to [3, 4, 5, c, 7, 8]. If a single int is given, it will be intepreted as
+      a symmetric window (window_size, window_size).
     implementation: A string to control which implementation backend to use.
       Supported strings are `xla`, `cudnn` (cuDNN flash attention). It defaults
       to `None`, which will automatically select the best available backend.
@@ -965,6 +995,8 @@ def dot_product_attention(
     query_seq_lengths = jnp.asarray(query_seq_lengths)
   if key_value_seq_lengths is not None:
     key_value_seq_lengths = jnp.asarray(key_value_seq_lengths)
+  if isinstance(local_window_size, int):
+    local_window_size = (local_window_size, local_window_size)
 
   def _check_shape_and_dtype(t: Array | None, shape: Sequence[int],
                              dtype: DType | None, name: str) -> None:
@@ -999,18 +1031,41 @@ def dot_product_attention(
           query_arr, key_arr, value_arr, bias, mask, is_causal=is_causal,
           scale=scale_val, q_seqlen=query_seq_lengths,
           kv_seqlen=key_value_seq_lengths,
+          local_window_size=local_window_size,
       )
     case 'cudnn':
+      use_padding = (
+           query_seq_lengths is not None or key_value_seq_lengths is not None
+      )
+      if use_padding:
+        if query_seq_lengths is None:
+          T = query_arr.shape[1]
+          query_seq_lengths = jnp.full((B,), T, dtype=jnp.int32)
+        if key_value_seq_lengths is None:
+          key_value_seq_lengths = jnp.full((B,), S, dtype=jnp.int32)
+
       mask_type = MaskType.NO_MASK
-      if query_seq_lengths is not None and is_causal:
+      if use_padding and is_causal:
         mask_type = MaskType.PADDING_CAUSAL
       elif is_causal:
         mask_type = MaskType.CAUSAL
-      elif query_seq_lengths is not None:
+      elif use_padding:
         mask_type = MaskType.PADDING
+      # CuDNN supports only the left window with an exclusive boundary when
+      # causal mask is enabled.
+      sliding_window = None
+      if local_window_size is not None:
+        l_window, r_window = local_window_size
+        if r_window == 0 or mask_type == MaskType.CAUSAL:
+          sliding_window = l_window + 1
+        else:
+          raise ValueError(f"cuDNN doesn't support right window: {r_window} "
+                           "when causal mask is not used.")
+
       out = cudnn_dot_product_attention(
           query_arr, key_arr, value_arr, bias, mask, query_seq_lengths,
-          key_value_seq_lengths, scale=scale_val, mask_type=mask_type
+          key_value_seq_lengths, scale=scale_val, mask_type=mask_type,
+          sliding_window_length=sliding_window,
       )
     case None:
       # TODO(kaixih@nvidia) Defaults to XLA for now. Will automatically select
@@ -1019,6 +1074,7 @@ def dot_product_attention(
           query_arr, key_arr, value_arr, bias, mask, is_causal=is_causal,
           scale=scale_val, q_seqlen=query_seq_lengths,
           kv_seqlen=key_value_seq_lengths,
+          local_window_size=local_window_size,
       )
     case _:
       raise ValueError(f"Unsupported implementation option: {implementation}")

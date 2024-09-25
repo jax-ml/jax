@@ -21,7 +21,7 @@ import os
 import pathlib
 import subprocess
 
-_version = "0.4.32"
+_version = "0.4.34"
 # The following line is overwritten by build scripts in distributions &
 # releases. Do not modify this manually, or jax/jaxlib build will fail.
 _release_version: str | None = None
@@ -115,7 +115,7 @@ def _get_cmdclass(pkg_source_path):
         # missing or outdated. Because _write_version(...) modifies the copy of
         # this file in the build tree, re-building from the same JAX directory
         # would not automatically re-copy a clean version, and _write_version
-        # would fail without this deletion. See google/jax#18252.
+        # would fail without this deletion. See jax-ml/jax#18252.
         if os.path.isfile(this_file_in_build_dir):
           os.unlink(this_file_in_build_dir)
       super().run()
@@ -133,7 +133,7 @@ def _get_cmdclass(pkg_source_path):
 
 
 __version__ = _get_version_string()
-_minimum_jaxlib_version = "0.4.31"
+_minimum_jaxlib_version = "0.4.33"
 
 def _version_as_tuple(version_str):
   return tuple(int(i) for i in version_str.split(".") if i.isdigit())

@@ -20,8 +20,8 @@ limitations under the License.
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/pair.h"
 #include "absl/container/flat_hash_map.h"
-#include "absl/strings/str_format.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_format.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/solver_handle_pool.h"
 #include "jaxlib/gpu/solver_kernels.h"
@@ -473,11 +473,19 @@ nb::dict Registrations() {
 #ifdef JAX_GPU_CUDA
   dict["cusolver_csrlsvqr"] = EncapsulateFunction(Csrlsvqr);
   dict["cusolver_gesvdj"] = EncapsulateFunction(Gesvdj);
+
 #endif  // JAX_GPU_CUDA
 
   dict[JAX_GPU_PREFIX "solver_getrf_ffi"] = EncapsulateFfiHandler(GetrfFfi);
   dict[JAX_GPU_PREFIX "solver_geqrf_ffi"] = EncapsulateFfiHandler(GeqrfFfi);
   dict[JAX_GPU_PREFIX "solver_orgqr_ffi"] = EncapsulateFfiHandler(OrgqrFfi);
+  dict[JAX_GPU_PREFIX "solver_syevd_ffi"] = EncapsulateFfiHandler(SyevdFfi);
+  dict[JAX_GPU_PREFIX "solver_syrk_ffi"] = EncapsulateFfiHandler(SyrkFfi);
+  dict[JAX_GPU_PREFIX "solver_gesvd_ffi"] = EncapsulateFfiHandler(GesvdFfi);
+
+#ifdef JAX_GPU_CUDA
+  dict[JAX_GPU_PREFIX "solver_gesvdj_ffi"] = EncapsulateFfiHandler(GesvdjFfi);
+#endif  // JAX_GPU_CUDA
 
   return dict;
 }

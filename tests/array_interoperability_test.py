@@ -75,6 +75,8 @@ class DLPackTest(jtu.JaxTestCase):
     use_stream=[False, True],
   )
   @jtu.run_on_devices("gpu")
+  @jtu.ignore_warning(message="Calling from_dlpack with a DLPack tensor",
+                      category=DeprecationWarning)
   def testJaxRoundTrip(self, shape, dtype, copy, use_stream):
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
@@ -142,6 +144,8 @@ class DLPackTest(jtu.JaxTestCase):
     dtype=dlpack_dtypes,
   )
   @unittest.skipIf(not tf, "Test requires TensorFlow")
+  @jtu.ignore_warning(message="Calling from_dlpack with a DLPack tensor",
+                      category=DeprecationWarning)
   def testTensorFlowToJax(self, shape, dtype):
     if (not config.enable_x64.value and
         dtype in [jnp.int64, jnp.uint64, jnp.float64]):
@@ -184,8 +188,10 @@ class DLPackTest(jtu.JaxTestCase):
     self.assertAllClose(np, y.numpy())
 
   @unittest.skipIf(not tf, "Test requires TensorFlow")
+  @jtu.ignore_warning(message="Calling from_dlpack with a DLPack tensor",
+                      category=DeprecationWarning)
   def testTensorFlowToJaxInt64(self):
-    # See https://github.com/google/jax/issues/11895
+    # See https://github.com/jax-ml/jax/issues/11895
     x = jax.dlpack.from_dlpack(
         tf.experimental.dlpack.to_dlpack(tf.ones((2, 3), tf.int64)))
     dtype_expected = jnp.int64 if config.enable_x64.value else jnp.int32
@@ -221,6 +227,8 @@ class DLPackTest(jtu.JaxTestCase):
     x_np = np.from_dlpack(x_jax)
     self.assertAllClose(x_np, x_jax)
 
+  @jtu.ignore_warning(message="Calling from_dlpack.*",
+                      category=DeprecationWarning)
   def testNondefaultLayout(self):
     # Generate numpy array with nonstandard layout
     a = np.arange(4).reshape(2, 2)

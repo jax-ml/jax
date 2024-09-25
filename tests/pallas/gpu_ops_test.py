@@ -28,10 +28,16 @@ from jax._src import test_util as jtu
 from jax._src.lax.control_flow.for_loop import for_loop
 from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax.experimental import pallas as pl
-from jax.experimental.pallas.ops.gpu import attention
-from jax.experimental.pallas.ops.gpu import layer_norm
-from jax.experimental.pallas.ops.gpu import rms_norm
-from jax.experimental.pallas.ops.gpu import softmax
+if sys.platform != "win32":
+  from jax.experimental.pallas.ops.gpu import attention
+  from jax.experimental.pallas.ops.gpu import layer_norm
+  from jax.experimental.pallas.ops.gpu import rms_norm
+  from jax.experimental.pallas.ops.gpu import softmax
+else:
+  attention = None
+  layer_norm = None
+  rms_norm = None
+  softmax = None
 import jax.numpy as jnp
 import numpy as np
 
@@ -125,7 +131,7 @@ class PallasBaseTest(jtu.JaxTestCase):
     if (jtu.test_device_matches(["cuda"]) and
         not jtu.is_cuda_compute_capability_at_least("8.0")):
       self.skipTest("Only works on GPU with capability >= sm80")
-    if sys.platform == "win32" and not self.INTERPRET:
+    if sys.platform == "win32":
       self.skipTest("Only works on non-Windows platforms")
 
     super().setUp()
@@ -172,7 +178,7 @@ class FusedAttentionTest(PallasBaseTest):
               (1, 384, 8, 64, True, True, True, {}),
               (1, 384, 8, 64, True, True, False, {}),
               (2, 384, 8, 64, True, True, True, {}),
-              # regression test: https://github.com/google/jax/pull/17314
+              # regression test: https://github.com/jax-ml/jax/pull/17314
               (1, 384, 8, 64, True, False, False, {'block_q': 128, 'block_k': 64}),
           ]
       ]
@@ -413,7 +419,7 @@ class SoftmaxTest(PallasBaseTest):
     }[dtype]
 
     # We upcast to float32 because NumPy <2.0 does not handle custom dtypes
-    # properly. See https://github.com/google/jax/issues/11014.
+    # properly. See https://github.com/jax-ml/jax/issues/11014.
     np.testing.assert_allclose(
         softmax.softmax(x, axis=-1).astype(jnp.float32),
         jax.nn.softmax(x, axis=-1).astype(jnp.float32),

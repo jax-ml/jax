@@ -41,10 +41,12 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src import lax_reference
 from jax._src import test_util as jtu
+from jax._src import xla_bridge
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
+from jax._src.lib import version as jaxlib_version
 from jax._src.util import NumpyComplexWarning, safe_zip
 from jax._src.tree_util import tree_map
 
@@ -110,6 +112,7 @@ class LaxTest(jtu.JaxTestCase):
           for shape_group in lax_test_util.compatible_shapes),
         dtype=rec.dtypes)
       for rec in lax_test_util.lax_ops()))
+  @jtu.ignore_warning(message="invalid value", category=RuntimeWarning)
   def testOpAgainstNumpy(self, op_name, rng_factory, shapes, dtype, tol):
     if (not config.enable_x64.value and op_name == "nextafter"
         and dtype == np.float64):
@@ -1002,7 +1005,7 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(fun_via_grad, fun, args_maker)
 
   def testConvTransposePaddingList(self):
-    # Regression test for https://github.com/google/jax/discussions/8695
+    # Regression test for https://github.com/jax-ml/jax/discussions/8695
     a = jnp.ones((28,28))
     b = jnp.ones((3,3))
     c = lax.conv_general_dilated(a[None, None], b[None, None], (1,1), [(0,0),(0,0)], (1,1))
@@ -1039,6 +1042,178 @@ class LaxTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     self._CompileAndCheck(partial(lax.dot, precision=precision), args_maker)
+
+  @parameterized.parameters([
+      (algorithm, dtype)
+      for algorithm, test_dtypes in [
+          (lax.DotAlgorithm(
+              lhs_precision_type=np.float32,
+              rhs_precision_type=np.float32,
+              accumulation_type=np.float32,
+              lhs_component_count=1,
+              rhs_component_count=1,
+              num_primitive_operations=1,
+              allow_imprecise_accumulation=False,
+          ), [np.float32]),
+          (lax.DotAlgorithm(
+              lhs_precision_type=np.float16,
+              rhs_precision_type=np.float16,
+              accumulation_type=np.float32,
+          ), [np.float16]),
+          ("F16_F16_F32", [np.float16]),
+          (lax.DotAlgorithm.Preset.DEFAULT, lax_test_util.float_dtypes),
+          (lax.DotAlgorithm.Preset.ANY_F8_ANY_F8_F32, dtypes._float8_dtypes),
+          (lax.DotAlgorithm.Preset.ANY_F8_ANY_F8_F32_FAST_ACCUM, dtypes._float8_dtypes),
+          (lax.DotAlgorithm.Preset.F16_F16_F16, [np.float16]),
+          (lax.DotAlgorithm.Preset.F16_F16_F32, [np.float16]),
+          (lax.DotAlgorithm.Preset.BF16_BF16_BF16, [dtypes.bfloat16]),
+          (lax.DotAlgorithm.Preset.BF16_BF16_F32, [dtypes.bfloat16]),
+          (lax.DotAlgorithm.Preset.BF16_BF16_F32_X3, [np.float32]),
+          (lax.DotAlgorithm.Preset.BF16_BF16_F32_X6, [np.float32]),
+          (lax.DotAlgorithm.Preset.TF32_TF32_F32, [np.float32]),
+          (lax.DotAlgorithm.Preset.TF32_TF32_F32_X3, [np.float32]),
+          (lax.DotAlgorithm.Preset.F32_F32_F32, [np.float32]),
+          (lax.DotAlgorithm.Preset.F64_F64_F64, [np.float64]),
+      ] for dtype in test_dtypes
+      if jtu.dtypes.supported([dtype])
+  ])
+  def testDotAlgorithm(self, algorithm, dtype):
+    if xla_bridge.using_pjrt_c_api():
+      raise SkipTest(
+          "The dot algorithm attribute is not supported by PJRT C API.")
+    if jaxlib_version <= (0, 4, 33):
+      raise SkipTest(
+          "The dot algorithm attribute is only supported for jaxlib >0.4.33.")
+    if jtu.test_device_matches(["gpu"]):
+      # GPU algorithm support is a little spotty. It is checked in
+      # xla/service/algorithm_util.cc and the logic is copied here.
+      if algorithm in {
+          lax.DotAlgorithm.Preset.F16_F16_F32,
+          lax.DotAlgorithm.Preset.TF32_TF32_F32,
+          lax.DotAlgorithm.Preset.BF16_BF16_F32,
+          lax.DotAlgorithm.Preset.BF16_BF16_F32_X3,  # Must have f32 input
+          lax.DotAlgorithm.Preset.BF16_BF16_F32_X6,  # Must have f32 input
+      }:
+        if not jtu.is_cuda_compute_capability_at_least("8.0"):
+          raise SkipTest(
+              f"The dot algorithm '{algorithm}' requires CUDA compute "
+              "capability >= 8.0.")
+      elif algorithm not in {
+          lax.DotAlgorithm.Preset.DEFAULT,
+          lax.DotAlgorithm.Preset.ANY_F8_ANY_F8_F32,
+          lax.DotAlgorithm.Preset.ANY_F8_ANY_F8_F32_FAST_ACCUM,
+          lax.DotAlgorithm.Preset.F32_F32_F32,
+          lax.DotAlgorithm.Preset.F64_F64_F64,
+      }:
+        raise SkipTest(
+            f"The dot algorithm '{algorithm}' is not supported on GPU.")
+    lhs_shape = (3, 4)
+    rhs_shape = (4, 3)
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+    self._CompileAndCheck(partial(lax.dot, algorithm=algorithm), args_maker)
+    # Check that accumulation type sets the output type
+    output = lax.dot(*args_maker(), algorithm=algorithm)
+    algorithm = lax_internal.canonicalize_dot_algorithm(algorithm)
+    expected_dtype = dtype if algorithm is None else algorithm.accumulation_type
+    self.assertEqual(output.dtype, expected_dtype)
+
+  def testDotAlgorithmInvalidFloat8Type(self):
+    if xla_bridge.using_pjrt_c_api():
+      raise SkipTest(
+          "The dot algorithm attribute is not supported by PJRT C API.")
+    if jaxlib_version <= (0, 4, 33):
+      raise SkipTest(
+          "The dot algorithm attribute is only supported for jaxlib >0.4.33.")
+    lhs_shape = (3, 4)
+    rhs_shape = (4, 3)
+    rng = jtu.rand_default(self.rng())
+    lhs, rhs = rng(lhs_shape, np.float32), rng(rhs_shape, dtypes.float8_e4m3fn)
+    with self.assertRaisesRegex(ValueError, "The dot algorithm"):
+      lax.dot(lhs, rhs, algorithm="ANY_F8_ANY_F8_F32")
+
+  @parameterized.parameters([
+      ({"precision": lax.Precision.HIGHEST}, "The dot_general precision must be None or DEFAULT"),
+      ({"preferred_element_type": np.float32}, "The preferred_element_type and algorithm arguments"),
+  ])
+  def testDotAlgorithmInvalidParameters(self, kwargs, pattern):
+    if xla_bridge.using_pjrt_c_api():
+      raise SkipTest(
+          "The dot algorithm attribute is not supported by PJRT C API.")
+    if jaxlib_version <= (0, 4, 33):
+      raise SkipTest(
+          "The dot algorithm attribute is only supported for jaxlib >0.4.33.")
+    lhs_shape = (3, 4)
+    rhs_shape = (4, 3)
+    rng = jtu.rand_default(self.rng())
+    lhs, rhs = rng(lhs_shape, np.float32), rng(rhs_shape, np.float32)
+    with self.assertRaisesRegex(ValueError, pattern):
+      lax.dot(lhs, rhs, algorithm="F32_F32_F32", **kwargs)
+
+  def testDotAlgorithmTransposeRequired(self):
+    if xla_bridge.using_pjrt_c_api():
+      raise SkipTest(
+          "The dot algorithm attribute is not supported by PJRT C API.")
+    if jaxlib_version <= (0, 4, 33):
+      raise SkipTest(
+          "The dot algorithm attribute is only supported for jaxlib >0.4.33.")
+    lhs_shape = (3, 4)
+    rhs_shape = (4, 3)
+    rng = jtu.rand_default(self.rng())
+    lhs, rhs = rng(lhs_shape, np.float32), rng(rhs_shape, np.float32)
+    fun = partial(lax.dot, algorithm="F32_F32_F32")
+    out = fun(lhs, rhs)
+    _, vjp_fun = jax.vjp(fun, lhs, rhs)
+    with self.assertRaisesRegex(
+        ValueError, "When a dot_general algorithm is specified"):
+      vjp_fun(out)
+
+  @parameterized.parameters([
+      ("F32_F32_F32", "F16_F16_F32"),
+      ("F32_F32_F32", ("F16_F16_F32", "F64_F64_F64")),
+  ])
+  def testDotAlgorithmTranspose(self, algorithm, transpose_algorithm):
+    if xla_bridge.using_pjrt_c_api():
+      raise SkipTest(
+          "The dot algorithm attribute is not supported by PJRT C API.")
+    if jaxlib_version <= (0, 4, 33):
+      raise SkipTest(
+          "The dot algorithm attribute is only supported for jaxlib >0.4.33.")
+    def fun(x, y):
+      return lax.dot(x, y, algorithm=algorithm,
+                     transpose_algorithm=transpose_algorithm)
+
+    algorithm_ = lax_internal.canonicalize_dot_algorithm(algorithm)
+    lhs_alg, rhs_alg = lax_internal.canonicalize_dot_transpose_algorithm(
+        transpose_algorithm)
+
+    lhs_shape = (3, 4)
+    rhs_shape = (4, 3)
+    rng = jtu.rand_default(self.rng())
+    lhs, rhs = rng(lhs_shape, np.float32), rng(rhs_shape, np.float32)
+    out = fun(lhs, rhs)
+
+    def check_transpose_algorithm(f, arg, alg, trans_alg, trans_trans_alg):
+      fun_trans = jax.linear_transpose(f, arg)
+      jaxpr = jax.make_jaxpr(fun_trans)(out)
+      eqn = next(filter(lambda eqn: eqn.primitive == lax.dot_general_p, jaxpr.eqns))
+      self.assertEqual(eqn.params["algorithm"], alg)
+      self.assertEqual(eqn.params["transpose_algorithm"], trans_alg)
+
+      fun_ = jax.linear_transpose(lambda x: fun_trans(x)[0], out)
+      jaxpr_ = jax.make_jaxpr(fun_)(arg)
+      eqn = next(filter(lambda eqn: eqn.primitive == lax.dot_general_p, jaxpr_.eqns))
+      self.assertEqual(eqn.params["algorithm"], algorithm_)
+
+      # Note that transposing the RHS of a dot_general introduce extra
+      # transposes on the input and output, so we don't actually end up with
+      # the same `transpose_algorithm` parameter after 2 transposes.
+      self.assertEqual(eqn.params["transpose_algorithm"], trans_trans_alg)
+
+    check_transpose_algorithm(partial(fun, y=rhs), lhs, lhs_alg,
+                              (algorithm_, rhs_alg), (lhs_alg, rhs_alg))
+    check_transpose_algorithm(partial(fun, lhs), rhs, rhs_alg,
+                              (algorithm_, lhs_alg), (rhs_alg, lhs_alg))
 
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
@@ -1280,7 +1455,7 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(op, args_maker)
 
   def testBroadcastInDimOperandShapeTranspose(self):
-    # Regression test for https://github.com/google/jax/issues/5276
+    # Regression test for https://github.com/jax-ml/jax/issues/5276
     def f(x):
       return lax.broadcast_in_dim(x, (2, 3, 4), broadcast_dimensions=(0, 1, 2)).sum()
     def g(x):
@@ -1681,7 +1856,7 @@ class LaxTest(jtu.JaxTestCase):
                             lax.dynamic_update_slice, args_maker)
 
   def testDynamicUpdateSliceBatched(self):
-    # Regression test for https://github.com/google/jax/issues/9083
+    # Regression test for https://github.com/jax-ml/jax/issues/9083
     x = jnp.arange(5)
     y = jnp.arange(6, 9)
     ind = jnp.arange(6)
@@ -2236,7 +2411,7 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual(shape, result.shape)
 
   def testReduceWindowWithEmptyOutput(self):
-    # https://github.com/google/jax/issues/10315
+    # https://github.com/jax-ml/jax/issues/10315
     shape = (5, 3, 2)
     operand, padding, strides = np.ones(shape), 'VALID', (1,) * len(shape)
     out = jax.eval_shape(lambda x: lax.reduce_window(x, 0., lax.add, padding=padding,
@@ -2844,9 +3019,10 @@ class LaxTest(jtu.JaxTestCase):
                                        (np.int32(1), np.int16(2))))
 
   def test_primitive_jaxtype_error(self):
+    err_str = ("Error interpreting argument to .* as an abstract array. The problematic "
+               r"value is of type .* and was passed to the function at path args\[1\].")
     with jax.enable_checks(False):
-      with self.assertRaisesRegex(
-          TypeError, "Argument .* of type .* is not a valid JAX type"):
+      with self.assertRaisesRegex(TypeError, err_str):
         lax.add(1, 'hi')
 
   def test_reduction_with_repeated_axes_error(self):
@@ -2859,13 +3035,13 @@ class LaxTest(jtu.JaxTestCase):
       op(2+3j, 4+5j)
 
   def test_population_count_booleans_not_supported(self):
-    # https://github.com/google/jax/issues/3886
+    # https://github.com/jax-ml/jax/issues/3886
     msg = "population_count does not accept dtype bool"
     with self.assertRaisesRegex(TypeError, msg):
       lax.population_count(True)
 
   def test_conv_general_dilated_different_input_ranks_error(self):
-    # https://github.com/google/jax/issues/4316
+    # https://github.com/jax-ml/jax/issues/4316
     msg = ("conv_general_dilated lhs and rhs must have the same number of "
            "dimensions")
     dimension_numbers = lax.ConvDimensionNumbers(lhs_spec=(0, 1, 2),
@@ -2885,7 +3061,7 @@ class LaxTest(jtu.JaxTestCase):
       lax.conv_general_dilated(lhs, rhs, **kwargs)
 
   def test_window_strides_dimension_shape_rule(self):
-    # https://github.com/google/jax/issues/5087
+    # https://github.com/jax-ml/jax/issues/5087
     msg = ("conv_general_dilated window and window_strides must have "
            "the same number of dimensions")
     lhs = jax.numpy.zeros((1, 1, 3, 3))
@@ -2894,7 +3070,7 @@ class LaxTest(jtu.JaxTestCase):
       jax.lax.conv(lhs, rhs, [1], 'SAME')
 
   def test_reduce_window_scalar_init_value_shape_rule(self):
-    # https://github.com/google/jax/issues/4574
+    # https://github.com/jax-ml/jax/issues/4574
     args = { "operand": np.ones((4, 4), dtype=np.int32)
            , "init_value": np.zeros((1,), dtype=np.int32)
            , "computation": lax.max
@@ -3045,7 +3221,7 @@ class LaxTest(jtu.JaxTestCase):
         np.array(lax.dynamic_slice(x, np.uint8([128]), (1,))), [128])
 
   def test_dot_general_batching_python_builtin_arg(self):
-    # https://github.com/google/jax/issues/16805
+    # https://github.com/jax-ml/jax/issues/16805
     @jax.remat
     def f(x):
       return jax.lax.dot_general(x, x, (([], []), ([], [])))
@@ -3053,7 +3229,7 @@ class LaxTest(jtu.JaxTestCase):
     jax.hessian(f)(1.0)  # don't crash
 
   def test_constant_folding_complex_to_real_scan_regression(self):
-    # regression test for github.com/google/jax/issues/19059
+    # regression test for github.com/jax-ml/jax/issues/19059
     def g(hiddens):
       hiddens_aug = jnp.vstack((hiddens[0], hiddens))
       new_hiddens = hiddens_aug.copy()
@@ -3088,10 +3264,14 @@ class LaxTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(asarray_closure)()
     self.assertLen(jaxpr.eqns, 0)
 
-    # Regression test for https://github.com/google/jax/issues/19334
+    # Regression test for https://github.com/jax-ml/jax/issues/19334
     # lax.asarray as a closure should not trigger transfer guard.
     with jax.transfer_guard('disallow'):
       jax.jit(asarray_closure)()
+
+  def testOptimizationBarrier(self):
+    x = lax.optimization_barrier((2, 3))
+    self.assertEqual((2, 3), x)
 
 
 class LazyConstantTest(jtu.JaxTestCase):
@@ -3250,7 +3430,7 @@ class LazyConstantTest(jtu.JaxTestCase):
   def testUnaryWeakTypes(self, op_name, rec_dtypes):
     """Test that all lax unary ops propagate weak_type information appropriately."""
     if op_name == "bitwise_not":
-      raise unittest.SkipTest("https://github.com/google/jax/issues/12066")
+      raise unittest.SkipTest("https://github.com/jax-ml/jax/issues/12066")
     # Find a valid dtype for the function.
     for dtype in [float, int, complex, bool]:
       dtype = dtypes.canonicalize_dtype(dtype)
@@ -3644,7 +3824,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     self.assertEqual(ys.shape, (3, 2, 1))
 
   def test_gather_batched_index_dtype(self):
-    # Regression test for https://github.com/google/jax/issues/16557
+    # Regression test for https://github.com/jax-ml/jax/issues/16557
     dtype = jnp.int8
     size = jnp.iinfo(dtype).max + 10
     indices = jnp.zeros(size, dtype=dtype)
@@ -3794,7 +3974,8 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     size_im = 11
     atol = None
 
-    if name in {"arccos", "arcsin", "arcsinh", "arccosh"}:
+    if (name in {"arccos", "arcsin", "arcsinh", "arccosh"}
+        or name in {"arctan", "arctanh"} and jax._src.lib.version > (0, 4, 31)):
       # TODO(pearu): eliminate this if-block when a fix to mpmath#787
       # becomes available
       extra_prec_multiplier = 20
@@ -3950,21 +4131,21 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     elif name == 'arccos':
       regions_with_inaccuracies_keep('q4.imag', 'ninf', 'pinf', 'ninfj', 'pinfj.real')
 
-    elif name == 'arctan':
+    elif name == 'arctan' and jax._src.lib.version <= (0, 4, 31):
       if dtype == np.complex64:
         regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj',
-                                       'mq1.imag', 'mq2.imag', 'mq3.imag', 'mq4.imag', 'mnegj.imag', 'mposj.imag')
+                                       'mq1.imag', 'mq2.imag', 'mq3.imag', 'mq4.imag', 'mnegj.real', 'mnegj.imag', 'mposj.imag')
       if dtype == np.complex128:
-        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj')
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mnegj.real')
 
-    elif name == 'arctanh':
+    elif name == 'arctanh' and jax._src.lib.version <= (0, 4, 31):
       regions_with_inaccuracies_keep('pos.imag', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos.imag')
 
     elif name in {'cos', 'sin'}:
       regions_with_inaccuracies_keep('ninf.imag', 'pinf.imag')
 
     elif name in {'positive', 'negative', 'conjugate', 'sin', 'cos', 'sqrt', 'expm1', 'log1p', 'tan',
-                  'arcsinh', 'arcsin', 'arccosh'}:
+                  'arcsinh', 'arcsin', 'arccosh', 'arctan', 'arctanh'}:
       regions_with_inaccuracies.clear()
     else:
       assert 0  # unreachable

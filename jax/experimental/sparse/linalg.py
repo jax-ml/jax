@@ -602,7 +602,9 @@ def spsolve(data, indices, indptr, b, tol=1e-6, reorder=1):
   """A sparse direct solver using QR factorization.
 
   Accepts a sparse matrix in CSR format `data, indices, indptr` arrays.
-  Currently only the CUDA GPU backend is implemented.
+  Currently only the CUDA GPU backend is implemented, the CPU backend will fall
+  back to `scipy.sparse.linalg.spsolve`. Neither the CPU nor the GPU
+  implementation support batching with `vmap`.
 
   Args:
     data : An array containing the non-zero entries of the CSR matrix.

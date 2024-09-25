@@ -323,7 +323,7 @@ class AttrsTest(jtu.JaxTestCase):
     self.assertEqual(count, 1)
 
   def test_tracer_lifetime_bug(self):
-    # regression test for https://github.com/google/jax/issues/20082
+    # regression test for https://github.com/jax-ml/jax/issues/20082
     class StatefulRNG:
       key: jax.Array
 

@@ -105,7 +105,7 @@ def _bcoo_set_nse(mat: BCOO, nse: int) -> BCOO:
               unique_indices=mat.unique_indices)
 
 # TODO(jakevdp) this can be problematic when used with autodiff; see
-# https://github.com/google/jax/issues/10163. Should this be a primitive?
+# https://github.com/jax-ml/jax/issues/10163. Should this be a primitive?
 # Alternatively, maybe roll this into bcoo_sum_duplicates as an optional argument.
 def bcoo_eliminate_zeros(mat: BCOO, nse: int | None = None) -> BCOO:
   data, indices, shape = mat.data, mat.indices, mat.shape
@@ -332,11 +332,11 @@ def _bcoo_fromdense_jvp(primals, tangents, *, nse, n_batch, n_dense, index_dtype
   data, indices = primals_out
 
   if type(Mdot) is ad.Zero:
-    data_dot = ad.Zero.from_value(data)
+    data_dot = ad.Zero.from_primal_value(data)
   else:
     data_dot = _bcoo_extract(indices, Mdot)
 
-  tangents_out = (data_dot, ad.Zero.from_value(indices))
+  tangents_out = (data_dot, ad.Zero.from_primal_value(indices))
 
   return primals_out, tangents_out
 
@@ -571,7 +571,7 @@ def _bcoo_transpose_jvp(primals, tangents, *, permutation: Sequence[int], spinfo
   data_dot, _ = tangents
   primals_out = _bcoo_transpose(data, indices, permutation=permutation, spinfo=spinfo)
   data_dot_out, _ = _bcoo_transpose(data_dot, indices, permutation=permutation, spinfo=spinfo)
-  return primals_out, (data_dot_out, ad.Zero.from_value(indices))
+  return primals_out, (data_dot_out, ad.Zero.from_primal_value(indices))
 
 def _bcoo_transpose_transpose(ct, data, indices, *, permutation: Sequence[int], spinfo: SparseInfo):
   data_ct, indices_ct = ct
@@ -609,7 +609,8 @@ mlir.register_lowering(bcoo_transpose_p, mlir.lower_fun(
 bcoo_dot_general_p = core.Primitive('bcoo_dot_general')
 
 def bcoo_dot_general(lhs: BCOO | Array, rhs: BCOO | Array, *, dimension_numbers: DotDimensionNumbers,
-                     precision: None = None, preferred_element_type: None = None) -> BCOO | Array:
+                     precision: None = None, preferred_element_type: None = None,
+                     algorithm: None = None, transpose_algorithm: None = None) -> BCOO | Array:
   """A general contraction operation.
 
   Args:
@@ -620,6 +621,8 @@ def bcoo_dot_general(lhs: BCOO | Array, rhs: BCOO | Array, *, dimension_numbers:
       (lhs_batch_dims, rhs_batch_dims))`.
     precision: unused
     preferred_element_type: unused
+    algorithm: unused
+    transpose_algorithm: unused
 
   Returns:
     An ndarray or BCOO-format sparse array containing the result. If both inputs
@@ -627,7 +630,7 @@ def bcoo_dot_general(lhs: BCOO | Array, rhs: BCOO | Array, *, dimension_numbers:
     the result will be dense, of type ndarray.
   """
   # TODO(jakevdp) make use of these?
-  del precision  # unused
+  del precision, algorithm, transpose_algorithm  # unused
   if isinstance(lhs, BCOO) and isinstance(rhs, BCOO):
     shape = _dot_general_validated_shape(lhs.shape, rhs.shape,
                                          dimension_numbers)
@@ -1053,7 +1056,9 @@ def _bcoo_dot_general_sampled_transpose(ct, A, B, indices, *, dimension_numbers)
   indices, ct = _bcoo_extract_transpose(ct, indices, mat, assume_unique=True)
   kwds = {'dimension_numbers': dimension_numbers,
           'precision': None,
-          'preferred_element_type': None}
+          'preferred_element_type': None,
+          'algorithm': None,
+          'transpose_algorithm': None}
   A, B = ad.get_primitive_transpose(lax.dot_general_p)(ct, A, B, **kwds)
   return A, B, indices
 
@@ -1140,7 +1145,7 @@ def _bcoo_spdot_general_unbatched(lhs_data, lhs_indices, rhs_data, rhs_indices, 
   out_indices = out_indices.at[:, :, lhs_j.shape[-1]:].set(rhs_j[None, :])
   out_indices = out_indices.reshape(len(out_data), out_indices.shape[-1])
   # Note: we do not eliminate zeros here, because it can cause issues with autodiff.
-  # See https://github.com/google/jax/issues/10163.
+  # See https://github.com/jax-ml/jax/issues/10163.
   return _bcoo_sum_duplicates(out_data, out_indices, spinfo=SparseInfo(shape=out_shape), nse=out_nse)
 
 @bcoo_spdot_general_p.def_impl
@@ -1277,7 +1282,7 @@ def _bcoo_spdot_general_jvp(primals, tangents, **kwds):
     data_dot_out += _bcoo_spdot_general(lhs_data_dot, lhs_indices, rhs_data, rhs_indices, **kwds)[0]
   if type(rhs_data_dot) is not ad.Zero:
     data_dot_out += _bcoo_spdot_general(lhs_data, lhs_indices, rhs_data_dot, rhs_indices, **kwds)[0]
-  return primals_out, [data_dot_out, ad.Zero.from_value(primals_out[1])]
+  return primals_out, [data_dot_out, ad.Zero.from_primal_value(primals_out[1])]
 
 # TODO(JVP): transpose rule
 batching.primitive_batchers[bcoo_spdot_general_p] = _bcoo_spdot_general_batch_rule
@@ -1358,8 +1363,8 @@ def _bcoo_sort_indices_jvp(primals, tangents, *, spinfo):
   permute = nfold_vmap(lambda d, p: d[p], props.n_batch)
   data_out = permute(data, perm)
 
-  indices_dot_out = ad.Zero.from_value(indices)
-  data_dot_out = ad.Zero.from_value(data_out) if type(data_dot) is ad.Zero else permute(data_dot, perm)
+  indices_dot_out = ad.Zero.from_primal_value(indices)
+  data_dot_out = ad.Zero.from_primal_value(data_out) if type(data_dot) is ad.Zero else permute(data_dot, perm)
   return (data_out, indices_out), (data_dot_out, indices_dot_out)
 
 _bcoo_sort_indices_hlo = mlir.lower_fun(
@@ -1537,15 +1542,15 @@ def _bcoo_sum_duplicates_jvp(primals, tangents, *, spinfo, nse):
                         nse, *data.shape[props.n_batch + 1:]), dtype=data.dtype)
   data_dot_out = data_out
   # This check is because scatter-add on zero-sized arrays has poorly defined
-  # semantics; see https://github.com/google/jax/issues/13656.
+  # semantics; see https://github.com/jax-ml/jax/issues/13656.
   if data_out.size:
     permute = lambda x, i, y: x.at[i].add(y, mode='drop')
   else:
     permute = lambda x, i, y: x
   permute = nfold_vmap(permute, props.n_batch)
   data_out = permute(data_out, mapping, data)
-  indices_dot_out = ad.Zero.from_value(indices_out)
-  data_dot_out = ad.Zero.from_value(data_out) if type(data_dot) is ad.Zero else permute(data_dot_out, mapping, data_dot)
+  indices_dot_out = ad.Zero.from_primal_value(indices_out)
+  data_dot_out = ad.Zero.from_primal_value(data_out) if type(data_dot) is ad.Zero else permute(data_dot_out, mapping, data_dot)
   return (data_out, indices_out), (data_dot_out, indices_dot_out)
 
 _bcoo_sum_duplicates_hlo = mlir.lower_fun(

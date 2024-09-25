@@ -44,7 +44,6 @@ from jax._src.lax import svd as lax_svd
 from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
     _input_dtype)
-from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
 from jax._src.lib import lapack
@@ -54,6 +53,9 @@ from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.typing import Array, ArrayLike
 
+# The following import is unused but needed to register the custom_call targets
+# in the gpu_linalg module.
+from jax._src.lib import gpu_linalg  # noqa: F401
 
 TFun = TypeVar('TFun', bound=Callable[..., Any])
 
@@ -208,6 +210,20 @@ def cholesky_update(r_matrix: ArrayLike, w_vector: ArrayLike) -> Array:
     A new R' matrix being the Cholesky decomposition of A + w @ w.T.
   """
   return cholesky_update_p.bind(r_matrix, w_vector)
+
+
+def symmetric_product(
+    a_matrix: ArrayLike, c_matrix: ArrayLike,
+    alpha: float = 1., beta: float = 0.,
+    symmetrize_output=False):
+  """Computes C = alpha * A @ A.T + beta * C (where C is symmetric)."""
+  result = symmetric_product_p.bind(a_matrix, c_matrix, alpha=alpha, beta=beta)
+  if symmetrize_output:
+    upper_half = lax.transpose(
+        _tril(result, k=-1),
+        (*range(result.ndim - 2), result.ndim - 1, result.ndim - 2))
+    result = _tril(result, k=0) + upper_half
+  return result
 
 
 def lu_pivots_to_permutation(pivots: ArrayLike, permutation_size: int) -> Array:
@@ -500,11 +516,7 @@ def _cholesky_cpu_lowering(ctx, operand):
   out_aval, = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
   op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-  # TODO(b/344892332): Remove the check after the compatibility period.
-  if jaxlib_version < (0, 4, 31):
-    ctx_arg = ()
-  else:
-    ctx_arg = (ctx,)
+  ctx_arg = (ctx,)
   result, info = lapack.potrf_hlo(*ctx_arg, operand_aval.dtype, operand,
                                   lower=True, a_shape_vals=op_shape_vals)
 
@@ -541,21 +553,6 @@ def _cholesky_update_abstract_eval(r_matrix, w_vector):
   return ShapedArray(r_matrix.shape, r_matrix.dtype)
 
 def _cholesky_update_gpu_lowering_rule(target_name_prefix, ctx, r_matrix, w_vector):
-  # TODO(b/360781533): Remove guard after 3 week forward compatibility period.
-  if ctx.is_forward_compat() or jaxlib_version < (0, 4, 32):
-    r_matrix_aval, _ = ctx.avals_in
-    try:
-      [platform] = ctx.module_context.platforms
-    except ValueError:
-      raise ValueError(
-          "Can only lower cholesky_update on a single platform."
-      ) from None
-    if platform != "cuda":
-      raise NotImplementedError(
-          "Can only lower fast cholesky_update on CUDA."
-      )
-    return gpu_linalg.cuda_cholesky_update(
-        r_matrix, w_vector, r_matrix_aval.dtype)
   rule = ffi.ffi_lowering(f"{target_name_prefix}_cholesky_update_ffi",
                           operand_output_aliases={0: 0, 1: 1})
   sub_ctx = ctx.replace(avals_out=ctx.avals_in)
@@ -592,6 +589,7 @@ def _cholesky_update_jax_fn(R, z):
     R = R.at[k, :].set(row_k)
   return R
 
+
 cholesky_update_p = Primitive('cholesky_update')
 cholesky_update_p.multiple_results = False
 cholesky_update_p.def_abstract_eval(_cholesky_update_abstract_eval)
@@ -603,6 +601,68 @@ mlir.register_lowering(
 mlir.register_lowering(
     cholesky_update_p,
     mlir.lower_fun(_cholesky_update_jax_fn, multiple_results=False))
+
+# symmetric_update
+
+def _symmetric_product_abstract_eval(a, c, *, alpha, beta):
+  a_dtype = dtypes.canonicalize_dtype(a.dtype)
+  c_dtype = dtypes.canonicalize_dtype(c.dtype)
+  if not (a_dtype == c_dtype and a_dtype in (np.float32, np.float64)):
+    raise NotImplementedError(
+        "Symmetric update is only implemented for float32 and float64.")
+  if not (a.ndim >= 2 and c.ndim >= 2
+          and a.shape[-2] == c.shape[-1]
+          and c.shape[-1] == c.shape[-2]):
+    raise ValueError(
+        "Symmetric update takes (maybe batched) matrices of matching shapes. "
+        "Got shapes {}, {} instead".format(a.shape, c.shape))
+  return ShapedArray(c.shape, c.dtype)
+
+
+def _symmetric_product_batching_rule(batched_args, batch_dims, *, alpha, beta):
+  a_tensor, c_tensor = batched_args
+  a_bd, c_bd = batch_dims
+  a_tensor = batching.moveaxis(a_tensor, a_bd, 0)
+  c_tensor = batching.moveaxis(c_tensor, c_bd, 0)
+  return (
+      symmetric_product_p.bind(a_tensor, c_tensor, alpha=alpha, beta=beta), 0)
+
+symmetric_product_p = Primitive('symmetric_update')
+symmetric_product_p.multiple_results = False
+symmetric_product_p.def_abstract_eval(_symmetric_product_abstract_eval)
+symmetric_product_p.def_impl(
+    partial(dispatch.apply_primitive, symmetric_product_p))
+batching.primitive_batchers[
+    symmetric_product_p] = _symmetric_product_batching_rule
+
+
+def _symmetric_product_gpu_lowering(
+    platform, ctx, a_tensor, c_tensor, alpha, beta):
+  a_aval, c_aval = ctx.avals_in[:2]
+  dtype = a_aval.dtype
+  alpha_aval = beta_aval = ShapedArray((), dtype)
+
+  alpha_array = mlir.full_like_aval(ctx, alpha, alpha_aval)
+  beta_array = mlir.full_like_aval(ctx, beta, beta_aval)
+
+  rule = ffi.ffi_lowering(f"{platform}solver_syrk_ffi",
+                          operand_output_aliases={1: 0})
+  ctx = ctx.replace(avals_in=[a_aval, c_aval, alpha_aval, beta_aval])
+  return rule(ctx, a_tensor, c_tensor, alpha_array, beta_array, transpose=False)
+
+
+def _symmetric_product_jax_fn(a, c, *, alpha, beta):
+  a_T = lax.transpose(a, (*range(a.ndim - 2), a.ndim - 1, a.ndim - 2))
+  return alpha * lax.batch_matmul(
+      a, a_T, precision=lax.Precision.HIGHEST) + beta * c
+
+
+mlir.register_lowering(
+    symmetric_product_p,
+    partial(_symmetric_product_gpu_lowering, 'cu'), platform='cuda')
+mlir.register_lowering(
+    symmetric_product_p,
+    mlir.lower_fun(_symmetric_product_jax_fn, multiple_results=False))
 
 # Asymmetric eigendecomposition
 
@@ -649,8 +709,7 @@ def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
   out_aval = ctx.avals_out[0]
   batch_dims = operand_aval.shape[:-2]
   op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-  # TODO(b/344892332): Remove the conditional after the compatibility period.
-  ctx_args = (ctx,) if jaxlib_version >= (0, 4, 32) else ()
+  ctx_args = (ctx,)
   w, vl, vr, info = lapack.geev_hlo(*ctx_args, operand_aval.dtype, operand,
                                     input_shape_vals=op_shape_vals,
                                     jobvl=compute_left_eigenvectors,
@@ -709,7 +768,7 @@ def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
     raise NotImplementedError(
         'The derivatives of eigenvectors are not implemented, only '
         'eigenvalues. See '
-        'https://github.com/google/jax/issues/2748 for discussion.')
+        'https://github.com/jax-ml/jax/issues/2748 for discussion.')
   # Formula for derivative of eigenvalues w.r.t. a is eqn 4.60 in
   # https://arxiv.org/abs/1701.00392
   a, = primals
@@ -860,8 +919,7 @@ def _eigh_cpu_gpu_lowering(
   op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
   cpu_args = []
   if platform == "cpu":
-    # TODO(b/344892332): Remove the conditional after the compatibility period.
-    ctx_args = (ctx,) if jaxlib_version >= (0, 4, 32) else ()
+    ctx_args = (ctx,)
     cpu_args.extend(ctx_args)
   v, w, info = syevd_impl(*cpu_args, operand_aval.dtype, operand,
                           a_shape_vals=op_shape_vals, lower=lower)
@@ -1416,8 +1474,8 @@ def _lu_jvp_rule(primals, tangents):
     l_dot = l @ _tril(lau, -1)
     u_dot = _triu(lau) @ u
   lu_dot = l_dot + u_dot
-  return (lu, pivots, permutation), (lu_dot, ad_util.Zero.from_value(pivots),
-                                     ad_util.Zero.from_value(permutation))
+  return (lu, pivots, permutation), (lu_dot, ad_util.Zero.from_primal_value(pivots),
+                                     ad_util.Zero.from_primal_value(permutation))
 
 
 def _lu_batching_rule(batched_args, batch_dims):
@@ -1434,9 +1492,9 @@ def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand, *, platform: str,
   info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
   m = operand_aval.shape[-2]
 
-  # TODO(b/357034884): Remove version gate once jaxlib 0.4.32 is the minimum
-  # version and the forward compat flag after the 3 week compatibility window.
-  if jaxlib_version < (0, 4, 32) or ctx.is_forward_compat():
+  # TODO(b/357034884): Remove version gate on the forward compat flag after the
+  # 3 week compatibility window.
+  if ctx.is_forward_compat():
     if not is_constant_shape(operand_aval.shape[-2:]):
       raise NotImplementedError(
         "Shape polymorphism for native lowering for lu on CPU and GPU is "
@@ -1680,9 +1738,8 @@ def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a, *,
       a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a)
     else:
       a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, a_aval.shape)
-      # TODO(b/344892332): Remove the conditional after the compatibility period
       ctx_args = (
-          (ctx,) if platform == "cpu" and jaxlib_version >= (0, 4, 32) else ()
+          (ctx,) if platform == "cpu" else ()
       )
       a_out, taus, *maybe_info_geqrf = geqrf_impl(
           *ctx_args, a_aval.dtype, a, a_shape_vals=a_shape_vals
@@ -1804,9 +1861,8 @@ def _householder_product_cpu_gpu_lowering(orgqr_impl, ctx, a, taus, *,
           f"on GPU is not implemented; b/261671778; {a_aval.shape}")
     a, info_orgqr = orgqr_impl(a_aval.dtype, a, taus)
   else:
-    # TODO(b/344892332): Remove the conditional after the compatibility period
     ctx_args = (
-        (ctx,) if platform == "cpu" and jaxlib_version >= (0, 4, 32) else ()
+        (ctx,) if platform == "cpu" else ()
     )
     a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, a_aval.shape)
     tau_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, taus_aval.shape)
@@ -2075,8 +2131,7 @@ def _svd_cpu_gpu_lowering(
                                 compute_uv=compute_uv)
   else:
     a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-    # TODO(b/344892332): Remove the conditional after the compatibility period.
-    ctx_args = (ctx,) if jaxlib_version >= (0, 4, 32) else ()
+    ctx_args = (ctx,)
     s, u, vt, info = gesvd_impl(*ctx_args, operand_aval.dtype, operand,
                                 full_matrices=full_matrices,
                                 compute_uv=compute_uv,

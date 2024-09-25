@@ -59,6 +59,8 @@ def program_id(axis: int) -> jax.Array:
   grid coordinates `(1, 2)`,
   `program_id(axis=0)` returns `1` and `program_id(axis=1)` returns `2`.
 
+  The returned value is an array of shape `()` and dtype `int32`.
+
   Args:
     axis: the axis of the grid along which to count the program.
   """
@@ -177,8 +179,10 @@ def _atomic_abstract_eval(*avals_flat, args_tree, atomic_type: AtomicOpType):
 
 def _atomic_rmw(x_ref_or_view, idx, val, *, mask: Any | None = None,
                 atomic_type: AtomicOpType):
-  x_ref, indexers = sp.get_ref_and_indexers(x_ref_or_view, idx, "atomic_rmw")
-  args_flat, args_tree = tree_util.tree_flatten((x_ref, indexers, val, mask))
+  x_ref, transforms = sp.get_ref_and_transforms(
+      x_ref_or_view, idx, "atomic_rmw"
+  )
+  args_flat, args_tree = tree_util.tree_flatten((x_ref, transforms, val, mask))
   return atomic_rmw_p.bind(
       *args_flat, args_tree=args_tree, atomic_type=atomic_type
   )
@@ -379,7 +383,7 @@ def _load_pp_rule(eqn, context, settings):
   result = [
       lhs,
       pp.text(' <- '),
-      sp.pp_ref_indexers(context, x, indexers)
+      sp.pp_ref_transforms(context, x, indexers)
   ]
   if mask is not None:
     result += [
@@ -529,7 +533,7 @@ def _swap_pp_rule(eqn, context, settings):
   # Pretty prints `_ = swap x v i` as `x[i] <- v`
   y, = eqn.outvars
   x, indexers, val, mask = eqn.params["args_tree"].unflatten(eqn.invars)
-  x_i = sp.pp_ref_indexers(context, x, indexers)
+  x_i = sp.pp_ref_transforms(context, x, indexers)
   if isinstance(y, jax_core.DropVar):
     return pp.concat([
         x_i,
@@ -638,8 +642,10 @@ def load(x_ref_or_view, idx, *, mask=None, other=None, cache_modifier=None,
     eviction_policy: TO BE DOCUMENTED.
     volatile: TO BE DOCUMENTED.
   """
-  x_ref, indexers = sp.get_ref_and_indexers(x_ref_or_view, idx, "load")
-  args_flat, args_tree = tree_util.tree_flatten((x_ref, indexers, mask, other))
+  x_ref, transforms = sp.get_ref_and_transforms(x_ref_or_view, idx, "load")
+  args_flat, args_tree = tree_util.tree_flatten(
+      (x_ref, transforms, mask, other)
+  )
   return load_p.bind(
       *args_flat,
       args_tree=args_tree,
@@ -657,8 +663,10 @@ def swap(x_ref_or_view, idx, val, *, mask=None, eviction_policy=None,
   Returns:
     The value stored in the ref prior to the swap.
   """
-  x_ref, indexers = sp.get_ref_and_indexers(x_ref_or_view, idx, _function_name)
-  args_flat, args_tree = tree_util.tree_flatten((x_ref, indexers, val, mask))
+  x_ref, transforms = sp.get_ref_and_transforms(
+      x_ref_or_view, idx, _function_name
+  )
+  args_flat, args_tree = tree_util.tree_flatten((x_ref, transforms, val, mask))
   return swap_p.bind(
       *args_flat, args_tree=args_tree, eviction_policy=eviction_policy
   )
@@ -708,7 +716,7 @@ debug_print_p.multiple_results = True
 
 
 def debug_print(fmt: str, *args: jax.typing.ArrayLike):
-  """Prints scalar values from inside a Pallas kernel.
+  """Prints values from inside a Pallas kernel.
 
   Args:
     fmt: A format string to be included in the output. The restrictions on the
@@ -718,11 +726,11 @@ def debug_print(fmt: str, *args: jax.typing.ArrayLike):
         (``{...}``), since it is always printed before any of the values.
       * On GPU, when using the experimental Mosaic GPU backend, ``fmt`` must
         contain a placeholder for each value to be printed. Format specs and
-        conversions are not supported.
+        conversions are not supported. All values must be scalars.
       * In TPU, if ``fmt`` contains placeholders, all values must be 32-bit
         integers. If there are no placeholders, the values are printed after
-        the format string.
-    *args: The scalar values to print.
+        the format string. All values must be scalars.
+    *args: The values to print.
   """  # fmt: skip
   has_placeholders = False
   if fmt:
@@ -765,9 +773,7 @@ def debug_print_impl(*args: Any, fmt: str, has_placeholders: bool):
 
 @debug_print_p.def_effectful_abstract_eval
 def debug_print_abstract_eval(*avals: Any, fmt: str, has_placeholders: bool):
-  del fmt, has_placeholders
-  if any(aval.shape for aval in avals):
-    raise ValueError("Only scalar values are supported")
+  del avals, fmt, has_placeholders  # Unused.
   return [], {debug_print_effect}
 
 
@@ -824,7 +830,7 @@ def run_scoped(f: Callable[..., Any], *types, **kw_types) -> Any:
 
   flat_types, in_tree = tree_util.tree_flatten((types, kw_types))
   flat_fun, out_tree_thunk = api_util.flatten_fun(lu.wrap_init(f), in_tree)
-  avals = [t.get_aval() for t in flat_types]
+  avals = [t.get_ref_aval() for t in flat_types]
   # Turn the function into a jaxpr. The body of run_scoped may have
   # effects (IO) on constvars (i.e. variables inherited from the
   # parent scope). Jax can't reason about effects to references that

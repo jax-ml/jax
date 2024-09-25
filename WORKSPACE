@@ -37,9 +37,10 @@ install_deps()
 load("@xla//third_party/py:python_repo.bzl", "custom_python_interpreter")
 custom_python_interpreter(
     name = "python_dev",
-    urls = ["https://www.python.org/ftp/python/3.13.0/Python-{version}.tgz"],
-    strip_prefix = "Python-{version}",
-    version = "3.13.0a6",
+    urls = ["https://www.python.org/ftp/python/{version}/Python-{version_variant}.tgz"],
+    strip_prefix = "Python-{version_variant}",
+    version = "3.13.0",
+    version_variant = "3.13.0rc2",
 )
 
 load("@xla//:workspace4.bzl", "xla_workspace4")

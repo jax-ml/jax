@@ -180,7 +180,7 @@ class ImageTest(jtu.JaxTestCase):
     antialias=[False, True],
   )
   def testResizeEmpty(self, dtype, image_shape, target_shape, method, antialias):
-    # Regression test for https://github.com/google/jax/issues/7586
+    # Regression test for https://github.com/jax-ml/jax/issues/7586
     image = np.ones(image_shape, dtype)
     out = jax.image.resize(image, shape=target_shape, method=method, antialias=antialias)
     self.assertArraysEqual(out, jnp.zeros(target_shape, dtype))

@@ -15,7 +15,7 @@
 load(
     "//jaxlib:jax.bzl",
     "jax_generate_backend_suites",
-    "jax_test",
+    "jax_multiplatform_test",
     "py_deps",
 )
 
@@ -28,7 +28,7 @@ package(
 
 jax_generate_backend_suites()
 
-jax_test(
+jax_multiplatform_test(
     name = "pallas_test",
     srcs = [
         "pallas_test.py",
@@ -39,7 +39,7 @@ jax_test(
         },
     },
     disable_configs = [
-        "gpu",
+        "gpu_v100",
         "gpu_x32",
         "gpu_p100",
         "gpu_p100_x32",
@@ -62,13 +62,13 @@ jax_test(
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "pallas_jumble_test",
     srcs = [
         "pallas_jumble_test.py",
     ],
     disable_configs = [
-        "gpu",
+        "gpu_v100",
         "gpu_x32",
         "gpu_a100",
         "gpu_p100",
@@ -85,7 +85,7 @@ jax_test(
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "ops_test",
     srcs = [
         "ops_test.py",
@@ -96,15 +96,15 @@ jax_test(
         },
     },
     disable_configs = [
-        "gpu",
+        "gpu_v100",
         "gpu_x32",
-        "gpu_a100",
         "gpu_p100",
         "gpu_p100_x32",
-        "gpu_h100",
     ],
     enable_configs = [
+        "gpu_a100",
         "gpu_a100_x32",
+        "gpu_h100",
         "gpu_h100_x32",
     ],
     shard_count = {
@@ -125,7 +125,7 @@ jax_test(
     ] + py_deps("absl/testing") + py_deps("hypothesis") + py_deps("numpy"),
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "indexing_test",
     srcs = [
         "indexing_test.py",
@@ -144,7 +144,7 @@ jax_test(
     ] + py_deps("absl/testing") + py_deps("hypothesis") + py_deps("numpy"),
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "pallas_vmap_test",
     srcs = [
         "pallas_vmap_test.py",
@@ -155,7 +155,7 @@ jax_test(
         },
     },
     disable_configs = [
-        "gpu",
+        "gpu_v100",
         "gpu_x32",
         "gpu_a100",
         "gpu_h100",
@@ -176,15 +176,14 @@ jax_test(
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "mosaic_gpu_test",
     srcs = [
         "mosaic_gpu_test.py",
     ],
     config_tags_overrides = {
-        # TODO(slebedev): Switch to False once Mosaic GPU is unconditionally enabled.
         "gpu_h100_x32": {
-            "ondemand": True,  # Include in presubmit.
+            "ondemand": False,  # Include in presubmit.
         },
     },
     disable_backends = [
@@ -192,7 +191,7 @@ jax_test(
         "tpu",
     ],
     disable_configs = [
-        "gpu",
+        "gpu_v100",
         "gpu_x32",
         "gpu_a100",
         "gpu_a100_x32",
@@ -214,7 +213,7 @@ jax_test(
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "export_back_compat_pallas_test",
     srcs = ["export_back_compat_pallas_test.py"],
     config_tags_overrides = {
@@ -223,7 +222,7 @@ jax_test(
         },
     },
     disable_configs = [
-        "gpu",
+        "gpu_v100",
         "gpu_x32",
         "gpu_a100",
         "gpu_h100",
@@ -245,7 +244,7 @@ jax_test(
     ],
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "export_pallas_test",
     srcs = ["export_pallas_test.py"],
     config_tags_overrides = {
@@ -254,7 +253,7 @@ jax_test(
         },
     },
     disable_configs = [
-        "gpu",
+        "gpu_v100",
         "gpu_x32",
         "gpu_a100",
         "gpu_h100",
@@ -273,7 +272,7 @@ jax_test(
     ],
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "pallas_shape_poly_test",
     srcs = ["pallas_shape_poly_test.py"],
     config_tags_overrides = {
@@ -300,7 +299,7 @@ jax_test(
     ],
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "pallas_error_handling_test",
     srcs = [
         "pallas_error_handling_test.py",
@@ -318,7 +317,7 @@ jax_test(
     ] + py_deps("numpy"),
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "tpu_all_gather_test",
     srcs = [
         "tpu_all_gather_test.py",
@@ -332,7 +331,7 @@ jax_test(
     ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "tpu_gmm_test",
     srcs = [
         "tpu_gmm_test.py",
@@ -357,7 +356,7 @@ jax_test(
     ]),
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "tpu_pallas_test",
     srcs = ["tpu_pallas_test.py"],
     # The flag is necessary for ``pl.debug_print`` tests to work on TPU.
@@ -373,7 +372,7 @@ jax_test(
     ],
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "tpu_ops_test",
     srcs = [
         "tpu_ops_test.py",
@@ -389,7 +388,7 @@ jax_test(
     ] + py_deps("absl/testing") + py_deps("hypothesis") + py_deps("numpy"),
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "tpu_pallas_distributed_test",
     srcs = ["tpu_pallas_distributed_test.py"],
     disable_backends = [
@@ -403,7 +402,7 @@ jax_test(
     ],
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "tpu_pallas_pipeline_test",
     srcs = ["tpu_pallas_pipeline_test.py"],
     disable_backends = [
@@ -423,7 +422,21 @@ jax_test(
     ] + py_deps("hypothesis"),
 )
 
-jax_test(
+jax_multiplatform_test(
+    name = "tpu_pallas_async_test",
+    srcs = ["tpu_pallas_async_test.py"],
+    disable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    tags = [
+    ],
+    deps = [
+        "//jax:pallas_tpu",
+    ],
+)
+
+jax_multiplatform_test(
     name = "tpu_pallas_mesh_test",
     srcs = ["tpu_pallas_mesh_test.py"],
     disable_backends = [
@@ -441,7 +454,7 @@ jax_test(
     ],
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "tpu_pallas_random_test",
     srcs = [
         "tpu_pallas_random_test.py",
@@ -459,7 +472,7 @@ jax_test(
     ] + py_deps("numpy"),
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "tpu_paged_attention_kernel_test",
     srcs = ["tpu_paged_attention_kernel_test.py"],
     disable_backends = [
@@ -477,7 +490,7 @@ jax_test(
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "tpu_splash_attention_kernel_test",
     srcs = [
         "tpu_splash_attention_kernel_test.py",
@@ -497,7 +510,7 @@ jax_test(
     ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "tpu_splash_attention_mask_test",
     srcs = [
         "tpu_splash_attention_mask_test.py",
@@ -510,7 +523,7 @@ jax_test(
     ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "gpu_attention_test",
     srcs = [
         "gpu_attention_test.py",
@@ -524,7 +537,7 @@ jax_test(
         "tpu",
     ],
     disable_configs = [
-        "gpu",
+        "gpu_v100",
         "gpu_x32",
         "gpu_p100",
         "gpu_p100_x32",
@@ -543,7 +556,7 @@ jax_test(
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "gpu_ops_test",
     srcs = [
         "gpu_ops_test.py",
@@ -557,7 +570,7 @@ jax_test(
         "tpu",
     ],
     disable_configs = [
-        "gpu",
+        "gpu_v100",
         "gpu_x32",
         "gpu_a100",
         "gpu_h100",

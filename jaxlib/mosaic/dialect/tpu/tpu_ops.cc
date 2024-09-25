@@ -322,13 +322,21 @@ LogicalResult MemRefBitcastOp::verify() {
     auto src_dim_size = src_ty.getDimSize(i);
     auto tgt_dim_size = tgt_ty.getDimSize(i);
     if (i == src_ty.getRank() - 2) {
-      src_dim_size *= src_bitwidth;
-      tgt_dim_size *= tgt_bitwidth;
-    }
-    if (src_dim_size != tgt_dim_size) {
-      return emitOpError(
-                 "Expected the same dim size on the 2nd minormost dim: ")
-             << src_dim_size << " vs " << tgt_dim_size;
+      auto src_bits = src_dim_size * src_bitwidth;
+      auto tgt_bits = tgt_dim_size * tgt_bitwidth;
+      if (src_bits != tgt_bits) {
+        return emitOpError(
+                   "Expected the same number of bits on the 2nd minormost "
+                   "dim: (")
+               << src_dim_size << " * " << src_bitwidth << ") vs ("
+               << tgt_dim_size << " * " << tgt_bitwidth << ")";
+        ;
+      }
+    } else {
+      if (src_dim_size != tgt_dim_size) {
+        return emitOpError("Expected the same dim size on dim ")
+               << i << ": " << src_dim_size << " vs " << tgt_dim_size;
+      }
     }
   }
   // Source and target attributes may be different before propagation is done by

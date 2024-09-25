@@ -321,7 +321,7 @@ Why introduce extended dtypes in generality, beyond PRNGs? We reuse this same
 extended dtype mechanism elsewhere internally. For example, the
 `jax._src.core.bint` object, a bounded integer type used for experimental work
 on dynamic shapes, is another extended dtype. In recent JAX versions it satisfies
-the properties above (See [jax/_src/core.py#L1789-L1802](https://github.com/google/jax/blob/jax-v0.4.14/jax/_src/core.py#L1789-L1802)).
+the properties above (See [jax/_src/core.py#L1789-L1802](https://github.com/jax-ml/jax/blob/jax-v0.4.14/jax/_src/core.py#L1789-L1802)).
 
 ### PRNG dtypes
 PRNG dtypes are defined as a particular case of extended dtypes. Specifically,

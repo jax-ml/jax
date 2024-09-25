@@ -16,3 +16,13 @@ Tutorials
    working-with-pytrees
    sharded-computation
    stateful-computations
+   
+.. toctree::
+   :maxdepth: 1
+   :caption: Advanced tutorials
+
+   advanced-autodiff
+   external-callbacks
+   gradient-checkpointing
+   jax-primitives
+   jaxpr

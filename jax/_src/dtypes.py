@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import abc
 import builtins
+import dataclasses
 import functools
+import types
 from typing import cast, overload, Any, Literal, Union
 import warnings
 
@@ -784,7 +786,7 @@ def check_user_dtype_supported(dtype, fun_name=None):
       uint2,
       uint4,
   ]
-  if np_dtype.kind not in "biufc" and not is_custom_dtype:
+  if np_dtype.kind not in "biufc" and not is_custom_dtype and not dtype == float0:
     msg = f"JAX only supports number and bool dtypes, got dtype {dtype}"
     msg += f" in {fun_name}" if fun_name else ""
     raise TypeError(msg)
@@ -793,7 +795,7 @@ def check_user_dtype_supported(dtype, fun_name=None):
            "and will be truncated to dtype {}. To enable more dtypes, set the "
            "jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell "
            "environment variable. "
-           "See https://github.com/google/jax#current-gotchas for more.")
+           "See https://github.com/jax-ml/jax#current-gotchas for more.")
     fun_name = f"requested in {fun_name}" if fun_name else ""
     truncated_dtype = canonicalize_dtype(np_dtype).name
     warnings.warn(msg.format(dtype, fun_name, truncated_dtype), stacklevel=3)
@@ -834,3 +836,32 @@ def safe_to_cast(input_dtype_or_value: Any,
   # We deliberately use output_dtype rather than output_dtype_or_value here:
   # this effectively treats the output dtype as always strongly-typed.
   return result_type(input_dtype_or_value, output_dtype) == output_dtype
+
+def primal_tangent_dtype(primal_dtype, tangent_dtype,
+                         name: str | None = None) -> ExtendedDType:
+  primal_dtype, tangent_dtype = map(dtype, (primal_dtype, tangent_dtype))
+  name_ = name or (f'PrimalTangentDType{{{short_dtype_name(primal_dtype)}'
+                   f'/{short_dtype_name(tangent_dtype)}}}')
+  rules = types.SimpleNamespace(
+      physical_element_aval=
+      lambda dtype: types.SimpleNamespace(shape=(), dtype=primal_dtype),
+      tangent_dtype=lambda dtype: tangent_dtype,
+      allow_conversion=True)
+
+  class primal_tangent_dtype_scalar(extended): ...
+
+  @dataclasses.dataclass(frozen=True)
+  class PrimalTangentDType(ExtendedDType):
+    name = name_
+    _rules = rules
+    type = primal_tangent_dtype_scalar
+    __repr__ = lambda _: name_
+
+  return PrimalTangentDType()
+
+def short_dtype_name(dtype) -> str:
+  if isinstance(dtype, ExtendedDType):
+    return str(dtype)
+  else:
+    return (dtype.name.replace('float', 'f').replace('uint'   , 'u')
+                      .replace('int'  , 'i').replace('complex', 'c'))

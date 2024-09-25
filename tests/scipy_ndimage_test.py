@@ -129,7 +129,7 @@ class NdimageTest(jtu.JaxTestCase):
       self._CheckAgainstNumpy(osp_op, lsp_op, args_maker)
 
   def testContinuousGradients(self):
-    # regression test for https://github.com/google/jax/issues/3024
+    # regression test for https://github.com/jax-ml/jax/issues/3024
 
     def loss(delta):
       x = np.arange(100.0)

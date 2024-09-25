@@ -68,3 +68,4 @@ ANY = TPUMemorySpace.ANY
 CMEM = TPUMemorySpace.CMEM
 SMEM = TPUMemorySpace.SMEM
 VMEM = TPUMemorySpace.VMEM
+SEMAPHORE = TPUMemorySpace.SEMAPHORE

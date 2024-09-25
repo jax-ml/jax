@@ -35,9 +35,9 @@ behavior of their code. This customization
    Python control flow and workflows for NaN debugging.
 
 As **JAX developers** we want to write library functions, like
-[`logit`](https://github.com/google/jax/blob/01039299304b148b405ef9b9fa5e82bbb527471d/jax/scipy/special.py#L83)
+[`logit`](https://github.com/jax-ml/jax/blob/01039299304b148b405ef9b9fa5e82bbb527471d/jax/scipy/special.py#L83)
 and
-[`expit`](https://github.com/google/jax/blob/01039299304b148b405ef9b9fa5e82bbb527471d/jax/scipy/special.py#L91),
+[`expit`](https://github.com/jax-ml/jax/blob/01039299304b148b405ef9b9fa5e82bbb527471d/jax/scipy/special.py#L91),
 that are defined in terms of other primitives, but for the purposes of
 differentiation have primitive-like behavior in the sense that we want to define
 custom differentiation rules for them, which may be more numerically stable or
@@ -50,9 +50,9 @@ looking to add custom differentiation rules for higher-order functions like
 want to be confident we’re not going to preclude good solutions to that problem.
 
 That is, our primary goals are
-1. solve the vmap-removes-custom-jvp semantics problem ([#1249](https://github.com/google/jax/issues/1249)), and
+1. solve the vmap-removes-custom-jvp semantics problem ([#1249](https://github.com/jax-ml/jax/issues/1249)), and
 2. allow Python in custom VJPs, e.g. to debug NaNs
-   ([#1275](https://github.com/google/jax/issues/1275)).
+   ([#1275](https://github.com/jax-ml/jax/issues/1275)).
 
 Secondary goals are
 3. clean up and simplify user experience (symbolic zeros, kwargs, etc)
@@ -60,18 +60,18 @@ Secondary goals are
    `odeint`, `root`, etc.
 
 Overall, we want to close
-[#116](https://github.com/google/jax/issues/116),
-[#1097](https://github.com/google/jax/issues/1097),
-[#1249](https://github.com/google/jax/issues/1249),
-[#1275](https://github.com/google/jax/issues/1275),
-[#1366](https://github.com/google/jax/issues/1366),
-[#1723](https://github.com/google/jax/issues/1723),
-[#1670](https://github.com/google/jax/issues/1670),
-[#1875](https://github.com/google/jax/issues/1875),
-[#1938](https://github.com/google/jax/issues/1938),
+[#116](https://github.com/jax-ml/jax/issues/116),
+[#1097](https://github.com/jax-ml/jax/issues/1097),
+[#1249](https://github.com/jax-ml/jax/issues/1249),
+[#1275](https://github.com/jax-ml/jax/issues/1275),
+[#1366](https://github.com/jax-ml/jax/issues/1366),
+[#1723](https://github.com/jax-ml/jax/issues/1723),
+[#1670](https://github.com/jax-ml/jax/issues/1670),
+[#1875](https://github.com/jax-ml/jax/issues/1875),
+[#1938](https://github.com/jax-ml/jax/issues/1938),
 and replace the custom_transforms machinery (from
-[#636](https://github.com/google/jax/issues/636),
-[#818](https://github.com/google/jax/issues/818),
+[#636](https://github.com/jax-ml/jax/issues/636),
+[#818](https://github.com/jax-ml/jax/issues/818),
 and others).
 
 ## Non-goals
@@ -400,7 +400,7 @@ There are some other bells and whistles to the API:
   resolved to positions using the `inspect` module. This is a bit of an experiment
   with Python 3’s improved ability to programmatically inspect argument
   signatures. I believe it is sound but not complete, which is a fine place to be.
-  (See also [#2069](https://github.com/google/jax/issues/2069).)
+  (See also [#2069](https://github.com/jax-ml/jax/issues/2069).)
 * Arguments can be marked non-differentiable using `nondiff_argnums`, and as with
   `jit`’s `static_argnums` these arguments don’t have to be JAX types. We need to
   set a convention for how these arguments are passed to the rules. For a primal
@@ -433,5 +433,5 @@ There are some other bells and whistles to the API:
   `custom_lin` to the tangent values; `custom_lin` carries with it the user’s
   custom backward-pass function, and as a primitive it only has a transpose
   rule.
-  * This mechanism is described more in [#636](https://github.com/google/jax/issues/636).
+  * This mechanism is described more in [#636](https://github.com/jax-ml/jax/issues/636).
 * To prevent 

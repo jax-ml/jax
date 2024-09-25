@@ -537,7 +537,7 @@ def dump_module_to_file(module: ir.Module, stage_name: str) -> str | None:
   sym_name = module.operation.attributes['sym_name']
   module_name = ir.StringAttr(sym_name).value
 
-  name = f"jax_ir{id}_{_make_string_safe_for_filename(module_name)}_{stage_name}.mlir"
+  name = f"jax_ir{id:04d}_{_make_string_safe_for_filename(module_name)}_{stage_name}.mlir"
 
   out_dir = path.Path(out_dir_name)
   out_dir.mkdir(parents=True, exist_ok=True)
@@ -951,7 +951,7 @@ class LoweringResult(NamedTuple):
   shape_poly_state: ShapePolyLoweringState
 
 
-_platforms_with_donation = ["cpu", "cuda", "rocm", "tpu"]
+_platforms_with_donation = ["cpu", "cuda", "rocm", "tpu", "neuron"]
 
 
 def add_manual_axes(axis_ctx: sharding_impls.SPMDAxisContext, sharding, ndim):
@@ -1923,6 +1923,10 @@ def lower_per_platform(ctx: LoweringRuleContext,
         lambda o: wrap_compute_type_in_place(ctx, o.owner),
         filter(_is_not_block_argument, flatten_ir_values(output)),
     )
+    map(
+        lambda o: wrap_xla_metadata_in_place(ctx, o.owner),
+        flatten_ir_values(output),
+    )
     return output
 
   assert len(platforms) > 1 and len(kept_rules) >= 2, (platforms, kept_rules)
@@ -1963,6 +1967,10 @@ def lower_per_platform(ctx: LoweringRuleContext,
       map(
           lambda o: wrap_compute_type_in_place(ctx, o.owner),
           filter(_is_not_block_argument, out_nodes),
+      )
+      map(
+          lambda o: wrap_xla_metadata_in_place(ctx, o.owner),
+          out_nodes,
       )
       if inner_ctx.tokens_out is not None:
         assert len(ordered_effects) == len(inner_ctx.tokens_out)
@@ -2125,14 +2133,32 @@ def wrap_compute_type_in_place(ctx, op):
     op.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
 
 
+def wrap_xla_metadata_in_place(ctx, op):
+  ctx_attributes = {}
+  existing_attributes = {}
+  if ctx.jaxpr_eqn_ctx is not None and ctx.jaxpr_eqn_ctx.xla_metadata:
+    for k, v in ctx.jaxpr_eqn_ctx.xla_metadata.items():
+      ctx_attributes[k] = ir.StringAttr.get(str(v).lower())
+    if isinstance(op, ir.Operation):
+      # combine with existing mhlo.frontend_attributes
+      op_attributes_dict = {attr.name: attr.attr for attr in op.attributes}
+      for k, attributes in op_attributes_dict.items():
+        if k == "mhlo.frontend_attributes":
+          v_dict = {attr.name: attr.attr for attr in attributes}
+          for fa_key, fa_val in v_dict.items():
+            existing_attributes[fa_key] = fa_val
+      op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
+          ctx_attributes | existing_attributes
+      )
+
+
 def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue, *,
                      broadcast_dimensions) -> ir.Value:
   # broadcast_dimension[i] is the axis of the result where the axis i of
   # op is broadcast.
   # Lower a possibly-dynamic broadcast_in_dim
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):  # type: ignore
-    elt_shape = aval_out.dtype._rules.physical_element_aval(  # type: ignore
-        aval_out.dtype).shape                                 # type: ignore
+    elt_shape = core.physical_element_aval(aval_out.dtype).shape  # type: ignore
     trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]  # type: ignore
     broadcast_dimensions = [*broadcast_dimensions, *trailing_dims]
     physical_aval_out = core.physical_aval(aval_out)
@@ -2186,8 +2212,7 @@ def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Va
 def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
              start_indices, limit_indices, strides) -> ir.Value:
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    elt_shape = aval_out.dtype._rules.physical_element_aval(
-        aval_out.dtype).shape
+    elt_shape = core.physical_element_aval(aval_out.dtype).shape
     trailing_zeros = [0] * len(elt_shape)
     trailing_ones  = [1] * len(elt_shape)
     start_indices = (*start_indices, *trailing_zeros)
@@ -2214,8 +2239,7 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
                   start_indices) -> ir.Value:
   x_aval = ctx.avals_in[0]
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    elt_shape = aval_out.dtype._rules.physical_element_aval(
-        aval_out.dtype).shape
+    elt_shape = core.physical_element_aval(aval_out.dtype).shape
     index_avals = ctx.avals_in[1:]
     dtype = dtypes.canonicalize_dtype(
         index_avals[0].dtype if index_avals else 'int64')  # type: ignore
@@ -2248,8 +2272,7 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
 def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
                          start_indices) -> ir.Value:
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    elt_shape = aval_out.dtype._rules.physical_element_aval(
-        aval_out.dtype).shape
+    elt_shape = core.physical_element_aval(aval_out.dtype).shape
     index_avals = ctx.avals_in[2:]
     dtype = dtypes.canonicalize_dtype(
         index_avals[0].dtype if index_avals else 'int64')  # type: ignore

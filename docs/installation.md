@@ -176,7 +176,7 @@ installation.
 JAX requires libdevice10.bc, which typically comes from the cuda-nvvm package.
 Make sure that it is present in your CUDA installation.
 
-Please let the JAX team know on [the GitHub issue tracker](https://github.com/google/jax/issues)
+Please let the JAX team know on [the GitHub issue tracker](https://github.com/jax-ml/jax/issues)
 if you run into any errors or problems with the pre-built wheels.
 
 (docker-containers-nvidia-gpu)=
@@ -216,7 +216,7 @@ refer to
 **Note:** There are several caveats with the Metal plugin:
 
 * The Metal plugin is new and experimental and has a number of
-  [known issues](https://github.com/google/jax/issues?q=is%3Aissue+is%3Aopen+label%3A%22Apple+GPU+%28Metal%29+plugin%22).
+  [known issues](https://github.com/jax-ml/jax/issues?q=is%3Aissue+is%3Aopen+label%3A%22Apple+GPU+%28Metal%29+plugin%22).
   Please report any issues on the JAX issue tracker.
 * The Metal plugin currently requires very specific versions of `jax` and
   `jaxlib`. This restriction will be relaxed over time as the plugin API
@@ -269,22 +269,26 @@ for more details.
 Nightly releases reflect the state of the main JAX repository at the time they are
 built, and may not pass the full test suite.
 
+Unlike the instructions for installing a JAX release, here we name all of JAX's
+packages explicitly on the command line, so `pip` will upgrade them if a newer
+version is available.
+
 - CPU only:
 
 ```bash
-pip install -U --pre jax -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
+pip install -U --pre jax jaxlib -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
 ```
 
 - Google Cloud TPU:
 
 ```bash
-pip install -U --pre jax[tpu] -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+pip install -U --pre jax jaxlib libtpu-nightly requests -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 ```
 
 - NVIDIA GPU (CUDA 12):
 
 ```bash
-pip install -U --pre jax[cuda12] -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
+pip install -U --pre jax jaxlib jax-cuda12-plugin[with_cuda] jax-cuda12-pjrt -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
 ```
 
 - NVIDIA GPU (CUDA 12) legacy:

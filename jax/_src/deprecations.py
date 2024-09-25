@@ -121,6 +121,7 @@ def warn(deprecation_id: str, message: str, stacklevel: int) -> None:
 
 # Register a number of deprecations: we do this here to ensure they're
 # always registered by the time `accelerate` and `is_acelerated` are called.
+register('jax-aval-named-shape')
 register('jax-dlpack-import-legacy')
 register("jax-numpy-astype-complex-to-real")
 register("jax-numpy-array-none")
@@ -131,3 +132,4 @@ register('jax-numpy-clip-args')
 register('jax-numpy-linalg-matrix_rank-tol')
 register('jax-numpy-linalg-pinv-rcond')
 register('jax-numpy-quantile-interpolation')
+register('jax-numpy-trimzeros-not-1d-array')

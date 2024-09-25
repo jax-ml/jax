@@ -72,7 +72,7 @@ def is_cache_used(backend: xla_client.Client) -> bool:
       # backend that supports serialization of executables.
       # TODO(skye): add warning when initializing cache on unsupported default
       # platform
-      supported_platforms = ["tpu", "gpu", "cpu"]
+      supported_platforms = ["tpu", "gpu", "cpu", "neuron"]
 
       if not _is_cache_enabled():
         monitoring.record_event('/jax/compilation_cache/task_disabled_cache')
@@ -265,7 +265,9 @@ def put_executable_and_time(
     cache.put(cache_key, executable_and_time)
 
 
-def get_cache_key(module: ir.Module, devices: np.ndarray, compile_options,
+def get_cache_key(module: ir.Module,
+                  devices: np.ndarray,
+                  compile_options,
                   backend) -> str:
   return cache_key.get(module, devices, compile_options, backend,
                        "zstandard" if zstandard is not None else "zlib")

@@ -40,7 +40,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import for_loop
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import func
@@ -48,8 +47,8 @@ from jax._src.lib.mlir.dialects import math
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
-from jax._src.pallas import pallas_call
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
@@ -58,6 +57,9 @@ from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
+from jax._src.state.types import RefBitcaster
+from jax._src.state.utils import dtype_bitwidth
+from jax._src.typing import DTypeLike
 from jax._src.util import safe_map
 from jax._src.util import safe_zip
 from jax._src.util import split_list
@@ -136,15 +138,29 @@ class LoweringRuleContext:
   replace = dataclasses.replace
 
 
-def _memory_space_to_tpu_memspace(memory_space: MemorySpace | None
-                                  ) -> ir.Attribute:
-  if memory_space is None:
-    memory_space = VMEM
-  elif memory_space == pallas_core.MemorySpace.ERROR:
-    memory_space = SMEM
-  elif memory_space == pallas_core.MemorySpace.INDEX:
-    memory_space = SMEM
-  return ir.Attribute.parse(f"#tpu.memory_space<{memory_space}>")
+def _memory_space_to_tpu_memory_space(memory_space: MemorySpace | None
+                                     ) -> TPUMemorySpace:
+  match memory_space:
+    case None:
+      # We pick VMEM as the default one when no memory space is
+      # specified
+      return TPUMemorySpace.VMEM
+    case pallas_core.MemorySpace.ANY:
+      # Map the general ANY memory space to TPU ANY memory space
+      return TPUMemorySpace.ANY
+    case pallas_core.MemorySpace.ERROR | pallas_core.MemorySpace.INDEX:
+      return TPUMemorySpace.SMEM
+    case TPUMemorySpace():
+      # Leave the memory space unchanged
+      return memory_space
+    case _:
+      raise ValueError("Invalid memory space: {memory_space}")
+
+
+def _memory_space_to_mosaic_attribute(memory_space: MemorySpace | None
+                                      ) -> ir.Attribute:
+  tpu_memory_space = _memory_space_to_tpu_memory_space(memory_space)
+  return ir.Attribute.parse(f"#tpu.memory_space<{tpu_memory_space}>")
 
 def _dtype_to_ir_type(dtype: jnp.dtype,
                       is_kernel_boundary: bool = False) -> ir.Type:
@@ -180,7 +196,7 @@ def aval_to_ir_type(aval,
       sem_type = ir.Type.parse("!tpu.semaphore")
     else:
       raise ValueError(f"Cannot allocate {aval.sem_type}.")
-    memspace = _memory_space_to_tpu_memspace(TPUMemorySpace.SEMAPHORE)
+    memspace = _memory_space_to_mosaic_attribute(TPUMemorySpace.SEMAPHORE)
     return ir.MemRefType.get((), sem_type, memory_space=memspace)
   if dtypes.issubdtype(aval.dtype, dtypes.prng_key):
     shape = aval.dtype._impl.key_shape
@@ -188,13 +204,13 @@ def aval_to_ir_type(aval,
       memory_space = TPUMemorySpace.SMEM
     if memory_space != TPUMemorySpace.SMEM:
       raise ValueError(f"PRNG keys must be stored in SMEM. Got {memory_space}")
-    memspace = _memory_space_to_tpu_memspace(memory_space)
+    memspace = _memory_space_to_mosaic_attribute(memory_space)
     return ir.MemRefType.get(shape, _dtype_to_ir_type(np.dtype(np.uint32)),
                              memory_space=memspace)
   if isinstance(aval, state.AbstractRef):
     if shape is None:
       shape = aval.shape
-    memspace = _memory_space_to_tpu_memspace(memory_space)
+    memspace = _memory_space_to_mosaic_attribute(memory_space)
     return ir.MemRefType.get(shape,
       _dtype_to_ir_type(aval.dtype, is_kernel_boundary=True),
       memory_space=memspace)
@@ -422,24 +438,23 @@ class MeshInfo:
   axis_names: list[str]
   mesh_strides: tuple[int, ...]
 
-def lower_jaxpr_to_module(
+
+def _check_block_mappings(
+    block_mappings: tuple[pallas_core.BlockMapping, ...],
     lowering_context: mlir.LoweringRuleContext,
-    ctx: ir.Context,
-    grid_mapping: pallas_core.GridMapping,
-    jaxpr: jax_core.Jaxpr,
-    *,
-    dimension_semantics: tuple[str | None, ...] | None,
     name_and_src_info: pallas_core.NameAndSrcInfo,
-    mesh: mesh_lib.Mesh | None = None,
-    for_verification: bool = False,
-) -> tuple[Module, tuple[Any, ...]]:
-  for bm in grid_mapping.block_mappings:
+) -> None:
+  del lowering_context  # originally needed for forward compat
+  for bm in block_mappings:
     rank = len(bm.block_shape)
     # TODO(necula): add tests for SMEM blocks with trivial windowing
     # We support scalars too
     if (bm.block_aval.memory_space == tpu_core.TPUMemorySpace.SMEM and
         bm.has_trivial_window()):
       continue
+    if bm.block_aval.memory_space == tpu_core.TPUMemorySpace.SEMAPHORE:
+      continue
+
     def err_details():
       return (f"Block spec for {bm.origin} in pallas_call {name_and_src_info} "
               "has block shape "
@@ -448,20 +463,10 @@ def lower_jaxpr_to_module(
               f"and index_map returning {bm.index_map_jaxpr.jaxpr.outvars}, in "
               f"memory space {bm.block_aval.memory_space}."
               "\nSee details at https://jax.readthedocs.io/en/latest/pallas/grid_blockspec.html#pallas-blockspec")
-    if lowering_context.is_forward_compat() or jaxlib_version < (0, 4, 32):
-      # TODO(b/356116061): Remove the old rank condition
-      if rank < 2:
-        raise ValueError(
-            "The Pallas TPU lowering currently supports only blocks of "
-            "rank >= 2 for blocks, except those in the SMEM memory space "
-            "having the same block shape as the array shape and a "
-            "trivial index_map (returning all 0s). " + err_details())
-    else:
-      if rank < 1:
-        raise ValueError(
-            "The Pallas TPU lowering currently supports only blocks of "
-            "rank >= 1. " + err_details())
-
+    if rank < 1:
+      raise ValueError(
+          "The Pallas TPU lowering currently supports only blocks of "
+          "rank >= 1. " + err_details())
 
     if (bm.block_aval.memory_space == tpu_core.TPUMemorySpace.ANY and
         not bm.has_trivial_window()):
@@ -476,42 +481,42 @@ def lower_jaxpr_to_module(
       bs1, as1 = unmapped_bs[-2], bm.array_shape_dtype.shape[-2]
     else:
       bs1, as1 = 1, 1
-    if lowering_context.is_forward_compat():
-      # TODO(b/356116061): Remove the old divisibility condition
-      # With shape polymorphism block_shape is static, but the array shape may
-      # be symbolic. Write the divisibility comparisons to defer inequality
-      # comparisons on dimensions as much as possible.
+
+    if rank >= 2:
       evenly_divisible = (
-          (bs0 % 128 == 0 or (bs0 == as0 and as0 < 128)) and
-          (bs1 % 8 == 0 or (bs1 == as1 and as1 < 8))
+          (bs0 == as0 or bs0 % 128 == 0) and
+          (bs1 == as1 or bs1 % 8 == 0)
       )
-      if not evenly_divisible:
-        raise ValueError(
-            "The Pallas TPU lowering currently requires that the last two "
-            "dimensions of your block shape are divisible by 8 and 128 "
-            "respectively, if the respective dimensions of the overall array "
-            "are larger than the respective factors. If array dimensions are "
-            "smaller, the block should span the full array dimension. "
-            + err_details())
     else:
-      if rank >= 2:
-        evenly_divisible = (
-            (bs0 == as0 or bs0 % 128 == 0) and
-            (bs1 == as1 or bs1 % 8 == 0)
-        )
-      else:
-        assert rank == 1
-        # TODO(necula): test this for bool. What should it do?
-        tiling_size = 128 * (32 // lax_internal._bit_width(bm.array_shape_dtype.dtype))
-        evenly_divisible = (bs0 == as0 or bs0 % tiling_size == 0)
+      assert rank == 1
+      # TODO(necula): test this for bool. What should it do?
+      tiling_size = 128 * (32 // lax_internal._bit_width(bm.array_shape_dtype.dtype))
+      evenly_divisible = (bs0 == as0 or bs0 % tiling_size == 0)
 
     if not evenly_divisible:
       raise ValueError(
-            "The Pallas TPU lowering currently requires that the last two "
-            "dimensions of your block shape are divisible by 8 and 128 "
-            "respectively, or be equal to the respective dimensions of the "
-            "overall array. "
-            + err_details())
+          "The Pallas TPU lowering currently requires that the last two "
+          "dimensions of your block shape are divisible by 8 and 128 "
+          "respectively, or be equal to the respective dimensions of the "
+          "overall array. "
+          + err_details()
+      )
+
+
+def lower_jaxpr_to_module(
+    lowering_context: mlir.LoweringRuleContext,
+    ctx: ir.Context,
+    grid_mapping: pallas_core.GridMapping,
+    jaxpr: jax_core.Jaxpr,
+    *,
+    dimension_semantics: tuple[str | None, ...] | None,
+    name_and_src_info: pallas_core.NameAndSrcInfo,
+    mesh: mesh_lib.Mesh | None = None,
+    for_verification: bool = False,
+) -> tuple[Module, tuple[Any, ...]]:
+  # Verify that we have legal block mappings to catch errors early.
+  _check_block_mappings(grid_mapping.block_mappings, lowering_context,
+                        name_and_src_info)
 
   mosaic_grid_mapping = MosaicGridMapping(
       jaxpr, grid_mapping, dimension_semantics, mesh)
@@ -533,7 +538,9 @@ def lower_jaxpr_to_module(
     for i, bm in enumerate(grid_mapping.block_mappings):
       func_name = f"transform_{i}"
       # ANY operands don't support windowing and require empty window_params.
-      if bm.block_aval.memory_space == tpu_core.TPUMemorySpace.ANY:
+      tpu_memory_space = _memory_space_to_tpu_memory_space(
+          bm.block_aval.memory_space)
+      if tpu_memory_space == tpu_core.TPUMemorySpace.ANY:
         # We checked above that the block does not require windowing.
         window_params.append(ir.DictAttr.get())
         continue
@@ -826,7 +833,7 @@ def jaxpr_subcomp(
         raise NotImplementedError(
             "Unimplemented primitive in Pallas TPU lowering: "
             f"{eqn.primitive.name}. "
-            "Please file an issue on https://github.com/google/jax/issues.")
+            "Please file an issue on https://github.com/jax-ml/jax/issues.")
       if eqn.primitive.multiple_results:
         map(write_env, eqn.outvars, ans)
       else:
@@ -985,11 +992,12 @@ def _indexer_to_start_size_stride(
   )
 
 
-def _slice_memref(ref: ir.Value, ref_aval: state.AbstractRef,
-                  indexer: NDIndexer,
-                  ref_block_shape: tuple[int | pallas_core.Mapped, ...]
-                  ) -> tuple[ir.Value, tuple[int | pallas_core.Mapped, ...],
-                             tuple[int | pallas_core.Mapped, ...]]:
+def _slice_memref(
+    ref: ir.Value,
+    indexer: NDIndexer,
+    ref_dtype: DTypeLike,
+    ref_block_shape: tuple[int | pallas_core.Mapped, ...],
+) -> tuple[ir.Value, tuple[int | pallas_core.Mapped, ...]]:
   assert ref_block_shape is not None
   target_shape = indexer.get_indexer_shape()
   starts, sizes, strides, squeeze_dims, ref_block_shape = (
@@ -1006,25 +1014,78 @@ def _slice_memref(ref: ir.Value, ref_aval: state.AbstractRef,
   static_sizes = tuple(s if not isinstance(s, ir.Value)
                        else ir_dynamic_size for s in sizes)
   target_ref_ty = ir.MemRefType.get(
-      static_sizes, _dtype_to_ir_type(ref_aval.dtype),
-      memory_space=ref.type.memory_space)
+      static_sizes,
+      _dtype_to_ir_type(ref_dtype),
+      memory_space=ref.type.memory_space,
+  )
   out = tpu.MemRefSliceOp(target_ref_ty, ref, starts, dynamic_sizes).result
   if any(squeeze_dims):
     # We need to squeeze out some dimensions
     static_sizes = tuple(s if not isinstance(s, ir.Value)
                          else ir_dynamic_size for s in target_shape)
     squeezed_ref_ty = ir.MemRefType.get(
-        static_sizes, _dtype_to_ir_type(ref_aval.dtype),
-        memory_space=ref.type.memory_space)
+        static_sizes,
+        _dtype_to_ir_type(ref_dtype),
+        memory_space=ref.type.memory_space,
+    )
     out = tpu.MemRefSqueezeOp(squeezed_ref_ty, out).result
   return out, ref_block_shape
 
 
-def _index_ref(ref, ref_aval, ref_block_shape, indexers):
-  for indexer in indexers:
-    ref, ref_block_shape = _slice_memref(ref, ref_aval, indexer,
-                                         ref_block_shape)
+def _bitcast_memref(
+    ref: ir.Value,
+    bitcaster: RefBitcaster,
+    ref_dtype: DTypeLike,
+    ref_block_shape: tuple[int | pallas_core.Mapped, ...],
+) -> tuple[ir.Value, DTypeLike, tuple[int | pallas_core.Mapped, ...]]:
+  src_bitwidth = dtype_bitwidth(ref_dtype)
+  dst_bitwidth = dtype_bitwidth(bitcaster.dtype)
+  if src_bitwidth != dst_bitwidth:
+    if len(ref_block_shape) < 2:
+      raise NotImplementedError(
+          "Bitcast 1D ref with bitwidth change is not supported."
+      )
+    if ref_block_shape[-2] is pallas_core.mapped:
+      raise NotImplementedError(
+          "Bitcast a ref whose 2nd minormost dimension is squeezed when"
+          " bitwidth changes."
+      )
+  new_ref_dtype = bitcaster.dtype
+  target_ref_ty = ir.MemRefType.get(
+      bitcaster.shape,
+      _dtype_to_ir_type(new_ref_dtype),
+      memory_space=ref.type.memory_space,
+  )
+  new_ref_block_shape = list(ref_block_shape)
+  if (
+      len(new_ref_block_shape) >= 2
+      and new_ref_block_shape[-2] is not pallas_core.mapped
+  ):
+    new_ref_block_shape[-2] = (
+        new_ref_block_shape[-2] * src_bitwidth // dst_bitwidth
+    )
+  return (
+      tpu.memref_bitcast(target_ref_ty, ref),
+      new_ref_dtype,
+      tuple(new_ref_block_shape),
+  )
+
+
+def _transform_ref(ref, ref_dtype, ref_block_shape, transforms):
+  for transform in transforms:
+    match transform:
+      case NDIndexer():
+        ref, ref_block_shape = _slice_memref(
+            ref, transform, ref_dtype, ref_block_shape
+        )
+      case RefBitcaster():
+        ref, ref_dtype, ref_block_shape = _bitcast_memref(
+            ref, transform, ref_dtype, ref_block_shape
+        )
+      case _:
+        raise NotImplementedError(f"Unsupported transform: {transform}")
   return ref, ref_block_shape
+
 
 @dataclasses.dataclass(frozen=True)
 class KeyScalarBundle:
@@ -1044,21 +1105,21 @@ class KeyScalarBundle:
   scalars: list[ir.OpResult]
 
 def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
-  ref, indexers, mask, _ = args_tree.unflatten(args_flat)
-  ref_aval, indexers_avals, _, _ = args_tree.unflatten(ctx.avals_in)
-  (*slice_indexers, idx) = indexers
+  ref, transforms, mask, _ = args_tree.unflatten(args_flat)
+  ref_aval, transforms_avals, _, _ = args_tree.unflatten(ctx.avals_in)
+  (*prev_transforms, idx) = transforms
   # Select last aval, which is the one that will be used for the load.
-  (*_, idx_aval) = indexers_avals
+  (*_, idx_aval) = transforms_avals
 
   if mask is not None:
     raise NotImplementedError
 
   ref_block_shape, *_ = ctx.block_shapes
-  ref, ref_block_shape = _index_ref(
-      ref, ref_aval, ref_block_shape, slice_indexers)
+  ref, ref_block_shape = _transform_ref(
+      ref, ref_aval.dtype, ref_block_shape, prev_transforms
+  )
   ref_type = ir.MemRefType(ref.type)
   is_smem_load = str(ref_type.memory_space) == "#tpu.memory_space<smem>"
-  ref_aval, *_ = ctx.avals_in
   (aval_out,) = ctx.avals_out
   if isinstance(aval_out.dtype, prng.KeyTy):
     if not is_smem_load:
@@ -1092,7 +1153,7 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
     raise ValueError(
         "Loads are only allowed on VMEM and SMEM references." + extra
     )
-  load_aval = jax_core.ShapedArray(sizes, dtype=ref_aval.dtype)
+  load_aval = jax_core.ShapedArray(sizes, dtype=aval_out.dtype)
   if need_stride:
     load_val = tpu.StridedLoadOp(
       aval_to_ir_type(load_aval, is_kernel_boundary=True), ref, starts, strides
@@ -1187,20 +1248,23 @@ def _maybe_cast_store_to_memref_type(
 def _masked_swap_lowering_rule(
     ctx: LoweringRuleContext, *args_flat, args_tree, **_
 ):
-  ref, indexers, val, mask = args_tree.unflatten(args_flat)
-  ref_aval, indexers_avals, val_aval, _ = args_tree.unflatten(ctx.avals_in)
-  (*slice_indexers, idx) = indexers
-  (*_, idx_aval) = indexers_avals
+  ref, transforms, val, mask = args_tree.unflatten(args_flat)
+  ref_aval, transforms_avals, val_aval, _ = args_tree.unflatten(ctx.avals_in)
+  (*prev_transforms, idx) = transforms
+  (*_, idx_aval) = transforms_avals
 
   if mask is not None:
     raise NotImplementedError
 
   ref_block_shape, *_ = ctx.block_shapes
-  ref, ref_block_shape = _index_ref(
-      ref, ref_aval, ref_block_shape, slice_indexers)
+  ref, ref_block_shape = _transform_ref(
+      ref, ref_aval.dtype, ref_block_shape, prev_transforms
+  )
 
   ref_type = ir.MemRefType(ref.type)
-  is_smem_store = str(ref_type.memory_space) == "#tpu.memory_space<smem>"
+  memory_space = str(ref_type.memory_space)
+  is_smem_store = memory_space == "#tpu.memory_space<smem>"
+  is_vmem_store = memory_space == "#tpu.memory_space<vmem>"
   (aval_out,) = ctx.avals_out
   if not isinstance(val, ir.Value):
     val = ir_constant(val, mlir_type=_dtype_to_ir_type(val_aval.dtype))
@@ -1219,6 +1283,7 @@ def _masked_swap_lowering_rule(
       cast_to_index=True,
   )
   need_stride = not all((s is None or s == 1) for s in strides)
+
   if is_smem_store:
     if val_aval.shape:
       raise ValueError("Can only store scalars to SMEM")
@@ -1227,13 +1292,19 @@ def _masked_swap_lowering_rule(
     val = _maybe_cast_store_to_memref_type(val_aval, val)
     memref.StoreOp(val, ref, starts)
     return result
-  elif str(ref_type.memory_space) != "#tpu.memory_space<vmem>":
+
+  if not is_vmem_store:
     extra = ""
-    if str(ref_type.memory_space) == "#tpu.memory_space<any>":
+    if memory_space == "#tpu.memory_space<any>":
       extra = " ANY memory space can only be accessed using async_copy."
     raise ValueError(
         "Loads and stores are only allowed on VMEM and SMEM references." + extra
     )
+
+  # handling VMEM store below
+  if not val_aval.shape:
+    raise ValueError("Cannot store scalars to VMEM")
+
   mem_slice_shape = list(aval_out.shape)
   for i, a in enumerate(idx_aval.indices):
     if not isinstance(a, primitives.Slice):
@@ -1838,22 +1909,10 @@ lowering_rules[lax.neg_p] = _neg_lowering_rule
 skip_mlir_conversions.add(lax.neg_p)
 
 
-def _sign_lowering_helper(x):
-  if jnp.issubdtype(x.dtype, jnp.unsignedinteger):
-    return (x != 0).astype(x.dtype)
-
-  if jnp.issubdtype(x.dtype, jnp.integer):
-    return (x > 0).astype(x.dtype) - (x < 0).astype(x.dtype)
-
-  if jnp.issubdtype(x.dtype, jnp.floating):
-    out = (x > 0.).astype(x.dtype) - (x < 0.).astype(x.dtype)
-    return jnp.where(jnp.isnan(x), jnp.nan, out)
-
-  raise NotImplementedError
-
-
 def _sign_lowering_rule(ctx: LoweringRuleContext, x):
-  return lower_fun(_sign_lowering_helper, multiple_results=False)(ctx, x)
+  return lower_fun(
+      pallas_utils.sign_lowering_helper, multiple_results=False,
+  )(ctx, x)
 
 
 lowering_rules[lax.sign_p] = _sign_lowering_rule
@@ -2498,11 +2557,9 @@ skip_mlir_conversions.add(lax.shift_right_logical_p)
 
 
 def _erf_inv_lowering_rule(ctx: LoweringRuleContext, x):
-  (x_aval,) = ctx.avals_in
-  if x_aval.dtype == jnp.float32:
-    return lower_fun(pallas_utils.erf_inv_32_lowering_helper, multiple_results=False)(ctx, x)
-  else:
-    raise NotImplementedError
+  return lower_fun(
+      pallas_utils.erf_inv_lowering_helper, multiple_results=False,
+  )(ctx, x)
 
 
 lowering_rules[lax.erf_inv_p] = _erf_inv_lowering_rule
@@ -2528,7 +2585,7 @@ lowering_rules[lax.bitcast_convert_type_p] = _bitcast_convert_type_lowering_rule
 
 def _alloc_value(aval: jax_core.AbstractValue) -> ir.Value:
   if isinstance(aval, pallas_core.AbstractMemoryRef):
-    memspace = _memory_space_to_tpu_memspace(aval.memory_space)
+    memspace = _memory_space_to_mosaic_attribute(aval.memory_space)
     if jnp.issubdtype(aval.dtype, tpu_core.semaphore_dtype):
       assert aval.memory_space == TPUMemorySpace.SEMAPHORE
       memref_type = aval_to_ir_type(aval, memory_space=TPUMemorySpace.SEMAPHORE)
@@ -2593,8 +2650,8 @@ def _semaphore_read_lowering_rule(
     args_tree,
 ):
   sem_aval, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
-  sem, indexers = tree_util.tree_unflatten(args_tree, args)
-  sem, _ = _index_ref(sem, sem_aval, sem_aval.shape, indexers)
+  sem, transforms = tree_util.tree_unflatten(args_tree, args)
+  sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, transforms)
   return tpu.SemaphoreReadOp(sem).result
 
 
@@ -2607,8 +2664,10 @@ def _semaphore_signal_lowering_rule(
     device_id_type: tpu_primitives.DeviceIdType,
 ):
   sem_aval, _, _, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
-  sem, indexers, value, device_id, core_index = tree_util.tree_unflatten(args_tree, args)
-  sem, _ = _index_ref(sem, sem_aval, sem_aval.shape, indexers)
+  sem, transforms, value, device_id, core_index = tree_util.tree_unflatten(
+      args_tree, args
+  )
+  sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, transforms)
   if device_id is not None:
     device_id = _device_id_to_logical(ctx, device_id, device_id_type)
   return tpu.SemaphoreSignalOp(
@@ -2622,8 +2681,8 @@ lowering_rules[tpu_primitives.semaphore_signal_p] = (
 
 def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   sem_aval, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
-  sem, indexers, value = tree_util.tree_unflatten(args_tree, args)
-  sem, _ = _index_ref(sem, sem_aval, sem_aval.shape, indexers)
+  sem, transforms, value = tree_util.tree_unflatten(args_tree, args)
+  sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, transforms)
   return tpu.SemaphoreWaitOp(sem, value).results
 lowering_rules[tpu_primitives.semaphore_wait_p] = _semaphore_wait_lowering_rule
 
@@ -2631,13 +2690,13 @@ def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree,
                              device_id_type: tpu_primitives.DeviceIdType):
   (
       src_ref,
-      src_indexers,
+      src_transforms,
       dst_ref,
-      dst_indexers,
+      dst_transforms,
       sem,
-      sem_indexers,
+      sem_transforms,
       src_sem,
-      src_sem_indexers,
+      src_sem_transforms,
       device_id,
   ) = tree_util.tree_unflatten(tree, args)
   (src_ref_aval, _, dst_ref_aval, _, sem_aval, _, src_sem_aval, _, _) = (
@@ -2647,16 +2706,17 @@ def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree,
     raise NotImplementedError("DMAs with bool dtypes are not supported.")
   block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)
   src_ref_block_shape, dst_ref_block_shape = block_shapes[0], block_shapes[2]
-  src_ref, _ = _index_ref(
-      src_ref, src_ref_aval, src_ref_block_shape, src_indexers
+  src_ref, _ = _transform_ref(
+      src_ref, src_ref_aval.dtype, src_ref_block_shape, src_transforms
   )
   if src_sem is not None:
-    src_sem, _ = _index_ref(
-        src_sem, src_sem_aval, src_sem_aval.shape, src_sem_indexers)
-  dst_ref, _ = _index_ref(
-      dst_ref, dst_ref_aval, dst_ref_block_shape, dst_indexers
+    src_sem, _ = _transform_ref(
+        src_sem, src_sem_aval.dtype, src_sem_aval.shape, src_sem_transforms
+    )
+  dst_ref, _ = _transform_ref(
+      dst_ref, dst_ref_aval.dtype, dst_ref_block_shape, dst_transforms
   )
-  sem, _ = _index_ref(sem, sem_aval, sem_aval.shape, sem_indexers)
+  sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
   if device_id is not None:
     device_id = _device_id_to_logical(ctx, device_id, device_id_type)
   return tpu.EnqueueDMAOp(src_ref, dst_ref, sem, source_semaphore=src_sem,
@@ -2667,14 +2727,12 @@ lowering_rules[tpu_primitives.dma_start_p] = _dma_start_lowering_rule
 def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
                             device_id_type: tpu_primitives.DeviceIdType):
   del device_id_type
-  sem, sem_indexers, ref, indexers = tree_util.tree_unflatten(tree, args)
+  sem, sem_transforms, ref, transforms = tree_util.tree_unflatten(tree, args)
   sem_aval, _, ref_aval, _ = tree_util.tree_unflatten(tree, ctx.avals_in)
   block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)
   ref_block_shape = block_shapes[2]
-  ref, _ = _index_ref(
-      ref, ref_aval, ref_block_shape, indexers
-  )
-  sem, _ = _index_ref(sem, sem_aval, sem_aval.shape, sem_indexers)
+  ref, _ = _transform_ref(ref, ref_aval.dtype, ref_block_shape, transforms)
+  sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
   return tpu.WaitDMAOp(sem, ref).results
 lowering_rules[tpu_primitives.dma_wait_p] = _dma_wait_lowering_rule
 
@@ -2718,6 +2776,9 @@ lowering_rules[tpu_primitives.delay_p] = _delay_rule
 def _debug_print_rule(
     ctx: LoweringRuleContext, *args, fmt: str, has_placeholders: bool
 ):
+  if any(aval.shape for aval in ctx.avals_in):
+    raise NotImplementedError("Only scalar values are supported")
+
   primitives.check_debug_print_format(fmt, *args)
   if has_placeholders:
     if not all(
@@ -2869,9 +2930,10 @@ def _shard_map_discharge_rule(
   out = pallas_call.pallas_call(
       body,
       out_shape=in_avals,
-      in_specs=[pallas_core.BlockSpec(memory_space=tpu_core.TPUMemorySpace.ANY)]
+      in_specs=[pallas_core.BlockSpec(memory_space=pallas_core.MemorySpace.ANY)]
       * len(in_avals),
-      out_specs=[pallas_core.BlockSpec(memory_space=tpu_core.TPUMemorySpace.ANY)]
+      out_specs=[pallas_core.BlockSpec(
+          memory_space=pallas_core.MemorySpace.ANY)]
       * len(in_avals),
       input_output_aliases={i: i for i in range(len(in_avals))},
       grid=((core_axis_name, num_cores),),

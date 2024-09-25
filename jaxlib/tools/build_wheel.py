@@ -135,7 +135,7 @@ def verify_mac_libraries_dont_reference_chkstack():
 
   We don't entirely know why this happens, but in some build environments
   we seem to target the wrong Mac OS version.
-  https://github.com/google/jax/issues/3867
+  https://github.com/jax-ml/jax/issues/3867
 
   This check makes sure we don't release wheels that have this dependency.
   """
@@ -164,7 +164,7 @@ def write_setup_cfg(sources_path, cpu):
 license_files = LICENSE.txt
 
 [bdist_wheel]
-plat-name={tag}
+plat_name={tag}
 """
     )
 

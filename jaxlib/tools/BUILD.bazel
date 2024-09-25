@@ -16,7 +16,7 @@
 
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
-load("//jaxlib:jax.bzl", "if_windows")
+load("//jaxlib:jax.bzl", "if_windows", "jax_py_test")
 
 licenses(["notice"])  # Apache 2
 
@@ -52,7 +52,7 @@ py_binary(
     ],
 )
 
-py_test(
+jax_py_test(
     name = "build_wheel_test",
     srcs = ["build_wheel_test.py"],
     data = [":build_wheel"],
@@ -64,11 +64,12 @@ py_test(
 cc_binary(
     name = "pjrt_c_api_gpu_plugin.so",
     linkopts = [
-        "-Wl,--version-script,$(location @xla//xla/pjrt/c:pjrt_c_api_gpu_version_script.lds)",
+        "-Wl,--version-script,$(location :gpu_version_script.lds)",
         "-Wl,--no-undefined",
     ],
     linkshared = True,
     deps = [
+        ":gpu_version_script.lds",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu_version_script.lds",
         "@xla//xla/service:gpu_plugin",

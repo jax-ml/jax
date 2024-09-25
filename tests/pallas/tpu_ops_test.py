@@ -16,15 +16,15 @@
 import sys
 import unittest
 
-import numpy as np
 from absl.testing import absltest
 from absl.testing import parameterized
-
 import jax
 from jax import lax
-import jax.numpy as jnp
 from jax._src import test_util as jtu
+from jax._src.pallas import utils as pallas_utils
 from jax.experimental import pallas as pl
+import jax.numpy as jnp
+import numpy as np
 
 if sys.platform != "win32":
   from jax.experimental.pallas import tpu as pltpu
@@ -67,28 +67,29 @@ class PallasBaseTest(jtu.JaxTestCase):
 
 class OpsTest(PallasBaseTest):
 
-  @parameterized.product(from_dtype=_JAX_DTYPES, to_dtype=_JAX_DTYPES)
-  def test_bitcast(self, from_dtype, to_dtype):
-    # TODO(jevinjiang): remove this after 2nd minor large tiling is enabled.
-    if (not jtu.is_device_tpu_at_least(version=5)) and (
-        from_dtype in (jnp.int8, jnp.int16) or to_dtype in (jnp.int8, jnp.int16)
-    ):
-      self.skipTest(
-          "Not implemented: packing and unpacking int8, int16 are not supported"
-          " on < TPUv5"
-      )
+  @parameterized.product(
+      from_dtype=_JAX_DTYPES, to_dtype=_JAX_DTYPES, is_ref_bitcast=[False, True]
+  )
+  def test_bitcast(self, from_dtype, to_dtype, is_ref_bitcast):
+    if not jtu.is_device_tpu_at_least(version=4):
+      self.skipTest("Run on TPUv4+ to have expected memory layout")
     if from_dtype == to_dtype:
       self.skipTest("No bitcast needed")
     if from_dtype == jnp.bool_ or to_dtype == jnp.bool_:
       self.skipTest("Bitcasting with bool is not supported")
 
     def kernel(x_ref, y_ref):
-      y_ref[...] = pltpu.bitcast(x_ref[...], to_dtype)
+      if is_ref_bitcast:
+        y_ref[...] = x_ref.bitcast(to_dtype)[...]
+      else:
+        y_ref[...] = pltpu.bitcast(x_ref[...], to_dtype)
 
-    m, n = 32, 256
-    shape = (m, n)
-    out_shape = (m * from_dtype.dtype.itemsize // to_dtype.dtype.itemsize, n)
-    inp = np.arange(np.prod(shape), dtype=from_dtype).reshape(shape)
+    m, n = 1, 256
+    in_packing = 32 // pallas_utils.dtype_bitwidth(from_dtype)
+    out_packing = 32 // pallas_utils.dtype_bitwidth(to_dtype)
+    in_shape = (m * in_packing, n)
+    out_shape = (m * out_packing, n)
+    inp = np.arange(np.prod(in_shape), dtype=from_dtype).reshape(in_shape)
     out = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct(out_shape, to_dtype),

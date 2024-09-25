@@ -2,6 +2,10 @@ name: Wheel build - Windows CPU x86_64
 on:
   workflow_dispatch: # allows triggering the workflow run manually
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 env:
   DISTUTILS_USE_SDK: 1
   MSSdk: 1
@@ -13,22 +17,17 @@ jobs:
       matrix:
         os: [windows-2019-32core]
         arch: [AMD64]
-        pyver: ['3.10', '3.11', '3.12']
+        pyver: ['3.10', '3.11', '3.12', '3.13.0-rc.2']
     name: ${{ matrix.os }} ${{ matrix.pyver }} jaxlib wheel build
     runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Cancel Previous Runs
-        uses: styfle/cancel-workflow-action@85880fa0301c86cca9da44039ee3bb12d3bedbfa # ratchet: styfle/cancel-workflow-action@0.12.1
-        with:
-          access_token: ${{ github.token }}
-
       - name: Install LLVM/Clang
         run: choco install llvm --version=18.1.4 --yes --no-progress --allow-downgrade
 
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
 
-      - uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # ratchet:actions/setup-python@v5
+      - uses: actions/setup-python@f677139bbe7f9c59b41e40162b753c062f5d49a3 # ratchet:actions/setup-python@v5
         with:
           python-version: ${{ matrix.pyver }}
           cache: 'pip'
@@ -46,7 +45,7 @@ jobs:
             --bazel_options=--config=win_clang `
             --verbose
 
-      - uses: actions/upload-artifact@834a144ee995460fba8ed112a2fc961b36a5ec5a # ratchet: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # ratchet: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}-${{ matrix.pyver }}
           path: ${{ github.workspace }}\dist\*.whl
@@ -58,7 +57,7 @@ jobs:
           JAX_SKIP_SLOW_TESTS: true
           PY_COLORS: 1
         run: |
+          python -m pip install --find-links ${{ github.workspace }}\dist jaxlib
           python -m pip install -e ${{ github.workspace }}
-          python -m pip install --no-index --find-links ${{ github.workspace }}\dist jaxlib
           echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
           pytest -n auto --tb=short tests examples
