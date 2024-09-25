@@ -355,13 +355,16 @@ class PallasCallTest(PallasTest):
         kernel(), jnp.full([256], 5.0, dtype=jnp.float32)
     )
 
-  def test_wgmma(self):
-    dtype = jnp.float16
+  @parameterized.parameters(jnp.float16, jnp.float32)
+  def test_wgmma(self, dtype):
+    # TensorCores can only fuse transposes of 16-bit values, and RHS
+    # is expected to be column major by default.
+    rhs_transpose = jnp.dtype(dtype).itemsize != 2
     swizzle = 128
     elems_128b = swizzle // jnp.dtype(dtype).itemsize
     def kernel(a_ref, b_ref, o_ref):
       acc = plgpu.zero_accumulator((64, 128), jnp.float32)
-      acc = plgpu.wgmma(acc, a_ref, b_ref, rhs_transpose=False)
+      acc = plgpu.wgmma(acc, a_ref, b_ref, rhs_transpose=rhs_transpose)
       plgpu.wgmma_wait(0)
       # TODO(cperivol): turn acc into a reference so we can reason about effects.
       o_ref[...] = acc.as_array()
@@ -382,6 +385,7 @@ class PallasCallTest(PallasTest):
             plgpu.GPUBlockSpec(
                 (128, 128),
                 lambda *i: i,
+                transpose_permutation=(1, 0, 2, 3) if rhs_transpose else None,
                 tiling=(elems_128b, elems_128b),
                 swizzle=128,
             ),
@@ -391,7 +395,7 @@ class PallasCallTest(PallasTest):
         grid=(1, 1),
     )(a, b)
     np.testing.assert_allclose(
-        res, a @ b, rtol=1e-3
+        res, a @ (b.T if rhs_transpose else b), rtol=1e-3
     )
 
   def test_input_output_aliases(self):
