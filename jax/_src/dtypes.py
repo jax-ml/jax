@@ -839,13 +839,14 @@ def safe_to_cast(input_dtype_or_value: Any,
 
 def primal_tangent_dtype(primal_dtype, tangent_dtype,
                          name: str | None = None) -> ExtendedDType:
-  name_ = name or f'PTDtype{{{primal_dtype}:{tangent_dtype}}}'
+  primal_dtype, tangent_dtype = map(dtype, (primal_dtype, tangent_dtype))
+  name_ = name or (f'PrimalTangentDType{{{short_dtype_name(primal_dtype)}'
+                   f'/{short_dtype_name(tangent_dtype)}}}')
   rules = types.SimpleNamespace(
       physical_element_aval=
       lambda dtype: types.SimpleNamespace(shape=(), dtype=primal_dtype),
       tangent_dtype=lambda dtype: tangent_dtype,
-      convert_from=lambda _, other: other == primal_dtype,
-      convert_to=lambda other, _: other == primal_dtype)
+      allow_conversion=True)
 
   class primal_tangent_dtype_scalar(extended): ...
 
@@ -854,5 +855,13 @@ def primal_tangent_dtype(primal_dtype, tangent_dtype,
     name = name_
     _rules = rules
     type = primal_tangent_dtype_scalar
+    __repr__ = lambda _: name_
 
   return PrimalTangentDType()
+
+def short_dtype_name(dtype) -> str:
+  if isinstance(dtype, ExtendedDType):
+    return str(dtype)
+  else:
+    return (dtype.name.replace('float', 'f').replace('uint'   , 'u')
+                      .replace('int'  , 'i').replace('complex', 'c'))

@@ -106,6 +106,26 @@ class TilingTransform(MemoryRefTransform):
 
 
 @dataclasses.dataclass(frozen=True)
+class TransposeTransform(MemoryRefTransform):
+  """Transpose a tiled memref."""
+
+  permutation: tuple[int, ...]
+
+  def __call__(
+      self, block_aval: pallas_core.AbstractMemoryRef
+  ) -> pallas_core.AbstractMemoryRef:
+    shape = block_aval.shape  # pytype: disable=attribute-error
+    return block_aval.update(
+        inner_aval=block_aval.inner_aval.update(
+            shape=self.to_gpu_transform().transform_shape(shape)
+        )
+    )
+
+  def to_gpu_transform(self) -> mgpu.MemRefTransform:
+    return mgpu.TransposeTransform(self.permutation)
+
+
+@dataclasses.dataclass(frozen=True)
 class GPUBlockMapping(pallas_core.BlockMapping):
   swizzle: int | None = None
 
@@ -114,6 +134,7 @@ class GPUBlockMapping(pallas_core.BlockMapping):
 class GPUBlockSpec(pallas_core.BlockSpec):
   # TODO(justinfu): Replace tiling a list of transforms.
   tiling: tuple[int, ...] | None = None
+  transpose_permutation: tuple[int, ...] | None = None
   swizzle: int | None = None
 
   def to_block_mapping(
@@ -137,6 +158,8 @@ class GPUBlockSpec(pallas_core.BlockSpec):
     transforms: tuple[pallas_core.MemoryRefTransform, ...] = ()
     if self.tiling is not None:
       transforms += (TilingTransform(self.tiling),)
+    if self.transpose_permutation is not None:
+      transforms += (TransposeTransform(self.transpose_permutation),)
     return GPUBlockMapping(
         block_shape=bm.block_shape,
         block_aval=bm.block_aval,

@@ -1262,7 +1262,9 @@ def _masked_swap_lowering_rule(
   )
 
   ref_type = ir.MemRefType(ref.type)
-  is_smem_store = str(ref_type.memory_space) == "#tpu.memory_space<smem>"
+  memory_space = str(ref_type.memory_space)
+  is_smem_store = memory_space == "#tpu.memory_space<smem>"
+  is_vmem_store = memory_space == "#tpu.memory_space<vmem>"
   (aval_out,) = ctx.avals_out
   if not isinstance(val, ir.Value):
     val = ir_constant(val, mlir_type=_dtype_to_ir_type(val_aval.dtype))
@@ -1281,6 +1283,7 @@ def _masked_swap_lowering_rule(
       cast_to_index=True,
   )
   need_stride = not all((s is None or s == 1) for s in strides)
+
   if is_smem_store:
     if val_aval.shape:
       raise ValueError("Can only store scalars to SMEM")
@@ -1289,13 +1292,19 @@ def _masked_swap_lowering_rule(
     val = _maybe_cast_store_to_memref_type(val_aval, val)
     memref.StoreOp(val, ref, starts)
     return result
-  elif str(ref_type.memory_space) != "#tpu.memory_space<vmem>":
+
+  if not is_vmem_store:
     extra = ""
-    if str(ref_type.memory_space) == "#tpu.memory_space<any>":
+    if memory_space == "#tpu.memory_space<any>":
       extra = " ANY memory space can only be accessed using async_copy."
     raise ValueError(
         "Loads and stores are only allowed on VMEM and SMEM references." + extra
     )
+
+  # handling VMEM store below
+  if not val_aval.shape:
+    raise ValueError("Cannot store scalars to VMEM")
+
   mem_slice_shape = list(aval_out.shape)
   for i, a in enumerate(idx_aval.indices):
     if not isinstance(a, primitives.Slice):

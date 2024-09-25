@@ -147,7 +147,11 @@ py_library(
     srcs = ["_src/internal_test_util/test_harnesses.py"],
     visibility = [":internal"] + jax_internal_test_harnesses_visibility,
     deps = [
+        ":ad_util",
+        ":config",
         ":jax",
+        ":test_util",
+        "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
 

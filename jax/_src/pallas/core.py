@@ -149,11 +149,8 @@ class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
     raise NotImplementedError
 
   def str_short(self, short_dtypes=False):
-    dt_str = (
-        jax_core._short_dtype_name(self.dtype)
-        if short_dtypes
-        else self.dtype.name
-    )
+    dt_str = \
+        dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
     dt_str = dt_str.replace("void", "float0")
     shapestr = ",".join(map(str, self.shape))
     if hasattr(self, "sharding"):
