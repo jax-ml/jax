@@ -284,11 +284,13 @@ def write_bazelrc(*, remote_build,
       f.write("build --config=mkl_open_source_only\n")
     if enable_cuda:
       f.write("build --config=cuda\n")
+      if use_cuda_nvcc:
+        f.write("build --config=cuda_nvcc\n")
+      else:
+        f.write("build --config=cuda_clang\n")
       f.write(f"build --action_env=CLANG_CUDA_COMPILER_PATH={clang_path}\n")
       if not enable_nccl:
         f.write("build --config=nonccl\n")
-      if use_cuda_nvcc:
-        f.write("build --config=cuda_nvcc\n")
       if cuda_version:
         f.write("build --repo_env HERMETIC_CUDA_VERSION=\"{cuda_version}\"\n"
                 .format(cuda_version=cuda_version))
