@@ -44,7 +44,6 @@ from jax._src.core import (
   MapPrimitive as MapPrimitive,
   nonempty_axis_env as nonempty_axis_env_DO_NOT_USE,
   OpaqueTraceState as OpaqueTraceState,
-  NameGatheringSubst as NameGatheringSubst,
   OutDBIdx as OutDBIdx,
   OutputType as OutputType,
   ParamDict as ParamDict,
