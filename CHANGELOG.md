@@ -15,6 +15,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * New Functionality
   * This release includes wheels for Python 3.13. Free-threading mode is not yet
     supported.
+  * `jax.errors.JaxRuntimeError` has been added as a public alias for the
+    formerly private `XlaRuntimeError` type.
 
 * Breaking changes
   * `jax_pmap_no_rank_reduction` flag is set to `True` by default.
@@ -32,6 +34,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     in an error.
   * Internal pretty-printing tools `jax.core.pp_*` have been removed, after
     being deprecated in JAX v0.4.30.
+  * `jax.lib.xla_client.XlaRuntimeError` has been deprecated. Use
+    `jax.errors.JaxRuntimeError` instead.
 
 * Deletion:
   * `jax.xla_computation` is deleted. It's been 3 months since it's deprecation

@@ -31,7 +31,7 @@ class PackageStructureTest(jtu.JaxTestCase):
 
   @parameterized.parameters([
       # TODO(jakevdp): expand test to other public modules.
-      _mod("jax.errors"),
+      _mod("jax.errors", exclude=["JaxRuntimeError"]),
       _mod("jax.nn.initializers"),
       _mod(
           "jax.tree_util",

@@ -9,6 +9,7 @@ along with representative examples of how one might fix them.
 .. currentmodule:: jax.errors
 .. autoclass:: ConcretizationTypeError
 .. autoclass:: KeyReuseError
+.. autoclass:: JaxRuntimeError
 .. autoclass:: NonConcreteBooleanIndexError
 .. autoclass:: TracerArrayConversionError
 .. autoclass:: TracerBoolConversionError
