@@ -44,22 +44,22 @@ class PallasErrorHandlingTest(jtu.JaxTestCase):
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Test only works on TPU.")
 
-  def test_vector_extract_nonzero(self):
-    input_arr = jax.random.uniform(jax.random.key(0), (2, 2), dtype=jnp.float32)
-    out_shape = jax.ShapeDtypeStruct((1, 1), jnp.float32)
+  def test_non_singular_stride(self):
+    input_arr = jax.random.uniform(
+        jax.random.key(0), (8, 128), dtype=jnp.float32)
+    out_shape = jax.ShapeDtypeStruct((8, 16), jnp.float32)
     grid_spec = pltpu.PrefetchScalarGridSpec(
         num_scalar_prefetch=0,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
     )
 
     @functools.partial(pl.pallas_call, out_shape=out_shape, grid_spec=grid_spec)
     def test_kernel(input_ref, output_ref):
-      val = input_ref[...]
-      x = val[0, 0] + val[0, 1]
-      output_ref[0, 0] = x
+      x = input_ref[:, ::8]
+      output_ref[...] = x
 
     # Test that a Mosaic error is raised. This assert is a guard against
     # underlying changes in Mosaic.
@@ -67,7 +67,7 @@ class PallasErrorHandlingTest(jtu.JaxTestCase):
     # the test example to force a different error.
     with self.assertRaisesRegex(
         error_handling.MosaicError,
-        "Not implemented: Only 0 indices supported for scalar results",
+        "Not Implemented: Stride on last dim is not 1",
     ):
       test_kernel(input_arr)
 
@@ -78,7 +78,7 @@ class PallasErrorHandlingTest(jtu.JaxTestCase):
     except error_handling.MosaicError as e:
       tb_string = traceback.format_tb(e.__traceback__)
       tb_string = "".join(tb_string)
-    self.assertEndsWith(tb_string, "x = val[0, 0] + val[0, 1]\n")
+    self.assertEndsWith(tb_string, "x = input_ref[:, ::8]\n")
 
     @jax.jit
     def kernel_in_jitted_fn(x):
@@ -91,7 +91,7 @@ class PallasErrorHandlingTest(jtu.JaxTestCase):
       except error_handling.MosaicError as e:
         tb_string = traceback.format_tb(e.__traceback__)
         tb_string = "".join(tb_string)
-      self.assertEndsWith(tb_string, "x = val[0, 0] + val[0, 1]\n")
+      self.assertEndsWith(tb_string, "x = input_ref[:, ::8]\n")
 
   def test_invalid_smem_vmem_verification_error(self):
     input_arr = jax.random.uniform(jax.random.key(0), (2, 2), dtype=jnp.float32)
