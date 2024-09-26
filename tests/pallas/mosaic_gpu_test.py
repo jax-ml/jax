@@ -437,6 +437,62 @@ class PallasCallTest(PallasTest):
     )(a)
     np.testing.assert_array_equal(b, np.ones_like(a))
 
+  def test_realistic_matmul(self):
+    dtype = jnp.float16
+    swizzle = 128
+    elems_128b = swizzle // jnp.dtype(dtype).itemsize
+    # TODO(apaszke): Make the grid and tile sizes larger
+    # grid_m, grid_k, grid_n = 132, 10, 4
+    # TODO(apaszke): Increasing grid_k causes th test to fail.
+    # It seems like our pipelining implementation has a number of races.
+    grid_m, grid_k, grid_n = 2, 1, 2
+    # tile_m = tile_n = 128
+    tile_m = tile_n = 64
+    tile_k = elems_128b
+    m, k, n = grid_m * tile_m, grid_k * tile_k, grid_n * tile_n
+    def kernel(a_ref, b_ref, o_ref, acc_ref):
+      plgpu.wgmma(acc_ref, a_ref, b_ref)
+      plgpu.wgmma_wait(0)  # TODO(apaszke): Delay the pipeline to avoid memory races
+      # TODO(apaszke): Only store in the last step. It doesn't work because we
+      # don't have partial discharge for control flow.
+      # is_last_step = pl.program_id(2) == grid_k - 1
+      # @pl.when(is_last_step)
+      # def _epilogue():
+      # pl.debug_print("{}", acc_ref[...])
+      # TODO(apaszke): This is an untiled store! It's slow!!
+      o_ref[...] = acc_ref[...]
+
+    key1, key2 = jax.random.split(jax.random.key(42), 2)
+    a = jax.random.uniform(key1, shape=(m, k), dtype=dtype)
+    b = jax.random.uniform(key2, shape=(k, n), dtype=dtype)
+
+    res = pl.pallas_call(
+        kernel,
+        in_specs=[
+            plgpu.GPUBlockSpec(
+                (tile_m, tile_k),
+                lambda m, n, k: (m, k),
+                transforms=plgpu.TilingTransform((64, elems_128b)),
+                swizzle=128,
+            ),
+            plgpu.GPUBlockSpec(
+                (tile_k, tile_n),
+                lambda m, n, k: (k, n),
+                transforms=plgpu.TilingTransform((elems_128b, elems_128b)),
+                swizzle=128,
+            ),
+        ],
+        out_specs=plgpu.GPUBlockSpec((tile_m, tile_n), lambda m, n, k: (m, n)),
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+        scratch_shapes=[plgpu.ACC((tile_m, tile_n), jnp.float32)],
+        grid=(grid_m, grid_n, grid_k),
+        compiler_params=plgpu.GPUCompilerParams(
+            dimension_semantics=["parallel", "parallel", "sequential"],
+            num_stages=2,
+        ),
+    )(a, b)
+    np.testing.assert_allclose(res, a @ b, rtol=1e-3)
+
 
 if __name__ == "__main__":
   absltest.main()

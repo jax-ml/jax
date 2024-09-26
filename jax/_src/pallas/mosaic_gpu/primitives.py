@@ -25,7 +25,6 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering
 import jax.experimental.mosaic.gpu as mgpu
-import jax.numpy as jnp
 
 async_copy_p = jax_core.Primitive("async_copy")
 async_copy_p.multiple_results = True
@@ -120,7 +119,7 @@ effects.control_flow_allowed_effects.add_type(_WGMMAPipelineEffect)
 wgmma_ref_p = jax_core.Primitive("wgmma_ref")
 wgmma_ref_p.multiple_results = True
 
-def wgmma(acc, a, b, *, rhs_transpose: bool | None = None, swizzle: int = 128):
+def wgmma(acc, a, b, *, rhs_transpose: bool = False, swizzle: int = 128):
   """Asynchronous warp group matmul.
 
   The sm90 wgmma instruction, essentially acc[...] += a @ b. Requires
@@ -136,12 +135,6 @@ def wgmma(acc, a, b, *, rhs_transpose: bool | None = None, swizzle: int = 128):
   """
   if not isinstance(acc.aval, gpu_core.WGMMAAbstractAccumulatorRef):
     raise TypeError(f"Expected WGMMAAbstractAccumulatorRef got {acc}")
-
-  rhs_transpose = (
-      (jnp.dtype(b.dtype).itemsize == 2)
-      if rhs_transpose is None
-      else rhs_transpose
-  )
 
   ma, ka, tma, tka = a.shape
   kb, nb, tkb, tnb = b.shape

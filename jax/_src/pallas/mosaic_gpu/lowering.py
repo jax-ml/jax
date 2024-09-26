@@ -55,6 +55,7 @@ map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 partial = functools.partial
+SMEM = gpu_core.SMEM
 
 _smem_estimators = {}
 
@@ -330,6 +331,45 @@ def lower_jaxpr_to_module(
         start_indices, [grid_mapping.num_inputs]
     )
 
+    smem_scratch_it = iter(scratch_buffers_smem)
+    scratch_buffers_template = []
+    should_discharge = []
+    accs = []
+    for aval in scratch_avals:
+      match aval:
+        case gpu_core.WGMMAAbstractAccumulatorRef():
+          scratch_buffers_template.append(None)
+          should_discharge.append(True)
+          accs.append(
+              mgpu.WGMMAAccumulator.zero(
+                  *aval.shape, dtype=mgpu_utils.dtype_to_ir_type(aval.dtype)
+              )
+          )
+        case gpu_core.AbstractMemoryRef() if aval.memory_space == SMEM:
+          scratch_buffers_template.append(next(smem_scratch_it))
+          should_discharge.append(False)
+        case _:
+          raise NotImplementedError(
+              f"Unsupported scratch operand type: {aval}"
+          )
+    assert not jaxpr.outvars
+    if any(should_discharge):
+      # User-visible WGMMA APIs use the effectful accumulator references, but we
+      # can't lower that directly to Mosaic GPU that uses pure dataflow for
+      # accumulators. So we have to discharge the effects first.
+      assert not jaxpr.constvars
+      should_discharge = (
+          [False] * len(grid_mapping.block_mappings)
+          + should_discharge
+          + [False] * len(extra_barriers)
+      )
+      with grid_mapping.trace_env():
+        lowered_jaxpr, _ = discharge.discharge_state(
+            jaxpr, (), should_discharge=should_discharge
+        )
+    else:
+      lowered_jaxpr = jaxpr
+
     # Precompute the total number of bytes transferred from GMEM to SMEM,
     # so that we can do a single arrive instruction for all of the inputs.
     in_transfer_bytes = 0
@@ -414,8 +454,8 @@ def lower_jaxpr_to_module(
         for idx in range(grid_mapping.num_inputs):
           fetch(idx, _as_index(slot), _as_index(slot))
 
-    @mgpu.fori(_as_index(num_steps), ())
-    def _(step, _):
+    @mgpu.fori(_as_index(num_steps), accs)
+    def _(step, accs):
       slot = arith_dialect.remui(step, _as_index(num_stages))
       if grid_mapping.num_inputs:
         # Only wait if async copies were issued.
@@ -427,9 +467,18 @@ def lower_jaxpr_to_module(
           else buffers_gmem[idx]
           for idx, in_smem in enumerate(it.chain(in_in_smem, out_in_smem))
       ]
-      args.extend(scratch_buffers_smem)
+      accs_it = iter(accs)
+      scratch_buffers = [
+          b if b is not None else next(accs_it)
+          for b in scratch_buffers_template
+      ]
+      args.extend(scratch_buffers)
+      # TODO(apaszke): This assumes barriers come after buffers in scratch args,
+      # but that's not necessarily true.
       args.extend(extra_barriers)
-      _ = lower_jaxpr_to_mosaic_gpu(module_ctx, launch_ctx, jaxpr, args)
+      new_accs = lower_jaxpr_to_mosaic_gpu(
+          module_ctx, launch_ctx, lowered_jaxpr, args
+      )
       mgpu.commit_shared()
 
       with mgpu.single_thread():
@@ -445,20 +494,22 @@ def lower_jaxpr_to_module(
           fetch(idx, next_step, slot)
         barriers[slot].arrive_expect_tx(in_transfer_bytes)
 
-      return ()
+      return list(new_accs)
 
     launch_ctx.await_async_copy(0)
 
   scratch_avals = [
       var.aval for var in jaxpr.invars[grid_mapping.slice_scratch_ops]
   ]
+  local_spaces = (gpu_core.SMEM, gpu_core.REGS)
   if not all(
       isinstance(aval, pallas_core.AbstractMemoryRef)
-      and aval.memory_space is gpu_core.SMEM
+      and aval.memory_space in local_spaces
       for aval in scratch_avals
   ):
     raise TypeError(
-        f"All scratch operands must be in SMEM, but got: {scratch_avals}"
+        "All scratch operands must be SMEM references or accumulators (ACC),"
+        f" but got: {scratch_avals}"
     )
   extra_barriers = [
       mgpu.Barrier(aval.dtype.num_arrivals, *aval.shape)
@@ -469,6 +520,7 @@ def lower_jaxpr_to_module(
       jax.ShapeDtypeStruct(aval.shape, aval.dtype)
       for aval in scratch_avals
       if not isinstance(aval.dtype, gpu_core.BarrierType)
+      and aval.memory_space == gpu_core.SMEM
   ]
   smem_scratch_bytes = compiler_params.get("smem_scratch_bytes")
   if smem_scratch_bytes is None:
