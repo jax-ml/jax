@@ -41,13 +41,13 @@ class GPUCompilerParams(pallas_core.CompilerParams):
       dimension of the kernel. Either "parallel" for dimensions that can
       execute in any order, or "sequential" for dimensions that must be
       executed sequentially.
-    num_stages: The number of pipline stages in the kernel. Defaults to 1,
-      meaning no pipelining is done.
+    max_concurrent_steps: The maximum number of sequential stages that are
+      active concurrently. Defaults to 1.
   """
   PLATFORM: ClassVar[str] = "mosaic_gpu"
   approx_math: bool = False
   dimension_semantics: Sequence[Literal["parallel", "sequential"]] | None = None
-  num_stages: int = 1
+  max_concurrent_steps: int = 1
 
 
 class GPUMemorySpace(enum.Enum):

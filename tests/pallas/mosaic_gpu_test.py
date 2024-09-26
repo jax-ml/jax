@@ -96,8 +96,8 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x + 1.0)
 
-  @parameterized.product(num_stages=[1, 2, 3])
-  def test_add_one_grid_pipelined(self, num_stages):
+  @parameterized.product(max_concurrent_steps=[1, 2, 3, 4])
+  def test_add_one_grid_pipelined(self, max_concurrent_steps):
 
     @functools.partial(
         pl.pallas_call,
@@ -106,9 +106,9 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct([128 * 2, 64], jnp.float32),
         compiler_params=plgpu.GPUCompilerParams(
             dimension_semantics=["parallel", "sequential"],
-            num_stages=num_stages,
+            max_concurrent_steps=max_concurrent_steps,
         ),
-        grid=(2, 1),
+        grid=(2, 4),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = x_ref[...] + 1.0
@@ -488,7 +488,7 @@ class PallasCallTest(PallasTest):
         grid=(grid_m, grid_n, grid_k),
         compiler_params=plgpu.GPUCompilerParams(
             dimension_semantics=["parallel", "parallel", "sequential"],
-            num_stages=2,
+            max_concurrent_steps=2,
         ),
     )(a, b)
     np.testing.assert_allclose(res, a @ b, rtol=1e-3)
