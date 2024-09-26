@@ -114,7 +114,6 @@ def _parse_parameters(body: str) -> dict[str, str]:
 def implements(
     original_fun: Callable[..., Any] | None,
     update_doc: bool = True,
-    lax_description: str = "",
     sections: Sequence[str] = ('Parameters', 'Returns', 'References'),
     skip_params: Sequence[str] = (),
     module: str | None = None,
@@ -132,8 +131,6 @@ def implements(
     update_doc: whether to transform the numpy docstring to remove references of
       parameters that are supported by the numpy version but not the JAX version.
       If False, include the numpy docstring verbatim.
-    lax_description: a string description that will be added to the beginning of
-      the docstring.
     sections: a list of sections to include in the docstring. The default is
       ["Parameters", "Returns", "References"]
     skip_params: a list of strings containing names of parameters accepted by the
@@ -146,8 +143,6 @@ def implements(
     wrapped_fun.__np_wrapped__ = original_fun
     # Allows this pattern: @implements(getattr(np, 'new_function', None))
     if original_fun is None:
-      if lax_description:
-        wrapped_fun.__doc__ = lax_description
       return wrapped_fun
     docstr = getattr(original_fun, "__doc__", None)
     name = getattr(original_fun, "__name__", getattr(wrapped_fun, "__name__", str(wrapped_fun)))
@@ -181,8 +176,6 @@ def implements(
 
         docstr = parsed.summary.strip() + "\n" if parsed.summary else ""
         docstr += f"\nLAX-backend implementation of :func:`{name}`.\n"
-        if lax_description:
-          docstr += "\n" + lax_description.strip() + "\n"
         docstr += "\n*Original docstring below.*\n"
 
         # We remove signatures from the docstrings, because they redundant at best and
