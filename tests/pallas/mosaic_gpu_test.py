@@ -462,13 +462,8 @@ class PallasCallTest(PallasTest):
     dtype = jnp.float16
     swizzle = 128
     elems_128b = swizzle // jnp.dtype(dtype).itemsize
-    # TODO(apaszke): Make the grid and tile sizes larger
-    # grid_m, grid_k, grid_n = 132, 10, 4
-    # TODO(apaszke): Increasing grid_k causes th test to fail.
-    # It seems like our pipelining implementation has a number of races.
-    grid_m, grid_k, grid_n = 2, 1, 2
-    # tile_m = tile_n = 128
-    tile_m = tile_n = 64
+    grid_m, grid_k, grid_n = 132, 10, 4
+    tile_m = tile_n = 128
     tile_k = elems_128b
     m, k, n = grid_m * tile_m, grid_k * tile_k, grid_n * tile_n
     def kernel(a_ref, b_ref, o_ref, acc_ref):
