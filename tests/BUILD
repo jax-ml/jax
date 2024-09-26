@@ -234,6 +234,7 @@ jax_multiplatform_test(
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
     enable_configs = [
+        "cpu_shardy",
         "gpu_2gpu_shardy",
         "tpu_v3_2x2_shardy",
         "tpu_v4_2x2_shardy",
@@ -1347,6 +1348,7 @@ jax_multiplatform_test(
     name = "shard_map_test",
     srcs = ["shard_map_test.py"],
     enable_configs = [
+        "cpu_shardy",
         "gpu_2gpu_shardy",
         "tpu_v3_2x2_shardy",
         "tpu_v4_2x2_shardy",
