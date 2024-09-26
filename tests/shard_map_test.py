@@ -848,6 +848,10 @@ class ShardMapTest(jtu.JaxTestCase):
   @parameterized.parameters([True, False])
   @jtu.run_on_devices('cpu', 'gpu', 'tpu')
   def test_debug_print_jit(self, jit):
+    if config.use_shardy_partitioner.value:
+      self.skipTest(
+          'TODO(b/364547005): debug prints not supported by Shardy yet'
+      )
     mesh = Mesh(jax.devices(), ('i',))
 
     @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
@@ -1229,13 +1233,18 @@ class ShardMapTest(jtu.JaxTestCase):
       return x
 
     hlo_str = mlir.module_to_string(jax.jit(foo).lower(x).compiler_ir('stablehlo'))
-    self.assertIn("call @shmap_body", hlo_str)
-    self.assertIn("call @shmap_body_0", hlo_str)
-    self.assertIn("%arg0: tensor<1xf32>", hlo_str)
-    self.assertIn("\"[None]\"", hlo_str)
-    self.assertIn("%arg1: tensor<1xf32>", hlo_str)
-    self.assertIn("\"[('i',)]\"", hlo_str)
-    self.assertIn("-> (tensor<1xf32> {jax.result_info = \"[('i',)]\"})", hlo_str)
+    if config.use_shardy_partitioner.value:
+      self.assertEqual(2, hlo_str.count('sdy.manual_computation'))
+    else:
+      self.assertIn('call @shmap_body', hlo_str)
+      self.assertIn('call @shmap_body_0', hlo_str)
+      self.assertIn('%arg0: tensor<1xf32>', hlo_str)
+      self.assertIn('"[None]"', hlo_str)
+      self.assertIn('%arg1: tensor<1xf32>', hlo_str)
+      self.assertIn('"[(\'i\',)]"', hlo_str)
+      self.assertIn(
+          '-> (tensor<1xf32> {jax.result_info = "[(\'i\',)]"})', hlo_str
+      )
 
   def test_rewrite_process_call(self):
     def f(x):
@@ -1759,10 +1768,18 @@ class ShardMapTest(jtu.JaxTestCase):
 
     v = jnp.arange(32.).reshape(4, 8)
     v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
-    self.assertIn(
-        'sharding={devices=[1,1,2,2]<=[4] last_tile_dims={manual, replicated}}',
-        f.lower(v).as_text('hlo'),
-    )
+    if config.use_shardy_partitioner.value:
+      self.assertIn(
+          'in_shardings=[<@mesh, [{"i"}, {}]>] out_shardings=[<@mesh, [{"i"},'
+          ' {}]>] manual_axes={"i"}',
+          f.lower(v).as_text(),
+      )
+    else:
+      self.assertIn(
+          'sharding={devices=[1,1,2,2]<=[4] last_tile_dims={manual,'
+          ' replicated}}',
+          f.lower(v).as_text('hlo'),
+      )
     self.assertAllClose(v*v, f(v), check_dtypes=False)
 
   def test_sharded_prng_with_abstract_mesh(self):
@@ -1909,6 +1926,11 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(jax.jit(f)(), jnp.zeros((2,)))
 
   def test_partial_auto_of_pjit_different_mesh(self):
+    if config.use_shardy_partitioner.value:
+      self.skipTest(
+          'Shardy requires the mesh axis names to be the same across '
+          'the entire computation.'
+      )
     mesh = jtu.create_mesh((2, 2), ('i', 'j'))
     mesh2 = jax.sharding.Mesh(mesh.devices, ('k', 'l'))
 
@@ -1977,10 +1999,14 @@ class ShardMapTest(jtu.JaxTestCase):
     xs = jnp.arange(16.)
 
     ir = jax.jit(jax.grad(lambda x: f(x).sum())).lower(xs)
-    self.assertIn(
-      '{jax.result_info = "[(\'i\', \'j\', \'k\', \'a\')]"}',
-      ir.as_text()
-    )
+    if config.use_shardy_partitioner.value:
+      self.assertIn(
+          'out_shardings=[<@mesh, [{"i", "j", "k", "a"}]>]', ir.as_text()
+      )
+    else:
+      self.assertIn(
+          "{jax.result_info = \"[('i', 'j', 'k', 'a')]\"}", ir.as_text()
+      )
 
   def test_vmap_spmd_axis_name_error(self):
     mesh = jtu.create_mesh((4, 2), ('i', 'j'))
@@ -2607,6 +2633,28 @@ class CustomPartitionerTest(jtu.JaxTestCase):
 
     c = fwd(a)
     self.assertEqual(c.addressable_data(0).shape, (4, 2))
+
+
+@jtu.with_config(jax_use_shardy_partitioner=True)
+class SdyIntegrationTest(jtu.JaxTestCase):
+  # Verify we can lower to a `ManualComputationOp`.
+  def test_shardy_collective_permute(self):
+    mesh = jtu.create_mesh((2,), ('x',))
+    a = jax.device_put(
+        jnp.arange(8 * 8).reshape((8, 8)),
+        jax.sharding.NamedSharding(mesh, P('x', None)),
+    )
+
+    @jax.jit
+    @partial(
+        shard_map, mesh=mesh, in_specs=(P('x', None),), out_specs=P('x', None)
+    )
+    def fwd(a):
+      axis_size = lax.psum(1, 'x')
+      perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
+      return lax.ppermute(a, 'x', perm=perm)
+
+    self.assertIn('sdy.manual_computation', jax.jit(fwd).lower(a).as_text())
 
 
 if __name__ == '__main__':
