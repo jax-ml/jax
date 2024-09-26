@@ -34,6 +34,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
+from jax._src.lib.mlir.dialects import scf as scf_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
@@ -677,6 +678,22 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   )
 
 
+@register_lowering_rule(lax.select_n_p)
+def _select_n_lowering_rule(ctx: LoweringRuleContext, pred, *cases):
+  if len(cases) != 2:
+    raise NotImplementedError(
+        "Mosaic GPU lowering only supports select_n with 2 cases, got"
+        f" {len(cases)}"
+    )
+  pred_aval, *cases_avals = ctx.avals_in
+  [out_aval] = ctx.avals_out
+  pred = _ensure_fa(pred, pred_aval.dtype)
+  cases = _bcast(*cases, *cases_avals, out_aval)
+  # ``select`` expects the first case to be the true branch, but ``select_n``
+  # orders the cases in reverse.
+  return pred.select(*reversed(cases))
+
+
 @register_lowering_rule(lax.broadcast_in_dim_p)
 def _broadcast_in_dim_lowering_rule(
     ctx: LoweringRuleContext,
@@ -712,6 +729,16 @@ mosaic_lowering_rules.update({
     lax.sub_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x - y),
     lax.mul_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x * y),
     lax.div_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x / y),
+    lax.rem_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x % y),
+    lax.and_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x & y),
+    lax.or_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x | y),
+    lax.xor_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x ^ y),
+    lax.gt_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x > y),
+    lax.lt_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x < y),
+    lax.ge_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x >= y),
+    lax.le_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x <= y),
+    lax.eq_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x == y),
+    lax.ne_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x != y),
 })
 
 
@@ -909,13 +936,41 @@ def _scan_lowering_rule(
   return for_out
 
 
+@register_lowering_rule(lax.cond_p)
+def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
+  index_aval, *_arg_avals = ctx.avals_in
+  switch_op = scf_dialect.IndexSwitchOp(
+      map(mgpu_utils.dtype_to_ir_type, ctx.avals_out),
+      _as_index(_ensure_ir_value(index, index_aval.dtype)),
+      ir.DenseI64ArrayAttr.get(range(len(branches) - 1)),
+      num_caseRegions=len(branches) - 1,
+  )
+
+  # ``RegionSequence`` in MLIR does not support slicing, so the
+  # auto-generated Python bindings for ``caseRegions`` fail at runtime!
+  # We convert it to a list to work around that.
+  regions = list(switch_op.regions)
+  # Move the default region to the back.
+  regions = regions[1:] + regions[:1]
+  for branch, region in zip(branches, regions):
+    with ir.InsertionPoint(region.blocks.append()):
+      outs = lower_jaxpr_to_mosaic_gpu(
+          ctx.module_ctx, ctx.launch_ctx, branch.jaxpr, args
+      )
+      scf_dialect.yield_([
+          _ensure_ir_value(out, aval.dtype)
+          for out, aval in zip(outs, ctx.avals_out)
+      ])
+  return list(switch_op.results)
+
+
 def _bcast(
     x: ir.Value,
     y: ir.Value,
     x_aval: jax_core.ShapedArray,
     y_aval: jax_core.ShapedArray,
     out_aval: jax_core.ShapedArray,
-) -> ir.Value:
+) -> tuple[mgpu.FragmentedArray, mgpu.FragmentedArray]:
   if not isinstance(x, mgpu.FragmentedArray):
     x_dtype = x_aval.dtype
     if x_aval.weak_type:
@@ -935,6 +990,7 @@ def _bcast(
 
 def _ensure_fa(x: object, dtype: jnp.dtype) -> mgpu.FragmentedArray:
   if isinstance(x, mgpu.FragmentedArray):
+    assert x.mlir_dtype == mgpu_utils.dtype_to_ir_type(dtype)
     return x
   elif isinstance(x, (np.number, np.ndarray, int, float)):
     return mgpu.FragmentedArray.splat(
@@ -944,12 +1000,14 @@ def _ensure_fa(x: object, dtype: jnp.dtype) -> mgpu.FragmentedArray:
     )
   elif isinstance(x, ir.Value):
     if isinstance(x.type, (ir.IntegerType, ir.FloatType, ir.IndexType)):
+      assert x.type == mgpu_utils.dtype_to_ir_type(dtype)
       return mgpu.FragmentedArray.splat(x, (), is_signed=mgpu_utils.is_signed(dtype))
   raise NotImplementedError(f"Unsupported type: {type(x)}")
 
 
 def _ensure_ir_value(x: object, dtype: jnp.dtype) -> ir.Value:
   if isinstance(x, ir.Value):
+    assert x.type == mgpu_utils.dtype_to_ir_type(dtype)
     return x
   elif isinstance(x, (np.number, np.ndarray, int, float)):
     return _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype))

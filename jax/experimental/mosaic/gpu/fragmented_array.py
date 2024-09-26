@@ -784,13 +784,13 @@ class FragmentedArray:
         _registers=new_regs, _layout=WGMMA_LAYOUT, _is_signed=self.is_signed
     )
 
-  def select(self, x, y):
+  def select(self, on_true, on_false):
     if (
         not ir.IntegerType.isinstance(self.mlir_dtype)
         or ir.IntegerType(self.mlir_dtype).width != 1
     ):
       raise NotImplementedError
-    return self._pointwise(arith.select, x, y)
+    return self._pointwise(arith.select, on_true, on_false)
 
   def foreach(self, fn: Callable[[ir.Value, tuple[ir.Value, ...]], None]):
     """Call a function for each value and index."""

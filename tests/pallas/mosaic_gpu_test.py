@@ -376,6 +376,27 @@ class PallasCallTest(PallasTest):
         kernel(), jnp.full([256], 5.0, dtype=jnp.float32)
     )
 
+  def test_cond(self):
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
+    )
+    def kernel(x_ref, o_ref):
+      acc = x_ref[...].sum()
+      jax.lax.cond(
+          acc % 2 == 0,
+          lambda: pl.debug_print("acc * 2: {}", acc * 2),
+          lambda: pl.debug_print("acc: {}", acc),
+      )
+      o_ref[...] = jnp.broadcast_to(acc, o_ref.shape)
+
+    x = jnp.arange(256)
+    with jtu.capture_stdout() as output:
+      jax.block_until_ready(kernel(x))
+
+    self.assertIn("acc * 2:", output())
+
   @parameterized.parameters(jnp.float16, jnp.float32)
   def test_wgmma(self, dtype):
     # TensorCores can only fuse transposes of 16-bit values, and RHS
