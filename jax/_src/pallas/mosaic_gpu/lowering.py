@@ -28,6 +28,7 @@ from jax import lax
 from jax._src import core as jax_core
 from jax._src import pjit
 from jax._src import util
+from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
@@ -37,6 +38,7 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic_gpu import core as gpu_core
+from jax._src.state import discharge
 from jax._src.state import primitives as sp
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import core as mgpu_core
@@ -615,6 +617,10 @@ def _swap_lowering_rule(
   del tree  # Unused.
   if indexers:
     raise NotImplementedError("No support for indexers yet")
+  if not isinstance(value, mgpu.FragmentedArray):
+    raise TypeError(f"Can only store arrays (got {value}).")
+  if not isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem):
+    raise TypeError(f"Can only store to references (got {value}).")
   x_aval, _ = ctx.avals_in
   old_value = mgpu.FragmentedArray.load_strided(
       x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
@@ -735,15 +741,57 @@ def _debug_print_lowering_rule(
 def _run_scoped_lowering_rule(
     ctx: LoweringRuleContext, *consts, jaxpr: jax_core.Jaxpr
 ):
-  in_avals = [v.aval.inner_aval for v in jaxpr.invars]
-  bytes_allocated, input_refs = ctx.module_ctx.scratch_view([
-      jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype)
-      for aval in in_avals
-  ])
-  outs = lower_jaxpr_to_mosaic_gpu(
-      ctx.module_ctx, ctx.launch_ctx, jaxpr, input_refs, consts
-  )
-  ctx.module_ctx.stack_free_smem(bytes_allocated)
+  input_refs = []
+  bytes_allocated = 0
+  should_discharge = []
+  for a in jaxpr.invars:
+    a = a.aval
+    if isinstance(a, gpu_core.WGMMAAbstractAccumulatorRef):
+      mlir_dtype = mlir.dtype_to_ir_type(a.dtype)
+      input_refs.append(mgpu.WGMMAAccumulator.zero(*a.shape, mlir_dtype))
+      should_discharge.append(True)
+    elif a.memory_space == gpu_core.SMEM:
+      ref_bytes, [input_ref] = ctx.module_ctx.scratch_view(
+          [jax.ShapeDtypeStruct(shape=a.shape, dtype=a.dtype)]
+      )
+      bytes_allocated += ref_bytes
+      input_refs.append(input_ref)
+      should_discharge.append(False)
+    else:
+      raise ValueError(f"Can't convert to ref: {a}")
+
+  if any(should_discharge):
+    # We convert consts to args, because we only have ir.Values and
+    # not JAX values during lowering. discharge_state() produces JAX
+    # valiues for the aguments but expects them to be provided for the
+    # consts. We also don't want to wrap the values in refs.
+    no_const_jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+    should_discharge = [False] * len(consts) + should_discharge
+    discharged_jaxpr, _ = discharge.discharge_state(no_const_jaxpr, (), should_discharge=should_discharge)
+    new_input_vals = consts + tuple(input_refs)
+    outs = lower_jaxpr_to_mosaic_gpu(
+        ctx.module_ctx, ctx.launch_ctx, discharged_jaxpr, new_input_vals, ()
+    )
+    # Discharge appends to the output the refs that got discharged.
+    outs = outs[:-sum(should_discharge)]
+  else:
+    outs = lower_jaxpr_to_mosaic_gpu(
+        ctx.module_ctx, ctx.launch_ctx, jaxpr, input_refs, consts
+    )
+
+  for o in outs:
+    # This is definitely one of the accumulators we produced. Each
+    # run_scoped call is responsible for dereferencing its own
+    # accumulators.
+    if isinstance(o, mgpu.WGMMAAccumulator) or (
+        isinstance(o, ir.Value) and ir.MemRefType.isinstance(o.type)
+    ):
+      raise ValueError(f"No references are allowed to escape a scope. (got {o})")
+
+  assert len(outs) == len(jaxpr.outvars), (jaxpr, outs)
+  if bytes_allocated:
+    ctx.module_ctx.stack_free_smem(bytes_allocated)
+
   return outs
 
 

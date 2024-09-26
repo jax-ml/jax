@@ -203,3 +203,53 @@ class Barrier:
         [self.num_barriers], BarrierType(self.num_arrivals)
     )
     return AbstractMemoryRef(aval, SMEM)
+
+
+@dataclasses.dataclass(frozen=True)
+class WGMMAAccumulatorRef:
+  shape: tuple[int, int]
+  dtype: jnp.dtype = jnp.float32
+
+  def get_ref_aval(self) -> AbstractMemoryRef:
+    return WGMMAAbstractAccumulatorRef(
+        jax_core.ShapedArray(shape=self.shape, dtype=self.dtype), GPUMemorySpace.REGS
+    )
+
+
+def _is_trivial_index(idx):
+  _is_deref1 = lambda i: i is Ellipsis or i == slice(None)
+  if isinstance(idx, tuple):
+    return all(_is_deref1(i) for i in idx)
+
+  return _is_deref1(idx)
+
+class WGMMAAbstractAccumulatorRef(AbstractMemoryRef):
+  __slots__ = ["inner_aval", "memory_space"]
+
+  def __repr__(self) -> str:
+    return f'Accumulator{{{self.inner_aval.str_short()}}}'
+
+  def join(self, other):
+    return _as_accum(super().join(other))
+
+  def update(self, inner_aval=None, memory_space=None):
+    return _as_accum(super().update(inner_aval=None, memory_space=None))
+
+  def at_least_vspace(self):
+    return _as_accum(super().at_least_vspace())
+
+  def _getitem(self, tracer, idx):
+    if not _is_trivial_index(idx):
+      raise NotImplementedError(f"Can only dereference accumulators, not slice ({idx=}).")
+    from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_deref  # pytype: disable=import-error
+    return wgmma_accumulator_deref(tracer)
+
+def _as_accum(ref) -> WGMMAAbstractAccumulatorRef:
+  return WGMMAAbstractAccumulatorRef(
+      inner_aval=ref.inner_aval,
+      memory_space=ref.memory_space,  # pytype: disable=attribute-error
+  )
+
+def _ref_raise_to_shaped(ref_aval, weak_type):
+  return _as_accum(jax_core.raise_to_shaped_mappings[AbstractMemoryRef](ref_aval, weak_type))
+jax_core.raise_to_shaped_mappings[WGMMAAbstractAccumulatorRef] = _ref_raise_to_shaped

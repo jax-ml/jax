@@ -16,12 +16,10 @@
 
 from __future__ import annotations
 
-import dataclasses
-
 from jax._src import core as jax_core
 from jax._src import effects
 from jax._src import state
-from jax._src.interpreters import mlir
+from jax._src.state import discharge
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
@@ -118,62 +116,9 @@ class _WGMMAPipelineEffect(effects.Effect):
 _wgmma_pipeline_effect = _WGMMAPipelineEffect()
 effects.control_flow_allowed_effects.add_type(_WGMMAPipelineEffect)
 
-
-# Not a shaped array to avoid unexpected operations.
-class WGMMAAbstractAccumulator(jax_core.AbstractValue):
-  __slots__ = ['shape', 'dtype']
-
-  def __init__(self, shape, dtype):
-    self.shape = shape
-    self.dtype = dtype
-
-  def __eq__(self, other):
-    return (type(self) is type(other)
-            and self.dtype == other.dtype and self.shape == other.shape)
-
-  def __hash__(self):
-    return hash((self.shape, self.dtype))
-
-  def update(self, shape=None, dtype=None):
-    if shape is None:
-      shape = self.shape
-    if dtype is None:
-      dtype = self.dtype
-    return WGMMAAbstractAccumulator(shape, dtype)
-
-  def str_short(self, short_dtypes=False) -> str:
-    del short_dtypes
-    shapestr = ",".join(map(str, self.shape))
-    return f"Accumulator{{{self.dtype.name}}}[{shapestr}]"
-
-@dataclasses.dataclass(frozen=True)
-class WGMMAAccumulator:
-  inner_aval: WGMMAAbstractAccumulator
-
-  shape = property(lambda self: self.inner_aval.shape)
-  dtype = property(lambda self: self.inner_aval.dtype)
-
-  def as_array(self) -> jax_core.ShapedArray:
-    return acc_to_shaped_array_p.bind(self.inner_aval)
-
-
-jax_core.raise_to_shaped_mappings[WGMMAAbstractAccumulator] = lambda aval, _: aval
-
-acc_to_shaped_array_p = jax_core.Primitive("acc_to_shaped_array")
-
-@acc_to_shaped_array_p.def_abstract_eval
-def _acc_to_shaped_array_abstract_eval(acc) -> jax_core.ShapedArray:
-  return jax_core.ShapedArray(shape=acc.shape, dtype=acc.dtype)
-
-
-@lowering.register_lowering_rule(acc_to_shaped_array_p)
-def _acc_to_shaped_array_lowering_rule(
-    ctx: lowering.LoweringRuleContext, acc
-):
-  del ctx
-  return acc.value
-
-wgmma_p = jax_core.Primitive("wgmma")
+# WGMMA on an accumulator reference
+wgmma_ref_p = jax_core.Primitive("wgmma_ref")
+wgmma_ref_p.multiple_results = True
 
 def wgmma(acc, a, b, *, rhs_transpose: bool | None = None, swizzle: int = 128):
   """Asynchronous warp group matmul.
@@ -189,8 +134,8 @@ def wgmma(acc, a, b, *, rhs_transpose: bool | None = None, swizzle: int = 128):
     n_tile: The number of tiles to use.
     swizzle: The swizzle pattern.
   """
-  if not isinstance(acc, WGMMAAccumulator):
-    raise TypeError(acc)
+  if not isinstance(acc.aval, gpu_core.WGMMAAbstractAccumulatorRef):
+    raise TypeError(f"Expected WGMMAAbstractAccumulatorRef got {acc}")
 
   rhs_transpose = (
       (jnp.dtype(b.dtype).itemsize == 2)
@@ -208,17 +153,42 @@ def wgmma(acc, a, b, *, rhs_transpose: bool | None = None, swizzle: int = 128):
   if tma * ma != mc or nb * tnb != nc or ka != kb or tka != tkb:
     raise ValueError(f"Incompatible shapes: {a.shape=}, {b.shape=}, {acc.shape=}, {rhs_transpose=}")
 
-  outval = wgmma_p.bind(acc.inner_aval, a, b, swizzle=swizzle, rhs_transpose=rhs_transpose)
-  return WGMMAAccumulator(outval)
+  return wgmma_ref_p.bind(acc, a, b, swizzle=swizzle, rhs_transpose=rhs_transpose)
 
-@wgmma_p.def_effectful_abstract_eval
-def _wgmma_effectful_abstract_eval(acc, *args, **kwargs):
-  del args, kwargs
-  return acc, {
+
+@wgmma_ref_p.def_effectful_abstract_eval
+def _wgmma_ref_effectful_abstract_eval(acc, *args, **kwargs):
+  del acc, args, kwargs
+  return [], {
       _wgmma_pipeline_effect,
+      state.WriteEffect(0),
+      state.ReadEffect(0),
       state.ReadEffect(1),
       state.ReadEffect(2),
   }
+
+
+@discharge.register_discharge_rule(wgmma_ref_p)
+def _wgmma_ref_discharge_rule(
+    in_avals, out_avals,
+    acc,
+    a,
+    b,
+    swizzle,
+    rhs_transpose,
+):
+  del in_avals, out_avals
+  return (
+      wgmma_p.bind(
+          acc, a, b, swizzle=swizzle, rhs_transpose=rhs_transpose
+      ),
+      None,
+      None,
+  ), []
+
+
+# Functional WGMMA, returns a shaped array. Internal.
+wgmma_p = jax_core.Primitive("wgmma")
 
 @lowering.register_lowering_rule(wgmma_p)
 def _wgmma_lowering_rule(
@@ -242,6 +212,15 @@ def _wgmma_lowering_rule(
   nvvm_dialect.wgmma_commit_group_sync_aligned()
   return new_acc
 
+@wgmma_p.def_effectful_abstract_eval
+def _wgmma_effectful_abstract_eval(acc, *args, **kwargs):
+  del args, kwargs
+  return acc, {
+      _wgmma_pipeline_effect,
+      state.ReadEffect(1),
+      state.ReadEffect(2),
+  }
+
 wgmma_wait_p = jax_core.Primitive("wgmma_wait")
 wgmma_wait_p.multiple_results = True
 
@@ -260,19 +239,29 @@ def _wgmma_wait_lowering_rule(ctx: lowering.LoweringRuleContext, allow_groups):
   nvvm_dialect.wgmma_wait_group_sync_aligned(allow_groups)
   return ()
 
-zero_accumulator_p =  jax_core.Primitive("zero_accumulator")
-def zero_accumulator(shape, dtype):
-  return WGMMAAccumulator(zero_accumulator_p.bind(shape=shape, dtype=dtype))
+wgmma_accumulator_deref_p = jax_core.Primitive("wgmma_accumulator_deref_p")
+def wgmma_accumulator_deref(acc):
+  """Dereferences an accumulator register."""
 
-@zero_accumulator_p.def_abstract_eval
-def _zero_accumulator_abstract_eval(shape, dtype):
-  return WGMMAAbstractAccumulator(shape=shape, dtype=dtype)
+  if not isinstance(acc.aval, gpu_core.WGMMAAbstractAccumulatorRef):
+    raise TypeError(f"acc must be a WGMMAAccumulatorAbstractRef, got {acc.aval=}")
 
+  return wgmma_accumulator_deref_p.bind(acc)
 
-@lowering.register_lowering_rule(zero_accumulator_p)
-def _zero_accumulator_lowering_rule(
-    ctx: lowering.LoweringRuleContext, shape, dtype
-):
+@wgmma_accumulator_deref_p.def_effectful_abstract_eval
+def _wgmma_accumulator_deref_abstract_eval(acc):
+  # Dereferencing implies flushing so we have a wgmma pipeline effect.
+  ret = acc.inner_aval if isinstance(acc, gpu_core.WGMMAAbstractAccumulatorRef) else acc
+  assert isinstance(ret, jax_core.ShapedArray), acc
+  return ret, {_wgmma_pipeline_effect}
+
+@discharge.register_discharge_rule(wgmma_accumulator_deref_p)
+def _wgmma_accumulator_deref_discharge_rule(in_avals, out_avals, acc):
+  del in_avals, out_avals
+  return (None,), wgmma_accumulator_deref_p.bind(acc)
+
+@lowering.register_lowering_rule(wgmma_accumulator_deref_p)
+def _wgmma_accumulator_deref_lowering_rule(ctx: lowering.LoweringRuleContext, acc):
   del ctx
-  m, n = shape
-  return mgpu.WGMMAAccumulator.zero(m=m, n=n, dtype=mlir.dtype_to_ir_type(jnp.dtype(dtype)))
+  nvvm_dialect.wgmma_wait_group_sync_aligned(0)
+  return acc.value

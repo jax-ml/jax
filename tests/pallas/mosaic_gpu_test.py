@@ -380,11 +380,11 @@ class PallasCallTest(PallasTest):
     swizzle = 128
     elems_128b = swizzle // jnp.dtype(dtype).itemsize
     def kernel(a_ref, b_ref, o_ref):
-      acc = plgpu.zero_accumulator((64, 128), jnp.float32)
-      acc = plgpu.wgmma(acc, a_ref, b_ref, rhs_transpose=rhs_transpose)
-      plgpu.wgmma_wait(0)
-      # TODO(cperivol): turn acc into a reference so we can reason about effects.
-      o_ref[...] = acc.as_array()
+      def scope(acc_ref):
+        plgpu.wgmma(acc_ref, a_ref, b_ref, rhs_transpose=rhs_transpose)
+        return acc_ref[...]
+
+      o_ref[...] = pl.run_scoped(scope, plgpu.ACC((64, 128), jnp.float32))
 
     key1, key2 = jax.random.split(jax.random.key(42), 2)
     a = jax.random.uniform(key1, shape=(64, 128), dtype=dtype)
