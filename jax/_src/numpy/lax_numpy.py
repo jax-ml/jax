@@ -6812,6 +6812,10 @@ def trace(a: ArrayLike, offset: int | ArrayLike = 0, axis1: int = 0, axis2: int 
   util.check_arraylike("trace", a)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.trace is not supported.")
+
+  if _canonicalize_axis(axis1, ndim(a)) == _canonicalize_axis(axis2, ndim(a)):
+    raise ValueError(f"axis1 and axis2 can not be same. axis1={axis1} and axis2={axis2}")
+
   dtypes.check_user_dtype_supported(dtype, "trace")
 
   a_shape = shape(a)

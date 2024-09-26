@@ -2725,6 +2725,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  def testTraceSameAxesError(self):
+    a = jnp.arange(1, 13).reshape(2, 3, 2)
+    with self.assertRaisesRegex(ValueError, r"axis1 and axis2 can not be same"):
+      jnp.trace(a, axis1=1, axis2=-2)
+
   @jtu.sample_product(
     ashape=[(15,), (16,), (17,)],
     vshape=[(), (5,), (5, 5)],
