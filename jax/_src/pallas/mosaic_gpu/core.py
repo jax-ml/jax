@@ -132,10 +132,8 @@ class GPUBlockMapping(pallas_core.BlockMapping):
 
 @dataclasses.dataclass
 class GPUBlockSpec(pallas_core.BlockSpec):
-  # TODO(justinfu): Replace tiling a list of transforms.
-  tiling: tuple[int, ...] | None = None
-  transpose_permutation: tuple[int, ...] | None = None
-  swizzle: int | None = None
+  transforms: MemoryRefTransform | tuple[MemoryRefTransform, ...] = ()
+  swizzle: int | None = None  # TODO: apaszke - Swizzle is also a transform.
 
   def to_block_mapping(
       self,
@@ -155,11 +153,9 @@ class GPUBlockSpec(pallas_core.BlockSpec):
         grid=grid,
         mapped_dims=mapped_dims,
     )
-    transforms: tuple[pallas_core.MemoryRefTransform, ...] = ()
-    if self.tiling is not None:
-      transforms += (TilingTransform(self.tiling),)
-    if self.transpose_permutation is not None:
-      transforms += (TransposeTransform(self.transpose_permutation),)
+    transforms = self.transforms
+    if not isinstance(transforms, tuple):
+      transforms = (transforms,)
     return GPUBlockMapping(
         block_shape=bm.block_shape,
         block_aval=bm.block_aval,

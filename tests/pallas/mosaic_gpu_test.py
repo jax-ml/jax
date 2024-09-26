@@ -326,11 +326,15 @@ class PallasCallTest(PallasTest):
     )
 
   def test_swizzled_blockspec_shapes(self):
+
     @functools.partial(
         pl.pallas_call,
         in_specs=[
             plgpu.GPUBlockSpec(
-                (128, 64), lambda *i: i, tiling=(64, 64), swizzle=128
+                (128, 64),
+                lambda *i: i,
+                transforms=plgpu.TilingTransform((64, 64)),
+                swizzle=128,
             ),
         ],
         out_specs=pl.BlockSpec((2, 1, 64, 64), lambda i, j: (i, j, 64, 64)),
@@ -390,20 +394,22 @@ class PallasCallTest(PallasTest):
     a = jax.random.uniform(key1, shape=(64, 128), dtype=dtype)
     b = jax.random.uniform(key2, shape=(128, 128), dtype=dtype)
 
+    rhs_transforms = (plgpu.TilingTransform((elems_128b, elems_128b)),)
+    if rhs_transpose:
+      rhs_transforms += (plgpu.TransposeTransform((1, 0, 2, 3)),)
     res = pl.pallas_call(
         kernel,
         in_specs=[
             plgpu.GPUBlockSpec(
                 (64, 128),
                 lambda i, j: (i, j),
-                tiling=(64, elems_128b),
+                transforms=plgpu.TilingTransform((64, elems_128b)),
                 swizzle=128,
             ),
             plgpu.GPUBlockSpec(
                 (128, 128),
                 lambda *i: i,
-                transpose_permutation=(1, 0, 2, 3) if rhs_transpose else None,
-                tiling=(elems_128b, elems_128b),
+                transforms=rhs_transforms,
                 swizzle=128,
             ),
         ],
