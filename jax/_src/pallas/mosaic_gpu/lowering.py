@@ -404,6 +404,8 @@ def lower_jaxpr_to_module(
           mgpu.ds(idx, dim) for idx, dim in zip(idxs, block_mapping.block_shape)
       )
 
+    is_memory_thread = mgpu.single_thread_predicate(per_block=True)
+
     def fetch(idx: int, step: ir.Value, slot: ir.Value) -> None:
       if not in_in_smem[idx]:
         return
@@ -419,36 +421,67 @@ def lower_jaxpr_to_module(
           swizzle=in_swizzles[idx],
           arrive=False,  # The caller must do ``arrive_expect_tx`` manually!
           uniform=False,
+          predicate=is_memory_thread,
       )
 
-    def store(idx: int, step: ir.Value, slot: ir.Value) -> None:
+    def store(
+        idx: int, step: ir.Value, slot: ir.Value, prev_base_offset: ir.Value
+    ) -> ir.Value:
       if not out_in_smem[idx]:
         return
 
+      # We have to do some work to make sure that consecutive stores are not
+      # going to be writing to the same location, or else we'll end up with
+      # multiple concurrent writes and a racy program.
+      # TODO(apaszke,slebedev): In most cases output index maps depend only on
+      # parallel grid axes and in that case we can simply move the store to
+      # happen after the loop.
+      # TODO(apaszke,slebedev): This still diverges significantly from the TPU
+      # semantics in that it will move on to the next SMEM output slice even if
+      # it's not storing the previous one.
+      store_slice = gmem_slice(step, out_block_mappings[idx])
+      strides, _ = ir.MemRefType(out_buffers_gmem[idx].type).get_strides_and_offset()
+      base_offset = _as_index(0)
+      for stride, slc in zip(strides, store_slice):
+        base_offset = arith_dialect.addi(
+            base_offset, arith_dialect.muli(slc.base, _as_index(stride))
+        )
+      base_offset_changed = arith_dialect.cmpi(
+          arith_dialect.CmpIPredicate.ne, base_offset, prev_base_offset
+      )
+      is_last_step = arith_dialect.cmpi(
+          arith_dialect.CmpIPredicate.eq, step, _as_index(num_steps - 1)
+      )
+      do_store = arith_dialect.andi(
+          is_memory_thread, arith_dialect.ori(base_offset_changed, is_last_step)
+      )
       # TODO(slebedev): Support 128-byte swizzling, once we can lower matmuls.
       launch_ctx.async_copy(
           src_ref=mgpu.memref_slice(out_buffers_smem[idx], slot),
           dst_ref=out_buffers_gmem[idx],
-          gmem_slice=gmem_slice(step, out_block_mappings[idx]),
+          gmem_slice=store_slice,
           swizzle=None,
           uniform=False,
+          predicate=do_store,
       )
+      return base_offset
 
-    with mgpu.single_thread():
-      for slot in range(min(max_concurrent_steps, num_steps)):
-        barriers[slot].arrive_expect_tx(in_transfer_bytes)
-        for idx in range(grid_mapping.num_inputs):
-          fetch(idx, _as_index(slot), _as_index(slot))
+    for slot in range(min(max_concurrent_steps, num_steps)):
+      barriers[slot].arrive_expect_tx(in_transfer_bytes, predicate=is_memory_thread)
+      for idx in range(grid_mapping.num_inputs):
+        fetch(idx, _as_index(slot), _as_index(slot))
 
-    @mgpu.fori(_as_index(num_steps), accs)
-    def _(step, accs):
+    last_store_offsets = [_as_index(-1)] * grid_mapping.num_outputs
+    @mgpu.fori(_as_index(num_steps), (accs, last_store_offsets))
+    def _(step, carry):
+      accs, last_store_offsets = carry
       slot = arith_dialect.remui(step, _as_index(max_concurrent_steps))
       if grid_mapping.num_inputs:
         # Only wait if async copies were issued.
         barriers[slot].wait()
       # We need to make sure the output copy is complete before the kernel starts
       # writing to the output window.
-      launch_ctx.await_async_copy(max_concurrent_steps - 1)
+      launch_ctx.await_async_copy(max_concurrent_steps - 1, await_read_only=True)
 
       args = [
           mgpu.memref_slice(buffers_smem[idx], slot)
@@ -468,23 +501,26 @@ def lower_jaxpr_to_module(
       new_accs = lower_jaxpr_to_mosaic_gpu(
           module_ctx, launch_ctx, lowered_jaxpr, args
       )
-      mgpu.commit_shared()
 
-      with mgpu.single_thread():
-        for idx in range(grid_mapping.num_outputs):
-          store(idx, step, slot)
+      # TODO(apaszke): Elide this if we're not going to perform any stores
+      mgpu.commit_shared()
+      new_store_offsets = []
+      for idx in range(grid_mapping.num_outputs):
+        new_store_offsets.append(
+            store(idx, step, slot, last_store_offsets[idx])
+        )
 
       next_step = arith_dialect.addi(step, _as_index(max_concurrent_steps))
       next_step_in_bounds = arith_dialect.cmpi(
           arith_dialect.CmpIPredicate.ult, next_step, _as_index(num_steps)
       )
       next_slot = slot  # (x + y) % y == x % y
-      with mgpu.when(next_step_in_bounds), mgpu.single_thread():
+      with mgpu.when(next_step_in_bounds):
+        barriers[slot].arrive_expect_tx(in_transfer_bytes, predicate=is_memory_thread)
         for idx in range(grid_mapping.num_inputs):
           fetch(idx, next_step, next_slot)
-        barriers[slot].arrive_expect_tx(in_transfer_bytes)
 
-      return list(new_accs)
+      return list(new_accs), new_store_offsets
 
     launch_ctx.await_async_copy(0)
 

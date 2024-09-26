@@ -229,6 +229,15 @@ class ThreadSubset(enum.IntEnum):
 _ONCE_PER: ThreadSubset | None = None
 
 
+def single_thread_predicate(per_block=True):
+  warp = warp_idx()
+  if not per_block:
+    warp = arith.remui(warp, c(4, warp.type))
+  first_warp = arith.cmpi(arith.CmpIPredicate.eq, warp, c(0, warp.type))
+  elected = nvvm.elect_sync(ir.IntegerType.get_signless(1))
+  return arith.andi(first_warp, elected)
+
+
 @contextlib.contextmanager
 def single_thread(per_block=True):
   """Runs the context only from a single thread.
@@ -244,16 +253,10 @@ def single_thread(per_block=True):
     yield
     return
 
-  warp = warp_idx()
-  if not per_block:
-    warp = arith.remui(warp, c(4, warp.type))
-  first_warp = arith.cmpi(arith.CmpIPredicate.eq, warp, c(0, warp.type))
-  elected = nvvm.elect_sync(ir.IntegerType.get_signless(1))
-  should_run = arith.andi(first_warp, elected)
-  if_op = scf.IfOp(should_run)
   prev_scope = _ONCE_PER
   _ONCE_PER = scope
   try:
+    if_op = scf.IfOp(single_thread_predicate(per_block))
     with ir.InsertionPoint(if_op.then_block):
       yield
       scf.YieldOp([])
@@ -610,14 +613,15 @@ class BarrierRef:
     i64 = ir.IntegerType.get_signless(64)
     nvvm.mbarrier_arrive_shared(i64, self.get_ptr())
 
-  def arrive_expect_tx(self, bytes: int | ir.Value):
+  def arrive_expect_tx(
+      self, bytes: int | ir.Value, predicate: ir.Value | None = None
+  ):
     if isinstance(bytes, int):
       bytes = c(bytes, ir.IntegerType.get_signless(32))
     elif ir.IndexType.isinstance(bytes.type):
       i32 = ir.IntegerType.get_signless(32)
       bytes = arith.index_cast(i32, bytes)
-
-    nvvm.mbarrier_arrive_expect_tx_shared(self.get_ptr(), bytes)
+    nvvm.mbarrier_arrive_expect_tx_shared(self.get_ptr(), bytes, predicate=predicate)
 
   def get_ptr(self):
     ptr = ir.Type.parse("!llvm.ptr<3>")

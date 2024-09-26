@@ -51,6 +51,7 @@ from .utils import (
     memref_unfold,
     memref_unsqueeze,
     single_thread,
+    single_thread_predicate,
     thread_idx,
     tile_shape,
     warp_idx,
