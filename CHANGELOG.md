@@ -34,6 +34,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     in an error.
   * Internal pretty-printing tools `jax.core.pp_*` have been removed, after
     being deprecated in JAX v0.4.30.
+  * `jax.lib.xla_client.Device` is deprecated; use `jax.Device` instead.
   * `jax.lib.xla_client.XlaRuntimeError` has been deprecated. Use
     `jax.errors.JaxRuntimeError` instead.
 
