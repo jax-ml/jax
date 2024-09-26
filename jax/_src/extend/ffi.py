@@ -20,6 +20,8 @@ import functools
 import os
 from typing import Any
 
+import numpy as np
+
 from jax._src import core
 from jax._src import dispatch
 from jax._src import effects
@@ -248,7 +250,7 @@ def ffi_call(
       vectorized=vectorized,
       target_name=target_name,
       has_side_effect=has_side_effect,
-      **kwargs,
+      **_wrap_kwargs_hashable(kwargs),
   )
   if multiple_results:
     return results
@@ -256,9 +258,80 @@ def ffi_call(
     return results[0]
 
 
+# ffi_call must support some small non-hashable input arguments, like np.arrays
+# and dicts, to support calling FFI targets with array inputs or user defined
+# structs. Since these arguments will eventually be embedded in the HLO as
+# dense attributes, we assume that they are small and hash by making an
+# immutable copy and hashing by value.
+def _wrap_kwargs_hashable(kwargs: dict[str, Any]) -> dict[str, Any]:
+  hashable_kwargs: dict[str, Any] = {}
+  for k, v in kwargs.items():
+    if isinstance(v, np.ndarray):
+      hashable_kwargs[k] = HashableArray(v)
+    elif isinstance(v, dict):
+      hashable_kwargs[k] = HashableDict(v)
+    else:
+      try:
+        hash(v)
+      except TypeError as e:
+        raise TypeError(
+            f"Non-hashable keyword argument to ffi_call {k}: {v}") from e
+      else:
+        hashable_kwargs[k] = v
+  return hashable_kwargs
+
+
+def _unwrap_kwargs_hashable(kwargs: dict[str, Any]) -> dict[str, Any]:
+  unwrapped_kwargs: dict[str, Any] = {}
+  for k, v in kwargs.items():
+    if isinstance(v, HashableArray):
+      unwrapped_kwargs[k] = v.val
+    elif isinstance(v, HashableDict):
+      unwrapped_kwargs[k] = dict(v.val)
+    else:
+      unwrapped_kwargs[k] = v
+  return unwrapped_kwargs
+
+
+class HashableArray:
+  __slots__ = ["val"]
+
+  def __init__(self, val):
+    assert isinstance(val, np.ndarray)
+    self.val = np.copy(val)
+    self.val.setflags(write=False)
+
+  def __repr__(self):
+    return f"HashableArray({self.val})"
+
+  def __hash__(self):
+    return hash((self.val.shape, self.val.dtype, self.val.tobytes()))
+
+  def __eq__(self, other):
+    return isinstance(other, HashableArray) and np.array_equal(self.val, other.val)
+
+
+class HashableDict:
+  __slots__ = ["val"]
+
+  def __init__(self, val):
+    assert isinstance(val, dict)
+    self.val = tuple(sorted(val.items()))
+
+  def __repr__(self):
+    return f"HashableDict({dict(self.val)})"
+
+  def __hash__(self):
+    return hash(self.val)
+
+  def __eq__(self, other):
+    return isinstance(other, HashableDict) and self.val == other.val
+
+
 class FfiEffect(effects.Effect):
   def __str__(self):
     return "FFI"
+
 
 _FfiEffect = FfiEffect()
 effects.lowerable_effects.add_type(FfiEffect)
@@ -303,12 +376,12 @@ def ffi_call_lowering(
 ) -> Sequence[ir.Value]:
   del result_avals, vectorized
   rule = ffi_lowering(target_name, has_side_effect=has_side_effect)
-  return rule(ctx, *operands, **kwargs)
+  return rule(ctx, *operands, **_unwrap_kwargs_hashable(kwargs))
 
 
 ffi_call_p = core.Primitive("ffi_call")
 ffi_call_p.multiple_results = True
-ffi_call_p.def_impl(functools.partial(dispatch.apply_primitive, ffi_call_p))
+dispatch.simple_impl(ffi_call_p)
 ffi_call_p.def_effectful_abstract_eval(ffi_call_abstract_eval)
 ad.primitive_jvps[ffi_call_p] = ffi_call_jvp
 ad.primitive_transposes[ffi_call_p] = ffi_call_transpose

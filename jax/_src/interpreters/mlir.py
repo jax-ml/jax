@@ -277,7 +277,12 @@ def ir_constant(val: Any) -> IrValues:
   raise TypeError(f"No constant handler for type: {type(val)}")
 
 def _numpy_array_constant(x: np.ndarray | np.generic) -> IrValues:
-  attr = _numpy_array_attribute(x)
+  element_type = dtype_to_ir_type(x.dtype)
+  shape = x.shape
+  if x.dtype == np.bool_:
+    x = np.packbits(x, bitorder='little')  # type: ignore
+  x = np.ascontiguousarray(x)
+  attr = ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # type: ignore
   return hlo.constant(attr)
 
 
@@ -359,13 +364,26 @@ def _numpy_scalar_attribute(val: Any) -> ir.Attribute:
   else:
     raise TypeError(f"Unsupported scalar attribute type: {type(val)}")
 
+_dtype_to_array_attr: dict[Any, AttributeHandler] = {
+  np.dtype(np.bool_): ir.DenseBoolArrayAttr.get,
+  np.dtype(np.float32): ir.DenseF32ArrayAttr.get,
+  np.dtype(np.float64): ir.DenseF64ArrayAttr.get,
+  np.dtype(np.int32): ir.DenseI32ArrayAttr.get,
+  np.dtype(np.int64): ir.DenseI64ArrayAttr.get,
+  np.dtype(np.int8): ir.DenseI8ArrayAttr.get,
+}
+
 def _numpy_array_attribute(x: np.ndarray | np.generic) -> ir.Attribute:
-  element_type = dtype_to_ir_type(x.dtype)
   shape = x.shape
   if x.dtype == np.bool_:
     x = np.packbits(x, bitorder='little')  # type: ignore
   x = np.ascontiguousarray(x)
-  return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # type: ignore
+  builder = _dtype_to_array_attr.get(x.dtype, None)
+  if builder:
+    return builder(x)
+  else:
+    element_type = dtype_to_ir_type(x.dtype)
+    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # type: ignore
 
 def _numpy_array_attribute_handler(val: np.ndarray | np.generic) -> ir.Attribute:
   if 0 in val.strides and val.size > 0:
@@ -407,6 +425,8 @@ def _sequence_attribute_handler(val: Sequence[Any]) -> ir.Attribute:
 
 register_attribute_handler(list, _sequence_attribute_handler)
 register_attribute_handler(tuple, _sequence_attribute_handler)
+register_attribute_handler(ir.Attribute, lambda x: x)
+register_attribute_handler(ir.Type, lambda x: x)
 
 def ir_attribute(val: Any) -> ir.Attribute:
   """Convert a Python value to an MLIR attribute."""

@@ -198,6 +198,36 @@ class FfiTest(jtu.JaxTestCase):
     self.assertIn("has_side_effect = true", hlo.as_text())
     self.assertIn(target_name, hlo.compile().as_text())
 
+  def testJvpError(self):
+    def fun(x):
+      return jex.ffi.ffi_call("test_ffi", x, x, non_hashable_arg={"a": 1})
+    with self.assertRaisesRegex(
+        ValueError, "The FFI call to `.+` cannot be differentiated."):
+      jax.jvp(fun, (0.5,), (0.5,))
+
+  def testNonHashableAttributes(self):
+    def fun(x):
+      return jex.ffi.ffi_call("test_ffi", x, x, non_hashable_arg={"a": 1})
+
+    self.assertIn("HashableDict", str(jax.make_jaxpr(fun)(jnp.ones(5))))
+    hlo = jax.jit(fun).lower(jnp.ones(5)).as_text()
+    self.assertIn("non_hashable_arg = {a = 1", hlo)
+
+    # If non-hashable arguments aren't handled properly, this will raise a
+    # TypeError. We make sure it doesn't.
+    with self.assertRaises(Exception) as manager:
+      fun(jnp.ones(5))
+    self.assertNotIsInstance(manager.exception, TypeError)
+
+    def fun(x):
+      return jex.ffi.ffi_call("test_ffi", x, x, non_hashable_arg=np.arange(3))
+    self.assertIn("HashableArray", str(jax.make_jaxpr(fun)(jnp.ones(5))))
+    hlo = jax.jit(fun).lower(jnp.ones(5)).as_text()
+    self.assertIn("non_hashable_arg = array<i64: 0, 1, 2>", hlo)
+    with self.assertRaises(Exception) as manager:
+      fun(jnp.ones(5))
+    self.assertNotIsInstance(manager.exception, TypeError)
+
   @jtu.sample_product(
     shape=[(1,), (4,), (5,)],
     dtype=(np.int32,),
