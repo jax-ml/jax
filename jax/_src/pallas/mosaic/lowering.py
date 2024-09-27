@@ -1635,7 +1635,8 @@ def _convert_element_type_lowering_rule(
   del weak_type
   del sharding
   out_aval = ctx.avals_out[0]
-  old_dtype = ctx.avals_in[0].dtype
+  in_aval = ctx.avals_in[0]
+  old_dtype = in_aval.dtype
   out_type = aval_to_ir_type(out_aval)
 
   if old_dtype == new_dtype:
@@ -1680,8 +1681,16 @@ def _convert_element_type_lowering_rule(
     predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
     const_type = _dtype_to_ir_type(old_dtype)
     const_zero = ir.IntegerAttr.get(const_type, 0)
-    const_zero = arith.ConstantOp(const_type, const_zero)
-    return arith.CmpIOp(predicate, x, const_zero).result
+    if in_aval.shape:
+      in_type = aval_to_ir_type(in_aval, is_kernel_boundary=False)
+      vector_zeros = arith.ConstantOp(
+          in_type,
+          ir.DenseElementsAttr.get_splat(in_type, const_zero),
+      )
+      return arith.CmpIOp(predicate, x, vector_zeros).result
+    return arith.CmpIOp(
+        predicate, x, arith.ConstantOp(const_type, const_zero)
+    ).result
   return lower_fun(functools.partial(_convert_helper, to_dtype=new_dtype),
                    multiple_results=False)(ctx, x)
 

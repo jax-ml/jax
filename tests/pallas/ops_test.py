@@ -561,7 +561,7 @@ class OpsTest(PallasBaseTest):
       self.skipTest("Not supported: bad canonicalization")
     if from_dtype == "bool" and to_dtype in {"int16", "int8"}:
       self.skipTest("Not supported: cannot extend to sub-32 bit types")
-    if from_dtype in {"int32", "bfloat16", "float32"} and to_dtype == "bool":
+    if from_dtype in {"bfloat16", "float32"} and to_dtype == "bool":
       self.skipTest("Not supported: unsupported relayout")
     if from_dtype == "bool" and to_dtype in {"int32", "bfloat16", "float32"}:
       self.skipTest("Not supported: unsupported relayout")
