@@ -25,9 +25,9 @@ jobs:
       - name: Install LLVM/Clang
         run: choco install llvm --version=18.1.4 --yes --no-progress --allow-downgrade
 
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
 
-      - uses: actions/setup-python@f677139bbe7f9c59b41e40162b753c062f5d49a3 # ratchet:actions/setup-python@v5
+      - uses: actions/setup-python@f677139bbe7f9c59b41e40162b753c062f5d49a3  # v5.2.0
         with:
           python-version: ${{ matrix.pyver }}
           cache: 'pip'
@@ -45,7 +45,7 @@ jobs:
             --bazel_options=--config=win_clang `
             --verbose
 
-      - uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # ratchet: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874  # v4.4.0
         with:
           name: wheels-${{ matrix.os }}-${{ matrix.pyver }}
           path: ${{ github.workspace }}\dist\*.whl
