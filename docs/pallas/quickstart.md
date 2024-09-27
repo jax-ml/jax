@@ -188,6 +188,23 @@ operations like matrix multiplications really quickly.
 On TPUs, programs are executed in a combination of parallel and sequential
 (depending on the architecture) so there are slightly different considerations.
 
+To call the above kernel on TPU, run:
+
+```{code-cell} ipython3
+from jax.experimental.pallas import tpu as pltpu
+
+def iota(size: int):
+  return pl.pallas_call(iota_kernel,
+                        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+                        out_shape=jax.ShapeDtypeStruct((size,), jnp.int32),
+                        grid=(size,))()
+iota(8)
+```
+
+TPUs distinguish between vector and scalar memory spaces and in this case the
+output must be placed in scalar memory (`TPUMemorySpace.SMEM`) since `i` is
+a scalar. For more details read {ref}`pallas_tpu_pipelining`.
+
 You can read more details at {ref}`pallas_grid`.
 
 +++
