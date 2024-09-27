@@ -16,6 +16,7 @@ load(
     "//jaxlib:jax.bzl",
     "jax_generate_backend_suites",
     "jax_multiplatform_test",
+    "jax_py_test",
     "py_deps",
 )
 
@@ -438,17 +439,16 @@ jax_multiplatform_test(
     ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
 )
 
-jax_multiplatform_test(
+# This test doesn't need a TPU; it only tests numpy-using helpers.
+jax_py_test(
     name = "tpu_splash_attention_mask_test",
     srcs = [
         "tpu_splash_attention_mask_test.py",
     ],
-    enable_backends = [
-        "cpu",
-        "tpu",
-    ],
     deps = [
+        "//jax",
         "//jax:pallas_tpu_ops",
+        "//jax:test_util",
     ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
 )
 

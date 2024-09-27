@@ -82,9 +82,13 @@ jax_multiplatform_test(
     },
 )
 
-jax_multiplatform_test(
+jax_py_test(
     name = "config_test",
     srcs = ["config_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ] + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -94,11 +98,6 @@ jax_multiplatform_test(
         "cpu": 5,
         "gpu": 10,
     },
-)
-
-jax_multiplatform_test(
-    name = "custom_object_test",
-    srcs = ["custom_object_test.py"],
 )
 
 jax_multiplatform_test(
@@ -397,11 +396,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "custom_linear_solve_test",
     srcs = ["custom_linear_solve_test.py"],
-    shard_count = {
-        "cpu": 10,
-        "gpu": 10,
-        "tpu": 10,
-    },
 )
 
 jax_multiplatform_test(
