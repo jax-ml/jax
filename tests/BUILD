@@ -66,7 +66,10 @@ jax_py_test(
 jax_multiplatform_test(
     name = "array_interoperability_test",
     srcs = ["array_interoperability_test.py"],
-    disable_backends = ["tpu"],
+    enable_backends = [
+        "cpu",
+        "gpu",
+    ],
     tags = ["multiaccelerator"],
     deps = py_deps("tensorflow_core"),
 )
@@ -160,10 +163,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "gpu_memory_flags_test_no_preallocation",
     srcs = ["gpu_memory_flags_test.py"],
-    disable_backends = [
-        "cpu",
-        "tpu",
-    ],
+    enable_backends = ["gpu"],
     env = {
         "XLA_PYTHON_CLIENT_PREALLOCATE": "0",
     },
@@ -173,10 +173,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "gpu_memory_flags_test",
     srcs = ["gpu_memory_flags_test.py"],
-    disable_backends = [
-        "cpu",
-        "tpu",
-    ],
+    enable_backends = ["gpu"],
     env = {
         "XLA_PYTHON_CLIENT_PREALLOCATE": "1",
     },
@@ -273,10 +270,7 @@ jax_multiplatform_test(
     backend_tags = {
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
-    disable_backends = [
-        "cpu",
-        "tpu",
-    ],
+    enable_backends = ["gpu"],
     env = {"XLA_FLAGS": "--xla_dump_to=sponge --xla_gpu_enable_latency_hiding_scheduler=true"},
     tags = [
         "config-cuda-only",
@@ -290,10 +284,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "mock_gpu_test",
     srcs = ["mock_gpu_test.py"],
-    disable_backends = [
-        "cpu",
-        "tpu",
-    ],
+    enable_backends = ["gpu"],
     tags = [
         "config-cuda-only",
     ],
@@ -556,11 +547,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_metal_test",
     srcs = ["lax_metal_test.py"],
-    disable_backends = [
-        "cpu",
-        "gpu",
-        "tpu",
-    ],
+    enable_backends = ["metal"],
     tags = ["notap"],
     deps = [
         "//jax:internal_test_util",
@@ -649,10 +636,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "metadata_test",
     srcs = ["metadata_test.py"],
-    disable_backends = [
-        "gpu",
-        "tpu",
-    ],
+    enable_backends = ["cpu"],
 )
 
 jax_py_test(
@@ -672,10 +656,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "multi_device_test",
     srcs = ["multi_device_test.py"],
-    disable_backends = [
-        "gpu",
-        "tpu",
-    ],
+    enable_backends = ["cpu"],
 )
 
 jax_multiplatform_test(
@@ -734,10 +715,7 @@ jax_multiplatform_test(
     name = "polynomial_test",
     srcs = ["polynomial_test.py"],
     # No implementation of nonsymmetric Eigendecomposition.
-    disable_backends = [
-        "gpu",
-        "tpu",
-    ],
+    enable_backends = ["cpu"],
     shard_count = {
         "cpu": 10,
     },
@@ -753,31 +731,28 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "heap_profiler_test",
     srcs = ["heap_profiler_test.py"],
-    disable_backends = [
-        "gpu",
-        "tpu",
-    ],
+    enable_backends = ["cpu"],
 )
 
 jax_multiplatform_test(
     name = "profiler_test",
     srcs = ["profiler_test.py"],
-    disable_backends = [
-        "gpu",
-        "tpu",
-    ],
+    enable_backends = ["cpu"],
 )
 
 jax_multiplatform_test(
     name = "pytorch_interoperability_test",
     srcs = ["pytorch_interoperability_test.py"],
-    disable_backends = ["tpu"],
     # The following cases are disabled because they time out in Google's CI, mostly because the
     # CUDA kernels in Torch take a very long time to compile.
     disable_configs = [
         "gpu_p100",  # Pytorch P100 build times out in Google's CI.
         "gpu_a100",  # Pytorch A100 build times out in Google's CI.
         "gpu_h100",  # Pytorch H100 build times out in Google's CI.
+    ],
+    enable_backends = [
+        "cpu",
+        "gpu",
     ],
     tags = [
         "not_build:arm",
@@ -1019,16 +994,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "sparse_nm_test",
     srcs = ["sparse_nm_test.py"],
-    config_tags_overrides = {
-        "gpu_a100": {
-            "ondemand": False,  # Include in presubmit.
-        },
-    },
-    disable_backends = [
-        "cpu",
-        "gpu",
-        "tpu",
-    ],
+    enable_backends = [],
     enable_configs = [
         "gpu_a100",
         "gpu_h100",
@@ -1386,13 +1352,10 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "experimental_rnn_test",
     srcs = ["experimental_rnn_test.py"],
-    disable_backends = [
-        "tpu",
-        "cpu",
-    ],
     disable_configs = [
         "gpu_a100",  # Numerical precision problems.
     ],
+    enable_backends = ["gpu"],
     shard_count = 15,
     deps = [
         "//jax:rnn",
@@ -1505,10 +1468,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "fused_attention_stablehlo_test",
     srcs = ["fused_attention_stablehlo_test.py"],
-    disable_backends = [
-        "tpu",
-        "cpu",
-    ],
+    enable_backends = ["gpu"],
     shard_count = {
         "gpu": 4,
     },
@@ -1542,10 +1502,7 @@ jax_py_test(
 jax_multiplatform_test(
     name = "cudnn_fusion_test",
     srcs = ["cudnn_fusion_test.py"],
-    disable_backends = [
-        "cpu",
-        "tpu",
-    ],
+    enable_backends = ["gpu"],
     enable_configs = [
         "gpu_a100",
         "gpu_h100",

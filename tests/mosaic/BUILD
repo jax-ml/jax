@@ -28,31 +28,16 @@ package(
 
 jax_generate_backend_suites()
 
-DISABLED_BACKENDS = [
-    "cpu",
-    "tpu",
-]
-
-DISABLED_CONFIGS = [
-    "gpu_a100",
-    "gpu_a100_x32",
-    "gpu_p100",
-    "gpu_p100_x32",
-    "gpu_pjrt_c_api",
-    "gpu_v100",
-    "gpu_x32",
-]
-
 jax_multiplatform_test(
     name = "gpu_test",
     srcs = ["gpu_test.py"],
-    disable_backends = DISABLED_BACKENDS,
-    disable_configs = DISABLED_CONFIGS,
+    enable_backends = [],
     enable_configs = [
         "gpu_h100",
         "gpu_h100_2gpu",
     ],
     shard_count = 4,
+    tags = ["multiaccelerator"],
     deps = [
         "//jax:mosaic_gpu",
     ] + py_deps("absl/testing") + py_deps("numpy"),
@@ -61,8 +46,8 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "matmul_test",
     srcs = ["matmul_test.py"],
-    disable_backends = DISABLED_BACKENDS,
-    disable_configs = DISABLED_CONFIGS,
+    enable_backends = [],
+    enable_configs = ["gpu_h100"],
     shard_count = 5,
     deps = [
         "//jax:mosaic_gpu",
@@ -73,8 +58,8 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "flash_attention",
     srcs = ["//jax/experimental/mosaic/gpu/examples:flash_attention.py"],
-    disable_backends = DISABLED_BACKENDS,
-    disable_configs = DISABLED_CONFIGS,
+    enable_backends = [],
+    enable_configs = ["gpu_h100"],
     main = "//jax/experimental/mosaic/gpu/examples:flash_attention.py",
     tags = ["notap"],
     deps = [
@@ -85,8 +70,8 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "flash_attention_test",
     srcs = ["flash_attention_test.py"],
-    disable_backends = DISABLED_BACKENDS,
-    disable_configs = DISABLED_CONFIGS,
+    enable_backends = [],
+    enable_configs = ["gpu_h100"],
     deps = [
         "//jax:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:flash_attention",

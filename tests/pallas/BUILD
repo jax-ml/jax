@@ -38,11 +38,9 @@ jax_multiplatform_test(
             "ondemand": False,  # Include in presubmit.
         },
     },
-    disable_configs = [
-        "gpu_v100",
-        "gpu_x32",
-        "gpu_p100",
-        "gpu_p100_x32",
+    enable_backends = [
+        "cpu",
+        "tpu",
     ],
     enable_configs = [
         "gpu_a100_x32",
@@ -75,9 +73,6 @@ jax_multiplatform_test(
         "gpu_p100_x32",
         "gpu_h100",
     ],
-    shard_count = {
-        "tpu": 1,
-    },
     deps = [
         "//jax:pallas",
         "//jax:pallas_tpu",
@@ -130,8 +125,9 @@ jax_multiplatform_test(
     srcs = [
         "indexing_test.py",
     ],
-    disable_backends = [
-        "gpu",
+    enable_backends = [
+        "cpu",
+        "tpu",
     ],
     tags = [
         "noasan",  # Times out.
@@ -154,14 +150,7 @@ jax_multiplatform_test(
             "ondemand": False,  # Include in presubmit.
         },
     },
-    disable_configs = [
-        "gpu_v100",
-        "gpu_x32",
-        "gpu_a100",
-        "gpu_h100",
-        "gpu_p100",
-        "gpu_p100_x32",
-    ],
+    enable_backends = ["cpu"],
     enable_configs = [
         "gpu_a100_x32",
         "gpu_h100_x32",
@@ -186,19 +175,7 @@ jax_multiplatform_test(
             "ondemand": False,  # Include in presubmit.
         },
     },
-    disable_backends = [
-        "cpu",
-        "tpu",
-    ],
-    disable_configs = [
-        "gpu_v100",
-        "gpu_x32",
-        "gpu_a100",
-        "gpu_a100_x32",
-        "gpu_p100",
-        "gpu_p100_x32",
-        "gpu_h100",
-    ],
+    enable_backends = [],
     enable_configs = [
         "gpu_h100_x32",
     ],
@@ -220,15 +197,7 @@ jax_multiplatform_test(
             "ondemand": False,  # Include in presubmit.
         },
     },
-    disable_configs = [
-        "gpu_v100",
-        "gpu_x32",
-        "gpu_a100",
-        "gpu_h100",
-        "gpu_p100",
-        "gpu_p100_x32",
-        "gpu_pjrt_c_api",
-    ],
+    enable_backends = ["cpu"],
     enable_configs = [
         "gpu_a100_x32",
         "gpu_h100_x32",
@@ -251,15 +220,7 @@ jax_multiplatform_test(
             "ondemand": False,  # Include in presubmit.
         },
     },
-    disable_configs = [
-        "gpu_v100",
-        "gpu_x32",
-        "gpu_a100",
-        "gpu_h100",
-        "gpu_p100",
-        "gpu_p100_x32",
-        "gpu_pjrt_c_api",
-    ],
+    enable_backends = ["cpu"],
     enable_configs = [
         "gpu_a100_x32",
     ],
@@ -303,10 +264,7 @@ jax_multiplatform_test(
     srcs = [
         "pallas_error_handling_test.py",
     ],
-    disable_backends = [
-        "cpu",
-        "gpu",
-    ],
+    enable_backends = ["tpu"],
     deps = [
         "//jax:pallas",
         "//jax:pallas_tpu",
@@ -321,10 +279,7 @@ jax_multiplatform_test(
     srcs = [
         "tpu_all_gather_test.py",
     ],
-    disable_backends = [
-        "cpu",
-        "gpu",
-    ],
+    enable_backends = ["tpu"],
     deps = [
         "//jax:pallas_tpu_ops",
     ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
@@ -335,10 +290,7 @@ jax_multiplatform_test(
     srcs = [
         "tpu_gmm_test.py",
     ],
-    disable_backends = [
-        "cpu",
-        "gpu",
-    ],
+    enable_backends = ["tpu"],
     shard_count = 50,
     tags = [
         "noasan",  # Times out.
@@ -360,10 +312,7 @@ jax_multiplatform_test(
     srcs = ["tpu_pallas_test.py"],
     # The flag is necessary for ``pl.debug_print`` tests to work on TPU.
     args = ["--logtostderr"],
-    disable_backends = [
-        "cpu",
-        "gpu",
-    ],
+    enable_backends = ["tpu"],
     deps = [
         "//jax:extend",
         "//jax:pallas_tpu",
@@ -376,8 +325,9 @@ jax_multiplatform_test(
     srcs = [
         "tpu_ops_test.py",
     ],
-    disable_backends = [
-        "gpu",
+    enable_backends = [
+        "cpu",
+        "tpu",
     ],
     deps = [
         "//jax:pallas",
@@ -390,10 +340,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_pallas_distributed_test",
     srcs = ["tpu_pallas_distributed_test.py"],
-    disable_backends = [
-        "cpu",
-        "gpu",
-    ],
+    enable_backends = ["tpu"],
     deps = [
         "//jax:extend",
         "//jax:pallas_tpu",
@@ -404,10 +351,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_pallas_pipeline_test",
     srcs = ["tpu_pallas_pipeline_test.py"],
-    disable_backends = [
-        "cpu",
-        "gpu",
-    ],
+    enable_backends = ["tpu"],
     shard_count = 5,
     tags = [
         "noasan",  # Times out.
@@ -424,10 +368,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_pallas_async_test",
     srcs = ["tpu_pallas_async_test.py"],
-    disable_backends = [
-        "cpu",
-        "gpu",
-    ],
+    enable_backends = ["tpu"],
     tags = [
     ],
     deps = [
@@ -438,10 +379,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_pallas_mesh_test",
     srcs = ["tpu_pallas_mesh_test.py"],
-    disable_backends = [
-        "cpu",
-        "gpu",
-    ],
+    enable_backends = ["tpu"],
     tags = [
         "noasan",
         "nomsan",
@@ -458,10 +396,7 @@ jax_multiplatform_test(
     srcs = [
         "tpu_pallas_random_test.py",
     ],
-    disable_backends = [
-        "cpu",
-        "gpu",
-    ],
+    enable_backends = ["tpu"],
     deps = [
         "//jax:pallas",
         "//jax:pallas_tpu",
@@ -474,10 +409,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_paged_attention_kernel_test",
     srcs = ["tpu_paged_attention_kernel_test.py"],
-    disable_backends = [
-        "cpu",
-        "gpu",
-    ],
+    enable_backends = ["tpu"],
     shard_count = 5,
     tags = [
         "noasan",  # Times out.
@@ -494,10 +426,7 @@ jax_multiplatform_test(
     srcs = [
         "tpu_splash_attention_kernel_test.py",
     ],
-    disable_backends = [
-        "gpu",
-        "cpu",
-    ],
+    enable_backends = ["tpu"],
     shard_count = 24,
     tags = [
         "noasan",  # Times out.
@@ -514,8 +443,9 @@ jax_multiplatform_test(
     srcs = [
         "tpu_splash_attention_mask_test.py",
     ],
-    disable_backends = [
-        "gpu",
+    enable_backends = [
+        "cpu",
+        "tpu",
     ],
     deps = [
         "//jax:pallas_tpu_ops",
@@ -532,17 +462,7 @@ jax_multiplatform_test(
             "ondemand": False,  # Include in presubmit.
         },
     },
-    disable_backends = [
-        "tpu",
-    ],
-    disable_configs = [
-        "gpu_v100",
-        "gpu_x32",
-        "gpu_p100",
-        "gpu_p100_x32",
-        "gpu_a100",
-        "gpu_h100",
-    ],
+    enable_backends = ["cpu"],
     enable_configs = [
         "gpu_a100_x32",
         "gpu_h100_x32",
@@ -565,17 +485,7 @@ jax_multiplatform_test(
             "ondemand": False,  # Include in presubmit.
         },
     },
-    disable_backends = [
-        "tpu",
-    ],
-    disable_configs = [
-        "gpu_v100",
-        "gpu_x32",
-        "gpu_a100",
-        "gpu_h100",
-        "gpu_p100",
-        "gpu_p100_x32",
-    ],
+    enable_backends = ["cpu"],
     enable_configs = [
         "gpu_a100_x32",
         "gpu_h100_x32",

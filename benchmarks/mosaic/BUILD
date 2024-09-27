@@ -28,25 +28,11 @@ package(
 
 jax_generate_backend_suites()
 
-DISABLED_BACKENDS = [
-    "cpu",
-    "tpu",
-]
-
-DISABLED_CONFIGS = [
-    "gpu_v100",
-    "gpu_a100",
-    "gpu_p100",
-    "gpu_p100_x32",
-    "gpu_x32",
-    "gpu_pjrt_c_api",
-]
-
 jax_multiplatform_test(
     name = "matmul_bench",
     srcs = ["matmul_bench.py"],
-    disable_backends = DISABLED_BACKENDS,
-    disable_configs = DISABLED_CONFIGS,
+    enable_backends = [],
+    enable_configs = ["gpu_h100"],
     tags = ["notap"],
     deps = [
         "//jax:mosaic_gpu",
