@@ -36,9 +36,9 @@ jobs:
     outputs:
       artifacts_availability: ${{ steps.status.outputs.ARTIFACTS_AVAILABLE }}
     steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@f677139bbe7f9c59b41e40162b753c062f5d49a3 # ratchet:actions/setup-python@v5
+        uses: actions/setup-python@f677139bbe7f9c59b41e40162b753c062f5d49a3  # v5.2.0
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install JAX test requirements
@@ -85,7 +85,7 @@ jobs:
           && steps.status.outcome == 'failure'
           && github.event_name == 'schedule'
           && github.repository == 'jax-ml/jax'
-        uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # ratchet: actions/upload-artifact@v4
+        uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874  # v4.4.0
         with:
           name: output-${{ matrix.python-version }}-log.jsonl
           path: output-${{ matrix.python-version }}-log.jsonl
@@ -106,11 +106,11 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
-      - uses: actions/setup-python@f677139bbe7f9c59b41e40162b753c062f5d49a3 # ratchet:actions/setup-python@v5
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
+      - uses: actions/setup-python@f677139bbe7f9c59b41e40162b753c062f5d49a3  # v5.2.0
         with:
           python-version: "3.x"
-      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # ratchet:actions/download-artifact@v4
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16  # v4.1.8
         with:
           path: /tmp/workspace/logs
       - name: install requirements
@@ -123,7 +123,7 @@ jobs:
           cat logs/*.jsonl > pytest-logs.txt
           python .github/workflows/parse_logs.py pytest-logs.txt --outfile=parsed-logs.txt
       - name: Report failures
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # ratchet:actions/github-script@v7
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
