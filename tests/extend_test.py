@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import unittest
 
 import numpy as np
 from absl.testing import absltest
@@ -177,6 +178,25 @@ class FfiTest(jtu.JaxTestCase):
     op = self.find_custom_call_in_module(module)
     self.assertTrue(hlo.TokenType.isinstance(op.operands[0].type))
     self.assertTrue(hlo.TokenType.isinstance(op.results[0].type))
+
+  def testEffectsHlo(self):
+    # The target name must exist on the current platform, but we don't actually
+    # need to call it with the correct syntax, because we're only checking the
+    # compiled HLO.
+    if jtu.test_device_matches(["cpu"]):
+      target_name = "lapack_sgetrf_ffi"
+    elif jtu.test_device_matches(["rocm"]):
+      target_name = "hipsolver_getrf_ffi"
+    elif jtu.test_device_matches(["cuda", "gpu"]):
+      target_name = "cusolver_getrf_ffi"
+    else:
+      raise unittest.SkipTest("Unsupported device")
+    def fun():
+      jex.ffi.ffi_call(target_name, (), has_side_effect=True)
+    hlo = jax.jit(fun).lower()
+    self.assertIn(target_name, hlo.as_text())
+    self.assertIn("has_side_effect = true", hlo.as_text())
+    self.assertIn(target_name, hlo.compile().as_text())
 
   @jtu.sample_product(
     shape=[(1,), (4,), (5,)],
