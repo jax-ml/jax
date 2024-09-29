@@ -65,7 +65,7 @@ TensorFlow ops that are only available with the XLA compiler, and which
 are not understood (yet) by the TFLite converter to be used below.
 
 
-Check out [more details about this limitation](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/no_xla_limitations.md),
+Check out [more details about this limitation](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/g3doc/no_xla_limitations.md),
 including to which JAX primitives it applies.
 
 ### Convert the trained model to the TF Lite format

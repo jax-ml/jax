@@ -15,9 +15,11 @@
 import contextlib
 import io
 import logging
+import os
 import platform
 import subprocess
 import sys
+import tempfile
 import textwrap
 import unittest
 
@@ -33,6 +35,19 @@ from jax._src import xla_bridge
 # absltest/absl logging altogether).
 from absl.testing import absltest
 jax.config.parse_flags_with_absl()
+
+
+@contextlib.contextmanager
+def jax_debug_log_modules(value):
+  # jax_debug_log_modules doesn't have a context manager, because it's
+  # not thread-safe. But since tests are always single-threaded, we
+  # can define one here.
+  original_value = jax.config.jax_debug_log_modules
+  jax.config.update("jax_debug_log_modules", value)
+  try:
+    yield
+  finally:
+    jax.config.update("jax_debug_log_modules", original_value)
 
 
 @contextlib.contextmanager
@@ -60,29 +75,45 @@ class LoggingTest(jtu.JaxTestCase):
     if sys.executable is None:
       raise self.skipTest("test requires access to python binary")
 
-    program = textwrap.dedent("""
-      import jax
-      jax.device_count()
-      f = jax.jit(lambda x: x + 1)
-      f(1)
-      f(2)
-      jax.numpy.add(1, 1)
-    """)
-    python = sys.executable
-    assert "python" in python
-    # Make sure C++ logging is at default level for the test process.
-    proc = subprocess.run([python, "-c", program], capture_output=True,
-                          env={"TF_CPP_MIN_LOG_LEVEL": "1"})
+    # Save script in file to fix the problem with
+    # `tsl::Env::Default()->GetExecutablePath()` not working properly with
+    # command flag.
+    with tempfile.NamedTemporaryFile(
+        mode="w+", encoding="utf-8", suffix=".py"
+    ) as f:
+      f.write(textwrap.dedent("""
+        import jax
+        jax.device_count()
+        f = jax.jit(lambda x: x + 1)
+        f(1)
+        f(2)
+        jax.numpy.add(1, 1)
+    """))
+      python = sys.executable
+      assert "python" in python
+      env_variables = {"TF_CPP_MIN_LOG_LEVEL": "1"}
+      if os.getenv("PYTHONPATH"):
+        env_variables["PYTHONPATH"] = os.getenv("PYTHONPATH")
+      if os.getenv("LD_LIBRARY_PATH"):
+        env_variables["LD_LIBRARY_PATH"] = os.getenv("LD_LIBRARY_PATH")
+      # Make sure C++ logging is at default level for the test process.
+      proc = subprocess.run(
+          [python, f.name],
+          capture_output=True,
+          env=env_variables,
+      )
 
-    lines = proc.stdout.split(b"\n")
-    lines.extend(proc.stderr.split(b"\n"))
-    allowlist = [
-        b"",
-        b"An NVIDIA GPU may be present on this machine, but a CUDA-enabled "
-        b"jaxlib is not installed. Falling back to cpu.",
-    ]
-    lines = [l for l in lines if l not in allowlist]
-    self.assertEmpty(lines)
+      lines = proc.stdout.split(b"\n")
+      lines.extend(proc.stderr.split(b"\n"))
+      allowlist = [
+          b"",
+          (
+              b"An NVIDIA GPU may be present on this machine, but a"
+              b" CUDA-enabled jaxlib is not installed. Falling back to cpu."
+          ),
+      ]
+      lines = [l for l in lines if l not in allowlist]
+      self.assertEmpty(lines)
 
   def test_debug_logging(self):
     # Warmup so we don't get "No GPU/TPU" warning later.
@@ -95,30 +126,30 @@ class LoggingTest(jtu.JaxTestCase):
     self.assertEmpty(log_output.getvalue())
 
     # Turn on all debug logging.
-    jax.config.update("jax_debug_log_modules", "jax")
-    with capture_jax_logs() as log_output:
-      jax.jit(lambda x: x + 1)(1)
-    self.assertIn("Finished tracing + transforming", log_output.getvalue())
-    self.assertIn("Compiling <lambda>", log_output.getvalue())
+    with jax_debug_log_modules("jax"):
+      with capture_jax_logs() as log_output:
+        jax.jit(lambda x: x + 1)(1)
+      self.assertIn("Finished tracing + transforming", log_output.getvalue())
+      self.assertIn("Compiling <lambda>", log_output.getvalue())
 
     # Turn off all debug logging.
-    jax.config.update("jax_debug_log_modules", None)
-    with capture_jax_logs() as log_output:
-      jax.jit(lambda x: x + 1)(1)
-    self.assertEmpty(log_output.getvalue())
+    with jax_debug_log_modules(""):
+      with capture_jax_logs() as log_output:
+        jax.jit(lambda x: x + 1)(1)
+      self.assertEmpty(log_output.getvalue())
 
     # Turn on one module.
-    jax.config.update("jax_debug_log_modules", "jax._src.dispatch")
-    with capture_jax_logs() as log_output:
-      jax.jit(lambda x: x + 1)(1)
-    self.assertIn("Finished tracing + transforming", log_output.getvalue())
-    self.assertNotIn("Compiling <lambda>", log_output.getvalue())
+    with jax_debug_log_modules("jax._src.dispatch"):
+      with capture_jax_logs() as log_output:
+        jax.jit(lambda x: x + 1)(1)
+      self.assertIn("Finished tracing + transforming", log_output.getvalue())
+      self.assertNotIn("Compiling <lambda>", log_output.getvalue())
 
     # Turn everything off again.
-    jax.config.update("jax_debug_log_modules", None)
-    with capture_jax_logs() as log_output:
-      jax.jit(lambda x: x + 1)(1)
-    self.assertEmpty(log_output.getvalue())
+    with jax_debug_log_modules(""):
+      with capture_jax_logs() as log_output:
+        jax.jit(lambda x: x + 1)(1)
+      self.assertEmpty(log_output.getvalue())
 
 
 if __name__ == "__main__":

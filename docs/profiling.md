@@ -1,4 +1,6 @@
-# Profiling JAX programs
+# Profiling computation
+
+<!--* freshness: { reviewed: '2024-03-18' } *-->
 
 ## Viewing program traces with Perfetto
 

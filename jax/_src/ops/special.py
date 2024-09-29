@@ -44,7 +44,7 @@ def logsumexp(a: ArrayLike, axis: Axis = None, b: ArrayLike | None = None,
               keepdims: bool = False, return_sign: bool = False, where: ArrayLike | None = None) -> Array | tuple[Array, Array]:
   r"""Log-sum-exp reduction.
 
-  Computes
+  JAX implementation of :func:`scipy.special.logsumexp`.
 
   .. math::
     \mathrm{logsumexp}(a) = \mathrm{log} \sum_j b \cdot \mathrm{exp}(a_{ij})

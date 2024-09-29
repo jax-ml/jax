@@ -27,21 +27,25 @@ import numpy as np
 
 import jax
 from jax import lax
-from jax.experimental.export import _export
+from jax._src.export import _export
+
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
-from jax._src.internal_test_util.export_back_compat_test_data import cpu_ducc_fft
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_cholesky_lapack_potrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_eig_lapack_geev
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_eigh_cusolver_syev
+from jax._src.internal_test_util.export_back_compat_test_data import rocm_eigh_hipsolver_syev
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_eigh_lapack_syev
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_lu_lapack_getrf
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_qr_cusolver_geqrf
+from jax._src.internal_test_util.export_back_compat_test_data import rocm_qr_hipsolver_geqrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_qr_lapack_geqrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_schur_lapack_gees
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_svd_lapack_gesdd
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_triangular_solve_blas_trsm
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_threefry2x32
+from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_pivots_to_permutation
+from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_cusolver_getrf
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Eigh
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Lu
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_ApproxTopK
@@ -50,6 +54,7 @@ from jax._src.internal_test_util.export_back_compat_test_data import tpu_Shardin
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_stablehlo_dynamic_reduce_window
 from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_rng_bit_generator
 from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_top_k
+from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_approx_top_k
 
 from jax.experimental import pjit
 from jax.experimental.shard_map import shard_map
@@ -60,12 +65,21 @@ from jax.sharding import PartitionSpec as P
 
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.lib import cuda_versions
 
 config.parse_flags_with_absl()
 
 
-@jtu.with_config(jax_legacy_prng_key='allow',
-                 jax_debug_key_reuse=False)
+def _is_required_cusolver_version_satisfied(required_version):
+  if cuda_versions is None:
+    return False
+  return cuda_versions.cusolver_get_version() >= required_version
+
+
+@jtu.with_config(jax_legacy_prng_key="allow",
+                 jax_debug_key_reuse=False,
+                 jax_include_full_tracebacks_in_locations=False,
+                 jax_threefry_gpu_kernel_lowering=True)
 class CompatTest(bctu.CompatTestBase):
   def test_dummy(self):
     # Tests the testing mechanism. Let this test run on all platforms
@@ -97,16 +111,30 @@ class CompatTest(bctu.CompatTestBase):
   def test_custom_call_coverage(self):
     """Tests that the back compat tests cover all the targets declared stable."""
     targets_to_cover = set(_export._CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
+    cpu_ffi_testdatas = [
+        cpu_cholesky_lapack_potrf.data_2024_05_31,
+        cpu_qr_lapack_geqrf.data_2024_08_22,
+        cpu_eig_lapack_geev.data_2024_08_19,
+        cpu_eigh_lapack_syev.data_2024_08_19,
+        cpu_lu_lapack_getrf.data_2024_05_31,
+        cpu_svd_lapack_gesdd.data_2024_08_13,
+    ]
     # Add here all the testdatas that should cover the targets guaranteed
     # stable
     covering_testdatas = [
-        cpu_ducc_fft.data_2023_06_14,
+        *cpu_ffi_testdatas,
         cpu_cholesky_lapack_potrf.data_2023_06_19,
         cpu_eig_lapack_geev.data_2023_06_19,
         cpu_eigh_lapack_syev.data_2023_03_17,
-        cpu_qr_lapack_geqrf.data_2023_03_17, cuda_threefry2x32.data_2023_03_15,
+        cpu_qr_lapack_geqrf.data_2023_03_17,
+        cuda_threefry2x32.data_2023_03_15, cuda_threefry2x32.data_2024_07_30,
         cpu_lu_lapack_getrf.data_2023_06_14,
-        cuda_qr_cusolver_geqrf.data_2023_03_18, cuda_eigh_cusolver_syev.data_2023_03_17,
+        cuda_lu_pivots_to_permutation.data_2024_08_08,
+        cuda_lu_cusolver_getrf.data_2024_08_19,
+        cuda_qr_cusolver_geqrf.data_2023_03_18,
+        cuda_eigh_cusolver_syev.data_2023_03_17,
+        rocm_qr_hipsolver_geqrf.data_2024_08_05,
+        rocm_eigh_hipsolver_syev.data_2024_08_05,
         cpu_schur_lapack_gees.data_2023_07_16,
         cpu_svd_lapack_gesdd.data_2023_06_19,
         cpu_triangular_solve_blas_trsm.data_2023_07_16,
@@ -118,6 +146,7 @@ class CompatTest(bctu.CompatTestBase):
         stablehlo_dynamic_rng_bit_generator.data_2023_06_17,
         stablehlo_dynamic_top_k.data_2023_07_16,
         stablehlo_dynamic_top_k.data_2023_08_11,  # with shape_assertion
+        stablehlo_dynamic_approx_top_k.data_2024_05_30,
     ]
     # Some of the above are nested structures.
     covering_testdatas = itertools.chain(
@@ -130,22 +159,13 @@ class CompatTest(bctu.CompatTestBase):
     covered_targets = covered_targets.union({
       "tf.call_tf_function",  # tested in jax2tf/tests/back_compat_tf_test.py
       "tpu_custom_call",  # tested separately
+      "__gpu$xla.gpu.triton",  # tested in pallas/export_back_compat_pallas_test.py
     })
     not_covered = targets_to_cover.difference(covered_targets)
     self.assertEmpty(not_covered,
                      msg=("The following custom call targets are declared "
                           "stable but are not covered by any tests: "
                           f"{not_covered}"))
-
-  def test_ducc_fft(self):
-    def func(x):
-      return lax.fft(x, fft_type="fft", fft_lengths=(4,))
-
-    # TODO(b/311175955): Remove this test and the corresponding custom calls.
-    # A newer lowering, with dynamic_ducc_fft.
-    data = self.load_testdata(cpu_ducc_fft.data_2023_06_14)
-    # FFT no longer lowers to a custom call.
-    self.run_one_test(func, data, expect_current_custom_calls=[])
 
   def cholesky_input(self, shape, dtype):
     a = jtu.rand_default(self.rng())(shape, dtype)
@@ -170,6 +190,10 @@ class CompatTest(bctu.CompatTestBase):
 
     data = self.load_testdata(cpu_cholesky_lapack_potrf.data_2023_06_19[dtype_name])
     self.run_one_test(func, data, rtol=rtol, atol=atol)
+    with config.export_ignore_forward_compatibility(True):
+      # FFI Kernel test
+      data = self.load_testdata(cpu_cholesky_lapack_potrf.data_2024_05_31[dtype_name])
+      self.run_one_test(func, data, rtol=rtol, atol=atol)
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -230,6 +254,11 @@ class CompatTest(bctu.CompatTestBase):
 
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=check_eig_results)
+    with config.export_ignore_forward_compatibility(True):
+      # FFI Kernel test
+      data = self.load_testdata(cpu_eig_lapack_geev.data_2024_08_19[dtype_name])
+      self.run_one_test(func, data, rtol=rtol, atol=atol,
+                        check_results=check_eig_results)
 
   @staticmethod
   def eigh_input(shape, dtype):
@@ -280,6 +309,11 @@ class CompatTest(bctu.CompatTestBase):
     atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_eigh_results, operand))
+    # FFI Kernel test
+    with config.export_ignore_forward_compatibility(True):
+      data = self.load_testdata(cpu_eigh_lapack_syev.data_2024_08_19[dtype_name])
+      self.run_one_test(func, data, rtol=rtol, atol=atol,
+                        check_results=partial(self.check_eigh_results, operand))
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}_{variant}",
@@ -287,9 +321,19 @@ class CompatTest(bctu.CompatTestBase):
       for dtype_name in ("f32", "f64")
       # We use different custom calls for sizes <= 32
       for variant in ["syevj", "syevd"])
-  def test_cuda_eigh_cusolver_syev(self, dtype_name="f32", variant="syevj"):
+  def test_gpu_eigh_solver_syev(self, dtype_name="f32", variant="syevj"):
     if not config.enable_x64.value and dtype_name == "f64":
       self.skipTest("Test disabled for x32 mode")
+    if jtu.test_device_matches(["cuda"]):
+      if _is_required_cusolver_version_satisfied(11600):
+        # The underlying problem is that this test assumes the workspace size can be
+        # queried from an older version of cuSOLVER and then be used in a newer one.
+        self.skipTest("Newer cuSOLVER expects a larger workspace than was serialized")
+      data = self.load_testdata(cuda_eigh_cusolver_syev.data_2023_03_17[f"{dtype_name}_{variant}"])
+    elif jtu.test_device_matches(["rocm"]):
+      data = self.load_testdata(rocm_eigh_hipsolver_syev.data_2024_08_05[f"{dtype_name}_{variant}"])
+    else:
+      self.skipTest("Unsupported platform")
     # For lax.linalg.eigh
     dtype = dict(f32=np.float32, f64=np.float64)[dtype_name]
     size = dict(syevj=8, syevd=36)[variant]
@@ -297,7 +341,6 @@ class CompatTest(bctu.CompatTestBase):
     atol = dict(f32=1e-2, f64=1e-10)[dtype_name]
     operand = CompatTest.eigh_input((size, size), dtype)
     func = lambda: CompatTest.eigh_harness((size, size), dtype)
-    data = self.load_testdata(cuda_eigh_cusolver_syev.data_2023_03_17[f"{dtype_name}_{variant}"])
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_eigh_results, operand))
 
@@ -313,6 +356,33 @@ class CompatTest(bctu.CompatTestBase):
     data = self.load_testdata(tpu_Eigh.data)
     self.run_one_test(func, data, rtol=1e-3,
                       check_results=partial(self.check_eigh_results, operand))
+
+  @staticmethod
+  def lu_pivots_to_permutation_harness(shape):
+    operand = jnp.reshape(jnp.arange(math.prod(shape), dtype=np.int32), shape)
+    return lax.linalg.lu_pivots_to_permutation(operand, permutation_size=8)
+
+  def test_cuda_lu_pivots_to_permutation(self):
+    shape = (2, 3, 4)
+    func = lambda: CompatTest.lu_pivots_to_permutation_harness(shape)
+    data = self.load_testdata(cuda_lu_pivots_to_permutation.data_2024_08_08)
+    self.run_one_test(func, data)
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}",
+           dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64", "c64", "c128"))
+  def test_cuda_lu_lapack_getrf(self, dtype_name:str):
+    if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
+      self.skipTest("Test disabled for x32 mode")
+    dtype = dict(f32=np.float32, f64=np.float64,
+                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    shape = (3, 4)
+    func = lambda: CompatTest.lu_harness(shape, dtype)
+    # TODO(b/360788062): Clean up after the compatibility period.
+    with config.export_ignore_forward_compatibility(True):
+      data = self.load_testdata(cuda_lu_cusolver_getrf.data_2024_08_19[dtype_name])
+      self.run_one_test(func, data)
 
   @staticmethod
   def qr_harness(shape, dtype):
@@ -334,20 +404,31 @@ class CompatTest(bctu.CompatTestBase):
     data = self.load_testdata(cpu_qr_lapack_geqrf.data_2023_03_17[dtype_name])
     rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     self.run_one_test(func, data, rtol=rtol)
+    with config.export_ignore_forward_compatibility(True):
+      # FFI Kernel test
+      data = self.load_testdata(
+          cpu_qr_lapack_geqrf.data_2024_08_22[dtype_name]
+      )
+      self.run_one_test(func, data, rtol=rtol)
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}_{batched}",
            dtype_name=dtype_name, batched=batched)
       for dtype_name in ("f32",)
-      # For batched qr we use cublas_geqrf_batched
+      # For batched qr we use cublas_geqrf_batched/hipblas_geqrf_batched.
       for batched in ("batched", "unbatched"))
-  def test_cuda_qr_cusolver_geqrf(self, dtype_name="f32", batched="unbatched"):
+  def test_gpu_qr_solver_geqrf(self, dtype_name="f32", batched="unbatched"):
+    if jtu.test_device_matches(["cuda"]):
+      data = self.load_testdata(cuda_qr_cusolver_geqrf.data_2023_03_18[batched])
+    elif jtu.test_device_matches(["rocm"]):
+      data = self.load_testdata(rocm_qr_hipsolver_geqrf.data_2024_08_05[batched])
+    else:
+      self.skipTest("Unsupported platform")
     # For lax.linalg.qr
     dtype = dict(f32=np.float32, f64=np.float64)[dtype_name]
     rtol = dict(f32=1e-3, f64=1e-5)[dtype_name]
     shape = dict(batched=(2, 3, 3), unbatched=(3, 3))[batched]
     func = lambda: CompatTest.qr_harness(shape, dtype)
-    data = self.load_testdata(cuda_qr_cusolver_geqrf.data_2023_03_18[batched])
     self.run_one_test(func, data, rtol=rtol)
 
   def test_tpu_Qr(self):
@@ -406,6 +487,12 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_lu_results, operand,
                                             dtype=dtype))
+    with config.export_ignore_forward_compatibility(True):
+      # FFI Kernel test
+      data = self.load_testdata(cpu_lu_lapack_getrf.data_2024_05_31[dtype_name])
+      self.run_one_test(func, data, rtol=rtol, atol=atol,
+                        check_results=partial(self.check_lu_results, operand,
+                                              dtype=dtype))
 
   def check_svd_results(self, input, res_run, res_exp,
                         rtol=None, atol=None):
@@ -472,7 +559,6 @@ class CompatTest(bctu.CompatTestBase):
                                   np.asarray(out), atol=1e-4, rtol=1e-4))
 
   @jtu.parameterized_filterable(
-    one_containing="f32",
     kwargs=[
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128")])
@@ -525,6 +611,13 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_svd_results,
                                             input))
+    with config.export_ignore_forward_compatibility(True):
+      # FFI Kernel test
+      data = self.load_testdata(
+          cpu_svd_lapack_gesdd.data_2024_08_13[dtype_name]
+      )
+      self.run_one_test(func, data, rtol=rtol, atol=atol,
+                        check_results=partial(self.check_svd_results, input))
 
   @jtu.parameterized_filterable(
     kwargs=[
@@ -576,13 +669,18 @@ class CompatTest(bctu.CompatTestBase):
     def func(x):
       return jax.random.uniform(x, (2, 4), dtype=np.float32)
 
+    # TODO(b/338022728): remove after 6 months
     data = self.load_testdata(cuda_threefry2x32.data_2023_03_15)
+    self.run_one_test(func, data,
+                      expect_current_custom_calls=["cu_threefry2x32_ffi"])
+
+    data = self.load_testdata(cuda_threefry2x32.data_2024_07_30)
     self.run_one_test(func, data)
 
   def test_sharding(self):
     # Tests "Sharding", "SPMDShardToFullShape", "SPMDFullToShardShape" on TPU
     if not jtu.test_device_matches(["tpu"]) or len(jax.devices()) < 2:
-     self.skipTest("Test runs only on TPU with at least 2 devices")
+      self.skipTest("Test runs only on TPU with at least 2 devices")
 
     # Must use exactly 2 devices for expected outputs from ppermute
     devices = jax.devices()[:2]
@@ -706,6 +804,44 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data_2,
                       polymorphic_shapes=("_, b",),
                       check_results=check_top_k_results)
+
+  def test_dynamic_approx_top_k(self):
+    # stablehlo.dynamic_approx_top_k is used temporarily for a approx_top_k
+    # with dynamism
+    # This is the input that was used to generate the test_data
+    _ = np.arange(24, dtype=np.float32)
+
+    def func(a):  # a: f32[b + 4]
+      return lax.approx_max_k(a, k=a.shape[0] - 4)
+
+    data = self.load_testdata(stablehlo_dynamic_approx_top_k.data_2024_05_30)
+
+    def check_top_k_results(res_run, res_expected, *, rtol, atol):
+      a = data.inputs[0]
+      # The order of the results may be different, but should be the same ones
+      values_expected, _ = res_expected
+      values_run, indices_run = res_run
+      # Check that indices are correct
+      self.assertAllClose(
+          values_run,
+          a[indices_run],
+          atol=atol,
+          rtol=rtol,
+      )
+      self.assertAllClose(
+          np.sort(values_run), np.sort(values_expected), atol=atol, rtol=rtol
+      )
+
+    self.run_one_test(
+        func,
+        data,
+        polymorphic_shapes=("b + 4,",),
+        check_results=check_top_k_results,
+        expect_current_custom_calls=[
+            "stablehlo.dynamic_approx_top_k",
+            "shape_assertion",
+        ],
+    )
 
 
 if __name__ == "__main__":

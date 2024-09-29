@@ -15,9 +15,7 @@
 
 Specific JAX primitive conversion tests are in primitives_test."""
 import collections
-from collections.abc import Sequence
 import contextlib
-import functools
 import math
 import os
 import re
@@ -29,29 +27,37 @@ from absl.testing import absltest, parameterized
 import jax
 from jax import ad_checkpoint
 from jax import dtypes
+from jax import export
 from jax import lax
 from jax import numpy as jnp
 from jax import sharding
 from jax._src import config
 from jax._src import core
-from jax._src.maps import xmap
 from jax._src import source_info_util
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax.experimental import jax2tf
-from jax.experimental import export
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax.experimental.shard_map import shard_map
 from jax.experimental import pjit
 from jax.sharding import PartitionSpec as P
 
 import numpy as np
-import tensorflow as tf  # type: ignore[import]
+import tensorflow as tf
 # pylint: disable=g-direct-tensorflow-import
-from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
+from tensorflow.compiler.tf2xla.python import xla as tfxla
 # pylint: enable=g-direct-tensorflow-import
 
 config.parse_flags_with_absl()
+_exit_stack = contextlib.ExitStack()
+
+# TODO(necula): Remove once tensorflow is 2.10.0 everywhere.
+def setUpModule():
+  if not hasattr(tfxla, "optimization_barrier"):
+    _exit_stack.enter_context(jtu.global_config_context(jax_remat_opt_barrier=False))
+
+def tearDownModule():
+  _exit_stack.close()
 
 
 class Jax2TfTest(tf_test_util.JaxToTfTestCase):
@@ -69,6 +75,17 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         cls.tf_devices.append(tf_device)
 
     super().setUpClass()
+
+  def setUp(self):
+    super().setUp()
+    self.warning_ctx = jtu.ignore_warning(
+        message="jax2tf.convert with native_serialization=False is deprecated"
+    )
+    self.warning_ctx.__enter__()
+
+  def tearDown(self):
+    self.warning_ctx.__exit__(None, None, None)
+    super().tearDown()
 
   def test_empty(self):
     f_jax = lambda x, y: x
@@ -589,7 +606,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.sample_product(with_function=[False, True])
   def test_gradients_int_argument(self, with_function=False):
-    # https://github.com/google/jax/issues/6975
+    # https://github.com/jax-ml/jax/issues/6975
     # Also issue #6975.
     # An expanded version of test_gradients_unused_argument
     state = dict(
@@ -853,17 +870,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       return ad_checkpoint.checkpoint_name(jnp.sin(x), "sin")
     jax2tf.convert(f_jax)(1.)  # No error.
 
-  def test_convert_nullary_func(self):
-    # Even nullary functions are converted to TF (as opposed to constant-folded
-    # in JAX prior to conversion).
-    def f_jax():
-      return jnp.sin(1.)
-    f_tf = jax2tf.convert(f_jax)
-    # for native serialization the HLO we get from TF is constant-folded, so this
-    # test fails.
-    if not config.jax2tf_default_native_serialization.value:
-      self.assertIn("sine(", self.TfToHlo(f_tf))
-
   def test_convert_of_nested_independent_jit(self):
     def func(x):
       def inner1(y):
@@ -970,11 +976,11 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       self.assertIn("my_test_function_jax/mul", self.TfToHlo(run_tf))
     else:
       graph_def = str(tf.function(run_tf, autograph=False).get_concrete_function().graph.as_graph_def())
-      if "my_test_function_jax/pjit_multiply_/Mul" not in graph_def:
-        self.assertIn("my_test_function_jax/jit_multiply_/Mul", graph_def)
+      if "my_test_function_jax/pjit__multiply_/Mul" not in graph_def:
+        self.assertIn("my_test_function_jax/jit__multiply_/Mul", graph_def)
 
   def test_bfloat16_constant(self):
-    # Re: https://github.com/google/jax/issues/3942
+    # Re: https://github.com/jax-ml/jax/issues/3942
     def jax_fn_scalar(x):
       x = x.astype(jnp.bfloat16)
       x *= 2.
@@ -995,7 +1001,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_shared_constants(self):
     # Check that the constants are shared properly in converted functions
-    # See https://github.com/google/jax/issues/7992.
+    # See https://github.com/jax-ml/jax/issues/7992.
     if config.jax2tf_default_native_serialization.value:
       raise unittest.SkipTest("shared constants tests not interesting for native serialization")
     const = np.random.uniform(size=256).astype(np.float32)  # A shared constant
@@ -1007,7 +1013,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_shared_constants_under_cond(self):
     # Check that the constants are shared properly in converted functions
-    # See https://github.com/google/jax/issues/7992.
+    # See https://github.com/jax-ml/jax/issues/7992.
     if config.jax2tf_default_native_serialization.value:
       raise unittest.SkipTest("shared constants tests not interesting for native serialization")
     const_size = 512
@@ -1023,7 +1029,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertLen(f2_consts, len(f1_consts))
 
   def test_shared_constants_under_scan(self):
-    # See https://github.com/google/jax/issues/7992.
+    # See https://github.com/jax-ml/jax/issues/7992.
     if config.jax2tf_default_native_serialization.value:
       raise unittest.SkipTest("shared constants tests not interesting for native serialization")
     const_size = 512
@@ -1097,7 +1103,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.sample_product(with_function=[False, True])
   def test_kwargs(self, with_function=False):
-    # Re: https://github.com/google/jax/issues/6791
+    # Re: https://github.com/jax-ml/jax/issues/6791
     def f_jax(*, x):
       return jnp.sum(x)
     f_tf = jax2tf.convert(f_jax)
@@ -1109,7 +1115,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.sample_product(with_function=[False, True])
   def test_grad_kwargs(self, with_function=False):
-    # Re: https://github.com/google/jax/issues/6791
+    # Re: https://github.com/jax-ml/jax/issues/6791
     x = (np.zeros(3, dtype=np.float32),
          np.zeros(4, dtype=np.float32))
     def f_jax(*, x=(1., 2.)):
@@ -1124,31 +1130,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose((np.full_like(x[0], fill_value=1.),
                          np.full_like(x[1], fill_value=2.)),
                         (grad_tf[0].numpy(), grad_tf[1].numpy()))
-
-  @jtu.skip_on_flag("jax2tf_default_native_serialization", True)
-  def test_enable_xla(self):
-    # Tests that enable_xla flag is properly scoped to a conversion.
-    def fun(x):
-      # lax.reduce is unlikely to ever be convertible with enable_xla=False
-      return lax.reduce(x, np.float32(0), lambda v, acc: v + acc, dimensions=(0, 1))
-
-    tf_fun_with_xla = jax2tf.convert(fun, enable_xla=True)
-    tf_fun_without_xla = jax2tf.convert(fun, enable_xla=False)
-    x = np.ones((2, 3), dtype=np.float32)
-
-    self.assertAllClose(fun(x), tf_fun_with_xla(x))
-    with self.assertRaisesRegex(NotImplementedError,
-                                "Call to reduce cannot be converted with enable_xla=False"):
-      tf_fun_without_xla(x)
-
-    # Now in reverse order (we had bugs with the management of enable_xla global)
-    tf_fun2_without_xla = jax2tf.convert(lambda x: fun(x), enable_xla=False)
-    tf_fun2_with_xla = jax2tf.convert(lambda x: fun(x), enable_xla=True)
-
-    with self.assertRaisesRegex(NotImplementedError,
-                                "Call to reduce cannot be converted with enable_xla=False"):
-      tf_fun2_without_xla(x)
-    self.assertAllClose(fun(x), tf_fun2_with_xla(x))
 
   def test_device_array_arg(self):
     self.ConvertAndCompare(jnp.sin, jnp.zeros((2, 3), jnp.float32))
@@ -1307,7 +1288,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     shape = (3, 2)
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
-    jax_comp = jax.xla_computation(f_while)(x)
+    jax_comp = jax.jit(f_while).lower(x).compiler_ir('hlo')
     backend = xb.get_backend()
     modules = backend.compile(jax_comp).hlo_modules()
     jax_opt_hlo = modules[0].to_string()
@@ -1456,8 +1437,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
           "none",
           "jit",
           "pjit", "pjit_in_shardings_None", "pjit_in_shardings_P",
-          "pjit_in_shardings_Sharding",
-          "shard_map", "xmap", "pmap"]
+          "pjit_in_shardings_Sharding", "shard_map", "pmap"]
       for transform2 in (
           ["none", "pjit_in_shardings_None", "pjit_in_shardings_P",
            "pjit_in_shardings_Sharding"]
@@ -1496,10 +1476,10 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       transformed_func = dict(
           none=func,
           jit=jax.jit(func),
-          jit_in_shardings_None=jax.jit(func, in_shardings=None),  # type: ignore
-          jit_in_shardings_P=jax.jit(func, in_shardings=(P("a"),)),  # type: ignore
+          jit_in_shardings_None=jax.jit(func, in_shardings=None),
+          jit_in_shardings_P=jax.jit(func, in_shardings=(P("a"),)),
           jit_in_shardings_Sharding=jax.jit(
-              func, in_shardings=(sharding.NamedSharding(mesh, P("a")),)),  # type: ignore
+              func, in_shardings=(sharding.NamedSharding(mesh, P("a")),)),
           pjit=pjit.pjit(func),
           pjit_in_shardings_None=pjit.pjit(func, in_shardings=None,
                                            out_shardings=None),
@@ -1512,8 +1492,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
           shard_map=(
               shard_map(func, mesh, in_specs=(P("a", None),),
                         out_specs=P("a", None))),
-          xmap=xmap(func, in_axes=({0: 'axis'},),
-                    out_axes={0: 'axis'}, axis_resources={'axis': 'a'}),
           pmap=jax.pmap(func, in_axes=0, out_axes=0),
       )[transform]
       return transformed_func
@@ -1521,11 +1499,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     transformed1_func = apply_transform(
         (func_shard_map if transform1 == "shard_map" else func),
         transform1)
-    assert transform2 not in ["xmap", "shard_map"]
+    assert transform2 not in ["shard_map"]
     transformed2_func = apply_transform(transformed1_func, transform2)
-
-    if transform1 == "xmap" and transform2 in ["pjit", "none"]:
-      raise unittest.SkipTest("TODO: pjit(xmap) with unspecified shardings crashes")
 
     if transform1 == "pmap":
       x = x.reshape((1, -1))  # Since we use 1 device
@@ -1552,7 +1527,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       # Run the JAX native version, to check it works, and to fill caches.
       _ = func_to_convert(*args)
       exported = export.export(
-          func_to_convert,
+          (jax.jit(func_to_convert) if not hasattr(func_to_convert, "trace") else func_to_convert),
           lowering_platforms=("tpu",)
       )(*(core.ShapedArray(a.shape, a.dtype) for a in args))
 
@@ -1657,6 +1632,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     res = jax2tf.convert(f_jax, native_serialization=True)(*many_args)
     self.assertAllClose(f_jax(*many_args), res)
 
+  @jtu.ignore_warning(message="Calling from_dlpack with a DLPack tensor",
+                      category=DeprecationWarning)
   def test_nested_convert(self):
     # Test call sequence: convert -> call_tf -> convert.
 
@@ -1710,29 +1687,20 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         res,
         x + _testing_multi_platform_to_add[tf_device_jax_platform])
 
-  def test_cond_primitive(self):
-    def f_cond(x):
-      return lax.cond(x < 1.0, jnp.cos, jnp.sin, x)
-
-    self.ConvertAndCompare(f_cond, np.pi / 4, enable_xla=False)
-    self.ConvertAndCompare(f_cond, np.pi / 2, enable_xla=False)
-
-    f_cond_tf = jax2tf.convert(f_cond, enable_xla=False)
-    self.assertNotIn("switch_case", self.TfToHlo(f_cond_tf, np.pi))
-
-    def f_switch(x):
-      return lax.switch(jnp.int32(x), [jnp.cos, jnp.sin, lambda _: 42.0], x)
-
-    self.ConvertAndCompare(f_switch, np.pi / 4, enable_xla=False)
-    self.ConvertAndCompare(f_switch, np.pi / 2, enable_xla=False)
-    self.ConvertAndCompare(f_switch, 2 * np.pi, enable_xla=False)
-
-    f_switch_tf = jax2tf.convert(f_switch, enable_xla=False)
-    self.assertIn("switch_case", self.TfToHlo(f_switch_tf, np.pi))
-
 
 @jtu.with_config(jax_enable_custom_prng=True)
 class Jax2tfWithCustomPRNGTest(tf_test_util.JaxToTfTestCase):
+  def setUp(self):
+    super().setUp()
+    self.warning_ctx = jtu.ignore_warning(
+        message="jax2tf.convert with native_serialization=False is deprecated"
+    )
+    self.warning_ctx.__enter__()
+
+  def tearDown(self):
+    self.warning_ctx.__exit__(None, None, None)
+    super().tearDown()
+
   def test_key_argument(self):
     func = lambda key: jax.random.uniform(key, ())
     key = jax.random.PRNGKey(0)
@@ -1765,12 +1733,12 @@ class Jax2TfVersioningTest(tf_test_util.JaxToTfTestCase):
     self.use_max_serialization_version = False
     super().setUp()
 
+  @jtu.ignore_warning(
+      message="jax2tf.convert with native_serialization=False is deprecated"
+  )
   def test_simple(self):
     self.ConvertAndCompare(jnp.sin, 0.7)
 
 
 if __name__ == "__main__":
-  # TODO: Remove once tensorflow is 2.10.0 everywhere.
-  if not hasattr(tfxla, "optimization_barrier"):
-    jax.config.update("jax_remat_opt_barrier", False)
   absltest.main(testLoader=jtu.JaxTestLoader())

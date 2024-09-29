@@ -91,7 +91,6 @@ from jax._src.interpreters.partial_eval import (
   trace_to_subjaxpr_dynamic as trace_to_subjaxpr_dynamic,
   trace_to_subjaxpr_dynamic2 as trace_to_subjaxpr_dynamic2,
   trace_to_subjaxpr_nounits as trace_to_subjaxpr_nounits,
-  trace_to_subjaxpr_nounits_dyn as trace_to_subjaxpr_nounits_dyn,
   trace_to_subjaxpr_nounits_fwd as trace_to_subjaxpr_nounits_fwd,
   tracers_to_jaxpr as tracers_to_jaxpr,
   trivial_ctx as trivial_ctx,

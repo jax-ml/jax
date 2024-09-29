@@ -119,7 +119,9 @@ Operators
     ne
     neg
     nextafter
+    optimization_barrier
     pad
+    platform_dependent
     polygamma
     population_count
     pow
@@ -158,7 +160,6 @@ Operators
     sub
     tan
     tanh
-    tie_in
     top_k
     transpose
     zeros_like_array
@@ -202,7 +203,6 @@ Parallel operators
 
     all_gather
     all_to_all
-    pdot
     psum
     psum_scatter
     pmax
@@ -249,6 +249,7 @@ Argument classes
 
 .. autoclass:: ConvDimensionNumbers
 .. autoclass:: ConvGeneralDilatedDimensionNumbers
+.. autoclass:: DotAlgorithm
 .. autoclass:: GatherDimensionNumbers
 .. autoclass:: GatherScatterMode
 .. autoclass:: Precision

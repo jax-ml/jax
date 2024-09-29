@@ -17,12 +17,12 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 from functools import partial
 import itertools as it
-from typing import Any, Callable, Protocol, Union
+from typing import Any, Protocol, Union
 
 import numpy as np
 
@@ -92,7 +92,7 @@ def sharding_to_proto(sharding: SpatialSharding):
   proto = xc.OpSharding()
   if isinstance(sharding, tuple) and not isinstance(sharding[0], int):
     assert all(s is None or isinstance(s, tuple) for s in sharding)
-    return tuple_sharding_proto(list(map(sharding_to_proto, sharding)))  # type: ignore
+    return tuple_sharding_proto(list(map(sharding_to_proto, sharding)))
 
   if sharding is None:
     proto.type = xc.OpSharding.Type.REPLICATED

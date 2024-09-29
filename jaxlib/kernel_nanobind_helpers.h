@@ -17,10 +17,12 @@ limitations under the License.
 #define JAXLIB_KERNEL_NANOBIND_HELPERS_H_
 
 #include <string>
+#include <type_traits>
 
 #include "nanobind/nanobind.h"
 #include "absl/base/casts.h"
 #include "jaxlib/kernel_helpers.h"
+#include "xla/ffi/api/c_api.h"
 #include "xla/tsl/python/lib/core/numpy.h"  // NOLINT
 
 namespace jax {
@@ -56,6 +58,13 @@ template <typename T>
 nanobind::capsule EncapsulateFunction(T* fn) {
   return nanobind::capsule(absl::bit_cast<void*>(fn),
                            "xla._CUSTOM_CALL_TARGET");
+}
+
+template <typename T>
+nanobind::capsule EncapsulateFfiHandler(T* fn) {
+  static_assert(std::is_invocable_r_v<XLA_FFI_Error *, T, XLA_FFI_CallFrame *>,
+                "Encapsulated function must be an XLA FFI handler");
+  return nanobind::capsule(absl::bit_cast<void*>(fn));
 }
 
 }  // namespace jax

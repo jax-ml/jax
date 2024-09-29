@@ -21,7 +21,7 @@ import logging
 import os
 import tempfile
 import time
-from typing import Any
+from typing import Any, Callable
 import warnings
 
 from jax._src import compilation_cache
@@ -33,19 +33,17 @@ from jax._src import profiler
 from jax._src import traceback_util
 from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
-from jax._src.xla_bridge import process_count
 import numpy as np
 
 
-_DISABLE_MOST_OPTIMIZATIONS = config.DEFINE_bool(
+_DISABLE_MOST_OPTIMIZATIONS = config.bool_flag(
     'jax_disable_most_optimizations',
     config.bool_env('JAX_DISABLE_MOST_OPTIMIZATIONS', False),
     'Try not to do much optimization work. This can be useful if the cost of '
     'optimization is greater than that of running a less-optimized program.')
 
-_COMPILER_DETAILED_LOGGING_MIN_OPS = config.DEFINE_integer(
+_COMPILER_DETAILED_LOGGING_MIN_OPS = config.int_flag(
     "jax_compiler_detailed_logging_min_ops",
     config.int_env("JAX_COMPILER_DETAILED_LOGGING_MIN_OPS", 10),
     help=(
@@ -93,11 +91,29 @@ def use_detailed_logging(module: ir.Module) -> bool:
   return _walk_operations(module.operation, bound) < 0
 
 
+def log_persistent_cache_hit(module_name: str, cache_key: str) -> None:
+  hit_log_priority = (logging.WARNING if config.log_compiles.value
+                      else logging.DEBUG)
+  logger.log(hit_log_priority, "Persistent compilation cache hit for '%s' with key %r",
+             module_name, cache_key)
+
+
+def log_persistent_cache_miss(module_name: str, cache_key: str) -> None:
+  miss_log_priority = (logging.WARNING
+                        if config.explain_cache_misses.value
+                        and compilation_cache.is_persistent_cache_enabled()
+                        else logging.DEBUG)
+  # all caps to match the tracing cache "TRACING CACHE MISS"
+  logger.log(miss_log_priority, "PERSISTENT COMPILATION CACHE MISS for '%s' with key %r",
+             module_name, cache_key)
+
+
 def get_compile_options(
     num_replicas: int,
     num_partitions: int,
     device_assignment=None,
     use_spmd_partitioning: bool = True,
+    use_shardy_partitioner: bool = False,
     use_auto_spmd_partitioning: bool = False,
     auto_spmd_partitioning_mesh_shape: list[int] | None = None,
     auto_spmd_partitioning_mesh_ids: list[int] | None = None,
@@ -117,6 +133,10 @@ def get_compile_options(
       `num_partitions`.
     use_spmd_partitioning: boolean indicating whether to enable SPMD or MPMD
       partitioning in XLA.
+    use_shardy_partitioner: boolean indicating whether to use the Shardy
+      partitioner in XLA. Shardy is a new open sourced propagation framework for
+      MLIR. Currently Shardy is experimental in JAX. See
+      www.github.com/openxla/shardy.
     use_auto_spmd_partitioning: boolean indicating whether to automatically
       generate XLA shardings for SPMD partitioner.
     auto_spmd_partitioning_mesh_shape: device mesh shape used to create
@@ -126,8 +146,8 @@ def get_compile_options(
     env_options_overrides: dict of additional options parsed by the compiler
     fdo_profile: Optional profile for feedback-directed optimization passed to
       XLA.
-    detailed_logging: Is this an "interesting" computation about which XLA
-      would be wise to log compilation information?
+    detailed_logging: Is this an "interesting" computation about which XLA would
+      be wise to log compilation information?
     backend: the client, if available.
   """
   compile_options = xc.CompileOptions()
@@ -136,6 +156,7 @@ def get_compile_options(
   build_options = compile_options.executable_build_options
   build_options.use_spmd_partitioning = use_spmd_partitioning
   build_options.use_auto_spmd_partitioning = use_auto_spmd_partitioning
+  build_options.use_shardy_partitioner = use_shardy_partitioner
   if fdo_profile is not None:
     build_options.fdo_profile = fdo_profile
   if use_auto_spmd_partitioning:
@@ -212,6 +233,7 @@ def get_compile_options(
 
   return compile_options
 
+
 @profiler.annotate_function
 def backend_compile(
     backend: xc.Client,
@@ -219,23 +241,55 @@ def backend_compile(
     options: xc.CompileOptions,
     host_callbacks: Sequence[Any],
 ) -> xc.LoadedExecutable:
-  # Convert ir.Module to a string representation, unless the
-  # back-end expliclity flags the ability to handle a module directly
-  # (avoiding the overhead of back and forth conversions)
+  # Convert ir.Module to a string representation, unless the backend
+  # explicitly flags the ability to handle a module directly (avoiding the
+  # overhead of back and forth conversions).
+  # TODO(slebedev): Change the backend.compile() to accept ir.Module.
+  built_c: Any
   if getattr(backend, "needs_str_ir", True):
     built_c = mlir.module_to_bytecode(module)
   else:
     built_c = module
 
-  # we use a separate function call to ensure that XLA compilation appears
-  # separately in Python profiling results
-  if host_callbacks:
-    return backend.compile(built_c, compile_options=options,
-                           host_callbacks=host_callbacks)
-  # Some backends don't have `host_callbacks` option yet
-  # TODO(sharadmv): remove this fallback when all backends allow `compile`
-  # to take in `host_callbacks`
-  return backend.compile(built_c, compile_options=options)
+  try:
+    # we use a separate function call to ensure that XLA compilation appears
+    # separately in Python profiling results
+    if host_callbacks:
+      return backend.compile(
+          built_c, compile_options=options, host_callbacks=host_callbacks
+      )
+    # Some backends don't have `host_callbacks` option yet
+    # TODO(sharadmv): remove this fallback when all backends allow `compile`
+    # to take in `host_callbacks`
+    return backend.compile(built_c, compile_options=options)
+  except xc.XlaRuntimeError as e:
+    for error_handler in _XLA_RUNTIME_ERROR_HANDLERS:
+      handler_result = error_handler(e)
+      if handler_result is not None:
+        raise handler_result from e
+    raise e
+
+
+_XLA_RUNTIME_ERROR_HANDLERS = []
+
+
+def register_xla_runtime_error_handler(
+    handler_fn: Callable[[xc.XlaRuntimeError], Exception | None],
+):
+  """Registers a custom exception handler for XLA runtime errors.
+
+  Registering a custom handler allows re-raising a more informative exception
+  after encountering an XLARuntimeError.
+
+  Args:
+    handler_fn: A function which returns a new exception to replace the original
+      XLA runtime error, or None if the original error should be propagated.
+
+  Returns:
+    A new exception or None.
+  """
+  _XLA_RUNTIME_ERROR_HANDLERS.append(handler_fn)
+
 
 def compile_or_get_cached(
     backend: xc.Client,
@@ -243,6 +297,7 @@ def compile_or_get_cached(
     devices: np.ndarray,
     compile_options: xc.CompileOptions,
     host_callbacks: Sequence[Any],
+    pgle_profiler: profiler.PGLEProfiler | None = None,
 ) -> xc.LoadedExecutable:
   sym_name = computation.operation.attributes['sym_name']
   module_name = ir.StringAttr(sym_name).value
@@ -250,25 +305,12 @@ def compile_or_get_cached(
   if dumped_to := mlir.dump_module_to_file(computation, "compile"):
     logging.info("Dumped the module to %s.", dumped_to)
 
-  # Persistent compilation cache only implemented on TPU and GPU and the backend
-  # that supports serialization of executables.
-  # TODO(skye): add warning when initializing cache on unsupported default platform
-  supported_platforms = ["tpu", "gpu"]
-  if xla_extension_version >= 253:
-    supported_platforms.append("cpu")
-  use_compilation_cache = (
-      config.enable_compilation_cache.value
-      and getattr(backend, "supports_executable_serialization", True)
-      and backend.platform in supported_platforms
-  )
+  use_compilation_cache = compilation_cache.is_cache_used(backend)
 
   if not use_compilation_cache:
     return backend_compile(backend, computation, compile_options,
                            host_callbacks)
 
-  compilation_cache.set_once_cache_used(
-      lambda: monitoring.record_event(
-          "/jax/compilation_cache/tasks_using_cache"))
   monitoring.record_event('/jax/compilation_cache/compile_requests_use_cache')
 
   try:
@@ -280,6 +322,50 @@ def compile_or_get_cached(
     return backend_compile(backend, computation, compile_options,
                            host_callbacks)
 
+  is_multi_process = (
+      len({device.process_index for device in devices.flatten()}) > 1)
+  min_device_process_id = (
+      min(devices.flatten(), key=lambda device: device.id).process_index)
+
+  # When PGLE is enabled there might be 3 types of situations:
+  # 1. PGLE profiled module (the one which was recompiled with FDO profile) is
+  # in the persistent cache. In this case the module should be returned from
+  # cache and PGLE should be disabled for this module. Is module is stored in
+  # the persistent cache under the "pgle_profiled_module_key" which calculated
+  # with replacing FDO profile with flag which identify that module were PGLE
+  # profiled.
+  # 2. PGLE profiled module is not in the persistent cache and the module is
+  # getting built with an FDO profile. In this case we need to share FDO profile
+  # with other processes and store the result under the
+  # "pgle_profiled_module_key" so later in case 1 we will be able to find the
+  # module.
+  # 3. PGLE profiled module is not in the persistent cache and the module is
+  # getting compiled to be PGLEd (FDO profile is empty). In this case we need to
+  # simply return the non-PGLE profiled module from the persistent cache.
+  if (config.enable_pgle.value
+      and config.pgle_profiling_runs.value > 0):
+    fdo_profile = compile_options.executable_build_options.fdo_profile
+    compile_options.executable_build_options.fdo_profile = b"pgle profiled"
+
+    pgle_profiled_module_key = compilation_cache.get_cache_key(
+        computation, devices, compile_options, backend)
+    compile_options.executable_build_options.fdo_profile = fdo_profile
+
+    if _is_executable_in_cache(backend, pgle_profiled_module_key):
+      # Load PGLE profiled module from the persistent cache.
+      cache_key = pgle_profiled_module_key
+      if pgle_profiler is not None:
+        pgle_profiler.disable()
+    elif fdo_profile is not None and len(fdo_profile) > 0:
+      # Store module under PGLE profiled module cache key.
+      cache_key = pgle_profiled_module_key
+      if is_multi_process and distributed.global_state.client is not None:
+        compile_options.executable_build_options.fdo_profile = _share_fdo_profiles(
+          computation, devices, compile_options, backend,
+          distributed.global_state.client,
+          min_device_process_id
+        )
+
   cache_retrieval_start = time.monotonic()
   retrieved_executable, retrieved_compile_time = _cache_read(
       module_name, cache_key, compile_options, backend)
@@ -287,7 +373,7 @@ def compile_or_get_cached(
 
   if retrieved_executable is not None:
     assert retrieved_compile_time is not None
-    logger.debug("Persistent compilation cache hit for '%s'", module_name)
+    log_persistent_cache_hit(module_name, cache_key)
 
     monitoring.record_event('/jax/compilation_cache/cache_hits')
     monitoring.record_event_duration_secs(
@@ -299,13 +385,14 @@ def compile_or_get_cached(
 
     return retrieved_executable
   elif (
-      process_count() > 1
-      and config.share_binary_between_hosts.value
+      config.share_binary_between_hosts.value
+      and is_multi_process
       and distributed.global_state.client is not None
       # Host callbacks are currently baked into the HLO module so we cant share
       # them.
       and len(host_callbacks) == 0
   ):
+    log_persistent_cache_miss(module_name, cache_key)
     return _compile_and_share_module(
         backend,
         computation,
@@ -314,12 +401,14 @@ def compile_or_get_cached(
         distributed.global_state.client,
         module_name,
         cache_key,
+        min_device_process_id
     )
   elif (
-      process_count() > 1
-      and config.share_autotune_config_between_hosts.value
+      config.share_autotune_config_between_hosts.value
+      and is_multi_process
       and distributed.global_state.client is not None
   ):
+    log_persistent_cache_miss(module_name, cache_key)
     return _compile_and_write_autotune_config(
         backend,
         computation,
@@ -328,8 +417,10 @@ def compile_or_get_cached(
         distributed.global_state.client,
         module_name,
         cache_key,
+        min_device_process_id
     )
   else:
+    log_persistent_cache_miss(module_name, cache_key)
     return _compile_and_write_cache(
         backend,
         computation,
@@ -339,9 +430,61 @@ def compile_or_get_cached(
         cache_key,
     )
 
+# The process that has the lowest device ID should share FDO profile before
+# compilation with other processes.
+def _share_fdo_profiles(
+    computation: ir.Module,
+    devices: np.ndarray,
+    compile_options: xc.CompileOptions,
+    backend: xc.Client,
+    global_client: lib.xla_extension.DistributedRuntimeClient,
+    min_process_id
+) -> bytes | None:
+  sym_name = computation.operation.attributes['sym_name']
+  module_name = ir.StringAttr(sym_name).value
+  fdo_profile = compile_options.executable_build_options.fdo_profile
+  if fdo_profile is None or len(fdo_profile) == 0:
+    return fdo_profile
 
-# The process with id 0 should compile the module and write an autotune config
-# to the K-V storage.
+  compile_options.executable_build_options.fdo_profile = b""
+  profile_key = (
+      compilation_cache.get_cache_key(
+          computation, devices, compile_options, backend
+      )
+      + "_fdo_sync"
+  )
+  if profile_key in _share_fdo_profiles.modules_profiles:
+    return _share_fdo_profiles.modules_profiles[profile_key]
+
+  share_timeout = config.share_binary_between_hosts_timeout_ms.value
+  if distributed.global_state.process_id == min_process_id:
+    logger.debug(
+        "Sharing FDO profile: %s. For module %s. Process %d.",
+        fdo_profile,
+        module_name,
+        min_process_id,
+    )
+    global_client.key_value_set_bytes(profile_key, fdo_profile)
+  else:
+    logger.debug(
+        "Waiting for FDO profile: %s. For module %s. Should be set by process %d.",
+        fdo_profile,
+        module_name,
+        min_process_id,
+    )
+    fdo_profile = global_client.blocking_key_value_get_bytes(
+        profile_key, share_timeout
+    )
+
+  _share_fdo_profiles.modules_profiles[profile_key] = fdo_profile
+  return fdo_profile
+
+
+_share_fdo_profiles.modules_profiles = {}
+
+
+# The process with the first_process_id should compile the module and write an
+# autotune config to the K-V storage.
 def _compile_and_write_autotune_config(
     backend: xc.Client,
     computation: ir.Module,
@@ -350,9 +493,14 @@ def _compile_and_write_autotune_config(
     global_client: lib.xla_extension.DistributedRuntimeClient,
     module_name: str,
     cache_key: str,
+    first_process_id: int
 ) -> xc.LoadedExecutable:
   share_timeout = config.share_binary_between_hosts_timeout_ms.value
   debug_options = compile_options.executable_build_options.debug_options
+
+  if _compile_and_write_autotune_config.autotune_configs_dir is None:
+    _compile_and_write_autotune_config.autotune_configs_dir = tempfile.mkdtemp()
+
   autotune_tmp_file = os.path.join(
       _compile_and_write_autotune_config.autotune_configs_dir, cache_key
   )
@@ -373,9 +521,10 @@ def _compile_and_write_autotune_config(
         cache_key,
     )
 
-  if distributed.global_state.process_id == 0:
+  if distributed.global_state.process_id == first_process_id:
     debug_options.xla_gpu_dump_autotune_results_to = autotune_tmp_file
-    logger.debug("Compiling and dumping autotune for module: %s", module_name)
+    logger.debug("Process %d compiling and dumping autotune for module: %s",
+                 first_process_id, module_name)
     executable = _compile_and_write_cache(
         backend,
         computation,
@@ -403,9 +552,11 @@ def _compile_and_write_autotune_config(
     )
   else:
     logger.debug(
-        "Compiling module %s, waiting for config to be shared by cache_key %s",
+        "Compiling module %s, waiting for config to be shared by cache_key %s"
+        "from process %d",
         module_name,
         cache_key,
+        first_process_id
     )
     autotune_config = global_client.blocking_key_value_get_bytes(
         cache_key, share_timeout
@@ -436,12 +587,10 @@ def _compile_and_write_autotune_config(
     )
   return executable
 
-_compile_and_write_autotune_config.autotune_configs_dir = tempfile.mkdtemp()
+_compile_and_write_autotune_config.autotune_configs_dir = None
 
-# The process with id 0 should compile the module and write it to the K-V
-# storage.
-# TODO: In case when the process with id 0 is not participating in computation
-# we need to choose another process to compile the module.
+# The process with the first_process_id should compile the module and write it
+# to the K-V storage.
 def _compile_and_share_module(
     backend: xc.Client,
     computation: ir.Module,
@@ -450,15 +599,16 @@ def _compile_and_share_module(
     global_client: lib.xla_extension.DistributedRuntimeClient,
     module_name: str,
     cache_key: str,
+    first_process_id: int
 ) -> xc.LoadedExecutable:
   share_timeout = config.share_binary_between_hosts_timeout_ms.value
 
-  # TODO: We need a proper eviction protocol here, otherwise all compiled
-  # modules will pile in memory.
   if cache_key in _compile_and_share_module.modules_cache:
     return _compile_and_share_module.modules_cache[cache_key]
 
-  if distributed.global_state.process_id == 0:
+  if distributed.global_state.process_id == first_process_id:
+    logger.debug("Process %d compiling and sharing module: %s",
+                 first_process_id, module_name)
     executable = _compile_and_write_cache(
         backend,
         computation,
@@ -473,6 +623,8 @@ def _compile_and_share_module(
     )
     global_client.key_value_set_bytes(cache_key, serialized_executable)
   else:
+    logger.debug("Waiting for module: %s from process %d", module_name,
+                 first_process_id)
     serialized_executable = global_client.blocking_key_value_get_bytes(
         cache_key, share_timeout
     )
@@ -506,6 +658,20 @@ def _compile_and_write_cache(
   )
   return executable
 
+def _is_executable_in_cache(backend, cache_key) -> bool:
+  """Checks if executable is presented in cache on a given key
+  """
+  try:
+    return compilation_cache.is_executable_in_cache(backend, cache_key)
+  except Exception as ex:
+    if config.raise_persistent_cache_errors.value:
+      raise
+    warnings.warn(
+        f"Error reading persistent compilation cache entry for "
+        f"'{cache_key}': {type(ex).__name__}: {ex}")
+    return False
+
+
 def _cache_read(
     module_name: str, cache_key: str, compile_options: xc.CompileOptions,
     backend: xc.Client
@@ -535,19 +701,26 @@ def _cache_write(cache_key: str,
   """
   # Only write cache entries from the first process. Otherwise we create
   # problems with contention for writes on some filesystems, e.g., GCS.
+  log_priority = (logging.WARNING
+                  if config.explain_cache_misses.value
+                  and compilation_cache.is_persistent_cache_enabled()
+                  else logging.DEBUG)
   if distributed.global_state.process_id != 0:
-    logger.debug("Not writing persistent cache entry since process_id != 0")
+    logger.log(log_priority,
+               "Not writing persistent cache entry since process_id != 0")
     return
 
   if host_callbacks:
-    logger.debug(
+    logger.log(
+        log_priority,
         "Not writing persistent cache entry for '%s' because it uses host "
         "callbacks (e.g. from jax.debug.print or breakpoint)", module_name)
     return
 
   min_compile_time = config.persistent_cache_min_compile_time_secs.value
   if compile_time_secs < min_compile_time:
-    logger.debug(
+    logger.log(
+        log_priority,
         "Not writing persistent cache entry for '%s' because it took < %.2f "
         "seconds to compile (%.2fs)", module_name, min_compile_time,
         compile_time_secs)

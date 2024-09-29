@@ -14,19 +14,23 @@
 # ==============================================================================
 """Utilities for code generator."""
 
+from collections.abc import Iterator, Sequence
 import contextlib
 import dataclasses
-from typing import Any, Literal, Sequence
+import enum
+import functools
+import math
+from typing import Any, Literal
 
-from absl import flags
 import jax
+from jax import numpy as jnp
+from jax.interpreters import mlir
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import builtin
 from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import memref
-from jaxlib.mlir.dialects import nvgpu
 from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import scf
 from jaxlib.mlir.dialects import vector
@@ -36,10 +40,6 @@ import numpy as np
 
 WARPGROUP_SIZE: int = 128
 DYNAMIC = -9223372036854775808
-
-FLAGS = flags.FLAGS
-
-flags.DEFINE_bool("mosaic_gpu_debug", False, "Perform debug printing")
 
 # pylint: disable=line-too-long, wildcard-import, missing-function-docstring, bad-continuation, g-bad-todo, protected-access, g-explicit-length-test, missing-class-docstring, g-doc-return-or-yield, g-inconsistent-quotes
 
@@ -105,15 +105,7 @@ def c(val: int | float, ty):
   return arith.constant(ty, attr)
 
 
-def get_tensormap_descriptor(**attrs):
-  return ir.Type.parse(
-      f"!nvgpu.tensormap.descriptor<{', '.join(k + '=' + v for k, v in attrs.items())}>"
-  )
-
-
 def debug_print(fmt, *args, uniform=True):
-  if not FLAGS.mosaic_gpu_debug:
-    return
   type_formats = []
   new_args = []
   for arg in args:
@@ -122,10 +114,8 @@ def debug_print(fmt, *args, uniform=True):
       ty_format = "%llu"
     if ir.IntegerType.isinstance(arg.type):
       width = ir.IntegerType(arg.type).width
-      if width == 64:
-        ty_format = "%llu"
-      elif width == 1:
-        ty_format = "%llu"
+      ty_format = "%llu"
+      if width < 64:
         arg = arith.extui(ir.IntegerType.get_signless(64), arg)
     if ir.F32Type.isinstance(arg.type):
       ty_format = "%f"
@@ -136,7 +126,11 @@ def debug_print(fmt, *args, uniform=True):
       raise NotImplementedError(arg.type)
     type_formats.append(ty_format)
     new_args.append(arg)
-  ctx = once if uniform else contextlib.nullcontext
+  ctx = (
+      functools.partial(single_thread, per_block=False)
+      if uniform
+      else contextlib.nullcontext
+  )
   with ctx():
     gpu.printf(fmt.format(*type_formats) + "\n", new_args)
 
@@ -161,9 +155,8 @@ def fori(bound, carrys):
   flat_carrys, carry_treedef = jax.tree.flatten(carrys)
 
   def wrapper(f):
-    index = ir.IndexType.get()
-    c0 = arith.ConstantOp(index, ir.IntegerAttr.get(index, 0))
-    c1 = arith.ConstantOp(index, ir.IntegerAttr.get(index, 1))
+    c0 = arith.constant(bound.type, 0)
+    c1 = arith.constant(bound.type, 1)
     for_op = scf.ForOp(c0, bound, c1, flat_carrys)
     with ir.InsertionPoint(for_op.body):
       i = for_op.induction_variable
@@ -185,50 +178,103 @@ def fori(bound, carrys):
   return wrapper
 
 
-def get_warp_idx():
+@contextlib.contextmanager
+def when(cond):
+  with ir.InsertionPoint(scf.IfOp(cond).then_block):
+    yield
+    scf.yield_([])
+
+
+def thread_idx():
   i32 = ir.IntegerType.get_signless(32)
-  tidx = arith.index_cast(i32, gpu.thread_id(gpu.Dimension.x))
-  warp_idx = arith.shrui(tidx, c(5, tidx.type))
+  as_i32 = lambda x: arith.index_cast(i32, x)
+  tidx = as_i32(gpu.thread_id(gpu.Dimension.x))
+  stride = as_i32(gpu.block_dim(gpu.Dimension.x))
+  for dim in (gpu.Dimension.y, gpu.Dimension.z):
+    tidx = arith.addi(tidx, arith.muli(as_i32(gpu.thread_id(dim)), stride))
+    stride = arith.muli(stride, as_i32(gpu.block_dim(dim)))
+  return tidx
+
+
+def _warp_bcast(val, lane_idx=0):
+  i32 = ir.IntegerType.get_signless(32)
   mask = c(0xFFFFFFFF, i32)
   return nvvm.shfl_sync(
-      warp_idx.type, mask, warp_idx, c(0, i32), c(0x1F, i32), nvvm.ShflKind.idx
+      val.type, mask, val, c(lane_idx, i32), c(0x1F, i32), nvvm.ShflKind.idx
   )
 
 
+def warp_idx(sync=True):
+  i32 = ir.IntegerType.get_signless(32)
+  warp_idx = arith.shrui(thread_idx(), c(5, i32))
+  # Performing a warp broadcast improves performance as compiler understands
+  # that the value is uniform across the warp.
+  return _warp_bcast(warp_idx) if sync else warp_idx
+
+
+def warpgroup_idx(sync=True):
+  i32 = ir.IntegerType.get_signless(32)
+  wg_idx = arith.shrui(thread_idx(), c(7, i32))
+  # Performing a warp broadcast improves performance as compiler understands
+  # that the value is uniform across the warp.
+  return _warp_bcast(wg_idx) if sync else wg_idx
+
+
+class ThreadSubset(enum.IntEnum):
+  WARPGROUP = enum.auto()
+  BLOCK = enum.auto()
+
+
 # True withon `once()` contexts.
-_ONCE_REGION_ACTIVE = False
+_ONCE_PER: ThreadSubset | None = None
+
+
+def single_thread_predicate(per_block=True):
+  warp = warp_idx()
+  if not per_block:
+    warp = arith.remui(warp, c(4, warp.type))
+  first_warp = arith.cmpi(arith.CmpIPredicate.eq, warp, c(0, warp.type))
+  elected = nvvm.elect_sync(ir.IntegerType.get_signless(1))
+  return arith.andi(first_warp, elected)
 
 
 @contextlib.contextmanager
-def once():
-  """Runs the context only from a single thread from the first warp.
+def single_thread(per_block=True):
+  """Runs the context only from a single thread.
 
-  The block is assumed to have a size of 1 in both y and z dimensions.
+  Args:
+    per_block: If True, only one thread per block will run the context.
+      Otherwise, only one thread per warp group will run the context.
   """
-  global _ONCE_REGION_ACTIVE
-
-  if _ONCE_REGION_ACTIVE:
+  global _ONCE_PER
+  scope = ThreadSubset.BLOCK if per_block else ThreadSubset.WARPGROUP
+  # If we're already in a single-thread context, we don't have to do anything.
+  if _ONCE_PER is not None and _ONCE_PER >= scope:
     yield
     return
 
-  warp = get_warp_idx()
-  first_warp = arith.cmpi(arith.CmpIPredicate.eq, warp, c(0, warp.type))
-  elected = nvvm.elect_sync(ir.IntegerType.get_signless(1))
-  should_run = arith.andi(first_warp, elected)
-  if_op = scf.IfOp(should_run)
-  _ONCE_REGION_ACTIVE = True
+  prev_scope = _ONCE_PER
+  _ONCE_PER = scope
   try:
+    if_op = scf.IfOp(single_thread_predicate(per_block))
     with ir.InsertionPoint(if_op.then_block):
       yield
       scf.YieldOp([])
   finally:
-    _ONCE_REGION_ACTIVE = False
+    _ONCE_PER = prev_scope
 
 
 def clock():
   i32 = ir.IntegerType.get_signless(32)
   return llvm.inline_asm(
       i32, [], "mov.u32  $0,%clock;", "=r", asm_dialect=0, has_side_effects=True
+  )
+
+
+def smid():
+  i32 = ir.IntegerType.get_signless(32)
+  return llvm.inline_asm(
+      i32, [], "mov.u32  $0,%smid;", "=r", asm_dialect=0
   )
 
 
@@ -266,6 +312,8 @@ ds = DynamicSlice
 def memref_slice(ref: ir.Value, index) -> ir.Value:
   ref_ty = ir.MemRefType(ref.type)
   base_indices, slice_shape, is_squeezed = parse_indices(index, ref_ty.shape)
+  # TODO(apaszke): Check that slice is within the memref (indices might be
+  # dynamic, but we can at least catch some OOB slices).
 
   memref_strides, offset = ref_ty.get_strides_and_offset()
   new_offset = offset
@@ -314,7 +362,9 @@ def memref_fold(ref: ir.Value, dim, fold_rank) -> ir.Value:
   new_shape = list(ref_ty.shape)
   new_shape[dim : dim + fold_rank] = [np.prod(new_shape[dim : dim + fold_rank])]
   identity = ir.AffineMapAttr.get(ir.AffineMap.get_identity(ref_ty.rank))
-  if ref_ty.layout == identity:
+  contig_strided_1d = ir.Attribute.parse("strided<[1]>")
+  # Not sure why but MLIR expects the strided 1D layout to disappear in this op.
+  if ref_ty.layout == identity or ref_ty.layout == contig_strided_1d:
     new_layout = ir.AffineMapAttr.get(
         ir.AffineMap.get_identity(ref_ty.rank - fold_rank + 1)
     )
@@ -376,7 +426,7 @@ def memref_unfold(ref: ir.Value, dim, factors) -> ir.Value:
     assoc.append(list(range(dim, dim + len(factors))))
     assoc.extend([d + len(factors) - 1] for d in range(dim + 1, ref_ty.rank))
   assert len(assoc) == ref_ty.rank
-  return memref.expand_shape(new_ty, ref, assoc)
+  return memref.expand_shape(new_ty, ref, assoc, [], new_ty.shape)
 
 
 def memref_unsqueeze(ref: ir.Value, dim) -> ir.Value:
@@ -399,7 +449,7 @@ def memref_unsqueeze(ref: ir.Value, dim) -> ir.Value:
     )
     assoc = [[d] for d in range(ref_ty.rank)]
     assoc[-1].append(ref_ty.rank)
-    return memref.expand_shape(new_ty, ref, assoc)
+    return memref.expand_shape(new_ty, ref, assoc, [], new_ty.shape)
   else:
     return memref_unfold(ref, dim, (1, None))
 
@@ -458,59 +508,221 @@ def parse_indices(
 
 
 def commit_shared():
-  gpu.barrier()
+  warpgroup_barrier()
   nvvm.fence_proxy(
       nvvm.ProxyKind.async_shared, space=nvvm.SharedSpace.shared_cta
   )
 
 
-class BarrierArray:
-
-  def __init__(self, num_barriers):
-    barrier_group_ty = ir.Type.parse(
-        "!nvgpu.mbarrier.group<memorySpace=#gpu.address_space<workgroup>,"
-        f" num_barriers={num_barriers}>"
-    )
-
-    self.value = nvgpu.mbarrier_create(barrier_group_ty)
-    index = ir.IndexType.get()
-    if num_barriers > 32:
-      raise NotImplementedError("Only up to 32 barriers per group supported")
-    i32 = ir.IntegerType.get_signless(32)
-    self.phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
-    memref.store(c(0, i32), self.phases, [])
-    with once():
-      for i in range(num_barriers):
-        nvgpu.mbarrier_init(self.value, c(1, index), c(i, index))
-
-  def __getitem__(self, offset: ir.Value | int):
-    if isinstance(offset, int):
-      offset = c(offset, ir.IndexType.get())
-    return Barrier(self, offset)
+def warpgroup_barrier():
+  # gpu.barrier() uses barrier number 0, and it would be unsafe to reuse it,
+  # so we shift the warpgroup index by 1.
+  i32 = ir.IntegerType.get_signless(32)
+  llvm.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [arith.addi(warpgroup_idx(sync=False), c(1, i32))],
+      f"bar.sync $0, {WARPGROUP_SIZE};",
+      "r",
+      has_side_effects=True,
+  )
 
 
 @dataclasses.dataclass(frozen=True)
-class Barrier:
-  barrier_array: BarrierArray
+class BarrierRef:
+  base_address: ir.Value
   offset: ir.Value
+  phases: ir.Value
+  num_barriers: int
 
-  def wait_parity(self, parity):
-    index = ir.IndexType.get()
-    nvgpu.mbarrier_try_wait_parity(
-        self.barrier_array.value, parity, c(10000000, index), self.offset,
+  @staticmethod
+  def initialize(address: ir.Value, num_barriers: int, arrival_count: int = 1) -> "BarrierRef":
+    if num_barriers > 32:
+      raise NotImplementedError("Only up to 32 barriers per group supported")
+    i32 = ir.IntegerType.get_signless(32)
+    i64 = ir.IntegerType.get_signless(64)
+    ptr = ir.Type.parse("!llvm.ptr<3>")
+    phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
+    memref.store(c(0, i32), phases, [])
+    with single_thread(per_block=True):
+      for i in range(num_barriers):
+        nvvm.mbarrier_init_shared(
+            llvm.getelementptr(ptr, address, [], [i], i64),
+            c(arrival_count, i32),
+        )
+    return BarrierRef(address, c(0, i32), phases, num_barriers)
+
+  def __iter__(self) -> Iterator["BarrierRef"]:
+    if self.num_barriers == 1:
+      yield self
+    else:
+      for offset in range(self.num_barriers):
+        yield self[offset]
+
+  def __getitem__(self, offset: ir.Value | int) -> "BarrierRef":
+    i32 = ir.IntegerType.get_signless(32)
+    if isinstance(offset, int):
+      offset = c(offset, i32)
+    elif ir.IndexType.isinstance(offset.type):
+      offset = arith.index_castui(i32, offset)
+    elif offset.type != i32:
+      raise ValueError(f"Expected a dynamic index or an integer, got {offset}")
+    return BarrierRef(
+        self.base_address,
+        arith.addi(self.offset, offset),
+        self.phases,
+        1,
     )
 
-  def wait(self):
+  def wait_parity(self, parity, expect_wait=False):
+    i1 = ir.IntegerType.get_signless(1)
     i32 = ir.IntegerType.get_signless(32)
-    parities = memref.load(self.barrier_array.phases, [])
-    offset_i32 = arith.index_castui(i32, self.offset)
-    bitmask = arith.shli(c(1, i32), offset_i32)
+    ticks = c(10000000, i32)
+    address = self.get_ptr()
+    parity = arith.extui(i32, parity)
+    if expect_wait:
+      nvvm.mbarrier_try_wait_parity_shared(address, parity, ticks)
+      return
+    barrier_ready = llvm.inline_asm(
+        i1,
+        [address, parity],
+        "mbarrier.test_wait.parity.shared.b64 $0, [$1], $2;",
+        "=b,l,r",
+        has_side_effects=True,
+    )
+    should_wait = arith.xori(barrier_ready, c(1, i1))
+    should_wait = llvm.intr_expect(should_wait, c(0, i1))
+    with ir.InsertionPoint(scf.IfOp(should_wait).then_block):
+      nvvm.mbarrier_try_wait_parity_shared(address, parity, ticks)
+      scf.yield_([])
+
+  def wait(self, expect_wait=False):
+    parities = memref.load(self.phases, [])
+    parity, new_parities = self.update_parities(parities)
+    memref.store(new_parities, self.phases, [])
+    self.wait_parity(parity, expect_wait=expect_wait)
+
+  def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
+    i32 = ir.IntegerType.get_signless(32)
+    bitmask = arith.shli(c(1, i32), self.offset)
     parity = arith.cmpi(
         arith.CmpIPredicate.ne, arith.andi(parities, bitmask), c(0, i32)
     )
-    new_parities = arith.xori(parities, bitmask)
-    memref.store(new_parities, self.barrier_array.phases, [])
-    self.wait_parity(parity)
+    return parity, arith.xori(parities, bitmask)
+
+  def arrive(self):
+    i64 = ir.IntegerType.get_signless(64)
+    nvvm.mbarrier_arrive_shared(i64, self.get_ptr())
+
+  def arrive_expect_tx(
+      self, bytes: int | ir.Value, predicate: ir.Value | None = None
+  ):
+    if isinstance(bytes, int):
+      bytes = c(bytes, ir.IntegerType.get_signless(32))
+    elif ir.IndexType.isinstance(bytes.type):
+      i32 = ir.IntegerType.get_signless(32)
+      bytes = arith.index_cast(i32, bytes)
+    nvvm.mbarrier_arrive_expect_tx_shared(self.get_ptr(), bytes, predicate=predicate)
+
+  def get_ptr(self):
+    ptr = ir.Type.parse("!llvm.ptr<3>")
+    i64 = ir.IntegerType.get_signless(64)
+    DYNAMIC32 = -2147483648
+    return llvm.getelementptr(
+        ptr, self.base_address, [self.offset], [DYNAMIC32], i64
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class CollectiveBarrierRef:
+  barrier: BarrierRef
+  cluster_mask: ir.Value | None
+
+  @staticmethod
+  def initialize(
+      address: ir.Value,
+      num_barriers: int,
+      dims: Sequence[gpu.Dimension | Sequence[gpu.Dimension]],
+      cluster_shape: tuple[int, int, int],
+  ) -> "CollectiveBarrierRef":
+    i32 = ir.IntegerType.get_signless(32)
+    # With the exception of the current device, each pair of slices along
+    # collective dims is disjoint. Since the current device is overcounted,
+    # we must decrease the arrival count a little.
+    dims_shape = [
+        cluster_shape[d]
+        if isinstance(d, gpu.Dimension)
+        else math.prod(cluster_shape[dd] for dd in d)
+        for d in dims
+    ]
+    arrival_count = sum(dims_shape) - len(dims) + 1
+    if arrival_count == 1:
+      assert all(s == 1 for s in dims_shape)
+      cluster_mask = None
+    else:
+      cluster_mask = c(0, i32)
+      for d, size in zip(dims, dims_shape):
+        if size == 1:
+          # Only the current device is in this mask, but it will also be
+          # present in one of the non-trivial cluster dims.
+          continue
+        cluster_mask = arith.ori(
+            cluster_mask, cluster_collective_mask(cluster_shape, d)
+        )
+    barrier = BarrierRef.initialize(address, num_barriers, arrival_count=arrival_count)
+    return CollectiveBarrierRef(barrier, cluster_mask)
+
+  def __iter__(self):
+    for b in self.barrier:
+      yield CollectiveBarrierRef(b, self.cluster_mask)
+
+  def __getitem__(self, offset):
+    return CollectiveBarrierRef(self.barrier[offset], self.cluster_mask)
+
+  def arrive(self):
+    """Arrives on a barrier in all blocks that share at least one of the coordinates along the collective dimensions.
+
+    Note that unlike in arrive, each warpgroup arrives once.
+    """
+    if self.barrier.num_barriers != 1:
+      raise ValueError("Can only arrive on a single barrier")
+    if self.cluster_mask is None:
+      with single_thread(per_block=False):
+        self.barrier.arrive()
+      return
+    i32 = ir.IntegerType.get_signless(32)
+    thread_in_warpgroup = arith.remui(thread_idx(), c(WARPGROUP_SIZE, i32))
+    signaled_block = arith.divui(
+        thread_in_warpgroup, c(WARPGROUP_SIZE // 16, i32)
+    )
+    is_collective_block = arith.cmpi(
+        arith.CmpIPredicate.ne,
+        arith.andi(self.cluster_mask, arith.shli(c(1, i32), signaled_block)),
+        c(0, i32),
+    )
+    is_signaling_thread = arith.cmpi(
+        arith.CmpIPredicate.eq,
+        arith.remui(thread_in_warpgroup, c(WARPGROUP_SIZE // 16, i32)),
+        c(0, i32),
+    )
+    should_arrive = arith.andi(is_collective_block, is_signaling_thread)
+    llvm.inline_asm(
+        ir.Type.parse("!llvm.void"),
+        [should_arrive, self.barrier.get_ptr(), signaled_block],
+        """
+    {
+        .reg .b32 mapped_addr;
+        @$0 mapa.shared::cluster.u32 mapped_addr, $1, $2;
+        @$0 mbarrier.arrive.shared::cluster.b64 _, [mapped_addr];
+    }""",
+        "b,r,r",
+        has_side_effects=True,
+    )
+
+  def wait(self, *args, **kwargs):
+    self.barrier.wait(*args, **kwargs)
+
+  def wait_parity(self, *args, **kwargs):
+    self.barrier.wait_parity(*args, **kwargs)
 
 
 class Partition:
@@ -645,3 +857,106 @@ def tile_shape(shape, tiling):
       *(s // t for s, t in zip(shape[-tiling_rank:], tiling)),
       *tiling,
   )
+
+
+def warp_tree_reduce(value, op, group_size):
+  """Reduce a value across the warpgroup."""
+  assert 32 % group_size == 0 and group_size <= 32
+  i32 = ir.IntegerType.get_signless(32)
+  result = value
+  iters = np.log2(group_size)
+  if not iters.is_integer():
+    raise ValueError(f"Warp reduction group size should be a power of 2 (got {group_size})")
+  iters = int(iters)
+  for i in range(iters):
+    other_result = nvvm.shfl_sync(
+        result.type,
+        c(0xFFFFFFFF, i32),
+        result,
+        c(1 << i, i32),
+        c(0x1F, i32),
+        nvvm.ShflKind.bfly,
+    )
+    result = op(result, other_result)
+
+  return result
+
+
+def memref_ptr(memref_arg, memory_space=None):
+  i64 = ir.IntegerType.get_signless(64)
+  memref_ty = ir.MemRefType(memref_arg.type)
+  if len(memref_ty.shape) == 0:
+    raise NotImplementedError
+  elem_bytewidth = bytewidth(memref_ty.element_type)
+  rank = len(memref_ty.shape)
+  # TODO: Read out memory space from memref
+  space = "" if memory_space is None else "<" + str(memory_space) + ">"
+  ptr_ty = ir.Type.parse("!llvm.ptr" + space)
+  desc_ty = ir.Type.parse(
+      f"!llvm.struct<({ptr_ty}, {ptr_ty}, i64, array<{rank} x i64>,"
+      f" array<{rank} x i64>)>"
+  )
+  desc = builtin.UnrealizedConversionCastOp([desc_ty], [memref_arg])
+  aligned_ptr = llvm.extractvalue(ptr_ty, desc, [1])
+  offset_elems = llvm.extractvalue(i64, desc, [2])
+  offset_bytes = llvm.mul(
+      offset_elems,
+      c(elem_bytewidth, i64),
+      overflow_flags=llvm.IntegerOverflowFlags.none,
+  )
+  return llvm.inttoptr(
+      ptr_ty,
+      llvm.add(
+          llvm.ptrtoint(i64, aligned_ptr),
+          offset_bytes,
+          overflow_flags=llvm.IntegerOverflowFlags.none,
+      ),
+  )
+
+
+def cluster_collective_mask(
+    cluster_shape: tuple[int, int, int],
+    collective: Sequence[gpu.Dimension] | gpu.Dimension,
+):
+  if isinstance(collective, gpu.Dimension):
+    collective = (collective,)
+  # We first compute the linearized index of the slice along the collective
+  # dim that contains the current block. Then, the mask is a sequence of 1s
+  # strided by the position of the collective dim, shifted left by the linear
+  # slice index.
+  # TODO(apaszke): Make sure this gets hoisted outside of any loops.
+  # If not, we might need to do it manually.
+  i32 = ir.IntegerType.get_signless(32)
+  mask_shift = c(0, i32)
+  # NOTE: GPU dimensions are minor-to-major.
+  cluster_strides = get_contiguous_strides(cluster_shape[::-1])[::-1]
+  for stride, cluster_dim in zip(cluster_strides, gpu.Dimension):
+    if cluster_dim in collective:
+      continue
+    if cluster_shape[cluster_dim] != 1:  # Constant-fold multiply by 0.
+      dim_idx = arith.index_castui(i32, gpu.cluster_block_id(cluster_dim))
+      mask_shift = arith.addi(
+          mask_shift, arith.muli(dim_idx, c(stride, i32)),
+      )
+  mask_unshifted = 0
+  collective_strides = [cluster_strides[d] for d in collective]
+  collective_shape = tuple(cluster_shape[d] for d in collective)
+  for idx in np.ndindex(collective_shape):
+    mask_unshifted |= 1 << sum(i * s for i, s in zip(idx, collective_strides))
+  return arith.shli(c(mask_unshifted, i32), mask_shift)
+
+
+def dtype_to_ir_type(dtype: jax.typing.DTypeLike) -> ir.Type:
+  dtype = jnp.dtype(dtype)
+  if jnp.issubdtype(dtype, jnp.integer):
+    # All integer types in Mosaic GPU are signless.
+    return ir.IntegerType.get_signless(dtype.itemsize * 8)
+  return mlir.dtype_to_ir_type(dtype)
+
+
+def is_signed(dtype: jax.typing.DTypeLike) -> bool | None:
+  if jnp.issubdtype(dtype, jnp.bool_):
+    return False
+  elif jnp.issubdtype(dtype, jnp.integer):
+    return jnp.issubdtype(dtype, jnp.signedinteger)
+  return None

@@ -610,7 +610,7 @@ class SparsifyTest(jtu.JaxTestCase):
     self.assertArraysEqual(jit(func)(Msp).todense(), expected)
 
   def testWeakTypes(self):
-    # Regression test for https://github.com/google/jax/issues/8267
+    # Regression test for https://github.com/jax-ml/jax/issues/8267
     M = jnp.arange(12, dtype='int32').reshape(3, 4)
     Msp = BCOO.fromdense(M)
     self.assertArraysEqual(

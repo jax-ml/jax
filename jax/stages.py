@@ -22,7 +22,7 @@ For more, see the `AOT walkthrough <https://jax.readthedocs.io/en/latest/aot.htm
 """
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.stages import (
   Compiled as Compiled,
@@ -30,4 +30,6 @@ from jax._src.stages import (
   Lowered as Lowered,
   Wrapped as Wrapped,
   ArgInfo as ArgInfo,
+  OutInfo as OutInfo,
+  Traced as Traced,
 )

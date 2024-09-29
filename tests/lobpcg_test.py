@@ -416,17 +416,17 @@ class F64LobpcgTest(LobpcgTest):
     super().setUp()
 
   @parameterized.named_parameters(_make_concrete_cases(f64=True))
-  @jtu.skip_on_devices("tpu", "iree", "gpu")
+  @jtu.skip_on_devices("tpu", "gpu")
   def testLobpcgConsistencyF64(self, matrix_name, n, k, m, tol):
     self.checkLobpcgConsistency(matrix_name, n, k, m, tol, jnp.float64)
 
   @parameterized.named_parameters(_make_concrete_cases(f64=True))
-  @jtu.skip_on_devices("tpu", "iree", "gpu")
+  @jtu.skip_on_devices("tpu", "gpu")
   def testLobpcgMonotonicityF64(self, matrix_name, n, k, m, tol):
     self.checkLobpcgMonotonicity(matrix_name, n, k, m, tol, jnp.float64)
 
   @parameterized.named_parameters(_make_callable_cases(f64=True))
-  @jtu.skip_on_devices("tpu", "iree", "gpu")
+  @jtu.skip_on_devices("tpu", "gpu")
   def testCallableMatricesF64(self, matrix_name):
     self.checkApproxEigs(matrix_name, jnp.float64)
 

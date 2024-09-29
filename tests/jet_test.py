@@ -94,6 +94,8 @@ class JetTest(jtu.JaxTestCase):
                         check_dtypes=check_dtypes)
 
   @jtu.skip_on_devices("tpu")
+  # Default tolerance too tight on A100 after openxla/xla@a58070090
+  @jax.default_matmul_precision("float32")
   def test_dot(self):
     M, K, N = 2, 3, 4
     order = 3
@@ -240,6 +242,8 @@ class JetTest(jtu.JaxTestCase):
   def test_floor(self):      self.unary_check(jnp.floor)
   @jtu.skip_on_devices("tpu")
   def test_ceil(self):       self.unary_check(jnp.ceil)
+  @jtu.skip_on_devices("tpu")
+  def test_trunc(self):       self.unary_check(jnp.trunc)
   @jtu.skip_on_devices("tpu")
   def test_round(self):      self.unary_check(lax.round)
   @jtu.skip_on_devices("tpu")
@@ -400,7 +404,7 @@ class JetTest(jtu.JaxTestCase):
     self.assertArraysEqual(g_out_series, f_out_series)
 
   def test_add_any(self):
-    # https://github.com/google/jax/issues/5217
+    # https://github.com/jax-ml/jax/issues/5217
     f = lambda x, eps: x * eps + eps + x
     def g(eps):
       x = jnp.array(1.)
@@ -408,7 +412,7 @@ class JetTest(jtu.JaxTestCase):
     jet(g, (1.,), ([1.],))  # doesn't crash
 
   def test_scatter_add(self):
-    # very basic test from https://github.com/google/jax/issues/5365
+    # very basic test from https://github.com/jax-ml/jax/issues/5365
     def f(x):
       x0 = x[0]
       x1 = x[1]

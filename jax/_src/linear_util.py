@@ -63,15 +63,16 @@ data must be immutable, because it will be stored in function memoization tables
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
-from typing import Any, Callable, NamedTuple
+from typing import Any, NamedTuple
 import weakref
 
 from jax._src import config
 from jax._src import core
 from jax._src import traceback_util
 from jax._src.tree_util import tree_map
-from jax._src.util import curry
+from jax._src.util import curry, cache_clearing_funs
 
 
 traceback_util.register_exclusion(__file__)
@@ -246,8 +247,9 @@ def transformation(gen, fun: WrappedFun, *gen_static_args) -> WrappedFun:
   return fun.wrap(gen, gen_static_args, None)
 
 @curry
-def transformation_with_aux(gen, fun: WrappedFun, *gen_static_args,
-                            use_eq_store=False) -> tuple[WrappedFun, Any]:
+def transformation_with_aux(
+    gen, fun: WrappedFun, *gen_static_args, use_eq_store: bool = False
+) -> tuple[WrappedFun, Callable[[], Any]]:
   """Adds one more transformation with auxiliary output to a WrappedFun."""
   out_store = Store() if not use_eq_store else EqualStore()
   out_thunk = lambda: out_store.val
@@ -307,7 +309,7 @@ class TracingDebugInfo(NamedTuple):
   # formed just before staging to a jaxpr and read in trace-time error messages.
   # TODO(mattjj): delete partial_eval.DebugInfo, replace all uses with this cls
   traced_for: str             # e.g. 'jit', 'scan', etc
-  func_src_info: str          # e.g. f'{fun.__name__} at {filename}:{lineno}'
+  func_src_info: str | None   # e.g. f'{fun.__name__} at {filename}:{lineno}'
   arg_names: tuple[str, ...]  # e.g. ('args[0]', ... )
   result_paths: Callable[[], tuple[str, ...]] | None
 
@@ -349,7 +351,7 @@ def cache(call: Callable, *, explain: Callable | None = None):
     else:
       ans = call(fun, *args)
       if explain and config.explain_cache_misses.value:
-        explain(fun.f, cache is new_cache, cache, key, ans)
+        explain(fun.f, cache is new_cache, cache, key)
       cache[key] = (ans, fun.stores)
 
     return ans
@@ -359,24 +361,18 @@ def cache(call: Callable, *, explain: Callable | None = None):
 
   memoized_fun.cache_clear = fun_caches.clear  # type: ignore
   memoized_fun.evict_function = _evict_function  # type: ignore
-
   cache_clearing_funs.add(memoized_fun.cache_clear)
-
   return memoized_fun
 
-cache_clearing_funs = weakref.WeakSet()  # type: ignore
 
-def clear_all_caches():
-  global cache_clearing_funs
-  for clear in cache_clearing_funs:
-    clear()
-
-@partial(partial, tree_map)
-def _copy_main_traces(x):
+def _copy_main_trace(x):
   if isinstance(x, core.MainTrace):
     return core.MainTrace(x.level, x.trace_type, **x.payload)
   else:
     return x
+
+_copy_main_traces = partial(tree_map, _copy_main_trace)
+
 
 
 @transformation

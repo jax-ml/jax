@@ -15,7 +15,7 @@
 load(
     "//jaxlib:jax.bzl",
     "jax_generate_backend_suites",
-    "jax_test",
+    "jax_multiplatform_test",
     "py_deps",
 )
 
@@ -28,54 +28,52 @@ package(
 
 jax_generate_backend_suites()
 
-DISABLED_BACKENDS = [
-    "cpu",
-    "tpu",
-]
-
-DISABLED_CONFIGS = [
-    "gpu",
-    "gpu_a100",
-    "gpu_p100",
-    "gpu_p100_x32",
-    "gpu_x32",
-    "gpu_pjrt_c_api",
-]
-
-jax_test(
+jax_multiplatform_test(
     name = "gpu_test",
     srcs = ["gpu_test.py"],
-    disable_backends = DISABLED_BACKENDS,
-    disable_configs = DISABLED_CONFIGS,
+    enable_backends = [],
+    enable_configs = [
+        "gpu_h100",
+        "gpu_h100_2gpu",
+    ],
     shard_count = 4,
+    tags = ["multiaccelerator"],
     deps = [
         "//jax:mosaic_gpu",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
-jax_test(
+jax_multiplatform_test(
     name = "matmul_test",
     srcs = ["matmul_test.py"],
-    disable_backends = DISABLED_BACKENDS,
-    disable_configs = DISABLED_CONFIGS,
-    shard_count = 8,
+    enable_backends = [],
+    enable_configs = ["gpu_h100"],
+    shard_count = 5,
     deps = [
         "//jax:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:matmul",
-    ] + py_deps("absl/testing") + py_deps("numpy"),
+    ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
 )
 
-jax_test(
-    name = "matmul",
-    srcs = ["//third_party/py/jax/experimental/mosaic/gpu/examples:matmul.py"],
-    disable_backends = DISABLED_BACKENDS,
-    disable_configs = DISABLED_CONFIGS,
-    main = "//third_party/py/jax/experimental/mosaic/gpu/examples:matmul.py",
-    tags = [
-        "manual",
-        "notap",
-    ],
+jax_multiplatform_test(
+    name = "flash_attention",
+    srcs = ["//jax/experimental/mosaic/gpu/examples:flash_attention.py"],
+    enable_backends = [],
+    enable_configs = ["gpu_h100"],
+    main = "//jax/experimental/mosaic/gpu/examples:flash_attention.py",
+    tags = ["notap"],
     deps = [
         "//jax:mosaic_gpu",
-    ] + py_deps("absl/testing") + py_deps("numpy"),
+    ] + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
+    name = "flash_attention_test",
+    srcs = ["flash_attention_test.py"],
+    enable_backends = [],
+    enable_configs = ["gpu_h100"],
+    deps = [
+        "//jax:mosaic_gpu",
+        "//jax/experimental/mosaic/gpu/examples:flash_attention",
+    ] + py_deps("absl/testing"),
 )

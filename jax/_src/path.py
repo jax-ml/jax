@@ -14,20 +14,33 @@
 
 import logging
 import pathlib
+import importlib.util
+
+__all__ = ["Path"]
 
 logger = logging.getLogger(__name__)
-
-try:
-  import etils.epath as epath
-except:
-  epath = None
 
 # If etils.epath (aka etils[epath] to pip) is present, we prefer it because it
 # can read and write to, e.g., GCS buckets. Otherwise we use the builtin
 # pathlib and can only read/write to the local filesystem.
-if epath:
+epath_installed = bool(
+    importlib.util.find_spec("etils") and
+    importlib.util.find_spec("etils.epath")
+)
+if epath_installed:
   logger.debug("etils.epath found. Using etils.epath for file I/O.")
-  Path = epath.Path
+
+  def __dir__():
+    return ["Path"]
+
+  def __getattr__(name):
+    if name != "Path":
+      raise AttributeError(f"module '{__name__}' has no attribute '{name}")
+
+    global Path
+    from etils import epath
+    Path = epath.Path
+    return Path
 else:
   logger.debug("etils.epath was not found. Using pathlib for file I/O.")
   Path = pathlib.Path

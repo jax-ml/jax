@@ -9,7 +9,7 @@ notebook.
 
 ## What to update
 
-After JAX [PR #4008](https://github.com/google/jax/pull/4008), the arguments
+After JAX [PR #4008](https://github.com/jax-ml/jax/pull/4008), the arguments
 passed into a `custom_vjp` function's `nondiff_argnums` can't be `Tracer`s (or
 containers of `Tracer`s), which basically means to allow for
 arbitrarily-transformable code `nondiff_argnums` shouldn't be used for
@@ -95,7 +95,7 @@ acted very much like lexical closure. But lexical closure over `Tracer`s wasn't
 at the time intended to work with `custom_jvp`/`custom_vjp`. Implementing
 `nondiff_argnums` that way was a mistake!
 
-**[PR #4008](https://github.com/google/jax/pull/4008) fixes all lexical closure
+**[PR #4008](https://github.com/jax-ml/jax/pull/4008) fixes all lexical closure
 issues with `custom_jvp` and `custom_vjp`.** Woohoo! That is, now `custom_jvp`
 and `custom_vjp` functions and rules can close over `Tracer`s to our hearts'
 content. For all non-autodiff transformations, things will Just Work. For
@@ -120,9 +120,9 @@ manageable, until you think through how we have to handle arbitrary pytrees!
 Moreover, that complexity isn't necessary: if user code treats array-like
 non-differentiable arguments just like regular arguments and residuals,
 everything already works. (Before
-[#4039](https://github.com/google/jax/pull/4039) JAX might've complained about
+[#4039](https://github.com/jax-ml/jax/pull/4039) JAX might've complained about
 involving integer-valued inputs and outputs in autodiff, but after
-[#4039](https://github.com/google/jax/pull/4039) those will just work!)
+[#4039](https://github.com/jax-ml/jax/pull/4039) those will just work!)
 
 Unlike `custom_vjp`, it was easy to make `custom_jvp` work with
 `nondiff_argnums` arguments that were `Tracer`s. So these updates only need to

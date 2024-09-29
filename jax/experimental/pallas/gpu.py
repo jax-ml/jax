@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Contains Triton specific Pallas functions."""
-from jax._src.pallas import triton
-from jax._src.pallas.triton import approx_tanh
-get_compute_capability = triton.get_compute_capability
-del triton
+"""Triton-specific Pallas APIs."""
+
+from jax._src.pallas.triton.core import TritonCompilerParams
+from jax._src.pallas.triton.primitives import approx_tanh
+from jax._src.pallas.triton.primitives import debug_barrier
+from jax._src.pallas.triton.primitives import elementwise_inline_asm

@@ -109,7 +109,7 @@ def sparse_bcoo_todense_compile(state):
 def _sparse_bcoo_matvec(state, jit: bool = False, compile: bool = False):
   shape = (2000, 2000)
   nse = 10000
-  key = jax.random.PRNGKey(1701)
+  key = jax.random.key(1701)
   mat = sparse.random_bcoo(
       key,
       nse=nse,

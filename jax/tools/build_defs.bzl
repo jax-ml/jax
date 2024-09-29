@@ -146,9 +146,9 @@ EOF
     )
 
     if format == "TF":
-        jax_to_ir_rule = "//third_party/py/jax/tools:jax_to_ir_with_tensorflow"
+        jax_to_ir_rule = "//jax/tools:jax_to_ir_with_tensorflow"
     else:
-        jax_to_ir_rule = "//third_party/py/jax/tools:jax_to_ir"
+        jax_to_ir_rule = "//jax/tools:jax_to_ir"
 
     py_binary(
         name = runner,

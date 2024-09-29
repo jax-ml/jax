@@ -423,6 +423,17 @@ def _shapes_are_equal_length(shapes):
   return all(len(shape) == len(shapes[0]) for shape in shapes[1:])
 
 
+def _get_testcase_name(index, params):
+  dtypes = "_".join(str(dt.__name__) for dt in  params['dtypes'])
+  name = params['op_name'] if "op_name" in params else params["name"]
+  return f"{index}_{name}_{dtypes}"
+
+
+def _create_named_parameters(iter_params):
+  for i, params in enumerate(iter_params):
+    yield dict(params, **{'testcase_name': _get_testcase_name(i, params)})
+
+
 class JaxNumpyOperatorTests(jtu.JaxTestCase):
   """Tests for LAX-backed Numpy operators."""
 
@@ -436,7 +447,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
               for a in out]
     return f
 
-  @parameterized.parameters(itertools.chain.from_iterable(
+  @parameterized.named_parameters(_create_named_parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
       [dict(op_name=rec.name, rng_factory=rec.rng_factory,
             check_dtypes=rec.check_dtypes, tolerance=rec.tolerance,
@@ -449,7 +460,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
           *(_valid_dtypes_for_shape(s, rec.dtypes) for s in shapes))],
     )
     for rec in itertools.chain(JAX_ONE_TO_ONE_OP_RECORDS,
-                               JAX_COMPOUND_OP_RECORDS)))
+                              JAX_COMPOUND_OP_RECORDS))))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testOp(self, op_name, rng_factory, shapes, dtypes, check_dtypes,
              tolerance, inexact, kwargs, alias):
@@ -477,7 +488,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_op, args_maker, check_dtypes=check_dtypes,
                             atol=tol, rtol=tol)
 
-  @parameterized.parameters(itertools.chain.from_iterable(
+  @parameterized.named_parameters(_create_named_parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
       [dict(name=rec.name, rng_factory=rec.rng_factory, tol=rec.tolerance)],
       [dict(shapes=shapes, dtypes=dtypes)
@@ -487,7 +498,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
         for dtypes in itertools.product(
           *(_valid_dtypes_for_shape(s, rec.dtypes) for s in shapes))],
     )
-    for rec in JAX_OPERATOR_OVERLOADS))
+    for rec in JAX_OPERATOR_OVERLOADS)))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testOperatorOverload(self, name, rng_factory, shapes, dtypes, tol):
     rng = rng_factory(self.rng())
@@ -498,7 +509,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CompileAndCheck(fun, args_maker, atol=tol, rtol=tol)
 
-  @parameterized.parameters(itertools.chain.from_iterable(
+  @parameterized.named_parameters(_create_named_parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
       [dict(name=rec.name, rng_factory=rec.rng_factory,
             op_tolerance=rec.tolerance)],
@@ -509,7 +520,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
         for dtypes in itertools.product(
           *(_valid_dtypes_for_shape(s, rec.dtypes) for s in shapes))],
     )
-    for rec in JAX_RIGHT_OPERATOR_OVERLOADS))
+    for rec in JAX_RIGHT_OPERATOR_OVERLOADS)))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testRightOperatorOverload(self, name, rng_factory, shapes, dtypes,
                                 op_tolerance):
@@ -579,7 +590,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
       with self.assertRaises(TypeError):
         op(arg, other)
 
-  @parameterized.parameters(itertools.chain.from_iterable(
+  @parameterized.named_parameters(_create_named_parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
       [dict(name=rec.name, rng_factory=rec.rng_factory, alias=rec.alias)],
       shapes=filter(
@@ -589,7 +600,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
         _dtypes_are_compatible_for_bitwise_ops,
         itertools.combinations_with_replacement(rec.dtypes, rec.nargs)),
     )
-    for rec in JAX_BITWISE_OP_RECORDS))
+    for rec in JAX_BITWISE_OP_RECORDS)))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testBitwiseOp(self, name, rng_factory, shapes, dtypes, alias):
     np_op = getattr(np, name) if hasattr(np, name) else getattr(np, alias)
@@ -643,7 +654,13 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     shift_rng = jtu.rand_int(self.rng(), high=max(info.bits, shift_info.bits))
     args_maker = lambda: (x_rng(shapes[0], dtype), shift_rng(shapes[1], shift_dtype))
 
-    np_op = getattr(np, op.__name__)
+    if jtu.numpy_version() < (2, 0, 0) and op.__name__ in ("bitwise_left_shift", "bitwise_right_shift"):
+      # numpy < 2.0.0 does not have bitwise shift functions.
+      op_name = op.__name__.removeprefix("bitwise_")
+    else:
+      op_name = op.__name__
+
+    np_op = getattr(np, op_name)
 
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CompileAndCheck(op, args_maker)
@@ -680,7 +697,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     self.assertIsInstance(jax.jit(operator.mul)(b, a), MyArray)
 
   def testI0Grad(self):
-    # Regression test for https://github.com/google/jax/issues/11479
+    # Regression test for https://github.com/jax-ml/jax/issues/11479
     dx = jax.grad(jax.numpy.i0)(0.0)
     self.assertArraysEqual(dx, 0.0)
 

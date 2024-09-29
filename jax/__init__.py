@@ -29,7 +29,7 @@ except Exception as exc:
   # Defensively swallow any exceptions to avoid making jax unimportable
   from warnings import warn as _warn
   _warn(f"cloud_tpu_init failed: {exc!r}\n This a JAX bug; please report "
-        f"an issue at https://github.com/google/jax/issues")
+        f"an issue at https://github.com/jax-ml/jax/issues")
   del _warn
 del _cloud_tpu_init
 
@@ -38,7 +38,7 @@ import jax.core as _core
 del _core
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.basearray import Array as Array
 from jax import tree as tree
@@ -56,6 +56,8 @@ from jax._src.config import (
   debug_nans as debug_nans,
   debug_infs as debug_infs,
   log_compiles as log_compiles,
+  no_tracing as no_tracing,
+  explain_cache_misses as explain_cache_misses,
   default_device as default_device,
   default_matmul_precision as default_matmul_precision,
   default_prng_impl as default_prng_impl,
@@ -118,14 +120,15 @@ from jax._src.api import named_scope as named_scope
 from jax._src.api import pmap as pmap
 from jax._src.xla_bridge import process_count as process_count
 from jax._src.xla_bridge import process_index as process_index
-from jax._src.callback import pure_callback_api as pure_callback
+from jax._src.xla_bridge import process_indices as process_indices
+from jax._src.callback import pure_callback as pure_callback
 from jax._src.ad_checkpoint import checkpoint_wrapper as remat
 from jax._src.api import ShapeDtypeStruct as ShapeDtypeStruct
 from jax._src.api import value_and_grad as value_and_grad
 from jax._src.api import vjp as vjp
 from jax._src.api import vmap as vmap
-from jax._src.api import xla_computation as xla_computation
 from jax._src.sharding_impls import NamedSharding as NamedSharding
+from jax._src.sharding_impls import make_mesh as make_mesh
 
 # Force import, allowing jax.interpreters.* to be used after import jax.
 from jax.interpreters import ad, batching, mlir, partial_eval, pxla, xla
@@ -134,6 +137,7 @@ del ad, batching, mlir, partial_eval, pxla, xla
 from jax._src.array import (
     make_array_from_single_device_arrays as make_array_from_single_device_arrays,
     make_array_from_callback as make_array_from_callback,
+    make_array_from_process_local_data as make_array_from_process_local_data,
 )
 
 from jax._src.tree_util import (
@@ -177,12 +181,6 @@ from jax._src.array import Shard as Shard
 import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
-# TODO(jakevdp): remove this when jax/config.py is removed.
-from jax._src.deprecations import register as _register_deprecation
-_register_deprecation("jax.config", "config-module")
-_register_deprecation("jax.experimental", "maps-module")
-del _register_deprecation
-
 _deprecations = {
   # Added July 2022
   "treedef_is_leaf": (
@@ -224,6 +222,13 @@ _deprecations = {
   "clear_backends": (
     "jax.clear_backends is deprecated.",
     _deprecated_clear_backends
+  ),
+  # Remove after jax 0.4.35 release.
+  "xla_computation": (
+      "jax.xla_computation is deleted. Please use the AOT APIs; see "
+      "https://jax.readthedocs.io/en/latest/aot.html. For example, replace "
+      "xla_computation(f)(*xs) with jit(f).lower(*xs).compiler_ir('hlo'). See "
+      "CHANGELOG.md for 0.4.30 for more examples.", None
   ),
 }
 

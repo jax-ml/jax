@@ -42,30 +42,35 @@ def _dtype(x):
 
 
 _default_tolerance = {
-  _dtypes.float0: 0,
-  np.dtype(np.bool_): 0,
-  np.dtype(_dtypes.int4): 0,
-  np.dtype(np.int8): 0,
-  np.dtype(np.int16): 0,
-  np.dtype(np.int32): 0,
-  np.dtype(np.int64): 0,
-  np.dtype(_dtypes.uint4): 0,
-  np.dtype(np.uint8): 0,
-  np.dtype(np.uint16): 0,
-  np.dtype(np.uint32): 0,
-  np.dtype(np.uint64): 0,
-  np.dtype(_dtypes.float8_e4m3b11fnuz): 1e-1,
-  np.dtype(_dtypes.float8_e4m3fn): 1e-1,
-  np.dtype(_dtypes.float8_e4m3fnuz): 1e-1,
-  np.dtype(_dtypes.float8_e5m2): 1e-1,
-  np.dtype(_dtypes.float8_e5m2fnuz): 1e-1,
-  np.dtype(_dtypes.bfloat16): 1e-2,
-  np.dtype(np.float16): 1e-3,
-  np.dtype(np.float32): 1e-6,
-  np.dtype(np.float64): 1e-15,
-  np.dtype(np.complex64): 1e-6,
-  np.dtype(np.complex128): 1e-15,
+    _dtypes.float0: 0,
+    np.dtype(np.bool_): 0,
+    np.dtype(_dtypes.int4): 0,
+    np.dtype(np.int8): 0,
+    np.dtype(np.int16): 0,
+    np.dtype(np.int32): 0,
+    np.dtype(np.int64): 0,
+    np.dtype(_dtypes.uint4): 0,
+    np.dtype(np.uint8): 0,
+    np.dtype(np.uint16): 0,
+    np.dtype(np.uint32): 0,
+    np.dtype(np.uint64): 0,
+    np.dtype(_dtypes.float8_e4m3b11fnuz): 1e-1,
+    np.dtype(_dtypes.float8_e4m3fn): 1e-1,
+    np.dtype(_dtypes.float8_e4m3fnuz): 1e-1,
+    np.dtype(_dtypes.float8_e5m2): 1e-1,
+    np.dtype(_dtypes.float8_e5m2fnuz): 1e-1,
+    np.dtype(_dtypes.bfloat16): 1e-2,
+    np.dtype(np.float16): 1e-3,
+    np.dtype(np.float32): 1e-6,
+    np.dtype(np.float64): 1e-15,
+    np.dtype(np.complex64): 1e-6,
+    np.dtype(np.complex128): 1e-15,
 }
+
+if _dtypes.int2 is not None:
+  assert _dtypes.uint2 is not None
+  _default_tolerance[np.dtype(_dtypes.int2)] = 0
+  _default_tolerance[np.dtype(_dtypes.uint2)] = 0
 
 def default_tolerance():
   return _default_tolerance
@@ -104,15 +109,11 @@ def _assert_numpy_allclose(a, b, atol=None, rtol=None, err_msg=''):
   def maybe_upcast(x):
     if x.dtype in custom_float_dtypes:
       return x.astype(np.float32)
-    # TODO(reedwm): Upcasting int4 to int8 will no longer be neccessary once
-    # ml_dtypes has a stable release with commit
+    # TODO(reedwm): Upcasting int2/int4 to int8 will no longer be necessary once
+    # JAX depends on a version of ml_dtypes which contains
     # https://github.com/jax-ml/ml_dtypes/commit/348fd3704306cae97f617c38045cee6bc416bf10.
-    # Remove these checks once JAX depends on a version on ml_dtypes with that
-    # commit.
-    if x.dtype == _dtypes.int4:
-      return x.astype(np.int8)
-    if x.dtype == _dtypes.uint4:
-      return x.astype(np.uint8)
+    if x.dtype in _dtypes._intn_dtypes:
+      return x.astype(np.int8 if _dtypes.iinfo(x.dtype).min < 0 else np.uint8)
     return x
 
   a = maybe_upcast(a)

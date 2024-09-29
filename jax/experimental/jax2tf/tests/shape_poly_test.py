@@ -15,10 +15,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import contextlib
 import math
-from typing import Any, Callable
+from typing import Any
 import unittest
 
 from absl import logging
@@ -32,9 +32,8 @@ import re
 
 import jax
 from jax.experimental import jax2tf
-from jax.experimental import export
-from jax.experimental.export import _shape_poly as shape_poly
 from jax.experimental import pjit
+from jax import export
 from jax import lax
 import jax.numpy as jnp
 from jax import random
@@ -43,6 +42,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import util
+from jax._src.export import shape_poly
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lib import xla_client
@@ -50,7 +50,7 @@ import numpy as np
 
 from jax.experimental.jax2tf.tests import tf_test_util
 
-import tensorflow as tf  # type: ignore[import]
+import tensorflow as tf
 
 config.parse_flags_with_absl()
 
@@ -85,7 +85,6 @@ class PolyHarness(Harness):
                polymorphic_constraints: Sequence[str] = (),
                input_signature: Sequence[tf.TensorSpec] | None = None,
                expected_output_signature: tf.TensorSpec | None = None,
-               enable_xla: bool = True,
                expect_error: tuple[Any | None, str | None] = (None, None),
                skip_jax_run: bool = False,
                check_result: bool = True,
@@ -105,7 +104,6 @@ class PolyHarness(Harness):
       input_signature: For `tf.function.get_concrete_function`. If missing,
         generated from `polymorphic_shapes`.
       expected_output_signature: the expected inferred output shape.
-      enable_xla: For `jax2tf.convert`.
       expect_error: a pair of an Exception type and a regular expression to
         match the expected exception string.
       skip_jax_run: If True, then neither the JAX nor the TF functions are
@@ -126,28 +124,10 @@ class PolyHarness(Harness):
     self.expected_output_signature = expected_output_signature
     self.skip_jax_run = skip_jax_run
     self.expect_error = expect_error
-    self.enable_xla = enable_xla
     self.tol = tol
     self.check_result = check_result
     self.limitations = limitations
     self.override_jax_config_flags = override_jax_config_flags
-
-  # Replicate the harness for both enable and disable xla
-  def both_enable_and_disable_xla(self) -> tuple[PolyHarness, PolyHarness]:
-    assert self.enable_xla
-    other = PolyHarness(self.group_name,
-                        f"{self.name}_enable_xla_False",
-                        self.fun,
-                        arg_descriptors=self.arg_descriptors,
-                        polymorphic_shapes=self.polymorphic_shapes,
-                        polymorphic_constraints=self.polymorphic_constraints,
-                        input_signature=self.input_signature,
-                        expected_output_signature=self.expected_output_signature,
-                        expect_error=self.expect_error,
-                        tol=self.tol,
-                        enable_xla=False)
-    self.name = f"{self.name}_enable_xla_True"
-    return (self, other)
 
   def run_test(self, tst: tf_test_util.JaxToTfTestCase) -> jax.Array | None:
     def log_message(extra: str):
@@ -189,8 +169,7 @@ class PolyHarness(Harness):
         stack.enter_context(tst.assertRaisesRegex(expect_error_type, expect_error_regex))
 
       f_tf = jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes,
-                            polymorphic_constraints=self.polymorphic_constraints,
-                            enable_xla=self.enable_xla)
+                            polymorphic_constraints=self.polymorphic_constraints)
       # Run in tf.Eager mode first, because it is friendlier to debuggers
       res_tf = f_tf(*args) if not self.skip_jax_run else None
       f_tf_func = tf.function(
@@ -218,7 +197,7 @@ class PolyHarness(Harness):
     if not self.skip_jax_run:
       res_jax = f_jax(*args)
       if self.check_result:
-        res_tf = tf.nest.map_structure(lambda t: t.numpy(), res_tf)  # type: ignore
+        res_tf = tf.nest.map_structure(lambda t: t.numpy(), res_tf)
         custom_assert_lims = [
             l for l in self.limitations if l.custom_assert is not None]
         assert len(custom_assert_lims) <= 1, custom_assert_lims
@@ -354,7 +333,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(expect_error, expect_msg):
       check_shape_poly(self, f_jax, arg_descriptors=[x],
                        polymorphic_shapes=["b"])
-
 
   @jtu.parameterized_filterable(
     kwargs=[
@@ -615,7 +593,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
              "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, c + b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
              "'b' = 0 from specification '2*b + a' for dimension args[0].shape[0] (= 2), . "
-             "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details."
+             "Please see https://jax.readthedocs.io/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
            )),
       dict(shape=(3, 2, 6),  # a = 2, b = 0.5, c = 4 - b is not integer
            poly_spec="(a + 2*b, a, a + b + c)",
@@ -624,7 +602,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
              "Division had remainder 1 when computing the value of 'b'. "
              "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, c + b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), . "
-             "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details."
+             "Please see https://jax.readthedocs.io/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
            )),
       dict(shape=(8, 2, 6),  # a = 2, b = 3 - inconsistency
            poly_spec="(a + 2*b, a, a + b)",
@@ -634,7 +612,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
              "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
              "'b' = 4 from specification 'b + a' for dimension args[0].shape[2] (= 6), . "
-             "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details."
+             "Please see https://jax.readthedocs.io/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
            )),
       dict(shape=(7, 2, 36),  # a = 2, b = 3, c = 6 - cannot solve c
            poly_spec="(2 * a + b, a, c * c)",
@@ -643,7 +621,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
              "We can only solve linear uni-variate constraints. "
              "Using the following polymorphic shapes specifications: args[0].shape = (b + 2*a, a, c^2). "
              "Unprocessed specifications: 'c^2' for dimension size args[0].shape[2]. "
-             "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#dimension-variables-must-be-solvable-from-the-input-shapes for more details."
+             "Please see https://jax.readthedocs.io/en/latest/export/shape_poly.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details."
            )),
   ])
   def test_shape_constraints_errors(self, *,
@@ -954,7 +932,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     kwargs=[dict(with_function=v) for v in [True, False]]
   )
   def test_grad_int(self, with_function=False):
-    # https://github.com/google/jax/issues/7093
+    # https://github.com/jax-ml/jax/issues/7093
     # Also issue #6975.
     x_shape = (2, 3, 4)
     xi = np.arange(math.prod(x_shape), dtype=np.int16).reshape(x_shape)
@@ -962,7 +940,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     xi_yf = (xi, yf)
     zb = np.array([True, False], dtype=np.bool_)
     def f_jax(xi_yf, zb):  # xi: s16[2, 3, 4], yf: f32[2, 3, 4], zb: bool[2]
-                           # results: f32[2, 3, 4], s16[2, 3, 4], bool[2], f32[2, 3, 4]
+      # results: f32[2, 3, 4], s16[2, 3, 4], bool[2], f32[2, 3, 4]
       xi, yf = xi_yf
       # Return a tuple:
       #   (1) float constant, with 0 tangent;
@@ -1053,6 +1031,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         f_tf, input_signature=[tf.TensorSpec([None], x.dtype)])
     self.assertAllClose(f_jax(x), restored_f(x))
 
+  @jtu.ignore_warning(
+      message="jax2tf.convert with native_serialization=False is deprecated"
+  )
   def test_readme_examples(self):
     """Some of the examples from the README."""
 
@@ -1125,41 +1106,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     x0 = np.array([], np.float32)
     self.assertEqual(jnp.array([0.], dtype=np.float32), f1_jax(x0))
 
-    # In graph serialization eager mode we catch the error
-    with self.assertRaisesRegex(
-        tf.errors.InvalidArgumentError,
-        re.escape("Expected value >= 1 for dimension variable 'b'. "
-                  "Using the following polymorphic shapes specifications: args[0].shape = (b,). "
-                  "Obtained dimension variables: 'b' = 0")):
-      jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
-                     native_serialization=False)(x0)
-
-    # In graph serialization graph mode we also catch it (except on TPU)
-    f1_tf = tf.function(
-        jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
-                       native_serialization=False),
-      autograph=False,
-    ).get_concrete_function(tf.TensorSpec([None], dtype=np.float32))
-    # In graph serialization graph mode we also catch it (except on TPU, where
-    # the behavior is as for jit_compile=1)
-    if jtu.test_device_matches(["tpu"]):
-      self.assertEqual(jnp.array([1.], dtype=np.float32), f1_tf(x0))
-    else:
-      with self.assertRaisesRegex(
-          tf.errors.InvalidArgumentError,
-          re.escape("Expected value >= 1 for dimension variable")):
-        _ = f1_tf(x0)
-
-    # In graph serialization with jit_compile=True we do not catch the error
-    # and we return the wrong result
-    f1_tf = tf.function(
-        jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
-                       native_serialization=False),
-      autograph=False,
-      jit_compile=True
-    )
-    self.assertEqual(jnp.array([1.], dtype=np.float32), f1_tf(x0))
-
     # We also catch the error with native serialization
     with self.assertRaisesRegex(
         tf.errors.InvalidArgumentError,
@@ -1167,8 +1113,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
           "Expected value >= 1 for dimension variable 'b'. "
           "Using the following polymorphic shapes specifications: args[0].shape = (b,). "
           "Obtained dimension variables: 'b' = 0")):
-      _ = jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
-                         native_serialization=True)(x0)
+      _ = jax2tf.convert(f1_jax, polymorphic_shapes=["b"])(x0)
 
     # Checking that the actual dimensions denoted by the same
     # dimension variables have equal sizes.
@@ -1205,24 +1150,13 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
           r"Found inconsistency"):
         _ = f2_tf(x45)
 
-    # In graph serialization with jit_compile=True we do not catch the error
-    # and we return the wrong result
-    f2_tf = tf.function(
-        jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
-                       native_serialization=False),
-      autograph=False,
-      jit_compile=True
-    )
-    self.assertEqual(1. + jnp.sum(x45), f2_tf(x45))
-
     # We also catch the error with native serialization
     with self.assertRaisesRegex(
         tf.errors.InvalidArgumentError,
         re.escape(
           "Found inconsistency between dimension size args[0].shape[1] (= 5) "
           "and the specification 'b' (= 4)")):
-      _ = jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
-                         native_serialization=True)(x45)
+      _ = jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"])(x45)
 
     x = np.ones((5,), dtype=np.float32)
     with self.assertRaisesRegex(
@@ -1572,12 +1506,12 @@ _POLY_SHAPE_TEST_HARNESSES = [
     PolyHarness("argmax", "0",
                 lambda op: lax.argmax(op, axis=0, index_dtype=np.int32),
                 arg_descriptors=[RandArg((3, 4, 5), _f32)],
-                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ..."]),
     # Reduce the non-poly dimension
     PolyHarness("argmax", "1",
                 lambda op: lax.argmax(op, axis=1, index_dtype=np.int32),
                 arg_descriptors=[RandArg((3, 4, 5), _f32)],
-                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ..."]),
     PolyHarness("jnp.argsort", "",
                 lambda op: jnp.argsort(op),
                 arg_descriptors=[RandArg((3, 4, 5), _f32)],
@@ -1659,7 +1593,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                                                rhs_spec=(2, 1, 0),
                                                                out_spec=(0, 2, 1))),
                 arg_descriptors=[RandArg((1, 12, 16), _f32), RandArg((4, 16, 16), _f32)],
-                polymorphic_shapes=["_, b, _", None]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["_, b, _", None]),
     # The same example from above, but with stride=2.
     PolyHarness("conv_general_dilated", "1d_stride=2_even",
                 lambda lhs, rhs: lax.conv_general_dilated(
@@ -1671,7 +1605,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                                                rhs_spec=(2, 1, 0),
                                                                out_spec=(0, 2, 1))),
                 arg_descriptors=[RandArg((1, 12, 16), _f32), RandArg((4, 16, 16), _f32)],
-                polymorphic_shapes=["_, b, _", None]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["_, b, _", None]),
     # The same example from above, but with stride=2 and odd input size.
     PolyHarness("conv_general_dilated", "1d_stride=2_odd",
                 lambda lhs, rhs: lax.conv_general_dilated(
@@ -1683,7 +1617,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                                                rhs_spec=(2, 1, 0),
                                                                out_spec=(0, 2, 1))),
                 arg_descriptors=[RandArg((1, 13, 16), _f32), RandArg((4, 16, 16), _f32)],
-                polymorphic_shapes=["_, b, _", None]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["_, b, _", None]),
     PolyHarness("conv_general_dilated", "1d_stride=2_zero_output",
               lambda lhs, rhs: lax.conv_general_dilated(
                 lhs, rhs,
@@ -1697,7 +1631,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
               arg_descriptors=[RandArg((1, 4, 16), _f32),
                                RandArg((8, 16, 16), _f32)],
               polymorphic_shapes=["_, b, _",
-                                  None]).both_enable_and_disable_xla(),
+                                  None]),
     # Issue #11402
     PolyHarness("conv_general_dilated", "1d_2",
                 lambda lhs, rhs: lax.conv_transpose(lhs, rhs,
@@ -1707,7 +1641,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                                     transpose_kernel=False),
                 arg_descriptors=[RandArg((5, 12, 16), _f32), RandArg((4, 16, 16), _f32)],
                 polymorphic_shapes=["b, _, _", None],
-                tol=5e-5).both_enable_and_disable_xla(),
+                tol=5e-5),
     # Issue #11402
     PolyHarness("conv_general_dilated", "1d_3",
                 lambda lhs, rhs: lax.conv_transpose(lhs, rhs,
@@ -1717,7 +1651,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                                     transpose_kernel=False),
                 arg_descriptors=[RandArg((5, 12, 16), _f32), RandArg((4, 16, 16), _f32)],
                 polymorphic_shapes=["_, b, _", None],
-                tol=5e-5).both_enable_and_disable_xla(),
+                tol=5e-5),
     PolyHarness("conv_general_dilated", "",
                 lambda lhs, rhs: lax.conv_general_dilated(
                     lhs, rhs,
@@ -1730,7 +1664,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                     batch_group_count=1,
                     precision=None),
                 arg_descriptors=[RandArg((7, 3, 9, 10), _f32), RandArg((3, 3, 4, 5), _f32)],
-                polymorphic_shapes=["b, ...", None]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ...", None]),
     [
       [
         PolyHarness(cum_name, "reduce_axis_poly",
@@ -1763,47 +1697,47 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 # x:shape: (b, 4)
                 lambda x: lax.dynamic_slice(x, (0, 1), (x.shape[0], 2)),
                 arg_descriptors=[RandArg((3, 4), _f32)],
-                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ..."]),
     PolyHarness("dynamic_slice", "idx=tuple_arg",
                 # x:shape: (b, 4)
                 lambda x, i0: lax.dynamic_slice(x, (i0, np.int32(1)), (x.shape[0], 2)),
                 arg_descriptors=[RandArg((3, 4), _f32), np.array(-2, dtype=np.int32)],
-                polymorphic_shapes=["b, ...", None]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ...", None]),
     PolyHarness("dynamic_slice", "idx=array",
                 # x:shape: (b, 4)
                 lambda x, idx: lax.dynamic_slice(x, idx, (x.shape[0], 2)),
                 arg_descriptors=[RandArg((3, 4), _f32), np.array([-2, -1], dtype=np.int32)],
-                polymorphic_shapes=["b, ...", None]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ...", None]),
     PolyHarness("dynamic_slice", "idx=tuple_int_start_oob_large",
                 # x:shape: (b, 4)
                 lambda x: lax.dynamic_slice(x, (1, 1), (x.shape[0], 2)),
                 arg_descriptors=[RandArg((3, 4), _f32)],
-                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ..."]),
     PolyHarness("dynamic_slice", "idx=tuple_int_start_oob_small",
               # x:shape: (b, 4)
               lambda x: lax.dynamic_slice(x, (-1, 1), (x.shape[0] - 1, 2)),
               arg_descriptors=[RandArg((3, 4), _f32)],
-              polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+              polymorphic_shapes=["b, ..."]),
     PolyHarness("dynamic_slice_in_dim", "idx=0",
                 # x:shape: (b, 4)
                 lambda x: lax.dynamic_slice_in_dim(x, 0, x.shape[0], axis=0),
                 arg_descriptors=[RandArg((3, 4), _f32)],
-                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ..."]),
     PolyHarness("dynamic_update_slice", "idx=tuple_int",
                 # x:shape: (b, 4)
                 lambda x: lax.dynamic_update_slice(x, x, (0, 0)),
                 arg_descriptors=[RandArg((3, 4), _f32)],
-                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ..."]),
     PolyHarness("dynamic_update_slice", "idx=tuple_arg",
                 # x:shape: (b, 4)
                 lambda x, i0: lax.dynamic_update_slice(x, x, (i0, np.int32(0))),
                 arg_descriptors=[RandArg((3, 4), _f32), np.array(-2, dtype=np.int32)],
-                polymorphic_shapes=["b, ...", None]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ...", None]),
     PolyHarness("dynamic_update_slice", "idx=array",
                 # x:shape: (b, 4)
                 lambda x, idx: lax.dynamic_update_slice(x, x, idx),
                 arg_descriptors=[RandArg((3, 4), _f32), np.array([-2, -1], dtype=np.int32)],
-                polymorphic_shapes=["b, _", None]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, _", None]),
     [
       PolyHarness("eig", f"shape={jtu.format_shape_dtype_string((3, 5, 5), dtype)}_poly={poly}_{left=}_{right=}",
                   lambda x, left, right: lax.linalg.eig(x, compute_left_eigenvectors=left, compute_right_eigenvectors=right),
@@ -1931,44 +1865,44 @@ _POLY_SHAPE_TEST_HARNESSES = [
     PolyHarness("getitem", "op=static_idx=poly",
                 lambda a, i: a[i],
                 arg_descriptors=[RandArg((3, 4), _f32), np.array([2, 2], np.int32)],
-                polymorphic_shapes=[None, "b0, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=[None, "b0, ..."]),
     # operand is poly, index is integer
     PolyHarness("getitem", "op=poly_idx=const",
                 lambda a: a[1],
                 arg_descriptors=[RandArg((3, 4), _f32)],
-                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ..."]),
     # operand is poly, index is dim poly
     PolyHarness("getitem", "op=poly_idx=dim",
                 lambda a: a[jnp.array(a.shape[0] - 2)],
                 arg_descriptors=[RandArg((3, 4), _f32)],
-                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ..."]),
     # Both the operand and the index are poly
     PolyHarness("getitem", "op=poly_idx=poly",
                 lambda a, i: a[i],
                 arg_descriptors=[RandArg((3, 4), _f32), np.array([1, 2, 0], np.int32)],
-                polymorphic_shapes=["b, ...", "b, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ...", "b, ..."]),
     # op is poly and index is an entire slice
     PolyHarness("getitem", "op=poly_idx=slice-all",
                 lambda a: a[:],
                 arg_descriptors=[RandArg((3, 4), _f32)],
-                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ..."]),
     # op is poly and index is a partial slice
     PolyHarness("getitem", "op=poly_idx=slice-ct-1",
                 lambda a: a[:2],
                 arg_descriptors=[RandArg((3, 4), _f32)],
-                polymorphic_shapes=["b + 2, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b + 2, ..."]),
     PolyHarness("getitem", "op=poly_idx=slice-ct-2",
                 lambda a: a[:, :2],
                 arg_descriptors=[RandArg((3, 4), _f32)],
-                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ..."]),
     PolyHarness("getitem", "op=poly_idx=slice-None-1",
                 lambda a: a[:a.shape[0]],
                 arg_descriptors=[RandArg((3, 4), _f32)],
-                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ..."]),
     PolyHarness("getitem", "op=poly_idx=slice-poly",
                 lambda a: a[:a.shape[0] - 1],
                 arg_descriptors=[RandArg((3, 4), _f32)],
-                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ..."]),
     PolyHarness("image_resize", "linear_0",
                 lambda x: jax.image.resize(x, (x.shape[0], 2 * x.shape[1], 2 * x.shape[2], x.shape[3]),
                                            method="linear"),
@@ -2201,13 +2135,13 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 lambda x: lax.reduce_window(x, np.array(1., _f32), lax.min,
                                             (2, 2), (1, 1), "VALID"),
                 arg_descriptors=[RandArg((3, 8), _f32)],
-                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ..."]),
     PolyHarness("reduce_window", "min_window_size=dynamic",
                 # x: f32[b, 8]
                 lambda x: lax.reduce_window(x, np.array(1., _f32), lax.min,
                                             (2, x.shape[0]), (1, 1), "VALID"),
                 arg_descriptors=[RandArg((3, 8), _f32)],
-                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ..."]),
     PolyHarness("reduce_window", "min_plus_max_window_size=static",
                 # x: f32[b, 8]
                 lambda x: (
@@ -2217,7 +2151,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                     lax.reduce_window(x, np.array(1., _f32), lax.max,
                                       (2, 2), (1, 1), "VALID")),
                 arg_descriptors=[RandArg((3, 8), _f32)],
-                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ..."]),
     PolyHarness("reduce_window", "min_plus_max_window_size=dynamic",
                 # x: f32[b, 8]
                 lambda x: (
@@ -2227,20 +2161,20 @@ _POLY_SHAPE_TEST_HARNESSES = [
                     lax.reduce_window(x, np.array(1., _f32), lax.max,
                                       (2, x.shape[0]), (1, 1), "VALID")),
                 arg_descriptors=[RandArg((3, 8), _f32)],
-                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ..."]),
     PolyHarness("reduce_window", "add_monoid_base_window_size=static",
                 # x: f32[b, 8]
                 lambda x: lax.reduce_window(x, np.array(0., _f32), lax.add,
                                             (2, 2), (1, 1), "VALID"),
                 arg_descriptors=[RandArg((3, 8), _f32)],
-                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ..."]),
     PolyHarness("reduce_window", "add_monoid_base_window_size=dynamic",
                 # x: f32[b, 8]
                 lambda x: lax.reduce_window(x, np.array(0., _f32), lax.add,
                                             (2, x.shape[0]), (1, 1), "VALID"),
                 arg_descriptors=[RandArg((3, 8), _f32)],
-                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
-    # https://github.com/google/jax/issues/11804
+                polymorphic_shapes=["b, ..."]),
+    # https://github.com/jax-ml/jax/issues/11804
     # Use the reshape trick to simulate a polymorphic dimension of 16*b.
     # (See test "conv_general_dilated.1d_1" above for more details.)
     PolyHarness("reduce_window", "add_monoid_strides_window_size=static",
@@ -2249,7 +2183,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                     jnp.reshape(x, (1, -1, 1)),
                     np.array(0., _f32), lax.add, (1, 4, 1), (1, 2, 1), "SAME"),
                 arg_descriptors=[RandArg((1, 128, 16), _f32)],
-                polymorphic_shapes=["_, b1, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["_, b1, ..."]),
     PolyHarness("reduce_window", "add_generic_window_size=static",
                 # x: f32[1, 16*b, 1]
                 # Use an initial value of 1. to trigger the generic reduction path
@@ -2257,7 +2191,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                     jnp.reshape(x, (1, -1, 1)),
                     np.array(1., _f32), lax.add, (1, 4, 1), (1, 2, 1), "SAME"),
                 arg_descriptors=[RandArg((1, 128, 16), _f32)],
-                polymorphic_shapes=["_, b1, ..."]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["_, b1, ..."]),
     PolyHarness("reduce_window", "variadic_generic_window_size=static",
               # x: f32[b, 8]  y: f32[b, 8]
               lambda x, y: lax.reduce_window(
@@ -2266,7 +2200,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                   lax.sub(xy0[1], xy1[1])),
                 (2, 2), (1, 1), "VALID"),
               arg_descriptors=[RandArg((3, 8), _f32), RandArg((3, 8), _i32)],
-              polymorphic_shapes=["b, ...", "b, ..."]).both_enable_and_disable_xla(),
+              polymorphic_shapes=["b, ...", "b, ..."]),
     PolyHarness("reduce_window", "variadic_generic_window_size=dynamic",
               # x: f32[b, 8]  y: f32[b, 8]
               lambda x, y: lax.reduce_window(
@@ -2275,7 +2209,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                   lax.sub(xy0[1], xy1[1])),
                 (2, x.shape[0]), (1, 1), "VALID"),
               arg_descriptors=[RandArg((3, 8), _f32), RandArg((3, 8), _i32)],
-              polymorphic_shapes=["b, ...", "b, ..."]).both_enable_and_disable_xla(),
+              polymorphic_shapes=["b, ...", "b, ..."]),
     # TODO(necula): not yet supported, but also unlikely to come up.
     # PolyHarness("random_uniform", "odd",
     #               lambda key, a: jax.random.uniform(key, (2 * a.shape[0] + 1, a.shape[1]),
@@ -2377,7 +2311,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
     PolyHarness("scatter_grad", "",
                 lambda *args: jax.grad(
                     lambda *args:
-                        jnp.sum(lax.scatter(  # type: ignore
+                        jnp.sum(lax.scatter(
                           *args,
                           indices_are_sorted=False,
                           unique_indices=False,
@@ -2392,7 +2326,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
     PolyHarness("scatter_grad", "poly_indices",
                 lambda *args: jax.grad(
                   lambda *args:
-                  jnp.sum(lax.scatter(  # type: ignore
+                  jnp.sum(lax.scatter(
                     *args,
                     indices_are_sorted=False,
                     unique_indices=False))
@@ -2493,7 +2427,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
     PolyHarness("take", "",
                 lambda a, i: jnp.take(a, i, axis=1),
                 arg_descriptors=[RandArg((3, 4, 5), _f32), np.array([1, 2], np.int32)],
-                polymorphic_shapes=["b, ...", None]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, ...", None]),
     PolyHarness("take_along_axis", "0",
                 lambda x, y: jnp.take_along_axis(x, y, axis=0),
                 arg_descriptors=[RandArg((5, 2), _f32), RandArg((5, 1), np.int32)],
@@ -2523,6 +2457,12 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 lambda x: jnp.tri(x.shape[0], M=x.shape[0] + 2) + x,
                 arg_descriptors=[RandArg((3, 1), _f32)],
                 polymorphic_shapes=["b, ..."]),
+    PolyHarness("tril", "",
+                lambda x: jnp.tril(jnp.ones((x.shape[0], x.shape[0] + x.shape[1]),
+                                            dtype=_f32),
+                                   k=x.shape[1]),
+                arg_descriptors=[RandArg((3, 4), _f32)],
+                polymorphic_shapes=["m, n"]),
     [
       PolyHarness("triangular_solve",
                   f"shape={jtu.format_shape_dtype_string(a_shape, dtype)}_{left_side=}_{a_poly=}_{b_poly=}",
@@ -2700,106 +2640,56 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
 
     # Exclude some harnesses that are known to fail for native serialization
     # FOR NATIVE SERIALIZATION
-    if config.jax2tf_default_native_serialization.value:
-      if not harness.enable_xla:
-        raise unittest.SkipTest("disabled for native_serialization and enable_xla=False")
+    # Set of harness.group_name:platform that are implemented with custom call
+    custom_call_harnesses = {
+        "householder_product:gpu",
+        "vmap_geqrf:gpu",  # used for linalg.qr
+        "vmap_lu:gpu",
+        # custom_linear_solve works as long as lu works.
+        "vmap_custom_linear_solve:gpu",
+        "vmap_qr:gpu", "qr:gpu",
+        "vmap_svd:gpu",
+    }
+    if f"{harness.group_name}:{jtu.device_under_test()}" in custom_call_harnesses:
+      raise unittest.SkipTest("native serialization with shape polymorphism not implemented for custom calls; b/261671778")
 
-      # Set of harness.group_name:platform that are implemented with custom call
-      custom_call_harnesses = {
-          "householder_product:gpu",
-          "vmap_geqrf:gpu",  # used for linalg.qr
-          "vmap_lu:gpu",
-          # custom_linear_solve works as long as lu works.
-          "vmap_custom_linear_solve:gpu",
-          "vmap_qr:gpu", "qr:gpu",
-          "vmap_svd:gpu",
-      }
-      if f"{harness.group_name}:{jtu.device_under_test()}" in custom_call_harnesses:
-        raise unittest.SkipTest("native serialization with shape polymorphism not implemented for custom calls; b/261671778")
+    if harness.group_name == "schur" and not jtu.test_device_matches(["cpu"]):
+      raise unittest.SkipTest("schur decomposition is only implemented on CPU.")
 
-      if harness.group_name == "schur" and not jtu.test_device_matches(["cpu"]):
-        raise unittest.SkipTest("schur decomposition is only implemented on CPU.")
+    if "fft_fft_type" in harness.fullname:
+      if "nr_fft_lengths_2" in harness.fullname:
+        raise unittest.SkipTest("native serialization with shape polymorphism not implemented for fft with non-constant fft_lengths on GPU and TPU")
 
-      if "fft_fft_type" in harness.fullname:
-        if "nr_fft_lengths_2" in harness.fullname:
-          raise unittest.SkipTest("native serialization with shape polymorphism not implemented for fft with non-constant fft_lengths on GPU and TPU")
-
-      if harness.group_name == "vmap_eigh" and jtu.test_device_matches(["gpu"]):
-        # For eigh on GPU with shape polymorphism under native serialization,
-        # we use a different lowering for small matrices. See README.md.
-        shape = harness.original_harness.params["shape"]
-        if 0 < shape[-1] <= 32:
-          harness.check_result = False
-
-      if harness.group_name == "vmap_tan":
-        # Tan (b/274462307) require support for custom call stablehlo.tan.
-        raise unittest.SkipTest(
-            "native lowering with shape polymorphism requires additional StableHLO feature support")
-
-      if (jtu.test_device_matches(["cpu", "gpu"]) and
-          harness.fullname in [
-              "cumsum_reduce_axis_poly", "cumprod_reduce_axis_poly",
-              "cummin_reduce_axis_poly", "cummax_reduce_axis_poly",
-              "cumlogsumexp_reduce_axis_poly",
-              "jnp_insert_insert_constant", "jnp_insert_insert_poly",
-              "jnp_nonzero_size_constant", "jnp_nonzero_size_poly"]):
-        # Need associative scan reductions on CPU and GPU. On TPU we use the
-        # reduce_window HLO, but on CPU and GPU (with axis size >= 32) we use
-        # a recursive associative scan that we cannot express with shape
-        # polymorphism.
-        raise unittest.SkipTest(
-            "native serialization with shape polymorphism not implemented for window_reductions on CPU and GPU")
-
-    # FOR GRAPH SERIALIZATION
-    if not config.jax2tf_default_native_serialization.value:
-      if ("random_gamma_threefry_non_partitionable" in harness.fullname and
-          jtu.test_device_matches(["cpu"])):
-        harness.tol = 1e-6
-
-      if harness.group_name == "vmap_cumsum":
-        # For cumsum we use a different implementation than JAX native
-        # See README.md for associative scan reductions
-        harness.tol = 1e-5
-
-      if "vmap_" in harness.group_name:
-        # For non-native serialization, it seems that we cannot just use
-        # the custom_asserts; we get too many errors.
-        if [l for l in harness.limitations if l.custom_assert]:
-          harness.check_result = False
-
-      if "vmap_integer_pow" in harness.group_name:
-        # For non-native serialization the overflow behavior is different.
+    if harness.group_name == "vmap_eigh" and jtu.test_device_matches(["gpu"]):
+      # For eigh on GPU with shape polymorphism under native serialization,
+      # we use a different lowering for small matrices. See README.md.
+      shape = harness.original_harness.params["shape"]
+      if 0 < shape[-1] <= 32:
         harness.check_result = False
 
-      if "average_axis_None_weights_Some" in harness.fullname:
-        harness.tol = 1e-5
+    if harness.group_name == "vmap_eigh":
+      raise unittest.SkipTest(
+          "Should not compare eigendecompositions for equality directly"
+          "because eigenvalues are sorted.")
 
-      if harness.group_name == "schur":
-        raise unittest.SkipTest("jax2tf graph serialization does not support schur.")
+    if harness.group_name == "vmap_tan":
+      # Tan (b/274462307) require support for custom call stablehlo.tan.
+      raise unittest.SkipTest(
+          "native lowering with shape polymorphism requires additional StableHLO feature support")
 
-      if harness.group_name == "eig" and "left_True_right_True" in harness.fullname:
-        raise unittest.SkipTest("jax2tf graph serialization does not support both left and right.")
-
-      if harness.group_name == "vmap_eigh":
-        self.skipTest("b/312378994: error in TF eager execution for tf.linalg.eigh")
-
-      if "conv_general_dilated_1d_stride_2_zero_output_enable_xla_False" in harness.fullname:
-        raise unittest.SkipTest("incomplete support for conv_general_dilated in enable_xla=False")
-
-      if harness.group_name == "reduce_window" and "variadic" in harness.fullname:
-        raise unittest.SkipTest("jax2tf graph serialization does not support variadic reduce_window.")
-
-      if (harness.group_name == "reduce_window" and
-          not harness.enable_xla and
-          "window_size_dynamic" in harness.fullname and
-          any(n in harness.fullname
-              for n in ["min_plus_max", "add_monoid_base", "min_window"])):
-        raise unittest.SkipTest(
-            "jax2tf graph serialization with enable_xla=False does not support "
-            "dynamic tf.nn.pool")
-
-      if "reduce_window_add_generic" in harness.fullname and not harness.enable_xla:
-        raise unittest.SkipTest("TODO(b/287733072): wrong result for enable_xla_False")
+    if (jtu.test_device_matches(["cpu", "gpu"]) and
+        harness.fullname in [
+            "cumsum_reduce_axis_poly", "cumprod_reduce_axis_poly",
+            "cummin_reduce_axis_poly", "cummax_reduce_axis_poly",
+            "cumlogsumexp_reduce_axis_poly",
+            "jnp_insert_insert_constant", "jnp_insert_insert_poly",
+            "jnp_nonzero_size_constant", "jnp_nonzero_size_poly"]):
+      # Need associative scan reductions on CPU and GPU. On TPU we use the
+      # reduce_window HLO, but on CPU and GPU (with axis size >= 32) we use
+      # a recursive associative scan that we cannot express with shape
+      # polymorphism.
+      raise unittest.SkipTest(
+          "native serialization with shape polymorphism not implemented for window_reductions on CPU and GPU")
 
     # FOR BOTH NATIVE AND GRAPH SERIALIZATION
     if harness.group_name == "vmap_conv_general_dilated":
@@ -2809,17 +2699,8 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     if harness.group_name == "eig" and not jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("JAX implements eig only on CPU.")
 
-    prev_jax_config_flags = {
-      fname: getattr(jax.config, fname)
-      for fname, fvalue in harness.override_jax_config_flags.items()
-    }
-    try:
-      for fname, fvalue in harness.override_jax_config_flags.items():
-        jax.config.update(fname, fvalue)
+    with jtu.global_config_context(**harness.override_jax_config_flags):
       harness.run_test(self)
-    finally:
-      for fname, _ in harness.override_jax_config_flags.items():
-        jax.config.update(fname, prev_jax_config_flags[fname])
 
 
 if __name__ == "__main__":

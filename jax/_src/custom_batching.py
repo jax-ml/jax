@@ -14,9 +14,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import functools
 import operator
-from typing import Callable
 
 from jax import lax
 from jax._src import api
@@ -27,7 +27,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
-from jax._src.api_util import flatten_fun_nokwargs
+from jax._src.api_util import flatten_fun_nokwargs, resolve_kwargs
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters.batching import not_mapped
@@ -53,7 +53,7 @@ class custom_vmap:
 
   def __init__(self, fun: Callable):
     functools.update_wrapper(self, fun)
-    self.fun = fun  # type: ignore[assignment]
+    self.fun = fun
     self.vmap_rule = None
 
   __getattr__ = custom_api_util.forward_attr
@@ -64,7 +64,12 @@ class custom_vmap:
 
   @traceback_util.api_boundary
   def __call__(self, *args, **kwargs):
-    assert not kwargs
+    args = resolve_kwargs(self.fun, args, kwargs)
+    fun_name = getattr(self.fun, "__name__", str(self.fun))
+    if not self.vmap_rule:
+      raise AttributeError(
+          f"No batching rule defined for custom_vmap function {fun_name} "
+          "using def_vmap.")
     args_flat, in_tree = tree_flatten(args)
     flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(self.fun), in_tree)
     in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
@@ -186,7 +191,7 @@ def custom_vmap_jvp(primals, tangents, *, call, rule, in_tree, out_tree):
 
     # TODO(frostig): assert these also equal:
     #   treedef_tuple((in_tree, in_tree))
-    # once https://github.com/google/jax/issues/9066 is fixed
+    # once https://github.com/jax-ml/jax/issues/9066 is fixed
     assert tree_ps_ts == tree_ps_ts2
     del tree_ps_ts2
 

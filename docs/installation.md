@@ -1,19 +1,26 @@
 (installation)=
-# Installing JAX
+# Installation
+
+<!--* freshness: { reviewed: '2024-06-18' } *-->
 
 Using JAX requires installing two packages: `jax`, which is pure Python and
 cross-platform, and `jaxlib` which contains compiled binaries, and requires
 different builds for different operating systems and accelerators.
 
-**TL;DR** For most users, a typical JAX installation may look something like this:
+**Summary:** For most users, a typical JAX installation may look something like this:
 
 * **CPU-only (Linux/macOS/Windows)**
   ```
-  pip install -U "jax[cpu]"
+  pip install -U jax
   ```
-* **GPU (NVIDIA, CUDA 12, x86_64)**
+* **GPU (NVIDIA, CUDA 12)**
   ```
-  pip install -U "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+  pip install -U "jax[cuda12]"
+  ```
+
+* **TPU (Google Cloud TPU VM)**
+  ```
+  pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
   ```
 
 (install-supported-platforms)=
@@ -39,6 +46,7 @@ Currently, the JAX team releases `jaxlib` wheels for the following
 operating systems and architectures:
 
 - Linux, x86_64
+- Linux, aarch64
 - macOS, Intel
 - macOS, Apple ARM-based
 - Windows, x86_64 (*experimental*)
@@ -48,7 +56,7 @@ development on a laptop, you can run:
 
 ```bash
 pip install --upgrade pip
-pip install --upgrade "jax[cpu]"
+pip install --upgrade jax
 ```
 
 On Windows, you may also need to install the
@@ -88,15 +96,15 @@ There are two ways to install JAX with NVIDIA GPU support:
 The JAX team strongly recommends installing CUDA and cuDNN using the pip wheels,
 since it is much easier!
 
-This method is only supported on x86_64, because NVIDIA has not released aarch64
-CUDA pip packages.
+NVIDIA has released CUDA pip packages only for x86_64 and aarch64; on other
+platforms you must use a local installation of CUDA.
 
 ```bash
 pip install --upgrade pip
 
 # NVIDIA CUDA 12 installation
 # Note: wheels only available on linux.
-pip install --upgrade "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+pip install --upgrade "jax[cuda12]"
 ```
 
 If JAX detects the wrong version of the NVIDIA CUDA libraries, there are several things
@@ -113,7 +121,7 @@ If you prefer to use a preinstalled copy of NVIDIA CUDA, you must first
 install NVIDIA [CUDA](https://developer.nvidia.com/cuda-downloads) and
 [cuDNN](https://developer.nvidia.com/CUDNN).
 
-JAX provides pre-built CUDA-compatible wheels for **Linux x86_64 only**. Other
+JAX provides pre-built CUDA-compatible wheels for **Linux x86_64 and Linux aarch64 only**. Other
 combinations of operating system and architecture are possible, but require
 building from source (refer to {ref}`building-from-source` to learn more}.
 
@@ -127,11 +135,11 @@ that NVIDIA provides for this purpose.
 
 JAX currently ships one CUDA wheel variant:
 
-| Built with | Compatible with   |
-|------------|-------------------|
-| CUDA 12.3  | CUDA >=12.1       |
-| CUDNN 8.9  | CUDNN >=8.9, <9.0 |
-| NCCL 2.19  | NCCL >=2.18       |
+| Built with | Compatible with    |
+|------------|--------------------|
+| CUDA 12.3  | CUDA >=12.1        |
+| CUDNN 9.1  | CUDNN >=9.1, <10.0 |
+| NCCL 2.19  | NCCL >=2.18        |
 
 JAX checks the versions of your libraries, and will report an error if they are
 not sufficiently new.
@@ -147,9 +155,9 @@ To install, run:
 ```bash
 pip install --upgrade pip
 
-# Installs the wheel compatible with NVIDIA CUDA 12 and cuDNN 8.9 or newer.
+# Installs the wheel compatible with NVIDIA CUDA 12 and cuDNN 9.0 or newer.
 # Note: wheels only available on linux.
-pip install --upgrade "jax[cuda12_local]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+pip install --upgrade "jax[cuda12_local]"
 ```
 
 **These `pip` installations do not work with Windows, and may fail silently; refer to the table
@@ -165,7 +173,10 @@ JAX uses `LD_LIBRARY_PATH` to find CUDA libraries and `PATH` to find binaries
 (`ptxas`, `nvlink`). Please make sure that these paths point to the correct CUDA
 installation.
 
-Please let the JAX team know on [the GitHub issue tracker](https://github.com/google/jax/issues)
+JAX requires libdevice10.bc, which typically comes from the cuda-nvvm package.
+Make sure that it is present in your CUDA installation.
+
+Please let the JAX team know on [the GitHub issue tracker](https://github.com/jax-ml/jax/issues)
 if you run into any errors or problems with the pre-built wheels.
 
 (docker-containers-nvidia-gpu)=
@@ -175,36 +186,6 @@ NVIDIA provides the [JAX
 Toolbox](https://github.com/NVIDIA/JAX-Toolbox) containers, which are
 bleeding edge containers containing nightly releases of jax and some
 models/frameworks.
-
-## JAX nightly installation
-
-Nightly releases reflect the state of the main JAX repository at the time they are
-built, and may not pass the full test suite.
-
-- `jax`:
-
-```bash
-pip install -U --pre jax -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
-```
-
-- `jaxlib` CPU:
-
-```bash
-pip install -U --pre jaxlib -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
-```
-
-- `jaxlib` Google Cloud TPU:
-
-```bash
-pip install -U --pre jaxlib -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
-pip install -U libtpu-nightly -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-```
-
-- `jaxlib` NVIDIA GPU (CUDA 12):
-
-```bash
-pip install -U --pre jaxlib -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_cuda12_releases.html
-```
 
 (install-google-tpu)=
 ## Google Cloud TPU
@@ -235,7 +216,7 @@ refer to
 **Note:** There are several caveats with the Metal plugin:
 
 * The Metal plugin is new and experimental and has a number of
-  [known issues](https://github.com/google/jax/issues?q=is%3Aissue+is%3Aopen+label%3A%22Apple+GPU+%28Metal%29+plugin%22).
+  [known issues](https://github.com/jax-ml/jax/issues?q=is%3Aissue+is%3Aopen+label%3A%22Apple+GPU+%28Metal%29+plugin%22).
   Please report any issues on the JAX issue tracker.
 * The Metal plugin currently requires very specific versions of `jax` and
   `jaxlib`. This restriction will be relaxed over time as the plugin API
@@ -282,6 +263,43 @@ Go to the `conda-forge`
 [jax](https://github.com/conda-forge/jax-feedstock#installing-jax) repositories
 for more details.
 
+
+## JAX nightly installation
+
+Nightly releases reflect the state of the main JAX repository at the time they are
+built, and may not pass the full test suite.
+
+Unlike the instructions for installing a JAX release, here we name all of JAX's
+packages explicitly on the command line, so `pip` will upgrade them if a newer
+version is available.
+
+- CPU only:
+
+```bash
+pip install -U --pre jax jaxlib -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
+```
+
+- Google Cloud TPU:
+
+```bash
+pip install -U --pre jax jaxlib libtpu-nightly requests -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+```
+
+- NVIDIA GPU (CUDA 12):
+
+```bash
+pip install -U --pre jax jaxlib jax-cuda12-plugin[with_cuda] jax-cuda12-pjrt -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
+```
+
+- NVIDIA GPU (CUDA 12) legacy:
+
+Use the following for historical nightly releases of monolithic CUDA jaxlibs.
+You most likely do not want this; no further monolithic CUDA jaxlibs will be
+built and those that exist will expire by Sep 2024. Use the "CUDA 12" option above.
+
+```bash
+pip install -U --pre jaxlib -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_cuda12_releases.html
+```
 
 (building-jax-from-source)=
 ## Building JAX from source

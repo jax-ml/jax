@@ -117,6 +117,7 @@ class TestBFGS(jtu.JaxTestCase):
     jax_res = jax.scipy.optimize.minimize(fun=eval_func, x0=x0, method='BFGS')
     self.assertLess(jax_res.fun, 1e-6)
 
+  @jtu.ignore_warning(category=RuntimeWarning, message='divide by zero')
   def test_minimize_bad_initial_values(self):
     # This test runs deliberately "bad" initial values to test that handling
     # of failed line search, etc. is the same across implementations

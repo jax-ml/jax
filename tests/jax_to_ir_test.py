@@ -81,6 +81,10 @@ class JaxToIRTest(absltest.TestCase):
       jax_to_ir.parse_shape_str('foo[]')
 
   @unittest.skipIf(tf is None, 'TensorFlow not installed.')
+  @jtu.ignore_warning(
+      category=UserWarning,
+      message='jax2tf.convert with native_serialization=False is deprecated.'
+  )
   def test_jax_to_tf_axpy(self):
     tf_proto, tf_text = jax_to_ir.jax_to_tf(axpy, [
         ('y', jax_to_ir.parse_shape_str('f32[128]')),
@@ -119,11 +123,15 @@ class JaxToIRTest(absltest.TestCase):
     self.assertParsedShape('f32[]', [], jnp.float32)
     self.assertParsedShape('f32[1,2,3]', [1, 2, 3], jnp.float32)
     self.assertParsedShape('pred[1]', [1], jnp.bool_)
+    if hasattr(jnp, 'int2'):
+      self.assertParsedShape('s2[1]', [1], jnp.int2)
     self.assertParsedShape('s4[1]', [1], jnp.int4)
     self.assertParsedShape('s8[1]', [1], jnp.int8)
     self.assertParsedShape('s16[1]', [1], jnp.int16)
     self.assertParsedShape('s32[1]', [1], jnp.int32)
     self.assertParsedShape('s64[1]', [1], jnp.int64)
+    if hasattr(jnp, 'uint2'):
+      self.assertParsedShape('u2[1]', [1], jnp.uint2)
     self.assertParsedShape('u4[1]', [1], jnp.uint4)
     self.assertParsedShape('u8[1]', [1], jnp.uint8)
     self.assertParsedShape('u16[1]', [1], jnp.uint16)

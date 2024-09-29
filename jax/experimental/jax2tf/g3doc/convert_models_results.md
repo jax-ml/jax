@@ -48,13 +48,13 @@ details on the different converters.
 ## `flax/actor_critic_[(_, 4*b, 4*b, _)]`
 ### Example: `flax/actor_critic_[(_, 4*b, 4*b, _)]` | Converter: `jax2tf_xla`
 ```
-InconclusiveDimensionOperation("Cannot divide '-1*b' by '2'.\nSee https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
+InconclusiveDimensionOperation("Cannot divide '-1*b' by '2'.\nSee https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
 ```
 [Back to top](#summary-table)
 
 ### Example: `flax/actor_critic_[(_, 4*b, 4*b, _)]` | Converter: `jax2tf_noxla`
 ```
-InconclusiveDimensionOperation("Cannot divide '-1*b' by '2'.\nSee https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
+InconclusiveDimensionOperation("Cannot divide '-1*b' by '2'.\nSee https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
 ```
 [Back to top](#summary-table)
 
@@ -62,13 +62,13 @@ InconclusiveDimensionOperation("Cannot divide '-1*b' by '2'.\nSee https://github
 ```
 Conversion error
 InconclusiveDimensionOperation("Cannot divide '-1*b' by '2'.
-See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.
+See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.
 
 This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -78,13 +78,13 @@ for more details.
 ```
 Conversion error
 InconclusiveDimensionOperation("Cannot divide '-1*b' by '2'.
-See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.
+See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.
 
 This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -94,13 +94,13 @@ for more details.
 ```
 Conversion error
 InconclusiveDimensionOperation("Cannot divide '-1*b' by '2'.
-See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.
+See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.
 
 This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -122,13 +122,13 @@ RuntimeError('third_party/tensorflow/lite/kernels/concatenation.cc:159 t->dims->
 ## `flax/bilstm_[(b, _), (_,)]`
 ### Example: `flax/bilstm_[(b, _), (_,)]` | Converter: `jax2tf_xla`
 ```
-InconclusiveDimensionOperation("Dimension polynomial comparison 'b' == '2' is inconclusive\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
+InconclusiveDimensionOperation("Dimension polynomial comparison 'b' == '2' is inconclusive\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
 ```
 [Back to top](#summary-table)
 
 ### Example: `flax/bilstm_[(b, _), (_,)]` | Converter: `jax2tf_noxla`
 ```
-InconclusiveDimensionOperation("Dimension polynomial comparison 'b' == '2' is inconclusive\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
+InconclusiveDimensionOperation("Dimension polynomial comparison 'b' == '2' is inconclusive\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
 ```
 [Back to top](#summary-table)
 
@@ -141,7 +141,7 @@ This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -156,7 +156,7 @@ This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -171,7 +171,7 @@ This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -180,13 +180,13 @@ for more details.
 ## `flax/bilstm_[(_, _), (b,)]`
 ### Example: `flax/bilstm_[(_, _), (b,)]` | Converter: `jax2tf_xla`
 ```
-InconclusiveDimensionOperation("Dimension polynomial comparison 'b' == '2' is inconclusive\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
+InconclusiveDimensionOperation("Dimension polynomial comparison 'b' == '2' is inconclusive\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
 ```
 [Back to top](#summary-table)
 
 ### Example: `flax/bilstm_[(_, _), (b,)]` | Converter: `jax2tf_noxla`
 ```
-InconclusiveDimensionOperation("Dimension polynomial comparison 'b' == '2' is inconclusive\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
+InconclusiveDimensionOperation("Dimension polynomial comparison 'b' == '2' is inconclusive\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
 ```
 [Back to top](#summary-table)
 
@@ -199,7 +199,7 @@ This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -214,7 +214,7 @@ This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -229,7 +229,7 @@ This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -238,13 +238,13 @@ for more details.
 ## `flax/cnn_[(_, b, b, _)]`
 ### Example: `flax/cnn_[(_, b, b, _)]` | Converter: `jax2tf_xla`
 ```
-InconclusiveDimensionOperation("Cannot compute stride for dimension 'b', window_size '2', stride '2'.\nDetails: Cannot divide 'b + -2' by '2'.\nSee https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n.\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
+InconclusiveDimensionOperation("Cannot compute stride for dimension 'b', window_size '2', stride '2'.\nDetails: Cannot divide 'b + -2' by '2'.\nSee https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n.\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
 ```
 [Back to top](#summary-table)
 
 ### Example: `flax/cnn_[(_, b, b, _)]` | Converter: `jax2tf_noxla`
 ```
-InconclusiveDimensionOperation("Cannot compute stride for dimension 'b', window_size '2', stride '2'.\nDetails: Cannot divide 'b + -2' by '2'.\nSee https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n.\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
+InconclusiveDimensionOperation("Cannot compute stride for dimension 'b', window_size '2', stride '2'.\nDetails: Cannot divide 'b + -2' by '2'.\nSee https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n.\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
 ```
 [Back to top](#summary-table)
 
@@ -253,13 +253,13 @@ InconclusiveDimensionOperation("Cannot compute stride for dimension 'b', window_
 Conversion error
 InconclusiveDimensionOperation("Cannot compute stride for dimension 'b', window_size '2', stride '2'.
 Details: Cannot divide 'b + -2' by '2'.
-See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.
+See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.
 
 This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 .
 
@@ -267,7 +267,7 @@ This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -278,13 +278,13 @@ for more details.
 Conversion error
 InconclusiveDimensionOperation("Cannot compute stride for dimension 'b', window_size '2', stride '2'.
 Details: Cannot divide 'b + -2' by '2'.
-See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.
+See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.
 
 This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 .
 
@@ -292,7 +292,7 @@ This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -303,13 +303,13 @@ for more details.
 Conversion error
 InconclusiveDimensionOperation("Cannot compute stride for dimension 'b', window_size '2', stride '2'.
 Details: Cannot divide 'b + -2' by '2'.
-See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.
+See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.
 
 This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 .
 
@@ -317,7 +317,7 @@ This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -395,13 +395,13 @@ ValueError('Cannot set tensor: Dimension mismatch. Got 8 but expected 1 for dime
 ## `flax/resnet50_[(_, 4*b, 4*b, _)]`
 ### Example: `flax/resnet50_[(_, 4*b, 4*b, _)]` | Converter: `jax2tf_xla`
 ```
-InconclusiveDimensionOperation("Cannot divide '-1*b' by '2'.\nSee https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
+InconclusiveDimensionOperation("Cannot divide '-1*b' by '2'.\nSee https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
 ```
 [Back to top](#summary-table)
 
 ### Example: `flax/resnet50_[(_, 4*b, 4*b, _)]` | Converter: `jax2tf_noxla`
 ```
-InconclusiveDimensionOperation("Cannot divide '-1*b' by '2'.\nSee https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
+InconclusiveDimensionOperation("Cannot divide '-1*b' by '2'.\nSee https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
 ```
 [Back to top](#summary-table)
 
@@ -409,13 +409,13 @@ InconclusiveDimensionOperation("Cannot divide '-1*b' by '2'.\nSee https://github
 ```
 Conversion error
 InconclusiveDimensionOperation("Cannot divide '-1*b' by '2'.
-See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.
+See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.
 
 This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -425,13 +425,13 @@ for more details.
 ```
 Conversion error
 InconclusiveDimensionOperation("Cannot divide '-1*b' by '2'.
-See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.
+See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.
 
 This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -441,13 +441,13 @@ for more details.
 ```
 Conversion error
 InconclusiveDimensionOperation("Cannot divide '-1*b' by '2'.
-See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.
+See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported.
 
 This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -613,13 +613,13 @@ IndexError('Cannot use NumPy slice indexing on an array dimension whose size is 
 ## `flax/lm1b_[(b, _)]`
 ### Example: `flax/lm1b_[(b, _)]` | Converter: `jax2tf_xla`
 ```
-InconclusiveDimensionOperation("Dimension polynomial comparison 'b' == '2' is inconclusive\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
+InconclusiveDimensionOperation("Dimension polynomial comparison 'b' == '2' is inconclusive\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
 ```
 [Back to top](#summary-table)
 
 ### Example: `flax/lm1b_[(b, _)]` | Converter: `jax2tf_noxla`
 ```
-InconclusiveDimensionOperation("Dimension polynomial comparison 'b' == '2' is inconclusive\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
+InconclusiveDimensionOperation("Dimension polynomial comparison 'b' == '2' is inconclusive\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
 ```
 [Back to top](#summary-table)
 
@@ -632,7 +632,7 @@ This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -647,7 +647,7 @@ This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -662,7 +662,7 @@ This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -684,13 +684,13 @@ ValueError('Cannot set tensor: Dimension mismatch. Got 2 but expected 1 for dime
 ## `flax/wmt_[(b, _), (b, _)]`
 ### Example: `flax/wmt_[(b, _), (b, _)]` | Converter: `jax2tf_xla`
 ```
-InconclusiveDimensionOperation("Dimension polynomial comparison 'b' == '2' is inconclusive\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
+InconclusiveDimensionOperation("Dimension polynomial comparison 'b' == '2' is inconclusive\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
 ```
 [Back to top](#summary-table)
 
 ### Example: `flax/wmt_[(b, _), (b, _)]` | Converter: `jax2tf_noxla`
 ```
-InconclusiveDimensionOperation("Dimension polynomial comparison 'b' == '2' is inconclusive\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
+InconclusiveDimensionOperation("Dimension polynomial comparison 'b' == '2' is inconclusive\n\nThis error arises for arithmetic or comparison operations with shapes that\nare non-constant, and the result of the operation cannot be represented as\na polynomial of dimension variables, or a boolean constant (for comparisons).\n\nPlease see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables\nfor more details.\n")
 ```
 [Back to top](#summary-table)
 
@@ -703,7 +703,7 @@ This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -718,7 +718,7 @@ This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -733,7 +733,7 @@ This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 ")
 ```
@@ -798,14 +798,14 @@ This converter simply converts a the forward function of a JAX model to a
 Tensorflow function with XLA support linked in. This is considered the baseline
 converter and has the largest coverage, because we expect nearly all ops to be
 convertible. However, please see
-[jax2tf Known Issue](https://github.com/google/jax/tree/main/jax/experimental/jax2tf#known-issues)
+[jax2tf Known Issue](https://github.com/jax-ml/jax/tree/main/jax/experimental/jax2tf#known-issues)
 for a list of known problems.
 
 ### `jax2tf_noxla`
 
 This converter converts a JAX model to a Tensorflow function without XLA
 support. This means the Tensorflow XLA ops aren't used. See
-[here](https://github.com/google/jax/tree/main/jax/experimental/jax2tf#tensorflow-xla-ops)
+[here](https://github.com/jax-ml/jax/tree/main/jax/experimental/jax2tf#tensorflow-xla-ops)
 for more details.
 
 ### `jax2tfjs`

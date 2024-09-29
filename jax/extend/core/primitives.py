@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.ad_util import stop_gradient_p as stop_gradient_p
 
@@ -225,5 +225,13 @@ from jax._src.lax.linalg import (
 )
 
 from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
-from jax._src.prng import threefry2x32_p as threefry2x32_p
+
+from jax._src.prng import (
+  random_bits_p as random_bits_p,
+  random_fold_in_p as random_fold_in_p,
+  random_seed_p as random_seed_p,
+  random_split_p as random_split_p,
+  threefry2x32_p as threefry2x32_p,
+)
+
 from jax._src.random import random_gamma_p as random_gamma_p

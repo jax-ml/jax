@@ -16,7 +16,6 @@ import collections
 import contextlib
 import functools
 import logging
-import textwrap
 import time
 import unittest
 
@@ -27,12 +26,8 @@ from jax import lax
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
-from jax._src import maps
 from jax._src import test_util as jtu
 from jax._src import util
-from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
-from jax._src.maps import xmap
 from jax.experimental import io_callback
 from jax.experimental import pjit
 from jax.experimental.shard_map import shard_map
@@ -42,22 +37,13 @@ import numpy as np
 
 config.parse_flags_with_absl()
 
-
-def _format_multiline(text):
-  return textwrap.dedent(text).lstrip()
-
-prev_xla_flags = None
-
+_exit_stack = contextlib.ExitStack()
 
 def setUpModule():
-  global prev_xla_flags
-  # This will control the CPU devices. On TPU we always have 2 devices
-  prev_xla_flags = jtu.set_host_platform_device_count(2)
+  _exit_stack.enter_context(jtu.set_host_platform_device_count(2))
 
-
-# Reset to previous configuration in case other test modules will be run.
 def tearDownModule():
-  prev_xla_flags()
+  _exit_stack.close()
 
 map, unsafe_map = util.safe_map, map
 
@@ -750,46 +736,6 @@ class PureCallbackTest(jtu.JaxTestCase):
     out = f(jnp.arange(float(jax.local_device_count())))
     np.testing.assert_allclose(out, np.sin(np.arange(jax.local_device_count())))
 
-  def test_can_pjit_pure_callback_under_hard_xmap(self):
-
-    if not hasattr(xla_client.OpSharding.Type, 'MANUAL'):
-      raise unittest.SkipTest('Manual partitioning needed for pure_callback')
-
-    spmd_lowering = maps.SPMD_LOWERING.value
-    spmd_manual_lowering = maps.SPMD_LOWERING_MANUAL.value
-    config.update('experimental_xmap_spmd_lowering', True)
-    config.update('experimental_xmap_spmd_lowering_manual', True)
-    try:
-      mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
-
-      spec = jax.sharding.PartitionSpec('x')
-
-      def f(x):
-        axis_resources = {v: v for v in mesh.axis_names}
-        return xmap(
-            lambda x: jax.pure_callback(np.sin, x, x),
-            in_axes=(('x',),),
-            out_axes=('x',),
-            axis_resources=axis_resources,
-            axis_sizes=mesh.shape,
-        )(x)
-
-      def without_xmap_f(x):
-        return jax.pure_callback(np.sin, x, x)
-
-      with mesh:
-        inp = jnp.arange(float(jax.local_device_count()))
-        out = pjit.pjit(f, in_shardings=spec, out_shardings=spec)(inp)
-        np.testing.assert_allclose(
-            out, np.sin(np.arange(jax.local_device_count()))
-        )
-    finally:
-      config.update('experimental_xmap_spmd_lowering', spmd_lowering)
-      config.update(
-        'experimental_xmap_spmd_lowering_manual',
-        spmd_manual_lowering,
-      )
-
   def test_cant_take_grad_of_pure_callback(self):
 
     def sin(x):
@@ -803,7 +749,6 @@ class PureCallbackTest(jtu.JaxTestCase):
         ValueError, "Pure callbacks do not support JVP."):
       f(2.)
 
-  @unittest.skipIf(xla_extension_version < 245, "jaxlib version too old")
   def test_error_propagation(self):
     def throws_error_fn(x):
       raise RuntimeError("Errors should propagate.")
@@ -815,7 +760,6 @@ class PureCallbackTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(Exception, "Errors should propagate."):
       print(np.array(f(2.0)), flush=True)
 
-  @unittest.skipIf(xla_extension_version < 250, "jaxlib version too old")
   def test_reentrant_error_propagation(self):
     reentrant_fn = jax.jit(jnp.sin).lower(2.0).compile()
 
@@ -945,34 +889,6 @@ class PureCallbackTest(jtu.JaxTestCase):
     # immediately. This test verifies that the execution itself keeps the
     # callback alive.
     np.testing.assert_allclose(out, np.full((num_devices, 4), 11, np.float32))
-
-  def test_callback_inside_xmap(self):
-
-    def _callback(x):
-      return (x + 1.).astype(x.dtype)
-
-    def f(x):
-      return jax.pure_callback(_callback, x, x)
-
-    f = maps.xmap(f, in_axes=['a'], out_axes=['a'],
-                  axis_resources={'a': 'dev'})
-    with jax.sharding.Mesh(np.array(jax.devices()), ['dev']):
-      out = f(np.arange(40.))
-    np.testing.assert_allclose(out, jnp.arange(1., 41.))
-
-  def test_vectorized_callback_inside_xmap(self):
-
-    def _callback(x):
-      return (x + 1.).astype(x.dtype)
-
-    def f(x):
-      return jax.pure_callback(_callback, x, x, vectorized=True)
-
-    f = maps.xmap(f, in_axes=['a'], out_axes=['a'],
-                  axis_resources={'a': 'dev'})
-    with jax.sharding.Mesh(np.array(jax.devices()), ['dev']):
-      out = f(np.arange(40.))
-    np.testing.assert_allclose(out, jnp.arange(1., 41.))
 
   def test_array_layout_is_preserved(self):
 
@@ -1117,14 +1033,6 @@ class IOCallbackTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, "Ordered effects not supported in `pmap`"):
       jax.pmap(f)(jnp.arange(jax.local_device_count()))
-
-  def test_cannot_call_ordered_io_in_xmap(self):
-    def f(x):
-      return io_callback(
-          lambda x: x, jax.ShapeDtypeStruct((), jnp.int32), x, ordered=True)
-    with self.assertRaisesRegex(
-        ValueError, "Cannot `vmap` ordered IO callback"):
-      maps.xmap(f, in_axes=([0],), out_axes=[0])(jnp.arange(16))
 
   def test_cannot_call_ordered_io_in_vmap(self):
     def f(x):
@@ -1337,7 +1245,7 @@ class IOCallbackTest(jtu.JaxTestCase):
       np.testing.assert_array_equal(shard[0] + 1, shard[1])
 
   def test_batching_with_side_effects(self):
-    # https://github.com/google/jax/issues/20628#issuecomment-2050800195
+    # https://github.com/jax-ml/jax/issues/20628#issuecomment-2050800195
     x_lst = []
     def append_x(x):
       nonlocal x_lst
@@ -1353,7 +1261,7 @@ class IOCallbackTest(jtu.JaxTestCase):
     self.assertAllClose(x_lst, [0., 1., 2., 0., 2., 4.], check_dtypes=False)
 
   def test_batching_with_side_effects_while_loop(self):
-    # https://github.com/google/jax/issues/20628#issuecomment-2050921219
+    # https://github.com/jax-ml/jax/issues/20628#issuecomment-2050921219
     x_lst = []
     def append_x(x):
       nonlocal x_lst

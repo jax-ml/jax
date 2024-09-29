@@ -28,8 +28,7 @@ if __name__ == '__main__':
 
   parser = argparse.ArgumentParser(description='Tool to convert NVIDIA Nsys Profiles to the .pbtxt format')
   parser.add_argument("--profile_path", type=str, help="path to nsys profile")
-  parser.add_argument("--post_process", help="post process pbtxt to get minimum cost value for each instruction", action="store_true")
-  parser.add_argument("--pgle_output_path", type=str, help="output directory", default="/opt/paxml/workspace/lhs_pbtxt/temp.pbtxt")
+  parser.add_argument("--pgle_output_path", type=str, help="output file", default="/opt/paxml/workspace/lhs_pbtxt/temp.pbtxt")
 
   args = parser.parse_args()
 
@@ -38,7 +37,14 @@ if __name__ == '__main__':
   profile_folder = os.path.join(os.path.split(args.profile_path)[0], '')
 
   assert isinstance(nsys_path, str)
-  stats_command = [nsys_path, "stats", "--force-overwrite", "true", "--force-export", "true", "--report", "nvtxkernsum", f"{args.profile_path}", "-o", f"{args.pgle_output_path}"]
+
+  # Older versions of nsys use `nvtxsum` for the report name so determine which is available.
+  query_reports_command = [nsys_path, "stats", "--help-reports"]
+  reports_list = subprocess.run(query_reports_command, capture_output=True, text=True).stdout
+  report_name = "nvtx_sum" if "nvtx_sum" in reports_list else "nvtxsum"
+
+  assert isinstance(nsys_path, str)
+  stats_command = [nsys_path, "stats", "--force-overwrite", "true", "--force-export", "true", "--report", report_name, f"{args.profile_path}", "-o", f"{args.pgle_output_path}"]
 
   print(f"""
     ******Starting stats command******
@@ -49,10 +55,10 @@ if __name__ == '__main__':
 
   thunk_re = re.compile("hlo_op=(.*)#")
   with open(f"{args.pgle_output_path}", 'w', newline='') as protofile:
-      with open(f"{pgle_folder}{pgle_filename}.pbtxt_nvtxkernsum.csv", newline='') as csvfile:
+      with open(f"{pgle_folder}{pgle_filename}.pbtxt_{report_name}.csv", newline='') as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
-          name = row['NVTX Range']
+          name = row['Range']
           time_ns = float(row['Avg (ns)'])
           m = thunk_re.search(name)
           if m is not None:

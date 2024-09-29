@@ -20,10 +20,8 @@ XLA. There are also a handful of related casting utilities.
 """
 from __future__ import annotations
 
-from __future__ import annotations
-
 import atexit
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import dataclasses
 from functools import lru_cache, partial
 import importlib
@@ -32,29 +30,26 @@ import logging
 import os
 import pkgutil
 import platform as py_platform
-import traceback
-import sys
 import threading
-from typing import Any, Callable, Union
+import traceback
+from typing import Any, Union
 import warnings
 
 from jax._src import config
 from jax._src import distributed
+from jax._src import hardware_utils
 from jax._src import traceback_util
 from jax._src import util
-from jax._src import hardware_utils
-from jax._src.cloud_tpu_init import maybe_import_libtpu
+from jax._src.cloud_tpu_init import get_tpu_library_path
 from jax._src.lib import cuda_versions
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
-from jax._src.lib import jaxlib
 
 logger = logging.getLogger(__name__)
 
 jax_plugins: Any | None
 try:
-  import jax_plugins  # type: ignore
+  import jax_plugins  # pytype: disable=import-error
 except ModuleNotFoundError:
   jax_plugins = None
 except ImportError as e:
@@ -68,57 +63,54 @@ XlaBackend = xla_client.Client
 MIN_COMPUTE_CAPABILITY = 52
 
 # TODO(phawkins): Remove jax_xla_backend.
-_XLA_BACKEND = config.DEFINE_string(
+_XLA_BACKEND = config.string_flag(
     'jax_xla_backend', '',
     'Deprecated, please use --jax_platforms instead.')
-BACKEND_TARGET = config.DEFINE_string(
+BACKEND_TARGET = config.string_flag(
     'jax_backend_target',
     os.getenv('JAX_BACKEND_TARGET', '').lower(),
     'Either "local" or "rpc:address" to connect to a remote service target.')
 # TODO(skye): warn when this is used once we test out --jax_platforms a bit
-_PLATFORM_NAME = config.DEFINE_string(
+_PLATFORM_NAME = config.string_flag(
     'jax_platform_name',
     os.getenv('JAX_PLATFORM_NAME', '').lower(),
     'Deprecated, please use --jax_platforms instead.')
-CUDA_VISIBLE_DEVICES = config.DEFINE_string(
+CUDA_VISIBLE_DEVICES = config.string_flag(
     'jax_cuda_visible_devices', 'all',
     'Restricts the set of CUDA devices that JAX will use. Either "all", or a '
     'comma-separate list of integer device IDs.')
-_ROCM_VISIBLE_DEVICES = config.DEFINE_string(
+_ROCM_VISIBLE_DEVICES = config.string_flag(
     'jax_rocm_visible_devices', 'all',
     'Restricts the set of ROCM devices that JAX will use. Either "all", or a '
     'comma-separate list of integer device IDs.')
 
-_USE_MOCK_GPU_CLIENT = config.DEFINE_bool(
-    name="use_mock_gpu_client",
-    default=False,
-    help="If True, use a mock GPU client instead of a real one.",
+_MOCK_NUM_GPU_PROCESSES = config.int_flag(
+    name="mock_num_gpu_processes",
+    default=0,
+    help="Mock number of JAX processes in GPU client. Value zero turns "
+         "off mocking.",
 )
 
-_MOCK_NUM_GPUS = config.DEFINE_integer(
-    name="mock_num_gpus",
-    default=1,
-    help="Mock GPU client number of gpus.",
-)
-
-_CPU_ENABLE_GLOO_COLLECTIVES = config.DEFINE_bool(
+_CPU_ENABLE_GLOO_COLLECTIVES = config.bool_flag(
     name="jax_cpu_enable_gloo_collectives",
     default=False,
     help="Deprecated, please use jax_cpu_collectives_implementation instead.",
 )
 
-_CPU_COLLECTIVES_IMPLEMENTATION = config.DEFINE_string(
-    name='jax_cpu_collectives_implementation',
-    default='none',
-    help='Cross-process collective implementation used on CPU. Either "none", '
-         '"gloo" or "mpi"'
+CPU_COLLECTIVES_IMPLEMENTATIONS = ["none", "gloo", "mpi"]
+CPU_COLLECTIVES_IMPLEMENTATION = config.enum_flag(
+    name="jax_cpu_collectives_implementation",
+    default="none",
+    enum_values=CPU_COLLECTIVES_IMPLEMENTATIONS,
+    help=(
+        "Cross-process collective implementation used on CPU. Must be one of"
+        f" {CPU_COLLECTIVES_IMPLEMENTATIONS}"
+    ),
 )
 
-# TODO(yueshengys): turn default back to True after resolving memory increase
-# issue.
-_CPU_ENABLE_ASYNC_DISPATCH = config.DEFINE_bool(
+_CPU_ENABLE_ASYNC_DISPATCH = config.bool_flag(
     name="jax_cpu_enable_async_dispatch",
-    default=False,
+    default=True,
     help="Only applies to non-parallel computations. If False, run computations"
     "inline without async dispatch.",
 )
@@ -136,18 +128,6 @@ _at_fork_handler_installed = False
 # Backends
 
 
-def _get_tpu_library_path() -> str | None:
-  path_from_env = os.getenv("TPU_LIBRARY_PATH")
-  if path_from_env is not None:
-    return path_from_env
-
-  libtpu_module = maybe_import_libtpu()
-  if libtpu_module is not None:
-    return libtpu_module.get_library_path()
-
-  return None
-
-
 def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
   def _log_warning():
     warnings.warn(
@@ -161,7 +141,9 @@ def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
   t.start()
 
   try:
-    client = xla_client.make_tpu_client(_get_tpu_library_path())
+    client = xla_client.make_tpu_client(
+        get_tpu_library_path(),
+        _options_from_jax_configs("tpu"))
   finally:
     t.cancel()
 
@@ -218,7 +200,7 @@ _plugin_callback_lock = threading.Lock()
 # It is fine for a plugin not to implement every feature that JAX uses, provided
 # that a reasonable feature set is implemented and the plugin fails gracefully
 # for unimplemented features. Wrong outputs are not acceptable.
-_nonexperimental_plugins: set[str] = {'cuda'}
+_nonexperimental_plugins: set[str] = {'cuda', 'rocm'}
 
 def register_backend_factory(name: str, factory: BackendFactory, *,
                              priority: int = 0,
@@ -235,40 +217,49 @@ def register_backend_factory(name: str, factory: BackendFactory, *,
     _topology_factories[name] = make_topology
 
 
-def make_cpu_client() -> xla_client.Client:
-  collectives: xla_client._xla.CpuCollectives | None = None
+def make_cpu_client(
+    collectives: xla_client._xla.CpuCollectives | None = None,
+) -> xla_client.Client:
+  """Creates a CPU client with the requested collectives implementation.
 
-  collectives_impl = _CPU_COLLECTIVES_IMPLEMENTATION.value
-  if _CPU_ENABLE_GLOO_COLLECTIVES.value:
-      collectives_impl = 'gloo'
-      warnings.warn('Setting `jax_cpu_enable_gloo_collectives` is deprecated. '
-                    'Please use `jax.config.update('
-                    '"jax_cpu_collectives_implementation", "gloo")` instead.',
-                    DeprecationWarning,
-                    )
-  if collectives_impl == 'gloo':
-    collectives = xla_client._xla.make_gloo_tcp_collectives(  # type: ignore
-      distributed_client=distributed.global_state.client,
-    )
-  elif collectives_impl == 'mpi' and xla_extension_version >= 251:
-    collectives = xla_client._xla.make_mpi_collectives()  # type: ignore
-    collectives.Init()  # type: ignore
-    atexit.register(collectives.Finalize)  # type: ignore
-  elif collectives_impl != 'none':
-    collectives_impls = ['none', 'gloo'
-                        ] + (['mpi'] if xla_extension_version >= 251 else [])
-    raise RuntimeError(f"Unknown collectives implementation "
-                       f"{collectives_impl}. Available implementations are "
-                       f"{collectives_impls}.")
-  if xla_extension_version >= 257:
-    return xla_client.make_cpu_client(  # type: ignore
-      asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
-      distributed_client=distributed.global_state.client,
-      node_id=distributed.global_state.process_id,
-      num_nodes=distributed.global_state.num_processes,
-      collectives=collectives,
-    )
-  return xla_client.make_cpu_client(  # type: ignore
+  The implementation of CPU collectives used by the client is determined by the
+  flag `--jax_cpu_collectives_implementation` - unless `collectives` is
+  provided, in which case the flag is overridden and `collectives` is used.
+
+  Args:
+    collectives: An optional CPU collectives implementation, used by the client
+      if provided.
+
+  Raises:
+    RuntimeError: If `--jax_cpu_collectives_implementation` is unknown.
+
+  Returns:
+    The created CPU client.
+  """
+  if collectives is None:
+    collectives_impl = CPU_COLLECTIVES_IMPLEMENTATION.value
+    if _CPU_ENABLE_GLOO_COLLECTIVES.value:
+        collectives_impl = 'gloo'
+        warnings.warn('Setting `jax_cpu_enable_gloo_collectives` is '
+                      'deprecated. Please use `jax.config.update('
+                      '"jax_cpu_collectives_implementation", "gloo")` instead.',
+                      DeprecationWarning,
+                      )
+    if collectives_impl == 'gloo':
+      collectives = xla_client._xla.make_gloo_tcp_collectives(
+        distributed_client=distributed.global_state.client,
+      )
+    elif collectives_impl == 'mpi':
+      collectives = xla_client._xla.make_mpi_collectives()
+      collectives.Init()
+      atexit.register(collectives.Finalize)
+    elif collectives_impl != 'none':
+      raise RuntimeError(f"Unknown collectives implementation "
+                        f"{collectives_impl}. Available implementations are "
+                        f"{CPU_COLLECTIVES_IMPLEMENTATIONS}.")
+
+  return xla_client.make_cpu_client(
+    asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
     distributed_client=distributed.global_state.client,
     node_id=distributed.global_state.process_id,
     num_nodes=distributed.global_state.num_processes,
@@ -388,7 +379,7 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
       # versions:
       # https://docs.nvidia.com/deeplearning/cudnn/developer-guide/index.html#api-compat
       scale_for_comparison=100,
-      min_supported_version=8900
+      min_supported_version=9100
   )
   _version_check("cuFFT", cuda_versions.cufft_get_version,
                  cuda_versions.cufft_build_version,
@@ -402,19 +393,16 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
   _version_check("cuPTI", cuda_versions.cupti_get_version,
                  cuda_versions.cupti_build_version,
                  min_supported_version=18)
-  # TODO(jakevdp) remove these checks when minimum jaxlib is v0.4.21
-  if hasattr(cuda_versions, "cublas_get_version"):
-    _version_check("cuBLAS", cuda_versions.cublas_get_version,
-                   cuda_versions.cublas_build_version,
-                   # Ignore patch versions.
-                   scale_for_comparison=100,
-                   min_supported_version=120100)
-  if hasattr(cuda_versions, "cusparse_get_version"):
-    _version_check("cuSPARSE", cuda_versions.cusparse_get_version,
-                   cuda_versions.cusparse_build_version,
-                   # Ignore patch versions.
-                   scale_for_comparison=100,
-                   min_supported_version=12100)
+  _version_check("cuBLAS", cuda_versions.cublas_get_version,
+                 cuda_versions.cublas_build_version,
+                 # Ignore patch versions.
+                 scale_for_comparison=100,
+                 min_supported_version=120100)
+  _version_check("cuSPARSE", cuda_versions.cusparse_get_version,
+                 cuda_versions.cusparse_build_version,
+                 # Ignore patch versions.
+                 scale_for_comparison=100,
+                 min_supported_version=12100)
 
   errors = []
   debug_results = []
@@ -436,16 +424,16 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
 
 
 def make_gpu_client(
-    *, platform_name: str, visible_devices_flag: config.FlagHolder[str]
+    *, platform_name: str, visible_devices_flag: config.Flag[str]
 ) -> xla_client.Client:
   visible_devices = visible_devices_flag.value
   allowed_devices = None
   if visible_devices != "all":
     allowed_devices = {int(x) for x in visible_devices.split(",")}
 
-  use_mock_gpu_client = _USE_MOCK_GPU_CLIENT.value
+  use_mock_gpu_client = _MOCK_NUM_GPU_PROCESSES.value > 0
   num_nodes = (
-      _MOCK_NUM_GPUS.value
+      _MOCK_NUM_GPU_PROCESSES.value
       if use_mock_gpu_client
       else distributed.global_state.num_processes
   )
@@ -456,11 +444,12 @@ def make_gpu_client(
       print('Skipped CUDA versions constraints check due to the '
             'JAX_SKIP_CUDA_CONSTRAINTS_CHECK env var being set.')
 
-    # TODO(micky774): remove this check when minimum jaxlib is v0.4.26
-    if jaxlib.version.__version_info__ >= (0, 4, 26):
-      devices_to_check = (allowed_devices if allowed_devices else
-                          range(cuda_versions.cuda_device_count()))
-      _check_cuda_compute_capability(devices_to_check)
+    devices_to_check = (
+        allowed_devices
+        if allowed_devices
+        else range(cuda_versions.cuda_device_count())
+    )
+    _check_cuda_compute_capability(devices_to_check)
 
   return xla_client.make_gpu_client(
       distributed_client=distributed.global_state.client,
@@ -468,7 +457,7 @@ def make_gpu_client(
       num_nodes=num_nodes,
       platform_name=platform_name,
       allowed_devices=allowed_devices,
-      mock=use_mock_gpu_client,  # type: ignore[call-arg]
+      mock=use_mock_gpu_client,
   )
 
 
@@ -593,12 +582,7 @@ def discover_pjrt_plugins() -> None:
     logger.debug("No jax_plugins namespace packages available")
 
   # Augment with advertised entrypoints.
-  if sys.version_info < (3, 10):
-    # Use the backport library because it provides a forward-compatible
-    # implementation.
-    from importlib_metadata import entry_points
-  else:
-    from importlib.metadata import entry_points
+  from importlib.metadata import entry_points
 
   for entry_point in entry_points(group="jax_plugins"):
     logger.debug("Discovered entry-point based JAX plugin: %s",
@@ -627,16 +611,31 @@ def discover_pjrt_plugins() -> None:
 
 
 def _options_from_jax_configs(plugin_name):
-  if plugin_name != "cuda":
-    return {}
-
   options = {}
-  visible_devices = CUDA_VISIBLE_DEVICES.value
-  if visible_devices != 'all':
-    options['visible_devices'] = [int(x) for x in visible_devices.split(',')]
-  options['enable_mock_nccl'] = _USE_MOCK_GPU_CLIENT.value
-  if options['enable_mock_nccl']:
-    options['num_nodes'] = _MOCK_NUM_GPUS.value
+
+  pjrt_client_options = config.jax_pjrt_client_create_options.value
+  pjrt_client_option_list = []
+  if pjrt_client_options:
+    pjrt_client_option_list = pjrt_client_options.split(";")
+
+  for option in pjrt_client_option_list:
+    option_list = option.split(":")
+    if (len(option_list) != 2):
+      raise RuntimeError(
+          "Multiple ':' separators for option in "
+          f"jax_pjrt_client_create_options: '{option}'. "
+          "Should be in format 'key:value'")
+    options[option_list[0]] = option_list[1]
+
+  if plugin_name == "cuda":
+    visible_devices = CUDA_VISIBLE_DEVICES.value
+    if visible_devices != 'all':
+      options['visible_devices'] = [int(x) for x in visible_devices.split(',')]
+    mock_gpu_processes = _MOCK_NUM_GPU_PROCESSES.value
+    options['enable_mock_nccl'] = mock_gpu_processes > 0
+    if options['enable_mock_nccl']:
+      options['num_nodes'] = mock_gpu_processes
+
   return options
 
 
@@ -700,16 +699,13 @@ def register_plugin(
       'registering PJRT plugin %s from %s', plugin_name, library_path
   )
   if library_path is not None:
-    c_api = xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)  # type: ignore
+    c_api = xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)
     xla_client.profiler.register_plugin_profiler(c_api)
   else:
-    if xla_extension_version >= 236:
-      assert c_api is not None
-      xla_client.load_pjrt_plugin_with_c_api(plugin_name, c_api)
-  if xla_extension_version >= 239:
-    make_topology = partial(xla_client.make_c_api_device_topology, c_api)
-  else:
-    make_topology = None
+    assert c_api is not None
+    xla_client.load_pjrt_plugin_with_c_api(plugin_name, c_api)
+
+  make_topology = partial(xla_client.make_c_api_device_topology, c_api)
   experimental = plugin_name not in _nonexperimental_plugins
   register_backend_factory(plugin_name, factory, priority=priority,
                            fail_quietly=False, experimental=experimental,
@@ -883,6 +879,9 @@ def backends() -> dict[str, xla_client.Client]:
     default_priority = -1000
     for platform, priority, fail_quietly in platform_registrations:
       try:
+        if platform == "cuda" and not hardware_utils.has_visible_nvidia_gpu():
+          continue
+
         backend = _init_backend(platform)
         _backends[platform] = backend
 
@@ -920,12 +919,7 @@ def _suggest_missing_backends():
 
   assert _default_backend is not None
   default_platform = _default_backend.platform
-  nvidia_gpu_devices = [
-    "/dev/nvidia0",
-    "/dev/dxg",  # WSL2
-  ]
-  if ("cuda" not in _backends and
-      any(os.path.exists(d) for d in nvidia_gpu_devices)):
+  if "cuda" not in _backends and hardware_utils.has_visible_nvidia_gpu():
     if hasattr(xla_extension, "GpuAllocatorConfig") and "cuda" in _backend_errors:
       err = _backend_errors["cuda"]
       warning_msg = f"CUDA backend failed to initialize: {err}."
@@ -954,7 +948,7 @@ def _clear_backends() -> None:
   global _backend_errors
   global _default_backend
 
-  logger.info("Clearing JAX backend caches.")
+  logger.debug("Clearing JAX backend caches.")
   with _backend_lock:
     _backends = {}
     _backend_errors = {}
@@ -1193,15 +1187,30 @@ def host_count(backend: str | xla_client.Client | None = None) -> int:
   return process_count(backend)
 
 
+def process_indices(
+    backend: str | xla_client.Client | None = None
+) -> list[int]:
+  """Returns the list of all JAX process indices associated with the backend.
+
+  Args:
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend: ``'cpu'``, ``'gpu'``, or
+      ``'tpu'``.
+
+  Returns:
+    List of integer process indices.
+  """
+  return list(range(process_count(backend)))
+
+
 # TODO: remove this sometime after jax 0.2.13 is released
 def host_ids(
     backend: str | xla_client.Client | None = None
 ) -> list[int]:
   warnings.warn(
-      "jax.host_ids has been deprecated; please use range(jax.process_count()) "
-      "instead. jax.host_ids will eventually be removed; please update your "
-      "code.")
-  return list(range(process_count(backend)))
+      "jax.host_ids has been renamed to jax.process_indices. This alias "
+      "will eventually be removed; please update your code.")
+  return process_indices(backend)
 
 
 def using_pjrt_c_api(backend=None):
@@ -1219,12 +1228,13 @@ def make_pjrt_topology(platform: str, topology_name='', **kwargs):
 # TODO(parkers): Get rid of this in favor of a generic way to get topologies.
 def make_pjrt_tpu_topology(topology_name='', **kwargs):
   if not xla_client.pjrt_plugin_loaded("tpu"):
-    library_path = _get_tpu_library_path()
+    library_path = get_tpu_library_path()
     if library_path is None:
       raise RuntimeError(
           "JAX TPU support not installed; cannot generate TPU topology. See"
-          " https://github.com/google/jax#installation")
-    xla_client.load_pjrt_plugin_dynamically("tpu", library_path)
+          " https://github.com/jax-ml/jax#installation")
+    c_api = xla_client.load_pjrt_plugin_dynamically("tpu", library_path)
+    xla_client.profiler.register_plugin_profiler(c_api)
   assert xla_client.pjrt_plugin_loaded("tpu")
   if not xla_client.pjrt_plugin_initialized("tpu"):
     xla_client.initialize_pjrt_plugin("tpu")

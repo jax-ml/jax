@@ -1,13 +1,15 @@
 (investigating-a-regression)=
 # Investigating a regression
 
+<!--* freshness: { reviewed: '2023-11-15' } *-->
+
 So you updated JAX and you hit a speed regression?
 You have a little bit of time and are ready to investigate this?
 Let's first make a JAX issue.
 But if you can pinpoint the commit that triggered the regression, it will really help us.
 
 This document explains how we identified the commit that caused a
-[15% performance regression](https://github.com/google/jax/issues/17686).
+[15% performance regression](https://github.com/jax-ml/jax/issues/17686).
 
 ## Steps
 
@@ -21,9 +23,9 @@ Here is a suggested investigation strategy:
  2. Hourly recompilation while keeping XLA and JAX in sync.
  3. Final verification: maybe a manual check of a few commits (or a git bisect).
 
-## Nightly investigation.
+## Nightly investigation
 
-This can be done by using [JAX-Toolbox nightly
+This can be done by using the [NVIDIA JAX-Toolbox nightly
 containers](https://github.com/NVIDIA/JAX-Toolbox).
 
 - Some days, bugs prevent the container from being built, or there are temporary regressions. Just discard those days.
@@ -32,7 +34,7 @@ containers](https://github.com/NVIDIA/JAX-Toolbox).
     - test_runner.sh: will start the containers and the test.
     - test.sh: will install missing dependencies and run the test
 
-Here are real example scripts used for the issue: https://github.com/google/jax/issues/17686
+Here are real example scripts used for the issue: https://github.com/jax-ml/jax/issues/17686
 - test_runner.sh:
 ```
   for m in 7 8 9; do
@@ -126,7 +128,7 @@ investigate hourly between 8-24 and 8-26. There was a smaller slowdown
 earlier, lets ignore it for this example. It would be only another
 hourly investigation between those dates.
 
-## Hourly investigation.
+## Hourly investigation
 
 This does a checkout of JAX and XLA at each hour between the 2 dates,
 rebuilds everything and runs the test.  The scripts are structured

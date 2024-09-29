@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Sequence
+import contextlib
 import io
 import re
 import textwrap
@@ -40,16 +41,13 @@ def make_fake_stdin_stdout(commands: Sequence[str]) -> tuple[IO[str], io.StringI
 def _format_multiline(text):
   return textwrap.dedent(text).lstrip()
 
-prev_xla_flags = None
+_exit_stack = contextlib.ExitStack()
 
 def setUpModule():
-  global prev_xla_flags
-  # This will control the CPU devices. On TPU we always have 2 devices
-  prev_xla_flags = jtu.set_host_platform_device_count(2)
+  _exit_stack.enter_context(jtu.set_host_platform_device_count(2))
 
-# Reset to previous configuration in case other test modules will be run.
 def tearDownModule():
-  prev_xla_flags()
+  _exit_stack.close()
 
 foo = 2
 

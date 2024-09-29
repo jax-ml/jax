@@ -14,11 +14,11 @@
 """Module for JAX callbacks."""
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import logging
-from typing import Any, Callable
+from typing import Any
 
 import jax
 from jax._src import core
@@ -72,7 +72,14 @@ def pure_callback_impl(
     vectorized: bool,
 ):
   del sharding, vectorized, result_avals
-  cpu_device, *_ = jax.local_devices(backend="cpu")
+  try:
+    cpu_device, *_ = jax.local_devices(backend="cpu")
+  except RuntimeError as e:
+    raise RuntimeError(
+        "jax.pure_callback failed to find a local CPU device to place the"
+        " inputs on. Make sure \"cpu\" is listed in --jax_platforms or the"
+        " JAX_PLATFORMS environment variable."
+    ) from e
   args = jax.device_put(args, cpu_device)
   with jax.default_device(cpu_device):
     try:
@@ -117,14 +124,14 @@ def pure_callback_transpose_rule(*args, **kwargs):
 ad.primitive_transposes[pure_callback_p] = pure_callback_transpose_rule
 
 
-def pure_callback_batching_rule(
+def callback_batching_rule(
+    prim,
     args,
     dims,
     *,
-    callback: _FlatCallback,
-    sharding: SingleDeviceSharding | None,
     vectorized: bool,
     result_avals: Sequence[core.ShapedArray],
+    **kwargs: Any,
 ):
   axis_size = next(a.shape[d] for a, d in zip(args, dims)
                    if d is not batching.not_mapped)
@@ -134,30 +141,30 @@ def pure_callback_batching_rule(
     result_avals = tuple(
         core.unmapped_aval(axis_size, core.no_axis_name, 0, aval)  # type: ignore
         for aval in result_avals)
-    outvals = pure_callback_p.bind(
+    outvals = prim.bind(
         *new_args,
-        callback=callback,
-        sharding=sharding,
         vectorized=vectorized,
         result_avals=result_avals,
+        **kwargs,
     )
   else:
     is_batched = [d is not batching.not_mapped for d in dims]
     unbatched_args, batched_args = util.partition_list(is_batched, new_args)
     def _batch_fun(batched_args):
       merged_args = util.merge_lists(is_batched, unbatched_args, batched_args)
-      return pure_callback_p.bind(
+      return prim.bind(
           *merged_args,
-          callback=callback,
-          sharding=sharding,
           result_avals=result_avals,
           vectorized=vectorized,
+          **kwargs,
       )
     outvals = lax_map(_batch_fun, batched_args)
   return tuple(outvals), (0,) * len(outvals)
 
 
-batching.primitive_batchers[pure_callback_p] = pure_callback_batching_rule
+batching.primitive_batchers[pure_callback_p] = functools.partial(
+    callback_batching_rule, pure_callback_p
+)
 
 
 def _callback_op_sharding(axis_context, sharding: SingleDeviceSharding | None):
@@ -189,7 +196,7 @@ def _callback_op_sharding(axis_context, sharding: SingleDeviceSharding | None):
       device_assignment = axis_context.device_assignment
       if device_assignment is None:
         raise AssertionError(
-            "Please file a bug at https://github.com/google/jax/issues")
+            "Please file a bug at https://github.com/jax-ml/jax/issues")
       try:
         device_index = device_assignment.index(device)
       except IndexError as e:
@@ -234,7 +241,7 @@ def pure_callback_lowering(
       list(args),
       ctx.avals_in,
       ctx.avals_out,
-      False,
+      has_side_effect=False,
       sharding=op_sharding,
   )
   return result
@@ -257,14 +264,39 @@ def pure_callback(
     vectorized: bool = False,
     **kwargs: Any,
 ):
-  """Calls a pure Python callback.
+  """Calls a pure Python callback. Works under :func:`jit`/:func:`~vmap`/etc.
 
   For more explanation, see `External Callbacks`_.
+
+  ``pure_callback`` enables calling a Python function in JIT-ed JAX functions.
+  The input ``callback`` will be passed JAX arrays placed on a local CPU, and
+  it should also return JAX arrays on CPU.
+
+  The callback is treated as functionally pure, meaning it has no side-effects
+  and its output value depends only on its argument values. As a consequence, it
+  is safe to be called multiple times (e.g. when transformed by :func:`~vmap` or
+  :func:`~pmap`), or not to be called at all when e.g. the output of a
+  `jit`-decorated function has no data dependence on its value. Pure callbacks
+  may also be reordered if data-dependence allows.
+
+  When `vmap`-ed the behavior will depend on the value of the
+  ``vectorized`` keyword argument. When ``vectorized`` is ``True``, the callback
+  is assumed to obey
+  ``jax.vmap(callback)(xs) == callback(xs) == jnp.stack([callback(x) for x in xs])``.
+  Therefore, the callback will be called directly on batched inputs (where the
+  batch axes are the leading dimensions). Additionally, the callbacks should
+  return outputs that have corresponding leading batch axes. If not vectorized
+  ``callback`` will be mapped sequentially across the batched axis.
+  For example, if ``callback = lambda x, y: np.matmul(x, y)``, then we are free
+  to set ``vectorized=True`` because the ``np.matmul`` function handles
+  arbitrary leading batch dimensions.
 
   Args:
     callback: function to execute on the host. The callback is assumed to be a pure
       function (i.e. one without side-effects): if an impure function is passed, it
-      may behave in unexpected ways, particularly under transformation.
+      may behave in unexpected ways, particularly under transformation. The callable
+      will be passed PyTrees of arrays as arguments, and should return a PyTree of
+      arrays that matches ``result_shape_dtypes``.
     result_shape_dtypes: pytree whose leaves have ``shape`` and ``dtype`` attributes,
       whose structure matches the expected output of the callback function at runtime.
       :class:`jax.ShapeDtypeStruct` is often used to define leaf values.
@@ -301,75 +333,6 @@ def pure_callback(
   return tree_util.tree_unflatten(out_tree, out_flat)
 
 
-def pure_callback_api(
-    callback: Callable[..., Any],
-    result_shape_dtypes: Any,
-    *args: Any,
-    sharding: SingleDeviceSharding | None = None,
-    vectorized: bool = False,
-    **kwargs: Any,
-):
-  """Applies a functionally pure Python callable. Works under :func:`jit`/:func:`~pmap`/etc.
-
-  ``pure_callback`` enables calling a Python function in JIT-ed JAX functions.
-  The input ``callback`` will be passed NumPy arrays in place of JAX arrays and
-  should also return NumPy arrays. Execution takes place on CPU, like any
-  Python+NumPy function.
-
-  The callback is treated as functionally pure, meaning it has no side-effects
-  and its output value depends only on its argument values. As a consequence, it
-  is safe to be called multiple times (e.g. when transformed by :func:`~vmap` or
-  :func:`~pmap`), or not to be called at all when e.g. the output of a
-  `jit`-decorated function has no data dependence on its value. Pure callbacks
-  may also be reordered if data-dependence allows.
-
-  When :func:`~pmap`-ed, the pure callback will be called several times (one on each
-  axis of the map). When `vmap`-ed the behavior will depend on the value of the
-  ``vectorized`` keyword argument. When ``vectorized`` is ``True``, the callback
-  is assumed to obey
-  ``jax.vmap(callback)(xs) == callback(xs) == jnp.stack([callback(x) for x in xs])``.
-  Therefore, the callback will be called directly on batched inputs (where the
-  batch axes are the leading dimensions). Additionally, the callbacks should
-  return outputs that have corresponding leading batch axes. If not vectorized
-  ``callback`` will be mapped sequentially across the batched axis.
-  For example, if ``callback = lambda x, y: np.matmul(x, y)``, then we are free
-  to set ``vectorized=True`` because the ``np.matmul`` function handles
-  arbitrary leading batch dimensions.
-
-  Args:
-    callback: A Python callable. The callable will be passed PyTrees of NumPy
-      arrays as arguments, and should return a PyTree of NumPy arrays that
-      matches ``result_shape_dtypes``.
-    result_shape_dtypes: A PyTree with leaves that are objects with ``shape``
-      and ``dtype`` attributes which represent to the shapes and dtypes of the
-      value of ``callback`` applied to ``args`` and ``kwargs``.
-    *args: The positional arguments to the callback. Must be PyTrees of JAX
-      types.
-    sharding: optional sharding that specifies the device from which the
-      callback should be invoked.
-    vectorized: A boolean that indicates whether or not ``callback`` is
-      vectorized, meaning it can handle arrays with additional leading
-      dimensions. If ``vectorized`` is `True`, when the callback is mapped
-      via `jax.vmap`, it will be called directly on inputs with leading batch
-      dimensions instead of executing ``callback`` on each mapped input
-      individually. The callback should also return outputs batched across the
-      leading axis. By default, ``vectorized`` is ``False``.
-    **kwargs: The keyword arguments to the callback. Must be PyTrees of JAX
-      types.
-
-  Returns:
-    The value of ``callback(*args, **kwargs)``.
-  """
-  return pure_callback(
-      callback,
-      result_shape_dtypes,
-      *args,
-      sharding=sharding,
-      vectorized=vectorized,
-      **kwargs,
-  )
-
-
 # IO Callback
 
 io_callback_p = core.Primitive("io_callback")
@@ -400,7 +363,14 @@ def io_callback_impl(
     ordered: bool,
 ):
   del result_avals, sharding, ordered
-  cpu_device, *_ = jax.local_devices(backend="cpu")
+  try:
+    cpu_device, *_ = jax.local_devices(backend="cpu")
+  except RuntimeError as e:
+    raise RuntimeError(
+        "jax.io_callback failed to find a local CPU device to place the"
+        " inputs on. Make sure \"cpu\" is listed in --jax_platforms or the"
+        " JAX_PLATFORMS environment variable."
+    ) from e
   args = jax.device_put(args, cpu_device)
   with jax.default_device(cpu_device):
     try:
@@ -471,7 +441,7 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
 
   op_sharding = _callback_op_sharding(ctx.module_context.axis_context, sharding)
   if ordered:
-    token = ctx.tokens_in.get(_OrderedIOEffect)[0]
+    token = ctx.tokens_in.get(_OrderedIOEffect)
     result, token, _ = mlir.emit_python_callback(
         ctx,
         _callback,
@@ -479,10 +449,10 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
         list(args),
         ctx.avals_in,
         ctx.avals_out,
-        True,
+        has_side_effect=True,
         sharding=op_sharding,
     )
-    ctx.set_tokens_out(mlir.TokenSet({_OrderedIOEffect: (token,)}))
+    ctx.set_tokens_out(mlir.TokenSet({_OrderedIOEffect: token}))
   else:
     result, token, _ = mlir.emit_python_callback(
         ctx,
@@ -491,7 +461,7 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
         list(args),
         ctx.avals_in,
         ctx.avals_out,
-        True,
+        has_side_effect=True,
         sharding=op_sharding,
     )
   return result
@@ -513,7 +483,7 @@ def io_callback(
   For more explanation, see `External Callbacks`_.
 
   Args:
-    callback: function to execute on the host. It is assumet to be an impure function.
+    callback: function to execute on the host. It is assumed to be an impure function.
       If ``callback`` is pure, using :func:`jax.pure_callback` instead may lead to
       more efficient execution.
     result_shape_dtypes: pytree whose leaves have ``shape`` and ``dtype`` attributes,

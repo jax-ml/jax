@@ -77,9 +77,19 @@ static int GetXCR0EAX() {
 static void ReportMissingCpuFeature(const char* name) {
   PyErr_Format(
       PyExc_RuntimeError,
+#if defined(__APPLE__)
+      "This version of jaxlib was built using %s instructions, which your "
+      "CPU and/or operating system do not support. This error is frequently "
+      "encountered on macOS when running an x86 Python installation on ARM "
+      "hardware. In this case, try installing an ARM build of Python. "
+      "Otherwise, you may be able work around this issue by building jaxlib "
+      "from source.",
+#else
       "This version of jaxlib was built using %s instructions, which your "
       "CPU and/or operating system do not support. You may be able work around "
-      "this issue by building jaxlib from source.", name);
+      "this issue by building jaxlib from source.",
+#endif
+      name);
 }
 
 static PyObject *CheckCpuFeatures(PyObject *self, PyObject *args) {
@@ -162,5 +172,12 @@ static struct PyModuleDef cpu_feature_guard_module = {
 #endif
 
 EXPORT_SYMBOL PyMODINIT_FUNC PyInit_cpu_feature_guard(void) {
-  return PyModule_Create(&cpu_feature_guard_module);
+  PyObject *module = PyModule_Create(&cpu_feature_guard_module);
+  if (module == NULL) {
+    return NULL;
+  }
+#ifdef Py_GIL_DISABLED
+  PyUnstable_Module_SetGIL(module, Py_MOD_GIL_NOT_USED);
+#endif
+  return module;
 }

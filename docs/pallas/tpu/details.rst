@@ -21,7 +21,7 @@ software emulation, and can slow down the computation.
 
   If you see unexpected outputs, please compare them against a kernel run with
   ``interpret=True`` passed in to ``pallas_call``. If the results diverge,
-  please file a `bug report <https://github.com/google/jax/issues/new/choose>`_.
+  please file a `bug report <https://github.com/jax-ml/jax/issues/new/choose>`_.
 
 What is a TPU?
 --------------
@@ -65,15 +65,16 @@ Noteworthy properties and restrictions
 ``BlockSpec``\s and grid iteration
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-``BlockSpec``\s generally behave as expected in Pallas --- every invocation of
+``BlockSpec``\s (see :ref:`pallas_blockspec`) generally behave as expected
+in Pallas --- every invocation of
 the kernel body gets access to slices of the inputs and is meant to initialize a slice
 of the output.
 
-.. warning::
-  Not all window shapes are supported. If the last two dimensions of your input
-  are larger than 8 and 128 respectively, the window shape in those dimensions
-  must be a multiple of the respective factor. If the input dimension is smaller,
-  the window should span the full dimension.
+.. note::
+  Not all block shapes are supported. On TPU, only blocks with rank at least 1
+    are supported. Furthermore, the last two dimensions of your block shape
+    must be divisible by 8 and 128 respectively, or be equal to the respective
+    dimensions of the overall array.
 
 One interesting aspect of Pallas TPU kernels is the way they handle memory spaces:
 While the inputs to ``pallas_call`` will often reside in HBM (the main TPU
@@ -147,10 +148,8 @@ grid axes over cores. This is an opt-in procedure. To allow that,
 ..
   pallas_call(
       ...,
-      compiler_params=dict(
-          mosaic=dict(
-              dimension_semantics=["parallel", "parallel", "arbitrary"]
-          )
+      compiler_params=pltpu.TPUCompilerParams(
+          dimension_semantics=["parallel", "parallel", "arbitrary"]
       ),
     )
 

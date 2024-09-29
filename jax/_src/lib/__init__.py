@@ -27,7 +27,7 @@ try:
 except ModuleNotFoundError as err:
   raise ModuleNotFoundError(
     'jax requires jaxlib to be installed. See '
-    'https://github.com/google/jax#installation for installation instructions.'
+    'https://github.com/jax-ml/jax#installation for installation instructions.'
     ) from err
 
 import jax.version
@@ -87,14 +87,12 @@ import jaxlib.utils as utils
 import jaxlib.xla_client as xla_client
 import jaxlib.lapack as lapack
 
-import jaxlib.ducc_fft as ducc_fft
-
 xla_extension = xla_client._xla
 pytree = xla_client._xla.pytree
 jax_jit = xla_client._xla.jax_jit
 pmap_lib = xla_client._xla.pmap_lib
 
-# XLA garbage collection: see https://github.com/google/jax/issues/14882
+# XLA garbage collection: see https://github.com/jax-ml/jax/issues/14882
 def _xla_gc_callback(*args):
   xla_client._xla.collect_garbage()
 gc.callbacks.append(_xla_gc_callback)
@@ -102,7 +100,10 @@ gc.callbacks.append(_xla_gc_callback)
 try:
   import jaxlib.cuda._versions as cuda_versions  # pytype: disable=import-error
 except ImportError:
-  cuda_versions = None
+  try:
+    import jax_cuda12_plugin._versions as cuda_versions  # pytype: disable=import-error
+  except ImportError:
+    cuda_versions = None
 
 import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error
 import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error
@@ -132,11 +133,6 @@ def _cuda_path() -> str | None:
   # both of the things XLA looks for in the cuda path, namely bin/ptxas and
   # nvvm/libdevice/libdevice.10.bc
   path = _jaxlib_path.parent / "nvidia" / "cuda_nvcc"
-  if path.is_dir():
-    return str(path)
-  # Failing that, we use the copy of libdevice.10.bc we include with jaxlib and
-  # hope that the user has ptxas in their PATH.
-  path = _jaxlib_path / "cuda"
   if path.is_dir():
     return str(path)
   return None

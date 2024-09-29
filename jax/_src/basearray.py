@@ -22,6 +22,7 @@ from typing import Any, Union
 from collections.abc import Sequence
 
 # TODO(jakevdp): fix import cycles and define these.
+Device = Any
 Shard = Any
 Sharding = Any
 
@@ -112,8 +113,41 @@ class Array(abc.ABC):
   def sharding(self) -> Sharding:
     """The sharding for the array."""
 
+  @property
+  @abc.abstractmethod
+  def device(self) -> Device | Sharding:
+    """Array API-compatible device attribute.
+
+    For single-device arrays, this returns a Device. For sharded arrays, this
+    returns a Sharding.
+    """
+
+  @abc.abstractmethod
+  def copy_to_host_async(self):
+    """Copies an ``Array`` to the host asynchronously.
+
+    For arrays that live an an accelerator, such as a GPU or a TPU, JAX may
+    cache the value of the array on the host. Normally this happens
+    behind the scenes when the value of an on-device array is requested by the
+    user, but waiting to initiate a device-to-host copy until the value is
+    requested requires that JAX block the caller while waiting for the copy to
+    complete.
+
+    ``copy_to_host_async`` requests that JAX populate its on-host cache of an
+    array, but does not wait for the copy to complete. This may speed up a
+    future on-host access to the array's contents.
+    """
+
 
 Array.__module__ = "jax"
+
+# StaticScalar is the Union of all scalar types that can be converted to
+# JAX arrays, and are possible to mark as static arguments.
+StaticScalar = Union[
+  np.bool_, np.number,  # NumPy scalar types
+  bool, int, float, complex,  # Python scalar types
+]
+StaticScalar.__doc__ = "Type annotation for JAX-compatible static scalars."
 
 
 # ArrayLike is a Union of all objects that can be implicitly converted to a
@@ -123,7 +157,6 @@ Array.__module__ = "jax"
 ArrayLike = Union[
   Array,  # JAX array type
   np.ndarray,  # NumPy array type
-  np.bool_, np.number,  # NumPy scalar types
-  bool, int, float, complex,  # Python scalar types
+  StaticScalar,  # valid scalars
 ]
 ArrayLike.__doc__ = "Type annotation for JAX array-like objects."

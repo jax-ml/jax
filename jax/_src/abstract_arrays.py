@@ -18,7 +18,6 @@ from functools import partial
 
 import numpy as np
 
-from jax._src import ad_util
 from jax._src import core
 from jax._src import dtypes
 
@@ -40,6 +39,11 @@ numpy_scalar_types: set[type] = {  # pylint: disable=g-bare-generic
     np.bool_, np.longlong, np.intc,
 } | {np.dtype(dt).type for dt in dtypes._float_types}
 
+if dtypes.int2 is not None:
+  assert dtypes.uint2 is not None
+  numpy_scalar_types.add(dtypes.int2)
+  numpy_scalar_types.add(dtypes.uint2)
+
 array_types: set[type] = {np.ndarray} | numpy_scalar_types  # pylint: disable=g-bare-generic
 
 def canonical_concrete_aval(val, weak_type=None):
@@ -57,11 +61,6 @@ for t in array_types:
 
 core.literalable_types.update(array_types)
 
-def _zeros_like_python_scalar(t, x):
-  dtype = dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[t])
-  aval = core.ShapedArray((), dtype, weak_type=True)
-  return ad_util.zeros_like_aval(aval)
-
 def _make_concrete_python_scalar(t, x):
   dtype = dtypes._scalar_type_to_dtype(t, x)
   weak_type = dtypes.is_weakly_typed(x)
@@ -70,4 +69,4 @@ def _make_concrete_python_scalar(t, x):
 for t in dtypes.python_scalar_dtypes:
   core.pytype_aval_mappings[t] = partial(_make_concrete_python_scalar, t)
 
-core.literalable_types.update(dtypes.python_scalar_dtypes.keys())  # type: ignore
+core.literalable_types.update(dtypes.python_scalar_dtypes.keys())

@@ -14,16 +14,14 @@
 """Module for discharging state primitives."""
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 from functools import partial
 import operator
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol, TypeVar
 
-import numpy as np
-
-from jax._src import api_util
 from jax._src import ad_util
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import linear_util as lu
@@ -35,12 +33,20 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
 from jax._src.state import indexing
-from jax._src.state.types import AbstractRef, RefEffect
-from jax._src.state.primitives import get_p, swap_p, addupdate_p
-from jax._src.state.utils import hoist_consts_to_refs
+from jax._src.state.primitives import addupdate_p, get_p, swap_p
+from jax._src.state.types import AbstractRef, RefBitcaster, RefEffect
+from jax._src.state.utils import bitcast, hoist_consts_to_refs
 from jax._src.typing import Array
-from jax._src.util import (safe_map, safe_zip, split_list, weakref_lru_cache,
-                           partition_list, merge_lists, split_dict)
+from jax._src.util import (
+    merge_lists,
+    partition_list,
+    safe_map,
+    safe_zip,
+    split_dict,
+    split_list,
+    weakref_lru_cache,
+)
+import numpy as np
 
 ## JAX utilities
 
@@ -112,10 +118,10 @@ def _eval_jaxpr_discharge_state(
   for eqn in jaxpr.eqns:
     if eqn.primitive is core.mutable_array_p:
       [invar], [outvar] = eqn.invars, eqn.outvars
-      init_val = env.read(invar)
-      env.write(outvar, init_val)
+      ans = env.read(invar)
       refs_to_discharge.add(id(outvar.aval))
-    elif any(id(v.aval) in refs_to_discharge for v in eqn.invars):
+    elif (any(id(v.aval) in refs_to_discharge for v in eqn.invars)
+         or core.internal_mutable_array_effect in eqn.effects ):
       if eqn.primitive not in _discharge_rules:
         raise NotImplementedError("No state discharge rule implemented for "
             f"primitive: {eqn.primitive}")
@@ -158,6 +164,62 @@ def _is_trivial_indexer(indexer: indexing.NDIndexer):
       return False
   return True
 
+
+def _maybe_convert_to_slice(
+    indexer: indexing.NDIndexer
+) -> list[tuple[int, int, int]] | None:
+  args = []
+
+  for i in indexer.indices:
+    if not isinstance(i, indexing.Slice):
+      return None
+
+    start = i.start
+    end = i.start + (i.size - 1) * i.stride + 1
+    stride = i.stride
+
+    # cannot convert to static `slice` if `start` or `end` is dynamic
+    if not isinstance(start, int) or not isinstance(end, int):
+      return None
+
+    args.append((start, end, stride))
+
+  return args
+
+
+def _maybe_convert_to_dynamic_slice(
+    indexer: indexing.NDIndexer,
+) -> (
+    tuple[tuple[Array | int, ...], tuple[Array | int, ...], tuple[int, ...]]
+    | None
+):
+  # An NDIndexer only corresponds to a `dynamic_slice` or `dynamic_update_slice`
+  # if each of the indexers is a `Slice` or a ()-shaped value.
+  if not all(isinstance(i, indexing.Slice) or not np.shape(i)
+             for i in indexer.indices):
+    return None
+
+  # `lax.dynamic_slice` does not handle striding
+  for i in indexer.indices:
+    if isinstance(i, indexing.Slice) and i.stride > 1:
+      return None
+
+  _convert_i32 = lambda x: lax.convert_element_type(x, np.dtype("int32"))
+  starts = tuple(
+      _convert_i32(i.start) if isinstance(i, indexing.Slice)
+      else _convert_i32(i) for i in indexer.indices
+  )
+  sizes = tuple(
+      i.size if isinstance(i, indexing.Slice) else 1 for i in indexer.indices
+  )
+  squeeze_dims = tuple(
+      i
+      for i, idx in enumerate(indexer.indices)
+      if not isinstance(idx, indexing.Slice)
+  )
+  return starts, sizes, squeeze_dims
+
+
 def _convert_to_array_indexer(indexer: indexing.NDIndexer
                               ) -> tuple[int | Array, ...]:
   # This is the general gather case. We need to create the gather arrays.
@@ -177,7 +239,7 @@ def _convert_to_array_indexer(indexer: indexing.NDIndexer
       assert isinstance(idx, indexing.Slice)
       slice_indices = lax.broadcasted_iota(
           np.dtype("int32"), total_shape, next(slice_dim_iter)
-      ) + idx.start
+      ) * idx.stride + idx.start
       slice_indexer.append(slice_indices)
       integer_indexer = tuple(
           lax.expand_dims(idx, (-1,)) for idx in integer_indexer
@@ -185,37 +247,6 @@ def _convert_to_array_indexer(indexer: indexing.NDIndexer
       continue
   assert next(slice_dim_iter, None) is None
   return tuple(merge_lists(is_integer_indexer, slice_indexer, integer_indexer))
-
-
-def _maybe_convert_to_dynamic_slice(
-    indexer: indexing.NDIndexer,
-) -> (
-    tuple[tuple[Array | int, ...], tuple[Array | int, ...], tuple[int, ...]]
-    | None
-):
-  # An NDIndexer only corresponds to a `dynamic_slice` or `dynamic_update_slice`
-  # if each of the indexers is a `Slice` or a ()-shaped value.
-  if not all(isinstance(i, indexing.Slice) or not np.shape(i)
-             for i in indexer.indices):
-    return None
-  # TODO(b/329733289): support strided load/store in interpret mode.
-  for i in indexer.indices:
-    if isinstance(i, indexing.Slice) and i.stride > 1:
-      raise NotImplementedError("Unimplemented stride support.")
-  _convert_i32 = lambda x: lax.convert_element_type(x, np.dtype("int32"))
-  starts = tuple(
-      _convert_i32(i.start) if isinstance(i, indexing.Slice)
-      else _convert_i32(i) for i in indexer.indices
-  )
-  sizes = tuple(
-      i.size if isinstance(i, indexing.Slice) else 1 for i in indexer.indices
-  )
-  squeeze_dims = tuple(
-      i
-      for i, idx in enumerate(indexer.indices)
-      if not isinstance(idx, indexing.Slice)
-  )
-  return starts, sizes, squeeze_dims
 
 
 @register_discharge_rule(get_p)
@@ -239,31 +270,95 @@ def _prepend_scatter(x, indexer, val, *, add=False):
     return x[None].at[(0, *indexer)].add(val)[0]
   return x[None].at[(0, *indexer)].set(val)[0]
 
+def _bitcast_array(x, bitcaster: RefBitcaster):
+  return bitcast(x, bitcaster.dtype)
 
-def _get_discharge(x, idx, tree):
-  indexers = tree_util.tree_unflatten(tree, idx)
-  if len(indexers) > 1:
-    raise NotImplementedError("Only single indexer is supported.")
-  indexer = indexers[0]
+def _index_array(x, indexer):
   if _is_trivial_indexer(indexer):
     return x
+  # Try the three APIs in the following order: `lax.slice`,
+  # `lax.dynamic_slice` and gather
+  if maybe_slice := _maybe_convert_to_slice(indexer):
+    x = lax_slicing.slice(x, *zip(*maybe_slice))
   # If everything in the indexer is a slice or ()-shaped, we can also
   # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
   # We need to squeeze out the 1-sized slices at the end.
-  if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
+  elif maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
     starts, sizes, squeeze_dims = maybe_slice
     y = lax_slicing.dynamic_slice(x, starts, sizes)
-    return lax.squeeze(y, squeeze_dims)
-  indexer = _convert_to_array_indexer(indexer)
-  if indexer is None:
-    return x
-  return x[None][(np.array(0, 'int32'), *indexer)]
+    x = lax.squeeze(y, squeeze_dims)
+  else:
+    indexer = _convert_to_array_indexer(indexer)
+    x = x[None][(np.array(0, "int32"), *indexer)]
+  return x
 
-def _indexer(idx, indexed_dims):
-  idx_ = iter(idx)
-  indexer = tuple(next(idx_) if b else slice(None) for b in indexed_dims)
-  assert next(idx_, None) is None
-  return indexer
+
+def transform_array(x, transforms):
+  if transforms is None:
+    transforms = []
+  result = x
+  for transform in transforms:
+    if transform is None:
+      continue
+    if isinstance(transform, indexing.NDIndexer):
+      result = _index_array(result, transform)
+    elif isinstance(transform, RefBitcaster):
+      result = _bitcast_array(result, transform)
+    else:
+      raise NotImplementedError(f"Unsupported transform: {transform}")
+  return result
+
+def transform_swap_array(x, transforms, val):
+  if transforms is None:
+    transforms = []
+  result = x
+  result_val = val
+  # Compute updated "val" (result).
+  _results = [x]
+  for transform in transforms:
+    if isinstance(transform, indexing.NDIndexer):
+      indexer = transform
+      if _is_trivial_indexer(indexer):
+        _results.append(None)
+        continue
+      # If everything in the indexer is a slice or ()-shaped, we can also
+      # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
+      # We need to squeeze out the 1-sized slices at the end.
+      if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
+        starts, sizes, squeeze_dims = maybe_slice
+        result_old = lax_slicing.dynamic_slice(result, starts, sizes)
+        result = lax.squeeze(result_old, squeeze_dims)
+      else:
+        indexer = _convert_to_array_indexer(indexer)
+        result = _prepend_gather(result, indexer)
+      _results.append(result)
+    elif isinstance(transform, RefBitcaster):
+      _results.append(_bitcast_array(result, transform))
+    else:
+      raise NotImplementedError(f"Unsupported transform: {transform}")
+
+  # Compute updated "x" (result_val)
+  for i, transform in reversed(list(enumerate(transforms))):
+    if isinstance(transform, indexing.NDIndexer):
+      indexer = transform
+      if _is_trivial_indexer(indexer):
+        continue
+      if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
+        starts, _, squeeze_dims = maybe_slice
+        result_val = lax.expand_dims(result_val, squeeze_dims)
+        result_val = lax_slicing.dynamic_update_slice(
+            _results[i], result_val, starts
+        )
+      else:
+        indexer = _convert_to_array_indexer(indexer)
+        result_val = _prepend_scatter(_results[i], indexer, result_val)
+    else:
+      raise NotImplementedError(f"Unsupported transform: {transform}")
+  return result, result_val
+
+def _get_discharge(x, idx, tree):
+  transforms = tree_util.tree_unflatten(tree, idx)
+  return transform_array(x, transforms)
 
 @register_discharge_rule(swap_p)
 def _swap_discharge_rule(
@@ -275,24 +370,8 @@ def _swap_discharge_rule(
   return (x_new, None) + (None,) * len(idx), z
 
 def _swap_discharge(x, val, idx, tree):
-  indexers = tree_util.tree_unflatten(tree, idx)
-  if len(indexers) > 1:
-    raise NotImplementedError("Only single indexer is supported.")
-  indexer = indexers[0]
-  if _is_trivial_indexer(indexer):
-    return x, val
-  # If everything in the indexer is a slice or ()-shaped, we can also
-  # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
-  # We need to squeeze out the 1-sized slices at the end.
-  if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
-    starts, sizes, squeeze_dims = maybe_slice
-    x_old = lax_slicing.dynamic_slice(x, starts, sizes)
-    val = lax.expand_dims(val, squeeze_dims)
-    y = lax_slicing.dynamic_update_slice(x, val, starts)
-    return lax.squeeze(x_old, squeeze_dims), y
-  indexer = _convert_to_array_indexer(indexer)
-  x_old = _prepend_gather(x, indexer)
-  return x_old, _prepend_scatter(x, indexer, val)
+  transforms = tree_util.tree_unflatten(tree, idx)
+  return transform_swap_array(x, transforms, val)
 
 @register_discharge_rule(addupdate_p)
 def _addupdate_discharge_rule(
@@ -304,10 +383,10 @@ def _addupdate_discharge_rule(
   return (ans, None) + (None,) * len(idx), []
 
 def _addupdate_discharge(x, val, idx, tree):
-  indexers = tree_util.tree_unflatten(tree, idx)
-  if len(indexers) > 1:
+  transforms = tree_util.tree_unflatten(tree, idx)
+  if len(transforms) > 1:
     raise NotImplementedError("Only single indexer is supported.")
-  indexer = indexers[0]
+  indexer = transforms[0]
   if _is_trivial_indexer(indexer):
     return x + val
   # If everything in the indexer is a slice or ()-shaped, we can also
@@ -411,7 +490,7 @@ def _run_state_jvp(primals: Sequence[Any], tangents: Sequence[Any], *,
                                                            len(primals)])
   del out_consts
   out_tangents_iter = iter(out_tangents)
-  out_tangents = [next(out_tangents_iter) if nz else ad_util.Zero.from_value(p)
+  out_tangents = [next(out_tangents_iter) if nz else ad_util.Zero.from_primal_value(p)
                   for p, nz in zip(out_primals, nonzero_tangents)]
   return out_primals, out_tangents
 ad.primitive_jvps[run_state_p] = _run_state_jvp
@@ -437,8 +516,7 @@ def _convert_outputs_to_writes(
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
       eval_jaxpr, [*in_avals, *res_ref_avals])
   assert not consts
-  return jaxpr, [core.ShapedArray(a.inner_aval.shape, a.inner_aval.dtype)  # pytype: disable=attribute-error
-                 for a in res_ref_avals]
+  return jaxpr, [core.ShapedArray(a.shape, a.dtype) for a in res_ref_avals]
 
 def _convert_inputs_to_reads(num_res: int, jaxpr: core.Jaxpr) -> core.Jaxpr:
   assert not jaxpr.constvars, "Jaxpr should not have constvars"
@@ -484,7 +562,7 @@ def _run_state_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
   else:
     raise Exception("Invalid fixpoint")
   del out_unknowns  # redundant since it's the same as `in_unknowns`
-  tracers = tuple(trace.instantiate_const(t) if uk else t  # type: ignore
+  tracers = tuple(trace.instantiate_const(t) if uk else t
                   for t, uk in zip(tracers, in_unknowns))
 
   # We use `partial_eval_jaxpr_stateful` here because it won't remove effectful
@@ -779,7 +857,8 @@ def _initial_style_jaxpr(fun, in_tree, in_avals):
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun_, in_avals, debug)
   return jaxpr, consts, out_tree_thunk()
 
-def run_state(f: Callable[..., None]):
+T = TypeVar('T')
+def run_state(f: Callable[..., None]) -> Callable[[T], T]:
   def wrapped(args):
     flat_args, in_tree = tree_util.tree_flatten(args)
     avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in flat_args]

@@ -1,5 +1,6 @@
-# Device Memory Profiling
+# Profiling device memory
 
+<!--* freshness: { reviewed: '2024-03-08' } *-->
 
 ```{note}
 May 2023 update: we recommend using [Tensorboard
@@ -8,7 +9,7 @@ profile, open the `memory_viewer` tab of the Tensorboard profiler for more
 detailed and understandable device memory usage.
 ```
 
-The JAX Device Memory Profiler allows us to explore how and why JAX programs are
+The JAX device memory profiler allows us to explore how and why JAX programs are
 using GPU or TPU memory. For example, it can be used to:
 
 * Figure out which arrays and executables are in GPU memory at a given time, or
