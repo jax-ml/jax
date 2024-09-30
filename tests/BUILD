@@ -1501,10 +1501,7 @@ jax_multiplatform_test(
         "gpu_a100",
         "gpu_h100",
     ],
-    tags = [
-        "multiaccelerator",
-        "notap",  # TODO(phawkins): this test fails in our internal CI.
-    ],
+    tags = ["multiaccelerator"],
 )
 
 exports_files(
