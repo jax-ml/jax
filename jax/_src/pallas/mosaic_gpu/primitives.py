@@ -119,7 +119,7 @@ effects.control_flow_allowed_effects.add_type(_WGMMAPipelineEffect)
 wgmma_ref_p = jax_core.Primitive("wgmma_ref")
 wgmma_ref_p.multiple_results = True
 
-def wgmma(acc, a, b, *, rhs_transpose: bool = False, swizzle: int = 128):
+def wgmma(acc, a, b, *, swizzle: int = 128):
   """Asynchronous warp group matmul.
 
   The sm90 wgmma instruction, essentially acc[...] += a @ b. Requires
@@ -129,24 +129,49 @@ def wgmma(acc, a, b, *, rhs_transpose: bool = False, swizzle: int = 128):
     acc: The accumulator register.
     a: The left hand side operand.
     b: The right hand side operand.
-    transpose: Whether to transpose b.
-    n_tile: The number of tiles to use.
     swizzle: The swizzle pattern.
   """
   if not isinstance(acc.aval, gpu_core.WGMMAAbstractAccumulatorRef):
     raise TypeError(f"Expected WGMMAAbstractAccumulatorRef got {acc}")
 
-  ma, ka, tma, tka = a.shape
-  kb, nb, tkb, tnb = b.shape
-  mc, nc = acc.shape
+  # TODO(apaszke): Make swizzling another transform and read it from the refs.
+  if not isinstance(a, pallas_core.TransformedRef):
+    raise ValueError("WGMMA inputs must be tiled references.")
 
-  if rhs_transpose:
-    kb, nb, tkb, tnb = nb, kb, tnb, tkb
+  m, n = acc.shape
+  m2, k = a.shape
+  k2, n2 = b.shape
 
-  if tma * ma != mc or nb * tnb != nc or ka != kb or tka != tkb:
-    raise ValueError(f"Incompatible shapes: {a.shape=}, {b.shape=}, {acc.shape=}, {rhs_transpose=}")
+  if m != m2 or n != n2 or k != k2:
+    raise ValueError(
+        f"Incompatible shapes for matrix multiplication: lhs={a.shape},"
+        f" rhs={b.shape=}, acc={acc.shape}"
+    )
 
-  return wgmma_ref_p.bind(acc, a, b, swizzle=swizzle, rhs_transpose=rhs_transpose)
+  if (dtype := a.dtype) != b.dtype:
+    raise ValueError(f"Mixed input dtypes for matrix multiplication unsupported: lhs={a.dtype}, rhs={b.dtype}")
+  if not isinstance(a, pallas_core.TransformedRef):
+    raise ValueError("WGMMA lhs must be a tiled reference.")
+  if not isinstance(b, pallas_core.TransformedRef):
+    raise ValueError("WGMMA rhs must be a tiled reference.")
+
+  elems_128b = swizzle // dtype.itemsize
+  if a.transforms != (gpu_core.UntileRef((64, elems_128b)),):
+    raise ValueError(
+        f"WGMMA lhs must be tiled with 64x{elems_128b} tiles for element type"
+        f" {dtype}."
+    )
+  rhs_transpose_transform = gpu_core.TransposeRef((1, 0, 2, 3))
+  rhs_tiling = gpu_core.UntileRef((elems_128b, elems_128b))
+  if not (
+      rhs_transpose := (b.transforms == (rhs_transpose_transform, rhs_tiling))
+  ) and not (b.transforms == (rhs_tiling,)):
+    raise ValueError(
+        f"WGMMA rhs must be tiled with {elems_128b}x{elems_128b} tiles for"
+        f" element type {dtype} (and optionally transposed)."
+    )
+
+  return wgmma_ref_p.bind(acc, a.ref, b.ref, swizzle=swizzle, rhs_transpose=rhs_transpose)
 
 
 @wgmma_ref_p.def_effectful_abstract_eval
