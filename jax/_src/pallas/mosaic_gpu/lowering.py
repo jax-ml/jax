@@ -239,11 +239,6 @@ def lower_jaxpr_to_module(
         "Only Blocked indexing mode is supported in Mosaic GPU lowering."
     )
 
-  with grid_mapping.trace_env():
-    jaxpr, _ = pe.dce_jaxpr(
-        jaxpr, [True] * len(jaxpr.outvars), instantiate=True
-    )
-
   block = (128, 1, 1)
   params = compiler_params.get("mosaic_gpu", {})
   approx_math = params.get("approx_math", False)
