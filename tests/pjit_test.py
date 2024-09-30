@@ -3780,6 +3780,29 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(out1[0], inp * 2)
     self.assertArraysEqual(out2[0], inp * 2)
 
+  @jtu.run_on_devices('tpu', 'gpu')
+  def test_aot_device_implicit_transfer(self):
+    mesh = jtu.create_mesh((1,), 'x')
+    np_inp = np.arange(8)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P()))
+
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    compiled = f.lower(arr).compile()
+
+    cpu_dev = jax.devices('cpu')[0]
+    with jax.default_device(cpu_dev):
+      cpu_arr = jnp.arange(8)
+      self.assertEqual(cpu_arr.sharding, SingleDeviceSharding(cpu_dev))
+      self.assertFalse(cpu_arr._committed)
+
+    out = compiled(cpu_arr)
+    self.assertArraysEqual(out, np_inp * 2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
+    self.assertEqual(out.sharding.memory_kind, 'device')
+
   def test_most_recent_executable_outer_inner_cache(self):
     x = np.zeros((20, 20), dtype=jnp.float64)
 
