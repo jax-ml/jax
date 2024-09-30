@@ -1054,9 +1054,32 @@ def sqrt(x: ArrayLike, /) -> Array:
   """
   return lax.sqrt(*promote_args_inexact('sqrt', x))
 
-@implements(np.cbrt, module='numpy')
+
 @partial(jit, inline=True)
 def cbrt(x: ArrayLike, /) -> Array:
+  """Calculates element-wise cube root of the input array.
+
+  JAX implementation of :obj:`numpy.cbrt`.
+
+  Args:
+    x: input array or scalar. ``complex`` dtypes are not supported.
+
+  Returns:
+    An array containing the cube root of the elements of ``x``.
+
+  See also:
+    - :func:`jax.numpy.sqrt`: Calculates the element-wise non-negative square root
+      of the input.
+    - :func:`jax.numpy.square`: Calculates the element-wise square of the input.
+
+  Examples:
+    >>> x = jnp.array([[216, 125, 64],
+    ...                [-27, -8, -1]])
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.cbrt(x)
+    Array([[ 6.,  5.,  4.],
+           [-3., -2., -1.]], dtype=float32)
+  """
   return lax.cbrt(*promote_args_inexact('cbrt', x))
 
 @partial(jit, inline=True)
