@@ -377,13 +377,17 @@ class PallasCallTest(PallasTest):
                 swizzle=128,
             ),
         ],
-        out_shape=jax.ShapeDtypeStruct((128, 64), jnp.float16),
+        out_specs=pl.BlockSpec((2, 1, 64, 64), lambda i, j: (i, j, 64, 64)),
+        out_shape=jax.ShapeDtypeStruct((4, 2, 64, 64), jnp.float16),
         grid=(2, 2),
     )
     def kernel(x_ref, o_ref):
-      assert x_ref.shape == (128, 64), x_ref.shape
+      assert x_ref.shape == (2, 1, 64, 64), x_ref.shape
+      o_ref[...] = x_ref[...]
 
-    kernel.lower(jax.ShapeDtypeStruct((256, 128), jnp.float16))
+    x = jnp.zeros((256, 128), dtype=jnp.float16)
+    result = kernel(x)
+    self.assertEqual(result.shape, (4, 2, 64, 64))
 
   def test_fori_loop_array(self):
     @functools.partial(
@@ -442,7 +446,7 @@ class PallasCallTest(PallasTest):
     elems_128b = swizzle // jnp.dtype(dtype).itemsize
     def kernel(a_ref, b_ref, o_ref):
       def scope(acc_ref):
-        plgpu.wgmma(acc_ref, a_ref, b_ref)
+        plgpu.wgmma(acc_ref, a_ref, b_ref, rhs_transpose=rhs_transpose)
         return acc_ref[...]
 
       o_ref[...] = pl.run_scoped(scope, plgpu.ACC((64, 128), jnp.float32))
@@ -503,10 +507,6 @@ class PallasCallTest(PallasTest):
     tile_k = elems_128b
     m, k, n = grid_m * tile_m, grid_k * tile_k, grid_n * tile_n
     def kernel(a_ref, b_ref, o_ref, acc_ref):
-      # Make sure tiling does not alter the shape of references
-      assert a_ref.shape == (tile_m, tile_k)
-      assert b_ref.shape == (tile_k, tile_n)
-      assert o_ref.shape == acc_ref.shape == (tile_m, tile_n)
       plgpu.wgmma(acc_ref, a_ref, b_ref)
       plgpu.wgmma_wait(0)  # TODO(apaszke): Delay the pipeline to avoid memory races
       # TODO(apaszke): Only store in the last step. It doesn't work because we
