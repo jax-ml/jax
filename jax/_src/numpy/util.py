@@ -115,7 +115,6 @@ def implements(
     original_fun: Callable[..., Any] | None,
     update_doc: bool = True,
     sections: Sequence[str] = ('Parameters', 'Returns', 'References'),
-    skip_params: Sequence[str] = (),
     module: str | None = None,
 ) -> Callable[[_T], _T]:
   """Decorator for JAX functions which implement a specified NumPy function.
@@ -133,8 +132,6 @@ def implements(
       If False, include the numpy docstring verbatim.
     sections: a list of sections to include in the docstring. The default is
       ["Parameters", "Returns", "References"]
-    skip_params: a list of strings containing names of parameters accepted by the
-      function that should be skipped in the parameter list.
     module: an optional string specifying the module from which the original function
       is imported. This is useful for objects such as ufuncs, where the module cannot
       be determined from the original function itself.
@@ -162,8 +159,7 @@ def implements(
           # Remove unrecognized parameter descriptions.
           parameters = _parse_parameters(parsed.sections['Parameters'])
           parameters = {p: desc for p, desc in parameters.items()
-                        if (code is None or p in code.co_varnames)
-                        and p not in skip_params}
+                        if (code is None or p in code.co_varnames)}
           if parameters:
             parsed.sections['Parameters'] = (
               "Parameters\n"
