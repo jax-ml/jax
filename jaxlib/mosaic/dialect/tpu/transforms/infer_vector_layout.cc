@@ -142,13 +142,12 @@ class VectorLayoutInferer {
       // support for offsets outside of the first tile. When support is more
       // broad, any op without support should check it within their own rule.
       if (!isa<vector::BroadcastOp, vector::ExtractStridedSliceOp>(any_op)) {
-        const SmallVector<Layout> layouts_in = getLayoutFromOperands(&any_op);
-        for (const Layout &layout : layouts_in) {
+        SmallVector<Layout> layouts_in = getLayoutFromOperands(&any_op);
+        for (auto &layout : layouts_in) {
           if (layout && layout->offsets()[1].has_value() &&
-              layout->offsets()[1].value() > layout->tiling()[1]) {
-            return any_op.emitOpError(
-                "Not implemented: Inferring from input offsets outside of the "
-                "first tile");
+              layout->offsets()[1].value() >= layout->tiling()[1]) {
+            layout = VectorLayout(layout->bitwidth(), {layout->offsets()[0], 0},
+                                  layout->tiling(), layout->implicit_dim());
           }
         }
       }
