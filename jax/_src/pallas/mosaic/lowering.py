@@ -2001,6 +2001,13 @@ def _sin_lowering_rule(ctx: LoweringRuleContext, x):
 lowering_rules[lax.sin_p] = _sin_lowering_rule
 
 
+def _cos_lowering_rule(ctx: LoweringRuleContext, x):
+  return math.CosOp(x).result
+
+
+lowering_rules[lax.cos_p] = _cos_lowering_rule
+
+
 def _tanh_lowering_rule(ctx: LoweringRuleContext, x):
   return math.TanhOp(x).result
 
