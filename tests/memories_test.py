@@ -670,7 +670,7 @@ class DevicePutTest(jtu.JaxTestCase):
 class ComputeOffload(jtu.BufferDonationTestCase):
 
   def setUp(self):
-    if not jtu.test_device_matches(["tpu"]):
+    if not jtu.test_device_matches(["tpu", "gpu"]):
       self.skipTest("Memories do not work on CPU and GPU backends yet.")
     super().setUp()
 
@@ -912,6 +912,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(out.sharding, s)
     self.assertArraysEqual(out, expected_out)
 
+  @jtu.run_on_devices("tpu")
   def test_host_offload_in_custom_vjp(self):
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
       self.skipTest("This test requires an xla_version >= 2.")
@@ -942,6 +943,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     all_true = jnp.ones(3)
     self.assertArraysEqual(g(x), all_true)
 
+  @jtu.run_on_devices("tpu")
   def test_host_offload_in_custom_vjp_sharded(self):
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
       self.skipTest("This test requires an xla_version >= 2.")
@@ -1026,6 +1028,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     lowered_text = f.lower(jnp.arange(8)).as_text()
     self.assertIn('_xla_compute_type', lowered_text)
 
+  @jtu.run_on_devices("tpu")
   def test_pure_host_data_and_compute(self):
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
       self.skipTest("This test requires an xla_version >= 2.")
@@ -1316,6 +1319,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
                             out_specs=P('x', 'y')))(arr)
     self.assertArraysEqual(out, np_inp * 24)
 
+  @jtu.run_on_devices("tpu")
   def test_qr_decomposition_offload(self):
     if jtu.is_cloud_tpu():
       self.skipTest("Test fails on cloud TPU")
@@ -1350,6 +1354,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
     self.assertArraysAllClose(out, expected_out, rtol=1e-3)
 
+  @jtu.run_on_devices("tpu")
   def test_mem_kind_donation_pinned_host(self):
     mesh = jtu.create_mesh((2,), "x")
     s = NamedSharding(mesh, P(), memory_kind='pinned_host')
@@ -1389,7 +1394,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertIn("input_output_alias", lowered_text)
     self.assertDeleted(x)
 
-  @jtu.run_on_devices('tpu')
   def test_aot_device_implicit_transfer(self):
     mesh = jtu.create_mesh((1,), 'x')
     np_inp = np.arange(8)
@@ -1412,6 +1416,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P()))
     self.assertEqual(out.sharding.memory_kind, 'device')
 
+  @jtu.run_on_devices("tpu")
   def test_compute_offload_with_donation(self):
     sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     p_sharding = jax.sharding.SingleDeviceSharding(
