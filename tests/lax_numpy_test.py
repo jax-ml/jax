@@ -6381,14 +6381,13 @@ class NumpyDocTests(jtu.JaxTestCase):
     if jit:
       wrapped = jax.jit(wrapped)
 
-    wrapped = implements(orig, skip_params=['out'])(wrapped)
+    wrapped = implements(orig)(wrapped)
     doc = wrapped.__doc__
 
     self.assertStartsWith(doc, "Example Docstring")
     self.assertIn("Original docstring below", doc)
     self.assertIn("Parameters", doc)
     self.assertIn("Returns", doc)
-    self.assertNotIn('out', doc)
     self.assertNotIn('other_arg', doc)
     self.assertNotIn('versionadded', doc)
 
