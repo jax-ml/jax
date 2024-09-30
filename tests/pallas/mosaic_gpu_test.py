@@ -14,6 +14,7 @@
 
 import functools
 import math
+import traceback
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -115,6 +116,26 @@ class PallasCallTest(PallasTest):
 
     x = jnp.arange(128 * 2 * 64).reshape((128 * 2, 64)).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x + 1.0)
+
+  def test_add_one_grid_pipelined_program_id(self):
+
+    @functools.partial(
+        pl.pallas_call,
+        out_specs=pl.BlockSpec((16, 16), lambda i, j: (i, j)),
+        out_shape=jax.ShapeDtypeStruct([16, 64], jnp.int32),
+        compiler_params=plgpu.GPUCompilerParams(
+            dimension_semantics=["parallel", "sequential"],
+            max_concurrent_steps=2,
+        ),
+        grid=(4, 4),
+    )
+    def kernel(o_ref):
+      o_ref[...] = jnp.broadcast_to(pl.program_id(1), o_ref.shape)
+
+    np.testing.assert_array_equal(
+        kernel(),
+        jnp.repeat(jnp.repeat(jnp.arange(4), 16)[None], 16, axis=0),
+    )
 
   def test_add_one_with_async_copy_smem_to_gmem(self):
     @functools.partial(
@@ -307,6 +328,25 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(
         kernel(),
         jnp.array([0] * 128 + [1] * 128, dtype=jnp.int32),
+    )
+
+  def test_program_id_in_block_spec(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_specs=pl.BlockSpec((128,), lambda *_: pl.program_id(0)),
+        out_shape=jax.ShapeDtypeStruct([128 * 2], jnp.int32),
+        grid=2,
+    )
+    def kernel(o_ref):
+      del o_ref
+
+    # ``assertRaises`` have no way of asserting against the cause, so we
+    # have to use ``traceback.format_exception`` manually.
+    with self.assertRaises(Exception) as exc_info:
+      kernel()
+    self.assertIn(
+        "not supported in this context",
+        "".join(traceback.format_exception(exc_info.exception)),
     )
 
   def test_num_programs(self):

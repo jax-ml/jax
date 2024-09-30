@@ -102,6 +102,7 @@ def _reduce_sum_smem_estimator(x_aval: jax_core.ShapedArray, *, axes) -> int:
 class ModuleContext:
   name: str
   grid_mapping: pallas_core.GridMapping
+  program_ids: Sequence[ir.Value] | None
   approx_math: bool
   runtime_smem: ir.Value  # ir.MemRefType
   smem_used_bytes: int = 0
@@ -266,7 +267,6 @@ def lower_jaxpr_to_module(
     raise NotImplementedError(
         "Only <=3D grids are supported in Mosaic GPU lowering."
     )
-  # Compute the number of steps along each sequential axis.
   if sequential_axes:
     # TODO(slebedev): Support multiple sequential axes.
     if len(sequential_axes) > 1:
@@ -346,11 +346,19 @@ def lower_jaxpr_to_module(
 
     parallel_count = it.count()
     program_ids_template = [
-        _program_id(next(parallel_count)) if i not in sequential_axes else None
-        for i in range(len(grid_mapping.grid))
+        _program_id(next(parallel_count))
+        if axis not in sequential_axes
+        else None
+        for axis in range(len(grid_mapping.grid))
     ]
+
+    def make_program_ids(step: ir.Value):
+      assert ir.IndexType.isinstance(step.type)
+      step = arith_dialect.index_cast(ir.IntegerType.get_signless(32), step)
+      return [step if pid is None else pid for pid in program_ids_template]
+
     module_ctx = ModuleContext(
-        name_and_src_info.name, grid_mapping, approx_math, runtime_smem
+        name_and_src_info.name, grid_mapping, None, approx_math, runtime_smem
     )
 
     smem_scratch_it = iter(scratch_buffers_smem)
@@ -412,7 +420,7 @@ def lower_jaxpr_to_module(
         block_mapping: pallas_core.BlockMapping,
     ) -> Sequence[mgpu.DynamicSlice]:
       assert len(sequential_axes) <= 1
-      program_ids = [step if i is None else i for i in program_ids_template]
+      program_ids = make_program_ids(step)
       idxs = _eval_index_map(module_ctx, launch_ctx, program_ids, block_mapping)
       return tuple(
           mgpu.ds(idx, dim) for idx, dim in zip(idxs, block_mapping.block_shape)
@@ -492,6 +500,7 @@ def lower_jaxpr_to_module(
         fetch(idx, _as_index(slot), _as_index(slot))
 
     last_store_offsets = [None if inv else _as_index(-1) for inv in out_sequential_invariant]
+
     @mgpu.fori(_as_index(num_steps), (accs, last_store_offsets))
     def _(step, carry):
       accs, last_store_offsets = carry
@@ -519,7 +528,10 @@ def lower_jaxpr_to_module(
       # but that's not necessarily true.
       args.extend(extra_barriers)
       new_accs = lower_jaxpr_to_mosaic_gpu(
-          module_ctx, launch_ctx, lowered_jaxpr, args
+          dataclasses.replace(module_ctx, program_ids=make_program_ids(step)),
+          launch_ctx,
+          lowered_jaxpr,
+          args,
       )
 
       # TODO(apaszke): Elide this if we're not going to perform any stores
@@ -668,9 +680,9 @@ def lower_jaxpr_to_mosaic_gpu(
 
 @register_lowering_rule(primitives.program_id_p)
 def _program_id_lowering_rule(ctx: LoweringRuleContext, axis):
-  # TODO(apaszke): Sequential axis should be handled specially!!
-  del ctx  # Unused.
-  return _program_id(axis)
+  if ctx.module_ctx.program_ids is None:
+    raise NotImplementedError("pl.program_id() is not supported in this context")
+  return ctx.module_ctx.program_ids[axis]
 
 
 def _program_id(axis: int) -> ir.Value:
