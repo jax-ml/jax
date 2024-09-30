@@ -34,11 +34,6 @@ jax_multiplatform_test(
     srcs = [
         "pallas_test.py",
     ],
-    config_tags_overrides = {
-        "gpu_a100_x32": {
-            "ondemand": False,  # Include in presubmit.
-        },
-    },
     enable_backends = [
         "cpu",
         "tpu",
@@ -86,11 +81,6 @@ jax_multiplatform_test(
     srcs = [
         "ops_test.py",
     ],
-    config_tags_overrides = {
-        "gpu_a100_x32": {
-            "ondemand": False,  # Include in presubmit.
-        },
-    },
     disable_configs = [
         "gpu_v100",
         "gpu_x32",
@@ -146,11 +136,6 @@ jax_multiplatform_test(
     srcs = [
         "pallas_vmap_test.py",
     ],
-    config_tags_overrides = {
-        "gpu_a100_x32": {
-            "ondemand": False,  # Include in presubmit.
-        },
-    },
     enable_backends = ["cpu"],
     enable_configs = [
         "gpu_a100_x32",
@@ -171,11 +156,6 @@ jax_multiplatform_test(
     srcs = [
         "mosaic_gpu_test.py",
     ],
-    config_tags_overrides = {
-        "gpu_h100_x32": {
-            "ondemand": False,  # Include in presubmit.
-        },
-    },
     enable_backends = [],
     enable_configs = [
         "gpu_h100_x32",
@@ -193,11 +173,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "export_back_compat_pallas_test",
     srcs = ["export_back_compat_pallas_test.py"],
-    config_tags_overrides = {
-        "gpu_a100_x32": {
-            "ondemand": False,  # Include in presubmit.
-        },
-    },
     enable_backends = ["cpu"],
     enable_configs = [
         "gpu_a100_x32",
@@ -216,11 +191,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "export_pallas_test",
     srcs = ["export_pallas_test.py"],
-    config_tags_overrides = {
-        "gpu_a100_x32": {
-            "ondemand": False,  # Include in presubmit.
-        },
-    },
     enable_backends = ["cpu"],
     enable_configs = [
         "gpu_a100_x32",
@@ -236,11 +206,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "pallas_shape_poly_test",
     srcs = ["pallas_shape_poly_test.py"],
-    config_tags_overrides = {
-        "gpu_a100_x32": {
-            "ondemand": False,  # Include in presubmit.
-        },
-    },
     disable_configs = [
         "gpu_x32",
         "gpu_h100",
@@ -457,11 +422,6 @@ jax_multiplatform_test(
     srcs = [
         "gpu_attention_test.py",
     ],
-    config_tags_overrides = {
-        "gpu_a100_x32": {
-            "ondemand": False,  # Include in presubmit.
-        },
-    },
     enable_backends = ["cpu"],
     enable_configs = [
         "gpu_a100_x32",
@@ -480,11 +440,6 @@ jax_multiplatform_test(
     srcs = [
         "gpu_ops_test.py",
     ],
-    config_tags_overrides = {
-        "gpu_a100_x32": {
-            "ondemand": False,  # Include in presubmit.
-        },
-    },
     enable_backends = ["cpu"],
     enable_configs = [
         "gpu_a100_x32",
