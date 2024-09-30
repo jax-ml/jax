@@ -6142,6 +6142,15 @@ class NumpyGradTests(jtu.JaxTestCase):
       tol = 3e-2
     check_grads(jnp.logaddexp2, args, 1, ["fwd", "rev"], tol, tol)
 
+  @jtu.sample_product(
+    n=range(-4, 5),
+    dtype=[jnp.float32, jnp.float64],
+  )
+  def testGradLdexp(self, n, dtype):
+    rng = jtu.rand_default(self.rng())
+    x = rng((), dtype)
+    check_grads(lambda x: jnp.ldexp(x, n), (x,), 1)
+
 
 class NumpySignaturesTest(jtu.JaxTestCase):
 
