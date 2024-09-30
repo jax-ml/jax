@@ -47,7 +47,6 @@ from jax._src.lax.lax import (
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
 from jax._src.lib import lapack
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -1303,13 +1302,9 @@ def _lu_pivots_to_permutation_batching_rule(batched_args, batch_dims, *,
 
 def _lu_pivots_to_permutation_gpu_lowering(platform, ctx, pivots, *,
                                            permutation_size):
+  del permutation_size  # unused
   rule = ffi.ffi_lowering(f"{platform}_lu_pivots_to_permutation")
-  # TODO(b/358275922): remove unused once jaxlib v0.4.32 is the minimum version.
-  if ctx.is_forward_compat() or jaxlib_version < (0, 4, 32):
-    kwargs = dict(permutation_size=np.int32(permutation_size))
-  else:
-    kwargs = {}
-  return rule(ctx, pivots, **kwargs)
+  return rule(ctx, pivots)
 
 
 lu_pivots_to_permutation_p = Primitive('lu_pivots_to_permutation')
@@ -1484,47 +1479,29 @@ def _lu_batching_rule(batched_args, batch_dims):
   x = batching.moveaxis(x, bd, 0)
   return lu_p.bind(x), (0, 0, 0)
 
-def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand, *, platform: str,
-                         target_name_prefix: str):
+def _lu_cpu_gpu_lowering(ctx, operand, *, target_name_prefix: str):
   operand_aval, = ctx.avals_in
   out_aval, pivot_aval, perm_aval = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
   info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
   m = operand_aval.shape[-2]
 
-  # TODO(b/357034884): Remove version gate on the forward compat flag after the
-  # 3 week compatibility window.
-  if ctx.is_forward_compat():
-    if not is_constant_shape(operand_aval.shape[-2:]):
-      raise NotImplementedError(
-        "Shape polymorphism for native lowering for lu on CPU and GPU is "
-        f"implemented only for the batch dimensions: {operand_aval.shape}")
-    if platform in ["cuda", "rocm"]:
-      if not is_constant_shape(operand_aval.shape):
-        raise NotImplementedError(
-            "Shape polymorphism for native serialization for lu on GPU is not "
-            f"implemented; b/261671778; {operand_aval.shape}")
-      lu, pivot, info = getrf_impl(operand_aval.dtype, operand)
-    else:
-      op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-      lu, pivot, info = getrf_impl(
-          operand_aval.dtype, operand, a_shape_vals=op_shape_vals)
+  if target_name_prefix == "cpu":
+    target_name = lapack.prepare_lapack_call("getrf_ffi", operand_aval.dtype)
   else:
-    if target_name_prefix == "cpu":
-      target_name = lapack.prepare_lapack_call("getrf_ffi", operand_aval.dtype)
-    else:
-      target_name = f"{target_name_prefix}solver_getrf_ffi"
-    # We manually construct the layouts because the input and output are
-    # expected to be in Fortran order.
-    nb = len(batch_dims)
-    layout = (nb, nb + 1) + tuple(range(nb - 1, -1, -1))
-    result_layouts = [layout, tuple(range(nb, -1, -1)),
-                      tuple(range(nb - 1, -1, -1))]
-    rule = ffi.ffi_lowering(target_name, operand_layouts=[layout],
-                            result_layouts=result_layouts,
-                            operand_output_aliases={0: 0})
-    sub_ctx = ctx.replace(avals_out=[out_aval, pivot_aval, info_aval])
-    lu, pivot, info = rule(sub_ctx, operand)
+    target_name = f"{target_name_prefix}solver_getrf_ffi"
+
+  # We manually construct the layouts because the input and output are
+  # expected to be in Fortran order.
+  nb = len(batch_dims)
+  layout = (nb, nb + 1) + tuple(range(nb - 1, -1, -1))
+  result_layouts = [layout, tuple(range(nb, -1, -1)),
+                    tuple(range(nb - 1, -1, -1))]
+  rule = ffi.ffi_lowering(target_name, operand_layouts=[layout],
+                          result_layouts=result_layouts,
+                          operand_output_aliases={0: 0})
+  sub_ctx = ctx.replace(avals_out=[out_aval, pivot_aval, info_aval])
+  lu, pivot, info = rule(sub_ctx, operand)
 
   # Subtract 1 from the pivot to get 0-based indices.
   pivot = hlo.subtract(pivot, mlir.full_like_aval(ctx, 1, pivot_aval))
@@ -1571,19 +1548,16 @@ mlir.register_lowering(lu_p, mlir.lower_fun(_lu_python, multiple_results=True))
 ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 
-mlir.register_lowering(lu_p,
-                        partial(_lu_cpu_gpu_lowering, lapack.getrf_hlo,
-                                platform='cpu', target_name_prefix="cpu"),
-                        platform='cpu')
+mlir.register_lowering(
+    lu_p, partial(_lu_cpu_gpu_lowering, target_name_prefix="cpu"),
+    platform="cpu")
 
 mlir.register_lowering(
-    lu_p, partial(_lu_cpu_gpu_lowering, gpu_solver.cuda_getrf,
-                  platform='cuda', target_name_prefix="cu"),
-    platform='cuda')
+    lu_p, partial(_lu_cpu_gpu_lowering, target_name_prefix="cu"),
+    platform="cuda")
 mlir.register_lowering(
-    lu_p, partial(_lu_cpu_gpu_lowering, gpu_solver.rocm_getrf,
-                  platform='rocm', target_name_prefix="hip"),
-    platform='rocm')
+    lu_p, partial(_lu_cpu_gpu_lowering, target_name_prefix="hip"),
+    platform="rocm")
 
 mlir.register_lowering(lu_p, _lu_tpu_lowering_rule, platform='tpu')
 

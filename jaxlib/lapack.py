@@ -30,7 +30,7 @@ from .cpu import _lapack
 from .cpu._lapack import eig
 from .hlo_helpers import (
     custom_call, hlo_u8, hlo_s32,
-    ensure_hlo_s32, hlo_add, hlo_min,
+    ensure_hlo_s32, hlo_add,
     DimensionSize, ShapeTypePair, mk_result_types_and_shapes,
 )
 
@@ -161,45 +161,6 @@ def trsm_hlo(dtype, alpha, a, b,
       result_shapes=result_shapes,
   ).results
 
-
-# # ?getrf: LU decomposition
-
-def getrf_hlo(dtype, a: ir.Value, *, a_shape_vals: tuple[DimensionSize, ...]):
-  a_type = ir.RankedTensorType(a.type)
-  assert len(a_shape_vals) >= 2
-  batch_dims_vals = a_shape_vals[:-2]
-  num_bd = len(a_shape_vals) - 2
-  m, n = a_shape_vals[-2:]
-  fn = prepare_lapack_call(fn_base="getrf", dtype=dtype)
-
-  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
-
-  i32_type = ir.IntegerType.get_signless(32)
-  shape_type_pairs: Sequence[ShapeTypePair] = [
-      (a_shape_vals, a_type.element_type),
-      (batch_dims_vals + (hlo_min(m, n),), i32_type),
-      (batch_dims_vals, i32_type)
-  ]
-  result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
-
-  scalar_layout = []
-  batch_size_val = hlo_s32(1)
-  for b_v in batch_dims_vals:
-    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
-
-  return custom_call(
-      fn,
-      result_types=result_types,
-      operands=[batch_size_val, ensure_hlo_s32(m), ensure_hlo_s32(n), a],
-      operand_layouts=[scalar_layout] * 3 + [layout],
-      result_layouts=[
-        layout,
-        tuple(range(num_bd, -1, -1)),
-        tuple(range(num_bd - 1, -1, -1)),
-      ],
-      operand_output_aliases={3: 0},
-      result_shapes=result_shapes,
-  ).results
 
 # # ?geqrf: QR decomposition
 

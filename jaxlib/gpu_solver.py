@@ -99,58 +99,6 @@ def _real_type(dtype):
   return np.finfo(dtype).dtype
 
 
-# TODO(b/357034884): Remove this function after the forward compat window.
-def _getrf_hlo(platform, gpu_blas, gpu_solver, dtype, a):
-  """LU decomposition."""
-  a_type = ir.RankedTensorType(a.type)
-  dims = a_type.shape
-  assert len(dims) >= 2
-  m, n = dims[-2:]
-  batch_dims = tuple(dims[:-2])
-  num_bd = len(batch_dims)
-  i32_type = ir.IntegerType.get_signless(32)
-  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
-
-  if not gpu_blas:
-    raise GpuLibNotLinkedError()
-
-  batch = math.prod(batch_dims)
-  if batch > 1 and m == n and m // batch <= 128:
-    lwork, opaque = gpu_blas.build_getrf_batched_descriptor(
-      np.dtype(dtype), batch, m)
-    workspace = ir.RankedTensorType.get([lwork], ir.IntegerType.get_signless(8))
-    kernel = f"{platform}blas_getrf_batched"
-  else:
-    lwork, opaque = gpu_solver.build_getrf_descriptor(
-        np.dtype(dtype), batch, m, n)
-    workspace = ir.RankedTensorType.get([lwork], a_type.element_type)
-    kernel = f"{platform}solver_getrf"
-
-  out = custom_call(
-      kernel,
-      result_types=[
-        a.type,
-        ir.RankedTensorType.get(batch_dims + (min(m, n),), i32_type),
-        ir.RankedTensorType.get(batch_dims, i32_type),
-        workspace,
-      ],
-      operands=[a],
-      backend_config=opaque,
-      operand_layouts=[layout],
-      result_layouts=[
-        layout,
-        tuple(range(num_bd, -1, -1)),
-        tuple(range(num_bd - 1, -1, -1)),
-        [0],
-      ],
-      operand_output_aliases={0: 0}).results
-  return out[:3]
-
-
-cuda_getrf = partial(_getrf_hlo, "cu", _cublas, _cusolver)
-rocm_getrf = partial(_getrf_hlo, "hip", _hipblas, _hipsolver)
-
-
 def _geqrf_hlo(platform, gpu_solver, dtype, a):
   """QR decomposition."""
   a_type = ir.RankedTensorType(a.type)

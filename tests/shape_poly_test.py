@@ -2828,11 +2828,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
           "lu", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}",
           lax.linalg.lu,
           arg_descriptors=[RandArg(shape, dtype)],
-          polymorphic_shapes=[poly],
-          # TODO(b/360788062): Remove once the forward compatibility window is
-          # closed.
-          override_jax_config_flags={
-              "jax_export_ignore_forward_compatibility": True})
+          polymorphic_shapes=[poly])
       for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
       for shape, poly in [
           ((5, 4), "m, n"),
@@ -3478,14 +3474,7 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
     # polymorphism for some new primitives as we add them. This check is
     # required so that we can still run the test suite with older versions of
     # jaxlib.
-    version_gated = {
-        # TODO(danfm): remove these checks when jaxlib 0.4.32 is released.
-        "lu_pivots_to_permutation:gpu": (0, 4, 32),
-        "lu_pivots_to_permutation_error:gpu": (0, 4, 32),
-        "lu:gpu": (0, 4, 32),
-        "vmap_lu:gpu": (0, 4, 32),
-        "vmap_custom_linear_solve:gpu": (0, 4, 32),
-    }
+    version_gated = {}
     if version_gated.get(name_device_key, jaxlib_version) > jaxlib_version:
       raise unittest.SkipTest(f"shape polymorphism not supported by jaxlib version {jaxlib_version}")
 
@@ -3543,12 +3532,6 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
     # TPU precision is a little lower since we swap the order of matmul operands.
     if "cholesky" in harness.group_name and jtu.test_device_matches(["tpu"]):
       harness.tol = 5e-5
-
-    # TODO(b/360788062): Clean up after the compatibility period.
-    if harness.group_name in [
-        "lu", "vmap_lu", "custom_linear_solve", "vmap_custom_linear_solve"
-        ] and jtu.test_device_matches(["gpu"]):
-      config_flags = {**config_flags, "jax_export_ignore_forward_compatibility": True}
 
     with jtu.global_config_context(**config_flags):
       harness.run_test(self)
