@@ -137,6 +137,33 @@ class PallasCallTest(PallasTest):
         jnp.repeat(jnp.repeat(jnp.arange(4), 16)[None], 16, axis=0),
     )
 
+  def test_add_one_grid_pipelined_sequential_invariant_output(self):
+    @functools.partial(
+        pl.pallas_call,
+        in_specs=[pl.BlockSpec((32, 16), lambda i, j: (i, j))],
+        out_specs=pl.BlockSpec((32, 16), lambda i, j: (i, 0)),
+        out_shape=jax.ShapeDtypeStruct([32 * 2, 64], jnp.float32),
+        compiler_params=plgpu.GPUCompilerParams(
+            dimension_semantics=["parallel", "sequential"],
+            max_concurrent_steps=2,
+        ),
+        grid=(2, 4),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1.0
+
+    x = jnp.arange(32 * 2 * 64).reshape((32 * 2, 64)).astype(jnp.float32)
+    y = jnp.empty_like(x)
+    for i in range(2):
+      i_slice = slice(32 * i, 32 * (i + 1))
+      for j in range(4):
+        j_slice = slice(16 * j, 16 * (j + 1))
+        y = y.at[i_slice, :16].set(x[i_slice, j_slice] + 1)
+
+    # We only compare the elements in the first 16 columns, because the rest
+    # are never written to.
+    np.testing.assert_array_equal(kernel(x)[:, :16], y[:, :16])
+
   def test_add_one_with_async_copy_smem_to_gmem(self):
     @functools.partial(
         pl.pallas_call,

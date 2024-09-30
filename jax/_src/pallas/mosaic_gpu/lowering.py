@@ -529,8 +529,8 @@ def lower_jaxpr_to_module(
           args,
       )
 
-      # TODO(apaszke): Elide this if we're not going to perform any stores
-      mgpu.commit_shared()
+      if not all(out_sequential_invariant):
+        mgpu.commit_shared()
       new_store_offsets = []
       for idx in range(grid_mapping.num_outputs):
         last_offset = last_store_offsets[idx]
@@ -554,6 +554,8 @@ def lower_jaxpr_to_module(
 
     # Outputs invariant to the sequential axis are never written from inside the
     # loop. This is the only place where we store them.
+    if all(out_sequential_invariant):
+      mgpu.commit_shared()
     last_slot = _as_index((num_steps - 1) % max_concurrent_steps)
     for idx in range(grid_mapping.num_outputs):
       if out_sequential_invariant[idx]:
