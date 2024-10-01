@@ -2432,9 +2432,43 @@ def _normalize_float(x):
   return lax.bitcast_convert_type(x1, int_type), x2
 
 
-@implements(np.ldexp, module='numpy')
 @jit
 def ldexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  """Compute x1 * 2 ** x2
+
+  JAX implementation of :func:`numpy.ldexp`.
+
+  Note that XLA does not provide an ``ldexp`` operation, so this
+  is implemneted in JAX via a standard multiplication and
+  exponentiation.
+
+  Args:
+    x1: real-valued input array.
+    x2: integer input array. Must be broadcast-compatible with ``x1``.
+
+  Returns:
+    ``x1 * 2 ** x2`` computed element-wise.
+
+  See also:
+    - :func:`jax.numpy.frexp`: decompose values into mantissa and exponent.
+
+  Examples:
+    >>> x1 = jnp.arange(5.0)
+    >>> x2 = 10
+    >>> jnp.ldexp(x1, x2)
+    Array([   0., 1024., 2048., 3072., 4096.], dtype=float32)
+
+    ``ldexp`` can be used to reconstruct the input to ``frexp``:
+
+    >>> x = jnp.array([2., 3., 5., 11.])
+    >>> m, e = jnp.frexp(x)
+    >>> m
+    Array([0.5   , 0.75  , 0.625 , 0.6875], dtype=float32)
+    >>> e
+    Array([2, 2, 3, 4], dtype=int32)
+    >>> jnp.ldexp(m, e)
+    Array([ 2.,  3.,  5., 11.], dtype=float32)
+  """
   check_arraylike("ldexp", x1, x2)
   x1_dtype = dtypes.dtype(x1)
   x2_dtype = dtypes.dtype(x2)
@@ -2447,9 +2481,38 @@ def ldexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   return _where(isinf(x1) | (x1 == 0), x1, x)
 
 
-@implements(np.frexp, module='numpy')
 @jit
 def frexp(x: ArrayLike, /) -> tuple[Array, Array]:
+  """Split floating point values into mantissa and twos exponent.
+
+  JAX implementation of :func:`numpy.frexp`.
+
+  Args:
+    x: real-valued array
+
+  Returns:
+    A tuple ``(mantissa, exponent)`` where ``mantissa`` is a floating point
+    value between -1 and 1, and ``exponent`` is an integer such that
+    ``x == mantissa * 2 ** exponent``.
+
+  See also:
+    - :func:`jax.numpy.ldexp`: compute the inverse of ``frexp``.
+
+  Examples:
+    Split values into mantissa and exponent:
+
+    >>> x = jnp.array([1., 2., 3., 4., 5.])
+    >>> m, e = jnp.frexp(x)
+    >>> m
+    Array([0.5  , 0.5  , 0.75 , 0.5  , 0.625], dtype=float32)
+    >>> e
+    Array([1, 2, 2, 3, 3], dtype=int32)
+
+    Reconstruct the original array:
+
+    >>> m * 2 ** e
+    Array([1., 2., 3., 4., 5.], dtype=float32)
+  """
   check_arraylike("frexp", x)
   x, = promote_dtypes_inexact(x)
   if dtypes.issubdtype(x.dtype, np.complexfloating):
