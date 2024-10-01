@@ -394,16 +394,16 @@ class PallasCallTest(PallasTest):
 
   def test_swizzled_blockspec_shapes(self):
 
+    spec = plgpu.GPUBlockSpec(
+        (128, 64),
+        lambda *i: i,
+        transforms=plgpu.TilingTransform((64, 64)),
+        swizzle=128,
+    )
     @functools.partial(
         pl.pallas_call,
-        in_specs=[
-            plgpu.GPUBlockSpec(
-                (128, 64),
-                lambda *i: i,
-                transforms=plgpu.TilingTransform((64, 64)),
-                swizzle=128,
-            ),
-        ],
+        in_specs=[spec],
+        out_specs=spec,
         out_shape=jax.ShapeDtypeStruct((128, 64), jnp.float16),
         grid=(2, 2),
     )

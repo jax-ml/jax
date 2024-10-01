@@ -287,10 +287,10 @@ def lower_jaxpr_to_module(
       [grid_mapping.num_inputs],
   )
 
-  in_structs_gmem = [*grid_mapping.in_shapes]
   in_block_mappings, out_block_mappings = util.split_list(
       block_mappings, [grid_mapping.num_inputs]
   )
+  in_structs_gmem = [*grid_mapping.in_shapes]
   # TODO(apaszke): We can shrink allocation if max_concurrent_steps is more than the actual number of steps.
   # We allocate the fully transformed shapes here. All primitives have seen the
   # inverse transformation stack and will understand how to handle it.
@@ -307,15 +307,13 @@ def lower_jaxpr_to_module(
   ]
   in_gmem_transforms = [
       cast(gpu_core.MemoryRefTransform, bm.transforms)
-      for bm in grid_mapping.block_mappings[: grid_mapping.num_inputs]
+      for bm in in_block_mappings
   ]
   out_structs_gmem = [*grid_mapping.out_shapes]
-  # TODO(justinfu): Implement output Memref transforms
-  for bm in block_mappings[grid_mapping.num_inputs :]:
-    if bm.transforms:
-      raise NotImplementedError("Output transforms are not supported")
   out_structs_smem = [
-      jax.ShapeDtypeStruct([max_concurrent_steps, *bm.block_shape], s.dtype)
+      jax.ShapeDtypeStruct(
+          [max_concurrent_steps, *bm.transformed_block_aval.shape], s.dtype
+      )
       if in_smem
       else None
       for bm, in_smem, s in zip(
@@ -323,6 +321,10 @@ def lower_jaxpr_to_module(
           out_in_smem,
           grid_mapping.out_shapes,
       )
+  ]
+  out_gmem_transforms = [
+      cast(gpu_core.MemoryRefTransform, bm.transforms)
+      for bm in out_block_mappings
   ]
 
   def body(launch_ctx: mgpu.LaunchContext, *buffers: ir.Value):
@@ -483,12 +485,21 @@ def lower_jaxpr_to_module(
         do_store = arith_dialect.andi(
             is_memory_thread, arith_dialect.ori(base_offset_changed, is_last_step)
         )
-      # TODO(slebedev): Support 128-byte swizzling, once we can lower matmuls.
+
+      swizzle = None
+      pl_transforms = out_gmem_transforms[idx]
+      if pl_transforms and isinstance(
+          pl_transforms[-1], gpu_core.SwizzleTransform
+      ):
+        swizzle = pl_transforms[-1].swizzle
+        pl_transforms = pl_transforms[:-1]
+      gmem_transforms = tuple(x.to_gpu_transform() for x in pl_transforms)
       launch_ctx.async_copy(
           src_ref=mgpu.memref_slice(out_buffers_smem[idx], slot),
           dst_ref=out_buffers_gmem[idx],
           gmem_slice=store_slice,
-          swizzle=None,
+          gmem_transform=gmem_transforms,
+          swizzle=swizzle,
           uniform=False,
           predicate=do_store,
       )
