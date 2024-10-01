@@ -667,6 +667,8 @@ pytype_strict_library(
         ":jax",
         ":pallas",
         ":pallas_tpu",
+        "//third_party/py/aqt/jax/v2:aqt_tensor",
+        "//third_party/py/aqt/jax/v2/pallas",
     ] + py_deps("numpy"),
 )
 
