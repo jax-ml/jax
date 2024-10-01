@@ -309,12 +309,6 @@ def lower_jaxpr_to_module(
       cast(gpu_core.MemoryRefTransform, bm.transforms)
       for bm in grid_mapping.block_mappings[: grid_mapping.num_inputs]
   ]
-  in_swizzles = map(
-      lambda bm: bm.swizzle
-      if isinstance(bm, gpu_core.GPUBlockMapping)
-      else None,
-      grid_mapping.block_mappings[: grid_mapping.num_inputs],
-  )
   out_structs_gmem = [*grid_mapping.out_shapes]
   # TODO(justinfu): Implement output Memref transforms
   for bm in block_mappings[grid_mapping.num_inputs :]:
@@ -435,15 +429,21 @@ def lower_jaxpr_to_module(
       if not in_in_smem[idx]:
         return
 
-      # TODO(slebedev): Support 128-byte swizzling, once we can lower matmuls.
-      gmem_transforms = (x.to_gpu_transform() for x in in_gmem_transforms[idx])
+      swizzle = None
+      pl_transforms = in_gmem_transforms[idx]
+      if pl_transforms and isinstance(
+          pl_transforms[-1], gpu_core.SwizzleTransform
+      ):
+        swizzle = pl_transforms[-1].swizzle
+        pl_transforms = pl_transforms[:-1]
+      gmem_transforms = tuple(x.to_gpu_transform() for x in pl_transforms)
       launch_ctx.async_copy(
           src_ref=in_buffers_gmem[idx],
           dst_ref=mgpu.memref_slice(in_buffers_smem[idx], slot),
           gmem_slice=gmem_slice(step, in_block_mappings[idx]),
           barrier=barriers[slot],
-          gmem_transform=tuple(gmem_transforms),
-          swizzle=in_swizzles[idx],
+          gmem_transform=gmem_transforms,
+          swizzle=swizzle,
           arrive=False,  # The caller must do ``arrive_expect_tx`` manually!
           uniform=False,
           predicate=is_memory_thread,

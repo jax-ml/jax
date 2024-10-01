@@ -149,6 +149,55 @@ class TransposeRef(Transform):
 
 
 @dataclasses.dataclass(frozen=True)
+class SwizzleTransform(MemoryRefTransform):
+  swizzle: int
+
+  def __post_init__(self):
+    if self.swizzle not in {32, 64, 128}:
+      raise ValueError(
+          f"Swizzle {self.swizzle} is not supported. Only 32, 64 and 128 are"
+          " accepted."
+      )
+
+  def undo(self, ref: pallas_core.TransformedRef) -> pallas_core.TransformedRef:
+    return dataclasses.replace(
+        ref, transforms=(*ref.transforms, UnswizzleRef(self.swizzle))
+    )
+
+  def to_gpu_transform(self) -> mgpu.MemRefTransform:
+    raise RuntimeError("SwizzleTransform does not have a GPU transform.")
+
+  def __call__(self, aval: jax_core.ShapedArray) -> jax_core.ShapedArray:
+    swizzle_elems = self.swizzle // aval.dtype.itemsize
+    if swizzle_elems != aval.shape[-1]:
+      raise ValueError(
+          f"Swizzle {self.swizzle} requires the trailing dimension to be of"
+          f" size {swizzle_elems}, but got shape: {aval.shape}"
+      )
+    return aval
+
+
+@tree_util.register_pytree_node_class
+@dataclasses.dataclass(frozen=True)
+class UnswizzleRef(Transform):
+  swizzle: int
+
+  def transform_shape(self, shape):
+    return shape
+
+  def transform_dtype(self, dtype):
+    return dtype
+
+  def tree_flatten(self):
+    return (), (self.swizzle,)
+
+  @classmethod
+  def tree_unflatten(cls, metadata, arrays):
+    assert not arrays
+    return cls(*metadata)
+
+
+@dataclasses.dataclass(frozen=True)
 class GPUBlockMapping(pallas_core.BlockMapping):
   swizzle: int | None = None
 
@@ -179,6 +228,8 @@ class GPUBlockSpec(pallas_core.BlockSpec):
     transforms = self.transforms
     if not isinstance(transforms, tuple):
       transforms = (transforms,)
+    if self.swizzle is not None:
+      transforms += (SwizzleTransform(self.swizzle),)
     block_inner_aval = bm.block_aval.inner_aval
     for t in transforms:
       block_inner_aval = t(block_inner_aval)

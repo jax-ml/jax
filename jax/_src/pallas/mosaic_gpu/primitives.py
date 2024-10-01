@@ -119,7 +119,7 @@ effects.control_flow_allowed_effects.add_type(_WGMMAPipelineEffect)
 wgmma_ref_p = jax_core.Primitive("wgmma_ref")
 wgmma_ref_p.multiple_results = True
 
-def wgmma(acc, a, b, *, swizzle: int = 128):
+def wgmma(acc, a, b):
   """Asynchronous warp group matmul.
 
   The sm90 wgmma instruction, essentially acc[...] += a @ b. Requires
@@ -155,20 +155,31 @@ def wgmma(acc, a, b, *, swizzle: int = 128):
   if not isinstance(b, pallas_core.TransformedRef):
     raise ValueError("WGMMA rhs must be a tiled reference.")
 
-  elems_128b = swizzle // dtype.itemsize
-  if a.transforms != (gpu_core.UntileRef((64, elems_128b)),):
+  # Infer swizzle from a.
+  if not a.transforms or not isinstance(
+      (swizzle_transform := a.transforms[0]), gpu_core.UnswizzleRef
+  ):
+    raise ValueError("WGMMA lhs must be a tiled and swizzled reference.")
+
+  swizzle = swizzle_transform.swizzle
+  swizzle_elems = swizzle // dtype.itemsize
+  if a.transforms[1:] != (gpu_core.UntileRef((64, swizzle_elems)),):
     raise ValueError(
-        f"WGMMA lhs must be tiled with 64x{elems_128b} tiles for element type"
+        f"WGMMA lhs must be tiled with 64x{swizzle_elems} tiles for element type"
         f" {dtype}."
     )
+
   rhs_transpose_transform = gpu_core.TransposeRef((1, 0, 2, 3))
-  rhs_tiling = gpu_core.UntileRef((elems_128b, elems_128b))
-  if not (
-      rhs_transpose := (b.transforms == (rhs_transpose_transform, rhs_tiling))
-  ) and not (b.transforms == (rhs_tiling,)):
+  rhs_tiling = gpu_core.UntileRef((swizzle_elems, swizzle_elems))
+  if b.transforms == (swizzle_transform, rhs_tiling):
+    rhs_transpose = False
+  elif b.transforms == (swizzle_transform, rhs_transpose_transform, rhs_tiling):
+    rhs_transpose = True
+  else:
     raise ValueError(
-        f"WGMMA rhs must be tiled with {elems_128b}x{elems_128b} tiles for"
-        f" element type {dtype} (and optionally transposed)."
+        f"WGMMA rhs must have {swizzle=} and be tiled with"
+        f" {swizzle_elems}x{swizzle_elems} tiles for element type {dtype} (and"
+        " optionally transposed)."
     )
 
   return wgmma_ref_p.bind(acc, a.ref, b.ref, swizzle=swizzle, rhs_transpose=rhs_transpose)
