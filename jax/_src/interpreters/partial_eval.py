@@ -1668,10 +1668,12 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
   sentinel = object()
   jaxpr_effects = set()
   all_vars = {v: i for i, v in enumerate(it.chain(constvars, invars))}
+  mut_arrays = set()
   for eqn in eqns:
     if eqn.primitive is core.mutable_array_p:
       outvar, = eqn.outvars
       all_vars[outvar] = None  # type: ignore
+      mut_arrays.add(outvar)
     for eff in eqn.effects:
       if isinstance(eff, effects.JaxprInputEffect):
         if eff.input_index >= len(eqn.invars):
@@ -1681,6 +1683,8 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
               "\n Jaxpr: "
               f"{core.Jaxpr(constvars, invars, outvars, eqns, set())}")
         invar = eqn.invars[eff.input_index]
+        if invar in mut_arrays:
+          continue
         if (input_index := all_vars.get(invar, sentinel)) is sentinel:
           raise ValueError(
                 f"`JaxprInputEffect` {eff} does not have "

@@ -2906,6 +2906,7 @@ def _check_jaxpr(
   # Check each eqn.
   sentinel = object()
   in_idx = {v: i for i, v in enumerate(it.chain(jaxpr.constvars, jaxpr.invars))}
+  mut_arrays = set()
   for eqn_idx, eqn in enumerate(jaxpr.eqns):
     prim = eqn.primitive
     try:
@@ -2930,6 +2931,7 @@ def _check_jaxpr(
       if prim is mutable_array_p:
         outvar, = eqn.outvars
         in_idx[outvar] = None  # type: ignore
+        mut_arrays.add(outvar)
       if eqn.effects != eqn_effects:
         raise JaxprTypeError("Inferred effects do not match equation effects. "
                              f"Equation effects: {eqn.effects}. "
@@ -2937,6 +2939,8 @@ def _check_jaxpr(
       for eff in eqn.effects:
         if isinstance(eff, effects.JaxprInputEffect):
           eqn_invar = eqn.invars[eff.input_index]
+          if eqn_invar in mut_arrays:
+            continue
           if (jaxpr_index := in_idx.get(eqn_invar, sentinel)) is sentinel:
             raise JaxprTypeError(
                 "Invalid `JaxprInputEffect`: must correspond to a jaxpr invar")
