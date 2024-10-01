@@ -32,48 +32,47 @@ from functools import partial
 import importlib
 import math
 import operator
+import string
 import types
-from typing import (overload, Any, Literal, NamedTuple,
-                    Protocol, TypeVar, Union)
+from typing import ( Any, Literal, NamedTuple,
+                    Protocol, TypeVar, Union,overload)
 import warnings
 
-import numpy as np
-import opt_einsum
-
 import jax
-from jax import jit
 from jax import errors
+from jax import jit
 from jax import lax
-from jax.sharding import Sharding, SingleDeviceSharding
-from jax.tree_util import tree_leaves, tree_flatten, tree_map
-
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
-from jax._src.custom_derivatives import custom_jvp
 from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import xla_bridge
 from jax._src.api_util import _ensure_index_tuple
 from jax._src.array import ArrayImpl
-from jax._src.core import ShapedArray, ConcreteArray
-from jax._src.lax.lax import (_array_copy, _sort_lt_comparator,
-                              _sort_le_comparator, PrecisionLike)
+from jax._src.core import ConcreteArray, ShapedArray
+from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax as lax_internal
+from jax._src.lax.lax import ( PrecisionLike,_array_copy,
+                              _sort_le_comparator, _sort_lt_comparator)
 from jax._src.lib import xla_client as xc
 from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.numpy.vectorize import vectorize
 from jax._src.typing import (
-  Array, ArrayLike, DeprecatedArg, DimSize, DuckTypedArray,
-  DType, DTypeLike, Shape, StaticScalar,
+  Array, ArrayLike,
+  DType, DTypeLike, DeprecatedArg, DimSize, DuckTypedArray, Shape, StaticScalar,
 )
-from jax._src.util import (unzip2, subvals, safe_zip,
-                           ceil_of_ratio, partition_list,
+from jax._src.util import (
+                           NumpyComplexWarning,
                            canonicalize_axis as _canonicalize_axis,
-                           NumpyComplexWarning)
+                           ceil_of_ratio, partition_list, safe_zip, subvals,unzip2)
+from jax.sharding import Sharding, SingleDeviceSharding
+from jax.tree_util import tree_flatten, tree_leaves, tree_map
+import numpy as np
+import opt_einsum
 
 for pkg_name in ['jax_cuda12_plugin', 'jax.jaxlib']:
   try:
@@ -10333,6 +10332,26 @@ def take_along_axis(
   out_shape = lax.broadcast_shapes(idx_shape, arr_shape)
   if axis_size == 0:
     return zeros(out_shape, a.dtype)
+
+  if mode == "one_hot":
+    indices = _normalize_index(indices, axis_size)
+    hot = jax.nn.one_hot(indices, axis_size, dtype=bool_)
+    if a.ndim == 1:
+      return einsum("...b,b->...", hot, a, preferred_element_type=a.dtype)
+    if axis_int > len(string.ascii_letters) - 2:
+      raise ValueError(
+          "One Hot indexing is only supported for up to 50 leading dimensions."
+      )
+    labels = "".join([string.ascii_letters[i] for i in range(axis_int)])
+    eq = labels + "y...z," + labels + "z...->" + labels + "y..."
+    return einsum(
+        eq,
+        hot,
+        a,
+        precision=lax.Precision.HIGHEST,
+        preferred_element_type=a.dtype,
+    )
+
   index_dims = [i for i, idx in enumerate(idx_shape) if i == axis_int or not core.definitely_equal(idx, 1)]
 
   gather_index_shape = tuple(np.array(out_shape)[index_dims]) + (1,)

@@ -267,6 +267,7 @@ class GatherScatterMode(enum.Enum):
   CLIP = enum.auto()
   FILL_OR_DROP = enum.auto()
   PROMISE_IN_BOUNDS = enum.auto()
+  ONE_HOT = enum.auto()
 
   @staticmethod
   def from_any(s: str | GatherScatterMode | None):
@@ -278,6 +279,8 @@ class GatherScatterMode(enum.Enum):
       return GatherScatterMode.FILL_OR_DROP
     if s == "promise_in_bounds":
       return GatherScatterMode.PROMISE_IN_BOUNDS
+    if s == "one_hot":
+      return GatherScatterMode.ONE_HOT
     else:
       raise ValueError(f'Unknown gather mode "{s}"')
 
