@@ -343,8 +343,8 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "tpu_pallas_mesh_test",
-    srcs = ["tpu_pallas_mesh_test.py"],
+    name = "tpu_pallas_state_test",
+    srcs = ["tpu_pallas_state_test.py"],
     enable_backends = ["tpu"],
     tags = [
         "noasan",

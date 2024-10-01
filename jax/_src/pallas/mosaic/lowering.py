@@ -2762,8 +2762,10 @@ lowering_rules[tpu_primitives.dma_start_p] = _dma_start_lowering_rule
 def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
                             device_id_type: tpu_primitives.DeviceIdType):
   del device_id_type
-  sem, sem_transforms, ref, transforms = tree_util.tree_unflatten(tree, args)
-  sem_aval, _, ref_aval, _ = tree_util.tree_unflatten(tree, ctx.avals_in)
+  (_, _, ref, transforms, sem, sem_transforms, _, _, _) = tree_util.tree_unflatten(
+      tree, args)
+  (_, _, ref_aval, _, sem_aval, _, _, _, _) = tree_util.tree_unflatten(
+      tree, ctx.avals_in)
   block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)
   ref_block_shape = block_shapes[2]
   ref, _ = _transform_ref(ref, ref_aval.dtype, ref_block_shape, transforms)
