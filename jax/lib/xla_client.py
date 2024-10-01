@@ -15,7 +15,6 @@
 from jax._src.lib import xla_client as _xc
 
 dtype_to_etype = _xc.dtype_to_etype
-execute_with_python_values = _xc.execute_with_python_values
 get_topology_for_devices = _xc.get_topology_for_devices
 heap_profile = _xc.heap_profile
 mlir_api_version = _xc.mlir_api_version

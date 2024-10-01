@@ -40,7 +40,6 @@ from jax._src import path as pathlib
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.compilation_cache_interface import CacheInterface
-from jax._src.lib import xla_client
 from jax.experimental.pjit import pjit
 from jax.sharding import PartitionSpec as P
 import numpy as np
@@ -177,15 +176,11 @@ class CompilationCacheTest(CompilationCacheTestCase):
     executable_retrieved, compile_time_retrieved = cc.get_executable_and_time(
         key, compile_options, backend)
     inputs_to_executable = (
-        np.array(1, dtype=np.int32),
-        np.array(2, dtype=np.int32),
+        jnp.array(1, dtype=np.int32),
+        jnp.array(2, dtype=np.int32),
     )
-    expected = xla_client.execute_with_python_values(
-        executable, inputs_to_executable, backend
-    )
-    actual = xla_client.execute_with_python_values(
-        executable_retrieved, inputs_to_executable, backend
-    )
+    expected = executable.execute(inputs_to_executable)
+    actual = executable_retrieved.execute(inputs_to_executable)
     self.assertEqual(expected, actual)
     self.assertEqual(FAKE_COMPILE_TIME, compile_time_retrieved)
 
