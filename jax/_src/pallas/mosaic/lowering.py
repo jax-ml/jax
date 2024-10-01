@@ -1617,7 +1617,12 @@ def _convert_helper(x, *, to_dtype):
       x = x.astype(jnp.float32)
     return x.astype(to_dtype)
   if jnp.issubdtype(from_dtype, jnp.floating):
-    if jnp.issubdtype(to_dtype, jnp.signedinteger):
+    if jnp.issubdtype(to_dtype, np.dtype("bool")):
+      # Cast to float32 rather than int32 because 0 < |x| < 1 rounds to 0,
+      # leading to false in bool. However, convert_element_type(x, bool)
+      # returns true. It's handled correctly when x is float32.
+      x = x.astype(jnp.float32)
+    elif jnp.issubdtype(to_dtype, jnp.signedinteger):
       if from_dtype.itemsize < 4:
         x = x.astype(jnp.float32)
       if to_dtype.itemsize < 4:
@@ -1625,10 +1630,7 @@ def _convert_helper(x, *, to_dtype):
         minval, maxval = jnp.iinfo(to_dtype).min, jnp.iinfo(to_dtype).max
         x = jnp.clip(x, minval, maxval)
         return x.astype(jnp.int32).astype(to_dtype)
-      return x.astype(to_dtype)
-    elif jnp.issubdtype(to_dtype, np.dtype("bool")):
-      x = x.astype(jnp.int32)
-    return x.astype(jnp.float32)
+    return x.astype(to_dtype)
   raise NotImplementedError(f"Unsupported cast: {from_dtype} -> {to_dtype}")
 
 def _convert_element_type_lowering_rule(
@@ -1675,24 +1677,32 @@ def _convert_element_type_lowering_rule(
   ):
     return arith.extui(out_type, x)
   elif (
-      jnp.issubdtype(old_dtype, jnp.integer)
+      (
+          (is_float := jnp.issubdtype(old_dtype, jnp.floating))
+          or jnp.issubdtype(old_dtype, jnp.integer)
+      )
       and new_dtype == jnp.bool_
       and old_dtype.itemsize == 4
   ):
-    pred = _cmpi_lowering_types[lax.ne_p]
-    predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
+    # Lower float32 or (u)int32 -> bool to cmp neq %in, 0
     const_type = _dtype_to_ir_type(old_dtype)
-    const_zero = ir.IntegerAttr.get(const_type, 0)
+    if is_float:
+      pred = _cmpf_lowering_types[lax.ne_p]
+      const_zero = ir.FloatAttr.get(const_type, 0)
+      op = arith.CmpFOp
+    else:
+      pred = _cmpi_lowering_types[lax.ne_p]
+      const_zero = ir.IntegerAttr.get(const_type, 0)
+      op = arith.CmpIOp
+    predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
     if in_aval.shape:
       in_type = aval_to_ir_type(in_aval, is_kernel_boundary=False)
       vector_zeros = arith.ConstantOp(
           in_type,
           ir.DenseElementsAttr.get_splat(in_type, const_zero),
       )
-      return arith.CmpIOp(predicate, x, vector_zeros).result
-    return arith.CmpIOp(
-        predicate, x, arith.ConstantOp(const_type, const_zero)
-    ).result
+      return op(predicate, x, vector_zeros).result
+    return op(predicate, x, arith.ConstantOp(const_type, const_zero)).result
   return lower_fun(functools.partial(_convert_helper, to_dtype=new_dtype),
                    multiple_results=False)(ctx, x)
 
