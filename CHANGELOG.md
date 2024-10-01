@@ -65,6 +65,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     is only a tree-prefix of itself. To preserve the current behavior, you can
     ask `jax.tree.map` to treat `None` as a leaf value by writing:
     `jax.tree.map(lambda x, y: None if x is None else f(x, y), a, b, is_leaf=lambda x: x is None)`.
+  * `jax.sharding.XLACompatibleSharding` has been removed. Please use
+    `jax.sharding.Sharding`.
 
 * Bug fixes
   * Fixed a bug where {func}`jax.numpy.cumsum` would produce incorrect outputs
