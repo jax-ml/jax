@@ -2020,6 +2020,13 @@ def _cos_lowering_rule(ctx: LoweringRuleContext, x):
 lowering_rules[lax.cos_p] = _cos_lowering_rule
 
 
+def _tan_lowering_rule(ctx: LoweringRuleContext, x):
+  return math.TanOp(x).result
+
+
+lowering_rules[lax.tan_p] = _tan_lowering_rule
+
+
 def _tanh_lowering_rule(ctx: LoweringRuleContext, x):
   return math.TanhOp(x).result
 

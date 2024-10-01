@@ -776,7 +776,7 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["tpu"]) and fn in (
         jnp.acos, jnp.acosh, jnp.asin, jnp.asinh, jnp.atan, jnp.atanh,
         jnp.cbrt, jnp.ceil, jnp.cosh, lax.clz, jnp.expm1,
-        jnp.floor, lax.population_count, jnp.sinh, jnp.tan,
+        jnp.floor, lax.population_count, jnp.sinh,
     ):
       self.skipTest(f"{fn.__name__} not implemented on TPU")
 
