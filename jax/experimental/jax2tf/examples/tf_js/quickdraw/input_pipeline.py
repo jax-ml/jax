@@ -39,7 +39,7 @@ def download_dataset(dir_path, nb_classes):
       continue
     with open(cls_file_path, "wb") as save_file:
       try:
-        response = requests.get(url + cls_filename.replace('_', ' '))
+        response = requests.get(url + cls_filename.replace('_', ' '), timeout=60)
         save_file.write(response.content)
         print(f'Successfully fetched {cls_filename}')
       except:
