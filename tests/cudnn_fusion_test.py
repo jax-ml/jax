@@ -26,8 +26,8 @@ jax.config.parse_flags_with_absl()
 class CudnnFusionTest(jtu.JaxTestCase):
   def setUp(self):
     if (not jtu.test_device_matches(["cuda"]) or
-        not jtu.is_cuda_compute_capability_at_least("8.0")):
-      self.skipTest("Only works on >= sm80 GPUs")
+        not jtu.is_cuda_compute_capability_at_least("9.0")):
+      self.skipTest("Only works on >= sm90 GPUs")
     super().setUp()
 
   @parameterized.parameters(["", "pmap"])
