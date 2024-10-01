@@ -568,10 +568,10 @@ _HOST_CALLBACK_OUTFEED = config.bool_flag(
 )
 _HOST_CALLBACK_LEGACY = config.bool_flag(
     'jax_host_callback_legacy',
-    config.bool_env('JAX_HOST_CALLBACK_LEGACY', True),
+    config.bool_env('JAX_HOST_CALLBACK_LEGACY', False),
     help=(
         'Use old implementation of host_callback, documented in the module docstring.'
-        'If False, use the jax.experimental.io_callback implementation. '
+        'If False, use the new jax.experimental.io_callback implementation. '
         'See https://github.com/jax-ml/jax/issues/20385.'
     )
 )

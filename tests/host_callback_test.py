@@ -349,6 +349,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       ( 6.00 9.00 )""")
 
   def test_tap_eval_exception(self):
+    self.supported_only_in_legacy_mode()
     if not hcb._HOST_CALLBACK_OUTFEED.value:
       raise SkipTest("TODO: implement error handling for customcall")
 
@@ -852,6 +853,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     self.assertEqual(100, count)
 
   def test_tap_jit_tap_exception(self):
+    self.supported_only_in_legacy_mode()
     if not hcb._HOST_CALLBACK_OUTFEED.value:
       raise SkipTest("TODO: implement error handling for customcall")
     # Simulate a tap error

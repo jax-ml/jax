@@ -27,6 +27,15 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
       that directly accesses shards accordingly. The rank of the per-shard-shape
       now matches that of the global shape which is the same behavior as jit.
       This avoids costly reshapes when passing results from pmap into jit.
+  * `jax.experimental.host_callback` has been deprecated since March 2024, with
+    JAX version 0.4.26. Now we set the default value of the
+    `--jax_host_callback_legacy` configuration value to `True`, which means that
+    if your code uses `jax.experimental.host_callback` APIs, those API calls
+    will be implemented in terms of the new `jax.experimental.io_callback` API.
+    If this breaks your code, for a very limited time, you can set the
+    `--jax_host_callback_legacy` to `True`. Soon we will remove that
+    configuration option, so you should instead transition to using the
+    new JAX callback APIs. See {jax-issue}`#20385` for a discussion.
 
 * Deprecations
   * In {func}`jax.numpy.trim_zeros`, non-arraylike arguments or arraylike
