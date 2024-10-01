@@ -97,7 +97,7 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x + 1.0)
 
-  @parameterized.product(max_concurrent_steps=[1, 2, 3, 4])
+  @parameterized.product(max_concurrent_steps=[1, 2, 3, 4, 16])
   def test_add_one_grid_pipelined(self, max_concurrent_steps):
 
     @functools.partial(
