@@ -1010,8 +1010,8 @@ def _debug_callback_eager_rule(mesh, *args, callback: Callable[..., Any],
   return []
 eager_rules[debugging.debug_callback_p] = _debug_callback_eager_rule
 
-def _device_put_eager_rule(mesh, *xs, srcs, devices):
-  del mesh, srcs
+def _device_put_eager_rule(mesh, *xs, srcs, devices, copy_semantics):
+  del mesh, srcs, copy_semantics
   for device in devices:
     if device is not None:
       raise ValueError("device_put with explicit device not allowed within "

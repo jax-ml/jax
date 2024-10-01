@@ -1162,12 +1162,13 @@ def _partial_eval_jaxpr_custom_cached(
         map(partial(write, False, False), eqn.outvars)
       elif isinstance(policy, Offloadable):
         # TODO(slebedev): This is a legit error which requires a BUILD fix.
-        from jax._src.dispatch import device_put_p, TransferToMemoryKind  # pytype: disable=import-error
+        from jax._src.dispatch import device_put_p, TransferToMemoryKind, CopySemantics  # pytype: disable=import-error
         resvars = [newvar(v.aval) for v in eqn.outvars]
         outvars_copy = list[Atom](eqn.outvars)
         offload_eqn = core.JaxprEqn(
             outvars_copy, resvars, device_put_p,
-            dict(devices=[TransferToMemoryKind(policy.dst)], srcs=[None]),
+            dict(devices=[TransferToMemoryKind(policy.dst)], srcs=[None],
+                 copy_semantics=[CopySemantics.COPY]),
             set(), source_info_util.new_source_info(),
             JaxprEqnContext(None, False))
         known_eqns.append(offload_eqn)
@@ -1176,7 +1177,8 @@ def _partial_eval_jaxpr_custom_cached(
         residuals.update(resvars)
         reload_eqn = core.JaxprEqn(
             resvars, eqn.outvars, device_put_p,
-            dict(devices=[TransferToMemoryKind(policy.src)], srcs=[None]),
+            dict(devices=[TransferToMemoryKind(policy.src)], srcs=[None],
+                 copy_semantics=[CopySemantics.COPY]),
             set(), source_info_util.new_source_info(),
             JaxprEqnContext(None, False))
         staged_eqns.append(reload_eqn)

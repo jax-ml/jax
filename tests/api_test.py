@@ -450,6 +450,28 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertDeleted(d)
     self.assertDeleted(e)
 
+  def test_device_put_aliasing(self):
+    arr = jax.device_put(np.arange(8), jax.devices()[0])
+    out = jax.device_put(arr, may_alias=True, donate=False)
+    self.assertEqual(id(arr), id(out))
+
+    out = jax.device_put(arr, may_alias=False, donate=False)
+    self.assertNotEqual(id(arr), id(out))
+
+    with self.assertRaisesRegex(
+        ValueError, "may_alias and donate cannot be True at the same time."):
+      jax.device_put(arr, may_alias=True, donate=True)
+
+    out = jax.device_put(arr,
+                         jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+                         may_alias=True, donate=False)
+    self.assertEqual(id(arr), id(out))
+
+    out = jax.device_put(arr,
+                         jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+                         may_alias=False, donate=False)
+    self.assertNotEqual(id(arr), id(out))
+
   @parameterized.named_parameters(
       ("argnums", "donate_argnums", 0),
       ("argnames", "donate_argnames", 'x'),
