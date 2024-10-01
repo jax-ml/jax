@@ -233,17 +233,6 @@ class OpsTest(PallasBaseTest):
 
     assert (run(cond, lhs, rhs) == lhs).all()
 
-  def test_offset_oob(self):
-    # TODO(b/342235360): Remove this test once we have a better way to handle
-    #                    out-of-first-tile offsets.
-    def body(x_ref, o_ref):
-      o_ref[...] = x_ref[...][:, 130:230]
-
-    out = jax.ShapeDtypeStruct((8, 100), jnp.int16)
-    x = jnp.arange(8 * 256, dtype=jnp.int16).reshape((8, 256))
-    result = self.pallas_call(body, out_shape=out)(x)
-    np.testing.assert_array_equal(result, x[:, 130:230])
-
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True
