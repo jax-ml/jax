@@ -457,9 +457,6 @@ def lower_jaxpr_to_module(
         # We have to do some work to make sure that consecutive stores are not
         # going to be writing to the same location, or else we'll end up with
         # multiple concurrent writes and a racy program.
-        # TODO(apaszke,slebedev): In most cases output index maps depend only on
-        # parallel grid axes and in that case we can simply move the store to
-        # happen after the loop.
         # TODO(apaszke,slebedev): This still diverges significantly from the TPU
         # semantics in that it will move on to the next SMEM output slice even if
         # it's not storing the previous one.
