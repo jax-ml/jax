@@ -936,6 +936,7 @@ _CPU_FFI_KERNELS = [
     "lapack_sgeev_ffi", "lapack_dgeev_ffi", "lapack_cgeev_ffi", "lapack_zgeev_ffi",
     "lapack_sgesdd_ffi", "lapack_dgesdd_ffi", "lapack_cgesdd_ffi", "lapack_zgesdd_ffi",
     "lapack_sgetrf_ffi", "lapack_dgetrf_ffi", "lapack_cgetrf_ffi", "lapack_zgetrf_ffi",
+    "lapack_sgehrd_ffi", "lapack_dgehrd_ffi", "lapack_cgehrd_ffi", "lapack_zgehrd_ffi",
 ]
 # These are the JAX custom call target names that are guaranteed to be stable.
 # Their backwards compatibility is tested by back_compat_test.py.
@@ -972,6 +973,8 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "blas_strsm", "blas_dtrsm", "blas_ctrsm", "blas_ztrsm",
     # schur on CPU
     "lapack_sgees", "lapack_dgees", "lapack_cgees", "lapack_zgees",
+    # hessenberg on CPU
+    "lapack_sgehrd", "lapack_dgehrd", "lapack_cgehrd", "lapack_zgehrd",
     # lu on GPU
     "cu_lu_pivots_to_permutation",
     # "cublas_getrf_batched", "cusolver_getrf",

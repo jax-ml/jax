@@ -840,8 +840,8 @@ def gees_hlo(dtype, a, *, jobvs=True, sort=False, select=None,
 
 
 # gehrd: Reduction of a non-symmetric square matrix to upper Hessenberg form.
-def gehrd_hlo(dtype, a):
-  _lapack.initialize()
+def gehrd_hlo(ctx, dtype, a):
+  fn_base = prepare_lapack_call(fn_base="gehrd", dtype=dtype)
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
   assert len(dims) >= 2
@@ -849,47 +849,68 @@ def gehrd_hlo(dtype, a):
   assert m == n, (m, n)
   batch_dims = tuple(dims[:-2])
   num_bd = len(batch_dims)
-  b = 1
-  for d in batch_dims:
-    b *= d
+  if ctx.is_forward_compat():
+    fn = fn_base
+    b = 1
+    for d in batch_dims:
+      b *= d
 
-  if dtype == np.float32:
-    fn = "lapack_sgehrd"
-    lwork = _lapack.lapack_sgehrd_workspace(n, n, 1, n)
-  elif dtype == np.float64:
-    fn = "lapack_dgehrd"
-    lwork = _lapack.lapack_dgehrd_workspace(n, n, 1, n)
-  elif dtype == np.complex64:
-    fn = "lapack_cgehrd"
-    lwork = _lapack.lapack_cgehrd_workspace(n, n, 1, n)
-  elif dtype == np.complex128:
-    fn = "lapack_zgehrd"
-    lwork = _lapack.lapack_zgehrd_workspace(n, n, 1, n)
-  else:
-    raise NotImplementedError(f"Unsupported dtype {dtype}")
+    if dtype == np.float32:
+      lwork = _lapack.lapack_sgehrd_workspace(n, n, 1, n)
+    elif dtype == np.float64:
+      lwork = _lapack.lapack_dgehrd_workspace(n, n, 1, n)
+    elif dtype == np.complex64:
+      lwork = _lapack.lapack_cgehrd_workspace(n, n, 1, n)
+    elif dtype == np.complex128:
+      lwork = _lapack.lapack_zgehrd_workspace(n, n, 1, n)
+    else:
+      raise NotImplementedError(f"Unsupported dtype {dtype}")
 
+    layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+    i32_type = ir.IntegerType.get_signless(32)
+    return custom_call(
+        fn,
+        result_types=[
+          a.type,
+          ir.RankedTensorType.get(batch_dims + (n - 1,), a_type.element_type),
+          ir.RankedTensorType.get(batch_dims, i32_type),
+          ir.RankedTensorType.get([lwork], a_type.element_type),
+        ],
+        operands=[hlo_s32(n), hlo_s32(1), hlo_s32(n), hlo_s32(n), hlo_s32(b),
+        hlo_s32(lwork), a],
+        operand_layouts=[[]] * 6 + [layout],
+        result_layouts=[
+          layout,
+          (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
+          tuple(range(num_bd - 1, -1, -1)),
+          [0],
+        ],
+        operand_output_aliases={6: 0},
+    ).results[:3]
+  fn = fn_base + "_ffi"
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
   i32_type = ir.IntegerType.get_signless(32)
-  out = custom_call(
+  return custom_call(
       fn,
       result_types=[
-        a.type,
-        ir.RankedTensorType.get(batch_dims + (n - 1,), a_type.element_type),
-        ir.RankedTensorType.get(batch_dims, i32_type),
-        ir.RankedTensorType.get([lwork], a_type.element_type),
+          a.type,
+          ir.RankedTensorType.get(batch_dims + (n - 1,), a_type.element_type),
+          ir.RankedTensorType.get(batch_dims, i32_type),
       ],
-      operands=[hlo_s32(n), hlo_s32(1), hlo_s32(n), hlo_s32(n), hlo_s32(b),
-       hlo_s32(lwork), a],
-      operand_layouts=[[]] * 6 + [layout],
+      operands=[a],
+      operand_layouts=[layout],
       result_layouts=[
-        layout,
-        (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
-        tuple(range(num_bd - 1, -1, -1)),
-        [0],
+          layout,
+          (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
+          tuple(range(num_bd - 1, -1, -1)),
       ],
-      operand_output_aliases={6: 0},
+      operand_output_aliases={0: 0},
+      backend_config={
+          "low": _lapack_int_attr(1),
+          "high": _lapack_int_attr(n),
+      },
+      api_version=4,
   ).results
-  return out[:3]
 
 
 # sytrd: Reduction of a symmetric (Hermitian) matrix to tridiagonal form.
