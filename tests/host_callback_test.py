@@ -585,6 +585,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       # See also b/160692602.
       raise SkipTest("concurrent id_tap not supported on CPU, GPU")
 
+    self.supported_only_in_legacy_mode()
     received = set()
     count = 5
 
