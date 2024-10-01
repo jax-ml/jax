@@ -40,6 +40,7 @@ from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.state import discharge
+from jax._src.state import indexing
 from jax._src.state import primitives as sp
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import core as mgpu_core
@@ -702,11 +703,28 @@ def _num_programs_lowering_rule(ctx: LoweringRuleContext, axis):
   )
 
 
+def _handle_indexing(
+    ref: ir.Value, transforms: Sequence[pallas_core.Transform]
+) -> ir.Value:
+  if not transforms:
+    pass
+  elif len(transforms) == 1 and isinstance(transforms[0], indexing.NDIndexer):
+    idx = transforms[0]
+    if idx.get_indexer_shape() != tuple(ir.MemRefType(ref.type).shape):
+      raise ValueError("Indexing not implemented")
+  else:
+    raise NotImplementedError(
+        f"Unsupported transforms: {transforms[0]}. Only no-op indexing implemented."
+    )
+  return ref
+
+
 @register_lowering_rule(sp.get_p)
-def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *indexers, tree):
-  del tree  # Unused.
-  if indexers:
-    raise NotImplementedError("No support for indexers yet")
+def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *leaves, tree):
+  if not isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem):
+    raise TypeError(f"Can only load from references (got {x_smem}).")
+  transform = jax.tree.unflatten(tree, leaves)
+  x_smem = _handle_indexing(x_smem, transform)
   [x_aval] = ctx.avals_in
   return mgpu.FragmentedArray.load_strided(
       x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
@@ -715,15 +733,14 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *indexers, tree):
 
 @register_lowering_rule(sp.swap_p)
 def _swap_lowering_rule(
-    ctx: LoweringRuleContext, x_smem, value, *indexers, tree
+    ctx: LoweringRuleContext, x_smem, value, *leaves, tree
 ):
-  del tree  # Unused.
-  if indexers:
-    raise NotImplementedError("No support for indexers yet")
   if not isinstance(value, mgpu.FragmentedArray):
     raise TypeError(f"Can only store arrays (got {value}).")
   if not isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem):
-    raise TypeError(f"Can only store to references (got {value}).")
+    raise TypeError(f"Can only store to references (got {x_smem}).")
+  transform = jax.tree.unflatten(tree, leaves)
+  x_smem = _handle_indexing(x_smem, transform)
   x_aval, _ = ctx.avals_in
   old_value = mgpu.FragmentedArray.load_strided(
       x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
