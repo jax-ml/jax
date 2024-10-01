@@ -22,6 +22,7 @@ from jax._src import ad_util
 from jax._src import core
 from jax._src import dispatch
 from jax._src import pretty_printer as pp
+from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -49,6 +50,7 @@ import numpy as np
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
+traceback_util.register_exclusion(__file__)
 
 ## get/swap/addupdate implementations
 

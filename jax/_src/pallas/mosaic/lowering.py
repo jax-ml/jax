@@ -36,6 +36,7 @@ from jax._src import pjit
 from jax._src import prng
 from jax._src import source_info_util
 from jax._src import state
+from jax._src import traceback_util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
@@ -820,15 +821,16 @@ def jaxpr_subcomp(
         except LoweringException:
           raise  # We only add the extra info to the innermost exception.
         except Exception as e:
-          raise LoweringException(
-              f"Exception while lowering eqn:\n  {eqn}\nWith context:\n "
-              f" {rule_context}\nWith inval"
-              f" shapes={map(lambda t: getattr(t, 'shape', None), invals)}\nWith"
-              " inval"
-              f" types={map(lambda t: getattr(t, 'type', None), invals)}\nIn"
-              f" jaxpr:\n{jaxpr}"
-              f"\nException: {e}"
-          ) from e
+          msg = (f"{type(e).__name__}: {e}\n" +
+                "Additional diagnostics: \n" +
+                f"Failing jaxpr equation: {eqn}\n")
+          new_error = LoweringException(msg)
+          # We insert the traceback here so that the user code shows
+          # up in the traceback for the post-transform error.
+          if source_info.traceback is not None:
+            tb = source_info.traceback.as_python_traceback()
+            new_error.__traceback__ = traceback_util.filter_traceback(tb)
+          raise new_error from e
       else:
         raise NotImplementedError(
             "Unimplemented primitive in Pallas TPU lowering: "

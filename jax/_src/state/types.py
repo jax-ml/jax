@@ -25,6 +25,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import pretty_printer as pp
+from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src.state import indexing
 from jax._src.typing import Array
@@ -34,6 +35,7 @@ from jax._src.util import safe_map, safe_zip
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
+traceback_util.register_exclusion(__file__)
 
 _ref_effect_color = pp.Color.GREEN
 
