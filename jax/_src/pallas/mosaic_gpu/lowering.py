@@ -280,7 +280,7 @@ def lower_jaxpr_to_module(
 
   in_in_smem, out_in_smem = util.split_list(
       [
-          bm.block_aval.memory_space in (None, gpu_core.SMEM)
+          bm.transformed_block_aval.memory_space in (None, gpu_core.SMEM)
           for bm in block_mappings
       ],
       [grid_mapping.num_inputs],
@@ -290,9 +290,13 @@ def lower_jaxpr_to_module(
   in_block_mappings, out_block_mappings = util.split_list(
       block_mappings, [grid_mapping.num_inputs]
   )
+  # TODO(apaszke): We can shrink allocation if max_concurrent_steps is more than the actual number of steps.
+  # We allocate the fully transformed shapes here. All primitives have seen the
+  # inverse transformation stack and will understand how to handle it.
   in_structs_smem = [
       jax.ShapeDtypeStruct(
-          [max_concurrent_steps, *bm.ref_aval.shape], bm.ref_aval.dtype
+          [max_concurrent_steps, *bm.transformed_block_aval.shape],
+          bm.transformed_block_aval.dtype,
       )
       if in_smem
       else None
@@ -312,6 +316,9 @@ def lower_jaxpr_to_module(
   )
   out_structs_gmem = [*grid_mapping.out_shapes]
   # TODO(justinfu): Implement output Memref transforms
+  for bm in block_mappings[grid_mapping.num_inputs :]:
+    if bm.transforms:
+      raise NotImplementedError("Output transforms are not supported")
   out_structs_smem = [
       jax.ShapeDtypeStruct([max_concurrent_steps, *bm.block_shape], s.dtype)
       if in_smem

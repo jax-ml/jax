@@ -39,6 +39,7 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.state import discharge as state_discharge
+from jax._src.state import types as state_types
 from jax._src.util import (
     safe_map,
     safe_zip,
@@ -941,6 +942,7 @@ def _pallas_call_batching_rule(
           batched_grid_mapping,
           tuple(flat_kernel_avals),
           kernel_in_tree,
+          tuple(() for _ in flat_kernel_avals),
           interpret=interpret,
       )
 
@@ -1136,19 +1138,35 @@ def pallas_call_checkify_rule(error: checkify.Error,
   return new_error, results
 checkify.error_checks[pallas_call_p] = pallas_call_checkify_rule
 
+
+# All of those shenanigans are because we can't make TransformedRef a PyTree,
+# because they should appear as atomic JAX values to the users.
+@lu.transformation
+def wrap_with_transforms(transforms, *args):
+  new_args = tuple(
+      state_types.TransformedRef(a, t) if t else a
+      for a, t in zip(args, transforms)
+  )
+  res = yield new_args, {}
+  yield res
+
+
 @weakref_lru_cache
-def _trace_kernel_to_jaxpr(fun: Callable,
-                           name_and_src_info: pallas_core.NameAndSrcInfo,
-                           grid_mapping: GridMapping,
-                           kernel_avals: tuple[pallas_core.AbstractMemRef, ...],
-                           kernel_in_tree: tree_util.PyTreeDef,
-                           interpret: bool,
-                           ) -> jax_core.ClosedJaxpr:
+def _trace_kernel_to_jaxpr(
+    fun: Callable,
+    name_and_src_info: pallas_core.NameAndSrcInfo,
+    grid_mapping: GridMapping,
+    kernel_avals: tuple[pallas_core.AbstractMemRef, ...],
+    kernel_in_tree: tree_util.PyTreeDef,
+    kernel_in_transforms: tuple[tuple[pallas_core.Transform, ...], ...],
+    interpret: bool,
+) -> jax_core.ClosedJaxpr:
   if interpret:
     kernel_avals = tuple(map(_logical_aval_to_interpret_mode_aval,
                              kernel_avals))
   wrapped_kernel_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(fun), kernel_in_tree)
+  wrapped_kernel_fun = wrap_with_transforms(wrapped_kernel_fun, kernel_in_transforms)
   debug = pe.debug_info(fun, kernel_in_tree, out_tree_thunk, False, "pallas_call")
   with grid_mapping.trace_env():
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_kernel_fun,
@@ -1406,16 +1424,25 @@ def pallas_call(
                        for p in in_paths)
     out_origins = tuple(f"outputs{tree_util.keystr(p)}" for p in out_paths)
     # TODO(necula): check that input_output_aliases is well-formed: no duplicates, etc.
-    kernel_avals, grid_mapping = pallas_core.get_grid_mapping(
+    kernel_args, grid_mapping = pallas_core.get_grid_mapping(
         grid_spec,
         flat_in_avals, in_tree, in_origins,
         flat_out_avals, out_tree, out_origins)
-    flat_kernel_avals, kernel_in_tree = tree_util.tree_flatten(kernel_avals)
+    flat_kernel_args, kernel_in_tree = tree_util.tree_flatten(kernel_args)
+    flat_kernel_avals = tuple(
+        x.ref if isinstance(x, state_types.TransformedRef) else x
+        for x in flat_kernel_args
+    )
+    # Note that only a subset of all transforms can be found here, and they are
+    # never expected to contains any arrays.
+    kernel_arg_transforms = tuple(
+        x.transforms if isinstance(x, state_types.TransformedRef) else ()
+        for x in flat_kernel_args
+    )
     with pallas_core.interpret_mode_env(interpret):
       jaxpr = _trace_kernel_to_jaxpr(
-          kernel, kernel_src_info,
-          grid_mapping, tuple(flat_kernel_avals), kernel_in_tree,
-          interpret=interpret)
+          kernel, kernel_src_info, grid_mapping, tuple(flat_kernel_avals),
+          kernel_in_tree, kernel_arg_transforms, interpret=interpret)
     for i_idx, o_idx in input_output_aliases.items():
       if i_idx not in range(len(flat_in_avals)):
         raise ValueError(
