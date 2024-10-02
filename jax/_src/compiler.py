@@ -199,7 +199,7 @@ def get_compile_options(
     debug_options.xla_backend_optimization_level = 0
     debug_options.xla_llvm_disable_expensive_passes = True
     debug_options.xla_test_all_input_layouts = False
-  
+
   if not config.enable_remat_opt_pass.value:
     debug_options.xla_disable_hlo_passes = "rematerialization"
 
