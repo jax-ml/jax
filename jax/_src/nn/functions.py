@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from functools import partial
 import operator
+import math
 import numpy as np
 from typing import Any, Literal
 import warnings
@@ -34,6 +35,8 @@ from jax._src import util
 from jax._src.core import AxisName
 from jax._src.cudnn.fused_attention_stablehlo import (
     dot_product_attention as cudnn_dot_product_attention, MaskType)
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
 from jax._src.numpy import util as numpy_util
 from jax._src.typing import Array, ArrayLike, DType
 from jax._src.ops.special import logsumexp as _logsumexp
@@ -902,6 +905,68 @@ def _dot_product_attention_xla(
   encoded = jnp.reshape(encoded, (B, T, N, H))
   return encoded
 
+def bias_fwd_rule(a, query_head_num):
+  return bias_fwd_p.bind(a, query_head_num), a
+def bias_bwd_rule(query_head_num, res, g):
+  a = res
+  if a.shape[0] > 1 or a.shape[-3] != query_head_num:
+    raise ValueError("cuDNN only supports bias gradient when the batch size is "
+                     f"1 and the head number matches the query, but got "
+                     f"B={a.shape[0]}, N={a.shape[-3]}.")
+  return (bias_bwd_p.bind(g, a, query_head_num),)
+
+# This function uses two custom primitives, `bias_fwd` and `bias_bwd`, to work
+# around a cuDNN issue where bias gradients are only supported when the batch
+# size is 1 and the number of heads matches the query.
+# TODO(kaixih@nvidia): Remove this workaround once cuDNN resolves the issue.
+@partial(jax.custom_vjp, nondiff_argnums=(1,))
+def check_valid_bias_batch(x, query_head_num):
+  output, _ = bias_fwd_rule(x, query_head_num)
+  return output
+check_valid_bias_batch.defvjp(bias_fwd_rule, bias_bwd_rule)
+
+bias_fwd_p = core.Primitive('bias_fwd')
+bias_fwd_p.multiple_results = False
+bias_bwd_p = core.Primitive('bias_bwd')
+bias_bwd_p.multiple_results = False
+
+def bias_fwd_impl(a, query_head_num):
+  return a
+def bias_bwd_impl(g, a, query_head_num):
+  return g
+bias_fwd_p.def_impl(bias_fwd_impl)
+bias_bwd_p.def_impl(bias_bwd_impl)
+
+def bias_fwd_abstract_eval(a, query_head_num):
+  return core.ShapedArray(a.shape, a.dtype)
+def bias_bwd_abstract_eval(g, a, query_head_num):
+  return core.ShapedArray(g.shape, g.dtype)
+bias_fwd_p.def_abstract_eval(bias_fwd_abstract_eval)
+bias_bwd_p.def_abstract_eval(bias_bwd_abstract_eval)
+
+def bias_fwd_lowering(ctx, a, query_head_num):
+  return [a]
+def bias_bwd_lowering(ctx, g, a, query_head_num):
+  return [g]
+mlir.register_lowering(bias_fwd_p, bias_fwd_lowering)
+mlir.register_lowering(bias_bwd_p, bias_bwd_lowering)
+
+def bias_fwd_batch_rule(batched_args, batch_dims):
+  x, query_head_num = batched_args
+  a = batch_dims[0]
+  output, _ = bias_fwd_rule(x, query_head_num)
+  return output, a
+def bias_bwd_batch_rule(batched_args, batch_dims):
+  g, x, query_head_num = batched_args
+  b = batch_dims[0]
+  *Bs, _, _, _ = x.shape
+  B = math.prod(Bs)
+  x = jnp.reshape(x, (B,) + x.shape[-3:])
+  output, = bias_bwd_rule(query_head_num, x, g)
+  return output, b
+batching.primitive_batchers[bias_fwd_p] = bias_fwd_batch_rule
+batching.primitive_batchers[bias_bwd_p] = bias_bwd_batch_rule
+
 def dot_product_attention(
     query: ArrayLike,
     key: ArrayLike,
@@ -1034,6 +1099,9 @@ def dot_product_attention(
           local_window_size=local_window_size,
       )
     case 'cudnn':
+      if bias is not None:
+        bias = check_valid_bias_batch(bias, query_arr.shape[-2])
+        bias = jnp.asarray(bias)
       use_padding = (
            query_seq_lengths is not None or key_value_seq_lengths is not None
       )

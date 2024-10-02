@@ -1555,6 +1555,9 @@ tf_not_yet_impl = [
     "bitcast",
     "repeat",
     "roll",
+    # temporary pending cudnn fix, see https://github.com/jax-ml/jax/pull/23740
+    "bias_fwd",
+    "bias_bwd",
 ]
 
 tf_impl[random_internal.random_clone_p] = lambda x: x
