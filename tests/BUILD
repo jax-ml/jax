@@ -1143,23 +1143,6 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "host_callback_outfeed_test",
-    srcs = ["host_callback_test.py"],
-    args = ["--jax_host_callback_outfeed=true"],
-    shard_count = {
-        "tpu": 5,
-    },
-    tags = [
-        "noasan",  # Times out.
-    ],
-    deps = [
-        "//jax:experimental",
-        "//jax:experimental_host_callback",
-        "//jax:ode",
-    ],
-)
-
-jax_multiplatform_test(
     name = "host_callback_test",
     srcs = ["host_callback_test.py"],
     args = ["--jax_host_callback_outfeed=false"],
