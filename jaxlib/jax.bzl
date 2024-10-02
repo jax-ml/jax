@@ -277,6 +277,7 @@ def jax_multiplatform_test(
                 "//jax:test_util",
             ] + deps + if_building_jaxlib([
                 "//jaxlib/cuda:gpu_only_test_deps",
+                "//jaxlib/rocm:gpu_only_test_deps",
                 "//jax_plugins:gpu_plugin_only_test_deps",
             ]),
             data = data,
