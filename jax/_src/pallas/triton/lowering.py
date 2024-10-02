@@ -286,10 +286,6 @@ def lower_jaxpr_to_triton_module(
     raise NotImplementedError(
         "scratch memory not implemented in the Triton backend"
     )
-  with grid_mapping.trace_env():
-    jaxpr, _ = pe.dce_jaxpr(
-        jaxpr, [True] * len(jaxpr.outvars), instantiate=True
-    )
   with _new_ir_context(), ir.Location.unknown():
     module = ir.Module.create()
     attrs = module.operation.attributes
@@ -2094,8 +2090,10 @@ def _dot_general_lowering(
     dimension_numbers,
     precision,
     preferred_element_type,
+    algorithm,
+    transpose_algorithm,
 ):
-  del preferred_element_type  # Unused.
+  del preferred_element_type, algorithm, transpose_algorithm  # Unused.
   ((a_contract_dim,), (b_contract_dim,)), batch_dims = dimension_numbers
   assert batch_dims == ((), ())
 

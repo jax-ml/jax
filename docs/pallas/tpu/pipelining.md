@@ -11,6 +11,8 @@ kernelspec:
   name: python3
 ---
 
+(pallas_tpu_pipelining)=
+
 +++ {"id": "teoJ_fUwlu0l"}
 
 # Pipelining

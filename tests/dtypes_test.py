@@ -19,6 +19,7 @@ import functools
 from functools import partial
 import itertools
 import operator
+import types
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -300,16 +301,6 @@ class DtypesTest(jtu.JaxTestCase):
         self.assertEqual(dtypes.issubdtype(t, category),
                          np.issubdtype(np.dtype(t).type, category))
 
-  def testIsSubdtypeExtended(self):
-    self.assertTrue(dtypes.issubdtype(dtypes.extended, dtypes.extended))
-    self.assertTrue(dtypes.issubdtype(dtypes.extended, np.generic))
-    self.assertFalse(dtypes.issubdtype(dtypes.extended, np.number))
-
-    self.assertTrue(jnp.issubdtype(dtypes.prng_key, dtypes.prng_key))
-    self.assertTrue(jnp.issubdtype(dtypes.prng_key, dtypes.extended))
-    self.assertTrue(jnp.issubdtype(dtypes.prng_key, np.generic))
-    self.assertFalse(dtypes.issubdtype(dtypes.prng_key, np.number))
-
   @parameterized.product(dtype=custom_float_dtypes)
   def testIsSubdtypeCustomFloats(self, dtype):
     for dt in [dtype, np.dtype(dtype), str(np.dtype(dtype))]:
@@ -408,6 +399,34 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(dtypes.float_, np.float32 if precision == '32' else np.float64)
     self.assertEqual(dtypes.complex_, np.complex64 if precision == '32' else np.complex128)
 
+  def test_check_dtype_non_hashable(self):
+    # regression test for issue with checking non-hashable custom dtype
+    class MyDtype:
+      __hash__ = None
+      dtype = np.dtype('float32')
+    dtypes.check_user_dtype_supported(MyDtype())
+
+  def test_check_dtype_array(self):
+    x = jnp.arange(4)
+    msg = "Passing an array as a dtype argument is deprecated"
+    with self.assertWarnsRegex(DeprecationWarning, msg):
+      dtypes.check_user_dtype_supported(x)
+    with self.assertWarnsRegex(DeprecationWarning, msg):
+      jax.jit(dtypes.check_user_dtype_supported)(x)
+
+
+class ExtendedDTypeTest(jtu.JaxTestCase):
+
+  def testIsSubdtypeExtended(self):
+    self.assertTrue(dtypes.issubdtype(dtypes.extended, dtypes.extended))
+    self.assertTrue(dtypes.issubdtype(dtypes.extended, np.generic))
+    self.assertFalse(dtypes.issubdtype(dtypes.extended, np.number))
+
+    self.assertTrue(jnp.issubdtype(dtypes.prng_key, dtypes.prng_key))
+    self.assertTrue(jnp.issubdtype(dtypes.prng_key, dtypes.extended))
+    self.assertTrue(jnp.issubdtype(dtypes.prng_key, np.generic))
+    self.assertFalse(dtypes.issubdtype(dtypes.prng_key, np.number))
+
   def test_custom_tangent_dtype(self):
     from jax._src import core
 
@@ -415,6 +434,8 @@ class DtypesTest(jtu.JaxTestCase):
       pass
 
     class ScalesTyRules:
+      allow_conversion: bool = True
+
       @staticmethod
       def physical_element_aval(dtype) -> core.ShapedArray:
         return core.ShapedArray((), dtype.float_dtype)
@@ -434,14 +455,6 @@ class DtypesTest(jtu.JaxTestCase):
         neginf = np.array(-np.inf if dtypes.supports_inf(dt.float_dtype)
                           else dtypes.finfo(dt.float_dtype).min, dt.float_dtype)
         return jax.lax.convert_element_type(neginf, dt)
-
-      @staticmethod
-      def convert_from(dtype, other_dtype) -> bool:
-        return dtype.float_dtype == other_dtype
-
-      @staticmethod
-      def convert_to(other_dtype, dtype) -> bool:
-        return dtype.float_dtype == other_dtype
 
     @dataclasses.dataclass(frozen=True)
     class ScaleTy(dtypes.ExtendedDType):
@@ -485,19 +498,13 @@ class DtypesTest(jtu.JaxTestCase):
     from jax._src import core
 
     class ScalesTyRules:
-      # tell JAX how to lower this dtype to an HLO dtype
+      # tell JAX how to lower this dtype to an HLO representation dtype
       @staticmethod
       def physical_element_aval(dtype) -> core.ShapedArray:
         return core.ShapedArray((), dtype.float_dtype)
 
-      # allow conversions to and from the corresponding float type
-      @staticmethod
-      def convert_from(scale_dtype, other_dtype) -> bool:
-        return scale_dtype.float_dtype == other_dtype
-
-      @staticmethod
-      def convert_to(other_dtype, scale_dtype) -> bool:
-        return scale_dtype.float_dtype == other_dtype
+      # allow conversions to and from the corresponding representation type
+      allow_conversion: bool = True
 
       # define how autodiff should accumulate these values
       @staticmethod
@@ -563,21 +570,6 @@ class DtypesTest(jtu.JaxTestCase):
     _, new_scale = jax.jit(jax.grad(outer, (0, 1)))(jnp.float32(3.14), scale)
     self.assertAllClose(new_scale, jnp.float32(1.0))
 
-  def test_check_dtype_non_hashable(self):
-    # regression test for issue with checking non-hashable custom dtype
-    class MyDtype:
-      __hash__ = None
-      dtype = np.dtype('float32')
-    dtypes.check_user_dtype_supported(MyDtype())
-
-  def test_check_dtype_array(self):
-    x = jnp.arange(4)
-    msg = "Passing an array as a dtype argument is deprecated"
-    with self.assertWarnsRegex(DeprecationWarning, msg):
-      dtypes.check_user_dtype_supported(x)
-    with self.assertWarnsRegex(DeprecationWarning, msg):
-      jax.jit(dtypes.check_user_dtype_supported)(x)
-
   @parameterized.parameters([True])  # TODO(mattjj): make jit=False work
   def test_primal_tangent_dtype(self, jit):
     dt = dtypes.primal_tangent_dtype(jnp.int8, jnp.bfloat16)
@@ -605,6 +597,123 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(result.dtype, jnp.bfloat16)
     self.assertEqual(bwd_result.dtype, jnp.bfloat16)
     self.assertAllClose(bwd_result, 2 * g)
+    self.assertEqual(repr(dt), 'PrimalTangentDType{i8/bf16}')
+
+  @parameterized.parameters(itertools.product([(), (2,), (3, 4)], repeat=2))
+  def test_edtype_conversion(self, shape_prefix, shape_suffix):
+    class scalar(dtypes.extended): ...
+
+    @dataclasses.dataclass(frozen=True)
+    class DType(dtypes.ExtendedDType):
+      name = 'dt'
+      type = scalar
+      _rules = types.SimpleNamespace(
+          physical_element_aval=
+          lambda _: types.SimpleNamespace(shape=shape_suffix, dtype='int32'),
+          allow_conversion=True)
+    dtype = DType()
+
+    @jax.jit
+    def f(x):
+      self.assertEqual(x.shape, shape_prefix + shape_suffix)
+      self.assertEqual(x.dtype, jnp.dtype('int32'))
+      x = jax.lax.convert_element_type(x, dtype)
+      self.assertEqual(x.shape, shape_prefix)
+      self.assertEqual(x.dtype, dtype)
+      x = jax.lax.convert_element_type(x, 'int32')
+      self.assertEqual(x.shape, shape_prefix + shape_suffix)
+      self.assertEqual(x.dtype, jnp.dtype('int32'))
+    f(jnp.zeros(shape_prefix + shape_suffix, dtype='int32'))
+
+  def test_edtype_conversion_errors(self):
+    class scalar(dtypes.extended): ...
+
+    @dataclasses.dataclass(frozen=True)
+    class DType(dtypes.ExtendedDType):
+      name = 'dt'
+      type = scalar
+      _rules = types.SimpleNamespace(
+          physical_element_aval=
+          lambda _: types.SimpleNamespace(shape=(3,), dtype='int32'),
+          allow_conversion=True)
+    dtype = DType()
+
+    class scalar2(dtypes.extended): ...
+
+    @dataclasses.dataclass(frozen=True)
+    class DType2(dtypes.ExtendedDType):
+      name = 'dt2'
+      type = scalar2
+      _rules = types.SimpleNamespace(
+          physical_element_aval=
+          lambda _: types.SimpleNamespace(shape=(3,), dtype='int32'),
+          allow_conversion=True)
+    dtype2 = DType2()
+
+    @jax.jit
+    def f(x):
+      y = jax.lax.convert_element_type(x, dtype)
+      with self.assertRaisesRegex(ValueError, "cannot directly"):
+        jax.lax.convert_element_type(y, dtype2)
+      with self.assertRaisesRegex(ValueError, "can only convert"):
+        jax.lax.convert_element_type(x.astype('float32'), dtype)
+      with self.assertRaisesRegex(ValueError, "can only convert"):
+        jax.lax.convert_element_type(x[:, :2], dtype)
+      with self.assertRaisesRegex(ValueError, "can only convert"):
+        jax.lax.convert_element_type(x[:, 0], dtype)
+      with self.assertRaisesRegex(ValueError, "can only convert"):
+        jax.lax.convert_element_type(y, 'float32')
+    f(jnp.zeros((5, 3), dtype='int32'))
+
+  def test_edtype_conversion_autodiff(self):
+
+    class scalar(dtypes.extended): ...
+
+    @dataclasses.dataclass(frozen=True)
+    class DType(dtypes.ExtendedDType):
+      name = 'dt'
+      type = scalar
+      _rules = types.SimpleNamespace(
+          physical_element_aval=
+          lambda _: types.SimpleNamespace(shape=(), dtype='float32'),
+          tangent_dtype=lambda dtype: jnp.dtype('bfloat16'),
+          allow_conversion=True)
+    dtype = DType()
+
+    @jax.jit
+    @jax.grad
+    def f(x):
+      x = jax.lax.convert_element_type(x, dtype)
+
+      @jax.custom_jvp
+      def g(x): return x
+      @g.defjvp
+      def g_jvp(primals, tangents):
+        (x,), (x_dot,) = primals, tangents
+        self.assertEqual(x.shape, (5,))
+        self.assertEqual(x.dtype, dtype)
+        self.assertEqual(x_dot.shape, (5,))
+        self.assertEqual(x_dot.dtype, jnp.dtype('bfloat16'))
+        return x, x_dot
+      x = g(x)
+
+      x = jax.lax.convert_element_type(x, 'float32')
+
+      @jax.custom_jvp
+      def h(x): return x
+      @h.defjvp
+      def h_jvp(primals, tangents):
+        (x,), (x_dot,) = primals, tangents
+        self.assertEqual(x.shape, (5,))
+        self.assertEqual(x.dtype, jnp.dtype('float32'))
+        self.assertEqual(x_dot.shape, (5,))
+        self.assertEqual(x_dot.dtype, jnp.dtype('float32'))
+        return x, x_dot
+      x = h(x)
+
+      return 0.
+
+    f(jnp.zeros(5, dtype='float32'))  # test assertions in the function
 
 
 class EArrayTest(jtu.JaxTestCase):
@@ -618,10 +727,7 @@ class EArrayTest(jtu.JaxTestCase):
     class foo(dtypes.extended): pass
 
     class FooTyRules:
-
-      @staticmethod
-      def convert_to(foo_dtype, target_dtype):
-        return True
+      allow_conversion: bool = True
 
       @staticmethod
       def physical_element_aval(foo_dtype):

@@ -3555,24 +3555,53 @@ LogicalResult vector_extract_rule(RewriteContext &ctx, Operation &op,
     op.erase();
     return success();
   } else {
-    for (int64_t i : extract_op.getStaticPosition()) {
-      if (i != 0) {
-        return op.emitOpError(
-            "Not implemented: Only 0 indices supported for scalar results");
-      }
-    }
+    // TODO(b/367459476): Support non-zero offsets.
     if (layout_in.offsets() != LayoutOffsets{0, 0}) {
       return op.emitOpError("Not implemented: Unsupported layout");
     }
+    auto [sub_tile, lane_tile] = layout_in.tiling();
     FAILUREOR_ASSIGN_OR_RETURN(
         const xla::Array<Value> vregs,
         disassemble(builder, layout_in, extract_op.getVector(),
                     ctx.target_shape));
     TPU_ASSERT_GT_OP(vregs.num_elements(), 0);
+
+    SmallVector<int64_t> indices(extract_op.getStaticPosition());
+    auto vreg_slice = layout_in.vregSlice(ctx.target_shape);
+    std::array<int64_t, 2> position = {0, 0};
+    SmallVector<int64_t> vreg_index(indices);
+    // TODO(b/367459476): Support non-VREG-aligned tiling.
+    CHECK_EQ(lane_tile, ctx.target_shape[1]);
+    layout_in.insertImplicit(indices, static_cast<int64_t>(0));
+    layout_in.insertImplicit(vreg_index, static_cast<int64_t>(0));
+    int i = *(indices.end()-2);
+    int j = *(indices.end()-1);
+    *(vreg_index.end() -2) = i / vreg_slice[0];
+    *(vreg_index.end() -1) = j / vreg_slice[1];
+    layout_in.eraseImplicit(vreg_index);
+    position[0] = ((j % vreg_slice[1]) / lane_tile * sub_tile
+      ) + i % sub_tile;
+    position[1] = j % lane_tile;
+
+    TPU_ASSERT_LT_OP(vreg_index, vregs.dimensions());
+    Value extracted_vreg = vregs(vreg_index);
+
+    // Invert the offsets to get the rotation amount.
+    position[0] = (ctx.target_shape[0] - position[0]) % ctx.target_shape[0];
+    position[1] = (ctx.target_shape[1] - position[1]) % ctx.target_shape[1];
+    auto res_vreg_ty = extracted_vreg.getType();
+    Value shift = builder.create<arith::ConstantOp>(
+        builder.getIntegerAttr(builder.getI32Type(), position[0]));
+    Value rotated_vreg = builder.create<tpu::DynamicRotateOp>(
+        res_vreg_ty, extracted_vreg, shift, 0, /*stride*/nullptr, nullptr);
+    shift = builder.create<arith::ConstantOp>(
+        builder.getIntegerAttr(builder.getI32Type(), position[1]));
+    rotated_vreg = builder.create<tpu::DynamicRotateOp>(
+        res_vreg_ty, rotated_vreg, shift, 1, /*stride*/nullptr, nullptr);
     extract_op.replaceAllUsesWith(
-        builder
-            .create<vector::ExtractOp>(op.getLoc(), *vregs.data(),
-                                       ArrayRef<int64_t>{0, 0})
+        builder.create<vector::ExtractOp>(
+                op.getLoc(), rotated_vreg,
+                ArrayRef<int64_t>{0, 0})
             .getResult());
   }
   extract_op.erase();

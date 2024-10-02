@@ -36,6 +36,7 @@ from jax._src import pjit
 from jax._src import prng
 from jax._src import source_info_util
 from jax._src import state
+from jax._src import traceback_util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
@@ -820,15 +821,16 @@ def jaxpr_subcomp(
         except LoweringException:
           raise  # We only add the extra info to the innermost exception.
         except Exception as e:
-          raise LoweringException(
-              f"Exception while lowering eqn:\n  {eqn}\nWith context:\n "
-              f" {rule_context}\nWith inval"
-              f" shapes={map(lambda t: getattr(t, 'shape', None), invals)}\nWith"
-              " inval"
-              f" types={map(lambda t: getattr(t, 'type', None), invals)}\nIn"
-              f" jaxpr:\n{jaxpr}"
-              f"\nException: {e}"
-          ) from e
+          msg = (f"{type(e).__name__}: {e}\n" +
+                "Additional diagnostics: \n" +
+                f"Failing jaxpr equation: {eqn}\n")
+          new_error = LoweringException(msg)
+          # We insert the traceback here so that the user code shows
+          # up in the traceback for the post-transform error.
+          if source_info.traceback is not None:
+            tb = source_info.traceback.as_python_traceback()
+            new_error.__traceback__ = traceback_util.filter_traceback(tb)
+          raise new_error from e
       else:
         raise NotImplementedError(
             "Unimplemented primitive in Pallas TPU lowering: "
@@ -1262,7 +1264,9 @@ def _masked_swap_lowering_rule(
   )
 
   ref_type = ir.MemRefType(ref.type)
-  is_smem_store = str(ref_type.memory_space) == "#tpu.memory_space<smem>"
+  memory_space = str(ref_type.memory_space)
+  is_smem_store = memory_space == "#tpu.memory_space<smem>"
+  is_vmem_store = memory_space == "#tpu.memory_space<vmem>"
   (aval_out,) = ctx.avals_out
   if not isinstance(val, ir.Value):
     val = ir_constant(val, mlir_type=_dtype_to_ir_type(val_aval.dtype))
@@ -1281,6 +1285,7 @@ def _masked_swap_lowering_rule(
       cast_to_index=True,
   )
   need_stride = not all((s is None or s == 1) for s in strides)
+
   if is_smem_store:
     if val_aval.shape:
       raise ValueError("Can only store scalars to SMEM")
@@ -1289,13 +1294,19 @@ def _masked_swap_lowering_rule(
     val = _maybe_cast_store_to_memref_type(val_aval, val)
     memref.StoreOp(val, ref, starts)
     return result
-  elif str(ref_type.memory_space) != "#tpu.memory_space<vmem>":
+
+  if not is_vmem_store:
     extra = ""
-    if str(ref_type.memory_space) == "#tpu.memory_space<any>":
+    if memory_space == "#tpu.memory_space<any>":
       extra = " ANY memory space can only be accessed using async_copy."
     raise ValueError(
         "Loads and stores are only allowed on VMEM and SMEM references." + extra
     )
+
+  # handling VMEM store below
+  if not val_aval.shape:
+    raise ValueError("Cannot store scalars to VMEM")
+
   mem_slice_shape = list(aval_out.shape)
   for i, a in enumerate(idx_aval.indices):
     if not isinstance(a, primitives.Slice):
@@ -1606,7 +1617,12 @@ def _convert_helper(x, *, to_dtype):
       x = x.astype(jnp.float32)
     return x.astype(to_dtype)
   if jnp.issubdtype(from_dtype, jnp.floating):
-    if jnp.issubdtype(to_dtype, jnp.signedinteger):
+    if jnp.issubdtype(to_dtype, np.dtype("bool")):
+      # Cast to float32 rather than int32 because 0 < |x| < 1 rounds to 0,
+      # leading to false in bool. However, convert_element_type(x, bool)
+      # returns true. It's handled correctly when x is float32.
+      x = x.astype(jnp.float32)
+    elif jnp.issubdtype(to_dtype, jnp.signedinteger):
       if from_dtype.itemsize < 4:
         x = x.astype(jnp.float32)
       if to_dtype.itemsize < 4:
@@ -1614,10 +1630,7 @@ def _convert_helper(x, *, to_dtype):
         minval, maxval = jnp.iinfo(to_dtype).min, jnp.iinfo(to_dtype).max
         x = jnp.clip(x, minval, maxval)
         return x.astype(jnp.int32).astype(to_dtype)
-      return x.astype(to_dtype)
-    elif jnp.issubdtype(to_dtype, np.dtype("bool")):
-      x = x.astype(jnp.int32)
-    return x.astype(jnp.float32)
+    return x.astype(to_dtype)
   raise NotImplementedError(f"Unsupported cast: {from_dtype} -> {to_dtype}")
 
 def _convert_element_type_lowering_rule(
@@ -1626,7 +1639,8 @@ def _convert_element_type_lowering_rule(
   del weak_type
   del sharding
   out_aval = ctx.avals_out[0]
-  old_dtype = ctx.avals_in[0].dtype
+  in_aval = ctx.avals_in[0]
+  old_dtype = in_aval.dtype
   out_type = aval_to_ir_type(out_aval)
 
   if old_dtype == new_dtype:
@@ -1663,16 +1677,32 @@ def _convert_element_type_lowering_rule(
   ):
     return arith.extui(out_type, x)
   elif (
-      jnp.issubdtype(old_dtype, jnp.integer)
+      (
+          (is_float := jnp.issubdtype(old_dtype, jnp.floating))
+          or jnp.issubdtype(old_dtype, jnp.integer)
+      )
       and new_dtype == jnp.bool_
       and old_dtype.itemsize == 4
   ):
-    pred = _cmpi_lowering_types[lax.ne_p]
-    predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
+    # Lower float32 or (u)int32 -> bool to cmp neq %in, 0
     const_type = _dtype_to_ir_type(old_dtype)
-    const_zero = ir.IntegerAttr.get(const_type, 0)
-    const_zero = arith.ConstantOp(const_type, const_zero)
-    return arith.CmpIOp(predicate, x, const_zero).result
+    if is_float:
+      pred = _cmpf_lowering_types[lax.ne_p]
+      const_zero = ir.FloatAttr.get(const_type, 0)
+      op = arith.CmpFOp
+    else:
+      pred = _cmpi_lowering_types[lax.ne_p]
+      const_zero = ir.IntegerAttr.get(const_type, 0)
+      op = arith.CmpIOp
+    predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
+    if in_aval.shape:
+      in_type = aval_to_ir_type(in_aval, is_kernel_boundary=False)
+      vector_zeros = arith.ConstantOp(
+          in_type,
+          ir.DenseElementsAttr.get_splat(in_type, const_zero),
+      )
+      return op(predicate, x, vector_zeros).result
+    return op(predicate, x, arith.ConstantOp(const_type, const_zero)).result
   return lower_fun(functools.partial(_convert_helper, to_dtype=new_dtype),
                    multiple_results=False)(ctx, x)
 
@@ -1981,6 +2011,20 @@ def _sin_lowering_rule(ctx: LoweringRuleContext, x):
 
 
 lowering_rules[lax.sin_p] = _sin_lowering_rule
+
+
+def _cos_lowering_rule(ctx: LoweringRuleContext, x):
+  return math.CosOp(x).result
+
+
+lowering_rules[lax.cos_p] = _cos_lowering_rule
+
+
+def _tan_lowering_rule(ctx: LoweringRuleContext, x):
+  return math.TanOp(x).result
+
+
+lowering_rules[lax.tan_p] = _tan_lowering_rule
 
 
 def _tanh_lowering_rule(ctx: LoweringRuleContext, x):
@@ -2718,8 +2762,10 @@ lowering_rules[tpu_primitives.dma_start_p] = _dma_start_lowering_rule
 def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
                             device_id_type: tpu_primitives.DeviceIdType):
   del device_id_type
-  sem, sem_transforms, ref, transforms = tree_util.tree_unflatten(tree, args)
-  sem_aval, _, ref_aval, _ = tree_util.tree_unflatten(tree, ctx.avals_in)
+  (_, _, ref, transforms, sem, sem_transforms, _, _, _) = tree_util.tree_unflatten(
+      tree, args)
+  (_, _, ref_aval, _, sem_aval, _, _, _, _) = tree_util.tree_unflatten(
+      tree, ctx.avals_in)
   block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)
   ref_block_shape = block_shapes[2]
   ref, _ = _transform_ref(ref, ref_aval.dtype, ref_block_shape, transforms)

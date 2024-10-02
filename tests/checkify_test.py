@@ -912,6 +912,25 @@ class CheckifyTransformTests(jtu.JaxTestCase):
 
     jax.jit(checkify.checkify(f))(0)  # Does not crash bc of leaked tracer.
 
+  @parameterized.parameters(True, False)
+  def test_remat(self, jit):
+    # basic test from https://github.com/jax-ml/jax/issues/23867
+    def fn(x: jax.Array):
+      checkify.check(jnp.all(x > 0), "x must be positive")
+      return x + 1
+
+    fn = jax.remat(fn)
+    if jit:
+      fn = jax.jit(fn)
+    fn = checkify.checkify(fn)
+    err, y = fn(jnp.array([1, 2, 3]))
+    self.assertIsNone(err.get())
+    self.assertAllClose(y, jnp.array([2, 3, 4]), check_dtypes=False)
+
+    err, _ = fn(jnp.array([0, 2, 3]))
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "x must be positive")
+
 
 @jtu.with_config(jax_check_tracer_leaks=True)
 class AssertPrimitiveTests(jtu.JaxTestCase):

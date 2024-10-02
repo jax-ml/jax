@@ -332,6 +332,24 @@ LogicalResult canonicalize_extract(int hardware_generation, Operation &raw_op) {
   return success();
 }
 
+LogicalResult canonicalize_select(int hardware_generation, Operation &raw_op) {
+  auto op = dyn_cast<arith::SelectOp>(raw_op);
+  if (!isa<VectorType>(op.getType()) ||
+      isa<VectorType>(op.getCondition().getType())) {
+    return success();
+  }
+  // Canonicalize `i1 ? v1 : v2` -> `broadcast(i1) ? v1 : v2`.
+  ImplicitLocOpBuilder builder(op->getLoc(), op.getOperation());
+  auto cond_ty = VectorType::get(cast<VectorType>(op.getType()).getShape(),
+                                 op.getCondition().getType());
+  auto cond = builder.create<vector::BroadcastOp>(cond_ty, op.getCondition());
+  auto new_op = builder.create<arith::SelectOp>(
+      op.getLoc(), cond, op.getTrueValue(), op.getFalseValue());
+  op.replaceAllUsesWith(new_op.getResult());
+  op.erase();
+  return success();
+}
+
 using canonicalize_rule_type =
     std::function<LogicalResult(int hardware_generation, Operation &op)>;
 
@@ -341,7 +359,8 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {vector::ContractionOp::getOperationName(), canonicalize_contraction},
       {vector::ContractionOp::getOperationName(), canonicalize_extract},
       {vector::MultiDimReductionOp::getOperationName(),
-       canonicalize_multi_dim_reduction}};
+       canonicalize_multi_dim_reduction},
+      {arith::SelectOp::getOperationName(), canonicalize_select}};
   return *rules;
 }
 

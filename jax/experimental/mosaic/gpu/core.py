@@ -19,21 +19,15 @@ import ctypes
 import dataclasses
 import functools
 import hashlib
-import itertools
 import math
 import os
 import pathlib
-import subprocess
-import tempfile
 import time
 from typing import Any, Generic, TypeVar
 import weakref
 
 import jax
-from jax._src import config
-from jax._src import core as jax_core
 from jax._src.interpreters import mlir
-from jax._src.lib import xla_client
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import builtin
@@ -42,7 +36,6 @@ from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import memref
 from jaxlib.mlir.dialects import nvvm
-from jaxlib.mlir.passmanager import PassManager
 import numpy as np
 
 from . import profiler
@@ -347,6 +340,7 @@ class LaunchContext:
       arrive: bool | None = None,
       uniform: bool = True,
       collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
+      predicate: ir.Value | None = None,
   ):
     index = ir.IndexType.get()
     i16 = ir.IntegerType.get_signless(16)
@@ -503,14 +497,17 @@ class LaunchContext:
       barrier_ptr = barrier.get_ptr()
       with uniform_ctx():
         if arrive:
-          nvvm.mbarrier_arrive_expect_tx_shared(barrier_ptr, transfer_bytes)
+          nvvm.mbarrier_arrive_expect_tx_shared(
+              barrier_ptr, transfer_bytes, predicate=predicate
+          )
         nvvm.cp_async_bulk_tensor_shared_cluster_global(
-            smem_ptr, tma_desc, rev_dyn_base_indices, barrier_ptr, [], multicast_mask=multicast_mask,
+            smem_ptr, tma_desc, rev_dyn_base_indices, barrier_ptr, [],
+            multicast_mask=multicast_mask, predicate=predicate
         )
     else:
       with uniform_ctx():
         nvvm.cp_async_bulk_tensor_global_shared_cta(
-            tma_desc, smem_ptr, rev_dyn_base_indices
+            tma_desc, smem_ptr, rev_dyn_base_indices, predicate=predicate
         )
         nvvm.cp_async_bulk_commit_group()
 

@@ -431,18 +431,34 @@ class AsyncCopyDescriptor:
   def is_remote(self):
     return self.src_sem is not None
 
+  def _get_args_and_tree(self, swap_src_and_dst: bool = False):
+    if swap_src_and_dst:
+      return tree_util.tree_flatten((
+          self.dst_ref,
+          self.dst_transforms,
+          self.src_ref,
+          self.src_transforms,
+          self.src_sem,
+          self.src_sem_transforms,
+          self.dst_sem,
+          self.dst_sem_transforms,
+          self.device_id,
+      ))
+    else:
+      return tree_util.tree_flatten((
+          self.src_ref,
+          self.src_transforms,
+          self.dst_ref,
+          self.dst_transforms,
+          self.dst_sem,
+          self.dst_sem_transforms,
+          self.src_sem,
+          self.src_sem_transforms,
+          self.device_id,
+      ))
+
   def start(self):
-    flat_args, tree = tree_util.tree_flatten((
-        self.src_ref,
-        self.src_transforms,
-        self.dst_ref,
-        self.dst_transforms,
-        self.dst_sem,
-        self.dst_sem_transforms,
-        self.src_sem,
-        self.src_sem_transforms,
-        self.device_id,
-    ))
+    flat_args, tree = self._get_args_and_tree()
     dma_start_p.bind(*flat_args, tree=tree, device_id_type=self.device_id_type)
 
   def wait(self):
@@ -451,27 +467,20 @@ class AsyncCopyDescriptor:
     self.wait_recv()
 
   def wait_recv(self):
-    wait_args, tree = tree_util.tree_flatten((
-        self.dst_sem,
-        self.dst_sem_transforms,
-        self.dst_ref,
-        self.dst_transforms,
-    ))
+    flat_args, tree = self._get_args_and_tree()
     dma_wait_p.bind(
-        *wait_args, tree=tree, device_id_type=self.device_id_type
+        *flat_args, tree=tree, device_id_type=self.device_id_type
     )
 
   def wait_send(self):
     if not self.is_remote:
       raise ValueError("Cannot `wait_send` on a local copy.")
-    wait_args, tree = tree_util.tree_flatten((
-        self.src_sem,
-        self.src_sem_transforms,
-        self.src_ref,
-        self.src_transforms,
-    ))
+    # We swap src and dst since by default dma_wait_p waits on the dst_sem
+    # As a clean up, maybe we could modify the primitive to have a
+    # `wait_on_send` bool.
+    flat_args, tree = self._get_args_and_tree(swap_src_and_dst=True)
     dma_wait_p.bind(
-        *wait_args, tree=tree, device_id_type=self.device_id_type
+        *flat_args, tree=tree, device_id_type=self.device_id_type
     )
 
 
@@ -689,7 +698,17 @@ def _dma_wait_pp_eqn(eqn: jax_core.JaxprEqn,
   del settings
   invars = eqn.invars
   tree = eqn.params["tree"]
-  sem, sem_transforms, ref, transforms = tree_util.tree_unflatten(tree, invars)
+  (
+      _,
+      _,
+      ref,
+      transforms,
+      sem,
+      sem_transforms,
+      _,
+      _,
+      _,
+  ) = tree_util.tree_unflatten(tree, invars)
   return pp.concat([
       pp.text("dma_wait"),
       pp.text(" "),
@@ -702,29 +721,38 @@ jax_core.pp_eqn_rules[dma_wait_p] = _dma_wait_pp_eqn
 
 def dma_wait_discharge_rule(in_avals, out_avals,
                              *args, tree, device_id_type):
+  # TODO(b/370563115): perform ref update in dma_wait discharge rule instead of dma_start
   del out_avals, device_id_type
-  (sem, sem_transforms, ref, ref_transforms) = tree_util.tree_unflatten(
-      tree, args
-  )
-  (
-      sem_aval,
-      sem_transforms_avals,
+  _, _, dst_ref, dst_ref_transforms, dst_sem, dst_sem_transforms, _, _, _ = (
+      tree_util.tree_unflatten(tree, args))
+  (_,
+      src_ref_transforms_avals,
       _,
-      ref_transforms_avals,
+      dst_ref_transforms_avals,
+      dst_sem_aval,
+      dst_sem_transforms_avals,
+      src_sem_aval,
+      src_sem_transforms_avals,
+      device_id_aval,
   ) = tree_util.tree_unflatten(tree, in_avals)
-  num_sem_transforms = len(tree_util.tree_leaves(sem_transforms_avals))
-  num_transforms = len(tree_util.tree_leaves(ref_transforms_avals))
-  updates = state_discharge.transform_array(ref, ref_transforms)
+  num_sem_transforms = len(tree_util.tree_leaves(dst_sem_transforms_avals))
+  num_transforms = len(tree_util.tree_leaves(dst_ref_transforms_avals))
+  updates = state_discharge.transform_array(dst_ref, dst_ref_transforms)
   copy_size = jnp.minimum(updates.size, pl_core.SEMAPHORE_MAX_VALUE)
   copy_size = jnp.array(copy_size, dtype=pl_core.SEMAPHORE_INTERPRET_DTYPE)
-  sem_value = _transform_semaphore(sem, sem_transforms, sem_aval)
+  sem_value = _transform_semaphore(dst_sem, dst_sem_transforms, dst_sem_aval)
   _, new_sem = state_discharge.transform_swap_array(
-      sem, sem_transforms, sem_value - copy_size
+      dst_sem, dst_sem_transforms, sem_value - copy_size
   )
-  new_vals = (new_sem,)  # sem
-  new_vals += (None,) * num_sem_transforms
+  new_vals = (None,)  # src_ref
+  new_vals += (None,) * len(tree_util.tree_leaves(src_ref_transforms_avals))
   new_vals += (None,)  # ref
-  new_vals += (None,) * num_transforms
+  new_vals += (None,) * num_transforms  # ref_transforms
+  new_vals += (new_sem,)  # sem
+  new_vals += (None,) * num_sem_transforms
+  new_vals += (None,) * len(tree_util.tree_leaves(src_sem_aval))  # src_sem
+  new_vals += (None,) * len(tree_util.tree_leaves(src_sem_transforms_avals))
+  new_vals += (None,) * len(tree_util.tree_leaves(device_id_aval)) # device_id
   return new_vals, []
 state_discharge.register_discharge_rule(dma_wait_p)(dma_wait_discharge_rule)
 

@@ -91,6 +91,7 @@ Automatic differentiation
 
     grad
     value_and_grad
+    jacobian
     jacfwd
     jacrev
     hessian

@@ -3780,6 +3780,29 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(out1[0], inp * 2)
     self.assertArraysEqual(out2[0], inp * 2)
 
+  @jtu.run_on_devices('tpu', 'gpu')
+  def test_aot_device_implicit_transfer(self):
+    mesh = jtu.create_mesh((1,), 'x')
+    np_inp = np.arange(8)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P()))
+
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    compiled = f.lower(arr).compile()
+
+    cpu_dev = jax.devices('cpu')[0]
+    with jax.default_device(cpu_dev):
+      cpu_arr = jnp.arange(8)
+      self.assertEqual(cpu_arr.sharding, SingleDeviceSharding(cpu_dev))
+      self.assertFalse(cpu_arr._committed)
+
+    out = compiled(cpu_arr)
+    self.assertArraysEqual(out, np_inp * 2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
+    self.assertEqual(out.sharding.memory_kind, 'device')
+
   def test_most_recent_executable_outer_inner_cache(self):
     x = np.zeros((20, 20), dtype=jnp.float64)
 
@@ -4329,7 +4352,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out = jax.device_put(x_s1, s2)
     self.assertArraysEqual(out, np_inp)
     self.assertEqual(out.sharding, s2)
-    del out
 
     s3 = NamedSharding(mesh2, P('model_q'))
     x_s3 = jax.device_put(np_inp, s3)
@@ -4337,6 +4359,42 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out2 = jax.device_put(x_s3, s1)
     self.assertArraysEqual(out2, np_inp)
     self.assertEqual(out2.sharding, s1)
+
+  def test_device_put_donate_pytree(self):
+    shape1 = (8, 2)
+    shape2 = (8, 384)
+    if config.use_shardy_partitioner.value:
+      self.skipTest(
+          '_different_device_order_reshard is creating a GSPMDSharding')
+    if jax.device_count() < 8:
+      self.skipTest('Requires >= 8 devices')
+
+    dev = jax.devices()
+    mesh1 = jax.sharding.Mesh(
+        np.asarray(dev).reshape([1, 2, 2, 2]),
+        ('replica', 'data', 'seq', 'model'))
+    mesh2 = jax.sharding.Mesh(
+        np.asarray(jax.devices())
+        .reshape([1, 1, 2, 2, 2, 1])
+        .swapaxes(2, 3)
+        .reshape([1, 1, 4, 2, 1]),
+        ('replica', 'data', 'seq', 'model_q', 'model_kv'))
+
+    np_inp1 = jnp.arange(math.prod(shape1)).reshape(shape1)
+    np_inp2 = jnp.arange(math.prod(shape2)).reshape(shape2)
+    s1 = NamedSharding(mesh1, P('model'))
+    s2 = NamedSharding(mesh2, P('model_q'))
+
+    x1 = jax.device_put(np_inp1, s1)
+    x2 = jax.device_put(np_inp2, s1)
+    # Reshard!
+    out1, out2 = jax.device_put((x1, x2), s2, donate=(True, False))
+    self.assertArraysEqual(out1, np_inp1)
+    self.assertArraysEqual(out2, np_inp2)
+    self.assertEqual(out1.sharding, s2)
+    self.assertEqual(out2.sharding, s2)
+    self.assertTrue(x1.is_deleted())
+    self.assertFalse(x2.is_deleted())
 
   def test_convert_element_type_sharding(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))

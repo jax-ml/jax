@@ -229,6 +229,15 @@ class ThreadSubset(enum.IntEnum):
 _ONCE_PER: ThreadSubset | None = None
 
 
+def single_thread_predicate(per_block=True):
+  warp = warp_idx()
+  if not per_block:
+    warp = arith.remui(warp, c(4, warp.type))
+  first_warp = arith.cmpi(arith.CmpIPredicate.eq, warp, c(0, warp.type))
+  elected = nvvm.elect_sync(ir.IntegerType.get_signless(1))
+  return arith.andi(first_warp, elected)
+
+
 @contextlib.contextmanager
 def single_thread(per_block=True):
   """Runs the context only from a single thread.
@@ -244,16 +253,10 @@ def single_thread(per_block=True):
     yield
     return
 
-  warp = warp_idx()
-  if not per_block:
-    warp = arith.remui(warp, c(4, warp.type))
-  first_warp = arith.cmpi(arith.CmpIPredicate.eq, warp, c(0, warp.type))
-  elected = nvvm.elect_sync(ir.IntegerType.get_signless(1))
-  should_run = arith.andi(first_warp, elected)
-  if_op = scf.IfOp(should_run)
   prev_scope = _ONCE_PER
   _ONCE_PER = scope
   try:
+    if_op = scf.IfOp(single_thread_predicate(per_block))
     with ir.InsertionPoint(if_op.then_block):
       yield
       scf.YieldOp([])
@@ -313,13 +316,15 @@ def memref_slice(ref: ir.Value, index) -> ir.Value:
   # dynamic, but we can at least catch some OOB slices).
 
   memref_strides, offset = ref_ty.get_strides_and_offset()
+  dynamic_offset = ir.ShapedType.get_dynamic_stride_or_offset()
   new_offset = offset
-  for idx, stride in zip(base_indices, memref_strides):
-    if isinstance(idx, int):
-      new_offset += idx * stride
-    else:
-      new_offset = ir.ShapedType.get_dynamic_stride_or_offset()
-      break
+  if new_offset != dynamic_offset:
+    for idx, stride in zip(base_indices, memref_strides):
+      if isinstance(idx, int):
+        new_offset += idx * stride
+      else:
+        new_offset = dynamic_offset
+        break
   new_strides = [
       s for s, squeeze in zip(memref_strides, is_squeezed) if not squeeze
   ]
@@ -483,7 +488,7 @@ def parse_indices(
       slice_shape.append(1)
       is_squeezed.append(True)
     elif isinstance(idx, slice):
-      if idx.step is not None:
+      if idx.step is not None and idx.step != 1:
         raise NotImplementedError("Strided slices not implemented")
       base_indices.append(idx.start or 0)
       slice_shape.append((idx.stop or bound) - (idx.start or 0))
@@ -610,14 +615,15 @@ class BarrierRef:
     i64 = ir.IntegerType.get_signless(64)
     nvvm.mbarrier_arrive_shared(i64, self.get_ptr())
 
-  def arrive_expect_tx(self, bytes: int | ir.Value):
+  def arrive_expect_tx(
+      self, bytes: int | ir.Value, predicate: ir.Value | None = None
+  ):
     if isinstance(bytes, int):
       bytes = c(bytes, ir.IntegerType.get_signless(32))
     elif ir.IndexType.isinstance(bytes.type):
       i32 = ir.IntegerType.get_signless(32)
       bytes = arith.index_cast(i32, bytes)
-
-    nvvm.mbarrier_arrive_expect_tx(self.get_ptr(), bytes)
+    nvvm.mbarrier_arrive_expect_tx_shared(self.get_ptr(), bytes, predicate=predicate)
 
   def get_ptr(self):
     ptr = ir.Type.parse("!llvm.ptr<3>")
@@ -951,6 +957,8 @@ def dtype_to_ir_type(dtype: jax.typing.DTypeLike) -> ir.Type:
 
 
 def is_signed(dtype: jax.typing.DTypeLike) -> bool | None:
-  if jnp.issubdtype(dtype, jnp.integer):
+  if jnp.issubdtype(dtype, jnp.bool_):
+    return False
+  elif jnp.issubdtype(dtype, jnp.integer):
     return jnp.issubdtype(dtype, jnp.signedinteger)
   return None

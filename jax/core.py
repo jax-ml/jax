@@ -154,19 +154,19 @@ _deprecations = {
       ("jax.core.check_valid_jaxtype is deprecated. Instead, you can manually"
        " raise an error if core.valid_jaxtype() returns False."),
       _src_core.check_valid_jaxtype),
-    # Added 2024-06-12
-    "pp_aval": ("jax.core.pp_aval is deprecated.", _src_core.pp_aval),
-    "pp_eqn": ("jax.core.pp_eqn is deprecated.", _src_core.pp_eqn),
-    "pp_eqn_rules": ("jax.core.pp_eqn_rules is deprecated.", _src_core.pp_eqn_rules),
-    "pp_eqns": ("jax.core.pp_eqns is deprecated.", _src_core.pp_eqns),
-    "pp_jaxpr": ("jax.core.pp_jaxpr is deprecated.", _src_core.pp_jaxpr),
-    "pp_jaxpr_eqn_range": ("jax.core.pp_jaxpr_eqn_range is deprecated.", _src_core.pp_jaxpr_eqn_range),
-    "pp_jaxpr_skeleton": ("jax.core.pp_jaxpr_skeleton is deprecated.", _src_core.pp_jaxpr_skeleton),
-    "pp_jaxprs": ("jax.core.pp_jaxprs is deprecated.", _src_core.pp_jaxprs),
-    "pp_kv_pair": ("jax.core.pp_kv_pair is deprecated.", _src_core.pp_kv_pair),
-    "pp_kv_pairs": ("jax.core.pp_kv_pairs is deprecated.", _src_core.pp_kv_pairs),
-    "pp_var": ("jax.core.pp_var is deprecated.", _src_core.pp_var),
-    "pp_vars": ("jax.core.pp_vars is deprecated.", _src_core.pp_vars),
+    # Finalized 2024-09-25; remove after 2024-12-25
+    "pp_aval": ("jax.core.pp_aval was removed in JAX v0.4.34.", None),
+    "pp_eqn": ("jax.core.pp_eqn was removed in JAX v0.4.34.", None),
+    "pp_eqn_rules": ("jax.core.pp_eqn_rules was removed in JAX v0.4.34.", None),
+    "pp_eqns": ("jax.core.pp_eqns was removed in JAX v0.4.34.", None),
+    "pp_jaxpr": ("jax.core.pp_jaxpr was removed in JAX v0.4.34.", None),
+    "pp_jaxpr_eqn_range": ("jax.core.pp_jaxpr_eqn_range was removed in JAX v0.4.34.", None),
+    "pp_jaxpr_skeleton": ("jax.core.pp_jaxpr_skeleton was removed in JAX v0.4.34.", None),
+    "pp_jaxprs": ("jax.core.pp_jaxprs was removed in JAX v0.4.34.", None),
+    "pp_kv_pair": ("jax.core.pp_kv_pair was removed in JAX v0.4.34.", None),
+    "pp_kv_pairs": ("jax.core.pp_kv_pairs was removed in JAX v0.4.34.", None),
+    "pp_var": ("jax.core.pp_var was removed in JAX v0.4.34.", None),
+    "pp_vars": ("jax.core.pp_vars was removed in JAX v0.4.34.", None),
     # Finalized 2024-05-13; remove after 2024-08-13
     "DimSize": (
         "jax.core.DimSize is deprecated. Use DimSize = int | Any.",
@@ -201,18 +201,6 @@ if typing.TYPE_CHECKING:
   check_type = _src_core.check_type
   check_valid_jaxtype = _src_core.check_valid_jaxtype
   non_negative_dim = _src_core.non_negative_dim
-  pp_aval = _src_core.pp_aval
-  pp_eqn = _src_core.pp_eqn
-  pp_eqn_rules = _src_core.pp_eqn_rules
-  pp_eqns = _src_core.pp_eqns
-  pp_jaxpr = _src_core.pp_jaxpr
-  pp_jaxpr_eqn_range = _src_core.pp_jaxpr_eqn_range
-  pp_jaxpr_skeleton = _src_core.pp_jaxpr_skeleton
-  pp_jaxprs = _src_core.pp_jaxprs
-  pp_kv_pair = _src_core.pp_kv_pair
-  pp_kv_pairs = _src_core.pp_kv_pairs
-  pp_var = _src_core.pp_var
-  pp_vars = _src_core.pp_vars
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)

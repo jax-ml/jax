@@ -22,6 +22,7 @@ from jax._src import ad_util
 from jax._src import core
 from jax._src import dispatch
 from jax._src import pretty_printer as pp
+from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -49,6 +50,7 @@ import numpy as np
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
+traceback_util.register_exclusion(__file__)
 
 ## get/swap/addupdate implementations
 
@@ -175,25 +177,17 @@ def _shape_after_transforming(
     shape: tuple[int | Array, ...], transforms: tuple[Transform, ...]
 ) -> tuple[int | Array, ...]:
   for transform in transforms:
-    match transform:
-      case indexing.NDIndexer():
-        # Run some simple checks that all the indexers have consistent shapes
-        if not transform.is_dynamic_size:
-          assert transform.shape == shape, (transform.shape, shape)
-        shape = transform.get_indexer_shape()
-      case RefBitcaster():
-        shape = transform.shape
-      case _:
-        raise ValueError(f"Unsupported transform: {transform}")
+    shape = transform.transform_shape(shape)  # type: ignore
+  assert shape is not None
   return shape
 
 
 def _dtype_after_transforming(
     dtype: Any, transforms: tuple[Transform, ...]
 ) -> Any:
-  for transform in reversed(transforms):
-    if isinstance(transform, RefBitcaster):
-      return transform.dtype
+  for transform in transforms:
+    dtype = transform.transform_dtype(dtype)
+  assert dtype is not None
   return dtype
 
 
@@ -334,7 +328,7 @@ def pp_transform(context: core.JaxprPpContext, transform: Transform) -> pp.Doc:
     case RefBitcaster():
       return pp_bitcaster(context, transform)
     case _:
-      raise ValueError(f"Unsupported transform: {transform}")
+      return pp.text(f"[{transform}]")
 
 
 def _pp_transforms(

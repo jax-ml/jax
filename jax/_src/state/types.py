@@ -18,12 +18,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 import dataclasses
 import math
-from typing import Any, Union
+from typing import Any, Union, Protocol
 
+from jax._src.typing import DTypeLike
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import pretty_printer as pp
+from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src.state import indexing
 from jax._src.typing import Array
@@ -33,6 +35,7 @@ from jax._src.util import safe_map, safe_zip
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
+traceback_util.register_exclusion(__file__)
 
 _ref_effect_color = pp.Color.GREEN
 
@@ -105,8 +108,39 @@ class RefBitcaster:
     assert not arrays
     return cls(*metadata)
 
+  def transform_shape(
+      self, shape: tuple[int | Array, ...] | None
+  ) -> tuple[int | Array, ...] | None:
+    del shape  # Unused
+    return self.shape
 
-Transform = indexing.NDIndexer | RefBitcaster
+  def transform_dtype(self, dtype):
+    del dtype  # Unused
+    return self.dtype
+
+
+class Transform(Protocol):
+
+  def transform_shape(
+      self, shape: tuple[int | Array, ...] | None
+  ) -> tuple[int | Array, ...] | None:
+    """Transform the shape.
+
+    Can return None if the input shape is not known, but must return a concrete
+    result when the input shape is known.
+    """
+    return shape
+
+  def transform_dtype(
+      self, dtype: DTypeLike | None
+  ) -> DTypeLike | None:
+    """Transform the dtype.
+
+    Can return None if the input dtype is not known, but must return a concrete
+    result when the input dtype is known.
+    """
+    return dtype
+
 
 @dataclasses.dataclass
 class RefIndexer:
@@ -122,30 +156,51 @@ class RefIndexer:
     return TransformedRef(self.ref_or_view, (indexer,))
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class TransformedRef:
   ref: Any
   transforms: tuple[Transform, ...]
 
   @property
   def is_dynamic_size(self):
-    return self.transforms[-1].is_dynamic_size
+    return any(not isinstance(i, int) for i in self.shape)
 
   @property
   def shape(self) -> tuple[int | Array, ...]:
-    assert (
-        len(self.transforms) > 0
-    ), "Should not be able to create a trivial TransformedRef"
-    if isinstance(self.transforms[-1], indexing.NDIndexer):
-      return self.transforms[-1].get_indexer_shape()
-    return self.transforms[-1].shape
+    unprocessed, shape = 0, None
+    # We first go backwards to find the first transform that knows its output
+    # shape. It's possible none of them do!
+    for unprocessed, t in enumerate(reversed(self.transforms), 1):
+      if (shape := t.transform_shape(None)) is not None:
+        unprocessed -= 1
+        break
+    if shape is None:
+      shape = self.ref.shape
+    if not unprocessed:
+      return shape
+    # If there are any unprocessed transforms left, we apply them to the shape
+    # we've found previuously.
+    for t in self.transforms[-unprocessed:]:
+      shape = t.transform_shape(shape)
+    assert shape is not None
+    return shape
 
   @property
   def dtype(self):
-    for transform in reversed(self.transforms):
-      if isinstance(transform, RefBitcaster):
-        return transform.dtype
-    return self.ref.dtype
+    # The structure of this method is analogous to `shape`. See comments there.
+    unprocessed, dtype = 0, None
+    for unprocessed, t in enumerate(reversed(self.transforms), 1):
+      if (dtype := t.transform_dtype(None)) is not None:
+        unprocessed -= 1
+        break
+    if dtype is None:
+      dtype = self.ref.dtype
+    if not unprocessed:
+      return dtype
+    for t in self.transforms[-unprocessed:]:
+      dtype = t.transform_dtype(dtype)
+    assert dtype is not None
+    return dtype
 
   @property
   def at(self) -> RefIndexer:

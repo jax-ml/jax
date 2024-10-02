@@ -851,6 +851,7 @@ pytype_strict_library(
         ":dtypes",
         ":effects",
         ":pretty_printer",
+        ":traceback_util",
         ":tree_util",
         ":typing",
         ":util",

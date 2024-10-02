@@ -32,10 +32,7 @@ jax_multiplatform_test(
     name = "cuda_custom_call_test",
     srcs = ["cuda_custom_call_test.py"],
     data = [":foo"],
-    disable_backends = [
-        "cpu",
-        "tpu",
-    ],
+    enable_backends = ["gpu"],
     tags = ["notap"],
     deps = [
         "//jax:extend",

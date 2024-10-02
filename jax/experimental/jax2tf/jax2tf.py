@@ -1549,6 +1549,8 @@ tf_not_yet_impl = [
     "ragged_dot",
     "cholesky_update",
     "symmetric_update",
+    "from_edtype",
+    "to_edtype",
     # Pallas TPU primitives
     "bitcast",
     "repeat",
@@ -1565,7 +1567,7 @@ def _add(x: TfVal, y: TfVal) -> TfVal:
 
 
 tf_impl[ad_util.add_jaxvals_p] = _add
-tf_impl[dispatch.device_put_p] = lambda *xs, devices=None, srcs=None: xs
+tf_impl[dispatch.device_put_p] = lambda *xs, devices=None, srcs=None, copy_semantics=None: xs
 tf_impl[lax_internal.copy_p] = lambda x: x
 
 def _shard_alike(*args: TfVal, **_):
@@ -2174,9 +2176,12 @@ tf_impl_with_avals[lax.conv_general_dilated_p] = _conv_general_dilated
 def _dot_general(lhs, rhs, *, dimension_numbers,
                  precision: tuple[PrecisionType, PrecisionType] | None,
                  preferred_element_type: DType | None,
+                 algorithm: Any, transpose_algorithm: Any,
                  _in_avals: Sequence[core.ShapedArray],
                  _out_aval: core.ShapedArray):
   """Implementation of lax.dot_general_p in terms of tf.linalg.einsum."""
+  del algorithm, transpose_algorithm  # unused
+
   # TODO(b/293247337): we ought to turn on this safety check, but this leads to
   # failures. Since we are going to turn on native serializaton soon, wait
   # until then to turn on this check.

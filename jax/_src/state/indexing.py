@@ -256,3 +256,10 @@ class NDIndexer:
     # In NDIndexers, the int_indexer_shape is *always* at the front of the
     # result.
     return (*self.int_indexer_shape, *slice_shape)
+
+  def transform_shape(self, shape: None | tuple[int | Array, ...]) -> None | tuple[int | Array, ...]:
+    del shape  # Unused
+    return self.get_indexer_shape()
+
+  def transform_dtype(self, dtype):
+    return dtype

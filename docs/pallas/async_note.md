@@ -37,7 +37,7 @@ Now imagine we aren’t using XLA’s `ppermute` but have our own custom Pallas 
 ```py
 def ppermute_kernel(x_ref, y_ref, send_sem, recv_sem):
   right_neighbor = ...
-  descriptor = pltpu.make_remote_async_copy(x_ref, y_ref, send_sem, recv_sem, device_id=right_neighbor)
+  descriptor = pltpu.make_async_remote_copy(x_ref, y_ref, send_sem, recv_sem, device_id=right_neighbor)
   descriptor.start()
   descriptor.wait_send()
   descriptor.wait_recv()
@@ -54,7 +54,7 @@ def add_one(x_ref, z_ref):
 
 def ppermute_add_one_kernel(x_ref, y_ref, z_ref, send_sem, recv_sem):
   right_neighbor = ...
-  descriptor = pltpu.make_remote_async_copy(x_ref, y_ref, send_sem, recv_sem, device_id=right_neighbor)
+  descriptor = pltpu.make_async_remote_copy(x_ref, y_ref, send_sem, recv_sem, device_id=right_neighbor)
   descriptor.start()
 
   # Explicitly schedule inner kernel between start/wait

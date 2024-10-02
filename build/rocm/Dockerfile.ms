@@ -9,7 +9,7 @@ RUN --mount=type=cache,target=/var/cache/apt \
 ARG GPU_DEVICE_TARGETS="gfx908 gfx90a gfx940 gfx941 gfx942 gfx1030 gfx1100"
 ENV GPU_DEVICE_TARGETS=${GPU_DEVICE_TARGETS}
 
-# Install ROCM
+# Install ROCm
 ARG ROCM_VERSION=6.0.0
 ARG ROCM_PATH=/opt/rocm-${ROCM_VERSION}
 ENV ROCM_PATH=${ROCM_PATH}
@@ -19,13 +19,8 @@ RUN --mount=type=bind,source=build/rocm/tools/get_rocm.py,target=get_rocm.py \
     --mount=type=cache,target=/var/cache/apt \
     python3 get_rocm.py --rocm-version=$ROCM_VERSION --job-name=$ROCM_BUILD_JOB --build-num=$ROCM_BUILD_NUM
 
-# Set up paths
-ENV HCC_HOME=$ROCM_PATH/hcc
-ENV HIP_PATH=$ROCM_PATH/
-ENV OPENCL_ROOT=$ROCM_PATH/opencl
-ENV PATH="$HCC_HOME/bin:$HIP_PATH/bin:${PATH}"
+# add ROCm bins to PATH
 ENV PATH="$ROCM_PATH/bin:${PATH}"
-ENV PATH="$OPENCL_ROOT/bin:${PATH}"
 ENV PATH="/root/bin:/root/.local/bin:$PATH"
 
 # install pyenv and python build dependencies

@@ -321,6 +321,7 @@ def base_arr_shape_to_keys_shape(impl, base_arr_shape):
 
 
 class KeyTyRules:
+  allow_conversion: bool = False
 
   @staticmethod
   def full(shape, fill_value, dtype):
@@ -424,14 +425,6 @@ class KeyTyRules:
   @staticmethod
   def zero(_):
     return np.zeros((), dtypes.float0)
-
-  @staticmethod
-  def convert_from(key_dtype, other_dtype) -> bool:
-    return False
-
-  @staticmethod
-  def convert_to(other_dtype, key_dtype) -> bool:
-    return False
 
 
 class KeyTy(dtypes.ExtendedDType):

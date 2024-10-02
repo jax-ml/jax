@@ -13,7 +13,7 @@
 # limitations under the License.
 
 load("@rules_python//python:defs.bzl", "py_library")
-load("//jaxlib:jax.bzl", "jax_py_test", "py_deps")
+load("//jaxlib:jax.bzl", "jax_multiplatform_test", "py_deps")
 
 licenses(["notice"])
 
@@ -48,18 +48,17 @@ py_library(
     ],
 )
 
-jax_py_test(
+jax_multiplatform_test(
     name = "run_matmul",
     srcs = ["matmul.py"],
+    enable_backends = [],
+    enable_configs = ["gpu_h100"],
     main = "matmul.py",
     tags = [
         "manual",
         "notap",
-        "requires-gpu-sm90-only",
     ],
     deps = [
-        "//jax",
         "//jax:mosaic_gpu",
-        "//learning/brain/research/jax:gpu_support",
     ] + py_deps("numpy"),
 )

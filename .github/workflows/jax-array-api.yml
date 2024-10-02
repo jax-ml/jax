@@ -22,9 +22,9 @@ jobs:
 
     steps:
     - name: Checkout jax
-      uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet: actions/checkout@v4
+      uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938  # v4.2.0
     - name: Checkout array-api-tests
-      uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet: actions/checkout@v4
+      uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938  # v4.2.0
       with:
         repository: data-apis/array-api-tests
         # TODO(jakevdp) update this to a stable release/tag when available.
@@ -32,7 +32,7 @@ jobs:
         submodules: 'true'
         path: 'array-api-tests'
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # ratchet:actions/setup-python@v5
+      uses: actions/setup-python@f677139bbe7f9c59b41e40162b753c062f5d49a3  # v5.2.0
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies

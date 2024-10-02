@@ -656,7 +656,7 @@ class RmsNormFwdClass:
         assert len(weight_info.shape) == 2
         # partition() will force all dims of all inputs to be replicated except the
         # first dim of x that will be kept as is.
-        # This is because the implementaion can only be sharded on the batch dimensions.
+        # This is because the implementation can only be sharded on the batch dimensions.
 
         x_spec = arg_infos[0].sharding.spec
         # None mean that we replicate on that dimension.

@@ -31,21 +31,16 @@ from jax._src.interpreters.pxla import Mesh as Mesh
 from jax._src.mesh import AbstractMesh
 
 _deprecations = {
-    # Added Jun 4, 2024.
+    # Finalized 2024-10-01; remove after 2025-01-01.
     "XLACompatibleSharding": (
         (
-            "jax.sharding.XLACompatibleSharding is deprecated. Use"
-            " jax.sharding.Sharding instead."
+            "jax.sharding.XLACompatibleSharding was removed in JAX v0.4.34. "
+            "Use jax.sharding.Sharding instead."
         ),
-        _deprecated_XLACompatibleSharding,
+        None,
     )
 }
 
-import typing
-if typing.TYPE_CHECKING:
-  XLACompatibleSharding = _deprecated_XLACompatibleSharding
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del typing
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = _deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr

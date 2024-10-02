@@ -20,6 +20,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
+from jax._src.state import discharge as state_discharge
 from jax.experimental import pallas as pl
 from jax.experimental import shard_map
 from jax.experimental.pallas import tpu as pltpu
@@ -753,6 +754,124 @@ class PallasCallRemoteAsyncCopyTest(parameterized.TestCase):
         jnp.roll(x[:, 8:], axis=0, shift=1),
     ], axis=1)
     np.testing.assert_array_equal(y, expected)
+
+
+def make_stateful_async_copy():
+  @jax.named_call
+  def copy_start(x_ref, o_ref) -> Future:
+
+    def copy_start_kernel(sem):
+      pltpu.make_async_copy(x_ref, o_ref, sem).start()
+    sem = pl.pallas_call(
+        copy_start_kernel,
+        out_shape=pltpu.SemaphoreType.DMA(()),
+        out_specs=pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
+    )()
+    return sem
+
+  @jax.named_call
+  def copy_done(x_ref, o_ref, future):
+    sem = future
+
+    def copy_done_kernel(sem):
+      pltpu.make_async_copy(x_ref, o_ref, sem).wait()
+
+    () = pl.pallas_call(
+        copy_done_kernel,
+        out_shape=(),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
+        ],
+    )(sem)
+
+  return copy_start, copy_done
+
+
+def make_stateful_async_slice(i: int):
+  @jax.named_call
+  def copy_start(x_ref, o_ref) -> Future:
+
+    def copy_start_kernel(sem):
+      pltpu.make_async_copy(x_ref.at[i], o_ref, sem).start()
+    sem = pl.pallas_call(
+        copy_start_kernel,
+        out_shape=pltpu.SemaphoreType.DMA(()),
+        out_specs=pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
+    )()
+    return sem
+
+  @jax.named_call
+  def copy_done(x_ref, o_ref, future):
+    sem = future
+
+    def copy_done_kernel(sem):
+      pltpu.make_async_copy(x_ref.at[i], o_ref, sem).wait()
+
+    () = pl.pallas_call(
+        copy_done_kernel,
+        out_shape=(),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
+        ],
+    )(sem)
+
+  return copy_start, copy_done
+
+
+class PallasCallStatefulAsyncTest(parameterized.TestCase):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('DMAs only guaranteed to work ou TPU v4+')
+
+  def test_basic_stateful_async_copy(self):
+    @jax.jit
+    def f(x):
+      y = jnp.zeros_like(x)
+      def body(refs):
+        copy_start, copy_done = make_stateful_async_copy()
+        x_ref, y_ref = refs
+        fut = copy_start(x_ref, y_ref)
+        copy_done(x_ref, y_ref, fut)
+      _, y = state_discharge.run_state(body)((x, y))
+      return y
+    x = jax.random.normal(jax.random.key(0), (8, 128), dtype=jnp.float32)
+    y = f(x)
+    np.testing.assert_array_equal(y, x)
+
+  def test_multiple_stateful_async_copy(self):
+    @jax.jit
+    def f(x):
+      y = y2 = jnp.zeros_like(x)
+      def body(refs):
+        copy_start, copy_done = make_stateful_async_copy()
+        x_ref, y_ref, y2_ref = refs
+        fut = copy_start(x_ref, y_ref)
+        fut2 = copy_start(x_ref, y2_ref)
+        copy_done(x_ref, y_ref, fut)
+        copy_done(x_ref, y2_ref, fut2)
+      _, y, y2 = state_discharge.run_state(body)((x, y, y2))
+      return y, y2
+    x = jax.random.normal(jax.random.key(0), (8, 128), dtype=jnp.float32)
+    y, y2 = f(x)
+    np.testing.assert_array_equal(y, x)
+    np.testing.assert_array_equal(y2, x)
+
+  def test_basic_stateful_async_slice(self):
+    @jax.jit
+    def f(x):
+      y = jnp.zeros(x.shape[1:], x.dtype)
+      def body(refs):
+        copy_start, copy_done = make_stateful_async_slice(2)
+        x_ref, y_ref = refs
+        fut = copy_start(x_ref, y_ref)
+        copy_done(x_ref, y_ref, fut)
+      _, y = state_discharge.run_state(body)((x, y))
+      return y
+    x = jax.random.normal(jax.random.key(0), (4, 8, 128), dtype=jnp.float32)
+    y = f(x)
+    np.testing.assert_array_equal(y, x[2])
 
 
 if __name__ == "__main__":

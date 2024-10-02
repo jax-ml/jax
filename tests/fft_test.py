@@ -26,6 +26,7 @@ from jax import numpy as jnp
 from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src.lib import version as jaxlib_version
 from jax._src.numpy.util import promote_dtypes_complex
 from jax._src.numpy.fft import _fft_norm
 
@@ -161,7 +162,7 @@ class FftTest(jtu.JaxTestCase):
     # Numpy promotes to complex128 aggressively.
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
-    self._CompileAndCheck(jnp_fn, args_maker)
+    self._CompileAndCheck(jnp_fn, args_maker, atol={np.complex64: 2e-6})
     # Test gradient for differentiable types.
     if (config.enable_x64.value and
         dtype in (float_dtypes if real and not inverse else inexact_dtypes)):
@@ -476,6 +477,17 @@ class FftTest(jtu.JaxTestCase):
     if func_name[0] != "i":
       np_norm = np.reciprocal(np_norm)
     self.assertArraysAllClose(jax_norm, np_norm, rtol=3e-8, check_dtypes=False)
+
+  def testFftNormalizationPrecision(self):
+    # reported in https://github.com/jax-ml/jax/issues/23827
+    if not config.enable_x64.value:
+      raise self.skipTest("requires jax_enable_x64=true")
+    if jaxlib_version <= (0, 4, 33):
+      raise self.skipTest("requires jaxlib version > 0.4.33")
+    n = 31
+    a = np.ones((n, 15), dtype="complex128")
+    self.assertArraysAllClose(
+        jnp.fft.ifft(a, n=n, axis=1), np.fft.ifft(a, n=n, axis=1), atol=1e-14)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -1608,12 +1608,6 @@ def physical_element_aval(edtype: dtypes.ExtendedDType) -> ShapedArray:
   duck = edtype._rules.physical_element_aval(edtype)  # type: ignore
   return ShapedArray(duck.shape, dtypes.dtype(duck.dtype))
 
-def _short_dtype_name(dtype) -> str:
-  if isinstance(dtype, dtypes.ExtendedDType):
-    return str(dtype)
-  else:
-    return (dtype.name.replace('float', 'f').replace('uint'   , 'u')
-                      .replace('int'  , 'i').replace('complex', 'c'))
 
 def _dtype_object(dtype):
   return dtype if isinstance(dtype, dtypes.ExtendedDType) else np.dtype(dtype)
@@ -1672,7 +1666,7 @@ class UnshapedArray(AbstractValue):
       raise TypeError(self, other)
 
   def str_short(self, short_dtypes=False) -> str:
-    return _short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
+    return dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
 
   def strip_weak_type(self):
     """Returns a copy of the aval with weak_type=False."""
@@ -1811,7 +1805,7 @@ class ShapedArray(UnshapedArray):
       raise TypeError(self, other)
 
   def str_short(self, short_dtypes=False):
-    dt_str =  _short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
+    dt_str =  dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
     dt_str = dt_str.replace('void', 'float0')
     shapestr = ','.join(map(str, self.shape))
     if hasattr(self, 'sharding'):
@@ -1872,7 +1866,7 @@ class ConcreteArray(ShapedArray):
       raise TypeError(self, other)
 
   def str_short(self, short_dtypes=False) -> str:
-    dt_str =  _short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
+    dt_str = dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
     return f'{self.val}, dtype={dt_str}'
 
   _bool    = partialmethod(_forward_to_value, bool)
@@ -1922,7 +1916,7 @@ class DShapedArray(UnshapedArray):
   def str_short(self, short_dtypes=False) -> str:
     del short_dtypes  # ignored
     shape = f'{",".join(str(d) for d in self.shape)}' if self.shape else ''
-    dtype = _short_dtype_name(self.dtype)
+    dtype = dtypes.short_dtype_name(self.dtype)
     return f'{dtype}[{shape}]'
   __str__ = __repr__ = str_short
 
@@ -1989,7 +1983,7 @@ class DArray:
       # special-case scalar bints
       return f'{int(self._data)}{{≤{self.dtype.bound}}}'
 
-    dtypestr = _short_dtype_name(self._aval.dtype)
+    dtypestr = dtypes.short_dtype_name(self._aval.dtype)
     shapestr = ','.join(map(str, self.shape))
     data = self.data
     return f'{dtypestr}[{shapestr}] with value: {data}'
@@ -2912,6 +2906,7 @@ def _check_jaxpr(
   # Check each eqn.
   sentinel = object()
   in_idx = {v: i for i, v in enumerate(it.chain(jaxpr.constvars, jaxpr.invars))}
+  mut_arrays = set()
   for eqn_idx, eqn in enumerate(jaxpr.eqns):
     prim = eqn.primitive
     try:
@@ -2936,6 +2931,7 @@ def _check_jaxpr(
       if prim is mutable_array_p:
         outvar, = eqn.outvars
         in_idx[outvar] = None  # type: ignore
+        mut_arrays.add(outvar)
       if eqn.effects != eqn_effects:
         raise JaxprTypeError("Inferred effects do not match equation effects. "
                              f"Equation effects: {eqn.effects}. "
@@ -2943,6 +2939,8 @@ def _check_jaxpr(
       for eff in eqn.effects:
         if isinstance(eff, effects.JaxprInputEffect):
           eqn_invar = eqn.invars[eff.input_index]
+          if eqn_invar in mut_arrays:
+            continue
           if (jaxpr_index := in_idx.get(eqn_invar, sentinel)) is sentinel:
             raise JaxprTypeError(
                 "Invalid `JaxprInputEffect`: must correspond to a jaxpr invar")
@@ -3203,7 +3201,7 @@ def pp_var(v: Var | Literal, context: JaxprPpContext) -> str:
 def pp_aval(a: AbstractValue, context: JaxprPpContext) -> str:
   if isinstance(a, DShapedArray):
     shape = [pp_var(d, context) if type(d) is Var else str(d) for d in a.shape]
-    dtype = _short_dtype_name(a.dtype)
+    dtype = dtypes.short_dtype_name(a.dtype)
     return f'{dtype}[{",".join(shape)}]'
   else:
     return a.str_short(short_dtypes=True)

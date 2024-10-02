@@ -30,6 +30,7 @@ from .fragmented_array import (
     FragmentedLayout,
     WGMMA_LAYOUT,
     WGMMA_ROW_LAYOUT,
+    WGSplatFragLayout,
     WGStridedFragLayout,
 )
 from .utils import (
@@ -50,6 +51,7 @@ from .utils import (
     memref_unfold,
     memref_unsqueeze,
     single_thread,
+    single_thread_predicate,
     thread_idx,
     tile_shape,
     warp_idx,

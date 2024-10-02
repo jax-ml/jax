@@ -231,15 +231,22 @@ def jax_multiplatform_test(
         shard_count = None,
         deps = [],
         data = [],
-        disable_backends = None,  # buildifier: disable=unused-variable
+        enable_backends = None,
         backend_variant_args = {},  # buildifier: disable=unused-variable
         backend_tags = {},  # buildifier: disable=unused-variable
         disable_configs = None,  # buildifier: disable=unused-variable
-        enable_configs = None,  # buildifier: disable=unused-variable
+        enable_configs = [],
         config_tags_overrides = None,  # buildifier: disable=unused-variable
         tags = [],
         main = None,
         pjrt_c_api_bypass = False):  # buildifier: disable=unused-variable
+    # enable_configs and disable_configs do not do anything in OSS, only in Google's CI.
+    # The order in which `enable_backends`, `enable_configs`, and `disable_configs` are applied is
+    # as follows:
+    # 1. `enable_backends` is applied first, enabling all test configs for the given backends.
+    # 2. `disable_configs` is applied second, disabling the named test configs.
+    # 3. `enable_configs` is applied last, enabling the named test configs.
+
     if main == None:
         if len(srcs) == 1:
             main = srcs[0]
@@ -256,7 +263,7 @@ def jax_multiplatform_test(
             "--jax_platform_name=" + backend,
         ]
         test_tags = list(tags) + ["jax_test_%s" % backend] + backend_tags.get(backend, [])
-        if disable_backends and backend in disable_backends:
+        if enable_backends != None and backend not in enable_backends and not any([config.startswith(backend) for config in enable_configs]):
             test_tags += ["manual"]
         if backend == "gpu":
             test_tags += tf_cuda_tests_tags()

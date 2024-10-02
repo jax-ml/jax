@@ -208,6 +208,31 @@ class OpsTest(PallasBaseTest):
         ),
     )
 
+  def test_select_with_scalar_condition(self):
+    def kernel(cond, lhs, rhs, out):
+      out[:] = jax.lax.select(cond[0] != 0, lhs[:], rhs[:])
+
+    def run(cond, lhs, rhs):
+      return pl.pallas_call(
+          kernel,
+          out_shape=lhs,
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=0,
+              in_specs=[
+                  pl.BlockSpec(memory_space=pltpu.SMEM),
+                  pl.BlockSpec(memory_space=pltpu.VMEM),
+                  pl.BlockSpec(memory_space=pltpu.VMEM),
+              ],
+          ),
+          name="select_kernel",
+      )(cond, lhs, rhs)
+
+    cond = jnp.array([1], dtype=jnp.int32)
+    lhs = jnp.zeros((8, 128), dtype=jnp.float32)
+    rhs = jnp.ones((8, 128), dtype=jnp.float32)
+
+    assert (run(cond, lhs, rhs) == lhs).all()
+
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True

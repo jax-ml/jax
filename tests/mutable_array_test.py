@@ -223,5 +223,14 @@ class MutableArrayTest(jtu.JaxTestCase):
     _, xs = doit()
     self.assertAllClose(xs, (np.arange(5) * 2), check_dtypes=False)
 
+  def test_double_jit_mutable_array(self):
+    @jax.jit
+    @jax.jit
+    def f():
+      x_ref = core.mutable_array(jnp.zeros(8))
+      return x_ref[...]
+    x = f()
+    self.assertArraysEqual(x, jnp.zeros(8))
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
