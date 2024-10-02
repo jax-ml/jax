@@ -66,7 +66,7 @@ jobs:
           PY_COLORS: 1
         run: |
           cd jax
+          python -m pip install --pre --find-links ${{ github.workspace }}\jax\dist jaxlib
           python -m pip install -e ${{ github.workspace }}\jax
-          python -m pip install --no-index --find-links ${{ github.workspace }}\jax\dist jaxlib
           echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
           pytest -n auto --tb=short tests examples
