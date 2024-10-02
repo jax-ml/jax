@@ -556,17 +556,14 @@ def _infer_params_impl(
         "pjit does not support kwargs when in_shardings is specified.")
 
   if pjit_mesh is not None:
-    jit_name = 'pjit'
     if (ji.backend or ji.device) and not pjit_mesh.empty:
       raise ValueError(
           "Mesh context manager should not be used with jit when backend or "
           "device is also specified as an argument to jit.")
-  else:
-    jit_name = 'jit'
 
   axes_specs = _flat_axes_specs(ji.abstracted_axes, *args, **kwargs)
 
-  dbg = debug_info(jit_name, ji.fun_sourceinfo, ji.fun_signature, args, kwargs,
+  dbg = debug_info('jit', ji.fun_sourceinfo, ji.fun_signature, args, kwargs,
                    ji.static_argnums, ji.static_argnames)
   f = lu.wrap_init(fun)
   f, res_paths = result_paths(f)
@@ -593,6 +590,7 @@ def _infer_params_impl(
     in_shardings_leaves = out_shardings_leaves = tuple(leaves)
     in_shardings_treedef = out_shardings_treedef = treedef
   else:
+    jit_name = 'pjit' if pjit_mesh is not None else 'jit'
     in_shardings_leaves = tuple(
         _create_sharding_for_array(pjit_mesh, x, 'in_shardings', jit_name)
         for x in ji.in_shardings_leaves)
@@ -607,35 +605,12 @@ def _infer_params_impl(
 
   in_type: core.InputType | tuple[core.AbstractValue, ...]
   if config.dynamic_shapes.value:
+    assert in_avals is None
     in_type = pe.infer_lambda_input_type(axes_specs, explicit_args)
     in_avals = tuple(a for a, e in in_type if e)
-  elif in_avals is None:
-    avals = []
-    for i, a in enumerate(explicit_args):
-      try:
-        avals.append(shaped_abstractify(a))
-      except OverflowError as e:
-        arg_path = (f"argument path is {dbg.arg_names[i]}" if dbg
-                    else f"flattened argument number is {i}")
-        raise OverflowError(
-          "An overflow was encountered while parsing an argument to a jitted "
-          f"computation, whose {arg_path}."
-        ) from e
-      except TypeError as e:
-        arg_description = (f"path {dbg.arg_names[i]}" if dbg
-                           else f"flattened argument number {i}")
-        raise TypeError(
-          f"Error interpreting argument to {fun} as an abstract array."
-          f" The problematic value is of type {type(a)} and was passed to"
-          f" the function at {arg_description}.\n"
-          "This typically means that a jit-wrapped function was called with a non-array"
-          " argument, and this argument was not marked as static using the"
-          " static_argnums or static_argnames parameters of jax.jit."
-        ) from e
-
-    in_type = in_avals = tuple(avals)
   else:
-    in_type = in_avals
+    in_type = in_avals  # type: ignore
+  assert in_avals is not None
 
   in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
       in_shardings_treedef, in_shardings_leaves,
@@ -652,6 +627,7 @@ def _infer_params_impl(
         flat_fun, in_type, attr_token, dbg,
         HashableFunction(res_paths, closure=()),
         IgnoreKey(ji.inline))
+    _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), explicit_args)
   _attr_update(flat_fun, in_type, attr_token, attrs_tracked)
 
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
@@ -693,7 +669,6 @@ def _infer_params_impl(
                     donated_invars, dbg.arg_names if dbg else None, len(consts),
                     attrs_tracked, abstract_mesh), args_flat
 
-
 def get_abstract_mesh_from_avals(in_avals):
   if not config.sharding_in_types.value:
     return None
@@ -711,9 +686,7 @@ def get_abstract_mesh_from_avals(in_avals):
 class InferParamsCacheEntry:
   """Mutable value object for _infer_params_cached."""
   __slots__ = ['pjit_params']
-
   pjit_params: PjitParams | None
-
   def __init__(self):
     self.pjit_params = None
 
@@ -747,34 +720,76 @@ def _infer_params(
     resource_env = None
     pjit_mesh = None
 
-  skip_cache = config.dynamic_shapes.value
-  if not skip_cache:
-    signature, dynargs = jax_jit.parse_arguments(
-        args, tuple(kwargs.values()), tuple(kwargs.keys()), ji.static_argnums,
-        ji.static_argnames, tree_util.default_registry)
-    try:
-      avals = tuple(shaped_abstractify(a) for a in dynargs)
-    except (OverflowError, TypeError):
-      # If we see something we don't understand, use the slow path.
-      skip_cache = True
-
-  if skip_cache:
+  if config.dynamic_shapes.value:  # if dynamic shapes, don't use the cache
     p, args_flat = _infer_params_impl(fun, ji, pjit_mesh, resource_env, args,
                                       kwargs, in_avals=None)
     return p, p.consts + args_flat
 
-  entry = _infer_params_cached(
-      fun, ji, signature, avals, pjit_mesh, resource_env)
+  signature, dynargs = jax_jit.parse_arguments(
+      args, tuple(kwargs.values()), tuple(kwargs.keys()), ji.static_argnums,
+      ji.static_argnames, tree_util.default_registry)
+  dbg = debug_info('jit', ji.fun_sourceinfo, ji.fun_signature, args, kwargs,
+                   ji.static_argnums, ji.static_argnames)
+  avals = _infer_input_type(fun, dbg, dynargs)
+  entry = _infer_params_cached(fun, ji, signature, avals, pjit_mesh, resource_env)
   if entry.pjit_params is None:
     p, args_flat = _infer_params_impl(
         fun, ji, pjit_mesh, resource_env, args, kwargs, in_avals=avals)
-    if p.attrs_tracked:
-      # If there are attrs_tracked, don't use the cache.
+    if p.attrs_tracked:  # if attrs, don't popoulate the cache
       return p, p.consts + args_flat
-    else:
-      entry.pjit_params = p
+    entry.pjit_params = p
   return entry.pjit_params, entry.pjit_params.consts + dynargs
 
+def _infer_input_type(fun, dbg, explicit_args) -> tuple[core.AbstractValue, ...]:
+  avals = []
+  try:
+    for i, x in enumerate(explicit_args):
+      avals.append(shaped_abstractify(x))
+  except OverflowError:
+    arg_path = (f"argument path is {dbg.arg_names[i]}" if dbg  # type: ignore
+                else f"flattened argument number is {i}")  # type: ignore
+    raise OverflowError(
+      "An overflow was encountered while parsing an argument to a jitted "
+      f"computation, whose {arg_path}."
+    ) from None
+  except TypeError:
+    arg_description = (f"path {dbg.arg_names[i]}" if dbg  # type: ignore
+                       else f"flattened argument number {i}")  # type: ignore
+    raise TypeError(
+      f"Error interpreting argument to {fun} as an abstract array."
+      f" The problematic value is of type {type(x)} and was passed to"  # type: ignore
+      f" the function at {arg_description}.\n"
+      "This typically means that a jit-wrapped function was called with a non-array"
+      " argument, and this argument was not marked as static using the"
+      " static_argnums or static_argnames parameters of jax.jit."
+    ) from None
+  if config.mutable_array_checks.value:
+    # TODO(mattjj): make this faster
+    refs: dict[int, int] = {}
+    for i, (a, x) in enumerate(zip(avals, explicit_args)):
+      if (isinstance(a, AbstractRef) and
+          (dup_idx := refs.setdefault(id(core.get_referent(x)), i)) != i):
+        raise ValueError(
+          "only one reference to a mutable array may be passed as an argument "
+          f"to a function, but when tracing {dbg.func_src_info} for {dbg.traced_for} "
+          f"the mutable array reference of type {a.str_short()} appeared at both "
+          f"{dbg.arg_names[dup_idx]} and {dbg.arg_names[i]}."
+          if dbg else
+          f"at both flat index {dup_idx} and flat index {i}") from None
+  return tuple(avals)
+
+def _check_no_aliased_closed_over_refs(dbg, consts, args) -> None:
+  if not config.mutable_array_checks.value: return
+  refs: set[int] = {id(core.get_referent(c)) for c in consts
+                    if isinstance(core.get_aval(c), AbstractRef)}
+  for i, x in enumerate(args):
+    if id(core.get_referent(x)) in refs:
+      a = shaped_abstractify(x)
+      raise ValueError(
+          f"when tracing {dbg.func_src_info} for {dbg.traced_for}, a mutable "
+          f"array reference of type {a.str_short()} was both closed over and "
+          f"passed as the argument "
+          f"{dbg.arg_names[i]}" if dbg else "at flat index {i}")
 
 def _extract_implicit_args(
   in_type: Sequence[tuple[core.AbstractValue, bool]],

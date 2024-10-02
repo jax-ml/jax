@@ -48,13 +48,6 @@ class MutableArrayTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(f)(x_mut)
     self.assertTrue(any(isinstance(e, RefEffect) for e in jaxpr.effects))
 
-  # disabling this test for now. TODO(dougalm): re-enable once we add checks to
-  # ensure mutable arrays aren't returned or duplicated etc.
-  # def test_staging_error(self):
-  #   x = jnp.zeros(3)
-  #   with self.assertRaises(Exception):
-  #     jax.jit(core.mutable_array)(x)
-
   @parameterized.parameters([True, False])
   def test_multiple_inputs_and_outputs(self, jit):
     def f(x_mut, y, z_mut, w):
@@ -243,6 +236,91 @@ class MutableArrayTest(jtu.JaxTestCase):
     ans = jax.grad(f)(1.)
     expected = 2.0
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_defensive_copy(self):
+    x = jnp.arange(3.)
+    _ = jax.jit(lambda x_ref: x_ref[...])(core.mutable_array(x))
+    x + 1  # don't crash
+
+
+@jtu.with_config(jax_mutable_array_checks=True)
+class MutableArrayErrorsTest(jtu.JaxTestCase):
+  def test_return_from_jit(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        r"traced for jit returned a mutable array reference.*\n\n"
+        r".*was created on line"):
+      jax.jit(core.mutable_array)(jnp.arange(3))
+
+  def test_return_from_jit_arg(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        r"traced for jit returned a mutable array reference.*\n\n"
+        r".*was passed in as the argument x_ref"):
+      jax.jit(lambda x_ref: x_ref)(core.mutable_array(jnp.arange(3)))
+
+  def test_return_from_jit_pytree(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        r"tree path \['hi'\]"):
+      jax.jit(lambda x_ref: {'hi': x_ref})(core.mutable_array(jnp.arange(3)))
+
+  def test_return_from_jit_closure(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        r"tree path \['hi'\]"):
+      x_ref = core.mutable_array(jnp.arange(3))
+      jax.jit(lambda: {'hi': x_ref})()
+
+  def test_argument_aliases_jit(self):
+    x_ref = core.mutable_array(0.)
+    with self.assertRaisesRegex(
+        ValueError, "appeared at both x_ref and y_ref"):
+      jax.jit(lambda x_ref, y_ref: x_ref[...] + y_ref[...])(x_ref, x_ref)
+
+  def test_closure_and_argument_aliases_jit(self):
+    x_ref = core.mutable_array(0.)
+    with self.assertRaisesRegex(
+        ValueError, "closed over and passed as the argument y_ref"):
+      jax.jit(lambda y_ref: x_ref[...] + y_ref[...])(x_ref)
+
+  def test_return_from_scan(self):
+    with self.assertRaisesRegex(
+        ValueError, "traced for scan returned a mutable array reference of type"):
+      jax.lax.scan(lambda c, x: (core.mutable_array(c), x), 0, jnp.arange(3))
+
+  # TODO test_argument_aliases_scan
+  # TODO test_closure_and_argument_aliases_scan
+
+  def test_return_from_cond(self):
+    with self.assertRaisesRegex(
+        ValueError, "traced for cond returned a mutable array reference of type"):
+      jax.lax.cond(True, lambda: core.mutable_array(1.0), lambda: core.mutable_array(2.0))
+
+  # TODO test_argument_aliases_cond
+  # TODO test_closure_and_argument_aliases_cond
+
+  # TODO test_return_from_custom_jvp/vjp
+  # TODO test_argument_aliases_custom_jvp/vjp
+  # TODO test_closure_and_argument_aliases_custom_jvp/vjp
+
+  # TODO(mattjj): enable when cond works with mutable arrays
+  # @parameterized.parameters([False, True])
+  # def test_cond_both_branches_close_over_same_mutable_array(self, jit):
+  #   # see also test_cond_with_ref_reuse in state_test.py
+  #   x_ref = core.mutable_array(0.)
+  #   def f(pred):
+  #     def true_fun():
+  #       x_ref[()] = 1.
+  #     def false_fun():
+  #       x_ref[()] = 2.
+  #     jax.lax.cond(pred, true_fun, false_fun)
+  #   if jit:
+  #     f = jax.jit(f)
+  #   out_true = f(True)
+  #   self.assertAllClose(x_ref[...], 1.)
+  #   out_false = f(False)
+  #   self.assertAllClose(x_ref[...], 2.)
 
 
 if __name__ == '__main__':
