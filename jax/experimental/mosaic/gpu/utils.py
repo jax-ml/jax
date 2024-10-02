@@ -316,13 +316,15 @@ def memref_slice(ref: ir.Value, index) -> ir.Value:
   # dynamic, but we can at least catch some OOB slices).
 
   memref_strides, offset = ref_ty.get_strides_and_offset()
+  dynamic_offset = ir.ShapedType.get_dynamic_stride_or_offset()
   new_offset = offset
-  for idx, stride in zip(base_indices, memref_strides):
-    if isinstance(idx, int):
-      new_offset += idx * stride
-    else:
-      new_offset = ir.ShapedType.get_dynamic_stride_or_offset()
-      break
+  if new_offset != dynamic_offset:
+    for idx, stride in zip(base_indices, memref_strides):
+      if isinstance(idx, int):
+        new_offset += idx * stride
+      else:
+        new_offset = dynamic_offset
+        break
   new_strides = [
       s for s, squeeze in zip(memref_strides, is_squeezed) if not squeeze
   ]
@@ -486,7 +488,7 @@ def parse_indices(
       slice_shape.append(1)
       is_squeezed.append(True)
     elif isinstance(idx, slice):
-      if idx.step is not None:
+      if idx.step is not None and idx.step != 1:
         raise NotImplementedError("Strided slices not implemented")
       base_indices.append(idx.start or 0)
       slice_shape.append((idx.stop or bound) - (idx.start or 0))

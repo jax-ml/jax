@@ -96,6 +96,7 @@ class TilingTransform(MemoryRefTransform):
     return mgpu.TileTransform(self.tiling)
 
 
+@tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
 class UntileRef(Transform):
   tiling: tuple[int, ...]
@@ -113,6 +114,33 @@ class UntileRef(Transform):
   def transform_dtype(self, dtype):
     return dtype
 
+  def untransform_index(self, idxs: tuple[slice, ...]) -> tuple[slice, ...]:
+    untiled_idxs = idxs[: -len(self.tiling)]
+    tiled_idxs = idxs[-len(self.tiling) :]
+    idxs_after_tiling = []
+    for idx, tile in zip(tiled_idxs, self.tiling):
+      if idx.step is not None and idx.step != 1:
+        raise NotImplementedError("Strided slices unsupported")
+      if (idx.start is not None and idx.start % tile) or (idx.stop is not None and idx.stop % tile):
+        raise ValueError("Non-empty slices must be tile aligned")
+      idxs_after_tiling.append(slice(idx.start // tile, idx.stop // tile))
+    return (*untiled_idxs, *idxs_after_tiling, *(slice(None) for _ in self.tiling))
+
+  def tree_flatten(self):
+    return (), (self.tiling,)
+
+  @classmethod
+  def tree_unflatten(cls, metadata, arrays):
+    assert not arrays
+    return cls(*metadata)
+
+
+def _perm_inverse(permutation: tuple[int, ...]) -> tuple[int, ...]:
+  inverse = [-1] * len(permutation)
+  for i, p in enumerate(permutation):
+    inverse[p] = i
+  return tuple(inverse)
+
 
 @dataclasses.dataclass(frozen=True)
 class TransposeTransform(MemoryRefTransform):
@@ -124,17 +152,19 @@ class TransposeTransform(MemoryRefTransform):
       raise ValueError(f"Permutation {self.permutation} is not a permutation.")
 
   def undo(self, ref: pallas_core.TransformedRef) -> pallas_core.TransformedRef:
-    inverse = [-1] * len(self.permutation)
-    for i, p in enumerate(self.permutation):
-      inverse[p] = i
     return dataclasses.replace(
-        ref, transforms=(*ref.transforms, TransposeRef(tuple(inverse)))
+        ref,
+        transforms=(
+            *ref.transforms,
+            TransposeRef(_perm_inverse(self.permutation)),
+        ),
     )
 
   def to_gpu_transform(self) -> mgpu.MemRefTransform:
     return mgpu.TransposeTransform(self.permutation)
 
 
+@tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
 class TransposeRef(Transform):
   permutation: tuple[int, ...]
@@ -146,6 +176,17 @@ class TransposeRef(Transform):
 
   def transform_dtype(self, dtype):
     return dtype
+
+  def untransform_index(self, idxs: tuple[slice, ...]) -> tuple[slice, ...]:
+    return tuple(idxs[i] for i in _perm_inverse(self.permutation))
+
+  def tree_flatten(self):
+    return (), (self.permutation,)
+
+  @classmethod
+  def tree_unflatten(cls, metadata, arrays):
+    assert not arrays
+    return cls(*metadata)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -182,11 +223,16 @@ class SwizzleTransform(MemoryRefTransform):
 class UnswizzleRef(Transform):
   swizzle: int
 
-  def transform_shape(self, shape):
-    return shape
-
-  def transform_dtype(self, dtype):
-    return dtype
+  def untransform_index(self, idxs: tuple[slice, ...]) -> tuple[slice, ...]:
+    if not idxs:
+      return idxs
+    if idxs[-1].step is not None and idxs[-1].step != 1:
+      raise NotImplementedError("Swizzled dims cannot be sliced")
+    if (idxs[-1].start is not None and idxs[-1].start != 0) or (
+        idxs[-1].stop is not None and idxs[-1].stop != self.swizzle
+    ):
+      raise ValueError("Swizzled dims cannot be sliced")
+    return idxs
 
   def tree_flatten(self):
     return (), (self.swizzle,)

@@ -177,25 +177,17 @@ def _shape_after_transforming(
     shape: tuple[int | Array, ...], transforms: tuple[Transform, ...]
 ) -> tuple[int | Array, ...]:
   for transform in transforms:
-    match transform:
-      case indexing.NDIndexer():
-        # Run some simple checks that all the indexers have consistent shapes
-        if not transform.is_dynamic_size:
-          assert transform.shape == shape, (transform.shape, shape)
-        shape = transform.get_indexer_shape()
-      case RefBitcaster():
-        shape = transform.shape
-      case _:
-        raise ValueError(f"Unsupported transform: {transform}")
+    shape = transform.transform_shape(shape)  # type: ignore
+  assert shape is not None
   return shape
 
 
 def _dtype_after_transforming(
     dtype: Any, transforms: tuple[Transform, ...]
 ) -> Any:
-  for transform in reversed(transforms):
-    if isinstance(transform, RefBitcaster):
-      return transform.dtype
+  for transform in transforms:
+    dtype = transform.transform_dtype(dtype)
+  assert dtype is not None
   return dtype
 
 
@@ -336,7 +328,7 @@ def pp_transform(context: core.JaxprPpContext, transform: Transform) -> pp.Doc:
     case RefBitcaster():
       return pp_bitcaster(context, transform)
     case _:
-      raise ValueError(f"Unsupported transform: {transform}")
+      return pp.text(f"[{transform}]")
 
 
 def _pp_transforms(

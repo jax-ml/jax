@@ -722,27 +722,57 @@ def _handle_indexing(
 ) -> ir.Value:
   if not transforms:
     pass
-  elif len(transforms) == 1 and isinstance(transforms[0], indexing.NDIndexer):
-    idx = transforms[0]
-    if idx.get_indexer_shape() != tuple(ir.MemRefType(ref.type).shape):
-      raise ValueError("Indexing not implemented")
-  else:
+  if not any(isinstance(t, indexing.NDIndexer) for t in transforms):
+    return ref
+  if any(
+      isinstance(t, indexing.NDIndexer) for t in transforms[:-1]
+  ) or not isinstance(transforms[-1], indexing.NDIndexer):
+    raise NotImplementedError("Only one level of indexing supported.")
+
+  idx: indexing.NDIndexer = transforms[-1]
+  if idx.int_indexer_shape:
+    raise NotImplementedError("int_indexer_shape non-empty")
+  slices = []
+  for s in idx.indices:
+    if not isinstance(s, indexing.Slice):
+      raise NotImplementedError(f"Unsupported dimension index: {s}")
+    if s.is_dynamic_start or s.is_dynamic_size:
+      raise NotImplementedError(f"Unsupported slice: {s}")
+    slices.append(slice(s.start, s.start + s.size, s.stride))
+  slices = tuple(slices)
+  for t in reversed(transforms[:-1]):
+    slices = t.untransform_index(slices)
+  return mgpu.memref_slice(ref, slices)
+
+
+def _is_swizzled(transforms: tuple[pallas_core.Transform, ...]) -> int | None:
+  if not transforms:
+    return None
+  if any(isinstance(t, gpu_core.UnswizzleRef) for t in transforms[1:]):
     raise NotImplementedError(
-        f"Unsupported transforms: {transforms[0]}. Only no-op indexing implemented."
+        "Swizzling must be the last transform applied to a ref"
     )
-  return ref
+  if not isinstance(transforms[0], gpu_core.UnswizzleRef):
+    return None
+  return transforms[0].swizzle
 
 
 @register_lowering_rule(sp.get_p)
 def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *leaves, tree):
   if not isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem):
     raise TypeError(f"Can only load from references (got {x_smem}).")
+  x_aval = ctx.avals_in[0]
   transform = jax.tree.unflatten(tree, leaves)
+  swizzle = _is_swizzled(transform)
   x_smem = _handle_indexing(x_smem, transform)
-  [x_aval] = ctx.avals_in
-  return mgpu.FragmentedArray.load_strided(
-      x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
-  )
+  if swizzle is None:
+    return mgpu.FragmentedArray.load_strided(
+        x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
+    )
+  else:
+    return mgpu.FragmentedArray.load_tiled(
+        x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype), swizzle=swizzle
+    )
 
 
 @register_lowering_rule(sp.swap_p)
@@ -754,13 +784,21 @@ def _swap_lowering_rule(
   if not isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem):
     raise TypeError(f"Can only store to references (got {x_smem}).")
   transform = jax.tree.unflatten(tree, leaves)
+  swizzle = _is_swizzled(transform)
   x_smem = _handle_indexing(x_smem, transform)
   x_aval, _ = ctx.avals_in
-  old_value = mgpu.FragmentedArray.load_strided(
-      x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
-  )
-  value.store_untiled(x_smem)
-  return old_value
+  if swizzle is None:
+    old_value = mgpu.FragmentedArray.load_strided(
+        x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
+    )
+    value.store_untiled(x_smem)
+    return old_value
+  else:
+    old_value = mgpu.FragmentedArray.load_tiled(
+        x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype), swizzle=swizzle
+    )
+    value.store_tiled(x_smem, swizzle=swizzle)
+    return old_value
 
 
 @register_lowering_rule(pjit.pjit_p)
