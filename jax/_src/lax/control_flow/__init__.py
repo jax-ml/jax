@@ -28,7 +28,6 @@ from jax._src.lax.control_flow.loops import (
     fori_loop as fori_loop,
     map as map,
     scan as scan,
-    scan_bind as scan_bind,
     scan_p as scan_p,
     _scan_impl as _scan_impl,
     while_loop as while_loop,
