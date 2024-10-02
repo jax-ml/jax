@@ -44,7 +44,7 @@ def get_metadata(key):
   while retry_count < 6:
     api_resp = requests.get(
         f'{gce_metadata_endpoint}/computeMetadata/v1/instance/attributes/{key}',
-        headers={'Metadata-Flavor': 'Google'})
+        headers={'Metadata-Flavor': 'Google'}, timeout=60)
     if api_resp.status_code == 200:
       break
     retry_count += 1
