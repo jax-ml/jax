@@ -34,8 +34,12 @@ def image_by_name(name):
 
 
 def dist_wheels(
-    rocm_version, python_versions, xla_path, rocm_build_job="", rocm_build_num="",
-    compiler="gcc"
+    rocm_version,
+    python_versions,
+    xla_path,
+    rocm_build_job="",
+    rocm_build_num="",
+    compiler="gcc",
 ):
     if xla_path:
         xla_path = os.path.abspath(xla_path)
@@ -260,7 +264,7 @@ def parse_args():
     p.add_argument(
         "--compiler",
         choices=["gcc", "clang"],
-        help="Compiler backend to use when compiling jax/jaxlib"
+        help="Compiler backend to use when compiling jax/jaxlib",
     )
 
     subp = p.add_subparsers(dest="action", required=True)
