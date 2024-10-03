@@ -376,6 +376,7 @@ namespace; they are listed below.
     size
     sort
     sort_complex
+    spacing
     split
     sqrt
     square
