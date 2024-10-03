@@ -24,13 +24,11 @@ import functools
 import itertools
 import threading
 from typing import Any, ClassVar, Hashable, Protocol, Union, runtime_checkable
-import warnings
 
 import jax
 from jax._src import api_util
 from jax._src import config
 from jax._src import core as jax_core
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
@@ -378,37 +376,10 @@ class BlockSpec:
   See :ref:`pallas_blockspec` for more details.
   """
   # An internal canonicalized version is in BlockMapping.
-  block_shape: tuple[int | None, ...] | None = None
+  block_shape: Sequence[int | None] | None = None
   index_map: Callable[..., Any] | None = None
   memory_space: Any | None = dataclasses.field(kw_only=True, default=None)
   indexing_mode: IndexingMode = dataclasses.field(kw_only=True, default=blocked)
-
-  def __init__(
-      self,
-      block_shape: Any | None = None,
-      index_map: Any | None = None,
-      *,
-      memory_space: Any | None = None,
-      indexing_mode: IndexingMode = blocked,
-  ) -> None:
-    if callable(block_shape):
-      # TODO(slebedev): Remove this code path and update the signature of
-      # __init__ after October 1, 2024.
-      message = (
-          "BlockSpec now expects ``block_shape`` to be passed before"
-          " ``index_map``. Update your code by swapping the order of these"
-          " arguments. For example, ``pl.BlockSpace(lambda i: i, (42,))``"
-          " should be written as ``pl.BlockSpec((42,), lambda i: i)``."
-      )
-      if deprecations.is_accelerated("pallas-block-spec-order"):
-        raise TypeError(message)
-      warnings.warn(message, DeprecationWarning)
-      index_map, block_shape = block_shape, index_map
-
-    self.block_shape = block_shape
-    self.index_map = index_map
-    self.memory_space = memory_space
-    self.indexing_mode = indexing_mode
 
   def to_block_mapping(
       self,
