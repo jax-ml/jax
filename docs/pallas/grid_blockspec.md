@@ -75,7 +75,8 @@ programs write to disjoint places in HBM to avoid these parallel writes.
 
 On TPUs, programs are executed in a combination of parallel and sequential
 (depending on the architecture) so there are slightly different considerations.
-See [the Pallas TPU documentation](https://jax.readthedocs.io/en/latest/pallas/tpu/details.html#noteworthy-properties-and-restrictions).
+
+See {ref}`pallas_tpu_noteworthy_properties`.
 
 (pallas_blockspec)=
 
@@ -88,8 +89,7 @@ to *which block of our inputs and outputs to be operated on*.
 This is provided via {class}`jax.experimental.pallas.BlockSpec` objects.
 
 Before we get into the details of `BlockSpec`s, you may want
-to revisit the
-[Pallas Quickstart BlockSpecs example](https://jax.readthedocs.io/en/latest/pallas/quickstart.html#block-specs-by-example).
+to revisit {ref}`pallas_block_specs_by_example` in Pallas Quickstart.
 
 `BlockSpec`s are provided to `pallas_call` via the
 `in_specs` and `out_specs`, one for each input and output respectively.
@@ -239,7 +239,7 @@ The output shown below was generated on CPU using `interpret=True`
 mode, which at the moment executes the invocation sequentially.
 On TPUs, programs are executed in a combination of parallel and sequential,
 and this function generates the output shown.
-See [the Pallas TPU documentation](https://jax.readthedocs.io/en/latest/pallas/tpu/details.html#noteworthy-properties-and-restrictions).
+See {ref}`pallas_tpu_noteworthy_properties`.
 
 ```python
 >>> show_program_ids(x_shape=(8, 6), block_shape=(2, 3), grid=(4, 2, 10),

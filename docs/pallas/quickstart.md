@@ -209,6 +209,8 @@ You can read more details at {ref}`pallas_grid`.
 
 +++
 
+(pallas_block_specs_by_example)=
+
 ### Block specs by example
 
 +++

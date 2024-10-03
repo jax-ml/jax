@@ -436,6 +436,8 @@ dimensions.
 
 +++ {"id": "KvPFez9N8cKJ"}
 
+(pallas_tpu_megacore)=
+
 ## TPUs in Megacore configuration
 
 +++ {"id": "0f4HAVzQ8n71"}

@@ -59,6 +59,8 @@ ideas described transfer to later generations as well.
 * `TPU v4: An Optically Reconfigurable Supercomputer for Machine Learning with Hardware Support for Embeddings <https://dl.acm.org/doi/abs/10.1145/3579371.3589350>`_
 
 
+.. _pallas_tpu_noteworthy_properties:
+
 Noteworthy properties and restrictions
 --------------------------------------
 
