@@ -275,8 +275,17 @@ def ceil(x: ArrayLike) -> Array:
   return ceil_p.bind(x)
 
 class RoundingMethod(enum.IntEnum):
+  """Rounding strategies for handling halfway values (e.g., 0.5) in
+  :func:`jax.lax.round`.
+  """
+
   AWAY_FROM_ZERO = 0
+  """Rounds halfway values away from zero (e.g., 0.5 -> 1, -0.5 -> -1)."""
+
   TO_NEAREST_EVEN = 1
+  """Rounds halfway values to the nearest even integer. This is also known
+  as “banker’s rounding” (e.g., 0.5 -> 0, 1.5 -> 2).
+  """
 
 def round(x: ArrayLike,
           rounding_method: RoundingMethod = RoundingMethod.AWAY_FROM_ZERO
@@ -288,8 +297,7 @@ def round(x: ArrayLike,
   Args:
     x: an array or scalar value to round.
     rounding_method: the method to use when rounding halfway values
-      (e.g., `0.5`). See ``lax.RoundingMethod`` for the list of possible
-      values.
+      (e.g., `0.5`). See :class:`jax.lax.RoundingMethod` for possible values.
 
   Returns:
     An array containing the elementwise rounding of x.
