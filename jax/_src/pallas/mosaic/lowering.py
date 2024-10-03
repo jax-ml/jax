@@ -2060,6 +2060,13 @@ def _round_lowering_rule(ctx: LoweringRuleContext, x, *, rounding_method):
 lowering_rules[lax.round_p] = _round_lowering_rule
 
 
+def _ceil_lowering_rule(ctx: LoweringRuleContext, x):
+  return math.CeilOp(x).result
+
+
+lowering_rules[lax.ceil_p] = _ceil_lowering_rule
+
+
 def _floor_lowering_rule(ctx: LoweringRuleContext, x):
   return math.FloorOp(x).result
 
