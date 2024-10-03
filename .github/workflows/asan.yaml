@@ -8,42 +8,48 @@ on:
   schedule:
     - cron: "0 12 * * *" # Daily at 12:00 UTC
   workflow_dispatch: # allows triggering the workflow run manually
-  pull_request:  # Automatically trigger on pull requests affecting this file
+  pull_request: # Automatically trigger on pull requests affecting this file
     branches:
       - main
     paths:
-      - '**workflows/asan.yml'
+      - '**/workflows/asan.yml'
 
 jobs:
-  upstream-dev:
-    runs-on: ubuntu-20.04-16core
+  asan:
+    runs-on: linux-x86-n2-64
+    container:
+      image: index.docker.io/library/ubuntu@sha256:b359f1067efa76f37863778f7b6d0e8d911e3ee8efa807ad01fbf5dc1ef9006b # ratchet:ubuntu:24.04
     strategy:
       fail-fast: false
-      matrix:
-        python-version: ["3.12"]
+    defaults:
+      run:
+        shell: bash -l {0}
     steps:
-      - uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938  # v4.2.0
+      - uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938 # v4.2.0
         with:
           path: jax
-      - uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938  # v4.2.0
+      - uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938 # v4.2.0
         with:
           repository: python/cpython
           path: cpython
           ref: v3.12.6
       - name: Install clang 18
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
-          echo deb http://apt.llvm.org/focal/ llvm-toolchain-focal-18 main | sudo tee -a /etc/apt/sources.list
-          sudo apt update
-          sudo apt install clang-18 libstdc++-10-dev
+          apt update
+          apt install -y clang-18 libstdc++-14-dev build-essential libssl-dev \
+            zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev curl git \
+            libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev \
+            libffi-dev liblzma-dev
       - name: Build CPython with ASAN enabled
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
           cd cpython
           mkdir ${GITHUB_WORKSPACE}/cpythonasan
-          CC=clang-18 ./configure --prefix ${GITHUB_WORKSPACE}/cpythonasan --with-address-sanitizer --without-pymalloc
-          make -j16
+          CC=clang-18 CXX=clang++-18 ./configure --prefix ${GITHUB_WORKSPACE}/cpythonasan --with-address-sanitizer --without-pymalloc
+          make -j64
           make install
           ${GITHUB_WORKSPACE}/cpythonasan/bin/python3 -m venv ${GITHUB_WORKSPACE}/venv
       - name: Install JAX test requirements
@@ -59,7 +65,10 @@ jobs:
         run: |
           source ${GITHUB_WORKSPACE}/venv/bin/activate
           cd jax
-          python build/build.py --bazel_options=--copt=-fsanitize=address --clang_path=/usr/bin/clang-18
+          python build/build.py \
+            --bazel_options=--color=yes
+            --bazel_options=--copt=-fsanitize=address \
+            --clang_path=/usr/bin/clang-18 \
           pip install dist/jaxlib-*.whl
           pip install -e .
       - name: Run tests
@@ -77,4 +86,3 @@ jobs:
           echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
           # The LD_PRELOAD works around https://github.com/google/sanitizers/issues/934#issuecomment-649516500
           LD_PRELOAD=/lib/x86_64-linux-gnu/libstdc++.so.6 python -m pytest -n auto --tb=short --maxfail=20 tests
- 

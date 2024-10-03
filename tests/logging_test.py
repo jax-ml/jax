@@ -92,10 +92,14 @@ class LoggingTest(jtu.JaxTestCase):
       python = sys.executable
       assert "python" in python
       env_variables = {"TF_CPP_MIN_LOG_LEVEL": "1"}
+      if os.getenv("ASAN_OPTIONS"):
+        env_variables["ASAN_OPTIONS"] = os.getenv("ASAN_OPTIONS")
       if os.getenv("PYTHONPATH"):
         env_variables["PYTHONPATH"] = os.getenv("PYTHONPATH")
       if os.getenv("LD_LIBRARY_PATH"):
         env_variables["LD_LIBRARY_PATH"] = os.getenv("LD_LIBRARY_PATH")
+      if os.getenv("LD_PRELOAD"):
+        env_variables["LD_PRELOAD"] = os.getenv("LD_PRELOAD")
       # Make sure C++ logging is at default level for the test process.
       proc = subprocess.run(
           [python, f.name],
