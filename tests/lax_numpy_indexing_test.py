@@ -1252,7 +1252,7 @@ def _can_cast(from_, to):
 
 
 def _compatible_dtypes(op, dtype, inexact=False):
-  if op == UpdateOps.ADD:
+  if op == UpdateOps.ADD or op == UpdateOps.SUB:
     return [dtype]
   elif inexact:
     return [dt for dt in float_dtypes if _can_cast(dt, dtype)]
@@ -1263,17 +1263,19 @@ def _compatible_dtypes(op, dtype, inexact=False):
 class UpdateOps(enum.Enum):
   UPDATE = 0
   ADD = 1
-  MUL = 2
-  DIV = 3
-  POW = 4
-  MIN = 5
-  MAX = 6
+  SUB = 2
+  MUL = 3
+  DIV = 4
+  POW = 5
+  MIN = 6
+  MAX = 7
 
   def np_fn(op, indexer, x, y):
     x = x.copy()
     x[indexer] = {
       UpdateOps.UPDATE: lambda: y,
       UpdateOps.ADD: lambda: x[indexer] + y,
+      UpdateOps.SUB: lambda: x[indexer] - y,
       UpdateOps.MUL: lambda: x[indexer] * y,
       UpdateOps.DIV: jtu.ignore_warning(category=RuntimeWarning)(
         lambda: x[indexer] / y.astype(x.dtype)),
@@ -1290,6 +1292,7 @@ class UpdateOps(enum.Enum):
     return {
       UpdateOps.UPDATE: x.at[indexer].set,
       UpdateOps.ADD: x.at[indexer].add,
+      UpdateOps.SUB: x.at[indexer].subtract,
       UpdateOps.MUL: x.at[indexer].multiply,
       UpdateOps.DIV: x.at[indexer].divide,
       UpdateOps.POW: x.at[indexer].power,
@@ -1420,7 +1423,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
      for update_shape in _broadcastable_shapes(index_shape)
     ],
     [dict(op=op, dtype=dtype, update_dtype=update_dtype)
-     for op in [UpdateOps.ADD, UpdateOps.MUL, UpdateOps.UPDATE]
+     for op in [UpdateOps.ADD, UpdateOps.SUB, UpdateOps.MUL, UpdateOps.UPDATE]
      for dtype in float_dtypes
      for update_dtype in _compatible_dtypes(op, dtype, inexact=True)
     ],
@@ -1447,8 +1450,9 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       ],
       [dict(op=op, dtype=dtype, update_dtype=update_dtype)
       for op in (
-        [UpdateOps.ADD, UpdateOps.MUL, UpdateOps.UPDATE] if unique_indices
-        else [UpdateOps.ADD])
+        [UpdateOps.ADD, UpdateOps.SUB, UpdateOps.MUL, UpdateOps.UPDATE]
+        if unique_indices
+        else [UpdateOps.ADD, UpdateOps.SUB])
       for dtype in float_dtypes
       for update_dtype in _compatible_dtypes(op, dtype, inexact=True)
       ],

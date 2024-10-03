@@ -280,6 +280,8 @@ from jax._src.lax.slicing import (
   scatter_mul as scatter_mul,
   scatter_mul_p as scatter_mul_p,
   scatter_p as scatter_p,
+  scatter_sub as scatter_sub,
+  scatter_sub_p as scatter_sub_p,
   slice as slice,
   slice_in_dim as slice_in_dim,
   slice_p as slice_p,

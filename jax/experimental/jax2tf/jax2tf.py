@@ -3043,6 +3043,7 @@ tf_impl_with_avals[lax.scatter_min_p] = _scatter
 tf_impl_with_avals[lax.scatter_max_p] = _scatter
 tf_impl_with_avals[lax.scatter_mul_p] = _scatter
 tf_impl_with_avals[lax.scatter_add_p] = _scatter
+tf_impl_with_avals[lax.scatter_sub_p] = _scatter
 
 
 def _cond(

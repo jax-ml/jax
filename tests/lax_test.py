@@ -2782,14 +2782,15 @@ class LaxTest(jtu.JaxTestCase):
     ]],
     dtype=lax_test_util.inexact_dtypes,
     mode=["clip", "fill", None],
+    op=[lax.scatter_add, lax.scatter_sub],
   )
-  def testScatterAdd(self, arg_shape, dtype, idxs, update_shape, dnums, mode):
+  def testScatterAddSub(self, arg_shape, dtype, idxs, update_shape, dnums, mode, op):
     rng = jtu.rand_default(self.rng())
     rng_idx = jtu.rand_int(self.rng(), high=max(arg_shape))
     rand_idxs = lambda: rng_idx(idxs.shape, idxs.dtype)
     args_maker = lambda: [rng(arg_shape, dtype), rand_idxs(),
                           rng(update_shape, dtype)]
-    fun = partial(lax.scatter_add, dimension_numbers=dnums, mode=mode)
+    fun = partial(op, dimension_numbers=dnums, mode=mode)
     self._CompileAndCheck(fun, args_maker)
 
   @jtu.sample_product(
