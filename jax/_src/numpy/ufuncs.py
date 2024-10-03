@@ -2927,9 +2927,36 @@ def modf(x: ArrayLike, /, out=None) -> tuple[Array, Array]:
   return x - whole, whole
 
 
-@implements(np.isfinite, module='numpy')
 @partial(jit, inline=True)
 def isfinite(x: ArrayLike, /) -> Array:
+  """Return a boolean array indicating whether each element of input is finite.
+
+  JAX implementation of :obj:`numpy.isfinite`.
+
+  Args:
+    x: input array or scalar.
+
+  Returns:
+    A boolean array of same shape as ``x`` containing ``True`` where ``x`` is
+    not ``inf``, ``-inf``, or ``NaN``, and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.isinf`: Returns a boolean array indicating whether each
+      element of input is either positive or negative infinity.
+    - :func:`jax.numpy.isposinf`: Returns a boolean array indicating whether each
+      element of input is positive infinity.
+    - :func:`jax.numpy.isneginf`: Returns a boolean array indicating whether each
+      element of input is negative infinity.
+    - :func:`jax.numpy.isnan`: Returns a boolean array indicating whether each
+      element of input is not a number (``NaN``).
+
+  Examples:
+    >>> x = jnp.array([-1, 3, jnp.inf, jnp.nan])
+    >>> jnp.isfinite(x)
+    Array([ True,  True, False, False], dtype=bool)
+    >>> jnp.isfinite(3-4j)
+    Array(True, dtype=bool, weak_type=True)
+  """
   check_arraylike("isfinite", x)
   dtype = dtypes.dtype(x)
   if dtypes.issubdtype(dtype, np.floating):
@@ -2940,9 +2967,36 @@ def isfinite(x: ArrayLike, /) -> Array:
     return lax.full_like(x, True, dtype=np.bool_)
 
 
-@implements(np.isinf, module='numpy')
 @jit
 def isinf(x: ArrayLike, /) -> Array:
+  """Return a boolean array indicating whether each element of input is infinite.
+
+  JAX implementation of :obj:`numpy.isinf`.
+
+  Args:
+    x: input array or scalar.
+
+  Returns:
+    A boolean array of same shape as ``x`` containing ``True`` where ``x`` is
+    ``inf`` or ``-inf``, and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.isposinf`: Returns a boolean array indicating whether each
+      element of input is positive infinity.
+    - :func:`jax.numpy.isneginf`: Returns a boolean array indicating whether each
+      element of input is negative infinity.
+    - :func:`jax.numpy.isfinite`: Returns a boolean array indicating whether each
+      element of input is finite.
+    - :func:`jax.numpy.isnan`: Returns a boolean array indicating whether each
+      element of input is not a number (``NaN``).
+
+  Examples:
+    >>> jnp.isinf(jnp.inf)
+    Array(True, dtype=bool)
+    >>> x = jnp.array([2+3j, -jnp.inf, 6, jnp.inf, jnp.nan])
+    >>> jnp.isinf(x)
+    Array([False,  True, False,  True, False], dtype=bool)
+  """
   check_arraylike("isinf", x)
   dtype = dtypes.dtype(x)
   if dtypes.issubdtype(dtype, np.floating):
@@ -2968,19 +3022,102 @@ def _isposneginf(infinity: float, x: ArrayLike, out) -> Array:
     return lax.full_like(x, False, dtype=np.bool_)
 
 
-@implements(np.isposinf, module='numpy')
 def isposinf(x, /, out=None):
+  """
+  Return boolean array indicating whether each element of input is positive infinite.
+
+  JAX implementation of :obj:`numpy.isposinf`.
+
+  Args:
+    x: input array or scalar. ``complex`` dtype are not supported.
+
+  Returns:
+    A boolean array of same shape as ``x`` containing ``True`` where ``x`` is
+    ``inf``, and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.isinf`: Returns a boolean array indicating whether each
+      element of input is either positive or negative infinity.
+    - :func:`jax.numpy.isneginf`: Returns a boolean array indicating whether each
+      element of input is negative infinity.
+    - :func:`jax.numpy.isfinite`: Returns a boolean array indicating whether each
+      element of input is finite.
+    - :func:`jax.numpy.isnan`: Returns a boolean array indicating whether each
+      element of input is not a number (``NaN``).
+
+  Examples:
+    >>> jnp.isposinf(5)
+    Array(False, dtype=bool)
+    >>> x = jnp.array([-jnp.inf, 5, jnp.inf, jnp.nan, 1])
+    >>> jnp.isposinf(x)
+    Array([False, False,  True, False, False], dtype=bool)
+  """
   return _isposneginf(np.inf, x, out)
 
 
-@implements(np.isposinf, module='numpy')
 def isneginf(x, /, out=None):
+  """
+  Return boolean array indicating whether each element of input is negative infinite.
+
+  JAX implementation of :obj:`numpy.isneginf`.
+
+  Args:
+    x: input array or scalar. ``complex`` dtype are not supported.
+
+  Returns:
+    A boolean array of same shape as ``x`` containing ``True`` where ``x`` is
+    ``-inf``, and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.isinf`: Returns a boolean array indicating whether each
+      element of input is either positive or negative infinity.
+    - :func:`jax.numpy.isposinf`: Returns a boolean array indicating whether each
+      element of input is positive infinity.
+    - :func:`jax.numpy.isfinite`: Returns a boolean array indicating whether each
+      element of input is finite.
+    - :func:`jax.numpy.isnan`: Returns a boolean array indicating whether each
+      element of input is not a number (``NaN``).
+
+  Examples:
+    >>> jnp.isneginf(jnp.inf)
+    Array(False, dtype=bool)
+    >>> x = jnp.array([-jnp.inf, 5, jnp.inf, jnp.nan, 1])
+    >>> jnp.isneginf(x)
+    Array([ True, False, False, False, False], dtype=bool)
+  """
   return _isposneginf(-np.inf, x, out)
 
 
-@implements(np.isnan, module='numpy')
 @partial(jit, inline=True)
 def isnan(x: ArrayLike, /) -> Array:
+  """Returns a boolean array indicating whether each element of input is ``NaN``.
+
+  JAX implementation of :obj:`numpy.isnan`.
+
+  Args:
+    x: input array or scalar.
+
+  Returns:
+    A boolean array of same shape as ``x`` containing ``True`` where ``x`` is
+    not a number (i.e. ``NaN``) and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.isfinite`: Returns a boolean array indicating whether each
+      element of input is finite.
+    - :func:`jax.numpy.isinf`: Returns a boolean array indicating whether each
+      element of input is either positive or negative infinity.
+    - :func:`jax.numpy.isposinf`: Returns a boolean array indicating whether each
+      element of input is positive infinity.
+    - :func:`jax.numpy.isneginf`: Returns a boolean array indicating whether each
+      element of input is negative infinity.
+
+  Examples:
+    >>> jnp.isnan(6)
+    Array(False, dtype=bool, weak_type=True)
+    >>> x = jnp.array([2, 1+4j, jnp.inf, jnp.nan])
+    >>> jnp.isnan(x)
+    Array([False, False, False,  True], dtype=bool)
+  """
   check_arraylike("isnan", x)
   return lax.ne(x, x)
 
