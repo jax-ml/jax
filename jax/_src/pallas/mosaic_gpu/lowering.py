@@ -718,7 +718,7 @@ def _num_programs_lowering_rule(ctx: LoweringRuleContext, axis):
 
 
 def _handle_indexing(
-    ref: ir.Value, transforms: Sequence[pallas_core.Transform]
+    ref: ir.Value, transforms: Sequence[gpu_core.Transform]
 ) -> ir.Value:
   if not transforms:
     pass
@@ -729,32 +729,36 @@ def _handle_indexing(
   ) or not isinstance(transforms[-1], indexing.NDIndexer):
     raise NotImplementedError("Only one level of indexing supported.")
 
-  idx: indexing.NDIndexer = transforms[-1]
-  if idx.int_indexer_shape:
+  indexer = cast(indexing.NDIndexer, transforms[-1])
+  if indexer.int_indexer_shape:
     raise NotImplementedError("int_indexer_shape non-empty")
-  slices = []
-  for s in idx.indices:
-    if not isinstance(s, indexing.Slice):
-      raise NotImplementedError(f"Unsupported dimension index: {s}")
-    if s.is_dynamic_start or s.is_dynamic_size:
-      raise NotImplementedError(f"Unsupported slice: {s}")
-    slices.append(slice(s.start, s.start + s.size, s.stride))
-  slices = tuple(slices)
+  slices = _ndindexer_slices(indexer)
   for t in reversed(transforms[:-1]):
     slices = t.untransform_index(slices)
   return mgpu.memref_slice(ref, slices)
 
 
-def _is_swizzled(transforms: tuple[pallas_core.Transform, ...]) -> int | None:
+def _ndindexer_slices(indexer: indexing.NDIndexer) -> tuple[slice, ...]:
+  slices = []
+  for s in indexer.indices:
+    if not isinstance(s, indexing.Slice):
+      raise NotImplementedError(f"Unsupported dimension index: {s}")
+    if s.is_dynamic_start or s.is_dynamic_size:
+      raise NotImplementedError(f"Unsupported slice: {s}")
+    slices.append(slice(s.start, s.start + s.size, s.stride))
+  return tuple(slices)
+
+
+def _is_swizzled(transforms: tuple[gpu_core.Transform, ...]) -> int | None:
   if not transforms:
     return None
   if any(isinstance(t, gpu_core.UnswizzleRef) for t in transforms[1:]):
     raise NotImplementedError(
         "Swizzling must be the last transform applied to a ref"
     )
-  if not isinstance(transforms[0], gpu_core.UnswizzleRef):
-    return None
-  return transforms[0].swizzle
+  if isinstance(t := transforms[0], gpu_core.UnswizzleRef):
+    return t.swizzle
+  return None
 
 
 @register_lowering_rule(sp.get_p)

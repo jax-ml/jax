@@ -19,43 +19,137 @@ from __future__ import annotations
 from jax._src import core as jax_core
 from jax._src import effects
 from jax._src import state
-from jax._src.state import discharge
+from jax._src import tree_util
+from jax._src import util
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering
+from jax._src.state import discharge
+from jax._src.state import indexing
+from jax._src.state import primitives as state_primitives
 import jax.experimental.mosaic.gpu as mgpu
 
-async_copy_p = jax_core.Primitive("async_copy")
-async_copy_p.multiple_results = True
+
+copy_smem_to_gmem_p = jax_core.Primitive("copy_smem_to_gmem")
+copy_smem_to_gmem_p.multiple_results = True
 
 
-@async_copy_p.def_effectful_abstract_eval
-def _async_copy_abstract_eval(*avals):
-  del avals  # Unused.
+@copy_smem_to_gmem_p.def_effectful_abstract_eval
+def _copy_smem_to_gmem_abstract_eval(*avals, **params):
+  del avals, params  # Unused.
   return (), {state.ReadEffect(0), state.WriteEffect(1)}
 
 
-@lowering.register_lowering_rule(async_copy_p)
-def _async_copy_lowering_rule(
-    ctx: lowering.LoweringRuleContext, src, dst, barrier=None
+@lowering.register_lowering_rule(copy_smem_to_gmem_p)
+def _copy_smem_to_gmem_lowering(
+    ctx: lowering.LoweringRuleContext,
+    src,
+    dst,
+    *flat_transforms,
+    src_transforms_treedef,
+    dst_transforms_treedef,
 ):
-  ctx.launch_ctx.async_copy(src_ref=src, dst_ref=dst, barrier=barrier)
+  flat_src_transforms, flat_dst_transforms = util.split_list(
+      flat_transforms,
+      [src_transforms_treedef.num_leaves],
+  )
+  src = lowering._handle_indexing(
+      src, src_transforms_treedef.unflatten(flat_src_transforms)
+  )
+  copy_params = parse_copy_params(
+      dst_transforms_treedef.unflatten(flat_dst_transforms)
+  )
+  ctx.launch_ctx.async_copy(src_ref=src, dst_ref=dst, **copy_params)
   return ()
 
 
-def async_copy_smem_to_gmem(
+def parse_copy_params(transforms):
+  if not transforms:
+    return {}
+  if any(
+      isinstance(t, indexing.NDIndexer) for t in transforms[:-1]
+  ) or not isinstance(transforms[-1], indexing.NDIndexer):
+    raise NotImplementedError("Only one level of indexing supported")
+  *transforms, indexer = transforms
+  swizzle = lowering._is_swizzled(transforms)
+  if swizzle is not None:
+    transforms = transforms[1:]
+  gpu_transforms = [t.to_gpu_transform() for t in transforms]
+  return dict(
+      gmem_slice=lowering._ndindexer_slices(indexer),
+      gmem_transform=tuple(gpu_transforms),
+      swizzle=swizzle,
+  )
+
+
+def copy_smem_to_gmem(
     src: pallas_core.AbstractMemoryRef, dst: pallas_core.AbstractMemoryRef
 ) -> None:
   if src.memory_space is not gpu_core.SMEM:
     raise TypeError(f"src must be a SMEM reference, got {src.memory_space}")
   if dst.memory_space is not gpu_core.GMEM:
     raise ValueError(f"dst must be a GMEM reference, got {dst.memory_space}")
-  async_copy_p.bind(src, dst)
+  src, src_transforms = state_primitives.get_ref_and_transforms(
+      src, None, "copy_smem_to_gmem"
+  )
+  dst, dst_transforms = state_primitives.get_ref_and_transforms(
+      dst, None, "copy_smem_to_gmem"
+  )
+  flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
+      src_transforms
+  )
+  flat_dst_transforms, dst_transforms_treedef = tree_util.tree_flatten(
+      dst_transforms
+  )
+  copy_smem_to_gmem_p.bind(
+      src,
+      dst,
+      *flat_src_transforms,
+      *flat_dst_transforms,
+      src_transforms_treedef=src_transforms_treedef,
+      dst_transforms_treedef=dst_transforms_treedef,
+  )
   return None
 
 
-def async_copy_gmem_to_smem(
+copy_gmem_to_smem_p = jax_core.Primitive("copy_gmem_to_smem")
+copy_gmem_to_smem_p.multiple_results = True
+
+
+@copy_gmem_to_smem_p.def_effectful_abstract_eval
+def _copy_gmem_to_smem_abstract_eval(*avals, **params):
+  del avals, params  # Unused.
+  return (), {state.ReadEffect(0), state.WriteEffect(1)}
+
+
+@lowering.register_lowering_rule(copy_gmem_to_smem_p)
+def _copy_gmem_to_smem_lowering(
+    ctx: lowering.LoweringRuleContext,
+    src,
+    dst,
+    barrier,
+    *flat_transforms,
+    src_transforms_treedef,
+    dst_transforms_treedef,
+):
+  flat_src_transforms, flat_dst_transforms = util.split_list(
+      flat_transforms,
+      [src_transforms_treedef.num_leaves],
+  )
+  copy_params = parse_copy_params(
+      src_transforms_treedef.unflatten(flat_src_transforms)
+  )
+  dst = lowering._handle_indexing(
+      dst, dst_transforms_treedef.unflatten(flat_dst_transforms)
+  )
+  ctx.launch_ctx.async_copy(
+      src_ref=src, dst_ref=dst, barrier=barrier, **copy_params
+  )
+  return ()
+
+
+def copy_gmem_to_smem(
     src: pallas_core.AbstractMemoryRef,
     dst: pallas_core.AbstractMemoryRef,
     *,
@@ -65,7 +159,27 @@ def async_copy_gmem_to_smem(
     raise TypeError(f"src must be a GMEM reference, got {src.memory_space}")
   if dst.memory_space is not gpu_core.SMEM:
     raise ValueError(f"dst must be a SMEM reference, got {dst.memory_space}")
-  async_copy_p.bind(src, dst, barrier)
+  src, src_transforms = state_primitives.get_ref_and_transforms(
+      src, None, "copy_gmem_to_smem"
+  )
+  dst, dst_transforms = state_primitives.get_ref_and_transforms(
+      dst, None, "copy_gmem_to_smem"
+  )
+  flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
+      src_transforms
+  )
+  flat_dst_transforms, dst_transforms_treedef = tree_util.tree_flatten(
+      dst_transforms
+  )
+  copy_gmem_to_smem_p.bind(
+      src,
+      dst,
+      barrier,
+      *flat_src_transforms,
+      *flat_dst_transforms,
+      src_transforms_treedef=src_transforms_treedef,
+      dst_transforms_treedef=dst_transforms_treedef,
+  )
   return None
 
 
