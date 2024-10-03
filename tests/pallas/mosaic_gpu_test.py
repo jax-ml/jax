@@ -43,16 +43,22 @@ class PallasTest(jtu.JaxTestCase):
 
 class PallasCallTest(PallasTest):
 
-  def test_add_one(self):
+  @parameterized.named_parameters(
+      ("add_one", lambda x:  x + 1.),
+      ("logistic", jax.lax.logistic),
+      ("square", lambda x: x ** 2),
+      ("rsqrt", jax.lax.rsqrt),
+  )
+  def test_unary_ops(self, unary):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
     )
     def kernel(x_ref, o_ref):
-      o_ref[...] = x_ref[...] + 1.0
+      o_ref[...] = unary(x_ref[...])
 
     x = jnp.arange(256).astype(jnp.float32)
-    np.testing.assert_array_equal(kernel(x), x + 1.0)
+    np.testing.assert_array_equal(kernel(x), unary(x))
 
   def test_add_xy(self):
     @functools.partial(
