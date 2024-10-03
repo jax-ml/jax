@@ -1724,7 +1724,8 @@ class HostCallbackCallTest(jtu.JaxTestCase):
                                   "batching rules are implemented only for id_tap, not for call"):
         jax.vmap(fun)(np.ones((2, 3)))
     else:
-      jax.vmap(fun)(np.ones((2, 3)))
+      with jtu.ignore_warning(category=DeprecationWarning):
+        jax.vmap(fun)(np.ones((2, 3)))
 
   def test_call_error_bad_result_shape(self):
     with self.assertRaisesRegex(

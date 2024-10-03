@@ -46,6 +46,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * `jax.lib.xla_client.Device` is deprecated; use `jax.Device` instead.
   * `jax.lib.xla_client.XlaRuntimeError` has been deprecated. Use
     `jax.errors.JaxRuntimeError` instead.
+  * The default behavior of {func}`jax.pure_callback` and
+    {func}`jax.extend.ffi.ffi_call` under `vmap` has been deprecated and so has
+    the `vectorized` parameter to those functions. The `vmap_method` parameter
+    should be used instead for better defined behavior. See the discussion in
+    {jax-issue}`#23881` for more details.
 
 * Deletion:
   * `jax.xla_computation` is deleted. It's been 3 months since it's deprecation
