@@ -3150,9 +3150,34 @@ def hypot(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   return _where(idx_inf, _lax_const(x, np.inf), x)
 
 
-@implements(np.reciprocal, module='numpy')
 @partial(jit, inline=True)
 def reciprocal(x: ArrayLike, /) -> Array:
+  """Calculate element-wise reciprocal of the input.
+
+  JAX implementation of :obj:`numpy.reciprocal`.
+
+  The reciprocal is calculated by ``1/x``.
+
+  Args:
+    x: input array or scalar.
+
+  Returns:
+    An array of same shape as ``x`` containing the reciprocal of each element of
+    ``x``.
+
+  Note:
+    For integer inputs, ``np.reciprocal`` returns rounded integer output, while
+    ``jnp.reciprocal`` promotes integer inputs to floating point.
+
+  Examples:
+    >>> jnp.reciprocal(2)
+    Array(0.5, dtype=float32, weak_type=True)
+    >>> jnp.reciprocal(0.)
+    Array(inf, dtype=float32, weak_type=True)
+    >>> x = jnp.array([1, 5., 4.])
+    >>> jnp.reciprocal(x)
+    Array([1.  , 0.2 , 0.25], dtype=float32)
+  """
   check_arraylike("reciprocal", x)
   x, = promote_dtypes_inexact(x)
   return lax.integer_pow(x, -1)
