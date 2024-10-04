@@ -244,4 +244,3 @@ jobs:
         CMAKE_ARGS: -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
     - name: Run tests
       run: python -m pytest examples/ffi/tests
->>>>>>> main
