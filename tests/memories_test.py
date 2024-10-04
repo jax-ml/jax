@@ -784,6 +784,20 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(out2, np.sum(inp) * np.sum(inp))
     self.assertEqual(out2.sharding.memory_kind, 'pinned_host')
 
+  def test_compute_host_loop(self):
+    @compute_on('device_host')
+    @jax.jit
+    def fn():
+      k = jax.random.key(0)
+      return jax.nn.initializers.lecun_normal()(k, (2, 2), jnp.float32)
+    fn()  # doesn't crash
+
+    @compute_on('device_host')
+    def fn():
+      k = jax.random.key(0)
+      return jax.nn.initializers.lecun_normal()(k, (2, 2), jnp.float32)
+    fn()  # doesn't crash
+
   def test_nested_compute_error(self):
     @compute_on('device')
     @jax.jit
