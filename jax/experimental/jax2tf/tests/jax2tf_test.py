@@ -317,6 +317,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.sample_product(with_function=[False, True])
   def test_gradients_disabled(self, with_function=False):
+    if tf.version.VERSION.split(".") <= ["2", "17", "0"]:
+      self.skipTest("This test works only with newer versions of TF")
     f_tf = jax2tf.convert(jnp.tan, with_gradient=False)
     if with_function:
       f_tf = tf.function(f_tf, autograph=False)
