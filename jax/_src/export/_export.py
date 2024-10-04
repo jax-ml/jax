@@ -947,11 +947,6 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "__gpu$xla.gpu.triton",  # Pallas call on GPU
     # cholesky on CPU
     "lapack_spotrf", "lapack_dpotrf", "lapack_cpotrf", "lapack_zpotrf",
-    # eigh on CPU
-    "lapack_ssyevd", "lapack_dsyevd", "lapack_cheevd", "lapack_zheevd",
-    # eigh on GPU
-    "cusolver_syevj", "cusolver_syevd",
-    "hipsolver_syevj", "hipsolver_syevd",
     # eigh on TPU
     "Eigh",
     # eig on CPU
@@ -969,9 +964,12 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     # lu on GPU
     "cu_lu_pivots_to_permutation", "cusolver_getrf_ffi",
     "hip_lu_pivots_to_permutation", "hipsolver_getrf_ffi",
+    "cu_lu_pivots_to_permutation", "cusolver_getrf_ffi",
     # qr on GPU
     "cusolver_geqrf_ffi", "cusolver_orgqr_ffi",
     "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi",
+    # eigh on GPU
+    "cusolver_syevd_ffi", "hipsolver_syevd_ffi",
     # svd on GPU
     # lu on TPU
     "LuDecomposition",

@@ -873,7 +873,7 @@ def _eigh_abstract_eval(operand, *, lower, sort_eigenvalues, subset_by_index):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
       raise ValueError(
-        "Argument to symmetric eigendecomposition must have shape [..., n, n],"
+        "Argument to symmetric eigendecomposition must have shape [..., n, n], "
         "got shape {}".format(operand.shape))
 
     batch_dims = operand.shape[:-2]
@@ -894,33 +894,39 @@ def _eigh_abstract_eval(operand, *, lower, sort_eigenvalues, subset_by_index):
 
 
 def _eigh_cpu_gpu_lowering(
-    syevd_impl, ctx, operand, *, lower, sort_eigenvalues, subset_by_index,
-    platform=None
+    ctx, operand, *, lower, sort_eigenvalues, subset_by_index,
+    target_name_prefix: str
 ):
   del sort_eigenvalues  # The CPU/GPU implementations always sort.
   operand_aval, = ctx.avals_in
   v_aval, w_aval = ctx.avals_out
   n = operand_aval.shape[-1]
-  batch_dims = operand_aval.shape[:-2]
-
-  # The eigh implementation on CPU and GPU uses lapack helper routines to
-  # find the size of the workspace based on the non-batch dimensions.
-  # Therefore, we cannot yet support dynamic non-batch dimensions.
-  if not is_constant_shape(operand_aval.shape[-2:]):
-    raise NotImplementedError(
-        "Shape polymorphism for native lowering for eigh is implemented "
-        f"only for the batch dimensions: {operand_aval.shape}")
-
   if not (subset_by_index is None or subset_by_index == (0, n)):
-    raise NotImplementedError("subset_by_index not implemented for CPU and GPU")
+    raise NotImplementedError("subset_by_index not supported on CPU and GPU")
+  batch_dims = operand_aval.shape[:-2]
+  nb = len(batch_dims)
+  layout = (nb, nb + 1) + tuple(range(nb - 1, -1, -1))
+  result_layouts = [layout, tuple(range(nb, -1, -1)),
+                    tuple(range(nb - 1, -1, -1))]
+  if target_name_prefix == "cpu":
+    dtype = operand_aval.dtype
+    prefix = "he" if dtypes.issubdtype(dtype, np.complexfloating) else "sy"
+    target_name = lapack.prepare_lapack_call(f"{prefix}evd_ffi",
+                                             operand_aval.dtype)
+    kwargs = {
+      "mode": np.uint8(ord("V")),
+      "uplo": np.uint8(ord("L" if lower else "U")),
+    }
+  else:
+    target_name = f"{target_name_prefix}solver_syevd_ffi"
+    kwargs = {"lower": lower, "algorithm": np.uint8(0)}
 
-  op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-  cpu_args = []
-  if platform == "cpu":
-    ctx_args = (ctx,)
-    cpu_args.extend(ctx_args)
-  v, w, info = syevd_impl(*cpu_args, operand_aval.dtype, operand,
-                          a_shape_vals=op_shape_vals, lower=lower)
+  rule = ffi.ffi_lowering(target_name, operand_layouts=[layout],
+                          result_layouts=result_layouts,
+                          operand_output_aliases={0: 0})
+  info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
+  sub_ctx = ctx.replace(avals_out=[v_aval, w_aval, info_aval])
+  v, w, info = rule(sub_ctx, operand, **kwargs)
 
   zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
   ok = mlir.compare_hlo(info, zeros, "EQ", "SIGNED")
@@ -1054,17 +1060,15 @@ ad.primitive_jvps[eigh_p] = _eigh_jvp_rule
 batching.primitive_batchers[eigh_p] = _eigh_batching_rule
 
 mlir.register_lowering(
-    eigh_p, partial(_eigh_cpu_gpu_lowering, lapack.syevd_hlo, platform='cpu'),
+    eigh_p, partial(_eigh_cpu_gpu_lowering, target_name_prefix='cpu'),
     platform='cpu')
 
 if gpu_solver is not None:
   mlir.register_lowering(
-    eigh_p, partial(_eigh_cpu_gpu_lowering, gpu_solver.cuda_syevd,
-                    platform='cuda'),
+    eigh_p, partial(_eigh_cpu_gpu_lowering, target_name_prefix='cu'),
     platform='cuda')
   mlir.register_lowering(
-    eigh_p, partial(_eigh_cpu_gpu_lowering, gpu_solver.rocm_syevd,
-                    platform='rocm'),
+    eigh_p, partial(_eigh_cpu_gpu_lowering, target_name_prefix='hip'),
     platform='rocm')
 
 mlir.register_lowering(

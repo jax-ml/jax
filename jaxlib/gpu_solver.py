@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Sequence
 from functools import partial
 import importlib
 import math
@@ -24,9 +23,7 @@ import numpy as np
 
 from jaxlib import xla_client
 
-from .hlo_helpers import (
-    DimensionSize, ShapeTypePair, mk_result_types_and_shapes,
-    custom_call, ensure_hlo_s32, hlo_s32, dense_int_array)
+from .hlo_helpers import custom_call, dense_int_array
 
 try:
   from .cuda import _blas as _cublas  # pytype: disable=import-error
@@ -120,80 +117,6 @@ def _csrlsvqr_hlo(platform, gpu_solver, dtype, data,
   return out
 
 cuda_csrlsvqr = partial(_csrlsvqr_hlo, "cu", _cusolver)
-
-
-def _syevd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a, *,
-               a_shape_vals: tuple[DimensionSize, ...], lower=False):
-  """Symmetric (Hermitian) eigendecomposition."""
-  a_type = ir.RankedTensorType(a.type)
-  assert len(a_shape_vals) >= 2
-  m, n = a_shape_vals[-2:]
-  assert type(m) is int and type(n) is int and m == n, a_shape_vals
-  batch_dims_vals = a_shape_vals[:-2]
-
-  num_bd = len(batch_dims_vals)
-  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
-
-  dynamic_batch_dims = any(type(d) != int for d in batch_dims_vals)
-  if dynamic_batch_dims:
-    batch_int = -1  # Signals to the kernel that the batch is an operand.
-  else:
-    batch_int = math.prod(batch_dims_vals)
-
-  if have_jacobi_solver and n <= 32 and not dynamic_batch_dims:
-    # We cannot use syevj for dynamic shapes because the workspace size
-    # depends on the batch size.
-    kernel = f"{platform}solver_syevj"
-    lwork, opaque = gpu_solver.build_syevj_descriptor(
-        np.dtype(dtype), lower, batch_int, n)
-  else:
-    kernel = f"{platform}solver_syevd"
-    lwork, opaque = gpu_solver.build_syevd_descriptor(
-        np.dtype(dtype), lower, batch_int, n)
-    # TODO(Ruturaj4): Currently, hipsolverSsyevd sets lwork to 0 if n==0.
-    # Remove if this behavior changes in then new ROCm release.
-    if n > 0 or platform != "hip":
-      assert lwork > 0
-
-  if ir.ComplexType.isinstance(a_type.element_type):
-    eigvals_type = ir.ComplexType(a_type.element_type).element_type
-  else:
-    eigvals_type = a_type.element_type
-
-  i32_type = ir.IntegerType.get_signless(32)
-  operands = [a]
-  operand_layouts = [layout]
-  if dynamic_batch_dims:
-    batch_size_val = hlo_s32(1)
-    for b_v in batch_dims_vals:
-      batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
-    operands.append(batch_size_val)
-    operand_layouts.append(())
-
-  shape_type_pairs: Sequence[ShapeTypePair] = [
-      (a_shape_vals, a_type.element_type),
-      (batch_dims_vals + (n,), eigvals_type),
-      (batch_dims_vals, i32_type),
-      ([lwork], a_type.element_type)]
-  result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
-  out = custom_call(
-      kernel,
-      result_types=result_types,
-      operands=operands,
-      backend_config=opaque,
-      operand_layouts=operand_layouts,
-      result_layouts=[
-          layout,
-          tuple(range(num_bd, -1, -1)),
-          tuple(range(num_bd - 1, -1, -1)),
-          [0],
-      ],
-      operand_output_aliases={0: 0},
-      result_shapes=result_shapes).results
-  return out[:3]
-
-cuda_syevd = partial(_syevd_hlo, "cu", _cusolver, True)
-rocm_syevd = partial(_syevd_hlo, "hip", _hipsolver, True)
 
 
 def _gesvd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a,

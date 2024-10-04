@@ -2849,6 +2849,34 @@ _POLY_SHAPE_TEST_HARNESSES = [
       ]
     ],
     [
+      PolyHarness(  # pylint: disable=g-complex-comprehension
+          "eigh", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}_{lower=}",
+          lambda x, lower: lax.linalg.eigh(x, lower=lower),
+          arg_descriptors=[RandArg(shape, dtype), StaticArg(lower)],
+          polymorphic_shapes=[poly])
+      for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
+      for lower in [True, False]
+      for shape, poly in [
+          ((4, 4), "n, n"),
+          ((2, 3, 4, 4), "b1, b2, ..."),
+          ((2, 3, 4, 4), "b1, b2, n, n"),
+      ]
+    ],
+    [
+      PolyHarness(  # pylint: disable=g-complex-comprehension
+          "eigh_shape_error", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}",
+          lambda x: lax.linalg.eigh(x, symmetrize_input=False),
+          arg_descriptors=[RandArg(shape, dtype)],
+          polymorphic_shapes=[poly],
+          expect_error=(ValueError, "Argument to symmetric eigendecomposition"))
+      for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
+      for shape, poly in [
+          ((4, 5), "m, n"),
+          ((2, 3, 4, 5), "b1, b2, ..."),
+          ((2, 3, 4, 5), "b1, b2, m, n"),
+      ]
+    ],
+    [
       # The random primitive tests, with threefry (both partitionable and
       # non-partitionable), and unsafe_rbg.
       [
@@ -3490,13 +3518,6 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
       if "nr_fft_lengths_2" in harness.fullname:
         raise unittest.SkipTest("native serialization with shape polymorphism not implemented for fft with non-constant fft_lengths on GPU and TPU")
 
-    if harness.group_name == "vmap_eigh" and jtu.test_device_matches(["gpu"]):
-      # For eigh on GPU with shape polymorphism under native serialization,
-      # we use a different lowering for small matrices.
-      shape = harness.original_harness.params["shape"]
-      if 0 < shape[-1] <= 32:
-        harness.check_result = False
-
     if harness.group_name == "vmap_eigh":
       raise unittest.SkipTest(
           "Should not compare eigendecompositions for equality directly"
@@ -3527,6 +3548,12 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
 
     if harness.group_name == "eig" and not jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("JAX implements eig only on CPU.")
+
+    if (harness.group_name == "eigh" and
+        not harness.polymorphic_shapes[0].endswith("...") and
+        jtu.test_device_matches(["tpu"])):
+      raise unittest.SkipTest(
+          "Shape polymorphsim for Eigh is only supported for batch dimensions on TPU.")
 
     config_flags = harness.override_jax_config_flags
     # Update this here rather than in harness object because vmap_random_gamma is derived
