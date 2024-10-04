@@ -10,7 +10,9 @@ Remember to align the itemized text with the first line of an item within a list
 When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
-## jax 0.4.34
+## jax 0.4.35
+
+## jax 0.4.34 (October 4, 2023)
 
 * New Functionality
   * This release includes wheels for Python 3.13. Free-threading mode is not yet
