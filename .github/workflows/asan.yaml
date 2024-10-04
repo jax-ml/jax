@@ -68,7 +68,7 @@ jobs:
           python build/build.py \
             --bazel_options=--color=yes \
             --bazel_options=--copt=-fsanitize=address \
-            --clang_path=/usr/bin/clang-18 \
+            --clang_path=/usr/bin/clang-18
           pip install dist/jaxlib-*.whl
           pip install -e .
       - name: Run tests
