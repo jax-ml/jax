@@ -19,7 +19,7 @@ import enum
 from contextlib import contextmanager
 import collections
 from collections import namedtuple
-from collections.abc import Callable, Sequence, Iterable, Iterator
+from collections.abc import Callable, Sequence, Iterable
 import dataclasses
 from functools import partial, lru_cache, cached_property
 import functools
@@ -1985,14 +1985,17 @@ def _create_da_object(  # pytype: disable=invalid-annotation
   return xc.DeviceList(device_assignment)
 
 
+@weakref_lru_cache
 def jaxpr_transfer_mem_kinds(
-    jaxpr: core.Jaxpr) -> Iterator[sharding_impls.TransferToMemoryKind]:
+    jaxpr: core.Jaxpr) -> Sequence[sharding_impls.TransferToMemoryKind]:
+  out = []  # type: ignore
   for eqn in jaxpr.eqns:
     if eqn.primitive is dispatch.device_put_p:
-      yield from (d for d in eqn.params['devices']
-                  if isinstance(d, sharding_impls.TransferToMemoryKind))
+      out.extend(d for d in eqn.params['devices']
+                 if isinstance(d, sharding_impls.TransferToMemoryKind))
   for subjaxpr in core.subjaxprs(jaxpr):
-    yield from jaxpr_transfer_mem_kinds(subjaxpr)
+    out.extend(jaxpr_transfer_mem_kinds(subjaxpr))
+  return out
 
 
 def are_all_shardings_default_mem_kind(da_object, shardings):
@@ -2001,7 +2004,9 @@ def are_all_shardings_default_mem_kind(da_object, shardings):
   except:
     return True
   for i in shardings:
-    if is_unspecified_or_auto(i) or i.memory_kind is None:
+    if is_unspecified_or_auto(i):
+      continue
+    if i.memory_kind is None:  # pytype: disable=attribute-error
       continue
     if i.memory_kind != default_mem_kind:
       return False
@@ -2174,7 +2179,7 @@ def lower_sharding_computation(
   # Device assignment across all inputs, outputs and shardings inside jaxpr
   # should be the same.
   unique_intermediate_shardings = util.stable_unique(
-      list(dispatch.get_intermediate_shardings(jaxpr)))
+      dispatch.get_intermediate_shardings(jaxpr))
   unique_in_shardings = util.stable_unique(in_shardings)
   unique_out_shardings = util.stable_unique(out_shardings)
   backend, device_assignment = _get_and_check_device_assignment(
@@ -2196,7 +2201,7 @@ def lower_sharding_computation(
 
   da_object = _create_da_object(tuple(device_assignment))
 
-  transfer_mem_kind_in_jaxpr = list(jaxpr_transfer_mem_kinds(jaxpr))
+  transfer_mem_kind_in_jaxpr = jaxpr_transfer_mem_kinds(jaxpr)
   all_default_mem_kind = are_all_shardings_default_mem_kind(
       da_object,
       it.chain(unique_in_shardings, unique_out_shardings,
