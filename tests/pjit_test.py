@@ -59,7 +59,6 @@ from jax._src.lib.mlir import dialects
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -661,10 +660,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     jax.grad(f)(x)  # Warm up the cache.
     with jtu.count_pjit_cpp_cache_miss() as count:
       jax.grad(f)(x)
-    if xla_extension_version >= 286:
-      self.assertEqual(count[0], 0)  # no cache miss i.e. cache hit
-    else:
-      self.assertEqual(count[0], 2)
+    self.assertEqual(count[0], 0)  # no cache miss i.e. cache hit
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testEvalJaxpr(self):
@@ -4590,8 +4586,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ' match the mesh shape of the target sharding.*'):
       with_sharding_constraint(arr, NamedSharding(abs_mesh2, P('y')))
 
-  @unittest.skipIf(xla_extension_version < 286,
-                   "Requires xla_extension_version >= 286")
   def test_global_jit_cpp_cache_hit_out_shardings(self):
     mesh = jtu.create_mesh((2,), 'x')
     s = NamedSharding(mesh, P('x'))
