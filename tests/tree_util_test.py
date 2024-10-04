@@ -24,7 +24,6 @@ from absl.testing import parameterized
 import jax
 from jax import flatten_util
 from jax import tree_util
-from jax._src.lib import xla_extension_version
 from jax._src import test_util as jtu
 from jax._src.tree_util import flatten_one_level, prefix_errors
 import jax.numpy as jnp
@@ -485,10 +484,8 @@ class TreeTest(jtu.JaxTestCase):
           [([1], (2,), {"a": [1]})],
           re.escape("Custom node type mismatch"),
       ),
-      *(
-          []
-          if xla_extension_version < 288
-          else [(None, [2], re.escape("Expected None, got [2]."))]
+      (
+          (None, [2], re.escape("Expected None, got [2]."))
       ),
   )
   def testFlattenUpToErrors(self, tree, xs, error):

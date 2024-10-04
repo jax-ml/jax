@@ -67,7 +67,6 @@ from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib import cuda_versions
-from jax._src.lib import version as jaxlib_version
 
 config.parse_flags_with_absl()
 
@@ -705,15 +704,12 @@ class CompatTest(bctu.CompatTestBase):
         cpu_hessenberg_lapack_gehrd.data_2024_08_30[dtype_name]
     )
     self.run_one_test(func, data, rtol=rtol, atol=atol)
-    # TODO(b/344892332): Remove the check after the compatibility period.
-    has_xla_ffi_support = jaxlib_version >= (0, 4, 34)
-    if has_xla_ffi_support:
-      with config.export_ignore_forward_compatibility(True):
-        # FFI Kernel test
-        data = self.load_testdata(
-            cpu_hessenberg_lapack_gehrd.data_2024_08_31[dtype_name]
-        )
-        self.run_one_test(func, data, rtol=rtol, atol=atol)
+    with config.export_ignore_forward_compatibility(True):
+      # FFI Kernel test
+      data = self.load_testdata(
+          cpu_hessenberg_lapack_gehrd.data_2024_08_31[dtype_name]
+      )
+      self.run_one_test(func, data, rtol=rtol, atol=atol)
 
   def test_approx_top_k(self):
     def func():

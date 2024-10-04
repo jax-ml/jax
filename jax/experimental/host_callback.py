@@ -536,7 +536,6 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 
@@ -1079,117 +1078,6 @@ def _outside_call_impl(*args, **params):
 outside_call_p.def_impl(_outside_call_impl)
 
 
-def _with_sharding_proto(builder, sharding_proto, op_fn, *args, **kwargs):
-  """Builds op_fn(*args, **kwargs) with sharding annotation."""
-  builder.set_sharding(sharding_proto)
-  try:
-    return op_fn(*args, **kwargs)
-  finally:
-    builder.clear_sharding()
-
-def _outside_call_translation_rule(ctx,
-                                   avals_in,
-                                   avals_out,
-                                   *args_op: XlaOp,
-                                   has_token,
-                                   identity,
-                                   device_index,
-                                   flat_results_aval=(),
-                                   **params):
-  # We expect the current tokens at the end, inserted by _rewrite_jaxpr.
-  assert has_token
-  use_outfeed = _use_outfeed(ctx.platform)
-  assert use_outfeed, 'Should be using MLIR path for `CustomCall` lowering'
-  current_token = args_op[-2]
-  current_itoken = args_op[-1]
-  comp = ctx.builder
-  assert comp.get_shape(current_token).is_token() and comp.get_shape(current_itoken).is_token(), (
-      "The last two arguments must be tokens")
-
-  args_to_outfeed = args_op[:-2]
-  # Some platforms refuse to infeed empty arrays. We generate constants
-  # instead.
-  non_empty_flat_results_aval = list(filter(lambda aval: not (_aval_is_empty(aval)),
-                                            flat_results_aval))
-  need_callback_results_on_device = (not identity and
-                                     len(non_empty_flat_results_aval) > 0)
-  send_infeed = use_outfeed and need_callback_results_on_device
-  generated_infeed = False  # Keep track if we emitted an infeed op
-
-  _raise_if_using_outfeed_with_pjrt_c_api(xb.get_backend(ctx.platform))
-  callback_id = _register_callback(
-      functools.partial(
-          _outside_call_run_callback,
-          send_infeed=send_infeed,
-          identity=identity,
-          flat_results_aval=flat_results_aval,
-          **params))
-  next_token = _callback_handler_data.receiver.add_outfeed(
-      comp, current_token, callback_id, args_to_outfeed, device_index)
-  if identity:
-    results = list(args_to_outfeed)
-    next_itoken = current_itoken
-  else:
-    empty_results = [
-        xops.ConstantLiteral(comp, np.zeros(aval.shape, aval.dtype))
-        for aval in flat_results_aval
-        if _aval_is_empty(aval)
-    ]
-    if non_empty_flat_results_aval:
-      assert need_callback_results_on_device
-      after_outfeed_itoken = xops.AfterAll(comp, [current_itoken, next_token])
-      # We shard the infeed as AssignedDevice(device_index). This must match the
-      # outfeed (from outfeed_receiver.cc). Since `lax.infeed` does not support
-      # this kind of sharding, we use a custom translation for infeed.
-      array_sharding_proto = xla_client.OpSharding()
-      array_sharding_proto.type = xla_client.OpSharding.Type.MAXIMAL
-      array_sharding_proto.tile_assignment_dimensions = [1]
-      array_sharding_proto.tile_assignment_devices = [device_index]
-
-      token_sharding_proto = xla_client.OpSharding()
-      token_sharding_proto.type = xla_client.OpSharding.Type.REPLICATED
-      infeed_sharding_proto = xla.tuple_sharding_proto(
-          [array_sharding_proto] * len(non_empty_flat_results_aval) +
-          [token_sharding_proto])
-
-      shape = [
-          shape.with_major_to_minor_layout_if_absent()
-          for x in non_empty_flat_results_aval
-          for shape in xla.aval_to_xla_shapes(x)
-      ]
-
-      build_infeed = functools.partial(xops.InfeedWithToken,
-                                        after_outfeed_itoken,
-                                        xla_client.Shape.tuple_shape(shape))
-      outs_and_token = _with_sharding_proto(comp, infeed_sharding_proto,
-                                            build_infeed)
-      outs = xops.GetTupleElement(outs_and_token, 0)
-      next_itoken = xops.GetTupleElement(outs_and_token, 1)
-      non_empty_results = [
-          xops.GetTupleElement(outs, i)
-          for i in range(len(non_empty_flat_results_aval))
-      ]
-      generated_infeed = True
-      results = [
-          empty_results.pop(0)
-          if _aval_is_empty(result_aval) else non_empty_results.pop(0)
-          for result_aval in flat_results_aval
-      ]
-    else:
-      results = empty_results
-      next_itoken = current_itoken
-
-  assert generated_infeed == send_infeed, (
-      f"generated_infeed ({generated_infeed}) != send_infeed ({send_infeed})")
-  assert identity or len(results) == len(flat_results_aval), (
-      f"got {len(results)} but expected {len(flat_results_aval)}. "
-      f"identity = {identity}")
-  return results + [next_token, next_itoken]
-
-if xla_extension_version < 287:
-  xla.register_translation(outside_call_p, _outside_call_translation_rule)
-
-
 def _outside_call_outfeed_lowering(ctx: mlir.LoweringRuleContext,
                                    *args_op,
                                    identity,
@@ -1318,25 +1206,14 @@ def _outside_call_lowering(ctx: mlir.LoweringRuleContext,
   platform = ctx.module_context.platforms[0]
   use_outfeed = _use_outfeed(platform)
   if use_outfeed:
-    if xla_extension_version < 287:
-      return mlir.xla_fallback_lowering(outside_call_p)(
-          ctx,
-          *args,
-          has_token=has_token,
-          identity=identity,
-          device_index=device_index,
-          flat_results_aval=flat_results_aval,
-          **params,
-      )
-    else:
-      return _outside_call_outfeed_lowering(
-          ctx, *args,
-          has_token=has_token,
-          identity=identity,
-          flat_results_aval=flat_results_aval,
-          device_index=device_index,
-          **params,
-      )
+    return _outside_call_outfeed_lowering(
+        ctx, *args,
+        has_token=has_token,
+        identity=identity,
+        flat_results_aval=flat_results_aval,
+        device_index=device_index,
+        **params,
+    )
   else:
     # TODO(necula): It seems that on CPU, with custom call, the device_index
     # does not work, and the callback is always run on device_index=0
@@ -1405,10 +1282,7 @@ def _outside_call_lowering(ctx: mlir.LoweringRuleContext,
       f"identity = {identity}")
   return list(results) + [next_token, next_itoken]
 
-if xla_extension_version < 287:
-  mlir.register_lowering(outside_call_p, _outside_call_lowering, platform="cpu")
-else:
-  mlir.register_lowering(outside_call_p, _outside_call_lowering)
+mlir.register_lowering(outside_call_p, _outside_call_lowering)
 
 def _outside_call_run_callback(
     arrays, device, *,

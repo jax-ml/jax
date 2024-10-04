@@ -62,7 +62,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.layout import DeviceLocalLayout, AutoLayout, Layout
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
@@ -3055,14 +3054,9 @@ class MeshExecutable(stages.XlaExecutable):
         fastpath_data = None
       return outs, fastpath_data, False  # Do not remove cache entry
 
-    if xla_extension_version >= 286:
-      return xc._xla.pjit(
-          self.unsafe_call.name, None, aot_cache_miss, [], [],
-          JitGlobalCppCacheKeys(), tree_util.dispatch_registry, cc_shard_arg)
-    else:
-      return xc._xla.pjit(
-          self.unsafe_call.name, None, aot_cache_miss, [], [], [],
-          tree_util.dispatch_registry, cc_shard_arg)
+    return xc._xla.pjit(
+        self.unsafe_call.name, None, aot_cache_miss, [], [],
+        JitGlobalCppCacheKeys(), tree_util.dispatch_registry, cc_shard_arg)
 
 def cc_shard_arg(x, sharding, layout):
   return shard_args([sharding], [layout], [x])[0]

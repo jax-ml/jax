@@ -3975,8 +3975,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     size_im = 11
     atol = None
 
-    if (name in {"arccos", "arcsin", "arcsinh", "arccosh"}
-        or name in {"arctan", "arctanh"} and jax._src.lib.version > (0, 4, 31)):
+    if name in {"arccos", "arcsin", "arcsinh", "arccosh", "arctan", "arctanh"}:
       # TODO(pearu): eliminate this if-block when a fix to mpmath#787
       # becomes available
       extra_prec_multiplier = 20
@@ -4131,16 +4130,6 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
 
     elif name == 'arccos':
       regions_with_inaccuracies_keep('q4.imag', 'ninf', 'pinf', 'ninfj', 'pinfj.real')
-
-    elif name == 'arctan' and jax._src.lib.version <= (0, 4, 31):
-      if dtype == np.complex64:
-        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj',
-                                       'mq1.imag', 'mq2.imag', 'mq3.imag', 'mq4.imag', 'mnegj.real', 'mnegj.imag', 'mposj.imag')
-      if dtype == np.complex128:
-        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mnegj.real')
-
-    elif name == 'arctanh' and jax._src.lib.version <= (0, 4, 31):
-      regions_with_inaccuracies_keep('pos.imag', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos.imag')
 
     elif name in {'cos', 'sin'}:
       regions_with_inaccuracies_keep('ninf.imag', 'pinf.imag')

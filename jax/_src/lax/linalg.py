@@ -47,7 +47,6 @@ from jax._src.lax.lax import (
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
 from jax._src.lib import lapack
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -709,8 +708,7 @@ def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
   out_aval = ctx.avals_out[0]
   batch_dims = operand_aval.shape[:-2]
   op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-  ctx_args = (ctx,)
-  w, vl, vr, info = lapack.geev_hlo(*ctx_args, operand_aval.dtype, operand,
+  w, vl, vr, info = lapack.geev_hlo(ctx, operand_aval.dtype, operand,
                                     input_shape_vals=op_shape_vals,
                                     jobvl=compute_left_eigenvectors,
                                     jobvr=compute_right_eigenvectors)
@@ -2033,8 +2031,7 @@ def _svd_cpu_gpu_lowering(
                                 compute_uv=compute_uv)
   else:
     a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-    ctx_args = (ctx,)
-    s, u, vt, info = gesvd_impl(*ctx_args, operand_aval.dtype, operand,
+    s, u, vt, info = gesvd_impl(ctx, operand_aval.dtype, operand,
                                 full_matrices=full_matrices,
                                 compute_uv=compute_uv,
                                 a_shape_vals=a_shape_vals)
@@ -2477,9 +2474,7 @@ batching.primitive_batchers[hessenberg_p] = _hessenberg_batching_rule
 def _hessenberg_cpu_hlo(ctx, a):
   a_aval, = ctx.avals_in
   batch_dims = a_aval.shape[:-2]
-  # TODO(b/344892332): Remove the conditional after the compatibility period.
-  ctx_args = (ctx,) if jaxlib_version >= (0, 4, 34) else ()
-  a, taus, info = lapack.gehrd_hlo(*ctx_args, a_aval.dtype, a)
+  a, taus, info = lapack.gehrd_hlo(ctx, a_aval.dtype, a)
   ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "EQ", "SIGNED")
