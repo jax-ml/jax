@@ -359,6 +359,7 @@ class MosaicGridMapping:
     self._prepare_mesh_info(mesh)
 
     if grid_mapping.get_grid_indices is None:
+      # Blah
 
       def _get_grid_indices(indices, maybe_include_mapped_dims: bool):
         if maybe_include_mapped_dims:
