@@ -1437,6 +1437,23 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     # 2 for `f` and `2` for `mul` (compute type changes for `mul`)
     self.assertEqual(count[0], 4)
 
+  def test_offload_take_host(self):
+    @compute_on('device_host')
+    @jax.jit
+    def peer_forward(x, experts, indices, scores):
+      w = jnp.take(experts, indices.astype(int), axis=0)
+      w_gate, w_down, w_up = w[..., 0], w[..., 1], w[..., 2]
+      g = jnp.einsum('btd, bthkd->bthk', x, w_gate)
+      x = jnp.einsum('btd, bthkd->bthk', x, w_down)
+      x = x * jax.nn.gelu(g) * scores
+      return jnp.einsum('bthk, bthkd->btd', x, w_up)
+
+    x = jnp.ones((16, 4, 32))
+    experts = jnp.ones((128, 32, 3))
+    indices = jnp.ones((16, 4, 4, 2), dtype=jnp.int32)
+    scores = jnp.ones((16, 4, 4, 2))
+    jax.jit(peer_forward)(x, experts, indices, scores)  # doesn't crash
+
 
 class ActivationOffloadingTest(jtu.JaxTestCase):
 
