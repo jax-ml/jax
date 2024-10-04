@@ -1072,7 +1072,7 @@ jax_multiplatform_test(
     srcs = ["checkify_test.py"],
     shard_count = {
         "gpu": 2,
-        "tpu": 2,
+        "tpu": 4,
     },
 )
 
@@ -1270,7 +1270,7 @@ jax_multiplatform_test(
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
     enable_configs = [
-        "gpu",
+        "gpu_h100",
         "cpu",
     ],
     tags = ["multiaccelerator"],
@@ -1280,7 +1280,7 @@ jax_multiplatform_test(
     name = "debugging_primitives_test",
     srcs = ["debugging_primitives_test.py"],
     enable_configs = [
-        "gpu",
+        "gpu_h100",
         "cpu",
     ],
 )
@@ -1301,7 +1301,7 @@ jax_multiplatform_test(
     name = "debugger_test",
     srcs = ["debugger_test.py"],
     enable_configs = [
-        "gpu",
+        "gpu_h100",
         "cpu",
     ],
 )
@@ -1317,7 +1317,7 @@ jax_multiplatform_test(
         "tpu_pjrt_c_api": ["--jax_num_generated_cases=1"],
     },
     enable_configs = [
-        "gpu",
+        "gpu_h100",
         "cpu",
     ],
     shard_count = {

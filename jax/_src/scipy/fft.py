@@ -21,7 +21,7 @@ import math
 from jax import lax
 import jax.numpy as jnp
 from jax._src.util import canonicalize_axis
-from jax._src.numpy.util import promote_dtypes_complex
+from jax._src.numpy.util import promote_dtypes_complex, promote_dtypes_inexact
 from jax._src.typing import Array
 
 def _W4(N: int, k: Array) -> Array:
@@ -298,12 +298,12 @@ def idct(x: Array, type: int = 2, n: int | None = None,
                 [(0, n - x.shape[axis] if a == axis else 0, 0)
                  for a in range(x.ndim)])
   N = x.shape[axis]
-  x = x.astype(jnp.float32)
+  x, = promote_dtypes_inexact(x)
   if norm is None or norm == 'backward':
     x = _dct_ortho_norm(x, axis)
   x = _dct_ortho_norm(x, axis)
 
-  k = lax.expand_dims(jnp.arange(N, dtype=jnp.float32), [a for a in range(x.ndim) if a != axis])
+  k = lax.expand_dims(jnp.arange(N, dtype=x.dtype), [a for a in range(x.ndim) if a != axis])
   # everything is complex from here...
   w4 = _W4(N,k)
   x = x.astype(w4.dtype)

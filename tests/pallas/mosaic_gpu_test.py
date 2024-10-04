@@ -227,35 +227,52 @@ class PallasCallTest(PallasTest):
 
     self.assertEqual(output(), "It works!\n")
 
-  def test_print_with_values(self):
+  def test_print_scalar(self):
     @functools.partial(
         pl.pallas_call,
-        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+        out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
     )
     def kernel(x_ref, o_ref):
       del o_ref
-      pl.debug_print("x[0] = {}", x_ref[0])
+      pl.debug_print("x.sum() = {}", x_ref[...].sum())
 
-    x = jnp.arange(256).astype(jnp.float32)
-    with self.assertRaises(Exception):
-      # TODO(slebedev): Remove assertRaises() once we support indexing.
-      kernel(x)
+    x = jnp.arange(256)
+    with jtu.capture_stdout() as output:
+      jax.block_until_ready(kernel(x))
+
+    self.assertIn(f"x.sum() = {x.sum()}", output())
+
+  def test_print_scalar_array(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
+    )
+    def kernel(x_ref, o_ref):
+      del o_ref
+      pl.debug_print("x.sum() = {}", x_ref[...].sum() + 1)
+
+    x = jnp.arange(256)
+    with jtu.capture_stdout() as output:
+      jax.block_until_ready(kernel(x))
+
+    self.assertIn(f"x.sum() = {x.sum() + 1}", output())
 
   def test_print_array(self):
     in_shape = [2, 1, 64, 64]
+
     @functools.partial(
         pl.pallas_call,
-        out_shape=jax.ShapeDtypeStruct(in_shape, jnp.float32),
+        out_shape=jax.ShapeDtypeStruct(in_shape, jnp.int32),
     )
     def kernel(x_ref, o_ref):
       del o_ref
       pl.debug_print("x: {}", x_ref[...])
 
-    x = jnp.arange(math.prod(in_shape)).reshape(in_shape).astype(jnp.float32)
+    x = jnp.arange(math.prod(in_shape)).reshape(in_shape)
     with jtu.capture_stdout() as output:
       jax.block_until_ready(kernel(x))
 
-    self.assertIn(f"x: [1, 0, 43, 23]/{list(in_shape)}: 6871.000000\n", output())
+    self.assertIn(f"x: [1, 0, 43, 23]/{in_shape}: 6871\n", output())
 
   def test_scoped_allocation(self):
     def kernel(x_ref, o_ref):

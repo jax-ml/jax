@@ -660,25 +660,25 @@ class FragmentedArray:
     )
 
   def reduce_sum(self, scratch) -> ir.Value:
-    index = ir.IndexType.get()
-    if not isinstance(self.layout, WGStridedFragLayout):
-      raise NotImplementedError(f"Unsupported layout {self.layout}")
-    result = c(0, self.mlir_dtype)
-    for reg in self.registers:
-      result = arith.addf(
-          result,
-          vector.reduction(self.mlir_dtype, vector.CombiningKind.ADD, reg),
-      )
-    scratch_ty = ir.MemRefType(scratch.type)
-    if scratch_ty.element_type != self.mlir_dtype or scratch_ty.shape != [4]:
-      raise ValueError(f"Expected shape={(4,)}, {self.mlir_dtype} (got {scratch_ty})")
-
     if ir.FloatType.isinstance(self.mlir_dtype):
       op = arith.addf
     elif ir.IntegerType.isinstance(self.mlir_dtype):
       op = arith.addi
     else:
       raise NotImplementedError(self.mlir_dtype)
+
+    index = ir.IndexType.get()
+    if not isinstance(self.layout, WGStridedFragLayout):
+      raise NotImplementedError(f"Unsupported layout {self.layout}")
+    result = c(0, self.mlir_dtype)
+    for reg in self.registers:
+      result = op(
+          result,
+          vector.reduction(self.mlir_dtype, vector.CombiningKind.ADD, reg),
+      )
+    scratch_ty = ir.MemRefType(scratch.type)
+    if scratch_ty.element_type != self.mlir_dtype or scratch_ty.shape != [4]:
+      raise ValueError(f"Expected shape={(4,)}, {self.mlir_dtype} (got {scratch_ty})")
 
     warp_result = utils.warp_tree_reduce(result, op, 32)
     warp_id = arith.divui(gpu.thread_id(gpu.Dimension.x), c(32, index))

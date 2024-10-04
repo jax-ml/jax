@@ -23,13 +23,13 @@ This section briefly introduces some key concepts of the JAX package.
 ## JAX arrays ({class}`jax.Array`)
 
 The default array implementation in JAX is {class}`jax.Array`. In many ways it is similar to
-the {class}`numpy.ndarray` type that you may be familar with from the NumPy package, but it
+the {class}`numpy.ndarray` type that you may be familiar with from the NumPy package, but it
 has some important differences.
 
 ### Array creation
 
 We typically don't call the {class}`jax.Array` constructor directly, but rather create arrays via JAX API functions.
-For example, {mod}`jax.numpy` provides familar NumPy-style array construction functionality
+For example, {mod}`jax.numpy` provides familiar NumPy-style array construction functionality
 such as {func}`jax.numpy.zeros`, {func}`jax.numpy.linspace`, {func}`jax.numpy.arange`, etc.
 
 ```{code-cell}
@@ -147,10 +147,10 @@ jaxprs later in {ref}`jax-internals-jaxpr`.
 ## Pytrees
 
 JAX functions and transformations fundamentally operate on arrays, but in practice it is
-convenient to write code that work with collections of arrays: for example, a neural
+convenient to write code that works with collection of arrays: for example, a neural
 network might organize its parameters in a dictionary of arrays with meaningful keys.
 Rather than handle such structures on a case-by-case basis, JAX relies on the {term}`pytree`
-abstraction to treat such collections in a uniform matter.
+abstraction to treat such collections in a uniform manner.
 
 Here are some examples of objects that can be treated as pytrees:
 

@@ -35,7 +35,6 @@ import operator
 import types
 from typing import (overload, Any, Literal, NamedTuple,
                     Protocol, TypeVar, Union)
-from textwrap import dedent as _dedent
 import warnings
 
 import numpy as np
@@ -2316,15 +2315,58 @@ def _interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
   return f
 
 
-@util.implements(np.interp,
-  lax_description=_dedent("""
-    In addition to constant interpolation supported by NumPy, jnp.interp also
-    supports left='extrapolate' and right='extrapolate' to indicate linear
-    extrapolation instead."""))
 def interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
            left: ArrayLike | str | None = None,
            right: ArrayLike | str | None = None,
            period: ArrayLike | None = None) -> Array:
+  """One-dimensional linear interpolation.
+
+  JAX implementation of :func:`numpy.interp`.
+
+  Args:
+    x: N-dimensional array of x coordinates at which to evaluate the interpolation.
+    xp: one-dimensional sorted array of points to be interpolated.
+    fp: array of shape ``xp.shape`` containing the function values associated with ``xp``.
+    left: specify how to handle points ``x < xp[0]``. Default is to return ``fp[0]``.
+      If ``left`` is a scalar value, it will return this value. if ``left`` is the string
+      ``"extrapolate"``, then the value will be determined by linear extrapolation.
+      ``left`` is ignored if ``period`` is specified.
+    right: specify how to handle points ``x > xp[-1]``. Default is to return ``fp[-1]``.
+      If ``right`` is a scalar value, it will return this value. if ``right`` is the string
+      ``"extrapolate"``, then the value will be determined by linear extrapolation.
+      ``right`` is ignored if ``period`` is specified.
+    period: optionally specify the period for the *x* coordinates, for e.g. interpolation
+      in angular space.
+
+  Returns:
+    an array of shape ``x.shape`` containing the interpolated function at values ``x``.
+
+  Examples:
+    >>> xp = jnp.arange(10)
+    >>> fp = 2 * xp
+    >>> x = jnp.array([0.5, 2.0, 3.5])
+    >>> interp(x, xp, fp)
+    Array([1., 4., 7.], dtype=float32)
+
+    Unless otherwise specified, extrapolation will be constant:
+
+    >>> x = jnp.array([-10., 10.])
+    >>> interp(x, xp, fp)
+    Array([ 0., 18.], dtype=float32)
+
+    Use ``"extrapolate"`` mode for linear extrapolation:
+
+    >>> interp(x, xp, fp, left='extrapolate', right='extrapolate')
+    Array([-20.,  20.], dtype=float32)
+
+    For periodic interpolation, specify the ``period``:
+
+    >>> xp = jnp.array([0, jnp.pi / 2, jnp.pi, 3 * jnp.pi / 2])
+    >>> fp = jnp.sin(xp)
+    >>> x = 2 * jnp.pi  # note: not in input array
+    >>> jnp.interp(x, xp, fp, period=2 * jnp.pi)
+    Array(0., dtype=float32)
+  """
   static_argnames = []
   if isinstance(left, str) or left is None:
     static_argnames.append('left')
@@ -9824,8 +9866,6 @@ def take_along_axis(
   offset_dims = []
   start_index_map = []
   collapsed_slice_dims = []
-  operand_batching_dims = []
-  start_indices_batching_dims = []
   j = 0
   for i in range(rank):
     if i == axis_int:
@@ -9850,23 +9890,21 @@ def take_along_axis(
       collapsed_slice_dims.append(i)
       j += 1
     else:
-      # Otherwise, idx_shape[i] == arr_shape[i]. Mark the dimensions in both
-      # array and index as batching so corresponding elements are gathered.
-      if core.definitely_equal(arr_shape[i], 0):
-        slice_sizes.append(0)
-      else:
-        slice_sizes.append(1)
-      operand_batching_dims.append(i)
-      start_indices_batching_dims.append(j)
+      # Otherwise, idx_shape[i] == arr_shape[i]. Use an iota index so
+      # corresponding elements of array and index are gathered.
+      # TODO(mattjj): next line needs updating for dynamic shapes
+      iota = lax.broadcasted_iota(index_dtype, gather_index_shape, j)
+      gather_indices.append(iota)
+      slice_sizes.append(1)
+      start_index_map.append(i)
+      collapsed_slice_dims.append(i)
       j += 1
 
   gather_indices_arr = lax.concatenate(gather_indices, dimension=j)
   dnums = lax.GatherDimensionNumbers(
     offset_dims=tuple(offset_dims),
     collapsed_slice_dims=tuple(collapsed_slice_dims),
-    start_index_map=tuple(start_index_map),
-    operand_batching_dims=tuple(operand_batching_dims),
-    start_indices_batching_dims=tuple(start_indices_batching_dims))
+    start_index_map=tuple(start_index_map))
   return lax.gather(a, gather_indices_arr, dnums, tuple(slice_sizes),
                     mode="fill" if mode is None else mode, fill_value=fill_value)
 
