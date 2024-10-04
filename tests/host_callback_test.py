@@ -258,12 +258,12 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     if os.getenv("XLA_FLAGS") != self.old_flags:
       os.environ["XLA_FLAGS"] = self.old_flags
       xla_bridge.get_backend.cache_clear()
-    hcb.barrier_wait("HostCallbackTapTest.tearDown")
+    jax.effects_barrier()
     super().tearDown()
 
   def test_tap_eval(self):
     self.assertAllClose((5. * 2.) ** 2, fun1(5.))
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         what: a * 2
         10.00
@@ -276,7 +276,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       return x1 + y1
 
     self.assertEqual(3. * (2. + 3.), func2(3.))
-    hcb.barrier_wait()
+    jax.effects_barrier()
 
     assertMultiLineStrippedEqual(self, """
         ( 6.00 9.00 )""", testing_stream.output)
@@ -287,7 +287,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       return res["a"] + res["b"]
 
     self.assertEqual(3. * (2. + 3.), func2(3.))
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         { a=6.00 b=9.00 }""", testing_stream.output)
 
@@ -298,7 +298,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       return x1
 
     self.assertEqual(3. * 4., func2(3.))
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         ( 6.00 9.00 )""", testing_stream.output)
 
@@ -311,7 +311,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       return x1
 
     self.assertEqual(3., func2(3.))
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, "called tap_func with None",
                                  testing_stream.output)
 
@@ -323,7 +323,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       return x
 
     self.assertEqual(3., func2(3.))
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, "called tap_func with None",
                                  testing_stream.output)
 
@@ -331,7 +331,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     """Tap empty arrays."""
     hcb_id_print((), output_stream=testing_stream)
     hcb_id_print((1., np.ones((2, 0))), what="second", output_stream=testing_stream)
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         (  )
         what: second
@@ -341,7 +341,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     jit_fun1 = jax.jit(lambda x: 3. * hcb_id_print(
         2. * x, what="here", output_stream=testing_stream))
     self.assertAllClose(6. * 5., jit_fun1(5.))
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         what: here
         10.00""", testing_stream.output)
@@ -351,7 +351,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       return hcb_id_print(42, output_stream=testing_stream)
 
     self.assertAllClose(42, jax.jit(func)())
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
     42""", testing_stream.output)
 
@@ -360,7 +360,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       return hcb_id_print(x1 + x2, output_stream=testing_stream)
 
     self.assertAllClose(42, jax.jit(func)(40, 2))
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
     42""", testing_stream.output)
 
@@ -369,7 +369,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       return hcb_id_print(42, result=x, output_stream=testing_stream)
 
     self.assertAllClose(5, jax.jit(func)(5))
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
     42""", testing_stream.output)
 
@@ -387,7 +387,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
         .trace(1)
         .lower(lowering_platforms=(jtu.device_under_test(),)).as_text("hlo"))
     self.assertEqual(2, jax.jit(func)(1))
-    hcb.barrier_wait()
+    jax.effects_barrier()
 
     assertMultiLineStrippedEqual(self, """
         where: 1
@@ -405,7 +405,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
 
     self.assertEqual(2, jax.jit(func)(1))
     self.assertEqual(11, jax.jit(func)(10))
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         where: 1
         1
@@ -426,7 +426,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
 
     self.assertEqual(2, jax.jit(func)(1))
     self.assertEqual(11, jax.jit(func)(10))
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         where: 1
         1
@@ -449,7 +449,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       return hcb_id_print(x3 + 1, where="3", output_stream=testing_stream)
 
     self.assertEqual(3, jax.jit(func)(1))
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         where: 1
         1
@@ -487,7 +487,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
               result=func(x * 2, what))
       )(5)
       self.assertEqual(func(10, what), transformed)
-    hcb.barrier_wait()  # Wait for receivers to be done
+    jax.effects_barrier()  # Wait for receivers to be done
     self.assertEqual(3, tap_count)
 
   @jtu.sample_product(with_jit=[True, False])
@@ -509,7 +509,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
 
     transform = jax.jit if with_jit else lambda f: f
     self.assertEqual(4, transform(func)(1))
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         where: 1
         1
@@ -542,7 +542,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
 
     transform = jax.jit if with_jit else lambda f: f
     self.assertEqual(4, transform(func)(1))
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         where: 1
         1
@@ -578,7 +578,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       return res
 
     self.assertEqual(3, jax.jit(func)(1))
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self,
                                  """
                                  where: w_p
@@ -616,7 +616,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       func = jax.jit(func)
     res = func(1)
     self.assertAllClose(jnp.arange(1, 4), res)
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         where: 1
         1
@@ -695,7 +695,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     for _ in range(10):
       # No dependencies between the jit invocations
       res += jax.jit(lambda x: func(x, 10))(x)
-    hcb.barrier_wait()
+    jax.effects_barrier()
     self.assertEqual(100, count)
 
   def test_tap_while(self):
@@ -709,7 +709,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
           (x, 1))
 
     func(y)
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         1
         2
@@ -721,7 +721,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     res_primals, res_tangents = jvp_fun1(jnp.float32(5.), jnp.float32(0.1))
     self.assertAllClose(100., res_primals, check_dtypes=False)
     self.assertAllClose(4., res_tangents, check_dtypes=False)
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         what: a * 2
         10.00
@@ -739,7 +739,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     arg = jnp.float32(5.)
     jaxpr = str(jax.make_jaxpr(grad_func)(arg))
     # making the Jaxpr does not print anything
-    hcb.barrier_wait()
+    jax.effects_barrier()
 
     if hcb._HOST_CALLBACK_LEGACY.value:
       treedef = jax.tree.structure(arg)
@@ -761,7 +761,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     testing_stream.reset()
 
     res_grad = grad_func(arg)
-    hcb.barrier_wait()
+    jax.effects_barrier()
 
     self.assertAllClose(6., res_grad, check_dtypes=False)
     assertMultiLineStrippedEqual(self, """
@@ -780,7 +780,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
 
     res_grad = grad_func(jnp.float32(5.))
     self.assertAllClose(2. * 5. * 6., res_grad, check_dtypes=False)
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         what: x * 2
         10.00
@@ -796,13 +796,13 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     grad_func = jax.grad(jax.grad(func))
     # making the Jaxpr does not print anything
     _ = jax.make_jaxpr(grad_func)(5.)
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, "", testing_stream.output)
 
     res_grad = grad_func(jnp.float32(5.))
 
     self.assertAllClose(12., res_grad, check_dtypes=False)
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         what: x * 2
         10.00""", testing_stream.output)
@@ -820,7 +820,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     print(jax.make_jaxpr(grad_func)(x))
     res_grad = grad_func(x)
     self.assertAllClose(14., res_grad, check_dtypes=False)
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         what: pair
         ( 10.00 15.00 )""", testing_stream.output)
@@ -845,7 +845,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
 
     res_grad = grad_func(jnp.float32(5.), jnp.int32(2))
     self.assertAllClose(2., res_grad, check_dtypes=False)
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         what: pair
         ( 5.00 2 )""", testing_stream.output)
@@ -869,7 +869,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     g = f_jax_vjp(x)
     self.assertAllClose(np.array([3., 3.], dtype=np.float32), g[0])
     self.assertEqual(dtypes.float0, g[1].dtype)
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         ( [0.70 0.80] [11 12 13] )""", testing_stream.output)
 
@@ -898,7 +898,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       return (f_vjp, (args, cts))
 
     res = f_jax(x)
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         ( [0.70 0.80] [11 12 13] )""", testing_stream.output)
     testing_stream.reset()
@@ -906,7 +906,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     # 1st order
     f_jax_vjp1, args_vjp1 = wrap_vjp(f_jax, (x,), res)
     res_vjp1 = f_jax_vjp1(*args_vjp1)
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         ( [0.70 0.80] [11 12 13] )""", testing_stream.output)
     testing_stream.reset()
@@ -923,7 +923,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     vmap_fun1 = jax.vmap(fun1)
     vargs = jnp.array([jnp.float32(4.), jnp.float32(5.)])
     vmap_fun1(vargs)
-    hcb.barrier_wait()
+    jax.effects_barrier()
     if hcb._HOST_CALLBACK_LEGACY.value:
       assertMultiLineStrippedEqual(self, """
           transforms: [('batch', {'batch_dims': (0,)})] what: a * 2
@@ -954,7 +954,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     vmap_func = jax.vmap(func)
     vargs = jnp.array([jnp.float32(4.), jnp.float32(5.)])
     _ = vmap_func(vargs)
-    hcb.barrier_wait()
+    jax.effects_barrier()
     if hcb._HOST_CALLBACK_LEGACY.value:
       assertMultiLineStrippedEqual(self, """
         transforms: [('batch', {'batch_dims': (None, 0)})]
@@ -981,7 +981,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     yv = jnp.arange(3, dtype=np.int32)
     # assertMultiLineStrippedEqual(self, "", str(jax.make_jaxpr(sum_all)(xv, yv)))
     _ = sum_all(xv, yv)
-    hcb.barrier_wait()
+    jax.effects_barrier()
     if hcb._HOST_CALLBACK_LEGACY.value:
       assertMultiLineStrippedEqual(self, """
           transforms: [('batch', {'batch_dims': (0,)}), ('batch', {'batch_dims': (0,)})]
@@ -1027,7 +1027,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
         np.array([2, 2, 2, 3, 4]),
         jax.jit(jax.vmap(func))(inputs),
         check_dtypes=False)
-    hcb.barrier_wait()
+    jax.effects_barrier()
     if hcb._HOST_CALLBACK_LEGACY.value:
       assertMultiLineStrippedEqual(
           self, """
@@ -1062,7 +1062,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
 
     inputs = np.arange(5, dtype=np.int32)
     res = jax.jit(jax.vmap(func))(inputs)
-    hcb.barrier_wait()
+    jax.effects_barrier()
     self.assertAllClose(np.array([2, 2, 2, 3, 4]), res, check_dtypes=False)
     if hcb._HOST_CALLBACK_LEGACY.value:
       assertMultiLineStrippedEqual(self, """
@@ -1093,7 +1093,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       return y * x
 
     print(f"impl = {power3(3.)}")
-    hcb.barrier_wait()
+    jax.effects_barrier()
     if hcb._HOST_CALLBACK_LEGACY.value:
       expected = """
             what: x,x^2
@@ -1106,7 +1106,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     testing_stream.reset()
 
     print(f"jvp = {jax.jvp(power3, (3.,), (0.1,))}")
-    hcb.barrier_wait()
+    jax.effects_barrier()
     if hcb._HOST_CALLBACK_LEGACY.value:
       expected = """
             what: x,x^2
@@ -1138,7 +1138,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       return y * x
 
     print(f"jvp = {jax.jvp(power3_with_tangents, (3.,), (0.1,))}")
-    hcb.barrier_wait()
+    jax.effects_barrier()
     if hcb._HOST_CALLBACK_LEGACY.value:
       expected = """
         what: x,x^2
@@ -1150,7 +1150,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     testing_stream.reset()
 
     print(f"grad = {jax.grad(power3)(3.)}")
-    hcb.barrier_wait()
+    jax.effects_barrier()
     # Only the primals by default
     if hcb._HOST_CALLBACK_LEGACY.value:
       expected = """
@@ -1189,7 +1189,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       return y1 * x1
 
     print(f"grad = {jax.grad(power3_with_cotangents)(3.)}")
-    hcb.barrier_wait()
+    jax.effects_barrier()
     if hcb._HOST_CALLBACK_LEGACY.value:
       expected = """
         what: x,x^2
@@ -1208,7 +1208,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     # TODO: grad of grad
 
     print(f"vmap = {jax.vmap(power3)(np.array([2., 3.]))}")
-    hcb.barrier_wait()
+    jax.effects_barrier()
     if hcb._HOST_CALLBACK_LEGACY.value:
       expected = """
          transforms: [('batch', {'batch_dims': (0, 0)})] what: x,x^2
@@ -1224,7 +1224,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     testing_stream.reset()
 
     print(f"vmap o grad {jax.vmap(jax.grad(power3))(np.array([2., 3.]))}")
-    hcb.barrier_wait()
+    jax.effects_barrier()
     if hcb._HOST_CALLBACK_LEGACY.value:
       expected = """
          transforms: [('batch', {'batch_dims': (0, 0)})] what: x,x^2
@@ -1240,7 +1240,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     testing_stream.reset()
 
     print(f"vmap o grad {jax.vmap(jax.grad(power3_with_cotangents))(np.array([2., 3.]))}")
-    hcb.barrier_wait()
+    jax.effects_barrier()
     if hcb._HOST_CALLBACK_LEGACY.value:
       expected = """
         transforms: [('batch', {'batch_dims': (0, 0)})] what: x,x^2
@@ -1262,7 +1262,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     testing_stream.reset()
 
     print(f"grad o remat = {jax.grad(lambda x: power3(ad_checkpoint.checkpoint(power3)(x)))(3.)}")
-    hcb.barrier_wait()
+    jax.effects_barrier()
     if hcb._HOST_CALLBACK_LEGACY.value:
       expected = """
         what: x,x^2
@@ -1300,7 +1300,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
 
     res = fun2(True, matrix)
     self.assertAllClose(fun2(True, matrix, do_print=False), res, check_dtypes=False)
-    hcb.barrier_wait()
+    jax.effects_barrier()
     assertMultiLineStrippedEqual(self, """
         TBD""", testing_stream.output)
 
@@ -1324,7 +1324,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
 
     jax.jit(func)(np.arange(6, dtype=np.float32).reshape((2, 3)))
     # Wait for the results
-    hcb.barrier_wait("first")
+    jax.effects_barrier()
     expected = """
         what: x times 1
         [[0. 1. 2.]
@@ -1339,7 +1339,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     testing_stream.reset()
     # Call again
     jax.jit(func)(np.arange(6, dtype=np.float32).reshape((2, 3)))
-    hcb.barrier_wait("second")
+    jax.effects_barrier()
     self.assertMultiLineStrippedEqual(expected, testing_stream.output)
 
   def test_tap_error_bad_consumer_id(self):
@@ -1420,7 +1420,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       return lax.fori_loop(0, 2, jax.remat(f), k)
 
     print(loss(3))
-    hcb.barrier_wait()
+    jax.effects_barrier()
     expected = """
       3
       10"""
@@ -1437,7 +1437,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       return lax.scan(step, init, np.arange(2))
 
     self.assertAllClose(tap_scalar(3, do_print=False), tap_scalar(3, do_print=True))
-    hcb.barrier_wait()
+    jax.effects_barrier()
     expected = """
       what: step_nr
       0
@@ -1465,7 +1465,7 @@ class HostCallbackCallTest(jtu.JaxTestCase):
     testing_stream._test_method_name = self._testMethodName
 
   def tearDown(self) -> None:
-    hcb.barrier_wait("HostCallbackCallTest.tearDown")
+    jax.effects_barrier()
     super().tearDown()
 
   def call_log_testing_stream(self, func, arg, *, result_shape, name=""):
@@ -1632,7 +1632,7 @@ class HostCallbackCallTest(jtu.JaxTestCase):
       return arg
 
     self.assertAllClose((3., 4.), f_outside((3., 4.)))
-    hcb.barrier_wait()
+    jax.effects_barrier()
     expected = """
         Call outside([3. 4.])
           = [3. 4.]"""
@@ -1737,7 +1737,7 @@ class HostCallbackCallTest(jtu.JaxTestCase):
         ValueError,
         "The values must be either numeric scalars, or must have 'shape' and 'dtype' attributes"):
       hcb.call(lambda x: x, 3., result_shape=lambda x: x)
-      hcb.barrier_wait("wait for error")
+      jax.effects_barrier()
 
   def helper_check_callback_errors(self, thunk: Callable,
                                    expected_exc_txt: str):
@@ -1765,7 +1765,7 @@ class HostCallbackCallTest(jtu.JaxTestCase):
             "There were exceptions during callback processing.*Last one was:.*" +
             expected_exc_txt,
             re.DOTALL)):
-      hcb.barrier_wait("Waiting for error")
+      jax.effects_barrier()
 
 
 def call_jax_other_device(
