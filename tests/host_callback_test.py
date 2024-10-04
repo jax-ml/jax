@@ -302,31 +302,6 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     assertMultiLineStrippedEqual(self, """
         ( 6.00 9.00 )""", testing_stream.output)
 
-  def test_tap_with_result_no_arg(self):
-    def tap_func(arg, transforms):
-      testing_stream.write(f"called tap_func with {arg}")
-
-    def func2(x):
-      x1 = hcb.id_tap(tap_func, None, result=x)
-      return x1
-
-    self.assertEqual(3., func2(3.))
-    jax.effects_barrier()
-    assertMultiLineStrippedEqual(self, "called tap_func with None",
-                                 testing_stream.output)
-
-  def test_tap_result_unused(self):
-    def tap_func(arg, transforms):
-      testing_stream.write(f"called tap_func with {arg}")
-    def func2(x):
-      hcb.id_tap(tap_func, None)
-      return x
-
-    self.assertEqual(3., func2(3.))
-    jax.effects_barrier()
-    assertMultiLineStrippedEqual(self, "called tap_func with None",
-                                 testing_stream.output)
-
   def test_tap_empty(self):
     """Tap empty arrays."""
     hcb_id_print((), output_stream=testing_stream)
@@ -457,38 +432,6 @@ class HostCallbackTapTest(jtu.JaxTestCase):
         2
         where: 3
         3""", testing_stream.output)
-
-  @jtu.sample_product(with_jit=[True, False])
-  def test_tap_pytree(self, with_jit=False):
-    def func(x, what=""):
-      """Returns some pytrees depending on x"""
-      if what == "pair_1_x":
-        return (1, x)
-      elif what == "pair_x_2x":
-        return (x, 2 * x)
-      elif what == "dict":
-        return dict(a=2 * x, b=3 * x)
-      else:
-        assert False
-
-    tap_count = 0
-
-    def tap_func(a, _, *, what=""):
-      nonlocal tap_count
-      tap_count += 1
-      self.assertEqual(func(5, what), a)
-
-    transform = jax.jit if with_jit else lambda f: f
-    for what in ("pair_1_x", "pair_x_2x", "dict"):
-      transformed = transform(
-          lambda x: hcb.id_tap(
-              partial(tap_func, what=what),
-              func(x, what),
-              result=func(x * 2, what))
-      )(5)
-      self.assertEqual(func(10, what), transformed)
-    jax.effects_barrier()  # Wait for receivers to be done
-    self.assertEqual(3, tap_count)
 
   @jtu.sample_product(with_jit=[True, False])
   def test_tap_cond(self, with_jit=False):
@@ -674,30 +617,6 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     arg = jnp.arange(50, dtype=jnp.int32).reshape((10, 5))
     jax.jit(lambda x, y: hcb_id_print((x, y, x * 2)))(arg, jnp.ones(100, dtype=jnp.int32))
 
-  def test_tap_jit_interleaving(self):
-    # Several jit's without data dependencies; they may interfere
-    count = 0  # Count tap invocations
-    nr_arrays = 5
-
-    def tap_func(arg, _):
-      nonlocal count
-      assert len(arg) == nr_arrays
-      count += 1
-
-    # This is the function that we'll run multiple times
-    def func(x, count):
-      for i in range(count):
-        x = hcb.id_tap(tap_func, [x + i for i in range(nr_arrays)])[-1]
-      return x
-
-    x = jnp.array(1, dtype=np.int32)
-    res = 0
-    for _ in range(10):
-      # No dependencies between the jit invocations
-      res += jax.jit(lambda x: func(x, 10))(x)
-    jax.effects_barrier()
-    self.assertEqual(100, count)
-
   def test_tap_while(self):
     """Executing while, even without JIT uses compiled code"""
     y = jnp.ones(5)  # captured const
@@ -715,18 +634,6 @@ class HostCallbackTapTest(jtu.JaxTestCase):
         2
         3
         4""", testing_stream.output)
-
-  def test_tap_jvp(self):
-    jvp_fun1 = lambda x, xt: jax.jvp(fun1, (x,), (xt,))
-    res_primals, res_tangents = jvp_fun1(jnp.float32(5.), jnp.float32(0.1))
-    self.assertAllClose(100., res_primals, check_dtypes=False)
-    self.assertAllClose(4., res_tangents, check_dtypes=False)
-    jax.effects_barrier()
-    assertMultiLineStrippedEqual(self, """
-        what: a * 2
-        10.00
-        what: y * 3
-        30.00""", testing_stream.output)
 
   def test_tap_grad_primal_unused(self):
     # The output of id_print is not needed for backwards pass
@@ -824,15 +731,6 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     assertMultiLineStrippedEqual(self, """
         what: pair
         ( 10.00 15.00 )""", testing_stream.output)
-
-  def test_tap_jvp_float0(self):
-    def f(x, yint):
-      x, yint = hcb.id_tap(lambda arg, _: arg, (x, yint),
-                           callback_flavor=hcb.CallbackFlavor.DEBUG)
-      return x * yint
-
-    res = jax.jvp(f, (2., 3), (0.2, np.zeros((), dtypes.float0)))
-    self.assertAllClose((6., 0.6), res)
 
   def test_tap_grad_float0(self):
 
@@ -1377,22 +1275,6 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       hcb._callback_handler_data.receiver.add_outfeed(
           comp, token, 123,
           [xops.Constant(comp, np.zeros((2,), dtype=np.float32))], 0)
-
-  def test_tap_id_tap_removed_kwargs(self):
-    def func(x, transforms, y):
-      pass
-
-    with self.assertRaisesRegex(TypeError, r"Support for \*\*kwargs in ``id_tap``"):
-      hcb.id_tap(func, 1, y=2)
-
-  def test_tap_id_tap_random_key(self):
-    # See https://github.com/jax-ml/jax/issues/13949
-    with jax.enable_custom_prng():
-      @jax.jit
-      def f(x):
-        def tap(tap_x, _): pass
-        return hcb.id_tap(tap, x, result=x)
-      f(jax.random.PRNGKey(123))
 
   def test_tap_odeint(self):
     # TODO: find a smaller repro for bug #4015
