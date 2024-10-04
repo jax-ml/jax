@@ -22,7 +22,7 @@ from jax import dtypes
 from jax import lax
 from jax._src.lib import xla_client
 from jax._src.util import safe_zip
-from jax._src.numpy.util import check_arraylike, implements, promote_dtypes_inexact
+from jax._src.numpy.util import check_arraylike, promote_dtypes_inexact
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import ufuncs, reductions
 from jax._src.sharding import Sharding
@@ -1206,7 +1206,7 @@ def rfftfreq(n: int, d: ArrayLike = 1.0, *, dtype: DTypeLike | None = None,
     Array of sample frequencies, length ``n // 2 + 1``.
 
   See also:
-    - :func:`jax.numpy.fft.rfftfreq`: frequencies for use with
+    - :func:`jax.numpy.fft.fftfreq`: frequencies for use with
       :func:`~jax.numpy.fft.fft` and :func:`~jax.numpy.fft.ifft`.
   """
   dtype = dtype or dtypes.canonicalize_dtype(jnp.float_)
@@ -1233,8 +1233,41 @@ def rfftfreq(n: int, d: ArrayLike = 1.0, *, dtype: DTypeLike | None = None,
   return result
 
 
-@implements(np.fft.fftshift)
 def fftshift(x: ArrayLike, axes: None | int | Sequence[int] = None) -> Array:
+  """Shift zero-frequency fft component to the center of the spectrum.
+
+  JAX implementation of :func:`numpy.fft.fftshift`.
+
+  Args:
+    x: N-dimensional array array of frequencies.
+    axes: optional integer or sequence of integers specifying which axes to
+      shift. If None (default), then shift all axes.
+
+  Returns:
+    A shifted copy of ``x``.
+
+  See also:
+    - :func:`jax.numpy.fft.ifftshift`: inverse of ``fftshift``.
+    - :func:`jax.numpy.fft.fftfreq`: generate FFT frequencies.
+
+  Examples:
+    Generate FFT frequencies with :func:`~jax.numpy.fft.fftfreq`:
+
+    >>> freq = jnp.fft.fftfreq(5)
+    >>> freq
+    Array([ 0. ,  0.2,  0.4, -0.4, -0.2], dtype=float32)
+
+    Use ``fftshift`` to shift the zero-frequency entry to the middle of the array:
+
+    >>> shifted_freq = jnp.fft.fftshift(freq)
+    >>> shifted_freq
+    Array([-0.4, -0.2,  0. ,  0.2,  0.4], dtype=float32)
+
+    Unshift with :func:`~jax.numpy.fft.ifftshift` to recover the original frequencies:
+
+    >>> jnp.fft.ifftshift(shifted_freq)
+    Array([ 0. ,  0.2,  0.4, -0.4, -0.2], dtype=float32)
+  """
   check_arraylike("fftshift", x)
   x = jnp.asarray(x)
   shift: int | Sequence[int]
@@ -1249,8 +1282,42 @@ def fftshift(x: ArrayLike, axes: None | int | Sequence[int] = None) -> Array:
   return jnp.roll(x, shift, axes)
 
 
-@implements(np.fft.ifftshift)
 def ifftshift(x: ArrayLike, axes: None | int | Sequence[int] = None) -> Array:
+  """The inverse of :func:`jax.numpy.fft.fftshift`.
+
+  JAX implementation of :func:`numpy.fft.ifftshift`.
+
+  Args:
+    x: N-dimensional array array of frequencies.
+    axes: optional integer or sequence of integers specifying which axes to
+      shift. If None (default), then shift all axes.
+
+  Returns:
+    A shifted copy of ``x``.
+
+  See also:
+    - :func:`jax.numpy.fft.fftshift`: inverse of ``ifftshift``.
+    - :func:`jax.numpy.fft.fftfreq`: generate FFT frequencies.
+
+  Examples:
+    Generate FFT frequencies with :func:`~jax.numpy.fft.fftfreq`:
+
+    >>> freq = jnp.fft.fftfreq(5)
+    >>> freq
+    Array([ 0. ,  0.2,  0.4, -0.4, -0.2], dtype=float32)
+
+    Use :func:`~jax.numpy.fft.fftshift` to shift the zero-frequency entry
+    to the middle of the array:
+
+    >>> shifted_freq = jnp.fft.fftshift(freq)
+    >>> shifted_freq
+    Array([-0.4, -0.2,  0. ,  0.2,  0.4], dtype=float32)
+
+    Unshift with ``ifftshift`` to recover the original frequencies:
+
+    >>> jnp.fft.ifftshift(shifted_freq)
+    Array([ 0. ,  0.2,  0.4, -0.4, -0.2], dtype=float32)
+  """
   check_arraylike("ifftshift", x)
   x = jnp.asarray(x)
   shift: int | Sequence[int]
