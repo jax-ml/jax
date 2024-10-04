@@ -22,8 +22,6 @@ import jaxlib.mlir.dialects.stablehlo as hlo
 
 import numpy as np
 
-from .gpu_common_utils import GpuLibNotLinkedError
-
 from jaxlib import xla_client
 
 from .hlo_helpers import (
@@ -99,86 +97,6 @@ def _real_type(dtype):
   return np.finfo(dtype).dtype
 
 
-def _geqrf_hlo(platform, gpu_solver, dtype, a):
-  """QR decomposition."""
-  a_type = ir.RankedTensorType(a.type)
-  dims = a_type.shape
-  assert len(dims) >= 2
-  m, n = dims[-2:]
-  batch_dims = tuple(dims[:-2])
-  num_bd = len(batch_dims)
-  batch = math.prod(batch_dims)
-
-  lwork, opaque = gpu_solver.build_geqrf_descriptor(
-      np.dtype(dtype), batch, m, n)
-
-  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
-  i32_type = ir.IntegerType.get_signless(32)
-  out = custom_call(
-      f"{platform}solver_geqrf",
-      result_types=[
-        a.type,
-        ir.RankedTensorType.get(batch_dims + (min(m, n),), a_type.element_type),
-        ir.RankedTensorType.get(batch_dims, i32_type),
-        ir.RankedTensorType.get([lwork], a_type.element_type),
-      ],
-      operands=[a],
-      backend_config=opaque,
-      operand_layouts=[layout],
-      result_layouts=[
-        layout,
-        tuple(range(num_bd, -1, -1)),
-        tuple(range(num_bd - 1, -1, -1)),
-        [0],
-      ],
-      operand_output_aliases={0: 0}).results
-  return out[:3]
-
-cuda_geqrf = partial(_geqrf_hlo, "cu", _cusolver)
-rocm_geqrf = partial(_geqrf_hlo, "hip", _hipsolver)
-
-def _geqrf_batched_hlo(platform, gpu_blas, dtype, a):
-  """Batched QR decomposition."""
-  a_type = ir.RankedTensorType(a.type)
-  dims = a_type.shape
-  assert len(dims) >= 2
-  m, n = dims[-2:]
-  batch_dims = tuple(dims[:-2])
-  num_bd = len(batch_dims)
-  batch = math.prod(batch_dims)
-
-  if not gpu_blas:
-    raise GpuLibNotLinkedError()
-
-  lwork, opaque = gpu_blas.build_geqrf_batched_descriptor(
-      np.dtype(dtype), batch, m, n)
-
-  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
-  out = custom_call(
-      f"{platform}blas_geqrf_batched",
-      result_types=[
-        a.type,
-        ir.RankedTensorType.get(batch_dims + (min(m, n),), a_type.element_type),
-        ir.RankedTensorType.get([lwork], ir.IntegerType.get_signless(8)),
-        ir.RankedTensorType.get([lwork], ir.IntegerType.get_signless(8)),
-      ],
-      operands=[a],
-      backend_config=opaque,
-      operand_layouts=[layout],
-      result_layouts=[
-        layout,
-        tuple(range(num_bd, -1, -1)),
-        [0],
-        [0],
-      ],
-      operand_output_aliases={0: 0}
-  ).results
-  return out[:2]
-
-cuda_geqrf_batched = partial(_geqrf_batched_hlo, "cu", _cublas)
-rocm_geqrf_batched = partial(_geqrf_batched_hlo, "hip", _hipblas)
-
-
 def _csrlsvqr_hlo(platform, gpu_solver, dtype, data,
                   indices, indptr, b, tol, reorder):
   """Sparse solver via QR decomposition. CUDA only."""
@@ -202,50 +120,6 @@ def _csrlsvqr_hlo(platform, gpu_solver, dtype, data,
   return out
 
 cuda_csrlsvqr = partial(_csrlsvqr_hlo, "cu", _cusolver)
-
-
-def _orgqr_hlo(platform, gpu_solver, dtype, a, tau):
-  """Product of elementary Householder reflections."""
-  a_type = ir.RankedTensorType(a.type)
-  dims = a_type.shape
-  assert len(dims) >= 2
-  m, n = dims[-2:]
-  batch_dims = tuple(dims[:-2])
-  num_bd = len(batch_dims)
-  batch = math.prod(batch_dims)
-
-  tau_dims = ir.RankedTensorType(tau.type).shape
-  assert tau_dims[:-1] == dims[:-2]
-  k = tau_dims[-1]
-
-  lwork, opaque = gpu_solver.build_orgqr_descriptor(
-      np.dtype(dtype), batch, m, n, k)
-
-  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
-  i32_type = ir.IntegerType.get_signless(32)
-  out = custom_call(
-      f"{platform}solver_orgqr",
-      result_types=[
-        a.type,
-        ir.RankedTensorType.get(batch_dims, i32_type),
-        ir.RankedTensorType.get([lwork], a_type.element_type),
-      ],
-      operands=[a, tau],
-      backend_config=opaque,
-      operand_layouts=[
-          layout,
-          tuple(range(num_bd, -1, -1)),
-      ],
-      result_layouts=[
-        layout,
-        tuple(range(num_bd - 1, -1, -1)),
-        [0],
-      ],
-      operand_output_aliases={0: 0}).results
-  return out[:2]
-
-cuda_orgqr = partial(_orgqr_hlo, "cu", _cusolver)
-rocm_orgqr = partial(_orgqr_hlo, "hip", _hipsolver)
 
 
 def _syevd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a, *,

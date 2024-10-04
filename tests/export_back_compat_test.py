@@ -134,7 +134,7 @@ class CompatTest(bctu.CompatTestBase):
         cpu_lu_lapack_getrf.data_2023_06_14,
         cuda_lu_pivots_to_permutation.data_2024_08_08,
         cuda_lu_cusolver_getrf.data_2024_08_19,
-        cuda_qr_cusolver_geqrf.data_2023_03_18,
+        cuda_qr_cusolver_geqrf.data_2024_09_26,
         cuda_eigh_cusolver_syev.data_2023_03_17,
         rocm_qr_hipsolver_geqrf.data_2024_08_05,
         rocm_eigh_hipsolver_syev.data_2024_08_05,
@@ -164,6 +164,9 @@ class CompatTest(bctu.CompatTestBase):
       "tf.call_tf_function",  # tested in jax2tf/tests/back_compat_tf_test.py
       "tpu_custom_call",  # tested separately
       "__gpu$xla.gpu.triton",  # tested in pallas/export_back_compat_pallas_test.py
+      # The following require ROCm to test
+      "hip_lu_pivots_to_permutation", "hipsolver_getrf_ffi",
+      "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi",
     })
     not_covered = targets_to_cover.difference(covered_targets)
     self.assertEmpty(not_covered,
@@ -396,41 +399,59 @@ class CompatTest(bctu.CompatTestBase):
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_cpu_qr_lapack_geqrf(self, dtype_name="f32"):
-    # For lax.linalg.qr
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
-
+    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     dtype = dict(f32=np.float32, f64=np.float64,
                  c64=np.complex64, c128=np.complex128)[dtype_name]
     func = lambda: CompatTest.qr_harness((3, 3), dtype)
-    data = self.load_testdata(cpu_qr_lapack_geqrf.data_2023_03_17[dtype_name])
-    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
-    self.run_one_test(func, data, rtol=rtol)
-    with config.export_ignore_forward_compatibility(True):
-      # FFI Kernel test
-      data = self.load_testdata(
-          cpu_qr_lapack_geqrf.data_2024_08_22[dtype_name]
-      )
-      self.run_one_test(func, data, rtol=rtol)
 
+    info = cpu_qr_lapack_geqrf.data_2024_08_22[dtype_name]
+    data = self.load_testdata(info)
+    self.run_one_test(func, data, rtol=rtol)
+
+    # TODO(b/369826500): Remove legacy custom call test after mid March 2025.
+    data = self.load_testdata(cpu_qr_lapack_geqrf.data_2023_03_17[dtype_name])
+    self.run_one_test(func, data, rtol=rtol,
+                      expect_current_custom_calls=info["custom_call_targets"])
+
+  # TODO(b/369826500): Remove legacy custom call test after mid March 2025.
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}_{batched}",
            dtype_name=dtype_name, batched=batched)
       for dtype_name in ("f32",)
       # For batched qr we use cublas_geqrf_batched/hipblas_geqrf_batched.
       for batched in ("batched", "unbatched"))
-  def test_gpu_qr_solver_geqrf(self, dtype_name="f32", batched="unbatched"):
-    if jtu.test_device_matches(["cuda"]):
-      data = self.load_testdata(cuda_qr_cusolver_geqrf.data_2023_03_18[batched])
-    elif jtu.test_device_matches(["rocm"]):
+  def test_gpu_qr_solver_geqrf_legacy(self, dtype_name, batched):
+    if jtu.test_device_matches(["rocm"]):
       data = self.load_testdata(rocm_qr_hipsolver_geqrf.data_2024_08_05[batched])
+      prefix = "hip"
+    elif jtu.test_device_matches(["cuda"]):
+      data = self.load_testdata(cuda_qr_cusolver_geqrf.data_2023_03_18[batched])
+      prefix = "cu"
     else:
       self.skipTest("Unsupported platform")
-    # For lax.linalg.qr
-    dtype = dict(f32=np.float32, f64=np.float64)[dtype_name]
-    rtol = dict(f32=1e-3, f64=1e-5)[dtype_name]
+    dtype = dict(f32=np.float32)[dtype_name]
+    rtol = dict(f32=1e-3)[dtype_name]
     shape = dict(batched=(2, 3, 3), unbatched=(3, 3))[batched]
     func = lambda: CompatTest.qr_harness(shape, dtype)
+    self.run_one_test(func, data, rtol=rtol, expect_current_custom_calls=[
+        f"{prefix}solver_geqrf_ffi", f"{prefix}solver_orgqr_ffi"])
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64", "c64", "c128"))
+  def test_gpu_qr_solver_geqrf(self, dtype_name="f32"):
+    if not jtu.test_device_matches(["cuda"]):
+      self.skipTest("Unsupported platform")
+    if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
+      self.skipTest("Test disabled for x32 mode")
+    dtype = dict(f32=np.float32, f64=np.float64,
+                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
+    shape = (2, 3, 3)
+    func = lambda: CompatTest.qr_harness(shape, dtype)
+    data = self.load_testdata(cuda_qr_cusolver_geqrf.data_2024_09_26[dtype_name])
     self.run_one_test(func, data, rtol=rtol)
 
   def test_tpu_Qr(self):

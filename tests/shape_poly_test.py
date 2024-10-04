@@ -2770,22 +2770,30 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 arg_descriptors=[RandArg((3, 5), _f32)],
                 polymorphic_shapes=["b, ..."]),
     [
-      PolyHarness(
+      PolyHarness(  # pylint: disable=g-complex-comprehension
           "qr", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}_{full_matrices=}",
           lambda x, full_matrices: lax.linalg.qr(x, full_matrices=full_matrices),
           arg_descriptors=[RandArg(shape, dtype), StaticArg(full_matrices)],
-          polymorphic_shapes=[poly])
+          polymorphic_shapes=[poly],
+          symbolic_constraints=constraints)
       for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
-      # m and n must be static for now
-      for shape, poly, full_matrices in [
-          ((2, 0, 4), "b, ...", False),  # m = 0
-          ((2, 4, 0), "b, ...", False),  # n = 0
-          ((2, 3, 4, 4), "b1, b2, ...", False),  # m == n
-          ((2, 3, 4, 4), "b1, b2, ...", True),
-          ((2, 3, 4, 5), "b1, b2, ...", False),  # m < n
-          ((2, 3, 4, 5), "b1, b2, ...", True),
-          ((2, 3, 8, 4), "b1, b2, ...", False),  # m > n
-          ((2, 3, 8, 4), "b1, b2, ...", True),
+      for shape, poly, full_matrices, constraints in [
+          ((2, 0, 4), "b, ...", False, ()),  # m = 0
+          ((2, 4, 0), "b, ...", False, ()),  # n = 0
+          ((2, 3, 4, 4), "b1, b2, ...", False, ()),  # m == n
+          ((2, 3, 4, 4), "b1, b2, ...", True, ()),
+          ((2, 3, 4, 5), "b1, b2, ...", False, ()),  # m < n
+          ((2, 3, 4, 5), "b1, b2, ...", True, ()),
+          ((2, 3, 8, 4), "b1, b2, ...", False, ()),  # m > n
+          ((2, 3, 8, 4), "b1, b2, ...", True, ()),
+          # Dynamic shapes are also supported for non-batch dimensions with
+          # some constraints.
+          ((2, 3, 4, 4), "b1, b2, m, m", False, ()),  # m == n
+          ((2, 3, 4, 4), "b1, b2, m, m", True, ()),
+          ((2, 3, 4, 5), "b1, b2, m, n", False, ["m + 1 <= n"]),  # m < n
+          ((2, 3, 4, 5), "b1, b2, m, n", True, ["m + 1 <= n"]),
+          ((2, 3, 8, 4), "b1, b2, m, n", False, ["n <= m"]),  # m > n
+          ((2, 3, 8, 4), "b1, b2, m, n", True, ["n <= m"]),
       ]
     ],
     [
@@ -3461,9 +3469,6 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
     # Exclude some harnesses that are known to fail for native serialization
     # Set of harness.group_name:platform that are implemented with custom call
     custom_call_harnesses = {
-        "householder_product:gpu",
-        "vmap_geqrf:gpu",  # used for linalg.qr
-        "vmap_qr:gpu", "qr:gpu",
         "vmap_svd:gpu",
     }
     name_device_key = f"{harness.group_name}:{jtu.device_under_test()}"
