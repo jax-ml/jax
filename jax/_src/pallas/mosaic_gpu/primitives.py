@@ -291,6 +291,39 @@ def wait_smem_to_gmem(allow_groups: int) -> None:
   wait_smem_to_gmem_p.bind(allow_groups=allow_groups)
 
 
+class SyncEffect(jax_core.Effect):
+  pass
+
+
+effects.control_flow_allowed_effects.add_type(SyncEffect)
+
+_sync_effect = SyncEffect()
+
+commit_shared_p = jax_core.Primitive("commit_shared")
+commit_shared_p.multiple_results = True
+
+
+@commit_shared_p.def_effectful_abstract_eval
+def _commit_shared_abstract_eval():
+  return (), {_sync_effect}
+
+
+@lowering.register_lowering_rule(commit_shared_p)
+def _commit_shared_lowering_rule(ctx: lowering.LoweringRuleContext):
+  del ctx  # Unused.
+  mgpu.commit_shared()
+  return ()
+
+
+def commit_shared() -> None:
+  """Synchronizes shared memory writes within the warp group.
+
+  The writes preceding the commit will be visible to any subsequent copy
+  operations.
+  """
+  commit_shared_p.bind()
+
+
 class _WGMMAPipelineEffect(effects.Effect):
   pass
 

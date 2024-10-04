@@ -253,6 +253,28 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x + 1.0)
 
+  def test_copy_gmem_to_smem_to_gmem(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+        in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        scratch_shapes=[
+            plgpu.SMEM((256,), jnp.float32),
+            plgpu.Barrier(num_arrivals=1),
+        ],
+    )
+    def kernel(x_ref_gmem, o_ref_gmem, scratch_ref, barrier_ref):
+      plgpu.copy_gmem_to_smem(x_ref_gmem, scratch_ref, barrier=barrier_ref)
+      plgpu.wait_barrier(barrier_ref)
+      scratch_ref[...] += 1
+      plgpu.commit_shared()
+      plgpu.copy_smem_to_gmem(scratch_ref, o_ref_gmem)
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jnp.arange(256).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x + 1.0)
+
   def test_add_doubled_sum(self):
     @functools.partial(
         pl.pallas_call,
