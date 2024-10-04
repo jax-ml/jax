@@ -60,6 +60,18 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), unary(x))
 
+  def test_add_first(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = x_ref[...] + y_ref[0]
+
+    x = jnp.arange(256).astype(jnp.float32)
+    y = jnp.flip(x).reshape(1, 256)
+    np.testing.assert_array_equal(kernel(x, y), x + y[0])
+
   def test_add_xy(self):
     @functools.partial(
         pl.pallas_call,
@@ -71,6 +83,19 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float32)
     y = x + 1
     np.testing.assert_array_equal(kernel(x, y), x + y)
+
+  def test_add_xy_indexed(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      idx = jnp.sum(y_ref[...])
+      o_ref[...] = x_ref[idx]
+
+    x = jnp.arange(4 * 128).reshape(4, 128).astype(jnp.float32)
+    y = jnp.zeros(128, dtype=jnp.int32)
+    np.testing.assert_array_equal(kernel(x, y), x[jnp.sum(y)])
 
   def test_add_one_grid(self):
     @functools.partial(
@@ -468,6 +493,22 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(
         kernel(), jnp.full([256], 5.0, dtype=jnp.float32)
     )
+
+  def test_fori_loop_indexed_store(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([4, 128], jnp.float32),
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      def body(idx, _):
+        o_ref[idx] = x_ref[idx] + y_ref[idx]
+        return ()
+
+      jax.lax.fori_loop(0, 4, body, ())
+
+    x = jnp.arange(4 * 128).reshape(4, 128).astype(jnp.float32)
+    y = x + 1
+    np.testing.assert_array_equal(kernel(x, y), x + y)
 
   def test_cond(self):
 

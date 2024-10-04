@@ -732,21 +732,22 @@ def _handle_indexing(
   indexer = cast(indexing.NDIndexer, transforms[-1])
   if indexer.int_indexer_shape:
     raise NotImplementedError("int_indexer_shape non-empty")
-  slices = _ndindexer_slices(indexer)
+  indices = _ndindexer_indices(indexer)
   for t in reversed(transforms[:-1]):
-    slices = t.untransform_index(slices)
-  return mgpu.memref_slice(ref, slices)
+    indices = t.untransform_index(indices)
+  return mgpu.memref_slice(ref, indices)
 
 
-def _ndindexer_slices(indexer: indexing.NDIndexer) -> tuple[slice, ...]:
-  slices = []
-  for s in indexer.indices:
-    if not isinstance(s, indexing.Slice):
-      raise NotImplementedError(f"Unsupported dimension index: {s}")
-    if s.is_dynamic_start or s.is_dynamic_size:
-      raise NotImplementedError(f"Unsupported slice: {s}")
-    slices.append(slice(s.start, s.start + s.size, s.stride))
-  return tuple(slices)
+def _ndindexer_indices(indexer: indexing.NDIndexer) -> tuple[gpu_core.Index, ...]:
+  indices = []
+  for idx in indexer.indices:
+    if isinstance(idx, indexing.Slice):
+      if idx.is_dynamic_start or idx.is_dynamic_size:
+        raise NotImplementedError(f"Unsupported slice: {idx}")
+      indices.append(slice(idx.start, idx.start + idx.size, idx.stride))
+    else:
+      indices.append(_as_index(idx))
+  return tuple(indices)
 
 
 def _is_swizzled(transforms: tuple[gpu_core.Transform, ...]) -> int | None:
@@ -787,10 +788,10 @@ def _swap_lowering_rule(
     raise TypeError(f"Can only store arrays (got {value}).")
   if not isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem):
     raise TypeError(f"Can only store to references (got {x_smem}).")
-  transform = jax.tree.unflatten(tree, leaves)
-  swizzle = _is_swizzled(transform)
-  x_smem = _handle_indexing(x_smem, transform)
-  x_aval, _ = ctx.avals_in
+  transforms = jax.tree.unflatten(tree, leaves)
+  swizzle = _is_swizzled(transforms)
+  x_smem = _handle_indexing(x_smem, transforms)
+  x_aval = ctx.avals_in[0]
   if swizzle is None:
     old_value = mgpu.FragmentedArray.load_strided(
         x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
@@ -1178,9 +1179,15 @@ def _i64_constant(v: int) -> ir.Value:
   return arith_dialect.constant(ir.IntegerType.get_signless(64), v)
 
 
-def _as_index(v: int | ir.Value) -> ir.Value:
-  if isinstance(v, int):
-    return arith_dialect.constant(ir.IndexType.get(), v)
-  if ir.IndexType.isinstance(v.type):
-    return v
-  return arith_dialect.index_cast(ir.IndexType.get(), v)
+def _as_index(v: object) -> ir.Value:
+  match v:
+    case int():
+      return arith_dialect.constant(ir.IndexType.get(), v)
+    case ir.Value() if ir.IndexType.isinstance(v.type):
+      return v
+    case ir.Value() if ir.IntegerType.isinstance(v.type):
+      return arith_dialect.index_cast(ir.IndexType.get(), v)
+    case mgpu.FragmentedArray(layout=mgpu.WGSplatFragLayout()):
+      return _as_index(v.registers.item())
+    case _:
+      raise ValueError(f"Unsupported index: {v}")

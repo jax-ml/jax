@@ -77,7 +77,7 @@ def _extract_copy_params(transforms):
     transforms = transforms[1:]
   gpu_transforms = [t.to_gpu_transform() for t in transforms]
   return dict(
-      gmem_slice=lowering._ndindexer_slices(indexer),
+      gmem_slice=lowering._ndindexer_indices(indexer),
       gmem_transform=tuple(gpu_transforms),
       swizzle=swizzle,
   )
