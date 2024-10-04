@@ -19,43 +19,148 @@ from __future__ import annotations
 from jax._src import core as jax_core
 from jax._src import effects
 from jax._src import state
-from jax._src.state import discharge
+from jax._src import tree_util
+from jax._src import util
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering
+from jax._src.state import discharge
+from jax._src.state import indexing
+from jax._src.state import primitives as state_primitives
 import jax.experimental.mosaic.gpu as mgpu
 
-async_copy_p = jax_core.Primitive("async_copy")
-async_copy_p.multiple_results = True
+
+copy_smem_to_gmem_p = jax_core.Primitive("copy_smem_to_gmem")
+copy_smem_to_gmem_p.multiple_results = True
 
 
-@async_copy_p.def_effectful_abstract_eval
-def _async_copy_abstract_eval(*avals):
-  del avals  # Unused.
+@copy_smem_to_gmem_p.def_effectful_abstract_eval
+def _copy_smem_to_gmem_abstract_eval(*avals, **params):
+  del avals, params  # Unused.
   return (), {state.ReadEffect(0), state.WriteEffect(1)}
 
 
-@lowering.register_lowering_rule(async_copy_p)
-def _async_copy_lowering_rule(
-    ctx: lowering.LoweringRuleContext, src, dst, barrier=None
+@lowering.register_lowering_rule(copy_smem_to_gmem_p)
+def _copy_smem_to_gmem_lowering(
+    ctx: lowering.LoweringRuleContext,
+    src,
+    dst,
+    *flat_transforms,
+    src_transforms_treedef,
+    dst_transforms_treedef,
 ):
-  ctx.launch_ctx.async_copy(src_ref=src, dst_ref=dst, barrier=barrier)
+  flat_src_transforms, flat_dst_transforms = util.split_list(
+      flat_transforms,
+      [src_transforms_treedef.num_leaves],
+  )
+  src = lowering._handle_indexing(
+      src, src_transforms_treedef.unflatten(flat_src_transforms)
+  )
+  copy_params = _extract_copy_params(
+      dst_transforms_treedef.unflatten(flat_dst_transforms)
+  )
+  ctx.launch_ctx.async_copy(src_ref=src, dst_ref=dst, **copy_params)
   return ()
 
 
-def async_copy_smem_to_gmem(
+def _extract_copy_params(transforms):
+  if not transforms:
+    return {}
+  if any(
+      isinstance(t, indexing.NDIndexer) for t in transforms[:-1]
+  ) or not isinstance(transforms[-1], indexing.NDIndexer):
+    raise NotImplementedError("Only one level of indexing supported")
+  *transforms, indexer = transforms
+  swizzle = lowering._is_swizzled(transforms)
+  if swizzle is not None:
+    transforms = transforms[1:]
+  gpu_transforms = [t.to_gpu_transform() for t in transforms]
+  return dict(
+      gmem_slice=lowering._ndindexer_indices(indexer),
+      gmem_transform=tuple(gpu_transforms),
+      swizzle=swizzle,
+  )
+
+
+def copy_smem_to_gmem(
     src: pallas_core.AbstractMemoryRef, dst: pallas_core.AbstractMemoryRef
 ) -> None:
   if src.memory_space is not gpu_core.SMEM:
     raise TypeError(f"src must be a SMEM reference, got {src.memory_space}")
   if dst.memory_space is not gpu_core.GMEM:
     raise ValueError(f"dst must be a GMEM reference, got {dst.memory_space}")
-  async_copy_p.bind(src, dst)
+  src, src_transforms = state_primitives.get_ref_and_transforms(
+      src, None, "copy_smem_to_gmem"
+  )
+  dst, dst_transforms = state_primitives.get_ref_and_transforms(
+      dst, None, "copy_smem_to_gmem"
+  )
+  flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
+      src_transforms
+  )
+  flat_dst_transforms, dst_transforms_treedef = tree_util.tree_flatten(
+      dst_transforms
+  )
+  copy_smem_to_gmem_p.bind(
+      src,
+      dst,
+      *flat_src_transforms,
+      *flat_dst_transforms,
+      src_transforms_treedef=src_transforms_treedef,
+      dst_transforms_treedef=dst_transforms_treedef,
+  )
   return None
 
 
-def async_copy_gmem_to_smem(
+copy_gmem_to_smem_p = jax_core.Primitive("copy_gmem_to_smem")
+copy_gmem_to_smem_p.multiple_results = True
+
+
+@copy_gmem_to_smem_p.def_effectful_abstract_eval
+def _copy_gmem_to_smem_abstract_eval(*avals, **params):
+  del avals, params  # Unused.
+  return (), {state.ReadEffect(0), state.WriteEffect(1)}
+
+
+@lowering.register_lowering_rule(copy_gmem_to_smem_p)
+def _copy_gmem_to_smem_lowering(
+    ctx: lowering.LoweringRuleContext,
+    src,
+    dst,
+    barrier,
+    *flat_transforms,
+    src_transforms_treedef,
+    dst_transforms_treedef,
+    barrier_transforms_treedef,
+):
+  flat_src_transforms, flat_dst_transforms, flat_barrier_transforms = (
+      util.split_list(
+          flat_transforms,
+          [
+              src_transforms_treedef.num_leaves,
+              dst_transforms_treedef.num_leaves,
+          ],
+      )
+  )
+  copy_params = _extract_copy_params(
+      src_transforms_treedef.unflatten(flat_src_transforms)
+  )
+  dst = lowering._handle_indexing(
+      dst, dst_transforms_treedef.unflatten(flat_dst_transforms)
+  )
+  barrier_indexer = _extract_barrier_indexer(
+      barrier_transforms_treedef.unflatten(flat_barrier_transforms)
+  )
+  if barrier_indexer is not None:
+    barrier = barrier.__getitem__(*barrier_indexer.indices)
+  ctx.launch_ctx.async_copy(
+      src_ref=src, dst_ref=dst, barrier=barrier, **copy_params
+  )
+  return ()
+
+
+def copy_gmem_to_smem(
     src: pallas_core.AbstractMemoryRef,
     dst: pallas_core.AbstractMemoryRef,
     *,
@@ -65,47 +170,125 @@ def async_copy_gmem_to_smem(
     raise TypeError(f"src must be a GMEM reference, got {src.memory_space}")
   if dst.memory_space is not gpu_core.SMEM:
     raise ValueError(f"dst must be a SMEM reference, got {dst.memory_space}")
-  async_copy_p.bind(src, dst, barrier)
+  src, src_transforms = state_primitives.get_ref_and_transforms(
+      src, None, "copy_gmem_to_smem"
+  )
+  dst, dst_transforms = state_primitives.get_ref_and_transforms(
+      dst, None, "copy_gmem_to_smem"
+  )
+  flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
+      src_transforms
+  )
+  flat_dst_transforms, dst_transforms_treedef = tree_util.tree_flatten(
+      dst_transforms
+  )
+  barrier, barrier_transforms = state_primitives.get_ref_and_transforms(
+      barrier, None, "copy_gmem_to_smem"
+  )
+  flat_barrier_transforms, barrier_transforms_treedef = tree_util.tree_flatten(
+      barrier_transforms
+  )
+  copy_gmem_to_smem_p.bind(
+      src,
+      dst,
+      barrier,
+      *flat_src_transforms,
+      *flat_dst_transforms,
+      *flat_barrier_transforms,
+      src_transforms_treedef=src_transforms_treedef,
+      dst_transforms_treedef=dst_transforms_treedef,
+      barrier_transforms_treedef=barrier_transforms_treedef,
+  )
   return None
+
+
+def _extract_barrier_indexer(transforms) -> indexing.NDIndexer | None:
+  if not transforms:
+    return None
+  match transforms:
+    case [indexing.NDIndexer(indices=[idx]) as indexer]:
+      if not isinstance(idx, indexing.Slice):
+        return indexer
+      if indexing.Slice.from_slice(slice(None), *indexer.shape) == idx:
+        # Special-case: the whole slice.
+        return None
+      else:
+        raise ValueError(
+            f"Barrier can only be indexed with an integer, got {idx}"
+        )
+    case [indexing.NDIndexer()]:
+      raise NotImplementedError("Barrier does not support multiple indices")
+    case []:
+      return None
+    case _:
+      raise ValueError("Barrier does not support arbirary transforms")
 
 
 class WaitEffect(jax_core.Effect):
   ...
 
 
-wait_effect = WaitEffect()
+_wait_effect = WaitEffect()
 
 
-wait_p = jax_core.Primitive("wait")
-wait_p.multiple_results = True
+wait_barrier_p = jax_core.Primitive("wait")
+wait_barrier_p.multiple_results = True
 
 
-@wait_p.def_effectful_abstract_eval
-def _wait_abstract_eval(*avals, **params):
+@wait_barrier_p.def_effectful_abstract_eval
+def _wait_barrier_abstract_eval(*avals, **params):
   del avals, params  # Unused.
-  return (), {wait_effect}
+  return (), {_wait_effect}
 
 
-@lowering.register_lowering_rule(wait_p)
-def _wait_lowering_rule(
-    ctx: lowering.LoweringRuleContext, barrier=None, allow_groups=None,
+@lowering.register_lowering_rule(wait_barrier_p)
+def _wait_barrier_lowering_rule(
+    ctx: lowering.LoweringRuleContext,
+    barrier,
+    *flat_transforms,
+    transforms_treedef,
 ):
-  if barrier is not None:
-    barrier.wait()
-  else:
-    assert allow_groups is not None
-    ctx.launch_ctx.await_async_copy(allow_groups=allow_groups)
+  del ctx  # Unused.
+  transforms = transforms_treedef.unflatten(flat_transforms)
+  indexer = _extract_barrier_indexer(transforms)
+  if indexer is not None:
+    barrier = barrier.__getitem__(*indexer.indices)
+  barrier.wait()
+  return ()
+
+
+def wait_barrier(barrier: pallas_core.AbstractMemoryRef) -> None:
+  """Waits on the given barrier."""
+  barrier, transforms = state_primitives.get_ref_and_transforms(
+      barrier, None, "wait_barrier"
+  )
+  flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
+  wait_barrier_p.bind(
+      barrier, *flat_transforms, transforms_treedef=transforms_treedef
+  )
+
+
+wait_smem_to_gmem_p = jax_core.Primitive("wait_smem_to_gmem")
+wait_smem_to_gmem_p.multiple_results = True
+
+
+@wait_smem_to_gmem_p.def_effectful_abstract_eval
+def _wait_smem_to_gmem_abstract_eval(*, allow_groups):
+  del allow_groups  # Unused.
+  return (), {_wait_effect}
+
+
+@lowering.register_lowering_rule(wait_smem_to_gmem_p)
+def _wait_smem_to_gmem_lowering_rule(
+    ctx: lowering.LoweringRuleContext, allow_groups
+):
+  ctx.launch_ctx.await_async_copy(allow_groups=allow_groups)
   return ()
 
 
 def wait_smem_to_gmem(allow_groups: int) -> None:
   """Waits until there are no more than the given number of SMEM->GMEM copies in flight."""
-  wait_p.bind(allow_groups=allow_groups)
-
-
-def wait_barrier(barrier: pallas_core.AbstractMemoryRef) -> None:
-  """Waits on the given barrier."""
-  wait_p.bind(barrier)
+  wait_smem_to_gmem_p.bind(allow_groups=allow_groups)
 
 
 class _WGMMAPipelineEffect(effects.Effect):

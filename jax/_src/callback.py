@@ -22,6 +22,7 @@ from typing import Any
 
 import jax
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
@@ -31,13 +32,18 @@ from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.lax import lax
 from jax._src.lax.control_flow.loops import map as lax_map
 from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import SingleDeviceSharding
+from jax._src.typing import DeprecatedArg
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# TODO(dfm): Remove after 6 months.
+# Added Oct 1, 2024
+deprecations.register("jax-callback-vectorized")
 
 # `pure_callback_p` is the main primitive for staging out Python pure callbacks.
 pure_callback_p = core.Primitive("pure_callback")
@@ -45,6 +51,7 @@ pure_callback_p.multiple_results = True
 dispatch.prim_requires_devices_during_lowering.add(pure_callback_p)
 
 map, unsafe_map = util.safe_map, map
+zip, unsafe_zip = util.safe_zip, zip
 
 
 @dataclasses.dataclass(frozen=True)
@@ -69,9 +76,10 @@ def pure_callback_impl(
     result_avals,
     callback: _FlatCallback,
     sharding: SingleDeviceSharding | None,
-    vectorized: bool,
+    vectorized: bool | DeprecatedArg,
+    vmap_method: str | None,
 ):
-  del sharding, vectorized, result_avals
+  del sharding, vectorized, vmap_method, result_avals
   try:
     cpu_device, *_ = jax.local_devices(backend="cpu")
   except RuntimeError as e:
@@ -99,9 +107,10 @@ def pure_callback_abstract_eval(
     callback: _FlatCallback,
     result_avals,
     sharding: SingleDeviceSharding | None,
-    vectorized: bool,
+    vectorized: bool | DeprecatedArg,
+    vmap_method: str | None,
 ):
-  del avals, callback, sharding, vectorized
+  del avals, callback, sharding, vectorized, vmap_method
   return result_avals
 
 
@@ -129,25 +138,51 @@ def callback_batching_rule(
     args,
     dims,
     *,
-    vectorized: bool,
+    vectorized: bool | None | DeprecatedArg,
+    vmap_method: str | None,
     result_avals: Sequence[core.ShapedArray],
     **kwargs: Any,
 ):
-  axis_size = next(a.shape[d] for a, d in zip(args, dims)
-                   if d is not batching.not_mapped)
+  if isinstance(vectorized, DeprecatedArg) and vmap_method is None:
+    deprecations.warn(
+        "jax-callback-vectorized",
+        f"The default behavior of {prim.name} under vmap will soon "
+        "change. Currently, the default behavior is to generate a sequential "
+        "vmap (i.e. a loop), but in the future the default will be to raise "
+        "an error. To keep the current default, set vmap_method='sequential'.",
+        stacklevel=6)
+    vmap_method = "sequential"
+
+  axis_size, = {a.shape[d] for a, d in zip(args, dims)
+                if d is not batching.not_mapped}
   new_args = [arg if dim is batching.not_mapped else
               batching.moveaxis(arg, dim, 0) for arg, dim in zip(args, dims)]
-  if vectorized:
-    result_avals = tuple(
-        core.unmapped_aval(axis_size, core.no_axis_name, 0, aval)  # type: ignore
-        for aval in result_avals)
+  batched_result_avals = tuple(
+      core.unmapped_aval(axis_size, core.no_axis_name, 0, aval)
+      for aval in result_avals)
+  if vmap_method == "legacy_vectorized":
+    # This method is kept to support the behavior that was previously exposed
+    # when using `vectorized=True`.
     outvals = prim.bind(
         *new_args,
         vectorized=vectorized,
-        result_avals=result_avals,
+        vmap_method=vmap_method,
+        result_avals=batched_result_avals,
         **kwargs,
     )
-  else:
+  elif vmap_method == "broadcast" or vmap_method == "broadcast_fullrank":
+    size = axis_size if vmap_method == "broadcast_fullrank" else 1
+    bcast_args = [
+        lax.broadcast(x, (size,)) if d is batching.not_mapped else x
+        for x, d in zip(new_args, dims)]
+    outvals = prim.bind(
+      *bcast_args,
+      vectorized=vectorized,
+      vmap_method=vmap_method,
+      result_avals=batched_result_avals,
+      **kwargs,
+    )
+  elif vmap_method == "sequential":
     is_batched = [d is not batching.not_mapped for d in dims]
     unbatched_args, batched_args = util.partition_list(is_batched, new_args)
     def _batch_fun(batched_args):
@@ -156,9 +191,15 @@ def callback_batching_rule(
           *merged_args,
           result_avals=result_avals,
           vectorized=vectorized,
+          vmap_method=vmap_method,
           **kwargs,
       )
     outvals = lax_map(_batch_fun, batched_args)
+  else:
+    raise NotImplementedError(
+        f"vmap is only supported for the {prim.name} primitive when vmap_method "
+        "is one of 'sequential', 'broadcast', 'broadcast_fullrank', or "
+        "'legacy_vectorized'.")
   return tuple(outvals), (0,) * len(outvals)
 
 
@@ -261,7 +302,8 @@ def pure_callback(
     result_shape_dtypes: Any,
     *args: Any,
     sharding: SingleDeviceSharding | None = None,
-    vectorized: bool = False,
+    vectorized: bool | None | DeprecatedArg = DeprecatedArg(),
+    vmap_method: str | None = None,
     **kwargs: Any,
 ):
   """Calls a pure Python callback. Works under :func:`jit`/:func:`~vmap`/etc.
@@ -279,17 +321,25 @@ def pure_callback(
   `jit`-decorated function has no data dependence on its value. Pure callbacks
   may also be reordered if data-dependence allows.
 
-  When `vmap`-ed the behavior will depend on the value of the
-  ``vectorized`` keyword argument. When ``vectorized`` is ``True``, the callback
-  is assumed to obey
-  ``jax.vmap(callback)(xs) == callback(xs) == jnp.stack([callback(x) for x in xs])``.
-  Therefore, the callback will be called directly on batched inputs (where the
-  batch axes are the leading dimensions). Additionally, the callbacks should
-  return outputs that have corresponding leading batch axes. If not vectorized
-  ``callback`` will be mapped sequentially across the batched axis.
-  For example, if ``callback = lambda x, y: np.matmul(x, y)``, then we are free
-  to set ``vectorized=True`` because the ``np.matmul`` function handles
-  arbitrary leading batch dimensions.
+  When `vmap`-ed the behavior will depend on the value of the ``vmap_method``.
+
+  * Calling :func:`~jax.vmap` on a callback without an explicit ``vmap_method``
+    is deprecated and it will eventually raise ``NotImplementedError``.
+  * ``vmap_method="sequential"`` uses :func:`~jax.lax.map` to loop over
+    the batched arugments, calling ``callback`` once for each batch element.
+  * ``vmap_method="broadcast"`` calls ``callback`` with new axes of size ``1``
+    added as the leading dimension unbatched inputs.
+  * ``vmap_method="broadcast_fullrank"`` behaves like ``broadcast``, but the
+    inputs are tiled to the expected batched shape.
+
+  If necessary, the legacy behavior provided by the deprecated
+  ``vectorized=True`` argument can be recovered using
+  ``vmap_method="legacy_vectorized"``.
+
+  The current default behavior is to use ``vmap_method="sequential"`` when
+  not specified, but this behavior is deprecated, and in the future, the
+  default will be to raise a ``NotImplementedError`` unless ``vmap_method`` is
+  explicitly specified.
 
   Args:
     callback: function to execute on the host. The callback is assumed to be a pure
@@ -303,8 +353,8 @@ def pure_callback(
     *args: arguments to be passed to the callback function
     sharding: optional sharding that specifies the device from which the callback should
       be invoked.
-    vectorized: boolean specifying whether the callback function can operate in a
-      vectorized manner.
+    vmap_method: string specifying how the callback transforms under
+      :func:`~jax.vmap` as described above.
     **kwargs: keyword arguments to be passed to the callback function
 
   Returns:
@@ -316,8 +366,62 @@ def pure_callback(
     - :func:`jax.debug.callback`: callback designed for general-purpose debugging.
     - :func:`jax.debug.print`: callback designed for printing.
 
+  Examples:
+    The behavior of ``pure_callback`` under :func:`~jax.vmap` is controlled by
+    the ``vmap_method`` argument as described above. It is useful to consider
+    some explicit examples that demonstrate the semantics. For example,
+    consider the following function:
+
+    >>> def callback(x, y):
+    ...   print(jnp.shape(x), jnp.shape(y))
+    ...   return x + y
+
+    >>> def fun(x, y, *, vmap_method):
+    ...   shape = jnp.broadcast_shapes(jnp.shape(x), jnp.shape(y))
+    ...   dtype = jnp.result_type(x, y)
+    ...   out_type = jax.ShapeDtypeStruct(shape, dtype)
+    ...   return jax.pure_callback(callback, out_type, x, y,
+    ...                            vmap_method=vmap_method)
+
+    Calling this with ``vmap_method="broadcast"`` adds a new axis of size ``1``
+    to ``y``:
+
+    >>> from functools import partial
+    >>> x = jnp.arange(4)
+    >>> y = 1.0
+    >>> jax.vmap(partial(fun, vmap_method="broadcast"), in_axes=(0, None))(x, y)
+    (4,) (1,)
+    Array([1., 2., 3., 4.], dtype=float32)
+
+    Whereas, ``vmap_method="broadcast_fullrank"`` adds an axis of size ``4`` to
+    ``y``:
+
+    >>> jax.vmap(partial(fun, vmap_method="broadcast_fullrank"),
+    ...          in_axes=(0, None))(x, y)
+    (4,) (4,)
+    Array([1., 2., 3., 4.], dtype=float32)
+
   .. _External Callbacks: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
   """
+  if not isinstance(vectorized, DeprecatedArg) and not vectorized is None:
+    deprecations.warn(
+        "jax-callback-vectorized",
+        "The vectorized argument of jax.pure_callback is deprecated and setting "
+        "it will soon raise an error. To avoid an error in the future, and to "
+        "suppress this warning, please use the vmap_method argument instead.",
+        stacklevel=2)
+    if vmap_method is not None:
+      raise ValueError(
+          "the vectorized and vmap_method arguments of jax.pure_callback cannot "
+          "be used together. Please use the vmap_method argument.")
+    vmap_method = "legacy_vectorized" if vectorized else "sequential"
+  allowed_vmap_methods = ["sequential", "broadcast", "broadcast_fullrank",
+                          "legacy_vectorized", None]
+  if vmap_method not in allowed_vmap_methods:
+    raise ValueError(
+        f"vmap_method must be on of the allowed methods {allowed_vmap_methods}, "
+        f"but got: {vmap_method}")
+
   flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
   tree_util.tree_map(_check_shape_dtype, result_shape_dtypes)
   result_avals = tree_util.tree_map(
@@ -329,6 +433,7 @@ def pure_callback(
       result_avals=tuple(flat_result_avals),
       sharding=sharding,
       vectorized=vectorized,
+      vmap_method=vmap_method,
   )
   return tree_util.tree_unflatten(out_tree, out_flat)
 

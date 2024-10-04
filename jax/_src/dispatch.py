@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import atexit
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Sequence
 import contextlib
 import dataclasses
 import enum
@@ -207,6 +207,7 @@ def jaxpr_has_primitive(jaxpr: core.Jaxpr, prim_name: str) -> bool:
 # stablehlo is oblivious of physical devices.
 prim_requires_devices_during_lowering: set[core.Primitive] = set()
 
+@util.weakref_lru_cache
 def jaxpr_has_prim_requiring_devices(jaxpr: core.Jaxpr) -> bool:
   for eqn in jaxpr.eqns:
     if eqn.primitive in prim_requires_devices_during_lowering:
@@ -222,23 +223,24 @@ class SourceInfo(NamedTuple):
   eqn_name: str
 
 
+@util.weakref_lru_cache
 def get_intermediate_shardings(
-    jaxpr: core.Jaxpr,
-) -> Iterator[tuple[Sharding, SourceInfo]]:
+    jaxpr: core.Jaxpr) -> Sequence[tuple[Sharding, SourceInfo]]:
   from jax._src import pjit
   from jax.experimental import shard_map
 
+  out = []
   for eqn in jaxpr.eqns:
     if eqn.primitive is pjit.sharding_constraint_p:
       s = eqn.params['sharding']
       if isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):
         continue
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
-      yield (s, source_info)
+      out.append((s, source_info))
     elif eqn.primitive is pjit.pjit_p:
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
-      yield from ((i, source_info) for i in eqn.params['in_shardings'])
-      yield from ((o, source_info) for o in eqn.params['out_shardings'])
+      out.extend((i, source_info) for i in eqn.params['in_shardings'])
+      out.extend((o, source_info) for o in eqn.params['out_shardings'])
     elif eqn.primitive is shard_map.shard_map_p:
       if not eqn.params['mesh']._is_jax_device_mesh:
         continue
@@ -246,14 +248,15 @@ def get_intermediate_shardings(
       def _names_to_pspec(names):
         ndmin = max(names) + 1 if names else 0
         return PartitionSpec(*(names.get(i) for i in range(ndmin)))
-      yield from ((NamedSharding(eqn.params['mesh'], _names_to_pspec(names)), source_info)
-                  for names in [*eqn.params['in_names'], *eqn.params['out_names']])
+      out.extend((NamedSharding(eqn.params['mesh'], _names_to_pspec(names)), source_info)
+                 for names in [*eqn.params['in_names'], *eqn.params['out_names']])
     elif eqn.primitive is device_put_p:
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
-      yield from ((s, source_info) for s in eqn.params['devices']
-                  if isinstance(s, Sharding) and s.memory_kind is not None)
+      out.extend((s, source_info) for s in eqn.params['devices']
+                 if isinstance(s, Sharding) and s.memory_kind is not None)
   for subjaxpr in core.subjaxprs(jaxpr):
-    yield from get_intermediate_shardings(subjaxpr)
+    out.extend(get_intermediate_shardings(subjaxpr))
+  return out
 
 
 def jaxpr_has_bints(jaxpr: core.Jaxpr) -> bool:

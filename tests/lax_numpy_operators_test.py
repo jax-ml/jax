@@ -126,6 +126,8 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("negative", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("nextafter", 2, [f for f in float_dtypes if f != jnp.bfloat16],
               all_shapes, jtu.rand_default, ["rev"], inexact=True, tolerance=0),
+    op_record("spacing", 1, float_dtypes, all_shapes, jtu.rand_default, ["rev"],
+              inexact=True, tolerance=0),
     op_record("not_equal", 2, all_dtypes, all_shapes, jtu.rand_some_equal, ["rev"]),
     op_record("array_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal, ["rev"]),
     op_record("array_equiv", 2, number_dtypes, all_shapes, jtu.rand_some_equal, ["rev"]),
@@ -700,6 +702,34 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     # Regression test for https://github.com/jax-ml/jax/issues/11479
     dx = jax.grad(jax.numpy.i0)(0.0)
     self.assertArraysEqual(dx, 0.0)
+
+  @jtu.sample_product(
+      shape=all_shapes,
+      dtype=default_dtypes,
+  )
+  def testSpacingIntegerInputs(self, shape, dtype):
+    rng = jtu.rand_int(self.rng(), low=-64, high=64)
+    args_maker = lambda: [rng(shape, dtype)]
+    computation_dtype = jnp.spacing(rng(shape, dtype)).dtype
+    np_func = lambda x: np.spacing(np.array(x).astype(computation_dtype))
+    self._CheckAgainstNumpy(np_func, jnp.spacing, args_maker, check_dtypes=True, tol=0)
+    self._CompileAndCheck(jnp.spacing, args_maker, tol=0)
+
+  @jtu.sample_product(dtype = float_dtypes)
+  @jtu.skip_on_devices("tpu")
+  def testSpacingSubnormals(self, dtype):
+    zero = np.array(0, dtype=dtype)
+    inf = np.array(np.inf, dtype=dtype)
+    x = [zero]
+    for i in range(5):
+      x.append(np.nextafter(x[-1], -inf))  # negative denormals
+    x = x[::-1]
+    for i in range(5):
+      x.append(np.nextafter(x[-1], inf))  # positive denormals
+    x = np.array(x, dtype=dtype)
+    args_maker = lambda: [x]
+    self._CheckAgainstNumpy(np.spacing, jnp.spacing, args_maker, check_dtypes=True, tol=0)
+    self._CompileAndCheck(jnp.spacing, args_maker, tol=0)
 
 
 if __name__ == "__main__":

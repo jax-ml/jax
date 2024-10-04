@@ -1537,6 +1537,14 @@ remat_opt_barrier = bool_state(
     default=True,
     help=('Enables using optimization-barrier op for lowering remat.'))
 
+enable_remat_opt_pass = bool_state(
+    name='jax_compiler_enable_remat_pass',
+    default=True,
+    help=('Config to enable / disable the rematerialization HLO pass. '
+          'Useful to allow XLA to automatically trade off memory and '
+          'compute when encountering OOM errors. However, you are '
+          'likely to get better results manually with jax.checkpoint'))
+
 # TODO(sharadmv,mattjj): set default to True, then remove
 eager_pmap = bool_state(
     name='jax_eager_pmap',

@@ -357,6 +357,8 @@ from the shape `shape` of the corresponding argument to `shard_map`-of-`f` and
 the corresponding `PartitionSpec` `spec` as roughly
 `tuple(sz // (1 if n is None else mesh.shape[n]) for sz, n in zip(shape, spec))`.
 
+(shard_map_collectives_tutorial)=
+
 ## Collectives tutorial
 
 A `shard_map` need not be a pure map: function applications can communicate

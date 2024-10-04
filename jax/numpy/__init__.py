@@ -443,6 +443,7 @@ from jax._src.numpy.ufuncs import (
     sin as sin,
     sinc as sinc,
     sinh as sinh,
+    spacing as spacing,
     sqrt as sqrt,
     square as square,
     subtract as subtract,

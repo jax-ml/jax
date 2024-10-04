@@ -35,7 +35,6 @@ from jax._src.sharding_impls import (NamedSharding, PositionalSharding,
                                      TransferToMemoryKind, PartitionSpec as P)
 from jax.experimental.compute_on import compute_on
 from jax.experimental.shard_map import shard_map
-from jax._src.lib import xla_extension_version
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -416,8 +415,6 @@ class DevicePutTest(jtu.JaxTestCase):
         out, np_inp * np_inp, s_dev, "device")
 
   def test_parameter_streaming(self):
-    if jtu.test_device_matches(["gpu"]) and xla_extension_version < 289:
-      self.skipTest("Requires xla_extension_version >= 289")
     _, s_host, np_inp, inp_host = _create_inputs(
         (8, 2), P("x", "y"), mem_kind="pinned_host")
     s_dev = s_host.with_memory_kind('device')
@@ -461,8 +458,6 @@ class DevicePutTest(jtu.JaxTestCase):
         out, np_inp, s_host, 'pinned_host')
 
   def test_parameter_streaming_with_scalar_and_constant(self):
-    if jtu.test_device_matches(["gpu"]) and xla_extension_version < 289:
-      self.skipTest("Requires xla_extension_version >= 289")
     mesh = jtu.create_mesh((2, 2), ("x", "y"))
     scalar_inp = 1
     s_host = NamedSharding(mesh, P(), memory_kind="pinned_host")
@@ -512,8 +507,6 @@ class DevicePutTest(jtu.JaxTestCase):
     )
 
   def test_parameter_and_output_streaming_with_scalar(self):
-    if jtu.test_device_matches(["gpu"]) and xla_extension_version < 289:
-      self.skipTest("Requires xla_extension_version >= 289")
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
       self.skipTest("This test requires an xla_version >= 2.")
 
@@ -581,8 +574,6 @@ class DevicePutTest(jtu.JaxTestCase):
     self.assertEqual(out_hbm.sharding, out_s)
 
   def test_output_streaming(self):
-    if jtu.test_device_matches(["gpu"]) and xla_extension_version < 289:
-      self.skipTest("Requires xla_extension_version >= 289")
     mesh = jtu.create_mesh((1, 1), ("x", "y"))
     np_inp = np.arange(16.0).reshape(8, 2)
     s_hbm = NamedSharding(mesh, P("x", "y"), memory_kind="device")
@@ -599,8 +590,6 @@ class DevicePutTest(jtu.JaxTestCase):
     self.assertEqual(out_host.sharding, s_host)
 
   def test_weight_offload_with_dp_on_output(self):
-    if jtu.test_device_matches(["gpu"]) and xla_extension_version < 289:
-      self.skipTest("Requires xla_extension_version >= 289")
     _, s_dev, np_inp, inp_dev = _create_inputs(
         (8, 2), P("x", "y"), mem_kind="device")
     s_host = s_dev.with_memory_kind('pinned_host')
@@ -616,8 +605,6 @@ class DevicePutTest(jtu.JaxTestCase):
         out_host, np_inp * 2, s_host, 'pinned_host')
 
   def test_output_streaming_inside_scan(self):
-    if jtu.test_device_matches(["gpu"]) and xla_extension_version < 289:
-      self.skipTest("Requires xla_extension_version >= 289")
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
       self.skipTest("This test requires an xla_version >= 2.")
     mesh = jtu.create_mesh((1, 1, 2), ("x", "y", "z"))
@@ -650,8 +637,6 @@ class DevicePutTest(jtu.JaxTestCase):
     self.assertEqual(t.shape, t_copy.shape)
 
   def test_close_over_host_constant_and_stream(self):
-    if jtu.test_device_matches(["gpu"]) and xla_extension_version < 289:
-      self.skipTest("Requires xla_extension_version >= 289")
 
     _, s_host, np_inp, inp_host = _create_inputs(
         (8, 2), P("x", "y"), mem_kind="pinned_host")
@@ -1437,6 +1422,23 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     # 2 for `f` and `2` for `mul` (compute type changes for `mul`)
     self.assertEqual(count[0], 4)
 
+  def test_offload_take_host(self):
+    @compute_on('device_host')
+    @jax.jit
+    def peer_forward(x, experts, indices, scores):
+      w = jnp.take(experts, indices.astype(int), axis=0)
+      w_gate, w_down, w_up = w[..., 0], w[..., 1], w[..., 2]
+      g = jnp.einsum('btd, bthkd->bthk', x, w_gate)
+      x = jnp.einsum('btd, bthkd->bthk', x, w_down)
+      x = x * jax.nn.gelu(g) * scores
+      return jnp.einsum('bthk, bthkd->btd', x, w_up)
+
+    x = jnp.ones((16, 4, 32))
+    experts = jnp.ones((128, 32, 3))
+    indices = jnp.ones((16, 4, 4, 2), dtype=jnp.int32)
+    scores = jnp.ones((16, 4, 4, 2))
+    jax.jit(peer_forward)(x, experts, indices, scores)  # doesn't crash
+
 
 class ActivationOffloadingTest(jtu.JaxTestCase):
 
@@ -1545,8 +1547,6 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
       self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
   def test_remat_scan_layout_change_offloadable(self):
-    if jtu.test_device_matches(["gpu"]) and xla_extension_version < 289:
-      self.skipTest("Requires xla_extension_version >= 289")
     mesh = jtu.create_mesh((2,), ("x",))
     shape = (256, 128)
     np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)

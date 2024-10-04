@@ -23,10 +23,11 @@ from typing import Any, ClassVar, Literal
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import tree_util
-from jax._src.state.types import Transform
 from jax._src.pallas import core as pallas_core
+from jax._src.state.types import Transform
 import jax.experimental.mosaic.gpu as mgpu
 import jax.numpy as jnp
+from jaxlib.mlir import ir
 
 
 AbstractMemoryRef = pallas_core.AbstractMemoryRef
@@ -75,6 +76,7 @@ class MemoryRefTransform(pallas_core.MemoryRefTransform, abc.ABC):
         shape=self.to_gpu_transform().transform_shape(aval.shape)
     )
 
+Index = slice | int | ir.Value
 
 @dataclasses.dataclass(frozen=True)
 class TilingTransform(MemoryRefTransform):
@@ -114,11 +116,14 @@ class UntileRef(Transform):
   def transform_dtype(self, dtype):
     return dtype
 
-  def untransform_index(self, idxs: tuple[slice, ...]) -> tuple[slice, ...]:
+  def untransform_index(self, idxs: tuple[Index, ...]) -> tuple[Index, ...]:
+    if not all(isinstance(idx, slice) for idx in idxs):
+      raise NotImplementedError("Non-slice indices are not supported")
     untiled_idxs = idxs[: -len(self.tiling)]
     tiled_idxs = idxs[-len(self.tiling) :]
     idxs_after_tiling = []
     for idx, tile in zip(tiled_idxs, self.tiling):
+      assert isinstance(idx, slice)
       if idx.step is not None and idx.step != 1:
         raise NotImplementedError("Strided slices unsupported")
       if (idx.start is not None and idx.start % tile) or (idx.stop is not None and idx.stop % tile):
@@ -177,7 +182,7 @@ class TransposeRef(Transform):
   def transform_dtype(self, dtype):
     return dtype
 
-  def untransform_index(self, idxs: tuple[slice, ...]) -> tuple[slice, ...]:
+  def untransform_index(self, idxs: tuple[Index, ...]) -> tuple[Index, ...]:
     return tuple(idxs[i] for i in _perm_inverse(self.permutation))
 
   def tree_flatten(self):
@@ -223,13 +228,17 @@ class SwizzleTransform(MemoryRefTransform):
 class UnswizzleRef(Transform):
   swizzle: int
 
-  def untransform_index(self, idxs: tuple[slice, ...]) -> tuple[slice, ...]:
+  def untransform_index(self, idxs: tuple[Index, ...]) -> tuple[Index, ...]:
     if not idxs:
       return idxs
-    if idxs[-1].step is not None and idxs[-1].step != 1:
+    if not all(isinstance(idx, slice) for idx in idxs):
+      raise NotImplementedError("Non-slice indices are not supported")
+    last_idx = idxs[-1]
+    assert isinstance(last_idx, slice)
+    if last_idx.step is not None and last_idx.step != 1:
       raise NotImplementedError("Swizzled dims cannot be sliced")
-    if (idxs[-1].start is not None and idxs[-1].start != 0) or (
-        idxs[-1].stop is not None and idxs[-1].stop != self.swizzle
+    if (last_idx.start is not None and last_idx.start != 0) or (
+        last_idx.stop is not None and last_idx.stop != self.swizzle
     ):
       raise ValueError("Swizzled dims cannot be sliced")
     return idxs

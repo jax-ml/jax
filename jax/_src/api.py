@@ -2775,6 +2775,8 @@ def clear_backends():
 def clean_up():
   if xb._default_backend is not None:
     clear_backends()
+  clear_caches()
+
   # Shut down distributed system if it exists. Otherwise, this is a no-op.
   distributed.shutdown()
 

@@ -32,6 +32,7 @@ import jax
 import jax.numpy as jnp
 from jax._src import core
 from jax._src import config
+from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax import dtypes
 from jax import stages
@@ -41,6 +42,7 @@ from jax.lax import with_sharding_constraint
 from jax._src import prng
 from jax.sharding import PartitionSpec as P, Mesh
 from jax.experimental import multihost_utils
+from jax.experimental.shard_map import shard_map
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax._src import array
 from jax._src.sharding import Sharding, common_devices_indices_map
@@ -57,7 +59,6 @@ from jax._src.lib.mlir import dialects
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -659,10 +660,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     jax.grad(f)(x)  # Warm up the cache.
     with jtu.count_pjit_cpp_cache_miss() as count:
       jax.grad(f)(x)
-    if xla_extension_version >= 286:
-      self.assertEqual(count[0], 0)  # no cache miss i.e. cache hit
-    else:
-      self.assertEqual(count[0], 2)
+    self.assertEqual(count[0], 0)  # no cache miss i.e. cache hit
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testEvalJaxpr(self):
@@ -4588,8 +4586,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ' match the mesh shape of the target sharding.*'):
       with_sharding_constraint(arr, NamedSharding(abs_mesh2, P('y')))
 
-  @unittest.skipIf(xla_extension_version < 286,
-                   "Requires xla_extension_version >= 286")
   def test_global_jit_cpp_cache_hit_out_shardings(self):
     mesh = jtu.create_mesh((2,), 'x')
     s = NamedSharding(mesh, P('x'))
@@ -5293,6 +5289,30 @@ class UtilTest(jtu.JaxTestCase):
       w_gt[i, j] = 1
 
     self.assertArraysEqual(w, w_gt)
+
+  def test_get_intermediate_shardings(self):
+    mesh = jtu.create_mesh((2, 1), ('x', 'y'))
+    s = NamedSharding(mesh, P('x'))
+    arr = jax.device_put(np.arange(8), s)
+
+    @jax.jit
+    def g(x):
+      x = with_sharding_constraint(x, s)
+      return with_sharding_constraint(x, s)
+
+    @jax.jit
+    def f(x, y):
+      x, y = with_sharding_constraint((x, y), s)
+      x, y = shard_map(lambda x, y: (x, y), mesh=mesh, in_specs=P('x'),
+                       out_specs=P('x'))(x, y)
+      x, y = jax.device_put((x, y), s)
+      x, y = jax.jit(lambda x, y: (x, y), in_shardings=s, out_shardings=s)(x, y)
+      return g(x), y
+
+    jaxpr = f.trace(arr, arr).jaxpr
+    out = dispatch.get_intermediate_shardings(jaxpr)
+    self.assertLen(out, 16)
+
 
 @jtu.with_config(jax_use_shardy_partitioner=True)
 class SdyIntegrationTest(jtu.JaxTestCase):

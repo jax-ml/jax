@@ -19,7 +19,7 @@ import enum
 from contextlib import contextmanager
 import collections
 from collections import namedtuple
-from collections.abc import Callable, Sequence, Iterable, Iterator
+from collections.abc import Callable, Sequence, Iterable
 import dataclasses
 from functools import partial, lru_cache, cached_property
 import functools
@@ -62,7 +62,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.layout import DeviceLocalLayout, AutoLayout, Layout
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
@@ -1985,14 +1984,17 @@ def _create_da_object(  # pytype: disable=invalid-annotation
   return xc.DeviceList(device_assignment)
 
 
+@weakref_lru_cache
 def jaxpr_transfer_mem_kinds(
-    jaxpr: core.Jaxpr) -> Iterator[sharding_impls.TransferToMemoryKind]:
+    jaxpr: core.Jaxpr) -> Sequence[sharding_impls.TransferToMemoryKind]:
+  out = []  # type: ignore
   for eqn in jaxpr.eqns:
     if eqn.primitive is dispatch.device_put_p:
-      yield from (d for d in eqn.params['devices']
-                  if isinstance(d, sharding_impls.TransferToMemoryKind))
+      out.extend(d for d in eqn.params['devices']
+                 if isinstance(d, sharding_impls.TransferToMemoryKind))
   for subjaxpr in core.subjaxprs(jaxpr):
-    yield from jaxpr_transfer_mem_kinds(subjaxpr)
+    out.extend(jaxpr_transfer_mem_kinds(subjaxpr))
+  return out
 
 
 def are_all_shardings_default_mem_kind(da_object, shardings):
@@ -2001,7 +2003,9 @@ def are_all_shardings_default_mem_kind(da_object, shardings):
   except:
     return True
   for i in shardings:
-    if is_unspecified_or_auto(i) or i.memory_kind is None:
+    if is_unspecified_or_auto(i):
+      continue
+    if i.memory_kind is None:  # pytype: disable=attribute-error
       continue
     if i.memory_kind != default_mem_kind:
       return False
@@ -2173,12 +2177,14 @@ def lower_sharding_computation(
                           else context_mesh._flat_devices_tuple)
   # Device assignment across all inputs, outputs and shardings inside jaxpr
   # should be the same.
-  unique_intermediate_shardings = list(util.stable_unique(
-      dispatch.get_intermediate_shardings(jaxpr)))
+  unique_intermediate_shardings = util.stable_unique(
+      dispatch.get_intermediate_shardings(jaxpr))
+  unique_in_shardings = util.stable_unique(in_shardings)
+  unique_out_shardings = util.stable_unique(out_shardings)
   backend, device_assignment = _get_and_check_device_assignment(
       it.chain(
-          ((i, MismatchType.ARG_SHARDING, None) for i in util.stable_unique(in_shardings)),
-          ((o, MismatchType.OUT_SHARDING, None) for o in util.stable_unique(out_shardings)),
+          ((i, MismatchType.ARG_SHARDING, None) for i in unique_in_shardings),
+          ((o, MismatchType.OUT_SHARDING, None) for o in unique_out_shardings),
           ((js, MismatchType.SHARDING_INSIDE_COMPUTATION, source_info)
            for js, source_info in unique_intermediate_shardings)),
       devices_from_context)
@@ -2188,16 +2194,16 @@ def lower_sharding_computation(
   committed = bool(
       devices_from_context or
       len(device_assignment) > 1 or
-      any(not is_unspecified(i) for i in in_shardings) or
+      any(not is_unspecified(i) for i in unique_in_shardings) or
       any(not is_unspecified(js) for js, _ in unique_intermediate_shardings) or
-      any(not is_unspecified(o) for o in out_shardings))
+      any(not is_unspecified(o) for o in unique_out_shardings))
 
   da_object = _create_da_object(tuple(device_assignment))
 
-  transfer_mem_kind_in_jaxpr = list(jaxpr_transfer_mem_kinds(jaxpr))
+  transfer_mem_kind_in_jaxpr = jaxpr_transfer_mem_kinds(jaxpr)
   all_default_mem_kind = are_all_shardings_default_mem_kind(
       da_object,
-      it.chain(in_shardings, out_shardings,
+      it.chain(unique_in_shardings, unique_out_shardings,
                [js for js, _ in unique_intermediate_shardings],
                transfer_mem_kind_in_jaxpr))  # pytype: disable=wrong-arg-types
 
@@ -2208,16 +2214,11 @@ def lower_sharding_computation(
         closed_jaxpr, in_shardings)
 
   # 2. Build up the HLO
-  semantic_in_shardings = SemanticallyEqualShardings(
-      in_shardings, global_in_avals)  # type: ignore
-  semantic_out_shardings = SemanticallyEqualShardings(
-      out_shardings, global_out_avals)  # type: ignore
-
   prim_requires_devices = dispatch.jaxpr_has_prim_requiring_devices(jaxpr)
 
   mesh_shape_tuple = None
   if config.use_shardy_partitioner.value or prim_requires_devices:
-    for sharding in it.chain(in_shardings, out_shardings,
+    for sharding in it.chain(unique_in_shardings, unique_out_shardings,
                              [js for js, _ in unique_intermediate_shardings]):
       if isinstance(sharding, (sharding_impls.NamedSharding, sharding_impls.AUTO)):
         if (mesh_shape_tuple is not None and
@@ -2227,6 +2228,11 @@ def lower_sharding_computation(
               f" shape for one sharding {mesh_shape_tuple} and"
               f" {sharding.mesh.shape_tuple} for another")
         mesh_shape_tuple = sharding.mesh.shape_tuple
+
+  semantic_in_shardings = SemanticallyEqualShardings(
+      in_shardings, global_in_avals)  # type: ignore
+  semantic_out_shardings = SemanticallyEqualShardings(
+      out_shardings, global_out_avals)  # type: ignore
 
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
@@ -3048,14 +3054,9 @@ class MeshExecutable(stages.XlaExecutable):
         fastpath_data = None
       return outs, fastpath_data, False  # Do not remove cache entry
 
-    if xla_extension_version >= 286:
-      return xc._xla.pjit(
-          self.unsafe_call.name, None, aot_cache_miss, [], [],
-          JitGlobalCppCacheKeys(), tree_util.dispatch_registry, cc_shard_arg)
-    else:
-      return xc._xla.pjit(
-          self.unsafe_call.name, None, aot_cache_miss, [], [], [],
-          tree_util.dispatch_registry, cc_shard_arg)
+    return xc._xla.pjit(
+        self.unsafe_call.name, None, aot_cache_miss, [], [],
+        JitGlobalCppCacheKeys(), tree_util.dispatch_registry, cc_shard_arg)
 
 def cc_shard_arg(x, sharding, layout):
   return shard_args([sharding], [layout], [x])[0]

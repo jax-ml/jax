@@ -429,6 +429,67 @@ def scatter_add(
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
       mode=GatherScatterMode.from_any(mode))
 
+
+def scatter_sub(
+    operand: ArrayLike,
+    scatter_indices: ArrayLike,
+    updates: ArrayLike,
+    dimension_numbers: ScatterDimensionNumbers,
+    *,
+    indices_are_sorted: bool = False,
+    unique_indices: bool = False,
+    mode: str | GatherScatterMode | None = None,
+) -> Array:
+  """Scatter-sub operator.
+
+  Wraps `XLA's Scatter operator
+  <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where
+  subtraction is used to combine updates and values from `operand`.
+
+  The semantics of scatter are complicated, and its API might change in the
+  future. For most use cases, you should prefer the
+  :attr:`jax.numpy.ndarray.at` property on JAX arrays which uses
+  the familiar NumPy indexing syntax.
+
+  Args:
+    operand: an array to which the scatter should be applied
+    scatter_indices: an array that gives the indices in `operand` to which each
+      update in `updates` should be applied.
+    updates: the updates that should be scattered onto `operand`.
+    dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes how
+      dimensions of `operand`, `start_indices`, `updates` and the output relate.
+    indices_are_sorted: whether `scatter_indices` is known to be sorted. If
+      true, may improve performance on some backends.
+    unique_indices: whether the elements to be updated in ``operand`` are
+      guaranteed to not overlap with each other. If true, may improve
+      performance on some backends. JAX does not check this promise: if the
+      updated elements overlap when ``unique_indices`` is ``True`` the behavior
+      is undefined.
+    mode: how to handle indices that are out of bounds: when set to 'clip',
+      indices are clamped so that the slice is within bounds, and when set to
+      'fill' or 'drop' out-of-bounds updates are dropped. The behavior for
+      out-of-bounds indices when set to 'promise_in_bounds' is
+      implementation-defined.
+
+  Returns:
+    An array containing the sum of `operand` and the scattered updates.
+  """
+  jaxpr, consts = lax._reduction_jaxpr(
+      lax.sub, lax._abstractify(lax._const(operand, 0))
+  )
+  return scatter_sub_p.bind(
+      operand,
+      scatter_indices,
+      updates,
+      update_jaxpr=jaxpr,
+      update_consts=consts,
+      dimension_numbers=dimension_numbers,
+      indices_are_sorted=indices_are_sorted,
+      unique_indices=unique_indices,
+      mode=GatherScatterMode.from_any(mode),
+  )
+
+
 def scatter_mul(
   operand: ArrayLike, scatter_indices: ArrayLike, updates: ArrayLike,
   dimension_numbers: ScatterDimensionNumbers, *,
@@ -1991,32 +2052,66 @@ def _clamp_scatter_indices(operand, indices, updates, *, dnums):
   return lax.clamp(np.int64(0), lax.convert_element_type(indices, np.int64),
                    upper_bound)
 
-def _scatter_add_jvp(primals, tangents, *, update_jaxpr, update_consts,
-                     dimension_numbers, indices_are_sorted, unique_indices,
-                     mode):
+
+def _scatter_addsub_jvp(
+    prim,
+    primals,
+    tangents,
+    *,
+    update_jaxpr,
+    update_consts,
+    dimension_numbers,
+    indices_are_sorted,
+    unique_indices,
+    mode,
+):
   operand, indices, updates = primals
   g_operand, g_indices, g_updates = tangents
   del g_indices  # ignored
-  val_out = scatter_add_p.bind(
-      operand, indices, updates, update_jaxpr=update_jaxpr,
-      update_consts=update_consts, dimension_numbers=dimension_numbers,
-      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-      mode=mode)
+  val_out = prim.bind(
+      operand,
+      indices,
+      updates,
+      update_jaxpr=update_jaxpr,
+      update_consts=update_consts,
+      dimension_numbers=dimension_numbers,
+      indices_are_sorted=indices_are_sorted,
+      unique_indices=unique_indices,
+      mode=mode,
+  )
   if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
     tangent_out = ad_util.Zero.from_primal_value(val_out)
   else:
     g_operand = ad.instantiate_zeros(g_operand)
     g_updates = ad.instantiate_zeros(g_updates)
-    tangent_out = scatter_add_p.bind(
-        g_operand, indices, g_updates, update_jaxpr=update_jaxpr,
-        update_consts=update_consts, dimension_numbers=dimension_numbers,
-        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-        mode=mode)
+    tangent_out = prim.bind(
+        g_operand,
+        indices,
+        g_updates,
+        update_jaxpr=update_jaxpr,
+        update_consts=update_consts,
+        dimension_numbers=dimension_numbers,
+        indices_are_sorted=indices_are_sorted,
+        unique_indices=unique_indices,
+        mode=mode,
+    )
   return val_out, tangent_out
 
-def _scatter_add_transpose_rule(t, operand, indices, updates, *,
-                                update_jaxpr, update_consts, dimension_numbers,
-                                indices_are_sorted, unique_indices, mode):
+
+def _scatter_addsub_transpose_rule(
+    prim,
+    t,
+    operand,
+    indices,
+    updates,
+    *,
+    update_jaxpr,
+    update_consts,
+    dimension_numbers,
+    indices_are_sorted,
+    unique_indices,
+    mode,
+):
   assert not ad.is_undefined_primal(indices)
   if ad.is_undefined_primal(updates):
     updates_shape = updates.aval.shape
@@ -2045,6 +2140,8 @@ def _scatter_add_transpose_rule(t, operand, indices, updates, *,
           pos += 1
       update_t = gather(t, indices, dimension_numbers=gather_dnums,
                         slice_sizes=slice_sizes, mode=mode, fill_value=0)
+      if prim is scatter_sub_p:
+        update_t = lax.neg(update_t)
   return [operand_t, None, update_t]
 
 def _scatter_mul_transpose_rule(t, operand, indices, updates, *,
@@ -2140,10 +2237,22 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
 scatter_add_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-add',
     weak_type_rule=_argnum_weak_type(0))
-ad.primitive_jvps[scatter_add_p] = _scatter_add_jvp
-ad.primitive_transposes[scatter_add_p] = _scatter_add_transpose_rule
+ad.primitive_jvps[scatter_add_p] = partial(_scatter_addsub_jvp, scatter_add_p)
+ad.primitive_transposes[scatter_add_p] = partial(_scatter_addsub_transpose_rule, scatter_add_p)
 batching.primitive_batchers[scatter_add_p] = (
   partial(_scatter_batching_rule, scatter_add_p))
+
+scatter_sub_p = standard_primitive(
+    _scatter_shape_rule,
+    _scatter_dtype_rule,
+    "scatter-sub",
+    weak_type_rule=_argnum_weak_type(0),
+)
+ad.primitive_jvps[scatter_sub_p] = partial(_scatter_addsub_jvp, scatter_sub_p)
+ad.primitive_transposes[scatter_sub_p] = partial(_scatter_addsub_transpose_rule, scatter_sub_p)
+batching.primitive_batchers[scatter_sub_p] = partial(
+    _scatter_batching_rule, scatter_sub_p
+)
 
 scatter_mul_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-mul',
@@ -2513,6 +2622,7 @@ def _scatter_lower(ctx, operand, indices, updates, *,
 
 mlir.register_lowering(scatter_p, _scatter_lower)
 mlir.register_lowering(scatter_add_p, _scatter_lower)
+mlir.register_lowering(scatter_sub_p, _scatter_lower)
 mlir.register_lowering(scatter_mul_p, _scatter_lower)
 mlir.register_lowering(scatter_min_p, _scatter_lower)
 mlir.register_lowering(scatter_max_p, _scatter_lower)
@@ -2520,9 +2630,21 @@ mlir.register_lowering(scatter_max_p, _scatter_lower)
 
 def _real_dtype(dtype): return np.finfo(dtype).dtype
 
-def _scatter_add_lower_gpu(ctx, operand, indices, updates,
-                           *, update_jaxpr, update_consts, dimension_numbers,
-                           indices_are_sorted, unique_indices, mode):
+
+def _scatter_addsub_lower_gpu(
+    ctx,
+    operand,
+    indices,
+    updates,
+    *,
+    update_jaxpr,
+    update_consts,
+    dimension_numbers,
+    indices_are_sorted,
+    unique_indices,
+    mode,
+    reduce_op,
+):
   operand_aval_in, _, updates_aval_in = ctx.avals_in
   if operand_aval_in.dtype != np.complex128:
     return _scatter_lower(ctx, operand, indices, updates,
@@ -2566,15 +2688,24 @@ def _scatter_add_lower_gpu(ctx, operand, indices, updates,
     scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), real_dtype))
     reducer = scatter.regions[0].blocks.append(scalar_type, scalar_type)
     with ir.InsertionPoint(reducer):
-      add = hlo.AddOp(*reducer.arguments).result
-      hlo.return_([add])
+      hlo.return_([reduce_op(*reducer.arguments).result])
     return scatter.result
 
   real = _scatter(hlo.real(operand), hlo.real(updates))
   imag = _scatter(hlo.imag(operand), hlo.imag(updates))
   return [hlo.complex(real, imag)]
 
-mlir.register_lowering(scatter_add_p, _scatter_add_lower_gpu, platform="gpu")
+
+mlir.register_lowering(
+    scatter_add_p,
+    partial(_scatter_addsub_lower_gpu, reduce_op=hlo.AddOp),
+    platform="gpu",
+)
+mlir.register_lowering(
+    scatter_sub_p,
+    partial(_scatter_addsub_lower_gpu, reduce_op=hlo.SubtractOp),
+    platform="gpu",
+)
 
 
 def _dynamic_slice_indices(

@@ -1451,6 +1451,50 @@ def nextafter(x: ArrayLike, y: ArrayLike, /) -> Array:
   """
   return lax.nextafter(*promote_args_inexact("nextafter", x, y))
 
+
+@partial(jit, inline=True)
+def spacing(x: ArrayLike, /) -> Array:
+  """Return the spacing between ``x`` and the next adjacent number.
+
+  JAX implementation of :func:`numpy.spacing`.
+
+  Args:
+    x: real-valued array. Integer or boolean types will be cast to float.
+
+  Returns:
+    Array of same shape as ``x`` containing spacing between each entry of
+    ``x`` and its closest adjacent value.
+
+  See also:
+    - :func:`jax.numpy.nextafter`: find the next representable value.
+
+  Examples:
+    >>> x = jnp.array([0.0, 0.25, 0.5, 0.75, 1.0], dtype='float32')
+    >>> jnp.spacing(x)
+    Array([1.4012985e-45, 2.9802322e-08, 5.9604645e-08, 5.9604645e-08,
+          1.1920929e-07], dtype=float32)
+
+    For ``x = 1``, the spacing is equal to the ``eps`` value given by
+    :class:`jax.numpy.finfo`:
+
+    >>> x = jnp.float32(1)
+    >>> jnp.spacing(x) == jnp.finfo(x.dtype).eps
+    Array(True, dtype=bool)
+  """
+  arr, = promote_args_inexact("spacing", x)
+  if dtypes.isdtype(arr.dtype, "complex floating"):
+    raise ValueError("jnp.spacing is not defined for complex inputs.")
+  inf = _lax_const(arr, np.inf)
+  smallest_subnormal = dtypes.finfo(arr.dtype).smallest_subnormal
+
+  # Numpy's behavior seems to depend on dtype
+  if arr.dtype == 'float16':
+    return lax.nextafter(arr, inf) - arr
+  else:
+    result = lax.nextafter(arr, copysign(inf, arr)) - arr
+    return _where(result == 0, copysign(smallest_subnormal, arr), result)
+
+
 # Logical ops
 @partial(jit, inline=True)
 def _logical_and(x: ArrayLike, y: ArrayLike, /) -> Array:
@@ -2883,9 +2927,36 @@ def modf(x: ArrayLike, /, out=None) -> tuple[Array, Array]:
   return x - whole, whole
 
 
-@implements(np.isfinite, module='numpy')
 @partial(jit, inline=True)
 def isfinite(x: ArrayLike, /) -> Array:
+  """Return a boolean array indicating whether each element of input is finite.
+
+  JAX implementation of :obj:`numpy.isfinite`.
+
+  Args:
+    x: input array or scalar.
+
+  Returns:
+    A boolean array of same shape as ``x`` containing ``True`` where ``x`` is
+    not ``inf``, ``-inf``, or ``NaN``, and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.isinf`: Returns a boolean array indicating whether each
+      element of input is either positive or negative infinity.
+    - :func:`jax.numpy.isposinf`: Returns a boolean array indicating whether each
+      element of input is positive infinity.
+    - :func:`jax.numpy.isneginf`: Returns a boolean array indicating whether each
+      element of input is negative infinity.
+    - :func:`jax.numpy.isnan`: Returns a boolean array indicating whether each
+      element of input is not a number (``NaN``).
+
+  Examples:
+    >>> x = jnp.array([-1, 3, jnp.inf, jnp.nan])
+    >>> jnp.isfinite(x)
+    Array([ True,  True, False, False], dtype=bool)
+    >>> jnp.isfinite(3-4j)
+    Array(True, dtype=bool, weak_type=True)
+  """
   check_arraylike("isfinite", x)
   dtype = dtypes.dtype(x)
   if dtypes.issubdtype(dtype, np.floating):
@@ -2896,9 +2967,36 @@ def isfinite(x: ArrayLike, /) -> Array:
     return lax.full_like(x, True, dtype=np.bool_)
 
 
-@implements(np.isinf, module='numpy')
 @jit
 def isinf(x: ArrayLike, /) -> Array:
+  """Return a boolean array indicating whether each element of input is infinite.
+
+  JAX implementation of :obj:`numpy.isinf`.
+
+  Args:
+    x: input array or scalar.
+
+  Returns:
+    A boolean array of same shape as ``x`` containing ``True`` where ``x`` is
+    ``inf`` or ``-inf``, and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.isposinf`: Returns a boolean array indicating whether each
+      element of input is positive infinity.
+    - :func:`jax.numpy.isneginf`: Returns a boolean array indicating whether each
+      element of input is negative infinity.
+    - :func:`jax.numpy.isfinite`: Returns a boolean array indicating whether each
+      element of input is finite.
+    - :func:`jax.numpy.isnan`: Returns a boolean array indicating whether each
+      element of input is not a number (``NaN``).
+
+  Examples:
+    >>> jnp.isinf(jnp.inf)
+    Array(True, dtype=bool)
+    >>> x = jnp.array([2+3j, -jnp.inf, 6, jnp.inf, jnp.nan])
+    >>> jnp.isinf(x)
+    Array([False,  True, False,  True, False], dtype=bool)
+  """
   check_arraylike("isinf", x)
   dtype = dtypes.dtype(x)
   if dtypes.issubdtype(dtype, np.floating):
@@ -2924,26 +3022,148 @@ def _isposneginf(infinity: float, x: ArrayLike, out) -> Array:
     return lax.full_like(x, False, dtype=np.bool_)
 
 
-@implements(np.isposinf, module='numpy')
 def isposinf(x, /, out=None):
+  """
+  Return boolean array indicating whether each element of input is positive infinite.
+
+  JAX implementation of :obj:`numpy.isposinf`.
+
+  Args:
+    x: input array or scalar. ``complex`` dtype are not supported.
+
+  Returns:
+    A boolean array of same shape as ``x`` containing ``True`` where ``x`` is
+    ``inf``, and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.isinf`: Returns a boolean array indicating whether each
+      element of input is either positive or negative infinity.
+    - :func:`jax.numpy.isneginf`: Returns a boolean array indicating whether each
+      element of input is negative infinity.
+    - :func:`jax.numpy.isfinite`: Returns a boolean array indicating whether each
+      element of input is finite.
+    - :func:`jax.numpy.isnan`: Returns a boolean array indicating whether each
+      element of input is not a number (``NaN``).
+
+  Examples:
+    >>> jnp.isposinf(5)
+    Array(False, dtype=bool)
+    >>> x = jnp.array([-jnp.inf, 5, jnp.inf, jnp.nan, 1])
+    >>> jnp.isposinf(x)
+    Array([False, False,  True, False, False], dtype=bool)
+  """
   return _isposneginf(np.inf, x, out)
 
 
-@implements(np.isposinf, module='numpy')
 def isneginf(x, /, out=None):
+  """
+  Return boolean array indicating whether each element of input is negative infinite.
+
+  JAX implementation of :obj:`numpy.isneginf`.
+
+  Args:
+    x: input array or scalar. ``complex`` dtype are not supported.
+
+  Returns:
+    A boolean array of same shape as ``x`` containing ``True`` where ``x`` is
+    ``-inf``, and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.isinf`: Returns a boolean array indicating whether each
+      element of input is either positive or negative infinity.
+    - :func:`jax.numpy.isposinf`: Returns a boolean array indicating whether each
+      element of input is positive infinity.
+    - :func:`jax.numpy.isfinite`: Returns a boolean array indicating whether each
+      element of input is finite.
+    - :func:`jax.numpy.isnan`: Returns a boolean array indicating whether each
+      element of input is not a number (``NaN``).
+
+  Examples:
+    >>> jnp.isneginf(jnp.inf)
+    Array(False, dtype=bool)
+    >>> x = jnp.array([-jnp.inf, 5, jnp.inf, jnp.nan, 1])
+    >>> jnp.isneginf(x)
+    Array([ True, False, False, False, False], dtype=bool)
+  """
   return _isposneginf(-np.inf, x, out)
 
 
-@implements(np.isnan, module='numpy')
 @partial(jit, inline=True)
 def isnan(x: ArrayLike, /) -> Array:
+  """Returns a boolean array indicating whether each element of input is ``NaN``.
+
+  JAX implementation of :obj:`numpy.isnan`.
+
+  Args:
+    x: input array or scalar.
+
+  Returns:
+    A boolean array of same shape as ``x`` containing ``True`` where ``x`` is
+    not a number (i.e. ``NaN``) and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.isfinite`: Returns a boolean array indicating whether each
+      element of input is finite.
+    - :func:`jax.numpy.isinf`: Returns a boolean array indicating whether each
+      element of input is either positive or negative infinity.
+    - :func:`jax.numpy.isposinf`: Returns a boolean array indicating whether each
+      element of input is positive infinity.
+    - :func:`jax.numpy.isneginf`: Returns a boolean array indicating whether each
+      element of input is negative infinity.
+
+  Examples:
+    >>> jnp.isnan(6)
+    Array(False, dtype=bool, weak_type=True)
+    >>> x = jnp.array([2, 1+4j, jnp.inf, jnp.nan])
+    >>> jnp.isnan(x)
+    Array([False, False, False,  True], dtype=bool)
+  """
   check_arraylike("isnan", x)
   return lax.ne(x, x)
 
 
-@implements(np.heaviside, module='numpy')
 @jit
 def heaviside(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  r"""Compute the heaviside step function.
+
+  JAX implementation of :obj:`numpy.heaviside`.
+
+  The heaviside step function is defined by:
+
+  .. math::
+
+    \mathrm{heaviside}(x1, x2) = \begin{cases}
+      0., & x < 0\\
+      x2, & x = 0\\
+      1., & x > 0.
+    \end{cases}
+
+  Args:
+    x1: input array or scalar. ``complex`` dtype are not supported.
+    x2: scalar or array. Specifies the return values when ``x1`` is ``0``. ``complex``
+      dtype are not supported. ``x1`` and ``x2`` must either have same shape or
+      broadcast compatible.
+
+  Returns:
+    An array containing the heaviside step function of ``x1``, promoting to
+    inexact dtype.
+
+  Examples:
+    >>> x1 = jnp.array([[-2, 0, 3],
+    ...                 [5, -1, 0],
+    ...                 [0, 7, -3]])
+    >>> x2 = jnp.array([2, 0.5, 1])
+    >>> jnp.heaviside(x1, x2)
+    Array([[0. , 0.5, 1. ],
+           [1. , 0. , 1. ],
+           [2. , 1. , 0. ]], dtype=float32)
+    >>> jnp.heaviside(x1, 0.5)
+    Array([[0. , 0.5, 1. ],
+           [1. , 0. , 0.5],
+           [0.5, 1. , 0. ]], dtype=float32)
+    >>> jnp.heaviside(-3, x2)
+    Array([0., 0., 0.], dtype=float32)
+  """
   check_arraylike("heaviside", x1, x2)
   x1, x2 = promote_dtypes_inexact(x1, x2)
   zero = _lax_const(x1, 0)
@@ -2969,9 +3189,34 @@ def hypot(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   return _where(idx_inf, _lax_const(x, np.inf), x)
 
 
-@implements(np.reciprocal, module='numpy')
 @partial(jit, inline=True)
 def reciprocal(x: ArrayLike, /) -> Array:
+  """Calculate element-wise reciprocal of the input.
+
+  JAX implementation of :obj:`numpy.reciprocal`.
+
+  The reciprocal is calculated by ``1/x``.
+
+  Args:
+    x: input array or scalar.
+
+  Returns:
+    An array of same shape as ``x`` containing the reciprocal of each element of
+    ``x``.
+
+  Note:
+    For integer inputs, ``np.reciprocal`` returns rounded integer output, while
+    ``jnp.reciprocal`` promotes integer inputs to floating point.
+
+  Examples:
+    >>> jnp.reciprocal(2)
+    Array(0.5, dtype=float32, weak_type=True)
+    >>> jnp.reciprocal(0.)
+    Array(inf, dtype=float32, weak_type=True)
+    >>> x = jnp.array([1, 5., 4.])
+    >>> jnp.reciprocal(x)
+    Array([1.  , 0.2 , 0.25], dtype=float32)
+  """
   check_arraylike("reciprocal", x)
   x, = promote_dtypes_inexact(x)
   return lax.integer_pow(x, -1)

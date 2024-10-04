@@ -255,4 +255,5 @@ Argument classes
 .. autoclass:: Precision
 .. autoclass:: PrecisionLike
 .. autoclass:: RoundingMethod
+  :members:
 .. autoclass:: ScatterDimensionNumbers

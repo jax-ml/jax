@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Sequence
 from functools import partial
 import importlib
 import math
@@ -22,13 +21,9 @@ import jaxlib.mlir.dialects.stablehlo as hlo
 
 import numpy as np
 
-from .gpu_common_utils import GpuLibNotLinkedError
-
 from jaxlib import xla_client
 
-from .hlo_helpers import (
-    DimensionSize, ShapeTypePair, mk_result_types_and_shapes,
-    custom_call, ensure_hlo_s32, hlo_s32, dense_int_array)
+from .hlo_helpers import custom_call, dense_int_array
 
 try:
   from .cuda import _blas as _cublas  # pytype: disable=import-error
@@ -99,86 +94,6 @@ def _real_type(dtype):
   return np.finfo(dtype).dtype
 
 
-def _geqrf_hlo(platform, gpu_solver, dtype, a):
-  """QR decomposition."""
-  a_type = ir.RankedTensorType(a.type)
-  dims = a_type.shape
-  assert len(dims) >= 2
-  m, n = dims[-2:]
-  batch_dims = tuple(dims[:-2])
-  num_bd = len(batch_dims)
-  batch = math.prod(batch_dims)
-
-  lwork, opaque = gpu_solver.build_geqrf_descriptor(
-      np.dtype(dtype), batch, m, n)
-
-  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
-  i32_type = ir.IntegerType.get_signless(32)
-  out = custom_call(
-      f"{platform}solver_geqrf",
-      result_types=[
-        a.type,
-        ir.RankedTensorType.get(batch_dims + (min(m, n),), a_type.element_type),
-        ir.RankedTensorType.get(batch_dims, i32_type),
-        ir.RankedTensorType.get([lwork], a_type.element_type),
-      ],
-      operands=[a],
-      backend_config=opaque,
-      operand_layouts=[layout],
-      result_layouts=[
-        layout,
-        tuple(range(num_bd, -1, -1)),
-        tuple(range(num_bd - 1, -1, -1)),
-        [0],
-      ],
-      operand_output_aliases={0: 0}).results
-  return out[:3]
-
-cuda_geqrf = partial(_geqrf_hlo, "cu", _cusolver)
-rocm_geqrf = partial(_geqrf_hlo, "hip", _hipsolver)
-
-def _geqrf_batched_hlo(platform, gpu_blas, dtype, a):
-  """Batched QR decomposition."""
-  a_type = ir.RankedTensorType(a.type)
-  dims = a_type.shape
-  assert len(dims) >= 2
-  m, n = dims[-2:]
-  batch_dims = tuple(dims[:-2])
-  num_bd = len(batch_dims)
-  batch = math.prod(batch_dims)
-
-  if not gpu_blas:
-    raise GpuLibNotLinkedError()
-
-  lwork, opaque = gpu_blas.build_geqrf_batched_descriptor(
-      np.dtype(dtype), batch, m, n)
-
-  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
-  out = custom_call(
-      f"{platform}blas_geqrf_batched",
-      result_types=[
-        a.type,
-        ir.RankedTensorType.get(batch_dims + (min(m, n),), a_type.element_type),
-        ir.RankedTensorType.get([lwork], ir.IntegerType.get_signless(8)),
-        ir.RankedTensorType.get([lwork], ir.IntegerType.get_signless(8)),
-      ],
-      operands=[a],
-      backend_config=opaque,
-      operand_layouts=[layout],
-      result_layouts=[
-        layout,
-        tuple(range(num_bd, -1, -1)),
-        [0],
-        [0],
-      ],
-      operand_output_aliases={0: 0}
-  ).results
-  return out[:2]
-
-cuda_geqrf_batched = partial(_geqrf_batched_hlo, "cu", _cublas)
-rocm_geqrf_batched = partial(_geqrf_batched_hlo, "hip", _hipblas)
-
-
 def _csrlsvqr_hlo(platform, gpu_solver, dtype, data,
                   indices, indptr, b, tol, reorder):
   """Sparse solver via QR decomposition. CUDA only."""
@@ -202,124 +117,6 @@ def _csrlsvqr_hlo(platform, gpu_solver, dtype, data,
   return out
 
 cuda_csrlsvqr = partial(_csrlsvqr_hlo, "cu", _cusolver)
-
-
-def _orgqr_hlo(platform, gpu_solver, dtype, a, tau):
-  """Product of elementary Householder reflections."""
-  a_type = ir.RankedTensorType(a.type)
-  dims = a_type.shape
-  assert len(dims) >= 2
-  m, n = dims[-2:]
-  batch_dims = tuple(dims[:-2])
-  num_bd = len(batch_dims)
-  batch = math.prod(batch_dims)
-
-  tau_dims = ir.RankedTensorType(tau.type).shape
-  assert tau_dims[:-1] == dims[:-2]
-  k = tau_dims[-1]
-
-  lwork, opaque = gpu_solver.build_orgqr_descriptor(
-      np.dtype(dtype), batch, m, n, k)
-
-  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
-  i32_type = ir.IntegerType.get_signless(32)
-  out = custom_call(
-      f"{platform}solver_orgqr",
-      result_types=[
-        a.type,
-        ir.RankedTensorType.get(batch_dims, i32_type),
-        ir.RankedTensorType.get([lwork], a_type.element_type),
-      ],
-      operands=[a, tau],
-      backend_config=opaque,
-      operand_layouts=[
-          layout,
-          tuple(range(num_bd, -1, -1)),
-      ],
-      result_layouts=[
-        layout,
-        tuple(range(num_bd - 1, -1, -1)),
-        [0],
-      ],
-      operand_output_aliases={0: 0}).results
-  return out[:2]
-
-cuda_orgqr = partial(_orgqr_hlo, "cu", _cusolver)
-rocm_orgqr = partial(_orgqr_hlo, "hip", _hipsolver)
-
-
-def _syevd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a, *,
-               a_shape_vals: tuple[DimensionSize, ...], lower=False):
-  """Symmetric (Hermitian) eigendecomposition."""
-  a_type = ir.RankedTensorType(a.type)
-  assert len(a_shape_vals) >= 2
-  m, n = a_shape_vals[-2:]
-  assert type(m) is int and type(n) is int and m == n, a_shape_vals
-  batch_dims_vals = a_shape_vals[:-2]
-
-  num_bd = len(batch_dims_vals)
-  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
-
-  dynamic_batch_dims = any(type(d) != int for d in batch_dims_vals)
-  if dynamic_batch_dims:
-    batch_int = -1  # Signals to the kernel that the batch is an operand.
-  else:
-    batch_int = math.prod(batch_dims_vals)
-
-  if have_jacobi_solver and n <= 32 and not dynamic_batch_dims:
-    # We cannot use syevj for dynamic shapes because the workspace size
-    # depends on the batch size.
-    kernel = f"{platform}solver_syevj"
-    lwork, opaque = gpu_solver.build_syevj_descriptor(
-        np.dtype(dtype), lower, batch_int, n)
-  else:
-    kernel = f"{platform}solver_syevd"
-    lwork, opaque = gpu_solver.build_syevd_descriptor(
-        np.dtype(dtype), lower, batch_int, n)
-    # TODO(Ruturaj4): Currently, hipsolverSsyevd sets lwork to 0 if n==0.
-    # Remove if this behavior changes in then new ROCm release.
-    if n > 0 or platform != "hip":
-      assert lwork > 0
-
-  if ir.ComplexType.isinstance(a_type.element_type):
-    eigvals_type = ir.ComplexType(a_type.element_type).element_type
-  else:
-    eigvals_type = a_type.element_type
-
-  i32_type = ir.IntegerType.get_signless(32)
-  operands = [a]
-  operand_layouts = [layout]
-  if dynamic_batch_dims:
-    batch_size_val = hlo_s32(1)
-    for b_v in batch_dims_vals:
-      batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
-    operands.append(batch_size_val)
-    operand_layouts.append(())
-
-  shape_type_pairs: Sequence[ShapeTypePair] = [
-      (a_shape_vals, a_type.element_type),
-      (batch_dims_vals + (n,), eigvals_type),
-      (batch_dims_vals, i32_type),
-      ([lwork], a_type.element_type)]
-  result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
-  out = custom_call(
-      kernel,
-      result_types=result_types,
-      operands=operands,
-      backend_config=opaque,
-      operand_layouts=operand_layouts,
-      result_layouts=[
-          layout,
-          tuple(range(num_bd, -1, -1)),
-          tuple(range(num_bd - 1, -1, -1)),
-          [0],
-      ],
-      operand_output_aliases={0: 0},
-      result_shapes=result_shapes).results
-  return out[:3]
-
-cuda_syevd = partial(_syevd_hlo, "cu", _cusolver, True)
-rocm_syevd = partial(_syevd_hlo, "hip", _hipsolver, True)
 
 
 def _gesvd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a,

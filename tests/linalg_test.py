@@ -1007,7 +1007,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     if jtu.test_device_matches(['cpu']):
       err, msg = NotImplementedError, "Unsupported dtype float16"
     else:
-      err, msg = ValueError, r"Unsupported dtype dtype\('float16'\)"
+      err, msg = Exception, "Unsupported dtype"
     with self.assertRaisesRegex(err, msg):
       jnp.linalg.qr(arr)
 
