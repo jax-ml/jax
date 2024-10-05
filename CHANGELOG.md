@@ -12,6 +12,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## jax 0.4.35
 
+* Breaking Changes
+  * {func}`jax.numpy.isscalar` now returns True for any array-like object with
+    zero dimensions. Previously it only returned True for zero-dimensional
+    array-like objects with a weak dtype.
+
 ## jax 0.4.34 (October 4, 2023)
 
 * New Functionality
