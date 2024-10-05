@@ -28,6 +28,7 @@ module = [
     "jraph.*",
     "libtpu.*",
     "matplotlib.*",
+    "nvidia.*",
     "numpy.*",
     "opt_einsum.*",
     "optax.*",
