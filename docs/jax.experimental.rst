@@ -16,7 +16,6 @@ Experimental Modules
 
     jax.experimental.array_api
     jax.experimental.checkify
-    jax.experimental.host_callback
     jax.experimental.pjit
     jax.experimental.sparse
     jax.experimental.jet
