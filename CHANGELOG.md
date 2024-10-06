@@ -20,7 +20,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     JAX version 0.4.26. Now we removed it.
     See {jax-issue}`#20385` for a discussion of alternatives.
 
-## jax 0.4.34 (October 4, 2023)
+## jax 0.4.34 (October 4, 2024)
 
 * New Functionality
   * This release includes wheels for Python 3.13. Free-threading mode is not yet
