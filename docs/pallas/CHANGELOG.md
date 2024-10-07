@@ -23,6 +23,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 * Deprecations
 
+  * The {mod}`jax.experimental.pallas.gpu` submodule is deprecated to avoid
+    ambiguite with {mod}`jax.experimental.pallas.mosaic_gpu`. To use the
+    Triton backend import {mod}`jax.experimental.pallas.triton`.
+
 * New functionality
 
   * {func}`jax.experimental.pallas.pallas_call` now accepts `scratch_shapes`,

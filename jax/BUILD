@@ -587,9 +587,11 @@ pytype_strict_library(
         ],
         exclude = [
             "experimental/pallas/gpu.py",
-            "experimental/pallas/tpu.py",
+            "experimental/pallas/mosaic_gpu.py",
             "experimental/pallas/ops/gpu/**/*.py",
             "experimental/pallas/ops/tpu/**/*.py",
+            "experimental/pallas/tpu.py",
+            "experimental/pallas/triton.py",
         ],
     ),
     visibility = [
@@ -649,18 +651,35 @@ pytype_strict_library(
     ] + py_deps("numpy"),
 )
 
+# TODO(slebedev): Rename to :pallas_triton and update all users. Reserve :pallas_gpu
+# for both GPU backends.
 pytype_strict_library(
     name = "pallas_gpu",
-    srcs = ["experimental/pallas/gpu.py"],
+    srcs = [
+        "experimental/pallas/gpu.py",
+        "experimental/pallas/triton.py",
+    ],
     visibility = [
         ":pallas_gpu_users",
     ],
     deps = [
-        "//jax/_src/pallas/mosaic_gpu:core",  # build_cleaner: keep
-        "//jax/_src/pallas/mosaic_gpu:pallas_call_registration",  # build_cleaner: keep
+        ":deprecations",
         "//jax/_src/pallas/triton:core",
         "//jax/_src/pallas/triton:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/triton:primitives",
+    ],
+)
+
+pytype_strict_library(
+    name = "pallas_mosaic_gpu",
+    srcs = ["experimental/pallas/mosaic_gpu.py"],
+    visibility = [
+        ":mosaic_gpu_users",
+    ],
+    deps = [
+        "//jax/_src/pallas/mosaic_gpu:core",
+        "//jax/_src/pallas/mosaic_gpu:pallas_call_registration",  # build_cleaner: keep
+        "//jax/_src/pallas/mosaic_gpu:primitives",
     ],
 )
 

@@ -39,7 +39,7 @@ from jax.interpreters import partial_eval as pe
 from jax.experimental import pallas as pl
 
 if sys.platform != "win32":
-  from jax.experimental.pallas import gpu as plgpu
+  from jax.experimental.pallas import triton as plgpu
   from jax.experimental.pallas import tpu as pltpu
 else:
   plgpu = None

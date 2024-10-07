@@ -21,8 +21,8 @@ from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import test_util as jtu
-import jax._src.pallas.mosaic_gpu as plgpu
 from jax.experimental import pallas as pl
+from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
 import numpy as np
 

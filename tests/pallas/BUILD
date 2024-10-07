@@ -165,7 +165,7 @@ jax_multiplatform_test(
     },
     deps = [
         "//jax:pallas",
-        "//jax:pallas_gpu",  # build_cleaner: keep
+        "//jax:pallas_mosaic_gpu",  # build_cleaner: keep
         "//jax/_src/pallas/mosaic_gpu",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )

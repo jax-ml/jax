@@ -1,4 +1,4 @@
-# Copyright 2023 The JAX Authors.
+# Copyright 2024 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,13 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src import deprecations
+"""Triton-specific Pallas APIs."""
 
-deprecations.warn(
-    "pallas-gpu-triton",
-    "The ``jax.experimental.pallas.gpu`` submodule is deprecated. "
-    " Use ``jax.experimental.pallas.triton`` instead.",
-    stacklevel=1,
-)
-
-from jax.experimental.pallas.triton import *  # noqa: F403
+from jax._src.pallas.triton.core import TritonCompilerParams
+from jax._src.pallas.triton.primitives import approx_tanh
+from jax._src.pallas.triton.primitives import debug_barrier
+from jax._src.pallas.triton.primitives import elementwise_inline_asm
