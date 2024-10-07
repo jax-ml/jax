@@ -361,7 +361,7 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
       use_resource_env=jit_info.use_resource_env)
   cpp_pjit_f = xc._xla.pjit(
       fun_name(fun), fun, cache_miss, jit_info.static_argnums,
-      jit_info.static_argnames, cache_key, tree_util.dispatch_registry,  # type: ignore
+      jit_info.static_argnames, cache_key, tree_util.dispatch_registry,
       pxla.cc_shard_arg,
       _get_cpp_global_cache(cache_key.contains_explicit_attributes))
 
