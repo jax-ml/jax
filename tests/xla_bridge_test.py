@@ -25,7 +25,6 @@ from jax._src import compiler
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
-from jax._src.interpreters import xla
 from jax._src.lib import xla_client as xc
 
 config.parse_flags_with_absl()
@@ -119,19 +118,6 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertEqual(c1str, c1.SerializeAsString())
     # Map order does not matter.
     self.assertEqual(c1str, c2.SerializeAsString())
-
-  def test_parameter_replication_default(self):
-    c = xc.XlaBuilder("test")
-    _ = xla.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()))
-    built_c = c.Build()
-    assert "replication" not in built_c.as_hlo_text()
-
-  def test_parameter_replication(self):
-    c = xc.XlaBuilder("test")
-    _ = xla.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()), "",
-                     False)
-    built_c = c.Build()
-    assert "parameter_replication={false}" in built_c.as_hlo_text()
 
   def test_local_devices(self):
     self.assertNotEmpty(xb.local_devices())

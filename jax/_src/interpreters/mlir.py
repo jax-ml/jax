@@ -1798,13 +1798,9 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
         for p in _platforms_for_eqn_ctx(eqn.ctx) or ctx.platforms:
           if eqn.primitive in _platform_specific_lowerings[p]:
             platform_rules[p] = _platform_specific_lowerings[p][eqn.primitive]
-          elif eqn.primitive in xla._backend_specific_translations[p]:
-            platform_rules[p] = xla_fallback_lowering(eqn.primitive)
         # Now the default rule
         if eqn.primitive in _lowerings:
           default_rule = _lowerings[eqn.primitive]
-        elif eqn.primitive in xla._translations:
-          default_rule = xla_fallback_lowering(eqn.primitive)
 
       effects = list(effects_lib.ordered_effects.filter_in(eqn.effects))
       tokens_in = tokens.subset(effects)
@@ -2599,46 +2595,6 @@ def merge_mlir_modules(dst_module: ir.Module,
   return renamings["main"]
 
 
-def xla_fallback_lowering(prim: core.Primitive):
-  @cache_lowering
-  def fallback(ctx: LoweringRuleContext, *args, **params):
-    module_ctx = ctx.module_context
-    axis_ctx = module_ctx.axis_context
-    if isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
-      axis_env = axis_ctx.unsafe_axis_env
-    else:
-      axis_env = module_ctx.axis_env
-
-    if any(hasattr(a, "shape") and
-           not core.is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
-      raise NotImplementedError(
-          f"Shape polymorphism for xla_fallback_lowering is not implemented ({ctx.primitive}); b/261682623")
-
-    if len(module_ctx.platforms) > 1:
-      raise NotImplementedError(
-        "fallback lowering not implemented for multi-platform lowering")
-    xla_computation = xla.primitive_subcomputation(
-        module_ctx.platforms[0], axis_env, prim, ctx.avals_in,
-        ctx.avals_out, **params)
-    xla_module = xla_computation_to_mlir_module(xla_computation)
-    callee_name = merge_mlir_modules(
-        module_ctx.module, f"xla_fallback_{prim.name}", xla_module,
-        dst_symtab=module_ctx.symbol_table)
-    output_types = map(aval_to_ir_type, ctx.avals_out)
-    flat_output_types = flatten_ir_types(output_types)
-    output_type = (ir.TupleType.get_tuple(flat_output_types)
-                   if prim.multiple_results else flat_output_types[0])
-
-    call = func_dialect.CallOp([output_type],
-                               ir.FlatSymbolRefAttr.get(callee_name),
-                               flatten_ir_values(args)).result
-    if not prim.multiple_results:
-      return [call]
-    flat_results = [hlo.get_tuple_element(call, i32_attr(i))
-                    for i in range(len(flat_output_types))]
-
-    return unflatten_ir_values_like_types(flat_results, output_types)
-  return fallback
 
 
 DEVICE_TO_DEVICE_TYPE = 1
