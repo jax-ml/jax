@@ -1578,7 +1578,7 @@ def _lu_solve_core(lu: Array, permutation: Array, b: Array, trans: int) -> Array
                          conjugate_a=conj)
     x = triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True,
                          transpose_a=True, conjugate_a=conj)
-    _, ind = lax.sort_key_val(permutation, lax.iota('int32', len(permutation)))
+    _, ind = lax.sort_key_val(permutation, lax.iota('int32', permutation.shape[0]))
     x = x[ind, :]
   else:
     raise ValueError(f"'trans' value must be 0, 1, or 2, got {trans}")
