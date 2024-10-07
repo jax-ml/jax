@@ -3171,9 +3171,39 @@ def heaviside(x1: ArrayLike, x2: ArrayLike, /) -> Array:
                 _where(lax.gt(x1, zero), _lax_const(x1, 1), x2))
 
 
-@implements(np.hypot, module='numpy')
 @jit
 def hypot(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  r"""
+  Return element-wise hypotenuse for the given legs of a right angle triangle.
+
+  JAX implementation of :obj:`numpy.hypot`.
+
+  Args:
+    x1: scalar or array. Specifies one of the legs of right angle triangle.
+      ``complex`` dtype are not supported.
+    x2: scalar or array. Specifies the other leg of right angle triangle.
+      ``complex`` dtype are not supported. ``x1`` and ``x2`` must either have
+      same shape or be broadcast compatible.
+
+  Returns:
+    An array containing the hypotenuse for the given given legs ``x1`` and ``x2``
+    of a right angle triangle, promoting to inexact dtype.
+
+  Note:
+    ``jnp.hypot`` is a more numerically stable way of computing
+    ``jnp.sqrt(x1 ** 2 + x2 **2)``.
+
+  Examples:
+    >>> jnp.hypot(3, 4)
+    Array(5., dtype=float32, weak_type=True)
+    >>> x1 = jnp.array([[3, -2, 5],
+    ...                 [9, 1, -4]])
+    >>> x2 = jnp.array([-5, 6, 8])
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.hypot(x1, x2)
+    Array([[ 5.831,  6.325,  9.434],
+           [10.296,  6.083,  8.944]], dtype=float32)
+  """
   x1, x2 = promote_args_inexact("hypot", x1, x2)
 
   # TODO(micky774): Promote to ValueError when deprecation is complete
