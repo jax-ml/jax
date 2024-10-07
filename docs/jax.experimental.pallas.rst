@@ -13,6 +13,8 @@ Classes
   GridSpec
   Slice
 
+  MemoryRef
+
 Functions
 ---------
 
@@ -36,3 +38,5 @@ Functions
   atomic_xchg
 
   debug_print
+
+  run_scoped
