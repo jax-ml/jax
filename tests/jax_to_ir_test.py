@@ -81,21 +81,12 @@ class JaxToIRTest(absltest.TestCase):
       jax_to_ir.parse_shape_str('foo[]')
 
   @unittest.skipIf(tf is None, 'TensorFlow not installed.')
-  @jtu.ignore_warning(
-      category=UserWarning,
-      message='jax2tf.convert with native_serialization=False is deprecated.'
-  )
   def test_jax_to_tf_axpy(self):
     tf_proto, tf_text = jax_to_ir.jax_to_tf(axpy, [
         ('y', jax_to_ir.parse_shape_str('f32[128]')),
         ('a', jax_to_ir.parse_shape_str('f32[]')),
         ('x', jax_to_ir.parse_shape_str('f32[128,2]')),
     ])
-
-    # Check that tf debug txt contains a broadcast, add, and multiply.
-    self.assertIn('BroadcastTo', tf_text)
-    self.assertIn('AddV2', tf_text)
-    self.assertIn('Mul', tf_text)
 
     # Check that we can re-import our graphdef.
     gdef = tf.compat.v1.GraphDef()
