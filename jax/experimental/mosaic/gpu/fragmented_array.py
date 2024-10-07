@@ -214,10 +214,16 @@ class FragmentedArray:
       raise TypeError(ref.type)
 
     ref_ty = ir.MemRefType(ref.type)
-    ref_1d = mgpu.memref_fold(ref, 0, len(ref_ty.shape))
     layout = WGStridedFragLayout.from_memref_type(ref_ty)
     vec_ty = ir.VectorType.get((layout.vec_size,), ref_ty.element_type)
-    vecs = [vector.load(vec_ty, ref_1d, [vec_idx]) for vec_idx in layout.linear_thread_vec_idxs()]
+    try:
+      # Flattening the reference potentially produces simpler PTX but
+      # if the ref is not already 1D and has strided dimensions
+      # flattening won't work.
+      ref_ = mgpu.memref_fold(ref, 0, len(ref_ty.shape))
+      vecs = [vector.load(vec_ty, ref_, [vec_idx]) for vec_idx in layout.linear_thread_vec_idxs()]
+    except NotImplementedError:
+      vecs = [vector.load(vec_ty, ref, vec_idx) for vec_idx in layout.thread_vec_idxs()]
     return cls(_registers=np.array(vecs), _layout=layout, _is_signed=is_signed)
 
   @classmethod
@@ -835,12 +841,22 @@ class FragmentedArray:
 
   def _store_untiled_wg_strided(self, ref: ir.Value):
     ref_ty = ir.MemRefType(ref.type)
+    try:
+      # Flattening the reference potentially produces simpler PTX but
+      # if the ref is not already 1D and has strided dimensions
+      # flattening won't work. We use a different variable for ref in
+      # case `NotImplementedError` is thrown by
+      # .linear_thread_vec_idxs().
+      ref_ = mgpu.memref_fold(ref, 0, len(ref_ty.shape))
+      idxs = ([i] for i in self.layout.linear_thread_vec_idxs())
+    except NotImplementedError:
+      ref_ = ref
+      idxs = self.layout.thread_vec_idxs()
     ref_shape = tuple(ref_ty.shape)
     if ref_shape != self.shape:
       raise ValueError((ref_shape, self.shape))
-    smem_1d = mgpu.memref_fold(ref, 0, len(ref_ty.shape))
-    for idx, reg in zip(self.layout.linear_thread_vec_idxs(), self.registers.flat):
-      vector.store(reg, smem_1d, [idx])
+    for idx, reg in zip(idxs, self.registers.flat):
+      vector.store(reg, ref_, idx)
 
   def _store_untiled_wgmma(self, ref: ir.Value):
     """Stores accumulator to a 2D memref. Not optimized at the moment."""
