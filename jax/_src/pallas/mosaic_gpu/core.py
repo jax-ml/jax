@@ -369,10 +369,14 @@ class WGMMAAbstractAccumulatorRef(AbstractMemoryRef):
     return _as_accum(super().at_least_vspace())
 
   def _getitem(self, tracer, idx):
-    if not _is_trivial_index(idx):
-      raise NotImplementedError(f"Can only dereference accumulators, not slice ({idx=}).")
     from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_deref  # pytype: disable=import-error
-    return wgmma_accumulator_deref(tracer)
+    arr = wgmma_accumulator_deref(tracer)
+
+    if not _is_trivial_index(idx):
+      arr = arr[idx]
+
+    return arr
+
 
 def _as_accum(ref) -> WGMMAAbstractAccumulatorRef:
   return WGMMAAbstractAccumulatorRef(

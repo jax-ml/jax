@@ -815,6 +815,16 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   )
 
 
+@register_lowering_rule(lax.slice_p)
+def _slice_lowering_rule(
+    ctx: LoweringRuleContext, x, limit_indices, start_indices, strides
+):
+  if strides is not None:
+    raise NotImplementedError("Strides are not supported.")
+
+  return x[tuple(slice(b, e) for b, e in zip(start_indices, limit_indices))]
+
+
 @register_lowering_rule(lax.select_n_p)
 def _select_n_lowering_rule(ctx: LoweringRuleContext, pred, *cases):
   if len(cases) != 2:

@@ -576,6 +576,42 @@ class PallasCallTest(PallasTest):
         res, a @ (b.T if rhs_transpose else b), rtol=1e-3
     )
 
+  def test_wgmma_sliced(self):
+    swizzle = 128
+    elems_128b = swizzle // jnp.dtype(jnp.float16).itemsize
+    def kernel(a_ref, b_ref, o_ref):
+      def scope(acc_ref):
+        plgpu.wgmma(acc_ref, a_ref, b_ref)
+        return acc_ref[:, :64], acc_ref[:, 64:]
+
+      o_ref[:, :64], o_ref[:, 64:] = pl.run_scoped(scope, plgpu.ACC((64, 128), jnp.float32))
+
+    key1, key2 = jax.random.split(jax.random.key(42), 2)
+    a = jax.random.uniform(key1, shape=(64, 128), dtype=jnp.float16)
+    b = jax.random.uniform(key2, shape=(128, 128), dtype=jnp.float16)
+    res = pl.pallas_call(
+        kernel,
+        in_specs=[
+            plgpu.GPUBlockSpec(
+                (64, 128),
+                lambda i, j: (i, j),
+                transforms=plgpu.TilingTransform((64, elems_128b)),
+                swizzle=128,
+            ),
+            plgpu.GPUBlockSpec(
+                (128, 128),
+                lambda *i: i,
+                transforms=plgpu.TilingTransform((elems_128b, elems_128b)),
+                swizzle=128,
+            ),
+        ],
+        out_specs=plgpu.GPUBlockSpec((64, 128), lambda *i: i),
+        out_shape=jax.ShapeDtypeStruct((64, 128), jnp.float32),
+        grid=(1, 1),
+    )(a, b)
+    np.testing.assert_allclose(res, a @ b, rtol=1e-3)
+
+
   def test_input_output_aliases(self):
     # Note that we're writing to the input pointer, which should alias b_ptr.
     def kernel(a_ref, b_ref):
