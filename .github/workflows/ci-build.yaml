@@ -68,7 +68,7 @@ jobs:
         python -m pip install --upgrade pip wheel
         echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
     - name: pip cache
-      uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9  # v4.0.2
+      uses: actions/cache@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2  # v4.1.0
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
         key: ${{ runner.os }}-py${{ matrix.python-version }}-pip-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
@@ -115,7 +115,7 @@ jobs:
         python -m pip install --upgrade pip wheel
         echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
     - name: pip cache
-      uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9  # v4.0.2
+      uses: actions/cache@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2  # v4.1.0
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
         key: ${{ runner.os }}-pip-docs-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
@@ -152,7 +152,7 @@ jobs:
         python -m pip install --upgrade pip wheel
         echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
     - name: pip cache
-      uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9  # v4.0.2
+      uses: actions/cache@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2  # v4.1.0
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
         key: ${{ runner.os }}-pip-docs-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
@@ -188,7 +188,7 @@ jobs:
         python -m pip install --upgrade pip wheel
         echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
     - name: pip cache
-      uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9  # v4.0.2
+      uses: actions/cache@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2  # v4.1.0
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
         key: ${{ runner.os }}-py${{ matrix.python-version }}-pip-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
@@ -227,7 +227,7 @@ jobs:
         python -m pip install --upgrade pip wheel
         echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
     - name: pip cache
-      uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9  # v4.0.2
+      uses: actions/cache@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2  # v4.1.0
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
         key: ${{ runner.os }}-pip-ffi-examples-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt', 'examples/**/pyproject.toml') }}
