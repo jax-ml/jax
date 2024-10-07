@@ -651,10 +651,19 @@ pytype_strict_library(
     ] + py_deps("numpy"),
 )
 
-# TODO(slebedev): Rename to :pallas_triton and update all users. Reserve :pallas_gpu
-# for both GPU backends.
 pytype_strict_library(
     name = "pallas_gpu",
+    visibility = [
+        ":pallas_gpu_users",
+    ],
+    deps = [
+        ":pallas_triton",
+        # TODO(slebedev): Add :pallas_mosaic_gpu once it is ready.
+    ],
+)
+
+pytype_strict_library(
+    name = "pallas_triton",
     srcs = [
         "experimental/pallas/gpu.py",
         "experimental/pallas/triton.py",
