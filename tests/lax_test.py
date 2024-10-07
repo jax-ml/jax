@@ -1061,19 +1061,19 @@ class LaxTest(jtu.JaxTestCase):
               accumulation_type=np.float32,
           ), [np.float16]),
           ("F16_F16_F32", [np.float16]),
-          (lax.DotAlgorithm.Preset.DEFAULT, lax_test_util.float_dtypes),
-          (lax.DotAlgorithm.Preset.ANY_F8_ANY_F8_F32, dtypes._float8_dtypes),
-          (lax.DotAlgorithm.Preset.ANY_F8_ANY_F8_F32_FAST_ACCUM, dtypes._float8_dtypes),
-          (lax.DotAlgorithm.Preset.F16_F16_F16, [np.float16]),
-          (lax.DotAlgorithm.Preset.F16_F16_F32, [np.float16]),
-          (lax.DotAlgorithm.Preset.BF16_BF16_BF16, [dtypes.bfloat16]),
-          (lax.DotAlgorithm.Preset.BF16_BF16_F32, [dtypes.bfloat16]),
-          (lax.DotAlgorithm.Preset.BF16_BF16_F32_X3, [np.float32]),
-          (lax.DotAlgorithm.Preset.BF16_BF16_F32_X6, [np.float32]),
-          (lax.DotAlgorithm.Preset.TF32_TF32_F32, [np.float32]),
-          (lax.DotAlgorithm.Preset.TF32_TF32_F32_X3, [np.float32]),
-          (lax.DotAlgorithm.Preset.F32_F32_F32, [np.float32]),
-          (lax.DotAlgorithm.Preset.F64_F64_F64, [np.float64]),
+          (lax.DotAlgorithmPreset.DEFAULT, lax_test_util.float_dtypes),
+          (lax.DotAlgorithmPreset.ANY_F8_ANY_F8_F32, dtypes._float8_dtypes),
+          (lax.DotAlgorithmPreset.ANY_F8_ANY_F8_F32_FAST_ACCUM, dtypes._float8_dtypes),
+          (lax.DotAlgorithmPreset.F16_F16_F16, [np.float16]),
+          (lax.DotAlgorithmPreset.F16_F16_F32, [np.float16]),
+          (lax.DotAlgorithmPreset.BF16_BF16_BF16, [dtypes.bfloat16]),
+          (lax.DotAlgorithmPreset.BF16_BF16_F32, [dtypes.bfloat16]),
+          (lax.DotAlgorithmPreset.BF16_BF16_F32_X3, [np.float32]),
+          (lax.DotAlgorithmPreset.BF16_BF16_F32_X6, [np.float32]),
+          (lax.DotAlgorithmPreset.TF32_TF32_F32, [np.float32]),
+          (lax.DotAlgorithmPreset.TF32_TF32_F32_X3, [np.float32]),
+          (lax.DotAlgorithmPreset.F32_F32_F32, [np.float32]),
+          (lax.DotAlgorithmPreset.F64_F64_F64, [np.float64]),
       ] for dtype in test_dtypes
       if jtu.dtypes.supported([dtype])
   ])
@@ -1084,26 +1084,35 @@ class LaxTest(jtu.JaxTestCase):
     if jaxlib_version <= (0, 4, 33):
       raise SkipTest(
           "The dot algorithm attribute is only supported for jaxlib >0.4.33.")
+    if jtu.test_device_matches(["cpu"]):
+      if algorithm not in {
+          lax.DotAlgorithmPreset.DEFAULT,
+          lax.DotAlgorithmPreset.F16_F16_F16,
+          lax.DotAlgorithmPreset.F32_F32_F32,
+          lax.DotAlgorithmPreset.F64_F64_F64,
+      }:
+        raise SkipTest(
+            f"The dot algorithm '{algorithm}' is not supported on CPU.")
     if jtu.test_device_matches(["gpu"]):
       # GPU algorithm support is a little spotty. It is checked in
       # xla/service/algorithm_util.cc and the logic is copied here.
       if algorithm in {
-          lax.DotAlgorithm.Preset.F16_F16_F32,
-          lax.DotAlgorithm.Preset.TF32_TF32_F32,
-          lax.DotAlgorithm.Preset.BF16_BF16_F32,
-          lax.DotAlgorithm.Preset.BF16_BF16_F32_X3,  # Must have f32 input
-          lax.DotAlgorithm.Preset.BF16_BF16_F32_X6,  # Must have f32 input
+          lax.DotAlgorithmPreset.F16_F16_F32,
+          lax.DotAlgorithmPreset.TF32_TF32_F32,
+          lax.DotAlgorithmPreset.BF16_BF16_F32,
+          lax.DotAlgorithmPreset.BF16_BF16_F32_X3,
+          lax.DotAlgorithmPreset.BF16_BF16_F32_X6,
       }:
         if not jtu.is_cuda_compute_capability_at_least("8.0"):
           raise SkipTest(
               f"The dot algorithm '{algorithm}' requires CUDA compute "
               "capability >= 8.0.")
       elif algorithm not in {
-          lax.DotAlgorithm.Preset.DEFAULT,
-          lax.DotAlgorithm.Preset.ANY_F8_ANY_F8_F32,
-          lax.DotAlgorithm.Preset.ANY_F8_ANY_F8_F32_FAST_ACCUM,
-          lax.DotAlgorithm.Preset.F32_F32_F32,
-          lax.DotAlgorithm.Preset.F64_F64_F64,
+          lax.DotAlgorithmPreset.DEFAULT,
+          lax.DotAlgorithmPreset.ANY_F8_ANY_F8_F32,
+          lax.DotAlgorithmPreset.ANY_F8_ANY_F8_F32_FAST_ACCUM,
+          lax.DotAlgorithmPreset.F32_F32_F32,
+          lax.DotAlgorithmPreset.F64_F64_F64,
       }:
         raise SkipTest(
             f"The dot algorithm '{algorithm}' is not supported on GPU.")
@@ -1111,12 +1120,8 @@ class LaxTest(jtu.JaxTestCase):
     rhs_shape = (4, 3)
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
-    self._CompileAndCheck(partial(lax.dot, algorithm=algorithm), args_maker)
-    # Check that accumulation type sets the output type
-    output = lax.dot(*args_maker(), algorithm=algorithm)
-    algorithm = lax_internal.canonicalize_dot_algorithm(algorithm)
-    expected_dtype = dtype if algorithm is None else algorithm.accumulation_type
-    self.assertEqual(output.dtype, expected_dtype)
+    self._CompileAndCheck(partial(lax.dot, precision=algorithm), args_maker)
+    self.assertEqual(lax.dot(*args_maker(), precision=algorithm).dtype, dtype)
 
   def testDotAlgorithmInvalidFloat8Type(self):
     if xla_bridge.using_pjrt_c_api():
@@ -1125,95 +1130,29 @@ class LaxTest(jtu.JaxTestCase):
     if jaxlib_version <= (0, 4, 33):
       raise SkipTest(
           "The dot algorithm attribute is only supported for jaxlib >0.4.33.")
+    if jtu.test_device_matches(["cpu"]):
+      raise SkipTest("Not supported on CPU.")
     lhs_shape = (3, 4)
     rhs_shape = (4, 3)
     rng = jtu.rand_default(self.rng())
     lhs, rhs = rng(lhs_shape, np.float32), rng(rhs_shape, dtypes.float8_e4m3fn)
     with self.assertRaisesRegex(ValueError, "The dot algorithm"):
-      lax.dot(lhs, rhs, algorithm="ANY_F8_ANY_F8_F32")
+      lax.dot(lhs, rhs, precision="ANY_F8_ANY_F8_F32")
 
-  @parameterized.parameters([
-      ({"precision": lax.Precision.HIGHEST}, "The dot_general precision must be None or DEFAULT"),
-      ({"preferred_element_type": np.float32}, "The preferred_element_type and algorithm arguments"),
-  ])
-  def testDotAlgorithmInvalidParameters(self, kwargs, pattern):
+  def testDotAlgorithmCasting(self):
     if xla_bridge.using_pjrt_c_api():
       raise SkipTest(
           "The dot algorithm attribute is not supported by PJRT C API.")
     if jaxlib_version <= (0, 4, 33):
       raise SkipTest(
           "The dot algorithm attribute is only supported for jaxlib >0.4.33.")
+    def fun(lhs, rhs):
+      return lax.dot(lhs, rhs, precision="F32_F32_F32")
     lhs_shape = (3, 4)
     rhs_shape = (4, 3)
     rng = jtu.rand_default(self.rng())
-    lhs, rhs = rng(lhs_shape, np.float32), rng(rhs_shape, np.float32)
-    with self.assertRaisesRegex(ValueError, pattern):
-      lax.dot(lhs, rhs, algorithm="F32_F32_F32", **kwargs)
-
-  def testDotAlgorithmTransposeRequired(self):
-    if xla_bridge.using_pjrt_c_api():
-      raise SkipTest(
-          "The dot algorithm attribute is not supported by PJRT C API.")
-    if jaxlib_version <= (0, 4, 33):
-      raise SkipTest(
-          "The dot algorithm attribute is only supported for jaxlib >0.4.33.")
-    lhs_shape = (3, 4)
-    rhs_shape = (4, 3)
-    rng = jtu.rand_default(self.rng())
-    lhs, rhs = rng(lhs_shape, np.float32), rng(rhs_shape, np.float32)
-    fun = partial(lax.dot, algorithm="F32_F32_F32")
-    out = fun(lhs, rhs)
-    _, vjp_fun = jax.vjp(fun, lhs, rhs)
-    with self.assertRaisesRegex(
-        ValueError, "When a dot_general algorithm is specified"):
-      vjp_fun(out)
-
-  @parameterized.parameters([
-      ("F32_F32_F32", "F16_F16_F32"),
-      ("F32_F32_F32", ("F16_F16_F32", "F64_F64_F64")),
-  ])
-  def testDotAlgorithmTranspose(self, algorithm, transpose_algorithm):
-    if xla_bridge.using_pjrt_c_api():
-      raise SkipTest(
-          "The dot algorithm attribute is not supported by PJRT C API.")
-    if jaxlib_version <= (0, 4, 33):
-      raise SkipTest(
-          "The dot algorithm attribute is only supported for jaxlib >0.4.33.")
-    def fun(x, y):
-      return lax.dot(x, y, algorithm=algorithm,
-                     transpose_algorithm=transpose_algorithm)
-
-    algorithm_ = lax_internal.canonicalize_dot_algorithm(algorithm)
-    lhs_alg, rhs_alg = lax_internal.canonicalize_dot_transpose_algorithm(
-        transpose_algorithm)
-
-    lhs_shape = (3, 4)
-    rhs_shape = (4, 3)
-    rng = jtu.rand_default(self.rng())
-    lhs, rhs = rng(lhs_shape, np.float32), rng(rhs_shape, np.float32)
-    out = fun(lhs, rhs)
-
-    def check_transpose_algorithm(f, arg, alg, trans_alg, trans_trans_alg):
-      fun_trans = jax.linear_transpose(f, arg)
-      jaxpr = jax.make_jaxpr(fun_trans)(out)
-      eqn = next(filter(lambda eqn: eqn.primitive == lax.dot_general_p, jaxpr.eqns))
-      self.assertEqual(eqn.params["algorithm"], alg)
-      self.assertEqual(eqn.params["transpose_algorithm"], trans_alg)
-
-      fun_ = jax.linear_transpose(lambda x: fun_trans(x)[0], out)
-      jaxpr_ = jax.make_jaxpr(fun_)(arg)
-      eqn = next(filter(lambda eqn: eqn.primitive == lax.dot_general_p, jaxpr_.eqns))
-      self.assertEqual(eqn.params["algorithm"], algorithm_)
-
-      # Note that transposing the RHS of a dot_general introduce extra
-      # transposes on the input and output, so we don't actually end up with
-      # the same `transpose_algorithm` parameter after 2 transposes.
-      self.assertEqual(eqn.params["transpose_algorithm"], trans_trans_alg)
-
-    check_transpose_algorithm(partial(fun, y=rhs), lhs, lhs_alg,
-                              (algorithm_, rhs_alg), (lhs_alg, rhs_alg))
-    check_transpose_algorithm(partial(fun, lhs), rhs, rhs_alg,
-                              (algorithm_, lhs_alg), (rhs_alg, lhs_alg))
+    lhs, rhs = rng(lhs_shape, np.float16), rng(rhs_shape, np.float16)
+    self.assertEqual(fun(lhs, rhs).dtype, np.float16)
 
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
