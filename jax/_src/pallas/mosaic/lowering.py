@@ -360,11 +360,16 @@ class MosaicGridMapping:
 
     if grid_mapping.get_grid_indices is None:
 
+      # Avoid using self.mapped_dims within the function, since doing so will
+      # introduce a self->_get_grid_indices->self reference cycle that means
+      # MosaicGridMapping instances can only ever be deleted by GC, rather than
+      # by their reference counts going to 0.
+      mapped_dims = self.mapped_dims
       def _get_grid_indices(indices, maybe_include_mapped_dims: bool):
         if maybe_include_mapped_dims:
           return indices
         return tuple(
-            idx for i, idx in enumerate(indices) if i not in self.mapped_dims
+            idx for i, idx in enumerate(indices) if i not in mapped_dims
         )
 
       self.get_grid_indices = _get_grid_indices
