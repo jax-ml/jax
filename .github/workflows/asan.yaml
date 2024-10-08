@@ -32,7 +32,7 @@ jobs:
         with:
           repository: python/cpython
           path: cpython
-          ref: v3.12.6
+          ref: v3.13.0
       - name: Install clang 18
         env:
           DEBIAN_FRONTEND: noninteractive
