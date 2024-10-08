@@ -543,10 +543,13 @@ def lower_jaxpr_to_module(
   if grid:
     for i, bm in enumerate(grid_mapping.block_mappings):
       func_name = f"transform_{i}"
-      # ANY operands don't support windowing and require empty window_params.
+      # ANY and SEMAPHORE operands don't support windowing and require empty window_params.
       tpu_memory_space = _memory_space_to_tpu_memory_space(
           bm.block_aval.memory_space)
-      if tpu_memory_space == tpu_core.TPUMemorySpace.ANY:
+      if (
+          tpu_memory_space == tpu_core.TPUMemorySpace.ANY
+          or tpu_memory_space == tpu_core.TPUMemorySpace.SEMAPHORE
+      ):
         # We checked above that the block does not require windowing.
         window_params.append(ir.DictAttr.get())
         continue
