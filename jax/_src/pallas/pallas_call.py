@@ -993,6 +993,85 @@ def checkify_pallas_kernel_body_jaxpr(
         body_jaxpr, enabled_errors, err_tree, *flat_err_and_in_vals)
   return checked_jaxpr, out_tree, error_effects
 
+def pallas_call_checkify_oob_grid(error: checkify.Error,
+                                  enabled_errors,
+                                  args: jax_core.Value,
+                                  grid_mapping: GridMapping,
+                                  input_output_aliases) -> checkify.Error:
+  if checkify.OOBError not in enabled_errors:
+    return error
+  dynamic_grid_args, args = split_list(
+      args, [grid_mapping.num_dynamic_grid_bounds]
+  )
+  output_args = _initialize_output_vals(grid_mapping.block_mappings_output,
+                                    args, input_output_aliases)
+  scalars, input_args, _ = split_list(
+      args, [grid_mapping.num_index_operands,
+             grid_mapping.num_inputs],
+  )
+  dynamic_grid_args_iter = iter(dynamic_grid_args)
+  grid = tuple(
+      a if a is not pallas_core.dynamic_grid_dim
+      else next(dynamic_grid_args_iter)
+      for a in grid_mapping.grid
+  )
+  grid_start_indices = (jnp.int32(0),) * len(grid)
+  if grid:
+    num_iterations = reduce(jnp.multiply, grid)
+  else:
+    # Base case is always one iteration when grid is ()
+    num_iterations = 1
+
+  is_indexing_dim = [
+      tuple(b is pallas_core.mapped for b in bm.block_shape)
+      for bm in grid_mapping.block_mappings
+  ]
+  block_shapes = [
+      None if iid is None
+      else tuple(1 if i else b for i, b in zip(iid, bm.block_shape))
+      for iid, bm in zip(is_indexing_dim, grid_mapping.block_mappings)
+  ]
+  # The scan carry: (i, loop_idx, *consts, *ins, *outs, *scratch)
+  # i:int32 is the interation index
+  # loop_idx: tuple[int32] are the program ids for each grid axis
+  def cond(carry):
+    i, *_ = carry
+    return i < num_iterations
+  def body(carry):
+    i, loop_idx = carry
+    if grid_mapping.local_grid_env is not None:
+      local_grid_env = grid_mapping.local_grid_env(loop_idx, grid)
+    else:
+      local_grid_env = tuple(
+          pallas_core.GridAxis(idx, b)
+          for dim, (idx, b) in enumerate(zip(loop_idx, grid))
+          if dim not in grid_mapping.vmapped_dims
+      )
+    with pallas_core.grid_env(local_grid_env):
+      start_indices = [
+          None if bm is None else bm.compute_start_indices_interpret(loop_idx, *scalars)
+          for bm in grid_mapping.block_mappings]
+    # We perform a dynamic slice on the i/o blocks, which will be checked by
+    # checkify for OOB accesses.
+    map(_maybe_dynamic_slice, start_indices, block_shapes,
+        [*input_args, *output_args], is_indexing_dim)
+    return (i + 1, _get_next_indices(grid, loop_idx))
+  def f(_):
+    lax.while_loop(
+        cond, body, (jnp.int32(0), grid_start_indices)
+    )
+  flat_args, jaxpr_in_tree = jax.tree_util.tree_flatten((jnp.int32(0),))
+  wrapped_loop, _ = api_util.flatten_fun_nokwargs(
+      lu.wrap_init(f), jaxpr_in_tree)
+  with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
+    avals_in = map(jax_core.get_aval, flat_args)
+    traced_loop, _, consts, () = pe.trace_to_jaxpr_dynamic(
+        wrapped_loop, list(avals_in))
+    traced_loop = jax_core.ClosedJaxpr(traced_loop, consts)
+  out_error, _ = checkify.checkify_jaxpr(
+      traced_loop, checkify.index_checks, error, flat_args)
+  return out_error
+
 def pallas_call_checkify_rule(error: checkify.Error,
                               enabled_errors,
                               *args: jax_core.Value,
@@ -1002,6 +1081,10 @@ def pallas_call_checkify_rule(error: checkify.Error,
                               grid_mapping: GridMapping,
                               out_avals: tuple[jax_core.AbstractValue, ...],
                               **kwargs):
+  # Check for OOB accesses in the grid.
+  error = pallas_call_checkify_oob_grid(error, enabled_errors,
+                                        args, grid_mapping,
+                                        input_output_aliases)
   # We implement the checkify rule in 4 steps:
   # 1) First, trace the kernel body to get the expected error shapes.
   # 2) Checkify the kernel body to obtain a jaxpr with errors as inputs
