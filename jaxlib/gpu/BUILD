@@ -82,7 +82,6 @@ cc_proto_library(
 
 xla_py_proto_library(
     name = "triton_py_pb2",
-    api_version = 2,
     visibility = jax_visibility("triton_proto_py_users"),
     deps = [":triton_proto"],
 )
