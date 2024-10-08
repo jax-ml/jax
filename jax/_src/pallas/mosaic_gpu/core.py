@@ -59,8 +59,11 @@ class GPUCompilerParams(pallas_core.CompilerParams):
 
 
 class GPUMemorySpace(enum.Enum):
+  #: Global memory.
   GMEM = "gmem"
+  #: Shared memory.
   SMEM = "smem"
+  #: Registers.
   REGS = "regs"
 
   def __str__(self) -> str:
