@@ -1220,6 +1220,7 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
 
   xla_donated_args = None
   out_donated_args = list(donated_args)
+  in_out_layout_not_none = in_layouts is not None and out_layouts is not None
   for i, (aval, rm) in enumerate(zip(avals_out, result_memory_kinds)):
     # Only donate if memory kinds match. Relax this when the compiler can
     # donate across memories.
@@ -1227,14 +1228,26 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
     if donations.get(key, ()):
       input_id = donations[key].popleft()
       out_donated_args[input_id] = False
-      # We can alias if XLA performs layout assignment because XLA will
-      # respect the aliases when assigning layouts. Its only for two
-      # mismatched explicitly assigned layouts that XLA will certainly fail.
-      if (in_layouts is None or
-          out_layouts is None or
-          in_layouts[input_id] == out_layouts[i] or
-          isinstance(in_layouts[input_id], AutoLayout) or
+      if (in_out_layout_not_none and
+          isinstance(in_layouts[input_id], AutoLayout) and
+          not isinstance(out_layouts[i], AutoLayout)):
+        raise ValueError(
+            f"Input layout being donated was {in_layouts[input_id]} while"
+            f" output layout was {out_layouts[i]}. Did you mean to set the"
+            " **output layout** to **DeviceLocalLayout.AUTO**?\nThis will"
+            " allow for the input and output layout to be chosen by XLA and"
+            " not the layout of the output which might not be optimal.")
+      if (in_out_layout_not_none and
+          not isinstance(in_layouts[input_id], AutoLayout) and
           isinstance(out_layouts[i], AutoLayout)):
+        raise ValueError(
+            f"Input layout being donated was {in_layouts[input_id]} while"
+            f" output layout was {out_layouts[i]}. Did you mean to set the"
+            " **input layout** to **DeviceLocalLayout.AUTO**?\nThis will allow"
+            " for the input and output layout to be chosen by XLA and not the"
+            " layout of the input which might not be optimal.")
+      if (in_layouts is None or out_layouts is None or
+          in_layouts[input_id] == out_layouts[i]):
         input_output_aliases[input_id] = i
       else:
         # Fallback to xla donation if layouts don't match.
@@ -1508,7 +1521,6 @@ def lower_jaxpr_to_fun(
           aliases.extend([None] * len_ir_types(itypes))
         else:
           aliases.extend(output_ids[alias])
-
       for attrs, alias in zip(arg_attrs, aliases):
         if alias is not None:
           attrs["tf.aliasing_output"] = i32_attr(alias)
@@ -2593,8 +2605,6 @@ def merge_mlir_modules(dst_module: ir.Module,
     dst_symtab.insert(op)
 
   return renamings["main"]
-
-
 
 
 DEVICE_TO_DEVICE_TYPE = 1
