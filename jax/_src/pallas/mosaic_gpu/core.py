@@ -46,11 +46,16 @@ class GPUCompilerParams(pallas_core.CompilerParams):
       executed sequentially.
     max_concurrent_steps: The maximum number of sequential stages that are
       active concurrently. Defaults to 1.
+    delay_release: The number of steps to wait before reusing the input/output
+      references. Defaults to 0, and must be strictly smaller than
+      max_concurrent_steps. Generally, you'll want to set it to 1 if you don't
+      await the WGMMA in the body.
   """
   PLATFORM: ClassVar[str] = "mosaic_gpu"
   approx_math: bool = False
   dimension_semantics: Sequence[Literal["parallel", "sequential"]] | None = None
   max_concurrent_steps: int = 1
+  delay_release: int = 0
 
 
 class GPUMemorySpace(enum.Enum):
