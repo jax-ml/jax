@@ -852,7 +852,7 @@ jax_multiplatform_test(
             "nomsan",
         ],  # Times out on TPU with asan/tsan/msan.
     },
-    shard_count = 4,
+    shard_count = 12,
 )
 
 jax_multiplatform_test(
