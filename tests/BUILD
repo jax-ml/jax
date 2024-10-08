@@ -330,7 +330,6 @@ jax_multiplatform_test(
     name = "infeed_test",
     srcs = ["infeed_test.py"],
     deps = [
-        "//jax:experimental_host_callback",
     ],
 )
 
@@ -1140,16 +1139,6 @@ jax_multiplatform_test(
         "cpu": 10,
     },
     deps = ["//jax:ode"],
-)
-
-jax_multiplatform_test(
-    name = "host_callback_test",
-    srcs = ["host_callback_test.py"],
-    main = "host_callback_test.py",
-    deps = [
-        "//jax:experimental",
-        "//jax:ode",
-    ],
 )
 
 jax_multiplatform_test(
