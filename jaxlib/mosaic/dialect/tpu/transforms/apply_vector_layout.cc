@@ -3035,7 +3035,8 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
     } else if (layout_out.bitwidth() == 32 &&
                canReinterpretToUntiledMemref(
                    memref_ty, ctx.target_shape,
-                   /*allow_minormost_padding=*/true)) {
+                   /*allow_minormost_padding=*/true,
+                   getDynamicSizesFromSlicedMemref(load_op.getBase()))) {
       // In this case, if the memref can be reinterpreted to untiled, it is
       // valid to use any tiling for output. But using native tiling can save us
       // a bunch of loads!
@@ -4236,7 +4237,8 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
                // apply_vector_layout will properly mask stores。
                canReinterpretToUntiledMemref(
                    memref_ty, ctx.target_shape,
-                   /*allow_minormost_padding=*/true)) {
+                   /*allow_minormost_padding=*/true,
+                   getDynamicSizesFromSlicedMemref(store_op.getBase()))) {
       // In this case, if the memref can be reinterpreted to untiled, it is
       // valid to use any tiling for to_store. But using native tiling can save
       // us a bunch of stores!

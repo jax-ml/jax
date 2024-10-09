@@ -1283,8 +1283,13 @@ class VectorLayoutInferer {
                                layout_tiling, ImplicitDim::kNone));
       } else if (bitwidth == 32 &&
                  canReinterpretToUntiledMemref(
-                     src_ty, target_shape_, /*allow_minormost_padding=*/true) &&
+                     src_ty, target_shape_, /*allow_minormost_padding=*/true,
+                     getDynamicSizesFromSlicedMemref(op.getBase())) &&
                  *(src_ty.getShape().end() - 2) > 1) {
+        if (tiling[0] != 1 || tiling[1] != target_shape_[1]) {
+          return op.emitOpError("Expected untiled memref to have tiling (1,")
+                 << target_shape_[1] << ")";
+        }
         // Since it is untiled, we can load from any arbitrary address which
         // means we can always set the sublane offset to 0.
         // Note: if the src_shape[-2] == 1, we can just use the tiling from ref.
@@ -1613,7 +1618,12 @@ class VectorLayoutInferer {
                  // We accept padding in the minormost dim, because
                  // apply_vector_layout will properly mask stores.
                  canReinterpretToUntiledMemref(
-                     ref_ty, target_shape_, /*allow_minormost_padding=*/true)) {
+                     ref_ty, target_shape_, /*allow_minormost_padding=*/true,
+                     getDynamicSizesFromSlicedMemref(op.getBase()))) {
+        if (tiling[0] != 1 || tiling[1] != target_shape_[1]) {
+          return op.emitOpError("Expected untiled memref to have tiling (1,")
+                 << target_shape_[1] << ")";
+        }
         // Since it is untiled, we can store to any arbitrary address which
         // means the sublane offset can be any value and we can fold it to
         // 2nd minor index.
