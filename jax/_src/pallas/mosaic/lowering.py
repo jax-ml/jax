@@ -1653,6 +1653,10 @@ def _convert_element_type_lowering_rule(
 
   if old_dtype == new_dtype:
     return x
+
+  if new_dtype.itemsize == 8:
+    raise NotImplementedError("64-bit types are not supported")
+
   if jnp.issubdtype(old_dtype, jnp.floating) and jnp.issubdtype(
       new_dtype, jnp.floating
   ):
