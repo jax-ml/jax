@@ -235,9 +235,7 @@ jax_multiplatform_test(
         "//jax:pallas",
         "//jax:pallas_tpu",
         "//jax/_src/pallas/mosaic:random",
-        "//third_party/py/absl/testing:absltest",
-        "//third_party/py/absl/testing:parameterized",
-    ] + py_deps("numpy"),
+    ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
 jax_multiplatform_test(
@@ -367,9 +365,7 @@ jax_multiplatform_test(
         "//jax:pallas",
         "//jax:pallas_tpu",
         "//jax/_src/pallas/mosaic:random",
-        "//third_party/py/absl/testing:absltest",
-        "//third_party/py/absl/testing:parameterized",
-    ] + py_deps("numpy"),
+    ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
 jax_multiplatform_test(
