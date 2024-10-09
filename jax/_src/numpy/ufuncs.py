@@ -1229,14 +1229,65 @@ def _bitwise_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
   """
   return lax.bitwise_xor(*promote_args("bitwise_xor", x, y))
 
-@implements(np.left_shift, module='numpy')
+
 @partial(jit, inline=True)
 def left_shift(x: ArrayLike, y: ArrayLike, /) -> Array:
+  r"""Shift bits of ``x`` to left by the amount specified in ``y``, element-wise.
+
+  JAX implementation of :obj:`numpy.left_shift`.
+
+  Args:
+    x: Input array, must be integer-typed.
+    y: The amount of bits to shift each element in ``x`` to the left, only accepts
+      integer subtypes. ``x`` and ``y`` must either have same shape or be broadcast
+      compatible.
+
+  Returns:
+    An array containing the left shifted elements of ``x`` by the amount specified
+    in ``y``, with the same shape as the broadcasted shape of ``x`` and ``y``.
+
+  Note:
+    Left shifting ``x`` by ``y`` is equivalent to ``x * (2**y)`` within the
+    bounds of the dtypes involved.
+
+  See also:
+    - :func:`jax.numpy.right_shift`: and :func:`jax.numpy.bitwise_right_shift`:
+      Shifts the bits of ``x1`` to right by the amount specified in ``x2``,
+      element-wise.
+    - :func:`jax.numpy.bitwise_left_shift`: Alias of :func:`jax.left_shift`.
+
+  Examples:
+    >>> def print_binary(x):
+    ...   return [bin(int(val)) for val in x]
+
+    >>> x1 = jnp.arange(5)
+    >>> x1
+    Array([0, 1, 2, 3, 4], dtype=int32)
+    >>> print_binary(x1)
+    ['0b0', '0b1', '0b10', '0b11', '0b100']
+    >>> x2 = 1
+    >>> result = jnp.left_shift(x1, x2)
+    >>> result
+    Array([0, 2, 4, 6, 8], dtype=int32)
+    >>> print_binary(result)
+    ['0b0', '0b10', '0b100', '0b110', '0b1000']
+
+    >>> x3 = 4
+    >>> print_binary([x3])
+    ['0b100']
+    >>> x4 = jnp.array([1, 2, 3, 4])
+    >>> result1 = jnp.left_shift(x3, x4)
+    >>> result1
+    Array([ 8, 16, 32, 64], dtype=int32)
+    >>> print_binary(result1)
+    ['0b1000', '0b10000', '0b100000', '0b1000000']
+  """
   return lax.shift_left(*promote_args_numeric("left_shift", x, y))
 
-@implements(getattr(np, "bitwise_left_shift", np.left_shift), module='numpy')
+
 @partial(jit, inline=True)
 def bitwise_left_shift(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Alias of :func:`jax.numpy.left_shift`."""
   return lax.shift_left(*promote_args_numeric("bitwise_left_shift", x, y))
 
 @implements(np.equal, module='numpy')
