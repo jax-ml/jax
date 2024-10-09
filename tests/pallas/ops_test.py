@@ -882,10 +882,6 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["tpu"]) and dtype == "float16":
       self.skipTest("float16 is not supported on TPU")
 
-    # TODO(ayx): skipped due to https://github.com/jax-ml/jax/issues/23972
-    if jtu.test_device_matches(["tpu"]) and dtype == "uint32":
-      self.skipTest("Not supported on TPU")
-
     # TODO: skipped due to https://github.com/jax-ml/jax/issues/24030
     if jtu.test_device_matches(["tpu"]) and dtype == "bool":
       self.skipTest("Not supported on TPU")
@@ -979,7 +975,7 @@ class OpsTest(PallasBaseTest):
     ):
       self.skipTest("jnp.remainder on TPU is only supported in interpret mode")
 
-    # TODO: skipped due to https://github.com/jax-ml/jax/issues/23972
+    # TODO(ayx): fix this on TPU
     if jtu.test_device_matches(["tpu"]) and dtype == "uint32":
       self.skipTest("Not supported on TPU")
 

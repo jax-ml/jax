@@ -1231,7 +1231,7 @@ def _maybe_cast_load_to_bool(
   if out_aval.dtype != jnp.bool_:
     return val
   load_scalar_type = _dtype_to_ir_type(BOOL_MEMREF_TYPE)
-  pred = _cmpi_lowering_types[lax.ne_p]
+  pred = _cmpsi_lowering_types[lax.ne_p]
   predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
   const_zero = ir.IntegerAttr.get(load_scalar_type, 0)
   if out_aval.shape:  # Vector case.
@@ -1699,7 +1699,7 @@ def _convert_element_type_lowering_rule(
       const_zero = ir.FloatAttr.get(const_type, 0)
       op = arith.CmpFOp
     else:
-      pred = _cmpi_lowering_types[lax.ne_p]
+      pred = _cmpsi_lowering_types[lax.ne_p]
       const_zero = ir.IntegerAttr.get(const_type, 0)
       op = arith.CmpIOp
     predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
@@ -2082,55 +2082,68 @@ def _floor_lowering_rule(ctx: LoweringRuleContext, x):
 lowering_rules[lax.floor_p] = _floor_lowering_rule
 
 
-# See https://mlir.llvm.org/docs/Dialects/ArithOps/#arithcmpi-arithcmpiop for
-# the mapping from comparison type to integer predicates for int comparisons.
-_cmpi_lowering_types = {
-    lax.eq_p: 0,
-    lax.ne_p: 1,
-    lax.lt_p: 2,
-    lax.le_p: 3,
-    lax.gt_p: 4,
-    lax.ge_p: 5,
+# Mapping for signed integer comparisons.
+_cmpsi_lowering_types = {
+    lax.eq_p: arith.CmpIPredicate.eq,
+    lax.ne_p: arith.CmpIPredicate.ne,
+    lax.lt_p: arith.CmpIPredicate.slt,
+    lax.le_p: arith.CmpIPredicate.sle,
+    lax.gt_p: arith.CmpIPredicate.sgt,
+    lax.ge_p: arith.CmpIPredicate.sge,
 }
 
-# See https://mlir.llvm.org/docs/Dialects/ArithOps/#arithcmpf-arithcmpfop for
-# the mapping from comparison type to integer predicate for float comparisons.
+# Mapping for unsigned integer comparisons.
+_cmpui_lowering_types = {
+    lax.eq_p: arith.CmpIPredicate.eq,
+    lax.ne_p: arith.CmpIPredicate.ne,
+    lax.lt_p: arith.CmpIPredicate.ult,
+    lax.le_p: arith.CmpIPredicate.ule,
+    lax.gt_p: arith.CmpIPredicate.ugt,
+    lax.ge_p: arith.CmpIPredicate.uge,
+}
+
+# Mapping for floating point comparisons.
 _cmpf_lowering_types = {
-    lax.eq_p: 1,
-    lax.ne_p: 6,
-    lax.lt_p: 4,
-    lax.le_p: 5,
-    lax.gt_p: 2,
-    lax.ge_p: 3,
+    lax.eq_p: arith.CmpFPredicate.OEQ,
+    lax.ne_p: arith.CmpFPredicate.ONE,
+    lax.lt_p: arith.CmpFPredicate.OLT,
+    lax.le_p: arith.CmpFPredicate.OLE,
+    lax.gt_p: arith.CmpFPredicate.OGT,
+    lax.ge_p: arith.CmpFPredicate.OGE,
 }
 
 
 def _cmp_lowering_rule(prim, ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   x_aval, y_aval = ctx.avals_in
-  dtypes = x_aval.dtype, y_aval.dtype
-  if all(
-      jnp.issubdtype(dtype, jnp.integer) | jnp.issubdtype(dtype, jnp.bool_)
-      for dtype in dtypes
-  ):
+  if x_aval.dtype != y_aval.dtype:
+    raise ValueError(
+        f"Mixed dtype operands in cmp: {x_aval.dtype}, {y_aval.dtype}"
+    )
+  dtype = x_aval.dtype
 
-    # Handle bool comparisons by casting to int32.
+  # Handle bool comparisons by casting to int32.
+  if jnp.issubdtype(dtype, jnp.bool_):
     bool_cast_to = _dtype_to_ir_type(jnp.dtype("int32"))
     true_ = ir_constant(1, mlir_type=bool_cast_to)
     false_ = ir_constant(0, mlir_type=bool_cast_to)
-    if jnp.issubdtype(dtypes[0], jnp.bool_):
-      x = arith.SelectOp(x, true_, false_)
-    if jnp.issubdtype(dtypes[1], jnp.bool_):
-      y = arith.SelectOp(y, true_, false_)
 
-    pred = _cmpi_lowering_types[prim]
+    x = arith.SelectOp(x, true_, false_)
+    y = arith.SelectOp(y, true_, false_)
+    dtype = jnp.dtype("int32")
+
+  if jnp.issubdtype(dtype, jnp.integer):
+    is_uint = jnp.issubdtype(dtype, jnp.unsignedinteger)
+    pred = (_cmpui_lowering_types if is_uint else _cmpsi_lowering_types)[prim]
     predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
     return arith.CmpIOp(predicate, x, y).result
-  elif all(jnp.issubdtype(dtype, jnp.floating) for dtype in dtypes):
+
+  if jnp.issubdtype(dtype, jnp.floating):
     pred = _cmpf_lowering_types[prim]
     predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
     return arith.CmpFOp(predicate, x, y).result
-  raise NotImplementedError("Mixed dtype operands in cmp")
+
+  raise NotImplementedError(f"Unsupported dtype in cmp: {dtype}")
 
 
 lowering_rules[lax.eq_p] = functools.partial(_cmp_lowering_rule, lax.eq_p)
