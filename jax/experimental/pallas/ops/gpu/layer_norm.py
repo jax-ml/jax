@@ -24,7 +24,7 @@ import jax.numpy as jnp
 from jax._src.lax.control_flow.for_loop import for_loop
 
 from jax.experimental import pallas as pl
-from jax.experimental.pallas import gpu as plgpu
+from jax.experimental.pallas import triton as plgpu
 
 def layer_norm_forward_kernel(
     x_ref, weight_ref, bias_ref, # Input arrays

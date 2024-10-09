@@ -584,6 +584,23 @@ class LayoutTest(jtu.JaxTestCase):
     f.lower(sds).compile()(arr)
     self.assertFalse(arr.is_deleted())
 
+  def test_donation_error_on_auto(self):
+    @partial(jax.jit, donate_argnums=0, in_shardings=Layout(DLL.AUTO))
+    def f(x):
+      return x * 2
+
+    with self.assertRaisesRegex(
+        ValueError, ".*Did you mean to set the.*output layout.*AUTO.*"):
+      f(jnp.arange(8))
+
+    @partial(jax.jit, donate_argnums=0, out_shardings=Layout(DLL.AUTO))
+    def g(x):
+      return x * 2
+
+    with self.assertRaisesRegex(
+        ValueError, ".*Did you mean to set the.*input layout.*AUTO.*"):
+      g(jnp.arange(8))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -21,7 +21,7 @@ from typing import Any
 import jax
 from jax import lax
 from jax.experimental import pallas as pl
-from jax.experimental.pallas import gpu as plgpu
+from jax.experimental.pallas import triton as plgpu
 import jax.numpy as jnp
 
 

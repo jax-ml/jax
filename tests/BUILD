@@ -330,7 +330,6 @@ jax_multiplatform_test(
     name = "infeed_test",
     srcs = ["infeed_test.py"],
     deps = [
-        "//jax:experimental_host_callback",
     ],
 )
 
@@ -852,7 +851,7 @@ jax_multiplatform_test(
             "nomsan",
         ],  # Times out on TPU with asan/tsan/msan.
     },
-    shard_count = 4,
+    shard_count = 12,
 )
 
 jax_multiplatform_test(
@@ -1140,32 +1139,6 @@ jax_multiplatform_test(
         "cpu": 10,
     },
     deps = ["//jax:ode"],
-)
-
-jax_multiplatform_test(
-    name = "host_callback_test",
-    srcs = ["host_callback_test.py"],
-    args = ["--jax_host_callback_outfeed=false"],
-    main = "host_callback_test.py",
-    shard_count = {
-        "gpu": 5,
-    },
-    tags = ["noasan"],  # Times out
-    deps = [
-        "//jax:experimental",
-        "//jax:experimental_host_callback",
-        "//jax:ode",
-    ],
-)
-
-jax_multiplatform_test(
-    name = "host_callback_to_tf_test",
-    srcs = ["host_callback_to_tf_test.py"],
-    tags = ["noasan"],  # Linking TF causes a linker OOM.
-    deps = [
-        "//jax:experimental_host_callback",
-        "//jax:ode",
-    ] + py_deps("tensorflow_core"),
 )
 
 jax_multiplatform_test(

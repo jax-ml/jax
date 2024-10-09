@@ -147,7 +147,11 @@ py_library(
     srcs = ["_src/internal_test_util/test_harnesses.py"],
     visibility = [":internal"] + jax_internal_test_harnesses_visibility,
     deps = [
+        ":ad_util",
+        ":config",
         ":jax",
+        ":test_util",
+        "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
 
@@ -583,9 +587,11 @@ pytype_strict_library(
         ],
         exclude = [
             "experimental/pallas/gpu.py",
-            "experimental/pallas/tpu.py",
+            "experimental/pallas/mosaic_gpu.py",
             "experimental/pallas/ops/gpu/**/*.py",
             "experimental/pallas/ops/tpu/**/*.py",
+            "experimental/pallas/tpu.py",
+            "experimental/pallas/triton.py",
         ],
     ),
     visibility = [
@@ -647,16 +653,42 @@ pytype_strict_library(
 
 pytype_strict_library(
     name = "pallas_gpu",
-    srcs = ["experimental/pallas/gpu.py"],
     visibility = [
         ":pallas_gpu_users",
     ],
     deps = [
-        "//jax/_src/pallas/mosaic_gpu:core",  # build_cleaner: keep
-        "//jax/_src/pallas/mosaic_gpu:pallas_call_registration",  # build_cleaner: keep
+        ":pallas_triton",
+        # TODO(slebedev): Add :pallas_mosaic_gpu once it is ready.
+    ],
+)
+
+pytype_strict_library(
+    name = "pallas_triton",
+    srcs = [
+        "experimental/pallas/gpu.py",
+        "experimental/pallas/triton.py",
+    ],
+    visibility = [
+        ":pallas_gpu_users",
+    ],
+    deps = [
+        ":deprecations",
         "//jax/_src/pallas/triton:core",
         "//jax/_src/pallas/triton:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/triton:primitives",
+    ],
+)
+
+pytype_strict_library(
+    name = "pallas_mosaic_gpu",
+    srcs = ["experimental/pallas/mosaic_gpu.py"],
+    visibility = [
+        ":mosaic_gpu_users",
+    ],
+    deps = [
+        "//jax/_src/pallas/mosaic_gpu:core",
+        "//jax/_src/pallas/mosaic_gpu:pallas_call_registration",  # build_cleaner: keep
+        "//jax/_src/pallas/mosaic_gpu:primitives",
     ],
 )
 

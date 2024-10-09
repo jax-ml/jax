@@ -104,7 +104,6 @@ _XLA_EXTENSION_STUBS = [
     "ifrt_proxy.pyi",
     "jax_jit.pyi",
     "ops.pyi",
-    "outfeed_receiver.pyi",
     "pmap_lib.pyi",
     "profiler.pyi",
     "pytree.pyi",

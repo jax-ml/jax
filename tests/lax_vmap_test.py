@@ -566,6 +566,18 @@ class LaxVmapTest(jtu.JaxTestCase):
           ((10, 5), np.array([[0, 2], [1, 0]]), lax.GatherDimensionNumbers(
             offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)),
             (1, 3)),
+          ((2, 5), np.array([[[0], [2]], [[1], [1]]]),
+           lax.GatherDimensionNumbers(
+               offset_dims=(), collapsed_slice_dims=(1,),
+               start_index_map=(1,), operand_batching_dims=(0,),
+               start_indices_batching_dims=(0,)),
+           (1, 1)),
+          ((2, 3, 10), np.array([[[0], [1]], [[2], [3]], [[4], [5]]]),
+           lax.GatherDimensionNumbers(
+               offset_dims=(2,), collapsed_slice_dims=(),
+               start_index_map=(2,), operand_batching_dims=(0, 1),
+               start_indices_batching_dims=(1, 0)),
+           (1, 1, 3))
       ]
       for bdims in lax_test_util.all_bdims(shape, idxs.shape)],
     dtype=lax_test_util.all_dtypes
@@ -590,6 +602,16 @@ class LaxVmapTest(jtu.JaxTestCase):
           ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,))),
+          ((2, 5), np.array([[[0], [2]], [[1], [1]]]), (2, 2),
+           lax.ScatterDimensionNumbers(
+               update_window_dims=(), inserted_window_dims=(1,),
+               scatter_dims_to_operand_dims=(1,), operand_batching_dims=(0,),
+               scatter_indices_batching_dims=(0,))),
+          ((2, 3, 10), np.array([[[0], [1]], [[2], [3]], [[4], [5]]]),
+           (3, 2, 3), lax.ScatterDimensionNumbers(
+               update_window_dims=(2,), inserted_window_dims=(),
+               scatter_dims_to_operand_dims=(2,), operand_batching_dims=(0, 1),
+               scatter_indices_batching_dims=(1, 0)))
       ]
       for bdims in lax_test_util.all_bdims(arg_shape, idxs.shape, update_shape)],
     dtype=lax_test_util.float_dtypes
@@ -613,6 +635,16 @@ class LaxVmapTest(jtu.JaxTestCase):
           ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,))),
+          ((2, 5), np.array([[[0], [2]], [[1], [1]]]), (2, 2),
+           lax.ScatterDimensionNumbers(
+               update_window_dims=(), inserted_window_dims=(1,),
+               scatter_dims_to_operand_dims=(1,), operand_batching_dims=(0,),
+               scatter_indices_batching_dims=(0,))),
+          ((2, 3, 10), np.array([[[0], [1]], [[2], [3]], [[4], [5]]]),
+           (3, 2, 3), lax.ScatterDimensionNumbers(
+               update_window_dims=(2,), inserted_window_dims=(),
+               scatter_dims_to_operand_dims=(2,), operand_batching_dims=(0, 1),
+               scatter_indices_batching_dims=(1, 0)))
       ]
       for bdims in lax_test_util.all_bdims(arg_shape, idxs.shape)],
     dtype=lax_test_util.float_dtypes,

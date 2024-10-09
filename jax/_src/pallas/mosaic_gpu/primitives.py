@@ -86,6 +86,11 @@ def _extract_copy_params(transforms):
 def copy_smem_to_gmem(
     src: pallas_core.AbstractMemoryRef, dst: pallas_core.AbstractMemoryRef
 ) -> None:
+  """Asynchronously copies a SMEM reference to a GMEM reference.
+
+  See also:
+    :func:`jax.experimental.mosaic.gpu.wait_smem_to_gmem`
+  """
   if src.memory_space is not gpu_core.SMEM:
     raise TypeError(f"src must be a SMEM reference, got {src.memory_space}")
   if dst.memory_space is not gpu_core.GMEM:
@@ -166,6 +171,11 @@ def copy_gmem_to_smem(
     *,
     barrier: pallas_core.AbstractMemoryRef,
 ) -> None:
+  """Asynchronously copies a GMEM reference to a SMEM reference.
+
+  See also:
+    :func:`jax.experimental.mosaic.gpu.wait_barrier`
+  """
   if src.memory_space is not gpu_core.GMEM:
     raise TypeError(f"src must be a GMEM reference, got {src.memory_space}")
   if dst.memory_space is not gpu_core.SMEM:
@@ -242,7 +252,7 @@ def _wait_barrier_abstract_eval(*avals, **params):
 
 
 @lowering.register_lowering_rule(wait_barrier_p)
-def _wait_barrier_lowering_rule(
+def _wait_barrier_lowering(
     ctx: lowering.LoweringRuleContext,
     barrier,
     *flat_transforms,
@@ -273,22 +283,20 @@ wait_smem_to_gmem_p.multiple_results = True
 
 
 @wait_smem_to_gmem_p.def_effectful_abstract_eval
-def _wait_smem_to_gmem_abstract_eval(*, allow_groups):
-  del allow_groups  # Unused.
+def _wait_smem_to_gmem_abstract_eval(n):
+  del n  # Unused.
   return (), {_wait_effect}
 
 
 @lowering.register_lowering_rule(wait_smem_to_gmem_p)
-def _wait_smem_to_gmem_lowering_rule(
-    ctx: lowering.LoweringRuleContext, allow_groups
-):
-  ctx.launch_ctx.await_async_copy(allow_groups=allow_groups)
+def _wait_smem_to_gmem_lowering(ctx: lowering.LoweringRuleContext, n):
+  ctx.launch_ctx.await_async_copy(allow_groups=n)
   return ()
 
 
-def wait_smem_to_gmem(allow_groups: int) -> None:
-  """Waits until there are no more than the given number of SMEM->GMEM copies in flight."""
-  wait_smem_to_gmem_p.bind(allow_groups=allow_groups)
+def wait_smem_to_gmem(n: int) -> None:
+  """Waits until there are no more than ``n`` SMEM->GMEM copies in flight."""
+  wait_smem_to_gmem_p.bind(n)
 
 
 class _WGMMAPipelineEffect(effects.Effect):
@@ -302,25 +310,27 @@ effects.control_flow_allowed_effects.add_type(_WGMMAPipelineEffect)
 wgmma_ref_p = jax_core.Primitive("wgmma_ref")
 wgmma_ref_p.multiple_results = True
 
-def wgmma(acc, a, b):
-  """Asynchronous warp group matmul.
 
-  The sm90 wgmma instruction, essentially acc[...] += a @ b. Requires
-  that accumulator is an accumualtion register reference.
+def wgmma(
+    acc: gpu_core.WGMMAAbstractAccumulatorRef,
+    a: pallas_core.TransformedRef,
+    b: pallas_core.TransformedRef,
+) -> None:
+  """Performs and asynchronous warp group matmul-accumulate on the given references.
+
+  Conceptually, this is equivalent to doing ``acc[...] += a[...] @ b[...]``,
+  except that the computation is performed asynchronously.
 
   Args:
-    acc: The accumulator register.
-    a: The left hand side operand.
-    b: The right hand side operand.
-    swizzle: The swizzle pattern.
+    acc: The accumulator reference. Needs to be allocated via
+      :func:`jax.experimental.pallas.run_scoped` called with a
+      :func:`jax.experimental.pallas.mosaic_gpu.WGMMAAccumulatorRef`.
+    a: The left hand side operand reference.
+    b: The right hand side operand reference.
+
+  See also:
+    :func:`jax.experimental.pallas.mosaic_gpu.wgmma_wait`
   """
-  if not isinstance(acc.aval, gpu_core.WGMMAAbstractAccumulatorRef):
-    raise TypeError(f"Expected WGMMAAbstractAccumulatorRef got {acc}")
-
-  # TODO(apaszke): Make swizzling another transform and read it from the refs.
-  if not isinstance(a, pallas_core.TransformedRef):
-    raise ValueError("WGMMA inputs must be tiled references.")
-
   m, n = acc.shape
   m2, k = a.shape
   k2, n2 = b.shape
@@ -333,10 +343,6 @@ def wgmma(acc, a, b):
 
   if (dtype := a.dtype) != b.dtype:
     raise ValueError(f"Mixed input dtypes for matrix multiplication unsupported: lhs={a.dtype}, rhs={b.dtype}")
-  if not isinstance(a, pallas_core.TransformedRef):
-    raise ValueError("WGMMA lhs must be a tiled reference.")
-  if not isinstance(b, pallas_core.TransformedRef):
-    raise ValueError("WGMMA rhs must be a tiled reference.")
 
   # Infer swizzle from a.
   if not a.transforms or not isinstance(
@@ -365,13 +371,15 @@ def wgmma(acc, a, b):
         " optionally transposed)."
     )
 
-  return wgmma_ref_p.bind(acc, a.ref, b.ref, swizzle=swizzle, rhs_transpose=rhs_transpose)
+  wgmma_ref_p.bind(acc, a.ref, b.ref, swizzle=swizzle, rhs_transpose=rhs_transpose)
 
 
 @wgmma_ref_p.def_effectful_abstract_eval
-def _wgmma_ref_effectful_abstract_eval(acc, *args, **kwargs):
-  del acc, args, kwargs
-  return [], {
+def _wgmma_ref_effectful_abstract_eval(acc_aval, a_aval, b_aval, **params):
+  del a_aval, b_aval, params
+  if not isinstance(acc_aval, gpu_core.WGMMAAbstractAccumulatorRef):
+    raise TypeError(f"Expected WGMMAAbstractAccumulatorRef got {acc_aval}")
+  return (), {
       _wgmma_pipeline_effect,
       state.WriteEffect(0),
       state.ReadEffect(0),
@@ -381,8 +389,9 @@ def _wgmma_ref_effectful_abstract_eval(acc, *args, **kwargs):
 
 
 @discharge.register_discharge_rule(wgmma_ref_p)
-def _wgmma_ref_discharge_rule(
-    in_avals, out_avals,
+def _wgmma_ref_discharge(
+    in_avals,
+    out_avals,
     acc,
     a,
     b,
@@ -402,8 +411,9 @@ def _wgmma_ref_discharge_rule(
 # Functional WGMMA, returns a shaped array. Internal.
 wgmma_p = jax_core.Primitive("wgmma")
 
+
 @lowering.register_lowering_rule(wgmma_p)
-def _wgmma_lowering_rule(
+def _wgmma_lowering(
     ctx: lowering.LoweringRuleContext,
     acc,
     a,
@@ -424,6 +434,7 @@ def _wgmma_lowering_rule(
   nvvm_dialect.wgmma_commit_group_sync_aligned()
   return new_acc
 
+
 @wgmma_p.def_effectful_abstract_eval
 def _wgmma_effectful_abstract_eval(acc, *args, **kwargs):
   del args, kwargs
@@ -436,22 +447,26 @@ def _wgmma_effectful_abstract_eval(acc, *args, **kwargs):
 wgmma_wait_p = jax_core.Primitive("wgmma_wait")
 wgmma_wait_p.multiple_results = True
 
-def wgmma_wait(i: int):
-  """Wait until all but the last `i` WGMMA operations are done."""
-  return wgmma_wait_p.bind(i)
+
+def wgmma_wait(n: int):
+  """Waits until there is no more than ``n`` WGMMA operations in flight."""
+  return wgmma_wait_p.bind(n)
 
 
 @wgmma_wait_p.def_effectful_abstract_eval
 def wgmma_wait_effectful_abstract_eval(_):
   return [], {_wgmma_pipeline_effect}
 
+
 @lowering.register_lowering_rule(wgmma_wait_p)
-def _wgmma_wait_lowering_rule(ctx: lowering.LoweringRuleContext, allow_groups):
+def _wgmma_wait_lowering(ctx: lowering.LoweringRuleContext, allow_groups):
   del ctx
   nvvm_dialect.wgmma_wait_group_sync_aligned(allow_groups)
   return ()
 
+
 wgmma_accumulator_deref_p = jax_core.Primitive("wgmma_accumulator_deref_p")
+
 def wgmma_accumulator_deref(acc):
   """Dereferences an accumulator register."""
 
@@ -467,13 +482,15 @@ def _wgmma_accumulator_deref_abstract_eval(acc):
   assert isinstance(ret, jax_core.ShapedArray), acc
   return ret, {_wgmma_pipeline_effect}
 
+
 @discharge.register_discharge_rule(wgmma_accumulator_deref_p)
-def _wgmma_accumulator_deref_discharge_rule(in_avals, out_avals, acc):
+def _wgmma_accumulator_deref_discharge(in_avals, out_avals, acc):
   del in_avals, out_avals
   return (None,), wgmma_accumulator_deref_p.bind(acc)
 
+
 @lowering.register_lowering_rule(wgmma_accumulator_deref_p)
-def _wgmma_accumulator_deref_lowering_rule(ctx: lowering.LoweringRuleContext, acc):
+def _wgmma_accumulator_deref_lowering(ctx: lowering.LoweringRuleContext, acc):
   del ctx
   nvvm_dialect.wgmma_wait_group_sync_aligned(0)
   return acc.value

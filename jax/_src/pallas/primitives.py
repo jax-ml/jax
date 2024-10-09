@@ -819,15 +819,13 @@ run_scoped_p = jax_core.Primitive("run_scoped")
 run_scoped_p.multiple_results = True
 
 
-def run_scoped(f: Callable[..., Any], *types, **kw_types) -> Any:
-  """Call the function with allocated references.
+def run_scoped(f: Callable[..., Any], *types: Any, **kw_types: Any) -> Any:
+  """Calls the function with allocated references and returns the result.
 
-  Args:
-    f: The function that generates the jaxpr.
-    *types: The types of the function's positional arguments.
-    **kw_types: The types of the function's keyword arguments.
+  The positional and keyword arguments describe which reference types
+  to allocate for each argument. Each backend has its own set of reference
+  types in addition to :class:`jax.experimental.pallas.MemoryRef`.
   """
-
   flat_types, in_tree = tree_util.tree_flatten((types, kw_types))
   flat_fun, out_tree_thunk = api_util.flatten_fun(lu.wrap_init(f), in_tree)
   avals = [t.get_ref_aval() for t in flat_types]

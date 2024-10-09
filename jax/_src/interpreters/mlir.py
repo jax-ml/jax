@@ -1220,6 +1220,7 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
 
   xla_donated_args = None
   out_donated_args = list(donated_args)
+  in_out_layout_not_none = in_layouts is not None and out_layouts is not None
   for i, (aval, rm) in enumerate(zip(avals_out, result_memory_kinds)):
     # Only donate if memory kinds match. Relax this when the compiler can
     # donate across memories.
@@ -1227,14 +1228,26 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
     if donations.get(key, ()):
       input_id = donations[key].popleft()
       out_donated_args[input_id] = False
-      # We can alias if XLA performs layout assignment because XLA will
-      # respect the aliases when assigning layouts. Its only for two
-      # mismatched explicitly assigned layouts that XLA will certainly fail.
-      if (in_layouts is None or
-          out_layouts is None or
-          in_layouts[input_id] == out_layouts[i] or
-          isinstance(in_layouts[input_id], AutoLayout) or
+      if (in_out_layout_not_none and
+          isinstance(in_layouts[input_id], AutoLayout) and
+          not isinstance(out_layouts[i], AutoLayout)):
+        raise ValueError(
+            f"Input layout being donated was {in_layouts[input_id]} while"
+            f" output layout was {out_layouts[i]}. Did you mean to set the"
+            " **output layout** to **DeviceLocalLayout.AUTO**?\nThis will"
+            " allow for the input and output layout to be chosen by XLA and"
+            " not the layout of the output which might not be optimal.")
+      if (in_out_layout_not_none and
+          not isinstance(in_layouts[input_id], AutoLayout) and
           isinstance(out_layouts[i], AutoLayout)):
+        raise ValueError(
+            f"Input layout being donated was {in_layouts[input_id]} while"
+            f" output layout was {out_layouts[i]}. Did you mean to set the"
+            " **input layout** to **DeviceLocalLayout.AUTO**?\nThis will allow"
+            " for the input and output layout to be chosen by XLA and not the"
+            " layout of the input which might not be optimal.")
+      if (in_layouts is None or out_layouts is None or
+          in_layouts[input_id] == out_layouts[i]):
         input_output_aliases[input_id] = i
       else:
         # Fallback to xla donation if layouts don't match.
@@ -1508,7 +1521,6 @@ def lower_jaxpr_to_fun(
           aliases.extend([None] * len_ir_types(itypes))
         else:
           aliases.extend(output_ids[alias])
-
       for attrs, alias in zip(arg_attrs, aliases):
         if alias is not None:
           attrs["tf.aliasing_output"] = i32_attr(alias)
@@ -1798,13 +1810,9 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
         for p in _platforms_for_eqn_ctx(eqn.ctx) or ctx.platforms:
           if eqn.primitive in _platform_specific_lowerings[p]:
             platform_rules[p] = _platform_specific_lowerings[p][eqn.primitive]
-          elif eqn.primitive in xla._backend_specific_translations[p]:
-            platform_rules[p] = xla_fallback_lowering(eqn.primitive)
         # Now the default rule
         if eqn.primitive in _lowerings:
           default_rule = _lowerings[eqn.primitive]
-        elif eqn.primitive in xla._translations:
-          default_rule = xla_fallback_lowering(eqn.primitive)
 
       effects = list(effects_lib.ordered_effects.filter_in(eqn.effects))
       tokens_in = tokens.subset(effects)
@@ -2597,48 +2605,6 @@ def merge_mlir_modules(dst_module: ir.Module,
     dst_symtab.insert(op)
 
   return renamings["main"]
-
-
-def xla_fallback_lowering(prim: core.Primitive):
-  @cache_lowering
-  def fallback(ctx: LoweringRuleContext, *args, **params):
-    module_ctx = ctx.module_context
-    axis_ctx = module_ctx.axis_context
-    if isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
-      axis_env = axis_ctx.unsafe_axis_env
-    else:
-      axis_env = module_ctx.axis_env
-
-    if any(hasattr(a, "shape") and
-           not core.is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
-      raise NotImplementedError(
-          f"Shape polymorphism for xla_fallback_lowering is not implemented ({ctx.primitive}); b/261682623")
-
-    if len(module_ctx.platforms) > 1:
-      raise NotImplementedError(
-        "fallback lowering not implemented for multi-platform lowering")
-    xla_computation = xla.primitive_subcomputation(
-        module_ctx.platforms[0], axis_env, prim, ctx.avals_in,
-        ctx.avals_out, **params)
-    xla_module = xla_computation_to_mlir_module(xla_computation)
-    callee_name = merge_mlir_modules(
-        module_ctx.module, f"xla_fallback_{prim.name}", xla_module,
-        dst_symtab=module_ctx.symbol_table)
-    output_types = map(aval_to_ir_type, ctx.avals_out)
-    flat_output_types = flatten_ir_types(output_types)
-    output_type = (ir.TupleType.get_tuple(flat_output_types)
-                   if prim.multiple_results else flat_output_types[0])
-
-    call = func_dialect.CallOp([output_type],
-                               ir.FlatSymbolRefAttr.get(callee_name),
-                               flatten_ir_values(args)).result
-    if not prim.multiple_results:
-      return [call]
-    flat_results = [hlo.get_tuple_element(call, i32_attr(i))
-                    for i in range(len(flat_output_types))]
-
-    return unflatten_ir_values_like_types(flat_results, output_types)
-  return fallback
 
 
 DEVICE_TO_DEVICE_TYPE = 1

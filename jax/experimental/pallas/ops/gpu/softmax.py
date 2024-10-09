@@ -18,7 +18,7 @@ import functools
 import jax
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
-from jax.experimental.pallas import gpu as plgpu
+from jax.experimental.pallas import triton as plgpu
 
 
 def _vmappable_softmax_kernel(

@@ -2769,6 +2769,11 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 lambda x: jnp.nanquantile(x, .5, axis=0),
                 arg_descriptors=[RandArg((3, 5), _f32)],
                 polymorphic_shapes=["b, ..."]),
+    PolyHarness("inv", "",
+                lambda x: jnp.linalg.inv(jnp.eye(x.shape[0])),
+                arg_descriptors=[RandArg((3, 3), _f32)],
+                polymorphic_shapes=["b, b, ..."],
+                override_jax_config_flags={"jax_export_ignore_forward_compatibility": True}),
     [
       PolyHarness(  # pylint: disable=g-complex-comprehension
           "qr", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}_{full_matrices=}",

@@ -21,8 +21,8 @@ from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import test_util as jtu
-import jax._src.pallas.mosaic_gpu as plgpu
 from jax.experimental import pallas as pl
+from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
 import numpy as np
 
@@ -576,6 +576,42 @@ class PallasCallTest(PallasTest):
         res, a @ (b.T if rhs_transpose else b), rtol=1e-3
     )
 
+  def test_wgmma_sliced(self):
+    swizzle = 128
+    elems_128b = swizzle // jnp.dtype(jnp.float16).itemsize
+    def kernel(a_ref, b_ref, o_ref):
+      def scope(acc_ref):
+        plgpu.wgmma(acc_ref, a_ref, b_ref)
+        return acc_ref[:, :64], acc_ref[:, 64:]
+
+      o_ref[:, :64], o_ref[:, 64:] = pl.run_scoped(scope, plgpu.ACC((64, 128), jnp.float32))
+
+    key1, key2 = jax.random.split(jax.random.key(42), 2)
+    a = jax.random.uniform(key1, shape=(64, 128), dtype=jnp.float16)
+    b = jax.random.uniform(key2, shape=(128, 128), dtype=jnp.float16)
+    res = pl.pallas_call(
+        kernel,
+        in_specs=[
+            plgpu.GPUBlockSpec(
+                (64, 128),
+                lambda i, j: (i, j),
+                transforms=plgpu.TilingTransform((64, elems_128b)),
+                swizzle=128,
+            ),
+            plgpu.GPUBlockSpec(
+                (128, 128),
+                lambda *i: i,
+                transforms=plgpu.TilingTransform((elems_128b, elems_128b)),
+                swizzle=128,
+            ),
+        ],
+        out_specs=plgpu.GPUBlockSpec((64, 128), lambda *i: i),
+        out_shape=jax.ShapeDtypeStruct((64, 128), jnp.float32),
+        grid=(1, 1),
+    )(a, b)
+    np.testing.assert_allclose(res, a @ b, rtol=1e-3)
+
+
   def test_input_output_aliases(self):
     # Note that we're writing to the input pointer, which should alias b_ptr.
     def kernel(a_ref, b_ref):
@@ -606,11 +642,11 @@ class PallasCallTest(PallasTest):
       assert b_ref.shape == (tile_k, tile_n)
       assert o_ref.shape == acc_ref.shape == (tile_m, tile_n)
       plgpu.wgmma(acc_ref, a_ref, b_ref)
-      plgpu.wgmma_wait(0)  # TODO(apaszke): Delay the pipeline to avoid memory races
       is_last_step = pl.program_id(2) == grid_k - 1
       @pl.when(is_last_step)
       def _epilogue():
         o_ref[...] = acc_ref[...].astype(dtype)
+      plgpu.wgmma_wait(1)  # We don't await the last WGMMA, hence delay_release=1
 
     key1, key2 = jax.random.split(jax.random.key(42), 2)
     a = jax.random.uniform(key1, shape=(m, k), dtype=dtype)
@@ -644,6 +680,7 @@ class PallasCallTest(PallasTest):
         compiler_params=plgpu.GPUCompilerParams(
             dimension_semantics=["parallel", "parallel", "sequential"],
             max_concurrent_steps=2,
+            delay_release=1,
         ),
     )(a, b)
     np.testing.assert_allclose(res, a @ b, rtol=1e-3)

@@ -334,7 +334,9 @@ def convert(fun_jax: Callable,
   """
   if not enable_xla:
     if allow_enable_xla_false():
-      warnings.warn("jax2tf.convert with enable_xla=False is deprecated.")
+      warnings.warn("jax2tf.convert with enable_xla=False is deprecated.",
+                    DeprecationWarning,
+                    stacklevel=2)
     else:
       raise ValueError("jax2tf.convert with enable_xla=False is not supported.")
 
@@ -346,7 +348,9 @@ def convert(fun_jax: Callable,
 
   if not native_serialization:
     warnings.warn(
-        "jax2tf.convert with native_serialization=False is deprecated.")
+        "jax2tf.convert with native_serialization=False is deprecated.",
+        DeprecationWarning,
+        stacklevel=2)
   if native_serialization and not enable_xla:
     raise ValueError(
         "native_serialization is not supported with enable_xla=False")
@@ -2179,12 +2183,9 @@ tf_impl_with_avals[lax.conv_general_dilated_p] = _conv_general_dilated
 def _dot_general(lhs, rhs, *, dimension_numbers,
                  precision: tuple[PrecisionType, PrecisionType] | None,
                  preferred_element_type: DType | None,
-                 algorithm: Any, transpose_algorithm: Any,
                  _in_avals: Sequence[core.ShapedArray],
                  _out_aval: core.ShapedArray):
   """Implementation of lax.dot_general_p in terms of tf.linalg.einsum."""
-  del algorithm, transpose_algorithm  # unused
-
   # TODO(b/293247337): we ought to turn on this safety check, but this leads to
   # failures. Since we are going to turn on native serializaton soon, wait
   # until then to turn on this check.
@@ -2876,6 +2877,9 @@ def _gather_dimensions_proto(indices_shape, dimension_numbers):
   proto.offset_dims.extend(dimension_numbers.offset_dims)
   proto.collapsed_slice_dims.extend(dimension_numbers.collapsed_slice_dims)
   proto.start_index_map.extend(dimension_numbers.start_index_map)
+  proto.operand_batching_dims.extend(dimension_numbers.operand_batching_dims)
+  proto.start_indices_batching_dims.extend(
+      dimension_numbers.start_indices_batching_dims)
   assert indices_shape
   proto.index_vector_dim = len(indices_shape) - 1
   return proto
@@ -2987,6 +2991,9 @@ def _scatter_dimensions_proto(indices_shape, dimension_numbers):
   proto.inserted_window_dims.extend(dimension_numbers.inserted_window_dims)
   proto.scatter_dims_to_operand_dims.extend(
       dimension_numbers.scatter_dims_to_operand_dims)
+  proto.input_batching_dims.extend(dimension_numbers.operand_batching_dims)
+  proto.scatter_indices_batching_dims.extend(
+      dimension_numbers.scatter_indices_batching_dims)
   assert indices_shape
   proto.index_vector_dim = len(indices_shape) - 1
   return proto

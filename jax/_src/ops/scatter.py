@@ -122,7 +122,9 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
   dnums = lax.ScatterDimensionNumbers(
     update_window_dims=indexer.dnums.offset_dims,
     inserted_window_dims=indexer.dnums.collapsed_slice_dims,
-    scatter_dims_to_operand_dims=indexer.dnums.start_index_map
+    scatter_dims_to_operand_dims=indexer.dnums.start_index_map,
+    operand_batching_dims=indexer.dnums.operand_batching_dims,
+    scatter_indices_batching_dims=indexer.dnums.start_indices_batching_dims,
   )
   out = scatter_op(
     x, indexer.gather_indices, y, dnums,

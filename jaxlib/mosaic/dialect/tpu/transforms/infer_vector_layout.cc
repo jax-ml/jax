@@ -856,7 +856,7 @@ class VectorLayoutInferer {
       auto shape = vty.getShape().take_back(2);
       if (shape[0] % major_multiple.value_or(tiling[0]) != 0 ||
           shape[1] % minor_multiple.value_or(tiling[1]) != 0) {
-        op->emitOpError("Matmul operand")
+        op->emitOpError("Matmul operand ")
             << operand_name << " must have a shape divisible by ("
             << major_multiple.value_or(tiling[0]) << ", "
             << minor_multiple.value_or(tiling[1]) << "), but got: (" << shape[0]

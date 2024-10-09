@@ -12,7 +12,15 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## jax 0.4.35
 
-## jax 0.4.34 (October 4, 2023)
+* Breaking Changes
+  * {func}`jax.numpy.isscalar` now returns True for any array-like object with
+    zero dimensions. Previously it only returned True for zero-dimensional
+    array-like objects with a weak dtype.
+  * `jax.experimental.host_callback` has been deprecated since March 2024, with
+    JAX version 0.4.26. Now we removed it.
+    See {jax-issue}`#20385` for a discussion of alternatives.
+
+## jax 0.4.34 (October 4, 2024)
 
 * New Functionality
   * This release includes wheels for Python 3.13. Free-threading mode is not yet

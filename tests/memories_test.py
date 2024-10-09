@@ -25,6 +25,7 @@ import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.lib import xla_extension_version
 from jax._src import config
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.numpy as jnp
@@ -651,6 +652,51 @@ class DevicePutTest(jtu.JaxTestCase):
     out = f()
     self._check_device_put_addressable_shards(out, np_inp * 2, s_dev, 'device')
 
+  @jtu.run_on_devices('tpu')
+  def test_ragged_copy_on_host(self):
+    if xla_extension_version < 290:
+      self.skipTest('Requires xla_extension_version >= 290')
+    mesh = jtu.create_mesh((2,), ('x'))
+    sharding = jax.sharding.NamedSharding(mesh, P(('x')))
+    cpu_sharding = sharding.with_memory_kind('pinned_host')
+
+    num_pages = 512 * 1024
+    page_size = 1024
+
+    x = jnp.full((num_pages, page_size), 1, dtype=jnp.bfloat16, device=sharding)
+
+    def write(x):
+      return x.at[16 * 1024:].set(0)
+    x = shard_map(write, mesh, P(('x'),), P(('x')))(x)
+
+    chunk_size = 8
+    def inner(state):
+      idx, x, output = state
+      chunk = jax.lax.dynamic_slice_in_dim(x, idx * chunk_size, chunk_size)
+      chunk_host = jax.device_put(chunk, TransferToMemoryKind('pinned_host'))
+      output = jax.lax.dynamic_update_slice_in_dim(
+          output, chunk_host, idx * chunk_size, axis=0)
+      return (idx + 1, x, output)
+
+    def cond(state):
+      idx, x, _ = state
+      chunk = jax.lax.dynamic_slice_in_dim(x, idx * chunk_size, chunk_size)
+      return (idx * chunk_size < x.shape[0]) & jnp.any(chunk > 0)
+
+    def foo(x):
+      output = jnp.zeros_like(x, device=cpu_sharding)
+      _, _, cpu_x = jax.lax.while_loop(cond, inner, (0, x, output))
+      return cpu_x
+
+    fn = jax.jit(shard_map(foo, mesh, P(('x'),), P(('x')),
+                       check_rep=False),
+                 out_shardings=cpu_sharding)
+    y = fn(x)
+    jax.block_until_ready(y)
+    compiled_text = fn.lower(x).compile().as_text()
+    if compiled_text is not None:
+      self.assertIn('custom_call_target="AllocateBuffer"', compiled_text)
+
 
 class ComputeOffload(jtu.BufferDonationTestCase):
 
@@ -783,6 +829,20 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     out2 = h(inp)
     self.assertArraysEqual(out2, np.sum(inp) * np.sum(inp))
     self.assertEqual(out2.sharding.memory_kind, 'pinned_host')
+
+  def test_compute_host_loop(self):
+    @compute_on('device_host')
+    @jax.jit
+    def fn():
+      k = jax.random.key(0)
+      return jax.nn.initializers.lecun_normal()(k, (2, 2), jnp.float32)
+    fn()  # doesn't crash
+
+    @compute_on('device_host')
+    def fn():
+      k = jax.random.key(0)
+      return jax.nn.initializers.lecun_normal()(k, (2, 2), jnp.float32)
+    fn()  # doesn't crash
 
   def test_nested_compute_error(self):
     @compute_on('device')

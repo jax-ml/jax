@@ -3775,6 +3775,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         np.array(bytearray(b'\x2a\xf3'), ndmin=2)
     )
 
+  @jtu.sample_product(value=[False, 1, 1.0, np.int32(5), np.array(16)])
+  def testIsScalar(self, value):
+    self.assertTrue(jnp.isscalar(value))
+
+  @jtu.sample_product(value=[None, [1], slice(4), (), np.array([0])])
+  def testIsNotScalar(self, value):
+    self.assertFalse(jnp.isscalar(value))
+
   @jtu.sample_product(val=[1+1j, [1+1j], jnp.pi, np.arange(2)])
   def testIsComplexObj(self, val):
     args_maker = lambda: [val]
