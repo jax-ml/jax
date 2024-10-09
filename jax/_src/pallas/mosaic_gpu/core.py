@@ -22,6 +22,7 @@ from typing import Any, ClassVar, Literal
 
 from jax._src import core as jax_core
 from jax._src import dtypes
+from jax._src.state import indexing
 from jax._src import tree_util
 from jax._src.pallas import core as pallas_core
 from jax._src.state.types import Transform
@@ -338,13 +339,6 @@ class WGMMAAccumulatorRef:
     )
 
 
-def _is_trivial_index(idx):
-  _is_deref1 = lambda i: i is Ellipsis or i == slice(None)
-  if isinstance(idx, tuple):
-    return all(_is_deref1(i) for i in idx)
-
-  return _is_deref1(idx)
-
 class WGMMAAbstractAccumulatorRef(AbstractMemoryRef):
   __slots__ = ["inner_aval", "memory_space"]
 
@@ -364,7 +358,7 @@ class WGMMAAbstractAccumulatorRef(AbstractMemoryRef):
     from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_deref  # pytype: disable=import-error
     arr = wgmma_accumulator_deref(tracer)
 
-    if not _is_trivial_index(idx):
+    if not indexing.is_trivial_index(idx, tracer.shape):
       arr = arr[idx]
 
     return arr
