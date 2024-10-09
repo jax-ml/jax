@@ -57,9 +57,16 @@ py_library(
     name = "primitives",
     srcs = ["primitives.py"],
     deps = [
+        ":core",
         "//jax",
         "//jax:core",
+        "//jax:dtypes",
         "//jax:mlir",
+        "//jax:pretty_printer",
+        "//jax:tree_util",
+        "//jax:typing",
+        "//jax:util",
+        "//jax/_src/pallas",
     ],
 )
 

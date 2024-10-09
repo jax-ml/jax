@@ -55,6 +55,7 @@ from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import error_handling
 from jax._src.pallas.mosaic import primitives as tpu_primitives
+from jax._src.pallas.mosaic import random as pl_random
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
@@ -201,10 +202,13 @@ def aval_to_ir_type(aval,
     return ir.MemRefType.get((), sem_type, memory_space=memspace)
   if dtypes.issubdtype(aval.dtype, dtypes.prng_key):
     shape = aval.dtype._impl.key_shape
-    if memory_space is None:
-      memory_space = TPUMemorySpace.SMEM
-    if memory_space != TPUMemorySpace.SMEM:
-      raise ValueError(f"PRNG keys must be stored in SMEM. Got {memory_space}")
+    if pl_random.is_pallas_impl(aval.dtype._impl):
+      if memory_space is None:
+        memory_space = TPUMemorySpace.SMEM
+      if memory_space != TPUMemorySpace.SMEM:
+        raise ValueError(
+            f"PRNG keys must be stored in SMEM. Got {memory_space}"
+        )
     memspace = _memory_space_to_mosaic_attribute(memory_space)
     return ir.MemRefType.get(shape, _dtype_to_ir_type(np.dtype(np.uint32)),
                              memory_space=memspace)
@@ -481,7 +485,8 @@ def _check_block_mappings(
           "only blocks having the same block shape as the array shape "
           "and a trivial index_map (returning all 0s)." + err_details())
 
-    unmapped_bs = [1 if bs is pallas_core.mapped else bs for bs in bm.block_shape]
+    unmapped_bs = [
+        1 if bs is pallas_core.mapped else bs for bs in bm.block_shape]
     bs0, as0 = unmapped_bs[-1], bm.array_shape_dtype.shape[-1]
     if rank >= 2:
       bs1, as1 = unmapped_bs[-2], bm.array_shape_dtype.shape[-2]
@@ -1131,7 +1136,9 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
   ref_type = ir.MemRefType(ref.type)
   is_smem_load = str(ref_type.memory_space) == "#tpu.memory_space<smem>"
   (aval_out,) = ctx.avals_out
-  if isinstance(aval_out.dtype, prng.KeyTy):
+  if isinstance(aval_out.dtype, prng.KeyTy) and pl_random.is_pallas_impl(
+      aval_out.dtype._impl
+  ):
     if not is_smem_load:
       raise ValueError("PRNG keys must be loaded from SMEM. Did you set "
                        "the memory space to TPUMemorySpace.SMEM in the "
@@ -2933,8 +2940,13 @@ def random_bits_lowering(ctx, keys, *, bit_width, shape):
   assert bit_width == 32, "Only 32-bit PRNG supported."
   aval, = ctx.avals_in
   impl = aval.dtype._impl
-  bits_lowering = lower_fun(
-      impl.random_bits, multiple_results=False)
+  _proxy_fn = impl.random_bits
+  if not pl_random.is_pallas_impl(impl):
+    def new_lowering(key, bit_width, shape):
+      key = jax.random.key_data(key).astype(jnp.uint32)
+      return impl.random_bits(key, bit_width, shape)
+    _proxy_fn = new_lowering
+  bits_lowering = lower_fun(_proxy_fn, multiple_results=False)
   return bits_lowering(ctx, keys, bit_width=bit_width, shape=shape)
 lowering_rules[prng.random_bits_p] = random_bits_lowering
 
@@ -2949,7 +2961,10 @@ lowering_rules[prng.random_fold_in_p] = random_fold_in_lowering
 
 
 def random_unwrap_lowering(ctx, key):
-  del ctx
+  keys_aval = ctx.avals_in[0]
+  impl = keys_aval.dtype._impl
+  if not pl_random.is_pallas_impl(impl):
+    return key
   assert isinstance(key, KeyScalarBundle)
   # Convert to a vector.
   if tuple(key.key_shape) != (1, 1):
@@ -2966,7 +2981,9 @@ lowering_rules[prng.random_unwrap_p] = random_unwrap_lowering
 
 
 def random_wrap_lowering(ctx, key_data, *, impl):
-  del ctx, impl
+  del ctx
+  if not pl_random.is_pallas_impl(impl):
+    return key_data
   if isinstance(key_data.type, ir.VectorType):
     # If the key data lives in vregs, need to unpack it to sregs.
     key_data_list = []
@@ -2988,6 +3005,42 @@ def random_wrap_lowering(ctx, key_data, *, impl):
 
 lowering_rules[prng.random_wrap_p] = random_wrap_lowering
 
+
+def _threefry2x32_lowering(ctx, k1, k2, m1, m2):
+  def _lower_fun(k1, k2, m1, m2):
+    with jax.named_scope("threefry2x32"):
+      res = prng._threefry2x32_lowering(k1, k2, m1, m2, use_rolled_loops=False)
+    return res
+
+  threefry_lowering = lower_fun(_lower_fun, multiple_results=True)
+  return threefry_lowering(ctx, k1, k2, m1, m2)
+
+
+lowering_rules[prng.threefry2x32_p] = _threefry2x32_lowering
+
+
+def _iota_2x32_shape_lowering(ctx, *, shape):
+  total_elements = np.prod(shape)
+  if total_elements > np.iinfo(jnp.int32).max:
+    raise NotImplementedError(f"Iota with >{np.iinfo(jnp.int32).max} items.")
+
+  def _lower_fun(shape):
+    iota_data = jnp.zeros(shape, dtype=jnp.int32)
+    multiplier = 1
+    for dim in range(len(shape)-1, -1, -1):
+      counts_lo = lax.broadcasted_iota(
+          dtype=jnp.int32, shape=shape, dimension=dim
+      )
+      iota_data += counts_lo * multiplier
+      multiplier *= shape[dim]
+    counts_hi = jnp.zeros(shape, dtype=jnp.int32)
+    return counts_hi, iota_data
+
+  iota_lowering = lower_fun(_lower_fun, multiple_results=True)
+  return iota_lowering(ctx, shape=shape)
+
+
+lowering_rules[prng.iota_2x32_shape_p] = _iota_2x32_shape_lowering
 
 # Lowering for shard_map
 

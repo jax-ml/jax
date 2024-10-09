@@ -992,6 +992,44 @@ class OpsTest(PallasBaseTest):
 
     np.testing.assert_allclose(f(x, y), kernel(x, y))
 
+  @parameterized.named_parameters(
+      (f"{fn.__name__}_{dtype}", fn, dtype)
+      for args in BINARY_OPS
+      for fn, dtype in itertools.product(*args)
+  )
+  def test_binary_scalar(self, f, dtype):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Test only supported on TPU.")
+    if jtu.test_device_matches(["tpu"]) and jnp.dtype(dtype).itemsize == 2:
+      self.skipTest("16-bit types are not supported on TPU")
+    # TODO: skipped due to https://github.com/jax-ml/jax/issues/24027
+    if (
+        jtu.test_device_matches(["tpu"])
+        and f == jnp.remainder
+        and not self.INTERPRET
+    ):
+      self.skipTest("jnp.remainder on TPU is only supported in interpret mode")
+
+    # TODO: skipped due to https://github.com/jax-ml/jax/issues/23972
+    if jtu.test_device_matches(["tpu"]) and dtype == "uint32":
+      self.skipTest("Not supported on TPU")
+
+    @functools.partial(
+        self.pallas_call,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+                  pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+                  ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+        out_shape=jax.ShapeDtypeStruct((1,), dtype), grid=1
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[0] = f(x_ref[0], y_ref[0])
+
+    x = jnp.array([1,]).astype(dtype)
+    y = jnp.array([18,]).astype(dtype)
+
+    np.testing.assert_allclose(f(x, y), kernel(x, y))
+
   @parameterized.parameters(
       ((8, 4), jnp.int32, 0),
       ((8, 16), jnp.float32, 1),
