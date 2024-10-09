@@ -2086,6 +2086,21 @@ def _floor_lowering_rule(ctx: LoweringRuleContext, x):
 lowering_rules[lax.floor_p] = _floor_lowering_rule
 
 
+def _clz_lowering_rule(ctx: LoweringRuleContext, x):
+  return math.CountLeadingZerosOp(x).result
+
+lowering_rules[lax.clz_p] = _clz_lowering_rule
+
+
+def _population_count_lowering_rule(ctx: LoweringRuleContext, x):
+  aval_out = ctx.avals_out[0]
+  if aval_out.shape == ():
+    raise ValueError("Population count is not supported on scalars")
+  return math.CtPopOp(x).result
+
+lowering_rules[lax.population_count_p] = _population_count_lowering_rule
+
+
 # Mapping for signed integer comparisons.
 _cmpsi_lowering_types = {
     lax.eq_p: arith.CmpIPredicate.eq,
