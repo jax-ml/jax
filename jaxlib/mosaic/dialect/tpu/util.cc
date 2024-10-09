@@ -15,12 +15,14 @@ limitations under the License.
 
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 
+#include <array>
 #include <cstdint>
 
 #include "llvm/Support/MathExtras.h"
 #include "absl/types/span.h"
 #include "mlir/include/mlir/IR/BuiltinTypes.h"
 #include "mlir/include/mlir/Support/LLVM.h"
+#include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 
 namespace mlir::tpu {
 SmallVector<int64_t> ComputeTileStrides(MemRefType memref_ty,
@@ -38,5 +40,19 @@ SmallVector<int64_t> ComputeTileStrides(MemRefType memref_ty,
     }
   }
   return tile_strides;
+}
+
+bool canReinterpretToUntiledMemref(MemRefType memref_ty,
+                                   const std::array<int64_t, 2>& target_shape) {
+  if (auto tiled_layout =
+          dyn_cast<tpu::TiledLayoutAttr>(memref_ty.getLayout())) {
+    auto packing = 32 / memref_ty.getElementTypeBitWidth();
+    return (memref_ty.getRank() >= 2 &&
+            *(memref_ty.getShape().end() - 1) == target_shape[1] &&
+            *(memref_ty.getShape().end() - 2) % packing == 0 &&
+            *(tiled_layout.getTileStrides().end() - 1) == 1 &&
+            *(tiled_layout.getTileStrides().end() - 2) == 1);
+  }
+  return false;
 }
 }  // namespace mlir::tpu

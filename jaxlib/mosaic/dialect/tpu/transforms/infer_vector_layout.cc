@@ -50,6 +50,7 @@ limitations under the License.
 #include "mlir/include/mlir/Pass/Pass.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "jaxlib/mosaic/dialect/tpu/util.h"
 #include "xla/layout.h"
 
 namespace mlir::tpu {
@@ -1142,7 +1143,7 @@ class VectorLayoutInferer {
   }
 
   LogicalResult infer(vector::LoadOp op) {
-    auto src_ty = op.getMemRefType();
+    auto src_ty = getMemRefType(op.getBase());
     auto res_ty = op.getVectorType();
     TPU_CHECK_OP(src_ty.getRank() == res_ty.getRank(),
                  "memref and vector rank mismatch");
@@ -1235,6 +1236,13 @@ class VectorLayoutInferer {
         setLayout(op, in_layout,
                   VectorLayout(bitwidth, {std::nullopt, offsets[1]},
                                layout_tiling, ImplicitDim::kNone));
+      } else if (bitwidth == 32 &&
+                 canReinterpretToUntiledMemref(src_ty, target_shape_)) {
+        // Since it is untiled, we can load from any arbitrary address which
+        // means the sublane offset is always 0.
+        setLayout(op, in_layout,
+                  VectorLayout(bitwidth, {0, offsets[1].value_or(0)},
+                               nativeTiling(bitwidth), ImplicitDim::kNone));
       } else {
         setLayout(
             op, in_layout,
@@ -1470,7 +1478,7 @@ class VectorLayoutInferer {
   }
 
   LogicalResult infer(vector::StoreOp op) {
-    auto ref_ty = op.getMemRefType();
+    auto ref_ty = getMemRefType(op.getBase());
     auto store_ty = op.getValueToStore().getType();
     TPU_CHECK_OP(ref_ty.getRank() == store_ty.getRank(),
                  "memref and vector rank mismatch");
@@ -1551,11 +1559,17 @@ class VectorLayoutInferer {
         // We can strided store sublanes if we're storing a single sublane for
         // multiple times. Enabling this helps store one entire row to memref
         // more efficiently.
-        store_layout = VectorLayout(store_ty.getElementTypeBitWidth(), offsets,
-                                    {1, tiling[1]}, ImplicitDim::kNone);
+        store_layout =
+            VectorLayout(bitwidth, offsets, {1, tiling[1]}, ImplicitDim::kNone);
+      } else if (bitwidth == 32 &&
+                 canReinterpretToUntiledMemref(ref_ty, target_shape_)) {
+        // Since it is untiled, we can store to any arbitrary address which
+        // means the sublane offset needs to reset to 0 before storing.
+        store_layout = VectorLayout(bitwidth, {0, offsets[1].value_or(0)},
+                                    nativeTiling(bitwidth), ImplicitDim::kNone);
       } else {
-        store_layout = VectorLayout(store_ty.getElementTypeBitWidth(), offsets,
-                                    {tiling[0], tiling[1]}, ImplicitDim::kNone);
+        store_layout = VectorLayout(bitwidth, offsets, {tiling[0], tiling[1]},
+                                    ImplicitDim::kNone);
       }
     }
     SmallVector<Layout, 5> in_layout{store_layout};

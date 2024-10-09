@@ -2910,14 +2910,27 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
   FAILUREOR_ASSIGN_OR_RETURN(
       Tiling memref_tiling,
       getMemRefTiling(load_op.getBase(), ctx.target_shape));
-  if (memref_tiling != layout_out.tiling() &&
-      !(memref_tiling[0] == 1 && layout_out.tiling()[0] == 1 &&
-        memref_tiling[1] % layout_out.tiling()[1] == 0)) {
-    // Now we can handle the case when tiling is (1, TARGET_SHAPE.lanes).
-    // TODO(b/295393167): need to support strided load for bitwidth < 32.
-    if (layout_out.bitwidth() != 32 ||
-        layout_out.tiling() != std::array<int64_t, 2>{1, ctx.target_shape[1]}) {
-      return op.emitOpError("Not implemented");
+  if (memref_tiling != layout_out.tiling()) {
+    if (memref_tiling[0] == 1 && layout_out.tiling()[0] == 1 &&
+        memref_tiling[1] % layout_out.tiling()[1] == 0) {
+      // In this case, it is valid to use output tiling (1, 128 * packing) when
+      // loading from a 1D memref.
+    } else if (layout_out.bitwidth() == 32 &&
+               layout_out.tiling() ==
+                   std::array<int64_t, 2>{1, ctx.target_shape[1]}) {
+      // In this case, it is valid to use output tiling (1, TARGET_SHAPE.lanes)
+      // because we strided-load one row from each tile of the memref. This can
+      // save us a bunch of loads!
+      // TODO(b/295393167): need to support strided load for bitwidth < 32.
+    } else if (layout_out.bitwidth() == 32 &&
+               canReinterpretToUntiledMemref(memref_ty, ctx.target_shape)) {
+      // In this case, if the memref can be reinterpreted to untiled, it is
+      // valid to use any tiling for output. But using native tiling can save us
+      // a bunch of loads!
+    } else {
+      return op.emitOpError(
+          "Not implemented: dismatch in memref tiling and vector tiling in "
+          "load");
     }
   }
   // TODO(apaszke): Check that loads are from vmem!
@@ -4090,14 +4103,27 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
   FAILUREOR_ASSIGN_OR_RETURN(
       const Tiling memref_tiling,
       getMemRefTiling(store_op.getBase(), ctx.target_shape));
-  if (memref_tiling != to_store_layout.tiling() &&
-      !(memref_tiling[0] == 1 && to_store_layout.tiling()[0] == 1 &&
-        memref_tiling[1] % to_store_layout.tiling()[1] == 0)) {
-    // Now we can handle the case when tiling is (1, TARGET_SHAPE.lanes).
-    // TODO(b/295393167): need to support strided store for bitwidth < 32.
-    if (to_store_layout.bitwidth() != 32 ||
-        to_store_layout.tiling() != Tiling{1, ctx.target_shape[1]}) {
-      return op.emitOpError("Not implemented");
+  if (memref_tiling != to_store_layout.tiling()) {
+    if (memref_tiling[0] == 1 && to_store_layout.tiling()[0] == 1 &&
+        memref_tiling[1] % to_store_layout.tiling()[1] == 0) {
+      // In this case, it is valid to have to_store tiling (1, 128 * packing)
+      // when storing to a 1D memref.
+    } else if (to_store_layout.bitwidth() == 32 &&
+               to_store_layout.tiling() ==
+                   std::array<int64_t, 2>{1, ctx.target_shape[1]}) {
+      // In this case, it is valid to have to_store tiling (1,
+      // TARGET_SHAPE.lanes) because we strided-store one row to each tile of
+      // the memref. This can save us a bunch of stores!
+      // TODO(b/295393167): need to support strided store for bitwidth < 32.
+    } else if (to_store_layout.bitwidth() == 32 &&
+               canReinterpretToUntiledMemref(memref_ty, ctx.target_shape)) {
+      // In this case, if the memref can be reinterpreted to untiled, it is
+      // valid to use any tiling for to_store. But using native tiling can save
+      // us a bunch of stores!
+    } else {
+      return op.emitOpError(
+          "Not implemented: dismatch in memref tiling and vector tiling in "
+          "store");
     }
   }
 
