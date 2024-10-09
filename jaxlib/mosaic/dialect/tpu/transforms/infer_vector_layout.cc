@@ -190,6 +190,10 @@ class VectorLayoutInferer {
         if (inferElementwise(&any_op).failed()) {
           return failure();
         }
+      } else if (auto op = dyn_cast<tpu::WeirdOp>(any_op)) {
+        if (inferElementwise(&any_op).failed()) {
+          return failure();
+        }
       } else if (auto op = dyn_cast<arith::ExtUIOp>(any_op)) {
         auto in_ty = dyn_cast<VectorType>(op.getIn().getType());
         auto out_ty = dyn_cast<VectorType>(op.getType());
