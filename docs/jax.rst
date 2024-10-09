@@ -73,13 +73,12 @@ Just-in-time compilation (:code:`jit`)
     eval_shape
     ShapeDtypeStruct
     device_put
-    device_put_replicated
-    device_put_sharded
     device_get
     default_backend
     named_call
     named_scope
     block_until_ready
+    make_mesh
 
 .. _jax-grad:
 
