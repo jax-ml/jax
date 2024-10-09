@@ -87,7 +87,18 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref_ty,
                                        int64_t leading_tile_rows = 0) {
   if (auto tiled_layout_attr =
           dyn_cast<TiledLayoutAttr>(memref_ty.getLayout())) {
-    return tiled_layout_attr;
+    // If expected leading_tile_rows does not match with the sublane tiling in
+    // the layout, we will override the layout.
+    if (!tiled_layout_attr.getTiles().empty() &&
+        tiled_layout_attr.getTiles().front().dimensions().size() == 2 &&
+        tiled_layout_attr.getTiles().front().dimensions()[0] ==
+            leading_tile_rows) {
+      return tiled_layout_attr;
+    } else {
+      memref_ty =
+          MemRefType::get(memref_ty.getShape(), memref_ty.getElementType(),
+                          /*layout=*/nullptr, memref_ty.getMemorySpace());
+    }
   }
   if (auto affine_map_attr = dyn_cast<AffineMapAttr>(memref_ty.getLayout())) {
     if (memref_ty.getRank() == 0) {
@@ -226,19 +237,38 @@ LogicalResult inferOp(Operation &op, const int hardware_generation,
   if (auto alloca_op = dyn_cast<memref::AllocaOp>(op)) {
     TypedValue<MemRefType> arg = alloca_op.getResult();
     const MemRefType memref_ty = alloca_op.getResult().getType();
-    FAILUREOR_ASSIGN_OR_RETURN(const MemRefType new_memref_ty,
-                               inferMemref(memref_ty, hardware_generation,
-                                           target_shape, tpu_tiling_flags));
+    // If the memref can be reinterpreted to untiled, force to use tiling
+    // {packing, target.lane_count}.
+    int64_t leading_tile_rows = 0;
+    if (canReinterpretToUntiledMemref(memref_ty, target_shape)) {
+      leading_tile_rows = 32 / memref_ty.getElementTypeBitWidth();
+    }
+    FAILUREOR_ASSIGN_OR_RETURN(
+        const MemRefType new_memref_ty,
+        inferMemref(memref_ty, hardware_generation, target_shape,
+                    tpu_tiling_flags, leading_tile_rows));
     alloca_op.getResult().setType(new_memref_ty);
     if (memref_ty != new_memref_ty) {
       OpBuilder builder(alloca_op->getContext());
       builder.setInsertionPointAfter(alloca_op);
-      auto erase_op = builder.create<tpu::EraseLayoutOp>(
-          arg.getLoc(),
-          MemRefType::get(new_memref_ty.getShape(), memref_ty.getElementType(),
-                          /*layout=*/nullptr, new_memref_ty.getMemorySpace()),
-          arg);
-      arg.replaceAllUsesExcept(erase_op.getResult(), erase_op);
+      // We never forbid users from creating their own EraseLayoutOp. So we do
+      // not need to create EraseLayoutOp if there is already one.
+      bool has_erase_layout_op = false;
+      for (auto user : arg.getUsers()) {
+        if (auto erase_op = dyn_cast<tpu::EraseLayoutOp>(user)) {
+          has_erase_layout_op = true;
+          break;
+        }
+      }
+      if (!has_erase_layout_op) {
+        auto erase_op = builder.create<tpu::EraseLayoutOp>(
+            arg.getLoc(),
+            MemRefType::get(new_memref_ty.getShape(),
+                            memref_ty.getElementType(),
+                            /*layout=*/nullptr, new_memref_ty.getMemorySpace()),
+            arg);
+        arg.replaceAllUsesExcept(erase_op.getResult(), erase_op);
+      }
     }
   } else if (auto alloca_op = dyn_cast<tpu::AllocaSemaphoreOp>(op)) {
     TypedValue<MemRefType> arg = alloca_op.getResult();
@@ -296,22 +326,62 @@ LogicalResult inferFunc(func::FuncOp f, const int hardware_generation,
     }
 
     FAILUREOR_ASSIGN_OR_RETURN(
-        const MemRefType new_memref_ty,
+        MemRefType new_memref_ty,
         inferMemref(memref_ty, hardware_generation, target_shape,
                     tpu_tiling_flags, leading_tile_rows));
     arg.setType(new_memref_ty);
     new_arg_types.push_back(arg.getType());
     if (memref_ty != new_memref_ty) {
-      // Some standard MLIR ops have static checks that seems unreasonable,
-      // and we know they hold in the way they are used in Mosaic. Still,
-      // verification with layouts likes to fail, because it can't statically
-      // prove the properties.
-      auto erase_op = builder.create<tpu::EraseLayoutOp>(
-          arg.getLoc(),
-          MemRefType::get(new_memref_ty.getShape(), memref_ty.getElementType(),
-                          /*layout=*/nullptr, new_memref_ty.getMemorySpace()),
-          arg);
-      arg.replaceAllUsesExcept(erase_op.getResult(), erase_op);
+      Value val = arg;
+      Operation * arg_use_op = nullptr;
+      // If the arg memref can be reinterpreted to untiled, we can insert
+      // ReinterpretCastOp to use tiling {packing, target.lane_count} before
+      // EraseLayoutOp for only the arg memrefs and expect the rest memref
+      // layout inference is based on the casted layout automatically. This
+      // would help lift many restrictions in alignment check when consuming
+      // this memref.
+      if (canReinterpretToUntiledMemref(new_memref_ty, target_shape)) {
+        auto tiled_layout =
+            cast<tpu::TiledLayoutAttr>(new_memref_ty.getLayout());
+        SmallVector<xla::Tile> tiles(tiled_layout.getTiles());
+        tiles[0] = ::xla::Tile(
+            {32 / memref_ty.getElementTypeBitWidth(), target_shape[1]});
+        auto new_tile_strides =
+            ComputeTileStrides(new_memref_ty, tiles[0].dimensions());
+        new_memref_ty = MemRefType::get(
+            new_memref_ty.getShape(), new_memref_ty.getElementType(),
+            TiledLayoutAttr::get(new_memref_ty.getContext(), tiles,
+                                 new_tile_strides),
+            new_memref_ty.getMemorySpace());
+        arg_use_op = builder.create<tpu::ReinterpretCastOp>(val.getLoc(),
+                                                            new_memref_ty, val);
+        val = arg_use_op->getResult(0);
+      }
+      // We never forbid users from creating their own EraseLayoutOp. So we do
+      // not need to create EraseLayoutOp if there is already one.
+      bool has_erase_layout_op = false;
+      for (auto user : arg.getUsers()) {
+        if (auto erase_op = dyn_cast<tpu::EraseLayoutOp>(user)) {
+          has_erase_layout_op = true;
+          break;
+        }
+      }
+      if (!has_erase_layout_op) {
+        // Some standard MLIR ops have static checks that seems unreasonable,
+        // and we know they hold in the way they are used in Mosaic. Still,
+        // verification with layouts likes to fail, because it can't statically
+        // prove the properties.
+        auto erase_op = builder.create<tpu::EraseLayoutOp>(
+            val.getLoc(),
+            MemRefType::get(new_memref_ty.getShape(),
+                            memref_ty.getElementType(),
+                            /*layout=*/nullptr, new_memref_ty.getMemorySpace()),
+            val);
+        if (!arg_use_op) {
+          arg_use_op = erase_op;
+        }
+        arg.replaceAllUsesExcept(erase_op.getResult(), arg_use_op);
+      }
     }
   }
   f.setFunctionType(
