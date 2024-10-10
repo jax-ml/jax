@@ -253,6 +253,24 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x + 1.0)
 
+  def test_copy_gmem_to_smem_in_run_scoped(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+        in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
+    )
+    def kernel(x_ref_gmem, o_ref):
+      def body(barrier_ref):
+        def inner_body(scratch_ref):
+          plgpu.copy_gmem_to_smem(x_ref_gmem, scratch_ref, barrier=barrier_ref)
+          plgpu.wait_barrier(barrier_ref)
+          o_ref[...] = scratch_ref[...] + 1
+        pl.run_scoped(inner_body, plgpu.SMEM((256,), jnp.float32))
+      pl.run_scoped(body, plgpu.Barrier(num_arrivals=1))
+
+    x = jnp.arange(256).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x + 1.0)
+
   def test_add_doubled_sum(self):
     @functools.partial(
         pl.pallas_call,
@@ -375,7 +393,7 @@ class PallasCallTest(PallasTest):
 
     self.assertIn(f"x: [1, 0, 43, 23]/{in_shape}: 6871\n", output())
 
-  def test_scoped_allocation(self):
+  def test_run_scoped(self):
     def kernel(x_ref, o_ref):
       def body(tmp_ref):
         self.assertEqual(tmp_ref.shape, (8, 128))
@@ -610,7 +628,6 @@ class PallasCallTest(PallasTest):
         grid=(1, 1),
     )(a, b)
     np.testing.assert_allclose(res, a @ b, rtol=1e-3)
-
 
   def test_input_output_aliases(self):
     # Note that we're writing to the input pointer, which should alias b_ptr.
