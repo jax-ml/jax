@@ -274,6 +274,7 @@ mlir.register_lowering(tpu_custom_call_p, _tpu_custom_call_lowering,
 def _lower_tpu_kernel(
     module: ir.Module,
     hardware_generation: int,
+    target_shape: tuple[int, int],
 ) -> ir.Module:
   """Runs MLIR passes lowering the given module to an MLIR module.
 
@@ -283,6 +284,7 @@ def _lower_tpu_kernel(
   Args:
     module: The MLIR module to lower.
     hardware_generation: The TPU hardware generation to target.
+    target_shape: The target shape of (sublane_count, lane_count).
 
   Returns:
     An MLIR module implementing the kernel.
@@ -312,11 +314,16 @@ def _lower_tpu_kernel(
       pipeline.run(module.operation)
       dump_mlir(module, "post-hlo-conversion")
 
+    sl_cnt, l_cnt = target_shape
     # Note: we don't pass the TpuTilingFlags here, since we don't know the
     # tiling decisions made by the compiler / what flags are enabled at this
     # point, so we assume everything can be tiled up to default tiling.
     pipeline = [
-        f"func.func(tpu-infer-memref-layout{{hardware-generation={hardware_generation}}})"
+        "func.func(tpu-infer-memref-layout{"
+        f" hardware-generation={hardware_generation}"
+        f" sublane-count={sl_cnt}"
+        f" lane-count={l_cnt}"
+        "})"
     ]
     pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
     pipeline.run(module.operation)
@@ -357,14 +364,16 @@ def _lower_tpu_kernel(
     dump_mlir(module, "post-canonicalize-mosaic")
 
     pipeline = [
-        "func.func(tpu-infer-vector-layout{sublane-count=8 lane-count=128})",
+        (
+            "func.func(tpu-infer-vector-layout{"
+            f" sublane-count={sl_cnt} lane-count={l_cnt}"
+            "})"
+        ),
     ]
     pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
     pipeline.run(module.operation)
     dump_mlir(module, "post-infer-vector-layout")
 
-    sl_cnt = 8
-    l_cnt = 128
     mxu_size = 128 if hardware_generation < 6 else 256
     pipeline = [
         "func.func(tpu-apply-vector-layout{"
@@ -414,7 +423,10 @@ def _lower_mosaic_module_to_asm(
             "tpu_custom_call cannot be lowered on a machine without TPUs "
             "when mosaic_use_python_pipeline=True.")
       hardware_generation = int(device_kind[len("TPU v")])
-      module = _lower_tpu_kernel(module, hardware_generation)
+      # TODO(b/369418606): Infer the target shape from the hardware generation.
+      module = _lower_tpu_kernel(
+          module, hardware_generation, target_shape=(8, 128)
+      )
       needs_hlo_passes = False
       needs_layout_passes = False
     prev_allow_unregistered_dialects = ctx.allow_unregistered_dialects

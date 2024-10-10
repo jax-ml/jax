@@ -38,18 +38,8 @@ class TPU_Attr<string name, string mnemonic_, list<Trait> traits = []>
   let mnemonic = mnemonic_;
 }
 
-def TPU_Vreg : Type<
-  And<[IsVectorTypePred,
-       Or<[
-        And<[
-          CPred<"llvm::cast<::mlir::VectorType>($_self).getShape() == ArrayRef<int64_t>{8, 128}">,
-          CPred<"llvm::cast<::mlir::VectorType>($_self).getElementType().getIntOrFloatBitWidth() == 32">
-        ]>,
-        CPred<"::llvm::cast<::mlir::VectorType>($_self).getShape() == ArrayRef<int64_t>{"
-          "8, 128, 32 / ::llvm::cast<::mlir::VectorType>($_self).getElementType().getIntOrFloatBitWidth()}">,
-       ]>
-      ]>,
-  "native-sized vreg", "::mlir::VectorType">;
+// TODO(b/369418606): Find out the way to verify vreg size.
+def TPU_Vreg : Type<IsVectorTypePred, "native-sized vreg", "::mlir::VectorType">;
 
 class TPU_Type<string name, string mnemonic_, list<Trait> traits = []>
     : TypeDef<TPU_Dialect, name, traits> {
@@ -738,6 +728,8 @@ def InferMemRefLayoutPass : Pass<"tpu-infer-memref-layout", "::mlir::func::FuncO
     // If hardware_generation is not set, the default value of -1 will crash on
     // runOnOperation.
     Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
+    Option<"lane_count", "lane-count", "int", /*default=*/"128", "">,
+    Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
     Option<"tpu_tiling_flags", "tpu-tiling-flags", "::mlir::tpu::TpuTilingFlags", /*default=*/"::mlir::tpu::TpuTilingFlags{}", "">,
   ];
 }

@@ -164,7 +164,7 @@ FailureOr<TypedValue<MemRefType>> getInternalScratch(
   FAILUREOR_ASSIGN_OR_RETURN(
       MemRefType scratch_ref_ty,
       inferMemref(MemRefType::get(shape, elem_ty), ctx.hardware_generation,
-                  /*tpu_tiling_flags=*/{}, sublane_tiling));
+                  ctx.target_shape, /*tpu_tiling_flags=*/{}, sublane_tiling));
   return builder.create<tpu::GetInternalScratchOp>(loc, scratch_ref_ty)
       .getResult();
 }
@@ -490,7 +490,7 @@ FailureOr<BlockArgument> appendConstant(RewriteContext &ctx, func::FuncOp func,
       MemRefType arg_type,
       inferMemref(
           MemRefType::get(value_ty.getShape(), value_ty.getElementType()),
-          ctx.hardware_generation, /*tpu_tiling_flags=*/{}));
+          ctx.hardware_generation, ctx.target_shape, /*tpu_tiling_flags=*/{}));
   const BlockArgument argument = entry_block.insertArgument(
       entry_block.getNumArguments() - 1, arg_type, UnknownLoc::get(mlir_ctx));
   const FunctionType func_ty = func.getFunctionType();
@@ -5821,8 +5821,8 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
   if (try_replicate_rows && packing == 1 &&
       *(vregs.dimensions().end() - 2) == 1 &&
       src.offsets() == LayoutOffsets{0, 0} &&
-      src.tiling() == std::array<int64_t, 2>{1, 128} &&
-      dst_tiling == std::array<int64_t, 2>{8, 128}) {
+      src.tiling() == std::array<int64_t, 2>{1, ctx.target_shape[1]} &&
+      dst_tiling == ctx.target_shape) {
     xla::Array<Value> retiled(dst_tiles_shape);
     retiled.Each([&](absl::Span<const int64_t> idx, Value *tile) {
       SmallVector<int64_t> src_idx(idx.begin(), idx.end());
@@ -5839,9 +5839,9 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
     return std::pair(dst, std::move(retiled));
   }
   // (8,128) -> (8 * packing,128) tiling change for packed type.
-  if (bitwidth < 32 && 32 % bitwidth == 0 &&
-      src_tiling == std::array<int64_t, 2>{8, 128} &&
-      dst_tiling == std::array<int64_t, 2>{8 * dst.packing(), 128}) {
+  if (bitwidth < 32 && 32 % bitwidth == 0 && src_tiling == ctx.target_shape &&
+      dst_tiling == std::array<int64_t, 2>{ctx.target_shape[0] * dst.packing(),
+                                           ctx.target_shape[1]}) {
     // Note: for int4, retiling with scratch is always faster.
     if (bitwidth != 4 || !has_enough_scratch) {
       xla::Array<Value> retiled(dst_tiles_shape);
@@ -5883,8 +5883,8 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
   // match corresponding elements without shifting. It's just that
   // the tiles are not adjacent (no contiguous vreg slice).
   if (bitwidth < 32 && 32 % bitwidth == 0 &&
-      src_tiling == std::array<int64_t, 2>{1, 128 * packing} &&
-      dst_tiling == std::array<int64_t, 2>{packing, 128}) {
+      src_tiling == std::array<int64_t, 2>{1, ctx.target_shape[1] * packing} &&
+      dst_tiling == std::array<int64_t, 2>{packing, ctx.target_shape[1]}) {
     // To illustrate, consider a 2 x 16 16-bit shape laid out in vregs of
     // 4 sublanes and 2 lanes (this is convenient for to keep the example small
     // yet non-trivial) with (1, 4) tiling. We will relayout to (2, 2) tiling.

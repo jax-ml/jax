@@ -21,9 +21,7 @@ limitations under the License.
 #include <optional>
 #include <ostream>
 #include <string>
-#include <type_traits>
 #include <utility>
-#include <variant>
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
@@ -34,7 +32,6 @@ limitations under the License.
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
-#include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Value.h"
@@ -42,6 +39,7 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/types/span.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/include/mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
@@ -49,6 +47,7 @@ limitations under the License.
 #include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/include/mlir/IR/OpDefinition.h"
 #include "mlir/include/mlir/IR/Visitors.h"
+#include "mlir/include/mlir/Pass/Pass.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "xla/layout.h"
@@ -2043,9 +2042,9 @@ class VectorLayoutInferer {
 
 struct InferVectorLayoutPass
     : public impl::InferVectorLayoutPassBase<InferVectorLayoutPass> {
-  InferVectorLayoutPass(int lane_count, int sublane_count) {
-    this->sublane_count = sublane_count;
-    this->lane_count = lane_count;
+  InferVectorLayoutPass(std::array<int64_t, 2> target_shape) {
+    this->sublane_count = target_shape[0];
+    this->lane_count = target_shape[1];
   }
   void runOnOperation() override {
     func::FuncOp func = getOperation();
@@ -2059,8 +2058,8 @@ struct InferVectorLayoutPass
 }  // namespace
 
 std::unique_ptr<OperationPass<func::FuncOp>> createInferVectorLayoutPass(
-    int lane_count, int sublane_count) {
-  return std::make_unique<InferVectorLayoutPass>(lane_count, sublane_count);
+    std::array<int64_t, 2> target_shape) {
+  return std::make_unique<InferVectorLayoutPass>(target_shape);
 }
 
 }  // namespace mlir::tpu
