@@ -244,6 +244,9 @@ jax_multiplatform_test(
         "tpu_all_gather_test.py",
     ],
     enable_backends = ["tpu"],
+    enable_configs = [
+        "tpu_v5e_4x2",
+    ],
     deps = [
         "//jax:pallas_tpu_ops",
     ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
@@ -277,6 +280,10 @@ jax_multiplatform_test(
     # The flag is necessary for ``pl.debug_print`` tests to work on TPU.
     args = ["--logtostderr"],
     enable_backends = ["tpu"],
+    enable_configs = [
+        "tpu_v5e",
+        "tpu_v5p_1x1",
+    ],
     deps = [
         "//jax:extend",
         "//jax:pallas_tpu",
@@ -305,6 +312,12 @@ jax_multiplatform_test(
     name = "tpu_pallas_distributed_test",
     srcs = ["tpu_pallas_distributed_test.py"],
     enable_backends = ["tpu"],
+    enable_configs = [
+        "tpu_v5e_4x2",
+        "tpu_v5p_2x2",
+        "tpu_v4_2x2",
+        "tpu_v3_2x2",
+    ],
     deps = [
         "//jax:extend",
         "//jax:pallas_tpu",
@@ -316,6 +329,10 @@ jax_multiplatform_test(
     name = "tpu_pallas_pipeline_test",
     srcs = ["tpu_pallas_pipeline_test.py"],
     enable_backends = ["tpu"],
+    enable_configs = [
+        "tpu_v5e_4x2",
+        "tpu_v5p_1x1",
+    ],
     shard_count = 5,
     tags = [
         "noasan",  # Times out.
@@ -333,7 +350,9 @@ jax_multiplatform_test(
     name = "tpu_pallas_async_test",
     srcs = ["tpu_pallas_async_test.py"],
     enable_backends = ["tpu"],
-    tags = [
+    enable_configs = [
+        "tpu_v5e_4x2",
+        "tpu_v5p_1x1",
     ],
     deps = [
         "//jax:pallas_tpu",
