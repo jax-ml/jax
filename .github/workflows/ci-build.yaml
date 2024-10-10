@@ -37,7 +37,7 @@ jobs:
       - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd  # v3.0.1
 
   build:
-    name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ubuntu-20.04-16core, x64=${{ matrix.enable-x64}})"
+    name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ubuntu-20.04, x64=${{ matrix.enable-x64}})"
     runs-on: linux-x86-n2-32
     container:
       image: index.docker.io/library/ubuntu@sha256:6d8d9799fe6ab3221965efac00b4c34a2bcc102c086a58dff9e19a08b913c7ef # ratchet:ubuntu:20.04
