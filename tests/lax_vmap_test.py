@@ -32,7 +32,6 @@ from jax import lax
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import windowed_reductions as lax_windowed_reductions
-from jax._src.lib import xla_client
 from jax._src.util import safe_map, safe_zip
 
 jax.config.parse_flags_with_absl()
@@ -546,7 +545,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     ndims = len(shape)
     axes = range(ndims - fft_ndims, ndims)
     fft_lengths = tuple(shape[axis] for axis in axes)
-    op = lambda x: lax.fft(x, xla_client.FftType.FFT, fft_lengths)
+    op = lambda x: lax.fft(x, lax.FftType.FFT, fft_lengths)
     self._CheckBatching(op, 5, bdims, [shape], [np.complex64], rng,
                         rtol=1e-5)
 

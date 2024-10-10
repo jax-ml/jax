@@ -59,7 +59,6 @@ from jax._src import prng
 from jax._src import test_util as jtu
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import windowed_reductions as lax_windowed_reductions
-from jax._src.lib import xla_client
 from jax._src import random as jax_random
 
 # mypy generates a lot of false positive due to re-assigned variables.
@@ -1777,7 +1776,7 @@ def _make_fft_harness(name,
                       *,
                       shape=(14, 15, 16, 17),
                       dtype=np.float32,
-                      fft_type=xla_client.FftType.FFT,
+                      fft_type=lax.FftType.FFT,
                       fft_lengths=(17,)):
 
   def _fft_rng_factory(dtype):
@@ -1805,12 +1804,12 @@ def _make_fft_harness(name,
 
 
 # FFT, IFFT, RFFT, IRFFT
-for fft_type in list(map(xla_client.FftType, [0, 1, 2, 3])):
+for fft_type in list(map(lax.FftType, [0, 1, 2, 3])):
   # Validate dtypes per FFT type
   for dtype in (jtu.dtypes.floating
-                if fft_type == xla_client.FftType.RFFT else jtu.dtypes.complex):
+                if fft_type == lax.FftType.RFFT else jtu.dtypes.complex):
     shape = (14, 15, 16, 17)
-    if fft_type != xla_client.FftType.IRFFT:
+    if fft_type != lax.FftType.IRFFT:
       fft_lengths_list = [ (shape[-1],) ]
     else:
       fft_lengths_list = [ ((shape[-1] - 1) * 2,), (shape[-1] * 2 - 1,) ]
@@ -1831,11 +1830,11 @@ for fft_type in list(map(xla_client.FftType, [0, 1, 2, 3])):
 
   # Validate dimensions per FFT type
   for dtype in [
-      np.float32 if fft_type == xla_client.FftType.RFFT else np.complex64
+      np.float32 if fft_type == lax.FftType.RFFT else np.complex64
   ]:
     for dims in [1, 2, 3]:
       for fft_lengths in [
-          shape[-dims:] if fft_type != xla_client.FftType.IRFFT else
+          shape[-dims:] if fft_type != lax.FftType.IRFFT else
           shape[-dims:-1] + ((shape[-1] - 1) * 2,)
       ]:
         _make_fft_harness(

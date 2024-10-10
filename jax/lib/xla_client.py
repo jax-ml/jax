@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from jax._src.lax.fft import FftType as _FftType
 from jax._src.lib import xla_client as _xc
 
 dtype_to_etype = _xc.dtype_to_etype
@@ -25,7 +26,6 @@ ArrayImpl = _xc.ArrayImpl
 Client = _xc.Client
 CompileOptions = _xc.CompileOptions
 DeviceAssignment = _xc.DeviceAssignment
-FftType = _xc.FftType
 Frame = _xc.Frame
 HloSharding = _xc.HloSharding
 OpSharding = _xc.OpSharding
@@ -47,9 +47,9 @@ _deprecations = {
         _xc.bfloat16,
     ),
     # Added Sep 26 2024
-    "Device" : (
-      "jax.lib.xla_client.Device is deprecated; use jax.Device instead.",
-      _xc.Device
+    "Device": (
+        "jax.lib.xla_client.Device is deprecated; use jax.Device instead.",
+        _xc.Device,
     ),
     "XlaRuntimeError": (
         (
@@ -57,6 +57,11 @@ _deprecations = {
             " jax.errors.JaxRuntimeError."
         ),
         _xc.XlaRuntimeError,
+    ),
+    # Added Oct 10 2024
+    "FftType": (
+        "jax.lib.xla_client.FftType is deprecated; use jax.lax.FftType.",
+        _FftType,
     ),
 }
 
@@ -66,6 +71,7 @@ if _typing.TYPE_CHECKING:
   _xla = _xc._xla
   bfloat16 = _xc.bfloat16
   Device = _xc.Device
+  FftType = _FftType
   XlaRuntimeError = _xc.XlaRuntimeError
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
@@ -73,4 +79,5 @@ else:
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del _typing
+del _FftType
 del _xc

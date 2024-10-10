@@ -20,6 +20,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     JAX version 0.4.26. Now we removed it.
     See {jax-issue}`#20385` for a discussion of alternatives.
 
+* Changes:
+  * `jax.lax.FftType` was introduced as a public name for the enum of FFT
+    operations. The semi-public API `jax.lib.xla_client.FftType` has been
+    deprecated.
+
 ## jax 0.4.34 (October 4, 2024)
 
 * New Functionality

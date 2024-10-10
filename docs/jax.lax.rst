@@ -254,6 +254,7 @@ Argument classes
    :members:
    :undoc-members:
    :member-order: bysource
+.. autoclass:: FftType
 .. autoclass:: GatherDimensionNumbers
 .. autoclass:: GatherScatterMode
 .. autoclass:: Precision
