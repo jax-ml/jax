@@ -66,7 +66,8 @@ from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.sharding_impls import PmapSharding, NamedSharding, PartitionSpec
+from jax._src.sharding_impls import (PmapSharding, NamedSharding,
+                                     PartitionSpec as P)
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
 from jax._src.util import (cache, safe_zip, safe_map, canonicalize_axis,
                            split_list, NumpyComplexWarning)
@@ -2072,7 +2073,7 @@ def broadcasting_sharding_rule(name, *avals):
     msg = '{}: arrays must have same number of dimensions, got {}.'
     raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
 
-  specs = [a.sharding.spec for a in avals if a.shape]
+  specs = [a.sharding.normalized_spec for a in avals if a.shape]
 
   mesh = None
   for a in avals:
@@ -2084,23 +2085,29 @@ def broadcasting_sharding_rule(name, *avals):
             f' another mesh: {a.sharding.mesh}')
   assert mesh is not None
 
-  result_specs = []
-  for ss, ds in zip(zip(*specs), zip(*shapes)):
+  result_specs = [None] * len(shapes[0])
+  for i, (ss, ds) in enumerate(zip(zip(*specs), zip(*shapes))):
     if all(s == ss[0] for s in ss[1:]):
       # if all dimension shardings are same, the resulting dimension sharding is
       # the same.
-      result_specs.append(ss[0])
+      result_specs[i] = ss[0]
     else:
       non_trivial_s = [s for s, d in zip(ss, ds)
                        if not (core.definitely_equal(d, 1) and s is None)]
       if not non_trivial_s:
-        result_specs.append(None)
+        result_specs[i] = None
       elif all(non_trivial_s[0] == s for s in non_trivial_s[1:]):
-        result_specs.append(non_trivial_s[0])
+        result_specs[i] = non_trivial_s[0]
       else:
-        raise TypeError(f'{name} got incompatible shardings for broadcasting: '
-                        f'{", ".join(map(str, map(tuple, specs)))}.')
-  return NamedSharding(mesh, PartitionSpec(*result_specs))
+        for s in ss:
+          if result_specs[i] is None and s is not None:
+            result_specs[i] = s
+          elif (result_specs[i] is not None and s is not None and
+                result_specs[i] != s):
+            raise TypeError(
+                f'{name} got incompatible shardings for broadcasting: '
+                f'{", ".join(map(str, map(tuple, specs)))}.')
+  return NamedSharding(mesh, P(*result_specs))
 
 
 def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
