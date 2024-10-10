@@ -26,33 +26,6 @@ from jax._src.lib import xla_extension
 
 logger = logging.getLogger(__name__)
 
-_DISTRIBUTED_SERVICE_HEARTBEAT_INTERVAL_SECONDS = config.int_flag(
-    name="jax_distributed_service_heartbeat_interval_seconds",
-    default=10,
-    help="Number of heartbeats that a client may miss in a row before the "
-         "coordinator concludes that a client has vanished.",
-)
-
-_DISTRIBUTED_SERVICE_MAX_MISSING_HEARTBEATS = config.int_flag(
-    name="jax_distributed_service_max_missing_heartbeats",
-    default=10,
-    help=".",
-)
-
-_DISTRIBUTED_CLIENT_HEARTBEAT_INTERVAL_SECONDS = config.int_flag(
-    name="jax_distributed_client_heartbeat_interval_seconds",
-    default=10,
-    help="Interval at which the client should send heartbeat RPCs to the "
-         "coordinator.",
-)
-
-_DISTRIBUTED_CLIENT_MAX_MISSING_HEARTBEATS = config.int_flag(
-    name="jax_distributed_client_max_missing_heartbeats",
-    default=10,
-    help="How many failed heartbeat RPCs may fail due to a possibly-ephemeral "
-         "reason before we decide the coordinator has vanished and that we "
-         "should shut down.",
-)
 
 class State:
   process_id: int = 0
@@ -69,7 +42,11 @@ class State:
                  local_device_ids: int | Sequence[int] | None = None,
                  cluster_detection_method: str | None = None,
                  initialization_timeout: int = 300,
-                 coordinator_bind_address: str | None = None):
+                 coordinator_bind_address: str | None = None,
+                 service_heartbeat_interval_seconds: int = 10,
+                 service_max_missing_heartbeats: int = 10,
+                 client_heartbeat_interval_seconds: int = 10,
+                 client_max_missing_heartbeats: int = 10):
     coordinator_address = (coordinator_address or
                            os.environ.get('JAX_COORDINATOR_ADDRESS'))
     if isinstance(local_device_ids, int):
@@ -135,8 +112,8 @@ class State:
       )
       self.service = xla_extension.get_distributed_runtime_service(
           coordinator_bind_address, num_processes,
-          heartbeat_interval=_DISTRIBUTED_SERVICE_HEARTBEAT_INTERVAL_SECONDS.value,
-          max_missing_heartbeats=_DISTRIBUTED_SERVICE_MAX_MISSING_HEARTBEATS.value)
+          heartbeat_interval=service_heartbeat_interval_seconds,
+          max_missing_heartbeats=service_max_missing_heartbeats)
 
     self.num_processes = num_processes
 
@@ -145,8 +122,8 @@ class State:
 
     self.client = xla_extension.get_distributed_runtime_client(
         coordinator_address, process_id, init_timeout=initialization_timeout,
-        heartbeat_interval=_DISTRIBUTED_CLIENT_HEARTBEAT_INTERVAL_SECONDS.value,
-        max_missing_heartbeats=_DISTRIBUTED_CLIENT_MAX_MISSING_HEARTBEATS.value)
+        heartbeat_interval=client_heartbeat_interval_seconds,
+        max_missing_heartbeats=client_max_missing_heartbeats)
     logger.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
 
