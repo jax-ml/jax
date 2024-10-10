@@ -25,6 +25,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     operations. The semi-public API `jax.lib.xla_client.FftType` has been
     deprecated.
 
+* Deprecations:
+  * The semi-public API `jax.lib.xla_client.PaddingType` has been deprecated.
+    No JAX APIs consume this type, so there is no replacement.
+
 ## jax 0.4.34 (October 4, 2024)
 
 * New Functionality

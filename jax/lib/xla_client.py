@@ -29,7 +29,6 @@ DeviceAssignment = _xc.DeviceAssignment
 Frame = _xc.Frame
 HloSharding = _xc.HloSharding
 OpSharding = _xc.OpSharding
-PaddingType = _xc.PaddingType
 PrimitiveType = _xc.PrimitiveType
 Shape = _xc.Shape
 Traceback = _xc.Traceback
@@ -63,6 +62,13 @@ _deprecations = {
         "jax.lib.xla_client.FftType is deprecated; use jax.lax.FftType.",
         _FftType,
     ),
+    "PaddingType": (
+        (
+            "jax.lib.xla_client.PaddingType is deprecated; this type is unused"
+            " by JAX so there is no replacement."
+        ),
+        _xc.PaddingType,
+    ),
 }
 
 import typing as _typing
@@ -72,6 +78,7 @@ if _typing.TYPE_CHECKING:
   bfloat16 = _xc.bfloat16
   Device = _xc.Device
   FftType = _FftType
+  PaddingType = _xc.PaddingType
   XlaRuntimeError = _xc.XlaRuntimeError
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
