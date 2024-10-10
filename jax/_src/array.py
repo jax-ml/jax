@@ -1029,7 +1029,8 @@ xla.canonicalize_dtype_handlers[ArrayImpl] = pxla.identity
 def _get_aval_array(self):
   if config.sharding_in_types.value and isinstance(self.sharding, NamedSharding):
     return self.aval.update(sharding=NamedSharding(
-        self.sharding.mesh.abstract_mesh, self.sharding.spec))
+        self.sharding.mesh.abstract_mesh,
+        self.sharding.normalized_spec(self.ndim)))
   else:
     return self.aval
 api_util._shaped_abstractify_handlers[ArrayImpl] = _get_aval_array

@@ -307,9 +307,8 @@ class NamedSharding(sharding.Sharding):
   def with_memory_kind(self, kind: str) -> NamedSharding:
     return NamedSharding(self.mesh, self.spec, memory_kind=kind)
 
-  @functools.cached_property
-  def normalized_spec(self):
-    out = []
+  def normalized_spec(self, ndim: int) -> PartitionSpec:
+    out = []  # type: ignore
     for p in self._parsed_pspec:
       if p is None:
         raise ValueError("UNCONSTRAINED is not supported yet.")
@@ -319,7 +318,9 @@ class NamedSharding(sharding.Sharding):
         out.append(p[0])
       else:
         out.append(p)
-    return tuple(out)
+    if len(out) < ndim:
+      out.extend([None] * (ndim - len(out)))
+    return PartitionSpec(*out)
 
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return named_sharding_to_xla_hlo_sharding(self, num_dimensions)

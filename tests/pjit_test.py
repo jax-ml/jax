@@ -4652,9 +4652,13 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, s)
     self.assertArraysEqual(out, (np_inp1 * np_inp2))
 
-    out = f(arr1, arr1)
+    out = f(arr1, jax.device_put(np_inp1, NamedSharding(mesh, P(('x',), ('y',)))))
     self.assertEqual(out.sharding, s)
     self.assertArraysEqual(out, (np_inp1 * np_inp1))
+
+    out = f(arr1, jax.device_put(np_inp2, NamedSharding(mesh, P())))
+    self.assertEqual(out.sharding, s)
+    self.assertArraysEqual(out, (np_inp1 * np_inp2))
 
     @jax.jit
     def g(x, y):
@@ -4663,6 +4667,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         TypeError, "mul got incompatible shardings for broadcasting"):
       g(arr1, jax.device_put(np_inp1, NamedSharding(mesh, P('y', 'x'))))
+
+    with self.assertRaisesRegex(
+        TypeError, "mul got incompatible shardings for broadcasting"):
+      g(arr1, jax.device_put(np_inp1, NamedSharding(mesh, P(('x', 'y')))))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

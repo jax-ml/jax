@@ -2073,7 +2073,7 @@ def broadcasting_sharding_rule(name, *avals):
     msg = '{}: arrays must have same number of dimensions, got {}.'
     raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
 
-  specs = [a.sharding.normalized_spec for a in avals if a.shape]
+  specs = [a.sharding.spec for a in avals if a.shape]
 
   mesh = None
   for a in avals:
