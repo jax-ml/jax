@@ -64,9 +64,13 @@ SMEM = gpu_core.SMEM
 @dataclasses.dataclass(kw_only=True, frozen=True)
 class Resources:
   smem_scratch_bytes: int
-  barriers: collections.Counter[mgpu.Barrier] = dataclasses.field(
+  barrier_counts: collections.Counter[mgpu.Barrier] = dataclasses.field(
       default_factory=collections.Counter
   )
+
+  @property
+  def barriers(self) -> Sequence[mgpu.Barrier]:
+    return list(self.barrier_counts.elements())
 
   def __add__(self, other: Resources) -> Resources:
     # TODO(slebedev): Optimize this.
@@ -75,7 +79,7 @@ class Resources:
     # we will allocate two barriers, even though one would be enough.
     return Resources(
         smem_scratch_bytes=self.smem_scratch_bytes + other.smem_scratch_bytes,
-        barriers=self.barriers + other.barriers,
+        barrier_counts=self.barrier_counts + other.barrier_counts,
     )
 
   def __or__(self, other: Resources) -> Resources:
@@ -83,7 +87,7 @@ class Resources:
         smem_scratch_bytes=max(
             self.smem_scratch_bytes, other.smem_scratch_bytes
         ),
-        barriers=self.barriers | other.barriers,
+        barrier_counts=self.barrier_counts | other.barrier_counts,
     )
 
 
@@ -145,7 +149,7 @@ def _run_scoped_resource_estimator(*consts, jaxpr: jax_core.Jaxpr) -> int:
       smem_scratch_bytes += math.prod(aval.shape) * aval.dtype.itemsize
   rs = Resources(
       smem_scratch_bytes=smem_scratch_bytes,
-      barriers=collections.Counter(barriers),
+      barrier_counts=collections.Counter(barriers),
   )
   return rs + _estimate_resources(jaxpr)
 
@@ -440,9 +444,7 @@ def lower_jaxpr_to_module(
       return [step if pid is None else pid for pid in program_ids_template]
 
     grouped_barriers = collections.defaultdict(list)
-    for barrier, barrier_ref in zip(
-        sorted(rs.barriers.elements()), runtime_barriers
-    ):
+    for barrier, barrier_ref in zip(rs.barriers, runtime_barriers):
       grouped_barriers[barrier].append(barrier_ref)
     module_ctx = ModuleContext(
         name_and_src_info.name,
@@ -726,7 +728,7 @@ def lower_jaxpr_to_module(
           *extra_smem_scratch,
           (
               mgpu.Barrier(arrival_count=1, num_barriers=max_concurrent_steps),
-              [*sorted(rs.barriers.elements())],
+              rs.barriers,
               extra_barriers,
           ),
       ),
