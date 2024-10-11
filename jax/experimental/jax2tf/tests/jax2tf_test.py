@@ -36,6 +36,7 @@ from jax._src import core
 from jax._src import source_info_util
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.lib import version as jaxlib_version
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax.experimental.shard_map import shard_map
@@ -1688,6 +1689,17 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       self.assertAllClose(
         res,
         x + _testing_multi_platform_to_add[tf_device_jax_platform])
+
+  def test_dot_algorithm(self):
+    if jaxlib_version <= (0, 4, 34):
+      self.skipTest("XLA fix not integrated into this jaxlib version")
+
+    # ref: https://github.com/jax-ml/jax/issues/24236
+    def f_jax(x):
+      return jax.lax.dot(x, x, precision="F32_F32_F32")
+
+    f_tf = jax2tf.convert(f_jax, native_serialization=True)
+    f_tf(np.ones((128, 128), dtype=np.float32))  # no crash
 
   def test_dot_algorithm_non_native_unsupported(self):
     def f_jax(x):
