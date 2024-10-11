@@ -4739,6 +4739,25 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         ' have the consistent sharding'):
       jnp.einsum('abc,acz->abz', arr1, arr2)
 
+  def test_aval_repr(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+
+    aval = core.ShapedArray((8, 2), np.float32,
+                            sharding=NamedSharding(mesh, P('x', 'y')))
+    self.assertEqual(aval.str_short(), 'float32[8@x,2@y]')
+
+    aval = aval.update(sharding=NamedSharding(mesh, P('x', None)))
+    self.assertEqual(aval.str_short(), 'float32[8@x,2]')
+
+    aval = aval.update(sharding=NamedSharding(mesh, P(None, 'y')))
+    self.assertEqual(aval.str_short(), 'float32[8,2@y]')
+
+    aval = aval.update(sharding=NamedSharding(mesh, P(None, None)))
+    self.assertEqual(aval.str_short(), 'float32[8,2]')
+
+    aval = aval.update(sharding=NamedSharding(mesh, P(('x', 'y'), None)))
+    self.assertEqual(aval.str_short(), 'float32[8@xy,2]')
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

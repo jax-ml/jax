@@ -307,7 +307,7 @@ class NamedSharding(sharding.Sharding):
   def with_memory_kind(self, kind: str) -> NamedSharding:
     return NamedSharding(self.mesh, self.spec, memory_kind=kind)
 
-  def normalized_spec(self, ndim: int) -> PartitionSpec:
+  def _normalized_spec(self, ndim: int) -> PartitionSpec:
     out = []  # type: ignore
     for p in self._parsed_pspec:
       if p is None:
