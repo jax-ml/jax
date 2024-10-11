@@ -270,6 +270,8 @@ def setup_repos_ubuntu(rocm_version_str):
     if rv.rev == 0:
         rocm_version_str = "%d.%d" % (rv.major, rv.minor)
 
+    # Update indexes.
+    subprocess.check_call(["apt-get", "update"])
     s = get_system()
     s.install_packages(["wget", "sudo", "gnupg"])
 
