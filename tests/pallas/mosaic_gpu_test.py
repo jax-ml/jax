@@ -468,8 +468,10 @@ class PallasCallTest(PallasTest):
     spec = plgpu.GPUBlockSpec(
         (128, 64),
         lambda *i: i,
-        transforms=plgpu.TilingTransform((64, 64)),
-        swizzle=128,
+        transforms=(
+            plgpu.TilingTransform((64, 64)),
+            plgpu.SwizzleTransform(128),
+        ),
     )
     @functools.partial(
         pl.pallas_call,
@@ -576,14 +578,15 @@ class PallasCallTest(PallasTest):
             plgpu.GPUBlockSpec(
                 (64, 128),
                 lambda i, j: (i, j),
-                transforms=plgpu.TilingTransform((64, elems_128b)),
-                swizzle=128,
+                transforms=(
+                    plgpu.TilingTransform((64, elems_128b)),
+                    plgpu.SwizzleTransform(128),
+                ),
             ),
             plgpu.GPUBlockSpec(
                 (128, 128),
                 lambda *i: i,
-                transforms=rhs_transforms,
-                swizzle=128,
+                transforms=(*rhs_transforms, plgpu.SwizzleTransform(128)),
             ),
         ],
         out_specs=plgpu.GPUBlockSpec((64, 128), lambda *i: i),
@@ -613,14 +616,18 @@ class PallasCallTest(PallasTest):
             plgpu.GPUBlockSpec(
                 (64, 128),
                 lambda i, j: (i, j),
-                transforms=plgpu.TilingTransform((64, elems_128b)),
-                swizzle=128,
+                transforms=(
+                    plgpu.TilingTransform((64, elems_128b)),
+                    plgpu.SwizzleTransform(128),
+                ),
             ),
             plgpu.GPUBlockSpec(
                 (128, 128),
                 lambda *i: i,
-                transforms=plgpu.TilingTransform((elems_128b, elems_128b)),
-                swizzle=128,
+                transforms=(
+                    plgpu.TilingTransform((elems_128b, elems_128b)),
+                    plgpu.SwizzleTransform(128),
+                ),
             ),
         ],
         out_specs=plgpu.GPUBlockSpec((64, 128), lambda *i: i),
@@ -675,21 +682,27 @@ class PallasCallTest(PallasTest):
             plgpu.GPUBlockSpec(
                 (tile_m, tile_k),
                 lambda m, n, k: (m, k),
-                transforms=plgpu.TilingTransform((64, elems_128b)),
-                swizzle=128,
+                transforms=(
+                    plgpu.TilingTransform((64, elems_128b)),
+                    plgpu.SwizzleTransform(128),
+                ),
             ),
             plgpu.GPUBlockSpec(
                 (tile_k, tile_n),
                 lambda m, n, k: (k, n),
-                transforms=plgpu.TilingTransform((elems_128b, elems_128b)),
-                swizzle=128,
+                transforms=(
+                    plgpu.TilingTransform((elems_128b, elems_128b)),
+                    plgpu.SwizzleTransform(128),
+                ),
             ),
         ],
         out_specs=plgpu.GPUBlockSpec(
             (tile_m, tile_n),
             lambda m, n, k: (m, n),
-            transforms=plgpu.TilingTransform((64, elems_128b)),
-            swizzle=128,
+            transforms=(
+                plgpu.TilingTransform((64, elems_128b)),
+                plgpu.SwizzleTransform(128),
+            ),
         ),
         out_shape=jax.ShapeDtypeStruct((m, n), jnp.float16),
         scratch_shapes=[plgpu.ACC((tile_m, tile_n), jnp.float32)],
@@ -716,8 +729,10 @@ class PallasCallTest(PallasTest):
     spec = plgpu.GPUBlockSpec(
         (128, 128),
         lambda: (0, 0),
-        transforms=plgpu.TilingTransform((64, 64)),
-        swizzle=128,
+        transforms=(
+            plgpu.TilingTransform((64, 64)),
+            plgpu.SwizzleTransform(128),
+        ),
     )
     f = pl.pallas_call(rotate, out_shape=x, in_specs=[spec], out_specs=spec)
     expected = np.empty_like(x)

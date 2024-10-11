@@ -260,15 +260,9 @@ class UnswizzleRef(Transform):
     return cls(*metadata)
 
 
-@dataclasses.dataclass(frozen=True)
-class GPUBlockMapping(pallas_core.BlockMapping):
-  swizzle: int | None = None
-
-
 @dataclasses.dataclass
 class GPUBlockSpec(pallas_core.BlockSpec):
-  transforms: MemoryRefTransform | tuple[MemoryRefTransform, ...] = ()
-  swizzle: int | None = None  # TODO: apaszke - Swizzle is also a transform.
+  transforms: Sequence[MemoryRefTransform] = ()
 
   def to_block_mapping(
       self,
@@ -279,7 +273,7 @@ class GPUBlockSpec(pallas_core.BlockSpec):
       index_map_tree: tree_util.PyTreeDef,
       grid: pallas_core.GridMappingGrid,
       mapped_dims: tuple[int, ...],
-  ) -> GPUBlockMapping:
+  ) -> pallas_core.BlockMapping:
     bm = super().to_block_mapping(
         origin,
         array_aval,
@@ -288,26 +282,14 @@ class GPUBlockSpec(pallas_core.BlockSpec):
         grid=grid,
         mapped_dims=mapped_dims,
     )
-    transforms = self.transforms
-    if not isinstance(transforms, tuple):
-      transforms = (transforms,)
-    if self.swizzle is not None:
-      transforms += (SwizzleTransform(self.swizzle),)
     block_inner_aval = bm.block_aval.inner_aval
-    for t in transforms:
+    for t in self.transforms:
       block_inner_aval = t(block_inner_aval)
-    return GPUBlockMapping(
-        block_shape=bm.block_shape,
+    return bm.replace(
         transformed_block_aval=bm.block_aval.update(
             inner_aval=block_inner_aval
         ),
-        origin=bm.origin,
-        index_map_jaxpr=bm.index_map_jaxpr,
-        index_map_src_info=bm.index_map_src_info,
-        indexing_mode=bm.indexing_mode,
-        array_shape_dtype=bm.array_shape_dtype,
-        transforms=transforms,
-        swizzle=self.swizzle,
+        transforms=self.transforms,
     )
 
 

@@ -21,6 +21,7 @@ from jax._src.pallas.mosaic_gpu.core import Barrier
 from jax._src.pallas.mosaic_gpu.core import GPUBlockSpec
 from jax._src.pallas.mosaic_gpu.core import GPUCompilerParams
 from jax._src.pallas.mosaic_gpu.core import GPUMemorySpace
+from jax._src.pallas.mosaic_gpu.core import SwizzleTransform
 from jax._src.pallas.mosaic_gpu.core import TilingTransform
 from jax._src.pallas.mosaic_gpu.core import TransposeTransform
 from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef

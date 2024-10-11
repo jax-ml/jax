@@ -13,6 +13,7 @@ Classes
    GPUBlockSpec
    GPUCompilerParams
    GPUMemorySpace
+   SwizzleTransform
    TilingTransform
    TransposeTransform
    WGMMAAccumulatorRef
