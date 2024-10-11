@@ -371,7 +371,7 @@ The policies are:
   but offload to CPU memory instead of recomputing.
 * `save_and_offload_only_these_names` same as `save_only_these_names`, but
   offload to CPU memory instead of recomputing.
-* `save_from_both_policies(policy_1, policy_2)` This `or` two policies.
+* `save_from_both_policies(policy_1, policy_2)` (like a logical `or`, so that a residual is saveable if it is saveable according to `policy_1` _or_ `policy_2`)
 
 Policies only indicate what is saveable; a value is only saved if it's actually needed by the backward pass.
 
