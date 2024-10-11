@@ -33,6 +33,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     the `vectorized` parameter to those functions. The `vmap_method` parameter
     should be used instead for better defined behavior. See the discussion in
     {jax-issue}`#23881` for more details.
+  * The semi-public API `jax.lib.xla_client.register_custom_call_target` has
+    been deprecated. Use the JAX FFI instead.
+  * The semi-public APIs `jax.lib.xla_client.dtype_to_etype`,
+    `jax.lib.xla_client.ops`, 
+    `jax.lib.xla_client.shape_from_pyval`, `jax.lib.xla_client.PrimitiveType`,
+    `jax.lib.xla_client.Shape`, `jax.lib.xla_client.XlaBuilder`, and
+    `jax.lib.xla_client.XlaComputation` have been deprecated. Use StableHLO
+    instead.
 
 ## jax 0.4.34 (October 4, 2024)
 
