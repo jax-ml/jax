@@ -285,9 +285,9 @@ def write_bazelrc(*, remote_build,
     if enable_cuda:
       f.write("build --config=cuda\n")
       if use_cuda_nvcc:
-        f.write("build --config=cuda_nvcc\n")
+        f.write("build --config=build_cuda_with_nvcc\n")
       else:
-        f.write("build --config=cuda_clang\n")
+        f.write("build --config=build_cuda_with_clang\n")
       f.write(f"build --action_env=CLANG_CUDA_COMPILER_PATH={clang_path}\n")
       if not enable_nccl:
         f.write("build --config=nonccl\n")
