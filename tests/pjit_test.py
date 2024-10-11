@@ -4603,9 +4603,9 @@ def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
 
 
+@jtu.with_config(jax_sharding_in_types=True)
 class ShardingInTypesTest(jtu.JaxTestCase):
 
-  @config.sharding_in_types(True)
   def test_basic_mul(self):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     np_inp = np.arange(16).reshape(8, 2)
@@ -4631,7 +4631,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     else:
       self.assertEqual(lowered_text.count('@Sharding'), 2)
 
-  @config.sharding_in_types(True)
   def test_fully_replicated_array_mul(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     np_inp1 = np.arange(16).reshape(8, 2)
@@ -4671,6 +4670,74 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         TypeError, "mul got incompatible shardings for broadcasting"):
       g(arr1, jax.device_put(np_inp1, NamedSharding(mesh, P(('x', 'y')))))
+
+  @parameterized.named_parameters(
+      ('x_y', P('x', None), P(None, 'y'), P('x', 'y'), None),
+      ('x_None', P('x', None), P(None, None), P('x', None), None),
+      ('contracting1', P('x', 'y'), P('y', None), P('x', None), 'all-reduce'),
+      ('contracting2', P('x', 'y'), P(None, None), P('x', None), 'all-gather'),
+      ('fsdp', P('x', None), P('x', None), P('x', None), 'all-gather'),
+      ('half_tp', P(None, 'y'), P(None, 'y'), P(None, 'y'), 'all-gather'),
+      ('other_half_tp', P(None, 'y'), P('y', None), P(None, None), 'all-reduce')
+  )
+  def test_dot_general_basic(self, spec1, spec2, out_spec, collective_name):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    np_inp1 = np.arange(16).reshape(8, 2)
+    arr1 = jax.device_put(np_inp1, NamedSharding(mesh, spec1))
+    arr2 = jax.device_put(np_inp1.T, NamedSharding(mesh, spec2))
+
+    @jax.jit
+    def f(x, y):
+      out = x @ y
+      self.assertEqual(out.sharding.spec, out_spec)
+      return out
+
+    out = f(arr1, arr2)
+    self.assertArraysEqual(out, np_inp1 @ np_inp1.T)
+    self.assertEqual(out.aval.sharding.spec, out_spec)
+
+    compiled_text = f.lower(arr1, arr2).compile().as_text()
+    if collective_name is not None and compiled_text is not None:
+      self.assertIn(collective_name, compiled_text)
+
+  @parameterized.named_parameters(
+      ('fail1', P('x', 'y'), P('y', 'x'),
+       "PartitionSpec.*x.*x.*has duplicate entries", ValueError),
+      ('fail2', P('x', 'y'), P('x', 'y'),
+       "dot_general requires contracting dimensions to have consistent sharding",
+       TypeError),
+  )
+  def test_dot_general_error(self, spec1, spec2, error_msg, error_type):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    np_inp1 = np.arange(16).reshape(8, 2)
+    arr1 = jax.device_put(np_inp1, NamedSharding(mesh, spec1))
+    arr2 = jax.device_put(np_inp1.T, NamedSharding(mesh, spec2))
+
+    @jax.jit
+    def f(x, y):
+      return x @ y
+
+    with self.assertRaisesRegex(error_type, error_msg):
+      f(arr1, arr2)
+
+  def test_dot_general_batch_error(self):
+    mesh = jtu.create_mesh((2, 2, 1), ('x', 'y', 'z'))
+    arr1 = jax.device_put(np.ones((8, 4, 2)),
+                          NamedSharding(mesh, P('x', 'y', 'z')))
+    arr2 = jax.device_put(np.ones((8, 2, 4)),
+                          NamedSharding(mesh, P('y', 'z', 'x')))
+    with self.assertRaisesRegex(
+        TypeError,
+        'dot_general requires lhs batch dimensions and rhs batch dimensions to'
+        ' have the consistent sharding'):
+      jax.lax.dot_general(
+          arr1, arr2, dimension_numbers=(([2], [1]), ([0], [0])))
+
+    with self.assertRaisesRegex(
+        TypeError,
+        'dot_general requires lhs batch dimensions and rhs batch dimensions to'
+        ' have the consistent sharding'):
+      jnp.einsum('abc,acz->abz', arr1, arr2)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

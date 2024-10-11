@@ -56,11 +56,11 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
     out = prim.impl(*[x.val for x in avals], **kwargs)
     return core.ConcreteArray(out.dtype, out, weak_type=weak_type)
   elif least_specialized is core.ShapedArray:
-    out_sharding = (sharding_rule(*avals, **kwargs)
-                    if config.sharding_in_types.value else None)
-    return core.ShapedArray(shape_rule(*avals, **kwargs),
-                            dtype_rule(*avals, **kwargs), weak_type=weak_type,
-                            sharding=out_sharding)
+    return core.ShapedArray(
+        shape_rule(*avals, **kwargs), dtype_rule(*avals, **kwargs),
+        weak_type=weak_type,
+        sharding=(sharding_rule(*avals, **kwargs)
+                  if config.sharding_in_types.value else None))
   elif least_specialized is core.DShapedArray:
     shape = shape_rule(*avals, **kwargs)
     ty = (core.ShapedArray if all(type(d) is int for d in shape)
