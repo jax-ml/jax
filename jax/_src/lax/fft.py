@@ -38,23 +38,19 @@ __all__ = [
 ]
 
 class FftType(enum.IntEnum):
-  """Describes which FFT operation to perform.
+  "Describes which FFT operation to perform."
 
-  Possible values are:
-
-  FFT:
-    Forward complex-to-complex FFT.
-  IFFT:
-    Inverse complex-to-complex FFT.
-  RFFT:
-    Forward real-to-complex FFT.
-  IRFFT:
-    Inverse real-to-complex FFT (i.e. takes complex, returns real).
-  """
   FFT = 0
+  "Forward complex-to-complex FFT."
+
   IFFT = 1
+  "Inverse complex-to-complex FFT."
+
   RFFT = 2
+  "Forward real-to-complex FFT."
+
   IRFFT = 3
+  "Inverse real-to-complex FFT."
 
 
 def _str_to_fft_type(s: str) -> FftType:

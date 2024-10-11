@@ -60,8 +60,6 @@ from jax._src.lax import slicing
 from jax._src.lax.utils import (
   _input_dtype, dtype_to_string, standard_abstract_eval,
   standard_multi_result_abstract_eval, standard_primitive)
-from jax._src import xla_bridge
-from jax._src.lib import xla_client
 from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
@@ -71,11 +69,6 @@ from jax._src.sharding_impls import (PmapSharding, NamedSharding,
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
 from jax._src.util import (cache, safe_zip, safe_map, canonicalize_axis,
                            split_list, NumpyComplexWarning)
-
-xb = xla_bridge
-xc = xla_client
-xops = xla_client.ops
-xe = xla_client._xla
 
 _max = builtins.max
 _min = builtins.min
@@ -5399,7 +5392,20 @@ def _rng_bit_generator_weak_type_rule(key, *, shape, dtype, algorithm):
   del shape, dtype, algorithm
   return (key.weak_type, False)
 
-RandomAlgorithm = xops.RandomAlgorithm
+
+class RandomAlgorithm(enum.IntEnum):
+  """Describes which PRNG algorithm to use for rng_bit_generator."""
+
+  RNG_DEFAULT = 0
+  "The platform's default algorithm."
+
+  RNG_THREE_FRY = 1
+  "The Threefry-2x32 PRNG algorithm."
+
+  RNG_PHILOX = 2
+  "The Philox-4x32 PRNG algorithm."
+
+
 RandomAlgorithm.__str__ = lambda algorithm: algorithm.name  # type: ignore[method-assign]
 
 def _rng_algorithm(algorithm: RandomAlgorithm):
@@ -5422,7 +5428,7 @@ def _rng_bit_generator_lowering(
   # need to convert u32[4] -> u64[2] here in the translation rule. However, we
   # also polymorphically allow a u64[2] for backward compatibility.
   #
-  # Separately, xops.RngBitGenerator doesn't support generating u8 or
+  # Separately, RngBitGenerator doesn't support generating u8 or
   # u16, so we request u32 and truncate in that case.
   u32_type = ir.IntegerType.get_unsigned(32)
   u64_type = ir.IntegerType.get_unsigned(64)

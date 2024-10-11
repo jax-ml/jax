@@ -23,13 +23,10 @@ from jax._src import dispatch
 from jax._src import config
 from jax._src import dtypes
 from jax._src.util import safe_zip
-from jax._src.lib import xla_client
 
 zip, unsafe_zip = safe_zip, zip
 
 import numpy as np
-
-xops = xla_client.ops
 
 def _input_dtype(x, *_, **__):
   return dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True)
@@ -96,13 +93,6 @@ def standard_multi_result_abstract_eval(
   else:
     raise TypeError(avals, least_specialized)
 
-def standard_translate(prim):
-  xla_opname = ''.join(term.capitalize() for term in prim.name.split('_'))
-  op = getattr(xops, xla_opname)
-  def translation_rule(ctx, avals_in, avals_out, *args, **kwargs):
-    del ctx, avals_in, avals_out
-    return [op(*args, **kwargs)]
-  return translation_rule
 
 def _standard_weak_type_rule(*avals, **kwargs):
   return all(aval.weak_type for aval in avals)
