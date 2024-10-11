@@ -225,6 +225,10 @@ jax_multiplatform_test(
         "tpu_v4_2x2",
         "tpu_v5p_2x2",
         "tpu_v5e_4x2",
+        "cpu_shardy",
+        "gpu_2gpu_shardy",
+        "tpu_v3_2x2_shardy",
+        "tpu_v5e_4x2_shardy",
     ],
     shard_count = {
         "tpu": 5,
