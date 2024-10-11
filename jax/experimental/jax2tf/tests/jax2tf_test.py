@@ -1689,6 +1689,15 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         res,
         x + _testing_multi_platform_to_add[tf_device_jax_platform])
 
+  def test_dot_algorithm_non_native_unsupported(self):
+    def f_jax(x):
+      return jax.lax.dot(x, x, precision="F32_F32_F32")
+
+    x = np.ones((128, 128), dtype=np.float32)
+    with self.assertRaisesRegex(NotImplementedError,
+                                "Unsupported precision in dot_general"):
+      jax2tf.convert(f_jax, native_serialization=False)(x)
+
 
 @jtu.with_config(jax_enable_custom_prng=True)
 class Jax2tfWithCustomPRNGTest(tf_test_util.JaxToTfTestCase):

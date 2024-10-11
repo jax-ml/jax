@@ -2181,7 +2181,7 @@ tf_impl_with_avals[lax.conv_general_dilated_p] = _conv_general_dilated
 
 
 def _dot_general(lhs, rhs, *, dimension_numbers,
-                 precision: tuple[PrecisionType, PrecisionType] | None,
+                 precision: lax_internal.CanonicalPrecision,
                  preferred_element_type: DType | None,
                  _in_avals: Sequence[core.ShapedArray],
                  _out_aval: core.ShapedArray):
@@ -2199,6 +2199,14 @@ def _dot_general(lhs, rhs, *, dimension_numbers,
   #   raise NotImplementedError(
   #     "dot_general with different lhs_dtype and rhs_dtype is not supported "
   #     "in non-native serialization")
+
+  if precision == lax.DotAlgorithmPreset.DEFAULT:
+    precision = None
+  if precision is not None and not (isinstance(precision, tuple) and
+                                    len(precision) == 2):
+    raise NotImplementedError(
+        f"Unsupported precision in dot_general: {precision}")
+
   lhs, rhs, convert_result = _dot_general_convert_to_common_dtype(
     lhs, _in_avals[0], rhs, _in_avals[1], _out_aval)
 
@@ -2208,7 +2216,7 @@ def _dot_general(lhs, rhs, *, dimension_numbers,
   dnums_proto.rhs_contracting_dimensions.extend(rhs_contracting)
   dnums_proto.lhs_batch_dimensions.extend(lhs_batch)
   dnums_proto.rhs_batch_dimensions.extend(rhs_batch)
-  precision_config_proto = _precision_config_proto(precision)
+  precision_config_proto = _precision_config_proto(precision)  # type: ignore
   res = tfxla.dot_general(
       lhs,
       rhs,
