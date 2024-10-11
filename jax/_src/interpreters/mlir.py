@@ -1014,11 +1014,11 @@ def _to_physical_op_sharding(
 def _to_xla_layout(layout: DeviceLocalLayout | None | AutoLayout,
                    aval: core.AbstractValue) -> str | None:
   if layout is None:
-    return "default"
+    return None
   if isinstance(layout, AutoLayout):
     return "auto"
   if aval is core.abstract_token:
-    return "default"
+    return None
   return str(layout._to_xla_layout(aval.dtype))  # type: ignore
 
 

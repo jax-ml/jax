@@ -121,7 +121,6 @@ class LayoutTest(jtu.JaxTestCase):
       return x.T
 
     lowered = jax.jit(f, in_shardings=None, out_shardings=None).lower(sds)
-    self.assertIn("default", lowered.as_text())
     compiled = lowered.compile()
     out = compiled(arr)
 
