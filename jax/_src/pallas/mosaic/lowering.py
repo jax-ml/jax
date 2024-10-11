@@ -470,7 +470,7 @@ def _check_block_mappings(
               "has block shape "
               f"{bm.block_shape}, array shape {bm.array_shape_dtype.shape}, "
               # TODO(necula): add index_map source location info
-              f"and index_map returning {bm.index_map_jaxpr.jaxpr.outvars}, in "
+              f"and index_map {bm.index_map_jaxpr.jaxpr}, in "
               f"memory space {bm.block_aval.memory_space}."
               "\nSee details at https://jax.readthedocs.io/en/latest/pallas/grid_blockspec.html#pallas-blockspec")
     if rank < 1:
