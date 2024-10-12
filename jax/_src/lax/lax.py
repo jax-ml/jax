@@ -4781,6 +4781,12 @@ def _reduce_number_dtype_rule(name, operand, *args, **kw):
 def _reduce_sum_shape_rule(operand, *, axes):
   return _reduce_op_shape_rule(operand, axes=axes)
 
+def _reduce_sum_sharding_rule(operand, *, axes):
+  axes = frozenset(axes)
+  new_spec = P(*tuple(s for i, s in enumerate(operand.sharding.spec)
+                      if i not in axes))
+  return NamedSharding(operand.sharding.mesh, new_spec)
+
 def _reduce_sum_transpose_rule(cotangent, operand, *, axes):
   assert ad.is_undefined_primal(operand)
   input_shape = operand.aval.shape
@@ -4806,7 +4812,7 @@ def _replace_masked_values(x, val, padded_axes):
 
 reduce_sum_p = standard_primitive(
   _reduce_sum_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_sum'),
-  'reduce_sum')
+  'reduce_sum', sharding_rule=_reduce_sum_sharding_rule)
 ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p, _get_sum_identity)
 pe.padding_rules[reduce_sum_p] = partial(_reducer_padding, _reduce_sum,

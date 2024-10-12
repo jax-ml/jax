@@ -4607,7 +4607,7 @@ def spec_regex(s):
 class ShardingInTypesTest(jtu.JaxTestCase):
 
   def test_basic_mul(self):
-    mesh = jtu.create_mesh((4, 2), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     np_inp = np.arange(16).reshape(8, 2)
     s = NamedSharding(mesh, P('x', 'y'))
     arr = jax.device_put(np_inp, s)
@@ -4757,6 +4757,34 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     aval = aval.update(sharding=NamedSharding(mesh, P(('x', 'y'), None)))
     self.assertEqual(aval.str_short(), 'float32[8@xy,2]')
+
+  @parameterized.named_parameters(
+      ('all', None,P('x', 'y'), P()),
+      ('first', 0, P('x', 'y'), P('y')),
+      ('second', 1, P('x', 'y'), P('x')),
+      ('first2', 0, P(('x', 'y'), None), P(None)),
+      ('second2', 1, P(('x', 'y'), None), P(('x', 'y')), False),
+  )
+  def test_reduce_sum(self, axis, in_spec, out_spec, reduce=True):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    s = NamedSharding(mesh, in_spec)
+    arr = jax.device_put(np_inp, s)
+
+    @jax.jit
+    def f(x):
+      self.assertEqual(x.sharding.spec, s.spec)
+      y = jnp.sum(x, axis=axis)
+      self.assertEqual(y.sharding.spec, out_spec)
+      return y
+
+    out = f(arr)
+    self.assertArraysEqual(out, np.sum(np_inp, axis=axis))
+    self.assertEqual(out.aval.sharding.spec, out_spec)
+
+    compiled_text = f.lower(arr).compile().as_text()
+    if reduce and compiled_text is not None:
+      self.assertIn('all-reduce', compiled_text)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
