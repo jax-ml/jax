@@ -3602,6 +3602,9 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
       precision_config=precision_attr(precision),
       **algorithm_kwarg,
   )
+  if config.sharding_in_types.value:
+    out_sp = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
+    result = mlir.wrap_with_sharding_op(ctx, result, aval_out, out_sp)
   if accumulation_aval.dtype != aval_out.dtype:
     result = mlir.convert_hlo(ctx, result, accumulation_aval, aval_out)
   return [result]
@@ -4973,6 +4976,9 @@ def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes):
   reducer_region = op.regions[0].blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(reducer_region):
     hlo.return_([reducer(*reducer_region.arguments)])
+  if config.sharding_in_types.value:
+    out_sp = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
+    return [mlir.wrap_with_sharding_op(ctx, op.result, aval_out, out_sp)]
   return op.results
 
 mlir.register_lowering(reduce_sum_p, partial(_unary_reduce_lower, hlo.AddOp,

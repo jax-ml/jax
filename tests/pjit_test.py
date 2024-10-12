@@ -4603,7 +4603,7 @@ def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
 
 
-@jtu.with_config(jax_sharding_in_types=True)
+@jtu.with_config(jax_sharding_in_types=True, jax_use_shardy_partitioner=False)
 class ShardingInTypesTest(jtu.JaxTestCase):
 
   def test_basic_mul(self):
@@ -4696,7 +4696,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_inp1 @ np_inp1.T)
     self.assertEqual(out.aval.sharding.spec, out_spec)
 
-    compiled_text = f.lower(arr1, arr2).compile().as_text()
+    lowered = f.lower(arr1, arr2)
+    self.assertIn('@Sharding', lowered.as_text())
+
+    compiled_text = lowered.compile().as_text()
     if collective_name is not None and compiled_text is not None:
       self.assertIn(collective_name, compiled_text)
 
@@ -4759,7 +4762,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(aval.str_short(), 'float32[128@(model,data),64]')
 
   @parameterized.named_parameters(
-      ('all', None,P('x', 'y'), P()),
+      ('all', None, P('x', 'y'), P()),
       ('first', 0, P('x', 'y'), P('y')),
       ('second', 1, P('x', 'y'), P('x')),
       ('first2', 0, P(('x', 'y'), None), P(None)),
@@ -4782,7 +4785,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np.sum(np_inp, axis=axis))
     self.assertEqual(out.aval.sharding.spec, out_spec)
 
-    compiled_text = f.lower(arr).compile().as_text()
+    lowered = f.lower(arr)
+    self.assertIn('@Sharding', lowered.as_text())
+
+    compiled_text = lowered.compile().as_text()
     if reduce and compiled_text is not None:
       self.assertIn('all-reduce', compiled_text)
 
