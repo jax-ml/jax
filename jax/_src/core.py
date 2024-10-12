@@ -1829,8 +1829,8 @@ def _get_shape_sharding_str(shape, spec):
     if s2 is None:
       yield f"{s1}"
     elif isinstance(s2, tuple):
-      ss = ''.join(s for s in s2)
-      yield f"{s1}@{ss}"
+      ss = ','.join(s for s in s2)
+      yield f"{s1}@({ss})"
     else:
       yield f"{s1}@{s2}"
 
