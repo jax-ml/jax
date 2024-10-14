@@ -4,6 +4,24 @@
   --block-bg-opacity: .5;
 }
 
+.article:has(.hero) {
+  padding: 0;
+}
+
+.article:has(.hero) > section > * {
+  padding-inline: 2rem;
+}
+
+@media (max-width: 768px) {
+  .article:has(.hero) > section > * {
+    padding-inline: 1rem;
+  }
+}
+
+.article:has(.hero) h1 {
+  display: none;
+}
+
 .wy-side-nav-search {
   background-color: #fff;
 }
@@ -18,6 +36,16 @@
 
 .developer-docs {
   background-color: rgba(171, 0, 182, var(--block-bg-opacity));
+}
+
+.color-cards {
+  background: #D2E3FC;
+  color: black;
+}
+
+.color-cards {
+  background: #A9CAFF;
+  color: black;
 }
 
 .ecosystem-grid {

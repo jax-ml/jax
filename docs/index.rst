@@ -1,8 +1,8 @@
 JAX: High performance array computing
 =====================================
 
-JAX is a Python library for accelerator-oriented array computation and program transformation,
-designed for high-performance numerical computing and large-scale machine learning.
+.. raw:: html
+   :file: hero.html
 
 .. grid:: 3
    :margin: 0
@@ -31,6 +31,7 @@ designed for high-performance numerical computing and large-scale machine learni
       The same code executes on multiple backends, including CPU, GPU, & TPU
 
 .. grid:: 3
+    :class-container: color-cards
 
     .. grid-item-card:: :material-regular:`rocket_launch;2em` Getting started
       :columns: 12 6 6 4
@@ -50,8 +51,8 @@ designed for high-performance numerical computing and large-scale machine learni
       :link-type: ref
       :class-card: developer-docs
 
-If you're looking to train neural networks, use Flax_ and start with its tutorials.
-For an end-to-end transformer library built on JAX, see MaxText_.
+   If you're looking to train neural networks, use Flax_ and start with its tutorials.
+   For an end-to-end transformer library built on JAX, see MaxText_.
 
 Ecosystem
 ---------
