@@ -63,6 +63,7 @@ traceback_util.register_exclusion(__file__)
 #   a:f32[3] <- x[]
 get_p = core.Primitive("get")
 get_p.def_impl(partial(dispatch.apply_primitive, get_p))
+batching.ragged_prop_rules[get_p] = batching.ragged_mask_transfer_identity
 
 Indexer = Union[int, slice, Array, types.EllipsisType]
 
@@ -121,6 +122,16 @@ def ref_get(
 swap_p = core.Primitive("swap")
 swap_p.def_impl(partial(dispatch.apply_primitive, swap_p))
 
+
+def swap_ragged_prop_rule(invar_raggedness, outvars):
+  assert len(invar_raggedness) == 2
+  invar_raggedness_lhs = invar_raggedness[0]
+  invar_raggedness_rhs = invar_raggedness[1]
+
+  return [invar_raggedness_rhs, invar_raggedness_lhs], [None]
+
+
+batching.ragged_prop_rules[swap_p] = swap_ragged_prop_rule
 
 def ref_swap(
     ref_or_view: AbstractRef | TransformedRef,
