@@ -493,9 +493,10 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
     if devices is None:
       raise AssertionError(
           'Please file a bug at https://github.com/jax-ml/jax/issues')
-    if axis_context.mesh_shape is not None:
-      ma, ms = list(zip(*axis_context.mesh_shape))
-      mesh = mesh_lib.Mesh(np.array(devices).reshape(ms), ma)
+    am = axis_context.abstract_mesh
+    if am is not None:
+      mesh = mesh_lib.Mesh(np.array(devices).reshape(am.axis_sizes),
+                           am.axis_names)
   elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
     devices = axis_context.mesh._flat_devices_tuple
   else:

@@ -248,6 +248,10 @@ class Mesh(contextlib.ContextDecorator):
         for name, size in util.safe_zip(self.axis_names, self.devices.shape))
 
   @property
+  def axis_sizes(self) -> tuple[int, ...]:
+    return self.devices.shape
+
+  @property
   def size(self):
     return math.prod(self.shape.values()) if self.devices.ndim else 0
 
@@ -360,6 +364,10 @@ class AbstractMesh:
   @property
   def axis_names(self):
     return self._axis_names
+
+  @property
+  def axis_sizes(self) -> tuple[int, ...]:
+    return self._axis_sizes
 
   @functools.cached_property
   def size(self):

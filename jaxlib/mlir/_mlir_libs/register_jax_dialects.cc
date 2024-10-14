@@ -39,6 +39,7 @@ PYBIND11_MODULE(register_jax_dialects, m, py::mod_gil_not_used()) {
     REGISTER_DIALECT(nvvm);
     REGISTER_DIALECT(llvm);
     mlirRegisterTransformsPasses();
+    // For Shardy
     mlirRegisterAllSdyPassesAndPipelines();
     // Transforms used by JAX.
     mlirRegisterTransformsStripDebugInfo();

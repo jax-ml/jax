@@ -4021,7 +4021,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     lowered_text = make_keys.lower(seeds).as_text()
     if config.use_shardy_partitioner.value:
-      self.assertIn('<@mesh, [{?}, {?}, {}]>', lowered_text)
+      self.assertIn('<@empty_mesh, [{?}, {?}, {}]>', lowered_text)
     else:
       self.assertIn('unspecified_dims=[0,1]', lowered_text)
 
@@ -4050,7 +4050,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     lowered_text = make_keys.lower(seeds).as_text()
     if config.use_shardy_partitioner.value:
-      self.assertIn('<@mesh, [{?}, {?}, {}]>', lowered_text)
+      self.assertIn('<@empty_mesh, [{?}, {?}, {}]>', lowered_text)
     else:
       self.assertIn('unspecified_dims=[0,1]', lowered_text)
 
@@ -4077,7 +4077,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     lowered_text = make_keys.lower(seeds).as_text()
     if config.use_shardy_partitioner.value:
-      self.assertIn('<@mesh, [{?}, {?}, {?}, {}]>', lowered_text)
+      self.assertIn('<@empty_mesh, [{?}, {?}, {?}, {}]>', lowered_text)
     else:
       self.assertIn('unspecified_dims=[0,1,2]', lowered_text)
 
@@ -5476,12 +5476,13 @@ class UtilTest(jtu.JaxTestCase):
 
 
 @jtu.with_config(jax_use_shardy_partitioner=True)
-class SdyIntegrationTest(jtu.JaxTestCase):
+class ShardyTest(jtu.JaxTestCase):
 
   # TODO(bartchr): Once JAX is released with SDY, remove setUp.
   def setUp(self):
     if not dialects.sdy:
       raise unittest.SkipTest('Shardy is not available.')
+    super().setUp()
 
   def test_lowering_input_output_sharding(self):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
