@@ -21,8 +21,11 @@ import sys
 logging_formatter = logging.Formatter(
     "{levelname}:{asctime}:{name}:{lineno}: {message}", style='{')
 
-_logging_level_handler_set: dict[str, tuple[logging.Handler, int]] = {}
+_logging_level_set: dict[str, int] = {}
 _default_TF_CPP_MIN_LOG_LEVEL = os.environ.get("TF_CPP_MIN_LOG_LEVEL", "1")
+
+_jax_logger_handler = logging.StreamHandler(sys.stderr)
+_jax_logger_handler.setFormatter(logging_formatter)
 
 _nameToLevel = {
     'CRITICAL': logging.CRITICAL,
@@ -36,17 +39,6 @@ _nameToLevel = {
 }
 def _getLevelNamesMapping():
   return _nameToLevel
-
-
-def _logging_level_to_int(logging_level: str):
-  # attempt to convert the logging level to integer
-  try:
-    # logging level is a string representation of an integer
-    logging_level_num = int(logging_level)
-  except ValueError:
-    # logging level is a name string
-    logging_level_num = _getLevelNamesMapping()[logging_level]
-  return logging_level_num
 
 _tf_cpp_map = {
     'CRITICAL': 3,
@@ -74,37 +66,39 @@ def _set_TF_CPP_MIN_LOG_LEVEL(logging_level: str | None = None):
 
 def update_logging_level_global(logging_level: str | None) -> None:
   # remove previous handlers
-  for logger_name, (handler, level) in _logging_level_handler_set.items():
+  for logger_name, level in _logging_level_set.items():
     logger = logging.getLogger(logger_name)
-    logger.removeHandler(handler)
+    logger.removeHandler(_jax_logger_handler)
     logger.setLevel(level)
-  _logging_level_handler_set.clear()
+  _logging_level_set.clear()
   _set_TF_CPP_MIN_LOG_LEVEL(logging_level)
 
   if logging_level is None:
     return
 
-  logging_level_num = _logging_level_to_int(logging_level)
-  handler = logging.StreamHandler()
-  handler.setLevel(logging_level_num)
-  handler.setFormatter(logging_formatter)
+  logging_level_num = _getLevelNamesMapping()[logging_level]
 
   # update jax and jaxlib root loggers for propagation
   root_loggers = [logging.getLogger("jax"), logging.getLogger("jaxlib")]
   for logger in root_loggers:
     logger.setLevel(logging_level_num)
-    logger.addHandler(handler)
-    logger.propagate
-    logger.parent
-    _logging_level_handler_set[logger.name] = (handler, logger.level)
+    logger.addHandler(_jax_logger_handler)
+    _logging_level_set[logger.name] = logger.level
 
+# per-module debug logging
+
+_jax_logger = logging.getLogger("jax")
+
+class _DebugHandlerFilter(logging.Filter):
+  def filter(self, _):
+    return _jax_logger.level > logging.DEBUG
 
 _debug_handler = logging.StreamHandler(sys.stderr)
 _debug_handler.setLevel(logging.DEBUG)
 _debug_handler.setFormatter(logging_formatter)
+_debug_handler.addFilter(_DebugHandlerFilter())
 
 _debug_enabled_loggers = []
-
 
 def _enable_debug_logging(logger_name):
   """Makes the specified logger log everything to stderr.
@@ -116,6 +110,7 @@ def _enable_debug_logging(logger_name):
   """
   logger = logging.getLogger(logger_name)
   _debug_enabled_loggers.append((logger, logger.level))
+
   logger.addHandler(_debug_handler)
   logger.setLevel(logging.DEBUG)
 
