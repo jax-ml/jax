@@ -15,7 +15,6 @@
 import contextlib
 import io
 import logging
-import os
 import platform
 import re
 import shlex
@@ -67,6 +66,7 @@ def jax_logging_level(value):
 @contextlib.contextmanager
 def capture_jax_logs():
   log_output = io.StringIO()
+
   handler = logging.StreamHandler(log_output)
   logger = logging.getLogger("jax")
 
@@ -75,6 +75,7 @@ def capture_jax_logs():
     yield log_output
   finally:
     logger.removeHandler(handler)
+
 
 def _get_repeated_log_fraction(logs: list[str]):
   repeats = 0
@@ -112,21 +113,8 @@ class LoggingTest(jtu.JaxTestCase):
     """))
       python = sys.executable
       assert "python" in python
-      env_variables = {}
-      if os.getenv("ASAN_OPTIONS"):
-        env_variables["ASAN_OPTIONS"] = os.getenv("ASAN_OPTIONS")
-      if os.getenv("PYTHONPATH"):
-        env_variables["PYTHONPATH"] = os.getenv("PYTHONPATH")
-      if os.getenv("LD_LIBRARY_PATH"):
-        env_variables["LD_LIBRARY_PATH"] = os.getenv("LD_LIBRARY_PATH")
-      if os.getenv("LD_PRELOAD"):
-        env_variables["LD_PRELOAD"] = os.getenv("LD_PRELOAD")
       # Make sure C++ logging is at default level for the test process.
-      proc = subprocess.run(
-          [python, f.name],
-          capture_output=True,
-          env=env_variables,
-      )
+      proc = subprocess.run([python, f.name], capture_output=True)
 
       lines = proc.stdout.split(b"\n")
       lines.extend(proc.stderr.split(b"\n"))
@@ -178,7 +166,7 @@ class LoggingTest(jtu.JaxTestCase):
 
   @unittest.skipIf(platform.system() == "Windows",
                    "Subprocess test doesn't work on Windows")
-  def test_subprocess_stderr_logging(self):
+  def test_subprocess_stderr_info_logging(self):
     if sys.executable is None:
       raise self.skipTest("test requires access to python binary")
 
@@ -200,16 +188,27 @@ class LoggingTest(jtu.JaxTestCase):
     self.assertIn("INFO", log_output)
     self.assertNotIn("DEBUG", log_output)
 
+  @unittest.skipIf(platform.system() == "Windows",
+                   "Subprocess test doesn't work on Windows")
+  def test_subprocess_stderr_debug_logging(self):
+    if sys.executable is None:
+      raise self.skipTest("test requires access to python binary")
+
+    program = """
+    import jax  # this prints INFO logging from backend imports
+    jax.jit(lambda x: x)(1)  # this prints logs to DEBUG (from compilation)
+    """
+
+    # strip the leading whitespace from the program script
+    program = re.sub(r"^\s+", "", program, flags=re.MULTILINE)
+
     # test DEBUG
     cmd = shlex.split(f"env JAX_LOGGING_LEVEL=DEBUG {sys.executable} -c"
                       f" '{program}'")
     p = subprocess.run(cmd, capture_output=True, text=True)
     log_output = p.stderr
-    debug_num_lines = log_output.split("\n")
-    self.assertGreater(len(info_lines), 0)
     self.assertIn("INFO", log_output)
     self.assertIn("DEBUG", log_output)
-    self.assertGreater(len(debug_num_lines), len(info_lines))
 
   @unittest.skipIf(platform.system() == "Windows",
                    "Subprocess test doesn't work on Windows")
@@ -224,7 +223,7 @@ class LoggingTest(jtu.JaxTestCase):
     jax.jit(lambda x: x)(1)  # this prints logs to DEBUG (from compilation)
     jax.config.update("jax_logging_level", None)
     sys.stderr.write("{_separator}")
-    jax.jit(lambda x: x)(1)  # this prints logs to DEBUG (from compilation)
+    jax.jit(lambda x: x)(1)  # should not log anything now
     """
 
     # strip the leading whitespace from the program script
@@ -251,6 +250,7 @@ class LoggingTest(jtu.JaxTestCase):
 
     program = """
     import jax  # this prints INFO logging from backend imports
+    jax.config.update("jax_debug_log_modules", "jax._src.compiler")
     jax.jit(lambda x: x)(1)  # this prints logs to DEBUG (from compilation)
     """
 
@@ -263,7 +263,7 @@ class LoggingTest(jtu.JaxTestCase):
     log_output = p.stderr
     self.assertNotEmpty(log_output)
     log_lines = log_output.strip().split("\n")
-    self.assertLess(_get_repeated_log_fraction(log_lines), 0.2)
+    self.assertLessEqual(_get_repeated_log_fraction(log_lines), 0.0)
 
   @unittest.skipIf(platform.system() == "Windows",
                    "Subprocess test doesn't work on Windows")
