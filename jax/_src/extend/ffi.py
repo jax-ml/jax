@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import ctypes
 import functools
 import os
@@ -37,6 +37,11 @@ from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.typing import (Array, ArrayLike, DeprecatedArg, DuckTypedArray,
                              Shape)
+
+# TODO(dfm): Remove after 6 months or less because there aren't any offical
+# compatibility guarantees for jax.extend (see JEP 15856)
+# Added Oct 13, 2024
+deprecations.register("jax-ffi-call-args")
 
 map, unsafe_map = util.safe_map, map
 FfiLayoutOptions = Sequence[int] | DeviceLocalLayout | None
@@ -200,13 +205,15 @@ def _result_avals(results: Sequence[ResultMetadata]) -> tuple[core.AbstractValue
 def ffi_call(
     target_name: str,
     result_shape_dtypes: ResultMetadata | Sequence[ResultMetadata],
-    *args: ArrayLike,
+    *deprecated_args: ArrayLike,
     has_side_effect: bool = False,
     vmap_method: str | None = None,
     vectorized: bool | DeprecatedArg = DeprecatedArg(),
-    **kwargs: Any,
-) -> Array | list[Array]:
+    **deprecated_kwargs: Any,
+) -> Callable[..., Array | Sequence[Array]] | Array | Sequence[Array]:
   """Call a foreign function interface (FFI) target.
+
+  See the :ref:`ffi-tutorial` tutorial for more information.
 
   Like :func:`~jax.pure_callback`, the behavior of ``ffi_call`` under
   :func:`~jax.vmap` depends on the value of ``vmap_method``. See the
@@ -226,18 +233,16 @@ def ffi_call(
       the custom call output or outputs. :class:`~jax.ShapeDtypeStruct` is often
       used to define the elements of ``result_shape_dtypes``.
       ``jax.core.abstract_token`` may be used to represent a token-typed output.
-    *args: the arguments passed to the custom call.
     has_side_effect: boolean specifying whether the custom call has side
       effects. When ``True``, the FFI call will be executed even when the
       outputs are not used.
     vmap_method: string specifying how the FFI call transforms under
       :func:`~jax.vmap` as described above.
-    **kwargs: keyword arguments that are passed as named attributes to the
-      custom call using XLA's FFI interface.
 
   Returns:
-    One or more :class:`~jax.Array` objects whose shapes and dtypes match
-    ``result_shape_dtypes``.
+    A function that can be called with the input arrays as positional arguments
+    to execute the FFI handler. Any keyword arguments are passed as named
+    attributes to the FFI handler using XLA's FFI interface.
   """
   if not isinstance(vectorized, DeprecatedArg) and not vectorized is None:
     deprecations.warn(
@@ -264,19 +269,35 @@ def ffi_call(
   else:
     multiple_results = False
     result_avals = _result_avals((result_shape_dtypes,))
-  results = ffi_call_p.bind(
-      *args,
-      result_avals=result_avals,
-      vectorized=vectorized,
-      vmap_method=vmap_method,
-      target_name=target_name,
-      has_side_effect=has_side_effect,
-      **_wrap_kwargs_hashable(kwargs),
-  )
-  if multiple_results:
-    return results
+
+  def wrapped(*args: ArrayLike, **kwargs: Any):
+    results = ffi_call_p.bind(
+        *args,
+        result_avals=result_avals,
+        vectorized=vectorized,
+        vmap_method=vmap_method,
+        target_name=target_name,
+        has_side_effect=has_side_effect,
+        attributes=_wrap_kwargs_hashable(kwargs),
+    )
+    if multiple_results:
+      return results
+    else:
+      return results[0]
+
+  if deprecated_args or deprecated_kwargs:
+    deprecations.warn(
+        "jax-ffi-call-args",
+        "Calling ffi_call directly with input arguments is deprecated. "
+        "Instead, ffi_call should be used to construct a callable, which can "
+        "then be called with the appropriate inputs. For example,\n"
+        "  ffi_call('target_name', output_type, x, argument=5)\n"
+        "should be replaced with\n"
+        "  ffi_call('target_name', output_type)(x, argument=5)",
+        stacklevel=2)
+    return wrapped(*deprecated_args, **deprecated_kwargs)
   else:
-    return results[0]
+    return wrapped
 
 
 # ffi_call must support some small non-hashable input arguments, like np.arrays
@@ -284,13 +305,13 @@ def ffi_call(
 # structs. Since these arguments will eventually be embedded in the HLO as
 # dense attributes, we assume that they are small and hash by making an
 # immutable copy and hashing by value.
-def _wrap_kwargs_hashable(kwargs: dict[str, Any]) -> dict[str, Any]:
-  hashable_kwargs: dict[str, Any] = {}
-  for k, v in kwargs.items():
+def _wrap_kwargs_hashable(kwargs: dict[str, Any]) -> Sequence[tuple[str, Any]]:
+  hashable_kwargs: list[tuple[str, Any]] = []
+  for k, v in sorted(kwargs.items()):
     if isinstance(v, np.ndarray):
-      hashable_kwargs[k] = HashableArray(v)
+      hashable_kwargs.append((k, HashableArray(v)))
     elif isinstance(v, dict):
-      hashable_kwargs[k] = HashableDict(v)
+      hashable_kwargs.append((k, HashableDict(v)))
     else:
       try:
         hash(v)
@@ -298,13 +319,13 @@ def _wrap_kwargs_hashable(kwargs: dict[str, Any]) -> dict[str, Any]:
         raise TypeError(
             f"Non-hashable keyword argument to ffi_call {k}: {v}") from e
       else:
-        hashable_kwargs[k] = v
-  return hashable_kwargs
+        hashable_kwargs.append((k, v))
+  return tuple(hashable_kwargs)
 
 
-def _unwrap_kwargs_hashable(kwargs: dict[str, Any]) -> dict[str, Any]:
+def _unwrap_kwargs_hashable(kwargs: Sequence[tuple[str, Any]]) -> dict[str, Any]:
   unwrapped_kwargs: dict[str, Any] = {}
-  for k, v in kwargs.items():
+  for k, v in kwargs:
     if isinstance(v, HashableArray):
       unwrapped_kwargs[k] = v.val
     elif isinstance(v, HashableDict):
@@ -366,9 +387,9 @@ def ffi_call_abstract_eval(
     vectorized: bool | DeprecatedArg,
     vmap_method: str | None,
     has_side_effect: bool,
-    **kwargs: Any,
+    attributes: Sequence[tuple[str, Any]],
 ):
-  del avals_in, target_name, vectorized, vmap_method, kwargs
+  del avals_in, target_name, vectorized, vmap_method, attributes
   effects = {_FfiEffect} if has_side_effect else core.no_effects
   return result_avals, effects
 
@@ -395,11 +416,11 @@ def ffi_call_lowering(
     vectorized: bool | DeprecatedArg,
     vmap_method: str | None,
     has_side_effect: bool,
-    **kwargs: Any,
+    attributes: Sequence[tuple[str, Any]],
 ) -> Sequence[ir.Value]:
   del result_avals, vectorized, vmap_method
   rule = ffi_lowering(target_name, has_side_effect=has_side_effect)
-  return rule(ctx, *operands, **_unwrap_kwargs_hashable(kwargs))
+  return rule(ctx, *operands, **_unwrap_kwargs_hashable(attributes))
 
 
 ffi_call_p = core.Primitive("ffi_call")

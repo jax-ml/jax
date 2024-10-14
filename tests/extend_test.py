@@ -154,7 +154,7 @@ class FfiTest(jtu.JaxTestCase):
   ])
   def testParams(self, param, expected_builder):
     def fun(x):
-      return jex.ffi.ffi_call("test_ffi", x, x, param=param)
+      return jex.ffi.ffi_call("test_ffi", x)(x, param=param)
 
     # Here we inspect the lowered IR to test that the parameter has been
     # serialized with the appropriate type.
@@ -171,7 +171,7 @@ class FfiTest(jtu.JaxTestCase):
   def testToken(self):
     def fun():
       token = lax.create_token()
-      return jex.ffi.ffi_call("test_ffi", core.abstract_token, token)
+      return jex.ffi.ffi_call("test_ffi", core.abstract_token)(token)
 
     # Ensure that token inputs and outputs are translated to the correct type
     module = jax.jit(fun).lower().compiler_ir("stablehlo")
@@ -192,7 +192,7 @@ class FfiTest(jtu.JaxTestCase):
     else:
       raise unittest.SkipTest("Unsupported device")
     def fun():
-      jex.ffi.ffi_call(target_name, (), has_side_effect=True)
+      jex.ffi.ffi_call(target_name, (), has_side_effect=True)()
     hlo = jax.jit(fun).lower()
     self.assertIn(target_name, hlo.as_text())
     self.assertIn("has_side_effect = true", hlo.as_text())
@@ -200,14 +200,14 @@ class FfiTest(jtu.JaxTestCase):
 
   def testJvpError(self):
     def fun(x):
-      return jex.ffi.ffi_call("test_ffi", x, x, non_hashable_arg={"a": 1})
+      return jex.ffi.ffi_call("test_ffi", x)(x, non_hashable_arg={"a": 1})
     with self.assertRaisesRegex(
         ValueError, "The FFI call to `.+` cannot be differentiated."):
       jax.jvp(fun, (0.5,), (0.5,))
 
   def testNonHashableAttributes(self):
     def fun(x):
-      return jex.ffi.ffi_call("test_ffi", x, x, non_hashable_arg={"a": 1})
+      return jex.ffi.ffi_call("test_ffi", x)(x, non_hashable_arg={"a": 1})
 
     self.assertIn("HashableDict", str(jax.make_jaxpr(fun)(jnp.ones(5))))
     hlo = jax.jit(fun).lower(jnp.ones(5)).as_text()
@@ -220,7 +220,7 @@ class FfiTest(jtu.JaxTestCase):
     self.assertNotIsInstance(manager.exception, TypeError)
 
     def fun(x):
-      return jex.ffi.ffi_call("test_ffi", x, x, non_hashable_arg=np.arange(3))
+      return jex.ffi.ffi_call("test_ffi", x)(x, non_hashable_arg=np.arange(3))
     self.assertIn("HashableArray", str(jax.make_jaxpr(fun)(jnp.ones(5))))
     hlo = jax.jit(fun).lower(jnp.ones(5)).as_text()
     self.assertIn("non_hashable_arg = array<i64: 0, 1, 2>", hlo)
@@ -274,6 +274,12 @@ class FfiTest(jtu.JaxTestCase):
       jax.vmap(
           lambda x: ffi_call_lu_pivots_to_permutation(x, permutation_size))(pivots)
 
+  def testBackwardCompatSyntax(self):
+    def fun(x):
+      return jex.ffi.ffi_call("test_ffi", x, x, param=0.5)
+    with self.assertWarns(DeprecationWarning):
+      jax.jit(fun).lower(jnp.ones(5))
+
 
 # TODO(dfm): For now this test uses the `cu_lu_pivots_to_permutation`
 # custom call target because that's the only one in jaxlib that uses the
@@ -286,9 +292,8 @@ def ffi_call_lu_pivots_to_permutation(pivots, permutation_size, **kwargs):
           shape=pivots.shape[:-1] + (permutation_size,),
           dtype=pivots.dtype,
       ),
-      pivots,
       **kwargs,
-  )
+  )(pivots)
 
 
 if __name__ == "__main__":

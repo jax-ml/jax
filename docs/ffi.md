@@ -248,26 +248,26 @@ def rms_norm(x, eps=1e-5):
   if x.dtype != jnp.float32:
     raise ValueError("Only the float32 dtype is implemented by rms_norm")
 
-  # In this case, the output of our FFI function is just a single array with the
-  # same shape and dtype as the input. We discuss a case with a more interesting
-  # output type below.
-  out_type = jax.ShapeDtypeStruct(x.shape, x.dtype)
-
-  return jex.ffi.ffi_call(
+  call = jex.ffi.ffi_call(
     # The target name must be the same string as we used to register the target
     # above in `register_custom_call_target`
     "rms_norm",
-    out_type,
-    x,
-    # Note that here we're use `numpy` (not `jax.numpy`) to specify a dtype for
-    # the attribute `eps`. Our FFI function expects this to have the C++ `float`
-    # type (which corresponds to numpy's `float32` type), and it must be a
-    # static parameter (i.e. not a JAX array).
-    eps=np.float32(eps),
+
+    # In this case, the output of our FFI function is just a single array with
+    # the same shape and dtype as the input. We discuss a case with a more
+    # interesting output type below.
+    jax.ShapeDtypeStruct(x.shape, x.dtype),
+
     # The `vmap_method` parameter controls this function's behavior under `vmap`
     # as discussed below.
     vmap_method="broadcast_fullrank",
   )
+
+  # Note that here we're use `numpy` (not `jax.numpy`) to specify a dtype for
+  # the attribute `eps`. Our FFI function expects this to have the C++ `float`
+  # type (which corresponds to numpy's `float32` type), and it must be a
+  # static parameter (i.e. not a JAX array).
+  return call(x, eps=np.float32(eps))
 
 
 # Test that this gives the same result as our reference implementation
@@ -334,10 +334,8 @@ def rms_norm_sequential(x, eps=1e-5):
   return jex.ffi.ffi_call(
     "rms_norm",
     jax.ShapeDtypeStruct(x.shape, x.dtype),
-    x,
-    eps=np.float32(eps),
     vmap_method="sequential",
-  )
+  )(x, eps=np.float32(eps))
 
 
 jax.make_jaxpr(jax.vmap(rms_norm_sequential))(x)
@@ -380,10 +378,8 @@ def rms_norm_fwd(x, eps=1e-5):
       jax.ShapeDtypeStruct(x.shape, x.dtype),
       jax.ShapeDtypeStruct(x.shape[:-1], x.dtype),
     ),
-    x,
-    eps=np.float32(eps),
     vmap_method="broadcast_fullrank",
-  )
+  )(x, eps=np.float32(eps))
   return y, (res, x)
 
 
@@ -396,11 +392,8 @@ def rms_norm_bwd(eps, res, ct):
     jex.ffi.ffi_call(
       "rms_norm_bwd",
       jax.ShapeDtypeStruct(ct.shape, ct.dtype),
-      res,
-      x,
-      ct,
-    vmap_method="broadcast_fullrank",
-    ),
+      vmap_method="broadcast_fullrank",
+    )(res, x, ct),
   )
 
 
@@ -477,10 +470,8 @@ def rms_norm_cross_platform(x, eps=1e-5):
     return lambda x: jex.ffi.ffi_call(
       target_name,
       out_type,
-      x,
-      eps=np.float32(eps),
       vmap_method="broadcast_fullrank",
-    )
+    )(x, eps=np.float32(eps))
 
   return jax.lax.platform_dependent(x, cpu=impl("rms_norm"), cuda=impl("rms_norm_cuda"))
 
