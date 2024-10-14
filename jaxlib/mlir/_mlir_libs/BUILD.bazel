@@ -257,6 +257,7 @@ py_extension(
         "@llvm-project//mlir:MLIRBindingsPythonHeaders",
         "@local_config_python//:headers",
         "@pybind11",
+        "@shardy//shardy/integrations/c:sdy_capi_headers",
     ],
 )
 
