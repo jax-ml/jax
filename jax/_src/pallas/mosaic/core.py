@@ -270,6 +270,7 @@ def _tensorcore_mesh_discharge_rule(
       compiler_params=dict(
           mosaic=dict(dimension_semantics=("parallel",)),
       ),
+      backend="mosaic_tpu",
   )(*args)
   return out, ()
 
