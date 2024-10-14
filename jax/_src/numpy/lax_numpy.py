@@ -860,10 +860,35 @@ def correlate(a: ArrayLike, v: ArrayLike, mode: str = 'valid', *,
                precision=precision, preferred_element_type=preferred_element_type)
 
 
-@util.implements(np.histogram_bin_edges)
 def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
                         range: None | Array | Sequence[ArrayLike] = None,
                         weights: ArrayLike | None = None) -> Array:
+  """Compute the bin edges for a histogram.
+
+  JAX implementation of :func:`numpy.histogram_bin_edges`.
+
+  Args:
+    a: array of values to be binned
+    bins: Specify the number of bins in the histogram (default: 10).
+    range: tuple of scalars. Specifies the range of the data. If not specified,
+      the range is inferred from the data.
+    weights: unused by JAX.
+
+  Returns:
+    An array of bin edges for the histogram.
+
+  See also:
+    - :func:`jax.numpy.histogram`: compute a 1D histogram.
+    - :func:`jax.numpy.histogram2d`: compute a 2D histogram.
+    - :func:`jax.numpy.histogramdd`: compute an N-dimensional histogram.
+
+  Examples:
+    >>> a = jnp.array([2, 5, 3, 6, 4, 1])
+    >>> jnp.histogram_bin_edges(a, bins=5)
+    Array([1., 2., 3., 4., 5., 6.], dtype=float32)
+    >>> jnp.histogram_bin_edges(a, bins=5, range=(-10, 10))  # doctest: +SKIP
+    Array([-10.,  -6.,  -2.,   2.,   6.,  10.], dtype=float32)
+  """
   del weights  # unused, because string bins is not supported.
   if isinstance(bins, str):
     raise NotImplementedError("string values for `bins` not implemented.")
@@ -886,11 +911,67 @@ def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
   return linspace(range[0], range[1], bins_int + 1, dtype=dtype)
 
 
-@util.implements(np.histogram)
 def histogram(a: ArrayLike, bins: ArrayLike = 10,
               range: Sequence[ArrayLike] | None = None,
               weights: ArrayLike | None = None,
               density: bool | None = None) -> tuple[Array, Array]:
+  """Compute a 1-dimensional histogram.
+
+  JAX implementation of :func:`numpy.histogram`.
+
+  Args:
+    a: array of values to be binned. May be any size or dimension.
+    bins: Specify the number of bins in the histogram (default: 10). ``bins``
+      may also be an array specifying the locations of the bin edges.
+    range: tuple of scalars. Specifies the range of the data. If not specified,
+      the range is inferred from the data.
+    weights: An optional array specifying the weights of the data points.
+      Should be broadcast-compatible with ``a``. If not specified, each
+      data point is weighted equally.
+    density: If True, return the normalized histogram in units of counts
+      per unit length. If False (default) return the (weighted) counts per bin.
+
+  Returns:
+    A tuple of arrays ``(histogram, bin_edges)``, where ``histogram`` contains
+    the aggregated data, and ``bin_edges`` specifies the boundaries of the bins.
+
+  See Also:
+    - :func:`jax.numpy.bincount`: Count the number of occurrences of each value in an array.
+    - :func:`jax.numpy.histogram2d`: Compute the histogram of a 2D array.
+    - :func:`jax.numpy.histogramdd`: Compute the histogram of an N-dimensional array.
+    - :func:`jax.numpy.histogram_bin_edges`: Compute the bin edges for a histogram.
+
+  Examples:
+    >>> a = jnp.array([1, 2, 3, 10, 11, 15, 19, 25])
+    >>> counts, bin_edges = jnp.histogram(a, bins=8)
+    >>> print(counts)
+    [3. 0. 0. 2. 1. 0. 1. 1.]
+    >>> print(bin_edges)
+    [ 1.  4.  7. 10. 13. 16. 19. 22. 25.]
+
+    Specifying the bin range:
+
+    >>> counts, bin_edges = jnp.histogram(a, range=(0, 25), bins=5)
+    >>> print(counts)
+    [3. 0. 2. 2. 1.]
+    >>> print(bin_edges)
+    [ 0.  5. 10. 15. 20. 25.]
+
+    Specifying the bin edges explicitly:
+
+    >>> bin_edges = jnp.array([0, 10, 20, 30])
+    >>> counts, _ = jnp.histogram(a, bins=bin_edges)
+    >>> print(counts)
+    [3. 4. 1.]
+
+    Using ``density=True`` returns a normalized histogram:
+
+    >>> density, bin_edges = jnp.histogram(a, density=True)
+    >>> dx = jnp.diff(bin_edges)
+    >>> normed_sum = jnp.sum(density * dx)
+    >>> jnp.allclose(normed_sum, 1.0)
+    Array(True, dtype=bool)
+  """
   if weights is None:
     util.check_arraylike("histogram", a, bins)
     a, = util.promote_dtypes_inexact(a)
@@ -910,11 +991,81 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
     counts = counts / bin_widths / counts.sum()
   return counts, bin_edges
 
-@util.implements(np.histogram2d)
+
 def histogram2d(x: ArrayLike, y: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
                 range: Sequence[None | Array | Sequence[ArrayLike]] | None = None,
                 weights: ArrayLike | None = None,
                 density: bool | None = None) -> tuple[Array, Array, Array]:
+  """Compute a 2-dimensional histogram.
+
+  JAX implementation of :func:`numpy.histogram2d`.
+
+  Args:
+    x: one-dimensional array of x-values for points to be binned.
+    y: one-dimensional array of y-values for points to be binned.
+    bins: Specify the number of bins in the histogram (default: 10). ``bins``
+      may also be an array specifying the locations of the bin edges, or a pair
+      of integers or pair of arrays specifying the number of bins in each
+      dimension.
+    range: Pair of arrays or lists of the form ``[[xmin, xmax], [ymin, ymax]]``
+      specifying the range of the data in each dimension. If not specified, the
+      range is inferred from the data.
+    weights: An optional array specifying the weights of the data points.
+      Should be the same shape as ``x`` and ``y``. If not specified, each
+      data point is weighted equally.
+    density: If True, return the normalized histogram in units of counts
+      per unit area. If False (default) return the (weighted) counts per bin.
+
+  Returns:
+    A tuple of arrays ``(histogram, x_edges, y_edges)``, where ``histogram``
+    contains the aggregated data, and ``x_edges`` and ``y_edges`` specify the
+    boundaries of the bins.
+
+  See Also:
+    - :func:`jax.numpy.histogram`: Compute the histogram of a 1D array.
+    - :func:`jax.numpy.histogramdd`: Compute the histogram of an N-dimensional array.
+    - :func:`jax.numpy.histogram_bin_edges`: Compute the bin edges for a histogram.
+
+  Examples:
+    >>> x = jnp.array([1, 2, 3, 10, 11, 15, 19, 25])
+    >>> y = jnp.array([2, 5, 6, 8, 13, 16, 17, 18])
+    >>> counts, x_edges, y_edges = jnp.histogram2d(x, y, bins=8)
+    >>> counts.shape
+    (8, 8)
+    >>> x_edges
+    Array([ 1.,  4.,  7., 10., 13., 16., 19., 22., 25.], dtype=float32)
+    >>> y_edges
+    Array([ 2.,  4.,  6.,  8., 10., 12., 14., 16., 18.], dtype=float32)
+
+    Specifying the bin range:
+
+    >>> counts, x_edges, y_edges = jnp.histogram2d(x, y, range=[(0, 25), (0, 25)], bins=5)
+    >>> counts.shape
+    (5, 5)
+    >>> x_edges
+    Array([ 0.,  5., 10., 15., 20., 25.], dtype=float32)
+    >>> y_edges
+    Array([ 0.,  5., 10., 15., 20., 25.], dtype=float32)
+
+    Specifying the bin edges explicitly:
+
+    >>> x_edges = jnp.array([0, 10, 20, 30])
+    >>> y_edges = jnp.array([0, 10, 20, 30])
+    >>> counts, _, _ = jnp.histogram2d(x, y, bins=[x_edges, y_edges])
+    >>> counts
+    Array([[3, 0, 0],
+           [1, 3, 0],
+           [0, 1, 0]], dtype=int32)
+
+    Using ``density=True`` returns a normalized histogram:
+
+    >>> density, x_edges, y_edges = jnp.histogram2d(x, y, density=True)
+    >>> dx = jnp.diff(x_edges)
+    >>> dy = jnp.diff(y_edges)
+    >>> normed_sum = jnp.sum(density * dx[:, None] * dy[None, :])
+    >>> jnp.allclose(normed_sum, 1.0)
+    Array(True, dtype=bool)
+  """
   util.check_arraylike("histogram2d", x, y)
   try:
     N = len(bins)  # type: ignore[arg-type]
@@ -929,11 +1080,62 @@ def histogram2d(x: ArrayLike, y: ArrayLike, bins: ArrayLike | list[ArrayLike] = 
   hist, edges = histogramdd(sample, bins, range, weights, density)
   return hist, edges[0], edges[1]
 
-@util.implements(np.histogramdd)
+
 def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
                 range: Sequence[None | Array | Sequence[ArrayLike]] | None = None,
                 weights: ArrayLike | None = None,
                 density: bool | None = None) -> tuple[Array, list[Array]]:
+  """Compute an N-dimensional histogram.
+
+  JAX implementation of :func:`numpy.histogramdd`.
+
+  Args:
+    sample: input array of shape ``(N, D)`` representing ``N`` points in
+      ``D`` dimensions.
+    bins: Specify the number of bins in each dimension of the histogram.
+      (default: 10). May also be a length-D sequence of integers or arrays
+      of bin edges.
+    range: Length-D sequence of pairs specifying the range for each dimension.
+      If not specified, the range is inferred from the data.
+    weights: An optional shape ``(N,)`` array specifying the weights of the
+      data points.
+      Should be the same shape as ``sample``. If not specified, each
+      data point is weighted equally.
+    density: If True, return the normalized histogram in units of counts
+      per unit volume. If False (default) return the (weighted) counts per bin.
+
+  Returns:
+    A tuple of arrays ``(histogram, bin_edges)``, where ``histogram`` contains
+    the aggregated data, and ``bin_edges`` specifies the boundaries of the bins.
+
+  See Also:
+    - :func:`jax.numpy.histogram`: Compute the histogram of a 1D array.
+    - :func:`jax.numpy.histogram2d`: Compute the histogram of a 2D array.
+    - :func:`jax.numpy.histogram_bin_edges`: Compute the bin edges for a histogram.
+
+  Examples:
+    A histogram over 100 points in three dimensions
+
+    >>> key = jax.random.key(42)
+    >>> a = jax.random.normal(key, (100, 3))
+    >>> counts, bin_edges = jnp.histogramdd(a, bins=6,
+    ...                                     range=[(-3, 3), (-3, 3), (-3, 3)])
+    >>> counts.shape
+    (6, 6, 6)
+    >>> bin_edges  # doctest: +SKIP
+    [Array([-3., -2., -1.,  0.,  1.,  2.,  3.], dtype=float32),
+     Array([-3., -2., -1.,  0.,  1.,  2.,  3.], dtype=float32),
+     Array([-3., -2., -1.,  0.,  1.,  2.,  3.], dtype=float32)]
+
+    Using ``density=True`` returns a normalized histogram:
+
+    >>> density, bin_edges = jnp.histogramdd(a, density=True)
+    >>> bin_widths = map(jnp.diff, bin_edges)
+    >>> dx, dy, dz = jnp.meshgrid(*bin_widths, indexing='ij')
+    >>> normed = jnp.sum(density * dx * dy * dz)
+    >>> jnp.allclose(normed, 1.0)
+    Array(True, dtype=bool)
+  """
   if weights is None:
     util.check_arraylike("histogramdd", sample)
     sample, = util.promote_dtypes_inexact(sample)
