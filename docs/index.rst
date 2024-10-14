@@ -5,6 +5,7 @@ JAX: High performance array computing
    :file: hero.html
 
 .. grid:: 3
+   :class-container: product-offerings
    :margin: 0
    :padding: 0
    :gutter: 0
@@ -60,7 +61,7 @@ JAX itself is narrowly-scoped and focuses on efficient array operations & progra
 transformations. Built around JAX is an evolving ecosystem of machine learning and
 numerical computing tools; the following is just a small sample of what is out there:
 
-.. grid:: 4
+.. grid:: 2
     :class-container: ecosystem-grid
 
     .. grid-item:: :material-outlined:`hub;2em` **Neural networks**
