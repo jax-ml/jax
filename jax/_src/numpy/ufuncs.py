@@ -100,19 +100,63 @@ def fabs(x: ArrayLike, /) -> Array:
     raise TypeError("ufunc 'fabs' does not support complex dtypes")
   return lax.abs(*promote_args_inexact('fabs', x))
 
-@implements(getattr(np, 'bitwise_invert', np.invert), module='numpy')
+
 @partial(jit, inline=True)
 def bitwise_invert(x: ArrayLike, /) -> Array:
+  """Alias of :func:`jax.numpy.invert`."""
   return lax.bitwise_not(*promote_args('bitwise_invert', x))
 
-@implements(np.bitwise_not, module='numpy')
+
 @partial(jit, inline=True)
 def bitwise_not(x: ArrayLike, /) -> Array:
+  """Alias of :func:`jax.numpy.invert`."""
   return lax.bitwise_not(*promote_args('bitwise_not', x))
 
-@implements(np.invert, module='numpy')
+
 @partial(jit, inline=True)
 def invert(x: ArrayLike, /) -> Array:
+  """Compute the bitwise inversion of an input.
+
+  JAX implementation of :func:`numpy.invert`. This function provides the
+  implementation of the ``~`` operator for JAX arrays.
+
+  Args:
+    x: input array, must be boolean or integer typed.
+
+  Returns:
+    An array of the same shape and dtype as ```x``, with the bits inverted.
+
+  See also:
+    - :func:`jax.numpy.bitwise_invert`: Array API alias of this function.
+    - :func:`jax.numpy.logical_not`: Invert after casting input to boolean.
+
+  Examples:
+    >>> x = jnp.arange(5, dtype='uint8')
+    >>> print(x)
+    [0 1 2 3 4]
+    >>> print(jnp.invert(x))
+    [255 254 253 252 251]
+
+    This function implements the unary ``~`` operator for JAX arrays:
+
+    >>> print(~x)
+    [255 254 253 252 251]
+
+    :func:`invert` operates bitwise on the input, and so the meaning of its
+    output may be more clear by showing the bitwise representation:
+
+    >>> with jnp.printoptions(formatter={'int': lambda x: format(x, '#010b')}):
+    ...   print(f"{x  = }")
+    ...   print(f"{~x = }")
+    x  = Array([0b00000000, 0b00000001, 0b00000010, 0b00000011, 0b00000100], dtype=uint8)
+    ~x = Array([0b11111111, 0b11111110, 0b11111101, 0b11111100, 0b11111011], dtype=uint8)
+
+    For boolean inputs, :func:`invert` is equivalent to :func:`logical_not`:
+
+    >>> x = jnp.array([True, False, True, True, False])
+    >>> jnp.invert(x)
+    Array([False,  True, False, False,  True], dtype=bool)
+  """
   return lax.bitwise_not(*promote_args('invert', x))
 
 
@@ -1607,9 +1651,41 @@ def _logical_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
   """
   return lax.bitwise_xor(*map(_to_bool, promote_args("logical_xor", x, y)))
 
-@implements(np.logical_not, module='numpy')
+
 @partial(jit, inline=True)
 def logical_not(x: ArrayLike, /) -> Array:
+  """Compute NOT bool(x) element-wise.
+
+  JAX implementation of :func:`numpy.logical_not`.
+
+  Args:
+    x: input array of any dtype.
+
+  Returns:
+    A boolean array that computes NOT bool(x) element-wise
+
+  See also:
+    - :func:`jax.numpy.invert` or :func:`jax.numpy.bitwise_invert`: bitwise NOT operation
+
+  Examples:
+    Compute NOT x element-wise on a boolean array:
+
+    >>> x = jnp.array([True, False, True])
+    >>> jnp.logical_not(x)
+    Array([False,  True, False], dtype=bool)
+
+    For boolean input, this is equivalent to :func:`~jax.numpy.invert`, which implements
+    the unary ``~`` operator:
+
+    >>> ~x
+    Array([False,  True, False], dtype=bool)
+
+    For non-boolean input, the input of :func:`logical_not` is implicitly cast to boolean:
+
+    >>> x = jnp.array([-1, 0, 1])
+    >>> jnp.logical_not(x)
+    Array([False,  True, False], dtype=bool)
+  """
   return lax.bitwise_not(*map(_to_bool, promote_args("logical_not", x)))
 
 # Comparison ops
