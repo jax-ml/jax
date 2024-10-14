@@ -14,11 +14,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import ctypes
 import functools
 import os
-from typing import Any
+from typing import overload, Any
 
 import numpy as np
 
@@ -37,6 +37,11 @@ from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.typing import (Array, ArrayLike, DeprecatedArg, DuckTypedArray,
                              Shape)
+
+# TODO(dfm): Remove after 6 months or less because there aren't any offical
+# compatibility guarantees for jax.extend (see JEP 15856)
+# Added Oct 13, 2024
+deprecations.register("jax-ffi-call-args")
 
 map, unsafe_map = util.safe_map, map
 FfiLayoutOptions = Sequence[int] | DeviceLocalLayout | None
@@ -197,15 +202,39 @@ def _result_avals(results: Sequence[ResultMetadata]) -> tuple[core.AbstractValue
   return tuple(avals)
 
 
+@overload
 def ffi_call(
     target_name: str,
     result_shape_dtypes: ResultMetadata | Sequence[ResultMetadata],
-    *args: ArrayLike,
+    *,
     has_side_effect: bool = False,
     vmap_method: str | None = None,
     vectorized: bool | DeprecatedArg = DeprecatedArg(),
-    **kwargs: Any,
+) -> Callable[..., Array | list[Array]]:
+  ...
+
+@overload
+def ffi_call(
+    target_name: str,
+    result_shape_dtypes: ResultMetadata | Sequence[ResultMetadata],
+    *deprecated_args: ArrayLike,
+    has_side_effect: bool = False,
+    vmap_method: str | None = None,
+    vectorized: bool | DeprecatedArg = DeprecatedArg(),
+    **deprecated_kwargs: Any,
 ) -> Array | list[Array]:
+  ...
+
+
+def ffi_call(
+    target_name: str,
+    result_shape_dtypes: ResultMetadata | Sequence[ResultMetadata],
+    *deprecated_args: ArrayLike,
+    has_side_effect: bool = False,
+    vmap_method: str | None = None,
+    vectorized: bool | DeprecatedArg = DeprecatedArg(),
+    **deprecated_kwargs: Any,
+) -> Callable[..., Array | list[Array]] | Array | list[Array]:
   """Call a foreign function interface (FFI) target.
 
   Like :func:`~jax.pure_callback`, the behavior of ``ffi_call`` under
@@ -264,19 +293,35 @@ def ffi_call(
   else:
     multiple_results = False
     result_avals = _result_avals((result_shape_dtypes,))
-  results = ffi_call_p.bind(
-      *args,
-      result_avals=result_avals,
-      vectorized=vectorized,
-      vmap_method=vmap_method,
-      target_name=target_name,
-      has_side_effect=has_side_effect,
-      **_wrap_kwargs_hashable(kwargs),
-  )
-  if multiple_results:
-    return results
+
+  def wrapped(*args: ArrayLike, **kwargs: Any):
+    results = ffi_call_p.bind(
+        *args,
+        result_avals=result_avals,
+        vectorized=vectorized,
+        vmap_method=vmap_method,
+        target_name=target_name,
+        has_side_effect=has_side_effect,
+        **_wrap_kwargs_hashable(kwargs),
+    )
+    if multiple_results:
+      return results
+    else:
+      return results[0]
+
+  if deprecated_args or deprecated_kwargs:
+    deprecations.warn(
+        "jax-ffi-call-args",
+        "Calling ffi_call directly with input arguments is deprecated. "
+        "Instead, ffi_call should be used to construct a callable, which can "
+        "then be called with the appropriate inputs. For example,\n"
+        "  ffi_call('target_name', output_type, x, argument=5)\n"
+        "should be replaced with\n"
+        "  ffi_call('target_name', output_type)(x, argument=5)",
+        stacklevel=2)
+    return wrapped(*deprecated_args, **deprecated_kwargs)
   else:
-    return results[0]
+    return wrapped
 
 
 # ffi_call must support some small non-hashable input arguments, like np.arrays

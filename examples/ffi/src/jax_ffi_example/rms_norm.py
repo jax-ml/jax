@@ -49,19 +49,17 @@ def rms_norm(x, eps=1e-5):
   # same shape and dtype as the input.
   out_type = jax.ShapeDtypeStruct(x.shape, x.dtype)
 
+  # Note that here we're use `numpy` (not `jax.numpy`) to specify a dtype for
+  # the attribute `eps`. Our FFI function expects this to have the C++ `float`
+  # type (which corresponds to numpy's `float32` type), and it must be a
+  # static parameter (i.e. not a JAX array).
   return jex.ffi.ffi_call(
     # The target name must be the same string as we used to register the target
     # above in `register_ffi_target`
     "rms_norm",
     out_type,
-    x,
-    # Note that here we're use `numpy` (not `jax.numpy`) to specify a dtype for
-    # the attribute `eps`. Our FFI function expects this to have the C++ `float`
-    # type (which corresponds to numpy's `float32` type), and it must be a
-    # static parameter (i.e. not a JAX array).
-    eps=np.float32(eps),
     vmap_method="broadcast_fullrank",
-  )
+  )(x, eps=np.float32(eps))
 
 
 def rms_norm_fwd(x, eps=1e-5):
@@ -71,10 +69,8 @@ def rms_norm_fwd(x, eps=1e-5):
       jax.ShapeDtypeStruct(x.shape, x.dtype),
       jax.ShapeDtypeStruct(x.shape[:-1], x.dtype),
     ),
-    x,
-    eps=np.float32(eps),
     vmap_method="broadcast_fullrank",
-  )
+  )(x, eps=np.float32(eps))
   return y, (res, x)
 
 
@@ -87,11 +83,8 @@ def rms_norm_bwd(eps, res, ct):
     jex.ffi.ffi_call(
       "rms_norm_bwd",
       jax.ShapeDtypeStruct(ct.shape, ct.dtype),
-      res,
-      x,
-      ct,
       vmap_method="broadcast_fullrank",
-    ),
+    )(res, x, ct),
   )
 
 
