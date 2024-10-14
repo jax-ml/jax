@@ -77,14 +77,6 @@ def capture_jax_logs():
     logger.removeHandler(handler)
 
 
-def _get_repeated_log_fraction(logs: list[str]):
-  repeats = 0
-  for i in range(len(logs) - 1):
-    if logs[i] in logs[i+1] or logs[i+1] in logs[i]:
-        repeats += 1
-  return repeats / max(len(logs) - 1, 1)
-
-
 class LoggingTest(jtu.JaxTestCase):
 
   @unittest.skipIf(platform.system() == "Windows",
@@ -250,7 +242,7 @@ class LoggingTest(jtu.JaxTestCase):
 
     program = """
     import jax  # this prints INFO logging from backend imports
-    jax.config.update("jax_debug_log_modules", "jax._src.compiler")
+    jax.config.update("jax_debug_log_modules", "jax._src.compiler,jax._src.dispatch")
     jax.jit(lambda x: x)(1)  # this prints logs to DEBUG (from compilation)
     """
 
@@ -263,7 +255,10 @@ class LoggingTest(jtu.JaxTestCase):
     log_output = p.stderr
     self.assertNotEmpty(log_output)
     log_lines = log_output.strip().split("\n")
-    self.assertLessEqual(_get_repeated_log_fraction(log_lines), 0.0)
+    # only one tracing line should be printed, if there's more than one
+    # then logs are printing duplicated
+    self.assertLen([line for line in log_lines
+                    if "Finished tracing + transforming" in line], 1)
 
   @unittest.skipIf(platform.system() == "Windows",
                    "Subprocess test doesn't work on Windows")
