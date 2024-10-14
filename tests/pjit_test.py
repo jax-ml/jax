@@ -38,6 +38,7 @@ from jax import dtypes
 from jax import stages
 from jax import lax
 from jax._src.lax import lax as lax_internal
+from jax._src.lib import xla_extension_version
 from jax.lax import with_sharding_constraint
 from jax._src import prng
 from jax.sharding import PartitionSpec as P, Mesh
@@ -5395,6 +5396,21 @@ class UtilTest(jtu.JaxTestCase):
     self.assertTrue(hs4.replicate_on_last_tile_dim())
     self.assertFalse(hs4.subgroup_types())
     self.assertTrue(hs4.is_tiled())
+
+  def test_hlo_sharding_with_device_ordering(self):
+    if xla_extension_version < 291:
+      self.skipTest('Requires xla_extension_version >= 291')
+
+    hs1 = xc.HloSharding.subgroup_with_device_ordering(
+        np.array([[[0, 1], [2, 3]], [[4, 5], [6, 7]]], dtype=np.int64),
+        subgroup_types=[xc.OpSharding.Type.REPLICATED],
+    )
+    self.assertEqual(
+        hs1,
+        xc.HloSharding.iota_tile(
+            (2, 2, 2), subgroup_types=[xc.OpSharding.Type.REPLICATED]
+        ),
+    )
 
   def test_op_sharding_cache_on_mesh_pspec_sharding(self):
     ndim = 2
