@@ -5503,6 +5503,7 @@ class ShardyTest(jtu.JaxTestCase):
 
     self.assertIn('sdy.sharding = #sdy.sharding', f.lower(arr).as_text())
 
+  @unittest.skipIf(xla_extension_version < 292, "Requires XLA version >=292")
   def test_lowering_with_sharding_constraint(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     arr = np.arange(16).reshape(4, 2, 2)
@@ -5528,6 +5529,7 @@ class ShardyTest(jtu.JaxTestCase):
     self.assertIn('<@mesh, [{"x"}, {?}, {"y"}]>', lowered_str)
 
   # TODO(bartchr): run on CPU once Shardy is added to the XLA CPU pipeline.
+  @unittest.skipIf(xla_extension_version < 292, "Requires XLA version >=292")
   @jtu.skip_on_devices('cpu')
   def test_compile_with_inferred_out_sharding(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
