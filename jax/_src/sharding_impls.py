@@ -316,7 +316,7 @@ class NamedSharding(sharding.Sharding):
     else:
       return cls(mesh, parsed_pspec.get_partition_spec(),
                   memory_kind=memory_kind, _parsed_pspec=parsed_pspec,
-)
+                  _manual_axes=_manual_axes)
 
   @property
   def num_devices(self) -> int:
