@@ -18,6 +18,7 @@ import dataclasses
 import enum
 import itertools
 import os
+import warnings
 
 from absl import app
 import jax
@@ -606,6 +607,13 @@ def benchmark_and_verify(
 
 
 if __name__ == "__main__":
+  if (not jtu.test_device_matches(["cuda"]) or
+      not jtu.is_cuda_compute_capability_at_least("9.0")):
+    warnings.warn(
+      "Mosaic GPU Flash Attention requires compute capability 9.0 to run, "
+      "skipping.")
+    exit(0)
+
   batch_size = 1
   num_q_heads = 4
   num_kv_heads = 1
