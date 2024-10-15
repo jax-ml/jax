@@ -83,8 +83,10 @@ def build_jax_xla(xla_path, rocm_version, rocm_target, use_clang, clang_path):
         f"--use_clang={str(use_clang).lower()}",
         f"--rocm_amdgpu_targets={rocm_target}",
         f"--rocm_path=/opt/rocm-{rocm_version}/",
-        bazel_options,
     ]
+
+    if bazel_options:
+        build_command.append(bazel_options)
 
     if clang_option:
         build_command.append(clang_option)
@@ -102,9 +104,8 @@ def build_jax_xla(xla_path, rocm_version, rocm_target, use_clang, clang_path):
 
 def install_wheel():
     try:
-        subprocess.run(
-            ["python3", "-m", "pip", "install", "dist/*.whl"], check=True, shell=True
-        )
+        cmd = " ".join(["python3", "-m", "pip", "install", "dist/*.whl"])
+        subprocess.run(cmd, check=True, shell=True)
         print("Packages installed successfully.")
     except subprocess.CalledProcessError as e:
         print(f"Failed to install packages: {e}")
