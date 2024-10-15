@@ -2496,9 +2496,50 @@ def exp2(x: ArrayLike, /) -> Array:
   return lax.exp2(x)
 
 
-@implements(np.signbit, module='numpy')
 @jit
 def signbit(x: ArrayLike, /) -> Array:
+  """Return the sign bit of array elements.
+
+  JAX implementation of :obj:`numpy.signbit`.
+
+  Args:
+    x: input array. Complex values are not supported.
+
+  Returns:
+    A boolean array of the same shape as ``x``, containing ``True``
+    where the sign of ``x`` is negative, and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.sign`: return the mathematical sign of array elements,
+      i.e. ``-1``, ``0``, or ``+1``.
+
+  Examples:
+    :func:`signbit` on boolean values is always ``False``:
+
+    >>> x = jnp.array([True, False])
+    >>> jnp.signbit(x)
+    Array([False, False], dtype=bool)
+
+    :func:`signbit` on integer values is equivalent to ``x < 0``:
+
+    >>> x = jnp.array([-2, -1, 0, 1, 2])
+    >>> jnp.signbit(x)
+    Array([ True,  True, False, False, False], dtype=bool)
+
+    :func:`signbit` on floating point values returns the value of the actual
+    sign bit from the float representation, including signed zero:
+
+    >>> x = jnp.array([-1.5, -0.0, 0.0, 1.5])
+    >>> jnp.signbit(x)
+    Array([ True, True, False, False], dtype=bool)
+
+    This also returns the sign bit for special values such as signed NaN
+    and signed infinity:
+
+    >>> x = jnp.array([jnp.nan, -jnp.nan, jnp.inf, -jnp.inf])
+    >>> jnp.signbit(x)
+    Array([False,  True, False,  True], dtype=bool)
+    """
   x, = promote_args("signbit", x)
   dtype = dtypes.dtype(x)
   if dtypes.issubdtype(dtype, np.integer):
