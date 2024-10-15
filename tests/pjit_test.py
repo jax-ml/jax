@@ -4298,9 +4298,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(out2, np.arange(8) * 2)
 
   def test_device_put_efficient_reshard_single_host(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest(
-          '_different_device_order_reshard is creating a GSPMDSharding')
     if jax.device_count() < 4:
       self.skipTest('Requires >= 4 devices')
 
@@ -4325,9 +4322,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
       ("8_384", (8, 384)),
   )
   def test_device_put_efficient_reshard_complex_mesh(self, shape):
-    if config.use_shardy_partitioner.value:
-      self.skipTest(
-          '_different_device_order_reshard is creating a GSPMDSharding')
     if jax.device_count() < 8:
       self.skipTest('Requires >= 8 devices')
 
@@ -4362,9 +4356,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_device_put_donate_pytree(self):
     shape1 = (8, 2)
     shape2 = (8, 384)
-    if config.use_shardy_partitioner.value:
-      self.skipTest(
-          '_different_device_order_reshard is creating a GSPMDSharding')
     if jax.device_count() < 8:
       self.skipTest('Requires >= 8 devices')
 
