@@ -120,7 +120,7 @@ def dist_wheels(
 def _fetch_jax_metadata(xla_path):
     cmd = ["git", "rev-parse", "HEAD"]
     jax_commit = subprocess.check_output(cmd)
-    xla_commit = ""
+    xla_commit = b""
 
     if xla_path:
         try:
