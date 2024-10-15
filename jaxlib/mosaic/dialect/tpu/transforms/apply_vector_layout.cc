@@ -1802,48 +1802,58 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_EQ_OP(padded_lhs_rows, acc_vregs.dim(0) * layout_acc.tiling()[0]);
   TPU_ASSERT_EQ_OP(padded_rhs_rows, rhs_vregs.dim(0) * layout_rhs.tiling()[0]);
 
-  const VectorType i32_vreg =
+  const VectorType i32_vreg_ty =
       getNativeVregType(builder.getI32Type(), ctx.target_shape);
-  auto getVmaskByPaddingEnd = [&](int64_t dim, int64_t padding,
-                                  VectorType vreg_ty) {
+  auto getX32VmaskByPaddingEnd = [&](int64_t dim, int64_t padding) {
     CHECK(dim == 0 || dim == 1);
     CHECK(padding >= 0 && padding <= ctx.target_shape[dim]);
-    auto mask = cast<TypedValue<VectorType>>(
+    return cast<TypedValue<VectorType>>(
         builder
             .create<arith::CmpIOp>(
                 arith::CmpIPredicate::slt,
-                builder.create<tpu::IotaOp>(i32_vreg,
+                builder.create<tpu::IotaOp>(i32_vreg_ty,
                                             builder.getI32IntegerAttr(dim)),
                 builder.create<arith::ConstantOp>(DenseElementsAttr::get(
-                    i32_vreg, builder.getI32IntegerAttr(ctx.target_shape[dim] -
-                                                        padding))))
+                    i32_vreg_ty, builder.getI32IntegerAttr(
+                                     ctx.target_shape[dim] - padding))))
             .getResult());
-    if (vreg_ty.getShape() != mask.getType().getShape()) {
-      mask = builder.create<tpu::MaskCastOp>(
-          VectorType::get(vreg_ty.getShape(), builder.getI1Type()), mask);
-    }
-    return mask;
   };
 
   // We can also extend this helper function with padding_top and padding_left
   // based on the offsets in vregs.
-  auto maskVregs = [&](xla::Array<Value> &vregs, Value zeros,
-                       int64_t padding_bottom, int64_t padding_right) {
+  // TODO(b/341729764): Support mask subelements.
+  auto maskVregs = [&](xla::Array<Value> &vregs, int64_t padding_bottom,
+                       int64_t padding_right) {
+    const Value i32_zeros_vreg = builder.create<arith::ConstantOp>(
+        op.getLoc(),
+        DenseElementsAttr::get(i32_vreg_ty, builder.getI32IntegerAttr(0)));
     auto vreg_ty = cast<VectorType>(vregs.begin()->getType());
+    int packing = vreg_ty.getRank() > 2 ? vreg_ty.getShape()[2] : 1;
     // Mask out the bottom.
     if (padding_bottom > 0) {
-      auto mask_bottom = getVmaskByPaddingEnd(0, padding_bottom, vreg_ty);
+      // We have limited the row size of LHS and RHS need to be a multiple of
+      // native tiling at the beginning of this rule. Therefore, it is safe to
+      // bitcast to x32 vreg for masking.
+      CHECK_EQ(padding_bottom % packing, 0);
+      padding_bottom /= packing;
+      auto mask_bottom = getX32VmaskByPaddingEnd(0, padding_bottom);
       for (int64_t i = 0; i < vregs.dim(1); ++i) {
         Value &vreg = vregs({vregs.dim(0) - 1, i});
-        vreg = builder.create<arith::SelectOp>(mask_bottom, vreg, zeros);
+        Value i32_vreg = builder.create<tpu::BitcastVregOp>(i32_vreg_ty, vreg);
+        i32_vreg = builder.create<arith::SelectOp>(mask_bottom, i32_vreg,
+                                                   i32_zeros_vreg);
+        vreg = builder.create<tpu::BitcastVregOp>(vreg_ty, i32_vreg);
       }
     }
     // Mask out the right.
     if (padding_right > 0) {
-      auto mask_right = getVmaskByPaddingEnd(1, padding_right, vreg_ty);
+      auto mask_right = getX32VmaskByPaddingEnd(1, padding_right);
       for (int64_t i = 0; i < vregs.dim(0); ++i) {
         Value &vreg = vregs({i, vregs.dim(1) - 1});
-        vreg = builder.create<arith::SelectOp>(mask_right, vreg, zeros);
+        Value i32_vreg = builder.create<tpu::BitcastVregOp>(i32_vreg_ty, vreg);
+        i32_vreg = builder.create<arith::SelectOp>(mask_right, i32_vreg,
+                                                   i32_zeros_vreg);
+        vreg = builder.create<tpu::BitcastVregOp>(vreg_ty, i32_vreg);
       }
     }
   };
@@ -1870,11 +1880,11 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
                              getZerosVergLike(*acc_vregs.begin()));
 
   // Only mask out the paddings on contracting dim of LHS and RHS.
-  maskVregs(lhs_vregs, lhs_zeros_vreg, 0, padded_lhs_cols - lhs_shape[1]);
+  maskVregs(lhs_vregs, 0, padded_lhs_cols - lhs_shape[1]);
   if (transpose_rhs) {
-    maskVregs(rhs_vregs, rhs_zeros_vreg, 0, padded_rhs_cols - rhs_shape[1]);
+    maskVregs(rhs_vregs, 0, padded_rhs_cols - rhs_shape[1]);
   } else {
-    maskVregs(rhs_vregs, rhs_zeros_vreg, padded_rhs_rows - rhs_shape[0], 0);
+    maskVregs(rhs_vregs, padded_rhs_rows - rhs_shape[0], 0);
   }
 
   // TODO(b/328094640): use latch 3 for short dimensions.
@@ -1884,6 +1894,10 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
   // second dim to be a multiple of mxu_size.
   auto mxu_contracting_size = ctx.mxu_shape[0];
   auto mxu_noncontracting_size = ctx.mxu_shape[1];
+  if (lhs.getType().getElementType().isSignlessInteger(4) &&
+      rhs.getType().getElementType().isSignlessInteger(4)) {
+    mxu_contracting_size *= 2;
+  }
   auto rhs_row_size = mxu_contracting_size;
   auto rhs_col_size = mxu_noncontracting_size;
   if (transpose_rhs) {
