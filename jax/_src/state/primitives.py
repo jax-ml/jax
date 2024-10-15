@@ -35,6 +35,7 @@ from jax._src.state.types import (
     AccumEffect,
     ReadEffect,
     RefBitcaster,
+    RefReshaper,
     Transform,
     TransformedRef,
     WriteEffect,
@@ -332,12 +333,21 @@ def pp_bitcaster(
   )
 
 
+def pp_reshaper(context: core.JaxprPpContext, reshaper: RefReshaper) -> pp.Doc:
+  del context
+  return pp.text(
+      f"[reshape({reshaper.dtype}[{','.join(str(d) for d in reshaper.shape)}])]"
+  )
+
+
 def pp_transform(context: core.JaxprPpContext, transform: Transform) -> pp.Doc:
   match transform:
     case indexing.NDIndexer():
       return pp_indexer(context, transform)
     case RefBitcaster():
       return pp_bitcaster(context, transform)
+    case RefReshaper():
+      return pp_reshaper(context, transform)
     case _:
       return pp.text(f"[{transform}]")
 

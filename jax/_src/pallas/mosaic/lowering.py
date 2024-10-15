@@ -59,7 +59,7 @@ from jax._src.pallas.mosaic import random as pl_random
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
-from jax._src.state.types import RefBitcaster
+from jax._src.state.types import RefBitcaster, RefReshaper
 from jax._src.state.utils import dtype_bitwidth
 from jax._src.typing import DTypeLike
 from jax._src.util import safe_map
@@ -1086,6 +1086,41 @@ def _bitcast_memref(
   )
 
 
+def _reshape_memref(
+    ref: ir.Value,
+    reshaper: RefReshaper,
+    ref_dtype: DTypeLike,
+    ref_block_shape: tuple[int | pallas_core.Mapped, ...],
+) -> tuple[ir.Value, DTypeLike, tuple[int | pallas_core.Mapped, ...]]:
+  if ref_dtype != reshaper.dtype:
+    raise ValueError(
+        f"Reshape a ref with dtype change: {reshaper.dtype} vs {ref_dtype}"
+    )
+  if len(ref_block_shape) < 2:
+    raise NotImplementedError("Reshape 1D ref is not supported.")
+  if (
+      ref_block_shape[-2] is pallas_core.mapped
+      or ref_block_shape[-1] is pallas_core.mapped
+  ):
+    raise NotImplementedError(
+        "Reshape a ref with squeezed dimension on last two dimensions."
+    )
+  if np.prod(ref_block_shape) != np.prod(reshaper.shape):
+    raise ValueError(
+        f"Reshape a ref with different number of elements: {ref_block_shape} "
+        f"vs {reshaper.shape}"
+    )
+  target_ref_ty = ir.MemRefType.get(
+      reshaper.shape,
+      _dtype_to_ir_type(reshaper.dtype),
+      memory_space=ref.type.memory_space,
+  )
+  return (
+      tpu.memref_reshape(target_ref_ty, ref),
+      reshaper.shape,
+  )
+
+
 def _transform_ref(ref, ref_dtype, ref_block_shape, transforms):
   for transform in transforms:
     match transform:
@@ -1095,6 +1130,10 @@ def _transform_ref(ref, ref_dtype, ref_block_shape, transforms):
         )
       case RefBitcaster():
         ref, ref_dtype, ref_block_shape = _bitcast_memref(
+            ref, transform, ref_dtype, ref_block_shape
+        )
+      case RefReshaper():
+        ref, ref_block_shape = _reshape_memref(
             ref, transform, ref_dtype, ref_block_shape
         )
       case _:

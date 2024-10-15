@@ -1882,24 +1882,89 @@ class PallasCallRefTransformTest(PallasBaseTest):
     expected = state_utils.bitcast(x, jnp.int32)
     np.testing.assert_array_equal(y[:8, :128], expected)
 
+  @parameterized.product(slice_first=[True, False])
+  def test_dma_reshaped_ref(self, slice_first):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('DMAs not supported on TPU generations <= 3')
+
+    def kernel(x_hbm_ref, y_hbm_ref):
+      def body(sem):
+        ref = (
+            x_hbm_ref.at[:8, :, :].reshape(8, 128)
+            if slice_first
+            else x_hbm_ref.reshape(16, 128).at[:8, :]
+        )
+        pltpu.async_copy(ref, y_hbm_ref.reshape(8, 128).at[...], sem).wait()
+
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
+
+    x = jnp.arange(16 * 128, dtype=jnp.int32).reshape(16, 1, 128)
+    y = self.pallas_call(
+        kernel,
+        in_specs=[
+            pl.BlockSpec(memory_space=pl.ANY),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        out_shape=jax.ShapeDtypeStruct((8, 1, 128), jnp.int32),
+    )(x)
+    expected = (
+        x[:8, :, :128].reshape((8, 128))
+        if slice_first
+        else x.reshape(16, 128)[:8, :128]
+    ).reshape(8, 1, 128)
+    np.testing.assert_array_equal(y, expected)
+
+  def test_load_reshaped_ref(self):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('No expected (1, 128) tiling')
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref.reshape(5, 128)[...]
+
+    x = jnp.arange(5 * 128, dtype=jnp.int32).reshape(5, 1, 128)
+    y = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((5, 128), jnp.int32),
+    )(x)
+    expected = x.reshape(5, 128)
+    np.testing.assert_array_equal(y, expected)
+
+  def test_store_reshaped_ref(self):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('No expected (1, 128) tiling')
+
+    def kernel(x_ref, y_ref):
+      y_ref.reshape(5, 128)[...] = x_ref[...]
+
+    x = jnp.arange(5 * 128, dtype=jnp.int32).reshape(5, 128)
+    y = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((5, 1, 128), jnp.int32),
+    )(x)
+    expected = x.reshape(5, 1, 128)
+    np.testing.assert_array_equal(y, expected)
+
   def test_multiple_ref_transforms(self):
 
     def kernel(x_ref, y_ref):
       ref = (
-          x_ref.at[:8, :256]
-          .bitcast(jnp.int16)
-          .bitcast(jnp.float16)
-          .at[:, :128]
-          .bitcast(jnp.int32)
+          x_ref.at[:16, :256]  # i32(16, 256)
+          .bitcast(jnp.int16)  # i16(32, 256)
+          .reshape((2, 16, 256))  # i16(2, 16, 256)
+          .bitcast(jnp.float16)  # bf16(2, 16, 256)
+          .at[1:, :, :]  # bf16(1, 16, 256)
+          .reshape((16, 256))  # bf16(16, 256)
+          .at[:, :128]  # bf16(16, 128)
+          .bitcast(jnp.int32)  # i32(8, 128)
       )
       y_ref[...] = ref[...]
 
-    x = jnp.arange(4 * 8 * 128, dtype=jnp.int32).reshape((16, 256))
+    x = jnp.arange(32 * 256, dtype=jnp.int32).reshape((32, 256))
     y = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.int32),
     )(x)
-    np.testing.assert_array_equal(y, x[:8, :128])
+    np.testing.assert_array_equal(y, x[8:16, :128])
 
 
 class PallasCallPrintTest(PallasBaseTest):
