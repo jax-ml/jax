@@ -50,7 +50,6 @@ from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
@@ -3078,54 +3077,3 @@ def _iota_2x32_shape_lowering(ctx, *, shape):
 
 
 lowering_rules[prng.iota_2x32_shape_p] = _iota_2x32_shape_lowering
-
-# Lowering for shard_map
-
-# Technically this is not a lowering rule, but a discharge rule. When we use
-# a special pallas mesh for a shard_map inside of a run_state, we turn it into
-# a pallas call. The pallas_call has named grid axes corresponding to the names
-# in the pallas mesh. It also sets up input/output aliasing automatically.
-
-def _shard_map_discharge_rule(
-    in_avals,
-    out_avals,
-    *args,
-    mesh,
-    auto,
-    in_names,
-    out_names,
-    jaxpr,
-    check_rep,
-    rewrite,
-):
-  del out_avals, auto, in_names, out_names, check_rep, rewrite
-  if not isinstance(mesh, pallas_core.PallasMesh):
-    raise NotImplementedError("Mesh must be a PallasMesh")
-  if len(mesh.shape) > 1:
-    raise NotImplementedError("Mesh must be 1D")
-  core_axis_name, num_cores = list(mesh.shape.items())[0]
-  def body(*args):
-    in_refs = args[:len(in_avals)]
-    jax_core.eval_jaxpr(jaxpr, (), *in_refs)
-  assert len(jaxpr.outvars) == 0
-  out = pallas_call.pallas_call(
-      body,
-      out_shape=in_avals,
-      in_specs=[pallas_core.BlockSpec(memory_space=pallas_core.MemorySpace.ANY)]
-      * len(in_avals),
-      out_specs=[pallas_core.BlockSpec(
-          memory_space=pallas_core.MemorySpace.ANY)]
-      * len(in_avals),
-      input_output_aliases={i: i for i in range(len(in_avals))},
-      grid=((core_axis_name, num_cores),),
-      compiler_params=dict(
-          mosaic=dict(dimension_semantics=("parallel",)),
-      ),
-  )(*args)
-  return out, ()
-
-
-from jax.experimental import shard_map
-state_discharge.register_discharge_rule(shard_map.shard_map_p)(
-    _shard_map_discharge_rule
-)

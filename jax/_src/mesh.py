@@ -270,11 +270,6 @@ class Mesh(contextlib.ContextDecorator):
   def _local_mesh(self, process_index):
     return _get_local_mesh(self, process_index)
 
-  @property
-  def _is_jax_device_mesh(self):
-    # Returns if the mesh contains JAX devices or not
-    return True
-
   @functools.cached_property
   def device_ids(self):
     assert not self.empty
@@ -376,10 +371,6 @@ class AbstractMesh:
   @functools.cached_property
   def shape(self):
     return collections.OrderedDict(self.shape_tuple)
-
-  @property
-  def _is_jax_device_mesh(self):
-    return False
 
   @property
   def _internal_device_list(self):
