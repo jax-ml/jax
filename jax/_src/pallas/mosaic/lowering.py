@@ -2187,26 +2187,62 @@ def _cmp_lowering_rule(prim, ctx: LoweringRuleContext, x, y):
     )
   dtype = x_aval.dtype
 
-  # Handle bool comparisons by casting to int32.
+  # For boolean comparisons, we handle them in two different ways. For `ne`,
+  # we directly use the xor operation since they are equivalent. For all
+  # other comparisons, we convert the boolean values to `int32` and use select
+  # operations to perform the comparison.
+  #
+  # The relationship between comparison operations on booleans and boolean
+  # algebra is as follows:
+  #
+  # eq(a, b) = !(a ^ b)
+  # ne(a, b) = a ^ b
+  # lt(a, b) = !a && b
+  # le(a, b) = !a || b
+  # gt(a, b) = a && !b
+  # ge(a, b) = a || !b
+  #
+  # However, except for `ne`, all other operations require negation, which is
+  # currently not supported. At present, even if negation were supported,
+  # it would still need to be implemented using `select` operations, making
+  # it equivalent to our current approach. For more details on negation support,
+  # see https://github.com/jax-ml/jax/issues/24243.
   if jnp.issubdtype(dtype, jnp.bool_):
-    bool_cast_to = _dtype_to_ir_type(jnp.dtype("int32"))
-    true_ = ir_constant(1, mlir_type=bool_cast_to)
-    false_ = ir_constant(0, mlir_type=bool_cast_to)
+    if prim == lax.ne_p:
+      return arith.xori(x, y)
 
-    x = arith.SelectOp(x, true_, false_)
-    y = arith.SelectOp(y, true_, false_)
-    dtype = jnp.dtype("int32")
+    i32 = ir.IntegerType.get_signless(32)
+    vtype = ir.VectorType.get(x_aval.shape, i32)
+
+    # Convert `x` and `y` from `bool` to `int32` for comparison, with 2
+    # for true and 0 for false. For example, comparing `x > y` is equivalent
+    # to `(x ? 2 : 0) > (y ? 2 : 0)`.
+    #
+    # Note that we cannot use 1 for true because the select operation will be
+    # misteriously eliminated.
+    two = arith.constant(i32, 2)
+    zero = arith.constant(i32, 0)
+
+    out_aval, = ctx.avals_out
+    if out_aval.shape != ():
+      # broadcast to vectors if we are comparing vectors
+      two = vector.broadcast(vtype, two)
+      zero = vector.broadcast(vtype, zero)
+
+    x = arith.select(x, two, zero)
+    y = arith.select(y, two, zero)
+    dtype = jnp.int32
 
   if jnp.issubdtype(dtype, jnp.integer):
     is_uint = jnp.issubdtype(dtype, jnp.unsignedinteger)
     pred = (_cmpui_lowering_types if is_uint else _cmpsi_lowering_types)[prim]
     predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
-    return arith.CmpIOp(predicate, x, y).result
+    return arith.cmpi(predicate, x, y)
 
   if jnp.issubdtype(dtype, jnp.floating):
     pred = _cmpf_lowering_types[prim]
     predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
-    return arith.CmpFOp(predicate, x, y).result
+    return arith.cmpf(predicate, x, y)
 
   raise NotImplementedError(f"Unsupported dtype in cmp: {dtype}")
 
