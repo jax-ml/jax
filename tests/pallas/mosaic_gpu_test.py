@@ -72,6 +72,21 @@ class PallasCallTest(PallasTest):
     y = jnp.flip(x).reshape(1, 256)
     np.testing.assert_array_equal(kernel(x, y), x + y[0])
 
+  def test_reshape(self):
+    shape1, shape2 = (128,), (2, 16, 4)
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape2, jnp.float32),
+    )
+    def kernel(x_ref, out_ref):
+      x_ref_reshaped = x_ref.reshape(shape2)
+      self.assertEqual(x_ref.shape, shape1)
+      self.assertEqual(x_ref_reshaped.shape, shape2)
+      out_ref[...] = x_ref_reshaped[...]
+
+    x = jnp.arange(math.prod(shape1)).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x.reshape(shape2))
+
   def test_add_xy(self):
     @functools.partial(
         pl.pallas_call,
@@ -738,6 +753,31 @@ class PallasCallTest(PallasTest):
     expected = np.empty_like(x)
     rotate(x, expected)
     np.testing.assert_array_equal(f(x), expected)
+
+  def test_tile_untile(self):
+    out_shape = (128, 256)
+    spec = lambda shape: plgpu.GPUBlockSpec(
+        shape,
+        lambda: (0, 0),
+        transforms=(
+            plgpu.TilingTransform((64, 64)),
+        ),
+    )
+    def copy(out_ref):
+      self.assertEqual(out_ref.shape, out_shape)
+      tiled = plgpu.tile(out_ref, (64, 64))
+      self.assertEqual(tiled.shape, (2, 4, 64, 64))
+      reshaped = tiled.reshape((4, 2, 64, 64))
+      self.assertEqual(reshaped.shape, (4, 2, 64, 64))
+      untiled = plgpu.untile(reshaped, 2)
+      self.assertEqual(untiled.shape, (256, 128))
+
+    pl.pallas_call(
+        copy,
+        out_shape=jax.ShapeDtypeStruct(shape=out_shape, dtype=jnp.float32),
+        in_specs=[],
+        out_specs=spec(out_shape),
+    )()
 
 
 class PipelineTest(PallasTest):

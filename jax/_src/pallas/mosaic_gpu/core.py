@@ -22,6 +22,7 @@ from typing import Any, ClassVar, Literal
 
 from jax._src import core as jax_core
 from jax._src import dtypes
+from jax._src.state import indexing
 from jax._src import tree_util
 from jax._src.pallas import core as pallas_core
 from jax._src.state.types import Transform
@@ -106,6 +107,37 @@ class TilingTransform(MemoryRefTransform):
 
   def to_gpu_transform(self) -> mgpu.MemRefTransform:
     return mgpu.TileTransform(self.tiling)
+
+
+@tree_util.register_pytree_node_class
+@dataclasses.dataclass(frozen=True)
+class TileRef(Transform):
+  tiling: tuple[int, ...]
+  permutation: tuple[int, ...] | None
+
+  def transform_shape(self, shape):
+    if shape is None:
+      return None
+    if self.permutation:
+      permuted = list(mgpu.tile_shape([shape[i] for i in self.permutation], self.tiling))
+      permuted[:len(shape)] = [permuted[i] for i in _perm_inverse(self.permutation)]
+      return tuple(permuted)
+
+    return mgpu.tile_shape(shape, self.tiling)
+
+  def transform_dtype(self, dtype):
+    return dtype
+
+  def untransform_index(self, idxs: indexing.ShapeIndexer) -> indexing.ShapeIndexer:
+    raise NotImplementedError("Indexing TileRef is not supported")
+
+  def tree_flatten(self):
+    return (), (self.tiling, self.permutation)
+
+  @classmethod
+  def tree_unflatten(cls, metadata, arrays):
+    assert not arrays
+    return cls(*metadata)
 
 
 @tree_util.register_pytree_node_class
@@ -338,13 +370,6 @@ class WGMMAAccumulatorRef:
     )
 
 
-def _is_trivial_index(idx):
-  _is_deref1 = lambda i: i is Ellipsis or i == slice(None)
-  if isinstance(idx, tuple):
-    return all(_is_deref1(i) for i in idx)
-
-  return _is_deref1(idx)
-
 class WGMMAAbstractAccumulatorRef(AbstractMemoryRef):
   __slots__ = ["inner_aval", "memory_space"]
 
@@ -364,7 +389,7 @@ class WGMMAAbstractAccumulatorRef(AbstractMemoryRef):
     from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_deref  # pytype: disable=import-error
     arr = wgmma_accumulator_deref(tracer)
 
-    if not _is_trivial_index(idx):
+    if not indexing.is_trivial_index(idx, tracer.shape):
       arr = arr[idx]
 
     return arr
@@ -379,3 +404,60 @@ def _as_accum(ref) -> WGMMAAbstractAccumulatorRef:
 def _ref_raise_to_shaped(ref_aval, weak_type):
   return _as_accum(jax_core.raise_to_shaped_mappings[AbstractMemoryRef](ref_aval, weak_type))
 jax_core.raise_to_shaped_mappings[WGMMAAbstractAccumulatorRef] = _ref_raise_to_shaped
+
+def _is_untiled(transforms, tiling) -> bool | None:
+  untiled = None
+  for t in transforms:
+    match t:
+      case UntileRef():
+        untiled = True
+      case TileRef():
+        untiled = False
+      case TransposeRef():
+        if untiled:
+          continue
+
+        tile_transpose = tuple(
+            range(
+                len(t.permutation[: -len(tiling)]),
+                len(t.permutation),
+            )
+        )
+        if t.permutation[-len(tiling) :] != tile_transpose:
+          raise ValueError("oops")
+        continue
+      case _:
+        continue
+
+    if t.tiling != tiling:
+      raise NotImplementedError(f"Can only tile {t.tiling}, not {tiling}")
+
+  return untiled
+
+def tile(ref, tiling):
+  err = NotImplementedError(f"Can only transform untiled refs (got: {ref}, {tiling=})")
+  if not _is_untiled(ref.transforms, tiling):
+    raise err
+  untile_ref_idx = ref.transforms.index(UntileRef(tiling))
+  post_untile = ref.transforms[untile_ref_idx + 1:]
+  if len(post_untile) == 1:
+    t = post_untile[0]
+    if not isinstance(t, TransposeRef):
+      raise err
+    permutation = t.permutation
+  elif len(post_untile) == 0:
+    permutation = None
+  else:
+    raise err
+
+  return dataclasses.replace(ref, transforms=(*ref.transforms, TileRef(tiling=tiling, permutation=permutation)))
+
+def untile(ref, dims):
+  err = NotImplementedError(f"Can only untile already tiled refs (got: {ref}, {dims=})")
+  if _is_untiled(ref.transforms, ref.shape[-dims:]) is not False:
+    raise err
+
+  # TODO(cperivol): Make sure the tiling is not permuted.
+  return dataclasses.replace(
+      ref, transforms=(*ref.transforms, UntileRef(tiling=ref.shape[-dims:]))
+)
