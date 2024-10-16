@@ -748,6 +748,13 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
       f"{self._origin_msg()}")
 
   @property
+  def committed(self):
+    raise ConcretizationTypeError(
+        self,
+        f"The 'committed' attribute is not available on {self._error_repr()}."
+        f"{self._origin_msg()}")
+
+  @property
   def device(self):
     # This attribute is part of the jax.Array API, but only defined on concrete arrays.
     # Raising a ConcretizationTypeError would make sense, but for backward compatibility

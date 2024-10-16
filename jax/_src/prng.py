@@ -233,6 +233,10 @@ class PRNGKeyArray(jax.Array):
   def sharding(self):
     return logical_sharding(self.aval, self._base_array.sharding)
 
+  @property
+  def committed(self):
+    return self._base_array.committed
+
   def _is_scalar(self):
     base_ndim = len(self._impl.key_shape)
     return self._base_array.ndim == base_ndim
