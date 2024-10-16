@@ -498,20 +498,30 @@ def _check_block_mappings(
           (bs0 == as0 or bs0 % 128 == 0) and
           (bs1 == as1 or bs1 % 8 == 0)
       )
+      if not evenly_divisible:
+        raise ValueError(
+            "The Pallas TPU lowering currently requires that the last two "
+            "dimensions of your block shape are divisible by 8 and 128 "
+            "respectively, or be equal to the respective dimensions of the "
+            "overall array. "
+            + err_details()
+        )
     else:
       assert rank == 1
       # TODO(necula): test this for bool. What should it do?
       tiling_size = 128 * (32 // lax_internal._bit_width(bm.array_shape_dtype.dtype))
       evenly_divisible = (bs0 == as0 or bs0 % tiling_size == 0)
-
-    if not evenly_divisible:
-      raise ValueError(
-          "The Pallas TPU lowering currently requires that the last two "
-          "dimensions of your block shape are divisible by 8 and 128 "
-          "respectively, or be equal to the respective dimensions of the "
-          "overall array. "
-          + err_details()
-      )
+      if not evenly_divisible:
+        raise ValueError(
+            "The Pallas TPU lowering currently requires that rank 1 block"
+            " shapes, either 1) the first (and only) dimension of the block"
+            " shape is equal to the first (and only) dimension of the array"
+            " shape, or 2) the first (and only) dimension of the block shape"
+            f" is a multiple of the tiling size ({tiling_size} = 128 * (32 //"
+            f" {lax_internal._bit_width(bm.array_shape_dtype.dtype)})) of the"
+            " array shape. "
+            + err_details()
+        )
 
 
 def lower_jaxpr_to_module(
