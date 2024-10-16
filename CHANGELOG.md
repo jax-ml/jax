@@ -41,6 +41,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `jax.lib.xla_client.Shape`, `jax.lib.xla_client.XlaBuilder`, and
     `jax.lib.xla_client.XlaComputation` have been deprecated. Use StableHLO
     instead.
+  * To align with the behavior of `numpy.arctan2`, `jax.numpy.arctan2` has been
+    modified to no longer support `complex dtypes`.
 
 ## jax 0.4.34 (October 4, 2024)
 
