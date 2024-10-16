@@ -15,6 +15,7 @@
 """GPU-specific Pallas primitives."""
 
 from __future__ import annotations
+from typing import Any, Callable, Sequence, TypeVar, assert_never
 
 from typing import Literal
 
@@ -32,6 +33,7 @@ from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 import jax.experimental.mosaic.gpu as mgpu
 
+import jax.numpy as jnp
 
 copy_smem_to_gmem_p = jax_core.Primitive("copy_smem_to_gmem")
 copy_smem_to_gmem_p.multiple_results = True
@@ -394,37 +396,16 @@ def wgmma(
         f" rhs={b.shape=}, acc={acc.shape}"
     )
 
-  if (dtype := a.dtype) != b.dtype:
+  if a.dtype != b.dtype:
     raise ValueError(f"Mixed input dtypes for matrix multiplication unsupported: lhs={a.dtype}, rhs={b.dtype}")
 
-  # Infer swizzle from a.
-  if not a.transforms or not isinstance(
-      (swizzle_transform := a.transforms[0]), gpu_core.UnswizzleRef
-  ):
-    raise ValueError("WGMMA lhs must be a tiled and swizzled reference.")
-
-  swizzle = swizzle_transform.swizzle
-  swizzle_elems = swizzle // dtype.itemsize
-  if a.transforms[1:] != (gpu_core.UntileRef((64, swizzle_elems)),):
-    raise ValueError(
-        f"WGMMA lhs must be tiled with 64x{swizzle_elems} tiles for element type"
-        f" {dtype}."
-    )
-
-  rhs_transpose_transform = gpu_core.TransposeRef((1, 0, 2, 3))
-  rhs_tiling = gpu_core.UntileRef((swizzle_elems, swizzle_elems))
-  if b.transforms == (swizzle_transform, rhs_tiling):
-    rhs_transpose = False
-  elif b.transforms == (swizzle_transform, rhs_transpose_transform, rhs_tiling):
-    rhs_transpose = True
-  else:
-    raise ValueError(
-        f"WGMMA rhs must have {swizzle=} and be tiled with"
-        f" {swizzle_elems}x{swizzle_elems} tiles for element type {dtype} (and"
-        " optionally transposed)."
-    )
-
-  wgmma_ref_p.bind(acc, a.ref, b.ref, swizzle=swizzle, rhs_transpose=rhs_transpose)
+  wgmma_ref_p.bind(
+      acc,
+      a.ref,
+      b.ref,
+      lhs_transforms=a.transforms,
+      rhs_transforms=b.transforms,
+  )
 
 
 @wgmma_ref_p.def_effectful_abstract_eval
@@ -448,13 +429,13 @@ def _wgmma_ref_discharge(
     acc,
     a,
     b,
-    swizzle,
-    rhs_transpose,
+    lhs_transforms,
+    rhs_transforms,
 ):
   del in_avals, out_avals
   return (
       wgmma_p.bind(
-          acc, a, b, swizzle=swizzle, rhs_transpose=rhs_transpose
+          acc, a, b, lhs_transforms=lhs_transforms, rhs_transforms=rhs_transforms
       ),
       None,
       None,
@@ -471,14 +452,67 @@ def _wgmma_lowering(
     acc,
     a,
     b,
-    swizzle,
-    rhs_transpose,
+    lhs_transforms,
+    rhs_transforms,
 ):
-  del ctx
+  dtype = jnp.dtype(ctx.avals_in[1].dtype)
+  # Infer swizzle from a.
+  if not lhs_transforms or not isinstance(
+      (swizzle_transform := lhs_transforms[0]), gpu_core.UnswizzleRef
+  ):
+    raise ValueError("WGMMA lhs must be a tiled and swizzled reference.")
+
+  swizzle = swizzle_transform.swizzle
+  swizzle_elems = swizzle // dtype.itemsize
+  if lhs_transforms[1:] != (gpu_core.UntileRef((64, swizzle_elems)),):
+    raise ValueError(
+        f"WGMMA lhs must be tiled with 64x{swizzle_elems} tiles for element type"
+        f" {dtype}."
+    )
+
+  rhs_tiling = gpu_core.UntileRef((swizzle_elems, swizzle_elems))
+
+  def is_tile_transpose(t):
+    # At this point we know that we are transposing the result of
+    # rhs_tiling so no need to check the shapes.
+    if not isinstance(t, gpu_core.TransposeRef):
+      return False
+    tail_perm = list(range(len(t.permutation) - 4, len(t.permutation)))
+    tail_perm[:2] = tail_perm[1::-1]
+    return t.permutation[-4:] == tuple(tail_perm)
+
+  if (tiling_idx := rhs_transforms.index(rhs_tiling)) != -1:
+    rhs_transpose = tiling_idx >= 1 and is_tile_transpose(
+        rhs_transforms[tiling_idx - 1]
+    )
+  else:
+    raise ValueError(
+      f"WGMMA rhs must have {swizzle=} and be tiled with"
+      f" {swizzle_elems}x{swizzle_elems} tiles for element type {dtype} (and"
+      " optionally transposed.)."
+    )
+
+  def _apply_reshapes(ref, transforms):
+    untiled = False
+    for t in transforms:
+      match t:
+        case gpu_core.UntileRef():
+          assert not untiled
+          untiled = True
+        case gpu_core.TileRef():
+          assert untiled
+          untiled = False
+        case gpu_core.RefReshaper(shape=shape):
+          assert not untiled
+          ref = mgpu.memref_reshape(ref, shape)
+        case _:
+          ...
+    return ref
+
   new_acc = mgpu.wgmma(
       acc,
-      a,
-      b,
+      _apply_reshapes(a, lhs_transforms),
+      _apply_reshapes(b, rhs_transforms),
       swizzle=swizzle,
       b_order=mgpu.WGMMALayout.COL_MAJOR
       if rhs_transpose
