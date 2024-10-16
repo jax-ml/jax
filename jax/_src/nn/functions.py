@@ -843,11 +843,51 @@ def _apply_masks(logits, mask, is_causal, q_seqlen, kv_seqlen,
   padded_logits = jnp.where(combined_mask, logits, large_negative_number)
   return padded_logits
 
+# We use this custom dot_general in the QK einsum op of attention to match
+# dtypes used in the Flash Attention implementation. For bf16 inputs as an
+# example, the fprop is like:
+#   bf16 -> dot -> fp32
+# Then the bprop is like:
+# (1) Without this change:
+#   fp32 -> dot -> fp32 -> cvt -> bf16.
+# (2) With this change:
+#   fp32 -> cvt -> bf16 -> dot -> bf16.
+@partial(custom_jvp, nondiff_argnums=(2, 3, 4))
+def dot_general_with_custom_convert(
+    lhs, rhs, dimension_numbers, precision=None, preferred_element_type=None
+):
+  return lax.dot_general(
+      lhs, rhs, dimension_numbers, precision=precision,
+      preferred_element_type=preferred_element_type,
+  )
+
+@dot_general_with_custom_convert.defjvp
+def dot_general_with_custom_convert_jvp(
+    dimension_numbers, precision, preferred_element_type, primals, tangents
+):
+  lhs, rhs = primals
+  lhs_dot, rhs_dot = tangents
+
+  out = lax.dot_general(
+      lhs, rhs, dimension_numbers, precision=precision,
+      preferred_element_type=preferred_element_type,
+  )
+
+  grad_out = lax.dot_general(
+      lhs_dot, rhs, dimension_numbers, precision=precision,
+  ) + lax.dot_general(
+      lhs, rhs_dot, dimension_numbers, precision=precision,
+  )
+  grad_out = grad_out.astype(preferred_element_type)
+
+  return out, grad_out
+
 def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
                                 scale, q_seqlen, kv_seqlen, local_window_size):
   logits_dtype = jnp.promote_types(query.dtype, jnp.float32)
   logits = jnp.einsum('BTNH,BSNH->BNTS', query, key,
-                      preferred_element_type=logits_dtype)
+                      preferred_element_type=logits_dtype,
+                      _dot_general=dot_general_with_custom_convert)
 
   logits *= jnp.array(scale, dtype=logits.dtype)
 
