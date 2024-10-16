@@ -167,5 +167,3 @@ max-complexity = 18
 "jax/tree_util.py" = ["F401"]
 "jax/typing.py" = ["F401"]
 "jax/util.py" = ["F401"]
-# F821: Undefined name.
-"jax/numpy/__init__.pyi" = ["F821"]
