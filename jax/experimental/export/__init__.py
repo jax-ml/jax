@@ -35,8 +35,8 @@ _deprecations = {
     "call": (_deprecation_message, _src_export.call),
     "call_exported": (_deprecation_message, _src_export.call_exported),
     "default_lowering_platform":  (_deprecation_message, _src_export.default_lowering_platform),
-    "minimum_supported_serialization_version" : (_deprecation_message, _src_export.minimum_supported_calling_convention_version),
-    "maximum_supported_serialization_version" : (_deprecation_message, _src_export.maximum_supported_calling_convention_version),
+    "minimum_supported_serialization_version": (_deprecation_message, _src_export.minimum_supported_calling_convention_version),
+    "maximum_supported_serialization_version": (_deprecation_message, _src_export.maximum_supported_calling_convention_version),
 
     "serialize": (_deprecation_message, _src_serialization.serialize),
     "deserialize": (_deprecation_message, _src_serialization.deserialize),

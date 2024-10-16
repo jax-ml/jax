@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 __all__ = ["DisabledSafetyCheck", "Exported", "export", "deserialize",
+           "register_pytree_node_serialization",
+           "register_namedtuple_serialization",
            "maximum_supported_calling_convention_version",
            "minimum_supported_calling_convention_version",
            "default_export_platform",
@@ -23,6 +25,8 @@ from jax._src.export._export import (
   Exported,
   export,
   deserialize,
+  register_pytree_node_serialization,
+  register_namedtuple_serialization,
   maximum_supported_calling_convention_version,
   minimum_supported_calling_convention_version,
   default_export_platform)
