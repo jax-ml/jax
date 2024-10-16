@@ -27,7 +27,6 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax.extend import ffi
-from jax.lib import xla_client
 
 # start test boilerplate
 from absl.testing import absltest
