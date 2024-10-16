@@ -16,6 +16,7 @@
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "absl/types/span.h"
+#include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "tsl/platform/statusor.h"
 
 // TODO: Instead of CHECK_EQs, can we do something like TF_RET_CHECK but with
@@ -96,8 +97,20 @@ std::string shapeToString(const T &shape) {
   return os.str();
 }
 
+DotDimensionNumbersAttr default_dimension_numbers(Builder &builder,
+                                                  bool transpose_lhs,
+                                                  bool transpose_rhs);
+
 SmallVector<int64_t> ComputeTileStrides(MemRefType memref_ty,
                                         absl::Span<const int64_t> tiling);
+
+// Assuming MKN or batch MKN (batch, M, K) * (batch, K, N) -> (batch, M, N)
+// with potential transposes on M and N dimensions
+// Assumptions are enforced with checks, invalid dimensions will crash!
+// It is assumed that this call is invoked after canonicalization - so we
+// assume that the dimension numbers are either default or well defined.
+std::pair<bool, bool> is_transposed_mkn(DotDimensionNumbersAttr dim_numbers);
+
 }  // namespace mlir::tpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_

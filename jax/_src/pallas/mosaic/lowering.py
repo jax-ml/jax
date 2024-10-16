@@ -1625,6 +1625,7 @@ def _dot_general_lowering_rule(
     )
     return vector.ShapeCastOp(out_type, red).result
 
+  # TODO(mvoz): Plumb these into dot dimension numbers on the matmul op!
   if lhs_dims == (1,):
     transpose_lhs = False
   elif lhs_dims == (0,):

@@ -1,5 +1,10 @@
+#include <algorithm>
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <numeric>
+#include <optional>
+#include <utility>
 #include <vector>
 
 #include "llvm/ADT/STLExtras.h"
@@ -15,6 +20,8 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LogicalResult.h"
 #include "absl/log/check.h"
+#include "third_party/llvm/llvm-project/llvm/include/llvm/ADT/ArrayRef.h"
+#include "third_party/llvm/llvm-project/llvm/include/llvm/ADT/SmallVector.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/include/mlir/Dialect/Vector/Transforms/VectorTransforms.h"
@@ -22,6 +29,7 @@
 #include "mlir/include/mlir/IR/Attributes.h"
 #include "mlir/include/mlir/IR/Block.h"
 #include "mlir/include/mlir/IR/Builders.h"
+#include "mlir/include/mlir/IR/BuiltinAttributes.h"
 #include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/include/mlir/IR/OpDefinition.h"
 #include "mlir/include/mlir/IR/Operation.h"
@@ -29,6 +37,7 @@
 #include "mlir/include/mlir/IR/Value.h"
 #include "mlir/include/mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "jaxlib/mosaic/dialect/tpu/util.h"
 
 namespace mlir::tpu {
 
@@ -38,6 +47,9 @@ namespace mlir::tpu {
 
 LogicalResult tpu_matmul_rule(tpu::MatmulOp op) {
   ImplicitLocOpBuilder builder(op.getLoc(), op.getOperation());
+
+  auto transpose_lhs = op.getTransposeLhs();
+  auto transpose_rhs = op.getTransposeRhs();
 
   auto lhs = op.getLhs();
   auto rhs = op.getRhs();
@@ -50,6 +62,284 @@ LogicalResult tpu_matmul_rule(tpu::MatmulOp op) {
   auto lhs_element_type = lhs_ty.getElementType();
   auto rhs_element_type = rhs_ty.getElementType();
   auto acc_element_type = acc_ty.getElementType();
+
+  // there are a few primary paths for dimension_numbers in matmul
+  // 1) empty and no transpose_lhs -> in which case, we define a default mkn
+  // 2) empty and transpose_lhs -> Illegal construction
+  // 3) defined and not default -> in which case, we verify them, and apply them
+  // 4) defined and default -> no op for batching and transposition
+  std::optional<int64_t> batch_size = std::nullopt;
+  std::optional<std::function<mlir::vector::TransposeOp(mlir::Value &)>>
+      lhs_transposition = std::nullopt;
+
+  // MKN matmul - no dims or transpositions set
+  if (!op.getDimensionNumbers().has_value() && !transpose_lhs &&
+      !transpose_rhs) {
+    op.setDimensionNumbersAttr(
+        default_dimension_numbers(builder, false, false));
+  } else if (
+      // Legacy API - either transpose_lhs or transpose_rhs is set but dim
+      // numbers are not
+      (!op.getDimensionNumbers().has_value() &&
+       (transpose_lhs || transpose_rhs)) ||
+      // New API - dimensions are provided and are not default
+      (op.getDimensionNumbers().value() !=
+       default_dimension_numbers(builder, false, false))) {
+    // TODO(mvoz): A bunch of these invariants can probably go to the verifier.
+    auto dimension_numbers = op.getDimensionNumbers();
+    if (!dimension_numbers.has_value()) {
+      // Legacy API - no dimension numbers provided, so we set them to default
+      // for the provided transpositions.
+      dimension_numbers =
+          default_dimension_numbers(builder, transpose_lhs, transpose_rhs);
+    }
+    auto lhs_contracting_dims = dimension_numbers->getLhsContractingDims();
+    auto rhs_contracting_dims = dimension_numbers->getRhsContractingDims();
+
+    auto transposition_fn = [&builder](auto &lhs) -> auto {
+      auto lhs_ty = lhs.getType().template cast<VectorType>();
+      // This function must run on 2d vectors - we rely on the rest of the
+      // rule to strip away batch dimensions and handle loops.
+      CHECK_EQ(lhs_ty.getShape().size(), 2);
+      auto minor_perm = {1, 0};
+      // swap the shape dims
+      std::vector<int64_t> shape(lhs_ty.getShape());
+      std::swap(shape[0], shape[1]);
+
+      auto lhs_ty_tranposed = VectorType::get(shape, lhs_ty.getElementType());
+
+      const SmallVector<int64_t> minor_perm_vec =
+          SmallVector<int64_t>(minor_perm.begin(), minor_perm.end());
+      auto new_transpose_op = builder.create<vector::TransposeOp>(
+          lhs_ty_tranposed, lhs,
+          DenseI64ArrayAttr::get(builder.getContext(), minor_perm_vec));
+
+      return new_transpose_op;
+    };
+
+    if (lhs_contracting_dims.size() != 1) {
+      op->emitOpError(
+          "Not implemented: lhs contracting dims must be of size 1");
+      return failure();
+    }
+    if (rhs_contracting_dims.size() != 1) {
+      op->emitOpError(
+          "Not implemented: rhs contracting dims must be of size 1");
+      return failure();
+    }
+
+    auto lhs_contracting_dim = lhs_contracting_dims[0];
+    auto rhs_contracting_dim = rhs_contracting_dims[0];
+
+    auto lhs_batch_dims = dimension_numbers->getLhsBatchDims();
+    auto rhs_batch_dims = dimension_numbers->getRhsBatchDims();
+
+    auto lhs_non_contracting_dims =
+        dimension_numbers->getLhsNonContractingDims();
+    auto rhs_non_contracting_dims =
+        dimension_numbers->getRhsNonContractingDims();
+
+    // size of contracting_im + non_contracting_dims + batch_dims must be the
+    // size of the shape.
+    if (lhs_contracting_dims.size() + lhs_non_contracting_dims.size() +
+            lhs_batch_dims.size() !=
+        lhs_ty.getShape().size()) {
+      op->emitOpError(
+          "Not implemented: lhs contracting + non contracting + batch dims "
+          "must be "
+          "of the same size as the lhs shape");
+      return failure();
+    }
+    if (rhs_contracting_dims.size() + rhs_non_contracting_dims.size() +
+            rhs_batch_dims.size() !=
+        rhs_ty.getShape().size()) {
+      op->emitOpError(
+          "Not implemented: rhs contracting + non contracting + batch dims "
+          "must be "
+          "of the same size as the rhs shape");
+      return failure();
+    }
+
+    if (lhs_ty.getShape()[lhs_contracting_dim] !=
+        rhs_ty.getShape()[rhs_contracting_dim]) {
+      op->emitOpError(
+          "Not implemented: lhs and rhs contracting dims must be of the same "
+          "size");
+      return failure();
+    }
+
+    if (lhs_batch_dims.size() != rhs_batch_dims.size()) {
+      op->emitOpError("Not implemented: Up to 1 batch dim supported");
+      return failure();
+    }
+    if (lhs_batch_dims.size() > 1) {
+      op->emitOpError("Not implemented: Up to 1 batch dim supported");
+      return failure();
+    }
+
+    // Ensure no overlap - batch dims cannot be found in contracting dims
+    for (int64_t dim : lhs_batch_dims) {
+      if (llvm::is_contained(lhs_contracting_dims, dim)) {
+        op->emitOpError(
+            "Illegal: batch dims cannot overlap w/ contracting dims");
+        return failure();
+      }
+    }
+    for (int64_t dim : rhs_batch_dims) {
+      if (llvm::is_contained(rhs_contracting_dims, dim)) {
+        op->emitOpError(
+            "Illegal: batch dims cannot overlap in contracting dims");
+        return failure();
+      }
+    }
+    // Contracting dims should not overlap non-contracting dims
+    for (int64_t dim : lhs_contracting_dims) {
+      if (llvm::is_contained(lhs_non_contracting_dims, dim)) {
+        op->emitOpError(
+            "Illegal: contracting dims cannot be found in non-contracting "
+            "dims");
+        return failure();
+      }
+    }
+    for (int64_t dim : rhs_contracting_dims) {
+      if (llvm::is_contained(rhs_non_contracting_dims, dim)) {
+        op->emitOpError() << "Illegal: contracting dims cannot be found in "
+                             "non-contracting dims";
+        return failure();
+      }
+    }
+
+    std::vector<int64_t> lhs_all_dims;
+    lhs_all_dims.insert(lhs_all_dims.end(), lhs_contracting_dims.begin(),
+                        lhs_contracting_dims.end());
+    lhs_all_dims.insert(lhs_all_dims.end(), lhs_non_contracting_dims.begin(),
+                        lhs_non_contracting_dims.end());
+    lhs_all_dims.insert(lhs_all_dims.end(), lhs_batch_dims.begin(),
+                        lhs_batch_dims.end());
+
+    std::vector<int64_t> rhs_all_dims;
+    rhs_all_dims.insert(rhs_all_dims.end(), rhs_contracting_dims.begin(),
+                        rhs_contracting_dims.end());
+    rhs_all_dims.insert(rhs_all_dims.end(), rhs_non_contracting_dims.begin(),
+                        rhs_non_contracting_dims.end());
+    rhs_all_dims.insert(rhs_all_dims.end(), rhs_batch_dims.begin(),
+                        rhs_batch_dims.end());
+
+    // Create reference dimension sets (0, 1, ..., N-1)
+    std::vector<int64_t> lhs_ref_dims(lhs_ty.getShape().size());
+    std::iota(lhs_ref_dims.begin(), lhs_ref_dims.end(), 0);
+
+    std::vector<int64_t> rhs_ref_dims(rhs_ty.getShape().size());
+    std::iota(rhs_ref_dims.begin(), rhs_ref_dims.end(), 0);
+
+    if (!std::is_permutation(lhs_all_dims.begin(), lhs_all_dims.end(),
+                             lhs_ref_dims.begin())) {
+      op->emitOpError(
+          "lhs contracting + non-contracting + batch dims must be a "
+          "permutation of lhs shape dims");
+      return failure();
+    }
+
+    if (!std::is_permutation(rhs_all_dims.begin(), rhs_all_dims.end(),
+                             rhs_ref_dims.begin())) {
+      op->emitOpError(
+          "rhs contracting + non-contracting + batch dims must be a "
+          "permutation of rhs shape dims");
+      return failure();
+    }
+
+    // At this point, we always have dimension numbers, and they are valid.
+    const std::optional<int64_t> batch_dim_lhs =
+        lhs_batch_dims.empty() ? std::nullopt
+                               : std::optional<int64_t>(lhs_batch_dims[0]);
+    const std::optional<int64_t> batch_dim_rhs =
+        rhs_batch_dims.empty() ? std::nullopt
+                               : std::optional<int64_t>(rhs_batch_dims[0]);
+    if (batch_dim_lhs != batch_dim_rhs) {
+      op->emitOpError("Not Implemented: batch dims must be equal");
+      return failure();
+    }
+    if (batch_dim_lhs.has_value() && (batch_dim_lhs.value() != 0)) {
+      op->emitOpError("Not Implemented: batch dims pos must be 0");
+      return failure();
+    }
+    // Invariant above enforces only 1 batch dim atm, and that both are eq
+    if (batch_dim_lhs.has_value()) {
+      batch_size = lhs_ty.getShape()[batch_dim_lhs.value()];
+      if (batch_size == 0) {
+        op->emitOpError("Illegal: batch size must be > 0");
+        return failure();
+      }
+    }
+    // Lower each dim in contracting dims by size(batch_dims)
+    std::vector<int64_t> batch_adjusted_lhs_contracting_dims =
+        lhs_contracting_dims;
+    auto lhs_adjustment = lhs_batch_dims.size();
+    for (int64_t i = 0; i < batch_adjusted_lhs_contracting_dims.size(); ++i) {
+      batch_adjusted_lhs_contracting_dims[i] -= lhs_adjustment;
+    }
+
+    if (batch_adjusted_lhs_contracting_dims != std::vector<int64_t>({1})) {
+      lhs_transposition = transposition_fn;
+      transpose_lhs = true;
+    }
+    std::vector<int64_t> batch_adjusted_rhs_contracting_dims =
+        rhs_contracting_dims;
+    auto rhs_adjustment = rhs_batch_dims.size();
+    for (int64_t i = 0; i < batch_adjusted_rhs_contracting_dims.size(); ++i) {
+      batch_adjusted_rhs_contracting_dims[i] -= rhs_adjustment;
+    }
+    // Legacy bool flag check
+    if (batch_adjusted_rhs_contracting_dims != std::vector<int64_t>({0})) {
+      // True if either one is set.
+      transpose_rhs = true;
+    }
+
+    auto output_dim_order = dimension_numbers->getOutputDimOrder();
+    if (output_dim_order.size() % 2 != 0) {
+      op->emitOpError("Illegal: output dim order must be of size 2");
+      return failure();
+    }
+    if (batch_size.has_value()) {
+      if (output_dim_order[0] != 0 || output_dim_order[1] != 0) {
+        op->emitOpError(
+            "Not implemented: Output with batch size must be the lhs 0 idx for "
+            "now.");
+        return failure();
+      }
+    }
+    std::vector<int64_t> batch_adjusted_output_dim_order;
+    batch_adjusted_output_dim_order.reserve(output_dim_order.size());
+    // Invariants above enforce a single batch idx for now, and that it is in
+    // position 0. Future extensions to this will be to:
+    // 1. Support multiple batch dims
+    // 2. Support batch dims in any position in the output dim order
+    for (int dim_pos = batch_size.has_value() ? 2 : 0;
+         dim_pos < output_dim_order.size(); dim_pos += 2) {
+      auto idx = output_dim_order[dim_pos];
+      if (idx != 0 && idx != 1) {
+        op->emitOpError("Illegal: output dim order must be 0 or 1");
+        return failure();
+      }
+      auto is_lhs = (idx == 0);
+      auto lhs_or_rhs_dim = output_dim_order[dim_pos + 1];
+      if (is_lhs) {
+        lhs_or_rhs_dim -= lhs_adjustment;
+      } else {
+        lhs_or_rhs_dim -= rhs_adjustment;
+      }
+      batch_adjusted_output_dim_order.emplace_back(idx);
+      batch_adjusted_output_dim_order.emplace_back(lhs_or_rhs_dim);
+    }
+    if (batch_adjusted_output_dim_order !=
+        default_dimension_numbers(builder, transpose_lhs, transpose_rhs)
+            .getOutputDimOrder()
+            .vec()) {
+      op->emitOpError(
+          "Not Implemented: Only vanilla mkn output dim order is supported");
+      return failure();
+    }
+  }
 
   auto extsi_sitofp = [&builder, &op](TypedValue<VectorType> element) {
     const VectorType ty = element.getType();
@@ -87,10 +377,12 @@ LogicalResult tpu_matmul_rule(tpu::MatmulOp op) {
     if (lhs_element_type.isInteger()) {
       auto float_lhs = extsi_sitofp(lhs);
       op->setOperand(0, float_lhs);
+      lhs = op.getLhs();
     }
     if (rhs_element_type.isInteger()) {
       auto float_rhs = extsi_sitofp(rhs);
       op->setOperand(1, float_rhs);
+      rhs = op.getRhs();
     }
   }
   // TODO(mvoz): Add more invariants.
@@ -112,6 +404,71 @@ LogicalResult tpu_matmul_rule(tpu::MatmulOp op) {
       op->emitOpError("float acc with int rhs. Expected float rhs.");
       return failure();
     }
+  }
+
+  auto dot_dim_matmul = [&](auto lhs, auto rhs, auto acc) {
+    auto precision_attr = op.getPrecisionAttr();
+
+    if (lhs_transposition.has_value()) {
+      lhs = lhs_transposition.value()(lhs);
+    }
+
+    auto ddn = default_dimension_numbers(builder, false, transpose_rhs);
+    auto matmul_res = builder.create<tpu::MatmulOp>(
+        op.getLoc(), acc.getType(), lhs, rhs, acc,
+        /*transpose_lhs=*/false,
+        /*transpose_rhs=*/false, precision_attr, ddn);
+    return matmul_res;
+  };
+
+  // If we have a batch_size, we want to slice rhs and lhs [:batch_size],
+  // and then do O[i] = A[i] @ B[i]
+  // Produce an output shape of [batch_size, m, n]
+  if (batch_size.has_value()) {
+    std::vector<Value> outputs;
+
+    for (int64_t i = 0; i < batch_size; ++i) {
+      auto lhs_shape = lhs_ty.getShape();
+      SmallVector<int64_t> slice_shape(lhs_shape);
+      slice_shape[0] = i;
+
+      auto sliced_lhs = builder.create<vector::ExtractOp>(op.getLoc(), lhs,
+                                                          ArrayRef<int64_t>{i});
+      auto sliced_rhs = builder.create<vector::ExtractOp>(op.getLoc(), rhs,
+                                                          ArrayRef<int64_t>{i});
+
+      auto sliced_acc = builder.create<vector::ExtractOp>(op.getLoc(), acc,
+                                                          ArrayRef<int64_t>{i});
+
+      auto matmul_res =
+          dot_dim_matmul(sliced_lhs.getResult(), sliced_rhs.getResult(),
+                         sliced_acc.getResult());
+      auto res_ty = matmul_res.getType().cast<VectorType>();
+      auto res_shape = res_ty.getShape();
+      // reshape to 1x[prior_shape]
+      auto reshape_shape = llvm::to_vector(res_shape);
+      reshape_shape.insert(reshape_shape.begin(), 1);
+      auto shape_cast = builder.create<vector::ShapeCastOp>(
+          op.getLoc(), VectorType::get(reshape_shape, res_ty.getElementType()),
+          matmul_res);
+      outputs.push_back(shape_cast);
+    }
+    // Kinda funky edge case
+    if (batch_size == 1) {
+      op.replaceAllUsesWith(outputs[0]);
+      op.erase();
+      return success();
+    }
+    auto output = builder
+                      .create<tpu::ConcatenateOp>(op.getLoc(), acc_ty, outputs,
+                                                  /*dimension=*/0)
+                      .getResult();
+    op.replaceAllUsesWith(output);
+    op.erase();
+  } else {
+    auto matmul_res = dot_dim_matmul(lhs, rhs, acc).getResult();
+    op.replaceAllUsesWith(matmul_res);
+    op.erase();
   }
   return success();
 };
@@ -308,9 +665,14 @@ LogicalResult canonicalize_contraction(int hardware_generation, Operation &op) {
   }
   const tpu::ContractPrecisionAttr precision_attr =  // May be null
       contraction_op->getAttrOfType<tpu::ContractPrecisionAttr>("precision");
+
+  const auto dot_dimension_numbers_attr =
+      default_dimension_numbers(builder, false, transpose_rhs);
+
   auto matmul_op = builder.create<tpu::MatmulOp>(
       contraction_op->getLoc(), acc_ty, lhs, rhs, acc,
-      /*transpose_lhs=*/false, transpose_rhs, precision_attr);
+      /*transpose_lhs=*/false,
+      /*transpose_rhs=*/false, precision_attr, dot_dimension_numbers_attr);
   contraction_op.replaceAllUsesWith(matmul_op.getResult());
   contraction_op.erase();
   auto result = tpu_matmul_rule(matmul_op);
