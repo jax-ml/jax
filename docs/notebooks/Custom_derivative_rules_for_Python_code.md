@@ -106,7 +106,7 @@ def f(x, y):
   return jnp.sin(x) * y
 
 def f_fwd(x, y):
-# Returns primal output and residuals to be used in backward pass by f_bwd.
+  # Returns primal output and residuals to be used in backward pass by f_bwd.
   return f(x, y), (jnp.cos(x), jnp.sin(x), y)
 
 def f_bwd(res, g):
