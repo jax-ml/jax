@@ -2214,23 +2214,18 @@ def _cmp_lowering_rule(prim, ctx: LoweringRuleContext, x, y):
     i32 = ir.IntegerType.get_signless(32)
     vtype = ir.VectorType.get(x_aval.shape, i32)
 
-    # Convert `x` and `y` from `bool` to `int32` for comparison, with 2
-    # for true and 0 for false. For example, comparing `x > y` is equivalent
-    # to `(x ? 2 : 0) > (y ? 2 : 0)`.
-    #
-    # Note that we cannot use 1 for true because the select operation will be
-    # misteriously eliminated.
-    two = arith.constant(i32, 2)
+    # Convert `x` and `y` from `bool` to `int32` for comparison.
+    one = arith.constant(i32, 1)
     zero = arith.constant(i32, 0)
 
     out_aval, = ctx.avals_out
     if out_aval.shape != ():
       # broadcast to vectors if we are comparing vectors
-      two = vector.broadcast(vtype, two)
+      one = vector.broadcast(vtype, one)
       zero = vector.broadcast(vtype, zero)
 
-    x = arith.select(x, two, zero)
-    y = arith.select(y, two, zero)
+    x = arith.select(x, one, zero)
+    y = arith.select(y, one, zero)
     dtype = jnp.int32
 
   if jnp.issubdtype(dtype, jnp.integer):
