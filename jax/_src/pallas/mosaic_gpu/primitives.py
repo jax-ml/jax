@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from jax._src import core as jax_core
 from jax._src import effects
 from jax._src import state
@@ -177,7 +179,8 @@ def copy_gmem_to_smem(
   """Asynchronously copies a GMEM reference to a SMEM reference.
 
   See also:
-    :func:`jax.experimental.mosaic.gpu.wait_barrier`
+    :func:`jax.experimental.mosaic.gpu.barrier_arrive`
+    :func:`jax.experimental.mosaic.gpu.barrier_wait`
   """
   if src.memory_space is not gpu_core.GMEM:
     raise TypeError(f"src must be a GMEM reference, got {src.memory_space}")
@@ -237,6 +240,52 @@ def _extract_barrier_indexer(transforms) -> indexing.NDIndexer | None:
       raise ValueError("Barrier does not support arbirary transforms")
 
 
+class ArriveEffect(jax_core.Effect):
+  ...
+
+
+effects.control_flow_allowed_effects.add_type(ArriveEffect)
+
+_arrive_effect = ArriveEffect()
+
+
+barrier_arrive_p = jax_core.Primitive("barrier_arrive")
+barrier_arrive_p.multiple_results = True
+
+
+@barrier_arrive_p.def_effectful_abstract_eval
+def _barrier_arrive_abstract_eval(*avals, **params):
+  del avals, params  # Unused.
+  return (), {_wait_effect}
+
+
+@lowering.register_lowering_rule(barrier_arrive_p)
+def _barrier_arrive_lowering(
+    ctx: lowering.LoweringRuleContext,
+    barrier,
+    *flat_transforms,
+    transforms_treedef,
+):
+  del ctx  # Unused.
+  transforms = transforms_treedef.unflatten(flat_transforms)
+  indexer = _extract_barrier_indexer(transforms)
+  if indexer is not None:
+    barrier = barrier.__getitem__(*map(lowering._as_index, indexer.indices))
+  barrier.arrive()
+  return ()
+
+
+def barrier_arrive(barrier: pallas_core.AbstractMemoryRef) -> None:
+  """Arrives at the given barrier."""
+  barrier, transforms = state_primitives.get_ref_and_transforms(
+      barrier, None, "barrier_arrive"
+  )
+  flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
+  barrier_arrive_p.bind(
+      barrier, *flat_transforms, transforms_treedef=transforms_treedef
+  )
+
+
 class WaitEffect(jax_core.Effect):
   ...
 
@@ -245,18 +294,18 @@ effects.control_flow_allowed_effects.add_type(WaitEffect)
 _wait_effect = WaitEffect()
 
 
-wait_barrier_p = jax_core.Primitive("wait")
-wait_barrier_p.multiple_results = True
+barrier_wait_p = jax_core.Primitive("barrier_wait")
+barrier_wait_p.multiple_results = True
 
 
-@wait_barrier_p.def_effectful_abstract_eval
-def _wait_barrier_abstract_eval(*avals, **params):
+@barrier_wait_p.def_effectful_abstract_eval
+def _barrier_wait_abstract_eval(*avals, **params):
   del avals, params  # Unused.
   return (), {_wait_effect}
 
 
-@lowering.register_lowering_rule(wait_barrier_p)
-def _wait_barrier_lowering(
+@lowering.register_lowering_rule(barrier_wait_p)
+def _barrier_wait_lowering(
     ctx: lowering.LoweringRuleContext,
     barrier,
     *flat_transforms,
@@ -271,13 +320,13 @@ def _wait_barrier_lowering(
   return ()
 
 
-def wait_barrier(barrier: pallas_core.AbstractMemoryRef) -> None:
+def barrier_wait(barrier: pallas_core.AbstractMemoryRef) -> None:
   """Waits on the given barrier."""
   barrier, transforms = state_primitives.get_ref_and_transforms(
-      barrier, None, "wait_barrier"
+      barrier, None, "barrier_wait"
   )
   flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
-  wait_barrier_p.bind(
+  barrier_wait_p.bind(
       barrier, *flat_transforms, transforms_treedef=transforms_treedef
   )
 
@@ -498,3 +547,41 @@ def _wgmma_accumulator_deref_lowering(ctx: lowering.LoweringRuleContext, acc):
   del ctx
   nvvm_dialect.wgmma_wait_group_sync_aligned(0)
   return acc.value
+
+
+class SetRegistersEffect(jax_core.Effect):
+  ...
+
+
+effects.control_flow_allowed_effects.add_type(SetRegistersEffect)
+
+_set_max_registers_effect = SetRegistersEffect()
+
+
+set_max_registers_p = jax_core.Primitive("set_max_registers_p")
+set_max_registers_p.multiple_results = True
+
+
+@set_max_registers_p.def_effectful_abstract_eval
+def _set_max_registers_abstract_eval(n, *, action):
+  del n, action  # Unused.
+  return (), {_set_max_registers_effect}
+
+
+@lowering.register_lowering_rule(set_max_registers_p)
+def _set_max_registers_lowering(
+    ctx: lowering.LoweringRuleContext, n, *, action
+):
+  del ctx
+  nvvm_dialect.setmaxregister(
+      n,
+      nvvm_dialect.SetMaxRegisterAction.increase
+      if action == "increase"
+      else nvvm_dialect.SetMaxRegisterAction.decrease,
+  )
+  return ()
+
+
+def set_max_registers(n: int, *, action: Literal["increase", "decrease"]):
+  """Sets the maximum number of registers owned by a warp."""
+  set_max_registers_p.bind(n, action=action)

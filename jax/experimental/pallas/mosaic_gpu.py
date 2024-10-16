@@ -28,7 +28,9 @@ from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef
 from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef as ACC
 from jax._src.pallas.mosaic_gpu.primitives import copy_gmem_to_smem
 from jax._src.pallas.mosaic_gpu.primitives import copy_smem_to_gmem
-from jax._src.pallas.mosaic_gpu.primitives import wait_barrier
+from jax._src.pallas.mosaic_gpu.primitives import barrier_wait
+from jax._src.pallas.mosaic_gpu.primitives import barrier_arrive
+from jax._src.pallas.mosaic_gpu.primitives import set_max_registers
 from jax._src.pallas.mosaic_gpu.primitives import wait_smem_to_gmem
 from jax._src.pallas.mosaic_gpu.primitives import wgmma
 from jax._src.pallas.mosaic_gpu.primitives import wgmma_wait

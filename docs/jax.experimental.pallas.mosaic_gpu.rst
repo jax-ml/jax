@@ -24,9 +24,11 @@ Functions
 .. autosummary::
    :toctree: _autosummary
 
+   barrier_arrive
+   barrier_wait
    copy_gmem_to_smem
    copy_smem_to_gmem
-   wait_barrier
+   set_max_registers
    wait_smem_to_gmem
    wgmma
    wgmma_wait

@@ -226,7 +226,7 @@ class PallasCallTest(PallasTest):
       plgpu.copy_gmem_to_smem(
           x_ref_gmem.at[indexer], scratch_ref.at[indexer], barrier=barrier_ref
       )
-      plgpu.wait_barrier(barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
       o_ref[...] = scratch_ref[...] + 1
 
     x = jnp.arange(256).astype(jnp.float32)
@@ -247,7 +247,7 @@ class PallasCallTest(PallasTest):
       plgpu.copy_gmem_to_smem(
           x_ref_gmem, scratch_ref, barrier=barrier_ref.at[indexer]
       )
-      plgpu.wait_barrier(barrier_ref.at[indexer])
+      plgpu.barrier_wait(barrier_ref.at[indexer])
       o_ref[...] = scratch_ref[...] + 1
 
     x = jnp.arange(128).astype(jnp.float32)
@@ -263,7 +263,7 @@ class PallasCallTest(PallasTest):
       def body(barrier_ref):
         def inner_body(scratch_ref):
           plgpu.copy_gmem_to_smem(x_ref_gmem, scratch_ref, barrier=barrier_ref)
-          plgpu.wait_barrier(barrier_ref)
+          plgpu.barrier_wait(barrier_ref)
           o_ref[...] = scratch_ref[...] + 1
         pl.run_scoped(inner_body, plgpu.SMEM((256,), jnp.float32))
       pl.run_scoped(body, plgpu.Barrier(num_arrivals=1))
@@ -759,7 +759,7 @@ class PipelineTest(PallasTest):
         slot = step % max_concurrent_steps
 
         # Wait for the current GMEM->SMEM copy to complete.
-        plgpu.wait_barrier(barrier.at[slot])
+        plgpu.barrier_wait(barrier.at[slot])
         # Wait for the previous output SMEM->GMEM copy to complete.
         plgpu.wait_smem_to_gmem(max_concurrent_steps - 1)
 

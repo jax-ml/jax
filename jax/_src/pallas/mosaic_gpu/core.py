@@ -32,6 +32,8 @@ from jaxlib.mlir import ir
 
 AbstractMemoryRef = pallas_core.AbstractMemoryRef
 
+DimensionSemantics = Literal["parallel", "sequential"]
+
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class GPUCompilerParams(pallas_core.CompilerParams):
@@ -53,7 +55,7 @@ class GPUCompilerParams(pallas_core.CompilerParams):
   """
   PLATFORM: ClassVar[str] = "mosaic_gpu"
   approx_math: bool = False
-  dimension_semantics: Sequence[Literal["parallel", "sequential"]] | None = None
+  dimension_semantics: Sequence[DimensionSemantics] | None = None
   max_concurrent_steps: int = 1
   delay_release: int = 0
 
