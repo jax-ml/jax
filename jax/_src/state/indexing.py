@@ -17,7 +17,8 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Union
+from typing import Any, Union, Literal
+import itertools as it
 
 from jax._src import core
 from jax._src import tree_util
@@ -110,6 +111,7 @@ ds = dslice  # Handy alias
 
 IntIndexer = Union[int, Array]
 DimIndexer = Union[IntIndexer, Slice]
+ShapeIndexer = Any
 
 def unpack_ndindexer(indexer: NDIndexer) -> tuple[tuple[bool, ...],
                                                   tuple[Slice, ...],
@@ -263,3 +265,19 @@ class NDIndexer:
 
   def transform_dtype(self, dtype):
     return dtype
+
+  def untransform_index(self, idx: ShapeIndexer) -> ShapeIndexer:
+    raise NotImplementedError()
+
+def is_trivial_index(idx, shape: ShapeIndexer) -> bool:
+  """Checks if the index selects the entire shape."""
+
+  # Slices that select the entire dimension.
+  _slices = lambda d: [
+      slice(b, e, s)
+      for b, e, s in it.product([0, None], [d, None], [1, None])
+  ]
+  if isinstance(idx, tuple):
+    return all(i in _slices(d) for d, i in zip(shape, idx))
+
+  return idx is ... or (len(shape) == 1 and idx in _slices(shape[0]))

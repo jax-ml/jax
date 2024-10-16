@@ -869,6 +869,17 @@ def _handle_indexing(
   indices = _ndindexer_indices(indexer)
   for t in reversed(transforms[:-1]):
     indices = t.untransform_index(indices)
+
+  if any(isinstance(t, gpu_core.RefReshaper) for t in transforms[:-1]):
+    if not all(isinstance(t, gpu_core.RefReshaper) for t in transforms[:-1]):
+      raise NotImplementedError(f"Reshapes do not compose with other transforms for now ({transforms[:-1]})")
+    # The latest reshape overrides all the others. If we reached this
+    # point all transforms are reshapes so the last non-indexer must
+    # be.
+    reshaper = transforms[-2]
+    assert isinstance(reshaper, gpu_core.RefReshaper)
+    ref = mgpu.memref_reshape(ref, reshaper.shape)
+
   return mgpu.memref_slice(ref, indices)
 
 
