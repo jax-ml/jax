@@ -21,7 +21,6 @@ import gc
 import os
 import pathlib
 import re
-from typing import Any
 
 try:
   import jaxlib as jaxlib
@@ -84,9 +83,9 @@ version = check_jaxlib_version(
 import jaxlib.cpu_feature_guard as cpu_feature_guard
 cpu_feature_guard.check_cpu_features()
 
-import jaxlib.utils as utils
+import jaxlib.utils as utils  # noqa: F401
 import jaxlib.xla_client as xla_client
-import jaxlib.lapack as lapack
+import jaxlib.lapack as lapack  # noqa: F401
 
 xla_extension = xla_client._xla
 pytree = xla_client._xla.pytree
@@ -99,18 +98,18 @@ def _xla_gc_callback(*args):
 gc.callbacks.append(_xla_gc_callback)
 
 try:
-  import jaxlib.cuda._versions as cuda_versions  # pytype: disable=import-error
+  import jaxlib.cuda._versions as cuda_versions  # pytype: disable=import-error  # noqa: F401
 except ImportError:
   try:
-    import jax_cuda12_plugin._versions as cuda_versions  # pytype: disable=import-error
+    import jax_cuda12_plugin._versions as cuda_versions  # pytype: disable=import-error  # noqa: F401
   except ImportError:
     cuda_versions = None
 
-import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error
-import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error
-import jaxlib.gpu_prng as gpu_prng  # pytype: disable=import-error
-import jaxlib.gpu_linalg as gpu_linalg  # pytype: disable=import-error
-import jaxlib.hlo_helpers as hlo_helpers  # pytype: disable=import-error
+import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error  # noqa: F401
+import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error  # noqa: F401
+import jaxlib.gpu_prng as gpu_prng  # pytype: disable=import-error  # noqa: F401
+import jaxlib.gpu_linalg as gpu_linalg  # pytype: disable=import-error  # noqa: F401
+import jaxlib.hlo_helpers as hlo_helpers  # pytype: disable=import-error  # noqa: F401
 
 # Jaxlib code is split between the Jax and the Tensorflow repositories.
 # Only for the internal usage of the JAX developers, we expose a version
@@ -118,10 +117,10 @@ import jaxlib.hlo_helpers as hlo_helpers  # pytype: disable=import-error
 # branch on the Jax github.
 xla_extension_version: int = getattr(xla_client, '_version', 0)
 
-import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error
-import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error
+import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error  # noqa: F401
+import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error  # noqa: F401
 
-import jaxlib.mosaic.python.tpu as tpu # pytype: disable=import-error
+import jaxlib.mosaic.python.tpu as tpu # pytype: disable=import-error  # noqa: F401
 
 # Version number for MLIR:Python APIs, provided by jaxlib.
 mlir_api_version = xla_client.mlir_api_version

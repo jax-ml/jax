@@ -17,7 +17,6 @@
 
 from jax._src.sharding import Sharding as Sharding
 from jax._src.sharding_impls import (
-    XLACompatibleSharding as _deprecated_XLACompatibleSharding,
     NamedSharding as NamedSharding,
     SingleDeviceSharding as SingleDeviceSharding,
     PmapSharding as PmapSharding,
@@ -28,7 +27,7 @@ from jax._src.partition_spec import (
     PartitionSpec as PartitionSpec,
 )
 from jax._src.interpreters.pxla import Mesh as Mesh
-from jax._src.mesh import AbstractMesh
+from jax._src.mesh import AbstractMesh as AbstractMesh
 
 _deprecations = {
     # Finalized 2024-10-01; remove after 2025-01-01.

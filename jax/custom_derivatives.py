@@ -16,9 +16,9 @@
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.custom_derivatives import (
-  _initial_style_jaxpr,
-  _sum_tangents,
-  _zeros_like_pytree,
+  _initial_style_jaxpr,  # noqa: F401
+  _sum_tangents,  # noqa: F401
+  _zeros_like_pytree,  # noqa: F401
   closure_convert as closure_convert,
   custom_gradient as custom_gradient,
   custom_jvp as custom_jvp,
