@@ -165,6 +165,8 @@ class Mesh(contextlib.ContextDecorator):
     if isinstance(axis_names, str):
       axis_names = (axis_names,)
     axis_names = tuple(axis_names)
+    if not all(i is not None for i in axis_names):
+      raise ValueError(f"Mesh axis names cannot be None. Got: {axis_names}")
 
     if devices.ndim != len(axis_names):
       raise ValueError(

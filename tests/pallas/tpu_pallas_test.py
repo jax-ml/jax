@@ -2165,8 +2165,8 @@ class PallasCallTPUBooleanTest(PallasBaseTest):
       )
     with self.assertRaisesRegex(
         Exception, 'DMAs with bool dtypes are not supported.'):
-      devices = mesh_utils.create_device_mesh((1, num_devices))
-      mesh = jax.sharding.Mesh(devices, P(None, 'x'))
+      devices = mesh_utils.create_device_mesh((num_devices,))
+      mesh = jax.sharding.Mesh(devices, ('x',))
       sharding = jax.sharding.NamedSharding(mesh, P(None, 'x'))
       input_arr = jax.device_put(input_arr, sharding)
       jax.jit(
