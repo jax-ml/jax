@@ -232,15 +232,20 @@ class FragmentedArray:
     match layout:
       case WGMMARowFragLayout():
         if len(shape) != 1:
-          raise ValueError
+          raise ValueError("WGMMARowFragLayout requires a 1D shape")
         if shape[0] % 64:
-          raise ValueError
+          raise ValueError(
+              "WGMMARowFragLayout requires shape[0] to be a multiple of 64"
+          )
         reg_shape = (shape[0] // 64, 2)
       case WGMMAFragLayout():
         if len(shape) != 2:
-          raise ValueError
+          raise ValueError("WGMMAFragLayout requires a 2D shape")
         if shape[0] % 64 or shape[1] % 8:
-          raise ValueError
+          raise ValueError(
+              "WGMMAFragLayout requires shape[0] to be a multiple of 64, and"
+              " shape[1] to be a multiple of 8"
+          )
         reg_shape = (shape[0] // 64, shape[1] // 8, 2, 1)
         value = vector.splat(ir.VectorType.get((2,), value.type), value)
       case WGStridedFragLayout(vec_size=vec_size):
@@ -282,6 +287,22 @@ class FragmentedArray:
         return ir.VectorType(reg_ty).element_type
       case WGMMARowFragLayout() | WGSplatFragLayout():
         return reg_ty
+
+  def to_layout(self, new_layout: FragmentedLayout):
+    """Converts the fragmented array to the given layout.
+
+    At the moment, only conversions from ``WGSplatFragLayout`` are supported.
+    """
+    if self.layout == new_layout:
+      return self
+    if not isinstance(self.layout, WGSplatFragLayout):
+      raise NotImplementedError(
+          f"Cannot convert from {self.layout} to {new_layout}"
+      )
+    [reg] = self.registers.flat
+    return type(self).splat(
+        reg, self.shape, new_layout, is_signed=self.is_signed
+    )
 
   def _pointwise(self, op, *other, output_is_signed: bool | None = None):
     is_signed = (
