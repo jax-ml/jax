@@ -857,17 +857,19 @@ def _run_scoped_abstract_eval(*args, jaxpr):
   return [v.aval for v in jaxpr.outvars], nonlocal_effects
 
 
-def _run_scoped_discharge_rule(in_avals,
-                               out_avals,
-                               *args_flat,
-                               jaxpr,
-                               **_):
+def _run_scoped_discharge_rule(
+    should_discharge,
+    in_avals,
+    out_avals,
+    *args_flat,
+    jaxpr,
+    **_):
   del out_avals
   num_consts = len(args_flat)
   jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
   num_return_values = len(jaxpr_noconst.outvars)
   discharged_body, new_consts = state_discharge.discharge_state(
-      jaxpr_noconst, [])
+      jaxpr_noconst, [], should_discharge=should_discharge)
   if new_consts:
     raise NotImplementedError(
         "Cannot handle new consts created by state discharge.")
@@ -886,13 +888,11 @@ def _run_scoped_discharge_rule(in_avals,
   updates = [
       ref_outputs.pop(0) if isinstance(aval, pallas_core.AbstractMemoryRef)
       else None for aval in in_avals]
-  assert len(ref_outputs) == len(
-      body_avals), f'{len(body_avals)}, != {len(ref_outputs)}'
   assert len(updates) == len(in_avals), f'{len(updates)} != {len(in_avals)}'
   return updates, return_values
 
 
-state_discharge.register_discharge_rule(run_scoped_p)(
+state_discharge.register_partial_discharge_rule(run_scoped_p)(
     _run_scoped_discharge_rule)
 
 
