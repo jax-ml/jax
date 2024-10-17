@@ -368,6 +368,13 @@ def compile_or_get_cached(
           distributed.global_state.client,
           min_device_process_id
         )
+      else:
+        compile_options.executable_build_options.fdo_profile = fdo_profile
+        logger.debug(
+            "Compiling module %s with FDO profile: %s",
+            module_name,
+            compile_options.executable_build_options.fdo_profile,
+        )
 
   cache_retrieval_start = time.monotonic()
   retrieved_executable, retrieved_compile_time = _cache_read(
