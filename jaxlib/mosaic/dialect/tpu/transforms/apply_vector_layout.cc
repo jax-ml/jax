@@ -3868,6 +3868,10 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
                   src_layout.tileDataBounds(builder.getContext(), src_shape,
                                             src_idx, ctx.target_shape,
                                             allow_replicated);
+              if (data_bounds == nullptr) {
+                // Op error has already been emitted inside tileDataBounds().
+                return absl::UnknownError("Unable to obtain data bounds");
+              }
               // TODO(tlongeri): Maybe assemble/disassemble should take
               // TypedValue<VectorType> and we could save casts here and
               // elsewhere
