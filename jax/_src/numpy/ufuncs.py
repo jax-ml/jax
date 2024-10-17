@@ -1334,14 +1334,102 @@ def bitwise_left_shift(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.left_shift`."""
   return lax.shift_left(*promote_args_numeric("bitwise_left_shift", x, y))
 
-@implements(np.equal, module='numpy')
+
 @partial(jit, inline=True)
 def equal(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Returns element-wise truth value of ``x == y``.
+
+  JAX implementation of :obj:`numpy.equal`. This function provides the implementation
+  of the ``==`` operator for JAX arrays.
+
+  Args:
+    x: input array or scalar.
+    y: input array or scalar. ``x`` and ``y`` should either have same shape or be
+      broadcast compatible.
+
+  Returns:
+    A boolean array containing ``True`` where the elements of ``x == y`` and
+    ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.not_equal`: Returns element-wise truth value of ``x != y``.
+    - :func:`jax.numpy.greater_equal`: Returns element-wise truth value of
+      ``x >= y``.
+    - :func:`jax.numpy.less_equal`: Returns element-wise truth value of ``x <= y``.
+    - :func:`jax.numpy.greater`: Returns element-wise truth value of ``x > y``.
+    - :func:`jax.numpy.less`: Returns element-wise truth value of ``x < y``.
+
+  Examples:
+    >>> jnp.equal(0., -0.)
+    Array(True, dtype=bool, weak_type=True)
+    >>> jnp.equal(1, 1.)
+    Array(True, dtype=bool, weak_type=True)
+    >>> jnp.equal(5, jnp.array(5))
+    Array(True, dtype=bool, weak_type=True)
+    >>> jnp.equal(2, -2)
+    Array(False, dtype=bool, weak_type=True)
+    >>> x = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6],
+    ...                [7, 8, 9]])
+    >>> y = jnp.array([1, 5, 9])
+    >>> jnp.equal(x, y)
+    Array([[ True, False, False],
+           [False,  True, False],
+           [False, False,  True]], dtype=bool)
+    >>> x == y
+    Array([[ True, False, False],
+           [False,  True, False],
+           [False, False,  True]], dtype=bool)
+  """
   return lax.eq(*promote_args("equal", x, y))
 
-@implements(np.not_equal, module='numpy')
+
 @partial(jit, inline=True)
 def not_equal(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Returns element-wise truth value of ``x != y``.
+
+  JAX implementation of :obj:`numpy.not_equal`. This function provides the
+  implementation of the ``!=`` operator for JAX arrays.
+
+  Args:
+    x: input array or scalar.
+    y: input array or scalar. ``x`` and ``y`` should either have same shape or be
+      broadcast compatible.
+
+  Returns:
+    A boolean array containing ``True`` where the elements of ``x != y`` and
+    ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.equal`: Returns element-wise truth value of ``x == y``.
+    - :func:`jax.numpy.greater_equal`: Returns element-wise truth value of
+      ``x >= y``.
+    - :func:`jax.numpy.less_equal`: Returns element-wise truth value of ``x <= y``.
+    - :func:`jax.numpy.greater`: Returns element-wise truth value of ``x > y``.
+    - :func:`jax.numpy.less`: Returns element-wise truth value of ``x < y``.
+
+  Examples:
+    >>> jnp.not_equal(0., -0.)
+    Array(False, dtype=bool, weak_type=True)
+    >>> jnp.not_equal(-2, 2)
+    Array(True, dtype=bool, weak_type=True)
+    >>> jnp.not_equal(1, 1.)
+    Array(False, dtype=bool, weak_type=True)
+    >>> jnp.not_equal(5, jnp.array(5))
+    Array(False, dtype=bool, weak_type=True)
+    >>> x = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6],
+    ...                [7, 8, 9]])
+    >>> y = jnp.array([1, 5, 9])
+    >>> jnp.not_equal(x, y)
+    Array([[False,  True,  True],
+           [ True, False,  True],
+           [ True,  True, False]], dtype=bool)
+    >>> x != y
+    Array([[False,  True,  True],
+           [ True, False,  True],
+           [ True,  True, False]], dtype=bool)
+  """
   return lax.ne(*promote_args("not_equal", x, y))
 
 @implements(np.subtract, module='numpy')
