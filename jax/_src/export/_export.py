@@ -17,13 +17,15 @@
 
 from __future__ import annotations
 
+import collections
 from collections.abc import Callable, Sequence
 import copy
 import dataclasses
 import functools
 import itertools
+import json
 import re
-from typing import Any, Union, cast
+from typing import Any, TypeVar, Union, cast
 import warnings
 
 from absl import logging
@@ -342,6 +344,150 @@ def deserialize(blob: bytearray) -> Exported:
   # dependency.
   from jax._src.export.serialization import deserialize
   return deserialize(blob)
+
+
+T = TypeVar("T")
+PyTreeAuxData = Any  # alias for tree_util._AuxData
+
+# A function to serialize the PyTree node AuxData (returned by the
+# `flatten_func` registered by `tree_util.register_pytree_node`).
+_SerializeAuxData = Callable[[PyTreeAuxData], bytes]
+# A function to deserialize the AuxData, and produce something ready for
+# `_BuildFromChildren` below.
+_DeserializeAuxData = Callable[[bytes], PyTreeAuxData]
+# A function to materialize a T given a deserialized AuxData and children.
+# This is similar in scope with the `unflatten_func`
+_BuildFromChildren = Callable[[PyTreeAuxData, Sequence[Any]], Any]
+
+
+custom_pytree_node_registry_serialization: dict[
+  type,
+  tuple[str, _SerializeAuxData]] = {}
+
+
+custom_pytree_node_registry_deserialization: dict[
+  str,
+  tuple[type, _DeserializeAuxData, _BuildFromChildren]] = {}
+
+
+def _is_namedtuple(nodetype: type) -> bool:
+  return (issubclass(nodetype, tuple) and
+          hasattr(nodetype, "_fields") and
+          isinstance(nodetype._fields, Sequence) and
+          all(isinstance(f, str) for f in nodetype._fields))
+
+def register_pytree_node_serialization(
+    nodetype: type[T],
+    *,
+    serialized_name: str,
+    serialize_auxdata: _SerializeAuxData,
+    deserialize_auxdata: _DeserializeAuxData,
+    from_children: _BuildFromChildren | None = None
+) -> type[T]:
+  """Registers a custom PyTree node for serialization and deserialization.
+
+  You must use this function before you can serialize and deserialize PyTree
+  nodes for the types not supported natively. We serialize PyTree nodes for
+  the `in_tree` and `out_tree` fields of `Exported`, which are part of the
+  exported function's calling convention.
+
+  This function must be called after calling
+  `jax.tree_util.register_pytree_node` (except for `collections.namedtuple`,
+  which do not require a call to `register_pytree_node`).
+
+  Args:
+    nodetype: the type whose PyTree nodes we want to serialize. Subsequent
+      registrations for the same type will overwrite old registrations.
+    serialized_name: a string that will be present in the serialization and
+      will be used to look up the registration during deserialization.
+    serialize_auxdata: serialize the PyTree auxdata (returned by the
+      `flatten_func` argument to `jax.tree_util.register_pytree_node`.).
+    deserialize_auxdata: deserialize the auxdata that was serialized by the
+      `serialize_auxdata`.
+    from_children: if present, this is a function that takes that result of
+      `deserialize_auxdata` along with some children and creates an instance
+      of `nodetype`. This is similar to the `unflatten_func` passed to
+      `jax.tree_util.register_pytree_node`. If not present, we look up
+      and use the `unflatten_func`. This is needed for `collections.namedtuple`,
+      which does not have a `register_pytree_node`, but it can be useful to
+      override that function. Note that the result of `from_children` is
+      only used with `jax.tree_util.tree_structure` to construct a proper
+      PyTree node, it is not used to construct the outputs of the serialized
+      function.
+
+  Returns: the same type passed as `nodetype`, so that this function can
+    be used as a class decorator.
+
+  """
+  custom_pytree_node_registry_serialization[nodetype] = (
+      serialized_name, serialize_auxdata)
+  if from_children is None:
+    if nodetype not in tree_util._registry:
+      raise ValueError(
+          f"If `from_children` is not present, you must call first"
+          f"`jax.tree_util.register_pytree_node` for `{nodetype}`")
+    from_children = tree_util._registry[nodetype].from_iter
+
+  custom_pytree_node_registry_deserialization[serialized_name] = (
+      nodetype, deserialize_auxdata, from_children)
+  return nodetype
+
+
+def register_namedtuple_serialization(
+    nodetype: type[T],
+    *,
+    serialized_name: str) -> type[T]:
+  """Registers a namedtuple for serialization and deserialization.
+
+  JAX has native PyTree support for `collections.namedtuple`, and does not
+  require a call to `jax.tree_util.register_pytree_node`. However, if you
+  want to serialize functions that have inputs of outputs of a
+  namedtuple type, you must register that type for serialization.
+
+  Args:
+    nodetype: the type whose PyTree nodes we want to serialize. Subsequent
+      registrations for the same type will overwrite old registrations.
+      On deserialization, this type must have the same set of keys that
+      were present during serialization.
+    serialized_name: a string that will be present in the serialization and
+      will be used to look up the registration during deserialization.
+
+  Returns: the same type passed as `nodetype`, so that this function can
+    be used as a class decorator.
+"""
+  if not _is_namedtuple(nodetype):
+    raise ValueError("Use `jax.export.register_pytree_node_serialization` for "
+                     "types other than `collections.namedtuple`.")
+
+  def serialize_auxdata(aux: PyTreeAuxData) -> bytes:
+    # Store the serialized keys in the serialized auxdata
+    del aux
+    return json.dumps(nodetype._fields).encode("utf-8")
+
+  def deserialize_auxdata(b: bytes) -> PyTreeAuxData:
+    return json.loads(b.decode("utf-8"))
+
+  def from_children(aux: PyTreeAuxData, children: Sequence[Any]) -> T:
+    # Use our own "from_children" because namedtuples do not have a pytree
+    # registration.
+    ser_keys = cast(Sequence[str], aux)
+    assert len(ser_keys) == len(children)
+    return nodetype(** dict(zip(ser_keys, children)))
+
+  return register_pytree_node_serialization(nodetype,
+                                            serialized_name=serialized_name,
+                                            serialize_auxdata=serialize_auxdata,
+                                            deserialize_auxdata=deserialize_auxdata,
+                                            from_children=from_children)
+
+
+# collections.OrderedDict is registered as a pytree node with auxdata being
+# `tuple(x.keys())`.
+register_pytree_node_serialization(
+  collections.OrderedDict,
+    serialized_name="collections.OrderedDict",
+    serialize_auxdata=lambda keys: json.dumps(keys).encode("utf-8"),
+    deserialize_auxdata=lambda b: json.loads(b.decode("utf-8")))
 
 
 def default_export_platform() -> str:
