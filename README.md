@@ -388,7 +388,7 @@ Some standouts:
 | CPU        | yes          | yes           | yes          | yes          | yes            | yes                 |
 | NVIDIA GPU | yes          | yes           | no           | n/a          | no             | experimental        |
 | Google TPU | yes          | n/a           | n/a          | n/a          | n/a            | n/a                 |
-| AMD GPU    | experimental | no            | no           | n/a          | no             | no                  |
+| AMD GPU    | yes          | no            | no           | n/a          | no             | no                  |
 | Apple GPU  | n/a          | no            | experimental | experimental | n/a            | n/a                 |
 
 
@@ -399,7 +399,7 @@ Some standouts:
 | CPU        | `pip install -U jax`                                                                                            |
 | NVIDIA GPU | `pip install -U "jax[cuda12]"`                                                                                  |
 | Google TPU | `pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html`                 |
-| AMD GPU    | Use [Docker](https://hub.docker.com/r/rocm/jax) or [build from source](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-a-rocm-jaxlib-for-amd-gpus). |
+| AMD GPU    | Use [Docker](https://hub.docker.com/r/rocm/jax-community/tags), [pre-built wheels](https://github.com/ROCm/jax/releases), or [build from source](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-a-rocm-jaxlib-for-amd-gpus). |
 | Apple GPU  | Follow [Apple's instructions](https://developer.apple.com/metal/jax/).                                          |
 
 See [the documentation](https://jax.readthedocs.io/en/latest/installation.html)
