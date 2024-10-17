@@ -129,7 +129,7 @@ def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
 
   .. math::
 
-	   y = p(x) = p[0] x^{deg} + p[1] x^{deg - 1} + ... + p[deg]
+    y = p(x) = p[0] x^{deg} + p[1] x^{deg - 1} + ... + p[deg]
 
   Args:
     x: Array of data points of shape ``(M,)``.
