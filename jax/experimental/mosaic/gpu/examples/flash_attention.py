@@ -17,21 +17,17 @@ import contextlib
 import dataclasses
 import enum
 import itertools
-import os
 import warnings
 
-from absl import app
 import jax
 from jax import random
 from jax._src.interpreters import mlir
-from jax._src import test_util as jtu
 from jax.experimental.mosaic.gpu import profiler
 from jax.experimental.mosaic.gpu import *  # noqa: F403
 import jax.numpy as jnp
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import gpu
-from jaxlib.mlir.dialects import nvgpu
 from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import scf
 import numpy as np

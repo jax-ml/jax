@@ -28,7 +28,6 @@ import unittest
 
 from absl.testing import absltest
 
-import jax
 from jax._src import config
 from jax._src import test_util as jtu
 

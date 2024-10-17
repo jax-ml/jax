@@ -29,11 +29,9 @@ from typing import Any, Optional
 
 import jax
 from jax._src import array
-from jax._src import config
 from jax._src import distributed
 from jax._src import sharding
-from jax._src import sharding_impls
-from jax._src.layout import Layout, DeviceLocalLayout as DLL
+from jax._src.layout import Layout
 from jax._src import typing
 from jax._src import util
 from jax._src.lib import xla_extension as xe

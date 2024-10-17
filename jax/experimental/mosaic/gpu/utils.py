@@ -20,7 +20,7 @@ import dataclasses
 import enum
 import functools
 import math
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import jax
 from jax import numpy as jnp

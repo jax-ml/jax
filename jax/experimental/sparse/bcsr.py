@@ -31,8 +31,7 @@ from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse import bcoo
 from jax.experimental.sparse.util import (
     nfold_vmap, _count_stored_elements,
-    _csr_to_coo, _dot_general_validated_shape,
-    CuSparseEfficiencyWarning, SparseInfo, Shape)
+    _csr_to_coo, CuSparseEfficiencyWarning, SparseInfo, Shape)
 from jax.util import split_list, safe_zip
 
 from jax._src import api_util
