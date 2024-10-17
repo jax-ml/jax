@@ -5299,7 +5299,11 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   # whenever x is weak, but avoids introducing weak types with something like
   # array([1, 2, 3])
   weak_type = dtype is None and dtypes.is_weakly_typed(object)
-  sharding = canonicalize_device_to_sharding(device)
+  if (config.sharding_in_types.value and device is None and
+      isinstance(object, Array)):
+    sharding = object.sharding
+  else:
+    sharding = canonicalize_device_to_sharding(device)  # type: ignore
 
   # Use device_put to avoid a copy for ndarray inputs.
   if (not copy and isinstance(object, np.ndarray) and

@@ -4420,7 +4420,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return jnp.array(inp, dtype=np.float32, device=s)
 
     out = f()
-    print(f.trace().jaxpr)
     self.assertArraysEqual(out, inp.astype('float32'))
     self.assertEqual(out.sharding, s)
     self.assertEqual(out.dtype, np.float32)
@@ -4883,6 +4882,22 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     lowered_text = f.lower(arr).as_text()
     self.assertIn('@Sharding', lowered_text)
+
+  def test_jnp_array(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(16, dtype=jnp.int32).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    @jax.jit
+    def f(x):
+      assert x.dtype == jnp.int32
+      y = jnp.array(x, dtype=jnp.float32)
+      self.assertEqual(y.dtype, jnp.float32)
+      self.assertEqual(y.sharding.spec, s.spec)
+      return y
+
+    f(arr)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
