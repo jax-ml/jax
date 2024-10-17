@@ -468,7 +468,7 @@ def from_head_minor(vals: tuple[Any, ...], layout: QKVLayout):
   return (*vals[:-2], vals[-1], vals[-2])
 
 
-@dataclasses.dataclass(unsafe_hash=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class BlockSizes:
   """Tile sizes parameterizing SplashAttention kernels.
 
@@ -498,9 +498,9 @@ class BlockSizes:
 
   def __post_init__(self):
     if self.block_kv_compute is None:
-      self.block_kv_compute = self.block_kv
+      object.__setattr__(self, "block_kv_compute", self.block_kv)
     if self.block_kv_dkv_compute is None:
-      self.block_kv_dkv_compute = self.block_kv_dkv
+      object.__setattr__(self, "block_kv_dkv_compute", self.block_kv_dkv)
     if self.use_fused_bwd_kernel:
       if self.block_q_dq is not None or self.block_kv_dq is not None:
         raise ValueError(
