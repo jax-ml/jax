@@ -240,13 +240,13 @@ def _extract_barrier_indexer(transforms) -> indexing.NDIndexer | None:
       raise ValueError("Barrier does not support arbirary transforms")
 
 
-class ArriveEffect(jax_core.Effect):
+class MemoryEffect(jax_core.Effect):
   ...
 
 
-effects.control_flow_allowed_effects.add_type(ArriveEffect)
+effects.control_flow_allowed_effects.add_type(MemoryEffect)
 
-_arrive_effect = ArriveEffect()
+_memory_effect = MemoryEffect()
 
 
 barrier_arrive_p = jax_core.Primitive("barrier_arrive")
@@ -256,7 +256,7 @@ barrier_arrive_p.multiple_results = True
 @barrier_arrive_p.def_effectful_abstract_eval
 def _barrier_arrive_abstract_eval(*avals, **params):
   del avals, params  # Unused.
-  return (), {_wait_effect}
+  return (), {_memory_effect}
 
 
 @lowering.register_lowering_rule(barrier_arrive_p)
@@ -286,14 +286,6 @@ def barrier_arrive(barrier: pallas_core.AbstractMemoryRef) -> None:
   )
 
 
-class WaitEffect(jax_core.Effect):
-  ...
-
-effects.control_flow_allowed_effects.add_type(WaitEffect)
-
-_wait_effect = WaitEffect()
-
-
 barrier_wait_p = jax_core.Primitive("barrier_wait")
 barrier_wait_p.multiple_results = True
 
@@ -301,7 +293,7 @@ barrier_wait_p.multiple_results = True
 @barrier_wait_p.def_effectful_abstract_eval
 def _barrier_wait_abstract_eval(*avals, **params):
   del avals, params  # Unused.
-  return (), {_wait_effect}
+  return (), {_memory_effect}
 
 
 @lowering.register_lowering_rule(barrier_wait_p)
@@ -338,7 +330,7 @@ wait_smem_to_gmem_p.multiple_results = True
 @wait_smem_to_gmem_p.def_effectful_abstract_eval
 def _wait_smem_to_gmem_abstract_eval(n):
   del n  # Unused.
-  return (), {_wait_effect}
+  return (), {_memory_effect}
 
 
 @lowering.register_lowering_rule(wait_smem_to_gmem_p)
@@ -549,15 +541,6 @@ def _wgmma_accumulator_deref_lowering(ctx: lowering.LoweringRuleContext, acc):
   return acc.value
 
 
-class SetRegistersEffect(jax_core.Effect):
-  ...
-
-
-effects.control_flow_allowed_effects.add_type(SetRegistersEffect)
-
-_set_max_registers_effect = SetRegistersEffect()
-
-
 set_max_registers_p = jax_core.Primitive("set_max_registers_p")
 set_max_registers_p.multiple_results = True
 
@@ -565,7 +548,7 @@ set_max_registers_p.multiple_results = True
 @set_max_registers_p.def_effectful_abstract_eval
 def _set_max_registers_abstract_eval(n, *, action):
   del n, action  # Unused.
-  return (), {_set_max_registers_effect}
+  return (), {_memory_effect}
 
 
 @lowering.register_lowering_rule(set_max_registers_p)
@@ -585,3 +568,23 @@ def _set_max_registers_lowering(
 def set_max_registers(n: int, *, action: Literal["increase", "decrease"]):
   """Sets the maximum number of registers owned by a warp."""
   set_max_registers_p.bind(n, action=action)
+
+
+commit_smem_p = jax_core.Primitive("commit_smem")
+commit_smem_p.multiple_results = True
+
+
+@commit_smem_p.def_effectful_abstract_eval
+def _commit_smem_abstract_eval():
+  return (), {_memory_effect}
+
+
+@lowering.register_lowering_rule(commit_smem_p)
+def _commit_smem_lowering(ctx: lowering.LoweringRuleContext):
+  mgpu.commit_shared()
+  return ()
+
+
+def commit_smem():
+  """Sets the maximum number of registers owned by a warp."""
+  commit_smem_p.bind()
