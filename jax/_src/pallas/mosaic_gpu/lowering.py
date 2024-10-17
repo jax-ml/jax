@@ -43,6 +43,7 @@ from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.state import discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as sp
+from jax._src.state.types import RefReshaper
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import core as mgpu_core
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
@@ -874,6 +875,17 @@ def _handle_indexing(
   indices = _ndindexer_indices(indexer)
   for t in reversed(transforms[:-1]):
     indices = t.untransform_index(indices)
+
+  if any(isinstance(t, RefReshaper) for t in transforms[:-1]):
+    if not all(isinstance(t, RefReshaper) for t in transforms[:-1]):
+      raise NotImplementedError(f"Reshapes do not compose with other transforms for now ({transforms[:-1]})")
+    # The latest reshape overrides all the others. If we reached this
+    # point all transforms are reshapes so the last non-indexer must
+    # be.
+    reshaper = transforms[-2]
+    assert isinstance(reshaper, RefReshaper)
+    ref = mgpu.memref_reshape(ref, reshaper.shape)
+
   return mgpu.memref_slice(ref, indices)
 
 
