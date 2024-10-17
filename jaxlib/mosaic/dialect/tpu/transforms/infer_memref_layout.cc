@@ -296,22 +296,50 @@ LogicalResult inferFunc(func::FuncOp f, const int hardware_generation,
     }
 
     FAILUREOR_ASSIGN_OR_RETURN(
-        const MemRefType new_memref_ty,
+        MemRefType new_memref_ty,
         inferMemref(memref_ty, hardware_generation, target_shape,
                     tpu_tiling_flags, leading_tile_rows));
     arg.setType(new_memref_ty);
     new_arg_types.push_back(arg.getType());
     if (memref_ty != new_memref_ty) {
+      Value val = arg;
+      Operation * arg_use_op = nullptr;
+      // If the arg memref can be reinterpreted to untiled, we can insert
+      // ReinterpretCastOp to use {packing, target.lane_count} before
+      // EraseLayoutOp for only the arg memrefs and expect the rest memref
+      // layout inference is based on the casted layout automatically. This
+      // would help lift many restrictions in alignment check when consuming
+      // this memref.
+      if (canReinterpretToUntiledMemref(new_memref_ty, target_shape)) {
+        auto tiled_layout =
+            cast<tpu::TiledLayoutAttr>(new_memref_ty.getLayout());
+        SmallVector<xla::Tile> tiles(tiled_layout.getTiles());
+        tiles[0] = ::xla::Tile(
+            {32 / memref_ty.getElementTypeBitWidth(), target_shape[1]});
+        auto new_tile_strides =
+            ComputeTileStrides(new_memref_ty, tiles[0].dimensions());
+        new_memref_ty = MemRefType::get(
+            new_memref_ty.getShape(), new_memref_ty.getElementType(),
+            TiledLayoutAttr::get(new_memref_ty.getContext(), tiles,
+                                 new_tile_strides),
+            new_memref_ty.getMemorySpace());
+        arg_use_op = builder.create<tpu::ReinterpretCastOp>(val.getLoc(),
+                                                            new_memref_ty, val);
+        val = arg_use_op->getResult(0);
+      }
       // Some standard MLIR ops have static checks that seems unreasonable,
       // and we know they hold in the way they are used in Mosaic. Still,
       // verification with layouts likes to fail, because it can't statically
       // prove the properties.
       auto erase_op = builder.create<tpu::EraseLayoutOp>(
-          arg.getLoc(),
+          val.getLoc(),
           MemRefType::get(new_memref_ty.getShape(), memref_ty.getElementType(),
                           /*layout=*/nullptr, new_memref_ty.getMemorySpace()),
-          arg);
-      arg.replaceAllUsesExcept(erase_op.getResult(), erase_op);
+          val);
+      if (!arg_use_op) {
+        arg_use_op = erase_op;
+      }
+      arg.replaceAllUsesExcept(erase_op.getResult(), arg_use_op);
     }
   }
   f.setFunctionType(

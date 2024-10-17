@@ -98,6 +98,11 @@ std::string shapeToString(const T &shape) {
 
 SmallVector<int64_t> ComputeTileStrides(MemRefType memref_ty,
                                         absl::Span<const int64_t> tiling);
+
+// If the memref has a single minor tile and has not been sliced on the
+// minormost dimension before, we consider this memref is untiled
+bool canReinterpretToUntiledMemref(MemRefType memref_ty,
+                                   const std::array<int64_t, 2> &target_shape);
 }  // namespace mlir::tpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_
