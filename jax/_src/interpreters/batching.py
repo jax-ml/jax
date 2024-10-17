@@ -366,9 +366,8 @@ def ragged_mask_transfer_identity(invar_raggedness, outvar_raggedness):
 
 ### tracer
 
-# TODO(mattjj): use a special sentinel type rather than None
-NotMapped = type(None)
-not_mapped = None
+class NotMapped: ...
+not_mapped = NotMapped()
 
 
 class BatchTracer(Tracer):
