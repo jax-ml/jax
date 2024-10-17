@@ -29,7 +29,7 @@
 .getting-started,
 .user-guides,
 .developer-docs {
-  background: #A9CAFF;
+  background: #3C4043;
   height: 170px;
   border: none !important;
 }
@@ -37,7 +37,8 @@
 .getting-started:hover,
 .user-guides:hover,
 .developer-docs:hover {
-  background: #B2DFDB;
+  background: #80CBC4;
+  color: #202124;
   transform: unset !important;
 }
 
@@ -62,20 +63,37 @@
 .getting-started svg,
 .user-guides svg,
 .developer-docs svg {
-  color: #1967D2;
+  color: #80CBC4;
 }
 
 .getting-started:hover svg,
 .user-guides:hover svg,
 .developer-docs:hover svg {
-  color: #5F6368;
+  color: #3C4043;
+}
+
+.bd-main .bd-content .bd-article-container .bd-article:has(.hero) > section > .hero {
+  padding-inline: 2rem 0 !important;
 }
 
 .hero {
   display: grid;
-  grid: auto-flow / 1fr .5fr;
+  grid: auto-flow / 1fr .6fr;
   align-items: center;
-  background: #5F6368;
+  background: rgb(32,33,36);
+  background: linear-gradient(90deg, rgba(32,33,36,1) 0%, rgba(39,45,56,1) 100%);
+  position: relative;
+  overflow: hidden;
+}
+
+.hero img {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+}
+
+.hero-left {
   padding-block: 24px;
 }
 
@@ -90,6 +108,26 @@
   color: white;
 }
 
+@media (max-width: 1295px) {
+  .hero img {
+    right: -75px;
+  }
+}
+
+@media (max-width: 750px) {
+  .hero {
+    grid: auto-flow / 1fr;
+  }
+
+  .hero-left {
+    padding-right: 2rem;
+  }
+
+  .hero img {
+    display: none;
+  }
+}
+
 .product-offerings {
   margin-block: 32px !important;
 }
@@ -99,16 +137,21 @@
 }
 
 .color-cards {
-  background: #D2E3FC;
-  color: black;
+  background: #202124;
+  color: white;
   padding: 48px 12px 0 12px;
   margin-bottom: 0 !important;
 }
 
+.color-cards > div {
+  gap: 24px 0;
+}
+
 .color-cards + p {
-  background: #D2E3FC;
+  background: #202124;
   padding: 24px 12px 48px 12px;
   font-weight: 600;
+  color: white;
 }
 
 html[data-theme="dark"] .color-cards,
