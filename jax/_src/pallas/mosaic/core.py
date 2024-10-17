@@ -29,6 +29,7 @@ from jax._src import dtypes
 from jax._src import util
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
+from jax._src.state import types as state_types
 import jax.numpy as jnp
 import numpy as np
 
@@ -257,19 +258,18 @@ def _tensorcore_mesh_discharge_rule(
     in_refs = args[:len(in_avals)]
     jax_core.eval_jaxpr(jaxpr, in_refs)
   assert len(jaxpr.outvars) == 0
+  any_spec = pallas_core.BlockSpec(memory_space=pallas_core.MemorySpace.ANY)
   out = pallas_call.pallas_call(
       body,
       out_shape=in_avals,
-      in_specs=[pallas_core.BlockSpec(memory_space=pallas_core.MemorySpace.ANY)]
-      * len(in_avals),
-      out_specs=[pallas_core.BlockSpec(
-          memory_space=pallas_core.MemorySpace.ANY)]
-      * len(in_avals),
-      input_output_aliases={i: i for i in range(len(in_avals))},
+      in_specs=[any_spec] * len(in_avals),
+      out_specs=[any_spec] * len(in_avals),
+      input_output_aliases={
+          eff.input_index: eff.input_index
+          for eff in jaxpr.effects
+          if isinstance(eff, state_types.WriteEffect)
+      },
       grid=((core_axis_name, num_cores),),
-      compiler_params=dict(
-          mosaic=dict(dimension_semantics=("parallel",)),
-      ),
   )(*args)
   return out, ()
 
