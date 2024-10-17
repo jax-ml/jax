@@ -16,7 +16,8 @@
 
 from __future__ import annotations
 
-from typing import Literal
+import enum
+from typing import Any, Literal
 
 from jax._src import core as jax_core
 from jax._src import effects
@@ -539,6 +540,33 @@ def _wgmma_accumulator_deref_lowering(ctx: lowering.LoweringRuleContext, acc):
   del ctx
   nvvm_dialect.wgmma_wait_group_sync_aligned(0)
   return acc.value
+
+
+class Layout(enum.Enum):
+  #: [m, n] matrix, where m % 64 == 0 == n % 8.
+  WGMMA = mgpu.WGMMA_LAYOUT
+  #: [m] matrix, where m % 64 == 0.
+  WGMMA_ROW = mgpu.WGMMA_ROW_LAYOUT
+
+
+layout_cast_p = jax_core.Primitive("layout_cast")
+
+
+@layout_cast_p.def_abstract_eval
+def _layout_cast_abstract_eval(x, new_layout):
+  del new_layout  # Unused.
+  return x
+
+
+@lowering.register_lowering_rule(layout_cast_p)
+def _layout_cast_lowering(ctx: lowering.LoweringRuleContext, x, *, new_layout):
+  del ctx  # Unused.
+  return x.to_layout(new_layout.value)
+
+
+def layout_cast(x: Any, new_layout: Layout):
+  """Casts the layout of the given array."""
+  return layout_cast_p.bind(x, new_layout=new_layout)
 
 
 set_max_registers_p = jax_core.Primitive("set_max_registers_p")

@@ -13,6 +13,7 @@ Classes
    GPUBlockSpec
    GPUCompilerParams
    GPUMemorySpace
+   Layout
    SwizzleTransform
    TilingTransform
    TransposeTransform
@@ -28,6 +29,7 @@ Functions
    barrier_wait
    copy_gmem_to_smem
    copy_smem_to_gmem
+   layout_cast
    set_max_registers
    wait_smem_to_gmem
    wgmma

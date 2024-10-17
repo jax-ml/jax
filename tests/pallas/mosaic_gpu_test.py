@@ -760,6 +760,17 @@ class PallasCallTest(PallasTest):
     rotate(x, expected)
     np.testing.assert_array_equal(f(x), expected)
 
+  def test_layout_cast(self, shape=(256, 64)):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+    )
+    def kernel(o_ref):
+      o_ref[...] = plgpu.layout_cast(jnp.full(shape, 42.0), plgpu.Layout.WGMMA)
+
+    x = jnp.full(shape, 42.0)
+    np.testing.assert_array_equal(kernel(), x)
+
 
 class PipelineTest(PallasTest):
 
