@@ -91,6 +91,7 @@
   top: 0;
   right: 0;
   height: 100%;
+  background: transparent !important;
 }
 
 .hero-left {
