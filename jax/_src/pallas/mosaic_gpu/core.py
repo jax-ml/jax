@@ -15,6 +15,7 @@
 """Contains GPU-specific Pallas abstractions."""
 
 import abc
+import collections
 from collections.abc import Sequence
 import dataclasses
 import enum
@@ -24,6 +25,7 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import tree_util
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import pallas_call
 from jax._src.state.types import Transform
 import jax.experimental.mosaic.gpu as mgpu
 import jax.numpy as jnp
@@ -379,3 +381,65 @@ def _as_accum(ref) -> WGMMAAbstractAccumulatorRef:
 def _ref_raise_to_shaped(ref_aval, weak_type):
   return _as_accum(jax_core.raise_to_shaped_mappings[AbstractMemoryRef](ref_aval, weak_type))
 jax_core.raise_to_shaped_mappings[WGMMAAbstractAccumulatorRef] = _ref_raise_to_shaped
+
+
+_WARPGROUP_AXIS_NAME = object()
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class GPUMesh:
+  grid: tuple[int, ...] = ()
+  cluster: tuple[int, ...] = ()
+  # Those are NOT CUDA threads. On Hopper they correspond to warpgroups.
+  num_threads: int | None = None
+  axis_names: tuple[str, ...] = ()
+
+  def __post_init__(self):
+    if len(self.axis_names) != len(self.grid) + (self.num_threads is not None):
+      raise ValueError("Need as many axis names as grid dimensions + warp groups")
+    if self.num_threads > 2048 // 128:
+      raise ValueError(
+          "Requested too many CUDA threads per block. Each Mosaic thread"
+          " corresponds to 128 CUDA threads."
+      )
+
+  @property
+  def shape(self):
+    if self.num_threads is not None:
+      pairs = zip(self.axis_names, (*self.grid, self.num_threads))
+    else:
+      pairs = (*zip(self.axis_names, self.grid), (_WARPGROUP_AXIS_NAME, 1))
+    return collections.OrderedDict(pairs)
+
+
+def _gpu_mesh_discharge_rule(
+    in_avals,
+    out_avals,
+    *args,
+    mesh,
+    jaxpr,
+):
+  del out_avals
+  assert isinstance(mesh, GPUMesh)
+  if mesh.grid or mesh.cluster:
+    raise NotImplementedError
+  if mesh.num_threads is None:
+    raise NotImplementedError
+  threads_axis_name, num_threads = list(mesh.shape.items())[0]
+  def body(*args):
+    # Due to aliasing, args contains aliased inputs and outputs so we remove
+    # outputs.
+    in_refs = args[:len(in_avals)]
+    jax_core.eval_jaxpr(jaxpr, in_refs)
+  assert len(jaxpr.outvars) == 0
+  any_spec = pallas_core.BlockSpec(memory_space=pallas_core.MemorySpace.ANY)
+  out = pallas_call.pallas_call(
+      body,
+      out_shape=in_avals,
+      in_specs=[any_spec] * len(in_avals),
+      out_specs=[any_spec] * len(in_avals),
+      input_output_aliases={i: i for i in range(len(in_avals))},
+      grid=((threads_axis_name, num_threads),),
+  )(*args)
+  return out, ()
+
+pallas_core._core_map_mesh_rules[GPUMesh] = _gpu_mesh_discharge_rule

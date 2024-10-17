@@ -806,5 +806,25 @@ class PipelineTest(PallasTest):
     np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
 
 
+class CoreMapTest(PallasTest):
+
+  def test_multiple_wg(self):
+    mesh = plgpu.GPUMesh(num_threads=2, axis_names=("y",))
+
+    @jax.jit
+    def f():
+      @pl.run_state
+      def inner(y_ref):
+        @pl.core_map(mesh)
+        def kernel():
+          wg_idx = jax.lax.axis_index("y")
+          y_ref[wg_idx] = jnp.broadcast_to(wg_idx, (128,))
+      y_init = jnp.zeros((2, 128), np.int32)
+      return inner(y_init)
+    np.testing.assert_array_equal(
+        f(), np.repeat(np.arange(2), 128).reshape(2, 128)
+    )
+
+
 if __name__ == "__main__":
   absltest.main()

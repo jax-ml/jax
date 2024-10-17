@@ -22,7 +22,7 @@ import dataclasses
 import functools
 import itertools as it
 import math
-from typing import Any, Protocol, cast
+from typing import Any, Hashable, Protocol, cast
 
 import jax
 from jax import lax
@@ -346,7 +346,6 @@ def lower_jaxpr_to_module(
   block_mappings = grid_mapping.block_mappings
   _check_block_mappings(block_mappings, name_and_src_info)
 
-  block = (128, 1, 1)
   params = compiler_params.get("mosaic_gpu", {})
   approx_math = params.get("approx_math", False)
   max_concurrent_steps = params.get("max_concurrent_steps", 1)
@@ -368,7 +367,13 @@ def lower_jaxpr_to_module(
         f" {max_concurrent_steps=}, {delay_release=}"
     )
 
-  grid = [d for i, d in enumerate(grid_mapping.grid) if i not in sequential_axes]
+  block = (128, 1, 1)
+  grid = grid_mapping.grid
+  if grid_mapping.grid_names:  # Last dim corresponds to the warpgroup count
+    block = (128 * grid_mapping.grid[-1], 1, 1)
+    grid = grid[:-1]
+
+  grid = [d for i, d in enumerate(grid) if i not in sequential_axes]
   if len(grid) < 3:
     grid += (1,) * (3 - len(grid))
   else:
@@ -1061,6 +1066,24 @@ def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
   )
   return mgpu.FragmentedArray.splat(
       x.reduce_sum(scratch), (), is_signed=mgpu_utils.is_signed(x_aval.dtype)
+  )
+
+
+@register_lowering_rule(lax.axis_index_p)
+def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
+  grid_names = ctx.module_ctx.grid_mapping.grid_names
+  if grid_names and axis_name in grid_names:
+    if axis_name == grid_names[-1]:
+      return mgpu.warpgroup_idx(sync=False)
+    else:
+      raise NotImplementedError  # The code below is untested
+      idx = grid_names.index(axis_name)
+      return arith_dialect.index_cast(
+          ir.IntegerType.get_signless(32),
+          gpu_dialect.block_id(gpu_dialect.Dimension(idx)),
+      )
+  raise ValueError(
+      "Named axes can only refer to GPUMesh axes in Mosaic GPU kernels"
   )
 
 

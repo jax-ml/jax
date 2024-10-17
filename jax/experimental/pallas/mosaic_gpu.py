@@ -26,6 +26,7 @@ from jax._src.pallas.mosaic_gpu.core import TilingTransform as TilingTransform
 from jax._src.pallas.mosaic_gpu.core import TransposeTransform as TransposeTransform
 from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef as WGMMAAccumulatorRef
 from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef as ACC  # noqa: F401
+from jax._src.pallas.mosaic_gpu.core import GPUMesh as GPUMesh
 from jax._src.pallas.mosaic_gpu.primitives import copy_gmem_to_smem as copy_gmem_to_smem
 from jax._src.pallas.mosaic_gpu.primitives import copy_smem_to_gmem as copy_smem_to_gmem
 from jax._src.pallas.mosaic_gpu.primitives import barrier_wait as barrier_wait
