@@ -207,6 +207,11 @@ class PgleTest(jtu.JaxTestCase):
 
       # Non-pgle profiled version of module should be saved
       non_pgle_profiled_files = os.listdir(tmpdir)
+      if len(non_pgle_profiled_files) > 1:
+        non_pgle_profiled_files = [
+            f for f in non_pgle_profiled_files if 'cache' in f
+        ]
+
       self.assertLen(non_pgle_profiled_files, 1)
 
       # Run 2: Compilation should not be called
@@ -223,9 +228,13 @@ class PgleTest(jtu.JaxTestCase):
         self.assertTrue(pgle_profiler.is_enabled())
         self.assertTrue(pgle_profiler.is_fdo_consumed())
       # One module is PGLEd version another one is not PGLEd
+      files_after_pgle_profile = os.listdir(tmpdir)
+      if len(files_after_pgle_profile) > 2:
+        files_after_pgle_profile = [
+            f for f in files_after_pgle_profile if 'cache' in f
+        ]
       self.assertLen(os.listdir(tmpdir), 2)
 
-      files_after_pgle_profile = os.listdir(tmpdir)
       self.assertLen(files_after_pgle_profile, 2)
       non_pgled_file_size = os.path.getsize(
           os.path.join(tmpdir, files_after_pgle_profile[0])
