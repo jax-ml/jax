@@ -47,6 +47,7 @@ class PallasCallTest(PallasTest):
   @parameterized.named_parameters(
       ("add_one", lambda x:  x + 1.),
       ("logistic", jax.lax.logistic),
+      ("exp", jax.lax.exp),
       ("square", lambda x: x ** 2),
       ("rsqrt", jax.lax.rsqrt),
   )
