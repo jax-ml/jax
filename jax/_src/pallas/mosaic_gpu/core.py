@@ -26,7 +26,7 @@ from jax._src import dtypes
 from jax._src import tree_util
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
-from jax._src.state.types import Transform
+from jax._src.state import types as state_types
 import jax.experimental.mosaic.gpu as mgpu
 import jax.numpy as jnp
 from jaxlib.mlir import ir
@@ -112,7 +112,7 @@ class TilingTransform(MemoryRefTransform):
 
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
-class UntileRef(Transform):
+class UntileRef(state_types.Transform):
   tiling: tuple[int, ...]
 
   def transform_shape(self, shape):
@@ -183,7 +183,7 @@ class TransposeTransform(MemoryRefTransform):
 
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
-class TransposeRef(Transform):
+class TransposeRef(state_types.Transform):
   permutation: tuple[int, ...]
 
   def transform_shape(self, shape):
@@ -237,7 +237,7 @@ class SwizzleTransform(MemoryRefTransform):
 
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
-class UnswizzleRef(Transform):
+class UnswizzleRef(state_types.Transform):
   swizzle: int
 
   def untransform_index(self, idxs: tuple[Index, ...]) -> tuple[Index, ...]:
@@ -437,7 +437,11 @@ def _gpu_mesh_discharge_rule(
       out_shape=in_avals,
       in_specs=[any_spec] * len(in_avals),
       out_specs=[any_spec] * len(in_avals),
-      input_output_aliases={i: i for i in range(len(in_avals))},
+      input_output_aliases={
+          eff.input_index: eff.input_index
+          for eff in jaxpr.effects
+          if isinstance(eff, state_types.WriteEffect)
+      },
       grid=((threads_axis_name, num_threads),),
   )(*args)
   return out, ()
