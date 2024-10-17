@@ -68,6 +68,12 @@ tpu_custom_call_p.def_impl(
 tpu_custom_call_p.multiple_results = True
 
 
+def get_target_shape(hardware_generation: int) -> tuple[int, int]:
+  """Returns the target shape for the given hardware generation."""
+  del hardware_generation
+  return (8, 128)
+
+
 class MemorySpace(enum.Enum):
   HBM = enum.auto()
   VMEM = enum.auto()
@@ -423,9 +429,9 @@ def _lower_mosaic_module_to_asm(
             "tpu_custom_call cannot be lowered on a machine without TPUs "
             "when mosaic_use_python_pipeline=True.")
       hardware_generation = int(device_kind[len("TPU v")])
-      # TODO(b/369418606): Infer the target shape from the hardware generation.
+      target_shape = get_target_shape(hardware_generation)
       module = _lower_tpu_kernel(
-          module, hardware_generation, target_shape=(8, 128)
+          module, hardware_generation, target_shape=target_shape
       )
       needs_hlo_passes = False
       needs_layout_passes = False
