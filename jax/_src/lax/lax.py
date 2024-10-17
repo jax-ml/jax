@@ -3928,8 +3928,14 @@ def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
     msg = ("broadcast_in_dim broadcast_dimensions must be strictly increasing; "
            "got broadcast_dimensions {}")
     raise TypeError(msg.format(broadcast_dimensions))
-
   return shape
+
+def _broadcast_in_dim_sharding_rule(operand, *, shape, broadcast_dimensions):
+  bds = set(broadcast_dimensions)
+  orig_spec = iter(operand.sharding.spec)
+  new_spec = [next(orig_spec) if i in bds else None for i in range(len(shape))]
+  assert next(orig_spec, None) is None
+  return NamedSharding(operand.sharding.mesh, P(*new_spec))
 
 def _broadcast_in_dim_typecheck_rule(
     _, operand, *dyn_shape, shape, broadcast_dimensions):
@@ -4079,10 +4085,12 @@ def _broadcast_in_dim_lower(ctx, x, *dyn_shape, shape, broadcast_dimensions) -> 
   aval_out, = ctx.avals_out
   if dyn_shape:
     aval_out = aval_out.update(shape=_merge_dyn_shape(shape, dyn_shape))
-
-
-  return [mlir.broadcast_in_dim(ctx, x, aval_out,
-                                broadcast_dimensions=broadcast_dimensions)]
+  out = mlir.broadcast_in_dim(ctx, x, aval_out,
+                              broadcast_dimensions=broadcast_dimensions)
+  if config.sharding_in_types.value:
+    proto = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
+    return [mlir.wrap_with_sharding_op(ctx, out, aval_out, proto)]
+  return [out]
 
 def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions):
   if (not dyn_shape and
@@ -4090,7 +4098,12 @@ def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions):
               type(core.get_aval(d).dtype) is core.bint for d in shape)):
     shape = _broadcast_in_dim_shape_rule(  # error checking
         x, shape=shape, broadcast_dimensions=broadcast_dimensions)
-    return core.ShapedArray(shape, x.dtype, x.weak_type)
+    if config.sharding_in_types.value:
+      sharding = _broadcast_in_dim_sharding_rule(
+          x, shape=shape, broadcast_dimensions=broadcast_dimensions)
+    else:
+      sharding = None
+    return core.ShapedArray(shape, x.dtype, x.weak_type, sharding=sharding)
   # If any BInts in shape, or Tracers in dyn_shape, produce a DShapedArray
   # (even if x is a ShapedArray)
   # TODO(mattjj): unify DShapedArray with ShapedArray, and remove this code

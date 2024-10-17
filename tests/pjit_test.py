@@ -4784,6 +4784,33 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     if reduce and compiled_text is not None:
       self.assertIn('all-reduce', compiled_text)
 
+  @parameterized.named_parameters(
+      ('0', 0, P(None, 'x', 'y')),
+      ('1', 1, P('x', None, 'y')),
+      ('2', 2, P('x', 'y', None)),
+      ('-1', -1, P('x', 'y', None)),
+  )
+  def test_broadcast_in_dim(self, axis, out_spec):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    out = jnp.expand_dims(arr, axis=axis)
+    self.assertEqual(out.aval.sharding.spec, out_spec)
+
+    @jax.jit
+    def f(x):
+      y = jnp.expand_dims(x, axis=axis)
+      self.assertEqual(y.sharding.spec, out_spec)
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.aval.sharding.spec, out_spec)
+
+    lowered_text = f.lower(arr).as_text()
+    self.assertIn('@Sharding', lowered_text)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
