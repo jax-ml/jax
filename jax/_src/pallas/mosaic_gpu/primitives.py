@@ -57,32 +57,37 @@ def _copy_smem_to_gmem_lowering(
       flat_transforms,
       [src_transforms_treedef.num_leaves],
   )
-  src = lowering._handle_indexing(
-      src, src_transforms_treedef.unflatten(flat_src_transforms)
-  )
-  copy_params = _extract_copy_params(
-      dst_transforms_treedef.unflatten(flat_dst_transforms)
-  )
+  src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
+  dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
+  src = lowering._handle_indexing(src, src_transforms)
+  copy_params = _extract_gmem_copy_params(dst_transforms) | _extract_smem_copy_params(src_transforms)
   mgpu.commit_shared()
   ctx.launch_ctx.async_copy(src_ref=src, dst_ref=dst, **copy_params)
   return ()
 
 
-def _extract_copy_params(transforms):
+def _extract_gmem_copy_params(transforms):
   if not transforms:
     return {}
-  if any(
-      isinstance(t, indexing.NDIndexer) for t in transforms[:-1]
-  ) or not isinstance(transforms[-1], indexing.NDIndexer):
-    raise NotImplementedError("Only one level of indexing supported")
-  *transforms, indexer = transforms
+  if len(transforms) > 1:
+    raise NotImplementedError("Only one level of indexing on GMEM refs supported")
+  if not isinstance(indexer := transforms[0], indexing.NDIndexer):
+    raise NotImplementedError("Only indexing on GMEM refs supported")
+  return dict(
+      gmem_slice=lowering._ndindexer_indices(indexer),
+  )
+
+def _extract_smem_copy_params(transforms):
+  if not transforms:
+    return {}
+  if isinstance(transforms[-1], indexing.NDIndexer):
+    transforms = transforms[:-1]
   swizzle = lowering._is_swizzled(transforms)
   if swizzle is not None:
     transforms = transforms[1:]
-  gpu_transforms = [t.to_gpu_transform() for t in transforms]
+  gpu_transforms = tuple(t.undo_to_gpu_transform() for t in transforms[::-1])
   return dict(
-      gmem_slice=lowering._ndindexer_indices(indexer),
-      gmem_transform=tuple(gpu_transforms),
+      gmem_transform=gpu_transforms,
       swizzle=swizzle,
   )
 
@@ -152,12 +157,10 @@ def _copy_gmem_to_smem_lowering(
           ],
       )
   )
-  copy_params = _extract_copy_params(
-      src_transforms_treedef.unflatten(flat_src_transforms)
-  )
-  dst = lowering._handle_indexing(
-      dst, dst_transforms_treedef.unflatten(flat_dst_transforms)
-  )
+  src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
+  dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
+  dst = lowering._handle_indexing(dst, dst_transforms)
+  copy_params = _extract_smem_copy_params(dst_transforms) | _extract_gmem_copy_params(src_transforms)
   barrier_indexer = _extract_barrier_indexer(
       barrier_transforms_treedef.unflatten(flat_barrier_transforms)
   )

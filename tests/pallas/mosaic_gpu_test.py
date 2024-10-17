@@ -255,6 +255,38 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x + 1.0)
 
+  @parameterized.named_parameters(("_g2s", False), ("_s2g", True))
+  def test_copy_with_transforms(self, to_smem):
+    def kernel(x_ref, o_ref, barrier_ref):
+      if to_smem:
+        plgpu.copy_gmem_to_smem(x_ref, o_ref, barrier=barrier_ref)
+        plgpu.barrier_wait(barrier_ref)
+      else:
+        plgpu.copy_smem_to_gmem(x_ref, o_ref)
+        plgpu.wait_smem_to_gmem(0)
+
+    in_spec = pl.BlockSpec(memory_space=plgpu.GMEM)
+    out_spec = plgpu.GPUBlockSpec(
+        (128, 128),
+        lambda: (0, 0),
+        transforms=(
+            plgpu.TilingTransform((64, 32)),
+            plgpu.SwizzleTransform(128),
+        ),
+        memory_space=plgpu.SMEM,
+    )
+    if not to_smem:
+      in_spec, out_spec = out_spec, in_spec
+    f = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct([128, 128], jnp.float32),
+        in_specs=(in_spec,),
+        out_specs=out_spec,
+        scratch_shapes=[plgpu.Barrier(num_arrivals=1)],
+    )
+    x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
+    np.testing.assert_array_equal(f(x), x)
+
   def test_copy_gmem_to_smem_in_run_scoped(self):
     @functools.partial(
         pl.pallas_call,

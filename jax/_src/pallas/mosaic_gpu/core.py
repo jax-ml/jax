@@ -143,6 +143,9 @@ class UntileRef(Transform):
       idxs_after_tiling.append(slice(idx.start // tile, idx.stop // tile))
     return (*untiled_idxs, *idxs_after_tiling, *(slice(None) for _ in self.tiling))
 
+  def undo_to_gpu_transform(self) -> mgpu.MemRefTransform:
+    return mgpu.TileTransform(self.tiling)
+
   def tree_flatten(self):
     return (), (self.tiling,)
 
@@ -197,6 +200,9 @@ class TransposeRef(Transform):
   def untransform_index(self, idxs: tuple[Index, ...]) -> tuple[Index, ...]:
     return tuple(idxs[i] for i in _perm_inverse(self.permutation))
 
+  def undo_to_gpu_transform(self) -> mgpu.MemRefTransform:
+    return mgpu.TransposeTransform(_perm_inverse(self.permutation))
+
   def tree_flatten(self):
     return (), (self.permutation,)
 
@@ -224,6 +230,10 @@ class SwizzleTransform(MemoryRefTransform):
 
   def to_gpu_transform(self) -> mgpu.MemRefTransform:
     raise RuntimeError("SwizzleTransform does not have a GPU transform.")
+
+  def undo_to_gpu_transform(self) -> mgpu.MemRefTransform:
+    # There's no swizzle transform in mgpu right now. It's a separate arg.
+    raise NotImplementedError
 
   def __call__(self, aval: jax_core.ShapedArray) -> jax_core.ShapedArray:
     swizzle_elems = self.swizzle // aval.dtype.itemsize
