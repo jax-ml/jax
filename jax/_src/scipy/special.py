@@ -37,6 +37,7 @@ from jax._src.third_party.scipy.betaln import betaln as _betaln_impl
 from jax._src.typing import Array, ArrayLike
 from jax._src.nn.functions import softmax as nn_softmax
 from jax._src.nn.functions import log_softmax as nn_log_softmax
+from jax._src.lib import cuda_versions
 
 
 def gammaln(x: ArrayLike) -> Array:
@@ -1746,7 +1747,24 @@ def _sph_harm(m: Array,
   cos_colatitude = jnp.cos(phi)
 
   legendre = _gen_associated_legendre(n_max, cos_colatitude, True)
-  legendre_val = legendre.at[abs(m), n, jnp.arange(len(n))].get(mode="clip")
+
+  # Works around a ptxas optimizer regression in CUDA Toolkit 12.5.0 to 12.6.2,
+  # which impacts GPUs of compute capability 9.0. It causes abs() inside array
+  # indices to be lost, thus incorrectly clamping negative indices to 0
+  ptxas_abs_relu_regression = False
+  if cuda_versions:
+    runtime_version = cuda_versions.cuda_runtime_get_version()
+    if runtime_version >= 12050 and runtime_version <= 12062:
+      cc = {cuda_versions.cuda_compute_capability(i)
+            for i in range(cuda_versions.cuda_device_count())}
+      if 90 in cc:
+        ptxas_abs_relu_regression = True
+  if ptxas_abs_relu_regression:
+    m_abs = m * jnp.sign(m)
+  else:
+    m_abs = abs(m)
+
+  legendre_val = legendre.at[m_abs, n, jnp.arange(len(n))].get(mode="clip")
 
   angle = abs(m) * theta
   vandermonde = lax.complex(jnp.cos(angle), jnp.sin(angle))
