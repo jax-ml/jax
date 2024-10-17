@@ -862,7 +862,7 @@ def _handle_indexing(
   if not transforms:
     pass
   if not any(isinstance(t, indexing.NDIndexer) for t in transforms):
-    return ref
+    return ref, transforms
   if any(
       isinstance(t, indexing.NDIndexer) for t in transforms[:-1]
   ) or not isinstance(transforms[-1], indexing.NDIndexer):
@@ -872,9 +872,11 @@ def _handle_indexing(
   if indexer.int_indexer_shape:
     raise NotImplementedError("int_indexer_shape non-empty")
   indices = _ndindexer_indices(indexer)
+  new_transforms_rev = []
   for t in reversed(transforms[:-1]):
-    indices = t.untransform_index(indices)
-  return mgpu.memref_slice(ref, indices)
+    indices, new_t = t.untransform_index(indices)
+    new_transforms_rev.append(new_t)
+  return mgpu.memref_slice(ref, indices), new_transforms_rev[::-1]
 
 
 def _ndindexer_indices(indexer: indexing.NDIndexer) -> tuple[gpu_core.Index, ...]:
@@ -896,34 +898,26 @@ def _ndindexer_indices(indexer: indexing.NDIndexer) -> tuple[gpu_core.Index, ...
   return tuple(indices)
 
 
-def _is_swizzled(transforms: tuple[gpu_core.Transform, ...]) -> int | None:
-  if not transforms:
-    return None
-  if any(isinstance(t, gpu_core.UnswizzleRef) for t in transforms[1:]):
-    raise NotImplementedError(
-        "Swizzling must be the last transform applied to a ref"
-    )
-  if isinstance(t := transforms[0], gpu_core.UnswizzleRef):
-    return t.swizzle
-  return None
-
-
 @register_lowering_rule(sp.get_p)
 def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *leaves, tree):
   if not isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem):
     raise TypeError(f"Can only load from references (got {x_smem}).")
   x_aval = ctx.avals_in[0]
-  transform = jax.tree.unflatten(tree, leaves)
-  swizzle = _is_swizzled(transform)
-  x_smem = _handle_indexing(x_smem, transform)
-  if swizzle is None:
-    return mgpu.FragmentedArray.load_strided(
-        x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
-    )
-  else:
-    return mgpu.FragmentedArray.load_tiled(
-        x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype), swizzle=swizzle
-    )
+  transforms = jax.tree.unflatten(tree, leaves)
+  x_smem, transforms = _handle_indexing(x_smem, transforms)
+  match transforms:
+    case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
+      if tiling != (64, swizzle // x_aval.dtype.itemsize):
+        raise NotImplementedError("Tiling does not fit swizzle")
+      return mgpu.FragmentedArray.load_tiled(
+          x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype), swizzle=swizzle
+      )
+    case ():
+      return mgpu.FragmentedArray.load_strided(
+          x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
+      )
+    case _:
+      raise NotImplementedError(f"Unsupported transforms: {transform}")
 
 
 @register_lowering_rule(sp.swap_p)
@@ -934,22 +928,24 @@ def _swap_lowering_rule(
     raise TypeError(f"Can only store arrays (got {value}).")
   if not isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem):
     raise TypeError(f"Can only store to references (got {x_smem}).")
-  transforms = jax.tree.unflatten(tree, leaves)
-  swizzle = _is_swizzled(transforms)
-  x_smem = _handle_indexing(x_smem, transforms)
   x_aval = ctx.avals_in[0]
-  if swizzle is None:
-    old_value = mgpu.FragmentedArray.load_strided(
-        x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
-    )
-    value.store_untiled(x_smem)
-    return old_value
-  else:
-    old_value = mgpu.FragmentedArray.load_tiled(
-        x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype), swizzle=swizzle
-    )
-    value.store_tiled(x_smem, swizzle=swizzle)
-    return old_value
+  transforms = jax.tree.unflatten(tree, leaves)
+  x_smem, transforms = _handle_indexing(x_smem, transforms)
+  match transforms:
+    case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
+      old_value = mgpu.FragmentedArray.load_tiled(
+          x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype), swizzle=swizzle
+      )
+      value.store_tiled(x_smem, swizzle=swizzle)
+      return old_value
+    case ():
+      old_value = mgpu.FragmentedArray.load_strided(
+          x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
+      )
+      value.store_untiled(x_smem)
+      return old_value
+    case _:
+      raise NotImplementedError(f"Unsupported transforms: {transform}")
 
 
 @register_lowering_rule(pjit.pjit_p)
@@ -995,10 +991,18 @@ def _broadcast_in_dim_lowering_rule(
     broadcast_dimensions,
     shape,
 ):
+  [x_aval] = ctx.avals_in
+  [y_aval] = ctx.avals_out
+  x = _ensure_fa(x, x_aval.dtype)
+  if (
+      broadcast_dimensions == tuple(range(x_aval.ndim))
+      and y_aval.ndim == x_aval.ndim + 1
+      and x.layout == mgpu.WGMMA_ROW_LAYOUT
+  ):
+    return x.broadcast_minor(y_aval.shape[-1])
   if broadcast_dimensions:
     raise NotImplementedError
-  [x_aval] = ctx.avals_in
-  return _ensure_fa(x, x_aval.dtype).broadcast(shape)
+  return x.broadcast(shape)
 
 
 @register_lowering_rule(lax.convert_element_type_p)
@@ -1032,6 +1036,8 @@ mosaic_lowering_rules.update({
     lax.le_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x <= y),
     lax.eq_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x == y),
     lax.ne_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x != y),
+    lax.max_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x.max(y)),
+    lax.min_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x.min(y)),
 })
 
 
@@ -1055,18 +1061,48 @@ def _logistic_lowering_rule(ctx: LoweringRuleContext, x):
   a = _ensure_fa(x, x_aval.dtype)
   return 1. / (1. + (-a).exp(approx=ctx.module_ctx.approx_math))
 
+@register_lowering_rule(lax.exp_p)
+def _exp_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  a = _ensure_fa(x, x_aval.dtype)
+  return a.exp(approx=ctx.module_ctx.approx_math)
+
 
 @register_lowering_rule(lax.reduce_sum_p)
 def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
-  if axes != (0,):
-    raise NotImplementedError("No support for axes other than 0 yet")
   [x_aval] = ctx.avals_in
   _, [scratch] = ctx.module_ctx.scratch_view(
       [jax.ShapeDtypeStruct(shape=(4,), dtype=x_aval.dtype)]
   )
-  return mgpu.FragmentedArray.splat(
-      x.reduce_sum(scratch), (), is_signed=mgpu_utils.is_signed(x_aval.dtype)
-  )
+  match x.layout:
+    case mgpu.WGStridedFragLayout():
+      if axes != (0,):
+        raise NotImplementedError("No support for axes other than 0 yet")
+      return mgpu.FragmentedArray.splat(
+          x.reduce_sum(scratch), (), is_signed=mgpu_utils.is_signed(x_aval.dtype)
+      )
+    case mgpu.WGMMA_LAYOUT:
+      if axes != (x_aval.ndim - 1,):
+        raise NotImplementedError
+      if not jnp.issubdtype(x_aval.dtype, jnp.floating):
+        raise NotImplementedError
+      return x.reduce(arith_dialect.addf, axes[0])
+    case _:
+      raise NotImplementedError(f"Unsupported layout {x.layout}")
+
+
+@register_lowering_rule(lax.reduce_max_p)
+def _reduce_max_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
+  [x_aval] = ctx.avals_in
+  match x.layout:
+    case mgpu.WGMMA_LAYOUT:
+      if axes != (x_aval.ndim - 1,):
+        raise NotImplementedError
+      if not jnp.issubdtype(x_aval.dtype, jnp.floating):
+        raise NotImplementedError
+      return x.reduce(arith_dialect.maxnumf, axes[0])
+    case _:
+      raise NotImplementedError(f"Unsupported layout {x.layout}")
 
 
 @register_lowering_rule(lax.axis_index_p)
