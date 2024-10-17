@@ -14,6 +14,7 @@
 
 import functools
 import math
+import re
 import traceback
 
 from absl.testing import absltest
@@ -345,6 +346,25 @@ class PallasCallTest(PallasTest):
       jax.block_until_ready(kernel(x))
 
     self.assertEqual(output(), "It works!\n")
+
+  def test_print_wgmma_tiled_layout(self):
+    shape = (128, 64)
+    size = math.prod(shape)
+    def kernel(x_ref, o_ref):
+      pl.debug_print("{}", x_ref[...])
+    spec = plgpu.GPUBlockSpec(shape, lambda: (0, 0), transforms=(plgpu.TilingTransform((64, 32)), plgpu.SwizzleTransform(128)))
+    x = jnp.arange(size, dtype=jnp.float32).reshape(shape)
+    f = pl.pallas_call(kernel, out_shape=x, in_specs=[spec], out_specs=spec)
+
+    with jtu.capture_stdout() as get_output:
+      jax.block_until_ready(f(x))
+
+    output = get_output()
+    results = re.findall(r"\[(\d+), (\d+)\]/\[128, 64\]: (\d+)", output)
+    self.assertLen(results, size)
+    for i, j, v in results:
+      i, j, v = map(int, (i, j, v))
+      self.assertEqual(v, i * shape[1] + j)
 
   def test_print_scalar(self):
     @functools.partial(
