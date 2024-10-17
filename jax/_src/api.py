@@ -77,6 +77,7 @@ from jax._src import util
 
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
+from jax._src.interpreters import jaxpr_passes
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla

@@ -46,6 +46,7 @@ from jax._src import source_info_util
 from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import jaxpr_passes
 from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
 from jax._src.sharding import Sharding as JSharding
@@ -196,7 +197,8 @@ def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
   if isinstance(dtype, core.bint):
     # TODO Support different-size underlying dtypes to take advantage of the
     # bound for packing?
-    dtype = np.dtype(np.int32)
+    assert False, "Got extended dtype in lowering"
+    # dtype = np.dtype(np.int32)
   assert isinstance(dtype, (np.dtype, np.generic)), type(dtype)
   dtype = np.dtype(dtype)
   try:
@@ -207,6 +209,8 @@ def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
   return ir_type_factory()
 
 def _array_ir_types(aval: core.ShapedArray | core.DShapedArray) -> ir.Type:
+  if dtypes.issubdtype(aval.dtype, dtypes.extended):
+    assert False, aval
   aval = core.physical_aval(aval)  # type: ignore
   if not core.is_constant_shape(aval.shape):
     return _dynamic_array_ir_types(aval)  # type: ignore
@@ -1004,8 +1008,7 @@ def _to_physical_op_sharding(
     return _to_physical_op_sharding(ctx, aval.inner_aval, sharding)
   assert isinstance(aval, (core.ShapedArray, core.DShapedArray))
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
-    sharding = sharding_impls.physical_sharding(aval, sharding)
-    aval = core.physical_aval(aval)
+    assert False, aval
   axis_ctx = ctx.axis_context
   if (isinstance(axis_ctx, sharding_impls.SPMDAxisContext) and
       axis_ctx.manual_axes):
@@ -1357,6 +1360,7 @@ def lower_jaxpr_to_fun(
   Returns:
     MLIR func op
   """
+  jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(jaxpr)
 
   # The first dimension variable may be the platform index
   num_dim_vars = len(ctx.shape_poly_state.dim_vars)
@@ -1603,12 +1607,8 @@ def lower_jaxpr_to_fun(
           for a, s, a_aval in zip(flat_args, ir_arg_shardings, input_avals)]
 
     if ir_arg_shardings is not None and name == "main":
-      flat_args = [
-          replicate_trailing_dims(entry_lowering_ctx, o, a)
-          if (a is not core.abstract_token and
-              dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # pytype: disable=attribute-error
-          for o, s, a in zip(flat_args, ir_arg_shardings, input_avals)
-      ]
+      if any(jaxpr_passes.is_extended(a) for a in input_avals):
+        assert False, input_avals
 
     _, token_args, unflattened_args = util.split_list(
         unflatten_ir_values_like_types(flat_args, input_types),
@@ -1644,12 +1644,8 @@ def lower_jaxpr_to_fun(
               flat_outputs, custom_call_ir_result_memory_kinds, output_avals)]
 
     if ir_result_shardings is not None and name == "main":
-      flat_outputs = [
-          replicate_trailing_dims(entry_lowering_ctx, o, a)
-          if (a is not core.abstract_token and
-              dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # pytype: disable=attribute-error
-          for o, s, a in zip(flat_outputs, ir_result_shardings, output_avals)
-      ]
+      if any(jaxpr_passes.is_extended(a) for a in output_avals):
+        assert False, output_avals
 
     func_dialect.return_(flat_outputs)
 
@@ -1679,6 +1675,7 @@ def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
   # For example: if the key.shape is (8, 2) and key_data(key).shape is (8, 2, 2),
   # then the sharding will be P(P.UNCONSTRAINED, P.UNCONSTRAINED, None).
   # The below custom call achieves the sharding like above example.
+  assert False
   if config.use_shardy_partitioner.value:
     physical_ndim = core.physical_aval(aval).ndim
     s = sharding_impls.SdyArraySharding(
@@ -2189,12 +2186,7 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
   # op is broadcast.
   # Lower a possibly-dynamic broadcast_in_dim
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):  # type: ignore
-    elt_shape = core.physical_element_aval(aval_out.dtype).shape  # type: ignore
-    trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]  # type: ignore
-    broadcast_dimensions = [*broadcast_dimensions, *trailing_dims]
-    physical_aval_out = core.physical_aval(aval_out)
-    return broadcast_in_dim(
-        ctx, op, physical_aval_out, broadcast_dimensions=broadcast_dimensions)
+    assert False
   else:
     if not core.is_constant_shape(aval_out.shape):  # type: ignore
       shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
@@ -2231,7 +2223,8 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
   return out
 
 def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Value:
-  aval_out = core.physical_aval(aval_out)
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
+    assert False
   if not core.is_constant_shape(aval_out.shape):  # type: ignore
     shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
     return hlo.dynamic_reshape(
@@ -2243,15 +2236,7 @@ def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Va
 def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
              start_indices, limit_indices, strides) -> ir.Value:
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    elt_shape = core.physical_element_aval(aval_out.dtype).shape
-    trailing_zeros = [0] * len(elt_shape)
-    trailing_ones  = [1] * len(elt_shape)
-    start_indices = (*start_indices, *trailing_zeros)
-    limit_indices = (*limit_indices, *elt_shape)
-    strides = (*strides, *trailing_ones)
-    physical_aval_out = core.physical_aval(aval_out)
-    return slice_op(ctx, x, physical_aval_out, start_indices=start_indices,
-                    limit_indices=limit_indices, strides=strides)
+    assert False
   else:
     if any(not core.is_constant_shape(s) for s in (start_indices, limit_indices, strides)):
       start_indices = eval_dynamic_shape_as_tensor(ctx, start_indices)
@@ -2270,14 +2255,7 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
                   start_indices) -> ir.Value:
   x_aval = ctx.avals_in[0]
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    elt_shape = core.physical_element_aval(aval_out.dtype).shape
-    index_avals = ctx.avals_in[1:]
-    dtype = dtypes.canonicalize_dtype(
-        index_avals[0].dtype if index_avals else 'int64')  # type: ignore
-    trailing_zeros = [ir_constant(np.array(0, dtype))] * len(elt_shape)
-    start_indices = (*start_indices, *trailing_zeros)
-    aval_out = core.physical_aval(aval_out)
-    x_aval = core.physical_aval(x_aval)
+    assert False
 
   slice_sizes = aval_out.shape
   if not core.is_constant_shape(slice_sizes):
@@ -2303,15 +2281,7 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
 def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
                          start_indices) -> ir.Value:
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    elt_shape = core.physical_element_aval(aval_out.dtype).shape
-    index_avals = ctx.avals_in[2:]
-    dtype = dtypes.canonicalize_dtype(
-        index_avals[0].dtype if index_avals else 'int64')  # type: ignore
-    zeros = [ir_constant(np.array(0, dtype=dtype))] * len(elt_shape)
-    start_indices = (*start_indices, *zeros)
-    physical_aval_out = core.physical_aval(aval_out)
-    return dynamic_update_slice(ctx, physical_aval_out, x, update,
-                                start_indices=start_indices)
+    assert False
   else:
     # TODO(necula): handle dynamic shapes
     return hlo.dynamic_update_slice(x, update, start_indices)
@@ -2352,7 +2322,7 @@ def full_like_aval(ctx: LoweringRuleContext, value, aval: core.ShapedArray) -> i
 def add_jaxvals_lowering(ctx, x, y):
   if (isinstance(a := ctx.avals_in[0], core.ShapedArray) and
       dtypes.issubdtype(a.dtype, dtypes.extended)):
-    return lower_fun(lambda x, y: [a.dtype._rules.add(a.dtype, x, y)])(ctx, x, y)
+    assert False
   return [hlo.add(x, y)]
 register_lowering(ad_util.add_jaxvals_p, add_jaxvals_lowering)
 
@@ -2397,8 +2367,9 @@ def convert_hlo(ctx: LoweringRuleContext, x, aval_in, aval_out):
 
   In particular, treat casts to boolean as x != 0, rather than truncating
   integer values (b/209440332)."""
-  if (not dtypes.issubdtype(aval_out.dtype, dtypes.extended) and
-      aval_out.dtype == np.dtype(np.bool_)):
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
+    assert False
+  if (aval_out.dtype == np.dtype(np.bool_)):
     if dtypes.issubdtype(aval_in.dtype, np.inexact):
       compare_type = "FLOAT"
     elif dtypes.issubdtype(aval_in.dtype, np.signedinteger):
@@ -2429,6 +2400,8 @@ def _wrap_with_spmd_op(name: str,
     backend_config = ""
   result_type = aval_to_ir_type(aval_out)
   assert isinstance(result_type, ir.Type), result_type
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
+    assert False
   out_shape = core.physical_aval(aval_out).shape  # type: ignore
   if core.is_constant_shape(out_shape):
     result_shapes = None
@@ -2479,6 +2452,8 @@ def wrap_with_layout_op(ctx: LoweringRuleContext,
                         aval_in: core.AbstractValue):
   result_type = aval_to_ir_type(aval_out)
   assert isinstance(result_type, ir.Type), result_type
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
+    assert False
   out_shape = core.physical_aval(aval_out).shape  # type: ignore
   if core.is_constant_shape(out_shape):
     result_shapes = None
@@ -2717,6 +2692,8 @@ def _layout_to_mlir_layout(minor_to_major: Sequence[int] | None):
   return ir.DenseIntElementsAttr.get(layout, type=ir.IndexType.get())
 
 def _aval_to_default_layouts(aval):
+  if dtypes.issubdtype(aval.dtype, dtypes.extended):
+    assert False
   avals = [core.physical_aval(aval)]
   # Row major order is default for `NumPy`.
   return [list(range(aval.ndim - 1, -1, -1)) for aval in avals]
