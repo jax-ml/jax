@@ -438,8 +438,9 @@ class Primitive:
     return self.bind_with_trace(find_top_trace(args), args, params)
 
   def bind_with_trace(self, trace, args, params):
+    tracers = map(trace.full_raise, args)
     with pop_level(trace.level):
-      out = trace.process_primitive(self, map(trace.full_raise, args), params)
+      out = trace.process_primitive(self, tracers, params)
     return map(full_lower, out) if self.multiple_results else full_lower(out)
 
   def def_impl(self, impl):
