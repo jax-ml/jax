@@ -2824,15 +2824,15 @@ def _compare_edtype_rule(direction: str,
   aval_out, = ctx.avals_out
   base_aval_x = core.physical_aval(aval_x)
   base_aval_y = core.physical_aval(aval_y)
-  elt_shape = aval_x.dtype._rules.physical_element_aval(  # type: ignore
-      aval_x.dtype).shape                                 # type: ignore
+  elt_shape = aval_x.dtype._rules.physical_element_aval(
+      aval_x.dtype).shape
   out_shape = aval_out.shape + elt_shape
   base_aval_out = core.ShapedArray(out_shape, aval_out.dtype)
   reduce_axes = tuple(range(aval_out.ndim, base_aval_out.ndim))
 
   x_and_y = []
   for op, op_aval in zip([x, y], [base_aval_x, base_aval_y]):
-    op_aval_shape = op_aval.shape  # type: ignore
+    op_aval_shape = op_aval.shape
     if core.definitely_equal_shape(op_aval_shape, out_shape):
       x_and_y.append(op)
     else:
@@ -4170,8 +4170,8 @@ def broadcast_in_dim_edtype_rule(
   aval_in, = ctx.avals_in
   assert dtypes.issubdtype(aval_out.dtype, dtypes.extended), aval_out.dtype
   assert aval_in.dtype == aval_out.dtype, aval_in.dtype
-  elt_shape = core.physical_element_aval(aval_out.dtype).shape        # type: ignore
-  trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]  # type: ignore
+  elt_shape = core.physical_element_aval(aval_out.dtype).shape
+  trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]
   broadcast_dimensions = [*broadcast_dimensions, *trailing_dims]
   physical_aval_out = core.physical_aval(aval_out)
   return broadcast_in_dim(arg,

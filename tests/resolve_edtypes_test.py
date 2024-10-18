@@ -39,7 +39,7 @@ jax.config.parse_flags_with_absl()
 Shape = Sequence[int]
 
 
-def find_primitive(jaxpr: core.Jaxpr, 
+def find_primitive(jaxpr: core.Jaxpr,
                   primitive: core.Primitive):
   for eqn in jaxpr.eqns:
     if eqn.primitive == primitive:
@@ -86,7 +86,7 @@ class PhysicalizeTest(unittest.TestCase):
     phys_aval = phys_jaxpr.jaxpr.invars[0].aval
     self.assertEqual(phys_aval.shape, (2, 2))
     self.assertEqual(phys_aval.dtype, jnp.uint32)
-    self.assert_jaxpr(phys_jaxpr, 
+    self.assert_jaxpr(phys_jaxpr,
                     lax.broadcast_in_dim_p,
                     expected_in_shapes=[(2, 2)],
                     expected_in_dtypes=[jnp.uint32],
@@ -102,7 +102,7 @@ class PhysicalizeTest(unittest.TestCase):
     self.assertEqual(result.shape, (4, 1))
     traced = jax.jit(fun).trace(k)
     phys_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(traced.jaxpr)
-    self.assert_jaxpr(phys_jaxpr, 
+    self.assert_jaxpr(phys_jaxpr,
                     lax.slice_p,
                     expected_in_shapes=[(4, 4, 2)],
                     expected_in_dtypes=[jnp.uint32],
@@ -118,7 +118,7 @@ class PhysicalizeTest(unittest.TestCase):
     self.assertEqual(result.shape, (2, 3))
     traced = jax.jit(fun).trace(k, (0, 1))
     phys_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(traced.jaxpr)
-    self.assert_jaxpr(phys_jaxpr, 
+    self.assert_jaxpr(phys_jaxpr,
                       lax.dynamic_slice_p,
                       expected_in_shapes=[(4, 4, 2)],
                       expected_in_dtypes=[jnp.uint32],
@@ -143,7 +143,7 @@ class PhysicalizeTest(unittest.TestCase):
     self.assertEqual(result.shape, (4, 4))
     traced = jax.jit(fun).trace(k, updates, (0, 1))
     phys_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(traced.jaxpr)
-    self.assert_jaxpr(phys_jaxpr, 
+    self.assert_jaxpr(phys_jaxpr,
                       lax.dynamic_update_slice_p,
                       expected_in_shapes=[(4, 4, 2), (2, 3, 2)],
                       expected_in_dtypes=[jnp.uint32, jnp.uint32],
@@ -173,7 +173,7 @@ class PhysicalizeTest(unittest.TestCase):
     self.assertEqual(result, 5)
     traced = jax.jit(fun).trace(2, 3)
     phys_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(traced.jaxpr)
-    self.assert_jaxpr(phys_jaxpr, 
+    self.assert_jaxpr(phys_jaxpr,
                     lax.convert_element_type_p,
                     expected_in_shapes=[()],
                     expected_in_dtypes=[jnp.int32],
@@ -201,7 +201,7 @@ class PhysicalizeTest(unittest.TestCase):
                                   jax.random.key_data(k[0:2, 1:4]))
     traced = jax.jit(fun).trace(k, starts)
     phys_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(traced.jaxpr)
-    self.assert_jaxpr(phys_jaxpr, 
+    self.assert_jaxpr(phys_jaxpr,
                     lax.gather_p,
                     expected_in_shapes=[(4, 4, 2)],
                     expected_in_dtypes=[jnp.uint32],
@@ -224,7 +224,7 @@ class PhysicalizeTest(unittest.TestCase):
                                     jax.random.key_data(updates)))
     traced = jax.jit(fun).trace(k, indices, updates)
     phys_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(traced.jaxpr)
-    self.assert_jaxpr(phys_jaxpr, 
+    self.assert_jaxpr(phys_jaxpr,
                     lax.scatter_p,
                     expected_in_shapes=[(4, 4, 2), (2,), (2, 3, 2)],
                     expected_in_dtypes=[jnp.uint32, jnp.int32, jnp.uint32],
@@ -242,7 +242,7 @@ class PhysicalizeTest(unittest.TestCase):
                                   jnp.zeros((2, 3)))
     traced = jax.jit(fun).trace(x, y)
     phys_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(traced.jaxpr)
-    self.assert_jaxpr(phys_jaxpr, 
+    self.assert_jaxpr(phys_jaxpr,
                     lax.eq_p,
                     expected_in_shapes=[(2, 3, 2), (2, 3, 2)],
                     expected_in_dtypes=[jnp.uint32, jnp.uint32],
@@ -262,7 +262,7 @@ class PhysicalizeTest(unittest.TestCase):
                                   jnp.stack([x[0], y[1], x[2]]))
     traced = jax.jit(fun).trace(which, x, y)
     phys_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(traced.jaxpr)
-    self.assert_jaxpr(phys_jaxpr, 
+    self.assert_jaxpr(phys_jaxpr,
                     lax.select_n_p,
                     expected_in_shapes=[(3, 2), (3, 2), (3, 2)],
                     expected_in_dtypes=[jnp.bool_, jnp.uint32, jnp.uint32],
@@ -278,7 +278,7 @@ class PhysicalizeTest(unittest.TestCase):
     self.assertEqual(result.shape, (3, 7, 2))
     traced = jax.jit(fun).trace(x)
     phys_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(traced.jaxpr)
-    self.assert_jaxpr(phys_jaxpr, 
+    self.assert_jaxpr(phys_jaxpr,
                     lax.transpose_p,
                     expected_in_shapes=[(2, 3, 7, 2)],
                     expected_in_dtypes=[jnp.uint32],
@@ -294,7 +294,7 @@ class PhysicalizeTest(unittest.TestCase):
     self.assertEqual(result.shape, (6, 7))
     traced = jax.jit(fun).trace(x)
     phys_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(traced.jaxpr)
-    self.assert_jaxpr(phys_jaxpr, 
+    self.assert_jaxpr(phys_jaxpr,
                     lax.reshape_p,
                     expected_in_shapes=[(2, 3, 7, 2)],
                     expected_in_dtypes=[jnp.uint32],
@@ -308,7 +308,6 @@ class PhysicalizeTest(unittest.TestCase):
       k1, k2 = random.split(k)
       k1 = random.fold_in(k1, 0)
       x1 = random.uniform(k1, shape=(4, 8))
-      
       k2 = random.key_data(k2)
       k2 = random.wrap_key_data(k2, impl=k.dtype._impl)
       x2 = random.uniform(k2, shape=(4, 8))
@@ -366,7 +365,7 @@ class PhysicalizeTransformationsTest(parameterized.TestCase):
     mapped_fun = jax.jit(mapped_fun)
     result = mapped_fun(keys, y)
     self.assertEqual(result.shape, (x_dim * 5, 8))
-  
+
   def test_pjit_sharding(self):
     if jax.device_count() < 2:
       self.skipTest('sharding test requires at least 2 devices.')
@@ -436,7 +435,7 @@ class PhysicalizeTransformationsTest(parameterized.TestCase):
   def test_batched_while_loop(self):
     def _cond_fun(val):
       return val[0] < 10
-    
+
     def _body_fun(val):
       return (val[0] + 1, val[1])
 
@@ -495,4 +494,3 @@ class PhysicalizeTransformationsTest(parameterized.TestCase):
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
-

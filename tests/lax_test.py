@@ -3729,7 +3729,7 @@ class FooTyRules:
       buf.aval = core.ShapedArray(buf.shape, buf.dtype)
       return FooArray(aval.shape, buf)
     return handler
-  
+
   @staticmethod
   def physical_const(val):
     return val.data

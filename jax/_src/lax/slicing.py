@@ -2103,7 +2103,7 @@ def _gather_edtype_rule(ctx, operand, indices, *,
       offset_dims=(*dimension_numbers.offset_dims, *trailing_offset_dims))
   slice_sizes = (*slice_sizes, *elt_shape)
   return gather(operand,
-                indices, 
+                indices,
                 dimension_numbers=dimension_numbers,
                 slice_sizes=slice_sizes,
                 unique_indices=unique_indices,

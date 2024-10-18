@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 from functools import partial
@@ -63,14 +63,14 @@ def resolve_edtypes_fun(fun: Callable, multiple_results: bool = True) -> Callabl
       idx = {d: core.DBIdx(i) for i, d in enumerate(ctx.axis_size_env)}
       i32_aval = core.ShapedArray((), np.dtype('int32'))
       implicit_args = [(i32_aval, False)] * len(ctx.axis_size_env)
-      explicit_args = [(a.update(shape=tuple(idx.get(d, d) for d in a.shape))  # type: ignore
+      explicit_args = [(a.update(shape=tuple(idx.get(d, d) for d in a.shape))
                         if type(a) is core.DShapedArray else a, True)
                       for a in ctx.avals_in]
       wrapped_fun = lu.annotate(wrapped_fun, (*implicit_args, *explicit_args))
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic2(wrapped_fun)
     else:
       jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
-    phys_jaxpr = resolve_edtypes_jaxpr(core.ClosedJaxpr(jaxpr, consts))    
+    phys_jaxpr = resolve_edtypes_jaxpr(core.ClosedJaxpr(jaxpr, consts))
     result = core.eval_jaxpr(phys_jaxpr.jaxpr, phys_jaxpr.consts, *args)
     if multiple_results:
       return result
@@ -155,4 +155,3 @@ def resolve_edtypes_interp(jaxpr: core.Jaxpr,
     core.clean_up_dead_vars(eqn, env, last_used)
 
   return map(read_env, jaxpr.outvars)
-

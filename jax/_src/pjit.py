@@ -2612,7 +2612,7 @@ batching.axis_primitive_batchers[sharding_constraint_p] = partial(
     _sharding_constraint_batcher, None)
 
 def _sharding_constraint_edtype_rule(ctx: jaxpr_passes.ResolveEdtypesContext,
-                                          x, *, 
+                                          x, *,
                                           sharding, layout,
                                           resource_env, unconstrained_dims):
   aval_in, = ctx.avals_in

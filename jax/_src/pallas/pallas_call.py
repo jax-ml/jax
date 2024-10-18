@@ -1545,12 +1545,12 @@ def _pallas_call_edtype_rule(ctx: jaxpr_passes.ResolveEdtypesContext,
                               shape=bm.array_shape_dtype.shape + physical_elt_aval.shape,
                               dtype=physical_elt_aval.dtype
                             )
-                            )
+        )
       )
     else:
       new_block_mappings.append(bm)
   physical_grid_mapping = dataclasses.replace(grid_mapping,
-                            block_mappings=new_block_mappings)
+    block_mappings=tuple(new_block_mappings))
   return pallas_call_p.bind(*args,
                             jaxpr=physical_jaxpr.jaxpr,
                             grid_mapping=physical_grid_mapping,
