@@ -715,7 +715,7 @@ def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_names, out_names,
   in_avals_ = [v.aval for v in jaxpr.invars]
   out_avals_ = [x.aval for x in jaxpr.outvars]
   if any(jnp.issubdtype(aval, dtypes.extended) for aval in in_avals_):
-    assert False
+    raise ValueError(f"Extended dtype encountered in lowering {in_avals_}")
   in_nodes_ = map(partial(_xla_shard, ctx, mesh, auto), in_names, ctx.avals_in,
                   in_avals_, in_nodes)
   new_axis_context = sharding_impls.SPMDAxisContext(
@@ -770,7 +770,7 @@ def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
   axes = {name: i for i, ns in names.items() for name in ns}
   ns = _make_scoped_manual_sharding(ctx, mesh, axes)
   if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
-    assert False
+    raise ValueError(f"Extended dtype encountered in MLIR lowering {aval_in}")
   shard_proto = ns._to_xla_hlo_sharding(aval_in.ndim).to_proto()
   unspecified = set(range(aval_in.ndim)) if auto else set()
   sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, shard_proto,
@@ -784,7 +784,7 @@ def _xla_unshard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
   axes = {name: i for i, ns in names.items() for name in ns}
   ns = _make_scoped_manual_sharding(ctx, mesh, axes)
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    assert False
+    raise ValueError(f"Extended dtype encountered in MLIR lowering {aval_in}")
   unspecified = set(range(aval_out.ndim)) if auto else set()
   manual_proto = pxla.manual_proto(aval_in, frozenset(mesh.axis_names) - auto, mesh)
   sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, manual_proto, unspecified_dims=unspecified)

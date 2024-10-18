@@ -1508,6 +1508,7 @@ def _pallas_call_edtype_rule(ctx: jaxpr_passes.ResolveEdtypesContext,
                                   *args,
                                   jaxpr: jax_core.Jaxpr,
                                   grid_mapping: GridMapping,
+                                  out_avals: tuple[jax_core.AbstractValue, ...],
                                   **kwargs
                                   ):
   del ctx
@@ -1538,7 +1539,7 @@ def _pallas_call_edtype_rule(ctx: jaxpr_passes.ResolveEdtypesContext,
       new_block_mappings.append(
         dataclasses.replace(bm,
                             block_shape=new_block_shape,
-                            block_aval=new_block_aval,
+                            transformed_block_aval=new_block_aval,
                             index_map_jaxpr=new_index_map_jaxpr,
                             array_shape_dtype=jax.ShapeDtypeStruct(
                               shape=bm.array_shape_dtype.shape + physical_elt_aval.shape,
@@ -1553,6 +1554,7 @@ def _pallas_call_edtype_rule(ctx: jaxpr_passes.ResolveEdtypesContext,
   return pallas_call_p.bind(*args,
                             jaxpr=physical_jaxpr.jaxpr,
                             grid_mapping=physical_grid_mapping,
+                            out_avals=map(jax_core.physical_aval, out_avals),
                             **kwargs)
 
 jaxpr_passes.register_edtype_rule(pallas_call_p, _pallas_call_edtype_rule)

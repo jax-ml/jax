@@ -1979,9 +1979,6 @@ def _gather_lower(ctx, operand, indices, *,
                   dimension_numbers, slice_sizes, unique_indices,
                   indices_are_sorted, mode, fill_value):
   aval_out, = ctx.avals_out
-  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    assert False
-
   if mode == GatherScatterMode.FILL_OR_DROP:
     gather_fill_fn = mlir.lower_fun(_gather_fill, multiple_results=False)
     return gather_fill_fn(
@@ -2777,9 +2774,6 @@ def _scatter_lower(ctx, operand, indices, updates, *,
         _scatter_reduction_computation, core.ShapedArray((), operand_dtype))
 
   aval_out, = ctx.avals_out
-  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    assert False
-
   if mode == GatherScatterMode.CLIP:
     clip_fn = mlir.lower_fun(_clamp_scatter_indices, multiple_results=False)
     (indices,) = clip_fn(ctx.replace(avals_out=None), operand, indices,

@@ -193,12 +193,9 @@ if dtypes.int2 is not None:
   )
 
 
-def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
-  if isinstance(dtype, core.bint):
-    # TODO Support different-size underlying dtypes to take advantage of the
-    # bound for packing?
-    assert False, "Got extended dtype in lowering"
-    # dtype = np.dtype(np.int32)
+def dtype_to_ir_type(dtype: np.dtype | np.generic) -> ir.Type:
+  if dtypes.issubdtype(dtype, dtypes.extended):
+    raise ValueError(f"Extended dtype encountered in MLIR lowering {dtype}")
   assert isinstance(dtype, (np.dtype, np.generic)), type(dtype)
   dtype = np.dtype(dtype)
   try:
@@ -210,8 +207,7 @@ def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
 
 def _array_ir_types(aval: core.ShapedArray | core.DShapedArray) -> ir.Type:
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
-    assert False, aval
-  aval = core.physical_aval(aval)  # type: ignore
+    raise ValueError(f"Extended dtype encountered in MLIR lowering {aval}")
   if not core.is_constant_shape(aval.shape):
     return _dynamic_array_ir_types(aval)  # type: ignore
   return ir.RankedTensorType.get(aval.shape, dtype_to_ir_type(aval.dtype))  # type: ignore
@@ -1376,8 +1372,12 @@ def lower_jaxpr_to_fun(
   token_avals = [core.abstract_token] * num_tokens
   # Order of arguments: dim vars, tokens, array inputs
   input_avals = dim_var_avals + token_avals + jaxpr.in_avals
+  if any(jaxpr_passes.is_extended(a) for a in input_avals):
+    raise ValueError(f"Extended dtype encountered in MLIR lowering {input_avals}")
   input_types = [*dim_var_types, *token_types, *input_types]
   output_avals = [core.abstract_token] * num_tokens + jaxpr.out_avals
+  if any(jaxpr_passes.is_extended(a) for a in output_avals):
+    raise ValueError(f"Extended dtype encountered in MLIR lowering {output_avals}")
   output_types = [*token_types, *output_types]
 
   if input_output_aliases is not None:
@@ -1606,10 +1606,6 @@ def lower_jaxpr_to_fun(
           a if s is None else wrap_with_sharding_op(entry_lowering_ctx, a, a_aval, s)
           for a, s, a_aval in zip(flat_args, ir_arg_shardings, input_avals)]
 
-    if ir_arg_shardings is not None and name == "main":
-      if any(jaxpr_passes.is_extended(a) for a in input_avals):
-        assert False, input_avals
-
     _, token_args, unflattened_args = util.split_list(
         unflatten_ir_values_like_types(flat_args, input_types),
         [num_dim_vars, num_tokens])
@@ -1643,9 +1639,6 @@ def lower_jaxpr_to_fun(
           for o, mk, o_aval in zip(
               flat_outputs, custom_call_ir_result_memory_kinds, output_avals)]
 
-    if ir_result_shardings is not None and name == "main":
-      if any(jaxpr_passes.is_extended(a) for a in output_avals):
-        assert False, output_avals
 
     func_dialect.return_(flat_outputs)
 
@@ -1665,30 +1658,6 @@ def wrap_with_memory_kind(
   dict_attr = {"_xla_buffer_placement": ir.StringAttr.get(memory_kind)}
   op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
   return op.result
-
-
-def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
-  # Set the sharding of extended dtypes to be UNCONSTRAINED
-  # (i.e. XLA will choose) on aval.shape.
-  # For the trailing dims i.e. the dimension of key_shape on the base_array,
-  # the sharding is set to be REPLICATED always.
-  # For example: if the key.shape is (8, 2) and key_data(key).shape is (8, 2, 2),
-  # then the sharding will be P(P.UNCONSTRAINED, P.UNCONSTRAINED, None).
-  # The below custom call achieves the sharding like above example.
-  assert False
-  if config.use_shardy_partitioner.value:
-    physical_ndim = core.physical_aval(aval).ndim
-    s = sharding_impls.SdyArraySharding(
-        mesh_shape=None,
-        dimension_shardings=[
-            sharding_impls.SdyDimSharding(axes=[], is_closed=i >= aval.ndim)
-            for i in range(physical_ndim)
-        ])
-    return wrap_with_sharding_op(ctx, val, aval, s)
-  else:
-    return wrap_with_sharding_op(
-      ctx, val, aval, xc.HloSharding.replicate().to_proto(),
-      unspecified_dims=set(range(aval.ndim)))
 
 
 def _emit_lowering_rule_as_fun(lowering_rule,
@@ -2186,7 +2155,7 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
   # op is broadcast.
   # Lower a possibly-dynamic broadcast_in_dim
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):  # type: ignore
-    assert False
+    raise ValueError(f"Extended dtype encountered in MLIR lowering {aval_out}")
   else:
     if not core.is_constant_shape(aval_out.shape):  # type: ignore
       shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
@@ -2224,7 +2193,7 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
 
 def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Value:
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    assert False
+    raise ValueError(f"Extended dtype encountered in MLIR lowering {aval_out}")
   if not core.is_constant_shape(aval_out.shape):  # type: ignore
     shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
     return hlo.dynamic_reshape(
@@ -2236,7 +2205,7 @@ def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Va
 def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
              start_indices, limit_indices, strides) -> ir.Value:
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    assert False
+    raise ValueError(f"Extended dtype encountered in MLIR lowering {aval_out}")
   else:
     if any(not core.is_constant_shape(s) for s in (start_indices, limit_indices, strides)):
       start_indices = eval_dynamic_shape_as_tensor(ctx, start_indices)
@@ -2255,7 +2224,7 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
                   start_indices) -> ir.Value:
   x_aval = ctx.avals_in[0]
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    assert False
+    raise ValueError(f"Extended dtype encountered in MLIR lowering {aval_out}")
 
   slice_sizes = aval_out.shape
   if not core.is_constant_shape(slice_sizes):
@@ -2281,7 +2250,7 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
 def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
                          start_indices) -> ir.Value:
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    assert False
+    raise ValueError(f"Extended dtype encountered in MLIR lowering {aval_out}")
   else:
     # TODO(necula): handle dynamic shapes
     return hlo.dynamic_update_slice(x, update, start_indices)
@@ -2322,7 +2291,7 @@ def full_like_aval(ctx: LoweringRuleContext, value, aval: core.ShapedArray) -> i
 def add_jaxvals_lowering(ctx, x, y):
   if (isinstance(a := ctx.avals_in[0], core.ShapedArray) and
       dtypes.issubdtype(a.dtype, dtypes.extended)):
-    assert False
+    raise ValueError(f"Extended dtype encountered in MLIR lowering {ctx.avals_in}")
   return [hlo.add(x, y)]
 register_lowering(ad_util.add_jaxvals_p, add_jaxvals_lowering)
 
@@ -2367,8 +2336,6 @@ def convert_hlo(ctx: LoweringRuleContext, x, aval_in, aval_out):
 
   In particular, treat casts to boolean as x != 0, rather than truncating
   integer values (b/209440332)."""
-  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    assert False
   if (aval_out.dtype == np.dtype(np.bool_)):
     if dtypes.issubdtype(aval_in.dtype, np.inexact):
       compare_type = "FLOAT"

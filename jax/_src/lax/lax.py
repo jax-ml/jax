@@ -2794,8 +2794,6 @@ def _compare_lower_hlo(direction: str, total_order: bool, ctx, x, y):
   avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
   x_dtype = avals_in[0].dtype
   x, y = mlir.multi_broadcast_in_dim(ctx, (x, y), avals_in, aval_out.shape)
-  if dtypes.issubdtype(x_dtype, dtypes.extended):
-    assert False
   if dtypes.issubdtype(x_dtype, np.inexact):
     compare_type = "TOTALORDER" if total_order else "FLOAT"
   elif dtypes.issubdtype(x_dtype, np.signedinteger):
@@ -3070,6 +3068,7 @@ ad.defjvp(to_edtype_p,
 ad.primitive_transposes[to_edtype_p] = \
     lambda ct, x, edtype: [from_edtype_p.bind(ct, dtype=x.aval.dtype)]  # type: ignore
 batching.defvectorized(to_edtype_p)
+jaxpr_passes.register_edtype_rule(to_edtype_p, lambda _, x, **__: x)
 mlir.register_lowering(to_edtype_p, lambda _, x, **__: [x])
 
 
@@ -3105,6 +3104,7 @@ ad.defjvp(from_edtype_p,
 ad.primitive_transposes[from_edtype_p] = \
     lambda ct, x, dtype: [to_edtype_p.bind(ct, edtype=x.dtype)]
 batching.defvectorized(from_edtype_p)
+jaxpr_passes.register_edtype_rule(from_edtype_p, lambda _, x, **__: x)
 mlir.register_lowering(from_edtype_p, lambda _, x, **__: [x])
 
 
@@ -4597,8 +4597,6 @@ def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
 
 def _transpose_lower(ctx, x, *, permutation):
   aval_out, = ctx.avals_out
-  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    assert False
   return [hlo.transpose(x, mlir.dense_int_array(permutation))]
 
 def _transpose_edtype_rule(ctx, x, *, permutation):
@@ -4716,9 +4714,6 @@ def _select_hlo_lowering(ctx, which, *cases):
   which_aval = ctx.avals_in[0]
   aval_out, = ctx.avals_out
 
-  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    assert False
-
   if which_aval.dtype == np.dtype(np.bool_):
     assert len(cases) <= 2
     if len(cases) == 1: return cases
@@ -4757,15 +4752,6 @@ def _select_edtype_rule(ctx, which, *cases):
   bcast_dims = list(range(aval_which.ndim))
   which_bcast = broadcast_in_dim(which, aval_which_bcast.shape, bcast_dims)
   return select_n_p.bind(which_bcast, *cases)
-  """
-  which_bcast = mlir.broadcast_in_dim(
-      ctx, which, aval_which_bcast, broadcast_dimensions=bcast_dims)
-
-  return mlir.delegate_lowering(
-      ctx, select_lower, which_bcast, *cases,
-      avals_in=[aval_which_bcast, *physical_avals_cases],
-      avals_out=[physical_aval_out])[0]
-  """
 
 select_n_p = standard_primitive(
     _select_shape_rule, _select_dtype_rule, 'select_n',
@@ -6098,8 +6084,6 @@ def empty(dtype):
 empty_p = core.Primitive('empty')
 empty_p.def_abstract_eval(lambda *, dtype: core.ShapedArray((), dtype))
 def _empty_lower(ctx, *, dtype):
-  if dtypes.issubdtype(dtype, dtypes.extended):
-    assert False
   dtype = np.dtype(dtype)
   return [mlir.ir_constant(np.zeros((), dtype))]
 mlir.register_lowering(empty_p, _empty_lower)

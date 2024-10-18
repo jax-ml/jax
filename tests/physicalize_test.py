@@ -182,12 +182,15 @@ class PhysicalizeTest(unittest.TestCase):
                       expected_out_shapes=[(12, 2, 2)],
                       expected_out_dtypes=[jnp.uint32],
                       )
-    # TODO(justinfu): Test dynamic.
 
   def test_convert_element_type(self):
     def fun(x, y):
+      # These converts are no-ops.
       x = lax.convert_element_type(x, core.bint(5))
       x = lax.convert_element_type(x, jnp.int32)
+      # Only this convert should exist in the jaxpr.
+      x = lax.convert_element_type(x, jnp.float32)
+      # These converts are no-ops.
       y = lax.convert_element_type(y, core.bint(8))
       y = lax.convert_element_type(y, jnp.int32)
       return x + y
@@ -200,7 +203,7 @@ class PhysicalizeTest(unittest.TestCase):
                     expected_in_shapes=[()],
                     expected_in_dtypes=[jnp.int32],
                     expected_out_shapes=[()],
-                    expected_out_dtypes=[jnp.int32],
+                    expected_out_dtypes=[jnp.float32],
                     )
 
   def test_empty(self):
@@ -347,6 +350,8 @@ class PhysicalizeTest(unittest.TestCase):
 
 class PhysicalizeTransformationsTest(parameterized.TestCase):
   def test_shard_map_eager(self):
+    if jax.device_count() < 2:
+      self.skipTest('sharding test requires at least 2 devices.')
     def fun(k, y):
       out = jax.random.uniform(k[0], shape=(5, 4)) + y[0, 0]
       return out
@@ -366,6 +371,8 @@ class PhysicalizeTransformationsTest(parameterized.TestCase):
     self.assertEqual(result.shape, (x_dim * 5, 8))
 
   def test_shard_map_inside_jit(self):
+    if jax.device_count() < 2:
+      self.skipTest('sharding test requires at least 2 devices.')
     def fun(k, y):
       out = jax.random.uniform(k[0], shape=(5, 4)) + y[0, 0]
       return out
@@ -386,6 +393,8 @@ class PhysicalizeTransformationsTest(parameterized.TestCase):
     self.assertEqual(result.shape, (x_dim * 5, 8))
   
   def test_pjit_sharding(self):
+    if jax.device_count() < 2:
+      self.skipTest('sharding test requires at least 2 devices.')
     def fun(k):
       return jax.random.key_data(k)
     n_devices = jax.device_count()
@@ -397,7 +406,7 @@ class PhysicalizeTransformationsTest(parameterized.TestCase):
                         out_shardings=NamedSharding(mesh, P('x')),
                         )
     result = jax.jit(jitted_fun)(keys)
-    self.assertEqual(result.shape, (8, 2))
+    self.assertEqual(result.shape, (n_devices, 2))
     traced = jax.jit(jitted_fun).trace(keys)
     phys_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(traced.jaxpr)
     pjit_eqn = find_primitive(phys_jaxpr, pjit.pjit_p)
@@ -410,6 +419,8 @@ class PhysicalizeTransformationsTest(parameterized.TestCase):
     self.assertEqual(out_shardings[0].spec, P('x',))
 
   def test_sharding_constraint(self):
+    if jax.device_count() < 2:
+      self.skipTest('sharding test requires at least 2 devices.')
     def fun(k):
       x = lax.with_sharding_constraint(k, NamedSharding(mesh, P('x')))
       x = jax.random.key_data(k)
@@ -423,7 +434,7 @@ class PhysicalizeTransformationsTest(parameterized.TestCase):
                         out_shardings=NamedSharding(mesh, P('x')),
                         )
     result = jax.jit(jitted_fun)(keys)
-    self.assertEqual(result.shape, (8, 4, 2))
+    self.assertEqual(result.shape, (n_devices, 4, 2))
     traced = jax.jit(jitted_fun).trace(keys)
     phys_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(traced.jaxpr)
     sharding_constraint_eqn = find_primitive(phys_jaxpr, pjit.sharding_constraint_p)

@@ -548,21 +548,11 @@ def random_seed_impl_base(seeds, *, impl):
   seed = iterated_vmap_unary(np.ndim(seeds), impl.seed)
   return seed(seeds)
 
-def random_seed_lowering(ctx, seeds, *, impl):
-  aval, = ctx.avals_in
-  seed = iterated_vmap_unary(aval.ndim, impl.seed)
-  seed_lowering = mlir.lower_fun(seed, multiple_results=False)
-  return mlir.delegate_lowering(
-      ctx, seed_lowering, seeds,
-      avals_out=ctx.avals_out)
-
 def random_seed_edtype_rule(ctx, seeds, *, impl):
   aval, = ctx.avals_in
   seed = iterated_vmap_unary(aval.ndim, impl.seed)
   return seed(seeds)
 
-# TODO(justinfu): This is no longer necessary?
-# mlir.register_lowering(random_seed_p, random_seed_lowering)
 jaxpr_passes.register_edtype_rule(random_seed_p, random_seed_edtype_rule)
 
 
@@ -587,24 +577,12 @@ def random_split_impl_base(impl, base_arr, keys_ndim, *, shape):
   split = iterated_vmap_unary(keys_ndim, lambda k: impl.split(k, shape))
   return split(base_arr)
 
-def random_split_lowering(ctx, keys, *, shape):
-  aval, = ctx.avals_in
-  impl = aval.dtype._impl
-  split = iterated_vmap_unary(aval.ndim, lambda k: impl.split(k, shape))
-  split_lowering = mlir.lower_fun(split, multiple_results=False)
-  return mlir.delegate_lowering(
-      ctx, split_lowering, keys,
-      avals_in=[aval],
-      avals_out=ctx.avals_out)
-
 def random_split_edtype_rule(ctx, keys, *, shape):
   aval, = ctx.avals_in
   impl = aval.dtype._impl
   split = iterated_vmap_unary(aval.ndim, lambda k: impl.split(k, shape))
   return split(keys)
 
-# TODO(justinfu): This is no longer necessary?
-# mlir.register_lowering(random_split_p, random_split_lowering)
 jaxpr_passes.register_edtype_rule(random_split_p, random_split_edtype_rule)
 
 
@@ -632,17 +610,6 @@ def random_fold_in_impl_base(impl, base_arr, msgs, keys_shape):
       keys_shape, np.shape(msgs), impl.fold_in)
   return fold_in(base_arr, msgs)
 
-def random_fold_in_lowering(ctx, keys, msgs):
-  keys_aval, msgs_aval = ctx.avals_in
-  impl = keys_aval.dtype._impl
-  fold_in = iterated_vmap_binary_bcast(
-      keys_aval.shape, msgs_aval.shape, impl.fold_in)
-  fold_in_lowering = mlir.lower_fun(fold_in, multiple_results=False)
-  return mlir.delegate_lowering(
-      ctx, fold_in_lowering, keys, msgs,
-      avals_in=[keys_aval, msgs_aval],
-      avals_out=ctx.avals_out)
-
 def random_fold_in_edtype_rule(ctx, keys, msgs):
   keys_aval, msgs_aval = ctx.avals_in
   impl = keys_aval.dtype._impl
@@ -650,8 +617,6 @@ def random_fold_in_edtype_rule(ctx, keys, msgs):
       keys_aval.shape, msgs_aval.shape, impl.fold_in)
   return fold_in(keys, msgs)
 
-# TODO(justinfu): This is no longer necessary?
-# mlir.register_lowering(random_fold_in_p, random_fold_in_lowering)
 jaxpr_passes.register_edtype_rule(random_fold_in_p, random_fold_in_edtype_rule)
 
 def random_bits(keys, bit_width, shape):
@@ -677,17 +642,6 @@ def random_bits_impl_base(impl, base_arr, keys_ndim, *, bit_width, shape):
       keys_ndim, lambda k: impl.random_bits(k, bit_width, shape))
   return bits(base_arr)
 
-def random_bits_lowering(ctx, keys, *, bit_width, shape):
-  aval, = ctx.avals_in
-  impl = aval.dtype._impl
-  bits = iterated_vmap_unary(
-      aval.ndim, lambda k: impl.random_bits(k, bit_width, shape))
-  bits_lowering = mlir.lower_fun(bits, multiple_results=False)
-  ctx_new = ctx.replace(avals_in=[aval])
-  out = bits_lowering(ctx_new, keys)
-  ctx.set_tokens_out(ctx_new.tokens_out)
-  return out
-
 def random_bits_edtype_rule(ctx, keys, *, bit_width, shape):
   aval, = ctx.avals_in
   impl = aval.dtype._impl
@@ -695,8 +649,6 @@ def random_bits_edtype_rule(ctx, keys, *, bit_width, shape):
       aval.ndim, lambda k: impl.random_bits(k, bit_width, shape))
   return bits(keys)
 
-# TODO(justinfu): This is no longer necessary?
-# mlir.register_lowering(random_bits_p, random_bits_lowering)
 jaxpr_passes.register_edtype_rule(random_bits_p, random_bits_edtype_rule)
 
 # The following wrap/unwrap primitives are at least a stopgap for
@@ -735,9 +687,6 @@ def random_wrap_abstract_eval(base_arr_aval, *, impl):
 def random_wrap_impl(base_arr, *, impl):
   return PRNGKeyArray(impl, base_arr)
 
-def random_wrap_lowering(ctx, base_arr, *, impl):
-  return [base_arr]
-
 def random_wrap_batch_rule(batched_args, batch_dims, *, impl):
   x, = batched_args
   d, = batch_dims
@@ -747,8 +696,6 @@ def random_wrap_batch_rule(batched_args, batch_dims, *, impl):
 def random_wrap_edtype_rule(ctx, base_arr, *, impl):
   return base_arr
 
-# TODO(justinfu): This is no longer necessary?
-# mlir.register_lowering(random_wrap_p, random_wrap_lowering)
 batching.primitive_batchers[random_wrap_p] = random_wrap_batch_rule
 jaxpr_passes.register_edtype_rule(random_wrap_p, random_wrap_edtype_rule)
 
@@ -770,14 +717,9 @@ def random_unwrap_abstract_eval(keys_aval):
 def random_unwrap_impl(keys):
   return keys._base_array
 
-def random_unwrap_lowering(ctx, keys):
-  return [keys]
-
 def random_unwrap_edtype_rule(ctx, keys):
   return keys
 
-# TODO(justinfu): This is no longer necessary?
-# mlir.register_lowering(random_unwrap_p, random_unwrap_lowering)
 jaxpr_passes.register_edtype_rule(random_unwrap_p, random_unwrap_edtype_rule)
 
 # -- threefry2x32 PRNG implementation

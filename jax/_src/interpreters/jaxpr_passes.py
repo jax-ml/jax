@@ -50,15 +50,6 @@ def default_edtypes_rule(primitive, ctx, *args, **params):
 def resolve_edtypes_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   """Converts a traceable JAX function `fun` into a translation rule."""
   def _rule(ctx: ResolveEdtypesContext, *args, **params):
-    """
-    flat_in_avals, in_tree = jax.tree.flatten(ctx.avals_in)
-    print(f'[DEBUG] flatten {ctx.avals_in} >>> {flat_in_avals}')
-    def fun_flat(*flat_args, **kw):
-      unflat_args = jax.tree.unflatten(in_tree, flat_args)
-      print(f'[DEBUG] fun_flat: {flat_args} ->>>>> {unflat_args}')
-      return fun(*unflat_args, **kw)
-    """
-
     f = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
     wrapped_fun = lu.wrap_init(f, params)
     if config.dynamic_shapes.value:
@@ -88,7 +79,7 @@ def resolve_edtypes_fun(fun: Callable, multiple_results: bool = True) -> Callabl
   return _rule
 
 
-# TODO(justinfu): Need to cache the jaxpr but not the consts.
+@util.weakref_lru_cache
 def resolve_edtypes_jaxpr(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
   """Replaces all extended dtypes with physical types in a jaxpr."""
   def _to_physical_const(const):
@@ -110,9 +101,6 @@ class ResolveEdtypesContext:
   avals_in: Sequence[Any]
   avals_out: Sequence[Any]
 
-class TranslationException(Exception):
-  pass
-
 def is_extended(aval: Any):
   if isinstance(aval, core.AbstractToken):
     return False
@@ -133,8 +121,6 @@ def resolve_edtypes_interp(jaxpr: core.Jaxpr,
     return env[var]
 
   def write_env(var: core.Var, val: Any):
-    #if config.enable_checks.value and not config.dynamic_shapes.value:
-    #  assert core.typecheck(var.aval, val), (var.aval, val)
     env[var] = val
 
   map(write_env, jaxpr.constvars, physical_consts)
@@ -153,19 +139,13 @@ def resolve_edtypes_interp(jaxpr: core.Jaxpr,
     with source_info_util.user_context(
         eqn.source_info.traceback, name_stack=name_stack
     ), eqn.ctx.manager:
-      try:
-        ctx = ResolveEdtypesContext(
-          avals_in = tuple(x.aval for x in eqn.invars),
-          avals_out = tuple(x.aval for x in eqn.outvars),
-        )
-        physical_outvals = edtype_rule(
-            ctx, *physical_invals, **eqn.params
-        )
-      #except TranslationException as e:
-      #  raise e
-      except Exception as e:
-        message = f"Encountered exception while translating eqn {eqn}."
-        raise TranslationException(message) from e
+      ctx = ResolveEdtypesContext(
+        avals_in = tuple(x.aval for x in eqn.invars),
+        avals_out = tuple(x.aval for x in eqn.outvars),
+      )
+      physical_outvals = edtype_rule(
+          ctx, *physical_invals, **eqn.params
+      )
 
     if eqn.primitive.multiple_results:
       assert len(physical_outvals) == len(eqn.outvars)

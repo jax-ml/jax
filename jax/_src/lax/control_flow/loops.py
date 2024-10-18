@@ -1943,7 +1943,7 @@ def _pred_bcast_select_hlo(ctx,
     assert (pred_aval.shape == x_y_aval.shape[:len(pred_aval.shape)]), (
             pred_aval.shape, x_y_aval)
     if np.issubdtype(x_y_aval, dtypes.extended):
-      assert False
+      raise ValueError(f"Got extended type {x_y_aval}")
     x_y_aval = core.physical_aval(x_y_aval)
     bcast_pred = mlir.broadcast_in_dim(
         ctx, pred, core.DShapedArray(x_y_aval.shape, np.dtype(np.bool_)),
