@@ -4685,7 +4685,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = f(arr1, arr2)
     self.assertArraysEqual(out, np_inp1 @ np_inp1.T)
-    self.assertEqual(out.aval.sharding.spec, out_spec)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
 
     lowered = f.lower(arr1, arr2)
     self.assertIn('@Sharding', lowered.as_text())
@@ -4774,7 +4774,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = f(arr)
     self.assertArraysEqual(out, np.sum(np_inp, axis=axis))
-    self.assertEqual(out.aval.sharding.spec, out_spec)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
 
     lowered = f.lower(arr)
     self.assertIn('@Sharding', lowered.as_text())
@@ -4805,7 +4805,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = f(arr)
     self.assertArraysEqual(out, np.max(np_inp, axis=axis))
-    self.assertEqual(out.aval.sharding.spec, out_spec)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
 
     lowered = f.lower(arr)
     self.assertIn('@Sharding', lowered.as_text())
@@ -4836,7 +4836,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return y
 
     out = f(arr)
-    self.assertEqual(out.aval.sharding.spec, out_spec)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
 
     lowered_text = f.lower(arr).as_text()
     self.assertIn('@Sharding', lowered_text)
@@ -4913,7 +4913,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = f(arr)
     self.assertArraysEqual(out, np.transpose(arr, (1, 2, 0)))
-    self.assertEqual(out.aval.sharding.spec, P('y', 'z', 'x'))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('y', 'z', 'x')))
 
     lowered_text = f.lower(arr).as_text()
     self.assertIn('@Sharding', lowered_text)
@@ -4931,13 +4931,14 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return y
 
     out = f(arr)
-    self.assertEqual(out.aval.sharding.spec, P('x', None))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
 
     @jax.jit
     def g(x):
       x = x * 2
       y = jax.lax.broadcasted_iota(
-          x.dtype, (8, 2), 0, _sharding=NamedSharding(mesh, P('x', 'y')))
+          x.dtype, (8, 2), 0,
+          _sharding=NamedSharding(mesh.abstract_mesh, P('x', 'y')))
       self.assertEqual(y.sharding.spec, P('x', 'y'))
       return x, y
 
