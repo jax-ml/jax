@@ -45,6 +45,8 @@ SerT = TypeVar("SerT")
 # even if the change is backwards compatible.
 # Version 1, Nov 2023, first version.
 # Version 2, Dec 16th, 2023, adds the f0 dtype.
+# Version 3, October 16th, 2024, adds serialization for namedtuple and custom types
+#   This version is backwards compatible with Version 2.
 _SERIALIZATION_VERSION = 2
 
 def serialize(exp: _export.Exported, vjp_order: int = 0) -> bytearray:
@@ -152,13 +154,13 @@ def _serialize_array(
 
 def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   serialization_version = exp.SerializationVersion()
-  if serialization_version != _SERIALIZATION_VERSION:
+  if serialization_version not in [2, 3]:
     raise NotImplementedError(
         f"deserialize unsupported version {serialization_version}"
     )
 
   fun_name = exp.FunctionName().decode("utf-8")
-  _, in_tree = tree_util.tree_flatten(
+  in_tree = tree_util.tree_structure(
       _deserialize_pytreedef_to_pytree(exp.InTree())
   )
   scope = shape_poly.SymbolicScope(())  # TODO: serialize the constraints
@@ -166,7 +168,7 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   in_avals = _deserialize_tuple(
       exp.InAvalsLength, exp.InAvals, deser_aval
   )
-  _, out_tree = tree_util.tree_flatten(
+  out_tree = tree_util.tree_structure(
       _deserialize_pytreedef_to_pytree(exp.OutTree())
   )
   out_avals = _deserialize_tuple(
@@ -246,23 +248,35 @@ def _serialize_pytreedef(
     children_vector_offset = _serialize_array(
         builder, _serialize_pytreedef, children
     )
+  custom_name = None
+  custom_auxdata = None
+  node_type = node_data and node_data[0]
 
   if node_data is None:  # leaf
     kind = ser_flatbuf.PyTreeDefKind.leaf
-  elif node_data[0] is type(None):
+  elif node_type is type(None):
     kind = ser_flatbuf.PyTreeDefKind.none
-  elif node_data[0] is tuple:
+  elif node_type is tuple:
     kind = ser_flatbuf.PyTreeDefKind.tuple
-  elif node_data[0] is list:
+  elif node_type is list:
     kind = ser_flatbuf.PyTreeDefKind.list
-  elif node_data[0] is dict:
+  elif node_type is dict:
     kind = ser_flatbuf.PyTreeDefKind.dict
     assert len(node_data[1]) == len(children)
     children_names_vector_offset = _serialize_array(
         builder, lambda b, s: b.CreateString(s), node_data[1]
     )
+  elif node_type in _export.custom_pytree_node_registry_serialization:
+    kind = ser_flatbuf.PyTreeDefKind.custom
+    serialized_name, serialize_auxdata = _export.custom_pytree_node_registry_serialization[node_type]
+    custom_name = builder.CreateString(serialized_name)
+    custom_auxdata = builder.CreateByteVector(serialize_auxdata(node_data[1]))
   else:
-    raise NotImplementedError(f"serializing PyTreeDef {node_data}")
+    raise ValueError(
+        "Cannot serialize PyTreeDef containing an "
+        f"unregistered type `{node_type}`. "
+        "Use `export.register_pytree_node_serialization` or "
+        "`export.register_namedtuple_serialization`.")
 
   ser_flatbuf.PyTreeDefStart(builder)
   ser_flatbuf.PyTreeDefAddKind(builder, kind)
@@ -270,6 +284,10 @@ def _serialize_pytreedef(
     ser_flatbuf.PyTreeDefAddChildren(builder, children_vector_offset)
   if children_names_vector_offset:
     ser_flatbuf.PyTreeDefAddChildrenNames(builder, children_names_vector_offset)
+  if custom_name is not None:
+    ser_flatbuf.PyTreeDefAddCustomName(builder, custom_name)
+  if custom_auxdata is not None:
+    ser_flatbuf.PyTreeDefAddCustomAuxdata(builder, custom_auxdata)
   return ser_flatbuf.PyTreeDefEnd(builder)
 
 
@@ -294,6 +312,17 @@ def _deserialize_pytreedef_to_pytree(p: ser_flatbuf.PyTreeDef):
     assert p.ChildrenNamesLength() == nr_children
     keys = [p.ChildrenNames(i).decode("utf-8") for i in range(nr_children)]
     return dict(zip(keys, children))
+  elif kind == ser_flatbuf.PyTreeDefKind.custom:
+    serialized_name = p.CustomName().decode("utf-8")
+    if serialized_name not in _export.custom_pytree_node_registry_deserialization:
+      raise ValueError(
+          "Cannot deserialize a PyTreeDef containing an "
+          f"unregistered type `{serialized_name}`. "
+          "Use `export.register_pytree_node_serialization` or "
+          "`export.register_namedtuple_serialization`.")
+    nodetype, deserialize_auxdata, from_iter = _export.custom_pytree_node_registry_deserialization[serialized_name]
+    auxdata = deserialize_auxdata(p.CustomAuxdataAsNumpy().tobytes())
+    return from_iter(auxdata, children)
   else:
     assert False, kind
 

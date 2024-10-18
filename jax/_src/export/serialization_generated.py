@@ -21,20 +21,21 @@ import flatbuffers
 from flatbuffers.compat import import_numpy
 np = import_numpy()
 
-class PyTreeDefKind:
+class PyTreeDefKind(object):
     leaf = 0
     none = 1
     tuple = 2
     list = 3
     dict = 4
+    custom = 5
 
 
-class AbstractValueKind:
+class AbstractValueKind(object):
     shapedArray = 0
     abstractToken = 1
 
 
-class DType:
+class DType(object):
     bool = 0
     i8 = 1
     i16 = 2
@@ -60,18 +61,18 @@ class DType:
     f0 = 22
 
 
-class ShardingKind:
+class ShardingKind(object):
     unspecified = 0
     hlo_sharding = 1
 
 
-class DisabledSafetyCheckKind:
+class DisabledSafetyCheckKind(object):
     platform = 0
     custom_call = 1
     shape_assertions = 2
 
 
-class PyTreeDef:
+class PyTreeDef(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -140,8 +141,42 @@ class PyTreeDef:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
         return o == 0
 
+    # PyTreeDef
+    def CustomName(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+        if o != 0:
+            return self._tab.String(o + self._tab.Pos)
+        return None
+
+    # PyTreeDef
+    def CustomAuxdata(self, j):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            a = self._tab.Vector(o)
+            return self._tab.Get(flatbuffers.number_types.Int8Flags, a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 1))
+        return 0
+
+    # PyTreeDef
+    def CustomAuxdataAsNumpy(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            return self._tab.GetVectorAsNumpy(flatbuffers.number_types.Int8Flags, o)
+        return 0
+
+    # PyTreeDef
+    def CustomAuxdataLength(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # PyTreeDef
+    def CustomAuxdataIsNone(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+        return o == 0
+
 def PyTreeDefStart(builder):
-    builder.StartObject(3)
+    builder.StartObject(5)
 
 def PyTreeDefAddKind(builder, kind):
     builder.PrependInt8Slot(0, kind, 0)
@@ -158,12 +193,21 @@ def PyTreeDefAddChildrenNames(builder, childrenNames):
 def PyTreeDefStartChildrenNamesVector(builder, numElems):
     return builder.StartVector(4, numElems, 4)
 
+def PyTreeDefAddCustomName(builder, customName):
+    builder.PrependUOffsetTRelativeSlot(3, flatbuffers.number_types.UOffsetTFlags.py_type(customName), 0)
+
+def PyTreeDefAddCustomAuxdata(builder, customAuxdata):
+    builder.PrependUOffsetTRelativeSlot(4, flatbuffers.number_types.UOffsetTFlags.py_type(customAuxdata), 0)
+
+def PyTreeDefStartCustomAuxdataVector(builder, numElems):
+    return builder.StartVector(1, numElems, 1)
+
 def PyTreeDefEnd(builder):
     return builder.EndObject()
 
 
 
-class AbstractValue:
+class AbstractValue(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -235,7 +279,7 @@ def AbstractValueEnd(builder):
 
 
 
-class Sharding:
+class Sharding(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -304,7 +348,7 @@ def ShardingEnd(builder):
 
 
 
-class Effect:
+class Effect(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -340,7 +384,7 @@ def EffectEnd(builder):
 
 
 
-class DisabledSafetyCheck:
+class DisabledSafetyCheck(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -386,7 +430,7 @@ def DisabledSafetyCheckEnd(builder):
 
 
 
-class Exported:
+class Exported(object):
     __slots__ = ['_tab']
 
     @classmethod
