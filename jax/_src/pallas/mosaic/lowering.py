@@ -50,7 +50,6 @@ from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
@@ -60,7 +59,7 @@ from jax._src.pallas.mosaic import random as pl_random
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
-from jax._src.state.types import RefBitcaster
+from jax._src.state.types import RefBitcaster, RefReshaper
 from jax._src.state.utils import dtype_bitwidth
 from jax._src.typing import DTypeLike
 from jax._src.util import safe_map
@@ -499,20 +498,30 @@ def _check_block_mappings(
           (bs0 == as0 or bs0 % 128 == 0) and
           (bs1 == as1 or bs1 % 8 == 0)
       )
+      if not evenly_divisible:
+        raise ValueError(
+            "The Pallas TPU lowering currently requires that the last two "
+            "dimensions of your block shape are divisible by 8 and 128 "
+            "respectively, or be equal to the respective dimensions of the "
+            "overall array. "
+            + err_details()
+        )
     else:
       assert rank == 1
       # TODO(necula): test this for bool. What should it do?
       tiling_size = 128 * (32 // lax_internal._bit_width(bm.array_shape_dtype.dtype))
       evenly_divisible = (bs0 == as0 or bs0 % tiling_size == 0)
-
-    if not evenly_divisible:
-      raise ValueError(
-          "The Pallas TPU lowering currently requires that the last two "
-          "dimensions of your block shape are divisible by 8 and 128 "
-          "respectively, or be equal to the respective dimensions of the "
-          "overall array. "
-          + err_details()
-      )
+      if not evenly_divisible:
+        raise ValueError(
+            "The Pallas TPU lowering currently requires that rank 1 block"
+            " shapes, either 1) the first (and only) dimension of the block"
+            " shape is equal to the first (and only) dimension of the array"
+            " shape, or 2) the first (and only) dimension of the block shape"
+            f" is a multiple of the tiling size ({tiling_size} = 128 * (32 //"
+            f" {lax_internal._bit_width(bm.array_shape_dtype.dtype)})) of the"
+            " array shape. "
+            + err_details()
+        )
 
 
 def lower_jaxpr_to_module(
@@ -1087,6 +1096,41 @@ def _bitcast_memref(
   )
 
 
+def _reshape_memref(
+    ref: ir.Value,
+    reshaper: RefReshaper,
+    ref_dtype: DTypeLike,
+    ref_block_shape: tuple[int | pallas_core.Mapped, ...],
+) -> tuple[ir.Value, DTypeLike, tuple[int | pallas_core.Mapped, ...]]:
+  if ref_dtype != reshaper.dtype:
+    raise ValueError(
+        f"Reshape a ref with dtype change: {reshaper.dtype} vs {ref_dtype}"
+    )
+  if len(ref_block_shape) < 2:
+    raise NotImplementedError("Reshape 1D ref is not supported.")
+  if (
+      ref_block_shape[-2] is pallas_core.mapped
+      or ref_block_shape[-1] is pallas_core.mapped
+  ):
+    raise NotImplementedError(
+        "Reshape a ref with squeezed dimension on last two dimensions."
+    )
+  if np.prod(ref_block_shape) != np.prod(reshaper.shape):
+    raise ValueError(
+        f"Reshape a ref with different number of elements: {ref_block_shape} "
+        f"vs {reshaper.shape}"
+    )
+  target_ref_ty = ir.MemRefType.get(
+      reshaper.shape,
+      _dtype_to_ir_type(reshaper.dtype),
+      memory_space=ref.type.memory_space,
+  )
+  return (
+      tpu.memref_reshape(target_ref_ty, ref),
+      reshaper.shape,
+  )
+
+
 def _transform_ref(ref, ref_dtype, ref_block_shape, transforms):
   for transform in transforms:
     match transform:
@@ -1096,6 +1140,10 @@ def _transform_ref(ref, ref_dtype, ref_block_shape, transforms):
         )
       case RefBitcaster():
         ref, ref_dtype, ref_block_shape = _bitcast_memref(
+            ref, transform, ref_dtype, ref_block_shape
+        )
+      case RefReshaper():
+        ref, ref_block_shape = _reshape_memref(
             ref, transform, ref_dtype, ref_block_shape
         )
       case _:
@@ -1770,7 +1818,8 @@ def _concatenate_lowering_rule(ctx: LoweringRuleContext, *xs, dimension):
 lowering_rules[lax.concatenate_p] = _concatenate_lowering_rule
 
 
-def _iota_lowering_rule(ctx: LoweringRuleContext, dtype, shape, dimension):
+def _iota_lowering_rule(ctx: LoweringRuleContext, dtype, shape, dimension,
+                        sharding):
   out_type = aval_to_ir_type(ctx.avals_out[0])
   return tpu.IotaOp(out_type, dimension=dimension).result
 
@@ -2149,26 +2198,62 @@ def _cmp_lowering_rule(prim, ctx: LoweringRuleContext, x, y):
     )
   dtype = x_aval.dtype
 
-  # Handle bool comparisons by casting to int32.
+  # For boolean comparisons, we handle them in two different ways. For `ne`,
+  # we directly use the xor operation since they are equivalent. For all
+  # other comparisons, we convert the boolean values to `int32` and use select
+  # operations to perform the comparison.
+  #
+  # The relationship between comparison operations on booleans and boolean
+  # algebra is as follows:
+  #
+  # eq(a, b) = !(a ^ b)
+  # ne(a, b) = a ^ b
+  # lt(a, b) = !a && b
+  # le(a, b) = !a || b
+  # gt(a, b) = a && !b
+  # ge(a, b) = a || !b
+  #
+  # However, except for `ne`, all other operations require negation, which is
+  # currently not supported. At present, even if negation were supported,
+  # it would still need to be implemented using `select` operations, making
+  # it equivalent to our current approach. For more details on negation support,
+  # see https://github.com/jax-ml/jax/issues/24243.
   if jnp.issubdtype(dtype, jnp.bool_):
-    bool_cast_to = _dtype_to_ir_type(jnp.dtype("int32"))
-    true_ = ir_constant(1, mlir_type=bool_cast_to)
-    false_ = ir_constant(0, mlir_type=bool_cast_to)
+    if prim == lax.ne_p:
+      return arith.xori(x, y)
 
-    x = arith.SelectOp(x, true_, false_)
-    y = arith.SelectOp(y, true_, false_)
-    dtype = jnp.dtype("int32")
+    i32 = ir.IntegerType.get_signless(32)
+    vtype = ir.VectorType.get(x_aval.shape, i32)
+
+    # Convert `x` and `y` from `bool` to `int32` for comparison, with 2
+    # for true and 0 for false. For example, comparing `x > y` is equivalent
+    # to `(x ? 2 : 0) > (y ? 2 : 0)`.
+    #
+    # Note that we cannot use 1 for true because the select operation will be
+    # misteriously eliminated.
+    two = arith.constant(i32, 2)
+    zero = arith.constant(i32, 0)
+
+    out_aval, = ctx.avals_out
+    if out_aval.shape != ():
+      # broadcast to vectors if we are comparing vectors
+      two = vector.broadcast(vtype, two)
+      zero = vector.broadcast(vtype, zero)
+
+    x = arith.select(x, two, zero)
+    y = arith.select(y, two, zero)
+    dtype = jnp.int32
 
   if jnp.issubdtype(dtype, jnp.integer):
     is_uint = jnp.issubdtype(dtype, jnp.unsignedinteger)
     pred = (_cmpui_lowering_types if is_uint else _cmpsi_lowering_types)[prim]
     predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
-    return arith.CmpIOp(predicate, x, y).result
+    return arith.cmpi(predicate, x, y)
 
   if jnp.issubdtype(dtype, jnp.floating):
     pred = _cmpf_lowering_types[prim]
     predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
-    return arith.CmpFOp(predicate, x, y).result
+    return arith.cmpf(predicate, x, y)
 
   raise NotImplementedError(f"Unsupported dtype in cmp: {dtype}")
 
@@ -3078,54 +3163,3 @@ def _iota_2x32_shape_lowering(ctx, *, shape):
 
 
 lowering_rules[prng.iota_2x32_shape_p] = _iota_2x32_shape_lowering
-
-# Lowering for shard_map
-
-# Technically this is not a lowering rule, but a discharge rule. When we use
-# a special pallas mesh for a shard_map inside of a run_state, we turn it into
-# a pallas call. The pallas_call has named grid axes corresponding to the names
-# in the pallas mesh. It also sets up input/output aliasing automatically.
-
-def _shard_map_discharge_rule(
-    in_avals,
-    out_avals,
-    *args,
-    mesh,
-    auto,
-    in_names,
-    out_names,
-    jaxpr,
-    check_rep,
-    rewrite,
-):
-  del out_avals, auto, in_names, out_names, check_rep, rewrite
-  if not isinstance(mesh, pallas_core.PallasMesh):
-    raise NotImplementedError("Mesh must be a PallasMesh")
-  if len(mesh.shape) > 1:
-    raise NotImplementedError("Mesh must be 1D")
-  core_axis_name, num_cores = list(mesh.shape.items())[0]
-  def body(*args):
-    in_refs = args[:len(in_avals)]
-    jax_core.eval_jaxpr(jaxpr, (), *in_refs)
-  assert len(jaxpr.outvars) == 0
-  out = pallas_call.pallas_call(
-      body,
-      out_shape=in_avals,
-      in_specs=[pallas_core.BlockSpec(memory_space=pallas_core.MemorySpace.ANY)]
-      * len(in_avals),
-      out_specs=[pallas_core.BlockSpec(
-          memory_space=pallas_core.MemorySpace.ANY)]
-      * len(in_avals),
-      input_output_aliases={i: i for i in range(len(in_avals))},
-      grid=((core_axis_name, num_cores),),
-      compiler_params=dict(
-          mosaic=dict(dimension_semantics=("parallel",)),
-      ),
-  )(*args)
-  return out, ()
-
-
-from jax.experimental import shard_map
-state_discharge.register_discharge_rule(shard_map.shard_map_p)(
-    _shard_map_discharge_rule
-)

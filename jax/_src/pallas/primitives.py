@@ -857,17 +857,22 @@ def _run_scoped_abstract_eval(*args, jaxpr):
   return [v.aval for v in jaxpr.outvars], nonlocal_effects
 
 
-def _run_scoped_discharge_rule(in_avals,
-                               out_avals,
-                               *args_flat,
-                               jaxpr,
-                               **_):
+def _run_scoped_discharge_rule(
+    should_discharge,
+    in_avals,
+    out_avals,
+    *args_flat,
+    jaxpr,
+    **_):
   del out_avals
   num_consts = len(args_flat)
   jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
   num_return_values = len(jaxpr_noconst.outvars)
+  should_discharge = should_discharge + [
+      isinstance(var.aval, state.AbstractRef) for var in jaxpr.invars
+  ]
   discharged_body, new_consts = state_discharge.discharge_state(
-      jaxpr_noconst, [])
+      jaxpr_noconst, [], should_discharge=should_discharge)
   if new_consts:
     raise NotImplementedError(
         "Cannot handle new consts created by state discharge.")
@@ -886,13 +891,11 @@ def _run_scoped_discharge_rule(in_avals,
   updates = [
       ref_outputs.pop(0) if isinstance(aval, pallas_core.AbstractMemoryRef)
       else None for aval in in_avals]
-  assert len(ref_outputs) == len(
-      body_avals), f'{len(body_avals)}, != {len(ref_outputs)}'
   assert len(updates) == len(in_avals), f'{len(updates)} != {len(in_avals)}'
   return updates, return_values
 
 
-state_discharge.register_discharge_rule(run_scoped_p)(
+state_discharge.register_partial_discharge_rule(run_scoped_p)(
     _run_scoped_discharge_rule)
 
 
@@ -900,9 +903,15 @@ state_discharge.register_discharge_rule(run_scoped_p)(
 def _run_scoped_lowering_rule(ctx, *args, jaxpr):
   # This lowering rule gets triggered when run_scoped is not discharged.
   # In this case there are no stateful effects to handle.
+  should_discharge = [
+      isinstance(aval, state.AbstractRef) for aval in ctx.avals_in
+  ]
+
   def _lower_fun(*lower_fun_args):
-    updates, out = _run_scoped_discharge_rule([], [], *lower_fun_args,
-                               jaxpr=jaxpr)
+    updates, out = _run_scoped_discharge_rule(
+        should_discharge,
+        [], [], *lower_fun_args,
+        jaxpr=jaxpr)
     assert len(updates) == 0, 'Cannot lower run_scoped with effects.'
     return out
   return mlir.lower_fun(_lower_fun, multiple_results=True)(ctx, *args)

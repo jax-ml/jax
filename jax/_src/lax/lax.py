@@ -1641,7 +1641,8 @@ def iota(dtype: DTypeLike, size: int) -> Array:
   """
   return broadcasted_iota(dtype, (size,), 0)
 
-def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int) -> Array:
+def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int,
+                     _sharding=None) -> Array:
   """Convenience wrapper around ``iota``."""
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = canonicalize_shape(shape)
@@ -1649,8 +1650,11 @@ def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int) -> Array:
   static_shape = [None if isinstance(d, core.Tracer) else d for d in shape]
   dimension = core.concrete_or_error(
       int, dimension, "dimension argument of lax.broadcasted_iota")
+  if not config.sharding_in_types.value and _sharding is not None:
+    raise NotImplementedError('sharding support for broadcasted_iota is not '
+                              'implemented outside of sharding_in_types mode.')
   return iota_p.bind(*dynamic_shape, dtype=dtype, shape=tuple(static_shape),
-                     dimension=dimension)
+                     dimension=dimension, sharding=_sharding)
 
 def _eye(dtype: DTypeLike, shape: Shape, offset: DimSize = 0) -> Array:
   """Like numpy.eye, create a 2D array with ones on a diagonal."""
@@ -1997,11 +2001,14 @@ def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval, **kwargs):
 
 def unop(result_dtype, accepted_dtypes, name):
   dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name)
-  prim = standard_primitive(_attrgetter('shape'), dtype_rule, name)
+  prim = standard_primitive(_attrgetter('shape'), dtype_rule, name,
+                            sharding_rule=_attrgetter('sharding'))
   batching.defvectorized(prim)
   pe.def_trivial_padding(prim)
   return prim
+
 standard_unop = partial(unop, _identity)
+
 _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
 
 
@@ -2586,7 +2593,8 @@ def _integer_pow_jvp(g, x, *, y):
   return _zeros(g) if y == 0 else mul(g, mul(_const(x, y), integer_pow(x, y - 1)))
 
 integer_pow_p = standard_primitive(
-  _attrgetter('shape'), _integer_pow_dtype_rule, 'integer_pow')
+  _attrgetter('shape'), _integer_pow_dtype_rule, 'integer_pow',
+  sharding_rule=_attrgetter('sharding'))
 batching.defvectorized(integer_pow_p)
 ad.defjvp(integer_pow_p, _integer_pow_jvp)
 pe.def_trivial_padding(integer_pow_p)
@@ -2613,9 +2621,9 @@ def _integer_pow_lowering(ctx, x, *, y):
   # These cases are subsumed by the general case, but it's faster to emit these
   # common cases directly.
   if y == 2:
-    return (hlo.multiply(x, x),)
+    out = hlo.multiply(x, x)
   elif y == 3:
-    return (hlo.multiply(hlo.multiply(x, x), x),)
+    out = hlo.multiply(hlo.multiply(x, x), x)
   else:
     lowering = mlir.lower_fun(_integer_pow, multiple_results=False)
     # TODO(b/217551391): emitting an out-of-line call leads to a large
@@ -2623,7 +2631,13 @@ def _integer_pow_lowering(ctx, x, *, y):
     # clones the callee. Consider unconditionally caching when the MLIR->HLO
     # lowering doesn't expand the program.
     lowering = mlir.cache_lowering(lowering)
-    return lowering(ctx, x, y=y)
+    out = lowering(ctx, x, y=y)
+  if config.sharding_in_types.value:
+    aval_out, = ctx.avals_out
+    proto = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
+    out = out[0] if isinstance(out, list) else out
+    return [mlir.wrap_with_sharding_op(ctx, out, aval_out, proto)]
+  return out if isinstance(out, list) else [out]
 
 mlir.register_lowering(integer_pow_p, _integer_pow_lowering)
 
@@ -3958,8 +3972,14 @@ def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
     msg = ("broadcast_in_dim broadcast_dimensions must be strictly increasing; "
            "got broadcast_dimensions {}")
     raise TypeError(msg.format(broadcast_dimensions))
-
   return shape
+
+def _broadcast_in_dim_sharding_rule(operand, *, shape, broadcast_dimensions):
+  bds = set(broadcast_dimensions)
+  orig_spec = iter(operand.sharding.spec)
+  new_spec = [next(orig_spec) if i in bds else None for i in range(len(shape))]
+  assert next(orig_spec, None) is None
+  return NamedSharding(operand.sharding.mesh, P(*new_spec))
 
 def _broadcast_in_dim_typecheck_rule(
     _, operand, *dyn_shape, shape, broadcast_dimensions):
@@ -4109,10 +4129,12 @@ def _broadcast_in_dim_lower(ctx, x, *dyn_shape, shape, broadcast_dimensions) -> 
   aval_out, = ctx.avals_out
   if dyn_shape:
     aval_out = aval_out.update(shape=_merge_dyn_shape(shape, dyn_shape))
-
-
-  return [mlir.broadcast_in_dim(ctx, x, aval_out,
-                                broadcast_dimensions=broadcast_dimensions)]
+  out = mlir.broadcast_in_dim(ctx, x, aval_out,
+                              broadcast_dimensions=broadcast_dimensions)
+  if config.sharding_in_types.value:
+    proto = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
+    return [mlir.wrap_with_sharding_op(ctx, out, aval_out, proto)]
+  return [out]
 
 def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions):
   if (not dyn_shape and
@@ -4120,7 +4142,12 @@ def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions):
               type(core.get_aval(d).dtype) is core.bint for d in shape)):
     shape = _broadcast_in_dim_shape_rule(  # error checking
         x, shape=shape, broadcast_dimensions=broadcast_dimensions)
-    return core.ShapedArray(shape, x.dtype, x.weak_type)
+    if config.sharding_in_types.value:
+      sharding = _broadcast_in_dim_sharding_rule(
+          x, shape=shape, broadcast_dimensions=broadcast_dimensions)
+    else:
+      sharding = None
+    return core.ShapedArray(shape, x.dtype, x.weak_type, sharding=sharding)
   # If any BInts in shape, or Tracers in dyn_shape, produce a DShapedArray
   # (even if x is a ShapedArray)
   # TODO(mattjj): unify DShapedArray with ShapedArray, and remove this code
@@ -4584,6 +4611,11 @@ def _transpose_shape_rule(operand, *, permutation):
     raise TypeError(msg.format(permutation, operand.shape))
   return tuple(operand.shape[old_idx] for old_idx in permutation)
 
+def _transpose_sharding_rule(operand, *, permutation):
+  o_spec = operand.sharding.spec
+  new_spec = [o_spec[old_idx] for old_idx in permutation]
+  return NamedSharding(operand.sharding.mesh, P(*new_spec))
+
 def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
   operand, = batched_args
   bdim, = batch_dims
@@ -4597,7 +4629,11 @@ def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
 
 def _transpose_lower(ctx, x, *, permutation):
   aval_out, = ctx.avals_out
-  return [hlo.transpose(x, mlir.dense_int_array(permutation))]
+  out = hlo.transpose(x, mlir.dense_int_array(permutation))
+  if config.sharding_in_types.value:
+    proto = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
+    return [mlir.wrap_with_sharding_op(ctx, out, aval_out, proto)]
+  return [out]
 
 def _transpose_edtype_rule(ctx, x, *, permutation):
   aval_out, = ctx.avals_out
@@ -4606,9 +4642,9 @@ def _transpose_edtype_rule(ctx, x, *, permutation):
   permutation = [*permutation, *trailing_dims]
   return transpose_p.bind(x, permutation=permutation)
 
-
-transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
-                                 'transpose')
+transpose_p = standard_primitive(
+    _transpose_shape_rule, _input_dtype, 'transpose',
+    sharding_rule=_transpose_sharding_rule)
 ad.deflinear2(transpose_p,
               lambda t, _, permutation: [transpose(t, np.argsort(permutation))])
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
@@ -4890,15 +4926,6 @@ def _reduce_number_dtype_rule(name, operand, *args, **kw):
                     "of number.".format(name, dtype_to_string(operand.dtype)))
   return dtypes.canonicalize_dtype(operand.dtype)
 
-def _reduce_sum_shape_rule(operand, *, axes):
-  return _reduce_op_shape_rule(operand, axes=axes)
-
-def _reduce_sum_sharding_rule(operand, *, axes):
-  axes = frozenset(axes)
-  new_spec = P(*tuple(s for i, s in enumerate(operand.sharding.spec)
-                      if i not in axes))
-  return NamedSharding(operand.sharding.mesh, new_spec)
-
 def _reduce_sum_transpose_rule(cotangent, operand, *, axes):
   assert ad.is_undefined_primal(operand)
   input_shape = operand.aval.shape
@@ -4921,16 +4948,6 @@ def _replace_masked_values(x, val, padded_axes):
   masks = [broadcasted_iota(dtype, x.shape, i) < d for i, d in padded_axes]
   return select(_reduce(operator.and_, masks), x, full_like(x, val))
 
-
-reduce_sum_p = standard_primitive(
-  _reduce_sum_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_sum'),
-  'reduce_sum', sharding_rule=_reduce_sum_sharding_rule)
-ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
-batching.defreducer(reduce_sum_p, _get_sum_identity)
-pe.padding_rules[reduce_sum_p] = partial(_reducer_padding, _reduce_sum,
-                                         _get_sum_identity)
-
-
 def _reduce_op_shape_rule(operand, *, axes, input_shape=None):
   del input_shape  # Unused.
   if len(axes) != len(set(axes)):
@@ -4939,6 +4956,20 @@ def _reduce_op_shape_rule(operand, *, axes, input_shape=None):
     raise ValueError(f"reduction axes {axes} contains out-of-bounds indices for {operand}.")
   axes = frozenset(axes)
   return tuple(d for i, d in enumerate(operand.shape) if i not in axes)
+
+def _reduce_op_sharding_rule(operand, *, axes):
+  axes = frozenset(axes)
+  new_spec = P(*tuple(s for i, s in enumerate(operand.sharding.spec)
+                      if i not in axes))
+  return NamedSharding(operand.sharding.mesh, new_spec)
+
+reduce_sum_p = standard_primitive(
+  _reduce_op_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_sum'),
+  'reduce_sum', sharding_rule=_reduce_op_sharding_rule)
+ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
+batching.defreducer(reduce_sum_p, _get_sum_identity)
+pe.padding_rules[reduce_sum_p] = partial(_reducer_padding, _reduce_sum,
+                                         _get_sum_identity)
 
 def _reduce_prod_jvp_rule(primals, tangents, *, axes):
   reducer = lambda x, y: [mul(x, y)]
@@ -4966,8 +4997,9 @@ def _reduce_chooser_jvp_rule(g, ans, operand, *, axes):
   return div(_reduce_sum(mul(g, location_indicators), axes), counts)
 
 
-reduce_max_p = standard_primitive(_reduce_op_shape_rule, _input_dtype,
-                                  'reduce_max')
+reduce_max_p = standard_primitive(
+    _reduce_op_shape_rule, _input_dtype, 'reduce_max',
+    sharding_rule=_reduce_op_sharding_rule)
 ad.defjvp2(reduce_max_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_max_p, _get_max_identity)
 pe.padding_rules[reduce_max_p] = partial(_reducer_padding, _reduce_max,
@@ -5733,7 +5765,7 @@ def rng_bit_generator(key, shape, dtype=np.uint32,
           key, shape=shape, dtype=dtype, algorithm=algorithm))
 
 
-def _iota_abstract_eval(*dyn_shape, dtype, shape, dimension):
+def _iota_abstract_eval(*dyn_shape, dtype, shape, dimension, sharding):
   if not dyn_shape:
     # TODO(mattjj) Generalize shape_like checking to permit dynamic shapes
     _check_shapelike("iota", "shape", shape)
@@ -5748,7 +5780,7 @@ def _iota_abstract_eval(*dyn_shape, dtype, shape, dimension):
   if (not dyn_shape and
       not any(isinstance(d, core.DArray) and
               type(core.get_aval(d).dtype) is core.bint for d in shape)):
-    return ShapedArray(shape, dtype)
+    return ShapedArray(shape, dtype, sharding=sharding)
   # TODO(mattjj): unify DShapedArray with ShapedArray, and remove this code
   return core.DShapedArray(_merge_dyn_shape(shape, dyn_shape), dtype, False)
 
@@ -5756,18 +5788,19 @@ iota_p = Primitive('iota')
 iota_p.def_impl(partial(dispatch.apply_primitive, iota_p))
 iota_p.def_abstract_eval(_iota_abstract_eval)
 
-def _iota_staging_rule(trace, *dyn_shape, dtype, shape, dimension):
-  params = dict(dtype=dtype, shape=shape, dimension=dimension)
+def _iota_staging_rule(trace, *dyn_shape, dtype, shape, dimension, sharding):
+  params = dict(dtype=dtype, shape=shape, dimension=dimension,
+                sharding=sharding)
   if not dyn_shape:
     return trace.default_process_primitive(iota_p, (), params)
   aval = core.DShapedArray(_merge_dyn_shape(shape, dyn_shape), dtype, False)
   return _dyn_shape_staging_rule(trace, iota_p, aval, *dyn_shape, **params)
 pe.custom_staging_rules[iota_p] = _iota_staging_rule
 
-def _iota_typecheck_rule(_, *dyn_shape, dtype, shape, dimension):
+def _iota_typecheck_rule(_, *dyn_shape, dtype, shape, dimension, sharding):
   if not dyn_shape:
     out_aval, effects = iota_p.abstract_eval(
-        dtype=dtype, shape=shape, dimension=dimension)
+        dtype=dtype, shape=shape, dimension=dimension, sharding=sharding)
     return [out_aval], effects
   else:
     out_shape = _merge_dyn_shape(shape, dyn_shape)
@@ -5776,25 +5809,34 @@ def _iota_typecheck_rule(_, *dyn_shape, dtype, shape, dimension):
     return [out_aval], core.no_effects
 core.custom_typechecks[iota_p] = _iota_typecheck_rule
 
-def _iota_lower(ctx, *dyn_shape, dtype, shape, dimension):
+def _iota_lower(ctx, *dyn_shape, dtype, shape, dimension, sharding):
   del dtype
   aval_out, = ctx.avals_out
   if dyn_shape:
     aval_out = aval_out.update(shape=_merge_dyn_shape(shape, dyn_shape))
-  return [mlir.iota(ctx, aval_out, dimension=dimension)]
+  out = mlir.iota(ctx, aval_out, dimension=dimension)
+  if config.sharding_in_types.value:
+    assert aval_out.sharding == sharding
+    proto = sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
+    return [mlir.wrap_with_sharding_op(ctx, out, aval_out, proto)]
+  return [out]
 mlir.register_lowering(iota_p, _iota_lower)
 
-def _iota_batching_rule(in_vals, in_dims, *, dtype, shape, dimension):
+def _iota_batching_rule(in_vals, in_dims, *, dtype, shape, dimension,
+                        sharding):
   (segment_lengths,), (ax,) = in_vals, in_dims
   assert ax == 0
   bound = segment_lengths.dtype.bound
   ragged_axis, = (i for i, dim in enumerate(shape) if dim is None)
   shape = (len(segment_lengths),) + _merge_dyn_shape(shape, (bound,))
+  if sharding is not None:
+    raise NotImplementedError('Please file an issue if you want this support')
   iota = broadcasted_iota(dtype, shape, dimension+1)
   return iota, batching.RaggedAxis(ax, ((ragged_axis+1, segment_lengths),))
 batching.primitive_batchers[iota_p] = _iota_batching_rule
 
-def _iota_padding_rule(in_avals, out_avals, *dyn_shape, dtype, shape, dimension):
+def _iota_padding_rule(in_avals, out_avals, *dyn_shape, dtype, shape, dimension,
+                       sharding):
   out_aval, = out_avals
   new_shape = []
   new_dyn_shape = []
@@ -5807,8 +5849,10 @@ def _iota_padding_rule(in_avals, out_avals, *dyn_shape, dtype, shape, dimension)
       assert isinstance(d, core.Tracer)
       new_shape.append(None)
       new_dyn_shape.append(d)
+  if sharding is not None:
+    raise NotImplementedError('Please file an issue if you want this support')
   return [iota_p.bind(*new_dyn_shape, shape=tuple(new_shape),
-                      dtype=dtype, dimension=dimension)]
+                      dtype=dtype, dimension=dimension, sharding=sharding)]
 pe.padding_rules[iota_p] = _iota_padding_rule
 
 

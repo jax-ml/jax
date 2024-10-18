@@ -195,11 +195,14 @@ sudo apt install miopen-hip hipfft-dev rocrand-dev hipsparse-dev hipsolver-dev \
     rccl-dev rccl hip-dev rocfft-dev roctracer-dev hipblas-dev rocm-device-libs
 ```
 
+The recommended way to install these dependencies is by running our script, `jax/build/rocm/tools/get_rocm.py`,
+and selecting the appropriate options.
+
 To build jaxlib with ROCM support, you can run the following build command,
 suitably adjusted for your paths and ROCM version.
 
 ```
-python build/build.py --enable_rocm --rocm_path=/opt/rocm-5.7.0
+python3 ./build/build.py --use_clang=true --clang_path=/usr/lib/llvm-18/bin/clang-18 --enable_rocm --build_gpu_plugin --gpu_plugin_rocm_version=60 --rocm_path=/opt/rocm-6.2.3
 ```
 
 AMD's fork of the XLA repository may include fixes not present in the upstream
@@ -207,15 +210,16 @@ XLA repository. If you experience problems with the upstream repository, you can
 try AMD's fork, by cloning their repository:
 
 ```
-git clone https://github.com/ROCmSoftwarePlatform/xla.git
+git clone https://github.com/ROCm/xla.git
 ```
 
 and override the XLA repository with which JAX is built:
 
 ```
-python build/build.py --enable_rocm --rocm_path=/opt/rocm-5.7.0 \
-  --bazel_options=--override_repository=xla=/path/to/xla-rocm
+python3 ./build/build.py --use_clang=true --clang_path=/usr/lib/llvm-18/bin/clang-18 --enable_rocm --build_gpu_plugin --gpu_plugin_rocm_version=60 --bazel_options=--override_repository=xla=/rel/xla/ --rocm_path=/opt/rocm-6.2.3
 ```
+
+For a simplified installation process, we also recommend checking out the `jax/build/rocm/dev_build_rocm.py script`.
 
 ## Managing hermetic Python
 

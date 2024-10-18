@@ -1358,7 +1358,8 @@ register_lowering(lax.erf_inv_p)(
 
 
 @register_lowering(lax.iota_p)
-def _iota_lowering_rule(ctx: LoweringRuleContext, *, dtype, shape, dimension):
+def _iota_lowering_rule(ctx: LoweringRuleContext, *, dtype, shape, dimension,
+                        sharding):
   iota = _make_range(0, shape[dimension])
   iota = _cast(iota, jnp.int32, dtype)
   for i in range(len(shape)):

@@ -917,15 +917,47 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["tpu"]) and dtype == "float16":
       self.skipTest("float16 is not supported on TPU")
 
-    # TODO: skipped due to https://github.com/jax-ml/jax/issues/24030
-    if jtu.test_device_matches(["tpu"]) and dtype == "bool":
-      self.skipTest("Not supported on TPU")
-
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((8,), jnp.bool_),
-        grid=1)
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8,), jnp.bool_),
+        grid=1,
+    )
     def kernel(x_ref, y_ref, o_ref):
       o_ref[:] = fn(x_ref[...], y_ref[...])
+
+    x = jnp.array([0, 3, -4, -6, 0, 5, 4, -7]).astype(dtype)
+    y = jnp.array([3, 1, -4, -5, 0, -2, 2, 4]).astype(dtype)
+    np.testing.assert_allclose(kernel(x, y), fn(x, y))
+
+  @parameterized.named_parameters(
+      (f"{fn.__name__}_{dtype}", fn, dtype)
+      for fn, dtype in itertools.product(
+          COMPARISON_OPS, ["int32", "uint32", "float16", "float32", "bool"]
+      )
+  )
+  def test_comparison_scalar(self, fn, dtype):
+    if jtu.test_device_matches(["tpu"]) and dtype == "float16":
+      self.skipTest("float16 is not supported on TPU")
+
+    if (
+        jtu.test_device_matches(["gpu"])
+        and not jtu.is_cuda_compute_capability_at_least("8.0")
+    ):
+      self.skipTest("Only works on GPUs with capability >= sm80")
+
+    @functools.partial(
+        self.pallas_call,
+        in_specs=(
+            pl.BlockSpec(memory_space=smem_on_tpu()),
+            pl.BlockSpec(memory_space=smem_on_tpu()),
+        ),
+        out_specs=pl.BlockSpec(memory_space=smem_on_tpu()),
+        out_shape=jax.ShapeDtypeStruct((8,), jnp.bool_),
+        grid=1,
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      for i in range(8):
+        o_ref[i] = fn(x_ref[i], y_ref[i])
 
     x = jnp.array([0, 3, -4, -6, 0, 5, 4, -7]).astype(dtype)
     y = jnp.array([3, 1, -4, -5, 0, -2, 2, 4]).astype(dtype)

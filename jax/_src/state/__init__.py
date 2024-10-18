@@ -13,14 +13,14 @@
 # limitations under the License.
 """Module for state."""
 from jax._src.state.types import (
-    AbstractRef,
-    AccumEffect,
-    ReadEffect,
-    RefEffect,
-    StateEffect,
-    Transform,
-    TransformedRef,
-    WriteEffect,
-    get_ref_state_effects,
-    shaped_array_ref,
+    AbstractRef as AbstractRef,
+    AccumEffect as AccumEffect,
+    ReadEffect as ReadEffect,
+    RefEffect as RefEffect,
+    StateEffect as StateEffect,
+    Transform as Transform,
+    TransformedRef as TransformedRef,
+    WriteEffect as WriteEffect,
+    get_ref_state_effects as get_ref_state_effects,
+    shaped_array_ref as shaped_array_ref,
 )

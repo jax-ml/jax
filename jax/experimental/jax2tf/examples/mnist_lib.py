@@ -30,7 +30,6 @@ from typing import Any
 import warnings
 from absl import flags
 
-import flax
 from flax import linen as nn
 
 import jax

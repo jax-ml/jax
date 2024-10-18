@@ -386,9 +386,18 @@ class PallasCallTest(PallasBaseTest):
             (bs0 == as0 or bs0 % 128 == 0) and
             (bs1 == as1 or bs1 % 8 == 0))
         if not evenly_divisible:
-          test_context = self.assertRaisesRegex(
-              ValueError,
-              "last two dimensions of your block shape are divisible by 8 and 128")
+          if rank == 1:
+            test_context = self.assertRaisesRegex(
+                ValueError,
+                r"the first \(and only\) dimension of the block shape is a"
+                " multiple of the tiling size",
+            )
+          else:
+            test_context = self.assertRaisesRegex(
+                ValueError,
+                "last two dimensions of your block shape are divisible by 8"
+                " and 128",
+            )
 
     elif jtu.test_device_matches(["gpu"]) and not self.INTERPRET:
       block_size = math.prod(block_shape)

@@ -1295,6 +1295,10 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertEqual(x_device.device, device)
     self.assertEqual(x_sharding.device, sharding)
 
+  def test_mesh_with_axis_name_none(self):
+    with self.assertRaisesRegex(ValueError, 'Mesh axis names cannot be None.'):
+      jax.sharding.Mesh(jax.devices(), (None, 'x'))
+
 
 @jtu.with_config(jax_use_shardy_partitioner=True)
 class ShardyShardingTest(jtu.JaxTestCase):

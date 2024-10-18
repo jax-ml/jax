@@ -962,6 +962,8 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     # eigh on GPU
     "cusolver_syevd_ffi", "hipsolver_syevd_ffi",
     # svd on GPU
+    "cusolver_gesvd_ffi", "cusolver_gesvdj_ffi",
+    "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi",
     # lu on TPU
     "LuDecomposition",
     # ApproxTopK on TPU
@@ -1041,9 +1043,10 @@ def _check_module(mod: ir.Module, *,
   if disallowed_custom_call_ops:
     disallowed_custom_call_ops_str = "\n".join(disallowed_custom_call_ops)
     msg = ("Cannot serialize code with custom calls whose targets have no "
-           "compatibility guarantees. Examples are:\n"
-           f"{disallowed_custom_call_ops_str}.\n"
-           "See https://jax.readthedocs.io/en/latest/export/export.html#compatibility-guarantees-for-custom-calls")
+           "compatibility guarantees. "
+           "See https://jax.readthedocs.io/en/latest/export/export.html#compatibility-guarantees-for-custom-calls. "
+           "Examples are:\n"
+           f"{disallowed_custom_call_ops_str}.\n")
     raise ValueError(msg)
   return module_uses_non_replicated_sharding
 

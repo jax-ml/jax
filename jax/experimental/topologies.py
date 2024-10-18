@@ -14,9 +14,7 @@
 
 from __future__ import annotations
 
-import abc
 from collections.abc import Sequence
-from typing import Optional
 
 import jax
 from jax.experimental import mesh_utils

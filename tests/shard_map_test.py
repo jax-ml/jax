@@ -37,6 +37,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import prng
 from jax._src import test_util as jtu
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.ad_checkpoint import saved_residuals
@@ -2640,6 +2641,8 @@ class CustomPartitionerTest(jtu.JaxTestCase):
 # TODO(phawkins): enable this test unconditionally once shardy is the default.
 @unittest.skipIf(sdy is None, "shardy is not enabled")
 class SdyIntegrationTest(jtu.JaxTestCase):
+
+  @unittest.skipIf(xla_extension_version < 292, "Requires XLA version >=292")
   # Verify we can lower to a `ManualComputationOp`.
   def test_shardy_collective_permute(self):
     mesh = jtu.create_mesh((2,), ('x',))

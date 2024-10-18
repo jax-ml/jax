@@ -15,6 +15,7 @@
 """Contains GPU-specific Pallas abstractions."""
 
 import abc
+import collections
 from collections.abc import Sequence
 import dataclasses
 import enum
@@ -24,6 +25,7 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import tree_util
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import pallas_call
 from jax._src.state.types import Transform
 import jax.experimental.mosaic.gpu as mgpu
 import jax.numpy as jnp
@@ -31,6 +33,8 @@ from jaxlib.mlir import ir
 
 
 AbstractMemoryRef = pallas_core.AbstractMemoryRef
+
+DimensionSemantics = Literal["parallel", "sequential"]
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -53,7 +57,7 @@ class GPUCompilerParams(pallas_core.CompilerParams):
   """
   PLATFORM: ClassVar[str] = "mosaic_gpu"
   approx_math: bool = False
-  dimension_semantics: Sequence[Literal["parallel", "sequential"]] | None = None
+  dimension_semantics: Sequence[DimensionSemantics] | None = None
   max_concurrent_steps: int = 1
   delay_release: int = 0
 
@@ -124,20 +128,25 @@ class UntileRef(Transform):
   def transform_dtype(self, dtype):
     return dtype
 
-  def untransform_index(self, idxs: tuple[Index, ...]) -> tuple[Index, ...]:
-    if not all(isinstance(idx, slice) for idx in idxs):
-      raise NotImplementedError("Non-slice indices are not supported")
+  def untransform_index(
+      self, idxs: tuple[Index, ...]
+  ) -> tuple[tuple[Index, ...], Transform]:
     untiled_idxs = idxs[: -len(self.tiling)]
     tiled_idxs = idxs[-len(self.tiling) :]
     idxs_after_tiling = []
     for idx, tile in zip(tiled_idxs, self.tiling):
+      if not isinstance(idx, slice):
+        raise NotImplementedError("Non-slice indices are not supported")
       assert isinstance(idx, slice)
       if idx.step is not None and idx.step != 1:
         raise NotImplementedError("Strided slices unsupported")
       if (idx.start is not None and idx.start % tile) or (idx.stop is not None and idx.stop % tile):
         raise ValueError("Non-empty slices must be tile aligned")
       idxs_after_tiling.append(slice(idx.start // tile, idx.stop // tile))
-    return (*untiled_idxs, *idxs_after_tiling, *(slice(None) for _ in self.tiling))
+    return (*untiled_idxs, *idxs_after_tiling, *(slice(None) for _ in self.tiling)), self
+
+  def undo_to_gpu_transform(self) -> mgpu.MemRefTransform:
+    return mgpu.TileTransform(self.tiling)
 
   def tree_flatten(self):
     return (), (self.tiling,)
@@ -190,8 +199,22 @@ class TransposeRef(Transform):
   def transform_dtype(self, dtype):
     return dtype
 
-  def untransform_index(self, idxs: tuple[Index, ...]) -> tuple[Index, ...]:
-    return tuple(idxs[i] for i in _perm_inverse(self.permutation))
+  def untransform_index(
+      self, idxs: tuple[Index, ...]
+  ) -> tuple[tuple[Index, ...], Transform]:
+    removed_dims = [
+        i for i, idx in enumerate(idxs) if not isinstance(idx, slice)
+    ]
+    new_perm = tuple(
+        p - sum(d < p for d in removed_dims)
+        for p in self.permutation
+        if p not in removed_dims
+    )
+    new_idxs = tuple(idxs[i] for i in _perm_inverse(self.permutation))
+    return new_idxs, TransposeRef(new_perm)
+
+  def undo_to_gpu_transform(self) -> mgpu.MemRefTransform:
+    return mgpu.TransposeTransform(_perm_inverse(self.permutation))
 
   def tree_flatten(self):
     return (), (self.permutation,)
@@ -200,6 +223,19 @@ class TransposeRef(Transform):
   def tree_unflatten(cls, metadata, arrays):
     assert not arrays
     return cls(*metadata)
+
+
+def transpose_ref(
+    ref: pallas_core.TransformedRef | pallas_core.AbstractMemoryRef,
+    permutation: tuple[int, ...],
+) -> pallas_core.TransformedRef:
+  if not isinstance(ref, pallas_core.TransformedRef):
+    if not isinstance(ref, pallas_core.AbstractMemoryRef):
+      raise TypeError("ref must be a reference")
+    ref = pallas_core.TransformedRef(ref, transforms=())
+  return pallas_core.TransformedRef(
+      ref.ref, (*ref.transforms, TransposeRef(permutation)),
+  )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -221,6 +257,10 @@ class SwizzleTransform(MemoryRefTransform):
   def to_gpu_transform(self) -> mgpu.MemRefTransform:
     raise RuntimeError("SwizzleTransform does not have a GPU transform.")
 
+  def undo_to_gpu_transform(self) -> mgpu.MemRefTransform:
+    # There's no swizzle transform in mgpu right now. It's a separate arg.
+    raise NotImplementedError
+
   def __call__(self, aval: jax_core.ShapedArray) -> jax_core.ShapedArray:
     swizzle_elems = self.swizzle // aval.dtype.itemsize
     if swizzle_elems != aval.shape[-1]:
@@ -236,11 +276,15 @@ class SwizzleTransform(MemoryRefTransform):
 class UnswizzleRef(Transform):
   swizzle: int
 
-  def untransform_index(self, idxs: tuple[Index, ...]) -> tuple[Index, ...]:
+  def untransform_index(
+      self, idxs: tuple[Index, ...]
+  ) -> tuple[tuple[Index, ...], Transform]:
     if not idxs:
-      return idxs
-    if not all(isinstance(idx, slice) for idx in idxs):
-      raise NotImplementedError("Non-slice indices are not supported")
+      return idxs, self
+    if not all(isinstance(idx, slice) for idx in idxs[-2:]):
+      raise NotImplementedError(
+          "Non-slice indices are not supported in 2 minormost dims"
+      )
     last_idx = idxs[-1]
     assert isinstance(last_idx, slice)
     if last_idx.step is not None and last_idx.step != 1:
@@ -249,7 +293,7 @@ class UnswizzleRef(Transform):
         last_idx.stop is not None and last_idx.stop != self.swizzle
     ):
       raise ValueError("Swizzled dims cannot be sliced")
-    return idxs
+    return idxs, self
 
   def tree_flatten(self):
     return (), (self.swizzle,)
@@ -377,3 +421,65 @@ def _as_accum(ref) -> WGMMAAbstractAccumulatorRef:
 def _ref_raise_to_shaped(ref_aval, weak_type):
   return _as_accum(jax_core.raise_to_shaped_mappings[AbstractMemoryRef](ref_aval, weak_type))
 jax_core.raise_to_shaped_mappings[WGMMAAbstractAccumulatorRef] = _ref_raise_to_shaped
+
+
+_WARPGROUP_AXIS_NAME = object()
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class GPUMesh:
+  grid: tuple[int, ...] = ()
+  cluster: tuple[int, ...] = ()
+  # Those are NOT CUDA threads. On Hopper they correspond to warpgroups.
+  num_threads: int | None = None
+  axis_names: tuple[str, ...] = ()
+
+  def __post_init__(self):
+    if len(self.axis_names) != len(self.grid) + (self.num_threads is not None):
+      raise ValueError("Need as many axis names as grid dimensions + warp groups")
+    if self.num_threads > 2048 // 128:
+      raise ValueError(
+          "Requested too many CUDA threads per block. Each Mosaic thread"
+          " corresponds to 128 CUDA threads."
+      )
+
+  @property
+  def shape(self):
+    if self.num_threads is not None:
+      pairs = zip(self.axis_names, (*self.grid, self.num_threads))
+    else:
+      pairs = (*zip(self.axis_names, self.grid), (_WARPGROUP_AXIS_NAME, 1))
+    return collections.OrderedDict(pairs)
+
+
+def _gpu_mesh_discharge_rule(
+    in_avals,
+    out_avals,
+    *args,
+    mesh,
+    jaxpr,
+):
+  del out_avals
+  assert isinstance(mesh, GPUMesh)
+  if mesh.grid or mesh.cluster:
+    raise NotImplementedError
+  if mesh.num_threads is None:
+    raise NotImplementedError
+  threads_axis_name, num_threads = list(mesh.shape.items())[0]
+  def body(*args):
+    # Due to aliasing, args contains aliased inputs and outputs so we remove
+    # outputs.
+    in_refs = args[:len(in_avals)]
+    jax_core.eval_jaxpr(jaxpr, in_refs)
+  assert len(jaxpr.outvars) == 0
+  any_spec = pallas_core.BlockSpec(memory_space=pallas_core.MemorySpace.ANY)
+  out = pallas_call.pallas_call(
+      body,
+      out_shape=in_avals,
+      in_specs=[any_spec] * len(in_avals),
+      out_specs=[any_spec] * len(in_avals),
+      input_output_aliases={i: i for i in range(len(in_avals))},
+      grid=((threads_axis_name, num_threads),),
+  )(*args)
+  return out, ()
+
+pallas_core._core_map_mesh_rules[GPUMesh] = _gpu_mesh_discharge_rule

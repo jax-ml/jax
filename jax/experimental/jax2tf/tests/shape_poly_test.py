@@ -45,7 +45,6 @@ from jax._src import util
 from jax._src.export import shape_poly
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
-from jax._src.lib import xla_client
 import numpy as np
 
 from jax.experimental.jax2tf.tests import tf_test_util

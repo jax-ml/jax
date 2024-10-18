@@ -1,0 +1,129 @@
+# Copyright 2024 The JAX Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+
+package(
+    default_applicable_licenses = [],
+    default_visibility = ["//jax:mosaic_gpu_users"],
+)
+
+td_library(
+    name = "mosaic_gpu_td_files",
+    srcs = ["mosaic_gpu.td"],
+    includes = ["."],
+    deps = [
+        "@llvm-project//mlir:BuiltinDialectTdFiles",
+        "@llvm-project//mlir:OpBaseTdFiles",
+    ],
+)
+
+gentbl_cc_library(
+    name = "mosaic_gpu_inc_gen",
+    tbl_outs = [
+        (
+            [
+                "-gen-dialect-decls",
+                "-dialect=mosaic_gpu",
+            ],
+            "mosaic_gpu_dialect.h.inc",
+        ),
+        (
+            [
+                "-gen-dialect-defs",
+                "-dialect=mosaic_gpu",
+            ],
+            "mosaic_gpu_dialect.cc.inc",
+        ),
+        (
+            [
+                "-gen-op-decls",
+                "--typedefs-dialect=mosaic_gpu",
+            ],
+            "mosaic_gpu_ops.h.inc",
+        ),
+        (
+            [
+                "-gen-op-defs",
+                "--typedefs-dialect=mosaic_gpu",
+            ],
+            "mosaic_gpu_ops.cc.inc",
+        ),
+        (
+            [
+                "-gen-typedef-decls",
+                "--typedefs-dialect=mosaic_gpu",
+            ],
+            "mosaic_gpu_types.h.inc",
+        ),
+        (
+            [
+                "-gen-typedef-defs",
+                "--typedefs-dialect=mosaic_gpu",
+            ],
+            "mosaic_gpu_types.cc.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "mosaic_gpu.td",
+    deps = [
+        ":mosaic_gpu_td_files",
+    ],
+)
+
+cc_library(
+    name = "mosaic_gpu",
+    srcs = ["mosaic_gpu.cc"],
+    hdrs = ["mosaic_gpu.h"],
+    deps = [
+        ":mosaic_gpu_inc_gen",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:LLVMCommonConversion",
+        "@llvm-project//mlir:LLVMDialect",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:SCFUtils",
+        "@llvm-project//mlir:Support",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_test(
+    name = "mosaic_gpu_test",
+    srcs = ["mosaic_gpu_test.cc"],
+    deps = [
+        ":mosaic_gpu",
+        "//testing/base/public:gunit_main",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:BufferizationInterfaces",
+        "@llvm-project//mlir:DataLayoutInterfaces",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:LLVMCommonConversion",
+        "@llvm-project//mlir:LLVMDialect",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:SCFUtils",
+        "@llvm-project//mlir:Support",
+        "@tsl//tsl/platform:errors",
+    ],
+)

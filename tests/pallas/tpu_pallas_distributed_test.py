@@ -294,8 +294,8 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
             )
         )
 
-    devices = mesh_utils.create_device_mesh((1, num_devices))
-    mesh = jax.sharding.Mesh(devices, P(None, 'x'))
+    devices = mesh_utils.create_device_mesh((num_devices,))
+    mesh = jax.sharding.Mesh(devices, 'x')
     sharding = jax.sharding.NamedSharding(mesh, P(None, 'x'))
     unsharded_arr = jax.random.normal(
         jax.random.key(0), shape=(8, 128 * num_devices))

@@ -100,19 +100,63 @@ def fabs(x: ArrayLike, /) -> Array:
     raise TypeError("ufunc 'fabs' does not support complex dtypes")
   return lax.abs(*promote_args_inexact('fabs', x))
 
-@implements(getattr(np, 'bitwise_invert', np.invert), module='numpy')
+
 @partial(jit, inline=True)
 def bitwise_invert(x: ArrayLike, /) -> Array:
+  """Alias of :func:`jax.numpy.invert`."""
   return lax.bitwise_not(*promote_args('bitwise_invert', x))
 
-@implements(np.bitwise_not, module='numpy')
+
 @partial(jit, inline=True)
 def bitwise_not(x: ArrayLike, /) -> Array:
+  """Alias of :func:`jax.numpy.invert`."""
   return lax.bitwise_not(*promote_args('bitwise_not', x))
 
-@implements(np.invert, module='numpy')
+
 @partial(jit, inline=True)
 def invert(x: ArrayLike, /) -> Array:
+  """Compute the bitwise inversion of an input.
+
+  JAX implementation of :func:`numpy.invert`. This function provides the
+  implementation of the ``~`` operator for JAX arrays.
+
+  Args:
+    x: input array, must be boolean or integer typed.
+
+  Returns:
+    An array of the same shape and dtype as ```x``, with the bits inverted.
+
+  See also:
+    - :func:`jax.numpy.bitwise_invert`: Array API alias of this function.
+    - :func:`jax.numpy.logical_not`: Invert after casting input to boolean.
+
+  Examples:
+    >>> x = jnp.arange(5, dtype='uint8')
+    >>> print(x)
+    [0 1 2 3 4]
+    >>> print(jnp.invert(x))
+    [255 254 253 252 251]
+
+    This function implements the unary ``~`` operator for JAX arrays:
+
+    >>> print(~x)
+    [255 254 253 252 251]
+
+    :func:`invert` operates bitwise on the input, and so the meaning of its
+    output may be more clear by showing the bitwise representation:
+
+    >>> with jnp.printoptions(formatter={'int': lambda x: format(x, '#010b')}):
+    ...   print(f"{x  = }")
+    ...   print(f"{~x = }")
+    x  = Array([0b00000000, 0b00000001, 0b00000010, 0b00000011, 0b00000100], dtype=uint8)
+    ~x = Array([0b11111111, 0b11111110, 0b11111101, 0b11111100, 0b11111011], dtype=uint8)
+
+    For boolean inputs, :func:`invert` is equivalent to :func:`logical_not`:
+
+    >>> x = jnp.array([True, False, True, True, False])
+    >>> jnp.invert(x)
+    Array([False,  True, False, False,  True], dtype=bool)
+  """
   return lax.bitwise_not(*promote_args('invert', x))
 
 
@@ -1290,14 +1334,102 @@ def bitwise_left_shift(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.left_shift`."""
   return lax.shift_left(*promote_args_numeric("bitwise_left_shift", x, y))
 
-@implements(np.equal, module='numpy')
+
 @partial(jit, inline=True)
 def equal(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Returns element-wise truth value of ``x == y``.
+
+  JAX implementation of :obj:`numpy.equal`. This function provides the implementation
+  of the ``==`` operator for JAX arrays.
+
+  Args:
+    x: input array or scalar.
+    y: input array or scalar. ``x`` and ``y`` should either have same shape or be
+      broadcast compatible.
+
+  Returns:
+    A boolean array containing ``True`` where the elements of ``x == y`` and
+    ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.not_equal`: Returns element-wise truth value of ``x != y``.
+    - :func:`jax.numpy.greater_equal`: Returns element-wise truth value of
+      ``x >= y``.
+    - :func:`jax.numpy.less_equal`: Returns element-wise truth value of ``x <= y``.
+    - :func:`jax.numpy.greater`: Returns element-wise truth value of ``x > y``.
+    - :func:`jax.numpy.less`: Returns element-wise truth value of ``x < y``.
+
+  Examples:
+    >>> jnp.equal(0., -0.)
+    Array(True, dtype=bool, weak_type=True)
+    >>> jnp.equal(1, 1.)
+    Array(True, dtype=bool, weak_type=True)
+    >>> jnp.equal(5, jnp.array(5))
+    Array(True, dtype=bool, weak_type=True)
+    >>> jnp.equal(2, -2)
+    Array(False, dtype=bool, weak_type=True)
+    >>> x = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6],
+    ...                [7, 8, 9]])
+    >>> y = jnp.array([1, 5, 9])
+    >>> jnp.equal(x, y)
+    Array([[ True, False, False],
+           [False,  True, False],
+           [False, False,  True]], dtype=bool)
+    >>> x == y
+    Array([[ True, False, False],
+           [False,  True, False],
+           [False, False,  True]], dtype=bool)
+  """
   return lax.eq(*promote_args("equal", x, y))
 
-@implements(np.not_equal, module='numpy')
+
 @partial(jit, inline=True)
 def not_equal(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Returns element-wise truth value of ``x != y``.
+
+  JAX implementation of :obj:`numpy.not_equal`. This function provides the
+  implementation of the ``!=`` operator for JAX arrays.
+
+  Args:
+    x: input array or scalar.
+    y: input array or scalar. ``x`` and ``y`` should either have same shape or be
+      broadcast compatible.
+
+  Returns:
+    A boolean array containing ``True`` where the elements of ``x != y`` and
+    ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.equal`: Returns element-wise truth value of ``x == y``.
+    - :func:`jax.numpy.greater_equal`: Returns element-wise truth value of
+      ``x >= y``.
+    - :func:`jax.numpy.less_equal`: Returns element-wise truth value of ``x <= y``.
+    - :func:`jax.numpy.greater`: Returns element-wise truth value of ``x > y``.
+    - :func:`jax.numpy.less`: Returns element-wise truth value of ``x < y``.
+
+  Examples:
+    >>> jnp.not_equal(0., -0.)
+    Array(False, dtype=bool, weak_type=True)
+    >>> jnp.not_equal(-2, 2)
+    Array(True, dtype=bool, weak_type=True)
+    >>> jnp.not_equal(1, 1.)
+    Array(False, dtype=bool, weak_type=True)
+    >>> jnp.not_equal(5, jnp.array(5))
+    Array(False, dtype=bool, weak_type=True)
+    >>> x = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6],
+    ...                [7, 8, 9]])
+    >>> y = jnp.array([1, 5, 9])
+    >>> jnp.not_equal(x, y)
+    Array([[False,  True,  True],
+           [ True, False,  True],
+           [ True,  True, False]], dtype=bool)
+    >>> x != y
+    Array([[False,  True,  True],
+           [ True, False,  True],
+           [ True,  True, False]], dtype=bool)
+  """
   return lax.ne(*promote_args("not_equal", x, y))
 
 @implements(np.subtract, module='numpy')
@@ -1607,9 +1739,41 @@ def _logical_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
   """
   return lax.bitwise_xor(*map(_to_bool, promote_args("logical_xor", x, y)))
 
-@implements(np.logical_not, module='numpy')
+
 @partial(jit, inline=True)
 def logical_not(x: ArrayLike, /) -> Array:
+  """Compute NOT bool(x) element-wise.
+
+  JAX implementation of :func:`numpy.logical_not`.
+
+  Args:
+    x: input array of any dtype.
+
+  Returns:
+    A boolean array that computes NOT bool(x) element-wise
+
+  See also:
+    - :func:`jax.numpy.invert` or :func:`jax.numpy.bitwise_invert`: bitwise NOT operation
+
+  Examples:
+    Compute NOT x element-wise on a boolean array:
+
+    >>> x = jnp.array([True, False, True])
+    >>> jnp.logical_not(x)
+    Array([False,  True, False], dtype=bool)
+
+    For boolean input, this is equivalent to :func:`~jax.numpy.invert`, which implements
+    the unary ``~`` operator:
+
+    >>> ~x
+    Array([False,  True, False], dtype=bool)
+
+    For non-boolean input, the input of :func:`logical_not` is implicitly cast to boolean:
+
+    >>> x = jnp.array([-1, 0, 1])
+    >>> jnp.logical_not(x)
+    Array([False,  True, False], dtype=bool)
+  """
   return lax.bitwise_not(*map(_to_bool, promote_args("logical_not", x)))
 
 # Comparison ops
@@ -2496,9 +2660,50 @@ def exp2(x: ArrayLike, /) -> Array:
   return lax.exp2(x)
 
 
-@implements(np.signbit, module='numpy')
 @jit
 def signbit(x: ArrayLike, /) -> Array:
+  """Return the sign bit of array elements.
+
+  JAX implementation of :obj:`numpy.signbit`.
+
+  Args:
+    x: input array. Complex values are not supported.
+
+  Returns:
+    A boolean array of the same shape as ``x``, containing ``True``
+    where the sign of ``x`` is negative, and ``False`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.sign`: return the mathematical sign of array elements,
+      i.e. ``-1``, ``0``, or ``+1``.
+
+  Examples:
+    :func:`signbit` on boolean values is always ``False``:
+
+    >>> x = jnp.array([True, False])
+    >>> jnp.signbit(x)
+    Array([False, False], dtype=bool)
+
+    :func:`signbit` on integer values is equivalent to ``x < 0``:
+
+    >>> x = jnp.array([-2, -1, 0, 1, 2])
+    >>> jnp.signbit(x)
+    Array([ True,  True, False, False, False], dtype=bool)
+
+    :func:`signbit` on floating point values returns the value of the actual
+    sign bit from the float representation, including signed zero:
+
+    >>> x = jnp.array([-1.5, -0.0, 0.0, 1.5])
+    >>> jnp.signbit(x)
+    Array([ True, True, False, False], dtype=bool)
+
+    This also returns the sign bit for special values such as signed NaN
+    and signed infinity:
+
+    >>> x = jnp.array([jnp.nan, -jnp.nan, jnp.inf, -jnp.inf])
+    >>> jnp.signbit(x)
+    Array([False,  True, False,  True], dtype=bool)
+    """
   x, = promote_args("signbit", x)
   dtype = dtypes.dtype(x)
   if dtypes.issubdtype(dtype, np.integer):
@@ -3303,9 +3508,53 @@ def reciprocal(x: ArrayLike, /) -> Array:
   return lax.integer_pow(x, -1)
 
 
-@implements(np.sinc, update_doc=False)
 @jit
 def sinc(x: ArrayLike, /) -> Array:
+  r"""Calculate the normalized sinc function.
+
+  JAX implementation of :func:`numpy.sinc`.
+
+  The normalized sinc function is given by
+
+  .. math::
+     \mathrm{sinc}(x) = \frac{\sin({\pi x})}{\pi x}
+
+  where ``sinc(0)`` returns the limit value of ``1``. The sinc function is
+  smooth and infinitely differentiable.
+
+  Args:
+    x : input array; will be promoted to an inexact type.
+
+  Returns:
+    An array of the same shape as ``x`` containing the result.
+
+  Examples:
+    >>> x = jnp.array([-1, -0.5, 0, 0.5, 1])
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.sinc(x)
+    Array([-0.   ,  0.637,  1.   ,  0.637, -0.   ], dtype=float32)
+
+    Compare this to the naive approach to computing the function, which is
+    undefined at zero:
+
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   jnp.sin(jnp.pi * x) / (jnp.pi * x)
+    Array([-0.   ,  0.637,    nan,  0.637, -0.   ], dtype=float32)
+
+    JAX defines a custom gradient rule for sinc to allow accurate evaluation
+    of the gradient at zero even for higher-order derivatives:
+
+    >>> f = jnp.sinc
+    >>> for i in range(1, 6):
+    ...   f = jax.grad(f)
+    ...   print(f"(d/dx)^{i} f(0.0) = {f(0.0):.2f}")
+    ...
+    (d/dx)^1 f(0.0) = 0.00
+    (d/dx)^2 f(0.0) = -3.29
+    (d/dx)^3 f(0.0) = 0.00
+    (d/dx)^4 f(0.0) = 19.48
+    (d/dx)^5 f(0.0) = 0.00
+  """
   check_arraylike("sinc", x)
   x, = promote_dtypes_inexact(x)
   eq_zero = lax.eq(x, _lax_const(x, 0))

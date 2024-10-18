@@ -150,6 +150,7 @@ Array properties and methods
     Array.choose
     Array.clip
     Array.compress
+    Array.committed
     Array.conj
     Array.conjugate
     Array.copy

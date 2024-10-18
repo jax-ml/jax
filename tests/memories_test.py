@@ -25,6 +25,7 @@ import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.layout import DeviceLocalLayout as DLL, Layout
 from jax._src.lib import xla_extension_version
 from jax._src import config
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
@@ -1469,6 +1470,89 @@ class ComputeOffload(jtu.BufferDonationTestCase):
         in_shardings=(sharding, p_sharding),
         out_shardings=(sharding, p_sharding),
         donate_argnums=(0, 1),
+    )
+    x_out, y_out = jit_fn(x, y)
+    self.assertArraysEqual(x_out, x1 * x1)
+    self.assertArraysEqual(y_out, y1 + y1)
+
+  def test_compute_offload_with_linear_layout(self):
+    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    p_sharding = jax.sharding.SingleDeviceSharding(
+        jax.devices()[0], memory_kind="pinned_host"
+    )
+
+    @compute_on("device_host")
+    @jax.jit
+    def host_fn(x_in, y_in):
+      return x_in * x_in, y_in + y_in
+
+    def test_fn(x_in, y_in):
+      x_out, y_out = host_fn(x_in, y_in)
+      return x_out, y_out
+
+    x = jnp.arange(0, 1024, dtype=jnp.float32)
+    x = jnp.reshape(x, (16, 64))
+    y = jnp.arange(0, 1024, dtype=jnp.float32)
+    y = jnp.reshape(y, (16, 64))
+    custom_dll = DLL(major_to_minor=(0, 1), _tiling=((8, 128),))
+    custom_dll_linear = DLL(major_to_minor=(0, 1), _tiling=((1,),))
+    x = jax.device_put(x, Layout(custom_dll, sharding))
+    y = jax.device_put(y, Layout(custom_dll_linear, p_sharding))
+
+    x1 = jnp.arange(0, 1024, dtype=jnp.float32)
+    x1 = jnp.reshape(x1, (16, 64))
+    y1 = jnp.arange(0, 1024, dtype=jnp.float32)
+    y1 = jnp.reshape(y1, (16, 64))
+
+    jit_fn = jax.jit(
+        test_fn,
+        out_shardings=(
+            Layout(custom_dll, sharding),
+            Layout(custom_dll, p_sharding),
+        ),
+    )
+    x_out, y_out = jit_fn(x, y)
+    self.assertArraysEqual(x_out, x1 * x1)
+    self.assertArraysEqual(y_out, y1 + y1)
+
+  def test_compute_offload_mesh_with_linear_layout(self):
+    if config.use_shardy_partitioner.value:
+      self.skipTest(
+          "Shardy inlines the host compute. Remove when that's fixed."
+      )
+    mesh = jtu.create_mesh((2, 2), ("x", "y"))
+    sharding = NamedSharding(mesh, P("x", "y"))
+    p_sharding = NamedSharding(mesh, P("x", "y"), memory_kind="pinned_host")
+
+    @compute_on("device_host")
+    @jax.jit
+    def host_fn(x_in, y_in):
+      return x_in * x_in, y_in + y_in
+
+    def test_fn(x_in, y_in):
+      x_out, y_out = host_fn(x_in, y_in)
+      return x_out, y_out
+
+    x = jnp.arange(0, 2048, dtype=jnp.float32)
+    x = jnp.reshape(x, (32, 64))
+    y = jnp.arange(0, 2048, dtype=jnp.float32)
+    y = jnp.reshape(y, (32, 64))
+    custom_dll = DLL(major_to_minor=(0, 1), _tiling=((8, 128),))
+    custom_dll_linear = DLL(major_to_minor=(0, 1), _tiling=((1,),))
+    x = jax.device_put(x, Layout(custom_dll, sharding))
+    y = jax.device_put(y, Layout(custom_dll_linear, p_sharding))
+
+    x1 = jnp.arange(0, 2048, dtype=jnp.float32)
+    x1 = jnp.reshape(x1, (32, 64))
+    y1 = jnp.arange(0, 2048, dtype=jnp.float32)
+    y1 = jnp.reshape(y1, (32, 64))
+
+    jit_fn = jax.jit(
+        test_fn,
+        out_shardings=(
+            Layout(custom_dll, sharding),
+            Layout(custom_dll, p_sharding),
+        ),
     )
     x_out, y_out = jit_fn(x, y)
     self.assertArraysEqual(x_out, x1 * x1)
