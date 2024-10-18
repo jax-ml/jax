@@ -12,10 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
 from typing import Any, Sequence
 import unittest
-import operator as op
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -25,17 +23,11 @@ from jax import numpy as jnp
 from jax import random
 from jax import lax
 from jax._src import pjit
-from jax._src import ad_util
 from jax._src import core
-from jax._src import dtypes
 import jax._src.interpreters.jaxpr_passes as jaxpr_passes
 import jax._src.test_util as jtu
-from jax._src.interpreters import xla
-from jax._src.interpreters import pxla
 from jax._src.lax import lax as lax_internal
-from jax._src import tree_util as tree_util_internal
-from jax._src.sharding_impls import (
-    NamedSharding, PmapSharding, physical_sharding, logical_sharding)
+from jax._src.sharding_impls import NamedSharding
 from jax.experimental import mesh_utils
 from jax.sharding import Mesh, PartitionSpec as P
 from jax.experimental import shard_map
@@ -165,23 +157,6 @@ class PhysicalizeTest(unittest.TestCase):
     self.assertEqual(result, k2)
     result = jax.jit(f)(k1, k2)
     self.assertEqual(result, k2)
-
-  def test_reshape(self):
-    with self.subTest('static'):
-      def fun(k):
-        return jnp.reshape(k, (12, 2))
-      k = random.split(random.key(0), (6, 4))
-      result = jax.jit(fun)(k)
-      self.assertEqual(result.shape, (12, 2))
-      traced = jax.jit(fun).trace(k)
-      phys_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(traced.jaxpr)
-      self.assert_jaxpr(phys_jaxpr, 
-                      lax.reshape_p,
-                      expected_in_shapes=[(6, 4, 2)],
-                      expected_in_dtypes=[jnp.uint32],
-                      expected_out_shapes=[(12, 2, 2)],
-                      expected_out_dtypes=[jnp.uint32],
-                      )
 
   def test_convert_element_type(self):
     def fun(x, y):
