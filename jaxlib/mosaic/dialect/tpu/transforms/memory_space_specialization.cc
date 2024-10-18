@@ -70,6 +70,10 @@ LogicalResult specializeMemorySpace(TypedValue<MemRefType> value,
     to_update.pop_back();
     // Here we only have to handle the operations allowed on refs with
     // unspecified memory space.
+    if (auto op = dyn_cast<tpu::ReinterpretCastOp>(some_op)) {
+      updateResultFrom(op, op.getInput().getType());
+      continue;
+    }
     if (auto op = dyn_cast<tpu::MemRefSliceOp>(some_op)) {
       updateResultFrom(op, op.getMemRef().getType());
       continue;
