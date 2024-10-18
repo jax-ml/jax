@@ -4918,6 +4918,32 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     lowered_text = f.lower(arr).as_text()
     self.assertIn('@Sharding', lowered_text)
 
+  def test_broadcasted_iota_with_sharding(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(4)
+    s = NamedSharding(mesh, P('x'))
+    arr = jax.device_put(np_inp, s)
+
+    @jax.jit
+    def f(x):
+      y = jax.nn.one_hot(x, 4)
+      self.assertEqual(y.sharding.spec, P('x', None))
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.aval.sharding.spec, P('x', None))
+
+    @jax.jit
+    def g(x):
+      x = x * 2
+      y = jax.lax.broadcasted_iota(
+          x.dtype, (8, 2), 0, _sharding=NamedSharding(mesh, P('x', 'y')))
+      self.assertEqual(y.sharding.spec, P('x', 'y'))
+      return x, y
+
+    _, out = g(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

@@ -1818,7 +1818,8 @@ def _concatenate_lowering_rule(ctx: LoweringRuleContext, *xs, dimension):
 lowering_rules[lax.concatenate_p] = _concatenate_lowering_rule
 
 
-def _iota_lowering_rule(ctx: LoweringRuleContext, dtype, shape, dimension):
+def _iota_lowering_rule(ctx: LoweringRuleContext, dtype, shape, dimension,
+                        sharding):
   out_type = aval_to_ir_type(ctx.avals_out[0])
   return tpu.IotaOp(out_type, dimension=dimension).result
 
