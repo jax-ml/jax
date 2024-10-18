@@ -63,6 +63,6 @@ Common causes of OOM failures
 
 **Disabling rematerialization HLO pass**
   Sometimes disabling the rematerialization HLO pass is favorable to avoid 
-  poor remat choices by the compiler. The pass can be disabled by 
+  poor remat choices by the compiler. The pass can be disabled by adding
   :code:`jax.config.update('enable_remat_opt_pass', False)`. But this can 
   sometimes lead to OOM failures. 
