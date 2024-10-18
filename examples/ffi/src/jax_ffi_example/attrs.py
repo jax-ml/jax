@@ -35,13 +35,11 @@ def array_attr(num: int):
   return jex.ffi.ffi_call(
       "array_attr",
       jax.ShapeDtypeStruct((), np.int32),
-      array=np.arange(num, dtype=np.int32),
-  )
+  )(array=np.arange(num, dtype=np.int32))
 
 
 def dictionary_attr(**kwargs):
   return jex.ffi.ffi_call(
       "dictionary_attr",
       (jax.ShapeDtypeStruct((), np.int32), jax.ShapeDtypeStruct((), np.int32)),
-      **kwargs,
-  )
+  )(**kwargs)
