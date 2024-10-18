@@ -4899,6 +4899,25 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     f(arr)
 
+  def test_lax_transpose_rule(self):
+    mesh = jtu.create_mesh((2, 2, 1), ('x', 'y', 'z'))
+    np_inp = np.arange(16).reshape(4, 2, 2)
+    s = NamedSharding(mesh, P('x', 'y', 'z'))
+    arr = jax.device_put(np_inp, s)
+
+    @jax.jit
+    def f(x):
+      y = jnp.transpose(x, (1, 2, 0))
+      self.assertEqual(y.sharding.spec, P('y', 'z', 'x'))
+      return y
+
+    out = f(arr)
+    self.assertArraysEqual(out, np.transpose(arr, (1, 2, 0)))
+    self.assertEqual(out.aval.sharding.spec, P('y', 'z', 'x'))
+
+    lowered_text = f.lower(arr).as_text()
+    self.assertIn('@Sharding', lowered_text)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

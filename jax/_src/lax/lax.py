@@ -4546,6 +4546,11 @@ def _transpose_shape_rule(operand, *, permutation):
     raise TypeError(msg.format(permutation, operand.shape))
   return tuple(operand.shape[old_idx] for old_idx in permutation)
 
+def _transpose_sharding_rule(operand, *, permutation):
+  o_spec = operand.sharding.spec
+  new_spec = [o_spec[old_idx] for old_idx in permutation]
+  return NamedSharding(operand.sharding.mesh, P(*new_spec))
+
 def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
   operand, = batched_args
   bdim, = batch_dims
@@ -4563,10 +4568,15 @@ def _transpose_lower(ctx, x, *, permutation):
     elt_shape = core.physical_element_aval(aval_out.dtype).shape
     trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]
     permutation = [*permutation, *trailing_dims]
-  return [hlo.transpose(x, mlir.dense_int_array(permutation))]
+  out = hlo.transpose(x, mlir.dense_int_array(permutation))
+  if config.sharding_in_types.value:
+    proto = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
+    return [mlir.wrap_with_sharding_op(ctx, out, aval_out, proto)]
+  return [out]
 
-transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
-                                 'transpose')
+transpose_p = standard_primitive(
+    _transpose_shape_rule, _input_dtype, 'transpose',
+    sharding_rule=_transpose_sharding_rule)
 ad.deflinear2(transpose_p,
               lambda t, _, permutation: [transpose(t, np.argsort(permutation))])
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
