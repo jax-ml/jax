@@ -639,15 +639,20 @@ class PallasCallTest(PallasTest):
     swizzle = 128
     elems_128b = swizzle // jnp.dtype(dtype).itemsize
     def kernel(a_ref, b_ref, o_ref):
+      if rhs_transpose:
+        b_ref = plgpu.transpose_ref(b_ref, (1, 0))
       def scope(acc_ref):
         plgpu.wgmma(acc_ref, a_ref, b_ref)
         return acc_ref[...]
 
-      o_ref[...] = pl.run_scoped(scope, plgpu.ACC((64, 128), jnp.float32))
+      o_ref[...] = pl.run_scoped(scope, plgpu.ACC((64, 192), jnp.float32))
 
     key1, key2 = jax.random.split(jax.random.key(42), 2)
     a = jax.random.uniform(key1, shape=(64, 128), dtype=dtype)
-    b = jax.random.uniform(key2, shape=(128, 128), dtype=dtype)
+    b_shape = (128, 192)
+    if rhs_transpose:
+      b_shape = b_shape[::-1]
+    b = jax.random.uniform(key2, shape=b_shape, dtype=dtype)
 
     rhs_transforms = (plgpu.TilingTransform((elems_128b, elems_128b)),)
     if rhs_transpose:
@@ -664,13 +669,13 @@ class PallasCallTest(PallasTest):
                 ),
             ),
             plgpu.GPUBlockSpec(
-                (128, 128),
+                b_shape,
                 lambda *i: i,
                 transforms=(*rhs_transforms, plgpu.SwizzleTransform(128)),
             ),
         ],
-        out_specs=plgpu.GPUBlockSpec((64, 128), lambda *i: i),
-        out_shape=jax.ShapeDtypeStruct((64, 128), jnp.float32),
+        out_specs=plgpu.GPUBlockSpec((64, 192), lambda *i: i),
+        out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float32),
         grid=(1, 1),
     )(a, b)
     np.testing.assert_allclose(

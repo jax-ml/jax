@@ -712,6 +712,7 @@ class FragmentedArray:
         _registers=new_registers, _layout=self.layout, _is_signed=is_signed
     )
 
+  # NOTE: scratch can be reused immediately once this function returns.
   def reduce_sum(self, scratch) -> ir.Value:
     if ir.FloatType.isinstance(self.mlir_dtype):
       op = arith.addf
@@ -749,7 +750,9 @@ class FragmentedArray:
       )
       memref.store(scratch_sum, scratch, [zero_index])
     utils.warpgroup_barrier()
-    return memref.load(scratch, [zero_index])
+    result = memref.load(scratch, [zero_index])
+    utils.warpgroup_barrier()  # Make sure everyone is done using scratch.
+    return result
 
   def reduce(self, op, axis):
     if self.layout != WGMMA_LAYOUT:
