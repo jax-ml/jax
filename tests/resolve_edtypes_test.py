@@ -169,9 +169,11 @@ class PhysicalizeTest(unittest.TestCase):
       y = lax.convert_element_type(y, core.bint(8))
       y = lax.convert_element_type(y, jnp.int32)
       return x + y
-    result = jax.jit(fun)(2, 3)
+    two = jnp.array(2, dtype=jnp.int32)
+    three = jnp.array(3, dtype=jnp.int32)
+    result = jax.jit(fun)(two, three)
     self.assertEqual(result, 5)
-    traced = jax.jit(fun).trace(2, 3)
+    traced = jax.jit(fun).trace(two, three)
     phys_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(traced.jaxpr)
     self.assert_jaxpr(phys_jaxpr,
                     lax.convert_element_type_p,
@@ -217,7 +219,7 @@ class PhysicalizeTest(unittest.TestCase):
                         lax.ScatterDimensionNumbers((0, 1), (), (0, 1)))
     k = random.split(random.key(0), (4, 4))
     updates = random.split(random.key(1), (2, 3))
-    indices = jnp.array([0, 1])
+    indices = jnp.array([0, 1], dtype=jnp.int32)
     result = jax.jit(fun)(k, indices, updates)
     np.testing.assert_array_equal(jax.random.key_data(result),
                                   jax.random.key_data(k).at[0:2, 1:4].set(
