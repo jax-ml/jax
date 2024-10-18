@@ -2292,6 +2292,15 @@ def _not_lowering_rule(ctx: LoweringRuleContext, x):
   # xor x, -1
   # covers both cases.
   out_aval = ctx.avals_out[0]
+
+  if out_aval.dtype == np.dtype(np.bool_):
+    def inner(x):
+      a = jnp.where(x, 1, 0)
+      b = jnp.where(x, 1, 0)
+      trues = a == b
+      return jnp.logical_xor(x, trues)
+    return lower_fun(inner, multiple_results=False)(ctx, x)
+
   out_scalar_type = _dtype_to_ir_type(out_aval.dtype)
   if not out_aval.shape:
     # Create a scalar constant.
