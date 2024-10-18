@@ -464,9 +464,12 @@ def _wgmma_lowering(
   match b_transforms:
     case (gpu_core.UnswizzleRef(rhs_swizzle), gpu_core.UntileRef(rhs_tiling)):
       rhs_transpose = False
-    # TODO(apaszke): Actually what we really want to test here is that we're
-    # only doing transposes within the tiles!
-    case (gpu_core.UnswizzleRef(rhs_swizzle), gpu_core.TransposeRef((1, 0, 2, 3)), gpu_core.UntileRef(rhs_tiling)):
+    case (
+        gpu_core.UnswizzleRef(rhs_swizzle),
+        gpu_core.TransposeRef((1, 0, 2, 3)),  # Only transpose between tiles
+        gpu_core.UntileRef(rhs_tiling),
+        gpu_core.TransposeRef((1, 0)),  # Transpose the two logical dims
+    ):
       rhs_transpose = True
     case _:
       raise ValueError(f"WGMMA rhs has unsupported transforms: {b_transforms}.")
