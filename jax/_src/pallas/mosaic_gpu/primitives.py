@@ -622,5 +622,5 @@ def _commit_smem_lowering(ctx: lowering.LoweringRuleContext):
 
 
 def commit_smem():
-  """Sets the maximum number of registers owned by a warp."""
+  """Commits all writes to SMEM, making them visible to loads, TMA and WGMMA."""
   commit_smem_p.bind()
