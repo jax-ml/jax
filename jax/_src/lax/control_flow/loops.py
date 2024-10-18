@@ -1219,9 +1219,9 @@ def scan_bind(*args, **params):
   return core.AxisPrimitive.bind(scan_p, *args, **params)
 
 def _scan_edtype_rule(_,
-                           *args,
-                           jaxpr: core.ClosedJaxpr,
-                           **kwargs):
+                      *args,
+                      jaxpr: core.ClosedJaxpr,
+                      **kwargs):
   return scan_p.bind(*args,
                       jaxpr=jaxpr_passes.resolve_edtypes_jaxpr(jaxpr),
                       **kwargs)
@@ -1902,11 +1902,11 @@ def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
   return invals_out, carry_out
 
 def _while_edtype_rule(_,
-                            *args,
-                            cond_jaxpr: core.ClosedJaxpr,
-                            body_jaxpr: core.ClosedJaxpr,
-                            cond_nconsts: int,
-                            body_nconsts: int):
+                      *args,
+                      cond_jaxpr: core.ClosedJaxpr,
+                      body_jaxpr: core.ClosedJaxpr,
+                      cond_nconsts: int,
+                      body_nconsts: int):
   return while_p.bind(*args,
                       cond_jaxpr=jaxpr_passes.resolve_edtypes_jaxpr(cond_jaxpr),
                       body_jaxpr=jaxpr_passes.resolve_edtypes_jaxpr(body_jaxpr),
@@ -1942,8 +1942,6 @@ def _pred_bcast_select_hlo(ctx,
     assert x.type == y.type, (x.type, y.type)
     assert (pred_aval.shape == x_y_aval.shape[:len(pred_aval.shape)]), (
             pred_aval.shape, x_y_aval)
-    if np.issubdtype(x_y_aval, dtypes.extended):
-      raise ValueError(f"Got extended type {x_y_aval}")
     x_y_aval = core.physical_aval(x_y_aval)
     bcast_pred = mlir.broadcast_in_dim(
         ctx, pred, core.DShapedArray(x_y_aval.shape, np.dtype(np.bool_)),

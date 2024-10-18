@@ -804,7 +804,7 @@ def cond_bind(*args, branches):
   return core.AxisPrimitive.bind(cond_p, *args, branches=branches)
 
 def _cond_edtype_rule(ctx: jaxpr_passes.ResolveEdtypesContext,
-                           index, *args, branches):
+                      index, *args, branches):
   del ctx
   physical_branches = tuple(map(jaxpr_passes.resolve_edtypes_jaxpr,
                                 branches))

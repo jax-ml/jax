@@ -272,7 +272,6 @@ def _get_fastpath_data(
     out_committed = [o._committed for o in out_reflattened]
     kept_var_bitvec = [i in executable._kept_var_idx
                        for i in range(len(args_flat))]
-    # TODO(justinfu): Do we keep this? It's executed in eager mode.
     in_shardings = [
         sharding_impls.physical_sharding(a, s)
         if a is not core.abstract_token and dtypes.issubdtype(a.dtype, dtypes.extended)
