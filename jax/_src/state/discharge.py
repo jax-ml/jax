@@ -44,6 +44,7 @@ from jax._src.util import (
     safe_zip,
     split_dict,
     split_list,
+    unzip2,
     weakref_lru_cache,
 )
 import numpy as np
@@ -896,29 +897,48 @@ def _initial_style_jaxpr(fun, in_tree, in_avals):
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun_, in_avals, debug)
   return jaxpr, consts, out_tree_thunk()
 
+
+_ref_type_aval_mappings: dict[
+    type[Any], Callable[[Any], tuple[AbstractRef, Array]]
+] = {}
+
+
+def _default_ref_type(x: Any) -> tuple[AbstractRef, Array]:
+  # Default type mapping just creates an AbstractRef from the array's aval.
+  aval = core.raise_to_shaped(core.get_aval(x))
+  return AbstractRef(aval), x
+
+
+def _get_ref_aval_from_value(x: Any):
+  if type(x) in _ref_type_aval_mappings:
+    return _ref_type_aval_mappings[type(x)](x)
+  return _default_ref_type(x)
+
+
 T = TypeVar('T')
 def run_state(f: Callable[..., None]) -> Callable[[T], T]:
   def wrapped(args):
     flat_args, in_tree = tree_util.tree_flatten(args)
-    avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in flat_args]
-    jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, map(AbstractRef, avals))
+    ref_avals, ref_args = unzip2(map(_get_ref_aval_from_value, flat_args))
+    jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, ref_avals)
     jaxpr = hoist_consts_to_refs(jaxpr_)
-    which_linear = (False,) * (len(consts) + len(flat_args))
-    out_const_flat = run_state_p.bind(*consts, *flat_args, jaxpr=jaxpr,
+    which_linear = (False,) * (len(consts) + len(ref_args))
+    out_const_flat = run_state_p.bind(*consts, *ref_args, jaxpr=jaxpr,
                                       which_linear=which_linear)
     _, out_flat = split_list(out_const_flat, [len(consts)])
     return in_tree.unflatten(out_flat)
   return wrapped
 
+
 def run_state_reference(f: Callable[..., None]):
   def wrapped(args):
     flat_args, in_tree = tree_util.tree_flatten(args)
-    avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in flat_args]
-    jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, map(AbstractRef, avals))
+    ref_avals, ref_args = unzip2(map(_get_ref_aval_from_value, flat_args))
+    jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, ref_avals)
     jaxpr = hoist_consts_to_refs(jaxpr_)
     discharged_jaxpr, discharged_consts = discharge_state(jaxpr, ())
     out_const_flat = core.eval_jaxpr(discharged_jaxpr, discharged_consts,
-                                     *consts, *args)
+                                     *consts, *ref_args)
     _, out_flat = split_list(out_const_flat, [len(consts)])
     return in_tree.unflatten(out_flat)
   return wrapped
