@@ -23,6 +23,10 @@ from .cluster import ClusterEnv as ClusterEnv
 from .ompi_cluster import OmpiCluster as OmpiCluster
 from .slurm_cluster import SlurmCluster as SlurmCluster
 from .mpi4py_cluster import Mpi4pyCluster as Mpi4pyCluster
-from .cloud_tpu_cluster import GkeTpuCluster as GkeTpuCluster
-from .cloud_tpu_cluster import GceTpuCluster as GceTpuCluster
 from .k8s_cluster import K8sCluster as K8sCluster
+# This is an abstract environment to be imported before the concrete impls.
+from .cloud_tpu_cluster import BaseTpuCluster as BaseTpuCluster
+from .cloud_gke_cluster import GkeTpuCluster as GkeTpuCluster
+# This environment check will query the GCE metadata server, so we put it at the
+# end of the list to avoid unnecessary queries.
+from .cloud_gce_cluster import GceTpuCluster as GceTpuCluster
