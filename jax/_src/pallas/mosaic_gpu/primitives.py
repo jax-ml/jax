@@ -59,7 +59,7 @@ def _copy_smem_to_gmem_lowering(
   )
   src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
-  src = lowering._handle_indexing(src, src_transforms)
+  src, src_transforms = lowering._handle_indexing(src, src_transforms)
   copy_params = _extract_gmem_copy_params(dst_transforms) | _extract_smem_copy_params(src_transforms)
   mgpu.commit_shared()
   ctx.launch_ctx.async_copy(src_ref=src, dst_ref=dst, **copy_params)
@@ -80,11 +80,12 @@ def _extract_gmem_copy_params(transforms):
 def _extract_smem_copy_params(transforms):
   if not transforms:
     return {}
-  if isinstance(transforms[-1], indexing.NDIndexer):
-    transforms = transforms[:-1]
-  swizzle = lowering._is_swizzled(transforms)
-  if swizzle is not None:
-    transforms = transforms[1:]
+  # Split off swizzling, if present
+  match transforms:
+    case [gpu_core.UnswizzleRef(swizzle), *transforms]:
+      pass
+    case _:
+      swizzle = None
   gpu_transforms = tuple(t.undo_to_gpu_transform() for t in transforms[::-1])
   return dict(
       gmem_transform=gpu_transforms,
@@ -159,7 +160,7 @@ def _copy_gmem_to_smem_lowering(
   )
   src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
-  dst = lowering._handle_indexing(dst, dst_transforms)
+  dst, dst_transforms = lowering._handle_indexing(dst, dst_transforms)
   copy_params = _extract_smem_copy_params(dst_transforms) | _extract_gmem_copy_params(src_transforms)
   barrier_indexer = _extract_barrier_indexer(
       barrier_transforms_treedef.unflatten(flat_barrier_transforms)

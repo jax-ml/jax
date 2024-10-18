@@ -128,20 +128,22 @@ class UntileRef(Transform):
   def transform_dtype(self, dtype):
     return dtype
 
-  def untransform_index(self, idxs: tuple[Index, ...]) -> tuple[Index, ...]:
-    if not all(isinstance(idx, slice) for idx in idxs):
-      raise NotImplementedError("Non-slice indices are not supported")
+  def untransform_index(
+      self, idxs: tuple[Index, ...]
+  ) -> tuple[tuple[Index, ...], Transform]:
     untiled_idxs = idxs[: -len(self.tiling)]
     tiled_idxs = idxs[-len(self.tiling) :]
     idxs_after_tiling = []
     for idx, tile in zip(tiled_idxs, self.tiling):
+      if not isinstance(idx, slice):
+        raise NotImplementedError("Non-slice indices are not supported")
       assert isinstance(idx, slice)
       if idx.step is not None and idx.step != 1:
         raise NotImplementedError("Strided slices unsupported")
       if (idx.start is not None and idx.start % tile) or (idx.stop is not None and idx.stop % tile):
         raise ValueError("Non-empty slices must be tile aligned")
       idxs_after_tiling.append(slice(idx.start // tile, idx.stop // tile))
-    return (*untiled_idxs, *idxs_after_tiling, *(slice(None) for _ in self.tiling))
+    return (*untiled_idxs, *idxs_after_tiling, *(slice(None) for _ in self.tiling)), self
 
   def undo_to_gpu_transform(self) -> mgpu.MemRefTransform:
     return mgpu.TileTransform(self.tiling)
@@ -197,8 +199,19 @@ class TransposeRef(Transform):
   def transform_dtype(self, dtype):
     return dtype
 
-  def untransform_index(self, idxs: tuple[Index, ...]) -> tuple[Index, ...]:
-    return tuple(idxs[i] for i in _perm_inverse(self.permutation))
+  def untransform_index(
+      self, idxs: tuple[Index, ...]
+  ) -> tuple[tuple[Index, ...], Transform]:
+    removed_dims = [
+        i for i, idx in enumerate(idxs) if not isinstance(idx, slice)
+    ]
+    new_perm = tuple(
+        p - sum(d < p for d in removed_dims)
+        for p in self.permutation
+        if p not in removed_dims
+    )
+    new_idxs = tuple(idxs[i] for i in _perm_inverse(self.permutation))
+    return new_idxs, TransposeRef(new_perm)
 
   def undo_to_gpu_transform(self) -> mgpu.MemRefTransform:
     return mgpu.TransposeTransform(_perm_inverse(self.permutation))
@@ -250,11 +263,15 @@ class SwizzleTransform(MemoryRefTransform):
 class UnswizzleRef(Transform):
   swizzle: int
 
-  def untransform_index(self, idxs: tuple[Index, ...]) -> tuple[Index, ...]:
+  def untransform_index(
+      self, idxs: tuple[Index, ...]
+  ) -> tuple[tuple[Index, ...], Transform]:
     if not idxs:
-      return idxs
-    if not all(isinstance(idx, slice) for idx in idxs):
-      raise NotImplementedError("Non-slice indices are not supported")
+      return idxs, self
+    if not all(isinstance(idx, slice) for idx in idxs[-2:]):
+      raise NotImplementedError(
+          "Non-slice indices are not supported in 2 minormost dims"
+      )
     last_idx = idxs[-1]
     assert isinstance(last_idx, slice)
     if last_idx.step is not None and last_idx.step != 1:
@@ -263,7 +280,7 @@ class UnswizzleRef(Transform):
         last_idx.stop is not None and last_idx.stop != self.swizzle
     ):
       raise ValueError("Swizzled dims cannot be sliced")
-    return idxs
+    return idxs, self
 
   def tree_flatten(self):
     return (), (self.swizzle,)
