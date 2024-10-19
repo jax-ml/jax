@@ -66,11 +66,9 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh, PartitionSpec as P
-from jax.experimental import mesh_utils
 from jax.experimental.shard_map import shard_map
 
-devices = mesh_utils.create_device_mesh((4, 2))
-mesh = Mesh(devices, axis_names=('i', 'j'))
+mesh = jax.make_mesh((4, 2), ('i', 'j'))
 
 a = jnp.arange( 8 * 16.).reshape(8, 16)
 b = jnp.arange(16 * 32.).reshape(16, 32)
