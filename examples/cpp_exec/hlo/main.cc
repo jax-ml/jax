@@ -13,28 +13,30 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-// An example for reading a HloModule from a HloProto file and execute the
-// module on PJRT CPU client.
-//
-// To build a HloModule,
-//
-// $ python3 jax/tools/jax_to_hlo.py \
-// --fn examples.jax_cpp.prog.fn \
-// --input_shapes '[("x", "f32[2,2]"), ("y", "f32[2,2]")]' \
-// --constants '{"z": 2.0}' \
-// --hlo_text_dest /tmp/fn_hlo.txt \
-// --hlo_proto_dest /tmp/fn_hlo.pb
-//
-// To load and run the HloModule,
-//
-// $ bazel build examples/jax_cpp:main --experimental_repo_remote_exec \
-//    --check_visibility=false
-// $ bazel-bin/examples/jax_cpp/main 2021-01-12
-// 15:35:28.316880: I examples/jax_cpp/main.cc:65] result = ( f32[2,2] {
-//   { 1.5, 1.5 },
-//   { 3.5, 3.5 }
-// }
-// )
+/*
+ An example for reading a HloModule from a HloProto file and execute the
+ module on PJRT CPU client.
+
+ To build a HloModule,
+
+ $ python3 jax/tools/jax_to_hlo.py \
+ --fn examples.cpp_exec.hlo.prog.fn \
+ --input_shapes '[("x", "f32[2,2]"), ("y", "f32[2,2]")]' \
+ --constants '{"z": 2.0}' \
+ --hlo_text_dest /tmp/fn_hlo.txt \
+ --hlo_proto_dest /tmp/fn_hlo.pb
+
+ To load and run the HloModule,
+
+ $ bazel build examples/cpp_exec/hlo:main --experimental_repo_remote_exec \
+    --check_visibility=false
+ $ bazel-bin/examples/cpp_exec/hlo/main 2021-01-12
+ 15:35:28.316880: I examples/cpp_exec/hlo/main.cc:65] result = ( f32[2,2] {
+   { 1.5, 1.5 },
+   { 3.5, 3.5 }
+ }
+ )
+*/
 
 #include <memory>
 #include <string>
