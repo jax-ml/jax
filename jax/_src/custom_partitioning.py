@@ -458,7 +458,9 @@ class custom_partitioning:
     in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
     debug = pe.debug_info(self.fun, in_tree, out_tree, False,
                           "custom_partitioning")
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
+    mesh = mesh_lib.thread_resources.env.physical_mesh
+    with core.extend_axis_env_nd(mesh.shape.items()):
+      jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
     assert not len(consts)
     closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
     out_flat = custom_partitioning_p.bind(
