@@ -160,9 +160,22 @@ def callback_batching_rule(
   batched_result_avals = tuple(
       core.unmapped_aval(axis_size, core.no_axis_name, 0, aval)
       for aval in result_avals)
+
+  # For FFI calls we must update the layouts. We handle the output layouts
+  # here, but the input layout updates depend on the vmap_method parameter.
+  if vmap_method != "sequential" and kwargs.get("output_layouts") is not None:
+    kwargs["output_layouts"] = tuple(
+        None if layout is None else tuple(n + 1 for n in layout) + (0,)
+        for layout in kwargs["output_layouts"])
+
   if vmap_method == "legacy_vectorized":
     # This method is kept to support the behavior that was previously exposed
     # when using `vectorized=True`.
+    if kwargs.get("input_layouts") is not None:
+      kwargs["input_layouts"] = tuple(
+          layout if d is batching.not_mapped else
+          (None if layout is None else tuple(n + 1 for n in layout) + (0,))
+          for layout, d in zip(kwargs["input_layouts"], dims))
     outvals = prim.bind(
         *new_args,
         vectorized=vectorized,
@@ -175,6 +188,10 @@ def callback_batching_rule(
     bcast_args = [
         lax.broadcast(x, (size,)) if d is batching.not_mapped else x
         for x, d in zip(new_args, dims)]
+    if kwargs.get("input_layouts") is not None:
+      kwargs["input_layouts"] = tuple(
+          None if layout is None else tuple(n + 1 for n in layout) + (0,)
+          for layout in kwargs["input_layouts"])
     outvals = prim.bind(
       *bcast_args,
       vectorized=vectorized,
