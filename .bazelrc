@@ -71,10 +71,10 @@ build:windows --host_linkopt=/OPT:ICF
 build:windows --incompatible_strict_action_env=true
 
 # #############################################################################
-# Feature-specific configurations. These are used by the Local and CI configs
-# below depending on the type of build. E.g. `local_linux_x86_64` inherits the
-# Linux x86 configs such as `avx_linux` and `mkl_open_source_only`,
-# `local_cuda_base` inherits `cuda` and `build_cuda_with_nvcc`, etc.
+# Feature-specific configurations. These are used by the CI configs below
+# depending on the type of build. E.g. `ci_linux_x86_64` inherits the Linux x86
+# configs such as `avx_linux` and `mkl_open_source_only`, `ci_linux_x86_64_cuda`
+# inherits `cuda` and `build_cuda_with_nvcc`, etc.
 # #############################################################################
 build:nonccl --define=no_nccl_support=true
 
@@ -380,10 +380,3 @@ try-import %workspace%/.jax_configure.bazelrc
 
 # Load rc file with user-specific options.
 try-import %workspace%/.bazelrc.user
-
-# Temporary aliases to not break existing presubmit builds
-build:rbe_cpu_linux_py3.13 --config=rbe_linux_x86_64 --repo_env=HERMETIC_PYTHON_VERSION=3.13
-build:rbe_linux_cuda12.3_nvcc_py3.10 --config=rbe_linux_x86_64_cuda --repo_env=HERMETIC_PYTHON_VERSION=3.10
-build:rbe_cross_compile_linux_arm64 --config=rbe_cross_compile_linux_aarch64
-build:tensorflow_testing_rbe_linux --project_id=tensorflow-testing
-common:tensorflow_testing_rbe_linux --remote_instance_name=projects/tensorflow-testing/instances/default_instance
