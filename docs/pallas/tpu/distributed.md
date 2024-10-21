@@ -39,7 +39,6 @@ outputId: 1d8229bd-cab5-495f-93e9-fff2e41db480
 import jax
 from jax import lax
 from jax import numpy as jnp
-from jax.experimental import mesh_utils
 from jax.experimental import pallas as pl
 from jax.experimental import shard_map
 from jax.experimental.pallas import tpu as pltpu
@@ -207,8 +206,7 @@ id: YkyIKN2thZ-V
 outputId: 9b7ed142-d161-4237-fed8-cbce41adc5f0
 ---
 partition = P(None, 'x')
-devices = mesh_utils.create_device_mesh((1, num_devices))
-mesh = jax.sharding.Mesh(devices, partition)
+mesh = jax.make_mesh((num_devices,), ('x',))
 sharding = jax.sharding.NamedSharding(mesh, partition)
 
 # Create an input array that shards the last dimension across
@@ -225,7 +223,7 @@ def right_permute_kernel(input_ref, output_ref, send_sem, recv_sem):
       dst_ref=output_ref,
       send_sem=send_sem,
       recv_sem=recv_sem,
-      device_id=(0, right_neighbor),
+      device_id=(right_neighbor,),
       device_id_type=pltpu.DeviceIdType.MESH,
   )
   remote_copy_op.start()
@@ -309,8 +307,7 @@ id: ojQEZB5mBRqM
 outputId: e1648f54-737c-4921-ca3b-b4c639a38d2b
 ---
 partition = P('x', None)
-devices = mesh_utils.create_device_mesh((num_devices, 1))
-mesh = jax.sharding.Mesh(devices, partition)
+mesh = jax.make_mesh((num_devices,), ('x',))
 sharding = jax.sharding.NamedSharding(mesh, partition)
 
 # Create an input array that shards the first dimension across
@@ -349,7 +346,7 @@ def all_gather_kernel(input_ref,
       dst_ref=output_ref.at[copy_slot],
       send_sem=send_sem,
       recv_sem=recv_sems.at[outer_step],
-      device_id=(right_neighbor, 0),
+      device_id=(right_neighbor,),
       device_id_type=pltpu.DeviceIdType.MESH,
   )
   remote_copy_op.start()
@@ -577,8 +574,7 @@ id: XrY5bMlvBroQ
 outputId: 77497000-4496-462e-cc3c-73fb640cc14c
 ---
 partition = P(None, 'x')
-devices = mesh_utils.create_device_mesh((1, num_devices))
-mesh = jax.sharding.Mesh(devices, partition)
+mesh = jax.make_mesh((num_devices,), ('x',))
 sharding = jax.sharding.NamedSharding(mesh, partition)
 
 input_arr = jax.random.uniform(jax.random.key(0), shape=(8, 128 * num_devices))
@@ -611,13 +607,13 @@ def all_reduce_kernel(
     pltpu.semaphore_signal(
         barrier_sem,
         inc=1,
-        device_id=(0, left_neighbor),
+        device_id=(left_neighbor,),
         device_id_type=pltpu.DeviceIdType.MESH,
     )
     pltpu.semaphore_signal(
         barrier_sem,
         inc=1,
-        device_id=(0, right_neighbor),
+        device_id=(right_neighbor,),
         device_id_type=pltpu.DeviceIdType.MESH,
     )
     pltpu.semaphore_wait(barrier_sem, 2)
@@ -630,7 +626,7 @@ def all_reduce_kernel(
         dst_ref=hbm_scratch.at[working_slot],
         send_sem=remote_send_sem,
         recv_sem=remote_recv_sem,
-        device_id=(0, right_neighbor),
+        device_id=(right_neighbor,),
         device_id_type=pltpu.DeviceIdType.MESH,
     )
     initial_copy.start()
@@ -642,7 +638,7 @@ def all_reduce_kernel(
   pltpu.semaphore_signal(
       capacity_sem,
       inc=1,
-      device_id=(0, left_neighbor),
+      device_id=(left_neighbor,),
       device_id_type=pltpu.DeviceIdType.MESH,
   )
 
@@ -663,7 +659,7 @@ def all_reduce_kernel(
       dst_ref=hbm_scratch.at[receiving_slot],
       send_sem=remote_send_sem,
       recv_sem=remote_recv_sem,
-      device_id=(0, right_neighbor),
+      device_id=(right_neighbor,),
       device_id_type=pltpu.DeviceIdType.MESH,
   )
   remote_copy.start()
@@ -786,8 +782,7 @@ executionInfo:
 id: nRauUAxNHg28
 ---
 partition = P(None, 'x')
-devices = mesh_utils.create_device_mesh((1, num_devices))
-mesh = jax.sharding.Mesh(devices, partition)
+mesh = jax.make_mesh((num_devices,), ('x',))
 sharding = jax.sharding.NamedSharding(mesh, partition)
 
 # We need a block size of (16, 128) to ensure that a half-slice is at least
@@ -817,7 +812,7 @@ def signal(left_or_right, semaphore):
   pltpu.semaphore_signal(
       semaphore,
       inc=1,
-      device_id=(0, neighbor),
+      device_id=(neighbor,),
       device_id_type=pltpu.DeviceIdType.MESH,
   )
 
@@ -858,7 +853,7 @@ def reduce_scatter_kernel(
       dst_ref=hbm_scratch.at[working_slot, left_copy_slice],
       send_sem=left_send_sem,
       recv_sem=left_recv_sem,
-      device_id=(0, left_neighbor),
+      device_id=(left_neighbor,),
       device_id_type=pltpu.DeviceIdType.MESH,
   )
 
@@ -867,7 +862,7 @@ def reduce_scatter_kernel(
       dst_ref=hbm_scratch.at[working_slot, right_copy_slice],
       send_sem=right_send_sem,
       recv_sem=right_recv_sem,
-      device_id=(0, right_neighbor),
+      device_id=(right_neighbor,),
       device_id_type=pltpu.DeviceIdType.MESH,
   )
 
@@ -876,7 +871,7 @@ def reduce_scatter_kernel(
       dst_ref=hbm_scratch.at[receiving_slot, left_copy_slice],
       send_sem=left_send_sem,
       recv_sem=left_recv_sem,
-      device_id=(0, left_neighbor),
+      device_id=(left_neighbor,),
       device_id_type=pltpu.DeviceIdType.MESH,
   )
   right_copy = pltpu.make_async_remote_copy(
@@ -886,7 +881,7 @@ def reduce_scatter_kernel(
       dst_ref=hbm_scratch.at[working_slot, right_copy_slice],
       send_sem=right_send_sem,
       recv_sem=right_recv_sem,
-      device_id=(0, right_neighbor),
+      device_id=(right_neighbor,),
       device_id_type=pltpu.DeviceIdType.MESH,
   )
 
@@ -899,13 +894,13 @@ def reduce_scatter_kernel(
     pltpu.semaphore_signal(
         barrier_sem,
         inc=1,
-        device_id=(0, left_neighbor),
+        device_id=(left_neighbor,),
         device_id_type=pltpu.DeviceIdType.MESH,
     )
     pltpu.semaphore_signal(
         barrier_sem,
         inc=1,
-        device_id=(0, right_neighbor),
+        device_id=(right_neighbor,),
         device_id_type=pltpu.DeviceIdType.MESH,
     )
     pltpu.semaphore_wait(barrier_sem, 2)
@@ -1212,8 +1207,7 @@ executionInfo:
 id: 27jni-pSartL
 ---
 partition = P(None, 'x')
-devices = mesh_utils.create_device_mesh((1, num_devices))
-mesh = jax.sharding.Mesh(devices, partition)
+mesh = jax.make_mesh((num_devices,), ('x',))
 sharding = jax.sharding.NamedSharding(mesh, partition)
 
 # We pick a large outer kernel block size that we do not want to place
@@ -1279,7 +1273,7 @@ def reduce_scatter_kernel(
       dst_ref=hbm_scratch.at[working_slot, left_copy_slice],
       send_sem=left_send_sem,
       recv_sem=left_recv_sem,
-      device_id=(0, left_neighbor),
+      device_id=(left_neighbor,),
       device_id_type=pltpu.DeviceIdType.MESH,
   )
 
@@ -1288,7 +1282,7 @@ def reduce_scatter_kernel(
       dst_ref=hbm_scratch.at[working_slot, right_copy_slice],
       send_sem=right_send_sem,
       recv_sem=right_recv_sem,
-      device_id=(0, right_neighbor),
+      device_id=(right_neighbor,),
       device_id_type=pltpu.DeviceIdType.MESH,
   )
 
@@ -1297,7 +1291,7 @@ def reduce_scatter_kernel(
       dst_ref=hbm_scratch.at[receiving_slot, left_copy_slice],
       send_sem=left_send_sem,
       recv_sem=left_recv_sem,
-      device_id=(0, left_neighbor),
+      device_id=(left_neighbor,),
       device_id_type=pltpu.DeviceIdType.MESH,
   )
   right_copy = pltpu.make_async_remote_copy(
@@ -1305,7 +1299,7 @@ def reduce_scatter_kernel(
       dst_ref=hbm_scratch.at[working_slot, right_copy_slice],
       send_sem=right_send_sem,
       recv_sem=right_recv_sem,
-      device_id=(0, right_neighbor),
+      device_id=(right_neighbor,),
       device_id_type=pltpu.DeviceIdType.MESH,
   )
 
@@ -1318,13 +1312,13 @@ def reduce_scatter_kernel(
     pltpu.semaphore_signal(
         barrier_sem,
         inc=1,
-        device_id=(0, left_neighbor),
+        device_id=(left_neighbor,),
         device_id_type=pltpu.DeviceIdType.MESH,
     )
     pltpu.semaphore_signal(
         barrier_sem,
         inc=1,
-        device_id=(0, right_neighbor),
+        device_id=(right_neighbor,),
         device_id_type=pltpu.DeviceIdType.MESH,
     )
     pltpu.semaphore_wait(barrier_sem, 2)
