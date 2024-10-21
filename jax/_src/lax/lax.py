@@ -2407,8 +2407,7 @@ def acos_impl(x):
 
 acos_p = standard_unop(_float | _complex, 'acos')
 ad.defjvp(acos_p, lambda g, x: mul(g, -rsqrt(_const(x, 1) - square(x))))
-mlir.register_lowering(acos_p,
-                       mlir.lower_fun(acos_impl, multiple_results=False))
+mlir.register_lowering(acos_p, partial(_nary_lower_hlo, chlo.acos))
 
 def atan_impl(x):
   return atan2(x, _const(x, 1))
