@@ -17,7 +17,7 @@ import collections
 from collections.abc import Callable, Iterable, Sequence
 import dataclasses
 from functools import partial
-from typing import Any, Union
+from typing import Any, Union, TypeAlias
 
 import numpy as np
 
@@ -367,7 +367,7 @@ def ragged_mask_transfer_identity(invar_raggedness, outvar_raggedness):
 ### tracer
 
 # TODO(mattjj): use a special sentinel type rather than None
-NotMapped = type(None)
+NotMapped: TypeAlias = type(None)
 not_mapped = None
 
 
