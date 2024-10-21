@@ -3270,7 +3270,7 @@ def pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings
            ) -> pp.Doc:
   rule = (_pp_eqn if not settings.custom_pp_eqn_rules else
           pp_eqn_rules.get(eqn.primitive, _pp_eqn))
-  doc = rule(eqn, context, settings)  # type: ignore[operator]
+  doc = rule(eqn, context, settings)
   user_frame = source_info_util.user_frame(eqn.source_info)
   return doc if user_frame is None else pp.source_map(doc, user_frame)
 

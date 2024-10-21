@@ -254,7 +254,7 @@ def _pallas_call_impl_interpret(
   num_inout_blocks = len(block_args) + len(out)
   grid_start_indices = (jnp.int32(0),) * len(grid)
   if grid:
-    num_iterations = reduce(jnp.multiply, grid)
+    num_iterations = reduce(jnp.multiply, grid)  # type: ignore[arg-type]
   else:
     # Base case is always one iteration when grid is ()
     num_iterations = 1
@@ -1174,7 +1174,7 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
   )
   grid_start_indices = (jnp.int32(0),) * len(grid)
   if grid:
-    num_iterations = reduce(jnp.multiply, grid)
+    num_iterations = reduce(jnp.multiply, grid)  # type: ignore[arg-type]
   else:
     # Base case is always one iteration when grid is ()
     num_iterations = 1

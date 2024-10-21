@@ -779,7 +779,7 @@ def _extract_implicit_args(
           args[d1.val] = d2
         assert core.same_referent(args[d1.val], d2)
   assert all(x is not None for x in args)
-  return [x for x, (_, e) in zip(args, in_type) if not e]  # pytype: disable=bad-return-type
+  return [x for x, (_, e) in zip(args, in_type) if not e]  # type: ignore
 
 def _flat_axes_specs(abstracted_axes, *args, **kwargs
                      ) -> list[pe.AbstractedAxesSpec] | None:
@@ -1545,6 +1545,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
           else:
             resolved_in_shardings.append(arg_s)
         else:
+          assert isinstance(arg_s, sharding.Sharding)
           if dispatch.is_single_device_sharding(arg_s):
             resolved_in_shardings.append(UNSPECIFIED)
           else:
@@ -1581,7 +1582,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
             not isinstance(arg_s, PmapSharding) and
             not op_shardings.are_op_shardings_equal(
                 pjit_in_s._to_xla_hlo_sharding(arg.ndim),  # type: ignore
-                arg_s._to_xla_hlo_sharding(arg.ndim))):
+                arg_s._to_xla_hlo_sharding(arg.ndim))):  # type: ignore
           raise ValueError('Sharding passed to pjit does not match the sharding '
                            'on the respective arg. '
                            f'Got pjit sharding: {pjit_in_s},\n'

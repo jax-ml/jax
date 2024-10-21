@@ -6477,7 +6477,7 @@ def _arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
     if (not dtypes.issubdtype(start_dtype, np.integer) and
         not dtypes.issubdtype(start_dtype, dtypes.extended)):
       ceil_ = ufuncs.ceil if isinstance(start, core.Tracer) else np.ceil
-      start = ceil_(start).astype(int)  # type: ignore[operator]
+      start = ceil_(start).astype(int)
     return lax.iota(dtype, start)  # type: ignore[arg-type]
   else:
     if step is None and start == 0 and stop is not None:
