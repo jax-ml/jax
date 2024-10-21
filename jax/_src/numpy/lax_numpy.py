@@ -1787,7 +1787,7 @@ def diff(a: ArrayLike, n: int = 1, axis: int = -1,
   slice1_tuple = tuple(slice1)
   slice2_tuple = tuple(slice2)
 
-  op = ufuncs.not_equal if arr.dtype == np.bool_ else ufuncs.subtract
+  op = operator.not_equal if arr.dtype == np.bool_ else operator.sub
   for _ in range(n):
     arr = op(arr[slice1_tuple], arr[slice2_tuple])
 

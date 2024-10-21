@@ -829,7 +829,7 @@ def stack(
 def std(a: ArrayLike, axis: _Axis = ..., dtype: DTypeLike = ...,
         out: None = ..., ddof: int = ..., keepdims: builtins.bool = ..., *,
         where: ArrayLike | None = ..., correction: int | float | None = ...) -> Array: ...
-def subtract(x: ArrayLike, y: ArrayLike, /) -> Array: ...
+subtract: BinaryUfunc
 def sum(
     a: ArrayLike,
     axis: _Axis = ...,
