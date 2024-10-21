@@ -35,6 +35,7 @@ from jax._src import sharding_impls
 from jax._src.interpreters import mlir
 from jax._src.lib import tpu
 from jax._src.lib import xla_client
+from jax._src.pallas import core as pallas_core
 from jax.interpreters import xla
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import mhlo
@@ -92,26 +93,13 @@ class MemorySpace(enum.Enum):
 
 
 @dataclasses.dataclass(frozen=True)
-class CostEstimate:
-  flops: int
-  transcendentals: int
-  bytes_accessed: int
-
-  def to_json(self) -> bytes:
-    return (
-        f'{{"flops": {self.flops}, "transcendentals": {self.transcendentals},'
-        f' "bytes_accessed": {self.bytes_accessed}}}'
-    ).encode('ascii')
-
-
-@dataclasses.dataclass(frozen=True)
 class CustomCallBackendConfig:
   """Represents an unserialized backend config for custom calls."""
   lowered_module_asm: bytes
   has_communication: bool
   collective_id: int | None
   device_type: str | None
-  cost_estimate: CostEstimate | None
+  cost_estimate: pallas_core.CostEstimate | None
   needs_hlo_passes: bool
   needs_layout_passes: bool
   vmem_limit_bytes: int | None
@@ -459,7 +447,7 @@ def _lower_to_custom_call_config(
     backend: str,
     device_type: str | None,
     vmem_limit_bytes: int | None,
-    cost_estimate: CostEstimate | None,
+    cost_estimate: pallas_core.CostEstimate | None,
     flags: dict[str, bool | int | float] | None,
     allow_input_fusion: list[bool] | None,
     internal_scratch_in_bytes: int | None,
@@ -499,7 +487,7 @@ def _lowered_to_custom_call_config(
     lowered_module_asm: bytes,
     *,
     vmem_limit_bytes: int | None,
-    cost_estimate: CostEstimate | None,
+    cost_estimate: pallas_core.CostEstimate | None,
     flags: dict[str, bool | int | float] | None,
     allow_input_fusion: list[bool] | None,
     internal_scratch_in_bytes: int | None,
@@ -552,7 +540,7 @@ def lower_module_to_custom_call(
     out_type: Any,
     backend: str,
     kernel_name: str,
-    cost_estimate: CostEstimate | None,
+    cost_estimate: pallas_core.CostEstimate | None,
     vmem_limit_bytes: int | None,
     flags: dict[str, bool | int | float] | None,
     allow_input_fusion: list[bool] | None,
@@ -590,7 +578,7 @@ def as_tpu_kernel(
     module: ir.Module,
     out_type: Any,
     *,
-    cost_estimate: CostEstimate | None = None,
+    cost_estimate: pallas_core.CostEstimate | None = None,
     backend: str | xla_client.Client = "tpu",
     device_type: str | None = None,
     kernel_name: str | None = None,
@@ -630,7 +618,7 @@ def lowered_as_tpu_kernel(
     out_type: Any,
     *,
     collective_id: int | None = None,
-    cost_estimate: CostEstimate | None = None,
+    cost_estimate: pallas_core.CostEstimate | None = None,
     needs_hlo_passes: bool = False,
     needs_layout_passes: bool = False,
     device_type: str | None = None,
