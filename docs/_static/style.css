@@ -155,6 +155,10 @@
   color: white;
 }
 
+.color-cards + p > a {
+  color: white;
+}
+
 html[data-theme="dark"] .color-cards,
 html[data-theme="dark"] .hero,
 html[data-theme="dark"] .color-cards + p {
