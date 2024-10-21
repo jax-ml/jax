@@ -37,8 +37,6 @@ _nameToLevel = {
     'DEBUG': logging.DEBUG,
     'NOTSET': logging.NOTSET,
 }
-def _getLevelNamesMapping():
-  return _nameToLevel
 
 _tf_cpp_map = {
     'CRITICAL': 3,
@@ -51,12 +49,12 @@ _tf_cpp_map = {
 }
 
 def _set_TF_CPP_MIN_LOG_LEVEL(logging_level: str | None = None):
-  # resetting to user-default TF_CPP_MIN_LOG_LEVEL
-  # this is typically "1", but if the user overrode it, it can be != "1"
-  os.environ["TF_CPP_MIN_LOG_LEVEL"] = _default_TF_CPP_MIN_LOG_LEVEL
-
-  # set cpp runtime logging level if the level is anything but NOTSET
-  if logging_level is not None and logging_level != "NOTSET":
+  if logging_level in (None, "NOTSET"):
+    # resetting to user-default TF_CPP_MIN_LOG_LEVEL
+    # this is typically "1", but if the user overrode it, it can be != "1"
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = _default_TF_CPP_MIN_LOG_LEVEL
+  else:
+    # set cpp runtime logging level if the level is anything but NOTSET
     if logging_level not in _tf_cpp_map:
       raise ValueError(f"Attempting to set log level \"{logging_level}\" which"
                        f" isn't one of the supported:"
@@ -76,7 +74,7 @@ def update_logging_level_global(logging_level: str | None) -> None:
   if logging_level is None:
     return
 
-  logging_level_num = _getLevelNamesMapping()[logging_level]
+  logging_level_num = _nameToLevel[logging_level]
 
   # update jax and jaxlib root loggers for propagation
   root_loggers = [logging.getLogger("jax"), logging.getLogger("jaxlib")]

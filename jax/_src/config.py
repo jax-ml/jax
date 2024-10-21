@@ -1780,10 +1780,10 @@ optional_enum_state(
     name='jax_logging_level',
     enum_values=['NOTSET', 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
     default=logging.getLevelName(logging.getLogger("jax").level),
-    help=('Set the correspoding logging level on all jax loggers. Only string'
+    help=('Set the corresponding logging level on all jax loggers. Only string'
           ' values from ["NOTSET", "DEBUG", "INFO", "WARNING", "ERROR",'
           ' "CRITICAL"] are accepted. If None, the logging level will not be'
-          ' set.'),
+          ' set. Includes C++ logging.'),
     update_global_hook=lambda logging_level: \
       logging_config.update_logging_level_global(logging_level=logging_level)
 )

@@ -202,6 +202,13 @@ class LoggingTest(jtu.JaxTestCase):
     self.assertIn("INFO", log_output)
     self.assertIn("DEBUG", log_output)
 
+    # test JAX_DEBUG_MODULES
+    cmd = shlex.split(f"env JAX_DEBUG_LOG_MODULES=jax {sys.executable} -c"
+                      f" '{program}'")
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    log_output = p.stderr
+    self.assertIn("DEBUG", log_output)
+
   @unittest.skipIf(platform.system() == "Windows",
                    "Subprocess test doesn't work on Windows")
   def test_subprocess_toggling_logging_level(self):
