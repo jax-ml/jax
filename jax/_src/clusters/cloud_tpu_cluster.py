@@ -180,6 +180,9 @@ class GceTpuCluster(BaseTpuCluster):
     if not running_in_cloud_tpu_vm:
       logger.debug("Did not detect cloud TPU VM")
       return False
+    if os.environ.get("TPU_SKIP_MDS_QUERY") is not None:
+      logger.debug("TPU_SKIP_MDS_QUERY is set to True, so it's probably not a GCE TPU cluster.")
+      return False
     metadata_response, metadata_code = get_metadata('agent-worker-number')
     if metadata_code == metadata_response_code_success:
       logger.debug("Gce Tpu Cluster detected for Jax Distributed System")
