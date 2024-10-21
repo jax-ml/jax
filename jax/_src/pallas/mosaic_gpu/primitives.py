@@ -107,10 +107,10 @@ def copy_smem_to_gmem(
   if dst.memory_space is not gpu_core.GMEM:
     raise ValueError(f"dst must be a GMEM reference, got {dst.memory_space}")
   src, src_transforms = state_primitives.get_ref_and_transforms(
-      src, None, "copy_smem_to_gmem"
+      src, None, "copy_smem_to_gmem", force_trailing_indexer=False,
   )
   dst, dst_transforms = state_primitives.get_ref_and_transforms(
-      dst, None, "copy_smem_to_gmem"
+      dst, None, "copy_smem_to_gmem", force_trailing_indexer=False,
   )
   flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
       src_transforms
@@ -193,10 +193,10 @@ def copy_gmem_to_smem(
   if dst.memory_space is not gpu_core.SMEM:
     raise ValueError(f"dst must be a SMEM reference, got {dst.memory_space}")
   src, src_transforms = state_primitives.get_ref_and_transforms(
-      src, None, "copy_gmem_to_smem"
+      src, None, "copy_gmem_to_smem", force_trailing_indexer=False,
   )
   dst, dst_transforms = state_primitives.get_ref_and_transforms(
-      dst, None, "copy_gmem_to_smem"
+      dst, None, "copy_gmem_to_smem", force_trailing_indexer=False,
   )
   flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
       src_transforms
@@ -205,7 +205,7 @@ def copy_gmem_to_smem(
       dst_transforms
   )
   barrier, barrier_transforms = state_primitives.get_ref_and_transforms(
-      barrier, None, "copy_gmem_to_smem"
+      barrier, None, "copy_gmem_to_smem", force_trailing_indexer=False,
   )
   flat_barrier_transforms, barrier_transforms_treedef = tree_util.tree_flatten(
       barrier_transforms
@@ -284,7 +284,7 @@ def _barrier_arrive_lowering(
 def barrier_arrive(barrier: pallas_core.AbstractMemoryRef) -> None:
   """Arrives at the given barrier."""
   barrier, transforms = state_primitives.get_ref_and_transforms(
-      barrier, None, "barrier_arrive"
+      barrier, None, "barrier_arrive", force_trailing_indexer=False,
   )
   flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
   barrier_arrive_p.bind(
@@ -321,7 +321,7 @@ def _barrier_wait_lowering(
 def barrier_wait(barrier: pallas_core.AbstractMemoryRef) -> None:
   """Waits on the given barrier."""
   barrier, transforms = state_primitives.get_ref_and_transforms(
-      barrier, None, "barrier_wait"
+      barrier, None, "barrier_wait", force_trailing_indexer=False,
   )
   flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
   barrier_wait_p.bind(

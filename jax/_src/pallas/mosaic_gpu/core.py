@@ -226,11 +226,11 @@ class TransposeRef(Transform):
 
 
 def transpose_ref(
-    ref: pallas_core.TransformedRef | pallas_core.AbstractMemoryRef,
+    ref: pallas_core.TransformedRef | Any,
     permutation: tuple[int, ...],
 ) -> pallas_core.TransformedRef:
   if not isinstance(ref, pallas_core.TransformedRef):
-    if not isinstance(ref, pallas_core.AbstractMemoryRef):
+    if not isinstance(jax_core.get_aval(ref), pallas_core.AbstractMemoryRef):
       raise TypeError("ref must be a reference")
     ref = pallas_core.TransformedRef(ref, transforms=())
   return pallas_core.TransformedRef(

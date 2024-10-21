@@ -314,6 +314,29 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
     np.testing.assert_array_equal(f(x), np.stack([x, x], axis=0))
 
+  def test_indexing_before_transpose(self):
+    def kernel(x_ref, o_ref, barrier_ref):
+      for i in range(2):
+        plgpu.copy_gmem_to_smem(
+            x_ref, plgpu.transpose_ref(o_ref.at[i], (1, 0, 2)), barrier=barrier_ref
+        )
+        plgpu.barrier_wait(barrier_ref)
+
+    in_spec = pl.BlockSpec(memory_space=plgpu.GMEM)
+    out_spec = plgpu.GPUBlockSpec(
+        (2, 64, 2, 128), lambda: (0, 0, 0, 0), memory_space=plgpu.SMEM,
+    )
+    f = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct([2, 64, 2, 128], jnp.float32),
+        in_specs=(in_spec,),
+        out_specs=out_spec,
+        scratch_shapes=[plgpu.Barrier(num_arrivals=1)],
+    )
+    x = jnp.arange(2 * 64 * 128, dtype=jnp.float32).reshape(2, 64, 128)
+    xt = x.transpose((1, 0, 2))
+    np.testing.assert_array_equal(f(x), np.stack([xt, xt], axis=0))
+
   def test_copy_gmem_to_smem_in_run_scoped(self):
     @functools.partial(
         pl.pallas_call,

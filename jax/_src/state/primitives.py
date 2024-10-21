@@ -73,6 +73,7 @@ def get_ref_and_transforms(
     ref_or_view: Any,
     idx: Indexer | tuple[Indexer, ...] | None,
     function_name: str,
+    force_trailing_indexer: bool = True,  # TODO(apaszke): Clean this up.
 ) -> tuple[Any, tuple[Transform, ...]]:
   if isinstance(ref_or_view, TransformedRef):
     ref, transforms = ref_or_view.ref, ref_or_view.transforms
@@ -89,6 +90,8 @@ def get_ref_and_transforms(
   elif not isinstance(idx, tuple):
     idx = (idx,)
 
+  if not idx and not force_trailing_indexer:
+    return ref, transforms
   if not idx and transforms and isinstance(transforms[-1], indexing.NDIndexer):
     return ref, transforms
   nd_indexer = indexing.NDIndexer.from_indices_shape(idx, ref_or_view.shape)
