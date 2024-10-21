@@ -24,7 +24,7 @@ from jax._src.api_util import flatten_fun_nokwargs
 from jax._src.interpreters import ad
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_flatten, tree_unflatten, tree_structure,
-                                treedef_tuple)
+                                treedef_tuple, tree_map)
 from jax._src.util import unzip2, safe_map, safe_zip, split_list
 
 map, unsafe_map = safe_map, map
@@ -35,22 +35,19 @@ Pytree = Any
 
 register = api_util.register_class_with_attrs
 
-@contextmanager
 def top_trace():
   stack = core.thread_local_state.trace_state.trace_stack.stack
-  main = stack.pop()
-  try:
-    trace = main.with_cur_sublevel()
-    yield trace
-  finally:
-    stack.append(main)
+  return stack[-1].with_cur_sublevel()
 
 def jax_getattr(obj: Any, attr: str):
-  with top_trace() as trace:
+  trace = top_trace()
+  with core.pop_level(trace.level):
     return trace.process_getattr(obj, attr)
 
 def jax_setattr(obj: Any, attr: str, val: Pytree):
-  with top_trace() as trace:
+  trace = top_trace()
+  val = tree_map(trace.full_raise, val)
+  with core.pop_level(trace.level):
     return trace.process_setattr(obj, attr, val)
 
 def _getattr_impl(_, obj, attr):
@@ -90,7 +87,6 @@ def _setattr_staging(trace, obj, attr, val):
   trace._ensure_tracked(obj, attr)
   setattr(obj, attr, val)
 pe.DynamicJaxprTrace.process_setattr = _setattr_staging
-
 
 def jvp(f, primals, tangents, attr_tangents):
   attrs, attr_tangents = unzip2(((o, a), t) for o, a, t in attr_tangents)
@@ -140,8 +136,8 @@ def jvp_subtrace2(main, primals, tangents):
   del main.attrs_tracked
   yield out_primals, out_tangents, tangent_attrs_out
 
-def _setattr_jvp(trace, obj, attr, maybe_tracer):
-  tracer = trace.full_raise(maybe_tracer)
+def _setattr_jvp(trace, obj, attr, tracer):
+  if not isinstance(tracer, core.Tracer): raise NotImplementedError  # pytrees
   if isinstance(tracer.tangent, ad.Zero):
     return setattr(obj, attr, tracer.primal)
   if (obj, attr) not in trace.main.attrs_tracked:
