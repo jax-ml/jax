@@ -364,7 +364,7 @@ wgmma_ref_p.multiple_results = True
 
 def wgmma(
     acc: gpu_core.WGMMAAbstractAccumulatorRef,
-    a: pallas_core.TransformedRef,
+    a,
     b: pallas_core.TransformedRef,
 ) -> None:
   """Performs and asynchronous warp group matmul-accumulate on the given references.
@@ -395,12 +395,16 @@ def wgmma(
   if a.dtype != b.dtype:
     raise ValueError(f"Mixed input dtypes for matrix multiplication unsupported: lhs={a.dtype}, rhs={b.dtype}")
 
-  a_transforms_leaves, a_transforms_tree = jax.tree.flatten(a.transforms)
+  if isinstance(a, pallas_core.TransformedRef):
+    a_transforms_leaves, a_transforms_tree = jax.tree.flatten(a.transforms)
+    a = a.ref
+  else:
+    a_transforms_leaves, a_transforms_tree = [], None
   b_transforms_leaves, b_transforms_tree = jax.tree.flatten(b.transforms)
 
   wgmma_ref_p.bind(
       acc,
-      a.ref,
+      a,
       b.ref,
       *a_transforms_leaves,
       *b_transforms_leaves,
@@ -411,15 +415,15 @@ def wgmma(
 
 @wgmma_ref_p.def_effectful_abstract_eval
 def _wgmma_ref_effectful_abstract_eval(acc_aval, a_aval, b_aval, *_, **params):
-  del a_aval, b_aval, params
+  del b_aval, params
   if not isinstance(acc_aval, gpu_core.WGMMAAbstractAccumulatorRef):
     raise TypeError(f"Expected WGMMAAbstractAccumulatorRef got {acc_aval}")
   return (), {
       _wgmma_pipeline_effect,
       state.WriteEffect(0),
       state.ReadEffect(0),
-      state.ReadEffect(1),
       state.ReadEffect(2),
+      *([state.ReadEffect(1)] if isinstance(a_aval, state.AbstractRef) else [])
   }
 
 
@@ -444,22 +448,30 @@ def _wgmma_lowering(
     b_transforms_tree,
 ):
   _, a_aval, *_ = ctx.avals_in
-  a_transforms_leaves, b_transforms_leaves = util.split_list(
-      transforms_leaves, [a_transforms_tree.num_leaves]
-  )
-  a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
+  lhs_swizzle = None
+  if a_transforms_tree is not None:
+    a_transforms_leaves, b_transforms_leaves = util.split_list(
+        transforms_leaves, [a_transforms_tree.num_leaves]
+    )
+    a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
+    a, a_transforms = lowering._handle_indexing(a, a_transforms)
+    match a_transforms:
+      case (gpu_core.UnswizzleRef(lhs_swizzle), gpu_core.UntileRef(tiling)):
+        swizzle_elems = lhs_swizzle // a_aval.dtype.itemsize
+        if tiling != (64, swizzle_elems):
+          raise NotImplementedError("WGMMA lhs tiling does not fit swizzle")
+      case _:
+        raise ValueError(f"WGMMA lhs has unsupported transforms: {a_transforms}.")
+  else:
+    b_transforms_leaves = transforms_leaves  # type: ignore
+    if not isinstance(a, mgpu.FragmentedArray):
+      raise ValueError(
+          "When WGMMA lhs is passed in as a ref, it must be transformed by"
+          " swizzling and tiling appropriately."
+      )
+
   b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
-
-  a, a_transforms = lowering._handle_indexing(a, a_transforms)
   b, b_transforms = lowering._handle_indexing(b, b_transforms)
-
-  match a_transforms:
-    case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
-      swizzle_elems = swizzle // a_aval.dtype.itemsize
-      if tiling != (64, swizzle_elems):
-        raise NotImplementedError("WGMMA lhs tiling does not fit swizzle")
-    case _:
-      raise ValueError(f"WGMMA lhs has unsupported transforms: {a_transforms}.")
 
   match b_transforms:
     case (gpu_core.UnswizzleRef(rhs_swizzle), gpu_core.UntileRef(rhs_tiling)):
@@ -474,16 +486,18 @@ def _wgmma_lowering(
     case _:
       raise ValueError(f"WGMMA rhs has unsupported transforms: {b_transforms}.")
 
-  if rhs_swizzle != swizzle:
-    raise NotImplementedError("WGMMA rhs swizzle must match lhs swizzle")
-  if rhs_tiling != (swizzle_elems, swizzle_elems):
-    raise NotImplementedError("WGMMA rhs tiling does not fit swizzle")
+  if lhs_swizzle is not None:
+    swizzle_elems = rhs_swizzle // a_aval.dtype.itemsize
+    if rhs_swizzle != lhs_swizzle:
+      raise NotImplementedError("WGMMA rhs swizzle must match lhs swizzle")
+    if rhs_tiling != (swizzle_elems, swizzle_elems):
+      raise NotImplementedError("WGMMA rhs tiling does not fit swizzle")
 
   new_acc = mgpu.wgmma(
       acc,
       a,
       b,
-      swizzle=swizzle,
+      swizzle=rhs_swizzle,
       b_order=mgpu.WGMMALayout.COL_MAJOR
       if rhs_transpose
       else mgpu.WGMMALayout.ROW_MAJOR,
@@ -493,12 +507,12 @@ def _wgmma_lowering(
 
 
 @wgmma_p.def_effectful_abstract_eval
-def _wgmma_effectful_abstract_eval(acc, *args, **kwargs):
+def _wgmma_effectful_abstract_eval(acc, lhs_ref, *args, **kwargs):
   del args, kwargs
   return acc, {
       _wgmma_pipeline_effect,
-      state.ReadEffect(1),
       state.ReadEffect(2),
+      *([state.ReadEffect(1)] if isinstance(lhs_ref, state.AbstractRef) else [])
   }
 
 wgmma_wait_p = jax_core.Primitive("wgmma_wait")
