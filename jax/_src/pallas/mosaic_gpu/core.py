@@ -14,6 +14,8 @@
 
 """Contains GPU-specific Pallas abstractions."""
 
+from __future__ import annotations
+
 import abc
 import collections
 from collections.abc import Sequence
@@ -25,8 +27,7 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import tree_util
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import pallas_call
-from jax._src.state.types import Transform
+from jax._src.state import types as state_types
 import jax.experimental.mosaic.gpu as mgpu
 import jax.numpy as jnp
 from jaxlib.mlir import ir
@@ -112,7 +113,7 @@ class TilingTransform(MemoryRefTransform):
 
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
-class UntileRef(Transform):
+class UntileRef(state_types.Transform):
   tiling: tuple[int, ...]
 
   def transform_shape(self, shape):
@@ -130,7 +131,7 @@ class UntileRef(Transform):
 
   def untransform_index(
       self, idxs: tuple[Index, ...]
-  ) -> tuple[tuple[Index, ...], Transform]:
+  ) -> tuple[tuple[Index, ...], state_types.Transform]:
     untiled_idxs = idxs[: -len(self.tiling)]
     tiled_idxs = idxs[-len(self.tiling) :]
     idxs_after_tiling = []
@@ -188,7 +189,7 @@ class TransposeTransform(MemoryRefTransform):
 
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
-class TransposeRef(Transform):
+class TransposeRef(state_types.Transform):
   permutation: tuple[int, ...]
 
   def transform_shape(self, shape):
@@ -201,7 +202,7 @@ class TransposeRef(Transform):
 
   def untransform_index(
       self, idxs: tuple[Index, ...]
-  ) -> tuple[tuple[Index, ...], Transform]:
+  ) -> tuple[tuple[Index, ...], state_types.Transform]:
     removed_dims = [
         i for i, idx in enumerate(idxs) if not isinstance(idx, slice)
     ]
@@ -273,12 +274,12 @@ class SwizzleTransform(MemoryRefTransform):
 
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
-class UnswizzleRef(Transform):
+class UnswizzleRef(state_types.Transform):
   swizzle: int
 
   def untransform_index(
       self, idxs: tuple[Index, ...]
-  ) -> tuple[tuple[Index, ...], Transform]:
+  ) -> tuple[tuple[Index, ...], state_types.Transform]:
     if not idxs:
       return idxs, self
     if not all(isinstance(idx, slice) for idx in idxs[-2:]):
@@ -458,28 +459,19 @@ def _gpu_mesh_discharge_rule(
     mesh,
     jaxpr,
 ):
-  del out_avals
   assert isinstance(mesh, GPUMesh)
   if mesh.grid or mesh.cluster:
     raise NotImplementedError
   if mesh.num_threads is None:
     raise NotImplementedError
   threads_axis_name, num_threads = list(mesh.shape.items())[0]
-  def body(*args):
-    # Due to aliasing, args contains aliased inputs and outputs so we remove
-    # outputs.
-    in_refs = args[:len(in_avals)]
-    jax_core.eval_jaxpr(jaxpr, in_refs)
-  assert len(jaxpr.outvars) == 0
-  any_spec = pallas_core.BlockSpec(memory_space=pallas_core.MemorySpace.ANY)
-  out = pallas_call.pallas_call(
-      body,
-      out_shape=in_avals,
-      in_specs=[any_spec] * len(in_avals),
-      out_specs=[any_spec] * len(in_avals),
-      input_output_aliases={i: i for i in range(len(in_avals))},
+  return pallas_core.default_mesh_discharge_rule(
+      in_avals,
+      out_avals,
+      *args,
+      jaxpr=jaxpr,
       grid=((threads_axis_name, num_threads),),
-  )(*args)
-  return out, ()
+      compiler_params=GPUCompilerParams(),
+  )
 
 pallas_core._core_map_mesh_rules[GPUMesh] = _gpu_mesh_discharge_rule
