@@ -23,7 +23,7 @@ from jax._src.lib import xla_client as xc
 
 
 def serialize(compiled: jax.stages.Compiled):
-  """Serializes a compiled binary.
+  """Serializes a compiled binary with pickling.
 
   Because pytrees are not serializable, they are returned so that
   the user can handle them properly.
@@ -44,7 +44,7 @@ def deserialize_and_load(serialized,
                          in_tree,
                          out_tree,
                          backend: str | xc.Client | None = None):
-  """Constructs a jax.stages.Compiled from a serialized executable."""
+  """Constructs a jax.stages.Compiled from a pickle-serialized executable."""
 
   if backend is None or isinstance(backend, str):
     backend = jax.devices(backend)[0].client
@@ -58,6 +58,27 @@ def deserialize_and_load(serialized,
 
   return jax.stages.Compiled(
       loaded_compiled_obj, args_info, out_tree, no_kwargs=no_kwargs)
+
+
+def serialize_raw(compiled: jax.stages.Compiled,
+                  backend: str | xc.Client | None = None):
+  """Serializes a compiled binary in raw format."""
+  u_compiled = compiled._executable._unloaded_executable
+  obj = u_compiled.xla_executable
+
+  if hasattr(obj, 'serialize'):
+    return obj.serialize()
+  else:
+    if backend is None or isinstance(backend, str):
+      backend = jax.devices(backend)[0].client
+    return backend.serialize_executable(obj)
+
+
+def deserialize_raw(serialized: bytes, backend: str | xc.Client | None = None):
+  """Constructs a jax.stages.Compiled from a serialized executable."""
+  if backend is None or isinstance(backend, str):
+    backend = jax.devices(backend)[0].client
+  return backend.deserialize_executable(serialized, None)
 
 
 class _JaxPjrtPickler(pickle.Pickler):
