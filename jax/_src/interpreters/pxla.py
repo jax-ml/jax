@@ -1750,7 +1750,7 @@ def _get_and_check_device_assignment(
   elif first_sharding_info is None:
     final_device_assignment = (_get_default_device(),)
   else:
-    final_device_assignment = first_sharding_info[0]
+    final_device_assignment = first_sharding_info[0]  # type: ignore
   return xb.get_device_backend(final_device_assignment[0]), final_device_assignment
 
 MaybeSharding = Union[JSharding, UnspecifiedValue]
