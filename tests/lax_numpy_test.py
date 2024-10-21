@@ -2993,6 +2993,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  def testDiffBool(self):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng((10,), bool)]
+    self._CheckAgainstNumpy(np.diff, jnp.diff, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp.diff, args_maker)
+
   def testDiffPrepoendScalar(self):
     # Regression test for https://github.com/jax-ml/jax/issues/19362
     x = jnp.arange(10)
