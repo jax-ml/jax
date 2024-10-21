@@ -1432,10 +1432,36 @@ def not_equal(x: ArrayLike, y: ArrayLike, /) -> Array:
   """
   return lax.ne(*promote_args("not_equal", x, y))
 
-@implements(np.subtract, module='numpy')
+
 @partial(jit, inline=True)
-def subtract(x: ArrayLike, y: ArrayLike, /) -> Array:
+def _subtract(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Subtract two arrays element-wise.
+
+  JAX implementation of :obj:`numpy.subtract`. This is a universal function,
+  and supports the additional APIs described at :class:`jax.numpy.ufunc`.
+  This function provides the implementation of the ``-`` operator for
+  JAX arrays.
+
+  Args:
+    x, y: arrays to subtract. Must be broadcastable to a common shape.
+
+  Returns:
+    Array containing the result of the element-wise subtraction.
+
+  Examples:
+    Calling ``subtract`` explicitly:
+
+    >>> x = jnp.arange(4)
+    >>> jnp.subtract(x, 10)
+    Array([-10,  -9,  -8,  -7], dtype=int32)
+
+    Calling ``subtract`` via the ``-`` operator:
+
+    >>> x - 10
+    Array([-10,  -9,  -8,  -7], dtype=int32)
+  """
   return lax.sub(*promote_args("subtract", x, y))
+
 
 @implements(np.arctan2, module='numpy')
 @partial(jit, inline=True)
@@ -3604,6 +3630,9 @@ def _add_at(a: Array, indices: Any, b: ArrayLike):
     return a.at[indices].add(b).astype(bool)
   return a.at[indices].add(b)
 
+def _subtract_at(a: Array, indices: Any, b: ArrayLike):
+  return a.at[indices].subtract(b)
+
 def _multiply_at(a: Array, indices: Any, b: ArrayLike):
   if a.dtype == bool:
     a = a.astype('int32')
@@ -3628,3 +3657,4 @@ logical_and = ufunc(_logical_and, name="logical_and", nin=2, nout=1, identity=Tr
 logical_or = ufunc(_logical_or, name="logical_or", nin=2, nout=1, identity=False, call=_logical_or, reduce=_logical_or_reduce)
 logical_xor = ufunc(_logical_xor, name="logical_xor", nin=2, nout=1, identity=False, call=_logical_xor)
 negative = ufunc(_negative, name="negative", nin=1, nout=1, call=_negative)
+subtract = ufunc(_subtract, name="subtract", nin=2, nout=1, call=_subtract, at=_subtract_at)
