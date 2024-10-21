@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import dataclasses
 import math
-from typing import Any, Protocol, Union
+from typing import Any, Callable, Protocol, Union
 
 from jax._src import core
 from jax._src import dtypes
@@ -404,3 +404,26 @@ def _unshard_ref(mesh, names, ref_aval: AbstractRef):
     raise NotImplementedError("Can't unshard a Ref")
   return ref_aval
 core.unshard_aval_handlers[AbstractRef] = _unshard_ref
+
+
+# Sentinel type for indicating an uninitialized value.
+class Uninitialized:
+  pass
+uninitialized = Uninitialized()
+
+
+_ref_type_aval_mappings: dict[
+    type[Any], Callable[[Any], tuple[AbstractRef, Array | Uninitialized]],
+] = {}
+
+
+def _default_value_to_ref_aval(x: Any) -> tuple[AbstractRef, Array]:
+  # Default type mapping just creates an AbstractRef from the array's aval.
+  aval = core.raise_to_shaped(core.get_aval(x))
+  return AbstractRef(aval), x
+
+
+def get_ref_aval_from_value(x: Any):
+  if type(x) in _ref_type_aval_mappings:
+    return _ref_type_aval_mappings[type(x)](x)
+  return _default_value_to_ref_aval(x)
