@@ -12,13 +12,13 @@ Key Creation & Manipulation
 .. autosummary::
   :toctree: _autosummary
 
-  PRNGKey
   key
   key_data
   wrap_key_data
   fold_in
   split
   clone
+  PRNGKey
 
 Random Samplers
 ~~~~~~~~~~~~~~~

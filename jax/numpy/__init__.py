@@ -13,12 +13,12 @@
 # limitations under the License.
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax.numpy import fft as fft
 from jax.numpy import linalg as linalg
 
-from jax._src.basearray import Array as ndarray
+from jax._src.basearray import Array as ndarray  # noqa: F401
 
 from jax._src.dtypes import (
     isdtype as isdtype,
@@ -53,7 +53,7 @@ from jax._src.numpy.lax_numpy import (
     bincount as bincount,
     blackman as blackman,
     block as block,
-    bool_ as bool,  # Array API alias for bool_
+    bool_ as bool,  # Array API alias for bool_  # noqa: F401
     bool_ as bool_,
     broadcast_arrays as broadcast_arrays,
     broadcast_shapes as broadcast_shapes,
@@ -212,7 +212,6 @@ from jax._src.numpy.lax_numpy import (
     rollaxis as rollaxis,
     rot90 as rot90,
     round as round,
-    round_ as round_,
     save as save,
     savez as savez,
     searchsorted as searchsorted,
@@ -263,6 +262,20 @@ from jax._src.numpy.lax_numpy import (
     where as where,
     zeros as zeros,
     zeros_like as zeros_like,
+)
+
+# TODO(slebedev): Remove the try-except once we upgrade to ml_dtypes 0.4.1.
+try:
+  from jax._src.numpy.lax_numpy import (
+    int2 as int2,
+    uint2 as uint2,
+  )
+except ImportError:
+  pass
+
+from jax._src.numpy.array_api_metadata import (
+  __array_api_version__ as __array_api_version__,
+  __array_namespace_info__ as __array_namespace_info__,
 )
 
 from jax._src.numpy.index_tricks import (
@@ -430,6 +443,7 @@ from jax._src.numpy.ufuncs import (
     sin as sin,
     sinc as sinc,
     sinh as sinh,
+    spacing as spacing,
     sqrt as sqrt,
     square as square,
     subtract as subtract,
@@ -452,6 +466,11 @@ del register_jax_array_methods
 
 
 _deprecations = {
+  # Deprecated 03 Sept 2024
+  "round_": (
+    "jnp.round_ is deprecated; use jnp.round instead.",
+    round
+  ),
   # Deprecated 18 Sept 2023 and removed 06 Feb 2024
   "trapz": (
     "jnp.trapz is deprecated; use jnp.trapezoid instead.",
@@ -459,6 +478,11 @@ _deprecations = {
   ),
 }
 
-from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-__getattr__ = _deprecation_getattr(__name__, _deprecations)
-del _deprecation_getattr
+import typing
+if typing.TYPE_CHECKING:
+  round_ = round
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del typing

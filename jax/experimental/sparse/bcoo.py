@@ -49,9 +49,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lax.lax import (
   _const, ranges_like, remaining, _dot_general_batch_dim_nums, DotDimensionNumbers)
 from jax._src.lax.slicing import GatherDimensionNumbers, GatherScatterMode
-from jax._src.lib.mlir import ir
 from jax._src.lib import gpu_sparse
-from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.setops import _unique
 from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.util import canonicalize_axis
@@ -105,7 +103,7 @@ def _bcoo_set_nse(mat: BCOO, nse: int) -> BCOO:
               unique_indices=mat.unique_indices)
 
 # TODO(jakevdp) this can be problematic when used with autodiff; see
-# https://github.com/google/jax/issues/10163. Should this be a primitive?
+# https://github.com/jax-ml/jax/issues/10163. Should this be a primitive?
 # Alternatively, maybe roll this into bcoo_sum_duplicates as an optional argument.
 def bcoo_eliminate_zeros(mat: BCOO, nse: int | None = None) -> BCOO:
   data, indices, shape = mat.data, mat.indices, mat.shape
@@ -332,11 +330,11 @@ def _bcoo_fromdense_jvp(primals, tangents, *, nse, n_batch, n_dense, index_dtype
   data, indices = primals_out
 
   if type(Mdot) is ad.Zero:
-    data_dot = ad.Zero.from_value(data)
+    data_dot = ad.Zero.from_primal_value(data)
   else:
     data_dot = _bcoo_extract(indices, Mdot)
 
-  tangents_out = (data_dot, ad.Zero.from_value(indices))
+  tangents_out = (data_dot, ad.Zero.from_primal_value(indices))
 
   return primals_out, tangents_out
 
@@ -514,7 +512,7 @@ def bcoo_transpose(mat: BCOO, *, permutation: Sequence[int]) -> BCOO:
       batch, sparse, and dense dimensions. The i’th axis of the returned array
       corresponds to the axis numbered permutation[i] of ``mat``. Transpose
       permutation currently does not support permuting batch axes with non-batch
-      axes nor permutating dense axes with non-dense axes.
+      axes nor permuting dense axes with non-dense axes.
 
   Returns:
     A BCOO-format array.
@@ -571,7 +569,7 @@ def _bcoo_transpose_jvp(primals, tangents, *, permutation: Sequence[int], spinfo
   data_dot, _ = tangents
   primals_out = _bcoo_transpose(data, indices, permutation=permutation, spinfo=spinfo)
   data_dot_out, _ = _bcoo_transpose(data_dot, indices, permutation=permutation, spinfo=spinfo)
-  return primals_out, (data_dot_out, ad.Zero.from_value(indices))
+  return primals_out, (data_dot_out, ad.Zero.from_primal_value(indices))
 
 def _bcoo_transpose_transpose(ct, data, indices, *, permutation: Sequence[int], spinfo: SparseInfo):
   data_ct, indices_ct = ct
@@ -641,7 +639,7 @@ def bcoo_dot_general(lhs: BCOO | Array, rhs: BCOO | Array, *, dimension_numbers:
                              preferred_element_type=preferred_element_type,
                              lhs_spinfo=lhs._info)
   elif isinstance(rhs, BCOO):
-    return _bcoo_rdot_general(lhs, rhs.data, rhs.indices, dimension_numbers=dimension_numbers,  # type: ignore[arg-type]
+    return _bcoo_rdot_general(lhs, rhs.data, rhs.indices, dimension_numbers=dimension_numbers,
                               preferred_element_type=preferred_element_type,
                               rhs_spinfo=rhs._info)
   else:
@@ -738,18 +736,17 @@ def _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs, *, dimension_numbers,
 @bcoo_dot_general_p.def_abstract_eval
 def _bcoo_dot_general_abstract_eval(lhs_data, lhs_indices, rhs, *, dimension_numbers,
                                     preferred_element_type, lhs_spinfo: SparseInfo):
-  out_aval = jax.eval_shape(
-    partial(lax.dot_general,
-            dimension_numbers=dimension_numbers,
-            preferred_element_type=preferred_element_type),
-    jax.ShapeDtypeStruct(lhs_spinfo.shape, lhs_data.dtype),
-    jax.ShapeDtypeStruct(rhs.shape, rhs.dtype))
+  out_aval = jax.jit(lax.dot_general, static_argnames=("dimension_numbers", "preferred_element_type")).eval_shape(
+          jax.ShapeDtypeStruct(lhs_spinfo.shape, lhs_data.dtype),
+          jax.ShapeDtypeStruct(rhs.shape, rhs.dtype),
+          dimension_numbers=dimension_numbers,
+          preferred_element_type=preferred_element_type)
 
   (lhs_contracting, _), (lhs_batch, _) = dimension_numbers
   n_batch, n_sparse, _, _ = _validate_bcoo(lhs_data, lhs_indices, lhs_spinfo.shape)
   if lhs_batch and max(lhs_batch) >= n_batch:
     raise NotImplementedError(
-      "bcoo_dot_general batch dimensions must be among the batch dimensions in the sparse representtaion.\n"
+      "bcoo_dot_general batch dimensions must be among the batch dimensions in the sparse representation.\n"
       f"got {lhs_batch=}, {n_batch=}")
 
   # TODO: support contraction of dense dimensions?
@@ -862,7 +859,7 @@ def _bcoo_dot_general_transpose(ct, lhs_data, lhs_indices, rhs, *, dimension_num
   rhs_kept = remaining(range(rhs_ndim), rhs_contract, rhs_batch)
   ans_batch, ans_lhs, ans_rhs = map(list, ranges_like(lhs_batch, lhs_kept, rhs_kept))
   if ad.is_undefined_primal(lhs_data):
-    dims: DotDimensionNumbers = ((ans_rhs, rhs_kept), (ans_batch, rhs_batch))  # type: ignore[assignment]
+    dims: DotDimensionNumbers = ((ans_rhs, rhs_kept), (ans_batch, rhs_batch))
     lhs_contract_sorted_by_rhs = list(np.take(lhs_contract, np.argsort(rhs_contract)))
     permutation = list(lhs_batch) + lhs_kept + lhs_contract_sorted_by_rhs
     out_axes = list(np.argsort(permutation))
@@ -895,7 +892,7 @@ def _bcoo_dot_general_transpose(ct, lhs_data, lhs_indices, rhs, *, dimension_num
       result = _bcoo_extract(lhs_indices, out_dense)
     return result, lhs_indices, rhs
   else:
-    dims = ((lhs_kept, ans_lhs), (lhs_batch, ans_batch))  # type: ignore[assignment]
+    dims = ((lhs_kept, ans_lhs), (lhs_batch, ans_batch))
     rhs_contract_sorted_by_lhs = list(np.take(rhs_contract, np.argsort(lhs_contract)))
     out_axes = list(np.argsort(list(rhs_batch) + rhs_contract_sorted_by_lhs + rhs_kept))
     result = _bcoo_dot_general(lhs_data, lhs_indices, ct, lhs_spinfo=lhs_spinfo,
@@ -1141,7 +1138,7 @@ def _bcoo_spdot_general_unbatched(lhs_data, lhs_indices, rhs_data, rhs_indices, 
   out_indices = out_indices.at[:, :, lhs_j.shape[-1]:].set(rhs_j[None, :])
   out_indices = out_indices.reshape(len(out_data), out_indices.shape[-1])
   # Note: we do not eliminate zeros here, because it can cause issues with autodiff.
-  # See https://github.com/google/jax/issues/10163.
+  # See https://github.com/jax-ml/jax/issues/10163.
   return _bcoo_sum_duplicates(out_data, out_indices, spinfo=SparseInfo(shape=out_shape), nse=out_nse)
 
 @bcoo_spdot_general_p.def_impl
@@ -1187,12 +1184,11 @@ def _bcoo_spdot_general_abstract_eval(lhs_data, lhs_indices, rhs_data, rhs_indic
                                       dimension_numbers, preferred_element_type):
   lhs_shape = lhs_spinfo.shape
   rhs_shape = rhs_spinfo.shape
-  out_aval = jax.eval_shape(
-    partial(lax.dot_general,
-            dimension_numbers=dimension_numbers,
-            preferred_element_type=preferred_element_type),
-    jax.ShapeDtypeStruct(lhs_shape, lhs_data.dtype),
-    jax.ShapeDtypeStruct(rhs_shape, rhs_data.dtype))
+  out_aval = jax.jit(lax.dot_general, static_argnames=("dimension_numbers", "preferred_element_type")).eval_shape(
+      jax.ShapeDtypeStruct(lhs_shape, lhs_data.dtype),
+      jax.ShapeDtypeStruct(rhs_shape, rhs_data.dtype),
+      dimension_numbers=dimension_numbers,
+      preferred_element_type=preferred_element_type)
 
   lhs = _validate_bcoo(lhs_data, lhs_indices, lhs_shape)
   rhs = _validate_bcoo(rhs_data, rhs_indices, rhs_shape)
@@ -1224,15 +1220,24 @@ def _bcoo_spdot_general_abstract_eval(lhs_data, lhs_indices, rhs_data, rhs_indic
   out_n_batch = lhs.n_batch + rhs.n_batch - len(lhs_batch)
   out_nse = min(out_nse, math.prod(out_aval.shape[out_n_batch:]))
 
+  lhs_batch_shape = np.broadcast_shapes(
+    tuple(lhs_data.shape[dim] for dim in range(lhs.n_batch) if dim not in lhs_batch),
+    tuple(lhs_indices.shape[dim] for dim in range(lhs.n_batch) if dim not in lhs_batch),
+  )
+  rhs_batch_shape = np.broadcast_shapes(
+    tuple(rhs_data.shape[dim] for dim in range(rhs.n_batch) if dim not in rhs_batch),
+    tuple(rhs_indices.shape[dim] for dim in range(rhs.n_batch) if dim not in rhs_batch),
+  )
+
   data_shape = (
     *(lhs_shape[dim] for dim in lhs_batch),
-    *(lhs_data.shape[dim] for dim in range(lhs.n_batch) if dim not in lhs_batch),
-    *(rhs_data.shape[dim] for dim in range(rhs.n_batch) if dim not in rhs_batch),
+    *lhs_batch_shape,
+    *rhs_batch_shape,
     out_nse)
   indices_shape = (
     *(lhs_shape[dim] for dim in lhs_batch),
-    *(lhs_indices.shape[dim] for dim in range(lhs.n_batch) if dim not in lhs_batch),
-    *(rhs_indices.shape[dim] for dim in range(rhs.n_batch) if dim not in rhs_batch),
+    *lhs_batch_shape,
+    *rhs_batch_shape,
     out_nse, lhs.n_sparse + rhs.n_sparse - 2 * len(lhs_contracting))
 
   data_aval = core.ShapedArray(data_shape, out_aval.dtype)
@@ -1270,7 +1275,7 @@ def _bcoo_spdot_general_jvp(primals, tangents, **kwds):
     data_dot_out += _bcoo_spdot_general(lhs_data_dot, lhs_indices, rhs_data, rhs_indices, **kwds)[0]
   if type(rhs_data_dot) is not ad.Zero:
     data_dot_out += _bcoo_spdot_general(lhs_data, lhs_indices, rhs_data_dot, rhs_indices, **kwds)[0]
-  return primals_out, [data_dot_out, ad.Zero.from_value(primals_out[1])]
+  return primals_out, [data_dot_out, ad.Zero.from_primal_value(primals_out[1])]
 
 # TODO(JVP): transpose rule
 batching.primitive_batchers[bcoo_spdot_general_p] = _bcoo_spdot_general_batch_rule
@@ -1351,8 +1356,8 @@ def _bcoo_sort_indices_jvp(primals, tangents, *, spinfo):
   permute = nfold_vmap(lambda d, p: d[p], props.n_batch)
   data_out = permute(data, perm)
 
-  indices_dot_out = ad.Zero.from_value(indices)
-  data_dot_out = ad.Zero.from_value(data_out) if type(data_dot) is ad.Zero else permute(data_dot, perm)
+  indices_dot_out = ad.Zero.from_primal_value(indices)
+  data_dot_out = ad.Zero.from_primal_value(data_out) if type(data_dot) is ad.Zero else permute(data_dot, perm)
   return (data_out, indices_out), (data_dot_out, indices_dot_out)
 
 _bcoo_sort_indices_hlo = mlir.lower_fun(
@@ -1530,15 +1535,15 @@ def _bcoo_sum_duplicates_jvp(primals, tangents, *, spinfo, nse):
                         nse, *data.shape[props.n_batch + 1:]), dtype=data.dtype)
   data_dot_out = data_out
   # This check is because scatter-add on zero-sized arrays has poorly defined
-  # semantics; see https://github.com/google/jax/issues/13656.
+  # semantics; see https://github.com/jax-ml/jax/issues/13656.
   if data_out.size:
     permute = lambda x, i, y: x.at[i].add(y, mode='drop')
   else:
     permute = lambda x, i, y: x
   permute = nfold_vmap(permute, props.n_batch)
   data_out = permute(data_out, mapping, data)
-  indices_dot_out = ad.Zero.from_value(indices_out)
-  data_dot_out = ad.Zero.from_value(data_out) if type(data_dot) is ad.Zero else permute(data_dot_out, mapping, data_dot)
+  indices_dot_out = ad.Zero.from_primal_value(indices_out)
+  data_dot_out = ad.Zero.from_primal_value(data_out) if type(data_dot) is ad.Zero else permute(data_dot_out, mapping, data_dot)
   return (data_out, indices_out), (data_dot_out, indices_dot_out)
 
 _bcoo_sum_duplicates_hlo = mlir.lower_fun(
@@ -1764,9 +1769,9 @@ def bcoo_concatenate(operands: Sequence[BCOO], *, dimension: int) -> BCOO:
     raise ValueError("bcoo_concatenate: expected operands to be a sequence of BCOO arrays. "
                      f"Got {operands}")
   # Validate inputs using lax.concatenate abstract evaluation.
-  out_aval = jax.eval_shape(
-    functools.partial(lax.concatenate, dimension=dimension),
-    [core.ShapedArray(op.shape, op.dtype) for op in operands])
+  out_aval = jax.jit(lax.concatenate, static_argnames=("dimension",)).eval_shape(
+          [core.ShapedArray(op.shape, op.dtype) for op in operands],
+          dimension=dimension)
   if len({op.n_dense for op in operands}) > 1:
     raise ValueError("bcoo_concatenate requires inputs to have matching nse dimensions.")
 
@@ -1882,8 +1887,9 @@ def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int], dimensions: Sequence[in
 def bcoo_rev(operand, dimensions):
   """Sparse implementation of {func}`jax.lax.rev`"""
   # Check validity of dimensions via original implementation.
-  _ = jax.eval_shape(partial(lax.rev, dimensions=dimensions),
-                     jax.ShapeDtypeStruct(operand.shape, operand.dtype))
+  _ = jax.jit(lax.rev, static_argnames=("dimensions",)).eval_shape(
+          jax.ShapeDtypeStruct(operand.shape, operand.dtype),
+          dimensions=dimensions)
   batch_dims = [d for d in dimensions if d < operand.n_batch]
   sparse_dims = [d for d in dimensions if operand.n_batch <= d < operand.n_batch + operand.n_sparse]
   dense_dims = [d for d in dimensions if d >= operand.n_batch + operand.n_sparse]
@@ -2026,15 +2032,16 @@ def bcoo_dynamic_slice(mat: BCOO, start_indices: Sequence[Any], slice_sizes: Seq
   Returns:
     out: BCOO array containing the slice.
   """
+  slice_sizes = tuple(operator.index(i) for i in slice_sizes)
   # Use abstract eval to validate inputs.
-  jax.eval_shape(partial(lax.dynamic_slice, slice_sizes=slice_sizes),
-    jax.ShapeDtypeStruct(mat.shape, mat.dtype), start_indices)
+  jax.jit(lax.dynamic_slice, static_argnames=("slice_sizes",)).eval_shape(
+          jax.ShapeDtypeStruct(mat.shape, mat.dtype), start_indices,
+          slice_sizes=slice_sizes)
   if not isinstance(mat, BCOO):
     raise TypeError(f"bcoo_slice: input should be BCOO array, got type(mat)={type(mat)}")
   start_indices = tuple(jnp.asarray(i) for i in start_indices)
   assert all(jnp.issubdtype(i.dtype, np.integer) for i in start_indices)
   assert all(i.shape == () for i in start_indices)
-  slice_sizes = tuple(operator.index(i) for i in slice_sizes)
   if len(start_indices) != len(slice_sizes) != mat.ndim:
     raise ValueError(f"bcoo_dynamic_slice: indices must have size mat.ndim={mat.ndim}")
   if not all(0 <= slice_size <= axis_size for slice_size, axis_size in zip(slice_sizes, mat.shape)):
@@ -2294,9 +2301,13 @@ def bcoo_gather(operand: BCOO, start_indices: Array,
               mode=mode, fill_value=fill_value)
 
   # Abstract eval lax.gather to validate arguments & determine output shape.
-  out_aval = jax.eval_shape(partial(lax.gather, **kwds),
-    jax.ShapeDtypeStruct(operand.shape, operand.dtype),
-    jax.ShapeDtypeStruct(start_indices.shape, start_indices.dtype))
+  static_argnames = ("dimension_numbers", "slice_sizes", "unique_indices",
+          "indices_are_sorted", "mode", "fill_value",)
+  out_aval = jax.jit(lax.gather, static_argnames=static_argnames).eval_shape(
+          jax.ShapeDtypeStruct(operand.shape, operand.dtype),
+          jax.ShapeDtypeStruct(start_indices.shape, start_indices.dtype),
+          **kwds)
+
   offset_dims = dimension_numbers.offset_dims
   collapsed_slice_dims = dimension_numbers.collapsed_slice_dims
   start_index_map = dimension_numbers.start_index_map

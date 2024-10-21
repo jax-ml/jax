@@ -11,11 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from jax import numpy as jnp # type: ignore
+from jax import numpy as jnp
 
-import numpy as np # type: ignore
+import numpy as np
 import os
-import requests # type: ignore
+import requests
 
 def download_dataset(dir_path, nb_classes):
 
@@ -39,7 +39,7 @@ def download_dataset(dir_path, nb_classes):
       continue
     with open(cls_file_path, "wb") as save_file:
       try:
-        response = requests.get(url + cls_filename.replace('_', ' '))
+        response = requests.get(url + cls_filename.replace('_', ' '), timeout=60)
         save_file.write(response.content)
         print(f'Successfully fetched {cls_filename}')
       except:

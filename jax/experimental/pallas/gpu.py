@@ -12,8 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Contains Triton specific Pallas functions."""
-from jax._src.pallas import triton
-from jax._src.pallas.triton import approx_tanh
-get_compute_capability = triton.get_compute_capability
-del triton
+from jax._src import deprecations
+
+deprecations.warn(
+    "pallas-gpu-triton",
+    "The ``jax.experimental.pallas.gpu`` submodule is deprecated. "
+    " Use ``jax.experimental.pallas.triton`` instead.",
+    stacklevel=1,
+)
+
+from jax.experimental.pallas.triton import *  # noqa: F403

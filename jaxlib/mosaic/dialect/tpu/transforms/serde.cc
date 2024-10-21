@@ -22,16 +22,20 @@ limitations under the License.
 
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Visitors.h"
 #include "mlir/Pass/Pass.h"  // IWYU pragma: keep
 #include "mlir/Support/LLVM.h"
+#include "mlir/include/mlir/IR/BuiltinAttributes.h"
+#include "mlir/include/mlir/IR/OpDefinition.h"
 #include "mlir/include/mlir/IR/OperationSupport.h"
+#include "mlir/include/mlir/Support/LogicalResult.h"
+#include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 
 namespace mlir::tpu {
 
-#define GEN_PASS_DECL_MOSAICSERDEPASS
 #define GEN_PASS_DEF_MOSAICSERDEPASS
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
 
@@ -39,7 +43,7 @@ namespace {
 
 constexpr std::string_view kMangledDialect = "stable_mosaic.";
 constexpr StringRef kVersionAttrName = "stable_mosaic.version";
-constexpr int kVersion = 1;
+constexpr int kVersion = 3;
 
 StringRef mangle(StringRef name, std::string* storage) {
   storage->clear();
@@ -57,6 +61,85 @@ std::optional<StringRef> demangle(StringRef name) {
   return name.drop_front(kMangledDialect.size());
 }
 
+using rule_type = std::function<LogicalResult(Operation*, int)>;
+
+LogicalResult enqueue_dma_rule(Operation* op, int version) {
+  // Added AttrSizedOperandSegments and core_id in version 2.
+  if (version < 2) {
+    if (op->getNumOperands() == 3) {  // Local DMA.
+      op->setAttr(
+          OpTrait::AttrSizedOperandSegments<
+              EnqueueDMAOp>::getOperandSegmentSizeAttr(),
+          mlir::DenseI32ArrayAttr::get(op->getContext(), {1, 0, 1, 1, 0, 0}));
+    } else if (op->getNumOperands() == 5) {  // Remote DMA.
+      op->setAttr(
+          OpTrait::AttrSizedOperandSegments<
+              EnqueueDMAOp>::getOperandSegmentSizeAttr(),
+          mlir::DenseI32ArrayAttr::get(op->getContext(), {1, 1, 1, 1, 1, 0}));
+    } else {
+      return op->emitError("Unexpected operand count in tpu.enqueue_dma: ")
+             << op->getNumOperands();
+    }
+  }
+  return success();
+}
+
+LogicalResult semaphore_signal_rule(Operation* op, int version) {
+  // Added AttrSizedOperandSegments and core_id in version 2.
+  if (version < 2) {
+    if (op->getNumOperands() == 2) {  // Local signal.
+      op->setAttr(OpTrait::AttrSizedOperandSegments<
+                      EnqueueDMAOp>::getOperandSegmentSizeAttr(),
+                  mlir::DenseI32ArrayAttr::get(op->getContext(), {1, 1, 0, 0}));
+    } else if (op->getNumOperands() == 3) {  // Remote signal.
+      op->setAttr(OpTrait::AttrSizedOperandSegments<
+                      EnqueueDMAOp>::getOperandSegmentSizeAttr(),
+                  mlir::DenseI32ArrayAttr::get(op->getContext(), {1, 1, 1, 0}));
+    } else {
+      return op->emitError("Unexpected operand count in tpu.semaphore_signal");
+    }
+  }
+  return success();
+}
+
+LogicalResult vector_multi_dim_reduce_rule(Operation* op, int version) {
+  // Changed reductions_dims from ArrayAttr of IntegerAttrs to DenseI64ArrayAttr
+  // in version 3.
+  if (version < 3) {
+    Attribute reduction_dims_attr = op->getAttr("reduction_dims");
+    if (!reduction_dims_attr) {
+      return op->emitError("Missing reduction_dims attribute");
+    }
+    ArrayAttr reduction_dims_array = dyn_cast<ArrayAttr>(reduction_dims_attr);
+    if (!reduction_dims_array) {
+      return op->emitOpError("reduction_dims attribute is not an ArrayAttr");
+    }
+    std::vector<int64_t> reduction_dims;
+    reduction_dims.reserve(reduction_dims_array.size());
+    for (Attribute reduction_dim : reduction_dims_array) {
+      IntegerAttr reduction_dim_attr = dyn_cast<IntegerAttr>(reduction_dim);
+      if (!reduction_dim_attr) {
+        return op->emitOpError(
+            "reduction_dims attribute contains a non-IntegerAttr");
+      }
+      reduction_dims.push_back(reduction_dim_attr.getInt());
+    }
+    op->setAttr("reduction_dims",
+                DenseI64ArrayAttr::get(op->getContext(), reduction_dims));
+  }
+  return success();
+}
+
+const llvm::StringMap<rule_type>& upgrade_rules() {
+  static auto rules = new llvm::StringMap<rule_type>{
+      {EnqueueDMAOp::getOperationName(), enqueue_dma_rule},
+      {SemaphoreSignalOp::getOperationName(), semaphore_signal_rule},
+      {vector::MultiDimReductionOp::getOperationName(),
+       vector_multi_dim_reduce_rule}
+  };
+  return *rules;
+}
+
 struct MosaicSerdePass : public impl::MosaicSerdePassBase<MosaicSerdePass> {
   using Base::Base;
 
@@ -68,6 +151,7 @@ struct MosaicSerdePass : public impl::MosaicSerdePassBase<MosaicSerdePass> {
       signalPassFailure();
       return;
     }
+    int version = kVersion;
     if (serialize) {
       module->setAttr(
           kVersionAttrName,
@@ -81,16 +165,17 @@ struct MosaicSerdePass : public impl::MosaicSerdePassBase<MosaicSerdePass> {
         signalPassFailure();
         return;
       }
-      if (version_attr.getValue() != kVersion) {
-        module->emitError("Unsupported Mosaic version: ")
-            << version_attr.getValue().getSExtValue();
+      if (version_attr.getInt() > kVersion) {
+        module->emitError("Unsupported Mosaic version:  expected <= ")
+            << kVersion << " but got " << version_attr.getInt();
         signalPassFailure();
         return;
       }
+      version = version_attr.getInt();
       module->removeAttr(kVersionAttrName);
     }
     std::string name_storage;
-    auto result = module.walk([this, &name_storage](Operation* op) {
+    auto result = module.walk([this, &name_storage, version](Operation* op) {
       if (isa<ModuleOp>(op)) {  // Don't mangle the ModuleOp itself.
         return WalkResult::advance();
       }
@@ -110,6 +195,13 @@ struct MosaicSerdePass : public impl::MosaicSerdePassBase<MosaicSerdePass> {
         } else {
           op->emitError("Operation not in a serialized form");
           return WalkResult::interrupt();
+        }
+        // Upgrade the op to the current version, if needed.
+        if (const auto rule = upgrade_rules().find(new_name->getStringRef());
+            rule != upgrade_rules().end()) {
+          if (rule->second(op, version).failed()) {
+            return WalkResult::interrupt();
+          }
         }
       }
       auto new_op = Operation::create(

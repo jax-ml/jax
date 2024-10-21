@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.1
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   name: python3
@@ -15,6 +15,8 @@ kernelspec:
 
 ## Control autodiff's saved values with `jax.checkpoint` (aka `jax.remat`)
 
+<!--* freshness: { reviewed: '2024-04-08' } *-->
+
 ```{code-cell}
 import jax
 import jax.numpy as jnp
@@ -22,7 +24,7 @@ import jax.numpy as jnp
 
 +++ {"id": "qaIsQSh1XoKF"}
 
-### TL;DR
+### Summary
 
 Use the `jax.checkpoint` decorator (aliased as `jax.remat`) with `jax.grad` to control which intermediates are saved on the forward pass versus recomputed on the backward pass, trading off memory and FLOPs.
 
@@ -368,8 +370,6 @@ Notice also that by providing a policy, we didn't need to edit the code defining
 Some policies can refer to values named with `jax.ad_checkpoint.checkpoint_name`:
 
 ```{code-cell}
-from jax.ad_checkpoint import checkpoint_name
-
 def predict(params, x):
   *Ws, Wlast = params
   for i, W in enumerate(Ws):

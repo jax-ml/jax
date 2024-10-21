@@ -13,11 +13,10 @@
 # limitations under the License.
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.sharding import Sharding as Sharding
 from jax._src.sharding_impls import (
-    XLACompatibleSharding as XLACompatibleSharding,
     NamedSharding as NamedSharding,
     SingleDeviceSharding as SingleDeviceSharding,
     PmapSharding as PmapSharding,
@@ -28,3 +27,19 @@ from jax._src.partition_spec import (
     PartitionSpec as PartitionSpec,
 )
 from jax._src.interpreters.pxla import Mesh as Mesh
+from jax._src.mesh import AbstractMesh as AbstractMesh
+
+_deprecations = {
+    # Finalized 2024-10-01; remove after 2025-01-01.
+    "XLACompatibleSharding": (
+        (
+            "jax.sharding.XLACompatibleSharding was removed in JAX v0.4.34. "
+            "Use jax.sharding.Sharding instead."
+        ),
+        None,
+    )
+}
+
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = _deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr

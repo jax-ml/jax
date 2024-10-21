@@ -26,14 +26,14 @@ def jax_issue_role(name, rawtext, text, lineno, inliner, options=None,
       :jax-issue:`1234`
 
   This will output a hyperlink of the form
-  `#1234 <http://github.com/google/jax/issues/1234>`_. These links work even
+  `#1234 <http://github.com/jax-ml/jax/issues/1234>`_. These links work even
   for PR numbers.
   """
   text = text.lstrip('#')
   if not text.isdigit():
       raise RuntimeError(f"Invalid content in {rawtext}: expected an issue or PR number.")
   options = {} if options is None else options
-  url = f"https://github.com/google/jax/issues/{text}"
+  url = f"https://github.com/jax-ml/jax/issues/{text}"
   node = nodes.reference(rawtext, '#' + text, refuri=url, **options)
   return [node], []
 

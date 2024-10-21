@@ -14,10 +14,10 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 import dataclasses
 from functools import partial
-from typing import Any, Callable, Union
+from typing import Any, Union
 
 import numpy as np
 
@@ -88,6 +88,18 @@ def _jumble_flatten(jumble):
   elt_ty = jumble.aval.elt_ty.update(shape=tuple(new_shape))
   aval = jumble.aval.replace(elt_ty=elt_ty)
   return (lengths, jumble.data), aval
+
+
+def _ragged_axis_parts(dim: RaggedAxis) -> tuple[int, int, int]:
+  stacked_axis = dim.stacked_axis
+  ragged_axes = dim.ragged_axes
+  if len(ragged_axes) != 1:
+    raise ValueError('Multiple ragged axes not yet implemented.')
+  ragged_axis_dim = ragged_axes[0][0]
+  ragged_axis_length = ragged_axes[0][1]
+  return stacked_axis, ragged_axis_dim, ragged_axis_length
+
+
 def _jumble_unflatten(aval, x):
   lengths, data = x
   new_shape = [d.replace(lengths=lengths[d.lengths - 1])
@@ -134,6 +146,7 @@ class RaggedAxis:
       return ax
     new_axes = tuple((move_axis(ax), sizes) for ax, sizes in self.ragged_axes)
     return RaggedAxis(dst, new_axes)
+
 
 def transpose_ragged_axes(dim: RaggedAxis, perm: tuple[int, ...]) -> RaggedAxis:
   new_ragged_axes = []
@@ -200,7 +213,7 @@ def _update_annotation(
   class Name:
     def __init__(self, a): self.a = a
   names = [Name(a) for a, _  in orig_type]
-  avals = [a.update(shape=tuple(names[d.val] if type(d) is pe.DBIdx else d  # type: ignore
+  avals = [a.update(shape=tuple(names[d.val] if type(d) is pe.DBIdx else d
                                 for d in a.shape))
            if type(a) is core.DShapedArray else a for a, e in orig_type if e]
 
@@ -245,20 +258,25 @@ def to_elt(trace: Trace, get_idx: GetIdx, x: Vmappable, spec: MapSpec) -> Elt:
                  for i, sz in enumerate(x.aval.elt_ty.shape)
                  if type(sz) is IndexedAxisSize)
     batch_axis = make_batch_axis(x.data.ndim, 0, [(d+1, ias.lengths)])
-    return BatchTracer(trace, x.data, batch_axis)  # type: ignore
+    return BatchTracer(trace, x.data, batch_axis)
   elif isinstance(spec, int) or spec is None:
     spec = spec and canonicalize_axis(spec, len(np.shape(x)))
     return (BatchTracer(trace, x, spec, source_info_util.current())
             if spec is not None else x)
   else:
-    assert False
+    # TODO(mvoz): This is a terrible place to fall into if you pass
+    # a non jumble type in, make it clearer what went wrong.
+    assert False, f'Unexpected type in ELT? {type(x)}'
+
 to_elt_handlers: dict[type, ToEltHandler] = {}
 
-def from_elt(trace: BatchTrace, axis_size: AxisSize, x: Elt, spec: MapSpec
-             ) -> Vmappable:
+def from_elt(trace: BatchTrace, axis_size: AxisSize, i: int,
+             x: Elt, spec: MapSpec) -> Vmappable:
   handler = from_elt_handlers.get(type(x))
   if handler:
-    return handler(partial(from_elt, trace), axis_size, x, spec)
+    def _cont(axis_size, elt, axis):
+      return from_elt(trace, axis_size, i, elt, axis)
+    return handler(_cont, axis_size, x, spec)
   x_ = trace.full_raise(x)
   val, bdim = x_.val, x_.batch_dim
   if type(bdim) is RaggedAxis:
@@ -267,7 +285,10 @@ def from_elt(trace: BatchTrace, axis_size: AxisSize, x: Elt, spec: MapSpec
       raise TypeError("ragged output without using jumble_axis out_axes spec")
     return _jumble_result(axis_size, bdim.stacked_axis, bdim.ragged_axes, val)
   else:
-    return matchaxis(trace.axis_name, axis_size, x_.batch_dim, spec, x_.val)
+    try:
+      return matchaxis(trace.axis_name, axis_size, x_.batch_dim, spec, x_.val)
+    except SpecMatchError:
+      raise SpecMatchError(i, x_.batch_dim, spec) from None
 from_elt_handlers: dict[type, FromEltHandler] = {}
 
 def make_iota(axis_size: AxisSize) -> Array:
@@ -306,6 +327,43 @@ def flatten_fun_for_vmap(in_tree, *args_flat):
   ans = yield py_args, py_kwargs
   yield tree_flatten(ans, is_leaf=is_vmappable)
 
+# Propagate ragged masking rules from invars to outvars
+# rule([raggedness_per_invar], outvars) ->
+#   [raggedness_per_invar, raggedness_per_outvar]
+RaggedMaskingRule = Callable[
+    [list[Any], list[Any]], tuple[list[Any], list[Any]]
+]
+
+ragged_prop_rules: dict[core.Primitive, RaggedMaskingRule] = {}
+
+
+def ragged_mask_elementwise_rule(invar_raggedness, outvars):
+  # TODO(mvoz): A util for getting the ragged representations
+  first_invar_raggedness = invar_raggedness[0]
+  for other_invar_raggedness in invar_raggedness[1:]:
+    if other_invar_raggedness != first_invar_raggedness:
+      raise ValueError(f'{other_invar_raggedness} != {first_invar_raggedness}')
+
+  outvar_raggedness = [first_invar_raggedness] * len(outvars)
+  return invar_raggedness, outvar_raggedness
+
+
+def ragged_mask_assert_no_op_rule(invar_raggedness, outvars):
+  if any(invar_raggedness):
+    raise ValueError(f'unexpected invar_raggedness: {invar_raggedness}')
+  return invar_raggedness, [None] * len(outvars)
+
+
+def ragged_mask_no_op_rule(invar_raggedness, outvars):
+  return invar_raggedness, [None] * len(outvars)
+
+
+def ragged_mask_transfer_identity(invar_raggedness, outvar_raggedness):
+  assert len(invar_raggedness) == 1, invar_raggedness
+  outvar_raggedness = invar_raggedness
+  return invar_raggedness, outvar_raggedness
+
+
 ### tracer
 
 # TODO(mattjj): use a special sentinel type rather than None
@@ -322,7 +380,7 @@ class BatchTracer(Tracer):
       assert type(batch_dim) in (NotMapped, int, RaggedAxis)
       if type(batch_dim) is int:
         aval = raise_to_shaped(core.get_aval(val))
-        assert 0 <= batch_dim < len(aval.shape)  # type: ignore
+        assert 0 <= batch_dim < len(aval.shape)
     self._trace = trace
     self.val = val
     self.batch_dim = batch_dim
@@ -338,7 +396,7 @@ class BatchTracer(Tracer):
     elif type(self.batch_dim) is RaggedAxis:
       new_aval = core.mapped_aval(
         aval.shape[self.batch_dim.stacked_axis], self.batch_dim.stacked_axis, aval)
-      shape = list(new_aval.shape)  # type: ignore
+      shape = list(new_aval.shape)  # pytype: disable=attribute-error
       for ragged_axis, segment_lengths in self.batch_dim.ragged_axes:
         size_tracer = BatchTracer(self._trace, segment_lengths, 0)
         if self.batch_dim.stacked_axis < ragged_axis:
@@ -635,7 +693,8 @@ def _batch_inner(axis_size, out_dim_dests, main, in_dims, *in_vals):
   in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)
   outs = yield in_tracers, {}
   out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
-  out_vals = map(partial(from_elt, trace, axis_size), outs, out_dim_dests)
+  out_vals = map(partial(from_elt, trace, axis_size), range(len(outs)),
+                 outs, out_dim_dests)
   yield out_vals
 
 # NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.
@@ -1119,7 +1178,13 @@ def matchaxis(axis_name, sz, src, dst, x, sum_match=False):
         axis_name is not core.no_axis_name):
       raise ValueError(f'vmap has mapped output ({axis_name=}) but out_axes is {dst}')
     else:
-      raise ValueError(f'vmap has mapped output but out_axes is {dst}')
+      raise SpecMatchError(None, None, None)
+
+class SpecMatchError(Exception):
+  def __init__(self, leaf_idx, src, dst):
+    self.leaf_idx = leaf_idx
+    self.src = src
+    self.dst = dst
 
 def bdim_at_front(x, bdim, size):
   if bdim is not_mapped:

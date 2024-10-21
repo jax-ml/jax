@@ -23,7 +23,6 @@ from jax._src.interpreters.pxla import (
   global_avals_to_results_handler as global_avals_to_results_handler,
   global_result_handlers as global_result_handlers,
   parallel_callable as parallel_callable,
-  shard_arg as shard_arg,
   shard_args as shard_args,
   xla_pmap_p as xla_pmap_p,
 )
@@ -39,9 +38,9 @@ from jax._src.op_shardings import (
 
 from jax._src.sharding_impls import (
   ArrayMapping as ArrayMapping,
-  UNSPECIFIED as _UNSPECIFIED,
+  UNSPECIFIED as _UNSPECIFIED,  # noqa: F401
   array_mapping_to_axis_resources as array_mapping_to_axis_resources,
-  is_unspecified as _is_unspecified,
+  is_unspecified as _is_unspecified,  # noqa: F401
 )
 
 from jax._src.sharding_specs import (

@@ -1,6 +1,6 @@
 # jax2tf Limitations for `enable_xla=False`
 
-*Note: the list below is only for running jax2tf with `enable_xla=False`. For general jax2tf known issues please see [here](https://github.com/google/jax/tree/main/jax/experimental/jax2tf#known-issues)*
+*Note: the list below is only for running jax2tf with `enable_xla=False`. For general jax2tf known issues please see [here](https://github.com/jax-ml/jax/tree/main/jax/experimental/jax2tf#known-issues)*
 
 For most JAX primitives there is a natural TF op that fits the needed semantics
 (e.g., `jax.lax.abs` is equivalent to `tf.abs`). However, there are a number of

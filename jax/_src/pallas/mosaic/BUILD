@@ -15,30 +15,12 @@
 # Package for Mosaic-specific Pallas extensions
 
 load("@rules_python//python:defs.bzl", "py_library")
-load(
-    "//jaxlib:jax.bzl",
-    "py_deps",
-    "py_library_providing_imports_info",
-)
+load("//jaxlib:jax.bzl", "py_deps")
 
 package(
     default_applicable_licenses = [],
     default_visibility = [
-        "//:__subpackages__",
-    ],
-)
-
-py_library_providing_imports_info(
-    name = "mosaic",
-    srcs = ["__init__.py"],
-    lib_rule = py_library,
-    deps = [
-        ":core",
-        ":kernel_regeneration_util",
-        ":lowering",
-        ":pallas_call_registration",
-        ":pipeline",
-        ":primitives",
+        "//jax:internal",
     ],
 )
 
@@ -52,12 +34,39 @@ py_library(
 )
 
 py_library(
+    name = "verification",
+    srcs = ["verification.py"],
+    deps = [
+        "//jax",
+        "//jax:mlir",
+        "//jax/_src/lib",
+    ],
+)
+
+py_library(
+    name = "error_handling",
+    srcs = ["error_handling.py"],
+    deps = [
+        "//jax:compiler",
+        "//jax:traceback_util",
+        "//jax/_src/lib",
+    ],
+)
+
+py_library(
     name = "primitives",
     srcs = ["primitives.py"],
     deps = [
+        ":core",
         "//jax",
         "//jax:core",
+        "//jax:dtypes",
         "//jax:mlir",
+        "//jax:pretty_printer",
+        "//jax:tree_util",
+        "//jax:typing",
+        "//jax:util",
+        "//jax/_src/pallas",
     ],
 )
 
@@ -79,10 +88,12 @@ py_library(
     srcs = ["lowering.py"],
     deps = [
         ":core",
+        ":error_handling",
         ":primitives",
         "//jax",
         "//jax:ad_util",
         "//jax:core",
+        "//jax:dtypes",
         "//jax:mesh",
         "//jax:mlir",
         "//jax:mosaic",
@@ -96,14 +107,6 @@ py_library(
 )
 
 py_library(
-    name = "kernel_regeneration_util",
-    srcs = ["kernel_regeneration_util.py"],
-    deps = [
-        "//jax:mlir",
-    ],
-)
-
-py_library(
     name = "pipeline",
     srcs = ["pipeline.py"],
     deps = [
@@ -111,7 +114,18 @@ py_library(
         ":primitives",
         "//jax",
         "//jax:api_util",
+        "//jax:pallas",
         "//jax:util",
         "//jax/_src/pallas",
-    ],
+    ] + py_deps("numpy"),
+)
+
+py_library(
+    name = "random",
+    srcs = ["random.py"],
+    deps = [
+        ":primitives",
+        "//jax",
+        "//jax:typing",
+    ] + py_deps("numpy"),
 )

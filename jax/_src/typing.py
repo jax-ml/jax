@@ -21,26 +21,30 @@ exported at `jax.typing`. Until then, the contents here should be considered uns
 and may change without notice.
 
 To see the proposal that led to the development of these tools, see
-https://github.com/google/jax/pull/11859/.
+https://github.com/jax-ml/jax/pull/11859/.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Protocol, Union
-import numpy as np
 import enum
+import typing
+from typing import Any, Protocol, Union
 
 from jax._src.basearray import (
-    Array as Array,
     ArrayLike as ArrayLike,
+    Array as Array,
+    StaticScalar as StaticScalar,
 )
+import numpy as np
 
 DType = np.dtype
 
 # TODO(jakevdp, froystig): make ExtendedDType a protocol
 ExtendedDType = Any
 
+
+@typing.runtime_checkable
 class SupportsDType(Protocol):
   @property
   def dtype(self) -> DType: ...

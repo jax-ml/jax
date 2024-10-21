@@ -7,14 +7,18 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.1
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   language: python
   name: python3
 ---
 
-# SPMD multi-device parallelism with `shard_map`
+# Manual parallelism with `shard_map`
+
+<!--* freshness: { reviewed: '2024-04-08' } *-->
+
+## Overview
 
 `shard_map` is a single-program multiple-data (SPMD) multi-device parallelism API to map a function over shards of data. Mapped function applications, or _instances_, communicate with each other via explicit collective communication operations.
 
@@ -31,7 +35,7 @@ import os
 os.environ["XLA_FLAGS"] = '--xla_force_host_platform_device_count=8' # Use 8 CPU devices
 ```
 
-## So, let's see a `shard_map`!
+### So, let's see a `shard_map`!
 
 Without further ado, here's a toy example:
 
@@ -42,13 +46,11 @@ import jax
 import jax.numpy as jnp
 
 from jax.sharding import Mesh, PartitionSpec as P
-from jax.experimental import mesh_utils
 from jax.experimental.shard_map import shard_map
 ```
 
 ```{code-cell}
-devices = mesh_utils.create_device_mesh((4, 2))
-mesh = Mesh(devices, axis_names=('x', 'y'))
+mesh = jax.make_mesh((4, 2), ('x', 'y'))
 
 a = jnp.arange( 8 * 16.).reshape(8, 16)
 b = jnp.arange(16 *  4.).reshape(16, 4)
@@ -118,9 +120,9 @@ print('b blocks:'); jax.debug.visualize_array_sharding(b)
 print('c blocks:'); jax.debug.visualize_array_sharding(c)
 ```
 
-## Slow down, start with the basics!
+### Slow down, start with the basics!
 
-### Rank-reducing vs rank-preserving maps
+#### Rank-reducing vs rank-preserving maps
 
 We can think of `vmap` and `pmap` as unstacking each array input along an axis
 (e.g. unpacking a 2D matrix into its 1D rows), applying its body function to
@@ -179,7 +181,7 @@ by any input axis size: for example, if we have a mesh of total size 4 (i.e.
 over 4 devices) then semantically we get 4 logical applications of the
 function, corresponding to the 4 devices physically computing them.
 
-### Controlling how each input is split (unconcatenated) and tiled with `in_specs`
+#### Controlling how each input is split (unconcatenated) and tiled with `in_specs`
 
 Each of the `in_specs` identifies some of the corresponding input array's axes
 with mesh axes by name using `PartitionSpec`s, representing how to split (or
@@ -192,8 +194,7 @@ input array axis size.) If an input's pspec does not mention a mesh axis name,
 then there's no splitting over that mesh axis. For example:
 
 ```{code-cell}
-devices = mesh_utils.create_device_mesh((4, 2))
-mesh = Mesh(devices, ('i', 'j'))
+mesh = jax.make_mesh((4, 2), ('i', 'j'))
 
 @partial(shard_map, mesh=mesh, in_specs=P('i', None), out_specs=P('i', 'j'))
 def f1(x_block):
@@ -235,7 +236,7 @@ along the first axis, and used the pspec `P(('j', 'i'), None)`.
 Physical data movement is possible on inputs, as each device needs to have a
 copy of the appropriate data.
 
-### Controlling how each output assembled by concatenation, block transposition, and untiling using `out_specs`
+#### Controlling how each output assembled by concatenation, block transposition, and untiling using `out_specs`
 
 Analogously to the input side, each of the `out_specs` identifies some of the
 corresponding output array's axes with mesh axes by name, representing how the
@@ -327,7 +328,7 @@ Instead, `out_specs` just encodes how to assemble the block outputs into
 `Array`s, or physically how to interpret the buffers across devices as the
 physical layout of a single logical `Array`.
 
-# API Specification
+## API Specification
 
 ```python
 from jax.sharding import Mesh
@@ -353,7 +354,9 @@ from the shape `shape` of the corresponding argument to `shard_map`-of-`f` and
 the corresponding `PartitionSpec` `spec` as roughly
 `tuple(sz // (1 if n is None else mesh.shape[n]) for sz, n in zip(shape, spec))`.
 
-# Collectives tutorial
+(shard_map_collectives_tutorial)=
+
+## Collectives tutorial
 
 A `shard_map` need not be a pure map: function applications can communicate
 with each other via _collectives_, using axis names defined in the `mesh`
@@ -374,7 +377,7 @@ values, as this reference function:
 
 ```python
 def f_shmapped_ref(x):
-  x_blocks = jnp.array_split(x, mesh.shape[0])
+  x_blocks = jnp.array_split(x, mesh.shape['i'])
   y_blocks = [f(x_blk) for x_blk in x_blocks]
   return jnp.concatenate(y_blocks)
 ```
@@ -417,7 +420,7 @@ collective introduces some amount of cross-block dependence. Physically, that
 means communication across devices. Exactly what communication happens, and
 what values are computed, depend on the collective.
 
-## `psum`
+### `psum`
 
 The simplest collective may be `jax.lax.psum`, which computes an
 all-reduce-sum along a device mesh axis (or multiple axes).
@@ -511,7 +514,7 @@ have a `grad` inside the `shard_map`ped function body, total gradients.
 In the sequel, we'll see how `psum` can be implemented in terms of other
 primitives, which gives some intuition about its communication cost.
 
-## `all_gather`
+### `all_gather`
 
 Another fundamental operation is gathering array shards along an axis, so that
 each function application has a full copy of the data along that axis:
@@ -569,7 +572,7 @@ def all_gather_ref(_, x_blocks, *, tiled=False):
 In deep learning, we might use `all_gather`s on parameters in fully sharded
 data parallelism (FSDP).
 
-## `psum_scatter`
+### `psum_scatter`
 
 The `jax.lax.psum_scatter` collective is a bit less intuitive. It's like
 `psum` except each function instance gets only one shard of the result:
@@ -632,7 +635,7 @@ machine learning, `psum_scatter` can be used in tensor-parallel matrix
 multiplies or fully-sharded data parallel gradient accumulation, as shown in
 the examples to follow.
 
-## `ppermute`
+### `ppermute`
 
 The `jax.lax.ppermute` collective provides the most direct way for
 function instances to send data to one another. Given a mesh axis and a
@@ -729,7 +732,7 @@ parallelizing the evaluation of convolutional layers, where we shard over
 spatial axes and thus devices must communicate "halos" to each other. Or it
 may be used under-the-hood in tensor-parallel matrix multiplies.
 
-## `all_to_all`
+### `all_to_all`
 
 A final collective is `all_to_all`, which is essentially a block matrix
 transpose operating along one positional axis and one cross-device axis:
@@ -778,12 +781,12 @@ In deep learning, we might use `all_to_all` in mixture-of-expert routing,
 where we first sort our local batch of examples according to which expert they
 should go to, then apply an `all_to_all` to redistribute examples to experts.
 
-# Toy examples
+## Toy examples
 
 How might we use `shard_map` and collective communication in practice? These
 examples, while simple, give some idea.
 
-## Matrix multiplies
+### Matrix multiplies
 
 Parallelizing matrix multiplication is central in scaling up deep learning
 models, both for training and for inference. When `jax.jit` automatically
@@ -808,7 +811,7 @@ def device_put(x, pspec):
   return jax.device_put(x, NamedSharding(mesh, pspec))
 ```
 
-### Example 1: `all-gather` on one side
+#### Example 1: `all-gather` on one side
 
 Consider performing a matrix multiplication where we shard the left-hand side
 argument (can think: parameters) on its leading (non-contracting) dimension:
@@ -818,7 +821,7 @@ lhs_spec = P('i', None)
 lhs = device_put(jax.random.normal(jax.random.key(0), (8, 8)), lhs_spec)
 ```
 
-And wee shard the right-hand side argument (can think: activations) on its
+And we shard the right-hand side argument (can think: activations) on its
 contracting dimension, with a similar sharding for the output:
 
 ```{code-cell}
@@ -924,7 +927,7 @@ In practice, to reduce compile times we would probably roll this into a
 `jax.lax.fori_loop`. We might also have additional axes of parallelism
 involved.
 
-### Example 2: `psum_scatter` the result
+#### Example 2: `psum_scatter` the result
 
 Another sharding we might start with has both `lhs` and `rhs` sharded along
 their contracting dimensions, with the output sharded like `rhs` again:
@@ -1009,7 +1012,7 @@ out = matmul_psumscatter_overlapped_bidi(lhs, rhs)
 print(jnp.allclose(out, lhs @ rhs, atol=1e-3, rtol=1e-3))
 ```
 
-## Neural networks
+### Neural networks
 
 We can use `shard_map` to parallelize computation in neural networks, either by
 itself or in combination with the automatic partitioning in `jax.jit`. This
@@ -1033,27 +1036,27 @@ def loss(params, batch):
 
 ```{code-cell}
 def init_layer(key, n_in, n_out):
-    k1, k2 = jax.random.split(key)
-    W = jax.random.normal(k1, (n_in, n_out)) / jnp.sqrt(n_in)
-    b = jax.random.normal(k2, (n_out,))
-    return W, b
+  k1, k2 = jax.random.split(key)
+  W = jax.random.normal(k1, (n_in, n_out)) / jnp.sqrt(n_in)
+  b = jax.random.normal(k2, (n_out,))
+  return W, b
 
 def init(key, layer_sizes, batch_size):
-    key, *keys = jax.random.split(key, len(layer_sizes))
-    params = list(map(init_layer, keys, layer_sizes[:-1], layer_sizes[1:]))
+  key, *keys = jax.random.split(key, len(layer_sizes))
+  params = list(map(init_layer, keys, layer_sizes[:-1], layer_sizes[1:]))
 
-    key, *keys = jax.random.split(key, 3)
-    inputs = jax.random.normal(keys[0], (batch_size, layer_sizes[0]))
-    targets = jax.random.normal(keys[1], (batch_size, layer_sizes[-1]))
+  key, *keys = jax.random.split(key, 3)
+  inputs = jax.random.normal(keys[0], (batch_size, layer_sizes[0]))
+  targets = jax.random.normal(keys[1], (batch_size, layer_sizes[-1]))
 
-    return params, (inputs, targets)
+  return params, (inputs, targets)
 ```
 
 ```{code-cell}
 layer_sizes = [784, 128, 128, 128, 128, 128, 8]
 batch_size = 32
 
-params, batch = init(jax.random.PRNGKey(0), layer_sizes, batch_size)
+params, batch = init(jax.random.key(0), layer_sizes, batch_size)
 ```
 
 Compare these examples with the purely [automatic partitioning examples in the
@@ -1063,7 +1066,7 @@ While in those automatic partitioning examples we don't need to edit the model
 functions to use different parallelization strategies, with `shard_map` we
 often do.
 
-### 8-way batch data parallelism
+#### 8-way batch data parallelism
 
 The simplest multi-device parallelism strategy is to shard the batch of inputs
 and targets over multiple devices, replicate the parameters over those devices,
@@ -1077,12 +1080,10 @@ from functools import partial
 
 from jax.sharding import NamedSharding, Mesh, PartitionSpec as P
 from jax.experimental.shard_map import shard_map
-from jax.experimental import mesh_utils
 
-devices = mesh_utils.create_device_mesh((8,))
+mesh = jax.make_mesh((8,), ('batch',))
 
 # replicate initial params on all devices, shard data batch over devices
-mesh = Mesh(devices, ('batch',))
 batch = jax.device_put(batch, NamedSharding(mesh, P('batch')))
 params = jax.device_put(params, NamedSharding(mesh, P()))
 
@@ -1117,7 +1118,7 @@ that the collective all-reduce-sum operations happen where we'd expect: at the
 end of the forward pass to compute the loss value, and in the backward pass to
 compute the total parameter gradients.
 
-### 8-way fully sharded data parallelism (FSDP)
+#### 8-way fully sharded data parallelism (FSDP)
 
 Another strategy is to additionally shard the parameters over the devices,
 all-gathering each one when the full value is needed for the `jnp.dot` or bias
@@ -1182,7 +1183,7 @@ print(allclose(jax.jit(jax.grad(loss))(params, batch),
                jax.jit(jax.grad(loss_fsdp))(params, batch)))
 ```
 
-### 8-way tensor parallelism (TP)
+#### 8-way tensor parallelism (TP)
 
 Usually we don't use tensor model parallelism by itself, but seeing it in
 isolation is a good warmup on parallel matrix multiplication. It's also a good
@@ -1197,8 +1198,7 @@ multiplications followed by a `psum_scatter` to sum the local results and
 efficiently scatter the result's shards.
 
 ```{code-cell}
-devices = mesh_utils.create_device_mesh((8,))
-mesh = Mesh(devices, ('feats',))
+mesh = jax.make_mesh((8,), ('feats',))
 
 batch = jax.device_put(batch, NamedSharding(mesh, P(None, 'feats')))
 params = jax.device_put(params, NamedSharding(mesh, P('feats')))
@@ -1223,13 +1223,12 @@ def loss_tp(params, batch):
   return jnp.mean(jnp.sum((predictions - targets) ** 2, axis=-1))  # NOTE psum!
 ```
 
-### FSDP + TP, with `shard_map` at the top level
+#### FSDP + TP, with `shard_map` at the top level
 
 We can compose these strategies together, using multiple axes of parallelism.
 
 ```{code-cell}
-devices = mesh_utils.create_device_mesh((4, 2))
-mesh = Mesh(devices, ('batch', 'feats'))
+mesh = jax.make_mesh((4, 2), ('batch', 'feats'))
 
 batch_ = jax.device_put(batch, NamedSharding(mesh, P('batch', 'feats')))
 params_ = jax.device_put(params, NamedSharding(mesh, P(('batch', 'feats'))))
@@ -1270,7 +1269,7 @@ print(allclose(jax.jit(jax.grad(loss))(params, batch),
                jax.jit(jax.grad(loss_fsdp_tp))(params, batch)))
 ```
 
-### SPMD pipeline parallelism (PP)
+#### SPMD pipeline parallelism (PP)
 
 With pipeline parallelism we aim to parallelize the evaluation of layers at
 different depths in our network. For example, one device might compute the

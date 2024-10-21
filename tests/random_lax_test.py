@@ -65,6 +65,9 @@ class LaxRandomTest(jtu.JaxTestCase):
     # whether RBG keys may be involved, but that's no longer exact.
     if config.enable_custom_prng.value and samples.dtype == jnp.bfloat16:
       return
+    # kstest does not understand bfloat16 input, so cast to float32.
+    if samples.dtype == jnp.bfloat16:
+      samples = samples.astype('float32')
     # kstest fails for infinities starting in scipy 1.12
     # (https://github.com/scipy/scipy/issues/20386)
     # TODO(jakevdp): remove this logic if/when fixed upstream.
@@ -175,7 +178,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   def testNormalBfloat16(self):
     # Passing bfloat16 as dtype string.
-    # https://github.com/google/jax/issues/6813
+    # https://github.com/jax-ml/jax/issues/6813
     res_bfloat16_str = random.normal(self.make_key(0), dtype='bfloat16')
     res_bfloat16 = random.normal(self.make_key(0), dtype=jnp.bfloat16)
     self.assertAllClose(res_bfloat16, res_bfloat16_str)
@@ -388,7 +391,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("tpu")  # TPU precision causes issues.
   def testBetaSmallParameters(self, dtype=np.float32):
-    # Regression test for beta version of https://github.com/google/jax/issues/9896
+    # Regression test for beta version of https://github.com/jax-ml/jax/issues/9896
     key = self.make_key(0)
     a, b = 0.0001, 0.0002
     samples = random.beta(key, a, b, shape=(100,), dtype=dtype)
@@ -438,7 +441,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("tpu")  # lower accuracy leads to failures.
   def testDirichletSmallAlpha(self, dtype=np.float32):
-    # Regression test for https://github.com/google/jax/issues/9896
+    # Regression test for https://github.com/jax-ml/jax/issues/9896
     key = self.make_key(0)
     alpha = 0.00001 * jnp.ones(3)
     samples = random.dirichlet(key, alpha, shape=(100,), dtype=dtype)
@@ -527,7 +530,7 @@ class LaxRandomTest(jtu.JaxTestCase):
                         rtol=rtol)
 
   def testGammaGradType(self):
-    # Regression test for https://github.com/google/jax/issues/2130
+    # Regression test for https://github.com/jax-ml/jax/issues/2130
     key = self.make_key(0)
     a = jnp.array(1., dtype=jnp.float32)
     b = jnp.array(3., dtype=jnp.float32)
@@ -660,7 +663,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   )
   def testGeneralizedNormalKS(self, p, shape, dtype):
     self.skipTest(  # test is also sometimes slow, with (300, ...)-shape draws
-        "sensitive to random key - https://github.com/google/jax/issues/18941")
+        "sensitive to random key - https://github.com/jax-ml/jax/issues/18941")
     key = lambda: self.make_key(2)
     rand = lambda key, p: random.generalized_normal(key, p, (300, *shape), dtype)
     crand = jax.jit(rand)
@@ -697,7 +700,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")  # TPU precision causes issues.
   def testBallKS(self, d, p, shape, dtype):
     self.skipTest(
-        "sensitive to random key - https://github.com/google/jax/issues/18932")
+        "sensitive to random key - https://github.com/jax-ml/jax/issues/18932")
     key = lambda: self.make_key(123)
     rand = lambda key, p: random.ball(key, d, p, (100, *shape), dtype)
     crand = jax.jit(rand)
@@ -797,7 +800,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     assert samples.shape == shape + (dim,)
 
   def testMultivariateNormalCovariance(self):
-    # test code based on https://github.com/google/jax/issues/1869
+    # test code based on https://github.com/jax-ml/jax/issues/1869
     N = 100000
     mean = jnp.zeros(4)
     cov = jnp.array([[  0.19,  0.00, -0.13,  0.00],
@@ -824,7 +827,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   @jtu.sample_product(method=['cholesky', 'eigh', 'svd'])
   @jtu.skip_on_devices('gpu', 'tpu')  # Some NaNs on accelerators.
   def testMultivariateNormalSingularCovariance(self, method):
-    # Singular covariance matrix https://github.com/google/jax/discussions/13293
+    # Singular covariance matrix https://github.com/jax-ml/jax/discussions/13293
     mu = jnp.zeros((2,))
     sigma = jnp.ones((2, 2))
     key = self.make_key(0)
@@ -886,7 +889,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   def testRandomBroadcast(self):
     """Issue 4033"""
-    # test for broadcast issue in https://github.com/google/jax/issues/4033
+    # test for broadcast issue in https://github.com/jax-ml/jax/issues/4033
     key = lambda: self.make_key(0)
     shape = (10, 2)
     with jax.numpy_rank_promotion('allow'):
@@ -1068,7 +1071,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertGreater((r == 255).sum(), 0)
 
   def test_large_prng(self):
-    # https://github.com/google/jax/issues/11010
+    # https://github.com/jax-ml/jax/issues/11010
     def f():
       return random.uniform(
           self.make_key(3), (308000000, 128), dtype=jnp.bfloat16)
@@ -1083,7 +1086,7 @@ class LaxRandomTest(jtu.JaxTestCase):
                       logits_shape_base=[(3, 4), (3, 1), (1, 4)],
                       axis=[-3, -2, -1, 0, 1, 2])
   def test_categorical_shape_argument(self, shape, logits_shape_base, axis):
-    # https://github.com/google/jax/issues/13124
+    # https://github.com/jax-ml/jax/issues/13124
     logits_shape = list(logits_shape_base)
     logits_shape.insert(axis % (len(logits_shape_base) + 1), 10)
     assert logits_shape[axis] == 10
@@ -1240,29 +1243,27 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertArraysAllClose(samples2, jnp.array([jnp.nan, 0., jnp.nan, jnp.nan]), check_dtypes=False)
     self.assertArraysAllClose(samples3, jnp.array([jnp.nan, jnp.nan, jnp.nan]), check_dtypes=False)
 
-  def test_batched_key_warnings(self):
+  def test_batched_key_errors(self):
     keys = lambda: jax.random.split(self.make_key(0))
     msg = "{} accepts a single key, but was given a key array of shape.*"
 
-    # Check a handful of functions that are expected to warn.
-    with self.assertWarnsRegex(FutureWarning, msg.format('bits')):
+    # Check a handful of functions that are expected to error.
+    with self.assertRaisesRegex(ValueError, msg.format('bits')):
       jax.random.bits(keys(), shape=(2,))
-    with self.assertWarnsRegex(FutureWarning, msg.format('chisquare')):
+    with self.assertRaisesRegex(ValueError, msg.format('chisquare')):
       jax.random.chisquare(keys(), 1.0, shape=(2,))
-    with self.assertWarnsRegex(FutureWarning, msg.format('dirichlet')):
+    with self.assertRaisesRegex(ValueError, msg.format('dirichlet')):
       jax.random.dirichlet(keys(), jnp.arange(2.0), shape=(2,))
-    with self.assertWarnsRegex(FutureWarning, msg.format('gamma')):
+    with self.assertRaisesRegex(ValueError, msg.format('gamma')):
       jax.random.gamma(keys(), 1.0, shape=(2,))
-    with self.assertWarnsRegex(FutureWarning, msg.format('loggamma')):
+    with self.assertRaisesRegex(ValueError, msg.format('loggamma')):
       jax.random.loggamma(keys(), 1.0, shape=(2,))
-
-    # Other functions should error; test a few cases.
     with self.assertRaisesRegex(ValueError, msg.format('fold_in')):
       jax.random.fold_in(keys(), 0)
     with self.assertRaisesRegex(ValueError, msg.format('split')):
       jax.random.split(keys())
 
-    # Some shouldn't error or warn
+    # Shouldn't error or warn:
     with self.assertNoWarnings():
       jax.random.key_data(keys())
       jax.random.key_impl(keys())

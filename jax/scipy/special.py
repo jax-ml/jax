@@ -13,14 +13,14 @@
 # limitations under the License.
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.scipy.special import (
   bernoulli as bernoulli,
+  bessel_jn as bessel_jn,
+  beta as beta,
   betainc as betainc,
   betaln as betaln,
-  beta as beta,
-  bessel_jn as bessel_jn,
   digamma as digamma,
   entr as entr,
   erf as erf,
@@ -31,31 +31,37 @@ from jax._src.scipy.special import (
   expit as expit,
   expn as expn,
   factorial as factorial,
+  gamma as gamma,
   gammainc as gammainc,
   gammaincc as gammaincc,
   gammaln as gammaln,
   gammasgn as gammasgn,
-  gamma as gamma,
+  hyp1f1 as hyp1f1,
   i0 as i0,
   i0e as i0e,
   i1 as i1,
   i1e as i1e,
+  kl_div as kl_div,
+  log_ndtr as log_ndtr,
+  log_softmax as log_softmax,
   logit as logit,
   logsumexp as logsumexp,
   lpmn as lpmn,
   lpmn_values as lpmn_values,
   multigammaln as multigammaln,
-  log_ndtr as log_ndtr,
   ndtr as ndtr,
   ndtri as ndtri,
+  poch as poch,
   polygamma as polygamma,
+  rel_entr as rel_entr,
+  softmax as softmax,
   spence as spence,
   sph_harm as sph_harm,
-  xlogy as xlogy,
   xlog1py as xlog1py,
+  xlogy as xlogy,
   zeta as zeta,
-  kl_div as kl_div,
-  rel_entr as rel_entr,
-  poch as poch,
-  hyp1f1 as hyp1f1,
+)
+
+from jax._src.third_party.scipy.special import (
+  fresnel as fresnel,
 )

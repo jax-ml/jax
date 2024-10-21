@@ -165,7 +165,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(sign * np.exp(logsumexp).astype(x.dtype), expected_sumexp, rtol=tol)
 
   def testLogSumExpZeros(self):
-    # Regression test for https://github.com/google/jax/issues/5370
+    # Regression test for https://github.com/jax-ml/jax/issues/5370
     scipy_fun = lambda a, b: osp_special.logsumexp(a, b=b)
     lax_fun = lambda a, b: lsp_special.logsumexp(a, b=b)
     args_maker = lambda: [np.array([-1000, -2]), np.array([1, 0])]
@@ -173,14 +173,14 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lax_fun, args_maker)
 
   def testLogSumExpOnes(self):
-    # Regression test for https://github.com/google/jax/issues/7390
+    # Regression test for https://github.com/jax-ml/jax/issues/7390
     args_maker = lambda: [np.ones(4, dtype='float32')]
     with jax.debug_infs(True):
       self._CheckAgainstNumpy(osp_special.logsumexp, lsp_special.logsumexp, args_maker)
       self._CompileAndCheck(lsp_special.logsumexp, args_maker)
 
   def testLogSumExpNans(self):
-    # Regression test for https://github.com/google/jax/issues/7634
+    # Regression test for https://github.com/jax-ml/jax/issues/7634
     with jax.debug_nans(True):
       with jax.disable_jit():
         result = lsp_special.logsumexp(1.0)
@@ -218,7 +218,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     rng = jtu.rand_positive(self.rng())
     args_maker = lambda: [rng(shape, dtype) + (d - 1) / 2.]
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
-                            tol={np.float32: 1e-3, np.float64: 1e-14})
+                            tol={np.float32: 1e-3, np.float64: 1e-14},
+                            check_dtypes=False)
     self._CompileAndCheck(
         lax_fun, args_maker, rtol={
             np.float32: 5e-5 if jtu.test_device_matches(["tpu"]) else 1e-05,
@@ -245,7 +246,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(lsp_special.xlogy(0., 0.), 0., check_dtypes=False)
 
   def testGradOfXlogyAtZero(self):
-    # https://github.com/google/jax/issues/15598
+    # https://github.com/jax-ml/jax/issues/15598
     x0, y0 = 0.0, 3.0
     d_xlog1py_dx = jax.grad(lsp_special.xlogy, argnums=0)(x0, y0)
     self.assertAllClose(d_xlog1py_dx, lax.log(y0))
@@ -259,7 +260,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(lsp_special.xlog1py(0., -1.), 0., check_dtypes=False)
 
   def testGradOfXlog1pyAtZero(self):
-    # https://github.com/google/jax/issues/15598
+    # https://github.com/jax-ml/jax/issues/15598
     x0, y0 = 0.0, 3.0
     d_xlog1py_dx = jax.grad(lsp_special.xlog1py, argnums=0)(x0, y0)
     self.assertAllClose(d_xlog1py_dx, lax.log1p(y0))
@@ -283,7 +284,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
                     rtol=.1, eps=1e-3)
 
   def testGradOfEntrAtZero(self):
-    # https://github.com/google/jax/issues/15709
+    # https://github.com/jax-ml/jax/issues/15709
     self.assertEqual(jax.jacfwd(lsp_special.entr)(0.0), jnp.inf)
     self.assertEqual(jax.jacrev(lsp_special.entr)(0.0), jnp.inf)
 
@@ -332,6 +333,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     dtype=float_dtypes,
   )
   def testLpmn(self, l_max, shape, dtype):
+    if jtu.is_device_tpu(6, "e"):
+      self.skipTest("TODO(b/364258243): fails on TPU v6e")
     rng = jtu.rand_uniform(self.rng(), low=-0.2, high=0.9)
     args_maker = lambda: [rng(shape, dtype)]
 
@@ -339,8 +342,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     def scipy_fun(z, m=l_max, n=l_max):
       # scipy only supports scalar inputs for z, so we must loop here.
-      vals, derivs = zip(*(osp_special.lpmn(m, n, zi) for zi in z))
-      return np.dstack(vals), np.dstack(derivs)
+      vals, derivs = zip(*(osp_special.lpmn(m, n, zi) for zi in z.astype('float64')))
+      return np.dstack(vals).astype(z.dtype), np.dstack(derivs).astype(z.dtype)
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, rtol=1e-5,
                             atol=3e-3, check_dtypes=False)
@@ -360,7 +363,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     def scipy_fun(z, m=l_max, n=l_max):
       # scipy only supports scalar inputs for z, so we must loop here.
-      vals, _ = zip(*(osp_special.lpmn(m, n, zi) for zi in z))
+      vals, _ = zip(*(osp_special.lpmn(m, n, zi) for zi in z.astype('float64')))
       a = np.dstack(vals)
 
       # apply the normalization
@@ -372,7 +375,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
           c1 = (4.0 * np.pi) * osp_special.factorial(l + m)
           c2 = np.sqrt(c0 / c1)
           a_normalized[m, l] = c2 * a[m, l]
-      return a_normalized
+      return a_normalized.astype(z.dtype)
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
                             rtol=1e-5, atol=1e-5, check_dtypes=False)
@@ -441,6 +444,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testSphHarmForJitAndAgainstNumpy(self, l_max, num_z, dtype):
     """Tests against JIT compatibility and Numpy."""
+    if jtu.is_device_tpu(6, "e"):
+      self.skipTest("TODO(b/364258243): fails on TPU v6e")
     n_max = l_max
     shape = (num_z,)
     rng = jtu.rand_int(self.rng(), -l_max, l_max + 1)

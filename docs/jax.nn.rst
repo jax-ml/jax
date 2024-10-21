@@ -23,6 +23,7 @@ Activation functions
     sigmoid
     softplus
     sparse_plus
+    sparse_sigmoid
     soft_sign
     silu
     swish
@@ -51,3 +52,4 @@ Other functions
     logsumexp
     standardize
     one_hot
+    dot_product_attention

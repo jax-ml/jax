@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.1
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   language: python
@@ -16,7 +16,7 @@ kernelspec:
 
 # Design of Type Promotion Semantics for JAX
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/jep/9407-type-promotion.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/google/jax/blob/main/docs/jep/9407-type-promotion.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jax-ml/jax/blob/main/docs/jep/9407-type-promotion.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/jax-ml/jax/blob/main/docs/jep/9407-type-promotion.ipynb)
 
 *Jake VanderPlas, December 2021*
 
@@ -908,7 +908,6 @@ display.HTML(table.to_html())
 :tags: [hide-input]
 
 # @title
-from jax import dtypes
 import jax
 import jax.numpy as jnp
 import pandas as pd
@@ -963,7 +962,6 @@ display.HTML(table.to_html())
 :tags: [hide-input]
 
 # @title
-from jax import dtypes
 import jax
 import jax.numpy as jnp
 import pandas as pd

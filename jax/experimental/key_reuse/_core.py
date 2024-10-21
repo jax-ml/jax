@@ -15,8 +15,9 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from functools import partial, reduce, total_ordering, wraps
-from typing import Any, Callable, Iterator, NamedTuple
+from collections.abc import Callable, Iterator
+from functools import partial, reduce, total_ordering
+from typing import Any, NamedTuple
 
 import jax
 from jax import lax
@@ -24,7 +25,6 @@ from jax import tree_util
 from jax.errors import KeyReuseError
 from jax.interpreters import batching, mlir
 from jax._src import api_util
-from jax._src import config
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import pjit

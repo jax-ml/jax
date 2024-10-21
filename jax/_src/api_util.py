@@ -14,11 +14,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 import inspect
 import operator
 from functools import partial, lru_cache
-from typing import Any, Callable, Type
+from typing import Any
 
 import numpy as np
 
@@ -273,7 +273,7 @@ def argnums_partial_except(f: lu.WrappedFun, static_argnums: tuple[int, ...],
           f"to unexpected cache-misses. Static argument (index {i}) of type "
           f"{type(static_arg)} for function {f.__name__} is non-hashable.")
     else:
-      fixed_args.append(_HashableWithStrictTypeEquality(static_arg))  # type: ignore
+      fixed_args.append(_HashableWithStrictTypeEquality(static_arg))
 
   return _argnums_partial(f, dyn_argnums, tuple(fixed_args)), dyn_args
 
@@ -307,7 +307,7 @@ def argnames_partial_except(f: lu.WrappedFun, static_argnames: tuple[str, ...],
             f"to unexpected cache-misses. Static argument (name {k}) of type "
             f"{type(arg)} for function {f.__name__} is non-hashable.")
       else:
-        fixed_kwargs[k] = Hashable(arg)  # type: ignore
+        fixed_kwargs[k] = Hashable(arg)
 
   return _argnames_partial(f, WrapKwArgs(fixed_kwargs)), dyn_kwargs
 
@@ -556,6 +556,26 @@ def _assert_no_intersection(static_argnames, donate_argnames):
         f"{out} appear in both static_argnames and donate_argnames")
 
 
+def resolve_kwargs(fun: Callable, args, kwargs) -> tuple[Any, ...]:
+  """Resolve input arguments to positional following a function's signature.
+
+  This will raise a TypeError if any keyword-only arguments were passed by the
+  caller.
+  """
+  if isinstance(fun, partial):
+    # functools.partial should have an opaque signature.
+    fun = lambda *args, **kwargs: None
+  ba = inspect.signature(fun).bind(*args, **kwargs)
+  ba.apply_defaults()
+  if ba.kwargs:
+    passed_kwargs = [k for k in ba.kwargs if k in kwargs]
+    if passed_kwargs:
+      raise TypeError(
+          f"keyword arguments ({passed_kwargs}) could not be resolved to "
+          "positions")
+  return ba.args
+
+
 def _dtype(x):
   try:
     return dtypes.result_type(x)
@@ -570,15 +590,13 @@ def _shaped_abstractify_slow(x):
     pass
 
   weak_type = getattr(x, 'weak_type', False)
-  named_shape = getattr(x, 'named_shape', {})
   if hasattr(x, 'dtype'):
     dtype = dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True)
   else:
     raise TypeError(
         f"Cannot interpret value of type {type(x)} as an abstract array; it "
         "does not have a dtype attribute")
-  return core.ShapedArray(np.shape(x), dtype, weak_type=weak_type,
-                          named_shape=named_shape)
+  return core.ShapedArray(np.shape(x), dtype, weak_type=weak_type)
 
 # TODO(mattjj,yashkatariya): replace xla.abstractify with this, same behavior
 def shaped_abstractify(x):
@@ -628,7 +646,7 @@ def debug_info(
   """Try to build trace-time debug info for fun when applied to args/kwargs."""
   arg_names = _arg_names(fun_signature, args, kwargs, static_argnums,
                          static_argnames)
-  if src is None or arg_names is None:
+  if arg_names is None:
     return None
   return TracingDebugInfo(traced_for, src, arg_names, None)
 
@@ -672,7 +690,7 @@ def result_paths(*args, **kwargs):
   yield ans, [keystr(path) for path, _ in generate_key_paths(ans)]
 
 def jaxpr_debug_info(jaxpr: core.Jaxpr, trace_debug: TracingDebugInfo | None,
-                     result_paths: tuple[str | None, ...] | None = None,
+                     result_paths: tuple[str, ...] | None = None,
                      ) -> core.Jaxpr:
   """Add debug info to jaxpr, given trace-time debug info and result paths."""
   if trace_debug is None:
@@ -713,6 +731,6 @@ class _HashableByObjectId:
   def __eq__(self, other):
     return self.val is other.val
 
-def register_class_with_attrs(t: Type) -> None:
+def register_class_with_attrs(t: type) -> None:
   _class_with_attrs.add(t)
-_class_with_attrs: set[Type] = set()
+_class_with_attrs: set[type] = set()

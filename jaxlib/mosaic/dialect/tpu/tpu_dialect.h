@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef JAXLIB_MOSAIC_DIALECT_TPU_DIALECT_H_
 #define JAXLIB_MOSAIC_DIALECT_TPU_DIALECT_H_
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -48,22 +49,44 @@ class TPUDialect;
 namespace mlir {
 namespace tpu {
 
+struct TpuTilingFlags {
+  bool use_x16_large_second_minor = false;
+  bool use_x8_large_second_minor = false;
+  bool use_x4_large_second_minor = false;
+};
+
+struct ApplyVectorLayoutContext {
+  // TODO(tlongeri): target_shape should be determined from hardware_generation
+  int hardware_generation = -1;
+  std::array<int64_t, 2> target_shape = {8, 128};
+  // mxu_shape = {contracting_size, non_contracting_size}
+  std::array<int64_t, 2> mxu_shape = {128, 128};
+  int64_t max_sublanes_in_scratch = 0;
+  int64_t vmem_banks = -1;  // -1 means "unspecified".
+};
+
 std::pair<bool, bool> mightCommunicateBetweenChips(Operation* op);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createInferMemRefLayoutPass(
+    int hardware_generation = -1,
+    std::array<int64_t, 2> target_shape = {8, 128},
+    const TpuTilingFlags &tpu_tiling_flags = {});
+
+std::unique_ptr<OperationPass<func::FuncOp>> createCanonicalizeMosaicPass(
     int hardware_generation = -1);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createInferVectorLayoutPass(
-    int lane_count = 128, int sublane_count = 8);
+    std::array<int64_t, 2> target_shape = {8, 128});
 
 std::unique_ptr<OperationPass<func::FuncOp>> createApplyVectorLayoutPass(
-    int hardware_generation = -1, int lane_count = 128, int sublane_count = 8,
-    int mxu_contracting_size = 128, int mxu_noncontracting_size = 128);
+    const ApplyVectorLayoutContext &ctx = ApplyVectorLayoutContext{});
 
 std::unique_ptr<OperationPass<func::FuncOp>>
 createLogicalToPhysicalDeviceIdPass(int64_t total_devices);
 
-std::unique_ptr<OperationPass<func::FuncOp>> createLinalgVectorizationPass();
+std::unique_ptr<OperationPass<func::FuncOp>> createLinalgVectorizationPass(
+    bool supports_bf16_alu_instructions = false,
+    bool supports_bf16_matmul = false);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createDebugAssertInsertionPass();
 

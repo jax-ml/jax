@@ -1,5 +1,7 @@
 # Custom operations for GPUs with C++ and CUDA
 
+<!--* freshness: { reviewed: '2024-06-07' } *-->
+
 JAX ships with a large number of built-in operations, but users occasionally run into a situation where they need a new operation that is not supported by JAX.
 
 To accommodate such scenarios, JAX allows users to define custom operations and this tutorial is to explain how we can define one for GPUs and use it in single-GPU and multi-GPU environments.
@@ -304,7 +306,7 @@ per_core_batch_size=4
 seq_len=512
 emb_dim=512
 x = jax.random.normal(
-    jax.random.PRNGKey(0),
+    jax.random.key(0),
     shape=(jax.local_device_count() * per_core_batch_size, seq_len, emb_dim),
     dtype=jnp.bfloat16,
 )
@@ -561,8 +563,7 @@ As XLA does not have enough knowledge about the custom functions to shard input 
 To avoid this duplication, we can:
 - [custom_partitioning](https://jax.readthedocs.io/en/latest/jax.experimental.custom_partitioning.html): to make it behave like all native JAX operations (but more complicated)
 - Use manual sharding
-  - [shard_map](https://jax.readthedocs.io/en/latest/jep/14273-shard-map.html): the new replacement for xmap
-  - [xmap](https://jax.readthedocs.io/en/latest/notebooks/xmap_tutorial.html) (now deprecated)
+  - [shard_map](https://jax.readthedocs.io/en/latest/jep/14273-shard-map.html)
 
 This example demonstrates the use of custom_partitioning.
 
@@ -655,7 +656,7 @@ class RmsNormFwdClass:
         assert len(weight_info.shape) == 2
         # partition() will force all dims of all inputs to be replicated except the
         # first dim of x that will be kept as is.
-        # This is because the implementaion can only be sharded on the batch dimensions.
+        # This is because the implementation can only be sharded on the batch dimensions.
 
         x_spec = arg_infos[0].sharding.spec
         # None mean that we replicate on that dimension.
@@ -752,7 +753,7 @@ class RmsNormBwdClass:
         return mesh, impl, output_shardings, arg_shardings
 register_primitive(RmsNormBwdClass)
 ```
-Plumbing to establish the forward and backward primtives with a custom_vjp rule as before:
+Plumbing to establish the forward and backward primitives with a custom_vjp rule as before:
 
 ```python
 @partial(jax.custom_vjp, nondiff_argnums=(2,))

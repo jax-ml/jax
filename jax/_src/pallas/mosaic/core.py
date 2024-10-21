@@ -15,39 +15,85 @@
 """Contains TPU-specific Pallas abstractions."""
 from __future__ import annotations
 
+import collections
 from collections.abc import Sequence
 import dataclasses
 import enum
 import functools
-from typing import Any, Union
+from typing import Any, ClassVar, Literal
 
+import jax
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
-from jax._src import tree_util
 from jax._src import util
-import jax.numpy as jnp
 from jax._src.pallas import core as pallas_core
-
-# TODO(sharadmv): enable type checking
-# mypy: ignore-errors
+from jax._src.pallas import pallas_call
+import jax.numpy as jnp
+import numpy as np
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 partial = functools.partial
 Grid = pallas_core.Grid
+TupleGrid = pallas_core.TupleGrid
 BlockSpec = pallas_core.BlockSpec
+BlockSpecTree = pallas_core.BlockSpecTree
 GridMapping = pallas_core.GridMapping
 NoBlockSpec = pallas_core.NoBlockSpec
+ScratchShapeTree = pallas_core.ScratchShapeTree
 AbstractMemoryRef = pallas_core.AbstractMemoryRef
 no_block_spec = pallas_core.no_block_spec
-_preprocess_grid = pallas_core._preprocess_grid
 _convert_block_spec_to_block_mapping = pallas_core._convert_block_spec_to_block_mapping
 split_list = util.split_list
 
+_ENABLE_RUNTIME_ASSERT = config.bool_state(
+    "jax_pallas_enable_runtime_assert",
+    default=False,
+    help=(
+        "If set, enables runtime assertions in the kernel via checkify.check."
+        " Otherwise, runtime asserts will be ignored unless functionalized"
+        " using checkify.checkify."
+    ),
+)
+
+
+@dataclasses.dataclass(frozen=True)
+class TPUCompilerParams(pallas_core.CompilerParams):
+  """Mosaic TPU compiler parameters.
+
+  Attributes:
+    dimension_semantics: A list of dimension semantics for each grid
+      dimension of the kernel. Either "parallel" for dimensions that can
+      execute in any order, or "arbitrary" for dimensions that must be
+      executed sequentially.
+    allow_input_fusion: A list of booleans indicating whether input fusion is
+      allowed for each argument.
+    vmem_limit_bytes: Overrides the default VMEM limit for a kernel. Note
+      that this must be used in conjunction with the
+      --xla_tpu_scoped_vmem_limit_kib=N flag with N*1kib > vmem_limit_bytes.
+    collective_id: Indicates which barrier semaphore to use for the kernel.
+      Note that using the same collective_id does not guarantee that
+      the same barrier semaphore will be allocated between kernels.
+    internal_scratch_in_bytes: The size of the internal scratch space used by
+      Mosaic.
+    flags: A dictionary of command line flags for the kernel.
+    serialization_format: The serialization format for the kernel body.
+    device_type: The device type to compile for.
+  """
+  PLATFORM: ClassVar[str] = "mosaic"
+  dimension_semantics: Sequence[Literal["parallel", "arbitrary"]] | None = None
+  allow_input_fusion: Sequence[bool] | None = None
+  vmem_limit_bytes: int | None = None
+  collective_id: int | None = None
+  flags: dict[str, Any] | None = None
+  internal_scratch_in_bytes: int | None = None
+  serialization_format: int = 1
+  device_type: str | None = None
 
 class TPUMemorySpace(enum.Enum):
-  ANY = "any"
+  ANY = "any"  # TODO(b/368401328): Remove this and just use pl.ANY.
   VMEM = "vmem"
   SMEM = "smem"
   CMEM = "cmem"
@@ -58,15 +104,25 @@ class TPUMemorySpace(enum.Enum):
 
   def __call__(self, shape: tuple[int, ...], dtype: jnp.dtype):
     # A convenience function for constructing MemoryRef types.
-    return MemoryRef(shape, dtype, self)
+    return pallas_core.MemoryRef(shape, dtype, self)
 
 class semaphore_dtype(dtypes.extended): pass
 class semaphore(semaphore_dtype): pass
 class dma_semaphore(semaphore_dtype): pass
 class barrier_semaphore(semaphore_dtype): pass
 
+class AbstractSemaphoreTyRules:
+  @staticmethod
+  def pallas_interpret_element_aval(_) -> jax_core.ShapedArray:
+    return jax_core.ShapedArray((), pallas_core.SEMAPHORE_INTERPRET_DTYPE)
+
+  @staticmethod
+  def physical_element_aval(_) -> jax_core.ShapedArray:
+    return jax_core.ShapedArray((), jnp.int32)
+
 class AbstractSemaphoreTy(dtypes.ExtendedDType):
   name: str
+  _rules = AbstractSemaphoreTyRules
 
   def __repr__(self) -> str:
     return self.name
@@ -75,7 +131,7 @@ class AbstractSemaphoreTy(dtypes.ExtendedDType):
     return self.__class__ == other.__class__
 
   def __hash__(self) -> int:
-    return hash((self.__class__))
+    return hash(self.__class__)
 
 # TODO(sharadmv): implement dtype rules for AbstractSemaphoreTy
 
@@ -97,16 +153,22 @@ class SemaphoreType(enum.Enum):
   BARRIER = "barrier"
 
   def __call__(self, shape: tuple[int, ...]):
+    dtype: Any
     if self == SemaphoreType.DMA:
       dtype = DmaSemaphoreTy()
     elif self == SemaphoreType.BARRIER:
       dtype = BarrierSemaphoreTy()
     else:
       dtype = SemaphoreTy()
-    return MemoryRef(shape, dtype, TPUMemorySpace.SEMAPHORE)
+    if pallas_core.is_interpret_mode():
+      dtype = pallas_core.SEMAPHORE_INTERPRET_DTYPE
+    return pallas_core.MemoryRef(shape, dtype, TPUMemorySpace.SEMAPHORE)
 
-  def get_aval(self) -> "AbstractMemoryRef":
-    return self(()).get_aval()
+  def get_array_aval(self) -> pallas_core.ShapedArrayWithMemorySpace:
+    return self(()).get_array_aval()
+
+  def get_ref_aval(self) -> AbstractMemoryRef:
+    return self(()).get_ref_aval()
 
 @dataclasses.dataclass(frozen=True)
 class AbstractSemaphore(jax_core.AbstractValue):
@@ -122,105 +184,95 @@ class AbstractSemaphore(jax_core.AbstractValue):
 jax_core.raise_to_shaped_mappings[AbstractSemaphore] = lambda aval, _: aval
 
 
-@dataclasses.dataclass(frozen=True)
-class MemoryRef:
-  """Like jax.ShapeDtypeStruct but with memory spaces."""
-  shape: tuple[int, ...]
-  dtype: jnp.dtype
-  memory_space: TPUMemorySpace = TPUMemorySpace.ANY
-
-  def get_aval(self) -> AbstractMemoryRef:
-    return AbstractMemoryRef(
-        jax_core.ShapedArray(self.shape, self.dtype), self.memory_space)
-
-
-def _make_aval(obj: object) -> jax_core.AbstractValue:
-  if isinstance(obj, MemoryRef):
-    return obj.get_aval()
-  if isinstance(obj, SemaphoreType):
-    return obj.get_aval()
-  raise ValueError(f"No registered conversion for {type(obj)}. "
-                   "Only VMEM and SemaphoreType are supported.")
-
-
-BlockSpecTree = Union[BlockSpec, NoBlockSpec, Sequence["BlockSpecTree"]]
-
-
-@dataclasses.dataclass(init=False, unsafe_hash=True)
+@dataclasses.dataclass(init=False, kw_only=True, unsafe_hash=True)
 class PrefetchScalarGridSpec(pallas_core.GridSpec):
-  grid: Grid
   num_scalar_prefetch: int
-  in_specs: tuple[BlockSpec | NoBlockSpec, ...]
-  out_specs: tuple[BlockSpec | NoBlockSpec, ...]
-  in_specs_tree: Any
-  out_specs_tree: Any
-  scratch_shapes: tuple[Any, ...]
 
   def __init__(
       self,
       num_scalar_prefetch: int,
-      grid: Grid | None = None,
+      grid: Grid = (),
       in_specs: BlockSpecTree = no_block_spec,
       out_specs: BlockSpecTree = no_block_spec,
-      scratch_shapes: Any | Sequence[Any] = ()
+      scratch_shapes: ScratchShapeTree = ()
   ):
-    super().__init__(grid, in_specs, out_specs)
+    super().__init__(grid, in_specs, out_specs, scratch_shapes)
     self.num_scalar_prefetch = num_scalar_prefetch
     self.scratch_shapes = tuple(scratch_shapes)
 
-  def get_grid_mapping(
-      self, in_avals, in_tree, out_avals, out_tree
-  ) -> tuple[tuple[jax_core.AbstractValue, ...], GridMapping]:
-    all_avals = tree_util.tree_unflatten(in_tree, in_avals)
-    flat_scratch_shapes, scratch_tree = tree_util.tree_flatten(
-        self.scratch_shapes)
-    flat_scratch_avals = map(_make_aval, flat_scratch_shapes)
-    scalar_avals, unflat_in_avals = split_list(
-        all_avals, [self.num_scalar_prefetch])
-    flat_scalar_avals, scalar_tree = tree_util.tree_flatten(scalar_avals)
-    num_flat_scalar_prefetch = len(flat_scalar_avals)
-    in_avals, in_avals_tree = tree_util.tree_flatten(tuple(unflat_in_avals))
-    flat_in_specs, flat_out_specs = self._get_in_out_specs(
-        in_avals, in_avals_tree, out_avals, out_tree)
-    in_specs, in_ref_avals, out_specs, out_ref_avals = (
-        pallas_core._get_ref_avals(
-            self.grid, in_avals, flat_in_specs,
-            out_avals, flat_out_specs))
-    scalar_ref_avals = [
-        AbstractMemoryRef(jax_core.ShapedArray(aval.shape, aval.dtype),
-                          TPUMemorySpace.SMEM)
-        for aval in flat_scalar_avals]
-    grid_avals = [jax_core.ShapedArray((), jnp.dtype("int32"))] * len(self.grid)
-    # Create args, kwargs pytree def
-    index_map_in_tree = tree_util.tree_structure(
-        ((*grid_avals, *scalar_avals), {})
-    )
-    in_block_mappings = map(
-        partial(_convert_block_spec_to_block_mapping,
-                (*grid_avals, *scalar_ref_avals),
-                in_tree=index_map_in_tree), in_specs, in_ref_avals)
-    out_block_mappings = map(
-        partial(_convert_block_spec_to_block_mapping,
-                (*grid_avals, *scalar_ref_avals),
-                in_tree=index_map_in_tree), out_specs, out_ref_avals)
-    grid_mapping = GridMapping(
-        grid=self.grid,
-        block_mappings=(*in_block_mappings, *out_block_mappings),
-        mapped_dims=(),
-        num_index_operands=num_flat_scalar_prefetch,
-        num_scratch_operands=len(flat_scratch_avals)
-    )
-    jaxpr_scalar_ref_avals = tree_util.tree_unflatten(
-        scalar_tree, scalar_ref_avals)
-    jaxpr_in_ref_avals = tree_util.tree_unflatten(in_avals_tree, in_ref_avals)
-    jaxpr_scratch_avals = tree_util.tree_unflatten(
-        scratch_tree, flat_scratch_avals)
-    if not isinstance(jaxpr_scratch_avals, (tuple, list)):
-      jaxpr_scratch_avals = (jaxpr_scratch_avals,)
-    jaxpr_in_avals = (*jaxpr_scalar_ref_avals,
-                      *jaxpr_in_ref_avals)
-    jaxpr_out_avals = tree_util.tree_unflatten(out_tree, out_ref_avals)
-    if not isinstance(jaxpr_out_avals, (tuple, list)):
-      jaxpr_out_avals = (jaxpr_out_avals,)
-    return (*jaxpr_in_avals, *jaxpr_out_avals,
-            *jaxpr_scratch_avals), grid_mapping
+  def _make_scalar_ref_aval(self, aval):
+    return AbstractMemoryRef(jax_core.ShapedArray(aval.shape, aval.dtype),
+                             TPUMemorySpace.SMEM)
+
+
+@dataclasses.dataclass(frozen=True)
+class TensorCore:
+  id: int
+
+
+@dataclasses.dataclass(frozen=True)
+class TensorCoreMesh:
+  """A mesh of TensorCores."""
+  devices: np.ndarray
+  axis_names: Sequence[str]
+
+  @property
+  def shape(self):
+    return collections.OrderedDict(zip(self.axis_names, self.devices.shape))
+
+
+def create_tensorcore_mesh(
+    axis_name: str, devices: Sequence[jax.Device] | None = None
+) -> TensorCoreMesh:
+  # TODO(b/355036384): emit a better error if we don't have tensorcores.
+  if devices is None:
+    devices = jax.devices()
+  num_cores = devices[0].num_cores
+  return TensorCoreMesh(
+      np.array([TensorCore(i) for i in range(num_cores)]),
+      [axis_name],
+  )
+
+
+def runtime_assert_enabled() -> bool:
+  """Returns whether runtime asserts are enabled."""
+  return _ENABLE_RUNTIME_ASSERT.value
+
+
+def _tensorcore_mesh_discharge_rule(
+    in_avals,
+    out_avals,
+    *args,
+    mesh,
+    jaxpr,
+):
+  del out_avals
+  assert isinstance(mesh, TensorCoreMesh)
+  if len(mesh.shape) > 1:
+    raise NotImplementedError("Mesh must be 1D")
+  core_axis_name, num_cores = list(mesh.shape.items())[0]
+  def body(*args):
+    # Due to aliasing, args contains aliased inputs and outputs so we remove
+    # outputs.
+    in_refs = args[:len(in_avals)]
+    jax_core.eval_jaxpr(jaxpr, in_refs)
+  assert len(jaxpr.outvars) == 0
+  out = pallas_call.pallas_call(
+      body,
+      out_shape=in_avals,
+      in_specs=[pallas_core.BlockSpec(memory_space=pallas_core.MemorySpace.ANY)]
+      * len(in_avals),
+      out_specs=[pallas_core.BlockSpec(
+          memory_space=pallas_core.MemorySpace.ANY)]
+      * len(in_avals),
+      input_output_aliases={i: i for i in range(len(in_avals))},
+      grid=((core_axis_name, num_cores),),
+      compiler_params=dict(
+          mosaic=dict(dimension_semantics=("parallel",)),
+      ),
+  )(*args)
+  return out, ()
+
+pallas_core._core_map_mesh_rules[TensorCoreMesh] = (
+    _tensorcore_mesh_discharge_rule
+)

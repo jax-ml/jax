@@ -161,7 +161,7 @@ class FftTest(jtu.JaxTestCase):
     # Numpy promotes to complex128 aggressively.
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
-    self._CompileAndCheck(jnp_fn, args_maker)
+    self._CompileAndCheck(jnp_fn, args_maker, atol={np.complex64: 2e-6})
     # Test gradient for differentiable types.
     if (config.enable_x64.value and
         dtype in (float_dtypes if real and not inverse else inexact_dtypes)):
@@ -175,7 +175,7 @@ class FftTest(jtu.JaxTestCase):
     self.assertEqual(dtype, expected_dtype)
 
   def testIrfftTranspose(self):
-    # regression test for https://github.com/google/jax/issues/6223
+    # regression test for https://github.com/jax-ml/jax/issues/6223
     def build_matrix(linear_func, size):
       return jax.vmap(linear_func)(jnp.eye(size, size))
 
@@ -346,13 +346,16 @@ class FftTest(jtu.JaxTestCase):
     dtype=all_dtypes,
     size=[9, 10, 101, 102],
     d=[0.1, 2.],
+    device=[None, -1],
   )
-  def testFftfreq(self, size, d, dtype):
+  def testFftfreq(self, size, d, dtype, device):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng([size], dtype),)
     jnp_op = jnp.fft.fftfreq
     np_op = np.fft.fftfreq
-    jnp_fn = lambda a: jnp_op(size, d=d)
+    if device is not None:
+      device = jax.devices()[device]
+    jnp_fn = lambda a: jnp_op(size, d=d, device=device)
     np_fn = lambda a: np_op(size, d=d)
     # Numpy promotes to complex128 aggressively.
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
@@ -362,6 +365,10 @@ class FftTest(jtu.JaxTestCase):
     if dtype in inexact_dtypes:
       tol = 0.15  # TODO(skye): can we be more precise?
       jtu.check_grads(jnp_fn, args_maker(), order=2, atol=tol, rtol=tol)
+    # Test device
+    if device is not None:
+      out = jnp_fn(args_maker())
+      self.assertEqual(out.devices(), {device})
 
   @jtu.sample_product(n=[[0, 1, 2]])
   def testFftfreqErrors(self, n):
@@ -384,13 +391,16 @@ class FftTest(jtu.JaxTestCase):
     dtype=all_dtypes,
     size=[9, 10, 101, 102],
     d=[0.1, 2.],
+    device=[None, -1],
   )
-  def testRfftfreq(self, size, d, dtype):
+  def testRfftfreq(self, size, d, dtype, device):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng([size], dtype),)
     jnp_op = jnp.fft.rfftfreq
     np_op = np.fft.rfftfreq
-    jnp_fn = lambda a: jnp_op(size, d=d)
+    if device is not None:
+      device = jax.devices()[device]
+    jnp_fn = lambda a: jnp_op(size, d=d, device=device)
     np_fn = lambda a: np_op(size, d=d)
     # Numpy promotes to complex128 aggressively.
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
@@ -400,6 +410,10 @@ class FftTest(jtu.JaxTestCase):
     if dtype in inexact_dtypes:
       tol = 0.15  # TODO(skye): can we be more precise?
       jtu.check_grads(jnp_fn, args_maker(), order=2, atol=tol, rtol=tol)
+    # Test device
+    if device is not None:
+      out = jnp_fn(args_maker())
+      self.assertEqual(out.devices(), {device})
 
   @jtu.sample_product(n=[[0, 1, 2]])
   def testRfftfreqErrors(self, n):
@@ -462,6 +476,15 @@ class FftTest(jtu.JaxTestCase):
     if func_name[0] != "i":
       np_norm = np.reciprocal(np_norm)
     self.assertArraysAllClose(jax_norm, np_norm, rtol=3e-8, check_dtypes=False)
+
+  def testFftNormalizationPrecision(self):
+    # reported in https://github.com/jax-ml/jax/issues/23827
+    if not config.enable_x64.value:
+      raise self.skipTest("requires jax_enable_x64=true")
+    n = 31
+    a = np.ones((n, 15), dtype="complex128")
+    self.assertArraysAllClose(
+        jnp.fft.ifft(a, n=n, axis=1), np.fft.ifft(a, n=n, axis=1), atol=1e-14)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

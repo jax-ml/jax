@@ -3,6 +3,12 @@ on:
   schedule:
     - cron: "0 12 * * *" # Daily at 12:00 UTC
   workflow_dispatch: # allows triggering the workflow run manually
+  pull_request:
+    types: [ labeled ] # allow force-windows-run label
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 env:
   DISTUTILS_USE_SDK: 1
@@ -10,31 +16,26 @@ env:
 
 jobs:
   win-wheels:
+    if: ${{ (github.event.action != 'labeled') || (github.event.label.name == 'windows:force-run')}}
     strategy:
       fail-fast: true
       matrix:
-        os: [win-2019-16core]
+        os: [windows-2019-32core]
         arch: [AMD64]
-        pyver: ['3.9']
-    name: ${{ matrix.os }} CI build
+        pyver: ['3.10']
+    name: Windows CI build
     runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Cancel Previous Runs
-        uses: styfle/cancel-workflow-action@85880fa0301c86cca9da44039ee3bb12d3bedbfa # ratchet: styfle/cancel-workflow-action@0.12.1
-        with:
-          access_token: ${{ github.token }}
 
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
+      - name: Install LLVM/Clang
+        run: choco install llvm --version=18.1.4 --yes --no-progress --allow-downgrade
+
+      - uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871  # v4.2.1
         with:
           path: jax
 
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
-        with:
-          repository: openxla/xla
-          path: xla
-
-      - uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # ratchet:actions/setup-python@v5
+      - uses: actions/setup-python@f677139bbe7f9c59b41e40162b753c062f5d49a3  # v5.2.0
         with:
           python-version: ${{ matrix.pyver }}
           cache: 'pip'
@@ -46,12 +47,13 @@ jobs:
         run: |
           cd jax
           python -m pip install -r build/test-requirements.txt
-          python -m pip uninstall -y matplotlib
-          python -m pip install --pre --upgrade numpy==2.0.0rc1 scipy==1.13.0
+          python -m pip install --upgrade numpy==2.0.0 scipy==1.13.1
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
-          python.exe build\build.py ('--bazel_options=--override_repository=xla=${{ github.workspace }}\xla' -replace '\\','\\') --bazel_options=--color=yes
+          python.exe build\build.py `
+            --bazel_options=--color=yes `
+            --bazel_options=--config=win_clang
 
-      - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # ratchet: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
         with:
           name: wheels
           path: ${{ github.workspace }}\jax\dist\*.whl
@@ -64,7 +66,7 @@ jobs:
           PY_COLORS: 1
         run: |
           cd jax
+          python -m pip install --pre --find-links ${{ github.workspace }}\jax\dist jaxlib
           python -m pip install -e ${{ github.workspace }}\jax
-          python -m pip install --no-index --find-links ${{ github.workspace }}\jax\dist jaxlib
           echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
           pytest -n auto --tb=short tests examples

@@ -19,6 +19,7 @@ import functools
 from functools import partial
 import itertools
 import operator
+import types
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -45,9 +46,14 @@ np_unsigned_dtypes = [np.dtype('uint8'), np.dtype('uint16'), np.dtype('uint32'),
                      np.dtype('uint64')]
 unsigned_dtypes = list(np_unsigned_dtypes)
 
-int4_dtypes = [np.dtype('int4'), np.dtype('uint4')]
+intn_dtypes = [np.dtype('int4'), np.dtype('uint4')]
 signed_dtypes += [np.dtype('int4')]
 unsigned_dtypes += [np.dtype('uint4')]
+if dtypes.int2 is not None:
+  assert dtypes.uint2 is not None
+  intn_dtypes[:0] = [np.dtype('int2'), np.dtype('uint2')]
+  signed_dtypes[:0] = [np.dtype('int2')]
+  unsigned_dtypes[:0] = [np.dtype('uint2')]
 
 np_float_dtypes = [np.dtype('float16'), np.dtype('float32'),
                    np.dtype('float64')]
@@ -224,7 +230,7 @@ class DtypesTest(jtu.JaxTestCase):
       # TODO(zhangqiaorjc): Consider more dtype promotion rules for fp8.
       if t1 in fp8_dtypes:
         continue
-      if t1 in int4_dtypes:
+      if t1 in intn_dtypes:
         continue
       self.assertEqual(np.dtype(np.complex128),
                        dtypes.promote_types(t1, np.complex128))
@@ -233,7 +239,7 @@ class DtypesTest(jtu.JaxTestCase):
         # TODO(zhangqiaorjc): Consider more dtype promotion rules for fp8.
         if t2 in fp8_dtypes:
           continue
-        if t2 in int4_dtypes:
+        if t2 in intn_dtypes:
           continue
         # Symmetry
         self.assertEqual(dtypes.promote_types(t1, t2),
@@ -249,7 +255,7 @@ class DtypesTest(jtu.JaxTestCase):
         # TODO(zhangqiaorjc): Consider more dtype promotion rules for fp8.
         if t in fp8_dtypes:
           continue
-        if t in int4_dtypes or i in int4_dtypes:
+        if t in intn_dtypes or i in intn_dtypes:
           continue
         self.assertEqual(t, dtypes.promote_types(t, i))
 
@@ -295,16 +301,6 @@ class DtypesTest(jtu.JaxTestCase):
         self.assertEqual(dtypes.issubdtype(t, category),
                          np.issubdtype(np.dtype(t).type, category))
 
-  def testIsSubdtypeExtended(self):
-    self.assertTrue(dtypes.issubdtype(dtypes.extended, dtypes.extended))
-    self.assertTrue(dtypes.issubdtype(dtypes.extended, np.generic))
-    self.assertFalse(dtypes.issubdtype(dtypes.extended, np.number))
-
-    self.assertTrue(jnp.issubdtype(dtypes.prng_key, dtypes.prng_key))
-    self.assertTrue(jnp.issubdtype(dtypes.prng_key, dtypes.extended))
-    self.assertTrue(jnp.issubdtype(dtypes.prng_key, np.generic))
-    self.assertFalse(dtypes.issubdtype(dtypes.prng_key, np.number))
-
   @parameterized.product(dtype=custom_float_dtypes)
   def testIsSubdtypeCustomFloats(self, dtype):
     for dt in [dtype, np.dtype(dtype), str(np.dtype(dtype))]:
@@ -319,14 +315,14 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertFalse(dtypes.issubdtype(dt, np.float64))
       self.assertFalse(dtypes.issubdtype(np.generic, dt))
 
-  @parameterized.product(dtype=int4_dtypes)
-  def testIsSubdtypeInt4(self, dtype):
-    if dtype == 'int4':
+  @parameterized.product(dtype=intn_dtypes)
+  def testIsSubdtypeIntN(self, dtype):
+    if dtype in ('int2', 'int4'):
       int_category = np.signedinteger
-    elif dtype == 'uint4':
+    elif dtype in ('uint2', 'uint4'):
       int_category = np.unsignedinteger
     else:
-      raise ValueError("Unexpected dtype: {dtype}")
+      raise ValueError(f'Unexpected dtype: {dtype}')
     for dt in [dtype, np.dtype(dtype), str(np.dtype(dtype))]:
       self.assertTrue(dtypes.issubdtype(dt, dt))
       self.assertTrue(dtypes.issubdtype(dt, np.dtype(dtype)))
@@ -403,6 +399,34 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(dtypes.float_, np.float32 if precision == '32' else np.float64)
     self.assertEqual(dtypes.complex_, np.complex64 if precision == '32' else np.complex128)
 
+  def test_check_dtype_non_hashable(self):
+    # regression test for issue with checking non-hashable custom dtype
+    class MyDtype:
+      __hash__ = None
+      dtype = np.dtype('float32')
+    dtypes.check_user_dtype_supported(MyDtype())
+
+  def test_check_dtype_array(self):
+    x = jnp.arange(4)
+    msg = "Passing an array as a dtype argument is deprecated"
+    with self.assertWarnsRegex(DeprecationWarning, msg):
+      dtypes.check_user_dtype_supported(x)
+    with self.assertWarnsRegex(DeprecationWarning, msg):
+      jax.jit(dtypes.check_user_dtype_supported)(x)
+
+
+class ExtendedDTypeTest(jtu.JaxTestCase):
+
+  def testIsSubdtypeExtended(self):
+    self.assertTrue(dtypes.issubdtype(dtypes.extended, dtypes.extended))
+    self.assertTrue(dtypes.issubdtype(dtypes.extended, np.generic))
+    self.assertFalse(dtypes.issubdtype(dtypes.extended, np.number))
+
+    self.assertTrue(jnp.issubdtype(dtypes.prng_key, dtypes.prng_key))
+    self.assertTrue(jnp.issubdtype(dtypes.prng_key, dtypes.extended))
+    self.assertTrue(jnp.issubdtype(dtypes.prng_key, np.generic))
+    self.assertFalse(dtypes.issubdtype(dtypes.prng_key, np.number))
+
   def test_custom_tangent_dtype(self):
     from jax._src import core
 
@@ -410,6 +434,8 @@ class DtypesTest(jtu.JaxTestCase):
       pass
 
     class ScalesTyRules:
+      allow_conversion: bool = True
+
       @staticmethod
       def physical_element_aval(dtype) -> core.ShapedArray:
         return core.ShapedArray((), dtype.float_dtype)
@@ -429,14 +455,6 @@ class DtypesTest(jtu.JaxTestCase):
         neginf = np.array(-np.inf if dtypes.supports_inf(dt.float_dtype)
                           else dtypes.finfo(dt.float_dtype).min, dt.float_dtype)
         return jax.lax.convert_element_type(neginf, dt)
-
-      @staticmethod
-      def convert_from(dtype, other_dtype) -> bool:
-        return dtype.float_dtype == other_dtype
-
-      @staticmethod
-      def convert_to(other_dtype, dtype) -> bool:
-        return dtype.float_dtype == other_dtype
 
     @dataclasses.dataclass(frozen=True)
     class ScaleTy(dtypes.ExtendedDType):
@@ -480,19 +498,13 @@ class DtypesTest(jtu.JaxTestCase):
     from jax._src import core
 
     class ScalesTyRules:
-      # tell JAX how to lower this dtype to an HLO dtype
+      # tell JAX how to lower this dtype to an HLO representation dtype
       @staticmethod
       def physical_element_aval(dtype) -> core.ShapedArray:
         return core.ShapedArray((), dtype.float_dtype)
 
-      # allow conversions to and from the corresponding float type
-      @staticmethod
-      def convert_from(scale_dtype, other_dtype) -> bool:
-        return scale_dtype.float_dtype == other_dtype
-
-      @staticmethod
-      def convert_to(other_dtype, scale_dtype) -> bool:
-        return scale_dtype.float_dtype == other_dtype
+      # allow conversions to and from the corresponding representation type
+      allow_conversion: bool = True
 
       # define how autodiff should accumulate these values
       @staticmethod
@@ -558,6 +570,152 @@ class DtypesTest(jtu.JaxTestCase):
     _, new_scale = jax.jit(jax.grad(outer, (0, 1)))(jnp.float32(3.14), scale)
     self.assertAllClose(new_scale, jnp.float32(1.0))
 
+  @parameterized.parameters([True])  # TODO(mattjj): make jit=False work
+  def test_primal_tangent_dtype(self, jit):
+    dt = dtypes.primal_tangent_dtype(jnp.int8, jnp.bfloat16)
+
+    x = jax.random.uniform(jax.random.key(0), (3,), minval=0, maxval=10
+                           ).astype(jnp.int8)
+    g = jax.random.uniform(jax.random.key(0), (3,), minval=0, maxval=10
+                           ).astype(jnp.bfloat16)
+
+    @jax.custom_gradient
+    def f(x):
+      def bwd(g):
+        return 2 * g,
+      return jnp.int8(x).astype(g.dtype) * 2 + 1, bwd
+
+    def h():
+      result, bwd = jax.vjp(f, x.astype(dt))
+      bwd_result, = bwd(g)
+      return result, bwd_result
+
+    if jit:
+      h = jax.jit(h)
+
+    result, bwd_result = h()
+    self.assertEqual(result.dtype, jnp.bfloat16)
+    self.assertEqual(bwd_result.dtype, jnp.bfloat16)
+    self.assertAllClose(bwd_result, 2 * g)
+    self.assertEqual(repr(dt), 'PrimalTangentDType{i8/bf16}')
+
+  @parameterized.parameters(itertools.product([(), (2,), (3, 4)], repeat=2))
+  def test_edtype_conversion(self, shape_prefix, shape_suffix):
+    class scalar(dtypes.extended): ...
+
+    @dataclasses.dataclass(frozen=True)
+    class DType(dtypes.ExtendedDType):
+      name = 'dt'
+      type = scalar
+      _rules = types.SimpleNamespace(
+          physical_element_aval=
+          lambda _: types.SimpleNamespace(shape=shape_suffix, dtype='int32'),
+          allow_conversion=True)
+    dtype = DType()
+
+    @jax.jit
+    def f(x):
+      self.assertEqual(x.shape, shape_prefix + shape_suffix)
+      self.assertEqual(x.dtype, jnp.dtype('int32'))
+      x = jax.lax.convert_element_type(x, dtype)
+      self.assertEqual(x.shape, shape_prefix)
+      self.assertEqual(x.dtype, dtype)
+      x = jax.lax.convert_element_type(x, 'int32')
+      self.assertEqual(x.shape, shape_prefix + shape_suffix)
+      self.assertEqual(x.dtype, jnp.dtype('int32'))
+    f(jnp.zeros(shape_prefix + shape_suffix, dtype='int32'))
+
+  def test_edtype_conversion_errors(self):
+    class scalar(dtypes.extended): ...
+
+    @dataclasses.dataclass(frozen=True)
+    class DType(dtypes.ExtendedDType):
+      name = 'dt'
+      type = scalar
+      _rules = types.SimpleNamespace(
+          physical_element_aval=
+          lambda _: types.SimpleNamespace(shape=(3,), dtype='int32'),
+          allow_conversion=True)
+    dtype = DType()
+
+    class scalar2(dtypes.extended): ...
+
+    @dataclasses.dataclass(frozen=True)
+    class DType2(dtypes.ExtendedDType):
+      name = 'dt2'
+      type = scalar2
+      _rules = types.SimpleNamespace(
+          physical_element_aval=
+          lambda _: types.SimpleNamespace(shape=(3,), dtype='int32'),
+          allow_conversion=True)
+    dtype2 = DType2()
+
+    @jax.jit
+    def f(x):
+      y = jax.lax.convert_element_type(x, dtype)
+      with self.assertRaisesRegex(ValueError, "cannot directly"):
+        jax.lax.convert_element_type(y, dtype2)
+      with self.assertRaisesRegex(ValueError, "can only convert"):
+        jax.lax.convert_element_type(x.astype('float32'), dtype)
+      with self.assertRaisesRegex(ValueError, "can only convert"):
+        jax.lax.convert_element_type(x[:, :2], dtype)
+      with self.assertRaisesRegex(ValueError, "can only convert"):
+        jax.lax.convert_element_type(x[:, 0], dtype)
+      with self.assertRaisesRegex(ValueError, "can only convert"):
+        jax.lax.convert_element_type(y, 'float32')
+    f(jnp.zeros((5, 3), dtype='int32'))
+
+  def test_edtype_conversion_autodiff(self):
+
+    class scalar(dtypes.extended): ...
+
+    @dataclasses.dataclass(frozen=True)
+    class DType(dtypes.ExtendedDType):
+      name = 'dt'
+      type = scalar
+      _rules = types.SimpleNamespace(
+          physical_element_aval=
+          lambda _: types.SimpleNamespace(shape=(), dtype='float32'),
+          tangent_dtype=lambda dtype: jnp.dtype('bfloat16'),
+          allow_conversion=True)
+    dtype = DType()
+
+    @jax.jit
+    @jax.grad
+    def f(x):
+      x = jax.lax.convert_element_type(x, dtype)
+
+      @jax.custom_jvp
+      def g(x): return x
+      @g.defjvp
+      def g_jvp(primals, tangents):
+        (x,), (x_dot,) = primals, tangents
+        self.assertEqual(x.shape, (5,))
+        self.assertEqual(x.dtype, dtype)
+        self.assertEqual(x_dot.shape, (5,))
+        self.assertEqual(x_dot.dtype, jnp.dtype('bfloat16'))
+        return x, x_dot
+      x = g(x)
+
+      x = jax.lax.convert_element_type(x, 'float32')
+
+      @jax.custom_jvp
+      def h(x): return x
+      @h.defjvp
+      def h_jvp(primals, tangents):
+        (x,), (x_dot,) = primals, tangents
+        self.assertEqual(x.shape, (5,))
+        self.assertEqual(x.dtype, jnp.dtype('float32'))
+        self.assertEqual(x_dot.shape, (5,))
+        self.assertEqual(x_dot.dtype, jnp.dtype('float32'))
+        return x, x_dot
+      x = h(x)
+
+      return 0.
+
+    f(jnp.zeros(5, dtype='float32'))  # test assertions in the function
+
+
 class EArrayTest(jtu.JaxTestCase):
 
   @parameterized.parameters([True, False])
@@ -569,23 +727,11 @@ class EArrayTest(jtu.JaxTestCase):
     class foo(dtypes.extended): pass
 
     class FooTyRules:
-
-      @staticmethod
-      def convert_to(foo_dtype, target_dtype):
-        return True
+      allow_conversion: bool = True
 
       @staticmethod
       def physical_element_aval(foo_dtype):
         return core.ShapedArray((), dtypes.dtype('float32'))
-
-      @staticmethod
-      def replicate_trailing_dims(ctx, val, aval):
-        del ctx, aval
-        return val
-
-      @staticmethod
-      def logical_sharding(aval, phys_sharding):
-        return phys_sharding
 
       @staticmethod
       def global_sharded_result_handler(aval, out_sharding, committed):
@@ -594,10 +740,6 @@ class EArrayTest(jtu.JaxTestCase):
         phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
         phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed)
         return lambda bufs: earray.EArray(aval, phys_handler(bufs))
-
-      @staticmethod
-      def physical_sharding(aval, sharding):
-        return sharding  # unlike KeyTyRules, assume same shape
 
     @dataclasses.dataclass(frozen=True)
     class FooTy(dtypes.ExtendedDType):
@@ -659,7 +801,7 @@ class TestPromotionTables(jtu.JaxTestCase):
       {"testcase_name": f"_{typ}", "typ": typ}
        for typ in [bool, int, float, complex])
   def testScalarWeakTypes(self, typ):
-    # Regression test for https://github.com/google/jax/issues/11377
+    # Regression test for https://github.com/jax-ml/jax/issues/11377
     val = typ(0)
 
     result1 = jnp.array(val)
@@ -798,9 +940,9 @@ class TestPromotionTables(jtu.JaxTestCase):
     for weak_type in [True, False]
   )
   def testUnaryPromotion(self, dtype, weak_type):
-    # Regression test for https://github.com/google/jax/issues/6051
-    if dtype in int4_dtypes:
-      self.skipTest("XLA support for int4 is incomplete.")
+    # Regression test for https://github.com/jax-ml/jax/issues/6051
+    if dtype in intn_dtypes:
+      self.skipTest("XLA support for int2 and int4 is incomplete.")
     x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     if weak_type:
       expected = dtypes.canonicalize_dtype(
@@ -819,13 +961,19 @@ class TestPromotionTables(jtu.JaxTestCase):
         x + y
 
   @jax.numpy_dtype_promotion('standard')
-  @jtu.run_on_devices("tpu")
-  def testInt4PromotionError(self):
-    for dtype in int4_dtypes:
+  @jtu.run_on_devices('tpu')
+  def testInt2PromotionError(self):
+    for dtype in intn_dtypes:
+      if dtype.name == 'int2' or dtype.name == 'uint2':
+        # TODO(b/343490729): Remove continue once the bug is fixed.
+        continue
+
       x = jnp.array(1, dtype=dtype)
       y = jnp.array(1, dtype='int32')
-      with self.assertRaisesRegex(dtypes.TypePromotionError,
-                                  ".*4-bit integers do not support implicit promotion"):
+      with self.assertRaisesRegex(
+          dtypes.TypePromotionError,
+          '.*[24]-bit integers do not support implicit promotion',
+      ):
         x + y
 
   @jtu.sample_product(
@@ -836,9 +984,9 @@ class TestPromotionTables(jtu.JaxTestCase):
   def testBinaryNonPromotion(self, dtype, weak_type, promotion):
     if dtype in fp8_dtypes:
       self.skipTest("XLA support for float8 is incomplete.")
-    if dtype in int4_dtypes:
-      self.skipTest("XLA support for int4 is incomplete.")
-    # Regression test for https://github.com/google/jax/issues/6051
+    if dtype in intn_dtypes:
+      self.skipTest("XLA support for int2 and int4 is incomplete.")
+    # Regression test for https://github.com/jax-ml/jax/issues/6051
     x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     with jax.numpy_dtype_promotion(promotion):
       y = (x + x)
@@ -859,15 +1007,13 @@ class TestPromotionTables(jtu.JaxTestCase):
     self.assertEqual(y.dtype, expected_dtype)
     self.assertEqual(dtypes.is_weakly_typed(y), expected_weak_type)
 
-  @parameterized.named_parameters(
-    {"testcase_name": f"_{dtype=}_{weak_type=}",
-     "dtype": dtype, "weak_type": weak_type}
-    for dtype in all_dtypes
-    for weak_type in [True, False]
-  )
+  @parameterized.product(dtype=all_dtypes, weak_type=[True, False])
   def testArrayRepr(self, dtype, weak_type):
-    if dtype in int4_dtypes and not jtu.test_device_matches(["tpu"]):
-      self.skipTest("XLA support for int4 is incomplete.")
+    if dtype in intn_dtypes:
+      if not jtu.test_device_matches(['tpu']):
+        self.skipTest('XLA support for int4 is incomplete.')
+      if dtypes.iinfo(dtype).bits == 2:
+        self.skipTest('XLA support for int2 is incomplete.')
     val = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     rep = repr(val)
     self.assertStartsWith(rep, 'Array(')

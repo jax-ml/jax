@@ -16,12 +16,12 @@
 from __future__ import annotations
 
 import builtins
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 from functools import partial, wraps
 import math
 import string
-from typing import Any, Callable, Optional
+from typing import Any
 
 from jax._src import core
 from jax import lax
@@ -32,7 +32,7 @@ from jax._src import util
 from jax.experimental.jax2tf import jax2tf
 
 import numpy as np
-import tensorflow as tf  # type: ignore[import]
+import tensorflow as tf
 
 
 # Implementation rules for primitives when XLA is not linked in. These
@@ -591,7 +591,7 @@ def _padding_reduce_window(operand, operand_shape, computation_name,
   padding_type = pads_to_padtype(operand_shape, window_dimensions,
                                  window_strides, padding)
 
-  # https://github.com/google/jax/issues/11874.
+  # https://github.com/jax-ml/jax/issues/11874.
   needs_manual_padding = (
       padding_type == "SAME" and computation_name == "add" and
       window_dimensions != [1] * len(operand_shape))

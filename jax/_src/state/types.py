@@ -18,19 +18,25 @@ from __future__ import annotations
 from collections.abc import Sequence
 import dataclasses
 import math
-from typing import Any, Union
+from typing import Any, Protocol, Union
 
 from jax._src import core
+from jax._src import dtypes
 from jax._src import effects
 from jax._src import pretty_printer as pp
+from jax._src import traceback_util
+from jax._src import tree_util
 from jax._src.state import indexing
-from jax._src.util import safe_map, safe_zip
 from jax._src.typing import Array
+from jax._src.typing import DTypeLike
+from jax._src.util import safe_map, safe_zip
+import numpy as np
 
 ## JAX utilities
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
+traceback_util.register_exclusion(__file__)
 
 _ref_effect_color = pp.Color.GREEN
 
@@ -72,7 +78,117 @@ effects.control_flow_allowed_effects.add_type(RefEffect)
 
 StateEffect = Union[ReadEffect, WriteEffect, AccumEffect]
 
+
 # ## `Ref`s
+@tree_util.register_pytree_node_class
+@dataclasses.dataclass(frozen=True)
+class RefBitcaster:
+  dtype: dtypes.DType
+  shape: tuple[int, ...]
+
+  @classmethod
+  def from_ref_new_dtype(cls, ref_or_view: Any, dtype) -> RefBitcaster:
+    if isinstance(ref_or_view, TransformedRef):
+      if ref_or_view.is_dynamic_size:
+        raise NotImplementedError(
+            "Bitcast ref with dynamic size is not supported."
+        )
+    from jax._src.state.utils import eval_bitcast_shape  # pytype: disable=import-error
+    dtype = dtypes.dtype(dtype)
+    return cls(dtype, eval_bitcast_shape(ref_or_view, dtype))
+
+  @property
+  def is_dynamic_size(self):
+    return False
+
+  def tree_flatten(self):
+    return (), (self.dtype, self.shape)
+
+  @classmethod
+  def tree_unflatten(cls, metadata, arrays):
+    assert not arrays
+    return cls(*metadata)
+
+  def transform_shape(
+      self, shape: tuple[int | Array, ...] | None
+  ) -> tuple[int | Array, ...] | None:
+    del shape  # Unused
+    return self.shape
+
+  def transform_dtype(self, dtype):
+    del dtype  # Unused
+    return self.dtype
+
+
+@tree_util.register_pytree_node_class
+@dataclasses.dataclass(frozen=True)
+class RefReshaper:
+  dtype: dtypes.DType
+  shape: tuple[int, ...]
+
+  @classmethod
+  def from_ref_new_shape(cls, ref_or_view: Any, *shape: Any) -> RefReshaper:
+    if len(shape) == 1 and isinstance(shape[0], tuple):
+      shape = shape[0]
+    if not shape:
+      raise ValueError("Cannot reshape ref to empty shape")
+    if np.prod(shape) != np.prod(ref_or_view.shape):
+      raise TypeError(
+          f"cannot reshape ref of shape {ref_or_view.shape} into shape {shape}"
+      )
+    if isinstance(ref_or_view, TransformedRef):
+      if ref_or_view.is_dynamic_size:
+        raise NotImplementedError(
+            "Reshape ref with dynamic size is not supported."
+        )
+    dtype = dtypes.dtype(ref_or_view.dtype)
+    return cls(dtype, shape)
+
+  @property
+  def is_dynamic_size(self):
+    return False
+
+  def tree_flatten(self):
+    return (), (self.dtype, self.shape)
+
+  @classmethod
+  def tree_unflatten(cls, metadata, arrays):
+    assert not arrays
+    return cls(*metadata)
+
+  def transform_shape(
+      self, shape: tuple[int | Array, ...] | None
+  ) -> tuple[int | Array, ...] | None:
+    del shape  # Unused
+    return self.shape
+
+  def transform_dtype(self, dtype):
+    del dtype  # Unused
+    return self.dtype
+
+
+class Transform(Protocol):
+
+  def transform_shape(
+      self, shape: tuple[int | Array, ...] | None
+  ) -> tuple[int | Array, ...] | None:
+    """Transform the shape.
+
+    Can return None if the input shape is not known, but must return a concrete
+    result when the input shape is known.
+    """
+    return shape
+
+  def transform_dtype(
+      self, dtype: DTypeLike | None
+  ) -> DTypeLike | None:
+    """Transform the dtype.
+
+    Can return None if the input dtype is not known, but must return a concrete
+    result when the input dtype is known.
+    """
+    return dtype
+
 
 @dataclasses.dataclass
 class RefIndexer:
@@ -82,36 +198,73 @@ class RefIndexer:
     if not isinstance(slc, tuple):
       slc = (slc,)
     indexer = indexing.NDIndexer.from_indices_shape(slc, self.ref_or_view.shape)
-    if isinstance(self.ref_or_view, RefView):
+    if isinstance(self.ref_or_view, TransformedRef):
       view = self.ref_or_view
-      return RefView(view.ref, (*view.indexers, indexer))
-    return RefView(self.ref_or_view, (indexer,))
+      return TransformedRef(view.ref, (*view.transforms, indexer))
+    return TransformedRef(self.ref_or_view, (indexer,))
 
-Indexer = Any
 
-@dataclasses.dataclass
-class RefView:
+@dataclasses.dataclass(frozen=True)
+class TransformedRef:
   ref: Any
-  indexers: tuple[indexing.NDIndexer, ...]
+  transforms: tuple[Transform, ...]
 
   @property
   def is_dynamic_size(self):
-    return self.indexers[-1].is_dynamic_size
+    return any(not isinstance(i, int) for i in self.shape)
 
   @property
   def shape(self) -> tuple[int | Array, ...]:
-    assert (
-        len(self.indexers) > 0
-    ), "Should not be able to create a trivial RefView"
-    return self.indexers[-1].get_indexer_shape()
+    unprocessed, shape = 0, None
+    # We first go backwards to find the first transform that knows its output
+    # shape. It's possible none of them do!
+    for unprocessed, t in enumerate(reversed(self.transforms), 1):
+      if (shape := t.transform_shape(None)) is not None:
+        unprocessed -= 1
+        break
+    if shape is None:
+      shape = self.ref.shape
+    if not unprocessed:
+      return shape
+    # If there are any unprocessed transforms left, we apply them to the shape
+    # we've found previuously.
+    for t in self.transforms[-unprocessed:]:
+      shape = t.transform_shape(shape)
+    assert shape is not None
+    return shape
 
   @property
   def dtype(self):
-    return self.ref.dtype
+    # The structure of this method is analogous to `shape`. See comments there.
+    unprocessed, dtype = 0, None
+    for unprocessed, t in enumerate(reversed(self.transforms), 1):
+      if (dtype := t.transform_dtype(None)) is not None:
+        unprocessed -= 1
+        break
+    if dtype is None:
+      dtype = self.ref.dtype
+    if not unprocessed:
+      return dtype
+    for t in self.transforms[-unprocessed:]:
+      dtype = t.transform_dtype(dtype)
+    assert dtype is not None
+    return dtype
 
   @property
   def at(self) -> RefIndexer:
     return RefIndexer(self)
+
+  def bitcast(self, dtype):
+    return TransformedRef(
+        self.ref,
+        (*self.transforms, RefBitcaster.from_ref_new_dtype(self, dtype)),
+    )
+
+  def reshape(self, *shape):
+    return TransformedRef(
+        self.ref,
+        (*self.transforms, RefReshaper.from_ref_new_shape(self, *shape)),
+    )
 
   def __getattr__(self, name):
     return getattr(self.ref, name)
@@ -132,6 +285,12 @@ class AbstractRef(core.AbstractValue):
   def __init__(self, inner_aval: core.AbstractValue):
     self.inner_aval = inner_aval
 
+  @property
+  def weak_type(self) -> bool:
+    if not hasattr(self.inner_aval, "weak_type"):
+      raise AttributeError
+    return self.inner_aval.weak_type
+
   def update(self, inner_aval=None):
     if inner_aval is None:
       return AbstractRef(self.inner_aval)
@@ -146,19 +305,33 @@ class AbstractRef(core.AbstractValue):
 
   @property
   def shape(self):
-    if not isinstance(self.inner_aval, core.ShapedArray):
-      raise AttributeError(f"`Ref{{{self.inner_aval.str_short()}}} has no `shape`.")
-    return self.inner_aval.shape
+    try:
+      return self.inner_aval.shape  # pytype: disable=attribute-error
+    except AttributeError:
+      raise AttributeError(
+          f"`Ref{{{self.inner_aval.str_short()}}} has no `shape`."
+      ) from None
 
   @property
   def dtype(self):
-    if not isinstance(self.inner_aval, core.UnshapedArray):
-      raise AttributeError(f"`Ref{{{self.inner_aval.str_short()}}} has no `dtype`.")
-    return self.inner_aval.dtype
+    try:
+      return self.inner_aval.dtype  # pytype: disable=attribute-error
+    except AttributeError:
+      raise AttributeError(
+          f"`Ref{{{self.inner_aval.str_short()}}} has no `dtype`."
+      ) from None
 
   @core.aval_property
   def at(self):
     return RefIndexer(self)
+
+  @core.aval_method
+  def bitcast(self, dtype):
+    return TransformedRef(self, (RefBitcaster.from_ref_new_dtype(self, dtype),))
+
+  @core.aval_method
+  def reshape(self, *shape):
+    return TransformedRef(self, (RefReshaper.from_ref_new_shape(self, *shape),))
 
   @core.aval_method
   @staticmethod
@@ -183,8 +356,8 @@ class AbstractRef(core.AbstractValue):
   def __repr__(self) -> str:
     return f'Ref{{{self.inner_aval.str_short()}}}'
 
-  def at_least_vspace(self):
-    return AbstractRef(self.inner_aval.at_least_vspace())
+  def to_tangent_aval(self):
+    return AbstractRef(self.inner_aval.to_tangent_aval())
 
   def __eq__(self, other):
     return (type(self) is type(other) and self.inner_aval == other.inner_aval)
@@ -212,8 +385,22 @@ def get_ref_state_effects(
            if isinstance(eff, (ReadEffect, WriteEffect, AccumEffect))
            and eff.input_index == i} for i, _ in enumerate(avals)]
 
-def shaped_array_ref(shape: tuple[int, ...], dtype,
-                     weak_type: bool = False,
-                     named_shape = None) -> AbstractRef:
-  return AbstractRef(core.ShapedArray(shape, dtype, weak_type=weak_type,
-                                      named_shape=named_shape))
+def shaped_array_ref(
+    shape: tuple[int, ...], dtype, weak_type: bool = False) -> AbstractRef:
+  return AbstractRef(core.ShapedArray(shape, dtype, weak_type=weak_type))
+
+def _shard_ref(mesh, names, ref_aval: AbstractRef):
+  del mesh
+  if names:
+    # Can't actually shard a ref, can only close over it.
+    raise NotImplementedError("Can't shard a Ref.")
+  return ref_aval
+core.shard_aval_handlers[AbstractRef] = _shard_ref
+
+def _unshard_ref(mesh, names, ref_aval: AbstractRef):
+  del mesh
+  if names:
+    # Can't actually shard a ref, can only close over it.
+    raise NotImplementedError("Can't unshard a Ref")
+  return ref_aval
+core.unshard_aval_handlers[AbstractRef] = _unshard_ref

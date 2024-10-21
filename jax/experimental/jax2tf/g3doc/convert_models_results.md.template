@@ -29,14 +29,14 @@ This converter simply converts a the forward function of a JAX model to a
 Tensorflow function with XLA support linked in. This is considered the baseline
 converter and has the largest coverage, because we expect nearly all ops to be
 convertible. However, please see
-[jax2tf Known Issue](https://github.com/google/jax/tree/main/jax/experimental/jax2tf#known-issues)
+[jax2tf Known Issue](https://github.com/jax-ml/jax/tree/main/jax/experimental/jax2tf#known-issues)
 for a list of known problems.
 
 ### `jax2tf_noxla`
 
 This converter converts a JAX model to a Tensorflow function without XLA
 support. This means the Tensorflow XLA ops aren't used. See
-[here](https://github.com/google/jax/tree/main/jax/experimental/jax2tf#tensorflow-xla-ops)
+[here](https://github.com/jax-ml/jax/tree/main/jax/experimental/jax2tf#tensorflow-xla-ops)
 for more details.
 
 ### `jax2tfjs`

@@ -19,7 +19,7 @@ licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//third_party/py/jax/experimental/jax2tf:__subpackages__"],
+    default_visibility = ["//jax/experimental/jax2tf:__subpackages__"],
 )
 
 py_library(
@@ -27,8 +27,8 @@ py_library(
     srcs = glob(["*.py"]),
     srcs_version = "PY3",
     deps = [
+        "//jax",
         "//third_party/py/flax:core",
-        "//third_party/py/jax",
         "//third_party/py/jraph",
         "//third_party/py/numpy",
         "//third_party/py/typing_extensions",

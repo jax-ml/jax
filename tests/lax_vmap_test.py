@@ -32,7 +32,6 @@ from jax import lax
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import windowed_reductions as lax_windowed_reductions
-from jax._src.lib import xla_client
 from jax._src.util import safe_map, safe_zip
 
 jax.config.parse_flags_with_absl()
@@ -546,7 +545,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     ndims = len(shape)
     axes = range(ndims - fft_ndims, ndims)
     fft_lengths = tuple(shape[axis] for axis in axes)
-    op = lambda x: lax.fft(x, xla_client.FftType.FFT, fft_lengths)
+    op = lambda x: lax.fft(x, lax.FftType.FFT, fft_lengths)
     self._CheckBatching(op, 5, bdims, [shape], [np.complex64], rng,
                         rtol=1e-5)
 
@@ -566,6 +565,18 @@ class LaxVmapTest(jtu.JaxTestCase):
           ((10, 5), np.array([[0, 2], [1, 0]]), lax.GatherDimensionNumbers(
             offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)),
             (1, 3)),
+          ((2, 5), np.array([[[0], [2]], [[1], [1]]]),
+           lax.GatherDimensionNumbers(
+               offset_dims=(), collapsed_slice_dims=(1,),
+               start_index_map=(1,), operand_batching_dims=(0,),
+               start_indices_batching_dims=(0,)),
+           (1, 1)),
+          ((2, 3, 10), np.array([[[0], [1]], [[2], [3]], [[4], [5]]]),
+           lax.GatherDimensionNumbers(
+               offset_dims=(2,), collapsed_slice_dims=(),
+               start_index_map=(2,), operand_batching_dims=(0, 1),
+               start_indices_batching_dims=(1, 0)),
+           (1, 1, 3))
       ]
       for bdims in lax_test_util.all_bdims(shape, idxs.shape)],
     dtype=lax_test_util.all_dtypes
@@ -590,6 +601,16 @@ class LaxVmapTest(jtu.JaxTestCase):
           ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,))),
+          ((2, 5), np.array([[[0], [2]], [[1], [1]]]), (2, 2),
+           lax.ScatterDimensionNumbers(
+               update_window_dims=(), inserted_window_dims=(1,),
+               scatter_dims_to_operand_dims=(1,), operand_batching_dims=(0,),
+               scatter_indices_batching_dims=(0,))),
+          ((2, 3, 10), np.array([[[0], [1]], [[2], [3]], [[4], [5]]]),
+           (3, 2, 3), lax.ScatterDimensionNumbers(
+               update_window_dims=(2,), inserted_window_dims=(),
+               scatter_dims_to_operand_dims=(2,), operand_batching_dims=(0, 1),
+               scatter_indices_batching_dims=(1, 0)))
       ]
       for bdims in lax_test_util.all_bdims(arg_shape, idxs.shape, update_shape)],
     dtype=lax_test_util.float_dtypes
@@ -613,6 +634,16 @@ class LaxVmapTest(jtu.JaxTestCase):
           ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,))),
+          ((2, 5), np.array([[[0], [2]], [[1], [1]]]), (2, 2),
+           lax.ScatterDimensionNumbers(
+               update_window_dims=(), inserted_window_dims=(1,),
+               scatter_dims_to_operand_dims=(1,), operand_batching_dims=(0,),
+               scatter_indices_batching_dims=(0,))),
+          ((2, 3, 10), np.array([[[0], [1]], [[2], [3]], [[4], [5]]]),
+           (3, 2, 3), lax.ScatterDimensionNumbers(
+               update_window_dims=(2,), inserted_window_dims=(),
+               scatter_dims_to_operand_dims=(2,), operand_batching_dims=(0, 1),
+               scatter_indices_batching_dims=(1, 0)))
       ]
       for bdims in lax_test_util.all_bdims(arg_shape, idxs.shape)],
     dtype=lax_test_util.float_dtypes,
@@ -693,8 +724,8 @@ class LaxVmapTest(jtu.JaxTestCase):
   # TODO(b/183233858): variadic reduce-window is not implemented on XLA:GPU
   @jtu.skip_on_devices("gpu")
   def test_variadic_reduce_window(self):
-    # https://github.com/google/jax/discussions/9818 and
-    # https://github.com/google/jax/issues/9837
+    # https://github.com/jax-ml/jax/discussions/9818 and
+    # https://github.com/jax-ml/jax/issues/9837
     def normpool(x):
       norms = jnp.linalg.norm(x, axis=-1)
       idxs = jnp.arange(x.shape[0])

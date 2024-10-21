@@ -28,6 +28,8 @@ from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import ad_checkpoint
+from jax._src.interpreters import mlir
+from jax._src.lib import cuda_versions
 from jax.test_util import check_grads
 from jax import nn
 from jax import random
@@ -36,8 +38,194 @@ import jax.numpy as jnp
 
 config.parse_flags_with_absl()
 
+def _is_required_cudnn_version_satisfied(min_cudnn_version):
+  return (
+      jtu.is_cuda_compute_capability_at_least("8.0") and
+      cuda_versions is not None and
+      cuda_versions.cudnn_get_version() >= min_cudnn_version
+  )
 
+def _check_cudnn_backend(fn, *args, **kwargs):
+  lowered = jax.jit(fn).lower(*args, **kwargs)
+  hlo = mlir.module_to_string(lowered.compiler_ir('stablehlo'))
+  return '__cudnn$fmha' in hlo
+
+_cudnn_dbias_error = 'cuDNN only supports bias gradient'
+
+@jtu.with_config(jax_legacy_prng_key="allow",
+                 jax_numpy_dtype_promotion="standard")
 class NNFunctionsTest(jtu.JaxTestCase):
+  @parameterized.product(
+      dtype=[jnp.bfloat16, jnp.float16],
+      group_num=[1, 2, 4],
+      use_vmap=[False, True],
+      impl=['cudnn', 'xla'],
+  )
+  def testDotProductAttention(self, dtype, group_num, use_vmap, impl):
+    if impl == 'cudnn' and not _is_required_cudnn_version_satisfied(8904):
+      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
+    if impl == 'cudnn' and dtype == jnp.float32:
+      raise unittest.SkipTest("cuDNN only supports fp16 or bf16.")
+
+    B, S, T, N, H, G = 2, 128, 128, 4, 32, group_num
+    keys = random.split(random.PRNGKey(0), 5)
+    Q = random.normal(keys[0], (B, T, N, H), dtype)
+    K = random.normal(keys[1], (B, S, N // G, H), dtype)
+    V = random.normal(keys[2], (B, S, N // G, H), dtype)
+    grad = random.normal(keys[3], (B, T, N, H), dtype)
+    bias, mask = None, None
+
+    sdpa = nn.dot_product_attention
+    sdpa_ref = partial(sdpa, implementation=None)
+    sdpa_ans = partial(sdpa, implementation=impl)
+    if use_vmap:
+      sdpa_ans = jax.vmap(sdpa_ans, in_axes=(0, 0, 0, None, None), out_axes=0)
+
+    # For testing purposes, we call the non-GQA version without vmap in the
+    # reference code
+    K_ref = jnp.repeat(K, G, axis=2)
+    V_ref = jnp.repeat(V, G, axis=2)
+    out_ref, sdpa_vjp_ref = jax.vjp(sdpa_ref, Q, K_ref, V_ref, bias, mask)
+    out_ans, sdpa_vjp_ans = jax.vjp(sdpa_ans, Q, K, V, bias, mask)
+
+    dQ_ref, dK_ref, dV_ref = sdpa_vjp_ref(grad)[:3]
+    dQ_ans, dK_ans, dV_ans = sdpa_vjp_ans(grad)[:3]
+    dK_ref = dK_ref.reshape(B, S, N // G, G, H).sum(axis=3)
+    dV_ref = dV_ref.reshape(B, S, N // G, G, H).sum(axis=3)
+
+    if impl == 'cudnn':
+      self.assertTrue(_check_cudnn_backend(sdpa_ans, Q, K, V, bias, mask))
+      self.assertTrue(_check_cudnn_backend(sdpa_vjp_ans, grad))
+
+    self.assertAllClose(out_ref, out_ans, atol=.01, rtol=.01)
+    self.assertAllClose(dQ_ref, dQ_ans, rtol=.01, atol=.01)
+    self.assertAllClose(dK_ref, dK_ans, rtol=.02, atol=.02)
+    self.assertAllClose(dV_ref, dV_ans, rtol=.02, atol=.02)
+
+  @parameterized.product(
+      mask_mode=['bias', 'causal', 'padding', 'custom', ('causal', 'padding'),
+                 ('custom', 'padding'), ('bias', 'causal'),
+                 ('causal', 'sliding_window')],
+  )
+  def testDotProductAttentionMask(self, mask_mode):
+    if isinstance(mask_mode, str):
+      mask_mode = (mask_mode,)
+    min_cudnn_version = 90200 if 'sliding_window' in mask_mode else 8904
+    if not _is_required_cudnn_version_satisfied(min_cudnn_version):
+      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
+
+    dtype = jnp.bfloat16
+    B, S, T, N, H = 2, 128, 128, 4, 32
+    keys = random.split(random.PRNGKey(0), 4)
+    Q = random.normal(keys[0], (B, T, N, H), dtype)
+    K = random.normal(keys[1], (B, S, N, H), dtype)
+    V = random.normal(keys[2], (B, S, N, H), dtype)
+    grad = random.normal(keys[3], (B, T, N, H), dtype)
+    bias, mask = None, None
+    q_seqlen, kv_seqlen = None, None
+    window_size = None
+
+    is_causal = 'causal' in mask_mode
+    if 'padding' in mask_mode:
+      q_seqlen = jnp.array([T // 2, T // 4], dtype=jnp.int32)
+      kv_seqlen = jnp.array([S // 4, S // 2], dtype=jnp.int32)
+    if 'custom' in mask_mode:
+      # Use a generated causal mask as the custom mask.
+      custom_mask = jnp.tril(jnp.ones((T, S), dtype=jnp.bool_))
+      mask = custom_mask[None, None, :, :]
+    if 'bias' in mask_mode:
+      bias = random.normal(keys[4], (1, N, T, S), dtype)
+    if 'sliding_window' in mask_mode:
+      window_size = (3, 2) if is_causal else (3, 0)
+
+    sdpa = nn.dot_product_attention
+    sdpa_ref = partial(sdpa, is_causal=is_causal, implementation=None)
+    sdpa_ans = partial(sdpa, is_causal=is_causal, implementation='cudnn')
+
+    args = (Q, K, V, bias, mask)
+    kwargs = {'query_seq_lengths': q_seqlen, 'key_value_seq_lengths': kv_seqlen}
+
+    # Convert the kargs to positional args for the jax.vjp.
+    fn_ref = lambda q, k, v, b, m, qs, kvs: sdpa_ref(
+        q, k, v, b, m, query_seq_lengths=qs, key_value_seq_lengths=kvs,
+        local_window_size=window_size,
+    )
+    fn_ans = lambda q, k, v, b, m, qs, kvs: sdpa_ans(
+        q, k, v, b, m, query_seq_lengths=qs, key_value_seq_lengths=kvs,
+        local_window_size=window_size,
+    )
+    out_ref, sdpa_vjp_ref = jax.vjp(fn_ref, *args, q_seqlen, kv_seqlen)
+    out_ans, sdpa_vjp_ans = jax.vjp(fn_ans, *args, q_seqlen, kv_seqlen)
+    dQ_ref, dK_ref, dV_ref, dbias_ref = sdpa_vjp_ref(grad)[:4]
+    dQ_ans, dK_ans, dV_ans, dbias_ans = sdpa_vjp_ans(grad)[:4]
+
+    # Check if cudnn backend is called.
+    self.assertTrue(_check_cudnn_backend(sdpa_ans, *args, **kwargs))
+    self.assertTrue(_check_cudnn_backend(sdpa_vjp_ans, grad))
+
+    self.assertAllClose(out_ref, out_ans, atol=.01, rtol=.01)
+    self.assertAllClose(dQ_ref, dQ_ans, rtol=.01, atol=.01)
+    self.assertAllClose(dK_ref, dK_ans, rtol=.02, atol=.02)
+    self.assertAllClose(dV_ref, dV_ans, rtol=.02, atol=.02)
+    self.assertAllClose(dbias_ref, dbias_ans, rtol=.03, atol=.03)
+
+  @parameterized.product(
+      batch_size=[1, 16],
+      use_vmap=[False, True],
+  )
+  def testDotProductAttentionBiasGradient(self, batch_size, use_vmap):
+    if not _is_required_cudnn_version_satisfied(8904):
+      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
+
+    dtype = jnp.bfloat16
+    B, S, N, H = batch_size, 128, 4, 32
+    keys = random.split(random.PRNGKey(0), 2)
+    x = random.normal(keys[0], (B, S, N, H), dtype)
+    bias = random.normal(keys[1], (B, N, S, S), dtype=dtype)
+    mask = jnp.ones((1, 1, S), dtype=jnp.bool_)
+
+    def attention(x, bias, mask, impl):
+      return jax.nn.dot_product_attention(
+          query=x,
+          key=x,
+          value=x,
+          bias=bias,
+          mask=mask,
+          is_causal=False,
+          implementation=impl,
+      )
+    attn_ref = partial(attention, impl=None)
+    attn_ans = partial(attention, impl='cudnn')
+    if use_vmap:
+      attn_batched_ref = jax.vmap(attn_ref, in_axes=(0, 0, None))
+      attn_batched_ans = jax.vmap(attn_ans, in_axes=(0, 0, None))
+    else:
+      attn_batched_ref = attn_ref
+      attn_batched_ans = attn_ans
+
+    fwd_ref = jax.jit(attn_batched_ref)
+    fwd_ans = jax.jit(attn_batched_ans)
+    y_ref = fwd_ref(x, bias, mask)
+    y_ans = fwd_ans(x, bias, mask)
+    self.assertAllClose(y_ref, y_ans)
+
+    @jax.jit
+    def bwd_ref(x, bias, mask):
+      _, f_vjp = jax.vjp(attn_ref, x, bias, mask)
+      return f_vjp(x)
+    @jax.jit
+    def bwd_ans(x, bias, mask):
+      _, f_vjp = jax.vjp(attn_ans, x, bias, mask)
+      return f_vjp(x)
+
+    if batch_size != 1:
+      with self.assertRaisesRegex(ValueError, _cudnn_dbias_error):
+        _, dbias_ans, _ = bwd_ans(x, bias, mask)
+    else:
+      _, dbias_ref, _ = bwd_ref(x, bias, mask)
+      _, dbias_ans, _ = bwd_ans(x, bias, mask)
+      self.assertAllClose(dbias_ans, dbias_ref, rtol=.03, atol=.03)
+
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
     check_grads(nn.softplus, (1e-8,), order=4,
@@ -179,11 +367,18 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testGelu(self, approximate):
     def gelu_reference(x):
       return x * scipy.stats.norm.cdf(x)
-    rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng((4, 5, 6), jnp.float32)]
+    args_maker = lambda: [jnp.linspace(-12, 5, 10000, dtype=jnp.float32)]
+    rtol = 2e-5
+    atol = 1e-3 if approximate else 0
     self._CheckAgainstNumpy(
-      gelu_reference, partial(nn.gelu, approximate=approximate), args_maker,
-      check_dtypes=False, tol=1e-3 if approximate else None)
+        gelu_reference,
+        partial(nn.gelu, approximate=approximate),
+        args_maker,
+        check_dtypes=False,
+        tol=0,
+        rtol=rtol,
+        atol=atol,
+    )
 
   @parameterized.parameters(*itertools.product(
       (jnp.float32, jnp.bfloat16, jnp.float16),
@@ -196,12 +391,12 @@ class NNFunctionsTest(jtu.JaxTestCase):
     self.assertEqual(out.dtype, dtype)
 
   def testEluMemory(self):
-    # see https://github.com/google/jax/pull/1640
+    # see https://github.com/jax-ml/jax/pull/1640
     with jax.enable_checks(False):  # With checks we materialize the array
       jax.make_jaxpr(lambda: nn.elu(jnp.ones((10 ** 12,))))  # don't oom
 
   def testHardTanhMemory(self):
-    # see https://github.com/google/jax/pull/1640
+    # see https://github.com/jax-ml/jax/pull/1640
     with jax.enable_checks(False):  # With checks we materialize the array
       jax.make_jaxpr(lambda: nn.hard_tanh(jnp.ones((10 ** 12,))))  # don't oom
 
@@ -238,7 +433,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
   @parameterized.parameters([nn.softmax, nn.log_softmax])
   def testSoftmaxWhereGrad(self, fn):
-    # regression test for https://github.com/google/jax/issues/19490
+    # regression test for https://github.com/jax-ml/jax/issues/19490
     x = jnp.array([36., 10000.])
     mask = x < 1000
 
@@ -314,7 +509,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(actual, expected)
 
   def testOneHotConcretizationError(self):
-    # https://github.com/google/jax/issues/3654
+    # https://github.com/jax-ml/jax/issues/3654
     msg = r"in jax.nn.one_hot argument `num_classes`"
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       jax.jit(nn.one_hot)(3, 5)
@@ -334,7 +529,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     nn.tanh  # doesn't crash
 
   def testCustomJVPLeak(self):
-    # https://github.com/google/jax/issues/8171
+    # https://github.com/jax-ml/jax/issues/8171
     @jax.jit
     def fwd():
       a = jnp.array(1.)
@@ -350,7 +545,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
       fwd()  # doesn't crash
 
   def testCustomJVPLeak2(self):
-    # https://github.com/google/jax/issues/8171
+    # https://github.com/jax-ml/jax/issues/8171
     # The above test uses jax.nn.sigmoid, as in the original #8171, but that
     # function no longer actually has a custom_jvp! So we inline the old def.
 

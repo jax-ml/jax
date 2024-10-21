@@ -11,72 +11,75 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+# pyformat: disable
 from __future__ import annotations
 
-from collections.abc import Generator, Iterable, Sequence
-from contextlib import contextmanager, ExitStack
+import collections
+from collections.abc import Callable, Generator, Iterable, Sequence
+from contextlib import ExitStack, contextmanager
 import datetime
-import inspect
-import io
 import functools
 from functools import partial
+import inspect
+import logging
 import math
-import re
 import os
+import re
+import sys
 import tempfile
 import textwrap
-from typing import Any, Callable
+from typing import Any, TextIO
 import unittest
 import warnings
 import zlib
 
 from absl.testing import absltest
 from absl.testing import parameterized
-
-import numpy as np
-import numpy.random as npr
-
 import jax
 from jax import lax
-from jax.experimental.compilation_cache import compilation_cache
-from jax._src.interpreters import mlir
-from jax.tree_util import tree_map, tree_all, tree_flatten, tree_unflatten
 from jax._src import api
-from jax._src import pjit as pjit_lib
+from jax._src import array
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
-from jax._src import linear_util as lu
 from jax._src import dtypes as _dtypes
+from jax._src import linear_util as lu
 from jax._src import monitoring
+from jax._src import pjit as pjit_lib
 from jax._src import stages
-from jax._src.lib import xla_client as xc
+from jax._src import xla_bridge
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
+from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
+from jax._src.lib import xla_client as xc
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
-from jax._src.util import unzip2
 from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
-    check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, tolerance)
-from jax._src import xla_bridge
+    check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, rand_like, tolerance)
+from jax._src.util import unzip2
+from jax.experimental.compilation_cache import compilation_cache
+from jax.tree_util import tree_all, tree_flatten, tree_map, tree_unflatten
+import numpy as np
+import numpy.random as npr
 
 
 # This submodule includes private test utilities that are not exported to
 # jax.test_util. Functionality appearing here is for internal use only, and
 # may be changed or removed at any time and without any deprecation cycle.
 
-_TEST_DUT = config.DEFINE_string(
+_TEST_DUT = config.string_flag(
     'jax_test_dut', '',
     help=
     'Describes the device under test in case special consideration is required.'
 )
 
-NUM_GENERATED_CASES = config.DEFINE_integer(
+NUM_GENERATED_CASES = config.int_flag(
   'jax_num_generated_cases',
   int(os.getenv('JAX_NUM_GENERATED_CASES', '10')),
   help='Number of generated cases to test')
 
-_MAX_CASES_SAMPLING_RETRIES = config.DEFINE_integer(
+_MAX_CASES_SAMPLING_RETRIES = config.int_flag(
   'max_cases_sampling_retries',
   int(os.getenv('JAX_MAX_CASES_SAMPLING_RETRIES', '100')),
   'Number of times a failed test sample should be retried. '
@@ -84,27 +87,34 @@ _MAX_CASES_SAMPLING_RETRIES = config.DEFINE_integer(
   'sampling process is terminated.'
 )
 
-_SKIP_SLOW_TESTS = config.DEFINE_bool(
+_SKIP_SLOW_TESTS = config.bool_flag(
     'jax_skip_slow_tests',
     config.bool_env('JAX_SKIP_SLOW_TESTS', False),
     help='Skip tests marked as slow (> 5 sec).'
 )
 
-_TEST_TARGETS = config.DEFINE_string(
+_TEST_TARGETS = config.string_flag(
   'test_targets', os.getenv('JAX_TEST_TARGETS', ''),
   'Regular expression specifying which tests to run, called via re.search on '
   'the test name. If empty or unspecified, run all tests.'
 )
-_EXCLUDE_TEST_TARGETS = config.DEFINE_string(
+_EXCLUDE_TEST_TARGETS = config.string_flag(
   'exclude_test_targets', os.getenv('JAX_EXCLUDE_TEST_TARGETS', ''),
   'Regular expression specifying which tests NOT to run, called via re.search '
   'on the test name. If empty or unspecified, run all tests.'
 )
-TEST_WITH_PERSISTENT_COMPILATION_CACHE = config.DEFINE_bool(
+TEST_WITH_PERSISTENT_COMPILATION_CACHE = config.bool_flag(
     'jax_test_with_persistent_compilation_cache',
     config.bool_env('JAX_TEST_WITH_PERSISTENT_COMPILATION_CACHE', False),
     help='If enabled, the persistent compilation cache will be enabled for all '
     'test cases. This can be used to increase compilation cache coverage.')
+
+HYPOTHESIS_PROFILE = config.string_flag(
+    'hypothesis_profile',
+    os.getenv('JAX_HYPOTHESIS_PROFILE', 'deterministic'),
+    help=('Select the hypothesis profile to use for testing. Available values: '
+          'deterministic, interactive'),
+)
 
 # We sanitize test names to ensure they work with "unitttest -k" and
 # "pytest -k" test filtering. pytest accepts '[' and ']' but unittest -k
@@ -163,7 +173,7 @@ def _normalize_tolerance(tol):
   if isinstance(tol, dict):
     return {np.dtype(k): v for k, v in tol.items()}
   else:
-    return {k: tol for k in _default_tolerance}
+    return dict.fromkeys(_default_tolerance, tol)
 
 def join_tolerance(tol1, tol2):
   tol1 = _normalize_tolerance(tol1)
@@ -180,11 +190,46 @@ def check_eq(xs, ys, err_msg=''):
 
 
 @contextmanager
-def capture_stdout() -> Generator[Callable[[], str], None, None]:
-  with unittest.mock.patch('sys.stdout', new_callable=io.StringIO) as fp:
-    def _read() -> str:
-      return fp.getvalue()
-    yield _read
+def _capture_output(fp: TextIO) -> Generator[Callable[[], str], None, None]:
+  """Context manager to capture all output written to a given file object.
+
+  Unlike ``contextlib.redirect_stdout``, this context manager works for
+  any file object and also for both pure Python and native code.
+
+  Example::
+
+    with capture_output(sys.stdout) as get_output:
+      print(42)
+    print("Captured": get_output())
+
+  Yields:
+    A function returning the captured output. The function must be called
+    *after* the context is no longer active.
+  """
+  # ``None`` means nothing has not been captured yet.
+  captured = None
+
+  def get_output() -> str:
+    if captured is None:
+      raise ValueError("get_output() called while the context is active.")
+    return captured
+
+  with tempfile.NamedTemporaryFile(mode="w+", encoding='utf-8') as f:
+    original_fd = os.dup(fp.fileno())
+    os.dup2(f.fileno(), fp.fileno())
+    try:
+      yield get_output
+    finally:
+      # Python also has its own buffers, make sure everything is flushed.
+      fp.flush()
+      os.fsync(fp.fileno())
+      f.seek(0)
+      captured = f.read()
+      os.dup2(original_fd, fp.fileno())
+
+
+capture_stdout = partial(_capture_output, sys.stdout)
+capture_stderr = partial(_capture_output, sys.stderr)
 
 
 @contextmanager
@@ -228,18 +273,18 @@ def count_primitive_compiles():
 
 @contextmanager
 def count_device_put_fast_path_hit():
-  original_fn = xc.copy_array_to_devices_with_sharding
+  original_fn = xc.batched_copy_array_to_devices_with_sharding
   count = [0]
 
-  def copy_array_to_devices_with_sharding_and_count(*args, **kwargs):
+  def batched_copy_array_to_devices_with_sharding_and_count(*args, **kwargs):
     count[0] += 1
     return original_fn(*args, **kwargs)
 
-  xc.copy_array_to_devices_with_sharding = copy_array_to_devices_with_sharding_and_count
+  xc.batched_copy_array_to_devices_with_sharding = batched_copy_array_to_devices_with_sharding_and_count
   try:
     yield count
   finally:
-    xc.copy_array_to_devices_with_sharding = original_fn
+    xc.batched_copy_array_to_devices_with_sharding = original_fn
 
 
 @contextmanager
@@ -257,6 +302,20 @@ def count_pjit_cpp_cache_miss():
   finally:
     pjit_lib._pjit_lower = original_pjit_lower
 
+@contextmanager
+def count_cached_compilation_cache_miss():
+  original_cached_compilation = pxla._cached_compilation
+  count = [0]
+
+  def cached_compilation_and_count(*args, **kwargs):
+    count[0] += 1
+    return original_cached_compilation(*args, **kwargs)
+
+  pxla._cached_compilation = cached_compilation_and_count
+  try:
+    yield count
+  finally:
+    pxla._cached_compilation = original_cached_compilation
 
 @contextmanager
 def count_jit_tracing_cache_miss():
@@ -273,6 +332,21 @@ def count_jit_tracing_cache_miss():
     yield count
   finally:
     pjit_lib._create_pjit_jaxpr = original_create_pjit_jaxpr
+
+@contextmanager
+def count_jit_infer_params_cache_miss():
+  original_infer_params_impl = pjit_lib._infer_params_impl
+  count = collections.defaultdict(int)
+
+  def infer_params_impl_and_count(fun, *args, **kw):
+    count[fun] += 1
+    return original_infer_params_impl(fun, *args, **kw)
+
+  pjit_lib._infer_params_impl = infer_params_impl_and_count
+  try:
+    yield count
+  finally:
+    pjit_lib._infer_params_impl = original_infer_params_impl
 
 
 @contextmanager
@@ -292,7 +366,7 @@ def count_aot_jit_cpp_cache_miss():
 
 
 @contextmanager
-def count_jit_and_pmap_compiles():
+def count_jit_and_pmap_lowerings():
   # No need to clear any caches since we generally jit and pmap fresh callables
   # in tests.
 
@@ -308,6 +382,44 @@ def count_jit_and_pmap_compiles():
     yield count
   finally:
     mlir.lower_jaxpr_to_module = mlir_lower
+
+
+@contextmanager
+def count_jax_array_shard_arg_calls():
+  # No need to clear any caches since we generally jit and pmap fresh callables
+  # in tests.
+
+  array_shard_arg = array._array_shard_arg
+  count = [0]
+
+  def array_shard_arg_and_count(*args, **kwargs):
+    count[0] += 1
+    return array_shard_arg(*args, **kwargs)
+
+  pxla.shard_arg_handlers[array.ArrayImpl] = array_shard_arg_and_count
+  try:
+    yield count
+  finally:
+    pxla.shard_arg_handlers[array.ArrayImpl] = array_shard_arg
+
+
+@contextmanager
+def count_jit_compilation_cache_miss():
+  # No need to clear any caches since we generally jit and pmap fresh callables
+  # in tests.
+
+  jit_compilation = pxla._cached_compilation
+  count = [0]
+
+  def compile_and_count(*args, **kwargs):
+    count[0] += 1
+    return jit_compilation(*args, **kwargs)
+
+  pxla._cached_compilation = compile_and_count
+  try:
+    yield count
+  finally:
+    pxla._cached_compilation = jit_compilation
 
 
 @contextmanager
@@ -332,7 +444,7 @@ def count_subjaxpr_to_hlo_conversion(fun_name: str):
 
 @contextmanager
 def assert_num_jit_and_pmap_compilations(times):
-  with count_jit_and_pmap_compiles() as count:
+  with count_jit_and_pmap_lowerings() as count:
     yield
   if count[0] != times:
     raise AssertionError(f"Expected exactly {times} XLA compilations, "
@@ -346,9 +458,6 @@ def supported_dtypes():
   if device_under_test() == "tpu":
     types = {np.bool_, np.int8, np.int16, np.int32, np.uint8, np.uint16,
              np.uint32, _dtypes.bfloat16, np.float16, np.float32, np.complex64}
-  elif device_under_test() == "iree":
-    types = {np.bool_, np.int8, np.int16, np.int32, np.uint8, np.uint16,
-             np.uint32, np.float32}
   elif device_under_test() == "METAL":
     types = {np.int32, np.uint32, np.float32}
   else:
@@ -361,7 +470,7 @@ def supported_dtypes():
   return types
 
 def is_device_rocm():
-  return xla_bridge.get_backend().platform_version.startswith('rocm')
+  return 'rocm' in xla_bridge.get_backend().platform_version
 
 def is_device_cuda():
   return 'cuda' in xla_bridge.get_backend().platform_version
@@ -417,7 +526,17 @@ def is_device_tpu(version: int | None = None, variant: str = "") -> bool:
   # Special case v5e until the name is updated in device_kind
   if expected_version == "v5e":
     return "v5 lite" in device_kind
+  elif expected_version == "v6e":
+    return "v6 lite" in device_kind
   return expected_version in device_kind
+
+def is_cuda_compute_capability_at_least(capability: str) -> bool:
+  if not is_device_cuda():
+    return False
+  d, *_ = jax.local_devices(backend="gpu")
+  target = tuple(int(x) for x in capability.split("."))
+  current = tuple(int(x) for x in d.compute_capability.split("."))
+  return current >= target
 
 def _get_device_tags():
   """returns a set of tags defined for the device under test"""
@@ -473,8 +592,13 @@ def device_supports_buffer_donation():
   )
 
 
+@contextmanager
 def set_host_platform_device_count(nr_devices: int):
-  """Returns a closure that undoes the operation."""
+  """Context manager to set host platform device count if not specified by user.
+
+  This should only be used by tests at the top level in setUpModule(); it will
+  not work correctly if applied to individual test cases.
+  """
   prev_xla_flags = os.getenv("XLA_FLAGS")
   flags_str = prev_xla_flags or ""
   # Don't override user-specified device count, or other XLA flags.
@@ -483,13 +607,14 @@ def set_host_platform_device_count(nr_devices: int):
                                f" --xla_force_host_platform_device_count={nr_devices}")
   # Clear any cached backends so new CPU backend will pick up the env var.
   xla_bridge.get_backend.cache_clear()
-  def undo():
+  try:
+    yield
+  finally:
     if prev_xla_flags is None:
       del os.environ["XLA_FLAGS"]
     else:
       os.environ["XLA_FLAGS"] = prev_xla_flags
     xla_bridge.get_backend.cache_clear()
-  return undo
 
 
 def skip_on_flag(flag_name, skip_value):
@@ -516,6 +641,18 @@ def pytest_mark_if_available(marker: str):
       return func_or_class
     return getattr(pytest.mark, marker)(func_or_class)
   return wrap
+
+
+def is_running_under_pytest():
+  return "pytest" in sys.modules
+
+
+def skip_under_pytest(reason: str):
+  """A decorator for test methods to skip the test when run under pytest."""
+  reason = "Running under pytest: " + reason
+  def skip(test_method):
+    return unittest.skipIf(is_running_under_pytest(), reason)(test_method)
+  return skip
 
 
 def format_test_name_suffix(opname, shapes, dtypes):
@@ -980,6 +1117,38 @@ def promote_like_jnp(fun, inexact=False):
     return fun(*args, **kw)
   return wrapper
 
+@contextmanager
+def global_config_context(**kwds):
+  original_config = {}
+  try:
+    for key, value in kwds.items():
+      original_config[key] = config._read(key)
+      config.update(key, value)
+    yield
+  finally:
+    for key, value in original_config.items():
+      config.update(key, value)
+
+
+class NotPresent:
+  def __repr__(self):
+    return "<not present>"
+
+
+@contextmanager
+def assert_global_configs_unchanged():
+  starting_config = jax.config.values.copy()
+  yield
+  ending_config = jax.config.values
+
+  if starting_config == ending_config:
+    return
+  differing = {k: (starting_config.get(k, NotPresent()), ending_config.get(k, NotPresent()))
+                for k in (starting_config.keys() | ending_config.keys())
+                if (k not in starting_config or k not in ending_config
+                    or starting_config[k] != ending_config[k])}
+  raise AssertionError(f"Test changed global config values. Differing values are: {differing}")
+
 
 class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
@@ -1000,26 +1169,20 @@ class JaxTestCase(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
-    self._original_config = {}
-    for key, value in self._default_config.items():
-      self._original_config[key] = config._read(key)
-      config.update(key, value)
+    self.enter_context(assert_global_configs_unchanged())
 
     # We use the adler32 hash for two reasons.
     # a) it is deterministic run to run, unlike hash() which is randomized.
     # b) it returns values in int32 range, which RandomState requires.
     self._rng = npr.RandomState(zlib.adler32(self._testMethodName.encode()))
 
-  def tearDown(self):
-    for key, value in self._original_config.items():
-      config.update(key, value)
-    super().tearDown()
-
   @classmethod
   def setUpClass(cls):
+    cls._compilation_cache_exit_stack = ExitStack()
+    stack = cls._compilation_cache_exit_stack
+    stack.enter_context(global_config_context(**cls._default_config))
+
     if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
-      cls._compilation_cache_exit_stack = ExitStack()
-      stack = cls._compilation_cache_exit_stack
       stack.enter_context(config.enable_compilation_cache(True))
       stack.enter_context(config.raise_persistent_cache_errors(True))
       stack.enter_context(config.persistent_cache_min_compile_time_secs(0))
@@ -1031,8 +1194,7 @@ class JaxTestCase(parameterized.TestCase):
 
   @classmethod
   def tearDownClass(cls):
-    if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
-      cls._compilation_cache_exit_stack.close()
+    cls._compilation_cache_exit_stack.close()
 
   def rng(self):
     return self._rng
@@ -1046,7 +1208,7 @@ class JaxTestCase(parameterized.TestCase):
     y = np.asarray(y)
 
     if (not allow_object_dtype) and (x.dtype == object or y.dtype == object):
-      # See https://github.com/google/jax/issues/17867
+      # See https://github.com/jax-ml/jax/issues/17867
       raise TypeError(
         "assertArraysEqual may be poorly behaved when np.asarray casts to dtype=object. "
         "If comparing PRNG keys, consider random_test.KeyArrayTest.assertKeysEqual. "
@@ -1235,15 +1397,16 @@ def with_and_without_mesh(f):
       ('Mesh', (('x', 2),), (('i', 'x'),))
     ))(with_mesh_from_kwargs(f))
 
-def create_global_mesh(mesh_shape, axis_names):
+def create_mesh(mesh_shape, axis_names, iota_order=False):
   size = math.prod(mesh_shape)
   if len(jax.devices()) < size:
     raise unittest.SkipTest(f"Test requires {size} global devices.")
-  devices = sorted(jax.devices(), key=lambda d: d.id)
-  mesh_devices = np.array(devices[:size]).reshape(mesh_shape)
-  global_mesh = jax.sharding.Mesh(mesh_devices, axis_names)
-  return global_mesh
-
+  if iota_order:
+    devices = sorted(jax.devices(), key=lambda d: d.id)
+    mesh_devices = np.array(devices[:size]).reshape(mesh_shape)
+    return jax.sharding.Mesh(mesh_devices, axis_names)
+  else:
+    return jax.make_mesh(mesh_shape, axis_names)
 
 class _cached_property:
   null = object()
@@ -1354,23 +1517,31 @@ def parameterized_filterable(*,
     testcase_name: Callable[[dict[str, Any]], str] | None = None,
     one_containing: str | None = None,
 ):
-  """
-  Decorator for named parameterized tests, with filtering.
+  """Decorator for named parameterized tests, with filtering support.
 
-  Works like parameterized.named_parameters, except that it supports the
-  `one_containing` option. This is useful to select only one of the tests,
-  and to leave the test name unchanged (helps with specifying the desired test
-  when debugging).
+  Works like ``parameterized.named_parameters``, except that it sanitizes the test
+  names so that we can use ``pytest -k`` and ``python test.py -k`` test filtering.
+  This means, e.g., that many special characters are replaced with `_`.
+  It also supports the ``one_containing`` arg to select one of the tests, while
+  leaving the name unchanged, which is useful for IDEs to be able to easily
+  pick up the enclosing test name.
+
+  Usage:
+     @jtu.parameterized_filterable(
+       # one_containing="a_4",
+       [dict(a=4, b=5),
+        dict(a=5, b=4)])
+     def test_my_test(self, *, a, b): ...
 
   Args:
     kwargs: Each entry is a set of kwargs to be passed to the test function.
     testcase_name: Optionally, a function to construct the testcase_name from
-      one kwargs dict. If not given then kwarg may contain `testcase_name` and
-      if not, the test case name is constructed as `str(kwarg)`.
+      one kwargs dict. If not given then ``kwargs`` may contain ``testcase_name`` and
+      otherwise the test case name is constructed as ``str(kwarg)``.
       We sanitize the test names to work with -k test filters. See
-      `sanitize_test_name`.
-    one_containing: If given, then leave the test name unchanged, and use
-      only one `kwargs` whose `testcase_name` includes `one_containing`.
+      ``sanitize_test_name``.
+    one_containing: If given, then leaves the test name unchanged, and use
+      only one of the ``kwargs`` whose `testcase_name` includes ``one_containing``.
   """
   # Ensure that all kwargs contain a testcase_name
   kwargs_with_testcase_name: Sequence[dict[str, Any]]
@@ -1414,7 +1585,7 @@ def register_event_duration_listener(callback):
 def set_env(**kwargs):
   """Context manager to temporarily set/unset one or more environment variables.
 
-  Example:
+  Examples:
 
     >>> import os
     >>> os.environ['my_var'] = 'original'
@@ -1796,12 +1967,12 @@ class numpy_with_mpmath:
   def arcsin(self, x):
     ctx = x.context
     if isinstance(x, ctx.mpc):
-      # Workaround mpmath 1.3 bug in asin(+-inf+-infj) evaluation (see mpmath/mpmath#793).
-      # TODO(pearu): remove this function when mpmath 1.4 or newer
-      # will be the required test dependency.
+      # Workaround mpmath 1.3 bug in asin(+-inf+-infj) evaluation (see
+      # mpmath/mpmath#793).
+      # TODO(pearu): remove the if-block below when mpmath 1.4 or
+      # newer will be the required test dependency.
       pi = ctx.pi
       inf = ctx.inf
-      nan = ctx.nan
       zero = ctx.zero
       if ctx.isinf(x.real):
         sign_real = -1 if x.real < 0 else 1
@@ -1811,24 +1982,142 @@ class numpy_with_mpmath:
       elif ctx.isinf(x.imag):
         return ctx.make_mpc((zero._mpf_, x.imag._mpf_))
 
-      # TODO(pearu): adjust this code according to mpmath/mpmath#786
-      # resolution when mpmath 1.4 or newer will be the required test
-      # dependency.
+      # On branch cut, mpmath.mp.asin returns different value compared
+      # to mpmath.fp.asin and numpy.arcsin (see
+      # mpmath/mpmath#786). The following if-block ensures
+      # compatibility with numpy.arcsin.
       if x.real > 1 and x.imag == 0:
         return ctx.asin(x).conjugate()
 
     return ctx.asin(x)
 
+  def arccos(self, x):
+    ctx = x.context
+
+    if isinstance(x, ctx.mpc):
+      # Workaround mpmath 1.3 bug in acos(+-inf+-infj) evaluation (see
+      # mpmath/mpmath#793).
+      # TODO(pearu): remove the if-block below when mpmath 1.4 or
+      # newer will be the required test dependency.
+      pi = ctx.pi
+      inf = ctx.inf
+      zero = ctx.zero
+
+      if ctx.isinf(x.imag):
+        if ctx.isinf(x.real):
+          real = pi / 4 if x.real > 0 else 3 * pi / 4
+        else:
+          real = pi / 2
+        imag = inf if x.imag < 0 else -inf
+        return ctx.make_mpc((real._mpf_, imag._mpf_))
+      elif ctx.isinf(x.real):
+        inf = ctx.inf
+        sign_imag = -1 if x.imag < 0 else 1
+        real = zero if x.real > 0 else pi
+        return ctx.make_mpc((real._mpf_, (-sign_imag * inf)._mpf_))
+      # On branch cut, mpmath.mp.acos returns different value
+      # compared to mpmath.fp.acos and numpy.arccos. The
+      # following if-block ensures compatibility with
+      # numpy.arccos.
+      if x.imag == 0 and x.real > 1:
+        return -ctx.acos(x)
+
+    return ctx.acos(x)
+
   def arcsinh(self, x):
     ctx = x.context
 
-    # TODO(pearu): adjust this code according to mpmath/mpmath#786
-    # resolution when mpmath 1.4 or newer will be the required test
-    # dependency.
     if isinstance(x, ctx.mpc):
+      # Workaround mpmath 1.3 bug in asinh(+-inf+-infj) evaluation
+      # (see mpmath/mpmath#749).
+      # TODO(pearu): remove the if-block below when mpmath 1.4 or
+      # newer will be the required test dependency.
+      pi = ctx.pi
+      inf = ctx.inf
+      zero = ctx.zero
+      if ctx.isinf(x.imag):
+        sign_imag = -1 if x.imag < 0 else 1
+        real = -inf if x.real < 0 else inf
+        imag = sign_imag * pi / (4 if ctx.isinf(x.real) else 2)
+        return ctx.make_mpc((real._mpf_, imag._mpf_))
+      elif ctx.isinf(x.real):
+        return ctx.make_mpc((x.real._mpf_, zero._mpf_))
+
+      # On branch cut, mpmath.mp.asinh returns different value
+      # compared to mpmath.fp.asinh and numpy.arcsinh (see
+      # mpmath/mpmath#786).  The following if-block ensures
+      # compatibility with numpy.arcsinh.
       if x.real == 0 and x.imag < -1:
         return (-ctx.asinh(x)).conjugate()
     return ctx.asinh(x)
+
+  def arccosh(self, x):
+    ctx = x.context
+
+    if isinstance(x, ctx.mpc):
+      # Workaround mpmath 1.3 bug in acosh(+-inf+-infj) evaluation
+      # (see mpmath/mpmath#749).
+      pi = ctx.pi
+      inf = ctx.inf
+      zero = ctx.zero
+      if ctx.isinf(x.real):
+        sign_imag = -1 if x.imag < 0 else 1
+        imag = (
+          (3 if x.real < 0 else 1) * sign_imag * pi / 4
+          if ctx.isinf(x.imag)
+          else (sign_imag * pi if x.real < 0 else zero)
+        )
+        return ctx.make_mpc((inf._mpf_, imag._mpf_))
+      elif ctx.isinf(x.imag):
+        sign_imag = -1 if x.imag < 0 else 1
+        imag = sign_imag * pi / 2
+        return ctx.make_mpc((inf._mpf_, imag._mpf_))
+    return ctx.acosh(x)
+
+  def arctan(self, x):
+    ctx = x.context
+
+    if isinstance(x, ctx.mpc):
+      # Workaround mpmath 1.3 bug in atan(+-inf+-infj) evaluation
+      # (see mpmath/mpmath#775 with the fix).
+      # TODO(pearu): remove the if-block below when mpmath 1.4 or
+      # newer will be the required test dependency.
+      pi = ctx.pi
+      zero = ctx.zero
+      if ctx.isinf(x.real) or ctx.isinf(x.imag):
+        if x.real < 0:
+          return ctx.make_mpc(((-pi / 2)._mpf_, zero._mpf_))
+        return ctx.make_mpc(((pi / 2)._mpf_, zero._mpf_))
+
+      # On branch cut, mpmath.mp.atan returns different value compared
+      # to mpmath.fp.atan and numpy.arctan (see mpmath/mpmath#865).
+      # The following if-block ensures compatibility with
+      # numpy.arctan.
+      if x.real == 0 and x.imag < -1:
+        return (-ctx.atan(x)).conjugate()
+    return ctx.atan(x)
+
+  def arctanh(self, x):
+    ctx = x.context
+
+    if isinstance(x, ctx.mpc):
+      # Workaround mpmath 1.3 bug in atanh(+-inf+-infj) evaluation
+      # (see mpmath/mpmath#775 with the fix).
+      # TODO(pearu): remove the if-block below when mpmath 1.4 or
+      # newer will be the required test dependency.
+      pi = ctx.pi
+      zero = ctx.zero
+      if ctx.isinf(x.real) or ctx.isinf(x.imag):
+        if x.imag < 0:
+          return ctx.make_mpc((zero._mpf_, (-pi / 2)._mpf_))
+        return ctx.make_mpc((zero._mpf_, (pi / 2)._mpf_))
+
+      # On branch cut, mpmath.mp.atanh returns different value
+      # compared to mpmath.fp.atanh and numpy.arctanh.  The following
+      # if-block ensures compatibility with numpy.arctanh.
+      if x.imag == 0 and x.real > 1:
+        return ctx.atanh(x).conjugate()
+    return ctx.atanh(x)
 
   def normalize(self, exact, reference, value):
     """Normalize reference and value using precision defined by the
@@ -1888,3 +2177,47 @@ class numpy_with_mpmath:
       return worker(ctx, scale, exact, reference, value)
     else:
       assert 0  # unreachable
+
+# Hypothesis testing support
+def setup_hypothesis(max_examples=30) -> None:
+  """Sets up the hypothesis profiles.
+
+  Sets up the hypothesis testing profiles, and selects the one specified by
+  the ``JAX_HYPOTHESIS_PROFILE`` environment variable (or the
+  ``--jax_hypothesis_profile`` configuration.
+
+  Args:
+    max_examples: the maximum number of hypothesis examples to try, when using
+      the default "deterministic" profile.
+  """
+  try:
+    import hypothesis as hp
+  except (ModuleNotFoundError, ImportError):
+    return
+
+  hp.settings.register_profile(
+      "deterministic",
+      database=None,
+      derandomize=True,
+      deadline=None,
+      max_examples=max_examples,
+      print_blob=True,
+  )
+  hp.settings.register_profile(
+      "interactive",
+      parent=hp.settings.load_profile("deterministic"),
+      max_examples=1,
+      report_multiple_bugs=False,
+      verbosity=hp.Verbosity.verbose,
+      # Don't try and shrink
+      phases=(
+          hp.Phase.explicit,
+          hp.Phase.reuse,
+          hp.Phase.generate,
+          hp.Phase.target,
+          hp.Phase.explain,
+      ),
+  )
+  profile = HYPOTHESIS_PROFILE.value
+  logging.info("Using hypothesis profile: %s", profile)
+  hp.settings.load_profile(profile)

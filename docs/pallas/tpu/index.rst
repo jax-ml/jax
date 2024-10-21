@@ -8,3 +8,7 @@ TPU specific documentation.
 
    details
    pipelining
+   matmul
+   sparse
+   distributed
+

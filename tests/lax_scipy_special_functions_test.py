@@ -23,6 +23,7 @@ import numpy as np
 import scipy.special as osp_special
 
 import jax
+from jax._src import deprecations
 from jax._src import test_util as jtu
 from jax.scipy import special as lsp_special
 
@@ -95,6 +96,10 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "factorial", 1, float_dtypes, jtu.rand_default, True
     ),
     op_record(
+        "fresnel", 1, float_dtypes,
+        functools.partial(jtu.rand_default, scale=30), True
+    ),
+    op_record(
         "i0", 1, float_dtypes, jtu.rand_default, True
     ),
     op_record(
@@ -147,7 +152,12 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "rel_entr", 2, float_dtypes, jtu.rand_positive, True,
     ),
     op_record("poch", 2, float_dtypes, jtu.rand_positive, True),
-    op_record("hyp1f1", 3, float_dtypes, functools.partial(jtu.rand_uniform, low=0.5, high=30), True)
+    op_record(
+        "hyp1f1", 3, float_dtypes,
+        functools.partial(jtu.rand_uniform, low=0.5, high=30), True
+    ),
+    op_record("log_softmax", 1, float_dtypes, jtu.rand_default, True),
+    op_record("softmax", 1, float_dtypes, jtu.rand_default, True),
 ]
 
 
@@ -227,6 +237,37 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
     self._CheckAgainstNumpy(osp_special.ndtri, lsp_special.ndtri, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.ndtri, args_maker, rtol=rtol)
+
+  def testRelEntrExtremeValues(self):
+    # Testing at the extreme values (bounds (0. and 1.) and outside the bounds).
+    dtype = jax.numpy.zeros(0).dtype  # default float dtype.
+    args_maker = lambda: [np.array([-2, -2, -2, -1, -1, -1, 0, 0, 0]).astype(dtype),
+                          np.array([-1, 0, 1, -1, 0, 1, -1, 0, 1]).astype(dtype)]
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self._CheckAgainstNumpy(osp_special.rel_entr, lsp_special.rel_entr, args_maker, rtol=rtol)
+    self._CompileAndCheck(lsp_special.rel_entr, args_maker, rtol=rtol)
+
+  def testBetaParameterDeprecation(self):
+    with self.assertNoWarnings():
+      lsp_special.beta(1, 1)
+      lsp_special.beta(1, b=1)
+      lsp_special.beta(a=1, b=1)
+    if deprecations.is_accelerated('jax-scipy-beta-args'):
+      with self.assertRaises(ValueError):
+        lsp_special.beta(x=1, y=1)
+    else:
+      with self.assertWarns(DeprecationWarning):
+        lsp_special.beta(1, y=1)
+      with self.assertWarns(DeprecationWarning):
+        lsp_special.beta(a=1, y=1)
+      with self.assertWarns(DeprecationWarning):
+        lsp_special.beta(x=1, b=1)
+      with self.assertWarns(DeprecationWarning):
+        lsp_special.beta(x=1, y=1)
+      with self.assertRaises(TypeError), self.assertWarns(DeprecationWarning):
+        lsp_special.beta(1, x=1)
+      with self.assertRaises(TypeError), self.assertWarns(DeprecationWarning):
+        lsp_special.beta(b=1, y=1)
 
 
 if __name__ == "__main__":

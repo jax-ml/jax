@@ -17,8 +17,6 @@ import importlib
 import logging
 import os
 import pathlib
-import platform
-import sys
 
 from jax._src.lib import xla_client
 import jax._src.xla_bridge as xb
@@ -48,6 +46,13 @@ def _get_library_path():
   local_path = os.path.join(
       os.path.dirname(__file__), 'pjrt_c_api_gpu_plugin.so'
   )
+  if not os.path.exists(local_path):
+    runfiles_dir = os.getenv('RUNFILES_DIR', None)
+    if runfiles_dir:
+      local_path = os.path.join(
+          runfiles_dir, 'xla/xla/pjrt/c/pjrt_c_api_gpu_plugin.so'
+      )
+
   if os.path.exists(local_path):
     logger.debug(
         'Native library %s does not exist. This most likely indicates an issue'

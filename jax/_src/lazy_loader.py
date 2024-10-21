@@ -14,9 +14,10 @@
 
 """A LazyLoader class."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import importlib
-from typing import Any, Callable
+import sys
+from typing import Any
 
 
 def attach(package_name: str, submodules: Sequence[str]) -> tuple[
@@ -26,17 +27,27 @@ def attach(package_name: str, submodules: Sequence[str]) -> tuple[
 ]:
   """Lazily loads submodules of a package.
 
-  Example use:
-  ```
-  __getattr__, __dir__, __all__ = lazy_loader.attach(__name__, ["sub1", "sub2"])
-  ```
-  """
+  Returns:
+    A tuple of ``__getattr__``, ``__dir__`` function and ``__all__`` --
+    a list of available global names, which can be used to replace the
+    corresponding definitions in the package.
 
-  __all__: list[str] = list(submodules)
+  Raises:
+    RuntimeError: If the ``__name__`` of the caller cannot be determined.
+  """
+  owner_name = sys._getframe(1).f_globals.get("__name__")
+  if owner_name is None:
+    raise RuntimeError("Cannot determine the ``__name__`` of the caller.")
+
+  __all__ = list(submodules)
 
   def __getattr__(name: str) -> Any:
     if name in submodules:
-      return importlib.import_module(f"{package_name}.{name}")
+      value = importlib.import_module(f"{package_name}.{name}")
+      # Update module-level globals to avoid calling ``__getattr__`` again
+      # for this ``name``.
+      setattr(sys.modules[owner_name], name, value)
+      return value
     raise AttributeError(f"module '{package_name}' has no attribute '{name}")
 
   def __dir__() -> list[str]:

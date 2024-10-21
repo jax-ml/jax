@@ -14,10 +14,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 import itertools as it
-from typing import Any, Callable, NamedTuple, Union
+from typing import Any, NamedTuple, Union
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -48,9 +48,11 @@ from jax._src.state.primitives import (get_p, swap_p, addupdate_p,
                                        ref_addupdate, ref_get, ref_set,
                                        ref_swap)
 from jax._src.state.types import (shaped_array_ref, ReadEffect, WriteEffect,
-                                  AccumEffect, RefEffect, AbstractRef)
+                                  AccumEffect, AbstractRef)
 
 config.parse_flags_with_absl()
+jtu.setup_hypothesis()
+
 
 class StatePrimitivesTest(jtu.JaxTestCase):
 
@@ -737,6 +739,20 @@ class StateDischargeTest(jtu.JaxTestCase):
     in_avals = [shaped_array_ref((), jnp.float32)]
     pe.trace_to_jaxpr_dynamic(lu.wrap_init(f), in_avals)
 
+  def test_partial_discharge(self):
+    def f(a_ref, b_ref):
+      a_ref[...] = jnp.array(0., dtype=jnp.float32)
+      b_ref[...] = jnp.array(1., dtype=jnp.float32)
+      return a_ref[...], b_ref[...]
+
+    scalar_ref = shaped_array_ref((), jnp.float32)
+    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
+        lu.wrap_init(f), [scalar_ref, scalar_ref])
+
+    discharged_jaxpr, _ = discharge_state(jaxpr, (), should_discharge=[False, True])
+    prim_count = lambda p, jaxpr: sum(eqn.primitive == swap_p for eqn in jaxpr.eqns)
+    self.assertEqual(prim_count(swap_p, jaxpr) // 2, prim_count(swap_p, discharged_jaxpr))
+    self.assertEqual(prim_count(get_p, jaxpr) // 2, prim_count(get_p, discharged_jaxpr))
 
 if CAN_USE_HYPOTHESIS:
 
@@ -1059,6 +1075,27 @@ class StateControlFlowTest(jtu.JaxTestCase):
     out = jax.jit(f)(False)
     self.assertTupleEqual(out, (0., 5.))
 
+  def test_cond_discharge(self):
+    def f0(pred, x_ref, y_ref):
+      def true_fun():
+        x_ref[...] = 1.
+      def false_fun():
+        y_ref[...] = 2.
+      lax.cond(pred, true_fun, false_fun)
+      return x_ref[...], y_ref[...]
+    ref = lambda x: AbstractRef(core.raise_to_shaped(core.get_aval(x)))
+    f_jaxpr = jax.make_jaxpr(f0)(False, ref(3.), ref(4.))
+    jaxpr, _ = discharge_state(f_jaxpr.jaxpr, (), should_discharge=[False, False, True])
+    # Effects on y_ref were discharged away but not the effects on x_ref
+    self.assertEqual(f_jaxpr.effects, {ReadEffect(1), WriteEffect(1), ReadEffect(2), WriteEffect(2)})
+    self.assertEqual(jaxpr.effects, {ReadEffect(1), WriteEffect(1)})
+    # x_ref arg is still a reference but y_ref is discharged
+    self.assertNotIsInstance(jaxpr.invars[2].aval, AbstractRef)
+    self.assertIsInstance(jaxpr.invars[1].aval, AbstractRef)
+    # x_ref value is returned as part of the discharged refs set.
+    self.assertLen(f_jaxpr.out_avals, 2)
+    self.assertLen(jaxpr.outvars, 3)
+
   def test_cond_with_ref_reuse(self):
     def f(pred):
       def body(x_ref):
@@ -1076,6 +1113,25 @@ class StateControlFlowTest(jtu.JaxTestCase):
     out_false = jax.jit(f)(False)
     expected_false = 2.
     self.assertAllClose(out_false, expected_false)
+
+  def test_cond_readonly_refs(self):
+    def f(pred):
+      def body(refs):
+        x_ref, y_ref, z_ref = refs
+        def true_fun():
+          y_ref[()] = x_ref[()]
+        def false_fun():
+          y_ref[()] = x_ref[()] + z_ref[()]
+        lax.cond(pred, true_fun, false_fun)
+      return run_state(body)((1., 0., 2.))
+    jaxpr = jax.make_jaxpr(f)(True).jaxpr
+    [run_state_eqn] = jaxpr.eqns
+    *_, cond_eqn = discharge_state(run_state_eqn.params["jaxpr"], ())[0].eqns
+    self.assertIs(cond_eqn.primitive, lax.cond_p)
+    self.assertLen(cond_eqn.invars, 4)  # pred + 3x ref values
+    self.assertLen(cond_eqn.outvars, 1)  # only the updated ref value
+    self.assertAllClose(jax.jit(f)(True), (1., 1., 2.))
+    self.assertAllClose(jax.jit(f)(False), (1., 3., 2.))
 
   def test_simple_cond_using_multiple_refs_with_interleaved_consts(self):
     def f(pred):
@@ -1494,159 +1550,6 @@ class RunStateTest(jtu.JaxTestCase):
 
     jtu.check_grads(f, (0.5,), order=3)
 
-
-class MutableArrayTest(jtu.JaxTestCase):
-
-  @parameterized.parameters([True, False])
-  def test_basic(self, jit):
-    def f(x_mut):
-      x_mut[...] += 1.
-      x_mut[0] += 1
-      x_mut[1] += 5
-
-    if jit:
-      f = jax.jit(f)
-
-    x_mut = core.mutable_array(jnp.zeros(3))
-    f(x_mut)
-
-    self.assertAllClose(x_mut[...], jnp.array([2., 6., 1.]),
-                        check_dtypes=False)
-
-    jaxpr = jax.make_jaxpr(f)(x_mut)
-    self.assertTrue(any(isinstance(e, RefEffect) for e in jaxpr.effects))
-
-  def test_staging_error(self):
-    x = jnp.zeros(3)
-    with self.assertRaises(Exception):
-      jax.jit(core.mutable_array)(x)
-
-  @parameterized.parameters([True, False])
-  def test_multiple_inputs_and_outputs(self, jit):
-    def f(x_mut, y, z_mut, w):
-      x_mut[...] += 1
-      z_mut[...] += 1
-      return x_mut[...] + y + z_mut[...] + w, y + w
-
-    if jit:
-      f = jax.jit(f)
-
-    x_mut = core.mutable_array(jnp.zeros((1, 3)))
-    y = jnp.ones((2, 3))
-    z_mut = core.mutable_array(jnp.zeros((2, 3)))
-    w = jnp.ones((2, 1))
-
-    out1, out2 = f(x_mut, y, z_mut, w)
-
-    self.assertAllClose(x_mut[...], jnp.ones((1, 3)), check_dtypes=False)
-    self.assertAllClose(z_mut[...], jnp.ones((2, 3)), check_dtypes=False)
-    self.assertAllClose(out1, 4 * jnp.ones((2, 3)), check_dtypes=False)
-    self.assertAllClose(out2, y + w, check_dtypes=False)
-
-  @parameterized.parameters([True, False])
-  def test_closed_over_basic(self, jit):
-    x_mut = core.mutable_array(jnp.zeros(3))
-    def f():
-      x_mut[...] += 1.
-      x_mut[0] += 1
-      x_mut[1] += 5
-
-    if jit:
-      f = jax.jit(f)
-
-    f()
-
-    self.assertAllClose(x_mut[...], jnp.array([2., 6., 1.]),
-                        check_dtypes=False)
-
-    jaxpr = jax.make_jaxpr(f)()
-    self.assertTrue(any(isinstance(e, RefEffect) for e in jaxpr.effects))
-
-  @parameterized.parameters([True, False])
-  def test_closed_over_nested(self, jit):
-    x_mut = core.mutable_array(jnp.zeros(3))
-
-    @jax.jit
-    def f(y_mut, z):
-      x_mut[...] += 1.
-      x_mut[0] += 1
-      x_mut[1] += 5
-
-      y_mut[2] += 7
-      return z + 9
-
-    if jit:
-      f = jax.jit(f)
-
-    y_mut = core.mutable_array(np.zeros(3))
-
-    w = f(y_mut, 1)
-
-    self.assertAllClose(x_mut[...], jnp.array([2., 6., 1.]),
-                        check_dtypes=False)
-    self.assertAllClose(y_mut[...], jnp.array([0., 0., 7.]),
-                        check_dtypes=False)
-    self.assertAllClose(w, 10, check_dtypes=False)
-
-  @parameterized.parameters([True, False])
-  def test_internal_mutarray_basic(self, jit):
-    def f():
-      x_mut = core.mutable_array(jnp.zeros(3))
-      x_mut[0] += 1
-      x_mut[0] += 1
-      x_mut[2] += 1
-      return x_mut[...]
-
-    if jit:
-      f = jax.jit(f)
-
-    out = f()
-    self.assertAllClose(out, jnp.array([2., 0., 1.]), check_dtypes=False)
-
-  @parameterized.parameters([True, False])
-  def test_refs_in_vjps(self, jit):
-    def gradient_history_calculator_fwd(x, ref):
-      return x, ref
-
-    def gradient_history_calculator_bwd(amax_history, grad_output):
-      amax_update = jnp.max(jnp.abs(grad_output))
-      shifted = jnp.roll(amax_history[:], 1)
-      shifted = shifted.at[0].set(amax_update)
-      amax_history[:] = shifted
-      amax_from_history = jnp.max(amax_history[:])
-      grad_output = grad_output / amax_from_history
-      return grad_output, None
-
-    @jax.custom_vjp
-    def gradient_history_calculator(x, ref):
-      return x
-
-    gradient_history_calculator.defvjp(
-      gradient_history_calculator_fwd,
-      gradient_history_calculator_bwd)
-
-    class DotOp:
-      def __init__(self):
-        self.amax_history = core.mutable_array(jnp.zeros(5,))
-
-      def forward(self, x, y):
-        out = jnp.dot(x, y)
-        out = gradient_history_calculator(out, self.amax_history)
-        return out
-
-    dot_op = DotOp()
-    x_top = jnp.ones((5,))
-    y_top = jnp.ones((5,))
-
-    def loss(x, y):
-      return dot_op.forward(x, y).sum()
-
-    if jit:
-      loss = jax.jit(loss)
-
-    for i in range(3):
-      jax.grad(loss, (0,1))(x_top, y_top)
-      self.assertAllClose(dot_op.amax_history[:], jnp.zeros((5,)).at[:i+1].set(1.0), check_dtypes=False)
 
 if CAN_USE_HYPOTHESIS:
 

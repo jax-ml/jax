@@ -20,11 +20,10 @@ these tests.
 from __future__ import annotations
 
 import base64
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import io
 import os
 import tarfile
-from typing import Callable, Optional
 
 from absl.testing import absltest
 import jax
@@ -78,7 +77,7 @@ class CompatTensoflowTest(bctu.CompatTestBase):
       return tf.identity(res, name="the_result")
 
     self.tf_func = tf_func
-    return tf_func(*data.inputs)  # type: ignore
+    return tf_func(*data.inputs)
 
   def serialize(
       self,

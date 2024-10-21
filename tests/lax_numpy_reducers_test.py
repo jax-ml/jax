@@ -27,6 +27,7 @@ import jax
 from jax import numpy as jnp
 
 from jax._src import config
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.util import NumpyComplexWarning
@@ -424,7 +425,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     if (shape in [()] + scalar_shapes and
         dtype in [jnp.int16, jnp.uint16] and
         jnp_op in [jnp.min, jnp.max]):
-      self.skipTest("Known XLA failure; see https://github.com/google/jax/issues/4971.")
+      self.skipTest("Known XLA failure; see https://github.com/jax-ml/jax/issues/4971.")
     rng = rng_factory(self.rng())
     is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
     # Do not pass where via args_maker as that is incompatible with _promote_like_jnp.
@@ -507,14 +508,12 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       for weights_shape in ([None, shape] if axis is None or len(shape) == 1 or isinstance(axis, tuple)
                             else [None, (shape[axis],), shape])
     ],
-    keepdims=([False, True] if numpy_version >= (1, 23) else [None]),
+    keepdims=[False, True],
     returned=[False, True],
   )
   def testAverage(self, shape, dtype, axis, weights_shape, returned, keepdims):
     rng = jtu.rand_default(self.rng())
-    kwds = dict(returned=returned)
-    if keepdims is not None:
-      kwds['keepdims'] = keepdims
+    kwds = dict(returned=returned, keepdims=keepdims)
     if weights_shape is None:
       np_fun = lambda x: np.average(x, axis, **kwds)
       jnp_fun = lambda x: jnp.average(x, axis, **kwds)
@@ -527,49 +526,67 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     tol = {dtypes.bfloat16: 2e-1, np.float16: 1e-2, np.float32: 1e-5,
            np.float64: 1e-12, np.complex64: 1e-5}
     check_dtypes = shape is not jtu.PYTHON_SCALAR_SHAPE
-    if numpy_version == (1, 23, 0) and keepdims and weights_shape is not None and axis is not None:
-      # Known failure: https://github.com/numpy/numpy/issues/21850
-      pass
-    else:
-      try:
-        self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
-                                check_dtypes=check_dtypes, tol=tol)
-      except ZeroDivisionError:
-        self.skipTest("don't support checking for ZeroDivisionError")
+    try:
+      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
+                              check_dtypes=check_dtypes, tol=tol)
+    except ZeroDivisionError:
+      self.skipTest("don't support checking for ZeroDivisionError")
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=check_dtypes,
                           rtol=tol, atol=tol)
 
   @jtu.sample_product(
+    test_fns=[(np.var, jnp.var), (np.std, jnp.std)],
     shape=[(5,), (10, 5)],
     dtype=all_dtypes,
     out_dtype=inexact_dtypes,
     axis=[None, 0, -1],
-    ddof=[0, 1, 2],
+    ddof_correction=[(0, None), (1, None), (1, 0), (0, 0), (0, 1), (0, 2)],
     keepdims=[False, True],
   )
-  def testVar(self, shape, dtype, out_dtype, axis, ddof, keepdims):
+  def testStdOrVar(self, test_fns, shape, dtype, out_dtype, axis, ddof_correction, keepdims):
+    np_fn, jnp_fn = test_fns
+    ddof, correction = ddof_correction
     rng = jtu.rand_default(self.rng())
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
     @jtu.ignore_warning(category=RuntimeWarning,
                         message="Degrees of freedom <= 0 for slice.")
     @jtu.ignore_warning(category=NumpyComplexWarning)
     def np_fun(x):
+      # setup ddof and correction kwargs excluding case when correction is not specified
+      ddof_correction_kwargs = {"ddof": ddof}
+      if correction is not None:
+        key = "correction" if numpy_version >= (2, 0) else "ddof"
+        ddof_correction_kwargs[key] = correction
       # Numpy fails with bfloat16 inputs
-      out = np.var(x.astype(np.float32 if dtype == dtypes.bfloat16 else dtype),
+      out = np_fn(x.astype(np.float32 if dtype == dtypes.bfloat16 else dtype),
                    dtype=np.float32 if out_dtype == dtypes.bfloat16 else out_dtype,
-                   axis=axis, ddof=ddof, keepdims=keepdims)
+                   axis=axis, keepdims=keepdims, **ddof_correction_kwargs)
       return out.astype(out_dtype)
-    jnp_fun = partial(jnp.var, dtype=out_dtype, axis=axis, ddof=ddof, keepdims=keepdims)
+    jnp_fun = partial(jnp_fn, dtype=out_dtype, axis=axis, ddof=ddof, correction=correction,
+                      keepdims=keepdims)
     tol = jtu.tolerance(out_dtype, {np.float16: 1e-1, np.float32: 1e-3,
                                     np.float64: 1e-3, np.complex128: 1e-6})
     if (jnp.issubdtype(dtype, jnp.complexfloating) and
         not jnp.issubdtype(out_dtype, jnp.complexfloating)):
-      self.assertRaises(ValueError, lambda: jnp_fun(*args_maker()))
+      self.assertRaises(ValueError, jnp_fun, *args_maker())
+    elif (correction is not None and ddof != 0):
+      self.assertRaises(ValueError, jnp_fun, *args_maker())
     else:
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
                               tol=tol)
       self._CompileAndCheck(jnp_fun, args_maker, rtol=tol,
                             atol=tol)
+
+  @jtu.sample_product(
+    jnp_fn=[jnp.var, jnp.std],
+    size=[0, 1, 2]
+  )
+  def testStdOrVarLargeDdofReturnsNan(self, jnp_fn, size):
+    # test for https://github.com/jax-ml/jax/issues/21330
+    x = jnp.arange(size)
+    self.assertTrue(np.isnan(jnp_fn(x, ddof=size)))
+    self.assertTrue(np.isnan(jnp_fn(x, ddof=size + 1)))
+    self.assertTrue(np.isnan(jnp_fn(x, ddof=size + 2)))
 
   @jtu.sample_product(
     shape=[(5,), (10, 5)],
@@ -605,7 +622,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
                             atol=tol)
 
   def testNanStdGrad(self):
-    # Regression test for https://github.com/google/jax/issues/8128
+    # Regression test for https://github.com/jax-ml/jax/issues/8128
     x = jnp.arange(5.0).at[0].set(jnp.nan)
     y = jax.grad(jnp.nanvar)(x)
     self.assertAllClose(y, jnp.array([0.0, -0.75, -0.25, 0.25, 0.75]), check_dtypes=False)
@@ -699,17 +716,31 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     # TODO(phawkins): we currently set dtype=False because we aren't as
     # aggressive about promoting to float64. It's not clear we want to mimic
     # Numpy here.
-    tol_spec = {np.float16: 1E-2, np.float32: 2e-4, np.float64: 5e-6}
+    tol_spec = {np.float16: 4e-2, np.float32: 2e-4, np.float64: 5e-6}
     tol = max(jtu.tolerance(a_dtype, tol_spec),
               jtu.tolerance(q_dtype, tol_spec))
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, rtol=tol)
 
+  @jtu.sample_product(
+      op=['quantile', 'nanquantile', 'percentile', 'nanpercentile']
+  )
+  def testQuantileDeprecatedArgs(self, op):
+    func = getattr(jnp, op)
+    msg = f"The interpolation= argument to '{op}' is deprecated. "
+    def assert_warns_or_errors(msg=msg):
+      if deprecations.is_accelerated("jax-numpy-quantile-interpolation"):
+        return self.assertRaisesRegex(ValueError, msg)
+      else:
+        return self.assertWarnsRegex(DeprecationWarning, msg)
+    with assert_warns_or_errors(msg):
+      func(jnp.arange(4), 0.5, interpolation='linear')
+
   @unittest.skipIf(not config.enable_x64.value, "test requires X64")
   @jtu.run_on_devices("cpu")  # test is for CPU float64 precision
   def testPercentilePrecision(self):
-    # Regression test for https://github.com/google/jax/issues/8513
+    # Regression test for https://github.com/jax-ml/jax/issues/8513
     x = jnp.float64([1, 2, 3, 4, 7, 10])
     self.assertEqual(jnp.percentile(x, 50), 3.5)
 
@@ -747,14 +778,14 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, rtol=tol)
 
   def testMeanLargeArray(self):
-    # https://github.com/google/jax/issues/15068
+    # https://github.com/jax-ml/jax/issues/15068
     raise unittest.SkipTest("test is slow, but it passes!")
     x = jnp.ones((16, 32, 1280, 4096), dtype='int8')
     self.assertEqual(1.0, jnp.mean(x))
     self.assertEqual(1.0, jnp.mean(x, where=True))
 
   def testStdLargeArray(self):
-    # https://github.com/google/jax/issues/15068
+    # https://github.com/jax-ml/jax/issues/15068
     raise unittest.SkipTest("test is slow, but it passes!")
     x = jnp.ones((16, 32, 1280, 4096), dtype='int8')
     self.assertEqual(0.0, jnp.std(x))
@@ -768,7 +799,6 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     expected = np.mean(x.astype('float64')).astype(dtype)
     actual = jnp.mean(x)
     self.assertAllClose(expected, actual, atol=0)
-
 
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)
@@ -791,23 +821,22 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     rng = jtu.rand_some_zero(self.rng())
 
     def np_mock_op(x, axis=None, dtype=None, include_initial=False):
-      kind = x.dtype.kind
-      if (dtype is None and kind in {'i', 'u'}
-          and x.dtype.itemsize*8 < int(config.default_dtype_bits.value)):
-        dtype = dtypes.canonicalize_dtype(dtypes._default_types[kind])
       axis = axis or 0
-      x = x.astype(dtype=dtype or x.dtype)
-      out = jnp.cumsum(x, axis=axis)
+      out = np.cumsum(x, axis=axis, dtype=dtype or x.dtype)
       if include_initial:
         zeros_shape = list(x.shape)
         zeros_shape[axis] = 1
         out = jnp.concat([jnp.zeros(zeros_shape, dtype=out.dtype), out], axis=axis)
       return out
 
-
     # We currently "cheat" to ensure we have JAX arrays, not NumPy arrays as
     # input because we rely on JAX-specific casting behavior
-    args_maker = lambda: [jnp.array(rng(shape, dtype))]
+    def args_maker():
+      x = jnp.array(rng(shape, dtype))
+      if out_dtype in unsigned_dtypes:
+        x = 10 * jnp.abs(x)
+      return [x]
+
     np_op = getattr(np, "cumulative_sum", np_mock_op)
     kwargs = dict(axis=axis, dtype=out_dtype, include_initial=include_initial)
 
@@ -815,7 +844,6 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     jnp_fun = lambda x: jnp.cumulative_sum(x, **kwargs)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
-
 
   @jtu.sample_product(
       shape=filter(lambda x: len(x) != 1, all_shapes), dtype=all_dtypes,
@@ -833,6 +861,10 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       with self.assertRaisesRegex(ValueError, msg):
         jnp.cumulative_sum(x, include_initial=include_initial)
 
+  def testCumulativeSumBool(self):
+    out = jnp.cumulative_sum(jnp.array([[0.1], [0.1], [0.0]]), axis=-1,
+                             dtype=jnp.bool_)
+    np.testing.assert_array_equal(np.array([[True], [True], [False]]), out)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

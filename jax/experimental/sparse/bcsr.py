@@ -31,8 +31,7 @@ from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse import bcoo
 from jax.experimental.sparse.util import (
     nfold_vmap, _count_stored_elements,
-    _csr_to_coo, _dot_general_validated_shape,
-    CuSparseEfficiencyWarning, SparseInfo, Shape)
+    _csr_to_coo, CuSparseEfficiencyWarning, SparseInfo, Shape)
 from jax.util import split_list, safe_zip
 
 from jax._src import api_util
@@ -272,11 +271,11 @@ def _bcsr_fromdense_jvp(primals, tangents, *, nse, n_batch, n_dense, index_dtype
   data, indices, indptr = primals_out
 
   if type(Mdot) is ad.Zero:
-    data_dot = ad.Zero.from_value(data)
+    data_dot = ad.Zero.from_primal_value(data)
   else:
     data_dot = bcsr_extract(indices, indptr, Mdot)
 
-  tangents_out = (data_dot, ad.Zero.from_value(indices), ad.Zero.from_value(indptr))
+  tangents_out = (data_dot, ad.Zero.from_primal_value(indices), ad.Zero.from_primal_value(indptr))
 
   return primals_out, tangents_out
 
@@ -671,8 +670,8 @@ def _bcsr_dot_general_gpu_lowering(
 
   # Account for a bug in cusparse: it references indices and data beyond
   # the extent of indptr.
-  (lhs_data,), (lhs_indices,) = _bcsr_correct_out_of_bound_indices_lowered(
-      ctx, lhs_data, lhs_indices, lhs_indptr, rhs, shape=lhs_spinfo.shape)
+  lhs_data, lhs_indices = _bcsr_correct_out_of_bound_indices_lowered(
+    ctx, lhs_data, lhs_indices, lhs_indptr, rhs, shape=lhs_spinfo.shape)
 
   if rhs_aval.ndim == 1:
     dot_general_fn = csr_matvec_lowering

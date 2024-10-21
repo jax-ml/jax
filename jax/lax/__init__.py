@@ -13,12 +13,14 @@
 # limitations under the License.
 
 # Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
+# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.lax.lax import (
   DotDimensionNumbers as DotDimensionNumbers,
   Precision as Precision,
   PrecisionLike as PrecisionLike,
+  DotAlgorithm as DotAlgorithm,
+  DotAlgorithmPreset as DotAlgorithmPreset,
   RandomAlgorithm as RandomAlgorithm,
   RoundingMethod as RoundingMethod,
   abs as abs,
@@ -142,6 +144,8 @@ from jax._src.lax.lax import (
   nextafter as nextafter,
   nextafter_p as nextafter_p,
   not_p as not_p,
+  optimization_barrier as optimization_barrier,
+  optimization_barrier_p as optimization_barrier_p,
   or_p as or_p,
   outfeed as outfeed,
   outfeed_p as outfeed_p,
@@ -152,6 +156,7 @@ from jax._src.lax.lax import (
   population_count_p as population_count_p,
   pow as pow,
   pow_p as pow_p,
+  ragged_dot as ragged_dot,
   real as real,
   real_p as real_p,
   reciprocal as reciprocal,
@@ -210,7 +215,6 @@ from jax._src.lax.lax import (
   tan_p as tan_p,
   tanh as tanh,
   tanh_p as tanh_p,
-  tie_in as _deprecated_tie_in,
   top_k as top_k,
   top_k_p as top_k_p,
   transpose as transpose,
@@ -275,6 +279,8 @@ from jax._src.lax.slicing import (
   scatter_mul as scatter_mul,
   scatter_mul_p as scatter_mul_p,
   scatter_p as scatter_p,
+  scatter_sub as scatter_sub,
+  scatter_sub_p as scatter_sub_p,
   slice as slice,
   slice_in_dim as slice_in_dim,
   slice_p as slice_p,
@@ -334,6 +340,7 @@ from jax._src.lax.control_flow import (
 from jax._src.lax.fft import (
   fft as fft,
   fft_p as fft_p,
+  FftType as FftType,
 )
 from jax._src.lax.parallel import (
   all_gather as all_gather,
@@ -355,8 +362,6 @@ from jax._src.lax.parallel import (
   psum_p as psum_p,
   psum_scatter as psum_scatter,
   pswapaxes as pswapaxes,
-  pdot as pdot,
-  xeinsum as xeinsum,
 )
 from jax._src.lax.other import (
   conv_general_dilated_local as conv_general_dilated_local,
@@ -376,18 +381,13 @@ from jax._src.dispatch import device_put_p as device_put_p
 
 
 _deprecations = {
-  # Added January 18 2023
+  # Finalized 2024-05-13; remove after 2024-08-13
   "tie_in": (
     "jax.lax.tie_in is deprecated: it has been a no-op since JAX v0.2.0. "
-    "Replace z = tie_in(x, y) with z = y.", _deprecated_tie_in,
+    "Replace z = tie_in(x, y) with z = y.", None,
   ),
 }
 
-import typing as _typing
-if _typing.TYPE_CHECKING:
-  tie_in = _deprecated_tie_in
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del _typing
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = _deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr

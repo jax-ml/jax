@@ -394,11 +394,19 @@ class UserContextTracebackTest(jtu.JaxTestCase):
 
 
 class CustomErrorsTest(jtu.JaxTestCase):
+
   @jtu.sample_product(
-    errorclass=[
-     errorclass for errorclass in dir(jax.errors)
-     if errorclass.endswith('Error') and errorclass not in ['JaxIndexError', 'JAXTypeError']
-    ],
+      errorclass=[
+          errorclass
+          for errorclass in dir(jax.errors)
+          if errorclass.endswith('Error')
+          and errorclass
+          not in [
+              'JaxIndexError',
+              'JAXTypeError',
+              'JaxRuntimeError',
+          ]
+      ],
   )
   def testErrorsURL(self, errorclass):
     class FakeTracer(core.Tracer):

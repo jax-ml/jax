@@ -15,13 +15,13 @@
 from __future__ import annotations
 
 import abc
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 import functools
 from functools import partial
 import itertools as it
 import logging
 import operator
-from typing import (Any, Callable, Generic, TypeVar, overload, TYPE_CHECKING, cast)
+from typing import (Any, Generic, TypeVar, overload, TYPE_CHECKING, cast)
 import weakref
 
 import numpy as np
@@ -129,6 +129,15 @@ def split_list(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
     lists.append(args[:n])
     args = args[n:]
   lists.append(args)
+  return lists
+
+def split_list_checked(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
+  args = list(args)
+  assert sum(ns) == len(args)
+  lists = []
+  for n in ns:
+    lists.append(args[:n])
+    args = args[n:]
   return lists
 
 def partition_list(bs: Sequence[bool], l: Sequence[T]) -> tuple[list[T], list[T]]:
@@ -276,7 +285,11 @@ def split_merge(predicate, xs):
 
   return lhs, rhs, merge
 
-def cache(max_size=4096):
+
+def _ignore(): return None
+
+
+def cache(max_size=4096, trace_context_in_key=True):
   def wrap(f):
     @functools.lru_cache(max_size)
     def cached(_, *args, **kwargs):
@@ -286,17 +299,26 @@ def cache(max_size=4096):
     def wrapper(*args, **kwargs):
       if config.check_tracer_leaks.value:
         return f(*args, **kwargs)
-      else:
-        return cached(config.trace_context(), *args, **kwargs)
+      return cached(config.trace_context() if trace_context_in_key else _ignore(),
+                    *args, **kwargs)
 
     wrapper.cache_clear = cached.cache_clear
     wrapper.cache_info = cached.cache_info
+    cache_clearing_funs.add(wrapper.cache_clear)
     return wrapper
   return wrap
 
+cache_clearing_funs = weakref.WeakSet()  # type: ignore
+
+def clear_all_caches():
+  global cache_clearing_funs
+  for clear in cache_clearing_funs:
+    clear()
+
 memoize = cache(max_size=None)
 
-def weakref_lru_cache(call: Callable, maxsize=2048):
+def weakref_lru_cache(call: Callable, maxsize=2048,
+                      trace_context_in_key: bool = True):
   """
   Least recently used cache decorator with weakref support.
 
@@ -305,7 +327,9 @@ def weakref_lru_cache(call: Callable, maxsize=2048):
   behave similar to `functools.lru_cache`.
   """
   global _weakref_lru_caches
-  cached_call = xc.weakref_lru_cache(config.trace_context, call, maxsize)
+  cached_call = xc.weakref_lru_cache(
+      config.trace_context if trace_context_in_key else _ignore,
+      call, maxsize)
   _weakref_lru_caches.add(cached_call)
   return cached_call
 
@@ -351,6 +375,13 @@ class WrapKwArgs:
 def wrap_name(name, transform_name):
   return transform_name + '(' + name + ')'
 
+def fun_name(fun: Callable):
+  return getattr(fun, "__name__", "<unnamed function>")
+
+def fun_qual_name(fun: Callable):
+  return getattr(fun, "__qualname__",
+                 getattr(fun, "__name__", "<unnamed function>"))
+
 def canonicalize_axis(axis, num_dims) -> int:
   """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
   axis = operator.index(axis)
@@ -390,7 +421,7 @@ def wraps(
   """
   def wrapper(fun: T) -> T:
     try:
-      name = getattr(wrapped, "__name__", "<unnamed function>")
+      name = fun_name(wrapped)
       doc = getattr(wrapped, "__doc__", "") or ""
       fun.__dict__.update(getattr(wrapped, "__dict__", {}))
       fun.__annotations__ = getattr(wrapped, "__annotations__", {})
@@ -580,55 +611,40 @@ def set_module(module: str) -> Callable[[T], T]:
   return wrapper
 
 
-if TYPE_CHECKING:
-  def use_cpp_class(cpp_cls: Any) -> Callable[[T], T]:
-    def wrapper(cls: T) -> T:
+def use_cpp_class(cpp_cls: type[Any]) -> Callable[[type[T]], type[T]]:
+  """A decorator replacing a Python class with its C++ version at runtime."""
+
+  def wrapper(cls):
+    if cpp_cls is None:
       return cls
-    return wrapper
 
-  def use_cpp_method(is_enabled: bool = True) -> Callable[[T], T]:
-    def wrapper(cls: T) -> T:
-      return cls
-    return wrapper
+    exclude_methods = {'__module__', '__dict__', '__doc__'}
 
-else:
-  def use_cpp_class(cpp_cls):
-    """A helper decorator to replace a python class with its C++ version"""
+    originals = {}
+    for attr_name, attr in cls.__dict__.items():
+      if attr_name not in exclude_methods:
+        if hasattr(_original_func(attr), "_use_cpp"):
+          originals[attr_name] = attr
+        else:
+          setattr(cpp_cls, attr_name, attr)
 
-    def wrapper(cls):
-      if cpp_cls is None:
-        return cls
+    cpp_cls.__doc__ = cls.__doc__
+    # TODO(pschuh): Remove once fastpath is gone.
+    cpp_cls._original_py_fns = originals
+    return cpp_cls
 
-      exclude_methods = {'__module__', '__dict__', '__doc__'}
+  return wrapper
 
-      originals = {}
-      for attr_name, attr in cls.__dict__.items():
-        if attr_name not in exclude_methods:
-          if hasattr(_original_func(attr), "_use_cpp"):
-            originals[attr_name] = attr
-          else:
-            setattr(cpp_cls, attr_name, attr)
-
-      cpp_cls.__doc__ = cls.__doc__
-      # TODO(pschuh): Remove once fastpath is gone.
-      cpp_cls._original_py_fns = originals
-      return cpp_cls
-
-    return wrapper
-
-  def use_cpp_method(is_enabled=True):
-    """A helper decorator to exclude methods from the set that are forwarded to C++ class"""
-    def decorator(f):
-      if is_enabled:
-        original_func = _original_func(f)
-        original_func._use_cpp = True
-      return f
-
-    if not isinstance(is_enabled, bool):
-      raise TypeError(
-          "Decorator got wrong type: @use_cpp_method(is_enabled: bool=True)"
-      )
-    return decorator
+def use_cpp_method(is_enabled: bool = True) -> Callable[[T], T]:
+  """A decorator excluding methods from the set that are forwarded to C++ class."""
+  if not isinstance(is_enabled, bool):
+    raise TypeError("``is_enabled`` must be a bool")
+  def decorator(f):
+    if is_enabled:
+      original_func = _original_func(f)
+      original_func._use_cpp = True
+    return f
+  return decorator
 
 
 try:

@@ -31,7 +31,7 @@ runner_token="$3"
 # - sets empty string as default to avoid unbound variable error from set -u
 jax_repo_url="${4-}"
 if [ -z "${jax_repo_url}" ]; then
-  jax_repo_url="https://github.com/google/jax"
+  jax_repo_url="https://github.com/jax-ml/jax"
 fi
 
 # Create `runner` user. This user won't have sudo access unless you ssh into the
@@ -67,7 +67,7 @@ cd ~/
 
 git clone ${jax_repo_url}
 
-# Based on https://github.com/google/jax/settings/actions/runners/new
+# Based on https://github.com/jax-ml/jax/settings/actions/runners/new
 # (will be 404 for github users with insufficient repo permissions)
 mkdir actions-runner && cd actions-runner
 curl -o actions-runner-linux-x64.tar.gz -L ${actions_runner_download}

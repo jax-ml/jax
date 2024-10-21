@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from functools import partial
 import operator
-from typing import Optional
 import warnings
 
 import numpy as np
@@ -35,7 +34,7 @@ from jax._src.interpreters import ad
 from jax._src.lax.lax import _const
 from jax._src.lib import gpu_sparse
 from jax._src.numpy.util import promote_dtypes
-from jax._src.typing import Array, ArrayLike, DTypeLike
+from jax._src.typing import Array, DTypeLike
 import jax.numpy as jnp
 
 
@@ -380,11 +379,11 @@ def _csr_fromdense_jvp(primals, tangents, *, nse, index_dtype):
   data, indices, indptr = primals_out
 
   if type(Mdot) is ad.Zero:
-    data_dot = ad.Zero.from_value(data)
+    data_dot = ad.Zero.from_primal_value(data)
   else:
     data_dot = _csr_extract(indices, indptr, Mdot)
 
-  tangents_out = (data_dot, ad.Zero.from_value(indices), ad.Zero.from_value(indptr))
+  tangents_out = (data_dot, ad.Zero.from_primal_value(indices), ad.Zero.from_primal_value(indptr))
 
   return primals_out, tangents_out
 

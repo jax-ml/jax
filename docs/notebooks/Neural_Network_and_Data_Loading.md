@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.1
+    jupytext_version: 1.16.4
 kernelspec:
   display_name: Python 3
   language: python
@@ -14,9 +14,11 @@ kernelspec:
 
 +++ {"id": "18AF5Ab4p6VL"}
 
-# Training a Simple Neural Network, with PyTorch Data Loading
+# Training a simple neural network, with PyTorch data loading
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/Neural_Network_and_Data_Loading.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/google/jax/blob/main/docs/notebooks/Neural_Network_and_Data_Loading.ipynb)
+<!--* freshness: { reviewed: '2024-05-03' } *-->
+
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jax-ml/jax/blob/main/docs/notebooks/Neural_Network_and_Data_Loading.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/jax-ml/jax/blob/main/docs/notebooks/Neural_Network_and_Data_Loading.ipynb)
 
 **Copyright 2018 The JAX Authors.**
 
@@ -33,9 +35,9 @@ limitations under the License.
 
 +++ {"id": "B_XlLLpcWjkA"}
 
-![JAX](https://raw.githubusercontent.com/google/jax/main/images/jax_logo_250px.png)
+![JAX](https://raw.githubusercontent.com/jax-ml/jax/main/images/jax_logo_250px.png)
 
-Let's combine everything we showed in the [quickstart notebook](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/quickstart.ipynb) to train a simple neural network. We will first specify and train a simple MLP on MNIST using JAX for the computation. We will use PyTorch's data loading API to load images and labels (because it's pretty great, and the world doesn't need yet another data loading library).
+Let's combine everything we showed in the [quickstart](https://colab.research.google.com/github/jax-ml/jax/blob/main/docs/quickstart.html) to train a simple neural network. We will first specify and train a simple MLP on MNIST using JAX for the computation. We will use PyTorch's data loading API to load images and labels (because it's pretty great, and the world doesn't need yet another data loading library).
 
 Of course, you can use JAX with any API that is compatible with NumPy to make specifying the model a bit more plug-and-play. Here, just for explanatory purposes, we won't use any neural network libraries or special APIs for building our model.
 
@@ -94,7 +96,7 @@ def predict(params, image):
   for w, b in params[:-1]:
     outputs = jnp.dot(w, activations) + b
     activations = relu(outputs)
-  
+
   final_w, final_b = params[-1]
   logits = jnp.dot(final_w, activations) + final_b
   return logits - logsumexp(logits)
@@ -154,7 +156,7 @@ At this point, we have all the ingredients we need to define our neural network 
 def one_hot(x, k, dtype=jnp.float32):
   """Create a one-hot encoding of x of size k."""
   return jnp.array(x[:, None] == jnp.arange(k), dtype)
-  
+
 def accuracy(params, images, targets):
   target_class = jnp.argmax(targets, axis=1)
   predicted_class = jnp.argmax(batched_predict(params, images), axis=1)
@@ -173,7 +175,7 @@ def update(params, x, y):
 
 +++ {"id": "umJJGZCC2oKl"}
 
-## Data Loading with PyTorch
+## Data loading with PyTorch
 
 JAX is laser-focused on program transformations and accelerator-backed NumPy, so we don't include data loading or munging in the JAX library. There are already a lot of great data loaders out there, so let's just use them instead of reinventing anything. We'll grab PyTorch's data loader, and make a tiny shim to make it work with NumPy arrays.
 
@@ -243,7 +245,7 @@ test_labels = one_hot(np.array(mnist_dataset_test.test_labels), n_targets)
 
 +++ {"id": "xxPd6Qw3Z98v"}
 
-## Training Loop
+## Training loop
 
 ```{code-cell} ipython3
 :id: X2DnZo3iYj18

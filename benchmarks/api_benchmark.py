@@ -566,7 +566,7 @@ def bench_repeated_static_slicing(state):
   while state:
     jax.block_until_ready([x[i:i + 2] for i in range(0, 1000, 2)])
 
-def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit, use_aot=False):
+def pjit_simple_benchmark(state, num_devices, num_args, use_aot=False):
   spec = jax.sharding.PartitionSpec('x')
   mesh = create_mesh((num_devices,), ('x',), state)
   if mesh is None:
@@ -601,8 +601,7 @@ def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit, use_aot=False):
 @google_benchmark.option.args([10])
 @google_benchmark.option.args([100])
 def pjit_simple_1_device(state):
-  pjit_simple_benchmark(
-      state, num_devices=1, num_args=state.range(0), cpp_jit=state.range(1))
+  pjit_simple_benchmark(state, num_devices=1, num_args=state.range(0))
 
 @google_benchmark.register
 @google_benchmark.option.arg_names(['num_args'])
@@ -610,8 +609,7 @@ def pjit_simple_1_device(state):
 @google_benchmark.option.args([10])
 @google_benchmark.option.args([100])
 def pjit_simple_4_device(state):
-  pjit_simple_benchmark(
-      state, num_devices=4, num_args=state.range(0), cpp_jit=state.range(1))
+  pjit_simple_benchmark(state, num_devices=4, num_args=state.range(0))
 
 @google_benchmark.register
 @google_benchmark.option.arg_names(['num_args'])
@@ -619,8 +617,7 @@ def pjit_simple_4_device(state):
 @google_benchmark.option.args([10])
 @google_benchmark.option.args([100])
 def pjit_simple_4000_device(state):
-  pjit_simple_benchmark(
-      state, num_devices=4000, num_args=state.range(0), cpp_jit=state.range(1))
+  pjit_simple_benchmark(state, num_devices=4000, num_args=state.range(0))
 
 
 @google_benchmark.register
@@ -633,7 +630,6 @@ def pjit_aot_1_device(state):
       state,
       num_devices=1,
       num_args=state.range(0),
-      cpp_jit=state.range(1),
       use_aot=True)
 
 
@@ -647,7 +643,6 @@ def pjit_aot_4_device(state):
       state,
       num_devices=4,
       num_args=state.range(0),
-      cpp_jit=state.range(1),
       use_aot=True)
 
 
@@ -661,7 +656,6 @@ def pjit_aot_4000_device(state):
       state,
       num_devices=4000,
       num_args=state.range(0),
-      cpp_jit=state.range(1),
       use_aot=True)
 
 
@@ -677,11 +671,33 @@ def host_local_array_to_global_array(state):
     multihost_utils.host_local_array_to_global_array(
         (input_data, input_data), global_mesh, (in_pspec, in_pspec))
 
+
 @google_benchmark.register
-def device_put(state):
-  x = np.array(1, np.int32)
+@google_benchmark.option.arg_names(['num_args'])
+@google_benchmark.option.args([1])
+@google_benchmark.option.args([10])
+@google_benchmark.option.args([100])
+@google_benchmark.option.args([1000])
+def device_put_from_numpy_array(state):
+  x = [np.array(1, np.int32)] * state.range(0)
   while state:
-    _ = jax.device_put(x).block_until_ready()
+    _ = jax.block_until_ready(jax.device_put(x))
+
+
+@google_benchmark.register
+@google_benchmark.option.arg_names(['num_args'])
+@google_benchmark.option.args([1])
+@google_benchmark.option.args([10])
+@google_benchmark.option.args([100])
+@google_benchmark.option.args([1000])
+def device_put_from_jax_array(state):
+  if len(jax.devices()) < 2:
+    state.skip_with_error('requires 2 devices')
+  x = [np.array(1, np.int32)] * state.range(0)
+  x = jax.block_until_ready(jax.device_put(x, device=jax.devices()[0]))
+  d = jax.devices()[1]
+  while state:
+    _ = jax.block_until_ready(jax.device_put(x, device=d))
 
 
 @google_benchmark.register
@@ -819,7 +835,7 @@ def serial_dot_products(state):
       out = out + y * x[0]
     return out
 
-  x = jax.random.normal(jax.random.PRNGKey(0), (2, 2))
+  x = jax.random.normal(jax.random.key(0), (2, 2))
   f(x).block_until_ready()  # compile
   while state:
     f(x).block_until_ready()
@@ -854,6 +870,21 @@ def bench_make_array_from_callback_fully_replicated_sharding(state):
   while state:
     jax.make_array_from_callback(shape, s, np_arr.__getitem__)
 
+
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+def bench_make_array_from_callback_sharded(state):
+  global_mesh = create_mesh((4, 2), ('x', 'y'), state)
+  input_shape = (8, 2)
+  input_data = np.arange(math.prod(input_shape)).reshape(input_shape)
+
+  def callback(index):
+    return input_data[index]
+
+  s = jax.NamedSharding(global_mesh, jax.sharding.PartitionSpec('x', 'y'))
+  while state:
+    jax.make_array_from_callback((8, 2), s, callback)
+
 @google_benchmark.register
 @google_benchmark.option.unit(google_benchmark.kMillisecond)
 def benchmark_lorentz63_cache_hits(state):
@@ -884,6 +915,24 @@ def benchmark_lorentz63_cache_hits(state):
   x = jnp.ones((8, 3))
   while state:
     jax.make_jaxpr(lambda x: training_step(x, 100, unroll=True))(x)
+
+
+@google_benchmark.register
+def jit_add_chain(state):
+  SIZE = 100
+
+  @jax.jit
+  def g(x, y):
+    return lax.add(x, y)
+
+  x = jax.random.normal(jax.random.key(0), (2, 2))
+  while state:
+    @jax.jit
+    def f(x):
+      for i in range(SIZE):
+        x = g(x, x)
+      return x
+    f(x).block_until_ready()
 
 
 if __name__ == "__main__":

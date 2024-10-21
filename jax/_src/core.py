@@ -13,12 +13,11 @@
 # limitations under the License.
 from __future__ import annotations
 
-import collections  # noqa: F401
 from collections import Counter, defaultdict, deque, namedtuple
-from collections.abc import (Collection, Generator, Hashable, Iterable,
-                             Iterator, Set, Sequence, MutableSet,
+from collections.abc import (Callable, Collection, Generator, Hashable,
+                             Iterable, Iterator, Set, Sequence, MutableSet,
                              MutableMapping)
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass
 import functools
 from functools import partial, partialmethod, total_ordering
@@ -29,16 +28,18 @@ import math
 import operator
 import threading
 import types
-from typing import (Any, Callable, ClassVar, Generic, NamedTuple, TypeVar,
+from typing import (Any, ClassVar, Generic, NamedTuple, TypeVar,
                     cast, overload, Union)
 import warnings
 from weakref import ref
 
 import numpy as np
 
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import config
 from jax._src import effects
+from jax._src import compute_on
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
     TracerIntegerConversionError, UnexpectedTracerError)
@@ -54,6 +55,7 @@ from jax._src.lib import jax_jit
 from jax._src import traceback_util
 from jax._src.typing import Array, DimSize, Shape
 from jax._src import typing
+from jax._src import xla_metadata as xla_metadata_lib
 
 traceback_util.register_exclusion(__file__)
 
@@ -61,7 +63,7 @@ zip, unsafe_zip = safe_zip, zip
 map, unsafe_map = safe_map, map
 
 
-_TRACER_ERROR_NUM_TRACEBACK_FRAMES = config.DEFINE_integer(
+_TRACER_ERROR_NUM_TRACEBACK_FRAMES = config.int_flag(
     'jax_tracer_error_num_traceback_frames',
     config.int_env('JAX_TRACER_ERROR_NUM_TRACEBACK_FRAMES', 5),
     help='Set the number of stack frames in JAX tracer error messages.'
@@ -77,9 +79,9 @@ no_effects: Effects = effects.no_effects
 
 class JaxprDebugInfo(NamedTuple):
   traced_for: str     # e.g. 'jit', 'scan', etc
-  func_src_info: str  # e.g. f'{fun.__name__} at {filename}:{lineno}'
+  func_src_info: str | None  # e.g. f'{fun.__name__} at {filename}:{lineno}'
   arg_names: tuple[str | None, ...]     # e.g. ('args[0]', ... )
-  result_paths: tuple[str | None, ...]  # e.g. ('[0]', '[1]', ...)
+  result_paths: tuple[str, ...]  # e.g. ('[0]', '[1]', ...)
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
@@ -149,65 +151,28 @@ class Jaxpr:
   def pretty_print(self, *, source_info=False, print_shapes=True,
                    custom_pp_eqn_rules=True, name_stack=False,
                    print_effects: bool = False, **kwargs):
-    context = JaxprPpContext()
-    settings = JaxprPpSettings(
-        source_info=source_info,
-        print_shapes=print_shapes,
-        custom_pp_eqn_rules=custom_pp_eqn_rules,
-        name_stack=name_stack,
-        print_effects=print_effects)
-
-    # Compute how many times each jaxpr is used.
-    names = defaultdict[Jaxpr, str](lambda: "jaxpr")
-    jaxpr_counts = Counter[Jaxpr]()
-    s = deque([self])
-    while s:
-      jaxpr = s.popleft()
-      jaxpr_counts[jaxpr] += 1
-      for eqn in jaxpr.eqns:
-        # TODO(slebedev): Come up with a more elaborate heuristic for name=.
-        name = eqn.params.get("name")
-        if name is None:
-          s.extend(jaxprs_in_params(eqn.params))
-          continue
-        name = name.strip("<>")  # <lambda> -> lambda
-        for subjaxpr in jaxprs_in_params(eqn.params):
-          s.append(subjaxpr)
-          names.setdefault(subjaxpr, name)
-
-    # Pull jaxprs occurring more than once to the top-level, making sure
-    # that their names are unique.
-    docs = []
-    name_counts = Counter[str]()
-    for jaxpr, c in jaxpr_counts.items():
-      if c == 1:
-        continue
-      name = names[jaxpr]
-      if (count := name_counts[name]) > 0:
-        name_counts[name] += 1
-        name += str(count)
-        name_counts[name] += 1
-      else:
-        name_counts[name] += 1
-      docs.append(pp_top_level_jaxpr(name, jaxpr, context, settings))
-      context.used_names.add(name)
-      context.top_level_jaxprs[jaxpr] = name
-    docs.append(pp_jaxpr(self, context, settings))
-    return pp.concat(docs).format(**kwargs)
+    doc = pp_toplevel_jaxpr(
+      self, source_info=source_info, print_shapes=print_shapes,
+      custom_pp_eqn_rules=custom_pp_eqn_rules, name_stack=name_stack,
+      print_effects=print_effects)
+    return doc.format(**kwargs)
 
   def _repr_pretty_(self, p, cycle):
     return p.text(self.pretty_print(use_color=True))
 
-  def replace(self, *, constvars=None, invars=None, outvars=None, eqns=None,
-              effects=None, debug_info=None):
-    constvars = self.constvars if constvars is None else constvars
-    invars =  self.invars if invars is None else invars
-    outvars = self.outvars if outvars is None else outvars
-    eqns = self.eqns if eqns is None else eqns
-    effects = self.effects if effects is None else effects
-    debug_info = self.debug_info if debug_info is None else debug_info
-    return Jaxpr(constvars=constvars, invars=invars, outvars=outvars, eqns=eqns,
-                 effects=effects, debug_info=debug_info)
+  def replace(self, **kwargs):
+    jaxpr = Jaxpr(
+        constvars=kwargs.pop("constvars", self.constvars),
+        invars=kwargs.pop("invars", self.invars),
+        outvars=kwargs.pop("outvars", self.outvars),
+        eqns=kwargs.pop("eqns", self.eqns),
+        effects=kwargs.pop("effects", self.effects),
+        debug_info=kwargs.pop("debug_info", self.debug_info),
+    )
+    if kwargs:
+      raise ValueError(f"Unknown keyword arguments: {kwargs}")
+    return jaxpr
+
 
 def join_effects(*effects: Effects) -> Effects:
   return set().union(*effects) if effects else no_effects
@@ -295,13 +260,57 @@ def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
   return eval_jaxpr(closed_jaxpr.jaxpr, closed_jaxpr.consts, *args)
 
 
-class JaxprEqn(NamedTuple):
+class JaxprEqnContext:
+
+  def __init__(self, compute_type: str | None, threefry_partitionable: bool,
+               xla_metadata=None):
+    self.compute_type = compute_type
+    self.threefry_partitionable = threefry_partitionable
+    self.xla_metadata = xla_metadata
+    self._managers = [
+        (compute_on.extend_compute_type, self.compute_type),
+        (config.threefry_partitionable.__call__, self.threefry_partitionable),
+        (xla_metadata_lib.set_xla_metadata, self.xla_metadata),
+    ]
+
+  @property
+  @contextmanager
+  def manager(self):
+    with ExitStack() as stack:
+      for manager, val in self._managers:
+        stack.enter_context(manager(val))
+      yield
+
+  def __repr__(self):
+    return (
+        f"JaxprEqnContext(compute_type={self.compute_type}, "
+        f"threefry_partitionable={self.threefry_partitionable}, "
+        f"xla_metadata={self.xla_metadata})"
+    )
+
+
+class JaxprEqn:
   invars: list[Atom]
   outvars: list[Var]
   primitive: Primitive
   params: dict[str, Any]
   effects: Effects
   source_info: source_info_util.SourceInfo
+  ctx: JaxprEqnContext
+
+  # It's slightly faster to use a class with __slots__ than a NamedTuple.
+  __slots__ = ['invars', 'outvars', 'primitive', 'params', 'effects',
+               'source_info', 'ctx']
+
+  def __init__(self, invars, outvars, primitive, params, effects, source_info,
+               ctx):
+    self.invars = invars
+    self.outvars = outvars
+    self.primitive = primitive
+    self.params = params
+    self.effects = effects
+    self.source_info = source_info
+    self.ctx = ctx
 
   def __repr__(self):
     return str(pp_eqn(self, JaxprPpContext(), JaxprPpSettings())).rstrip()
@@ -314,8 +323,8 @@ class JaxprEqn(NamedTuple):
       params: dict[str, Any] | None = None,
       effects: Effects | None = None,
       source_info: source_info_util.SourceInfo | None = None,
+      ctx: JaxprEqnContext | None = None
   ):
-    # It is slightly faster to rebuild the tuple directly than to call _replace.
     return JaxprEqn(
       self.invars if invars is None else invars,
       self.outvars if outvars is None else outvars,
@@ -323,16 +332,22 @@ class JaxprEqn(NamedTuple):
       self.params if params is None else params,
       self.effects if effects is None else effects,
       self.source_info if source_info is None else source_info,
+      self.ctx if ctx is None else ctx,
     )
 
 
 # TODO(mattjj): call typecheck rules here, so we don't form bad eqns
-def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None):
+def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
+                  ctx=None):
   source_info = source_info or source_info_util.new_source_info()
+  ctx = ctx or JaxprEqnContext(
+      compute_on.current_compute_type(),
+      config.threefry_partitionable.value,
+      xla_metadata_lib.current_xla_metadata())
   if config.enable_checks.value:
     assert all(isinstance(x, (Var, Literal)) for x in  invars)
     assert all(isinstance(v,  Var)           for v in outvars)
-  return JaxprEqn(invars, outvars, primitive, params, effects, source_info)
+  return JaxprEqn(invars, outvars, primitive, params, effects, source_info, ctx)
 
 _var_counter = it.count()
 
@@ -423,7 +438,8 @@ class Primitive:
     return self.bind_with_trace(find_top_trace(args), args, params)
 
   def bind_with_trace(self, trace, args, params):
-    out = trace.process_primitive(self, map(trace.full_raise, args), params)
+    with pop_level(trace.level):
+      out = trace.process_primitive(self, map(trace.full_raise, args), params)
     return map(full_lower, out) if self.multiple_results else full_lower(out)
 
   def def_impl(self, impl):
@@ -431,11 +447,11 @@ class Primitive:
     return impl
 
   def def_abstract_eval(self, abstract_eval):
-    self.abstract_eval = _effect_free_abstract_eval(abstract_eval)  # type: ignore[assignment]
+    self.abstract_eval = _effect_free_abstract_eval(abstract_eval)
     return abstract_eval
 
   def def_effectful_abstract_eval(self, effectful_abstract_eval):
-    self.abstract_eval = effectful_abstract_eval  # type: ignore[assignment]
+    self.abstract_eval = effectful_abstract_eval
     return effectful_abstract_eval
 
   def def_custom_bind(self, bind):
@@ -487,7 +503,8 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
     subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
     name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
     traceback = eqn.source_info.traceback if propagate_source_info else None
-    with source_info_util.user_context(traceback, name_stack=name_stack):
+    with source_info_util.user_context(
+        traceback, name_stack=name_stack), eqn.ctx.manager:
       ans = eqn.primitive.bind(*subfuns, *map(read, eqn.invars), **bind_params)
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)
@@ -673,13 +690,25 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
   size = _aval_property('size')
   shape = _aval_property('shape')
 
+  def __hash__(self):
+    # TODO(jakevdp) finalize this deprecation and set __hash__ = None
+    # Warning added 2024-06-13
+    if deprecations.is_accelerated('tracer-hash'):
+      raise TypeError(f"unhashable type: {type(self)}")
+    # Use FutureWarning rather than DeprecationWarning because hash is likely
+    # not called directly by the user, so we want to warn at all stacklevels.
+    warnings.warn(
+      f"unhashable type: {type(self)}. Attempting to hash a tracer will lead to an"
+      " error in a future JAX release.", category=FutureWarning)
+    return super().__hash__()
+
   def __init__(self, trace: Trace):
     self._trace = trace
 
   def _error_repr(self):
     if self.aval is None:
       return f"traced array with aval {self.aval}"
-    return f"traced array with shape {raise_to_shaped(self.aval).str_short()}."
+    return f"traced array with shape {raise_to_shaped(self.aval).str_short()}"
 
   def __array__(self, *args, **kw):
     raise TracerArrayConversionError(self)
@@ -714,13 +743,25 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
     # This attribute is part of the jax.Array API, but only defined on concrete arrays.
     # Raising a ConcretizationTypeError would make sense, but for backward compatibility
     # we raise an AttributeError so that hasattr() and getattr() work as expected.
-    try:
-      orig_msg = self._origin_msg()
-    except:
-      orig_msg = ''
     raise AttributeError(self,
       f"The 'sharding' attribute is not available on {self._error_repr()}."
-      f"{orig_msg}")
+      f"{self._origin_msg()}")
+
+  @property
+  def committed(self):
+    raise ConcretizationTypeError(
+        self,
+        f"The 'committed' attribute is not available on {self._error_repr()}."
+        f"{self._origin_msg()}")
+
+  @property
+  def device(self):
+    # This attribute is part of the jax.Array API, but only defined on concrete arrays.
+    # Raising a ConcretizationTypeError would make sense, but for backward compatibility
+    # we raise an AttributeError so that hasattr() and getattr() work as expected.
+    raise AttributeError(self,
+      f"The 'device' attribute is not available on {self._error_repr()}."
+      f"{self._origin_msg()}")
 
   @property
   def addressable_shards(self):
@@ -901,7 +942,7 @@ aval_method = namedtuple("aval_method", ["fun"])
 
 
 class EvalTrace(Trace):
-  # See comments in https://github.com/google/jax/pull/3370
+  # See comments in https://github.com/jax-ml/jax/pull/3370
   def pure(self, x): return x
   lift = sublift = pure
 
@@ -964,7 +1005,7 @@ class MainTrace:
     return self.trace_type(self, cur_sublevel(), **self.payload)
 
 class TraceStack:
-  # See comments in https://github.com/google/jax/pull/3370
+  # See comments in https://github.com/jax-ml/jax/pull/3370
   stack: list[MainTrace]
   dynamic: MainTrace
 
@@ -1033,13 +1074,8 @@ class TraceState:
 
 
 def _update_thread_local_jit_state(dynamic):
-  # Copies the MainTrace instance, removing any .debug_info or .jaxpr_stack
-  # fields that should not be kept alive as part of a cache key.
-  # TODO(mattjj): split debug_info and jaxpr_stack out of MainTrace.
-  # TODO(mattjj): add a test that verifies that JIT-ted functions are not kept
-  # alive by the JIT cache, particularly for nested JIT-ted functions.
-  copy = MainTrace(dynamic.level, dynamic.trace_type, **dynamic.payload)
-  config.update_thread_local_jit_state(dynamic_trace_state=copy)
+  state = (dynamic.level, dynamic.trace_type)
+  config.update_thread_local_jit_state(dynamic_trace_state=state)
 
 
 # The global state of the tracer is accessed by a thread-local object.
@@ -1064,8 +1100,8 @@ def _initialize_jax_jit_thread_local_state():
   tls = jax_jit.thread_local_state()
   if tls.extra_jit_context is None:
     dynamic = thread_local_state.trace_state.trace_stack.dynamic
-    copy = MainTrace(dynamic.level, dynamic.trace_type, **dynamic.payload)
-    config.update_thread_local_jit_state(dynamic_trace_state=copy)
+    state = (dynamic.level, dynamic.trace_type)
+    config.update_thread_local_jit_state(dynamic_trace_state=state)
 
 
 jax_jit.set_thread_local_state_initialization_callback(
@@ -1081,7 +1117,7 @@ def trace_state_clean() -> bool:
 def reset_trace_state() -> bool:
   """Resets the global trace state and returns True if it was already clean."""
   if not trace_state_clean():
-    thread_local_state.trace_state.__init__()  # type: ignore
+    thread_local_state.trace_state.__init__()
     return False
   else:
     return True
@@ -1138,7 +1174,7 @@ def _why_alive(ignore_ids: set[int], x: Any) -> str:
     # parent->child jump. We do that by setting `parent` here to be a
     # grandparent (or great-grandparent) of `child`, and then handling that case
     # in _why_alive_container_info. See example:
-    #  https://github.com/google/jax/pull/13022#discussion_r1008456599
+    #  https://github.com/jax-ml/jax/pull/13022#discussion_r1008456599
     # To prevent this collapsing behavior, just comment out this code block.
     if (isinstance(parent, dict) and
         getattr(parents(parent)[0], '__dict__', None) is parents(child)[0]):
@@ -1184,7 +1220,7 @@ def _why_alive_container_info(container, obj_id) -> str:
 @contextmanager
 def new_main(trace_type: type[Trace], dynamic: bool = False,
              **payload) -> Generator[MainTrace, None, None]:
-  # See comments in https://github.com/google/jax/pull/3370
+  # See comments in https://github.com/jax-ml/jax/pull/3370
   stack = thread_local_state.trace_state.trace_stack
   level = stack.next_level()
   main = MainTrace(level, trace_type, **payload)
@@ -1225,7 +1261,7 @@ def dynamic_level() -> int:
 @contextmanager
 def new_base_main(trace_type: type[Trace],
                   **payload) -> Generator[MainTrace, None, None]:
-  # See comments in https://github.com/google/jax/pull/3370
+  # See comments in https://github.com/jax-ml/jax/pull/3370
   stack = thread_local_state.trace_state.trace_stack
   main = MainTrace(0, trace_type, **payload)
   prev_dynamic, stack.dynamic = stack.dynamic, main
@@ -1244,6 +1280,18 @@ def new_base_main(trace_type: type[Trace],
     if t() is not None:
       leaked_tracers = maybe_find_leaked_tracers(t())
       if leaked_tracers: raise leaked_tracer_error("trace", t(), leaked_tracers)
+
+@contextmanager
+def pop_level(level: int):
+  if level == 0:
+    return (yield)  # noqa: B901
+  prev, thread_local_state.trace_state.trace_stack.stack = \
+      thread_local_state.trace_state.trace_stack.stack, \
+      thread_local_state.trace_state.trace_stack.stack[:level]
+  try:
+    yield
+  finally:
+    thread_local_state.trace_state.trace_stack.stack = prev
 
 @contextmanager
 def ensure_compile_time_eval():
@@ -1278,7 +1326,7 @@ def ensure_compile_time_eval():
       else:
         return jnp.cos(x)
 
-  Here's a real-world example from https://github.com/google/jax/issues/3974::
+  Here's a real-world example from https://github.com/jax-ml/jax/issues/3974::
 
     import jax
     import jax.numpy as jnp
@@ -1343,11 +1391,11 @@ def find_top_trace(xs) -> Trace:
     top_tracer._assert_live()
     top_main = top_tracer._trace.main
   else:
-    top_main = None  # type: ignore
+    top_main = None
   dynamic = thread_local_state.trace_state.trace_stack.dynamic
   top_main = (dynamic if top_main is None or dynamic.level > top_main.level
               else top_main)
-  return top_main.with_cur_sublevel()  # type: ignore
+  return top_main.with_cur_sublevel()
 
 def get_referent(x: Any) -> Any:
   return x.get_referent() if isinstance(x, Tracer) else x
@@ -1373,8 +1421,12 @@ def definitely_equal(x, y):
 class AbstractValue:
   __slots__: list[str] = []
 
-  def at_least_vspace(self):
+  def to_tangent_aval(self):
     raise NotImplementedError("must override")
+
+  # TODO(dougalm): deprecate this alias
+  def at_least_vspace(self):
+    return self.to_tangent_aval()
 
   def __repr__(self):
     try:
@@ -1384,9 +1436,6 @@ class AbstractValue:
       return self.__class__.__name__
 
   def strip_weak_type(self) -> AbstractValue:
-    return self
-
-  def strip_named_shape(self) -> AbstractValue:
     return self
 
   def join(self, other):
@@ -1439,9 +1488,10 @@ bot = Bot()
 def lattice_join(x: AbstractValue | None,
                  y: AbstractValue | None) -> AbstractValue:
   if x is None:
-    return cast(AbstractValue, y)
+    assert y is not None
+    return y
   elif y is None:
-    return cast(AbstractValue, x)
+    return x
   elif isinstance(x, type(y)):
     return y.join(x)
   elif isinstance(y, type(x)):
@@ -1485,6 +1535,12 @@ def get_aval(x):
   else:
     return concrete_aval(x)
 
+def get_type(x):
+  aval = get_aval(x)
+  if isinstance(aval, ConcreteArray):
+    return raise_to_shaped(aval)
+  else:
+    return aval
 
 def concretization_function_error(fun, suggest_astype=False):
   fname = getattr(fun, "__name__", fun)
@@ -1518,7 +1574,7 @@ def concrete_or_error(force: Any, val: Any, context=""):
 
 def concrete_dim_or_error(val: Any, context=""):
   """Like concrete_or_error(operator.index), allowing symbolic dimensions."""
-  if is_dim(val):
+  if is_symbolic_dim(val):
     return val
   else:
     return concrete_or_error(operator.index, val, context=context)
@@ -1547,23 +1603,18 @@ def physical_aval(aval: DShapedArray) -> DShapedArray: ...
 def physical_aval(aval: AbstractValue) -> AbstractValue: ...
 
 def physical_aval(aval):
-  aval_dtype = getattr(aval, 'dtype', None)
-  if aval_dtype and isinstance(aval_dtype, dtypes.ExtendedDType):
-    ctor = type(aval)
-    aval_shape = getattr(aval, 'shape', None)
-    assert aval_shape is not None, (ctor, aval)
-    elt_aval = aval_dtype._rules.physical_element_aval(aval_dtype)
-    assert type(elt_aval) is ShapedArray
-    return ctor((*aval_shape, *elt_aval.shape), elt_aval.dtype)  # pytype: disable=wrong-arg-count
-  else:
-    return aval
+  if (isinstance(aval, (ShapedArray, DShapedArray)) and
+      isinstance(aval.dtype, dtypes.ExtendedDType)):
+    elt_aval = physical_element_aval(aval.dtype)
+    if isinstance(aval, ShapedArray):
+      return ShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype)
+    return DShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype)
+  return aval
 
-def _short_dtype_name(dtype) -> str:
-  if isinstance(dtype, dtypes.ExtendedDType):
-    return str(dtype)
-  else:
-    return (dtype.name.replace('float', 'f').replace('uint'   , 'u')
-                      .replace('int'  , 'i').replace('complex', 'c'))
+def physical_element_aval(edtype: dtypes.ExtendedDType) -> ShapedArray:
+  duck = edtype._rules.physical_element_aval(edtype)  # type: ignore
+  return ShapedArray(duck.shape, dtypes.dtype(duck.dtype))
+
 
 def _dtype_object(dtype):
   return dtype if isinstance(dtype, dtypes.ExtendedDType) else np.dtype(dtype)
@@ -1608,7 +1659,7 @@ class UnshapedArray(AbstractValue):
   _oct     = concretization_function_error(oct)
   _index   = concretization_function_error(operator.index)
 
-  def at_least_vspace(self) -> AbstractValue:
+  def to_tangent_aval(self) -> AbstractValue:
     return UnshapedArray(primal_dtype_to_tangent_dtype(self.dtype),
                          self.weak_type)
 
@@ -1622,7 +1673,7 @@ class UnshapedArray(AbstractValue):
       raise TypeError(self, other)
 
   def str_short(self, short_dtypes=False) -> str:
-    return _short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
+    return dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
 
   def strip_weak_type(self):
     """Returns a copy of the aval with weak_type=False."""
@@ -1631,7 +1682,7 @@ class UnshapedArray(AbstractValue):
   @property
   def shape(self):
     msg = ("UnshapedArray has no shape. Please open an issue at "
-           "https://github.com/google/jax/issues because it's unexpected for "
+           "https://github.com/jax-ml/jax/issues because it's unexpected for "
            "UnshapedArray instances to ever be produced.")
     raise TypeError(msg)
 
@@ -1663,6 +1714,8 @@ def canonicalize_shape(shape: Shape, context: str="") -> tuple[Any, ...]:
   Returns:
     A tuple of canonical dimension values.
   """
+  if isinstance(shape, int):
+    shape = shape,
   try:
     return tuple(unsafe_map(_canonicalize_dimension, shape))
   except TypeError:
@@ -1673,7 +1726,7 @@ def canonicalize_dim(d: DimSize, context: str="") -> DimSize:
   """Canonicalizes and checks for errors in a user-provided shape dimension value.
 
   Args:
-    f: a Python value that represents a dimension.
+    d: a Python value that represents a dimension.
 
   Returns:
     A canonical dimension value.
@@ -1701,25 +1754,28 @@ def _invalid_shape_error(shape: Shape, context: str=""):
   return TypeError(msg)
 
 class ShapedArray(UnshapedArray):
-  __slots__ = ['shape', 'named_shape']
+  __slots__ = ['shape', 'sharding']  # inherits slots from parent
   array_abstraction_level = 2
 
-  def __init__(self, shape, dtype, weak_type=False, named_shape=None):
+  def __init__(self, shape, dtype, weak_type=False, sharding=None):
     self.shape = canonicalize_shape(shape)
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
-    self.named_shape = {} if named_shape is None else dict(named_shape)
+    if config.sharding_in_types.value:
+      if sharding is not None:
+        assert len(sharding.spec) == len(self.shape)
+      self.sharding = sharding
 
-  def update(self, shape=None, dtype=None, weak_type=None, named_shape=None):
+  def update(self, shape=None, dtype=None, weak_type=None, sharding=None):
     if shape is None:
       shape = self.shape
     if dtype is None:
       dtype = self.dtype
     if weak_type is None:
       weak_type = self.weak_type
-    if named_shape is None:
-      named_shape = self.named_shape
-    return ShapedArray(shape, dtype, weak_type, named_shape)
+    if sharding is None:
+      sharding = getattr(self, 'sharding', None)
+    return ShapedArray(shape, dtype, weak_type, sharding=sharding)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self:
@@ -1735,46 +1791,55 @@ class ShapedArray(UnshapedArray):
     return (type(self) is type(other)
             and self.dtype == other.dtype and self.shape == other.shape
             and self.weak_type == other.weak_type
-            and self.named_shape == other.named_shape)
+            and getattr(self, 'sharding', None) == getattr(other, 'sharding', None))
 
   def __hash__(self):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
     # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
     return hash((self.shape, self.dtype, self.weak_type,
-                 tuple(self.named_shape.items())))
+                 getattr(self, 'sharding', None)))
 
-  def at_least_vspace(self):
+  def to_tangent_aval(self):
     return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
-                       self.weak_type, self.named_shape)
+                       self.weak_type)
 
   def join(self, other):
     if definitely_equal_shape(self.shape, other.shape) and self.dtype == other.dtype:
       weak_type = self.weak_type and other.weak_type
-      named_shape = join_named_shapes(self.named_shape, other.named_shape)
-      return self.update(weak_type=weak_type, named_shape=named_shape)
+      return self.update(weak_type=weak_type)
     elif self.dtype == other.dtype:
       return UnshapedArray(self.dtype)
     else:
       raise TypeError(self, other)
 
   def str_short(self, short_dtypes=False):
-    dt_str =  _short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
-    shapestr = ','.join(map(str, self.shape))
-    if self.named_shape:
-      named_shapestr = ','.join(f'{k}:{v}' for k, v in self.named_shape.items())
-      return f'{dt_str}[{shapestr};{named_shapestr}]'
-    else:
+    dt_str = (dtypes.short_dtype_name(self.dtype) if short_dtypes else
+              self.dtype.name)
+    dt_str = dt_str.replace('void', 'float0')
+    if hasattr(self, 'sharding') and self.sharding is not None:
+      shapestr = ','.join(_get_shape_sharding_str(self.shape, self.sharding.spec))
       return f'{dt_str}[{shapestr}]'
-
-  def strip_named_shape(self):
-    return self.update(named_shape={})
+    else:
+      shapestr = ','.join(map(str, self.shape))
+      return f'{dt_str}[{shapestr}]'
 
   def _len(self, ignored_tracer):
     try:
       return self.shape[0]
     except IndexError as err:
       raise TypeError("len() of unsized object") from err  # same as numpy error
+
+
+def _get_shape_sharding_str(shape, spec):
+  for s1, s2 in zip(shape, spec):
+    if s2 is None:
+      yield f"{s1}"
+    elif isinstance(s2, tuple):
+      ss = ','.join(s for s in s2)
+      yield f"{s1}@({ss})"
+    else:
+      yield f"{s1}@{s2}"
 
 
 def _forward_to_value(self, fun, ignored_tracer, *args):
@@ -1816,17 +1881,14 @@ class ConcreteArray(ShapedArray):
       return self
     elif self.shape == other.shape and self.dtype == other.dtype:
       weak_type = self.weak_type and other.weak_type
-      named_shape = join_named_shapes(self.named_shape, other.named_shape)
-      return ShapedArray(
-          self.shape, self.dtype, weak_type=weak_type, named_shape=named_shape)
+      return ShapedArray(self.shape, self.dtype, weak_type=weak_type)
     elif self.dtype == other.dtype:
-      return UnshapedArray(self.dtype,
-                           weak_type=self.weak_type and other.weak_type)
+      return UnshapedArray(self.dtype, weak_type=self.weak_type and other.weak_type)
     else:
       raise TypeError(self, other)
 
   def str_short(self, short_dtypes=False) -> str:
-    dt_str =  _short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
+    dt_str = dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
     return f'{self.val}, dtype={dt_str}'
 
   _bool    = partialmethod(_forward_to_value, bool)
@@ -1840,7 +1902,7 @@ class ConcreteArray(ShapedArray):
 
 def primal_dtype_to_tangent_dtype(primal_dtype):
   if isinstance(primal_dtype, dtypes.ExtendedDType):
-    return primal_dtype._rules.tangent_dtype(primal_dtype)  # type: ignore
+    return primal_dtype._rules.tangent_dtype(primal_dtype)
   elif not dtypes.issubdtype(primal_dtype, np.inexact):
     return dtypes.float0
   else:
@@ -1876,7 +1938,7 @@ class DShapedArray(UnshapedArray):
   def str_short(self, short_dtypes=False) -> str:
     del short_dtypes  # ignored
     shape = f'{",".join(str(d) for d in self.shape)}' if self.shape else ''
-    dtype = _short_dtype_name(self.dtype)
+    dtype = dtypes.short_dtype_name(self.dtype)
     return f'{dtype}[{shape}]'
   __str__ = __repr__ = str_short
 
@@ -1910,7 +1972,7 @@ class DShapedArray(UnshapedArray):
     else:
       raise TypeError(self, other)
 
-  def at_least_vspace(self):
+  def to_tangent_aval(self):
     return DShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
                         self.weak_type)
 
@@ -1934,6 +1996,7 @@ class DArray:
     assert data.shape == pad_shape
     self._aval = aval
     self._data = data
+
   shape = property(lambda self: self._aval.shape)
   dtype = property(lambda self: self._aval.dtype)
   aval = property(lambda self: self._aval)
@@ -1942,22 +2005,39 @@ class DArray:
       # special-case scalar bints
       return f'{int(self._data)}{{≤{self.dtype.bound}}}'
 
-    dtypestr = _short_dtype_name(self._aval.dtype)
+    dtypestr = dtypes.short_dtype_name(self._aval.dtype)
     shapestr = ','.join(map(str, self.shape))
-    slices = tuple(slice(int(d._data)) if type(d) is DArray and
-                   type(d.dtype) is bint else slice(None) for d in self.shape)
-    data = self._data[slices]
+    data = self.data
     return f'{dtypestr}[{shapestr}] with value: {data}'
+
   def __hash__(self) -> int:
     if not self.shape:
       return hash((self._aval, int(self._data)))
     raise TypeError("unhashable type: DArray")
+
   def __eq__(self, other):
     if isinstance(other, DArray) and self._aval == other._aval:
       return self._data == other._data
     return False
+
   def __len__(self):
     return self.shape[0]
+
+  @property
+  def data(self):
+    if not self.shape and type(self.dtype) is bint:
+      # special-case scalar bints
+      return self._data
+
+    slices = tuple(
+        slice(int(d._data))
+        if type(d) is DArray and type(d.dtype) is bint
+        else slice(None)
+        for d in self.shape
+    )
+    data = self._data[slices]
+    return data
+
 
 pytype_aval_mappings[DArray] = \
     lambda x: DConcreteArray(x._aval.shape, x._aval.dtype, x._aval.weak_type,
@@ -1999,17 +2079,19 @@ def mutable_array(init_val):
   return mutable_array_p.bind(init_val)
 mutable_array_p = Primitive('mutable_array')
 
-class InternalMutableArray(effects.Effect):
+class InternalMutableArrayEffect(effects.Effect):
   pass
+internal_mutable_array_effect = InternalMutableArrayEffect()
+effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
 
 @mutable_array_p.def_effectful_abstract_eval
 def mutable_array_abstract_eval(init_aval):
-  from jax._src.state.types import AbstractRef  # type: ignore[import]
-  return AbstractRef(init_aval), {InternalMutableArray}
+  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
+  return AbstractRef(init_aval), {internal_mutable_array_effect}
 
 @mutable_array_p.def_impl
 def _mutable_array_impl(init_val):
-  from jax._src.state.types import AbstractRef  # type: ignore[import]
+  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   aval = raise_to_shaped(get_aval(init_val))
   return MutableArray(AbstractRef(aval), init_val)
 
@@ -2021,7 +2103,7 @@ class AbstractToken(AbstractValue):
     else:
       assert False, f"Cannot join {self} with {other}"
   def str_short(self, short_dtypes=False): return 'Tok'
-  def at_least_vspace(self): return self
+  def to_tangent_aval(self): return self
 abstract_token: AbstractToken = AbstractToken()
 
 # Singleton shaped array used by all abstract tokens when shape/dtype is needed.
@@ -2050,14 +2132,15 @@ def raise_to_shaped(aval: AbstractValue, weak_type=None):
     if handler: return handler(aval, weak_type)
   raise TypeError(type(aval))
 
-raise_to_shaped_mappings : dict[type, Callable] = {
-  AbstractToken: lambda aval, _: aval,
-  Bot: lambda aval, _: aval,
-  UnshapedArray: lambda aval, _: aval,
-  ShapedArray: lambda aval, weak_type: ShapedArray(
-      aval.shape, aval.dtype, weak_type, aval.named_shape),
-  DConcreteArray: lambda aval, weak_type: DShapedArray(
-      aval.shape, aval.dtype, weak_type),
+raise_to_shaped_mappings: dict[type, Callable] = {
+    AbstractToken: lambda aval, _: aval,
+    Bot: lambda aval, _: aval,
+    UnshapedArray: lambda aval, _: aval,
+    ShapedArray: lambda aval, weak_type: ShapedArray(
+        aval.shape, aval.dtype, weak_type),
+    DConcreteArray: lambda aval, weak_type: DShapedArray(
+        aval.shape, aval.dtype, weak_type
+    ),
 }
 
 ### Operations on shapes and dimension sizes.
@@ -2168,20 +2251,24 @@ def min_dim(d1: DimSize, d2: DimSize) -> DimSize:
   d1_is_constant = is_constant_dim(d1)
   if d1_is_constant and is_constant_dim(d2):
     return min(d1, d2)
+  d1 = concrete_dim_or_error(d1, "argument `d1` of `core.min_dim`")
+  d2 = concrete_dim_or_error(d2, "argument `d2` of `core.min_dim`")
   if d1_is_constant:
-    return d2.rmin(d1)  # type: ignore[union-attr]
+    return d2.rmin(d1)
   else:
-    return d1.min(d2)  # type: ignore[union-attr]
+    return d1.min(d2)
 
 def max_dim(d1: DimSize, d2: DimSize) -> DimSize:
   """Like max(d1, d2) but for both constant and symbolic dimensions."""
   d1_is_constant = is_constant_dim(d1)
   if d1_is_constant and is_constant_dim(d2):
       return max(d1, d2)
+  d1 = concrete_dim_or_error(d1, "argument `d1` of `core.max_dim`")
+  d2 = concrete_dim_or_error(d2, "argument `d2` of `core.max_dim`")
   if d1_is_constant:
-    return d2.rmax(d1)  # type: ignore[union-attr]
+    return d2.rmax(d1)
   else:
-    return d1.max(d2)  # type: ignore[union-attr]
+    return d1.max(d2)
 
 def dimension_as_value(d: DimSize):
   """Turns a dimension size into a JAX array.
@@ -2244,92 +2331,6 @@ def dim_constant(ct: int):
 
 def dim_value_aval() -> AbstractValue:
   return ShapedArray((), dim_value_dtype(), weak_type=True)
-
-# ------------------- Named shapes -------------------
-
-
-class NamedShape:
-  def __init__(self, *args, **kwargs):
-    self.__positional = canonicalize_shape(args)
-    # TODO: Assert that kwargs match axis env?
-    self.__named = dict(kwargs)
-
-  @property
-  def rank(self):
-    return len(self.__positional) + len(self.__named)
-
-  @property
-  def positional_rank(self):
-    return len(self.__positional)
-
-  @property
-  def named_rank(self):
-    return len(self.__named)
-
-  @property
-  def positional(self):
-    return self.__positional
-
-  @property
-  def names(self):
-    return self.__named.keys()
-
-  @property
-  def named_sizes(self):
-    return self.__named.values()
-
-  @property
-  def named_items(self):
-    return self.__named.items()
-
-  def __getitem__(self, idx):
-    try:
-      idx = operator.index(idx)
-      return self.__positional[idx]
-    except TypeError:
-      pass
-    return self.__named[idx]
-
-  @property
-  def total(self):
-    total = 1
-    for s in self.__positional: total *= s
-    for s in self.__named.values(): total *= s
-    return total
-
-  def __str__(self):
-    # TODO(mattjj,frostig): revise not to miss commas
-    if not self.__named:
-      return str(self.__positional)
-    return (f"({', '.join(map(str, self.__positional))}{', ' if self.__named else ''}"
-            f"{', '.join(f'{k}={v}' for k, v in self.__named.items())})")
-
-  def __eq__(self, other):
-    if isinstance(other, NamedShape):
-      return (self.__positional, self.__named) == (other.__positional, other.__named)
-    if isinstance(other, tuple):
-      return not self.__named and self.__positional == other
-    return False
-
-  def __hash__(self):
-    named = frozenset(self.__named.items())
-    return hash((self.__positional, named))
-
-def join_named_shapes(*named_shapes):
-  result = {}
-  for named_shape in named_shapes:
-    for name, size in named_shape.items():
-      if result.setdefault(name, size) != size:
-        raise TypeError(
-            f"Axis name {name} used with inconsistent sizes: {result[name]} != {size}")
-  return result
-
-# TODO: Make canonicalize_shape return named shapes?
-def as_named_shape(shape) -> NamedShape:
-  if isinstance(shape, NamedShape):
-    return shape
-  return NamedShape(*shape)
-
 
 # ------------------- Call -------------------
 
@@ -2405,6 +2406,8 @@ class ClosedCallPrimitive(CallPrimitive):
 
 closed_call_p: ClosedCallPrimitive = ClosedCallPrimitive('closed_call')
 closed_call_p.def_impl(call_impl)
+closed_call_p.def_effectful_abstract_eval(
+    lambda *_, call_jaxpr: (call_jaxpr.out_avals, call_jaxpr.effects))
 
 
 outfeed_primitives: set[Primitive] = set()
@@ -2533,17 +2536,15 @@ def _map_shaped_array(
   # TODO: Extend the named shape
   if axis is None: return aval
   return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
-                     named_shape=aval.named_shape, weak_type=aval.weak_type)
+                     weak_type=aval.weak_type)
 
 def _unmap_shaped_array(
     size: int, axis_name: AxisName, axis: int | None, aval: ShapedArray
   ) -> ShapedArray:
-  named_shape = dict(aval.named_shape)
-  named_shape.pop(axis_name, None)  # TODO: make this mandatory
-  if axis is None: return aval.update(named_shape=named_shape)
+  if axis is None: return aval
   elif type(axis) is int:
     return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
-                       named_shape=named_shape, weak_type=aval.weak_type)
+                       weak_type=aval.weak_type)
   else: raise TypeError(axis)
 
 def _map_dshaped_array(
@@ -2739,16 +2740,8 @@ def subst_axis_names_var(v: Var, subst: AxisSubst, var_map: dict[Var, Var]) -> V
   # Var identity is load-bearing, so we can't have duplicates!
   if isinstance(v, DropVar): return v
   assert v not in var_map
-  if not hasattr(v.aval, 'named_shape'):
-    var_map[v] = v
-    return v
-  names = tuple(it.chain.from_iterable(subst(name) for name in v.aval.named_shape))
-  named_shape = {name: axis_frame(name).size for name in names}
-  if len(named_shape) != len(names):
-    raise DuplicateAxisNameError(v)
-  new_v = Var(v.suffix, v.aval.update(named_shape=named_shape))
-  var_map[v] = new_v
-  return new_v
+  var_map[v] = v
+  return v
 
 def subst_axis_names_eqn(eqn: JaxprEqn, subst: AxisSubst, var_map: dict[Var, Var]) -> JaxprEqn:
   invars: list[Atom] = [v if isinstance(v, Literal) else var_map[v] for v in eqn.invars]
@@ -2769,7 +2762,7 @@ def do_subst_axis_names_jaxpr(jaxpr: Jaxpr | ClosedJaxpr, subst: AxisSubst):
   var_map: dict[Var, Var] = {}
   invars = [subst_axis_names_var(v, subst, var_map) for v in jaxpr.invars]  # type: ignore[union-attr]
   constvars = [subst_axis_names_var(v, subst, var_map) for v in jaxpr.constvars]  # type: ignore[union-attr]
-  eqns = [subst_axis_names_eqn(eqn, subst, var_map) for eqn in jaxpr.eqns]  # type: ignore[union-attr]
+  eqns = [subst_axis_names_eqn(eqn, subst, var_map) for eqn in jaxpr.eqns]
   outvars: list[Atom] = [v if isinstance(v, Literal) else var_map[v] for v in jaxpr.outvars]  # type: ignore[union-attr]
   effects = subst_axis_names_effects(jaxpr.effects, subst)
   new_jaxpr = Jaxpr(constvars, invars, outvars, eqns, effects)
@@ -2816,31 +2809,20 @@ def typecheck(aval: AbstractValue, x) -> bool:
   return typecompat(aval, get_aval(x))
 
 def typecompat(aval_ref: AbstractValue, aval: AbstractValue) -> bool:
-  """Determine whether `aval` conforms to `aval_ref`.
-
-  Ignores weak_type and named_shape, other than to check that an axis name isn't
-  used with different sizes.
-  """
+  """Determine whether `aval` conforms to `aval_ref`. Ignores weak_type."""
   try:
     return typematch(aval_ref, lattice_join(aval_ref, aval))
   except TypeError:
     return False
 
 def typematch(aval1: AbstractValue, aval2: AbstractValue) -> bool:
-  """Determine whether `aval1` and `aval2` are equivalent.
-
-  Ignores weak_type and named_shape, other than to check that an axis name isn't
-  used with different sizes.
-  """
+  """Determine whether `aval1` and `aval2` are equivalent. Ignores weak_type."""
   if aval1 == aval2: return True
   # unequal avals may still represent the same type, because type is represented
-  # by avals at the shaped level, and because weak type tags and (for now) named
-  # shape components aren't considered part of the type
-  if isinstance(aval1, ShapedArray) and isinstance(aval2, ShapedArray):
-    # a bonus check for whether any named axes have inconsistent sizes
-    join_named_shapes(aval1.named_shape, aval2.named_shape)
-  return (raise_to_shaped(aval1, weak_type=False).strip_named_shape() ==
-          raise_to_shaped(aval2, weak_type=False).strip_named_shape())
+  # by avals at the shaped level, and because weak type tags aren't considered
+  # part of the type
+  return (raise_to_shaped(aval1, weak_type=False) ==
+          raise_to_shaped(aval2, weak_type=False))
 
 class JaxprTypeError(TypeError): pass
 
@@ -2848,7 +2830,7 @@ custom_typechecks: dict[Primitive, Callable] = {}
 
 def _check_closed_call(_, *in_atoms, call_jaxpr):
   in_avals = [x.aval for x in in_atoms]
-  if list(in_avals) != list(call_jaxpr.in_avals):
+  if not all(map(typecompat, call_jaxpr.in_avals, in_avals)):
     raise JaxprTypeError("Closed call in_avals mismatch")
   return call_jaxpr.out_avals, call_jaxpr.effects
 custom_typechecks[closed_call_p] = _check_closed_call
@@ -2946,6 +2928,7 @@ def _check_jaxpr(
   # Check each eqn.
   sentinel = object()
   in_idx = {v: i for i, v in enumerate(it.chain(jaxpr.constvars, jaxpr.invars))}
+  mut_arrays = set()
   for eqn_idx, eqn in enumerate(jaxpr.eqns):
     prim = eqn.primitive
     try:
@@ -2970,6 +2953,7 @@ def _check_jaxpr(
       if prim is mutable_array_p:
         outvar, = eqn.outvars
         in_idx[outvar] = None  # type: ignore
+        mut_arrays.add(outvar)
       if eqn.effects != eqn_effects:
         raise JaxprTypeError("Inferred effects do not match equation effects. "
                              f"Equation effects: {eqn.effects}. "
@@ -2977,6 +2961,8 @@ def _check_jaxpr(
       for eff in eqn.effects:
         if isinstance(eff, effects.JaxprInputEffect):
           eqn_invar = eqn.invars[eff.input_index]
+          if eqn_invar in mut_arrays:
+            continue
           if (jaxpr_index := in_idx.get(eqn_invar, sentinel)) is sentinel:
             raise JaxprTypeError(
                 "Invalid `JaxprInputEffect`: must correspond to a jaxpr invar")
@@ -3052,8 +3038,8 @@ def substitute_vars_in_output_ty(
   result = []
   for aval in out_type:
     if type(aval) is DShapedArray:
-      shape = [in_atoms[d.val] if type(d) is InDBIdx else  # type: ignore
-               out_binders[d.val] if type(d) is OutDBIdx else  # type: ignore
+      shape = [in_atoms[d.val] if type(d) is InDBIdx else
+               out_binders[d.val] if type(d) is OutDBIdx else
                d for d in aval.shape]
       aval = aval.update(shape=tuple(shape))
     result.append(aval)
@@ -3146,6 +3132,55 @@ def _check_map(ctx_factory, prim, in_avals, params):
 
 # ------------------- Jaxpr printed representation -------------------
 
+def pp_toplevel_jaxpr(jaxpr_to_print, *, source_info=False, print_shapes=True,
+                      custom_pp_eqn_rules=True, name_stack=False,
+                      print_effects: bool = False) -> pp.Doc:
+    context = JaxprPpContext()
+    settings = JaxprPpSettings(
+        source_info=source_info,
+        print_shapes=print_shapes,
+        custom_pp_eqn_rules=custom_pp_eqn_rules,
+        name_stack=name_stack,
+        print_effects=print_effects)
+
+    # Compute how many times each jaxpr is used.
+    names = defaultdict[Jaxpr, str](lambda: "jaxpr")
+    jaxpr_counts = Counter[Jaxpr]()
+    s = deque([jaxpr_to_print])
+    while s:
+      jaxpr = s.popleft()
+      jaxpr_counts[jaxpr] += 1
+      for eqn in jaxpr.eqns:
+        # TODO(slebedev): Come up with a more elaborate heuristic for name=.
+        name = eqn.params.get("name")
+        if name is None:
+          s.extend(jaxprs_in_params(eqn.params))
+          continue
+        name = name.strip("<>")  # <lambda> -> lambda
+        for subjaxpr in jaxprs_in_params(eqn.params):
+          s.append(subjaxpr)
+          names.setdefault(subjaxpr, name)
+
+    # Pull jaxprs occurring more than once to the top-level, making sure
+    # that their names are unique.
+    docs = []
+    name_counts = Counter[str]()
+    for jaxpr, c in jaxpr_counts.items():
+      if c == 1:
+        continue
+      name = names[jaxpr]
+      if (count := name_counts[name]) > 0:
+        name_counts[name] += 1
+        name += str(count)
+        name_counts[name] += 1
+      else:
+        name_counts[name] += 1
+      docs.append(pp_top_level_jaxpr(name, jaxpr, context, settings))
+      context.used_names.add(name)
+      context.top_level_jaxprs[jaxpr] = name
+    docs.append(pp_jaxpr(jaxpr_to_print, context, settings))
+    return pp.concat(docs)
+
 
 class JaxprPpSettings(NamedTuple):
   print_shapes: bool = True
@@ -3188,7 +3223,7 @@ def pp_var(v: Var | Literal, context: JaxprPpContext) -> str:
 def pp_aval(a: AbstractValue, context: JaxprPpContext) -> str:
   if isinstance(a, DShapedArray):
     shape = [pp_var(d, context) if type(d) is Var else str(d) for d in a.shape]
-    dtype = _short_dtype_name(a.dtype)
+    dtype = dtypes.short_dtype_name(a.dtype)
     return f'{dtype}[{",".join(shape)}]'
   else:
     return a.str_short(short_dtypes=True)
@@ -3235,7 +3270,9 @@ def pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings
            ) -> pp.Doc:
   rule = (_pp_eqn if not settings.custom_pp_eqn_rules else
           pp_eqn_rules.get(eqn.primitive, _pp_eqn))
-  return rule(eqn, context, settings)  # type: ignore[operator]
+  doc = rule(eqn, context, settings)  # type: ignore[operator]
+  user_frame = source_info_util.user_frame(eqn.source_info)
+  return doc if user_frame is None else pp.source_map(doc, user_frame)
 
 def _pp_eqn(eqn, context, settings, params=None) -> pp.Doc:
   annotation = (source_info_util.summarize(eqn.source_info)
@@ -3267,11 +3304,17 @@ def _compact_eqn_should_include(k: str, v: Any) -> bool:
     return False
   return True
 
-def str_eqn_compact(primitive_name: str, params: dict) -> str:
+def str_eqn_compact(primitive: Primitive, params: dict[Any, Any]) -> str:
   "Compact equation to string conversion used in HLO metadata."
+  if primitive in custom_str_eqn_compact_rules:
+    return custom_str_eqn_compact_rules[primitive](primitive, params)
+  primitive_name = primitive.name
   kvs = " ".join(f"{k}={v}" for k, v in params.items()
                  if _compact_eqn_should_include(k, v))
   return f"{primitive_name}[{kvs}]" if len(kvs) > 0 else primitive_name
+custom_str_eqn_compact_rules: dict[
+    Primitive, Callable[[Primitive, dict[Any, Any]], str]
+] = {}
 
 def pp_jaxpr_skeleton(jaxpr, eqns_fn, context: JaxprPpContext,
                       settings: JaxprPpSettings) -> pp.Doc:
@@ -3383,3 +3426,57 @@ def clean_up_dead_vars(eqn: JaxprEqn, env: dict[Var, Any],
     if last_used[v] is eqn:
       # Delete ref to variable when it is no longer needed by next equations.
       del env[v]
+
+# Used in shard_map for converting avals
+shard_aval_handlers = {}  # type: ignore
+unshard_aval_handlers = {}  # type: ignore
+
+# ----------------- external APIs for querying tracing context -----------------
+
+# TODO(dougalm, jakevdp): expose these via jax.extend
+
+# Comparable object for checking whether JAX's trace state has changed.
+class OpaqueTraceState:
+  def __init__(self, trace_info, convention):
+    self._trace_info = trace_info
+    self._convention = convention
+
+  def __eq__(self, other):
+    if isinstance(other, OpaqueTraceState):
+      if self._convention in ["nnx"]:
+        return self._trace_info is other._trace_info
+      elif self._convention in ["haiku", "flax"]:
+        return self._trace_info == other._trace_info
+      else:
+        raise Exception(f"unrecognized convention: {self._convention}")
+
+
+# Each library has its own opinion about what the important fragment of jax's
+# internal state is. TODO: reconcile the differences and remove the flag.
+def get_opaque_trace_state(convention="flax"):
+  if convention == "flax":
+    trace_info = find_top_trace(()).level
+  elif convention == "haiku":
+    trace_stack = thread_local_state.trace_state.trace_stack.stack
+    top_type = trace_stack[0].trace_type
+    level = trace_stack[-1].level
+    sublevel = cur_sublevel()
+    trace_info =  (top_type, level, sublevel)
+  elif convention == "nnx":
+    trace_info = thread_local_state.trace_state.trace_stack.dynamic
+  else:
+    raise Exception(f"unrecognized convention: {convention}")
+
+  return OpaqueTraceState(trace_info, convention)
+
+def nonempty_axis_env() -> bool:
+  return bool(thread_local_state.trace_state.axis_env)
+
+def unsafe_am_i_under_a_jit() -> bool:
+  return 'DynamicJaxprTrace' in str(thread_local_state.trace_state.trace_stack)
+
+def unsafe_am_i_under_a_vmap() -> bool:
+  return 'BatchTrace' in str(thread_local_state.trace_state.trace_stack)
+
+def unsafe_get_axis_names() -> list[str]:
+  return [axis.name for axis in thread_local_state.trace_state.axis_env]

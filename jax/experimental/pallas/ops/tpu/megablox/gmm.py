@@ -14,8 +14,9 @@
 
 """Grouped matrix multiplication kernels for TPU written in Pallas."""
 
+from collections.abc import Callable
 import functools
-from typing import Any, Callable, Optional, Union
+from typing import Any, Optional
 
 import jax
 from jax import lax
@@ -315,9 +316,9 @@ def gmm(
     rhs: jnp.ndarray,
     group_sizes: jnp.ndarray,
     preferred_element_type: jnp.dtype = jnp.float32,
-    tiling: Optional[Union[tuple[int, int, int], LutFn]] = (128, 128, 128),
-    group_offset: Optional[jnp.ndarray] = None,
-    existing_out: Optional[jnp.ndarray] = None,
+    tiling: tuple[int, int, int] | LutFn | None = (128, 128, 128),
+    group_offset: jnp.ndarray | None = None,
+    existing_out: jnp.ndarray | None = None,
     transpose_rhs: bool = False,
     interpret: bool = False,
 ) -> jnp.ndarray:
@@ -497,7 +498,7 @@ def gmm(
     del k_i, group_offsets, group_ids, group_offset
     return m_tile_ids[grid_id], n_i
 
-  out_block_spec = pl.BlockSpec(out_transform_indices, (tm, tn))
+  out_block_spec = pl.BlockSpec((tm, tn), out_transform_indices)
   if existing_out is None:
     in_out_block_spec: Any = None
     input_output_aliases = {}
@@ -505,11 +506,11 @@ def gmm(
     in_out_block_spec = out_block_spec
     input_output_aliases = {6: 0}
 
-  lhs_block_spec = pl.BlockSpec(lhs_transform_indices, (tm, tk))
+  lhs_block_spec = pl.BlockSpec((tm, tk), lhs_transform_indices)
   if transpose_rhs:
-    rhs_block_spec = pl.BlockSpec(rhs_transform_indices, (None, tn, tk))
+    rhs_block_spec = pl.BlockSpec((None, tn, tk), rhs_transform_indices)
   else:
-    rhs_block_spec = pl.BlockSpec(rhs_transform_indices, (None, tk, tn))
+    rhs_block_spec = pl.BlockSpec((None, tk, tn), rhs_transform_indices)
 
   lhs_bytes = lhs.size * lhs.itemsize
   rhs_bytes = (k * n) * rhs.itemsize  # We don't read all of rhs
@@ -519,7 +520,7 @@ def gmm(
       (lhs_bytes * tiles_n) + (rhs_bytes * max_active_tiles) + out_bytes
   )
   flops = 2 * m * k * n
-  cost_estimate = pltpu.CostEstimate(
+  cost_estimate = pl.CostEstimate(
       flops=flops, bytes_accessed=bytes_accessed, transcendentals=0
   )
   call_gmm = pl.pallas_call(
@@ -537,13 +538,10 @@ def gmm(
           scratch_shapes=[pltpu.VMEM((tm, tn), jnp.float32)],
       ),
       input_output_aliases=input_output_aliases,
-      compiler_params=dict(
-          mosaic=dict(
-              dimension_semantics=("parallel", "arbitrary", "arbitrary"),
-              cost_estimate=cost_estimate,
-          )
-      ),
+      compiler_params=pltpu.TPUCompilerParams(
+              dimension_semantics=("parallel", "arbitrary", "arbitrary")),
       interpret=interpret,
+      cost_estimate=cost_estimate,
   )
 
   out = call_gmm(
@@ -577,10 +575,10 @@ def tgmm(
     rhs: jnp.ndarray,
     group_sizes: jnp.ndarray,
     preferred_element_type: jnp.dtype = jnp.float32,
-    tiling: Optional[Union[tuple[int, int, int], LutFn]] = (128, 128, 128),
-    group_offset: Optional[jnp.ndarray] = None,
-    num_actual_groups: Optional[int] = None,
-    existing_out: Optional[jnp.ndarray] = None,
+    tiling: tuple[int, int, int] | LutFn | None = (128, 128, 128),
+    group_offset: jnp.ndarray | None = None,
+    num_actual_groups: int | None = None,
+    existing_out: jnp.ndarray | None = None,
     interpret: bool = False,
 ) -> jnp.ndarray:
   """Compute lhs[:, sizes[i-1]:sizes[i]] @ rhs[sizes[i-1]:sizes[i], :].
@@ -739,7 +737,7 @@ def tgmm(
     # "unsharded" domain.
     return group_ids[grid_id] - group_offset[0], k_i, n_i
 
-  out_block_spec = pl.BlockSpec(out_transform_indices, (None, tk, tn))
+  out_block_spec = pl.BlockSpec((None, tk, tn), out_transform_indices)
   if existing_out is None:
     in_out_block_spec: Any = None
     input_output_aliases = {}
@@ -747,8 +745,8 @@ def tgmm(
     in_out_block_spec = out_block_spec
     input_output_aliases = {6: 0}
 
-  lhs_block_spec = pl.BlockSpec(lhs_transform_indices, (tm, tk))
-  rhs_block_spec = pl.BlockSpec(rhs_transform_indices, (tm, tn))
+  lhs_block_spec = pl.BlockSpec((tm, tk), lhs_transform_indices)
+  rhs_block_spec = pl.BlockSpec((tm, tn), rhs_transform_indices)
 
   lhs_bytes = lhs.size * lhs.itemsize
   rhs_bytes = rhs.size * rhs.itemsize
@@ -758,7 +756,7 @@ def tgmm(
       (lhs_bytes * tiles_n) + (rhs_bytes * tiles_k) + out_bytes
   )
   flops = 2 * m * k * n
-  cost_estimate = pltpu.CostEstimate(
+  cost_estimate = pl.CostEstimate(
       flops=flops, bytes_accessed=bytes_accessed, transcendentals=0
   )
   lhs = lhs.swapaxes(0, 1)
@@ -779,13 +777,10 @@ def tgmm(
           scratch_shapes=[pltpu.VMEM((tk, tn), jnp.float32)],
       ),
       input_output_aliases=input_output_aliases,
-      compiler_params=dict(
-          mosaic=dict(
-              dimension_semantics=("parallel", "arbitrary", "arbitrary"),
-              cost_estimate=cost_estimate,
-          )
-      ),
+      compiler_params=pltpu.TPUCompilerParams(
+              dimension_semantics=("parallel", "arbitrary", "arbitrary")),
       interpret=interpret,
+      cost_estimate=cost_estimate,
   )
 
   out = call_gmm(

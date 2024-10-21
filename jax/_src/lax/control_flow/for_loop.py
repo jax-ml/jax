@@ -15,12 +15,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import functools
 import operator
-from typing import Any, Callable, Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
-import jax.numpy as jnp
 from jax import lax
 from jax.api_util import flatten_fun_nokwargs
 from jax._src.interpreters import ad
@@ -46,6 +45,7 @@ from jax._src.util import (partition_list, merge_lists, safe_map, safe_zip,
                            split_list, split_dict, weakref_lru_cache)
 from jax._src.lax.control_flow import loops
 from jax._src.lax.control_flow.common import _abstractify, _initial_style_jaxpr
+import numpy as np
 
 ## JAX utilities
 
@@ -69,29 +69,6 @@ for_p = core.Primitive('for')
 for_p.multiple_results = True
 
 ### Tracing utilities
-
-def _hoist_consts_to_refs(jaxpr: core.Jaxpr) -> core.Jaxpr:
-  all_const_avals = [var.aval for var in jaxpr.constvars]
-  is_const_ref = [isinstance(var.aval, AbstractRef) for var in
-                  jaxpr.constvars]
-  const_avals, const_ref_avals = partition_list(is_const_ref, all_const_avals)
-  const_avals = map(AbstractRef, const_avals)
-  merged_const_avals = merge_lists(is_const_ref, const_avals, const_ref_avals)
-  i_aval, *arg_avals = (var.aval for var in jaxpr.invars)
-  in_avals = [i_aval, *merged_const_avals, *arg_avals]
-  num_consts = len(merged_const_avals)
-
-  def _hoist(i, *consts_args):
-    all_consts, args = split_list(consts_args, [num_consts])
-    consts, const_refs = partition_list(is_const_ref, all_consts)
-    # We immediately read the const values out of the `Ref`s.
-    consts = map(lambda x: ref_get(x, ()), consts)
-    all_consts = merge_lists(is_const_ref, consts, const_refs)
-    return core.eval_jaxpr(jaxpr, all_consts, i, *args)
-  hoisted_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(_hoist), in_avals)
-  assert not consts, "All consts should have been converted to refs"
-  return hoisted_jaxpr
 
 def _trace_to_jaxpr_with_refs(f, state_tree: PyTreeDef,
                               state_avals: Sequence[core.AbstractValue]
@@ -155,13 +132,12 @@ def for_loop(nsteps: int | Sequence[int],
   nsteps, = nsteps
   flat_state, state_tree = tree_flatten(init_state)
   state_avals = map(state_utils.val_to_ref_aval, flat_state)
-  idx_aval = core.ShapedArray((), jnp.dtype("int32"))
+  idx_aval = core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))
   jaxpr, consts, out_tree = _trace_to_jaxpr_with_refs(
       body, state_tree, [idx_aval, *state_avals])
   if out_tree != tree_structure(None):
     raise Exception("`body` should not return anything.")
-  # Remove constvars from jaxpr and turn them into `Ref`s
-  jaxpr = _hoist_consts_to_refs(jaxpr)
+  jaxpr = state_utils.hoist_consts_to_refs(jaxpr, index=1)
   which_linear = (False,) * (len(consts) + len(flat_state))
   out_flat = for_p.bind(*consts, *flat_state, jaxpr=jaxpr, nsteps=int(nsteps),
                         reverse=reverse, which_linear=which_linear,
@@ -226,7 +202,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     return jaxpr, out_tree
   jaxpr, out_tree = _create_jaxpr(init)
   _, ys_avals = tree_unflatten(out_tree, jaxpr.out_avals)
-  ys = tree_map(lambda aval: jnp.zeros([length, *aval.shape], aval.dtype),
+  ys = tree_map(lambda aval: lax.full([length, *aval.shape], 0, aval.dtype),
                 ys_avals)
   def for_body(i, refs):
     carry_refs, xs_refs, ys_refs = refs
@@ -275,7 +251,7 @@ def _for_impl(*args, jaxpr, nsteps, reverse, which_linear, unroll):
 
 def _for_impl_unrolled(body, nsteps, unroll, *args):
   remainder = nsteps % unroll
-  i = jnp.int32(0)
+  i = lax.full((), 0, dtypes.canonicalize_dtype(np.int64))
   state = list(args)
 
   for _ in range(remainder):
@@ -364,7 +340,7 @@ def _for_jvp(primals, tangents, *, jaxpr, nsteps, reverse, which_linear,
   # into outputs as well. We don't care about these in AD so we throw them out.
   out_primals, out_tangents = split_list(out_flat, [len(primals)])
   out_tangents_iter = iter(out_tangents)
-  out_tangents = [next(out_tangents_iter) if nz else ad_util.Zero.from_value(p)
+  out_tangents = [next(out_tangents_iter) if nz else ad_util.Zero.from_primal_value(p)
                   for p, nz in zip(out_primals, nonzero_tangents)]
   return out_primals, out_tangents
 ad.primitive_jvps[for_p] = _for_jvp
@@ -441,7 +417,7 @@ def _for_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
   else:
     raise Exception("Invalid fixpoint")
   del out_unknowns  # redundant since it's the same as `in_unknowns`
-  tracers = tuple(trace.instantiate_const(t) if uk else t  # type: ignore
+  tracers = tuple(trace.instantiate_const(t) if uk else t
                   for t, uk in zip(tracers, in_unknowns))
 
   # We use `partial_eval_jaxpr_custom` here because it won't remove effectful
@@ -772,7 +748,7 @@ def discharged_for_loop(nsteps, body, init_state, *, reverse: bool = False):
   """
   flat_state, state_tree = tree_flatten(init_state)
   state_avals = map(state_utils.val_to_ref_aval, flat_state)
-  idx_aval = core.ShapedArray((), jnp.dtype("int32"))
+  idx_aval = core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))
   jaxpr, consts, out_tree = _trace_to_jaxpr_with_refs(
       body, state_tree, [idx_aval, *state_avals])
   if out_tree != tree_structure(None):
@@ -780,7 +756,7 @@ def discharged_for_loop(nsteps, body, init_state, *, reverse: bool = False):
   discharged_jaxpr, discharged_consts = discharge_state(jaxpr, consts)
 
   def fori_body(i, carry):
-    i = jnp.int32(i)
+    i = lax.convert_element_type(i, dtypes.canonicalize_dtype(np.int64))
     if reverse:
       i = nsteps - i - 1
     out_flat = core.eval_jaxpr(discharged_jaxpr, discharged_consts,

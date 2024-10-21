@@ -313,20 +313,5 @@ absl::Status AsStatus(cufftResult error, const char* file, std::int64_t line,
 }
 #endif
 
-absl::StatusOr<std::unique_ptr<void*[]>> MakeBatchPointers(
-    gpuStream_t stream, void* buffer, void* dev_ptrs, int batch,
-    int batch_elem_size) {
-  char* ptr = static_cast<char*>(buffer);
-  auto host_ptrs = absl::make_unique<void*[]>(batch);
-  for (int i = 0; i < batch; ++i) {
-    host_ptrs[i] = ptr;
-    ptr += batch_elem_size;
-  }
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      gpuMemcpyAsync(dev_ptrs, host_ptrs.get(), sizeof(void*) * batch,
-                     gpuMemcpyHostToDevice, stream)));
-  return std::move(host_ptrs);
-}
-
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax
