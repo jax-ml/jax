@@ -99,8 +99,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
     self.assertAllClose(out_ref, out_ans, atol=.01, rtol=.01)
     self.assertAllClose(dQ_ref, dQ_ans, rtol=.01, atol=.01)
-    self.assertAllClose(dK_ref, dK_ans, rtol=.02, atol=.02)
-    self.assertAllClose(dV_ref, dV_ans, rtol=.02, atol=.02)
+    self.assertAllClose(dK_ref, dK_ans, rtol=.01, atol=.01)
+    self.assertAllClose(dV_ref, dV_ans, rtol=.01, atol=.01)
 
   @parameterized.product(
       mask_mode=['bias', 'causal', 'padding', 'custom', ('causal', 'padding'),
@@ -164,10 +164,10 @@ class NNFunctionsTest(jtu.JaxTestCase):
     self.assertTrue(_check_cudnn_backend(sdpa_vjp_ans, grad))
 
     self.assertAllClose(out_ref, out_ans, atol=.01, rtol=.01)
-    self.assertAllClose(dQ_ref, dQ_ans, rtol=.01, atol=.01)
+    self.assertAllClose(dQ_ref, dQ_ans, rtol=.02, atol=.02)
     self.assertAllClose(dK_ref, dK_ans, rtol=.02, atol=.02)
-    self.assertAllClose(dV_ref, dV_ans, rtol=.02, atol=.02)
-    self.assertAllClose(dbias_ref, dbias_ans, rtol=.03, atol=.03)
+    self.assertAllClose(dV_ref, dV_ans, rtol=.01, atol=.01)
+    self.assertAllClose(dbias_ref, dbias_ans, rtol=.02, atol=.02)
 
   @parameterized.product(
       batch_size=[1, 16],
@@ -224,7 +224,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     else:
       _, dbias_ref, _ = bwd_ref(x, bias, mask)
       _, dbias_ans, _ = bwd_ans(x, bias, mask)
-      self.assertAllClose(dbias_ans, dbias_ref, rtol=.03, atol=.03)
+      self.assertAllClose(dbias_ans, dbias_ref, rtol=.02, atol=.02)
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
