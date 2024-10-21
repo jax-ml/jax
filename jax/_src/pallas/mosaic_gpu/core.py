@@ -14,6 +14,8 @@
 
 """Contains GPU-specific Pallas abstractions."""
 
+from __future__ import annotations
+
 import abc
 import collections
 from collections.abc import Sequence
@@ -73,9 +75,32 @@ class GPUMemorySpace(enum.Enum):
   def __str__(self) -> str:
     return self.value
 
-  def __call__(self, shape: tuple[int, ...], dtype: jnp.dtype):
+  def __call__(
+      self,
+      shape: tuple[int, ...],
+      dtype: jnp.dtype,
+      transforms: Sequence[MemoryRefTransform] = (),
+  ):
     # A convenience function for constructing MemoryRef types.
-    return pallas_core.MemoryRef(shape, dtype, memory_space=self)
+    return GPUMemoryRef(shape, dtype, memory_space=self, transforms=transforms)
+
+
+@dataclasses.dataclass(frozen=True)
+class GPUMemoryRef(pallas_core.MemoryRef):
+  transforms: Sequence[MemoryRefTransform] = ()
+
+  def get_ref_aval(self) -> pallas_core.TransformedRef | AbstractMemoryRef:
+    aval = jax_core.ShapedArray(self.shape, self.dtype)
+    for t in self.transforms:
+      aval = t(aval)
+    ref = pallas_core.TransformedRef(
+        AbstractMemoryRef(aval, memory_space=self.memory_space), ()
+    )
+    for t in reversed(self.transforms):
+      ref = t.undo(ref)
+    if not ref.transforms:
+      return ref.ref
+    return ref
 
 
 class MemoryRefTransform(pallas_core.MemoryRefTransform, abc.ABC):
