@@ -260,7 +260,7 @@ def rms_norm(x, eps=1e-5):
 
     # The `vmap_method` parameter controls this function's behavior under `vmap`
     # as discussed below.
-    vmap_method="broadcast_fullrank",
+    vmap_method="broadcast_all",
   )
 
   # Note that here we're use `numpy` (not `jax.numpy`) to specify a dtype for
@@ -299,9 +299,9 @@ The docs for {func}`~jax.pure_callback` provide more details about the `vmap_met
 The simplest `vmap_method` is `"sequential"`.
 In this case, when `vmap`ped, an `ffi_call` will be rewritten as a {func}`~jax.lax.scan` with the `ffi_call` in the body.
 This implementation is general purpose, but it doesn't parallelize very well.
-Many FFI calls provide more efficient batching behavior and, in some simple cases, the `"broadcast"` or `"broadcast_fullrank"` methods can be used to expose a better implementation.
+Many FFI calls provide more efficient batching behavior and, in some simple cases, the `"expand_dims"` or `"broadcast_all"` methods can be used to expose a better implementation.
 
-In this case, since we only have one input argument, `"broadcast"` and `"broadcast_fullrank"` actually have the same behavior.
+In this case, since we only have one input argument, `"expand_dims"` and `"broadcast_all"` actually have the same behavior.
 The specific assumption required to use these methods is that the foreign function knows how to handle batch dimensions.
 Another way of saying this is that the result of calling `ffi_call` on the batched inputs is assumed to be equal to stacking the repeated application of `ffi_call` to each element in the batched input, roughly:
 
@@ -311,11 +311,11 @@ ffi_call(xs) == jnp.stack([ffi_call(x) for x in xs])
 
 ```{tip}
 Note that things get a bit more complicated when we have multiple input arguments.
-For simplicity, we will use the `"broadcast_fullrank"` throughout this tutorial, which guarantees that all inputs will be broadcasted to have the same batch dimensions, but it would also be possible to implement a foreign function to handle the `"broadcast"` method.
+For simplicity, we will use the `"broadcast_all"` throughout this tutorial, which guarantees that all inputs will be broadcasted to have the same batch dimensions, but it would also be possible to implement a foreign function to handle the `"expand_dims"` method.
 The documentation for {func}`~jax.pure_callback` includes some examples of this
 ```
 
-Our implementation of `rms_norm` has the appropriate semantics, and it supports `vmap` with `vmap_method="broadcast_fullrank"` out of the box:
+Our implementation of `rms_norm` has the appropriate semantics, and it supports `vmap` with `vmap_method="broadcast_all"` out of the box:
 
 ```{code-cell} ipython3
 np.testing.assert_allclose(jax.vmap(rms_norm)(x), jax.vmap(rms_norm_ref)(x), rtol=1e-5)
@@ -378,7 +378,7 @@ def rms_norm_fwd(x, eps=1e-5):
       jax.ShapeDtypeStruct(x.shape, x.dtype),
       jax.ShapeDtypeStruct(x.shape[:-1], x.dtype),
     ),
-    vmap_method="broadcast_fullrank",
+    vmap_method="broadcast_all",
   )(x, eps=np.float32(eps))
   return y, (res, x)
 
@@ -392,7 +392,7 @@ def rms_norm_bwd(eps, res, ct):
     jex.ffi.ffi_call(
       "rms_norm_bwd",
       jax.ShapeDtypeStruct(ct.shape, ct.dtype),
-      vmap_method="broadcast_fullrank",
+      vmap_method="broadcast_all",
     )(res, x, ct),
   )
 
@@ -470,7 +470,7 @@ def rms_norm_cross_platform(x, eps=1e-5):
     return lambda x: jex.ffi.ffi_call(
       target_name,
       out_type,
-      vmap_method="broadcast_fullrank",
+      vmap_method="broadcast_all",
     )(x, eps=np.float32(eps))
 
   return jax.lax.platform_dependent(x, cpu=impl("rms_norm"), cuda=impl("rms_norm_cuda"))

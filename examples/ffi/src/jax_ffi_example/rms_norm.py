@@ -58,7 +58,7 @@ def rms_norm(x, eps=1e-5):
     # above in `register_ffi_target`
     "rms_norm",
     out_type,
-    vmap_method="broadcast_fullrank",
+    vmap_method="broadcast_all",
   )(x, eps=np.float32(eps))
 
 
@@ -69,7 +69,7 @@ def rms_norm_fwd(x, eps=1e-5):
       jax.ShapeDtypeStruct(x.shape, x.dtype),
       jax.ShapeDtypeStruct(x.shape[:-1], x.dtype),
     ),
-    vmap_method="broadcast_fullrank",
+    vmap_method="broadcast_all",
   )(x, eps=np.float32(eps))
   return y, (res, x)
 
@@ -83,7 +83,7 @@ def rms_norm_bwd(eps, res, ct):
     jex.ffi.ffi_call(
       "rms_norm_bwd",
       jax.ShapeDtypeStruct(ct.shape, ct.dtype),
-      vmap_method="broadcast_fullrank",
+      vmap_method="broadcast_all",
     )(res, x, ct),
   )
 
