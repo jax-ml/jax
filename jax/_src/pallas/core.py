@@ -200,7 +200,7 @@ class MemoryRef:
         self.shape, dtype, memory_space=self.memory_space
     )
 
-  def get_ref_aval(self) -> AbstractMemoryRef:
+  def get_ref_aval(self) -> TransformedRef | AbstractMemoryRef:
     # TODO(sharadmv): Clean this up. ShapedArrayWithMemorySpace fails when we
     # try to apply JAX ops to it.
     return AbstractMemoryRef(
