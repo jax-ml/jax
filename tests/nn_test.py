@@ -17,6 +17,7 @@
 import collections
 from functools import partial
 import itertools
+import re
 import unittest
 
 from absl.testing import absltest
@@ -99,8 +100,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
     self.assertAllClose(out_ref, out_ans, atol=.01, rtol=.01)
     self.assertAllClose(dQ_ref, dQ_ans, rtol=.01, atol=.01)
-    self.assertAllClose(dK_ref, dK_ans, rtol=.02, atol=.02)
-    self.assertAllClose(dV_ref, dV_ans, rtol=.02, atol=.02)
+    self.assertAllClose(dK_ref, dK_ans, rtol=.01, atol=.01)
+    self.assertAllClose(dV_ref, dV_ans, rtol=.01, atol=.01)
 
   @parameterized.product(
       mask_mode=['bias', 'causal', 'padding', 'custom', ('causal', 'padding'),
@@ -164,10 +165,10 @@ class NNFunctionsTest(jtu.JaxTestCase):
     self.assertTrue(_check_cudnn_backend(sdpa_vjp_ans, grad))
 
     self.assertAllClose(out_ref, out_ans, atol=.01, rtol=.01)
-    self.assertAllClose(dQ_ref, dQ_ans, rtol=.01, atol=.01)
+    self.assertAllClose(dQ_ref, dQ_ans, rtol=.02, atol=.02)
     self.assertAllClose(dK_ref, dK_ans, rtol=.02, atol=.02)
-    self.assertAllClose(dV_ref, dV_ans, rtol=.02, atol=.02)
-    self.assertAllClose(dbias_ref, dbias_ans, rtol=.03, atol=.03)
+    self.assertAllClose(dV_ref, dV_ans, rtol=.01, atol=.01)
+    self.assertAllClose(dbias_ref, dbias_ans, rtol=.02, atol=.02)
 
   @parameterized.product(
       batch_size=[1, 16],
@@ -224,7 +225,22 @@ class NNFunctionsTest(jtu.JaxTestCase):
     else:
       _, dbias_ref, _ = bwd_ref(x, bias, mask)
       _, dbias_ans, _ = bwd_ans(x, bias, mask)
-      self.assertAllClose(dbias_ans, dbias_ref, rtol=.03, atol=.03)
+      self.assertAllClose(dbias_ans, dbias_ref, rtol=.02, atol=.02)
+
+  def testDotProductAttentionCustomDtype(self):
+    dtype = jnp.bfloat16
+    B, S, N, H = 4, 128, 4, 32
+    keys = random.split(random.PRNGKey(0), 2)
+    x = random.normal(keys[0], (B, S, N, H), dtype)
+
+    def attention(x):
+      return jax.nn.dot_product_attention(x, x, x, implementation='xla')
+    _, f_vjp = jax.vjp(attention, x)
+    jitted = jax.jit(f_vjp)
+
+    hlo = jitted.lower(x).as_text("hlo")
+    dot_count = len(re.findall(r"dot.*? = bf16.*?", hlo))
+    self.assertEqual(4, dot_count)
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
