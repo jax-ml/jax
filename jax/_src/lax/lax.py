@@ -2398,27 +2398,9 @@ asin_p = standard_unop(_float | _complex, 'asin')
 ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(_const(x, 1) - square(x))))
 mlir.register_lowering(asin_p, partial(_nary_lower_hlo, chlo.asin))
 
-def acos_impl(x):
-  if dtypes.issubdtype(_dtype(x), np.complexfloating):
-    result = mul(_const(x, 1j), acosh(x))
-    # By convention, numpy chooses the branch with positive real part.
-    rpart = real(result)
-    return select(
-      gt(rpart, _const(rpart, 0)),
-      result,
-      neg(result)
-    )
-  else:
-    return select(
-        ne(x, _const(x, -1.0)),
-        mul(_const(x, 2),
-            atan2(sqrt(sub(_const(x, 1), square(x))), add(_const(x, 1), x))),
-        full_like(x, np.pi))
-
 acos_p = standard_unop(_float | _complex, 'acos')
 ad.defjvp(acos_p, lambda g, x: mul(g, -rsqrt(_const(x, 1) - square(x))))
-mlir.register_lowering(acos_p,
-                       mlir.lower_fun(acos_impl, multiple_results=False))
+mlir.register_lowering(acos_p, partial(_nary_lower_hlo, chlo.acos))
 
 def atan_impl(x):
   return atan2(x, _const(x, 1))

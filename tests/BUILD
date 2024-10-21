@@ -87,6 +87,18 @@ jax_multiplatform_test(
 )
 
 jax_py_test(
+    name = "composite_test",
+    srcs = ["composite_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+        "//jax/_src/lib",
+        "//jaxtyping",
+        "//third_party/py/absl:app",
+    ],
+)
+
+jax_py_test(
     name = "config_test",
     srcs = ["config_test.py"],
     deps = [
