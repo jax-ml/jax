@@ -245,7 +245,7 @@ class FfiTest(jtu.JaxTestCase):
   @jtu.sample_product(
       shape=[(1,), (4,), (5,)],
       dtype=(np.int32,),
-      vmap_method=("broadcast", "broadcast_fullrank", "sequential",
+      vmap_method=("expand_dims", "broadcast_all", "sequential",
                    "legacy_vectorized"),
   )
   @jtu.run_on_devices("gpu")
