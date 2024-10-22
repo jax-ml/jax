@@ -1040,7 +1040,8 @@ DotDimensionNumbers = tuple[tuple[Sequence[int], Sequence[int]],
 
 def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionNumbers,
                 precision: PrecisionLike = None,
-                preferred_element_type: DTypeLike | None = None) -> Array:
+                preferred_element_type: DTypeLike | None = None,
+                out_type=None) -> Array:
   """General dot product/contraction operator.
 
   Wraps XLA's `DotGeneral
@@ -1086,6 +1087,13 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
     by the ``lhs`` non-contracting/non-batch dimensions, and finally the ``rhs``
     non-contracting/non-batch dimensions.
   """
+  if out_type is not None and not config.sharding_in_types.value:
+    raise NotImplementedError("out_type only works when sharding_in_types "
+                              "config is True.")
+  if out_type is not None and not isinstance(out_type, NamedSharding):
+    raise NotImplementedError(
+        '`out_type` argument of `dot_general` only supports NamedSharding '
+        'instances. Please file a bug if this is not enough for your use case.')
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   cdims = (api_util._ensure_index_tuple(lhs_contract),
            api_util._ensure_index_tuple(rhs_contract))
@@ -1097,7 +1105,8 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
   return dot_general_p.bind(lhs, rhs,
                             dimension_numbers=(cdims, bdims),
                             precision=canonicalize_precision(precision),
-                            preferred_element_type=preferred_element_type)
+                            preferred_element_type=preferred_element_type,
+                            out_type=out_type)
 
 
 def ragged_dot(
@@ -1123,7 +1132,8 @@ def ragged_dot(
   """
   return ragged_dot_p.bind(lhs, rhs, group_sizes,
                             precision=canonicalize_precision(precision),
-                            preferred_element_type=preferred_element_type, group_offset=group_offset)
+                            preferred_element_type=preferred_element_type,
+                            group_offset=group_offset)
 
 
 def broadcast(operand: ArrayLike, sizes: Sequence[int]) -> Array:
@@ -3002,7 +3012,11 @@ def _convert_element_type_lower(ctx, operand, *, new_dtype, weak_type,
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
     operand = hlo.real(operand)
     aval_in = aval_in.update(dtype=_real_dtype(aval_in.dtype))
-  return [mlir.convert_hlo(ctx, operand, aval_in, aval_out)]
+  out = mlir.convert_hlo(ctx, operand, aval_in, aval_out)
+  if config.sharding_in_types.value:
+    proto = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
+    return [mlir.wrap_with_sharding_op(ctx, out, aval_out, proto)]
+  return [out]
 
 mlir.register_lowering(convert_element_type_p, _convert_element_type_lower)
 
@@ -3164,7 +3178,10 @@ def _validate_preferred_element_type(input_dtype, preferred_element_type):
 
 
 def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision,
-                            preferred_element_type: DTypeLike | None):
+                            preferred_element_type: DTypeLike | None,
+                            out_type):
+  if out_type is not None and not isinstance(out_type, NamedSharding):
+    raise NotImplementedError
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   if not all(np.all(np.greater_equal(d, 0)) and np.all(np.less(d, lhs.ndim))
              for d in (lhs_contracting, lhs_batch)):
@@ -3241,24 +3258,29 @@ def _check_specs_match(lhs_spec, rhs_spec, msg):
       raise TypeError(msg)
 
 def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
-                               preferred_element_type: DTypeLike | None):
+                               preferred_element_type: DTypeLike | None,
+                               out_type):
   if lhs.sharding.mesh != rhs.sharding.mesh:
     raise ValueError(
         'Mesh of both lhs and rhs should match. Got lhs:'
         f' {lhs.sharding.mesh} and rhs: {rhs.sharding.mesh}')
 
+  if out_type is not None:
+    assert isinstance(out_type, NamedSharding)
+    return out_type
+
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_batch_spec = tuple(lhs.sharding.spec[i] for i in lhs_batch)
   rhs_batch_spec = tuple(rhs.sharding.spec[i] for i in rhs_batch)
   msg = ("dot_general requires lhs batch dimensions and rhs batch dimensions "
-         f"to have the consistent sharding, got {lhs_batch_spec} and "
-         f"{rhs_batch_spec}.")
+        f"to have the consistent sharding, got {lhs_batch_spec} and "
+        f"{rhs_batch_spec}.")
   _check_specs_match(lhs_batch_spec, rhs_batch_spec, msg)
 
   lhs_contracting_spec = tuple(lhs.sharding.spec[i] for i in lhs_contracting)
   rhs_contracting_spec = tuple(rhs.sharding.spec[i] for i in rhs_contracting)
   msg = ("dot_general requires contracting dimensions to have consistent "
-         f"sharding, got {lhs_contracting_spec} and {rhs_contracting_spec}.")
+        f"sharding, got {lhs_contracting_spec} and {rhs_contracting_spec}.")
   _check_specs_match(lhs_contracting_spec, rhs_contracting_spec, msg)
 
   return _dot_general_sharding_computation(
@@ -3280,7 +3302,10 @@ def tuple_delete(tup, idx):
 
 
 def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
-                            preferred_element_type: DTypeLike | None):
+                            preferred_element_type: DTypeLike | None,
+                            out_type):
+  if out_type is not None and not isinstance(out_type, NamedSharding):
+    raise NotImplementedError
   del dimension_numbers  # unused
   # We're mostly matching XLA's logic here, namely in shape_inference.cc and
   # primitive_util.h's HigherPrecisionType, e.g.
@@ -3327,7 +3352,9 @@ def _maybe_upcast(result_dtype, preferred_element_type, check_bit_width):
 
 def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
                                preferred_element_type: DTypeLike | None,
-                               swap_ans=False):
+                               out_type, swap_ans=False):
+  if out_type is not None:
+    raise NotImplementedError
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   x_ndim = x.aval.ndim
   x_kept = remaining(range(x_ndim), x_contract, x_batch)
@@ -3347,12 +3374,16 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
   return x_bar
 
 def _dot_general_transpose_rhs(g, x, y, *, dimension_numbers, precision,
-                               preferred_element_type: DTypeLike | None):
+                               preferred_element_type: DTypeLike | None,
+                               out_type):
+  if out_type is not None:
+    raise NotImplementedError
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   swapped_dimension_numbers = ((y_contract, x_contract), (y_batch, x_batch))
   y_bar = _dot_general_transpose_lhs(
     g, y, x, dimension_numbers=swapped_dimension_numbers, precision=precision,
-    preferred_element_type=preferred_element_type, swap_ans=True)
+    preferred_element_type=preferred_element_type, out_type=out_type,
+    swap_ans=True)
   if y_bar.dtype != y.aval.dtype:
     y_bar = _convert_element_type(y_bar, y.aval.dtype, y.aval.weak_type)
   return y_bar
@@ -3366,6 +3397,7 @@ def _dot_batch_rule(
     batch_dims,
     *,
     dimension_numbers,
+    out_type,
     precision,
     preferred_element_type: DTypeLike | None,
     **_,
@@ -3395,12 +3427,16 @@ def _dot_batch_rule(
     rhs_shape = batching.bdim_as_shape(rbd, rhs.shape)
   else:
     rhs_shape = np.shape(rhs)
+  if out_type is not None:
+    raise NotImplementedError("vmap with out_type is not supported. "
+                              "Please open an issue.")
   batched_out = invoke_prim(
       lhs,
       rhs,
       new_dimension_numbers,
       precision=precision,
       preferred_element_type=preferred_element_type,
+      out_type=out_type,
   )
   result_batch_dim = batching.shape_as_bdim(
       result_stack_dim,
@@ -3570,7 +3606,7 @@ def dot_algorithm_attr(precision: CanonicalPrecision, lhs_dtype: DTypeLike,
 
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                        precision, preferred_element_type: np.dtype | None,
-                       platform: str = "default"):
+                       out_type, platform: str = "default"):
   def _is_fp8_mixed_precision_matmul(_lhs_dtypes, _rhs_dtypes):
     fp8_dtypes = (dtypes.float8_e4m3fn, dtypes.float8_e5m2,
                   dtypes.float8_e5m2fnuz, dtypes.float8_e4m3fnuz)
@@ -3658,6 +3694,8 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
       **algorithm_kwarg,
   )
   if config.sharding_in_types.value:
+    if out_type is not None:
+      assert aval_out.sharding == out_type
     out_sp = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
     result = mlir.wrap_with_sharding_op(ctx, result, aval_out, out_sp)
   if accumulation_aval.dtype != aval_out.dtype:
@@ -3711,12 +3749,15 @@ def _ragged_dot_shape_rule(lhs: Array, rhs: Array, group_sizes: Array, **_) -> S
   return (m, n)
 
 def _ragged_dot_dtype_rule(lhs: Array, rhs: Array, group_sizes: Array,
-                           precision, preferred_element_type: DTypeLike | None, **_) -> np.dtype:
+                           precision, preferred_element_type: DTypeLike | None,
+                           **_) -> np.dtype:
   if not dtypes.issubdtype(group_sizes.dtype, np.integer):
     raise TypeError("ragged_dot requires that group_sizes.dtype is subtype of np.integer.")
   # defer the output dtype to dot_general, which is part of the _ragged_dot_impl.
-  return _dot_general_dtype_rule(lhs, rhs, dimension_numbers=_RAGGED_DOT_DOT_DIMENSION_NUMBERS,
-                                 precision=precision, preferred_element_type=preferred_element_type)
+  return _dot_general_dtype_rule(
+      lhs, rhs, dimension_numbers=_RAGGED_DOT_DOT_DIMENSION_NUMBERS,
+      precision=precision, preferred_element_type=preferred_element_type,
+      out_type=None)
 
 
 def _ragged_dot_jvp_rule(
@@ -3839,7 +3880,9 @@ def _ragged_dot_invoke_prim(
     new_dimension_numbers,
     precision,
     preferred_element_type,
+    out_type,
 ):
+  del out_type
   return ragged_dot(
       lhs,
       rhs,
@@ -3868,6 +3911,7 @@ def _ragged_dot_batch_rule(
       dimension_numbers=_RAGGED_DOT_DOT_DIMENSION_NUMBERS,
       precision=precision,
       preferred_element_type=preferred_element_type,
+      out_type=None,
   )
 
 
