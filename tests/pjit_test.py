@@ -4945,6 +4945,60 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     _, out = g(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
 
+  def test_einsum_with_out_type(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    arr1 = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
+    arr2 = jax.device_put(np_inp.T, NamedSharding(mesh, P('y', 'x')))
+
+    @jax.jit
+    def f(x, y):
+      out = jnp.einsum('xy,yz->xz', x, y,
+                       out_type=NamedSharding(x.sharding.mesh, P('x', None)))
+      self.assertEqual(out.sharding.spec, P('x', None))
+      return out
+
+    out = f(arr1, arr2)
+    self.assertArraysEqual(out, np_inp @ np_inp.T)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
+    lowered_text = f.lower(arr1, arr2).as_text()
+    self.assertIn('@Sharding', lowered_text)
+
+    @jax.jit
+    def g(x, y):
+      out = jnp.einsum('xy,yz->xz', x, y,
+                       out_type=NamedSharding(x.sharding.mesh, P('x', None)))
+      self.assertEqual(out.sharding.spec, P('x', None))
+      return out
+
+    arr3 = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
+    arr4 = jax.device_put(np_inp.T, NamedSharding(mesh, P('x', 'y')))
+    out2 = g(arr3, arr4)
+    self.assertArraysEqual(out2, np_inp @ np_inp.T)
+    self.assertEqual(out2.sharding, NamedSharding(mesh, P('x', None)))
+
+  def test_einsum_inverse(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(64)
+
+    @jax.jit
+    def h(x, y):
+      s = NamedSharding(x.sharding.mesh, P('x', None, 'y', None))
+      out = jnp.einsum('btd,dhq->bhtq', x, y, out_type=s)
+      self.assertEqual(out.sharding.spec, s.spec)
+      return out
+
+    arr1 = jax.device_put(np_inp.reshape(8, 4, 2),
+                          NamedSharding(mesh, P('x', 'y', None)))
+    arr2 = jax.device_put(np_inp.reshape(2, 4, 8),
+                          NamedSharding(mesh, P(None, 'x', 'y')))
+    out = h(arr1, arr2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None, 'y', None)))
+
+    lowered_text = h.lower(arr1, arr2).as_text()
+    self.assertIn('@Sharding', lowered_text)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
