@@ -39,6 +39,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
+from jax._src.state import types as state_types
 from jax._src.state import primitives as sp
 from jax.interpreters import mlir
 import jax.numpy as jnp
@@ -816,6 +817,20 @@ def debug_print_lowering_rule(ctx, *args, **params):
   return result
 
 
+# All of those shenanigans are because we can't make TransformedRef a PyTree,
+# because they should appear as atomic JAX values to the users.
+# TODO(apaszke): This can be deleted once we make transforms in Mosaic GPU
+# inferred by the compiler.
+@lu.transformation
+def wrap_with_transforms(transforms, *args):
+  new_args = tuple(
+      state_types.TransformedRef(a, t) if t else a
+      for a, t in zip(args, transforms)
+  )
+  res = yield new_args, {}
+  yield res
+
+
 run_scoped_p = jax_core.Primitive("run_scoped")
 run_scoped_p.multiple_results = True
 
@@ -829,7 +844,17 @@ def run_scoped(f: Callable[..., Any], *types: Any, **kw_types: Any) -> Any:
   """
   flat_types, in_tree = tree_util.tree_flatten((types, kw_types))
   flat_fun, out_tree_thunk = api_util.flatten_fun(lu.wrap_init(f), in_tree)
-  avals = [t.get_ref_aval() for t in flat_types]
+  # We allow ref avals to be transformed references.
+  ref_avals = [t.get_ref_aval() for t in flat_types]
+  avals = [
+      t.ref if isinstance(t, state_types.TransformedRef) else t
+      for t in ref_avals
+  ]
+  ref_transforms = tuple(
+      t.transforms if isinstance(t, state_types.TransformedRef) else ()
+      for t in ref_avals
+  )
+  flat_fun = wrap_with_transforms(flat_fun, ref_transforms)
   # Turn the function into a jaxpr. The body of run_scoped may have
   # effects (IO) on constvars (i.e. variables inherited from the
   # parent scope). Jax can't reason about effects to references that

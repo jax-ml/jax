@@ -287,6 +287,29 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
     np.testing.assert_array_equal(f(x), x)
 
+  def test_scoped_copy_with_transforms(self):
+    ts = (plgpu.TilingTransform((64, 32)), plgpu.SwizzleTransform(128))
+    def kernel(x_ref, o_ref, barrier_ref):
+      def body(tmp_ref):
+        plgpu.copy_gmem_to_smem(x_ref, tmp_ref, barrier=barrier_ref)
+        plgpu.barrier_wait(barrier_ref)
+        o_ref[...] = tmp_ref[...] * 2
+      pl.run_scoped(body, plgpu.SMEM((128, 128), jnp.float32, transforms=ts))
+
+    in_spec = pl.BlockSpec(memory_space=plgpu.GMEM)
+    out_spec = plgpu.GPUBlockSpec(
+        (128, 128), lambda: (0, 0), transforms=ts, memory_space=plgpu.SMEM,
+    )
+    f = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct([128, 128], jnp.float32),
+        in_specs=(in_spec,),
+        out_specs=out_spec,
+        scratch_shapes=[plgpu.Barrier(num_arrivals=1)],
+    )
+    x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
+    np.testing.assert_array_equal(f(x), x * 2)
+
   def test_copy_with_transforms_and_indexing(self):
     def kernel(x_ref, o_ref, barrier_ref):
       for i in range(2):

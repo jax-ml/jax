@@ -1382,17 +1382,6 @@ def pallas_call_checkify_rule(error: checkify.Error,
   return new_error, results
 checkify.error_checks[pallas_call_p] = pallas_call_checkify_rule
 
-# All of those shenanigans are because we can't make TransformedRef a PyTree,
-# because they should appear as atomic JAX values to the users.
-@lu.transformation
-def wrap_with_transforms(transforms, *args):
-  new_args = tuple(
-      state_types.TransformedRef(a, t) if t else a
-      for a, t in zip(args, transforms)
-  )
-  res = yield new_args, {}
-  yield res
-
 
 @weakref_lru_cache
 def _trace_kernel_to_jaxpr(
@@ -1410,7 +1399,9 @@ def _trace_kernel_to_jaxpr(
                              kernel_avals))
   wrapped_kernel_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(fun), kernel_in_tree)
-  wrapped_kernel_fun = wrap_with_transforms(wrapped_kernel_fun, kernel_in_transforms)
+  wrapped_kernel_fun = primitives.wrap_with_transforms(
+      wrapped_kernel_fun, kernel_in_transforms
+  )
   debug = pe.debug_info(fun, kernel_in_tree, out_tree_thunk, False, "pallas_call")
   with grid_mapping.trace_env():
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_kernel_fun,
