@@ -2180,7 +2180,7 @@ def _conv_general_dilated(lhs, rhs, *,
 tf_impl_with_avals[lax.conv_general_dilated_p] = _conv_general_dilated
 
 
-def _dot_general(lhs, rhs, *, dimension_numbers, out_type,
+def _dot_general(lhs, rhs, *, dimension_numbers,
                  precision: lax_internal.CanonicalPrecision,
                  preferred_element_type: DType | None,
                  _in_avals: Sequence[core.ShapedArray],

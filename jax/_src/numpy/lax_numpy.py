@@ -67,10 +67,10 @@ from jax._src.typing import (
   DType, DTypeLike, DeprecatedArg, DimSize, DuckTypedArray, Shape, StaticScalar,
 )
 from jax._src.util import (
-    NumpyComplexWarning, canonicalize_axis as _canonicalize_axis,
-    ceil_of_ratio, partition_list, safe_zip, subvals,unzip2)
-from jax.sharding import (Sharding, SingleDeviceSharding, NamedSharding,
-                          PartitionSpec as P)
+                           NumpyComplexWarning,
+                           canonicalize_axis as _canonicalize_axis,
+                           ceil_of_ratio, partition_list, safe_zip, subvals,unzip2)
+from jax.sharding import Sharding, SingleDeviceSharding
 from jax.tree_util import tree_flatten, tree_leaves, tree_map
 import numpy as np
 import opt_einsum
@@ -8955,7 +8955,6 @@ def einsum(
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
-    out_type=None,
 ) -> Array: ...
 
 @overload
@@ -8968,7 +8967,6 @@ def einsum(
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
-    out_type=None,
 ) -> Array: ...
 
 def einsum(
@@ -8979,7 +8977,6 @@ def einsum(
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
-    out_type=None,
 ) -> Array:
   """Einstein summation
 
@@ -9211,11 +9208,11 @@ def einsum(
 
   contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)
 
-  einsum = jit(_einsum, static_argnums=(1, 2, 3, 4, 5), inline=True)
+  einsum = jit(_einsum, static_argnums=(1, 2, 3, 4), inline=True)
   if spec is not None:
     einsum = jax.named_call(einsum, name=spec)
   return einsum(operands, contractions, precision,
-                preferred_element_type, _dot_general, out_type)
+                preferred_element_type, _dot_general)
 
 
 # Enable other modules to override einsum_contact_path.
@@ -9314,12 +9311,7 @@ def _einsum(
     precision,
     preferred_element_type,
     _dot_general=lax.dot_general,
-    out_type=None,
 ):
-  if out_type is not None and not isinstance(out_type, NamedSharding):
-    raise NotImplementedError(
-        "`out_type` argument of `einsum` only supports NamedSharding instances."
-        " Please file a bug if this is not enough for your use case.")
   dtypes.check_user_dtype_supported(preferred_element_type, "einsum")
   operands = list(map(asarray, operands))
   if preferred_element_type is None:
@@ -9442,21 +9434,12 @@ def _einsum(
       if names == result_names:
         dimension_numbers = ((rhs_cont, lhs_cont), (rhs_batch, lhs_batch))
         operand = _dot_general(rhs, lhs, dimension_numbers, precision,
-                               preferred_element_type=preferred_element_type,
-                               out_type=out_type)
+                               preferred_element_type=preferred_element_type)
       else:
         names = batch_names_str + remaining_lhs_names + remaining_rhs_names
-        if (config.sharding_in_types.value and out_type is not None and
-            names != result_names):
-          spec = out_type.spec
-          inverse_spec = tuple(spec[result_names.index(name)] for name in names)
-          dot_general_out_type = NamedSharding(out_type.mesh, P(*inverse_spec))
-        else:
-          dot_general_out_type = out_type  # type: ignore
         dimension_numbers = ((lhs_cont, rhs_cont), (lhs_batch, rhs_batch))
         operand = _dot_general(lhs, rhs, dimension_numbers, precision,
-                               preferred_element_type=preferred_element_type,
-                               out_type=dot_general_out_type)
+                               preferred_element_type=preferred_element_type)
     else:
       raise NotImplementedError  # if this is actually reachable, open an issue!
 
@@ -9469,8 +9452,7 @@ def _einsum(
       operand = lax.transpose(operand, perm)
     operands.append(operand)  # used in next iteration
 
-  return lax_internal._convert_element_type(operands[0], preferred_element_type,
-                                            output_weak_type)
+  return lax_internal._convert_element_type(operands[0], preferred_element_type, output_weak_type)
 
 
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
