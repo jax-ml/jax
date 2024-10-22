@@ -50,23 +50,23 @@ jobs:
           pip install -U -r build/collect-profile-requirements.txt
       - name: Install JAX
         run: |
-          pip uninstall -y jax jaxlib libtpu-nightly
+          pip uninstall -y jax jaxlib libtpu
           if [ "${{ matrix.jaxlib-version }}" == "pypi_latest" ]; then
             pip install .[tpu] \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
           elif [ "${{ matrix.jaxlib-version }}" == "nightly" ]; then
             pip install --pre . -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
-            pip install --pre libtpu-nightly \
+            pip install --pre libtpu \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
             pip install requests
 
           elif [ "${{ matrix.jaxlib-version }}" == "nightly+oldest_supported_libtpu" ]; then
             pip install --pre . -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
+            # TODO(phawkins): switch to libtpu, when the oldest release we support is a libtpu release.
             pip install --pre libtpu-nightly==0.1.dev${{ env.LIBTPU_OLDEST_VERSION_DATE }} \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
             pip install requests
-
           else
             echo "Unknown jaxlib-version: ${{ matrix.jaxlib-version }}"
             exit 1
