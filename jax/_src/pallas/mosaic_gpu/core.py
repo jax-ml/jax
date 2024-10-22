@@ -512,6 +512,7 @@ def _gpu_mesh_discharge_rule(
       out_specs=[any_spec] * len(in_avals),
       input_output_aliases={i: i for i in range(len(in_avals))},
       grid=tuple(mesh.shape.items()),
+      backend="mosaic_gpu",
   )(*args)
   return out, ()
 
