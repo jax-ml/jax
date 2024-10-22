@@ -1125,7 +1125,6 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
     if axis_name == grid_names[-1]:
       return mgpu.warpgroup_idx(sync=False)
     else:
-      raise NotImplementedError  # The code below is untested
       idx = grid_names.index(axis_name)
       return arith_dialect.index_cast(
           ir.IntegerType.get_signless(32),

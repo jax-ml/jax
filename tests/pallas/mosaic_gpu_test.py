@@ -1025,6 +1025,28 @@ class CoreMapTest(PallasTest):
         f(), np.repeat(np.arange(2), 128).reshape(2, 128)
     )
 
+  def test_multiple_wg_with_grid(self):
+    mesh = plgpu.GPUMesh(grid=(2, 2), num_threads=2, axis_names=("x", "y", "wg"))
+
+    @jax.jit
+    def f():
+      @pl.run_state
+      def inner(y_ref):
+        @pl.core_map(mesh)
+        def kernel():
+          xy_idx = jax.lax.axis_index(("x", "y"))
+          yx_idx = jax.lax.axis_index(("y", "x"))
+          wg_idx = jax.lax.axis_index("wg")
+          num_wgs = jax.lax.psum(1, "wg")
+          y_ref[xy_idx, wg_idx] = jnp.broadcast_to(
+              yx_idx * num_wgs + wg_idx, (128,)
+          )
+      y_init = jnp.zeros((4, 2, 128), np.int32)
+      return inner(y_init)
+    np.testing.assert_array_equal(
+        f(), np.repeat([0, 1, 4, 5, 2, 3, 6, 7], 128).reshape(4, 2, 128)
+    )
+
 
 if __name__ == "__main__":
   absltest.main()

@@ -466,13 +466,22 @@ class GPUMesh:
           "Requested too many CUDA threads per block. Each Mosaic thread"
           " corresponds to 128 CUDA threads."
       )
+    if self.cluster:
+      raise NotImplementedError(
+          "Pallas/MosaicGPU does not support clusters yet."
+      )
 
   @property
   def shape(self):
     if self.num_threads is not None:
-      pairs = zip(self.axis_names, (*self.grid, self.num_threads))
+      pairs = zip(self.axis_names, (*self.grid, *self.cluster, self.num_threads))
     else:
-      pairs = (*zip(self.axis_names, self.grid), (_WARPGROUP_AXIS_NAME, 1))
+      pairs = tuple(
+          zip(
+              (*self.axis_names, _WARPGROUP_AXIS_NAME),
+              (*self.grid, *self.cluster, 1),
+          )
+      )
     return collections.OrderedDict(pairs)
 
 
@@ -485,11 +494,10 @@ def _gpu_mesh_discharge_rule(
 ):
   del out_avals
   assert isinstance(mesh, GPUMesh)
-  if mesh.grid or mesh.cluster:
+  if mesh.cluster:
     raise NotImplementedError
   if mesh.num_threads is None:
     raise NotImplementedError
-  threads_axis_name, num_threads = list(mesh.shape.items())[0]
   def body(*args):
     # Due to aliasing, args contains aliased inputs and outputs so we remove
     # outputs.
@@ -503,7 +511,7 @@ def _gpu_mesh_discharge_rule(
       in_specs=[any_spec] * len(in_avals),
       out_specs=[any_spec] * len(in_avals),
       input_output_aliases={i: i for i in range(len(in_avals))},
-      grid=((threads_axis_name, num_threads),),
+      grid=tuple(mesh.shape.items()),
   )(*args)
   return out, ()
 
