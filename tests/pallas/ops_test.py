@@ -1056,16 +1056,12 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["tpu"]) and jnp.dtype(dtype).itemsize == 2:
       self.skipTest("16-bit types are not supported on TPU")
 
-    # TODO: skipped due to https://github.com/jax-ml/jax/issues/24027
+    # TODO(ayx): Fix these operations on TPU
     if (
         jtu.test_device_matches(["tpu"])
-        and f == jnp.remainder
-        and not self.INTERPRET
+        and f in (jnp.floor_divide, jnp.subtract)
+        and dtype == "uint32"
     ):
-      self.skipTest("jnp.remainder on TPU is only supported in interpret mode")
-
-    # TODO(ayx): fix this on TPU
-    if jtu.test_device_matches(["tpu"]) and dtype == "uint32":
       self.skipTest("Not supported on TPU")
 
     @functools.partial(
@@ -1092,16 +1088,13 @@ class OpsTest(PallasBaseTest):
       self.skipTest("Test only supported on TPU.")
     if jtu.test_device_matches(["tpu"]) and jnp.dtype(dtype).itemsize == 2:
       self.skipTest("16-bit types are not supported on TPU")
-    # TODO: skipped due to https://github.com/jax-ml/jax/issues/24027
+
+    # TODO(ayx): Fix these operations on TPU
     if (
         jtu.test_device_matches(["tpu"])
-        and f == jnp.remainder
-        and not self.INTERPRET
+        and f in (jnp.floor_divide, jnp.subtract)
+        and dtype == "uint32"
     ):
-      self.skipTest("jnp.remainder on TPU is only supported in interpret mode")
-
-    # TODO: skipped due to https://github.com/jax-ml/jax/issues/23972
-    if jtu.test_device_matches(["tpu"]) and dtype == "uint32":
       self.skipTest("Not supported on TPU")
 
     @functools.partial(
