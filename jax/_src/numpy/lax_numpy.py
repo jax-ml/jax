@@ -9316,6 +9316,9 @@ def _einsum(
     _dot_general=lax.dot_general,
     out_type=None,
 ):
+  if out_type is not None and not config.sharding_in_types.value:
+    raise NotImplementedError("out_type only works when sharding_in_types "
+                              "config is True.")
   if out_type is not None and not isinstance(out_type, NamedSharding):
     raise NotImplementedError(
         "`out_type` argument of `einsum` only supports NamedSharding instances."

@@ -1087,6 +1087,9 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
     by the ``lhs`` non-contracting/non-batch dimensions, and finally the ``rhs``
     non-contracting/non-batch dimensions.
   """
+  if out_type is not None and not config.sharding_in_types.value:
+    raise NotImplementedError("out_type only works when sharding_in_types "
+                              "config is True.")
   if out_type is not None and not isinstance(out_type, NamedSharding):
     raise NotImplementedError(
         '`out_type` argument of `dot_general` only supports NamedSharding '
