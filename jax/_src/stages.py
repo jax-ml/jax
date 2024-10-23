@@ -43,7 +43,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
-from jax._src.sharding_impls import is_unspecified_or_auto
+from jax._src.sharding_impls import UnspecifiedValue, AUTO
 from jax._src.layout import Layout
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
@@ -649,7 +649,7 @@ class Lowered(Stage):
     out_avals = self._lowering.compile_args["global_out_avals"]
     out_shardings = self._lowering.compile_args["out_shardings"]
     return self.out_tree.unflatten(
-        [OutInfo(o.shape, o.dtype, None if is_unspecified_or_auto(s) else s)
+        [OutInfo(o.shape, o.dtype, None if isinstance(s, (UnspecifiedValue, AUTO)) else s)
          for o, s in zip(out_avals, out_shardings)])
 
   def compile(

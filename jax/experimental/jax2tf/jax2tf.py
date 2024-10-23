@@ -3537,7 +3537,7 @@ def split_to_logical_devices(tensor: TfVal,
 def _xla_compatible_sharding_to_hlo_sharding(
     s: sharding.Sharding,
     aval: core.ShapedArray) -> xla_client.HloSharding | None:
-  if sharding_impls.is_unspecified(s):
+  if isinstance(s, sharding_impls.UnspecifiedValue):
     return None
   return s._to_xla_hlo_sharding(aval.ndim)
 
