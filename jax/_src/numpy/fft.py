@@ -45,7 +45,7 @@ def _fft_norm(s: Array, func_name: str, norm: str) -> Array:
                     '"ortho" or "forward".')
 
 
-def _fft_core(func_name: str, fft_type: xla_client.FftType, a: ArrayLike,
+def _fft_core(func_name: str, fft_type: lax.FftType, a: ArrayLike,
               s: Shape | None, axes: Sequence[int] | None,
               norm: str | None) -> Array:
   full_name = f"jax.numpy.fft.{func_name}"
@@ -87,14 +87,14 @@ def _fft_core(func_name: str, fft_type: xla_client.FftType, a: ArrayLike,
     in_s = list(arr.shape)
     for axis, x in safe_zip(axes, s):
       in_s[axis] = x
-    if fft_type == xla_client.FftType.IRFFT:
+    if fft_type == lax.FftType.IRFFT:
       in_s[-1] = (in_s[-1] // 2 + 1)
     # Cropping
     arr = arr[tuple(map(slice, in_s))]
     # Padding
     arr = jnp.pad(arr, [(0, x-y) for x, y in zip(in_s, arr.shape)])
   else:
-    if fft_type == xla_client.FftType.IRFFT:
+    if fft_type == lax.FftType.IRFFT:
       s = [arr.shape[axis] for axis in axes[:-1]]
       if axes:
         s += [max(0, 2 * (arr.shape[axes[-1]] - 1))]
@@ -181,7 +181,7 @@ def fftn(a: ArrayLike, s: Shape | None = None,
     >>> jnp.allclose(x, jnp.fft.ifftn(x_fftn))
     Array(True, dtype=bool)
   """
-  return _fft_core('fftn', xla_client.FftType.FFT, a, s, axes, norm)
+  return _fft_core('fftn', lax.FftType.FFT, a, s, axes, norm)
 
 
 def ifftn(a: ArrayLike, s: Shape | None = None,
@@ -249,7 +249,7 @@ def ifftn(a: ArrayLike, s: Shape | None = None,
     [[ 2.5 +0.j    0.  -0.58j  0.  +0.58j]
      [ 0.17+0.j   -0.83-0.29j -0.83+0.29j]]
   """
-  return _fft_core('ifftn', xla_client.FftType.IFFT, a, s, axes, norm)
+  return _fft_core('ifftn', lax.FftType.IFFT, a, s, axes, norm)
 
 
 def rfftn(a: ArrayLike, s: Shape | None = None,
@@ -340,7 +340,7 @@ def rfftn(a: ArrayLike, s: Shape | None = None,
     >>> jnp.fft.rfftn(x1)
     Array([10.+0.j, -2.+2.j, -2.+0.j], dtype=complex64)
   """
-  return _fft_core('rfftn', xla_client.FftType.RFFT, a, s, axes, norm)
+  return _fft_core('rfftn', lax.FftType.RFFT, a, s, axes, norm)
 
 
 def irfftn(a: ArrayLike, s: Shape | None = None,
@@ -417,7 +417,7 @@ def irfftn(a: ArrayLike, s: Shape | None = None,
            [[-2., -2., -2.],
             [-2., -2., -2.]]], dtype=float32)
   """
-  return _fft_core('irfftn', xla_client.FftType.IRFFT, a, s, axes, norm)
+  return _fft_core('irfftn', lax.FftType.IRFFT, a, s, axes, norm)
 
 
 def _axis_check_1d(func_name: str, axis: int | None):
@@ -428,7 +428,7 @@ def _axis_check_1d(func_name: str, axis: int | None):
         "Got axis = %r." % (full_name, full_name, axis)
     )
 
-def _fft_core_1d(func_name: str, fft_type: xla_client.FftType,
+def _fft_core_1d(func_name: str, fft_type: lax.FftType,
                  a: ArrayLike, n: int | None, axis: int | None,
                  norm: str | None) -> Array:
   _axis_check_1d(func_name, axis)
@@ -496,7 +496,7 @@ def fft(a: ArrayLike, n: int | None = None,
     >>> jnp.allclose(x, jnp.fft.ifft(x_fft))
     Array(True, dtype=bool)
   """
-  return _fft_core_1d('fft', xla_client.FftType.FFT, a, n=n, axis=axis,
+  return _fft_core_1d('fft', lax.FftType.FFT, a, n=n, axis=axis,
                       norm=norm)
 
 
@@ -552,7 +552,7 @@ def ifft(a: ArrayLike, n: int | None = None,
      [ 0.67+0.58j -0.5 +1.44j  0.17+2.02j  1.83+0.29j]
      [ 0.67-0.58j -0.5 -1.44j  0.17-2.02j  1.83-0.29j]]
   """
-  return _fft_core_1d('ifft', xla_client.FftType.IFFT, a, n=n, axis=axis,
+  return _fft_core_1d('ifft', lax.FftType.IFFT, a, n=n, axis=axis,
                       norm=norm)
 
 
@@ -613,7 +613,7 @@ def rfft(a: ArrayLike, n: int | None = None,
            [ 1.-2.j,  3.-4.j,  5.-6.j],
            [-1.+0.j, -1.+0.j, -1.+0.j]], dtype=complex64)
   """
-  return _fft_core_1d('rfft', xla_client.FftType.RFFT, a, n=n, axis=axis,
+  return _fft_core_1d('rfft', lax.FftType.RFFT, a, n=n, axis=axis,
                       norm=norm)
 
 
@@ -673,7 +673,7 @@ def irfft(a: ArrayLike, n: int | None = None,
            [-0.75, -1.25, -1.75],
            [ 0.25,  0.75,  1.25]], dtype=float32)
   """
-  return _fft_core_1d('irfft', xla_client.FftType.IRFFT, a, n=n, axis=axis,
+  return _fft_core_1d('irfft', lax.FftType.IRFFT, a, n=n, axis=axis,
                       norm=norm)
 
 
@@ -763,7 +763,7 @@ def hfft(a: ArrayLike, n: int | None = None,
   conj_a = ufuncs.conj(a)
   _axis_check_1d('hfft', axis)
   nn = (conj_a.shape[axis] - 1) * 2 if n is None else n
-  return _fft_core_1d('hfft', xla_client.FftType.IRFFT, conj_a, n=n, axis=axis,
+  return _fft_core_1d('hfft', lax.FftType.IRFFT, conj_a, n=n, axis=axis,
                       norm=norm) * nn
 
 
@@ -813,12 +813,12 @@ def ihfft(a: ArrayLike, n: int | None = None,
   _axis_check_1d('ihfft', axis)
   arr = jnp.asarray(a)
   nn = arr.shape[axis] if n is None else n
-  output = _fft_core_1d('ihfft', xla_client.FftType.RFFT, arr, n=n, axis=axis,
+  output = _fft_core_1d('ihfft', lax.FftType.RFFT, arr, n=n, axis=axis,
                         norm=norm)
   return ufuncs.conj(output) * (1 / nn)
 
 
-def _fft_core_2d(func_name: str, fft_type: xla_client.FftType, a: ArrayLike,
+def _fft_core_2d(func_name: str, fft_type: lax.FftType, a: ArrayLike,
                  s: Shape | None, axes: Sequence[int],
                  norm: str | None) -> Array:
   full_name = f"jax.numpy.fft.{func_name}"
@@ -905,7 +905,7 @@ def fft2(a: ArrayLike, s: Shape | None = None, axes: Sequence[int] = (-2,-1),
     >>> jnp.allclose(x, jnp.fft.ifft2(x_fft2))
     Array(True, dtype=bool)
   """
-  return _fft_core_2d('fft2', xla_client.FftType.FFT, a, s=s, axes=axes,
+  return _fft_core_2d('fft2', lax.FftType.FFT, a, s=s, axes=axes,
                       norm=norm)
 
 
@@ -977,7 +977,7 @@ def ifft2(a: ArrayLike, s: Shape | None = None, axes: Sequence[int] = (-2,-1),
             [-0.33-0.58j, -0.33-0.58j],
             [-0.33+0.58j, -0.33+0.58j]]], dtype=complex64)
   """
-  return _fft_core_2d('ifft2', xla_client.FftType.IFFT, a, s=s, axes=axes,
+  return _fft_core_2d('ifft2', lax.FftType.IFFT, a, s=s, axes=axes,
                       norm=norm)
 
 
@@ -1056,7 +1056,7 @@ def rfft2(a: ArrayLike, s: Shape | None = None, axes: Sequence[int] = (-2,-1),
             [  3.47+10.11j,   6.43+11.42j,   9.38+12.74j],
             [  3.19 +1.63j,   4.4  +1.38j,   5.61 +1.12j]]], dtype=complex64)
   """
-  return _fft_core_2d('rfft2', xla_client.FftType.RFFT, a, s=s, axes=axes,
+  return _fft_core_2d('rfft2', lax.FftType.RFFT, a, s=s, axes=axes,
                       norm=norm)
 
 
@@ -1131,7 +1131,7 @@ def irfft2(a: ArrayLike, s: Shape | None = None, axes: Sequence[int] = (-2,-1),
             [ 0.  ,  0.  ,  0.  ],
             [ 0.  ,  0.  ,  0.  ]]], dtype=float32)
   """
-  return _fft_core_2d('irfft2', xla_client.FftType.IRFFT, a, s=s, axes=axes,
+  return _fft_core_2d('irfft2', lax.FftType.IRFFT, a, s=s, axes=axes,
                       norm=norm)
 
 

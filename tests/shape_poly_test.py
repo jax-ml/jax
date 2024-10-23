@@ -48,8 +48,6 @@ from jax._src.export import shape_poly
 from jax._src.export import shape_poly_decision
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
-from jax._src.lib import xla_client
-from jax._src.lib import version as jaxlib_version
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -2533,11 +2531,11 @@ _POLY_SHAPE_TEST_HARNESSES = [
             lambda x, fft_type, nr_fft_lengths: lax.fft_p.bind(
                 x, fft_type=fft_type,
                 fft_lengths=tuple(
-                    x.shape[-nr_fft_lengths:] if fft_type != xla_client.FftType.IRFFT else
+                    x.shape[-nr_fft_lengths:] if fft_type != lax.FftType.IRFFT else
                     [(x.shape[-1] - 1) * 2])),
             arg_descriptors=[
                 RandArg((3, 4, 5, 6),
-                        np.float32 if fft_type == xla_client.FftType.RFFT else np.complex64),
+                        np.float32 if fft_type == lax.FftType.RFFT else np.complex64),
                 StaticArg(fft_type),
                 StaticArg(nr_fft_lengths)],
             # All axes but the last one are dynamic. This means that the test
@@ -2545,8 +2543,8 @@ _POLY_SHAPE_TEST_HARNESSES = [
             polymorphic_shapes=["b0, b1, b2, ..."],
             tol=1e-4)
 
-         for fft_type in (xla_client.FftType.FFT, xla_client.FftType.IFFT,
-                         xla_client.FftType.RFFT, xla_client.FftType.IRFFT)
+         for fft_type in (lax.FftType.FFT, lax.FftType.IFFT,
+                         lax.FftType.RFFT, lax.FftType.IRFFT)
          for nr_fft_lengths in (1, 2)
     ],
     PolyHarness("full", "",
@@ -2879,6 +2877,28 @@ _POLY_SHAPE_TEST_HARNESSES = [
           ((4, 5), "m, n"),
           ((2, 3, 4, 5), "b1, b2, ..."),
           ((2, 3, 4, 5), "b1, b2, m, n"),
+      ]
+    ],
+    [
+      PolyHarness(  # pylint: disable=g-complex-comprehension
+          "svd", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}_{full_matrices=}_{compute_uv=}",
+          lambda x, full_matrices, compute_uv: lax.linalg.svd(x, full_matrices=full_matrices, compute_uv=compute_uv),
+          arg_descriptors=[RandArg(shape, dtype), StaticArg(full_matrices), StaticArg(compute_uv)],
+          polymorphic_shapes=[poly],
+          symbolic_constraints=constraints)
+      for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
+      for compute_uv in [True, False]
+      for full_matrices in ([True, False] if compute_uv else [True])
+      for shape, poly, constraints in [
+          ((2, 0, 4), "b, ...", ()),
+          ((2, 4, 0), "b, ...", ()),
+          ((2, 3, 4, 4), "b1, b2, ...", ()),
+          ((2, 3, 4, 5), "b1, b2, ...", ()),
+          ((2, 3, 8, 4), "b1, b2, ...", ()),
+          # The constraints listed here are only for the GPU implementation
+          # which selects an algorithm based on the size of the matrix.
+          ((5, 4), "m, n", ["n <= m", "m <= 32", "n <= 32"]),
+          ((2, 3, 4, 5), "b1, b2, m, n", ["m <= n", "m <= 32", "n <= 32"]),
       ]
     ],
     [
@@ -3499,23 +3519,6 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
     if harness.expect_error == expect_error_associative_scan and jtu.test_device_matches(["tpu"]):
       harness.expect_error = None
 
-    # Exclude some harnesses that are known to fail for native serialization
-    # Set of harness.group_name:platform that are implemented with custom call
-    custom_call_harnesses = {
-        "vmap_svd:gpu",
-    }
-    name_device_key = f"{harness.group_name}:{jtu.device_under_test()}"
-    if name_device_key in custom_call_harnesses:
-      raise unittest.SkipTest("native serialization with shape polymorphism not implemented for custom calls; b/261671778")
-
-    # This list keeps track of the minimum jaxlib version that supports shape
-    # polymorphism for some new primitives as we add them. This check is
-    # required so that we can still run the test suite with older versions of
-    # jaxlib.
-    version_gated = {}
-    if version_gated.get(name_device_key, jaxlib_version) > jaxlib_version:
-      raise unittest.SkipTest(f"shape polymorphism not supported by jaxlib version {jaxlib_version}")
-
     if harness.group_name == "schur" and not jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("schur decomposition is only implemented on CPU.")
 
@@ -3554,11 +3557,11 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
     if harness.group_name == "eig" and not jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("JAX implements eig only on CPU.")
 
-    if (harness.group_name == "eigh" and
+    if (harness.group_name in ("eigh", "svd") and
         not harness.polymorphic_shapes[0].endswith("...") and
         jtu.test_device_matches(["tpu"])):
       raise unittest.SkipTest(
-          "Shape polymorphsim for Eigh is only supported for batch dimensions on TPU.")
+          "Shape polymorphsim for Eigh and Svd is only supported for batch dimensions on TPU.")
 
     config_flags = harness.override_jax_config_flags
     # Update this here rather than in harness object because vmap_random_gamma is derived

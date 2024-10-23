@@ -67,7 +67,6 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax.experimental import jax2tf
 from jax.interpreters import mlir
-from jax._src.interpreters import xla
 
 import numpy as np
 import tensorflow as tf

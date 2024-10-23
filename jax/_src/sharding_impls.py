@@ -32,10 +32,12 @@ from jax._src import util
 from jax._src import xla_bridge
 from jax._src import mesh_utils
 from jax._src.lib import xla_client as xc
+from jax._src.lib.mlir.dialects import sdy
 from jax._src.op_shardings import (
     are_op_shardings_equal, get_num_ways_dim_sharded, is_op_sharding_replicated)
 from jax._src.partition_spec import PartitionSpec
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
+from jax._src.lib import xla_extension_version
 import numpy as np
 
 
@@ -91,6 +93,41 @@ def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]
     index_to_replica[h_index] += 1
     out[device] = replica_id
   return out
+
+
+@dataclasses.dataclass
+class SdyDimSharding:
+  axes: Sequence[str]
+  is_closed: bool
+  priority: int | None = None
+
+  # NOTE: An MLIR context is required as a context manager.
+  def build(self) -> sdy.DimensionShardingAttr:
+    return sdy.DimensionShardingAttr.get(
+        [sdy.AxisRefAttr.get(axis) for axis in self.axes],
+        is_closed=self.is_closed,
+        priority=self.priority)
+
+
+@dataclasses.dataclass
+class SdyArraySharding:
+  mesh_shape: tuple[tuple[str, int], ...] | None
+  dimension_shardings: Sequence[SdyDimSharding]
+  logical_device_ids: tuple[int, ...] | None = None
+
+  # NOTE: An MLIR context is required as a context manager.
+  def build(self) -> sdy.TensorShardingAttr:
+    if self.mesh_shape is None:
+      mesh_attr = sdy.MeshAttr.get([])
+    else:
+      ldi = ([] if self.logical_device_ids is None else
+             list(self.logical_device_ids))
+      mesh_attr = sdy.MeshAttr.get(
+          [sdy.MeshAxisAttr.get(name, size) for name, size in self.mesh_shape],
+          ldi)
+    return sdy.TensorShardingAttr.get(
+        mesh_attr,
+        [dim_sharding.build() for dim_sharding in self.dimension_shardings])
 
 
 @util.cache(max_size=4096, trace_context_in_key=False)
@@ -150,9 +187,17 @@ def named_sharding_to_xla_hlo_sharding(
   #     reshape_dims = [2, 2, 2, 2]
   #     transpose_perm = [3, 1, 2, 0]  # 'a' is replicated hence 0 is at the end
   #     subgroup_types = [xc.OpSharding.Type.REPLICATED]
-  return xc.HloSharding.iota_tile(
-      dims=new_mesh_shape, reshape_dims=tuple(self.mesh.shape.values()),
-      transpose_perm=mesh_permutation, subgroup_types=last_tile_dims)
+  dims = new_mesh_shape
+  reshape_dims = self.mesh.axis_sizes
+  if self._logical_device_ids is None:
+    return xc.HloSharding.iota_tile(
+        dims=dims, reshape_dims=reshape_dims, transpose_perm=mesh_permutation,
+        subgroup_types=last_tile_dims)
+  else:
+    return xc.HloSharding.subgroup_with_device_ordering(
+        np.asarray(self._logical_device_ids)
+        .reshape(dims).reshape(reshape_dims).transpose(mesh_permutation)
+        .reshape(dims), subgroup_types=last_tile_dims)
 
 
 @use_cpp_class(xc.NamedSharding)
@@ -196,27 +241,34 @@ class NamedSharding(sharding.Sharding):
   _memory_kind: str | None
   _parsed_pspec: ParsedPartitionSpec
   _manual_axes: frozenset[MeshAxisName]
+  _logical_device_ids: tuple[int, ...] | None
+  if xla_extension_version < 292:
+    _logical_device_ids = None
 
   @use_cpp_method()
   def __init__(
       self, mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh, spec: PartitionSpec, *,
       memory_kind: str | None = None, _parsed_pspec=None,
-      _manual_axes=frozenset()):
+      _manual_axes=frozenset(), _logical_device_ids=None):
     self.mesh = mesh
     self.spec = spec
     self._memory_kind = memory_kind
     self._manual_axes = _manual_axes
+    self._logical_device_ids = _logical_device_ids
     self._parsed_pspec = preprocess(self.mesh, self.spec, _parsed_pspec)
 
   def __repr__(self):
     mesh_repr = ", ".join(f"'{k}': {v}" for k, v in self.mesh.shape.items())
     mem = '' if self.memory_kind is None else f', memory_kind={self.memory_kind}'
-    return f'NamedSharding(mesh=Mesh({mesh_repr}), spec={self.spec}{mem})'
+    ldi = ('' if self._logical_device_ids is None else
+           f', logical_device_ids={self._logical_device_ids}')
+    return f'NamedSharding(mesh=Mesh({mesh_repr}), spec={self.spec}{mem}{ldi})'
 
   def __reduce__(self):
     return (type(self), (self.mesh, self.spec),
             {'memory_kind': self.memory_kind,
-             '_manual_axes': self._manual_axes})
+             '_manual_axes': self._manual_axes,
+             '_logical_device_ids': self._logical_device_ids})
 
   @property
   def memory_kind(self) -> str | None:
@@ -225,7 +277,8 @@ class NamedSharding(sharding.Sharding):
   def __hash__(self):
     if not hasattr(self, '_hash'):
       self._hash = hash(
-          (self.mesh, self.memory_kind, self._parsed_pspec, self._manual_axes))
+          (self.mesh, self.memory_kind, self._parsed_pspec, self._manual_axes,
+           self._logical_device_ids))
     return self._hash
 
   def __eq__(self, other):
@@ -235,7 +288,8 @@ class NamedSharding(sharding.Sharding):
       return True
     if (self._parsed_pspec != other._parsed_pspec
         or self.memory_kind != other.memory_kind
-        or self._manual_axes != other._manual_axes):
+        or self._manual_axes != other._manual_axes
+        or self._logical_device_ids != other._logical_device_ids):
       return False
     return self.mesh is other.mesh or self.mesh == other.mesh
 
@@ -251,11 +305,18 @@ class NamedSharding(sharding.Sharding):
 
   @classmethod
   def _from_parsed_pspec(
-      cls, mesh, parsed_pspec, *, memory_kind=None, _manual_axes=frozenset()
+      cls, mesh, parsed_pspec, *, memory_kind=None, _manual_axes=frozenset(),
+      _logical_device_ids=None,
   ):
-    return cls(mesh, parsed_pspec.get_partition_spec(),
-                memory_kind=memory_kind, _parsed_pspec=parsed_pspec,
-                _manual_axes=_manual_axes)
+    if xla_extension_version >= 292:
+      return cls(mesh, parsed_pspec.get_partition_spec(),
+                  memory_kind=memory_kind, _parsed_pspec=parsed_pspec,
+                  _manual_axes=_manual_axes,
+                  _logical_device_ids=_logical_device_ids)
+    else:
+      return cls(mesh, parsed_pspec.get_partition_spec(),
+                  memory_kind=memory_kind, _parsed_pspec=parsed_pspec,
+                  _manual_axes=_manual_axes)
 
   @property
   def num_devices(self) -> int:
@@ -307,11 +368,26 @@ class NamedSharding(sharding.Sharding):
   def with_memory_kind(self, kind: str) -> NamedSharding:
     return NamedSharding(self.mesh, self.spec, memory_kind=kind)
 
+  def _normalized_spec(self, ndim: int) -> PartitionSpec:
+    out = []  # type: ignore
+    for p in self._parsed_pspec:
+      if p is None:
+        raise ValueError("UNCONSTRAINED is not supported yet.")
+      if not p:
+        out.append(None)
+      elif isinstance(p, tuple) and len(p) == 1:
+        out.append(p[0])
+      else:
+        out.append(p)
+    if len(out) < ndim:
+      out.extend([None] * (ndim - len(out)))
+    return PartitionSpec(*out)
+
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return named_sharding_to_xla_hlo_sharding(self, num_dimensions)
 
-  def _to_sdy_sharding(self, num_dimensions: int) -> sharding.SdyArraySharding:
-    dim_shardings = [sharding.SdyDimSharding(axes=[], is_closed=True)
+  def _to_sdy_sharding(self, num_dimensions: int) -> SdyArraySharding:
+    dim_shardings = [SdyDimSharding(axes=[], is_closed=True)
                      for _ in range(num_dimensions)]
     for i, dim_spec in enumerate(self._parsed_pspec):
       if dim_spec is None:
@@ -321,7 +397,8 @@ class NamedSharding(sharding.Sharding):
         pass
       else:
         dim_shardings[i].axes = dim_spec
-    return sharding.SdyArraySharding('mesh', dim_shardings)
+    return SdyArraySharding(self.mesh.shape_tuple, dim_shardings,
+                            self._logical_device_ids)
 
 
 @util.cache(max_size=128, trace_context_in_key=False)
@@ -395,11 +472,10 @@ class SingleDeviceSharding(sharding.Sharding):
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return get_replicated_hlo_sharding()
 
-  def _to_sdy_sharding(self, num_dimensions: int) -> sharding.SdyArraySharding:
-    return sharding.SdyArraySharding(
-        'mesh',
-        [sharding.SdyDimSharding(axes=[], is_closed=True)
-         for _ in range(num_dimensions)])
+  def _to_sdy_sharding(self, num_dimensions: int) -> SdyArraySharding:
+    sdy_dim_sharding = [SdyDimSharding(axes=[], is_closed=True)
+                        for _ in range(num_dimensions)]
+    return SdyArraySharding(None, sdy_dim_sharding)
 
   @property
   def is_fully_replicated(self) -> bool:
@@ -537,7 +613,7 @@ class PmapSharding(sharding.Sharding):
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     raise NotImplementedError("pmap doesn't use OpSharding.")
 
-  def _to_sdy_sharding(self, num_dimensions: int) -> sharding.SdyArraySharding:
+  def _to_sdy_sharding(self, num_dimensions: int) -> SdyArraySharding:
     raise NotImplementedError("pmap doesn't use SdyArraySharding.")
 
   @functools.cached_property
@@ -743,7 +819,7 @@ class PositionalSharding(sharding.Sharding):
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return _positional_sharding_to_xla_hlo_sharding(self, num_dimensions)
 
-  def _to_sdy_sharding(self, num_dimensions: int) -> sharding.SdyArraySharding:
+  def _to_sdy_sharding(self, num_dimensions: int) -> SdyArraySharding:
     raise NotImplementedError(
         "PositionalSharding can't be converted to an SdyArraySharding.")
 
@@ -860,7 +936,7 @@ class GSPMDSharding(sharding.Sharding):
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return self._hlo_sharding
 
-  def _to_sdy_sharding(self, num_dimensions: int) -> sharding.SdyArraySharding:
+  def _to_sdy_sharding(self, num_dimensions: int) -> SdyArraySharding:
     raise NotImplementedError(
         "GSPMDSharding can't be converted to SdyArraySharding.")
 
@@ -882,6 +958,11 @@ class AUTO:
 
   def __init__(self, mesh: mesh_lib.Mesh):
     self.mesh = mesh
+
+  def _to_sdy_sharding(self, ndim: int) -> SdyArraySharding:
+    dim_shardings = [SdyDimSharding(axes=[], is_closed=False)
+                     for _ in range(ndim)]
+    return SdyArraySharding(self.mesh.shape_tuple, dim_shardings)
 
 
 def is_auto(x):
@@ -1130,7 +1211,7 @@ class ShardingContext:
   """
   num_devices: int
   device_assignment: tuple[xc.Device, ...] | None = None
-  mesh_shape: tuple[tuple[str, int], ...] | None = None
+  abstract_mesh: mesh_lib.AbstractMesh | None = None
 
   def __post_init__(self):
     if self.device_assignment is not None:

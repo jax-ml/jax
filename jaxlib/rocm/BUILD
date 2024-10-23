@@ -289,6 +289,7 @@ cc_library(
     hdrs = ["//jaxlib/gpu:linalg_kernels.h"],
     features = ["-use_header_modules"],
     deps = [
+        ":hip_blas_handle_pool",
         ":hip_gpu_kernel_helpers",
         ":hip_linalg_kernels_impl",
         ":hip_vendor",

@@ -17,9 +17,7 @@ import functools
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
-from jax._src.state import discharge as state_discharge
 from jax.experimental import pallas as pl
-from jax.experimental import shard_map
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
 import numpy as np
@@ -51,7 +49,7 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      _, y = state_discharge.run_state(f_stateful)((x, jnp.zeros_like(x)))
+      _, y = pl.run_state(f_stateful)((x, jnp.zeros_like(x)))
       return y
 
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
@@ -73,7 +71,7 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      _, y = state_discharge.run_state(f_stateful)((x, jnp.zeros_like(x)))
+      _, y = pl.run_state(f_stateful)((x, jnp.zeros_like(x)))
       return y
 
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
@@ -101,7 +99,7 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      _, y = state_discharge.run_state(f_stateful)((x[None], jnp.zeros_like(x)))
+      _, y = pl.run_state(f_stateful)((x[None], jnp.zeros_like(x)))
       return y
 
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
@@ -128,7 +126,7 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      _, y, o = state_discharge.run_state(f_stateful)(
+      _, y, o = pl.run_state(f_stateful)(
           (x, jnp.zeros_like(x), jnp.zeros_like(x))
       )
       return y, o
@@ -178,7 +176,7 @@ class PallasCallStatefulTest(jtu.JaxTestCase):
             scratch_shapes=[pltpu.VMEM((bm, bn), jnp.float32)],
         )()
 
-      _, _, o = state_discharge.run_state(run_matmul)(
+      _, _, o = pl.run_state(run_matmul)(
           (x, y, jnp.ones((m, n), dtype=x.dtype))
       )
       return o
@@ -202,11 +200,7 @@ class ShmallasTest(jtu.JaxTestCase):
   def test_can_create_tensorcore_mesh(self):
     _ = pltpu.create_tensorcore_mesh("x")
 
-  def test_can_trivially_shard_map_with_pallas_mesh(self):
-    mesh = pltpu.create_tensorcore_mesh("x")
-    _ = shard_map.shard_map(lambda: None, mesh, in_specs=(), out_specs=None)()
-
-  def test_can_run_basic_pallas_kernel_with_shard_map(self):
+  def test_can_run_basic_pallas_kernel_with_core_map(self):
     mesh = pltpu.create_tensorcore_mesh("x")
 
     @jax.jit
@@ -214,19 +208,18 @@ class ShmallasTest(jtu.JaxTestCase):
       y = jnp.zeros_like(x)
       def inner(refs):
         x_ref, y_ref = refs
-        def kernel():
+        @pl.core_map(mesh)
+        def _():
           def alloc(sem):
             pltpu.async_copy(x_ref, y_ref, sem).wait()
           pl.run_scoped(alloc, pltpu.SemaphoreType.DMA)
-        shard_map.shard_map(kernel, mesh, in_specs=(), out_specs=None,
-                            check_rep=False)()
-      _, y = state_discharge.run_state(inner)((x, y))
+      _, y = pl.run_state(inner)((x, y))
       return y
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
     y = f(x)
     np.testing.assert_array_equal(y, x)
 
-  def test_can_query_core_index_pallas_kernel_with_shard_map(self):
+  def test_can_query_core_index_pallas_kernel_with_core_map(self):
     mesh = pltpu.create_tensorcore_mesh("x")
 
     @jax.jit
@@ -234,7 +227,8 @@ class ShmallasTest(jtu.JaxTestCase):
       y = jnp.zeros_like(x)
       def inner(refs):
         x_ref, y_ref = refs
-        def kernel():
+        @pl.core_map(mesh)
+        def _():
           num_cores = jax.lax.psum(1, "x")
           slc_size = 16 // num_cores
           def alloc(x_vmem_ref, y_vmem_ref, sem):
@@ -254,9 +248,7 @@ class ShmallasTest(jtu.JaxTestCase):
               pltpu.VMEM((slc_size, 128), y_ref.dtype),
               pltpu.SemaphoreType.DMA,
           )
-        shard_map.shard_map(kernel, mesh, in_specs=(), out_specs=None,
-                            check_rep=False)()
-      _, y = state_discharge.run_state(inner)((x, y))
+      _, y = pl.run_state(inner)((x, y))
       return y
     num_cores = jax.devices()[0].num_cores
     x = jnp.arange(16 * 128, dtype=jnp.int32).reshape((16, 128))

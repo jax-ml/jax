@@ -220,5 +220,39 @@ class BlockInvarianceTest(parameterized.TestCase):
     np.testing.assert_array_equal(result_16x128, result_32x256)
 
 
+class ThreefryTest(parameterized.TestCase):
+
+  def setUp(self):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Need TPU devices")
+    super().setUp()
+
+  @parameterized.parameters(
+      ((8, 128),),
+      ((32, 256),),
+      ((4, 16, 128),),
+  )
+  def test_uniform_matches_jax_threefry(self, shape):
+    def body(key_ref, o_ref):
+      key = jax.random.wrap_key_data(key_ref[0, ...], impl='threefry2x32')
+      o_ref[...] = jax_random.uniform(
+          key, shape=o_ref[...].shape, minval=0.0, maxval=1.0
+      )
+
+    threefry_key = jax_random.key(0, impl="threefry2x32").reshape((1,))
+    o_shape = jax.ShapeDtypeStruct(shape, jnp.float32)
+    with jax.threefry_partitionable(True):
+      # TODO(justinfu): support passing keys into VMEM.
+      result = pl.pallas_call(
+          body,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM)],
+          out_shape=o_shape,
+      )(jax.random.key_data(threefry_key))
+      jax_result = jax_random.uniform(
+          threefry_key[0], shape=o_shape.shape, minval=0.0, maxval=1.0
+      )
+    np.testing.assert_array_equal(result, jax_result)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

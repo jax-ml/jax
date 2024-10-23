@@ -35,6 +35,7 @@ from jax._src.state.types import (
     AccumEffect,
     ReadEffect,
     RefBitcaster,
+    RefReshaper,
     Transform,
     TransformedRef,
     WriteEffect,
@@ -63,6 +64,7 @@ traceback_util.register_exclusion(__file__)
 #   a:f32[3] <- x[]
 get_p = core.Primitive("get")
 get_p.def_impl(partial(dispatch.apply_primitive, get_p))
+batching.ragged_prop_rules[get_p] = batching.ragged_mask_transfer_identity
 
 Indexer = Union[int, slice, Array, types.EllipsisType]
 
@@ -71,6 +73,7 @@ def get_ref_and_transforms(
     ref_or_view: Any,
     idx: Indexer | tuple[Indexer, ...] | None,
     function_name: str,
+    force_trailing_indexer: bool = True,  # TODO(apaszke): Clean this up.
 ) -> tuple[Any, tuple[Transform, ...]]:
   if isinstance(ref_or_view, TransformedRef):
     ref, transforms = ref_or_view.ref, ref_or_view.transforms
@@ -87,6 +90,8 @@ def get_ref_and_transforms(
   elif not isinstance(idx, tuple):
     idx = (idx,)
 
+  if not idx and not force_trailing_indexer:
+    return ref, transforms
   if not idx and transforms and isinstance(transforms[-1], indexing.NDIndexer):
     return ref, transforms
   nd_indexer = indexing.NDIndexer.from_indices_shape(idx, ref_or_view.shape)
@@ -121,6 +126,16 @@ def ref_get(
 swap_p = core.Primitive("swap")
 swap_p.def_impl(partial(dispatch.apply_primitive, swap_p))
 
+
+def swap_ragged_prop_rule(invar_raggedness, outvars):
+  assert len(invar_raggedness) == 2
+  invar_raggedness_lhs = invar_raggedness[0]
+  invar_raggedness_rhs = invar_raggedness[1]
+
+  return [invar_raggedness_rhs, invar_raggedness_lhs], [None]
+
+
+batching.ragged_prop_rules[swap_p] = swap_ragged_prop_rule
 
 def ref_swap(
     ref_or_view: AbstractRef | TransformedRef,
@@ -321,12 +336,21 @@ def pp_bitcaster(
   )
 
 
+def pp_reshaper(context: core.JaxprPpContext, reshaper: RefReshaper) -> pp.Doc:
+  del context
+  return pp.text(
+      f"[reshape({reshaper.dtype}[{','.join(str(d) for d in reshaper.shape)}])]"
+  )
+
+
 def pp_transform(context: core.JaxprPpContext, transform: Transform) -> pp.Doc:
   match transform:
     case indexing.NDIndexer():
       return pp_indexer(context, transform)
     case RefBitcaster():
       return pp_bitcaster(context, transform)
+    case RefReshaper():
+      return pp_reshaper(context, transform)
     case _:
       return pp.text(f"[{transform}]")
 

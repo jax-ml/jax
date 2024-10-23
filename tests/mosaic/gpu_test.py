@@ -1462,6 +1462,18 @@ class FragmentedArrayTest(TestCase):
     )(x)
     np.testing.assert_array_equal(result, reference)
 
+  @parameterized.parameters(
+      ([64 * 4], "WGMMA_ROW_LAYOUT"),
+      ([64 * 4, 8 * 2], "WGMMA_LAYOUT"),
+  )
+  def test_to_layout(self, shape, new_layout):
+    def kernel(ctx, _):
+      # No assertions, we are just checking there are no compile-time errors.
+      arr = mgpu.FragmentedArray.splat(c(42.0, ir.F32Type.get()), shape)
+      arr.to_layout(getattr(mgpu, new_layout))
+
+    _ = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), (), (), None)()
+
 
 class ProfilerTest(TestCase):
 

@@ -26,6 +26,7 @@ import jax
 from jax import lax
 from jax import tree_util
 from jax._src import ad_util
+from jax._src import checkify
 from jax._src import core as jax_core
 from jax._src import custom_derivatives
 from jax._src import debugging
@@ -49,16 +50,16 @@ from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import error_handling
 from jax._src.pallas.mosaic import primitives as tpu_primitives
+from jax._src.pallas.mosaic import random as pl_random
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
-from jax._src.state.types import RefBitcaster
+from jax._src.state.types import RefBitcaster, RefReshaper
 from jax._src.state.utils import dtype_bitwidth
 from jax._src.typing import DTypeLike
 from jax._src.util import safe_map
@@ -201,10 +202,13 @@ def aval_to_ir_type(aval,
     return ir.MemRefType.get((), sem_type, memory_space=memspace)
   if dtypes.issubdtype(aval.dtype, dtypes.prng_key):
     shape = aval.dtype._impl.key_shape
-    if memory_space is None:
-      memory_space = TPUMemorySpace.SMEM
-    if memory_space != TPUMemorySpace.SMEM:
-      raise ValueError(f"PRNG keys must be stored in SMEM. Got {memory_space}")
+    if pl_random.is_pallas_impl(aval.dtype._impl):
+      if memory_space is None:
+        memory_space = TPUMemorySpace.SMEM
+      if memory_space != TPUMemorySpace.SMEM:
+        raise ValueError(
+            f"PRNG keys must be stored in SMEM. Got {memory_space}"
+        )
     memspace = _memory_space_to_mosaic_attribute(memory_space)
     return ir.MemRefType.get(shape, _dtype_to_ir_type(np.dtype(np.uint32)),
                              memory_space=memspace)
@@ -236,20 +240,13 @@ def ir_constant(x, mlir_type=None):
   if not mlir_type:
     mlir_type = _dtype_to_ir_type(x.dtype)
   if isinstance(x, int) or x.dtype in (np.int32, np.uint32, np.int8):
-    return arith.ConstantOp(mlir_type, ir.IntegerAttr.get(mlir_type, int(x))
-                            ).result
+    return arith.constant(mlir_type, ir.IntegerAttr.get(mlir_type, int(x)))
   elif isinstance(x, float) or x.dtype == np.float32:
-    return arith.ConstantOp(
-        mlir_type, ir.FloatAttr.get(mlir_type, float(x))
-    ).result
+    return arith.constant(mlir_type, ir.FloatAttr.get(mlir_type, float(x)))
   elif x.dtype == jnp.bfloat16:
-    return arith.ConstantOp(
-        mlir_type, ir.FloatAttr.get(mlir_type, float(x))
-    ).result
+    return arith.constant(mlir_type, ir.FloatAttr.get(mlir_type, float(x)))
   elif x.dtype == jnp.bool_:
-    return arith.ConstantOp(
-        mlir_type, ir.BoolAttr.get(bool(x))
-    ).result
+    return arith.constant(mlir_type, ir.BoolAttr.get(bool(x)))
   raise NotImplementedError(x.dtype)
 
 
@@ -466,7 +463,7 @@ def _check_block_mappings(
               "has block shape "
               f"{bm.block_shape}, array shape {bm.array_shape_dtype.shape}, "
               # TODO(necula): add index_map source location info
-              f"and index_map returning {bm.index_map_jaxpr.jaxpr.outvars}, in "
+              f"and index_map {bm.index_map_jaxpr.jaxpr}, in "
               f"memory space {bm.block_aval.memory_space}."
               "\nSee details at https://jax.readthedocs.io/en/latest/pallas/grid_blockspec.html#pallas-blockspec")
     if rank < 1:
@@ -481,7 +478,8 @@ def _check_block_mappings(
           "only blocks having the same block shape as the array shape "
           "and a trivial index_map (returning all 0s)." + err_details())
 
-    unmapped_bs = [1 if bs is pallas_core.mapped else bs for bs in bm.block_shape]
+    unmapped_bs = [
+        1 if bs is pallas_core.mapped else bs for bs in bm.block_shape]
     bs0, as0 = unmapped_bs[-1], bm.array_shape_dtype.shape[-1]
     if rank >= 2:
       bs1, as1 = unmapped_bs[-2], bm.array_shape_dtype.shape[-2]
@@ -493,20 +491,30 @@ def _check_block_mappings(
           (bs0 == as0 or bs0 % 128 == 0) and
           (bs1 == as1 or bs1 % 8 == 0)
       )
+      if not evenly_divisible:
+        raise ValueError(
+            "The Pallas TPU lowering currently requires that the last two "
+            "dimensions of your block shape are divisible by 8 and 128 "
+            "respectively, or be equal to the respective dimensions of the "
+            "overall array. "
+            + err_details()
+        )
     else:
       assert rank == 1
       # TODO(necula): test this for bool. What should it do?
       tiling_size = 128 * (32 // lax_internal._bit_width(bm.array_shape_dtype.dtype))
       evenly_divisible = (bs0 == as0 or bs0 % tiling_size == 0)
-
-    if not evenly_divisible:
-      raise ValueError(
-          "The Pallas TPU lowering currently requires that the last two "
-          "dimensions of your block shape are divisible by 8 and 128 "
-          "respectively, or be equal to the respective dimensions of the "
-          "overall array. "
-          + err_details()
-      )
+      if not evenly_divisible:
+        raise ValueError(
+            "The Pallas TPU lowering currently requires that rank 1 block"
+            " shapes, either 1) the first (and only) dimension of the block"
+            " shape is equal to the first (and only) dimension of the array"
+            " shape, or 2) the first (and only) dimension of the block shape"
+            f" is a multiple of the tiling size ({tiling_size} = 128 * (32 //"
+            f" {lax_internal._bit_width(bm.array_shape_dtype.dtype)})) of the"
+            " array shape. "
+            + err_details()
+        )
 
 
 def lower_jaxpr_to_module(
@@ -927,7 +935,7 @@ def _make_index(s):
     return ir_constant(s, ir.IndexType.get())
   if s.type == ir.IndexType.get():
     return s
-  return arith.IndexCastOp(ir.IndexType.get(), s).result
+  return arith.index_cast(ir.IndexType.get(), s)
 
 
 def _maybe_cast_to_index(cast_to_index, x):
@@ -1028,7 +1036,7 @@ def _slice_memref(
       _dtype_to_ir_type(ref_dtype),
       memory_space=ref.type.memory_space,
   )
-  out = tpu.MemRefSliceOp(target_ref_ty, ref, starts, dynamic_sizes).result
+  out = tpu.memref_slice(target_ref_ty, ref, starts, dynamic_sizes)
   if any(squeeze_dims):
     # We need to squeeze out some dimensions
     static_sizes = tuple(s if not isinstance(s, ir.Value)
@@ -1038,7 +1046,7 @@ def _slice_memref(
         _dtype_to_ir_type(ref_dtype),
         memory_space=ref.type.memory_space,
     )
-    out = tpu.MemRefSqueezeOp(squeezed_ref_ty, out).result
+    out = tpu.memref_squeeze(squeezed_ref_ty, out)
   return out, ref_block_shape
 
 
@@ -1081,6 +1089,41 @@ def _bitcast_memref(
   )
 
 
+def _reshape_memref(
+    ref: ir.Value,
+    reshaper: RefReshaper,
+    ref_dtype: DTypeLike,
+    ref_block_shape: tuple[int | pallas_core.Mapped, ...],
+) -> tuple[ir.Value, DTypeLike, tuple[int | pallas_core.Mapped, ...]]:
+  if ref_dtype != reshaper.dtype:
+    raise ValueError(
+        f"Reshape a ref with dtype change: {reshaper.dtype} vs {ref_dtype}"
+    )
+  if len(ref_block_shape) < 2:
+    raise NotImplementedError("Reshape 1D ref is not supported.")
+  if (
+      ref_block_shape[-2] is pallas_core.mapped
+      or ref_block_shape[-1] is pallas_core.mapped
+  ):
+    raise NotImplementedError(
+        "Reshape a ref with squeezed dimension on last two dimensions."
+    )
+  if np.prod(ref_block_shape) != np.prod(reshaper.shape):
+    raise ValueError(
+        f"Reshape a ref with different number of elements: {ref_block_shape} "
+        f"vs {reshaper.shape}"
+    )
+  target_ref_ty = ir.MemRefType.get(
+      reshaper.shape,
+      _dtype_to_ir_type(reshaper.dtype),
+      memory_space=ref.type.memory_space,
+  )
+  return (
+      tpu.memref_reshape(target_ref_ty, ref),
+      reshaper.shape,
+  )
+
+
 def _transform_ref(ref, ref_dtype, ref_block_shape, transforms):
   for transform in transforms:
     match transform:
@@ -1090,6 +1133,10 @@ def _transform_ref(ref, ref_dtype, ref_block_shape, transforms):
         )
       case RefBitcaster():
         ref, ref_dtype, ref_block_shape = _bitcast_memref(
+            ref, transform, ref_dtype, ref_block_shape
+        )
+      case RefReshaper():
+        ref, ref_block_shape = _reshape_memref(
             ref, transform, ref_dtype, ref_block_shape
         )
       case _:
@@ -1131,7 +1178,9 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
   ref_type = ir.MemRefType(ref.type)
   is_smem_load = str(ref_type.memory_space) == "#tpu.memory_space<smem>"
   (aval_out,) = ctx.avals_out
-  if isinstance(aval_out.dtype, prng.KeyTy):
+  if isinstance(aval_out.dtype, prng.KeyTy) and pl_random.is_pallas_impl(
+      aval_out.dtype._impl
+  ):
     if not is_smem_load:
       raise ValueError("PRNG keys must be loaded from SMEM. Did you set "
                        "the memory space to TPUMemorySpace.SMEM in the "
@@ -1154,8 +1203,7 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
   if is_smem_load:
     if ctx.avals_out[0].shape:
       raise ValueError("Can only load scalars from SMEM")
-    return _maybe_cast_load_to_bool(
-        aval_out, memref.LoadOp(ref, starts).result)
+    return _maybe_cast_load_to_bool(aval_out, memref.load(ref, starts))
   elif str(ref_type.memory_space) != "#tpu.memory_space<vmem>":
     extra = ""
     if str(ref_type.memory_space) == "#tpu.memory_space<any>":
@@ -1165,17 +1213,17 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
     )
   load_aval = jax_core.ShapedArray(sizes, dtype=aval_out.dtype)
   if need_stride:
-    load_val = tpu.StridedLoadOp(
+    load_val = tpu.strided_load(
       aval_to_ir_type(load_aval, is_kernel_boundary=True), ref, starts, strides
-    ).result
+    )
   else:
-    load_val = vector.LoadOp(
-        aval_to_ir_type(load_aval, is_kernel_boundary=True), ref, starts).result
+    load_val = vector.load(
+        aval_to_ir_type(load_aval, is_kernel_boundary=True), ref, starts)
   if load_aval != aval_out:
     vec_type = ir.VectorType.get(aval_out.shape,
                                 _dtype_to_ir_type(aval_out.dtype,
                                                   is_kernel_boundary=True))
-    load_val = vector.ShapeCastOp(vec_type, load_val).result
+    load_val = vector.shape_cast(vec_type, load_val)
   return _maybe_cast_load_to_bool(aval_out, load_val)
 
 def _prng_key_load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree) -> KeyScalarBundle:
@@ -1206,7 +1254,7 @@ def _prng_key_load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree
         ref_block_shape,
         cast_to_index=True,
     )
-    load_ops.append(memref.LoadOp(ref, starts).result)
+    load_ops.append(memref.load(ref, starts))
   return KeyScalarBundle(scalars=load_ops, key_shape=tuple(ref_block_shape))
 
 
@@ -1231,7 +1279,7 @@ def _maybe_cast_load_to_bool(
   if out_aval.dtype != jnp.bool_:
     return val
   load_scalar_type = _dtype_to_ir_type(BOOL_MEMREF_TYPE)
-  pred = _cmpi_lowering_types[lax.ne_p]
+  pred = _cmpsi_lowering_types[lax.ne_p]
   predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
   const_zero = ir.IntegerAttr.get(load_scalar_type, 0)
   if out_aval.shape:  # Vector case.
@@ -1240,10 +1288,10 @@ def _maybe_cast_load_to_bool(
         load_vector_type,
         ir.DenseElementsAttr.get_splat(load_vector_type, const_zero)
     )
-    return arith.CmpIOp(predicate, val, vector_zeros).result
+    return arith.cmpi(predicate, val, vector_zeros)
   else:  # Scalar case.
     const_zero = arith.ConstantOp(load_scalar_type, const_zero)
-    return arith.CmpIOp(predicate, val, const_zero).result
+    return arith.cmpi(predicate, val, const_zero)
 
 
 def _maybe_cast_store_to_memref_type(
@@ -1252,7 +1300,7 @@ def _maybe_cast_store_to_memref_type(
   if expected_aval.dtype != jnp.bool_:
     return val
   int_out_type = aval_to_ir_type(expected_aval, is_kernel_boundary=True)
-  return arith.ExtUIOp(int_out_type, val).result
+  return arith.extui(int_out_type, val)
 
 
 def _masked_swap_lowering_rule(
@@ -1297,7 +1345,7 @@ def _masked_swap_lowering_rule(
   if is_smem_store:
     if val_aval.shape:
       raise ValueError("Can only store scalars to SMEM")
-    result = memref.LoadOp(ref, starts).result
+    result = memref.load(ref, starts)
     result = _maybe_cast_load_to_bool(val_aval, result)
     val = _maybe_cast_store_to_memref_type(val_aval, val)
     memref.StoreOp(val, ref, starts)
@@ -1328,18 +1376,18 @@ def _masked_swap_lowering_rule(
   mem_aval_vec_type = ir.VectorType.get(mem_aval.shape,
     _dtype_to_ir_type(mem_aval.dtype, is_kernel_boundary=True))
   if need_stride:
-    result = tpu.StridedLoadOp(mem_aval_vec_type, ref, starts, strides).result
+    result = tpu.strided_load(mem_aval_vec_type, ref, starts, strides)
   else:
-    result = vector.LoadOp(mem_aval_vec_type, ref, starts).result
+    result = vector.load(mem_aval_vec_type, ref, starts)
   val = _maybe_cast_store_to_memref_type(val_aval, val)
   if mem_aval != aval_out:
     # We are slicing a scalar so provided dummy 1 indices
     result_vec_type = ir.VectorType.get(aval_out.shape,
       _dtype_to_ir_type(aval_out.dtype, is_kernel_boundary=True))
-    result = vector.ShapeCastOp(result_vec_type, result).result
+    result = vector.shape_cast(result_vec_type, result)
     val_vec_type = ir.VectorType.get(mem_aval.shape,
       _dtype_to_ir_type(mem_aval.dtype, is_kernel_boundary=True))
-    val = vector.ShapeCastOp(val_vec_type, val).result
+    val = vector.shape_cast(val_vec_type, val)
   result = _maybe_cast_load_to_bool(val_aval, result)
 
   if need_stride:
@@ -1396,13 +1444,7 @@ def reduce_lowering_rule(reduce_fn, type_to_kind, type_to_identity):
     out_type = aval_to_ir_type(ctx.avals_out[0])
     identity = ir.DenseElementsAttr.get_splat(out_type, val)
     acc = arith.ConstantOp(out_type, identity)
-    op = vector.MultiDimReductionOp(
-        kind,
-        x,
-        acc,
-        axes,
-    )
-    return op.result
+    return vector.multi_reduction(kind, x, acc, axes)
   return _lowering_rule
 
 
@@ -1506,13 +1548,13 @@ def _broadcast_in_dim_lowering_rule(
     out_type = ir.VectorType.get(
         out_shape, _dtype_to_ir_type(aval_out.dtype)
     )
-    val = vector.ShapeCastOp(out_type, val).result
+    val = vector.shape_cast(out_type, val)
     if out_shape == aval_out.shape:
       return val
   out_type = ir.VectorType.get(
       aval_out.shape, _dtype_to_ir_type(aval_out.dtype)
   )
-  return vector.BroadcastOp(out_type, val).result
+  return vector.broadcast(out_type, val)
 
 
 lowering_rules[lax.broadcast_in_dim_p] = _broadcast_in_dim_lowering_rule
@@ -1567,7 +1609,7 @@ def _dot_general_lowering_rule(
         acc,
         [1]
     )
-    return vector.ShapeCastOp(out_type, red).result
+    return vector.shape_cast(out_type, red)
 
   if lhs_dims == (1,):
     transpose_lhs = False
@@ -1596,12 +1638,11 @@ def _dot_general_lowering_rule(
   out_tile = arith.ConstantOp(
       out_type, ir.DenseElementsAttr.get_splat(out_type, val)
   )
-  op = tpu.MatmulOp(
+  return tpu.matmul(
       out_type, x, y, out_tile,
       transpose_lhs=transpose_lhs, transpose_rhs=transpose_rhs,
       precision=precision_attr
   )
-  return op.result
 
 
 lowering_rules[lax.dot_general_p] = _dot_general_lowering_rule
@@ -1653,31 +1694,35 @@ def _convert_element_type_lowering_rule(
 
   if old_dtype == new_dtype:
     return x
+
+  if new_dtype.itemsize == 8:
+    raise NotImplementedError("64-bit types are not supported")
+
   if jnp.issubdtype(old_dtype, jnp.floating) and jnp.issubdtype(
       new_dtype, jnp.floating
   ):
     if old_dtype.itemsize < new_dtype.itemsize and new_dtype.itemsize == 4:
-      return arith.ExtFOp(out_type, x).result
+      return arith.extf(out_type, x)
     elif old_dtype.itemsize > new_dtype.itemsize and old_dtype.itemsize == 4:
-      return arith.TruncFOp(out_type, x).result
+      return arith.truncf(out_type, x)
   elif jnp.issubdtype(old_dtype, jnp.integer) and jnp.issubdtype(
       new_dtype, jnp.integer
   ):
     if old_dtype.itemsize < new_dtype.itemsize and new_dtype.itemsize == 4:
-      return arith.ExtSIOp(out_type, x).result
+      return arith.extsi(out_type, x)
     elif old_dtype.itemsize > new_dtype.itemsize and old_dtype.itemsize == 4:
-      return arith.TruncIOp(out_type, x).result
+      return arith.trunci(out_type, x)
     elif jnp.iinfo(old_dtype).bits == jnp.iinfo(new_dtype).bits:
       # This case triggers when casting signed to unsigned or vice versa.
       return x
   elif jnp.issubdtype(old_dtype, jnp.floating) and jnp.issubdtype(
       new_dtype, jnp.signedinteger
   ) and old_dtype.itemsize == new_dtype.itemsize == 4:
-    return arith.FPToSIOp(out_type, x).result
+    return arith.fptosi(out_type, x)
   elif jnp.issubdtype(old_dtype, jnp.integer) and jnp.issubdtype(
       new_dtype, jnp.floating
   ) and old_dtype.itemsize == new_dtype.itemsize == 4:
-    return arith.SIToFPOp(out_type, x).result
+    return arith.sitofp(out_type, x)
   elif (
       old_dtype == jnp.bool_
       and jnp.issubdtype(new_dtype, jnp.integer)
@@ -1699,7 +1744,7 @@ def _convert_element_type_lowering_rule(
       const_zero = ir.FloatAttr.get(const_type, 0)
       op = arith.CmpFOp
     else:
-      pred = _cmpi_lowering_types[lax.ne_p]
+      pred = _cmpsi_lowering_types[lax.ne_p]
       const_zero = ir.IntegerAttr.get(const_type, 0)
       op = arith.CmpIOp
     predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
@@ -1724,8 +1769,8 @@ def _reshape_lowering_rule(ctx: LoweringRuleContext, x, new_sizes, dimensions):
   if any(d is None for d in new_sizes):
     raise NotImplementedError
   if not ctx.avals_in[0].shape:
-    return vector.BroadcastOp(aval_to_ir_type(ctx.avals_out[0]), x).result
-  return vector.ShapeCastOp(aval_to_ir_type(ctx.avals_out[0]), x).result
+    return vector.broadcast(aval_to_ir_type(ctx.avals_out[0]), x)
+  return vector.shape_cast(aval_to_ir_type(ctx.avals_out[0]), x)
 
 
 lowering_rules[lax.reshape_p] = _reshape_lowering_rule
@@ -1742,25 +1787,25 @@ def _squeeze_lowering_rule(ctx: LoweringRuleContext, x, dimensions):
           f" but got: {aval_out.dtype}. Try casting the input before squeezing"
           " the scalar."
       )
-    return vector.ExtractOp(x, [], [0] * len(aval_in.shape)).result
-  return vector.ShapeCastOp(aval_to_ir_type(ctx.avals_out[0]), x).result
+    return vector.extract(x, [], [0] * len(aval_in.shape))
+  return vector.shape_cast(aval_to_ir_type(ctx.avals_out[0]), x)
 
 
 lowering_rules[lax.squeeze_p] = _squeeze_lowering_rule
 
 
 def _concatenate_lowering_rule(ctx: LoweringRuleContext, *xs, dimension):
-  return tpu.ConcatenateOp(
-      aval_to_ir_type(ctx.avals_out[0]), xs, dimension=dimension
-  ).result
+  out_type = aval_to_ir_type(ctx.avals_out[0])
+  return tpu.concatenate(out_type, xs, dimension=dimension)
 
 
 lowering_rules[lax.concatenate_p] = _concatenate_lowering_rule
 
 
-def _iota_lowering_rule(ctx: LoweringRuleContext, dtype, shape, dimension):
+def _iota_lowering_rule(ctx: LoweringRuleContext, dtype, shape, dimension,
+                        sharding):
   out_type = aval_to_ir_type(ctx.avals_out[0])
-  return tpu.IotaOp(out_type, dimension=dimension).result
+  return tpu.iota(out_type, dimension=dimension)
 
 
 lowering_rules[lax.iota_p] = _iota_lowering_rule
@@ -1770,7 +1815,7 @@ def _transpose_lowering_rule(ctx: LoweringRuleContext, x, *, permutation):
   if permutation != (1, 0):
     raise NotImplementedError
   out_type = aval_to_ir_type(ctx.avals_out[0])
-  return vector.TransposeOp(out_type, x, permutation).result
+  return vector.transpose(out_type, x, permutation)
 
 
 lowering_rules[lax.transpose_p] = _transpose_lowering_rule
@@ -1809,9 +1854,9 @@ def _add_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   (aval_out,) = ctx.avals_out
   if jnp.issubdtype(aval_out.dtype, jnp.integer):
-    return arith.AddIOp(x, y).result
+    return arith.addi(x, y)
   if jnp.issubdtype(aval_out.dtype, jnp.floating):
-    return arith.AddFOp(x, y).result
+    return arith.addf(x, y)
   raise NotImplementedError(aval_out.dtype)
 
 
@@ -1825,11 +1870,11 @@ def _max_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   (aval_out,) = ctx.avals_out
   if jnp.issubdtype(aval_out.dtype, jnp.signedinteger):
-    return arith.MaxSIOp(x, y).result
+    return arith.maxsi(x, y)
   elif jnp.issubdtype(aval_out.dtype, jnp.unsignedinteger):
-    return arith.MaxUIOp(x, y).result
+    return arith.maxui(x, y)
   elif jnp.issubdtype(aval_out.dtype, jnp.floating):
-    return arith.MaximumFOp(x, y).result
+    return arith.maximumf(x, y)
   raise NotImplementedError(aval_out.dtype)
 
 
@@ -1841,11 +1886,11 @@ def _min_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   (aval_out,) = ctx.avals_out
   if jnp.issubdtype(aval_out.dtype, jnp.signedinteger):
-    return arith.MinSIOp(x, y).result
+    return arith.minsi(x, y)
   elif jnp.issubdtype(aval_out.dtype, jnp.unsignedinteger):
-    return arith.MinUIOp(x, y).result
+    return arith.minui(x, y)
   elif jnp.issubdtype(aval_out.dtype, jnp.floating):
-    return arith.MinimumFOp(x, y).result
+    return arith.minimumf(x, y)
   raise NotImplementedError(aval_out.dtype)
 
 
@@ -1857,9 +1902,9 @@ def _sub_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   (aval_out,) = ctx.avals_out
   if jnp.issubdtype(aval_out.dtype, jnp.integer):
-    return arith.SubIOp(x, y).result
+    return arith.subi(x, y)
   if jnp.issubdtype(aval_out.dtype, jnp.floating):
-    return arith.SubFOp(x, y).result
+    return arith.subf(x, y)
   raise NotImplementedError(aval_out.dtype)
 
 
@@ -1871,9 +1916,9 @@ def _mul_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   (aval_out,) = ctx.avals_out
   if jnp.issubdtype(aval_out.dtype, jnp.integer):
-    return arith.MulIOp(x, y).result
+    return arith.muli(x, y)
   if jnp.issubdtype(aval_out.dtype, jnp.floating):
-    return arith.MulFOp(x, y).result
+    return arith.mulf(x, y)
   raise NotImplementedError(aval_out.dtype)
 
 
@@ -1885,11 +1930,11 @@ def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   (aval_out,) = ctx.avals_out
   if jnp.issubdtype(aval_out.dtype, jnp.integer):
-    return arith.DivSIOp(x, y).result
+    return arith.divsi(x, y)
   if jnp.issubdtype(aval_out.dtype, jnp.unsignedinteger):
-    return arith.DivUIOp(x, y).result
+    return arith.divui(x, y)
   elif jnp.issubdtype(aval_out.dtype, jnp.floating):
-    return arith.DivFOp(x, y).result
+    return arith.divf(x, y)
   raise NotImplementedError(aval_out.dtype)
 
 
@@ -1900,12 +1945,12 @@ skip_mlir_conversions.add(lax.div_p)
 def _rem_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   (aval_out,) = ctx.avals_out
-  if jnp.issubdtype(aval_out.dtype, jnp.integer):
-    return arith.RemSIOp(x, y).result
+  if jnp.issubdtype(aval_out.dtype, jnp.signedinteger):
+    return arith.remsi(x, y)
   if jnp.issubdtype(aval_out.dtype, jnp.unsignedinteger):
-    return arith.RemUIOp(x, y).result
-  elif jnp.issubdtype(aval_out.dtype, jnp.floating):
-    return arith.RemFOp(x, y).result
+    return arith.remui(x, y)
+  if jnp.issubdtype(aval_out.dtype, jnp.floating):
+    return arith.remf(x, y)
   raise NotImplementedError(aval_out.dtype)
 
 
@@ -1916,9 +1961,9 @@ skip_mlir_conversions.add(lax.rem_p)
 def _abs_lowering_rule(ctx: LoweringRuleContext, x):
   (aval_out,) = ctx.avals_out
   if jnp.issubdtype(aval_out.dtype, jnp.integer):
-    return math.AbsIOp(x).result
+    return math.absi(x)
   if jnp.issubdtype(aval_out.dtype, jnp.floating):
-    return math.AbsFOp(x).result
+    return math.absf(x)
   raise NotImplementedError(aval_out.dtype)
 
 
@@ -1948,21 +1993,21 @@ lowering_rules[lax.sign_p] = _sign_lowering_rule
 
 
 def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):
-  return math.RsqrtOp(x).result
+  return math.rsqrt(x)
 
 
 lowering_rules[lax.rsqrt_p] = _rsqrt_lowering_rule
 
 
 def _sqrt_lowering_rule(ctx: LoweringRuleContext, x):
-  return math.SqrtOp(x).result
+  return math.sqrt(x)
 
 
 lowering_rules[lax.sqrt_p] = _sqrt_lowering_rule
 
 
 def _exp_lowering_rule(ctx: LoweringRuleContext, x):
-  return math.ExpOp(x).result
+  return math.exp(x)
 
 
 lowering_rules[lax.exp_p] = _exp_lowering_rule
@@ -1970,9 +2015,9 @@ lowering_rules[lax.exp_p] = _exp_lowering_rule
 
 def _pow_lowering_rule(ctx: LoweringRuleContext, x, y):
   if not isinstance(x, ir.Value) and x == 2.:
-    return math.Exp2Op(y).result
+    return math.exp2(y)
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
-  return math.PowFOp(x, y).result
+  return math.powf(x, y)
 
 
 lowering_rules[lax.pow_p] = _pow_lowering_rule
@@ -1999,58 +2044,58 @@ skip_mlir_conversions.add(lax.exp2_p)
 
 
 def _logistic_lowering_rule(ctx: LoweringRuleContext, x):
-  neg_x = arith.NegFOp(x).result
-  exp_neg_x = math.ExpOp(neg_x).result
+  neg_x = arith.negf(x)
+  exp_neg_x = math.exp(neg_x)
   aval_out = ctx.avals_out[0]
   out_type = aval_to_ir_type(aval_out)
   if aval_out.shape == ():
     one = ir_constant(1.0, mlir_type=out_type)
   else:
     one = vector.BroadcastOp(out_type, ir_constant(1.0))
-  denom = arith.AddFOp(one, exp_neg_x).result
-  return arith.DivFOp(one, denom).result
+  denom = arith.addf(one, exp_neg_x)
+  return arith.divf(one, denom)
 
 
 lowering_rules[lax.logistic_p] = _logistic_lowering_rule
 
 
 def _sin_lowering_rule(ctx: LoweringRuleContext, x):
-  return math.SinOp(x).result
+  return math.sin(x)
 
 
 lowering_rules[lax.sin_p] = _sin_lowering_rule
 
 
 def _cos_lowering_rule(ctx: LoweringRuleContext, x):
-  return math.CosOp(x).result
+  return math.cos(x)
 
 
 lowering_rules[lax.cos_p] = _cos_lowering_rule
 
 
 def _tan_lowering_rule(ctx: LoweringRuleContext, x):
-  return math.TanOp(x).result
+  return math.tan(x)
 
 
 lowering_rules[lax.tan_p] = _tan_lowering_rule
 
 
 def _tanh_lowering_rule(ctx: LoweringRuleContext, x):
-  return math.TanhOp(x).result
+  return math.tanh(x)
 
 
 lowering_rules[lax.tanh_p] = _tanh_lowering_rule
 
 
 def _log_lowering_rule(ctx: LoweringRuleContext, x):
-  return math.LogOp(x).result
+  return math.log(x)
 
 
 lowering_rules[lax.log_p] = _log_lowering_rule
 
 
 def _log1p_lowering_rule(ctx: LoweringRuleContext, x):
-  return math.Log1pOp(x).result
+  return math.log1p(x)
 
 
 lowering_rules[lax.log1p_p] = _log1p_lowering_rule
@@ -2058,9 +2103,9 @@ lowering_rules[lax.log1p_p] = _log1p_lowering_rule
 
 def _round_lowering_rule(ctx: LoweringRuleContext, x, *, rounding_method):
   if rounding_method == 0:
-    return math.RoundOp(x).result
+    return math.round(x)
   elif rounding_method == 1:
-    return math.RoundEvenOp(x).result
+    return math.roundeven(x)
   else:
     raise NotImplementedError(f"Unsupported rounding method: {rounding_method}")
 
@@ -2069,68 +2114,132 @@ lowering_rules[lax.round_p] = _round_lowering_rule
 
 
 def _ceil_lowering_rule(ctx: LoweringRuleContext, x):
-  return math.CeilOp(x).result
+  return math.ceil(x)
 
 
 lowering_rules[lax.ceil_p] = _ceil_lowering_rule
 
 
 def _floor_lowering_rule(ctx: LoweringRuleContext, x):
-  return math.FloorOp(x).result
+  return math.floor(x)
 
 
 lowering_rules[lax.floor_p] = _floor_lowering_rule
 
 
-# See https://mlir.llvm.org/docs/Dialects/ArithOps/#arithcmpi-arithcmpiop for
-# the mapping from comparison type to integer predicates for int comparisons.
-_cmpi_lowering_types = {
-    lax.eq_p: 0,
-    lax.ne_p: 1,
-    lax.lt_p: 2,
-    lax.le_p: 3,
-    lax.gt_p: 4,
-    lax.ge_p: 5,
+def _clz_lowering_rule(ctx: LoweringRuleContext, x):
+  return math.ctlz(x)
+
+lowering_rules[lax.clz_p] = _clz_lowering_rule
+
+
+def _population_count_lowering_rule(ctx: LoweringRuleContext, x):
+  aval_out = ctx.avals_out[0]
+  if aval_out.shape == ():
+    raise ValueError("Population count is not supported on scalars")
+  return math.ctpop(x)
+
+lowering_rules[lax.population_count_p] = _population_count_lowering_rule
+
+
+# Mapping for signed integer comparisons.
+_cmpsi_lowering_types = {
+    lax.eq_p: arith.CmpIPredicate.eq,
+    lax.ne_p: arith.CmpIPredicate.ne,
+    lax.lt_p: arith.CmpIPredicate.slt,
+    lax.le_p: arith.CmpIPredicate.sle,
+    lax.gt_p: arith.CmpIPredicate.sgt,
+    lax.ge_p: arith.CmpIPredicate.sge,
 }
 
-# See https://mlir.llvm.org/docs/Dialects/ArithOps/#arithcmpf-arithcmpfop for
-# the mapping from comparison type to integer predicate for float comparisons.
+# Mapping for unsigned integer comparisons.
+_cmpui_lowering_types = {
+    lax.eq_p: arith.CmpIPredicate.eq,
+    lax.ne_p: arith.CmpIPredicate.ne,
+    lax.lt_p: arith.CmpIPredicate.ult,
+    lax.le_p: arith.CmpIPredicate.ule,
+    lax.gt_p: arith.CmpIPredicate.ugt,
+    lax.ge_p: arith.CmpIPredicate.uge,
+}
+
+# Mapping for floating point comparisons.
 _cmpf_lowering_types = {
-    lax.eq_p: 1,
-    lax.ne_p: 6,
-    lax.lt_p: 4,
-    lax.le_p: 5,
-    lax.gt_p: 2,
-    lax.ge_p: 3,
+    lax.eq_p: arith.CmpFPredicate.OEQ,
+    lax.ne_p: arith.CmpFPredicate.ONE,
+    lax.lt_p: arith.CmpFPredicate.OLT,
+    lax.le_p: arith.CmpFPredicate.OLE,
+    lax.gt_p: arith.CmpFPredicate.OGT,
+    lax.ge_p: arith.CmpFPredicate.OGE,
 }
 
 
 def _cmp_lowering_rule(prim, ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   x_aval, y_aval = ctx.avals_in
-  dtypes = x_aval.dtype, y_aval.dtype
-  if all(
-      jnp.issubdtype(dtype, jnp.integer) | jnp.issubdtype(dtype, jnp.bool_)
-      for dtype in dtypes
-  ):
+  if x_aval.dtype != y_aval.dtype:
+    raise ValueError(
+        f"Mixed dtype operands in cmp: {x_aval.dtype}, {y_aval.dtype}"
+    )
+  dtype = x_aval.dtype
 
-    # Handle bool comparisons by casting to int32.
-    bool_cast_to = _dtype_to_ir_type(jnp.dtype("int32"))
-    true_ = ir_constant(1, mlir_type=bool_cast_to)
-    false_ = ir_constant(0, mlir_type=bool_cast_to)
-    if jnp.issubdtype(dtypes[0], jnp.bool_):
-      x = arith.SelectOp(x, true_, false_)
-    if jnp.issubdtype(dtypes[1], jnp.bool_):
-      y = arith.SelectOp(y, true_, false_)
+  # For boolean comparisons, we handle them in two different ways. For `ne`,
+  # we directly use the xor operation since they are equivalent. For all
+  # other comparisons, we convert the boolean values to `int32` and use select
+  # operations to perform the comparison.
+  #
+  # The relationship between comparison operations on booleans and boolean
+  # algebra is as follows:
+  #
+  # eq(a, b) = !(a ^ b)
+  # ne(a, b) = a ^ b
+  # lt(a, b) = !a && b
+  # le(a, b) = !a || b
+  # gt(a, b) = a && !b
+  # ge(a, b) = a || !b
+  #
+  # However, except for `ne`, all other operations require negation, which is
+  # currently not supported. At present, even if negation were supported,
+  # it would still need to be implemented using `select` operations, making
+  # it equivalent to our current approach. For more details on negation support,
+  # see https://github.com/jax-ml/jax/issues/24243.
+  if jnp.issubdtype(dtype, jnp.bool_):
+    if prim == lax.ne_p:
+      return arith.xori(x, y)
 
-    pred = _cmpi_lowering_types[prim]
+    i32 = ir.IntegerType.get_signless(32)
+    vtype = ir.VectorType.get(x_aval.shape, i32)
+
+    # Convert `x` and `y` from `bool` to `int32` for comparison, with 2
+    # for true and 0 for false. For example, comparing `x > y` is equivalent
+    # to `(x ? 2 : 0) > (y ? 2 : 0)`.
+    #
+    # Note that we cannot use 1 for true because the select operation will be
+    # misteriously eliminated.
+    two = arith.constant(i32, 2)
+    zero = arith.constant(i32, 0)
+
+    out_aval, = ctx.avals_out
+    if out_aval.shape != ():
+      # broadcast to vectors if we are comparing vectors
+      two = vector.broadcast(vtype, two)
+      zero = vector.broadcast(vtype, zero)
+
+    x = arith.select(x, two, zero)
+    y = arith.select(y, two, zero)
+    dtype = jnp.int32
+
+  if jnp.issubdtype(dtype, jnp.integer):
+    is_uint = jnp.issubdtype(dtype, jnp.unsignedinteger)
+    pred = (_cmpui_lowering_types if is_uint else _cmpsi_lowering_types)[prim]
     predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
-    return arith.CmpIOp(predicate, x, y).result
-  elif all(jnp.issubdtype(dtype, jnp.floating) for dtype in dtypes):
+    return arith.cmpi(predicate, x, y)
+
+  if jnp.issubdtype(dtype, jnp.floating):
     pred = _cmpf_lowering_types[prim]
     predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
-    return arith.CmpFOp(predicate, x, y).result
-  raise NotImplementedError("Mixed dtype operands in cmp")
+    return arith.cmpf(predicate, x, y)
+
+  raise NotImplementedError(f"Unsupported dtype in cmp: {dtype}")
 
 
 lowering_rules[lax.eq_p] = functools.partial(_cmp_lowering_rule, lax.eq_p)
@@ -2143,7 +2252,7 @@ lowering_rules[lax.ge_p] = functools.partial(_cmp_lowering_rule, lax.ge_p)
 
 def _and_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
-  return arith.AndIOp(x, y).result
+  return arith.andi(x, y)
 
 
 lowering_rules[lax.and_p] = _and_lowering_rule
@@ -2152,7 +2261,7 @@ skip_mlir_conversions.add(lax.and_p)
 
 def _or_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
-  return arith.OrIOp(x, y).result
+  return arith.ori(x, y)
 
 
 lowering_rules[lax.or_p] = _or_lowering_rule
@@ -2178,7 +2287,7 @@ def _not_lowering_rule(ctx: LoweringRuleContext, x):
     minus_one = arith.ConstantOp(
         out_type, ir.DenseElementsAttr.get_splat(out_type, scalar_minus_one)
     )
-  return arith.XOrIOp(x, minus_one).result
+  return arith.xori(x, minus_one)
 
 
 lowering_rules[lax.not_p] = _not_lowering_rule
@@ -2199,7 +2308,7 @@ def _select_n_lowering_rule(ctx: LoweringRuleContext, pred, x, *args):
     return x
   # Assume x and y, which we check above.
   y, = args
-  return arith.SelectOp(pred, y, x).result
+  return arith.select(pred, y, x)
 
 
 lowering_rules[lax.select_n_p] = _select_n_lowering_rule
@@ -2438,9 +2547,9 @@ lowering_rules[lax.while_p] = _while_lowering_rule
 def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches):
   index, *args = args
   out_types = map(aval_to_ir_type, ctx.avals_out)
-  pred = arith.CmpIOp(
+  pred = arith.cmpi(
       arith.CmpIPredicate.ne, index, ir_constant(0, index.type)
-  ).result
+  )
   if_op = scf.IfOp(pred, out_types, hasElse=True)
   lowering_context = ctx.lowering_context.replace(
       block_shapes=ctx.block_shapes[1:],
@@ -2451,7 +2560,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches):
     if len(branches) > 2:
       out = _cond_lowering_rule(
           ctx,
-          arith.SubIOp(index, ir_constant(1, index.type)).result,
+          arith.subi(index, ir_constant(1, index.type)),
           *args,
           branches=branches[1:],
       )
@@ -2537,7 +2646,7 @@ lowering_rules[primitives.num_programs_p] = _num_programs_lowering_rule
 
 def _repeat_lowering_rule(ctx: LoweringRuleContext, x, *, repeats, axis):
   (out_aval,) = ctx.avals_out
-  return tpu.RepeatOp(aval_to_ir_type(out_aval), x, axis, repeats).result
+  return tpu.repeat(aval_to_ir_type(out_aval), x, axis, repeats)
 
 
 lowering_rules[tpu_primitives.repeat_p] = _repeat_lowering_rule
@@ -2547,14 +2656,14 @@ def _roll_lowering_rule(
     ctx: LoweringRuleContext, x, shift, *, axis, stride, stride_axis
 ):
   (out_aval,) = ctx.avals_out
-  return tpu.DynamicRotateOp(
+  return tpu.dynamic_rotate(
       aval_to_ir_type(out_aval),
       x,
       shift,
       axis,
       stride=stride,
       stride_dimension=stride_axis,
-  ).result
+  )
 
 
 lowering_rules[tpu_primitives.roll_p] = _roll_lowering_rule
@@ -2565,13 +2674,13 @@ def _slice_lowering_rule(
 ):
   """Lowers a slice to vector dialect."""
   (aval_out,) = ctx.avals_out
+  out_type = aval_to_ir_type(aval_out)
   if strides is None:
     strides = [1] * len(start_indices)
   sizes = np.array(limit_indices) - np.array(start_indices)
-  op = vector.ExtractStridedSliceOp(
-      aval_to_ir_type(aval_out), x, start_indices, sizes, strides
+  return vector.extract_strided_slice(
+      out_type, x, start_indices, sizes, strides
   )
-  return op.result
 
 
 lowering_rules[lax.slice_p] = _slice_lowering_rule
@@ -2579,7 +2688,7 @@ lowering_rules[lax.slice_p] = _slice_lowering_rule
 
 def _xor_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
-  return arith.XOrIOp(x, y).result
+  return arith.xori(x, y)
 
 
 lowering_rules[lax.xor_p] = _xor_lowering_rule
@@ -2588,7 +2697,7 @@ skip_mlir_conversions.add(lax.xor_p)
 
 def _shift_left_lowering_rule(ctx: LoweringRuleContext, x, d):
   x, d = _bcast(x, d, *ctx.avals_in, *ctx.avals_out)
-  return arith.ShLIOp(x, d).result
+  return arith.shli(x, d)
 
 
 lowering_rules[lax.shift_left_p] = _shift_left_lowering_rule
@@ -2597,7 +2706,7 @@ skip_mlir_conversions.add(lax.shift_left_p)
 
 def _shift_right_arithmetic_lowering_rule(ctx: LoweringRuleContext, x, d):
   x, d = _bcast(x, d, *ctx.avals_in, *ctx.avals_out)
-  return arith.ShRSIOp(x, d).result
+  return arith.shrsi(x, d)
 
 
 lowering_rules[lax.shift_right_arithmetic_p] = _shift_right_arithmetic_lowering_rule
@@ -2606,7 +2715,7 @@ skip_mlir_conversions.add(lax.shift_right_arithmetic_p)
 
 def _shift_right_logical_lowering_rules(ctx: LoweringRuleContext, x, d):
   x, d = _bcast(x, d, *ctx.avals_in, *ctx.avals_out)
-  return arith.ShRUIOp(x, d).result
+  return arith.shrui(x, d)
 
 
 lowering_rules[lax.shift_right_logical_p] = _shift_right_logical_lowering_rules
@@ -2625,7 +2734,7 @@ lowering_rules[lax.erf_inv_p] = _erf_inv_lowering_rule
 def _bitcast_lowering_rule(ctx: LoweringRuleContext, x, *, ty):
   del ty
   (out_aval,) = ctx.avals_out
-  return tpu.BitcastOp(aval_to_ir_type(out_aval), x).result
+  return tpu.bitcast(aval_to_ir_type(out_aval), x)
 
 lowering_rules[tpu_primitives.bitcast_p] = _bitcast_lowering_rule
 
@@ -2637,7 +2746,7 @@ def _bitcast_convert_type_lowering_rule(
   new_bitwidth = pallas_utils.dtype_bitwidth(new_dtype)
   if old_bitwidth != new_bitwidth:
     raise NotImplementedError("Changing bitwidths not supported.")
-  return tpu.BitcastOp(aval_to_ir_type(out_aval), x).result
+  return tpu.bitcast(aval_to_ir_type(out_aval), x)
 lowering_rules[lax.bitcast_convert_type_p] = _bitcast_convert_type_lowering_rule
 
 def _alloc_value(aval: jax_core.AbstractValue) -> ir.Value:
@@ -2646,16 +2755,16 @@ def _alloc_value(aval: jax_core.AbstractValue) -> ir.Value:
     if jnp.issubdtype(aval.dtype, tpu_core.semaphore_dtype):
       assert aval.memory_space == TPUMemorySpace.SEMAPHORE
       memref_type = aval_to_ir_type(aval, memory_space=TPUMemorySpace.SEMAPHORE)
-      return tpu.AllocaSemaphoreOp(memref_type).result
+      return tpu.sem_alloc(memref_type)
     else:
       out_type = ir.MemRefType.get(
           aval.shape,
           _dtype_to_ir_type(aval.dtype, is_kernel_boundary=True),
           memory_space=memspace)
-      return memref.AllocaOp(out_type, [], []).result
+      return memref.alloca(out_type, [], [])
   elif isinstance(aval, tpu_core.AbstractSemaphore):
     memref_type = aval_to_ir_type(aval, memory_space=TPUMemorySpace.SEMAPHORE)
-    return tpu.AllocaSemaphoreOp(memref_type).result
+    return tpu.sem_alloc(memref_type)
   raise NotImplementedError(f"Cannot allocate {type(aval)}.")
 
 
@@ -2709,7 +2818,7 @@ def _semaphore_read_lowering_rule(
   sem_aval, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
   sem, transforms = tree_util.tree_unflatten(args_tree, args)
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, transforms)
-  return tpu.SemaphoreReadOp(sem).result
+  return tpu.sem_read(sem)
 
 
 lowering_rules[tpu_primitives.semaphore_read_p] = _semaphore_read_lowering_rule
@@ -2727,9 +2836,8 @@ def _semaphore_signal_lowering_rule(
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, transforms)
   if device_id is not None:
     device_id = _device_id_to_logical(ctx, device_id, device_id_type)
-  return tpu.SemaphoreSignalOp(
-      sem, value, device_id=device_id, core_id=core_index
-  ).results
+  tpu.sem_signal(sem, value, device_id=device_id, core_id=core_index)
+  return []
 
 
 lowering_rules[tpu_primitives.semaphore_signal_p] = (
@@ -2740,7 +2848,8 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   sem_aval, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
   sem, transforms, value = tree_util.tree_unflatten(args_tree, args)
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, transforms)
-  return tpu.SemaphoreWaitOp(sem, value).results
+  tpu.sem_wait(sem, value)
+  return []
 lowering_rules[tpu_primitives.semaphore_wait_p] = _semaphore_wait_lowering_rule
 
 def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree,
@@ -2776,8 +2885,9 @@ def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree,
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
   if device_id is not None:
     device_id = _device_id_to_logical(ctx, device_id, device_id_type)
-  return tpu.EnqueueDMAOp(src_ref, dst_ref, sem, source_semaphore=src_sem,
-                          device_id=device_id).results
+  tpu.enqueue_dma(src_ref, dst_ref, sem, source_semaphore=src_sem,
+                  device_id=device_id)
+  return []
 lowering_rules[tpu_primitives.dma_start_p] = _dma_start_lowering_rule
 
 
@@ -2792,11 +2902,12 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
   ref_block_shape = block_shapes[2]
   ref, _ = _transform_ref(ref, ref_aval.dtype, ref_block_shape, transforms)
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
-  return tpu.WaitDMAOp(sem, ref).results
+  tpu.wait_dma(sem, ref)
+  return []
 lowering_rules[tpu_primitives.dma_wait_p] = _dma_wait_lowering_rule
 
 def _device_id_lowering_rule(ctx: LoweringRuleContext):
-  return tpu.DeviceIdOp().result
+  return tpu.device_id()
 lowering_rules[tpu_primitives.device_id_p] = _device_id_lowering_rule
 
 def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
@@ -2805,7 +2916,7 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
     # We are querying a named axis corresponding to a grid dimension.
     return _program_id_lowering_rule(ctx, axis=grid_names.index(axis_name))
   # We are querying a named axis corresponding to a mesh dimension.
-  device_id = tpu.DeviceIdOp().result
+  device_id = tpu.device_id()
   mesh_context = ctx.lowering_context.mesh_context
   if mesh_context is None:
     raise ValueError("Mesh context is not set.")
@@ -2821,12 +2932,13 @@ lowering_rules[lax.axis_index_p] = _axis_index_rule
 
 def _get_barrier_semaphore_rule(ctx: LoweringRuleContext):
   memref_type = aval_to_ir_type(ctx.avals_out[0])
-  return tpu.GetBarrierSemaphoreOp(memref_type).result
+  return tpu.sem_barrier(memref_type)
 lowering_rules[tpu_primitives.get_barrier_semaphore_p] = _get_barrier_semaphore_rule
 
 
 def _delay_rule(ctx: LoweringRuleContext, nanos: int):
-  return tpu.DelayOp(nanos).results
+  tpu.delay(nanos)
+  return []
 
 
 lowering_rules[tpu_primitives.delay_p] = _delay_rule
@@ -2869,14 +2981,16 @@ def _prng_seed_lowering_rule(ctx: LoweringRuleContext, *seeds):
   # In the KeyScalarBundle case we unpack the bundle and set the seed with
   # the list of scalars.
   if len(seeds) == 1 and isinstance(seeds[0], KeyScalarBundle):
-    return tpu.PRNGSeed32Op(seeds[0].scalars).results
+    tpu.prng_set_seed_32(seeds[0].scalars)
+    return []
   # For integer seeds, we can set the seed directly as PRNGSeed32Op natively
   # takes in a list of integers as input.
   all_integers = all(isinstance(seed.type, ir.IntegerType) for seed in seeds)
   if not all_integers:
     seed_types = [seed.type for seed in seeds]
     raise ValueError(f"All seed data must be scalar integers. Got {seed_types}")
-  return tpu.PRNGSeed32Op(seeds).results
+  tpu.prng_set_seed_32(seeds)
+  return []
 lowering_rules[tpu_primitives.prng_seed_p] = _prng_seed_lowering_rule
 
 
@@ -2886,13 +3000,12 @@ def _prng_random_bits_lowering_rule(ctx: LoweringRuleContext, *, shape):
     raise NotImplementedError("random_bits only supports rank>=2 outputs.")
   out_aval = ctx.avals_out[0]
   out_type = aval_to_ir_type(out_aval)
-  return tpu.PRNGRandomBitsOp(out_type).result
+  return tpu.prng_random_bits(out_type)
 lowering_rules[tpu_primitives.prng_random_bits_p] = _prng_random_bits_lowering_rule
 
 
 def random_seed_lowering(ctx, seeds, *, impl):
-  seed_lowering = lower_fun(
-      impl.seed, multiple_results=False)
+  seed_lowering = lower_fun(impl.seed, multiple_results=False)
   return seed_lowering(ctx, seeds)
 lowering_rules[prng.random_seed_p] = random_seed_lowering
 
@@ -2901,8 +3014,13 @@ def random_bits_lowering(ctx, keys, *, bit_width, shape):
   assert bit_width == 32, "Only 32-bit PRNG supported."
   aval, = ctx.avals_in
   impl = aval.dtype._impl
-  bits_lowering = lower_fun(
-      impl.random_bits, multiple_results=False)
+  _proxy_fn = impl.random_bits
+  if not pl_random.is_pallas_impl(impl):
+    def new_lowering(key, bit_width, shape):
+      key = jax.random.key_data(key).astype(jnp.uint32)
+      return impl.random_bits(key, bit_width, shape)
+    _proxy_fn = new_lowering
+  bits_lowering = lower_fun(_proxy_fn, multiple_results=False)
   return bits_lowering(ctx, keys, bit_width=bit_width, shape=shape)
 lowering_rules[prng.random_bits_p] = random_bits_lowering
 
@@ -2910,14 +3028,16 @@ lowering_rules[prng.random_bits_p] = random_bits_lowering
 def random_fold_in_lowering(ctx, keys, msgs):
   keys_aval, _ = ctx.avals_in
   impl = keys_aval.dtype._impl
-  fold_in_lowering = lower_fun(
-      impl.fold_in, multiple_results=False)
+  fold_in_lowering = lower_fun(impl.fold_in, multiple_results=False)
   return fold_in_lowering(ctx, keys, msgs)
 lowering_rules[prng.random_fold_in_p] = random_fold_in_lowering
 
 
 def random_unwrap_lowering(ctx, key):
-  del ctx
+  keys_aval = ctx.avals_in[0]
+  impl = keys_aval.dtype._impl
+  if not pl_random.is_pallas_impl(impl):
+    return key
   assert isinstance(key, KeyScalarBundle)
   # Convert to a vector.
   if tuple(key.key_shape) != (1, 1):
@@ -2928,13 +3048,15 @@ def random_unwrap_lowering(ctx, key):
   out_type = ir.VectorType.get(
       key.key_shape, _dtype_to_ir_type(jnp.dtype('int32'))
   )
-  val = vector.BroadcastOp(out_type, scalar).result
+  val = vector.broadcast(out_type, scalar)
   return val
 lowering_rules[prng.random_unwrap_p] = random_unwrap_lowering
 
 
 def random_wrap_lowering(ctx, key_data, *, impl):
-  del ctx, impl
+  del ctx
+  if not pl_random.is_pallas_impl(impl):
+    return key_data
   if isinstance(key_data.type, ir.VectorType):
     # If the key data lives in vregs, need to unpack it to sregs.
     key_data_list = []
@@ -2956,54 +3078,75 @@ def random_wrap_lowering(ctx, key_data, *, impl):
 
 lowering_rules[prng.random_wrap_p] = random_wrap_lowering
 
+def _checkify_lowering_rule(
+    ctx: LoweringRuleContext, *err_args, err_tree, debug):
+  if not tpu_core.runtime_assert_enabled():
+    if debug:
+      return []
+    else:
+      raise LoweringException("Non-debug check must be functionalized. "
+                              "Enable runtime asserts with "
+                              "--jax_pallas_enable_runtime_assert "
+                              "or functionalize with checkify.check.")
 
-# Lowering for shard_map
+  assert ctx.lowering_context.ir_context.allow_unregistered_dialects, (
+    "allow_unregistered_dialects must be set to True for "
+    "runtime assert check.")
+  error = jax.tree.unflatten(err_tree, err_args)
+  assert len(error._pred) == 1
+  assert len(error._metadata) == 1
+  assert len(error._payload) == 1
+  pred = list(error._pred.items())[0][1]
+  metadata = list(error._metadata.items())[0]
+  payload = list(error._payload.items())[0][1]
+  exception_tree = metadata[1]
+  exception = jax.tree.unflatten(exception_tree, payload)
+  assert isinstance(exception, checkify.FailedCheckError)
 
-# Technically this is not a lowering rule, but a discharge rule. When we use
-# a special pallas mesh for a shard_map inside of a run_state, we turn it into
-# a pallas call. The pallas_call has named grid axes corresponding to the names
-# in the pallas mesh. It also sets up input/output aliasing automatically.
+  # check_p has an inverted predicate compared to assert,
+  # so we need to compute not(pred) here.
+  out_scalar_type = _dtype_to_ir_type(jnp.dtype('bool'))
+  minus_one = ir_constant(-1, out_scalar_type)
+  not_pred = arith.xori(pred, minus_one)
+  attrs = {"msg": ir.StringAttr.get(exception.fmt_string)}
+  ir.Operation.create("cf.assert",
+                      operands=(not_pred,),
+                      attributes=attrs)
+  return []
+lowering_rules[checkify.check_p] = _checkify_lowering_rule
 
-def _shard_map_discharge_rule(
-    in_avals,
-    out_avals,
-    *args,
-    mesh,
-    auto,
-    in_names,
-    out_names,
-    jaxpr,
-    check_rep,
-    rewrite,
-):
-  del out_avals, auto, in_names, out_names, check_rep, rewrite
-  if not isinstance(mesh, pallas_core.PallasMesh):
-    raise NotImplementedError("Mesh must be a PallasMesh")
-  if len(mesh.shape) > 1:
-    raise NotImplementedError("Mesh must be 1D")
-  core_axis_name, num_cores = list(mesh.shape.items())[0]
-  def body(*args):
-    in_refs = args[:len(in_avals)]
-    jax_core.eval_jaxpr(jaxpr, (), *in_refs)
-  assert len(jaxpr.outvars) == 0
-  out = pallas_call.pallas_call(
-      body,
-      out_shape=in_avals,
-      in_specs=[pallas_core.BlockSpec(memory_space=pallas_core.MemorySpace.ANY)]
-      * len(in_avals),
-      out_specs=[pallas_core.BlockSpec(
-          memory_space=pallas_core.MemorySpace.ANY)]
-      * len(in_avals),
-      input_output_aliases={i: i for i in range(len(in_avals))},
-      grid=((core_axis_name, num_cores),),
-      compiler_params=dict(
-          mosaic=dict(dimension_semantics=("parallel",)),
-      ),
-  )(*args)
-  return out, ()
+def _threefry2x32_lowering(ctx, k1, k2, m1, m2):
+  def _lower_fun(k1, k2, m1, m2):
+    with jax.named_scope("threefry2x32"):
+      res = prng._threefry2x32_lowering(k1, k2, m1, m2, use_rolled_loops=False)
+    return res
+
+  threefry_lowering = lower_fun(_lower_fun, multiple_results=True)
+  return threefry_lowering(ctx, k1, k2, m1, m2)
 
 
-from jax.experimental import shard_map
-state_discharge.register_discharge_rule(shard_map.shard_map_p)(
-    _shard_map_discharge_rule
-)
+lowering_rules[prng.threefry2x32_p] = _threefry2x32_lowering
+
+
+def _iota_2x32_shape_lowering(ctx, *, shape):
+  total_elements = np.prod(shape)
+  if total_elements > np.iinfo(jnp.int32).max:
+    raise NotImplementedError(f"Iota with >{np.iinfo(jnp.int32).max} items.")
+
+  def _lower_fun(shape):
+    iota_data = jnp.zeros(shape, dtype=jnp.int32)
+    multiplier = 1
+    for dim in range(len(shape)-1, -1, -1):
+      counts_lo = lax.broadcasted_iota(
+          dtype=jnp.int32, shape=shape, dimension=dim
+      )
+      iota_data += counts_lo * multiplier
+      multiplier *= shape[dim]
+    counts_hi = jnp.zeros(shape, dtype=jnp.int32)
+    return counts_hi, iota_data
+
+  iota_lowering = lower_fun(_lower_fun, multiple_results=True)
+  return iota_lowering(ctx, shape=shape)
+
+
+lowering_rules[prng.iota_2x32_shape_p] = _iota_2x32_shape_lowering

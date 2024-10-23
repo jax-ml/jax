@@ -332,7 +332,7 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuGetDeviceProperties cudaGetDeviceProperties
 #define gpuLaunchCooperativeKernel cudaLaunchCooperativeKernel
 
-#define JAX_GPU_64_BIT 1
+#define JAX_GPU_HAVE_64_BIT 1
 
 #define GPU_R_32F CUDA_R_32F
 #define GPU_R_64F CUDA_R_64F
@@ -345,6 +345,8 @@ typedef cusolverDnParams_t gpusolverDnParams_t;
 #define gpusolverDnCreateParams cusolverDnCreateParams
 #define gpusolverDnDestroyParams cusolverDnDestroyParams
 
+#define gpusolverDnXsyevd_bufferSize cusolverDnXsyevd_bufferSize
+#define gpusolverDnXsyevd cusolverDnXsyevd
 #define gpusolverDnXgesvd_bufferSize cusolverDnXgesvd_bufferSize
 #define gpusolverDnXgesvd cusolverDnXgesvd
 
@@ -368,7 +370,7 @@ constexpr uint32_t kNumThreadsPerWarp = 32;
 #define JAX_GPU_PREFIX "hip"
 
 #define JAX_GPU_HAVE_SPARSE 1
-#define JAX_GPU_64_BIT 0
+#define JAX_GPU_HAVE_64_BIT 0
 #define JAX_GPU_HAVE_FP8 0
 
 typedef hipFloatComplex gpuComplex;

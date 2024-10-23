@@ -696,7 +696,7 @@ class PureCallbackTest(jtu.JaxTestCase):
     @jax.jit
     @jax.vmap
     def g(x):
-      return jax.pure_callback(cb2, x, x, vmap_method="broadcast")
+      return jax.pure_callback(cb2, x, x, vmap_method="expand_dims")
 
     np.testing.assert_allclose(g(jnp.arange(4.)), np.sin(np.arange(4.)))
 
@@ -704,7 +704,7 @@ class PureCallbackTest(jtu.JaxTestCase):
     @functools.partial(jax.vmap, in_axes=(0, None))
     def h(x, y):
       return jax.pure_callback(lambda x, y: np.sin(x) + y, x, x, y,
-                               vmap_method="broadcast")
+                               vmap_method="expand_dims")
     out = h(jnp.arange(4.), 4.)
     np.testing.assert_allclose(out, np.sin(np.arange(4.)) + 4.)
 
@@ -725,7 +725,7 @@ class PureCallbackTest(jtu.JaxTestCase):
     @jax.jit
     @jax.vmap
     def f(x):
-      return jax.pure_callback(cb, x, x, vmap_method="broadcast")
+      return jax.pure_callback(cb, x, x, vmap_method="expand_dims")
 
     with self.assertRaises(RuntimeError):
       f(jnp.arange(4.))
@@ -1007,18 +1007,18 @@ class PureCallbackTest(jtu.JaxTestCase):
     with self.assertWarnsRegex(DeprecationWarning, "The vectorized argument"):
       f(jnp.arange(4.0), vectorized=False)
 
-  def test_vmap_method_broadcast(self):
+  def test_vmap_method_expand_dims(self):
     def callback(x, y):
       self.assertTupleEqual(x.shape, (4,))
       self.assertTupleEqual(y.shape, (1,))
       return x + y
 
     def f(x, y):
-      return jax.pure_callback(callback, x, x, y, vmap_method="broadcast")
+      return jax.pure_callback(callback, x, x, y, vmap_method="expand_dims")
 
     jax.vmap(f, in_axes=(0, None))(jnp.arange(4.0), 1.0)  # doesn't error
 
-  def test_vmap_method_broadcast_fullrank(self):
+  def test_vmap_method_broadcast_all(self):
     def callback(x, y):
       self.assertTupleEqual(x.shape, (4,))
       self.assertTupleEqual(y.shape, (4,))
@@ -1026,7 +1026,7 @@ class PureCallbackTest(jtu.JaxTestCase):
 
     def f(x, y):
       return jax.pure_callback(callback, x, x, y,
-                               vmap_method="broadcast_fullrank")
+                               vmap_method="broadcast_all")
 
     jax.vmap(f, in_axes=(0, None))(jnp.arange(4.0), 1.0)  # doesn't error
 

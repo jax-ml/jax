@@ -37,8 +37,10 @@ jobs:
       - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd  # v3.0.1
 
   build:
-    name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ${{ matrix.os }}, x64=${{ matrix.enable-x64}})"
-    runs-on: ${{ matrix.os }}
+    name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ubuntu-20.04, x64=${{ matrix.enable-x64}})"
+    runs-on: linux-x86-n2-32
+    container:
+      image: index.docker.io/library/ubuntu@sha256:6d8d9799fe6ab3221965efac00b4c34a2bcc102c086a58dff9e19a08b913c7ef # ratchet:ubuntu:20.04
     timeout-minutes: 60
     strategy:
       matrix:
@@ -46,18 +48,20 @@ jobs:
         include:
           - name-prefix: "with 3.10"
             python-version: "3.10"
-            os: ubuntu-20.04-16core
             enable-x64: 1
             prng-upgrade: 1
             num_generated_cases: 1
-          - name-prefix: "with 3.12"
-            python-version: "3.12"
-            os: ubuntu-20.04-16core
+          - name-prefix: "with 3.13"
+            python-version: "3.13"
             enable-x64: 0
             prng-upgrade: 0
             num_generated_cases: 1
     steps:
     - uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871  # v4.2.1
+    - name: Image Setup
+      run: |
+        apt update
+        apt install -y libssl-dev 
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@f677139bbe7f9c59b41e40162b753c062f5d49a3  # v5.2.0
       with:
@@ -68,7 +72,7 @@ jobs:
         python -m pip install --upgrade pip wheel
         echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
     - name: pip cache
-      uses: actions/cache@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2  # v4.1.0
+      uses: actions/cache@3624ceb22c1c5a301c8db4169662070a689d9ea8 # v4.1.1
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
         key: ${{ runner.os }}-py${{ matrix.python-version }}-pip-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
@@ -115,7 +119,7 @@ jobs:
         python -m pip install --upgrade pip wheel
         echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
     - name: pip cache
-      uses: actions/cache@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2  # v4.1.0
+      uses: actions/cache@3624ceb22c1c5a301c8db4169662070a689d9ea8  # v4.1.1
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
         key: ${{ runner.os }}-pip-docs-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
@@ -152,7 +156,7 @@ jobs:
         python -m pip install --upgrade pip wheel
         echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
     - name: pip cache
-      uses: actions/cache@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2  # v4.1.0
+      uses: actions/cache@3624ceb22c1c5a301c8db4169662070a689d9ea8  # v4.1.1
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
         key: ${{ runner.os }}-pip-docs-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
@@ -188,7 +192,7 @@ jobs:
         python -m pip install --upgrade pip wheel
         echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
     - name: pip cache
-      uses: actions/cache@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2  # v4.1.0
+      uses: actions/cache@3624ceb22c1c5a301c8db4169662070a689d9ea8  # v4.1.1
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
         key: ${{ runner.os }}-py${{ matrix.python-version }}-pip-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
@@ -227,7 +231,7 @@ jobs:
         python -m pip install --upgrade pip wheel
         echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
     - name: pip cache
-      uses: actions/cache@2cdf405574d6ef1f33a1d12acccd3ae82f47b3f2  # v4.1.0
+      uses: actions/cache@3624ceb22c1c5a301c8db4169662070a689d9ea8  # v4.1.1
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
         key: ${{ runner.os }}-pip-ffi-examples-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt', 'examples/**/pyproject.toml') }}

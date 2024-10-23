@@ -841,8 +841,7 @@ def conv_dimension_numbers(lhs_shape, rhs_shape, dimension_numbers
     lhs_shape: tuple of nonnegative integers, shape of the convolution input.
     rhs_shape: tuple of nonnegative integers, shape of the convolution kernel.
     dimension_numbers: None or a tuple/list of strings or a ConvDimensionNumbers
-      object following the convolution dimension number specification format in
-      xla_client.py.
+      object.
 
   Returns:
     A `ConvDimensionNumbers` object that represents `dimension_numbers` in the

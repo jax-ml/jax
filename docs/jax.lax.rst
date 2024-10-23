@@ -254,10 +254,16 @@ Argument classes
    :members:
    :undoc-members:
    :member-order: bysource
+.. autoclass:: FftType
+  :members:
 .. autoclass:: GatherDimensionNumbers
 .. autoclass:: GatherScatterMode
 .. autoclass:: Precision
 .. autoclass:: PrecisionLike
+.. autoclass:: RandomAlgorithm
+  :members:
+  :member-order: bysource
 .. autoclass:: RoundingMethod
   :members:
+  :member-order: bysource
 .. autoclass:: ScatterDimensionNumbers

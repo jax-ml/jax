@@ -400,6 +400,12 @@ class LaunchContext:
           "Expected the SMEM reference to have the same shape as the"
           f" transformed slice: {tuple(smem_ref_ty.shape)} != {slice_shape}"
       )
+    smem_strides, _ = smem_ref_ty.get_strides_and_offset()
+    if smem_strides != utils.get_contiguous_strides(smem_ref_ty.shape):
+      raise ValueError(
+          "async_copy needs the SMEM reference to be contiguous, but got"
+          f" strides {smem_strides} for shape {smem_ref_ty.shape}"
+      )
 
     dyn_base_indices = list(dyn_base_indices)
     slice_shape = list(slice_shape)

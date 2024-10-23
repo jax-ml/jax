@@ -518,7 +518,7 @@ struct LinalgVectorizationPass
     // unrelated to the original linalg op.
     SmallVector<Operation *> linalgOps;
     func.walk([&](Operation *op) {
-      if (dyn_cast<linalg::LinalgOp>(op) ||
+      if (dyn_cast<arith::SelectOp>(op) || dyn_cast<linalg::LinalgOp>(op) ||
           dyn_cast<vector::TransferReadOp>(op) ||
           dyn_cast<vector::TransferWriteOp>(op) ||
           dyn_cast<vector::ContractionOp>(op) ||

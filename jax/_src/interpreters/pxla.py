@@ -70,7 +70,7 @@ from jax._src.sharding_impls import (
     ArrayMapping, ArrayMappingOrAutoOrUnspecified, AUTO, UNSPECIFIED,
     UnspecifiedValue, get_array_mapping as _get_array_mapping, is_auto,
     is_unspecified, is_unspecified_or_auto, array_mapping_to_axis_resources,
-    SingleDeviceSharding, GSPMDSharding)
+    SingleDeviceSharding, GSPMDSharding, NamedSharding, PositionalSharding)
 from jax._src.util import (safe_map, safe_zip, partition_list, wrap_name,
                            tuple_update, tuple_delete, distributed_debug_log,
                            unzip2, HashableFunction, weakref_lru_cache)
@@ -1257,7 +1257,7 @@ class ExecuteReplicated:
         for token in token_buf:
           assert isinstance(token.sharding, sharding_impls.SingleDeviceSharding)
           token_devices.append(token.sharding._device_assignment[0])
-        s = sharding_impls.PositionalSharding(token_devices)
+        s = PositionalSharding(token_devices)
         global_token_array = jax.make_array_from_single_device_arrays(
             (0,), s, token_buf
         )
@@ -1608,7 +1608,7 @@ def _full_to_shard_lowering(ctx, x, *, axes: ArrayMapping, mesh: Mesh,
   aval_in, = ctx.avals_in
   aval_out, = ctx.avals_out
   sharding_proto = (
-      sharding_impls.NamedSharding(mesh, array_mapping_to_axis_resources(axes))
+      NamedSharding(mesh, array_mapping_to_axis_resources(axes))
       ._to_xla_hlo_sharding(aval_in.ndim).to_proto())
   unspecified_dims = set(range(aval_in.ndim)) - set(axes.values())
   sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, sharding_proto,
@@ -1634,7 +1634,7 @@ def _shard_to_full_lowering(ctx: mlir.LoweringRuleContext, x, *, axes: ArrayMapp
   sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, proto,
                                   unspecified_dims=unspecified_dims)
   sharding_proto = (
-      sharding_impls.NamedSharding(mesh, array_mapping_to_axis_resources(axes))
+      NamedSharding(mesh, array_mapping_to_axis_resources(axes))
       ._to_xla_hlo_sharding(aval_out.ndim).to_proto())
   return (mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out, sharding_proto,
                                           unspecified_dims),)
@@ -1750,7 +1750,7 @@ def _get_and_check_device_assignment(
   elif first_sharding_info is None:
     final_device_assignment = (_get_default_device(),)
   else:
-    final_device_assignment = first_sharding_info[0]
+    final_device_assignment = first_sharding_info[0]  # type: ignore
   return xb.get_device_backend(final_device_assignment[0]), final_device_assignment
 
 MaybeSharding = Union[JSharding, UnspecifiedValue]
@@ -1868,7 +1868,8 @@ def _raise_warnings_or_errors_for_jit_of_pmap(
          "does not preserve sharded data representations and instead collects "
          "input and output arrays onto a single device. "
          "Consider removing the outer jit unless you know what you're doing. "
-         "See https://github.com/jax-ml/jax/issues/2926.")
+         "See https://github.com/jax-ml/jax/issues/2926. Or "
+         "use jax.experimental.shard_map instead of pmap under jit compilation.")
 
   if nreps > xb.device_count(backend):
     raise ValueError(
@@ -1892,7 +1893,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
                             propagated_out_mem_kinds: tuple[None | str, ...],
                             platforms: tuple[str, ...],
                             lowering_parameters: mlir.LoweringParameters,
-                            mesh_shape_tuple: tuple[tuple[str, int], ...] | None):
+                            abstract_mesh: mesh_lib.AbstractMesh | None):
   jaxpr = closed_jaxpr.jaxpr
   in_shardings = semantic_in_shardings.shardings
   out_shardings = semantic_out_shardings.shardings
@@ -1914,8 +1915,8 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
   nreps = dispatch.jaxpr_replicas(jaxpr)
   _raise_warnings_or_errors_for_jit_of_pmap(nreps, backend, fun_name, jaxpr)
 
-  in_mlir_shardings: list[JSharding | None] | None
-  out_mlir_shardings: list[JSharding | None] | None
+  in_mlir_shardings: list[JSharding | AUTO | None] | None
+  out_mlir_shardings: list[JSharding | AUTO | None] | None
   axis_ctx: mlir.AxisContext
 
   if nreps == 1:
@@ -1923,7 +1924,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
     out_mlir_shardings = map(_to_logical_sharding, global_out_avals, out_shardings)
     replicated_args = [False] * len(global_in_avals)
     axis_ctx = sharding_impls.ShardingContext(num_devices, device_assignment,
-                                              mesh_shape_tuple)
+                                              abstract_mesh)
     num_partitions = num_devices
   else:
     # This path is triggered for `jit(pmap)` cases.
@@ -2117,6 +2118,24 @@ def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
   return (closed_jaxpr, inout_aliases, mut, in_shardings, in_layouts,
           donated_invars, out_shardings, out_layouts)
 
+def _concretize_abstract_shardings(shardings, avals, device_assignment):
+  np_dev = np.vectorize(lambda i: device_assignment[i],
+                        otypes=[object])(np.arange(len(device_assignment)))
+
+  @lru_cache(maxsize=128)
+  def _abstract_to_concrete_mesh(abstract_mesh):
+    return mesh_lib.Mesh(
+        np_dev.reshape(abstract_mesh.axis_sizes), abstract_mesh.axis_names)
+
+  out = []
+  for s, a in zip(shardings, avals):
+    if is_unspecified(s) and a.sharding is not None:
+      out.append(NamedSharding(_abstract_to_concrete_mesh(a.sharding.mesh),
+                               a.sharding.spec))
+    else:
+      out.append(s)
+  return tuple(out)
+
 
 @profiler.annotate_function
 def lower_sharding_computation(
@@ -2142,7 +2161,6 @@ def lower_sharding_computation(
   lower_sharding_computation calculates the number of out_avals so it can apply
   the singleton UNSPECIFIED to all out_avals.
   """
-  # 1. Trace to jaxpr and preprocess/verify it
   auto_spmd_lowering = check_if_any_auto(
       it.chain.from_iterable([in_shardings, out_shardings]))
 
@@ -2189,6 +2207,10 @@ def lower_sharding_computation(
            for js, source_info in unique_intermediate_shardings)),
       devices_from_context)
 
+  if config.sharding_in_types.value:
+    out_shardings = _concretize_abstract_shardings(
+        out_shardings, global_out_avals, device_assignment)
+
   platforms = lowering_platforms or (backend.platform,)
 
   committed = bool(
@@ -2216,18 +2238,18 @@ def lower_sharding_computation(
   # 2. Build up the HLO
   prim_requires_devices = dispatch.jaxpr_has_prim_requiring_devices(jaxpr)
 
-  mesh_shape_tuple = None
-  if config.use_shardy_partitioner.value or prim_requires_devices:
+  abstract_mesh = None
+  if prim_requires_devices:
     for sharding in it.chain(unique_in_shardings, unique_out_shardings,
                              [js for js, _ in unique_intermediate_shardings]):
-      if isinstance(sharding, (sharding_impls.NamedSharding, sharding_impls.AUTO)):
-        if (mesh_shape_tuple is not None and
-            mesh_shape_tuple != sharding.mesh.shape_tuple):
+      if isinstance(sharding, NamedSharding):
+        if (abstract_mesh is not None and
+            abstract_mesh != sharding.mesh.abstract_mesh):
           raise ValueError(
               "mesh should be the same across the entire program. Got mesh"
-              f" shape for one sharding {mesh_shape_tuple} and"
-              f" {sharding.mesh.shape_tuple} for another")
-        mesh_shape_tuple = sharding.mesh.shape_tuple
+              f" shape for one sharding {abstract_mesh} and"
+              f" {sharding.mesh.abstract_mesh} for another")
+        abstract_mesh = sharding.mesh.abstract_mesh  # type: ignore
 
   semantic_in_shardings = SemanticallyEqualShardings(
       in_shardings, global_in_avals)  # type: ignore
@@ -2242,7 +2264,7 @@ def lower_sharding_computation(
        name_stack, all_default_mem_kind, inout_aliases,
        propagated_out_mem_kinds, platforms,
        lowering_parameters=lowering_parameters,
-       mesh_shape_tuple=mesh_shape_tuple)
+       abstract_mesh=abstract_mesh)
 
   # backend and device_assignment is passed through to MeshExecutable because
   # if keep_unused=False and all in_shardings are pruned, then there is no way
@@ -2285,9 +2307,11 @@ def lower_sharding_computation(
 
 def _to_logical_sharding(
     aval: core.AbstractValue, sharding: MaybeSharding | AUTO
-) -> JSharding | None:
-  if is_unspecified(sharding) or is_auto(sharding):
+) -> JSharding | AUTO | None:
+  if isinstance(sharding, UnspecifiedValue):
     return None
+  if isinstance(sharding, AUTO):
+    return sharding
   elif isinstance(aval, (ShapedArray, DShapedArray, AbstractRef)):
     assert isinstance(sharding, JSharding)
     return sharding
@@ -2421,13 +2445,12 @@ def _get_in_shardings_from_xla(
 # without mesh.
 def _get_mesh_pspec_shardings_from_executable(
     xla_executable, mesh: Mesh
-) -> tuple[Sequence[sharding_impls.NamedSharding],
-           Sequence[sharding_impls.NamedSharding]]:
+) -> tuple[Sequence[NamedSharding], Sequence[NamedSharding]]:
   from jax._src import pjit
 
   in_pspec, out_pspec = pjit.get_pspec_from_executable(xla_executable, mesh)
-  return ([sharding_impls.NamedSharding(mesh, i) for i in in_pspec],
-          [sharding_impls.NamedSharding(mesh, o) for o in out_pspec])
+  return ([NamedSharding(mesh, i) for i in in_pspec],
+          [NamedSharding(mesh, o) for o in out_pspec])
 
 
 _orig_out_sharding_handlers = {}
@@ -2437,29 +2460,25 @@ _ShardingT = TypeVar("_ShardingT", bound=JSharding)
 
 def _register_out_sharding_handler(
     sharding_cls: type[_ShardingT],
-    handler: Callable[[sharding_impls.GSPMDSharding, _ShardingT], _ShardingT],
+    handler: Callable[[GSPMDSharding, _ShardingT], _ShardingT],
 ) -> None:
   _orig_out_sharding_handlers[sharding_cls] = handler
 
 def _gspmd_to_named_sharding(
-    out_s: sharding_impls.GSPMDSharding,
-    orig_in_s: sharding_impls.NamedSharding) -> sharding_impls.NamedSharding:
+    out_s: GSPMDSharding, orig_in_s: NamedSharding) -> NamedSharding:
   assert isinstance(orig_in_s.mesh, mesh_lib.Mesh)
   return sharding_impls._gspmd_to_named_sharding_via_mesh(out_s, orig_in_s.mesh)
 
-_register_out_sharding_handler(
-    sharding_impls.NamedSharding, _gspmd_to_named_sharding)
+_register_out_sharding_handler(NamedSharding, _gspmd_to_named_sharding)
 
 
 def _gspmd_to_positional_sharding(
-    out_s: sharding_impls.GSPMDSharding,
-    orig_in_s: sharding_impls.PositionalSharding
-    ) -> sharding_impls.PositionalSharding:
+    out_s: GSPMDSharding, orig_in_s: PositionalSharding) -> PositionalSharding:
   return sharding_impls._op_sharding_to_pos_sharding(
       out_s._hlo_sharding, orig_in_s._device_assignment, out_s.memory_kind)
 
 _register_out_sharding_handler(
-    sharding_impls.PositionalSharding, _gspmd_to_positional_sharding)
+    PositionalSharding, _gspmd_to_positional_sharding)
 
 def _gspmd_to_single_device_sharding(
     out_s: GSPMDSharding, orig_in_s: SingleDeviceSharding) -> SingleDeviceSharding:

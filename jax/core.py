@@ -42,7 +42,7 @@ from jax._src.core import (
   Literal as Literal,
   MainTrace as MainTrace,
   MapPrimitive as MapPrimitive,
-  nonempty_axis_env as nonempty_axis_env_DO_NOT_USE,
+  nonempty_axis_env as nonempty_axis_env_DO_NOT_USE,  # noqa: F401
   OpaqueTraceState as OpaqueTraceState,
   NameGatheringSubst as NameGatheringSubst,
   OutDBIdx as OutDBIdx,
@@ -58,9 +58,9 @@ from jax._src.core import (
   TraceStack as TraceStack,
   TraceState as TraceState,
   Tracer as Tracer,
-  unsafe_am_i_under_a_jit as unsafe_am_i_under_a_jit_DO_NOT_USE,
-  unsafe_am_i_under_a_vmap as unsafe_am_i_under_a_vmap_DO_NOT_USE,
-  unsafe_get_axis_names as unsafe_get_axis_names_DO_NOT_USE,
+  unsafe_am_i_under_a_jit as unsafe_am_i_under_a_jit_DO_NOT_USE,  # noqa: F401
+  unsafe_am_i_under_a_vmap as unsafe_am_i_under_a_vmap_DO_NOT_USE,  # noqa: F401
+  unsafe_get_axis_names as unsafe_get_axis_names_DO_NOT_USE,  # noqa: F401
   UnshapedArray as UnshapedArray,
   Value as Value,
   Var as Var,

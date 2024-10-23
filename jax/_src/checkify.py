@@ -1209,7 +1209,11 @@ def checkify(f: Callable[..., Out],
     return error, jtu.tree_unflatten(out_tree(), out_flat)
   return checked_fun
 
-def check(pred: Bool, msg: str, *fmt_args, **fmt_kwargs) -> None:
+def check(pred: Bool, msg: str,
+          *fmt_args,
+          debug: bool = False,
+          **fmt_kwargs,
+          ) -> None:
   """Check a predicate, add an error with msg if predicate is False.
 
   This is an effectful operation, and can't be staged (jitted/scanned/...).
@@ -1218,6 +1222,9 @@ def check(pred: Bool, msg: str, *fmt_args, **fmt_kwargs) -> None:
   Args:
     pred: if False, a FailedCheckError error is added.
     msg: error message if error is added. Can be a format string.
+    debug: Whether to turn on debugging mode. If True, check will be removed
+      during execution. If False, the the check must be functionalized using
+      checkify.checkify.
     fmt_args, fmt_kwargs: Positional and keyword formatting arguments for
       `msg`, eg.:
       ``check(.., "check failed on values {} and {named_arg}", x, named_arg=y)``
@@ -1242,7 +1249,7 @@ def check(pred: Bool, msg: str, *fmt_args, **fmt_kwargs) -> None:
     jax._src.checkify.JaxRuntimeError: -3. needs to be positive!
 
   """
-  _check(pred, msg, False, *fmt_args, **fmt_kwargs)
+  _check(pred, msg, debug, *fmt_args, **fmt_kwargs)
 
 def _check(pred, msg, debug, *fmt_args, **fmt_kwargs):
   if not is_scalar_pred(pred):

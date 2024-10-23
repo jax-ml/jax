@@ -46,7 +46,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import version as jaxlib_version
 from jax._src.util import NumpyComplexWarning, safe_zip
 from jax._src.tree_util import tree_map
 
@@ -1081,9 +1080,6 @@ class LaxTest(jtu.JaxTestCase):
     if xla_bridge.using_pjrt_c_api():
       raise SkipTest(
           "The dot algorithm attribute is not supported by PJRT C API.")
-    if jaxlib_version <= (0, 4, 33):
-      raise SkipTest(
-          "The dot algorithm attribute is only supported for jaxlib >0.4.33.")
     if jtu.test_device_matches(["cpu"]):
       if algorithm not in {
           lax.DotAlgorithmPreset.DEFAULT,
@@ -1116,6 +1112,21 @@ class LaxTest(jtu.JaxTestCase):
       }:
         raise SkipTest(
             f"The dot algorithm '{algorithm}' is not supported on GPU.")
+    if jtu.test_device_matches(["tpu"]):
+      if algorithm not in {
+          lax.DotAlgorithmPreset.DEFAULT,
+          lax.DotAlgorithmPreset.BF16_BF16_F32,
+          lax.DotAlgorithmPreset.BF16_BF16_F32_X3,
+          lax.DotAlgorithmPreset.BF16_BF16_F32_X6,
+      }:
+        raise SkipTest(
+            f"The dot algorithm '{algorithm}' is not supported on TPU."
+        )
+      if algorithm != lax.DotAlgorithmPreset.DEFAULT and dtype != np.float32:
+        raise SkipTest(
+            f"The dot algorithm '{algorithm}' is only supported for float32 on"
+            " TPU."
+        )
     lhs_shape = (3, 4)
     rhs_shape = (4, 3)
     rng = jtu.rand_default(self.rng())
@@ -1127,9 +1138,6 @@ class LaxTest(jtu.JaxTestCase):
     if xla_bridge.using_pjrt_c_api():
       raise SkipTest(
           "The dot algorithm attribute is not supported by PJRT C API.")
-    if jaxlib_version <= (0, 4, 33):
-      raise SkipTest(
-          "The dot algorithm attribute is only supported for jaxlib >0.4.33.")
     if jtu.test_device_matches(["cpu"]):
       raise SkipTest("Not supported on CPU.")
     lhs_shape = (3, 4)
@@ -1143,9 +1151,8 @@ class LaxTest(jtu.JaxTestCase):
     if xla_bridge.using_pjrt_c_api():
       raise SkipTest(
           "The dot algorithm attribute is not supported by PJRT C API.")
-    if jaxlib_version <= (0, 4, 33):
-      raise SkipTest(
-          "The dot algorithm attribute is only supported for jaxlib >0.4.33.")
+    if jtu.test_device_matches(["tpu"]):
+      raise SkipTest("F32_F32_F32 is not supported on TPU.")
     def fun(lhs, rhs):
       return lax.dot(lhs, rhs, precision="F32_F32_F32")
     lhs_shape = (3, 4)
@@ -1198,12 +1205,14 @@ class LaxTest(jtu.JaxTestCase):
   )
   def test_mixed_fp8_dot_general(self, lhs_shape, rhs_shape, dtype_lhs, dtype_rhs):
     if jtu.test_device_matches(["tpu"]):
-        raise SkipTest("Mixed fp8 precision matmul is not yet supported on TPU")
+      raise SkipTest("Mixed fp8 precision matmul is not yet supported on TPU")
     if not jtu.is_device_rocm() and (
         dtype_lhs in [dtypes.float8_e4m3fnuz, dtypes.float8_e5m2fnuz] or
         dtype_rhs in [dtypes.float8_e4m3fnuz, dtypes.float8_e5m2fnuz]
     ):
-        raise SkipTest("float8_e4m3fnuz and float8_e5m2fnuz types are only supported on ROCm")
+      raise SkipTest(
+          "float8_e4m3fnuz and float8_e5m2fnuz types are only supported on ROCm"
+      )
     rng = jtu.rand_default(self.rng())
     lhs = rng(lhs_shape, dtype=dtype_lhs)
     rhs = rng(rhs_shape, dtype=dtype_rhs)

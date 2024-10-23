@@ -25,6 +25,7 @@ import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.layout import DeviceLocalLayout as DLL, Layout
 from jax._src.lib import xla_extension_version
 from jax._src import config
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
@@ -442,7 +443,7 @@ class DevicePutTest(jtu.JaxTestCase):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("This test does not work on GPU backend.")
     _, s_host, np_inp, inp_host = _create_inputs(
-        (0,), P("x"), mem_kind="pinned_host")
+        (0,), P(), mem_kind="pinned_host")
     s_dev = s_host.with_memory_kind('device')
 
     @functools.partial(jax.jit, out_shardings=s_host)
@@ -730,6 +731,9 @@ class ComputeOffload(jtu.BufferDonationTestCase):
   def test_compute_no_inputs_host_replicated(self):
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 3:
       self.skipTest("This test requires an xla_version >= 3.")
+    if config.use_shardy_partitioner.value:
+      self.skipTest("XLA failure due to b/370786664 and b/366411266. "
+                    "Enable when fixed.")
     mesh = jtu.create_mesh((4,), ('data'))
 
     tpu_sharding = NamedSharding(mesh, P('data'))
@@ -737,8 +741,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
     @functools.partial(jax.jit, out_shardings=(tpu_sharding, cpu_sharding))
     def init():
-      tpu_array = jax.random.normal(jax.random.key(42), (16,16))
-      cpu_array = jax.random.normal(jax.random.key(42), (16,16))
+      tpu_array = jax.random.normal(jax.random.key(42), (16, 16))
+      cpu_array = jax.random.normal(jax.random.key(42), (16, 16))
       return tpu_array, cpu_array
 
     tpu_array, cpu_array = init()
@@ -1245,6 +1249,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(out2, np_inp @ np_inp.T)
 
   def test_jit_compilation_cache_hit(self):
+    if config.use_shardy_partitioner.value:
+      self.skipTest("Shardy doesn't support GSPMDSharding")
     mesh, s, np_inp, inp = _create_inputs((8, 2), P("x", "y"))
     inp2 = jax.device_put(
         np_inp, GSPMDSharding(tuple(mesh.devices.flat),
@@ -1396,6 +1402,9 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysAllClose(out, expected_out, rtol=1e-3)
 
   def test_mem_kind_donation_pinned_host(self):
+    if config.use_shardy_partitioner.value:
+      self.skipTest("XLA failure due to b/370786664 and b/366411266. "
+                    "Enable when fixed.")
     mesh = jtu.create_mesh((2,), "x")
     s = NamedSharding(mesh, P(), memory_kind='pinned_host')
     s_dev = s.with_memory_kind('device')
@@ -1461,6 +1470,89 @@ class ComputeOffload(jtu.BufferDonationTestCase):
         in_shardings=(sharding, p_sharding),
         out_shardings=(sharding, p_sharding),
         donate_argnums=(0, 1),
+    )
+    x_out, y_out = jit_fn(x, y)
+    self.assertArraysEqual(x_out, x1 * x1)
+    self.assertArraysEqual(y_out, y1 + y1)
+
+  def test_compute_offload_with_linear_layout(self):
+    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    p_sharding = jax.sharding.SingleDeviceSharding(
+        jax.devices()[0], memory_kind="pinned_host"
+    )
+
+    @compute_on("device_host")
+    @jax.jit
+    def host_fn(x_in, y_in):
+      return x_in * x_in, y_in + y_in
+
+    def test_fn(x_in, y_in):
+      x_out, y_out = host_fn(x_in, y_in)
+      return x_out, y_out
+
+    x = jnp.arange(0, 1024, dtype=jnp.float32)
+    x = jnp.reshape(x, (16, 64))
+    y = jnp.arange(0, 1024, dtype=jnp.float32)
+    y = jnp.reshape(y, (16, 64))
+    custom_dll = DLL(major_to_minor=(0, 1), _tiling=((8, 128),))
+    custom_dll_linear = DLL(major_to_minor=(0, 1), _tiling=((1,),))
+    x = jax.device_put(x, Layout(custom_dll, sharding))
+    y = jax.device_put(y, Layout(custom_dll_linear, p_sharding))
+
+    x1 = jnp.arange(0, 1024, dtype=jnp.float32)
+    x1 = jnp.reshape(x1, (16, 64))
+    y1 = jnp.arange(0, 1024, dtype=jnp.float32)
+    y1 = jnp.reshape(y1, (16, 64))
+
+    jit_fn = jax.jit(
+        test_fn,
+        out_shardings=(
+            Layout(custom_dll, sharding),
+            Layout(custom_dll, p_sharding),
+        ),
+    )
+    x_out, y_out = jit_fn(x, y)
+    self.assertArraysEqual(x_out, x1 * x1)
+    self.assertArraysEqual(y_out, y1 + y1)
+
+  def test_compute_offload_mesh_with_linear_layout(self):
+    if config.use_shardy_partitioner.value:
+      self.skipTest(
+          "Shardy inlines the host compute. Remove when that's fixed."
+      )
+    mesh = jtu.create_mesh((2, 2), ("x", "y"))
+    sharding = NamedSharding(mesh, P("x", "y"))
+    p_sharding = NamedSharding(mesh, P("x", "y"), memory_kind="pinned_host")
+
+    @compute_on("device_host")
+    @jax.jit
+    def host_fn(x_in, y_in):
+      return x_in * x_in, y_in + y_in
+
+    def test_fn(x_in, y_in):
+      x_out, y_out = host_fn(x_in, y_in)
+      return x_out, y_out
+
+    x = jnp.arange(0, 2048, dtype=jnp.float32)
+    x = jnp.reshape(x, (32, 64))
+    y = jnp.arange(0, 2048, dtype=jnp.float32)
+    y = jnp.reshape(y, (32, 64))
+    custom_dll = DLL(major_to_minor=(0, 1), _tiling=((8, 128),))
+    custom_dll_linear = DLL(major_to_minor=(0, 1), _tiling=((1,),))
+    x = jax.device_put(x, Layout(custom_dll, sharding))
+    y = jax.device_put(y, Layout(custom_dll_linear, p_sharding))
+
+    x1 = jnp.arange(0, 2048, dtype=jnp.float32)
+    x1 = jnp.reshape(x1, (32, 64))
+    y1 = jnp.arange(0, 2048, dtype=jnp.float32)
+    y1 = jnp.reshape(y1, (32, 64))
+
+    jit_fn = jax.jit(
+        test_fn,
+        out_shardings=(
+            Layout(custom_dll, sharding),
+            Layout(custom_dll, p_sharding),
+        ),
     )
     x_out, y_out = jit_fn(x, y)
     self.assertArraysEqual(x_out, x1 * x1)

@@ -18,9 +18,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 import dataclasses
 import math
-from typing import Any, Union, Protocol
+from typing import Any, Protocol, Union
 
-from jax._src.typing import DTypeLike
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
@@ -29,7 +28,9 @@ from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src.state import indexing
 from jax._src.typing import Array
+from jax._src.typing import DTypeLike
 from jax._src.util import safe_map, safe_zip
+import numpy as np
 
 ## JAX utilities
 
@@ -95,6 +96,53 @@ class RefBitcaster:
     from jax._src.state.utils import eval_bitcast_shape  # pytype: disable=import-error
     dtype = dtypes.dtype(dtype)
     return cls(dtype, eval_bitcast_shape(ref_or_view, dtype))
+
+  @property
+  def is_dynamic_size(self):
+    return False
+
+  def tree_flatten(self):
+    return (), (self.dtype, self.shape)
+
+  @classmethod
+  def tree_unflatten(cls, metadata, arrays):
+    assert not arrays
+    return cls(*metadata)
+
+  def transform_shape(
+      self, shape: tuple[int | Array, ...] | None
+  ) -> tuple[int | Array, ...] | None:
+    del shape  # Unused
+    return self.shape
+
+  def transform_dtype(self, dtype):
+    del dtype  # Unused
+    return self.dtype
+
+
+@tree_util.register_pytree_node_class
+@dataclasses.dataclass(frozen=True)
+class RefReshaper:
+  dtype: dtypes.DType
+  shape: tuple[int, ...]
+
+  @classmethod
+  def from_ref_new_shape(cls, ref_or_view: Any, *shape: Any) -> RefReshaper:
+    if len(shape) == 1 and isinstance(shape[0], tuple):
+      shape = shape[0]
+    if not shape:
+      raise ValueError("Cannot reshape ref to empty shape")
+    if np.prod(shape) != np.prod(ref_or_view.shape):
+      raise TypeError(
+          f"cannot reshape ref of shape {ref_or_view.shape} into shape {shape}"
+      )
+    if isinstance(ref_or_view, TransformedRef):
+      if ref_or_view.is_dynamic_size:
+        raise NotImplementedError(
+            "Reshape ref with dynamic size is not supported."
+        )
+    dtype = dtypes.dtype(ref_or_view.dtype)
+    return cls(dtype, shape)
 
   @property
   def is_dynamic_size(self):
@@ -212,6 +260,12 @@ class TransformedRef:
         (*self.transforms, RefBitcaster.from_ref_new_dtype(self, dtype)),
     )
 
+  def reshape(self, *shape):
+    return TransformedRef(
+        self.ref,
+        (*self.transforms, RefReshaper.from_ref_new_shape(self, *shape)),
+    )
+
   def __getattr__(self, name):
     return getattr(self.ref, name)
 
@@ -274,6 +328,10 @@ class AbstractRef(core.AbstractValue):
   @core.aval_method
   def bitcast(self, dtype):
     return TransformedRef(self, (RefBitcaster.from_ref_new_dtype(self, dtype),))
+
+  @core.aval_method
+  def reshape(self, *shape):
+    return TransformedRef(self, (RefReshaper.from_ref_new_shape(self, *shape),))
 
   @core.aval_method
   @staticmethod

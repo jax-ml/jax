@@ -194,6 +194,14 @@ def mock_8x8x16_devices(one_device_per_chip):
   """Hard-coded reproduction of jax.devices() output on 8x8x16."""
   return mock_tpu_devices(8, 8, 16, 'TPU v4', one_device_per_chip)
 
+def mock_4x2_v5e_devices(one_device_per_chip=True):
+  """Hard-coded reproduction of jax.devices() output on 4x2 v5e."""
+  return mock_tpu_devices(4, 2, 1, 'TPU v5 lite', one_device_per_chip)
+
+def mock_2x2x2_v5e_devices(one_device_per_chip=True):
+  """Hard-coded reproduction of jax.devices() output on 2x2x2 v5e."""
+  return mock_tpu_devices(2, 2, 2, 'TPU v5 lite', one_device_per_chip)
+
 
 class MeshUtilsTest(test_util.JaxTestCase):
 
@@ -580,6 +588,20 @@ class MeshUtilsTest(test_util.JaxTestCase):
                                             [20, 21, 22, 23, 30, 31, 28, 29]]),
   )
   def test_v3_create_device_mesh(self, devices, mesh_shape,
+                                 expected_device_id_mesh):
+    global_devices = devices()
+    mesh = mesh_utils.create_device_mesh(
+        mesh_shape, devices=global_devices, contiguous_submeshes=False)
+    device_id_mesh = np.vectorize(lambda d: d.id)(mesh)
+    self.assertAllClose(np.array(expected_device_id_mesh), device_id_mesh)
+
+  @parameterized.named_parameters(
+      # Ring order over tray
+      ('4x2_1d', mock_4x2_v5e_devices, [8], [0, 1, 2, 3, 7, 6, 5, 4]),
+      # Iota order
+      ('2x2x2_1d', mock_2x2x2_v5e_devices, [8], [0, 4, 2, 6, 1, 5, 3, 7]),
+  )
+  def test_v5e_create_device_mesh(self, devices, mesh_shape,
                                  expected_device_id_mesh):
     global_devices = devices()
     mesh = mesh_utils.create_device_mesh(

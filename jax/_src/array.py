@@ -276,6 +276,10 @@ class ArrayImpl(basearray.Array):
   def weak_type(self):
     return self.aval.weak_type
 
+  @property
+  def committed(self) -> bool:
+    return self._committed
+
   def __str__(self):
     return str(self._value)
 
@@ -1029,7 +1033,8 @@ xla.canonicalize_dtype_handlers[ArrayImpl] = pxla.identity
 def _get_aval_array(self):
   if config.sharding_in_types.value and isinstance(self.sharding, NamedSharding):
     return self.aval.update(sharding=NamedSharding(
-        self.sharding.mesh.abstract_mesh, self.sharding.spec))
+        self.sharding.mesh.abstract_mesh,
+        self.sharding._normalized_spec(self.ndim)))
   else:
     return self.aval
 api_util._shaped_abstractify_handlers[ArrayImpl] = _get_aval_array

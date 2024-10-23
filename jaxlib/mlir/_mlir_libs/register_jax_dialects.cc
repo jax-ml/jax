@@ -14,6 +14,8 @@
 #include "mlir-c/Dialect/Vector.h"
 #include "mlir-c/Transforms.h"
 #include "mlir/Bindings/Python/PybindAdaptors.h"
+#include "shardy/integrations/c/passes.h"
+
 
 namespace py = pybind11;
 
@@ -37,6 +39,8 @@ PYBIND11_MODULE(register_jax_dialects, m, py::mod_gil_not_used()) {
     REGISTER_DIALECT(nvvm);
     REGISTER_DIALECT(llvm);
     mlirRegisterTransformsPasses();
+    // For Shardy
+    mlirRegisterAllSdyPassesAndPipelines();
     // Transforms used by JAX.
     mlirRegisterTransformsStripDebugInfo();
   });

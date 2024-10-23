@@ -44,7 +44,7 @@ Here is an example:
 (ShapedArray(float32[]),)
 
 >>> print(re.search(r".*@main.*", exported.mlir_module()).group(0))
-  func.func public @main(%arg0: tensor<f32> {mhlo.layout_mode = "default"} loc("x")) -> (tensor<f32> {jax.result_info = "", mhlo.layout_mode = "default"}) {
+  func.func public @main(%arg0: tensor<f32> loc("x")) -> (tensor<f32> {jax.result_info = ""}) {
 
 >>> # And you can serialize the Exported to a bytearray.
 >>> serialized: bytearray = exported.serialize()
@@ -181,7 +181,7 @@ target. To use the latest lowering rules, you can pass the
 or the `JAX_EXPORT_IGNORE_FORWARD_COMPATIBILITY=1` environment variable.
 
 Only a subset of custom calls are guaranteed stable and have
-compatibility guarantees ([see list](https://github.com/search?q=repo%3Agoogle%2Fjax%20_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE&type=code)).
+compatibility guarantees ([see list](https://github.com/search?q=repo%3Ajax-ml%2Fjax++%22_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE+%3D%22+path%3A_export.py&amp%3Btype=code&type=code)).
 We continuously
 add more custom call targets to the allowed list along with backwards
 compatibility tests. If you try to serialize
@@ -206,7 +206,7 @@ as in the following example:
 >>> _ = mlir.register_lowering(new_prim, lambda ctx, o: mlir.custom_call("my_new_prim", operands=[o], result_types=[o.type]).results)
 >>> print(jax.jit(new_prim.bind).lower(1.).compiler_ir())
 module @jit_bind attributes {mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 1 : i32} {
-  func.func public @main(%arg0: tensor<f32> {mhlo.layout_mode = "default"}) -> (tensor<f32> {jax.result_info = "", mhlo.layout_mode = "default"}) {
+  func.func public @main(%arg0: tensor<f32>) -> (tensor<f32> {jax.result_info = ""}) {
     %0 = stablehlo.custom_call @my_new_prim(%arg0) {api_version = 2 : i32, backend_config = ""} : (tensor<f32>) -> tensor<f32>
     return %0 : tensor<f32>
   }
@@ -747,7 +747,7 @@ that live in jaxlib):
        * Note that the forward compatibility mode is always false in JIT mode
          or if the user passes `--jax_export_ignore_forward_compatibility=true`
        * We add `T_NEW` to the list of
-         [`_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE`](https://github.com/search?q=repo%3Agoogle%2Fjax++%22_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE+%3D%22+path%3A_export.py&amp%3Btype=code&type=code)
+         [`_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE`](https://github.com/search?q=repo%3Ajax-ml%2Fjax++%22_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE+%3D%22+path%3A_export.py&amp%3Btype=code&type=code)
          in `_export.py`.
   3. Day “D + 21” (end of forward compatibility window; can be even later than 21 days):
     We remove the `forward_compat_mode` in the lowering code, so now exporting
@@ -757,7 +757,7 @@ that live in jaxlib):
     we start the clock for the 6 months backwards compatibility.
     Note that this is relevant only if `T` is among the custom call targets for which
     we already guarantee stability, i.e., are listed in
-    [`_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE`](https://github.com/search?q=repo%3Agoogle%2Fjax++%22_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE+%3D%22+path%3A_export.py&amp%3Btype=code&type=code).
+    [`_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE`](https://github.com/search?q=repo%3Ajax-ml%2Fjax++%22_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE+%3D%22+path%3A_export.py&amp%3Btype=code&type=code).
       * If `RELEASE` is in the forward compatibility window `[D, D + 21]` and if
         we make `RELEASE` the minimum allowed jaxlib version then we can
         remove the `jaxlib_version < (0, 4, 31)` conditional in the

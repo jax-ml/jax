@@ -386,9 +386,18 @@ class PallasCallTest(PallasBaseTest):
             (bs0 == as0 or bs0 % 128 == 0) and
             (bs1 == as1 or bs1 % 8 == 0))
         if not evenly_divisible:
-          test_context = self.assertRaisesRegex(
-              ValueError,
-              "last two dimensions of your block shape are divisible by 8 and 128")
+          if rank == 1:
+            test_context = self.assertRaisesRegex(
+                ValueError,
+                r"the first \(and only\) dimension of the block shape is a"
+                " multiple of the tiling size",
+            )
+          else:
+            test_context = self.assertRaisesRegex(
+                ValueError,
+                "last two dimensions of your block shape are divisible by 8"
+                " and 128",
+            )
 
     elif jtu.test_device_matches(["gpu"]) and not self.INTERPRET:
       block_size = math.prod(block_shape)
@@ -2035,6 +2044,37 @@ class PallasOutOfBoundsInterpretTest(PallasBaseTest):
 
 class PallasCheckifyTest(PallasBaseTest):
   INTERPRET = False
+
+  def test_basic_runtime_assert(self):
+    # TODO(justinfu): Move to non-interpret checkify class.
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Runtime check only implemented on TPU.")
+    # Run this test manually, since we cannot recover from a halt.
+    self.skipTest("Cannot recover from halt.")
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+      checkify.check(True, "first check passed")
+      checkify.check(False, "second check failed")
+    input_ = jnp.arange(4, dtype=jnp.int32)
+    out_shape = jax.ShapeDtypeStruct(input_.shape, input_.dtype)
+    with pltpu.enable_runtime_assert(True):
+      pallas_call = pl.pallas_call(kernel, out_shape=out_shape)
+      pallas_call(input_)  # This should log "second check failed"
+
+  def test_runtime_assert_is_noop_when_not_enabled(self):
+    # TODO(justinfu): Move to non-interpret checkify class.
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Runtime check only implemented on TPU.")
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+      checkify.check(False, "failed check",
+                     debug=True)  # This check always fails.
+    input_ = jnp.arange(4, dtype=jnp.int32)
+    out_shape = jax.ShapeDtypeStruct(input_.shape, input_.dtype)
+    with pltpu.enable_runtime_assert(False):
+      pallas_call = pl.pallas_call(kernel, out_shape=out_shape)
+      result = pallas_call(input_)
+    np.testing.assert_allclose(result, input_)
 
   def test_no_checkify(self,):
     if jtu.test_device_matches(["gpu"]):

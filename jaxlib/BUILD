@@ -239,6 +239,7 @@ pybind_extension(
     deps = [
         "//jaxlib:kernel_nanobind_helpers",
         "@com_google_absl//absl/status",
+        "@local_config_rocm//rocm:hip",
         "@local_config_rocm//rocm:rocm_headers",
         "@nanobind",
         "@xla//third_party/python_runtime:headers",

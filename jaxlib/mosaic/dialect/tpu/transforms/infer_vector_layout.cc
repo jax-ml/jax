@@ -21,9 +21,7 @@ limitations under the License.
 #include <optional>
 #include <ostream>
 #include <string>
-#include <type_traits>
 #include <utility>
-#include <variant>
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
@@ -34,7 +32,6 @@ limitations under the License.
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
-#include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Value.h"
@@ -42,6 +39,7 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/types/span.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/include/mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
@@ -49,6 +47,7 @@ limitations under the License.
 #include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/include/mlir/IR/OpDefinition.h"
 #include "mlir/include/mlir/IR/Visitors.h"
+#include "mlir/include/mlir/Pass/Pass.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "xla/layout.h"
@@ -144,11 +143,9 @@ class VectorLayoutInferer {
       if (!isa<vector::BroadcastOp, vector::ExtractStridedSliceOp>(any_op)) {
         const SmallVector<Layout> layouts_in = getLayoutFromOperands(&any_op);
         for (const Layout &layout : layouts_in) {
-          if (layout && layout->offsets()[1].has_value() &&
-              layout->offsets()[1].value() > layout->tiling()[1]) {
-            return any_op.emitOpError(
-                "Not implemented: Inferring from input offsets outside of the "
-                "first tile");
+          if (layout &&
+              layout->offsets()[1].value_or(0) >= layout->tiling()[1]) {
+            force_first_tile_offsets_ = true;
           }
         }
       }
@@ -349,6 +346,7 @@ class VectorLayoutInferer {
       }
       CHECK(any_op.getNumResults() == 0 || any_op.hasAttr("out_layout"));
       CHECK(any_op.getNumOperands() == 0 || any_op.hasAttr("in_layout"));
+      force_first_tile_offsets_ = false;
     }
     return match_terminator(block.getTerminator());
   }
@@ -774,21 +772,66 @@ class VectorLayoutInferer {
     }
     auto res_ty = op.getResult().getType();
     int8_t bitwidth = res_ty.getElementTypeBitWidth();
-    auto layout = getLayout(op.getSources().front());
-    // When concatenating vectors with replicated offsets, we want to reset the
-    // replicated offset to zero. Because we are not sure if the replicated
-    // value from each vector are same.
-    layout = VectorLayout(
-        layout->bitwidth(),
-        {layout->offsets()[0].value_or(0), layout->offsets()[1].value_or(0)},
-        layout->tiling(), layout->implicit_dim());
-    if (dimension >= res_rank - 2) {
-      layout = VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
-                            ImplicitDim::kNone);
+
+    std::optional<int64_t> tiling_dim;
+    if (dimension == res_ty.getRank() - 1) {
+      tiling_dim = 1;
+    } else if (dimension == res_ty.getRank() - 2) {
+      tiling_dim = 0;
     }
-    SmallVector<Layout> in_layouts(op->getNumOperands(), layout);
-    setLayout(op, in_layouts, layout);
-    return success();
+
+    if (tiling_dim.has_value()) {
+      int64_t starting_point = 0;
+
+      auto first_layout = getLayout(op.getSources().front());
+      auto op_layouts = getLayoutFromOperands(op);
+      SmallVector<Layout> in_layouts;
+      in_layouts.reserve(op.getSources().size());
+
+      auto native_tiling = nativeTiling(bitwidth);
+
+      for (int i = 0; i < op.getSources().size(); ++i) {
+        // Compute the offset per source.
+        // Ex: for a cat of (10, 128), (10, 128) on dim 0, where the
+        // vreg_sice for that dim is 8, the first source starts at
+        // offset 0, and overflows the vreg
+        // by 2, so the offset for the second input is 2.
+        auto op_shape =
+            cast<VectorType>(op.getSources()[i].getType()).getShape();
+        auto offset_amount = starting_point % native_tiling[tiling_dim.value()];
+        auto op_layout = op_layouts[i];
+        SmallVector<int64_t> in_idx{op_layout->offsets()[0].value_or(0),
+                                    op_layout->offsets()[1].value_or(0)};
+        in_idx[tiling_dim.value()] = offset_amount;
+        starting_point += op_shape[dimension];
+        in_layouts.push_back(VectorLayout(bitwidth, {in_idx[0], in_idx[1]},
+                                          native_tiling, ImplicitDim::kNone));
+      }
+      SmallVector<int64_t> res_layout_offsets(
+          {first_layout->offsets()[0].value_or(0),
+           first_layout->offsets()[1].value_or(0)});
+      res_layout_offsets[tiling_dim.value()] = 0;
+      // TODO(mvoz): A tiny optimization we could do here later is to
+      // no-op setting tiling when sublane dim size is aligned to sublane
+      // tiling.
+      auto res_layout =
+          VectorLayout(bitwidth, {res_layout_offsets[0], res_layout_offsets[1]},
+                       native_tiling, ImplicitDim::kNone);
+      setLayout(op, in_layouts, res_layout);
+      return success();
+    } else {
+      auto layout = getLayout(op.getSources().front());
+      // When concatenating vectors with replicated offsets, we want to reset
+      // the replicated offset to zero. Because we are not sure if the
+      // replicated value from each vector are same.
+      layout = VectorLayout(
+          layout->bitwidth(),
+          {layout->offsets()[0].value_or(0), layout->offsets()[1].value_or(0)},
+          layout->tiling(), layout->implicit_dim());
+      SmallVector<Layout> in_layouts(op->getNumOperands(), layout);
+      setLayout(op, in_layouts, layout);
+      return success();
+    }
   }
 
   LogicalResult infer(tpu::LoadOp op) {
@@ -1940,7 +1983,14 @@ class VectorLayoutInferer {
     auto result_index = op_result.getResultNumber();
     auto out_attrs = op->getAttrOfType<ArrayAttr>("out_layout").getValue();
     CHECK(out_attrs.size() > result_index);
-    return cast<VectorLayoutAttr>(out_attrs[result_index]).getLayout();
+    auto layout = cast<VectorLayoutAttr>(out_attrs[result_index]).getLayout();
+    if (force_first_tile_offsets_ &&
+        layout->offsets()[1].value_or(0) >= layout->tiling()[1]) {
+      // Force the out-of-first-tile offset to be zero.
+      layout = VectorLayout(layout->bitwidth(), {layout->offsets()[0], 0},
+                            layout->tiling(), layout->implicit_dim());
+    }
+    return layout;
   }
 
   SmallVector<Layout, 4> getLayoutFromOperands(Operation *op) {
@@ -2024,6 +2074,10 @@ class VectorLayoutInferer {
   std::array<int64_t, 2> target_shape_;
   std::array<int64_t, 2> default_tiling_;
 
+  // TODO(b/342235360): Deprecate force_first_tile_offsets_ once we fully
+  // remove the restriction that offsets must fall within the first tile.
+  bool force_first_tile_offsets_ = false;
+
   // Address alignment requirement, counted in 32-bit increments.
   static constexpr int64_t kVmemAlignment32 = 128;
   // TODO(apaszke): This is not really native on newer generations of TPUs.
@@ -2033,9 +2087,9 @@ class VectorLayoutInferer {
 
 struct InferVectorLayoutPass
     : public impl::InferVectorLayoutPassBase<InferVectorLayoutPass> {
-  InferVectorLayoutPass(int lane_count, int sublane_count) {
-    this->sublane_count = sublane_count;
-    this->lane_count = lane_count;
+  InferVectorLayoutPass(std::array<int64_t, 2> target_shape) {
+    this->sublane_count = target_shape[0];
+    this->lane_count = target_shape[1];
   }
   void runOnOperation() override {
     func::FuncOp func = getOperation();
@@ -2049,8 +2103,8 @@ struct InferVectorLayoutPass
 }  // namespace
 
 std::unique_ptr<OperationPass<func::FuncOp>> createInferVectorLayoutPass(
-    int lane_count, int sublane_count) {
-  return std::make_unique<InferVectorLayoutPass>(lane_count, sublane_count);
+    std::array<int64_t, 2> target_shape) {
+  return std::make_unique<InferVectorLayoutPass>(target_shape);
 }
 
 }  // namespace mlir::tpu

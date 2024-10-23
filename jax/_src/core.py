@@ -748,6 +748,13 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
       f"{self._origin_msg()}")
 
   @property
+  def committed(self):
+    raise ConcretizationTypeError(
+        self,
+        f"The 'committed' attribute is not available on {self._error_repr()}."
+        f"{self._origin_msg()}")
+
+  @property
   def device(self):
     # This attribute is part of the jax.Array API, but only defined on concrete arrays.
     # Raising a ConcretizationTypeError would make sense, but for backward compatibility
@@ -1755,6 +1762,8 @@ class ShapedArray(UnshapedArray):
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
     if config.sharding_in_types.value:
+      if sharding is not None:
+        assert len(sharding.spec) == len(self.shape)
       self.sharding = sharding
 
   def update(self, shape=None, dtype=None, weak_type=None, sharding=None):
@@ -1805,12 +1814,14 @@ class ShapedArray(UnshapedArray):
       raise TypeError(self, other)
 
   def str_short(self, short_dtypes=False):
-    dt_str =  dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
+    dt_str = (dtypes.short_dtype_name(self.dtype) if short_dtypes else
+              self.dtype.name)
     dt_str = dt_str.replace('void', 'float0')
-    shapestr = ','.join(map(str, self.shape))
-    if hasattr(self, 'sharding'):
-      return f'{dt_str}[{shapestr}]({self.sharding})'
+    if hasattr(self, 'sharding') and self.sharding is not None:
+      shapestr = ','.join(_get_shape_sharding_str(self.shape, self.sharding.spec))
+      return f'{dt_str}[{shapestr}]'
     else:
+      shapestr = ','.join(map(str, self.shape))
       return f'{dt_str}[{shapestr}]'
 
   def _len(self, ignored_tracer):
@@ -1818,6 +1829,17 @@ class ShapedArray(UnshapedArray):
       return self.shape[0]
     except IndexError as err:
       raise TypeError("len() of unsized object") from err  # same as numpy error
+
+
+def _get_shape_sharding_str(shape, spec):
+  for s1, s2 in zip(shape, spec):
+    if s2 is None:
+      yield f"{s1}"
+    elif isinstance(s2, tuple):
+      ss = ','.join(s for s in s2)
+      yield f"{s1}@({ss})"
+    else:
+      yield f"{s1}@{s2}"
 
 
 def _forward_to_value(self, fun, ignored_tracer, *args):
@@ -3248,7 +3270,7 @@ def pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings
            ) -> pp.Doc:
   rule = (_pp_eqn if not settings.custom_pp_eqn_rules else
           pp_eqn_rules.get(eqn.primitive, _pp_eqn))
-  doc = rule(eqn, context, settings)  # type: ignore[operator]
+  doc = rule(eqn, context, settings)
   user_frame = source_info_util.user_frame(eqn.source_info)
   return doc if user_frame is None else pp.source_map(doc, user_frame)
 

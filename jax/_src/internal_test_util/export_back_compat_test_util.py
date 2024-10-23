@@ -20,8 +20,7 @@ work as before. We test this here.
 The tests in this file refer to the test data in
 jax/_src/internal_test_util/export_back_compat_test_data.
 
-There is one test for each version of a custom call target, e.g.,
-`test_ducc_fft` tests the FFT custom calls on CPU.
+There is one test for each version of a custom call target.
 Only custom call targets tested here should be listed in
 export._CUSTOM_CALL_TARGETS_GUARANTEED_STABLE. All other custom
 call targets will result in an error when encountered during serialization.

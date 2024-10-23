@@ -1358,7 +1358,8 @@ register_lowering(lax.erf_inv_p)(
 
 
 @register_lowering(lax.iota_p)
-def _iota_lowering_rule(ctx: LoweringRuleContext, *, dtype, shape, dimension):
+def _iota_lowering_rule(ctx: LoweringRuleContext, *, dtype, shape, dimension,
+                        sharding):
   iota = _make_range(0, shape[dimension])
   iota = _cast(iota, jnp.int32, dtype)
   for i in range(len(shape)):
@@ -2088,10 +2089,11 @@ def _dot_general_lowering(
     b,
     *,
     dimension_numbers,
+    out_type,
     precision,
     preferred_element_type,
 ):
-  del preferred_element_type  # Unused.
+  del preferred_element_type, out_type  # Unused.
   ((a_contract_dim,), (b_contract_dim,)), batch_dims = dimension_numbers
   assert batch_dims == ((), ())
 

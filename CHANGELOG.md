@@ -20,6 +20,32 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     JAX version 0.4.26. Now we removed it.
     See {jax-issue}`#20385` for a discussion of alternatives.
 
+* Changes:
+  * `jax.lax.FftType` was introduced as a public name for the enum of FFT
+    operations. The semi-public API `jax.lib.xla_client.FftType` has been
+    deprecated.
+  * TPU: JAX now installs TPU support from the `libtpu` package rather than
+    `libtpu-nightly`. For the next few releases JAX will pin an empty version of
+    `libtpu-nightly` as well as `libtpu` to ease the transition; that dependency
+    will be removed in Q1 2025.
+
+* Deprecations:
+  * The semi-public API `jax.lib.xla_client.PaddingType` has been deprecated.
+    No JAX APIs consume this type, so there is no replacement.
+  * The default behavior of {func}`jax.pure_callback` and
+    {func}`jax.extend.ffi.ffi_call` under `vmap` has been deprecated and so has
+    the `vectorized` parameter to those functions. The `vmap_method` parameter
+    should be used instead for better defined behavior. See the discussion in
+    {jax-issue}`#23881` for more details.
+  * The semi-public API `jax.lib.xla_client.register_custom_call_target` has
+    been deprecated. Use the JAX FFI instead.
+  * The semi-public APIs `jax.lib.xla_client.dtype_to_etype`,
+    `jax.lib.xla_client.ops`, 
+    `jax.lib.xla_client.shape_from_pyval`, `jax.lib.xla_client.PrimitiveType`,
+    `jax.lib.xla_client.Shape`, `jax.lib.xla_client.XlaBuilder`, and
+    `jax.lib.xla_client.XlaComputation` have been deprecated. Use StableHLO
+    instead.
+
 ## jax 0.4.34 (October 4, 2024)
 
 * New Functionality
@@ -56,11 +82,6 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * `jax.lib.xla_client.Device` is deprecated; use `jax.Device` instead.
   * `jax.lib.xla_client.XlaRuntimeError` has been deprecated. Use
     `jax.errors.JaxRuntimeError` instead.
-  * The default behavior of {func}`jax.pure_callback` and
-    {func}`jax.extend.ffi.ffi_call` under `vmap` has been deprecated and so has
-    the `vectorized` parameter to those functions. The `vmap_method` parameter
-    should be used instead for better defined behavior. See the discussion in
-    {jax-issue}`#23881` for more details.
 
 * Deletion:
   * `jax.xla_computation` is deleted. It's been 3 months since it's deprecation

@@ -33,6 +33,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import util
 from jax._src.core import AxisName
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.cudnn.fused_attention_stablehlo import (
     dot_product_attention as cudnn_dot_product_attention, MaskType)
 from jax._src.interpreters import batching
@@ -667,7 +668,13 @@ def _one_hot(x: Any, num_classes: int, *,
   lhs = lax.expand_dims(x_arr, (axis,))
   rhs_shape = [1] * x_arr.ndim
   rhs_shape.insert(output_pos_axis, num_classes)
-  rhs = lax.broadcasted_iota(x_arr.dtype, rhs_shape, output_pos_axis)
+  if config.sharding_in_types.value:
+    # TODO(yashkatariya): Maybe expose `out_sharding` on `one_hot` too?
+    rhs_sharding = NamedSharding(x_arr.sharding.mesh, P(*[None] * len(rhs_shape)))
+  else:
+    rhs_sharding = None
+  rhs = lax.broadcasted_iota(x_arr.dtype, rhs_shape, output_pos_axis,
+                             _sharding=rhs_sharding)
   return jnp.asarray(lhs == rhs, dtype=dtype)
 
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.

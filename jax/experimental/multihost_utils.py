@@ -16,13 +16,12 @@
 from __future__ import annotations
 
 from functools import partial, lru_cache
-from typing import Optional
 import zlib
 
 from typing import Any
 import jax
 import jax.numpy as jnp
-from jax.tree_util import tree_flatten, tree_map, tree_unflatten
+from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import core
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching

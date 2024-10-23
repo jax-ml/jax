@@ -22,7 +22,9 @@ project_name = 'jax'
 _current_jaxlib_version = '0.4.34'
 # The following should be updated after each new jaxlib release.
 _latest_jaxlib_version_on_pypi = '0.4.34'
-_libtpu_version = '0.1.dev20241002'
+
+_libtpu_version = '0.0.2'
+_libtpu_nightly_terminal_version = '0.1.dev20241010+nightly.cleanup'
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
@@ -54,7 +56,7 @@ setup(
     python_requires='>=3.10',
     install_requires=[
         f'jaxlib >={_minimum_jaxlib_version}, <={_jax_version}',
-        'ml_dtypes>=0.2.0',
+        'ml_dtypes>=0.4.0',
         'numpy>=1.24',
         "numpy>=1.26.0; python_version>='3.12'",
         'opt_einsum',
@@ -76,7 +78,9 @@ setup(
         # $ pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
         'tpu': [
           f'jaxlib>={_current_jaxlib_version},<={_jax_version}',
-          f'libtpu-nightly=={_libtpu_version}',
+          # TODO(phawkins): remove the libtpu-nightly dependency in Q1 2025.
+          f'libtpu-nightly=={_libtpu_nightly_terminal_version}',
+          f'libtpu=={_libtpu_version}',
           'requests',  # necessary for jax.distributed.initialize
         ],
 

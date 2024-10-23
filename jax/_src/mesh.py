@@ -165,6 +165,8 @@ class Mesh(contextlib.ContextDecorator):
     if isinstance(axis_names, str):
       axis_names = (axis_names,)
     axis_names = tuple(axis_names)
+    if any(i is None for i in axis_names):
+      raise ValueError(f"Mesh axis names cannot be None. Got: {axis_names}")
 
     if devices.ndim != len(axis_names):
       raise ValueError(
@@ -248,6 +250,10 @@ class Mesh(contextlib.ContextDecorator):
         for name, size in util.safe_zip(self.axis_names, self.devices.shape))
 
   @property
+  def axis_sizes(self) -> tuple[int, ...]:
+    return self.devices.shape
+
+  @property
   def size(self):
     return math.prod(self.shape.values()) if self.devices.ndim else 0
 
@@ -265,11 +271,6 @@ class Mesh(contextlib.ContextDecorator):
 
   def _local_mesh(self, process_index):
     return _get_local_mesh(self, process_index)
-
-  @property
-  def _is_jax_device_mesh(self):
-    # Returns if the mesh contains JAX devices or not
-    return True
 
   @functools.cached_property
   def device_ids(self):
@@ -361,6 +362,10 @@ class AbstractMesh:
   def axis_names(self):
     return self._axis_names
 
+  @property
+  def axis_sizes(self) -> tuple[int, ...]:
+    return self._axis_sizes
+
   @functools.cached_property
   def size(self):
     return math.prod(self._axis_sizes) if self._axis_sizes else 0
@@ -368,10 +373,6 @@ class AbstractMesh:
   @functools.cached_property
   def shape(self):
     return collections.OrderedDict(self.shape_tuple)
-
-  @property
-  def _is_jax_device_mesh(self):
-    return False
 
   @property
   def _internal_device_list(self):

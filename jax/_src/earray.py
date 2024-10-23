@@ -84,6 +84,10 @@ class EArray(basearray.Array):
     return sharding_impls.logical_sharding(self.aval, phys_sharding)
 
   @property
+  def committed(self):
+    return self._data.committed
+
+  @property
   def device(self):
     if isinstance(self._data.sharding, sharding_impls.SingleDeviceSharding):
       return self._data.device
