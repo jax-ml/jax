@@ -483,6 +483,25 @@ def _wgmma_lowering(
         gpu_core.TransposeRef((1, 0)),  # Transpose the two logical dims
     ):
       rhs_transpose = True
+    case (
+        gpu_core.UnswizzleRef(rhs_swizzle),
+        gpu_core.TransposeRef((1, 0, 2, 3, 4)),
+        gpu_core.UntileRef(rhs_tiling),
+        gpu_core.TransposeRef(permutation=(1, 0, 2)),
+        state.types.RefReshaper(shape=new_shape),
+    ):
+      if len(rhs_tiling) != 2 or len(new_shape) != 2:
+        raise ValueError("WGMMA expects shapes 2D tiled into 2D tiles.")
+
+      if any(d % t != 0 for d, t in util.safe_zip(new_shape, rhs_tiling)):
+        raise ValueError(
+            f"The last reshape {new_shape} is not divisible by the tiling"
+            f" {rhs_tiling}."
+        )
+
+      high_dims = [d // t for d, t in util.safe_zip(new_shape, rhs_tiling)]
+      b = mgpu.memref_reshape(b, (*high_dims, *rhs_tiling))
+      rhs_transpose = False
     case _:
       raise ValueError(f"WGMMA rhs has unsupported transforms: {b_transforms}.")
 
