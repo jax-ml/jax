@@ -44,6 +44,7 @@ from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.state import discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as sp
+from jax._src.state.types import RefReshaper
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import core as mgpu_core
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
@@ -866,6 +867,33 @@ def _num_programs_lowering_rule(ctx: LoweringRuleContext, axis):
   )
 
 
+def _handle_reshaping(
+    ref: ir.Value, transforms: Sequence[gpu_core.Transform]
+) -> tuple[ir.Value, Sequence[gpu_core.Transform]]:
+  is_trivial_indexer = lambda t: isinstance(
+      t, indexing.NDIndexer
+  ) and gpu_core.is_trivial_index(t.indices, t.shape)
+
+  last_reshaper_idx = next(
+      reversed([i for i, t in enumerate(transforms) if isinstance(t, RefReshaper)]),
+      None,
+  )
+  if last_reshaper_idx is None:
+    return ref, transforms
+  # Check that before the reshape are only trivial indexes and or
+  # other reshapes.
+  # TODO(cperivol): Reshapes should bubble up  rather than being
+  # expected to effectively be the first ref transform.
+  if not all(isinstance(t, RefReshaper) or is_trivial_indexer(t) for t in transforms[:last_reshaper_idx]):
+    raise NotImplementedError(
+        "Reshapes do not compose with other transforms and indexers must be"
+        f" trivial (transforms: {transforms})"
+    )
+  reshaper = cast(RefReshaper, transforms[last_reshaper_idx])
+  # Skip all the reshapes and trivial indexes.
+  return mgpu.memref_reshape(ref, reshaper.shape), transforms[last_reshaper_idx + 1:]
+
+
 def _handle_indexing(
     ref: ir.Value, transforms: Sequence[gpu_core.Transform]
 ) -> tuple[ir.Value, Sequence[gpu_core.Transform]]:
@@ -916,6 +944,7 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *leaves, tree):
     raise TypeError(f"Can only load from references (got {x_smem}).")
   x_aval = ctx.avals_in[0]
   transforms = jax.tree.unflatten(tree, leaves)
+  x_smem, transforms = _handle_reshaping(x_smem, transforms)
   x_smem, transforms = _handle_indexing(x_smem, transforms)
   match transforms:
     case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
@@ -942,6 +971,7 @@ def _swap_lowering_rule(
     raise TypeError(f"Can only store to references (got {x_smem}).")
   x_aval = ctx.avals_in[0]
   transforms = jax.tree.unflatten(tree, leaves)
+  x_smem, transforms = _handle_reshaping(x_smem, transforms)
   x_smem, transforms = _handle_indexing(x_smem, transforms)
   match transforms:
     case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):

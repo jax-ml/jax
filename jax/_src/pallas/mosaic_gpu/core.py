@@ -21,6 +21,7 @@ import collections
 from collections.abc import Sequence
 import dataclasses
 import enum
+import itertools as it
 from typing import Any, ClassVar, Literal
 
 from jax._src import core as jax_core
@@ -29,6 +30,7 @@ from jax._src import tree_util
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
 from jax._src.state.types import Transform
+from jax._src.state import indexing
 import jax.experimental.mosaic.gpu as mgpu
 import jax.numpy as jnp
 from jaxlib.mlir import ir
@@ -37,6 +39,20 @@ from jaxlib.mlir import ir
 AbstractMemoryRef = pallas_core.AbstractMemoryRef
 
 DimensionSemantics = Literal["parallel", "sequential"]
+
+
+def is_trivial_index(idx, shape) -> bool:
+  """Checks if the index selects the entire shape."""
+
+  # Slices that select the entire dimension.
+  def _slices(d):
+    slices = [slice(b, e, s) for b, e, s in it.product([0, None], [d, None], [1, None])]
+    return [indexing.Slice(0, d, 1), *slices]
+
+  if isinstance(idx, tuple):
+    return all(i in _slices(d) for d, i in zip(shape, idx))
+
+  return idx is ... or (len(shape) == 1 and idx in _slices(shape[0]))
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -405,13 +421,6 @@ class WGMMAAccumulatorRef:
     )
 
 
-def _is_trivial_index(idx):
-  _is_deref1 = lambda i: i is Ellipsis or i == slice(None)
-  if isinstance(idx, tuple):
-    return all(_is_deref1(i) for i in idx)
-
-  return _is_deref1(idx)
-
 class WGMMAAbstractAccumulatorRef(AbstractMemoryRef):
   __slots__ = ["inner_aval", "memory_space"]
 
@@ -431,7 +440,7 @@ class WGMMAAbstractAccumulatorRef(AbstractMemoryRef):
     from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_deref  # pytype: disable=import-error
     arr = wgmma_accumulator_deref(tracer)
 
-    if not _is_trivial_index(idx):
+    if not is_trivial_index(idx, tracer.shape):
       arr = arr[idx]
 
     return arr
