@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 import dataclasses
 from functools import partial
+import math
 import operator
 from typing import Any, Protocol, TypeVar
 
@@ -34,7 +35,14 @@ from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
 from jax._src.state import indexing
 from jax._src.state.primitives import addupdate_p, get_p, swap_p
-from jax._src.state.types import AbstractRef, RefBitcaster, RefEffect, RefReshaper
+from jax._src.state.types import (
+    AbstractRef,
+    RefBitcaster,
+    RefEffect,
+    RefReshaper,
+    get_ref_aval_from_value,
+    uninitialized,
+)
 from jax._src.state.utils import bitcast, hoist_consts_to_refs
 from jax._src.typing import Array
 from jax._src.util import (
@@ -44,6 +52,7 @@ from jax._src.util import (
     safe_zip,
     split_dict,
     split_list,
+    unzip2,
     weakref_lru_cache,
 )
 import numpy as np
@@ -470,39 +479,87 @@ run_state_p = core.Primitive("run_state")
 run_state_p.multiple_results = True
 
 def _run_state_bind(*args: Any, jaxpr: core.Jaxpr,
-                    which_linear: tuple[bool, ...]):
+                    which_linear: tuple[bool, ...],
+                    is_initialized: tuple[bool, ...]):
   if config.enable_checks.value:
     core.check_jaxpr(jaxpr)
-    assert len(jaxpr.invars) == len(args)
-    assert len(which_linear) == len(args)
+    num_uninitialized = sum(not i for i in is_initialized)
+    assert len(jaxpr.invars) == len(args) + num_uninitialized
+    assert len(which_linear) == len(args) + num_uninitialized
   return core.Primitive.bind(run_state_p, *args, jaxpr=jaxpr,
-                             which_linear=which_linear)
+                             which_linear=which_linear,
+                             is_initialized=is_initialized)
 run_state_p.def_custom_bind(_run_state_bind)
 
+
+def _default_initialization(x):
+  assert hasattr(x, 'shape')
+  assert hasattr(x, 'dtype')
+  dtype = np.dtype(x)
+  if np.issubdtype(dtype, np.integer):
+    value = np.iinfo(dtype).min
+  else:
+    value = math.nan
+  return lax.full(x.shape, value, dtype)
+
+
 def _run_state_impl(*args: Any, jaxpr: core.Jaxpr,
-                    which_linear: tuple[bool, ...]):
+                    which_linear: tuple[bool, ...],
+                    is_initialized: tuple[bool, ...]):
   del which_linear
   discharged_jaxpr, consts = discharge_state(jaxpr, ())
+  # Initialize the args that are not initialized.
+  args_it = iter(args)
+  args = tuple(
+      next(args_it) if is_init else _default_initialization(var.aval)
+      for is_init, var in zip(is_initialized, discharged_jaxpr.invars)
+  )
   return core.eval_jaxpr(discharged_jaxpr, consts, *args)
 run_state_p.def_impl(_run_state_impl)
 mlir.register_lowering(run_state_p, mlir.lower_fun(_run_state_impl))
 
 def _run_state_abstract_eval(*avals: core.AbstractValue, jaxpr: core.Jaxpr,
-                             which_linear: tuple[bool, ...]):
+                             which_linear: tuple[bool, ...],
+                             is_initialized: tuple[bool, ...]):
   del which_linear
+  assert sum(is_initialized) == len(avals)
   # When we abstractly evaluate `run_state`, we want to keep track of which
   # input avals are `Ref`s and which are not. If an aval is a `Ref`, we want to
   # "propagate" out its inner effects. Otherwise, the effects are local to this
   # `run_state`.
+  inner_to_outer_aval_mapping = {}
+  outer_ref_index = 0
+  for i, is_init in enumerate(is_initialized):
+    if not is_init:
+      pass
+    inner_to_outer_aval_mapping[i] = outer_ref_index
+    outer_ref_index += 1
+  nonlocal_effects = set()
   is_ref = {i for i, aval in enumerate(avals) if isinstance(aval, AbstractRef)}
-  nonlocal_effects = {e for e in jaxpr.effects
-                      if (isinstance(e, RefEffect) and e.input_index in is_ref)
-                      or not isinstance(e, RefEffect)}
+  for eff in jaxpr.effects:
+    if not isinstance(eff, RefEffect):
+      nonlocal_effects.add(eff)
+      continue
+    if eff.input_index not in inner_to_outer_aval_mapping:
+      # This means that this effect corresponds to an uninitialized Ref and
+      # should not propagate out of the primitive.
+      continue
+    # If we do propagate the effect, we need to update the input index to
+    # correspond to the outer index.
+    outer_index = inner_to_outer_aval_mapping[eff.input_index]
+    if outer_index in is_ref:
+      # This means that the effect corresponds to a Ref from an outside scope.
+      nonlocal_effects.add(
+          eff.replace(input_index=inner_to_outer_aval_mapping[eff.input_index])
+      )
   return avals, nonlocal_effects
 run_state_p.def_effectful_abstract_eval(_run_state_abstract_eval)
 
 def _run_state_jvp(primals: Sequence[Any], tangents: Sequence[Any], *,
-                   jaxpr: core.Jaxpr, which_linear: tuple[bool, ...]):
+                   jaxpr: core.Jaxpr, which_linear: tuple[bool, ...],
+                   is_initialized: tuple[bool, ...]):
+  if not all(is_initialized):
+    raise NotImplementedError("Uninitialized Refs are not supported in jvp.")
   nonzero_tangents = [not isinstance(t, ad_util.Zero) for t in tangents]
   discharged_jaxpr, body_consts = discharge_state(jaxpr, ())
   for _ in range(len(nonzero_tangents)):
@@ -524,7 +581,9 @@ def _run_state_jvp(primals: Sequence[Any], tangents: Sequence[Any], *,
   jvp_jaxpr = hoist_consts_to_refs(jvp_jaxpr_)
   jvp_which_linear = (*(False,) * len(jvp_consts), *which_linear, *(True,) * len(tangents))
   out = run_state_p.bind(*jvp_consts, *primals, *tangents, jaxpr=jvp_jaxpr,
-                         which_linear=jvp_which_linear)
+                         which_linear=jvp_which_linear,
+                         # TODO(sharadmv): compute this in the general case
+                         is_initialized=(True,) * len(jvp_jaxpr.invars))
   out_consts, out_primals, out_tangents = split_list(out, [len(jvp_consts),
                                                            len(primals)])
   del out_consts
@@ -576,7 +635,12 @@ def _convert_inputs_to_reads(num_res: int, jaxpr: core.Jaxpr) -> core.Jaxpr:
   return jaxpr
 
 def _run_state_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
-                            jaxpr: core.Jaxpr, which_linear: tuple[bool, ...]):
+                            jaxpr: core.Jaxpr, which_linear: tuple[bool, ...],
+                            is_initialized: tuple[bool, ...]):
+  if not all(is_initialized):
+    raise NotImplementedError(
+        "Uninitialized Refs are not supported in partial_eval."
+    )
   num_inputs = len(tracers)
   assert num_inputs == len(jaxpr.invars)
   in_unknowns = [not t.pval.is_known() for t in tracers]
@@ -636,7 +700,9 @@ def _run_state_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
 
   jaxpr_known_which_linear = (*known_which_linear, *(False,) * num_res)
   out_flat = run_state_p.bind(*jaxpr_known_args, jaxpr=jaxpr_known,
-                              which_linear=jaxpr_known_which_linear)
+                              which_linear=jaxpr_known_which_linear,
+                              # TODO(sharadmv): compute this in the general case
+                              is_initialized=(True,) * len(jaxpr_known.invars))
   known_outputs, residuals = split_list(out_flat, [len(known_tracers)])
   residuals = map(trace.new_instantiated_const, residuals)
   ref_res, nonref_res = split_list(residuals, [num_res_ref])
@@ -664,7 +730,9 @@ def _run_state_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
 
   assert len(unknown_inputs) == len(res_ref_unknown_outputs)
   assert len(unknown_inputs) == len(jaxpr_unknown.invars)
-  uk_params = dict(jaxpr=jaxpr_unknown, which_linear=unknown_which_linear)
+  uk_params = dict(jaxpr=jaxpr_unknown, which_linear=unknown_which_linear,
+                   # TODO(sharadmv); compute this in the general case
+                   is_initialized=(True,) * len(jaxpr_unknown.invars))
   _, eqn_effects = run_state_p.abstract_eval(*[v.aval for v in unknown_inputs],
                                              **uk_params)
   eqn = pe.new_eqn_recipe(unknown_inputs, res_ref_unknown_outputs,
@@ -682,7 +750,13 @@ def _run_state_partial_eval_custom(
     eqn: core.JaxprEqn):
   if not any(in_unknowns):
     return eqn, None, in_unknowns, [False] * len(in_unknowns), []
-  jaxpr, which_linear = split_dict(eqn.params, ["jaxpr", "which_linear"])
+  jaxpr, which_linear, is_initialized = split_dict(
+      eqn.params, ["jaxpr", "which_linear", "is_initialized"]
+  )
+  if not all(is_initialized):
+    raise NotImplementedError(
+        "Uninitialized Refs are not supported in partial_eval_custom."
+    )
   num_inputs = len(eqn.invars)
   # We first need to run a fixpoint to determine which of the `Ref`s are unknown
   # after running the for loop. However, the jaxpr has no outputs. Instead, we
@@ -709,7 +783,8 @@ def _run_state_partial_eval_custom(
       break
     in_unknowns = map(operator.or_, in_unknowns, out_unknowns)
   else:
-    if num_inputs > 0: raise Exception("Invalid fixpoint")
+    if num_inputs > 0:
+      raise Exception("Invalid fixpoint")
   del out_unknowns # Redundant since it's the same as `in_unknowns`
   new_inst = [x for x, already, inst in zip(eqn.invars, in_inst, out_inst)
               if type(x) is core.Var and inst and not already]
@@ -748,7 +823,9 @@ def _run_state_partial_eval_custom(
   jaxpr_known_which_linear = (*known_which_linear, *(False,) * num_res)
   known_and_res_invars = [*known_invars, *ref_resvars, *nonref_resvars]
 
-  known_params = dict(jaxpr=jaxpr_known, which_linear=jaxpr_known_which_linear)
+  known_params = dict(jaxpr=jaxpr_known, which_linear=jaxpr_known_which_linear,
+                      # TODO(sharadmv): compute this in the general case
+                      is_initialized=(True,) * len(jaxpr_known.invars))
   _, known_effects = run_state_p.abstract_eval(
       *[v.aval for v in known_and_res_invars], **known_params)
   eqn_known = pe.new_jaxpr_eqn(known_and_res_invars,
@@ -760,7 +837,9 @@ def _run_state_partial_eval_custom(
 
   _, staged_which_linear = partition_list(in_unknowns, which_linear)
   which_linear_unknown = (*[False] * num_res, *staged_which_linear)
-  staged_params = dict(jaxpr=jaxpr_staged, which_linear=which_linear_unknown)
+  staged_params = dict(jaxpr=jaxpr_staged, which_linear=which_linear_unknown,
+                       # TODO(sharadmv): compute this in the general case
+                       is_initialized=(True,) * len(jaxpr_staged.invars))
   rejiggered_resvars = [*nonref_resvars, *ref_resvars]
   _, staged_invars = partition_list(in_unknowns, eqn.invars)
   res_staged_invars = [*rejiggered_resvars, *staged_invars]
@@ -791,8 +870,12 @@ def _run_state_partial_eval_custom(
   return eqn_known, eqn_staged, in_unknowns, in_unknowns, new_vars
 pe.partial_eval_jaxpr_custom_rules[run_state_p] = _run_state_partial_eval_custom
 
-def _transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: Sequence[bool]
-                    ) -> tuple[core.Jaxpr, Any]:
+def _transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: Sequence[bool],
+                     is_initialized: tuple[bool, ...]) -> tuple[core.Jaxpr, Any]:
+  if not all(is_initialized):
+    raise NotImplementedError(
+        "Uninitialized Refs are not supported in transpose."
+    )
   def trans(*args):
     # First we want to run the computation to read all the residual refs. We can
     # do that by using partial evaluation with all linear inputs unknown.
@@ -811,8 +894,14 @@ def _transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: Sequence[bool]
     all_avals = [*res_avals, *[v.aval for v in res_jaxpr_.outvars]]
     empty_res = map(ad.zeros_like_aval, all_avals)
     res_jaxpr, _ = _convert_outputs_to_writes(res_jaxpr_)
-    res = run_state_p.bind(*res_args, *empty_res, jaxpr=res_jaxpr,
-                           which_linear=(False,) * (len(res_args) + len(empty_res)))
+    res = run_state_p.bind(
+        *res_args,
+        *empty_res,
+        jaxpr=res_jaxpr,
+        which_linear=(False,) * (len(res_args) + len(empty_res)),
+        # TODO(sharadmv): compute this in the general case
+        is_initialized=(True,) * len(res_jaxpr.invars),
+    )
     res = res[len(res_args):]
     ref_res_, nonref_res_ = split_list(res, [num_res_ref])
 
@@ -835,7 +924,12 @@ def _transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: Sequence[bool]
   return jaxpr_trans, consts
 
 def _run_state_transpose(in_cts, *args, jaxpr: core.Jaxpr,
-                         which_linear: tuple[bool, ...]):
+                         which_linear: tuple[bool, ...],
+                         is_initialized: tuple[bool, ...]):
+  if not all(is_initialized):
+    raise NotImplementedError(
+        "Uninitialized Refs are not supported in transpose."
+    )
   # if any in_ct is nonzero, we definitely want it in args_ (and the
   # corresponding x in args could be an undefined primal, but doesn't have to be)
   # for non-res stuff:
@@ -859,12 +953,19 @@ def _run_state_transpose(in_cts, *args, jaxpr: core.Jaxpr,
     elif type(ct) is not ad_util.Zero and     ad.is_undefined_primal(x):
       # the loop was 'getting and setting', grab that cotangent!
       transpose_args.append(ct)
-  jaxpr_transpose_, consts = _transpose_jaxpr(jaxpr, which_linear)
+  jaxpr_transpose_, consts = _transpose_jaxpr(
+      jaxpr, which_linear, is_initialized
+  )
   jaxpr_transpose = hoist_consts_to_refs(jaxpr_transpose_)
   which_linear = (*[False] * len(consts), *which_linear)
-  const_all_outs = run_state_p.bind(*consts, *transpose_args,
-                                    jaxpr=jaxpr_transpose,
-                                    which_linear=which_linear)
+  const_all_outs = run_state_p.bind(
+      *consts,
+      *transpose_args,
+      jaxpr=jaxpr_transpose,
+      which_linear=which_linear,
+      # TODO(sharadmv): compute this in the general case
+      is_initialized=(True,) * len(jaxpr_transpose.invars),
+  )
   _, all_outs = split_list(const_all_outs, [len(consts)])
   ct_outs = [ct if ad.is_undefined_primal(x) else None
              for x, ct in zip(args, all_outs)]
@@ -875,9 +976,15 @@ ad.primitive_transposes[run_state_p] = _run_state_transpose
 def _run_state_discharge_rule(in_avals: Sequence[core.AbstractValue],
                               out_avals: Sequence[core.AbstractValue],
                               *args: Any, jaxpr: core.Jaxpr,
-                              which_linear: Sequence[bool]):
+                              which_linear: Sequence[bool],
+                              is_initialized: tuple[bool, ...]):
+  if not all(is_initialized):
+    raise NotImplementedError(
+        "Uninitialized Refs are not supported in discharge."
+    )
   del out_avals
-  out_vals = run_state_p.bind(*args, jaxpr=jaxpr, which_linear=which_linear)
+  out_vals = run_state_p.bind(*args, jaxpr=jaxpr, which_linear=which_linear,
+                              is_initialized=is_initialized)
   new_invals = []
   for aval, out_val in zip(in_avals, out_vals):
     new_invals.append(out_val if isinstance(aval, AbstractRef) else None)
@@ -896,16 +1003,23 @@ def _initial_style_jaxpr(fun, in_tree, in_avals):
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun_, in_avals, debug)
   return jaxpr, consts, out_tree_thunk()
 
+
 T = TypeVar('T')
 def run_state(f: Callable[..., None]) -> Callable[[T], T]:
   def wrapped(args):
     flat_args, in_tree = tree_util.tree_flatten(args)
-    avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in flat_args]
-    jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, map(AbstractRef, avals))
+    ref_avals, ref_args = unzip2(map(get_ref_aval_from_value, flat_args))
+    # There may be some uninitialized values here in ref_args.
+    jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, ref_avals)
     jaxpr = hoist_consts_to_refs(jaxpr_)
-    which_linear = (False,) * (len(consts) + len(flat_args))
-    out_const_flat = run_state_p.bind(*consts, *flat_args, jaxpr=jaxpr,
-                                      which_linear=which_linear)
+    which_linear = (False,) * (len(consts) + len(ref_args))
+    refs_is_initialized = tuple(r is not uninitialized for r in ref_args)
+    init_args = tuple(r for r in ref_args if r is not uninitialized)
+    # Consts are always initialized.
+    is_initialized = (True,) * len(consts) + refs_is_initialized
+    out_const_flat = run_state_p.bind(*consts, *init_args, jaxpr=jaxpr,
+                                      which_linear=which_linear,
+                                      is_initialized=is_initialized)
     _, out_flat = split_list(out_const_flat, [len(consts)])
     return in_tree.unflatten(out_flat)
   return wrapped
@@ -913,12 +1027,19 @@ def run_state(f: Callable[..., None]) -> Callable[[T], T]:
 def run_state_reference(f: Callable[..., None]):
   def wrapped(args):
     flat_args, in_tree = tree_util.tree_flatten(args)
-    avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in flat_args]
-    jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, map(AbstractRef, avals))
+    ref_avals, ref_args = unzip2(map(get_ref_aval_from_value, flat_args))
+    jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, ref_avals)
     jaxpr = hoist_consts_to_refs(jaxpr_)
     discharged_jaxpr, discharged_consts = discharge_state(jaxpr, ())
+
+    # Initialize any uninitialized values here in ref_args in the reference.
+    ref_args = [
+        _default_initialization(aval) if r is uninitialized else r
+        for r, aval in zip(ref_args, ref_avals)
+    ]
+
     out_const_flat = core.eval_jaxpr(discharged_jaxpr, discharged_consts,
-                                     *consts, *args)
+                                     *consts, *ref_args)
     _, out_flat = split_list(out_const_flat, [len(consts)])
     return in_tree.unflatten(out_flat)
   return wrapped
