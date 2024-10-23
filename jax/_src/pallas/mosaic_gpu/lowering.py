@@ -36,6 +36,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
+from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.lib.mlir.dialects import scf as scf_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
@@ -43,6 +44,7 @@ from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.state import discharge
 from jax._src.state import indexing
+from jax._src.state import types as state_types
 from jax._src.state import primitives as sp
 from jax._src.state.types import RefReshaper
 import jax.experimental.mosaic.gpu as mgpu
@@ -1259,6 +1261,55 @@ def _run_scoped_lowering_rule(
 
   assert len(outs) == len(jaxpr.outvars), (jaxpr, outs)
   return outs
+
+
+@register_lowering_rule(discharge.run_state_p)
+def _run_state_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    jaxpr: jax_core.Jaxpr,
+    which_linear: tuple[bool, ...],
+    is_initialized: tuple[bool, ...],
+):
+  del which_linear
+  # TODO(apaszke): This should be unified with run_scoped.
+  if not all(is_initialized):
+    raise NotImplementedError("Uninitialized Refs are not supported in lowering of run_state.")
+
+  should_discharge = []
+  new_input_vals = []
+  for arg, v, out_aval in zip(args, jaxpr.invars, ctx.avals_out):
+    aval = v.aval
+    if isinstance(aval, gpu_core.WGMMAAbstractAccumulatorRef):
+      new_input_vals.append(mgpu.WGMMAAccumulator.from_registers(arg))
+      should_discharge.append(True)
+      assert isinstance(out_aval, jax_core.ShapedArray)
+    else:
+      new_input_vals.append(arg)
+      should_discharge.append(not isinstance(out_aval, state_types.AbstractRef))
+  if not any(should_discharge):
+    raise NotImplementedError(
+        "Expected at least one accumulator to in run_state."
+    )
+
+  discharged_jaxpr, new_consts = discharge.discharge_state(
+      jaxpr, (), should_discharge=should_discharge
+  )
+  assert not new_consts
+  outs = lower_jaxpr_to_mosaic_gpu(
+      ctx.module_ctx, ctx.launch_ctx, discharged_jaxpr, new_input_vals, ()
+  )
+  # Await the accumulators and extract their final values.
+  nvvm_dialect.wgmma_wait_group_sync_aligned(0)
+  outs = [
+      out.value if isinstance(out, mgpu.WGMMAAccumulator) else out
+      for out in outs
+  ]
+  # Blend the discharge results with refs we closed over. I don't fully
+  # understand the reasons behind this calling convention, but sharadmv@ has
+  # assured me that this is ok.
+  outs_it = iter(outs)
+  return [next(outs_it) if d else a for d, a in zip(should_discharge, args)]
 
 
 def _lower_jaxpr_to_for_loop(

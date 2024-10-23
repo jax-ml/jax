@@ -767,6 +767,30 @@ class PallasCallTest(PallasTest):
     )(a, b)
     np.testing.assert_allclose(res, a @ b, rtol=1e-3)
 
+  def test_wgmma_registers_init(self):
+    def kernel(a_ref, b_ref, i_ref, o_ref):
+      def scope(acc_ref):
+        plgpu.wgmma(acc_ref, a_ref[...], b_ref)
+      o_ref[...] = pl.run_state(scope)(plgpu.ACC.init(i_ref[...]))
+
+    key1, key2, key3 = jax.random.split(jax.random.key(42), 3)
+    a = jax.random.uniform(key1, shape=(64, 128), dtype=jnp.float16)
+    b = jax.random.uniform(key2, shape=(128, 192), dtype=jnp.float16)
+    i = jax.random.uniform(key3, shape=(64, 192), dtype=jnp.float16) * 10
+
+    transforms = (plgpu.TilingTransform((64, 64)), plgpu.SwizzleTransform(128))
+    res = pl.pallas_call(
+        kernel,
+        in_specs=[
+            plgpu.GPUBlockSpec((64, 128), lambda: (0, 0), transforms=transforms),
+            plgpu.GPUBlockSpec((128, 192), lambda: (0, 0), transforms=transforms),
+            plgpu.GPUBlockSpec((64, 192), lambda: (0, 0), transforms=transforms),
+        ],
+        out_specs=plgpu.GPUBlockSpec((64, 192), lambda: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float16),
+    )(a, b, i)
+    np.testing.assert_allclose(res, i + a @ b, rtol=2e-3)
+
   def test_wgmma_sliced_ref(self):
     def kernel(a_ref, b_ref, o_ref):
       def scope(acc_ref):

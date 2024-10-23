@@ -31,6 +31,7 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
 from jax._src.state.types import Transform
 from jax._src.state import indexing
+from jax._src.state import types as state_types
 import jax.experimental.mosaic.gpu as mgpu
 import jax.numpy as jnp
 from jaxlib.mlir import ir
@@ -414,11 +415,28 @@ class Barrier:
 class WGMMAAccumulatorRef:
   shape: tuple[int, int]
   dtype: jnp.dtype = jnp.float32
+  _init: Any = state_types.uninitialized
 
   def get_ref_aval(self) -> AbstractMemoryRef:
+    if self._init is not state_types.uninitialized:
+      raise ValueError(
+          "Preinitialized WGMMAAccumulatorRef only supported in pl.run_state."
+      )
     return WGMMAAbstractAccumulatorRef(
         jax_core.ShapedArray(shape=self.shape, dtype=self.dtype), GPUMemorySpace.REGS
     )
+
+  @staticmethod
+  def init(array):
+    return WGMMAAccumulatorRef(array.shape, array.dtype, _init=array)
+
+
+def _wgmma_ref_type_mapping(ref: WGMMAAccumulatorRef):
+  aval = WGMMAAbstractAccumulatorRef(
+      jax_core.ShapedArray(shape=ref.shape, dtype=ref.dtype), GPUMemorySpace.REGS
+  )
+  return aval, ref._init
+state_types._ref_type_aval_mappings[WGMMAAccumulatorRef] = _wgmma_ref_type_mapping
 
 
 class WGMMAAbstractAccumulatorRef(AbstractMemoryRef):
