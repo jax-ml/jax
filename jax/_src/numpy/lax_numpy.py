@@ -3900,10 +3900,63 @@ def flatnonzero(a: ArrayLike, *, size: int | None = None,
   return nonzero(ravel(a), size=size, fill_value=fill_value)[0]
 
 
-@util.implements(np.unwrap)
 @partial(jit, static_argnames=('axis',))
 def unwrap(p: ArrayLike, discont: ArrayLike | None = None,
            axis: int = -1, period: ArrayLike = 2 * pi) -> Array:
+  """Unwrap a periodic signal.
+
+  JAX implementation of :func:`numpy.unwrap`.
+
+  Args:
+    p: input array
+    discont: the maximum allowable discontinuity in the sequence. The
+      default is ``period / 2``
+    axis: the axis along which to unwrap; defaults to -1
+    period: the period of the signal, which defaults to :math:`2\\pi`
+
+  Returns:
+    An unwrapped copy of ``p``.
+
+  Examples:
+    Consider a situation in which you are making measurements of the position of
+    a rotating disk via the ``x`` and ``y`` locations of some point on that disk.
+    The underlying variable is an always-increating angle which we'll generate
+    this way, using degrees for ease of representation:
+
+    >>> rng = np.random.default_rng(0)
+    >>> theta = rng.integers(0, 90, size=(20,)).cumsum()
+    >>> theta
+    array([ 76, 133, 179, 203, 230, 233, 239, 240, 255, 328, 386, 468, 513,
+           567, 654, 719, 775, 823, 873, 957])
+
+    Our observations of this angle are the ``x`` and ``y`` coordinates, given by
+    the sine and cosine of this underlying angle:
+
+    >>> x, y = jnp.sin(jnp.deg2rad(theta)), jnp.cos(jnp.deg2rad(theta))
+
+    Now, say that given these ``x`` and ``y`` coordinates, we wish to recover
+    the original angle ``theta``. We might do this via the :func:`atan2` function:
+
+    >>> theta_out = jnp.rad2deg(jnp.atan2(x, y)).round()
+    >>> theta_out
+    Array([  76.,  133.,  179., -157., -130., -127., -121., -120., -105.,
+            -32.,   26.,  108.,  153., -153.,  -66.,   -1.,   55.,  103.,
+            153., -123.], dtype=float32)
+
+    The first few values match the input angle ``theta`` above, but after this the
+    values are wrapped because the ``sin`` and ``cos`` observations obscure the phase
+    information. The purpose of the :func:`unwrap` function is to recover the original
+    signal from this wrapped view of it:
+
+    >>> jnp.unwrap(theta_out, period=360)
+    Array([ 76., 133., 179., 203., 230., 233., 239., 240., 255., 328., 386.,
+           468., 513., 567., 654., 719., 775., 823., 873., 957.],      dtype=float32)
+
+    It does this by assuming that the true underlying sequence does not differ by more than
+    ``discont`` (which defaults to ``period / 2``) within a single step, and when it encounters
+    a larger discontinuity it adds factors of the period to the data. For periodic signals
+    that satisfy this assumption, :func:`unwrap` can recover the original phased signal.
+  """
   util.check_arraylike("unwrap", p)
   p = asarray(p)
   if issubdtype(p.dtype, np.complexfloating):
