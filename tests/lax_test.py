@@ -1122,11 +1122,6 @@ class LaxTest(jtu.JaxTestCase):
         raise SkipTest(
             f"The dot algorithm '{algorithm}' is not supported on TPU."
         )
-      if algorithm != lax.DotAlgorithmPreset.DEFAULT and dtype != np.float32:
-        raise SkipTest(
-            f"The dot algorithm '{algorithm}' is only supported for float32 on"
-            " TPU."
-        )
     lhs_shape = (3, 4)
     rhs_shape = (4, 3)
     rng = jtu.rand_default(self.rng())
