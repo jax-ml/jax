@@ -2411,25 +2411,23 @@ def _pjit_state_discharge_rule(
   return new_invals, out_vals
 state_discharge.register_discharge_rule(pjit_p)(_pjit_state_discharge_rule)
 
+def _sharding_to_physical(s, a):
+  if jaxpr_passes.is_extended(a) and not isinstance(s, UnspecifiedValue):
+    return sharding_impls.physical_sharding(a, s)
+  return s
+
 def _pjit_edtype_rule(ctx: jaxpr_passes.ResolveEdtypesContext,
                           *args,
                           name, jaxpr: core.ClosedJaxpr, in_shardings,
                           out_shardings, in_layouts, out_layouts, resource_env,
                           donated_invars, keep_unused, inline
                            ):
+  if any(layout is not None for layout in in_layouts) or any(
+    layout is not None for layout in out_layouts):
+    raise NotImplementedError("Layouts for extended dtypes not implemented.")
   physical_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(jaxpr)
-  in_shardings = [
-    sharding_impls.physical_sharding(a, s)
-    if a is not core.abstract_token and dtypes.issubdtype(a.dtype, dtypes.extended)
-    else s
-    for s, a in zip(in_shardings, ctx.avals_in)
-  ]
-  out_shardings = [
-    sharding_impls.physical_sharding(a, s)
-    if a is not core.abstract_token and dtypes.issubdtype(a.dtype, dtypes.extended)
-    else s
-    for s, a in zip(out_shardings, ctx.avals_out)
-  ]
+  in_shardings = map(_sharding_to_physical, in_shardings, ctx.avals_in)
+  out_shardings = map(_sharding_to_physical, out_shardings, ctx.avals_out)
   return pjit_p.bind(*args, name=name,
                      jaxpr=physical_jaxpr,
                      in_shardings=in_shardings,

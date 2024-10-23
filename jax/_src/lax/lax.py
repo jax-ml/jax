@@ -2970,26 +2970,6 @@ def _convert_elt_type_pp_rule(eqn, context, settings):
   if params['sharding'] is None:
     del params['sharding']  # don't show trivial case
   return core._pp_eqn(eqn.replace(params=params), context, settings)
-
-def _convert_element_type_edtype_rule(ctx, operand, *, new_dtype, weak_type,
-                                     sharding):
-  aval_in, = ctx.avals_in
-  if (aval_in.dtype != new_dtype and
-      ((dtypes.issubdtype(aval_in.dtype, dtypes.extended) and
-        not aval_in.dtype._rules.convert_from(aval_in.dtype, new_dtype)) or
-       (dtypes.issubdtype(new_dtype, dtypes.extended) and
-        not new_dtype._rules.convert_to(aval_in.dtype, new_dtype)))):
-    raise ValueError(
-        f"Cannot convert_element_type from {dtype_to_string(aval_in.dtype)} "
-        f"to {dtype_to_string(new_dtype)}")
-  aval_out, = ctx.avals_out
-  physical_out_dtype = core.physical_aval(aval_out).dtype
-  return convert_element_type_p.bind(operand,
-                                     new_dtype=physical_out_dtype,
-                                     weak_type=weak_type,
-                                     sharding=sharding)
-
-
 convert_element_type_p = Primitive('convert_element_type')
 def _convert_element_type_bind(operand, *, new_dtype, weak_type, sharding):
   operand = core.Primitive.bind(convert_element_type_p, operand,
@@ -3012,7 +2992,6 @@ pe.const_fold_rules[convert_element_type_p] = _convert_elt_type_folding_rule
 pe.forwarding_rules[convert_element_type_p] = _convert_elt_type_fwd_rule
 pe.def_trivial_padding(convert_element_type_p)
 core.pp_eqn_rules[convert_element_type_p] = _convert_elt_type_pp_rule
-jaxpr_passes.register_edtype_rule(convert_element_type_p, _convert_element_type_edtype_rule)
 batching.ragged_prop_rules[convert_element_type_p] = (
     batching.ragged_mask_elementwise_rule
 )

@@ -206,13 +206,13 @@ def dtype_to_ir_type(dtype: np.dtype | np.generic) -> ir.Type:
   return ir_type_factory()
 
 def _array_ir_types(aval: core.ShapedArray | core.DShapedArray) -> ir.Type:
-  if dtypes.issubdtype(aval.dtype, dtypes.extended):
-    raise ValueError(f"Extended dtype encountered in MLIR lowering {aval}")
+  aval = core.physical_aval(aval)
   if not core.is_constant_shape(aval.shape):
     return _dynamic_array_ir_types(aval)  # type: ignore
   return ir.RankedTensorType.get(aval.shape, dtype_to_ir_type(aval.dtype))  # type: ignore
 
 def _dynamic_array_ir_types(aval: core.ShapedArray) -> ir.Type:
+  aval = core.physical_aval(aval)
   dyn_size = ir.ShapedType.get_dynamic_size()
   shape = [d if type(d) is int else dyn_size for d in aval.shape]
   return ir.RankedTensorType.get(shape, dtype_to_ir_type(aval.dtype))
@@ -1354,6 +1354,9 @@ def lower_jaxpr_to_fun(
   Returns:
     MLIR func op
   """
+  # TODO(justinfu): Infer extended avals from source other than the jaxpr.
+  extended_in_avals = jaxpr.in_avals
+  extended_out_avals = jaxpr.out_avals
   jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(jaxpr)
 
   # The first dimension variable may be the platform index
@@ -1370,10 +1373,12 @@ def lower_jaxpr_to_fun(
   token_avals = [core.abstract_token] * num_tokens
   # Order of arguments: dim vars, tokens, array inputs
   input_avals = dim_var_avals + token_avals + jaxpr.in_avals
+  extended_in_avals = dim_var_avals + token_avals + extended_in_avals
   if any(jaxpr_passes.is_extended(a) for a in input_avals):
     raise ValueError(f"Extended dtype encountered in MLIR lowering {input_avals}")
   input_types = [*dim_var_types, *token_types, *input_types]
   output_avals = [core.abstract_token] * num_tokens + jaxpr.out_avals
+  extended_out_avals = [core.abstract_token] * num_tokens + extended_out_avals
   if any(jaxpr_passes.is_extended(a) for a in output_avals):
     raise ValueError(f"Extended dtype encountered in MLIR lowering {output_avals}")
   output_types = [*token_types, *output_types]
@@ -1604,6 +1609,14 @@ def lower_jaxpr_to_fun(
           a if s is None else wrap_with_sharding_op(entry_lowering_ctx, a, a_aval, s)
           for a, s, a_aval in zip(flat_args, ir_arg_shardings, input_avals)]
 
+    if ir_arg_shardings is not None and name == "main":
+      flat_args = [
+          replicate_trailing_dims(entry_lowering_ctx, o, a)
+          if (a is not core.abstract_token and
+              dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # pytype: disable=attribute-error
+          for o, s, a in zip(flat_args, ir_arg_shardings, extended_in_avals)
+      ]
+
     _, token_args, unflattened_args = util.split_list(
         unflatten_ir_values_like_types(flat_args, input_types),
         [num_dim_vars, num_tokens])
@@ -1628,6 +1641,14 @@ def lower_jaxpr_to_fun(
       flat_outputs = [
           o if s is None else wrap_with_sharding_op(entry_lowering_ctx, o, o_aval, s)
           for o, s, o_aval in zip(flat_outputs, ir_result_shardings, output_avals)]
+
+    if ir_result_shardings is not None and name == "main":
+      flat_outputs = [
+          replicate_trailing_dims(entry_lowering_ctx, o, a)
+          if (a is not core.abstract_token and
+              dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # pytype: disable=attribute-error
+          for o, s, a in zip(flat_outputs, ir_result_shardings, extended_out_avals)
+      ]
 
     # Insert a custom call if output is on host because XLA needs that to do the
     # transfer.
@@ -1656,6 +1677,29 @@ def wrap_with_memory_kind(
   dict_attr = {"_xla_buffer_placement": ir.StringAttr.get(memory_kind)}
   op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
   return op.result
+
+
+def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
+  # Set the sharding of extended dtypes to be UNCONSTRAINED
+  # (i.e. XLA will choose) on aval.shape.
+  # For the trailing dims i.e. the dimension of key_shape on the base_array,
+  # the sharding is set to be REPLICATED always.
+  # For example: if the key.shape is (8, 2) and key_data(key).shape is (8, 2, 2),
+  # then the sharding will be P(P.UNCONSTRAINED, P.UNCONSTRAINED, None).
+  # The below custom call achieves the sharding like above example.
+  if config.use_shardy_partitioner.value:
+    physical_ndim = core.physical_aval(aval).ndim
+    s = sharding_impls.SdyArraySharding(
+        mesh_shape=None,
+        dimension_shardings=[
+            sharding_impls.SdyDimSharding(axes=[], is_closed=i >= aval.ndim)
+            for i in range(physical_ndim)
+        ])
+    return wrap_with_sharding_op(ctx, val, aval, s)
+  else:
+    return wrap_with_sharding_op(
+      ctx, val, aval, xc.HloSharding.replicate().to_proto(),
+      unspecified_dims=set(range(aval.ndim)))
 
 
 def _emit_lowering_rule_as_fun(lowering_rule,
@@ -2365,8 +2409,6 @@ def _wrap_with_spmd_op(name: str,
     backend_config = ""
   result_type = aval_to_ir_type(aval_out)
   assert isinstance(result_type, ir.Type), result_type
-  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    assert False
   out_shape = core.physical_aval(aval_out).shape  # type: ignore
   if core.is_constant_shape(out_shape):
     result_shapes = None
