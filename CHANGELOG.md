@@ -10,7 +10,9 @@ Remember to align the itemized text with the first line of an item within a list
 When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
-## jax 0.4.35
+## jax 0.4.36
+
+## jax 0.4.35 (Oct 22, 2024)
 
 * Breaking Changes
   * {func}`jax.numpy.isscalar` now returns True for any array-like object with
