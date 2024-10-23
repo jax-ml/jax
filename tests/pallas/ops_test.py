@@ -793,12 +793,15 @@ class OpsTest(PallasBaseTest):
       self.skipTest(f"{fn.__name__} not implemented on TPU")
 
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), dtype), grid=1
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 128), dtype),
+        grid=1,
     )
     def kernel(x_ref, o_ref):
       o_ref[:] = fn(x_ref[...])
 
-    x = jnp.array([0.42, 2.4]).astype(dtype)
+    # create an array with shape (8, 128)
+    x = jnp.array([0.42, 2.4] * (8 * 128 // 2)).reshape(8, 128).astype(dtype)
     self.assertAllClose(kernel(x), fn(x), rtol=1e-6)
 
   @parameterized.named_parameters(
