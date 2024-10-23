@@ -21,7 +21,6 @@ from typing import Any, Literal
 
 import jax
 from jax._src import core as jax_core
-from jax._src import effects
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
@@ -246,15 +245,6 @@ def _extract_barrier_indexer(transforms) -> indexing.NDIndexer | None:
       raise ValueError("Barrier does not support arbirary transforms")
 
 
-class MemoryEffect(jax_core.Effect):
-  ...
-
-
-effects.control_flow_allowed_effects.add_type(MemoryEffect)
-
-_memory_effect = MemoryEffect()
-
-
 barrier_arrive_p = jax_core.Primitive("barrier_arrive")
 barrier_arrive_p.multiple_results = True
 
@@ -262,7 +252,7 @@ barrier_arrive_p.multiple_results = True
 @barrier_arrive_p.def_effectful_abstract_eval
 def _barrier_arrive_abstract_eval(*avals, **params):
   del avals, params  # Unused.
-  return (), {_memory_effect}
+  return (), {gpu_core._memory_effect}
 
 
 @lowering.register_lowering_rule(barrier_arrive_p)
@@ -299,7 +289,7 @@ barrier_wait_p.multiple_results = True
 @barrier_wait_p.def_effectful_abstract_eval
 def _barrier_wait_abstract_eval(*avals, **params):
   del avals, params  # Unused.
-  return (), {_memory_effect}
+  return (), {gpu_core._memory_effect}
 
 
 @lowering.register_lowering_rule(barrier_wait_p)
@@ -336,7 +326,7 @@ wait_smem_to_gmem_p.multiple_results = True
 @wait_smem_to_gmem_p.def_effectful_abstract_eval
 def _wait_smem_to_gmem_abstract_eval(n):
   del n  # Unused.
-  return (), {_memory_effect}
+  return (), {gpu_core._memory_effect}
 
 
 @lowering.register_lowering_rule(wait_smem_to_gmem_p)
@@ -349,13 +339,6 @@ def wait_smem_to_gmem(n: int) -> None:
   """Waits until there are no more than ``n`` SMEM->GMEM copies in flight."""
   wait_smem_to_gmem_p.bind(n)
 
-
-class _WGMMAPipelineEffect(effects.Effect):
-  pass
-
-
-_wgmma_pipeline_effect = _WGMMAPipelineEffect()
-effects.control_flow_allowed_effects.add_type(_WGMMAPipelineEffect)
 
 # WGMMA on an accumulator reference
 wgmma_ref_p = jax_core.Primitive("wgmma_ref")
@@ -419,7 +402,7 @@ def _wgmma_ref_effectful_abstract_eval(acc_aval, a_aval, b_aval, *_, **params):
   if not isinstance(acc_aval, gpu_core.WGMMAAbstractAccumulatorRef):
     raise TypeError(f"Expected WGMMAAbstractAccumulatorRef got {acc_aval}")
   return (), {
-      _wgmma_pipeline_effect,
+      gpu_core._wgmma_pipeline_effect,
       state.WriteEffect(0),
       state.ReadEffect(0),
       state.ReadEffect(2),
@@ -529,7 +512,7 @@ def _wgmma_lowering(
 def _wgmma_effectful_abstract_eval(acc, lhs_ref, *args, **kwargs):
   del args, kwargs
   return acc, {
-      _wgmma_pipeline_effect,
+      gpu_core._wgmma_pipeline_effect,
       state.ReadEffect(2),
       *([state.ReadEffect(1)] if isinstance(lhs_ref, state.AbstractRef) else [])
   }
@@ -545,7 +528,7 @@ def wgmma_wait(n: int):
 
 @wgmma_wait_p.def_effectful_abstract_eval
 def wgmma_wait_effectful_abstract_eval(_):
-  return [], {_wgmma_pipeline_effect}
+  return [], {gpu_core._wgmma_pipeline_effect}
 
 
 @lowering.register_lowering_rule(wgmma_wait_p)
@@ -570,7 +553,7 @@ def _wgmma_accumulator_deref_abstract_eval(acc):
   # Dereferencing implies flushing so we have a wgmma pipeline effect.
   ret = acc.inner_aval if isinstance(acc, gpu_core.WGMMAAbstractAccumulatorRef) else acc
   assert isinstance(ret, jax_core.ShapedArray), acc
-  return ret, {_wgmma_pipeline_effect}
+  return ret, {gpu_core._wgmma_pipeline_effect}
 
 
 @discharge.register_discharge_rule(wgmma_accumulator_deref_p)
@@ -620,7 +603,7 @@ set_max_registers_p.multiple_results = True
 @set_max_registers_p.def_effectful_abstract_eval
 def _set_max_registers_abstract_eval(n, *, action):
   del n, action  # Unused.
-  return (), {_memory_effect}
+  return (), {gpu_core._memory_effect}
 
 
 @lowering.register_lowering_rule(set_max_registers_p)
@@ -648,7 +631,7 @@ commit_smem_p.multiple_results = True
 
 @commit_smem_p.def_effectful_abstract_eval
 def _commit_smem_abstract_eval():
-  return (), {_memory_effect}
+  return (), {gpu_core._memory_effect}
 
 
 @lowering.register_lowering_rule(commit_smem_p)

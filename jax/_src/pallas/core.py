@@ -1059,6 +1059,8 @@ def _core_map_abstract_eval(*args, jaxpr, mesh):
     raise ValueError("core_map must not return any outputs.")
   effs = set()
   for eff in jaxpr.effects:
+    if mesh.discharges_effect(eff):
+      continue
     if not isinstance(eff, jax_core.NamedAxisEffect):
       effs.add(eff)
       continue
@@ -1083,6 +1085,8 @@ def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh):
     jax_core.check_jaxpr(jaxpr)
   effs = set()
   for eff in jaxpr.effects:
+    if mesh.discharges_effect(eff):
+      continue
     if not isinstance(eff, jax_core.NamedAxisEffect):
       effs.add(eff)
       continue

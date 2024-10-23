@@ -26,6 +26,7 @@ from typing import Any, ClassVar, Literal
 
 from jax._src import core as jax_core
 from jax._src import dtypes
+from jax._src import effects
 from jax._src import tree_util
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
@@ -511,6 +512,9 @@ class GPUMesh:
       )
     return collections.OrderedDict(pairs)
 
+  def discharges_effect(self, effect: jax_core.Effect):
+    return effect is _wgmma_pipeline_effect or effect is _memory_effect
+
 
 def _gpu_mesh_discharge_rule(
     in_avals,
@@ -544,3 +548,19 @@ def _gpu_mesh_discharge_rule(
   return out, ()
 
 pallas_core._core_map_mesh_rules[GPUMesh] = _gpu_mesh_discharge_rule
+
+
+class MemoryEffect(jax_core.Effect):
+  pass
+
+
+effects.control_flow_allowed_effects.add_type(MemoryEffect)
+_memory_effect = MemoryEffect()
+
+
+class _WGMMAPipelineEffect(effects.Effect):
+  pass
+
+
+effects.control_flow_allowed_effects.add_type(_WGMMAPipelineEffect)
+_wgmma_pipeline_effect = _WGMMAPipelineEffect()

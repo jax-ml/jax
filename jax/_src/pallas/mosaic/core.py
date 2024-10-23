@@ -220,6 +220,10 @@ class TensorCoreMesh:
   def shape(self):
     return collections.OrderedDict(zip(self.axis_names, self.devices.shape))
 
+  def discharges_effect(self, effect: jax_core.Effect):
+    del effect
+    return False
+
 
 def create_tensorcore_mesh(
     axis_name: str, devices: Sequence[jax.Device] | None = None
