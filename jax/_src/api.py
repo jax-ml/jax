@@ -53,6 +53,7 @@ from jax._src import dtypes
 from jax._src import sharding_impls
 from jax._src import sharding_specs
 from jax._src import source_info_util
+from jax._src import state
 from jax._src import traceback_util
 from jax._src import pjit
 from jax._src import xla_bridge as xb
@@ -69,6 +70,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import PmapSharding, TransferToMemoryKind
+from jax._src.state import types as state_types
 from jax._src.layout import Layout, AutoLayout
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
@@ -2554,6 +2556,13 @@ def _sds_aval_mapping(x):
       x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
       weak_type=x.weak_type)
 core.pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
+
+def _sdstruct_ref_type(x: ShapeDtypeStruct) -> tuple[state.AbstractRef, basearray.Array]:
+  # Just initialize it with zeros as a reasonable starting point
+  uninitialized = lax_internal.full(x.shape, 0, x.dtype)
+  return state.AbstractRef(core.ShapedArray(x.shape, x.dtype)), uninitialized
+state_types._ref_type_aval_mappings[ShapeDtypeStruct] = _sdstruct_ref_type
+
 
 
 @api_boundary

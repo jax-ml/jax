@@ -1411,6 +1411,19 @@ class RunStateTest(jtu.JaxTestCase):
     self.assertEqual(x, 2 + 2 * 3 * 2)
     self.assertEqual(y, 2 * 3 * 2)
 
+  def test_run_state_with_uninitialized_input(self):
+    def f(refs):
+      x_ref, y_ref = refs
+      # y_ref is uninitialized so we shouldn't read from it until we write into
+      # it.
+      x = x_ref[...]
+      y_ref[...] = x * 2
+      x_ref[...] = y_ref[...] + x_ref[...]
+      # x + x * 2, x * 2
+    x, y = run_state(f)((jnp.int32(2), jax.ShapeDtypeStruct((), jnp.int32)))
+    self.assertEqual(x, 2 + 2 * 2)
+    self.assertEqual(y, 2 * 2)
+
   def test_nontrivial_run_state_jit(self):
     def f(refs):
       x_ref, y_ref = refs
