@@ -25,6 +25,7 @@ import textwrap
 from typing import Any, NamedTuple, TypeVar, Union, overload
 
 from jax._src import traceback_util
+from jax._src import lib
 from jax._src.lib import pytree
 from jax._src.util import safe_zip, set_module
 from jax._src.util import unzip2
