@@ -2785,7 +2785,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                                 message="NumPy will stop allowing conversion.*"):
           out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
     else:
-      with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype int64"):
+      with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype.*int64"):
         with self.assertRaisesRegex(OverflowError, "Python integer 2147483648 out of bounds.*"):
           out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
 
