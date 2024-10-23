@@ -12418,12 +12418,102 @@ def compress(condition: ArrayLike, a: ArrayLike, axis: int | None = None,
   return moveaxis(result, 0, axis)
 
 
-@util.implements(np.cov)
 @partial(jit, static_argnames=('rowvar', 'bias', 'ddof'))
 def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
         bias: bool = False, ddof: int | None = None,
         fweights: ArrayLike | None = None,
         aweights: ArrayLike | None = None) -> Array:
+  r"""Estimate the weighted sample covariance.
+
+  JAX implementation of :func:`numpy.cov`.
+
+  The covariance :math:`C_{ij}` between variable *i* and variable *j* is defined
+  as
+
+  .. math::
+
+     cov[X_i, X_j] = E[(X_i - E[X_i])(X_j - E[X_j])]
+
+  Given an array of *N* observations of the variables :math:`X_i` and :math:`X_j`,
+  this can be estimated via the sample covariance:
+
+  .. math::
+
+     C_{ij} = \frac{1}{N - 1} \sum_{n=1}^N (X_{in} - \overline{X_i})(X_{jn} - \overline{X_j})
+
+  Where :math:`\overline{X_i} = \frac{1}{N} \sum_{k=1}^N X_{ik}` is the mean of the
+  observations.
+
+  Args:
+    m: array of shape ``(M, N)`` (if ``rowvar`` is True), or ``(N, M)``
+      (if ``rowvar`` is False) representing ``N`` observations of ``M`` variables.
+      ``m`` may also be one-dimensional, representing ``N`` observations of a
+      single variable.
+    y: optional set of additional observations, with the same form as ``m``. If
+      specified, then ``y`` is combined with ``m``, i.e. for the default
+      ``rowvar = True`` case, ``m`` becomes ``jnp.vstack([m, y])``.
+    rowvar: if True (default) then each row of ``m`` represents a variable. If
+      False, then each column represents a variable.
+    bias: if False (default) then normalize the covariance by ``N - 1``. If True,
+      then normalize the covariance by ``N``
+    ddof: specify the degrees of freedom. Defaults to ``1`` if ``bias`` is False,
+      or to ``0`` if ``bias`` is True.
+    fweights: optional array of integer frequency weights of shape ``(N,)``. This
+      is an absolute weight specifying the number of times each observation is
+      included in the computation.
+    aweights: optional array of observation weights of shape ``(N,)``. This is
+      a relative weight specifying the "importance" of each observation. In the
+      ``ddof=0`` case, it is equivalent to assigning probabilities to each
+      observation.
+
+  Returns:
+    A covariance matrix of shape ``(M, M)``.
+
+  See also:
+    - :func:`jax.numpy.corrcoef`: compute the correlation coefficient, a normalized
+      version of the covariance matrix.
+
+  Examples:
+    Consider these observations of two variables that correlate perfectly.
+    The covariance matrix in this case is a 2x2 matrix of ones:
+
+    >>> x = jnp.array([[0, 1, 2],
+    ...                [0, 1, 2]])
+    >>> jnp.cov(x)
+    Array([[1., 1.],
+           [1., 1.]], dtype=float32)
+
+    Now consider these observations of two variables that are perfectly
+    anti-correlated. The covariance matrix in this case has ``-1`` in the
+    off-diagonal:
+
+    >>> x = jnp.array([[-1,  0,  1],
+    ...                [ 1,  0, -1]])
+    >>> jnp.cov(x)
+    Array([[ 1., -1.],
+           [-1.,  1.]], dtype=float32)
+
+    Equivalently, these sequences can be specified as separate arguments,
+    in which case they are stacked before continuing the computation.
+
+    >>> x = jnp.array([-1, 0, 1])
+    >>> y = jnp.array([1, 0, -1])
+    >>> jnp.cov(x, y)
+    Array([[ 1., -1.],
+           [-1.,  1.]], dtype=float32)
+
+    In general, the entries of the covariance matrix may be any positive
+    or negative real value. For example, here is the covariance of 100
+    points drawn from a 3-dimensional standard normal distribution:
+
+    >>> key = jax.random.key(0)
+    >>> x = jax.random.normal(key, shape=(3, 100))
+    >>> with jnp.printoptions(precision=2):
+    ...   print(jnp.cov(x))
+    [[ 1.22 -0.    0.11]
+     [-0.    0.84 -0.1 ]
+     [ 0.11 -0.1   0.88]]
+  """
   if y is not None:
     m, y = util.promote_args_inexact("cov", m, y)
     if y.ndim > 2:
@@ -12486,9 +12576,81 @@ def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
   return ufuncs.true_divide(dot(X, X_T.conj()), f).squeeze()
 
 
-@util.implements(np.corrcoef)
 @partial(jit, static_argnames=('rowvar',))
 def corrcoef(x: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True) -> Array:
+  r"""Compute the Pearson correlation coefficients.
+
+  JAX implementation of :func:`numpy.corrcoef`.
+
+  This is a normalized version of the sample covariance computed by :func:`jax.numpy.cov`.
+  For a sample covariance :math:`C_{ij}`, the correlation coefficients are
+
+  .. math::
+
+     R_{ij} = \frac{C_{ij}}{\sqrt{C_{ii}C_{jj}}}
+
+  they are constructed such that the values satisfy :math:`-1 \le R_{ij} \le 1`.
+
+  Args:
+    x: array of shape ``(M, N)`` (if ``rowvar`` is True), or ``(N, M)``
+      (if ``rowvar`` is False) representing ``N`` observations of ``M`` variables.
+      ``x`` may also be one-dimensional, representing ``N`` observations of a
+      single variable.
+    y: optional set of additional observations, with the same form as ``m``. If
+      specified, then ``y`` is combined with ``m``, i.e. for the default
+      ``rowvar = True`` case, ``m`` becomes ``jnp.vstack([m, y])``.
+    rowvar: if True (default) then each row of ``m`` represents a variable. If
+      False, then each column represents a variable.
+
+  Returns:
+    A covariance matrix of shape ``(M, M)``.
+
+  See also:
+    - :func:`jax.numpy.cov`: compute the covariance matrix.
+
+  Examples:
+    Consider these observations of two variables that correlate perfectly.
+    The correlation matrix in this case is a 2x2 matrix of ones:
+
+    >>> x = jnp.array([[0, 1, 2],
+    ...                [0, 1, 2]])
+    >>> jnp.corrcoef(x)
+    Array([[1., 1.],
+           [1., 1.]], dtype=float32)
+
+    Now consider these observations of two variables that are perfectly
+    anti-correlated. The correlation matrix in this case has ``-1`` in the
+    off-diagonal:
+
+    >>> x = jnp.array([[-1,  0,  1],
+    ...                [ 1,  0, -1]])
+    >>> jnp.corrcoef(x)
+    Array([[ 1., -1.],
+           [-1.,  1.]], dtype=float32)
+
+    Equivalently, these sequences can be specified as separate arguments,
+    in which case they are stacked before continuing the computation.
+
+    >>> x = jnp.array([-1, 0, 1])
+    >>> y = jnp.array([1, 0, -1])
+    >>> jnp.corrcoef(x, y)
+    Array([[ 1., -1.],
+           [-1.,  1.]], dtype=float32)
+
+    The entries of the correlation matrix are normalized such that they
+    lie within the range -1 to +1, where +1 indicates perfect correlation
+    and -1 indicates perfect anti-correlation. For example, here is the
+    correlation of 100 points drawn from a 3-dimensional standard normal
+    distribution:
+
+    >>> key = jax.random.key(0)
+    >>> x = jax.random.normal(key, shape=(3, 100))
+    >>> with jnp.printoptions(precision=2):
+    ...   print(jnp.corrcoef(x))
+    [[ 1.   -0.    0.1 ]
+     [-0.    1.   -0.12]
+     [ 0.1  -0.12  1.  ]]
+  """
   util.check_arraylike("corrcoef", x)
   c = cov(x, y, rowvar)
   if len(shape(c)) == 0:
