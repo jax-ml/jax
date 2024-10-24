@@ -748,6 +748,13 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
       f"{self._origin_msg()}")
 
   @property
+  def committed(self):
+    raise ConcretizationTypeError(
+        self,
+        f"The 'committed' attribute is not available on {self._error_repr()}."
+        f"{self._origin_msg()}")
+
+  @property
   def device(self):
     # This attribute is part of the jax.Array API, but only defined on concrete arrays.
     # Raising a ConcretizationTypeError would make sense, but for backward compatibility
@@ -1810,7 +1817,7 @@ class ShapedArray(UnshapedArray):
     dt_str = (dtypes.short_dtype_name(self.dtype) if short_dtypes else
               self.dtype.name)
     dt_str = dt_str.replace('void', 'float0')
-    if hasattr(self, 'sharding'):
+    if hasattr(self, 'sharding') and self.sharding is not None:
       shapestr = ','.join(_get_shape_sharding_str(self.shape, self.sharding.spec))
       return f'{dt_str}[{shapestr}]'
     else:
@@ -3263,7 +3270,7 @@ def pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings
            ) -> pp.Doc:
   rule = (_pp_eqn if not settings.custom_pp_eqn_rules else
           pp_eqn_rules.get(eqn.primitive, _pp_eqn))
-  doc = rule(eqn, context, settings)  # type: ignore[operator]
+  doc = rule(eqn, context, settings)
   user_frame = source_info_util.user_frame(eqn.source_info)
   return doc if user_frame is None else pp.source_map(doc, user_frame)
 

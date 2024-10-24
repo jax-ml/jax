@@ -52,7 +52,7 @@ from jax._src.lax import (lax, parallel as lax_parallel, slicing,
                           windowed_reductions, convolution, fft, linalg,
                           special, control_flow, ann)
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import hlo, sdy
+from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import (HashableFunction, HashablePartial, unzip2, unzip3,
                            as_hashable_function, memoize, partition_list,
                            merge_lists, split_list, subs_list2)

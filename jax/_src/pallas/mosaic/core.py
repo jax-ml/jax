@@ -15,6 +15,7 @@
 """Contains TPU-specific Pallas abstractions."""
 from __future__ import annotations
 
+import collections
 from collections.abc import Sequence
 import dataclasses
 import enum
@@ -27,8 +28,12 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import util
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import pallas_call
 import jax.numpy as jnp
 import numpy as np
+
+# TODO(b/375357542): Remove the import once the bug is fixed.
+_ = pallas_call
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -208,14 +213,60 @@ class TensorCore:
   id: int
 
 
-def create_tensorcore_mesh(axis_name: str) -> pallas_core.PallasMesh:
+@dataclasses.dataclass(frozen=True)
+class TensorCoreMesh:
+  """A mesh of TensorCores."""
+  devices: np.ndarray
+  axis_names: Sequence[str]
+
+  @property
+  def shape(self):
+    return collections.OrderedDict(zip(self.axis_names, self.devices.shape))
+
+  def discharges_effect(self, effect: jax_core.Effect):
+    del effect
+    return False
+
+
+def create_tensorcore_mesh(
+    axis_name: str, devices: Sequence[jax.Device] | None = None
+) -> TensorCoreMesh:
   # TODO(b/355036384): emit a better error if we don't have tensorcores.
-  num_cores = jax.devices()[0].num_cores
-  return pallas_core.PallasMesh(
+  if devices is None:
+    devices = jax.devices()
+  num_cores = devices[0].num_cores
+  return TensorCoreMesh(
       np.array([TensorCore(i) for i in range(num_cores)]),
       [axis_name],
   )
 
+
 def runtime_assert_enabled() -> bool:
   """Returns whether runtime asserts are enabled."""
   return _ENABLE_RUNTIME_ASSERT.value
+
+
+def _tensorcore_mesh_discharge_rule(
+    in_avals,
+    out_avals,
+    *args,
+    mesh,
+    jaxpr,
+):
+  assert isinstance(mesh, TensorCoreMesh)
+  if len(mesh.shape) > 1:
+    raise NotImplementedError("Mesh must be 1D")
+  core_axis_name, num_cores = list(mesh.shape.items())[0]
+  return pallas_core.default_mesh_discharge_rule(
+      in_avals,
+      out_avals,
+      *args,
+      jaxpr=jaxpr,
+      grid=((core_axis_name, num_cores),),
+      compiler_params=TPUCompilerParams(dimension_semantics=("parallel",)),
+      backend="mosaic_tpu",
+  )
+
+pallas_core._core_map_mesh_rules[TensorCoreMesh] = (
+    _tensorcore_mesh_discharge_rule
+)

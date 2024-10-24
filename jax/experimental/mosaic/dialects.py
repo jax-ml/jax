@@ -14,4 +14,4 @@
 # ==============================================================================
 """Contains bindings for Mosaic MLIR dialects."""
 
-from jax._src.lib import tpu
+from jax._src.lib import tpu as tpu

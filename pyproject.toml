@@ -108,6 +108,11 @@ select = [
     "W",
     "YTT",
     "ASYNC",
+    "E101",
+    "E112",
+    "E113",
+    "E115",
+    "E117",
     "E225",
     "E227",
     "E228",
@@ -128,44 +133,3 @@ max-complexity = 18
 "docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb" = ["F811"]
 "docs/jep/9407-type-promotion.ipynb" = ["F811"]
 "docs/autodidax.ipynb" = ["F811"]
-# Note: we don't use jax/*.py because this matches contents of jax/_src
-"__init__.py" = ["F401"]
-"jax/abstract_arrays.py" = ["F401"]
-"jax/ad_checkpoint.py" = ["F401"]
-"jax/api_util.py" = ["F401"]
-"jax/cloud_tpu_init.py" = ["F401"]
-"jax/core.py" = ["F401"]
-"jax/custom_batching.py" = ["F401"]
-"jax/custom_derivatives.py" = ["F401"]
-"jax/custom_transpose.py" = ["F401"]
-"jax/debug.py" = ["F401"]
-"jax/distributed.py" = ["F401"]
-"jax/dlpack.py" = ["F401"]
-"jax/dtypes.py" = ["F401"]
-"jax/errors.py" = ["F401"]
-"jax/experimental/*.py" = ["F401"]
-"jax/extend/*.py" = ["F401"]
-"jax/flatten_util.py" = ["F401"]
-"jax/interpreters/ad.py" = ["F401"]
-"jax/interpreters/batching.py" = ["F401"]
-"jax/interpreters/mlir.py" = ["F401"]
-"jax/interpreters/partial_eval.py" = ["F401"]
-"jax/interpreters/pxla.py" = ["F401"]
-"jax/interpreters/xla.py" = ["F401"]
-"jax/lax/*.py" = ["F401"]
-"jax/linear_util.py" = ["F401"]
-"jax/monitoring.py" = ["F401"]
-"jax/nn/*.py" = ["F401"]
-"jax/numpy/*.py" = ["F401"]
-"jax/prng.py" = ["F401"]
-"jax/profiler.py" = ["F401"]
-"jax/random.py" = ["F401"]
-"jax/scipy/*.py" = ["F401"]
-"jax/sharding.py" = ["F401"]
-"jax/stages.py" = ["F401"]
-"jax/test_util.py" = ["F401"]
-"jax/tree_util.py" = ["F401"]
-"jax/typing.py" = ["F401"]
-"jax/util.py" = ["F401"]
-# F821: Undefined name.
-"jax/numpy/__init__.pyi" = ["F821"]

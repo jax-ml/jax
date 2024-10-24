@@ -2785,7 +2785,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                                 message="NumPy will stop allowing conversion.*"):
           out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
     else:
-      with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype int64"):
+      with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype.*int64"):
         with self.assertRaisesRegex(OverflowError, "Python integer 2147483648 out of bounds.*"):
           out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
 
@@ -2992,6 +2992,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = lambda x: jnp.diff(x, n=n, axis=axis, prepend=prepend, append=append)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  def testDiffBool(self):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng((10,), bool)]
+    self._CheckAgainstNumpy(np.diff, jnp.diff, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp.diff, args_maker)
 
   def testDiffPrepoendScalar(self):
     # Regression test for https://github.com/jax-ml/jax/issues/19362
@@ -6349,8 +6355,9 @@ class NumpyDocTests(jtu.JaxTestCase):
 
     unimplemented = ['fromfile', 'fromiter']
     aliases = ['abs', 'acos', 'acosh', 'asin', 'asinh', 'atan', 'atanh', 'atan2',
-               'amax', 'amin', 'around', 'bitwise_left_shift', 'bitwise_right_shift',
-               'conj', 'degrees', 'divide', 'mod', 'pow', 'radians', 'round_']
+               'amax', 'amin', 'around', 'bitwise_invert', 'bitwise_left_shift',
+               'bitwise_not','bitwise_right_shift', 'conj', 'degrees', 'divide',
+               'mod', 'pow', 'radians', 'round_']
     skip_args_check = ['vsplit', 'hsplit', 'dsplit', 'array_split']
 
     for name in dir(jnp):

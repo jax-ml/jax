@@ -39,8 +39,8 @@ from absl import logging
 import numpy.random as npr
 
 import jax # Must import before TF
-from jax.experimental import jax2tf  # Defines needed flags
-from jax._src import test_util  # Defines needed flags
+from jax.experimental import jax2tf  # Defines needed flags  # noqa: F401
+from jax._src import test_util  # Defines needed flags  # noqa: F401
 
 jax.config.parse_flags_with_absl()
 

@@ -2640,6 +2640,7 @@ class CustomPartitionerTest(jtu.JaxTestCase):
 # TODO(phawkins): enable this test unconditionally once shardy is the default.
 @unittest.skipIf(sdy is None, "shardy is not enabled")
 class SdyIntegrationTest(jtu.JaxTestCase):
+
   # Verify we can lower to a `ManualComputationOp`.
   def test_shardy_collective_permute(self):
     mesh = jtu.create_mesh((2,), ('x',))

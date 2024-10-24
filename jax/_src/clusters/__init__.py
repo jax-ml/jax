@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .cluster import ClusterEnv
+from .cluster import ClusterEnv as ClusterEnv
 
 # Order of declaration of the cluster environments
 # will dictate the order in which they will be checked.
@@ -20,9 +20,9 @@ from .cluster import ClusterEnv
 # the user did not explicitly provide the arguments
 # to :func:`jax.distributed.initialize`, the first
 # available one from the list will be picked.
-from .ompi_cluster import OmpiCluster
-from .slurm_cluster import SlurmCluster
-from .mpi4py_cluster import Mpi4pyCluster
-from .cloud_tpu_cluster import GkeTpuCluster
-from .cloud_tpu_cluster import GceTpuCluster
-from .k8s_cluster import K8sCluster
+from .ompi_cluster import OmpiCluster as OmpiCluster
+from .slurm_cluster import SlurmCluster as SlurmCluster
+from .mpi4py_cluster import Mpi4pyCluster as Mpi4pyCluster
+from .cloud_tpu_cluster import GkeTpuCluster as GkeTpuCluster
+from .cloud_tpu_cluster import GceTpuCluster as GceTpuCluster
+from .k8s_cluster import K8sCluster as K8sCluster

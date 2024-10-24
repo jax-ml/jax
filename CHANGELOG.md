@@ -10,7 +10,9 @@ Remember to align the itemized text with the first line of an item within a list
 When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
-## jax 0.4.35
+## jax 0.4.36
+
+## jax 0.4.35 (Oct 22, 2024)
 
 * Breaking Changes
   * {func}`jax.numpy.isscalar` now returns True for any array-like object with
@@ -24,6 +26,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * `jax.lax.FftType` was introduced as a public name for the enum of FFT
     operations. The semi-public API `jax.lib.xla_client.FftType` has been
     deprecated.
+  * TPU: JAX now installs TPU support from the `libtpu` package rather than
+    `libtpu-nightly`. For the next few releases JAX will pin an empty version of
+    `libtpu-nightly` as well as `libtpu` to ease the transition; that dependency
+    will be removed in Q1 2025.
 
 * Deprecations:
   * The semi-public API `jax.lib.xla_client.PaddingType` has been deprecated.

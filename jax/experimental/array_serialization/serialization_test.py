@@ -27,7 +27,6 @@ import jax
 import jax.numpy as jnp
 from jax._src import test_util as jtu
 from jax._src import array
-from jax._src import xla_bridge as xb
 from jax.sharding import NamedSharding, GSPMDSharding, SingleDeviceSharding
 from jax.sharding import PartitionSpec as P
 from jax.experimental.array_serialization import serialization

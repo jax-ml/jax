@@ -19,7 +19,10 @@ licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//jax/experimental/jax2tf:__subpackages__"],
+    default_visibility = [
+        "//jax/experimental/jax2tf:__subpackages__",
+        "//third_party/tensorflow/lite/experimental/mlir/testing/jax/test_models:__subpackages__",
+    ],
 )
 
 py_library(

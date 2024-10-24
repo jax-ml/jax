@@ -13,11 +13,13 @@
 # limitations under the License.
 from __future__ import annotations
 
+import collections
 from collections.abc import Callable, Sequence
 import contextlib
 import dataclasses
 import functools
 import logging
+import json
 import math
 import re
 import unittest
@@ -32,6 +34,7 @@ from jax.experimental.shard_map import shard_map
 from jax.sharding import NamedSharding
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
+from jax import tree_util
 
 from jax._src import config
 from jax._src import core
@@ -310,6 +313,123 @@ class JaxExportTest(jtu.JaxTestCase):
     exp_f = get_exported(jax.jit(f))((a, b), a=a, b=b)
     self.assertAllClose(f((a, b), a=a, b=b),
                         exp_f.call((a, b), a=a, b=b))
+
+  def test_pytree_namedtuple(self):
+    T = collections.namedtuple("SomeType", ("a", "b", "c"))
+    export.register_namedtuple_serialization(
+        T,
+        serialized_name="test_pytree_namedtuple.SomeType",
+    )
+    x = T(a=1, b=2, c=3)
+
+    def f(x):
+      return (x, x)  # return 2 copies, to check that types are shared
+
+    exp = export.export(jax.jit(f))(x)
+    res = exp.call(x)
+    self.assertEqual(tree_util.tree_structure(res),
+                     tree_util.tree_structure((x, x)))
+    self.assertEqual(type(res[0]), type(x))
+    self.assertEqual(type(res[1]), type(x))
+    ser = exp.serialize()
+    exp2 = export.deserialize(ser)
+    self.assertEqual(exp2.in_tree, exp.in_tree)
+    self.assertEqual(exp2.out_tree, exp.out_tree)
+    res2 = exp2.call(x)
+    self.assertEqual(tree_util.tree_structure(res2),
+                     tree_util.tree_structure(res))
+
+  def test_pytree_namedtuple_error(self):
+    T = collections.namedtuple("SomeType", ("a", "b"))
+    x = T(a=1, b=2)
+    with self.assertRaisesRegex(
+        ValueError,
+        "Cannot serialize .* unregistered type .*SomeType"):
+      export.export(jax.jit(lambda x: x))(x).serialize()
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "If `from_children` is not present.* must call.*register_pytree_node"
+    ):
+      export.register_pytree_node_serialization(
+          T,
+          serialized_name="test_pytree_namedtuple.SomeType_V2",
+          serialize_auxdata=lambda x: b"",
+          deserialize_auxdata=lambda b: None
+      )
+
+    with self.assertRaisesRegex(ValueError,
+                                "Use .*register_pytree_node_serialization"):
+      export.register_namedtuple_serialization(str, serialized_name="n/a")
+
+    export.register_namedtuple_serialization(
+        T,
+        serialized_name="test_pytree_namedtuple_error.SomeType",
+    )
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Duplicate serialization registration .*test_pytree_namedtuple_error.SomeType"
+    ):
+      export.register_namedtuple_serialization(
+          T,
+          serialized_name="test_pytree_namedtuple_error.OtherType",
+      )
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Duplicate serialization registration for serialized_name.*test_pytree_namedtuple_error.SomeType"
+    ):
+      export.register_namedtuple_serialization(
+          collections.namedtuple("SomeOtherType", ("a", "b")),
+          serialized_name="test_pytree_namedtuple_error.SomeType",
+      )
+
+  def test_pytree_custom_types(self):
+    x1 = collections.OrderedDict([("foo", 34), ("baz", 101), ("something", -42)])
+
+    @tree_util.register_pytree_node_class
+    class CustomType:
+      def __init__(self, a: int, b: CustomType | None, string: str):
+        self.a = a
+        self.b = b
+        self.string = string
+
+      def tree_flatten(self):
+        return ((self.a, self.b), self.string)
+
+      @classmethod
+      def tree_unflatten(cls, aux_data, children):
+        string = aux_data
+        return cls(*children, string)
+
+    export.register_pytree_node_serialization(
+        CustomType,
+        serialized_name="test_pytree_custom_types.CustomType",
+        serialize_auxdata=lambda aux: aux.encode("utf-8"),
+        deserialize_auxdata=lambda b: b.decode("utf-8")
+    )
+    x2 = CustomType(4, 5, "foo")
+
+    def f(x1, x2):
+      return (x1, x2, x1, x2)  # return 2 copies, to check that types are shared
+
+    exp = export.export(jax.jit(f))(x1, x2)
+    res = exp.call(x1, x2)
+    self.assertEqual(tree_util.tree_structure(res),
+                     tree_util.tree_structure(((x1, x2, x1, x2))))
+    self.assertEqual(type(res[0]), type(x1))
+    self.assertEqual(type(res[1]), type(x2))
+    self.assertEqual(type(res[2]), type(x1))
+    self.assertEqual(type(res[3]), type(x2))
+    ser = exp.serialize()
+    exp2 = export.deserialize(ser)
+    self.assertEqual(exp2.in_tree, exp.in_tree)
+    self.assertEqual(exp2.out_tree, exp.out_tree)
+    res2 = exp2.call(x1, x2)
+    self.assertEqual(tree_util.tree_structure(res2),
+                     tree_util.tree_structure(res))
+
 
   def test_error_wrong_intree(self):
     def f(a_b_pair, *, c):

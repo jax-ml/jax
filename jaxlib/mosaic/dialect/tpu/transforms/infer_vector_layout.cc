@@ -50,6 +50,7 @@ limitations under the License.
 #include "mlir/include/mlir/Pass/Pass.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "jaxlib/mosaic/dialect/tpu/util.h"
 #include "xla/layout.h"
 
 namespace mlir::tpu {
@@ -772,21 +773,66 @@ class VectorLayoutInferer {
     }
     auto res_ty = op.getResult().getType();
     int8_t bitwidth = res_ty.getElementTypeBitWidth();
-    auto layout = getLayout(op.getSources().front());
-    // When concatenating vectors with replicated offsets, we want to reset the
-    // replicated offset to zero. Because we are not sure if the replicated
-    // value from each vector are same.
-    layout = VectorLayout(
-        layout->bitwidth(),
-        {layout->offsets()[0].value_or(0), layout->offsets()[1].value_or(0)},
-        layout->tiling(), layout->implicit_dim());
-    if (dimension >= res_rank - 2) {
-      layout = VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
-                            ImplicitDim::kNone);
+
+    std::optional<int64_t> tiling_dim;
+    if (dimension == res_ty.getRank() - 1) {
+      tiling_dim = 1;
+    } else if (dimension == res_ty.getRank() - 2) {
+      tiling_dim = 0;
     }
-    SmallVector<Layout> in_layouts(op->getNumOperands(), layout);
-    setLayout(op, in_layouts, layout);
-    return success();
+
+    if (tiling_dim.has_value()) {
+      int64_t starting_point = 0;
+
+      auto first_layout = getLayout(op.getSources().front());
+      auto op_layouts = getLayoutFromOperands(op);
+      SmallVector<Layout> in_layouts;
+      in_layouts.reserve(op.getSources().size());
+
+      auto native_tiling = nativeTiling(bitwidth);
+
+      for (int i = 0; i < op.getSources().size(); ++i) {
+        // Compute the offset per source.
+        // Ex: for a cat of (10, 128), (10, 128) on dim 0, where the
+        // vreg_sice for that dim is 8, the first source starts at
+        // offset 0, and overflows the vreg
+        // by 2, so the offset for the second input is 2.
+        auto op_shape =
+            cast<VectorType>(op.getSources()[i].getType()).getShape();
+        auto offset_amount = starting_point % native_tiling[tiling_dim.value()];
+        auto op_layout = op_layouts[i];
+        SmallVector<int64_t> in_idx{op_layout->offsets()[0].value_or(0),
+                                    op_layout->offsets()[1].value_or(0)};
+        in_idx[tiling_dim.value()] = offset_amount;
+        starting_point += op_shape[dimension];
+        in_layouts.push_back(VectorLayout(bitwidth, {in_idx[0], in_idx[1]},
+                                          native_tiling, ImplicitDim::kNone));
+      }
+      SmallVector<int64_t> res_layout_offsets(
+          {first_layout->offsets()[0].value_or(0),
+           first_layout->offsets()[1].value_or(0)});
+      res_layout_offsets[tiling_dim.value()] = 0;
+      // TODO(mvoz): A tiny optimization we could do here later is to
+      // no-op setting tiling when sublane dim size is aligned to sublane
+      // tiling.
+      auto res_layout =
+          VectorLayout(bitwidth, {res_layout_offsets[0], res_layout_offsets[1]},
+                       native_tiling, ImplicitDim::kNone);
+      setLayout(op, in_layouts, res_layout);
+      return success();
+    } else {
+      auto layout = getLayout(op.getSources().front());
+      // When concatenating vectors with replicated offsets, we want to reset
+      // the replicated offset to zero. Because we are not sure if the
+      // replicated value from each vector are same.
+      layout = VectorLayout(
+          layout->bitwidth(),
+          {layout->offsets()[0].value_or(0), layout->offsets()[1].value_or(0)},
+          layout->tiling(), layout->implicit_dim());
+      SmallVector<Layout> in_layouts(op->getNumOperands(), layout);
+      setLayout(op, in_layouts, layout);
+      return success();
+    }
   }
 
   LogicalResult infer(tpu::LoadOp op) {
@@ -1142,7 +1188,7 @@ class VectorLayoutInferer {
   }
 
   LogicalResult infer(vector::LoadOp op) {
-    auto src_ty = op.getMemRefType();
+    auto src_ty = getMemRefType(op.getBase());
     auto res_ty = op.getVectorType();
     TPU_CHECK_OP(src_ty.getRank() == res_ty.getRank(),
                  "memref and vector rank mismatch");
@@ -1235,6 +1281,16 @@ class VectorLayoutInferer {
         setLayout(op, in_layout,
                   VectorLayout(bitwidth, {std::nullopt, offsets[1]},
                                layout_tiling, ImplicitDim::kNone));
+      } else if (bitwidth == 32 &&
+                 canReinterpretToUntiledMemref(
+                     src_ty, target_shape_, /*allow_minormost_padding=*/true) &&
+                 *(src_ty.getShape().end() - 2) > 1) {
+        // Since it is untiled, we can load from any arbitrary address which
+        // means we can always set the sublane offset to 0.
+        // Note: if the src_shape[-2] == 1, we can just use the tiling from ref.
+        setLayout(op, in_layout,
+                  VectorLayout(bitwidth, {0, offsets[1].value_or(0)},
+                               nativeTiling(bitwidth), ImplicitDim::kNone));
       } else {
         setLayout(
             op, in_layout,
@@ -1470,7 +1526,7 @@ class VectorLayoutInferer {
   }
 
   LogicalResult infer(vector::StoreOp op) {
-    auto ref_ty = op.getMemRefType();
+    auto ref_ty = getMemRefType(op.getBase());
     auto store_ty = op.getValueToStore().getType();
     TPU_CHECK_OP(ref_ty.getRank() == store_ty.getRank(),
                  "memref and vector rank mismatch");
@@ -1551,11 +1607,27 @@ class VectorLayoutInferer {
         // We can strided store sublanes if we're storing a single sublane for
         // multiple times. Enabling this helps store one entire row to memref
         // more efficiently.
-        store_layout = VectorLayout(store_ty.getElementTypeBitWidth(), offsets,
-                                    {1, tiling[1]}, ImplicitDim::kNone);
+        store_layout =
+            VectorLayout(bitwidth, offsets, {1, tiling[1]}, ImplicitDim::kNone);
+      } else if (bitwidth == 32 &&
+                 // We accept padding in the minormost dim, because
+                 // apply_vector_layout will properly mask stores.
+                 canReinterpretToUntiledMemref(
+                     ref_ty, target_shape_, /*allow_minormost_padding=*/true)) {
+        // Since it is untiled, we can store to any arbitrary address which
+        // means the sublane offset can be any value and we can fold it to
+        // 2nd minor index.
+        // TODO(jevinjiang): We can fold the sublane offset into the 2nd minor
+        // index. But we need to handle negative index in lower-to-llo. For
+        // now, we just force the sublane offset to be 0.
+        if (offsets[1].value_or(0) < 0 || offsets[1].value_or(0) >= tiling[1]) {
+          offsets[1] = 0;
+        }
+        store_layout = VectorLayout(bitwidth, {0, offsets[1]},
+                                    nativeTiling(bitwidth), ImplicitDim::kNone);
       } else {
-        store_layout = VectorLayout(store_ty.getElementTypeBitWidth(), offsets,
-                                    {tiling[0], tiling[1]}, ImplicitDim::kNone);
+        store_layout = VectorLayout(bitwidth, offsets, {tiling[0], tiling[1]},
+                                    ImplicitDim::kNone);
       }
     }
     SmallVector<Layout, 5> in_layout{store_layout};

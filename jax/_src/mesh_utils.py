@@ -68,6 +68,7 @@ _TRAY_RING_ORDER = (0, 1, 2, 3, 6, 7, 4, 5)
 _TRAY_2x2_RING_ORDER = (0, 1, 3, 2)
 _TRAY_4x4_RING_ORDER = (0, 1, 2, 3, 7, 6, 5, 9, 10, 11, 15, 14, 13, 12, 8, 4)
 _V5E_TRAY_RING_ORDER = (0, 1, 2, 3, 7, 6, 5, 4)
+_V5E_TRAY_IOTA_ORDER = (0, 4, 2, 6, 1, 5, 3, 7)
 
 def _tpu_v2_v3_create_device_mesh(
     mesh_shape: Sequence[int],
@@ -127,7 +128,11 @@ def _v5e_create_device_mesh(
 
   if len(devices) == 8:
     device_mesh = np.asarray(sequential_devices)
-    device_mesh = device_mesh[np.array(_V5E_TRAY_RING_ORDER)]
+    if bound_x == bound_y == bound_z == 2:  # v5e 2x2x2
+      order = _V5E_TRAY_IOTA_ORDER
+    else:
+      order = _V5E_TRAY_RING_ORDER
+    device_mesh = device_mesh[np.array(order)]
     device_mesh = device_mesh.reshape(mesh_shape)
     return device_mesh
 

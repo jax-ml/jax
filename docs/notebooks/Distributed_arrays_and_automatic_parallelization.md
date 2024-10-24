@@ -61,16 +61,14 @@ First, we'll create a `jax.Array` sharded across multiple devices:
 ```{code-cell}
 :id: Gf2lO4ii3vGG
 
-from jax.experimental import mesh_utils
-from jax.sharding import Mesh, PartitionSpec as P, NamedSharding
+from jax.sharding import PartitionSpec as P, NamedSharding
 ```
 
 ```{code-cell}
 :id: q-XBTEoy3vGG
 
 # Create a Sharding object to distribute a value across devices:
-mesh = Mesh(devices=mesh_utils.create_device_mesh((4, 2)),
-            axis_names=('x', 'y'))
+mesh = jax.make_mesh((4, 2), ('x', 'y'))
 ```
 
 ```{code-cell}
@@ -173,7 +171,7 @@ jax.debug.visualize_array_sharding(x)
 
 Here, we're using the `jax.debug.visualize_array_sharding` function to show where the value `x` is stored in memory. All of `x` is stored on a single device, so the visualization is pretty boring!
 
-But we can shard `x` across multiple devices by using `jax.device_put` and a `Sharding` object. First, we make a `numpy.ndarray` of `Devices` using `mesh_utils.create_device_mesh`, which takes hardware topology into account for the `Device` order:
+But we can shard `x` across multiple devices by using `jax.device_put` and a `Sharding` object. First, we make a `numpy.ndarray` of `Devices` using `jax.make_mesh`, which takes hardware topology into account for the `Device` order:
 
 ```{code-cell}
 ---
@@ -184,12 +182,10 @@ id: zpB1JxyK3vGN
 outputId: 8e385462-1c2c-4256-c38a-84299d3bd02c
 ---
 from jax.sharding import Mesh, PartitionSpec, NamedSharding
-from jax.experimental import mesh_utils
 
 P = PartitionSpec
 
-devices = mesh_utils.create_device_mesh((4, 2))
-mesh = Mesh(devices, axis_names=('a', 'b'))
+mesh = jax.make_mesh((4, 2), ('a', 'b'))
 y = jax.device_put(x, NamedSharding(mesh, P('a', 'b')))
 jax.debug.visualize_array_sharding(y)
 ```
@@ -201,8 +197,7 @@ We can define a helper function to make things simpler:
 ```{code-cell}
 :id: 8g0Md2Gd3vGO
 
-devices = mesh_utils.create_device_mesh((4, 2))
-default_mesh = Mesh(devices, axis_names=('a', 'b'))
+default_mesh = jax.make_mesh((4, 2), ('a', 'b'))
 
 def mesh_sharding(
     pspec: PartitionSpec, mesh: Optional[Mesh] = None,
@@ -318,8 +313,7 @@ For example, the simplest computation is an elementwise one:
 ```{code-cell}
 :id: _EmQwggc3vGQ
 
-devices = mesh_utils.create_device_mesh((4, 2))
-mesh = Mesh(devices, axis_names=('a', 'b'))
+mesh = jax.make_mesh((4, 2), ('a', 'b'))
 ```
 
 ```{code-cell}
@@ -522,7 +516,7 @@ While the compiler will attempt to decide how a function's intermediate values a
 ```{code-cell}
 :id: jniSFm5V3vGT
 
-mesh = Mesh(mesh_utils.create_device_mesh((4, 2)), ('x', 'y'))
+mesh = jax.make_mesh((4, 2), ('x', 'y'))
 ```
 
 ```{code-cell}
@@ -657,7 +651,7 @@ params, batch = init_model(jax.random.key(0), layer_sizes, batch_size)
 ```{code-cell}
 :id: mJLqRPpSDX0i
 
-mesh = Mesh(mesh_utils.create_device_mesh((8,)), 'batch')
+mesh = jax.make_mesh((8,), ('batch',))
 ```
 
 ```{code-cell}
@@ -735,7 +729,7 @@ outputId: d66767b7-3f17-482f-b811-919bb1793277
 ```{code-cell}
 :id: k1hxOfgRDwo0
 
-mesh = Mesh(mesh_utils.create_device_mesh((4, 2)), ('batch', 'model'))
+mesh = jax.make_mesh((4, 2), ('batch', 'model'))
 ```
 
 ```{code-cell}

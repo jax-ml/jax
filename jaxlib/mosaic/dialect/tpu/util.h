@@ -98,6 +98,14 @@ std::string shapeToString(const T &shape) {
 
 SmallVector<int64_t> ComputeTileStrides(MemRefType memref_ty,
                                         absl::Span<const int64_t> tiling);
+
+// Returns true if a >=2D memref has a tiled layout and can be equivalently
+// considered as an untiled memref, except for potential padding in the
+// minormost dimension up to target_shape[1] (if allow_minormost_padding is
+// true).
+bool canReinterpretToUntiledMemref(MemRefType tiled_memref_ty,
+                                   const std::array<int64_t, 2> &target_shape,
+                                   bool allow_minormost_padding = false);
 }  // namespace mlir::tpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_

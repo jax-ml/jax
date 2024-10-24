@@ -276,6 +276,10 @@ class ArrayImpl(basearray.Array):
   def weak_type(self):
     return self.aval.weak_type
 
+  @property
+  def committed(self) -> bool:
+    return self._committed
+
   def __str__(self):
     return str(self._value)
 

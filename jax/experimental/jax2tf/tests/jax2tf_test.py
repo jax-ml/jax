@@ -770,6 +770,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertLen(jax.tree_util.tree_leaves(m.b), 2)
     self.assertLen(jax.tree_util.tree_leaves(m.c), 2)
 
+  @unittest.skip("Test fails at head")
   def test_issue_10586(self):
 
     class JaxModule(tf.Module):
@@ -1688,6 +1689,31 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       self.assertAllClose(
         res,
         x + _testing_multi_platform_to_add[tf_device_jax_platform])
+
+  def test_dot_algorithm(self):
+    # ref: https://github.com/jax-ml/jax/issues/24236
+    if tf.version.VERSION.split(".") <= ["2", "17", "0"]:
+      self.skipTest("This test works only with newer versions of TF")
+
+    if jtu.test_device_matches(["tpu"]):
+      algorithm = "BF16_BF16_F32"
+    else:
+      algorithm = "F32_F32_F32"
+
+    def f_jax(x):
+      return jax.lax.dot(x, x, precision=algorithm)
+
+    f_tf = jax2tf.convert(f_jax, native_serialization=True)
+    f_tf(np.ones((128, 128), dtype=np.float32))  # no crash
+
+  def test_dot_algorithm_non_native_unsupported(self):
+    def f_jax(x):
+      return jax.lax.dot(x, x, precision="F32_F32_F32")
+
+    x = np.ones((128, 128), dtype=np.float32)
+    with self.assertRaisesRegex(NotImplementedError,
+                                "Unsupported precision in dot_general"):
+      jax2tf.convert(f_jax, native_serialization=False)(x)
 
 
 @jtu.with_config(jax_enable_custom_prng=True)

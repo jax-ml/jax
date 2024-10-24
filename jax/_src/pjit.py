@@ -779,7 +779,7 @@ def _extract_implicit_args(
           args[d1.val] = d2
         assert core.same_referent(args[d1.val], d2)
   assert all(x is not None for x in args)
-  return [x for x, (_, e) in zip(args, in_type) if not e]  # pytype: disable=bad-return-type
+  return [x for x, (_, e) in zip(args, in_type) if not e]  # type: ignore
 
 def _flat_axes_specs(abstracted_axes, *args, **kwargs
                      ) -> list[pe.AbstractedAxesSpec] | None:
@@ -1545,6 +1545,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
           else:
             resolved_in_shardings.append(arg_s)
         else:
+          assert isinstance(arg_s, sharding.Sharding)
           if dispatch.is_single_device_sharding(arg_s):
             resolved_in_shardings.append(UNSPECIFIED)
           else:
@@ -1567,7 +1568,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
             'Please see the jax.Array migration guide for more information '
             'https://jax.readthedocs.io/en/latest/jax_array_migration.html#handling-of-host-local-inputs-to-pjit-like-batch-etc. '
             f'Got arg shape: {arg.shape}, arg value: {arg}')
-      if not is_unspecified(arg_s):
+      if not isinstance(arg_s, UnspecifiedValue):
         # jax.jit does not allow resharding across different memory kinds even
         # if the argument is uncommitted. Use jax.device_put for those cases,
         # either outside or inside jax.jit.
@@ -1575,7 +1576,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
           raise ValueError(
               'Memory kinds passed to jax.jit does not match memory kind on the'
               f' respective arg. Got pjit memory kind: {pjit_in_s.memory_kind}, '  # type: ignore
-              f'arg memory kind: {arg_s.memory_kind} for '  # pytype: disable=attribute-error
+              f'arg memory kind: {arg_s.memory_kind} for '
               f'arg shape: {shaped_abstractify(arg).str_short()}')
         if (committed and
             not isinstance(arg_s, PmapSharding) and

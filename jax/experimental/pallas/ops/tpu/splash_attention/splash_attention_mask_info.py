@@ -18,7 +18,7 @@ from __future__ import annotations
 import collections
 from collections.abc import Callable
 import functools
-from typing import Dict, List, NamedTuple, Set, Tuple
+from typing import NamedTuple
 from jax import util as jax_util
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
 import numpy as np

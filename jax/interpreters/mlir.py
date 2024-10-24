@@ -27,7 +27,7 @@ from jax._src.interpreters.mlir import (
   Token as Token,
   TokenSet as TokenSet,
   Value as Value,
-  call_lowering as _call_lowering,
+  call_lowering as _call_lowering,  # noqa: F401
   _lowerings as _lowerings,
   _platform_specific_lowerings as _platform_specific_lowerings,
   aval_to_ir_type as aval_to_ir_type,
@@ -41,7 +41,7 @@ from jax._src.interpreters.mlir import (
   dtype_to_ir_type as dtype_to_ir_type,
   emit_python_callback as emit_python_callback,
   flatten_ir_types as flatten_ir_types,
-  flatten_ir_values as flatten_lowering_ir_args,  # TODO(phawkins): remove me
+  flatten_ir_values as flatten_lowering_ir_args,  # TODO(phawkins): remove me  # noqa: F401
   flatten_ir_values as flatten_ir_values,
   unflatten_ir_values_like_types as unflatten_ir_values_like_types,
   func_dialect as func_dialect,

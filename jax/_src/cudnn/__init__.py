@@ -12,4 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .fusion import cudnn_fusion
+from .fusion import cudnn_fusion as cudnn_fusion

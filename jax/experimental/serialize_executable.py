@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import pickle
 import io
-from typing import Optional, Union
 
 import jax
 from jax._src.lib import xla_client as xc

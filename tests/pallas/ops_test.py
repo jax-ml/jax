@@ -742,7 +742,7 @@ class OpsTest(PallasBaseTest):
           [jnp.abs, jnp.negative],
           ["int16", "int32", "int64", "float16", "float32", "float64"],
       ),
-      ([jnp.ceil, jnp.floor], ["float32", "float64", "int32"]),
+      ([jnp.ceil, jnp.floor], ["bfloat16", "float32", "float64", "int32"]),
       (
           [jnp.exp, jnp.exp2, jnp.sin, jnp.cos, jnp.log, jnp.sqrt],
           ["float16", "float32", "float64"],
@@ -750,8 +750,8 @@ class OpsTest(PallasBaseTest):
       (
           # fmt: off
           [jnp.expm1, jnp.log1p, jnp.cbrt, lax.rsqrt, jnp.tan, jnp.asin,
-           jnp.acos, jnp.atan, jnp.sinh, jnp.cosh, jnp.asinh, jnp.acosh,
-           jnp.atanh],
+           jnp.acos, jnp.atan, jnp.sinh, jnp.cosh, jnp.tanh, jnp.asinh,
+           jnp.acosh, jnp.atanh],
           # fmt: on
           ["float32", "float64"],
       ),
@@ -767,8 +767,23 @@ class OpsTest(PallasBaseTest):
     if not jax.config.x64_enabled and jnp.dtype(dtype).itemsize == 8:
       self.skipTest("64-bit types require x64_enabled")
 
-    if jtu.test_device_matches(["tpu"]) and jnp.dtype(dtype).itemsize == 2:
-      self.skipTest("16-bit types are not supported on TPU")
+    if jtu.test_device_matches(["tpu"]) and dtype in ("int16", "float16"):
+      self.skipTest("int16 and float16 are not supported on TPU")
+
+    if (
+        jtu.test_device_matches(["gpu"])
+        and fn in (jnp.ceil, jnp.floor)
+        and dtype == "bfloat16"
+    ):
+      self.skipTest(f"bfloat16 {fn.__name__} is not supported on GPU")
+
+    if (
+        jtu.test_device_matches(["tpu"])
+        and not jtu.is_device_tpu_at_least(6)
+        and fn in (jnp.ceil, jnp.floor)
+        and dtype == "bfloat16"
+    ):
+      self.skipTest(f"bfloat16 {fn.__name__} is only supported on TPU v6+")
 
     # TODO(b/370578663): implement these lowerings on TPU
     if jtu.test_device_matches(["tpu"]) and fn in (
@@ -778,13 +793,16 @@ class OpsTest(PallasBaseTest):
       self.skipTest(f"{fn.__name__} not implemented on TPU")
 
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), dtype), grid=1
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 128), dtype),
+        grid=1,
     )
     def kernel(x_ref, o_ref):
       o_ref[:] = fn(x_ref[...])
 
-    x = jnp.array([0.42, 2.4]).astype(dtype)
-    np.testing.assert_allclose(kernel(x), fn(x), rtol=1e-6)
+    # create an array with shape (8, 128)
+    x = jnp.array([0.42, 2.4] * (8 * 128 // 2)).reshape(8, 128).astype(dtype)
+    self.assertAllClose(kernel(x), fn(x), rtol=1e-6)
 
   @parameterized.named_parameters(
       (f"{fn.__name__}_{dtype}", fn, dtype)
@@ -799,6 +817,13 @@ class OpsTest(PallasBaseTest):
       self.skipTest("16-bit types are not supported on TPU")
 
     if (
+        jtu.test_device_matches(["gpu"])
+        and fn in (jnp.ceil, jnp.floor)
+        and dtype == "bfloat16"
+    ):
+      self.skipTest(f"bfloat16 {fn.__name__} is not supported on GPU")
+
+    if (
         jtu.test_device_matches(["tpu"])
         and fn == lax.population_count
         and not self.INTERPRET
@@ -810,8 +835,8 @@ class OpsTest(PallasBaseTest):
     # TODO(b/370578663): implement these lowerings on TPU
     if jtu.test_device_matches(["tpu"]) and fn in (
         jnp.abs, jnp.acos, jnp.acosh, jnp.asin, jnp.asinh, jnp.atan,
-        jnp.atanh, jnp.cbrt, jnp.cos, jnp.cosh, jnp.expm1,
-        jnp.sin, jnp.sinh, jnp.tan, lax.rsqrt,
+        jnp.atanh, jnp.cbrt, jnp.cosh, jnp.expm1,
+        jnp.sinh, lax.rsqrt,
     ):
       self.skipTest(f"{fn.__name__} not implemented on TPU")
 
@@ -826,7 +851,7 @@ class OpsTest(PallasBaseTest):
       o_ref[1] = fn(x_ref[1])
 
     x = jnp.array([0.42, 2.4]).astype(dtype)
-    np.testing.assert_allclose(kernel(x), fn(x), rtol=1e-6)
+    self.assertAllClose(kernel(x), fn(x), rtol=1e-6)
 
   def test_abs_weak_type(self):
     # see https://github.com/jax-ml/jax/issues/23191
@@ -846,9 +871,6 @@ class OpsTest(PallasBaseTest):
       ("float64", "float64"),
   )
   def test_pow(self, x_dtype, y_dtype):
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("TODO: Error on TPU")
-
     if not jax.config.x64_enabled and jnp.dtype(x_dtype).itemsize == 8:
       self.skipTest("64-bit types require x64_enabled")
 
@@ -917,15 +939,47 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["tpu"]) and dtype == "float16":
       self.skipTest("float16 is not supported on TPU")
 
-    # TODO: skipped due to https://github.com/jax-ml/jax/issues/24030
-    if jtu.test_device_matches(["tpu"]) and dtype == "bool":
-      self.skipTest("Not supported on TPU")
-
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((8,), jnp.bool_),
-        grid=1)
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8,), jnp.bool_),
+        grid=1,
+    )
     def kernel(x_ref, y_ref, o_ref):
       o_ref[:] = fn(x_ref[...], y_ref[...])
+
+    x = jnp.array([0, 3, -4, -6, 0, 5, 4, -7]).astype(dtype)
+    y = jnp.array([3, 1, -4, -5, 0, -2, 2, 4]).astype(dtype)
+    np.testing.assert_allclose(kernel(x, y), fn(x, y))
+
+  @parameterized.named_parameters(
+      (f"{fn.__name__}_{dtype}", fn, dtype)
+      for fn, dtype in itertools.product(
+          COMPARISON_OPS, ["int32", "uint32", "float16", "float32", "bool"]
+      )
+  )
+  def test_comparison_scalar(self, fn, dtype):
+    if jtu.test_device_matches(["tpu"]) and dtype == "float16":
+      self.skipTest("float16 is not supported on TPU")
+
+    if (
+        jtu.test_device_matches(["gpu"])
+        and not jtu.is_cuda_compute_capability_at_least("8.0")
+    ):
+      self.skipTest("Only works on GPUs with capability >= sm80")
+
+    @functools.partial(
+        self.pallas_call,
+        in_specs=(
+            pl.BlockSpec(memory_space=smem_on_tpu()),
+            pl.BlockSpec(memory_space=smem_on_tpu()),
+        ),
+        out_specs=pl.BlockSpec(memory_space=smem_on_tpu()),
+        out_shape=jax.ShapeDtypeStruct((8,), jnp.bool_),
+        grid=1,
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      for i in range(8):
+        o_ref[i] = fn(x_ref[i], y_ref[i])
 
     x = jnp.array([0, 3, -4, -6, 0, 5, 4, -7]).astype(dtype)
     y = jnp.array([3, 1, -4, -5, 0, -2, 2, 4]).astype(dtype)
@@ -1002,16 +1056,12 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["tpu"]) and jnp.dtype(dtype).itemsize == 2:
       self.skipTest("16-bit types are not supported on TPU")
 
-    # TODO: skipped due to https://github.com/jax-ml/jax/issues/24027
+    # TODO(ayx): Fix these operations on TPU
     if (
         jtu.test_device_matches(["tpu"])
-        and f == jnp.remainder
-        and not self.INTERPRET
+        and f in (jnp.floor_divide, jnp.subtract)
+        and dtype == "uint32"
     ):
-      self.skipTest("jnp.remainder on TPU is only supported in interpret mode")
-
-    # TODO(ayx): fix this on TPU
-    if jtu.test_device_matches(["tpu"]) and dtype == "uint32":
       self.skipTest("Not supported on TPU")
 
     @functools.partial(
@@ -1038,16 +1088,13 @@ class OpsTest(PallasBaseTest):
       self.skipTest("Test only supported on TPU.")
     if jtu.test_device_matches(["tpu"]) and jnp.dtype(dtype).itemsize == 2:
       self.skipTest("16-bit types are not supported on TPU")
-    # TODO: skipped due to https://github.com/jax-ml/jax/issues/24027
+
+    # TODO(ayx): Fix these operations on TPU
     if (
         jtu.test_device_matches(["tpu"])
-        and f == jnp.remainder
-        and not self.INTERPRET
+        and f in (jnp.floor_divide, jnp.subtract)
+        and dtype == "uint32"
     ):
-      self.skipTest("jnp.remainder on TPU is only supported in interpret mode")
-
-    # TODO: skipped due to https://github.com/jax-ml/jax/issues/23972
-    if jtu.test_device_matches(["tpu"]) and dtype == "uint32":
       self.skipTest("Not supported on TPU")
 
     @functools.partial(
