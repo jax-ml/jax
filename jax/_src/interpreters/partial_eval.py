@@ -17,7 +17,6 @@ from collections import namedtuple
 from collections.abc import Callable, Sequence, Hashable
 from contextlib import contextmanager
 from functools import partial
-import inspect
 import itertools as it
 import operator as op
 from typing import Any, NamedTuple, Union
@@ -46,7 +45,7 @@ from jax._src.core import (Trace, Tracer, TraceTag, Jaxpr, Literal, get_aval,
                            InputType, OutputType, get_referent, JaxprEqnContext)
 from jax._src.state.types import AbstractRef
 from jax._src.tree_util import (PyTreeDef, treedef_tuple, tree_unflatten,
-                                tree_flatten, tree_structure, KeyPath, generate_key_paths,
+                                tree_flatten, tree_structure, generate_key_paths,
                                 keystr)
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
@@ -1529,8 +1528,7 @@ class DynamicJaxprTracer(core.Tracer):
   def __init__(self, trace, aval, line_info=None):
     self._trace = trace
     self._line_info = line_info
-    # Needed for UnexpectedTracerError.
-    self._debug_info = self._trace.frame.debug_info
+    self._debug_info = self._trace.frame.debug_info  # for UnexpectedTracerError
     self.aval = aval
 
   def full_lower(self):
@@ -1551,11 +1549,11 @@ class DynamicJaxprTracer(core.Tracer):
 
     origin = ("The error occurred while tracing the function "
               f"{dbg.func_src_info or '<unknown>'} for {dbg.traced_for}. ")
-    arg_info = arg_info_all(dbg)
-    # TODO(mattjj): figure out when not (invar_pos < len(arg_info))
-    if invar_pos and arg_info and all(i < len(arg_info) for i in invar_pos):
-      arg_info = [arg_info[i] for i in invar_pos]
-      arg_names = [f'{name}{keystr(path)}' for name, path in arg_info]
+    if invar_pos and dbg.arg_names:
+      try:
+        arg_names = [dbg.arg_names[i] for i in invar_pos]
+      except IndexError:
+        return ""  # TODO(mattjj): figure out when not (invar_pos < len(arg_info))
       if len(arg_names) == 1:
         arg_info_str = f"the argument {arg_names[0]}"
       elif len(arg_names) == 2:
@@ -1632,7 +1630,7 @@ class JaxprStackFrame:
   attrs_tracked: list[tuple[Any, str]]
   attrs_inits: list
   attrs_vars: list[Var]
-  debug_info: DebugInfo | None
+  debug_info: lu.TracingDebugInfo | None
 
   def __init__(self):
     self.gensym = core.gensym()
@@ -2116,64 +2114,42 @@ def _jvp_jaxpr_zeros(f, store, in_zeros, zero_avals, *primal_tangent_avals):
   store.store(out_zeros)
   return [*out_primals, *out_nz_tangents]
 
-# TODO(mattjj): remove this DebugInfo and helper functions, replace with
-# api_util.py versions
-
-class DebugInfo(NamedTuple):
-  func_src_info: str | None  # f'{fun.__name__} at {filename}:{lineno}'
-  signature: inspect.Signature | None  # inspect.signature(fun)
-  in_tree: PyTreeDef | None  # caller/constructor might not have this info
-  out_tree: Callable[[], PyTreeDef] | None  # lazy, not avail at trace time
-  has_kwargs: bool  # whether in_tree corresponds to (args, kwargs) or args
-  traced_for: str  # "jit", "scan", "make_jaxpr", etc
-
-def debug_info(fn: Callable, in_tree: PyTreeDef | None,
-               out_tree_thunk: Callable[[], PyTreeDef] | None,
-               has_kwargs: bool, traced_for: str) -> DebugInfo:
-  sig = api_util.fun_signature(fn)
+# Callers should be using linear_util.debug_info instead!
+def debug_info(
+    fn: Callable,
+    in_tree: PyTreeDef | None,
+    out_tree_thunk: Callable[[], PyTreeDef] | None,
+    has_kwargs: bool,
+    traced_for: str
+) -> lu.TracingDebugInfo | None:
   src_info = fun_sourceinfo(fn)
-  return DebugInfo(src_info, sig, in_tree, out_tree_thunk, has_kwargs,
-                   traced_for)
+  try:
+    dummy_args = tree_unflatten(in_tree, [False] * in_tree.num_leaves)  # type: ignore
+    args, kwargs = dummy_args if has_kwargs else (dummy_args, {})
+    ba = api_util.fun_signature(fn).bind(*args, **kwargs)  # type: ignore
+    arg_names = tuple(f'{name}{keystr(path)}' for name, dummy in ba.arguments.items()
+                      for path, _ in generate_key_paths(dummy))
+  except:
+    arg_names = None
+  def result_paths():
+    try:
+      out_tree = out_tree_thunk()
+      dummy_result = tree_unflatten(out_tree, [False] * out_tree.num_leaves)
+    except:
+      return None
+    return tuple(path for path, _ in generate_key_paths(dummy_result))
+  return lu.TracingDebugInfo(traced_for, src_info, arg_names, result_paths)  # type: ignore
 
-def debug_info_final(fn: lu.WrappedFun, traced_for: str) -> DebugInfo:
-  "Make a DebugInfo from data available to final-style primitives like pmap."
+def debug_info_final(fn: lu.WrappedFun, traced_for: str) -> lu.TracingDebugInfo | None:
   in_tree, out_tree, has_kws = flattened_fun_in_tree(fn) or (None, None, False)
   return debug_info(fn.f, in_tree, out_tree, has_kws, traced_for)
-
-def arg_info_all(dbg: DebugInfo) -> list[tuple[str, KeyPath]] | None:
-  ba = None if dbg.in_tree is None else sig_info(dbg)
-  if ba is None: return None
-  return [(name, key_path) for name, dummy_arg in ba.arguments.items()
-          for key_path, _ in generate_key_paths(dummy_arg)]
-
-def sig_info(dbg: DebugInfo) -> inspect.BoundArguments | None:
-  if dbg.in_tree is None or dbg.signature is None: return None
-  try:
-    dummy_args = tree_unflatten(dbg.in_tree, [False] * dbg.in_tree.num_leaves)
-  except:
-    return None
-  args, kwargs = dummy_args if dbg.has_kwargs else (dummy_args, {})
-  try:
-    return dbg.signature.bind(*args, **kwargs)
-  except (TypeError, ValueError):
-    return None
-
-def result_info(dbg: DebugInfo) -> list[KeyPath] | None:
-  if dbg.out_tree is None: return None
-  try:
-    num_leaves = dbg.out_tree().num_leaves
-    dummy_result = tree_unflatten(dbg.out_tree(), [False] * num_leaves)
-  except:
-    return None
-  else:
-    return [path for path, _ in generate_key_paths(dummy_result)]
 
 
 @profiler.annotate_function
 def trace_to_jaxpr_dynamic(
     fun: lu.WrappedFun,
     in_avals: Sequence[AbstractValue],
-    debug_info: DebugInfo | None = None,
+    debug_info: lu.TracingDebugInfo | None = None,
     *,
     keep_inputs: list[bool] | None = None,
 ) -> tuple[Jaxpr, list[AbstractValue], list[Any],
@@ -2197,7 +2173,7 @@ def trace_to_jaxpr_dynamic(
 
 @profiler.annotate_function
 def trace_to_jaxpr_dynamic2(
-    fun: lu.WrappedFun, debug_info: DebugInfo | None = None
+    fun: lu.WrappedFun, debug_info: lu.TracingDebugInfo | None = None
   ) -> tuple[Jaxpr, OutputType, list[Any]]:
 
   trace = DynamicJaxprTrace()
