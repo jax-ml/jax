@@ -305,6 +305,95 @@ def jax_generate_backend_suites(backends = []):
         tags = ["-jax_test_%s" % backend for backend in backends] + ["-manual"],
     )
 
+def _jax_wheel_impl(ctx):
+    executable = ctx.executable.wheel_binary
+
+    output = ctx.actions.declare_directory(ctx.label.name)
+    args = ctx.actions.args()
+    args.add("--output_path", output.path)  # required argument
+    args.add("--cpu", ctx.attr.platform_tag)  # required argument
+    jaxlib_git_hash = "" if ctx.file.git_hash == None else ctx.file.git_hash.path
+    args.add("--jaxlib_git_hash", jaxlib_git_hash)  # required argument
+
+    if ctx.attr.enable_cuda:
+        args.add("--enable-cuda", "True")
+        if ctx.attr.platform_version == "":
+            fail("platform_version must be set to a valid cuda version for cuda wheels")
+        args.add("--platform_version", ctx.attr.platform_version)  # required for gpu wheels
+    if ctx.attr.enable_rocm:
+        args.add("--enable-rocm", "True")
+        if ctx.attr.platform_version == "":
+            fail("platform_version must be set to a valid rocm version for rocm wheels")
+        args.add("--platform_version", ctx.attr.platform_version)  # required for gpu wheels
+    if ctx.attr.skip_gpu_kernels:
+        args.add("--skip_gpu_kernels")
+
+    args.set_param_file_format("flag_per_line")
+    args.use_param_file("@%s", use_always = False)
+    ctx.actions.run(
+        arguments = [args],
+        inputs = [ctx.file.git_hash] if ctx.file.git_hash != None else [],
+        outputs = [output],
+        executable = executable,
+    )
+    return [DefaultInfo(files = depset(direct = [output]))]
+
+_jax_wheel = rule(
+    attrs = {
+        "wheel_binary": attr.label(
+            default = Label("//jaxlib/tools:build_wheel"),
+            executable = True,
+            # b/365588895 Investigate cfg = "exec" for multi platform builds
+            cfg = "target",
+        ),
+        "platform_tag": attr.string(mandatory = True),
+        "git_hash": attr.label(allow_single_file = True),
+        "enable_cuda": attr.bool(default = False),
+        # A cuda/rocm version is required for gpu wheels; for cpu wheels, it can be an empty string.
+        "platform_version": attr.string(mandatory = True, default = ""),
+        "skip_gpu_kernels": attr.bool(default = False),
+        "enable_rocm": attr.bool(default = False),
+    },
+    implementation = _jax_wheel_impl,
+    executable = False,
+)
+
+def jax_wheel(name, wheel_binary, enable_cuda = False, platform_version = ""):
+    """Create jax artifact wheels.
+
+    Common artifact attributes are grouped within a single macro.
+
+    Args:
+      name: the name of the wheel
+      wheel_binary: the binary to use to build the wheel
+      enable_cuda: whether to build a cuda wheel
+      platform_version: the cuda version to use for the wheel
+
+    Returns:
+      A directory containing the wheel
+    """
+    _jax_wheel(
+        name = name,
+        wheel_binary = wheel_binary,
+        enable_cuda = enable_cuda,
+        platform_version = platform_version,
+        # Empty by default. Use `--//jaxlib/tools:jaxlib_git_hash=nightly` flag in bazel command to
+        # pass the git hash for nightly or release builds. Note that the symlink git_hash_symlink to
+        # the git hash file needs to be created first.
+        git_hash = select({
+            "//jaxlib/tools:jaxlib_git_hash_nightly_or_release": "git_hash_symlink",
+            "//conditions:default": None,
+        }),
+        # Following the convention in jax/tools/build_utils.py.
+        # TODO(kanglan) Add @platforms//cpu:ppc64le once JAX Bazel is upgraded > 6.5.0.
+        platform_tag = select({
+            "//jaxlib/tools:macos_arm64": "arm64",
+            "//jaxlib/tools:win_amd64": "AMD64",
+            "//jaxlib/tools:arm64": "aarch64",
+            "@platforms//cpu:x86_64": "x86_64",
+        }),
+    )
+
 jax_test_file_visibility = []
 
 def xla_py_proto_library(*args, **kw):  # buildifier: disable=unused-variable
