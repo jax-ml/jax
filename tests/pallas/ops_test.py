@@ -756,6 +756,7 @@ class OpsTest(PallasBaseTest):
           ["float32", "float64"],
       ),
       ([lax.population_count, lax.clz, jnp.invert], ["int32", "int64"]),
+      ([jnp.logical_not], ["bool"])
   ]
 
   @parameterized.named_parameters(

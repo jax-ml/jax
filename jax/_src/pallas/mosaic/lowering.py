@@ -2281,6 +2281,31 @@ def _not_lowering_rule(ctx: LoweringRuleContext, x):
   # xor x, -1
   # covers both cases.
   out_aval = ctx.avals_out[0]
+
+  if out_aval.dtype == np.dtype(np.bool_) and out_aval.shape != ():
+    # The 'not' operation should ideally be implemented as
+    # `not(x) == xor(x, 1)`. However, due to the issue
+    # https://github.com/jax-ml/jax/issues/24464, we are currently unable to
+    # create a boolean array (named i1 splat) directly. To work around this,
+    # we first create an all-ones array and an all-zeros array with the same
+    # shape as the input. Then, we use `select(x, 1, 0)` twice to obtain two
+    # identical arrays. After that, we can compare these two identical arrays to
+    # produce an all-ones boolean array. Note that we cannot directly compare
+    # two arrays of all zeros or all ones, as such comparisons would be
+    # optimized away.
+    #
+    # TODO: Replace this with the simpler implementation `not(x) == xor(x, 1)`
+    # once the issue https://github.com/jax-ml/jax/issues/24464 is resolved.
+    i32 = ir.IntegerType.get_signless(32)
+    vtype = ir.VectorType.get(out_aval.shape, i32)
+    one = vector.broadcast(vtype, arith.constant(i32, 1))
+    zero = vector.broadcast(vtype, arith.constant(i32, 0))
+    m = arith.select(x, one, zero)
+    n = arith.select(x, one, zero)
+    trues = arith.cmpi(arith.CmpIPredicate.eq, m, n)
+
+    return arith.xori(x, trues)
+
   out_scalar_type = _dtype_to_ir_type(out_aval.dtype)
   if not out_aval.shape:
     # Create a scalar constant.
