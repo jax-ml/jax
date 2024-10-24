@@ -109,6 +109,11 @@ current directory.
    --cuda_version=12.3.2 --cudnn_version=9.1.1
    ```
 
+   Please note that these parameters are optional: by default Bazel will
+   download CUDA and CUDNN redistribution versions provided in `.bazelrc` in the
+   environment variables `HERMETIC_CUDA_VERSION` and `HERMETIC_CUDNN_VERSION`
+   respectively.
+
    To point to CUDA/CUDNN/NCCL redistributions on local file system, you can use
    the following command:
 
