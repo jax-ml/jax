@@ -119,6 +119,16 @@ class RefBitcaster:
     del dtype  # Unused
     return self.dtype
 
+  def untransform_index(
+      self, idx: tuple[indexing.DimIndexer, ...]
+  ) -> tuple[indexing.DimIndexer, ...]:
+    if not indexing.is_trivial_index(idx, self.shape):
+      raise NotImplementedError(
+          "Untransforming non-trivial indexers not supported."
+      )
+
+    return idx
+
 
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
@@ -166,6 +176,16 @@ class RefReshaper:
     del dtype  # Unused
     return self.dtype
 
+  def untransform_index(
+      self, idx: tuple[indexing.DimIndexer, ...]
+  ) -> tuple[indexing.DimIndexer, ...]:
+    if not indexing.is_trivial_index(idx, self.shape):
+      raise NotImplementedError(
+          "Untransforming non-trivial indexers not supported."
+      )
+
+    return idx
+
 
 class Transform(Protocol):
 
@@ -189,6 +209,10 @@ class Transform(Protocol):
     """
     return dtype
 
+  def untransform_index(self, idx: indexing.ShapeIndexer) -> indexing.ShapeIndexer:
+    """Untromsform an index over the array."""
+
+    return idx
 
 @dataclasses.dataclass
 class RefIndexer:
