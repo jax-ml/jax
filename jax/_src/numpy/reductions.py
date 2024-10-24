@@ -72,9 +72,13 @@ def _promote_integer_dtype(dtype: DTypeLike) -> DTypeLike:
   if dtypes.issubdtype(dtype, np.bool_):
     return dtypes.int_
   elif dtypes.issubdtype(dtype, np.unsignedinteger):
+    if dtype in [np.dtype('uint4'), np.dtype('uint2')]:
+      return dtypes.uint
     if np.iinfo(dtype).bits < np.iinfo(dtypes.uint).bits:
       return dtypes.uint
   elif dtypes.issubdtype(dtype, np.integer):
+    if dtype in [np.dtype('int4'), np.dtype('int2')]:
+      return dtypes.int_
     if np.iinfo(dtype).bits < np.iinfo(dtypes.int_).bits:
       return dtypes.int_
   return dtype
