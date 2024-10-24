@@ -33,6 +33,7 @@ import os
 import re
 import subprocess
 import sys
+import traceback
 import types
 from typing import NamedTuple
 import unittest
@@ -6422,6 +6423,21 @@ class RematTest(jtu.JaxTestCase):
     y, vjp = jax.vjp(f, x)
     y_, = vjp(jnp.ones_like(y))
     self.assertAllClose(y, y_, atol=0, rtol=0)
+
+  def test_concreteness_error_includes_user_code(self):
+    @jax.remat
+    def f(x):
+      if x > 0:
+        return x
+      else:
+        return jnp.sin(x)
+
+    try:
+      f(3.)
+    except TracerBoolConversionError:
+      self.assertIn('x > 0', traceback.format_exc())
+    else:
+      assert False
 
 
 @jtu.with_config(jax_pprint_use_color=False)
