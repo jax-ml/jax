@@ -579,8 +579,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
 class DotProductAttentionF8Test(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
-    if jax.device_count() < 4:
-      self.skipTest("Requires more than 4 devices.")
     try:
       cudnn_version = check_cudnn_version()
     except RuntimeError as e:
@@ -624,46 +622,22 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
     value_quantized = quantize(value, jnp.float8_e4m3fn, jnp.ones((1,)), jnp.float32)
     grad_quantized = quantize(grad, jnp.float8_e4m3fn, jnp.ones((1,)), jnp.float32)
 
-    devices = np.array(jax.local_devices()[:4])
-    devices = devices.reshape((2, 2))
+    sdpa_train_fp8_p = partial(sdpa_train_fp8, scale=scale, mask_type=mask_type)
+    jitted_sdpa_train_fp8 = jax.jit(sdpa_train_fp8_p)
+    jitted_sdpa_train_ref = jax.jit(
+      partial(
+        sdpa_train_ref, scale=scale, mask_type=mask_type, dropout_rate=0.0),
+    )
 
-    with Mesh(devices, ("dp", "tp")) as mesh:
-      qkv_spec = PartitionSpec("dp", None, "tp", None)
-      qkv_sharding = NamedSharding(mesh, qkv_spec)
-      query = jax.device_put(query, qkv_sharding)
-      key = jax.device_put(key, qkv_sharding)
-      value = jax.device_put(value, qkv_sharding)
-      grad = jax.device_put(grad, qkv_sharding)
+    out, (query_grad, key_grad, value_grad) = \
+        jitted_sdpa_train_fp8(query_quantized, key_quantized, value_quantized, grad_quantized, fp8_metas)
+    out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = \
+        jitted_sdpa_train_ref(query, key, value, grad, None, None)
 
-      query_quantized = jax.device_put(query_quantized , qkv_sharding)
-      key_quantized  = jax.device_put(key_quantized , qkv_sharding)
-      value_quantized  = jax.device_put(value_quantized , qkv_sharding)
-      grad_quantized = jax.device_put(grad_quantized , qkv_sharding)
-
-      fp8_meta_shardings = {name: None for name in fp8_meta_names}
-      in_shardings = (qkv_sharding, qkv_sharding, qkv_sharding, qkv_sharding, fp8_meta_shardings)
-      out_shardings = (qkv_sharding, (qkv_sharding, qkv_sharding, qkv_sharding))
-
-      in_shardings_ref = (qkv_sharding, qkv_sharding, qkv_sharding, qkv_sharding, None, None)
-      out_shardings_ref = out_shardings
-      sdpa_train_fp8_p = partial(sdpa_train_fp8, scale=scale, mask_type=mask_type)
-      jitted_sdpa_train_fp8 = jax.jit(sdpa_train_fp8_p, in_shardings=in_shardings, out_shardings=out_shardings)
-      jitted_sdpa_train_ref = jax.jit(
-        partial(
-          sdpa_train_ref, scale=scale, mask_type=mask_type, dropout_rate=0.0),
-        in_shardings=in_shardings_ref,
-        out_shardings=out_shardings_ref
-      )
-
-      out, (query_grad, key_grad, value_grad) = \
-          jitted_sdpa_train_fp8(query_quantized, key_quantized, value_quantized, grad_quantized, fp8_metas)
-      out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = \
-          jitted_sdpa_train_ref(query, key, value, grad, None, None)
-
-      self.assertArraysAllClose(out_ref, out.astype(dtype), rtol=5e-1, atol=5e-1)
-      self.assertArraysAllClose(query_grad_ref, query_grad.astype(dtype), rtol=5e-1, atol=3e0)
-      self.assertArraysAllClose(key_grad_ref, key_grad.astype(dtype), rtol=5e-1, atol=3e0)
-      self.assertArraysAllClose(value_grad_ref, value_grad.astype(dtype), rtol=5e-1, atol=5e-1)
+    self.assertArraysAllClose(out_ref, out.astype(dtype), rtol=5e-1, atol=5e-1)
+    self.assertArraysAllClose(query_grad_ref, query_grad.astype(dtype), rtol=5e-1, atol=3e0)
+    self.assertArraysAllClose(key_grad_ref, key_grad.astype(dtype), rtol=5e-1, atol=3e0)
+    self.assertArraysAllClose(value_grad_ref, value_grad.astype(dtype), rtol=5e-1, atol=5e-1)
 
   @jtu.sample_product(
       batch_size=[4, 2],
@@ -696,48 +670,22 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
     key_quantized = quantize(key, jnp.float8_e4m3fn, jnp.ones((1,)), jnp.float32)
     value_quantized = quantize(value, jnp.float8_e4m3fn, jnp.ones((1,)), jnp.float32)
 
-    devices = np.array(jax.local_devices()[:4])
-    devices = devices.reshape((2, 2))
+    def dot_product_attention_fp8(query, key, value, fp8_metas):
+      f_p = partial(
+        dot_product_attention, scale=scale, mask_type=mask_type, qkv_layout=qkv_layout, use_fp8=True)
+      return f_p(query, key, value, None, None, None, None, fp8_metas)
 
-    with Mesh(devices, ("dp", "tp")) as mesh:
-      if qkv_layout == "BNTH":
-        qkv_spec = PartitionSpec("dp", "tp", None, None)
-      else:
-        qkv_spec = PartitionSpec("dp", None, "tp", None)
+    jitted_sdpa_inference = jax.jit(
+      dot_product_attention_fp8,
+    )
 
-      qkv_sharding = NamedSharding(mesh, qkv_spec)
-      fp8_meta_shardings = {name: None for name in fp8_meta_names}
-      in_shardings = (
-        qkv_sharding, qkv_sharding, qkv_sharding, fp8_meta_shardings)
-      out_shardings = (qkv_sharding, None, None)
-
-      in_shardings_ref = (
-        qkv_sharding, qkv_sharding, qkv_sharding)
-      out_shardings_ref = qkv_sharding
-
-      query = jax.device_put(query, qkv_sharding)
-      key = jax.device_put(key, qkv_sharding)
-      value = jax.device_put(value, qkv_sharding)
-      def dot_product_attention_fp8(query, key, value, fp8_metas):
-        f_p = partial(
-          dot_product_attention, scale=scale, mask_type=mask_type, qkv_layout=qkv_layout, use_fp8=True)
-        return f_p(query, key, value, None, None, None, None, fp8_metas)
-
-      jitted_sdpa_inference = jax.jit(
-        dot_product_attention_fp8,
-        in_shardings=in_shardings,
-        out_shardings=out_shardings
-      )
-
-      jitted_sdpa_inference_ref = jax.jit(
-        partial(
-          dot_product_attention, scale=scale, mask_type=mask_type, qkv_layout=qkv_layout),
-        in_shardings=in_shardings_ref,
-        out_shardings=out_shardings_ref
-      )
-      out, _, _ = jitted_sdpa_inference(query_quantized, key_quantized, value_quantized, fp8_metas)
-      out_ref = jitted_sdpa_inference_ref(query, key, value)
-      self.assertArraysAllClose(out_ref, out.astype(dtype), rtol=5e-2, atol=5e-2)
+    jitted_sdpa_inference_ref = jax.jit(
+      partial(
+        dot_product_attention, scale=scale, mask_type=mask_type, qkv_layout=qkv_layout),
+    )
+    out, _, _ = jitted_sdpa_inference(query_quantized, key_quantized, value_quantized, fp8_metas)
+    out_ref = jitted_sdpa_inference_ref(query, key, value)
+    self.assertArraysAllClose(out_ref, out.astype(dtype), rtol=5e-2, atol=5e-2)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

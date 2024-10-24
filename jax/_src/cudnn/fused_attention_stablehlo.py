@@ -219,24 +219,10 @@ def create_dot_product_attention_backend_config(
   backend_config['cudnn_fmha_backend_config']["sliding_window_length"] = sliding_window_length
   return json.dumps(backend_config)
 
-def create_dot_product_attention_fp8_backend_config(batch,
-                                                num_heads,
-                                                seq_q,
-                                                seq_kv,
-                                                dtype,
-                                                fmha_scale,
-                                                mask_type,
-                                                layout,
-                                                is_bwd):
-  backend_config = create_dot_product_attention_backend_config_base(batch,
-                                                      num_heads,
-                                                      seq_q,
-                                                      seq_kv,
-                                                      dtype,
-                                                      fmha_scale,
-                                                      mask_type,
-                                                      layout,
-                                                      is_bwd)
+def create_dot_product_attention_fp8_backend_config(
+    batch, num_heads, seq_q, seq_kv, dtype, fmha_scale, mask_type, layout, is_bwd):
+  backend_config = create_dot_product_attention_backend_config_base(
+      batch, num_heads, seq_q, seq_kv, dtype, fmha_scale, mask_type, layout, is_bwd)
   return json.dumps(backend_config)
 
 # mapping from (is_bwd, has_dropout, has_bias) to custom call name
@@ -1023,6 +1009,10 @@ def _dot_product_attention(query: Array,
       mask_type=mask_type, layout=layout, sliding_window_length=sliding_window_length,
       cudnn_version=cudnn_version)
   return output
+
+_dot_product_attention.defvjp(
+    _dot_product_attention_fwd_rule, _dot_product_attention_bwd_rule
+)
 
 fp8_params_keys = [
     'amax_dQ', 'amax_dK', 'amax_dV', 'amax_dP', # place holder for bwd output
