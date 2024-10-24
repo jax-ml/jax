@@ -1156,6 +1156,18 @@ class LaxTest(jtu.JaxTestCase):
     lhs, rhs = rng(lhs_shape, np.float16), rng(rhs_shape, np.float16)
     self.assertEqual(fun(lhs, rhs).dtype, np.float16)
 
+  def testDotAlgorithmConfig(self):
+    lhs_shape = (3, 4)
+    rhs_shape = (4, 3)
+    rng = jtu.rand_default(self.rng())
+    lhs, rhs = rng(lhs_shape, np.float32), rng(rhs_shape, np.float32)
+
+    expected = ("algorithm = <lhs_precision_type = f32, rhs_precision_type = "
+                "f32, accumulation_type = f32")
+    with jax.default_matmul_precision("F32_F32_F32"):
+      hlo = jax.jit(lax.dot).lower(lhs, rhs).as_text()
+      self.assertRegex(hlo, expected)
+
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
      for lhs_shape in [(3,), (4, 3)] for rhs_shape in [(3,), (3, 6)]],
