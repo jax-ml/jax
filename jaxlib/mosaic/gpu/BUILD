@@ -27,6 +27,19 @@ py_library(
 )
 
 cc_library(
+    name = "target",
+    srcs = ["target.cc"],
+    hdrs = ["target.h"],
+    deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@llvm-project//llvm:MC",
+    ],
+)
+
+cc_library(
     name = "passes",
     srcs = [
         "launch_lowering.cc",
@@ -104,12 +117,14 @@ cc_library(
     srcs = ["custom_call.cc"],
     deps = [
         ":passes",
+        ":target",
         "//jaxlib/cuda:cuda_vendor",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
