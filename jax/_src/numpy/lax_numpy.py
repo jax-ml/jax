@@ -12740,9 +12740,11 @@ def corrcoef(x: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True) -> A
 @partial(vectorize, excluded={0, 1, 3, 4})
 def _searchsorted_via_scan(unrolled: bool, sorted_arr: Array, query: Array, side: str, dtype: type) -> Array:
   op = _sort_le_comparator if side == 'left' else _sort_lt_comparator
+  unsigned_dtype = np.uint32 if dtype == np.int32 else np.uint64
   def body_fun(state, _):
     low, high = state
-    mid = (low + high) // 2
+    mid = low.astype(unsigned_dtype) + high.astype(unsigned_dtype)
+    mid = lax.div(mid, unsigned_dtype(2)).astype(dtype)
     go_left = op(query, sorted_arr[mid])
     return (where(go_left, low, mid), where(go_left, mid, high)), ()
   n_levels = int(np.ceil(np.log2(len(sorted_arr) + 1)))
