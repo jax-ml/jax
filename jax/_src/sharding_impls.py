@@ -37,7 +37,6 @@ from jax._src.op_shardings import (
     are_op_shardings_equal, get_num_ways_dim_sharded, is_op_sharding_replicated)
 from jax._src.partition_spec import PartitionSpec
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
-from jax._src.lib import xla_extension_version
 import numpy as np
 
 
@@ -242,8 +241,6 @@ class NamedSharding(sharding.Sharding):
   _parsed_pspec: ParsedPartitionSpec
   _manual_axes: frozenset[MeshAxisName]
   _logical_device_ids: tuple[int, ...] | None
-  if xla_extension_version < 292:
-    _logical_device_ids = None
 
   @use_cpp_method()
   def __init__(
@@ -308,15 +305,10 @@ class NamedSharding(sharding.Sharding):
       cls, mesh, parsed_pspec, *, memory_kind=None, _manual_axes=frozenset(),
       _logical_device_ids=None,
   ):
-    if xla_extension_version >= 292:
-      return cls(mesh, parsed_pspec.get_partition_spec(),
-                  memory_kind=memory_kind, _parsed_pspec=parsed_pspec,
-                  _manual_axes=_manual_axes,
-                  _logical_device_ids=_logical_device_ids)
-    else:
-      return cls(mesh, parsed_pspec.get_partition_spec(),
-                  memory_kind=memory_kind, _parsed_pspec=parsed_pspec,
-                  _manual_axes=_manual_axes)
+    return cls(mesh, parsed_pspec.get_partition_spec(),
+                memory_kind=memory_kind, _parsed_pspec=parsed_pspec,
+                _manual_axes=_manual_axes,
+                _logical_device_ids=_logical_device_ids)
 
   @property
   def num_devices(self) -> int:

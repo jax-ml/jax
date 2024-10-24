@@ -26,7 +26,6 @@ from jax import lax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.layout import DeviceLocalLayout as DLL, Layout
-from jax._src.lib import xla_extension_version
 from jax._src import config
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.numpy as jnp
@@ -655,8 +654,6 @@ class DevicePutTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices('tpu')
   def test_ragged_copy_on_host(self):
-    if xla_extension_version < 290:
-      self.skipTest('Requires xla_extension_version >= 290')
     mesh = jtu.create_mesh((2,), ('x'))
     sharding = jax.sharding.NamedSharding(mesh, P(('x')))
     cpu_sharding = sharding.with_memory_kind('pinned_host')

@@ -38,7 +38,6 @@ from jax import dtypes
 from jax import stages
 from jax import lax
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import xla_extension_version
 from jax.lax import with_sharding_constraint
 from jax._src import prng
 from jax.sharding import PartitionSpec as P, Mesh
@@ -5604,9 +5603,6 @@ class UtilTest(jtu.JaxTestCase):
     self.assertTrue(hs4.is_tiled())
 
   def test_hlo_sharding_with_device_ordering(self):
-    if xla_extension_version < 291:
-      self.skipTest('Requires xla_extension_version >= 291')
-
     hs1 = xc.HloSharding.subgroup_with_device_ordering(
         np.array([[[0, 1], [2, 3]], [[4, 5], [6, 7]]], dtype=np.int64),
         subgroup_types=[xc.OpSharding.Type.REPLICATED],
@@ -5718,7 +5714,6 @@ class ShardyTest(jtu.JaxTestCase):
 
     self.assertIn('sdy.sharding = #sdy.sharding', f.lower(arr).as_text())
 
-  @unittest.skipIf(xla_extension_version < 292, "Requires XLA version >=292")
   def test_lowering_with_sharding_constraint(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     arr = np.arange(16).reshape(4, 2, 2)
@@ -5744,7 +5739,6 @@ class ShardyTest(jtu.JaxTestCase):
     self.assertIn('<@mesh, [{"x"}, {?}, {"y"}]>', lowered_str)
 
   # TODO(bartchr): run on CPU once Shardy is added to the XLA CPU pipeline.
-  @unittest.skipIf(xla_extension_version < 292, "Requires XLA version >=292")
   @jtu.skip_on_devices('cpu')
   def test_compile_with_inferred_out_sharding(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))

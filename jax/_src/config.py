@@ -1719,51 +1719,43 @@ def transfer_guard(new_val: str) -> Iterator[None]:
     yield
 
 
-if lib.xla_extension_version < 293:
+def _update_garbage_collection_guard(state, key, val):
+  """Applies the transfer guard level within guard_lib."""
+  if val is None:
+    setattr(state, key, None)
+  elif val == 'allow':
+    setattr(state, key, guard_lib.GarbageCollectionGuardLevel.ALLOW)
+  elif val == 'log':
+    setattr(state, key, guard_lib.GarbageCollectionGuardLevel.LOG)
+  elif val == 'fatal':
+    setattr(state, key, guard_lib.GarbageCollectionGuardLevel.FATAL)
+  else:
+    assert False, f'Invalid garbage collection guard level {val}'
 
-  def array_garbage_collection_guard(_val):
-    raise NotImplementedError(
-        'jaxlib version is too low for garbage collection guard'
-    )
-
-else:
-  def _update_garbage_collection_guard(state, key, val):
-    """Applies the transfer guard level within guard_lib."""
-    if val is None:
-      setattr(state, key, None)
-    elif val == 'allow':
-      setattr(state, key, guard_lib.GarbageCollectionGuardLevel.ALLOW)
-    elif val == 'log':
-      setattr(state, key, guard_lib.GarbageCollectionGuardLevel.LOG)
-    elif val == 'fatal':
-      setattr(state, key, guard_lib.GarbageCollectionGuardLevel.FATAL)
-    else:
-      assert False, f'Invalid garbage collection guard level {val}'
-
-  array_garbage_collection_guard = optional_enum_state(
-      name='jax_array_garbage_collection_guard',
-      enum_values=['allow', 'log', 'fatal'],
-      # The default is applied by guard_lib.
-      default=None,
-      help=(
-          'Select garbage collection guard level for "jax.Array" objects.\nThis'
-          ' option can be used to control what happens when a "jax.Array"'
-          ' object is garbage collected. It is desirable for "jax.Array"'
-          ' objects to be freed by Python reference couting rather than garbage'
-          ' collection in order to avoid device memory being held by the arrays'
-          ' until garbage collection occurs.\n\nValid values are:\n * "allow":'
-          ' do not log garbage collection of "jax.Array" objects.\n * "log":'
-          ' log an error when a "jax.Array" is garbage collected.\n * "fatal":'
-          ' fatal error if a "jax.Array" is garbage collected.\nDefault is'
-          ' "allow".'
-      ),
-      update_global_hook=lambda val: _update_garbage_collection_guard(
-          guard_lib.global_state(), 'garbage_collect_array', val
-      ),
-      update_thread_local_hook=lambda val: _update_garbage_collection_guard(
-          guard_lib.thread_local_state(), 'garbage_collect_array', val
-      ),
-  )
+array_garbage_collection_guard = optional_enum_state(
+    name='jax_array_garbage_collection_guard',
+    enum_values=['allow', 'log', 'fatal'],
+    # The default is applied by guard_lib.
+    default=None,
+    help=(
+        'Select garbage collection guard level for "jax.Array" objects.\nThis'
+        ' option can be used to control what happens when a "jax.Array"'
+        ' object is garbage collected. It is desirable for "jax.Array"'
+        ' objects to be freed by Python reference couting rather than garbage'
+        ' collection in order to avoid device memory being held by the arrays'
+        ' until garbage collection occurs.\n\nValid values are:\n * "allow":'
+        ' do not log garbage collection of "jax.Array" objects.\n * "log":'
+        ' log an error when a "jax.Array" is garbage collected.\n * "fatal":'
+        ' fatal error if a "jax.Array" is garbage collected.\nDefault is'
+        ' "allow".'
+    ),
+    update_global_hook=lambda val: _update_garbage_collection_guard(
+        guard_lib.global_state(), 'garbage_collect_array', val
+    ),
+    update_thread_local_hook=lambda val: _update_garbage_collection_guard(
+        guard_lib.thread_local_state(), 'garbage_collect_array', val
+    ),
+)
 
 def _update_debug_log_modules(module_names_str: str | None):
   logging_config.disable_all_debug_logging()
