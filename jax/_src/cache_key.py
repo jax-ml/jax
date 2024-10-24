@@ -274,6 +274,8 @@ def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
       "--xla_dump_hlo_pipeline_re",
       "--xla_tpu_sdc_checker_streamz_metric",
       "--xla_tpu_sdc_checker_enable_sdc_event_callbacks",
+      "--xla_tpu_sdc_checker_enable_coresweep_ng_callbacks",
+      "--xla_tpu_sdc_checker_no_logging_if_callbacks_are_present",
       "--xla_gpu_cuda_data_dir",
   ]
   # LINT.ThenChange(:debug_options)
