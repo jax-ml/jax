@@ -14,6 +14,7 @@
 
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 load("@rules_python//python:defs.bzl", "py_library")
+load(":extension_deps.bzl", "extension_deps")
 
 licenses(["notice"])
 
@@ -41,6 +42,7 @@ cc_library(
         "dialect/tpu/tpu_dialect.cc",
         "dialect/tpu/tpu_ops.cc",
         "dialect/tpu/util.cc",
+        ":extension_srcs",
     ] + glob([
         "dialect/tpu/transforms/*.cc",
     ]),
@@ -83,7 +85,7 @@ cc_library(
         "@xla//xla:array",
         "@xla//xla:shape_util",
         "@xla//xla:util",
-    ],
+    ] + extension_deps,
 )
 
 gentbl_cc_library(
@@ -225,4 +227,12 @@ cc_library(
         "@llvm-project//mlir:IR",
     ],
     alwayslink = True,
+)
+
+filegroup(
+    name = "extension_srcs",
+    srcs = [
+        "dialect/tpu/transforms/extensions/apply_vector_layout_extensions.cc",
+        "dialect/tpu/transforms/extensions/infer_vector_layout_extensions.cc",
+    ],
 )

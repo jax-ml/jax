@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "apply_vector_layout_extensions.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringMap.h"
@@ -4615,8 +4616,8 @@ LogicalResult prng_random_bits_rule(RewriteContext &ctx, Operation &op,
   return success();
 }
 
-const llvm::StringMap<rule_type> &rules() {
-  static auto rules = new llvm::StringMap<rule_type>{
+llvm::StringMap<rule_type> create_rules() {
+  auto rules = new llvm::StringMap<rule_type>{
       {arith::ConstantOp::getOperationName(), arith_constant_rule},
       {arith::ExtFOp::getOperationName(), arith_extf_rule},
       {arith::ExtSIOp::getOperationName(), arith_extsi_rule},
@@ -4656,7 +4657,17 @@ const llvm::StringMap<rule_type> &rules() {
       {vector::ShapeCastOp::getOperationName(), vector_shape_cast_rule},
       {vector::StoreOp::getOperationName(), vector_store_rule},
       {vector::TransposeOp::getOperationName(), vector_transpose_rule}};
-  return *rules;
+
+  auto extended_rules = mlir::tpu::extensions::rules();
+  for (auto &entry : extended_rules) {
+    rules->insert(&entry);
+  }
+  return std::move(*rules);
+}
+
+const llvm::StringMap<rule_type> &rules() {
+  static auto rules = create_rules();
+  return rules;
 }
 }  // namespace
 

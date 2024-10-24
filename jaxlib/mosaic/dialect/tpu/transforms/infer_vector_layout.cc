@@ -23,6 +23,7 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "infer_vector_layout_extensions.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/Support/raw_ostream.h"
@@ -339,6 +340,10 @@ class VectorLayoutInferer {
       } else if (OpTrait::hasElementwiseMappableTraits(&any_op)) {
         // We put elementwise rule to the end in case the overriding rule.
         if (inferElementwise(&any_op).failed()) {
+          return failure();
+        }
+      } else if (mlir::tpu::extensions::CanInferVectorLayout(any_op)) {
+        if (mlir::tpu::extensions::InferVectorLayout(any_op).failed()) {
           return failure();
         }
       } else {
