@@ -31,6 +31,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/strings/str_cat.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/mosaic/gpu/target.h"
 #include "absl/base/optimization.h"
@@ -143,7 +144,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     return true;
   }();
   (void)register_once;
-  return mlir::parsePassPipeline(
+  return mlir::parsePassPipeline(absl::StrCat(
       R"(
       builtin.module(
         canonicalize,
@@ -154,8 +155,8 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         convert-scf-to-cf,
         convert-nvvm-to-llvm,
         expand-strided-metadata,
-        nvvm-attach-target{O=3 chip=)" +
-      sm + R"( fast=false features=+)" + ptx_isa +
+        nvvm-attach-target{O=3 chip=)",
+      sm, R"( fast=false features=+)", ptx_isa,
       R"( ftz=false  module= triple=nvptx64-nvidia-cuda},
         lower-affine,
         convert-arith-to-llvm{index-bitwidth=0},
@@ -169,19 +170,19 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         gpu.module(mosaic-byval-insertion),
         gpu.module(reconcile-unrealized-casts),
         mosaic-convert-gpu-to-llvm,
-        gpu-module-to-binary{format=)" +
-      mlir::gpu::stringifyCompilationTarget(target).str() + R"(},
+        gpu-module-to-binary{format=)",
+      mlir::gpu::stringifyCompilationTarget(target).str(), R"(},
         convert-math-to-llvm{approximate-log1p=true},
         canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true},
         cse,
-        )" +
+        )",
       (target != mlir::gpu::CompilationTarget::Assembly ? "gpu-launch-lowering,"
-                                                        : "") +
+                                                        : ""),
       R"(
         convert-to-llvm,
         reconcile-unrealized-casts
       )
-  )");
+  )"));
 }
 
 mlir::LogicalResult RunPasses(mlir::OpPassManager&& passes,
