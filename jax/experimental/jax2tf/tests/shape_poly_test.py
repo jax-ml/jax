@@ -2114,7 +2114,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                     polymorphic_shapes=[None, "b0, ..."],
                     expect_error=(
                         (core.InconclusiveDimensionOperation,
-                         "the product of the known dimensions must be even") if flags_name == "threefry_non_partitionable" else (None, None)),
+                         "array size .* must be even") if flags_name == "threefry_non_partitionable" else (None, None)),
                     override_jax_config_flags=override_jax_config_flags)  # type: ignore
       ]
         for key_size, flags_name, override_jax_config_flags in [
