@@ -801,9 +801,9 @@ def _export_lowered(
   nr_devices = len(lowering.compile_args["device_assignment"])
   def export_sharding(s: LoweringSharding,
                       aval: core.ShapedArray) -> HloSharding | None:
-    if sharding_impls.is_unspecified(s):
+    if isinstance(s, sharding_impls.UnspecifiedValue):
       return None
-    return s._to_xla_hlo_sharding(aval.ndim)  # type: ignore[union-attr]
+    return s._to_xla_hlo_sharding(aval.ndim)
 
   all_in_shardings = expand_in_shardings(lowering.compile_args["in_shardings"],
                                          module_kept_var_idx,
