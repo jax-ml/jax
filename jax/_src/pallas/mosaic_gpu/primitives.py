@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import enum
+import math
 from typing import Any, Literal
 
 import jax
@@ -24,6 +25,7 @@ from jax._src import core as jax_core
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
+from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
@@ -32,6 +34,9 @@ from jax._src.state import discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 import jax.experimental.mosaic.gpu as mgpu
+
+
+WARPGROUP_SIZE = 128
 
 
 copy_smem_to_gmem_p = jax_core.Primitive("copy_smem_to_gmem")
@@ -169,8 +174,19 @@ def _copy_gmem_to_smem_lowering(
     barrier = barrier.__getitem__(
         *map(lowering._as_index, barrier_indexer.indices)
     )
+  dst_ty = ir.MemRefType(dst.type)
+  bytes = math.prod(dst_ty.shape) * mgpu.bytewidth(dst_ty.element_type)
+  if bytes % WARPGROUP_SIZE:
+    raise NotImplementedError("Only aligned copies are supported")
+  # We arrive uniformly from each thread in the WG, so we need to divide the
+  # number of bytes by the number of threads in the WG.
+  # TODO: apaszke - Relax this. We can just select the WG leader and have it
+  # arrive with the whole transfer size, while everyone else arrives with 0.
+  # But we should continue using this scheme as it's likely to be faster.
+  bytes //= WARPGROUP_SIZE
+  barrier.arrive_expect_tx(bytes)
   ctx.launch_ctx.async_copy(
-      src_ref=src, dst_ref=dst, barrier=barrier, **copy_params
+      src_ref=src, dst_ref=dst, barrier=barrier, arrive=False, **copy_params
   )
   return ()
 

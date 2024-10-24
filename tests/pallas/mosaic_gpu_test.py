@@ -1087,6 +1087,26 @@ class CoreMapTest(PallasTest):
         f(), np.repeat([0, 1, 4, 5, 2, 3, 6, 7], 128).reshape(4, 2, 128)
     )
 
+  def test_cross_wg_barrier(self):
+    mesh = plgpu.GPUMesh(num_threads=2, axis_names=("wg",))
+
+    @jax.jit
+    def f():
+      @pl.run_state
+      def inner(y_ref):
+        @pl.core_map(mesh)
+        def kernel():
+          def scoped(barrier):
+            plgpu.barrier_arrive(barrier)
+            plgpu.barrier_wait(barrier)
+            wg_idx = jax.lax.axis_index("wg")
+            y_ref[wg_idx] = jnp.broadcast_to(wg_idx, (128,))
+          # Each warpgroup is a single logical thread!
+          pl.run_scoped(scoped, plgpu.Barrier(num_arrivals=2))
+      y_init = jnp.zeros((2, 128), np.int32)
+      return inner(y_init)
+    np.testing.assert_array_equal(f(), np.repeat([0, 1], 128).reshape(2, 128))
+
 
 if __name__ == "__main__":
   absltest.main()

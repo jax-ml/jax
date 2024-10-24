@@ -67,6 +67,7 @@ SMEM = gpu_core.SMEM
 # sensitive to alignment and while this is quite conservative, it gets the job
 # done. We should make this more refined in the future.
 _SMEM_ALIGNMENT = 1024
+WARPGROUP_SIZE = 128
 
 def _align_to(x: int, alignment: int):
   if (rem := x % alignment):
@@ -164,9 +165,11 @@ def _run_scoped_resource_estimator(*consts, jaxpr: jax_core.Jaxpr) -> int:
     aval = v.aval
     if isinstance(aval.dtype, gpu_core.BarrierType):
       rs += Resources(
-          barrier_counts=collections.Counter(
-              [mgpu.Barrier(aval.dtype.num_arrivals, *aval.shape)]
-          )
+          barrier_counts=collections.Counter([
+              mgpu.Barrier(
+                  aval.dtype.num_arrivals * WARPGROUP_SIZE, *aval.shape
+              )
+          ])
       )
     else:
       rs += Resources(
@@ -592,7 +595,6 @@ def lower_jaxpr_to_module(
           gmem_transform=gmem_transforms,
           swizzle=swizzle,
           arrive=False,  # The caller must do ``arrive_expect_tx`` manually!
-          uniform=False,
           predicate=is_memory_thread,
       )
 
@@ -645,7 +647,6 @@ def lower_jaxpr_to_module(
           gmem_slice=store_slice,
           gmem_transform=gmem_transforms,
           swizzle=swizzle,
-          uniform=False,
           predicate=do_store,
       )
       return base_offset
@@ -747,7 +748,7 @@ def lower_jaxpr_to_module(
     )
   rs = _estimate_resources(jaxpr)
   extra_barriers = [
-      mgpu.Barrier(aval.dtype.num_arrivals, *aval.shape)
+      mgpu.Barrier(aval.dtype.num_arrivals * WARPGROUP_SIZE, *aval.shape)
       for aval in scratch_avals
       if isinstance(aval.dtype, gpu_core.BarrierType)
   ]
@@ -1216,7 +1217,9 @@ def _run_scoped_lowering_rule(
     elif isinstance(aval.dtype, gpu_core.BarrierType):
       input_refs.append(
           ctx.module_ctx.reserve_barrier(
-              mgpu.Barrier(aval.dtype.num_arrivals, *aval.shape)
+              mgpu.Barrier(
+                  aval.dtype.num_arrivals * WARPGROUP_SIZE, *aval.shape
+              )
           )
       )
       should_discharge.append(False)

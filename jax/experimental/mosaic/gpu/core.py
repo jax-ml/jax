@@ -355,6 +355,8 @@ class LaunchContext:
           f"Expected same element type, got {element_type} and"
           f" {dst_ref_ty.element_type}"
       )
+    if predicate is not None and not uniform:
+      raise ValueError("Predicate can only be defined when uniform is True")
     if not isinstance(gmem_transform, tuple):
       gmem_transform = (gmem_transform,)
 
