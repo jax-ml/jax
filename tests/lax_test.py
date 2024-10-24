@@ -43,6 +43,7 @@ from jax._src import lax_reference
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.interpreters import mlir
+from jax._src.interpreters import jaxpr_passes
 from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
@@ -3744,6 +3745,10 @@ class FooTyRules:
     return handler
 
   @staticmethod
+  def physical_const(val):
+    return val.data
+
+  @staticmethod
   def global_sharded_result_handler(aval, out_sharding, committed):
     def handler(arr):
       from jax._src.array import ArrayImpl
@@ -3804,7 +3809,7 @@ class FooArray:
   data: jax.Array
 
   def __init__(self, shape, data):
-    assert data.shape == (*shape, 2)
+    assert data.shape == (*shape, 2), data.shape
     self.shape = shape
     self.data = data
 
@@ -3814,6 +3819,7 @@ class FooArray:
 
   size = property(lambda self: self.data.size // 2)
   ndim = property(lambda self: self.data.ndim - 1)
+  dtype = property(lambda self: FooTy())
 
 def shard_foo_array_handler(xs, shardings, layouts):
   results = []
@@ -3827,18 +3833,6 @@ def shard_foo_array_handler(xs, shardings, layouts):
 def foo_array_constant_handler(x):
   return array._array_mlir_constant_handler(x.data)
 
-def make_lowering(*, shape):
-  return jnp.zeros((*shape, 2), 'uint32')
-
-def bake_lowering(k):
-  return k.T
-
-def take_lowering(k):
-  return jnp.broadcast_to(jnp.float32(k.size), k.shape)
-
-def jake_lowering(k):
-  return jnp.ones((*k.shape, 2), 'uint32')
-
 def bake_vmap(batched_args, batch_dims):
   xs, = batched_args
   bdim_in, = batch_dims
@@ -3847,6 +3841,20 @@ def bake_vmap(batched_args, batch_dims):
   bdim_out = perm[bdim_in]
   return ys, bdim_out
 
+def _make_edtype_rule(_, *, shape):
+  return jnp.zeros((*shape, 2), 'uint32')
+
+def _bake_edtype_rule(_, k):
+  idxs = tuple(range(k.ndim-1)[::-1]) + (k.ndim-1,)
+  return jnp.transpose(k, idxs)
+
+def _take_edtype_rule(_, k):
+  k_logical_shape = k.shape[:-1]
+  size = np.prod(k_logical_shape)
+  return jnp.broadcast_to(jnp.float32(size), k_logical_shape)
+
+def _jake_edtype_rule(_, k):
+  return jnp.ones((*k.shape[:-1], 2), 'uint32')
 
 class CustomElementTypesTest(jtu.JaxTestCase):
 
@@ -3858,10 +3866,10 @@ class CustomElementTypesTest(jtu.JaxTestCase):
         lambda x: core.ShapedArray(x.shape, FooTy())
     pxla.shard_arg_handlers[FooArray] = shard_foo_array_handler
     mlir._constant_handlers[FooArray] = foo_array_constant_handler
-    mlir.register_lowering(make_p, mlir.lower_fun(make_lowering, False))
-    mlir.register_lowering(bake_p, mlir.lower_fun(bake_lowering, False))
-    mlir.register_lowering(take_p, mlir.lower_fun(take_lowering, False))
-    mlir.register_lowering(jake_p, mlir.lower_fun(jake_lowering, False))
+    jaxpr_passes.register_edtype_rule(make_p, _make_edtype_rule)
+    jaxpr_passes.register_edtype_rule(bake_p, _bake_edtype_rule)
+    jaxpr_passes.register_edtype_rule(take_p, _take_edtype_rule)
+    jaxpr_passes.register_edtype_rule(jake_p, _jake_edtype_rule)
     batching.defvectorized(take_p)
     batching.primitive_batchers[bake_p] = bake_vmap
 
@@ -3870,9 +3878,6 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     del xla.canonicalize_dtype_handlers[FooArray]
     del xla.pytype_aval_mappings[FooArray]
     del mlir._constant_handlers[FooArray]
-    del mlir._lowerings[make_p]
-    del mlir._lowerings[bake_p]
-    del mlir._lowerings[take_p]
     del batching.primitive_batchers[take_p]
     del batching.primitive_batchers[bake_p]
 

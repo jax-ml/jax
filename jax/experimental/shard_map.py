@@ -60,6 +60,7 @@ from jax.api_util import flatten_fun_nokwargs, shaped_abstractify, argnums_parti
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import jaxpr_passes
 from jax._src.interpreters import pxla
 from jax._src.interpreters import ad
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
@@ -713,6 +714,8 @@ def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_names, out_names,
         ctx, in_nodes, jaxpr, mesh, in_names, out_names, auto)
   in_avals_ = [v.aval for v in jaxpr.invars]
   out_avals_ = [x.aval for x in jaxpr.outvars]
+  if any(jnp.issubdtype(aval, dtypes.extended) for aval in in_avals_):
+    raise ValueError(f"Extended dtype encountered in lowering {in_avals_}")
   in_nodes_ = map(partial(_xla_shard, ctx, mesh, auto), in_names, ctx.avals_in,
                   in_avals_, in_nodes)
   new_axis_context = sharding_impls.SPMDAxisContext(
@@ -729,6 +732,25 @@ def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_names, out_names,
   return map(partial(_xla_unshard, ctx, mesh, auto), out_names, out_avals_,
              ctx.avals_out, out_nodes_)
 mlir.register_lowering(shard_map_p, _shard_map_lowering)
+
+def _shard_map_edtype_rule(ctx: jaxpr_passes.ResolveEdtypesContext,
+                                *args_flat,
+                                jaxpr: core.Jaxpr,
+                                mesh, in_names, out_names, check_rep, rewrite, auto):
+  del ctx
+  with core.extend_axis_env_nd(mesh.shape.items()):
+    phys_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(core.ClosedJaxpr(jaxpr, []))
+  # TODO(justinfu): This might not be true for all etypes.
+  # We don't need to update in_names and out_names since physical element dimensions
+  # are always trailing and None.
+  eval_fun = partial(core.eval_jaxpr, phys_jaxpr.jaxpr, phys_jaxpr.consts)
+  wrapped_fun = lu.wrap_init(eval_fun)
+  out_flat = shard_map_p.bind(
+      wrapped_fun, *args_flat, mesh=mesh, in_names=in_names,
+      out_names_thunk=lambda : out_names, check_rep=check_rep, rewrite=rewrite,
+      auto=auto)
+  return out_flat
+jaxpr_passes.register_edtype_rule(shard_map_p, _shard_map_edtype_rule, always_invoke=True)
 
 def _make_scoped_manual_sharding(ctx, mesh, axes):
   axis_ctx = ctx.module_context.axis_context
@@ -748,8 +770,7 @@ def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
   axes = {name: i for i, ns in names.items() for name in ns}
   ns = _make_scoped_manual_sharding(ctx, mesh, axes)
   if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
-    ns = sharding_impls.physical_sharding(aval_in, ns)
-    aval_in = core.physical_aval(aval_in)
+    raise ValueError(f"Extended dtype encountered in MLIR lowering {aval_in}")
   shard_proto = ns._to_xla_hlo_sharding(aval_in.ndim).to_proto()
   unspecified = set(range(aval_in.ndim)) if auto else set()
   sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, shard_proto,
@@ -763,8 +784,7 @@ def _xla_unshard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
   axes = {name: i for i, ns in names.items() for name in ns}
   ns = _make_scoped_manual_sharding(ctx, mesh, axes)
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    ns = sharding_impls.physical_sharding(aval_out, ns)
-    aval_out = core.physical_aval(aval_out)
+    raise ValueError(f"Extended dtype encountered in MLIR lowering {aval_in}")
   unspecified = set(range(aval_out.ndim)) if auto else set()
   manual_proto = pxla.manual_proto(aval_in, frozenset(mesh.axis_names) - auto, mesh)
   sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, manual_proto, unspecified_dims=unspecified)

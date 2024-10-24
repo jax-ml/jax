@@ -57,6 +57,7 @@ from jax._src.core import DShapedArray
 from jax._src.core import ShapedArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
+from jax._src.interpreters import jaxpr_passes
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
@@ -1540,6 +1541,26 @@ def _pmap_lowering(ctx, *in_nodes, axis_name,
 
 mlir.register_lowering(xla_pmap_p, _pmap_lowering)
 
+def _pmap_edtype_rule(ctx: jaxpr_passes.ResolveEdtypesContext,
+                      *args,
+                      axis_name,
+                      global_axis_size,
+                      call_jaxpr,
+                      out_axes,
+                      **kwargs):
+  del ctx
+  with maybe_extend_axis_env(axis_name, global_axis_size, None):
+    phys_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(
+                            pe.close_jaxpr(call_jaxpr))
+  eval_fun = partial(core.eval_jaxpr, phys_jaxpr.jaxpr, phys_jaxpr.consts)
+  wrapped_fun = lu.wrap_init(eval_fun)
+  return xla_pmap_p.bind(wrapped_fun, *args,
+                         axis_name=axis_name,
+                         global_axis_size=global_axis_size,
+                         out_axes_thunk= lambda: out_axes,
+                         **kwargs)
+
+jaxpr_passes.register_edtype_rule(xla_pmap_p, _pmap_edtype_rule, always_invoke=True)
 
 def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval):
   assert isinstance(aval, ShapedArray)

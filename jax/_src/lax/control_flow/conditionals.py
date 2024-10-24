@@ -39,6 +39,7 @@ from jax._src.core import ConcreteArray, raise_to_shaped, replace_jaxpr_effects
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import jaxpr_passes
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.lax import lax
@@ -802,6 +803,13 @@ def cond_bind(*args, branches):
       core.check_jaxpr(jaxpr.jaxpr)
   return core.AxisPrimitive.bind(cond_p, *args, branches=branches)
 
+def _cond_edtype_rule(ctx: jaxpr_passes.ResolveEdtypesContext,
+                      index, *args, branches):
+  del ctx
+  physical_branches = tuple(map(jaxpr_passes.resolve_edtypes_jaxpr,
+                                branches))
+  return cond_p.bind(index, *args, branches=physical_branches)
+
 cond_p = core.AxisPrimitive('cond')
 cond_p.multiple_results = True
 cond_p.def_impl(partial(dispatch.apply_primitive, cond_p))
@@ -817,6 +825,7 @@ core.custom_typechecks[cond_p] = partial(_cond_typecheck, False)
 core.axis_substitution_rules[cond_p] = _cond_axis_substitution
 pe.partial_eval_jaxpr_custom_rules[cond_p] = _cond_partial_eval_custom
 pe.dce_rules[cond_p] = _cond_dce_rule
+jaxpr_passes.register_edtype_rule(cond_p, _cond_edtype_rule, always_invoke=True)
 batching.ragged_prop_rules[cond_p] = batching.ragged_mask_assert_no_op_rule
 
 def _cond_lowering(ctx, index, *args, branches):
