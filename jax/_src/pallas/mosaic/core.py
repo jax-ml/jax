@@ -32,6 +32,9 @@ from jax._src.pallas import pallas_call
 import jax.numpy as jnp
 import numpy as np
 
+# TODO(b/375357542): Remove the import once the bug is fixed.
+_ = pallas_call
+
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
@@ -250,33 +253,19 @@ def _tensorcore_mesh_discharge_rule(
     mesh,
     jaxpr,
 ):
-  del out_avals
   assert isinstance(mesh, TensorCoreMesh)
   if len(mesh.shape) > 1:
     raise NotImplementedError("Mesh must be 1D")
   core_axis_name, num_cores = list(mesh.shape.items())[0]
-  def body(*args):
-    # Due to aliasing, args contains aliased inputs and outputs so we remove
-    # outputs.
-    in_refs = args[:len(in_avals)]
-    jax_core.eval_jaxpr(jaxpr, in_refs)
-  assert len(jaxpr.outvars) == 0
-  out = pallas_call.pallas_call(
-      body,
-      out_shape=in_avals,
-      in_specs=[pallas_core.BlockSpec(memory_space=pallas_core.MemorySpace.ANY)]
-      * len(in_avals),
-      out_specs=[pallas_core.BlockSpec(
-          memory_space=pallas_core.MemorySpace.ANY)]
-      * len(in_avals),
-      input_output_aliases={i: i for i in range(len(in_avals))},
+  return pallas_core.default_mesh_discharge_rule(
+      in_avals,
+      out_avals,
+      *args,
+      jaxpr=jaxpr,
       grid=((core_axis_name, num_cores),),
-      compiler_params=dict(
-          mosaic=dict(dimension_semantics=("parallel",)),
-      ),
+      compiler_params=TPUCompilerParams(dimension_semantics=("parallel",)),
       backend="mosaic_tpu",
-  )(*args)
-  return out, ()
+  )
 
 pallas_core._core_map_mesh_rules[TensorCoreMesh] = (
     _tensorcore_mesh_discharge_rule

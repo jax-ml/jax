@@ -37,6 +37,7 @@ from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.state import discharge as state_discharge
+from jax._src.state import types as state_types
 from jax._src.state.types import TransformedRef
 import jax.numpy as jnp
 
@@ -1070,6 +1071,53 @@ def _core_map_abstract_eval(*args, jaxpr, mesh):
 
 
 _core_map_mesh_rules: dict[type[Any], Callable[..., Any]] = {}
+
+
+def default_mesh_discharge_rule(
+    in_avals,
+    out_avals,
+    *args,
+    grid,
+    compiler_params,
+    backend,
+    jaxpr,
+):
+  """Discharges a ``core_map`` over a mesh to a ``pallas_call``."""
+  del out_avals  # Unused.
+
+  def body(*args):
+    # Due to aliasing, ``args`` contains aliased inputs and outputs so we
+    # remove outputs.
+    in_refs = args[:len(in_avals)]
+    jax_core.eval_jaxpr(jaxpr, in_refs)
+
+  assert len(jaxpr.outvars) == 0
+  modified_idxs = sorted(
+      eff.input_index
+      for eff in jaxpr.effects
+      if isinstance(eff, state_types.WriteEffect)
+  )
+  any_spec = BlockSpec(memory_space=MemorySpace.ANY)
+  from jax._src.pallas import pallas_call  # Avoid circular dependency.
+  outs = pallas_call.pallas_call(
+      body,
+      out_shape=[in_avals[idx] for idx in modified_idxs],
+      in_specs=[any_spec] * len(in_avals),
+      out_specs=[any_spec] * len(modified_idxs),
+      input_output_aliases={
+          in_idx: out_idx for out_idx, in_idx in enumerate(modified_idxs)
+      },
+      grid=grid,
+      compiler_params=compiler_params,
+      backend=backend,
+  )(*args)
+  # ``outs`` lacks the unmodified inputs. Add them back in.
+  all_outs = [*args]
+  for out_idx, in_idx in enumerate(modified_idxs):
+    all_outs[in_idx] = outs[out_idx]
+  return all_outs, ()
+
+
 @state_discharge.register_discharge_rule(core_map_p)
 def _core_map_discharge_rule(in_avals, out_avals, *args_flat, jaxpr, mesh, **kwargs):
   if type(mesh) not in _core_map_mesh_rules:
