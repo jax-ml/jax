@@ -98,3 +98,16 @@ pytype_strict_library(
         "//jax/_src/pallas",
     ],
 )
+
+pytype_strict_library(
+    name = "pipeline",
+    srcs = ["pipeline.py"],
+    deps = [
+        ":core",
+        ":primitives",
+        "//jax",
+        "//jax:pallas",
+        "//jax:util",
+        "//jax/_src/pallas",
+    ],
+)

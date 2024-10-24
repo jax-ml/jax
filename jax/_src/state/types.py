@@ -194,7 +194,7 @@ class Transform(Protocol):
 class RefIndexer:
   ref_or_view: Any
 
-  def __getitem__(self, slc):
+  def __getitem__(self, slc: Any | tuple[Any, ...]):
     if not isinstance(slc, tuple):
       slc = (slc,)
     indexer = indexing.NDIndexer.from_indices_shape(slc, self.ref_or_view.shape)

@@ -1003,7 +1003,7 @@ class PipelineTest(PallasTest):
         # Wait for the previous output SMEM->GMEM copy to complete.
         plgpu.wait_smem_to_gmem(max_concurrent_steps - 1)
 
-        o_smem[...] = x_smem[...] + 1.0
+        o_smem.at[slot][...] = x_smem.at[slot][...] + 1.0
 
         plgpu.copy_smem_to_gmem(
             o_smem.at[slot], o_gmem.at[gmem_slice, pl.ds(step * 16, 16)]
@@ -1036,6 +1036,30 @@ class PipelineTest(PallasTest):
       plgpu.wait_smem_to_gmem(0)
 
     x = jnp.arange(32 * 4 * 64).reshape(32 * 4, 64).astype(jnp.float32)
+    kernel_fn = pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        grid=(4, 1),
+    )
+    np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
+
+  def test_emit(self, max_concurrent_steps=2, num_steps=4):
+    def kernel(x_gmem, o_gmem):
+      plgpu.emit_pipeline(
+          kernel_body,
+          in_specs=[pl.BlockSpec((32, 16), lambda *ij: ij)],
+          out_specs=[pl.BlockSpec((32, 16), lambda *ij: ij)],
+          grid=(1, num_steps),
+          max_concurrent_steps=max_concurrent_steps,
+          dimension_semantics=["parallel", "sequential"],
+      )(x_gmem, o_gmem)
+
+    def kernel_body(x_smem, o_smem):
+      o_smem[...] = x_smem[...] + 1.0
+
+    x = jnp.arange(32 * num_steps * 64).reshape(-1, 64).astype(jnp.float32)
     kernel_fn = pl.pallas_call(
         kernel,
         in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
