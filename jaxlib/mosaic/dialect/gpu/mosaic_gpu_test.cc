@@ -118,8 +118,8 @@ class MosaicGpuTest : public ::testing::Test {
 };
 
 TEST_F(MosaicGpuTest, InitTmaDescriptorRequiresSliceShapeHasTheCorrectRank) {
-  llvm::ArrayRef<int64_t> shape{1, 2, 3};
-  llvm::ArrayRef<int64_t> slice_shape{1, 2};
+  std::vector<int64_t> shape{1, 2, 3};
+  std::vector<int64_t> slice_shape{1, 2};
 
   mlir::LLVM::LLVMPointerType pointer_type =
       mlir::LLVM::LLVMPointerType::get(&context_);
@@ -128,7 +128,7 @@ TEST_F(MosaicGpuTest, InitTmaDescriptorRequiresSliceShapeHasTheCorrectRank) {
 
   EXPECT_THAT(
       FromCppFunc(*module_, mosaic_gpu::InitTmaDescriptor, pointer_type,
-                  memref_type, slice_shape),
+                  memref_type, mlir::ArrayRef<int64_t>(slice_shape)),
       StatusIs(
           absl::StatusCode::kFailedPrecondition,
           HasSubstr(
@@ -136,8 +136,8 @@ TEST_F(MosaicGpuTest, InitTmaDescriptorRequiresSliceShapeHasTheCorrectRank) {
 }
 
 TEST_F(MosaicGpuTest, InitTmaDescriptorGracefullyRejectsSubByteTypes) {
-  llvm::ArrayRef<int64_t> shape{1, 2, 3};
-  llvm::ArrayRef<int64_t> slice_shape{1, 2, 3};
+  std::vector<int64_t> shape{1, 2, 3};
+  std::vector<int64_t> slice_shape{1, 2, 3};
 
   mlir::LLVM::LLVMPointerType pointer_type =
       mlir::LLVM::LLVMPointerType::get(&context_);
@@ -145,14 +145,14 @@ TEST_F(MosaicGpuTest, InitTmaDescriptorGracefullyRejectsSubByteTypes) {
       mlir::MemRefType::get(shape, builder_.getI4Type());
 
   EXPECT_THAT(FromCppFunc(*module_, mosaic_gpu::InitTmaDescriptor, pointer_type,
-                          memref_type, slice_shape),
+                          memref_type, mlir::ArrayRef<int64_t>(slice_shape)),
               StatusIs(absl::StatusCode::kUnimplemented,
                        HasSubstr("Sub-byte types are not yet supported")));
 }
 
 TEST_F(MosaicGpuTest, InitTmaDescriptorProducesACallToRuntime) {
-  llvm::ArrayRef<int64_t> shape{1, 2, 3};
-  llvm::ArrayRef<int64_t> slice_shape{1, 2, 3};
+  std::vector<int64_t> shape{1, 2, 3};
+  std::vector<int64_t> slice_shape{1, 2, 3};
 
   mlir::LLVM::LLVMPointerType pointer_type =
       mlir::LLVM::LLVMPointerType::get(&context_);
@@ -161,7 +161,7 @@ TEST_F(MosaicGpuTest, InitTmaDescriptorProducesACallToRuntime) {
 
   absl::StatusOr<mlir::func::FuncOp> fn_or =
       FromCppFunc(*module_, mosaic_gpu::InitTmaDescriptor, pointer_type,
-                  memref_type, slice_shape);
+                  memref_type, mlir::ArrayRef<int64_t>(slice_shape));
   ASSERT_OK(fn_or);
 
   llvm::SmallVector<mlir::func::CallOp> call_ops =
