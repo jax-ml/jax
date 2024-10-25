@@ -1920,6 +1920,23 @@ class APITest(jtu.JaxTestCase):
     ):
       jax.vmap(f, (0, 0, None))(jnp.ones(2), jnp.ones(3), jnp.add)
 
+  def test_vmap_inconsistent_sizes_constructs_proper_error_message_kwargs(self):
+    # regression test for https://github.com/jax-ml/jax/issues/24406
+    def f(x1, x2, a3):
+      return x1 + x2 + a3
+
+    with self.assertRaisesRegex(
+      ValueError,
+      "vmap got inconsistent sizes for array axes to be mapped:\n"
+      r"  \* most axes \(2 of them\) had size 2, e.g. axis 0 of argument x1 of type float32\[2\];\n"
+      r"  \* one axis had size 1: axis 0 of kwargs\['a3'\] of type float32\[1\]",
+    ):
+      jax.vmap(f)(
+        jnp.ones(2, dtype=jnp.float32),
+        a3=jnp.ones(1, dtype=jnp.float32),
+        x2=jnp.ones(2, dtype=jnp.float32)
+      )
+
   def test_device_get_scalar(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
     x = api.device_put(x)
@@ -3072,7 +3089,7 @@ class APITest(jtu.JaxTestCase):
         "vmap got inconsistent sizes for array axes to be mapped:\n"
         r"  \* one axis had size 1: axis 0 of argument x of type int32\[1\];"
         "\n"
-        r"  \* one axis had size 2: axis 0 of argument y of type int32\[2\]"):
+        r"  \* one axis had size 2: axis 0 of kwargs\['y'\] of type int32\[2\]"):
       f(jnp.array([1], 'int32'), y=jnp.array([1, 2], 'int32'))
 
   def test_vmap_mismatched_axis_sizes_error_message_issue_705(self):
