@@ -510,10 +510,17 @@ def _call_tf_lowering(
       else:
         captured_inputs.append(inp)
 
-  captured_ops = tuple(
-      mlir.ir_constant(np.asarray(inp))
-      for inp in captured_inputs
-  )
+  # The following use case happens when we call_tf a restored saved model that
+  # includes parameters (hence functions closing over tf.Variable), and then
+  # we jax2tf.convert it with native serialization, under tf.function (or
+  # for saving to saved model). The `np.asarray(inp)` fails because it thinks
+  # it is in TF graph mode. The `tf.init_scope()` lifts out of function-building
+  # graph scopes, and allows us to read the values of the variables
+  with tf.init_scope():
+    captured_ops = tuple(
+        mlir.ir_constant(np.asarray(inp))
+        for inp in captured_inputs
+    )
 
   if call_tf_graph:
     with jax2tf_internal.inside_call_tf():
