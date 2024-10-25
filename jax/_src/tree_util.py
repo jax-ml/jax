@@ -41,7 +41,7 @@ H = TypeVar("H", bound=Hashable)
 Leaf = Any
 PyTreeDef = pytree.PyTreeDef
 
-default_registry = pytree.default_registry()
+default_registry = pytree.PyTreeRegistry()
 # Set __module__ and __name__, which allow this registry to be pickled by
 # reference.
 default_registry.__module__ = __name__
