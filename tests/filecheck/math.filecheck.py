@@ -41,7 +41,7 @@ def main(_):
   print_ir(np.float32(1), np.float32(2))(lax.add)
 
   # CHECK-LABEL: TEST: acos float32[]
-  # CHECK: hlo.atan2
+  # CHECK: chlo.acos
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(1))(lax.acos)
 
