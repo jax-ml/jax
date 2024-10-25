@@ -4658,6 +4658,34 @@ const llvm::StringMap<rule_type> &rules() {
       {vector::TransposeOp::getOperationName(), vector_transpose_rule}};
   return *rules;
 }
+
+// Determines whether we should handle bank conflict for the given stride and
+// max_sublane_offset.
+//
+// See `handleBankConflict` for how this is done.
+bool shouldHandleBankConflict(const ApplyVectorLayoutContext &ctx,
+                              int32_t stride, int max_sublane_offset) {
+  return ctx.hardware_generation >= 4 && ctx.vmem_banks > 0 &&
+         ctx.vmem_banks < stride * ctx.target_shape[0] &&
+         ctx.max_shuffle_sublane_offset > 0 &&
+         ctx.max_shuffle_sublane_offset >= max_sublane_offset;
+}
+
+// Handles load/store bank conflict by adding one extra sublane to stride and
+// adjusting sublane offsets accordingly.
+//
+// For example, when store stride is 4 and load sublane offsets are
+// [0, 1, 2, 3, 4, 5, 6, 7], the store bank conflict can be avoided by changing
+// stride to 5 and sublane offsets to [0, 1, 2, 3, 5, 6, 7, 8].
+void handleBankConflict(int32_t &stride, absl::Span<int> sublane_offsets) {
+  // Add one extra sublane to stride to avoid bank conflict.
+  for (int i = 0; i < sublane_offsets.size(); ++i) {
+    // Adjust sublane offsets to match the stride.
+    sublane_offsets[i] += i / stride;
+  }
+  ++stride;
+}
+
 }  // namespace
 
 RollVectorsOp assemble(OpBuilder &builder, VectorType vty,
@@ -5641,16 +5669,37 @@ LogicalResult retileToLargeTileWithScratch(
   // The older hardware has limited support for shuffles so even if we have bank
   // conflicts, we just accept them and will have the lowering unroll the
   // loads/stores.
+  int64_t num_offsets = sublane_offsets.num_elements();
+  // The max sublane offset before handling bank conflicts is always
+  // (num_offsets - 1). To avoid bank conflicts, we need to add one extra
+  // sublane to stride so (num_offsets - 1) / stride is the extra offset needed
+  // to pad sublanes.
+  //
+  // For example, if store stride = 4, sublane_count = 8, and
+  // load offsets = [0, 1, 2, 3, 4, 5, 6, 7], then the sublane offsets after
+  // handling bank conflicts will be [0, 1, 2, 3, 5, 6, 7, 8] and the max
+  // sublane offset will be 7 + (8 - 1) / 4 = 8.
+  //
+  // Before
+  //        <-------- sublanes --------->
+  //        0    1  ...                 32
+  // store: x---x---x---x---x---x---x---x
+  // load:  xxxxxxxxx--------------------
+  //
+  // After
+  //        <-------- sublanes --------->
+  //        0    5  ...                        40
+  // store: x----x----x----x----x----x----x----x
+  // load:  xxxx-xxxx---------------------------
+  //
+  // where "x" indicates a sublane that needs to be accessed and "-"" indicates
+  // a sublane that does not need to be accessed.
+  int max_sublane_offset = (num_offsets - 1) + (num_offsets - 1) / stride;
   bool should_handle_bank_confict =
-      ctx.hardware_generation >= 4 && ctx.vmem_banks > 0 &&
-      ctx.vmem_banks < stride * ctx.target_shape[0];
-  // Add one extra sublane to stride to avoid bank conflict.
+      shouldHandleBankConflict(ctx, stride, max_sublane_offset);
   if (should_handle_bank_confict) {
-    // Adjust sublane offsets to match the stride.
-    for (int i = 0; i < sublane_offsets.num_elements(); i += 1) {
-      *(sublane_offsets.begin() + i) += i / stride;
-    }
-    stride += 1;
+    handleBankConflict(stride, absl::MakeSpan(sublane_offsets.data(),
+                                              sublane_offsets.num_elements()));
   }
   sublane_offsets.TransposeDimensions({0, 2, 1});
 
@@ -5773,9 +5822,34 @@ LogicalResult retileToSmallTileWithScratch(
   // The older hardware has limited support for shuffles so even if we have
   // bank conflicts, we just accept them and will have the lowering unroll the
   // loads/stores.
+  int64_t num_offsets = sublane_offsets.num_elements();
+  // The max sublane offset before handling bank conflicts is always
+  // (num_offsets - 1). To avoid bank conflicts, we need to add one extra
+  // sublane to stride so (num_offsets - 1) / stride is the extra offset needed
+  // to pad sublanes.
+  //
+  // For example, if store stride = 4, sublane_count = 8, and
+  // load offsets = [0, 1, 2, 3, 4, 5, 6, 7], then the sublane offsets after
+  // handling bank conflicts will be [0, 1, 2, 3, 5, 6, 7, 8] and the max
+  // sublane offset will be 7 + (8 - 1) / 4 = 8.
+  //
+  // Before
+  //        <-------- sublanes --------->
+  //        0   4   ...
+  // store: x---x---x---x---x---x---x---x
+  // load:  xxxxxxxxx-------------------
+  //
+  // After
+  //        <-------- sublanes --------->
+  //        0    5  ...
+  // store: x----x----x----x----x----x----x----x
+  // load:  xxxx-xxxx---------------------------
+  //
+  // where "x" indicates a sublane that needs to be accessed and "-"" indicates
+  // a sublane that does not need to be accessed.
+  int max_sublane_offset = (num_offsets - 1) + (num_offsets - 1) / stride;
   bool should_handle_bank_confict =
-      ctx.hardware_generation >= 4 && ctx.vmem_banks > 0 &&
-      ctx.vmem_banks < stride * ctx.target_shape[0];
+      shouldHandleBankConflict(ctx, stride, max_sublane_offset);
   bool use_shuffled_load = false;
   if (ctx.hardware_generation <= 4) {
     if (src_tile[0] == 8) {
@@ -5794,11 +5868,8 @@ LogicalResult retileToSmallTileWithScratch(
 
   // Add one extra sublane to stride to avoid bank conflict.
   if (should_handle_bank_confict) {
-    // Adjust sublane offsets to match the stride.
-    for (int i = 0; i < sublane_offsets.num_elements(); i += 1) {
-      *(sublane_offsets.begin() + i) += i / stride;
-    }
-    stride += 1;
+    handleBankConflict(stride, absl::MakeSpan(sublane_offsets.data(),
+                                              sublane_offsets.num_elements()));
   }
   sublane_offsets.TransposeDimensions({0, 2, 1});
   auto mlirIndexConst = [&](int d) {
@@ -6455,6 +6526,7 @@ struct ApplyVectorLayoutPass
     mxu_noncontracting_size = ctx.mxu_shape[1];
     max_sublanes_in_scratch = ctx.max_sublanes_in_scratch;
     vmem_banks = ctx.vmem_banks;
+    max_shuffle_sublane_offset = ctx.max_shuffle_sublane_offset;
   }
   void runOnOperation() override {
     // Fail if hardware_generation has not been set from the default value.
@@ -6467,7 +6539,9 @@ struct ApplyVectorLayoutPass
         .target_shape = {sublane_count, lane_count},
         .mxu_shape = {mxu_contracting_size, mxu_noncontracting_size},
         .max_sublanes_in_scratch = max_sublanes_in_scratch,
-        .vmem_banks = vmem_banks};
+        .vmem_banks = vmem_banks,
+        .max_shuffle_sublane_offset = max_shuffle_sublane_offset,
+    };
     if (failed(applyLayoutFunc(ctx, getOperation()))) {
       signalPassFailure();
       return;

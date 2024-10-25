@@ -63,6 +63,7 @@ struct ApplyVectorLayoutContext {
   std::array<int64_t, 2> mxu_shape = {128, 128};
   int64_t max_sublanes_in_scratch = 0;
   int64_t vmem_banks = -1;  // -1 means "unspecified".
+  int32_t max_shuffle_sublane_offset = -1;  // -1 means "unspecified".
 };
 
 std::pair<bool, bool> mightCommunicateBetweenChips(Operation* op);
