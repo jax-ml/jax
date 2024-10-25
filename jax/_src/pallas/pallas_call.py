@@ -945,7 +945,15 @@ def _pallas_call_batching_rule(
           )
           for invar in eqn.invars
       ]
-      invar_raggedness, outvar_raggedness = rule(invar_raggedness, eqn.outvars)
+      try:
+        invar_raggedness, outvar_raggedness = rule(
+            eqn.params, invar_raggedness, eqn.outvars  # type: ignore[arg-type]
+        )
+      except Exception as e:
+        raise RuntimeError(
+            f"Failed to run rule for {prim}. invars: {eqn.invars}, outvars:"
+            f" {eqn.outvars}. Underlying reason: {e}"
+        ) from e
 
       for invar, rav in zip(eqn.invars, invar_raggedness):  # type: ignore[assignment]
         if isinstance(invar, jax_core.Var):

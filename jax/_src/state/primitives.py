@@ -127,7 +127,7 @@ swap_p = core.Primitive("swap")
 swap_p.def_impl(partial(dispatch.apply_primitive, swap_p))
 
 
-def swap_ragged_prop_rule(invar_raggedness, outvars):
+def swap_ragged_prop_rule(eqn_params, invar_raggedness, outvars):
   assert len(invar_raggedness) == 2
   invar_raggedness_lhs = invar_raggedness[0]
   invar_raggedness_rhs = invar_raggedness[1]
