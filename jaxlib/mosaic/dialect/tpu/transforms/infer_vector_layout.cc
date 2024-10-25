@@ -1620,7 +1620,7 @@ class VectorLayoutInferer {
         // TODO(jevinjiang): We can fold the sublane offset into the 2nd minor
         // index. But we need to handle negative index in lower-to-llo. For
         // now, we just force the sublane offset to be 0.
-        if (offsets[1].value_or(0) < 0 || offsets[1].value_or(0) >= tiling[1]) {
+        if (offsets[1].value_or(0) >= tiling[1]) {
           offsets[1] = 0;
         }
         store_layout = VectorLayout(bitwidth, {0, offsets[1]},
