@@ -1067,8 +1067,9 @@ def threefry_2x32(keypair, count):
 
   odd_size = count.size % 2
   if not isinstance(odd_size, int):
-    msg = ("jax.random functions have limited support for shape polymorphism. "
-           "In particular, the product of the known dimensions must be even.")
+    msg = ("jax.random functions have limited support for shape polymorphism "
+           "when using threefry. "
+           f"In particular, the array size ({count.size}) must be even.")
     raise core.InconclusiveDimensionOperation(msg)
 
   if odd_size:
