@@ -38,6 +38,7 @@ from jax._src.api import jit, vmap
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import jaxpr_passes
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy.lax_numpy import _convert_and_clip_integer
 from jax._src.numpy.util import _arraylike, check_arraylike, promote_dtypes_inexact
@@ -1261,6 +1262,9 @@ mlir.register_lowering(random_gamma_p, mlir.lower_fun(
     partial(_gamma_impl, use_vmap=True),
     multiple_results=False), platform='cpu')
 batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
+jaxpr_passes.register_edtype_rule(random_gamma_p, jaxpr_passes.resolve_edtypes_fun(
+    partial(_gamma_impl, use_vmap=True),
+    multiple_results=False))
 
 def gamma(key: KeyArrayLike,
           a: RealArray,

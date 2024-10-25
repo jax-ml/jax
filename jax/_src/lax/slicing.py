@@ -35,6 +35,7 @@ from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import jaxpr_passes
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
 from jax._src.lax.utils import (
@@ -1336,7 +1337,21 @@ def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
   return [mlir.slice_op(ctx, x, aval_out,
                         start_indices=start_indices, limit_indices=limit_indices, strides=strides)]
 
+def _slice_edtype_rule(ctx, x, *, start_indices, limit_indices, strides):
+  aval_out, = ctx.avals_out
+  elt_shape = core.physical_element_aval(aval_out.dtype).shape
+  trailing_zeros = [0] * len(elt_shape)
+  trailing_ones  = [1] * len(elt_shape)
+  # TODO(frostig,justinfu): why this line here, not in traceable?
+  strides = strides or [1] * len(start_indices)
+  start_indices = (*start_indices, *trailing_zeros)
+  limit_indices = (*limit_indices, *elt_shape)
+  strides = (*strides, *trailing_ones)
+  return slice_p.bind(x, start_indices=start_indices,
+                      limit_indices=limit_indices, strides=strides)
+
 mlir.register_lowering(slice_p, _slice_lower)
+jaxpr_passes.register_edtype_rule(slice_p, _slice_edtype_rule)
 
 
 def _dynamic_slice_shape_rule(
@@ -1464,6 +1479,17 @@ def _dynamic_slice_padding_rule(in_avals, out_avals, x, *starts_and_dyn,
   start_idx = [d.val if type(d) is core.DArray else d for d in start_indices]
   return [dynamic_slice(x, start_idx, slice_sizes_)]
 
+def _dynamic_slice_edtype_rule(ctx, x, *starts_and_dyn_sizes, slice_sizes):
+  aval_out, = ctx.avals_out
+  [x_aval], slice_avals, _ = util.split_list(ctx.avals_in, [1, x.ndim])
+  elt_shape = core.physical_element_aval(aval_out.dtype).shape
+  start_indices, dyn = util.split_list(starts_and_dyn_sizes, [x_aval.ndim])
+  zero = lax._zero(slice_avals[0]) if slice_avals else 0
+  trailing_zeros = [zero] * len(elt_shape)
+  start_indices = (*start_indices, *trailing_zeros, *dyn)
+  slice_sizes = (*slice_sizes, *elt_shape)
+  return dynamic_slice(x, start_indices, slice_sizes)
+
 dynamic_slice_p = standard_primitive(
     _dynamic_slice_shape_rule, _dynamic_slice_dtype_rule, 'dynamic_slice',
     weak_type_rule=_argnum_weak_type(0))
@@ -1473,6 +1499,7 @@ batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
 pe.custom_staging_rules[dynamic_slice_p] = _dynamic_slice_staging_rule
 core.custom_typechecks[dynamic_slice_p] = _dynamic_slice_typecheck_rule
 pe.padding_rules[dynamic_slice_p] = _dynamic_slice_padding_rule
+jaxpr_passes.register_edtype_rule(dynamic_slice_p, _dynamic_slice_edtype_rule)
 
 def _dynamic_slice_lower(ctx, x, *starts_and_dyn_sizes, slice_sizes):
   x_aval, *_ = ctx.avals_in
@@ -1574,6 +1601,15 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
     out_axes=0)(operand, index, update), 0
 
 
+def _dynamic_update_slice_edtype_rule(ctx, x, update, *start_indices):
+  _, _, start_avals = util.split_list(ctx.avals_in, [1, 1])
+  aval_out, = ctx.avals_out
+  elt_shape = core.physical_element_aval(aval_out.dtype).shape
+  zero = lax._zero(start_avals[0]) if start_avals else 0
+  zeros = [zero] * len(elt_shape)
+  start_indices = (*start_indices, *zeros)
+  return dynamic_update_slice(x, update, start_indices=start_indices)
+
 dynamic_update_slice_p = standard_primitive(
     _dynamic_update_slice_shape_rule, _dynamic_update_slice_dtype_rule,
     'dynamic_update_slice')
@@ -1582,6 +1618,7 @@ ad.primitive_transposes[dynamic_update_slice_p] = \
     _dynamic_update_slice_transpose_rule
 batching.primitive_batchers[dynamic_update_slice_p] = \
     _dynamic_update_slice_batching_rule
+jaxpr_passes.register_edtype_rule(dynamic_update_slice_p, _dynamic_update_slice_edtype_rule)
 
 def _dynamic_update_slice_lower(ctx, x, update, *start_indices):
   aval_out, = ctx.avals_out
@@ -2006,37 +2043,10 @@ batching.primitive_batchers[gather_p] = _gather_batching_rule
 pe.padding_rules[gather_p] = _gather_pad_rule
 
 
-def _gather_lower_opaque(ctx, operand, indices, *,
-                         dimension_numbers, slice_sizes, unique_indices,
-                         indices_are_sorted, mode, fill_value) -> ir.Value:
-  aval_x, aval_indices = ctx.avals_in
-  aval_y, = ctx.avals_out
-  elt_shape = core.physical_element_aval(aval_x.dtype).shape
-  trailing_offset_dims = [aval_y.ndim + i for i in range(len(elt_shape))]
-  dimension_numbers = dimension_numbers._replace(
-      offset_dims=(*dimension_numbers.offset_dims, *trailing_offset_dims))
-  slice_sizes = (*slice_sizes, *elt_shape)
-  gather_lower = partial(
-      _gather_lower, dimension_numbers=dimension_numbers,
-      slice_sizes=slice_sizes, unique_indices=unique_indices,
-      indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)
-  res, = mlir.delegate_lowering(
-      ctx, gather_lower, operand, indices,
-      avals_in=[core.physical_aval(aval_x), aval_indices],
-      avals_out=[core.physical_aval(aval_y)])
-  return res
-
 def _gather_lower(ctx, operand, indices, *,
                   dimension_numbers, slice_sizes, unique_indices,
                   indices_are_sorted, mode, fill_value):
   aval_out, = ctx.avals_out
-  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    return [_gather_lower_opaque(
-        ctx, operand, indices, dimension_numbers=dimension_numbers,
-        slice_sizes=slice_sizes, unique_indices=unique_indices,
-        indices_are_sorted=indices_are_sorted, mode=mode,
-        fill_value=fill_value)]
-
   if mode == GatherScatterMode.FILL_OR_DROP:
     gather_fill_fn = mlir.lower_fun(_gather_fill, multiple_results=False)
     return gather_fill_fn(
@@ -2081,6 +2091,26 @@ def _gather_lower(ctx, operand, indices, *,
         indices_are_sorted=ir.BoolAttr.get(indices_are_sorted))]
 
 mlir.register_lowering(gather_p, _gather_lower)
+
+def _gather_edtype_rule(ctx, operand, indices, *,
+                     dimension_numbers, slice_sizes, unique_indices,
+                     indices_are_sorted, mode, fill_value ):
+  aval_x, aval_indices = ctx.avals_in
+  aval_y, = ctx.avals_out
+  elt_shape = core.physical_element_aval(aval_x.dtype).shape
+  trailing_offset_dims = [aval_y.ndim + i for i in range(len(elt_shape))]
+  dimension_numbers = dimension_numbers._replace(
+      offset_dims=(*dimension_numbers.offset_dims, *trailing_offset_dims))
+  slice_sizes = (*slice_sizes, *elt_shape)
+  return gather(operand,
+                indices,
+                dimension_numbers=dimension_numbers,
+                slice_sizes=slice_sizes,
+                unique_indices=unique_indices,
+                indices_are_sorted=indices_are_sorted,
+                mode=mode,
+                fill_value=fill_value)
+jaxpr_passes.register_edtype_rule(gather_p, _gather_edtype_rule)
 
 def _scatter_dtype_rule(operand, indices, updates, **kwargs):
   if not dtypes.issubdtype(indices.dtype, np.integer):
@@ -2802,28 +2832,6 @@ batching.primitive_batchers[scatter_p] = (
   partial(_scatter_batching_rule, scatter_p))
 
 
-def _scatter_lower_opaque(ctx, operand, indices, updates, *,
-                          update_jaxpr, update_consts, dimension_numbers,
-                          unique_indices, indices_are_sorted, mode):
-  aval_x, aval_indices, aval_updates = ctx.avals_in
-  aval_y, = ctx.avals_out
-  elt_shape = core.physical_element_aval(aval_x.dtype).shape
-  trailing_window_dims = [aval_updates.ndim + i for i in range(len(elt_shape))]
-  dimension_numbers = dimension_numbers._replace(
-      update_window_dims=(*dimension_numbers.update_window_dims,
-                          *trailing_window_dims))
-  scatter_lower = partial(
-      _scatter_lower, update_jaxpr=update_jaxpr, update_consts=update_consts,
-      dimension_numbers=dimension_numbers, unique_indices=unique_indices,
-      indices_are_sorted=indices_are_sorted, mode=mode)
-  res, = mlir.delegate_lowering(
-      ctx, scatter_lower, operand, indices, updates,
-      avals_in=[core.physical_aval(aval_x), aval_indices,
-                core.physical_aval(aval_updates)],
-      avals_out=[core.physical_aval(aval_y)])
-  return res
-
-
 def _scatter_lower(ctx, operand, indices, updates, *,
                    update_jaxpr, update_consts, dimension_numbers,
                    indices_are_sorted, unique_indices, mode):
@@ -2834,13 +2842,6 @@ def _scatter_lower(ctx, operand, indices, updates, *,
         _scatter_reduction_computation, core.ShapedArray((), operand_dtype))
 
   aval_out, = ctx.avals_out
-  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    return [_scatter_lower_opaque(
-        ctx, operand, indices, updates,
-        update_jaxpr=update_jaxpr, update_consts=update_consts,
-        dimension_numbers=dimension_numbers, unique_indices=unique_indices,
-        indices_are_sorted=indices_are_sorted, mode=mode)]
-
   if mode == GatherScatterMode.CLIP:
     clip_fn = mlir.lower_fun(_clamp_scatter_indices, multiple_results=False)
     (indices,) = clip_fn(ctx.replace(avals_out=None), operand, indices,
@@ -2879,12 +2880,33 @@ def _scatter_lower(ctx, operand, indices, updates, *,
     hlo.return_(mlir.flatten_ir_values(out_nodes))
   return op.results
 
+def _scatter_edtype_rule(ctx, operand, indices, updates, *,
+                   update_jaxpr, update_consts, dimension_numbers,
+                   indices_are_sorted, unique_indices, mode):
+  aval_x, aval_indices, aval_updates = ctx.avals_in
+  aval_y, = ctx.avals_out
+  elt_shape = core.physical_element_aval(aval_x.dtype).shape
+  trailing_window_dims = [aval_updates.ndim + i for i in range(len(elt_shape))]
+  dimension_numbers = dimension_numbers._replace(
+      update_window_dims=(*dimension_numbers.update_window_dims,
+                          *trailing_window_dims))
+  return scatter(operand, indices, updates,
+                 dimension_numbers=dimension_numbers,
+                 indices_are_sorted=indices_are_sorted,
+                 unique_indices=unique_indices,
+                 mode=mode)
+
 mlir.register_lowering(scatter_p, _scatter_lower)
 mlir.register_lowering(scatter_add_p, _scatter_lower)
 mlir.register_lowering(scatter_sub_p, _scatter_lower)
 mlir.register_lowering(scatter_mul_p, _scatter_lower)
 mlir.register_lowering(scatter_min_p, _scatter_lower)
 mlir.register_lowering(scatter_max_p, _scatter_lower)
+jaxpr_passes.register_edtype_rule(scatter_p, _scatter_edtype_rule)
+jaxpr_passes.register_edtype_rule(scatter_add_p, _scatter_edtype_rule)
+jaxpr_passes.register_edtype_rule(scatter_mul_p, _scatter_edtype_rule)
+jaxpr_passes.register_edtype_rule(scatter_min_p, _scatter_edtype_rule)
+jaxpr_passes.register_edtype_rule(scatter_max_p, _scatter_edtype_rule)
 
 
 def _real_dtype(dtype): return np.finfo(dtype).dtype

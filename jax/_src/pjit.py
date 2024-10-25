@@ -57,6 +57,7 @@ from jax._src.interpreters import xla
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import jaxpr_passes
 from jax._src.interpreters import pxla
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -2408,6 +2409,35 @@ def _pjit_state_discharge_rule(
   return new_invals, out_vals
 state_discharge.register_discharge_rule(pjit_p)(_pjit_state_discharge_rule)
 
+def _sharding_to_physical(s, a):
+  if jaxpr_passes.is_extended(a) and not isinstance(s, UnspecifiedValue):
+    return sharding_impls.physical_sharding(a, s)
+  return s
+
+def _pjit_edtype_rule(ctx: jaxpr_passes.ResolveEdtypesContext,
+                          *args,
+                          name, jaxpr: core.ClosedJaxpr, in_shardings,
+                          out_shardings, in_layouts, out_layouts, resource_env,
+                          donated_invars, keep_unused, inline
+                           ):
+  if any(layout is not None for layout in in_layouts) or any(
+    layout is not None for layout in out_layouts):
+    raise NotImplementedError("Layouts for extended dtypes not implemented.")
+  physical_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(jaxpr)
+  in_shardings = map(_sharding_to_physical, in_shardings, ctx.avals_in)
+  out_shardings = map(_sharding_to_physical, out_shardings, ctx.avals_out)
+  return pjit_p.bind(*args, name=name,
+                     jaxpr=physical_jaxpr,
+                     in_shardings=in_shardings,
+                     out_shardings=out_shardings,
+                     in_layouts=in_layouts,
+                     out_layouts=out_layouts,
+                     resource_env=resource_env,
+                     donated_invars=donated_invars,
+                     keep_unused=keep_unused,
+                     inline=inline)
+jaxpr_passes.register_edtype_rule(pjit_p, _pjit_edtype_rule, always_invoke=True)
+
 
 # -------------------- with_sharding_constraint --------------------
 
@@ -2575,6 +2605,17 @@ def _sharding_constraint_batcher(
 batching.spmd_axis_primitive_batchers[sharding_constraint_p] = _sharding_constraint_batcher
 batching.axis_primitive_batchers[sharding_constraint_p] = partial(
     _sharding_constraint_batcher, None)
+
+def _sharding_constraint_edtype_rule(ctx: jaxpr_passes.ResolveEdtypesContext,
+                                          x, *,
+                                          sharding, layout,
+                                          resource_env, unconstrained_dims):
+  aval_in, = ctx.avals_in
+  phys_sharding = sharding_impls.physical_sharding(aval_in, sharding)
+  return sharding_constraint_p.bind(x, sharding=phys_sharding, layout=layout,
+                                    resource_env=resource_env,
+                                    unconstrained_dims=unconstrained_dims)
+jaxpr_passes.register_edtype_rule(sharding_constraint_p, _sharding_constraint_edtype_rule)
 
 # -------------------- helpers --------------------
 
