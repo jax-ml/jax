@@ -1700,8 +1700,37 @@ tf_impl[lax.sin_p] = tf.math.sin
 tf_impl[lax.sinh_p] = tf.math.sinh
 tf_impl[lax.cos_p] = tf.math.cos
 tf_impl[lax.cosh_p] = tf.math.cosh
-tf_impl_with_avals[lax.acos_p] = _convert_jax_impl(
-    lax_internal.acos_impl, multiple_results=False)
+
+
+def _acos_impl(x):
+  if x.dtype.is_complex:
+    result = tf.multiply(tf.constant(1j, dtype=x.dtype), tf.math.acosh(x))
+    # By convention, numpy chooses the branch with positive real part.
+    rpart = tf.math.real(result)
+    return tf.where(
+        tf.math.greater(rpart, tf.constant(0, dtype=rpart.dtype)),
+        result,
+        tf.math.negative(result),
+    )
+  else:
+    return tf.where(
+        tf.math.not_equal(x, tf.constant(-1.0, dtype=x.dtype)),
+        tf.multiply(
+            tf.constant(2, dtype=x.dtype),
+            tf.math.atan2(
+                tf.math.sqrt(
+                    tf.math.subtract(
+                        tf.constant(1, dtype=x.dtype), tf.math.square(x)
+                    )
+                ),
+                tf.math.add(tf.constant(1, dtype=x.dtype), x),
+            ),
+        ),
+        tf.broadcast_to(tf.constant(np.pi, dtype=x.dtype), tf.shape(x)),
+    )
+
+
+tf_impl_with_avals[lax.acos_p] = _acos_impl
 tf_impl_with_avals[lax.asin_p] = _convert_jax_impl(
     lax_internal.asin_impl, multiple_results=False)
 tf_impl_with_avals[lax.atan_p] = _convert_jax_impl(
