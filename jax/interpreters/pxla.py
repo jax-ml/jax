@@ -40,7 +40,6 @@ from jax._src.sharding_impls import (
   ArrayMapping as ArrayMapping,
   UNSPECIFIED as _UNSPECIFIED,  # noqa: F401
   array_mapping_to_axis_resources as array_mapping_to_axis_resources,
-  is_unspecified as _is_unspecified,  # noqa: F401
 )
 
 from jax._src.sharding_specs import (

@@ -957,20 +957,10 @@ class AUTO:
     return SdyArraySharding(self.mesh.shape_tuple, dim_shardings)
 
 
-def is_auto(x):
-  return isinstance(x, AUTO)
-
-
 class UnspecifiedValue:
   def __repr__(self):
     return "UnspecifiedValue"
 UNSPECIFIED = UnspecifiedValue()
-
-def is_unspecified(x):
-  return isinstance(x, UnspecifiedValue)
-
-def is_unspecified_or_auto(x):
-  return is_auto(x) or is_unspecified(x)
 
 
 MeshAxisName = Any
@@ -1014,8 +1004,6 @@ def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
 def get_array_mapping(
     axis_resources: ParsedPartitionSpec | AUTO | UnspecifiedValue
 ) -> ArrayMappingOrAutoOrUnspecified:
-  # TODO(yashkatariya): Use `TypeGuard` on `is_auto` when it is supported.
-  # Don't use `is_auto` here to satisfy pytype and mypy.
   if isinstance(axis_resources, (AUTO, UnspecifiedValue)):
     return axis_resources
   return OrderedDict((axis, i)
@@ -1113,7 +1101,7 @@ def prepare_axis_resources(axis_resources, arg_name,
 
   new_entries = []
   for entry in entries:
-    if is_unspecified_or_auto(entry) or entry is None:
+    if isinstance(entry, (UnspecifiedValue, AUTO)) or entry is None:
       new_entries.append(entry)
     elif isinstance(entry, sharding.Sharding):
       if isinstance(entry, PmapSharding):
@@ -1131,8 +1119,7 @@ def prepare_axis_resources(axis_resources, arg_name,
 def _check_unique_resources(axis_resources, arg_name):
   for arg_axis_resources in axis_resources:
     if not arg_axis_resources: continue
-    if (is_unspecified_or_auto(arg_axis_resources) or
-        isinstance(arg_axis_resources, sharding.Sharding)):
+    if isinstance(arg_axis_resources, (UnspecifiedValue, AUTO, sharding.Sharding)):
       continue
     constrained_dims = [d for d in arg_axis_resources if d is not None]
     resource_counts = collections.Counter(
