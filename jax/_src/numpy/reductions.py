@@ -1838,7 +1838,7 @@ class CumulativeReduction(Protocol):
 
 def _cumulative_reduction(
     name: str, reduction: Callable[..., Array],
-    a: ArrayLike, axis: int | None, dtype: DTypeLike | None, out: None,
+    a: ArrayLike, axis: int | None, dtype: DTypeLike | None, out: None = None,
     fill_nan: bool = False, fill_value: ArrayLike = 0,
     promote_integers: bool = False) -> Array:
   """Helper function for implementing cumulative reductions."""
@@ -2064,7 +2064,7 @@ def cumulative_sum(
   Args:
     x: N-dimensional array
     axis: integer axis along which to accumulate. If ``x`` is one-dimensional,
-      this argument is optional.
+      this argument is optional and defaults to zero.
     dtype: optional dtype of the output.
     include_initial: if True, then include the initial value in the cumulative
       sum. Default is False.
@@ -2110,6 +2110,67 @@ def cumulative_sum(
     zeros_shape[axis] = 1
     out = lax_internal.concatenate(
       [lax_internal.full(zeros_shape, 0, dtype=out.dtype), out],
+      dimension=axis)
+  return out
+
+
+def cumulative_prod(
+    x: ArrayLike, /, *, axis: int | None = None,
+    dtype: DTypeLike | None = None,
+    include_initial: bool = False) -> Array:
+  """Cumulative product along the axis of an array.
+
+  JAX implementation of :func:`numpy.cumulative_prod`.
+
+  Args:
+    x: N-dimensional array
+    axis: integer axis along which to accumulate. If ``x`` is one-dimensional,
+      this argument is optional and defaults to zero.
+    dtype: optional dtype of the output.
+    include_initial: if True, then include the initial value in the cumulative
+      product. Default is False.
+
+  Returns:
+    An array containing the accumulated values.
+
+  See Also:
+    - :func:`jax.numpy.cumprod`: alternative API for cumulative product.
+    - :func:`jax.numpy.nancumprod`: cumulative product while ignoring NaN values.
+    - :func:`jax.numpy.multiply.accumulate`: cumulative product via the ufunc API.
+
+  Examples:
+    >>> x = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6]])
+    >>> jnp.cumulative_prod(x, axis=1)
+    Array([[  1,   2,   6],
+           [  4,  20, 120]], dtype=int32)
+    >>> jnp.cumulative_prod(x, axis=1, include_initial=True)
+    Array([[  1,   1,   2,   6],
+           [  1,   4,  20, 120]], dtype=int32)
+  """
+  check_arraylike("cumulative_prod", x)
+  x = lax_internal.asarray(x)
+  if x.ndim == 0:
+    raise ValueError(
+      "The input must be non-scalar to take a cumulative product, however a "
+      "scalar value or scalar array was given."
+    )
+  if axis is None:
+    axis = 0
+    if x.ndim > 1:
+      raise ValueError(
+        f"The input array has rank {x.ndim}, however axis was not set to an "
+        "explicit value. The axis argument is only optional for one-dimensional "
+        "arrays.")
+
+  axis = _canonicalize_axis(axis, x.ndim)
+  dtypes.check_user_dtype_supported(dtype)
+  out = _cumulative_reduction("cumulative_prod", lax.cumprod, x, axis, dtype)
+  if include_initial:
+    zeros_shape = list(x.shape)
+    zeros_shape[axis] = 1
+    out = lax_internal.concatenate(
+      [lax_internal.full(zeros_shape, 1, dtype=out.dtype), out],
       dimension=axis)
   return out
 
