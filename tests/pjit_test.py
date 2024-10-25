@@ -4598,7 +4598,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   def test_basic_mul(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
-    np_inp = np.arange(16).reshape(8, 2)
+    np_inp = np.arange(16.).reshape(8, 2)
     s = NamedSharding(mesh, P('x', 'y'))
     arr = jax.device_put(np_inp, s)
 
@@ -4620,6 +4620,17 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertIn('sdy.sharding_constraint', lowered_text)
     else:
       self.assertEqual(lowered_text.count('@Sharding'), 2)
+
+    @jax.jit
+    def g(x):
+      x = f(x)
+      return jnp.sum(x)
+
+    out = jax.grad(g)(arr)
+    self.assertEqual(out.sharding, arr.sharding)
+
+    out = jax.jit(jax.grad(g))(arr)
+    self.assertEqual(out.sharding, arr.sharding)
 
   def test_fully_replicated_array_mul(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
@@ -4670,9 +4681,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       ('half_tp', P(None, 'y'), P(None, 'y'), P(None, 'y'), 'all-gather'),
       ('other_half_tp', P(None, 'y'), P('y', None), P(None, None), 'all-reduce')
   )
-  def test_dot_general_basic(self, spec1, spec2, out_spec, collective_name):
+  def test_dot_general(self, spec1, spec2, out_spec, collective_name):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
-    np_inp1 = np.arange(16).reshape(8, 2)
+    np_inp1 = np.arange(16.).reshape(8, 2)
     arr1 = jax.device_put(np_inp1, NamedSharding(mesh, spec1))
     arr2 = jax.device_put(np_inp1.T, NamedSharding(mesh, spec2))
 
@@ -4692,6 +4703,55 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     compiled_text = lowered.compile().as_text()
     if collective_name is not None and compiled_text is not None:
       self.assertIn(collective_name, compiled_text)
+
+    @jax.jit
+    def g(x, y):
+      out = f(x, y)
+      return jnp.sum(out)
+
+    out = jax.grad(g, argnums=(0, 1))(arr1, arr2)
+    self.assertEqual(out[0].sharding, arr1.sharding)
+    self.assertEqual(out[1].sharding, arr2.sharding)
+
+    out = jax.jit(jax.grad(g, argnums=(0, 1)))(arr1, arr2)
+    self.assertEqual(out[0].sharding, arr1.sharding)
+    self.assertEqual(out[1].sharding, arr2.sharding)
+
+  def test_dot_general_out_type(self):
+    mesh = jtu.create_mesh((4,), ('x',))
+    np_inp1 = np.arange(16.).reshape(8, 2)
+    arr1 = jax.device_put(np_inp1, NamedSharding(mesh, P('x', None)))
+    arr2 = jax.device_put(np_inp1.T, NamedSharding(mesh, P(None, 'x')))
+
+    @jax.jit
+    def f(x, y):
+      out = jnp.einsum('xy,yz->xz', x, y,
+                       out_type=NamedSharding(x.sharding.mesh, P('x', None)))
+      self.assertEqual(out.sharding.spec, P('x', None))
+      return jnp.sum(out)
+
+    out = f(arr1, arr2)
+    self.assertArraysEqual(out, np.sum(np_inp1 @ np_inp1.T))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
+
+    out = jax.grad(f, argnums=(0, 1))(arr1, arr2)
+    self.assertEqual(out[0].sharding, arr1.sharding)
+    self.assertEqual(out[1].sharding, arr2.sharding)
+
+    jitted_grad = jax.jit(jax.grad(f, argnums=(0, 1)))
+    out = jitted_grad(arr1, arr2)
+    self.assertEqual(out[0].sharding, arr1.sharding)
+    self.assertEqual(out[1].sharding, arr2.sharding)
+
+    jaxpr = jitted_grad.trace(arr1, arr2).jaxpr
+    bwd_jaxpr = jaxpr.eqns[1]
+    expected_spec = [('broadcast_in_dim', P('x', None)),
+                     ('dot_general', P('x', None)),
+                     ('transpose', P(None, 'x')),
+                     ('dot_general', P('x', None))]
+    for eqn, spec in zip(bwd_jaxpr.params['jaxpr'].eqns, expected_spec):
+      self.assertEqual(eqn.primitive.name, spec[0])
+      self.assertEqual(eqn.outvars[0].aval.sharding.spec, spec[1])
 
   @parameterized.named_parameters(
       ('fail1', P('x', 'y'), P('y', 'x'),
@@ -4791,7 +4851,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   def test_reduce_max(self, axis, in_spec, out_spec, reduce=True):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
-    np_inp = np.arange(16).reshape(8, 2)
+    np_inp = np.arange(16.).reshape(8, 2)
     s = NamedSharding(mesh, in_spec)
     arr = jax.device_put(np_inp, s)
 
@@ -4812,6 +4872,17 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     compiled_text = lowered.compile().as_text()
     if reduce and compiled_text is not None:
       self.assertIn('all-reduce', compiled_text)
+
+    @jax.jit
+    def g(x):
+      out = f(x)
+      return jnp.mean(out)
+
+    out = jax.grad(g)(arr)
+    self.assertEqual(out.sharding, arr.sharding)
+
+    out = jax.jit(jax.grad(g))(arr)
+    self.assertEqual(out.sharding, arr.sharding)
 
   @parameterized.named_parameters(
       ('0', 0, P(None, 'x', 'y')),
@@ -4946,7 +5017,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   def test_einsum_with_out_type(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
-    np_inp = np.arange(16).reshape(8, 2)
+    np_inp = np.arange(16.).reshape(8, 2)
     arr1 = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
     arr2 = jax.device_put(np_inp.T, NamedSharding(mesh, P('y', 'x')))
 
@@ -4977,9 +5048,22 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(out2, np_inp @ np_inp.T)
     self.assertEqual(out2.sharding, NamedSharding(mesh, P('x', None)))
 
+    @jax.jit
+    def h2(x, y):
+      out = g(x, y)
+      return jnp.sum(out)
+
+    out = jax.grad(h2, argnums=(0, 1))(arr3, arr4)
+    self.assertEqual(out[0].sharding, arr3.sharding)
+    self.assertEqual(out[1].sharding, arr4.sharding)
+
+    out = jax.jit(jax.grad(h2, argnums=(0, 1)))(arr3, arr4)
+    self.assertEqual(out[0].sharding, arr3.sharding)
+    self.assertEqual(out[1].sharding, arr4.sharding)
+
   def test_einsum_inverse(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
-    np_inp = np.arange(64)
+    np_inp = np.arange(64.)
 
     @jax.jit
     def h(x, y):
@@ -4997,6 +5081,73 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     lowered_text = h.lower(arr1, arr2).as_text()
     self.assertIn('@Sharding', lowered_text)
+
+    @jax.jit
+    def h2(x, y):
+      out = h(x, y)
+      return jnp.sum(out)
+
+    out = jax.grad(h2, argnums=(0, 1))(arr1, arr2)
+    self.assertEqual(out[0].sharding, arr1.sharding)
+    self.assertEqual(out[1].sharding, arr2.sharding)
+
+    out = jax.jit(jax.grad(h2, argnums=(0, 1)))(arr1, arr2)
+    self.assertEqual(out[0].sharding, arr1.sharding)
+    self.assertEqual(out[1].sharding, arr2.sharding)
+
+  @parameterized.named_parameters(
+      ('1', (16, 1), (1, 16, 1), P('x', None), P(None, 'x', None), False),
+      ('2', (8, 2, 1), (1, 16, 1), P('x', None, None), P(None, 'x', None), True),
+      ('3', (8, 1), (1, 4, 2), P('x', None), P(None, 'x', None), True)
+  )
+  def test_reshape(self, src_shape, dst_shape, src_spec, dst_spec, will_error):
+    mesh = jtu.create_mesh((2,), ('x',))
+    np_inp = np.arange(math.prod(src_shape),
+                       dtype=np.float32).reshape(src_shape)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, src_spec))
+
+    @jax.jit
+    def f(x):
+      y = jnp.reshape(x, dst_shape)
+      y = y * 2
+      self.assertEqual(y.sharding.spec, dst_spec)
+      return y
+
+    if will_error:
+      with self.assertRaises(NotImplementedError):
+        f(arr)
+    else:
+      out = f(arr)
+      self.assertEqual(out.sharding, NamedSharding(mesh, dst_spec))
+      self.assertArraysEqual(out, np_inp.reshape(dst_shape) * 2)
+
+      lowered_text = f.lower(arr).as_text()
+      self.assertIn('@Sharding', lowered_text)
+
+  def test_select(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    arr1 = jax.device_put(np_inp, s)
+    arr2 = jax.device_put(np_inp, s)
+
+    @jax.jit
+    def f(pred, on_true, on_false):
+      y = lax.select(pred, on_true, on_false)
+      self.assertEqual(y.sharding.spec, s.spec)
+      return y
+
+    out = f(arr1 == arr2, arr1, arr2)
+    self.assertEqual(out.sharding, s)
+    self.assertArraysEqual(out, arr1)
+
+    lowered_text = f.lower(arr1 == arr2, arr1, arr2).as_text()
+    self.assertIn('@Sharding', lowered_text)
+
+    arr3 = jax.device_put(np_inp, NamedSharding(mesh, P('y', 'x')))
+    with self.assertRaisesRegex(
+        TypeError, "select cases must have the same shardings"):
+      f(arr1 == arr2, arr1, arr3)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

@@ -1521,8 +1521,9 @@ lowering_rules[lax.reduce_or_p] = _reduce_or_lowering_rule
 
 
 def _broadcast_in_dim_lowering_rule(
-    ctx: LoweringRuleContext, val, *, shape, broadcast_dimensions
+    ctx: LoweringRuleContext, val, *, shape, broadcast_dimensions, sharding
 ):
+  del sharding
   (aval_in,) = ctx.avals_in
   (aval_out,) = ctx.avals_out
 

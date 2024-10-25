@@ -1695,7 +1695,8 @@ def bcoo_update_layout(mat: BCOO, *, n_batch: int | None = None, n_dense: int | 
   return BCOO((new_data, new_indices), shape=shape)
 
 
-def bcoo_broadcast_in_dim(mat: BCOO, *, shape: Shape, broadcast_dimensions: Sequence[int]) -> BCOO:
+def bcoo_broadcast_in_dim(mat: BCOO, *, shape: Shape, broadcast_dimensions: Sequence[int],
+                          sharding=None) -> BCOO:
   """Expand the size and rank of a BCOO array by duplicating the data.
 
   A BCOO equivalence to jax.lax.broadcast_in_dim.

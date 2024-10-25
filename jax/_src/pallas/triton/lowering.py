@@ -1586,8 +1586,9 @@ def select_n_lowering_rule(ctx: LoweringRuleContext, pred, x, y):
 
 @register_lowering(lax.broadcast_in_dim_p)
 def _broadcast_in_dim_lowering_rule(
-    ctx: LoweringRuleContext, x, *, broadcast_dimensions, shape
+    ctx: LoweringRuleContext, x, *, broadcast_dimensions, shape, sharding
 ):
+  del sharding
   x = _ensure_ir_value(x, *ctx.avals_in)
   if not ir.RankedTensorType.isinstance(x.type):
     return _bcast_to(x, shape)

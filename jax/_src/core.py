@@ -1801,8 +1801,12 @@ class ShapedArray(UnshapedArray):
                  getattr(self, 'sharding', None)))
 
   def to_tangent_aval(self):
-    return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
-                       self.weak_type)
+    if config.sharding_in_types.value:
+      return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
+                         self.weak_type, self.sharding)
+    else:
+      return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
+                         self.weak_type)
 
   def join(self, other):
     if definitely_equal_shape(self.shape, other.shape) and self.dtype == other.dtype:
@@ -1845,6 +1849,14 @@ def _get_shape_sharding_str(shape, spec):
 def _forward_to_value(self, fun, ignored_tracer, *args):
   return fun(self.val, *args)
 
+def _get_abstract_sharding(val):
+  from jax._src.sharding_impls import NamedSharding  # pytype: disable=import-error
+
+  if (config.sharding_in_types.value and hasattr(val, 'sharding') and
+      isinstance(val.sharding, NamedSharding)):
+    return NamedSharding(val.sharding.mesh.abstract_mesh,
+                         val.sharding._normalized_spec(val.ndim))
+  return None
 
 class ConcreteArray(ShapedArray):
   __slots__ = ['val']
@@ -1853,7 +1865,8 @@ class ConcreteArray(ShapedArray):
   def __init__(self, dtype, val, weak_type=None):
     super().__init__(
         np.shape(val), dtype,
-        weak_type=dtypes.is_weakly_typed(val) if weak_type is None else weak_type)
+        weak_type=dtypes.is_weakly_typed(val) if weak_type is None else weak_type,
+        sharding=_get_abstract_sharding(val))
     dtypes.check_valid_dtype(self.dtype)
     # Note: canonicalized self.dtype doesn't necessarily match self.val
     assert self.dtype == dtypes.canonicalize_dtype(np.result_type(val)), (val, dtype)
@@ -2132,12 +2145,16 @@ def raise_to_shaped(aval: AbstractValue, weak_type=None):
     if handler: return handler(aval, weak_type)
   raise TypeError(type(aval))
 
+def _shaped_array_mapping(aval, weak_type):
+  if config.sharding_in_types.value:
+    return ShapedArray(aval.shape, aval.dtype, weak_type, sharding=aval.sharding)
+  return ShapedArray(aval.shape, aval.dtype, weak_type)
+
 raise_to_shaped_mappings: dict[type, Callable] = {
     AbstractToken: lambda aval, _: aval,
     Bot: lambda aval, _: aval,
     UnshapedArray: lambda aval, _: aval,
-    ShapedArray: lambda aval, weak_type: ShapedArray(
-        aval.shape, aval.dtype, weak_type),
+    ShapedArray: _shaped_array_mapping,
     DConcreteArray: lambda aval, weak_type: DShapedArray(
         aval.shape, aval.dtype, weak_type
     ),
@@ -3073,10 +3090,16 @@ def _check_call(ctx_factory, prim, in_atoms, params):
     return aval
   for v, x in zip(call_jaxpr.invars, in_atoms):
     if not typecompat(substitute(v.aval), x.aval):
-      # TODO(mattjj): vars in error message are confusing b/c of Var.__repr__
-      raise JaxprTypeError(f"Call primitive {prim} passes operand {x} of type "
-                           f"{x.aval} to jaxpr expecting type "
-                           f"{substitute(v.aval)}")
+      # TODO(yashkatariya): Remove this once numpy array's aval has a sharding
+      # on it.
+      if (config.sharding_in_types.value and isinstance(x, Literal) and
+          v.aval.sharding is not None and x.val.ndim == 0):
+        pass
+      else:
+        # TODO(mattjj): vars in error message are confusing b/c of Var.__repr__
+        raise JaxprTypeError(f"Call primitive {prim} passes operand {x} of type "
+                            f"{x.aval} to jaxpr expecting type "
+                            f"{substitute(v.aval)}")
     env[v] = x if type(x) is Var else x.val
 
   _check_jaxpr(ctx_factory, call_jaxpr)

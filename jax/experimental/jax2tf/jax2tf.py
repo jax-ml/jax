@@ -2267,7 +2267,7 @@ def _dot_general_convert_to_common_dtype(
     convert_result = lambda res: res
   return (lhs, rhs, convert_result)
 
-def _broadcast_in_dim(operand, *, shape, broadcast_dimensions,
+def _broadcast_in_dim(operand, *, shape, broadcast_dimensions, sharding=None,
                       _in_avals: Sequence[core.ShapedArray],
                       _out_aval: core.ShapedArray):
   # for i in range(len(operand.shape)):

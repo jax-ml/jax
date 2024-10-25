@@ -1037,7 +1037,9 @@ def _broadcast_in_dim_lowering_rule(
     *,
     broadcast_dimensions,
     shape,
+    sharding,
 ):
+  del sharding
   [x_aval] = ctx.avals_in
   [y_aval] = ctx.avals_out
   x = _ensure_fa(x, x_aval.dtype)
