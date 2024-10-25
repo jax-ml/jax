@@ -1690,11 +1690,10 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         res,
         x + _testing_multi_platform_to_add[tf_device_jax_platform])
 
-  @unittest.skip("TODO(danfm): Test fails at head with segfault in GH")
   def test_dot_algorithm(self):
     # ref: https://github.com/jax-ml/jax/issues/24236
-    if tf.version.VERSION.split(".") <= ["2", "17", "0"]:
-      self.skipTest("This test works only with newer versions of TF")
+    if tf.version.VERSION.split(".") <= ["2", "18", "0"]:
+      self.skipTest("Because of an XLA bug this test segfaults with TF v2.18.0")
 
     if jtu.test_device_matches(["tpu"]):
       algorithm = "BF16_BF16_F32"
