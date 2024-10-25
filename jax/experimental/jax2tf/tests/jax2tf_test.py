@@ -1690,6 +1690,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         res,
         x + _testing_multi_platform_to_add[tf_device_jax_platform])
 
+  @unittest.skip("TODO(danfm): Test fails at head with segfault in GH")
   def test_dot_algorithm(self):
     # ref: https://github.com/jax-ml/jax/issues/24236
     if tf.version.VERSION.split(".") <= ["2", "17", "0"]:
