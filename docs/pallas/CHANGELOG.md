@@ -11,7 +11,16 @@ For the overall JAX change log see [here](https://jax.readthedocs.io/en/latest/c
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## Released with jax 0.4.34
+## Released with jax 0.4.35
+
+* Removals
+
+  * Removed previously deprecated aliases
+    {class}`jax.experimental.pallas.tpu.CostEstimate` and
+    {func}`jax.experimental.tpu.run_scoped`. Both  are now available in
+    {mod}`jax.experimental.pallas`.
+
+## Released with jax 0.4.34 (October 4, 2024)
 
 * Changes
 

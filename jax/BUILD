@@ -931,6 +931,7 @@ pytype_strict_library(
         ":mlir",
         ":sharding_impls",
         "//jax/_src/lib",
+        "//jax/_src/pallas",
     ] + if_building_jaxlib([
         "//jaxlib/mlir:ir",
         "//jaxlib/mlir:mhlo_dialect",
