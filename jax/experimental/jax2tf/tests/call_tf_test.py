@@ -90,7 +90,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     super().setUp()
     self.warning_ctx = jtu.ignore_warning(
         message=(
-            "(jax2tf.convert with native_serialization=False is deprecated"
+            "(jax2tf.convert with native_serialization=False has been deprecated"
             "|Calling from_dlpack with a DLPack tensor is deprecated)"
         )
     )
@@ -897,7 +897,7 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     super().setUp()
     self.warning_ctx = jtu.ignore_warning(
         message=(
-            "(jax2tf.convert with native_serialization=False is deprecated"
+            "(jax2tf.convert with native_serialization=False has been deprecated"
             "|Calling from_dlpack with a DLPack tensor is deprecated)"
         )
     )
@@ -1203,7 +1203,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     super().setUp()
     self.warning_ctx = jtu.ignore_warning(
         message=(
-            "(jax2tf.convert with native_serialization=False is deprecated"
+            "(jax2tf.convert with native_serialization=False has been deprecated"
             "|Calling from_dlpack with a DLPack tensor is deprecated)"
         )
     )

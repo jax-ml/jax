@@ -12,6 +12,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## jax 0.4.36
 
+* Breaking Changes
+  * {func}`jax.experimental.jax2tf.convert` with `native_serialization=False`
+    or with `enable_xla=False` have been deprecated since July 2024, with
+    JAX version 0.4.31. Now we removed support for these use cases. `jax2tf`
+    with native serialization will still be supported.
+
 ## jax 0.4.35 (Oct 22, 2024)
 
 * Breaking Changes
@@ -21,6 +27,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * `jax.experimental.host_callback` has been deprecated since March 2024, with
     JAX version 0.4.26. Now we removed it.
     See {jax-issue}`#20385` for a discussion of alternatives.
+  * {func}`jax.experimental.jax2tf.convert` with `native_serialization=False`
+    or with `enable_xla=False` have been deprecated since July 2024, with
+    JAX version 0.4.31. Now we removed support for these use cases. `jax2tf`
+    with native serialization is still supported.
 
 * Changes:
   * `jax.lax.FftType` was introduced as a public name for the enum of FFT
