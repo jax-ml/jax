@@ -17,6 +17,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     or with `enable_xla=False` have been deprecated since July 2024, with
     JAX version 0.4.31. Now we removed support for these use cases. `jax2tf`
     with native serialization will still be supported.
+  * In `jax.interpreters.xla`, the `xb`, `xc`, and `xe` symbols have been removed
+    after being deprecated in JAX v0.4.31. Instead use `xb = jax.lib.xla_bridge`,
+    `xc = jax.lib.xla_client`, and `xe = jax.lib.xla_extension`.
 
 ## jax 0.4.35 (Oct 22, 2024)
 
