@@ -28,12 +28,9 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import util
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import pallas_call
 import jax.numpy as jnp
 import numpy as np
 
-# TODO(b/375357542): Remove the import once the bug is fixed.
-_ = pallas_call
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
