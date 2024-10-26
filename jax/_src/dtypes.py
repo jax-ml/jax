@@ -651,7 +651,8 @@ def _least_upper_bound(jax_numpy_dtype_promotion: str, *nodes: JAXType) -> JAXTy
 def promote_types(a: DTypeLike, b: DTypeLike) -> DType:
   """Returns the type to which a binary operation should cast its arguments.
 
-  For details of JAX's type promotion semantics, see :ref:`type-promotion`.
+  JAX implementation of :func:`numpy.promote_types`. For details of JAX's
+  type promotion semantics, see :ref:`type-promotion`.
 
   Args:
     a: a :class:`numpy.dtype` or a dtype specifier.
@@ -659,6 +660,35 @@ def promote_types(a: DTypeLike, b: DTypeLike) -> DType:
 
   Returns:
     A :class:`numpy.dtype` object.
+
+  Examples:
+    Type specifiers may be strings, dtypes, or scalar types, and the return
+    value is always a dtype:
+
+    >>> jnp.promote_types('int32', 'float32')  # strings
+    dtype('float32')
+    >>> jnp.promote_types(jnp.dtype('int32'), jnp.dtype('float32'))  # dtypes
+    dtype('float32')
+    >>> jnp.promote_types(jnp.int32, jnp.float32)  # scalar types
+    dtype('float32')
+
+    Built-in scalar types (:type:`int`, :type:`float`, or :type:`complex`) are
+    treated as weakly-typed and will not change the bit width of a strongly-typed
+    counterpart (see discussion in :ref:`type-promotion`):
+
+    >>> jnp.promote_types('uint8', int)
+    dtype('uint8')
+    >>> jnp.promote_types('float16', float)
+    dtype('float16')
+
+    This differs from the NumPy version of this function, which treats built-in scalar
+    types as equivalent to 64-bit types:
+
+    >>> import numpy
+    >>> numpy.promote_types('uint8', int)
+    dtype('int64')
+    >>> numpy.promote_types('float16', float)
+    dtype('float64')
   """
   # Note: we deliberately avoid `if a in _weak_types` here because we want to check
   # object identity, not object equality, due to the behavior of np.dtype.__eq__
