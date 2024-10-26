@@ -1133,6 +1133,14 @@ class ShardingTest(jtu.JaxTestCase):
     ps = jax.sharding.PmapSharding.default((4, 2), devices=new_order)
     self.assertEqual(ps._device_assignment, new_order)
 
+  def test_default_pmap_sharding_replicated(self):
+    x = np.zeros((len(jax.local_devices()), 8), dtype=np.float32)
+    x = jax.pmap(lambda x: x, in_axes=0, out_axes=None)(x)
+    ps = jax.sharding.PmapSharding.default(
+        shape=(8,), sharded_dim=None,
+        devices=jax.local_devices())
+    self.assertEqual(x.sharding, ps)
+
   def test_mesh_repr(self):
     mesh = jtu.create_mesh((1, 1), ('x', 'y'))
     mesh_repr = repr(mesh)

@@ -535,7 +535,7 @@ class PmapSharding(sharding.Sharding):
 
   # TODO(yashkatariya): Expose `sharded_dim_size` in the API if required.
   @classmethod
-  def default(cls, shape: Shape, sharded_dim: int = 0,
+  def default(cls, shape: Shape, sharded_dim: int | None = 0,
               devices: Sequence[xc.Device] | None = None) -> PmapSharding:
     """Creates a :class:`PmapSharding` which matches the default placement
     used by :func:`jax.pmap`.
@@ -547,6 +547,13 @@ class PmapSharding(sharding.Sharding):
       device order used by pmap is used, which is the order of
         :func:`jax.local_devices`.
     """
+    if sharded_dim is None:
+      if devices is None:
+        raise ValueError("One of sharded_dim or devices must be set.")
+      nrep = len(devices)
+      return cls(np.array(devices),
+          sharding_specs.pmap_sharding_spec(nrep, nrep, shape, None))
+
     # The dtype doesn't matter here. Its only used for creating the
     # sharding_spec.
     sharding_spec = sharding_specs.create_pmap_sharding_spec(
@@ -564,11 +571,6 @@ class PmapSharding(sharding.Sharding):
         else:
           raise NotImplementedError(
               'Multiple chunks in Chunked dimension not supported.')
-
-    if num_ways_sharded is None:
-      raise NotImplementedError(
-          '`None` to sharded_dim is not supported. Please file a jax '
-          'issue if you need this feature.')
 
     if devices is None:
       pmap_devices: np.ndarray = np.array(
