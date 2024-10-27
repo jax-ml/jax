@@ -8976,12 +8976,26 @@ class CustomVJPTest(jtu.JaxTestCase):
       vjp = lambda g: (jnp.cos(x) * jnp.arange(3., 6.),)
       return jnp.sum(jnp.sin(x)), vjp
 
-    self.assertAllClose(f(jnp.arange(3)), jnp.sum(jnp.sin(jnp.arange(3.))),
+    self.assertAllClose(f(jnp.arange(3.)), jnp.sum(jnp.sin(jnp.arange(3.))),
                         check_dtypes=False)
     self.assertAllClose(
         api.grad(f)(jnp.arange(3.)),
         api.grad(lambda x: jnp.sum(jnp.sin(x)))(jnp.arange(3.)) * jnp.arange(3., 6.),
         check_dtypes=False)
+
+  def test_custom_gradient_jit_closure(self):
+    @jax.jit
+    def f(x, y):
+      y = jnp.sin(y)
+
+      @jax.custom_gradient
+      def g(x):
+        return y * jnp.sin(x), lambda g: (y * jnp.cos(x) * g,)
+
+      return g(x)
+
+    g = jax.grad(f)(1., 2.)
+    self.assertAllClose(g, jnp.sin(2.) * jnp.cos(1.), check_dtypes=False)
 
   def test_custom_gradient_can_return_singleton_value_in_vjp(self):
     @jax.custom_gradient
