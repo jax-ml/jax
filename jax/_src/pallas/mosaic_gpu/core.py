@@ -104,11 +104,13 @@ class GPUMemorySpace(enum.Enum):
     return self.value
 
   def __call__(
+
       self,
       shape: tuple[int, ...],
       dtype: jnp.dtype,
       transforms: Sequence[MemoryRefTransform] = (),
-  ):
+
+  ) -> pallas_core.MemoryRef:
     # A convenience function for constructing MemoryRef types.
     return GPUMemoryRef(shape, dtype, memory_space=self, transforms=transforms)
 

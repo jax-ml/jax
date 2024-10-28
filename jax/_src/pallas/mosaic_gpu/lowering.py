@@ -1126,7 +1126,6 @@ mosaic_lowering_rules.update({
     lax.add_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x + y),
     lax.sub_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x - y),
     lax.mul_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x * y),
-    lax.div_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x / y),
     lax.rem_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x % y),
     lax.and_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x & y),
     lax.or_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x | y),
@@ -1140,6 +1139,14 @@ mosaic_lowering_rules.update({
     lax.max_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x.max(y)),
     lax.min_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x.min(y)),
 })
+
+
+@register_lowering_rule(lax.div_p)
+def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
+  x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
+  if ir.FloatType.isinstance(x.mlir_dtype):
+    return x / y
+  return x // y
 
 
 @register_lowering_rule(lax.integer_pow_p)
