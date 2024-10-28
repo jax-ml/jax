@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import functools
 import math
 import os
@@ -28,6 +29,10 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
 import numpy as np
+try:
+  from jax._src.lib import mosaic_gpu as mosaic_gpu_lib
+except ImportError:
+  mosaic_gpu_lib = None
 
 
 jax.config.parse_flags_with_absl()
@@ -42,6 +47,15 @@ class PallasTest(jtu.JaxTestCase):
       self.skipTest("Only works on a GPU with capability >= sm90")
 
     super().setUp()
+
+  @contextlib.contextmanager
+  def capture_stdout(self):
+    if mosaic_gpu_lib is None:
+      raise ValueError("Running tests but missing Mosaic GPU extension")
+    with jtu.capture_stdout() as stdout:
+      yield stdout
+      # We need to cudaDeviceSynchronize to make sure printfs are flushed.
+      mosaic_gpu_lib._mosaic_gpu_ext._sync_all_devices()
 
 
 class PallasCallTest(PallasTest):
@@ -466,9 +480,8 @@ class PallasCallTest(PallasTest):
       pl.debug_print("It works!")
 
     x = jnp.arange(256).astype(jnp.float32)
-    with jtu.capture_stdout() as output:
+    with self.capture_stdout() as output:
       jax.block_until_ready(kernel(x))
-
     self.assertEqual(output(), "It works!\n")
 
   def test_print_wgmma_tiled_layout(self):
@@ -480,7 +493,7 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(size, dtype=jnp.float32).reshape(shape)
     f = pl.pallas_call(kernel, out_shape=x, in_specs=[spec], out_specs=spec)
 
-    with jtu.capture_stdout() as get_output:
+    with self.capture_stdout() as get_output:
       jax.block_until_ready(f(x))
 
     output = get_output()
@@ -500,7 +513,7 @@ class PallasCallTest(PallasTest):
       pl.debug_print("x.sum() = {}", x_ref[...].sum())
 
     x = jnp.arange(256)
-    with jtu.capture_stdout() as output:
+    with self.capture_stdout() as output:
       jax.block_until_ready(kernel(x))
 
     self.assertIn(f"x.sum() = {x.sum()}", output())
@@ -515,7 +528,7 @@ class PallasCallTest(PallasTest):
       pl.debug_print("x.sum() = {}", x_ref[...].sum() + 1)
 
     x = jnp.arange(256)
-    with jtu.capture_stdout() as output:
+    with self.capture_stdout() as output:
       jax.block_until_ready(kernel(x))
 
     self.assertIn(f"x.sum() = {x.sum() + 1}", output())
@@ -532,7 +545,7 @@ class PallasCallTest(PallasTest):
       pl.debug_print("x: {}", x_ref[...])
 
     x = jnp.arange(math.prod(in_shape)).reshape(in_shape)
-    with jtu.capture_stdout() as output:
+    with self.capture_stdout() as output:
       jax.block_until_ready(kernel(x))
 
     self.assertIn(f"x: [1, 0, 43, 23]/{in_shape}: 6871\n", output())
@@ -675,7 +688,6 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x, y), x + y)
 
   def test_cond(self):
-
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
@@ -690,7 +702,7 @@ class PallasCallTest(PallasTest):
       o_ref[...] = jnp.broadcast_to(acc, o_ref.shape)
 
     x = jnp.arange(256)
-    with jtu.capture_stdout() as output:
+    with self.capture_stdout() as output:
       jax.block_until_ready(kernel(x))
 
     self.assertIn("acc * 2:", output())

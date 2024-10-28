@@ -16,8 +16,6 @@ limitations under the License.
 #include <cstdint>
 
 #include "nanobind/nanobind.h"
-#include "absl/container/flat_hash_map.h"
-#include "absl/synchronization/mutex.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 #include "xla/service/custom_call_status.h"
@@ -57,6 +55,20 @@ NB_MODULE(_mosaic_gpu_ext, m) {
   });
   m.def("_record_event_capsule",
         []() { return EncapsulateFunction(EventRecordCall); });
+  m.def("_sync_all_devices", []() {
+    int devices = 0;
+    if (cudaGetDeviceCount(&devices) != gpuSuccess) {
+      throw std::runtime_error("Failed to get device count");
+    }
+    for (int i = 0; i < devices; ++i) {
+      if (cudaSetDevice(i) != gpuSuccess) {
+        throw std::runtime_error("Failed to set device");
+      }
+      if (cudaDeviceSynchronize() != gpuSuccess) {
+        throw std::runtime_error("Failed to synchronize device");
+      }
+    }
+  });
 }
 
 }  // namespace
