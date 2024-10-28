@@ -31,14 +31,12 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/strings/str_cat.h"
-#include "jaxlib/gpu/vendor.h"
-#include "jaxlib/mosaic/gpu/target.h"
 #include "absl/base/optimization.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "llvm/include/llvm/ADT/SmallVector.h"
 #include "llvm/include/llvm/Support/CodeGen.h"
@@ -54,6 +52,7 @@ limitations under the License.
 #include "mlir/include/mlir/Conversion/Passes.h"
 #include "mlir/include/mlir/Conversion/UBToLLVM/UBToLLVM.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/include/mlir/Dialect/Arith/Transforms/Passes.h"
 #include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/include/mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/include/mlir/Dialect/GPU/Transforms/Passes.h"
@@ -81,8 +80,10 @@ limitations under the License.
 #include "mlir/include/mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/include/mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "mlir/include/mlir/Transforms/Passes.h"
+#include "jaxlib/gpu/vendor.h"
 #include "jaxlib/mosaic/gpu/launch_lowering.h"
 #include "jaxlib/mosaic/gpu/passes.h"
+#include "jaxlib/mosaic/gpu/target.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
 
@@ -141,12 +142,14 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mosaic::gpu::registerGpuLaunchLoweringPass();
     mosaic::gpu::registerConvertGpuToLLVMPass();
     mosaic::gpu::registerByvalInsertionPass();
+    mlir::arith::registerArithExpandOpsPass();
     return true;
   }();
   (void)register_once;
   return mlir::parsePassPipeline(absl::StrCat(
       R"(
       builtin.module(
+        arith-expand,
         canonicalize,
         gpu-launch-sink-index-computations,
         convert-nvgpu-to-nvvm,

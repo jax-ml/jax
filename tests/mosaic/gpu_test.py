@@ -1209,26 +1209,20 @@ class FragmentedArrayTest(TestCase):
           operator.add,
           operator.mul,
           operator.sub,
-          operator.truediv,
-          operator.mod,
           (lambda x, y: mgpu.FragmentedArray.max(x, y), np.maximum),
       ),
       dtype=[jnp.float32, jnp.int32, jnp.uint32],
       m=(64, 128),
       n=(8, 16, 32, 64, 80, 128, 256),
   )
-  @jtu.ignore_warning(message="(invalid value|divide by zero)",
-                      category=RuntimeWarning)
+  @jtu.ignore_warning(
+      message="(invalid value|divide by zero)", category=RuntimeWarning
+  )
   def test_binary(self, op, dtype, m=64, n=32):
     if isinstance(op, tuple):
       op, np_op = op
     else:
       np_op = op
-
-    if jnp.issubdtype(dtype, jnp.integer) and op is operator.truediv:
-      self.skipTest("Unsupported for integer types")
-    if jnp.issubdtype(dtype, jnp.floating) and op is operator.mod:
-      self.skipTest("Unsupported for floating types")
 
     for scalar_rhs in [None, 2]:
       def kernel(ctx, dst, _):
@@ -1242,10 +1236,30 @@ class FragmentedArrayTest(TestCase):
       )()
       ref_x = np.arange(m * n, dtype=dtype).reshape(m, n)
       ref_rhs = scalar_rhs or ref_x
-      if op is operator.truediv:
-        np.testing.assert_allclose(result, np_op(ref_x, ref_rhs), atol=2e-7)
-      else:
-        np.testing.assert_array_equal(result, np_op(ref_x, ref_rhs))
+      np.testing.assert_array_equal(result, np_op(ref_x, ref_rhs))
+
+  @parameterized.product(
+      op=[operator.truediv, operator.floordiv, operator.mod],
+      dtype=[jnp.float32, jnp.int32, jnp.uint32],
+  )
+  def test_division(self, op, dtype, m=64, n=32):
+    if jnp.issubdtype(dtype, jnp.integer) and op is operator.truediv:
+      self.skipTest("Unsupported for integer types")
+    if jnp.issubdtype(dtype, jnp.floating) and op is operator.mod:
+      self.skipTest("Unsupported for floating types")
+
+    def kernel(ctx, dst, _):
+      iota = iota_tensor(m, n, dtype)
+      op(dtype(4.2).item() * iota, iota + 1).store_untiled(dst)
+
+    out_shape = jax.ShapeDtypeStruct((m, n), dtype)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+    )()
+    iota = np.arange(m * n, dtype=dtype).reshape(m, n)
+    np.testing.assert_allclose(
+        result, op(dtype(4.2).item() * iota, iota + 1), atol=2e-7
+    )
 
   @parameterized.product(
       op=[
