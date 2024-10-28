@@ -97,7 +97,7 @@ def _mosaic_gpu_lowering_rule(
     out_types,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
 ):
-  del out_types  # Unused.
+  assert len(out_types) == len(ctx.avals_out)
   kernel_id = hashlib.sha256(module).digest()
   # Note that this is technically only a half measure. Someone might load a
   # compiled module with a hash collision from disk. But that's so unlikely with

@@ -1481,6 +1481,17 @@ class ProfilerTest(TestCase):
     x = jnp.arange(1024 * 1024)
     profiler.measure(lambda x, y: x + y, x, x)  # This is just a smoke test
 
+  def test_profile(self):
+    def kernel(ctx, src, dst, _):
+      mgpu.FragmentedArray.load_strided(src).store_untiled(dst)
+    x = np.arange(64 * 64, dtype=jnp.float32).reshape(64, 64)
+    spec = profiler.ProfilerSpec(1024)
+    # This is just a smoke test.
+    f = jax.jit(mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), x, x, (), prof_spec=spec
+    ))
+    jax.block_until_ready(f(x))
+
   def test_multigpu(self):
     if len(jax.devices()) < 2:
       self.skipTest("Need at least 2 devices")

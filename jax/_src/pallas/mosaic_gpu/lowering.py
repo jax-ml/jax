@@ -30,6 +30,7 @@ from jax import lax
 from jax._src import core as jax_core
 from jax._src import pjit
 from jax._src import util
+from jax._src import source_info_util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
@@ -50,6 +51,7 @@ from jax._src.state.types import RefReshaper
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import core as mgpu_core
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
+from jax.experimental.mosaic.gpu import profiler as mgpu_profiler
 import jax.numpy as jnp
 import numpy as np
 
@@ -196,6 +198,8 @@ class ModuleContext:
   runtime_barriers: MutableMapping[
       mgpu.Barrier, MutableSequence[mgpu.BarrierRef]
   ]
+  name_stack: source_info_util.NameStack
+  traceback_caches: mlir.TracebackCaches
 
   def reserve_barrier(self, barrier: mgpu.Barrier) -> mgpu.BarrierRef:
     """Reserves a barrier.
@@ -269,7 +273,15 @@ class LoweringRuleContext:
 class LoweringResult:
   module: ir.Module
   grid: tuple[int, ...]
+  block: tuple[int, ...]
   out_structs: tuple[jax.ShapeDtypeStruct, ...]
+  profiler_context: ProfilerContext | None
+
+
+@dataclasses.dataclass(frozen=True)
+class ProfilerContext:
+  dump_path: str
+  spec: mgpu_profiler.ProfilerSpec
 
 
 class LoweringError(Exception):  # pylint: disable=g-bad-exception-name
@@ -505,6 +517,8 @@ def lower_jaxpr_to_module(
         runtime_smem,
         smem_used_bytes=0,
         runtime_barriers=grouped_barriers,
+        name_stack=source_info_util.NameStack(),
+        traceback_caches=mlir.TracebackCaches(),
     )
     del runtime_smem, grouped_barriers, runtime_barriers
 
@@ -758,14 +772,19 @@ def lower_jaxpr_to_module(
       if not isinstance(aval.dtype, gpu_core.BarrierType)
       and aval.memory_space == gpu_core.SMEM
   ]
-  smem_scratch_bytes = compiler_params.get("smem_scratch_bytes")
+  smem_scratch_bytes = params.get("smem_scratch_bytes")
   if smem_scratch_bytes is None:
     smem_scratch_bytes = rs.smem_scratch_bytes
   extra_smem_scratch.append(
       jax.ShapeDtypeStruct(shape=[smem_scratch_bytes], dtype=np.int8)
   )
 
-  module, out_structs_smem, _ = mgpu_core._lower_as_gpu_kernel(
+  prof_ctx = prof_spec = None
+  if prof_space := params.get("profile_space", 0):
+    # Each range is 2 events, each event is 4 bytes.
+    prof_spec = mgpu_profiler.ProfilerSpec(prof_space * 2 * 4)
+    prof_ctx = ProfilerContext(params["profile_dir"], prof_spec)
+  module, out_structs_gmem, _ = mgpu_core._lower_as_gpu_kernel(
       body,
       grid=grid,
       cluster=(),
@@ -782,9 +801,10 @@ def lower_jaxpr_to_module(
           ),
       ),
       module_name=name_and_src_info.name,
+      prof_spec=prof_spec,
   )
 
-  return LoweringResult(module, grid, out_structs_smem)
+  return LoweringResult(module, grid, block, out_structs_gmem, prof_ctx)
 
 
 mosaic_lowering_rules = {}
@@ -796,6 +816,19 @@ def register_lowering_rule(primitive: jax_core.Primitive):
     return fn
 
   return deco
+
+
+def _compute_name_stack_updates(
+    old_name_stack: list[str],
+    new_name_stack: list[str]
+) -> tuple[list[str], list[str]]:
+  common_prefix_idx = 0
+  for i, (old, new) in enumerate(unsafe_zip(old_name_stack, new_name_stack)):
+    if old == new:
+      common_prefix_idx = i+1
+    else:
+      break
+  return old_name_stack[common_prefix_idx:], new_name_stack[common_prefix_idx:]
 
 
 def lower_jaxpr_to_mosaic_gpu(
@@ -815,35 +848,54 @@ def lower_jaxpr_to_mosaic_gpu(
 
   map(write_env, jaxpr.constvars, consts)
   map(write_env, jaxpr.invars, args)
+  # TODO(justinfu): Handle transform scopes.
+  last_local_name_stack: list[str] = []
+  named_regions = []
   for eqn in jaxpr.eqns:
     invals = map(read_env, eqn.invars)
-    if eqn.primitive not in mosaic_lowering_rules:
-      raise NotImplementedError(
-          "Unimplemented primitive in Pallas Mosaic GPU lowering: "
-          f"{eqn.primitive.name}. "
-          "Please file an issue on https://github.com/jax-ml/jax/issues."
-      )
-    rule = mosaic_lowering_rules[eqn.primitive]
-    rule_ctx = LoweringRuleContext(
-        module_ctx,
-        launch_ctx,
-        avals_in=[cast(jax_core.ShapedArray, v.aval) for v in eqn.invars],
-        avals_out=[cast(jax_core.ShapedArray, v.aval) for v in eqn.outvars],
+    source_info = eqn.source_info.replace(
+        name_stack=module_ctx.name_stack + eqn.source_info.name_stack
     )
-    try:
-      outvals = rule(rule_ctx, *invals, **eqn.params)
-    except LoweringError:
-      raise  # We only add the extra info to the innermost exception.
-    except Exception as e:
-      inval_types = map(lambda t: getattr(t, "type", None), invals)
-      raise LoweringError(
-          f"Exception while lowering eqn:\n  {eqn}\nWith context:\n "
-          f" {rule_ctx}\nWith inval types={inval_types}\nIn jaxpr:\n{jaxpr}"
-      ) from e
-    if eqn.primitive.multiple_results:
-      map(write_env, eqn.outvars, outvals)
-    else:
-      write_env(eqn.outvars[0], outvals)
+    loc = mlir._source_info_to_location(module_ctx, eqn.primitive, source_info)
+    with source_info_util.user_context(eqn.source_info.traceback), loc:
+      if eqn.primitive not in mosaic_lowering_rules:
+        raise NotImplementedError(
+            "Unimplemented primitive in Pallas Mosaic GPU lowering: "
+            f"{eqn.primitive.name}. "
+            "Please file an issue on https://github.com/jax-ml/jax/issues."
+        )
+      new_local_name_stack = [scope.name for scope in eqn.source_info.name_stack.stack]
+      popped, pushed = _compute_name_stack_updates(last_local_name_stack, new_local_name_stack)
+      last_local_name_stack = new_local_name_stack
+      for _ in popped:
+        named_regions.pop().close()
+      for name in pushed:
+        wrapper_stack = contextlib.ExitStack()
+        wrapper_stack.enter_context(launch_ctx.named_region(name))
+        named_regions.append(wrapper_stack)
+      rule = mosaic_lowering_rules[eqn.primitive]
+      rule_ctx = LoweringRuleContext(
+          module_ctx,
+          launch_ctx,
+          avals_in=[cast(jax_core.ShapedArray, v.aval) for v in eqn.invars],
+          avals_out=[cast(jax_core.ShapedArray, v.aval) for v in eqn.outvars],
+      )
+      try:
+        outvals = rule(rule_ctx, *invals, **eqn.params)
+      except LoweringError:
+        raise  # We only add the extra info to the innermost exception.
+      except Exception as e:
+        inval_types = map(lambda t: getattr(t, "type", None), invals)
+        raise LoweringError(
+            f"Exception while lowering eqn:\n  {eqn}\nWith context:\n "
+            f" {rule_ctx}\nWith inval types={inval_types}\nIn jaxpr:\n{jaxpr}"
+        ) from e
+      if eqn.primitive.multiple_results:
+        map(write_env, eqn.outvars, outvals)
+      else:
+        write_env(eqn.outvars[0], outvals)
+  while named_regions:  # Drain the name stack.
+    named_regions.pop().close()
   return map(read_env, jaxpr.outvars)
 
 

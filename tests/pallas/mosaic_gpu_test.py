@@ -14,7 +14,9 @@
 
 import functools
 import math
+import os
 import re
+import tempfile
 import traceback
 
 from absl.testing import absltest
@@ -978,6 +980,33 @@ class PallasCallTest(PallasTest):
 
     x = jnp.full(shape, 42.0)
     np.testing.assert_array_equal(kernel(), x)
+
+  def test_profiler(self):
+    def kernel(x_ref, o_ref):
+      with jax.named_scope("add"):
+        with jax.named_scope("load"):
+          x = x_ref[...]
+        o = x + x
+      with jax.named_scope("store"):
+        o_ref[...] = o
+    with tempfile.TemporaryDirectory() as tmpdir:
+      x = jnp.arange(256).astype(jnp.float32)
+      y = pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+          compiler_params=plgpu.GPUCompilerParams(
+              profile_space=16, profile_dir=tmpdir
+          ),
+      )(x)
+      jax.block_until_ready(y)
+      jax.effects_barrier()
+      [name] = os.listdir(tmpdir)
+      with open(os.path.join(tmpdir, name), "r") as f:
+        data = f.read()
+        self.assertEqual(data.count('"name": "add"'), 2)
+        self.assertEqual(data.count('"name": "load"'), 2)
+        self.assertEqual(data.count('"name": "store"'), 2)
+      np.testing.assert_array_equal(y, x + x)
 
 
 class PipelineTest(PallasTest):

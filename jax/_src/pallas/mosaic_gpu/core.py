@@ -72,12 +72,24 @@ class GPUCompilerParams(pallas_core.CompilerParams):
       references. Defaults to 0, and must be strictly smaller than
       max_concurrent_steps. Generally, you'll want to set it to 1 if you don't
       await the WGMMA in the body.
+    profile_space: The number of profiler events that can be collected in a
+      single invocation. It is undefined behavior if a thread collects more
+      events than this.
+    profile_dir: The directory to which profiling traces will be written to.
   """
   PLATFORM: ClassVar[str] = "mosaic_gpu"
   approx_math: bool = False
   dimension_semantics: Sequence[DimensionSemantics] | None = None
   max_concurrent_steps: int = 1
   delay_release: int = 0
+  profile_space: int = 0
+  profile_dir: str = ""
+
+  def __post_init__(self):
+    if bool(self.profile_space) ^ bool(self.profile_dir):
+      raise ValueError(
+          "Either both profile_space and profile_dir must be set, or neither."
+      )
 
 
 class GPUMemorySpace(enum.Enum):
