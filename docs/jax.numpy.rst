@@ -138,6 +138,7 @@ namespace; they are listed below.
     csingle
     cumprod
     cumsum
+    cumulative_prod
     cumulative_sum
     deg2rad
     degrees
