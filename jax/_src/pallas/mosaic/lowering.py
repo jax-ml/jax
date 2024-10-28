@@ -2803,6 +2803,8 @@ def _device_id_to_logical(
     mesh_strides = ctx.lowering_context.mesh_context.mesh_strides
 
     i32 = ir.IntegerType.get_signless(32)
+    if len(device_ids) == 0:
+      return arith.constant(i32, 0)
     return functools.reduce(
         arith.addi,
         (
