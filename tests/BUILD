@@ -1346,6 +1346,14 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "colocated_python_test",
+    srcs = ["colocated_python_test.py"],
+    deps = [
+        "//jax:experimental_colocated_python",
+    ],
+)
+
+jax_multiplatform_test(
     name = "experimental_rnn_test",
     srcs = ["experimental_rnn_test.py"],
     disable_configs = [
