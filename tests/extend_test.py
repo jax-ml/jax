@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import sys
 import unittest
 from functools import partial
 
@@ -260,6 +261,10 @@ class FfiTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("gpu", "cpu")
   def testVectorizedDeprecation(self):
+    if sys.version_info.major == 3 and sys.version_info.minor == 13:
+      # TODO(b/376025274): Remove the skip once the bug is fixed.
+      raise unittest.SkipTest("Crashes on Python 3.13")
+
     x = self.rng().randn(3, 5, 4).astype(np.float32)
     with self.assertWarns(DeprecationWarning):
       ffi_call_geqrf(x, vectorized=True)
