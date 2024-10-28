@@ -571,7 +571,8 @@ class FragmentedArray:
       elif ir.VectorType.isinstance(x.type):
         index = ir.IndexType.get()
         result = llvm.mlir_undef(x.type)
-        for i in range(2):
+        [vec_len] = ir.VectorType(x.type).shape
+        for i in range(vec_len):
           v = vector.extractelement(x, position=c(i, index))
           vr = fast_instr(v)
           result = vector.insertelement(vr, result, position=c(i, index))
