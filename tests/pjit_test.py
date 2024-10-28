@@ -3544,6 +3544,13 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out2 = pjit(identity)(arr2)
     self.assertIsInstance(out2.sharding, PositionalSharding)
 
+  def test_wsc_error_on_none(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        'One of with_sharding_constraint arguments got sharding None which is'
+        ' not allowed'):
+      with_sharding_constraint(jnp.arange(8), None)
+
   def test_sharding_preserved_aot(self):
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
     ns = NamedSharding(mesh, P('x'))

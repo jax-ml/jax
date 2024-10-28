@@ -2449,12 +2449,18 @@ def with_sharding_constraint(x, shardings):
   shardings_flat = [_create_sharding_for_array(mesh, a, 'shardings',
                                                'with_sharding_constraint')
                     for a in user_shardings_flat]
+  for s, u in zip(shardings_flat, user_shardings_flat):
+    if isinstance(s, (UnspecifiedValue, AUTO)):
+      raise ValueError(
+          f'One of with_sharding_constraint arguments got sharding {u} which is'
+          ' not allowed. Please only pass `jax.sharding.Sharding` instances.')
+  del user_shardings_flat
+
   # TODO(bartchr): remove `unconstrained_dims` after migrating to Shardy. It's
   # already part of the shardings.
   unconstrained_dims = [get_unconstrained_dims(s)
                         if isinstance(s, NamedSharding) else {}
                         for s in shardings_flat]
-  del user_shardings_flat
 
   pjit_check_aval_sharding(
       shardings_flat, x_flat, None, "with_sharding_constraint arguments",
