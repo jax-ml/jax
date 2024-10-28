@@ -4112,6 +4112,13 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
              dst_tiled_dims[1] % dst_vreg_slice[1] == 0) {
     // Shapecast (..., 128) -> (..., m * 128 * packing).
     no_op = true;
+  } else if (layout_in.offsets() == LayoutOffsets{0, 0} &&
+             layout_out.offsets() == LayoutOffsets{0, 0} &&
+             layout_in.tiling()[0] == 1 && layout_out.tiling()[0] == 1 &&
+             src_vreg_slice[1] == dst_vreg_slice[1] &&
+             src_tiled_dims[1] % src_vreg_slice[1] == 0 &&
+             dst_tiled_dims[1] % dst_vreg_slice[1] == 0) {
+    no_op = true;
   }
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> src_vregs,

@@ -1448,7 +1448,13 @@ class VectorLayoutInferer {
       // 1D tilings that use 1 in the sublane dimension.
       int64_t sublane_tiling = vreg_slice[0];
       do {
-        if (src_tiled_ishape[1] == res_tiled_ishape[1] &&
+        auto src_res_tiled_equal = src_tiled_ishape[1] == res_tiled_ishape[1];
+        auto vreg_num_elements = target_shape_[0] * target_shape_[1];
+        auto single_subline_mod_1024 =
+            (sublane_tiling == 1 &&
+             src_tiled_ishape[1] % vreg_num_elements == 0 &&
+             res_tiled_ishape[1] % vreg_num_elements == 0);
+        if ((src_res_tiled_equal || single_subline_mod_1024) &&
             src_tiled_ishape[0] % sublane_tiling == 0 &&
             res_tiled_ishape[0] % sublane_tiling == 0) {
           std::array<int64_t, 2> tiling = {sublane_tiling, target_shape_[1]};
