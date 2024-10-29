@@ -75,6 +75,7 @@ def write_bazelrc(*, remote_build,
       f.write("build --config=mkl_open_source_only\n")
     if enable_cuda:
       f.write("build --config=cuda\n")
+      f.write("build --config=cuda_wheel\n")
       if use_cuda_nvcc:
         f.write("build --config=build_cuda_with_nvcc\n")
       else:
