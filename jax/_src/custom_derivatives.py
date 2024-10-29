@@ -41,7 +41,7 @@ from jax._src.interpreters import xla
 from jax._src.interpreters.batching import not_mapped
 from jax._src.lax import lax
 from jax._src.tree_util import (
-    tree_flatten, tree_unflatten, tree_map, treedef_is_leaf, treedef_tuple,
+    tree_flatten, tree_unflatten, tree_map, treedef_tuple,
     register_pytree_node_class, tree_leaves, tree_flatten_with_path, keystr,
     treedef_children)
 from jax._src.util import (cache, safe_zip, safe_map, split_list, Unhashable,
@@ -1029,31 +1029,50 @@ def custom_gradient(fun):
   >>> print(jax.grad(f, argnums=(0, 1))(3., 4.))
   (Array(4., dtype=float32, weak_type=True), Array(3., dtype=float32, weak_type=True))
   """
-  @custom_vjp
+  # TODO(mattjj): better debug info
   def wrapped_fun(*args, **kwargs):
-    ans, _ = fun(*args, **kwargs)
-    return ans
+    args_flat, in_tree = tree_flatten((args, kwargs))
+    in_avals = [core.get_aval(x) for x in args_flat]
+    primal_jaxpr, fwd_jaxpr, bwd_jaxpr, consts, out_tree = \
+        _primal_fwd_bwd(in_tree, in_avals)
 
-  def fwd(*args, **kwargs):
-    ans, rule = fun(*args, **kwargs)
-    ans_flat, out_tree = tree_flatten((ans,))
-    rule, in_tree = flatten_fun_nokwargs(lu.wrap_init(rule), out_tree)
-    ans_avals = [core.get_aval(x).to_tangent_aval() for x in ans_flat]
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(rule, ans_avals)
-    return ans, Residuals(jaxpr, in_tree(), out_tree, consts)
+    @custom_vjp
+    def primal(consts, args):
+      return core.eval_jaxpr(primal_jaxpr, (), *consts, *args)
+    def fwd(consts, args):
+      ans_res = core.eval_jaxpr(fwd_jaxpr, (), *consts, *args)
+      return split_list(ans_res, [out_tree.num_leaves])
+    def bwd(res, cts):
+      return None, core.eval_jaxpr(bwd_jaxpr, res, *cts)
+    primal.defvjp(fwd, bwd)
 
-  def bwd(res, cts):
-    jaxpr, in_tree, out_tree, consts = res
-    cts_flat, out_tree_ = tree_flatten((cts,))
-    if out_tree != out_tree_: raise TypeError(f'{out_tree}\n!=\n{out_tree_}')
-    cts_out = core.eval_jaxpr(jaxpr, consts, *cts_flat)
-    cts_out = tree_unflatten(in_tree, cts_out)
-    if treedef_is_leaf(in_tree):
-      cts_out = (cts_out,)
-    return cts_out
+    out_flat = primal(consts, args_flat)
+    return tree_unflatten(out_tree, out_flat)
 
-  wrapped_fun.defvjp(fwd, bwd)
+  def _primal_fwd_bwd(in_tree, in_avals):
+    out_tree, rule_jaxpr = None, None
+    @lu.wrap_init
+    def run(*args_flat):
+      nonlocal rule_jaxpr, out_tree
+      args, kwargs = tree_unflatten(in_tree, args_flat)
+      ans, rule = fun(*args, **kwargs)
+      ans_flat, out_tree = tree_flatten((ans,))
+      ans_bar_avals = [core.get_aval(x).to_tangent_aval() for x in ans_flat]
+      rule_, in_tree_ = flatten_fun_nokwargs(lu.wrap_init(rule), out_tree)
+      rule_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(rule_, ans_bar_avals)
+      out_tree, = treedef_children(out_tree)
+      return *ans_flat, *consts
+    fwd_jaxpr, _, fwd_consts, () = pe.trace_to_jaxpr_dynamic(run, in_avals)
+    fwd_jaxpr = pe.convert_constvars_jaxpr(fwd_jaxpr)
+    assert out_tree is not None and rule_jaxpr is not None
+    num_ans = out_tree.num_leaves
+    num_res = len(fwd_jaxpr.outvars) - num_ans
+    primal_jaxpr, _ = pe.dce_jaxpr(fwd_jaxpr,
+                                   [True] * num_ans + [False] * num_res, True)
+    return primal_jaxpr, fwd_jaxpr, rule_jaxpr, fwd_consts, out_tree
+
   return wrapped_fun
+
 
 @register_pytree_node_class
 class Residuals:
