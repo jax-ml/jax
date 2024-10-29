@@ -49,7 +49,7 @@ ForwardRef._evaluate = _do_not_evaluate_in_jax
 # -- Project information -----------------------------------------------------
 
 project = 'JAX'
-copyright = '2024, The JAX Authors. NumPy and SciPy documentation are copyright the respective authors.'
+copyright = '2024, The JAX Authors'
 author = 'The JAX authors'
 
 # The short X.Y version
