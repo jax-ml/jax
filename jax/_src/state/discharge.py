@@ -23,7 +23,6 @@ from typing import Any, Protocol, TypeVar
 
 from jax._src import ad_util
 from jax._src import api_util
-from jax._src import config
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import source_info_util
@@ -478,20 +477,6 @@ def _closed_call_discharge_rule(
 run_state_p = core.Primitive("run_state")
 run_state_p.multiple_results = True
 
-def _run_state_bind(*args: Any, jaxpr: core.Jaxpr,
-                    which_linear: tuple[bool, ...],
-                    is_initialized: tuple[bool, ...]):
-  if config.enable_checks.value:
-    core.check_jaxpr(jaxpr)
-    num_uninitialized = sum(not i for i in is_initialized)
-    assert len(jaxpr.invars) == len(args) + num_uninitialized
-    assert len(which_linear) == len(args) + num_uninitialized
-  return core.Primitive.bind(run_state_p, *args, jaxpr=jaxpr,
-                             which_linear=which_linear,
-                             is_initialized=is_initialized)
-run_state_p.def_custom_bind(_run_state_bind)
-
-
 def _default_initialization(x):
   assert hasattr(x, 'shape')
   assert hasattr(x, 'dtype')
@@ -501,7 +486,6 @@ def _default_initialization(x):
   else:
     value = math.nan
   return lax.full(x.shape, value, dtype)
-
 
 def _run_state_impl(*args: Any, jaxpr: core.Jaxpr,
                     which_linear: tuple[bool, ...],

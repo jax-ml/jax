@@ -217,7 +217,9 @@ def trace_context():
   return (axis_env_state, mesh_context_manager, xla_metadata_context_manager,
           compute_on_context_manager, enable_x64.value,
           numpy_rank_promotion.value, default_matmul_precision.value,
-          dynamic_shapes.value, numpy_dtype_promotion.value,
+          dynamic_shapes.value,
+          eager_constant_folding.value,
+          numpy_dtype_promotion.value,
           default_device.value, random_seed_offset.value,
           threefry_partitionable.value,
           threefry_gpu_kernel_lowering.value,
@@ -832,6 +834,7 @@ class _GlobalExtraJitContext(NamedTuple):
   numpy_dtype_promotion: str | None = None
   default_matmul_precision: Any | None = None
   dynamic_shapes: bool = False
+  eager_constant_folding: bool = False
   random_seed_offset: int = 0
   threefry_partitionable: bool = False
   threefry_gpu_kernel_lowering: bool = False
@@ -858,7 +861,7 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   The initialization, which uses both config.py and core.py is done using
   `_update_thread_local_jit_state` in core.py to prevent circular imports.
   """
-  dynamic_trace_state: Any | None = None
+  trace_state: Any | None = None
   axis_env_state: Hashable = ()
   mesh_context_manager: Hashable = ()
   compute_on_context_manager: Hashable = ()
@@ -873,6 +876,7 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   numpy_dtype_promotion: str | None = None
   default_matmul_precision: Any | None = None
   dynamic_shapes: bool | None = None
+  eager_constant_folding : bool | None = None
   random_seed_offset: int | None = None
   threefry_partitionable: bool | None = None
   threefry_gpu_kernel_lowering: bool | None = None
@@ -908,7 +912,6 @@ def update_thread_local_jit_state(**kw):
   context = tls.extra_jit_context or _ThreadLocalExtraJitContext()
   tmp = context._replace(**kw)
   tls.extra_jit_context = _thread_local_state_cache.canonicalize(tmp)
-
 
 # TODO(b/214340779): remove flag when XLA:CPU is improved.
 jax2tf_associative_scan_reductions = bool_state(
@@ -1163,6 +1166,11 @@ sharding_in_types = bool_state(
     update_thread_local_hook=lambda val: update_thread_local_jit_state(
         sharding_in_types=val))
 
+data_dependent_tracing_fallback = bool_state(
+    name='jax_data_dependent_tracing_fallback',
+    default=False,
+    help=('When True, falls back to trace dispatch based on data dependence '
+          'instead of throwing an escaped tracer error.'))
 
 softmax_custom_jvp = bool_state(
     name='jax_softmax_custom_jvp',
@@ -1529,6 +1537,16 @@ dynamic_shapes = bool_state(
       _update_global_jit_state(dynamic_shapes=val),
     update_thread_local_hook=lambda val: \
       update_thread_local_jit_state(dynamic_shapes=val))
+
+# This is for stackless backward compat with e.g. equinox
+eager_constant_folding = bool_state(
+    name='eager_constant_folding',
+    default=False,
+    help=('Attempt constant folding during staging.'),
+    update_global_hook=lambda val: \
+      _update_global_jit_state(eager_constant_folding=val),
+    update_thread_local_hook=lambda val: \
+      update_thread_local_jit_state(eager_constant_folding=val))
 
 # This flag is temporary during rollout of the remat barrier.
 # TODO(parkers): Remove if there are no complaints.

@@ -1142,14 +1142,3 @@ def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh):
       effs.add(eff)
   return [], effs
 jax_core.custom_typechecks[core_map_p] = _core_map_typecheck_rule
-
-
-def _core_map_axis_subst(params, subst, traverse):
-  if not traverse:
-    return params
-  def shadowed_subst(name):
-    return (name,) if name in params['mesh'].shape else subst(name)
-  with jax_core.extend_axis_env_nd(params['mesh'].shape.items()):
-    new_jaxpr = jax_core.subst_axis_names_jaxpr(params['jaxpr'], shadowed_subst)
-  return dict(params, jaxpr=new_jaxpr)
-jax_core.axis_substitution_rules[core_map_p] = _core_map_axis_subst

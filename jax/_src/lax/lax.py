@@ -1759,6 +1759,9 @@ def stop_gradient(x: T) -> T:
       return x
     elif (dtypes.issubdtype(_dtype(x), np.floating) or
         dtypes.issubdtype(_dtype(x), np.complexfloating)):
+      # break abstractions to support legacy leaked tracer use cases
+      if isinstance(x, ad.JVPTracer):
+        return stop(x.primal)
       return ad_util.stop_gradient_p.bind(x)
     else:
       return x
@@ -2979,14 +2982,18 @@ def _convert_elt_type_pp_rule(eqn, context, settings):
   return core._pp_eqn(eqn.replace(params=params), context, settings)
 
 convert_element_type_p = Primitive('convert_element_type')
-def _convert_element_type_bind(operand, *, new_dtype, weak_type, sharding):
-  operand = core.Primitive.bind(convert_element_type_p, operand,
-                                new_dtype=new_dtype, weak_type=weak_type,
-                                sharding=sharding)
+
+# TODO(dougalm): I'm overriding bind_with_trace here because that's the closest thing to
+# the old "custom bind" but it might not be the best way to do this.
+def _convert_element_type_bind_with_trace(trace, args, params):
+  sharding = params['sharding']
+  operand = core.Primitive.bind_with_trace(convert_element_type_p, trace, args, params)
   if sharding is not None and not config.sharding_in_types.value:
-    operand = pjit.with_sharding_constraint(operand, sharding)
+    with core.set_current_trace(trace):
+      operand = pjit.with_sharding_constraint(operand, sharding)
   return operand
-convert_element_type_p.def_custom_bind(_convert_element_type_bind)
+convert_element_type_p.def_bind_with_trace(_convert_element_type_bind_with_trace)
+
 convert_element_type_p.def_impl(partial(dispatch.apply_primitive, convert_element_type_p))
 convert_element_type_p.def_abstract_eval(
     partial(standard_abstract_eval, convert_element_type_p,
