@@ -221,7 +221,6 @@ jax_multiplatform_test(
         "//jax:pallas",
         "//jax:pallas_gpu",  # build_cleaner: keep
         "//jax:pallas_tpu",  # build_cleaner: keep
-        "//jax/experimental/export",
     ],
 )
 
