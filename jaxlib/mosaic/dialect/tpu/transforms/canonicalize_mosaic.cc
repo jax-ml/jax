@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -350,6 +351,29 @@ LogicalResult canonicalize_select(int hardware_generation, Operation &raw_op) {
   return success();
 }
 
+LogicalResult canonicalize_repeat(int hardware_generation, Operation &raw_op) {
+  auto op = dyn_cast<tpu::RepeatOp>(raw_op);
+  if (!isa<VectorType>(op.getType())) {
+    return op.emitOpError("Only vector types supported");
+  }
+  auto operand = op.getSource();
+  auto times = op.getTimes();
+  if (times == 1) {
+    // A true no op - kind of an odd edge case, but this does come up in
+    // flash_attention_backward tests.
+    op.replaceAllUsesWith(operand);
+    op.erase();
+    return success();
+  }
+  auto operands = std::vector<Value>(times, operand);
+  ImplicitLocOpBuilder builder(op->getLoc(), op.getOperation());
+  auto concat = builder.create<tpu::ConcatenateOp>(op.getLoc(), op.getType(),
+                                                   operands, op.getDimension());
+  op.replaceAllUsesWith(concat.getResult());
+  op.erase();
+  return success();
+}
+
 using canonicalize_rule_type =
     std::function<LogicalResult(int hardware_generation, Operation &op)>;
 
@@ -360,7 +384,8 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {vector::ContractionOp::getOperationName(), canonicalize_extract},
       {vector::MultiDimReductionOp::getOperationName(),
        canonicalize_multi_dim_reduction},
-      {arith::SelectOp::getOperationName(), canonicalize_select}};
+      {arith::SelectOp::getOperationName(), canonicalize_select},
+      {tpu::RepeatOp::getOperationName(), canonicalize_repeat}};
   return *rules;
 }
 

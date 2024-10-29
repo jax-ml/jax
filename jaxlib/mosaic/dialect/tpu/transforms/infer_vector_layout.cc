@@ -288,10 +288,6 @@ class VectorLayoutInferer {
         if (infer(op).failed()) {
           return failure();
         }
-      } else if (auto op = dyn_cast<tpu::RepeatOp>(any_op)) {
-        if (infer(op).failed()) {
-          return failure();
-        }
       } else if (auto op = dyn_cast<tpu::TraceOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
@@ -1017,12 +1013,6 @@ class VectorLayoutInferer {
                           : src_offsets[0],
                       src_offsets[1]},
                      nativeTiling(out_bitwidth), implicit_dim));
-    return success();
-  }
-
-  LogicalResult infer(tpu::RepeatOp op) {
-    auto src_layout = getLayout(op.getSource());
-    setLayout(op, src_layout, src_layout);
     return success();
   }
 

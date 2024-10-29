@@ -295,6 +295,8 @@ def TPU_IotaOp : TPU_Op<"iota", [Pure]> {
   let assemblyFormat = [{ attr-dict `:` type($output) }];
 }
 
+// TODO(mvoz): deprecated - use concat. Canonicalization will do so automatically.
+// b/376295711
 def TPU_RepeatOp : TPU_Op<"repeat", [Pure]> {
   let arguments = (ins
     AnyVector:$source,
