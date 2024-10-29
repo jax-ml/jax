@@ -295,12 +295,18 @@ def check_is_flash_attention(
     _, T, _, H = query.shape
     _, S, _, _ = key.shape
 
-  if (H > 128 or H % 8 != 0 or
-      (is_training and has_bias and (T % 2 != 0 or S % 2 != 0))):
+  # Check the head dim.
+  is_on_hopper = check_compute_capability("9.0")
+  H_max = 256 if cudnn_version >= 90500 and is_on_hopper else 128
+  if not (H <= H_max and H % 8 == 0):
+    raise NotImplementedError(
+        f"The head dim must be <= {H_max} and a mutiple of 8, but got {H}.")
+
+  if (is_training and has_bias and (T % 2 != 0 or S % 2 != 0)):
     # check if flash attention is supported
     # for training, for patterns with bias, seqlen should be divisible by 2
     raise NotImplementedError(
-      f"Unsupported sequence length Q {T}, KV {S} and head dim {H}.")
+      f"Unsupported sequence length Q {T}, KV {S}.")
   # check if minimum cudnn version requirement is satisfied
   if cudnn_version < 8904:
     raise RuntimeError(
