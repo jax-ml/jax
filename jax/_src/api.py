@@ -2440,6 +2440,13 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
 def _device_get(x):
   if isinstance(x, core.Tracer):
     return x
+  if dtypes.issubdtype(getattr(x, "dtype", None), dtypes.extended):
+    try:
+      to_device = x.dtype._rules.device_get
+    except AttributeError:
+      pass
+    else:
+      return to_device(x)
   try:
     toarray = x.__array__
   except AttributeError:
