@@ -756,6 +756,7 @@ class OpsTest(PallasBaseTest):
           ["float32", "float64"],
       ),
       ([lax.population_count, lax.clz, jnp.invert], ["int32", "int64"]),
+      ([jnp.logical_not], ["bool"])
   ]
 
   @parameterized.named_parameters(
@@ -791,6 +792,14 @@ class OpsTest(PallasBaseTest):
         jnp.cbrt, jnp.cosh, jnp.expm1, jnp.sinh,
     ):
       self.skipTest(f"{fn.__name__} not implemented on TPU")
+
+    # TODO: https://github.com/jax-ml/jax/issues/24243
+    if (
+        jtu.test_device_matches(["tpu"])
+        and fn == jnp.logical_not
+        and not self.INTERPRET
+    ):
+      self.skipTest("logical_not on TPU is only supported in interpret mode")
 
     @functools.partial(
         self.pallas_call,
