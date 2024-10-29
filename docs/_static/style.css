@@ -1,5 +1,52 @@
 @import url("theme.css");
 
+/* Base LP sidebar modifications */
+/* TODO: uncomment the following code to remove the sidebar on the LP */
+/* body:has(.hero) .bd-sidebar-primary,
+body:has(.hero) .sidebar-toggle,
+body:has(.hero) .bd-sidebar-secondary {
+    display: none !important;
+}
+
+body:has(.hero) .prev-next-footer {
+    display: none;
+}
+
+body:has(.hero) .bd-article-container {
+    max-width: unset !important;
+}
+
+body:has(.hero) .bd-page-width {
+    max-width: unset !important;
+}
+
+body:has(.hero) .bd-article {
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+}
+
+body:has(.hero) .bd-container {
+    flex-direction: column;
+}
+
+@media (min-width: 960px) {
+    body:has(.hero) .bd-header-article {
+        justify-content: center;
+    }
+
+    body:has(.hero) .header-article-items,
+    body:has(.hero) .bd-article > section {
+        max-width: 65rem !important;
+        align-self: center;
+        width: -moz-available;
+        width: -webkit-fill-available;
+        width: fill-available;
+    }
+} */
+
+/* Custom CSS */
+
 :root {
   --block-bg-opacity: .5;
 }
@@ -29,7 +76,7 @@
 .getting-started,
 .user-guides,
 .developer-docs {
-  background: #3C4043;
+  background: #A9CAFF;
   height: 170px;
   border: none !important;
 }
@@ -63,7 +110,7 @@
 .getting-started svg,
 .user-guides svg,
 .developer-docs svg {
-  color: #80CBC4;
+  color: #1967D2;
 }
 
 .getting-started:hover svg,
@@ -138,8 +185,8 @@
 }
 
 .color-cards {
-  background: #202124;
-  color: white;
+  background: #D2E3FC;
+  color: #222832;
   padding: 48px 12px 0 12px;
   margin-bottom: 0 !important;
 }
@@ -149,24 +196,51 @@
 }
 
 .color-cards + p {
-  background: #202124;
+  background: #D2E3FC;
   padding: 24px 12px 48px 12px;
   font-weight: 600;
-  color: white;
+  color: #222832;
 }
 
 .color-cards + p > a {
-  color: white;
+  color: #222832;
 }
 
-.color-cards + p > a:hover {
+.color-cards + p > a:hover,
+html[data-theme="dark"] .color-cards + p > a:hover {
   color: #e89217;
 }
 
 html[data-theme="dark"] .color-cards,
 html[data-theme="dark"] .hero,
-html[data-theme="dark"] .color-cards + p {
-  background: #202124
+html[data-theme="dark"] .color-cards + p,
+html[data-theme="dark"] .color-cards + p > a {
+  background: #202124;
+  color: white;
+}
+
+html[data-theme="dark"] .getting-started,
+html[data-theme="dark"] .user-guides,
+html[data-theme="dark"] .developer-docs {
+  background: #455A64;
+}
+
+html[data-theme="dark"] .getting-started:hover,
+html[data-theme="dark"] .user-guides:hover,
+html[data-theme="dark"] .developer-docs:hover {
+  background: #80CBC4;
+}
+
+html[data-theme="dark"] .getting-started svg,
+html[data-theme="dark"] .user-guides svg,
+html[data-theme="dark"] .developer-docs svg {
+  color: #7BAAF7;
+}
+
+html[data-theme="dark"] .getting-started:hover svg,
+html[data-theme="dark"] .user-guides:hover svg,
+html[data-theme="dark"] .developer-docs:hover svg {
+  color: #3C4043;
 }
 
 .ecosystem-grid {
