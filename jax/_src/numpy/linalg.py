@@ -532,7 +532,7 @@ def slogdet(a: ArrayLike, *, method: str | None = None) -> SlogdetResult:
   a, = promote_dtypes_inexact(jnp.asarray(a))
   a_shape = jnp.shape(a)
   if len(a_shape) < 2 or a_shape[-1] != a_shape[-2]:
-    raise ValueError("Argument to slogdet() must have shape [..., n, n], got {a_shape}")
+    raise ValueError(f"Argument to slogdet() must have shape [..., n, n], got {a_shape}")
   if method is None or method == "lu":
     return SlogdetResult(*_slogdet_lu(a))
   elif method == "qr":
