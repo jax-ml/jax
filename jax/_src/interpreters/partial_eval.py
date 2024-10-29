@@ -595,7 +595,7 @@ def trace_to_subjaxpr_nounits2(
         trace, instantiate, in_pvals)
     out_pvals = [t.pval for t in out_tracers]
     del out_tracers
-    yield jaxpr, (out_pvals, out_consts, env)
+  yield jaxpr, (out_pvals, out_consts, env)
 
 def _trace_to_subjaxpr_nounits(trace:JaxprTrace, instantiate, in_pvals):
   in_knowns  = [pval.is_known()     for pval in in_pvals]
@@ -641,7 +641,7 @@ def trace_to_subjaxpr_nounits_fwd(
     pruned_consts = [c for c, fwd in zip(out_consts, fwds) if fwd is None]
 
     del out_tracers
-    yield jaxpr, (fwds, out_pvals, pruned_consts, env)
+  yield jaxpr, (fwds, out_pvals, pruned_consts, env)
 
 # The below variant implements two optimizations:
 #  1. residuals that are also primal inputs are indicated in aux data rather
