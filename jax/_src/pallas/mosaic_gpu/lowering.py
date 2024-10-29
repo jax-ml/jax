@@ -1217,7 +1217,7 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
   grid_names = ctx.module_ctx.grid_mapping.grid_names
   if grid_names and axis_name in grid_names:
     if axis_name == grid_names[-1]:
-      return mgpu.warpgroup_idx(sync=False)
+      return mgpu.warpgroup_idx(sync=True)
     else:
       idx = grid_names.index(axis_name)
       return arith_dialect.index_cast(
