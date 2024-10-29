@@ -401,6 +401,11 @@ class KeyTyRules:
     return PRNGKeyArray(aval.dtype._impl, phys_result)
 
   @staticmethod
+  def device_get(val):
+    buffer = api.device_get(random_unwrap(val))
+    return random_wrap(buffer, impl=val.dtype._impl)
+
+  @staticmethod
   def device_put_sharded(vals, aval, sharding, devices):
     physical_aval = core.physical_aval(aval)
     physical_buffers = tree_util.tree_map(random_unwrap, vals)
