@@ -1477,7 +1477,16 @@ numpy_rank_promotion = enum_state(
 
 default_matmul_precision = optional_enum_state(
     name='jax_default_matmul_precision',
-    enum_values=['default', 'high', 'highest', 'bfloat16', 'tensorfloat32', 'float32'],
+    enum_values=[
+        # Legacy precision API values
+        'default', 'high', 'highest', 'bfloat16', 'tensorfloat32', 'float32',
+        # Dot algorithm presets
+        'ANY_F8_ANY_F8_F32', 'ANY_F8_ANY_F8_F32_FAST_ACCUM', 'ANY_F8_ANY_F8_ANY',
+        'ANY_F8_ANY_F8_ANY_FAST_ACCUM', 'F16_F16_F16', 'F16_F16_F32',
+        'BF16_BF16_BF16', 'BF16_BF16_F32', 'BF16_BF16_F32_X3',
+        'BF16_BF16_F32_X6', 'TF32_TF32_F32', 'TF32_TF32_F32_X3', 'F32_F32_F32',
+        'F64_F64_F64',
+    ],
     default=None,
     help=('Control the default matmul and conv precision for 32bit inputs.\n\n'
 
@@ -1494,7 +1503,12 @@ default_matmul_precision = optional_enum_state(
           'convolution on 32bit inputs. The levels roughly describe the '
           "precision at which scalar products are computed. The 'bfloat16' "
           "option is the fastest and least precise; 'float32' is similar to "
-          "full float32 precision; 'tensorfloat32' is intermediate.\n\n"),
+          "full float32 precision; 'tensorfloat32' is intermediate.\n\n"
+
+          'This parameter can also be used to specify an accumulation '
+          '"algorithm" for functions that perform matrix multiplications, like '
+          ':func:`jax.lax.dot`. To specify an algorithm, set this option to '
+          'the name of a :class:`~jax.lax.DotAlgorithmPreset`.\n\n'),
     update_global_hook=lambda val: \
       _update_global_jit_state(default_matmul_precision=val),
     update_thread_local_hook=lambda val: \
