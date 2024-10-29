@@ -497,6 +497,7 @@ class GPUMesh:
   # Those are NOT CUDA threads. On Hopper they correspond to warpgroups.
   num_threads: int | None = None
   axis_names: tuple[str, ...] = ()
+  approx_math: bool = False
 
   def __post_init__(self):
     if len(self.axis_names) != len(self.grid) + (self.num_threads is not None):
@@ -547,9 +548,8 @@ def _gpu_mesh_discharge_rule(
       jaxpr=jaxpr,
       grid=tuple(mesh.shape.items()),
       backend="mosaic_gpu",
-      compiler_params=GPUCompilerParams(),
+      compiler_params=GPUCompilerParams(approx_math=mesh.approx_math),
   )
-
 pallas_core._core_map_mesh_rules[GPUMesh] = _gpu_mesh_discharge_rule
 
 

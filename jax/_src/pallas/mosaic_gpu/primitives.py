@@ -108,7 +108,7 @@ def copy_smem_to_gmem(
   """
   if src.memory_space is not gpu_core.SMEM:
     raise TypeError(f"src must be a SMEM reference, got {src.memory_space}")
-  if dst.memory_space is not gpu_core.GMEM:
+  if getattr(dst, "memory_space", gpu_core.GMEM) is not gpu_core.GMEM:
     raise ValueError(f"dst must be a GMEM reference, got {dst.memory_space}")
   src, src_transforms = state_primitives.get_ref_and_transforms(
       src, None, "copy_smem_to_gmem", force_trailing_indexer=False,
@@ -203,7 +203,7 @@ def copy_gmem_to_smem(
     :func:`jax.experimental.mosaic.gpu.barrier_arrive`
     :func:`jax.experimental.mosaic.gpu.barrier_wait`
   """
-  if src.memory_space is not gpu_core.GMEM:
+  if getattr(src, "memory_space", gpu_core.GMEM) is not gpu_core.GMEM:
     raise TypeError(f"src must be a GMEM reference, got {src.memory_space}")
   if dst.memory_space is not gpu_core.SMEM:
     raise ValueError(f"dst must be a SMEM reference, got {dst.memory_space}")

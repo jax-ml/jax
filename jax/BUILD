@@ -627,7 +627,7 @@ pytype_strict_library(
 
 pytype_strict_library(
     name = "pallas_gpu_ops",
-    srcs = glob(["experimental/pallas/ops/gpu/**/*.py"]),
+    srcs = ["//jax/experimental/pallas/ops/gpu:triton_ops"],
     visibility = [
         ":pallas_gpu_users",
     ],
@@ -635,6 +635,22 @@ pytype_strict_library(
         ":jax",
         ":pallas",
         ":pallas_gpu",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "pallas_experimental_gpu_ops",
+    testonly = True,
+    srcs = ["//jax/experimental/pallas/ops/gpu:mgpu_ops"],
+    visibility = [
+        ":mosaic_gpu_users",
+    ],
+    deps = [
+        ":jax",
+        ":mosaic_gpu",
+        ":pallas",
+        ":pallas_mosaic_gpu",
+        ":test_util",  # This is only to make them runnable as jax_multiplatform_test...
     ] + py_deps("numpy"),
 )
 

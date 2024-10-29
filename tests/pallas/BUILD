@@ -467,3 +467,30 @@ jax_multiplatform_test(
         "//jax:pallas_gpu_ops",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
+
+jax_multiplatform_test(
+    name = "mgpu_attention_run",
+    srcs = ["//jax/experimental/pallas/ops/gpu:attention_mgpu.py"],
+    enable_backends = [],
+    enable_configs = ["gpu_h100_x32"],
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_mosaic_gpu",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
+    name = "mgpu_attention_test",
+    srcs = ["mgpu_attention_test.py"],
+    enable_backends = [],
+    enable_configs = ["gpu_h100_x32"],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_experimental_gpu_ops",
+        "//jax:pallas_mosaic_gpu",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
