@@ -31,6 +31,11 @@ def TPU_Dialect : Dialect {
   let cppNamespace = "::mlir::tpu";
   let useDefaultAttributePrinterParser = 1;
   let useDefaultTypePrinterParser = 1;
+  let extraClassDeclaration = [{
+    static StringRef GetCoreTypeKey() { return "tpu.core_type"; }
+
+    static std::optional<CoreType> GetCoreTypeAttr(Operation *op);
+  }];
 }
 
 class TPU_Attr<string name, string mnemonic_, list<Trait> traits = []>
@@ -44,6 +49,19 @@ def TPU_Vreg : Type<IsVectorTypePred, "native-sized vreg", "::mlir::VectorType">
 class TPU_Type<string name, string mnemonic_, list<Trait> traits = []>
     : TypeDef<TPU_Dialect, name, traits> {
   let mnemonic = mnemonic_;
+}
+
+def TPU_CoreType : I32EnumAttr<"CoreType", "Core type", [
+  I32EnumAttrCase<"kTc", 0, "tc">,
+  I32EnumAttrCase<"kScScalarSubcore", 1, "sc_scalar_subcore">,
+  I32EnumAttrCase<"kScVectorSubcore", 2, "sc_vector_subcore">
+]> {
+    let genSpecializedAttr = 0;
+    let cppNamespace = "::mlir::tpu";
+}
+
+def TPU_CoreTypeEnum : EnumAttr<TPU_Dialect, TPU_CoreType, "core_type"> {
+    let assemblyFormat = "`<` $value `>`";
 }
 
 def TPU_SemaphoreType : TPU_Type<"Semaphore", "semaphore", [MemRefElementTypeInterface]>;

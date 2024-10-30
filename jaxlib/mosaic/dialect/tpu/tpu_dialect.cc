@@ -19,6 +19,7 @@ limitations under the License.
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -66,6 +67,18 @@ void TPUDialect::initialize() {
 #define GET_OP_LIST
 #include "jaxlib/mosaic/dialect/tpu/tpu_ops.cc.inc"
       >();
+}
+
+/* static */ std::optional<CoreType> TPUDialect::GetCoreTypeAttr(
+    Operation *op) {
+  Attribute attr = op->getAttr(GetCoreTypeKey());
+  if (attr == nullptr) {
+    return std::nullopt;
+  }
+  if (!mlir::isa<CoreTypeAttr>(attr)) {
+    return std::nullopt;
+  }
+  return mlir::cast<CoreTypeAttr>(attr).getValue();
 }
 
 void VectorLayoutAttr::print(AsmPrinter &printer) const {
