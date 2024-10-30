@@ -1409,9 +1409,6 @@ jax_multiplatform_test(
         "tpu_v3_2x2",
     ],
     tags = [],
-    deps = [
-        "//jax/experimental/export",
-    ],
 )
 
 jax_multiplatform_test(

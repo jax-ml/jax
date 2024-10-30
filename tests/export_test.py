@@ -244,22 +244,6 @@ class JaxExportTest(jtu.JaxTestCase):
                                 "Function to be exported must be the result of `jit`"):
       _ = export.export(lambda x: jnp.sin(x))
 
-  @jtu.ignore_warning(category=DeprecationWarning,
-                      message="The jax.experimental.export module is deprecated")
-  def test_export_experimental_back_compat(self):
-    if not CAN_SERIALIZE:
-      self.skipTest("serialization disabled")
-    from jax.experimental import export
-    # Can export a lambda, without jit
-    exp = export.export(lambda x: jnp.sin(x))(.1)
-    self.assertAllClose(exp.call(1.), np.sin(1.))
-
-    blob = export.serialize(exp, vjp_order=1)
-    rehydrated = export.deserialize(blob)
-
-    self.assertAllClose(export.call(exp)(1.), np.sin(1.))
-    self.assertAllClose(export.call_exported(exp)(1.), np.sin(1.))
-
   def test_call_exported_lambda(self):
     # When we export a lambda, the exported.fun_name is not a valid MLIR function name
     f = jax.jit(lambda x: jnp.sin(x))
