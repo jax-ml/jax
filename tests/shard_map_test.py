@@ -1235,7 +1235,11 @@ class ShardMapTest(jtu.JaxTestCase):
 
     hlo_str = mlir.module_to_string(jax.jit(foo).lower(x).compiler_ir('stablehlo'))
     if config.use_shardy_partitioner.value:
-      self.assertEqual(2, hlo_str.count('sdy.manual_computation'))
+      if len(jax.devices()) > 1:
+        self.assertEqual(2, hlo_str.count('sdy.manual_computation'))
+      else:
+        # When devices == 1, the `sdy.manual_computation` is inlined.
+        self.assertEqual(0, hlo_str.count('sdy.manual_computation'))
     else:
       self.assertIn('call @shmap_body', hlo_str)
       self.assertIn('call @shmap_body_0', hlo_str)
