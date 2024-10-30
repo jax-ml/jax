@@ -25,6 +25,7 @@ from jax._src import config
 from jax._src.layout import Layout, DeviceLocalLayout as DLL
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip
+from jax.experimental.compute_on import compute_on
 
 config.parse_flags_with_absl()
 
@@ -599,6 +600,29 @@ class LayoutTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, ".*Did you mean to set the.*input layout.*AUTO.*"):
       g(jnp.arange(8))
+
+  def test_sparsecore_compute(self):
+    if not (jtu.is_device_tpu('5', 'f') or jtu.is_device_tpu_at_least(6)):
+      self.skipTest('Does not have a sparsecore present')
+    shape = (128, 128)
+    inp = jnp.arange(math.prod(shape)).reshape(shape)
+
+    dll = DLL(major_to_minor=(0, 1), _tiling=((8,),))
+    s = SingleDeviceSharding(jax.devices()[0])
+    sparse_layout = Layout(dll, s)
+    sparecore_arr = jax.device_put(inp, sparse_layout)
+    dense_layout = Layout(DLL(major_to_minor=(0, 1)), s)
+
+    @compute_on('tpu_sparsecore')
+    @jax.jit
+    def sparsecore_compute(x):
+      return x * x
+
+    @partial(jax.jit, out_shardings=(dense_layout, sparse_layout))
+    def f(x, y):
+      return x * 2, sparsecore_compute(y)
+
+    f(inp, sparecore_arr)
 
 
 if __name__ == '__main__':

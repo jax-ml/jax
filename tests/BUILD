@@ -271,6 +271,9 @@ jax_multiplatform_test(
         "tpu": ["requires-mem:16g"],  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
     },
     tags = ["multiaccelerator"],
+    deps = [
+        "//jax:experimental",
+    ],
 )
 
 jax_multiplatform_test(
