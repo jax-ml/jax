@@ -602,7 +602,8 @@ class LayoutTest(jtu.JaxTestCase):
       g(jnp.arange(8))
 
   def test_sparsecore_compute(self):
-    if not (jtu.is_device_tpu('5', 'f') or jtu.is_device_tpu_at_least(6)):
+    if not (jax.devices()[0].device_kind == 'TPU v5' or
+            jtu.is_device_tpu_at_least(6)):
       self.skipTest('Does not have a sparsecore present')
     shape = (128, 128)
     inp = jnp.arange(math.prod(shape)).reshape(shape)
