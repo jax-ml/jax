@@ -46,6 +46,7 @@ from jax._src.lib.mlir.dialects import math as math_dialect
 from jax._src.lib.mlir.dialects import scf as scf_dialect
 from jax._src.lib.triton import dialect as tt_dialect
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.state import discharge
@@ -70,6 +71,7 @@ NDIndexer = indexing.NDIndexer
 GridMapping = pallas_core.GridMapping
 BlockMapping = pallas_core.BlockMapping
 Blocked = pallas_core.Blocked
+LoweringError = pallas_call.LoweringError
 
 
 # # General lowering logic
@@ -105,10 +107,6 @@ class LoweringResult:
 
   module: ir.Module
   grid: tuple[int, ...]
-
-
-class LoweringError(Exception):
-  pass
 
 
 def _eval_index_map(

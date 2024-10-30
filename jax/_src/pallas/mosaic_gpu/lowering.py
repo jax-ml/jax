@@ -40,6 +40,7 @@ from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.lib.mlir.dialects import scf as scf_dialect
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic_gpu import core as gpu_core
@@ -59,6 +60,8 @@ import numpy as np
 # TODO(slebedev): Enable type checking.
 # mypy: ignore-errors
 # pytype: skip-file
+
+LoweringError = pallas_call.LoweringError
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -282,10 +285,6 @@ class LoweringResult:
 class ProfilerContext:
   dump_path: str
   spec: mgpu_profiler.ProfilerSpec
-
-
-class LoweringError(Exception):  # pylint: disable=g-bad-exception-name
-  pass
 
 
 def _eval_index_map(

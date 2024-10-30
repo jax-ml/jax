@@ -1461,6 +1461,10 @@ def _unsupported_lowering_error(platform: str) -> Exception:
 _Backend = Literal["mosaic_tpu", "triton", "mosaic_gpu"]
 
 
+class LoweringError(Exception):
+  pass
+
+
 def _pallas_call_lowering(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,

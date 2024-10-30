@@ -50,6 +50,7 @@ from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
@@ -73,6 +74,8 @@ import numpy as np
 
 # TODO(sharadmv): enable type checking
 # mypy: ignore-errors
+
+LoweringError = pallas_call.LoweringError
 
 NDIndexer = indexing.NDIndexer
 TPUMemorySpace = tpu_core.TPUMemorySpace
@@ -746,10 +749,6 @@ def lower_fun(fun: Callable, *, multiple_results: bool) -> Callable:
   return f_lowered
 
 
-class LoweringException(Exception):
-  pass
-
-
 def _compute_name_stack_updates(
     old_name_stack: list[str],
     new_name_stack: list[str]
@@ -834,13 +833,13 @@ def jaxpr_subcomp(
           ans = lowering_rules[eqn.primitive](
               rule_context, *invals, **eqn.params
           )
-        except LoweringException:
+        except LoweringError:
           raise  # We only add the extra info to the innermost exception.
         except Exception as e:
           msg = (f"{type(e).__name__}: {e}\n" +
                 "Additional diagnostics: \n" +
                 f"Failing jaxpr equation: {eqn}\n")
-          new_error = LoweringException(msg)
+          new_error = LoweringError(msg)
           # We insert the traceback here so that the user code shows
           # up in the traceback for the post-transform error.
           if source_info.traceback is not None:
