@@ -46,6 +46,7 @@ from jax._src.lib.mlir.dialects import math as math_dialect
 from jax._src.lib.mlir.dialects import scf as scf_dialect
 from jax._src.lib.triton import dialect as tt_dialect
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.state import discharge
@@ -390,6 +391,8 @@ def lower_jaxpr_to_triton_ir(
     except LoweringError:
       raise  # We only add the extra info to the innermost exception.
     except Exception as e:
+      if not pallas_call._verbose_errors_enabled():
+          raise
       inval_types = map(lambda t: getattr(t, "type", None), invals)
       raise LoweringError(
           f"Exception while lowering eqn:\n  {eqn}\nWith context:\n "

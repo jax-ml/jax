@@ -1448,6 +1448,17 @@ _PALLAS_USE_MOSAIC_GPU = config.bool_flag(
         " dialect, instead of Trition IR."
     ),
 )
+_PALLAS_VERBOSE_ERRORS = config.bool_flag(
+    "jax_pallas_verbose_errors",
+    default=config.bool_env("JAX_PALLAS_VERBOSE_ERRORS", True),
+    help=(
+        "If True, print verbose error messages for Pallas kernels."
+    ),
+)
+
+
+def _verbose_errors_enabled() -> bool:
+  return _PALLAS_VERBOSE_ERRORS.value
 
 
 def _unsupported_lowering_error(platform: str) -> Exception:
