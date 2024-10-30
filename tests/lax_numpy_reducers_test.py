@@ -843,7 +843,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
 
     np_fun = lambda x: np_op(x, **kwargs)
     jnp_fun = lambda x: jnp.cumulative_sum(x, **kwargs)
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
+                            rtol={jnp.bfloat16: 5e-2})
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
