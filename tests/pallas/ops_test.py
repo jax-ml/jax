@@ -721,6 +721,28 @@ class OpsTest(PallasBaseTest):
         expected.astype(jnp.float32),
     )
 
+  # TODO(twsung): Add more types once lowering is implemented.
+  @parameterized.parameters(
+      jnp.float32,
+      jnp.bfloat16,
+      jnp.int32,
+  )
+  def test_add_constant(self, dtype):
+
+    shape = (256, 256)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1
+
+    np.testing.assert_array_equal(
+        kernel(jnp.zeros(shape, dtype=dtype)),
+        jnp.ones(shape, dtype=dtype),
+    )
+
   @parameterized.parameters(
       -3.2, -1.0, -0.999517, -0.4, 0., 0.72, 0.999517, 1.0, 2.4,
   )
