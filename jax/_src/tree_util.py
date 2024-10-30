@@ -615,7 +615,7 @@ def prefix_errors(prefix_tree: Any, full_tree: Any,
   return list(_prefix_error((), prefix_tree, full_tree, is_leaf))
 
 
-# equality_errors is not exported
+@export
 def equality_errors(
     tree1: Any, tree2: Any, is_leaf: Callable[[Any], bool] | None = None,
 ) -> Iterable[tuple[KeyPath, str, str, str]]:

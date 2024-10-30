@@ -50,6 +50,7 @@ from jax._src.tree_util import (
     all_leaves as all_leaves,
     build_tree as build_tree,
     default_registry as default_registry,
+    equality_errors as equality_errors,
     keystr as keystr,
     register_pytree_node_class as register_pytree_node_class,
     register_pytree_node as register_pytree_node,
