@@ -84,7 +84,7 @@ SMEM = tpu_core.TPUMemorySpace.SMEM
 BOOL_MEMREF_TYPE = np.dtype('int32')
 
 # The value interpreted as a dynamic dimension by MLIR.
-MLIR_DYNAMIC = -9223372036854775808
+MLIR_DYNAMIC = ir.ShapedType.get_dynamic_size()
 
 partial = functools.partial
 map, unsafe_map = safe_map, map  # pylint: disable=redefined-builtin
