@@ -572,16 +572,6 @@ def _generate_logical_mesh(
   return logical_mesh
 
 
-def _bounds_from_last_device(last_device) -> Sequence[int]:
-  """Gets the bound from the given last device."""
-  # Must be passed the device at the highest-coordinate corner of the
-  # relevant mesh, which is a requirement we know is satisfied by the last
-  # device in jax.devices().
-  assert hasattr(last_device, 'coords'), 'Only TPU supported'
-  x, y, z = last_device.coords
-  return x + 1, y + 1, z + 1, last_device.core_on_chip + 1
-
-
 def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
   r"""Rearrange TPU devices in a slice into a physical mesh.
 
