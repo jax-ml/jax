@@ -418,6 +418,10 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
   consts, carry, xs_ = split_list(args, [num_consts, num_carry])
   _, y_avals = split_list(jaxpr.out_avals, [num_carry])
   num_trips, remainder = divmod(length, unroll)
+  if unroll != 1 and num_trips == 1 and remainder == 0:
+    # In that case, we explicitly want to fully unroll the loop. Put everything
+    # into the remainder block and avoid lowering to a while loop.
+    num_trips, remainder = 0, length
   if unroll == 1:
     xss = xs_
     yss = _map(partial(_empty_array, (length,)), y_avals)

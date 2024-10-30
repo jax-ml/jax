@@ -2424,6 +2424,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     scan = lambda c, xs: lax.scan(f, c, xs)
     scan_unrolled = lambda c, xs: lax.scan(f, c, xs, unroll=2)
+    scan_fully_unrolled = lambda c, xs: lax.scan(f, c, xs, unroll=True)
 
     # jaxprs should be the same size
     self.assertEqual(
@@ -2431,9 +2432,19 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         len(str(jax.make_jaxpr(scan_unrolled)(c, xs))))
 
     # but HLO should grow due to unrolling
-    self.assertLess(
-        len(str(jax.jit(scan).lower(c, xs).as_text('hlo'))),
-        len(str(jax.jit(scan_unrolled).lower(c, xs).as_text('hlo'))))
+    scan_hlo = str(jax.jit(scan).lower(c, xs).as_text("hlo"))
+    scan_unrolled_hlo = str(jax.jit(scan_unrolled).lower(c, xs).as_text("hlo"))
+    scan_fully_unrolled_hlo = str(
+        jax.jit(scan_fully_unrolled).lower(c, xs).as_text("hlo"))
+
+    self.assertLess(len(scan_hlo), len(scan_unrolled_hlo))
+    self.assertLess(len(scan_unrolled_hlo), len(scan_fully_unrolled_hlo))
+
+    # and the lowering should contain a while loop, unless the scan is fully
+    # unrolled
+    self.assertIn("while(", scan_hlo)
+    self.assertIn("while(", scan_unrolled_hlo)
+    self.assertNotIn("while(", scan_fully_unrolled_hlo)
 
   def test_scan_xs_none(self):
     def f(h, _):
