@@ -1439,7 +1439,8 @@ class VectorLayoutInferer {
       int64_t sublane_tiling = vreg_slice[0];
       do {
         auto src_res_tiled_equal = src_tiled_ishape[1] == res_tiled_ishape[1];
-        auto vreg_num_elements = target_shape_[0] * target_shape_[1];
+        auto vreg_num_elements =
+            target_shape_[0] * target_shape_[1] * layout.packing();
         auto single_subline_mod_1024 =
             (sublane_tiling == 1 &&
              src_tiled_ishape[1] % vreg_num_elements == 0 &&
