@@ -1558,12 +1558,6 @@ def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
       return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype)
 
 
-def _get_memory_space_from_ref(ref_aval: state.AbstractRef) -> Any:
-  if isinstance(ref_aval, pallas_core.AbstractMemoryRef):
-    return ref_aval.memory_space
-  return pallas_core.MemorySpace.ANY
-
-
 @state_discharge.register_discharge_rule(pallas_call_p)
 def _pallas_call_state_discharge_rule(
     avals_in,
