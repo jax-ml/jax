@@ -799,12 +799,6 @@ class CustomVJPCallPrimitive(core.CallPrimitive):
 
 custom_vjp_call_p = CustomVJPCallPrimitive('custom_vjp_call')
 
-def _apply_bwd_transform(todos, bwd):
-  todos_list = list(todos)
-  while todos_list:
-    bwd = todos_list.pop()(bwd)
-  return bwd
-
 def _custom_vjp_call_jaxpr_impl(*args, fun_jaxpr, **_):
   return core.jaxpr_as_fun(fun_jaxpr)(*args)
 

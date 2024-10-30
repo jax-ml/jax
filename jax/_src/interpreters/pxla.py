@@ -172,11 +172,6 @@ def is_default_layout(curr_layout, sharding, aval):
       raise
 
 
-@lru_cache(maxsize=1024)
-def _get_replicated_slices(num_addressable_devices: int):
-  return ((slice(None),),) * num_addressable_devices
-
-
 def _masked_array_error(xs, shardings, layouts):
   raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
                    "Use arr.filled() to convert the value to a standard numpy array.")
