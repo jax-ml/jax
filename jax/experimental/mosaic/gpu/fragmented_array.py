@@ -472,6 +472,35 @@ class FragmentedArray:
     else:
       return self._pointwise(lambda s, o: arith.remui(o, s), other)
 
+  def __invert__(self):
+    if not ir.IntegerType.isinstance(self.mlir_dtype):
+      return NotImplemented
+    return self ^ ~0
+
+  def __or__(self, other):
+    if not ir.IntegerType.isinstance(self.mlir_dtype):
+      return NotImplemented
+    return self._pointwise(arith.ori, other)
+
+  def __ror__(self, other):
+    return self | other
+
+  def __and__(self, other):
+    if not ir.IntegerType.isinstance(self.mlir_dtype):
+      return NotImplemented
+    return self._pointwise(arith.andi, other)
+
+  def __rand__(self, other):
+    return self & other
+
+  def __xor__(self, other):
+    if not ir.IntegerType.isinstance(self.mlir_dtype):
+      return NotImplemented
+    return self._pointwise(arith.xori, other)
+
+  def __rxor__(self, other):
+    return self ^ other
+
   def __eq__(self, other):
     return self._compare(
         other,
@@ -606,15 +635,6 @@ class FragmentedArray:
       else:
         raise NotImplementedError(x.type)
     return fast_instr
-
-  def __and__(self, other):
-    if not ir.IntegerType.isinstance(self.mlir_dtype):
-      raise ValueError(
-          "Bitwise operations only defined for integer types, not"
-          f" {self.mlir_dtype}"
-      )
-
-    return self._pointwise(arith.andi, other)
 
   def bitcast(self, elt: ir.Type):
     reg_type = self.registers.flat[0].type
