@@ -1912,17 +1912,6 @@ def reciprocal(x: ArrayLike) -> Array:
   r"""Elementwise reciprocal: :math:`1 \over x`."""
   return integer_pow(x, -1)
 
-def _upcast_fp16_for_computation(f):
-  @functools.wraps(f)
-  def f_wrapped(x):
-    dtype = _dtype(x)
-    if dtype == np.float16 or dtype == dtypes.bfloat16:
-      return convert_element_type(
-        f(convert_element_type(x, np.float32)), dtype)
-    return f(x)
-
-  return f_wrapped
-
 def tan(x: ArrayLike) -> Array:
   r"""Elementwise tangent: :math:`\mathrm{tan}(x)`."""
   return tan_p.bind(x)
