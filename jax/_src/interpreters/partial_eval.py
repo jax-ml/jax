@@ -540,6 +540,13 @@ class JaxprTracer(Tracer):
     else:
       return []
 
+  def full_lower(self):
+    known = self.pval.get_known()
+    if known is not None:
+      return core.full_lower(known)
+    else:
+      return self
+
   def is_known(self):
     return self.pval.is_known()
 

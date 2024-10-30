@@ -433,7 +433,9 @@ class Primitive:
 
   def bind(self, *args, **params):
     for arg in args:
-      if isinstance(arg, Tracer) and not arg._trace.is_valid():
+      if (isinstance(arg, Tracer)
+          and not arg._trace.is_valid()
+          and not config.data_dependent_tracing_fallback.value):
         raise escaped_tracer_error(arg)
     # TODO: figure out how to handle function arguments
     # assert (not config.enable_checks.value or
