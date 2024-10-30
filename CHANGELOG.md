@@ -20,6 +20,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * In `jax.interpreters.xla`, the `xb`, `xc`, and `xe` symbols have been removed
     after being deprecated in JAX v0.4.31. Instead use `xb = jax.lib.xla_bridge`,
     `xc = jax.lib.xla_client`, and `xe = jax.lib.xla_extension`.
+  * The deprecated module `jax.experimental.export` has been removed. It was replaced
+    by {mod}`jax.export` in JAX v0.4.30. See the [migration guide](https://jax.readthedocs.io/en/latest/export/export.html#migration-guide-from-jax-experimental-export)
+    for information on migrating to the new API.
 
 ## jax 0.4.35 (Oct 22, 2024)
 
