@@ -40,7 +40,7 @@ from jax._src.api_util import (flattened_fun_in_tree, flatten_fun_nokwargs,
                                fun_sourceinfo)
 from jax._src.core import (Trace, Tracer, TraceTag, Jaxpr, Literal, get_aval,
                            AbstractValue, ClosedJaxpr, new_jaxpr_eqn,
-                           ConcreteArray, Var, DropVar, raise_to_shaped, Atom,
+                           Var, DropVar, raise_to_shaped, Atom,
                            JaxprEqn, Primitive, ShapedArray, DShapedArray,
                            mapped_aval, unmapped_aval, DBIdx, InDBIdx, OutDBIdx,
                            InputType, OutputType, get_referent, JaxprEqnContext)
@@ -299,7 +299,6 @@ class JaxprTrace(Trace['JaxprTracer']):
       # With dynamic shapes, we may need to substitute Tracers into avals.
       out_tracers = []
       for aval, _ in out_type:
-        assert not isinstance(aval, ConcreteArray)
         if type(aval) is DShapedArray:
           shape = [[*res_tracers, *env_tracers, *unknown_arg_tracers][d.val]
                   if type(d) is InDBIdx else d for d in aval.shape]

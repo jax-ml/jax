@@ -35,7 +35,7 @@ from jax._src import source_info_util
 from jax._src import state
 from jax._src import util
 from jax._src.api_util import shaped_abstractify
-from jax._src.core import ConcreteArray, ShapedArray, raise_to_shaped
+from jax._src.core import ShapedArray, raise_to_shaped
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -2015,12 +2015,11 @@ def fori_loop(lower, upper, body_fun, init_val,
 
   # If we can specialize on the trip count, call scan instead of a while_loop
   # to enable efficient reverse-mode differentiation.
-  if (isinstance(core.get_aval(lower), ConcreteArray) and
-      isinstance(core.get_aval(upper), ConcreteArray)):
+  if core.is_concrete(lower) and core.is_concrete(upper):
     try:
       lower_ = int(lower)
       upper_ = int(upper)
-    except TypeError:
+    except (TypeError, core.InconclusiveDimensionOperation):
       use_scan = False
     else:
       use_scan = True

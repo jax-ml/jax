@@ -3691,18 +3691,6 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       g(1)
 
-  def test_join_concrete_arrays_with_omnistaging(self):
-    # https://github.com/jax-ml/jax/issues/4622
-    x = jnp.array([1., 2., 3.])
-    y = jnp.array([1., 2., 4.])
-
-    @jit
-    def f():
-      core.lattice_join(core.ConcreteArray(x.dtype, x),
-                        core.ConcreteArray(y.dtype, y))
-
-    f()  # doesn't crash
-
   def test_linearize_aux(self):
     def fn(x):
       return x * 2 - 3, x > 0

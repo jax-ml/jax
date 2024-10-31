@@ -35,7 +35,7 @@ from jax._src import source_info_util
 from jax._src import util
 from jax._src.state.discharge import register_partial_discharge_rule, discharge_state
 from jax._src.state.types import AbstractRef, RefEffect
-from jax._src.core import ConcreteArray, raise_to_shaped, replace_jaxpr_effects
+from jax._src.core import raise_to_shaped, replace_jaxpr_effects
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -130,8 +130,7 @@ def switch(index, branches: Sequence[Callable], *operands,
   hi = np.array(len(branches) - 1, np.int32)
   index = lax.clamp(lo, index, hi)
 
-  if (config.disable_jit.value and
-      isinstance(core.get_aval(index), ConcreteArray)):
+  if (config.disable_jit.value and core.is_concrete(index)):
     return branches[int(index)](*operands)
 
   ops, ops_tree = tree_flatten(operands)
@@ -220,7 +219,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
       msg = ("Pred type must be either boolean or number, got {}.")
       raise TypeError(msg.format(pred_dtype))
 
-  if config.disable_jit.value and isinstance(core.get_aval(pred), ConcreteArray):
+  if config.disable_jit.value and core.is_concrete(pred):
     if pred:
       return true_fun(*operands)
     else:

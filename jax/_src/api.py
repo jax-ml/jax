@@ -56,7 +56,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import pjit
 from jax._src import xla_bridge as xb
-from jax._src.core import eval_jaxpr, ShapedArray, ConcreteArray
+from jax._src.core import eval_jaxpr, ShapedArray
 from jax._src.api_util import (
     flatten_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2, argnums_partial,
     flatten_axes, donation_vector,
@@ -2188,9 +2188,9 @@ def _infer_src_sharding(src, x) -> Sharding | None:
   if isinstance(x, array.ArrayImpl):
     return x.sharding
   elif isinstance(x, core.Tracer):
-    aval = core.get_aval(x)
-    if isinstance(aval, ConcreteArray) and isinstance(aval.val, array.ArrayImpl):
-      return aval.val.sharding
+    val = x.to_concrete_value()
+    if val is not None and isinstance(val, array.ArrayImpl):
+      return val.sharding
   return None
 
 

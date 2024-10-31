@@ -19,7 +19,7 @@ from collections.abc import (Callable, Collection, Hashable, Iterable, Iterator,
 from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass
 import functools
-from functools import partial, partialmethod, total_ordering
+from functools import partial, total_ordering
 import gc
 import inspect
 import itertools as it
@@ -696,6 +696,10 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
   def __len__(self):
     return self.aval._len(self)
 
+  def to_concrete_value(self):
+    # Should return the concrete value if there is one, or else None.
+    return None
+
   @property
   def sharding(self):
     # This attribute is part of the jax.Array API, but only defined on concrete arrays.
@@ -739,10 +743,12 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
     return self  # Override for object equivalence checking
 
   def __bool__(self):
+    if is_concrete(self): return bool(self.to_concrete_value())  # pytype: disable=wrong-arg-types
     check_bool_conversion(self)
     return self.aval._bool(self)
 
   def __int__(self):
+    if is_concrete(self): return int(self.to_concrete_value())  # pytype: disable=wrong-arg-types
     check_scalar_conversion(self)
     return self.aval._int(self)
 
@@ -755,14 +761,17 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
     return self.aval._complex(self)
 
   def __hex__(self):
+    if is_concrete(self): return hex(self.to_concrete_value())  # pytype: disable=wrong-arg-types
     check_integer_conversion(self)
     return self.aval._hex(self)
 
   def __oct__(self):
+    if is_concrete(self): return oct(self.to_concrete_value())  # pytype: disable=wrong-arg-types
     check_integer_conversion(self)
     return self.aval._oct(self)
 
   def __index__(self):
+    if is_concrete(self): return operator.index(self.to_concrete_value())  # pytype: disable=wrong-arg-types
     check_integer_conversion(self)
     return self.aval._index(self)
 
@@ -1393,12 +1402,16 @@ def get_aval(x):
   else:
     return concrete_aval(x)
 
-def get_type(x):
-  aval = get_aval(x)
-  if isinstance(aval, ConcreteArray):
-    return raise_to_shaped(aval)
+get_type = get_aval
+
+def is_concrete(x):
+  return to_concrete_value(x) is not None
+
+def to_concrete_value(x):
+  if isinstance(x, Tracer):
+    return x.to_concrete_value()
   else:
-    return aval
+    return x
 
 def concretization_function_error(fun, suggest_astype=False):
   fname = getattr(fun, "__name__", fun)
@@ -1423,10 +1436,11 @@ def concrete_or_error(force: Any, val: Any, context=""):
   if force is None:
     force = lambda x: x
   if isinstance(val, Tracer):
-    if isinstance(val.aval, ConcreteArray):
-      return force(val.aval.val)
-    else:
+    maybe_concrete = val.to_concrete_value()
+    if maybe_concrete is None:
       raise ConcretizationTypeError(val, context)
+    else:
+      return force(maybe_concrete)
   else:
     return force(val)
 
@@ -1578,7 +1592,7 @@ def _invalid_shape_error(shape: Shape, context: str=""):
     msg += f" {context}."
   if not config.dynamic_shapes.value and any(
          isinstance(x, Tracer) and isinstance(get_aval(x), ShapedArray)
-         and not isinstance(get_aval(x), ConcreteArray) for x in shape):
+         and not is_concrete(x) for x in shape):
     msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
             "smaller subfunctions.")
     for x in shape:
@@ -1677,10 +1691,6 @@ def _get_shape_sharding_str(shape, spec):
     else:
       yield f"{s1}@{s2}"
 
-
-def _forward_to_value(self, fun, ignored_tracer, *args):
-  return fun(self.val, *args)
-
 def _get_abstract_sharding(val):
   from jax._src.sharding_impls import NamedSharding  # pytype: disable=import-error
 
@@ -1689,59 +1699,6 @@ def _get_abstract_sharding(val):
     return NamedSharding(val.sharding.mesh.abstract_mesh,
                          val.sharding._normalized_spec(val.ndim))
   return None
-
-class ConcreteArray(ShapedArray):
-  __slots__ = ['val']
-  array_abstraction_level = 0
-
-  def __init__(self, dtype, val, weak_type=None):
-    super().__init__(
-        np.shape(val), dtype,
-        weak_type=dtypes.is_weakly_typed(val) if weak_type is None else weak_type,
-        sharding=_get_abstract_sharding(val))
-    dtypes.check_valid_dtype(self.dtype)
-    # Note: canonicalized self.dtype doesn't necessarily match self.val
-    assert self.dtype == dtypes.canonicalize_dtype(np.result_type(val)), (val, dtype)
-    self.val = val
-
-  def update(self, dtype=None, val=None, weak_type=None):
-    dtype = self.dtype if dtype is None else dtype
-    val = self.val if val is None else val
-    weak_type = self.weak_type if weak_type is None else weak_type
-    return ConcreteArray(dtype, val, weak_type)
-
-  def __eq__(self, other):
-    if (type(self) is type(other) and self.dtype == other.dtype
-        and self.shape == other.shape and self.weak_type == other.weak_type):
-      with eval_context():  # in case self.val is an Array
-        return (self.val == other.val).all()
-    else:
-      return False
-
-  def __hash__(self):
-    return id(self.val)
-
-  def join(self, other) -> AbstractValue:
-    if self == other:
-      return self
-    elif self.shape == other.shape and self.dtype == other.dtype:
-      weak_type = self.weak_type and other.weak_type
-      return ShapedArray(self.shape, self.dtype, weak_type=weak_type)
-    else:
-      raise TypeError(self, other)
-
-  def str_short(self, short_dtypes=False) -> str:
-    dt_str = dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
-    return f'{self.val}, dtype={dt_str}'
-
-  _bool    = partialmethod(_forward_to_value, bool)
-  _int     = partialmethod(_forward_to_value, int)
-  _hex     = partialmethod(_forward_to_value, hex)
-  _oct     = partialmethod(_forward_to_value, oct)
-  _index   = partialmethod(_forward_to_value, operator.index)
-
-  _float   = concretization_function_error(float, True)
-  _complex = concretization_function_error(complex, True)
 
 def primal_dtype_to_tangent_dtype(primal_dtype):
   if isinstance(primal_dtype, dtypes.ExtendedDType):
@@ -1817,14 +1774,6 @@ class DShapedArray(UnshapedArray):
     return DShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
                         self.weak_type)
 
-class DConcreteArray(DShapedArray):
-  __slots__ = ['val']
-  array_abstraction_level = 1
-  def __init__(self, shape, dtype, weak_type, val):
-    super().__init__(shape, dtype, weak_type)
-    self.val = val
-
-
 pytype_aval_mappings: dict[type, Callable[[Any], AbstractValue]] = {}
 
 
@@ -1881,8 +1830,7 @@ class DArray:
 
 
 pytype_aval_mappings[DArray] = \
-    lambda x: DConcreteArray(x._aval.shape, x._aval.dtype, x._aval.weak_type,
-                             x._data)
+    lambda x: DShapedArray(x._aval.shape, x._aval.dtype, x._aval.weak_type)
 
 @dataclass(frozen=True)
 class bint(dtypes.ExtendedDType):
@@ -1984,10 +1932,7 @@ raise_to_shaped_mappings: dict[type, Callable] = {
     AbstractToken: lambda aval, _: aval,
     Bot: lambda aval, _: aval,
     ShapedArray: _shaped_array_mapping,
-    DShapedArray: lambda aval, _: aval,
-    DConcreteArray: lambda aval, weak_type: DShapedArray(
-        aval.shape, aval.dtype, weak_type
-    ),
+    DShapedArray: lambda aval, _: aval
 }
 
 ### Operations on shapes and dimension sizes.
@@ -2323,7 +2268,6 @@ AvalMapHandlerPair = tuple[Callable, Callable]
 aval_mapping_handlers: dict[type, AvalMapHandlerPair] = {
     DShapedArray:   (_map_dshaped_array, _unmap_dshaped_array),
     ShapedArray:   (_map_shaped_array, _unmap_shaped_array),
-    ConcreteArray: (_map_shaped_array, _unmap_shaped_array),
     AbstractToken: (lambda _, __, a: a, lambda _, __, ___, a: a)
 }
 

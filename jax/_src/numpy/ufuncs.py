@@ -2512,7 +2512,7 @@ def power(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   #     lax.pow.
 
   # Case 1: concrete integer scalar powers:
-  if isinstance(core.get_aval(x2), core.ConcreteArray):
+  if core.is_concrete(x2):
     try:
       x2 = operator.index(x2)  # type: ignore[arg-type]
     except TypeError:

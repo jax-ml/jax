@@ -52,7 +52,7 @@ from jax._src import dtypes
 from jax._src import xla_bridge
 from jax._src.api_util import _ensure_index_tuple
 from jax._src.array import ArrayImpl
-from jax._src.core import ConcreteArray, ShapedArray
+from jax._src.core import ShapedArray
 from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.lax import ( PrecisionLike,_array_copy,
@@ -11789,7 +11789,7 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
     except TypeError:
       abstract_i = None
     # Handle basic int indexes.
-    if isinstance(abstract_i, (ConcreteArray, ShapedArray)) and _int(abstract_i):
+    if isinstance(abstract_i, ShapedArray) and _int(abstract_i):
       if core.definitely_equal(x_shape[x_axis], 0):
         # XLA gives error when indexing into an axis of size 0
         raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
@@ -11945,7 +11945,7 @@ def _expand_bool_indices(idx, shape):
         i = array(i)
         abstract_i = core.get_aval(i)
 
-      if not type(abstract_i) is ConcreteArray:
+      if not core.is_concrete(i):
         # TODO(mattjj): improve this error by tracking _why_ the indices are not concrete
         raise errors.NonConcreteBooleanIndexError(abstract_i)
       elif _ndim(i) == 0:
@@ -11975,7 +11975,7 @@ def _is_slice_element_none_or_constant_or_symbolic(elt):
   if elt is None: return True
   if core.is_symbolic_dim(elt): return True
   try:
-    return type(core.get_aval(elt)) is ConcreteArray
+    return core.is_concrete(elt)
   except TypeError:
     return False
 

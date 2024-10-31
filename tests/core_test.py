@@ -347,13 +347,6 @@ class CoreTest(jtu.JaxTestCase):
           'This BatchTracer with object id'):
       g_vmap(jnp.ones((1, )))
 
-  def test_concrete_array_string_representation(self):
-    # https://github.com/jax-ml/jax/issues/5364
-    self.assertEqual(
-        str(core.ConcreteArray(np.dtype(np.int32),
-                               np.array([1], dtype=np.int32))),
-        'ConcreteArray([1], dtype=int32)')
-
   def test_dropvar_avals(self):
     def f(x):
       def body(c, _):

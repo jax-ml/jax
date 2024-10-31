@@ -230,7 +230,6 @@ def aval_to_ir_type(aval: core.AbstractValue) -> IrTypes:
     raise TypeError(f"No ir_type_handler for aval type: {type(aval)}") from err
 
 ir_type_handlers[core.ShapedArray] = _array_ir_types
-ir_type_handlers[core.ConcreteArray] = _array_ir_types
 ir_type_handlers[core.AbstractToken] = lambda _: hlo.TokenType.get()
 ir_type_handlers[core.DShapedArray] = _dynamic_array_ir_types
 

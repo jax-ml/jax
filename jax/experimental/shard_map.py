@@ -911,13 +911,14 @@ class ShardMapTracer(core.Tracer):
   @property
   def aval(self):
     aval = core.get_aval(self.val)
-    if (isinstance(aval, core.ConcreteArray) and
-        self.rep == set(self._trace.mesh.axis_names)):
+    return core.mapped_aval(self._trace.mesh.size, 0, aval)
+
+  def to_concrete_value(self):
+    if self.rep == set(self._trace.mesh.axis_names):
       with core.eval_context():
-        return core.get_aval(self.val[0])
+        return core.to_concrete_value(self.val[0])
     else:
-      aval = core.raise_to_shaped(aval)
-      return core.mapped_aval(self._trace.mesh.size, 0, aval)
+      return None
 
   def __str__(self) -> str:
     with core.eval_context():
@@ -1767,6 +1768,9 @@ class RewriteTracer(core.Tracer):
   @property
   def aval(self) -> core.AbstractValue:
     return core.get_aval(self.val)
+
+  def to_concrete_value(self):
+    return core.to_concrete_value(self.val)
 
   def __str__(self) -> str:
     return str(self.val)  # TODO(mattjj): could show replication info here
