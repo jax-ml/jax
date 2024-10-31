@@ -13,16 +13,15 @@
 #include <utility>
 #include <vector>
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/Compiler.h"
-#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Traits.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
@@ -52,7 +51,6 @@
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
-#include "llvm/ADT/ArrayRef.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
@@ -61,6 +59,7 @@
 #include "mlir/include/mlir/IR/OperationSupport.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "jaxlib/mosaic/dialect/tpu/transforms/apply_vector_layout_extensions.h"
 #include "jaxlib/mosaic/dialect/tpu/transforms/infer_memref_layout.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 #include "xla/array.h"
@@ -4586,45 +4585,53 @@ LogicalResult prng_random_bits_rule(RewriteContext &ctx, Operation &op,
 }
 
 const llvm::StringMap<rule_type> &rules() {
-  static auto rules = new llvm::StringMap<rule_type>{
-      {arith::ConstantOp::getOperationName(), arith_constant_rule},
-      {arith::ExtFOp::getOperationName(), arith_extf_rule},
-      {arith::ExtSIOp::getOperationName(), arith_extsi_rule},
-      {arith::ExtUIOp::getOperationName(), arith_extui_rule},
-      {arith::TruncFOp::getOperationName(), arith_truncf_rule},
-      {arith::TruncIOp::getOperationName(), arith_trunci_rule},
-      {func::ReturnOp::getOperationName(), func_return_rule},
-      {scf::ForOp::getOperationName(), scf_for_rule},
-      {scf::WhileOp::getOperationName(), scf_while_rule},
-      {scf::ConditionOp::getOperationName(), scf_condition_rule},
-      {scf::IfOp::getOperationName(), scf_if_rule},
-      {scf::YieldOp::getOperationName(), yield_rule},
-      {tpu::YieldOp::getOperationName(), yield_rule},
-      {tpu::RotateOp::getOperationName(), tpu_rotate_rule},
-      {tpu::DynamicRotateOp::getOperationName(), tpu_dynamic_rotate_rule},
-      {tpu::ConcatenateOp::getOperationName(), tpu_concatenate_rule},
-      {tpu::IotaOp::getOperationName(), tpu_iota_rule},
-      {tpu::GatherOp::getOperationName(), tpu_gather_rule},
-      {tpu::LoadOp::getOperationName(), tpu_load_rule},
-      {tpu::StoreOp::getOperationName(), tpu_store_rule},
-      {tpu::StridedLoadOp::getOperationName(), tpu_strided_load_rule},
-      {tpu::StridedStoreOp::getOperationName(), tpu_strided_store_rule},
-      {tpu::MatmulOp::getOperationName(), tpu_matmul_rule},
-      {tpu::RegionOp::getOperationName(), tpu_region_rule},
-      {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},
-      {tpu::TraceOp::getOperationName(), tpu_trace_rule},
-      {tpu::AssumeLayoutOp::getOperationName(), tpu_assume_layout_rule},
-      {tpu::PRNGRandomBitsOp::getOperationName(), prng_random_bits_rule},
-      {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
-      {vector::ExtractOp::getOperationName(), vector_extract_rule},
-      {vector::LoadOp::getOperationName(), vector_load_rule},
-      {vector::MultiDimReductionOp::getOperationName(),
-       vector_multi_reduction_rule},
-      {vector::ExtractStridedSliceOp::getOperationName(),
-       vector_extract_strided_slice_rule},
-      {vector::ShapeCastOp::getOperationName(), vector_shape_cast_rule},
-      {vector::StoreOp::getOperationName(), vector_store_rule},
-      {vector::TransposeOp::getOperationName(), vector_transpose_rule}};
+  static const llvm::StringMap<rule_type> *rules = [] {
+    static auto rules = new llvm::StringMap<rule_type>{
+        {arith::ConstantOp::getOperationName(), arith_constant_rule},
+        {arith::ExtFOp::getOperationName(), arith_extf_rule},
+        {arith::ExtSIOp::getOperationName(), arith_extsi_rule},
+        {arith::ExtUIOp::getOperationName(), arith_extui_rule},
+        {arith::TruncFOp::getOperationName(), arith_truncf_rule},
+        {arith::TruncIOp::getOperationName(), arith_trunci_rule},
+        {func::ReturnOp::getOperationName(), func_return_rule},
+        {scf::ForOp::getOperationName(), scf_for_rule},
+        {scf::WhileOp::getOperationName(), scf_while_rule},
+        {scf::ConditionOp::getOperationName(), scf_condition_rule},
+        {scf::IfOp::getOperationName(), scf_if_rule},
+        {scf::YieldOp::getOperationName(), yield_rule},
+        {tpu::YieldOp::getOperationName(), yield_rule},
+        {tpu::RotateOp::getOperationName(), tpu_rotate_rule},
+        {tpu::DynamicRotateOp::getOperationName(), tpu_dynamic_rotate_rule},
+        {tpu::ConcatenateOp::getOperationName(), tpu_concatenate_rule},
+        {tpu::IotaOp::getOperationName(), tpu_iota_rule},
+        {tpu::GatherOp::getOperationName(), tpu_gather_rule},
+        {tpu::LoadOp::getOperationName(), tpu_load_rule},
+        {tpu::StoreOp::getOperationName(), tpu_store_rule},
+        {tpu::StridedLoadOp::getOperationName(), tpu_strided_load_rule},
+        {tpu::StridedStoreOp::getOperationName(), tpu_strided_store_rule},
+        {tpu::MatmulOp::getOperationName(), tpu_matmul_rule},
+        {tpu::RegionOp::getOperationName(), tpu_region_rule},
+        {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},
+        {tpu::TraceOp::getOperationName(), tpu_trace_rule},
+        {tpu::AssumeLayoutOp::getOperationName(), tpu_assume_layout_rule},
+        {tpu::PRNGRandomBitsOp::getOperationName(), prng_random_bits_rule},
+        {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
+        {vector::ExtractOp::getOperationName(), vector_extract_rule},
+        {vector::LoadOp::getOperationName(), vector_load_rule},
+        {vector::MultiDimReductionOp::getOperationName(),
+         vector_multi_reduction_rule},
+        {vector::ExtractStridedSliceOp::getOperationName(),
+         vector_extract_strided_slice_rule},
+        {vector::ShapeCastOp::getOperationName(), vector_shape_cast_rule},
+        {vector::StoreOp::getOperationName(), vector_store_rule},
+        {vector::TransposeOp::getOperationName(), vector_transpose_rule}};
+
+    llvm::StringMap<rule_type> extended_rules = mlir::tpu::extensions::rules();
+    for (auto &entry : extended_rules) {
+      rules->insert(&entry);
+    }
+    return rules;
+  }();
   return *rules;
 }
 

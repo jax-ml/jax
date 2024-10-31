@@ -50,6 +50,7 @@ limitations under the License.
 #include "mlir/include/mlir/Pass/Pass.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "jaxlib/mosaic/dialect/tpu/transforms/infer_vector_layout_extensions.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 #include "xla/layout.h"
 
@@ -335,6 +336,10 @@ class VectorLayoutInferer {
       } else if (OpTrait::hasElementwiseMappableTraits(&any_op)) {
         // We put elementwise rule to the end in case the overriding rule.
         if (inferElementwise(&any_op).failed()) {
+          return failure();
+        }
+      } else if (mlir::tpu::extensions::canInferVectorLayout(any_op)) {
+        if (mlir::tpu::extensions::inferVectorLayout(any_op).failed()) {
           return failure();
         }
       } else {
