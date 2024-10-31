@@ -377,16 +377,3 @@ from jax.lax import linalg as linalg
 from jax._src.pjit import with_sharding_constraint as with_sharding_constraint
 from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
 from jax._src.dispatch import device_put_p as device_put_p
-
-
-_deprecations = {
-  # Finalized 2024-05-13; remove after 2024-08-13
-  "tie_in": (
-    "jax.lax.tie_in is deprecated: it has been a no-op since JAX v0.2.0. "
-    "Replace z = tie_in(x, y) with z = y.", None,
-  ),
-}
-
-from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-__getattr__ = _deprecation_getattr(__name__, _deprecations)
-del _deprecation_getattr
