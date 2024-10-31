@@ -104,6 +104,10 @@ MemRefType getMemRefType(Value value);
 
 bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel = 8);
 
+DotDimensionNumbersAttr defaultDimensionNumbers(Builder &builder,
+                                                bool transpose_lhs,
+                                                bool transpose_rhs);
+
 #define GEN_PASS_REGISTRATION
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
 

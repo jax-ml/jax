@@ -223,4 +223,18 @@ bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel) {
   return false;
 }
 
+DotDimensionNumbersAttr defaultDimensionNumbers(Builder &builder,
+                                                bool transpose_lhs,
+                                                bool transpose_rhs) {
+  return tpu::DotDimensionNumbersAttr::get(
+      builder.getContext(),
+      /*lhs_contracting_dims=*/{transpose_lhs ? 0 : 1},
+      /*rhs_contracting_dims=*/{transpose_rhs ? 1 : 0},
+      /*lhs_non_contracting_dims=*/{transpose_lhs ? 1 : 0},
+      /*rhs_non_contracting_dims=*/{transpose_rhs ? 0 : 1},
+      /*output_dim_order=*/{0, transpose_lhs ? 1 : 0, 1, transpose_rhs ? 0 : 1},
+      /*lhs_batch_dims=*/{},
+      /*rhs_batch_dims=*/{});
+}
+
 }  // namespace mlir::tpu

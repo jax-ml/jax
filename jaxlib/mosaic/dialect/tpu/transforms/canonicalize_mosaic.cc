@@ -1,6 +1,10 @@
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <numeric>
+#include <optional>
+#include <utility>
 #include <vector>
 
 #include "llvm/ADT/STLExtras.h"
@@ -16,6 +20,8 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LogicalResult.h"
 #include "absl/log/check.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallVector.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/include/mlir/Dialect/Vector/Transforms/VectorTransforms.h"
@@ -23,6 +29,7 @@
 #include "mlir/include/mlir/IR/Attributes.h"
 #include "mlir/include/mlir/IR/Block.h"
 #include "mlir/include/mlir/IR/Builders.h"
+#include "mlir/include/mlir/IR/BuiltinAttributes.h"
 #include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/include/mlir/IR/OpDefinition.h"
 #include "mlir/include/mlir/IR/Operation.h"
@@ -40,6 +47,9 @@ namespace mlir::tpu {
 LogicalResult tpu_matmul_rule(tpu::MatmulOp op) {
   ImplicitLocOpBuilder builder(op.getLoc(), op.getOperation());
 
+  auto transpose_lhs = op.getTransposeLhs();
+  auto transpose_rhs = op.getTransposeRhs();
+
   auto lhs = op.getLhs();
   auto rhs = op.getRhs();
   auto acc = op.getAcc();
@@ -51,6 +61,51 @@ LogicalResult tpu_matmul_rule(tpu::MatmulOp op) {
   auto lhs_element_type = lhs_ty.getElementType();
   auto rhs_element_type = rhs_ty.getElementType();
   auto acc_element_type = acc_ty.getElementType();
+
+  // there are a few primary paths for dimension_numbers in matmul
+  // 1) No dimension numbers provided -> set to default
+  // 2) defined and not default -> verify and apply
+  // 3) defined and matching defaultDimensionNumbers -> no-op for
+  // canonicalization of dims
+  std::optional<int64_t> batch_size = std::nullopt;
+
+  // MKN matmul - no dims or transpositions set
+  if (!op.getDimensionNumbers().has_value()) {
+    // Legacy API - convert it to dimension numbers
+    op.setDimensionNumbersAttr(
+        defaultDimensionNumbers(builder, transpose_lhs, transpose_rhs));
+  } else if (
+      // Dot dim API - dimensions are provided and are not default
+      (op.getDimensionNumbers().value() !=
+       defaultDimensionNumbers(builder, false, false))) {
+    auto dimension_numbers = op.getDimensionNumbers();
+    auto lhs_contracting_dims = dimension_numbers->getLhsContractingDims();
+    auto rhs_contracting_dims = dimension_numbers->getRhsContractingDims();
+
+    auto lhs_batch_dims = dimension_numbers->getLhsBatchDims();
+    auto rhs_batch_dims = dimension_numbers->getRhsBatchDims();
+
+    // Invariant in matmul verifier: <= 1 batch dim atm, and that lhs and rhs
+    // are the same
+    // Invariant in matmul verifier: Exactly one contracting and non contracting
+    // dim in each of lhs and rhs for now.
+    batch_size =
+        lhs_batch_dims.empty()
+            ? std::nullopt
+            : std::optional<int64_t>(lhs_ty.getShape()[lhs_batch_dims[0]]);
+    // Lower each dim in contracting dims by size(batch_dims)
+    auto batch_adjusted_lhs_contracting_dim =
+        lhs_contracting_dims[0] - lhs_batch_dims.size();
+    auto batch_adjusted_rhs_contracting_dim =
+        rhs_contracting_dims[0] - rhs_batch_dims.size();
+
+    if (batch_adjusted_lhs_contracting_dim != 1) {
+      transpose_lhs = true;
+    }
+    if (batch_adjusted_rhs_contracting_dim != 0) {
+      transpose_rhs = true;
+    }
+  }
 
   auto extsi_sitofp = [&builder, &op](TypedValue<VectorType> element) {
     const VectorType ty = element.getType();
@@ -88,10 +143,12 @@ LogicalResult tpu_matmul_rule(tpu::MatmulOp op) {
     if (lhs_element_type.isInteger()) {
       auto float_lhs = extsi_sitofp(lhs);
       op->setOperand(0, float_lhs);
+      lhs = cast<TypedValue<VectorType>>(float_lhs.getResult());
     }
     if (rhs_element_type.isInteger()) {
       auto float_rhs = extsi_sitofp(rhs);
       op->setOperand(1, float_rhs);
+      rhs = cast<TypedValue<VectorType>>(float_rhs.getResult());
     }
   }
   // TODO(mvoz): Add more invariants.
@@ -113,6 +170,91 @@ LogicalResult tpu_matmul_rule(tpu::MatmulOp op) {
       op->emitOpError("float acc with int rhs. Expected float rhs.");
       return failure();
     }
+  }
+
+  auto dot_dim_matmul = [&](auto lhs, auto rhs, auto acc) {
+    auto precision_attr = op.getPrecisionAttr();
+
+    // If we are transposing the lhs, we need to transpose the lhs before
+    // matmul here, as we don't have lhs fusion implemented in apply.
+    if (transpose_lhs) {
+      auto lhs_ty = cast<VectorType>(lhs.getType());
+      auto rank = lhs_ty.getShape().size();
+
+      // This transposition must run on vectors with rank >= 2
+      CHECK_GE(rank, 2);
+
+      std::vector<int64_t> perm(rank);
+      std::iota(perm.begin(), perm.end(), 0);
+      std::swap(perm[rank - 2], perm[rank - 1]);
+
+      std::vector<int64_t> shape(lhs_ty.getShape());
+      std::swap(shape[rank - 2], shape[rank - 1]);
+
+      auto lhs_ty_transposed = VectorType::get(shape, lhs_ty.getElementType());
+
+      const SmallVector<int64_t> perm_vec =
+          SmallVector<int64_t>(perm.begin(), perm.end());
+      lhs = builder.create<vector::TransposeOp>(
+          lhs_ty_transposed, lhs,
+          DenseI64ArrayAttr::get(builder.getContext(), perm_vec));
+    }
+    auto ddn = defaultDimensionNumbers(builder, /*transpose_lhs=*/false,
+                                       transpose_rhs);
+    // transpose flags are always false here, because ddn takes precedence
+    // after this pass.
+    auto matmul_res = builder.create<tpu::MatmulOp>(
+        op.getLoc(), acc.getType(), lhs, rhs, acc,
+        /*transpose_lhs=*/false,
+        /*transpose_rhs=*/false, precision_attr, ddn);
+    return matmul_res;
+  };
+
+  // If we have a batch_size, we want to slice rhs and lhs [:batch_size],
+  // and then do O[i] = A[i] @ B[i]
+  // Produce an output shape of [batch_size, m, n]
+  if (batch_size.has_value()) {
+    std::vector<Value> outputs;
+
+    for (int64_t i = 0; i < batch_size; ++i) {
+      auto sliced_lhs = builder.create<vector::ExtractOp>(op.getLoc(), lhs,
+                                                          ArrayRef<int64_t>{i});
+      auto sliced_rhs = builder.create<vector::ExtractOp>(op.getLoc(), rhs,
+                                                          ArrayRef<int64_t>{i});
+
+      auto sliced_acc = builder.create<vector::ExtractOp>(op.getLoc(), acc,
+                                                          ArrayRef<int64_t>{i});
+
+      auto matmul_res =
+          dot_dim_matmul(sliced_lhs.getResult(), sliced_rhs.getResult(),
+                         sliced_acc.getResult());
+      auto res_ty = matmul_res.getType().cast<VectorType>();
+      auto res_shape = res_ty.getShape();
+      // reshape to 1x[prior_shape]
+      auto reshape_shape = llvm::to_vector(res_shape);
+      reshape_shape.insert(reshape_shape.begin(), 1);
+      auto shape_cast = builder.create<vector::ShapeCastOp>(
+          op.getLoc(), VectorType::get(reshape_shape, res_ty.getElementType()),
+          matmul_res);
+      outputs.push_back(shape_cast);
+    }
+    // Technically almost identical to the case where batch_size is 1, but
+    // we want to avoid the spurious concat here.
+    if (batch_size == 1) {
+      op.replaceAllUsesWith(outputs[0]);
+      op.erase();
+      return success();
+    }
+    auto output = builder
+                      .create<tpu::ConcatenateOp>(op.getLoc(), acc_ty, outputs,
+                                                  /*dimension=*/0)
+                      .getResult();
+    op.replaceAllUsesWith(output);
+    op.erase();
+  } else {
+    auto matmul_res = dot_dim_matmul(lhs, rhs, acc).getResult();
+    op.replaceAllUsesWith(matmul_res);
+    op.erase();
   }
   return success();
 };
@@ -309,9 +451,14 @@ LogicalResult canonicalize_contraction(int hardware_generation, Operation &op) {
   }
   const tpu::ContractPrecisionAttr precision_attr =  // May be null
       contraction_op->getAttrOfType<tpu::ContractPrecisionAttr>("precision");
+
+  const auto dot_dimension_numbers_attr =
+      defaultDimensionNumbers(builder, false, transpose_rhs);
+
   auto matmul_op = builder.create<tpu::MatmulOp>(
       contraction_op->getLoc(), acc_ty, lhs, rhs, acc,
-      /*transpose_lhs=*/false, transpose_rhs, precision_attr);
+      /*transpose_lhs=*/false,
+      /*transpose_rhs=*/false, precision_attr, dot_dimension_numbers_attr);
   contraction_op.replaceAllUsesWith(matmul_op.getResult());
   contraction_op.erase();
   auto result = tpu_matmul_rule(matmul_op);

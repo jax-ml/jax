@@ -384,22 +384,47 @@ def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure]> {
   }];
 }
 
-// TODO(apaszke): Add a verifier for this op
+
+def TPU_DotDimensionNumbersAttr : TPU_Attr<"DotDimensionNumbers", "dot_dimension_numbers"> {
+  let parameters = (ins
+    ArrayRefParameter<"int64_t", "">:$lhs_contracting_dims,
+    ArrayRefParameter<"int64_t", "">:$rhs_contracting_dims,
+    ArrayRefParameter<"int64_t", "">:$lhs_non_contracting_dims,
+    ArrayRefParameter<"int64_t", "">:$rhs_non_contracting_dims,
+    // The contract is a flattened structure, wherein, each element is half of a
+    // pair of indices. The first element is always 0 (lhs) or 1 (rhs) and the
+    // second index is the index from the lhs or rhs.
+    ArrayRefParameter<"int64_t", "">:$output_dim_order,
+    OptionalArrayRefParameter<"int64_t", "">:$lhs_batch_dims,
+    OptionalArrayRefParameter<"int64_t", "">:$rhs_batch_dims
+    );
+    let assemblyFormat = "`<` `[` $lhs_contracting_dims `]` `,` `[` $rhs_contracting_dims `]` `,` "
+                     "`[` $lhs_non_contracting_dims `]` `,` `[` $rhs_non_contracting_dims `]` `,` "
+                     "`[` $output_dim_order `]` `,` "
+                     "`[` (`]`):($lhs_batch_dims^ `]`)? `,` "
+                     "`[` (`]`):($rhs_batch_dims^ `]`)? `>`";
+}
+
 // TODO(apaszke): Think hard about precision
 def TPU_MatmulOp : TPU_Op<"matmul", [Pure]> {
   let arguments = (ins
     AnyVector:$lhs,
     AnyVector:$rhs,
     AnyVector:$acc,
+    // These flags are deprecated - if dimension_numbers are defined,
+    // these flags are ignored. They will always be false after canonicalize.
     DefaultValuedAttr<BoolAttr, "false">:$transpose_lhs,
     DefaultValuedAttr<BoolAttr, "false">:$transpose_rhs,
-    OptionalAttr<TPU_ContractPrecisionEnum>:$precision
+    OptionalAttr<TPU_ContractPrecisionEnum>:$precision,
+    // NOTE: User-level optional, once canonicalized, always present.
+    OptionalAttr<TPU_DotDimensionNumbersAttr>:$dimension_numbers
   );
   let results = (outs AnyVector:$result);
   let assemblyFormat = [{
     $lhs `,` $rhs `,` $acc attr-dict `:` type($lhs) `,` type($rhs) `,` type($acc) `->` type($result)
   }];
   let hasCanonicalizer = 1;
+  let hasVerifier = 1;
 }
 
 def TPU_ConcatenateOp : TPU_Op<"concatenate", [Pure]> {

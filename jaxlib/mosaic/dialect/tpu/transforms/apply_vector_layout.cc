@@ -1696,15 +1696,36 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
       llvm::all_of(layouts_in, [&](const Layout &l) { return l.has_value(); }));
   TPU_ASSERT_OP(layouts_out.front().has_value());
   auto matmul_op = cast<tpu::MatmulOp>(op);
-  const auto transpose_lhs = matmul_op.getTransposeLhs();
-  const auto transpose_rhs = matmul_op.getTransposeRhs();
-  const auto &layout_lhs = *layouts_in[0];
-  const auto &layout_rhs = *layouts_in[1];
-  const auto &layout_acc = *layouts_in[2];
-  const auto &layout_out = *layouts_out[0];
-  if (transpose_lhs) {
-    return op.emitOpError("Not implemented: Transposed LHS");
+  if (matmul_op.getTransposeRhs()) {
+    return op.emitOpError(
+        "Transposition must have been erased into dimension numbers during "
+        "canonicalization");
   }
+
+  auto dimension_numbers = matmul_op.getDimensionNumbers();
+  if (!dimension_numbers.has_value()) {
+    return op.emitOpError(
+        "Dimension numbers must be provided, ensure canonicalization has been "
+        "run.");
+  }
+  auto transposed_mkn = isTransposedMatmul(dimension_numbers.value());
+  if (!transposed_mkn.has_value()) {
+    return op.emitOpError(
+        "Dimension numbers must be MKN, ensure canonicalization has been "
+        "run.");
+  }
+  auto [transpose_lhs, transpose_rhs] = transposed_mkn.value();
+  if (transpose_lhs) {
+    return op.emitOpError(
+        "Transposition of LHS is not supported in apply_vector_layout, ensure "
+        "canonicalization has been run.");
+  }
+
+  auto &layout_lhs = *layouts_in[0];
+  auto &layout_rhs = *layouts_in[1];
+  auto &layout_acc = *layouts_in[2];
+  auto &layout_out = *layouts_out[0];
+
   const std::array<std::reference_wrapper<const VectorLayout>, 4> all_layouts =
       {layout_lhs, layout_rhs, layout_acc, layout_out};
   for (const VectorLayout &layout : all_layouts) {
@@ -1965,6 +1986,8 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
 
   const tpu::ContractPrecisionAttr precision_attr =  // May be null
       op.getAttrOfType<tpu::ContractPrecisionAttr>("precision");
+  const tpu::DotDimensionNumbersAttr dot_dimension_numbers_attr =
+      defaultDimensionNumbers(builder, false, transpose_rhs);
   for (int64_t j = 0; j < nj; ++j) {
     for (int64_t k = 0; k < nk; ++k) {
       // TODO(tlongeri): there should be a way to slice without copying
@@ -1981,7 +2004,8 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
       acc_col->setAttr("out_layout", acc_layout_attr);
       auto new_acc_col = builder.create<tpu::MatmulOp>(
           op.getLoc(), acc_col_ty, lhs_cols[k], rhs_rolled_group, acc_col,
-          transpose_lhs, transpose_rhs, precision_attr);
+          /*transpose_lhs=*/false, /*transpose_rhs=*/false, precision_attr,
+          dot_dimension_numbers_attr);
       auto new_acc_vregs = builder.create<tpu::UnrollVectorsOp>(
           op.getLoc(),
           TypeRange(ValueRange(XlaArrayToFlatArrayRef(acc_col_vregs))),
