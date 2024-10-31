@@ -6,7 +6,6 @@ filelock
 flatbuffers
 hypothesis
 mpmath>=1.3
-numpy>=1.22
 pillow>=10.4.0
 portpicker
 pytest-xdist
@@ -14,3 +13,9 @@ wheel
 rich
 # TODO(ybaturina): remove setuptools version
 setuptools<71.0.0
+# matplotlib 3.9.0 pins NumPy 1.23, which is incompatible with the requirement
+# below.
+matplotlib~=3.8.4; python_version<="3.10"
+matplotlib; python_version>="3.11"
+opt-einsum
+auditwheel
