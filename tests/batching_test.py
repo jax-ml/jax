@@ -932,23 +932,6 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False,
                         rtol=jtu.default_gradient_tolerance)
 
-  def testIssue387(self):
-    # https://github.com/jax-ml/jax/issues/387
-    R = self.rng().rand(100, 2)
-
-    def dist_sq(R):
-      dR = R[:, jnp.newaxis, :] - R[jnp.newaxis, :, :]
-      zero = jnp.zeros_like(dR)
-      dR = dR - jnp.where(jnp.abs(dR) < 0.5, zero, 0.5 * jnp.sign(dR))
-      return jnp.sum(dR ** 2, axis=2)
-
-    @jit
-    def f(R):
-      _ = dist_sq(R)
-      return jnp.sum(R ** 2)
-
-    _ = hessian(f)(R)  # don't crash on UnshapedArray
-
   @jax.legacy_prng_key('allow')
   def testIssue489(self):
     # https://github.com/jax-ml/jax/issues/489

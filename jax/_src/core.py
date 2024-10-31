@@ -1482,15 +1482,11 @@ class UnshapedArray(AbstractValue):
   array_abstraction_level = 4
 
   def __init__(self, dtype, weak_type=False):
+    # Is it silly to initialize this object and then complain that we should
+    # never create one? Yes. But otherwise pytype complains.
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
-
-  def update(self, dtype=None, weak_type=None):
-    if dtype is None:
-      dtype = self.dtype
-    if weak_type is None:
-      weak_type = self.weak_type
-    return UnshapedArray(dtype, weak_type)
+    raise Exception("We should never create an UnshapedArray object")
 
   def __eq__(self, other):
     return (type(self) is type(other) and self.dtype == other.dtype and
@@ -1517,32 +1513,12 @@ class UnshapedArray(AbstractValue):
   _oct     = concretization_function_error(oct)
   _index   = concretization_function_error(operator.index)
 
-  def to_tangent_aval(self) -> AbstractValue:
-    return UnshapedArray(primal_dtype_to_tangent_dtype(self.dtype),
-                         self.weak_type)
-
-  def join(self, other):
-    if self.dtype == other.dtype:
-      if self.weak_type == other.weak_type:
-        return self
-      else:
-        return UnshapedArray(self.dtype, weak_type=False)
-    else:
-      raise TypeError(self, other)
-
   def str_short(self, short_dtypes=False) -> str:
     return dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
 
   def strip_weak_type(self):
     """Returns a copy of the aval with weak_type=False."""
     return self.update(weak_type=False)
-
-  @property
-  def shape(self):
-    msg = ("UnshapedArray has no shape. Please open an issue at "
-           "https://github.com/jax-ml/jax/issues because it's unexpected for "
-           "UnshapedArray instances to ever be produced.")
-    raise TypeError(msg)
 
 def _canonicalize_dimension(dim: DimSize) -> DimSize:
   # Dimensions are most commonly integral (by far), so we check that first.
@@ -1670,8 +1646,6 @@ class ShapedArray(UnshapedArray):
     if definitely_equal_shape(self.shape, other.shape) and self.dtype == other.dtype:
       weak_type = self.weak_type and other.weak_type
       return self.update(weak_type=weak_type)
-    elif self.dtype == other.dtype:
-      return UnshapedArray(self.dtype)
     else:
       raise TypeError(self, other)
 
@@ -1753,8 +1727,6 @@ class ConcreteArray(ShapedArray):
     elif self.shape == other.shape and self.dtype == other.dtype:
       weak_type = self.weak_type and other.weak_type
       return ShapedArray(self.shape, self.dtype, weak_type=weak_type)
-    elif self.dtype == other.dtype:
-      return UnshapedArray(self.dtype, weak_type=self.weak_type and other.weak_type)
     else:
       raise TypeError(self, other)
 
@@ -1838,8 +1810,6 @@ class DShapedArray(UnshapedArray):
         self.dtype == other.dtype):
       weak_type = self.weak_type and other.weak_type
       return self.update(weak_type=weak_type)
-    elif self.dtype == other.dtype:
-      return UnshapedArray(self.dtype)
     else:
       raise TypeError(self, other)
 
@@ -1996,6 +1966,8 @@ def raise_to_shaped(aval: AbstractValue, weak_type=None):
   aval_type = type(aval)
   if aval_type is ShapedArray and weak_type is None:
     return aval
+  if aval_type is DShapedArray and weak_type is None:
+    return aval
   if weak_type is None:
     weak_type = getattr(aval, 'weak_type', False)
   for typ in aval_type.__mro__:
@@ -2011,8 +1983,8 @@ def _shaped_array_mapping(aval, weak_type):
 raise_to_shaped_mappings: dict[type, Callable] = {
     AbstractToken: lambda aval, _: aval,
     Bot: lambda aval, _: aval,
-    UnshapedArray: lambda aval, _: aval,
     ShapedArray: _shaped_array_mapping,
+    DShapedArray: lambda aval, _: aval,
     DConcreteArray: lambda aval, weak_type: DShapedArray(
         aval.shape, aval.dtype, weak_type
     ),

@@ -1362,17 +1362,6 @@ class StateControlFlowTest(jtu.JaxTestCase):
 
 class GeneralRefTest(jtu.JaxTestCase):
 
-  def test_unshaped_ref(self):
-    def f(x_ref):
-      x = x_ref[...]
-      x_ref[...] = x
-      ref_addupdate(x_ref, (), x)
-      return [x]
-    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(f), [AbstractRef(core.UnshapedArray(jnp.int32))])
-    self.assertIs(type(jaxpr.outvars[0].aval), core.UnshapedArray)
-    self.assertEqual(jaxpr.outvars[0].aval.dtype, jnp.dtype("int32"))
-
   def test_token(self):
     def f(x_ref):
       x = x_ref[...]

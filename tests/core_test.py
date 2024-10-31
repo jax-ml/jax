@@ -33,14 +33,13 @@ from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import util
 from jax._src import test_util as jtu
-from jax._src.core import UnshapedArray, ShapedArray, DBIdx
+from jax._src.core import ShapedArray, DBIdx
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
 
 config.parse_flags_with_absl()
 
-_ = pe.PartialVal.unknown(UnshapedArray(np.float32))
 __ = pe.PartialVal.unknown(ShapedArray((), np.float32))
 
 def call(f, *args):
