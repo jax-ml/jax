@@ -144,6 +144,7 @@ def attention(q, k, v, config: TuningConfig):
       # TODO(apaszke): Invert and multiply to avoid expensive divisions.
       acc /= lax.broadcast_in_dim(l_i, (block_q, head_dim), [0])
       qo_smem[...] = acc.astype(dtype)
+      plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(
           qo_smem, out_ref.at[pl.ds(q_seq_base, block_q)],
       )

@@ -239,6 +239,7 @@ class PallasCallTest(PallasTest):
     )
     def kernel(x_ref, o_ref_gmem, scratch_ref):
       scratch_ref[...] = x_ref[...] + 1
+      plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(scratch_ref.at[indexer], o_ref_gmem.at[indexer])
       plgpu.wait_smem_to_gmem(0)
 
@@ -294,6 +295,7 @@ class PallasCallTest(PallasTest):
         plgpu.copy_gmem_to_smem(x_ref, o_ref, barrier=barrier_ref)
         plgpu.barrier_wait(barrier_ref)
       else:
+        plgpu.commit_smem()
         plgpu.copy_smem_to_gmem(x_ref, o_ref)
         plgpu.wait_smem_to_gmem(0)
 
@@ -1046,6 +1048,7 @@ class PipelineTest(PallasTest):
 
         o_smem.at[slot][...] = x_smem.at[slot][...] + 1.0
 
+        plgpu.commit_smem()
         plgpu.copy_smem_to_gmem(
             o_smem.at[slot], o_gmem.at[gmem_slice, pl.ds(step * 16, 16)]
         )
