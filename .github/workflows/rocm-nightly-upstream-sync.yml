@@ -3,6 +3,7 @@
 
 name: ROCm Nightly Upstream Sync
 on:
+  workflow_dispatch:
   schedule:
     - cron: '0 6 * * 1-5'
 jobs:
