@@ -1,0 +1,19 @@
+# Pulls the latest changes from upstream into main and opens a PR to merge
+# them into rocm-main.
+
+name: ROCm Nightly Upstream Sync
+on:
+  schedule:
+    - cron: '0 6 * * 1-5'
+jobs:
+  sync-main:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh repo sync rocm/jax -b main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  open-sync-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          gh pr create --repo $GITHUB_REPOSITORY --head main --base rocm-main --title "CI: $(date +%x) upstream sync" --body "Daily sync with upstream"
