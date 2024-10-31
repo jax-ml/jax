@@ -649,7 +649,9 @@ if __name__ == "__main__":
       matmul_flops = (
           4 * q_seq_len * kv_seq_len * head_dim * num_q_heads * batch_size
       )
-      peak_flops = 1e15  # f16 TensorCore peak = 1000TFLOPS
+      # Table 1 in
+      # https://resources.nvidia.com/en-us-tensor-core/gtc22-whitepaper-hopper
+      peak_flops = 989.4 * 1e12  # f16 TensorCore peak
       optimal_time = matmul_flops / peak_flops * 1e6  # us
       achieved_tc_util = optimal_time / runtime_us * 100
       has_tma_warp = impl == Implementation.TWO_COMPUTE_ONE_TMA_WG
