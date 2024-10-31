@@ -14,6 +14,8 @@
 # ==============================================================================
 
 from jax import ShapeDtypeStruct as ShapeDtypeStruct
+from jax._src.lib import mosaic_gpu_dialect as dialect  # noqa: F401
+
 from .core import (
     Barrier as Barrier,
     ClusterBarrier as ClusterBarrier,

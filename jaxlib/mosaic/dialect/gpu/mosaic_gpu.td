@@ -16,13 +16,13 @@ limitations under the License.
 #ifndef THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_
 #define THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_
 
-include "third_party/llvm/llvm-project/mlir/include/mlir/IR/AttrTypeBase.td"
-include "third_party/llvm/llvm-project/mlir/include/mlir/IR/BuiltinTypeInterfaces.td"
-include "third_party/llvm/llvm-project/mlir/include/mlir/IR/CommonAttrConstraints.td"
-include "third_party/llvm/llvm-project/mlir/include/mlir/IR/CommonTypeConstraints.td"
-include "third_party/llvm/llvm-project/mlir/include/mlir/IR/DialectBase.td"
-include "third_party/llvm/llvm-project/mlir/include/mlir/IR/EnumAttr.td"
-include "third_party/llvm/llvm-project/mlir/include/mlir/IR/OpBase.td"
+include "mlir/IR/AttrTypeBase.td"
+include "mlir/IR/BuiltinTypeInterfaces.td"
+include "mlir/IR/CommonAttrConstraints.td"
+include "mlir/IR/CommonTypeConstraints.td"
+include "mlir/IR/DialectBase.td"
+include "mlir/IR/EnumAttr.td"
+include "mlir/IR/OpBase.td"
 
 def MosaicGPU_Dialect : Dialect {
   let name = "mosaic_gpu";

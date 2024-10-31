@@ -149,6 +149,18 @@ py_extension(
     ],
 )
 
+py_extension(
+    name = "_mosaic_gpu_ext",
+    srcs = ["mosaic_gpu_ext.cc"],
+    copts = COPTS,
+    linkopts = LINKOPTS,
+    deps = [
+        "//jaxlib/mosaic/dialect/gpu:gpu_dialect_capi",
+        "@llvm-project//mlir:CAPIIRHeaders",
+        "@llvm-project//mlir:MLIRBindingsPythonHeadersAndDeps",
+    ],
+)
+
 # This is here, instead of in jaxlib/mosaic/python, so it's in the same
 # directory as libjaxlib_mlir_capi.so (produced by
 # :jaxlib_mlir_capi_shared_library). This ensures that the RPATH works correctly
