@@ -1088,14 +1088,6 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["tpu"]) and jnp.dtype(dtype).itemsize == 2:
       self.skipTest("16-bit types are not supported on TPU")
 
-    # TODO(ayx): Fix these operations on TPU
-    if (
-        jtu.test_device_matches(["tpu"])
-        and f in (jnp.floor_divide, jnp.subtract)
-        and dtype == "uint32"
-    ):
-      self.skipTest("Not supported on TPU")
-
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((8,), dtype), grid=1
     )
@@ -1120,14 +1112,6 @@ class OpsTest(PallasBaseTest):
       self.skipTest("Test only supported on TPU.")
     if jtu.test_device_matches(["tpu"]) and jnp.dtype(dtype).itemsize == 2:
       self.skipTest("16-bit types are not supported on TPU")
-
-    # TODO(ayx): Fix these operations on TPU
-    if (
-        jtu.test_device_matches(["tpu"])
-        and f in (jnp.floor_divide, jnp.subtract)
-        and dtype == "uint32"
-    ):
-      self.skipTest("Not supported on TPU")
 
     @functools.partial(
         self.pallas_call,
