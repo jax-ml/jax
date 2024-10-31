@@ -15,4 +15,5 @@ jobs:
   open-sync-pr:
     runs-on: ubuntu-latest
     steps:
-      - run: gh pr create --repo rocm/jax --head main --base rocm-main --title "CI: $(date +%x) upstream sync" --body "Daily sync with upstream"
+      - run: |
+          gh pr create --repo $GITHUB_REPOSITORY --head main --base rocm-main --title "CI: $(date +%x) upstream sync" --body "Daily sync with upstream"
