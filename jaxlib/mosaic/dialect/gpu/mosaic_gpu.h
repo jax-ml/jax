@@ -30,6 +30,9 @@ limitations under the License.
 
 // Generated definitions.
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_dialect.h.inc"  // IWYU pragma: keep
+#include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_enums.h.inc"
+#define GET_ATTRDEF_CLASSES
+#include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_attrdefs.h.inc"
 #define GET_TYPEDEF_CLASSES
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_types.h.inc"
 #define GET_OP_CLASSES

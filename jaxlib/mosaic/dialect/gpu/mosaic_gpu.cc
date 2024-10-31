@@ -48,7 +48,9 @@ limitations under the License.
 
 // Generated definitions.
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_dialect.cc.inc"
-
+#include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_enums.cc.inc"
+#define GET_ATTRDEF_CLASSES
+#include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_attrdefs.cc.inc"
 #define GET_TYPEDEF_CLASSES
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_types.cc.inc"
 #define GET_OP_CLASSES

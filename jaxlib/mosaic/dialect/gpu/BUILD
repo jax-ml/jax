@@ -47,17 +47,11 @@ gentbl_cc_library(
             "mosaic_gpu_dialect.cc.inc",
         ),
         (
-            [
-                "-gen-op-decls",
-                "--typedefs-dialect=mosaic_gpu",
-            ],
+            ["-gen-op-decls"],
             "mosaic_gpu_ops.h.inc",
         ),
         (
-            [
-                "-gen-op-defs",
-                "--typedefs-dialect=mosaic_gpu",
-            ],
+            ["-gen-op-defs"],
             "mosaic_gpu_ops.cc.inc",
         ),
         (
@@ -73,6 +67,28 @@ gentbl_cc_library(
                 "--typedefs-dialect=mosaic_gpu",
             ],
             "mosaic_gpu_types.cc.inc",
+        ),
+        (
+            ["-gen-enum-decls"],
+            "mosaic_gpu_enums.h.inc",
+        ),
+        (
+            ["-gen-enum-defs"],
+            "mosaic_gpu_enums.cc.inc",
+        ),
+        (
+            [
+                "-gen-attrdef-decls",
+                "--attrdefs-dialect=mosaic_gpu",
+            ],
+            "mosaic_gpu_attrdefs.h.inc",
+        ),
+        (
+            [
+                "-gen-attrdef-defs",
+                "--attrdefs-dialect=mosaic_gpu",
+            ],
+            "mosaic_gpu_attrdefs.cc.inc",
         ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
