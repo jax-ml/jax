@@ -15,7 +15,7 @@ rich
 setuptools<71.0.0
 # matplotlib 3.9.0 pins NumPy 1.23, which is incompatible with the requirement
 # below.
-matplotlib~=3.8.4; python_version<="3.10"
+matplotlib~=3.8.4; python_version=="3.10"
 matplotlib; python_version>="3.11"
 opt-einsum
 auditwheel
