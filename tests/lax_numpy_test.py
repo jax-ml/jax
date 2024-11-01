@@ -6329,6 +6329,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'stack': ['casting'],
       'std': ['mean'],
       'tri': ['like'],
+      'trim_zeros': ['axis'],
       'var': ['mean'],
       'vstack': ['casting'],
       'zeros_like': ['subok', 'order']
