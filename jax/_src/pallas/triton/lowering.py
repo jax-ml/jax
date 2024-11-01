@@ -996,7 +996,7 @@ triton_lowering_rules.update({
     lax.nextafter_p: _make_dispatch_table(
         "nextafter",
         cuda=[
-            _Extern([jnp.float32, jnp.float32], "__nv_nextafterf", jnp.float32 ),
+            _Extern([jnp.float32, jnp.float32], "__nv_nextafterf", jnp.float32),
             _Extern([jnp.float64, jnp.float64], "__nv_nextafter", jnp.float64),
         ],
         rocm=[

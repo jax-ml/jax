@@ -930,24 +930,32 @@ class OpsTest(PallasBaseTest):
     x = jnp.array([1, 2, 3, 4]).astype(jnp.float32) / 10
     np.testing.assert_allclose(kernel(x), lax.integer_pow(x, y))
 
-  @parameterized.parameters("float32", "float64")
-  def test_nextafter(self, dtype):
+  _NEXTAFTER_VALUES = (-3.2, -0., 0., 5.1, jnp.nan, jnp.inf, -jnp.inf)
+
+  @parameterized.named_parameters(
+      (f"{dtype.__name__} ({x=}, {y=})", dtype, x, y)
+      for dtype, x, y in itertools.product(
+          (jnp.float32, jnp.float64), _NEXTAFTER_VALUES, _NEXTAFTER_VALUES,
+      )
+  )
+  def test_nextafter(self, dtype, x, y):
     if not jax.config.x64_enabled and jnp.dtype(dtype).itemsize == 8:
       self.skipTest("64-bit types require x64_enabled")
 
-    # TODO: implement this on TPU
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not implemented: nextafter")
-
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), dtype), grid=1
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((4,), dtype),
     )
     def kernel(x_ref, y_ref, o_ref):
-      o_ref[:] = jnp.nextafter(x_ref[...], y_ref[...])
+      o_ref[...] = jnp.nextafter(x_ref[...], y_ref[...])
 
-    x = jnp.array([1, 2, 3, 4]).astype(dtype)
-    y = jnp.array([1, 2, 3, 4]).astype(dtype)
-    np.testing.assert_allclose(kernel(x, y), jnp.nextafter(x, y))
+    x = jnp.full((4,), x, dtype=dtype)
+    y = jnp.full((4,), y, dtype=dtype)
+    out = kernel(x, y)
+    expected = jnp.nextafter(x, y)
+
+    # `nextafter` requires exact equality
+    self.assertArraysEqual(out, expected)
 
   COMPARISON_OPS = [
       jnp.equal,

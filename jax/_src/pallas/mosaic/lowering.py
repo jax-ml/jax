@@ -1997,6 +1997,15 @@ def _sign_lowering_rule(ctx: LoweringRuleContext, x):
 lowering_rules[lax.sign_p] = _sign_lowering_rule
 
 
+def _nextafter_lowering_rule(ctx: LoweringRuleContext, x, y):
+  return lower_fun(
+      pallas_utils.nextafter_lowering_helper, multiple_results=False,
+  )(ctx, x, y)
+
+
+lowering_rules[lax.nextafter_p] = _nextafter_lowering_rule
+
+
 def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):
   return math.rsqrt(x)
 
