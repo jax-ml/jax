@@ -24,6 +24,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     by {mod}`jax.export` in JAX v0.4.30. See the [migration guide](https://jax.readthedocs.io/en/latest/export/export.html#migration-guide-from-jax-experimental-export)
     for information on migrating to the new API.
 
+* New Features
+  * {func}`jax.jit` got a new `compiler_options: dict[str, Any]` argument, for
+    passing compilation options to XLA. For the moment it's undocumented and
+    may be in flux.
+
 ## jax 0.4.35 (Oct 22, 2024)
 
 * Breaking Changes
