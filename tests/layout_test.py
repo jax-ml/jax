@@ -625,6 +625,36 @@ class LayoutTest(jtu.JaxTestCase):
 
     f(inp, sparecore_arr)
 
+  def test_sparsecore_compute_twice(self):
+    if not (
+        jax.devices()[0].device_kind == 'TPU v5'
+        or jtu.is_device_tpu_at_least(6)
+    ):
+      self.skipTest('Does not have a sparsecore present')
+    shape = (4096, 8)
+    inp = jnp.arange(math.prod(shape)).reshape(shape)
+
+    dll = DLL(major_to_minor=(0, 1), _tiling=((8,),))
+    s = SingleDeviceSharding(jax.devices()[0])
+    sparse_layout = Layout(dll, s)
+    sparecore_arr = jax.device_put(inp, sparse_layout)
+
+    @compute_on('tpu_sparsecore')
+    @jax.jit
+    def sparsecore_multiply(x, y):
+      return x * y
+
+    @compute_on('tpu_sparsecore')
+    @jax.jit
+    def sparsecore_add(x, y):
+      return x + y
+
+    @partial(jax.jit, donate_argnums=0, out_shardings=sparse_layout)
+    def f(x):
+      return sparsecore_multiply(sparsecore_add(x, x) + 1, x)
+
+    f(sparecore_arr)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
