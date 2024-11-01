@@ -2121,6 +2121,7 @@ def lower_sharding_computation(
     *,
     keep_unused: bool,
     context_mesh: mesh_lib.Mesh | None,
+    compiler_options_kvs: tuple[tuple[str, Any], ...],
     lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
     pgle_profiler: profiler.PGLEProfiler | None,
@@ -2247,6 +2248,7 @@ def lower_sharding_computation(
       module,
       donated_invars,
       platforms,
+      compiler_options_kvs,
       global_in_avals=global_in_avals,
       global_out_avals=global_out_avals,
       in_shardings=in_shardings,
@@ -2298,11 +2300,13 @@ class MeshComputation(stages.XlaLowering):
 
   def __init__(self, name: str, hlo: ir.Module,
                donated_invars: Sequence[bool], platforms: Sequence[str],
+               compiler_options_kvs: tuple[tuple[str, Any], ...],
                **compile_args):
     self._name = name
     self._hlo = hlo
     self._donated_invars = donated_invars
     self._platforms = platforms
+    self._compiler_options_kvs = compiler_options_kvs
     self.compile_args = compile_args
     self._executable = None
 
@@ -2312,11 +2316,14 @@ class MeshComputation(stages.XlaLowering):
     return self._hlo
 
   def compile(self, compiler_options=None) -> MeshExecutable:
-    if self._executable is None or compiler_options is not None:
+    t_compiler_options = (() if compiler_options is None else
+                          tuple(compiler_options.items()))
+    compiler_options_kvs = self._compiler_options_kvs + t_compiler_options
+    if self._executable is None or compiler_options_kvs:
       executable = UnloadedMeshExecutable.from_hlo(
           self._name, self._hlo, **self.compile_args,
-          compiler_options=compiler_options)
-      if compiler_options is None:
+          compiler_options_kvs=compiler_options_kvs)
+      if not compiler_options_kvs:
         self._executable = executable
       return executable
     return self._executable
@@ -2581,8 +2588,7 @@ def create_compile_options(
   else:
     xla_device_assignment = np_dev.reshape((num_replicas, num_partitions))
 
-  fdo_profile = (None if compiler_options is None else
-                 compiler_options.pop("fdo_profile", None))
+  fdo_profile = compiler_options.pop("fdo_profile", None)
 
   compile_options = compiler.get_compile_options(
       num_replicas=num_replicas,
@@ -2614,17 +2620,11 @@ def create_compile_options(
 def _cached_compilation(computation, name, mesh, spmd_lowering,
                         tuple_args, auto_spmd_lowering, allow_prop_to_inputs,
                         allow_prop_to_outputs, host_callbacks, backend,
-                        da, pmap_nreps, compiler_options_keys,
-                        compiler_options_values,
-                        pgle_profiler):
+                        da, pmap_nreps, compiler_options_kvs, pgle_profiler):
   # One would normally just write: dev = np.array(device_assignment)
   # The formulation below is substantially faster if there are many devices.
   dev = np.vectorize(lambda i: da[i], otypes=[object])(np.arange(len(da)))
-
-  if compiler_options_keys is None:
-    compiler_options = None
-  else:
-    compiler_options = dict(safe_zip(compiler_options_keys, compiler_options_values))
+  compiler_options = dict(compiler_options_kvs)
 
   compile_options = create_compile_options(
       computation, mesh, spmd_lowering, tuple_args, auto_spmd_lowering,
@@ -2788,22 +2788,18 @@ class UnloadedMeshExecutable:
                committed: bool,
                in_layouts: MaybeLayout,
                out_layouts: MaybeLayout,
+               compiler_options_kvs: tuple[tuple[str, Any], ...],
                pmap_nreps: int = 1,
                mut: MutationData | None = None,
                shape_poly_state: mlir.ShapePolyLoweringState | None = None,
                all_default_mem_kind: bool = True,
                all_args_info: AllArgsInfo | None = None,
-               compiler_options=None,
                pgle_profiler: profiler.PGLEProfiler | None = None,
                intermediate_shardings: Sequence[JSharding] | None = None,
                context_mesh: mesh_lib.Mesh | None = None
   ) -> MeshExecutable:
     if shape_poly_state is not None and shape_poly_state.uses_dim_vars:
       hlo = mlir.refine_polymorphic_shapes(hlo)
-    compiler_options_keys = tuple(
-        compiler_options.keys()) if compiler_options is not None else None
-    compiler_options_values = tuple(
-        compiler_options.values()) if compiler_options is not None else None
     if isinstance(device_assignment, xc.DeviceList):
       da = device_assignment
     else:
@@ -2826,7 +2822,7 @@ class UnloadedMeshExecutable:
         hlo, name, mesh, spmd_lowering,
         tuple_args, auto_spmd_lowering, allow_prop_to_inputs,
         allow_prop_to_outputs, tuple(host_callbacks), backend, da, pmap_nreps,
-        compiler_options_keys, compiler_options_values, pgle_profiler)
+        compiler_options_kvs, pgle_profiler)
 
     if auto_spmd_lowering:
       assert mesh is not None
@@ -2918,6 +2914,7 @@ class JitGlobalCppCacheKeys:
   out_layouts_treedef: PyTreeDef | None = None
   out_layouts_leaves: tuple[Any, ...] | None = None
   use_resource_env: bool = False
+  compiler_options_kvs: tuple[tuple[str, Any], ...] | None = None
 
   @functools.cached_property
   def contains_explicit_attributes(self):
@@ -2928,7 +2925,8 @@ class JitGlobalCppCacheKeys:
             any(not isinstance(i, UnspecifiedValue) for i in self.in_shardings_leaves) or
             any(not isinstance(o, UnspecifiedValue) for o in self.out_shardings_leaves) or
             any(i is not None for i in self.in_layouts_leaves) or
-            any(o is not None for o in self.out_layouts_leaves))
+            any(o is not None for o in self.out_layouts_leaves) or
+            self.compiler_options_kvs)
 
 
 def reflatten_outputs_for_dispatch(out_tree, out_flat):

@@ -3581,6 +3581,7 @@ def _pjit(*args: TfVal,
           name: str,
           keep_unused: bool,
           inline: bool,
+          compiler_options_kvs,
           _in_avals: Sequence[core.ShapedArray],
           _out_aval: Sequence[core.ShapedArray]) -> TfVal:
   del donated_invars

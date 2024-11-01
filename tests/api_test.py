@@ -1373,6 +1373,18 @@ class JitTest(jtu.BufferDonationTestCase):
         }
     )
 
+  def test_compile_options_jit(self):
+    def f(x):
+      return jnp.sqrt(x ** 2) + 1.
+
+    f_jit = jit(
+        f,
+        compiler_options={
+            "xla_embed_ir_in_executable": True,
+            "xla_dump_max_hlo_modules": 200,
+            "xla_gpu_auto_spmd_partitioning_memory_budget_ratio": 0.5,
+        })(1.0)  # doesn't crash.
+
   def test_jit_lower_compile_with_compiler_options_invalid(self):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
@@ -1390,7 +1402,21 @@ class JitTest(jtu.BufferDonationTestCase):
         lambda: lowered.compile(
             compiler_options={"xla_embed_ir_in_executable": "invalid_value"}))
 
-  def test_jit_lower_compile_with_compiler_options_multiple(self):
+  def test_jit_compile_with_compiler_options_multiple(self):
+    def f(x):
+      return jnp.sqrt(x ** 2) + 1.
+
+    with jtu.count_jit_compilation_cache_miss() as count:
+      jit(f, compiler_options={"xla_embed_ir_in_executable": True})(1.)
+      jit(f, compiler_options={"xla_embed_ir_in_executable": False})(1.)
+    self.assertEqual(count[0], 2)
+
+    # We should still error on invalid options after some valid compiles
+    with self.assertRaisesRegex(
+        xla_extension.XlaRuntimeError, "No such compile option: 'invalid_key'"):
+      jit(f, compiler_options={"invalid_key": "invalid_value"})(1.)
+
+  def test_lower_compile_with_compiler_options_multiple(self):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
 

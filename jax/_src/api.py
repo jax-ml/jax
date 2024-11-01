@@ -151,6 +151,7 @@ def jit(
   backend: str | None = None,
   inline: bool = False,
   abstracted_axes: Any | None = None,
+  compiler_options: dict[str, Any] | None = None,
 ) -> pjit.JitWrapped:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
@@ -280,7 +281,7 @@ def jit(
   return pjit.make_jit(
         fun, in_shardings, out_shardings, donate_argnums, donate_argnames,
         static_argnums, static_argnames, device, backend, abstracted_axes,
-        keep_unused, inline, use_resource_env=False)
+        keep_unused, inline, compiler_options, use_resource_env=False)
 
 
 @contextmanager

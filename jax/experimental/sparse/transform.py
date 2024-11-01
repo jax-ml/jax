@@ -762,7 +762,7 @@ sparse_rules_bcoo[lax.while_p] = _while_sparse
 
 def _pjit_sparse(spenv, *spvalues, jaxpr, in_shardings, out_shardings,
                  in_layouts, out_layouts, resource_env, donated_invars, name,
-                 keep_unused, inline):
+                 keep_unused, inline, compiler_options_kvs):
   if any(donated_invars):
     raise NotImplementedError("sparse xla_call with donated_invars")
 
@@ -798,7 +798,8 @@ def _pjit_sparse(spenv, *spvalues, jaxpr, in_shardings, out_shardings,
       donated_invars=donated_invars,
       name=name,
       keep_unused=keep_unused,
-      inline=inline)
+      inline=inline,
+      compiler_options_kvs=compiler_options_kvs)
   return arrays_to_spvalues(spenv, tree_unflatten(out_tree, out_flat))
 
 sparse_rules_bcoo[pjit.pjit_p] = _pjit_sparse
