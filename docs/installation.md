@@ -244,7 +244,7 @@ conda install jax -c conda-forge
 To install it on a machine with an NVIDIA GPU, run:
 
 ```bash
-conda install jaxlib=*=*cuda* jax cuda-nvcc -c conda-forge -c nvidia
+conda install "jaxlib=*=*cuda*" jax cuda-nvcc -c conda-forge -c nvidia
 ```
 
 Note the `cudatoolkit` distributed by `conda-forge` is missing `ptxas`, which
