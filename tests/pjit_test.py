@@ -5156,6 +5156,22 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         TypeError, "select cases must have the same shardings"):
       f(arr1 == arr2, arr1, arr3)
 
+  def test_device_put_reshard(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    @jax.jit
+    def f(x):
+      y = jax.device_put(x, NamedSharding(x.sharding.mesh, P('x', None)))
+      self.assertEqual(y.sharding.spec, P('x', None))
+      return y
+
+    out = f(arr)
+    self.assertArraysEqual(out, np_inp)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

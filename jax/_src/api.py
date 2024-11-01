@@ -2183,11 +2183,12 @@ def make_jaxpr(
 
 def _infer_src_sharding(src, x) -> Sharding | None:
   if src is not None:
-    # TODO(slebedev): This looks like an error and needs investigation.
     return src  # pytype: disable=bad-return-type
   if isinstance(x, array.ArrayImpl):
     return x.sharding
-  elif isinstance(x, core.Tracer):
+  if config.sharding_in_types.value and hasattr(x, 'sharding'):
+    return x.sharding
+  if isinstance(x, core.Tracer):
     val = x.to_concrete_value()
     if val is not None and isinstance(val, array.ArrayImpl):
       return val.sharding
