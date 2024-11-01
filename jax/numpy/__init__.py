@@ -472,11 +472,6 @@ _deprecations = {
     "jnp.round_ is deprecated; use jnp.round instead.",
     round
   ),
-  # Deprecated 18 Sept 2023 and removed 06 Feb 2024
-  "trapz": (
-    "jnp.trapz is deprecated; use jnp.trapezoid instead.",
-    None
-  ),
 }
 
 import typing

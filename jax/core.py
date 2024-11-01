@@ -147,28 +147,6 @@ _deprecations = {
     "pp_kv_pairs": ("jax.core.pp_kv_pairs was removed in JAX v0.4.34.", None),
     "pp_var": ("jax.core.pp_var was removed in JAX v0.4.34.", None),
     "pp_vars": ("jax.core.pp_vars was removed in JAX v0.4.34.", None),
-    # Finalized 2024-05-13; remove after 2024-08-13
-    "DimSize": (
-        "jax.core.DimSize is deprecated. Use DimSize = int | Any.",
-        None,
-    ),
-    "Shape": (
-        "jax.core.Shape is deprecated. Use Shape = Sequence[int | Any].",
-        None,
-    ),
-    # Finalized 2024-06-24; remove after 2024-09-24
-    "canonicalize_shape": (
-      "jax.core.canonicalize_shape is deprecated.", None,
-    ),
-    "dimension_as_value": (
-      "jax.core.dimension_as_value is deprecated. Use jnp.array.", None,
-    ),
-    "definitely_equal": (
-      "jax.core.definitely_equal is deprecated. Use ==.", None,
-    ),
-    "symbolic_equal_dim": (
-      "jax.core.symbolic_equal_dim is deprecated. Use ==.", None,
-    ),
     # Added Jan 8, 2024
     "non_negative_dim": (
       "jax.core.non_negative_dim is deprecated. Use max_dim(..., 0).", _src_core.non_negative_dim,

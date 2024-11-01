@@ -68,17 +68,6 @@ from jax._src.interpreters.ad import (
   zeros_like_p as zeros_like_p,
 )
 
-_deprecations = {
-    # Finalized Mar 18, 2024; remove after June 18, 2024
-    "config": (
-        "jax.interpreters.ad.config is deprecated. Use jax.config directly.",
-        None,
-    ),
-    "source_info_util": (
-        "jax.interpreters.ad.source_info_util is deprecated. Use jax.extend.source_info_util.",
-        None,
-    ),
-}
 
 def backward_pass(jaxpr, reduce_axes, transform_stack,
                   consts, primals_in, cotangents_in):
