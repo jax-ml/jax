@@ -8328,6 +8328,7 @@ def diagflat(v: ArrayLike, k: int = 0) -> Array:
   return res
 
 
+# TODO(jakevdp): add support for N-dimensional inputs as in NumPy v2.2
 def trim_zeros(filt: ArrayLike, trim: str ='fb') -> Array:
   """Trim leading and/or trailing zeros of the input array.
 
