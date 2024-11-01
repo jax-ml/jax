@@ -39,8 +39,6 @@ jobs:
   build:
     name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ubuntu-20.04, x64=${{ matrix.enable-x64}})"
     runs-on: ROCM-Ubuntu
-    container:
-      image: index.docker.io/library/ubuntu@sha256:6d8d9799fe6ab3221965efac00b4c34a2bcc102c086a58dff9e19a08b913c7ef # ratchet:ubuntu:20.04
     timeout-minutes: 60
     strategy:
       matrix:
@@ -58,10 +56,6 @@ jobs:
             num_generated_cases: 1
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-    - name: Image Setup
-      run: |
-        apt update
-        apt install -y libssl-dev 
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
       with:
