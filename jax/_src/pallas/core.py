@@ -1112,7 +1112,7 @@ def default_mesh_discharge_rule(
       backend=backend,
   )(*args)
   # ``outs`` lacks the unmodified inputs. Add them back in.
-  all_outs = [*args]
+  all_outs = [None] * len(args)
   for out_idx, in_idx in enumerate(modified_idxs):
     all_outs[in_idx] = outs[out_idx]
   return all_outs, ()
