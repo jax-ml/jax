@@ -1531,7 +1531,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       _ = func_to_convert(*args)
       exported = export.export(
           (jax.jit(func_to_convert) if not hasattr(func_to_convert, "trace") else func_to_convert),
-          lowering_platforms=("tpu",)
+          platforms=("tpu",)
       )(*(core.ShapedArray(a.shape, a.dtype) for a in args))
 
     if transform1 == "shard_map":

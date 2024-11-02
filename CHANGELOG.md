@@ -23,6 +23,17 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The deprecated module `jax.experimental.export` has been removed. It was replaced
     by {mod}`jax.export` in JAX v0.4.30. See the [migration guide](https://jax.readthedocs.io/en/latest/export/export.html#migration-guide-from-jax-experimental-export)
     for information on migrating to the new API.
+  * The following deprecated methods and functions in {mod}`jax.export` have
+    been removed:
+      * `jax.export.DisabledSafetyCheck.shape_assertions`: it had no effect
+        already.
+      * `jax.export.Exported.lowering_platforms`: use `platforms`.
+      * `jax.export.Exported.mlir_module_serialization_version`:
+        use `calling_convention_version`.
+      * `jax.export.Exported.uses_shape_polymorphism`:
+         use `uses_global_constants`.
+      * the `lowering_platforms` kwarg for {func}`jax.export.export`: use
+        `platforms` instead.
 
 * New Features
   * {func}`jax.jit` got a new `compiler_options: dict[str, Any]` argument, for

@@ -532,7 +532,16 @@ class NativeSerializationImpl(SerializationImpl):
     self.convert_kwargs = dict(native_serialization=True,
                                native_serialization_platforms=native_serialization_platforms,
                                native_serialization_disabled_checks=native_serialization_disabled_checks)
-    self.fun_jax = fun_jax
+    if hasattr(fun_jax, "trace"):
+      # If we have a pjit or pmap already we do not wrap with another, and we
+      # allow shardings.
+      fun_jit = fun_jax
+    else:
+      # We support convert(pjit(f_jax)) and convert(jit(f_jax)) but also
+      # convert(f_jax), in which case a "jit" is implied. In that case we raise
+      # an error if the lowered function contains non-replicated sharding annotations.
+      fun_jit = jax.jit(fun_jax)
+    self.fun_jax = fun_jit
     self.args_specs = args_specs
     self.kwargs_specs = kwargs_specs
     self.native_serialization_disabled_checks = native_serialization_disabled_checks
@@ -547,9 +556,9 @@ class NativeSerializationImpl(SerializationImpl):
 
     self._restore_context = _restore_context
     _exported_device_assignment = [None]
-    self.exported = _export.export_back_compat(
+    self.exported = _export._export_internal(
         self.fun_jax,
-        lowering_platforms=self.native_serialization_platforms,
+        platforms=self.native_serialization_platforms,
         disabled_checks=self.native_serialization_disabled_checks,
         _device_assignment_for_internal_jax2tf_use_only=_exported_device_assignment,
     )(*self.args_specs, **self.kwargs_specs)

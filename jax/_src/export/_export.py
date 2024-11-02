@@ -26,7 +26,6 @@ import itertools
 import json
 import re
 from typing import Any, Protocol, TypeVar, Union, cast
-import warnings
 
 from absl import logging
 import numpy as np
@@ -101,20 +100,6 @@ class DisabledSafetyCheck:
       target_name: the name of the custom call target to allow.
     """
     return DisabledSafetyCheck(f"custom_call:{target_name}")
-
-  @classmethod
-  def shape_assertions(cls) -> DisabledSafetyCheck:
-    """DEPRECATED: A noop.
-
-    Was used previously to allow invocations with shapes that do not meet the
-    constraints. Has no effect anymore, shape assertions cannot be disabled.
-    """
-    # TODO(necula): remove this after compatibility period. Was deprecated in
-    # May 2024.
-    warnings.warn(
-        "DisabledSafetyCheck.shape_assertions is deprecated, has no effect anymore",
-        DeprecationWarning, stacklevel=2)
-    return DisabledSafetyCheck("shape_assertions")
 
   def is_custom_call(self) -> str | None:
     """Returns the custom call target allowed by this directive."""
@@ -273,33 +258,6 @@ class Exported:
     """
     return tuple(_hlo_sharding_to_xla_compatible_sharding(s, mesh)
                  for s in self.out_shardings_hlo)
-
-  # For backwards compatibility
-  # TODO(necula): remove after September 2024.
-  @property
-  def lowering_platforms(self):
-    """DEPRECATED."""
-    warnings.warn("lowering_platform is deprecated. Use .platforms instead.",
-                  DeprecationWarning, stacklevel=2)
-    return self.platforms
-
-  # For backwards compatibility
-  # TODO(necula): remove after September 2024.
-  @property
-  def mlir_module_serialization_version(self):
-    """DEPRECATED."""
-    warnings.warn("mlir_module_serialization_version is deprecated. Use .calling_convention_version instead.",
-                  DeprecationWarning, stacklevel=2)
-    return self.calling_convention_version
-
-  # For backwards compatibility
-  # TODO(necula): remove after September 2024.
-  @property
-  def uses_shape_polymorphism(self):
-    """DEPRECATED."""
-    warnings.warn("uses_shape_polymorphism is deprecated. Use .uses_global_constants instead.",
-                  DeprecationWarning, stacklevel=2)
-    return self.uses_global_constants
 
   def has_vjp(self) -> bool:
     """Returns if this Exported supports VJP."""
@@ -546,109 +504,11 @@ def shape_and_dtype_jax_array(a) -> tuple[Sequence[int | None], DType]:
   aval = core.raise_to_shaped(core.get_aval(a))
   return aval.shape, aval.dtype
 
-def args_specs(
-    args,  # pytree of arguments
-    polymorphic_shapes,  # prefix pytree of strings
-    get_shape_and_dtype=shape_and_dtype_jax_array,
-):
-  # TODO: deprecated in January 2024, to be removed.
-  warnings.warn(
-      "export.args_specs is deprecated in favor of export.symbolic_args_specs",
-      DeprecationWarning, stacklevel=2)
-  if get_shape_and_dtype is not shape_and_dtype_jax_array:
-    # This was needed in some older jax2tf implementations
-    args = tree_util.tree_map(lambda a: jax.ShapeDtypeStruct(* get_shape_and_dtype(a)),
-                              args)
-  return shape_poly.symbolic_args_specs(args, polymorphic_shapes)
-
-
-# TODO(necula): remove this once we remove jax.experimental.export.
-def export_back_compat(
-    fun_jax: Callable,
-    *,
-    lowering_platforms: Sequence[str] | None = None,
-    disabled_checks: Sequence[DisabledSafetyCheck] = (),
-    _device_assignment_for_internal_jax2tf_use_only = None,
-    ) -> Callable[..., Exported]:
-  """Exports native serialization for a JAX function.
-
-  Note: this function exists only for internal usage by jax2tf and for
-    backwards compatibility with jax.experimental.export. Use
-    `jax.export` instead.
-    See https://jax.readthedocs.io/en/latest/export/export.html
-
-  Args:
-    fun_jax: the function to lower and serialize.
-    lowering_platforms:
-        Optional sequence containing a subset of 'tpu', 'cpu',
-        'cuda', 'rocm'. If more than one platform is specified, then
-        the lowered code takes an argument specifying the platform.
-        If None, then use the default JAX backend.
-        The calling convention for multiple platforms is explained
-        at https://jax.readthedocs.io/en/latest/export/export.html#module-calling-convention.
-    disabled_checks: the safety checks to disable. See docstring
-        of `DisabledSafetyCheck`.
-
-  Returns:
-    a function that takes args and kwargs pytrees of jax.ShapeDtypeStruct,
-    or values with `.shape` and `.dtype` attributes, and returns an
-    `Exported`.
-
-  Usage:
-
-      def f_jax(*args, **kwargs): ...
-      exported = jax_export.export(f_jax)(*args, **kwargs)
-  """
-
-  def do_export(*args_specs, **kwargs_specs) -> Exported:
-    if hasattr(fun_jax, "trace"):
-      # If we have a pjit or pmap already we do not wrap with another, and we
-      # allow shardings.
-      wrapped_fun_jax = fun_jax
-    else:
-      # We support convert(pjit(f_jax)) and convert(jit(f_jax)) but also
-      # convert(f_jax), in which case a "jit" is implied. In that case we raise
-      # an error if the lowered function contains non-replicated sharding annotations.
-      wrapped_fun_jax = jax.jit(fun_jax)
-
-    if lowering_platforms is not None:
-      actual_lowering_platforms = tuple(lowering_platforms)
-    else:
-      actual_lowering_platforms = (default_export_platform(),)
-
-    # TODO: move to `lower`
-    symbolic_scope: tuple[shape_poly.SymbolicScope, tree_util.KeyPath] | None = None  # type: ignore[invalid-annotation,unused-ignore]
-    for k_path, aval in tree_util.tree_flatten_with_path((args_specs, kwargs_specs))[0]:
-      # Static args may have no `shape` attribute.
-      if not hasattr(aval, "shape"):
-        continue
-      for d in aval.shape:
-        if shape_poly.is_symbolic_dim(d):
-          if symbolic_scope is None:
-            symbolic_scope = (d.scope, k_path)
-            continue
-          symbolic_scope[0]._check_same_scope(
-              d, when=f"when exporting {util.fun_name(wrapped_fun_jax)}",
-              self_descr=f"current (from {shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
-              other_descr=shape_poly.args_kwargs_path_to_str(k_path))
-
-    traced = wrapped_fun_jax.trace(*args_specs, **kwargs_specs)
-    lowered = traced.lower(
-        lowering_platforms=actual_lowering_platforms,
-        _private_parameters=mlir.LoweringParameters(
-            for_export=True,
-            export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value))
-    return _export_lowered(
-        lowered, traced.jaxpr, traced.fun_name,
-        disabled_checks=disabled_checks,
-        _device_assignment_for_internal_jax2tf_use_only=_device_assignment_for_internal_jax2tf_use_only)
-  return do_export
 
 def export(
     fun_jit: stages.Wrapped,
     *,
     platforms: Sequence[str] | None = None,
-    lowering_platforms: Sequence[str] | None = None,
     disabled_checks: Sequence[DisabledSafetyCheck] = (),
     ) -> Callable[..., Exported]:
   """Exports a JAX function for persistent serialization.
@@ -662,7 +522,6 @@ def export(
         If None, then use the default JAX backend.
         The calling convention for multiple platforms is explained at
         https://jax.readthedocs.io/en/latest/export/export.html#module-calling-convention.
-    lowering_platforms: DEPRECATED, use `platforms`.
     disabled_checks: the safety checks to disable. See documentation for
         of `jax.export.DisabledSafetyCheck`.
 
@@ -689,34 +548,38 @@ def export(
       >>> rehydrated.call(np.array([.1, .2, .3, .4], dtype=np.float32))
       Array([0.09983342, 0.19866933, 0.29552022, 0.38941833], dtype=float32)
   """
+  return _export_internal(fun_jit, platforms=platforms,
+                          disabled_checks=disabled_checks)
+
+
+# TODO(necula): remove this once we improve the integration with jax2tf.
+def _export_internal(
+    fun_jit: stages.Wrapped,
+    *,
+    platforms: Sequence[str] | None = None,
+    disabled_checks: Sequence[DisabledSafetyCheck] = (),
+    _device_assignment_for_internal_jax2tf_use_only = None,
+    ) -> Callable[..., Exported]:
+  """Exports native serialization for a JAX function.
+
+  Note: this function exists only for internal usage by jax2tf. Use
+    `jax.export` instead.
+    See https://jax.readthedocs.io/en/latest/export/export.html
+
+  See docstring of `export` for more details.
+  """
   if not isinstance(fun_jit, stages.Wrapped):
     raise ValueError(
         f"Function to be exported must be the result of `jit` but is: {fun_jit}")
-  if platforms is not None and lowering_platforms is not None:
-    raise ValueError("Cannot use both `platforms` and `lowering_platforms`")
-  if platforms is None and lowering_platforms is not None:
-    platforms = lowering_platforms
-  if platforms is not None:
-    actual_lowering_platforms = tuple(platforms)
-  else:
-    actual_lowering_platforms = (default_export_platform(),)
 
   def do_export(*args_specs, **kwargs_specs) -> Exported:
+    if platforms is not None:
+      actual_lowering_platforms = tuple(platforms)
+    else:
+      actual_lowering_platforms = (default_export_platform(),)
+
     # TODO: move to `lower`
-    symbolic_scope: tuple[shape_poly.SymbolicScope, tree_util.KeyPath] | None = None  # type: ignore[invalid-annotation,unused-ignore]
-    for k_path, aval in tree_util.tree_flatten_with_path((args_specs, kwargs_specs))[0]:
-      # Static args may have no `shape` attribute.
-      if not hasattr(aval, "shape"):
-        continue
-      for d in aval.shape:
-        if shape_poly.is_symbolic_dim(d):
-          if symbolic_scope is None:
-            symbolic_scope = (d.scope, k_path)
-            continue
-          symbolic_scope[0]._check_same_scope(
-              d, when=f"when exporting {util.fun_name(fun_jit)}",
-              self_descr=f"current (from {shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
-              other_descr=shape_poly.args_kwargs_path_to_str(k_path))
+    check_symbolic_scope_errors(fun_jit, args_specs, kwargs_specs)
 
     traced = fun_jit.trace(*args_specs, **kwargs_specs)
     lowered = traced.lower(
@@ -726,12 +589,32 @@ def export(
             export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value))
     return _export_lowered(
         lowered, traced.jaxpr, traced.fun_name,
-        disabled_checks=disabled_checks)
+        disabled_checks=disabled_checks,
+        _device_assignment_for_internal_jax2tf_use_only=_device_assignment_for_internal_jax2tf_use_only)
   return do_export
+
+
+def check_symbolic_scope_errors(fun_jax, args_specs, kwargs_specs):
+  symbolic_scope: tuple[shape_poly.SymbolicScope, tree_util.KeyPath] | None = None  # type: ignore[invalid-annotation,unused-ignore]
+  for k_path, aval in tree_util.tree_flatten_with_path((args_specs, kwargs_specs))[0]:
+    # Static args may have no `shape` attribute.
+    if not hasattr(aval, "shape"):
+      continue
+    for d in aval.shape:
+      if shape_poly.is_symbolic_dim(d):
+        if symbolic_scope is None:
+          symbolic_scope = (d.scope, k_path)
+          continue
+        symbolic_scope[0]._check_same_scope(
+            d, when=f"when exporting {util.fun_name(fun_jax)}",
+            self_descr=f"current (from {shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
+            other_descr=shape_poly.args_kwargs_path_to_str(k_path))
+
 
 def _export_lowered(
     lowered: stages.Lowered,
-    jaxpr: core.ClosedJaxpr, fun_name: str,
+    jaxpr: core.ClosedJaxpr,
+    fun_name: str,
     disabled_checks: Sequence[DisabledSafetyCheck] = (),
     _device_assignment_for_internal_jax2tf_use_only = None,
   ) -> Exported:

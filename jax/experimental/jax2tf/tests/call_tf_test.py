@@ -803,7 +803,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     lowering_platforms = ("tpu", "cpu", "cuda")
 
     exp = export.export(jax.jit(f_jax),
-                        lowering_platforms=lowering_platforms)(x)
+                        platforms=lowering_platforms)(x)
     for jax_platform in jax_and_tf_platforms:
       with self.subTest(jax_platform):
         jax_device = jax.devices(jax_platform)[0]

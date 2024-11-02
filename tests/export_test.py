@@ -196,7 +196,7 @@ class JaxExportTest(jtu.JaxTestCase):
     def f(a_b_pair, *, a, b):
       return (dict(res=a_b_pair, a=a, b=b), jnp.sin(a), jnp.cos(b))
 
-    exp = get_exported(jax.jit(f), lowering_platforms=("cpu",))((a, b), a=a, b=b)
+    exp = get_exported(jax.jit(f), platforms=("cpu",))((a, b), a=a, b=b)
     a_aval = core.ShapedArray(a.shape, a.dtype)
     b_aval = core.ShapedArray(b.shape, b.dtype)
     self.assertEqual(exp.platforms, ("cpu",))
@@ -463,7 +463,7 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_error_wrong_platform(self, platform):
     a = np.arange(4, dtype=np.float32)
 
-    exp_f = get_exported(jnp.sin, lowering_platforms=(platform,))(a)
+    exp_f = get_exported(jnp.sin, platforms=(platform,))(a)
     if xb.canonicalize_platform(jtu.device_under_test()) == platform:
       raise unittest.SkipTest("Uninteresting scenario")
 
@@ -473,7 +473,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
     # Now try with the platform check disabled
     exp_f_no_platform_check = get_exported(
-      jnp.sin, lowering_platforms=(platform,),
+      jnp.sin, platforms=(platform,),
       disabled_checks=[export.DisabledSafetyCheck.platform()])(a)
     res = exp_f_no_platform_check.call(a)
     self.assertAllClose(res, jnp.sin(a))
@@ -1464,7 +1464,7 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform(self):
     x = np.arange(8, dtype=np.float32)
     exp = get_exported(jax.jit(_testing_multi_platform_func),
-                       lowering_platforms=("tpu", "cpu", "cuda", "rocm"))(x)
+                       platforms=("tpu", "cpu", "cuda", "rocm"))(x)
     self.assertEqual(exp.platforms, ("tpu", "cpu", "cuda", "rocm"))
     module_str = str(exp.mlir_module())
     expected_main_re = (
@@ -1487,14 +1487,14 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform_nested(self):
     x = np.arange(5, dtype=np.float32)
     exp = get_exported(jax.jit(lambda x: _testing_multi_platform_func(jnp.sin(x))),
-                       lowering_platforms=("cpu", "tpu", "cuda", "rocm"))(x)
+                       platforms=("cpu", "tpu", "cuda", "rocm"))(x)
     self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda", "rocm"))
 
     # Now serialize the call to the exported using a different sequence of
     # lowering platforms, but included in the lowering platforms for the
     # nested exported.
     exp2 = get_exported(jax.jit(exp.call),
-                        lowering_platforms=("cpu", "cuda", "rocm"))(x)
+                        platforms=("cpu", "cuda", "rocm"))(x)
 
     # Ensure that we do not have multiple lowerings of the exported function
     exp2_module_str = str(exp2.mlir_module())
@@ -1513,7 +1513,7 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform_nested_inside_single_platform_export(self):
     x = np.arange(5, dtype=np.float32)
     exp = get_exported(jax.jit(_testing_multi_platform_func),
-                       lowering_platforms=("cpu", "tpu", "cuda", "rocm"))(x)
+                       platforms=("cpu", "tpu", "cuda", "rocm"))(x)
     self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda", "rocm"))
 
     # Now serialize the call for the current platform.
@@ -1586,14 +1586,14 @@ class JaxExportTest(jtu.JaxTestCase):
     def f(x):
       return times_2_or_3_or_4.bind(x)
     x = np.float32(42.)
-    exp = export.export(f, lowering_platforms=["cpu", "cuda", "rocm", "tpu"])(x)
+    exp = export.export(f, platforms=["cpu", "cuda", "rocm", "tpu"])(x)
     expected = x * np.float32(dict(cpu=2, gpu=3, tpu=4)[jtu.device_under_test()])
     self.assertAllClose(exp.call(x), expected)
 
   def test_multi_platform_unknown_platform(self):
     x = np.arange(8, dtype=np.float32)
     exp = get_exported(jax.jit(jnp.sin),
-                       lowering_platforms=("tpu", "cpu", "cuda", "other"))(x)
+                       platforms=("tpu", "cpu", "cuda", "other"))(x)
     self.assertEqual(exp.platforms, ("tpu", "cpu", "cuda", "other"))
 
 
@@ -1620,7 +1620,7 @@ class JaxExportTest(jtu.JaxTestCase):
       # The export is not applicable to GPU
       raise unittest.SkipTest("Not intended for running on GPU")
     exp = get_exported(jax.jit(lambda x: jnp.reshape(_testing_multi_platform_func(x), (-1,))),
-                       lowering_platforms=("cpu", "tpu"))(
+                       platforms=("cpu", "tpu"))(
         jax.ShapeDtypeStruct(export.symbolic_shape("b1, b2"), np.float32)
     )
     x = np.arange(12, dtype=np.float32).reshape((3, 4))
@@ -1643,8 +1643,7 @@ class JaxExportTest(jtu.JaxTestCase):
       return b * 2.
 
     res_native = f_jax(a)
-    exp = get_exported(f_jax,
-                        lowering_platforms=("cpu", "tpu", "cuda", "rocm"))(a)
+    exp = get_exported(f_jax, platforms=("cpu", "tpu", "cuda", "rocm"))(a)
 
     # Call with argument placed on different plaforms
     for platform in self.__class__.platforms:
@@ -1790,7 +1789,7 @@ class JaxExportTest(jtu.JaxTestCase):
                                                   effect_class_name="ForTestingOrderedEffect1")
       exp = get_exported(
           jax.jit(f_jax),
-          lowering_platforms=("cpu", "tpu")
+          platforms=("cpu", "tpu")
           )(jax.ShapeDtypeStruct(export.symbolic_shape("b1, b2"), x.dtype))
       mlir_module_str = str(exp.mlir_module())
       wrapped_main_expected_re = (
