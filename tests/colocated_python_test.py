@@ -36,10 +36,11 @@ def _colocated_cpu_devices(
   # PjRt-IFRT prepares CPU devices by its own.
   cpu_backend_devices = jax.local_devices(backend="cpu")
   device_index_map = {device.id: i for i, device in enumerate(jax.devices())}
-  return [
-      cpu_backend_devices[device_index_map[device.id]] for device in devices
-  ]
 
+  available_devices = devices[:min(len(cpu_backend_devices), len(devices))]
+  return [
+      cpu_backend_devices[device_index_map[d.id]] for d in available_devices
+  ]
 
 @contextlib.contextmanager
 def _count_colocated_python_specialization_cache_miss() -> list[int]:
