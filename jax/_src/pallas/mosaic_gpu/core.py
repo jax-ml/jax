@@ -458,14 +458,8 @@ class WGMMAAbstractAccumulatorRef(AbstractMemoryRef):
   def __repr__(self) -> str:
     return f'Accumulator{{{self.inner_aval.str_short()}}}'
 
-  def join(self, other):
-    return _as_accum(super().join(other))
-
   def update(self, inner_aval=None, memory_space=None):
     return _as_accum(super().update(inner_aval=None, memory_space=None))
-
-  def at_least_vspace(self):
-    return _as_accum(super().at_least_vspace())
 
   def _getitem(self, tracer, idx):
     from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_deref  # pytype: disable=import-error
@@ -482,10 +476,6 @@ def _as_accum(ref) -> WGMMAAbstractAccumulatorRef:
       inner_aval=ref.inner_aval,
       memory_space=ref.memory_space,  # pytype: disable=attribute-error
   )
-
-def _ref_raise_to_shaped(ref_aval, weak_type):
-  return _as_accum(jax_core.raise_to_shaped_mappings[AbstractMemoryRef](ref_aval, weak_type))
-jax_core.raise_to_shaped_mappings[WGMMAAbstractAccumulatorRef] = _ref_raise_to_shaped
 
 
 _WARPGROUP_AXIS_NAME = object()

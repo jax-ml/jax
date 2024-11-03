@@ -23,7 +23,6 @@ from jax._src import api
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import linear_util as lu
-from jax._src.core import raise_to_shaped
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -300,7 +299,7 @@ def _linear_solve_abstract_eval(*args, const_lengths, jaxprs):
   num_aux = len(jaxprs.solve.out_avals) - len(jaxprs.matvec.out_avals)
   if num_aux > 0:
     args_to_raise += tuple(jaxprs.solve.out_avals[-num_aux:])
-  return _map(raise_to_shaped, args_to_raise)
+  return args_to_raise
 
 
 def _custom_linear_solve_impl(*args, const_lengths, jaxprs):

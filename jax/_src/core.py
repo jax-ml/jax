@@ -368,7 +368,7 @@ class Var:
   def __init__(self, suffix: str, aval: AbstractValue):
     self.count = next(_var_counter)
     self.suffix = suffix
-    self.aval = raise_to_shaped(aval)
+    self.aval = aval
 
   # TODO(phawkins, mattjj): remove ordering of variables. JAX itself does not
   # care about variable ordering, but the downstream package kfac_jax does.
@@ -662,7 +662,7 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
   def _error_repr(self):
     if self.aval is None:
       return f"traced array with aval {self.aval}"
-    return f"traced array with shape {raise_to_shaped(self.aval).str_short()}"
+    return f"traced array with shape {self.aval.str_short()}"
 
   def __array__(self, *args, **kw):
     raise TracerArrayConversionError(self)
@@ -1302,18 +1302,17 @@ class AbstractValue:
     except AttributeError:
       return self.__class__.__name__
 
-  def strip_weak_type(self) -> AbstractValue:
+  def update_weak_type(self, weak_type):
     return self
 
-  def join(self, other):
-    raise NotImplementedError("must override")
+  def strip_weak_type(self) -> AbstractValue:
+    return self.update_weak_type(False)
 
   def update(self, **kwargs):
     raise NotImplementedError("must override")
 
   def str_short(self, short_dtypes=False):
     return str(self)
-
 
 # For type signatures involving dynamic shapes, we use lists of abstract values
 # which may contain (reverse) de Bruijn indices in their shapes.
@@ -1348,26 +1347,10 @@ def _jaxpr_type_to_callable_annotation(jaxpr: Jaxpr) -> InputType:
          for v in jaxpr.invars]
   return tuple(out)
 
-class Bot(AbstractValue): pass
-bot = Bot()
-
-
-def lattice_join(x: AbstractValue | None,
-                 y: AbstractValue | None) -> AbstractValue:
-  if x is None:
-    assert y is not None
-    return y
-  elif y is None:
-    return x
-  elif isinstance(x, type(y)):
-    return y.join(x)
-  elif isinstance(y, type(x)):
-    return x.join(y)
-  elif isinstance(x, DShapedArray) and isinstance(y, ShapedArray):
-    # TODO(mattjj): remove this special case after dynamic shapes are integrated
-    return x.join(y)
-  else:
-    raise TypeError(x, y)
+# TODO(dougalm): Deprecate. This is here for backwards compat.
+def lattice_join(x, y):
+  assert typematch(x, y)
+  return x
 
 # For use in typing annotations to denote either a Tracer or a `valid_jaxtype`.
 Value = Any
@@ -1530,9 +1513,8 @@ class UnshapedArray(AbstractValue):
   def str_short(self, short_dtypes=False) -> str:
     return dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
 
-  def strip_weak_type(self):
-    """Returns a copy of the aval with weak_type=False."""
-    return self.update(weak_type=False)
+  def update_weak_type(self, weak_type):
+    return self.update(weak_type=weak_type)
 
 def _canonicalize_dimension(dim: DimSize) -> DimSize:
   # Dimensions are most commonly integral (by far), so we check that first.
@@ -1656,13 +1638,6 @@ class ShapedArray(UnshapedArray):
       return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
                          self.weak_type)
 
-  def join(self, other):
-    if definitely_equal_shape(self.shape, other.shape) and self.dtype == other.dtype:
-      weak_type = self.weak_type and other.weak_type
-      return self.update(weak_type=weak_type)
-    else:
-      raise TypeError(self, other)
-
   def str_short(self, short_dtypes=False):
     dt_str = (dtypes.short_dtype_name(self.dtype) if short_dtypes else
               self.dtype.name)
@@ -1761,14 +1736,6 @@ class DShapedArray(UnshapedArray):
 
   def __hash__(self):
     return hash((self.shape, self.dtype, self.weak_type))
-
-  def join(self, other):
-    if (definitely_equal_shape(self.shape, other.shape) and
-        self.dtype == other.dtype):
-      weak_type = self.weak_type and other.weak_type
-      return self.update(weak_type=weak_type)
-    else:
-      raise TypeError(self, other)
 
   def to_tangent_aval(self):
     return DShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
@@ -1881,16 +1848,11 @@ def mutable_array_abstract_eval(init_aval):
 @mutable_array_p.def_impl
 def _mutable_array_impl(init_val):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
-  aval = raise_to_shaped(get_aval(init_val))
+  aval = get_aval(init_val)
   return MutableArray(AbstractRef(aval), init_val)
 
 
 class AbstractToken(AbstractValue):
-  def join(self, other):
-    if isinstance(other, AbstractToken):
-      return self
-    else:
-      assert False, f"Cannot join {self} with {other}"
   def str_short(self, short_dtypes=False): return 'Tok'
   def to_tangent_aval(self): return self
 abstract_token: AbstractToken = AbstractToken()
@@ -1910,30 +1872,9 @@ class Token:
 pytype_aval_mappings[Token] = lambda _: abstract_token
 
 
-def raise_to_shaped(aval: AbstractValue, weak_type=None):
-  aval_type = type(aval)
-  if aval_type is ShapedArray and weak_type is None:
-    return aval
-  if aval_type is DShapedArray and weak_type is None:
-    return aval
-  if weak_type is None:
-    weak_type = getattr(aval, 'weak_type', False)
-  for typ in aval_type.__mro__:
-    handler = raise_to_shaped_mappings.get(typ)
-    if handler: return handler(aval, weak_type)
-  raise TypeError(type(aval))
-
-def _shaped_array_mapping(aval, weak_type):
-  if config.sharding_in_types.value:
-    return ShapedArray(aval.shape, aval.dtype, weak_type, sharding=aval.sharding)
-  return ShapedArray(aval.shape, aval.dtype, weak_type)
-
-raise_to_shaped_mappings: dict[type, Callable] = {
-    AbstractToken: lambda aval, _: aval,
-    Bot: lambda aval, _: aval,
-    ShapedArray: _shaped_array_mapping,
-    DShapedArray: lambda aval, _: aval
-}
+# TODO(dougalm): Deprecate. This is just here for backwards compat.
+def raise_to_shaped(aval):
+  return aval
 
 ### Operations on shapes and dimension sizes.
 
@@ -2341,18 +2282,23 @@ def typecheck(aval: AbstractValue, x) -> bool:
 def typecompat(aval_ref: AbstractValue, aval: AbstractValue) -> bool:
   """Determine whether `aval` conforms to `aval_ref`. Ignores weak_type."""
   try:
-    return typematch(aval_ref, lattice_join(aval_ref, aval))
+    return typematch(aval_ref, aval)
   except TypeError:
     return False
 
-def typematch(aval1: AbstractValue, aval2: AbstractValue) -> bool:
-  """Determine whether `aval1` and `aval2` are equivalent. Ignores weak_type."""
-  if aval1 == aval2: return True
-  # unequal avals may still represent the same type, because type is represented
-  # by avals at the shaped level, and because weak type tags aren't considered
-  # part of the type
-  return (raise_to_shaped(aval1, weak_type=False) ==
-          raise_to_shaped(aval2, weak_type=False))
+def typematch(t1: AbstractValue, t2: AbstractValue) -> bool:
+  """Determine whether `t1` and `t2` are equivalent. Ignores weak_type."""
+  t1 = t1.strip_weak_type()
+  t2 = t2.strip_weak_type()
+  if t1 == t2:
+    return True
+  elif (isinstance(t1, (ShapedArray, DShapedArray)) and
+        isinstance(t2, (ShapedArray, DShapedArray))):
+    # This case handles DShapedArray and shape polynomials. Alternatively we
+    # could try normalizing first and then doing simple equality.
+    return t1.dtype == t2.dtype and definitely_equal_shape(t1.shape, t2.shape)
+  else:
+    return False
 
 class JaxprTypeError(TypeError): pass
 

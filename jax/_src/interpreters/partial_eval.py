@@ -40,7 +40,7 @@ from jax._src.api_util import (flattened_fun_in_tree, flatten_fun_nokwargs,
                                fun_sourceinfo)
 from jax._src.core import (Trace, Tracer, TraceTag, Jaxpr, Literal, get_aval,
                            AbstractValue, ClosedJaxpr, new_jaxpr_eqn,
-                           Var, DropVar, raise_to_shaped, Atom,
+                           Var, DropVar, Atom,
                            JaxprEqn, Primitive, ShapedArray, DShapedArray,
                            mapped_aval, unmapped_aval, DBIdx, InDBIdx, OutDBIdx,
                            InputType, OutputType, get_referent, JaxprEqnContext)
@@ -162,8 +162,7 @@ class JaxprTrace(Trace['JaxprTracer']):
 
   def new_instantiated_literal(self, val) -> JaxprTracer:
     aval = get_aval(val)
-    return JaxprTracer(self, PartialVal.unknown(aval),
-                       Literal(val, raise_to_shaped(aval)))
+    return JaxprTracer(self, PartialVal.unknown(aval), Literal(val, aval))
 
   def new_instantiated_const(self, val) -> JaxprTracer:
     aval = get_aval(val)
@@ -201,7 +200,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     if const is None:
       return tracer
     else:
-      aval = raise_to_shaped(get_aval(const), np.isscalar(const))
+      aval = get_aval(const).update_weak_type(np.isscalar(const))
       return JaxprTracer(self, PartialVal.unknown(aval), ConstVar(const))
 
   def process_primitive(self, primitive, tracers, params):
@@ -715,7 +714,7 @@ def new_eqn_recipe(in_tracers: Sequence[JaxprTracer],
             len(params["in_axes"]) == len(params["call_jaxpr"].invars))
     assert ("donated_invars" in params and
             len(params["donated_invars"]) == len(params["call_jaxpr"].invars))
-  out_avals = [core.raise_to_shaped(t.aval) for t in out_tracers]
+  out_avals = [t.aval for t in out_tracers]
   ctx = ctx or JaxprEqnContext(
       compute_on.current_compute_type(),
       config.threefry_partitionable.value,
@@ -936,7 +935,7 @@ def _partial_eval_jaxpr_nounits(jaxpr, in_unknowns, instantiate):
         f, in_pvals, instantiate=instantiate)
     jaxpr_unknown = convert_constvars_jaxpr(jaxpr_unknown_)
     out_unknowns = [not pval.is_known() for pval in out_pvals]
-    res_avals = [core.raise_to_shaped(core.get_aval(r)) for r in residuals]
+    res_avals = [core.get_aval(r) for r in residuals]
     cell.append((out_unknowns, jaxpr_unknown, res_avals))
     known_vals_out = [pval.get_known() for pval in out_pvals if pval.is_known()]
     return [*known_vals_out, *residuals]
@@ -1567,7 +1566,7 @@ class DynamicJaxprTracer(core.Tracer):
     return self if val is None else get_referent(val)
 
 def _dynamic_jaxpr_tracer_shaped_abstractify(x):
-  return core.raise_to_shaped(x.aval)
+  return x.aval
 api_util._shaped_abstractify_handlers[DynamicJaxprTracer] = _dynamic_jaxpr_tracer_shaped_abstractify
 
 def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
@@ -1827,7 +1826,9 @@ class DynamicJaxprTrace(core.Trace):
     # TODO(mattjj): for ints, or hashable consts, don't rely on id
     tracer = self.frame.constid_to_tracer.get(id(c))
     if tracer is None:
-      aval = raise_to_shaped(get_aval(c), weak_type=dtypes.is_weakly_typed(c))
+      aval = get_aval(c)
+      if hasattr(aval, "weak_type"):
+        aval = aval.update_weak_type(dtypes.is_weakly_typed(c))
       aval = self._lift_tracers_in_aval(aval)
       tracer = self._new_const(aval, c)
     return tracer
@@ -1892,8 +1893,7 @@ class DynamicJaxprTrace(core.Trace):
 
   def process_call(self, call_primitive, f, explicit_tracers, params):
     if f.in_type is None:
-      f = lu.annotate(f, tuple((raise_to_shaped(get_aval(t)), True)
-                               for t in explicit_tracers))
+      f = lu.annotate(f, tuple((get_aval(t), True) for t in explicit_tracers))
     implicit_tracers = _extract_implicit_args(self, f.in_type, explicit_tracers)
     in_tracers = map(self.to_jaxpr_tracer, [*implicit_tracers, *explicit_tracers])
     # TODO(mattjj): check in_tracers are consistent with f.in_type annotation
@@ -2291,7 +2291,7 @@ def _collect_implicit(
     for i, name in spec.items():
       if name not in idxs and id(x.shape[i]) not in explicit_tracers:
         idxs[name] = DBIdx(next(counter))
-        implicit_types.append(raise_to_shaped(get_aval(x.shape[i])))
+        implicit_types.append(get_aval(x.shape[i]))
     if isinstance(x, Tracer):
       explicit_tracers.setdefault(id(x), explicit_idx)  # use the first
 
@@ -2310,7 +2310,7 @@ def _arg_type(
   ) -> AbstractValue:
   # Produce an AbstractValue by substituting DBIdxs for AbstractedAxisNames.
   aval = get_aval(x)  # aval.shape could contain Tracers
-  if not spec: return core.raise_to_shaped(aval)
+  if not spec: return aval
   shape: list[int | DBIdx] = [idxs[spec[i]] if i in spec else d
                                     for i, d in enumerate(aval.shape)]
   assert not any(isinstance(d, Tracer) for d in shape)
