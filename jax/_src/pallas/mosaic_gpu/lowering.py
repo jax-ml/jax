@@ -1389,16 +1389,23 @@ def _lower_jaxpr_to_for_loop(
     has_loop_index: bool,
 ):
 
-  @mgpu.fori(length, [*args])
+  _consts_avals, arg_avals = util.split_list(ctx.avals_in, [len(consts)])
+  arg_avals = arg_avals[has_loop_index:]
+  out_avals = []
+  if arg_avals:
+    out_avals = ctx.avals_out[-len(arg_avals):]
+
+  @mgpu.fori(length, [*map(_ensure_fa, args, arg_avals)])
   def loop(loop_index, body_args):
     if has_loop_index:
       loop_index = arith_dialect.addi(loop_index, start)
       jaxpr_args = [*consts, loop_index, *body_args]
     else:
       jaxpr_args = [*consts, *body_args]
-    return lower_jaxpr_to_mosaic_gpu(
+    outs = lower_jaxpr_to_mosaic_gpu(
         ctx.module_ctx, ctx.launch_ctx, jaxpr, jaxpr_args
     )
+    return map(_ensure_fa, outs, out_avals)
 
   return loop.results
 
@@ -1437,13 +1444,12 @@ def _scan_lowering_rule(
   _consts_avals, arg_avals = util.split_list(ctx.avals_in, [num_consts])
   if has_loop_index:
     start, *args = args
-    index_aval, *arg_avals = arg_avals
+    index_aval, *_ = arg_avals
     start: ir.Value = _ensure_ir_value(start, index_aval.dtype)
     length = _ir_constant(length, start.type)
   else:
     start = _i32_constant(0)
     length = _i32_constant(length)
-  args = map(lambda arg, aval: _ensure_fa(arg, aval.dtype), args, arg_avals)
   for_out = _lower_jaxpr_to_for_loop(
       ctx, jaxpr, start, length, consts, *args, has_loop_index=has_loop_index
   )

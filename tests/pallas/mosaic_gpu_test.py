@@ -649,28 +649,48 @@ class PallasCallTest(PallasTest):
   def test_fori_loop_array(self):
     @functools.partial(
         pl.pallas_call,
-        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+        out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
     )
     def kernel(x_ref, o_ref):
       # Equivalent to x_ref[...] + 2 + 3.
       o_ref[...] = jax.lax.fori_loop(2, 4, lambda i, x: x + i, x_ref[...])
 
-    x = jnp.arange(256).astype(jnp.float32)
-    np.testing.assert_array_equal(kernel(x), x + 2.0 + 3.0)
+    x = jnp.arange(256).astype(jnp.int32)
+    np.testing.assert_array_equal(kernel(x), x + 2 + 3)
 
   def test_fori_loop_scalar(self):
+
     @functools.partial(
         pl.pallas_call,
-        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+        out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
     )
     def kernel(o_ref):
       # Equivalent to 2 + 3.
       o_ref[...] = jax.lax.broadcast(
-          jax.lax.fori_loop(2, 4, lambda i, x: x + i, 0.0), o_ref.shape
+          jax.lax.fori_loop(2, 4, lambda i, x: x + i, 0), o_ref.shape
+      )
+
+    np.testing.assert_array_equal(kernel(), jnp.full([256], 5, dtype=jnp.int32))
+
+  def test_fori_loop_tuple(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
+    )
+    def kernel(o_ref):
+      def body(step, xs):
+        return tuple(
+            jax.lax.cond(step % 2 == 0, lambda x: x + 1, lambda x: x, x)
+            for x in xs
+        )
+
+      # Equivalent to 3 * (0 + 1).
+      o_ref[...] = jax.lax.broadcast(
+          sum(jax.lax.fori_loop(2, 4, body, (0, 0, 0))), o_ref.shape
       )
 
     np.testing.assert_array_equal(
-        kernel(), jnp.full([256], 5.0, dtype=jnp.float32)
+        kernel(), jnp.full([256], 3 * (0 + 1), dtype=jnp.int32)
     )
 
   def test_fori_loop_indexed_store(self):
