@@ -1824,8 +1824,8 @@ class ShardMapTest(jtu.JaxTestCase):
     v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
     if config.use_shardy_partitioner.value:
       self.assertIn(
-          'in_shardings=[<@mesh, [{"i"}, {}]>] out_shardings=[<@mesh, [{"i"},'
-          ' {}]>] manual_axes={"i"}',
+          'in_shardings=[<@mesh, [{"i", ?}, {?}]>]'
+          ' out_shardings=[<@mesh, [{"i", ?}, {?}]>] manual_axes={"i"}',
           f.lower(v).as_text(),
       )
     else:
@@ -1835,6 +1835,41 @@ class ShardMapTest(jtu.JaxTestCase):
           f.lower(v).as_text('hlo'),
       )
     self.assertAllClose(v*v, f(v), check_dtypes=False)
+
+  def test_partial_auto_propagate_through(self):
+    mesh = jtu.create_mesh((2, 2), ('i', 'j'))
+    sharding = jax.sharding.NamedSharding(mesh, P('i'))
+
+    def g(x):
+      return jax.lax.with_sharding_constraint(x * x, sharding)
+
+    @jax.jit
+    def f(x):
+      return shard_map(
+          g,
+          mesh,
+          in_specs=P(),
+          out_specs=P(),
+          check_rep=False,
+          auto=frozenset({'i'}),
+      )(x)
+
+    v = jnp.arange(32.0).reshape(4, 8)
+    v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i')))
+    if config.use_shardy_partitioner.value:
+      self.assertIn(
+          'in_shardings=[<@mesh, [{?}, {?}]>]'
+          ' out_shardings=[<@mesh, [{?}, {?}]>] manual_axes={"j"}',
+          f.lower(v).as_text(),
+      )
+    else:
+      self.assertIn(
+          'sharding={devices=[1,1,2,2]<=[2,2]T(1,0) last_tile_dims={manual, replicated}}',
+          f.lower(v).as_text('hlo'),
+      )
+    actual = f(v)
+    self.assertAllClose(v * v, actual, check_dtypes=False)
+    self.assertEqual(actual.sharding, sharding)
 
   def test_sharded_prng_with_abstract_mesh(self):
     shape = (8, 2, 2)
