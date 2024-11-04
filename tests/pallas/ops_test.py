@@ -21,12 +21,9 @@ import sys
 from typing import Any
 import unittest
 
-import numpy as np
 from absl.testing import absltest
 from absl.testing import parameterized
-
 import jax
-import jax.numpy as jnp
 from jax import lax
 from jax import random
 from jax._src import config
@@ -34,8 +31,11 @@ from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import test_util as jtu
-from jax.interpreters import partial_eval as pe
 from jax.experimental import pallas as pl
+from jax.experimental.pallas.ops.tpu.eigh import eigh
+from jax.interpreters import partial_eval as pe
+import jax.numpy as jnp
+import numpy as np
 
 if sys.platform != "win32":
   from jax.experimental.pallas import triton as plgpu
@@ -1913,6 +1913,38 @@ class OpsTest(PallasBaseTest):
         kernel, out_shape=jax.ShapeDtypeStruct((128, 256), dtype)
     )(x)
     np.testing.assert_array_equal(out, np.triu(x, k=k))
+
+  @parameterized.parameters(
+      (8, jnp.float32),
+      (8, jnp.bfloat16),
+      (32, jnp.float32),
+      (32, jnp.bfloat16),
+      (128, jnp.float32),
+      (128, jnp.bfloat16),
+  )
+  def test_eigh(self, n, dtype):
+    if jtu.test_device_matches(["tpu"]):
+      self.skipTest("NYI - TPU")
+    if self.INTERPRET:
+      self.skipTest("NYI - interpret mode has odd float64 issues")
+
+    A = jnp.ones(n * n, dtype=dtype).reshape([n, n]) * jnp.ones(n * n, dtype=dtype).reshape(
+        [n, n]
+    )
+    A = (A + A.conj().T) / 2
+    ref_v, ref_w = jax.lax.linalg.eigh(A, sort_eigenvalues=False)
+    jacobi_pallas_jitted = jax.jit(eigh)
+    w, v = jacobi_pallas_jitted(A)
+    ref_w = np.sort(ref_w, axis=0)
+    w = w[0]
+    sort_indices = jnp.argsort(w)
+    w = w[sort_indices]
+    sort_indices = jnp.argsort(ref_w)
+    ref_w = ref_w[sort_indices]
+
+    self.assertTrue(np.allclose(ref_w, w))
+    self.assertTrue(np.allclose(ref_v, v))
+
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True
