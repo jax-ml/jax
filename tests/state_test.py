@@ -746,10 +746,9 @@ class StateDischargeTest(jtu.JaxTestCase):
       b_ref[...] = jnp.array(1., dtype=jnp.float32)
       return a_ref[...], b_ref[...]
 
-    scalar_ref_1 = shaped_array_ref((), jnp.float32)
-    scalar_ref_2 = shaped_array_ref((), jnp.float32)
+    scalar_ref = shaped_array_ref((), jnp.float32)
     jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(f), [scalar_ref_1, scalar_ref_2])
+        lu.wrap_init(f), [scalar_ref, scalar_ref])
 
     discharged_jaxpr, _ = discharge_state(jaxpr, (), should_discharge=[False, True])
     prim_count = lambda p, jaxpr: sum(eqn.primitive == swap_p for eqn in jaxpr.eqns)

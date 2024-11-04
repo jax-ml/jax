@@ -48,7 +48,7 @@ from jax._src import state
 from jax._src import util
 from jax._src.abstract_arrays import array_types
 from jax._src.core import (Primitive, UnshapedArray, ShapedArray,
-                           abstract_token, canonicalize_shape)
+                           raise_to_shaped, abstract_token, canonicalize_shape)
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -3044,7 +3044,7 @@ def _to_edtype_abstract_eval(x, *, edtype):
         f" has a representation shape {rep_aval.shape} while the given "
         f"representation array has shape {x.shape}, so the shape suffix "
         f"does not match: given {shape_suffix} but required {rep_aval.shape}.")
-  return x.update(shape=shape_prefix, dtype=edtype)
+  return core.raise_to_shaped(x).update(shape=shape_prefix, dtype=edtype)
 
 to_edtype_p = Primitive('to_edtype')
 to_edtype_p.def_impl(partial(dispatch.apply_primitive, to_edtype_p))
@@ -5246,7 +5246,7 @@ _INT_DTYPES = {
 
 
 def _sort_abstract_eval(*args, **kwargs):
-  args = tuple(args)
+  args = tuple(raise_to_shaped(arg) for arg in args)
   if any(arg.shape != args[0].shape for arg in args[1:]):
     shapes = " ".join(str(a.shape) for a in args)
     raise TypeError(f"Arguments to sort must have equal shapes, got: {shapes}")
@@ -6196,7 +6196,7 @@ def _eq_meet(a, b):
 
 
 def _abstractify(x):
-  return core.get_aval(x)
+  return raise_to_shaped(core.get_aval(x))
 
 
 def empty(dtype):

@@ -35,7 +35,7 @@ from jax._src import source_info_util
 from jax._src import util
 from jax._src.state.discharge import register_partial_discharge_rule, discharge_state
 from jax._src.state.types import AbstractRef, RefEffect
-from jax._src.core import replace_jaxpr_effects
+from jax._src.core import raise_to_shaped, replace_jaxpr_effects
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -328,7 +328,7 @@ def _cond_abstract_eval(*avals, branches, **_):
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `cond`: {disallowed_effects}')
-  return branches[0].out_avals, joined_effects
+  return map(raise_to_shaped, branches[0].out_avals), joined_effects
 
 def _bcast_select(pred, on_true, on_false):
   if np.ndim(pred) != np.ndim(on_true):
@@ -676,6 +676,7 @@ def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
 
 def _transpose_cond_jaxpr(jaxpr, num_res):
   res_avals, primal_avals = split_list(jaxpr.in_avals, [num_res])
+  primal_avals = map(raise_to_shaped, primal_avals)
 
   @lu.wrap_init
   def transposed(*args):
@@ -692,7 +693,7 @@ def _cond_transpose(cts, *args, branches):
   index, *ops = args
   assert type(index) is not ad.UndefinedPrimal
   linear = [type(x) is ad.UndefinedPrimal for x in ops]
-  in_avals = branches[0].in_avals
+  in_avals = map(raise_to_shaped, branches[0].in_avals)
   num_res = len(ops) - sum(linear)
   if any(isinstance(eff, RefEffect) for branch in branches for eff in
       branch.jaxpr.effects):
@@ -700,7 +701,8 @@ def _cond_transpose(cts, *args, branches):
 
   branches_trans = tuple(
       _transpose_cond_jaxpr(jaxpr, num_res) for jaxpr in branches)
-  lin_in_avals = [a.strip_weak_type() for a, l in zip(in_avals, linear) if l]
+  lin_in_avals = [raise_to_shaped(a, weak_type=False)
+                  for a, l in zip(in_avals, linear) if l]
   assert all(core.typematch(out_aval, lin_in_aval)
              for jaxpr in branches_trans
              for out_aval, lin_in_aval in zip(jaxpr.out_avals, lin_in_avals))

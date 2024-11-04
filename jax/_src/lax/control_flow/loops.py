@@ -35,7 +35,7 @@ from jax._src import source_info_util
 from jax._src import state
 from jax._src import util
 from jax._src.api_util import shaped_abstractify
-from jax._src.core import ShapedArray
+from jax._src.core import ShapedArray, raise_to_shaped
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -262,7 +262,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     stacked_y = tree_map(stack, *maybe_reversed(ys))
     return carry, stacked_y
 
-  xs_avals = [core.get_aval(x) for x in xs_flat]
+  xs_avals = [core.raise_to_shaped(core.get_aval(x)) for x in xs_flat]
   x_avals = [core.mapped_aval(length, 0, aval) for aval in xs_avals]
 
   def _create_jaxpr(init):
@@ -1370,7 +1370,7 @@ def _while_loop_abstract_eval(*avals, cond_jaxpr, body_jaxpr, body_nconsts,
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `while`: {disallowed_effects}')
-  return body_jaxpr.out_avals, joined_effects
+  return _map(raise_to_shaped, body_jaxpr.out_avals), joined_effects
 
 
 def _while_loop_batching_rule(axis_data, args, dims, cond_nconsts, cond_jaxpr,

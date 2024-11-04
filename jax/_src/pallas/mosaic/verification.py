@@ -529,8 +529,7 @@ assume_p.def_impl(lambda x, y: x)
 
 @assume_p.def_abstract_eval
 def _assume_abstract_eval(x, y):
-  assert jax_core.typematch(x, y)
-  return x
+  return x.join(y)
 
 def _assume_lowering(ctx: lowering.LoweringRuleContext, x, y):
   return y if ctx.lowering_context.for_verification else x

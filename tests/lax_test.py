@@ -3821,7 +3821,7 @@ def shard_foo_array_handler(xs, shardings, layouts):
   results = []
   for x, sharding in safe_zip(xs, shardings):
     device, = sharding._addressable_device_assignment
-    aval = core.get_aval(x.data)
+    aval = core.raise_to_shaped(core.get_aval(x.data))
     results.append(pxla.batched_device_put(
         aval, jax.sharding.SingleDeviceSharding(device), [x.data], [device]))
   return results

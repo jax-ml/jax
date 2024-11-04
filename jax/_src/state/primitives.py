@@ -230,6 +230,7 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`swap` must be called on `Ref` types: {ref_aval}.")
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
+    val_aval = core.raise_to_shaped(val_aval)
     assert isinstance(val_aval, core.ShapedArray)
     expected_out_shape = _shape_after_transforming(ref_aval.shape, transforms)
     expected_out_dtype = _dtype_after_transforming(ref_aval.dtype, transforms)
@@ -261,6 +262,7 @@ def _addupdate_abstract_eval(ref_aval: AbstractRef,
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`addupdate` must be called on `Ref` types: {ref_aval}.")
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
+    val_aval = core.raise_to_shaped(val_aval)
     out_shape = _shape_after_transforming(ref_aval.shape, transforms)
     out_dtype = _dtype_after_transforming(ref_aval.dtype, transforms)
     assert isinstance(val_aval, core.ShapedArray)

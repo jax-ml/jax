@@ -33,7 +33,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import util
 from jax._src.core import (
-    Primitive, ShapedArray, is_constant_dim, is_constant_shape)
+    Primitive, ShapedArray, raise_to_shaped, is_constant_dim, is_constant_shape)
 from jax._src.extend import ffi
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -1289,6 +1289,7 @@ def _generic_lu_pivots_to_permutation(swaps, permutation_size):
 
 
 def _lu_pivots_to_permutation_abstract_eval(pivots, *, permutation_size):
+  pivots = raise_to_shaped(pivots)
   if isinstance(pivots, ShapedArray):
     if pivots.ndim < 1 or pivots.dtype != np.dtype(np.int32):
       raise ValueError(
@@ -1420,6 +1421,7 @@ def _lu_impl(operand):
   return lu, pivot, perm
 
 def _lu_abstract_eval(operand):
+  operand = raise_to_shaped(operand)
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2:
       raise ValueError("Argument to LU decomposition must have ndims >= 2")

@@ -291,13 +291,14 @@ class AbstractRef(core.AbstractValue):
       raise AttributeError
     return self.inner_aval.weak_type
 
-  def update_weak_type(self, weak_type):
-    return AbstractRef(self.inner_aval.update_weak_type(weak_type))
-
   def update(self, inner_aval=None):
     if inner_aval is None:
       return AbstractRef(self.inner_aval)
     return AbstractRef(inner_aval)
+
+  def join(self, other):
+    assert isinstance(other, AbstractRef)
+    return AbstractRef(self.inner_aval.join(other.inner_aval))
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: math.prod(self.shape))
@@ -363,6 +364,10 @@ class AbstractRef(core.AbstractValue):
 
   def __hash__(self):
     return hash((self.__class__, self.inner_aval))
+
+def _ref_raise_to_shaped(ref_aval: AbstractRef, weak_type):
+  return AbstractRef(core.raise_to_shaped(ref_aval.inner_aval, weak_type))
+core.raise_to_shaped_mappings[AbstractRef] = _ref_raise_to_shaped
 
 def _map_ref(size, axis, ref_aval):
   return AbstractRef(core.mapped_aval(size, axis, ref_aval.inner_aval))

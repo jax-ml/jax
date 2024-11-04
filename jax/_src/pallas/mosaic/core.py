@@ -174,6 +174,15 @@ class SemaphoreType(enum.Enum):
 class AbstractSemaphore(jax_core.AbstractValue):
   sem_type: SemaphoreType
 
+  def join(self, other):
+    if not isinstance(other, AbstractSemaphore):
+      raise ValueError
+    if other.sem_type != self.sem_type:
+      raise ValueError
+    return self
+
+jax_core.raise_to_shaped_mappings[AbstractSemaphore] = lambda aval, _: aval
+
 
 @dataclasses.dataclass(init=False, kw_only=True, unsafe_hash=True)
 class PrefetchScalarGridSpec(pallas_core.GridSpec):

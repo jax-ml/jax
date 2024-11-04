@@ -105,6 +105,7 @@ from jax._src.core import (
   primitive_uses_outfeed as primitive_uses_outfeed,
   pytype_aval_mappings as pytype_aval_mappings,
   raise_to_shaped as raise_to_shaped,
+  raise_to_shaped_mappings as raise_to_shaped_mappings,
   reset_trace_state as reset_trace_state,
   set_current_trace as set_current_trace,
   str_eqn_compact as str_eqn_compact,
