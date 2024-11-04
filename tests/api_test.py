@@ -4807,6 +4807,21 @@ class APITest(jtu.JaxTestCase):
     jit_add_one_dupe = jax.jit(add_one_and_dupe, inline=True)
     jax.eval_shape(jit_add_one_dupe, 0)  # don't crash
 
+  def test_use_direct_linearize(self):
+
+    def check_invariant_to_use_direct_linearize(f):
+      with config.use_direct_linearize(False):
+        ans1 = f()
+      with config.use_direct_linearize(True):
+        ans2 = f()
+
+      self.assertEqual(ans1, ans2)
+
+    def sin_of_sin(x):
+      return jnp.sin(jnp.sin(x))
+
+    check_invariant_to_use_direct_linearize(lambda: jax.grad(sin_of_sin)(1.0))
+
 
 class RematTest(jtu.JaxTestCase):
 
