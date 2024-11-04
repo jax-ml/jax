@@ -1545,6 +1545,14 @@ class JitTest(jtu.BufferDonationTestCase):
       with jax.no_tracing():
         _ = f(y)  # crash!
 
+  def test_jit_static_annotation(self):
+    @jax.jit
+    def f(x: jax.Array, double: jax.typing.Static[bool]):
+      return 2 * x if double else x
+
+    self.assertEqual(f(1, True), 2)
+    self.assertEqual(f(1, False), 1)
+
 
 class APITest(jtu.JaxTestCase):
 

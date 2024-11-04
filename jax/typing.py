@@ -72,4 +72,5 @@ see `Non-array inputs NumPy vs JAX`_
 from jax._src.typing import (
     ArrayLike as ArrayLike,
     DTypeLike as DTypeLike,
+    Static as Static,
 )
