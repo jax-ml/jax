@@ -65,7 +65,6 @@ numerical computing tools; the following is just a small sample of what is out t
     .. grid-item:: :material-outlined:`hub;2em` **Neural networks**
 
        - Flax_
-       - NNX_
        - Equinox_
        - Keras_
 
@@ -79,8 +78,8 @@ numerical computing tools; the following is just a small sample of what is out t
     .. grid-item:: :material-outlined:`storage;2em` **Data loading**
 
        - Grain_
-       - `Tensorflow datasets`_
-       - `Hugging Face datasets`_
+       - `TensorFlow Datasets`_
+       - `Hugging Face Datasets`_
 
     .. grid-item:: :material-regular:`construction;2em` **Miscellaneous tools**
 
@@ -95,7 +94,7 @@ numerical computing tools; the following is just a small sample of what is out t
 
     .. grid-item:: :material-regular:`bar_chart;2em` **Probabilistic modeling**
 
-       - `Tensorflow probabilty`_
+       - `TensorFlow Probabilty`_
        - Distrax_
 
     .. grid-item:: :material-outlined:`animation;2em` **Physics & simulation**
@@ -164,17 +163,16 @@ maintains an up-to-date list.
 .. _Equinox: https://docs.kidger.site/equinox/
 .. _Flax: https://flax.readthedocs.io/
 .. _Grain: https://github.com/google/grain
-.. _Hugging Face datasets: https://huggingface.co/docs/datasets/
+.. _Hugging Face Datasets: https://huggingface.co/docs/datasets/
 .. _JAX MD: https://jax-md.readthedocs.io/
 .. _Keras: https://keras.io/
 .. _Levanter: https://github.com/stanford-crfm/levanter
 .. _Lineax: https://github.com/patrick-kidger/lineax
 .. _MaxText: https://github.com/google/maxtext/
-.. _NNX: https://flax.readthedocs.io/en/latest/nnx/
 .. _Numpyro: https://num.pyro.ai/en/latest/index.html
 .. _Optax: https://optax.readthedocs.io/
 .. _Optimistix: https://github.com/patrick-kidger/optimistix
 .. _Orbax: https://orbax.readthedocs.io/
 .. _PyMC: https://www.pymc.io/
-.. _Tensorflow datasets: https://www.tensorflow.org/datasets
-.. _Tensorflow probabilty: https://www.tensorflow.org/probability
+.. _TensorFlow Datasets: https://www.tensorflow.org/datasets
+.. _TensorFlow Probabilty: https://www.tensorflow.org/probability
