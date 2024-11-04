@@ -32,6 +32,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_extension
 from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax._src.state import utils as state_utils
+from jax._src.state import discharge as state_discharge
 from jax.experimental import mesh_utils
 from jax.experimental import mosaic
 from jax.experimental import pallas as pl
@@ -860,6 +861,27 @@ class PallasCallDMATest(PallasBaseTest):
     )()
     np.testing.assert_allclose(o, 4 * np.ones_like(o))
 
+  def test_run_scoped_partial_discharge(self):
+    def f(a_ref, b_ref):
+      def scope():
+        a_ref[...] = jnp.ones(4, jnp.float32)
+        b_ref[...] = jnp.ones(4, jnp.float32)
+        return []
+      pl.run_scoped(scope)
+      return []
+
+    aref = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
+    in_avals = [aref, aref]
+    stateful_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
+                                                          in_avals)
+    discharged_jaxpr, _ = state_discharge.discharge_state(
+        stateful_jaxpr, consts=(), should_discharge=[False, True])
+    self.assertLen(discharged_jaxpr.invars, 2)
+    self.assertLen(discharged_jaxpr.outvars, 1)
+    self.assertIsInstance(discharged_jaxpr.invars[0].aval, state.AbstractRef)
+    self.assertIsInstance(discharged_jaxpr.invars[1].aval, jax.core.ShapedArray)
+    self.assertEqual(discharged_jaxpr.effects, {state.WriteEffect(0)})
+
   def test_can_allocate_semaphore(self):
     def kernel(y_ref):
       def body(sem1):
@@ -1565,7 +1587,6 @@ class PallasCallTest(PallasBaseTest):
     self.assertEqual(analysis_result['transcendentals'], 21)
     self.assertEqual(analysis_result['bytes accessed'], 12345)
 
-
   def test_cost_analysis_vmap(self):
     def kernel(x, y):
       y[:] = x[:]
@@ -1583,7 +1604,6 @@ class PallasCallTest(PallasBaseTest):
     self.assertEqual(analysis_result['flops'], batch_size * 1234)
     self.assertEqual(analysis_result['transcendentals'], batch_size * 21)
     self.assertEqual(analysis_result['bytes accessed'], batch_size * 12345)
-
 
   def test_vmem_limit(self):
     shape = (128, 128)
@@ -1650,6 +1670,23 @@ class PallasCallTest(PallasBaseTest):
               internal_scratch_in_bytes=requested_bytes,
           ),
       )(x)
+
+  @parameterized.product(dtype=[jnp.bfloat16, jnp.float32])
+  def test_pltpu_repeat(self, dtype):
+    def test_kernel(x_ref, o_ref):
+      x = x_ref[...]
+      o_ref[...] = pltpu.repeat(x, 2, axis=1)
+
+    @jax.jit
+    def test(x: jax.Array) -> jax.Array:
+      return pl.pallas_call(
+          test_kernel,
+          out_shape=jax.ShapeDtypeStruct([x.shape[0], x.shape[1] * 2], x.dtype),
+      )(x)
+
+    x = jnp.arange(2048, dtype=dtype).reshape((8, 256))
+    y = test(x)
+    np.testing.assert_array_equal(y, jnp.concatenate([x, x], axis=1))
 
 
 class PallasUXTest(PallasBaseTest):

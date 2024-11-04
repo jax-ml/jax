@@ -203,7 +203,8 @@ class ProfilerSpec:
             "tid": 1 + wg_idx + warpgroups_per_block * block_idx,
         })
       else:  # If we didn't break
-        events.append(block_events)
+        if block_events:
+          events.append(block_events)
     events = sorted(events, key=lambda x: x[0]["ts"])
     flat_events = list(itertools.chain.from_iterable(events))
     return json.dump({"displayTimeUnit": "ns", "traceEvents": flat_events}, f)

@@ -294,7 +294,7 @@ To express this, we'd first use a `(2, 2)` grid (one block for each program).
 
 For `x`, we use `BlockSpec((512, 1024), lambda i, j: (i, 0))`  -- this
 carves `x` up into "row" blocks.
-To see this see how both program instances
+To see this, see how both program instances
 `(1, 0)` and `(1, 1)` pick the `(1, 0)` block in `x`.
 For `y`, we use a transposed version `BlockSpec((1024, 512), lambda i, j: (0, j))`.
 Finally, for `z` we use `BlockSpec((512, 512), lambda i, j: (i, j))`.

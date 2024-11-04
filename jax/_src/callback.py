@@ -160,9 +160,22 @@ def callback_batching_rule(
   batched_result_avals = tuple(
       core.unmapped_aval(axis_size, core.no_axis_name, 0, aval)
       for aval in result_avals)
+
+  # For FFI calls we must update the layouts. We handle the output layouts
+  # here, but the input layout updates depend on the vmap_method parameter.
+  if vmap_method != "sequential" and kwargs.get("output_layouts") is not None:
+    kwargs["output_layouts"] = tuple(
+        None if layout is None else tuple(n + 1 for n in layout) + (0,)
+        for layout in kwargs["output_layouts"])
+
   if vmap_method == "legacy_vectorized":
     # This method is kept to support the behavior that was previously exposed
     # when using `vectorized=True`.
+    if kwargs.get("input_layouts") is not None:
+      kwargs["input_layouts"] = tuple(
+          layout if d is batching.not_mapped else
+          (None if layout is None else tuple(n + 1 for n in layout) + (0,))
+          for layout, d in zip(kwargs["input_layouts"], dims))
     outvals = prim.bind(
         *new_args,
         vectorized=vectorized,
@@ -170,11 +183,15 @@ def callback_batching_rule(
         result_avals=batched_result_avals,
         **kwargs,
     )
-  elif vmap_method == "broadcast" or vmap_method == "broadcast_fullrank":
-    size = axis_size if vmap_method == "broadcast_fullrank" else 1
+  elif vmap_method == "expand_dims" or vmap_method == "broadcast_all":
+    size = axis_size if vmap_method == "broadcast_all" else 1
     bcast_args = [
         lax.broadcast(x, (size,)) if d is batching.not_mapped else x
         for x, d in zip(new_args, dims)]
+    if kwargs.get("input_layouts") is not None:
+      kwargs["input_layouts"] = tuple(
+          None if layout is None else tuple(n + 1 for n in layout) + (0,)
+          for layout in kwargs["input_layouts"])
     outvals = prim.bind(
       *bcast_args,
       vectorized=vectorized,
@@ -198,7 +215,7 @@ def callback_batching_rule(
   else:
     raise NotImplementedError(
         f"vmap is only supported for the {prim.name} primitive when vmap_method "
-        "is one of 'sequential', 'broadcast', 'broadcast_fullrank', or "
+        "is one of 'sequential', 'expand_dims', 'broadcast_all', or "
         "'legacy_vectorized'.")
   return tuple(outvals), (0,) * len(outvals)
 
@@ -327,9 +344,9 @@ def pure_callback(
     is deprecated and it will eventually raise ``NotImplementedError``.
   * ``vmap_method="sequential"`` uses :func:`~jax.lax.map` to loop over
     the batched arugments, calling ``callback`` once for each batch element.
-  * ``vmap_method="broadcast"`` calls ``callback`` with new axes of size ``1``
+  * ``vmap_method="expand_dims"`` calls ``callback`` with new axes of size ``1``
     added as the leading dimension unbatched inputs.
-  * ``vmap_method="broadcast_fullrank"`` behaves like ``broadcast``, but the
+  * ``vmap_method="broadcast_all"`` behaves like ``expand_dims``, but the
     inputs are tiled to the expected batched shape.
 
   If necessary, the legacy behavior provided by the deprecated
@@ -383,20 +400,20 @@ def pure_callback(
     ...   return jax.pure_callback(callback, out_type, x, y,
     ...                            vmap_method=vmap_method)
 
-    Calling this with ``vmap_method="broadcast"`` adds a new axis of size ``1``
+    Calling this with ``vmap_method="expand_dims"`` adds a new axis of size ``1``
     to ``y``:
 
     >>> from functools import partial
     >>> x = jnp.arange(4)
     >>> y = 1.0
-    >>> jax.vmap(partial(fun, vmap_method="broadcast"), in_axes=(0, None))(x, y)
+    >>> jax.vmap(partial(fun, vmap_method="expand_dims"), in_axes=(0, None))(x, y)
     (4,) (1,)
     Array([1., 2., 3., 4.], dtype=float32)
 
-    Whereas, ``vmap_method="broadcast_fullrank"`` adds an axis of size ``4`` to
+    Whereas, ``vmap_method="broadcast_all"`` adds an axis of size ``4`` to
     ``y``:
 
-    >>> jax.vmap(partial(fun, vmap_method="broadcast_fullrank"),
+    >>> jax.vmap(partial(fun, vmap_method="broadcast_all"),
     ...          in_axes=(0, None))(x, y)
     (4,) (4,)
     Array([1., 2., 3., 4.], dtype=float32)
@@ -415,7 +432,7 @@ def pure_callback(
           "the vectorized and vmap_method arguments of jax.pure_callback cannot "
           "be used together. Please use the vmap_method argument.")
     vmap_method = "legacy_vectorized" if vectorized else "sequential"
-  allowed_vmap_methods = ["sequential", "broadcast", "broadcast_fullrank",
+  allowed_vmap_methods = ["sequential", "expand_dims", "broadcast_all",
                           "legacy_vectorized", None]
   if vmap_method not in allowed_vmap_methods:
     raise ValueError(
@@ -616,7 +633,6 @@ def io_callback(
   flat_shape_dtypes, out_tree = tree_util.tree_flatten(result_shape_dtypes)
   flat_result_avals = map(lambda x: core.ShapedArray(x.shape, x.dtype),
                           flat_shape_dtypes)
-  flat_args = map(core.raise_as_much_as_possible, flat_args)
   out_flat = io_callback_p.bind(
       *flat_args,
       callback=_FlatCallback(callback, in_tree),

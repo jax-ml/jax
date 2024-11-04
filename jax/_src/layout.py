@@ -19,7 +19,7 @@ from typing import Union
 import numpy as np
 from jax._src.dtypes import iinfo, issubdtype
 from jax._src.sharding import Sharding
-from jax._src.sharding_impls import AUTO as AutoSharding, is_auto
+from jax._src.sharding_impls import AUTO as AutoSharding
 from jax._src.lib import xla_client as xc
 
 Shape = tuple[int, ...]
@@ -101,7 +101,7 @@ class Layout:
                sharding: ShardingOptions = None):
     # If layout is concrete and sharding is not, error.
     if (isinstance(device_local_layout, DeviceLocalLayout) and
-        (sharding is None or is_auto(sharding))):
+        (sharding is None or isinstance(sharding, AutoSharding))):
       raise ValueError(
           'Sharding has to be concrete when layout is of type'
           f' {type(device_local_layout)}. Please pass a'

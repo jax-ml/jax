@@ -169,7 +169,7 @@ class RectangularVregBounds : public VRegDataBounds {
 //
 // The tiling attribute makes it possible to subdivide a single vector register
 // into multiple subtiles that traverse the last dimension of a value. For
-// example, consider vregs of shape (4, 5) an array:
+// example, consider vregs of shape (4, 5) on (2, 10) array:
 //
 //   a b c d e f g h i j
 //   k l m n o p q r s t

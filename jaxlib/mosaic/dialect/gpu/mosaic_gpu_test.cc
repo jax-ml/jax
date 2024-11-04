@@ -25,8 +25,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "third_party/llvm/llvm-project/llvm/include/llvm/ADT/ArrayRef.h"
-#include "third_party/llvm/llvm-project/llvm/include/llvm/ADT/SmallVector.h"
+#include "llvm/include/llvm/ADT/ArrayRef.h"
+#include "llvm/include/llvm/ADT/SmallVector.h"
 #include "mlir/include/mlir/Conversion/LLVMCommon/MemRefBuilder.h"
 #include "mlir/include/mlir/Conversion/LLVMCommon/StructBuilder.h"
 #include "mlir/include/mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
@@ -118,8 +118,8 @@ class MosaicGpuTest : public ::testing::Test {
 };
 
 TEST_F(MosaicGpuTest, InitTmaDescriptorRequiresSliceShapeHasTheCorrectRank) {
-  llvm::ArrayRef<int64_t> shape{1, 2, 3};
-  llvm::ArrayRef<int64_t> slice_shape{1, 2};
+  std::vector<int64_t> shape{1, 2, 3};
+  std::vector<int64_t> slice_shape{1, 2};
 
   mlir::LLVM::LLVMPointerType pointer_type =
       mlir::LLVM::LLVMPointerType::get(&context_);
@@ -128,7 +128,7 @@ TEST_F(MosaicGpuTest, InitTmaDescriptorRequiresSliceShapeHasTheCorrectRank) {
 
   EXPECT_THAT(
       FromCppFunc(*module_, mosaic_gpu::InitTmaDescriptor, pointer_type,
-                  memref_type, slice_shape),
+                  memref_type, mlir::ArrayRef<int64_t>(slice_shape)),
       StatusIs(
           absl::StatusCode::kFailedPrecondition,
           HasSubstr(
@@ -136,8 +136,8 @@ TEST_F(MosaicGpuTest, InitTmaDescriptorRequiresSliceShapeHasTheCorrectRank) {
 }
 
 TEST_F(MosaicGpuTest, InitTmaDescriptorGracefullyRejectsSubByteTypes) {
-  llvm::ArrayRef<int64_t> shape{1, 2, 3};
-  llvm::ArrayRef<int64_t> slice_shape{1, 2, 3};
+  std::vector<int64_t> shape{1, 2, 3};
+  std::vector<int64_t> slice_shape{1, 2, 3};
 
   mlir::LLVM::LLVMPointerType pointer_type =
       mlir::LLVM::LLVMPointerType::get(&context_);
@@ -145,14 +145,14 @@ TEST_F(MosaicGpuTest, InitTmaDescriptorGracefullyRejectsSubByteTypes) {
       mlir::MemRefType::get(shape, builder_.getI4Type());
 
   EXPECT_THAT(FromCppFunc(*module_, mosaic_gpu::InitTmaDescriptor, pointer_type,
-                          memref_type, slice_shape),
+                          memref_type, mlir::ArrayRef<int64_t>(slice_shape)),
               StatusIs(absl::StatusCode::kUnimplemented,
                        HasSubstr("Sub-byte types are not yet supported")));
 }
 
 TEST_F(MosaicGpuTest, InitTmaDescriptorProducesACallToRuntime) {
-  llvm::ArrayRef<int64_t> shape{1, 2, 3};
-  llvm::ArrayRef<int64_t> slice_shape{1, 2, 3};
+  std::vector<int64_t> shape{1, 2, 3};
+  std::vector<int64_t> slice_shape{1, 2, 3};
 
   mlir::LLVM::LLVMPointerType pointer_type =
       mlir::LLVM::LLVMPointerType::get(&context_);
@@ -161,7 +161,7 @@ TEST_F(MosaicGpuTest, InitTmaDescriptorProducesACallToRuntime) {
 
   absl::StatusOr<mlir::func::FuncOp> fn_or =
       FromCppFunc(*module_, mosaic_gpu::InitTmaDescriptor, pointer_type,
-                  memref_type, slice_shape);
+                  memref_type, mlir::ArrayRef<int64_t>(slice_shape));
   ASSERT_OK(fn_or);
 
   llvm::SmallVector<mlir::func::CallOp> call_ops =
@@ -193,34 +193,6 @@ TEST_F(MosaicGpuTest, RuntimeFunctionsAreRegistered) {
                               mosaic_gpu::kRuntimeMemcpyAsyncH2DName));
 }
 
-TEST_F(MosaicGpuTest, InitializeBarrierOpEnforcesRelevantInvariants) {
-  auto loc = builder_.getUnknownLoc();
-  auto f32 = builder_.getF32Type();
-  auto barrier = BarrierType::get(&context_);
-
-  // InitializeBarrierOp requires a memref with type `BarrierType`.
-  auto initialize_op = builder_.create<InitializeBarrierOp>(
-      loc, mlir::MemRefType::get({1, 2}, f32), /*arrival_count=*/1);
-  EXPECT_FALSE(mlir::succeeded(mlir::verify(*module_)));
-  ExpectLastErrorContains("must be memref of barrier values");
-  initialize_op->erase();
-
-  // InitializeBarrierOp requires a non-negative arrival count.
-  initialize_op = builder_.create<InitializeBarrierOp>(
-      loc, mlir::MemRefType::get({1, 2}, barrier), /*arrival_count=*/0);
-  EXPECT_FALSE(mlir::succeeded(mlir::verify(*module_)));
-  ExpectLastErrorContains("value is positive");
-  initialize_op->erase();
-
-  // Checks that InitializeBarrierOp prints nicely.
-  initialize_op = builder_.create<InitializeBarrierOp>(
-      loc, mlir::MemRefType::get({1, 2}, barrier), /*arrival_count=*/1);
-  EXPECT_TRUE(mlir::succeeded(mlir::verify(*module_)));
-  EXPECT_THAT(
-      MlirToString(initialize_op),
-      HasSubstr(
-          "mosaic_gpu.initialize_barrier 1 : memref<1x2x!mosaic_gpu.barrier>"));
-}
 
 }  // anonymous namespace
 }  // namespace mosaic_gpu

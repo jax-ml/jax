@@ -48,13 +48,12 @@ from jax._src.interpreters import pxla
 from jax._src import lib
 from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.monitoring import record_event_duration_secs
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    SingleDeviceSharding, NamedSharding,
-    GSPMDSharding, TransferToMemoryKind, is_single_device_sharding)
+    SingleDeviceSharding, NamedSharding, TransferToMemoryKind,
+    is_single_device_sharding)
 from jax._src.layout import Layout, DeviceLocalLayout
 
 
@@ -96,7 +95,8 @@ def apply_primitive(prim, *args, **params):
 @util.cache()
 def xla_primitive_callable(prim: core.Primitive, **params):
   def prim_fun(*args):
-    return prim.bind(*args, **params)
+    with config.eager_constant_folding(False):
+      return prim.bind(*args, **params)
   prim_fun.__name__ = prim.name
   prim_fun.__qualname__ = prim.name
   return api.jit(prim_fun)
@@ -361,50 +361,21 @@ def _different_device_order_reshard(x, target_sharding, copy: CopySemantics):
                      f"platform {inp_plat} and target sharding's device set "
                      f"ids: {target_ids} on platform {target_plat}")
 
-  if xla_extension_version >= 292:
-    if inp_sharding.is_fully_replicated:
-      permute_order = None
-    else:
-      permute_order = np.vectorize(target_sharding._device_assignment.index,
-                                   otypes=[int])(inp_sharding._device_assignment)
-    new_mesh = Mesh(
-        target_sharding.mesh.devices.reshape(inp_sharding.mesh.axis_sizes),
-        inp_sharding.mesh.axis_names)
-    new_s = NamedSharding(
-        new_mesh, inp_sharding.spec, memory_kind=target_sharding.memory_kind,
-        _logical_device_ids=(None if permute_order is None else
-                             tuple(permute_order.tolist())))
-    new_x = array.make_array_from_single_device_arrays(x.shape, new_s, x._arrays)
-    return api.jit(_identity_fn, out_shardings=target_sharding,
-                  donate_argnums=donate_argnums)(new_x)
+  if inp_sharding.is_fully_replicated:
+    permute_order = None
   else:
-    old_hlo_sharding = inp_sharding._to_xla_hlo_sharding(x.ndim)
-    if old_hlo_sharding.is_replicated():
-      new_hlo_sharding = old_hlo_sharding
-    else:
-      permute_order = np.vectorize(target_sharding._device_assignment.index,
+    permute_order = np.vectorize(target_sharding._device_assignment.index,
                                   otypes=[int])(inp_sharding._device_assignment)
-      # Unfortunately need to fallback to V1 sharding here.
-      new_op_sharding = old_hlo_sharding.to_proto()
-      new_op_sharding.iota_reshape_dims = []
-      new_op_sharding.iota_transpose_perm = []
-      new_op_sharding.tile_assignment_devices = np.take(
-          permute_order, old_hlo_sharding.tile_assignment_devices()
-      )
-      new_hlo_sharding = xc.HloSharding.from_proto(new_op_sharding)
-      assert (list(np.take(inp_sharding._device_assignment,
-                          old_hlo_sharding.tile_assignment_devices()))
-              == list(np.take(target_sharding._device_assignment,
-                              new_op_sharding.tile_assignment_devices)))
-
-    new_x = array.make_array_from_single_device_arrays(
-        x.shape,
-        GSPMDSharding(target_sharding._device_assignment, new_hlo_sharding,
-                      memory_kind=target_sharding.memory_kind),
-        x._arrays,
-    )
-    return api.jit(_identity_fn, out_shardings=target_sharding,
-                  donate_argnums=donate_argnums)(new_x)
+  new_mesh = Mesh(
+      target_sharding.mesh.devices.reshape(inp_sharding.mesh.axis_sizes),
+      inp_sharding.mesh.axis_names)
+  new_s = NamedSharding(
+      new_mesh, inp_sharding.spec, memory_kind=target_sharding.memory_kind,
+      _logical_device_ids=(None if permute_order is None else
+                            tuple(permute_order.tolist())))
+  new_x = array.make_array_from_single_device_arrays(x.shape, new_s, x._arrays)
+  return api.jit(_identity_fn, out_shardings=target_sharding,
+                donate_argnums=donate_argnums)(new_x)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -555,7 +526,12 @@ def _batched_device_put_impl(
 device_put_p = core.Primitive('device_put')
 device_put_p.multiple_results = True
 device_put_p.def_impl(_batched_device_put_impl)
-device_put_p.def_abstract_eval(lambda *xs, devices, srcs, copy_semantics: xs)
+
+def _device_put_abstract_eval(*xs, devices, srcs, copy_semantics):
+  if config.sharding_in_types.value:
+    return [x.update(sharding=s) for x, s in zip(xs, devices)]
+  return xs
+device_put_p.def_abstract_eval(_device_put_abstract_eval)
 
 def _device_put_transpose(cts, *_, devices, srcs, copy_semantics):
   results = [None] * len(cts)
@@ -596,6 +572,12 @@ def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
   # TODO(yashkatariya): Maybe we should add the custom calls anyways if it's
   # being used inside jit? Atleast for now, this preserves the old behavior.
   if ctx.module_context.all_default_mem_kind:
+    if config.sharding_in_types.value:
+      return [
+          mlir.wrap_with_sharding_op(
+              ctx, x, a, a.sharding._to_xla_hlo_sharding(a.ndim).to_proto())
+          for x, a in zip(xs, ctx.avals_out)
+      ]
     return xs
   def lower(x, device, aval, out_aval):
     if (isinstance(device, (Sharding, TransferToMemoryKind)) and
@@ -621,6 +603,12 @@ mlir.register_lowering(
 
 
 def _common_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
+  if config.sharding_in_types.value:
+    return [
+        mlir.wrap_with_sharding_op(
+            ctx, x, a, a.sharding._to_xla_hlo_sharding(a.ndim).to_proto())
+        for x, a in zip(xs, ctx.avals_out)
+    ]
   return xs
 mlir.register_lowering(device_put_p, _common_device_put_lowering)
 

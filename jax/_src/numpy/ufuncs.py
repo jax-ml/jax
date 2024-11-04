@@ -35,7 +35,7 @@ from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.numpy.util import (
    check_arraylike, promote_args, promote_args_inexact,
    promote_args_numeric, promote_dtypes_inexact, promote_dtypes_numeric,
-   promote_shapes, _where, implements, check_no_float0s)
+   promote_shapes, _where, check_no_float0s)
 from jax._src.numpy.ufunc_api import ufunc
 from jax._src.numpy import reductions
 
@@ -1432,14 +1432,89 @@ def not_equal(x: ArrayLike, y: ArrayLike, /) -> Array:
   """
   return lax.ne(*promote_args("not_equal", x, y))
 
-@implements(np.subtract, module='numpy')
+
 @partial(jit, inline=True)
-def subtract(x: ArrayLike, y: ArrayLike, /) -> Array:
+def _subtract(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Subtract two arrays element-wise.
+
+  JAX implementation of :obj:`numpy.subtract`. This is a universal function,
+  and supports the additional APIs described at :class:`jax.numpy.ufunc`.
+  This function provides the implementation of the ``-`` operator for
+  JAX arrays.
+
+  Args:
+    x, y: arrays to subtract. Must be broadcastable to a common shape.
+
+  Returns:
+    Array containing the result of the element-wise subtraction.
+
+  Examples:
+    Calling ``subtract`` explicitly:
+
+    >>> x = jnp.arange(4)
+    >>> jnp.subtract(x, 10)
+    Array([-10,  -9,  -8,  -7], dtype=int32)
+
+    Calling ``subtract`` via the ``-`` operator:
+
+    >>> x - 10
+    Array([-10,  -9,  -8,  -7], dtype=int32)
+  """
   return lax.sub(*promote_args("subtract", x, y))
 
-@implements(np.arctan2, module='numpy')
+
 @partial(jit, inline=True)
 def arctan2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  r"""Compute the arctangent of x1/x2, choosing the correct quadrant.
+
+  JAX implementation of :func:`numpy.arctan2`
+
+  Args:
+    x1: numerator array.
+    x2: denomniator array; should be broadcast-compatible with x1.
+
+  Returns:
+    The elementwise arctangent of x1 / x2, tracking the correct quadrant.
+
+  See also:
+    - :func:`jax.numpy.tan`: compute the tangent of an angle
+    - :func:`jax.numpy.atan2`: the array API version of this function.
+
+  Examples:
+    Consider a sequence of angles in radians between 0 and :math:`2\pi`:
+
+    >>> theta = jnp.linspace(-jnp.pi, jnp.pi, 9)
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(theta)
+    [-3.14 -2.36 -1.57 -0.79  0.    0.79  1.57  2.36  3.14]
+
+    These angles can equivalently be represented by ``(x, y)`` coordinates
+    on a unit circle:
+
+    >>> x, y = jnp.cos(theta), jnp.sin(theta)
+
+    To reconstruct the input angle, we might be tempted to use the identity
+    :math:`\tan(\theta) = y / x`, and compute :math:`\theta = \tan^{-1}(y/x)`.
+    Unfortunately, this does not recover the input angle:
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.arctan(y / x))
+    [-0.    0.79  1.57 -0.79  0.    0.79  1.57 -0.79  0.  ]
+
+    The problem is that :math:`y/x` contains some ambiguity: although
+    :math:`(y, x) = (-1, -1)` and :math:`(y, x) = (1, 1)` represent different points in
+    Cartesian space, in both cases :math:`y / x = 1`, and so the simple arctan
+    approach loses information about which quadrant the angle lies in. :func:`arctan2`
+    is built to address this:
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...  print(jnp.arctan2(y, x))
+    [ 3.14 -2.36 -1.57 -0.79  0.    0.79  1.57  2.36 -3.14]
+
+    The results match the input ``theta``, except at the endpoints where :math:`+\pi`
+    and :math:`-\pi` represent indistinguishable points on the unit circle. By convention,
+    :func:`arctan2` alwasy returns values between :math:`-\pi` and :math:`+\pi` inclusive.
+  """
   return lax.atan2(*promote_args_inexact("arctan2", x1, x2))
 
 
@@ -2437,7 +2512,7 @@ def power(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   #     lax.pow.
 
   # Case 1: concrete integer scalar powers:
-  if isinstance(core.get_aval(x2), core.ConcreteArray):
+  if core.is_concrete(x2):
     try:
       x2 = operator.index(x2)  # type: ignore[arg-type]
     except TypeError:
@@ -3604,6 +3679,9 @@ def _add_at(a: Array, indices: Any, b: ArrayLike):
     return a.at[indices].add(b).astype(bool)
   return a.at[indices].add(b)
 
+def _subtract_at(a: Array, indices: Any, b: ArrayLike):
+  return a.at[indices].subtract(b)
+
 def _multiply_at(a: Array, indices: Any, b: ArrayLike):
   if a.dtype == bool:
     a = a.astype('int32')
@@ -3628,3 +3706,4 @@ logical_and = ufunc(_logical_and, name="logical_and", nin=2, nout=1, identity=Tr
 logical_or = ufunc(_logical_or, name="logical_or", nin=2, nout=1, identity=False, call=_logical_or, reduce=_logical_or_reduce)
 logical_xor = ufunc(_logical_xor, name="logical_xor", nin=2, nout=1, identity=False, call=_logical_xor)
 negative = ufunc(_negative, name="negative", nin=1, nout=1, call=_negative)
+subtract = ufunc(_subtract, name="subtract", nin=2, nout=1, call=_subtract, at=_subtract_at)

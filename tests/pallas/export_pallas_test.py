@@ -49,7 +49,7 @@ class ExportTest(jtu.JaxTestCase):
     a = np.arange(8 * 16, dtype=np.int32).reshape((8, 16))
     exp = export.export(
         add_vectors,
-        lowering_platforms=["tpu", "cuda"],
+        platforms=["tpu", "cuda"],
     )(a, a)
 
     if (jtu.device_under_test() == "tpu" or

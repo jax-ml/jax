@@ -25,7 +25,7 @@ import numpy as np
 from jax._src import core
 from jax._src import dtypes
 from jax._src.abstract_arrays import numpy_scalar_types
-from jax._src.core import ConcreteArray, ShapedArray
+from jax._src.core import ShapedArray
 from jax._src.util import safe_zip, safe_map
 
 from jax._src.typing import Shape
@@ -101,7 +101,6 @@ def aval_to_xla_shapes(aval: core.AbstractValue) -> Sequence[xc.Shape]:
 _xla_shape_handlers: dict[type[core.AbstractValue],
                          Callable[[Any], Sequence[xc.Shape]]] = {
     ShapedArray: _make_array_shape,
-    ConcreteArray: _make_array_shape,
 }
 _xla_shape_handlers[core.AbstractToken] = lambda _: (xc.Shape.token_shape(),)
 

@@ -415,6 +415,9 @@ parallel reads and writes that happen on GPU.
 
 ### Examples
 
+Note all the following examples are for GPU only. They will require some small
+changes to work on TPUs.
+
 #### `add`
 
 We modify our `add_kernel` example to operate over (2,)-sized blocks

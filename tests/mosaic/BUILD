@@ -16,6 +16,7 @@ load(
     "//jaxlib:jax.bzl",
     "jax_generate_backend_suites",
     "jax_multiplatform_test",
+    "jax_py_test",
     "py_deps",
 )
 
@@ -41,6 +42,16 @@ jax_multiplatform_test(
     deps = [
         "//jax:mosaic_gpu",
     ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_py_test(
+    name = "gpu_dialect_test",
+    srcs = ["gpu_dialect_test.py"],
+    deps = [
+        "//jax",
+        "//jax:mosaic_gpu",
+        "//jax:test_util",
+    ] + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(

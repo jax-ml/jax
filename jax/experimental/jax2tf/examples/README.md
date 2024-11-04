@@ -9,7 +9,7 @@ This directory contains a number of examples of using the
   * save SavedModel from trained MNIST models, using both Flax and pure JAX.
   * reuse the feature-extractor part of the trained MNIST model
     in a larger TensorFlow Keras model.
-  * use Flax models with TensorFlow Serving, TensorFlow JavaScript, and TensorFlow Lite.
+  * use Flax models with TensorFlow Serving, TensorFlow JavaScript.
 
 You can also find usage examples in other projects:
 
@@ -176,16 +176,15 @@ At the moment, the open-source TensorFlow model server is missing XLA support,
 but the Google version can be used, as shown in the
 [serving examples](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/examples/serving/README.md).
 
-# Using jax2tf with TensorFlow Lite and TensorFlow JavaScript
+# Using jax2tf with TensorFlow JavaScript
 
 A jax2tf-generated SavedModel can also be converted to a format usable with
-TensorFlow Lite or TensorFlow.js, by using the appropriate converters from SavedModel. 
+TensorFlow.js, by using the appropriate converters from SavedModel. 
 At the moment, these converters may reject some jax2tf-generated SavedModels due to
 some ops not yet implemented in the converters. As a partial workaround, one
 can pass the `enable_xla=False` parameter to `jax2tf.convert` to direct 
 `jax2tf` to avoid problematic ops. This will increase the coverage, and in fact
 most, but not all, Flax examples can be converted this way. 
 
-Check out the [MNIST TensorFlow Lite](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/examples/tflite/mnist/README.md)
-and the
+Check out
 [Quickdraw TensorFlow.js example](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/examples/tf_js/quickdraw/README.md).

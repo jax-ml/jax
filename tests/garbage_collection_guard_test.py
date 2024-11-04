@@ -20,7 +20,6 @@ from unittest import mock
 from absl.testing import absltest
 import jax
 from jax._src import config
-from jax._src.lib import xla_extension_version
 import jax._src.test_util as jtu
 import jax.numpy as jnp
 
@@ -46,9 +45,6 @@ def _create_array_cycle():
 class GarbageCollectionGuardTest(jtu.JaxTestCase):
 
   def test_gced_array_is_not_logged_by_default(self):
-    if xla_extension_version < 293:
-      self.skipTest("Requires xla_extension_version >= 293")
-
     # Create a reference cycle of two jax.Arrays.
     _create_array_cycle()
 
@@ -66,9 +62,6 @@ class GarbageCollectionGuardTest(jtu.JaxTestCase):
     )
 
   def test_gced_array_is_logged(self):
-    if xla_extension_version < 293:
-      self.skipTest("Requires xla_extension_version >= 293")
-
     # Use mock_stderr to be able to inspect stderr.
     mock_stderr = io.StringIO()
 

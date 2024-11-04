@@ -18,8 +18,6 @@
 from __future__ import annotations
 
 from jax._src.interpreters.ad import (
-  CustomJVPException as CustomJVPException,
-  CustomVJPException as CustomVJPException,
   JVPTrace as JVPTrace,
   JVPTracer as JVPTracer,
   UndefinedPrimal as UndefinedPrimal,
@@ -67,21 +65,9 @@ from jax._src.interpreters.ad import (
   vjp as vjp,
   zero_jvp as zero_jvp,
   zeros_like_aval as zeros_like_aval,
-  zeros_like_jaxval as zeros_like_jaxval,
   zeros_like_p as zeros_like_p,
 )
 
-_deprecations = {
-    # Finalized Mar 18, 2024; remove after June 18, 2024
-    "config": (
-        "jax.interpreters.ad.config is deprecated. Use jax.config directly.",
-        None,
-    ),
-    "source_info_util": (
-        "jax.interpreters.ad.source_info_util is deprecated. Use jax.extend.source_info_util.",
-        None,
-    ),
-}
 
 def backward_pass(jaxpr, reduce_axes, transform_stack,
                   consts, primals_in, cotangents_in):

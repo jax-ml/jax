@@ -192,6 +192,8 @@ def g_inner_jitted(x, n):
 g_inner_jitted(10, 20)
 ```
 
+(jit-marking-arguments-as-static)=
+
 ## Marking arguments as static
 
 If we really need to JIT-compile a function that has a condition on the value of an input, we can tell JAX to help itself to a less abstract tracer for a particular input by specifying `static_argnums` or `static_argnames`.

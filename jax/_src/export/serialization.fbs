@@ -28,12 +28,15 @@ enum PyTreeDefKind: byte {
   tuple = 2,
   list = 3,
   dict = 4,
+  custom = 5,
 }
 
 table PyTreeDef {
   kind: PyTreeDefKind;
   children: [PyTreeDef];
-  children_names: [string];  // only for "dict"
+  children_names: [string];  // only for "kind==dict"
+  custom_name: string;  // only for "kind==custom"
+  custom_auxdata: [byte];  // only for "kind==custom"
 }
 
 enum AbstractValueKind: byte {
@@ -94,7 +97,7 @@ table Effect {
 enum DisabledSafetyCheckKind: byte {
   platform,
   custom_call,
-  shape_assertions,
+  shape_assertions,  // unused
 }
 
 table DisabledSafetyCheck {

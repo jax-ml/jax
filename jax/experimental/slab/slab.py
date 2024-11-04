@@ -89,7 +89,7 @@ def xprod(xs: Iterable[XInt]) -> XInt:
   return xmul(*list(xs))
 
 def static_int(x: XInt) -> bool:
-  return isinstance(core.get_aval(x), core.ConcreteArray)
+  return core.is_concrete(x)
 
 def static_shape(s: DShape) -> bool:
   return all(map(static_int, s))

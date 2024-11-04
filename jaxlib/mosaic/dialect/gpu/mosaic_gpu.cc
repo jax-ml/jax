@@ -22,33 +22,35 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
-#include "third_party/llvm/llvm-project/llvm/include/llvm/ADT/STLExtras.h"
-#include "third_party/llvm/llvm-project/llvm/include/llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep
-#include "third_party/llvm/llvm-project/llvm/include/llvm/Support/Casting.h"
-#include "mlir/include/mlir/Conversion/LLVMCommon/MemRefBuilder.h"
-#include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/include/mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/include/mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/include/mlir/Dialect/SCF/Utils/Utils.h"
-#include "mlir/include/mlir/IR/Builders.h"
-#include "mlir/include/mlir/IR/BuiltinAttributes.h"
-#include "mlir/include/mlir/IR/BuiltinTypes.h"
-#include "mlir/include/mlir/IR/Dialect.h"
-#include "mlir/include/mlir/IR/DialectImplementation.h"  // IWYU pragma: keep
-#include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
-#include "mlir/include/mlir/IR/Location.h"
-#include "mlir/include/mlir/IR/MLIRContext.h"
-#include "mlir/include/mlir/IR/TypeRange.h"
-#include "mlir/include/mlir/IR/Types.h"
-#include "mlir/include/mlir/IR/Value.h"
-#include "mlir/include/mlir/IR/ValueRange.h"
-#include "mlir/include/mlir/Support/LLVM.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep
+#include "llvm/Support/Casting.h"
+#include "mlir/Conversion/LLVMCommon/MemRefBuilder.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/Utils/Utils.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Dialect.h"
+#include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep
+#include "mlir/IR/ImplicitLocOpBuilder.h"
+#include "mlir/IR/Location.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/TypeRange.h"
+#include "mlir/IR/Types.h"
+#include "mlir/IR/Value.h"
+#include "mlir/IR/ValueRange.h"
+#include "mlir/Support/LLVM.h"
 #include "tsl/platform/statusor.h"
 
 // Generated definitions.
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_dialect.cc.inc"
-
+#include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_enums.cc.inc"
+#define GET_ATTRDEF_CLASSES
+#include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_attrdefs.cc.inc"
 #define GET_TYPEDEF_CLASSES
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_types.cc.inc"
 #define GET_OP_CLASSES

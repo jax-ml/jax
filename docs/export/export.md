@@ -273,7 +273,7 @@ ValueError: Function 'cos' was lowered for platforms '('tpu',)' but it is used o
 >>> # compilation platform (which is the case for `cos` in this
 >>> # example):
 >>> exp_unsafe = export.export(jax.jit(lax.cos),
-...    lowering_platforms=['tpu'],
+...    platforms=['tpu'],
 ...    disabled_checks=[export.DisabledSafetyCheck.platform()])(1.)
 
 >>> exp_unsafe.call(1.)
@@ -281,7 +281,7 @@ Array(0.5403023, dtype=float32, weak_type=True)
 
 # and similarly with multi-platform lowering
 >>> exp_multi = export.export(jax.jit(lax.cos),
-...    lowering_platforms=['tpu', 'cpu', 'cuda'])(1.)
+...    platforms=['tpu', 'cpu', 'cuda'])(1.)
 >>> exp_multi.call(1.)
 Array(0.5403023, dtype=float32, weak_type=True)
 
@@ -310,7 +310,7 @@ the same StableHLO as for the single-plaform export.
 9220
 
 >>> exp_multi = export.export(jax.jit(f),
-...                           lowering_platforms=["cpu", "tpu", "cuda"])(1.)
+...                           platforms=["cpu", "tpu", "cuda"])(1.)
 >>> len(exp_multi.mlir_module_serialized)  # doctest: +SKIP
 9282
 

@@ -61,6 +61,7 @@ pytype_strict_library(
         "//jax:mosaic_gpu",
         "//jax:pallas",
         "//jax:partial_eval",
+        "//jax:source_info_util",
         "//jax:util",
         "//jax/_src/lib",
         "//jax/_src/pallas",
@@ -74,6 +75,7 @@ pytype_strict_library(
         "//jax",
         "//jax:core",
         "//jax:dtypes",
+        "//jax:effects",
         "//jax:mosaic_gpu",
         "//jax:tree_util",
         "//jax/_src/pallas",
@@ -94,6 +96,19 @@ pytype_strict_library(
         "//jax:tree_util",
         "//jax:util",
         "//jax/_src/lib",
+        "//jax/_src/pallas",
+    ],
+)
+
+pytype_strict_library(
+    name = "pipeline",
+    srcs = ["pipeline.py"],
+    deps = [
+        ":core",
+        ":primitives",
+        "//jax",
+        "//jax:pallas",
+        "//jax:util",
         "//jax/_src/pallas",
     ],
 )

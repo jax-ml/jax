@@ -250,6 +250,9 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     jnp_fun = getattr(jnp, name)
     np_fun = getattr(np, name)
 
+    if jnp_fun.identity is None and axis is None and len(shape) > 1:
+      self.skipTest("Multiple-axis reduction over non-reorderable ufunc.")
+
     jnp_fun_reduce = partial(jnp_fun.reduce, axis=axis)
     np_fun_reduce = partial(np_fun.reduce, axis=axis)
 

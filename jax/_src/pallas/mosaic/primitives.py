@@ -593,14 +593,14 @@ def dma_start_discharge_rule(in_avals, out_avals,
     # Note that this code only works in SPMD mode. If not all devices execute
     # the DMA then the devices that do will hang.
     # TODO(justinfu): Verify that code only works in SPMD mode.
-    axis_env = jax_core.thread_local_state.trace_state.axis_env
-    nonempty_axes = [frame for frame in axis_env if frame.name is not None]
+    axis_env = jax_core.get_axis_env()
+    nonempty_axes = [name for name in axis_env.axis_sizes if name is not None]
     if device_id_type == DeviceIdType.LOGICAL:
       if len(nonempty_axes) > 1:
         raise NotImplementedError("Sharding with more than one named axis not "
                                   "implemented in dma_start_p for LOGICAL "
                                   "device_id_type.")
-      shard_axis = nonempty_axes[0].name
+      shard_axis = nonempty_axes[0]
       my_axis = jax.lax.axis_index(shard_axis)
     elif device_id_type == DeviceIdType.MESH:
       device_id_len = 1
@@ -608,9 +608,9 @@ def dma_start_discharge_rule(in_avals, out_avals,
         device_id_len = device_id.size
       elif hasattr(device_id, '__len__'):
         device_id_len = len(device_id)
-      if device_id_len != len(axis_env):
+      if device_id_len != len(axis_env.axis_sizes):
         raise ValueError(
-            f"device_id ({device_id_len}) and mesh ({len(axis_env)}) "
+            f"device_id ({device_id_len}) and mesh ({len(axis_env.axis_sizes)}) "
             "must have same length.")
       if device_id_len > 1 or len(nonempty_axes) > 1:
         raise NotImplementedError("Meshes with more than 1 named dimension not "

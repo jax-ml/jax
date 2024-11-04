@@ -189,6 +189,13 @@ def get_compile_options(
     compile_options.device_assignment = device_assignment
 
   if env_options_overrides is not None:
+    # Some overrides are passed directly on build_options.
+    overrides_on_build_options = [
+        'exec_time_optimization_effort', 'memory_fitting_effort']
+    env_options_overrides = dict(env_options_overrides)
+    for name in overrides_on_build_options:
+      if name in env_options_overrides:
+        setattr(build_options, name, env_options_overrides.pop(name))
     compile_options.env_option_overrides = list(env_options_overrides.items())
 
   debug_options = compile_options.executable_build_options.debug_options

@@ -17,14 +17,15 @@
 
 from __future__ import annotations
 
+import collections
 from collections.abc import Callable, Sequence
 import copy
 import dataclasses
 import functools
 import itertools
+import json
 import re
-from typing import Any, Union, cast
-import warnings
+from typing import Any, Protocol, TypeVar, Union, cast
 
 from absl import logging
 import numpy as np
@@ -99,20 +100,6 @@ class DisabledSafetyCheck:
       target_name: the name of the custom call target to allow.
     """
     return DisabledSafetyCheck(f"custom_call:{target_name}")
-
-  @classmethod
-  def shape_assertions(cls) -> DisabledSafetyCheck:
-    """DEPRECATED: A noop.
-
-    Was used previously to allow invocations with shapes that do not meet the
-    constraints. Has no effect anymore, shape assertions cannot be disabled.
-    """
-    # TODO(necula): remove this after compatibility period. Was deprecated in
-    # May 2024.
-    warnings.warn(
-        "DisabledSafetyCheck.shape_assertions is deprecated, has no effect anymore",
-        DeprecationWarning, stacklevel=2)
-    return DisabledSafetyCheck("shape_assertions")
 
   def is_custom_call(self) -> str | None:
     """Returns the custom call target allowed by this directive."""
@@ -272,33 +259,6 @@ class Exported:
     return tuple(_hlo_sharding_to_xla_compatible_sharding(s, mesh)
                  for s in self.out_shardings_hlo)
 
-  # For backwards compatibility
-  # TODO(necula): remove after September 2024.
-  @property
-  def lowering_platforms(self):
-    """DEPRECATED."""
-    warnings.warn("lowering_platform is deprecated. Use .platforms instead.",
-                  DeprecationWarning, stacklevel=2)
-    return self.platforms
-
-  # For backwards compatibility
-  # TODO(necula): remove after September 2024.
-  @property
-  def mlir_module_serialization_version(self):
-    """DEPRECATED."""
-    warnings.warn("mlir_module_serialization_version is deprecated. Use .calling_convention_version instead.",
-                  DeprecationWarning, stacklevel=2)
-    return self.calling_convention_version
-
-  # For backwards compatibility
-  # TODO(necula): remove after September 2024.
-  @property
-  def uses_shape_polymorphism(self):
-    """DEPRECATED."""
-    warnings.warn("uses_shape_polymorphism is deprecated. Use .uses_global_constants instead.",
-                  DeprecationWarning, stacklevel=2)
-    return self.uses_global_constants
-
   def has_vjp(self) -> bool:
     """Returns if this Exported supports VJP."""
     return self._get_vjp is not None
@@ -344,6 +304,189 @@ def deserialize(blob: bytearray) -> Exported:
   return deserialize(blob)
 
 
+T = TypeVar("T")
+PyTreeAuxData = Any  # alias for tree_util._AuxData
+
+
+class _SerializeAuxData(Protocol):
+  def __call__(self, aux_data: PyTreeAuxData) -> bytes:
+    """Serializes the PyTree node AuxData.
+
+    The AuxData is returned by the `flatten_func` registered by
+    `tree_util.register_pytree_node`).
+    """
+
+
+class _DeserializeAuxData(Protocol):
+  def __call__(self, serialized_aux_data: bytes) -> PyTreeAuxData:
+    """Deserializes the PyTree node AuxData.
+
+    The result will be passed to `_BuildFromChildren`.
+    """
+
+
+class _BuildFromChildren(Protocol):
+  def __call__(self, aux_data: PyTreeAuxData, children: Sequence[Any]) -> Any:
+    """Materializes a T given a deserialized AuxData and children.
+
+    This is similar in scope with the `unflatten_func`.
+    """
+
+
+serialization_registry: dict[type, tuple[str, _SerializeAuxData]] = {}
+
+
+deserialization_registry: dict[
+  str,
+  tuple[type, _DeserializeAuxData, _BuildFromChildren]] = {}
+
+
+def _is_namedtuple(nodetype: type) -> bool:
+  return (issubclass(nodetype, tuple) and
+          hasattr(nodetype, "_fields") and
+          isinstance(nodetype._fields, Sequence) and
+          all(isinstance(f, str) for f in nodetype._fields))
+
+def register_pytree_node_serialization(
+    nodetype: type[T],
+    *,
+    serialized_name: str,
+    serialize_auxdata: _SerializeAuxData,
+    deserialize_auxdata: _DeserializeAuxData,
+    from_children: _BuildFromChildren | None = None
+) -> type[T]:
+  """Registers a custom PyTree node for serialization and deserialization.
+
+  You must use this function before you can serialize and deserialize PyTree
+  nodes for the types not supported natively. We serialize PyTree nodes for
+  the `in_tree` and `out_tree` fields of `Exported`, which are part of the
+  exported function's calling convention.
+
+  This function must be called after calling
+  `jax.tree_util.register_pytree_node` (except for `collections.namedtuple`,
+  which do not require a call to `register_pytree_node`).
+
+  Args:
+    nodetype: the type whose PyTree nodes we want to serialize. It is an
+      error to attempt to register multiple serializations for a `nodetype`.
+    serialized_name: a string that will be present in the serialization and
+      will be used to look up the registration during deserialization. It is an
+      error to attempt to register multiple serializations for a
+      `serialized_name`.
+    serialize_auxdata: serialize the PyTree auxdata (returned by the
+      `flatten_func` argument to `jax.tree_util.register_pytree_node`.).
+    deserialize_auxdata: deserialize the auxdata that was serialized by the
+      `serialize_auxdata`.
+    from_children: if present, this is a function that takes that result of
+      `deserialize_auxdata` along with some children and creates an instance
+      of `nodetype`. This is similar to the `unflatten_func` passed to
+      `jax.tree_util.register_pytree_node`. If not present, we look up
+      and use the `unflatten_func`. This is needed for `collections.namedtuple`,
+      which does not have a `register_pytree_node`, but it can be useful to
+      override that function. Note that the result of `from_children` is
+      only used with `jax.tree_util.tree_structure` to construct a proper
+      PyTree node, it is not used to construct the outputs of the serialized
+      function.
+
+  Returns:
+    the same type passed as `nodetype`, so that this function can
+    be used as a class decorator.
+  """
+  if nodetype in serialization_registry:
+    raise ValueError(
+        f"Duplicate serialization registration for type `{nodetype}`. "
+        "Previous registration was with serialized_name "
+        f"`{serialization_registry[nodetype][0]}`.")
+  if serialized_name in deserialization_registry:
+    raise ValueError(
+        "Duplicate serialization registration for "
+        f"serialized_name `{serialized_name}`. "
+        "Previous registration was for type "
+        f"`{deserialization_registry[serialized_name][0]}`.")
+  if from_children is None:
+    if nodetype not in tree_util._registry:
+      raise ValueError(
+          f"If `from_children` is not present, you must call first"
+          f"`jax.tree_util.register_pytree_node` for `{nodetype}`")
+    from_children = tree_util._registry[nodetype].from_iter
+
+  serialization_registry[nodetype] = (
+      serialized_name, serialize_auxdata)
+  deserialization_registry[serialized_name] = (
+      nodetype, deserialize_auxdata, from_children)
+  return nodetype
+
+
+def register_namedtuple_serialization(
+    nodetype: type[T],
+    *,
+    serialized_name: str) -> type[T]:
+  """Registers a namedtuple for serialization and deserialization.
+
+  JAX has native PyTree support for `collections.namedtuple`, and does not
+  require a call to `jax.tree_util.register_pytree_node`. However, if you
+  want to serialize functions that have inputs of outputs of a
+  namedtuple type, you must register that type for serialization.
+
+  Args:
+    nodetype: the type whose PyTree nodes we want to serialize. It is an
+      error to attempt to register multiple serializations for a `nodetype`.
+      On deserialization, this type must have the same set of keys that
+      were present during serialization.
+    serialized_name: a string that will be present in the serialization and
+      will be used to look up the registration during deserialization. It is an
+      error to attempt to register multiple serializations for
+      a `serialized_name`.
+
+  Returns:
+    the same type passed as `nodetype`, so that this function can
+    be used as a class decorator.
+"""
+  if not _is_namedtuple(nodetype):
+    raise ValueError("Use `jax.export.register_pytree_node_serialization` for "
+                     "types other than `collections.namedtuple`.")
+
+  def serialize_auxdata(aux_data: PyTreeAuxData) -> bytes:
+    # Store the serialized keys in the serialized auxdata
+    del aux_data
+    return json.dumps(nodetype._fields).encode("utf-8")
+
+  def deserialize_auxdata(serialized_aux_data: bytes) -> PyTreeAuxData:
+    return json.loads(serialized_aux_data.decode("utf-8"))
+
+  def from_children(aux_data: PyTreeAuxData, children: Sequence[Any]) -> Any:
+    # Use our own "from_children" because namedtuples do not have a pytree
+    # registration.
+    ser_keys = cast(Sequence[str], aux_data)
+    assert len(ser_keys) == len(children)
+    return nodetype(** dict(zip(ser_keys, children)))
+
+  return register_pytree_node_serialization(
+      nodetype,
+      serialized_name=serialized_name,
+      serialize_auxdata=serialize_auxdata,
+      deserialize_auxdata=deserialize_auxdata,
+      from_children=from_children)
+
+
+# collections.OrderedDict is registered as a pytree node with auxdata being
+# `tuple(x.keys())`.
+def _serialize_ordereddict_keys(keys):
+  if isinstance(keys, Sequence) and all(isinstance(k, str) for k in keys):
+    return json.dumps(keys).encode("utf-8")
+  else:
+    raise NotImplementedError(
+        "Serialization of collections.OrderedDict is supported only when the "
+        f"keys are strings. Found keys: {keys}.")
+
+
+register_pytree_node_serialization(
+    collections.OrderedDict,
+    serialized_name="collections.OrderedDict",
+    serialize_auxdata=_serialize_ordereddict_keys,
+    deserialize_auxdata=lambda b: json.loads(b.decode("utf-8")))
+
+
 def default_export_platform() -> str:
   """Retrieves the default export platform.
 
@@ -361,108 +504,11 @@ def shape_and_dtype_jax_array(a) -> tuple[Sequence[int | None], DType]:
   aval = core.raise_to_shaped(core.get_aval(a))
   return aval.shape, aval.dtype
 
-def args_specs(
-    args,  # pytree of arguments
-    polymorphic_shapes,  # prefix pytree of strings
-    get_shape_and_dtype=shape_and_dtype_jax_array,
-):
-  # TODO: deprecated in January 2024, to be removed.
-  warnings.warn(
-      "export.args_specs is deprecated in favor of export.symbolic_args_specs",
-      DeprecationWarning, stacklevel=2)
-  if get_shape_and_dtype is not shape_and_dtype_jax_array:
-    # This was needed in some older jax2tf implementations
-    args = tree_util.tree_map(lambda a: jax.ShapeDtypeStruct(* get_shape_and_dtype(a)),
-                              args)
-  return shape_poly.symbolic_args_specs(args, polymorphic_shapes)
-
-
-# TODO(necula): remove this once we remove jax.experimental.export.
-def export_back_compat(
-    fun_jax: Callable,
-    *,
-    lowering_platforms: Sequence[str] | None = None,
-    disabled_checks: Sequence[DisabledSafetyCheck] = (),
-    _device_assignment_for_internal_jax2tf_use_only = None,
-    ) -> Callable[..., Exported]:
-  """Exports native serialization for a JAX function.
-
-  Note: this function exists only for internal usage by jax2tf and for
-    backwards compatibility with jax.experimental.export. Use
-    `jax.export` instead.
-    See https://jax.readthedocs.io/en/latest/export/export.html
-
-  Args:
-    fun_jax: the function to lower and serialize.
-    lowering_platforms:
-        Optional sequence containing a subset of 'tpu', 'cpu',
-        'cuda', 'rocm'. If more than one platform is specified, then
-        the lowered code takes an argument specifying the platform.
-        If None, then use the default JAX backend.
-        The calling convention for multiple platforms is explained
-        at https://jax.readthedocs.io/en/latest/export/export.html#module-calling-convention.
-    disabled_checks: the safety checks to disable. See docstring
-        of `DisabledSafetyCheck`.
-
-  Returns: a function that takes args and kwargs pytrees of jax.ShapeDtypeStruct,
-      or values with `.shape` and `.dtype` attributes, and returns an
-      `Exported`.
-
-  Usage:
-
-      def f_jax(*args, **kwargs): ...
-      exported = jax_export.export(f_jax)(*args, **kwargs)
-  """
-
-  def do_export(*args_specs, **kwargs_specs) -> Exported:
-    if hasattr(fun_jax, "trace"):
-      # If we have a pjit or pmap already we do not wrap with another, and we
-      # allow shardings.
-      wrapped_fun_jax = fun_jax
-    else:
-      # We support convert(pjit(f_jax)) and convert(jit(f_jax)) but also
-      # convert(f_jax), in which case a "jit" is implied. In that case we raise
-      # an error if the lowered function contains non-replicated sharding annotations.
-      wrapped_fun_jax = jax.jit(fun_jax)
-
-    if lowering_platforms is not None:
-      actual_lowering_platforms = tuple(lowering_platforms)
-    else:
-      actual_lowering_platforms = (default_export_platform(),)
-
-    # TODO: move to `lower`
-    symbolic_scope: tuple[shape_poly.SymbolicScope, tree_util.KeyPath] | None = None  # type: ignore[invalid-annotation,unused-ignore]
-    for k_path, aval in tree_util.tree_flatten_with_path((args_specs, kwargs_specs))[0]:
-      # Static args may have no `shape` attribute.
-      if not hasattr(aval, "shape"):
-        continue
-      for d in aval.shape:
-        if shape_poly.is_symbolic_dim(d):
-          if symbolic_scope is None:
-            symbolic_scope = (d.scope, k_path)
-            continue
-          symbolic_scope[0]._check_same_scope(
-              d, when=f"when exporting {util.fun_name(wrapped_fun_jax)}",
-              self_descr=f"current (from {shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
-              other_descr=shape_poly.args_kwargs_path_to_str(k_path))
-
-    traced = wrapped_fun_jax.trace(*args_specs, **kwargs_specs)
-    lowered = traced.lower(
-        lowering_platforms=actual_lowering_platforms,
-        _private_parameters=mlir.LoweringParameters(
-            for_export=True,
-            export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value))
-    return _export_lowered(
-        lowered, traced.jaxpr, traced.fun_name,
-        disabled_checks=disabled_checks,
-        _device_assignment_for_internal_jax2tf_use_only=_device_assignment_for_internal_jax2tf_use_only)
-  return do_export
 
 def export(
     fun_jit: stages.Wrapped,
     *,
     platforms: Sequence[str] | None = None,
-    lowering_platforms: Sequence[str] | None = None,
     disabled_checks: Sequence[DisabledSafetyCheck] = (),
     ) -> Callable[..., Exported]:
   """Exports a JAX function for persistent serialization.
@@ -476,13 +522,13 @@ def export(
         If None, then use the default JAX backend.
         The calling convention for multiple platforms is explained at
         https://jax.readthedocs.io/en/latest/export/export.html#module-calling-convention.
-    lowering_platforms: DEPRECATED, use `platforms`.
     disabled_checks: the safety checks to disable. See documentation for
         of `jax.export.DisabledSafetyCheck`.
 
-  Returns: a function that takes args and kwargs pytrees of {class}`jax.ShapeDtypeStruct`,
-      or values with `.shape` and `.dtype` attributes, and returns an
-      `Exported`.
+  Returns:
+    a function that takes args and kwargs pytrees of {class}`jax.ShapeDtypeStruct`,
+    or values with `.shape` and `.dtype` attributes, and returns an
+    `Exported`.
 
   Usage:
 
@@ -502,34 +548,38 @@ def export(
       >>> rehydrated.call(np.array([.1, .2, .3, .4], dtype=np.float32))
       Array([0.09983342, 0.19866933, 0.29552022, 0.38941833], dtype=float32)
   """
+  return _export_internal(fun_jit, platforms=platforms,
+                          disabled_checks=disabled_checks)
+
+
+# TODO(necula): remove this once we improve the integration with jax2tf.
+def _export_internal(
+    fun_jit: stages.Wrapped,
+    *,
+    platforms: Sequence[str] | None = None,
+    disabled_checks: Sequence[DisabledSafetyCheck] = (),
+    _device_assignment_for_internal_jax2tf_use_only = None,
+    ) -> Callable[..., Exported]:
+  """Exports native serialization for a JAX function.
+
+  Note: this function exists only for internal usage by jax2tf. Use
+    `jax.export` instead.
+    See https://jax.readthedocs.io/en/latest/export/export.html
+
+  See docstring of `export` for more details.
+  """
   if not isinstance(fun_jit, stages.Wrapped):
     raise ValueError(
         f"Function to be exported must be the result of `jit` but is: {fun_jit}")
-  if platforms is not None and lowering_platforms is not None:
-    raise ValueError("Cannot use both `platforms` and `lowering_platforms`")
-  if platforms is None and lowering_platforms is not None:
-    platforms = lowering_platforms
-  if platforms is not None:
-    actual_lowering_platforms = tuple(platforms)
-  else:
-    actual_lowering_platforms = (default_export_platform(),)
 
   def do_export(*args_specs, **kwargs_specs) -> Exported:
+    if platforms is not None:
+      actual_lowering_platforms = tuple(platforms)
+    else:
+      actual_lowering_platforms = (default_export_platform(),)
+
     # TODO: move to `lower`
-    symbolic_scope: tuple[shape_poly.SymbolicScope, tree_util.KeyPath] | None = None  # type: ignore[invalid-annotation,unused-ignore]
-    for k_path, aval in tree_util.tree_flatten_with_path((args_specs, kwargs_specs))[0]:
-      # Static args may have no `shape` attribute.
-      if not hasattr(aval, "shape"):
-        continue
-      for d in aval.shape:
-        if shape_poly.is_symbolic_dim(d):
-          if symbolic_scope is None:
-            symbolic_scope = (d.scope, k_path)
-            continue
-          symbolic_scope[0]._check_same_scope(
-              d, when=f"when exporting {util.fun_name(fun_jit)}",
-              self_descr=f"current (from {shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
-              other_descr=shape_poly.args_kwargs_path_to_str(k_path))
+    check_symbolic_scope_errors(fun_jit, args_specs, kwargs_specs)
 
     traced = fun_jit.trace(*args_specs, **kwargs_specs)
     lowered = traced.lower(
@@ -539,12 +589,32 @@ def export(
             export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value))
     return _export_lowered(
         lowered, traced.jaxpr, traced.fun_name,
-        disabled_checks=disabled_checks)
+        disabled_checks=disabled_checks,
+        _device_assignment_for_internal_jax2tf_use_only=_device_assignment_for_internal_jax2tf_use_only)
   return do_export
+
+
+def check_symbolic_scope_errors(fun_jax, args_specs, kwargs_specs):
+  symbolic_scope: tuple[shape_poly.SymbolicScope, tree_util.KeyPath] | None = None  # type: ignore[invalid-annotation,unused-ignore]
+  for k_path, aval in tree_util.tree_flatten_with_path((args_specs, kwargs_specs))[0]:
+    # Static args may have no `shape` attribute.
+    if not hasattr(aval, "shape"):
+      continue
+    for d in aval.shape:
+      if shape_poly.is_symbolic_dim(d):
+        if symbolic_scope is None:
+          symbolic_scope = (d.scope, k_path)
+          continue
+        symbolic_scope[0]._check_same_scope(
+            d, when=f"when exporting {util.fun_name(fun_jax)}",
+            self_descr=f"current (from {shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
+            other_descr=shape_poly.args_kwargs_path_to_str(k_path))
+
 
 def _export_lowered(
     lowered: stages.Lowered,
-    jaxpr: core.ClosedJaxpr, fun_name: str,
+    jaxpr: core.ClosedJaxpr,
+    fun_name: str,
     disabled_checks: Sequence[DisabledSafetyCheck] = (),
     _device_assignment_for_internal_jax2tf_use_only = None,
   ) -> Exported:
@@ -614,9 +684,9 @@ def _export_lowered(
   nr_devices = len(lowering.compile_args["device_assignment"])
   def export_sharding(s: LoweringSharding,
                       aval: core.ShapedArray) -> HloSharding | None:
-    if sharding_impls.is_unspecified(s):
+    if isinstance(s, sharding_impls.UnspecifiedValue):
       return None
-    return s._to_xla_hlo_sharding(aval.ndim)  # type: ignore[union-attr]
+    return s._to_xla_hlo_sharding(aval.ndim)
 
   all_in_shardings = expand_in_shardings(lowering.compile_args["in_shardings"],
                                          module_kept_var_idx,

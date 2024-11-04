@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+load(
+    "@llvm-project//mlir:tblgen.bzl",
+    "gentbl_cc_library",
+    "gentbl_filegroup",
+    "td_library",
+)
 
 package(
     default_applicable_licenses = [],
@@ -47,17 +52,11 @@ gentbl_cc_library(
             "mosaic_gpu_dialect.cc.inc",
         ),
         (
-            [
-                "-gen-op-decls",
-                "--typedefs-dialect=mosaic_gpu",
-            ],
+            ["-gen-op-decls"],
             "mosaic_gpu_ops.h.inc",
         ),
         (
-            [
-                "-gen-op-defs",
-                "--typedefs-dialect=mosaic_gpu",
-            ],
+            ["-gen-op-defs"],
             "mosaic_gpu_ops.cc.inc",
         ),
         (
@@ -73,6 +72,28 @@ gentbl_cc_library(
                 "--typedefs-dialect=mosaic_gpu",
             ],
             "mosaic_gpu_types.cc.inc",
+        ),
+        (
+            ["-gen-enum-decls"],
+            "mosaic_gpu_enums.h.inc",
+        ),
+        (
+            ["-gen-enum-defs"],
+            "mosaic_gpu_enums.cc.inc",
+        ),
+        (
+            [
+                "-gen-attrdef-decls",
+                "--attrdefs-dialect=mosaic_gpu",
+            ],
+            "mosaic_gpu_attrdefs.h.inc",
+        ),
+        (
+            [
+                "-gen-attrdef-defs",
+                "--attrdefs-dialect=mosaic_gpu",
+            ],
+            "mosaic_gpu_attrdefs.cc.inc",
         ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
@@ -125,5 +146,50 @@ cc_test(
         "@llvm-project//mlir:SCFUtils",
         "@llvm-project//mlir:Support",
         "@tsl//tsl/platform:errors",
+    ],
+)
+
+gentbl_filegroup(
+    name = "mosaic_gpu_python_gen_raw",
+    tbl_outs = [
+        (
+            [
+                "-gen-python-op-bindings",
+                "-bind-dialect=mosaic_gpu",
+            ],
+            "_mosaic_gpu_gen_raw.py",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = ":mosaic_gpu.td",
+    deps = [
+        ":mosaic_gpu_td_files",
+        "@llvm-project//mlir:OpBaseTdFiles",
+    ],
+)
+
+genrule(
+    name = "mosaic_gpu_python_gen",
+    srcs = ["_mosaic_gpu_gen_raw.py"],
+    outs = ["_mosaic_gpu_gen.py"],
+    cmd = "cat $(location _mosaic_gpu_gen_raw.py) | sed -e 's/^from \\./from jaxlib\\.mlir\\.dialects\\./g' > $@",
+)
+
+DIALECT_CAPI_SOURCES = [
+    ":integrations/c/gpu_dialect.cc",
+]
+
+DIALECT_CAPI_HEADERS = [
+    ":integrations/c/gpu_dialect.h",
+]
+
+cc_library(
+    name = "gpu_dialect_capi",
+    srcs = DIALECT_CAPI_SOURCES,
+    hdrs = DIALECT_CAPI_HEADERS,
+    deps = [
+        ":mosaic_gpu",
+        ":mosaic_gpu_inc_gen",
+        "@llvm-project//mlir:CAPIIR",
     ],
 )

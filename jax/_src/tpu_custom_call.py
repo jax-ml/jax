@@ -204,9 +204,6 @@ class CustomCallBackendConfig:
         if i + 1 != len(self.flags):
           config.write(b",")
       config.write(b"]")
-    # Prevent the compiler from sharding the custom call beyond what Mosaic does
-    # based on user annotations
-    config.write(b', "implicit_sharding": {"type": "MANUAL"}')
     config.write(b"}")
     return config.getvalue()
 
@@ -417,10 +414,11 @@ def _lower_mosaic_module_to_asm(
   needs_layout_passes = not device_type
   # We'll mutate the module, so clone it
   with module.context as ctx, module.operation.location as _:
-    module = ir.Module.parse(
-        module.operation.get_asm(binary=True, enable_debug_info=True)
-    )
     if needs_layout_passes and _MOSAIC_USE_PYTHON_PIPELINE.value:
+      module = ir.Module.parse(
+          module.operation.get_asm(binary=True, enable_debug_info=True)
+      )
+      module_op = module.operation
       some_tpu = jax.devices(backend)[0]
       device_kind = some_tpu.device_kind
       if not device_kind.startswith("TPU v"):
@@ -435,15 +433,17 @@ def _lower_mosaic_module_to_asm(
       )
       needs_hlo_passes = False
       needs_layout_passes = False
+    else:
+      module_op = module.operation.clone()
     prev_allow_unregistered_dialects = ctx.allow_unregistered_dialects
     ctx.allow_unregistered_dialects = True
     try:
       pipeline = PassManager.parse("builtin.module(mosaic-serde{serialize=true})")
-      pipeline.run(module.operation)
+      pipeline.run(module_op)
     finally:
       ctx.allow_unregistered_dialects = prev_allow_unregistered_dialects
     bytecode_buffer = io.BytesIO()
-    module.operation.write_bytecode(bytecode_buffer, desired_version=0)
+    module_op.write_bytecode(bytecode_buffer, desired_version=0)
     asm = bytecode_buffer.getvalue()
     return asm, (
         has_communication,
@@ -451,6 +451,44 @@ def _lower_mosaic_module_to_asm(
         needs_hlo_passes,
         needs_layout_passes,
     )
+
+
+def _get_device_type(module: ir.Module) -> str | None:
+  """Determines the device type based on the core_type annotations."""
+  sparsecore_func_found = False
+  tensorcore_func_found = False
+
+  def assign_device_type_based_on_core_type(op: ir.Operation) -> ir.WalkResult:
+    nonlocal sparsecore_func_found
+    nonlocal tensorcore_func_found
+    if op.name == "func.func":
+      if "tpu.core_type" in op.attributes:
+        core_type = op.attributes["tpu.core_type"]
+        if str(core_type) in [
+            f"#tpu.core_type<{c}>"
+            for c in ["sc_scalar_subcore", "sc_vector_subcore"]
+        ]:
+          sparsecore_func_found = True
+          if tensorcore_func_found:
+            return ir.WalkResult.INTERRUPT
+          return ir.WalkResult.SKIP
+        if str(core_type) == "#tpu.core_type<tc>":
+          tensorcore_func_found = True
+          return ir.WalkResult.SKIP
+        raise ValueError(f"Unknown core type: {core_type}")
+    return ir.WalkResult.ADVANCE
+
+  module.operation.walk(
+      assign_device_type_based_on_core_type, walk_order=ir.WalkOrder.PRE_ORDER
+  )
+  if tensorcore_func_found and sparsecore_func_found:
+    raise ValueError(
+        "A single Mosaic kernel cannot contain both "
+        "TensorCore and SparseCore functions."
+    )
+  if sparsecore_func_found:
+    return "sparsecore"
+  return None
 
 
 def _lower_to_custom_call_config(
@@ -592,7 +630,6 @@ def as_tpu_kernel(
     *,
     cost_estimate: CostEstimate | None = None,
     backend: str | xla_client.Client = "tpu",
-    device_type: str | None = None,
     kernel_name: str | None = None,
     vmem_limit_bytes: int | None = None,
     flags: dict[str, bool | int | float] | None = None,
@@ -604,6 +641,7 @@ def as_tpu_kernel(
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
+  device_type = _get_device_type(module)
   config = _lower_to_custom_call_config(
       module,
       backend=backend,

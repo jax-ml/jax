@@ -307,8 +307,9 @@ from jax._src.numpy.reductions import (
     all as all,
     average as average,
     count_nonzero as count_nonzero,
-    cumsum as cumsum,
     cumprod as cumprod,
+    cumsum as cumsum,
+    cumulative_prod as cumulative_prod,
     cumulative_sum as cumulative_sum,
     max as max,
     mean as mean,
@@ -470,11 +471,6 @@ _deprecations = {
   "round_": (
     "jnp.round_ is deprecated; use jnp.round instead.",
     round
-  ),
-  # Deprecated 18 Sept 2023 and removed 06 Feb 2024
-  "trapz": (
-    "jnp.trapz is deprecated; use jnp.trapezoid instead.",
-    None
   ),
 }
 

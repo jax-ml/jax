@@ -2941,6 +2941,40 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                      RandArg((3, 5, 0), _f32)],
                     polymorphic_shapes=[None, "b0, b1, ..."],
                     override_jax_config_flags=override_jax_config_flags),  # type: ignore
+        [
+            PolyHarness("random_choice", f"{flags_name}_arr_poly={arr_poly}_shape_poly={shape_poly}_replace={replace}_use_p={use_p}",
+                    lambda key, a, res_shape, use_p: jax.random.choice(
+                        jax.random.wrap_key_data(key),
+                        a,
+                        shape=res_shape.shape,
+                        p=jnp.full((a.shape[1],), 0.1, dtype=_f32) if use_p else None,
+                        axis=1,
+                        replace=replace),
+                    arg_descriptors=[RandArg((key_size,), np.uint32),
+                                     RandArg((64, 12, 4), _f32),  # sample on axis=1
+                                     RandArg((3, 4), _f32),
+                                     StaticArg(use_p)],
+                    # TODO(necula): threefry requires even-sized samples.
+                    polymorphic_shapes=[None,
+                                        "_, 2*b1, _" if arr_poly else None,
+                                        "b3, b4" if shape_poly else None],
+                    # The array sampled dimension must be larger than res_shape.size
+                    symbolic_constraints=[
+                        "2*b1 >= 12" if arr_poly else "1 >= 0",
+                        "2*b1 >= b3*b4" if arr_poly and shape_poly else "1 >= 0",
+                        "12 >= b3*b4" if shape_poly else "1 >= 0"
+                    ],
+                    override_jax_config_flags=override_jax_config_flags,
+                    expect_error=(
+                        (NotImplementedError, "permutation")
+                        if arr_poly and not use_p else None))  # type: ignore
+            # np.insert used in random.choice tries to coerce shape_poly to
+            # integer arrays, but only when the arr_poly is False.
+            for arr_poly in [True, False]
+            for shape_poly in [True, False]
+            for replace in [True, False]
+            for use_p in [True, False]
+        ],
         PolyHarness("random_split", f"{flags_name}",
                     lambda key, a: jax.random.key_data(
                       jax.random.split(jax.random.wrap_key_data(key),
@@ -2971,7 +3005,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                     polymorphic_shapes=[None, "b0, ..."],
                     expect_error=(
                         (core.InconclusiveDimensionOperation,
-                         "the product of the known dimensions must be even") if flags_name == "threefry_non_partitionable" else None),
+                         "array size .* must be even") if flags_name == "threefry_non_partitionable" else None),
                     override_jax_config_flags=override_jax_config_flags)  # type: ignore
       ]
         for key_size, flags_name, override_jax_config_flags in [

@@ -28,6 +28,8 @@ Functions
   minimum_supported_calling_convention_version
   maximum_supported_calling_convention_version
   default_export_platform
+  register_pytree_node_serialization
+  register_namedtuple_serialization
 
 Functions related to shape polymorphism
 ---------------------------------------

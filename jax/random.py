@@ -251,20 +251,3 @@ from jax._src.random import (
   weibull_min as weibull_min,
   wrap_key_data as wrap_key_data,
 )
-
-_deprecations = {
-    # Finalized Jul 26 2024; remove after Nov 2024.
-    "shuffle": (
-        "jax.random.shuffle is deprecated. Use jax.random.permutation with independent=True.",
-        None,
-    )
-}
-
-import typing
-if typing.TYPE_CHECKING:
-  pass
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del typing

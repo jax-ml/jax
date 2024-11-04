@@ -1,3 +1,6 @@
+load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+load("@rules_python//python:defs.bzl", "py_library")
+
 # Copyright 2023 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,9 +14,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
-load("@rules_python//python:defs.bzl", "py_library")
+load("//jaxlib:jax.bzl", "pallas_extension_deps")
 
 licenses(["notice"])
 
@@ -41,6 +42,7 @@ cc_library(
         "dialect/tpu/tpu_dialect.cc",
         "dialect/tpu/tpu_ops.cc",
         "dialect/tpu/util.cc",
+        ":extension_srcs",
     ] + glob([
         "dialect/tpu/transforms/*.cc",
     ]),
@@ -83,7 +85,7 @@ cc_library(
         "@xla//xla:array",
         "@xla//xla:shape_util",
         "@xla//xla:util",
-    ],
+    ] + pallas_extension_deps,
 )
 
 gentbl_cc_library(
@@ -225,4 +227,12 @@ cc_library(
         "@llvm-project//mlir:IR",
     ],
     alwayslink = True,
+)
+
+filegroup(
+    name = "extension_srcs",
+    srcs = [
+        "dialect/tpu/transforms/extensions/apply_vector_layout_extensions.cc",
+        "dialect/tpu/transforms/extensions/infer_vector_layout_extensions.cc",
+    ],
 )

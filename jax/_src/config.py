@@ -217,7 +217,9 @@ def trace_context():
   return (axis_env_state, mesh_context_manager, xla_metadata_context_manager,
           compute_on_context_manager, enable_x64.value,
           numpy_rank_promotion.value, default_matmul_precision.value,
-          dynamic_shapes.value, numpy_dtype_promotion.value,
+          dynamic_shapes.value,
+          eager_constant_folding.value,
+          numpy_dtype_promotion.value,
           default_device.value, random_seed_offset.value,
           threefry_partitionable.value,
           threefry_gpu_kernel_lowering.value,
@@ -832,6 +834,7 @@ class _GlobalExtraJitContext(NamedTuple):
   numpy_dtype_promotion: str | None = None
   default_matmul_precision: Any | None = None
   dynamic_shapes: bool = False
+  eager_constant_folding: bool = False
   random_seed_offset: int = 0
   threefry_partitionable: bool = False
   threefry_gpu_kernel_lowering: bool = False
@@ -858,7 +861,7 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   The initialization, which uses both config.py and core.py is done using
   `_update_thread_local_jit_state` in core.py to prevent circular imports.
   """
-  dynamic_trace_state: Any | None = None
+  trace_state: Any | None = None
   axis_env_state: Hashable = ()
   mesh_context_manager: Hashable = ()
   compute_on_context_manager: Hashable = ()
@@ -873,6 +876,7 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   numpy_dtype_promotion: str | None = None
   default_matmul_precision: Any | None = None
   dynamic_shapes: bool | None = None
+  eager_constant_folding : bool | None = None
   random_seed_offset: int | None = None
   threefry_partitionable: bool | None = None
   threefry_gpu_kernel_lowering: bool | None = None
@@ -908,7 +912,6 @@ def update_thread_local_jit_state(**kw):
   context = tls.extra_jit_context or _ThreadLocalExtraJitContext()
   tmp = context._replace(**kw)
   tls.extra_jit_context = _thread_local_state_cache.canonicalize(tmp)
-
 
 # TODO(b/214340779): remove flag when XLA:CPU is improved.
 jax2tf_associative_scan_reductions = bool_state(
@@ -1163,6 +1166,11 @@ sharding_in_types = bool_state(
     update_thread_local_hook=lambda val: update_thread_local_jit_state(
         sharding_in_types=val))
 
+data_dependent_tracing_fallback = bool_state(
+    name='jax_data_dependent_tracing_fallback',
+    default=False,
+    help=('When True, falls back to trace dispatch based on data dependence '
+          'instead of throwing an escaped tracer error.'))
 
 softmax_custom_jvp = bool_state(
     name='jax_softmax_custom_jvp',
@@ -1469,7 +1477,16 @@ numpy_rank_promotion = enum_state(
 
 default_matmul_precision = optional_enum_state(
     name='jax_default_matmul_precision',
-    enum_values=['default', 'high', 'highest', 'bfloat16', 'tensorfloat32', 'float32'],
+    enum_values=[
+        # Legacy precision API values
+        'default', 'high', 'highest', 'bfloat16', 'tensorfloat32', 'float32',
+        # Dot algorithm presets
+        'ANY_F8_ANY_F8_F32', 'ANY_F8_ANY_F8_F32_FAST_ACCUM', 'ANY_F8_ANY_F8_ANY',
+        'ANY_F8_ANY_F8_ANY_FAST_ACCUM', 'F16_F16_F16', 'F16_F16_F32',
+        'BF16_BF16_BF16', 'BF16_BF16_F32', 'BF16_BF16_F32_X3',
+        'BF16_BF16_F32_X6', 'TF32_TF32_F32', 'TF32_TF32_F32_X3', 'F32_F32_F32',
+        'F64_F64_F64',
+    ],
     default=None,
     help=('Control the default matmul and conv precision for 32bit inputs.\n\n'
 
@@ -1486,7 +1503,12 @@ default_matmul_precision = optional_enum_state(
           'convolution on 32bit inputs. The levels roughly describe the '
           "precision at which scalar products are computed. The 'bfloat16' "
           "option is the fastest and least precise; 'float32' is similar to "
-          "full float32 precision; 'tensorfloat32' is intermediate.\n\n"),
+          "full float32 precision; 'tensorfloat32' is intermediate.\n\n"
+
+          'This parameter can also be used to specify an accumulation '
+          '"algorithm" for functions that perform matrix multiplications, like '
+          ':func:`jax.lax.dot`. To specify an algorithm, set this option to '
+          'the name of a :class:`~jax.lax.DotAlgorithmPreset`.\n\n'),
     update_global_hook=lambda val: \
       _update_global_jit_state(default_matmul_precision=val),
     update_thread_local_hook=lambda val: \
@@ -1529,6 +1551,16 @@ dynamic_shapes = bool_state(
       _update_global_jit_state(dynamic_shapes=val),
     update_thread_local_hook=lambda val: \
       update_thread_local_jit_state(dynamic_shapes=val))
+
+# This is for stackless backward compat with e.g. equinox
+eager_constant_folding = bool_state(
+    name='eager_constant_folding',
+    default=False,
+    help=('Attempt constant folding during staging.'),
+    update_global_hook=lambda val: \
+      _update_global_jit_state(eager_constant_folding=val),
+    update_thread_local_hook=lambda val: \
+      update_thread_local_jit_state(eager_constant_folding=val))
 
 # This flag is temporary during rollout of the remat barrier.
 # TODO(parkers): Remove if there are no complaints.
@@ -1719,51 +1751,43 @@ def transfer_guard(new_val: str) -> Iterator[None]:
     yield
 
 
-if lib.xla_extension_version < 293:
+def _update_garbage_collection_guard(state, key, val):
+  """Applies the transfer guard level within guard_lib."""
+  if val is None:
+    setattr(state, key, None)
+  elif val == 'allow':
+    setattr(state, key, guard_lib.GarbageCollectionGuardLevel.ALLOW)
+  elif val == 'log':
+    setattr(state, key, guard_lib.GarbageCollectionGuardLevel.LOG)
+  elif val == 'fatal':
+    setattr(state, key, guard_lib.GarbageCollectionGuardLevel.FATAL)
+  else:
+    assert False, f'Invalid garbage collection guard level {val}'
 
-  def array_garbage_collection_guard(_val):
-    raise NotImplementedError(
-        'jaxlib version is too low for garbage collection guard'
-    )
-
-else:
-  def _update_garbage_collection_guard(state, key, val):
-    """Applies the transfer guard level within guard_lib."""
-    if val is None:
-      setattr(state, key, None)
-    elif val == 'allow':
-      setattr(state, key, guard_lib.GarbageCollectionGuardLevel.ALLOW)
-    elif val == 'log':
-      setattr(state, key, guard_lib.GarbageCollectionGuardLevel.LOG)
-    elif val == 'fatal':
-      setattr(state, key, guard_lib.GarbageCollectionGuardLevel.FATAL)
-    else:
-      assert False, f'Invalid garbage collection guard level {val}'
-
-  array_garbage_collection_guard = optional_enum_state(
-      name='jax_array_garbage_collection_guard',
-      enum_values=['allow', 'log', 'fatal'],
-      # The default is applied by guard_lib.
-      default=None,
-      help=(
-          'Select garbage collection guard level for "jax.Array" objects.\nThis'
-          ' option can be used to control what happens when a "jax.Array"'
-          ' object is garbage collected. It is desirable for "jax.Array"'
-          ' objects to be freed by Python reference couting rather than garbage'
-          ' collection in order to avoid device memory being held by the arrays'
-          ' until garbage collection occurs.\n\nValid values are:\n * "allow":'
-          ' do not log garbage collection of "jax.Array" objects.\n * "log":'
-          ' log an error when a "jax.Array" is garbage collected.\n * "fatal":'
-          ' fatal error if a "jax.Array" is garbage collected.\nDefault is'
-          ' "allow".'
-      ),
-      update_global_hook=lambda val: _update_garbage_collection_guard(
-          guard_lib.global_state(), 'garbage_collect_array', val
-      ),
-      update_thread_local_hook=lambda val: _update_garbage_collection_guard(
-          guard_lib.thread_local_state(), 'garbage_collect_array', val
-      ),
-  )
+array_garbage_collection_guard = optional_enum_state(
+    name='jax_array_garbage_collection_guard',
+    enum_values=['allow', 'log', 'fatal'],
+    # The default is applied by guard_lib.
+    default=None,
+    help=(
+        'Select garbage collection guard level for "jax.Array" objects.\nThis'
+        ' option can be used to control what happens when a "jax.Array"'
+        ' object is garbage collected. It is desirable for "jax.Array"'
+        ' objects to be freed by Python reference couting rather than garbage'
+        ' collection in order to avoid device memory being held by the arrays'
+        ' until garbage collection occurs.\n\nValid values are:\n * "allow":'
+        ' do not log garbage collection of "jax.Array" objects.\n * "log":'
+        ' log an error when a "jax.Array" is garbage collected.\n * "fatal":'
+        ' fatal error if a "jax.Array" is garbage collected.\nDefault is'
+        ' "allow".'
+    ),
+    update_global_hook=lambda val: _update_garbage_collection_guard(
+        guard_lib.global_state(), 'garbage_collect_array', val
+    ),
+    update_thread_local_hook=lambda val: _update_garbage_collection_guard(
+        guard_lib.thread_local_state(), 'garbage_collect_array', val
+    ),
+)
 
 def _update_debug_log_modules(module_names_str: str | None):
   logging_config.disable_all_debug_logging()

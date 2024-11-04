@@ -13,12 +13,9 @@
 # limitations under the License.
 
 from __future__ import annotations
-
-import functools
 from functools import partial
 import importlib
 import itertools
-import operator
 
 import jaxlib.mlir.ir as ir
 
@@ -60,8 +57,6 @@ if _hip_prng:
     api_version = 1 if "_ffi" in _name else 0
     xla_client.register_custom_call_target(_name, _value, platform="ROCM",
                                            api_version=api_version)
-
-_prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 
 
 def _threefry2x32_lowering(prng, platform: str, keys, data,

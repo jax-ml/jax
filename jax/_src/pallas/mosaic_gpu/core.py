@@ -14,19 +14,23 @@
 
 """Contains GPU-specific Pallas abstractions."""
 
+from __future__ import annotations
+
 import abc
 import collections
 from collections.abc import Sequence
 import dataclasses
 import enum
+import itertools as it
 from typing import Any, ClassVar, Literal
 
 from jax._src import core as jax_core
 from jax._src import dtypes
+from jax._src import effects
 from jax._src import tree_util
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import pallas_call
-from jax._src.state.types import Transform
+from jax._src.state import indexing
+from jax._src.state import types as state_types
 import jax.experimental.mosaic.gpu as mgpu
 import jax.numpy as jnp
 from jaxlib.mlir import ir
@@ -35,6 +39,20 @@ from jaxlib.mlir import ir
 AbstractMemoryRef = pallas_core.AbstractMemoryRef
 
 DimensionSemantics = Literal["parallel", "sequential"]
+
+
+def is_trivial_index(idx, shape) -> bool:
+  """Checks if the index selects the entire shape."""
+
+  # Slices that select the entire dimension.
+  def _slices(d):
+    slices = [slice(b, e, s) for b, e, s in it.product([0, None], [d, None], [1, None])]
+    return [indexing.Slice(0, d, 1), *slices]
+
+  if isinstance(idx, tuple):
+    return all(i in _slices(d) for d, i in zip(shape, idx))
+
+  return idx is ... or (len(shape) == 1 and idx in _slices(shape[0]))
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -54,12 +72,24 @@ class GPUCompilerParams(pallas_core.CompilerParams):
       references. Defaults to 0, and must be strictly smaller than
       max_concurrent_steps. Generally, you'll want to set it to 1 if you don't
       await the WGMMA in the body.
+    profile_space: The number of profiler events that can be collected in a
+      single invocation. It is undefined behavior if a thread collects more
+      events than this.
+    profile_dir: The directory to which profiling traces will be written to.
   """
   PLATFORM: ClassVar[str] = "mosaic_gpu"
   approx_math: bool = False
   dimension_semantics: Sequence[DimensionSemantics] | None = None
   max_concurrent_steps: int = 1
   delay_release: int = 0
+  profile_space: int = 0
+  profile_dir: str = ""
+
+  def __post_init__(self):
+    if bool(self.profile_space) ^ bool(self.profile_dir):
+      raise ValueError(
+          "Either both profile_space and profile_dir must be set, or neither."
+      )
 
 
 class GPUMemorySpace(enum.Enum):
@@ -73,9 +103,34 @@ class GPUMemorySpace(enum.Enum):
   def __str__(self) -> str:
     return self.value
 
-  def __call__(self, shape: tuple[int, ...], dtype: jnp.dtype):
+  def __call__(
+
+      self,
+      shape: tuple[int, ...],
+      dtype: jnp.dtype,
+      transforms: Sequence[MemoryRefTransform] = (),
+
+  ) -> pallas_core.MemoryRef:
     # A convenience function for constructing MemoryRef types.
-    return pallas_core.MemoryRef(shape, dtype, memory_space=self)
+    return GPUMemoryRef(shape, dtype, memory_space=self, transforms=transforms)
+
+
+@dataclasses.dataclass(frozen=True)
+class GPUMemoryRef(pallas_core.MemoryRef):
+  transforms: Sequence[MemoryRefTransform] = ()
+
+  def get_ref_aval(self) -> pallas_core.TransformedRef | AbstractMemoryRef:
+    aval = jax_core.ShapedArray(self.shape, self.dtype)
+    for t in self.transforms:
+      aval = t(aval)
+    ref = pallas_core.TransformedRef(
+        AbstractMemoryRef(aval, memory_space=self.memory_space), ()
+    )
+    for t in reversed(self.transforms):
+      ref = t.undo(ref)
+    if not ref.transforms:
+      return ref.ref
+    return ref
 
 
 class MemoryRefTransform(pallas_core.MemoryRefTransform, abc.ABC):
@@ -112,7 +167,7 @@ class TilingTransform(MemoryRefTransform):
 
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
-class UntileRef(Transform):
+class UntileRef(state_types.Transform):
   tiling: tuple[int, ...]
 
   def transform_shape(self, shape):
@@ -130,7 +185,7 @@ class UntileRef(Transform):
 
   def untransform_index(
       self, idxs: tuple[Index, ...]
-  ) -> tuple[tuple[Index, ...], Transform]:
+  ) -> tuple[tuple[Index, ...], state_types.Transform]:
     untiled_idxs = idxs[: -len(self.tiling)]
     tiled_idxs = idxs[-len(self.tiling) :]
     idxs_after_tiling = []
@@ -188,7 +243,7 @@ class TransposeTransform(MemoryRefTransform):
 
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
-class TransposeRef(Transform):
+class TransposeRef(state_types.Transform):
   permutation: tuple[int, ...]
 
   def transform_shape(self, shape):
@@ -201,7 +256,7 @@ class TransposeRef(Transform):
 
   def untransform_index(
       self, idxs: tuple[Index, ...]
-  ) -> tuple[tuple[Index, ...], Transform]:
+  ) -> tuple[tuple[Index, ...], state_types.Transform]:
     removed_dims = [
         i for i, idx in enumerate(idxs) if not isinstance(idx, slice)
     ]
@@ -223,6 +278,19 @@ class TransposeRef(Transform):
   def tree_unflatten(cls, metadata, arrays):
     assert not arrays
     return cls(*metadata)
+
+
+def transpose_ref(
+    ref: pallas_core.TransformedRef | Any,
+    permutation: tuple[int, ...],
+) -> pallas_core.TransformedRef:
+  if not isinstance(ref, pallas_core.TransformedRef):
+    if not isinstance(jax_core.get_aval(ref), pallas_core.AbstractMemoryRef):
+      raise TypeError("ref must be a reference")
+    ref = pallas_core.TransformedRef(ref, transforms=())
+  return pallas_core.TransformedRef(
+      ref.ref, (*ref.transforms, TransposeRef(permutation)),
+  )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -260,12 +328,12 @@ class SwizzleTransform(MemoryRefTransform):
 
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
-class UnswizzleRef(Transform):
+class UnswizzleRef(state_types.Transform):
   swizzle: int
 
   def untransform_index(
       self, idxs: tuple[Index, ...]
-  ) -> tuple[tuple[Index, ...], Transform]:
+  ) -> tuple[tuple[Index, ...], state_types.Transform]:
     if not idxs:
       return idxs, self
     if not all(isinstance(idx, slice) for idx in idxs[-2:]):
@@ -360,19 +428,29 @@ class Barrier:
 class WGMMAAccumulatorRef:
   shape: tuple[int, int]
   dtype: jnp.dtype = jnp.float32
+  _init: Any = state_types.uninitialized
 
   def get_ref_aval(self) -> AbstractMemoryRef:
+    if self._init is not state_types.uninitialized:
+      raise ValueError(
+          "Preinitialized WGMMAAccumulatorRef only supported in pl.run_state."
+      )
     return WGMMAAbstractAccumulatorRef(
         jax_core.ShapedArray(shape=self.shape, dtype=self.dtype), GPUMemorySpace.REGS
     )
 
+  @staticmethod
+  def init(array):
+    return WGMMAAccumulatorRef(array.shape, array.dtype, _init=array)
 
-def _is_trivial_index(idx):
-  _is_deref1 = lambda i: i is Ellipsis or i == slice(None)
-  if isinstance(idx, tuple):
-    return all(_is_deref1(i) for i in idx)
 
-  return _is_deref1(idx)
+def _wgmma_ref_type_mapping(ref: WGMMAAccumulatorRef):
+  aval = WGMMAAbstractAccumulatorRef(
+      jax_core.ShapedArray(shape=ref.shape, dtype=ref.dtype), GPUMemorySpace.REGS
+  )
+  return aval, ref._init
+state_types._ref_type_aval_mappings[WGMMAAccumulatorRef] = _wgmma_ref_type_mapping
+
 
 class WGMMAAbstractAccumulatorRef(AbstractMemoryRef):
   __slots__ = ["inner_aval", "memory_space"]
@@ -393,7 +471,7 @@ class WGMMAAbstractAccumulatorRef(AbstractMemoryRef):
     from jax._src.pallas.mosaic_gpu.primitives import wgmma_accumulator_deref  # pytype: disable=import-error
     arr = wgmma_accumulator_deref(tracer)
 
-    if not _is_trivial_index(idx):
+    if not is_trivial_index(idx, tracer.shape):
       arr = arr[idx]
 
     return arr
@@ -419,6 +497,7 @@ class GPUMesh:
   # Those are NOT CUDA threads. On Hopper they correspond to warpgroups.
   num_threads: int | None = None
   axis_names: tuple[str, ...] = ()
+  approx_math: bool = False
 
   def __post_init__(self):
     if len(self.axis_names) != len(self.grid) + (self.num_threads is not None):
@@ -428,14 +507,26 @@ class GPUMesh:
           "Requested too many CUDA threads per block. Each Mosaic thread"
           " corresponds to 128 CUDA threads."
       )
+    if self.cluster:
+      raise NotImplementedError(
+          "Pallas/MosaicGPU does not support clusters yet."
+      )
 
   @property
   def shape(self):
     if self.num_threads is not None:
-      pairs = zip(self.axis_names, (*self.grid, self.num_threads))
+      pairs = zip(self.axis_names, (*self.grid, *self.cluster, self.num_threads))
     else:
-      pairs = (*zip(self.axis_names, self.grid), (_WARPGROUP_AXIS_NAME, 1))
+      pairs = tuple(
+          zip(
+              (*self.axis_names, _WARPGROUP_AXIS_NAME),
+              (*self.grid, *self.cluster, 1),
+          )
+      )
     return collections.OrderedDict(pairs)
+
+  def discharges_effect(self, effect: jax_core.Effect):
+    return effect is _wgmma_pipeline_effect or effect is _memory_effect
 
 
 def _gpu_mesh_discharge_rule(
@@ -445,28 +536,34 @@ def _gpu_mesh_discharge_rule(
     mesh,
     jaxpr,
 ):
-  del out_avals
   assert isinstance(mesh, GPUMesh)
-  if mesh.grid or mesh.cluster:
+  if mesh.cluster:
     raise NotImplementedError
   if mesh.num_threads is None:
     raise NotImplementedError
-  threads_axis_name, num_threads = list(mesh.shape.items())[0]
-  def body(*args):
-    # Due to aliasing, args contains aliased inputs and outputs so we remove
-    # outputs.
-    in_refs = args[:len(in_avals)]
-    jax_core.eval_jaxpr(jaxpr, in_refs)
-  assert len(jaxpr.outvars) == 0
-  any_spec = pallas_core.BlockSpec(memory_space=pallas_core.MemorySpace.ANY)
-  out = pallas_call.pallas_call(
-      body,
-      out_shape=in_avals,
-      in_specs=[any_spec] * len(in_avals),
-      out_specs=[any_spec] * len(in_avals),
-      input_output_aliases={i: i for i in range(len(in_avals))},
-      grid=((threads_axis_name, num_threads),),
-  )(*args)
-  return out, ()
-
+  return pallas_core.default_mesh_discharge_rule(
+      in_avals,
+      out_avals,
+      *args,
+      jaxpr=jaxpr,
+      grid=tuple(mesh.shape.items()),
+      backend="mosaic_gpu",
+      compiler_params=GPUCompilerParams(approx_math=mesh.approx_math),
+  )
 pallas_core._core_map_mesh_rules[GPUMesh] = _gpu_mesh_discharge_rule
+
+
+class MemoryEffect(jax_core.Effect):
+  pass
+
+
+effects.control_flow_allowed_effects.add_type(MemoryEffect)
+_memory_effect = MemoryEffect()
+
+
+class _WGMMAPipelineEffect(effects.Effect):
+  pass
+
+
+effects.control_flow_allowed_effects.add_type(_WGMMAPipelineEffect)
+_wgmma_pipeline_effect = _WGMMAPipelineEffect()
