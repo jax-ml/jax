@@ -150,7 +150,20 @@ def _cuda_path() -> str | None:
       from nvidia import cuda_nvcc  # pytype: disable=import-error
     except ImportError:
       return None
-    cuda_nvcc_path = pathlib.Path(cuda_nvcc.__file__).parent
+
+    if hasattr(cuda_nvcc, '__file__') and cuda_nvcc.__file__ is not None:
+      # `cuda_nvcc` is a regular package.
+      cuda_nvcc_path = pathlib.Path(cuda_nvcc.__file__).parent
+    elif hasattr(cuda_nvcc, '__path__') and cuda_nvcc.__path__ is not None:
+      # `cuda_nvcc` is a namespace package, which might have multiple paths.
+      cuda_nvcc_path = None
+      for path in cuda_nvcc.__path__:
+        if (pathlib.Path(path) / 'bin' / 'ptxas').exists():
+          cuda_nvcc_path = pathlib.Path(path)
+          break
+    else:
+      return None
+
     return str(cuda_nvcc_path)
 
   if (path := _try_cuda_root_environment_variable()) is not None:
