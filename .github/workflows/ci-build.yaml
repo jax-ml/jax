@@ -1,4 +1,4 @@
-name: CI
+name: ROCm CPU CI
 
 # We test all supported Python versions as follows:
 # - 3.10 : Documentation build
@@ -11,10 +11,10 @@ on:
   # but only for the main branch
   push:
     branches:
-      - main
+      - rocm-main
   pull_request:
     branches:
-      - main
+      - rocm-main
 
 permissions:
   contents: read  # to fetch code
