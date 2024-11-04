@@ -23,6 +23,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The deprecated module `jax.experimental.export` has been removed. It was replaced
     by {mod}`jax.export` in JAX v0.4.30. See the [migration guide](https://jax.readthedocs.io/en/latest/export/export.html#migration-guide-from-jax-experimental-export)
     for information on migrating to the new API.
+  * The `initial` argument to {func}`jax.nn.softmax` and {func}`jax.nn.log_softmax`
+    has been removed, after being deprecated in v0.4.27.
   * The following deprecated methods and functions in {mod}`jax.export` have
     been removed:
       * `jax.export.DisabledSafetyCheck.shape_assertions`: it had no effect
