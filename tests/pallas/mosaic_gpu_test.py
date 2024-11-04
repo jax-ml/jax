@@ -1025,7 +1025,9 @@ class PallasCallTest(PallasTest):
 
 class PipelineTest(PallasTest):
 
-  def test_manual(self, max_concurrent_steps=2, num_steps=4):
+  def test_manual(self):
+    max_concurrent_steps = 2
+    num_steps = 4
 
     def kernel(x_gmem, o_gmem):
       return pl.run_scoped(
@@ -1089,14 +1091,16 @@ class PipelineTest(PallasTest):
     )
     np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
 
-  def test_emit(self, max_concurrent_steps=2, num_steps=4):
+  def test_emit(self):
+    num_steps = 4
+
     def kernel(x_gmem, o_gmem):
       plgpu.emit_pipeline(
           kernel_body,
           in_specs=[pl.BlockSpec((32, 16), lambda i: (0, i))],
           out_specs=[pl.BlockSpec((32, 16), lambda i: (0, i))],
           grid=(num_steps,),
-          max_concurrent_steps=max_concurrent_steps,
+          max_concurrent_steps=2,
       )(x_gmem, o_gmem)
 
     def kernel_body(x_smem, o_smem):
@@ -1112,8 +1116,10 @@ class PipelineTest(PallasTest):
     )
     np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
 
-  def test_emit_with_parallel_grid(self, max_concurrent_steps=2, num_steps=4):
+  def test_emit_with_parallel_grid(self):
     self.skipTest("Enable once we support multiple levels of indexing")
+
+    num_steps = 4
 
     def kernel(x_gmem, o_gmem):
       gmem_slice = pl.ds(pl.program_id(0) * 32, 32)
@@ -1122,7 +1128,7 @@ class PipelineTest(PallasTest):
           in_specs=[pl.BlockSpec((32, 16), lambda i: (0, i))],
           out_specs=[pl.BlockSpec((32, 16), lambda i: (0, i))],
           grid=(num_steps,),
-          max_concurrent_steps=max_concurrent_steps,
+          max_concurrent_steps=2,
       )(x_gmem.at[gmem_slice], o_gmem.at[gmem_slice])
 
     def kernel_body(x_smem, o_smem):
@@ -1136,6 +1142,32 @@ class PipelineTest(PallasTest):
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
         grid=(4, 1),
+    )
+    np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
+
+  def test_emit_with_2d_grid(self):
+    num_steps1 = 4
+    num_steps2 = 5
+
+    def kernel(x_gmem, o_gmem):
+      plgpu.emit_pipeline(
+          kernel_body,
+          in_specs=[pl.BlockSpec((32, 16, 8), lambda i, j: (0, i, j))],
+          out_specs=[pl.BlockSpec((32, 16, 8), lambda i, j: (0, i, j))],
+          grid=(num_steps1, num_steps2),
+          max_concurrent_steps=2,
+      )(x_gmem, o_gmem)
+
+    def kernel_body(x_smem, o_smem):
+      o_smem[...] = x_smem[...] + 1.0
+
+    x = jnp.arange(32 * num_steps1 * 16 * num_steps2 * 8)
+    x = x.reshape(-1, num_steps1 * 16, num_steps2 * 8).astype(jnp.float32)
+    kernel_fn = pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
     )
     np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
 
