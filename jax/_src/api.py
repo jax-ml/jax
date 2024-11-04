@@ -123,8 +123,8 @@ def _update_debug_special_global(_):
     jax_jit.global_state().post_hook = None
 
 def _update_debug_special_thread_local(_):
-  if (getattr(config._thread_local_state, "jax_debug_nans", False) or
-      getattr(config._thread_local_state, "jax_debug_infs", False)):
+  if (config.debug_nans.get_local() == True or
+      config.debug_infs.get_local() == True):
     jax_jit.thread_local_state().post_hook = _nan_check_posthook
   else:
     jax_jit.thread_local_state().post_hook = None

@@ -2215,8 +2215,6 @@ class CppPmapTest(PythonPmapTest):
     pmaped_f(inputs)
     self.assertEqual(pmaped_f._cache_size, 1)
 
-    config.update_thread_local_jit_state()
-
     pmaped_f(inputs)
     self.assertEqual(pmaped_f._cache_size, 1)
 
