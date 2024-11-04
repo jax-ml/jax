@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Hashable, Sequence
+import dataclasses
 import enum
 from functools import partial
 import inspect
@@ -606,14 +607,22 @@ def _rule_missing(prim: core.Primitive, *_, **__):
 # Lowering
 
 def _shardy_shard_map_sharding(
-    ctx: mlir.LoweringRuleContext, mesh, names, aval_in
+    ctx: mlir.LoweringRuleContext, mesh, auto, names, aval_in
   ) -> ir.Attribute:
   axes = {name: i for i, ns in names.items() for name in ns}
   ns = _make_scoped_manual_sharding(ctx, mesh, axes)
   if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
     ns = sharding_impls.physical_sharding(aval_in, ns)
     aval_in = core.physical_aval(aval_in)
-  return ns._to_sdy_sharding(aval_in.ndim).build()
+  sdy_sharding = ns._to_sdy_sharding(aval_in.ndim)
+  if auto:
+    for i in range(len(sdy_sharding.dimension_shardings)):
+      dimension_shardings = list(sdy_sharding.dimension_shardings)
+      dimension_shardings[i] = dataclasses.replace(dimension_shardings[i],
+                                                   is_closed=False)
+      sdy_sharding = dataclasses.replace(
+          sdy_sharding, dimension_shardings=dimension_shardings)
+  return sdy_sharding.build()
 
 
 def _shard_map_lowering_shardy(
@@ -643,10 +652,10 @@ def _shard_map_lowering_shardy(
     return out_nodes
 
   in_shardings = sdy.TensorShardingPerValueAttr.get(map(
-      partial(_shardy_shard_map_sharding, ctx, mesh),
+      partial(_shardy_shard_map_sharding, ctx, mesh, auto),
       in_names, ctx.avals_in))
   out_shardings = sdy.TensorShardingPerValueAttr.get(map(
-      partial(_shardy_shard_map_sharding, ctx, mesh),
+      partial(_shardy_shard_map_sharding, ctx, mesh, auto),
       out_names, ctx.avals_out))
   output_types = map(mlir.aval_to_ir_type, ctx.avals_out)
   manual_computation_op = sdy.ManualComputationOp(

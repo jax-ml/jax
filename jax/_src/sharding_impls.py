@@ -94,7 +94,7 @@ def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]
   return out
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class SdyDimSharding:
   axes: Sequence[str]
   is_closed: bool
@@ -108,7 +108,7 @@ class SdyDimSharding:
         priority=self.priority)
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class SdyArraySharding:
   mesh_shape: tuple[tuple[str, int], ...] | None
   dimension_shardings: Sequence[SdyDimSharding]
@@ -383,12 +383,12 @@ class NamedSharding(sharding.Sharding):
                      for _ in range(num_dimensions)]
     for i, dim_spec in enumerate(self._parsed_pspec):
       if dim_spec is None:
-        dim_shardings[i].is_closed = False
+        dim_shardings[i] = dataclasses.replace(dim_shardings[i], is_closed=False)
       elif not dim_spec:
         # Already empty and closed sharding.
         pass
       else:
-        dim_shardings[i].axes = dim_spec
+        dim_shardings[i] = dataclasses.replace(dim_shardings[i], axes=dim_spec)
     return SdyArraySharding(self.mesh.shape_tuple, dim_shardings,
                             self._logical_device_ids)
 
