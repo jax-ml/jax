@@ -23,7 +23,6 @@ import numpy as np
 import scipy.special as osp_special
 
 import jax
-from jax._src import deprecations
 from jax._src import test_util as jtu
 from jax.scipy import special as lsp_special
 
@@ -252,22 +251,8 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
       lsp_special.beta(1, 1)
       lsp_special.beta(1, b=1)
       lsp_special.beta(a=1, b=1)
-    if deprecations.is_accelerated('jax-scipy-beta-args'):
-      with self.assertRaises(ValueError):
-        lsp_special.beta(x=1, y=1)
-    else:
-      with self.assertWarns(DeprecationWarning):
-        lsp_special.beta(1, y=1)
-      with self.assertWarns(DeprecationWarning):
-        lsp_special.beta(a=1, y=1)
-      with self.assertWarns(DeprecationWarning):
-        lsp_special.beta(x=1, b=1)
-      with self.assertWarns(DeprecationWarning):
-        lsp_special.beta(x=1, y=1)
-      with self.assertRaises(TypeError), self.assertWarns(DeprecationWarning):
-        lsp_special.beta(1, x=1)
-      with self.assertRaises(TypeError), self.assertWarns(DeprecationWarning):
-        lsp_special.beta(b=1, y=1)
+    with self.assertRaises(TypeError):
+      lsp_special.beta(x=1, y=1)
 
 
 if __name__ == "__main__":
