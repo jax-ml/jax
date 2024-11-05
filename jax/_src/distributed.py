@@ -123,7 +123,7 @@ class State:
     self.client = xla_extension.get_distributed_runtime_client(
         coordinator_address, process_id, init_timeout=initialization_timeout,
         heartbeat_interval=client_heartbeat_interval_seconds,
-        max_missing_heartbeats=client_max_missing_heartbeats)
+        max_missing_heartbeats=client_max_missing_heartbeats, use_compression=True)
     logger.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
 
