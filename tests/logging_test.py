@@ -27,6 +27,7 @@ import unittest
 import jax
 import jax._src.test_util as jtu
 from jax._src import xla_bridge
+from jax._src.logging_config import _default_TF_CPP_MIN_LOG_LEVEL
 
 # Note: importing absltest causes an extra absl root log handler to be
 # registered, which causes extra debug log messages. We don't expect users to
@@ -156,6 +157,7 @@ class LoggingTest(jtu.JaxTestCase):
         jax.jit(lambda x: x + 1)(1)
       self.assertEmpty(log_output.getvalue())
 
+  @jtu.skip_on_devices("tpu")
   @unittest.skipIf(platform.system() == "Windows",
                    "Subprocess test doesn't work on Windows")
   def test_subprocess_stderr_info_logging(self):
@@ -180,6 +182,7 @@ class LoggingTest(jtu.JaxTestCase):
     self.assertIn("INFO", log_output)
     self.assertNotIn("DEBUG", log_output)
 
+  @jtu.skip_on_devices("tpu")
   @unittest.skipIf(platform.system() == "Windows",
                    "Subprocess test doesn't work on Windows")
   def test_subprocess_stderr_debug_logging(self):
@@ -209,6 +212,7 @@ class LoggingTest(jtu.JaxTestCase):
     log_output = p.stderr
     self.assertIn("DEBUG", log_output)
 
+  @jtu.skip_on_devices("tpu")
   @unittest.skipIf(platform.system() == "Windows",
                    "Subprocess test doesn't work on Windows")
   def test_subprocess_toggling_logging_level(self):
@@ -241,6 +245,7 @@ class LoggingTest(jtu.JaxTestCase):
                   log_output_verbose)
     self.assertEqual(log_output_silent, "")
 
+  @jtu.skip_on_devices("tpu")
   @unittest.skipIf(platform.system() == "Windows",
                    "Subprocess test doesn't work on Windows")
   def test_subprocess_double_logging_absent(self):
@@ -267,6 +272,7 @@ class LoggingTest(jtu.JaxTestCase):
     self.assertLen([line for line in log_lines
                     if "Finished tracing + transforming" in line], 1)
 
+  @jtu.skip_on_devices("tpu")
   @unittest.skipIf(platform.system() == "Windows",
                    "Subprocess test doesn't work on Windows")
   def test_subprocess_cpp_logging_level(self):
@@ -302,7 +308,8 @@ class LoggingTest(jtu.JaxTestCase):
     cmd = shlex.split(f"{sys.executable} -c"
                       f" '{program}'")
     p = subprocess.run(cmd, capture_output=True, text=True)
-    self.assertNotIn("Initializing CoordinationService", p.stderr)
+    if int(_default_TF_CPP_MIN_LOG_LEVEL) >= 1:
+      self.assertNotIn("Initializing CoordinationService", p.stderr)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
