@@ -44,7 +44,7 @@ following example:
 ```
 
 Note that such functions are still re-compiled on demand for
-each concrete input shapes they are invoked on. Only the
+each concrete input shape they are invoked on. Only the
 tracing and the lowering are saved.
 
 The {func}`jax.export.symbolic_shape` is used in the above
@@ -98,7 +98,7 @@ A few examples of shape specifications:
     arguments. Note that the same specification would work if the first
     argument is a pytree of 3D arrays, all with the same leading dimension
     but possibly with different trailing dimensions.
-    The value `None` for the second arugment means that the argument
+    The value `None` for the second argument means that the argument
     is not symbolic. Equivalently, one can use `...`.
 
   * `("(batch, ...)", "(batch,)")` specifies that the two arguments
@@ -256,7 +256,7 @@ as follows:
     integers. E.g., `b >= 1`, `b >= 0`, `2 * a + b >= 3` are `True`, while `b >= 2`,
     `a >= b`, `a - b >= 0` are inconclusive and result in an exception.
 
-In cases where a comparison operation cannot be resolve to a boolean,
+In cases where a comparison operation cannot be resolved to a boolean,
 we raise {class}`InconclusiveDimensionOperation`. E.g.,
 
 ```python
@@ -351,7 +351,7 @@ symbolic constraints:
     is encountered, it is rewritten to the expression on
     the right.
     E.g., `floordiv(a, b) == c` works by replacing all
-    occurences of `floordiv(a, b)` with `c`.
+    occurrences of `floordiv(a, b)` with `c`.
     Equality constraints must not contain addition or
     subtraction at the top-level on the left-hand-side. Examples of
     valid left-hand-sides are `a * b`, or `4 * a`, or
@@ -498,11 +498,11 @@ This works well for most use cases, and
 it mirrors the calling convention of JIT functions.
 
 Sometimes you may want to export a function parameterized
-by an integer values that determines some shapes in the program.
+by an integer value that determines some shapes in the program.
 For example, we may
 want to export the function `my_top_k` defined below,
 parameterized by the
-value of `k`, which determined the shape of the result.
+value of `k`, which determines the shape of the result.
 The following attempt will lead to an error since the dimension
 variable `k` cannot be derived from the shape of the input `x: i32[4, 10]`:
 

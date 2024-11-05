@@ -247,7 +247,7 @@ for which the code was exported.
 You can specify explicitly for what platforms the code should be exported.
 This allows you to specify a different accelerator than you have
 available at export time,
-and it even allows you to specify multi-platform lexport to
+and it even allows you to specify multi-platform export to
 obtain an `Exported` object that can be compiled and executed
 on multiple platforms.
 
@@ -293,7 +293,7 @@ resulting module size should be only marginally larger than the
 size of a module with default export.
 As an extreme case, when serializing a module without any
 primitives with platform-specific lowering, you will get
-the same StableHLO as for the single-plaform export.
+the same StableHLO as for the single-platform export.
 
 ```python
 >>> import jax
