@@ -121,7 +121,7 @@ import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error  # noqa: F401
 import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error  # noqa: F401
 
 try:
-  import jaxlib.mosaic.python.gpu as mosaic_gpu_dialect  # pytype: disable=import-error
+  import jaxlib.mosaic.python.mosaic_gpu as mosaic_gpu_dialect  # pytype: disable=import-error
 except ImportError:
   # TODO(bchetioui): Remove this when minimum jaxlib version >= 0.4.36.
   # Jaxlib doesn't contain Mosaic GPU dialect bindings.

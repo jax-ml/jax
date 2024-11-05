@@ -20,7 +20,7 @@ load("@rules_python//python:defs.bzl", "py_library")
 py_library(
     name = "gpu_dialect",
     srcs = [
-        "gpu.py",
+        "mosaic_gpu.py",
         "//jaxlib/mosaic/dialect/gpu:_mosaic_gpu_gen.py",
     ],
     visibility = ["//visibility:public"],

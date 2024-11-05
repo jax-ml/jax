@@ -21,6 +21,9 @@ from jax._src.lib.mlir import ir
 from jax.experimental.mosaic.gpu import dialect as mgpu  # pylint: disable=g-importing-member
 
 
+_cext = mgpu._cext if mgpu is not None else None
+
+
 config.parse_flags_with_absl()
 
 
@@ -39,6 +42,9 @@ class DialectTest(parameterized.TestCase):
     self.enter_context(_make_ir_context())
     self.enter_context(ir.Location.unknown())
     self.module = ir.Module.create()
+
+  def test_dialect_module_is_loaded(self):
+    self.assertTrue(_cext.globals._check_dialect_module_loaded("mosaic_gpu"))
 
   def test_initialize_barrier_op_result_memref_must_wrap_barriers(self):
     with ir.InsertionPoint(self.module.body):
@@ -62,6 +68,8 @@ class DialectTest(parameterized.TestCase):
           ir.MemRefType.get((1, 2), ir.Type.parse("!mosaic_gpu.barrier")),
           arrival_count=1)
     self.assertTrue(self.module.operation.verify())
+    self.assertIsInstance(self.module.body.operations[0],
+                          mgpu.InitializeBarrierOp)
 
 
 if __name__ == "__main__":

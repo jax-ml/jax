@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Python bindings for the MLIR Mosaic GPU dialect."""
+"""Python bindings for the MLIR Mosaic GPU dialect.
+
+Note: this file *must* be called `mosaic_gpu.py`, in order to match the dialect
+name. Otherwise, MLIR is unable to find the module during dialect search.
+"""
 
 # ruff: noqa: F401
 # ruff: noqa: F403
