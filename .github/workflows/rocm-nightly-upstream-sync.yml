@@ -8,13 +8,19 @@ on:
     - cron: '0 6 * * 1-5'
 jobs:
   sync-main:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - run: gh repo sync rocm/jax -b main
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   open-sync-pr:
+    permissions:
+      pull-requests: write
     runs-on: ubuntu-latest
     steps:
       - run: |
           gh pr create --repo $GITHUB_REPOSITORY --head main --base rocm-main --title "CI: $(date +%x) upstream sync" --body "Daily sync with upstream"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
