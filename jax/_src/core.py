@@ -34,7 +34,6 @@ from weakref import ref
 
 import numpy as np
 
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import config
 from jax._src import effects
@@ -638,23 +637,12 @@ def _aval_property(name):
 class Tracer(typing.Array, metaclass=StrictABCMeta):
   __array_priority__ = 1000
   __slots__ = ['_trace', '_line_info']
+  __hash__ = None  # type: ignore
 
   dtype = _aval_property('dtype')
   ndim = _aval_property('ndim')
   size = _aval_property('size')
   shape = _aval_property('shape')
-
-  def __hash__(self):
-    # TODO(jakevdp) finalize this deprecation and set __hash__ = None
-    # Warning added 2024-06-13
-    if deprecations.is_accelerated('tracer-hash'):
-      raise TypeError(f"unhashable type: {type(self)}")
-    # Use FutureWarning rather than DeprecationWarning because hash is likely
-    # not called directly by the user, so we want to warn at all stacklevels.
-    warnings.warn(
-      f"unhashable type: {type(self)}. Attempting to hash a tracer will lead to an"
-      " error in a future JAX release.", category=FutureWarning)
-    return super().__hash__()
 
   def __init__(self, trace: Trace):
     self._trace = trace
