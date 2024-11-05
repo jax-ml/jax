@@ -41,15 +41,13 @@ def set_xla_metadata(*args, **kwargs):
       thread_local_metadata.val,
       new_metadata,
   )
-  config.update_thread_local_jit_state(
-      xla_metadata_context_manager=tuple(
-          (v, k) for k, v in sorted(new_metadata.items())))
+  config.xla_metadata_context_manager.set_local(
+      tuple((v, k) for k, v in sorted(new_metadata.items()))
+  )
   try:
     yield
   finally:
     thread_local_metadata.val = prev_metadata
-    config.update_thread_local_jit_state(
-        xla_metadata_context_manager=tuple(
-            (v, k) for k, v in sorted(prev_metadata.items())
-        )
+    config.xla_metadata_context_manager.set_local(
+        tuple((v, k) for k, v in sorted(prev_metadata.items()))
     )
