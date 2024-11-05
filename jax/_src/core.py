@@ -1016,16 +1016,18 @@ class TracingContext(threading.local):
   def set_trace(self, trace):
     self.trace = trace
     ts = ref(trace) if trace is not None else None
-    config.trace_state.set_local(ts)
+    config.update_thread_local_jit_state(trace_state=ts)
 
   def set_axis_env(self, axis_env):
     self.axis_env = axis_env
-    config.axis_env_state.set_local(axis_env.as_hashable_key())
+    config.update_thread_local_jit_state(
+      axis_env_state=self.axis_env.as_hashable_key())
 
   def update_thread_local_jit_state(self):
     ts = ref(self.trace) if self.trace is not None else None
-    config.trace_state.set_local(ts)
-    config.axis_env_state.set_local(self.axis_env.as_hashable_key())
+    config.update_thread_local_jit_state(
+      trace_state=ts,
+      axis_env_state=self.axis_env.as_hashable_key())
 
 trace_ctx = TracingContext()
 
@@ -1069,7 +1071,10 @@ def _initialize_jax_jit_thread_local_state():
 
   This function does not live in `config.py`, to prevent circular imports.
   """
-  trace_ctx.update_thread_local_jit_state()
+  tls = jax_jit.thread_local_state()
+
+  if tls.extra_jit_context is None:
+    trace_ctx.update_thread_local_jit_state()
 
 jax_jit.set_thread_local_state_initialization_callback(
     _initialize_jax_jit_thread_local_state)
