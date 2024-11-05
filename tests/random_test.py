@@ -1160,6 +1160,12 @@ class KeyArrayTest(jtu.JaxTestCase):
     result = jax.grad(lambda theta: f(theta, state)[0])(3.0)
     self.assertEqual(result, 1.0)
 
+  def test_keyarray_array_conversion_fails(self):
+    key = jax.random.key(0)
+    msg = "JAX array with PRNGKey dtype cannot be converted to a NumPy array."
+    with self.assertRaisesRegex(TypeError, msg):
+      np.asarray(key)
+
   # TODO(frostig,mattjj): more polymorphic primitives tests
 
 
