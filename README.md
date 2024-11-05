@@ -411,23 +411,18 @@ community-supported conda build, and answers to some frequently-asked questions.
 
 ## Neural network libraries
 
-Multiple Google research groups develop and share libraries for training neural
-networks in JAX. If you want a fully featured library for neural network
+Multiple Google research groups at Google DeepMind and Alphabet develop and share libraries
+for training neural networks in JAX. If you want a fully featured library for neural network
 training with examples and how-to guides, try
-[Flax](https://github.com/google/flax). Check out the new [NNX](https://flax.readthedocs.io/en/latest/nnx/index.html) API for a
-simplified development experience.
+[Flax](https://github.com/google/flax) and its [documentation site](https://flax.readthedocs.io/en/latest/nnx/index.html).
 
-Google X maintains the neural network library
-[Equinox](https://github.com/patrick-kidger/equinox). This is used as the
-foundation for several other libraries in the JAX ecosystem.
-
-In addition, DeepMind has open-sourced an [ecosystem of libraries around
-JAX](https://deepmind.com/blog/article/using-jax-to-accelerate-our-research)
-including [Optax](https://github.com/deepmind/optax) for gradient processing and
-optimization, [RLax](https://github.com/deepmind/rlax) for RL algorithms, and
-[chex](https://github.com/deepmind/chex) for reliable code and testing. (Watch
-the NeurIPS 2020 JAX Ecosystem at DeepMind talk
-[here](https://www.youtube.com/watch?v=iDxJxIyzSiM))
+Check out the [JAX Ecosystem section](https://jax.readthedocs.io/en/latest/#ecosystem)
+on the JAX documentation site for a list of JAX-based network libraries, which includes
+[Optax](https://github.com/deepmind/optax) for gradient processing and
+optimization, [chex](https://github.com/deepmind/chex) for reliable code and testing, and
+[Equinox](https://github.com/patrick-kidger/equinox) for neural networks.
+(Watch the NeurIPS 2020 JAX Ecosystem at DeepMind talk
+[here](https://www.youtube.com/watch?v=iDxJxIyzSiM) for additional details.)
 
 ## Citing JAX
 
