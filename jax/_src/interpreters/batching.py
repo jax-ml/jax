@@ -29,7 +29,7 @@ from jax._src import linear_util as lu
 from jax._src.ad_util import (Zero, instantiate, SymbolicZero,
                               replace_rule_output_symbolic_zeros,
                               add_jaxvals, add_jaxvals_p)
-from jax._src.core import raise_to_shaped, Trace, Tracer, TraceTag, AxisName
+from jax._src.core import Trace, Tracer, TraceTag, AxisName
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_unflatten, tree_flatten,
                                 register_pytree_node)
@@ -217,7 +217,7 @@ def _update_annotation(
                                 for d in a.shape))
            if type(a) is core.DShapedArray else a for a, e in orig_type if e]
 
-  new_avals = [core.raise_to_shaped(core.get_aval(s)) for s in segment_lens]
+  new_avals = [core.get_aval(s) for s in segment_lens]
   sz = Name(axis_size.aval) if isinstance(axis_size, Tracer) else axis_size
   for a, d in zip(avals, explicit_in_dims):
     if isinstance(d, RaggedAxis):
@@ -387,7 +387,7 @@ class BatchTracer(Tracer):
     if config.enable_checks.value:
       assert type(batch_dim) in (NotMapped, int, RaggedAxis)
       if type(batch_dim) is int:
-        aval = raise_to_shaped(core.get_aval(val))
+        aval = core.get_aval(val)
         assert 0 <= batch_dim < len(aval.shape)
     self._trace = trace
     self.val = val
@@ -396,7 +396,7 @@ class BatchTracer(Tracer):
 
   @property
   def aval(self):
-    aval = raise_to_shaped(core.get_aval(self.val))
+    aval = core.get_aval(self.val)
     if self.batch_dim is not_mapped:
       return aval
     elif type(self.batch_dim) is int:

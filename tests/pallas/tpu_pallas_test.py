@@ -870,8 +870,9 @@ class PallasCallDMATest(PallasBaseTest):
       pl.run_scoped(scope)
       return []
 
-    aref = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
-    in_avals = [aref, aref]
+    aref1 = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
+    aref2 = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
+    in_avals = [aref1, aref2]
     stateful_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
                                                           in_avals)
     discharged_jaxpr, _ = state_discharge.discharge_state(

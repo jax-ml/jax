@@ -140,13 +140,6 @@ class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
         self.memory_space,
     ))
 
-  def at_least_vspace(self):
-    """Vector space method needed for AD."""
-    raise NotImplementedError
-
-  def join(self, other):
-    raise NotImplementedError
-
   def str_short(self, short_dtypes=False):
     dt_str = \
         dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
@@ -226,10 +219,9 @@ class AbstractMemoryRef(state.AbstractRef):
   def __repr__(self) -> str:
     return f'MemRef<{self.memory_space}>{{{self.inner_aval.str_short()}}}'
 
-  def join(self, other):
-    assert isinstance(other, AbstractMemoryRef)
-    return AbstractMemoryRef(self.inner_aval.join(other.inner_aval),
-                             self.memory_space)
+  def update_weak_type(self, weak_type):
+    return AbstractMemoryRef(
+        self.inner_aval.update_weak_type(weak_type), self.memory_space)
 
   def update(self, inner_aval=None, memory_space=None):
     inner_aval = self.inner_aval if inner_aval is None else inner_aval
@@ -239,6 +231,10 @@ class AbstractMemoryRef(state.AbstractRef):
   def to_tangent_aval(self):
     return AbstractMemoryRef(
         self.inner_aval.to_tangent_aval(), self.memory_space)
+
+  # TODO(dougalm, sharadmv): figure out how to avoid needing this
+  def normalize(self):
+    return state.AbstractRef(self.inner_aval).normalize()
 
   def __eq__(self, other):
     return (type(self) is type(other) and self.inner_aval == other.inner_aval
@@ -260,13 +256,6 @@ class MemorySpace(enum.Enum):
 
   def __str__(self) -> str:
     return self.value
-
-
-def _ref_raise_to_shaped(ref_aval: AbstractMemoryRef, weak_type):
-  return AbstractMemoryRef(
-      jax_core.raise_to_shaped(ref_aval.inner_aval, weak_type),
-      ref_aval.memory_space)
-jax_core.raise_to_shaped_mappings[AbstractMemoryRef] = _ref_raise_to_shaped
 
 
 @dataclasses.dataclass(frozen=True)

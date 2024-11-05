@@ -33,8 +33,7 @@ from jax._src.ad_util import (
     replace_rule_output_symbolic_zeros, Zero, zeros_like_aval)
 from jax._src.ad_util import zeros_like_p, add_jaxvals_p  # noqa: F401
 from jax._src.api_util import flatten_fun, flatten_fun_nokwargs
-from jax._src.core import (Trace, Tracer, get_aval, call_p, Primitive, Literal,
-                           raise_to_shaped)
+from jax._src.core import (Trace, Tracer, get_aval, call_p, Primitive, Literal)
 from jax._src.dtypes import dtype, float0
 from jax._src.util import (unzip2, safe_map, safe_zip, split_list, wrap_name,
                            as_hashable_function, weakref_lru_cache,
@@ -362,7 +361,7 @@ class JVPTrace(Trace):
 
     _, res_tree = out_trees()
     res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
-    avals_out = [raise_to_shaped(core.get_aval(x)).to_tangent_aval() for x in primals_out]
+    avals_out = [core.get_aval(x).to_tangent_aval() for x in primals_out]
     # TODO(frostig,mattjj): avoid instantiating zeros when we don't have to!
     with core.set_current_trace(self.parent_trace):
       tangents_in = map(instantiate_zeros, tangents_in)
@@ -434,8 +433,8 @@ class JVPTracer(Tracer):
 
 def _primal_tangent_shapes_match(primal, tangent):
   if type(tangent) is not Zero:
-    primal_aval = raise_to_shaped(get_aval(primal), weak_type=False)
-    tangent_aval = raise_to_shaped(get_aval(tangent), weak_type=False)
+    primal_aval = get_aval(primal).strip_weak_type()
+    tangent_aval = get_aval(tangent).strip_weak_type()
     assert core.definitely_equal_shape(primal_aval.shape, tangent_aval.shape)
     expected_tangent_dtype = core.primal_dtype_to_tangent_dtype(primal_aval.dtype)
     assert expected_tangent_dtype == tangent_aval.dtype, (expected_tangent_dtype, tangent_aval.dtype)
