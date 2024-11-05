@@ -67,6 +67,7 @@ _py_deps = {
     "flatbuffers": ["@pypi_flatbuffers//:pkg"],
     "hypothesis": ["@pypi_hypothesis//:pkg"],
     "matplotlib": ["@pypi_matplotlib//:pkg"],
+    "mpmath": [],
     "opt_einsum": ["@pypi_opt_einsum//:pkg"],
     "pil": ["@pypi_pillow//:pkg"],
     "portpicker": ["@pypi_portpicker//:pkg"],
