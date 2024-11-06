@@ -638,6 +638,18 @@ def _export_lowered(
   else:
     # For pmap
     module_kept_var_idx = tuple(range(len(args_avals_flat)))
+
+  if len(args_avals_flat) != len(lowering.compile_args["all_args_info"].in_avals):
+    logging.info("xxx args_avals_flat[%s]: %s",
+                 len(args_avals_flat),
+                 args_avals_flat)
+    logging.info("all_args_info[%s]: %s",
+                 len(lowering.compile_args["all_args_info"].in_avals),
+                 lowering.compile_args["all_args_info"].in_avals)
+    logging.info("module_kept_var_idx: %s", module_kept_var_idx)
+    logging.info("jaxpr: %s", jaxpr)
+    logging.info("mlir_module: %s", mlir_module)
+    assert False, (args_avals_flat, lowering.compile_args["all_args_info"])
   shape_poly_state = lowering.compile_args["shape_poly_state"]
   if (not all(core.is_constant_shape(a.shape) for a in args_avals_flat)
       or lowering.compile_args.get("ordered_effects", [])):
