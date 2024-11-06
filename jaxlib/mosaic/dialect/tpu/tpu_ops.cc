@@ -820,6 +820,14 @@ LogicalResult SemaphoreSignalOp::verify() {
   return success();
 }
 
+LogicalResult SemaphoreWaitOp::verify() {
+  auto sem_type = getMemRefType(getSemaphore());
+  if (sem_type.getRank() != 0) {
+    return emitOpError("Semaphore reference must be rank 0");
+  }
+  return success();
+}
+
 LogicalResult EnqueueDMAOp::verify() {
   auto source_sem = getSourceSemaphore();
   if (source_sem) {

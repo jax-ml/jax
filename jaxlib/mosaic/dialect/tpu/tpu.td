@@ -616,6 +616,7 @@ def TPU_SemaphoreWaitOp : TPU_Op<"sem_wait"> {
   );
   let results = (outs);
   let assemblyFormat = [{ $semaphore `,` $amount attr-dict `:` type($semaphore)}];
+  let hasVerifier = 1;
 }
 
 def TPU_AllocaSemaphoreOp : TPU_Op<"sem_alloc"> {
