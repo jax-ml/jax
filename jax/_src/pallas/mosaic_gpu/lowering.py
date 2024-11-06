@@ -1012,9 +1012,20 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *leaves, tree):
           x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype), swizzle=swizzle
       )
     case ():
-      return mgpu.FragmentedArray.load_strided(
-          x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
-      )
+      if math.prod(x_aval.shape) == 1:
+        if jnp.issubdtype(x_aval.dtype, jnp.signedinteger):
+          is_signed = True
+        elif jnp.issubdtype(x_aval.dtype, jnp.unsignedinteger):
+          is_signed = False
+        else:
+          is_signed = None
+
+        val = memref_dialect.load(x_smem, [1] * len(x_aval.shape))
+        return mgpu.FragmentedArray.splat(val, (), is_signed=is_signed)
+      else:
+        return mgpu.FragmentedArray.load_strided(
+            x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
+        )
     case _:
       raise NotImplementedError(f"Unsupported transforms: {transforms}")
 

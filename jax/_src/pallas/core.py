@@ -22,6 +22,7 @@ import dataclasses
 import enum
 import functools
 import itertools
+import math
 import threading
 from typing import Any, ClassVar, Hashable, Protocol, Union, runtime_checkable
 
@@ -1077,7 +1078,15 @@ def default_mesh_discharge_rule(
   def body(*args):
     # Due to aliasing, ``args`` contains aliased inputs and outputs so we
     # remove outputs.
-    in_refs = args[:len(in_avals)]
+    def _maybe_deref(aval, val):
+      # Const values may have non-ref type but pallas_call can only
+      # pass refs so to make the types match we need to deref those.
+      if not isinstance(aval, state.AbstractRef) and isinstance(val.aval, state.AbstractRef):
+        return val[...]
+      else:
+        return val
+
+    in_refs = [_maybe_deref(aval, val) for aval, val in unsafe_zip(in_avals, args)]
     jax_core.eval_jaxpr(jaxpr, in_refs)
 
   assert len(jaxpr.outvars) == 0

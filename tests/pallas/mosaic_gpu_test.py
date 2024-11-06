@@ -1211,6 +1211,20 @@ class CoreMapTest(PallasTest):
         f(), np.repeat(np.arange(2), 128).reshape(2, 128)
     )
 
+  def test_scalar_const(self):
+    mesh = plgpu.GPUMesh(num_threads=1, axis_names=("y",))
+
+    @jax.jit
+    def f(x):
+      @pl.run_state
+      def inner(y_ref):
+        @pl.core_map(mesh)
+        def kernel():
+          y_ref[...] = jnp.broadcast_to(x, (128,))
+      y_init = jnp.zeros((128,), np.int32)
+      return inner(y_init)
+    np.testing.assert_array_equal(f(1), np.repeat(1, 128))
+
   def test_multiple_wg_with_grid(self):
     mesh = plgpu.GPUMesh(grid=(2, 2), num_threads=2, axis_names=("x", "y", "wg"))
 
