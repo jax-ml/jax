@@ -24,7 +24,6 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import op_shardings
 from jax._src import test_util as jtu
@@ -608,16 +607,11 @@ class JaxArrayTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "unhashable type"):
       hash(x)
 
-    @jax.jit
-    def check_tracer_hash(x):
-      self.assertIsInstance(hash(x), int)
+    with self.assertRaisesRegex(TypeError, "unhashable type"):
+      jax.jit(hash)(x)
 
-    if deprecations.is_accelerated('tracer-hash'):
-      with self.assertRaisesRegex(TypeError, "unhashable type"):
-        check_tracer_hash(x)
-    else:
-      with self.assertWarnsRegex(FutureWarning, "unhashable type"):
-        check_tracer_hash(x)
+    with self.assertRaisesRegex(TypeError, "unhashable type"):
+      jax.vmap(hash)(x)
 
   def test_shape_dtype_struct_sharding_jit(self):
     mesh = jtu.create_mesh((8,), ('x'))

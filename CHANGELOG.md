@@ -36,6 +36,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
          use `uses_global_constants`.
       * the `lowering_platforms` kwarg for {func}`jax.export.export`: use
         `platforms` instead.
+  * Hashing of tracers, which has been deprecated since version 0.4.30, now
+    results in a `TypeError`.
 
 * New Features
   * {func}`jax.jit` got a new `compiler_options: dict[str, Any]` argument, for
