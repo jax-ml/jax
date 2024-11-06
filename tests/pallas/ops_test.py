@@ -764,12 +764,12 @@ class OpsTest(PallasBaseTest):
       ),
       ([jnp.ceil, jnp.floor], ["bfloat16", "float32", "float64", "int32"]),
       (
-          [jnp.exp, jnp.exp2, jnp.sin, jnp.cos, jnp.log, jnp.sqrt],
-          ["float16", "float32", "float64"],
+          [jnp.exp, jnp.exp2, jnp.sin, jnp.cos, jnp.log, jnp.sqrt, lax.rsqrt],
+          ["bfloat16", "float16", "float32", "float64"],
       ),
       (
           # fmt: off
-          [jnp.expm1, jnp.log1p, jnp.cbrt, lax.rsqrt, jnp.tan, jnp.asin,
+          [jnp.expm1, jnp.log1p, jnp.cbrt, jnp.tan, jnp.asin,
            jnp.acos, jnp.atan, jnp.sinh, jnp.cosh, jnp.tanh, jnp.asinh,
            jnp.acosh, jnp.atanh],
           # fmt: on
@@ -800,8 +800,15 @@ class OpsTest(PallasBaseTest):
 
     if (
         jtu.test_device_matches(["tpu"])
+        and fn in (jnp.exp, jnp.sin, jnp.cos, jnp.log, jnp.sqrt)
+        and dtype == "bfloat16"
+    ):
+      self.skipTest(f"bfloat16 {fn.__name__} is not supported on TPU")
+
+    if (
+        jtu.test_device_matches(["tpu"])
         and not jtu.is_device_tpu_at_least(6)
-        and fn in (jnp.ceil, jnp.floor)
+        and fn in (jnp.ceil, jnp.floor, jnp.exp2, lax.rsqrt)
         and dtype == "bfloat16"
     ):
       self.skipTest(f"bfloat16 {fn.__name__} is only supported on TPU v6+")
