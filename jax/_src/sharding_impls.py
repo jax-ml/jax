@@ -1728,7 +1728,7 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
         f'of mesh_shape {axis_shapes}')
   elif axis_size < len(devices):
     devices = devices[:axis_size]
-  if devices[0].device_kind == mesh_utils._TPU_V5_LITE:
+  if devices[0].device_kind in (mesh_utils._TPU_V5_LITE, mesh_utils._TPU_V5E):
     allow_split_physical_axes = True
   else:
     allow_split_physical_axes = False
