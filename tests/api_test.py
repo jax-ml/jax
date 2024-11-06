@@ -33,6 +33,7 @@ import os
 import re
 import subprocess
 import sys
+import textwrap
 import traceback
 import types
 from typing import NamedTuple
@@ -1552,6 +1553,36 @@ class JitTest(jtu.BufferDonationTestCase):
 
     self.assertEqual(f(1, True), 2)
     self.assertEqual(f(1, False), 1)
+
+  def test_jit_static_annotation_of_instance(self):
+    class F:
+      def __call__(self, x: jax.Array, double: jax.typing.Static[bool]):
+        return 2 * x if double else x
+    f = jax.jit(F())
+
+    self.assertEqual(f(1, True), 2)
+    self.assertEqual(f(1, False), 1)
+
+  def test_jit_static_annotation_with_nameerror(self):
+    code = textwrap.dedent("""
+    from __future__ import annotations
+
+    def f(x: {typ}) -> Any:
+      return x
+
+    jax.jit(f)(1.0)
+    """)
+
+    # No error with undefined type when Static[] not present.
+    exec(code.format(typ="Any"), {'jax': jax})
+
+    # Error with undefined type when Static[] is present.
+    with self.assertRaisesRegex(NameError, "name 'Static' is not defined"):
+      exec(code.format(typ="Static[Any]"), {'jax': jax})
+
+    # Error with undefined type when qualified Static[] is present.
+    with self.assertRaisesRegex(NameError, "name 'Any' is not defined"):
+      exec(code.format(typ="jax.typing.Static[Any]"), {'jax': jax})
 
 
 class APITest(jtu.JaxTestCase):

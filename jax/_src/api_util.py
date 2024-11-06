@@ -503,8 +503,23 @@ def _is_static(annotation: Any) -> bool:
 def static_argnames_from_annotations(fun: Callable[..., Any]) -> tuple[str, ...]:
   try:
     hints = get_type_hints(fun, include_extras=True)
-  except (TypeError, ValueError, NameError):
-    return ()
+  except TypeError:
+    # This can happen when `fun` is not of the expected type. This includes class instances
+    # with a __call__ method, so we handle these explicitly.
+    return static_argnames_from_annotations(fun.__call__) if hasattr(fun, "__call__") else ()
+  except ValueError:
+    # This may occur when get_type_hints results in a TypeError, but repr(fun)
+    # raises a ValueError (as in test_jit_repr_errors).
+    # Assuming this is the case, we'll handle this the same way as TypeError.
+    return static_argnames_from_annotations(fun.__call__) if hasattr(fun, "__call__") else ()
+  except NameError:
+    # This can happen with lazily-evaluated annotations. If we ignore this, then we
+    # may inadvertently ignore Static annotations of lazy types. As an imperfect hack,
+    # we look for the string 'Static[' within the annotations and raise if it's present.
+    if any('Static[' in s for s in getattr(fun, '__annotations__', {}).values()):
+      raise
+    else:
+      return ()
   else:
     return tuple(name for name, hint in hints.items() if _is_static(hint))
 
