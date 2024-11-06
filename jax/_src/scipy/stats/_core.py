@@ -198,7 +198,7 @@ def rankdata(
     return jnp.apply_along_axis(rankdata, axis, a, method)
 
   arr = jnp.ravel(a)
-  arr, sorter = jax.lax.sort_key_val(arr, jnp.arange(len(arr)))
+  arr, sorter = jax.lax.sort_key_val(arr, jnp.arange(arr.size))
   inv = invert_permutation(sorter)
 
   if method == "ordinal":
@@ -207,7 +207,7 @@ def rankdata(
   dense = obs.cumsum()[inv]
   if method == "dense":
     return dense
-  count = jnp.nonzero(obs, size=arr.size + 1, fill_value=len(obs))[0]
+  count = jnp.nonzero(obs, size=arr.size + 1, fill_value=obs.size)[0]
   if method == "max":
     return count[dense]
   if method == "min":
