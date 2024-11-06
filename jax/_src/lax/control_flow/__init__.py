@@ -38,6 +38,7 @@ from jax._src.lax.control_flow.conditionals import (
     cond_p as cond_p,
     switch as switch,
     platform_dependent as platform_dependent,
+    platform_index_p as platform_index_p,
 )
 from jax._src.lax.control_flow.solves import (
     custom_linear_solve as custom_linear_solve,
