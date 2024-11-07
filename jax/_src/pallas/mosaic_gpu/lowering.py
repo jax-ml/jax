@@ -1480,7 +1480,9 @@ def _square_lowering_rule(ctx: LoweringRuleContext, x):
 
 @register_lowering_rule(lax.rsqrt_p, mgpu.ThreadSemantics.Lane)
 @register_lowering_rule(lax.rsqrt_p, mgpu.ThreadSemantics.Warpgroup)
-def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):
+def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   [x_aval] = ctx.avals_in
   if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
     return _ensure_fa(x, x_aval.dtype).rsqrt(approx=ctx.module_ctx.approx_math)
@@ -1494,7 +1496,9 @@ def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):
 
 @register_lowering_rule(lax.tanh_p, mgpu.ThreadSemantics.Lane)
 @register_lowering_rule(lax.tanh_p, mgpu.ThreadSemantics.Warpgroup)
-def _tanh_lowering_rule(ctx: LoweringRuleContext, x):
+def _tanh_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   [x_aval] = ctx.avals_in
   if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
     return _ensure_fa(x, x_aval.dtype).tanh(approx=ctx.module_ctx.approx_math)
@@ -1518,7 +1522,9 @@ mosaic_lowering_rules[mgpu.ThreadSemantics.Warpgroup][lax.logistic_p] = (
 
 @register_lowering_rule(lax.exp_p, mgpu.ThreadSemantics.Lane)
 @register_lowering_rule(lax.exp_p, mgpu.ThreadSemantics.Warpgroup)
-def _exp_lowering_rule(ctx: LoweringRuleContext, x):
+def _exp_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   [x_aval] = ctx.avals_in
   if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
     return _ensure_fa(x, x_aval.dtype).exp(approx=ctx.module_ctx.approx_math)
@@ -1529,7 +1535,9 @@ def _exp_lowering_rule(ctx: LoweringRuleContext, x):
 
 
 @register_lowering_rule(lax.exp2_p, mgpu.ThreadSemantics.Lane)
-def _exp2_lowering_rule(ctx: LoweringRuleContext, x):
+def _exp2_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   [x_aval] = ctx.avals_in
   if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
     return _ensure_fa(x, x_aval.dtype).exp2(approx=ctx.module_ctx.approx_math)
@@ -1541,7 +1549,9 @@ def _exp2_lowering_rule(ctx: LoweringRuleContext, x):
 
 @register_lowering_rule(lax.log_p, mgpu.ThreadSemantics.Lane)
 @register_lowering_rule(lax.log_p, mgpu.ThreadSemantics.Warpgroup)
-def _log_lowering_rule(ctx: LoweringRuleContext, x):
+def _log_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   [x_aval] = ctx.avals_in
   if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
     return _ensure_fa(x, x_aval.dtype).log(approx=ctx.module_ctx.approx_math)
