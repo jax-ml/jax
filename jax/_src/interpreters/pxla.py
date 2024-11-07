@@ -1710,7 +1710,10 @@ ShardingInfo = tuple[
 
 
 def _get_default_device() -> xc.Device:
-  return config.default_device.value or xb.local_devices()[0]
+  if isinstance(config.default_device.value, str):
+    return xb.get_backend(config.default_device.value).local_devices()[0]
+  else:
+    return config.default_device.value or xb.local_devices()[0]
 
 
 def _get_and_check_device_assignment(
@@ -1742,6 +1745,7 @@ def _get_and_check_device_assignment(
         raise DeviceAssignmentMismatchError([
             DeviceAssignmentMismatch(devices, MismatchType.CONTEXT_DEVICES, None),
             DeviceAssignmentMismatch(arr_device_assignment, s_type, source_info)])
+
   if first_sharding_info is None and devices:
     final_device_assignment = devices
   elif first_sharding_info is None:
@@ -2189,6 +2193,7 @@ def lower_sharding_computation(
 
   assert len(out_shardings) == len(out_layouts) == len(global_out_avals), (
       len(out_shardings), len(out_layouts), len(global_out_avals))
+
 
   devices_from_context = (None if context_mesh is None or context_mesh.empty
                           else context_mesh._flat_devices_tuple)
