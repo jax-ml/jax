@@ -52,11 +52,9 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
       batch_size=(1,),
       q_seq_len=(4096,),
       kv_seq_len=(4096,),
-      num_q_and_kv_heads=((1, 1),),
-      # TODO(apaszke): Enable once we support many heads.
-      # num_q_and_kv_heads=((4, 1),    # MQA
-      #                     (6, 3),    # GQA
-      #                     (4, 4),),  # MHA
+      num_q_and_kv_heads=((4, 1),    # MQA
+                          (6, 3),    # GQA
+                          (4, 4),),  # MHA
       head_dim=(64, 128, 256),
   )
   def test_flash_attention(
