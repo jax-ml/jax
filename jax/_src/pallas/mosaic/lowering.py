@@ -1914,7 +1914,7 @@ def _sub_lowering_rule(ctx: LoweringRuleContext, x, y):
 
 
 lowering_rules[lax.sub_p] = _sub_lowering_rule
-skip_mlir_conversions.add(lax.max_p)
+skip_mlir_conversions.add(lax.sub_p)
 
 
 def _mul_lowering_rule(ctx: LoweringRuleContext, x, y):
