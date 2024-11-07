@@ -225,8 +225,7 @@ def _isolve(_isolve_solve, A, b, x0=None, *, tol=1e-5, atol=0.0,
   return x, info
 
 
-def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None,
-       assume_ipart_is_zero: bool = False):
+def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None, assume_ipart_is_zero: bool = False):
   """Use Conjugate Gradient iteration to solve ``Ax = b``.
 
   The numerics of JAX's ``cg`` should exact match SciPy's ``cg`` (up to
@@ -275,7 +274,9 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None,
       to reach a given error tolerance.
   assume_ipart_is_zero : bool, optional
       Whether the linear operator dtype can be assumed to have imag(A)=0.
-      Defaults to False for complex-value systems.
+      Defaults to False for complex-value systems. When True, then it can be
+      assumed that for complex operators A, A @ x and A.T @ x are equivalent,
+      leading to more efficient reverse-mode autodiff.
 
   See also
   --------
@@ -288,13 +289,12 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None,
   else:
     # real-valued positive-definite linear operators are symmetric.
     def real_valued(x):
-      return not issubclass(jnp.result_type(x).type, np.complexfloating)
+      return not dtypes.issubdtype(jnp.result_type(x), np.complexfloating)
 
     try:
       # Prefer to use the dtype of the operator, if available.
       if callable(A) and x0 is not None:
-        symmetric = all(map(real_valued,
-                            tree_leaves(jax.eval_shape(A, x0))))
+        symmetric = all(map(real_valued, tree_leaves(jax.eval_shape(A, x0))))
       else:
           symmetric = real_valued(A)
     except TypeError:
@@ -721,8 +721,7 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
   return x, info
 
 
-def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None,
-             symmetric=False):
+def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None, symmetric=False):
   """Use Bi-Conjugate Gradient Stable iteration to solve ``Ax = b``.
 
   The numerics of JAX's ``bicgstab`` should exact match SciPy's

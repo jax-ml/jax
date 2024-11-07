@@ -107,7 +107,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     A = rand_sym_pos_def(rng, shape, dtype)
     if assume_ipart_is_zero:
-      A = A - jnp.imag(A)
+      A = A.real.astype(A.dtype)
     b = rng(shape[:1], dtype)
     M = self._fetch_preconditioner(preconditioner, A, rng=rng)
 
@@ -230,7 +230,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     A = rng(shape, dtype)
     if symmetric:
-      A = A @ A.T.conj()
+      A = A + A.T
     b = rng(shape[:1], dtype)
     M = self._fetch_preconditioner(preconditioner, A, rng=rng)
 
