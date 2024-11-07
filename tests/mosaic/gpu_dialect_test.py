@@ -14,12 +14,19 @@
 # ==============================================================================
 """(Deviceless) tests for the Mosaic GPU MLIR dialect."""
 
+from typing import Callable
+
 from absl.testing import parameterized
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
-from jax.experimental.mosaic.gpu import dialect as mgpu  # pylint: disable=g-importing-member
+from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import nvvm
+from jax._src.lib.mlir.dialects import scf
 
+from jax.experimental.mosaic.gpu import dialect as mgpu  # pylint: disable=g-importing-member
+from jax.experimental.mosaic.gpu import lower_mgpu_dialect  # pylint: disable=g-importing-member,g-multiple-import
 
 _cext = mgpu._cext if mgpu is not None else None
 
@@ -29,8 +36,33 @@ config.parse_flags_with_absl()
 
 def _make_ir_context():
   context = ir.Context()
+  context.append_dialect_registry(mlir_interpreter.upstream_dialects)
+  context.load_all_available_dialects()
   mgpu.register_dialect(context)
   return context
+
+
+def walk_operations(op: ir.OpView, callback):
+  for region in op.operation.regions:
+    for block in region:
+      for block_op in block:
+        walk_operations(block_op, callback)
+  callback(op)
+
+
+def find_if(module: ir.Module,
+            predicate: Callable[[ir.OpView], bool]) -> list[ir.OpView]:
+  result = []
+  def callback(op: ir.OpView):
+    if predicate(op):
+      result.append(op)
+  for op in module.body.operations:
+    walk_operations(op, callback)
+  return result
+
+
+def is_mosaic_gpu_op(op: ir.OpView) -> bool:
+  return op.name.startswith("mosaic_gpu.")
 
 
 class DialectTest(parameterized.TestCase):
@@ -70,6 +102,58 @@ class DialectTest(parameterized.TestCase):
     self.assertTrue(self.module.operation.verify())
     self.assertIsInstance(self.module.body.operations[0],
                           mgpu.InitializeBarrierOp)
+
+
+class DialectLoweringTest(DialectTest):
+
+  def test_lowering_removes_mosaic_gpu_ops(self):
+    with ir.InsertionPoint(self.module.body):
+      mgpu.initialize_barrier(
+          ir.MemRefType.get((1, 2), ir.Type.parse("!mosaic_gpu.barrier")),
+          arrival_count=1)
+    lower_mgpu_dialect(self.module)
+
+    self.assertEmpty(
+        list(filter(is_mosaic_gpu_op, self.module.body.operations)))
+
+  def test_lowering_traverses_regions_correctly(self):
+    with ir.InsertionPoint(self.module.body):
+      bool_type = ir.IntegerType.get_signless(1)
+      cst_true = arith.constant(bool_type, ir.IntegerAttr.get(bool_type, 1))
+      if_op = scf.IfOp(cst_true)
+      with ir.InsertionPoint(if_op.then_block):
+        mgpu.initialize_barrier(
+            ir.MemRefType.get((1, 2), ir.Type.parse("!mosaic_gpu.barrier")),
+            arrival_count=1)
+        scf.yield_([])
+    lower_mgpu_dialect(self.module)
+
+    self.assertEmpty(
+        list(filter(is_mosaic_gpu_op, if_op.then_block.operations)))
+
+  def test_initialize_barrier_op_lowering_rule(self):
+    shape = (3, 4)
+    num_shape_elements = shape[0] * shape[1]
+    arrival_count = 1337
+
+    with ir.InsertionPoint(self.module.body):
+      mgpu.initialize_barrier(
+          ir.MemRefType.get(shape, ir.Type.parse("!mosaic_gpu.barrier")),
+          arrival_count=arrival_count)
+    lower_mgpu_dialect(self.module)
+
+    all_mbarrier_init_shared_ops = find_if(
+        self.module,
+        lambda op: op.name == nvvm.MBarrierInitSharedOp.OPERATION_NAME)
+
+    # One nvvm.mbarrier_init_shared is issued per barrier.
+    self.assertLen(all_mbarrier_init_shared_ops, num_shape_elements)
+
+    # Each barrier has its count equal to the arrival count.
+    for op in all_mbarrier_init_shared_ops:
+      count = op.count.owner.opview
+      self.assertIsInstance(count, arith.ConstantOp)
+      self.assertEqual(count.literal_value, arrival_count)
 
 
 if __name__ == "__main__":
