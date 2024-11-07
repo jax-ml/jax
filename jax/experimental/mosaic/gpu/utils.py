@@ -40,6 +40,7 @@ import numpy as np
 
 WARPGROUP_SIZE: int = 128
 DYNAMIC = -9223372036854775808
+DYNAMIC32 = -2147483648
 
 # pylint: disable=line-too-long, wildcard-import, missing-function-docstring, bad-continuation, g-bad-todo, protected-access, g-explicit-length-test, missing-class-docstring, g-doc-return-or-yield, g-inconsistent-quotes
 
@@ -1036,3 +1037,11 @@ def is_signed(dtype: jax.typing.DTypeLike) -> bool | None:
   elif jnp.issubdtype(dtype, jnp.integer):
     return jnp.issubdtype(dtype, jnp.signedinteger)
   return None
+
+
+def getelementptr(
+    ptr: ir.Value, indices: Sequence[ir.Value | int], dtype: ir.Type
+) -> ir.Value:
+  static_indices = [i if isinstance(i, int) else DYNAMIC32 for i in indices]
+  dyn_indices = [i for i in indices if not isinstance(i, int)]
+  return llvm.getelementptr(ptr.type, ptr, dyn_indices, static_indices, dtype)
