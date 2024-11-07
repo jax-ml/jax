@@ -704,7 +704,7 @@ def _maybe_put(x):
     aval = shaped_abstractify(x)
     s = sharding.SingleDeviceSharding(xb.local_devices(backend='cpu')[0])
     result_handler = pxla.global_aval_to_result_handler(aval, s, False)
-    return result_handler(pxla.shard_args([s], [None], [x]))
+    return result_handler(pxla.shard_args([s], [None], [None], [x]))
   else:
     return x
 

@@ -40,6 +40,7 @@ from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout, Layout
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension as xe
+from jax._src.lib import xla_extension_version
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding, NamedSharding,
@@ -1110,7 +1111,7 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
     # Look up all buffers that contain the correct slice of the logical array.
     candidates_list = candidates[hashed_index(idx)]
     if not candidates_list:
-      return pxla.shard_args([sharding], [None], [x._value],
+      return pxla.shard_args([sharding], [None], [None], [x._value],
                              canonicalize=False)[0]
     # Try to find a candidate buffer already on the correct device,
     # otherwise copy one of them.
@@ -1130,11 +1131,13 @@ def _sharding_indices_and_eq(src_sharding, shape, dst_sharding):
   return dst_indices, tuple(src_indices) == tuple(dst_indices)
 
 
-def _array_shard_arg(xs, shardings, layouts):
+def _array_shard_arg(xs, shardings, layouts, copy_semantics):
   results = []
   batch_xs, batch_devs, batch_shardings, batch_indices = [], [], [], []
+  batch_cs = []
 
-  for i, (x, sharding, layout) in enumerate(safe_zip(xs, shardings, layouts)):
+  for i, (x, sharding, layout, cs) in enumerate(
+      safe_zip(xs, shardings, layouts, copy_semantics)):
     x._check_if_deleted()
     indices, same_indices = _sharding_indices_and_eq(x.sharding, x.shape, sharding)
     same_layout = (True if layout is None else
@@ -1156,6 +1159,7 @@ def _array_shard_arg(xs, shardings, layouts):
         batch_devs.append(list(devices))
         batch_shardings.append(sharding)
         batch_indices.append(i)
+        batch_cs.append(cs)
       # Resharding starts here:
       elif not same_layout:
         results.append(api.device_put(x, Layout(layout, sharding)))
@@ -1165,8 +1169,12 @@ def _array_shard_arg(xs, shardings, layouts):
         results.append(
             shard_sharded_device_array_slow_path(x, devices, indices, sharding))
 
-  copy_outs = xc.batched_copy_array_to_devices_with_sharding(
-      batch_xs, batch_devs, batch_shardings)
+  if xla_extension_version >= 296:
+    copy_outs = xc.batched_copy_array_to_devices_with_sharding(
+        batch_xs, batch_devs, batch_shardings, batch_cs)
+  else:
+    copy_outs = xc.batched_copy_array_to_devices_with_sharding(  # type: ignore
+        batch_xs, batch_devs, batch_shardings)
   for i, copy_out in safe_zip(batch_indices, copy_outs):
     assert results[i] is None
     results[i] = copy_out
@@ -1200,8 +1208,9 @@ pxla.local_result_handlers[core.ShapedArray] = _array_local_result_handler
 
 # Token handlers
 
-def _token_shard_arg(xs, shardings, layouts):
-  return _array_shard_arg([x._buf for x in xs], shardings, layouts)
+def _token_shard_arg(xs, shardings, layouts, copy_semantics):
+  return _array_shard_arg([x._buf for x in xs], shardings, layouts,
+                          copy_semantics)
 pxla.shard_arg_handlers[core.Token] = _token_shard_arg
 
 

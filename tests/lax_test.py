@@ -3817,7 +3817,7 @@ class FooArray:
   size = property(lambda self: self.data.size // 2)
   ndim = property(lambda self: self.data.ndim - 1)
 
-def shard_foo_array_handler(xs, shardings, layouts):
+def shard_foo_array_handler(xs, shardings, layouts, copy_semantics):
   results = []
   for x, sharding in safe_zip(xs, shardings):
     device, = sharding._addressable_device_assignment
