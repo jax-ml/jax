@@ -300,9 +300,7 @@ def build_kernel(
     with ir.InsertionPoint(if_compute.else_block):
       nvvm.setmaxregister(40, nvvm.SetMaxRegisterAction.decrease)
       with single_thread(per_block=False):
-        k_tr = (
-            TileTransform(tiling), TransposeTransform((0, 2, 1, 3, 4)),
-        )
+        k_tr = (TileTransform(tiling), TransposeTransform((1, 0, 2, 3)))
         v_tr = TileTransform(tiling)
         kv_head_idx = arith.divui(q_head_idx, c(q_heads_per_kv_head))
         def start_kv_copy(slot, kv_seq_base, smem, gmem, barrier, transform):
@@ -396,10 +394,7 @@ def build_kernel(
       with single_thread(per_block=False):
         txcount = 2 * blocks.kv * head_dim * bytewidth(f16)
         barriers[slot].arrive_expect_tx(txcount)
-        k_tr = (
-            TileTransform(tiling),
-            TransposeTransform((0, 2, 1, 3, 4)),
-        )
+        k_tr = (TileTransform(tiling), TransposeTransform((1, 0, 2, 3)))
         v_tr = TileTransform(tiling)
         for smem, gmem, t in ((k_smem, k_gmem, k_tr), (v_smem, v_gmem, v_tr)):
           ctx.async_copy(

@@ -1060,6 +1060,30 @@ class TMATest(TestCase):
     y = f(x)
     np.testing.assert_array_equal(y, x)
 
+  def test_tma_load_indexed_tiled(self):
+    shape = (128, 2, 128)
+    tiling = mgpu.TileTransform((32, 32))
+    def kernel(ctx, src, dst, scratch):
+      tmp, barrier = scratch
+      ctx.async_copy(
+          src_ref=src,
+          dst_ref=tmp,
+          barrier=barrier,
+          gmem_transform=tiling,
+          gmem_slice=(slice(None), 1, slice(None)),
+      )
+      barrier.wait()
+      ctx.async_copy(src_ref=tmp, dst_ref=dst, gmem_transform=tiling)
+      ctx.await_async_copy(0)
+    x = np.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
+    smem = (
+        jax.ShapeDtypeStruct((4, 4, 32, 32), jnp.float32),
+        mgpu.TMABarrier(),
+    )
+    out_shape = jax.ShapeDtypeStruct((128, 128), jnp.float32)
+    f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, out_shape, smem)
+    np.testing.assert_array_equal(f(x), x[:, 1, :])
+
   @parameterized.product(
       swizzle=(None, 128),
       dtype=(jnp.float16, jnp.float32),
