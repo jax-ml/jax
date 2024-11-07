@@ -30,6 +30,7 @@ from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax.experimental import pallas as pl
 if sys.platform != "win32":
   from jax.experimental.pallas.ops.gpu import attention
+  from jax.experimental.pallas.ops.gpu import ragged_attention
   from jax.experimental.pallas.ops.gpu import layer_norm
   from jax.experimental.pallas.ops.gpu import rms_norm
   from jax.experimental.pallas.ops.gpu import softmax
@@ -299,6 +300,128 @@ class FusedAttentionTest(PallasBaseTest):
 
 
 class FusedAttentionInterpretTest(FusedAttentionTest):
+  INTERPRET = True
+
+
+
+class RaggedAttentionTest(PallasBaseTest):
+
+  def setUp(self):
+    super().setUp()
+    if jtu.test_device_matches(["tpu"]):
+      self.skipTest("Not intended for TPU")
+
+  @jtu.parameterized_filterable(
+      kwargs=[
+          dict(
+              batch_size=batch_size,
+              seq_len=seq_len,
+              num_heads=num_heads,
+              head_dim=head_dim,
+              kwargs=kwargs,
+          )
+          for (
+              batch_size,
+              seq_len,
+              num_heads,
+              head_dim,
+              kwargs,
+          ) in [
+              (1, 384, 2, 64, {"debug": True, "block_k": 128}),
+              (12, 384, 6, 64, {"debug": True}),
+              (1, 384, 64, 64, {"block_h": 32}),
+              (1, 512, 16, 64, {"debug": True, "block_k": 128}),
+              (1, 512, 16, 128, {}),
+              (2, 128, 16, 64, {"block_k": 128}),
+              (12, 384, 16, 128, {"block_k": 128}),
+          ]
+      ]
+  )
+  def test_ragged_attention_mqa(
+      self,
+      *,
+      batch_size,
+      seq_len,
+      num_heads,
+      head_dim,
+      kwargs,
+  ):
+    k1, k2, k3, k4 = random.split(random.key(0), 4)
+    q = random.normal(k1, (batch_size, num_heads, head_dim), dtype=jnp.float16)
+    k = random.normal(k2, (batch_size, seq_len, head_dim), dtype=jnp.float16)
+    v = random.normal(k3, (batch_size, seq_len, head_dim), dtype=jnp.float16)
+    lengths = jax.random.randint(k4, (batch_size,), 1, seq_len + 1)
+
+    impl = functools.partial(
+        ragged_attention.mqa,
+        interpret=self.INTERPRET,
+        **kwargs,
+    )
+    o = impl(q, k, v, lengths)
+    o_ref = ragged_attention.mqa_reference(q, k, v, lengths)
+
+    np.testing.assert_allclose(o, o_ref, atol=0.05)
+
+  @jtu.parameterized_filterable(
+      kwargs=[
+          dict(
+              batch_size=batch_size,
+              seq_len=seq_len,
+              num_q_heads=num_q_heads,
+              num_kv_heads=num_kv_heads,
+              head_dim=head_dim,
+              kwargs=kwargs,
+          )
+          for (
+              batch_size,
+              seq_len,
+              num_q_heads,
+              num_kv_heads,
+              head_dim,
+              kwargs,
+          ) in [
+              (2, 384, 16, 8, 64, {"debug": True}),
+              (2, 384, 16, 16, 64, {}),
+              (4, 4096, 32, 32, 128, {}),
+              (4, 4096, 64, 8, 128, {}),
+              (2, 4096, 16, 16, 128, {}),
+          ]
+      ]
+  )
+  def test_ragged_attention_gqa(
+      self,
+      *,
+      batch_size,
+      seq_len,
+      num_q_heads,
+      num_kv_heads,
+      head_dim,
+      kwargs,
+  ):
+    k1, k2, k3, k4 = random.split(random.key(0), 4)
+    q = random.normal(
+        k1, (batch_size, num_q_heads, head_dim), dtype=jnp.float16
+    )
+    k = random.normal(
+        k2, (batch_size, seq_len, num_kv_heads, head_dim), dtype=jnp.float16
+    )
+    v = random.normal(
+        k3, (batch_size, seq_len, num_kv_heads, head_dim), dtype=jnp.float16
+    )
+    lengths = jax.random.randint(k4, (batch_size,), 1, seq_len + 1)
+
+    impl = functools.partial(
+        ragged_attention.gqa,
+        interpret=self.INTERPRET,
+        **kwargs,
+    )
+    o = impl(q, k, v, lengths)
+    o_ref = ragged_attention.gqa_reference(q, k, v, lengths)
+
+    np.testing.assert_allclose(o, o_ref, atol=0.05)
+
+
+class RaggedAttentionInterpretTest(RaggedAttentionTest):
   INTERPRET = True
 
 
