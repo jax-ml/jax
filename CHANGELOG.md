@@ -43,6 +43,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.jit` got a new `compiler_options: dict[str, Any]` argument, for
     passing compilation options to XLA. For the moment it's undocumented and
     may be in flux.
+  * {func}`jax.tree_util.register_dataclass` now allows metadata fields to be
+    declared inline via {func}`dataclasses.field`. See the function documentation
+    for examples.
 
 ## jax 0.4.35 (Oct 22, 2024)
 

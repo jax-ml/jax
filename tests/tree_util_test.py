@@ -17,7 +17,6 @@ import dataclasses
 import functools
 import pickle
 import re
-from typing import TypeVar
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -142,27 +141,6 @@ class FlatCache:
       data, meta = tree_util.tree_flatten(tree_util.tree_unflatten(meta, data))
     return FlatCache(None, leaves=data, treedef=meta)
 
-_T = TypeVar("_T")
-
-
-# Inspired by Flax.
-def pytree_node_dataclass(clz: _T, **kwargs) -> _T:
-  data_clz = dataclasses.dataclass(**kwargs)(clz)  # type: ignore
-  meta_fields = []
-  data_fields = []
-  for field_info in dataclasses.fields(data_clz):
-    is_pytree_node = field_info.metadata.get("pytree_node", True)
-    if is_pytree_node:
-      data_fields.append(field_info.name)
-    else:
-      meta_fields.append(field_info.name)
-
-  jax.tree_util.register_dataclass(
-      data_clz, data_fields, meta_fields
-  )
-
-  return data_clz
-
 
 @tree_util.register_static
 class StaticInt(int):
@@ -231,16 +209,18 @@ TREE_STRINGS = (
     "PyTreeDef(CustomNode(StaticDict[{'foo': 4, 'bar': 5}], []))",
 )
 
-@pytree_node_dataclass
+@jax.tree_util.register_dataclass
+@dataclasses.dataclass
 class ADataclass:
   x: tuple[int, int]
   y: int
 
-@pytree_node_dataclass
+@jax.tree_util.register_dataclass
+@dataclasses.dataclass
 class ADataclassWithMeta:
   x: tuple[int, int]
   y: int
-  z: int = dataclasses.field(metadata={"pytree_node": False})
+  z: int = dataclasses.field(metadata={"static": True})
 
 TREES += (
     (ADataclass(x=(1, 2), y=3),),
@@ -1293,6 +1273,36 @@ class TreeAliasTest(jtu.JaxTestCase):
 
 
 class RegistrationTest(jtu.JaxTestCase):
+
+  def test_register_dataclass_with_field_specifier(self):
+    @tree_util.register_dataclass
+    @dataclasses.dataclass
+    class Foo:
+      x: int
+      y: int = dataclasses.field(metadata=dict(static=True))
+
+    f = Foo(2, 3)
+    self.assertLen(jax.tree.leaves(f), 1)
+
+  def test_register_dataclass_field_errors(self):
+    class Foo:  # not a dataclass
+      x: int
+      y: int
+
+    msg = ("register_dataclass: data_fields and meta_fields are required"
+           " when nodetype is not a dataclass. Got nodetype=<class '.*Foo'>")
+    with self.assertRaisesRegex(TypeError, msg):
+      tree_util.register_dataclass(Foo)
+
+    msg = ("register_dataclass: data_fields and meta_fields must both be specified"\
+           r" when either is specified. Got data_fields=\['x'\] meta_fields=None.")
+    with self.assertRaisesRegex(TypeError, msg):
+      tree_util.register_dataclass(Foo, data_fields=['x'])
+
+    msg = ("register_dataclass: data_fields and meta_fields must both be specified"\
+           r" when either is specified. Got data_fields=None meta_fields=\['y'\].")
+    with self.assertRaisesRegex(TypeError, msg):
+      tree_util.register_dataclass(Foo, meta_fields=['y'])
 
   def test_register_dataclass_missing_fields(self):
     @dataclasses.dataclass
