@@ -3190,8 +3190,8 @@ LogicalResult arith_constant_rule(RewriteContext &ctx, Operation &op,
     }
     const VectorLayout &layout_out = *layouts_out.front();
     DenseElementsAttr value = cast<DenseElementsAttr>(constant_op.getValue());
-    const VectorType target_vty =
-        getNativeVregType(vty.getElementType(), ctx.target_shape);
+    const VectorType target_vty = getNativeVregOrVmaskType(
+        vty.getElementType(), layout_out.bitwidth(), ctx.target_shape);
     if (value.isSplat()) {
       if (layout_out.offsets() != LayoutOffsets{std::nullopt, std::nullopt}) {
         return op.emitOpError(
