@@ -18,7 +18,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from absl.testing import absltest
-from jax._src import config
 from jax._src import test_util as jtu
 from jax.sharding import NamedSharding, PartitionSpec as P
 from jax.experimental.shard_alike import shard_alike
