@@ -142,6 +142,7 @@ maintains an up-to-date list.
    extensions
    notes
    jax
+   about
 
 
 .. toctree::
