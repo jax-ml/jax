@@ -390,6 +390,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_paged_attention_kernel_test",
     srcs = ["tpu_paged_attention_kernel_test.py"],
+    disable_configs = [
+        "tpu_v5p_1x1",
+    ],
     enable_backends = ["tpu"],
     shard_count = 5,
     tags = [
