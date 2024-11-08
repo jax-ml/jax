@@ -82,7 +82,7 @@ def is_cache_used(backend: xla_client.Client) -> bool:
       ):
         monitoring.record_event('/jax/compilation_cache/tasks_using_cache')
         _cache_used = True
-      return _cache_used
+      return _cache_used  # pytype: disable=bad-return-type
 
 
 def get_file_cache(path: str) -> tuple[CacheInterface, str] | None:
