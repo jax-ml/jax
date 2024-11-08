@@ -32,6 +32,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/optimization.h"
+#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -290,6 +291,7 @@ void DumpCompilationOutput(mlir::ModuleOp module, const std::string& sm,
   }
 
   module = module.clone();  // Prevent accidental modification.
+  absl::Cleanup module_destroyer = [module] { module->erase(); };
   auto passes = GetPassPipeline(
       module.getContext(), mlir::gpu::CompilationTarget::Assembly, sm, ptx_isa);
   if (mlir::failed(passes) ||
