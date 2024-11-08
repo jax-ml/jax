@@ -131,10 +131,10 @@ ffi::Error GetrfImpl(int64_t batch, int64_t rows, int64_t cols,
   FFI_ASSIGN_OR_RETURN(auto workspace,
                        AllocateWorkspace<T>(scratch, lwork, "getrf"));
 
-  auto a_data = static_cast<T*>(a.untyped_data());
-  auto out_data = static_cast<T*>(out->untyped_data());
-  auto ipiv_data = ipiv->typed_data();
-  auto info_data = info->typed_data();
+  auto* a_data = a.typed_data<T>();
+  auto* out_data = out->typed_data<T>();
+  auto* ipiv_data = ipiv->typed_data();
+  auto* info_data = info->typed_data();
   if (a_data != out_data) {
     JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
         out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
@@ -162,10 +162,10 @@ ffi::Error GetrfBatchedImpl(int64_t batch, int64_t cols, gpuStream_t stream,
   FFI_ASSIGN_OR_RETURN(auto batch_ptrs,
                        AllocateWorkspace<T*>(scratch, batch, "batched getrf"));
 
-  auto a_data = a.untyped_data();
-  auto out_data = out->untyped_data();
-  auto ipiv_data = ipiv->typed_data();
-  auto info_data = info->typed_data();
+  auto* a_data = a.untyped_data();
+  auto* out_data = out->untyped_data();
+  auto* ipiv_data = ipiv->typed_data();
+  auto* info_data = info->typed_data();
   if (a_data != out_data) {
     JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
         out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
@@ -239,9 +239,9 @@ ffi::Error GeqrfImpl(int64_t batch, int64_t rows, int64_t cols,
   // in device memory, so we need to allocate it.
   FFI_ASSIGN_OR_RETURN(auto info, AllocateWorkspace<int>(scratch, 1, "geqrf"));
 
-  auto a_data = static_cast<T*>(a.untyped_data());
-  auto out_data = static_cast<T*>(out->untyped_data());
-  auto tau_data = static_cast<T*>(tau->untyped_data());
+  auto* a_data = a.typed_data<T>();
+  auto* out_data = out->typed_data<T>();
+  auto* tau_data = tau->typed_data<T>();
   if (a_data != out_data) {
     JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
         out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
@@ -271,9 +271,9 @@ ffi::Error GeqrfBatchedImpl(int64_t batch, int64_t rows, int64_t cols,
   FFI_ASSIGN_OR_RETURN(auto tau_batch_ptrs,
                        AllocateWorkspace<T*>(scratch, batch, "batched geqrf"));
 
-  auto a_data = a.untyped_data();
-  auto out_data = out->untyped_data();
-  auto tau_data = tau->untyped_data();
+  auto* a_data = a.untyped_data();
+  auto* out_data = out->untyped_data();
+  auto* tau_data = tau->untyped_data();
   if (a_data != out_data) {
     JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
         out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
@@ -351,9 +351,9 @@ ffi::Error OrgqrImpl(int64_t batch, int64_t rows, int64_t cols, int64_t size,
   // in device memory, so we need to allocate it.
   FFI_ASSIGN_OR_RETURN(auto info, AllocateWorkspace<int>(scratch, 1, "orgqr"));
 
-  auto a_data = static_cast<T*>(a.untyped_data());
-  auto tau_data = static_cast<T*>(tau.untyped_data());
-  auto out_data = static_cast<T*>(out->untyped_data());
+  auto* a_data = a.typed_data<T>();
+  auto* tau_data = tau.typed_data<T>();
+  auto* out_data = out->typed_data<T>();
   if (a_data != out_data) {
     JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
         out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
@@ -451,9 +451,9 @@ ffi::Error Syevd64Impl(int64_t batch, int64_t n, gpuStream_t stream,
   auto workspaceOnHost =
       std::unique_ptr<char[]>(new char[workspaceInBytesOnHost]);
 
-  const char* a_data = static_cast<const char*>(a.untyped_data());
-  char* out_data = static_cast<char*>(out->untyped_data());
-  char* w_data = static_cast<char*>(w->untyped_data());
+  const char* a_data = a.typed_data<char>();
+  char* out_data = out->typed_data<char>();
+  char* w_data = w->typed_data<char>();
   int* info_data = info->typed_data();
   if (a_data != out_data) {
     JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
@@ -484,6 +484,8 @@ ffi::Error SyevdImpl(int64_t batch, int64_t size, gpuStream_t stream,
                      ffi::AnyBuffer a, ffi::Result<ffi::AnyBuffer> out,
                      ffi::Result<ffi::AnyBuffer> w,
                      ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  typedef typename solver::RealType<T>::value Real;
+
   FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int>(size));
   FFI_ASSIGN_OR_RETURN(auto handle, SolverHandlePool::Borrow(stream));
 
@@ -491,11 +493,10 @@ ffi::Error SyevdImpl(int64_t batch, int64_t size, gpuStream_t stream,
   gpusolverFillMode_t uplo =
       lower ? GPUSOLVER_FILL_MODE_LOWER : GPUSOLVER_FILL_MODE_UPPER;
 
-  auto a_data = static_cast<T*>(a.untyped_data());
-  auto out_data = static_cast<T*>(out->untyped_data());
-  auto w_data =
-      static_cast<typename solver::RealType<T>::value*>(w->untyped_data());
-  auto info_data = info->typed_data();
+  auto* a_data = a.typed_data<T>();
+  auto* out_data = out->typed_data<T>();
+  auto* w_data = w->typed_data<Real>();
+  auto* info_data = info->typed_data();
   if (a_data != out_data) {
     JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
         out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
@@ -503,7 +504,7 @@ ffi::Error SyevdImpl(int64_t batch, int64_t size, gpuStream_t stream,
 
   FFI_ASSIGN_OR_RETURN(int lwork,
                        solver::SyevdBufferSize<T>(handle.get(), jobz, uplo, n));
-  FFI_ASSIGN_OR_RETURN(auto workspace,
+  FFI_ASSIGN_OR_RETURN(auto* workspace,
                        AllocateWorkspace<T>(scratch, lwork, "syevd"));
   int out_step = n * n;
   for (auto i = 0; i < batch; ++i) {
@@ -524,6 +525,8 @@ ffi::Error SyevdjImpl(int64_t batch, int64_t size, gpuStream_t stream,
                       ffi::AnyBuffer a, ffi::Result<ffi::AnyBuffer> out,
                       ffi::Result<ffi::AnyBuffer> w,
                       ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  typedef typename solver::RealType<T>::value Real;
+
   FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int>(size));
   FFI_ASSIGN_OR_RETURN(auto handle, SolverHandlePool::Borrow(stream));
 
@@ -531,11 +534,10 @@ ffi::Error SyevdjImpl(int64_t batch, int64_t size, gpuStream_t stream,
   gpusolverFillMode_t uplo =
       lower ? GPUSOLVER_FILL_MODE_LOWER : GPUSOLVER_FILL_MODE_UPPER;
 
-  auto a_data = static_cast<T*>(a.untyped_data());
-  auto out_data = static_cast<T*>(out->untyped_data());
-  auto w_data =
-      static_cast<typename solver::RealType<T>::value*>(w->untyped_data());
-  auto info_data = info->typed_data();
+  auto* a_data = a.typed_data<T>();
+  auto* out_data = out->typed_data<T>();
+  auto* w_data = w->typed_data<Real>();
+  auto* info_data = info->typed_data();
   if (a_data != out_data) {
     JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
         out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
@@ -549,7 +551,7 @@ ffi::Error SyevdjImpl(int64_t batch, int64_t size, gpuStream_t stream,
   if (batch == 1) {
     FFI_ASSIGN_OR_RETURN(int lwork, solver::SyevjBufferSize<T>(
                                         handle.get(), jobz, uplo, n, params));
-    FFI_ASSIGN_OR_RETURN(auto workspace,
+    FFI_ASSIGN_OR_RETURN(auto* workspace,
                          AllocateWorkspace<T>(scratch, lwork, "syevj"));
     FFI_RETURN_IF_ERROR_STATUS(solver::Syevj<T>(handle.get(), jobz, uplo, n,
                                                 out_data, w_data, workspace,
@@ -558,7 +560,7 @@ ffi::Error SyevdjImpl(int64_t batch, int64_t size, gpuStream_t stream,
     FFI_ASSIGN_OR_RETURN(
         int lwork, solver::SyevjBatchedBufferSize<T>(handle.get(), jobz, uplo,
                                                      n, params, batch));
-    FFI_ASSIGN_OR_RETURN(auto workspace,
+    FFI_ASSIGN_OR_RETURN(auto* workspace,
                          AllocateWorkspace<T>(scratch, lwork, "syevj_batched"));
     FFI_RETURN_IF_ERROR_STATUS(
         solver::SyevjBatched<T>(handle.get(), jobz, uplo, n, out_data, w_data,
@@ -642,9 +644,9 @@ ffi::Error SyrkImpl(gpuStream_t stream, bool transpose, ffi::AnyBuffer a,
   gpublasFillMode_t uplo = GPUSOLVER_FILL_MODE_UPPER;
   gpublasOperation_t trans = transpose ? GPUBLAS_OP_N : GPUBLAS_OP_T;
 
-  const T* a_data = static_cast<const T*>(a.untyped_data());
-  T* c_data = static_cast<T*>(c_in.untyped_data());
-  T* c_out_data = static_cast<T*>(c_out->untyped_data());
+  const T* a_data = a.typed_data<T>();
+  T* c_data = c_in.typed_data<T>();
+  T* c_out_data = c_out->typed_data<T>();
 
   // with alpha or beta provided as device_pointers, cublas<T>syrk will SIGSEGV
   T host_alpha;
@@ -730,15 +732,15 @@ ffi::Error Gesvd64Impl(int64_t batch, int64_t m, int64_t n, gpuStream_t stream,
     return ffi::Error(ffi::ErrorCode::kResourceExhausted,
                       "Unable to allocate device workspace for gesvd");
   }
-  auto workspaceOnDevice = maybe_workspace.value();
+  auto* workspaceOnDevice = maybe_workspace.value();
   auto workspaceOnHost =
       std::unique_ptr<char[]>(new char[workspaceInBytesOnHost]);
 
-  const char* a_data = static_cast<const char*>(a.untyped_data());
-  char* out_data = static_cast<char*>(out->untyped_data());
-  char* s_data = static_cast<char*>(s->untyped_data());
-  char* u_data = static_cast<char*>(u->untyped_data());
-  char* vt_data = static_cast<char*>(vt->untyped_data());
+  const char* a_data = a.typed_data<char>();
+  char* out_data = out->typed_data<char>();
+  char* s_data = s->typed_data<char>();
+  char* u_data = u->typed_data<char>();
+  char* vt_data = vt->typed_data<char>();
   int* info_data = info->typed_data();
   if (a_data != out_data) {
     JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
@@ -780,6 +782,8 @@ ffi::Error GesvdImpl(int64_t batch, int64_t rows, int64_t cols,
                      ffi::Result<ffi::AnyBuffer> u,
                      ffi::Result<ffi::AnyBuffer> vt,
                      ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  typedef typename solver::RealType<T>::value Real;
+
   FFI_ASSIGN_OR_RETURN(auto m, MaybeCastNoOverflow<int>(rows));
   FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int>(cols));
   FFI_ASSIGN_OR_RETURN(auto handle, SolverHandlePool::Borrow(stream));
@@ -789,13 +793,12 @@ ffi::Error GesvdImpl(int64_t batch, int64_t rows, int64_t cols,
                        solver::GesvdBufferSize<T>(handle.get(), job, m, n));
   FFI_ASSIGN_OR_RETURN(auto workspace,
                        AllocateWorkspace<T>(scratch, lwork, "gesvd"));
-  auto a_data = static_cast<T*>(a.untyped_data());
-  auto out_data = static_cast<T*>(out->untyped_data());
-  auto s_data =
-      static_cast<typename solver::RealType<T>::value*>(s->untyped_data());
-  auto u_data = compute_uv ? static_cast<T*>(u->untyped_data()) : nullptr;
-  auto vt_data = compute_uv ? static_cast<T*>(vt->untyped_data()) : nullptr;
-  auto info_data = info->typed_data();
+  auto* a_data = a.typed_data<T>();
+  auto* out_data = out->typed_data<T>();
+  auto* s_data = s->typed_data<Real>();
+  auto* u_data = compute_uv ? u->typed_data<T>() : nullptr;
+  auto* vt_data = compute_uv ? vt->typed_data<T>() : nullptr;
+  auto* info_data = info->typed_data();
   if (a_data != out_data) {
     FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuMemcpyAsync(
         out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream)));
@@ -900,6 +903,8 @@ ffi::Error GesvdjImpl(int64_t batch, int64_t rows, int64_t cols,
                       ffi::Result<ffi::AnyBuffer> u,
                       ffi::Result<ffi::AnyBuffer> v,
                       ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  typedef typename solver::RealType<T>::value Real;
+
   FFI_ASSIGN_OR_RETURN(auto m, MaybeCastNoOverflow<int>(rows));
   FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int>(cols));
   FFI_ASSIGN_OR_RETURN(auto handle, SolverHandlePool::Borrow(stream));
@@ -913,12 +918,12 @@ ffi::Error GesvdjImpl(int64_t batch, int64_t rows, int64_t cols,
   std::unique_ptr<gpuGesvdjInfo, void (*)(gpuGesvdjInfo_t)> params_cleanup(
       params, [](gpuGesvdjInfo_t p) { gpusolverDnDestroyGesvdjInfo(p); });
 
-  auto a_data = static_cast<T*>(a.untyped_data());
-  auto out_data = static_cast<T*>(out->untyped_data());
-  auto s_data = static_cast<solver::RealType<T>::value*>(s->untyped_data());
-  auto u_data = static_cast<T*>(u->untyped_data());
-  auto v_data = static_cast<T*>(v->untyped_data());
-  auto info_data = info->typed_data();
+  auto* a_data = a.typed_data<T>();
+  auto* out_data = out->typed_data<T>();
+  auto* s_data = s->typed_data<Real>();
+  auto* u_data = u->typed_data<T>();
+  auto* v_data = v->typed_data<T>();
+  auto* info_data = info->typed_data();
   if (a_data != out_data) {
     JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
         out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
