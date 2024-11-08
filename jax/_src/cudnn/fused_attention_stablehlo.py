@@ -295,8 +295,8 @@ def check_is_flash_attention(
     _, T, _, H = query.shape
     _, S, _, _ = key.shape
 
-  if not ((H <= 128 and H % 8 == 0) and
-        (not is_training or not has_bias or T % 2 == 0 and S % 2 == 0)):
+  if (H > 128 or H % 8 != 0 or
+      (is_training and has_bias and (T % 2 != 0 or S % 2 != 0))):
     # check if flash attention is supported
     # for training, for patterns with bias, seqlen should be divisible by 2
     raise NotImplementedError(

@@ -50,6 +50,8 @@ limitations under the License.
 #include "mlir/include/mlir/Pass/Pass.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "jaxlib/mosaic/dialect/tpu/transforms/infer_vector_layout_extensions.h"
+#include "jaxlib/mosaic/dialect/tpu/util.h"
 #include "xla/layout.h"
 
 namespace mlir::tpu {
@@ -287,10 +289,6 @@ class VectorLayoutInferer {
         if (infer(op).failed()) {
           return failure();
         }
-      } else if (auto op = dyn_cast<tpu::RepeatOp>(any_op)) {
-        if (infer(op).failed()) {
-          return failure();
-        }
       } else if (auto op = dyn_cast<tpu::TraceOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
@@ -340,6 +338,10 @@ class VectorLayoutInferer {
         if (inferElementwise(&any_op).failed()) {
           return failure();
         }
+      } else if (mlir::tpu::extensions::canInferVectorLayout(any_op)) {
+        if (mlir::tpu::extensions::inferVectorLayout(any_op).failed()) {
+          return failure();
+        }
       } else {
         any_op.emitOpError("unsupported in vector layout inference");
         return failure();
@@ -363,6 +365,11 @@ class VectorLayoutInferer {
       TPU_CHECK_OP(ty.getRank() > 0, "rank 0 vectors unsupported");
       TPU_CHECK_OP(elems, "expected vector constants to use DenseElementsAttr");
       auto bitwidth = ty.getElementTypeBitWidth();
+      if (bitwidth == 1) {
+        // i1 is a special case where the layout bitwidth can be different from
+        // the element bitwidth, see comment in VectorLayout class
+        bitwidth = kNativeBitwidth;
+      }
       if (elems.isSplat()) {
         if (ty.getRank() == 1) {
           // Here, we choose to lay out along lanes arbitrarily. It would be
@@ -1019,12 +1026,6 @@ class VectorLayoutInferer {
     return success();
   }
 
-  LogicalResult infer(tpu::RepeatOp op) {
-    auto src_layout = getLayout(op.getSource());
-    setLayout(op, src_layout, src_layout);
-    return success();
-  }
-
   LogicalResult infer(tpu::TraceOp op) {
     static LogicalResult (*match_yield)(Operation *) = [](Operation *op) {
       TPU_CHECK_OP(isa<tpu::YieldOp>(op), "expected yield terminator");
@@ -1187,7 +1188,7 @@ class VectorLayoutInferer {
   }
 
   LogicalResult infer(vector::LoadOp op) {
-    auto src_ty = op.getMemRefType();
+    auto src_ty = getMemRefType(op.getBase());
     auto res_ty = op.getVectorType();
     TPU_CHECK_OP(src_ty.getRank() == res_ty.getRank(),
                  "memref and vector rank mismatch");
@@ -1280,6 +1281,16 @@ class VectorLayoutInferer {
         setLayout(op, in_layout,
                   VectorLayout(bitwidth, {std::nullopt, offsets[1]},
                                layout_tiling, ImplicitDim::kNone));
+      } else if (bitwidth == 32 &&
+                 canReinterpretToUntiledMemref(
+                     src_ty, target_shape_, /*allow_minormost_padding=*/true) &&
+                 *(src_ty.getShape().end() - 2) > 1) {
+        // Since it is untiled, we can load from any arbitrary address which
+        // means we can always set the sublane offset to 0.
+        // Note: if the src_shape[-2] == 1, we can just use the tiling from ref.
+        setLayout(op, in_layout,
+                  VectorLayout(bitwidth, {0, offsets[1].value_or(0)},
+                               nativeTiling(bitwidth), ImplicitDim::kNone));
       } else {
         setLayout(
             op, in_layout,
@@ -1437,7 +1448,14 @@ class VectorLayoutInferer {
       // 1D tilings that use 1 in the sublane dimension.
       int64_t sublane_tiling = vreg_slice[0];
       do {
-        if (src_tiled_ishape[1] == res_tiled_ishape[1] &&
+        auto src_res_tiled_equal = src_tiled_ishape[1] == res_tiled_ishape[1];
+        auto vreg_num_elements =
+            target_shape_[0] * target_shape_[1] * layout.packing();
+        auto single_subline_mod_1024 =
+            (sublane_tiling == 1 &&
+             src_tiled_ishape[1] % vreg_num_elements == 0 &&
+             res_tiled_ishape[1] % vreg_num_elements == 0);
+        if ((src_res_tiled_equal || single_subline_mod_1024) &&
             src_tiled_ishape[0] % sublane_tiling == 0 &&
             res_tiled_ishape[0] % sublane_tiling == 0) {
           std::array<int64_t, 2> tiling = {sublane_tiling, target_shape_[1]};
@@ -1515,7 +1533,7 @@ class VectorLayoutInferer {
   }
 
   LogicalResult infer(vector::StoreOp op) {
-    auto ref_ty = op.getMemRefType();
+    auto ref_ty = getMemRefType(op.getBase());
     auto store_ty = op.getValueToStore().getType();
     TPU_CHECK_OP(ref_ty.getRank() == store_ty.getRank(),
                  "memref and vector rank mismatch");
@@ -1596,11 +1614,27 @@ class VectorLayoutInferer {
         // We can strided store sublanes if we're storing a single sublane for
         // multiple times. Enabling this helps store one entire row to memref
         // more efficiently.
-        store_layout = VectorLayout(store_ty.getElementTypeBitWidth(), offsets,
-                                    {1, tiling[1]}, ImplicitDim::kNone);
+        store_layout =
+            VectorLayout(bitwidth, offsets, {1, tiling[1]}, ImplicitDim::kNone);
+      } else if (bitwidth == 32 &&
+                 // We accept padding in the minormost dim, because
+                 // apply_vector_layout will properly mask stores.
+                 canReinterpretToUntiledMemref(
+                     ref_ty, target_shape_, /*allow_minormost_padding=*/true)) {
+        // Since it is untiled, we can store to any arbitrary address which
+        // means the sublane offset can be any value and we can fold it to
+        // 2nd minor index.
+        // TODO(jevinjiang): We can fold the sublane offset into the 2nd minor
+        // index. But we need to handle negative index in lower-to-llo. For
+        // now, we just force the sublane offset to be 0.
+        if (offsets[1].value_or(0) >= tiling[1]) {
+          offsets[1] = 0;
+        }
+        store_layout = VectorLayout(bitwidth, {0, offsets[1]},
+                                    nativeTiling(bitwidth), ImplicitDim::kNone);
       } else {
-        store_layout = VectorLayout(store_ty.getElementTypeBitWidth(), offsets,
-                                    {tiling[0], tiling[1]}, ImplicitDim::kNone);
+        store_layout = VectorLayout(bitwidth, offsets, {tiling[0], tiling[1]},
+                                    ImplicitDim::kNone);
       }
     }
     SmallVector<Layout, 5> in_layout{store_layout};

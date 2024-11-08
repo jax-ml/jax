@@ -91,8 +91,8 @@ def cholesky(a: ArrayLike, *, upper: bool = False) -> Array:
   Args:
     a: input array, representing a (batched) positive-definite hermitian matrix.
       Must have shape ``(..., N, N)``.
-    upper: if True, compute the upper Cholesky decomposition `L`. if False
-      (default), compute the lower Cholesky decomposition `U`.
+    upper: if True, compute the upper Cholesky decomposition `U`. if False
+      (default), compute the lower Cholesky decomposition `L`.
 
   Returns:
     array of shape ``(..., N, N)`` representing the Cholesky decomposition
@@ -532,7 +532,7 @@ def slogdet(a: ArrayLike, *, method: str | None = None) -> SlogdetResult:
   a, = promote_dtypes_inexact(jnp.asarray(a))
   a_shape = jnp.shape(a)
   if len(a_shape) < 2 or a_shape[-1] != a_shape[-2]:
-    raise ValueError("Argument to slogdet() must have shape [..., n, n], got {a_shape}")
+    raise ValueError(f"Argument to slogdet() must have shape [..., n, n], got {a_shape}")
   if method is None or method == "lu":
     return SlogdetResult(*_slogdet_lu(a))
   elif method == "qr":

@@ -62,12 +62,15 @@ class DecodeAttentionTest(PallasBaseTest):
 
   @parameterized.named_parameters(*[
       (
-          f"{batch_size=}_{seq_len=}_{num_heads=}_{head_dim=}_{kwargs=}",
+          (f"{batch_size=}_{seq_len=}_{num_heads=}_{head_dim=}_{kwargs=}_"
+           f"{start_idx=}_{kv_seq_len=}"),
           batch_size,
           seq_len,
           num_heads,
           head_dim,
           kwargs,
+          start_idx,
+          kv_seq_len,
       )
       for (
           batch_size,
@@ -80,6 +83,8 @@ class DecodeAttentionTest(PallasBaseTest):
           (2, 1024, 2, 64, {}),
           (1, 1024, 8, 64, {}),
       ]
+      for start_idx in [None, 123]
+      for kv_seq_len in [None, 250]
   ])
   @jax.numpy_dtype_promotion("standard")
   def test_mqa(
@@ -89,6 +94,8 @@ class DecodeAttentionTest(PallasBaseTest):
       num_heads,
       head_dim,
       kwargs,
+      start_idx,
+      kv_seq_len,
   ):
     del kwargs
 
@@ -97,19 +104,24 @@ class DecodeAttentionTest(PallasBaseTest):
     k = random.normal(k2, (batch_size, seq_len, head_dim), dtype=jnp.float16)
     v = random.normal(k3, (batch_size, seq_len, head_dim), dtype=jnp.float16)
 
-    o = decode_attention.mqa(q, k, v, interpret=self.INTERPRET)
-    o_ref = decode_attention.mqa_reference(q, k, v)
+    o = decode_attention.mqa(q, k, v, start_idx=start_idx,
+                             kv_seq_len=kv_seq_len, interpret=self.INTERPRET)
+    o_ref = decode_attention.mqa_reference(q, k, v, start_idx=start_idx,
+                                           kv_seq_len=kv_seq_len)
     np.testing.assert_allclose(o, o_ref, atol=0.05)
 
   @parameterized.named_parameters(*[
       (
-          f"{batch_size=}_{seq_len=}_{num_q_heads=}_{num_kv_heads=}_{head_dim=}_{kwargs=}",
+          (f"{batch_size=}_{seq_len=}_{num_q_heads=}_{num_kv_heads=}_{head_dim=}"
+           f"_{kwargs=}_{start_idx=}_{kv_seq_len=}"),
           batch_size,
           seq_len,
           num_q_heads,
           num_kv_heads,
           head_dim,
           kwargs,
+          start_idx,
+          kv_seq_len,
       )
       for (
           batch_size,
@@ -123,6 +135,8 @@ class DecodeAttentionTest(PallasBaseTest):
           (1, 1024, 16, 16, 64, {}),
           (1, 1024, 32, 32, 64, {}),
       ]
+      for start_idx in [None, 123]
+      for kv_seq_len in [None, 250]
   ])
   @jax.numpy_dtype_promotion("standard")
   def test_gqa(
@@ -133,6 +147,8 @@ class DecodeAttentionTest(PallasBaseTest):
       num_kv_heads,
       head_dim,
       kwargs,
+      start_idx,
+      kv_seq_len,
   ):
     del kwargs
 
@@ -146,9 +162,10 @@ class DecodeAttentionTest(PallasBaseTest):
     v = random.normal(
         k3, (batch_size, seq_len, num_kv_heads, head_dim), dtype=jnp.float16
     )
-
-    o = decode_attention.gqa(q, k, v, interpret=self.INTERPRET)
-    o_ref = decode_attention.gqa_reference(q, k, v)
+    o = decode_attention.gqa(q, k, v, start_idx=start_idx,
+                             kv_seq_len=kv_seq_len, interpret=self.INTERPRET)
+    o_ref = decode_attention.gqa_reference(q, k, v, start_idx=start_idx,
+                                           kv_seq_len=kv_seq_len)
     np.testing.assert_allclose(o, o_ref, atol=0.05)
 
 class DecodeAttentionInterpretTest(DecodeAttentionTest):

@@ -41,7 +41,6 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src import lax_reference
 from jax._src import test_util as jtu
-from jax._src import xla_bridge
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
@@ -1077,9 +1076,6 @@ class LaxTest(jtu.JaxTestCase):
       if jtu.dtypes.supported([dtype])
   ])
   def testDotAlgorithm(self, algorithm, dtype):
-    if xla_bridge.using_pjrt_c_api():
-      raise SkipTest(
-          "The dot algorithm attribute is not supported by PJRT C API.")
     if jtu.test_device_matches(["cpu"]):
       if algorithm not in {
           lax.DotAlgorithmPreset.DEFAULT,
@@ -1122,11 +1118,6 @@ class LaxTest(jtu.JaxTestCase):
         raise SkipTest(
             f"The dot algorithm '{algorithm}' is not supported on TPU."
         )
-      if algorithm != lax.DotAlgorithmPreset.DEFAULT and dtype != np.float32:
-        raise SkipTest(
-            f"The dot algorithm '{algorithm}' is only supported for float32 on"
-            " TPU."
-        )
     lhs_shape = (3, 4)
     rhs_shape = (4, 3)
     rng = jtu.rand_default(self.rng())
@@ -1135,9 +1126,6 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual(lax.dot(*args_maker(), precision=algorithm).dtype, dtype)
 
   def testDotAlgorithmInvalidFloat8Type(self):
-    if xla_bridge.using_pjrt_c_api():
-      raise SkipTest(
-          "The dot algorithm attribute is not supported by PJRT C API.")
     if jtu.test_device_matches(["cpu"]):
       raise SkipTest("Not supported on CPU.")
     lhs_shape = (3, 4)
@@ -1148,9 +1136,6 @@ class LaxTest(jtu.JaxTestCase):
       lax.dot(lhs, rhs, precision="ANY_F8_ANY_F8_F32")
 
   def testDotAlgorithmCasting(self):
-    if xla_bridge.using_pjrt_c_api():
-      raise SkipTest(
-          "The dot algorithm attribute is not supported by PJRT C API.")
     if jtu.test_device_matches(["tpu"]):
       raise SkipTest("F32_F32_F32 is not supported on TPU.")
     def fun(lhs, rhs):
@@ -1160,6 +1145,18 @@ class LaxTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     lhs, rhs = rng(lhs_shape, np.float16), rng(rhs_shape, np.float16)
     self.assertEqual(fun(lhs, rhs).dtype, np.float16)
+
+  def testDotAlgorithmConfig(self):
+    lhs_shape = (3, 4)
+    rhs_shape = (4, 3)
+    rng = jtu.rand_default(self.rng())
+    lhs, rhs = rng(lhs_shape, np.float32), rng(rhs_shape, np.float32)
+
+    expected = ("algorithm = <lhs_precision_type = f32, rhs_precision_type = "
+                "f32, accumulation_type = f32")
+    with jax.default_matmul_precision("F32_F32_F32"):
+      hlo = jax.jit(lax.dot).lower(lhs, rhs).as_text()
+      self.assertRegex(hlo, expected)
 
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
@@ -3820,11 +3817,11 @@ class FooArray:
   size = property(lambda self: self.data.size // 2)
   ndim = property(lambda self: self.data.ndim - 1)
 
-def shard_foo_array_handler(xs, shardings, layouts):
+def shard_foo_array_handler(xs, shardings, layouts, copy_semantics):
   results = []
   for x, sharding in safe_zip(xs, shardings):
     device, = sharding._addressable_device_assignment
-    aval = core.raise_to_shaped(core.get_aval(x.data))
+    aval = core.get_aval(x.data)
     results.append(pxla.batched_device_put(
         aval, jax.sharding.SingleDeviceSharding(device), [x.data], [device]))
   return results

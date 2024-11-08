@@ -97,7 +97,7 @@ def _mosaic_gpu_lowering_rule(
     out_types,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
 ):
-  del out_types  # Unused.
+  assert len(out_types) == len(ctx.avals_out)
   kernel_id = hashlib.sha256(module).digest()
   # Note that this is technically only a half measure. Someone might load a
   # compiled module with a hash collision from disk. But that's so unlikely with
@@ -131,6 +131,14 @@ class MemRefTransform:
     raise NotImplementedError("Subclasses should override this method")
 
   def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    raise NotImplementedError("Subclasses should override this method")
+
+  def batch(self, leading_rank: int) -> 'MemRefTransform':
+    """Returns a transform that accepts a ref with the extra `leading_rank` dims.
+
+    The returned transform should leave the leading dimensions unchanged and
+    only apply to the suffix of the shape.
+    """
     raise NotImplementedError("Subclasses should override this method")
 
 
@@ -198,6 +206,9 @@ class TileTransform(MemRefTransform):
         *self.tiling,
     )
 
+  def batch(self, leading_rank: int) -> MemRefTransform:
+    return self
+
 
 @dataclasses.dataclass(frozen=True)
 class TransposeTransform(MemRefTransform):
@@ -216,6 +227,11 @@ class TransposeTransform(MemRefTransform):
 
   def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
     return tuple(shape[p] for p in self.permutation)
+
+  def batch(self, leading_rank: int) -> MemRefTransform:
+    return TransposeTransform(
+        (*range(leading_rank), *(d + leading_rank for d in self.permutation))
+    )
 
 
 OnDeviceProfiler = profiler.OnDeviceProfiler
@@ -355,6 +371,8 @@ class LaunchContext:
           f"Expected same element type, got {element_type} and"
           f" {dst_ref_ty.element_type}"
       )
+    if predicate is not None and not uniform:
+      raise ValueError("Predicate can only be defined when uniform is True")
     if not isinstance(gmem_transform, tuple):
       gmem_transform = (gmem_transform,)
 
@@ -386,16 +404,26 @@ class LaunchContext:
     dyn_base_indices = tuple(
         c(i, index) if not isinstance(i, ir.Value) else i for i in base_indices
     )
+    squeezed_dims = [i for i, squeezed in enumerate(is_squeezed) if squeezed]
+    sliced_dims = [i for i, squeezed in enumerate(is_squeezed) if not squeezed]
+    # Indexing is really slicing + squeezing, and user transforms are meant to
+    # apply after that. However, we actually have to apply the indexing last
+    # (it's fused into the TMA) and so we need to commute it with all the user
+    # transforms. For slicing this is done using transform_index and
+    # transform_shape. For squeezing we actually move all the squeezed dims to
+    # the front, and then batch each transform, making it ignore the extra dims.
+    if squeezed_dims:
+      gmem_transform = (TransposeTransform((*squeezed_dims, *sliced_dims)),
+                        *(t.batch(len(squeezed_dims)) for t in gmem_transform))
+
     slice_shape = tuple(slice_shape)
     for t in gmem_transform:
       dyn_base_indices = t.transform_index(dyn_base_indices)
       slice_shape = t.transform_shape(slice_shape)
-    for dim, squeezed in enumerate(is_squeezed):
-      if squeezed:
-        smem_ref = utils.memref_unsqueeze(smem_ref, dim)
-    smem_ref_ty = ir.MemRefType(smem_ref.type)
 
-    if slice_shape != tuple(smem_ref_ty.shape):
+    smem_ref_ty = ir.MemRefType(smem_ref.type)
+    # We moved all squeezed dims to the front.
+    if slice_shape[len(squeezed_dims):] != tuple(smem_ref_ty.shape):
       raise ValueError(
           "Expected the SMEM reference to have the same shape as the"
           f" transformed slice: {tuple(smem_ref_ty.shape)} != {slice_shape}"
@@ -409,6 +437,7 @@ class LaunchContext:
 
     dyn_base_indices = list(dyn_base_indices)
     slice_shape = list(slice_shape)
+    assert all(d == 1 for d in slice_shape[:len(squeezed_dims)])
     collective_size = 1
     if collective is not None:
       if isinstance(collective, gpu.Dimension):
@@ -416,13 +445,16 @@ class LaunchContext:
       collective_size = math.prod(self.cluster_size[d] for d in collective)
     if collective_size > 1:
       def partition_dim(dim: int, idx: ir.Value, num_chunks: int):
+        # No need to partition squeezed dims. They don't even exist in smem_ref.
+        assert dim >= len(squeezed_dims)
         nonlocal smem_ref
         slice_shape[dim] //= num_chunks
         block_offset = arith.muli(idx, c(slice_shape[dim], index))
         dyn_base_indices[dim] = arith.addi(dyn_base_indices[dim], block_offset)
         smem_ref = utils.memref_slice(
             smem_ref,
-            (slice(None),) * dim + (utils.ds(block_offset, slice_shape[dim]),)
+            (slice(None),) * (dim - len(squeezed_dims))
+            + (utils.ds(block_offset, slice_shape[dim]),),
         )
       stride = 1
       idx = c(0, index)
@@ -438,10 +470,12 @@ class LaunchContext:
           rem_collective_size = 1
           break
         elif rem_collective_size % slice_size == 0:
-          dim_idx = arith.remui(idx, c(slice_size, index))
-          partition_dim(dim, dim_idx, slice_size)
-          idx = arith.divui(idx, c(slice_size, index))
-          rem_collective_size //= slice_size
+          # This is an optimization and it lets us skip squeezed dims.
+          if slice_size > 1:
+            dim_idx = arith.remui(idx, c(slice_size, index))
+            partition_dim(dim, dim_idx, slice_size)
+            idx = arith.divui(idx, c(slice_size, index))
+            rem_collective_size //= slice_size
         else:
           break  # We failed to partition the leading dimensions.
       del idx  # We overwrote the block index in the loop.

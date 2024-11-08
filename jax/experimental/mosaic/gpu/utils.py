@@ -40,32 +40,35 @@ import numpy as np
 
 WARPGROUP_SIZE: int = 128
 DYNAMIC = -9223372036854775808
+DYNAMIC32 = -2147483648
 
 # pylint: disable=line-too-long, wildcard-import, missing-function-docstring, bad-continuation, g-bad-todo, protected-access, g-explicit-length-test, missing-class-docstring, g-doc-return-or-yield, g-inconsistent-quotes
 
 
 def ptr_as_memref(ptr, memref_ty: ir.MemRefType):
-  if len(memref_ty.shape) == 0:
-    raise NotImplementedError
   i64 = ir.IntegerType.get_signless(64)
   rank = len(memref_ty.shape)
-  desc_ty = ir.Type.parse(
-      f"!llvm.struct<(ptr, ptr, i64, array<{rank} x i64>, array<{rank} x i64>)>"
-  )
+  if rank > 0:
+    desc_ty = ir.Type.parse(
+        f"!llvm.struct<(ptr, ptr, i64, array<{rank} x i64>, array<{rank} x i64>)>"
+    )
+  else:
+    desc_ty = ir.Type.parse("!llvm.struct<(ptr, ptr, i64)>")
   desc = llvm.UndefOp(desc_ty)
   desc = llvm.InsertValueOp(desc, ptr, [0])  # Allocation
   desc = llvm.InsertValueOp(desc, ptr, [1])  # Aligned Base
   desc = llvm.InsertValueOp(
       desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, 0)), [2]
   )
-  for i, s in enumerate(memref_ty.shape):
-    desc = llvm.InsertValueOp(
-        desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)), [3, i]
-    )
-  for i, s in enumerate(get_contiguous_strides(memref_ty.shape)):
-    desc = llvm.InsertValueOp(
-        desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)), [4, i]
-    )
+  if rank > 0:
+    for i, s in enumerate(memref_ty.shape):
+      desc = llvm.InsertValueOp(
+          desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)), [3, i]
+      )
+    for i, s in enumerate(get_contiguous_strides(memref_ty.shape)):
+      desc = llvm.InsertValueOp(
+          desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)), [4, i]
+      )
   return builtin.unrealized_conversion_cast([memref_ty], [desc])
 
 
@@ -1036,3 +1039,15 @@ def is_signed(dtype: jax.typing.DTypeLike) -> bool | None:
   elif jnp.issubdtype(dtype, jnp.integer):
     return jnp.issubdtype(dtype, jnp.signedinteger)
   return None
+
+
+def getelementptr(
+    ptr: ir.Value, indices: Sequence[ir.Value | int], dtype: ir.Type
+) -> ir.Value:
+  static_indices = [i if isinstance(i, int) else DYNAMIC32 for i in indices]
+  dyn_indices = [i for i in indices if not isinstance(i, int)]
+  return llvm.getelementptr(ptr.type, ptr, dyn_indices, static_indices, dtype)
+
+
+def dyn_dot(x, y):
+  return functools.reduce(arith.addi, (arith.muli(a, b) for a, b in zip(x, y)))

@@ -37,7 +37,6 @@ from jax._src.op_shardings import (
     are_op_shardings_equal, get_num_ways_dim_sharded, is_op_sharding_replicated)
 from jax._src.partition_spec import PartitionSpec
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
-from jax._src.lib import xla_extension_version
 import numpy as np
 
 
@@ -242,8 +241,6 @@ class NamedSharding(sharding.Sharding):
   _parsed_pspec: ParsedPartitionSpec
   _manual_axes: frozenset[MeshAxisName]
   _logical_device_ids: tuple[int, ...] | None
-  if xla_extension_version < 292:
-    _logical_device_ids = None
 
   @use_cpp_method()
   def __init__(
@@ -308,15 +305,10 @@ class NamedSharding(sharding.Sharding):
       cls, mesh, parsed_pspec, *, memory_kind=None, _manual_axes=frozenset(),
       _logical_device_ids=None,
   ):
-    if xla_extension_version >= 292:
-      return cls(mesh, parsed_pspec.get_partition_spec(),
-                  memory_kind=memory_kind, _parsed_pspec=parsed_pspec,
-                  _manual_axes=_manual_axes,
-                  _logical_device_ids=_logical_device_ids)
-    else:
-      return cls(mesh, parsed_pspec.get_partition_spec(),
-                  memory_kind=memory_kind, _parsed_pspec=parsed_pspec,
-                  _manual_axes=_manual_axes)
+    return cls(mesh, parsed_pspec.get_partition_spec(),
+                memory_kind=memory_kind, _parsed_pspec=parsed_pspec,
+                _manual_axes=_manual_axes,
+                _logical_device_ids=_logical_device_ids)
 
   @property
   def num_devices(self) -> int:
@@ -543,7 +535,7 @@ class PmapSharding(sharding.Sharding):
 
   # TODO(yashkatariya): Expose `sharded_dim_size` in the API if required.
   @classmethod
-  def default(cls, shape: Shape, sharded_dim: int = 0,
+  def default(cls, shape: Shape, sharded_dim: int | None = 0,
               devices: Sequence[xc.Device] | None = None) -> PmapSharding:
     """Creates a :class:`PmapSharding` which matches the default placement
     used by :func:`jax.pmap`.
@@ -555,6 +547,13 @@ class PmapSharding(sharding.Sharding):
       device order used by pmap is used, which is the order of
         :func:`jax.local_devices`.
     """
+    if sharded_dim is None:
+      if devices is None:
+        raise ValueError("One of sharded_dim or devices must be set.")
+      nrep = len(devices)
+      return cls(np.array(devices),
+          sharding_specs.pmap_sharding_spec(nrep, nrep, shape, None))
+
     # The dtype doesn't matter here. Its only used for creating the
     # sharding_spec.
     sharding_spec = sharding_specs.create_pmap_sharding_spec(
@@ -572,11 +571,6 @@ class PmapSharding(sharding.Sharding):
         else:
           raise NotImplementedError(
               'Multiple chunks in Chunked dimension not supported.')
-
-    if num_ways_sharded is None:
-      raise NotImplementedError(
-          '`None` to sharded_dim is not supported. Please file a jax '
-          'issue if you need this feature.')
 
     if devices is None:
       pmap_devices: np.ndarray = np.array(
@@ -965,20 +959,10 @@ class AUTO:
     return SdyArraySharding(self.mesh.shape_tuple, dim_shardings)
 
 
-def is_auto(x):
-  return isinstance(x, AUTO)
-
-
 class UnspecifiedValue:
   def __repr__(self):
     return "UnspecifiedValue"
 UNSPECIFIED = UnspecifiedValue()
-
-def is_unspecified(x):
-  return isinstance(x, UnspecifiedValue)
-
-def is_unspecified_or_auto(x):
-  return is_auto(x) or is_unspecified(x)
 
 
 MeshAxisName = Any
@@ -1022,8 +1006,6 @@ def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
 def get_array_mapping(
     axis_resources: ParsedPartitionSpec | AUTO | UnspecifiedValue
 ) -> ArrayMappingOrAutoOrUnspecified:
-  # TODO(yashkatariya): Use `TypeGuard` on `is_auto` when it is supported.
-  # Don't use `is_auto` here to satisfy pytype and mypy.
   if isinstance(axis_resources, (AUTO, UnspecifiedValue)):
     return axis_resources
   return OrderedDict((axis, i)
@@ -1121,7 +1103,7 @@ def prepare_axis_resources(axis_resources, arg_name,
 
   new_entries = []
   for entry in entries:
-    if is_unspecified_or_auto(entry) or entry is None:
+    if isinstance(entry, (UnspecifiedValue, AUTO)) or entry is None:
       new_entries.append(entry)
     elif isinstance(entry, sharding.Sharding):
       if isinstance(entry, PmapSharding):
@@ -1139,8 +1121,7 @@ def prepare_axis_resources(axis_resources, arg_name,
 def _check_unique_resources(axis_resources, arg_name):
   for arg_axis_resources in axis_resources:
     if not arg_axis_resources: continue
-    if (is_unspecified_or_auto(arg_axis_resources) or
-        isinstance(arg_axis_resources, sharding.Sharding)):
+    if isinstance(arg_axis_resources, (UnspecifiedValue, AUTO, sharding.Sharding)):
       continue
     constrained_dims = [d for d in arg_axis_resources if d is not None]
     resource_counts = collections.Counter(
@@ -1747,7 +1728,7 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
         f'of mesh_shape {axis_shapes}')
   elif axis_size < len(devices):
     devices = devices[:axis_size]
-  if devices[0].device_kind == mesh_utils._TPU_V5_LITE:
+  if devices[0].device_kind in (mesh_utils._TPU_V5_LITE, mesh_utils._TPU_V5E):
     allow_split_physical_axes = True
   else:
     allow_split_physical_axes = False

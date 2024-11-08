@@ -18,6 +18,8 @@ import enum
 import itertools
 import math
 import operator
+import os
+import re
 import unittest
 
 from absl.testing import absltest, parameterized
@@ -29,6 +31,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
+from jax.experimental.mosaic.gpu import fragmented_array as fa
 import jax.numpy as jnp
 import numpy as np
 try:
@@ -361,6 +364,26 @@ class MemRefTest(TestCase):
         do_test()
     else:
       do_test()
+
+  @parameterized.parameters(jnp.uint64, jnp.uint32, jnp.uint16, jnp.uint8)
+  def test_scalar_argument(self, dtype):
+    scalar = 42
+    expected = np.full((128, 128), scalar, dtype=dtype)
+
+    def kernel(ctx, inp, out, _):
+      del ctx
+      inp = memref.load(inp, [])
+      mgpu.FragmentedArray.splat(inp, expected.shape, is_signed=True).store_untiled(out)
+
+    res = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        jax.ShapeDtypeStruct(shape=(), dtype=expected.dtype),
+        expected,
+        (),
+    )(scalar)
+    np.testing.assert_array_equal(res, expected)
 
 
 def get_packed_shape(strides, shape):
@@ -1060,6 +1083,30 @@ class TMATest(TestCase):
     y = f(x)
     np.testing.assert_array_equal(y, x)
 
+  def test_tma_load_indexed_tiled(self):
+    shape = (128, 2, 128)
+    tiling = mgpu.TileTransform((32, 32))
+    def kernel(ctx, src, dst, scratch):
+      tmp, barrier = scratch
+      ctx.async_copy(
+          src_ref=src,
+          dst_ref=tmp,
+          barrier=barrier,
+          gmem_transform=tiling,
+          gmem_slice=(slice(None), 1, slice(None)),
+      )
+      barrier.wait()
+      ctx.async_copy(src_ref=tmp, dst_ref=dst, gmem_transform=tiling)
+      ctx.await_async_copy(0)
+    x = np.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
+    smem = (
+        jax.ShapeDtypeStruct((4, 4, 32, 32), jnp.float32),
+        mgpu.TMABarrier(),
+    )
+    out_shape = jax.ShapeDtypeStruct((128, 128), jnp.float32)
+    f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, out_shape, smem)
+    np.testing.assert_array_equal(f(x), x[:, 1, :])
+
   @parameterized.product(
       swizzle=(None, 128),
       dtype=(jnp.float16, jnp.float32),
@@ -1209,26 +1256,20 @@ class FragmentedArrayTest(TestCase):
           operator.add,
           operator.mul,
           operator.sub,
-          operator.truediv,
-          operator.mod,
           (lambda x, y: mgpu.FragmentedArray.max(x, y), np.maximum),
       ),
       dtype=[jnp.float32, jnp.int32, jnp.uint32],
       m=(64, 128),
       n=(8, 16, 32, 64, 80, 128, 256),
   )
-  @jtu.ignore_warning(message="(invalid value|divide by zero)",
-                      category=RuntimeWarning)
+  @jtu.ignore_warning(
+      message="(invalid value|divide by zero)", category=RuntimeWarning
+  )
   def test_binary(self, op, dtype, m=64, n=32):
     if isinstance(op, tuple):
       op, np_op = op
     else:
       np_op = op
-
-    if jnp.issubdtype(dtype, jnp.integer) and op is operator.truediv:
-      self.skipTest("Unsupported for integer types")
-    if jnp.issubdtype(dtype, jnp.floating) and op is operator.mod:
-      self.skipTest("Unsupported for floating types")
 
     for scalar_rhs in [None, 2]:
       def kernel(ctx, dst, _):
@@ -1242,10 +1283,30 @@ class FragmentedArrayTest(TestCase):
       )()
       ref_x = np.arange(m * n, dtype=dtype).reshape(m, n)
       ref_rhs = scalar_rhs or ref_x
-      if op is operator.truediv:
-        np.testing.assert_allclose(result, np_op(ref_x, ref_rhs), atol=2e-7)
-      else:
-        np.testing.assert_array_equal(result, np_op(ref_x, ref_rhs))
+      np.testing.assert_array_equal(result, np_op(ref_x, ref_rhs))
+
+  @parameterized.product(
+      op=[operator.truediv, operator.floordiv, operator.mod],
+      dtype=[jnp.float32, jnp.int32, jnp.uint32],
+  )
+  def test_division(self, op, dtype, m=64, n=32):
+    if jnp.issubdtype(dtype, jnp.integer) and op is operator.truediv:
+      self.skipTest("Unsupported for integer types")
+    if jnp.issubdtype(dtype, jnp.floating) and op is operator.mod:
+      self.skipTest("Unsupported for floating types")
+
+    def kernel(ctx, dst, _):
+      iota = iota_tensor(m, n, dtype)
+      op(dtype(4.2).item() * iota, iota + 1).store_untiled(dst)
+
+    out_shape = jax.ShapeDtypeStruct((m, n), dtype)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+    )()
+    iota = np.arange(m * n, dtype=dtype).reshape(m, n)
+    np.testing.assert_allclose(
+        result, op(dtype(4.2).item() * iota, iota + 1), atol=2e-7
+    )
 
   @parameterized.product(
       op=[
@@ -1264,6 +1325,22 @@ class FragmentedArrayTest(TestCase):
       op(iota, iota + 1).store_untiled(dst)
 
     out_shape = jax.ShapeDtypeStruct((m, n), jnp.bool)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+    )()
+    iota = np.arange(m * n, dtype=dtype).reshape(m, n)
+    np.testing.assert_array_equal(result, op(iota, iota + 1))
+
+  @parameterized.product(
+      op=[operator.and_, operator.or_, operator.xor],
+      dtype=[jnp.uint32],
+  )
+  def test_bitwise(self, op, dtype, m=64, n=8):
+    def kernel(ctx, dst, _):
+      iota = iota_tensor(m, n, dtype)
+      op(iota, iota + 1).store_untiled(dst)
+
+    out_shape = jax.ShapeDtypeStruct((m, n), dtype)
     result = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
     )()
@@ -1481,6 +1558,17 @@ class ProfilerTest(TestCase):
     x = jnp.arange(1024 * 1024)
     profiler.measure(lambda x, y: x + y, x, x)  # This is just a smoke test
 
+  def test_profile(self):
+    def kernel(ctx, src, dst, _):
+      mgpu.FragmentedArray.load_strided(src).store_untiled(dst)
+    x = np.arange(64 * 64, dtype=jnp.float32).reshape(64, 64)
+    spec = profiler.ProfilerSpec(1024)
+    # This is just a smoke test.
+    f = jax.jit(mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), x, x, (), prof_spec=spec
+    ))
+    jax.block_until_ready(f(x))
+
   def test_multigpu(self):
     if len(jax.devices()) < 2:
       self.skipTest("Need at least 2 devices")
@@ -1516,6 +1604,87 @@ class TorchTest(TestCase):
     y = f(x)
     np.testing.assert_allclose(y.cpu(), x.cpu() * 2)
     del y  # Make sure the destructor runs successfully.
+
+
+class LayoutTest(TestCase):
+
+  @parameterized.product(
+      shape=((128, 128), (64, 8), (64, 256)),
+      dtype=(jnp.int32, jnp.int16, jnp.int8),
+  )
+  def test_wgmma_tiled_layout(self, shape, dtype):
+    def kernel(ctx, dst, _):
+      iota = iota_tensor(*shape, dtype)
+      tiled = iota.to_layout(fa._tiled_wgmma_layout(shape))
+      # Note that WGMMA layouts are always (shape[0] // 64, shape[1] // 8, 2, 1)
+      self.assertEqual(
+          tiled.registers.shape,
+          (shape[0] // 64, shape[1] // 8, 1, 1, 2, 1, 1, 1, 1, 1),
+      )
+      self.assertEqual(tiled.shape, shape)
+      self.assertEqual(tiled.mlir_dtype, iota.mlir_dtype)
+      tiled.store_untiled(dst)
+    ty = jax.ShapeDtypeStruct(shape, dtype)
+    f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), (), ty, ())
+    expected = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    np.testing.assert_array_equal(f(), expected)
+
+  @parameterized.product(
+      load_tiled=[False, True],
+      store_tiled=[False, True],
+      dtype=[jnp.int16],
+      swizzle=[32, 64, 128],
+      num_col_tiles=[1, 2, 4],
+  )
+  def test_copy_tiled(self, load_tiled, store_tiled, dtype, swizzle, num_col_tiles):
+    mlir_dtype = utils.dtype_to_ir_type(dtype)
+    col_tiling = swizzle // bytewidth(mlir_dtype)
+    m, n = 128, col_tiling * num_col_tiles
+    tiling = (64, col_tiling)
+    tiled_layout = fa._tiled_wgmma_layout((m, n))
+    load_layout = tiled_layout if load_tiled else mgpu.WGMMA_LAYOUT
+    store_layout = tiled_layout if store_tiled else mgpu.WGMMA_LAYOUT
+    def kernel(ctx, in_, out, smems):
+      smem_in, smem_out, barrier = smems
+      ctx.async_copy(src_ref=in_, dst_ref=smem_in, swizzle=swizzle, barrier=barrier)
+      barrier.wait()
+      t = mgpu.FragmentedArray.load_tiled(
+          smem_in, swizzle=swizzle, is_signed=True, layout=load_layout
+      )
+      t.to_layout(store_layout).store_tiled(smem_out, swizzle=swizzle)
+      mgpu.commit_shared()
+      ctx.async_copy(src_ref=smem_out, dst_ref=out, swizzle=swizzle)
+      ctx.await_async_copy(0)
+    expected = (
+        np.arange(m * n, dtype=dtype)
+        .reshape(m // tiling[0], tiling[0], n // tiling[1], tiling[1])
+        .transpose(0, 2, 1, 3)
+    )
+
+    prev_dump = os.environ.get("MOSAIC_GPU_DUMP_SASS", None)
+    os.environ["MOSAIC_GPU_DUMP_SASS"] = "1"
+    try:
+      with jtu.capture_stdout() as get_sass:
+        iota = mgpu.as_gpu_kernel(
+            kernel, (1, 1, 1), (128, 1, 1), expected, expected,
+            [expected, expected, mgpu.TMABarrier()],
+        )(expected)
+    finally:
+      if prev_dump is not None:
+        os.environ["MOSAIC_GPU_DUMP_SASS"] = prev_dump
+    np.testing.assert_array_equal(iota, expected)
+
+    # Verify that we don't use too many registers for the transfers.
+    # We verify LDS and STS separately, because they might use two different
+    # methods of computing offsets and we don't rely on CSE between them.
+    register_pattern = re.compile(r"(R[0-9]+)")
+    expected_regs = swizzle // bytewidth(mlir_dtype) // 8
+    for instr in ("STS", "LDS"):
+      with self.subTest(instr + " count"):
+        addrs = re.findall(instr + r".* \[(.*)\]", get_sass())
+        chain = itertools.chain.from_iterable
+        used_regs = set(chain(register_pattern.findall(addr) for addr in addrs))
+        self.assertLen(used_regs, expected_regs)
 
 
 if __name__ == "__main__":

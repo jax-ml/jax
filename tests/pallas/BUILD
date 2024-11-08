@@ -162,6 +162,7 @@ jax_multiplatform_test(
     ],
     env = {
         "JAX_PALLAS_USE_MOSAIC_GPU": "1",
+        "JAX_PALLAS_VERBOSE_ERRORS": "0",
     },
     deps = [
         "//jax:pallas",
@@ -221,7 +222,6 @@ jax_multiplatform_test(
         "//jax:pallas",
         "//jax:pallas_gpu",  # build_cleaner: keep
         "//jax:pallas_tpu",  # build_cleaner: keep
-        "//jax/experimental/export",
     ],
 )
 
@@ -390,6 +390,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "tpu_paged_attention_kernel_test",
     srcs = ["tpu_paged_attention_kernel_test.py"],
+    disable_configs = [
+        "tpu_v5p_1x1",
+    ],
     enable_backends = ["tpu"],
     shard_count = 5,
     tags = [
@@ -465,5 +468,32 @@ jax_multiplatform_test(
         "//jax:pallas",
         "//jax:pallas_gpu",
         "//jax:pallas_gpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
+    name = "mgpu_attention_run",
+    srcs = ["//jax/experimental/pallas/ops/gpu:attention_mgpu.py"],
+    enable_backends = [],
+    enable_configs = ["gpu_h100_x32"],
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_mosaic_gpu",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
+    name = "mgpu_attention_test",
+    srcs = ["mgpu_attention_test.py"],
+    enable_backends = [],
+    enable_configs = ["gpu_h100_x32"],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_experimental_gpu_ops",
+        "//jax:pallas_mosaic_gpu",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )

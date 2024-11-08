@@ -10,7 +10,44 @@ Remember to align the itemized text with the first line of an item within a list
 When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
-## jax 0.4.35
+## jax 0.4.36
+
+* Breaking Changes
+  * {func}`jax.experimental.jax2tf.convert` with `native_serialization=False`
+    or with `enable_xla=False` have been deprecated since July 2024, with
+    JAX version 0.4.31. Now we removed support for these use cases. `jax2tf`
+    with native serialization will still be supported.
+  * In `jax.interpreters.xla`, the `xb`, `xc`, and `xe` symbols have been removed
+    after being deprecated in JAX v0.4.31. Instead use `xb = jax.lib.xla_bridge`,
+    `xc = jax.lib.xla_client`, and `xe = jax.lib.xla_extension`.
+  * The deprecated module `jax.experimental.export` has been removed. It was replaced
+    by {mod}`jax.export` in JAX v0.4.30. See the [migration guide](https://jax.readthedocs.io/en/latest/export/export.html#migration-guide-from-jax-experimental-export)
+    for information on migrating to the new API.
+  * The `initial` argument to {func}`jax.nn.softmax` and {func}`jax.nn.log_softmax`
+    has been removed, after being deprecated in v0.4.27.
+  * The following deprecated methods and functions in {mod}`jax.export` have
+    been removed:
+      * `jax.export.DisabledSafetyCheck.shape_assertions`: it had no effect
+        already.
+      * `jax.export.Exported.lowering_platforms`: use `platforms`.
+      * `jax.export.Exported.mlir_module_serialization_version`:
+        use `calling_convention_version`.
+      * `jax.export.Exported.uses_shape_polymorphism`:
+         use `uses_global_constants`.
+      * the `lowering_platforms` kwarg for {func}`jax.export.export`: use
+        `platforms` instead.
+  * Hashing of tracers, which has been deprecated since version 0.4.30, now
+    results in a `TypeError`.
+
+* New Features
+  * {func}`jax.jit` got a new `compiler_options: dict[str, Any]` argument, for
+    passing compilation options to XLA. For the moment it's undocumented and
+    may be in flux.
+  * {func}`jax.tree_util.register_dataclass` now allows metadata fields to be
+    declared inline via {func}`dataclasses.field`. See the function documentation
+    for examples.
+
+## jax 0.4.35 (Oct 22, 2024)
 
 * Breaking Changes
   * {func}`jax.numpy.isscalar` now returns True for any array-like object with

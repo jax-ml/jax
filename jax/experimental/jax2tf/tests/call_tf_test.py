@@ -90,7 +90,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     super().setUp()
     self.warning_ctx = jtu.ignore_warning(
         message=(
-            "(jax2tf.convert with native_serialization=False is deprecated"
+            "(jax2tf.convert with native_serialization=False has been deprecated"
             "|Calling from_dlpack with a DLPack tensor is deprecated)"
         )
     )
@@ -390,6 +390,20 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     x = np.float32(2.)
     res = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))(x)
     self.assertAllClose((x * 3. + 4. + 2.) * 3. + 5., res, check_dtypes=False)
+
+  def test_with_capture_then_convert_again(self):
+    captured_by_tf = tf.Variable(np.arange(1024, dtype=np.float32))
+    def tf_fn(x):
+      return tf.math.add(x, captured_by_tf)
+
+    x = np.arange(1024, dtype=np.float32)
+    res = jax2tf.convert(jax2tf.call_tf(tf_fn))(x)
+    self.assertAllClose(res, 2 * x)
+
+    # The bug appears only when we use non-eager mode on the converted func
+    res = tf.function(jax2tf.convert(jax2tf.call_tf(tf_fn)),
+                      autograph=False)(x)
+    self.assertAllClose(res, 2 * x)
 
   @_parameterized_jit
   def test_grad(self, with_jit=False):
@@ -789,7 +803,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     lowering_platforms = ("tpu", "cpu", "cuda")
 
     exp = export.export(jax.jit(f_jax),
-                        lowering_platforms=lowering_platforms)(x)
+                        platforms=lowering_platforms)(x)
     for jax_platform in jax_and_tf_platforms:
       with self.subTest(jax_platform):
         jax_device = jax.devices(jax_platform)[0]
@@ -883,7 +897,7 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     super().setUp()
     self.warning_ctx = jtu.ignore_warning(
         message=(
-            "(jax2tf.convert with native_serialization=False is deprecated"
+            "(jax2tf.convert with native_serialization=False has been deprecated"
             "|Calling from_dlpack with a DLPack tensor is deprecated)"
         )
     )
@@ -957,6 +971,13 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     restored_jax = jax2tf.call_tf(restored_model.f)
     self.assertAllClose(f_jax(param, x), restored_jax(x))
     self.assertAllClose(f_jax(param, x), jax.jit(restored_jax)(x))
+    self.assertAllClose(f_jax(param, x), jax2tf.convert(restored_jax)(x))
+    self.assertAllClose(f_jax(param, x),
+                        tf.function(jax2tf.convert(restored_jax),
+                                    autograph=False)(x))
+    self.assertAllClose(f_jax(param, x),
+                        tf.function(jax2tf.convert(restored_jax),
+                                    autograph=True)(x))
 
   def test_saved_model_shape_poly(self):
     tracing_count = 0
@@ -1182,7 +1203,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     super().setUp()
     self.warning_ctx = jtu.ignore_warning(
         message=(
-            "(jax2tf.convert with native_serialization=False is deprecated"
+            "(jax2tf.convert with native_serialization=False has been deprecated"
             "|Calling from_dlpack with a DLPack tensor is deprecated)"
         )
     )

@@ -294,7 +294,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     args_specs = export.symbolic_args_specs(data.inputs, polymorphic_shapes)
     exported = export.export(
       jax.jit(func),
-      lowering_platforms=(self.default_jax_backend(),),
+      platforms=(self.default_jax_backend(),),
       disabled_checks=tuple(
         export.DisabledSafetyCheck.custom_call(target)
         for target in allow_unstable_custom_call_targets)

@@ -63,6 +63,7 @@ struct ApplyVectorLayoutContext {
   std::array<int64_t, 2> mxu_shape = {128, 128};
   int64_t max_sublanes_in_scratch = 0;
   int64_t vmem_banks = -1;  // -1 means "unspecified".
+  int32_t max_shuffle_sublane_offset = -1;  // -1 means "unspecified".
 };
 
 std::pair<bool, bool> mightCommunicateBetweenChips(Operation* op);
@@ -102,6 +103,10 @@ LogicalResult specializeMemorySpace(TypedValue<MemRefType> value,
 MemRefType getMemRefType(Value value);
 
 bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel = 8);
+
+DotDimensionNumbersAttr defaultDimensionNumbers(Builder &builder,
+                                                bool transpose_lhs,
+                                                bool transpose_rhs);
 
 #define GEN_PASS_REGISTRATION
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"

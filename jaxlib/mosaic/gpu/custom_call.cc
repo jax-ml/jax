@@ -31,12 +31,13 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "jaxlib/gpu/vendor.h"
 #include "absl/base/optimization.h"
+#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "llvm/include/llvm/ADT/SmallVector.h"
 #include "llvm/include/llvm/Support/CodeGen.h"
@@ -52,6 +53,7 @@ limitations under the License.
 #include "mlir/include/mlir/Conversion/Passes.h"
 #include "mlir/include/mlir/Conversion/UBToLLVM/UBToLLVM.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/include/mlir/Dialect/Arith/Transforms/Passes.h"
 #include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/include/mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/include/mlir/Dialect/GPU/Transforms/Passes.h"
@@ -79,8 +81,10 @@ limitations under the License.
 #include "mlir/include/mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/include/mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "mlir/include/mlir/Transforms/Passes.h"
+#include "jaxlib/gpu/vendor.h"
 #include "jaxlib/mosaic/gpu/launch_lowering.h"
 #include "jaxlib/mosaic/gpu/passes.h"
+#include "jaxlib/mosaic/gpu/target.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
 
@@ -89,8 +93,30 @@ namespace {
 using MosaicInitFunc = void(void****);
 using MosaicHostFunc = void(void**);
 
+absl::StatusOr<std::pair<std::string, std::string>> GetSmAndPtxIsaVersion() {
+  // Assumes driver has been initialized and a context exists. XLA already has
+  // some utilities to query this, but we try to stay runtime-agnostic, so we
+  // build our own here.
+  CUdevice device;
+  if (cuCtxGetDevice(&device) != CUDA_SUCCESS) {
+    return absl::InternalError("Failed to get device for current context");
+  }
+  int major = 0;
+  if (cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR,
+                           device) != CUDA_SUCCESS) {
+    return absl::InternalError("Failed to get major compute capability");
+  }
+  int minor = 0;
+  if (cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR,
+                           device) != CUDA_SUCCESS) {
+    return absl::InternalError("Failed to get minor compute capability");
+  }
+  return mosaic::gpu::GetSmAndPtxIsaVersion(major, minor);
+}
+
 mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
-    mlir::MLIRContext* ctx, mlir::gpu::CompilationTarget target) {
+    mlir::MLIRContext* ctx, mlir::gpu::CompilationTarget target,
+    const std::string& sm, const std::string& ptx_isa) {
   static bool register_once = []() {
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTarget();
@@ -117,12 +143,14 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mosaic::gpu::registerGpuLaunchLoweringPass();
     mosaic::gpu::registerConvertGpuToLLVMPass();
     mosaic::gpu::registerByvalInsertionPass();
+    mlir::arith::registerArithExpandOpsPass();
     return true;
   }();
   (void)register_once;
-  return mlir::parsePassPipeline(
+  return mlir::parsePassPipeline(absl::StrCat(
       R"(
       builtin.module(
+        arith-expand,
         canonicalize,
         gpu-launch-sink-index-computations,
         convert-nvgpu-to-nvvm,
@@ -131,7 +159,9 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         convert-scf-to-cf,
         convert-nvvm-to-llvm,
         expand-strided-metadata,
-        nvvm-attach-target{O=3 chip=sm_90a fast=false features=+ptx80 ftz=false  module= triple=nvptx64-nvidia-cuda},
+        nvvm-attach-target{O=3 chip=)",
+      sm, R"( fast=false features=+)", ptx_isa,
+      R"( ftz=false  module= triple=nvptx64-nvidia-cuda},
         lower-affine,
         convert-arith-to-llvm{index-bitwidth=0},
         convert-index-to-llvm{index-bitwidth=64},
@@ -144,19 +174,19 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         gpu.module(mosaic-byval-insertion),
         gpu.module(reconcile-unrealized-casts),
         mosaic-convert-gpu-to-llvm,
-        gpu-module-to-binary{format=)" +
-      mlir::gpu::stringifyCompilationTarget(target).str() + R"(},
+        gpu-module-to-binary{format=)",
+      mlir::gpu::stringifyCompilationTarget(target).str(), R"(},
         convert-math-to-llvm{approximate-log1p=true},
         canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true},
         cse,
-        )" +
+        )",
       (target != mlir::gpu::CompilationTarget::Assembly ? "gpu-launch-lowering,"
-                                                        : "") +
+                                                        : ""),
       R"(
         convert-to-llvm,
         reconcile-unrealized-casts
       )
-  )");
+  )"));
 }
 
 mlir::LogicalResult RunPasses(mlir::OpPassManager&& passes,
@@ -251,7 +281,8 @@ class TemporaryDirectory {
   std::string path;
 };
 
-void DumpCompilationOutput(mlir::ModuleOp module) {
+void DumpCompilationOutput(mlir::ModuleOp module, const std::string& sm,
+                           const std::string& ptx_isa) {
   bool dump_ptx = getenv("MOSAIC_GPU_DUMP_PTX") != nullptr;
   bool dump_ptxas = getenv("MOSAIC_GPU_DUMP_PTXAS") != nullptr;
   bool dump_sass = getenv("MOSAIC_GPU_DUMP_SASS") != nullptr;
@@ -260,8 +291,9 @@ void DumpCompilationOutput(mlir::ModuleOp module) {
   }
 
   module = module.clone();  // Prevent accidental modification.
-  auto passes = GetPassPipeline(module.getContext(),
-                                mlir::gpu::CompilationTarget::Assembly);
+  absl::Cleanup module_destroyer = [module] { module->erase(); };
+  auto passes = GetPassPipeline(
+      module.getContext(), mlir::gpu::CompilationTarget::Assembly, sm, ptx_isa);
   if (mlir::failed(passes) ||
       mlir::failed(RunPasses(std::move(*passes), module))) {
     return;
@@ -297,7 +329,7 @@ void DumpCompilationOutput(mlir::ModuleOp module) {
     // Run ptxas to generate SASS.
     std::vector<const char*> ptxas_args = {
         "ptxas",          "--opt-level",   "3",
-        "--gpu-name",     "sm_90a",        "--output-file",
+        "--gpu-name",     sm.c_str(),      "--output-file",
         elf_path.c_str(), ptx_path.c_str()};
     if (dump_ptxas) {
       ptxas_args.push_back("-v");
@@ -321,9 +353,15 @@ void DumpCompilationOutput(mlir::ModuleOp module) {
 
 absl::StatusOr<std::unique_ptr<mlir::ExecutionEngine>> Compile(
     mlir::ModuleOp module) {
-  DumpCompilationOutput(module);
-  auto passes = GetPassPipeline(module.getContext(),
-                                mlir::gpu::CompilationTarget::Binary);
+  auto sm_and_ptx_isa = GetSmAndPtxIsaVersion();
+  if (!sm_and_ptx_isa.ok()) {
+    return sm_and_ptx_isa.status();
+  }
+  const std::string sm = sm_and_ptx_isa.value().first;
+  const std::string ptx_isa = sm_and_ptx_isa.value().second;
+  DumpCompilationOutput(module, sm, ptx_isa);
+  auto passes = GetPassPipeline(
+      module.getContext(), mlir::gpu::CompilationTarget::Binary, sm, ptx_isa);
   if (mlir::failed(passes)) {
     return absl::InternalError("Failed to construct pass pipeline");
   }

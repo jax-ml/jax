@@ -50,6 +50,7 @@ from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
@@ -837,6 +838,8 @@ def jaxpr_subcomp(
         except LoweringException:
           raise  # We only add the extra info to the innermost exception.
         except Exception as e:
+          if not pallas_call._verbose_errors_enabled():
+            raise
           msg = (f"{type(e).__name__}: {e}\n" +
                 "Additional diagnostics: \n" +
                 f"Failing jaxpr equation: {eqn}\n")
@@ -1521,8 +1524,9 @@ lowering_rules[lax.reduce_or_p] = _reduce_or_lowering_rule
 
 
 def _broadcast_in_dim_lowering_rule(
-    ctx: LoweringRuleContext, val, *, shape, broadcast_dimensions
+    ctx: LoweringRuleContext, val, *, shape, broadcast_dimensions, sharding
 ):
+  del sharding
   (aval_in,) = ctx.avals_in
   (aval_out,) = ctx.avals_out
 
@@ -1560,6 +1564,71 @@ def _broadcast_in_dim_lowering_rule(
 lowering_rules[lax.broadcast_in_dim_p] = _broadcast_in_dim_lowering_rule
 
 
+def jax_dot_dims_to_tpu_dot_dot_dims(dimension_numbers, lhs_shape, rhs_shape):
+  """Converts a jax dot dimension numbers to a tpu dot dimension numbers.
+
+  Jax dot dimension numbers are given as a tuple of tuples of sequences of ints
+  of the form ((lhs_contracting_dims, rhs_contracting_dims), (lhs_batch_dims,
+  rhs_batch_dims)).
+
+  TPU dot dimension numbers are given as an MLIR definition of the form
+  #tpu.dot_dimension_numbers - which can be found in the tpu dilect definition
+  # file, tpu.td .
+  """
+  (contracting_dims, batch_dims) = dimension_numbers
+  lhs_contracting_dims, rhs_contracting_dims = contracting_dims
+  lhs_batch_dims, rhs_batch_dims = batch_dims
+
+  lhs_total_dims = set(range(len(lhs_shape)))
+  rhs_total_dims = set(range(len(rhs_shape)))
+
+  lhs_non_contracting_dims = sorted(
+      lhs_total_dims - set(lhs_contracting_dims) - set(lhs_batch_dims)
+  )
+  rhs_non_contracting_dims = sorted(
+      rhs_total_dims - set(rhs_contracting_dims) - set(rhs_batch_dims)
+  )
+
+  # Create output_dim_order
+  # Note: we assume that the output dimensions are ordered as batch dims, lhs_non_contracting_dims,
+  # rhs_non_contracting_dims - this assumption is safe to make, as it is
+  # the same one made in jax's dot_general.
+  output_dim_order = []
+
+  lhs_dim_map = {dim: idx for idx, dim in enumerate(range(len(lhs_shape)))}
+  rhs_dim_map = {dim: idx for idx, dim in enumerate(range(len(rhs_shape)))}
+
+  for dim in lhs_batch_dims:
+    output_dim_order.append(0)
+    output_dim_order.append(lhs_dim_map[dim])
+
+  for dim in lhs_non_contracting_dims:
+    output_dim_order.append(0)
+    output_dim_order.append(lhs_dim_map[dim])
+
+  for dim in rhs_non_contracting_dims:
+    output_dim_order.append(1)
+    output_dim_order.append(rhs_dim_map[dim])
+
+  def format_dims(dims):
+    return "[" + ", ".join(str(d) for d in dims) + "]"
+
+  all_dims = (
+      lhs_contracting_dims,
+      rhs_contracting_dims,
+      lhs_non_contracting_dims,
+      rhs_non_contracting_dims,
+      output_dim_order,
+      lhs_batch_dims,
+      rhs_batch_dims,
+  )
+  tpu_dim_numbers_str = (
+      f"#tpu.dot_dimension_numbers<{','.join(map(format_dims, all_dims))}>"
+  )
+
+  return ir.Attribute.parse(tpu_dim_numbers_str)
+
+
 def _dot_general_lowering_rule(
     ctx: LoweringRuleContext, x, y, dimension_numbers, precision, **_
 ):
@@ -1585,7 +1654,7 @@ def _dot_general_lowering_rule(
     raise NotImplementedError(
         f"Only 2D tensors supported in dot; received: {ctx.avals_in}"
     )
-  lhs_aval, _ = ctx.avals_in
+  lhs_aval, rhs_aval = ctx.avals_in
   # This is really a matrix-vector product. It only looks like matrix-matrix.
   if lhs_dims == (1,) and rhs_dims == (1,) and ctx.avals_in[1].shape[0] == 1:
     if ctx.avals_in[0].shape != ctx.avals_in[1].shape:
@@ -1611,18 +1680,10 @@ def _dot_general_lowering_rule(
     )
     return vector.shape_cast(out_type, red)
 
-  if lhs_dims == (1,):
-    transpose_lhs = False
-  elif lhs_dims == (0,):
-    transpose_lhs = True
-  else:
-    raise NotImplementedError
-  if rhs_dims == (0,):
-    transpose_rhs = False
-  elif rhs_dims == (1,):
-    transpose_rhs = True
-  else:
-    raise NotImplementedError
+  tpu_dot_dims = jax_dot_dims_to_tpu_dot_dot_dims(
+      dimension_numbers, lhs_aval.shape, rhs_aval.shape
+  )
+
   if precision is not None:
     if precision[0] != precision[1]:
       raise NotImplementedError("Per-operand dot precision unsupported")
@@ -1639,9 +1700,12 @@ def _dot_general_lowering_rule(
       out_type, ir.DenseElementsAttr.get_splat(out_type, val)
   )
   return tpu.matmul(
-      out_type, x, y, out_tile,
-      transpose_lhs=transpose_lhs, transpose_rhs=transpose_rhs,
-      precision=precision_attr
+      out_type,
+      x,
+      y,
+      out_tile,
+      dimension_numbers=tpu_dot_dims,
+      precision=precision_attr,
   )
 
 
@@ -1909,7 +1973,7 @@ def _sub_lowering_rule(ctx: LoweringRuleContext, x, y):
 
 
 lowering_rules[lax.sub_p] = _sub_lowering_rule
-skip_mlir_conversions.add(lax.max_p)
+skip_mlir_conversions.add(lax.sub_p)
 
 
 def _mul_lowering_rule(ctx: LoweringRuleContext, x, y):
@@ -1929,7 +1993,7 @@ skip_mlir_conversions.add(lax.mul_p)
 def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   (aval_out,) = ctx.avals_out
-  if jnp.issubdtype(aval_out.dtype, jnp.integer):
+  if jnp.issubdtype(aval_out.dtype, jnp.signedinteger):
     return arith.divsi(x, y)
   if jnp.issubdtype(aval_out.dtype, jnp.unsignedinteger):
     return arith.divui(x, y)
@@ -1992,6 +2056,15 @@ def _sign_lowering_rule(ctx: LoweringRuleContext, x):
 lowering_rules[lax.sign_p] = _sign_lowering_rule
 
 
+def _nextafter_lowering_rule(ctx: LoweringRuleContext, x, y):
+  return lower_fun(
+      pallas_utils.nextafter_lowering_helper, multiple_results=False,
+  )(ctx, x, y)
+
+
+lowering_rules[lax.nextafter_p] = _nextafter_lowering_rule
+
+
 def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):
   return math.rsqrt(x)
 
@@ -2014,6 +2087,11 @@ lowering_rules[lax.exp_p] = _exp_lowering_rule
 
 
 def _pow_lowering_rule(ctx: LoweringRuleContext, x, y):
+  # jax accepts float base (x) and integer/float exponent (y), and integer
+  # exponent is casted to float.
+  out_type = aval_to_ir_type(ctx.avals_out[0])
+  if jnp.issubdtype(ctx.avals_in[1].dtype, jnp.integer):
+    y = arith.sitofp(out_type, y)
   if not isinstance(x, ir.Value) and x == 2.:
     return math.exp2(y)
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
@@ -2795,16 +2873,17 @@ def _device_id_to_logical(
     # Mesh means we are passed the mesh coordinates for the device
     device_ids = tree_util.tree_leaves(device_id)
     mesh_strides = ctx.lowering_context.mesh_context.mesh_strides
-    def _linearize_mesh_indices(*indices):
-      return sum(a * b for a, b in zip(indices, mesh_strides))
-    lower_ctx = LoweringRuleContext(
-        lowering_context=ctx.lowering_context,
-        avals_in=[pallas_core.index_map_grid_aval] * len(device_ids),
-        avals_out=[pallas_core.index_map_grid_aval],
-        block_shapes=(None,) * len(device_ids),
+
+    i32 = ir.IntegerType.get_signless(32)
+    if len(device_ids) == 0:
+      return arith.constant(i32, 0)
+    return functools.reduce(
+        arith.addi,
+        (
+            arith.muli(a, arith.constant(i32, b))
+            for a, b in zip(device_ids, mesh_strides)
+        ),
     )
-    return lower_fun(_linearize_mesh_indices, multiple_results=False)(
-        lower_ctx, *device_ids)
   elif device_id_type is tpu_primitives.DeviceIdType.LOGICAL:
     return device_id
   raise NotImplementedError(f"Unsupported device id type: {device_id_type}")

@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import dataclasses
 import math
-from typing import Any, Protocol, Union
+from typing import Any, Callable, Protocol, Union
 
 from jax._src import core
 from jax._src import dtypes
@@ -291,14 +291,13 @@ class AbstractRef(core.AbstractValue):
       raise AttributeError
     return self.inner_aval.weak_type
 
+  def update_weak_type(self, weak_type):
+    return AbstractRef(self.inner_aval.update_weak_type(weak_type))
+
   def update(self, inner_aval=None):
     if inner_aval is None:
       return AbstractRef(self.inner_aval)
     return AbstractRef(inner_aval)
-
-  def join(self, other):
-    assert isinstance(other, AbstractRef)
-    return AbstractRef(self.inner_aval.join(other.inner_aval))
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: math.prod(self.shape))
@@ -365,10 +364,6 @@ class AbstractRef(core.AbstractValue):
   def __hash__(self):
     return hash((self.__class__, self.inner_aval))
 
-def _ref_raise_to_shaped(ref_aval: AbstractRef, weak_type):
-  return AbstractRef(core.raise_to_shaped(ref_aval.inner_aval, weak_type))
-core.raise_to_shaped_mappings[AbstractRef] = _ref_raise_to_shaped
-
 def _map_ref(size, axis, ref_aval):
   return AbstractRef(core.mapped_aval(size, axis, ref_aval.inner_aval))
 
@@ -404,3 +399,26 @@ def _unshard_ref(mesh, names, ref_aval: AbstractRef):
     raise NotImplementedError("Can't unshard a Ref")
   return ref_aval
 core.unshard_aval_handlers[AbstractRef] = _unshard_ref
+
+
+# Sentinel type for indicating an uninitialized value.
+class Uninitialized:
+  pass
+uninitialized = Uninitialized()
+
+
+_ref_type_aval_mappings: dict[
+    type[Any], Callable[[Any], tuple[AbstractRef, Array | Uninitialized]],
+] = {}
+
+
+def _default_value_to_ref_aval(x: Any) -> tuple[AbstractRef, Array]:
+  # Default type mapping just creates an AbstractRef from the array's aval.
+  aval = core.raise_to_shaped(core.get_aval(x))
+  return AbstractRef(aval), x
+
+
+def get_ref_aval_from_value(x: Any):
+  if type(x) in _ref_type_aval_mappings:
+    return _ref_type_aval_mappings[type(x)](x)
+  return _default_value_to_ref_aval(x)

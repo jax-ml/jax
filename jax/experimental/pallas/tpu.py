@@ -49,12 +49,6 @@ from jax._src.pallas.mosaic.primitives import semaphore_read as semaphore_read
 from jax._src.pallas.mosaic.primitives import semaphore_signal as semaphore_signal
 from jax._src.pallas.mosaic.primitives import semaphore_wait as semaphore_wait
 from jax._src.pallas.mosaic.random import to_pallas_key as to_pallas_key
-# Remove this import after October 22th 2024.
-from jax._src.tpu_custom_call import CostEstimate as CostEstimate
-
-# TODO(cperivol): Temporary alias to the global run_scoped. Remove
-# this once everyone has migrated to the pallas core one.
-from jax._src.pallas.primitives import run_scoped as run_scoped
 
 import types
 from jax._src.pallas.mosaic.verification import assume

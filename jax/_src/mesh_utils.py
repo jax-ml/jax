@@ -32,6 +32,7 @@ _TPU_V2 = 'TPU v2'
 _TPU_V3 = 'TPU v3'
 _TPU_V4 = 'TPU v4'
 _TPU_V5_LITE = "TPU v5 lite"
+_TPU_V5E = "TPU v5e"
 
 # Maps physical topology -> mesh shape -> transpose to use for jekbradbury's
 # famous contiguous mesh trick.
@@ -570,16 +571,6 @@ def _generate_logical_mesh(
   logical_mesh = np.reshape(logical_mesh, logical_mesh_shape)
 
   return logical_mesh
-
-
-def _bounds_from_last_device(last_device) -> Sequence[int]:
-  """Gets the bound from the given last device."""
-  # Must be passed the device at the highest-coordinate corner of the
-  # relevant mesh, which is a requirement we know is satisfied by the last
-  # device in jax.devices().
-  assert hasattr(last_device, 'coords'), 'Only TPU supported'
-  x, y, z = last_device.coords
-  return x + 1, y + 1, z + 1, last_device.core_on_chip + 1
 
 
 def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:

@@ -1162,10 +1162,8 @@ class JaxTestCase(parameterized.TestCase):
 
   _compilation_cache_exit_stack: ExitStack | None = None
 
-  # TODO(mattjj): this obscures the error messages from failures, figure out how
-  # to re-enable it
-  # def tearDown(self) -> None:
-  #   assert core.reset_trace_state()
+  def tearDown(self) -> None:
+    assert core.reset_trace_state()
 
   def setUp(self):
     super().setUp()
@@ -1452,8 +1450,7 @@ class _LazyDtypes:
 
   @_cached_property
   def all_integer(self):
-    return self.supported([
-        _dtypes.int4, np.int8, np.int16, np.int32, np.int64])
+    return self.supported([np.int8, np.int16, np.int32, np.int64])
 
   @_cached_property
   def unsigned(self):
@@ -1461,8 +1458,7 @@ class _LazyDtypes:
 
   @_cached_property
   def all_unsigned(self):
-    return self.supported([
-        _dtypes.uint4, np.uint8, np.uint16, np.uint32, np.uint64])
+    return self.supported([np.uint8, np.uint16, np.uint32, np.uint64])
 
   @_cached_property
   def complex(self):

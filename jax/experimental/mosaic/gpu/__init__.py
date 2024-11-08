@@ -14,6 +14,8 @@
 # ==============================================================================
 
 from jax import ShapeDtypeStruct as ShapeDtypeStruct
+from jax._src.lib import mosaic_gpu_dialect as dialect  # noqa: F401
+
 from .core import (
     Barrier as Barrier,
     ClusterBarrier as ClusterBarrier,
@@ -25,6 +27,12 @@ from .core import (
     Union as Union,
     as_gpu_kernel as as_gpu_kernel,
 )
+
+if dialect is not None:
+  from .dialect_lowering import lower_mgpu_dialect
+else:
+  lower_mgpu_dialect = None
+
 from .fragmented_array import (
     FragmentedArray as FragmentedArray,
     FragmentedLayout as FragmentedLayout,

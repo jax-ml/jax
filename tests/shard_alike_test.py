@@ -18,6 +18,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from absl.testing import absltest
+from jax._src import config
 from jax._src import test_util as jtu
 from jax.sharding import NamedSharding, PartitionSpec as P
 from jax.experimental.shard_alike import shard_alike
@@ -221,18 +222,16 @@ class ShardAlikeTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2,), ('x',))
     np_inp = np.arange(8.)
     s = NamedSharding(mesh, P('x'))
-    rep_s = NamedSharding(mesh, P())
     arr = jax.device_put(np_inp, s)
-    arr2 = jax.device_put(np_inp, rep_s)
 
     def f(x, y):
       return shard_alike(x, y)
 
-    eager_out1, eager_out2 = f(arr, arr2)
+    eager_out1, eager_out2 = f(arr, np_inp)
     self.assertEqual(eager_out1.sharding, s)
     self.assertEqual(eager_out2.sharding, s)
 
-    out1, out2 = jax.jit(f)(arr, arr2)
+    out1, out2 = jax.jit(f)(arr, np_inp)
     self.assertEqual(out1.sharding, s)
     self.assertEqual(out2.sharding, s)
 
@@ -281,7 +280,6 @@ class ShardAlikeTest(jtu.JaxTestCase):
     x = jax.device_put(np.arange(8), s)
     _, y = shard_alike(x, jnp.arange(8))
     self.assertEqual(y.sharding, s)
-
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

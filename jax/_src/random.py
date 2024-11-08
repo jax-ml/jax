@@ -581,6 +581,10 @@ def _shuffle(key, x, axis) -> Array:
   # another analysis (where the keys are generated one bit at a time).
   exponent = 3  # see tjablin@'s analysis for explanation of this parameter
   uint32max = jnp.iinfo(np.uint32).max
+  if not core.is_constant_dim(x.size):
+    raise NotImplementedError(
+        "shape polymorphism for `permutation` or `shuffle`"
+        f" for arrays of non-constant size: {x.size}")
   num_rounds = int(np.ceil(exponent * np.log(max(1, x.size)) / np.log(uint32max)))
 
   for _ in range(num_rounds):
@@ -640,7 +644,9 @@ def choice(key: KeyArrayLike,
   if n_inputs <= 0:
     raise ValueError("a must be greater than 0 unless no samples are taken")
   if not replace and n_draws > n_inputs:
-    raise ValueError("Cannot take a larger sample than population when 'replace=False'")
+    raise ValueError(
+        f"Cannot take a larger sample (size {n_draws}) than "
+        f"population (size {n_inputs}) when 'replace=False'")
 
   if p is None:
     if replace:
@@ -653,7 +659,9 @@ def choice(key: KeyArrayLike,
     check_arraylike("choice", p)
     p_arr, = promote_dtypes_inexact(p)
     if p_arr.shape != (n_inputs,):
-      raise ValueError("p must be None or match the shape of a")
+      raise ValueError(
+          "p must be None or a 1D vector with the same size as a.shape[axis]. "
+          f"p has shape {p_arr.shape} and a.shape[axis] is {n_inputs}.")
     if replace:
       p_cuml = jnp.cumsum(p_arr)
       r = p_cuml[-1] * (1 - uniform(key, shape, dtype=p_cuml.dtype))
@@ -665,7 +673,7 @@ def choice(key: KeyArrayLike,
     result = ind if arr.ndim == 0 else jnp.take(arr, ind, axis)
 
   return result.reshape(shape if arr.ndim == 0 else
-                        np.insert(np.delete(arr.shape, axis), axis, shape))
+                        arr.shape[0:axis] + tuple(shape) + arr.shape[axis+1:])
 
 
 def normal(key: KeyArrayLike,

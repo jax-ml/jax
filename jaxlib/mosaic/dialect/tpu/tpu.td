@@ -31,6 +31,11 @@ def TPU_Dialect : Dialect {
   let cppNamespace = "::mlir::tpu";
   let useDefaultAttributePrinterParser = 1;
   let useDefaultTypePrinterParser = 1;
+  let extraClassDeclaration = [{
+    static StringRef GetCoreTypeKey() { return "tpu.core_type"; }
+
+    static std::optional<CoreType> GetCoreTypeAttr(Operation *op);
+  }];
 }
 
 class TPU_Attr<string name, string mnemonic_, list<Trait> traits = []>
@@ -44,6 +49,19 @@ def TPU_Vreg : Type<IsVectorTypePred, "native-sized vreg", "::mlir::VectorType">
 class TPU_Type<string name, string mnemonic_, list<Trait> traits = []>
     : TypeDef<TPU_Dialect, name, traits> {
   let mnemonic = mnemonic_;
+}
+
+def TPU_CoreType : I32EnumAttr<"CoreType", "Core type", [
+  I32EnumAttrCase<"kTc", 0, "tc">,
+  I32EnumAttrCase<"kScScalarSubcore", 1, "sc_scalar_subcore">,
+  I32EnumAttrCase<"kScVectorSubcore", 2, "sc_vector_subcore">
+]> {
+    let genSpecializedAttr = 0;
+    let cppNamespace = "::mlir::tpu";
+}
+
+def TPU_CoreTypeEnum : EnumAttr<TPU_Dialect, TPU_CoreType, "core_type"> {
+    let assemblyFormat = "`<` $value `>`";
 }
 
 def TPU_SemaphoreType : TPU_Type<"Semaphore", "semaphore", [MemRefElementTypeInterface]>;
@@ -295,6 +313,8 @@ def TPU_IotaOp : TPU_Op<"iota", [Pure]> {
   let assemblyFormat = [{ attr-dict `:` type($output) }];
 }
 
+// TODO(mvoz): deprecated - use concat. Canonicalization will do so automatically.
+// b/376295711
 def TPU_RepeatOp : TPU_Op<"repeat", [Pure]> {
   let arguments = (ins
     AnyVector:$source,
@@ -364,22 +384,47 @@ def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure]> {
   }];
 }
 
-// TODO(apaszke): Add a verifier for this op
+
+def TPU_DotDimensionNumbersAttr : TPU_Attr<"DotDimensionNumbers", "dot_dimension_numbers"> {
+  let parameters = (ins
+    ArrayRefParameter<"int64_t", "">:$lhs_contracting_dims,
+    ArrayRefParameter<"int64_t", "">:$rhs_contracting_dims,
+    ArrayRefParameter<"int64_t", "">:$lhs_non_contracting_dims,
+    ArrayRefParameter<"int64_t", "">:$rhs_non_contracting_dims,
+    // The contract is a flattened structure, wherein, each element is half of a
+    // pair of indices. The first element is always 0 (lhs) or 1 (rhs) and the
+    // second index is the index from the lhs or rhs.
+    ArrayRefParameter<"int64_t", "">:$output_dim_order,
+    OptionalArrayRefParameter<"int64_t", "">:$lhs_batch_dims,
+    OptionalArrayRefParameter<"int64_t", "">:$rhs_batch_dims
+    );
+    let assemblyFormat = "`<` `[` $lhs_contracting_dims `]` `,` `[` $rhs_contracting_dims `]` `,` "
+                     "`[` $lhs_non_contracting_dims `]` `,` `[` $rhs_non_contracting_dims `]` `,` "
+                     "`[` $output_dim_order `]` `,` "
+                     "`[` (`]`):($lhs_batch_dims^ `]`)? `,` "
+                     "`[` (`]`):($rhs_batch_dims^ `]`)? `>`";
+}
+
 // TODO(apaszke): Think hard about precision
 def TPU_MatmulOp : TPU_Op<"matmul", [Pure]> {
   let arguments = (ins
     AnyVector:$lhs,
     AnyVector:$rhs,
     AnyVector:$acc,
+    // These flags are deprecated - if dimension_numbers are defined,
+    // these flags are ignored. They will always be false after canonicalize.
     DefaultValuedAttr<BoolAttr, "false">:$transpose_lhs,
     DefaultValuedAttr<BoolAttr, "false">:$transpose_rhs,
-    OptionalAttr<TPU_ContractPrecisionEnum>:$precision
+    OptionalAttr<TPU_ContractPrecisionEnum>:$precision,
+    // NOTE: User-level optional, once canonicalized, always present.
+    OptionalAttr<TPU_DotDimensionNumbersAttr>:$dimension_numbers
   );
   let results = (outs AnyVector:$result);
   let assemblyFormat = [{
     $lhs `,` $rhs `,` $acc attr-dict `:` type($lhs) `,` type($rhs) `,` type($acc) `->` type($result)
   }];
   let hasCanonicalizer = 1;
+  let hasVerifier = 1;
 }
 
 def TPU_ConcatenateOp : TPU_Op<"concatenate", [Pure]> {
@@ -571,6 +616,7 @@ def TPU_SemaphoreWaitOp : TPU_Op<"sem_wait"> {
   );
   let results = (outs);
   let assemblyFormat = [{ $semaphore `,` $amount attr-dict `:` type($semaphore)}];
+  let hasVerifier = 1;
 }
 
 def TPU_AllocaSemaphoreOp : TPU_Op<"sem_alloc"> {
@@ -784,6 +830,7 @@ def ApplyVectorLayoutPass : Pass<"tpu-apply-vector-layout", "::mlir::func::FuncO
     Option<"mxu_noncontracting_size", "mxu-noncontracting-size", "int", /*default=*/"128", "">,
     Option<"max_sublanes_in_scratch", "max-sublanes-in-scratch", "int", /*default=*/"0", "">,
     Option<"vmem_banks", "vmem-banks", "int", /*default=*/"-1", "">,
+    Option<"max_shuffle_sublane_offset", "max-shuffle-sublane-offset", "int", /*default=*/"-1", "Max sublane offset per shuffled load/store">,
   ];
 }
 

@@ -410,17 +410,15 @@ def _trace_to_jaxpr(fun, in_tree, in_avals):
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
   except core.ConcretizationTypeError as e:
     msg, = e.args
-    if 'for checkpoint' not in msg:
-      raise
-    new_msg = msg + "\n\n" + (
-        "Consider using the `static_argnums` parameter for `jax.remat` or "
-        "`jax.checkpoint`. See the `jax.checkpoint` docstring and its example "
-        "involving `static_argnums`:\n"
-        "https://jax.readthedocs.io/en/latest/_autosummary/jax.checkpoint.html"
-        "\n")
-    new_e = core.ConcretizationTypeError.__new__(core.ConcretizationTypeError)
-    new_e.args = (new_msg,)
-    raise new_e from None
+    if 'for checkpoint' in msg:
+      msg += "\n\n" + (
+          "Consider using the `static_argnums` parameter for `jax.remat` or "
+          "`jax.checkpoint`. See the `jax.checkpoint` docstring and its example "
+          "involving `static_argnums`:\n"
+          "https://jax.readthedocs.io/en/latest/_autosummary/jax.checkpoint.html"
+          "\n")
+      e.args = msg,
+    raise
   return pe.convert_constvars_jaxpr(jaxpr), consts, out_tree()
 
 
@@ -703,20 +701,17 @@ def _transpose_jaxpr(jaxpr, in_lin, out_zeros):
   transposed_jaxpr = core.ClosedJaxpr(transposed_jaxpr_, consts)
   return transposed_jaxpr, cell.in_cts_zero  # pytype: disable=attribute-error
 
-def remat_vmap(spmd_axis_name, axis_size, axis_name, main_type, args, dims, *,
-               jaxpr, **params):
+def remat_vmap(axis_data, args, dims, *, jaxpr, **params):
   assert not jaxpr.constvars
   jaxpr_batched_, out_batched = batching.batch_jaxpr_axes(
-      pe.close_jaxpr(jaxpr), axis_size, dims,
-      [batching.zero_if_mapped] * len(jaxpr.outvars),
-      axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+      pe.close_jaxpr(jaxpr), axis_data, dims,
+      [batching.zero_if_mapped] * len(jaxpr.outvars))
   jaxpr_batched, consts = jaxpr_batched_.jaxpr, jaxpr_batched_.consts
   if consts:
     jaxpr_batched = pe.convert_constvars_jaxpr(jaxpr_batched)
   out_dims = [0 if b else None for b in out_batched]
   return remat_p.bind(*consts, *args, jaxpr=jaxpr_batched, **params), out_dims
-batching.axis_primitive_batchers[remat_p] = partial(remat_vmap, None)
-batching.spmd_axis_primitive_batchers[remat_p] = remat_vmap
+batching.fancy_primitive_batchers[remat_p] = remat_vmap
 
 # TODO(mattjj,sharadmv): de-duplicate with pe.dce_jaxpr_call_rule
 def remat_dce(used_outputs: list[bool], eqn: core.JaxprEqn

@@ -27,8 +27,10 @@ Functions
 
    barrier_arrive
    barrier_wait
+   commit_smem
    copy_gmem_to_smem
    copy_smem_to_gmem
+   emit_pipeline
    layout_cast
    set_max_registers
    wait_smem_to_gmem

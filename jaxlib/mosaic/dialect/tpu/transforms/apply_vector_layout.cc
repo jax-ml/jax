@@ -13,16 +13,15 @@
 #include <utility>
 #include <vector>
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/Compiler.h"
-#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Traits.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
@@ -52,7 +51,6 @@
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
-#include "llvm/ADT/ArrayRef.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
@@ -61,6 +59,7 @@
 #include "mlir/include/mlir/IR/OperationSupport.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "jaxlib/mosaic/dialect/tpu/transforms/apply_vector_layout_extensions.h"
 #include "jaxlib/mosaic/dialect/tpu/transforms/infer_memref_layout.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 #include "xla/array.h"
@@ -168,25 +167,6 @@ FailureOr<TypedValue<MemRefType>> getInternalScratch(
                   ctx.target_shape, /*tpu_tiling_flags=*/{}, sublane_tiling));
   return builder.create<tpu::GetInternalScratchOp>(loc, scratch_ref_ty)
       .getResult();
-}
-
-// Models Numpy's np.repeat, repeating each element `repeats` times along the
-// specified axis. For example, if `src` is [1, 2], `axis` is 0 and `repeats` is
-// 3, this will return [1, 1, 1, 2, 2, 2].
-xla::Array<Value> repeat(const xla::Array<Value> &src, const int repeats,
-                         const int64_t axis) {
-  SmallVector<int64_t> dims(toArrayRef(src.dimensions()));
-  dims[axis] *= repeats;
-  xla::Array<Value> res(dims);
-  src.Each([&](absl::Span<const int64_t> idx, const Value v) {
-    SmallVector<int64_t> res_idx(toArrayRef(idx));
-    res_idx[axis] *= repeats;
-    for (int i = 0; i < repeats; ++i) {
-      res(res_idx) = v;
-      ++res_idx[axis];
-    }
-  });
-  return res;
 }
 
 // Models Numpy's np.concatenate
@@ -1715,15 +1695,36 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
       llvm::all_of(layouts_in, [&](const Layout &l) { return l.has_value(); }));
   TPU_ASSERT_OP(layouts_out.front().has_value());
   auto matmul_op = cast<tpu::MatmulOp>(op);
-  const auto transpose_lhs = matmul_op.getTransposeLhs();
-  const auto transpose_rhs = matmul_op.getTransposeRhs();
-  const auto &layout_lhs = *layouts_in[0];
-  const auto &layout_rhs = *layouts_in[1];
-  const auto &layout_acc = *layouts_in[2];
-  const auto &layout_out = *layouts_out[0];
-  if (transpose_lhs) {
-    return op.emitOpError("Not implemented: Transposed LHS");
+  if (matmul_op.getTransposeRhs()) {
+    return op.emitOpError(
+        "Transposition must have been erased into dimension numbers during "
+        "canonicalization");
   }
+
+  auto dimension_numbers = matmul_op.getDimensionNumbers();
+  if (!dimension_numbers.has_value()) {
+    return op.emitOpError(
+        "Dimension numbers must be provided, ensure canonicalization has been "
+        "run.");
+  }
+  auto transposed_mkn = isTransposedMatmul(dimension_numbers.value());
+  if (!transposed_mkn.has_value()) {
+    return op.emitOpError(
+        "Dimension numbers must be MKN, ensure canonicalization has been "
+        "run.");
+  }
+  auto [transpose_lhs, transpose_rhs] = transposed_mkn.value();
+  if (transpose_lhs) {
+    return op.emitOpError(
+        "Transposition of LHS is not supported in apply_vector_layout, ensure "
+        "canonicalization has been run.");
+  }
+
+  auto &layout_lhs = *layouts_in[0];
+  auto &layout_rhs = *layouts_in[1];
+  auto &layout_acc = *layouts_in[2];
+  auto &layout_out = *layouts_out[0];
+
   const std::array<std::reference_wrapper<const VectorLayout>, 4> all_layouts =
       {layout_lhs, layout_rhs, layout_acc, layout_out};
   for (const VectorLayout &layout : all_layouts) {
@@ -1984,6 +1985,8 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
 
   const tpu::ContractPrecisionAttr precision_attr =  // May be null
       op.getAttrOfType<tpu::ContractPrecisionAttr>("precision");
+  const tpu::DotDimensionNumbersAttr dot_dimension_numbers_attr =
+      defaultDimensionNumbers(builder, false, transpose_rhs);
   for (int64_t j = 0; j < nj; ++j) {
     for (int64_t k = 0; k < nk; ++k) {
       // TODO(tlongeri): there should be a way to slice without copying
@@ -2000,7 +2003,8 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
       acc_col->setAttr("out_layout", acc_layout_attr);
       auto new_acc_col = builder.create<tpu::MatmulOp>(
           op.getLoc(), acc_col_ty, lhs_cols[k], rhs_rolled_group, acc_col,
-          transpose_lhs, transpose_rhs, precision_attr);
+          /*transpose_lhs=*/false, /*transpose_rhs=*/false, precision_attr,
+          dot_dimension_numbers_attr);
       auto new_acc_vregs = builder.create<tpu::UnrollVectorsOp>(
           op.getLoc(),
           TypeRange(ValueRange(XlaArrayToFlatArrayRef(acc_col_vregs))),
@@ -2949,48 +2953,6 @@ LogicalResult tpu_region_rule(RewriteContext &ctx, Operation &op,
   return success();
 }
 
-LogicalResult tpu_repeat_rule(RewriteContext &ctx, Operation &op,
-                              const ArrayRef<Layout> layouts_in,
-                              const ArrayRef<Layout> layouts_out) {
-  TPU_ASSERT_EQ_OP(layouts_in.size(), 1);
-  TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
-  TPU_ASSERT_OP(layouts_in.front().has_value());
-  TPU_ASSERT_OP(layouts_out.front().has_value());
-  const VectorLayout &layout_in = *layouts_in.front();
-  const VectorLayout &layout_out = *layouts_out.front();
-  if (layout_in.implicit_dim() != VectorLayout::ImplicitDim::kNone) {
-    return op.emitOpError("Not implemented: Only 2D layouts supported");
-  }
-  if (layout_in != layout_out) {
-    return op.emitOpError("Not implemented: Changing layout mid-repeat");
-  }
-  if (!layout_in.hasNaturalTopology(ctx.target_shape) ||
-      layout_in.offsets() != LayoutOffsets{0, 0}) {
-    return op.emitOpError("Not implemented: Non-trivial layouts unsupported");
-  }
-  OpBuilder builder(&op);
-  tpu::RepeatOp repeat_op = cast<tpu::RepeatOp>(op);
-  VectorType src_ty = repeat_op.getSource().getType();
-  const uint32_t dim = repeat_op.getDimension();
-  if (dim != src_ty.getRank() - 1) {
-    return op.emitOpError(
-        "Not implemented: Only repeats along the last dim supported");
-  }
-  if (src_ty.getShape().back() % ctx.target_shape.back() != 0) {
-    return op.emitOpError("Not implemented: Only free repeats are suppported");
-  }
-  FAILUREOR_ASSIGN_OR_RETURN(
-      const xla::Array<Value> &in_vregs,
-      disassemble(builder, layout_in, repeat_op.getSource(), ctx.target_shape));
-  xla::Array<Value> out_vregs = repeat(in_vregs, repeat_op.getTimes(), dim);
-  repeat_op->replaceAllUsesWith(
-      assemble(builder, repeat_op.getResult().getType(), layout_out, out_vregs,
-               ctx.target_shape)
-          .getOperation());
-  repeat_op->erase();
-  return success();
-}
-
 LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
                                const ArrayRef<Layout> layouts_in,
                                const ArrayRef<Layout> layouts_out) {
@@ -3020,14 +2982,29 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
   FAILUREOR_ASSIGN_OR_RETURN(
       Tiling memref_tiling,
       getMemRefTiling(load_op.getBase(), ctx.target_shape));
-  if (memref_tiling != layout_out.tiling() &&
-      !(memref_tiling[0] == 1 && layout_out.tiling()[0] == 1 &&
-        memref_tiling[1] % layout_out.tiling()[1] == 0)) {
-    // Now we can handle the case when tiling is (1, TARGET_SHAPE.lanes).
-    // TODO(b/295393167): need to support strided load for bitwidth < 32.
-    if (layout_out.bitwidth() != 32 ||
-        layout_out.tiling() != std::array<int64_t, 2>{1, ctx.target_shape[1]}) {
-      return op.emitOpError("Not implemented");
+  if (memref_tiling != layout_out.tiling()) {
+    if (memref_tiling[0] == 1 && layout_out.tiling()[0] == 1 &&
+        memref_tiling[1] % layout_out.tiling()[1] == 0) {
+      // In this case, it is valid to use output tiling (1, 128 * packing) when
+      // loading from a 1D memref.
+    } else if (layout_out.bitwidth() == 32 &&
+               layout_out.tiling() ==
+                   std::array<int64_t, 2>{1, ctx.target_shape[1]}) {
+      // In this case, it is valid to use output tiling (1, TARGET_SHAPE.lanes)
+      // because we strided-load one row from each tile of the memref. This can
+      // save us a bunch of loads!
+      // TODO(b/295393167): need to support strided load for bitwidth < 32.
+    } else if (layout_out.bitwidth() == 32 &&
+               canReinterpretToUntiledMemref(
+                   memref_ty, ctx.target_shape,
+                   /*allow_minormost_padding=*/true)) {
+      // In this case, if the memref can be reinterpreted to untiled, it is
+      // valid to use any tiling for output. But using native tiling can save us
+      // a bunch of loads!
+    } else {
+      return op.emitOpError(
+          "Not implemented: dismatch in memref tiling and vector tiling in "
+          "load");
     }
   }
   // TODO(apaszke): Check that loads are from vmem!
@@ -3213,8 +3190,8 @@ LogicalResult arith_constant_rule(RewriteContext &ctx, Operation &op,
     }
     const VectorLayout &layout_out = *layouts_out.front();
     DenseElementsAttr value = cast<DenseElementsAttr>(constant_op.getValue());
-    const VectorType target_vty =
-        getNativeVregType(vty.getElementType(), ctx.target_shape);
+    const VectorType target_vty = getNativeVregOrVmaskType(
+        vty.getElementType(), layout_out.bitwidth(), ctx.target_shape);
     if (value.isSplat()) {
       if (layout_out.offsets() != LayoutOffsets{std::nullopt, std::nullopt}) {
         return op.emitOpError(
@@ -4097,6 +4074,13 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
              dst_tiled_dims[1] % dst_vreg_slice[1] == 0) {
     // Shapecast (..., 128) -> (..., m * 128 * packing).
     no_op = true;
+  } else if (layout_in.offsets() == LayoutOffsets{0, 0} &&
+             layout_out.offsets() == LayoutOffsets{0, 0} &&
+             layout_in.tiling()[0] == 1 && layout_out.tiling()[0] == 1 &&
+             src_vreg_slice[1] == dst_vreg_slice[1] &&
+             src_tiled_dims[1] % src_vreg_slice[1] == 0 &&
+             dst_tiled_dims[1] % dst_vreg_slice[1] == 0) {
+    no_op = true;
   }
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> src_vregs,
@@ -4204,14 +4188,31 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
   FAILUREOR_ASSIGN_OR_RETURN(
       const Tiling memref_tiling,
       getMemRefTiling(store_op.getBase(), ctx.target_shape));
-  if (memref_tiling != to_store_layout.tiling() &&
-      !(memref_tiling[0] == 1 && to_store_layout.tiling()[0] == 1 &&
-        memref_tiling[1] % to_store_layout.tiling()[1] == 0)) {
-    // Now we can handle the case when tiling is (1, TARGET_SHAPE.lanes).
-    // TODO(b/295393167): need to support strided store for bitwidth < 32.
-    if (to_store_layout.bitwidth() != 32 ||
-        to_store_layout.tiling() != Tiling{1, ctx.target_shape[1]}) {
-      return op.emitOpError("Not implemented");
+  if (memref_tiling != to_store_layout.tiling()) {
+    if (memref_tiling[0] == 1 && to_store_layout.tiling()[0] == 1 &&
+        memref_tiling[1] % to_store_layout.tiling()[1] == 0) {
+      // In this case, it is valid to have to_store tiling (1, 128 * packing)
+      // when storing to a 1D memref.
+    } else if (to_store_layout.bitwidth() == 32 &&
+               to_store_layout.tiling() ==
+                   std::array<int64_t, 2>{1, ctx.target_shape[1]}) {
+      // In this case, it is valid to have to_store tiling (1,
+      // TARGET_SHAPE.lanes) because we strided-store one row to each tile of
+      // the memref. This can save us a bunch of stores!
+      // TODO(b/295393167): need to support strided store for bitwidth < 32.
+    } else if (to_store_layout.bitwidth() == 32 &&
+               // We accept padding in the minormost dim, because
+               // apply_vector_layout will properly mask stores。
+               canReinterpretToUntiledMemref(
+                   memref_ty, ctx.target_shape,
+                   /*allow_minormost_padding=*/true)) {
+      // In this case, if the memref can be reinterpreted to untiled, it is
+      // valid to use any tiling for to_store. But using native tiling can save
+      // us a bunch of stores!
+    } else {
+      return op.emitOpError(
+          "Not implemented: dismatch in memref tiling and vector tiling in "
+          "store");
     }
   }
 
@@ -4584,48 +4585,83 @@ LogicalResult prng_random_bits_rule(RewriteContext &ctx, Operation &op,
 }
 
 const llvm::StringMap<rule_type> &rules() {
-  static auto rules = new llvm::StringMap<rule_type>{
-      {arith::ConstantOp::getOperationName(), arith_constant_rule},
-      {arith::ExtFOp::getOperationName(), arith_extf_rule},
-      {arith::ExtSIOp::getOperationName(), arith_extsi_rule},
-      {arith::ExtUIOp::getOperationName(), arith_extui_rule},
-      {arith::TruncFOp::getOperationName(), arith_truncf_rule},
-      {arith::TruncIOp::getOperationName(), arith_trunci_rule},
-      {func::ReturnOp::getOperationName(), func_return_rule},
-      {scf::ForOp::getOperationName(), scf_for_rule},
-      {scf::WhileOp::getOperationName(), scf_while_rule},
-      {scf::ConditionOp::getOperationName(), scf_condition_rule},
-      {scf::IfOp::getOperationName(), scf_if_rule},
-      {scf::YieldOp::getOperationName(), yield_rule},
-      {tpu::YieldOp::getOperationName(), yield_rule},
-      {tpu::RotateOp::getOperationName(), tpu_rotate_rule},
-      {tpu::DynamicRotateOp::getOperationName(), tpu_dynamic_rotate_rule},
-      {tpu::ConcatenateOp::getOperationName(), tpu_concatenate_rule},
-      {tpu::IotaOp::getOperationName(), tpu_iota_rule},
-      {tpu::GatherOp::getOperationName(), tpu_gather_rule},
-      {tpu::LoadOp::getOperationName(), tpu_load_rule},
-      {tpu::StoreOp::getOperationName(), tpu_store_rule},
-      {tpu::StridedLoadOp::getOperationName(), tpu_strided_load_rule},
-      {tpu::StridedStoreOp::getOperationName(), tpu_strided_store_rule},
-      {tpu::MatmulOp::getOperationName(), tpu_matmul_rule},
-      {tpu::RegionOp::getOperationName(), tpu_region_rule},
-      {tpu::RepeatOp::getOperationName(), tpu_repeat_rule},
-      {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},
-      {tpu::TraceOp::getOperationName(), tpu_trace_rule},
-      {tpu::AssumeLayoutOp::getOperationName(), tpu_assume_layout_rule},
-      {tpu::PRNGRandomBitsOp::getOperationName(), prng_random_bits_rule},
-      {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
-      {vector::ExtractOp::getOperationName(), vector_extract_rule},
-      {vector::LoadOp::getOperationName(), vector_load_rule},
-      {vector::MultiDimReductionOp::getOperationName(),
-       vector_multi_reduction_rule},
-      {vector::ExtractStridedSliceOp::getOperationName(),
-       vector_extract_strided_slice_rule},
-      {vector::ShapeCastOp::getOperationName(), vector_shape_cast_rule},
-      {vector::StoreOp::getOperationName(), vector_store_rule},
-      {vector::TransposeOp::getOperationName(), vector_transpose_rule}};
+  static const llvm::StringMap<rule_type> *rules = [] {
+    static auto rules = new llvm::StringMap<rule_type>{
+        {arith::ConstantOp::getOperationName(), arith_constant_rule},
+        {arith::ExtFOp::getOperationName(), arith_extf_rule},
+        {arith::ExtSIOp::getOperationName(), arith_extsi_rule},
+        {arith::ExtUIOp::getOperationName(), arith_extui_rule},
+        {arith::TruncFOp::getOperationName(), arith_truncf_rule},
+        {arith::TruncIOp::getOperationName(), arith_trunci_rule},
+        {func::ReturnOp::getOperationName(), func_return_rule},
+        {scf::ForOp::getOperationName(), scf_for_rule},
+        {scf::WhileOp::getOperationName(), scf_while_rule},
+        {scf::ConditionOp::getOperationName(), scf_condition_rule},
+        {scf::IfOp::getOperationName(), scf_if_rule},
+        {scf::YieldOp::getOperationName(), yield_rule},
+        {tpu::YieldOp::getOperationName(), yield_rule},
+        {tpu::RotateOp::getOperationName(), tpu_rotate_rule},
+        {tpu::DynamicRotateOp::getOperationName(), tpu_dynamic_rotate_rule},
+        {tpu::ConcatenateOp::getOperationName(), tpu_concatenate_rule},
+        {tpu::IotaOp::getOperationName(), tpu_iota_rule},
+        {tpu::GatherOp::getOperationName(), tpu_gather_rule},
+        {tpu::LoadOp::getOperationName(), tpu_load_rule},
+        {tpu::StoreOp::getOperationName(), tpu_store_rule},
+        {tpu::StridedLoadOp::getOperationName(), tpu_strided_load_rule},
+        {tpu::StridedStoreOp::getOperationName(), tpu_strided_store_rule},
+        {tpu::MatmulOp::getOperationName(), tpu_matmul_rule},
+        {tpu::RegionOp::getOperationName(), tpu_region_rule},
+        {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},
+        {tpu::TraceOp::getOperationName(), tpu_trace_rule},
+        {tpu::AssumeLayoutOp::getOperationName(), tpu_assume_layout_rule},
+        {tpu::PRNGRandomBitsOp::getOperationName(), prng_random_bits_rule},
+        {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
+        {vector::ExtractOp::getOperationName(), vector_extract_rule},
+        {vector::LoadOp::getOperationName(), vector_load_rule},
+        {vector::MultiDimReductionOp::getOperationName(),
+         vector_multi_reduction_rule},
+        {vector::ExtractStridedSliceOp::getOperationName(),
+         vector_extract_strided_slice_rule},
+        {vector::ShapeCastOp::getOperationName(), vector_shape_cast_rule},
+        {vector::StoreOp::getOperationName(), vector_store_rule},
+        {vector::TransposeOp::getOperationName(), vector_transpose_rule}};
+
+    llvm::StringMap<rule_type> extended_rules = mlir::tpu::extensions::rules();
+    for (auto &entry : extended_rules) {
+      rules->insert(&entry);
+    }
+    return rules;
+  }();
   return *rules;
 }
+
+// Determines whether we should handle bank conflict for the given stride and
+// max_sublane_offset.
+//
+// See `handleBankConflict` for how this is done.
+bool shouldHandleBankConflict(const ApplyVectorLayoutContext &ctx,
+                              int32_t stride, int max_sublane_offset) {
+  return ctx.hardware_generation >= 4 && ctx.vmem_banks > 0 &&
+         ctx.vmem_banks < stride * ctx.target_shape[0] &&
+         ctx.max_shuffle_sublane_offset > 0 &&
+         ctx.max_shuffle_sublane_offset >= max_sublane_offset;
+}
+
+// Handles load/store bank conflict by adding one extra sublane to stride and
+// adjusting sublane offsets accordingly.
+//
+// For example, when store stride is 4 and load sublane offsets are
+// [0, 1, 2, 3, 4, 5, 6, 7], the store bank conflict can be avoided by changing
+// stride to 5 and sublane offsets to [0, 1, 2, 3, 5, 6, 7, 8].
+void handleBankConflict(int32_t &stride, absl::Span<int> sublane_offsets) {
+  // Add one extra sublane to stride to avoid bank conflict.
+  for (int i = 0; i < sublane_offsets.size(); ++i) {
+    // Adjust sublane offsets to match the stride.
+    sublane_offsets[i] += i / stride;
+  }
+  ++stride;
+}
+
 }  // namespace
 
 RollVectorsOp assemble(OpBuilder &builder, VectorType vty,
@@ -5143,8 +5179,10 @@ FailureOr<xla::Array<Value>> tpu_rotate_with_overflow(
   // Compute the mask for the blend.
   // Positive blends blend "forward" and negative blends blend "backward".
   auto mask_val = amount;
+  auto vreg_rot_amount = amount;
   if (amount < 0) {
     mask_val = layout_in.tiling()[tiling_dim] - std::abs(amount);
+    vreg_rot_amount += target_shape[tiling_dim];
   }
   auto boundIdxConst = std::bind(IdxConst, std::placeholders::_1, builder, loc);
   auto mask = builder.create<tpu::CreateMaskOp>(
@@ -5156,7 +5194,8 @@ FailureOr<xla::Array<Value>> tpu_rotate_with_overflow(
   in_tiles.Each([&](absl::Span<const int64_t> idxs, Value *v) {
     if (dim >= in_tiles.num_dimensions() - 2) {
       *v = builder.create<tpu::RotateOp>(loc, res_vreg_ty, in_tiles(idxs),
-                                         amount, tiling_dim, nullptr, nullptr);
+                                         vreg_rot_amount, tiling_dim, nullptr,
+                                         nullptr);
     }
   });
 
@@ -5606,16 +5645,37 @@ LogicalResult retileToLargeTileWithScratch(
   // The older hardware has limited support for shuffles so even if we have bank
   // conflicts, we just accept them and will have the lowering unroll the
   // loads/stores.
+  int64_t num_offsets = sublane_offsets.num_elements();
+  // The max sublane offset before handling bank conflicts is always
+  // (num_offsets - 1). To avoid bank conflicts, we need to add one extra
+  // sublane to stride so (num_offsets - 1) / stride is the extra offset needed
+  // to pad sublanes.
+  //
+  // For example, if store stride = 4, sublane_count = 8, and
+  // load offsets = [0, 1, 2, 3, 4, 5, 6, 7], then the sublane offsets after
+  // handling bank conflicts will be [0, 1, 2, 3, 5, 6, 7, 8] and the max
+  // sublane offset will be 7 + (8 - 1) / 4 = 8.
+  //
+  // Before
+  //        <-------- sublanes --------->
+  //        0    1  ...                 32
+  // store: x---x---x---x---x---x---x---x
+  // load:  xxxxxxxxx--------------------
+  //
+  // After
+  //        <-------- sublanes --------->
+  //        0    5  ...                        40
+  // store: x----x----x----x----x----x----x----x
+  // load:  xxxx-xxxx---------------------------
+  //
+  // where "x" indicates a sublane that needs to be accessed and "-"" indicates
+  // a sublane that does not need to be accessed.
+  int max_sublane_offset = (num_offsets - 1) + (num_offsets - 1) / stride;
   bool should_handle_bank_confict =
-      ctx.hardware_generation >= 4 && ctx.vmem_banks > 0 &&
-      ctx.vmem_banks < stride * ctx.target_shape[0];
-  // Add one extra sublane to stride to avoid bank conflict.
+      shouldHandleBankConflict(ctx, stride, max_sublane_offset);
   if (should_handle_bank_confict) {
-    // Adjust sublane offsets to match the stride.
-    for (int i = 0; i < sublane_offsets.num_elements(); i += 1) {
-      *(sublane_offsets.begin() + i) += i / stride;
-    }
-    stride += 1;
+    handleBankConflict(stride, absl::MakeSpan(sublane_offsets.data(),
+                                              sublane_offsets.num_elements()));
   }
   sublane_offsets.TransposeDimensions({0, 2, 1});
 
@@ -5738,9 +5798,34 @@ LogicalResult retileToSmallTileWithScratch(
   // The older hardware has limited support for shuffles so even if we have
   // bank conflicts, we just accept them and will have the lowering unroll the
   // loads/stores.
+  int64_t num_offsets = sublane_offsets.num_elements();
+  // The max sublane offset before handling bank conflicts is always
+  // (num_offsets - 1). To avoid bank conflicts, we need to add one extra
+  // sublane to stride so (num_offsets - 1) / stride is the extra offset needed
+  // to pad sublanes.
+  //
+  // For example, if store stride = 4, sublane_count = 8, and
+  // load offsets = [0, 1, 2, 3, 4, 5, 6, 7], then the sublane offsets after
+  // handling bank conflicts will be [0, 1, 2, 3, 5, 6, 7, 8] and the max
+  // sublane offset will be 7 + (8 - 1) / 4 = 8.
+  //
+  // Before
+  //        <-------- sublanes --------->
+  //        0   4   ...
+  // store: x---x---x---x---x---x---x---x
+  // load:  xxxxxxxxx-------------------
+  //
+  // After
+  //        <-------- sublanes --------->
+  //        0    5  ...
+  // store: x----x----x----x----x----x----x----x
+  // load:  xxxx-xxxx---------------------------
+  //
+  // where "x" indicates a sublane that needs to be accessed and "-"" indicates
+  // a sublane that does not need to be accessed.
+  int max_sublane_offset = (num_offsets - 1) + (num_offsets - 1) / stride;
   bool should_handle_bank_confict =
-      ctx.hardware_generation >= 4 && ctx.vmem_banks > 0 &&
-      ctx.vmem_banks < stride * ctx.target_shape[0];
+      shouldHandleBankConflict(ctx, stride, max_sublane_offset);
   bool use_shuffled_load = false;
   if (ctx.hardware_generation <= 4) {
     if (src_tile[0] == 8) {
@@ -5759,11 +5844,8 @@ LogicalResult retileToSmallTileWithScratch(
 
   // Add one extra sublane to stride to avoid bank conflict.
   if (should_handle_bank_confict) {
-    // Adjust sublane offsets to match the stride.
-    for (int i = 0; i < sublane_offsets.num_elements(); i += 1) {
-      *(sublane_offsets.begin() + i) += i / stride;
-    }
-    stride += 1;
+    handleBankConflict(stride, absl::MakeSpan(sublane_offsets.data(),
+                                              sublane_offsets.num_elements()));
   }
   sublane_offsets.TransposeDimensions({0, 2, 1});
   auto mlirIndexConst = [&](int d) {
@@ -6420,6 +6502,7 @@ struct ApplyVectorLayoutPass
     mxu_noncontracting_size = ctx.mxu_shape[1];
     max_sublanes_in_scratch = ctx.max_sublanes_in_scratch;
     vmem_banks = ctx.vmem_banks;
+    max_shuffle_sublane_offset = ctx.max_shuffle_sublane_offset;
   }
   void runOnOperation() override {
     // Fail if hardware_generation has not been set from the default value.
@@ -6432,7 +6515,9 @@ struct ApplyVectorLayoutPass
         .target_shape = {sublane_count, lane_count},
         .mxu_shape = {mxu_contracting_size, mxu_noncontracting_size},
         .max_sublanes_in_scratch = max_sublanes_in_scratch,
-        .vmem_banks = vmem_banks};
+        .vmem_banks = vmem_banks,
+        .max_shuffle_sublane_offset = max_shuffle_sublane_offset,
+    };
     if (failed(applyLayoutFunc(ctx, getOperation()))) {
       signalPassFailure();
       return;

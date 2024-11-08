@@ -225,9 +225,7 @@ jax_multiplatform_test(
         "tpu_v4_2x2",
         "tpu_v5p_2x2",
         "tpu_v5e_4x2",
-        "cpu_shardy",
         "gpu_2gpu_shardy",
-        "tpu_v3_2x2_shardy",
         "tpu_v5e_4x2_shardy",
     ],
     shard_count = {
@@ -246,10 +244,8 @@ jax_multiplatform_test(
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
     enable_configs = [
-        "cpu_shardy",
         "gpu_2gpu_shardy",
         "tpu_v3_2x2_shardy",
-        "tpu_v4_2x2_shardy",
         "tpu_v3_2x2",
         "gpu_2gpu",
     ],
@@ -264,6 +260,7 @@ jax_multiplatform_test(
     ],
 )
 
+# TODO(b/355263220): enable on TPU once layouts is supported with Shardy.
 jax_multiplatform_test(
     name = "layout_test",
     srcs = ["layout_test.py"],
@@ -271,15 +268,22 @@ jax_multiplatform_test(
         "tpu": ["requires-mem:16g"],  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
     },
     tags = ["multiaccelerator"],
+    deps = [
+        "//jax:experimental",
+    ],
 )
 
 jax_multiplatform_test(
     name = "shard_alike_test",
     srcs = ["shard_alike_test.py"],
+    disable_configs = [
+        "cpu_shardy",  # TODO(b/355263220): enable once shard_alike is supported.
+    ],
     enable_configs = [
         "tpu_v3_2x2",
         "tpu_v5e_4x2",
         "tpu_v4_2x2",
+        "tpu_v3_2x2_shardy",
     ],
     deps = [
         "//jax:experimental",
@@ -293,7 +297,6 @@ jax_multiplatform_test(
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
     enable_backends = ["gpu"],
-    env = {"XLA_FLAGS": "--xla_dump_to=sponge --xla_gpu_enable_latency_hiding_scheduler=true"},
     tags = [
         "config-cuda-only",
         "multiaccelerator",
@@ -307,6 +310,9 @@ jax_multiplatform_test(
     name = "mock_gpu_test",
     srcs = ["mock_gpu_test.py"],
     enable_backends = ["gpu"],
+    enable_configs = [
+        "gpu_2gpu_shardy",
+    ],
     tags = [
         "config-cuda-only",
     ],
@@ -411,11 +417,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "custom_root_test",
     srcs = ["custom_root_test.py"],
-    shard_count = {
-        "cpu": 10,
-        "gpu": 10,
-        "tpu": 10,
-    },
 )
 
 jax_multiplatform_test(
@@ -550,6 +551,7 @@ jax_multiplatform_test(
     name = "lax_test",
     srcs = ["lax_test.py"],
     backend_tags = {
+        "cpu": ["not_run:arm"],  # Numerical issues, including https://github.com/jax-ml/jax/issues/24787
         "tpu": ["noasan"],  # Times out.
     },
     shard_count = {
@@ -560,7 +562,7 @@ jax_multiplatform_test(
     deps = [
         "//jax:internal_test_util",
         "//jax:lax_reference",
-    ] + py_deps("numpy"),
+    ] + py_deps("numpy") + py_deps("mpmath"),
 )
 
 jax_multiplatform_test(
@@ -995,6 +997,9 @@ jax_multiplatform_test(
         "gpu": ["--jax_num_generated_cases=40"],
         "tpu": ["--jax_num_generated_cases=40"],
     },
+    disable_configs = [
+        "cpu_shardy",  # TODO(b/376475853): array values mismatch, need to fix and re-enable.
+    ],
     shard_count = {
         "cpu": 50,
         "gpu": 50,
@@ -1232,6 +1237,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "debugging_primitives_test",
     srcs = ["debugging_primitives_test.py"],
+    disable_configs = [
+        "cpu_shardy",  # TODO(b/364547005): enable once pure callbacks are supported.
+    ],
     enable_configs = [
         "cpu",
         "gpu_h100",
@@ -1247,6 +1255,9 @@ jax_multiplatform_test(
     backend_tags = {
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
+    disable_configs = [
+        "cpu_shardy",  # TODO(b/364547005): enable once pure callbacks are supported.
+    ],
     enable_configs = [
         "tpu_v2_1x1",
         "tpu_v3_2x2",
@@ -1261,6 +1272,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "debugger_test",
     srcs = ["debugger_test.py"],
+    disable_configs = [
+        "cpu_shardy",  # TODO(b/364547005): enable once pure callbacks are supported.
+    ],
     enable_configs = [
         "cpu",
         "gpu_h100",
@@ -1311,10 +1325,8 @@ jax_multiplatform_test(
     name = "shard_map_test",
     srcs = ["shard_map_test.py"],
     enable_configs = [
-        "cpu_shardy",
         "gpu_2gpu_shardy",
         "tpu_v3_2x2_shardy",
-        "tpu_v4_2x2_shardy",
     ],
     shard_count = {
         "cpu": 50,
@@ -1343,6 +1355,14 @@ jax_multiplatform_test(
     srcs = ["attrs_test.py"],
     deps = [
         "//jax:experimental",
+    ],
+)
+
+jax_multiplatform_test(
+    name = "colocated_python_test",
+    srcs = ["colocated_python_test.py"],
+    deps = [
+        "//jax:experimental_colocated_python",
     ],
 )
 
@@ -1395,13 +1415,13 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "export_test",
     srcs = ["export_test.py"],
+    disable_configs = [
+        "cpu_shardy",  # TODO(b/355263220): enable once export is supported.
+    ],
     enable_configs = [
         "tpu_v3_2x2",
     ],
     tags = [],
-    deps = [
-        "//jax/experimental/export",
-    ],
 )
 
 jax_multiplatform_test(
@@ -1435,6 +1455,7 @@ jax_multiplatform_test(
     disable_configs = [
         "gpu_a100",  # TODO(b/269593297): matmul precision issues
         "gpu_h100",  # Scarce resources.
+        "cpu_shardy",  # TODO(b/355263220): enable once export is supported.
     ],
     shard_count = {
         "cpu": 40,

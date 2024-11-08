@@ -945,7 +945,15 @@ def _pallas_call_batching_rule(
           )
           for invar in eqn.invars
       ]
-      invar_raggedness, outvar_raggedness = rule(invar_raggedness, eqn.outvars)
+      try:
+        invar_raggedness, outvar_raggedness = rule(
+            eqn.params, invar_raggedness, eqn.outvars  # type: ignore[arg-type]
+        )
+      except Exception as e:
+        raise RuntimeError(
+            f"Failed to run rule for {prim}. invars: {eqn.invars}, outvars:"
+            f" {eqn.outvars}. Underlying reason: {e}"
+        ) from e
 
       for invar, rav in zip(eqn.invars, invar_raggedness):  # type: ignore[assignment]
         if isinstance(invar, jax_core.Var):
@@ -1440,6 +1448,17 @@ _PALLAS_USE_MOSAIC_GPU = config.bool_flag(
         " dialect, instead of Trition IR."
     ),
 )
+_PALLAS_VERBOSE_ERRORS = config.bool_flag(
+    "jax_pallas_verbose_errors",
+    default=config.bool_env("JAX_PALLAS_VERBOSE_ERRORS", True),
+    help=(
+        "If True, print verbose error messages for Pallas kernels."
+    ),
+)
+
+
+def _verbose_errors_enabled() -> bool:
+  return _PALLAS_VERBOSE_ERRORS.value
 
 
 def _unsupported_lowering_error(platform: str) -> Exception:
@@ -1548,12 +1567,6 @@ def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
       if not (hasattr(out_shape, "shape") and hasattr(out_shape, "dtype")):
         raise ValueError(f"Invalid out_shape type: {type(out_shape)}")
       return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype)
-
-
-def _get_memory_space_from_ref(ref_aval: state.AbstractRef) -> Any:
-  if isinstance(ref_aval, pallas_core.AbstractMemoryRef):
-    return ref_aval.memory_space
-  return pallas_core.MemorySpace.ANY
 
 
 @state_discharge.register_discharge_rule(pallas_call_p)

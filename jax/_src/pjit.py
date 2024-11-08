@@ -67,8 +67,7 @@ from jax._src.mesh import AbstractMesh
 from jax._src.sharding_impls import (
     NamedSharding, GSPMDSharding,
     SingleDeviceSharding, PmapSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
-    ParsedPartitionSpec, get_single_pspec, is_unspecified,
-    is_unspecified_or_auto, prepare_axis_resources, parse_flatten_op_sharding)
+    ParsedPartitionSpec, get_single_pspec, prepare_axis_resources, parse_flatten_op_sharding)
 from jax._src.layout import Layout, DeviceLocalLayout, AutoLayout
 from jax._src.state import discharge as state_discharge, RefEffect, AbstractRef
 from jax._src.traceback_util import api_boundary
@@ -165,6 +164,7 @@ class PjitInfo(NamedTuple):
   inline: bool
   abstracted_axes: Any | None
   use_resource_env: bool  # False for jit, True for pjit
+  compiler_options_kvs: tuple[tuple[str, Any], ...]
 
   # Hash and compare PjitInfo by identity when used as a cache key.
   def __hash__(self):
@@ -358,7 +358,8 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
       in_layouts_leaves=jit_info.in_layouts_leaves,
       out_layouts_treedef=jit_info.out_layouts_treedef,
       out_layouts_leaves=jit_info.out_layouts_leaves,
-      use_resource_env=jit_info.use_resource_env)
+      use_resource_env=jit_info.use_resource_env,
+      compiler_options_kvs=jit_info.compiler_options_kvs)
   cpp_pjit_f = xc._xla.pjit(
       fun_name(fun), fun, cache_miss, jit_info.static_argnums,
       jit_info.static_argnames, cache_key, tree_util.dispatch_registry,
@@ -399,7 +400,8 @@ def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
                          static_argnames: str | Iterable[str] | None,
                          device: xc.Device | None, backend: str | None,
                          abstracted_axes: Any | None, keep_unused: bool,
-                         inline: bool, use_resource_env: bool) -> PjitInfo:
+                         inline: bool, compiler_options: dict[str, Any] | None,
+                         use_resource_env: bool) -> PjitInfo:
   """Parses the arguments to jit/pjit.
 
   Performs any preprocessing and validation of the arguments that we can do
@@ -418,10 +420,10 @@ def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
     if device is not None and backend is not None:
       raise ValueError("can't specify both a device and a backend for jit, "
                        f"got {device=} and {backend=}")
-    if in_shardings is not None and not is_unspecified(in_shardings):
+    if in_shardings is not None and not isinstance(in_shardings, UnspecifiedValue):
       raise ValueError('If backend or device is specified on jit, then '
                        'in_shardings should not be specified.')
-    if out_shardings is not None and not is_unspecified(out_shardings):
+    if out_shardings is not None and not isinstance(out_shardings, UnspecifiedValue):
       raise ValueError('If backend or device is specified on jit, then '
                        'out_shardings should not be specified.')
 
@@ -440,7 +442,7 @@ def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
   out_shardings = prepare_axis_resources(out_shardings, 'out_shardings')
 
   user_specified_in_shardings = (in_shardings is not None and
-                                 not is_unspecified(in_shardings))
+                                 not isinstance(in_shardings, UnspecifiedValue))
 
   in_shardings_leaves, in_shardings_treedef = none_lr.flatten(in_shardings)
   out_shardings_leaves, out_shardings_treedef = none_lr.flatten(out_shardings)
@@ -454,6 +456,8 @@ def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
       fun, fun_signature, donate_argnums, donate_argnames, static_argnums,
       static_argnames)
 
+  compiler_options_kvs = (() if compiler_options is None else
+                          tuple(compiler_options.items()))
   return PjitInfo(
         fun_sourceinfo=fun_sourceinfo,
         fun_signature=fun_signature,
@@ -471,7 +475,8 @@ def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
         donate_argnames=donate_argnames, device=device, backend=backend,
         keep_unused=keep_unused, inline=inline,
         abstracted_axes=abstracted_axes,
-        use_resource_env=use_resource_env)
+        use_resource_env=use_resource_env,
+        compiler_options_kvs=compiler_options_kvs)
 
 
 def _make_jit_wrapper(fun: Callable, jit_info: PjitInfo):
@@ -483,7 +488,7 @@ def _make_jit_wrapper(fun: Callable, jit_info: PjitInfo):
   @api_boundary
   def eval_shape(*args, **kwargs):
     p, _ = _infer_params(fun, jit_info, args, kwargs)
-    out_s = [None if is_unspecified(s) else s for s in p.params['out_shardings']]
+    out_s = [None if isinstance(s, UnspecifiedValue) else s for s in p.params['out_shardings']]
     # TODO(yashkatariya): Add `Layout` to SDS.
     out = [api.ShapeDtypeStruct(x.shape, x.dtype, sharding=s,
                                 weak_type=x.weak_type)
@@ -515,12 +520,13 @@ def make_jit(fun: Callable, in_shardings: Any, out_shardings: Any,
              static_argnames: str | Iterable[str] | None,
              device: xc.Device | None, backend: str | None,
              abstracted_axes: Any | None, keep_unused: bool,
-             inline: bool, use_resource_env: bool) -> Any:
+             inline: bool, compiler_options: dict[str, Any] | None,
+             use_resource_env: bool) -> Any:
   """jit() and pjit() are thin wrappers around this function."""
   jit_info = _parse_jit_arguments(
         fun, in_shardings, out_shardings, donate_argnums, donate_argnames,
         static_argnums, static_argnames, device, backend, abstracted_axes,
-        keep_unused, inline, use_resource_env)
+        keep_unused, inline, compiler_options, use_resource_env)
   return _make_jit_wrapper(fun, jit_info)
 
 
@@ -677,6 +683,7 @@ def _infer_params_impl(
       name=fun_qual_name(flat_fun),
       keep_unused=ji.keep_unused,
       inline=ji.inline,
+      compiler_options_kvs=ji.compiler_options_kvs,
   )
   return PjitParams(consts, params, in_avals, in_tree, out_tree(),
                     donated_invars, dbg.arg_names if dbg else None, len(consts),
@@ -816,6 +823,7 @@ def pjit(
     backend: str | None = None,
     inline: bool = False,
     abstracted_axes: Any | None = None,
+    compiler_options: dict[str, Any] | None = None,
 ) -> JitWrapped:
   """Makes ``fun`` compiled and automatically partitioned across multiple devices.
 
@@ -988,7 +996,7 @@ def pjit(
   return make_jit(
        fun, in_shardings, out_shardings, donate_argnums, donate_argnames,
        static_argnums, static_argnames, device, backend, abstracted_axes,
-       keep_unused, inline, use_resource_env=True)
+       keep_unused, inline, compiler_options, use_resource_env=True)
 
 
 def hashable_pytree(pytree):
@@ -1001,7 +1009,7 @@ def hashable_pytree(pytree):
 def _create_sharding_for_array(mesh, x, name, api_name):
   if x is None and (mesh is None or mesh.empty):
     return UNSPECIFIED
-  if isinstance(x, sharding.Sharding) or is_unspecified_or_auto(x):
+  if isinstance(x, (AUTO, UnspecifiedValue, sharding.Sharding)):
     return x
   if mesh is None:
     msg = ('jax.jit only supports `Sharding`s being passed to'
@@ -1110,7 +1118,7 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
   orig_in_shardings = tree_unflatten(in_shardings_treedef, in_shardings_leaves)
   # Only do this if original in_shardings are unspecified. If it is AUTO, go
   # via flatten_axis_resources.
-  if is_unspecified(orig_in_shardings):
+  if isinstance(orig_in_shardings, UnspecifiedValue):
     in_shardings_flat = (orig_in_shardings,) * len(in_avals)
   else:
     in_shardings_flat = flatten_axis_resources(
@@ -1312,8 +1320,7 @@ def _check_and_canonicalize_out_shardings(
     out_shardings_treedef, out_shardings_leaves, out_layouts_treedef,
     out_layouts_leaves, out_tree, out_avals, debug_info, device_or_backend_set):
   orig_out_shardings = tree_unflatten(out_shardings_treedef, out_shardings_leaves)
-  if (is_unspecified(orig_out_shardings) or
-      isinstance(orig_out_shardings, sharding.Sharding)):
+  if isinstance(orig_out_shardings, (UnspecifiedValue, sharding.Sharding)):
     out_shardings_flat = (orig_out_shardings,) * len(out_avals)
   else:
     out_shardings_flat = flatten_axis_resources(
@@ -1391,7 +1398,7 @@ def pjit_check_aval_sharding(
     what_aval: str, allow_uneven_sharding: bool):
   new_names = [''] * len(shardings) if names is None else names
   for aval, s, name in zip(flat_avals, shardings, new_names):
-    if is_unspecified_or_auto(s):
+    if isinstance(s, (UnspecifiedValue, AUTO)):
       continue
     name_str = f' with pytree key path {name}' if name else ''
     shape = aval.shape
@@ -1439,7 +1446,7 @@ def check_aval_layout_compatibility(
 
 # -------------------- pjit rules --------------------
 
-pjit_p = core.AxisPrimitive("pjit")
+pjit_p = core.Primitive("pjit")
 pjit_p.multiple_results = True
 
 
@@ -1466,7 +1473,7 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
     else:
       arg_layout, dispatch_arg_layout = None, None
     # Sharding can be unspecified when array is committed if it's a PmapSharding.
-    is_pmap_sharding = (is_unspecified(rs) or
+    is_pmap_sharding = (isinstance(rs, UnspecifiedValue) or
                         isinstance(getattr(arg, 'sharding', None), PmapSharding))
     if jit_in_l is None:
       if committed:
@@ -1527,15 +1534,15 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
     if getattr(a, '_committed', True):
       committed_arg_shardings.append((arg_s, pxla.MismatchType.ARG_SHARDING, None))
 
-  resolved_in_shardings = []
+  resolved_in_shardings: list[PjitSharding] = []
   for arg, pjit_in_s in zip(args, pjit_in_shardings):
     # arg sharding can be None in case of ShapeDtypeStruct. jax.Array does
     # not allow None as the sharding.
     arg_s, committed = ((arg.sharding, getattr(arg, '_committed', True))
                         if hasattr(arg, 'sharding') and arg.sharding is not None
                         else (UNSPECIFIED, False))
-    if is_unspecified(pjit_in_s):
-      if is_unspecified(arg_s):
+    if isinstance(pjit_in_s, UnspecifiedValue):
+      if isinstance(arg_s, UnspecifiedValue):
         resolved_in_shardings.append(arg_s)
       else:
         if committed:
@@ -1553,7 +1560,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
                                       'multiple devices is not supported.')
     else:
       if (isinstance(arg, np.ndarray) and
-          not pjit_in_s.is_fully_replicated and  # type: ignore
+          not pjit_in_s.is_fully_replicated and  # type: ignore[union-attr]
           xb.process_count() > 1):
         raise ValueError(
             'Passing non-trivial shardings for numpy '
@@ -1572,16 +1579,16 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
         # jax.jit does not allow resharding across different memory kinds even
         # if the argument is uncommitted. Use jax.device_put for those cases,
         # either outside or inside jax.jit.
-        if pjit_in_s.memory_kind != arg_s.memory_kind:  # type: ignore
+        if pjit_in_s.memory_kind != arg_s.memory_kind:  # type: ignore[union-attr]
           raise ValueError(
               'Memory kinds passed to jax.jit does not match memory kind on the'
-              f' respective arg. Got pjit memory kind: {pjit_in_s.memory_kind}, '  # type: ignore
+              f' respective arg. Got pjit memory kind: {pjit_in_s.memory_kind}, '  # type: ignore[union-attr]
               f'arg memory kind: {arg_s.memory_kind} for '
               f'arg shape: {shaped_abstractify(arg).str_short()}')
         if (committed and
             not isinstance(arg_s, PmapSharding) and
             not op_shardings.are_op_shardings_equal(
-                pjit_in_s._to_xla_hlo_sharding(arg.ndim),  # type: ignore
+                pjit_in_s._to_xla_hlo_sharding(arg.ndim),  # type: ignore[union-attr]
                 arg_s._to_xla_hlo_sharding(arg.ndim))):
           raise ValueError('Sharding passed to pjit does not match the sharding '
                            'on the respective arg. '
@@ -1596,25 +1603,25 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
 def _resolve_and_lower(
     args, jaxpr, in_shardings, out_shardings, in_layouts,
     out_layouts, resource_env, donated_invars, name, keep_unused, inline,
-    lowering_platforms, lowering_parameters, pgle_profiler):
+    lowering_platforms, lowering_parameters, pgle_profiler,
+    compiler_options_kvs):
   in_shardings = _resolve_in_shardings(args, in_shardings)
   in_layouts = _resolve_in_layouts(args, in_layouts, in_shardings,
                                    jaxpr.in_avals)
-  lowered = _pjit_lower(
+  return _pjit_lower(
       jaxpr, in_shardings, out_shardings, in_layouts, out_layouts, resource_env,
-      donated_invars, name, keep_unused, inline,
+      donated_invars, name, keep_unused, inline, compiler_options_kvs,
       lowering_platforms=lowering_platforms,
       lowering_parameters=lowering_parameters,
       pgle_profiler=pgle_profiler)
-  return lowered
 
 def _pjit_call_impl_python(
     *args, jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
-    resource_env, donated_invars, name, keep_unused, inline):
+    resource_env, donated_invars, name, keep_unused, inline,
+    compiler_options_kvs):
   global _most_recent_pjit_call_executable
 
-  compile_options = None
-  pgle_profiler = None
+  pgle_compile_options, pgle_profiler = {}, None
   pgle_profiler_dict = _most_recent_pjit_call_executable.weak_pgle_profiler_dict
   if config.enable_pgle.value and config.pgle_profiling_runs.value > 0:
     if jaxpr not in pgle_profiler_dict:
@@ -1628,8 +1635,9 @@ def _pjit_call_impl_python(
     # be None.
     fdo_profile = pgle_profiler.consume_fdo_profile()
     if fdo_profile is not None:
-      compile_options = {'fdo_profile': fdo_profile}
+      pgle_compile_options['fdo_profile'] = fdo_profile
 
+  compiler_options_kvs = compiler_options_kvs + tuple(pgle_compile_options.items())
   # TODO(patrios): Do not pass mutable profile session through cached lowering
   # chain. Instead we need to move profilers dictionary to pxla module and use
   # module as key. Right now we can't do that since there is no way to evict _pjit_lower_cached cache for in PGLE mode.
@@ -1640,8 +1648,9 @@ def _pjit_call_impl_python(
       donated_invars=donated_invars, name=name, keep_unused=keep_unused,
       inline=inline, lowering_platforms=None,
       lowering_parameters=mlir.LoweringParameters(),
-      pgle_profiler=pgle_profiler
-  ).compile(compile_options)
+      pgle_profiler=pgle_profiler,
+      compiler_options_kvs=compiler_options_kvs,
+  ).compile()
 
   _most_recent_pjit_call_executable.weak_key_dict[jaxpr] = compiled
   # This check is expensive so only do it if enable_checks is on.
@@ -1695,7 +1704,7 @@ def _pjit_call_impl_python(
 @weakref_lru_cache
 def _get_jaxpr_as_fun(jaxpr, in_shardings, out_shardings, in_layouts,
                       out_layouts, resource_env, donated_invars, name,
-                      keep_unused, inline):
+                      keep_unused, inline, compiler_options_kvs):
   # The input jaxpr to `_get_jaxpr_as_fun` is under a weakref_lru_cache so
   # returning `core.jaxpr_as_fun(jaxpr)` directly creates a strong reference to
   # the jaxpr defeating the purpose of weakref_lru_cache. So return a function
@@ -1708,15 +1717,15 @@ def _get_jaxpr_as_fun(jaxpr, in_shardings, out_shardings, in_layouts,
 
 def _pjit_call_impl(*args, jaxpr,
                     in_shardings, out_shardings, in_layouts, out_layouts,
-                    resource_env,
-                    donated_invars, name, keep_unused, inline):
+                    resource_env, donated_invars, name, keep_unused, inline,
+                    compiler_options_kvs):
   def call_impl_cache_miss(*args_, **kwargs_):
     out_flat, compiled = _pjit_call_impl_python(
         *args, jaxpr=jaxpr, in_shardings=in_shardings,
         out_shardings=out_shardings, in_layouts=in_layouts,
         out_layouts=out_layouts, resource_env=resource_env,
         donated_invars=donated_invars, name=name, keep_unused=keep_unused,
-        inline=inline)
+        inline=inline, compiler_options_kvs=compiler_options_kvs)
     pgle_profiler = _read_pgle_profiler(jaxpr)
     fastpath_data = _get_fastpath_data(
         compiled, tree_structure(out_flat), args, out_flat, [], jaxpr.effects,
@@ -1725,7 +1734,8 @@ def _pjit_call_impl(*args, jaxpr,
 
   f = _get_jaxpr_as_fun(
       jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
-      resource_env, donated_invars, name, keep_unused, inline)
+      resource_env, donated_invars, name, keep_unused, inline,
+      compiler_options_kvs)
   donated_argnums = tuple(i for i, d in enumerate(donated_invars) if d)
   cache_key = pxla.JitGlobalCppCacheKeys(
       donate_argnums=donated_argnums, donate_argnames=None,
@@ -1759,6 +1769,7 @@ def _pjit_lower_cached(
     name: str,
     keep_unused: bool,
     inline: bool,
+    compiler_options_kvs: tuple[tuple[str, Any], ...],
     *,
     lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
@@ -1769,6 +1780,7 @@ def _pjit_lower_cached(
       jaxpr, api_name, name, in_shardings, out_shardings,
       in_layouts, out_layouts, tuple(donated_invars),
       keep_unused=keep_unused, context_mesh=mesh,
+      compiler_options_kvs=compiler_options_kvs,
       lowering_platforms=lowering_platforms,
       lowering_parameters=lowering_parameters,
       pgle_profiler=pgle_profiler)
@@ -1780,16 +1792,17 @@ def pjit_staging_rule(trace, *args, **params):
   params = dict(params, jaxpr=jaxpr, out_shardings=out_shardings,
                 out_layouts=out_layouts)
   if (params["inline"] and
-      all(is_unspecified(i) for i in params["in_shardings"]) and
-      all(is_unspecified(o) for o in params["out_shardings"]) and
+      all(isinstance(i, UnspecifiedValue) for i in params["in_shardings"]) and
+      all(isinstance(o, UnspecifiedValue) for o in params["out_shardings"]) and
       all(i is None for i in params["in_layouts"]) and
       all(o is None for o in params["out_layouts"])):
     if config.dynamic_shapes.value:
       # Inline jaxpr doesn't handle dynamic shapes when inlining. If dynamic
       # shapes are enabled, use eval_jaxpr, which uses the tracing machinery,
       # but redundantly performs abstract evaluation again.
-      out_tracers = core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *args,
-                                    propagate_source_info=False)
+      with core.set_current_trace(trace):
+        out_tracers = core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *args,
+                                      propagate_source_info=False)
     else:
       out_tracers = pe.inline_jaxpr_into_trace(
           trace, jaxpr.jaxpr, jaxpr.consts, *args)
@@ -1809,7 +1822,7 @@ def pjit_staging_rule(trace, *args, **params):
     trace.frame.add_eqn(eqn)
   elif any(isinstance(c, core.MutableArray) for c in jaxpr.consts):
     jaxpr, consts = pxla._move_mutable_consts(jaxpr)
-    consts = map(trace.instantiate_const, consts)
+    consts = map(trace.new_const, consts)
     in_shardings = (*params['in_shardings'],) + (UNSPECIFIED,) * len(consts)
     in_layouts = (*params['in_layouts'],) + (None,) * len(consts)
     donated_invars = (*params['donated_invars'],) + (False,) * len(consts)
@@ -1830,7 +1843,7 @@ pe.custom_staging_rules[pjit_p] = pjit_staging_rule
 
 def _pjit_forwarding(jaxpr, out_shardings, out_layouts):
   in_fwd: list[int | None] = pe._jaxpr_forwarding(jaxpr.jaxpr)
-  in_fwd = [fwd if is_unspecified(os) and ol is None else None for fwd, os, ol
+  in_fwd = [fwd if isinstance(os, UnspecifiedValue) and ol is None else None for fwd, os, ol
             in zip(in_fwd, out_shardings, out_layouts)]
   keep = [f is None for f in in_fwd]
   jaxpr = pe.prune_closed_jaxpr_outputs(jaxpr, keep)
@@ -1896,8 +1909,8 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx, name, jaxpr, effects, in_shardings,
 
   func = mod_ctx.cached_primitive_lowerings.get(key, None)
   if func is None:
-    arg_shardings = [None if is_unspecified(i) else i for i in in_shardings]
-    result_shardings = [None if is_unspecified(o) else o for o in out_shardings]
+    arg_shardings = [None if isinstance(i, UnspecifiedValue) else i for i in in_shardings]
+    result_shardings = [None if isinstance(o, UnspecifiedValue) else o for o in out_shardings]
     # TODO(b/228598865): inlined calls cannot have shardings set directly on the
     # inputs or outputs because they are lost during MLIR->HLO conversion.
     # using_sharding_annotation=False means we add an identity operation instead.
@@ -1912,7 +1925,7 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx, name, jaxpr, effects, in_shardings,
 
 def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
                    out_shardings, in_layouts, out_layouts, resource_env,
-                   donated_invars, keep_unused, inline):
+                   donated_invars, keep_unused, inline, compiler_options_kvs):
   effects = list(ctx.tokens_in.effects())
   output_types = map(mlir.aval_to_ir_type, ctx.avals_out)
   output_types = [mlir.token_type()] * len(effects) + output_types
@@ -1938,14 +1951,12 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
 mlir.register_lowering(pjit_p, _pjit_lowering)
 
 
-def _pjit_batcher(spmd_axis_name, axis_size, axis_name, main_type,
-                  vals_in, dims_in, jaxpr, in_shardings, out_shardings,
-                  in_layouts, out_layouts, resource_env, donated_invars, name,
-                  keep_unused, inline):
+def _pjit_batcher(axis_data, vals_in, dims_in,
+                  jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
+                  resource_env, donated_invars, name, keep_unused, inline,
+                  compiler_options_kvs):
   segment_lens, dims_in = batching.indirectify_ragged_axes(dims_in)
-  new_jaxpr, axes_out = batching.batch_jaxpr2(
-      jaxpr, axis_size, dims_in, axis_name=axis_name,
-      spmd_axis_name=spmd_axis_name, main_type=main_type)
+  new_jaxpr, axes_out = batching.batch_jaxpr2(jaxpr, axis_data, dims_in)
 
   if resource_env is not None:
     mesh = resource_env.physical_mesh
@@ -1954,11 +1965,11 @@ def _pjit_batcher(spmd_axis_name, axis_size, axis_name, main_type,
 
   # TODO(axch): prepend with Nones (?) to account for new segment_lens inputs
   in_shardings = tuple(
-      _pjit_batcher_for_sharding(i, axis_in, spmd_axis_name, mesh, aval.ndim)
+      _pjit_batcher_for_sharding(i, axis_in, axis_data.spmd_name, mesh, aval.ndim)
       if axis_in is not None else i
       for axis_in, i, aval in zip(dims_in, in_shardings, new_jaxpr.in_avals))
   out_shardings = tuple(
-      _pjit_batcher_for_sharding(o, axis_out, spmd_axis_name, mesh, aval.ndim)
+      _pjit_batcher_for_sharding(o, axis_out, axis_data.spmd_name, mesh, aval.ndim)
       if axis_out is not None else o
       for axis_out, o, aval in zip(axes_out, out_shardings, new_jaxpr.out_avals))
   # TODO(yashkatariya): Figure out layouts should change under vmap.
@@ -1978,21 +1989,22 @@ def _pjit_batcher(spmd_axis_name, axis_size, axis_name, main_type,
     donated_invars=donated_invars,
     name=name,
     keep_unused=keep_unused,
-    inline=inline)
+    inline=inline,
+    compiler_options_kvs=compiler_options_kvs)
 
   resolved_axes_out = batching.resolve_ragged_axes_against_inputs_outputs(
       vals_in, vals_out, axes_out)
   return vals_out, resolved_axes_out
 
-batching.spmd_axis_primitive_batchers[pjit_p] = _pjit_batcher
-batching.axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, None)
+batching.fancy_primitive_batchers[pjit_p] = _pjit_batcher
+batching.ragged_prop_rules[pjit_p] = batching.ragged_mask_no_op_rule
 
 def _pjit_batcher_for_sharding(
     s: sharding.Sharding | UnspecifiedValue,
     dim: int, spmd_axis_name: tuple[str, ...] | None, mesh, ndim: int):
-  if is_unspecified(s):
+  if isinstance(s, UnspecifiedValue):
     return s
-  hlo_s = s._to_xla_hlo_sharding(ndim)  # type: ignore
+  hlo_s = s._to_xla_hlo_sharding(ndim)
   if spmd_axis_name is None:
     if sharding_impls.is_op_sharding_replicated(hlo_s):
       return s
@@ -2004,7 +2016,7 @@ def _pjit_batcher_for_sharding(
     tad.insert(dim, 1)
     new_op.tile_assignment_dimensions = tad
     new_gs = GSPMDSharding(
-        s._device_assignment, new_op,  # type: ignore
+        s._device_assignment, new_op,
         _device_list=getattr(s, '_internal_device_list', None))
     return pxla._get_out_sharding_from_orig_sharding([new_gs], [None], s, None)[0]
   else:
@@ -2028,7 +2040,8 @@ def _pjit_batcher_for_sharding(
 
 def _pjit_jvp(primals_in, tangents_in,
               jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
-              resource_env, donated_invars, name, keep_unused, inline):
+              resource_env, donated_invars, name, keep_unused, inline,
+              compiler_options_kvs):
   if any(isinstance(c, core.MutableArray) for c in jaxpr.consts):
     jaxpr, mut_primals = pxla._move_mutable_consts(jaxpr)
     mut_tangents = map(ad_util.zeros_like_jaxval, mut_primals)
@@ -2060,7 +2073,8 @@ def _pjit_jvp(primals_in, tangents_in,
       donated_invars=(*donated_invars, *_filter_zeros_in(donated_invars)),
       name=name,
       keep_unused=keep_unused,
-      inline=inline)
+      inline=inline,
+      compiler_options_kvs=compiler_options_kvs)
 
   primals_out, tangents_out = split_list(outputs, [len(jaxpr.jaxpr.outvars)])
   assert len(primals_out) == len(jaxpr.jaxpr.outvars)
@@ -2070,19 +2084,10 @@ def _pjit_jvp(primals_in, tangents_in,
 ad.primitive_jvps[pjit_p] = _pjit_jvp
 
 
-@weakref_lru_cache
-def _known_jaxpr_fwd(known_jaxpr: core.ClosedJaxpr,
-                     in_fwd: tuple[int | None, ...]) -> core.ClosedJaxpr:
-  updated_jaxpr = known_jaxpr.jaxpr.replace(
-      outvars=[x for x, i in zip(known_jaxpr.jaxpr.outvars, in_fwd)
-               if i is None])
-  return known_jaxpr.replace(jaxpr=updated_jaxpr)
-
-
 def _pjit_partial_eval(trace, *in_tracers,
                        jaxpr, in_shardings, out_shardings,
                        in_layouts, out_layouts, resource_env, donated_invars,
-                       name, keep_unused, inline):
+                       name, keep_unused, inline, compiler_options_kvs):
   in_pvals = [t.pval for t in in_tracers]
 
   known_ins = tuple(pv.is_known() for pv in in_pvals)
@@ -2107,7 +2112,7 @@ def _pjit_partial_eval(trace, *in_tracers,
   # Only forward primal outputs when corresponding out_sharding is UNSPECIFIED.
   in_fwd_primal, in_fwd_res = split_list(in_fwd, [num_out_primals])
   in_fwd = [
-      fwd if is_unspecified(os) and ol is None else None
+      fwd if isinstance(os, UnspecifiedValue) and ol is None else None
       for os, ol, fwd in zip(
           keep_where(out_shardings, known_outs),
           keep_where(out_layouts, known_outs), in_fwd_primal)
@@ -2140,7 +2145,8 @@ def _pjit_partial_eval(trace, *in_tracers,
       in_layouts=keep_where(in_layouts, known_ins),
       out_layouts=known_out_layouts, resource_env=resource_env,
       donated_invars=keep_where(donated_invars, known_ins),
-      name=name, keep_unused=keep_unused, inline=inline)
+      name=name, keep_unused=keep_unused, inline=inline,
+      compiler_options_kvs=compiler_options_kvs)
   assert len(known_params['out_shardings']) == len(known_params['jaxpr'].out_avals)
   assert len(known_params['out_layouts']) == len(known_params['jaxpr'].out_avals)
 
@@ -2174,7 +2180,8 @@ def _pjit_partial_eval(trace, *in_tracers,
                       (False,) * num_residuals),
       name=name,
       keep_unused=keep_unused,
-      inline=inline)
+      inline=inline,
+      compiler_options_kvs=compiler_options_kvs)
   unknown_tracers_in = [t for t in in_tracers if not t.pval.is_known()]
   unknown_out_avals = unknown_jaxpr.out_avals
   unknown_tracers_out = [
@@ -2254,7 +2261,8 @@ def _pjit_transpose_trace(fun, in_avals):
 
 def _pjit_transpose(cts_in, *primals_in,
                     jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
-                    resource_env, donated_invars, name, keep_unused, inline):
+                    resource_env, donated_invars, name, keep_unused, inline,
+                    compiler_options_kvs):
   def prune_type(ty, xs, maybe_zeros):
     return tuple(x for x, mz in zip(xs, maybe_zeros) if type(mz) is not ty)
 
@@ -2305,7 +2313,8 @@ def _pjit_transpose(cts_in, *primals_in,
       donated_invars=(False,) * len(primals_and_nz_cts_in),
       name=name,
       keep_unused=keep_unused,
-      inline=inline)
+      inline=inline,
+      compiler_options_kvs=compiler_options_kvs)
 
   if attrs_tracked:
     final_states, nz_cts_out = split_list(nz_cts_out, [len(init_states)])
@@ -2358,9 +2367,9 @@ def _pjit_pp_rule(eqn, context, settings):
   del params['inline']
   if not any(params['donated_invars']):
     del params['donated_invars']
-  if all(is_unspecified(s) for s in params['in_shardings']):
+  if all(isinstance(s, UnspecifiedValue) for s in params['in_shardings']):
     del params['in_shardings']
-  if all(is_unspecified(s) for s in params['out_shardings']):
+  if all(isinstance(s, UnspecifiedValue) for s in params['out_shardings']):
     del params['out_shardings']
   if all(l is None for l in params['in_layouts']):
     del params['in_layouts']
@@ -2371,6 +2380,8 @@ def _pjit_pp_rule(eqn, context, settings):
   if (params['resource_env'] is None or
       params['resource_env'].physical_mesh.empty):
     del params['resource_env']
+  if not params['compiler_options_kvs']:
+    del params['compiler_options_kvs']
 
   # Move name= to the front to make the resulting equation easier to scan.
   del params["name"]
@@ -2382,8 +2393,7 @@ core.pp_eqn_rules[pjit_p] = _pjit_pp_rule
 def _pjit_state_discharge_rule(
     in_avals, out_avals, *args, jaxpr, in_shardings, out_shardings,
     in_layouts, out_layouts, **params):
-  if not (all(map(is_unspecified, in_shardings)) and
-          all(map(is_unspecified, out_shardings))):
+  if not all(isinstance(s, UnspecifiedValue) for s in (*in_shardings, *out_shardings)):
     raise NotImplementedError
 
   if not (all(l is None for l in in_layouts) and
@@ -2451,12 +2461,18 @@ def with_sharding_constraint(x, shardings):
   shardings_flat = [_create_sharding_for_array(mesh, a, 'shardings',
                                                'with_sharding_constraint')
                     for a in user_shardings_flat]
+  for s, u in zip(shardings_flat, user_shardings_flat):
+    if isinstance(s, (UnspecifiedValue, AUTO)):
+      raise ValueError(
+          f'One of with_sharding_constraint arguments got sharding {u} which is'
+          ' not allowed. Please only pass `jax.sharding.Sharding` instances.')
+  del user_shardings_flat
+
   # TODO(bartchr): remove `unconstrained_dims` after migrating to Shardy. It's
   # already part of the shardings.
   unconstrained_dims = [get_unconstrained_dims(s)
                         if isinstance(s, NamedSharding) else {}
                         for s in shardings_flat]
-  del user_shardings_flat
 
   pjit_check_aval_sharding(
       shardings_flat, x_flat, None, "with_sharding_constraint arguments",
@@ -2537,24 +2553,23 @@ mlir.register_lowering(sharding_constraint_p,
 
 
 def _sharding_constraint_batcher(
-    spmd_axis_name, axis_size, axis_name, main_type, vals_in,
-    dims_in, sharding, layout, resource_env, unconstrained_dims):
-  if spmd_axis_name is not None and isinstance(sharding, NamedSharding):
+    axis_data, vals_in, dims_in, sharding, layout, resource_env, unconstrained_dims):
+  if axis_data.spmd_name is not None and isinstance(sharding, NamedSharding):
     used = {n for ns in sharding.spec
             for n in (ns if isinstance(ns, tuple) else (ns,))}
-    if set(spmd_axis_name) & used:
-      raise ValueError(f"vmap spmd_axis_name {spmd_axis_name} cannot appear in "
+    if set(axis_data.spmd_name) & used:
+      raise ValueError(f"vmap spmd_axis_name {axis_data.spmd_name} cannot appear in "
                        "with_sharding_constraint spec, but got spec "
                        f"{sharding.spec}")
   x, = vals_in
   d, = dims_in
-
+  # None means unconstrained in ParsedPartitionSpec
   unconstrained_dims = {ud + (d <= ud) for ud in unconstrained_dims}
-  if spmd_axis_name is None:
+  if axis_data.spmd_name is None:
     unconstrained_dims.add(d)
 
   vmapped_sharding = _pjit_batcher_for_sharding(
-      sharding, d, spmd_axis_name, resource_env.physical_mesh, x.ndim)
+      sharding, d, axis_data.spmd_name, resource_env.physical_mesh, x.ndim)
   if unconstrained_dims and isinstance(vmapped_sharding, NamedSharding):
     new_spec = list(vmapped_sharding.spec) + [None] * (x.ndim - len(vmapped_sharding.spec))
     for u in unconstrained_dims:
@@ -2575,9 +2590,9 @@ def _sharding_constraint_batcher(
       resource_env=resource_env,
       unconstrained_dims=unconstrained_dims)
   return y, d
-batching.spmd_axis_primitive_batchers[sharding_constraint_p] = _sharding_constraint_batcher
-batching.axis_primitive_batchers[sharding_constraint_p] = partial(
-    _sharding_constraint_batcher, None)
+batching.fancy_primitive_batchers[sharding_constraint_p] = _sharding_constraint_batcher
+batching.skippable_batchers[sharding_constraint_p] = lambda _: ()
+
 
 # -------------------- helpers --------------------
 

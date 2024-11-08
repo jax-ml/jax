@@ -51,7 +51,6 @@ from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
-from jax._src.numpy.util import _parse_numpydoc, ParsedDoc, implements
 from jax._src.util import safe_zip, NumpyComplexWarning
 
 config.parse_flags_with_absl()
@@ -2785,7 +2784,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                                 message="NumPy will stop allowing conversion.*"):
           out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
     else:
-      with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype int64"):
+      with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype.*int64"):
         with self.assertRaisesRegex(OverflowError, "Python integer 2147483648 out of bounds.*"):
           out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
 
@@ -6186,10 +6185,114 @@ class NumpySignaturesTest(jtu.JaxTestCase):
 
   def testWrappedSignaturesMatch(self):
     """Test that jax.numpy function signatures match numpy."""
-    jnp_funcs = {name: getattr(jnp, name) for name in dir(jnp)}
-    func_pairs = {name: (fun, fun.__np_wrapped__) for name, fun in jnp_funcs.items()
-                  if getattr(fun, '__np_wrapped__', None) is not None}
-    assert len(func_pairs) > 0
+    # NumPy functions explicitly not implemented in JAX:
+    skip = {'array2string',
+            'asanyarray',
+            'asarray_chkfinite',
+            'ascontiguousarray',
+            'asfortranarray',
+            'asmatrix',
+            'base_repr',
+            'binary_repr',
+            'bmat',
+            'broadcast',
+            'busday_count',
+            'busday_offset',
+            'busdaycalendar',
+            'common_type',
+            'copyto',
+            'datetime_as_string',
+            'datetime_data',
+            'errstate',
+            'flatiter',
+            'format_float_positional',
+            'format_float_scientific',
+            'fromregex',
+            'genfromtxt',
+            'get_include',
+            'getbufsize',
+            'geterr',
+            'geterrcall',
+            'in1d',
+            'info',
+            'is_busday',
+            'isfortran',
+            'isnat',
+            'loadtxt',
+            'matrix',
+            'may_share_memory',
+            'memmap',
+            'min_scalar_type',
+            'mintypecode',
+            'ndenumerate',
+            'ndindex',
+            'nditer',
+            'nested_iters',
+            'poly1d',
+            'put_along_axis',
+            'putmask',
+            'real_if_close',
+            'recarray',
+            'record',
+            'require',
+            'row_stack',
+            'savetxt',
+            'savez_compressed',
+            'setbufsize',
+            'seterr',
+            'seterrcall',
+            'shares_memory',
+            'show_config',
+            'show_runtime',
+            'test',
+            'trapz',
+            'typename'}
+
+    # symbols removed in NumPy 2.0
+    skip |= {'add_docstring',
+             'add_newdoc',
+             'add_newdoc_ufunc',
+             'alltrue',
+             'asfarray',
+             'byte_bounds',
+             'compare_chararrays',
+             'cumproduct',
+             'deprecate',
+             'deprecate_with_doc',
+             'disp',
+             'fastCopyAndTranspose',
+             'find_common_type',
+             'get_array_wrap',
+             'geterrobj',
+             'issctype',
+             'issubclass_',
+             'issubsctype',
+             'lookfor',
+             'mat',
+             'maximum_sctype',
+             'msort',
+             'obj2sctype',
+             'product',
+             'recfromcsv',
+             'recfromtxt',
+             'round_',
+             'safe_eval',
+             'sctype2char',
+             'set_numeric_ops',
+             'set_string_function',
+             'seterrobj',
+             'sometrue',
+             'source',
+             'who'}
+
+    self.assertEmpty(skip.intersection(dir(jnp)))
+
+    names = (name for name in dir(np) if not (name.startswith('_') or name in skip))
+    names = (name for name in names if callable(getattr(np, name)))
+    names = {name for name in names if not isinstance(getattr(np, name), type)}
+    self.assertEmpty(names.difference(dir(jnp)))
+
+    self.assertNotEmpty(names)
 
     # TODO(jakevdp): fix some of the following signatures. Some are due to wrong argument names.
     unsupported_params = {
@@ -6200,6 +6303,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'copy': ['subok'],
       'corrcoef': ['ddof', 'bias', 'dtype'],
       'cov': ['dtype'],
+      'cumulative_prod': ['out'],
       'cumulative_sum': ['out'],
       'empty_like': ['subok', 'order'],
       'einsum': ['kwargs'],
@@ -6211,9 +6315,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'full': ['order', 'like'],
       'full_like': ['subok', 'order'],
       'fromfunction': ['like'],
-      'histogram': ['normed'],
-      'histogram2d': ['normed'],
-      'histogramdd': ['normed'],
+      'load': ['mmap_mode', 'allow_pickle', 'fix_imports', 'encoding', 'max_header_size'],
       'nanpercentile': ['weights'],
       'nanquantile': ['weights'],
       'nanstd': ['correction', 'mean'],
@@ -6223,29 +6325,30 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'partition': ['kind', 'order'],
       'percentile': ['weights'],
       'quantile': ['weights'],
-      'reshape': ['shape', 'copy'],
       'row_stack': ['casting'],
       'stack': ['casting'],
       'std': ['mean'],
       'tri': ['like'],
+      'trim_zeros': ['axis'],
       'var': ['mean'],
       'vstack': ['casting'],
       'zeros_like': ['subok', 'order']
     }
 
     extra_params = {
-      # TODO(micky774): Remove when np.clip has adopted the Array API 2023
-      # standard
-      'clip': ['x', 'max', 'min'],
+      'compress': ['size', 'fill_value'],
       'einsum': ['subscripts', 'precision'],
       'einsum_path': ['subscripts'],
+      'load': ['args', 'kwargs'],
       'take_along_axis': ['mode', 'fill_value'],
       'fill_diagonal': ['inplace'],
     }
 
     mismatches = {}
 
-    for name, (jnp_fun, np_fun) in func_pairs.items():
+    for name in names:
+      jnp_fun = getattr(jnp, name)
+      np_fun = getattr(np, name)
       if name in ['histogram', 'histogram2d', 'histogramdd']:
         # numpy 1.24 re-orders the density and weights arguments.
         # TODO(jakevdp): migrate histogram APIs to match newer numpy versions.
@@ -6259,12 +6362,15 @@ class NumpySignaturesTest(jtu.JaxTestCase):
         # TODO(dfm): After our deprecation period for the clip arguments ends
         # it should be possible to reintroduce the check.
         continue
-      # Note: can't use inspect.getfullargspec due to numpy issue
+      if name == "reshape":
+        # Similar issue to clip: we'd need logic specific to the NumPy version
+        # because of the change in argument name from `newshape` to `shape`.
+        continue
+      # Note: can't use inspect.getfullargspec for some functions due to numpy issue
       # https://github.com/numpy/numpy/issues/12225
       try:
         np_params = inspect.signature(np_fun).parameters
       except ValueError:
-        # Some functions cannot be inspected
         continue
       jnp_params = inspect.signature(jnp_fun).parameters
       extra = set(extra_params.get(name, []))
@@ -6351,8 +6457,6 @@ class NumpyUfuncTests(jtu.JaxTestCase):
 class NumpyDocTests(jtu.JaxTestCase):
 
   def test_lax_numpy_docstrings(self):
-    # Test that docstring wrapping & transformation didn't fail.
-
     unimplemented = ['fromfile', 'fromiter']
     aliases = ['abs', 'acos', 'acosh', 'asin', 'asinh', 'atan', 'atanh', 'atan2',
                'amax', 'amin', 'around', 'bitwise_invert', 'bitwise_left_shift',
@@ -6372,15 +6476,6 @@ class NumpyDocTests(jtu.JaxTestCase):
       elif hasattr(np, name) and obj is getattr(np, name):
         # Some APIs are imported directly from NumPy; we don't check these.
         pass
-      elif hasattr(obj, '__np_wrapped__'):
-        # Functions decorated with @implements(...) should have __np_wrapped__
-        wrapped_fun = obj.__np_wrapped__
-        if wrapped_fun is not None:
-          # If the wrapped function has a docstring, obj should too
-          if wrapped_fun.__doc__ and not obj.__doc__:
-            raise Exception(f"jnp.{name} does not contain wrapped docstring.")
-          if obj.__doc__ and "*Original docstring below.*" not in obj.__doc__:
-            raise Exception(f"jnp.{name} does not have a wrapped docstring.")
       elif name in aliases:
         assert "Alias of" in obj.__doc__
       elif name not in skip_args_check:
@@ -6391,84 +6486,6 @@ class NumpyDocTests(jtu.JaxTestCase):
         self.assertIn("Returns:", doc, msg=f"'Returns:' not found in docstring of jnp.{name}")
         if name not in ["frompyfunc", "isdtype", "promote_types"]:
           self.assertIn("Examples:", doc, msg=f"'Examples:' not found in docstring of jnp.{name}")
-
-  @parameterized.named_parameters(
-    {"testcase_name": "_jit" if jit else "", "jit": jit} for jit in [True, False])
-  def test_wrapped_function_parameters(self, jit):
-    def orig(x):
-      """Example Docstring
-
-      Parameters
-      ----------
-      x : array_like
-        Input Data
-
-        .. versionadded:: 1.8.0
-      out : array_like, optional
-        Output to overwrite
-      other_arg : Any
-        not used
-
-      Returns
-      -------
-      x : input
-      """
-      return x
-
-    def wrapped(x, out=None):
-      return x
-
-    if jit:
-      wrapped = jax.jit(wrapped)
-
-    wrapped = implements(orig)(wrapped)
-    doc = wrapped.__doc__
-
-    self.assertStartsWith(doc, "Example Docstring")
-    self.assertIn("Original docstring below", doc)
-    self.assertIn("Parameters", doc)
-    self.assertIn("Returns", doc)
-    self.assertNotIn('other_arg', doc)
-    self.assertNotIn('versionadded', doc)
-
-
-  def test_parse_numpydoc(self):
-    # Unit test ensuring that _parse_numpydoc correctly parses docstrings for all
-    # functions in NumPy's top-level namespace.
-    section_titles = {'Attributes', 'Examples', 'Notes',
-                      'Parameters', 'Raises', 'References',
-                      'Returns', 'See also', 'See Also', 'Warnings', 'Warns'}
-    headings = [title + '\n' + '-'*len(title) for title in section_titles]
-
-    for name in dir(np):
-      if name.startswith('_'):
-        continue
-      obj = getattr(np, name)
-      if isinstance(obj, type):
-        continue
-      if not callable(obj):
-        continue
-      if 'built-in function' in repr(obj):
-        continue
-      parsed = _parse_numpydoc(obj.__doc__)
-
-      # Check that no docstring is handled gracefully.
-      if not obj.__doc__:
-        self.assertEqual(parsed, ParsedDoc(obj.__doc__))
-        continue
-
-      # Check that no unexpected section names are found.
-      extra_keys = parsed.sections.keys() - section_titles
-      if extra_keys:
-        raise ValueError(f"Extra section headers found in np.{name}: {extra_keys}")
-
-      # Check that every docstring has a summary.
-      if not parsed.summary:
-        raise ValueError(f"No summary found for np.{name}")
-
-      # Check that no expected headings are missed.
-      for heading in headings:
-        assert heading not in parsed.front_matter
 
 
 if __name__ == "__main__":

@@ -29,6 +29,7 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 from jax import random
+from jax._src import config
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import state
@@ -524,9 +525,6 @@ class OpsTest(PallasBaseTest):
         tol = 1e-6
       elif name == "exp2":
         tol = 1e-6
-    elif jtu.test_device_matches(["tpu"]):
-      if not jtu.is_device_tpu_at_least(version=5) and False:
-        self.skipTest("TODO: not implemented on TPU v{3,4}")
 
     def kernel(x_ref, y_ref):
       y_ref[...] = func(x_ref[...])
@@ -721,6 +719,28 @@ class OpsTest(PallasBaseTest):
         expected.astype(jnp.float32),
     )
 
+  # TODO(twsung): Add more types once lowering is implemented.
+  @parameterized.parameters(
+      jnp.float32,
+      jnp.bfloat16,
+      jnp.int32,
+  )
+  def test_add_constant(self, dtype):
+
+    shape = (256, 256)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1
+
+    np.testing.assert_array_equal(
+        kernel(jnp.zeros(shape, dtype=dtype)),
+        jnp.ones(shape, dtype=dtype),
+    )
+
   @parameterized.parameters(
       -3.2, -1.0, -0.999517, -0.4, 0., 0.72, 0.999517, 1.0, 2.4,
   )
@@ -756,6 +776,7 @@ class OpsTest(PallasBaseTest):
           ["float32", "float64"],
       ),
       ([lax.population_count, lax.clz, jnp.invert], ["int32", "int64"]),
+      ([jnp.logical_not], ["bool"])
   ]
 
   @parameterized.named_parameters(
@@ -792,13 +813,24 @@ class OpsTest(PallasBaseTest):
     ):
       self.skipTest(f"{fn.__name__} not implemented on TPU")
 
+    # TODO: https://github.com/jax-ml/jax/issues/24243
+    if (
+        jtu.test_device_matches(["tpu"])
+        and fn == jnp.logical_not
+        and not self.INTERPRET
+    ):
+      self.skipTest("logical_not on TPU is only supported in interpret mode")
+
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), dtype), grid=1
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 128), dtype),
+        grid=1,
     )
     def kernel(x_ref, o_ref):
       o_ref[:] = fn(x_ref[...])
 
-    x = jnp.array([0.42, 2.4]).astype(dtype)
+    # create an array with shape (8, 128)
+    x = jnp.array([0.42, 2.4] * (8 * 128 // 2)).reshape(8, 128).astype(dtype)
     self.assertAllClose(kernel(x), fn(x), rtol=1e-6)
 
   @parameterized.named_parameters(
@@ -831,9 +863,9 @@ class OpsTest(PallasBaseTest):
 
     # TODO(b/370578663): implement these lowerings on TPU
     if jtu.test_device_matches(["tpu"]) and fn in (
-        jnp.abs, jnp.acos, jnp.acosh, jnp.asin, jnp.asinh, jnp.atan,
+        jnp.acos, jnp.acosh, jnp.asin, jnp.asinh, jnp.atan,
         jnp.atanh, jnp.cbrt, jnp.cosh, jnp.expm1,
-        jnp.sinh, lax.rsqrt,
+        jnp.sinh,
     ):
       self.skipTest(f"{fn.__name__} not implemented on TPU")
 
@@ -868,9 +900,6 @@ class OpsTest(PallasBaseTest):
       ("float64", "float64"),
   )
   def test_pow(self, x_dtype, y_dtype):
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("TODO: Error on TPU")
-
     if not jax.config.x64_enabled and jnp.dtype(x_dtype).itemsize == 8:
       self.skipTest("64-bit types require x64_enabled")
 
@@ -898,24 +927,32 @@ class OpsTest(PallasBaseTest):
     x = jnp.array([1, 2, 3, 4]).astype(jnp.float32) / 10
     np.testing.assert_allclose(kernel(x), lax.integer_pow(x, y))
 
-  @parameterized.parameters("float32", "float64")
-  def test_nextafter(self, dtype):
+  _NEXTAFTER_VALUES = (-3.2, -0., 0., 5.1, jnp.nan, jnp.inf, -jnp.inf)
+
+  @parameterized.named_parameters(
+      (f"{dtype.__name__} ({x=}, {y=})", dtype, x, y)
+      for dtype, x, y in itertools.product(
+          (jnp.float32, jnp.float64), _NEXTAFTER_VALUES, _NEXTAFTER_VALUES,
+      )
+  )
+  def test_nextafter(self, dtype, x, y):
     if not jax.config.x64_enabled and jnp.dtype(dtype).itemsize == 8:
       self.skipTest("64-bit types require x64_enabled")
 
-    # TODO: implement this on TPU
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not implemented: nextafter")
-
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), dtype), grid=1
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((4,), dtype),
     )
     def kernel(x_ref, y_ref, o_ref):
-      o_ref[:] = jnp.nextafter(x_ref[...], y_ref[...])
+      o_ref[...] = jnp.nextafter(x_ref[...], y_ref[...])
 
-    x = jnp.array([1, 2, 3, 4]).astype(dtype)
-    y = jnp.array([1, 2, 3, 4]).astype(dtype)
-    np.testing.assert_allclose(kernel(x, y), jnp.nextafter(x, y))
+    x = jnp.full((4,), x, dtype=dtype)
+    y = jnp.full((4,), y, dtype=dtype)
+    out = kernel(x, y)
+    expected = jnp.nextafter(x, y)
+
+    # `nextafter` requires exact equality
+    self.assertArraysEqual(out, expected)
 
   COMPARISON_OPS = [
       jnp.equal,
@@ -1056,14 +1093,6 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["tpu"]) and jnp.dtype(dtype).itemsize == 2:
       self.skipTest("16-bit types are not supported on TPU")
 
-    # TODO(ayx): Fix these operations on TPU
-    if (
-        jtu.test_device_matches(["tpu"])
-        and f in (jnp.floor_divide, jnp.subtract)
-        and dtype == "uint32"
-    ):
-      self.skipTest("Not supported on TPU")
-
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((8,), dtype), grid=1
     )
@@ -1088,14 +1117,6 @@ class OpsTest(PallasBaseTest):
       self.skipTest("Test only supported on TPU.")
     if jtu.test_device_matches(["tpu"]) and jnp.dtype(dtype).itemsize == 2:
       self.skipTest("16-bit types are not supported on TPU")
-
-    # TODO(ayx): Fix these operations on TPU
-    if (
-        jtu.test_device_matches(["tpu"])
-        and f in (jnp.floor_divide, jnp.subtract)
-        and dtype == "uint32"
-    ):
-      self.skipTest("Not supported on TPU")
 
     @functools.partial(
         self.pallas_call,
@@ -1210,6 +1231,8 @@ class OpsTest(PallasBaseTest):
       "plgpu.TritonCompilerParams unavailable on Windows",
   )
   def test_debug_print(self):
+    if config.use_shardy_partitioner.value:
+      self.skipTest("TODO(b/364547005): pure callbacks not supported by Shardy yet")
     if jtu.test_device_matches(["tpu"]):
       self.skipTest("Not supported on TPU")
 
@@ -1387,7 +1410,7 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["tpu"]) and jnp.dtype(dtype).itemsize == 2:
       self.skipTest("16-bit types are not supported on TPU")
 
-    if jtu.test_device_matches(["tpu"]):
+    if jtu.test_device_matches(["tpu"]) and trans_x:
       self.skipTest("Not implemented: Transposed LHS")
 
     @functools.partial(
@@ -1865,11 +1888,35 @@ class OpsTest(PallasBaseTest):
       y_ref = jnp.cumsum(x, axis=axis)
       np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2, err_msg=i)
 
+  @parameterized.parameters(
+      (0, jnp.float32),
+      (0, jnp.bfloat16),
+      (1, jnp.float32),
+      (1, jnp.bfloat16),
+      (-1, jnp.float32),
+      (-1, jnp.bfloat16),
+  )
+  def test_triu(self, k, dtype):
+    if dtype == jnp.bfloat16 and jtu.test_device_matches(["tpu"]):
+      # TODO(mvoz): b/376330700
+      raise unittest.SkipTest('NYI - bf16 select')
+
+    x = jnp.arange(128 * 256, dtype=dtype).reshape((128, 256))
+
+    def kernel(x_ref, out_ref):
+      out_ref[...] = jnp.triu(x_ref[...], k=k)
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((128, 256), dtype)
+    )(x)
+    np.testing.assert_array_equal(out, np.triu(x, k=k))
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True
 
   def test_debug_print(self):
+    if config.use_shardy_partitioner.value:
+      self.skipTest("TODO(b/364547005): pure callbacks not supported by Shardy yet")
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),

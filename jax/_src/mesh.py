@@ -224,17 +224,17 @@ class Mesh(contextlib.ContextDecorator):
     new_env = thread_resources.stack[-1].with_mesh(self)
     thread_resources.stack.append(new_env)
     thread_resources.env = new_env
-    jax_config.update_thread_local_jit_state(
-        mesh_context_manager=tuple(t.physical_mesh for t in thread_resources.stack
-                                   if not t.physical_mesh.empty))
+    jax_config.mesh_context_manager.set_local(
+        tuple(t.physical_mesh for t in thread_resources.stack
+              if not t.physical_mesh.empty))
     return self
 
   def __exit__(self, exc_type, exc_value, traceback):
     thread_resources.stack.pop()
     thread_resources.env = thread_resources.stack[-1]
-    jax_config.update_thread_local_jit_state(
-        mesh_context_manager=tuple(t.physical_mesh for t in thread_resources.stack
-                                   if not t.physical_mesh.empty))
+    jax_config.mesh_context_manager.set_local(
+        tuple(t.physical_mesh for t in thread_resources.stack
+              if not t.physical_mesh.empty))
     return False
 
   @property
@@ -410,7 +410,7 @@ class AbstractMesh:
 
   @staticmethod
   def _extremely_unsafe_enter_tracing_context(mesh: AbstractMesh):
-    jax_config.update_thread_local_jit_state(mesh_context_manager=mesh)
+    jax_config.mesh_context_manager.set_local(mesh)
     return
 
 

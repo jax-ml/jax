@@ -53,6 +53,7 @@ class Array(abc.ABC):
   # associated basearray.pyi file.
 
   __slots__ = ['__weakref__']
+  __hash__ = None
 
   @property
   @abc.abstractmethod

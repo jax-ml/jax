@@ -30,6 +30,7 @@ from jax._src import config
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
 from jax._src import test_util as jtu
+from jax._src.state import types as state_types
 from jax._src.util import tuple_insert
 import jax.numpy as jnp
 from jax._src.lax.control_flow import for_loop
@@ -745,9 +746,10 @@ class StateDischargeTest(jtu.JaxTestCase):
       b_ref[...] = jnp.array(1., dtype=jnp.float32)
       return a_ref[...], b_ref[...]
 
-    scalar_ref = shaped_array_ref((), jnp.float32)
+    scalar_ref_1 = shaped_array_ref((), jnp.float32)
+    scalar_ref_2 = shaped_array_ref((), jnp.float32)
     jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(f), [scalar_ref, scalar_ref])
+        lu.wrap_init(f), [scalar_ref_1, scalar_ref_2])
 
     discharged_jaxpr, _ = discharge_state(jaxpr, (), should_discharge=[False, True])
     prim_count = lambda p, jaxpr: sum(eqn.primitive == swap_p for eqn in jaxpr.eqns)
@@ -1361,17 +1363,6 @@ class StateControlFlowTest(jtu.JaxTestCase):
 
 class GeneralRefTest(jtu.JaxTestCase):
 
-  def test_unshaped_ref(self):
-    def f(x_ref):
-      x = x_ref[...]
-      x_ref[...] = x
-      ref_addupdate(x_ref, (), x)
-      return [x]
-    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(f), [AbstractRef(core.UnshapedArray(jnp.int32))])
-    self.assertIs(type(jaxpr.outvars[0].aval), core.UnshapedArray)
-    self.assertEqual(jaxpr.outvars[0].aval.dtype, jnp.dtype("int32"))
-
   def test_token(self):
     def f(x_ref):
       x = x_ref[...]
@@ -1410,6 +1401,26 @@ class RunStateTest(jtu.JaxTestCase):
     x, y = run_state(f)((2, 3))
     self.assertEqual(x, 2 + 2 * 3 * 2)
     self.assertEqual(y, 2 * 3 * 2)
+
+  def test_run_state_with_uninitialized_input(self):
+    def f(refs):
+      x_ref, y_ref = refs
+      # y_ref is uninitialized so we shouldn't read from it until we write into
+      # it.
+      x = x_ref[...]
+      y_ref[...] = x * 2
+      x_ref[...] = y_ref[...] + x_ref[...]
+      # x + x * 2, x * 2
+    # jax.ShapeDtypeStruct is weirdly special to JAX, so we make our own class.
+    class MyArrayType:
+      pass
+    state_types._ref_type_aval_mappings[MyArrayType] = lambda _: (
+        AbstractRef(core.ShapedArray((), jnp.int32)),
+        state_types.uninitialized,
+    )
+    x, y = run_state(f)((jnp.int32(2), MyArrayType()))
+    self.assertEqual(x, 2 + 2 * 2)
+    self.assertEqual(y, 2 * 2)
 
   def test_nontrivial_run_state_jit(self):
     def f(refs):

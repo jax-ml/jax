@@ -25,8 +25,8 @@ import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
-from jax._src.layout import DeviceLocalLayout as DLL, Layout
 from jax._src.lib import xla_extension_version
+from jax._src.layout import DeviceLocalLayout as DLL, Layout
 from jax._src import config
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.numpy as jnp
@@ -655,8 +655,6 @@ class DevicePutTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices('tpu')
   def test_ragged_copy_on_host(self):
-    if xla_extension_version < 290:
-      self.skipTest('Requires xla_extension_version >= 290')
     mesh = jtu.create_mesh((2,), ('x'))
     sharding = jax.sharding.NamedSharding(mesh, P(('x')))
     cpu_sharding = sharding.with_memory_kind('pinned_host')
@@ -697,6 +695,34 @@ class DevicePutTest(jtu.JaxTestCase):
     compiled_text = fn.lower(x).compile().as_text()
     if compiled_text is not None:
       self.assertIn('custom_call_target="AllocateBuffer"', compiled_text)
+
+  def test_disallow_alias_copies_arrays(self):
+    if xla_extension_version < 296:
+      self.skipTest("Requires xla_extension_version >= 296")
+    _, _, _, inp_host = _create_inputs(
+        (8, 2), P("x", "y"), mem_kind="pinned_host")
+
+    inp_host_copy = jax.device_put(inp_host, may_alias=False)
+
+    for a in jax.tree.leaves(inp_host):
+      a.delete()
+
+    jax.block_until_ready(inp_host_copy)
+
+  def test_disallow_alias_copies_arrays_with_donated_input(self):
+    if xla_extension_version < 296:
+      self.skipTest("Requires xla_extension_version >= 296")
+    _, _, _, inp_host = _create_inputs(
+        (8, 2), P("x", "y"), mem_kind="pinned_host")
+
+    inp_host_donate = jax.jit(lambda x: x, donate_argnums=0)(inp_host)
+
+    inp_host_donate_copy = jax.device_put(inp_host_donate, may_alias=False)
+
+    for a in jax.tree.leaves(inp_host_donate):
+      a.delete()
+
+    jax.block_until_ready(inp_host_donate_copy)
 
 
 class ComputeOffload(jtu.BufferDonationTestCase):

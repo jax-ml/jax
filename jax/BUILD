@@ -627,7 +627,7 @@ pytype_strict_library(
 
 pytype_strict_library(
     name = "pallas_gpu_ops",
-    srcs = glob(["experimental/pallas/ops/gpu/**/*.py"]),
+    srcs = ["//jax/experimental/pallas/ops/gpu:triton_ops"],
     visibility = [
         ":pallas_gpu_users",
     ],
@@ -635,6 +635,22 @@ pytype_strict_library(
         ":jax",
         ":pallas",
         ":pallas_gpu",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "pallas_experimental_gpu_ops",
+    testonly = True,
+    srcs = ["//jax/experimental/pallas/ops/gpu:mgpu_ops"],
+    visibility = [
+        ":mosaic_gpu_users",
+    ],
+    deps = [
+        ":jax",
+        ":mosaic_gpu",
+        ":pallas",
+        ":pallas_mosaic_gpu",
+        ":test_util",  # This is only to make them runnable as jax_multiplatform_test...
     ] + py_deps("numpy"),
 )
 
@@ -688,6 +704,7 @@ pytype_strict_library(
     deps = [
         "//jax/_src/pallas/mosaic_gpu:core",
         "//jax/_src/pallas/mosaic_gpu:pallas_call_registration",  # build_cleaner: keep
+        "//jax/_src/pallas/mosaic_gpu:pipeline",
         "//jax/_src/pallas/mosaic_gpu:primitives",
     ],
 )
@@ -931,6 +948,7 @@ pytype_strict_library(
         ":mlir",
         ":sharding_impls",
         "//jax/_src/lib",
+        "//jax/_src/pallas",
     ] + if_building_jaxlib([
         "//jaxlib/mlir:ir",
         "//jaxlib/mlir:mhlo_dialect",
@@ -1156,4 +1174,25 @@ pytype_library(
     srcs = ["experimental/rnn.py"],
     visibility = ["//visibility:public"],
     deps = [":jax"],
+)
+
+pytype_library(
+    name = "experimental_colocated_python",
+    srcs = [
+        "experimental/colocated_python/__init__.py",
+        "experimental/colocated_python/api.py",
+        "experimental/colocated_python/func.py",
+        "experimental/colocated_python/func_backend.py",
+        "experimental/colocated_python/serialization.py",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":api_util",
+        ":jax",
+        ":traceback_util",
+        ":tree_util",
+        ":util",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy") + py_deps("cloudpickle"),
 )

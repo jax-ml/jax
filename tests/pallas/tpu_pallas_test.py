@@ -870,8 +870,9 @@ class PallasCallDMATest(PallasBaseTest):
       pl.run_scoped(scope)
       return []
 
-    aref = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
-    in_avals = [aref, aref]
+    aref1 = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
+    aref2 = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
+    in_avals = [aref1, aref2]
     stateful_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
                                                           in_avals)
     discharged_jaxpr, _ = state_discharge.discharge_state(
@@ -1587,7 +1588,6 @@ class PallasCallTest(PallasBaseTest):
     self.assertEqual(analysis_result['transcendentals'], 21)
     self.assertEqual(analysis_result['bytes accessed'], 12345)
 
-
   def test_cost_analysis_vmap(self):
     def kernel(x, y):
       y[:] = x[:]
@@ -1605,7 +1605,6 @@ class PallasCallTest(PallasBaseTest):
     self.assertEqual(analysis_result['flops'], batch_size * 1234)
     self.assertEqual(analysis_result['transcendentals'], batch_size * 21)
     self.assertEqual(analysis_result['bytes accessed'], batch_size * 12345)
-
 
   def test_vmem_limit(self):
     shape = (128, 128)
@@ -1672,6 +1671,23 @@ class PallasCallTest(PallasBaseTest):
               internal_scratch_in_bytes=requested_bytes,
           ),
       )(x)
+
+  @parameterized.product(dtype=[jnp.bfloat16, jnp.float32])
+  def test_pltpu_repeat(self, dtype):
+    def test_kernel(x_ref, o_ref):
+      x = x_ref[...]
+      o_ref[...] = pltpu.repeat(x, 2, axis=1)
+
+    @jax.jit
+    def test(x: jax.Array) -> jax.Array:
+      return pl.pallas_call(
+          test_kernel,
+          out_shape=jax.ShapeDtypeStruct([x.shape[0], x.shape[1] * 2], x.dtype),
+      )(x)
+
+    x = jnp.arange(2048, dtype=dtype).reshape((8, 256))
+    y = test(x)
+    np.testing.assert_array_equal(y, jnp.concatenate([x, x], axis=1))
 
 
 class PallasUXTest(PallasBaseTest):

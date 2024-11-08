@@ -52,7 +52,7 @@ from jax._src import dtypes
 from jax._src import xla_bridge
 from jax._src.api_util import _ensure_index_tuple
 from jax._src.array import ArrayImpl
-from jax._src.core import ConcreteArray, ShapedArray
+from jax._src.core import ShapedArray
 from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.lax import ( PrecisionLike,_array_copy,
@@ -194,6 +194,12 @@ def _make_scalar_type(np_scalar_type: type) -> _ScalarMeta:
   meta = _ScalarMeta(np_scalar_type.__name__, (object,),
                      {"dtype": np.dtype(np_scalar_type)})
   meta.__module__ = _PUBLIC_MODULE_NAME
+  meta.__doc__ =\
+  f"""A JAX scalar constructor of type {np_scalar_type.__name__}.
+
+  While NumPy defines scalar types for each data type, JAX represents
+  scalars as zero-dimensional arrays.
+  """
   return meta
 
 bool_ = _make_scalar_type(np.bool_)
@@ -3900,10 +3906,63 @@ def flatnonzero(a: ArrayLike, *, size: int | None = None,
   return nonzero(ravel(a), size=size, fill_value=fill_value)[0]
 
 
-@util.implements(np.unwrap)
 @partial(jit, static_argnames=('axis',))
 def unwrap(p: ArrayLike, discont: ArrayLike | None = None,
            axis: int = -1, period: ArrayLike = 2 * pi) -> Array:
+  """Unwrap a periodic signal.
+
+  JAX implementation of :func:`numpy.unwrap`.
+
+  Args:
+    p: input array
+    discont: the maximum allowable discontinuity in the sequence. The
+      default is ``period / 2``
+    axis: the axis along which to unwrap; defaults to -1
+    period: the period of the signal, which defaults to :math:`2\\pi`
+
+  Returns:
+    An unwrapped copy of ``p``.
+
+  Examples:
+    Consider a situation in which you are making measurements of the position of
+    a rotating disk via the ``x`` and ``y`` locations of some point on that disk.
+    The underlying variable is an always-increating angle which we'll generate
+    this way, using degrees for ease of representation:
+
+    >>> rng = np.random.default_rng(0)
+    >>> theta = rng.integers(0, 90, size=(20,)).cumsum()
+    >>> theta
+    array([ 76, 133, 179, 203, 230, 233, 239, 240, 255, 328, 386, 468, 513,
+           567, 654, 719, 775, 823, 873, 957])
+
+    Our observations of this angle are the ``x`` and ``y`` coordinates, given by
+    the sine and cosine of this underlying angle:
+
+    >>> x, y = jnp.sin(jnp.deg2rad(theta)), jnp.cos(jnp.deg2rad(theta))
+
+    Now, say that given these ``x`` and ``y`` coordinates, we wish to recover
+    the original angle ``theta``. We might do this via the :func:`atan2` function:
+
+    >>> theta_out = jnp.rad2deg(jnp.atan2(x, y)).round()
+    >>> theta_out
+    Array([  76.,  133.,  179., -157., -130., -127., -121., -120., -105.,
+            -32.,   26.,  108.,  153., -153.,  -66.,   -1.,   55.,  103.,
+            153., -123.], dtype=float32)
+
+    The first few values match the input angle ``theta`` above, but after this the
+    values are wrapped because the ``sin`` and ``cos`` observations obscure the phase
+    information. The purpose of the :func:`unwrap` function is to recover the original
+    signal from this wrapped view of it:
+
+    >>> jnp.unwrap(theta_out, period=360)
+    Array([ 76., 133., 179., 203., 230., 233., 239., 240., 255., 328., 386.,
+           468., 513., 567., 654., 719., 775., 823., 873., 957.],      dtype=float32)
+
+    It does this by assuming that the true underlying sequence does not differ by more than
+    ``discont`` (which defaults to ``period / 2``) within a single step, and when it encounters
+    a larger discontinuity it adds factors of the period to the data. For periodic signals
+    that satisfy this assumption, :func:`unwrap` can recover the original phased signal.
+  """
   util.check_arraylike("unwrap", p)
   p = asarray(p)
   if issubdtype(p.dtype, np.complexfloating):
@@ -5045,9 +5104,77 @@ def _block(xs: ArrayLike | list[ArrayLike]) -> tuple[Array, int]:
   else:
     return asarray(xs), 1
 
-@util.implements(np.block)
+
 @jit
 def block(arrays: ArrayLike | list[ArrayLike]) -> Array:
+  """Create an array from a list of blocks.
+
+  JAX implementation of :func:`numpy.block`.
+
+  Args:
+    arrays: an array, or nested list of arrays which will be concatenated
+      together to form the final array.
+
+  Returns:
+    a single array constructed from the inputs.
+
+  See also:
+    - :func:`concatenate`, :func:`concat`: concatenate arrays along an existing axis.
+    - :func:`stack`, :func:`vstack`, :func:`hstack`, :func:`dstack` concatenate
+      arrays along a new axis.
+
+  Examples:
+    consider these blocks:
+
+    >>> zeros = jnp.zeros((2, 2))
+    >>> ones = jnp.ones((2, 2))
+    >>> twos = jnp.full((2, 2), 2)
+    >>> threes = jnp.full((2, 2), 3)
+
+    Passing a single array to :func:`block` returns the array:
+
+    >>> jnp.block(zeros)
+    Array([[0., 0.],
+           [0., 0.]], dtype=float32)
+
+    Passing a simple list of arrays concatenates them along the last axis:
+
+    >>> jnp.block([zeros, ones])
+    Array([[0., 0., 1., 1.],
+           [0., 0., 1., 1.]], dtype=float32)
+
+    Passing a doubly-nested list of arrays concatenates the inner list along
+    the last axis, and the outer list along the second-to-last axis:
+
+    >>> jnp.block([[zeros, ones],
+    ...            [twos, threes]])
+    Array([[0., 0., 1., 1.],
+           [0., 0., 1., 1.],
+           [2., 2., 3., 3.],
+           [2., 2., 3., 3.]], dtype=float32)
+
+    Note that blocks need not align in all dimensions, though the size along the axis
+    of concatenation must match. For example, this is valid because after the inner,
+    horizontal concatenation, the resulting blocks have a valid shape for the outer,
+    vertical concatenation.
+
+    >>> a = jnp.zeros((2, 1))
+    >>> b = jnp.ones((2, 3))
+    >>> c = jnp.full((1, 2), 2)
+    >>> d = jnp.full((1, 2), 3)
+    >>> jnp.block([[a, b], [c, d]])
+    Array([[0., 1., 1., 1.],
+           [0., 1., 1., 1.],
+           [2., 2., 3., 3.]], dtype=float32)
+
+    Note also that this logic generalizes to blocks in 3 or more dimensions.
+    Here's a 3-dimensional block-wise array:
+
+    >>> x = jnp.arange(6).reshape((1, 2, 3))
+    >>> blocks = [[[x for i in range(3)] for j in range(4)] for k in range(5)]
+    >>> jnp.block(blocks).shape
+    (5, 8, 9)
+  """
   out, _ = _block(arrays)
   return out
 
@@ -6913,6 +7040,7 @@ def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
     A length-N list of grid arrays.
 
   See also:
+    - :func:`jax.numpy.indices`: generate a grid of indices.
     - :obj:`jax.numpy.mgrid`: create a meshgrid using indexing syntax.
     - :obj:`jax.numpy.ogrid`: create an open meshgrid using indexing syntax.
 
@@ -7085,9 +7213,38 @@ def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
 @overload
 def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
             sparse: bool = False) -> Array | tuple[Array, ...]: ...
-@util.implements(np.indices)
 def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
             sparse: bool = False) -> Array | tuple[Array, ...]:
+  """Generate arrays of grid indices.
+
+  JAX implementation of :func:`numpy.indices`.
+
+  Args:
+    dimensions: the shape of the grid.
+    dtype: the dtype of the indices (defaults to integer).
+    sparse: if True, then return sparse indices. Default is False, which
+      returns dense indices.
+
+  Returns:
+    An array of shape ``(len(dimensions), *dimensions)`` If ``sparse`` is False,
+    or a sequence of arrays of the same length as ``dimensions`` if ``sparse`` is True.
+
+  See also:
+    - :func:`jax.numpy.meshgrid`: generate a grid from arbitrary input arrays.
+    - :obj:`jax.numpy.mgrid`: generate dense indices using a slicing syntax.
+    - :obj:`jax.numpy.ogrid`: generate sparse indices using a slicing syntax.
+
+  Examples:
+    >>> jnp.indices((2, 3))
+    Array([[[0, 0, 0],
+            [1, 1, 1]],
+    <BLANKLINE>
+           [[0, 1, 2],
+            [0, 1, 2]]], dtype=int32)
+    >>> jnp.indices((2, 3), sparse=True)
+    (Array([[0],
+           [1]], dtype=int32), Array([[0, 1, 2]], dtype=int32))
+  """
   dtypes.check_user_dtype_supported(dtype, "indices")
   dtype = dtype or dtypes.canonicalize_dtype(int_)
   dimensions = tuple(
@@ -8171,6 +8328,7 @@ def diagflat(v: ArrayLike, k: int = 0) -> Array:
   return res
 
 
+# TODO(jakevdp): add support for N-dimensional inputs as in NumPy v2.2
 def trim_zeros(filt: ArrayLike, trim: str ='fb') -> Array:
   """Trim leading and/or trailing zeros of the input array.
 
@@ -10027,18 +10185,18 @@ def argmin(a: ArrayLike, axis: int | None = None, out: None = None,
            keepdims: bool | None = None) -> Array:
   """Return the index of the minimum value of an array.
 
-  JAX implementation of :func:`numpy.argmax`.
+  JAX implementation of :func:`numpy.argmin`.
 
   Args:
     a: input array
-    axis: optional integer specifying the axis along which to find the maximum
+    axis: optional integer specifying the axis along which to find the minimum
       value. If ``axis`` is not specified, ``a`` will be flattened.
     out: unused by JAX
     keepdims: if True, then return an array with the same number of dimensions
       as ``a``.
 
   Returns:
-    an array containing the index of the maximum value along the specified axis.
+    an array containing the index of the minimum value along the specified axis.
 
   See also:
     - :func:`jax.numpy.argmax`: return the index of the maximum value.
@@ -11632,7 +11790,7 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
     except TypeError:
       abstract_i = None
     # Handle basic int indexes.
-    if isinstance(abstract_i, (ConcreteArray, ShapedArray)) and _int(abstract_i):
+    if isinstance(abstract_i, ShapedArray) and _int(abstract_i):
       if core.definitely_equal(x_shape[x_axis], 0):
         # XLA gives error when indexing into an axis of size 0
         raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
@@ -11788,7 +11946,7 @@ def _expand_bool_indices(idx, shape):
         i = array(i)
         abstract_i = core.get_aval(i)
 
-      if not type(abstract_i) is ConcreteArray:
+      if not core.is_concrete(i):
         # TODO(mattjj): improve this error by tracking _why_ the indices are not concrete
         raise errors.NonConcreteBooleanIndexError(abstract_i)
       elif _ndim(i) == 0:
@@ -11818,7 +11976,7 @@ def _is_slice_element_none_or_constant_or_symbolic(elt):
   if elt is None: return True
   if core.is_symbolic_dim(elt): return True
   try:
-    return type(core.get_aval(elt)) is ConcreteArray
+    return core.is_concrete(elt)
   except TypeError:
     return False
 
@@ -12335,12 +12493,102 @@ def compress(condition: ArrayLike, a: ArrayLike, axis: int | None = None,
   return moveaxis(result, 0, axis)
 
 
-@util.implements(np.cov)
 @partial(jit, static_argnames=('rowvar', 'bias', 'ddof'))
 def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
         bias: bool = False, ddof: int | None = None,
         fweights: ArrayLike | None = None,
         aweights: ArrayLike | None = None) -> Array:
+  r"""Estimate the weighted sample covariance.
+
+  JAX implementation of :func:`numpy.cov`.
+
+  The covariance :math:`C_{ij}` between variable *i* and variable *j* is defined
+  as
+
+  .. math::
+
+     cov[X_i, X_j] = E[(X_i - E[X_i])(X_j - E[X_j])]
+
+  Given an array of *N* observations of the variables :math:`X_i` and :math:`X_j`,
+  this can be estimated via the sample covariance:
+
+  .. math::
+
+     C_{ij} = \frac{1}{N - 1} \sum_{n=1}^N (X_{in} - \overline{X_i})(X_{jn} - \overline{X_j})
+
+  Where :math:`\overline{X_i} = \frac{1}{N} \sum_{k=1}^N X_{ik}` is the mean of the
+  observations.
+
+  Args:
+    m: array of shape ``(M, N)`` (if ``rowvar`` is True), or ``(N, M)``
+      (if ``rowvar`` is False) representing ``N`` observations of ``M`` variables.
+      ``m`` may also be one-dimensional, representing ``N`` observations of a
+      single variable.
+    y: optional set of additional observations, with the same form as ``m``. If
+      specified, then ``y`` is combined with ``m``, i.e. for the default
+      ``rowvar = True`` case, ``m`` becomes ``jnp.vstack([m, y])``.
+    rowvar: if True (default) then each row of ``m`` represents a variable. If
+      False, then each column represents a variable.
+    bias: if False (default) then normalize the covariance by ``N - 1``. If True,
+      then normalize the covariance by ``N``
+    ddof: specify the degrees of freedom. Defaults to ``1`` if ``bias`` is False,
+      or to ``0`` if ``bias`` is True.
+    fweights: optional array of integer frequency weights of shape ``(N,)``. This
+      is an absolute weight specifying the number of times each observation is
+      included in the computation.
+    aweights: optional array of observation weights of shape ``(N,)``. This is
+      a relative weight specifying the "importance" of each observation. In the
+      ``ddof=0`` case, it is equivalent to assigning probabilities to each
+      observation.
+
+  Returns:
+    A covariance matrix of shape ``(M, M)``.
+
+  See also:
+    - :func:`jax.numpy.corrcoef`: compute the correlation coefficient, a normalized
+      version of the covariance matrix.
+
+  Examples:
+    Consider these observations of two variables that correlate perfectly.
+    The covariance matrix in this case is a 2x2 matrix of ones:
+
+    >>> x = jnp.array([[0, 1, 2],
+    ...                [0, 1, 2]])
+    >>> jnp.cov(x)
+    Array([[1., 1.],
+           [1., 1.]], dtype=float32)
+
+    Now consider these observations of two variables that are perfectly
+    anti-correlated. The covariance matrix in this case has ``-1`` in the
+    off-diagonal:
+
+    >>> x = jnp.array([[-1,  0,  1],
+    ...                [ 1,  0, -1]])
+    >>> jnp.cov(x)
+    Array([[ 1., -1.],
+           [-1.,  1.]], dtype=float32)
+
+    Equivalently, these sequences can be specified as separate arguments,
+    in which case they are stacked before continuing the computation.
+
+    >>> x = jnp.array([-1, 0, 1])
+    >>> y = jnp.array([1, 0, -1])
+    >>> jnp.cov(x, y)
+    Array([[ 1., -1.],
+           [-1.,  1.]], dtype=float32)
+
+    In general, the entries of the covariance matrix may be any positive
+    or negative real value. For example, here is the covariance of 100
+    points drawn from a 3-dimensional standard normal distribution:
+
+    >>> key = jax.random.key(0)
+    >>> x = jax.random.normal(key, shape=(3, 100))
+    >>> with jnp.printoptions(precision=2):
+    ...   print(jnp.cov(x))
+    [[ 1.22 -0.    0.11]
+     [-0.    0.84 -0.1 ]
+     [ 0.11 -0.1   0.88]]
+  """
   if y is not None:
     m, y = util.promote_args_inexact("cov", m, y)
     if y.ndim > 2:
@@ -12403,9 +12651,81 @@ def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
   return ufuncs.true_divide(dot(X, X_T.conj()), f).squeeze()
 
 
-@util.implements(np.corrcoef)
 @partial(jit, static_argnames=('rowvar',))
 def corrcoef(x: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True) -> Array:
+  r"""Compute the Pearson correlation coefficients.
+
+  JAX implementation of :func:`numpy.corrcoef`.
+
+  This is a normalized version of the sample covariance computed by :func:`jax.numpy.cov`.
+  For a sample covariance :math:`C_{ij}`, the correlation coefficients are
+
+  .. math::
+
+     R_{ij} = \frac{C_{ij}}{\sqrt{C_{ii}C_{jj}}}
+
+  they are constructed such that the values satisfy :math:`-1 \le R_{ij} \le 1`.
+
+  Args:
+    x: array of shape ``(M, N)`` (if ``rowvar`` is True), or ``(N, M)``
+      (if ``rowvar`` is False) representing ``N`` observations of ``M`` variables.
+      ``x`` may also be one-dimensional, representing ``N`` observations of a
+      single variable.
+    y: optional set of additional observations, with the same form as ``m``. If
+      specified, then ``y`` is combined with ``m``, i.e. for the default
+      ``rowvar = True`` case, ``m`` becomes ``jnp.vstack([m, y])``.
+    rowvar: if True (default) then each row of ``m`` represents a variable. If
+      False, then each column represents a variable.
+
+  Returns:
+    A covariance matrix of shape ``(M, M)``.
+
+  See also:
+    - :func:`jax.numpy.cov`: compute the covariance matrix.
+
+  Examples:
+    Consider these observations of two variables that correlate perfectly.
+    The correlation matrix in this case is a 2x2 matrix of ones:
+
+    >>> x = jnp.array([[0, 1, 2],
+    ...                [0, 1, 2]])
+    >>> jnp.corrcoef(x)
+    Array([[1., 1.],
+           [1., 1.]], dtype=float32)
+
+    Now consider these observations of two variables that are perfectly
+    anti-correlated. The correlation matrix in this case has ``-1`` in the
+    off-diagonal:
+
+    >>> x = jnp.array([[-1,  0,  1],
+    ...                [ 1,  0, -1]])
+    >>> jnp.corrcoef(x)
+    Array([[ 1., -1.],
+           [-1.,  1.]], dtype=float32)
+
+    Equivalently, these sequences can be specified as separate arguments,
+    in which case they are stacked before continuing the computation.
+
+    >>> x = jnp.array([-1, 0, 1])
+    >>> y = jnp.array([1, 0, -1])
+    >>> jnp.corrcoef(x, y)
+    Array([[ 1., -1.],
+           [-1.,  1.]], dtype=float32)
+
+    The entries of the correlation matrix are normalized such that they
+    lie within the range -1 to +1, where +1 indicates perfect correlation
+    and -1 indicates perfect anti-correlation. For example, here is the
+    correlation of 100 points drawn from a 3-dimensional standard normal
+    distribution:
+
+    >>> key = jax.random.key(0)
+    >>> x = jax.random.normal(key, shape=(3, 100))
+    >>> with jnp.printoptions(precision=2):
+    ...   print(jnp.corrcoef(x))
+    [[ 1.   -0.    0.1 ]
+     [-0.    1.   -0.12]
+     [ 0.1  -0.12  1.  ]]
+  """
   util.check_arraylike("corrcoef", x)
   c = cov(x, y, rowvar)
   if len(shape(c)) == 0:
@@ -12427,9 +12747,11 @@ def corrcoef(x: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True) -> A
 @partial(vectorize, excluded={0, 1, 3, 4})
 def _searchsorted_via_scan(unrolled: bool, sorted_arr: Array, query: Array, side: str, dtype: type) -> Array:
   op = _sort_le_comparator if side == 'left' else _sort_lt_comparator
+  unsigned_dtype = np.uint32 if dtype == np.int32 else np.uint64
   def body_fun(state, _):
     low, high = state
-    mid = (low + high) // 2
+    mid = low.astype(unsigned_dtype) + high.astype(unsigned_dtype)
+    mid = lax.div(mid, unsigned_dtype(2)).astype(dtype)
     go_left = op(query, sorted_arr[mid])
     return (where(go_left, low, mid), where(go_left, mid, high)), ()
   n_levels = int(np.ceil(np.log2(len(sorted_arr) + 1)))

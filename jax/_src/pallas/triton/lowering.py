@@ -46,6 +46,7 @@ from jax._src.lib.mlir.dialects import math as math_dialect
 from jax._src.lib.mlir.dialects import scf as scf_dialect
 from jax._src.lib.triton import dialect as tt_dialect
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.state import discharge
@@ -247,7 +248,8 @@ def _process_grid_to_3d_grid(grid_mapping: GridMapping):
 
 
 def _new_ir_context() -> ir.Context:
-  ctx = ir.Context()
+  ctx = mlir.JaxIrContext()
+  ctx.append_dialect_registry(mlir.upstream_dialects)
   tt_dialect.register_dialect(ctx)
   ctx.load_all_available_dialects()
   return ctx
@@ -390,6 +392,8 @@ def lower_jaxpr_to_triton_ir(
     except LoweringError:
       raise  # We only add the extra info to the innermost exception.
     except Exception as e:
+      if not pallas_call._verbose_errors_enabled():
+          raise
       inval_types = map(lambda t: getattr(t, "type", None), invals)
       raise LoweringError(
           f"Exception while lowering eqn:\n  {eqn}\nWith context:\n "
@@ -992,7 +996,7 @@ triton_lowering_rules.update({
     lax.nextafter_p: _make_dispatch_table(
         "nextafter",
         cuda=[
-            _Extern([jnp.float32, jnp.float32], "__nv_nextafterf", jnp.float32 ),
+            _Extern([jnp.float32, jnp.float32], "__nv_nextafterf", jnp.float32),
             _Extern([jnp.float64, jnp.float64], "__nv_nextafter", jnp.float64),
         ],
         rocm=[
@@ -1586,8 +1590,9 @@ def select_n_lowering_rule(ctx: LoweringRuleContext, pred, x, y):
 
 @register_lowering(lax.broadcast_in_dim_p)
 def _broadcast_in_dim_lowering_rule(
-    ctx: LoweringRuleContext, x, *, broadcast_dimensions, shape
+    ctx: LoweringRuleContext, x, *, broadcast_dimensions, shape, sharding
 ):
+  del sharding
   x = _ensure_ir_value(x, *ctx.avals_in)
   if not ir.RankedTensorType.isinstance(x.type):
     return _bcast_to(x, shape)
