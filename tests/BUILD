@@ -551,6 +551,7 @@ jax_multiplatform_test(
     name = "lax_test",
     srcs = ["lax_test.py"],
     backend_tags = {
+        "cpu": ["not_run:arm"],  # Numerical issues, including https://github.com/jax-ml/jax/issues/24787
         "tpu": ["noasan"],  # Times out.
     },
     shard_count = {
