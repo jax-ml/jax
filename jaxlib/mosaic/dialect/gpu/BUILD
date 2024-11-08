@@ -29,7 +29,9 @@ td_library(
     srcs = ["mosaic_gpu.td"],
     includes = ["."],
     deps = [
+        "@llvm-project//mlir:BasicPtxBuilderIntTdFiles",
         "@llvm-project//mlir:BuiltinDialectTdFiles",
+        "@llvm-project//mlir:InferTypeOpInterfaceTdFiles",
         "@llvm-project//mlir:OpBaseTdFiles",
     ],
 )
@@ -109,6 +111,7 @@ cc_library(
     hdrs = ["mosaic_gpu.h"],
     deps = [
         ":mosaic_gpu_inc_gen",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -116,9 +119,11 @@ cc_library(
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:InferTypeOpInterface",
         "@llvm-project//mlir:LLVMCommonConversion",
         "@llvm-project//mlir:LLVMDialect",
         "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:MemRefUtils",
         "@llvm-project//mlir:SCFUtils",
         "@llvm-project//mlir:Support",
         "@tsl//tsl/platform:statusor",
@@ -154,10 +159,17 @@ gentbl_filegroup(
     tbl_outs = [
         (
             [
+                "-gen-python-enum-bindings",
+                "-bind-dialect=mosaic_gpu",
+            ],
+            "_mosaic_gpu_gen_enums_raw.py",
+        ),
+        (
+            [
                 "-gen-python-op-bindings",
                 "-bind-dialect=mosaic_gpu",
             ],
-            "_mosaic_gpu_gen_raw.py",
+            "_mosaic_gpu_gen_ops_raw.py",
         ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
@@ -169,10 +181,19 @@ gentbl_filegroup(
 )
 
 genrule(
-    name = "mosaic_gpu_python_gen",
-    srcs = ["_mosaic_gpu_gen_raw.py"],
-    outs = ["_mosaic_gpu_gen.py"],
-    cmd = "cat $(location _mosaic_gpu_gen_raw.py) | sed -e 's/^from \\./from jaxlib\\.mlir\\.dialects\\./g' > $@",
+    name = "mosaic_gpu_python_gen_enums",
+    srcs = ["_mosaic_gpu_gen_enums_raw.py"],
+    outs = ["_mosaic_gpu_gen_enums.py"],
+    cmd = """
+      cat $(location _mosaic_gpu_gen_enums_raw.py) | \
+      sed -e 's/^from \\.\\.ir/from jaxlib\\.mlir\\.ir/g; s/^from \\./from jaxlib\\.mlir\\.dialects\\./g' > $@""",
+)
+
+genrule(
+    name = "mosaic_gpu_python_gen_ops",
+    srcs = ["_mosaic_gpu_gen_ops_raw.py"],
+    outs = ["_mosaic_gpu_gen_ops.py"],
+    cmd = "cat $(location _mosaic_gpu_gen_ops_raw.py) | sed -e 's/^from \\./from jaxlib\\.mlir\\.dialects\\./g' > $@",
 )
 
 DIALECT_CAPI_SOURCES = [

@@ -22,9 +22,9 @@ from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
-
 from jax.experimental.mosaic.gpu import dialect as mgpu  # pylint: disable=g-importing-member
 from jax.experimental.mosaic.gpu import lower_mgpu_dialect  # pylint: disable=g-importing-member,g-multiple-import
 
@@ -50,12 +50,15 @@ def walk_operations(op: ir.OpView, callback):
   callback(op)
 
 
-def find_if(module: ir.Module,
-            predicate: Callable[[ir.OpView], bool]) -> list[ir.OpView]:
+def find_if(
+    module: ir.Module, predicate: Callable[[ir.OpView], bool]
+) -> list[ir.OpView]:
   result = []
+
   def callback(op: ir.OpView):
     if predicate(op):
       result.append(op)
+
   for op in module.body.operations:
     walk_operations(op, callback)
   return result
@@ -81,16 +84,19 @@ class DialectTest(parameterized.TestCase):
   def test_initialize_barrier_op_result_memref_must_wrap_barriers(self):
     with ir.InsertionPoint(self.module.body):
       mgpu.initialize_barrier(
-          ir.MemRefType.get((1, 2), ir.F32Type.get()), arrival_count=1)
+          ir.MemRefType.get((1, 2), ir.F32Type.get()), arrival_count=1
+      )
     with self.assertRaisesRegex(
-        ir.MLIRError, "must be memref of barrier values"):
+        ir.MLIRError, "must be memref of barrier values"
+    ):
       self.module.operation.verify()
 
   def test_initialize_barrier_op_arrival_count_must_be_strictly_positive(self):
     with ir.InsertionPoint(self.module.body):
       mgpu.initialize_barrier(
           ir.MemRefType.get((1, 2), ir.Type.parse("!mosaic_gpu.barrier")),
-          arrival_count=0)
+          arrival_count=0,
+      )
     with self.assertRaisesRegex(ir.MLIRError, "value is positive"):
       self.module.operation.verify()
 
@@ -98,10 +104,358 @@ class DialectTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       mgpu.initialize_barrier(
           ir.MemRefType.get((1, 2), ir.Type.parse("!mosaic_gpu.barrier")),
-          arrival_count=1)
+          arrival_count=1,
+      )
     self.assertTrue(self.module.operation.verify())
-    self.assertIsInstance(self.module.body.operations[0],
-                          mgpu.InitializeBarrierOp)
+    self.assertIsInstance(
+        self.module.body.operations[0], mgpu.InitializeBarrierOp
+    )
+
+  def test_async_load_op_dest_must_be_contiguous(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([4, 8], ir.F32Type.get()),
+          ir.MemRefType.get(
+              [4, 8],
+              ir.F32Type.get(),
+              layout=ir.Attribute.parse("strided<[16, 1]>"),
+          ),
+          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.IntegerType.get_signless(32),
+          ir.IntegerType.get_signless(32),
+          name="async_load",
+      )(
+          lambda source, destination, barrier, *indices: mgpu.async_load(
+              source,
+              destination,
+              barrier,
+              indices,
+              slice_lengths=[4, 8],
+              transforms=ir.ArrayAttr.get([]),
+              collective=ir.ArrayAttr.get([]),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The `destination` memref must be contiguous",
+    ):
+      self.module.operation.verify()
+
+  def test_async_load_op_source_and_dest_must_have_same_element_type(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([4, 8], ir.F32Type.get()),
+          ir.MemRefType.get([4, 8], ir.F64Type.get()),
+          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.IntegerType.get_signless(32),
+          ir.IntegerType.get_signless(32),
+          name="async_load",
+      )(
+          lambda source, destination, barrier, *indices: mgpu.async_load(
+              source,
+              destination,
+              barrier,
+              indices,
+              slice_lengths=[4, 8],
+              transforms=ir.ArrayAttr.get([]),
+              collective=ir.ArrayAttr.get([]),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "`source` and `destination` memrefs must have the same element",
+    ):
+      self.module.operation.verify()
+
+  def test_async_load_op_slice_lengths_must_be_larger_than_minus_two(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([4, 8], ir.F32Type.get()),
+          ir.MemRefType.get([4, 8], ir.F32Type.get()),
+          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.IntegerType.get_signless(32),
+          ir.IntegerType.get_signless(32),
+          name="async_load",
+      )(
+          lambda source, destination, barrier, *indices: mgpu.async_load(
+              source,
+              destination,
+              barrier,
+              indices,
+              slice_lengths=[-2, 8],
+              transforms=ir.ArrayAttr.get([]),
+              collective=ir.ArrayAttr.get([]),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The `slice_lengths` attribute must not contain values less than -1",
+    ):
+      self.module.operation.verify()
+
+  def test_async_load_op_source_and_dest_ranks_must_match_with_collapse(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([1, 4, 8], ir.F32Type.get()),
+          ir.MemRefType.get([4], ir.F32Type.get()),
+          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.IntegerType.get_signless(32),
+          ir.IntegerType.get_signless(32),
+          ir.IntegerType.get_signless(32),
+          name="async_load",
+      )(
+          lambda source, destination, barrier, *indices: mgpu.async_load(
+              source,
+              destination,
+              barrier,
+              indices,
+              slice_lengths=[-1, 4, 8],
+              transforms=ir.ArrayAttr.get([]),
+              collective=ir.ArrayAttr.get([]),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "`destination` plus the number of collapsed dimensions as indicated",
+    ):
+      self.module.operation.verify()
+
+  def test_async_load_op_indices_size_must_match_source_rank(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([4, 8], ir.F32Type.get()),
+          ir.MemRefType.get([4, 8], ir.F32Type.get()),
+          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.IntegerType.get_signless(32),
+          name="async_load",
+      )(
+          lambda source, destination, barrier, *indices: mgpu.async_load(
+              source,
+              destination,
+              barrier,
+              indices,
+              slice_lengths=[4, 8],
+              transforms=ir.ArrayAttr.get([]),
+              collective=ir.ArrayAttr.get([]),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The size of `indices` must be equal to the rank of `source`",
+    ):
+      self.module.operation.verify()
+
+  def test_async_load_op_slice_lengths_size_must_match_source_rank(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([4], ir.F32Type.get()),
+          ir.MemRefType.get([4], ir.F32Type.get()),
+          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.IntegerType.get_signless(32),
+          name="async_load",
+      )(
+          lambda source, destination, barrier, *indices: mgpu.async_load(
+              source,
+              destination,
+              barrier,
+              indices,
+              slice_lengths=[4, 8],
+              transforms=ir.ArrayAttr.get([]),
+              collective=ir.ArrayAttr.get([]),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The size of `slice_lengths` must be equal to the rank of `source`",
+    ):
+      self.module.operation.verify()
+
+  def test_async_load_op_slice_collective_must_be_unique(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([4], ir.F32Type.get()),
+          ir.MemRefType.get([4], ir.F32Type.get()),
+          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.IntegerType.get_signless(32),
+          name="async_load",
+      )(
+          lambda source, destination, barrier, *indices: mgpu.async_load(
+              source,
+              destination,
+              barrier,
+              indices,
+              slice_lengths=[4],
+              transforms=ir.ArrayAttr.get([]),
+              collective=ir.ArrayAttr.get([
+                  ir.Attribute.parse(
+                      f"#mosaic_gpu.dim<{mgpu.Dimension.x.name}>"
+                  ),
+                  ir.Attribute.parse(
+                      f"#mosaic_gpu.dim<{mgpu.Dimension.x.name}>"
+                  ),
+              ]),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The `collective` attribute must not contain duplicate dimensions",
+    ):
+      self.module.operation.verify()
+
+  def test_async_store_op_source_must_be_contiguous(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get(
+              [4, 8],
+              ir.F32Type.get(),
+              layout=ir.Attribute.parse("strided<[16, 1]>"),
+          ),
+          ir.MemRefType.get([4, 8], ir.F32Type.get()),
+          ir.IntegerType.get_signless(32),
+          ir.IntegerType.get_signless(32),
+          name="async_store",
+      )(
+          lambda source, destination, *indices: mgpu.async_store(
+              source,
+              destination,
+              indices,
+              slice_lengths=[4, 8],
+              transforms=ir.ArrayAttr.get([]),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The `source` memref must be contiguous",
+    ):
+      self.module.operation.verify()
+
+  def test_async_store_op_source_and_dest_must_have_same_element_type(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([4, 8], ir.F32Type.get()),
+          ir.MemRefType.get([4, 8], ir.F64Type.get()),
+          ir.IntegerType.get_signless(32),
+          ir.IntegerType.get_signless(32),
+          name="async_store",
+      )(
+          lambda source, destination, *indices: mgpu.async_store(
+              source,
+              destination,
+              indices,
+              slice_lengths=[4, 8],
+              transforms=ir.ArrayAttr.get([]),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "`source` and `destination` memrefs must have the same element",
+    ):
+      self.module.operation.verify()
+
+  def test_async_store_op_slice_lengths_must_be_larger_than_minus_two(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([4, 8], ir.F32Type.get()),
+          ir.MemRefType.get([4, 8], ir.F32Type.get()),
+          ir.IntegerType.get_signless(32),
+          ir.IntegerType.get_signless(32),
+          name="async_store",
+      )(
+          lambda source, destination, *indices: mgpu.async_store(
+              source,
+              destination,
+              indices,
+              slice_lengths=[-2, 8],
+              transforms=ir.ArrayAttr.get([]),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The `slice_lengths` attribute must not contain values less than -1",
+    ):
+      self.module.operation.verify()
+
+  def test_async_store_op_source_and_dest_ranks_must_match_with_collapse(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([4], ir.F32Type.get()),
+          ir.MemRefType.get([1, 4, 8], ir.F32Type.get()),
+          ir.IntegerType.get_signless(32),
+          ir.IntegerType.get_signless(32),
+          ir.IntegerType.get_signless(32),
+          name="async_store",
+      )(
+          lambda source, destination, *indices: mgpu.async_store(
+              source,
+              destination,
+              indices,
+              slice_lengths=[-1, 4, 8],
+              transforms=ir.ArrayAttr.get([]),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "`source` plus the number of collapsed dimensions as indicated",
+    ):
+      self.module.operation.verify()
+
+  def test_async_store_op_indices_size_must_match_destination_rank(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([4, 8], ir.F32Type.get()),
+          ir.MemRefType.get([4, 8], ir.F32Type.get()),
+          ir.IntegerType.get_signless(32),
+          name="async_store",
+      )(
+          lambda source, destination, *indices: mgpu.async_store(
+              source,
+              destination,
+              indices,
+              slice_lengths=[4, 8],
+              transforms=ir.ArrayAttr.get([]),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The size of `indices` must be equal to the rank of `destination`",
+    ):
+      self.module.operation.verify()
+
+  def test_async_store_op_slice_lengths_size_must_match_source_rank(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.MemRefType.get([4], ir.F32Type.get()),
+          ir.MemRefType.get([4], ir.F32Type.get()),
+          ir.IntegerType.get_signless(32),
+          name="async_store",
+      )(
+          lambda source, destination, *indices: mgpu.async_store(
+              source,
+              destination,
+              indices,
+              slice_lengths=[4, 8],
+              transforms=ir.ArrayAttr.get([]),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The size of `slice_lengths` must be equal to the rank of"
+        " `destination`",
+    ):
+      self.module.operation.verify()
 
 
 class DialectLoweringTest(DialectTest):
@@ -110,11 +464,13 @@ class DialectLoweringTest(DialectTest):
     with ir.InsertionPoint(self.module.body):
       mgpu.initialize_barrier(
           ir.MemRefType.get((1, 2), ir.Type.parse("!mosaic_gpu.barrier")),
-          arrival_count=1)
+          arrival_count=1,
+      )
     lower_mgpu_dialect(self.module)
 
     self.assertEmpty(
-        list(filter(is_mosaic_gpu_op, self.module.body.operations)))
+        list(filter(is_mosaic_gpu_op, self.module.body.operations))
+    )
 
   def test_lowering_traverses_regions_correctly(self):
     with ir.InsertionPoint(self.module.body):
@@ -124,12 +480,14 @@ class DialectLoweringTest(DialectTest):
       with ir.InsertionPoint(if_op.then_block):
         mgpu.initialize_barrier(
             ir.MemRefType.get((1, 2), ir.Type.parse("!mosaic_gpu.barrier")),
-            arrival_count=1)
+            arrival_count=1,
+        )
         scf.yield_([])
     lower_mgpu_dialect(self.module)
 
     self.assertEmpty(
-        list(filter(is_mosaic_gpu_op, if_op.then_block.operations)))
+        list(filter(is_mosaic_gpu_op, if_op.then_block.operations))
+    )
 
   def test_initialize_barrier_op_lowering_rule(self):
     shape = (3, 4)
@@ -139,12 +497,14 @@ class DialectLoweringTest(DialectTest):
     with ir.InsertionPoint(self.module.body):
       mgpu.initialize_barrier(
           ir.MemRefType.get(shape, ir.Type.parse("!mosaic_gpu.barrier")),
-          arrival_count=arrival_count)
+          arrival_count=arrival_count,
+      )
     lower_mgpu_dialect(self.module)
 
     all_mbarrier_init_shared_ops = find_if(
         self.module,
-        lambda op: op.name == nvvm.MBarrierInitSharedOp.OPERATION_NAME)
+        lambda op: op.name == nvvm.MBarrierInitSharedOp.OPERATION_NAME,
+    )
 
     # One nvvm.mbarrier_init_shared is issued per barrier.
     self.assertLen(all_mbarrier_init_shared_ops, num_shape_elements)
