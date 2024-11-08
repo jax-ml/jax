@@ -1033,6 +1033,19 @@ class OpsTest(PallasBaseTest):
     x = x.at[3].set(jnp.nan)
     np.testing.assert_allclose(isnan(x), jnp.isnan(x))
 
+  def test_jnp_einsum_grad_y_pallas(self):
+    x = jnp.arange(128 * 256, dtype=jnp.float32).reshape((128, 256))
+    y = jnp.arange(256 * 128, dtype=jnp.float32).reshape((128, 256))
+
+    def kernel(x_ref, y_ref, out_ref):
+      # grad_y side of grouped matmul
+      out_ref[...] = jnp.einsum('mk,mn->kn', x_ref[...], y_ref[...])
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((256, 256), jnp.float32)
+    )(x, y)
+    np.testing.assert_array_equal(out, jnp.einsum('mk,mn->kn', x, y))
+
   @parameterized.parameters(
       ("int32", "float32"),
       ("float32", "float32"),
