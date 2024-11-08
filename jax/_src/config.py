@@ -22,7 +22,7 @@ import logging
 import os
 import sys
 import threading
-from typing import Any, Generic, NamedTuple, NoReturn, Optional, Protocol, TypeVar, cast, TYPE_CHECKING
+from typing import Any, Generic, NamedTuple, NoReturn, Optional, Protocol, TypeVar, cast
 
 from jax._src import lib
 from jax._src.lib import guard_lib
@@ -371,7 +371,7 @@ else:
 
   _thread_local_state = threading.local()
 
-  class State(Generic[_T]):
+  class State(Generic[_T]):  # type: ignore[no-redef]
 
     __slots__ = (
         '_name', '_value', '_update_thread_local_hook', '_update_global_hook',

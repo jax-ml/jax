@@ -29,6 +29,8 @@ from jaxlib.mlir.dialects import memref
 from jaxlib.mlir.dialects import nvvm
 from .utils import c, memref_ptr, single_thread_predicate
 
+# mypy: ignore-errors
+
 
 MlirLoweringRule = Callable[[ir.Operation | ir.OpView], Sequence[ir.Value]]
 

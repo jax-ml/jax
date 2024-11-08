@@ -19,6 +19,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import math
+from collections.abc import Callable
 from typing import Iterable, Sequence, TypeVar
 
 import jax

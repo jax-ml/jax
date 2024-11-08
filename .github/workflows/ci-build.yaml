@@ -39,7 +39,7 @@ jobs:
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ env.pythonLocation }}-${{ hashFiles('.pre-commit-config.yaml', 'setup.py') }}
-      - run: pre-commit run --show-diff-on-failure --color=always
+      - run: pre-commit run --show-diff-on-failure --color=always --all-files
 
   build:
     name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ubuntu-20.04, x64=${{ matrix.enable-x64}})"
