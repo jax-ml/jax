@@ -626,40 +626,61 @@ class FragmentedArray:
         output_is_signed if output_is_signed is not None else self.is_signed
     )
 
+    # If self is splat then try to broadcast it to the arguments.
+    this = self
+    if isinstance(self.layout, WGSplatFragLayout):
+      for o in other:
+        this = FragmentedArray.splat(
+            self.registers.flat[0],
+            shape=o.shape,
+            layout=o.layout,
+            is_signed=is_signed,
+        )
+
+        if not isinstance(o.layout, WGSplatFragLayout):
+          if not self.layout.can_broadcast_to(o.shape):
+            raise ValueError("Incompatible fragment array shapes.")
+          # Just copy the entire layout of the non-splat argument.
+          break
+
+        if not self.layout.can_broadcast_to(o.shape):
+          # Broadcast (hopefully) can only happen the other way round
+          this = self
+
     other_arrs = []
     for o in other:
       if not isinstance(o, FragmentedArray):
         if isinstance(o, (float, int)):
-          o = utils.c(o, self.mlir_dtype)
+          o = utils.c(o, this.mlir_dtype)
         elif not isinstance(o, ir.Value):
           raise NotImplementedError(o)
 
         o = FragmentedArray.splat(
-            o, shape=self.shape, layout=self.layout, is_signed=is_signed
+            o, shape=this.shape, layout=this.layout, is_signed=is_signed
         )
 
       if isinstance(o.layout, WGSplatFragLayout):
-        if not o.layout.can_broadcast_to(self.shape):
+        if not o.layout.can_broadcast_to(this.shape):
           raise ValueError("Can't broadcast shape.")
         o = FragmentedArray.splat(
             o.registers.flat[0],
-            shape=self.shape,
-            layout=self.layout,
+            shape=this.shape,
+            layout=this.layout,
             is_signed=is_signed,
         )
       else:
-        if self.layout != o.layout:
+        if this.layout != o.layout:
           raise ValueError("Incompatible FragmentedArray layouts")
-        if self.registers.shape != o.registers.shape:
+        if this.registers.shape != o.registers.shape:
           raise ValueError("Incompatible FragmentedArray shapes")
 
       other_arrs.append(o)
-    new_regs = np.empty_like(self.registers)
+    new_regs = np.empty_like(this.registers)
 
-    for idx, reg in np.ndenumerate(self.registers):
+    for idx, reg in np.ndenumerate(this.registers):
       new_regs[idx] = op(reg, *(o.registers[idx] for o in other_arrs))
     return FragmentedArray(
-        _registers=new_regs, _layout=self.layout, _is_signed=is_signed
+        _registers=new_regs, _layout=this.layout, _is_signed=is_signed
     )
 
   def __pos__(self):
