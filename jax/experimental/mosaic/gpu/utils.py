@@ -1047,3 +1047,7 @@ def getelementptr(
   static_indices = [i if isinstance(i, int) else DYNAMIC32 for i in indices]
   dyn_indices = [i for i in indices if not isinstance(i, int)]
   return llvm.getelementptr(ptr.type, ptr, dyn_indices, static_indices, dtype)
+
+
+def dyn_dot(x, y):
+  return functools.reduce(arith.addi, (arith.muli(a, b) for a, b in zip(x, y)))
