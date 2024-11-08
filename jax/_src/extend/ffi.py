@@ -27,7 +27,7 @@ from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import effects
 from jax._src import util
-from jax._src.callback import _check_shape_dtype, callback_batching_rule
+from jax._src.callback import callback_batching_rule
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -209,11 +209,14 @@ ResultMetadata = DuckTypedArray | core.AbstractToken
 
 def _result_avals(results: Sequence[ResultMetadata]) -> tuple[core.AbstractValue, ...]:
   avals: list[core.AbstractValue] = []
-  for result in results:
+  for idx, result in enumerate(results):
     if isinstance(result, core.AbstractToken):
       avals.append(result)
     else:
-      _check_shape_dtype(result)
+      if not hasattr(result, "shape") or not hasattr(result, "dtype"):
+        raise ValueError(
+            "All elements of result_shape_dtypes must have 'shape' and 'dtype' "
+            f"attributes. Got {result} at position {idx}.")
       avals.append(core.ShapedArray(result.shape, result.dtype))
   return tuple(avals)
 

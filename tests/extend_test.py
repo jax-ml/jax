@@ -27,6 +27,7 @@ import jax.numpy as jnp
 
 from jax._src import abstract_arrays
 from jax._src import api
+from jax._src import config
 from jax._src import core
 from jax._src import linear_util
 from jax._src import prng
@@ -325,6 +326,21 @@ class FfiTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError,
                                 "The use of ffi_call attributes requires"):
       jax.jit(fun).lower(jnp.ones(5)).as_text()
+
+  def testAllow64(self):
+    if config.enable_x64.value:
+      self.skipTest("Requires enable_x64=False")
+    def fun():
+      return jex.ffi.ffi_call("test", jax.ShapeDtypeStruct((), np.int64))()
+    self.assertIn("tensor<i64>", jax.jit(fun).lower().as_text())
+
+  def testInvalidResultType(self):
+    with self.assertRaisesRegex(
+        ValueError, "All elements of result_shape_dtypes.*position 0"):
+      jex.ffi.ffi_call("test", None)()
+    with self.assertRaisesRegex(
+        ValueError, "All elements of result_shape_dtypes.*position 1"):
+      jex.ffi.ffi_call("test", (jax.ShapeDtypeStruct((), np.float32), ()))()
 
 
 def ffi_call_geqrf(x, **kwargs):
