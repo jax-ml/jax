@@ -283,6 +283,7 @@ jax_multiplatform_test(
         "tpu_v3_2x2",
         "tpu_v5e_4x2",
         "tpu_v4_2x2",
+        "tpu_v3_2x2_shardy",
     ],
     deps = [
         "//jax:experimental",
