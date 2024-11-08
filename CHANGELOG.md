@@ -25,6 +25,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     for information on migrating to the new API.
   * The `initial` argument to {func}`jax.nn.softmax` and {func}`jax.nn.log_softmax`
     has been removed, after being deprecated in v0.4.27.
+  * Calling `np.asarray` on typed PRNG keys (i.e. keys produced by :func:`jax.random.key`)
+    now raises an error. Previously, this returned a scalar object array.
   * The following deprecated methods and functions in {mod}`jax.export` have
     been removed:
       * `jax.export.DisabledSafetyCheck.shape_assertions`: it had no effect
