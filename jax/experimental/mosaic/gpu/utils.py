@@ -46,27 +46,29 @@ DYNAMIC32 = -2147483648
 
 
 def ptr_as_memref(ptr, memref_ty: ir.MemRefType):
-  if len(memref_ty.shape) == 0:
-    raise NotImplementedError
   i64 = ir.IntegerType.get_signless(64)
   rank = len(memref_ty.shape)
-  desc_ty = ir.Type.parse(
-      f"!llvm.struct<(ptr, ptr, i64, array<{rank} x i64>, array<{rank} x i64>)>"
-  )
+  if rank > 0:
+    desc_ty = ir.Type.parse(
+        f"!llvm.struct<(ptr, ptr, i64, array<{rank} x i64>, array<{rank} x i64>)>"
+    )
+  else:
+    desc_ty = ir.Type.parse("!llvm.struct<(ptr, ptr, i64)>")
   desc = llvm.UndefOp(desc_ty)
   desc = llvm.InsertValueOp(desc, ptr, [0])  # Allocation
   desc = llvm.InsertValueOp(desc, ptr, [1])  # Aligned Base
   desc = llvm.InsertValueOp(
       desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, 0)), [2]
   )
-  for i, s in enumerate(memref_ty.shape):
-    desc = llvm.InsertValueOp(
-        desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)), [3, i]
-    )
-  for i, s in enumerate(get_contiguous_strides(memref_ty.shape)):
-    desc = llvm.InsertValueOp(
-        desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)), [4, i]
-    )
+  if rank > 0:
+    for i, s in enumerate(memref_ty.shape):
+      desc = llvm.InsertValueOp(
+          desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)), [3, i]
+      )
+    for i, s in enumerate(get_contiguous_strides(memref_ty.shape)):
+      desc = llvm.InsertValueOp(
+          desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)), [4, i]
+      )
   return builtin.unrealized_conversion_cast([memref_ty], [desc])
 
 

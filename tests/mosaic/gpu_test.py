@@ -363,6 +363,26 @@ class MemRefTest(TestCase):
     else:
       do_test()
 
+  @parameterized.parameters(jnp.uint64, jnp.uint32, jnp.uint16, jnp.uint8)
+  def test_scalar_argument(self, dtype):
+    scalar = 42
+    expected = np.full((128, 128), scalar, dtype=dtype)
+
+    def kernel(ctx, inp, out, _):
+      del ctx
+      inp = memref.load(inp, [])
+      mgpu.FragmentedArray.splat(inp, expected.shape, is_signed=True).store_untiled(out)
+
+    res = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        jax.ShapeDtypeStruct(shape=(), dtype=expected.dtype),
+        expected,
+        (),
+    )(scalar)
+    np.testing.assert_array_equal(res, expected)
+
 
 def get_packed_shape(strides, shape):
   perm = sorted(range(len(strides)), key=lambda i: strides[i], reverse=True)
