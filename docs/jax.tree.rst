@@ -5,8 +5,8 @@
 
 .. automodule:: jax.tree
 
-List of Functions
------------------
+Pytree manipulation functions
+-----------------------------
 
 .. autosummary::
    :toctree: _autosummary
@@ -19,3 +19,12 @@ List of Functions
    structure
    transpose
    unflatten
+
+Pytree-compatible dataclasses
+-----------------------------
+
+.. autosummary::
+   :toctree: _autosummary
+
+   dataclass
+   field
