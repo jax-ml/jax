@@ -1,10 +1,17 @@
 # Persistent compilation cache
 
-<!--* freshness: { reviewed: '2024-04-09' } *-->
+<!--* freshness: { reviewed: '2024-11-07' } *-->
 
 JAX has an optional disk cache for compiled programs. If enabled, JAX will
 store copies of compiled programs on disk, which can save recompilation time
 when running the same or similar tasks repeatedly.
+
+Note: if the compilation cache is not on a local filesystem,
+[etils](https://pypi.org/project/etils/) needs to be installed.
+
+```python
+pip install etils
+```
 
 ## Usage
 
