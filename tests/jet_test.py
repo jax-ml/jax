@@ -319,6 +319,8 @@ class JetTest(jtu.JaxTestCase):
   def test_dynamic_slice(self): self.unary_check(partial(lax.dynamic_slice, start_indices=(1,2), slice_sizes=(1,1)))
   @jtu.skip_on_devices("tpu")
   def test_dynamic_update_slice(self): self.unary_check(partial(lax.dynamic_update_slice, start_indices=(1,2), update=np.arange(6.0).reshape(2, 3)))
+  @jtu.skip_on_devices("tpu")
+  def test_copy(self):       self.unary_check(jnp.array)
 
 
   @jtu.skip_on_devices("tpu")
