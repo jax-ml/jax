@@ -1171,6 +1171,25 @@ class LaxTest(jtu.JaxTestCase):
       hlo = jax.jit(lax.dot).lower(lhs, rhs).as_text()
       self.assertRegex(hlo, expected)
 
+  @parameterized.parameters([
+      (lax.DotAlgorithm(np.float32, np.float32, np.float32), "F32_F32_F32"),
+      (lax.DotAlgorithm(np.float64, np.float64, np.float64), "F32_F32_F32"),
+      (lax.DotAlgorithm(dtypes.bfloat16, dtypes.bfloat16, np.float32,
+                        num_primitive_operations=6), "BF16_BF16_F32_X6"),
+      (lax.DotAlgorithm(dtypes.float8_e5m2, dtypes.float8_e5m2, np.float32,
+                        allow_imprecise_accumulation=True),
+       "ANY_F8_ANY_F8_F32_FAST_ACCUM"),
+      (lax.DotAlgorithm(np.float32, np.float32, np.float64), "DotAlgorithm"),
+  ])
+  def testDotAlgorithmToPreset(self, spec, name):
+    def fun(lhs, rhs):
+      return lax.dot(lhs, rhs, precision=spec)
+    lhs_shape = (3, 4)
+    rhs_shape = (4, 3)
+    rng = jtu.rand_default(self.rng())
+    lhs, rhs = rng(lhs_shape, np.float32), rng(rhs_shape, np.float32)
+    self.assertIn(name, str(jax.make_jaxpr(fun)(lhs, rhs)))
+
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
      for lhs_shape in [(3,), (4, 3)] for rhs_shape in [(3,), (3, 6)]],
