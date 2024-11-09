@@ -1297,9 +1297,10 @@ def _call_exported_abstract_eval(
   # Must express the exported_dim_vars in terms of the shapes in in_avals.
   solution, shape_constraints, synth_dim_vars = shape_poly.solve_dim_vars(
       exported.in_avals, args_kwargs_tree=exported.in_tree)
-  synthetic_env = {vname: in_avals[arg_idx].shape[dim_idx]
-                   for (vname, arg_idx, dim_idx) in synth_dim_vars}
-  synthetic_eval = shape_poly.CachingShapeEvaluator(**synthetic_env)
+  synthetic_env: shape_poly.DimVarEnv = {
+      vname: in_avals[arg_idx].shape[dim_idx]
+      for (vname, arg_idx, dim_idx) in synth_dim_vars}
+  synthetic_eval = shape_poly.ShapeEvaluator(synthetic_env)
   # We discharge all the constraints statically. This results in much simpler
   # composability (because we do not have to worry about the constraints of the
   # Exported called recursively; we only need to worry about entry-point
