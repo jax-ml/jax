@@ -600,9 +600,9 @@ def benchmark_and_verify(
 
 if __name__ == "__main__":
   if (not jtu.test_device_matches(["cuda"]) or
-      not jtu.is_cuda_compute_capability_at_least("9.0")):
+      not jtu.is_cuda_compute_capability_equal("9.0")):
     warnings.warn(
-      "Mosaic GPU Flash Attention requires compute capability 9.0 to run, "
+      "Mosaic GPU Flash Attention requires compute capability 9.0a to run, "
       "skipping.")
     exit(0)
 
