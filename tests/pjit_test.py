@@ -1292,6 +1292,23 @@ class PJitTest(jtu.BufferDonationTestCase):
     with self.assertRaisesRegex(ValueError, "spmd_axis_name"):
       jax.vmap(f, spmd_axis_name='x')(xs)
 
+  def test_cache_bug(self):
+    devices = list(jax.devices())
+    if len(devices) < 2:
+      raise unittest.SkipTest("Test requires 2 devices")
+
+    def under_jvp(f):
+      return jax.jvp(f, (), ())
+
+    x0 = jnp.zeros(1, device=devices[0])
+    x1 = jnp.zeros(1, device=devices[1])
+
+    # comments describe how caches worked under the old `_most_recent_pjit_call_executable` system
+    under_jvp(lambda: jnp.sin(x0)) # cpp_pjit miss, pjit_call_impl miss
+    jnp.sin(x1)        # cpp_pjit miss, pjit_call_impl miss
+    ans1 = jnp.sin(x0) # cpp_pjit miss, pjit_call_impl hit. Bad cpp_pjit entry created
+    ans2 = jnp.sin(x0) # cpp_pjit hit with bad cache entry
+    assert(ans1.devices() == ans2.devices())
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class CustomPartitionerTest(jtu.JaxTestCase):
