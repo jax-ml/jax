@@ -75,15 +75,17 @@ body:has(.hero) .bd-container {
 .getting-started,
 .user-guides,
 .developer-docs {
-  background: #A9CAFF;
+  background: #3C4043;
+  color: white;
   height: 170px;
   border: none !important;
+  border-radius: 12px;
 }
 
 .getting-started:hover,
 .user-guides:hover,
 .developer-docs:hover {
-  background: #80CBC4;
+  background: #AECBFA;
   color: #202124;
   transform: unset !important;
 }
@@ -109,7 +111,7 @@ body:has(.hero) .bd-container {
 .getting-started svg,
 .user-guides svg,
 .developer-docs svg {
-  color: #1967D2;
+  color: #8AB4F8;
 }
 
 .getting-started:hover svg,
@@ -130,6 +132,7 @@ body:has(.hero) .bd-container {
   background: linear-gradient(90deg, rgba(32,33,36,1) 0%, rgba(39,45,56,1) 100%);
   position: relative;
   overflow: hidden;
+  border-radius: 24px;
 }
 
 .hero > img {
@@ -194,10 +197,11 @@ body:has(.hero) .bd-container {
 }
 
 .color-cards {
-  background: #D2E3FC;
+  background: #E8EAED;
   color: #222832;
   padding: 48px 12px 0 12px;
   margin-bottom: 0 !important;
+  border-radius: 24px 24px 0 0;
 }
 
 .color-cards > div {
@@ -205,10 +209,11 @@ body:has(.hero) .bd-container {
 }
 
 .color-cards + p {
-  background: #D2E3FC;
+  background: #E8EAED;
   padding: 24px 12px 48px 12px;
   font-weight: 600;
   color: #222832;
+  border-radius: 0 0 24px 24px;
 }
 
 .color-cards + p > a {
@@ -226,30 +231,6 @@ html[data-theme="dark"] .color-cards + p,
 html[data-theme="dark"] .color-cards + p > a {
   background: #202124;
   color: white;
-}
-
-html[data-theme="dark"] .getting-started,
-html[data-theme="dark"] .user-guides,
-html[data-theme="dark"] .developer-docs {
-  background: #455A64;
-}
-
-html[data-theme="dark"] .getting-started:hover,
-html[data-theme="dark"] .user-guides:hover,
-html[data-theme="dark"] .developer-docs:hover {
-  background: #80CBC4;
-}
-
-html[data-theme="dark"] .getting-started svg,
-html[data-theme="dark"] .user-guides svg,
-html[data-theme="dark"] .developer-docs svg {
-  color: #7BAAF7;
-}
-
-html[data-theme="dark"] .getting-started:hover svg,
-html[data-theme="dark"] .user-guides:hover svg,
-html[data-theme="dark"] .developer-docs:hover svg {
-  color: #3C4043;
 }
 
 .ecosystem-grid {
