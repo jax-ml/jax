@@ -32,6 +32,7 @@ td_library(
         "@llvm-project//mlir:BasicPtxBuilderIntTdFiles",
         "@llvm-project//mlir:BuiltinDialectTdFiles",
         "@llvm-project//mlir:InferTypeOpInterfaceTdFiles",
+        "@llvm-project//mlir:LLVMOpsTdFiles",
         "@llvm-project//mlir:OpBaseTdFiles",
     ],
 )
