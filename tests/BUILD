@@ -1314,6 +1314,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "for_loop_test",
     srcs = ["for_loop_test.py"],
+    disable_configs = [
+        "tpu_v5p_1x1",  # TODO(b/377666550): enable once XLA is fixed.
+    ],
     shard_count = {
         "cpu": 20,
         "gpu": 10,
