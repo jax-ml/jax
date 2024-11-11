@@ -19,14 +19,17 @@ limitations under the License.
 #include <cstdint>
 #include <string>
 
-#include "absl/status/status.h"
-#include "absl/strings/string_view.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Interfaces/InferTypeOpInterface.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Support/LLVM.h"
+#include "absl/status/status.h"
+#include "absl/strings/string_view.h"
 
 // Generated definitions.
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_dialect.h.inc"  // IWYU pragma: keep
@@ -42,6 +45,10 @@ namespace mosaic_gpu {
 
 using Memref = ::mlir::TypedValue<::mlir::MemRefType>;
 using Pointer = ::mlir::TypedValue<::mlir::LLVM::LLVMPointerType>;
+
+struct GlobalMemory : public mlir::SideEffects::Resource::Base<GlobalMemory> {
+  llvm::StringRef getName() final { return "<GlobalMemory>"; }
+};
 
 constexpr absl::string_view kRuntimeTmaDescriptorInitializerName =
     "mosaic_gpu_init_tma_desc";

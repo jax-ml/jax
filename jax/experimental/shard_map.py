@@ -1506,7 +1506,7 @@ def _unmentioned2(mesh: Mesh, names: AxisNames) -> list[AxisName]:
   # We use a filtered-down version of unmentioned to avoid defensive-psum over
   # more chips than required in the transpose-no-check-rep case.
   name_set = {n for ns in names.values() for n in ns}
-  return [n for n in mesh.axis_names if n not in name_set]
+  return [n for n in _all_mesh_names_except_spmd(mesh) if n not in name_set]
 
 
 def _shard_map_transpose(out_cts, *args, jaxpr, mesh, in_names, out_names,
@@ -1652,10 +1652,7 @@ def _pe_custom_params(unks_in, inst_in, kept_outs_known, kept_outs_staged,
 
 # TODO(mattjj): remove this mechanism when we revise mesh scopes
 def _all_mesh_names_except_spmd(mesh: Mesh, trace=None) -> tuple[AxisName, ...]:
-  trace = core.unsafe_get_current_trace() if trace is None else trace
-  stack = core.unsafe_get_trace_stack(trace)
-  batch_traces = [t for t in stack if isinstance(t, batching.BatchTrace)]
-  spmd_names = {n for trace in batch_traces for n in trace.axis_data.spmd_name }
+  spmd_names = core.get_axis_env().spmd_axis_names
   return tuple(name for name in mesh.axis_names if name not in spmd_names)
 
 # DCE

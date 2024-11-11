@@ -699,8 +699,10 @@ class DevicePutTest(jtu.JaxTestCase):
   def test_disallow_alias_copies_arrays(self):
     if xla_extension_version < 296:
       self.skipTest("Requires xla_extension_version >= 296")
-    _, _, _, inp_host = _create_inputs(
-        (8, 2), P("x", "y"), mem_kind="pinned_host")
+    mesh = jtu.create_mesh((2,), ("x",))
+    np_inp = np.arange(16).reshape(8, 2)
+    s = NamedSharding(mesh, P("x"), memory_kind="pinned_host")
+    inp_host = jax.device_put(np_inp, s)
 
     inp_host_copy = jax.device_put(inp_host, may_alias=False)
 
@@ -712,8 +714,10 @@ class DevicePutTest(jtu.JaxTestCase):
   def test_disallow_alias_copies_arrays_with_donated_input(self):
     if xla_extension_version < 296:
       self.skipTest("Requires xla_extension_version >= 296")
-    _, _, _, inp_host = _create_inputs(
-        (8, 2), P("x", "y"), mem_kind="pinned_host")
+    mesh = jtu.create_mesh((2,), ("x",))
+    np_inp = np.arange(16).reshape(8, 2)
+    s = NamedSharding(mesh, P("x"), memory_kind="pinned_host")
+    inp_host = jax.device_put(np_inp, s)
 
     inp_host_donate = jax.jit(lambda x: x, donate_argnums=0)(inp_host)
 

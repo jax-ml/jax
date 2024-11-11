@@ -23,7 +23,8 @@ name. Otherwise, MLIR is unable to find the module during dialect search.
 
 
 # pylint: disable=g-bad-import-order
-from jaxlib.mosaic.dialect.gpu._mosaic_gpu_gen import *  # pylint: disable=wildcard-import  # type: ignore[import-not-found]
+from jaxlib.mosaic.dialect.gpu._mosaic_gpu_gen_ops import *  # pylint: disable=wildcard-import  # type: ignore[import-not-found]
+from jaxlib.mosaic.dialect.gpu._mosaic_gpu_gen_enums import *  # pylint: disable=wildcard-import  # type: ignore[import-not-found]
 from jaxlib.mlir._mlir_libs._mosaic_gpu_ext import *  # pylint: disable=wildcard-import  # type: ignore[import-not-found]
 
 try:

@@ -18,7 +18,7 @@ from collections.abc import Callable, Mapping, Sequence
 import ctypes
 import functools
 import os
-from typing import Any
+from typing import Any, overload
 
 import numpy as np
 
@@ -238,6 +238,43 @@ def _convert_layouts_for_ffi_call(
           else layout[::-1]
       )
       for aval, layout in zip(avals, layouts))
+
+
+# ffi_call() returns as many results as result_shape_dtypes.
+@overload
+def ffi_call(
+    target_name: str,
+    result_shape_dtypes: ResultMetadata,
+    *deprecated_args: ArrayLike,
+    has_side_effect: bool = ...,
+    vmap_method: str | None = ...,
+    input_layouts: Sequence[FfiLayoutOptions] | None = ...,
+    output_layouts: FfiLayoutOptions | Sequence[FfiLayoutOptions] | None = ...,
+    input_output_aliases: dict[int, int] | None = ...,
+    custom_call_api_version: int = ...,
+    legacy_backend_config: str | None = ...,
+    vectorized: bool | DeprecatedArg = ...,
+    **deprecated_kwargs: Any,
+) -> Callable[..., Array] | Array:
+  ...
+
+
+@overload
+def ffi_call(
+    target_name: str,
+    result_shape_dtypes: Sequence[ResultMetadata],
+    *deprecated_args: ArrayLike,
+    has_side_effect: bool = ...,
+    vmap_method: str | None = ...,
+    input_layouts: Sequence[FfiLayoutOptions] | None = ...,
+    output_layouts: FfiLayoutOptions | Sequence[FfiLayoutOptions] | None = ...,
+    input_output_aliases: dict[int, int] | None = ...,
+    custom_call_api_version: int = ...,
+    legacy_backend_config: str | None = ...,
+    vectorized: bool | DeprecatedArg = ...,
+    **deprecated_kwargs: Any,
+) -> Callable[..., Sequence[Array]] | Sequence[Array]:
+  ...
 
 
 def ffi_call(
