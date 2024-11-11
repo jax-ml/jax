@@ -1608,17 +1608,6 @@ def _squeeze_lowering_rule(ctx: LoweringRuleContext, a, *, dimensions):
   return _reshape_lowering_rule(ctx, a, new_sizes=None, dimensions=None)
 
 
-def _reshape(x: ir.Value, shape: Sequence[int]) -> ir.Value:
-  if not shape:
-    raise ValueError("cannot reshape to an empty shape")
-  ty = ir.RankedTensorType(x.type)
-  return tt_dialect.reshape(
-      ir.RankedTensorType.get(shape, ty.element_type, ty.encoding),
-      x,
-      allow_reorder=False,
-  )
-
-
 @register_lowering(lax.reshape_p)
 def _reshape_lowering_rule(
     ctx: LoweringRuleContext, a, *, new_sizes, dimensions
@@ -1633,34 +1622,12 @@ def _reshape_lowering_rule(
     assert all(dim_size == 1 for dim_size in out_aval.shape)
     return _splat(a, out_aval.shape)
 
-  # TODO(slebedev): Check that the following comment still applies.
-  # Expand-dims or reduce-sum to handle singleton dims as `tl.reshape` is not
-  # currently implemented.
-  dst_shape = [*out_aval.shape]
-  i = 0
-  while (
-      ir.RankedTensorType.isinstance(a.type)
-      and (a_shape := ir.RankedTensorType(a.type).shape) != dst_shape
-  ):
-    dim_size = a_shape[i] if i < len(a_shape) else None
-    dst_dim_size = dst_shape[i] if i < len(dst_shape) else None
-    if dim_size == dst_dim_size:
-      i += 1
-    elif dst_dim_size == 1:
-      a = _expand_dims(a, axis=i)
-      i += 1
-    elif dim_size == 1:
-      in_shape = a_shape
-      out_shape = tuple(d for di, d in enumerate(a_shape) if di != i)
-      reduce_ctx = ctx.replace(
-          avals_in=[ctx.avals_in[0].update(shape=in_shape)],
-          avals_out=[ctx.avals_in[0].update(shape=out_shape)],
-      )
-      a = _reduce_lowering(jnp.add, reduce_ctx, a, axes=(i,))
-    else:  # We expect this to fail.
-      return _reshape(a, dst_shape)
-
-  return a
+  ty = ir.RankedTensorType(a.type)
+  return tt_dialect.reshape(
+      ir.RankedTensorType.get([*out_aval.shape], ty.element_type, ty.encoding),
+      a,
+      allow_reorder=False,
+  )
 
 
 def _compute_pointers_from_indices(
