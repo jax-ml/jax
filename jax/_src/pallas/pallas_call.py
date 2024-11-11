@@ -1822,10 +1822,11 @@ def pallas_call(
     arg_names = None
     if kernel_fun_sig:
       kernel_debug_info = api_util.debug_info(
+          kernel,
           "pallas_call kernel",
-           kernel_src_info,
-           kernel_fun_sig,
-           [1] * len(kernel_fun_sig.parameters), {}, (), ())
+          [1] * len(kernel_fun_sig.parameters), {},
+          fun_src_info=kernel_src_info,
+          fun_sig=kernel_fun_sig)
       if kernel_debug_info:
         arg_names = kernel_debug_info.arg_names
       del kernel_debug_info

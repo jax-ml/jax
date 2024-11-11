@@ -68,11 +68,50 @@ def _ensure_str_tuple(x: str | Iterable[str]) -> tuple[str, ...]:
   else:
     return tuple(map(_ensure_str, x))
 
+def _fill_debug_info_after_flatten(
+    fun: lu.WrappedFun, in_tree: PyTreeDef,
+    has_kwargs: bool, out_tree_thunk: Callable[[], PyTreeDef]) -> lu.WrappedFun:
+  """Fills in the fun.debug_info."""
+  dbg = fun.debug_info
+  if dbg is None:
+    fun_src_info = fun_sourceinfo(fun.f)
+    dbg = TracingDebugInfo("unknown", fun_src_info, None, None)
+  elif dbg.func_src_info is None:
+    fun_src_info = fun_sourceinfo(fun.f)
+  else:
+    fun_src_info = dbg.func_src_info
+
+  if dbg.arg_names is None:
+    dummy_args = tree_unflatten(in_tree, [False] * in_tree.num_leaves)
+    dummy_args, dummy_kwargs = dummy_args if has_kwargs else (dummy_args, {})
+    fun_sig = fun_signature(fun.f)
+    arg_names = _arg_names(fun_sig, dummy_args, dummy_kwargs, (), ())
+  else:
+    arg_names = dbg.arg_names
+
+  def result_paths() -> tuple[str, ...] | None:
+    out_tree = out_tree_thunk()
+    try:
+      num_leaves = out_tree.num_leaves
+      dummy_result = tree_unflatten(out_tree, [False] * num_leaves)
+    except:
+      return None
+    else:
+      return tuple(keystr(path) for path, _ in generate_key_paths(dummy_result))
+  result_paths_ = HashableFunction(result_paths, closure=())
+  dbg = TracingDebugInfo(dbg.traced_for, fun_src_info,
+                         arg_names, result_paths_)
+  return lu.add_debug_info(fun, dbg)
+
 @lu.transformation_with_aux
-def flatten_fun(in_tree, *args_flat):
+def flatten_fun_transformation(in_tree, *args_flat):
   py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
   ans = yield py_args, py_kwargs
   yield tree_flatten(ans)
+
+def flatten_fun(f: lu.WrappedFun, in_tree: PyTreeDef) -> tuple[lu.WrappedFun, Callable]:
+  wrapped, out_tree_thunk = flatten_fun_transformation(f, in_tree)
+  return _fill_debug_info_after_flatten(wrapped, in_tree, True, out_tree_thunk), out_tree_thunk
 
 def apply_flat_fun(fun, io_tree, *py_args):
   in_tree_expected, out_tree = io_tree
@@ -83,10 +122,14 @@ def apply_flat_fun(fun, io_tree, *py_args):
   return tree_unflatten(out_tree, ans)
 
 @lu.transformation_with_aux
-def flatten_fun_nokwargs(in_tree, *args_flat):
+def flatten_fun_nokwargs_transformation(in_tree, *args_flat):
   py_args = tree_unflatten(in_tree, args_flat)
   ans = yield py_args, {}
   yield tree_flatten(ans)
+
+def flatten_fun_nokwargs(f: lu.WrappedFun, in_tree: PyTreeDef) -> tuple[lu.WrappedFun, Callable]:
+  wrapped, out_tree_thunk = flatten_fun_nokwargs_transformation(f, in_tree)
+  return _fill_debug_info_after_flatten(wrapped, in_tree, False, out_tree_thunk), out_tree_thunk
 
 def apply_flat_fun_nokwargs(fun, io_tree, py_args):
   in_tree_expected, out_tree = io_tree
@@ -105,13 +148,13 @@ def flattened_fun_in_tree(
   # with flatten_fun or flatten_fun_nokwargs, which could happen e.g. when
   # core.eval_jaxpr encounters a call primitive (though at that point we're just
   # round-tripping jaxprs and the user errors in question are impossible).
-  assert isinstance(flatten_fun, partial) and len(flatten_fun.args) == 1
-  assert (isinstance(flatten_fun_nokwargs, partial) and
-          len(flatten_fun_nokwargs.args) == 1)
-  flattens = {flatten_fun.args[0], flatten_fun_nokwargs.args[0]}
+  assert isinstance(flatten_fun_transformation, partial) and len(flatten_fun_transformation.args) == 1
+  assert (isinstance(flatten_fun_nokwargs_transformation, partial) and
+          len(flatten_fun_nokwargs_transformation.args) == 1)
+  flattens = {flatten_fun_transformation.args[0], flatten_fun_nokwargs_transformation.args[0]}
   try:
     ((in_tree,), out_tree_store, has_kwargs), = (
-        (args, store, f is flatten_fun.args[0])
+        (args, store, f is flatten_fun_transformation.args[0])
         for (f, args), store in zip(fn.transforms, fn.stores) if f in flattens)
   except ValueError:
     return None
@@ -639,16 +682,25 @@ def api_hook(fun, tag: str):
 
 
 def debug_info(
-  traced_for: str, src: str | None, fun_signature: inspect.Signature | None,
-  args: tuple[Any, ...], kwargs: dict[str, Any], static_argnums: tuple[int, ...],
-  static_argnames: tuple[str, ...]
+    fun: Callable,
+    traced_for: str,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    *,
+    fun_src_info: str | None = None,
+    fun_sig: inspect.Signature | None = None,
+    static_argnums: tuple[int, ...] = (),
+    static_argnames: tuple[str, ...] = ()
 ) -> TracingDebugInfo | None:
   """Try to build trace-time debug info for fun when applied to args/kwargs."""
-  arg_names = _arg_names(fun_signature, args, kwargs, static_argnums,
+  assert not isinstance(fun, lu.WrappedFun)
+  if fun_src_info is None:
+    fun_src_info = fun_sourceinfo(fun)
+  if fun_sig is None:
+    fun_sig = fun_signature(fun)
+  arg_names = _arg_names(fun_sig, args, kwargs, static_argnums,
                          static_argnames)
-  if arg_names is None:
-    return None
-  return TracingDebugInfo(traced_for, src, arg_names, None)
+  return TracingDebugInfo(traced_for, fun_src_info, arg_names, None)
 
 def fun_signature(fun: Callable) -> inspect.Signature | None:
   try:
@@ -686,10 +738,12 @@ def _arg_names(fn_signature, args, kwargs, static_argnums, static_argnames,
 @lu.transformation_with_aux
 def result_paths(*args, **kwargs):
   "linear_util transform to get output pytree paths of pre-flattened function."
+  # TODO(necula): remove this function
   ans = yield args, kwargs
   yield ans, [keystr(path) for path, _ in generate_key_paths(ans)]
 
-def jaxpr_debug_info(jaxpr: core.Jaxpr, trace_debug: TracingDebugInfo | None,
+def jaxpr_debug_info(jaxpr: core.Jaxpr,
+                     trace_debug: TracingDebugInfo | None,
                      result_paths: tuple[str, ...] | None = None,
                      ) -> core.Jaxpr:
   """Add debug info to jaxpr, given trace-time debug info and result paths."""
@@ -700,17 +754,8 @@ def jaxpr_debug_info(jaxpr: core.Jaxpr, trace_debug: TracingDebugInfo | None,
     result_paths = trace_debug.result_paths()  # type: ignore
   debug_info = core.JaxprDebugInfo(
       trace_debug.traced_for, trace_debug.func_src_info,
-      trace_debug.arg_names, tuple(result_paths))
+      trace_debug.arg_names, tuple(result_paths))  # type: ignore
   return jaxpr.replace(debug_info=debug_info)
-
-def debug_info_final(f: lu.WrappedFun, dbg: TracingDebugInfo | None,
-                     res_paths: Callable[[], tuple[str, ...]]) -> lu.WrappedFun:
-  "Attach trace-time debug info and result paths lazy thunk to an lu.WrappedFun"
-  if dbg is None: return f
-  assert dbg.result_paths is None
-  res_paths_ = HashableFunction(res_paths, closure=())
-  return lu.add_debug_info(f, dbg._replace(result_paths=res_paths_))
-
 
 def hoist_obj_attrs(f, flat_args):
   idxs, objs, flat_args_ = [], [], []

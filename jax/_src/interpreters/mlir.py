@@ -34,6 +34,7 @@ import warnings
 import numpy as np
 
 from jax._src import ad_util
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
@@ -2051,7 +2052,10 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   as `avals_out`."""
   def f_lowered(ctx: LoweringRuleContext, *args, **params):
     f = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
-    wrapped_fun = lu.wrap_init(f, params)
+    fun_src_info = api_util.fun_sourceinfo(fun)
+    dbg = api_util.debug_info(fun, "lower", args, {},
+                              fun_src_info=fun_src_info)
+    wrapped_fun = lu.wrap_init(f, params=params, debug_info=dbg)
     manager = (contextlib.nullcontext() if ctx.jaxpr_eqn_ctx is None else
                ctx.jaxpr_eqn_ctx.manager)
 

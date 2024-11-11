@@ -62,7 +62,7 @@ from jax._src.api_util import (
     flatten_axes, donation_vector,
     rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
     shaped_abstractify, apply_flat_fun_nokwargs, check_callable, debug_info,
-    result_paths, flat_out_axes, debug_info_final, fun_sourceinfo)
+    flat_out_axes, fun_sourceinfo)
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
@@ -1392,19 +1392,17 @@ def _get_global_axis_size(local_axis_size: int, in_devices, backend_name: str,
   return global_axis_size
 
 
-def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
+def _prepare_pmap(fun: Callable,
+                  in_axes, out_axes, static_broadcasted_tuple,
                   donate_tuple, in_devices, backend_name,
                   axis_size, args, kwargs):
   if in_devices is not None and len(in_devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
-  src = fun_sourceinfo(fun)
-  signature = api_util.fun_signature(fun)
+  dbg = debug_info(fun, 'pmap', args, kwargs,
+                   static_argnums=static_broadcasted_tuple)
 
-  dbg = debug_info('pmap', src, signature, args, kwargs,
-                   static_broadcasted_tuple, ())
-
-  f = lu.wrap_init(fun)
+  f = lu.wrap_init(fun, debug_info=dbg)
   if static_broadcasted_tuple:
     if max(static_broadcasted_tuple) >= len(args):
       raise ValueError(
@@ -1451,10 +1449,10 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
     raise ValueError(msg) from None
   local_axis_size = _mapped_axis_size(fun, in_tree, args, in_axes_flat, "pmap")
 
-  f, res_paths = result_paths(f)
+  # f, res_paths = result_paths(f)
   f, out_axes_thunk = flat_out_axes(f, out_axes)
   flat_fun, out_tree = flatten_fun(f, in_tree)
-  flat_fun = debug_info_final(flat_fun, dbg, res_paths)
+  # flat_fun = debug_info_final(flat_fun, dbg, res_paths)
 
   is_explicit_global_axis_size = axis_size is not None
   global_axis_size = _get_global_axis_size(local_axis_size, in_devices,
@@ -1957,7 +1955,7 @@ def vjp(
   del reduce_axes
   check_callable(fun)
   return _vjp(
-      lu.wrap_init(fun), *primals, has_aux=has_aux)
+      lu.wrap_init(fun, traced_for="vjp"), *primals, has_aux=has_aux)
 
 def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
   """Variant of vjp() that takes an lu.WrappedFun."""

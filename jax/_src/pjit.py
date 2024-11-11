@@ -49,7 +49,7 @@ from jax._src import xla_bridge as xb
 from jax._src.api_util import (
     argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
     donation_vector, shaped_abstractify, check_callable, resolve_argnums,
-    argnames_partial_except, debug_info, result_paths, jaxpr_debug_info,
+    argnames_partial_except, debug_info, jaxpr_debug_info,
     hoist_obj_attrs)
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec
@@ -567,10 +567,14 @@ def _infer_params_impl(
 
   axes_specs = _flat_axes_specs(ji.abstracted_axes, *args, **kwargs)
 
-  dbg = debug_info(jit_name, ji.fun_sourceinfo, ji.fun_signature, args, kwargs,
-                   ji.static_argnums, ji.static_argnames)
-  f = lu.wrap_init(fun)
-  f, res_paths = result_paths(f)
+  dbg = debug_info(fun,
+                   jit_name, args, kwargs,
+                   # TODO(necula): do we need ji.fun_sourceinfo?
+                   fun_src_info=ji.fun_sourceinfo,
+                   fun_sig=ji.fun_signature,
+                   static_argnums=ji.static_argnums,
+                   static_argnames=ji.static_argnames)
+  f = lu.wrap_init(fun, debug_info=dbg)
   f, dyn_args = argnums_partial_except(f, ji.static_argnums, args, allow_invalid=True)
   del args
 
@@ -645,8 +649,7 @@ def _infer_params_impl(
 
   attr_token = _attr_token(flat_fun, in_type)
   jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
-      flat_fun, in_type, attr_token, dbg,
-      HashableFunction(res_paths, closure=()),
+      flat_fun, in_type, attr_token,
       IgnoreKey(ji.inline))
   _attr_update(flat_fun, in_type, attr_token, attrs_tracked)
 
@@ -1145,15 +1148,15 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
 callsites: set[str] = set()
 
 def explain_tracing_cache_miss(
-    f: Callable, unseen_f: bool, cache: dict, key: tuple):
+    fun: lu.WrappedFun, unseen_f: bool, cache: dict, key: tuple):
   if config.check_tracer_leaks.value: return
 
   def unpack(key):
-    transforms, (), _, (in_type, _, debug_info, _, inline), *_, ctx = key
+    transforms, (), _, (in_type, _, inline), *_, ctx = key
     # TODO(dougalm,mattjj): enable cache miss explanation with attrs
     _, (_, (in_tree,)), *_ = transforms
-    return in_tree, in_type, debug_info, inline.val, ctx
-  in_tree, in_type, debug_info, inline, ctx = unpack(key)
+    return in_tree, in_type, inline.val, ctx
+  in_tree, in_type, inline, ctx = unpack(key)
   if inline: return
 
   msg: list[str] = []
@@ -1164,14 +1167,15 @@ def explain_tracing_cache_miss(
   p(f"TRACING CACHE MISS at {callsite} because:")
 
   # have we seen this function before at all?
-  fun_name = getattr(f, '__qualname__', f)
+  fun_name = getattr(fun.f, '__qualname__', fun.f)
+  debug_info = fun.debug_info
   if debug_info is not None and debug_info.func_src_info:
     _, _, *rest = debug_info.func_src_info.split(' ')
     src_info = " defined at "  + ' '.join(rest)
   else:
     src_info = ''
   if unseen_f:
-    p(f"  never seen function:\n    {fun_name} id={id(f)}{src_info}")
+    p(f"  never seen function:\n    {fun_name} id={id(fun.f)}{src_info}")
     if callsite in callsites:
       p("  but seen another function defined on the same line; maybe the function is\n"
         "  being re-defined repeatedly, preventing caching?")
@@ -1275,8 +1279,6 @@ def _create_pjit_jaxpr(
     fun: lu.WrappedFun,
     in_type: core.InputType | Sequence[core.AbstractValue],
     attr_data: int,
-    debug_info: lu.TracingDebugInfo,
-    out_paths: Callable,
     ignored_inline: IgnoreKey
 ) -> tuple[core.ClosedJaxpr, list[Any], list[core.AbstractValue],
            list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]]:
@@ -1287,7 +1289,7 @@ def _create_pjit_jaxpr(
   with dispatch.log_elapsed_time(
       "Finished tracing + transforming {fun_name} for pjit in {elapsed_time:.9f} sec",
       fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
-    pe_debug = debug_info and pe.debug_info_final(fun, debug_info.traced_for)
+    pe_debug = debug_info and pe.debug_info_final(fun, fun.debug_info.traced_for)
     if config.dynamic_shapes.value:
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic2(
           lu.annotate(fun, cast(core.InputType, in_type)), debug_info=pe_debug)
@@ -1299,7 +1301,7 @@ def _create_pjit_jaxpr(
 
   # TODO(dougalm,mattjj): enable debug info with attrs_tracked
   if not config.dynamic_shapes.value and not attrs_tracked:
-    jaxpr = jaxpr_debug_info(jaxpr, debug_info, out_paths())
+    jaxpr = jaxpr_debug_info(jaxpr, fun.debug_info)
 
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports

@@ -67,6 +67,7 @@ from collections.abc import Callable
 from typing import Any, NamedTuple
 import weakref
 
+
 from jax._src import config
 from jax._src import core
 from jax._src import traceback_util
@@ -135,6 +136,16 @@ class EqualStore:
     self._store.reset()
 
 
+class TracingDebugInfo(NamedTuple):
+  # Packages up trace/staging-time debug info about a func and its parameters,
+  # formed just before staging to a jaxpr and read in trace-time error messages.
+  # TODO(mattjj): delete partial_eval.DebugInfo, replace all uses with this cls
+  traced_for: str             # e.g. 'jit', 'scan', etc
+  func_src_info: str | None   # e.g. f'{fun.__name__} at {filename}:{lineno}'
+  arg_names: tuple[str, ...] | None  # e.g. ('args[0]', ... )
+  result_paths: Callable[[], tuple[str, ...]] | None  # e.g., ('out[0]', ...)
+
+
 class WrappedFun:
   """Represents a function `f` to which `transforms` are to be applied.
 
@@ -151,7 +162,8 @@ class WrappedFun:
   """
   __slots__ = ("f", "transforms", "stores", "params", "in_type", "debug_info")
 
-  def __init__(self, f, transforms, stores, params, in_type, debug_info):
+  def __init__(self, f, transforms, stores, params, in_type,
+               debug_info: core.TracingDebugInfo):
     self.f = f
     self.transforms = transforms
     self.stores = stores
@@ -166,7 +178,8 @@ class WrappedFun:
   def wrap(self, gen, gen_static_args, out_store) -> WrappedFun:
     """Add another transform and its store."""
     return WrappedFun(self.f, ((gen, gen_static_args),) + self.transforms,
-                      (out_store,) + self.stores, self.params, None, None)
+                      (out_store,) + self.stores, self.params, None,
+                      self.debug_info)
 
   def populate_stores(self, stores):
     """Copy the values from the `stores` into `self.stores`."""
@@ -180,6 +193,7 @@ class WrappedFun:
     The positional `args` and keyword `kwargs` are passed to the first
     transformation generator.
     """
+    assert self.debug_info is not None
     stack = []
     for (gen, gen_static_args), out_store in zip(self.transforms, self.stores):
       gen = gen(*(gen_static_args + tuple(args)), **kwargs)
@@ -259,10 +273,16 @@ def fun_name(f):
   except:
     return str(f)
 
-def wrap_init(f, params=None) -> WrappedFun:
+def wrap_init(f: Callable,
+              params=None,
+              *,
+              debug_info: TracingDebugInfo | None = None,
+              traced_for: str | None = None) -> WrappedFun:
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
   params = () if params is None else tuple(sorted(params.items()))
-  return WrappedFun(f, (), (), params, None, None)
+  if debug_info is None:
+    debug_info = TracingDebugInfo(traced_for or "unknown", None, None, None)
+  return WrappedFun(f, (), (), params, None, debug_info)
 
 
 def annotate(f: WrappedFun, in_type: core.InputType | None) -> WrappedFun:
@@ -302,21 +322,8 @@ def _check_input_type(in_type: core.InputType) -> None:
   assert all(provided)
 
 
-class TracingDebugInfo(NamedTuple):
-  # Packages up trace/staging-time debug info about a func and its parameters,
-  # formed just before staging to a jaxpr and read in trace-time error messages.
-  # TODO(mattjj): delete partial_eval.DebugInfo, replace all uses with this cls
-  traced_for: str             # e.g. 'jit', 'scan', etc
-  func_src_info: str | None   # e.g. f'{fun.__name__} at {filename}:{lineno}'
-  arg_names: tuple[str, ...]  # e.g. ('args[0]', ... )
-  result_paths: Callable[[], tuple[str, ...]] | None
-
-def add_debug_info(f: WrappedFun, debug_info: TracingDebugInfo | None
-                   ) -> WrappedFun:
+def add_debug_info(f: WrappedFun, debug_info: TracingDebugInfo) -> WrappedFun:
   """Produce a new WrappedFun with debug_info attached."""
-  assert f.debug_info is None
-  if debug_info is None:
-    return f
   return WrappedFun(f.f, f.transforms, f.stores, f.params, f.in_type, debug_info)
 
 
@@ -344,7 +351,7 @@ def cache(call: Callable, *, explain: Callable | None = None):
     else:
       ans = call(fun, *args)
       if explain and config.explain_cache_misses.value:
-        explain(fun.f, cache is new_cache, cache, key)
+        explain(fun, cache is new_cache, cache, key)
       cache[key] = (ans, fun.stores)
 
     return ans

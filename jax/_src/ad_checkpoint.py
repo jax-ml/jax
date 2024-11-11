@@ -25,6 +25,7 @@ import numpy as np
 
 from jax._src import ad_util
 from jax._src import api
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
@@ -404,7 +405,8 @@ _dyn_args_fun_cached = weakref_lru_cache(_dyn_args_fun_uncached)
 # remat-specific errors.
 @weakref_lru_cache
 def _trace_to_jaxpr(fun, in_tree, in_avals):
-  flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
+  flat_fun, out_tree = flatten_fun(lu.wrap_init(fun, traced_for="checkpoint"),
+                                   in_tree)
   debug = pe.debug_info(fun, in_tree, out_tree, True, "checkpoint")
   try:
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
