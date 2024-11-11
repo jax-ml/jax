@@ -1,8 +1,7 @@
 @import url("theme.css");
 
 /* Base LP sidebar modifications */
-/* TODO: uncomment the following code to remove the sidebar on the LP */
-/* body:has(.hero) .bd-sidebar-primary,
+body:has(.hero) .bd-sidebar-primary,
 body:has(.hero) .sidebar-toggle,
 body:has(.hero) .bd-sidebar-secondary {
     display: none !important;
@@ -43,7 +42,7 @@ body:has(.hero) .bd-container {
         width: -webkit-fill-available;
         width: fill-available;
     }
-} */
+}
 
 /* Custom CSS */
 
@@ -133,7 +132,7 @@ body:has(.hero) .bd-container {
   overflow: hidden;
 }
 
-.hero img {
+.hero > img {
   position: absolute;
   top: 0;
   right: 0;
@@ -143,10 +142,20 @@ body:has(.hero) .bd-container {
 
 .hero-left {
   padding-block: 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+.hero-left img {
+  width: 100px;
+  height: auto;
+  position: relative;
+  margin-bottom: 16px;
+  background: transparent !important;
 }
 
 .hero-left h2 {
-  font: 500 40px 'Google Sans';
+  font: 500 32px 'Google Sans';
   color: white;
   margin-top: 0;
 }
@@ -157,7 +166,7 @@ body:has(.hero) .bd-container {
 }
 
 @media (max-width: 1295px) {
-  .hero img {
+  .hero > img {
     right: -75px;
   }
 }
@@ -171,7 +180,7 @@ body:has(.hero) .bd-container {
     padding-right: 2rem;
   }
 
-  .hero img {
+  .hero > img {
     display: none;
   }
 }
