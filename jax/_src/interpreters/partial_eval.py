@@ -1795,7 +1795,7 @@ def _inline_literals(
 
 
 class DynamicJaxprTrace(core.Trace):
-  def __init__(self, frame):
+  def __init__(self, frame: JaxprStackFrame):
     self.frame = frame
 
   def invalidate(self):
@@ -2101,19 +2101,33 @@ class DebugInfo(NamedTuple):
   out_tree: Callable[[], PyTreeDef] | None  # lazy, not avail at trace time
   has_kwargs: bool  # whether in_tree corresponds to (args, kwargs) or args
   traced_for: str  # "jit", "scan", "make_jaxpr", etc
+  # TODO(necula): will replace here all DebugInfo
+  replacement_debug_info: core.TracingDebugInfo
 
 def debug_info(fn: Callable, in_tree: PyTreeDef | None,
                out_tree_thunk: Callable[[], PyTreeDef] | None,
-               has_kwargs: bool, traced_for: str) -> DebugInfo:
+               has_kwargs: bool, traced_for: str,
+               *,
+               replacement_debug_info: core.TracingDebugInfo | None = None) -> DebugInfo:
   sig = api_util.fun_signature(fn)
-  src_info = fun_sourceinfo(fn)
-  return DebugInfo(src_info, sig, in_tree, out_tree_thunk, has_kwargs,
-                   traced_for)
+  fun_src_info = fun_sourceinfo(fn)
+  if replacement_debug_info is None:
+    assert in_tree is not None
+    dummy_args = tree_unflatten(in_tree, [False] * in_tree.num_leaves)
+    dummy_args, dummy_kwargs = dummy_args if has_kwargs else (dummy_args, {})
+    replacement_debug_info = api_util.debug_info(fn,
+                                                 traced_for,
+                                                 dummy_args,
+                                                 dummy_kwargs,
+                                                 fun_src_info=fun_src_info)
+  return DebugInfo(fun_src_info, sig, in_tree, out_tree_thunk, has_kwargs,
+                   traced_for, replacement_debug_info)
 
-def debug_info_final(fn: lu.WrappedFun, traced_for: str) -> DebugInfo:
+def debug_info_final(fun: lu.WrappedFun, traced_for: str) -> DebugInfo:
   "Make a DebugInfo from data available to final-style primitives like pmap."
-  in_tree, out_tree, has_kws = flattened_fun_in_tree(fn) or (None, None, False)
-  return debug_info(fn.f, in_tree, out_tree, has_kws, traced_for)
+  in_tree, out_tree, has_kws = flattened_fun_in_tree(fun) or (None, None, False)
+  return debug_info(fun.f, in_tree, out_tree, has_kws, traced_for,
+                    replacement_debug_info=fun.debug_info)
 
 def arg_info_all(dbg: DebugInfo) -> list[tuple[str, KeyPath]] | None:
   ba = None if dbg.in_tree is None else sig_info(dbg)

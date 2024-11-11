@@ -79,7 +79,6 @@ from jax._src.interpreters.partial_eval import (
   partition_pvals as partition_pvals,
   recipe_to_eqn as recipe_to_eqn,
   result_info as result_info,
-  sig_info as sig_info,
   trace_to_jaxpr_dynamic as _trace_to_jaxpr_dynamic,
   trace_to_jaxpr_dynamic2 as trace_to_jaxpr_dynamic2,
   trace_to_jaxpr_nounits as trace_to_jaxpr_nounits,

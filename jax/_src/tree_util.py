@@ -746,7 +746,7 @@ KeyPath = tuple[KeyEntry, ...]
 
 
 @export
-def keystr(keys: KeyPath):
+def keystr(keys: KeyPath) -> str:
   """Helper to pretty-print a tuple of keys.
 
   Args:

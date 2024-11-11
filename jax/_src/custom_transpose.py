@@ -60,7 +60,7 @@ def transformation_with_aux(
   return fun.wrap(gen, gen_static_args, out_store), out_thunk
 
 flatten_fun_nokwargs = transformation_with_aux(
-    api_util.flatten_fun_nokwargs.args[0])
+    api_util.flatten_fun_nokwargs_transformation.args[0])
 
 
 ### api

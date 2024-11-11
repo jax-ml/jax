@@ -722,7 +722,7 @@ def stage_parallel_callable(
         fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
       jaxpr, out_sharded_avals, consts, _ = pe.trace_to_jaxpr_dynamic(
           fun, sharded_avals, pe.debug_info_final(fun, "pmap"))
-  jaxpr = api_util.jaxpr_debug_info(jaxpr, orig_fun.debug_info)
+  jaxpr = api_util.jaxpr_debug_info(jaxpr, fun.debug_info)
   jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
 
   assert len(out_sharded_avals) == len(pci.out_axes), (

@@ -20,6 +20,7 @@ import os
 from functools import partial
 from typing import Any
 
+from jax._src import api_util
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src.lax import lax
