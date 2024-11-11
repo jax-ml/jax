@@ -892,6 +892,11 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
 aval_property = namedtuple("aval_property", ["fget"])
 aval_method = namedtuple("aval_method", ["fun"])
 
+def check_eval_args(args):
+  for arg in args:
+    if isinstance(arg, Tracer):
+      raise escaped_tracer_error(arg)
+
 class EvalTrace(Trace):
 
   def process_primitive(self, primitive, args, params):
@@ -902,12 +907,11 @@ class EvalTrace(Trace):
     else:
       # TODO(dougalm): delete. this shouldn't be necessary
       args = map(full_lower, args)
-      for arg in args:
-        if isinstance(arg, Tracer):
-          if config.data_dependent_tracing_fallback.value:
+      if config.data_dependent_tracing_fallback.value:
+        for arg in args:
+          if isinstance(arg, Tracer):
             return primitive.bind_with_trace(arg._trace, args, params)
-          else:
-            raise escaped_tracer_error(arg)
+      check_eval_args(args)
       return primitive.impl(*args, **params)
 
   def process_call(self, primitive, f, tracers, params):

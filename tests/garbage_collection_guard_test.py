@@ -36,8 +36,8 @@ class GarbageCollectionGuardTestNodeHelper:
 
 def _create_array_cycle():
   """Creates a reference cycle of two jax.Arrays."""
-  n1 = GarbageCollectionGuardTestNodeHelper(jnp.ones((2, 2)))
-  n2 = GarbageCollectionGuardTestNodeHelper(jnp.zeros((2, 2)))
+  n1 = GarbageCollectionGuardTestNodeHelper(jax.jit(lambda: jnp.ones( (2, 2)))())
+  n2 = GarbageCollectionGuardTestNodeHelper(jax.jit(lambda: jnp.zeros((2, 2)))())
   n1.next = n2
   n2.next = n1
 
