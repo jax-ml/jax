@@ -57,6 +57,20 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "pallas_cost_estimate_test",
+    srcs = [
+        "pallas_cost_estimate_test.py",
+    ],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_gpu",
+        "//jax:pallas_gpu_ops",
+        "//jax:pallas_tpu",
+        "//jax:pallas_tpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
     name = "pallas_jumble_test",
     srcs = [
         "pallas_jumble_test.py",
