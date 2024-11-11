@@ -1034,6 +1034,9 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_allclose(isnan(x), jnp.isnan(x))
 
   def test_jnp_einsum_grad_y_pallas(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("This test ooms on gpu")
+
     x = jnp.arange(128 * 256, dtype=jnp.float32).reshape((128, 256))
     y = jnp.arange(256 * 128, dtype=jnp.float32).reshape((128, 256))
 
