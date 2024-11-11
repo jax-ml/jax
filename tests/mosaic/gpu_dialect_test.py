@@ -25,6 +25,7 @@ from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import llvm
+from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
 from jax.experimental.mosaic.gpu import dialect as mgpu  # pylint: disable=g-importing-member
@@ -512,11 +513,17 @@ class DialectLoweringTest(DialectTest):
     arrival_count = 1337
 
     with ir.InsertionPoint(self.module.body):
-      mgpu.initialize_barrier(
+      barriers_ref = mgpu.initialize_barrier(
           ir.MemRefType.get(shape, ir.Type.parse("!mosaic_gpu.barrier")),
           llvm.UndefOp(workgroup_ptr_ty()),
           arrival_count=arrival_count)
+      # Add a user for barriers_ref to make sure that the lowering keeps types
+      # consistent.
+      memref.copy(barriers_ref, barriers_ref)
+
+    self.assertTrue(self.module.operation.verify())
     lower_mgpu_dialect(self.module)
+    self.assertTrue(self.module.operation.verify())
 
     all_mbarrier_init_shared_ops = find_if(
         self.module,

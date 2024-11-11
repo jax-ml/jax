@@ -26,7 +26,7 @@ from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import nvvm
-from .utils import c, single_thread_predicate
+from .utils import c, ptr_as_memref, single_thread_predicate
 
 # mypy: ignore-errors
 
@@ -89,7 +89,12 @@ def _initialize_barrier_op_lowering_rule(
         predicate=predicate
     )
 
-  return initialize_barrier_op.base_pointer,
+  barrier_base_ptr = llvm.getelementptr(
+      ir.Type.parse("!llvm.ptr"),
+      initialize_barrier_op.base_pointer, [], [0], lowered_barrier_type)
+
+  return ptr_as_memref(
+      barrier_base_ptr, initialize_barrier_op.barriers_ref.type),
 
 
 def lower_mgpu_dialect(module: ir.Module):
