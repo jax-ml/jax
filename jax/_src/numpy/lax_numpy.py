@@ -3070,6 +3070,8 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
     Array([2, 1, 0, 1, 0], dtype=int32)
   """
   util.check_arraylike("bincount", x)
+  if _dtype(x) == bool:
+    x = lax.convert_element_type(x, 'int32')
   if not issubdtype(_dtype(x), integer):
     raise TypeError(f"x argument to bincount must have an integer type; got {_dtype(x)}")
   if ndim(x) != 1:
@@ -3080,7 +3082,7 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
     x_arr = core.concrete_or_error(asarray, x,
       "The error occurred because of argument 'x' of jnp.bincount. "
       "To avoid this error, pass a static `length` argument.")
-    length = max(minlength, x_arr.size and int(x_arr.max()) + 1)
+    length = max(minlength, x_arr.size and int(max(0, x_arr.max())) + 1)
   else:
     length = core.concrete_dim_or_error(length,
         "The error occurred because of argument 'length' of jnp.bincount.")

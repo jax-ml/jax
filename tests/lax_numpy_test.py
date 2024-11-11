@@ -4905,7 +4905,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     shape=[(0,), (5,), (10,)],
-    dtype=int_dtypes,
+    dtype=int_dtypes + bool_dtypes,
     weights=[True, False],
     minlength=[0, 20],
     length=[None, 8],
