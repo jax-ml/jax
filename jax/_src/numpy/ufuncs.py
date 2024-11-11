@@ -1519,7 +1519,7 @@ def arctan2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
 
 @partial(jit, inline=True)
-def minimum(x: ArrayLike, y: ArrayLike, /) -> Array:
+def _minimum(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise minimum of the input arrays.
 
   JAX implementation of :obj:`numpy.minimum`.
@@ -1579,7 +1579,7 @@ def minimum(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 @partial(jit, inline=True)
-def maximum(x: ArrayLike, y: ArrayLike, /) -> Array:
+def _maximum(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Return element-wise maximum of the input arrays.
 
   JAX implementation of :obj:`numpy.maximum`.
@@ -3682,6 +3682,12 @@ def _add_at(a: Array, indices: Any, b: ArrayLike):
 def _subtract_at(a: Array, indices: Any, b: ArrayLike):
   return a.at[indices].subtract(b)
 
+def _maximum_at(a: Array, indices: Any, b: ArrayLike):
+  return a.at[indices].max(b)
+
+def _minimum_at(a: Array, indices: Any, b: ArrayLike):
+  return a.at[indices].min(b)
+
 def _multiply_at(a: Array, indices: Any, b: ArrayLike):
   if a.dtype == bool:
     a = a.astype('int32')
@@ -3707,3 +3713,5 @@ logical_or = ufunc(_logical_or, name="logical_or", nin=2, nout=1, identity=False
 logical_xor = ufunc(_logical_xor, name="logical_xor", nin=2, nout=1, identity=False, call=_logical_xor)
 negative = ufunc(_negative, name="negative", nin=1, nout=1, call=_negative)
 subtract = ufunc(_subtract, name="subtract", nin=2, nout=1, call=_subtract, at=_subtract_at)
+maximum = ufunc(_maximum, name="maximum", nin=2, nout=1, call=_maximum, at=_maximum_at)
+minimum = ufunc(_minimum, name="minimum", nin=2, nout=1, call=_minimum, at=_minimum_at)
