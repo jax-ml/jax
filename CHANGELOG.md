@@ -40,6 +40,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
         `platforms` instead.
   * Hashing of tracers, which has been deprecated since version 0.4.30, now
     results in a `TypeError`.
+  * {func}`jax.scipy.linalg.toeplitz` now does implicit batching on multi-dimensional
+    inputs. To recover the previous behavior, you can call {func}`jax.numpy.ravel`
+    on the function inputs.
 
 * New Features
   * {func}`jax.jit` got a new `compiler_options: dict[str, Any]` argument, for
