@@ -57,6 +57,24 @@ def _to_bool(x: Array) -> Array:
   return x if x.dtype == bool else lax.ne(x, _lax_const(x, 0))
 
 
+def unary_ufunc(func: Callable[[ArrayLike], Array]) -> ufunc:
+  """An internal helper function for defining unary ufuncs."""
+  func_jit = jit(func, inline=True)
+  return ufunc(func_jit, name=func.__name__, nin=1, nout=1, call=func_jit)
+
+
+def binary_ufunc(identity: Any, reduce: Callable[..., Any] | None = None,
+                 accumulate: Callable[..., Any] | None = None,
+                 at: Callable[..., Any] | None = None,
+                 reduceat: Callable[..., Any] | None = None) -> Callable[[Callable[[ArrayLike, ArrayLike], Array]], ufunc]:
+  """An internal helper function for defining binary ufuncs."""
+  def decorator(func: Callable[[ArrayLike, ArrayLike], Array]) -> ufunc:
+    func_jit = jit(func, inline=True)
+    return ufunc(func_jit, name=func.__name__, nin=2, nout=1, call=func_jit,
+                 identity=identity, reduce=reduce, accumulate=accumulate, at=at, reduceat=reduceat)
+  return decorator
+
+
 @partial(jit, inline=True)
 def fabs(x: ArrayLike, /) -> Array:
   """Compute the element-wise absolute values of the real-valued input.
@@ -160,8 +178,8 @@ def invert(x: ArrayLike, /) -> Array:
   return lax.bitwise_not(*promote_args('invert', x))
 
 
-@partial(jit, inline=True)
-def _negative(x: ArrayLike, /) -> Array:
+@unary_ufunc
+def negative(x: ArrayLike, /) -> Array:
   """Return element-wise negative values of the input.
 
   JAX implementation of :obj:`numpy.negative`.
@@ -1126,8 +1144,16 @@ def cbrt(x: ArrayLike, /) -> Array:
   """
   return lax.cbrt(*promote_args_inexact('cbrt', x))
 
-@partial(jit, inline=True)
-def _add(x: ArrayLike, y: ArrayLike, /) -> Array:
+def _add_at(a: Array, indices: Any, b: ArrayLike) -> Array:
+  """Implementation of jnp.add.at."""
+  if a.dtype == bool:
+    a = a.astype('int32')
+    b = lax.convert_element_type(b, bool).astype('int32')
+    return a.at[indices].add(b).astype(bool)
+  return a.at[indices].add(b)
+
+@binary_ufunc(identity=0, reduce=reductions.sum, accumulate=reductions.cumsum, at=_add_at)
+def add(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Add two arrays element-wise.
 
   JAX implementation of :obj:`numpy.add`. This is a universal function,
@@ -1156,8 +1182,17 @@ def _add(x: ArrayLike, y: ArrayLike, /) -> Array:
   x, y = promote_args("add", x, y)
   return lax.add(x, y) if x.dtype != bool else lax.bitwise_or(x, y)
 
-@partial(jit, inline=True)
-def _multiply(x: ArrayLike, y: ArrayLike, /) -> Array:
+def _multiply_at(a: Array, indices: Any, b: ArrayLike) -> Array:
+  """Implementation of jnp.multiply.at."""
+  if a.dtype == bool:
+    a = a.astype('int32')
+    b = lax.convert_element_type(b, bool).astype('int32')
+    return a.at[indices].mul(b).astype(bool)
+  else:
+    return a.at[indices].mul(b)
+
+@binary_ufunc(identity=1, reduce=reductions.prod, accumulate=reductions.cumprod, at=_multiply_at)
+def multiply(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Multiply two arrays element-wise.
 
   JAX implementation of :obj:`numpy.multiply`. This is a universal function,
@@ -1186,8 +1221,8 @@ def _multiply(x: ArrayLike, y: ArrayLike, /) -> Array:
   x, y = promote_args("multiply", x, y)
   return lax.mul(x, y) if x.dtype != bool else lax.bitwise_and(x, y)
 
-@partial(jit, inline=True)
-def _bitwise_and(x: ArrayLike, y: ArrayLike, /) -> Array:
+@binary_ufunc(identity=-1)
+def bitwise_and(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the bitwise AND operation elementwise.
 
   JAX implementation of :obj:`numpy.bitwise_and`. This is a universal function,
@@ -1215,8 +1250,8 @@ def _bitwise_and(x: ArrayLike, y: ArrayLike, /) -> Array:
   """
   return lax.bitwise_and(*promote_args("bitwise_and", x, y))
 
-@partial(jit, inline=True)
-def _bitwise_or(x: ArrayLike, y: ArrayLike, /) -> Array:
+@binary_ufunc(identity=0)
+def bitwise_or(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the bitwise OR operation elementwise.
 
   JAX implementation of :obj:`numpy.bitwise_or`. This is a universal function,
@@ -1244,8 +1279,8 @@ def _bitwise_or(x: ArrayLike, y: ArrayLike, /) -> Array:
   """
   return lax.bitwise_or(*promote_args("bitwise_or", x, y))
 
-@partial(jit, inline=True)
-def _bitwise_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
+@binary_ufunc(identity=0)
+def bitwise_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the bitwise XOR operation elementwise.
 
   JAX implementation of :obj:`numpy.bitwise_xor`. This is a universal function,
@@ -1433,8 +1468,12 @@ def not_equal(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.ne(*promote_args("not_equal", x, y))
 
 
-@partial(jit, inline=True)
-def _subtract(x: ArrayLike, y: ArrayLike, /) -> Array:
+def _subtract_at(a: Array, indices: Any, b: ArrayLike) -> Array:
+  """Implementation of jnp.subtract.at."""
+  return a.at[indices].subtract(b)
+
+@binary_ufunc(identity=None, at=_subtract_at)
+def subtract(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Subtract two arrays element-wise.
 
   JAX implementation of :obj:`numpy.subtract`. This is a universal function,
@@ -1754,8 +1793,17 @@ def spacing(x: ArrayLike, /) -> Array:
 
 
 # Logical ops
-@partial(jit, inline=True)
-def _logical_and(x: ArrayLike, y: ArrayLike, /) -> Array:
+def _logical_and_reduce(a: ArrayLike, axis: int = 0, dtype: DTypeLike | None = None,
+                        out: None = None, keepdims: bool = False, initial: ArrayLike | None = None,
+                        where: ArrayLike | None = None):
+  """Implementation of jnp.logical_and.reduce."""
+  if initial is not None:
+    raise ValueError("initial argument not supported in jnp.logical_and.reduce()")
+  result = reductions.all(a, axis=axis, out=out, keepdims=keepdims, where=where)
+  return result if dtype is None else result.astype(dtype)
+
+@binary_ufunc(identity=True, reduce=_logical_and_reduce)
+def logical_and(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the logical AND operation elementwise.
 
   JAX implementation of :obj:`numpy.logical_and`. This is a universal function,
@@ -1774,8 +1822,18 @@ def _logical_and(x: ArrayLike, y: ArrayLike, /) -> Array:
   """
   return lax.bitwise_and(*map(_to_bool, promote_args("logical_and", x, y)))
 
-@partial(jit, inline=True)
-def _logical_or(x: ArrayLike, y: ArrayLike, /) -> Array:
+
+def _logical_or_reduce(a: ArrayLike, axis: int = 0, dtype: DTypeLike | None = None,
+                       out: None = None, keepdims: bool = False, initial: ArrayLike | None = None,
+                       where: ArrayLike | None = None):
+  """Implementation of jnp.logical_or.reduce."""
+  if initial is not None:
+    raise ValueError("initial argument not supported in jnp.logical_or.reduce()")
+  result = reductions.any(a, axis=axis, out=out, keepdims=keepdims, where=where)
+  return result if dtype is None else result.astype(dtype)
+
+@binary_ufunc(identity=False, reduce=_logical_or_reduce)
+def logical_or(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the logical OR operation elementwise.
 
   JAX implementation of :obj:`numpy.logical_or`. This is a universal function,
@@ -1794,8 +1852,9 @@ def _logical_or(x: ArrayLike, y: ArrayLike, /) -> Array:
   """
   return lax.bitwise_or(*map(_to_bool, promote_args("logical_or", x, y)))
 
-@partial(jit, inline=True)
-def _logical_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
+
+@binary_ufunc(identity=False)
+def logical_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the logical XOR operation elementwise.
 
   JAX implementation of :obj:`numpy.logical_xor`. This is a universal function,
@@ -3653,57 +3712,3 @@ def _sinc_maclaurin(k, x):
 def _sinc_maclaurin_jvp(k, primals, tangents):
   (x,), (t,) = primals, tangents
   return _sinc_maclaurin(k, x), _sinc_maclaurin(k + 1, x) * t
-
-
-def _logical_and_reduce(a: ArrayLike, axis: int = 0, dtype: DTypeLike | None = None,
-                        out: None = None, keepdims: bool = False, initial: ArrayLike | None = None,
-                        where: ArrayLike | None = None):
-  if initial is not None:
-    raise ValueError("initial argument not supported in jnp.logical_and.reduce()")
-  result = reductions.all(a, axis=axis, out=out, keepdims=keepdims, where=where)
-  return result if dtype is None else result.astype(dtype)
-
-
-def _logical_or_reduce(a: ArrayLike, axis: int = 0, dtype: DTypeLike | None = None,
-                       out: None = None, keepdims: bool = False, initial: ArrayLike | None = None,
-                       where: ArrayLike | None = None):
-  if initial is not None:
-    raise ValueError("initial argument not supported in jnp.logical_or.reduce()")
-  result = reductions.any(a, axis=axis, out=out, keepdims=keepdims, where=where)
-  return result if dtype is None else result.astype(dtype)
-
-def _add_at(a: Array, indices: Any, b: ArrayLike):
-  if a.dtype == bool:
-    a = a.astype('int32')
-    b = lax.convert_element_type(b, bool).astype('int32')
-    return a.at[indices].add(b).astype(bool)
-  return a.at[indices].add(b)
-
-def _subtract_at(a: Array, indices: Any, b: ArrayLike):
-  return a.at[indices].subtract(b)
-
-def _multiply_at(a: Array, indices: Any, b: ArrayLike):
-  if a.dtype == bool:
-    a = a.astype('int32')
-    b = lax.convert_element_type(b, bool).astype('int32')
-    return a.at[indices].mul(b).astype(bool)
-  else:
-    return a.at[indices].mul(b)
-
-# Generate ufunc interfaces for several common binary functions.
-# We start with binary ufuncs that have well-defined identities.'
-# TODO(jakevdp): wrap more ufuncs. Possibly define a decorator for convenience?
-# TODO(jakevdp): optimize some implementations.
-# - define add.at/multiply.at in terms of scatter_add/scatter_mul
-# - define add.reduceat/multiply.reduceat in terms of segment_sum/segment_prod
-# - define all monoidal reductions in terms of lax.reduce
-add = ufunc(_add, name="add", nin=2, nout=1, identity=0, call=_add, reduce=reductions.sum, accumulate=reductions.cumsum, at=_add_at)
-multiply = ufunc(_multiply, name="multiply", nin=2, nout=1, identity=1, call=_multiply, reduce=reductions.prod, accumulate=reductions.cumprod, at=_multiply_at)
-bitwise_and = ufunc(_bitwise_and, name="bitwise_and", nin=2, nout=1, identity=-1, call=_bitwise_and)
-bitwise_or = ufunc(_bitwise_or, name="bitwise_or", nin=2, nout=1, identity=0, call=_bitwise_or)
-bitwise_xor = ufunc(_bitwise_xor, name="bitwise_xor", nin=2, nout=1, identity=0, call=_bitwise_xor)
-logical_and = ufunc(_logical_and, name="logical_and", nin=2, nout=1, identity=True, call=_logical_and, reduce=_logical_and_reduce)
-logical_or = ufunc(_logical_or, name="logical_or", nin=2, nout=1, identity=False, call=_logical_or, reduce=_logical_or_reduce)
-logical_xor = ufunc(_logical_xor, name="logical_xor", nin=2, nout=1, identity=False, call=_logical_xor)
-negative = ufunc(_negative, name="negative", nin=1, nout=1, call=_negative)
-subtract = ufunc(_subtract, name="subtract", nin=2, nout=1, call=_subtract, at=_subtract_at)
