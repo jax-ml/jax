@@ -944,7 +944,9 @@ def _scan_padding_rule(in_avals, out_avals, *args, jaxpr, **params):
   return scan_p.bind(*args, jaxpr=_cached_scan_pad_jaxpr(jaxpr), **params)
 
 def _scan_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn
-                   ) -> tuple[list[bool], core.JaxprEqn]:
+                   ) -> tuple[list[bool], core.JaxprEqn | None]:
+  if not any(used_outputs) and not pe.has_effects(eqn):
+    return [False] * len(eqn.invars), None
   jaxpr = eqn.params['jaxpr']
   num_consts, num_carry = eqn.params['num_consts'], eqn.params['num_carry']
   num_xs = len(jaxpr.in_avals) - num_consts - num_carry

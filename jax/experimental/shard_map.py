@@ -1660,6 +1660,8 @@ def _all_mesh_names_except_spmd(mesh: Mesh, trace=None) -> tuple[AxisName, ...]:
 # TODO(mattjj): de-duplicate with pe.dce_jaxpr_call_rule, and/or _pmap_dce_rule?
 def _shard_map_dce(used_outputs: list[bool], eqn: core.JaxprEqn
                    ) -> tuple[list[bool], core.JaxprEqn | None]:
+  if not any(used_outputs) and not pe.has_effects(eqn):
+    return [False] * len(eqn.invars), None
   mesh = eqn.params["mesh"]
   with core.extend_axis_env_nd(mesh.shape.items()):
     jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs)

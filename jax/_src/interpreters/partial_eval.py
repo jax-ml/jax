@@ -360,7 +360,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     staged_out_axes, _ = partition_list(out_knowns, out_axes)
     staged_in_axes = (0,) * len(res) + (None,) * len(env) + (*unk_in_axes,)
 
-    # Create the input tracers for the staged-out (unkonwn-value) call.
+    # Create the input tracers for the staged-out (unknown-value) call.
     const_tracers = map(self.new_instantiated_const, res)
     env_tracers = map(self.to_jaxpr_tracer, env)
     unknown_arg_tracers = [t for t in tracers if not t.is_known()]
@@ -1382,6 +1382,11 @@ def dce_jaxpr_consts(jaxpr: Jaxpr, used_outputs: Sequence[bool],
   return new_jaxpr, used_consts, used_inputs
 
 
+def has_effects(eqn: JaxprEqn) -> bool:
+  effs = {e for e in eqn.effects if not isinstance(e, core.NamedAxisEffect)}
+  return bool(effs)
+
+
 @weakref_lru_cache
 def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
                instantiate: tuple[bool, ...]
@@ -1395,21 +1400,14 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
     if type(x) is Var:
       env[x] = read(x) or b
 
-  def has_effects(eqn: JaxprEqn) -> bool:
-    effs = {e for e in eqn.effects if not isinstance(e, core.NamedAxisEffect)}
-    return bool(effs)
-
   new_eqns = []
   map(write, jaxpr.outvars, used_outputs)
   for eqn in jaxpr.eqns[::-1]:
     used_outs = map(read, eqn.outvars)
-    if not any(used_outs) and not has_effects(eqn):
-      used_ins = [False] * len(eqn.invars)
-    else:
-      rule = dce_rules.get(eqn.primitive, _default_dce_rule)
-      used_ins, new_eqn = rule(used_outs, eqn)
-      if new_eqn is not None:
-        new_eqns.append(new_eqn)
+    rule = dce_rules.get(eqn.primitive, _default_dce_rule)
+    used_ins, new_eqn = rule(used_outs, eqn)
+    if new_eqn is not None:
+      new_eqns.append(new_eqn)
     map(write, eqn.invars, used_ins)
   used_inputs = map(read, jaxpr.invars)
   used_inputs = map(op.or_, instantiate, used_inputs)
@@ -1433,7 +1431,9 @@ DCERule = Callable[[list[bool], JaxprEqn],
 
 def _default_dce_rule(
     used_outs: list[bool], eqn: JaxprEqn
-  ) -> tuple[list[bool], JaxprEqn]:
+  ) -> tuple[list[bool], JaxprEqn | None]:
+  if not any(used_outs) and not has_effects(eqn):
+    return [False] * len(eqn.invars), None
   return [True] * len(eqn.invars), eqn
 
 dce_rules: dict[Primitive, DCERule] = {}
@@ -1441,6 +1441,8 @@ dce_rules: dict[Primitive, DCERule] = {}
 
 def dce_jaxpr_call_rule(used_outputs: list[bool], eqn: JaxprEqn
                         ) -> tuple[list[bool], JaxprEqn | None]:
+  if not any(used_outputs) and not has_effects(eqn):
+    return [False] * len(eqn.invars), None
   new_jaxpr, used_inputs = dce_jaxpr(eqn.params['call_jaxpr'], used_outputs)
   new_params = dict(eqn.params, call_jaxpr=new_jaxpr)
   update_params = call_param_updaters.get(eqn.primitive)
@@ -1454,6 +1456,7 @@ def dce_jaxpr_call_rule(used_outputs: list[bool], eqn: JaxprEqn
         [v for v, used in zip(eqn.outvars, used_outputs) if used],
         eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info, eqn.ctx)
     return used_inputs, new_eqn
+
 dce_rules[core.call_p] = dce_jaxpr_call_rule
 
 
@@ -1465,8 +1468,10 @@ def _cached_closed_call_dce(jaxpr_, used_outputs: tuple[bool, ...]
   return core.ClosedJaxpr(new_jaxpr, consts), used_inputs
 
 def dce_jaxpr_closed_call_rule(used_outputs: list[bool], eqn: JaxprEqn
-                               ) -> tuple[list[bool], JaxprEqn]:
+                               ) -> tuple[list[bool], JaxprEqn | None]:
   # TODO(mattjj): de-duplicate with above rule?
+  if not any(used_outputs) and not has_effects(eqn):
+    return [False] * len(eqn.invars), None
   jaxpr_ = eqn.params['call_jaxpr']
   closed_jaxpr, used_inputs = _cached_closed_call_dce(jaxpr_, tuple(used_outputs))
   new_params = dict(eqn.params, call_jaxpr=closed_jaxpr)

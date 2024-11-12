@@ -63,6 +63,7 @@ from jax._src.interpreters.partial_eval import (
   debug_info_final as debug_info_final,
   def_trivial_padding as def_trivial_padding,
   forwarding_rules as forwarding_rules,
+  has_effects as has_effects,
   infer_lambda_input_type as infer_lambda_input_type,
   instantiate_const_at as instantiate_const_at,
   make_jaxpr_effects as make_jaxpr_effects,

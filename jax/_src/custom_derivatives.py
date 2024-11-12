@@ -1531,6 +1531,8 @@ def _remat_opt_transpose(
       "remat optimization for custom_vjp does not support higher-order AD")
 
 def _remat_opt_dce(used_outs: list[bool], eqn: core.JaxprEqn):
+  if not any(used_outs) and not pe.has_effects(eqn):
+    return [False] * len(eqn.invars), None
   used_res, used_prims = split_list(used_outs, [eqn.params["num_res"]])
   outvars = [v for used, v in zip(used_outs, eqn.outvars) if used]
   if any(used_res):

@@ -1353,6 +1353,8 @@ def _pmap_partial_eval_custom_res_maker(params_known, aval):
 
 def _pmap_dce_rule(used_outputs, eqn):
   # just like pe.dce_jaxpr_call_rule, except handles in_axes / out_axes
+  if not any(used_outputs) and not pe.has_effects(eqn):
+    return [False] * len(eqn.invars), None
   axis_name = eqn.params["axis_name"]
   with core.extend_axis_env_nd([(axis_name, eqn.params["global_axis_size"])]):
     new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['call_jaxpr'], used_outputs)
