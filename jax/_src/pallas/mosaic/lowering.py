@@ -502,8 +502,13 @@ def _check_block_mappings(
         )
     else:
       assert rank == 1
-      # TODO(necula): test this for bool. What should it do?
-      tiling_size = 128 * (32 // lax_internal._bit_width(bm.array_shape_dtype.dtype))
+      # bools get a bitwidth of 32 due to how mosaic handles them
+      if bm.array_shape_dtype.dtype == jnp.bool_:
+        bitwidth = 32
+      else:
+        bitwidth = lax_internal._bit_width(bm.array_shape_dtype.dtype)
+      packing = 32 // bitwidth
+      tiling_size = 128 * packing
       evenly_divisible = (bs0 == as0 or bs0 % tiling_size == 0)
       if not evenly_divisible:
         raise ValueError(
