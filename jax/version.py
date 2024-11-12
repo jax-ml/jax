@@ -60,7 +60,11 @@ def _version_from_git_tree(base_version: str) -> str | None:
   except:
     return None
   else:
-    return f"{base_version}.dev{datestring}+{commit_hash}"
+    version = f"{base_version}.dev{datestring}+{commit_hash}"
+    suffix = os.environ.get("JAX_CUSTOM_VERSION_SUFFIX", None)
+    if suffix:
+      return version + "." + suffix
+    return version
 
 
 def _get_version_for_build() -> str:
