@@ -2664,7 +2664,6 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
 
       const auto bitwidth = res_ty.getElementTypeBitWidth();
       const int packing = res_layout->packing();
-
       SmallVector<int64_t> out_idx;
       vreg.Each([&](absl::Span<const int64_t> idx, Value *v) {
         out_idx.assign(idx.begin(), idx.end());
@@ -2674,17 +2673,29 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
           const VectorType vmask_ty = getNativeVregOrVmaskType(
               builder.getI1Type(), bitwidth, ctx.target_shape);
           if (tiling_dim.value() == 0) {  // sublane
-            mask = builder.create<tpu::CreateMaskOp>(
-                op.getLoc(), vmask_ty,
-                ArrayRef<Value>{boundIdxConst(0), boundIdxConst(0)},
-                ArrayRef<Value>{boundIdxConst(operand_offset * packing),
-                                boundIdxConst(layout->tiling()[1])});
+            if (operand_offset % packing != 0) {
+              // Packed case, degenerate where we have a half or quarter
+              // sublane.
+              // TODO(mvoz): We can probably always use the
+              // CreateSubelementMaskOp if (1) optimize it on TPUv4 and (2) Add
+              // support for unpacked types in some of the invariants in
+              // lower_to_llo.
+              mask = builder.create<tpu::CreateSubelementMaskOp>(
+                  op.getLoc(), vmask_ty, 0, operand_offset, packing);
+            } else {
+              auto sublane_offset = operand_offset / packing;
+              mask = builder.create<tpu::CreateMaskOp>(
+                  op.getLoc(), vmask_ty,
+                  ArrayRef<Value>{boundIdxConst(0), boundIdxConst(0)},
+                  ArrayRef<Value>{boundIdxConst(sublane_offset),
+                                  boundIdxConst(layout->tiling()[1])});
+            }
           } else {  // lane
             mask = builder.create<tpu::CreateMaskOp>(
                 op.getLoc(), vmask_ty,
                 ArrayRef<Value>{boundIdxConst(0), boundIdxConst(0)},
                 ArrayRef<Value>{boundIdxConst(layout->tiling()[0]),
-                                boundIdxConst(operand_offset * packing)});
+                                boundIdxConst(operand_offset)});
           }
           // Blend the current value with the existing value in the output.
           *v = builder.create<arith::SelectOp>(op.getLoc(), mask,
