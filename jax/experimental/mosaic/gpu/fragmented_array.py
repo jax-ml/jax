@@ -1184,7 +1184,11 @@ class FragmentedArray:
         or ir.IntegerType(self.mlir_dtype).width != 1
     ):
       raise NotImplementedError
-    return self._pointwise(arith.select, on_true, on_false)
+    # We change the receiver here, because the return type is defined by
+    # `on_true` and `on_false` and not the predicate `self`.
+    return on_true._pointwise(
+        lambda t, p, f: arith.select(p, t, f), self, on_false,
+    )
 
   def foreach(self, fn: Callable[[ir.Value, tuple[ir.Value, ...]], None]):
     """Call a function for each value and index."""
