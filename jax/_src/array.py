@@ -1184,7 +1184,6 @@ def _array_global_result_handler(global_aval, out_sharding, committed):
       global_aval, out_sharding, committed=committed, _skip_checks=True
   )
 pxla.global_result_handlers[core.ShapedArray] = _array_global_result_handler
-pxla.global_result_handlers[core.ConcreteArray] = _array_global_result_handler
 
 # Only used for Arrays that come out of pmap.
 def _array_local_result_handler(aval, sharding, indices):
@@ -1197,7 +1196,6 @@ def _array_local_result_handler(aval, sharding, indices):
       aval, sharding, committed=True, _skip_checks=True
   )
 pxla.local_result_handlers[core.ShapedArray] = _array_local_result_handler
-pxla.local_result_handlers[core.ConcreteArray] = _array_local_result_handler
 
 
 # Token handlers

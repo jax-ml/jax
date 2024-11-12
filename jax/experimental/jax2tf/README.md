@@ -237,7 +237,7 @@ params_vars = tf.nest.map_structure(tf.Variable, params)
 prediction_tf = lambda inputs: jax2tf.convert(model_jax)(params_vars, inputs)
 
 my_model = tf.Module()
-# Tell the model saver what are the variables.
+# Tell the model saver what the variables are.
 my_model._variables = tf.nest.flatten(params_vars)
 my_model.f = tf.function(prediction_tf, jit_compile=True, autograph=False)
 tf.saved_model.save(my_model)
@@ -760,7 +760,7 @@ symbolic constraints:
     We plan to improve somewhat this area in the future.
   * Equality constraints are treated as normalization rules.
     E.g., `floordiv(a, b) = c` works by replacing all
-    occurences of the left-hand-side with the right-hand-side.
+    occurrences of the left-hand-side with the right-hand-side.
     You can only have equality constraints where the left-hand-side
     is a multiplication of factors, e.g, `a * b`, or `4 * a`, or
     `floordiv(a, b)`. Thus, the left-hand-side cannot contain
@@ -1048,7 +1048,7 @@ jax2tf.convert(jnp.sin)(np.float64(3.14))  # Has type float32
 tf.function(jax2tf.convert(jnp.sin), autograph=False)(tf.Variable(3.14, dtype=tf.float64))
 ```
 
-When the `JAX_ENABLE_X64` flas is set, JAX uses 64-bit types
+When the `JAX_ENABLE_X64` flag is set, JAX uses 64-bit types
 for Python scalars and respects the explicit 64-bit types:
 
 ```python
@@ -1245,7 +1245,7 @@ Applies to both native and non-native serialization.
 trackable classes during attribute assignment.
 Python Dict/List/Tuple are changed to _DictWrapper/_ListWrapper/_TupleWrapper
 classes.
-In most situation, these Wrapper classes work exactly as the standard
+In most situations, these Wrapper classes work exactly as the standard
 Python data types. However, the low-level pytree data structures are different
 and this can lead to errors.
 
@@ -1499,7 +1499,7 @@ during lowering we try to generate one TensorFlow op for one JAX primitive.
 We expect that the lowering that XLA does is similar to that done by JAX
 before conversion. (This is a hypothesis, we have not yet verified it extensively.)
 
-There is one know case when the performance of the lowered code will be different.
+There is one known case when the performance of the lowered code will be different.
 JAX programs use a [stateless
 deterministic PRNG](https://github.com/jax-ml/jax/blob/main/docs/design_notes/prng.md)
 and it has an internal JAX primitive for it.

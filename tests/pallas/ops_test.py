@@ -525,9 +525,6 @@ class OpsTest(PallasBaseTest):
         tol = 1e-6
       elif name == "exp2":
         tol = 1e-6
-    elif jtu.test_device_matches(["tpu"]):
-      if not jtu.is_device_tpu_at_least(version=5) and False:
-        self.skipTest("TODO: not implemented on TPU v{3,4}")
 
     def kernel(x_ref, y_ref):
       y_ref[...] = func(x_ref[...])
@@ -930,24 +927,32 @@ class OpsTest(PallasBaseTest):
     x = jnp.array([1, 2, 3, 4]).astype(jnp.float32) / 10
     np.testing.assert_allclose(kernel(x), lax.integer_pow(x, y))
 
-  @parameterized.parameters("float32", "float64")
-  def test_nextafter(self, dtype):
+  _NEXTAFTER_VALUES = (-3.2, -0., 0., 5.1, jnp.nan, jnp.inf, -jnp.inf)
+
+  @parameterized.named_parameters(
+      (f"{dtype.__name__} ({x=}, {y=})", dtype, x, y)
+      for dtype, x, y in itertools.product(
+          (jnp.float32, jnp.float64), _NEXTAFTER_VALUES, _NEXTAFTER_VALUES,
+      )
+  )
+  def test_nextafter(self, dtype, x, y):
     if not jax.config.x64_enabled and jnp.dtype(dtype).itemsize == 8:
       self.skipTest("64-bit types require x64_enabled")
 
-    # TODO: implement this on TPU
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not implemented: nextafter")
-
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), dtype), grid=1
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((4,), dtype),
     )
     def kernel(x_ref, y_ref, o_ref):
-      o_ref[:] = jnp.nextafter(x_ref[...], y_ref[...])
+      o_ref[...] = jnp.nextafter(x_ref[...], y_ref[...])
 
-    x = jnp.array([1, 2, 3, 4]).astype(dtype)
-    y = jnp.array([1, 2, 3, 4]).astype(dtype)
-    np.testing.assert_allclose(kernel(x, y), jnp.nextafter(x, y))
+    x = jnp.full((4,), x, dtype=dtype)
+    y = jnp.full((4,), y, dtype=dtype)
+    out = kernel(x, y)
+    expected = jnp.nextafter(x, y)
+
+    # `nextafter` requires exact equality
+    self.assertArraysEqual(out, expected)
 
   COMPARISON_OPS = [
       jnp.equal,
@@ -1088,14 +1093,6 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["tpu"]) and jnp.dtype(dtype).itemsize == 2:
       self.skipTest("16-bit types are not supported on TPU")
 
-    # TODO(ayx): Fix these operations on TPU
-    if (
-        jtu.test_device_matches(["tpu"])
-        and f in (jnp.floor_divide, jnp.subtract)
-        and dtype == "uint32"
-    ):
-      self.skipTest("Not supported on TPU")
-
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((8,), dtype), grid=1
     )
@@ -1120,14 +1117,6 @@ class OpsTest(PallasBaseTest):
       self.skipTest("Test only supported on TPU.")
     if jtu.test_device_matches(["tpu"]) and jnp.dtype(dtype).itemsize == 2:
       self.skipTest("16-bit types are not supported on TPU")
-
-    # TODO(ayx): Fix these operations on TPU
-    if (
-        jtu.test_device_matches(["tpu"])
-        and f in (jnp.floor_divide, jnp.subtract)
-        and dtype == "uint32"
-    ):
-      self.skipTest("Not supported on TPU")
 
     @functools.partial(
         self.pallas_call,
@@ -1421,7 +1410,7 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["tpu"]) and jnp.dtype(dtype).itemsize == 2:
       self.skipTest("16-bit types are not supported on TPU")
 
-    if jtu.test_device_matches(["tpu"]):
+    if jtu.test_device_matches(["tpu"]) and trans_x:
       self.skipTest("Not implemented: Transposed LHS")
 
     @functools.partial(

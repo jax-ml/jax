@@ -42,42 +42,6 @@ _deprecations = {
         ("jax.interpreters.xla.xe was removed in JAX v0.4.36. "
          "Use jax.lib.xla_extension instead."), None
     ),
-    # Finalized 2024-05-13; remove after 2024-08-13
-    "backend_specific_translations": (
-        "jax.interpreters.xla.backend_specific_translations is deprecated. "
-        "Register custom primitives via jax.interpreters.mlir instead.",
-        None,
-    ),
-    "translations": (
-        "jax.interpreters.xla.translations is deprecated. "
-        "Register custom primitives via jax.interpreters.mlir instead.",
-        None,
-    ),
-    "register_translation": (
-        "jax.interpreters.xla.register_translation is deprecated. "
-        "Register custom primitives via jax.interpreters.mlir instead.",
-        None,
-    ),
-    "xla_destructure": (
-        "jax.interpreters.xla.xla_destructure is deprecated. "
-        "Register custom primitives via jax.interpreters.mlir instead.",
-        None,
-    ),
-    "TranslationRule": (
-        "jax.interpreters.xla.TranslationRule is deprecated. "
-        "Register custom primitives via jax.interpreters.mlir instead.",
-        None,
-    ),
-    "TranslationContext": (
-        "jax.interpreters.xla.TranslationContext is deprecated. "
-        "Register custom primitives via jax.interpreters.mlir instead.",
-        None,
-    ),
-    "XlaOp": (
-        "jax.interpreters.xla.XlaOp is deprecated. "
-        "Register custom primitives via jax.interpreters.mlir instead.",
-        None,
-    ),
 }
 
 from jax._src.deprecations import deprecation_getattr as _deprecation_getattr

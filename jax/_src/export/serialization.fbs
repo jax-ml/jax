@@ -97,7 +97,7 @@ table Effect {
 enum DisabledSafetyCheckKind: byte {
   platform,
   custom_call,
-  shape_assertions,
+  shape_assertions,  // unused
 }
 
 table DisabledSafetyCheck {

@@ -56,7 +56,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import pjit
 from jax._src import xla_bridge as xb
-from jax._src.core import eval_jaxpr, ShapedArray, ConcreteArray
+from jax._src.core import eval_jaxpr, ShapedArray
 from jax._src.api_util import (
     flatten_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2, argnums_partial,
     flatten_axes, donation_vector,
@@ -123,8 +123,8 @@ def _update_debug_special_global(_):
     jax_jit.global_state().post_hook = None
 
 def _update_debug_special_thread_local(_):
-  if (getattr(config._thread_local_state, "jax_debug_nans", False) or
-      getattr(config._thread_local_state, "jax_debug_infs", False)):
+  if (config.debug_nans.get_local() == True or
+      config.debug_infs.get_local() == True):
     jax_jit.thread_local_state().post_hook = _nan_check_posthook
   else:
     jax_jit.thread_local_state().post_hook = None
@@ -151,6 +151,7 @@ def jit(
   backend: str | None = None,
   inline: bool = False,
   abstracted_axes: Any | None = None,
+  compiler_options: dict[str, Any] | None = None,
 ) -> pjit.JitWrapped:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
@@ -280,7 +281,7 @@ def jit(
   return pjit.make_jit(
         fun, in_shardings, out_shardings, donate_argnums, donate_argnames,
         static_argnums, static_argnames, device, backend, abstracted_axes,
-        keep_unused, inline, use_resource_env=False)
+        keep_unused, inline, compiler_options, use_resource_env=False)
 
 
 @contextmanager
@@ -2183,14 +2184,15 @@ def make_jaxpr(
 
 def _infer_src_sharding(src, x) -> Sharding | None:
   if src is not None:
-    # TODO(slebedev): This looks like an error and needs investigation.
     return src  # pytype: disable=bad-return-type
   if isinstance(x, array.ArrayImpl):
     return x.sharding
-  elif isinstance(x, core.Tracer):
-    aval = core.get_aval(x)
-    if isinstance(aval, ConcreteArray) and isinstance(aval.val, array.ArrayImpl):
-      return aval.val.sharding
+  if config.sharding_in_types.value and hasattr(x, 'sharding'):
+    return x.sharding
+  if isinstance(x, core.Tracer):
+    val = x.to_concrete_value()
+    if val is not None and isinstance(val, array.ArrayImpl):
+      return val.sharding
   return None
 
 
@@ -2440,6 +2442,17 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
 def _device_get(x):
   if isinstance(x, core.Tracer):
     return x
+
+  # Extended dtypes dispatch via their device_get rule.
+  if isinstance(x, basearray.Array) and dtypes.issubdtype(x.dtype, dtypes.extended):
+    try:
+      to_device = x.dtype._rules.device_get
+    except AttributeError:
+      pass
+    else:
+      return to_device(x)
+
+  # Other types dispatch via their __array__ method.
   try:
     toarray = x.__array__
   except AttributeError:

@@ -936,6 +936,11 @@ class KeyArrayTest(jtu.JaxTestCase):
     x = jnp.array([True, False, False])
     f(x)  # doesn't crash
 
+  def test_device_get(self):
+    keys = self.make_keys(4)
+    keys_on_host = jax.device_get(keys)
+    self.assertKeysEqual(keys, keys_on_host)
+
   def test_device_put(self):
     device = jax.devices()[0]
     keys = self.make_keys(4)

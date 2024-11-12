@@ -47,8 +47,8 @@ from jax._src import source_info_util
 from jax._src import state
 from jax._src import util
 from jax._src.abstract_arrays import array_types
-from jax._src.core import (Primitive, UnshapedArray, ShapedArray, ConcreteArray,
-                           raise_to_shaped, abstract_token, canonicalize_shape)
+from jax._src.core import (Primitive, UnshapedArray, ShapedArray,
+                           abstract_token, canonicalize_shape)
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -582,8 +582,7 @@ def _convert_element_type(
 
   if ((old_dtype, old_weak_type) == (new_dtype, weak_type) and
       isinstance(operand, Array) and
-      not (isinstance(operand, core.Tracer) and
-           isinstance(core.get_aval(operand), core.ConcreteArray)) and
+      not (isinstance(operand, core.Tracer) and core.is_concrete(operand)) and
       (sharding is None or getattr(operand, 'sharding', None) == sharding)):
     return operand
   else:
@@ -1438,23 +1437,24 @@ def _get_monoid_reducer(monoid_op: Callable,
   x, = xs
   aval = core.get_aval(x)
   dtype = _dtype(x)
-  if (type(aval) is ConcreteArray) and aval.shape == ():
+  if core.is_concrete(x) and aval.shape == ():
+    val = core.to_concrete_value(x)
     # allow bitwise reductions for boolean and integer types
     _is_intlike = dtype == np.bool_ or dtypes.issubdtype(dtype, np.integer)
     if monoid_op is add:
-      return _reduce_sum if np.equal(aval.val, 0) else None
+      return _reduce_sum if np.equal(val, 0) else None
     elif monoid_op is mul:
-      return _reduce_prod if np.equal(aval.val, 1) else None
+      return _reduce_prod if np.equal(val, 1) else None
     elif monoid_op is bitwise_or and _is_intlike:
-      return _reduce_or if np.equal(aval.val, _get_bitwise_or_identity(dtype)) else None
+      return _reduce_or if np.equal(val, _get_bitwise_or_identity(dtype)) else None
     elif monoid_op is bitwise_and and _is_intlike:
-      return _reduce_and if np.equal(aval.val, _get_bitwise_and_identity(dtype)) else None
+      return _reduce_and if np.equal(val, _get_bitwise_and_identity(dtype)) else None
     elif monoid_op is bitwise_xor and _is_intlike:
-      return _reduce_xor if np.equal(aval.val, _get_bitwise_or_identity(dtype)) else None
+      return _reduce_xor if np.equal(val, _get_bitwise_or_identity(dtype)) else None
     elif monoid_op is max:
-      return _reduce_max if np.equal(aval.val, _get_max_identity(dtype)) else None
+      return _reduce_max if np.equal(val, _get_max_identity(dtype)) else None
     elif monoid_op is min:
-      return _reduce_min if np.equal(aval.val, _get_min_identity(dtype)) else None
+      return _reduce_min if np.equal(val, _get_min_identity(dtype)) else None
   return None
 
 def _get_bitwise_and_identity(dtype: DTypeLike) -> np.ndarray:
@@ -3044,7 +3044,7 @@ def _to_edtype_abstract_eval(x, *, edtype):
         f" has a representation shape {rep_aval.shape} while the given "
         f"representation array has shape {x.shape}, so the shape suffix "
         f"does not match: given {shape_suffix} but required {rep_aval.shape}.")
-  return core.raise_to_shaped(x).update(shape=shape_prefix, dtype=edtype)
+  return x.update(shape=shape_prefix, dtype=edtype)
 
 to_edtype_p = Primitive('to_edtype')
 to_edtype_p.def_impl(partial(dispatch.apply_primitive, to_edtype_p))
@@ -5246,7 +5246,7 @@ _INT_DTYPES = {
 
 
 def _sort_abstract_eval(*args, **kwargs):
-  args = tuple(raise_to_shaped(arg) for arg in args)
+  args = tuple(args)
   if any(arg.shape != args[0].shape for arg in args[1:]):
     shapes = " ".join(str(a.shape) for a in args)
     raise TypeError(f"Arguments to sort must have equal shapes, got: {shapes}")
@@ -6196,7 +6196,7 @@ def _eq_meet(a, b):
 
 
 def _abstractify(x):
-  return raise_to_shaped(core.get_aval(x))
+  return core.get_aval(x)
 
 
 def empty(dtype):

@@ -149,7 +149,7 @@ class PrimitiveTest(jtu.JaxTestCase):
 
     logging.info("Exporting harness for %s", lowering_platforms)
     exp = export.export(jax.jit(func_jax),
-                        lowering_platforms=lowering_platforms)(*args)
+                        platforms=lowering_platforms)(*args)
 
     for device in devices:
       if device.platform in skip_run_on_platforms:

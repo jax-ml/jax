@@ -130,7 +130,7 @@ def pallas_call_tpu_lowering_rule(
   if axis_context is not None:
     if isinstance(axis_context, sharding_impls.SPMDAxisContext):
       mesh = axis_context.mesh
-  mlir_ctx = ir.Context()
+  mlir_ctx = mlir.JaxIrContext()
   mlir_ctx.append_dialect_registry(mlir.upstream_dialects)
   mlir_ctx.load_all_available_dialects()
   tpu.register_dialect(mlir_ctx)

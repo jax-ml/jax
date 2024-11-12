@@ -16,6 +16,7 @@
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "absl/types/span.h"
+#include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "tsl/platform/statusor.h"
 
 // TODO: Instead of CHECK_EQs, can we do something like TF_RET_CHECK but with
@@ -98,6 +99,14 @@ std::string shapeToString(const T &shape) {
 
 SmallVector<int64_t> ComputeTileStrides(MemRefType memref_ty,
                                         absl::Span<const int64_t> tiling);
+// Assuming MKN matmul - This function must only be called after
+// canonicalization passes.
+//
+// Given a set of dimension numbers, Returns a pair of booleans, where the
+// first is true if the lhs is transposed
+// and the second is true if the rhs is transposed.
+std::optional<std::pair<bool, bool>> isTransposedMatmul(
+    DotDimensionNumbersAttr dim_numbers);
 
 // Returns true if a >=2D memref has a tiled layout and can be equivalently
 // considered as an untiled memref, except for potential padding in the
@@ -106,6 +115,7 @@ SmallVector<int64_t> ComputeTileStrides(MemRefType memref_ty,
 bool canReinterpretToUntiledMemref(MemRefType tiled_memref_ty,
                                    const std::array<int64_t, 2> &target_shape,
                                    bool allow_minormost_padding = false);
+
 }  // namespace mlir::tpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_

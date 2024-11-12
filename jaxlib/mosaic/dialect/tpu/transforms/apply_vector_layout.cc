@@ -13,16 +13,15 @@
 #include <utility>
 #include <vector>
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/Compiler.h"
-#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Traits.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
@@ -52,7 +51,6 @@
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
-#include "llvm/ADT/ArrayRef.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
@@ -61,6 +59,7 @@
 #include "mlir/include/mlir/IR/OperationSupport.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "jaxlib/mosaic/dialect/tpu/transforms/apply_vector_layout_extensions.h"
 #include "jaxlib/mosaic/dialect/tpu/transforms/infer_memref_layout.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 #include "xla/array.h"
@@ -1696,15 +1695,36 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
       llvm::all_of(layouts_in, [&](const Layout &l) { return l.has_value(); }));
   TPU_ASSERT_OP(layouts_out.front().has_value());
   auto matmul_op = cast<tpu::MatmulOp>(op);
-  const auto transpose_lhs = matmul_op.getTransposeLhs();
-  const auto transpose_rhs = matmul_op.getTransposeRhs();
-  const auto &layout_lhs = *layouts_in[0];
-  const auto &layout_rhs = *layouts_in[1];
-  const auto &layout_acc = *layouts_in[2];
-  const auto &layout_out = *layouts_out[0];
-  if (transpose_lhs) {
-    return op.emitOpError("Not implemented: Transposed LHS");
+  if (matmul_op.getTransposeRhs()) {
+    return op.emitOpError(
+        "Transposition must have been erased into dimension numbers during "
+        "canonicalization");
   }
+
+  auto dimension_numbers = matmul_op.getDimensionNumbers();
+  if (!dimension_numbers.has_value()) {
+    return op.emitOpError(
+        "Dimension numbers must be provided, ensure canonicalization has been "
+        "run.");
+  }
+  auto transposed_mkn = isTransposedMatmul(dimension_numbers.value());
+  if (!transposed_mkn.has_value()) {
+    return op.emitOpError(
+        "Dimension numbers must be MKN, ensure canonicalization has been "
+        "run.");
+  }
+  auto [transpose_lhs, transpose_rhs] = transposed_mkn.value();
+  if (transpose_lhs) {
+    return op.emitOpError(
+        "Transposition of LHS is not supported in apply_vector_layout, ensure "
+        "canonicalization has been run.");
+  }
+
+  auto &layout_lhs = *layouts_in[0];
+  auto &layout_rhs = *layouts_in[1];
+  auto &layout_acc = *layouts_in[2];
+  auto &layout_out = *layouts_out[0];
+
   const std::array<std::reference_wrapper<const VectorLayout>, 4> all_layouts =
       {layout_lhs, layout_rhs, layout_acc, layout_out};
   for (const VectorLayout &layout : all_layouts) {
@@ -1965,6 +1985,8 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
 
   const tpu::ContractPrecisionAttr precision_attr =  // May be null
       op.getAttrOfType<tpu::ContractPrecisionAttr>("precision");
+  const tpu::DotDimensionNumbersAttr dot_dimension_numbers_attr =
+      defaultDimensionNumbers(builder, false, transpose_rhs);
   for (int64_t j = 0; j < nj; ++j) {
     for (int64_t k = 0; k < nk; ++k) {
       // TODO(tlongeri): there should be a way to slice without copying
@@ -1981,7 +2003,8 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
       acc_col->setAttr("out_layout", acc_layout_attr);
       auto new_acc_col = builder.create<tpu::MatmulOp>(
           op.getLoc(), acc_col_ty, lhs_cols[k], rhs_rolled_group, acc_col,
-          transpose_lhs, transpose_rhs, precision_attr);
+          /*transpose_lhs=*/false, /*transpose_rhs=*/false, precision_attr,
+          dot_dimension_numbers_attr);
       auto new_acc_vregs = builder.create<tpu::UnrollVectorsOp>(
           op.getLoc(),
           TypeRange(ValueRange(XlaArrayToFlatArrayRef(acc_col_vregs))),
@@ -4562,45 +4585,53 @@ LogicalResult prng_random_bits_rule(RewriteContext &ctx, Operation &op,
 }
 
 const llvm::StringMap<rule_type> &rules() {
-  static auto rules = new llvm::StringMap<rule_type>{
-      {arith::ConstantOp::getOperationName(), arith_constant_rule},
-      {arith::ExtFOp::getOperationName(), arith_extf_rule},
-      {arith::ExtSIOp::getOperationName(), arith_extsi_rule},
-      {arith::ExtUIOp::getOperationName(), arith_extui_rule},
-      {arith::TruncFOp::getOperationName(), arith_truncf_rule},
-      {arith::TruncIOp::getOperationName(), arith_trunci_rule},
-      {func::ReturnOp::getOperationName(), func_return_rule},
-      {scf::ForOp::getOperationName(), scf_for_rule},
-      {scf::WhileOp::getOperationName(), scf_while_rule},
-      {scf::ConditionOp::getOperationName(), scf_condition_rule},
-      {scf::IfOp::getOperationName(), scf_if_rule},
-      {scf::YieldOp::getOperationName(), yield_rule},
-      {tpu::YieldOp::getOperationName(), yield_rule},
-      {tpu::RotateOp::getOperationName(), tpu_rotate_rule},
-      {tpu::DynamicRotateOp::getOperationName(), tpu_dynamic_rotate_rule},
-      {tpu::ConcatenateOp::getOperationName(), tpu_concatenate_rule},
-      {tpu::IotaOp::getOperationName(), tpu_iota_rule},
-      {tpu::GatherOp::getOperationName(), tpu_gather_rule},
-      {tpu::LoadOp::getOperationName(), tpu_load_rule},
-      {tpu::StoreOp::getOperationName(), tpu_store_rule},
-      {tpu::StridedLoadOp::getOperationName(), tpu_strided_load_rule},
-      {tpu::StridedStoreOp::getOperationName(), tpu_strided_store_rule},
-      {tpu::MatmulOp::getOperationName(), tpu_matmul_rule},
-      {tpu::RegionOp::getOperationName(), tpu_region_rule},
-      {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},
-      {tpu::TraceOp::getOperationName(), tpu_trace_rule},
-      {tpu::AssumeLayoutOp::getOperationName(), tpu_assume_layout_rule},
-      {tpu::PRNGRandomBitsOp::getOperationName(), prng_random_bits_rule},
-      {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
-      {vector::ExtractOp::getOperationName(), vector_extract_rule},
-      {vector::LoadOp::getOperationName(), vector_load_rule},
-      {vector::MultiDimReductionOp::getOperationName(),
-       vector_multi_reduction_rule},
-      {vector::ExtractStridedSliceOp::getOperationName(),
-       vector_extract_strided_slice_rule},
-      {vector::ShapeCastOp::getOperationName(), vector_shape_cast_rule},
-      {vector::StoreOp::getOperationName(), vector_store_rule},
-      {vector::TransposeOp::getOperationName(), vector_transpose_rule}};
+  static const llvm::StringMap<rule_type> *rules = [] {
+    static auto rules = new llvm::StringMap<rule_type>{
+        {arith::ConstantOp::getOperationName(), arith_constant_rule},
+        {arith::ExtFOp::getOperationName(), arith_extf_rule},
+        {arith::ExtSIOp::getOperationName(), arith_extsi_rule},
+        {arith::ExtUIOp::getOperationName(), arith_extui_rule},
+        {arith::TruncFOp::getOperationName(), arith_truncf_rule},
+        {arith::TruncIOp::getOperationName(), arith_trunci_rule},
+        {func::ReturnOp::getOperationName(), func_return_rule},
+        {scf::ForOp::getOperationName(), scf_for_rule},
+        {scf::WhileOp::getOperationName(), scf_while_rule},
+        {scf::ConditionOp::getOperationName(), scf_condition_rule},
+        {scf::IfOp::getOperationName(), scf_if_rule},
+        {scf::YieldOp::getOperationName(), yield_rule},
+        {tpu::YieldOp::getOperationName(), yield_rule},
+        {tpu::RotateOp::getOperationName(), tpu_rotate_rule},
+        {tpu::DynamicRotateOp::getOperationName(), tpu_dynamic_rotate_rule},
+        {tpu::ConcatenateOp::getOperationName(), tpu_concatenate_rule},
+        {tpu::IotaOp::getOperationName(), tpu_iota_rule},
+        {tpu::GatherOp::getOperationName(), tpu_gather_rule},
+        {tpu::LoadOp::getOperationName(), tpu_load_rule},
+        {tpu::StoreOp::getOperationName(), tpu_store_rule},
+        {tpu::StridedLoadOp::getOperationName(), tpu_strided_load_rule},
+        {tpu::StridedStoreOp::getOperationName(), tpu_strided_store_rule},
+        {tpu::MatmulOp::getOperationName(), tpu_matmul_rule},
+        {tpu::RegionOp::getOperationName(), tpu_region_rule},
+        {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},
+        {tpu::TraceOp::getOperationName(), tpu_trace_rule},
+        {tpu::AssumeLayoutOp::getOperationName(), tpu_assume_layout_rule},
+        {tpu::PRNGRandomBitsOp::getOperationName(), prng_random_bits_rule},
+        {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
+        {vector::ExtractOp::getOperationName(), vector_extract_rule},
+        {vector::LoadOp::getOperationName(), vector_load_rule},
+        {vector::MultiDimReductionOp::getOperationName(),
+         vector_multi_reduction_rule},
+        {vector::ExtractStridedSliceOp::getOperationName(),
+         vector_extract_strided_slice_rule},
+        {vector::ShapeCastOp::getOperationName(), vector_shape_cast_rule},
+        {vector::StoreOp::getOperationName(), vector_store_rule},
+        {vector::TransposeOp::getOperationName(), vector_transpose_rule}};
+
+    llvm::StringMap<rule_type> extended_rules = mlir::tpu::extensions::rules();
+    for (auto &entry : extended_rules) {
+      rules->insert(&entry);
+    }
+    return rules;
+  }();
   return *rules;
 }
 

@@ -401,6 +401,11 @@ class KeyTyRules:
     return PRNGKeyArray(aval.dtype._impl, phys_result)
 
   @staticmethod
+  def device_get(val):
+    buffer = api.device_get(random_unwrap(val))
+    return random_wrap(buffer, impl=val.dtype._impl)
+
+  @staticmethod
   def device_put_sharded(vals, aval, sharding, devices):
     physical_aval = core.physical_aval(aval)
     physical_buffers = tree_util.tree_map(random_unwrap, vals)
@@ -807,7 +812,7 @@ def _threefry2x32_abstract_eval(*args):
     shape = lax_internal.broadcasting_shape_rule(*args)
     aval = core.ShapedArray(shape, jnp.dtype(jnp.uint32))
   else:
-    aval = core.UnshapedArray(jnp.dtype(jnp.uint32))
+    raise TypeError(f"Arguments to threefry2x32 must all be arrays, got {args}")
   return (aval,) * 2
 
 

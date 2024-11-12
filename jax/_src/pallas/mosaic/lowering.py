@@ -1615,6 +1615,7 @@ def _dot_general_lowering_rule(
     )
     return vector.shape_cast(out_type, red)
 
+  # TODO(mvoz): Plumb these into dot dimension numbers on the matmul op!
   if lhs_dims == (1,):
     transpose_lhs = False
   elif lhs_dims == (0,):
@@ -1933,7 +1934,7 @@ skip_mlir_conversions.add(lax.mul_p)
 def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   (aval_out,) = ctx.avals_out
-  if jnp.issubdtype(aval_out.dtype, jnp.integer):
+  if jnp.issubdtype(aval_out.dtype, jnp.signedinteger):
     return arith.divsi(x, y)
   if jnp.issubdtype(aval_out.dtype, jnp.unsignedinteger):
     return arith.divui(x, y)
@@ -1994,6 +1995,15 @@ def _sign_lowering_rule(ctx: LoweringRuleContext, x):
 
 
 lowering_rules[lax.sign_p] = _sign_lowering_rule
+
+
+def _nextafter_lowering_rule(ctx: LoweringRuleContext, x, y):
+  return lower_fun(
+      pallas_utils.nextafter_lowering_helper, multiple_results=False,
+  )(ctx, x, y)
+
+
+lowering_rules[lax.nextafter_p] = _nextafter_lowering_rule
 
 
 def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):

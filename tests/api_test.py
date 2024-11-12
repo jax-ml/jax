@@ -60,7 +60,7 @@ from jax._src.ad_checkpoint import saved_residuals
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
-from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension, xla_extension_version
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.custom_batching
@@ -1373,6 +1373,38 @@ class JitTest(jtu.BufferDonationTestCase):
         }
     )
 
+  def test_compile_options_jit(self):
+    def f(x):
+      return jnp.sqrt(x ** 2) + 1.
+
+    f_jit = jit(
+        f,
+        compiler_options={
+            "xla_embed_ir_in_executable": True,
+            "xla_dump_max_hlo_modules": 200,
+            "xla_gpu_auto_spmd_partitioning_memory_budget_ratio": 0.5,
+        })(1.0)  # doesn't crash.
+
+  def test_exec_time_optimization_effort_compiler_option(self):
+    if xla_extension_version < 294:
+      raise unittest.SkipTest("test requires newer xla extension version")
+
+    def f(x):
+      return jnp.sqrt(x ** 2) + 1.
+
+    f_jit = jit(
+        f,
+        compiler_options={
+            "exec_time_optimization_effort": 0.0,
+        })(1.0)  # doesn't crash.
+
+    with self.assertRaisesRegex(xla_extension.XlaRuntimeError, "No such"):
+      f_jit = jit(
+          f,
+          compiler_options={
+              "exec_time_compilation_effort": 0.0,
+          })(1.0)
+
   def test_jit_lower_compile_with_compiler_options_invalid(self):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
@@ -1390,7 +1422,21 @@ class JitTest(jtu.BufferDonationTestCase):
         lambda: lowered.compile(
             compiler_options={"xla_embed_ir_in_executable": "invalid_value"}))
 
-  def test_jit_lower_compile_with_compiler_options_multiple(self):
+  def test_jit_compile_with_compiler_options_multiple(self):
+    def f(x):
+      return jnp.sqrt(x ** 2) + 1.
+
+    with jtu.count_jit_compilation_cache_miss() as count:
+      jit(f, compiler_options={"xla_embed_ir_in_executable": True})(1.)
+      jit(f, compiler_options={"xla_embed_ir_in_executable": False})(1.)
+    self.assertEqual(count[0], 2)
+
+    # We should still error on invalid options after some valid compiles
+    with self.assertRaisesRegex(
+        xla_extension.XlaRuntimeError, "No such compile option: 'invalid_key'"):
+      jit(f, compiler_options={"invalid_key": "invalid_value"})(1.)
+
+  def test_lower_compile_with_compiler_options_multiple(self):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
 
@@ -3690,18 +3736,6 @@ class APITest(jtu.JaxTestCase):
     msg = r"on the value of the argument y"
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       g(1)
-
-  def test_join_concrete_arrays_with_omnistaging(self):
-    # https://github.com/jax-ml/jax/issues/4622
-    x = jnp.array([1., 2., 3.])
-    y = jnp.array([1., 2., 4.])
-
-    @jit
-    def f():
-      core.lattice_join(core.ConcreteArray(x.dtype, x),
-                        core.ConcreteArray(y.dtype, y))
-
-    f()  # doesn't crash
 
   def test_linearize_aux(self):
     def fn(x):

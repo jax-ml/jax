@@ -66,7 +66,6 @@ def _copy_smem_to_gmem_lowering(
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
   src, src_transforms = lowering._handle_indexing(src, src_transforms)
   copy_params = _extract_gmem_copy_params(dst_transforms) | _extract_smem_copy_params(src_transforms)
-  mgpu.commit_shared()
   ctx.launch_ctx.async_copy(src_ref=src, dst_ref=dst, **copy_params)
   return ()
 
@@ -105,6 +104,7 @@ def copy_smem_to_gmem(
 
   See also:
     :func:`jax.experimental.mosaic.gpu.wait_smem_to_gmem`
+    :func:`jax.experimental.mosaic.gpu.commit_smem`
   """
   if src.memory_space is not gpu_core.SMEM:
     raise TypeError(f"src must be a SMEM reference, got {src.memory_space}")
@@ -567,7 +567,7 @@ def wgmma_accumulator_deref(acc):
 @wgmma_accumulator_deref_p.def_effectful_abstract_eval
 def _wgmma_accumulator_deref_abstract_eval(acc):
   # Dereferencing implies flushing so we have a wgmma pipeline effect.
-  ret = acc.inner_aval if isinstance(acc, gpu_core.WGMMAAbstractAccumulatorRef) else acc
+  ret = acc.inner_aval if isinstance(acc, state.AbstractRef) else acc
   assert isinstance(ret, jax_core.ShapedArray), acc
   return ret, {gpu_core._wgmma_pipeline_effect}
 

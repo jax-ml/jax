@@ -17,6 +17,8 @@ limitations under the License.
 
 #include <array>
 #include <cstdint>
+#include <optional>
+#include <utility>
 
 #include "llvm/Support/MathExtras.h"
 #include "absl/types/span.h"
@@ -40,6 +42,31 @@ SmallVector<int64_t> ComputeTileStrides(MemRefType memref_ty,
     }
   }
   return tile_strides;
+}
+
+std::optional<std::pair<bool, bool>> isTransposedMatmul(
+    DotDimensionNumbersAttr dim_numbers) {
+  auto lhs_contracting_dims = dim_numbers.getLhsContractingDims();
+  auto rhs_contracting_dims = dim_numbers.getRhsContractingDims();
+  auto lhs_non_contracting_dims = dim_numbers.getLhsNonContractingDims();
+  auto rhs_non_contracting_dims = dim_numbers.getRhsNonContractingDims();
+
+  if (lhs_contracting_dims.size() != 1 || rhs_contracting_dims.size() != 1 ||
+      lhs_non_contracting_dims.size() != 1 ||
+      rhs_non_contracting_dims.size() != 1) {
+    return std::nullopt;
+  }
+
+  int64_t lhs_non_contracting_dim = lhs_non_contracting_dims[0];
+  int64_t lhs_contracting_dim = lhs_contracting_dims[0];
+  int64_t rhs_non_contracting_dim = rhs_non_contracting_dims[0];
+  int64_t rhs_contracting_dim = rhs_contracting_dims[0];
+
+  bool lhs_transposed = lhs_non_contracting_dim > lhs_contracting_dim;
+
+  bool rhs_transposed = rhs_contracting_dim > rhs_non_contracting_dim;
+
+  return std::pair<bool, bool>{lhs_transposed, rhs_transposed};
 }
 
 bool canReinterpretToUntiledMemref(MemRefType tiled_memref_ty,
@@ -68,4 +95,5 @@ bool canReinterpretToUntiledMemref(MemRefType tiled_memref_ty,
           *(tiled_layout.getTileStrides().end() - 1) == 1 &&
           *(tiled_layout.getTileStrides().end() - 2) == 1);
 }
+
 }  // namespace mlir::tpu

@@ -565,7 +565,7 @@ jax_multiplatform_test(
     deps = [
         "//jax:internal_test_util",
         "//jax:lax_reference",
-    ] + py_deps("numpy"),
+    ] + py_deps("numpy") + py_deps("mpmath"),
 )
 
 jax_multiplatform_test(

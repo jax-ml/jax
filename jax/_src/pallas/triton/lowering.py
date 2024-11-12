@@ -248,7 +248,8 @@ def _process_grid_to_3d_grid(grid_mapping: GridMapping):
 
 
 def _new_ir_context() -> ir.Context:
-  ctx = ir.Context()
+  ctx = mlir.JaxIrContext()
+  ctx.append_dialect_registry(mlir.upstream_dialects)
   tt_dialect.register_dialect(ctx)
   ctx.load_all_available_dialects()
   return ctx
@@ -995,7 +996,7 @@ triton_lowering_rules.update({
     lax.nextafter_p: _make_dispatch_table(
         "nextafter",
         cuda=[
-            _Extern([jnp.float32, jnp.float32], "__nv_nextafterf", jnp.float32 ),
+            _Extern([jnp.float32, jnp.float32], "__nv_nextafterf", jnp.float32),
             _Extern([jnp.float64, jnp.float64], "__nv_nextafter", jnp.float64),
         ],
         rocm=[

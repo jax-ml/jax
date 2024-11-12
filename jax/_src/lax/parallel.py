@@ -27,7 +27,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import sharding_impls
-from jax._src.core import AxisName, ShapedArray, raise_to_shaped
+from jax._src.core import AxisName, ShapedArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -636,7 +636,7 @@ def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
       raise ValueError(f"axis_index_groups can only be used with reductions over "
                        f"named axes, but got: {axes}")
   out_avals = [
-      ShapedArray(lax._reduce_op_shape_rule(raise_to_shaped(arg), axes=pos_axes),
+      ShapedArray(lax._reduce_op_shape_rule(arg, axes=pos_axes),
                   arg.dtype) for arg in args]
   return out_avals, {core.NamedAxisEffect(axis) for axis in named_axes}
 
@@ -817,7 +817,7 @@ def _ppermute_batcher(axis_data, vals_in, dims_in, axis_name, perm):
 
 def _raise_to_shaped_abstract_eval(x, *, axis_name, **params):
   _check_axis_names(axis_name)
-  return raise_to_shaped(x)
+  return x
 
 ppermute_p = core.Primitive('ppermute')
 ppermute_p.def_abstract_eval(_raise_to_shaped_abstract_eval)
@@ -1019,13 +1019,12 @@ def _all_to_all_batched_collective(axis_data, vals_in, dims_in,
 
 
 def _all_to_all_effectful_abstract_eval(
-    x, axis_name, split_axis, concat_axis, axis_index_groups, tiled
+    input_aval, axis_name, split_axis, concat_axis, axis_index_groups, tiled
 ):
   del tiled  # expand_dims and squeeze is done in `all_to_all` if `True`
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
   _check_axis_names(axis_name)
-  input_aval = raise_to_shaped(x)
   shape = list(input_aval.shape)
   axis_size = psum(1, axis_name) if axis_index_groups is None else len(axis_index_groups[0])
   assert shape[split_axis] % axis_size == 0, (shape[split_axis], axis_size)
@@ -1169,12 +1168,11 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
 
 
 def _all_gather_effectful_abstract_eval(
-    x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled
+    x_aval, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled
 ):
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
   _check_axis_names(axis_name)
-  x_aval = raise_to_shaped(x)
   new_shape = list(x_aval.shape)
   if tiled:
     new_shape[all_gather_dimension] *= axis_size
@@ -1298,12 +1296,11 @@ def _reduce_scatter_lowering(
 
 
 def _reduce_scatter_effectful_abstract_eval(
-    x, *, axis_name, scatter_dimension, axis_index_groups, axis_size, tiled
+    x_aval, *, axis_name, scatter_dimension, axis_index_groups, axis_size, tiled
 ):
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
   _check_axis_names(axis_name)
-  x_aval = core.raise_to_shaped(x)
   new_shape = list(x_aval.shape)
   scatter_dim_input_size = x_aval.shape[scatter_dimension]
   if tiled:

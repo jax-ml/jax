@@ -526,7 +526,12 @@ def _batched_device_put_impl(
 device_put_p = core.Primitive('device_put')
 device_put_p.multiple_results = True
 device_put_p.def_impl(_batched_device_put_impl)
-device_put_p.def_abstract_eval(lambda *xs, devices, srcs, copy_semantics: xs)
+
+def _device_put_abstract_eval(*xs, devices, srcs, copy_semantics):
+  if config.sharding_in_types.value:
+    return [x.update(sharding=s) for x, s in zip(xs, devices)]
+  return xs
+device_put_p.def_abstract_eval(_device_put_abstract_eval)
 
 def _device_put_transpose(cts, *_, devices, srcs, copy_semantics):
   results = [None] * len(cts)
@@ -567,6 +572,12 @@ def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
   # TODO(yashkatariya): Maybe we should add the custom calls anyways if it's
   # being used inside jit? Atleast for now, this preserves the old behavior.
   if ctx.module_context.all_default_mem_kind:
+    if config.sharding_in_types.value:
+      return [
+          mlir.wrap_with_sharding_op(
+              ctx, x, a, a.sharding._to_xla_hlo_sharding(a.ndim).to_proto())
+          for x, a in zip(xs, ctx.avals_out)
+      ]
     return xs
   def lower(x, device, aval, out_aval):
     if (isinstance(device, (Sharding, TransferToMemoryKind)) and
@@ -592,6 +603,12 @@ mlir.register_lowering(
 
 
 def _common_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
+  if config.sharding_in_types.value:
+    return [
+        mlir.wrap_with_sharding_op(
+            ctx, x, a, a.sharding._to_xla_hlo_sharding(a.ndim).to_proto())
+        for x, a in zip(xs, ctx.avals_out)
+    ]
   return xs
 mlir.register_lowering(device_put_p, _common_device_put_lowering)
 

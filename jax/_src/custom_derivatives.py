@@ -31,7 +31,6 @@ from jax._src.ad_util import (
     stop_gradient_p, SymbolicZero, Zero, zeros_like_aval)
 from jax._src.api_util import (
     argnums_partial, flatten_fun_nokwargs, resolve_kwargs)
-from jax._src.core import raise_to_shaped
 from jax._src.errors import UnexpectedTracerError
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -81,7 +80,7 @@ def _flatten_fun_nokwargs(in_tree, *args_flat):
   py_args = tree_unflatten(in_tree, args_flat)
   ans = yield py_args, {}
   ans_flat, ans_tree = tree_flatten(ans)
-  ans_avals = [core.raise_to_shaped(core.get_aval(x)) for x in ans_flat]
+  ans_avals = [core.get_aval(x) for x in ans_flat]
   yield ans_flat, (ans_tree, ans_avals)
 
 
@@ -287,7 +286,7 @@ def _flatten_jvp(primal_name, jvp_name, in_tree, maybe_out_type, *args):
   py_primals_out, py_tangents_out = pair_out
   primals_out, out_tree = tree_flatten(py_primals_out)
   tangents_out, out_tree2 = tree_flatten(py_tangents_out)
-  primal_avals = [core.raise_to_shaped(core.get_aval(x)) for x in primals_out]
+  primal_avals = [core.get_aval(x) for x in primals_out]
   if out_tree != out_tree2:
     msg = (f"Custom JVP rule {jvp_name} for function {primal_name} must "
            "produce primal and tangent outputs with equal container (pytree) "
@@ -327,11 +326,11 @@ def _flatten_jvp(primal_name, jvp_name, in_tree, maybe_out_type, *args):
            "shapes/dtypes of:\n"
            f"""    {str(ty_tree_).replace("'", "")}""")
       raise TypeError(m)
-  primal_avals_out = [raise_to_shaped(core.get_aval(x), weak_type=False) for x in primals_out]
+  primal_avals_out = [core.get_aval(x).strip_weak_type() for x in primals_out]
   expected_tangent_avals_out = [
-    raise_to_shaped(core.get_aval(x), weak_type=False).to_tangent_aval()
+    core.get_aval(x).strip_weak_type().to_tangent_aval()
     for x in primals_out]
-  tangent_avals_out = [raise_to_shaped(core.get_aval(t), weak_type=False)
+  tangent_avals_out = [core.get_aval(t).strip_weak_type()
                        if type(t) is not SymbolicZero else t.aval.strip_weak_type()
                        for t in tangents_out]
   if expected_tangent_avals_out != tangent_avals_out:
@@ -606,7 +605,7 @@ class custom_vjp(Generic[ReturnValue]):
         f_, dyn_args = lu.wrap_init(self.fun), args
         fwd_, bwd = lu.wrap_init(fwd), lu.wrap_init(self.bwd)
       args_flat, in_tree = tree_flatten(dyn_args)
-      in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
+      in_avals = [core.get_aval(x) for x in args_flat]
       flat_fun, out_type = _flatten_fun_nokwargs(f_, in_tree)
       flat_fwd, out_trees = _flatten_fwd(fwd_, self.symbolic_zeros, primal_name,
                                          fwd_name, in_tree, out_type)
@@ -674,7 +673,7 @@ def _flatten_fwd(symbolic_zeros, primal_name, fwd_name, in_tree, maybe_out_type,
   py_primals_out, res = pair_out
   primals_out, out_tree = tree_flatten(py_primals_out)
   res, res_tree = tree_flatten(res)
-  primal_avals = [core.raise_to_shaped(core.get_aval(x)) for x in primals_out]
+  primal_avals = [core.get_aval(x) for x in primals_out]
   # If the primal function already ran, check out_tree agreement.
   try: out_type_ = maybe_out_type()
   except lu.StoreException: out_type_ = None
@@ -772,7 +771,7 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
         msg = ("Custom VJP bwd rule must produce an output with the same "
                "shape/dtypes as the args tuple of the primal function, but at "
                f"output{keystr(kp)} the bwd rule produced an output of "
-               f"shape/dtype {raise_to_shaped(a_).str_short()} corresponding "
+               f"shape/dtype {a_.str_short()} corresponding "
                f"to an input of shape/dtype {a.str_short()}.")
         raise ValueError(msg)
       results.append(ct)
@@ -831,7 +830,7 @@ def _custom_vjp_call_jaxpr_jvp(
   _, res_tree = out_trees()
   res_and_primals_out = core.eval_jaxpr(fwd_jaxpr, fwd_consts, *args)
   res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
-  avals_out = [raise_to_shaped(core.get_aval(x)).to_tangent_aval() for x in primals_out]
+  avals_out = [core.get_aval(x).to_tangent_aval() for x in primals_out]
   args_dot = map(ad.instantiate_zeros, args_dot)
   tangents_out = ad.custom_lin_p.bind(
       *res, *args_dot, num_res=res_tree.num_leaves, bwd=bwd,
@@ -1110,7 +1109,7 @@ def partition_list(choice, lst):
   return out, merge
 
 def abstractify(x):
-  return core.raise_to_shaped(core.get_aval(x))
+  return core.get_aval(x)
 
 
 ### Custom transposition
@@ -1211,7 +1210,7 @@ def linear_call(fun: Callable, fun_transpose: Callable, residual_args,
   lin_avals = map(abstractify, operands_lin)
   f_jaxpr, f_consts = _initial_style_jaxpr(f, (*res_avals, *lin_avals))
   f_jaxpr = _close_jaxpr(f_jaxpr)
-  out_avals = map(core.raise_to_shaped, f_jaxpr.out_avals)
+  out_avals = f_jaxpr.out_avals
 
   t_in_tree = treedef_tuple((res_tree, out_tree()))
   t, t_out_tree = flatten_fun_nokwargs(lu.wrap_init(fun_transpose), t_in_tree)
@@ -1265,7 +1264,7 @@ def _linear_call_transpose_rule(cts, *args, callee, transpose,
   return [None] * (num_callee_consts + num_transpose_consts + num_res) + cts_out
 
 def _linear_call_abstract_eval(*args, **kwargs):
-  return map(core.raise_to_shaped, kwargs['callee'].out_avals)
+  return kwargs['callee'].out_avals
 
 linear_call_p = core.Primitive('linear_call')
 linear_call_p.multiple_results = True
@@ -1398,7 +1397,7 @@ def optimize_remat_of_custom_vjp_fwd(
                                        in_tree, out_type)
     flat_fwd = _fix_fwd_args(flat_fwd)
 
-    in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
+    in_avals = [core.get_aval(x) for x in args_flat]
     fwd_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fwd, in_avals)
     fwd_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(fwd_jaxpr))
     prim_tree, res_tree = out_trees()

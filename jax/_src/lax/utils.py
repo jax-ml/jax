@@ -52,10 +52,7 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
   assert not prim.multiple_results
   weak_type = weak_type_rule(*avals, **kwargs)
   least_specialized = type(max(avals, key=_get_array_abstraction_level))
-  if least_specialized is core.ConcreteArray:
-    out = prim.impl(*[x.val for x in avals], **kwargs)
-    return core.ConcreteArray(out.dtype, out, weak_type=weak_type)
-  elif least_specialized is core.ShapedArray:
+  if least_specialized is core.ShapedArray:
     return core.ShapedArray(
         shape_rule(*avals, **kwargs), dtype_rule(*avals, **kwargs),
         weak_type=weak_type,
@@ -77,11 +74,7 @@ def standard_multi_result_abstract_eval(
   assert all(isinstance(aval, core.UnshapedArray) for aval in avals), avals
   least_specialized = max(map(type, avals), key=_get_array_abstraction_level)
   weak_types = weak_type_rule(*avals, **kwargs)
-  if least_specialized is core.ConcreteArray:
-    out_vals = prim.impl(*[x.val for x in avals], **kwargs)
-    return [core.ConcreteArray(val.dtype, val, weak_type=weak_type)
-            for val, weak_type in zip(out_vals, weak_types)]
-  elif least_specialized is core.ShapedArray:
+  if least_specialized is core.ShapedArray:
     out_shapes = shape_rule(*avals, **kwargs)
     out_dtypes = dtype_rule(*avals, **kwargs)
     return [core.ShapedArray(s, d, weak_type=weak_type)

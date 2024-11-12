@@ -19,7 +19,7 @@ from collections.abc import (Callable, Collection, Hashable, Iterable, Iterator,
 from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass
 import functools
-from functools import partial, partialmethod, total_ordering
+from functools import partial, total_ordering
 import gc
 import inspect
 import itertools as it
@@ -34,7 +34,6 @@ from weakref import ref
 
 import numpy as np
 
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import config
 from jax._src import effects
@@ -368,7 +367,7 @@ class Var:
   def __init__(self, suffix: str, aval: AbstractValue):
     self.count = next(_var_counter)
     self.suffix = suffix
-    self.aval = raise_to_shaped(aval)
+    self.aval = aval
 
   # TODO(phawkins, mattjj): remove ordering of variables. JAX itself does not
   # care about variable ordering, but the downstream package kfac_jax does.
@@ -638,23 +637,12 @@ def _aval_property(name):
 class Tracer(typing.Array, metaclass=StrictABCMeta):
   __array_priority__ = 1000
   __slots__ = ['_trace', '_line_info']
+  __hash__ = None  # type: ignore
 
   dtype = _aval_property('dtype')
   ndim = _aval_property('ndim')
   size = _aval_property('size')
   shape = _aval_property('shape')
-
-  def __hash__(self):
-    # TODO(jakevdp) finalize this deprecation and set __hash__ = None
-    # Warning added 2024-06-13
-    if deprecations.is_accelerated('tracer-hash'):
-      raise TypeError(f"unhashable type: {type(self)}")
-    # Use FutureWarning rather than DeprecationWarning because hash is likely
-    # not called directly by the user, so we want to warn at all stacklevels.
-    warnings.warn(
-      f"unhashable type: {type(self)}. Attempting to hash a tracer will lead to an"
-      " error in a future JAX release.", category=FutureWarning)
-    return super().__hash__()
 
   def __init__(self, trace: Trace):
     self._trace = trace
@@ -662,7 +650,7 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
   def _error_repr(self):
     if self.aval is None:
       return f"traced array with aval {self.aval}"
-    return f"traced array with shape {raise_to_shaped(self.aval).str_short()}"
+    return f"traced array with shape {self.aval.str_short()}"
 
   def __array__(self, *args, **kw):
     raise TracerArrayConversionError(self)
@@ -695,6 +683,10 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
 
   def __len__(self):
     return self.aval._len(self)
+
+  def to_concrete_value(self):
+    # Should return the concrete value if there is one, or else None.
+    return None
 
   @property
   def sharding(self):
@@ -739,10 +731,12 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
     return self  # Override for object equivalence checking
 
   def __bool__(self):
+    if is_concrete(self): return bool(self.to_concrete_value())  # pytype: disable=wrong-arg-types
     check_bool_conversion(self)
     return self.aval._bool(self)
 
   def __int__(self):
+    if is_concrete(self): return int(self.to_concrete_value())  # pytype: disable=wrong-arg-types
     check_scalar_conversion(self)
     return self.aval._int(self)
 
@@ -755,14 +749,17 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
     return self.aval._complex(self)
 
   def __hex__(self):
+    if is_concrete(self): return hex(self.to_concrete_value())  # pytype: disable=wrong-arg-types
     check_integer_conversion(self)
     return self.aval._hex(self)
 
   def __oct__(self):
+    if is_concrete(self): return oct(self.to_concrete_value())  # pytype: disable=wrong-arg-types
     check_integer_conversion(self)
     return self.aval._oct(self)
 
   def __index__(self):
+    if is_concrete(self): return operator.index(self.to_concrete_value())  # pytype: disable=wrong-arg-types
     check_integer_conversion(self)
     return self.aval._index(self)
 
@@ -1007,18 +1004,16 @@ class TracingContext(threading.local):
   def set_trace(self, trace):
     self.trace = trace
     ts = ref(trace) if trace is not None else None
-    config.update_thread_local_jit_state(trace_state=ts)
+    config.trace_state.set_local(ts)
 
   def set_axis_env(self, axis_env):
     self.axis_env = axis_env
-    config.update_thread_local_jit_state(
-      axis_env_state=self.axis_env.as_hashable_key())
+    config.axis_env_state.set_local(axis_env.as_hashable_key())
 
   def update_thread_local_jit_state(self):
     ts = ref(self.trace) if self.trace is not None else None
-    config.update_thread_local_jit_state(
-      trace_state=ts,
-      axis_env_state=self.axis_env.as_hashable_key())
+    config.trace_state.set_local(ts)
+    config.axis_env_state.set_local(self.axis_env.as_hashable_key())
 
 trace_ctx = TracingContext()
 
@@ -1062,10 +1057,7 @@ def _initialize_jax_jit_thread_local_state():
 
   This function does not live in `config.py`, to prevent circular imports.
   """
-  tls = jax_jit.thread_local_state()
-
-  if tls.extra_jit_context is None:
-    trace_ctx.update_thread_local_jit_state()
+  trace_ctx.update_thread_local_jit_state()
 
 jax_jit.set_thread_local_state_initialization_callback(
     _initialize_jax_jit_thread_local_state)
@@ -1293,18 +1285,20 @@ class AbstractValue:
     except AttributeError:
       return self.__class__.__name__
 
-  def strip_weak_type(self) -> AbstractValue:
+  def update_weak_type(self, weak_type):
     return self
 
-  def join(self, other):
-    raise NotImplementedError("must override")
+  def strip_weak_type(self) -> AbstractValue:
+    return self.update_weak_type(False)
+
+  def normalize(self) -> AbstractValue:
+    return self.strip_weak_type()
 
   def update(self, **kwargs):
     raise NotImplementedError("must override")
 
   def str_short(self, short_dtypes=False):
     return str(self)
-
 
 # For type signatures involving dynamic shapes, we use lists of abstract values
 # which may contain (reverse) de Bruijn indices in their shapes.
@@ -1339,26 +1333,10 @@ def _jaxpr_type_to_callable_annotation(jaxpr: Jaxpr) -> InputType:
          for v in jaxpr.invars]
   return tuple(out)
 
-class Bot(AbstractValue): pass
-bot = Bot()
-
-
-def lattice_join(x: AbstractValue | None,
-                 y: AbstractValue | None) -> AbstractValue:
-  if x is None:
-    assert y is not None
-    return y
-  elif y is None:
-    return x
-  elif isinstance(x, type(y)):
-    return y.join(x)
-  elif isinstance(y, type(x)):
-    return x.join(y)
-  elif isinstance(x, DShapedArray) and isinstance(y, ShapedArray):
-    # TODO(mattjj): remove this special case after dynamic shapes are integrated
-    return x.join(y)
-  else:
-    raise TypeError(x, y)
+# TODO(dougalm): Deprecate. This is here for backwards compat.
+def lattice_join(x, y):
+  assert typematch(x, y)
+  return x
 
 # For use in typing annotations to denote either a Tracer or a `valid_jaxtype`.
 Value = Any
@@ -1393,12 +1371,16 @@ def get_aval(x):
   else:
     return concrete_aval(x)
 
-def get_type(x):
-  aval = get_aval(x)
-  if isinstance(aval, ConcreteArray):
-    return raise_to_shaped(aval)
+get_type = get_aval
+
+def is_concrete(x):
+  return to_concrete_value(x) is not None
+
+def to_concrete_value(x):
+  if isinstance(x, Tracer):
+    return x.to_concrete_value()
   else:
-    return aval
+    return x
 
 def concretization_function_error(fun, suggest_astype=False):
   fname = getattr(fun, "__name__", fun)
@@ -1423,10 +1405,11 @@ def concrete_or_error(force: Any, val: Any, context=""):
   if force is None:
     force = lambda x: x
   if isinstance(val, Tracer):
-    if isinstance(val.aval, ConcreteArray):
-      return force(val.aval.val)
-    else:
+    maybe_concrete = val.to_concrete_value()
+    if maybe_concrete is None:
       raise ConcretizationTypeError(val, context)
+    else:
+      return force(maybe_concrete)
   else:
     return force(val)
 
@@ -1482,15 +1465,11 @@ class UnshapedArray(AbstractValue):
   array_abstraction_level = 4
 
   def __init__(self, dtype, weak_type=False):
+    # Is it silly to initialize this object and then complain that we should
+    # never create one? Yes. But otherwise pytype complains.
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
-
-  def update(self, dtype=None, weak_type=None):
-    if dtype is None:
-      dtype = self.dtype
-    if weak_type is None:
-      weak_type = self.weak_type
-    return UnshapedArray(dtype, weak_type)
+    raise Exception("We should never create an UnshapedArray object")
 
   def __eq__(self, other):
     return (type(self) is type(other) and self.dtype == other.dtype and
@@ -1517,32 +1496,11 @@ class UnshapedArray(AbstractValue):
   _oct     = concretization_function_error(oct)
   _index   = concretization_function_error(operator.index)
 
-  def to_tangent_aval(self) -> AbstractValue:
-    return UnshapedArray(primal_dtype_to_tangent_dtype(self.dtype),
-                         self.weak_type)
-
-  def join(self, other):
-    if self.dtype == other.dtype:
-      if self.weak_type == other.weak_type:
-        return self
-      else:
-        return UnshapedArray(self.dtype, weak_type=False)
-    else:
-      raise TypeError(self, other)
-
   def str_short(self, short_dtypes=False) -> str:
     return dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
 
-  def strip_weak_type(self):
-    """Returns a copy of the aval with weak_type=False."""
-    return self.update(weak_type=False)
-
-  @property
-  def shape(self):
-    msg = ("UnshapedArray has no shape. Please open an issue at "
-           "https://github.com/jax-ml/jax/issues because it's unexpected for "
-           "UnshapedArray instances to ever be produced.")
-    raise TypeError(msg)
+  def update_weak_type(self, weak_type):
+    return self.update(weak_type=weak_type)
 
 def _canonicalize_dimension(dim: DimSize) -> DimSize:
   # Dimensions are most commonly integral (by far), so we check that first.
@@ -1602,7 +1560,7 @@ def _invalid_shape_error(shape: Shape, context: str=""):
     msg += f" {context}."
   if not config.dynamic_shapes.value and any(
          isinstance(x, Tracer) and isinstance(get_aval(x), ShapedArray)
-         and not isinstance(get_aval(x), ConcreteArray) for x in shape):
+         and not is_concrete(x) for x in shape):
     msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
             "smaller subfunctions.")
     for x in shape:
@@ -1666,15 +1624,6 @@ class ShapedArray(UnshapedArray):
       return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
                          self.weak_type)
 
-  def join(self, other):
-    if definitely_equal_shape(self.shape, other.shape) and self.dtype == other.dtype:
-      weak_type = self.weak_type and other.weak_type
-      return self.update(weak_type=weak_type)
-    elif self.dtype == other.dtype:
-      return UnshapedArray(self.dtype)
-    else:
-      raise TypeError(self, other)
-
   def str_short(self, short_dtypes=False):
     dt_str = (dtypes.short_dtype_name(self.dtype) if short_dtypes else
               self.dtype.name)
@@ -1703,10 +1652,6 @@ def _get_shape_sharding_str(shape, spec):
     else:
       yield f"{s1}@{s2}"
 
-
-def _forward_to_value(self, fun, ignored_tracer, *args):
-  return fun(self.val, *args)
-
 def _get_abstract_sharding(val):
   from jax._src.sharding_impls import NamedSharding  # pytype: disable=import-error
 
@@ -1715,61 +1660,6 @@ def _get_abstract_sharding(val):
     return NamedSharding(val.sharding.mesh.abstract_mesh,
                          val.sharding._normalized_spec(val.ndim))
   return None
-
-class ConcreteArray(ShapedArray):
-  __slots__ = ['val']
-  array_abstraction_level = 0
-
-  def __init__(self, dtype, val, weak_type=None):
-    super().__init__(
-        np.shape(val), dtype,
-        weak_type=dtypes.is_weakly_typed(val) if weak_type is None else weak_type,
-        sharding=_get_abstract_sharding(val))
-    dtypes.check_valid_dtype(self.dtype)
-    # Note: canonicalized self.dtype doesn't necessarily match self.val
-    assert self.dtype == dtypes.canonicalize_dtype(np.result_type(val)), (val, dtype)
-    self.val = val
-
-  def update(self, dtype=None, val=None, weak_type=None):
-    dtype = self.dtype if dtype is None else dtype
-    val = self.val if val is None else val
-    weak_type = self.weak_type if weak_type is None else weak_type
-    return ConcreteArray(dtype, val, weak_type)
-
-  def __eq__(self, other):
-    if (type(self) is type(other) and self.dtype == other.dtype
-        and self.shape == other.shape and self.weak_type == other.weak_type):
-      with eval_context():  # in case self.val is an Array
-        return (self.val == other.val).all()
-    else:
-      return False
-
-  def __hash__(self):
-    return id(self.val)
-
-  def join(self, other) -> AbstractValue:
-    if self == other:
-      return self
-    elif self.shape == other.shape and self.dtype == other.dtype:
-      weak_type = self.weak_type and other.weak_type
-      return ShapedArray(self.shape, self.dtype, weak_type=weak_type)
-    elif self.dtype == other.dtype:
-      return UnshapedArray(self.dtype, weak_type=self.weak_type and other.weak_type)
-    else:
-      raise TypeError(self, other)
-
-  def str_short(self, short_dtypes=False) -> str:
-    dt_str = dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
-    return f'{self.val}, dtype={dt_str}'
-
-  _bool    = partialmethod(_forward_to_value, bool)
-  _int     = partialmethod(_forward_to_value, int)
-  _hex     = partialmethod(_forward_to_value, hex)
-  _oct     = partialmethod(_forward_to_value, oct)
-  _index   = partialmethod(_forward_to_value, operator.index)
-
-  _float   = concretization_function_error(float, True)
-  _complex = concretization_function_error(complex, True)
 
 def primal_dtype_to_tangent_dtype(primal_dtype):
   if isinstance(primal_dtype, dtypes.ExtendedDType):
@@ -1833,27 +1723,9 @@ class DShapedArray(UnshapedArray):
   def __hash__(self):
     return hash((self.shape, self.dtype, self.weak_type))
 
-  def join(self, other):
-    if (definitely_equal_shape(self.shape, other.shape) and
-        self.dtype == other.dtype):
-      weak_type = self.weak_type and other.weak_type
-      return self.update(weak_type=weak_type)
-    elif self.dtype == other.dtype:
-      return UnshapedArray(self.dtype)
-    else:
-      raise TypeError(self, other)
-
   def to_tangent_aval(self):
     return DShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
                         self.weak_type)
-
-class DConcreteArray(DShapedArray):
-  __slots__ = ['val']
-  array_abstraction_level = 1
-  def __init__(self, shape, dtype, weak_type, val):
-    super().__init__(shape, dtype, weak_type)
-    self.val = val
-
 
 pytype_aval_mappings: dict[type, Callable[[Any], AbstractValue]] = {}
 
@@ -1911,8 +1783,7 @@ class DArray:
 
 
 pytype_aval_mappings[DArray] = \
-    lambda x: DConcreteArray(x._aval.shape, x._aval.dtype, x._aval.weak_type,
-                             x._data)
+    lambda x: DShapedArray(x._aval.shape, x._aval.dtype, x._aval.weak_type)
 
 @dataclass(frozen=True)
 class bint(dtypes.ExtendedDType):
@@ -1963,16 +1834,11 @@ def mutable_array_abstract_eval(init_aval):
 @mutable_array_p.def_impl
 def _mutable_array_impl(init_val):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
-  aval = raise_to_shaped(get_aval(init_val))
+  aval = get_aval(init_val)
   return MutableArray(AbstractRef(aval), init_val)
 
 
 class AbstractToken(AbstractValue):
-  def join(self, other):
-    if isinstance(other, AbstractToken):
-      return self
-    else:
-      assert False, f"Cannot join {self} with {other}"
   def str_short(self, short_dtypes=False): return 'Tok'
   def to_tangent_aval(self): return self
 abstract_token: AbstractToken = AbstractToken()
@@ -1992,31 +1858,10 @@ class Token:
 pytype_aval_mappings[Token] = lambda _: abstract_token
 
 
-def raise_to_shaped(aval: AbstractValue, weak_type=None):
-  aval_type = type(aval)
-  if aval_type is ShapedArray and weak_type is None:
-    return aval
-  if weak_type is None:
-    weak_type = getattr(aval, 'weak_type', False)
-  for typ in aval_type.__mro__:
-    handler = raise_to_shaped_mappings.get(typ)
-    if handler: return handler(aval, weak_type)
-  raise TypeError(type(aval))
-
-def _shaped_array_mapping(aval, weak_type):
-  if config.sharding_in_types.value:
-    return ShapedArray(aval.shape, aval.dtype, weak_type, sharding=aval.sharding)
-  return ShapedArray(aval.shape, aval.dtype, weak_type)
-
-raise_to_shaped_mappings: dict[type, Callable] = {
-    AbstractToken: lambda aval, _: aval,
-    Bot: lambda aval, _: aval,
-    UnshapedArray: lambda aval, _: aval,
-    ShapedArray: _shaped_array_mapping,
-    DConcreteArray: lambda aval, weak_type: DShapedArray(
-        aval.shape, aval.dtype, weak_type
-    ),
-}
+# TODO(dougalm): Deprecate these. They're just here for backwards compat.
+def raise_to_shaped(aval):
+  return aval
+raise_to_shaped_mappings: dict[type, Callable] = {}
 
 ### Operations on shapes and dimension sizes.
 
@@ -2351,7 +2196,6 @@ AvalMapHandlerPair = tuple[Callable, Callable]
 aval_mapping_handlers: dict[type, AvalMapHandlerPair] = {
     DShapedArray:   (_map_dshaped_array, _unmap_dshaped_array),
     ShapedArray:   (_map_shaped_array, _unmap_shaped_array),
-    ConcreteArray: (_map_shaped_array, _unmap_shaped_array),
     AbstractToken: (lambda _, __, a: a, lambda _, __, ___, a: a)
 }
 
@@ -2425,18 +2269,23 @@ def typecheck(aval: AbstractValue, x) -> bool:
 def typecompat(aval_ref: AbstractValue, aval: AbstractValue) -> bool:
   """Determine whether `aval` conforms to `aval_ref`. Ignores weak_type."""
   try:
-    return typematch(aval_ref, lattice_join(aval_ref, aval))
+    return typematch(aval_ref, aval)
   except TypeError:
     return False
 
-def typematch(aval1: AbstractValue, aval2: AbstractValue) -> bool:
-  """Determine whether `aval1` and `aval2` are equivalent. Ignores weak_type."""
-  if aval1 == aval2: return True
-  # unequal avals may still represent the same type, because type is represented
-  # by avals at the shaped level, and because weak type tags aren't considered
-  # part of the type
-  return (raise_to_shaped(aval1, weak_type=False) ==
-          raise_to_shaped(aval2, weak_type=False))
+def typematch(t1: AbstractValue, t2: AbstractValue) -> bool:
+  """Determine whether `t1` and `t2` are equivalent. Ignores weak_type."""
+  t1 = t1.normalize()
+  t2 = t2.normalize()
+  if t1 == t2:
+    return True
+  elif (isinstance(t1, (ShapedArray, DShapedArray)) and
+        isinstance(t2, (ShapedArray, DShapedArray))):
+    # This case handles DShapedArray and shape polynomials. Alternatively we
+    # could try normalizing first and then doing simple equality.
+    return t1.dtype == t2.dtype and definitely_equal_shape(t1.shape, t2.shape)
+  else:
+    return False
 
 class JaxprTypeError(TypeError): pass
 

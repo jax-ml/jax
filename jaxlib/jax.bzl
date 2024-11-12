@@ -43,6 +43,7 @@ mosaic_gpu_internal_users = []
 mosaic_internal_users = []
 pallas_gpu_internal_users = []
 pallas_tpu_internal_users = []
+pallas_extension_deps = []
 
 jax_internal_export_back_compat_test_util_visibility = []
 jax_internal_test_harnesses_visibility = []
@@ -66,6 +67,7 @@ _py_deps = {
     "flatbuffers": ["@pypi_flatbuffers//:pkg"],
     "hypothesis": ["@pypi_hypothesis//:pkg"],
     "matplotlib": ["@pypi_matplotlib//:pkg"],
+    "mpmath": [],
     "opt_einsum": ["@pypi_opt_einsum//:pkg"],
     "pil": ["@pypi_pillow//:pkg"],
     "portpicker": ["@pypi_portpicker//:pkg"],
