@@ -1146,6 +1146,19 @@ class LaxTest(jtu.JaxTestCase):
     lhs, rhs = rng(lhs_shape, np.float16), rng(rhs_shape, np.float16)
     self.assertEqual(fun(lhs, rhs).dtype, np.float16)
 
+  def testDotAlgorithmAllowedOutputStorage(self):
+    # see https://github.com/jax-ml/jax/issues/24794
+    if not jtu.test_device_matches(["gpu"]):
+      self.skipTest("Only supported on GPU.")
+    def fun(lhs, rhs):
+      return lax.dot(lhs, rhs, precision="F16_F16_F32",
+                     preferred_element_type=np.float16)
+    lhs_shape = (3, 4)
+    rhs_shape = (4, 3)
+    rng = jtu.rand_default(self.rng())
+    lhs, rhs = rng(lhs_shape, np.float16), rng(rhs_shape, np.float16)
+    self.assertNotIn("convert", jax.jit(fun).lower(lhs, rhs).as_text())
+
   def testDotAlgorithmConfig(self):
     lhs_shape = (3, 4)
     rhs_shape = (4, 3)
