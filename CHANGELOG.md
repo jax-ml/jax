@@ -49,6 +49,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     declared inline via {func}`dataclasses.field`. See the function documentation
     for examples.
 
+* Bug fixes
+  * Fixed a bug where the GPU implementations of LU and QR decomposition would
+    result in an indexing overflow for batch sizes close to int32 max. See
+    {jax-issue}`#24843` for more details.
+
 ## jax 0.4.35 (Oct 22, 2024)
 
 * Breaking Changes
@@ -79,7 +84,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The semi-public API `jax.lib.xla_client.register_custom_call_target` has
     been deprecated. Use the JAX FFI instead.
   * The semi-public APIs `jax.lib.xla_client.dtype_to_etype`,
-    `jax.lib.xla_client.ops`, 
+    `jax.lib.xla_client.ops`,
     `jax.lib.xla_client.shape_from_pyval`, `jax.lib.xla_client.PrimitiveType`,
     `jax.lib.xla_client.Shape`, `jax.lib.xla_client.XlaBuilder`, and
     `jax.lib.xla_client.XlaComputation` have been deprecated. Use StableHLO
