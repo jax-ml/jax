@@ -770,7 +770,13 @@ class ModuleContext:
     return self.backend_or_name
 
   def new_channel(self) -> int:
-    return next(self.channel_iterator)
+    channel = next(self.channel_iterator)
+    # `xla::HostCallback` requires a 16-bit channel ID.
+    if channel >= (1 << 16):
+      raise RuntimeError(
+          "Host callback lowering created too many channels. PjRt does not"
+          " support more than 65535 channels")
+    return channel
 
   # Adds an IFRT host callback object to the context. A reference to these
   # callbacks will be provided to IFRT during compilation so it can do things
