@@ -2111,33 +2111,6 @@ closed_call_p.def_impl(call_impl)
 closed_call_p.def_effectful_abstract_eval(
     lambda *_, call_jaxpr: (call_jaxpr.out_avals, call_jaxpr.effects))
 
-
-outfeed_primitives: set[Primitive] = set()
-def jaxpr_uses_outfeed(jaxpr: Jaxpr) -> bool:
-  """Finds if there are outfeed primitives anywhere inside a Jaxpr."""
-  return any(primitive_uses_outfeed(eqn.primitive, eqn.params)
-             for eqn in jaxpr.eqns)
-
-def _param_uses_outfeed(param):
-  if type(param) is Jaxpr:
-    if jaxpr_uses_outfeed(param):
-      return True
-  elif type(param) is ClosedJaxpr:
-    if jaxpr_uses_outfeed(param.jaxpr):
-      return True
-  return False
-
-def primitive_uses_outfeed(prim: Primitive, params: dict) -> bool:
-  if prim in outfeed_primitives:
-    return True
-  for param in params.values():
-    if isinstance(param, tuple):
-      if any(unsafe_map(_param_uses_outfeed, param)):
-        return True
-    elif _param_uses_outfeed(param):
-      return True
-  return False
-
 # ------------------- Map -------------------
 
 class MapPrimitive(Primitive):
