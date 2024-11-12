@@ -87,6 +87,16 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref_ty,
                                        int64_t leading_tile_rows = 0) {
   if (auto tiled_layout_attr =
           dyn_cast<TiledLayoutAttr>(memref_ty.getLayout())) {
+    if (leading_tile_rows > 0 && !tiled_layout_attr.getTiles().empty() &&
+        tiled_layout_attr.getTiles().front().dimensions().size() == 2 &&
+        tiled_layout_attr.getTiles().front().dimensions()[0] !=
+            leading_tile_rows) {
+      return emitError(UnknownLoc::get(memref_ty.getContext()),
+                       "Trying to infer memref layout with sublane tiling ")
+             << leading_tile_rows
+             << ", but the memref already has sublane tiling "
+             << tiled_layout_attr.getTiles().front().dimensions()[0];
+    }
     return tiled_layout_attr;
   }
   if (auto affine_map_attr = dyn_cast<AffineMapAttr>(memref_ty.getLayout())) {
@@ -226,13 +236,25 @@ LogicalResult inferOp(Operation &op, const int hardware_generation,
   if (auto alloca_op = dyn_cast<memref::AllocaOp>(op)) {
     TypedValue<MemRefType> arg = alloca_op.getResult();
     const MemRefType memref_ty = alloca_op.getResult().getType();
-    FAILUREOR_ASSIGN_OR_RETURN(const MemRefType new_memref_ty,
-                               inferMemref(memref_ty, hardware_generation,
-                                           target_shape, tpu_tiling_flags));
+    // If the memref can be reinterpreted to untiled, force to use tiling
+    // {1, target.lane_count} for 32 bit.
+    int64_t leading_tile_rows = 0;
+    // TODO(b/375038685): generalize untiled memref with packed type which
+    // needs to update load/store rules.
+    if (memref_ty.getElementTypeBitWidth() == 32 && memref_ty.getRank() > 1 &&
+        *(memref_ty.getShape().end() - 1) <= target_shape[1]) {
+      leading_tile_rows = 1;
+    }
+    FAILUREOR_ASSIGN_OR_RETURN(
+        const MemRefType new_memref_ty,
+        inferMemref(memref_ty, hardware_generation, target_shape,
+                    tpu_tiling_flags, leading_tile_rows));
     alloca_op.getResult().setType(new_memref_ty);
     if (memref_ty != new_memref_ty) {
       OpBuilder builder(alloca_op->getContext());
       builder.setInsertionPointAfter(alloca_op);
+      // TODO(b/376130272): add a canonicalizer for EraseLayoutOp so that if we
+      // have erase(erase(x)) then we rewrite it to erase(x).
       auto erase_op = builder.create<tpu::EraseLayoutOp>(
           arg.getLoc(),
           MemRefType::get(new_memref_ty.getShape(), memref_ty.getElementType(),
@@ -296,22 +318,56 @@ LogicalResult inferFunc(func::FuncOp f, const int hardware_generation,
     }
 
     FAILUREOR_ASSIGN_OR_RETURN(
-        const MemRefType new_memref_ty,
+        MemRefType new_memref_ty,
         inferMemref(memref_ty, hardware_generation, target_shape,
                     tpu_tiling_flags, leading_tile_rows));
     arg.setType(new_memref_ty);
     new_arg_types.push_back(arg.getType());
     if (memref_ty != new_memref_ty) {
+      Value val = arg;
+      Operation * arg_use_op = nullptr;
+      // If the arg memref can be reinterpreted to untiled, we can insert
+      // ReinterpretCastOp to use tiling {packing, target.lane_count} before
+      // EraseLayoutOp for only the arg memrefs and expect the rest memref
+      // layout inference is based on the casted layout automatically. This
+      // would help lift many restrictions in alignment check when consuming
+      // this memref.
+      if (canReinterpretToUntiledMemref(cast<TypedValue<MemRefType>>(val),
+                                        target_shape,
+                                        /*allow_minormost_padding=*/true) &&
+          // TODO(b/375038685): generalize untiled memref with packed type which
+          // needs to update load/store rules.
+          new_memref_ty.getElementTypeBitWidth() == 32) {
+        auto tiled_layout =
+            cast<tpu::TiledLayoutAttr>(new_memref_ty.getLayout());
+        SmallVector<xla::Tile> tiles(tiled_layout.getTiles());
+        SmallVector<int64_t> new_tile_strides(tiled_layout.getTileStrides());
+        for (int i = 0; i < new_tile_strides.size() - 2; ++i) {
+          new_tile_strides[i] *= tiles[0].dimension(0);
+        }
+        tiles[0] = ::xla::Tile({1, target_shape[1]});
+        new_memref_ty = MemRefType::get(
+            new_memref_ty.getShape(), new_memref_ty.getElementType(),
+            TiledLayoutAttr::get(new_memref_ty.getContext(), tiles,
+                                 new_tile_strides),
+            new_memref_ty.getMemorySpace());
+        arg_use_op = builder.create<tpu::ReinterpretCastOp>(val.getLoc(),
+                                                            new_memref_ty, val);
+        val = arg_use_op->getResult(0);
+      }
       // Some standard MLIR ops have static checks that seems unreasonable,
       // and we know they hold in the way they are used in Mosaic. Still,
       // verification with layouts likes to fail, because it can't statically
       // prove the properties.
       auto erase_op = builder.create<tpu::EraseLayoutOp>(
-          arg.getLoc(),
+          val.getLoc(),
           MemRefType::get(new_memref_ty.getShape(), memref_ty.getElementType(),
                           /*layout=*/nullptr, new_memref_ty.getMemorySpace()),
-          arg);
-      arg.replaceAllUsesExcept(erase_op.getResult(), erase_op);
+          val);
+      if (!arg_use_op) {
+        arg_use_op = erase_op;
+      }
+      arg.replaceAllUsesExcept(erase_op.getResult(), arg_use_op);
     }
   }
   f.setFunctionType(
