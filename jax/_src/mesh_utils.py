@@ -33,6 +33,7 @@ _TPU_V3 = 'TPU v3'
 _TPU_V4 = 'TPU v4'
 _TPU_V5_LITE = "TPU v5 lite"
 _TPU_V5E = "TPU v5e"
+_TPU_V5P = "TPU v5p"
 
 # Maps physical topology -> mesh shape -> transpose to use for jekbradbury's
 # famous contiguous mesh trick.
@@ -70,6 +71,7 @@ _TRAY_2x2_RING_ORDER = (0, 1, 3, 2)
 _TRAY_4x4_RING_ORDER = (0, 1, 2, 3, 7, 6, 5, 9, 10, 11, 15, 14, 13, 12, 8, 4)
 _V5E_TRAY_RING_ORDER = (0, 1, 2, 3, 7, 6, 5, 4)
 _V5E_TRAY_IOTA_ORDER = (0, 4, 2, 6, 1, 5, 3, 7)
+_V5P_2x2x2_ORDER = (0, 1, 3, 2, 6, 7, 5, 4)
 
 def _tpu_v2_v3_create_device_mesh(
     mesh_shape: Sequence[int],
@@ -148,6 +150,35 @@ def _v5e_create_device_mesh(
   return None
 
 
+def _v5p_create_device_mesh(
+    mesh_shape: Sequence[int], devices: Sequence[Any], **unused_kwargs
+) -> np.ndarray | None:
+  """Creates device assignment for selected topologies.
+
+  Args:
+    mesh_shape: Logical mesh shape used by the model.
+    devices: TPU devices.
+    **unused_kwargs: ...
+
+  Returns:
+    None or reordered devices reshaped as `mesh_shape`.
+  """
+  max_x, max_y, max_z = max(getattr(d, "coords", (0, 0, 0)) for d in devices)
+  bound_x, bound_y, bound_z = max_x + 1, max_y + 1, max_z + 1
+  # Our ring re-ordering makes sense only if the passed-in devices are
+  # sequential, which may not always be the case. reversed() changes z-minor to
+  # x-minor.
+  sequential_devices = sorted(
+      devices,
+      key=lambda d: tuple(reversed(getattr(d, "coords", (0, 0, 0)))))
+
+  if bound_x == bound_y == 2 and bound_z == 2:
+    device_mesh = np.asarray(sequential_devices)
+    device_mesh = device_mesh[np.array(_V5P_2x2x2_ORDER)]
+    device_mesh = device_mesh.reshape(mesh_shape)
+    return device_mesh
+  return None
+
 # Registers functions to create device mesh for specific device kinds. Takes
 # precedence over the more general logic in create_device_mesh(). Handler may
 # return None; in that case, it will fall back to using the default logic.
@@ -158,6 +189,7 @@ device_kind_handler_dict: dict[
     _TPU_V2: _tpu_v2_v3_create_device_mesh,
     _TPU_V3: _tpu_v2_v3_create_device_mesh,
     _TPU_V5_LITE: _v5e_create_device_mesh,
+    _TPU_V5P: _v5p_create_device_mesh,
 }
 
 
