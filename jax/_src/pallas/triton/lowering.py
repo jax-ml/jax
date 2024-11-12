@@ -1624,6 +1624,11 @@ def _reshape_lowering_rule(
     return _splat(a, out_aval.shape)
 
   ty = ir.RankedTensorType(a.type)
+
+  # Triton Reshape doesn't support scalar result types (only 0d tensors).
+  if not out_aval.shape:
+    return _reduce_lowering(jnp.add, ctx, a, axes=tuple(range(ty.rank)))
+
   return tt_dialect.reshape(
       ir.RankedTensorType.get([*out_aval.shape], ty.element_type, ty.encoding),
       a,
