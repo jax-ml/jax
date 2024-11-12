@@ -185,9 +185,11 @@ pybind_extension(
     deps = [
         "//jaxlib:kernel_nanobind_helpers",
         "//jaxlib/cuda:cuda_vendor",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/strings",
         "@nanobind",
-        "@xla//xla/service:custom_call_status",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
         "@xla//xla/tsl/cuda:cudart",
     ],
 )

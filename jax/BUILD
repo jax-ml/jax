@@ -722,6 +722,7 @@ py_library(
         ":jax",
         ":mlir",
         "//jax/_src/lib",
+        "//jax/extend:ffi",
         "//jaxlib/mlir:arithmetic_dialect",
         "//jaxlib/mlir:builtin_dialect",
         "//jaxlib/mlir:func_dialect",
