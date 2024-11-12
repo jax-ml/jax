@@ -1451,6 +1451,14 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(us, actual_us)
 
   @jtu.skip_on_devices("cpu", "tpu")
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
+  def testBatchedLuOverflow(self):
+    # see https://github.com/jax-ml/jax/issues/24843
+    x = self.rng().standard_normal((1500000, 20, 20)).astype(np.float32)
+    lu, _, _ = lax.linalg.lu(x)
+    self.assertTrue(jnp.all(lu.std(axis=[1, 2]) > 0.9))
+
+  @jtu.skip_on_devices("cpu", "tpu")
   @jtu.ignore_warning(category=DeprecationWarning,
                       message="backend and device argument")
   def testLuCPUBackendOnGPU(self):

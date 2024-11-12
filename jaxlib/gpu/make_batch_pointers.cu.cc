@@ -16,6 +16,7 @@ limitations under the License.
 #include "jaxlib/gpu/make_batch_pointers.h"
 
 #include <algorithm>
+#include <cstdint>
 
 #include "jaxlib/gpu/vendor.h"
 
@@ -24,8 +25,9 @@ namespace JAX_GPU_NAMESPACE {
 
 namespace {
 __global__ void MakeBatchPointersAsyncKernel(char* buffer_in, void** buffer_out,
-                                             int batch, int batch_elem_size) {
-  for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < batch;
+                                             int64_t batch,
+                                             int64_t batch_elem_size) {
+  for (int64_t idx = blockIdx.x * blockDim.x + threadIdx.x; idx < batch;
        idx += blockDim.x * gridDim.x) {
     buffer_out[idx] = buffer_in + idx * batch_elem_size;
   }
@@ -33,8 +35,9 @@ __global__ void MakeBatchPointersAsyncKernel(char* buffer_in, void** buffer_out,
 }  // namespace
 
 void MakeBatchPointersAsync(gpuStream_t stream, void* buffer_in,
-                            void* buffer_out, int batch, int batch_elem_size) {
-  const int block_dim = 128;
+                            void* buffer_out, int64_t batch,
+                            int64_t batch_elem_size) {
+  const std::size_t block_dim = 128;
   const std::size_t grid_dim =
       std::min<std::size_t>(1024, (batch + block_dim - 1) / block_dim);
   MakeBatchPointersAsyncKernel<<<grid_dim, block_dim, 0, stream>>>(
