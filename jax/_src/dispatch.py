@@ -137,7 +137,7 @@ class RuntimeTokenSet(threading.local):
     # We only use replicated sharding for the first time when the token for the
     # order effect hasn't been created.
     s = jax.sharding.GSPMDSharding.get_replicated(devices)
-    sharded_tok = core.Token(pxla.shard_args([s], [None], [tok])[0])
+    sharded_tok = core.Token(pxla.shard_args([s], [None], [None], [tok])[0])
     self.current_tokens[eff] = sharded_tok
     return sharded_tok
 
@@ -391,6 +391,7 @@ class _DeferredShardArg:
   s: Sharding
   aval: core.AbstractValue
   committed: bool
+  copy_semantics: CopySemantics
 
   @property
   def result_handler(self):
@@ -435,7 +436,7 @@ def _device_put_sharding_impl(x, aval, device, copy):
           "device_put's second argument must be a Device or a Sharding which"
           f" represents addressable devices, but got {s}. Please pass device or"
           " Sharding which represents addressable devices.")
-    return _DeferredShardArg(x, s, aval, True)
+    return _DeferredShardArg(x, s, aval, True, copy)
 
   # Only `Device` exists below. `Sharding` instance is handled above.
   if isinstance(x, array.ArrayImpl):
@@ -443,8 +444,11 @@ def _device_put_sharding_impl(x, aval, device, copy):
       raise ValueError(
           "device_put's first argument must be a fully addressable array, but "
           f"got value with devices {x.devices()}")
-    if device is None and copy == CopySemantics.ALIAS:
-      return x
+    if device is None:
+      if copy == CopySemantics.ALIAS:
+        return x
+      else:
+        return _DeferredShardArg(x, x.sharding, aval, x.committed, copy)
     elif is_single_device_sharding(x.sharding):
       device = x.sharding._device_assignment[0] if device is None else device
       return pxla.batched_device_put(aval, SingleDeviceSharding(device), [x],
@@ -452,7 +456,7 @@ def _device_put_sharding_impl(x, aval, device, copy):
 
   sh = SingleDeviceSharding(pxla._get_default_device()
                             if device is None else device)
-  return _DeferredShardArg(x, sh, aval, device is not None)
+  return _DeferredShardArg(x, sh, aval, device is not None, copy)
 
 
 def _device_put_impl(
@@ -501,12 +505,14 @@ def _batched_device_put_impl(
     copy_semantics: Sequence[CopySemantics]):
   ys = []
   shard_arg_indices, shard_arg_xs, shard_arg_shardings = [], [], []
+  shard_arg_copy_semantics = []
   for i, (x, device, src, cp) in enumerate(zip(xs, devices, srcs, copy_semantics)):
     y = _device_put_impl(x, device=device, src=src, copy=cp)
     if isinstance(y, _DeferredShardArg):
       shard_arg_indices.append(i)
       shard_arg_xs.append(y.x)
       shard_arg_shardings.append(y.s)
+      shard_arg_copy_semantics.append(y.copy_semantics)
     ys.append(y)
 
   if shard_arg_xs:
@@ -515,7 +521,8 @@ def _batched_device_put_impl(
     # device_put handles `Layout` via a different path, so just pass `None` as
     # the layout here.
     shard_arg_results = pxla.shard_args(
-        shard_arg_shardings, [None] * len(shard_arg_xs), shard_arg_xs)
+        shard_arg_shardings, [None] * len(shard_arg_xs),
+        shard_arg_copy_semantics, shard_arg_xs)
     for i, shard_arg_result in zip(shard_arg_indices, shard_arg_results):
       assert isinstance(ys[i], _DeferredShardArg)
       ys[i] = ys[i].result_handler(shard_arg_result)

@@ -528,7 +528,7 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
   static auto rules = new llvm::StringMap<canonicalize_rule_type>{
       {tpu::MatmulOp::getOperationName(), canonicalize_matmul},
       {vector::ContractionOp::getOperationName(), canonicalize_contraction},
-      {vector::ContractionOp::getOperationName(), canonicalize_extract},
+      {vector::ExtractOp::getOperationName(), canonicalize_extract},
       {vector::MultiDimReductionOp::getOperationName(),
        canonicalize_multi_dim_reduction},
       {arith::SelectOp::getOperationName(), canonicalize_select},

@@ -378,7 +378,7 @@ def verify(
         x,
         y,
         dimension_numbers=dimension_numbers,
-        preferred_element_type=jnp.float32,
+        preferred_element_type=out_dtype,
     ).astype(out_dtype)
 
   ref, ref_runtime = profiler.measure(ref_f, x, y)

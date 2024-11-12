@@ -29,6 +29,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
+from jax.experimental.mosaic.gpu import fragmented_array as fa
 import jax.numpy as jnp
 import numpy as np
 try:
@@ -1060,6 +1061,30 @@ class TMATest(TestCase):
     y = f(x)
     np.testing.assert_array_equal(y, x)
 
+  def test_tma_load_indexed_tiled(self):
+    shape = (128, 2, 128)
+    tiling = mgpu.TileTransform((32, 32))
+    def kernel(ctx, src, dst, scratch):
+      tmp, barrier = scratch
+      ctx.async_copy(
+          src_ref=src,
+          dst_ref=tmp,
+          barrier=barrier,
+          gmem_transform=tiling,
+          gmem_slice=(slice(None), 1, slice(None)),
+      )
+      barrier.wait()
+      ctx.async_copy(src_ref=tmp, dst_ref=dst, gmem_transform=tiling)
+      ctx.await_async_copy(0)
+    x = np.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
+    smem = (
+        jax.ShapeDtypeStruct((4, 4, 32, 32), jnp.float32),
+        mgpu.TMABarrier(),
+    )
+    out_shape = jax.ShapeDtypeStruct((128, 128), jnp.float32)
+    f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, out_shape, smem)
+    np.testing.assert_array_equal(f(x), x[:, 1, :])
+
   @parameterized.product(
       swizzle=(None, 128),
       dtype=(jnp.float16, jnp.float32),
@@ -1557,6 +1582,30 @@ class TorchTest(TestCase):
     y = f(x)
     np.testing.assert_allclose(y.cpu(), x.cpu() * 2)
     del y  # Make sure the destructor runs successfully.
+
+
+class LayoutTest(TestCase):
+
+  @parameterized.product(
+      shape=((128, 128), (64, 8), (64, 256)),
+      dtype=(jnp.int32, jnp.int16, jnp.int8),
+  )
+  def test_wgmma_tiled_layout(self, shape, dtype):
+    def kernel(ctx, dst, _):
+      iota = iota_tensor(*shape, dtype)
+      tiled = iota.to_layout(fa._tiled_wgmma_layout(shape))
+      # Note that WGMMA layouts are always (shape[0] // 64, shape[1] // 8, 2, 1)
+      self.assertEqual(
+          tiled.registers.shape,
+          (shape[0] // 64, shape[1] // 8, 1, 1, 2, 1, 1, 1, 1, 1),
+      )
+      self.assertEqual(tiled.shape, shape)
+      self.assertEqual(tiled.mlir_dtype, iota.mlir_dtype)
+      tiled.store_untiled(dst)
+    ty = jax.ShapeDtypeStruct(shape, dtype)
+    f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), (), ty, ())
+    expected = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    np.testing.assert_array_equal(f(), expected)
 
 
 if __name__ == "__main__":

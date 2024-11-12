@@ -365,6 +365,11 @@ class VectorLayoutInferer {
       TPU_CHECK_OP(ty.getRank() > 0, "rank 0 vectors unsupported");
       TPU_CHECK_OP(elems, "expected vector constants to use DenseElementsAttr");
       auto bitwidth = ty.getElementTypeBitWidth();
+      if (bitwidth == 1) {
+        // i1 is a special case where the layout bitwidth can be different from
+        // the element bitwidth, see comment in VectorLayout class
+        bitwidth = kNativeBitwidth;
+      }
       if (elems.isSplat()) {
         if (ty.getRank() == 1) {
           // Here, we choose to lay out along lanes arbitrarily. It would be
