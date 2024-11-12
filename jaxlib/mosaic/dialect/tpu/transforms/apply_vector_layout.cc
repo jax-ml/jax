@@ -2996,7 +2996,7 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
       // TODO(b/295393167): need to support strided load for bitwidth < 32.
     } else if (layout_out.bitwidth() == 32 &&
                canReinterpretToUntiledMemref(
-                   memref_ty, ctx.target_shape,
+                   load_op.getBase(), ctx.target_shape,
                    /*allow_minormost_padding=*/true)) {
       // In this case, if the memref can be reinterpreted to untiled, it is
       // valid to use any tiling for output. But using native tiling can save us
@@ -4204,7 +4204,7 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
                // We accept padding in the minormost dim, because
                // apply_vector_layout will properly mask stores。
                canReinterpretToUntiledMemref(
-                   memref_ty, ctx.target_shape,
+                   store_op.getBase(), ctx.target_shape,
                    /*allow_minormost_padding=*/true)) {
       // In this case, if the memref can be reinterpreted to untiled, it is
       // valid to use any tiling for to_store. But using native tiling can save

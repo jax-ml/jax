@@ -283,6 +283,7 @@ jax_multiplatform_test(
         "tpu_v3_2x2",
         "tpu_v5e_4x2",
         "tpu_v4_2x2",
+        "tpu_v3_2x2_shardy",
     ],
     deps = [
         "//jax:experimental",
@@ -550,6 +551,7 @@ jax_multiplatform_test(
     name = "lax_test",
     srcs = ["lax_test.py"],
     backend_tags = {
+        "cpu": ["not_run:arm"],  # Numerical issues, including https://github.com/jax-ml/jax/issues/24787
         "tpu": ["noasan"],  # Times out.
     },
     shard_count = {
@@ -1312,6 +1314,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "for_loop_test",
     srcs = ["for_loop_test.py"],
+    disable_configs = [
+        "tpu_v5p_1x1",  # TODO(b/377666550): enable once XLA is fixed.
+    ],
     shard_count = {
         "cpu": 20,
         "gpu": 10,

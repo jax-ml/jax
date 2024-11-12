@@ -2,7 +2,6 @@
 #define THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <sstream>
 #include <string>
@@ -17,7 +16,7 @@
 #include "mlir/Support/LogicalResult.h"
 #include "absl/types/span.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
-#include "tsl/platform/statusor.h"
+#include "mlir/include/mlir/IR/Value.h"
 
 // TODO: Instead of CHECK_EQs, can we do something like TF_RET_CHECK but with
 // MLIR diagnostics?
@@ -112,7 +111,7 @@ std::optional<std::pair<bool, bool>> isTransposedMatmul(
 // considered as an untiled memref, except for potential padding in the
 // minormost dimension up to target_shape[1] (if allow_minormost_padding is
 // true).
-bool canReinterpretToUntiledMemref(MemRefType tiled_memref_ty,
+bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
                                    const std::array<int64_t, 2> &target_shape,
                                    bool allow_minormost_padding = false);
 

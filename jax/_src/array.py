@@ -1173,7 +1173,7 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
     copy_outs = xc.batched_copy_array_to_devices_with_sharding(
         batch_xs, batch_devs, batch_shardings, batch_cs)
   else:
-    copy_outs = xc.batched_copy_array_to_devices_with_sharding(  # type: ignore
+    copy_outs = xc.batched_copy_array_to_devices_with_sharding(  # pytype: disable=missing-parameter
         batch_xs, batch_devs, batch_shardings)
   for i, copy_out in safe_zip(batch_indices, copy_outs):
     assert results[i] is None

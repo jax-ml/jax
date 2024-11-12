@@ -1283,7 +1283,8 @@ class VectorLayoutInferer {
                                layout_tiling, ImplicitDim::kNone));
       } else if (bitwidth == 32 &&
                  canReinterpretToUntiledMemref(
-                     src_ty, target_shape_, /*allow_minormost_padding=*/true) &&
+                     op.getBase(), target_shape_,
+                     /*allow_minormost_padding=*/true) &&
                  *(src_ty.getShape().end() - 2) > 1) {
         // Since it is untiled, we can load from any arbitrary address which
         // means we can always set the sublane offset to 0.
@@ -1620,7 +1621,8 @@ class VectorLayoutInferer {
                  // We accept padding in the minormost dim, because
                  // apply_vector_layout will properly mask stores.
                  canReinterpretToUntiledMemref(
-                     ref_ty, target_shape_, /*allow_minormost_padding=*/true)) {
+                     op.getBase(), target_shape_,
+                     /*allow_minormost_padding=*/true)) {
         // Since it is untiled, we can store to any arbitrary address which
         // means the sublane offset can be any value and we can fold it to
         // 2nd minor index.

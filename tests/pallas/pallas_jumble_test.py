@@ -227,6 +227,9 @@ class PallasCallRaggedVmapTest(PallasBaseTest):
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Only tested on TPU")
 
+    if jtu.is_device_tpu(version=4):
+      self.skipTest("Flaky 15% of the time on tpuv4?")
+
     m = 128
     k = 640
     n = 640

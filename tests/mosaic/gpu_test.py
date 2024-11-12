@@ -18,6 +18,8 @@ import enum
 import itertools
 import math
 import operator
+import os
+import re
 import unittest
 
 from absl.testing import absltest, parameterized
@@ -362,6 +364,26 @@ class MemRefTest(TestCase):
         do_test()
     else:
       do_test()
+
+  @parameterized.parameters(jnp.uint64, jnp.uint32, jnp.uint16, jnp.uint8)
+  def test_scalar_argument(self, dtype):
+    scalar = 42
+    expected = np.full((128, 128), scalar, dtype=dtype)
+
+    def kernel(ctx, inp, out, _):
+      del ctx
+      inp = memref.load(inp, [])
+      mgpu.FragmentedArray.splat(inp, expected.shape, is_signed=True).store_untiled(out)
+
+    res = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        jax.ShapeDtypeStruct(shape=(), dtype=expected.dtype),
+        expected,
+        (),
+    )(scalar)
+    np.testing.assert_array_equal(res, expected)
 
 
 def get_packed_shape(strides, shape):
@@ -1606,6 +1628,63 @@ class LayoutTest(TestCase):
     f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), (), ty, ())
     expected = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
     np.testing.assert_array_equal(f(), expected)
+
+  @parameterized.product(
+      load_tiled=[False, True],
+      store_tiled=[False, True],
+      dtype=[jnp.int16],
+      swizzle=[32, 64, 128],
+      num_col_tiles=[1, 2, 4],
+  )
+  def test_copy_tiled(self, load_tiled, store_tiled, dtype, swizzle, num_col_tiles):
+    mlir_dtype = utils.dtype_to_ir_type(dtype)
+    col_tiling = swizzle // bytewidth(mlir_dtype)
+    m, n = 128, col_tiling * num_col_tiles
+    tiling = (64, col_tiling)
+    tiled_layout = fa._tiled_wgmma_layout((m, n))
+    load_layout = tiled_layout if load_tiled else mgpu.WGMMA_LAYOUT
+    store_layout = tiled_layout if store_tiled else mgpu.WGMMA_LAYOUT
+    def kernel(ctx, in_, out, smems):
+      smem_in, smem_out, barrier = smems
+      ctx.async_copy(src_ref=in_, dst_ref=smem_in, swizzle=swizzle, barrier=barrier)
+      barrier.wait()
+      t = mgpu.FragmentedArray.load_tiled(
+          smem_in, swizzle=swizzle, is_signed=True, layout=load_layout
+      )
+      t.to_layout(store_layout).store_tiled(smem_out, swizzle=swizzle)
+      mgpu.commit_shared()
+      ctx.async_copy(src_ref=smem_out, dst_ref=out, swizzle=swizzle)
+      ctx.await_async_copy(0)
+    expected = (
+        np.arange(m * n, dtype=dtype)
+        .reshape(m // tiling[0], tiling[0], n // tiling[1], tiling[1])
+        .transpose(0, 2, 1, 3)
+    )
+
+    prev_dump = os.environ.get("MOSAIC_GPU_DUMP_SASS", None)
+    os.environ["MOSAIC_GPU_DUMP_SASS"] = "1"
+    try:
+      with jtu.capture_stdout() as get_sass:
+        iota = mgpu.as_gpu_kernel(
+            kernel, (1, 1, 1), (128, 1, 1), expected, expected,
+            [expected, expected, mgpu.TMABarrier()],
+        )(expected)
+    finally:
+      if prev_dump is not None:
+        os.environ["MOSAIC_GPU_DUMP_SASS"] = prev_dump
+    np.testing.assert_array_equal(iota, expected)
+
+    # Verify that we don't use too many registers for the transfers.
+    # We verify LDS and STS separately, because they might use two different
+    # methods of computing offsets and we don't rely on CSE between them.
+    register_pattern = re.compile(r"(R[0-9]+)")
+    expected_regs = swizzle // bytewidth(mlir_dtype) // 8
+    for instr in ("STS", "LDS"):
+      with self.subTest(instr + " count"):
+        addrs = re.findall(instr + r".* \[(.*)\]", get_sass())
+        chain = itertools.chain.from_iterable
+        used_regs = set(chain(register_pattern.findall(addr) for addr in addrs))
+        self.assertLen(used_regs, expected_regs)
 
 
 if __name__ == "__main__":

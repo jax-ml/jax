@@ -16,13 +16,16 @@ limitations under the License.
 #ifndef JAXLIB_GPU_MAKE_BATCH_POINTERS_H_
 #define JAXLIB_GPU_MAKE_BATCH_POINTERS_H_
 
+#include <cstdint>
+
 #include "jaxlib/gpu/vendor.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
 
 void MakeBatchPointersAsync(gpuStream_t stream, void* buffer_in,
-                            void* buffer_out, int batch, int batch_elem_size);
+                            void* buffer_out, int64_t batch,
+                            int64_t batch_elem_size);
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

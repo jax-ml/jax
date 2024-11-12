@@ -892,6 +892,11 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
 aval_property = namedtuple("aval_property", ["fget"])
 aval_method = namedtuple("aval_method", ["fun"])
 
+def check_eval_args(args):
+  for arg in args:
+    if isinstance(arg, Tracer):
+      raise escaped_tracer_error(arg)
+
 class EvalTrace(Trace):
 
   def process_primitive(self, primitive, args, params):
@@ -902,12 +907,11 @@ class EvalTrace(Trace):
     else:
       # TODO(dougalm): delete. this shouldn't be necessary
       args = map(full_lower, args)
-      for arg in args:
-        if isinstance(arg, Tracer):
-          if config.data_dependent_tracing_fallback.value:
+      if config.data_dependent_tracing_fallback.value:
+        for arg in args:
+          if isinstance(arg, Tracer):
             return primitive.bind_with_trace(arg._trace, args, params)
-          else:
-            raise escaped_tracer_error(arg)
+      check_eval_args(args)
       return primitive.impl(*args, **params)
 
   def process_call(self, primitive, f, tracers, params):
@@ -955,6 +959,7 @@ no_axis_name = object()
 @dataclass(frozen=True)
 class AxisEnv:
   axis_sizes : dict[AxisName, int]
+  spmd_axis_names : set[AxisName]
 
   def axis_size(self, axis_name):
     if axis_name not in self.axis_sizes:
@@ -971,20 +976,24 @@ class AxisEnv:
   def pop_pure(self, axis_name):
     new_sizes = self.axis_sizes.copy()
     new_sizes.pop(axis_name)
-    return AxisEnv(new_sizes)
+    return AxisEnv(new_sizes, self.spmd_axis_names)
 
   def extend_pure(self, name_size_pairs):
     new_sizes = self.axis_sizes.copy()
     new_sizes.update((name, size) for name, size in name_size_pairs
                     if name is not no_axis_name)
-    return AxisEnv(new_sizes)
+    return AxisEnv(new_sizes, self.spmd_axis_names)
+
+  def add_spmd_axis_names(self, axis_names):
+    new_spmd_axis_names = self.spmd_axis_names | set(axis_names)
+    return AxisEnv(self.axis_sizes, new_spmd_axis_names)
 
   def as_hashable_key(self):
     return tuple((name, size) for (name, size) in self.axis_sizes.items()
                  if name is not no_axis_name)
 
 eval_trace = EvalTrace()
-top_axis_env = AxisEnv({})
+top_axis_env = AxisEnv({}, set())
 
 class TracingContext(threading.local):
   trace: Trace | None
@@ -1041,6 +1050,16 @@ def extend_axis_env_nd(name_size_pairs : Iterable[tuple[AxisName, int]]):
   prev = trace_ctx.axis_env
   try:
     trace_ctx.set_axis_env(prev.extend_pure(name_size_pairs))
+    yield
+  finally:
+    trace_ctx.set_axis_env(prev)
+
+@contextmanager
+def add_spmd_axis_names(axis_names: AxisName | None):
+  prev = trace_ctx.axis_env
+  try:
+    if axis_names is not None:
+      trace_ctx.set_axis_env(prev.add_spmd_axis_names(axis_names))
     yield
   finally:
     trace_ctx.set_axis_env(prev)
@@ -2091,33 +2110,6 @@ closed_call_p: ClosedCallPrimitive = ClosedCallPrimitive('closed_call')
 closed_call_p.def_impl(call_impl)
 closed_call_p.def_effectful_abstract_eval(
     lambda *_, call_jaxpr: (call_jaxpr.out_avals, call_jaxpr.effects))
-
-
-outfeed_primitives: set[Primitive] = set()
-def jaxpr_uses_outfeed(jaxpr: Jaxpr) -> bool:
-  """Finds if there are outfeed primitives anywhere inside a Jaxpr."""
-  return any(primitive_uses_outfeed(eqn.primitive, eqn.params)
-             for eqn in jaxpr.eqns)
-
-def _param_uses_outfeed(param):
-  if type(param) is Jaxpr:
-    if jaxpr_uses_outfeed(param):
-      return True
-  elif type(param) is ClosedJaxpr:
-    if jaxpr_uses_outfeed(param.jaxpr):
-      return True
-  return False
-
-def primitive_uses_outfeed(prim: Primitive, params: dict) -> bool:
-  if prim in outfeed_primitives:
-    return True
-  for param in params.values():
-    if isinstance(param, tuple):
-      if any(unsafe_map(_param_uses_outfeed, param)):
-        return True
-    elif _param_uses_outfeed(param):
-      return True
-  return False
 
 # ------------------- Map -------------------
 

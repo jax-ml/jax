@@ -7,7 +7,6 @@ show_error_codes = true
 disable_error_code = "attr-defined, name-defined, annotation-unchecked"
 no_implicit_optional = true
 warn_redundant_casts = true
-warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
 module = [

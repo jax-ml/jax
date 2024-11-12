@@ -37,7 +37,7 @@ jax_multiplatform_test(
         "gpu_h100",
         "gpu_h100_2gpu",
     ],
-    shard_count = 4,
+    shard_count = 8,
     tags = ["multiaccelerator"],
     deps = [
         "//jax:mosaic_gpu",

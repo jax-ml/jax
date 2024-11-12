@@ -279,6 +279,11 @@ class PRNGKeyArray(jax.Array):
   __hash__ = None  # type: ignore[assignment]
   __array_priority__ = 100
 
+  def __array__(self, dtype: np.dtype | None = None, copy: bool | None = None) -> np.ndarray:
+    raise TypeError("JAX array with PRNGKey dtype cannot be converted to a NumPy array."
+                    " Use jax.random.key_data(arr) if you wish to extract the underlying"
+                    " integer array.")
+
   # Overwritten immediately below
   @property
   def at(self)                  -> _IndexUpdateHelper: assert False  # type: ignore[override]
@@ -399,11 +404,6 @@ class KeyTyRules:
     phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed)
     phys_result = phys_handler(phys_arrays)
     return PRNGKeyArray(aval.dtype._impl, phys_result)
-
-  @staticmethod
-  def device_get(val):
-    buffer = api.device_get(random_unwrap(val))
-    return random_wrap(buffer, impl=val.dtype._impl)
 
   @staticmethod
   def device_put_sharded(vals, aval, sharding, devices):

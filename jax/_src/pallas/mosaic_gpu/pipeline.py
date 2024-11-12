@@ -30,6 +30,7 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import primitives as gpu_primitives
 from jax.experimental import pallas as pl
+import jax.numpy as jnp
 
 
 map = util.safe_map
@@ -72,15 +73,16 @@ jax.tree_util.register_dataclass(
 )
 
 
-def make_grid_indices(
-    step: jax.typing.ArrayLike, grid: Sequence[int]
+def _inc_grid_by_1(
+    indices: tuple[jax.Array, ...], grid: Sequence[int]
 ) -> tuple[jax.Array, ...]:
-  # TODO(slebedev): Maintain the grid index through the fori_loop instead.
-  indices = []
-  for size in reversed(grid):
-    indices.append(lax.rem(step, size))
-    step = lax.div(step, size)
-  return tuple(reversed(indices))
+  next_indices = []
+  carry: bool | jax.Array = True
+  for idx, size in reversed(list(zip(indices, grid))):
+    next_idx = lax.select(carry, idx + 1, idx)
+    carry = next_idx == size
+    next_indices.append(lax.select(carry, 0, next_idx).astype(idx.dtype))
+  return tuple(reversed(next_indices))
 
 
 def emit_pipeline(
@@ -143,15 +145,15 @@ def emit_pipeline(
     ):
       map(lambda bref: bref.copy_in(step, indices, barrier_ref), in_brefs)
 
-    def loop_body(step, _):
+    def loop_body(step, carry):
       slot = step % max_concurrent_steps
+      indices, fetch_indices = carry
 
       # Wait for the current GMEM->SMEM copy to complete.
       gpu_primitives.barrier_wait(barrier_ref.at[slot])
       # Wait for the previous output SMEM->GMEM copy to complete.
       gpu_primitives.wait_smem_to_gmem(max_concurrent_steps - 1)
 
-      indices = make_grid_indices(step, grid)
       with pallas_core.grid_env(map(pallas_core.GridAxis, indices, grid)):
         body(
             *(bref.smem_ref.at[slot] for bref in it.chain(in_brefs, out_brefs))
@@ -166,17 +168,19 @@ def emit_pipeline(
       jax.lax.cond(
           fetch_step < num_steps,
           lambda: map(
-              lambda bref: bref.copy_in(
-                  fetch_slot, make_grid_indices(fetch_step, grid), barrier_ref
-              ),
+              lambda bref: bref.copy_in(fetch_slot, fetch_indices, barrier_ref),
               in_brefs,
           ),
           lambda: [None] * len(in_brefs),
       )
 
-      return ()
+      return _inc_grid_by_1(indices, grid), _inc_grid_by_1(fetch_indices, grid)
 
-    lax.fori_loop(0, num_steps, loop_body, ())
+    indices = (jnp.asarray(0, dtype=lax.dtype(0)),) * len(grid)
+    fetch_indices = indices
+    for _ in range(max_concurrent_steps):
+      fetch_indices = _inc_grid_by_1(fetch_indices, grid)
+    lax.fori_loop(0, num_steps, loop_body, (indices, fetch_indices))
 
     # Finalize the pipeline.
     gpu_primitives.wait_smem_to_gmem(0)

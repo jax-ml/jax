@@ -18,18 +18,17 @@ limitations under the License.
 #include <cstdint>
 #include <vector>
 
-#include "absl/status/status.h"
-#include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
-#include "absl/strings/string_view.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/LogicalResult.h"
 #include "mlir/Conversion/LLVMCommon/MemRefBuilder.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/MemRef/Utils/MemRefUtils.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -44,6 +43,12 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
+#include "absl/algorithm/container.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
+#include "mlir/include/mlir/IR/Diagnostics.h"
 #include "tsl/platform/statusor.h"
 
 // Generated definitions.
@@ -232,10 +237,88 @@ void DeclareRuntimeFunctions(mlir::OpBuilder& builder) {
       .setVisibility(mlir::func::FuncOp::Visibility::Private);
 }
 
+bool IsContiguous(mlir::MemRefType type) {
+  return type.getLayout().isIdentity() ||
+         (type.hasStaticShape() && type.getNumElements() > 0 &&
+          mlir::memref::isStaticShapeAndContiguousRowMajor(type));
+}
+
+namespace {
+llvm::LogicalResult VerifyCommonLoadStoreOp(
+    mlir::Location loc, mlir::MemRefType gmem_type, absl::string_view gmem_name,
+    mlir::MemRefType smem_type, absl::string_view smem_name,
+    mlir::ArrayRef<int64_t> slice_lengths, int num_indices) {
+  auto error = [loc](auto... params) {
+    return emitError(loc, llvm::formatv(params...));
+  };
+
+  if (!IsContiguous(smem_type)) {
+    return error("The `{0}` memref must be contiguous.", smem_name);
+  }
+  if (gmem_type.getElementType() != smem_type.getElementType()) {
+    return error(
+        "The `source` and `destination` memrefs must have the same element "
+        "type.");
+  }
+  if (absl::c_any_of(slice_lengths, [](int64_t s) { return s < -1; })) {
+    return error(
+        "The `slice_lengths` attribute must not contain values less than -1.");
+  }
+  if (gmem_type.getRank() !=
+      smem_type.getRank() + absl::c_count(slice_lengths, -1)) {
+    return error(
+        "The rank of the `{0}` must be equal to the rank of the "
+        "`{1}` plus the number of collapsed dimensions as indicated "
+        "by -1 values in `slice_lengths`.",
+        gmem_name, smem_name);
+  }
+  if (num_indices != gmem_type.getRank()) {
+    return error("The size of `indices` must be equal to the rank of `{0}`.",
+                 gmem_name);
+  }
+  if (slice_lengths.size() != gmem_type.getRank()) {
+    return error(
+        "The size of `slice_lengths` must be equal to the rank of `{0}`.",
+        gmem_name);
+  }
+  return llvm::success();
+}
+}  // namespace
+
+llvm::LogicalResult AsyncLoadOp::verify() {
+  auto r = VerifyCommonLoadStoreOp(getLoc(), getSource().getType(), "source",
+                                   getDestination().getType(), "destination",
+                                   getSliceLengths(), getIndices().size());
+  if (failed(r)) {
+    return r;
+  }
+
+  for (int i = 0; i < getCollective().size(); ++i) {
+    for (int k = i + 1; k < getCollective().size(); ++k)
+      if (getCollective()[i] == getCollective()[k]) {
+        return emitError(
+            "The `collective` attribute must not contain duplicate "
+            "dimensions.");
+      }
+  }
+
+  return llvm::success();
+}
+
+llvm::LogicalResult AsyncStoreOp::verify() {
+  return VerifyCommonLoadStoreOp(getLoc(), getDestination().getType(),
+                                 "destination", getSource().getType(), "source",
+                                 getSliceLengths(), getIndices().size());
+}
+
 void MosaicGPUDialect::initialize() {
   addTypes<
 #define GET_TYPEDEF_LIST
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_types.cc.inc"
+      >();
+  addAttributes<
+#define GET_ATTRDEF_LIST
+#include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_attrdefs.cc.inc"
       >();
   addOperations<
 #define GET_OP_LIST

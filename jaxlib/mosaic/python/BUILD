@@ -21,7 +21,8 @@ py_library(
     name = "gpu_dialect",
     srcs = [
         "mosaic_gpu.py",
-        "//jaxlib/mosaic/dialect/gpu:_mosaic_gpu_gen.py",
+        "//jaxlib/mosaic/dialect/gpu:_mosaic_gpu_gen_enums.py",
+        "//jaxlib/mosaic/dialect/gpu:_mosaic_gpu_gen_ops.py",
     ],
     visibility = ["//visibility:public"],
     deps = [

@@ -57,6 +57,10 @@ class PallasTest(jtu.JaxTestCase):
       # We need to cudaDeviceSynchronize to make sure printfs are flushed.
       mosaic_gpu_lib._mosaic_gpu_ext._sync_all_devices()
 
+  def skip_unless_sm90a(self):
+    if not jtu.is_cuda_compute_capability_equal("9.0"):
+      self.skipTest("Only works on GPU with capability sm90a")
+
 
 class PallasCallTest(PallasTest):
 
@@ -731,6 +735,7 @@ class PallasCallTest(PallasTest):
 
   @parameterized.parameters(jnp.float16, jnp.float32)
   def test_wgmma(self, dtype):
+    self.skip_unless_sm90a()
     # TensorCores can only fuse transposes of 16-bit values, and RHS
     # is expected to be column major by default.
     rhs_transpose = jnp.dtype(dtype).itemsize != 2
@@ -781,6 +786,7 @@ class PallasCallTest(PallasTest):
     )
 
   def test_wgmma_registers(self):
+    self.skip_unless_sm90a()
     def kernel(a_ref, b_ref, o_ref):
       def scope(acc_ref):
         plgpu.wgmma(acc_ref, a_ref[...], b_ref)
@@ -804,6 +810,7 @@ class PallasCallTest(PallasTest):
     np.testing.assert_allclose(res, a @ b, rtol=1e-3)
 
   def test_wgmma_registers_init(self):
+    self.skip_unless_sm90a()
     def kernel(a_ref, b_ref, i_ref, o_ref):
       def scope(acc_ref):
         plgpu.wgmma(acc_ref, a_ref[...], b_ref)
@@ -828,6 +835,7 @@ class PallasCallTest(PallasTest):
     np.testing.assert_allclose(res, i + a @ b, rtol=2e-3)
 
   def test_wgmma_sliced_ref(self):
+    self.skip_unless_sm90a()
     def kernel(a_ref, b_ref, o_ref):
       def scope(acc_ref):
         plgpu.wgmma(acc_ref, a_ref.at[0], b_ref.at[0])
@@ -863,6 +871,7 @@ class PallasCallTest(PallasTest):
     np.testing.assert_allclose(res, a[0] @ b[0], rtol=1e-3)
 
   def test_wgmma_sliced_acc(self):
+    self.skip_unless_sm90a()
     swizzle = 128
     elems_128b = swizzle // jnp.dtype(jnp.float16).itemsize
     def kernel(a_ref, b_ref, o_ref):
@@ -918,6 +927,7 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(b, np.ones_like(a))
 
   def test_realistic_matmul(self):
+    self.skip_unless_sm90a()
     dtype = jnp.float16
     swizzle = 128
     elems_128b = swizzle // jnp.dtype(dtype).itemsize

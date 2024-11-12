@@ -915,7 +915,7 @@ ffi::Error GesvdjImpl(int64_t batch, int64_t rows, int64_t cols,
 
   auto a_data = static_cast<T*>(a.untyped_data());
   auto out_data = static_cast<T*>(out->untyped_data());
-  auto s_data = static_cast<solver::RealType<T>::value*>(s->untyped_data());
+  auto s_data = static_cast<typename solver::RealType<T>::value*>(s->untyped_data());
   auto u_data = static_cast<T*>(u->untyped_data());
   auto v_data = static_cast<T*>(v->untyped_data());
   auto info_data = info->typed_data();

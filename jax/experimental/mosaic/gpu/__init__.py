@@ -29,9 +29,12 @@ from .core import (
 )
 
 if dialect is not None:
-  from .dialect_lowering import lower_mgpu_dialect
+  from .dialect_lowering import (
+      gpu_address_space_to_nvptx as gpu_address_space_to_nvptx,
+      lower_mgpu_dialect as lower_mgpu_dialect
+  )
 else:
-  lower_mgpu_dialect = None
+  gpu_address_space_to_nvptx, lower_mgpu_dialect = None, None
 
 from .fragmented_array import (
     FragmentedArray as FragmentedArray,
