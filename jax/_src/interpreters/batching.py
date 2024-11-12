@@ -653,7 +653,7 @@ def batch_subtrace(tag, axis_data, in_dims, *in_vals):
       outs = yield in_tracers, {}
     out_vals, out_dims = unzip2(map(trace.to_batch_info, outs))
     segment_lens, out_dims = indirectify_ragged_axes(out_dims)
-    yield (*segment_lens, *out_vals), out_dims
+  yield (*segment_lens, *out_vals), out_dims
 
 def indirectify_ragged_axes(dims):
   if not any(type(d) is RaggedAxis for d in dims):
@@ -803,7 +803,7 @@ def _batch_jaxpr_inner(axis_data, tag, in_axes, *in_vals):
     out_vals, out_axes = unzip2(map(trace.to_batch_info, outs))
     new_out_axes = indirectify_ragged_axes_against_inputs_outputs(
         out_axes, in_vals, out_vals)
-    yield out_vals, new_out_axes
+  yield out_vals, new_out_axes
 
 @lu.transformation_with_aux
 def _match_axes_jaxpr(axis_data, out_axes_dest, out_axes, trace, in_axes,
