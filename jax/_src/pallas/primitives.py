@@ -824,14 +824,13 @@ def debug_print_lowering_rule(ctx, *args, **params):
 # because they should appear as atomic JAX values to the users.
 # TODO(apaszke): This can be deleted once we make transforms in Mosaic GPU
 # inferred by the compiler.
-@lu.transformation
-def wrap_with_transforms(transforms, *args):
+@lu.transformation2
+def wrap_with_transforms(f, transforms, *args):
   new_args = tuple(
       state_types.TransformedRef(a, t) if t else a
       for a, t in zip(args, transforms)
   )
-  res = yield new_args, {}
-  yield res
+  return f(*new_args)
 
 
 run_scoped_p = jax_core.Primitive("run_scoped")
