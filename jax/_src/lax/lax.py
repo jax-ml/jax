@@ -1915,7 +1915,7 @@ def batch_matmul(lhs: Array, rhs: Array,
 
 def square(x: ArrayLike) -> Array:
   r"""Elementwise square: :math:`x^2`."""
-  return integer_pow(x, 2)
+  return square_p.bind(x)
 
 def reciprocal(x: ArrayLike) -> Array:
   r"""Elementwise reciprocal: :math:`1 \over x`."""
@@ -2523,6 +2523,27 @@ cbrt_p = standard_unop(_float, 'cbrt')
 ad.defjvp2(cbrt_p,
            lambda g, ans, x: mul(g, mul(_const(x, 1/3), integer_pow(ans, -2))))
 mlir.register_lowering(cbrt_p, partial(_nary_lower_hlo, hlo.cbrt))
+
+square_p = standard_unop(_int | _float | _complex, 'square')
+
+def _square_complex(x):
+  a, b = real(x), imag(x)
+  # zero square(x).real is handled explicitly for abs(a)==abs(b) cases
+  # where for finite a, 2 * a is non-finite:
+  zero_re = is_finite(a) & (eq(a, b) | eq(a, -b))
+  # equivalent to a**2 - b**2 but avoids overflow errors for large a
+  # and large b cases:
+  re = (a - b) * (a + b)
+  im = a * b * 2
+  return select(zero_re, complex(_const(a, 0), im), complex(re, im))
+
+def _square_lower_hlo(ctx, x):
+  if dtypes.issubdtype(ctx.avals_in[0].dtype, np.complexfloating):
+    return mlir.lower_fun(_square_complex, multiple_results=False)(ctx, x)
+  return [hlo.multiply(x, x)]
+
+ad.defjvp2(square_p, lambda g, ans, x: mul(g, mul(_const(x, 2), x)))
+mlir.register_lowering(square_p, _square_lower_hlo)  # TODO(pearu): use chlo.square
 
 def _pow_dtype_rule(x, y):
   if (dtypes.issubdtype(x.dtype, np.inexact) and

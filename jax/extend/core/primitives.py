@@ -127,6 +127,7 @@ from jax._src.lax.lax import (
   sinh_p as sinh_p,
   sort_p as sort_p,
   sqrt_p as sqrt_p,
+  square_p as square_p,
   squeeze_p as squeeze_p,
   sub_p as sub_p,
   tan_p as tan_p,

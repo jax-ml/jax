@@ -780,6 +780,7 @@ triton_lowering_rules.update({
             _Fallback([jnp.bfloat16], lambda ctx, x: math_dialect.sqrt(x)),
         ],
     ),
+    lax.square_p: lambda ctx, x: _mul(x, x),
     lax.pow_p: _make_dispatch_table(
         "pow",
         cuda=[

@@ -2084,6 +2084,15 @@ def _sqrt_lowering_rule(ctx: LoweringRuleContext, x):
 lowering_rules[lax.sqrt_p] = _sqrt_lowering_rule
 
 
+def _square_lowering_rule(ctx: LoweringRuleContext, x):
+  if jnp.issubdtype(ctx.avals_in[0].dtype, jnp.integer):
+    return arith.muli(x, x)
+  return arith.mulf(x, x)
+
+
+lowering_rules[lax.square_p] = _square_lowering_rule
+
+
 def _exp_lowering_rule(ctx: LoweringRuleContext, x):
   return math.exp(x)
 

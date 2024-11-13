@@ -97,6 +97,7 @@ _zero_preserving_unary_primitives = [
   lax.sin_p,
   lax.sinh_p,
   lax.sqrt_p,
+  lax.square_p,
   lax.tan_p,
   lax.tanh_p,
   lax.convert_element_type_p,

@@ -1726,6 +1726,7 @@ tf_impl[lax.atanh_p] = tf.math.atanh
 tf_impl[lax.asinh_p] = tf.math.asinh
 
 tf_impl[lax.sqrt_p] = tf.math.sqrt
+tf_impl[lax.square_p] = tf.math.square
 tf_impl[lax.rsqrt_p] = tf.math.rsqrt
 
 def _cbrt(x):
