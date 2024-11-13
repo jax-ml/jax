@@ -1927,6 +1927,47 @@ class OpsTest(PallasBaseTest):
     )(x)
     np.testing.assert_array_equal(out, np.triu(x, k=k))
 
+  @parameterized.parameters(
+      (jnp.float16, jnp.float16),  # Noop
+      (jnp.int16, jnp.float16),
+      (jnp.int16, jnp.bfloat16),
+      (jnp.float32, jnp.int32),
+  )
+  def test_bitcast_convert_type(self, in_dtype, out_dtype):
+    if jtu.test_device_matches(["tpu"]):
+      self.skipTest("Not implemented on TPU")
+
+    m, n = 4, 4
+    out_shape = jax.ShapeDtypeStruct((m, n), out_dtype)
+    grid = ()
+
+    @functools.partial(self.pallas_call, out_shape=out_shape, grid=grid)
+    def convert(x_ref, y_ref):
+      y_ref[...] = jax.lax.bitcast_convert_type(x_ref[...], out_shape)
+
+    x = jnp.arange(m * n, dtype=in_dtype).reshape((m, n))
+    y = convert(x)
+    y_ref = jax.lax.bitcast_convert_type(x, out_dtype)
+    np.testing.assert_array_equal(y, y_ref)
+
+  def test_bitcast_convert_type_scalar(self):
+    if jtu.test_device_matches(["tpu"]):
+      self.skipTest("Not implemented on TPU")
+
+    x = jnp.int32(42)
+    out_dtype = jnp.float32
+    out_shape = jax.ShapeDtypeStruct(x.shape, out_dtype)
+    grid = ()
+
+    @functools.partial(self.pallas_call, out_shape=out_shape, grid=grid)
+    def convert(x_ref, y_ref):
+      y_ref[...] = jax.lax.bitcast_convert_type(x_ref[...], out_dtype)
+
+    y = convert(x)
+    y_ref = jax.lax.bitcast_convert_type(x, out_dtype)
+    np.testing.assert_array_equal(y, y_ref)
+
+
 class OpsInterpretTest(OpsTest):
   INTERPRET = True
 
