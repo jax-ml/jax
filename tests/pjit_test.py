@@ -17,6 +17,7 @@ import contextlib
 import re
 from functools import partial
 import logging
+import json
 import math
 import textwrap
 import threading
@@ -59,6 +60,7 @@ from jax._src.lib.mlir import dialects
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -3824,6 +3826,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_inp * 2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P()))
     self.assertEqual(out.sharding.memory_kind, 'device')
+
+  @unittest.skipIf(xla_extension_version < 297, "Requires jaxlib 0.4.36+")
+  def test_jit_static_argnames_non_interned(self):
+    def do_nothing(foobar: int):
+      return foobar
+
+    argname = "foobar"
+    # Has the side effect of ensuring argname is not interned.
+    argname = str(json.loads(json.dumps(argname)))
+    jax.jit(do_nothing, static_argnames=[argname])(foobar=2)  # doesn't crash
 
   def test_most_recent_executable_outer_inner_cache(self):
     x = np.zeros((20, 20), dtype=jnp.float64)
