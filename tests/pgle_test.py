@@ -219,8 +219,6 @@ class PgleTest(jtu.JaxTestCase):
     shape = (16, 16)
     x = jnp.arange(math.prod(shape)).reshape(shape).astype(np.float32)
 
-    profilers_dict = (
-        pjit._most_recent_pjit_call_executable.weak_pgle_profiler_dict)
     with (config.enable_compilation_cache(True),
           config.enable_pgle(True),
           config.raise_persistent_cache_errors(True),
@@ -276,7 +274,7 @@ class PgleTest(jtu.JaxTestCase):
               os.path.getsize(os.path.join(self.dump_dir, module)), 0
           )
 
-      for pgle_profiler in profilers_dict.values():
+      for pgle_profiler in pjit._pgle_profiler_dict.values():
         self.assertTrue(pgle_profiler.is_enabled())
         self.assertTrue(pgle_profiler.is_fdo_consumed())
 
@@ -291,7 +289,7 @@ class PgleTest(jtu.JaxTestCase):
         os.remove(os.path.join(cache_dir, non_pgle_file))
 
       api.clear_caches()
-      profilers_dict.clear()
+      pjit._pgle_profiler_dict.clear()
 
       # Run 4: Persistent compilation cache should be hit PGLE profiler should
       # be disabled
