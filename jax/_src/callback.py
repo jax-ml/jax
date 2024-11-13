@@ -343,7 +343,7 @@ def pure_callback(
   * Calling :func:`~jax.vmap` on a callback without an explicit ``vmap_method``
     is deprecated and it will eventually raise ``NotImplementedError``.
   * ``vmap_method="sequential"`` uses :func:`~jax.lax.map` to loop over
-    the batched arugments, calling ``callback`` once for each batch element.
+    the batched arguments, calling ``callback`` once for each batch element.
   * ``vmap_method="expand_dims"`` calls ``callback`` with new axes of size ``1``
     added as the leading dimension unbatched inputs.
   * ``vmap_method="broadcast_all"`` behaves like ``expand_dims``, but the
