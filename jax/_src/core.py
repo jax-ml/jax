@@ -446,8 +446,16 @@ class Primitive:
     # TODO: figure out how to handle function arguments
     # assert (not config.enable_checks.value or
     #         all(isinstance(arg, Tracer) or valid_jaxtype(arg) for arg in args)), args
-    with take_current_trace() as cur_trace:
-      return self.bind_with_trace(cur_trace, args, params)
+
+    # This is equivalent to "with take_current_trace()", but the bind() code
+    # is called frequently and it's slightly faster to avoid using a context
+    # manager object.
+    prev_trace = trace_ctx.trace
+    trace_ctx.set_trace(eval_trace)
+    try:
+      return self.bind_with_trace(prev_trace, args, params)
+    finally:
+      trace_ctx.set_trace(prev_trace)
 
   def bind_with_trace(self, trace, args, params):
     return trace.process_primitive(self, args, params)
