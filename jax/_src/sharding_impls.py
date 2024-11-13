@@ -712,7 +712,7 @@ class PositionalSharding(sharding.Sharding):
                        f"one device, got {devices}")
     self._devices = tuple(devices.flat)
     self._memory_kind = memory_kind
-    name = self._devices[0].platform.upper()
+    name = self._devices[0].device_kind.upper()
     self._ids = np.array([DeviceIdSet(name, i) for i in range(devices.size)],
                          dtype='object').reshape(devices.shape)
     self._internal_device_list = xc.DeviceList(self._devices)
@@ -730,9 +730,9 @@ class PositionalSharding(sharding.Sharding):
   def __repr__(self) -> str:
     cls_name = self.__class__.__name__
     ids = self._ids.copy()
-    platform_name = self._devices[0].platform.upper()
+    device_kind = self._devices[0].device_kind.upper()
     for idx, x in np.ndenumerate(ids):
-      ids[idx] = DeviceIdSet(platform_name, *(self._devices[i].id for i in x))
+      ids[idx] = DeviceIdSet(device_kind, *(self._devices[i].id for i in x))
     body = np.array2string(ids, prefix=cls_name + '(', suffix=')',
                            max_line_width=100)
     mem = '' if self._memory_kind is None else f', memory_kind={self._memory_kind}'
