@@ -1160,6 +1160,11 @@ def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
     return x * x
   return NotImplementedError
 
+@register_lowering_rule(lax.square_p)
+def _square_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  x = _ensure_fa(x, x_aval.dtype)
+  return x * x
 
 @register_lowering_rule(lax.rsqrt_p)
 def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):

@@ -3107,7 +3107,7 @@ def square(x: ArrayLike, /) -> Array:
   """
   check_arraylike("square", x)
   x, = promote_dtypes_numeric(x)
-  return lax.integer_pow(x, 2)
+  return lax.square(x)
 
 
 @partial(jit, inline=True)
