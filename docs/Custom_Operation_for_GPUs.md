@@ -679,7 +679,7 @@ class RmsNormFwdClass:
                          NamedSharding(mesh, PartitionSpec(None, None)))
         invvar_sharding = NamedSharding(mesh, PartitionSpec(x_spec[0]))
         output_shardings = (arg_shardings[0], invvar_sharding)
-        # Sharded_impl only accepts positional arugments
+        # Sharded_impl only accepts positional arguments
         # And they should be Jax traceable variables
         impl = partial(RmsNormFwdClass.impl, eps=eps)
 
@@ -739,7 +739,7 @@ class RmsNormBwdClass:
         output_shardings = (output_sharding, invvar_sharding, invvar_sharding)
 
 
-        # Sharded_impl only accepts positional arugments
+        # Sharded_impl only accepts positional arguments
         # And they should be Jax traceable variables
         def impl(g, invvar, x, weight):
             grad_input, grad_weight, part_grad = _rms_norm_bwd_p.bind(
