@@ -1,0 +1,60 @@
+name: Run Pytest TPU tests
+
+on:
+  # pull_request:
+  #   branches:
+  #     - main
+  workflow_dispatch:
+    inputs:
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: choice
+        required: true
+        default: 'no'
+        options:
+        - 'yes'
+        - 'no'
+
+jobs:
+  run_tests:
+    strategy:
+      matrix:
+        runner: ["linux-x86-ct5lp-224-8tpu"]
+        tpu_cores: ["8"]
+        python: ["3.10"]
+
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: "gcr.io/tensorflow-testing/nosla-cuda12.3-cudnn9.1-ubuntu20.04-manylinux2014-multipython:latest"
+
+    env:
+      JAXCI_CLONE_MAIN_XLA: 1
+      JAXCI_HERMETIC_PYTHON_VERSION: ${{ matrix.python }}
+
+    steps:
+      - uses: actions/checkout@v3
+      # Halt for testing
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@main
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Build jaxlib
+        run: ./ci/build_artifacts.sh "jaxlib"
+      - name: Install pytest
+        env:
+          JAXCI_PYTHON: python${{ matrix.python }}
+        run: $JAXCI_PYTHON -m pip install pytest
+      - name: Install Test requirements
+        env:
+          JAXCI_PYTHON: python${{ matrix.python }}
+        run: | 
+          $JAXCI_PYTHON -m pip install -r build/test-requirements.txt
+          $JAXCI_PYTHON -m pip install -r build/collect-profile-requirements.txt
+      - name: Install Libtpu
+        env:
+          JAXCI_PYTHON: python${{ matrix.python }}
+        run: $JAXCI_PYTHON -m pip install --pre libtpu-nightly -f "https://storage.googleapis.com/jax-releases/libtpu_releases.html"
+      - name: Run Pytest TPU tests
+        env:
+          JAXCI_TPU_CORES: ${{ matrix.tpu_cores }}
+        run: ./ci/run_pytest_tpu.sh

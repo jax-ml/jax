@@ -1,0 +1,74 @@
+name: Build JAX Artifacts
+
+on:
+  # pull_request:
+  #   branches:
+  #     - main
+  workflow_dispatch:
+    inputs:
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: choice
+        required: true
+        default: 'no'
+        options:
+        - 'yes'
+        - 'no'
+  workflow_call:
+
+jobs:
+  build:
+    continue-on-error: true
+    defaults:
+      run:
+        # Explicitly set the shell to bash to override the default Windows environment, i.e, cmd.
+        shell: bash
+    strategy:
+      matrix:
+        runner: ["windows-x86-n2-64", "linux-x86-n2-16", "linux-arm64-t2a-16"]
+        artifact: ["jax", "jaxlib", "jax-cuda-pjrt", "jax-cuda-plugin"]
+        python: ["3.10", "3.11", "3.12"]
+        # jax-cuda-pjrt and jax are pure Python packages so they do not need to be built for each
+        # Python version.
+        exclude:
+          # Pure Python packages do not need to be built for each Python version.
+          - artifact: "jax-cuda-pjrt"
+            python: "3.10"
+          - artifact: "jax-cuda-pjrt"
+            python: "3.11"
+          - artifact: "jax"
+            python: "3.10"
+          - artifact: "jax"
+            python: "3.11"
+          # jax is a pure Python package so it does not need to be built on multiple platforms.
+          - artifact: "jax"
+            runner: "windows-x86-n2-64"
+          - artifact: "jax"
+            runner: "linux-arm64-t2a-16"
+          # jax-cuda-plugin and jax-cuda-pjrt are not supported on Windows.
+          - artifact: "jax-cuda-plugin"
+            runner: "windows-x86-n2-64"
+          - artifact: "jax-cuda-pjrt"
+            runner: "windows-x86-n2-64"
+
+    runs-on: ${{ matrix.runner }}
+
+    container: ${{ (contains(matrix.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest') ||
+                   (contains(matrix.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/linux-arm64-arc-container:latest') ||
+                   (contains(matrix.runner, 'windows-x86') && null) }}
+
+    env:
+      # Do not run Docker container for Linux runners. Linux runners already run in a Docker container.
+      JAXCI_RUN_DOCKER_CONTAINER: 0
+
+    steps:
+      - uses: actions/checkout@v3
+      # Halt for testing
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@main
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Build ${{ matrix.artifact }}
+        env:
+          JAXCI_HERMETIC_PYTHON_VERSION: "${{ matrix.python }}"
+        run: ./ci/build_artifacts.sh "${{ matrix.artifact }}"
