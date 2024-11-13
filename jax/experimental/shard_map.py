@@ -1274,6 +1274,32 @@ def _scan_rewrite(mesh, in_rep, *args, jaxpr, num_consts, num_carry, **params):
       *args, jaxpr=jaxpr_, num_consts=num_consts, num_carry=num_carry, **params)
   return out_vals, out_rep
 
+@register_check(control_flow.conditionals.cond_p)
+def _cond_rule(mesh, *in_rep, branches):
+  _, *args_rep = in_rep
+  true_out_rep = _check_rep(mesh, branches[0].jaxpr, args_rep)
+  false_out_rep = _check_rep(mesh, branches[1].jaxpr, args_rep)
+  if not true_out_rep == false_out_rep:
+    raise Exception("The true and false branches of cond produced mismatched "
+                    f"replication types {true_out_rep} and {false_out_rep}. "
+                    "Please open an issue at "
+                    "https://github.com/jax-ml/jax/issues, and as a temporary "
+                    "workaround pass the check_rep=False argument to shard_map")
+  return true_out_rep
+
+@register_rewrite(control_flow.conditionals.cond_p)
+def _cond_rewrite(mesh, in_rep, *args, branches):
+  pred_rep, *args_rep = in_rep
+  _, true_out_rep = _replication_rewrite_nomatch(mesh, branches[0], args_rep)
+  _, false_out_rep = _replication_rewrite_nomatch(mesh, branches[1], args_rep)
+  out_rep = map(op.and_, true_out_rep, false_out_rep)
+  out_rep = map(partial(op.and_, pred_rep), out_rep)
+  branches_ = (
+      _replication_rewrite_match(mesh, branches[0], args_rep, out_rep),
+      _replication_rewrite_match(mesh, branches[1], args_rep, out_rep),
+  )
+  out_vals = control_flow.conditionals.cond_p.bind(*args, branches=branches_)
+  return out_vals, out_rep
 
 @register_rewrite(core.closed_call_p)
 def _closed_call_rewrite(mesh, in_rep, *args, call_jaxpr, **kwargs):
