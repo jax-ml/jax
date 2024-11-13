@@ -28,25 +28,6 @@ import urllib.request
 
 logger = logging.getLogger(__name__)
 
-def is_windows():
-  return sys.platform.startswith("win32")
-
-def shell(cmd):
-  try:
-    logger.info("shell(): %s", cmd)
-    output = subprocess.check_output(cmd)
-  except subprocess.CalledProcessError as e:
-    logger.info("subprocess raised: %s", e)
-    if e.output:
-      print(e.output)
-    raise
-  except Exception as e:
-    logger.info("subprocess raised: %s", e)
-    raise
-  return output.decode("UTF-8").strip()
-
-
-# Bazel
 BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/6.5.0/"
 BazelPackage = collections.namedtuple(
     "BazelPackage", ["base_uri", "file", "sha256"]
@@ -180,7 +161,12 @@ def get_bazel_path(bazel_path_flag):
 
 def get_bazel_version(bazel_path):
   try:
-    version_output = shell([bazel_path, "--version"])
+    version_output = subprocess.run(
+        [bazel_path, "--version"],
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
   except (subprocess.CalledProcessError, OSError):
     return None
   match = re.search(r"bazel *([0-9\\.]+)", version_output)
@@ -203,47 +189,33 @@ def get_clang_path_or_exit():
     sys.exit(-1)
 
 
-def get_clang_major_version(clang_path):
-  clang_version_proc = subprocess.run(
-      [clang_path, "-E", "-P", "-"],
-      input="__clang_major__",
-      check=True,
-      capture_output=True,
-      text=True,
-  )
-  major_version = int(clang_version_proc.stdout)
+def get_jax_configure_bazel_options(bazel_command: list[str]):
+  """Returns the bazel options to be written to .jax_configure.bazelrc."""
+  # Get the index of the "run" parameter. Build options will come after "run" so
+  # we find the index of "run" and filter everything after it.
+  start = bazel_command.index("run")
+  jax_configure_bazel_options = ""
+  try:
+    for i in range(start + 1, len(bazel_command)):
+      bazel_flag = bazel_command[i]
+      # On Windows, replace all backslashes with double backslashes to avoid
+      # unintended escape sequences.
+      if platform.system() == "Windows":
+        bazel_flag = bazel_flag.replace("\\", "\\\\")
+      jax_configure_bazel_options += f"build {bazel_flag}\n"
+    return jax_configure_bazel_options
+  except ValueError:
+    logging.error("Unable to find index for 'run' in the Bazel command")
+    return ""
 
-  return major_version
-
-
-# Python
-def get_python_bin_path(python_bin_path_flag):
-  """Returns the path to the Python interpreter to use."""
-  path = python_bin_path_flag or sys.executable
-  return path.replace(os.sep, "/")
-
-
-def get_python_version(python_bin_path):
-  version_output = shell([
-      python_bin_path,
-      "-c",
-      (
-          'import sys; print("{}.{}".format(sys.version_info[0], '
-          "sys.version_info[1]))"
-      ),
-  ])
-  major, minor = map(int, version_output.split("."))
-  return major, minor
-
-def check_python_version(python_version):
-  if python_version < (3, 10):
-    print("ERROR: JAX requires Python 3.10 or newer, found ", python_version)
-    sys.exit(-1)
 
 def get_githash():
   try:
     return subprocess.run(
-        ["git", "rev-parse", "HEAD"], encoding="utf-8", capture_output=True
+        ["git", "rev-parse", "HEAD"],
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
     ).stdout.strip()
   except OSError:
     return ""

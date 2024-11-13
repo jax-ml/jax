@@ -1,0 +1,29 @@
+name: Build Jaxlib
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        runner: ["arc-linux-x86-n2-64"]
+
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: "index.docker.io/tensorflow/build@sha256:e042f39c18a01012349ad42ae69f6c9fb6e8cc912ddf362d47f6caf1f97f54c3"
+
+    env:
+      ENV_FILE: ci/envs/build_artifacts/jaxlib
+      JAXCI_USE_DOCKER: 0
+      JAXCI_USE_RBE: 1
+
+    steps:
+      - uses: actions/checkout@v3
+      # Halt for testing
+      - name: Wait For Connection
+        uses: ./actions/ci_connection/
+      - name: Run build script
+        run: ./ci/build_artifacts.sh

@@ -1,0 +1,41 @@
+name: Run Bazel GPU tests locally
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        runner: ["linux-x86-g2-48-l4-4gpu"]
+
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: "gcr.io/tensorflow-testing/nosla-cuda12.3-cudnn9.1-ubuntu20.04-manylinux2014-multipython:latest"
+
+    env:
+      # GitHub actions run in Docker by defaut. Disable running the `setup_docker.sh` script.
+      JAXCI_SETUP_DOCKER: 0
+      # Use RBE to build the artifacts.
+      JAXCI_BUILD_ARTIFACT_WITH_RBE: 1
+      # Setup the test environment (disable x64 mode and clone XLA at HEAD)
+      JAXCI_SETUP_TEST_ENVIRONMENT: 1
+      JAXCI_HERMETIC_PYTHON_VERSION: 3.11
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build jaxlib
+        run: ./ci/build_artifacts.sh jaxlib
+      - name: Build jax-cuda-plugin
+        run: ./ci/build_artifacts.sh jax-cuda-plugin
+      - name: Build jax-cuda-pjrt
+        run: ./ci/build_artifacts.sh jax-cuda-pjrt
+      # Halt for testing
+      - name: Wait For Connection
+        uses: ./actions/ci_connection/
+      - name: Run Bazel GPU tests locally
+        env:
+          ENV_FILE: ci/envs/run_tests/bazel_gpu_local
+        run: ./ci/run_bazel_test_gpu.sh
