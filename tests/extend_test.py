@@ -24,6 +24,7 @@ import jax
 from jax import lax
 import jax.extend as jex
 import jax.numpy as jnp
+import jax.sharding as shd
 
 from jax._src import abstract_arrays
 from jax._src import api
@@ -38,6 +39,7 @@ from jax._src.layout import DeviceLocalLayout
 from jax._src.lib import lapack
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lax import linalg as lax_linalg_internal
+from jax.experimental.shard_map import shard_map
 
 jax.config.parse_flags_with_absl()
 
@@ -341,6 +343,20 @@ class FfiTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, "All elements of result_shape_dtypes.*position 1"):
       jex.ffi.ffi_call("test", (jax.ShapeDtypeStruct((), np.float32), ()))()
+
+  @jtu.run_on_devices("gpu", "cpu")
+  def testShardMap(self):
+    mesh = jtu.create_mesh((1,), ("i",))
+    x = self.rng().randn(8, 4, 5).astype(np.float32)
+
+    @partial(shard_map, mesh=mesh, in_specs=shd.PartitionSpec('i'),
+             out_specs=shd.PartitionSpec('i'))
+    def f(x):
+      return ffi_call_geqrf(x)
+
+    f(x)  # eager mode doesn't crash
+    jax.jit(f)(x)  # neither does JIT
+    self.assertNotIn("all-gather", jax.jit(f).lower(x).compile().as_text())
 
 
 def ffi_call_geqrf(x, **kwargs):
