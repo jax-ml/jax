@@ -430,6 +430,7 @@ pytype_strict_library(
         ":config",
         ":mlir",
         ":monitoring",
+        ":path",
         ":profiler",
         ":traceback_util",
         ":xla_bridge",
