@@ -1711,7 +1711,10 @@ ShardingInfo = tuple[
 
 
 def _get_default_device() -> xc.Device:
-  return config.default_device.value or xb.local_devices()[0]
+  if isinstance(config.default_device.value, str):
+    return xb.get_backend(config.default_device.value).local_devices()[0]
+  else:
+    return config.default_device.value or xb.local_devices()[0]
 
 
 def _get_and_check_device_assignment(

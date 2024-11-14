@@ -1570,7 +1570,9 @@ def _update_default_device_thread_local(val):
 
 
 def _validate_default_device(val):
-  if val is not None and not isinstance(val, xla_client.Device):
+  if (val is not None and
+      not isinstance(val, xla_client.Device) and
+      val not in ['cpu', 'gpu', 'tpu']):
     # TODO(skyewm): this is a workaround for non-PJRT Device types. Remove when
     # all JAX backends use a single C++ device interface.
     if 'Device' in str(type(val)):
@@ -1578,12 +1580,11 @@ def _validate_default_device(val):
           'Allowing non-`xla_client.Device` default device: %s, type: %s',
           repr(val), type(val))
       return
-    raise ValueError('jax.default_device must be passed a Device object (e.g. '
-                     f"`jax.devices('cpu')[0]`), got: {val!r}")
+    raise ValueError('jax.default_device must be passed either a Device object (e.g. '
+                     f"`jax.devices('cpu')[0]`) or a platform name string like 'cpu' or 'gpu'"
+                     f", got: {val!r}")
 
 
-# TODO(skye): default_device only accepts devices for now. Make it work with
-# platform names as well (e.g. "cpu" to mean the same as jax.devices("cpu")[0]).
 default_device = string_or_object_state(
     name='jax_default_device',
     default=None,
