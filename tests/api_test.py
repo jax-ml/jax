@@ -2981,21 +2981,27 @@ class APITest(jtu.JaxTestCase):
     self.assertIn("stablehlo.sine", stablehlo)
 
   def test_concurrent_device_get_and_put(self):
-    def f(x):
-      for _ in range(100):
-        y = jax.device_put(x)
-        x = jax.device_get(y)
-      return x
+    # Capture ThreadSanitizer warnings and fail the test if anything reported
+    with jtu.capture_stderr() as get_output:
+      def f(x):
+        for _ in range(100):
+          y = jax.device_put(x)
+          x = jax.device_get(y)
+        return x
 
-    xs = [self.rng().randn(i) for i in range(10)]
-    # Make sure JAX backend is initialised on the main thread since some JAX
-    # backends install signal handlers.
-    jax.device_put(0)
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-      futures = [executor.submit(partial(f, x)) for x in xs]
-      ys = [f.result() for f in futures]
-    for x, y in zip(xs, ys):
-      self.assertAllClose(x, y)
+      xs = [self.rng().randn(i) for i in range(10)]
+      # Make sure JAX backend is initialised on the main thread since some JAX
+      # backends install signal handlers.
+      jax.device_put(0)
+      with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = [executor.submit(partial(f, x)) for x in xs]
+        ys = [f.result() for f in futures]
+      for x, y in zip(xs, ys):
+        self.assertAllClose(x, y)
+
+    captured = get_output()
+    if len(captured) > 0 and "ThreadSanitizer" in captured:
+      raise RuntimeError(f"ThreadSanitizer reported warnings:\n{captured}")
 
   def test_dtype_from_builtin_types(self):
     for dtype in [bool, int, float, complex]:
@@ -7561,25 +7567,32 @@ class CustomJVPTest(jtu.JaxTestCase):
 
   def test_concurrent_initial_style(self):
     # https://github.com/jax-ml/jax/issues/3843
-    def unroll(param, sequence):
-      def scan_f(prev_state, inputs):
-        return prev_state, jax.nn.sigmoid(param * inputs)
-      return jnp.sum(jax.lax.scan(scan_f, None, sequence)[1])
 
-    def run():
-      return jax.grad(unroll)(jnp.array(1.0), jnp.array([1.0]))
+    # Capture ThreadSanitizer warnings and fail the test if anything reported
+    with jtu.capture_stderr() as get_output:
+      def unroll(param, sequence):
+        def scan_f(prev_state, inputs):
+          return prev_state, jax.nn.sigmoid(param * inputs)
+        return jnp.sum(jax.lax.scan(scan_f, None, sequence)[1])
 
-    expected = run()
+      def run():
+        return jax.grad(unroll)(jnp.array(1.0), jnp.array([1.0]))
 
-    # we just don't want this to crash
-    n_workers = 2
-    with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as e:
-      futures = []
-      for _ in range(n_workers):
-        futures.append(e.submit(run))
-      results = [f.result() for f in futures]
-    for ans in results:
-      self.assertAllClose(ans, expected)
+      expected = run()
+
+      # we just don't want this to crash
+      n_workers = 2
+      with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as e:
+        futures = []
+        for _ in range(n_workers):
+          futures.append(e.submit(run))
+        results = [f.result() for f in futures]
+      for ans in results:
+        self.assertAllClose(ans, expected)
+
+    captured = get_output()
+    if len(captured) > 0 and "ThreadSanitizer" in captured:
+      raise RuntimeError(f"ThreadSanitizer reported warnings:\n{captured}")
 
   def test_nondiff_argnums_vmap_tracer(self):
     # https://github.com/jax-ml/jax/issues/3964
