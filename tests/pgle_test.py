@@ -18,6 +18,7 @@ import glob
 import logging
 import math
 import os
+import shutil
 import tempfile
 
 from absl.testing import absltest
@@ -286,7 +287,11 @@ class PgleTest(jtu.JaxTestCase):
       # Removing non-pgle profiled module from cache to check that later pgle
       # profiled version will be used.
       for non_pgle_file in non_pgle_profiled_files:
-        os.remove(os.path.join(cache_dir, non_pgle_file))
+        path = os.path.join(cache_dir, non_pgle_file)
+        if os.path.isfile(path):
+          os.remove(path)
+        elif os.path.isdir(path):
+          shutil.rmtree(path)
 
       api.clear_caches()
       pjit._pgle_profiler_dict.clear()
