@@ -365,7 +365,7 @@ def compile_or_get_cached(
       min(devices.flatten(), key=lambda device: device.id).process_index)
 
   # When PGLE is enabled there might be 3 types of situations:
-  # 1. PGLE profiled module (the one which was recompiled with FDO profile) is
+  # 1. PGLE optimized module (the one which was recompiled with FDO profile) is
   # in the persistent cache. In this case the module should be returned from
   # cache and PGLE should be disabled for this module. Is module is stored in
   # the persistent cache under the "pgle_profiled_module_key" which calculated
@@ -379,8 +379,15 @@ def compile_or_get_cached(
   # 3. PGLE profiled module is not in the persistent cache and the module is
   # getting compiled to be PGLEd (FDO profile is empty). In this case we need to
   # simply return the non-PGLE profiled module from the persistent cache.
-  if (config.enable_pgle.value
-      and config.pgle_profiling_runs.value > 0):
+  #
+  # If the compilation_cache_expect_pgle option is set then in case 1 the PGLE
+  # optimized module will be loaded even if PGLE is not enabled in the current
+  # process. This is useful if we want to combine the use of PGLE with other
+  # profiling tools (e.g. Nsight Systems) that cannot co-exist with PGLE due to
+  # contention for CUPTI resources.
+  if ((config.enable_pgle.value
+        and config.pgle_profiling_runs.value > 0)
+      or config.compilation_cache_expect_pgle.value):
     fdo_profile = compile_options.executable_build_options.fdo_profile
     compile_options.executable_build_options.fdo_profile = b"pgle profiled"
 
@@ -391,24 +398,34 @@ def compile_or_get_cached(
     if _is_executable_in_cache(backend, pgle_profiled_module_key):
       # Load PGLE profiled module from the persistent cache.
       cache_key = pgle_profiled_module_key
+      if config.compilation_cache_expect_pgle.value:
+        logging.info(f"PGLE-optimized {module_name} loaded from compilation cache")
       if pgle_profiler is not None:
         pgle_profiler.disable()
-    elif fdo_profile is not None and len(fdo_profile) > 0:
-      # Store module under PGLE profiled module cache key.
-      cache_key = pgle_profiled_module_key
-      if is_multi_process and distributed.global_state.client is not None:
-        compile_options.executable_build_options.fdo_profile = _share_fdo_profiles(
-          computation, devices, compile_options, backend,
-          distributed.global_state.client,
-          min_device_process_id
-        )
-      else:
-        compile_options.executable_build_options.fdo_profile = fdo_profile
-        logger.debug(
-            "Compiling module %s with FDO profile: %s",
-            module_name,
-            compile_options.executable_build_options.fdo_profile,
-        )
+    else:
+      # No PGLE-optimised module found in the persistent cache.
+      if (config.compilation_cache_expect_pgle.value
+          and _is_executable_in_cache(backend, cache_key)):
+        # The user asserted this miss was unexpected; emit a warning
+        warnings.warn(f"PERSISTENT CACHE MISS for PGLE-optimized {module_name} "
+                      "despite non-PGLE hit; it may not have been executed "
+                      "enough times when the cache was populated")
+      if fdo_profile is not None and len(fdo_profile) > 0:
+        # Store module under PGLE profiled module cache key.
+        cache_key = pgle_profiled_module_key
+        if is_multi_process and distributed.global_state.client is not None:
+          compile_options.executable_build_options.fdo_profile = _share_fdo_profiles(
+            computation, devices, compile_options, backend,
+            distributed.global_state.client,
+            min_device_process_id
+          )
+        else:
+          compile_options.executable_build_options.fdo_profile = fdo_profile
+          logger.debug(
+              "Compiling module %s with FDO profile: %s",
+              module_name,
+              compile_options.executable_build_options.fdo_profile,
+          )
 
   cache_retrieval_start = time.monotonic()
   retrieved_executable, retrieved_compile_time = _cache_read(
