@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 class _UnconstrainedPartitionSingleton:
 
   def __repr__(self):
@@ -48,3 +50,21 @@ class PartitionSpec(tuple):
 
   def __reduce__(self):
     return (PartitionSpec, tuple(self))
+
+  def _normalized_spec(self, ndim: int) -> PartitionSpec:
+    out = []  # type: ignore
+    for p in self:
+      if p is None:
+        out.append(None)
+      elif p == self.UNCONSTRAINED:
+        out.append(p)
+      elif isinstance(p, (list, tuple)):
+        if len(p) == 1:
+          out.append(p[0])
+        else:
+          out.append(tuple(p))
+      else:
+        out.append(p)
+    if len(out) < ndim:
+      out.extend([None] * (ndim - len(out)))
+    return PartitionSpec(*out)

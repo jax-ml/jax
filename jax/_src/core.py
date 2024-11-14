@@ -1656,8 +1656,10 @@ class ShapedArray(UnshapedArray):
               self.dtype.name)
     dt_str = dt_str.replace('void', 'float0')
     if hasattr(self, 'sharding') and self.sharding is not None:
-      shapestr = ','.join(_get_shape_sharding_str(self.shape, self.sharding.spec))
-      return f'{dt_str}[{shapestr}]'
+      shapestr = _get_shape_sharding_str(self.shape, self.sharding.spec)
+      axis_types = self.sharding.mesh.axis_types
+      axt = _get_axis_type_str(axis_types) if axis_types is not None else ''
+      return f'{dt_str}[{shapestr}]{axt}'
     else:
       shapestr = ','.join(map(str, self.shape))
       return f'{dt_str}[{shapestr}]'
@@ -1669,15 +1671,32 @@ class ShapedArray(UnshapedArray):
       raise TypeError("len() of unsized object") from err  # same as numpy error
 
 
+def _get_axis_type_str(axis_types):
+  from jax._src.mesh import AxisTypes  # type: ignore
+
+  out = []
+  for t, axes in axis_types.items():
+    a = f"({','.join(a for a in axes)})" if isinstance(axes, tuple) else axes
+    if t == AxisTypes.Collective:
+      out.append(f"C:{a}")
+    elif t == AxisTypes.User:
+      out.append(f"U:{a}")
+    else:
+      assert t == AxisTypes.Auto
+      out.append(f"A:{a}")
+  return f"{{{', '.join(out)}}}"
+
 def _get_shape_sharding_str(shape, spec):
+  out = []
   for s1, s2 in zip(shape, spec):
     if s2 is None:
-      yield f"{s1}"
+      out.append(f"{s1}")
     elif isinstance(s2, tuple):
       ss = ','.join(s for s in s2)
-      yield f"{s1}@({ss})"
+      out.append(f"{s1}@({ss})")
     else:
-      yield f"{s1}@{s2}"
+      out.append(f"{s1}@{s2}")
+  return ','.join(out)
 
 def _get_abstract_sharding(val):
   from jax._src.sharding_impls import NamedSharding  # pytype: disable=import-error

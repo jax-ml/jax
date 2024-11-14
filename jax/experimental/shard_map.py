@@ -46,7 +46,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.core import Tracer
-from jax._src.mesh import AbstractMesh, Mesh
+from jax._src.mesh import AbstractMesh, Mesh, AxisTypes
 from jax._src.api import _shared_code_pmap, _prepare_pmap
 from jax._src.lax import (lax, parallel as lax_parallel, slicing,
                           windowed_reductions, convolution, fft, linalg,
@@ -528,17 +528,30 @@ def _unshard_aval(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
     raise NotImplementedError(f"Unsupported aval type: {type(aval)}")
 
 def _shard_shaped_array(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
-                       ) -> core.AbstractValue:
+                        ) -> core.AbstractValue:
   assert isinstance(aval, core.ShapedArray)
-  return aval.update(tuple(sz // prod(mesh.shape[n] for n in names.get(i, ()))
-                            for i, sz in enumerate(aval.shape)))
+  new_shape = tuple(sz // prod(mesh.shape[n] for n in names.get(i, ()))
+                    for i, sz in enumerate(aval.shape))
+  if config.sharding_in_types.value:
+    new_mesh = AbstractMesh(
+        mesh.shape_tuple, {AxisTypes.Collective: mesh.axis_names})
+    new_sharding = NamedSharding(new_mesh, P(*[None] * aval.ndim))
+  else:
+    new_sharding = None
+  return aval.update(shape=new_shape, sharding=new_sharding)
 core.shard_aval_handlers[core.ShapedArray] = _shard_shaped_array
 
 def _unshard_shaped_array(mesh: Mesh, names: AxisNames,
                           aval: core.AbstractValue,) -> core.AbstractValue:
   assert isinstance(aval, core.ShapedArray)
-  return aval.update(tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
-                            for i, sz in enumerate(aval.shape)))
+  new_shape = tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
+                    for i, sz in enumerate(aval.shape))
+  if config.sharding_in_types.value:
+    spec = _names_to_pspec(names)._normalized_spec(aval.ndim)
+    new_sharding = NamedSharding(AbstractMesh(mesh.shape_tuple), spec)
+  else:
+    new_sharding = None
+  return aval.update(shape=new_shape, sharding=new_sharding)
 core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
 
 # Type-checking

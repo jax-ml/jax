@@ -2203,14 +2203,13 @@ def multi_sharding_in_dim(ctx, ops, in_avals, out_aval):
   for op, in_aval in zip(ops, in_avals):
     if in_aval.sharding == out_aval.sharding or in_aval.sharding is None:
       out.append(op)
+    elif in_aval.sharding.mesh.are_all_axes_collective:
+      out.append(op)
     else:
       # TODO(yashkatariya, dougalm): If `in_aval.sharding` contains
       # CompilerShardingAxis, then specify `unspecified_dims` via
       # `wrap_with_sharding_op`.
-      if config.use_shardy_partitioner.value:
-        sp = in_aval.sharding._to_sdy_sharding(in_aval.ndim)
-      else:
-        sp = in_aval.sharding._to_xla_hlo_sharding(in_aval.ndim).to_proto()
+      sp = in_aval.sharding._to_xla_hlo_sharding(in_aval.ndim).to_proto()
       out.append(mlir.wrap_with_sharding_op(ctx, op, out_aval, sp))
   return out
 
@@ -2227,10 +2226,9 @@ def _nary_lower_hlo(op: Callable, ctx,
 
   out = op(*args)
   if config.sharding_in_types.value:
-    if config.use_shardy_partitioner.value:
-      out_sp = aval_out.sharding._to_sdy_sharding(aval_out.ndim)
-    else:
-      out_sp = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
+    if aval_out.sharding.mesh.are_all_axes_collective:
+      return [out]
+    out_sp = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
     return [mlir.wrap_with_sharding_op(ctx, out, aval_out, out_sp)]
   else:
     return [out]
