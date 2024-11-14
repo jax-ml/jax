@@ -80,7 +80,8 @@ def cloud_tpu_init() -> None:
   os.environ.setdefault('TPU_ML_PLATFORM', 'JAX')
   os.environ.setdefault('TPU_ML_PLATFORM_VERSION', version.__version__)
   os.environ.setdefault('ENABLE_RUNTIME_UPTIME_TELEMETRY', '1')
-  os.environ["LIBTPU_INIT_ARGS"] = os.environ.get("LIBTPU_INIT_ARGS","") + " --xla_tpu_use_enhanced_launch_barrier=true"
+  if '--xla_tpu_use_enhanced_launch_barrier' not in os.environ['LIBTPU_INIT_ARGS']:
+    os.environ['LIBTPU_INIT_ARGS'] = os.environ.get('LIBTPU_INIT_ARGS','') + ' --xla_tpu_use_enhanced_launch_barrier=true'
 
   # this makes tensorstore serialization work better on TPU
   os.environ.setdefault('TENSORSTORE_CURL_LOW_SPEED_TIME_SECONDS', '60')
