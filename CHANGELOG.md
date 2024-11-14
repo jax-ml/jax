@@ -48,6 +48,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.tree_util.register_dataclass` now allows metadata fields to be
     declared inline via {func}`dataclasses.field`. See the function documentation
     for examples.
+  * Added {func}`jax.numpy.put_along_axis`.
 
 * Bug fixes
   * Fixed a bug where the GPU implementations of LU and QR decomposition would

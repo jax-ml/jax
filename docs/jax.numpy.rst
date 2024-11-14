@@ -337,6 +337,7 @@ namespace; they are listed below.
     promote_types
     ptp
     put
+    put_along_axis
     quantile
     r_
     rad2deg

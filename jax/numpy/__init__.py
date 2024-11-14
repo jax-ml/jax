@@ -202,6 +202,7 @@ from jax._src.numpy.lax_numpy import (
     printoptions as printoptions,
     promote_types as promote_types,
     put as put,
+    put_along_axis as put_along_axis,
     ravel as ravel,
     ravel_multi_index as ravel_multi_index,
     repeat as repeat,
