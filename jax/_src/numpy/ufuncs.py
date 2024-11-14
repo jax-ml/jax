@@ -31,7 +31,7 @@ from jax._src.api import jit
 from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax
 from jax._src.lax import other as lax_other
-from jax._src.typing import Array, ArrayLike, DTypeLike
+from jax._src.typing import Array, ArrayLike
 from jax._src.numpy.util import (
    check_arraylike, promote_args, promote_args_inexact,
    promote_args_numeric, promote_dtypes_inexact, promote_dtypes_numeric,
@@ -1221,7 +1221,7 @@ def multiply(x: ArrayLike, y: ArrayLike, /) -> Array:
   x, y = promote_args("multiply", x, y)
   return lax.mul(x, y) if x.dtype != bool else lax.bitwise_and(x, y)
 
-@binary_ufunc(identity=-1)
+@binary_ufunc(identity=-1, reduce=reductions._reduce_bitwise_and)
 def bitwise_and(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the bitwise AND operation elementwise.
 
@@ -1250,7 +1250,7 @@ def bitwise_and(x: ArrayLike, y: ArrayLike, /) -> Array:
   """
   return lax.bitwise_and(*promote_args("bitwise_and", x, y))
 
-@binary_ufunc(identity=0)
+@binary_ufunc(identity=0, reduce=reductions._reduce_bitwise_or)
 def bitwise_or(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the bitwise OR operation elementwise.
 
@@ -1279,7 +1279,7 @@ def bitwise_or(x: ArrayLike, y: ArrayLike, /) -> Array:
   """
   return lax.bitwise_or(*promote_args("bitwise_or", x, y))
 
-@binary_ufunc(identity=0)
+@binary_ufunc(identity=0, reduce=reductions._reduce_bitwise_xor)
 def bitwise_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the bitwise XOR operation elementwise.
 
@@ -1793,16 +1793,7 @@ def spacing(x: ArrayLike, /) -> Array:
 
 
 # Logical ops
-def _logical_and_reduce(a: ArrayLike, axis: int = 0, dtype: DTypeLike | None = None,
-                        out: None = None, keepdims: bool = False, initial: ArrayLike | None = None,
-                        where: ArrayLike | None = None):
-  """Implementation of jnp.logical_and.reduce."""
-  if initial is not None:
-    raise ValueError("initial argument not supported in jnp.logical_and.reduce()")
-  result = reductions.all(a, axis=axis, out=out, keepdims=keepdims, where=where)
-  return result if dtype is None else result.astype(dtype)
-
-@binary_ufunc(identity=True, reduce=_logical_and_reduce)
+@binary_ufunc(identity=True, reduce=reductions._reduce_logical_and)
 def logical_and(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the logical AND operation elementwise.
 
@@ -1823,16 +1814,7 @@ def logical_and(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.bitwise_and(*map(_to_bool, promote_args("logical_and", x, y)))
 
 
-def _logical_or_reduce(a: ArrayLike, axis: int = 0, dtype: DTypeLike | None = None,
-                       out: None = None, keepdims: bool = False, initial: ArrayLike | None = None,
-                       where: ArrayLike | None = None):
-  """Implementation of jnp.logical_or.reduce."""
-  if initial is not None:
-    raise ValueError("initial argument not supported in jnp.logical_or.reduce()")
-  result = reductions.any(a, axis=axis, out=out, keepdims=keepdims, where=where)
-  return result if dtype is None else result.astype(dtype)
-
-@binary_ufunc(identity=False, reduce=_logical_or_reduce)
+@binary_ufunc(identity=False, reduce=reductions._reduce_logical_or)
 def logical_or(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the logical OR operation elementwise.
 
@@ -1853,7 +1835,7 @@ def logical_or(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.bitwise_or(*map(_to_bool, promote_args("logical_or", x, y)))
 
 
-@binary_ufunc(identity=False)
+@binary_ufunc(identity=False, reduce=reductions._reduce_logical_xor)
 def logical_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
   """Compute the logical XOR operation elementwise.
 
