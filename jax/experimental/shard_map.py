@@ -1505,15 +1505,15 @@ def _shard_map_partial_eval(trace, shard_map_p, f, tracers, mesh, in_names,
   return pe.merge_lists(out_knowns, out_tracers, out_consts)
 pe.JaxprTrace.process_shard_map = _shard_map_partial_eval
 
-@lu.transformation
-def _promote_scalar_residuals(*args, **kwargs):
-  jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env) = yield args, kwargs
+@lu.transformation2
+def _promote_scalar_residuals(f, *args, **kwargs):
+  jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env) = f(*args, **kwargs)
   which = [f1 is None and f2 is None and not v.aval.shape
            for f1, f2, v in zip(in_fwds, out_fwds, jaxpr.constvars)]
   jaxpr = _promote_scalar_residuals_jaxpr(jaxpr, which)
   out_consts = [jax.lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
                 for x in out_consts]
-  yield jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env)
+  return jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env)
 
 def _promote_scalar_residuals_jaxpr(jaxpr, which):
   @lu.wrap_init
@@ -1754,13 +1754,13 @@ def _cached_shard_map(flat_fun, mesh, in_axes_flat, out_axes_thunk, axis_name):
                      check_rep=False, auto=frozenset()),
           in_specs, out_specs)
 
-@lu.transformation
-def _handle_reshapes(in_axes, out_axes_thunk, *args, **kwargs):
+@lu.transformation2
+def _handle_reshapes(f, in_axes, out_axes_thunk, *args, **kwargs):
   args = tree_map(lambda x, ax: x if ax is None else jnp.squeeze(x, axis=ax),
                   list(args), list(in_axes))
-  out = yield args, {}
-  yield tree_map(lambda x, ax: x if ax is None else jnp.expand_dims(x, axis=ax),
-                 list(out), list(out_axes_thunk()))
+  out = f(*args)
+  return tree_map(lambda x, ax: x if ax is None else jnp.expand_dims(x, axis=ax),
+                  list(out), list(out_axes_thunk()))
 
 def _axis_to_spec(axis_name, ax):
   if isinstance(ax, int):
@@ -1881,27 +1881,28 @@ def _efficient_transpose_rewrite(fun, mesh, in_names, out_names_thunk):
   fun, out_reps_src = _efficient_transpose_rewrite_nomatch(fun, mesh, in_reps)
   return _match_rep(fun, mesh, out_reps_src, out_reps_dst)
 
-@lu.transformation_with_aux
-def _efficient_transpose_rewrite_nomatch(mesh, in_reps, *args):
+@lu.transformation_with_aux2
+def _efficient_transpose_rewrite_nomatch(f, store, mesh, in_reps, *args):
   with core.take_current_trace() as parent:
     tag = core.TraceTag()
     t = RewriteTrace(parent_trace = parent, tag = tag, mesh=mesh)
     in_tracers = map(partial(RewriteTracer, t), in_reps, args)
     with core.set_current_trace(t):
-      ans = yield in_tracers, {}
+      ans = f(*in_tracers)
     out_vals, out_reps = unzip2(map(t.to_val_rep_pair, ans))
     del t, in_tracers, ans
-  yield out_vals, out_reps
+  store.store(out_reps)
+  return out_vals
 
-@lu.transformation
-def _match_rep(mesh, out_reps_src_, out_reps_dst_, *args):
-  outs = yield args, {}
+@lu.transformation2
+def _match_rep(f, mesh, out_reps_src_, out_reps_dst_, *args):
+  outs = f(*args)
   out_reps_src = out_reps_src_() if callable(out_reps_src_) else out_reps_src_
   out_reps_dst = out_reps_dst_() if callable(out_reps_dst_) else out_reps_dst_
   _check_reps2(mesh, out_reps_dst, out_reps_src)
   outs = [pbroadcast(x, tuple(n for n in src if n not in dst)) if src - dst
           else x for x, src, dst in zip(outs, out_reps_src, out_reps_dst)]
-  yield outs
+  return outs
 
 # TODO(mattjj): caching
 def _replication_rewrite_match(
@@ -1927,16 +1928,17 @@ def _replication_rewrite_nomatch(
   jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(f, jaxpr.in_avals)
   return core.ClosedJaxpr(jaxpr_, consts), out_rep()
 
-@lu.transformation_with_aux
-def _rewrite_subtrace(tag, mesh, in_reps, *in_vals):
+@lu.transformation_with_aux2
+def _rewrite_subtrace(f, store, tag, mesh, in_reps, *in_vals):
   with core.take_current_trace() as parent_trace:
     assert len(in_reps) == len(in_vals), (len(in_reps), len(in_vals))
     t = RewriteTrace(parent_trace, tag, mesh)
     in_tracers = map(partial(RewriteTracer, t), in_reps, in_vals)
     with core.set_current_trace(t):
-      outs = yield in_tracers, {}
-    ans = unzip2(map(t.to_val_rep_pair, outs))
-    yield ans
+      outs = f(*in_tracers)
+    out_vals, out_reps = unzip2(map(t.to_val_rep_pair, outs))
+    store.store(out_reps)
+    return out_vals
 
 def _rewrite_bwd(bwd, mesh, in_reps, reps_dst):
   def new_bwd(*args):

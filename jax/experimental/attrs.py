@@ -97,34 +97,34 @@ def jvp(f, primals, tangents, attr_tangents):
   out_tangents = tree_unflatten(out_tree(), out_tangents_flat)
   return out_primals, out_tangents, tangent_attrs_out
 
-@lu.transformation
-def _set_attrs(attrs, attr_vals, *args):
+@lu.transformation2
+def _set_attrs(f, attrs, attr_vals, *args):
   for (o, a), x in zip(attrs, attr_vals):
     jax_setattr(o, a, x)
-  yield (yield args, {})
+  return f(*args)
 
 def _jvp(fun: lu.WrappedFun):
   return jvpfun2(jvp_subtrace2(fun))
 
-@lu.transformation
-def jvpfun2(primals, tangents):
+@lu.transformation2
+def jvpfun2(f, primals, tangents):
   tag = core.TraceTag()
   tangents = [Zero.from_primal_value(t) if not isinstance(t, Zero)
               and dtype(t) == float0 else t for t in tangents]
   ctx = source_info_util.transform_name_stack('jvp')
   with ctx:
-    out_primals, out_tangents, tangent_attrs_out = yield (tag, primals, tangents), {}
-  yield out_primals, out_tangents, tangent_attrs_out
+    out_primals, out_tangents, tangent_attrs_out = f(tag, primals, tangents)
+  return out_primals, out_tangents, tangent_attrs_out
 
-@lu.transformation
-def jvp_subtrace2(tag, primals, tangents):
+@lu.transformation2
+def jvp_subtrace2(f, tag, primals, tangents):
   with core.take_current_trace() as parent_trace:
     trace = ad.JVPTrace(parent_trace, tag)
     tag.attrs_tracked = []  # attrs written to
     in_tracers = [ad.JVPTracer(trace, x, t) if type(t) is not ad.Zero else x
                   for x, t in zip(primals, tangents)]
     with core.set_current_trace(trace):
-      ans = yield in_tracers, {}
+      ans = f(*in_tracers)
       out_primals, out_tangents = unzip2(map(trace.to_primal_tangent_pair, ans))
       tangent_attrs_out = []
       for (obj, name) in tag.attrs_tracked:
@@ -133,7 +133,7 @@ def jvp_subtrace2(tag, primals, tangents):
         if type(tangent) is not ad.Zero:
           tangent_attrs_out.append((obj, name, tangent))
     del tag.attrs_tracked
-    yield out_primals, out_tangents, tangent_attrs_out
+    return out_primals, out_tangents, tangent_attrs_out
 
 def _setattr_jvp(trace, obj, attr, maybe_tracer):
   primal, tangent = trace.to_primal_tangent_pair(maybe_tracer)
@@ -175,11 +175,12 @@ def _linearize(traceable: lu.WrappedFun, *primals):
   return (out_primals_consts, [*out_tangents_pvals, *out_tangent_attr_pvals],
           jaxpr, consts, attrs())
 
-@lu.transformation_with_aux
-def _split_attrs(*args, **kwargs):
-  primals, tangents, tangent_attrs = yield args, kwargs
+@lu.transformation_with_aux2
+def _split_attrs(f, store, *args, **kwargs):
+  primals, tangents, tangent_attrs = f(*args, **kwargs)
   attrs, tangent_attr_vals = unzip2(((o, a), t) for o, a, t in tangent_attrs)
-  yield (primals, tangents, tangent_attr_vals), attrs
+  store.store(attrs)
+  return primals, tangents, tangent_attr_vals
 
 def _lin_wrap(jaxpr, consts, out_pvals, attr_avals, io_tree, in_attrs, out_attrs):
   in_tree, out_tree = io_tree
