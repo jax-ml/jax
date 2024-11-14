@@ -1,5 +1,5 @@
 # Pulls the latest changes from upstream into main and opens a PR to merge
-# them into rocm-main.
+# them into rocm-main branch.
 
 name: ROCm Nightly Upstream Sync
 on:
