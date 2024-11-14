@@ -264,6 +264,7 @@ class ModuleContext:
 class LoweringRuleContext:
   module_ctx: ModuleContext
   launch_ctx: mgpu.LaunchContext
+  predicate: ir.Value
   avals_in: Sequence[jax_core.ShapedArray]
   avals_out: Sequence[jax_core.ShapedArray]
 
@@ -878,6 +879,7 @@ def lower_jaxpr_to_mosaic_gpu(
       rule_ctx = LoweringRuleContext(
           module_ctx,
           launch_ctx,
+          predicate=mgpu.single_thread_predicate(per_block=False),
           avals_in=[cast(jax_core.ShapedArray, v.aval) for v in eqn.invars],
           avals_out=[cast(jax_core.ShapedArray, v.aval) for v in eqn.outvars],
       )
@@ -1118,6 +1120,12 @@ def _convert_element_type_lowering_rule(
   return _ensure_fa(x, x_aval.dtype).astype(
       mgpu_utils.dtype_to_ir_type(new_dtype), is_signed=mgpu_utils.is_signed(new_dtype)
   )
+
+
+mosaic_lowering_rules.update({
+    lax.neg_p: lambda ctx, x: -x,
+    lax.not_p: lambda ctx, x: ~x,
+})
 
 
 def _binary_op_lowering_rule(ctx: LoweringRuleContext, x, y, *, impl):
@@ -1576,4 +1584,4 @@ def _as_index(v: object) -> ir.Value:
     case mgpu.FragmentedArray(layout=mgpu.WGSplatFragLayout()):
       return _as_index(v.registers.item())
     case _:
-      raise ValueError(f"Unsupported index: {v}")
+      raise ValueError(f"Unsupported index: {v} of type {type(v)}")
