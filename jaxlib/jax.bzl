@@ -74,6 +74,7 @@ _py_deps = {
     "absl/flags": ["@pypi_absl_py//:pkg"],
     "cloudpickle": ["@pypi_cloudpickle//:pkg"],
     "colorama": ["@pypi_colorama//:pkg"],
+    "cupti-python": ["@pypi_cupti_python//:pkg"],
     "epath": ["@pypi_etils//:pkg"],  # etils.epath
     "filelock": ["@pypi_filelock//:pkg"],
     "flatbuffers": ["@pypi_flatbuffers//:pkg"],

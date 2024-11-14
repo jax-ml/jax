@@ -266,6 +266,18 @@ def put_executable_and_time(
                "Writing %s to persistent compilation cache with key %r",
                module_name, cache_key)
     monitoring.record_event('/jax/compilation_cache/cache_misses')
+    if config.compilation_cache_expect_pgle.value:
+      # User asserted that the compilation cache would already contain PGLE-optimized
+      # executables. Because of the size/compile-time thresholds, it is expected that
+      # some compilation of small modules will still happen, but that should not lead
+      # to compilation cache writes.
+      warnings.warn(
+          f"PERSISTENT CACHE WRITE with key {cache_key}, this is unexpected because "
+          "JAX_COMPILATION_CACHE_EXPECT_PGLE is set. The execution that populated the "
+          "cache may lack coverage, "
+          "https://jax.readthedocs.io/en/latest/persistent_compilation_cache.html may "
+          "help debug why this has happened")
+
     cache.put(cache_key, executable_and_time)
 
 
