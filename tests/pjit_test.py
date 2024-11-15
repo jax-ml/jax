@@ -5225,6 +5225,32 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, (np_inp * np_inp) * 2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
 
+  def test_shard_map_dot(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
+    arr2 = jax.device_put(np_inp.T, NamedSharding(mesh, P('y', 'x')))
+
+    def g(x, y):
+      self.assertTrue(x.sharding.mesh.are_all_axes_collective)
+      self.assertTrue(y.sharding.mesh.are_all_axes_collective)
+      allgatherd_y = jax.lax.all_gather(y, axis_name='x', axis=1, tiled=True)
+      z = x @ allgatherd_y
+      return jax.lax.psum(z, axis_name='y')
+
+    @jax.jit
+    def f(x, y):
+      z = shard_map(g, mesh=mesh, in_specs=(x.sharding.spec, y.sharding.spec),
+                    out_specs=P('x', None))(x, y)
+      self.assertEqual(z.sharding.spec, P('x', None))
+      out = z * 2
+      self.assertEqual(out.sharding.spec, P('x', None))
+      return out
+
+    out = f(arr, arr2)
+    self.assertArraysEqual(out, (np_inp @ np_inp.T) * 2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

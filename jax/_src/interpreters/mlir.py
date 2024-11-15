@@ -2474,6 +2474,20 @@ wrap_with_full_to_shard_op = partial(_wrap_with_spmd_op, "SPMDFullToShardShape")
 wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
 
 
+def lower_sharding_under_shit(ctx, op, aval, sharding_proto=None):
+  if sharding_proto is None:
+    proto = aval.sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
+  else:
+    proto = sharding_proto
+  # TODO(yashkatariya): Setting all axes as unspecified should work even when
+  # any axes is Collective because that's what happens in partial auto shmap.
+  # Do that after tests for it exists.
+  unspecified_dims = (set(range(aval.ndim))
+                      if aval.sharding.mesh.are_all_axes_collective else None)
+  return wrap_with_sharding_op(
+      ctx, op, aval, proto, unspecified_dims=unspecified_dims)
+
+
 def set_sharding(op, sharding: xc.OpSharding | sharding_impls.SdyArraySharding):
   if config.use_shardy_partitioner.value:
     op.attributes["sdy.sharding"] = get_sharding_attr(sharding)

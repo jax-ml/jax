@@ -107,6 +107,17 @@ class AxisTypes(enum.Enum):
   User = enum.auto()
   Collective = enum.auto()
 
+def axis_names_to_types(axis_types) -> dict[str, AxisTypes]:
+  if axis_types is None:
+    return {}
+  d = {}
+  for t, names in axis_types.items():
+    if isinstance(names, tuple):
+      for n in names:
+        d[n] = t
+    else:
+      d[names] = t
+  return d
 
 _mesh_object_dict = {}  # type: ignore
 
@@ -269,6 +280,10 @@ class Mesh(contextlib.ContextDecorator):
   def axis_sizes(self) -> tuple[int, ...]:
     return self.devices.shape
 
+  @functools.cached_property
+  def _name_to_type(self):
+    return axis_names_to_types(self.axis_types)
+
   @property
   def size(self):
     return math.prod(self.shape.values()) if self.devices.ndim else 0
@@ -389,6 +404,10 @@ class AbstractMesh:
   @property
   def axis_sizes(self) -> tuple[int, ...]:
     return self._axis_sizes
+
+  @functools.cached_property
+  def _name_to_type(self):
+    return axis_names_to_types(self.axis_types)
 
   @functools.cached_property
   def size(self):
