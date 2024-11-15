@@ -2687,8 +2687,7 @@ def _pow_int_int(x1, x2):
   return acc
 
 
-@export
-@jit
+@binary_ufunc(identity=-np.inf, reduce=reductions._logsumexp)
 def logaddexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """Compute ``log(exp(x1) + exp(x2))`` avoiding overflow.
 
@@ -2714,8 +2713,7 @@ def logaddexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   return lax_other.logaddexp(x1, x2)
 
 
-@export
-@jit
+@binary_ufunc(identity=-np.inf, reduce=reductions._logsumexp2)
 def logaddexp2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """Logarithm of the sum of exponentials of inputs in base-2 avoiding overflow.
 
