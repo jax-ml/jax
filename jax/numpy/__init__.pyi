@@ -29,6 +29,46 @@ _Device = Device
 
 ComplexWarning: type
 
+class ufunc:
+  def __init__(self, func: Callable[..., Any], /,
+               nin: int, nout: int, *,
+               name: str | None = None,
+               nargs: int | None = None,
+               identity: Any = None,
+               call: Callable[..., Any] | None = None,
+               reduce: Callable[..., Any] | None = None,
+               accumulate: Callable[..., Any] | None = None,
+               at: Callable[..., Any] | None = None,
+               reduceat: Callable[..., Any] | None = None,
+               ): ...
+  @property
+  def nin(self) -> int: ...
+  @property
+  def nout(self) -> int: ...
+  @property
+  def nargs(self) -> int: ...
+  @property
+  def identity(self) -> builtins.bool | int | float: ...
+  def __call__(self, *args: ArrayLike) -> Any: ...
+  def reduce(self, a: ArrayLike, /, *,
+             axis: int | None = 0,
+             dtype: DTypeLike | None = None,
+             out: None = None,
+             keepdims: builtins.bool = False,
+             initial: ArrayLike | None = None,
+             where: ArrayLike | None = None) -> Array: ...
+  def accumulate(self, a: ArrayLike, /, *,
+                 axis: int = 0,
+                 dtype: DTypeLike | None = None,
+                 out: None = None) -> Array: ...
+  def at(self, a: ArrayLike, indices: Any, b: ArrayLike | None = None, /, *,
+         inplace: builtins.bool = True) -> Array: ...
+  def reduceat(self, a: ArrayLike, indices: Any, *,
+               axis: int = 0,
+               dtype: DTypeLike | None = None,
+               out: None = None) -> Array: ...
+  def outer(self, a: ArrayLike, b: ArrayLike, /) -> Array: ...
+
 class BinaryUfunc(Protocol):
   @property
   def nin(self) -> int: ...
@@ -39,9 +79,10 @@ class BinaryUfunc(Protocol):
   @property
   def identity(self) -> builtins.bool | int | float: ...
   def __call__(self, x: ArrayLike, y: ArrayLike, /) -> Array: ...
-  def reduce(self, arr: ArrayLike, /, *,
+  def reduce(self, a: ArrayLike, /, *,
              axis: int | None = 0,
              dtype: DTypeLike | None = None,
+             out: None = None,
              keepdims: builtins.bool = False,
              initial: ArrayLike | None = None,
              where: ArrayLike | None = None) -> Array: ...
@@ -434,6 +475,8 @@ def fromfile(*args, **kwargs): ...
 def fromfunction(function: Callable[..., Array], shape: Any,
                  *, dtype: DTypeLike = ..., **kwargs) -> Array: ...
 def fromiter(*args, **kwargs): ...
+def frompyfunc(func: Callable[..., Any], /, nin: int, nout: int,
+               *, identity: Any = None) -> ufunc: ...
 def fromstring(
     string: str, dtype: DTypeLike = ..., count: int = ..., *, sep: str
 ) -> Array: ...
