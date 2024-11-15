@@ -677,7 +677,7 @@ class KeyReuseError(JAXTypeError):
     KeyReuseError: Previously-consumed key passed to jit-compiled function at index 0
 
   This sort of key reuse is problematic because the JAX PRNG is stateless, and keys
-  must be manually split; For more information on this see `Sharp Bits: Random Numbers
-  <https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#random-numbers>`_.
+  must be manually split; For more information on this see `the Pseudorandom Numbers
+  tutorial <https://jax.readthedocs.io/en/latest/random-numbers.html>`_.
   """
   pass
