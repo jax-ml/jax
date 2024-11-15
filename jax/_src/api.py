@@ -155,10 +155,10 @@ def jit(
 ) -> pjit.JitWrapped:
   """A JAX transformation that sets up ``fun`` for just-in-time compilation with XLA.
   
-  Learn more in the
-  `Just-in-time compilation <https://jax.readthedocs.io/en/latest/jit-compilation.html>`_
-  tutorial and the
-  `Quickstart <https://jax.readthedocs.io/en/latest/quickstart.html#just-in-time-compilation-with-jax-jit>`_.
+  Learn more in the Just-in-time compilation tutorial `[1]`_ and the Quickstart `[2]`_.
+  
+  .. _[1] https://jax.readthedocs.io/en/latest/jit-compilation.html
+  .. _[2] https://jax.readthedocs.io/en/latest/quickstart.html#just-in-time-compilation-with-jax-jit
   
   Args:
     fun: Function to be jitted. ``fun`` should be a pure function.
