@@ -1050,6 +1050,16 @@ class ShardMapTest(jtu.JaxTestCase):
     a = jnp.array([True, False])
     shard_map(f, mesh, in_specs=P('x'), out_specs=P('x'))(a)
 
+  def test_switch_rep_rule(self):
+    mesh = jtu.create_mesh((2, 2,), ('x', 'y'))
+    x = jnp.arange(4)
+
+    def f(n, x, y):
+      return jax.lax.switch(
+          n, [lambda x, _: x, lambda x, _: x + 1, lambda x, _: x + 2], x, y)
+
+    shard_map(f, mesh, in_specs=(P(), P('x'), P('y')), out_specs=P('x'))(1, x, x)
+
   def test_eager_custom_jvp_basic(self):
     @jax.custom_jvp
     def foo(x):
