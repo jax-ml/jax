@@ -68,7 +68,7 @@ from jax._src.typing import (
 )
 from jax._src.util import (
     NumpyComplexWarning, canonicalize_axis as _canonicalize_axis,
-    ceil_of_ratio, partition_list, safe_zip, subvals,unzip2)
+    ceil_of_ratio, partition_list, safe_zip, subvals,unzip2, tuple_replace)
 from jax.sharding import (Sharding, SingleDeviceSharding, NamedSharding,
                           PartitionSpec as P)
 from jax.tree_util import tree_flatten, tree_leaves, tree_map
@@ -11453,6 +11453,105 @@ def take_along_axis(
     start_indices_batching_dims=tuple(start_indices_batching_dims))
   return lax.gather(a, gather_indices_arr, dnums, tuple(slice_sizes),
                     mode="fill" if mode is None else mode, fill_value=fill_value)
+
+
+_indices = indices  # argument below named 'indices' shadows the function
+
+
+def _make_along_axis_idx(shape, indices, axis):
+  return tuple_replace(_indices(shape, sparse=True), axis, indices)
+
+
+@partial(jit, static_argnames=('axis', 'inplace', 'mode'))
+def put_along_axis(
+  arr: ArrayLike,
+  indices: ArrayLike,
+  values: ArrayLike,
+  axis: int | None,
+  inplace: bool = True,
+  *,
+  mode: str | None = None,
+) -> Array:
+  """Put values into the destination array by matching 1d index and data slices.
+
+  JAX implementation of :func:`numpy.put_along_axis`.
+
+  The semantics of :func:`numpy.put_along_axis` are to modify arrays in-place, which
+  is not possible for JAX's immutable arrays. The JAX version returns a modified
+  copy of the input, and adds the ``inplace`` parameter which must be set to
+  `False`` by the user as a reminder of this API difference.
+
+  Args:
+    arr: array into which values will be put.
+    indices: array of indices at which to put values.
+    values: array of values to put into the array.
+    axis: the axis along which to put values. If not specified, the array will
+      be flattened before indexing is applied.
+    inplace: must be set to False to indicate that the input is not modified
+      in-place, but rather a modified copy is returned.
+    mode: Out-of-bounds indexing mode. For more discussion of ``mode`` options,
+      see :attr:`jax.numpy.ndarray.at`.
+
+  Returns:
+    A copy of ``a`` with specified entries updated.
+
+  See Also:
+    - :func:`jax.numpy.put`: put elements into an array at given indices.
+    - :func:`jax.numpy.place`: place elements into an array via boolean mask.
+    - :func:`jax.numpy.ndarray.at`: array updates using NumPy-style indexing.
+    - :func:`jax.numpy.take`: extract values from an array at given indices.
+    - :func:`jax.numpy.take_along_axis`: extract values from an array along an axis.
+
+  Examples:
+    >>> from jax import numpy as jnp
+    >>> a = jnp.array([[10, 30, 20], [60, 40, 50]])
+    >>> i = jnp.argmax(a, axis=1, keepdims=True)
+    >>> print(i)
+    [[1]
+     [0]]
+    >>> b = jnp.put_along_axis(a, i, 99, axis=1, inplace=False)
+    >>> print(b)
+    [[10 99 20]
+     [99 40 50]]
+  """
+  if inplace:
+    raise ValueError(
+      "jax.numpy.put_along_axis cannot modify arrays in-place, because JAX arrays"
+      "are immutable. Pass inplace=False to instead return an updated array.")
+
+  util.check_arraylike("put_along_axis", arr, indices, values)
+  arr = asarray(arr)
+  indices = asarray(indices)
+  values = asarray(values)
+
+  original_axis = axis
+  original_arr_shape = arr.shape
+
+  if axis is None:
+    arr = arr.ravel()
+    axis = 0
+
+  if not arr.ndim == indices.ndim:
+    raise ValueError(
+      "put_along_axis arguments 'arr' and 'indices' must have same ndim. Got "
+      f"{arr.ndim=} and {indices.ndim=}."
+    )
+
+  try:
+    values = broadcast_to(values, indices.shape)
+  except ValueError:
+    raise ValueError(
+      "put_along_axis argument 'values' must be broadcastable to 'indices'. Got "
+      f"{values.shape=} and {indices.shape=}."
+    )
+
+  idx = _make_along_axis_idx(arr.shape, indices, axis)
+  result = arr.at[idx].set(values, mode=mode)
+
+  if original_axis is None:
+    result = result.reshape(original_arr_shape)
+
+  return result
 
 
 ### Indexing
