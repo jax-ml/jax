@@ -30,10 +30,10 @@ cannot follow NumPy exactly.
   JIT. For this reason, JAX adds an optional ``size`` argument to such functions
   which may be specified statically in order to use them with JIT.
 
-Learn more about ``jax.numpy`` in
-`JAX Quickstart <https://jax.readthedocs.io/en/latest/key-concepts.html#array-creation>`_
-and
-`How to think in JAX <https://jax.readthedocs.io/en/latest/notebooks/thinking_in_jax.html#jax-vs-numpy>`_.
+You can learn more about ``jax.numpy`` in the Quickstart `[1]`_ and How to think in JAX `[2]`_ documentation.
+
+.. _[1] https://jax.readthedocs.io/en/latest/key-concepts.html#array-creation
+.. _[2] https://jax.readthedocs.io/en/latest/notebooks/thinking_in_jax.html#jax-vs-numpy
 
 Nearly all applicable NumPy functions are implemented in the ``jax.numpy``
 namespace; they are listed below.
