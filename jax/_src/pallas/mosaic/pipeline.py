@@ -363,6 +363,8 @@ class BufferedRef:
     """Compute DMA slice from grid indices."""
     block_shape = tuple(1 if x is None else x for x in self.block_shape)
     indices = self.compute_index(*grid_indices)
+    if isinstance(self.spec.indexing_mode, pl.Unblocked):
+      return jax.tree.map(pl.ds, indices, block_shape)
     return jax.tree.map(_make_ds, indices, block_shape)
 
   def init_slots(self):
@@ -429,6 +431,8 @@ class BufferedRef:
     tiling = _make_tiling(src_shape, src_dtype)
     block_shape = tuple(1 if b is None else b for b in self.block_shape)
     block_indices = self.compute_index(*grid_indices)
+    if isinstance(self.spec.indexing_mode, pl.Unblocked):
+      return jax.tree.map(pl.ds, block_indices, block_shape)
     return jax.tree.map(
         _make_block_slice, block_indices, block_shape, src_shape, tiling
     )

@@ -137,10 +137,10 @@ class PallasCallPipelineTest(parameterized.TestCase):
   @parameterized.named_parameters(
       ('vmem', pltpu.TPUMemorySpace.VMEM),
       ('hbm', pltpu.TPUMemorySpace.ANY),
+      ('vmem_unblocked', pltpu.TPUMemorySpace.VMEM, True),
+      ('hbm_unblocked', pltpu.TPUMemorySpace.ANY, True),
   )
-  def test_pipeline_matmul(self, memory_space):
-    # TODO(b/358121809): Re-enable this test once the bug is fixed.
-    self.skipTest('Broken test.')
+  def test_pipeline_matmul(self, memory_space, unblocked=False):
     k1, k2 = jax.random.split(jax.random.key(0))
     x = jax.random.uniform(k1, (512, 512))
     y = jax.random.uniform(k2, (512, 512))
@@ -152,15 +152,33 @@ class PallasCallPipelineTest(parameterized.TestCase):
 
       z_ref[...] += x_ref[...] @ y_ref[...]
 
+    if unblocked:
+      lhs_spec = pl.BlockSpec(
+          (128, 128),
+          lambda i, j, k: (i * 128, k * 128),
+          indexing_mode=pl.unblocked,
+      )
+      rhs_spec = pl.BlockSpec(
+          (128, 128),
+          lambda i, j, k: (k * 128, j * 128),
+          indexing_mode=pl.unblocked,
+      )
+      out_spec = pl.BlockSpec(
+          (128, 128),
+          lambda i, j, k: (i * 128, j * 128),
+          indexing_mode=pl.unblocked,
+      )
+    else:
+      lhs_spec = pl.BlockSpec((128, 128), lambda i, j, k: (i, k))
+      rhs_spec = pl.BlockSpec((128, 128), lambda i, j, k: (k, j))
+      out_spec = pl.BlockSpec((128, 128), lambda i, j, k: (i, j))
+
     def matmul_kernel(x_ref, y_ref, z_ref):
       pltpu.emit_pipeline(
           matmul_pipeline,
           grid=(4, 4, 4),
-          in_specs=[
-              pl.BlockSpec((128, 128), lambda i, j, k: (i, k)),
-              pl.BlockSpec((128, 128), lambda i, j, k: (k, j)),
-          ],
-          out_specs=pl.BlockSpec((128, 128), lambda i, j, k: (i, j)),
+          in_specs=[lhs_spec, rhs_spec],
+          out_specs=out_spec,
       )(x_ref, y_ref, z_ref)
 
     z = pl.pallas_call(
