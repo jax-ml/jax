@@ -12,6 +12,7 @@ kernelspec:
   name: python3
 ---
 
+(stateful-computations)=
 # Stateful computations
 
 <!--* freshness: { reviewed: '2024-05-03' } *-->

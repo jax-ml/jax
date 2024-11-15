@@ -170,7 +170,7 @@ jax.jit(g)(10, 20)  # Raises an error
 The problem in both cases is that we tried to condition the trace-time flow of the program using runtime values.
 Traced values within JIT, like `x` and `n` here, can only affect control flow via their static attributes: such as
 `shape` or `dtype`, and not via their values.
-For more detail on the interaction between Python control flow and JAX, see [🔪 JAX - The Sharp Bits 🔪: Control Flow](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#control-flow).
+For more detail on the interaction between Python control flow and JAX, see {ref}`control-flow`.
 
 One way to deal with this problem is to rewrite the code to avoid conditionals on value. Another is to use special {ref}`lax-control-flow` like {func}`jax.lax.cond`. However, sometimes that is not possible or practical.
 In that case, you can consider JIT-compiling only part of the function.

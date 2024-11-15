@@ -16,6 +16,7 @@ Tutorials
    working-with-pytrees
    sharded-computation
    stateful-computations
+   control-flow
    
 .. toctree::
    :maxdepth: 1

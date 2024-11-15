@@ -189,8 +189,7 @@ You can mix `jit` and `grad` and any other JAX transformation however you like.
 
 Using `jit` puts constraints on the kind of Python control flow
 the function can use; see
-the [Gotchas
-Notebook](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#python-control-flow-+-JIT)
+the tutorial on [Control Flow and Logical Operators with JIT](https://jax.readthedocs.io/en/latest/control-flow.html)
 for more.
 
 ### Auto-vectorization with `vmap`
@@ -369,7 +368,7 @@ Some standouts:
    and NumPy types aren't preserved, namely `np.add(1, np.array([2],
    np.float32)).dtype` is `float64` rather than `float32`.
 1. Some transformations, like `jit`, [constrain how you can use Python control
-   flow](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#control-flow).
+   flow](https://jax.readthedocs.io/en/latest/control-flow.html).
    You'll always get loud errors if something goes wrong. You might have to use
    [`jit`'s `static_argnums`
    parameter](https://jax.readthedocs.io/en/latest/jax.html#just-in-time-compilation-jit),
