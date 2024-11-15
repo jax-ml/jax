@@ -31,7 +31,7 @@ The primary purpose of this module is to enable the interoperability between
 user defined data structures and JAX transformations (e.g. ``jax.jit``). This is not
 meant to be a general purpose tree-like data structure handling library.
 
-Refer to Working with pytrees `[1]`_ tutorial for examples.
+Refer to the Working with pytrees `[1]`_ tutorial for examples.
 
 .. _[1] https://jax.readthedocs.io/en/latest/working-with-pytrees.html
 """
