@@ -716,6 +716,8 @@ batching.fancy_primitive_batchers[remat_p] = remat_vmap
 # TODO(mattjj,sharadmv): de-duplicate with pe.dce_jaxpr_call_rule
 def remat_dce(used_outputs: list[bool], eqn: core.JaxprEqn
               ) -> tuple[list[bool], core.JaxprEqn | None]:
+  if not any(used_outputs) and not pe.has_effects(eqn):
+    return [False] * len(eqn.invars), None
   new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs)
   new_params = dict(eqn.params, jaxpr=new_jaxpr)
   if (not any(used_inputs) and not any(used_outputs) and

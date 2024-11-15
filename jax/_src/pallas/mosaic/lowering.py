@@ -502,8 +502,13 @@ def _check_block_mappings(
         )
     else:
       assert rank == 1
-      # TODO(necula): test this for bool. What should it do?
-      tiling_size = 128 * (32 // lax_internal._bit_width(bm.array_shape_dtype.dtype))
+      # bools get a bitwidth of 32 due to how mosaic handles them
+      if bm.array_shape_dtype.dtype == jnp.bool_:
+        bitwidth = 32
+      else:
+        bitwidth = lax_internal._bit_width(bm.array_shape_dtype.dtype)
+      packing = 32 // bitwidth
+      tiling_size = 128 * packing
       evenly_divisible = (bs0 == as0 or bs0 % tiling_size == 0)
       if not evenly_divisible:
         raise ValueError(
@@ -2077,6 +2082,15 @@ def _sqrt_lowering_rule(ctx: LoweringRuleContext, x):
 
 
 lowering_rules[lax.sqrt_p] = _sqrt_lowering_rule
+
+
+def _square_lowering_rule(ctx: LoweringRuleContext, x):
+  if jnp.issubdtype(ctx.avals_in[0].dtype, jnp.integer):
+    return arith.muli(x, x)
+  return arith.mulf(x, x)
+
+
+lowering_rules[lax.square_p] = _square_lowering_rule
 
 
 def _exp_lowering_rule(ctx: LoweringRuleContext, x):

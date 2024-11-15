@@ -29,10 +29,12 @@ from jax._src import config as config
 from jax._src import distributed
 from jax._src import lib
 from jax._src import monitoring
+from jax._src import path as pathlib
 from jax._src import profiler
 from jax._src import traceback_util
 from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 import numpy as np
 
@@ -240,6 +242,31 @@ def get_compile_options(
                      "XLA-AutoFDO profile version is 0; this should not happen")
 
   debug_options.xla_detailed_logging = detailed_logging
+
+  # If persistent cache is enabled, also enable additional XLA caching features.
+  if compilation_cache.is_persistent_cache_enabled() and jaxlib_version > (0, 4, 35):
+    # compilation_cache_dir can't be None here, but the type checker is a bit
+    # strict.
+    path = pathlib.Path(config.compilation_cache_dir.value or "")
+    enabled_flags = config.persistent_cache_enable_xla_caches.value or ""
+
+    if enabled_flags == "all" or "xla_gpu_kernel_cache_file" in enabled_flags:
+      kernel_cache_path = path / "xla_gpu_kernel_cache_file"
+      debug_options.xla_gpu_kernel_cache_file = str(kernel_cache_path)
+      # This option is required to use the kernel cache.
+      debug_options.xla_gpu_enable_llvm_module_compilation_parallelism = True
+      logger.debug("Enabling XLA kernel cache at '%s'", kernel_cache_path)
+
+    if enabled_flags == "all" or "xla_gpu_per_fusion_autotune_cache_dir" in enabled_flags:
+      autotune_cache_path = path / "xla_gpu_per_fusion_autotune_cache_dir"
+      debug_options.xla_gpu_per_fusion_autotune_cache_dir = str(autotune_cache_path)
+      logger.debug("Enabling XLA autotuning cache at '%s'", autotune_cache_path)
+
+      # Set caching mode so that only process 0 can write to the cache.
+      if distributed.global_state.process_id == 0:
+        debug_options.xla_gpu_experimental_autotune_cache_mode = xc.AutotuneCacheMode.UPDATE
+      else:
+        debug_options.xla_gpu_experimental_autotune_cache_mode = xc.AutotuneCacheMode.READ
 
   return compile_options
 

@@ -4362,12 +4362,6 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     elif name == 'sign':
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4')
 
-    elif name == 'square':
-      if is_cuda:
-        regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'ninf.real', 'pinf.real', 'ninfj.real', 'pinfj.real')
-      if is_cpu:
-        regions_with_inaccuracies_keep('ninf.real', 'pinf.real', 'q1.real', 'q2.real', 'q3.real', 'q4.real')
-
     elif name == 'log':
       regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'ninf.imag', 'pinf.imag', 'ninfj.imag', 'pinfj.imag')
 
@@ -4411,7 +4405,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       regions_with_inaccuracies_keep('ninf.imag', 'pinf.imag')
 
     elif name in {'positive', 'negative', 'conjugate', 'sin', 'cos', 'sqrt', 'expm1', 'log1p', 'tan',
-                  'arcsinh', 'arcsin', 'arccosh', 'arctan', 'arctanh'}:
+                  'arcsinh', 'arcsin', 'arccosh', 'arctan', 'arctanh', 'square'}:
       regions_with_inaccuracies.clear()
     else:
       assert 0  # unreachable

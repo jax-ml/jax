@@ -264,6 +264,7 @@ class ModuleContext:
 class LoweringRuleContext:
   module_ctx: ModuleContext
   launch_ctx: mgpu.LaunchContext
+  predicate: ir.Value
   avals_in: Sequence[jax_core.ShapedArray]
   avals_out: Sequence[jax_core.ShapedArray]
 
@@ -878,6 +879,7 @@ def lower_jaxpr_to_mosaic_gpu(
       rule_ctx = LoweringRuleContext(
           module_ctx,
           launch_ctx,
+          predicate=mgpu.single_thread_predicate(per_block=False),
           avals_in=[cast(jax_core.ShapedArray, v.aval) for v in eqn.invars],
           avals_out=[cast(jax_core.ShapedArray, v.aval) for v in eqn.outvars],
       )
@@ -1120,6 +1122,12 @@ def _convert_element_type_lowering_rule(
   )
 
 
+mosaic_lowering_rules.update({
+    lax.neg_p: lambda ctx, x: -x,
+    lax.not_p: lambda ctx, x: ~x,
+})
+
+
 def _binary_op_lowering_rule(ctx: LoweringRuleContext, x, y, *, impl):
   x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
   return impl(x, y)
@@ -1160,6 +1168,11 @@ def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
     return x * x
   return NotImplementedError
 
+@register_lowering_rule(lax.square_p)
+def _square_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  x = _ensure_fa(x, x_aval.dtype)
+  return x * x
 
 @register_lowering_rule(lax.rsqrt_p)
 def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):
@@ -1571,4 +1584,4 @@ def _as_index(v: object) -> ir.Value:
     case mgpu.FragmentedArray(layout=mgpu.WGSplatFragLayout()):
       return _as_index(v.registers.item())
     case _:
-      raise ValueError(f"Unsupported index: {v}")
+      raise ValueError(f"Unsupported index: {v} of type {type(v)}")

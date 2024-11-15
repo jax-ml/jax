@@ -22,5 +22,7 @@ from jax._src.linear_util import (
   merge_linear_aux as merge_linear_aux,
   transformation as transformation,
   transformation_with_aux as transformation_with_aux,
+  transformation2 as transformation2,
+  transformation_with_aux2 as transformation_with_aux2,
   wrap_init as wrap_init,
 )

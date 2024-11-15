@@ -640,7 +640,7 @@ def TPU_SemaphoreSignalOp : TPU_Op<"sem_signal", [AttrSizedOperandSegments]> {
     Optional<I32>:$core_id // For megacore
   );
   let assemblyFormat = [{
-    $semaphore `,` $amount (`,` $device_id^)? (`,` $core_id^)? attr-dict `:` type($semaphore)
+    $semaphore `,` $amount (`device_id` $device_id^)? (`core_id` $core_id^)? attr-dict `:` type($semaphore)
   }];
   let hasVerifier = 1;
 }

@@ -1915,7 +1915,7 @@ def batch_matmul(lhs: Array, rhs: Array,
 
 def square(x: ArrayLike) -> Array:
   r"""Elementwise square: :math:`x^2`."""
-  return integer_pow(x, 2)
+  return square_p.bind(x)
 
 def reciprocal(x: ArrayLike) -> Array:
   r"""Elementwise reciprocal: :math:`1 \over x`."""
@@ -2203,14 +2203,13 @@ def multi_sharding_in_dim(ctx, ops, in_avals, out_aval):
   for op, in_aval in zip(ops, in_avals):
     if in_aval.sharding == out_aval.sharding or in_aval.sharding is None:
       out.append(op)
+    elif in_aval.sharding.mesh.are_all_axes_collective:
+      out.append(op)
     else:
       # TODO(yashkatariya, dougalm): If `in_aval.sharding` contains
       # CompilerShardingAxis, then specify `unspecified_dims` via
       # `wrap_with_sharding_op`.
-      if config.use_shardy_partitioner.value:
-        sp = in_aval.sharding._to_sdy_sharding(in_aval.ndim)
-      else:
-        sp = in_aval.sharding._to_xla_hlo_sharding(in_aval.ndim).to_proto()
+      sp = in_aval.sharding._to_xla_hlo_sharding(in_aval.ndim).to_proto()
       out.append(mlir.wrap_with_sharding_op(ctx, op, out_aval, sp))
   return out
 
@@ -2227,10 +2226,9 @@ def _nary_lower_hlo(op: Callable, ctx,
 
   out = op(*args)
   if config.sharding_in_types.value:
-    if config.use_shardy_partitioner.value:
-      out_sp = aval_out.sharding._to_sdy_sharding(aval_out.ndim)
-    else:
-      out_sp = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
+    if aval_out.sharding.mesh.are_all_axes_collective:
+      return [out]
+    out_sp = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
     return [mlir.wrap_with_sharding_op(ctx, out, aval_out, out_sp)]
   else:
     return [out]
@@ -2524,6 +2522,27 @@ ad.defjvp2(cbrt_p,
            lambda g, ans, x: mul(g, mul(_const(x, 1/3), integer_pow(ans, -2))))
 mlir.register_lowering(cbrt_p, partial(_nary_lower_hlo, hlo.cbrt))
 
+square_p = standard_unop(_int | _float | _complex, 'square')
+
+def _square_complex(x):
+  a, b = real(x), imag(x)
+  # zero square(x).real is handled explicitly for abs(a)==abs(b) cases
+  # where for finite a, 2 * a is non-finite:
+  zero_re = is_finite(a) & (eq(a, b) | eq(a, -b))
+  # equivalent to a**2 - b**2 but avoids overflow errors for large a
+  # and large b cases:
+  re = (a - b) * (a + b)
+  im = a * b * 2
+  return select(zero_re, complex(_const(a, 0), im), complex(re, im))
+
+def _square_lower_hlo(ctx, x):
+  if dtypes.issubdtype(ctx.avals_in[0].dtype, np.complexfloating):
+    return mlir.lower_fun(_square_complex, multiple_results=False)(ctx, x)
+  return [hlo.multiply(x, x)]
+
+ad.defjvp2(square_p, lambda g, ans, x: mul(g, mul(_const(x, 2), x)))
+mlir.register_lowering(square_p, _square_lower_hlo)  # TODO(pearu): use chlo.square
+
 def _pow_dtype_rule(x, y):
   if (dtypes.issubdtype(x.dtype, np.inexact) and
       dtypes.issubdtype(y.dtype, np.integer)):
@@ -2612,24 +2631,24 @@ def _integer_pow(x, *, y):
 def _integer_pow_lowering(ctx, x, *, y):
   # These cases are subsumed by the general case, but it's faster to emit these
   # common cases directly.
-  if y == 2:
+  if y == 1:
+    out = x
+  elif y == 2:
     out = hlo.multiply(x, x)
   elif y == 3:
     out = hlo.multiply(hlo.multiply(x, x), x)
+  elif y == -1:
+    out = hlo.divide(mlir.full_like_aval(ctx, 1, ctx.avals_in[0]), x)
   else:
     lowering = mlir.lower_fun(_integer_pow, multiple_results=False)
-    # TODO(b/217551391): emitting an out-of-line call leads to a large
-    # expansion when the MLIR is lowered to HLO, because the HLO lowering
-    # clones the callee. Consider unconditionally caching when the MLIR->HLO
-    # lowering doesn't expand the program.
-    lowering = mlir.cache_lowering(lowering)
-    out = lowering(ctx, x, y=y)
+    if builtins.abs(y) >= 3:
+      lowering = mlir.cache_lowering(lowering)
+    out, = lowering(ctx, x, y=y)
   if config.sharding_in_types.value:
     aval_out, = ctx.avals_out
     proto = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
-    out = out[0] if isinstance(out, list) else out
     return [mlir.wrap_with_sharding_op(ctx, out, aval_out, proto)]
-  return out if isinstance(out, list) else [out]
+  return [out]
 
 mlir.register_lowering(integer_pow_p, _integer_pow_lowering)
 

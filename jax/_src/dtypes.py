@@ -339,6 +339,8 @@ def _issubclass(a: Any, b: Any) -> bool:
     return False
 
 
+_types_for_issubdtype = (type, np.dtype, ExtendedDType)
+
 # TODO(jakevdp): consider whether to disallow None here. We allow it
 # because np.issubdtype allows it (and treats it as equivalent to float64).
 def issubdtype(a: DTypeLike | ExtendedDType | None,
@@ -360,8 +362,8 @@ def issubdtype(a: DTypeLike | ExtendedDType | None,
   # unhashable (e.g. custom objects with a dtype attribute). The following check is
   # fast and covers the majority of calls to this function within JAX library code.
   return _issubdtype_cached(
-    a if isinstance(a, (type, np.dtype, ExtendedDType)) else np.dtype(a),  # type: ignore[arg-type]
-    b if isinstance(b, (type, np.dtype, ExtendedDType)) else np.dtype(b),  # type: ignore[arg-type]
+    a if isinstance(a, _types_for_issubdtype) else np.dtype(a),  # type: ignore[arg-type]
+    b if isinstance(b, _types_for_issubdtype) else np.dtype(b),  # type: ignore[arg-type]
   )
 
 

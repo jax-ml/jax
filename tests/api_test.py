@@ -287,13 +287,15 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertEqual(f(sticky).devices(), system_default_devices)
     self.assertEqual(f(1).devices(), system_default_devices)
 
-  # TODO(skye): make this work!
   def test_jit_default_platform(self):
-    with self.assertRaisesWithLiteralMatch(
-        ValueError, "jax.default_device must be passed a Device object "
-        "(e.g. `jax.devices('cpu')[0]`), got: 'cpu'"):
       with jax.default_device("cpu"):
-        jax.jit(lambda x: x + 1)(1)
+        result = jax.jit(lambda x: x + 1)(1)
+      self.assertEqual(result.device.platform, "cpu")
+      self.assertEqual(result.device, jax.local_devices(backend="cpu")[0])
+
+      result = jax.jit(lambda x: x + 1)(1)
+      self.assertEqual(result.device.platform, jax.default_backend())
+      self.assertEqual(result.device, jax.local_devices()[0])
 
   def test_complex_support(self):
     self.assertEqual(jit(lambda x: x + 1)(1 + 1j), 2 + 1j)

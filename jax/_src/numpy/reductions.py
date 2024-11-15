@@ -192,6 +192,11 @@ def _cast_to_bool(operand: ArrayLike) -> Array:
 def _cast_to_numeric(operand: ArrayLike) -> Array:
   return promote_dtypes_numeric(operand)[0]
 
+def _require_integer(operand: ArrayLike) -> Array:
+  arr = lax_internal.asarray(operand)
+  if not dtypes.isdtype(arr, ("bool", "integral")):
+    raise ValueError(f"integer argument required; got dtype={arr.dtype}")
+  return arr
 
 def _ensure_optional_axes(x: Axis) -> Axis:
   def force(x):
@@ -651,6 +656,63 @@ def any(a: ArrayLike, axis: Axis = None, out: None = None,
   """
   return _reduce_any(a, axis=_ensure_optional_axes(axis), out=out,
                      keepdims=keepdims, where=where)
+
+
+@partial(api.jit, static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+def _reduce_bitwise_and(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
+                        out: None = None, keepdims: bool = False,
+                        initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
+  arr = lax_internal.asarray(a)
+  init_val = np.array(-1, dtype=dtype or arr.dtype)
+  return _reduction(arr, name="reduce_bitwise_and", np_fun=None, op=lax.bitwise_and, init_val=init_val, preproc=_require_integer,
+                    axis=_ensure_optional_axes(axis), dtype=dtype, out=out, keepdims=keepdims,
+                    initial=initial, where_=where)
+
+
+@partial(api.jit, static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+def _reduce_bitwise_or(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
+                        out: None = None, keepdims: bool = False,
+                        initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
+  return _reduction(a, name="reduce_bitwise_or", np_fun=None, op=lax.bitwise_or, init_val=0, preproc=_require_integer,
+                    axis=_ensure_optional_axes(axis), dtype=dtype, out=out, keepdims=keepdims,
+                    initial=initial, where_=where)
+
+
+@partial(api.jit, static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+def _reduce_bitwise_xor(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
+                        out: None = None, keepdims: bool = False,
+                        initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
+  return _reduction(a, name="reduce_bitwise_xor", np_fun=None, op=lax.bitwise_xor, init_val=0, preproc=_require_integer,
+                    axis=_ensure_optional_axes(axis), dtype=dtype, out=out, keepdims=keepdims,
+                    initial=initial, where_=where)
+
+
+@partial(api.jit, static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+def _reduce_logical_and(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
+                        out: None = None, keepdims: bool = False,
+                        initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
+  return _reduction(a, name="reduce_logical_and", np_fun=None, op=lax.bitwise_and, init_val=True, preproc=_cast_to_bool,
+                    axis=_ensure_optional_axes(axis), dtype=dtype, out=out, keepdims=keepdims,
+                    initial=initial, where_=where)
+
+
+@partial(api.jit, static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+def _reduce_logical_or(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
+                       out: None = None, keepdims: bool = False,
+                       initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
+  return _reduction(a, name="reduce_logical_or", np_fun=None, op=lax.bitwise_or, init_val=False, preproc=_cast_to_bool,
+                    axis=_ensure_optional_axes(axis), dtype=dtype, out=out, keepdims=keepdims,
+                    initial=initial, where_=where)
+
+
+@partial(api.jit, static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+def _reduce_logical_xor(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
+                        out: None = None, keepdims: bool = False,
+                        initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
+  return _reduction(a, name="reduce_logical_xor", np_fun=None, op=lax.bitwise_xor, init_val=False, preproc=_cast_to_bool,
+                    axis=_ensure_optional_axes(axis), dtype=dtype, out=out, keepdims=keepdims,
+                    initial=initial, where_=where)
+
 
 def amin(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False, initial: ArrayLike | None = None,

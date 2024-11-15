@@ -322,6 +322,21 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "mock_gpu_topology_test",
+    srcs = ["mock_gpu_topology_test.py"],
+    enable_backends = ["gpu"],
+    enable_configs = [
+        "gpu_h100",
+    ],
+    tags = [
+        "config-cuda-only",
+    ],
+    deps = [
+        "//jax:experimental",
+    ],
+)
+
+jax_multiplatform_test(
     name = "array_test",
     srcs = ["array_test.py"],
     backend_tags = {
@@ -1523,6 +1538,7 @@ jax_multiplatform_test(
     srcs = ["cudnn_fusion_test.py"],
     enable_backends = [],
     enable_configs = [
+        "gpu_a100",
         "gpu_h100",
     ],
     tags = ["multiaccelerator"],

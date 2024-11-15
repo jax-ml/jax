@@ -993,6 +993,63 @@ class ShardMapTest(jtu.JaxTestCase):
       shard_map(g, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
                 out_specs=[P(None), P(None), P(('x', 'y'))])(x, x, x)
 
+  def test_cond_rep_rule(self):
+    mesh = jtu.create_mesh((2, 2,), ('x', 'y'))
+    x = jnp.arange(4)
+
+    def f(x, y):
+      def true_fn(x, y):
+        return x
+      def false_fun(x, y):
+        return x + 1
+      return jax.lax.cond(True, true_fn, false_fun, x, y)
+
+    shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P('x'))(x, x)
+    with self.assertRaisesRegex(ValueError, "require replication"):
+      shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(None))(x, x)
+
+    def f(x, y):
+      def true_fn(x, y):
+        return x
+      def false_fun(x, y):
+        return y
+      return jax.lax.cond(True, true_fn, false_fun, x, y)
+
+    shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(('x', 'y')))(x, x)
+    with self.assertRaisesRegex(ValueError, "require replication"):
+      shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P('x'))(x, x)
+
+    def f(x, y):
+      def true_fn(x, y):
+        return x
+      def false_fun(x, y):
+        return x + 1
+      return jax.lax.cond(jnp.any(x > 0), true_fn, false_fun, x, y)
+
+    shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P('x'))(x, x)
+    with self.assertRaisesRegex(ValueError, "require replication"):
+      shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(None))(x, x)
+
+    def f(x, y):
+      def true_fn(x, y):
+        return x
+      def false_fun(x, y):
+        return x + 1
+      return jax.lax.cond(jnp.any(y > 0), true_fn, false_fun, x, y)
+
+    shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(('x', 'y')))(x, x)
+    with self.assertRaisesRegex(ValueError, "require replication"):
+      shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P('x'))(x, x)
+
+    # https://github.com/jax-ml/jax/issues/24418
+    def f(a):
+      c = jax.lax.cond(jnp.any(a), lambda: 1, lambda: 0)
+      return jnp.reshape(c, a.shape)
+
+    mesh = jtu.create_mesh((2,), ('x',))
+    a = jnp.array([True, False])
+    shard_map(f, mesh, in_specs=P('x'), out_specs=P('x'))(a)
+
   def test_eager_custom_jvp_basic(self):
     @jax.custom_jvp
     def foo(x):

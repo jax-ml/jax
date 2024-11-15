@@ -90,6 +90,13 @@ _MOCK_NUM_GPU_PROCESSES = config.int_flag(
     help="Mock number of JAX processes in GPU client. Value zero turns "
          "off mocking.",
 )
+_MOCK_GPU_TOPOLOGY = config.string_flag(
+    name="jax_mock_gpu_topology",
+    default="",
+    help='Mock multi-host GPU topology in GPU client. The value should '
+         'be of the form "<number-of-slices> x <number-of-hosts-per-slice> x '
+         '<number-of-devices-per-host>". Empty string turns off mocking.',
+)
 
 _CPU_ENABLE_GLOO_COLLECTIVES = config.bool_flag(
     name="jax_cpu_enable_gloo_collectives",
@@ -425,6 +432,14 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
                        f'following issues with CUDA components:\n'
                        f'{join_str.join(errors)}')
 
+def _get_num_nodes_from_gpu_topology(topology: str) -> int:
+    try:
+      slices_str, hosts_per_slice_str, _ = topology.split("x", 2)
+      return int(slices_str) * int(hosts_per_slice_str)
+    except (IndexError, ValueError):
+      raise ValueError('Mock topology must be of the form '
+                       '"<number-of-slices> x <number-of-hosts-per-slice> x '
+                       '<number-of-devices-per-host>".')
 
 def make_gpu_client(
     *, platform_name: str, visible_devices_flag: config.Flag[str]
@@ -434,12 +449,14 @@ def make_gpu_client(
   if visible_devices != "all":
     allowed_devices = {int(x) for x in visible_devices.split(",")}
 
-  use_mock_gpu_client = _MOCK_NUM_GPU_PROCESSES.value > 0
-  num_nodes = (
-      _MOCK_NUM_GPU_PROCESSES.value
-      if use_mock_gpu_client
-      else distributed.global_state.num_processes
-  )
+  mock_gpu_topology = _MOCK_GPU_TOPOLOGY.value or None
+  mock_num_gpu_processes = (_get_num_nodes_from_gpu_topology(mock_gpu_topology) if
+      mock_gpu_topology else _MOCK_NUM_GPU_PROCESSES.value)
+
+  use_mock_gpu_client = mock_num_gpu_processes > 0
+  num_nodes = (mock_num_gpu_processes if use_mock_gpu_client
+      else distributed.global_state.num_processes)
+
   if platform_name == "cuda":
     if not os.getenv("JAX_SKIP_CUDA_CONSTRAINTS_CHECK"):
       _check_cuda_versions()
@@ -634,10 +651,14 @@ def _options_from_jax_configs(plugin_name):
     visible_devices = CUDA_VISIBLE_DEVICES.value
     if visible_devices != 'all':
       options['visible_devices'] = [int(x) for x in visible_devices.split(',')]
-    mock_gpu_processes = _MOCK_NUM_GPU_PROCESSES.value
-    options['enable_mock_nccl'] = mock_gpu_processes > 0
-    if options['enable_mock_nccl']:
-      options['num_nodes'] = mock_gpu_processes
+    mock_gpu_topology = _MOCK_GPU_TOPOLOGY.value or None
+    mock_num_processes = (_get_num_nodes_from_gpu_topology(mock_gpu_topology) if
+        mock_gpu_topology else _MOCK_NUM_GPU_PROCESSES.value)
+    options['enable_mock_nccl'] = mock_num_processes > 0
+    if mock_num_processes > 0:
+      options['num_nodes'] = mock_num_processes
+      if mock_gpu_topology:
+        options['mock_gpu_topology'] = mock_gpu_topology
 
   return options
 

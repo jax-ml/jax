@@ -1146,6 +1146,37 @@ class PipelineTest(PallasTest):
     )
     np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
 
+  def test_emit_with_grid_invariant_output(self):
+    num_steps = 4
+
+    def kernel(x_gmem, o_gmem):
+      plgpu.emit_pipeline(
+          kernel_body,
+          in_specs=[pl.BlockSpec((32, 16), lambda i: (0, i))],
+          out_specs=[pl.BlockSpec((32, 16), lambda i: (0, 0))],
+          grid=(num_steps,),
+          max_concurrent_steps=2,
+      )(x_gmem, o_gmem)
+
+    def kernel_body(x_smem, o_smem):
+      o_smem[...] = x_smem[...] + 1.0
+
+    x = jnp.arange(32 * num_steps * 16)
+    x = x.reshape(-1, num_steps * 16).astype(jnp.float32)
+    kernel_fn = pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+    )
+    y = jnp.empty_like(x)
+    for i in range(num_steps):
+      i_slice = slice(16 * i, 16 * (i + 1))
+      y = y.at[:, :16].set(x[:, i_slice] + 1)
+    # We only compare the elements in the first 16 columns, because the rest
+    # are never written to.
+    np.testing.assert_array_equal(kernel_fn(x)[:, :16], y[:, :16])
+
   def test_emit_with_parallel_grid(self):
     self.skipTest("Enable once we support multiple levels of indexing")
 

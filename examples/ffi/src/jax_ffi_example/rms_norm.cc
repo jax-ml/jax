@@ -59,11 +59,10 @@ std::pair<int64_t, int64_t> GetDims(const ffi::Buffer<T> &buffer) {
 // library function `ComputeRmsNorm` above. This function handles the batch
 // dimensions by calling `ComputeRmsNorm` within a loop.
 ffi::Error RmsNormImpl(float eps, ffi::Buffer<ffi::F32> x,
-                       ffi::Result<ffi::Buffer<ffi::F32>> y) {
+                       ffi::ResultBuffer<ffi::F32> y) {
   auto [totalSize, lastDim] = GetDims(x);
   if (lastDim == 0) {
-    return ffi::Error(ffi::ErrorCode::kInvalidArgument,
-                      "RmsNorm input must be an array");
+    return ffi::Error::InvalidArgument("RmsNorm input must be an array");
   }
   for (int64_t n = 0; n < totalSize; n += lastDim) {
     ComputeRmsNorm(eps, lastDim, &(x.typed_data()[n]), &(y->typed_data()[n]));
@@ -82,12 +81,11 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(RmsNorm, RmsNormImpl,
 );
 
 ffi::Error RmsNormFwdImpl(float eps, ffi::Buffer<ffi::F32> x,
-                          ffi::Result<ffi::Buffer<ffi::F32>> y,
-                          ffi::Result<ffi::Buffer<ffi::F32>> res) {
+                          ffi::ResultBuffer<ffi::F32> y,
+                          ffi::ResultBuffer<ffi::F32> res) {
   auto [totalSize, lastDim] = GetDims(x);
   if (lastDim == 0) {
-    return ffi::Error(ffi::ErrorCode::kInvalidArgument,
-                      "RmsNormFwd input must be an array");
+    return ffi::Error::InvalidArgument("RmsNormFwd input must be an array");
   }
   for (int64_t n = 0, idx = 0; n < totalSize; n += lastDim, ++idx) {
     res->typed_data()[idx] = ComputeRmsNorm(eps, lastDim, &(x.typed_data()[n]),
@@ -118,11 +116,10 @@ void ComputeRmsNormBwd(int64_t size, float res, const float *x,
 
 ffi::Error RmsNormBwdImpl(ffi::Buffer<ffi::F32> res, ffi::Buffer<ffi::F32> x,
                           ffi::Buffer<ffi::F32> ct_y,
-                          ffi::Result<ffi::Buffer<ffi::F32>> ct_x) {
+                          ffi::ResultBuffer<ffi::F32> ct_x) {
   auto [totalSize, lastDim] = GetDims(x);
   if (lastDim == 0) {
-    return ffi::Error(ffi::ErrorCode::kInvalidArgument,
-                      "RmsNormBwd inputs must be arrays");
+    return ffi::Error::InvalidArgument("RmsNormBwd inputs must be arrays");
   }
   for (int64_t n = 0, idx = 0; n < totalSize; n += lastDim, ++idx) {
     ComputeRmsNormBwd(lastDim, res.typed_data()[idx], &(x.typed_data()[n]),

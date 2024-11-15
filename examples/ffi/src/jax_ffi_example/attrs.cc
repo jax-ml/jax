@@ -22,7 +22,7 @@ namespace nb = nanobind;
 namespace ffi = xla::ffi;
 
 ffi::Error ArrayAttrImpl(ffi::Span<const int32_t> array,
-                         ffi::Result<ffi::BufferR0<ffi::S32>> res) {
+                         ffi::ResultBufferR0<ffi::S32> res) {
   int64_t total = 0;
   for (int32_t x : array) {
     total += x;
@@ -37,8 +37,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(ArrayAttr, ArrayAttrImpl,
                                   .Ret<ffi::BufferR0<ffi::S32>>());
 
 ffi::Error DictionaryAttrImpl(ffi::Dictionary attrs,
-                              ffi::Result<ffi::BufferR0<ffi::S32>> secret,
-                              ffi::Result<ffi::BufferR0<ffi::S32>> count) {
+                              ffi::ResultBufferR0<ffi::S32> secret,
+                              ffi::ResultBufferR0<ffi::S32> count) {
   auto maybe_secret = attrs.get<int64_t>("secret");
   if (maybe_secret.has_error()) {
     return maybe_secret.error();

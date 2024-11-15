@@ -690,15 +690,15 @@ def find_replicas(
   num_global_replicas = global_axis_size * jaxpr_replicas
   return ReplicaInfo(jaxpr_replicas, num_local_replicas, num_global_replicas)
 
-@lu.transformation
-def _change_argument_ranks(in_axes, out_axes_thunk, *args):
+@lu.transformation2
+def _change_argument_ranks(f, in_axes, out_axes_thunk, *args):
   args = tuple(
       arg if in_axis is None else jax.lax.squeeze(arg, dimensions=(in_axis,))
       for in_axis, arg in zip(in_axes, args)
   )
-  results = yield (args, {})
+  results = f(*args)
   out_axes = out_axes_thunk()
-  yield tuple(
+  return tuple(
       x if axis is None else jax.lax.expand_dims(x, dimensions=(axis,))
       for x, axis in zip(results, out_axes)
   )
@@ -1353,6 +1353,8 @@ def _pmap_partial_eval_custom_res_maker(params_known, aval):
 
 def _pmap_dce_rule(used_outputs, eqn):
   # just like pe.dce_jaxpr_call_rule, except handles in_axes / out_axes
+  if not any(used_outputs) and not pe.has_effects(eqn):
+    return [False] * len(eqn.invars), None
   axis_name = eqn.params["axis_name"]
   with core.extend_axis_env_nd([(axis_name, eqn.params["global_axis_size"])]):
     new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['call_jaxpr'], used_outputs)
@@ -1709,7 +1711,10 @@ ShardingInfo = tuple[
 
 
 def _get_default_device() -> xc.Device:
-  return config.default_device.value or xb.local_devices()[0]
+  if isinstance(config.default_device.value, str):
+    return xb.get_backend(config.default_device.value).local_devices()[0]
+  else:
+    return config.default_device.value or xb.local_devices()[0]
 
 
 def _get_and_check_device_assignment(

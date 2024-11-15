@@ -40,6 +40,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
         `platforms` instead.
   * Hashing of tracers, which has been deprecated since version 0.4.30, now
     results in a `TypeError`.
+  * {func}`jax.scipy.linalg.toeplitz` now does implicit batching on multi-dimensional
+    inputs. To recover the previous behavior, you can call {func}`jax.numpy.ravel`
+    on the function inputs.
+  * `jax.clear_backends` was removed after being deprecated in v0.4.26.
 
 * New Features
   * {func}`jax.jit` got a new `compiler_options: dict[str, Any]` argument, for
@@ -48,6 +52,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.tree_util.register_dataclass` now allows metadata fields to be
     declared inline via {func}`dataclasses.field`. See the function documentation
     for examples.
+
+* Bug fixes
+  * Fixed a bug where the GPU implementations of LU and QR decomposition would
+    result in an indexing overflow for batch sizes close to int32 max. See
+    {jax-issue}`#24843` for more details.
 
 ## jax 0.4.35 (Oct 22, 2024)
 
@@ -79,7 +88,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The semi-public API `jax.lib.xla_client.register_custom_call_target` has
     been deprecated. Use the JAX FFI instead.
   * The semi-public APIs `jax.lib.xla_client.dtype_to_etype`,
-    `jax.lib.xla_client.ops`, 
+    `jax.lib.xla_client.ops`,
     `jax.lib.xla_client.shape_from_pyval`, `jax.lib.xla_client.PrimitiveType`,
     `jax.lib.xla_client.Shape`, `jax.lib.xla_client.XlaBuilder`, and
     `jax.lib.xla_client.XlaComputation` have been deprecated. Use StableHLO

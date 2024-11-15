@@ -13,18 +13,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <string>
 
 #include "nanobind/nanobind.h"
+#include "absl/cleanup/cleanup.h"
 #include "absl/strings/str_cat.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
-#include "xla/service/custom_call_status.h"
+#include "xla/ffi/api/c_api.h"
+#include "xla/ffi/api/ffi.h"
 
 namespace jax::cuda {
 namespace {
+
+namespace ffi = xla::ffi;
+namespace nb = nanobind;
 
 static std::string ToString(CUresult result) {
   const char* error_name;
@@ -38,45 +43,88 @@ static std::string ToString(CUresult result) {
   return absl::StrCat(error_name, ": ", error_string);
 }
 
-void EventRecordCall(void* stream, void** buffers, char* opaque,
-                     size_t opaque_len, XlaCustomCallStatus* status) {
-  auto* event = reinterpret_cast<gpuEvent_t**>(opaque);
-  if (auto res = gpuEventRecord(**event, reinterpret_cast<gpuStream_t>(stream));
-      res) {
-    auto message = absl::StrCat("Failed to record event: ", ToString(res));
-    XlaCustomCallStatusSetFailure(status, message.c_str(), message.size());
-  }
+// Ensure it is safe to store gpuEvent_t in a uint64_t buffer.
+static_assert(sizeof(gpuEvent_t) <= sizeof(uint64_t));
+
+static const auto* kEventRecord =
+    ffi::Ffi::Bind()
+        .Ctx<ffi::PlatformStream<gpuStream_t>>()
+        .Attr<bool>("copy_before")
+        .RemainingArgs()
+        .Ret<ffi::BufferR0<ffi::U64>>()  // event
+        .RemainingRets()
+        .To([](gpuStream_t stream, bool copy_before,
+               auto remaining_args, auto ret, auto remaining_rets) {
+          static auto* event = new gpuEvent_t;
+          if (auto res = gpuEventCreate(event, GPU_EVENT_DEFAULT);
+              res) {
+            return ffi::Error::Internal(
+                absl::StrCat("Failed to create event: ", ToString(res)));
+          }
+          auto do_copy = [&]() {
+            gpuMemcpyAsync(ret->untyped_data(), event,
+                           sizeof(gpuEvent_t), gpuMemcpyHostToDevice, stream);
+          };
+          if (copy_before) {
+            do_copy();
+          }
+          if (auto res = gpuEventRecord(*event, stream); res) {
+            return ffi::Error::Internal(
+                absl::StrCat("Failed to record event: ", ToString(res)));
+          }
+          if (!copy_before) {
+            do_copy();
+          }
+          return ffi::Error::Success();
+        })
+        .release();
+
+XLA_FFI_Error* EventRecord(XLA_FFI_CallFrame* call_frame) {
+  return kEventRecord->Call(call_frame);
+}
+
+static const auto* kEventElapsed =
+    ffi::Ffi::Bind()
+        .Ctx<ffi::PlatformStream<gpuStream_t>>()
+        .Arg<ffi::BufferR0<ffi::U64>>()  // start_event
+        .Arg<ffi::BufferR0<ffi::U64>>()  // end_event
+        .Ret<ffi::BufferR0<ffi::F32>>()  // elapsed_ms
+        .To([](gpuStream_t stream, auto start, auto end, auto out) {
+          gpuStreamSynchronize(stream);
+          auto start_event = std::make_unique<gpuEvent_t>();
+          auto end_event = std::make_unique<gpuEvent_t>();
+          absl::MakeCleanup([&]() {
+            gpuEventDestroy(*start_event);
+            gpuEventDestroy(*end_event);
+          });
+          gpuMemcpy(start_event.get(), start.untyped_data(), sizeof(gpuEvent_t),
+                    gpuMemcpyDeviceToHost);
+          gpuMemcpy(end_event.get(), end.untyped_data(), sizeof(gpuEvent_t),
+                    gpuMemcpyDeviceToHost);
+          float elapsed;
+          if (auto res =
+                  gpuEventElapsedTime(&elapsed, *start_event, *end_event);
+              res) {
+            return ffi::Error::Internal(absl::StrCat(
+                "Failed to get elapsed time between events: ", ToString(res)));
+          }
+          gpuMemcpy(out->untyped_data(), &elapsed, sizeof(float),
+                    gpuMemcpyHostToDevice);
+          return ffi::Error::Success();
+        })
+        .release();
+
+XLA_FFI_Error* EventElapsed(XLA_FFI_CallFrame* call_frame) {
+  return kEventElapsed->Call(call_frame);
 }
 
 NB_MODULE(_mosaic_gpu_ext, m) {
-  m.def("_gpu_event_create", []() {
-    gpuEvent_t* event = new gpuEvent_t();
-    if (auto res = gpuEventCreate(event, GPU_EVENT_DEFAULT); res) {
-      throw std::runtime_error(
-          absl::StrCat("Failed to create event: ", ToString(res)));
-    }
-    return reinterpret_cast<uintptr_t>(event);
+  m.def("registrations", []() {
+    return nb::make_tuple(
+        nb::make_tuple("mgpu_event_record", EncapsulateFunction(EventRecord)),
+        nb::make_tuple("mgpu_event_elapsed", EncapsulateFunction(EventElapsed))
+    );
   });
-  m.def("_gpu_event_destroy", [](uintptr_t event) {
-    if (auto res = gpuEventDestroy(*reinterpret_cast<gpuEvent_t*>(event));
-        res) {
-      throw std::runtime_error(
-          absl::StrCat("Failed to destroy event: ", ToString(res)));
-    }
-  });
-  m.def("_gpu_event_elapsed", [](uintptr_t start_event, uintptr_t end_event) {
-    float elapsed_ms = -1;
-    if (auto res = gpuEventElapsedTime(
-            &elapsed_ms, *reinterpret_cast<gpuEvent_t*>(start_event),
-            *reinterpret_cast<gpuEvent_t*>(end_event));
-        res) {
-      throw std::runtime_error(absl::StrCat(
-          "Failed to get elapsed time between events: ", ToString(res)));
-    }
-    return elapsed_ms;
-  });
-  m.def("_record_event_capsule",
-        []() { return EncapsulateFunction(EventRecordCall); });
   m.def("_sync_all_devices", []() {
     int devices = 0;
     if (cudaGetDeviceCount(&devices) != gpuSuccess) {

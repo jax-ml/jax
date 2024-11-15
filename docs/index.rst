@@ -32,6 +32,12 @@ designed for high-performance numerical computing and large-scale machine learni
 
 .. grid:: 3
 
+    .. grid-item-card:: :material-regular:`laptop_chromebook;2em` Installation
+      :columns: 12 6 6 4
+      :link: installation
+      :link-type: ref
+      :class-card: installation
+
     .. grid-item-card:: :material-regular:`rocket_launch;2em` Getting started
       :columns: 12 6 6 4
       :link: beginner-guide
@@ -43,12 +49,6 @@ designed for high-performance numerical computing and large-scale machine learni
       :link: user-guides
       :link-type: ref
       :class-card: user-guides
-
-    .. grid-item-card:: :material-regular:`laptop_chromebook;2em` Developer notes
-      :columns: 12 6 6 4
-      :link: contributor-guide
-      :link-type: ref
-      :class-card: developer-docs
 
 If you're looking to train neural networks, use Flax_ and start with its tutorials.
 For an end-to-end transformer library built on JAX, see MaxText_.

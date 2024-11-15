@@ -17,6 +17,7 @@ import contextlib
 import re
 from functools import partial
 import logging
+import json
 import math
 import textwrap
 import threading
@@ -59,6 +60,7 @@ from jax._src.lib.mlir import dialects
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -3825,6 +3827,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P()))
     self.assertEqual(out.sharding.memory_kind, 'device')
 
+  @unittest.skipIf(xla_extension_version < 297, "Requires jaxlib 0.4.36+")
+  def test_jit_static_argnames_non_interned(self):
+    def do_nothing(foobar: int):
+      return foobar
+
+    argname = "foobar"
+    # Has the side effect of ensuring argname is not interned.
+    argname = str(json.loads(json.dumps(argname)))
+    jax.jit(do_nothing, static_argnames=[argname])(foobar=2)  # doesn't crash
+
   def test_most_recent_executable_outer_inner_cache(self):
     x = np.zeros((20, 20), dtype=jnp.float64)
 
@@ -5188,6 +5200,30 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = f(arr)
     self.assertArraysEqual(out, np_inp)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
+  def test_shard_map_full_manual(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
+    arr2 = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
+
+    def g(x, y):
+      self.assertTrue(x.sharding.mesh.are_all_axes_collective)
+      self.assertTrue(y.sharding.mesh.are_all_axes_collective)
+      return x * y
+
+    @jax.jit
+    def f(x, y):
+      z = shard_map(g, mesh=mesh, in_specs=(x.sharding.spec, y.sharding.spec),
+                    out_specs=P('x', 'y'))(x, y)
+      self.assertEqual(z.sharding.spec, P('x', 'y'))
+      out = z * 2
+      self.assertEqual(out.sharding.spec, P('x', 'y'))
+      return out
+
+    out = f(arr, arr2)
+    self.assertArraysEqual(out, (np_inp * np_inp) * 2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

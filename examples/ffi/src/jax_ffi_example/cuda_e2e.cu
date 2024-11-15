@@ -44,11 +44,9 @@ __global__ void FooFwdKernel(const float *a, const float *b, float *c,
 // Buffer type provides buffer dimensions, so the "n" argument here is not
 // strictly necessary, but it allows us to demonstrate the use of attributes
 // (.Attr in the FFI handler definition above).
-ffi::Error FooFwdHost(cudaStream_t stream, ffi::Buffer<ffi::DataType::F32> a,
-                      ffi::Buffer<ffi::DataType::F32> b,
-                      ffi::Result<ffi::Buffer<ffi::DataType::F32>> c,
-                      ffi::Result<ffi::Buffer<ffi::DataType::F32>> b_plus_1,
-                      size_t n) {
+ffi::Error FooFwdHost(cudaStream_t stream, ffi::Buffer<ffi::F32> a,
+                      ffi::Buffer<ffi::F32> b, ffi::ResultBuffer<ffi::F32> c,
+                      ffi::ResultBuffer<ffi::F32> b_plus_1, size_t n) {
   const int block_dim = 128;
   const int grid_dim = 1;
   // Note how we access regular Buffer data vs Result Buffer data:
@@ -73,12 +71,12 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
     FooFwd, FooFwdHost,
     ffi::Ffi::Bind()
         .Ctx<ffi::PlatformStream<cudaStream_t>>()  // stream
-        .Arg<ffi::Buffer<ffi::DataType::F32>>()    // a
-        .Arg<ffi::Buffer<ffi::DataType::F32>>()    // b
-        .Ret<ffi::Buffer<ffi::DataType::F32>>()    // c
-        .Ret<ffi::Buffer<ffi::DataType::F32>>()    // b_plus_1
+        .Arg<ffi::Buffer<ffi::F32>>()              // a
+        .Arg<ffi::Buffer<ffi::F32>>()              // b
+        .Ret<ffi::Buffer<ffi::F32>>()              // c
+        .Ret<ffi::Buffer<ffi::F32>>()              // b_plus_1
         .Attr<size_t>("n"),
-    {xla::ffi::Traits::kCmdBufferCompatible});     // cudaGraph enabled
+    {xla::ffi::Traits::kCmdBufferCompatible});  // cudaGraph enabled
 
 //----------------------------------------------------------------------------//
 //                            Backward pass                                   //
@@ -106,11 +104,11 @@ __global__ void FooBwdKernel(const float *c_grad,    // incoming gradient wrt c
 }
 
 ffi::Error FooBwdHost(cudaStream_t stream,
-                      ffi::Buffer<ffi::DataType::F32> c_grad,
-                      ffi::Buffer<ffi::DataType::F32> a,
-                      ffi::Result<ffi::Buffer<ffi::DataType::F32>> b_plus_1,
-                      ffi::Result<ffi::Buffer<ffi::DataType::F32>> a_grad,
-                      ffi::Result<ffi::Buffer<ffi::DataType::F32>> b_grad,
+                      ffi::Buffer<ffi::F32> c_grad,
+                      ffi::Buffer<ffi::F32> a,
+                      ffi::ResultBuffer<ffi::F32> b_plus_1,
+                      ffi::ResultBuffer<ffi::F32> a_grad,
+                      ffi::ResultBuffer<ffi::F32> b_grad,
                       size_t n) {
   const int block_dim = 128;
   const int grid_dim = 1;
@@ -131,10 +129,10 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
     FooBwd, FooBwdHost,
     ffi::Ffi::Bind()
         .Ctx<ffi::PlatformStream<cudaStream_t>>()  // stream
-        .Arg<ffi::Buffer<ffi::DataType::F32>>()    // c_grad
-        .Arg<ffi::Buffer<ffi::DataType::F32>>()    // a
-        .Arg<ffi::Buffer<ffi::DataType::F32>>()    // b_plus_1
-        .Ret<ffi::Buffer<ffi::DataType::F32>>()    // a_grad
-        .Ret<ffi::Buffer<ffi::DataType::F32>>()    // b_grad
+        .Arg<ffi::Buffer<ffi::F32>>()    // c_grad
+        .Arg<ffi::Buffer<ffi::F32>>()    // a
+        .Arg<ffi::Buffer<ffi::F32>>()    // b_plus_1
+        .Ret<ffi::Buffer<ffi::F32>>()    // a_grad
+        .Ret<ffi::Buffer<ffi::F32>>()    // b_grad
         .Attr<size_t>("n"),
-    {xla::ffi::Traits::kCmdBufferCompatible});     // cudaGraph enabled
+    {xla::ffi::Traits::kCmdBufferCompatible});  // cudaGraph enabled

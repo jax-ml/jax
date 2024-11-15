@@ -780,6 +780,7 @@ triton_lowering_rules.update({
             _Fallback([jnp.bfloat16], lambda ctx, x: math_dialect.sqrt(x)),
         ],
     ),
+    lax.square_p: lambda ctx, x: _mul(x, x),
     lax.pow_p: _make_dispatch_table(
         "pow",
         cuda=[
@@ -2612,3 +2613,24 @@ def _dtype_to_ir_type(dtype: jnp.dtype) -> ir.Type:
     # All integer types in Triton are signless.
     return ir.IntegerType.get_signless(dtype.itemsize * 8)
   return mlir.dtype_to_ir_type(dtype)
+
+
+@register_lowering(lax.bitcast_convert_type_p)
+def _bitcast_convert_type_lowering_rule(
+    ctx: LoweringRuleContext, operand: ir.Value, *, new_dtype
+) -> ir.Value:
+  # TODO(petebu) Handle case where src and dst types have different bitwidths
+  src_elem_type = _element_type(operand.type)
+  dst_elem_type = _element_type(_dtype_to_ir_type(new_dtype))
+  assert isinstance(src_elem_type, (ir.IntegerType, ir.FloatType))
+  assert isinstance(dst_elem_type, (ir.IntegerType, ir.FloatType))
+  if src_elem_type.width != dst_elem_type.width:
+    raise NotImplementedError(
+        f"cannot cast {operand} to {new_dtype} because of different widths"
+    )
+  if ir.RankedTensorType.isinstance(operand.type):
+    shape = ir.RankedTensorType(operand.type).shape
+    result_type = ir.RankedTensorType.get(shape, dst_elem_type)
+  else:
+    result_type = dst_elem_type
+  return tt_dialect.bitcast(result_type, operand)
