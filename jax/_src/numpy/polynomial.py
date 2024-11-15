@@ -33,6 +33,10 @@ from jax._src.numpy import linalg
 from jax._src.numpy.util import (
     check_arraylike, promote_dtypes, promote_dtypes_inexact, _where)
 from jax._src.typing import Array, ArrayLike
+from jax._src.util import set_module
+
+
+export = set_module('jax.numpy')
 
 
 @jit
@@ -57,6 +61,7 @@ def _roots_with_zeros(p: Array, num_leading_zeros: Array | int) -> Array:
   return _where(arange(roots.size) < roots.size - num_leading_zeros, roots, complex(np.nan, np.nan))
 
 
+@export
 def roots(p: ArrayLike, *, strip_zeros: bool = True) -> Array:
   r"""Returns the roots of a polynomial given the coefficients ``p``.
 
@@ -116,6 +121,7 @@ def roots(p: ArrayLike, *, strip_zeros: bool = True) -> Array:
     return _roots_with_zeros(p_arr, num_leading_zeros)
 
 
+@export
 @partial(jit, static_argnames=('deg', 'rcond', 'full', 'cov'))
 def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
             full: bool = False, w: ArrayLike | None = None, cov: bool = False
@@ -287,6 +293,7 @@ def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
     return c
 
 
+@export
 @jit
 def poly(seq_of_zeros: ArrayLike) -> Array:
   r"""Returns the coefficients of a polynomial for the given sequence of roots.
@@ -369,6 +376,7 @@ def poly(seq_of_zeros: ArrayLike) -> Array:
   return a
 
 
+@export
 @partial(jit, static_argnames=['unroll'])
 def polyval(p: ArrayLike, x: ArrayLike, *, unroll: int = 16) -> Array:
   r"""Evaluates the polynomial at specific values.
@@ -432,6 +440,7 @@ def polyval(p: ArrayLike, x: ArrayLike, *, unroll: int = 16) -> Array:
   return y
 
 
+@export
 @jit
 def polyadd(a1: ArrayLike, a2: ArrayLike) -> Array:
   r"""Returns the sum of the two polynomials.
@@ -489,6 +498,7 @@ def polyadd(a1: ArrayLike, a2: ArrayLike) -> Array:
     return a2_arr.at[-a1_arr.shape[0]:].add(a1_arr)
 
 
+@export
 @partial(jit, static_argnames=('m',))
 def polyint(p: ArrayLike, m: int = 1, k: int | ArrayLike | None = None) -> Array:
   r"""Returns the coefficients of the integration of specified order of a polynomial.
@@ -557,6 +567,7 @@ def polyint(p: ArrayLike, m: int = 1, k: int | ArrayLike | None = None) -> Array
     return true_divide(concatenate((p_arr, k_arr)), coeff)
 
 
+@export
 @partial(jit, static_argnames=('m',))
 def polyder(p: ArrayLike, m: int = 1) -> Array:
   r"""Returns the coefficients of the derivative of specified order of a polynomial.
@@ -607,6 +618,7 @@ def polyder(p: ArrayLike, m: int = 1) -> Array:
   return p_arr[:-m] * coeff[::-1]
 
 
+@export
 def polymul(a1: ArrayLike, a2: ArrayLike, *, trim_leading_zeros: bool = False) -> Array:
   r"""Returns the product of two polynomials.
 
@@ -673,6 +685,7 @@ def polymul(a1: ArrayLike, a2: ArrayLike, *, trim_leading_zeros: bool = False) -
   return convolve(a1_arr, a2_arr, mode='full')
 
 
+@export
 def polydiv(u: ArrayLike, v: ArrayLike, *, trim_leading_zeros: bool = False) -> tuple[Array, Array]:
   r"""Returns the quotient and remainder of polynomial division.
 
@@ -732,6 +745,7 @@ def polydiv(u: ArrayLike, v: ArrayLike, *, trim_leading_zeros: bool = False) -> 
   return q, u_arr
 
 
+@export
 @jit
 def polysub(a1: ArrayLike, a2: ArrayLike) -> Array:
   r"""Returns the difference of two polynomials.

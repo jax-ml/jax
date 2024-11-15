@@ -343,6 +343,7 @@ _types_for_issubdtype = (type, np.dtype, ExtendedDType)
 
 # TODO(jakevdp): consider whether to disallow None here. We allow it
 # because np.issubdtype allows it (and treats it as equivalent to float64).
+@set_module('jax.numpy')
 def issubdtype(a: DTypeLike | ExtendedDType | None,
                b: DTypeLike | ExtendedDType | None) -> bool:
   """Returns True if first argument is a typecode lower/equal in type hierarchy.
@@ -458,6 +459,7 @@ _dtype_kinds: dict[str, set] = {
 }
 
 
+@set_module('jax.numpy')
 def isdtype(dtype: DTypeLike, kind: str | DTypeLike | tuple[str | DTypeLike, ...]) -> bool:
   """Returns a boolean indicating whether a provided dtype is of a specified kind.
 
@@ -650,6 +652,7 @@ def _least_upper_bound(jax_numpy_dtype_promotion: str, *nodes: JAXType) -> JAXTy
       "JAX's internal logic; please report it to the JAX maintainers."
     )
 
+@set_module('jax.numpy')
 def promote_types(a: DTypeLike, b: DTypeLike) -> DType:
   """Returns the type to which a binary operation should cast its arguments.
 

@@ -32,6 +32,14 @@ class PackageStructureTest(jtu.JaxTestCase):
   @parameterized.parameters([
       # TODO(jakevdp): expand test to other public modules.
       _mod("jax.errors", exclude=["JaxRuntimeError"]),
+      _mod(
+          "jax.numpy",
+          exclude=["array_repr", "array_str", "can_cast", "character", "complexfloating",
+                   "dtype", "iinfo", "index_exp", "inexact", "integer", "iterable", "finfo",
+                   "flexible", "floating", "generic", "get_printoptions", "ndarray", "ndim",
+                   "number", "object_", "printoptions", "save", "savez", "set_printoptions",
+                   "shape", "signedinteger", "size", "s_", "unsignedinteger", "ComplexWarning"]
+      ),
       _mod("jax.nn.initializers"),
       _mod(
           "jax.tree_util",
@@ -46,7 +54,8 @@ class PackageStructureTest(jtu.JaxTestCase):
       if name not in include and (name.startswith('_') or name in exclude):
         continue
       obj = getattr(module, name)
-      if isinstance(obj, types.ModuleType):
+      if obj is None or isinstance(obj, (bool, int, float, complex, types.ModuleType)):
+        # No __module__ attribute expected.
         continue
       self.assertEqual(obj.__module__, module_name,
                        f"{obj} has {obj.__module__=}, expected {module_name}")
