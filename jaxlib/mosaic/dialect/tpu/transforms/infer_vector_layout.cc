@@ -770,14 +770,11 @@ class VectorLayoutInferer {
   LogicalResult infer(tpu::ConcatenateOp op) {
     TPU_CHECK_OP(!op.getSources().empty(),
                  "Need at least one vector to concatenate");
-    auto res_rank = op.getType().getRank();
-    auto dimension = op.getDimension();
+    int64_t res_rank = op.getType().getRank();
+    uint32_t dimension = op.getDimension();
     TPU_CHECK_OP(0 <= dimension && dimension < res_rank,
                  "Expect a valid concatenate dimension");
-    if (res_rank == 1) {
-      NYI("Support concatenation with 1D vectors");
-    }
-    auto res_ty = op.getResult().getType();
+    VectorType res_ty = op.getResult().getType();
     int8_t bitwidth = res_ty.getElementTypeBitWidth();
 
     std::optional<int64_t> tiling_dim;
@@ -790,29 +787,39 @@ class VectorLayoutInferer {
     if (tiling_dim.has_value()) {
       int64_t starting_point = 0;
 
-      auto first_layout = getLayout(op.getSources().front());
-      auto op_layouts = getLayoutFromOperands(op);
+      Layout first_layout = getLayout(op.getSources().front());
+      SmallVector<Layout, 4> op_layouts = getLayoutFromOperands(op);
       SmallVector<Layout> in_layouts;
       in_layouts.reserve(op.getSources().size());
 
-      auto native_tiling = nativeTiling(bitwidth);
-
+      // Set implicit dim to treat 1D as (1, N) and tile it as (1, 128)
+      std::array<int64_t, 2> tiling =
+          res_rank == 1 ? std::array<int64_t, 2>{1L, target_shape_[1]}
+                        : nativeTiling(bitwidth);
+      ImplicitDim implicit_dim =
+          res_rank == 1 ? ImplicitDim::kSecondMinor : ImplicitDim::kNone;
+      std::array<int64_t, 2> vreg_slice =
+          VectorLayout::vregSlice(target_shape_, bitwidth, tiling);
       for (int i = 0; i < op.getSources().size(); ++i) {
         // Compute the offset per source.
         // Ex: for a cat of (10, 128), (10, 128) on dim 0, where the
-        // vreg_sice for that dim is 8, the first source starts at
+        // vreg_slice for that dim is 8, the first source starts at
         // offset 0, and overflows the vreg
         // by 2, so the offset for the second input is 2.
-        auto op_shape =
+        ArrayRef<int64_t> op_shape =
             cast<VectorType>(op.getSources()[i].getType()).getShape();
-        auto offset_amount = starting_point % native_tiling[tiling_dim.value()];
-        auto op_layout = op_layouts[i];
+        Layout op_layout = op_layouts[i];
+        int64_t offset_amount = starting_point % vreg_slice[tiling_dim.value()];
+        if (offset_amount >= tiling[tiling_dim.value()]) {
+          return op.emitError(
+              "Not implemented: Input offsets outside of the first tile");
+        }
         SmallVector<int64_t> in_idx{op_layout->offsets()[0].value_or(0),
                                     op_layout->offsets()[1].value_or(0)};
         in_idx[tiling_dim.value()] = offset_amount;
         starting_point += op_shape[dimension];
         in_layouts.push_back(VectorLayout(bitwidth, {in_idx[0], in_idx[1]},
-                                          native_tiling, ImplicitDim::kNone));
+                                          tiling, implicit_dim));
       }
       SmallVector<int64_t> res_layout_offsets(
           {first_layout->offsets()[0].value_or(0),
@@ -821,13 +828,13 @@ class VectorLayoutInferer {
       // TODO(mvoz): A tiny optimization we could do here later is to
       // no-op setting tiling when sublane dim size is aligned to sublane
       // tiling.
-      auto res_layout =
+      VectorLayout res_layout =
           VectorLayout(bitwidth, {res_layout_offsets[0], res_layout_offsets[1]},
-                       native_tiling, ImplicitDim::kNone);
+                       tiling, implicit_dim);
       setLayout(op, in_layouts, res_layout);
       return success();
     } else {
-      auto layout = getLayout(op.getSources().front());
+      Layout layout = getLayout(op.getSources().front());
       // When concatenating vectors with replicated offsets, we want to reset
       // the replicated offset to zero. Because we are not sure if the
       // replicated value from each vector are same.
@@ -1464,11 +1471,11 @@ class VectorLayoutInferer {
           //                    unfolding, it's still a no-op, but we need to
           //                    add support in apply-vector-layout.
           LayoutOffsets offsets = {0, layout.offsets()[1]};
-          setLayout(op,
-                    VectorLayout(layout.bitwidth(), offsets, tiling,
-                                layout.implicit_dim()),
-                    VectorLayout(layout.bitwidth(), offsets, tiling,
-                                implicit_dim));
+          setLayout(
+              op,
+              VectorLayout(layout.bitwidth(), offsets, tiling,
+                           layout.implicit_dim()),
+              VectorLayout(layout.bitwidth(), offsets, tiling, implicit_dim));
           return success();
         }
         sublane_tiling /= 2;
@@ -1845,9 +1852,9 @@ class VectorLayoutInferer {
                  "only 32-bit random bit generation supported");
     // TODO: b/342054464 - Support implicit dims for PRNGRandomBitsOp.
     LayoutOffsets offsets = {0, 0};
-    setOutLayout(op, VectorLayout(
-        kNativeBitwidth, offsets, nativeTiling(kNativeBitwidth),
-                                  ImplicitDim::kNone));
+    setOutLayout(
+        op, VectorLayout(kNativeBitwidth, offsets,
+                         nativeTiling(kNativeBitwidth), ImplicitDim::kNone));
     return success();
   }
 
