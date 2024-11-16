@@ -4547,6 +4547,8 @@ def shape_as_value(shape: core.Shape):
   """Converts a shape that may contain Poly values into a JAX value."""
   if len(shape) == 0:
     return full((0,), np.array(0, np.int64))
+  if core.is_constant_shape(shape):
+    return np.asarray(shape, dtype=np.int64)
   dims = [
       expand_dims(convert_element_type(core.dimension_as_value(d), np.int64),
                   (0,))
