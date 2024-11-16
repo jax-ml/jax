@@ -2475,17 +2475,15 @@ wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
 
 
 def lower_sharding_under_shit(ctx, op, aval, sharding_proto=None):
-  if sharding_proto is None:
-    proto = aval.sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
-  else:
-    proto = sharding_proto
-  # TODO(yashkatariya): Setting all axes as unspecified should work even when
-  # any axes is Collective because that's what happens in partial auto shmap.
-  # Do that after tests for it exists.
-  unspecified_dims = (set(range(aval.ndim))
-                      if aval.sharding.mesh.are_all_axes_collective else None)
-  return wrap_with_sharding_op(
-      ctx, op, aval, proto, unspecified_dims=unspecified_dims)
+  # Don't emit a wsc under full manual mode to avoid increasing HLO size.
+  if aval.sharding.mesh._are_all_axes_collective:
+    return op
+  proto = (aval.sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
+           if sharding_proto is None else sharding_proto)
+  # TODO(yashkatariya): Enable this
+  # unspecified_dims = (set(range(aval.ndim))
+  #                     if aval.sharding.mesh._any_axis_collective else None)
+  return wrap_with_sharding_op(ctx, op, aval, proto)
 
 
 def set_sharding(op, sharding: xc.OpSharding | sharding_impls.SdyArraySharding):

@@ -426,7 +426,7 @@ class AbstractMesh:
     return self.size == 0
 
   @functools.cached_property
-  def are_all_axes_collective(self) -> bool:
+  def _are_all_axes_collective(self) -> bool:
     if self.axis_types is None:
       return False
     return all(t == AxisTypes.Collective for t in self.axis_types.keys())
