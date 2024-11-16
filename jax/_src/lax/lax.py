@@ -65,7 +65,8 @@ from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import (PmapSharding, NamedSharding,
                                      PartitionSpec as P)
-from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
+from jax._src.typing import (Array, ArrayLike, DimSize, DuckTypedArray,
+                             DType, DTypeLike, Shape)
 from jax._src.util import (cache, safe_zip, safe_map, canonicalize_axis,
                            split_list, NumpyComplexWarning)
 
@@ -838,16 +839,6 @@ class DotAlgorithmPreset(enum.Enum):
   of lower accuracy.
   """
 
-  ANY_F8_ANY_F8_ANY = enum.auto()
-  """Like ``ANY_F8_ANY_F8_F32``, but the accumulation type is controlled by
-  ``preferred_element_type``.
-  """
-
-  ANY_F8_ANY_F8_ANY_FAST_ACCUM = enum.auto()
-  """Like ``ANY_F8_ANY_F8_F32_FAST_ACCUM``, but the accumulation type is
-  controlled by ``preferred_element_type``.
-  """
-
   F16_F16_F16 = enum.auto()
   F16_F16_F32 = enum.auto()
   BF16_BF16_BF16 = enum.auto()
@@ -876,18 +867,16 @@ class DotAlgorithmPreset(enum.Enum):
     return self.name
 
   @property
-  def lhs_precision_type(self) -> DTypeLike | tuple[DTypeLike, ...] | None:
+  def lhs_precision_type(self) -> DType | tuple[DType, ...] | None:
     match self:
       case (
           DotAlgorithmPreset.DEFAULT |
           DotAlgorithmPreset.ANY_F8_ANY_F8_F32 |
-          DotAlgorithmPreset.ANY_F8_ANY_F8_F32_FAST_ACCUM |
-          DotAlgorithmPreset.ANY_F8_ANY_F8_ANY |
-          DotAlgorithmPreset.ANY_F8_ANY_F8_ANY_FAST_ACCUM
+          DotAlgorithmPreset.ANY_F8_ANY_F8_F32_FAST_ACCUM
       ):
         return None
       case DotAlgorithmPreset.F16_F16_F16 | DotAlgorithmPreset.F16_F16_F32:
-        return np.float16
+        return dtypes.dtype(np.float16)
       case (
           DotAlgorithmPreset.BF16_BF16_BF16 |
           DotAlgorithmPreset.BF16_BF16_F32
@@ -895,45 +884,48 @@ class DotAlgorithmPreset(enum.Enum):
         # These algorithms support either f32 or bf32 input storage types.
         # If either of those types are provided as input, we use the provided
         # type. If not, we explicitly cast to bfloat16.
-        return (dtypes.bfloat16, np.float32)
+        return (dtypes.dtype(dtypes.bfloat16), dtypes.dtype(np.float32))
       case DotAlgorithmPreset.F64_F64_F64:
-        return np.float64
+        return dtypes.dtype(np.float64)
       case _:
-        return np.float32
+        return dtypes.dtype(np.float32)
 
   @property
-  def rhs_precision_type(self) -> DTypeLike | tuple[DTypeLike, ...] | None:
+  def rhs_precision_type(self) -> DType | tuple[DType, ...] | None:
     return self.lhs_precision_type
 
   @property
-  def accumulation_type(self) -> DTypeLike | tuple[DTypeLike, ...] | None:
+  def accumulation_type(self) -> DType | tuple[DType, ...] | None:
     match self:
-      case (
-          DotAlgorithmPreset.DEFAULT |
-          DotAlgorithmPreset.ANY_F8_ANY_F8_ANY |
-          DotAlgorithmPreset.ANY_F8_ANY_F8_ANY_FAST_ACCUM
-      ):
+      case DotAlgorithmPreset.DEFAULT:
         return None
       case (
           DotAlgorithmPreset.ANY_F8_ANY_F8_F32 |
           DotAlgorithmPreset.ANY_F8_ANY_F8_F32_FAST_ACCUM
       ):
-        return (np.float32, np.float16, dtypes.bfloat16, dtypes.float8_e4m3fn,
-                dtypes.float8_e5m2, dtypes.float8_e5m2fnuz,
-                dtypes.float8_e4m3fnuz, dtypes.float8_e4m3b11fnuz)
+        return (
+            dtypes.dtype(np.float32),
+            dtypes.dtype(np.float16),
+            dtypes.dtype(dtypes.bfloat16),
+            dtypes.dtype(dtypes.float8_e4m3fn),
+            dtypes.dtype(dtypes.float8_e5m2),
+            dtypes.dtype(dtypes.float8_e5m2fnuz),
+            dtypes.dtype(dtypes.float8_e4m3fnuz),
+            dtypes.dtype(dtypes.float8_e4m3b11fnuz),
+        )
       case DotAlgorithmPreset.F16_F16_F16:
-        return np.float16
+        return dtypes.dtype(np.float16)
       case DotAlgorithmPreset.F16_F16_F32:
-        return (np.float32, np.float16)
+        return (dtypes.dtype(np.float32), dtypes.dtype(np.float16))
       case DotAlgorithmPreset.BF16_BF16_BF16:
-        return dtypes.bfloat16
+        return dtypes.dtype(dtypes.bfloat16)
       case DotAlgorithmPreset.F64_F64_F64:
-        return np.float64
+        return dtypes.dtype(np.float64)
       case _:
-        return np.float32
+        return dtypes.dtype(np.float32)
 
   def _convert_to_hlo_attr(self, lhs_dtype: DTypeLike,
-                            rhs_dtype: DTypeLike) -> hlo.DotAlgorithm | None:
+                           rhs_dtype: DTypeLike) -> hlo.DotAlgorithm | None:
     f16 = ir.F16Type.get()
     f32 = ir.F32Type.get()
     f64 = ir.F64Type.get()
@@ -942,21 +934,21 @@ class DotAlgorithmPreset(enum.Enum):
     match self:
       case (
           DotAlgorithmPreset.ANY_F8_ANY_F8_F32 |
-          DotAlgorithmPreset.ANY_F8_ANY_F8_F32_FAST_ACCUM |
-          DotAlgorithmPreset.ANY_F8_ANY_F8_ANY |
-          DotAlgorithmPreset.ANY_F8_ANY_F8_ANY_FAST_ACCUM
+          DotAlgorithmPreset.ANY_F8_ANY_F8_F32_FAST_ACCUM
       ):
-        fp8_dtypes = (np.dtype(dtypes.float8_e4m3b11fnuz),
-                      np.dtype(dtypes.float8_e4m3fn),
-                      np.dtype(dtypes.float8_e4m3fnuz),
-                      np.dtype(dtypes.float8_e5m2),
-                      np.dtype(dtypes.float8_e5m2fnuz))
+        fp8_dtypes = (dtypes.dtype(dtypes.float8_e4m3b11fnuz),
+                      dtypes.dtype(dtypes.float8_e4m3fn),
+                      dtypes.dtype(dtypes.float8_e4m3fnuz),
+                      dtypes.dtype(dtypes.float8_e5m2),
+                      dtypes.dtype(dtypes.float8_e5m2fnuz))
+        lhs_dtype = dtypes.dtype(lhs_dtype)
+        rhs_dtype = dtypes.dtype(rhs_dtype)
         if lhs_dtype not in fp8_dtypes or rhs_dtype not in fp8_dtypes:
           raise ValueError(
               f"The dot algorithm '{self}' requires both inputs to have float8 "
               f"dtypes. Got {lhs_dtype} and {rhs_dtype} instead.")
-        lhs = mlir.dtype_to_ir_type(dtypes.dtype(lhs_dtype))
-        rhs = mlir.dtype_to_ir_type(dtypes.dtype(rhs_dtype))
+        lhs = mlir.dtype_to_ir_type(lhs_dtype)
+        rhs = mlir.dtype_to_ir_type(rhs_dtype)
         acc = ir.F32Type.get()
         return hlo.DotAlgorithm.get(
             lhs, rhs, acc, 1, 1, 1,
@@ -6167,6 +6159,56 @@ def remaining(original, *removed_lists):
   return [i for i in original if i not in removed]
 
 
+def maybe_convert_algorithm_to_preset(
+    algorithm: DotAlgorithm) -> DotAlgorithmPreset | DotAlgorithm:
+  lhs_dtype = dtypes.dtype(algorithm.lhs_precision_type)
+  rhs_dtype = dtypes.dtype(algorithm.rhs_precision_type)
+  acc_dtype = dtypes.dtype(algorithm.accumulation_type)
+
+  f16 = dtypes.dtype(np.float16)
+  f32 = dtypes.dtype(np.float32)
+  f64 = dtypes.dtype(np.float64)
+  bf16 = dtypes.dtype(dtypes.bfloat16)
+  key = (
+      lhs_dtype,
+      rhs_dtype,
+      acc_dtype,
+      algorithm.lhs_component_count,
+      algorithm.rhs_component_count,
+      algorithm.num_primitive_operations,
+      algorithm.allow_imprecise_accumulation,
+  )
+  preset = {
+      (f16, f16, f16, 1, 1, 1, False): DotAlgorithmPreset.F16_F16_F16,
+      (f16, f16, f32, 1, 1, 1, False): DotAlgorithmPreset.F16_F16_F32,
+      (bf16, bf16, bf16, 1, 1, 1, False): DotAlgorithmPreset.BF16_BF16_BF16,
+      (bf16, bf16, f32, 1, 1, 1, False): DotAlgorithmPreset.BF16_BF16_F32,
+      (bf16, bf16, f32, 1, 1, 3, False): DotAlgorithmPreset.BF16_BF16_F32_X3,
+      (bf16, bf16, f32, 1, 1, 6, False): DotAlgorithmPreset.BF16_BF16_F32_X6,
+      (f32, f32, f32, 1, 1, 1, False): DotAlgorithmPreset.F32_F32_F32,
+      (f64, f64, f64, 1, 1, 1, False): DotAlgorithmPreset.F32_F32_F32,
+  }.get(key, None)
+  if preset is not None:
+    return preset
+
+  fp8_dtypes = (dtypes.dtype(dtypes.float8_e4m3b11fnuz),
+                dtypes.dtype(dtypes.float8_e4m3fn),
+                dtypes.dtype(dtypes.float8_e4m3fnuz),
+                dtypes.dtype(dtypes.float8_e5m2),
+                dtypes.dtype(dtypes.float8_e5m2fnuz))
+  if (lhs_dtype in fp8_dtypes and rhs_dtype in fp8_dtypes and
+      acc_dtype == np.float32 and algorithm.lhs_component_count == 1 and
+      algorithm.rhs_component_count == 1 and
+      algorithm.num_primitive_operations == 1):
+    return (
+        DotAlgorithmPreset.ANY_F8_ANY_F8_F32_FAST_ACCUM
+        if algorithm.allow_imprecise_accumulation else
+        DotAlgorithmPreset.ANY_F8_ANY_F8_F32
+    )
+
+  return algorithm
+
+
 def canonicalize_precision(precision: PrecisionLike) -> CanonicalPrecision:
   """Turns an API precision specification into a pair of enumeration values.
 
@@ -6194,8 +6236,10 @@ def canonicalize_precision(precision: PrecisionLike) -> CanonicalPrecision:
         pass
   elif isinstance(precision, Precision):
     return precision, precision
-  elif isinstance(precision, (DotAlgorithm, DotAlgorithmPreset)):
+  elif isinstance(precision, DotAlgorithmPreset):
     return precision
+  elif isinstance(precision, DotAlgorithm):
+    return maybe_convert_algorithm_to_preset(precision)
   elif (isinstance(precision, (list, tuple)) and len(precision) == 2 and
         all(isinstance(p, Precision) for p in precision)):
     return type_cast(tuple[Precision, Precision], precision)
