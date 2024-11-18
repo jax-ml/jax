@@ -6,21 +6,22 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '0 6 * * 1-5'
+permissions:
+  contents: write
+  pull-requests: write
 env:
   SYNC_BRANCH_NAME: ci-upstream-sync-${{ github.run_number }}_${{ github.run_attempt }}
 jobs:
   sync-main:
-    permissions:
-      contents: write
     runs-on: ubuntu-latest
     steps:
-      - run: gh repo sync rocm/jax -b main
+      - run: |
+          gh auth status
+          gh repo sync rocm/jax -b main
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   create-sync-branch:
     needs: sync-main
-    permissions:
-      contents: write
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -32,11 +33,15 @@ jobs:
           git fetch
           git checkout origin/main 
           git checkout -b $SYNC_BRANCH_NAME
+          # Try and merge rocm-main into this new branch so that we don't run upstream's CI code
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          git merge origin/rocm-main || true
+          # If the merge creates conflicts, we want to abort and push to origin anyways so that a dev can resolve the conflicts
+          git merge --abort || true
           git push origin HEAD
   open-sync-pr:
     needs: create-sync-branch
-    permissions:
-      pull-requests: write
     runs-on: ubuntu-latest
     steps:
       - run: |
