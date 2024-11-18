@@ -723,6 +723,38 @@ def _reduce_logical_xor(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None
                     initial=initial, where_=where)
 
 
+def _logsumexp(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
+               out: None = None, keepdims: bool = False,
+               initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
+  """Compute log(sum(exp(a))) while avoiding precision loss."""
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.logaddexp.reduce is not supported.")
+  dtypes.check_user_dtype_supported(dtype, "jnp.logaddexp.reduce")
+  a_arr, = promote_dtypes_inexact(a)
+  pos_dims, dims = _reduction_dims(a_arr, axis)
+  amax = max(a_arr.real, axis=dims, keepdims=keepdims, where=where, initial=-np.inf)
+  amax = lax.stop_gradient(lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0)))
+  amax_with_dims = amax if keepdims else lax.expand_dims(amax, pos_dims)
+  exp_a = lax.exp(lax.sub(a_arr, amax_with_dims.astype(a_arr.dtype)))
+  sumexp = exp_a.sum(axis=dims, keepdims=keepdims, where=where)
+  result = lax.add(lax.log(sumexp), amax.astype(sumexp.dtype))
+  return result if initial is None else lax.logaddexp(initial, result)
+
+
+def _logsumexp2(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
+                out: None = None, keepdims: bool = False,
+                initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
+  """Compute log2(sum(2 ** a)) via logsumexp."""
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.logaddexp2.reduce is not supported.")
+  dtypes.check_user_dtype_supported(dtype, "jnp.logaddexp2.reduce")
+  ln2 = float(np.log(2))
+  if initial is not None:
+    initial *= ln2
+  return _logsumexp(a * ln2, axis=axis, dtype=dtype, keepdims=keepdims,
+                    where=where, initial=initial) / ln2
+
+
 @export
 def amin(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False, initial: ArrayLike | None = None,
