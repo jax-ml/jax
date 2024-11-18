@@ -43,6 +43,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.scipy.linalg.toeplitz` now does implicit batching on multi-dimensional
     inputs. To recover the previous behavior, you can call {func}`jax.numpy.ravel`
     on the function inputs.
+  * {func}`jax.scipy.special.gamma` and {func}`jax.scipy.special.gammasgn` now
+    return NaN for negative integer inputs, to match the behavior of SciPy from
+    https://github.com/scipy/scipy/pull/21827.
   * `jax.clear_backends` was removed after being deprecated in v0.4.26.
 
 * New Features

@@ -20,9 +20,11 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import numpy as np
+import scipy
 import scipy.special as osp_special
 
 import jax
+import jax.numpy as jnp
 from jax._src import test_util as jtu
 from jax.scipy import special as lsp_special
 
@@ -214,7 +216,7 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
       n=[0, 1, 2, 3, 10, 50]
   )
   def testScipySpecialFunBernoulli(self, n):
-    dtype = jax.numpy.zeros(0).dtype  # default float dtype.
+    dtype = jnp.zeros(0).dtype  # default float dtype.
     scipy_op = lambda: osp_special.bernoulli(n).astype(dtype)
     lax_op = functools.partial(lsp_special.bernoulli, n)
     args_maker = lambda: []
@@ -222,16 +224,33 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
     self._CompileAndCheck(lax_op, args_maker, atol=0, rtol=1E-5)
 
   def testGammaSign(self):
-    # Test that the sign of `gamma` matches at integer-valued inputs.
-    dtype = jax.numpy.zeros(0).dtype  # default float dtype.
-    args_maker = lambda: [np.arange(-10, 10).astype(dtype)]
-    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
-    self._CheckAgainstNumpy(osp_special.gamma, lsp_special.gamma, args_maker, rtol=rtol)
-    self._CompileAndCheck(lsp_special.gamma, args_maker, rtol=rtol)
+    dtype = jnp.zeros(0).dtype  # default float dtype.
+    typ = dtype.type
+    testcases = [
+      (np.arange(-10, 0).astype(dtype), np.array([np.nan] * 10, dtype=dtype)),
+      (np.nextafter(np.arange(-5, 0).astype(dtype), typ(-np.inf)),
+       np.array([1, -1, 1, -1, 1], dtype=dtype)),
+      (np.nextafter(np.arange(-5, 0).astype(dtype), typ(np.inf)),
+       np.array([-1, 1, -1, 1, -1], dtype=dtype)),
+      (np.arange(0, 10).astype(dtype), np.ones((10,), dtype)),
+      (np.nextafter(np.arange(0, 10).astype(dtype), typ(np.inf)),
+       np.ones((10,), dtype)),
+      (np.nextafter(np.arange(1, 10).astype(dtype), typ(-np.inf)),
+       np.ones((9,), dtype)),
+      (np.array([-np.inf, -0.0, 0.0, np.inf, np.nan]),
+       np.array([np.nan, -1.0, 1.0, 1.0, np.nan]))
+    ]
+    for inp, out in testcases:
+      self.assertArraysEqual(out, lsp_special.gammasgn(inp))
+      self.assertArraysEqual(out, jnp.sign(lsp_special.gamma(inp)))
+      if jtu.parse_version(scipy.__version__) >= (1, 15):
+        self.assertArraysEqual(out, osp_special.gammasgn(inp))
+        self.assertAllClose(osp_special.gammasgn(inp),
+                            lsp_special.gammasgn(inp))
 
   def testNdtriExtremeValues(self):
     # Testing at the extreme values (bounds (0. and 1.) and outside the bounds).
-    dtype = jax.numpy.zeros(0).dtype  # default float dtype.
+    dtype = jnp.zeros(0).dtype  # default float dtype.
     args_maker = lambda: [np.arange(-10, 10).astype(dtype)]
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
     self._CheckAgainstNumpy(osp_special.ndtri, lsp_special.ndtri, args_maker, rtol=rtol)
@@ -239,7 +258,7 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
 
   def testRelEntrExtremeValues(self):
     # Testing at the extreme values (bounds (0. and 1.) and outside the bounds).
-    dtype = jax.numpy.zeros(0).dtype  # default float dtype.
+    dtype = jnp.zeros(0).dtype  # default float dtype.
     args_maker = lambda: [np.array([-2, -2, -2, -1, -1, -1, 0, 0, 0]).astype(dtype),
                           np.array([-1, 0, 1, -1, 0, 1, -1, 0, 1]).astype(dtype)]
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
