@@ -43,6 +43,11 @@ jax.config.parse_flags_with_absl()
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
+# TODO(patrios): Remove this skip once b/379267258 is fixed.
+@jtu.skip_under_pytest(
+  'This test requires specific XLA_FLAGS. However, pytest does not reload '
+  'modules between tests. So if another test is launched before this one '
+  'necessary XLA_FLAGS will not be re-used by the XLA.')
 class PgleTest(jtu.JaxTestCase):
   _dump_exit_stack: ExitStack | None = None
 
