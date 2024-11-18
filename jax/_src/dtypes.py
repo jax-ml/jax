@@ -25,18 +25,18 @@ import abc
 import builtins
 import dataclasses
 import functools
+import logging
 import types
-from typing import cast, overload, Any, Literal, Union
+from typing import Any, Literal, Union, cast, overload
 import warnings
 
+from jax._src import config
+from jax._src import traceback_util
+from jax._src.typing import Array, DType, DTypeLike
+from jax._src.util import StrictABC, set_module
 import ml_dtypes
 import numpy as np
 
-from jax._src import config
-from jax._src.typing import Array, DType, DTypeLike
-from jax._src.util import set_module, StrictABC
-
-from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 try:
@@ -426,6 +426,7 @@ _signed_types = [
     np.dtype('int32'),
     np.dtype('int64'),
 ]
+_string_types = [np.dtype('str')]
 
 if _int2_dtype is not None:
   _signed_types.insert(0, _int2_dtype)
@@ -444,18 +445,36 @@ _complex_types: list[JAXType] = [
     np.dtype('complex64'),
     np.dtype('complex128'),
 ]
-_jax_types = _bool_types + _int_types + _float_types + _complex_types
-_jax_dtype_set = {float0, *_bool_types, *_int_types, *_float_types, *_complex_types}
+_string_types = [
+    np.dtype('object'),
+]
 
+_jax_types = (
+    _bool_types + _int_types + _float_types + _complex_types + _string_types
+)
+_jax_dtype_set = {
+    float0,
+    *_bool_types,
+    *_int_types,
+    *_float_types,
+    *_complex_types,
+    *_string_types,
+}
 
-_dtype_kinds: dict[str, set] = {
-  'bool': {*_bool_types},
-  'signed integer': {*_signed_types},
-  'unsigned integer': {*_unsigned_types},
-  'integral': {*_signed_types, *_unsigned_types},
-  'real floating': {*_float_types},
-  'complex floating': {*_complex_types},
-  'numeric': {*_signed_types, *_unsigned_types, *_float_types, *_complex_types},
+_dtype_kinds: dict[str, set[JAXType]] = {
+    'bool': {*_bool_types},
+    'signed integer': {*_signed_types},
+    'unsigned integer': {*_unsigned_types},
+    'integral': {*_signed_types, *_unsigned_types},
+    'real floating': {*_float_types},
+    'complex floating': {*_complex_types},
+    'numeric': {
+        *_signed_types,
+        *_unsigned_types,
+        *_float_types,
+        *_complex_types,
+    },
+    'string': {*_string_types},
 }
 
 
@@ -717,8 +736,10 @@ def is_python_scalar(x: Any) -> bool:
 
 def check_valid_dtype(dtype: DType) -> None:
   if dtype not in _jax_dtype_set:
-    raise TypeError(f"Dtype {dtype} is not a valid JAX array "
-                    "type. Only arrays of numeric types are supported by JAX.")
+    raise TypeError(
+        f'Dtype {dtype} is not a valid JAX array '
+        'type. Only arrays of numeric types and strings are supported by JAX.'
+    )
 
 def dtype(x: Any, *, canonicalize: bool = False) -> DType:
   """Return the dtype object for a value or type, optionally canonicalized based on X64 mode."""

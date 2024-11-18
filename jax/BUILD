@@ -305,6 +305,12 @@ py_library_providing_imports_info(
         ":xla_bridge",
         ":xla_metadata",
         "//jax/_src/lib",
+        "//third_party/py/IPython:ipython-libs",
+        "//third_party/py/absl/logging",
+        "//third_party/py/google/colab:_do_not_use_only_for_pynball_rules_",
+        "//third_party/py/matplotlib",
+        "//third_party/py/setuptools",
+        "//third_party/py/web_pdb",
     ] + py_deps("numpy") + py_deps("scipy") + py_deps("opt_einsum") + py_deps("flatbuffers") + jax_extra_deps,
 )
 

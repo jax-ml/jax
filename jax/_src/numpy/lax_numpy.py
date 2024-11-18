@@ -5578,6 +5578,18 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     # Keep the output uncommitted.
     return jax.device_put(object)
 
+  # 2DO: Add a comment.
+  if isinstance(object, np.ndarray) and (object.dtype == np.dtype(np.object_)):
+    if (dtype is not None) and (dtype != object.dtype):
+      raise TypeError(
+          f"Cannot convert an array with dtype=object to dtype {dtype}"
+      )
+    if (ndmin > 0) and (ndmin != object.ndim):
+      raise TypeError(
+          f"ndmin {ndmin} does not match ndims {object.ndim} of input array"
+      )
+    return jax.device_put(x=object, device=device)
+
   # For Python scalar literals, call coerce_to_array to catch any overflow
   # errors. We don't use dtypes.is_python_scalar because we don't want this
   # triggering for traced values. We do this here because it matters whether or
