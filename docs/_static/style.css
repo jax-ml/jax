@@ -103,7 +103,7 @@ body:has(.hero) .bd-container {
   display: flex;
   align-items: center;
   justify-content: center;
-  font: 500 24px 'Roboto';
+  font: 500 24px 'Roboto', sans-serif;
 }
 
 .getting-started .sd-card-title,
@@ -165,13 +165,13 @@ body:has(.hero) .bd-container {
 }
 
 .hero-left h2 {
-  font: 500 32px 'Google Sans';
+  font: 500 32px 'Google Sans', 'Roboto', sans-serif;
   color: white;
   margin-top: 0;
 }
 
 .hero-left p {
-  font: 400 16px 'Roboto';
+  font: 400 16px 'Roboto', sans-serif;
   color: white;
 }
 
@@ -200,7 +200,7 @@ body:has(.hero) .bd-container {
 }
 
 .product-offerings .sd-card-title {
-  font: 400 24px 'Google Sans';
+  font: 400 24px 'Google Sans', 'Roboto', sans-serif;
 }
 
 .color-cards {
