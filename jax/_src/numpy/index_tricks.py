@@ -24,8 +24,12 @@ from jax._src.numpy.lax_numpy import (
   arange, array, concatenate, expand_dims, linspace, meshgrid, stack, transpose
 )
 from jax._src.typing import Array, ArrayLike
+from jax._src.util import set_module
 
 import numpy as np
+
+
+export = set_module('jax.numpy')
 
 
 __all__ = ["c_", "index_exp", "mgrid", "ogrid", "r_", "s_"]
@@ -87,7 +91,7 @@ class _Mgrid:
     return stack(output_arr, 0)
 
 
-mgrid = _Mgrid()
+mgrid = export(_Mgrid())
 
 
 class _Ogrid:
@@ -129,7 +133,7 @@ class _Ogrid:
     return meshgrid(*output, indexing='ij', sparse=True)
 
 
-ogrid = _Ogrid()
+ogrid = export(_Ogrid())
 
 
 _IndexType = Union[ArrayLike, str, slice]
@@ -279,7 +283,7 @@ class RClass(_AxisConcat):
   op_name = "r_"
 
 
-r_ = RClass()
+r_ = export(RClass())
 
 
 class CClass(_AxisConcat):
@@ -327,7 +331,7 @@ class CClass(_AxisConcat):
   op_name = "c_"
 
 
-c_ = CClass()
+c_ = export(CClass())
 
 s_ = np.s_
 
