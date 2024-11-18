@@ -1417,17 +1417,25 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_allclose(f(x), expected)
 
   @parameterized.product(
-      size=[16, 32, 64],
-      dtype=["float32", "float16"],
+      size=[16, 32, 64, 128, 256],
+      dtype=[jnp.float32, jnp.float16, jnp.bfloat16],
       trans_x=[False, True],
       trans_y=[False, True],
   )
   def test_dot(self, size, dtype, trans_x, trans_y):
-    if jtu.test_device_matches(["tpu"]) and jnp.dtype(dtype).itemsize == 2:
-      self.skipTest("16-bit types are not supported on TPU")
+    if jtu.test_device_matches(["tpu"]):
+      if dtype == jnp.float16:
+        self.skipTest("float16 type is not supported on TPU")
+      if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4):
+        self.skipTest("bfloat16 matmul is supported on TPUv4+")
+      if trans_x:
+        self.skipTest("Not implemented: Transposed LHS")
 
-    if jtu.test_device_matches(["tpu"]) and trans_x:
-      self.skipTest("Not implemented: Transposed LHS")
+    if jtu.test_device_matches(["gpu"]):
+      if dtype == jnp.bfloat16:
+        self.skipTest("bfloat16 type are not supported on GPU")
+      if size > 128:
+        self.skipTest("Shared memory size limit exceeded")
 
     @functools.partial(
         self.pallas_call,
@@ -1444,7 +1452,12 @@ class OpsTest(PallasBaseTest):
     y = random.normal(k2, (size, size), dtype=dtype)
     out = dot(x, y)
     expected = jnp.dot(x.T if trans_x else x, y.T if trans_y else y)
-    np.testing.assert_allclose(out, expected, atol=0.05, rtol=0.05)
+    np.testing.assert_allclose(
+        out.astype(jnp.float32),
+        expected.astype(jnp.float32),
+        atol=0.05,
+        rtol=0.05,
+    )
 
   @parameterized.product(
       size=[1, 2, 64, 129, 1021],
