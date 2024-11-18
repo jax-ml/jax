@@ -4624,6 +4624,14 @@ class ArrayPjitTest(jtu.JaxTestCase):
       jax.jit(f, out_shardings=s)(np.arange(8))
     self.assertEqual(count[0], 1)
 
+  def test_input_shardings_single_device(self):
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    ins, _ = f.lower(np.arange(8)).compile().input_shardings
+    self.assertEqual(ins[0], SingleDeviceSharding(jax.devices()[0]))
+
 
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
