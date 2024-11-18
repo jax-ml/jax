@@ -53,6 +53,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     declared inline via {func}`dataclasses.field`. See the function documentation
     for examples.
   * Added {func}`jax.numpy.put_along_axis`.
+  * {func}`jax.lax.linalg.eig` and the related `jax.numpy` functions
+    ({func}`jax.numpy.linalg.eig` and {func}`jax.numpy.linalg.eigvals`) are now
+    supported on GPU. See {jax-issue}`#24663` for more details.
 
 * Bug fixes
   * Fixed a bug where the GPU implementations of LU and QR decomposition would

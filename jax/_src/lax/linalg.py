@@ -121,16 +121,46 @@ def cholesky(x: Array, *, symmetrize_input: bool = True) -> Array:
 
 
 def eig(x: ArrayLike, *, compute_left_eigenvectors: bool = True,
-        compute_right_eigenvectors: bool = True) -> list[Array]:
+        compute_right_eigenvectors: bool = True,
+        use_magma: bool | None = None) -> list[Array]:
   """Eigendecomposition of a general matrix.
 
-  Nonsymmetric eigendecomposition is at present only implemented on CPU.
+  Nonsymmetric eigendecomposition is only implemented on CPU and GPU. On GPU,
+  the default implementation calls LAPACK directly on the host CPU, but an
+  experimental GPU implementation using `MAGMA <https://icl.utk.edu/magma/>`_
+  is also available. The MAGMA implementation is typically slower than the
+  equivalent LAPACK implementation for small matrices (less than about 2048),
+  but it may perform better for larger matrices.
+
+  To enable the MAGMA implementation, you must install MAGMA yourself (there
+  are Debian and conda-forge packages, or you can build from source). Then set
+  the ``use_magma`` argument to ``True``, or set the ``jax_use_magma``
+  configuration variable to ``"on"`` or ``"auto"``:
+
+  .. code-block:: python
+
+      jax.config.update('jax_use_magma', 'on')
+
+  JAX will try to ``dlopen`` the installed MAGMA shared library, raising an
+  error if it is not found. To explicitly specify the path to the MAGMA
+  library, set the environment variable `JAX_GPU_MAGMA_PATH` to the full
+  installation path.
+
+  If ``jax_use_magma`` is set to ``"auto"``, the MAGMA implementation will
+  be used if the library can be found, and the input matrix is sufficiently
+  large (>= 2048x2048).
 
   Args:
     x: A batch of square matrices with shape ``[..., n, n]``.
     compute_left_eigenvectors: If true, the left eigenvectors will be computed.
     compute_right_eigenvectors: If true, the right eigenvectors will be
       computed.
+    use_magma: Locally override the ``jax_use_magma`` flag. If ``True``, the
+      eigendecomposition is computed using MAGMA. If ``False``, the computation
+      is done using LAPACK on to the host CPU. If ``None`` (default), the
+      behavior is controlled by the ``jax_use_magma`` flag. This argument
+      is only used on GPU.
+
   Returns:
     The eigendecomposition of ``x``, which is a tuple of the form
     ``(w, vl, vr)`` where ``w`` are the eigenvalues, ``vl`` are the left
@@ -142,7 +172,8 @@ def eig(x: ArrayLike, *, compute_left_eigenvectors: bool = True,
     for that batch element.
   """
   return eig_p.bind(x, compute_left_eigenvectors=compute_left_eigenvectors,
-                    compute_right_eigenvectors=compute_right_eigenvectors)
+                    compute_right_eigenvectors=compute_right_eigenvectors,
+                    use_magma=use_magma)
 
 
 def eigh(
@@ -678,12 +709,14 @@ mlir.register_lowering(
 
 # Asymmetric eigendecomposition
 
-def eig_impl(operand, *, compute_left_eigenvectors, compute_right_eigenvectors):
+def eig_impl(operand, *, compute_left_eigenvectors, compute_right_eigenvectors,
+             use_magma):
   return dispatch.apply_primitive(
       eig_p,
       operand,
       compute_left_eigenvectors=compute_left_eigenvectors,
       compute_right_eigenvectors=compute_right_eigenvectors,
+      use_magma=use_magma,
   )
 
 def eig_lower(*args, **kw):
@@ -692,7 +725,8 @@ def eig_lower(*args, **kw):
     "If your matrix is symmetric or Hermitian, you should use eigh instead.")
 
 def eig_abstract_eval(operand, *, compute_left_eigenvectors,
-                      compute_right_eigenvectors):
+                      compute_right_eigenvectors, use_magma):
+  del use_magma  # unused
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
       raise ValueError("Argument to nonsymmetric eigendecomposition must have "
@@ -716,7 +750,8 @@ def eig_abstract_eval(operand, *, compute_left_eigenvectors,
   return tuple(output)
 
 def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
-                      compute_right_eigenvectors):
+                      compute_right_eigenvectors, use_magma):
+  del use_magma  # unused
   operand_aval, = ctx.avals_in
   out_aval = ctx.avals_out[0]
   batch_dims = operand_aval.shape[:-2]
@@ -763,18 +798,94 @@ def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
   return output
 
 
+def _eig_gpu_impl(target_name_prefix, x, *, compute_left_eigenvectors,
+                  compute_right_eigenvectors, use_magma):
+  gpu_solver.initialize_hybrid_kernels()
+  dtype = x.dtype
+  is_real = dtype == np.float32 or dtype == np.float64
+  if is_real:
+    target_name = f"{target_name_prefix}hybrid_eig_real"
+    complex_dtype = np.complex64 if dtype == np.float32 else np.complex128
+  else:
+    target_name = f"{target_name_prefix}hybrid_eig_comp"
+    assert dtype == np.complex64 or dtype == np.complex128
+    complex_dtype = dtype
+
+  batch_dims = x.shape[:-2]
+  n, m = x.shape[-2:]
+  assert n == m
+  num_batch_dims = len(batch_dims)
+
+  layout = tuple(range(num_batch_dims)) + (num_batch_dims + 1, num_batch_dims)
+  out_types = [
+      api.ShapeDtypeStruct(batch_dims + (n,), dtype),
+      api.ShapeDtypeStruct(batch_dims + (n, n), complex_dtype),
+      api.ShapeDtypeStruct(batch_dims + (n, n), complex_dtype),
+      api.ShapeDtypeStruct(batch_dims, np.int32),
+  ]
+  out_layouts = [None, layout, layout, None]
+  if is_real:
+    out_types = [api.ShapeDtypeStruct(batch_dims + (n,), dtype)] + out_types
+    out_layouts = [None] + out_layouts
+
+  magma = config.gpu_use_magma.value
+  if use_magma is not None:
+    magma = "on" if use_magma else "off"
+  fun = ffi.ffi_call(target_name, out_types, input_layouts=[layout],
+                     output_layouts=out_layouts)
+  *w, vl, vr, info = fun(x, magma=magma, left=compute_left_eigenvectors,
+                         right=compute_right_eigenvectors)
+  if is_real:
+    assert len(w) == 2
+    w = lax.complex(*w)
+  else:
+    assert len(w) == 1
+    w = w[0]
+  ok = lax.eq(info, lax.zeros_like_array(info))
+  ok = _broadcast_to(ok[..., None], w.shape)
+  w = lax.select(ok, w, lax.full_like(w, np.nan + np.nan * 1j))
+  ok = _broadcast_to(ok[..., None], x.shape)
+  output = [w]
+  if compute_left_eigenvectors:
+    vl = lax.select(ok, vl, lax.full_like(vl, np.nan + np.nan * 1j))
+    output.append(vl)
+  if compute_right_eigenvectors:
+    vr = lax.select(ok, vr, lax.full_like(vr, np.nan + np.nan * 1j))
+    output.append(vr)
+  return output
+
+
+def _eig_gpu_lowering(target_name_prefix, ctx, operand, *,
+                      compute_left_eigenvectors, compute_right_eigenvectors,
+                      use_magma):
+  if ctx.is_forward_compat():
+    raise NotImplementedError(
+        "Export of nonsymmetric eigendecomposition on GPU is not supported "
+        "because of forward compatibility. The "
+        "'jax_export_ignore_forward_compatibility' configuration option can be "
+        "used to disable this check.")
+  rule = mlir.lower_fun(partial(
+      _eig_gpu_impl, target_name_prefix,
+      compute_left_eigenvectors=compute_left_eigenvectors,
+      compute_right_eigenvectors=compute_right_eigenvectors,
+      use_magma=use_magma), multiple_results=True)
+  return rule(ctx, operand)
+
+
 def eig_batching_rule(batched_args, batch_dims, *, compute_left_eigenvectors,
-                      compute_right_eigenvectors):
+                      compute_right_eigenvectors, use_magma):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
 
   return (eig_p.bind(x, compute_left_eigenvectors=compute_left_eigenvectors,
-                     compute_right_eigenvectors=compute_right_eigenvectors),
+                     compute_right_eigenvectors=compute_right_eigenvectors,
+                     use_magma=use_magma),
           (0,) * (1 + compute_left_eigenvectors + compute_right_eigenvectors))
 
 def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
-                 compute_right_eigenvectors):
+                 compute_right_eigenvectors, use_magma):
+  del use_magma  # unused
   if compute_left_eigenvectors or compute_right_eigenvectors:
     raise NotImplementedError(
         'The derivatives of eigenvectors are not implemented, only '
@@ -793,6 +904,10 @@ eig_p.def_impl(eig_impl)
 eig_p.def_abstract_eval(eig_abstract_eval)
 mlir.register_lowering(eig_p, eig_lower)
 mlir.register_lowering(eig_p, _eig_cpu_lowering, platform='cpu')
+mlir.register_lowering(eig_p, partial(_eig_gpu_lowering, 'cu'),
+                       platform='cuda')
+mlir.register_lowering(eig_p, partial(_eig_gpu_lowering, 'hip'),
+                       platform='rocm')
 batching.primitive_batchers[eig_p] = eig_batching_rule
 ad.primitive_jvps[eig_p] = eig_jvp_rule
 

@@ -665,6 +665,13 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "magma_linalg_test",
+    srcs = ["magma_linalg_test.py"],
+    enable_backends = ["gpu"],
+    deps = py_deps("magma"),
+)
+
+jax_multiplatform_test(
     name = "cholesky_update_test",
     srcs = ["cholesky_update_test.py"],
 )

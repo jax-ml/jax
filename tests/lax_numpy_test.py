@@ -1492,8 +1492,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testPoly(self, a_shape, dtype, rank):
     if dtype in (np.float16, jnp.bfloat16, np.int16):
       self.skipTest(f"{dtype} gets promoted to {np.float16}, which is not supported.")
-    elif rank == 2 and not jtu.test_device_matches(["cpu"]):
-      self.skipTest("Nonsymmetric eigendecomposition is only implemented on the CPU backend.")
+    elif rank == 2 and not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("Nonsymmetric eigendecomposition is only implemented on the CPU and GPU backends.")
     rng = jtu.rand_default(self.rng())
     tol = { np.int8: 2e-3, np.int32: 1e-3, np.float32: 1e-3, np.float64: 1e-6 }
     if jtu.test_device_matches(["tpu"]):

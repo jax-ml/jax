@@ -1963,3 +1963,14 @@ use_shardy_partitioner = bool_state(
     ),
     include_in_jit_key=True,
 )
+
+gpu_use_magma = enum_state(
+    name='jax_use_magma',
+    enum_values=['off', 'on', 'auto'],
+    default='auto',
+    help=(
+        'Enable experimental support for MAGMA-backed lax.linalg.eig on GPU. '
+        'See the documentation for lax.linalg.eig for more details about how '
+        'to use this feature.'
+    ),
+)
