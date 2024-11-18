@@ -1704,7 +1704,7 @@ def _get_abstract_sharding(val):
   if (config.sharding_in_types.value and hasattr(val, 'sharding') and
       isinstance(val.sharding, NamedSharding)):
     return NamedSharding(val.sharding.mesh.abstract_mesh,
-                         val.sharding._normalized_spec(val.ndim))
+                         val.sharding.spec._normalized_spec(val.ndim))
   return None
 
 def primal_dtype_to_tangent_dtype(primal_dtype):
