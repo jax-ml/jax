@@ -464,8 +464,8 @@ def supported_dtypes():
     types = {np.bool_, np.int8, np.int16, np.int32, np.int64,
              np.uint8, np.uint16, np.uint32, np.uint64,
              _dtypes.bfloat16, np.float16, np.float32, np.float64,
-             np.complex64, np.complex128,
-             _dtypes.float8_e4m3fn, _dtypes.float8_e5m2}
+             np.complex64, np.complex128, _dtypes.float8_e4m3fn,
+             _dtypes.float8_e5m2}
   elif device_under_test() == "METAL":
     types = {np.int32, np.uint32, np.float32}
   else:
@@ -1472,10 +1472,19 @@ class _LazyDtypes:
 
   @_cached_property
   def custom_floats(self):
-    return self.supported([
-      _dtypes.bfloat16, _dtypes.float8_e4m3b11fnuz,
-      _dtypes.float8_e4m3fn, _dtypes.float8_e4m3fnuz,
-      _dtypes.float8_e5m2, _dtypes.float8_e5m2fnuz])
+    float_dtypes = [
+      _dtypes.bfloat16,
+      _dtypes.float8_e4m3b11fnuz,
+      _dtypes.float8_e4m3fn,
+      _dtypes.float8_e4m3fnuz,
+      _dtypes.float8_e5m2,
+      _dtypes.float8_e5m2fnuz,
+    ]
+    if _dtypes.float8_e3m4 is not None:
+      float_dtypes += [_dtypes.float8_e3m4]
+    if _dtypes.float8_e4m3 is not None:
+      float_dtypes += [_dtypes.float8_e4m3]
+    return self.supported(float_dtypes)
 
   @_cached_property
   def floating(self):
