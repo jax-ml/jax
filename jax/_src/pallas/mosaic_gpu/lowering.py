@@ -23,14 +23,14 @@ import dataclasses
 import functools
 import itertools as it
 import math
-from typing import Any, Hashable, Protocol, cast
+from typing import Any, cast, Hashable, Protocol
 
 import jax
 from jax import lax
 from jax._src import core as jax_core
 from jax._src import pjit
-from jax._src import util
 from jax._src import source_info_util
+from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
@@ -46,13 +46,13 @@ from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.state import discharge
 from jax._src.state import indexing
-from jax._src.state import types as state_types
 from jax._src.state import primitives as sp
+from jax._src.state import types as state_types
 from jax._src.state.types import RefReshaper
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import core as mgpu_core
-from jax.experimental.mosaic.gpu import utils as mgpu_utils
 from jax.experimental.mosaic.gpu import profiler as mgpu_profiler
+from jax.experimental.mosaic.gpu import utils as mgpu_utils
 import jax.numpy as jnp
 import numpy as np
 
@@ -841,9 +841,19 @@ def lower_jaxpr_to_mosaic_gpu(
     consts=(),
 ) -> Sequence[ir.Value]:
   env = {}
+  cached_ir_consts: dict[mlir.HashableLiteral, mlir.IrValues] = {}
 
-  def read_env(atom: jax_core.Atom):
-    return atom.val if isinstance(atom, jax_core.Literal) else env[atom]
+  def read_env(v: jax_core.Atom):
+    if type(v) is jax_core.Literal:
+      h = mlir.HashableLiteral(v)
+      c = cached_ir_consts.get(h)
+      if c is None:
+        c = mlir.ir_constant(v.val)
+        cached_ir_consts[h] = c
+      return c
+    else:
+      assert isinstance(v, jax_core.Var)
+      return env[v]
 
   def write_env(var: jax_core.Var, val):
     env[var] = val
