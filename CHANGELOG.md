@@ -53,6 +53,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     declared inline via {func}`dataclasses.field`. See the function documentation
     for examples.
   * Added {func}`jax.numpy.put_along_axis`.
+  * Added a `allow_negative_indices` option to {func}`jax.lax.dynamic_slice`,
+    {func}`jax.lax.dynamic_update_slice` and related functions. The default is
+    true, matching the current behavior. If set to false, JAX does not need to
+    emit code clamping negative indices, which improves code size.
 
 * Bug fixes
   * Fixed a bug where the GPU implementations of LU and QR decomposition would
