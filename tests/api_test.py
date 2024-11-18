@@ -4625,7 +4625,7 @@ class APITest(jtu.JaxTestCase):
       jax.jit(operator.add)(42, 24)
 
   @parameterized.named_parameters([
-      {"testcase_name": f"{dtype}", "dtype": dtype}
+      {"testcase_name": f"{np.dtype(dtype)}", "dtype": dtype}
       for dtype in jtu.dtypes.custom_floats])
   def test_jit_custom_floats(self, dtype):
     f = lambda x: x + 1

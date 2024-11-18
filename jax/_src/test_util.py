@@ -457,7 +457,15 @@ def device_under_test():
 def supported_dtypes():
   if device_under_test() == "tpu":
     types = {np.bool_, np.int8, np.int16, np.int32, np.uint8, np.uint16,
-             np.uint32, _dtypes.bfloat16, np.float16, np.float32, np.complex64}
+             np.uint32, _dtypes.bfloat16, np.float16, np.float32, np.complex64,
+             _dtypes.float8_e4m3fn, _dtypes.float8_e4m3b11fnuz,
+             _dtypes.float8_e5m2}
+  elif device_under_test() == "gpu":
+    types = {np.bool_, np.int8, np.int16, np.int32, np.int64,
+             np.uint8, np.uint16, np.uint32, np.uint64,
+             _dtypes.bfloat16, np.float16, np.float32, np.float64,
+             np.complex64, np.complex128,
+             _dtypes.float8_e4m3fn, _dtypes.float8_e5m2}
   elif device_under_test() == "METAL":
     types = {np.int32, np.uint32, np.float32}
   else:
@@ -1464,10 +1472,10 @@ class _LazyDtypes:
 
   @_cached_property
   def custom_floats(self):
-    return [np.dtype(t) for t in [
+    return self.supported([
       _dtypes.bfloat16, _dtypes.float8_e4m3b11fnuz,
       _dtypes.float8_e4m3fn, _dtypes.float8_e4m3fnuz,
-      _dtypes.float8_e5m2, _dtypes.float8_e5m2fnuz]]
+      _dtypes.float8_e5m2, _dtypes.float8_e5m2fnuz])
 
   @_cached_property
   def floating(self):
