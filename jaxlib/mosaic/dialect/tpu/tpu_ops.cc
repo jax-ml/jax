@@ -28,9 +28,12 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "absl/log/check.h"
+#include "absl/strings/str_format.h"
+#include "mlir/include/mlir/IR/Builders.h"
 #include "mlir/include/mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/include/mlir/IR/BuiltinTypes.h"
 #include "mlir/include/mlir/IR/IRMapping.h"
+#include "mlir/include/mlir/IR/OperationSupport.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 
@@ -837,10 +840,41 @@ LogicalResult GetBarrierSemaphoreOp::verify() {
   return success();
 }
 
+void SemaphoreSignalOp::build(OpBuilder &builder, OperationState &state,
+                              Value semaphore, Value amount, Value device_id,
+                              Value core_id) {
+  build(builder, state, semaphore, amount, device_id, core_id,
+        /*core_type=*/nullptr);
+}
+
 LogicalResult SemaphoreSignalOp::verify() {
   auto sem_type = getMemRefType(getSemaphore());
   if (sem_type.getRank() != 0) {
     return emitOpError("Semaphore reference must be rank 0");
+  }
+
+  FailureOr<std::optional<CoreType>> issuing_core_type_maybe =
+      GetCoreTypeOfParentFunc(**this);
+  if (failed(issuing_core_type_maybe)) {
+    return issuing_core_type_maybe;
+  }
+  CoreType issuing_core_type = issuing_core_type_maybe->value_or(CoreType::kTc);
+  CoreType target_core_type = getCoreType().value_or(issuing_core_type);
+
+  if (getCoreId() == nullptr && getDeviceId() == nullptr) {
+    if (target_core_type != issuing_core_type) {
+      return emitOpError(
+          absl::StrFormat("Target core type (%s) must match source core type "
+                          "(%s) when device_id and core_id are not specified",
+                          stringifyCoreType(target_core_type),
+                          stringifyCoreType(issuing_core_type)));
+    }
+  }
+  if ((issuing_core_type == CoreType::kTc &&
+       target_core_type == CoreType::kScScalarSubcore) ||
+      (issuing_core_type == CoreType::kScScalarSubcore &&
+       target_core_type == CoreType::kTc)) {
+    return emitOpError("Signalling between TC and SC is not implemented");
   }
   return success();
 }

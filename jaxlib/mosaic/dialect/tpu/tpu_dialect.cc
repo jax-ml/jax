@@ -34,6 +34,7 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"
 #include "absl/hash/hash.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.cc.inc"
 #include "jaxlib/mosaic/dialect/tpu/tpu_enums.cc.inc"
 #include "xla/layout.h"
@@ -79,6 +80,15 @@ void TPUDialect::initialize() {
     return std::nullopt;
   }
   return mlir::cast<CoreTypeAttr>(attr).getValue();
+}
+
+FailureOr<std::optional<CoreType>> GetCoreTypeOfParentFunc(Operation &op) {
+  mlir::Operation *func_op = op.getParentOfType<mlir::func::FuncOp>();
+  if (func_op == nullptr) {
+    return op.emitError() << "Operation " << op.getName()
+                          << " is not inside a func.func";
+  }
+  return TPUDialect::GetCoreTypeAttr(func_op);
 }
 
 void VectorLayoutAttr::print(AsmPrinter &printer) const {
