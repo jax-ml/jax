@@ -59,6 +59,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.lax.linalg.eig` and the related `jax.numpy` functions
     ({func}`jax.numpy.linalg.eig` and {func}`jax.numpy.linalg.eigvals`) are now
     supported on GPU. See {jax-issue}`#24663` for more details.
+  * Added {func}`jax.lax.split`. This is a primitive version of
+    {func}`jax.numpy.split`, added because it yields a more compact
+    transpose in automatic differentiation.
 
 * Bug fixes
   * Fixed a bug where the GPU implementations of LU and QR decomposition would

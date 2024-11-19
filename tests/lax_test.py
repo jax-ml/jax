@@ -284,6 +284,33 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
 
   @jtu.sample_product(
+    [dict(base_shape=shape, axis=axis) for shape in [(4,), (3, 4), (2, 3, 4)]
+     for axis in range(len(shape))],
+    num_pieces=range(3),
+    dtype=lax_test_util.default_dtypes,
+  )
+  def testSplit(self, axis, base_shape, dtype, num_pieces):
+    sizes = jtu.rand_int(self.rng(), 5)((num_pieces + 1,), np.int64)
+    shape = list(base_shape)
+    shape[axis] = np.sum(sizes)
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    op = lambda x: lax.split(x, sizes, axis=axis)
+    def numpy_op(x):
+      return np.split(x, np.cumsum(sizes[:-1]), axis=axis)
+    self._CompileAndCheck(op, args_maker)
+    self._CheckAgainstNumpy(numpy_op, op, args_maker)
+
+  def testSplitErrors(self):
+    with self.assertRaisesRegex(ValueError,
+                                "Sizes passed to split must be nonnegative"):
+      lax.split(np.arange(5), [-1])
+    with self.assertRaisesRegex(ValueError, "Sum of sizes 6 must be equal"):
+      lax.split(np.arange(5), [6])
+    with self.assertRaisesRegex(ValueError, "axis 1 is out of bounds"):
+      lax.split(np.arange(5), sizes=(), axis=1)
+
+  @jtu.sample_product(
       [
           dict(lhs_shape=(b, i, 9, 10), rhs_shape=(j, i, 4, 5))
           for b, i, j in itertools.product([2, 3], repeat=3)
