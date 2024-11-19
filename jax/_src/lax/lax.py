@@ -2096,11 +2096,11 @@ def broadcasting_sharding_rule(name, *avals):
   mesh = None
   for a in avals:
     if a.sharding is not None:
-      mesh = a.sharding.mesh
       if mesh is not None and mesh != a.sharding.mesh:
         raise ValueError(
             f'Mesh for all inputs should be equal. Got one mesh: {mesh} and'
             f' another mesh: {a.sharding.mesh}')
+      mesh = a.sharding.mesh
   assert mesh is not None
 
   shapes = [aval.shape for aval in avals if aval.shape]

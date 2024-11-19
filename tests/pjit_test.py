@@ -4979,6 +4979,21 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     lowered_text = f.lower(arr).as_text()
     self.assertIn('@Sharding', lowered_text)
 
+  def test_broadcasting_nary_error(self):
+    mesh1 = Mesh([jax.devices()[0]], 'x')
+    mesh2 = Mesh([jax.devices()[0]], 'y')
+
+    arr1 = jax.device_put(np.arange(8), NamedSharding(mesh1, P()))
+    arr2 = jax.device_put(np.arange(8), NamedSharding(mesh2, P()))
+
+    @jax.jit
+    def f(x, y):
+      return x + y
+
+    with self.assertRaisesRegex(
+        ValueError, "Mesh for all inputs should be equal"):
+      f(arr1, arr2)
+
   def test_sin_unop(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     np_inp = np.arange(16.).reshape(8, 2)
