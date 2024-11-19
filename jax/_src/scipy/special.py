@@ -66,6 +66,7 @@ def gammaln(x: ArrayLike) -> Array:
   return lax.lgamma(x)
 
 
+@jit
 def gammasgn(x: ArrayLike) -> Array:
   r"""Sign of the gamma function.
 
@@ -81,6 +82,13 @@ def gammasgn(x: ArrayLike) -> Array:
   Where :math:`\Gamma` is the :func:`~jax.scipy.special.gamma` function.
   Because :math:`\Gamma(x)` is never zero, no condition is required for this case.
 
+  * if :math:`x = -\infty`, NaN is returned.
+  * if :math:`x = \pm 0`, :math:`\pm 1` is returned.
+  * if :math:`x` is a negative integer, NaN is returned. The sign of gamma
+    at a negative integer depends on from which side the pole is approached.
+  * if :math:`x = \infty`, :math:`1` is returned.
+  * if :math:`x` is NaN, NaN is returned.
+
   Args:
     x: arraylike, real valued.
 
@@ -92,8 +100,14 @@ def gammasgn(x: ArrayLike) -> Array:
     - :func:`jax.scipy.special.gammaln`: the natural log of the gamma function
   """
   x, = promote_args_inexact("gammasgn", x)
+  typ = x.dtype.type
   floor_x = lax.floor(x)
-  return jnp.where((x > 0) | (x == floor_x) | (floor_x % 2 == 0), 1.0, -1.0)
+  x_negative = x < 0
+  return jnp.select(
+    [(x_negative & (x == floor_x)) | jnp.isnan(x),
+     (x_negative & (floor_x % 2 != 0)) | ((x == 0) & jnp.signbit(x))],
+    [typ(np.nan), typ(-1.0)],
+    typ(1.0))
 
 
 def gamma(x: ArrayLike) -> Array:
@@ -115,6 +129,13 @@ def gamma(x: ArrayLike) -> Array:
 
      \Gamma(n) = (n - 1)!
 
+  * if :math:`z = -\infty`, NaN is returned.
+  * if :math:`x = \pm 0`, :math:`\pm \infty` is returned.
+  * if :math:`x` is a negative integer, NaN is returned. The sign of gamma
+    at a negative integer depends on from which side the pole is approached.
+  * if :math:`x = \infty`, :math:`\infty` is returned.
+  * if :math:`x` is NaN, NaN is returned.
+
   Args:
     x: arraylike, real valued.
 
@@ -127,7 +148,8 @@ def gamma(x: ArrayLike) -> Array:
     - :func:`jax.scipy.special.gammasgn`: the sign of the gamma function
 
   Notes:
-    Unlike the scipy version, JAX's ``gamma`` does not support complex-valued inputs.
+    Unlike the scipy version, JAX's ``gamma`` does not support complex-valued
+    inputs.
   """
   x, = promote_args_inexact("gamma", x)
   return gammasgn(x) * lax.exp(lax.lgamma(x))
