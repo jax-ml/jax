@@ -6314,6 +6314,14 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
     return emitError(v.getLoc(), "Can't change bitwidth during a relayout");
   }
   VectorType vty = v.getType();
+  const bool is_mask = vty.getElementTypeBitWidth() == 1;
+  if (is_mask) {
+    if (src.bitwidth() != 32 || dst.bitwidth() != 32) {
+      return emitError(v.getLoc(),
+                       "Not implemented: mask relayout with non-32 bitwidth in "
+                       "vector layout");
+    }
+  }
   {
     // Replication imposes a replication constraint on the *logical* value of
     // the vector: When moving along a replicated axis, all elements must be
@@ -6347,6 +6355,31 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> src_tiles,
       disassemble(builder, src, v, target_shape, /*use_implicit_shape=*/true));
+  if (is_mask) {
+    auto new_tile_ty =
+        getNativeVregOrVmaskType(builder.getI32Type(), 32, target_shape);
+    src_tiles.Each([&](const absl::Span<const int64_t> idx, Value *tile) {
+      *tile =
+          builder.create<arith::ExtUIOp>(tile->getLoc(), new_tile_ty, *tile);
+    });
+    vty = VectorType::get(vty.getShape(), builder.getI32Type());
+  }
+  auto assemble_with_mask_check = [&](xla::Array<Value> &tiles,
+                                      bool use_implicit_shape = false) {
+    if (is_mask) {
+      auto zeros_tile = builder.create<arith::ConstantOp>(
+          tiles.begin()->getLoc(),
+          DenseElementsAttr::get(cast<VectorType>(tiles.begin()->getType()),
+                                 builder.getI32IntegerAttr(0)));
+      tiles.Each([&](const absl::Span<const int64_t> idx, Value *tile) {
+        *tile = builder.create<arith::CmpIOp>(
+            tile->getLoc(), arith::CmpIPredicate::ne, *tile, zeros_tile);
+      });
+      vty = VectorType::get(vty.getShape(), builder.getI1Type());
+    }
+    return assemble(builder, vty, dst, tiles, target_shape, use_implicit_shape)
+        .getResult();
+  };
   // Two easy cases: source is more general, or is replicated.
   if (src.generalizes(dst, vty.getShape(), target_shape)) {
     // A value with a replicated offset might use fewer vregs than a value with
@@ -6397,9 +6430,8 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
           .getResult();
     }
     src_tiles.Reshape(dst.tileArrayImplicitShape(vty.getShape(), target_shape));
-    return assemble(builder, vty, dst, std::move(src_tiles), target_shape,
-                    /*use_implicit_shape=*/true)
-        .getResult();
+    return assemble_with_mask_check(src_tiles,
+                                    /*use_implicit_shape=*/true);
   }
   if (src.layout_rank() >= dst.layout_rank() && !src.offsets()[0].has_value() &&
       !src.offsets()[1].has_value() && src.tilesPerVreg(target_shape) == 1) {
@@ -6410,8 +6442,7 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
     xla::Array<Value> dst_tiles(
         /*sizes=*/dst.tileArrayShape(vty.getShape(), target_shape),
         /*value=*/src_tiles.data()[0]);
-    return assemble(builder, vty, dst, std::move(dst_tiles), target_shape)
-        .getResult();
+    return assemble_with_mask_check(dst_tiles);
   }
 
   // Consider (1,128),-2 -> (8,128). In this case we can change the implicit
@@ -6449,9 +6480,8 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
                     dst.offsets()));
 
   CHECK_EQ(src, dst);  // At this point we've should be done.
-  return assemble(builder, vty, dst, std::move(src_tiles), target_shape,
-                  /*use_implicit_shape=*/true)
-      .getResult();
+  return assemble_with_mask_check(src_tiles,
+                                  /*use_implicit_shape=*/true);
 }
 
 // TODO(apaszke): Implement a debug mode that inserts additional assertions.
@@ -6491,6 +6521,9 @@ LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op) {
                                  getOutLayouts(*def_op, ctx.target_shape));
       const Layout lo = def_layouts[res_idx];
       TPU_ASSERT_OP(lo.has_value());
+      if (*lo == *li) {
+        continue;
+      }
       OpBuilder builder(&op);
       FAILUREOR_ASSIGN_OR_RETURN(
           Value new_v, relayout(ctx, builder, vector_operand, /*src=*/*lo,
