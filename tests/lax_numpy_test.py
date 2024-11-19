@@ -51,6 +51,7 @@ from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
+from jax._src.lib import version as jaxlib_version
 from jax._src.util import safe_zip, NumpyComplexWarning, tuple_replace
 
 config.parse_flags_with_absl()
@@ -1494,6 +1495,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.skipTest(f"{dtype} gets promoted to {np.float16}, which is not supported.")
     elif rank == 2 and not jtu.test_device_matches(["cpu", "gpu"]):
       self.skipTest("Nonsymmetric eigendecomposition is only implemented on the CPU and GPU backends.")
+    if rank == 2 and jaxlib_version <= (0, 4, 35) and jtu.test_device_matches(["gpu"]):
+      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     rng = jtu.rand_default(self.rng())
     tol = { np.int8: 2e-3, np.int32: 1e-3, np.float32: 1e-3, np.float64: 1e-6 }
     if jtu.test_device_matches(["tpu"]):
