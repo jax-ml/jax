@@ -21,12 +21,9 @@ import sys
 from typing import Any
 import unittest
 
-import numpy as np
 from absl.testing import absltest
 from absl.testing import parameterized
-
 import jax
-import jax.numpy as jnp
 from jax import lax
 from jax import random
 from jax._src import config
@@ -34,8 +31,10 @@ from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import test_util as jtu
-from jax.interpreters import partial_eval as pe
 from jax.experimental import pallas as pl
+from jax.interpreters import partial_eval as pe
+import jax.numpy as jnp
+import numpy as np
 
 if sys.platform != "win32":
   from jax.experimental.pallas import triton as plgpu
@@ -1979,6 +1978,57 @@ class OpsTest(PallasBaseTest):
     y = convert(x)
     y_ref = jax.lax.bitcast_convert_type(x, out_dtype)
     np.testing.assert_array_equal(y, y_ref)
+
+  @parameterized.product(
+      array_shapes=[(4, 128), (10, 100), (8, 128), (17, 257)],
+      padding=[
+          ((5, 8), (0, 0)),
+          ((0, 0), (5, 100)),
+          ((1, 1), (1, 1)),
+          ((0, 0), (0, 0)),
+      ],
+      pad_type=["constant", "wrap"],
+      dtype=(
+          jnp.float32,
+          jnp.bfloat16,
+      ),
+  )
+  def test_arbitrary_padding_jnp_pad(
+      self, array_shapes, padding, pad_type, dtype
+  ):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("Not implemented on GPU")
+
+    x = jnp.arange(np.prod(array_shapes), dtype=dtype).reshape(array_shapes)
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.pad(x_ref[...], padding, mode=pad_type)
+
+    ref = jnp.pad(x, padding, mode=pad_type)
+
+    out_shape = jax.ShapeDtypeStruct(ref.shape, x.dtype)
+    try:
+      out = self.pallas_call(
+          kernel,
+          out_shape=out_shape,
+      )(x)
+      np.testing.assert_array_equal(out, jnp.pad(x, padding, mode=pad_type))
+    except Exception as e:
+      self.assertEqual(
+          dtype,
+          jnp.bfloat16,
+          "some bfloat16 combinations can fail with not implemented",
+      )
+      # The first two options are expected to fail due to current limitations
+      # in the Pallas TPU lowering. However, the last one is unexpected, and
+      # should be fixed, it is a pjrt bug.
+      # b/379787665
+      acceptable_errors = (
+          "Only 32-bit types supported" in str(e)
+          or "Not implemented" in str(e)
+          or "Expected mask vector type" in str(e)
+      )
+      self.assertTrue(acceptable_errors, "Failed with error: " + str(e))
 
 
 class OpsInterpretTest(OpsTest):

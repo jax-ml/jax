@@ -3243,3 +3243,68 @@ def _iota_2x32_shape_lowering(ctx, *, shape):
 
 
 lowering_rules[prng.iota_2x32_shape_p] = _iota_2x32_shape_lowering
+
+
+def _pad_lowering_rule(ctx: LoweringRuleContext, *args, **kwargs):
+  operand, padding_value = args
+  padding_config = kwargs["padding_config"]
+
+  out_type: ir.VectorType = aval_to_ir_type(ctx.avals_in[0])
+  if not isinstance(out_type, ir.VectorType):
+    raise NotImplementedError("Only vector types are supported.")
+
+  for axis, (low, high, interior) in enumerate(padding_config):
+    if low == 0 and high == 0 and interior == 0:
+      continue
+
+    def _pad(val):
+      shape = list(operand.type.shape)
+      shape[axis] = val
+      pad_vec_type = ir.VectorType.get(
+          shape,
+          operand.type.element_type,
+      )
+
+      if isinstance(padding_value, ir.OpResult):
+        pad = vector.BroadcastOp(
+            pad_vec_type,
+            padding_value,
+        ).result
+      else:
+        scalar_attr = ir.FloatAttr.get(operand.type.element_type, padding_value)
+        pad = arith.ConstantOp(
+            pad_vec_type,
+            ir.DenseElementsAttr.get_splat(
+                pad_vec_type,
+                scalar_attr,
+            ),
+        ).result
+      return pad
+
+    if low != 0:
+      pad_low = _pad(low)
+      new_shape = out_type.shape
+      new_shape[axis] += low
+      out_type = ir.VectorType.get(
+          new_shape,
+          out_type.element_type,
+      )
+      operand = tpu.concatenate(out_type, [pad_low, operand], dimension=axis)
+
+    if high != 0:
+      pad_high = _pad(high)
+      new_shape = out_type.shape
+      new_shape[axis] += high
+      out_type = ir.VectorType.get(
+          new_shape,
+          out_type.element_type,
+      )
+      operand = tpu.concatenate(out_type, [operand, pad_high], dimension=axis)
+
+    if interior > 0:
+      raise NotImplementedError("Not implemented: interior padding")
+
+  return operand
+
+
+lowering_rules[lax.pad_p] = _pad_lowering_rule

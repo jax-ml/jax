@@ -2674,6 +2674,13 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
     for (size_t i = 0; i < operand_vregs.size(); ++i) {
       auto &vreg = operand_vregs[i];
       const auto &layout = layouts_in[i];
+      const int packing = res_layout->packing();
+
+      if (layout->tiling()[0] % packing != 0) {
+        return op.emitOpError(
+            "Illegal tiling: Non-native tiling in concat - this should "
+            "have been caught earlier!");
+      }
 
       const int64_t operand_offset = *layout->offsets()[tiling_dim.value()];
       if (operand_offset != 0) {
@@ -2685,7 +2692,6 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
       }
 
       const auto bitwidth = res_ty.getElementTypeBitWidth();
-      const int packing = res_layout->packing();
       SmallVector<int64_t> out_idx;
       vreg.Each([&](absl::Span<const int64_t> idx, Value *v) {
         out_idx.assign(idx.begin(), idx.end());
@@ -2716,7 +2722,7 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
             mask = builder.create<tpu::CreateMaskOp>(
                 op.getLoc(), vmask_ty,
                 ArrayRef<Value>{boundIdxConst(0), boundIdxConst(0)},
-                ArrayRef<Value>{boundIdxConst(layout->tiling()[0]),
+                ArrayRef<Value>{boundIdxConst(layout->tiling()[0] / packing),
                                 boundIdxConst(operand_offset)});
           }
           // Blend the current value with the existing value in the output.
