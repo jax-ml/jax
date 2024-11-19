@@ -2087,12 +2087,6 @@ def _concatenate(*operands, dimension):
 tf_impl[lax.concatenate_p] = _concatenate
 
 
-def _split(operand, *, sizes, axis):
-  return tf.split(operand, sizes, axis=axis)
-
-tf_impl[lax.split_p] = _split
-
-
 def _conv_general_dimension_numbers_proto(dimension_numbers):
   """Converts a ConvDimensionNumbers to an XLA ConvolutionDimensionNumbers."""
   assert isinstance(dimension_numbers, lax.ConvDimensionNumbers)

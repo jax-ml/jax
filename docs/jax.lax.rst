@@ -154,7 +154,6 @@ Operators
     slice_in_dim
     sort
     sort_key_val
-    split
     sqrt
     square
     squeeze
