@@ -394,9 +394,13 @@ jax_multiplatform_test(
         "tpu_pallas_random_test.py",
     ],
     enable_backends = ["tpu"],
+    enable_configs = [
+        "tpu_v5p_2x2",
+    ],
     deps = [
         "//jax:pallas",
         "//jax:pallas_tpu",
+        "//jax:pallas_tpu_ops",
         "//jax/_src/pallas/mosaic:random",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
