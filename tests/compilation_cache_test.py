@@ -41,7 +41,6 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.compilation_cache_interface import CacheInterface
 from jax._src.lib import xla_client as xc
-from jax._src.lib import version as jaxlib_version
 from jax.experimental.pjit import pjit
 from jax.sharding import PartitionSpec as P
 import numpy as np
@@ -538,7 +537,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
         executable.fingerprint, deserialized_executable.fingerprint)
 
   def test_persistent_cache_enable_xla_caches(self):
-    if jaxlib_version <= (0, 4, 35):
+    if jtu.jaxlib_version() <= (0, 4, 35):
       self.skipTest("Test requires AutotuneCacheMode bindings")
     with config.compilation_cache_dir("jax-cache"):
       with config.persistent_cache_enable_xla_caches("none"):
@@ -609,7 +608,7 @@ class CompilationCacheDisabledTest(CompilationCacheTestCase):
       self.assertEqual(count_after_second_use, count_after_first_use)
 
   def test_persistent_cache_enable_xla_caches_disabled(self):
-    if jaxlib_version <= (0, 4, 35):
+    if jtu.jaxlib_version() <= (0, 4, 35):
       self.skipTest("Test requires AutotuneCacheMode bindings")
     with config.enable_compilation_cache(False):
       compile_options = compiler.get_compile_options(

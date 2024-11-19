@@ -34,7 +34,6 @@ from jax._src import deprecations
 from jax._src.lax import linalg as lax_linalg
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
-from jax._src.lib import version as jaxlib_version
 from jax._src.numpy.util import promote_dtypes_inexact
 
 config.parse_flags_with_absl()
@@ -254,7 +253,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   @jtu.run_on_devices("cpu", "gpu")
   def testEig(self, shape, dtype, compute_left_eigenvectors,
               compute_right_eigenvectors):
-    if jtu.test_device_matches(["gpu"]) and jaxlib_version <= (0, 4, 35):
+    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
       self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     rng = jtu.rand_default(self.rng())
     n = shape[-1]
@@ -298,7 +297,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testEigHandlesNanInputs(self, shape, dtype, compute_left_eigenvectors,
                               compute_right_eigenvectors):
     """Verifies that `eig` fails gracefully if given non-finite inputs."""
-    if jtu.test_device_matches(["gpu"]) and jaxlib_version <= (0, 4, 35):
+    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
       self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     a = jnp.full(shape, jnp.nan, dtype)
     results = lax.linalg.eig(
@@ -317,7 +316,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # haven't checked, that might be because of perturbations causing the
     # ordering of eigenvalues to change, which will trip up check_grads. So we
     # just test on small-ish matrices.
-    if jtu.test_device_matches(["gpu"]) and jaxlib_version <= (0, 4, 35):
+    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
       self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
@@ -332,7 +331,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("cpu", "gpu")
   def testEigvals(self, shape, dtype):
-    if jtu.test_device_matches(["gpu"]) and jaxlib_version <= (0, 4, 35):
+    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
       self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
@@ -344,7 +343,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   @jtu.run_on_devices("cpu", "gpu")
   def testEigvalsInf(self):
     # https://github.com/jax-ml/jax/issues/2661
-    if jtu.test_device_matches(["gpu"]) and jaxlib_version <= (0, 4, 35):
+    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
       self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     x = jnp.array([[jnp.inf]])
     self.assertTrue(jnp.all(jnp.isnan(jnp.linalg.eigvals(x))))
@@ -355,7 +354,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("cpu", "gpu")
   def testEigBatching(self, shape, dtype):
-    if jtu.test_device_matches(["gpu"]) and jaxlib_version <= (0, 4, 35):
+    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
       self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     rng = jtu.rand_default(self.rng())
     shape = (10,) + shape

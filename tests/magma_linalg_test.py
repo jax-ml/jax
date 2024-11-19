@@ -24,7 +24,6 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lib import gpu_solver
-from jax._src.lib import version as jaxlib_version
 
 config.parse_flags_with_absl()
 
@@ -43,7 +42,7 @@ class MagmaLinalgTest(jtu.JaxTestCase):
   @jtu.run_on_devices("gpu")
   def testEig(self, shape, dtype, compute_left_eigenvectors,
               compute_right_eigenvectors):
-    if jaxlib_version <= (0, 4, 35):
+    if jtu.jaxlib_version() <= (0, 4, 35):
       self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     if not gpu_solver.has_magma():
       self.skipTest("MAGMA is not installed or can't be loaded.")
@@ -94,7 +93,7 @@ class MagmaLinalgTest(jtu.JaxTestCase):
   def testEigHandlesNanInputs(self, shape, dtype, compute_left_eigenvectors,
                               compute_right_eigenvectors):
     """Verifies that `eig` fails gracefully if given non-finite inputs."""
-    if jaxlib_version <= (0, 4, 35):
+    if jtu.jaxlib_version() <= (0, 4, 35):
       self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     if not gpu_solver.has_magma():
       self.skipTest("MAGMA is not installed or can't be loaded.")
@@ -111,7 +110,7 @@ class MagmaLinalgTest(jtu.JaxTestCase):
       self.assertTrue(np.all(np.isnan(result)))
 
   def testEigMagmaConfig(self):
-    if jaxlib_version <= (0, 4, 35):
+    if jtu.jaxlib_version() <= (0, 4, 35):
       self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     if not gpu_solver.has_magma():
       self.skipTest("MAGMA is not installed or can't be loaded.")

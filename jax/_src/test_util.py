@@ -44,6 +44,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes as _dtypes
+from jax._src import lib as _jaxlib
 from jax._src import linear_util as lu
 from jax._src import monitoring
 from jax._src import pjit as pjit_lib
@@ -449,6 +450,10 @@ def assert_num_jit_and_pmap_compilations(times):
   if count[0] != times:
     raise AssertionError(f"Expected exactly {times} XLA compilations, "
                          f"but executed {count[0]}")
+
+
+def jaxlib_version() -> tuple[int, ...]:
+  return _jaxlib.version
 
 
 def device_under_test():
