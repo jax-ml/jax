@@ -121,16 +121,7 @@ from jax._src.core import (
   valid_jaxtype as valid_jaxtype,
 )
 
-
-from jax._src import core as _src_core
 _deprecations = {
-    # Added 2024-08-14
-    "check_eqn": ("jax.core.check_eqn is deprecated.", _src_core.check_eqn),
-    "check_type": ("jax.core.check_type is deprecated.", _src_core.check_type),
-    "check_valid_jaxtype": (
-      ("jax.core.check_valid_jaxtype is deprecated. Instead, you can manually"
-       " raise an error if core.valid_jaxtype() returns False."),
-      _src_core.check_valid_jaxtype),
     # Finalized 2024-09-25; remove after 2024-12-25
     "pp_aval": ("jax.core.pp_aval was removed in JAX v0.4.34.", None),
     "pp_eqn": ("jax.core.pp_eqn was removed in JAX v0.4.34.", None),
@@ -144,21 +135,11 @@ _deprecations = {
     "pp_kv_pairs": ("jax.core.pp_kv_pairs was removed in JAX v0.4.34.", None),
     "pp_var": ("jax.core.pp_var was removed in JAX v0.4.34.", None),
     "pp_vars": ("jax.core.pp_vars was removed in JAX v0.4.34.", None),
-    # Added Jan 8, 2024
-    "non_negative_dim": (
-      "jax.core.non_negative_dim is deprecated. Use max_dim(..., 0).", _src_core.non_negative_dim,
-    ),
 }
 
 import typing
-if typing.TYPE_CHECKING:
-  check_eqn = _src_core.check_eqn
-  check_type = _src_core.check_type
-  check_valid_jaxtype = _src_core.check_valid_jaxtype
-  non_negative_dim = _src_core.non_negative_dim
-else:
+if not typing.TYPE_CHECKING:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del typing
-del _src_core

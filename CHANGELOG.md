@@ -38,6 +38,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
          use `uses_global_constants`.
       * the `lowering_platforms` kwarg for {func}`jax.export.export`: use
         `platforms` instead.
+  * The following deprecated functions in {mod}`jax.lib` have been removed:
+      * `jax.lib.xla_bridge.xla_client`: use {mod}`jax.lib.xla_client`.
+      * `jax.lib.xla_bridge.get_backend`: use {func}`jax.extend.backend.get_backend`.
+      * `jax.lib.xla_bridge.default_backend`: use {func}`jax.default_backend`.
+      * `jax.lib.xla_client._xla`: use {mod}`jax.lib.xla_extension`.
+      * `jax.lib.xla_client.bfloat16`: use `ml_dtypes.bfloat16`.
+  * The following deprecated functions in {mod}`jax.core` have been removed:
+    `jax.core.check_eqn`, `jax.core.check_type` and `jax.core.check_valid_jaxtype`.
   * Hashing of tracers, which has been deprecated since version 0.4.30, now
     results in a `TypeError`.
   * {func}`jax.scipy.linalg.toeplitz` now does implicit batching on multi-dimensional

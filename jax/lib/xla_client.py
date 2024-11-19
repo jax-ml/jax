@@ -28,15 +28,6 @@ OpSharding = _xc.OpSharding
 Traceback = _xc.Traceback
 
 _deprecations = {
-    # Added Aug 5 2024
-    "_xla": (
-        "jax.lib.xla_client._xla is deprecated; use jax.lib.xla_extension.",
-        _xc._xla,
-    ),
-    "bfloat16": (
-        "jax.lib.xla_client.bfloat16 is deprecated; use ml_dtypes.bfloat16.",
-        _xc.bfloat16,
-    ),
     # Added Sep 26 2024
     "Device": (
         "jax.lib.xla_client.Device is deprecated; use jax.Device instead.",
@@ -100,8 +91,6 @@ _deprecations = {
 import typing as _typing
 
 if _typing.TYPE_CHECKING:
-  _xla = _xc._xla
-  bfloat16 = _xc.bfloat16
   dtype_to_etype = _xc.dtype_to_etype
   ops = _xc.ops
   register_custom_call_target = _xc.register_custom_call_target
