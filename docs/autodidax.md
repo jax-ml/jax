@@ -2195,7 +2195,7 @@ output. If instead any input is unknown then we instead stage out into a
 representing unknown outputs, we need avals, which we get from the abstract
 eval rules. (Notice that tracers reference `JaxprEqnRecipe`s, and
 `JaxprEqnRecipe`s reference tracers; we avoid circular garbage by using
-weakrefs.)
+`weakref`s.)
 
 That `process_primitive` logic applies to most primitives, but `xla_call_p`
 requires recursive treatment. So we special-case its rule in a
