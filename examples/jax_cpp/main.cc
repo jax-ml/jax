@@ -36,15 +36,21 @@ limitations under the License.
 // }
 // )
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "third_party/absl/status/statusor.h"
+#include "xla/hlo/builder/xla_computation.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
-#include "xla/pjrt/cpu/cpu_client.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
+#include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/tools/hlo_module_loader.h"
 #include "tsl/platform/init_main.h"
 #include "tsl/platform/logging.h"
@@ -66,8 +72,10 @@ int main(int argc, char** argv) {
   // Run it using JAX C++ Runtime (PJRT).
 
   // Get a CPU client.
+  xla::CpuClientOptions options;
+  options.asynchronous = true;
   std::unique_ptr<xla::PjRtClient> client =
-      xla::GetTfrtCpuClient(/*asynchronous=*/true).value();
+      xla::GetXlaPjrtCpuClient(options).value();
 
   // Compile XlaComputation to PjRtExecutable.
   xla::XlaComputation xla_computation(test_module_proto);
