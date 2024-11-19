@@ -49,12 +49,6 @@ class ClusterEnv:
                                            initialization_timeout: int | None,
                                           ) -> tuple[str | None, int | None, int | None,
                                                      Sequence[int] | None]:
-
-    if all(p is not None for p in (coordinator_address, num_processes,
-      process_id, local_device_ids)):
-      return (coordinator_address, num_processes, process_id,
-              local_device_ids)
-
     # First, we check the spec detection method because it will ignore submitted values
     # If if succeeds.
     if cluster_detection_method is not None:
