@@ -214,6 +214,22 @@ def TPU_LoadOp : TPU_Op<"load"> {
   }];
 }
 
+// TODO(jevinjiang): migrate tpu.strided_store to general vector store op.
+def TPU_VectorStoreOp :TPU_Op<"vector_store", [AttrSizedOperandSegments]> {
+  let arguments = (ins
+    AnyVector:$valueToStore,
+    AnyMemRef:$base,
+    Variadic<Index>:$indices,
+    DenseI32ArrayAttr:$strides,
+    Optional<AnyVector>:$mask   // Elementwise mask.
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    $base `[` $indices `]` `,` $valueToStore (`masked` $mask^)? attr-dict `:` type($base) `,` type($valueToStore) `,` type($mask)
+  }];
+  let hasVerifier = 1;
+}
+
 def TPU_StridedLoadOp : TPU_Op<"strided_load"> {
   let arguments = (ins
     AnyMemRef:$base,

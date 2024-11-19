@@ -4200,18 +4200,15 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
   shape_cast_op->erase();
   return success();
 }
-LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
-                                const ArrayRef<Layout> layouts_in,
-                                const ArrayRef<Layout> layouts_out) {
-  TPU_ASSERT_EQ_OP(layouts_out.size(), 0);
-  MLIRContext *const mlir_ctx = op.getContext();
-  TPU_ASSERT_OP(layouts_in.front().has_value());
-  TPU_ASSERT_OP(llvm::none_of(layouts_in.drop_front(),
-                              [&](const Layout &l) { return l.has_value(); }));
+
+template <typename Op>
+LogicalResult vector_store_impl(RewriteContext &ctx, Op store_op,
+                                const VectorLayout &to_store_layout,
+                                TypedValue<VectorType> store_mask = nullptr) {
+  Operation &op = *(store_op.getOperation());
+  MLIRContext *const mlir_ctx = store_op.getContext();
   ImplicitLocOpBuilder builder(op.getLoc(), &op);
-  vector::StoreOp store_op = cast<vector::StoreOp>(op);
   const VectorType ty = store_op.getValueToStore().getType();
-  const VectorLayout &to_store_layout = *layouts_in.front();
   const auto memref_ty = getMemRefType(store_op.getBase());
   if (!ty.getRank()) {
     return op.emitOpError("Not implemented: scalar stores to vmem");
@@ -4308,10 +4305,9 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
   } else {
     // Convert dynamic store to dynamic slice + static store. This saves us a
     // bunch of scalar core work.
-    auto slice_result =
-        sliceRef(builder, store_op.getBase(),
-                 store_op.getVectorType().getShape(), store_op.getIndices(),
-                 ArrayRef<int64_t>(memref_tiling).take_back(tiled_dims));
+    auto slice_result = sliceRef(
+        builder, store_op.getBase(), ty.getShape(), store_op.getIndices(),
+        ArrayRef<int64_t>(memref_tiling).take_back(tiled_dims));
     if (failed(slice_result)) {
       return failure();
     }
@@ -4332,6 +4328,13 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
       xla::Array<Value> tiles,
       disassemble(builder, to_store_layout, store_op.getValueToStore(),
                   ctx.target_shape));
+  std::optional<xla::Array<Value>> tile_masks;
+  if (store_mask) {
+    FAILUREOR_ASSIGN_OR_RETURN(
+        tile_masks,
+        disassemble(builder, to_store_layout, store_mask, ctx.target_shape));
+    TPU_ASSERT_EQ_OP(tile_masks->dimensions(), tiles.dimensions());
+  }
   const int64_t ndims = ty.getRank();
   const auto base_s =
       is_1d ? IdxConst(0, builder, op.getLoc()) : tile_base_idxs.front();
@@ -4353,6 +4356,7 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
   const absl::Status status =
       tiles.EachStatus([&](const absl::Span<const int64_t> idx,
                            const Value tile) -> absl::Status {
+        const auto tile_mask = store_mask ? (*tile_masks)(idx) : nullptr;
         const std::unique_ptr<VRegDataBounds> bounds =
             to_store_layout.tileDataBounds(mlir_ctx, stored_shape,
                                            toArrayRef(idx), ctx.target_shape);
@@ -4412,19 +4416,19 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
               updated = builder.create<arith::SelectOp>(mask, tile, data);
             }
             builder.create<tpu::StoreOp>(
-                updated, base_addr, indices, sublane_mask,
-                /*mask=*/nullptr,
+                updated, base_addr, indices, sublane_mask, tile_mask,
                 /*sublane_stride=*/builder.getI32IntegerAttr(sublane_stride));
           } else {
             builder.create<tpu::StoreOp>(
                 tile, base_addr, indices, sublane_mask,
-                /*mask=*/mask,
+                tile_mask
+                    ? builder.create<arith::AndIOp>(mask, tile_mask).getResult()
+                    : mask,
                 /*sublane_stride=*/builder.getI32IntegerAttr(sublane_stride));
           }
         } else {
           builder.create<tpu::StoreOp>(
-              tile, base_addr, indices, sublane_mask,
-              /*mask=*/nullptr,
+              tile, base_addr, indices, sublane_mask, tile_mask,
               /*sublane_stride=*/builder.getI32IntegerAttr(sublane_stride));
         }
         return absl::OkStatus();
@@ -4434,7 +4438,35 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
   }
   store_op->erase();
   return success();
+}
+
+LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
+                                const ArrayRef<Layout> layouts_in,
+                                const ArrayRef<Layout> layouts_out) {
+  auto store_op = cast<vector::StoreOp>(op);
+  TPU_ASSERT_EQ_OP(layouts_out.size(), 0);
+  TPU_ASSERT_OP(layouts_in.front().has_value());
+  TPU_ASSERT_OP(llvm::none_of(layouts_in.drop_front(),
+                              [&](const Layout &l) { return l.has_value(); }));
+  return vector_store_impl(ctx, store_op, *layouts_in.front());
+}
+
+LogicalResult tpu_vector_store_rule(RewriteContext &ctx, Operation &op,
+                                    const ArrayRef<Layout> layouts_in,
+                                    const ArrayRef<Layout> layouts_out) {
+  auto store_op = cast<tpu::VectorStoreOp>(op);
+  TPU_ASSERT_EQ_OP(layouts_out.size(), 0);
+  TPU_ASSERT_OP(layouts_in.front().has_value());
+  auto other_layouts_in = layouts_in.drop_front();
+  if (store_op.getMask()) {
+    TPU_ASSERT_EQ_OP(layouts_in.front(), layouts_in.back());
+    other_layouts_in = other_layouts_in.drop_back();
   }
+  TPU_ASSERT_OP(llvm::none_of(other_layouts_in,
+                              [&](const Layout &l) { return l.has_value(); }));
+  return vector_store_impl(ctx, store_op, *layouts_in.front(),
+                           store_op.getMask());
+}
 
 LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
                                     const ArrayRef<Layout> layouts_in,
@@ -4648,6 +4680,7 @@ const llvm::StringMap<rule_type> &rules() {
         {tpu::StoreOp::getOperationName(), tpu_store_rule},
         {tpu::StridedLoadOp::getOperationName(), tpu_strided_load_rule},
         {tpu::StridedStoreOp::getOperationName(), tpu_strided_store_rule},
+        {tpu::VectorStoreOp::getOperationName(), tpu_vector_store_rule},
         {tpu::MatmulOp::getOperationName(), tpu_matmul_rule},
         {tpu::RegionOp::getOperationName(), tpu_region_rule},
         {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},

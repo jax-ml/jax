@@ -321,8 +321,14 @@ class VectorLayoutInferer {
         if (infer(op).failed()) {
           return failure();
         }
+      } else if (auto op = dyn_cast<tpu::VectorStoreOp>(any_op)) {
+        if (inferStore<tpu::VectorStoreOp>(op,
+                                           /*has_mask=*/op.getMask() != nullptr)
+                .failed()) {
+          return failure();
+        }
       } else if (auto op = dyn_cast<vector::StoreOp>(any_op)) {
-        if (infer(op).failed()) {
+        if (inferStore<vector::StoreOp>(op).failed()) {
           return failure();
         }
       } else if (auto op = dyn_cast<vector::TransposeOp>(any_op)) {
@@ -1540,7 +1546,8 @@ class VectorLayoutInferer {
     return failure();
   }
 
-  LogicalResult infer(vector::StoreOp op) {
+  template <typename Op>
+  LogicalResult inferStore(Op op, bool has_mask = false) {
     auto ref_ty = getMemRefType(op.getBase());
     auto store_ty = op.getValueToStore().getType();
     TPU_CHECK_OP(ref_ty.getRank() == store_ty.getRank(),
@@ -1648,6 +1655,10 @@ class VectorLayoutInferer {
     }
     SmallVector<Layout, 5> in_layout{store_layout};
     in_layout.insert(in_layout.end(), op.getIndices().size() + 1, kNoLayout);
+    if (has_mask) {
+      // Mask layout should be the same as the layout of value to store.
+      in_layout.push_back(store_layout);
+    }
     setInLayout(op, in_layout);
     return success();
   }
