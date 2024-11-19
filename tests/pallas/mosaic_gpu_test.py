@@ -263,7 +263,7 @@ class PallasCallTest(PallasTest):
     )
     def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
       plgpu.copy_gmem_to_smem(
-          x_ref_gmem.at[indexer], scratch_ref.at[indexer], barrier=barrier_ref
+          x_ref_gmem.at[indexer], scratch_ref.at[indexer], barrier_ref
       )
       plgpu.barrier_wait(barrier_ref)
       o_ref[...] = scratch_ref[...] + 1
@@ -284,7 +284,7 @@ class PallasCallTest(PallasTest):
     )
     def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
       plgpu.copy_gmem_to_smem(
-          x_ref_gmem, scratch_ref, barrier=barrier_ref.at[indexer]
+          x_ref_gmem, scratch_ref, barrier_ref.at[indexer]
       )
       plgpu.barrier_wait(barrier_ref.at[indexer])
       o_ref[...] = scratch_ref[...] + 1
@@ -296,7 +296,7 @@ class PallasCallTest(PallasTest):
   def test_copy_with_transforms(self, to_smem):
     def kernel(x_ref, o_ref, barrier_ref):
       if to_smem:
-        plgpu.copy_gmem_to_smem(x_ref, o_ref, barrier=barrier_ref)
+        plgpu.copy_gmem_to_smem(x_ref, o_ref, barrier_ref)
         plgpu.barrier_wait(barrier_ref)
       else:
         plgpu.commit_smem()
@@ -329,7 +329,7 @@ class PallasCallTest(PallasTest):
     ts = (plgpu.TilingTransform((64, 32)), plgpu.SwizzleTransform(128))
     def kernel(x_ref, o_ref, barrier_ref):
       def body(tmp_ref):
-        plgpu.copy_gmem_to_smem(x_ref, tmp_ref, barrier=barrier_ref)
+        plgpu.copy_gmem_to_smem(x_ref, tmp_ref, barrier_ref)
         plgpu.barrier_wait(barrier_ref)
         o_ref[...] = tmp_ref[...] * 2
       pl.run_scoped(body, plgpu.SMEM((128, 128), jnp.float32, transforms=ts))
@@ -351,7 +351,7 @@ class PallasCallTest(PallasTest):
   def test_copy_with_transforms_and_indexing(self):
     def kernel(x_ref, o_ref, barrier_ref):
       for i in range(2):
-        plgpu.copy_gmem_to_smem(x_ref, o_ref.at[i], barrier=barrier_ref)
+        plgpu.copy_gmem_to_smem(x_ref, o_ref.at[i], barrier_ref)
         plgpu.barrier_wait(barrier_ref)
 
     in_spec = pl.BlockSpec(memory_space=plgpu.GMEM)
@@ -379,7 +379,7 @@ class PallasCallTest(PallasTest):
     def kernel(x_ref, o_ref, barrier_ref):
       for i in range(2):
         plgpu.copy_gmem_to_smem(
-            x_ref, plgpu.transpose_ref(o_ref.at[i], (1, 0, 2)), barrier=barrier_ref
+            x_ref, plgpu.transpose_ref(o_ref.at[i], (1, 0, 2)), barrier_ref
         )
         plgpu.barrier_wait(barrier_ref)
 
@@ -407,7 +407,7 @@ class PallasCallTest(PallasTest):
     def kernel(x_ref_gmem, o_ref):
       def body(barrier_ref):
         def inner_body(scratch_ref):
-          plgpu.copy_gmem_to_smem(x_ref_gmem, scratch_ref, barrier=barrier_ref)
+          plgpu.copy_gmem_to_smem(x_ref_gmem, scratch_ref, barrier_ref)
           plgpu.barrier_wait(barrier_ref)
           o_ref[...] = scratch_ref[...] + 1
         pl.run_scoped(inner_body, plgpu.SMEM((256,), jnp.float32))
@@ -1092,7 +1092,7 @@ class PipelineTest(PallasTest):
             lambda: plgpu.copy_gmem_to_smem(
                 x_gmem.at[gmem_slice, pl.ds(fetch_step * 16, 16)],
                 x_smem.at[fetch_slot],
-                barrier=barrier.at[fetch_slot],
+                barrier.at[fetch_slot],
             ),
             lambda: None,
         )
@@ -1103,7 +1103,7 @@ class PipelineTest(PallasTest):
         plgpu.copy_gmem_to_smem(
             x_gmem.at[gmem_slice, pl.ds(slot * 16, 16)],
             x_smem.at[slot],
-            barrier=barrier.at[slot],
+            barrier.at[slot],
         )
 
       jax.lax.fori_loop(0, num_steps, body, ())

@@ -218,7 +218,6 @@ def _copy_gmem_to_smem_lowering(
 def copy_gmem_to_smem(
     src: pallas_core.AbstractMemoryRef,
     dst: pallas_core.AbstractMemoryRef,
-    *,
     barrier: pallas_core.AbstractMemoryRef,
 ) -> None:
   """Asynchronously copies a GMEM reference to a SMEM reference.

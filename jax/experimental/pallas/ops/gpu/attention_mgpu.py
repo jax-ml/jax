@@ -89,7 +89,7 @@ def attention(q, k, v, config: TuningConfig):
       plgpu.copy_gmem_to_smem(
           q_ref.at[pl.ds(q_seq_base, block_q), q_head],
           qo_smem,
-          barrier=q_barriers.at[wg_idx],
+          q_barriers.at[wg_idx],
       )
       plgpu.barrier_wait(q_barriers.at[wg_idx])
 
@@ -166,17 +166,17 @@ def attention(q, k, v, config: TuningConfig):
       kv_head = lax.div(lax.axis_index("heads"), q_heads_per_kv_head)
       for i in range(max_concurrent_steps):
         s = (pl.ds(i * block_kv, block_kv), kv_head)
-        plgpu.copy_gmem_to_smem(k_ref.at[s], k_smem.at[i], barrier=k_barriers.at[i])
-        plgpu.copy_gmem_to_smem(v_ref.at[s], v_smem.at[i], barrier=v_barriers.at[i])
+        plgpu.copy_gmem_to_smem(k_ref.at[s], k_smem.at[i], k_barriers.at[i])
+        plgpu.copy_gmem_to_smem(v_ref.at[s], v_smem.at[i], v_barriers.at[i])
 
       def kv_loop(kv_step, _):
         tma_step = kv_step + max_concurrent_steps
         tma_slot = lax.rem(kv_step, max_concurrent_steps)
         s = (pl.ds(tma_step * block_kv, block_kv), kv_head)
         plgpu.barrier_wait(k_consumed_barrier)
-        plgpu.copy_gmem_to_smem(k_ref.at[s], k_smem.at[tma_slot], barrier=k_barriers.at[tma_slot])
+        plgpu.copy_gmem_to_smem(k_ref.at[s], k_smem.at[tma_slot], k_barriers.at[tma_slot])
         plgpu.barrier_wait(v_consumed_barrier)
-        plgpu.copy_gmem_to_smem(v_ref.at[s], v_smem.at[tma_slot], barrier=v_barriers.at[tma_slot])
+        plgpu.copy_gmem_to_smem(v_ref.at[s], v_smem.at[tma_slot], v_barriers.at[tma_slot])
       lax.fori_loop(0, kv_seq_len // block_kv - max_concurrent_steps, kv_loop, None)
 
       def kv_epilogue(i, _):

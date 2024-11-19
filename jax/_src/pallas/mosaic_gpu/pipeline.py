@@ -63,7 +63,7 @@ class BufferedRef:
     gpu_primitives.copy_gmem_to_smem(
         self.gmem_ref.at[gmem_slices],  # pytype: disable=unsupported-operands
         self.smem_ref.at[slot],
-        barrier=barrier_ref.at[slot],
+        barrier_ref.at[slot],
     )
 
   def copy_out(self, slot, grid_indices, predicate=None):
