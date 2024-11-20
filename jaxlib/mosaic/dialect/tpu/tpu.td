@@ -761,6 +761,7 @@ def TPU_LogOp : TPU_Op<"log"> {
   );
   let results = (outs);
   let assemblyFormat = [{ $tag attr-dict (`:`  `[` $inputs^ `]` `:` type($inputs))? }];
+  let hasVerifier = 1;
 }
 
 def DebugAssertInsertionPass : Pass<"debug-assert-insertion", "::mlir::func::FuncOp"> {
