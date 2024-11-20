@@ -808,6 +808,46 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(out2, inp * 6)
     self.assertEqual(out2.sharding.memory_kind, 'pinned_host')
 
+  def test_compute_on_host_shared_sharding(self):
+    mesh = jtu.create_mesh((2,), ("x"))
+    device_sharding = NamedSharding(mesh, P("x"))
+    host_sharding = device_sharding.with_memory_kind("pinned_host")
+
+    @compute_on("device_host")
+    @functools.partial(
+        jax.jit,
+        in_shardings=(host_sharding, device_sharding),
+        out_shardings=(host_sharding, device_sharding),
+        donate_argnums=(0, 1),
+    )
+    def host_func(x, y):
+      return (x * y), ((x**2) * (y**2))
+
+    @functools.partial(
+        jax.jit,
+        in_shardings=(host_sharding, device_sharding),
+        out_shardings=(host_sharding, device_sharding),
+        donate_argnums=(0),
+    )
+    def device_func(host_data, device_data):
+      host_data, device_data = host_func(host_data, device_data)
+      device_data = device_data * 2
+      host_data, device_data = host_func(host_data, device_data)
+      return (host_data, device_data)
+
+    input_x = jnp.ones(8)
+    input_host = jax.device_put(input_x, host_sharding)
+
+    input_device = jnp.arange(8)
+    input_device = jnp.where(input_device < 4, 0, 1)
+    input_device = jax.device_put(input_device, device_sharding)
+
+    output_host, output_device = device_func(input_host, input_device)
+    self.assertEqual(output_host.sharding.memory_kind, 'pinned_host')
+    self.assertEqual(output_device.sharding.memory_kind, 'device')
+    self.assertArraysEqual(output_host, [0., 0., 0., 0., 2., 2., 2., 2.])
+    self.assertArraysEqual(output_device, [0., 0., 0., 0., 4., 4., 4., 4.])
+
   def test_compute_on_basic_inline(self):
     @compute_on('device_host')
     @jax.jit
