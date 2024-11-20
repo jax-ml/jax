@@ -42,6 +42,7 @@ from jax._src.lax.utils import (
     _input_dtype,
     standard_primitive,
 )
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.typing import Array, ArrayLike, Shape
@@ -1270,6 +1271,29 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
   return tuple(core.stride_dim(d, window_size=1, window_stride=s)
                for d, s in zip(diff, strides))
 
+def _get_sub_spec_size(mesh, sub_spec):
+  if isinstance(sub_spec, tuple):
+    return math.prod(mesh.shape[s] for s in sub_spec)
+  return mesh.shape[sub_spec]
+
+def _slice_sharding_rule(operand, *, start_indices, limit_indices, strides):
+  # TODO(yashkatariya): Once JAX supports uneven sharding at the top level,
+  # change this logic to `return operand.sharding` directly.
+  out_shape = _slice_shape_rule(operand, start_indices=start_indices,
+                                limit_indices=limit_indices, strides=strides)
+  mesh = operand.sharding.mesh
+  new_spec = []
+  for op_sh, out_sh, op_spec in safe_zip(
+      operand.shape, out_shape, operand.sharding.spec):
+    if (op_sh != out_sh and op_spec is not None and
+        out_sh % _get_sub_spec_size(mesh, op_spec) != 0):
+      raise NotImplementedError(
+          f"slicing on sharded dims where out dim ({out_sh}) is not divisble by"
+          f" mesh axes ({_get_sub_spec_size(mesh, op_spec)}) with spec"
+          f" ({op_spec}) is not implemented.")
+    new_spec.append(op_spec)
+  return NamedSharding(mesh, P(*new_spec))
+
 def _slice_transpose_rule(t, operand, *, start_indices, limit_indices, strides):
   assert ad.is_undefined_primal(operand)
   operand_shape = operand.aval.shape
@@ -1308,7 +1332,8 @@ def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
   out = slice(operand, new_start_indices, new_limit_indices, new_strides)
   return out, bdim
 
-slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice')
+slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice',
+                             sharding_rule=_slice_sharding_rule)
 ad.deflinear2(slice_p, _slice_transpose_rule)
 batching.primitive_batchers[slice_p] = _slice_batching_rule
 # TODO(mvoz): A better slice rule for ragged prop, enforcing boundaries
@@ -1333,8 +1358,11 @@ def _slice_impl(x, start_indices, limit_indices, strides):
 def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
   strides = strides or [1] * len(start_indices)
   aval_out, = ctx.avals_out
-  return [mlir.slice_op(ctx, x, aval_out,
-                        start_indices=start_indices, limit_indices=limit_indices, strides=strides)]
+  out = mlir.slice_op(ctx, x, aval_out, start_indices=start_indices,
+                      limit_indices=limit_indices, strides=strides)
+  if config.sharding_in_types.value:
+    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
+  return [out]
 
 mlir.register_lowering(slice_p, _slice_lower)
 

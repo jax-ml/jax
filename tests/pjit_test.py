@@ -5285,6 +5285,43 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, (np_inp @ np_inp.T) * 2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
 
+  def test_slice(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(4, 4)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x', None)))
+
+    @jax.jit
+    def f(x):
+      y = lax.slice(x, (0, 0), (4, 3))
+      self.assertEqual(y.sharding.spec, P('x', None))
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertIn('@Sharding', f.lower(arr).as_text())
+
+    with self.assertRaisesRegex(NotImplementedError, "slicing on sharded dims"):
+      f(jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y'))))
+
+    with self.assertRaisesRegex(NotImplementedError, "slicing on sharded dims"):
+      f(jax.device_put(np_inp, NamedSharding(mesh, P(None, ('x', 'y')))))
+
+  def test_squeeze(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(4, 4, 1)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x', None, None)))
+
+    @jax.jit
+    def f(x):
+      y = lax.squeeze(x, (2,))
+      self.assertEqual(y.sharding.spec, P('x', None))
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertIn('@Sharding', f.lower(arr).as_text())
+    self.assertArraysEqual(out, np.squeeze(np_inp, axis=2))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

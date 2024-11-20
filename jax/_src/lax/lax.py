@@ -4527,6 +4527,12 @@ def _squeeze_dtype_rule(operand, *, dimensions):
 def _squeeze_shape_rule(operand, *, dimensions):
   return _compute_squeeze_shape(np.shape(operand), dimensions)
 
+def _squeeze_sharding_rule(operand, *, dimensions):
+  dims_set = set(dimensions)
+  new_spec = tuple(s for i, s in enumerate(operand.sharding.spec)
+                   if i not in dims_set)
+  return NamedSharding(operand.sharding.mesh, P(*new_spec))
+
 def _compute_squeeze_shape(shape, dimensions):
   dims_set = set(dimensions)
   if len(dims_set) != len(dimensions):
@@ -4555,7 +4561,7 @@ def _squeeze_batch_rule(batched_args, batch_dims, *, dimensions):
   return squeeze(operand, dimensions=dimensions), bdim_out
 
 squeeze_p = standard_primitive(_squeeze_shape_rule, _squeeze_dtype_rule,
-                               'squeeze')
+                               'squeeze', sharding_rule=_squeeze_sharding_rule)
 ad.deflinear2(squeeze_p, _squeeze_transpose_rule)
 batching.primitive_batchers[squeeze_p] = _squeeze_batch_rule
 pe.def_trivial_padding(squeeze_p)
@@ -4563,7 +4569,11 @@ batching.ragged_prop_rules[squeeze_p] = batching.ragged_mask_no_op_rule
 
 def _squeeze_lower(ctx, operand, *, dimensions):
   del dimensions  # Implied by the output aval.
-  return [mlir.reshape(ctx, operand, ctx.avals_out[0])]
+  aval_out, = ctx.avals_out
+  out = mlir.reshape(ctx, operand, aval_out)
+  if config.sharding_in_types.value:
+    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
+  return [out]
 
 mlir.register_lowering(squeeze_p, _squeeze_lower)
 
