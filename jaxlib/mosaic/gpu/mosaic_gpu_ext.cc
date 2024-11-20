@@ -13,11 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <memory>
+#include <cstddef>
+#include <cstdint>
+#include <new>
 #include <stdexcept>
 #include <string>
+#include <tuple>
+#include <vector>
 
 #include "nanobind/nanobind.h"
+#include "nanobind/stl/tuple.h"
+#include "nanobind/stl/vector.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/strings/str_cat.h"
 #include "jaxlib/gpu/vendor.h"
@@ -118,6 +124,75 @@ XLA_FFI_Error* EventElapsed(XLA_FFI_CallFrame* call_frame) {
   return kEventElapsed->Call(call_frame);
 }
 
+#define THROW(...)                                                 \
+  do {                                                             \
+    throw std::runtime_error(                                      \
+        absl::StrCat("Mosaic GPU profiler error: ", __VA_ARGS__)); \
+  } while (0)
+
+#define THROW_IF(expr, ...)       \
+  do {                            \
+    if (expr) THROW(__VA_ARGS__); \
+  } while (0)
+
+#define THROW_IF_CUPTI_ERROR(expr, ...)          \
+  do {                                           \
+    CUptiResult _result = (expr);                \
+    if (_result != CUPTI_SUCCESS) {              \
+      const char* s;                             \
+      cuptiGetErrorMessage(_result, &s);         \
+      THROW(s, ": " __VA_OPT__(, ) __VA_ARGS__); \
+    }                                            \
+  } while (0)
+
+// CUPTI can only have one subscriber per process, so it's ok to make the
+// profiler state global.
+struct {
+  CUpti_SubscriberHandle subscriber;
+  std::vector<std::tuple<const char* /*kernel_name*/, double /*ms*/>> timings;
+} profiler_state;
+
+void callback_request(uint8_t** buffer, size_t* size, size_t* maxNumRecords) {
+  // 10 MiB buffer size is generous but somewhat arbitrary, it's at the upper
+  // bound of what's recommended in CUPTI documentation:
+  // https://docs.nvidia.com/cupti/main/main.html#cupti-callback-api:~:text=For%20typical%20workloads%2C%20it%E2%80%99s%20suggested%20to%20choose%20a%20size%20between%201%20and%2010%20MB.
+  const int buffer_size = 10 * (1 << 20);
+  // 8 byte alignment is specified in the official CUPTI code samples, see
+  // extras/CUPTI/samples/common/helper_cupti_activity.h in your CUDA
+  // installation.
+  *buffer = new (std::align_val_t(8)) uint8_t[buffer_size];
+  *size = buffer_size;
+  *maxNumRecords = 0;
+}
+
+void callback_complete(CUcontext context, uint32_t streamId,
+                       uint8_t* buffer, size_t size, size_t validSize) {
+  // take ownership of the buffer once CUPTI is done using it
+  absl::Cleanup cleanup = [buffer]() {
+    operator delete[](buffer, std::align_val_t(8));
+  };
+  CUpti_Activity* record = nullptr;
+  while (true) {
+    CUptiResult status = cuptiActivityGetNextRecord(buffer, validSize, &record);
+    if (status == CUPTI_SUCCESS) {
+      if (record->kind == CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL) {
+        // TODO(andportnoy) handle multi-GPU
+        CUpti_ActivityKernel9* kernel = (CUpti_ActivityKernel9*)record;
+        // Convert integer nanoseconds to floating point milliseconds to match
+        // the interface of the events-based profiler.
+        double duration_ms = (kernel->end - kernel->start) / 1e6;
+        profiler_state.timings.push_back(
+            std::make_tuple(kernel->name, duration_ms));
+      }
+    } else if (status == CUPTI_ERROR_MAX_LIMIT_REACHED) {
+      // no more records available
+      break;
+    } else {
+      THROW_IF_CUPTI_ERROR(status);
+    }
+  }
+}
+
 NB_MODULE(_mosaic_gpu_ext, m) {
   m.def("registrations", []() {
     return nb::make_tuple(
@@ -138,6 +213,35 @@ NB_MODULE(_mosaic_gpu_ext, m) {
         throw std::runtime_error("Failed to synchronize device");
       }
     }
+  });
+  m.def("_cupti_init", []() {
+    profiler_state.timings.clear();
+    // Ok to pass nullptr for the callback here because we don't register any
+    // callbacks through cuptiEnableCallback.
+    auto subscribe_result = cuptiSubscribe(
+        &profiler_state.subscriber, /*callback=*/nullptr, /*userdata=*/nullptr);
+    if (subscribe_result == CUPTI_ERROR_MULTIPLE_SUBSCRIBERS_NOT_SUPPORTED) {
+      THROW(
+          "Attempted to subscribe to CUPTI while another subscriber, such as "
+          "Nsight Systems or Nsight Compute, is active. CUPTI backend of the "
+          "Mosaic GPU profiler cannot be used in that mode since CUPTI does "
+          "not support multiple subscribers.");
+    }
+    THROW_IF_CUPTI_ERROR(subscribe_result, "failed to subscribe to CUPTI");
+    THROW_IF_CUPTI_ERROR(
+        cuptiActivityRegisterCallbacks(callback_request, callback_complete),
+        "failed to register CUPTI activity callbacks");
+    THROW_IF_CUPTI_ERROR(
+        cuptiActivityEnable(CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL),
+        "failed to enable tracking of kernel activity by CUPTI");
+  });
+  m.def("_cupti_get_timings", []() {
+    THROW_IF_CUPTI_ERROR(cuptiUnsubscribe(profiler_state.subscriber),
+                         "failed to unsubscribe from CUPTI");
+    THROW_IF_CUPTI_ERROR(cuptiActivityFlushAll(CUPTI_ACTIVITY_FLAG_NONE),
+                         "failed to flush CUPTI activity buffers");
+    THROW_IF_CUPTI_ERROR(cuptiFinalize(), "failed to detach CUPTI");
+    return profiler_state.timings;
   });
 }
 
