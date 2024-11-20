@@ -1312,6 +1312,17 @@ class PJitTest(jtu.BufferDonationTestCase):
     ans2 = jnp.sin(x0) # cpp_pjit hit with bad cache entry
     assert(ans1.devices() == ans2.devices())
 
+  def test_zero_literal_equality(self):
+    # This test verifies that we don't accidentally conflate positive and
+    # negative zeros when deduplicating literals in the IR.
+    f = jax.jit(lambda x: (x / np.float32(-0.0), x / np.float32(0.0)))
+    a, b = f(np.float32(1.0))
+    self.assertEqual(a, -np.inf)
+    self.assertEqual(b, np.inf)
+    ir = f.lower(np.float32(1.0)).as_text()
+    self.assertIn("stablehlo.constant dense<0.000000e+00>", ir)
+    self.assertIn("stablehlo.constant dense<-0.000000e+00>", ir)
+
 @jtu.pytest_mark_if_available('multiaccelerator')
 class CustomPartitionerTest(jtu.JaxTestCase):
 

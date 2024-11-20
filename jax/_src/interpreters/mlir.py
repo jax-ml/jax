@@ -1755,33 +1755,39 @@ def _emit_lowering_rule_as_fun(lowering_rule,
 class HashableLiteral:
   """Hashable wrapper of core.Literal, used for deduplicating IR constants."""
 
-  __slots__ = ["value"]
+  __slots__ = ["value", "data"]
 
   value: core.Literal
 
+  # Copy of the value suitable for an equality comparison. We are careful to
+  # avoid floating point comparisons here, because in particular we don't want
+  # 0.0 and -0.0 to be considered equal, but we are fine with NaNs being equal.
+  data: bytes | int | bool | None
+
   def __init__(self, value):
     self.value = value
+    if isinstance(value.val, (np.generic, np.ndarray)):
+      self.data = value.val.tobytes()
+    elif isinstance(value.val, (bool, int)):
+      self.data = value.val
+    elif isinstance(value.val, float):
+      self.data = np.float64(value.val).tobytes()
+    elif isinstance(value.val, complex):
+      self.data = np.complex128(value.val).tobytes()
+    else:
+      self.data = None  # Unhandled case.
 
   def __hash__(self):
-    h = self.value.hash
-    return id(self.value.val) if h is None else h
+    return hash(self.data)
 
   def __eq__(self, other):
-    if self is other:
-      return True
     if type(self.value.val) != type(other.value.val):
       return False
     if self.value.aval != other.value.aval:
       return False
-    if isinstance(self.value.val, (bool, int, float, complex)):
-      return self.value == other.value
-    if isinstance(self.value.val, (np.generic, np.ndarray)):
-      return np.array_equal(
-        self.value.val, other.value.val,
-        equal_nan=np.issubdtype(self.value.val.dtype, np.inexact))
-    # Since the use case is constant deduplication, it's safe to return
-    # False in unhandled cases.
-    return False
+    if self.data is None:
+      return id(self) == id(other)
+    return self.data == other.data
 
 
 def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
