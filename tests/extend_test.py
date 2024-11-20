@@ -73,34 +73,40 @@ class ExtendTest(jtu.JaxTestCase):
 
 class RandomTest(jtu.JaxTestCase):
 
-  def test_key_make_with_custom_impl(self):
-    shape = (4, 2, 7)
-
+  def make_custom_impl(self, shape, seed=False, split=False, fold_in=False,
+                       random_bits=False):
+    assert not split and not fold_in and not random_bits  # not yet implemented
     def seed_rule(_):
       return jnp.ones(shape, dtype=jnp.dtype('uint32'))
 
     def no_rule(*args, **kwargs):
       assert False, 'unreachable'
 
-    impl = jex.random.define_prng_impl(
-        key_shape=shape, seed=seed_rule, split=no_rule, fold_in=no_rule,
-        random_bits=no_rule)
+    return jex.random.define_prng_impl(
+        key_shape=shape, seed=seed_rule if seed else no_rule, split=no_rule,
+        fold_in=no_rule, random_bits=no_rule)
+
+  def test_key_make_with_custom_impl(self):
+    impl = self.make_custom_impl(shape=(4, 2, 7), seed=True)
     k = jax.random.key(42, impl=impl)
     self.assertEqual(k.shape, ())
     self.assertEqual(impl, jax.random.key_impl(k))
 
   def test_key_wrap_with_custom_impl(self):
-    def no_rule(*args, **kwargs):
-      assert False, 'unreachable'
-
     shape = (4, 2, 7)
-    impl = jex.random.define_prng_impl(
-        key_shape=shape, seed=no_rule, split=no_rule, fold_in=no_rule,
-        random_bits=no_rule)
+    impl = self.make_custom_impl(shape=shape)
     data = jnp.ones((3, *shape), dtype=jnp.dtype('uint32'))
     k = jax.random.wrap_key_data(data, impl=impl)
     self.assertEqual(k.shape, (3,))
     self.assertEqual(impl, jax.random.key_impl(k))
+
+  def test_key_impl_is_spec(self):
+    # this is counterpart to random_test.py:
+    # KeyArrayTest.test_key_impl_builtin_is_string_name
+    spec_ref = self.make_custom_impl(shape=(4, 2, 7), seed=True)
+    key = jax.random.key(42, impl=spec_ref)
+    spec = jax.random.key_impl(key)
+    self.assertEqual(repr(spec), f"PRNGSpec({spec_ref._impl.name!r})")
 
 
 class FfiTest(jtu.JaxTestCase):
