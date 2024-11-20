@@ -363,20 +363,30 @@ wait_smem_to_gmem_p.multiple_results = True
 
 
 @wait_smem_to_gmem_p.def_effectful_abstract_eval
-def _wait_smem_to_gmem_abstract_eval(n):
-  del n  # Unused.
+def _wait_smem_to_gmem_abstract_eval(n, *, wait_read_only):
+  del n, wait_read_only  # Unused.
   return (), {gpu_core._memory_effect}
 
 
 @lowering.register_lowering_rule(wait_smem_to_gmem_p)
-def _wait_smem_to_gmem_lowering(ctx: lowering.LoweringRuleContext, n):
-  ctx.launch_ctx.await_async_copy(allow_groups=n)
+def _wait_smem_to_gmem_lowering(
+    ctx: lowering.LoweringRuleContext, n, *, wait_read_only
+):
+  ctx.launch_ctx.await_async_copy(
+      allow_groups=n, await_read_only=wait_read_only
+  )
   return ()
 
 
-def wait_smem_to_gmem(n: int) -> None:
-  """Waits until there are no more than ``n`` SMEM->GMEM copies in flight."""
-  wait_smem_to_gmem_p.bind(n)
+def wait_smem_to_gmem(n: int, wait_read_only: bool = False) -> None:
+  """Waits until there are no more than ``n`` SMEM->GMEM copies in flight.
+
+  Args:
+    n: The maximum number of copies in flight to wait for.
+    wait_read_only: If ``True``, wait for the in flight copies to finish
+      reading from SMEM. The writes to GMEM are not waited for.
+  """
+  wait_smem_to_gmem_p.bind(n, wait_read_only=wait_read_only)
 
 
 # WGMMA on an accumulator reference

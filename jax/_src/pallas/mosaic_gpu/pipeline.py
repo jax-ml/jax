@@ -207,7 +207,9 @@ def emit_pipeline(
         # Wait for the current GMEM->SMEM copy to complete.
         gpu_primitives.barrier_wait(barrier_ref.at[slot])
       # Wait for the previous output SMEM->GMEM copy to complete.
-      gpu_primitives.wait_smem_to_gmem(max_concurrent_steps - 1)
+      gpu_primitives.wait_smem_to_gmem(
+          max_concurrent_steps - 1, wait_read_only=True
+      )
 
       with pallas_core.grid_env(map(pallas_core.GridAxis, indices, grid)):
         body(
