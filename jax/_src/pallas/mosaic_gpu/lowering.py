@@ -1501,6 +1501,31 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
   return list(switch_op.results)
 
 
+@register_lowering_rule(lax.bitcast_convert_type_p)
+def _bitcast_convert_type_lowering_rule(
+    ctx: LoweringRuleContext, operand, *, new_dtype
+):
+  # TODO(petebu) Handle case where src and dst types have different bitwidths
+  [operand_aval] = ctx.avals_in
+  operand = _ensure_fa(operand, operand_aval.dtype)
+  src_elem_type = mgpu_utils.dtype_to_ir_type(operand_aval.dtype)
+  dst_elem_type = mgpu_utils.dtype_to_ir_type(new_dtype)
+  assert isinstance(src_elem_type, (ir.IntegerType, ir.FloatType))
+  assert isinstance(dst_elem_type, (ir.IntegerType, ir.FloatType))
+  if src_elem_type.width != dst_elem_type.width:
+    raise NotImplementedError(
+        f"Can't bitcast from {operand_aval.dtype} to {new_dtype} because they"
+        " have different widths"
+    )
+  if ir.IntegerType.isinstance(dst_elem_type):
+    output_is_signed = mgpu_utils.is_signed(new_dtype)
+  else:
+    output_is_signed = None
+  return mgpu.FragmentedArray.bitcast(
+      operand, dst_elem_type, output_is_signed=output_is_signed
+  )
+
+
 def _bcast(
     x: ir.Value,
     y: ir.Value,

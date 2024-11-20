@@ -929,7 +929,9 @@ class FragmentedArray:
         raise NotImplementedError(x.type)
     return fast_instr
 
-  def bitcast(self, elt: ir.Type):
+  def bitcast(self, elt: ir.Type, *, output_is_signed: bool | None = None):
+    if elt == self.mlir_dtype:
+      return self
     reg_type = self.registers.flat[0].type
     if ir.VectorType.isinstance(reg_type):
       reg_shape = ir.VectorType(reg_type).shape
@@ -937,7 +939,9 @@ class FragmentedArray:
     else:
       ty = elt
 
-    return self._pointwise(lambda x: arith.bitcast(ty, x))
+    return self._pointwise(
+        lambda x: arith.bitcast(ty, x), output_is_signed=output_is_signed
+    )
 
   def __getitem__(self, idx):
     if self.layout != WGMMA_LAYOUT:
