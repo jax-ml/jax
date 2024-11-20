@@ -360,7 +360,7 @@ def verify(
       wgmma_impl=WGMMADefaultImpl,
       profiler_spec=prof_spec,
   )
-  z, runtime = profiler.measure(f, x, y)
+  z, runtime = profiler.measure(f)(x, y)
 
   if rhs_transpose:
     dimension_numbers = ((1,), (1,)), ((), ())
@@ -382,7 +382,7 @@ def verify(
         preferred_element_type=out_dtype,
     ).astype(out_dtype)
 
-  ref, ref_runtime = profiler.measure(ref_f, x, y)
+  ref, ref_runtime = profiler.measure(ref_f)(x, y)
   np.testing.assert_allclose(
       z.astype(jnp.float32), ref.astype(jnp.float32), atol=1e-3, rtol=1e-3
   )
@@ -426,7 +426,7 @@ if __name__ == "__main__":
       f = build_kernel(
           m, n, k, dtype, dtype, dtype, wgmma_impl=WGMMADefaultImpl, **kwargs
       )
-      _, runtime = profiler.measure(f, x, y)
+      _, runtime = profiler.measure(f)(x, y)
     except ValueError as e:
       if "Mosaic GPU kernel exceeds available shared memory" not in str(e):
         raise

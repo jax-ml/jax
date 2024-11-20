@@ -274,7 +274,7 @@ def main(unused_argv):
     for block_kv in (256, 128, 64):
       config = TuningConfig(block_q=block_q, block_kv=block_kv, max_concurrent_steps=2)
       try:
-        out, runtime_ms = profiler.measure(functools.partial(attention, config=config), q, k, v)
+        out, runtime_ms = profiler.measure(functools.partial(attention, config=config))(q, k, v)
         if seq_len < 32768:
           out_ref = attention_reference(q, k, v)
           np.testing.assert_allclose(out, out_ref, atol=2e-3, rtol=1e-3)

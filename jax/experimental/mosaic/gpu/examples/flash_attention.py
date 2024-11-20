@@ -576,7 +576,7 @@ def benchmark_and_verify(
         head_dim=head_dim,
         **kwargs,
     )
-    out, runtime = profiler.measure(f, q[0], k[0], v[0])
+    out, runtime = profiler.measure(f)(q[0], k[0], v[0])
     out = out[None]
 
     @jax.jit
