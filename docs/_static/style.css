@@ -1,5 +1,19 @@
 @import url("theme.css");
 
+@font-face {
+  font-family: 'Google Sans';
+  src: url('GoogleSans-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Google Sans';
+  src: url('GoogleSans-Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+}
+
 /* Base LP sidebar modifications */
 body:has(.hero) .sidebar-toggle,
 body:has(.hero) .bd-sidebar-secondary {

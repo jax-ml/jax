@@ -171,6 +171,7 @@ html_theme_options = {
     'repository_url': 'https://github.com/jax-ml/jax',
     'use_repository_button': True,     # add a "link to repository" button
     'navigation_with_keys': False,
+    'documentation_font': "Google Sans",
 }
 
 # The name of an image file (relative to this directory) to place at the top
