@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Sequence, Iterable
+import contextlib
 import dataclasses
 from functools import partial
 import inspect
@@ -637,10 +638,13 @@ def _infer_params_impl(
       in_avals, in_tree, dbg, device_or_backend_set, have_kwargs)
 
   attr_token = _attr_token(flat_fun, in_type)
-  jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
-      flat_fun, in_type, attr_token, dbg,
-      HashableFunction(res_paths, closure=()),
-      IgnoreKey(ji.inline))
+
+  abstract_mesh = get_abstract_mesh(in_type)
+  with abstract_mesh:
+    jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
+        flat_fun, in_type, attr_token, dbg,
+        HashableFunction(res_paths, closure=()),
+        IgnoreKey(ji.inline))
   _attr_update(flat_fun, in_type, attr_token, attrs_tracked)
 
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
@@ -681,6 +685,26 @@ def _infer_params_impl(
   return PjitParams(consts, params, in_avals, in_tree, out_tree(),
                     donated_invars, dbg.arg_names if dbg else None, len(consts),
                     attrs_tracked), args_flat
+
+
+def get_abstract_mesh(in_avals):
+  if not config.sharding_in_types.value:
+    return contextlib.nullcontext()
+  m = None
+  for a in in_avals:
+    # TODO(yashkatariya): Remove this when mesh context can be set by the user.
+    if a.sharding is None:  # type: ignore
+      continue
+    if m is not None and m != a.sharding.mesh:
+      raise ValueError(
+          f'Mesh for all inputs should be equal. Got one mesh: {m} and'
+          f' another mesh: {a.sharding.mesh}')
+    m = a.sharding.mesh  # type: ignore
+  # TODO(yashkatariya): Remove this when mesh context can be set by the user.
+  if m is None:
+    return contextlib.nullcontext()
+  assert m is not None
+  return m
 
 
 class InferParamsCacheEntry:

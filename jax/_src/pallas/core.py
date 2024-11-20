@@ -873,7 +873,7 @@ def get_grid_mapping(
   )
   # The inputs for the index maps
   index_map_avals = (
-      (index_map_grid_aval,) * len(grid_spec.grid))
+      (index_map_grid_aval.update(sharding=None),) * len(grid_spec.grid))
   index_map_tree = tree_util.tree_structure((index_map_avals, {}))
 
   num_scalar_prefetch: int = getattr(grid_spec, "num_scalar_prefetch", 0)

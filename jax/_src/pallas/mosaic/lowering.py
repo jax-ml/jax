@@ -1380,7 +1380,7 @@ def _masked_swap_lowering_rule(
       1 if b is pallas_core.mapped else next(mem_slice_shape_iter)
       for b in ref_block_shape
   ]
-  mem_aval = aval_out.update(shape=tuple(mem_slice_shape))
+  mem_aval = aval_out.update(shape=tuple(mem_slice_shape), sharding=None)
   mem_aval_vec_type = ir.VectorType.get(mem_aval.shape,
     _dtype_to_ir_type(mem_aval.dtype, is_kernel_boundary=True))
   if need_stride:

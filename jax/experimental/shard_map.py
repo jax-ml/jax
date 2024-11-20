@@ -483,7 +483,8 @@ def _shard_map_staging(
   in_tracers = map(trace.to_jaxpr_tracer, in_tracers)
   in_avals = [t.aval for t in in_tracers]
   in_avals_ = map(partial(_shard_aval, mesh), in_names, in_avals)
-  with core.extend_axis_env_nd(list(mesh.shape.items())):
+  with (core.extend_axis_env_nd(list(mesh.shape.items())),
+        pjit.get_abstract_mesh(in_avals_)):
     jaxpr, out_avals_, consts, () = pe.trace_to_jaxpr_dynamic(f, in_avals_)
   _check_names(out_names_thunk(), out_avals_)
   if check_rep:
@@ -547,6 +548,8 @@ def _unshard_shaped_array(mesh: Mesh, names: AxisNames,
   assert isinstance(aval, core.ShapedArray)
   new_shape = tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
                     for i, sz in enumerate(aval.shape))
+  # TODO(yashkatariya): Reset the mesh properly based on the input avals if the
+  # mesh of shard_map specifies collective axes.
   if config.sharding_in_types.value:
     spec = _names_to_pspec(names)._normalized_spec(aval.ndim)
     new_sharding = NamedSharding(AbstractMesh(mesh.shape_tuple), spec)

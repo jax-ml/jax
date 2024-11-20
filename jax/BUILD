@@ -451,6 +451,7 @@ pytype_strict_library(
         ":deprecations",
         ":dtypes",
         ":effects",
+        ":mesh",
         ":pretty_printer",
         ":source_info_util",
         ":traceback_util",

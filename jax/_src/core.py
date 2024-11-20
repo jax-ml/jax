@@ -38,6 +38,7 @@ from jax._src import dtypes
 from jax._src import config
 from jax._src import effects
 from jax._src import compute_on
+from jax._src import mesh as mesh_lib
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
     TracerIntegerConversionError, UnexpectedTracerError)
@@ -1596,6 +1597,23 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 
   return TypeError(msg)
 
+
+def get_sharding(sharding, ndim):
+  from jax._src.sharding_impls import NamedSharding, PartitionSpec as P  # type: ignore
+
+  if sharding is not None:
+    assert len(sharding.spec) == ndim
+    return sharding
+
+  context_mesh = mesh_lib.mesh_context.mesh
+  # TODO(yashkatariya): Error out and ask users to set the context mesh in their
+  # code.
+  if context_mesh is None:
+    return None
+  assert sharding is None
+  return NamedSharding(context_mesh, P(*[None] * ndim))
+
+
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape', 'sharding']  # inherits slots from parent
   array_abstraction_level = 2
@@ -1605,20 +1623,18 @@ class ShapedArray(UnshapedArray):
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
     if config.sharding_in_types.value:
-      if sharding is not None:
-        assert len(sharding.spec) == len(self.shape)
-      self.sharding = sharding
+      self.sharding = get_sharding(sharding, len(self.shape))
 
-  def update(self, shape=None, dtype=None, weak_type=None, sharding=None):
+  def update(self, shape=None, dtype=None, weak_type=None, **kwargs):
     if shape is None:
       shape = self.shape
     if dtype is None:
       dtype = self.dtype
     if weak_type is None:
       weak_type = self.weak_type
-    if sharding is None:
-      sharding = getattr(self, 'sharding', None)
-    return ShapedArray(shape, dtype, weak_type, sharding=sharding)
+    if 'sharding' not in kwargs:
+      kwargs['sharding'] = getattr(self, 'sharding', None)
+    return ShapedArray(shape, dtype, weak_type, **kwargs)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self:

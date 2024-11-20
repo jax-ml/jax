@@ -214,7 +214,10 @@ def _get_abstract_eval(ref_aval: AbstractRef, *args,
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
     out_shape = _shape_after_transforming(ref_aval.shape, transforms)
     out_dtype = _dtype_after_transforming(ref_aval.dtype, transforms)
-    out_aval = ref_aval.inner_aval.update(shape=out_shape, dtype=out_dtype)
+    # TODO(yashkatariya): Transform the sharding too instead of setting it to
+    # None.
+    out_aval = ref_aval.inner_aval.update(shape=out_shape, dtype=out_dtype,
+                                          sharding=None)
   else:
     if transforms:
       raise ValueError("Cannot index non-shaped array with nontrivial indices.")

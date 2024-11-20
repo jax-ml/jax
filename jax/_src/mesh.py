@@ -107,6 +107,9 @@ class AxisTypes(enum.Enum):
   User = enum.auto()
   Collective = enum.auto()
 
+  def __repr__(self):
+    return self.name
+
 def axis_names_to_types(axis_types) -> dict[str, AxisTypes]:
   if axis_types is None:
     return {}
@@ -452,14 +455,22 @@ class AbstractMesh:
     _raise_value_error("local_mesh")
 
   def __enter__(self):
-    raise RuntimeError("AbstractMesh is not a context manager")
+    mesh_context.stack.append(self)
+    mesh_context.mesh = self
+    jax_config.abstract_mesh_context_manager.set_local(
+        tuple(m for m in mesh_context.stack if m is not None))
+    return self
 
   def __exit__(self, exc_type, exc_value, traceback):
-    raise RuntimeError("AbstractMesh is not a context manager")
+    mesh_context.stack.pop()
+    mesh_context.mesh = mesh_context.stack[-1]
+    jax_config.abstract_mesh_context_manager.set_local(
+        tuple(m for m in mesh_context.stack if m is not None))
+    return False
 
   @staticmethod
   def _extremely_unsafe_enter_tracing_context(mesh: AbstractMesh):
-    jax_config.mesh_context_manager.set_local(mesh)
+    jax_config.abstract_mesh_context_manager.set_local(mesh)
     return
 
 
@@ -467,3 +478,11 @@ class AbstractMesh:
 # property raises an exception unconditionally. Remove this once that is fixed.
 def _raise_value_error(name):
   raise ValueError(f"AbstractMesh does not implement {name}")
+
+
+class MeshContext(threading.local):
+  def __init__(self):
+    self.stack = [None]
+    self.mesh = self.stack[-1]
+
+mesh_context = MeshContext()
