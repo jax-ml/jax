@@ -65,6 +65,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     result in an indexing overflow for batch sizes close to int32 max. See
     {jax-issue}`#24843` for more details.
 
+* Deprecations
+  * `jax.lib.xla_extension.ArrayImpl` and `jax.lib.xla_client.ArrayImpl` are deprecated;
+    use `jax.Array` instead.
+  * `jax.lib.xla_extension.XlaRuntimeError` is deprecated; use `jax.errors.JaxRuntimeError`
+    instead.
+
 ## jax 0.4.35 (Oct 22, 2024)
 
 * Breaking Changes
