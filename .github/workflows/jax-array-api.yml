@@ -28,7 +28,7 @@ jobs:
       with:
         repository: data-apis/array-api-tests
         # TODO(jakevdp) update this to a stable release/tag when available.
-        ref: 'a3f3f376308e64f0ac15b307dfe27be945409e41'  # Latest commit as of 2024-11-14
+        ref: 'ad81cf6c3721d9dbeb168bdab49c962b6b38c0d5'  # Latest commit as of 2024-11-20
         submodules: 'true'
         path: 'array-api-tests'
     - name: Set up Python ${{ matrix.python-version }}
