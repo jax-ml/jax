@@ -13,6 +13,21 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## jax 0.4.36
 
 * Breaking Changes
+  * This release lands "stackless", an internal change to JAX's tracing
+    machinery. We made trace dispatch purely a function of context rather than a
+    function of both context and data. This let us delete a lot of machinery for
+    managing data-dependent tracing: levels, sublevels, `post_process_call`,
+    `new_base_main`, `custom_bind`, and so on. The change should only affect
+    users that use JAX internals.
+
+    If you do use JAX internals then you may need to
+    update your code (see
+    https://github.com/jax-ml/jax/commit/c36e1f7c1ad4782060cbc8e8c596d85dfb83986f
+    for clues about how to do this). There might also be version skew
+    issues with JAX libraries that do this. If you find this change breaks your
+    non-JAX-internals-using code then try the
+    `config.jax_data_dependent_tracing_fallback` flag as a workaround, and if
+    you need help updating your code then please file a bug.
   * {func}`jax.experimental.jax2tf.convert` with `native_serialization=False`
     or with `enable_xla=False` have been deprecated since July 2024, with
     JAX version 0.4.31. Now we removed support for these use cases. `jax2tf`
