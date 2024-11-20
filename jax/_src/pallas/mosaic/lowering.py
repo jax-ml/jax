@@ -42,6 +42,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import for_loop
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import func
@@ -1315,12 +1316,20 @@ def _masked_swap_lowering_rule(
     ctx: LoweringRuleContext, *args_flat, args_tree, **_
 ):
   ref, transforms, val, mask = args_tree.unflatten(args_flat)
-  ref_aval, transforms_avals, val_aval, _ = args_tree.unflatten(ctx.avals_in)
+  ref_aval, transforms_avals, val_aval, mask_aval = args_tree.unflatten(
+      ctx.avals_in
+  )
   (*prev_transforms, idx) = transforms
   (*_, idx_aval) = transforms_avals
 
   if mask is not None:
-    raise NotImplementedError
+    if  val_aval.dtype.itemsize != 4:
+      raise NotImplementedError("masked swap with non-32-bit data")
+    if val_aval.shape != mask_aval.shape:
+      raise ValueError(
+          "Expected value and mask to have the same shape, but got"
+          f" value shape {val_aval.shape} vs. mask shape {mask_aval.shape}."
+      )
 
   ref_block_shape, *_ = ctx.block_shapes
   ref, ref_block_shape = _transform_ref(
@@ -1351,6 +1360,8 @@ def _masked_swap_lowering_rule(
   need_stride = not all((s is None or s == 1) for s in strides)
 
   if is_smem_store:
+    if mask is not None:
+      raise ValueError("SMEM store does not support masks")
     if val_aval.shape:
       raise ValueError("Can only store scalars to SMEM")
     result = memref.load(ref, starts)
@@ -1399,9 +1410,15 @@ def _masked_swap_lowering_rule(
   result = _maybe_cast_load_to_bool(val_aval, result)
 
   if need_stride:
+    if mask is not None:
+      raise NotImplementedError("masked swap with strided store")
     tpu.StridedStoreOp(val, ref, starts, strides)
-  else:
+  elif jaxlib_version <= (0, 4, 35):
+    if mask is not None:
+      raise NotImplementedError("masked swap with vector store")
     vector.StoreOp(val, ref, starts)
+  else:
+    tpu.VectorStoreOp(val, ref, starts, [], mask=mask)
   return result
 
 
