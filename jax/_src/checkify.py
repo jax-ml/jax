@@ -330,11 +330,12 @@ def update_error(error, pred, code, metadata, payload, effect_type):
 
 ## Checkify transformation for plumbing functional error values.
 
-@lu.transformation_with_aux
-def _flatten_and_get_error_metadata_thunk(*invals):
-  error, out = yield invals, {}
+@lu.transformation_with_aux2
+def _flatten_and_get_error_metadata_thunk(f, store, *invals):
+  error, out = f(*invals)
   out_vals, out_tree = jtu.tree_flatten((error, out))
-  yield out_vals, (out_tree, set(error._pred.keys()))
+  store.store((out_tree, set(error._pred.keys())))
+  return out_vals
 
 def default_checkify_rule(primitive: core.Primitive, error: Error,
                           enabled_errors, *invals: core.Value,
@@ -438,10 +439,12 @@ def checkify_jaxpr_flat_hashable(jaxpr, hashable_consts, enabled_errors,
   consts = tuple(c.x for c in hashable_consts)
   return checkify_jaxpr_flat(jaxpr, consts, enabled_errors, err_tree, *args)
 
-@lu.transformation_with_aux
-def flatten_fun_output(*args):
-  ans = yield args, {}
-  yield tree_flatten(ans)
+@lu.transformation_with_aux2
+def flatten_fun_output(f, store, *args):
+  ans = f(*args)
+  ans, out_tree = tree_flatten(ans)
+  store.store(out_tree)
+  return ans
 
 
 def _reduce_any_error(error: Error):

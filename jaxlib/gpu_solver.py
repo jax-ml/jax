@@ -56,6 +56,21 @@ if _cusolver:
     xla_client.register_custom_call_target(_name, _value, platform="CUDA",
                                            api_version=api_version)
 
+for cuda_module_name in [".cuda", "jax_cuda12_plugin"]:
+  try:
+    _cuhybrid = importlib.import_module(
+        f"{cuda_module_name}._hybrid", package="jaxlib"
+    )
+  except ImportError:
+    _cuhybrid = None
+  else:
+    break
+
+if _cuhybrid:
+  for _name, _value in _cuhybrid.registrations().items():
+    xla_client.register_custom_call_target(_name, _value, platform="CUDA",
+                                           api_version=1)
+
 try:
   from .rocm import _blas as _hipblas  # pytype: disable=import-error
 except ImportError:
@@ -87,6 +102,34 @@ if _hipsolver:
     api_version = 1 if _name.endswith("_ffi") else 0
     xla_client.register_custom_call_target(_name, _value, platform="ROCM",
                                            api_version=api_version)
+
+for rocm_module_name in [".rocm", "jax_rocm60_plugin"]:
+  try:
+    _hiphybrid = importlib.import_module(
+        f"{rocm_module_name}._hybrid", package="jaxlib"
+    )
+  except ImportError:
+    _hiphybrid = None
+  else:
+    break
+
+if _hiphybrid:
+  for _name, _value in _hiphybrid.registrations().items():
+    xla_client.register_custom_call_target(_name, _value, platform="ROCM",
+                                           api_version=1)
+
+def initialize_hybrid_kernels():
+  if _cuhybrid:
+    _cuhybrid.initialize()
+  if _hiphybrid:
+    _hiphybrid.initialize()
+
+def has_magma():
+  if _cuhybrid:
+    return _cuhybrid.has_magma()
+  if _hiphybrid:
+    return _hiphybrid.has_magma()
+  return False
 
 def _real_type(dtype):
   """Returns the real equivalent of 'dtype'."""

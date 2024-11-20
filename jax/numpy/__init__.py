@@ -202,6 +202,7 @@ from jax._src.numpy.lax_numpy import (
     printoptions as printoptions,
     promote_types as promote_types,
     put as put,
+    put_along_axis as put_along_axis,
     ravel as ravel,
     ravel_multi_index as ravel_multi_index,
     repeat as repeat,
@@ -269,6 +270,15 @@ try:
   from jax._src.numpy.lax_numpy import (
     int2 as int2,
     uint2 as uint2,
+  )
+except ImportError:
+  pass
+
+# TODO: Remove the try-except once we upgrade to ml_dtypes 0.5.0
+try:
+  from jax._src.numpy.lax_numpy import (
+    float8_e3m4 as float8_e3m4,
+    float8_e4m3 as float8_e4m3,
   )
 except ImportError:
   pass

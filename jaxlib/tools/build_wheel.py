@@ -231,6 +231,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
             f"__main__/jaxlib/cuda/_rnn.{pyext}",
             f"__main__/jaxlib/cuda/_sparse.{pyext}",
             f"__main__/jaxlib/cuda/_triton.{pyext}",
+            f"__main__/jaxlib/cuda/_hybrid.{pyext}",
             f"__main__/jaxlib/cuda/_versions.{pyext}",
         ],
     )
@@ -244,6 +245,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
             f"__main__/jaxlib/rocm/_prng.{pyext}",
             f"__main__/jaxlib/rocm/_sparse.{pyext}",
             f"__main__/jaxlib/rocm/_triton.{pyext}",
+            f"__main__/jaxlib/rocm/_hybrid.{pyext}",
         ],
     )
 

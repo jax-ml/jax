@@ -25,9 +25,8 @@ from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import llvm
-from jaxlib.mlir.dialects import memref
 from jaxlib.mlir.dialects import nvvm
-from .utils import c, memref_ptr, single_thread_predicate
+from .utils import c, ptr_as_memref, single_thread_predicate
 
 # mypy: ignore-errors
 
@@ -57,7 +56,7 @@ def _lowered_barrier_type() -> ir.Type:
   return ir.IntegerType.get_signless(64)
 
 
-def _gpu_address_space_to_nvptx(address_space: gpu.AddressSpace) -> int:
+def gpu_address_space_to_nvptx(address_space: gpu.AddressSpace) -> int:
   match address_space:
     case gpu.AddressSpace.Global:
       return 1
@@ -75,25 +74,27 @@ def _initialize_barrier_op_lowering_rule(
   num_barriers = functools.reduce(operator.mul, shape, 1)
 
   i32 = ir.IntegerType.get_signless(32)
-  workgroup_nvptx_address_space = _gpu_address_space_to_nvptx(
+  workgroup_nvptx_address_space = gpu_address_space_to_nvptx(
       gpu.AddressSpace.Workgroup)
   ptr_ty = ir.Type.parse(f"!llvm.ptr<{workgroup_nvptx_address_space}>")
 
   lowered_barrier_type = _lowered_barrier_type()
-  lowered_barrier_ref = memref.alloca(
-      ir.MemRefType.get(shape, lowered_barrier_type), [], [])
-  barrier_ref_address = memref_ptr(
-      lowered_barrier_ref, memory_space=workgroup_nvptx_address_space)
 
   predicate = single_thread_predicate(per_block=True)
   for i in range(num_barriers):
     nvvm.mbarrier_init_shared(
-        llvm.getelementptr(ptr_ty, barrier_ref_address, [], [i],
+        llvm.getelementptr(ptr_ty, initialize_barrier_op.base_pointer, [], [i],
                            lowered_barrier_type),
         c(initialize_barrier_op.arrival_count.value, i32),
         predicate=predicate
     )
-  return barrier_ref_address,
+
+  barrier_base_ptr = llvm.getelementptr(
+      ir.Type.parse("!llvm.ptr"),
+      initialize_barrier_op.base_pointer, [], [0], lowered_barrier_type)
+
+  return ptr_as_memref(
+      barrier_base_ptr, initialize_barrier_op.barriers_ref.type),
 
 
 def lower_mgpu_dialect(module: ir.Module):

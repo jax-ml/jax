@@ -22,7 +22,7 @@
 # -o allexport: export all functions and variables to be available to subscripts
 set -exu -o history -o allexport
 
-# Inherit default JAXCI environment variables.
+# Source default JAXCI environment variables.
 source ci/envs/default.env
 
 # Clone XLA at HEAD if path to local XLA is not provided
@@ -33,6 +33,7 @@ fi
 # Set up the build environment.
 source "ci/utilities/setup_build_environment.sh"
 
+# Run Bazel CPU tests with RBE.
 os=$(uname -s | awk '{print tolower($0)}')
 arch=$(uname -m)
 
@@ -43,8 +44,8 @@ arch=$(uname -m)
 # single machine can take a long time, we skip running them on these
 # platforms.
 if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] ); then
-    echo "Building RBE CPU tests..."
-    bazel build --config=rbe_cross_compile_${os}_${arch} \
+      echo "Building RBE CPU tests..."
+      bazel build --config=rbe_cross_compile_${os}_${arch} \
             --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
             --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
             --test_env=JAX_NUM_GENERATED_CASES=25 \
@@ -54,8 +55,8 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
             --color=yes \
             //tests:cpu_tests //tests:backend_independent_tests
 else
-    echo "Running RBE CPU tests..."
-    bazel test --config=rbe_${os}_${arch} \
+      echo "Running RBE CPU tests..."
+      bazel test --config=rbe_${os}_${arch} \
             --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
             --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
             --test_env=JAX_NUM_GENERATED_CASES=25 \

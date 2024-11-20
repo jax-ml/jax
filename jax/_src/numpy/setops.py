@@ -35,9 +35,11 @@ from jax._src.numpy.lax_numpy import (
 from jax._src.numpy.reductions import any, cumsum
 from jax._src.numpy.ufuncs import isnan
 from jax._src.numpy.util import check_arraylike, promote_dtypes
-from jax._src.util import canonicalize_axis
+from jax._src.util import canonicalize_axis, set_module
 from jax._src.typing import Array, ArrayLike
 
+
+export = set_module('jax.numpy')
 
 _lax_const = lax_internal._const
 
@@ -88,6 +90,7 @@ def _concat_unique(arr1: Array, arr2: Array) -> tuple[Array, Array]:
   return arr, num_unique1 + num_unique2
 
 
+@export
 def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
               *, size: int | None = None, fill_value: ArrayLike | None = None) -> Array:
   """Compute the set difference of two 1D arrays.
@@ -175,6 +178,7 @@ def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
     return where(arange(size) < mask.sum(), arr1[where(mask, size=size)], fill_value)
 
 
+@export
 def union1d(ar1: ArrayLike, ar2: ArrayLike,
             *, size: int | None = None, fill_value: ArrayLike | None = None) -> Array:
   """Compute the set union of two 1D arrays.
@@ -278,6 +282,7 @@ def _setxor1d_size(arr1: Array, arr2: Array, fill_value: ArrayLike | None, *,
     return where(arange(len(vals)) < num_results, vals, fill_value)
 
 
+@export
 def setxor1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False, *,
              size: int | None = None, fill_value: ArrayLike | None = None) -> Array:
   """Compute the set-wise xor of elements in two arrays.
@@ -417,6 +422,7 @@ def _intersect1d_size(arr1: Array, arr2: Array, fill_value: ArrayLike | None, as
     return vals
 
 
+@export
 def intersect1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
                 return_indices: bool = False, *, size: int | None = None,
                 fill_value: ArrayLike | None = None) -> Array | tuple[Array, Array, Array]:
@@ -524,6 +530,7 @@ def intersect1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
     return int1d
 
 
+@export
 def isin(element: ArrayLike, test_elements: ArrayLike,
          assume_unique: bool = False, invert: bool = False, *,
          method='auto') -> Array:
@@ -652,6 +659,7 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
   return ret[0] if len(ret) == 1 else ret
 
 
+@export
 def unique(ar: ArrayLike, return_index: bool = False, return_inverse: bool = False,
            return_counts: bool = False, axis: int | None = None,
            *, equal_nan: bool = True, size: int | None = None, fill_value: ArrayLike | None = None):
@@ -863,6 +871,7 @@ class _UniqueInverseResult(NamedTuple):
     inverse_indices: Array
 
 
+@export
 def unique_all(x: ArrayLike, /, *, size: int | None = None,
                fill_value: ArrayLike | None = None) -> _UniqueAllResult:
   """Return unique values from x, along with indices, inverse indices, and counts.
@@ -945,6 +954,7 @@ def unique_all(x: ArrayLike, /, *, size: int | None = None,
   return _UniqueAllResult(values=values, indices=indices, inverse_indices=inverse_indices, counts=counts)
 
 
+@export
 def unique_counts(x: ArrayLike, /, *, size: int | None = None,
                   fill_value: ArrayLike | None = None) -> _UniqueCountsResult:
   """Return unique values from x, along with counts.
@@ -1005,6 +1015,7 @@ def unique_counts(x: ArrayLike, /, *, size: int | None = None,
   return _UniqueCountsResult(values=values, counts=counts)
 
 
+@export
 def unique_inverse(x: ArrayLike, /, *, size: int | None = None,
                    fill_value: ArrayLike | None = None) -> _UniqueInverseResult:
   """Return unique values from x, along with indices, inverse indices, and counts.
@@ -1070,6 +1081,7 @@ def unique_inverse(x: ArrayLike, /, *, size: int | None = None,
   return _UniqueInverseResult(values=values, inverse_indices=inverse_indices)
 
 
+@export
 def unique_values(x: ArrayLike, /, *, size: int | None = None,
                   fill_value: ArrayLike | None = None) -> Array:
   """Return unique values from x, along with indices, inverse indices, and counts.

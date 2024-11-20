@@ -12,7 +12,7 @@ on:
     branches:
       - main
     paths:
-      - '**/workflows/asan.yml'
+      - '**/workflows/asan.yaml'
 
 jobs:
   asan:

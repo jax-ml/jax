@@ -206,6 +206,7 @@ from jax._src.lax.lax import (
   sqrt as sqrt,
   sqrt_p as sqrt_p,
   square as square,
+  square_p as square_p,
   squeeze as squeeze,
   squeeze_p as squeeze_p,
   stop_gradient as stop_gradient,

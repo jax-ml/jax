@@ -327,11 +327,13 @@ def unregister_vmappable(data_type: type) -> None:
 def is_vmappable(x: Any) -> bool:
   return type(x) is Jumble or type(x) in vmappables
 
-@lu.transformation_with_aux
-def flatten_fun_for_vmap(in_tree, *args_flat):
+@lu.transformation_with_aux2
+def flatten_fun_for_vmap(f, store, in_tree, *args_flat):
   py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
-  ans = yield py_args, py_kwargs
-  yield tree_flatten(ans, is_leaf=is_vmappable)
+  ans = f(*py_args, **py_kwargs)
+  ans, out_tree = tree_flatten(ans, is_leaf=is_vmappable)
+  store.store(out_tree)
+  return ans
 
 # Propagate ragged masking rules from invars to outvars
 # rule([params], [raggedness_per_invar], outvars) ->
@@ -580,16 +582,16 @@ def batch(fun: lu.WrappedFun, axis_data,
   f = _batch_inner(fun, axis_data, out_dim_dests)
   return _batch_outer(f, axis_data, in_dims)
 
-@lu.transformation
-def _batch_outer(axis_data, in_dims, *in_vals):
+@lu.transformation2
+def _batch_outer(f, axis_data, in_dims, *in_vals):
   tag = TraceTag()
   with source_info_util.transform_name_stack('vmap'):
-    outs, trace = yield (tag, in_dims, *in_vals), {}
+    outs, trace = f(tag, in_dims, *in_vals)
   with core.ensure_no_leaks(trace): del trace
-  yield outs
+  return outs
 
-@lu.transformation
-def _batch_inner(axis_data, out_dim_dests, tag, in_dims, *in_vals):
+@lu.transformation2
+def _batch_inner(f, axis_data, out_dim_dests, tag, in_dims, *in_vals):
   in_dims = in_dims() if callable(in_dims) else in_dims
   with core.take_current_trace() as parent_trace:
     trace = BatchTrace(parent_trace, tag, axis_data)
@@ -599,13 +601,13 @@ def _batch_inner(axis_data, out_dim_dests, tag, in_dims, *in_vals):
     with (core.set_current_trace(trace),
           core.extend_axis_env_nd([(axis_data.name, axis_data.size)]),
           core.add_spmd_axis_names(axis_data.spmd_name)):
-      outs = yield in_tracers, {}
+      outs = f(*in_tracers)
 
   out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
   out_vals = map(partial(from_elt, trace, axis_data.size), range(len(outs)),
                  outs, out_dim_dests)
 
-  yield out_vals, trace
+  return out_vals, trace
 
 # NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.
 def vtile(f_flat: lu.WrappedFun,
@@ -628,21 +630,21 @@ def vtile(f_flat: lu.WrappedFun,
     shape[axis:axis+2] = [shape[axis] * shape[axis+1]]
     return out.reshape(shape)
 
-  @lu.transformation
-  def _map_to_tile(*args_flat):
+  @lu.transformation2
+  def _map_to_tile(f, *args_flat):
     sizes = (x.shape[i] for x, i in safe_zip(args_flat, in_axes_flat) if i is not None)
     tile_size_ = tile_size or next(sizes, None)
     assert tile_size_ is not None, "No mapped arguments?"
-    outputs_flat = yield map(tile_axis(tile_size=tile_size_), args_flat, in_axes_flat), {}
-    yield map(untile_axis, outputs_flat, out_axes_flat)
+    outputs_flat = f(*map(tile_axis(tile_size=tile_size_), args_flat, in_axes_flat))
+    return map(untile_axis, outputs_flat, out_axes_flat)
 
   axis_data = AxisData(axis_name, tile_size, None)
   return _map_to_tile(batch(f_flat, axis_data, in_axes_flat, out_axes_flat))
 
 ### API for batching functions with jaxpr type inputs and outputs
 
-@lu.transformation_with_aux
-def batch_subtrace(tag, axis_data, in_dims, *in_vals):
+@lu.transformation_with_aux2
+def batch_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
   with core.take_current_trace() as parent_trace:
     trace = BatchTrace(parent_trace, tag, axis_data)
     with core.set_current_trace(trace):
@@ -650,10 +652,11 @@ def batch_subtrace(tag, axis_data, in_dims, *in_vals):
       in_vals, in_dims = resolve_ragged_axes(in_vals, in_dims)
       in_tracers = [BatchTracer(trace, x, dim, source_info_util.current())
                     if dim is not None else x for x, dim in zip(in_vals, in_dims)]
-      outs = yield in_tracers, {}
+      outs = f(*in_tracers)
     out_vals, out_dims = unzip2(map(trace.to_batch_info, outs))
     segment_lens, out_dims = indirectify_ragged_axes(out_dims)
-    yield (*segment_lens, *out_vals), out_dims
+  store.store(out_dims)
+  return (*segment_lens, *out_vals)
 
 def indirectify_ragged_axes(dims):
   if not any(type(d) is RaggedAxis for d in dims):
@@ -789,8 +792,8 @@ def _batch_jaxpr_axes(closed_jaxpr, axis_data, in_axes, out_axes_dest):
   jaxpr_out, _, consts, () = pe.trace_to_jaxpr_dynamic(f, avals_in)
   return core.ClosedJaxpr(jaxpr_out, consts), out_batched()
 
-@lu.transformation_with_aux
-def _batch_jaxpr_inner(axis_data, tag, in_axes, *in_vals):
+@lu.transformation_with_aux2
+def _batch_jaxpr_inner(f, store, axis_data, tag, in_axes, *in_vals):
   with core.take_current_trace() as parent_trace:
     trace = BatchTrace(parent_trace, tag, axis_data)
     _, in_axes = resolve_ragged_axes(in_vals, in_axes)
@@ -799,16 +802,17 @@ def _batch_jaxpr_inner(axis_data, tag, in_axes, *in_vals):
     with (core.set_current_trace(trace),
           core.extend_axis_env_nd([(axis_data.name, axis_data.size)]),
           core.add_spmd_axis_names(axis_data.spmd_name)):
-      outs = yield in_tracers, {}
+      outs = f(*in_tracers)
     out_vals, out_axes = unzip2(map(trace.to_batch_info, outs))
     new_out_axes = indirectify_ragged_axes_against_inputs_outputs(
         out_axes, in_vals, out_vals)
-    yield out_vals, new_out_axes
+  store.store(new_out_axes)
+  return out_vals
 
-@lu.transformation_with_aux
-def _match_axes_jaxpr(axis_data, out_axes_dest, out_axes, trace, in_axes,
+@lu.transformation_with_aux2
+def _match_axes_jaxpr(f, store, axis_data, out_axes_dest, out_axes, trace, in_axes,
                       *in_vals):
-  out_vals = yield (trace, in_axes, *in_vals), {}
+  out_vals = f(trace, in_axes, *in_vals)
   out_axes = out_axes()
   out_axes_dest = [(None if src is not_mapped else 0)
                    if dst is zero_if_mapped else dst
@@ -819,16 +823,16 @@ def _match_axes_jaxpr(axis_data, out_axes_dest, out_axes, trace, in_axes,
   out_vals = map(partial(matchaxis, axis_data.name, axis_data.size),
                  out_axes, out_axes_dest, out_vals)
   out_batched = [dst is not None for dst in out_axes_dest]
-  yield out_vals, out_batched
+  store.store(out_batched)
+  return out_vals
 
-@lu.transformation
-def _batch_jaxpr_outer(axis_data, in_dims, *in_vals):
+@lu.transformation2
+def _batch_jaxpr_outer(f, axis_data, in_dims, *in_vals):
   in_dims = in_dims() if callable(in_dims) else in_dims
   in_dims = [canonicalize_axis(ax, np.ndim(x)) if isinstance(ax, int)
              else ax for x, ax in unsafe_zip(in_vals, in_dims)]
   tag = TraceTag()
-  out_vals = yield (tag, in_dims, *in_vals), {}
-  yield out_vals
+  return f(tag, in_dims, *in_vals)
 
 def _merge_bdims(x, y):
   if x == y:
@@ -845,8 +849,8 @@ zero_if_mapped = ZeroIfMapped()
 
 ### functions for handling custom_vjp
 
-@lu.transformation_with_aux
-def batch_custom_jvp_subtrace(tag, axis_data, in_dims, *in_vals):
+@lu.transformation_with_aux2
+def batch_custom_jvp_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
   size = axis_data.size
   with core.take_current_trace() as parent_trace:
     trace = BatchTrace(parent_trace, tag, axis_data)
@@ -855,7 +859,7 @@ def batch_custom_jvp_subtrace(tag, axis_data, in_dims, *in_vals):
                   if type(val) is SymbolicZero else BatchTracer(trace, val, dim)
                   for val, dim in zip(in_vals, in_dims * 2)]
     with core.set_current_trace(trace):
-      outs = yield in_tracers, {}
+      outs = f(*in_tracers)
       # TODO(mattjj,frostig): instantiating any SymbolicZero output is easy, but can
       # be wasteful in the rare case it actually triggers; handle symbolically!
       outs = [instantiate(replace_rule_output_symbolic_zeros(x)) for x in outs]
@@ -868,7 +872,8 @@ def batch_custom_jvp_subtrace(tag, axis_data, in_dims, *in_vals):
                      out_primal_bds, out_dims,  out_primals)
   out_tangents = map(partial(matchaxis, trace.axis_data.name, size),
                      out_tangent_bds, out_dims, out_tangents)
-  yield out_primals + out_tangents, out_dims * 2
+  store.store(out_dims * 2)
+  return out_primals + out_tangents
 
 def batch_custom_vjp_bwd(bwd, tag, axis_data, in_dims, out_dim_dests):
   axis_size = axis_data.size
@@ -886,11 +891,11 @@ def batch_custom_vjp_bwd(bwd, tag, axis_data, in_dims, out_dim_dests):
     return bwd_.call_wrapped(*args)
   return new_bwd
 
-@lu.transformation
-def _match_axes_and_sum(axis_size, axis_name, out_dims_thunk, out_dim_dests, *in_vals):
+@lu.transformation2
+def _match_axes_and_sum(f, axis_size, axis_name, out_dims_thunk, out_dim_dests, *in_vals):
   # this is like _match_axes, but we do reduce-sums as needed
-  out_vals = yield in_vals, {}
-  yield map(partial(_matchaxis_symbolic_zeros, axis_name, axis_size, axis_name,
+  out_vals = f(*in_vals)
+  return map(partial(_matchaxis_symbolic_zeros, axis_name, axis_size, axis_name,
                     sum_match=True), out_dims_thunk(), out_dim_dests, out_vals)
 
 def _matchaxis_symbolic_zeros(axis_name, sz, name, src, dst, x, sum_match=False):

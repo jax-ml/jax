@@ -13,6 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
+# Set up the build environment for JAX CI jobs. This script depends on the
+# "JAXCI_" environment variables set or sourced in the build script.
+
 # Pre-emptively mark the JAX git directory as safe. This is necessary for JAX CI
 # jobs running on Linux runners in GitHub Actions. Without this, git complains
 # that the directory has dubious ownership and refuses to run any commands.
@@ -37,7 +40,7 @@ if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
   if [[ ! -d $(pwd)/xla ]]; then
     clone_main_xla
   else
-    echo "JAXCI_CLONE_MAIN_XLA set but local XLA folder already exists: $(pwd)/xla"
+    echo "JAXCI_CLONE_MAIN_XLA set but local XLA folder already exists: $(pwd)/xla so using that instead."
     # Set JAXCI_XLA_GIT_DIR if local XLA already exists
     export JAXCI_XLA_GIT_DIR=$(pwd)/xla
   fi

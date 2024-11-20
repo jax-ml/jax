@@ -1146,6 +1146,19 @@ class LaxTest(jtu.JaxTestCase):
     lhs, rhs = rng(lhs_shape, np.float16), rng(rhs_shape, np.float16)
     self.assertEqual(fun(lhs, rhs).dtype, np.float16)
 
+  def testDotAlgorithmAllowedOutputStorage(self):
+    # see https://github.com/jax-ml/jax/issues/24794
+    if not jtu.test_device_matches(["gpu"]):
+      self.skipTest("Only supported on GPU.")
+    def fun(lhs, rhs):
+      return lax.dot(lhs, rhs, precision="F16_F16_F32",
+                     preferred_element_type=np.float16)
+    lhs_shape = (3, 4)
+    rhs_shape = (4, 3)
+    rng = jtu.rand_default(self.rng())
+    lhs, rhs = rng(lhs_shape, np.float16), rng(rhs_shape, np.float16)
+    self.assertNotIn("convert", jax.jit(fun).lower(lhs, rhs).as_text())
+
   def testDotAlgorithmConfig(self):
     lhs_shape = (3, 4)
     rhs_shape = (4, 3)
@@ -4349,12 +4362,6 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     elif name == 'sign':
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4')
 
-    elif name == 'square':
-      if is_cuda:
-        regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'ninf.real', 'pinf.real', 'ninfj.real', 'pinfj.real')
-      if is_cpu:
-        regions_with_inaccuracies_keep('ninf.real', 'pinf.real', 'q1.real', 'q2.real', 'q3.real', 'q4.real')
-
     elif name == 'log':
       regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'ninf.imag', 'pinf.imag', 'ninfj.imag', 'pinfj.imag')
 
@@ -4391,14 +4398,34 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     elif name == 'tanh':
       regions_with_inaccuracies_keep('ninf', 'pinf', 'ninfj', 'pinfj')
 
+    elif name == 'arcsin':
+      if is_arm_cpu and platform.system() == 'Darwin':
+        regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'neg.real', 'pos.real')
+      else:
+        regions_with_inaccuracies.clear()
+
+    elif name == 'arcsinh':
+      if is_arm_cpu and platform.system() == 'Darwin':
+        regions_with_inaccuracies_keep('q1.imag', 'q2.imag', 'q3.imag', 'q4.imag',
+                                       'negj.imag', 'posj.imag')
+      else:
+        regions_with_inaccuracies.clear()
+
     elif name == 'arccos':
       regions_with_inaccuracies_keep('q4.imag', 'ninf', 'pinf', 'ninfj', 'pinfj.real')
 
     elif name in {'cos', 'sin'}:
       regions_with_inaccuracies_keep('ninf.imag', 'pinf.imag')
 
-    elif name in {'positive', 'negative', 'conjugate', 'sin', 'cos', 'sqrt', 'expm1', 'log1p', 'tan',
-                  'arcsinh', 'arcsin', 'arccosh', 'arctan', 'arctanh'}:
+    elif name == 'log1p':
+      if is_arm_cpu and platform.system() == 'Darwin':
+        regions_with_inaccuracies_keep('q1.imag', 'q2.imag', 'q3.imag', 'q4.imag', 'negj.imag',
+                                       'posj.imag')
+      else:
+        regions_with_inaccuracies.clear()
+
+    elif name in {'positive', 'negative', 'conjugate', 'sin', 'cos', 'sqrt', 'expm1', 'tan',
+                  'arcsinh', 'arccosh', 'arctan', 'arctanh', 'square'}:
       regions_with_inaccuracies.clear()
     else:
       assert 0  # unreachable

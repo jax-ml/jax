@@ -731,7 +731,9 @@ def eig(a: ArrayLike) -> tuple[Array, Array]:
     - This differs from :func:`numpy.linalg.eig` in that the return type of
       :func:`jax.numpy.linalg.eig` is always complex64 for 32-bit input, and complex128
       for 64-bit input.
-    - At present, non-symmetric eigendecomposition is only implemented on the CPU backend.
+    - At present, non-symmetric eigendecomposition is only implemented on the CPU and
+      GPU backends. For more details about the GPU implementation, see the
+      documentation for :func:`jax.lax.linalg.eig`.
 
   See also:
     - :func:`jax.numpy.linalg.eigh`: eigenvectors and eigenvalues of a Hermitian matrix.

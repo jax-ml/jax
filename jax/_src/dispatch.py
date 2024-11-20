@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import atexit
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 import contextlib
 import dataclasses
 import enum
@@ -276,17 +276,6 @@ def _is_bint_axis_size(d: core.AxisSize) -> bool:
     return (isinstance(d.aval, core.DShapedArray) and
             type(d.aval.dtype) is core.bint)
   return False
-
-
-# We can optionally set a Jaxpr rewriter that can be applied just before
-# compilation. This mechanism is used for compiling id_tap, we can
-# remove it once we bring the id_tap implementation into the core.
-outfeed_rewriter: Callable[[core.Jaxpr], core.Jaxpr] | None = None
-def apply_outfeed_rewriter(jaxpr: core.Jaxpr) -> core.Jaxpr:
-  if outfeed_rewriter is not None:
-    return outfeed_rewriter(jaxpr)
-  else:
-    return jaxpr
 
 
 def check_arg(arg: Any):

@@ -2445,12 +2445,8 @@ def _device_get(x):
 
   # Extended dtypes dispatch via their device_get rule.
   if isinstance(x, basearray.Array) and dtypes.issubdtype(x.dtype, dtypes.extended):
-    try:
-      to_device = x.dtype._rules.device_get
-    except AttributeError:
-      pass
-    else:
-      return to_device(x)
+    bufs, tree = tree_util.dispatch_registry.flatten(x)
+    return tree.unflatten(device_get(bufs))
 
   # Other types dispatch via their __array__ method.
   try:

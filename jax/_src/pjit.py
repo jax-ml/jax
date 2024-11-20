@@ -23,7 +23,6 @@ import logging
 import operator as op
 import weakref
 from typing import NamedTuple, Any, Union, cast
-import threading
 import warnings
 
 import numpy as np
@@ -185,7 +184,16 @@ def _python_pjit_helper(fun, jit_info, *args, **kwargs):
     args_flat = [*init_states, *args_flat]
 
   try:
-    out_flat = pjit_p.bind(*args_flat, **p.params)
+    if (core.trace_state_clean() and
+        not config.debug_key_reuse.value and
+        not config.data_dependent_tracing_fallback.value):
+      args_flat = map(core.full_lower, args_flat)
+      core.check_eval_args(args_flat)
+      out_flat, compiled, profiler = _pjit_call_impl_python(*args_flat, **p.params)
+    else:
+      out_flat = pjit_p.bind(*args_flat, **p.params)
+      compiled = None
+      profiler = None
   except pxla.DeviceAssignmentMismatchError as e:
     fails, = e.args
     api_name = 'jit' if p.params['resource_env'] is None else 'pjit'
@@ -215,7 +223,8 @@ def _python_pjit_helper(fun, jit_info, *args, **kwargs):
     _set_states(p.attrs_tracked, final_states)
 
   outs = tree_unflatten(p.out_tree, out_flat)
-  return outs, out_flat, p.out_tree, args_flat, p.params['jaxpr'], p.attrs_tracked
+  return (outs, out_flat, p.out_tree, args_flat, p.params['jaxpr'],
+          p.attrs_tracked, compiled, profiler)
 
 
 def _set_states(attrs_tracked, vals):
@@ -286,21 +295,6 @@ def _get_fastpath_data(
   return fastpath_data
 
 
-class _MostRecentPjitCallExecutable(threading.local):
-  def __init__(self):
-    self.weak_key_dict = weakref.WeakKeyDictionary()
-    self.weak_pgle_profiler_dict = weakref.WeakKeyDictionary()
-
-_most_recent_pjit_call_executable = _MostRecentPjitCallExecutable()
-
-
-def _read_most_recent_pjit_call_executable(jaxpr):
-  return _most_recent_pjit_call_executable.weak_key_dict.get(jaxpr, None)
-
-
-def _read_pgle_profiler(jaxpr):
-  return _most_recent_pjit_call_executable.weak_pgle_profiler_dict.get(jaxpr, None)
-
 def _cpp_pjit_evict_fn(self):
   self._clear_cache()
   _create_pjit_jaxpr.evict_function(self._fun)  # pytype: disable=attribute-error
@@ -335,10 +329,9 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
     if config.no_tracing.value:
       raise RuntimeError(f"re-tracing function {jit_info.fun_sourceinfo} for "
                          "`jit`, but 'no_tracing' is set")
-    outs, out_flat, out_tree, args_flat, jaxpr, attrs_tracked = _python_pjit_helper(
+    outs, out_flat, out_tree, args_flat, jaxpr, \
+      attrs_tracked, executable, pgle_profiler = _python_pjit_helper(
         fun, jit_info, *args, **kwargs)
-    executable = _read_most_recent_pjit_call_executable(jaxpr)
-    pgle_profiler = _read_pgle_profiler(jaxpr)
     maybe_fastpath_data = _get_fastpath_data(
         executable, out_tree, args_flat, out_flat, attrs_tracked, jaxpr.effects,
         jaxpr.consts, jit_info.abstracted_axes,
@@ -1615,21 +1608,22 @@ def _resolve_and_lower(
       lowering_parameters=lowering_parameters,
       pgle_profiler=pgle_profiler)
 
+_pgle_profiler_dict = weakref.WeakKeyDictionary()  # type: ignore
+
 def _pjit_call_impl_python(
     *args, jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
     resource_env, donated_invars, name, keep_unused, inline,
     compiler_options_kvs):
-  global _most_recent_pjit_call_executable
-
   pgle_compile_options, pgle_profiler = {}, None
-  pgle_profiler_dict = _most_recent_pjit_call_executable.weak_pgle_profiler_dict
   if config.enable_pgle.value and config.pgle_profiling_runs.value > 0:
-    if jaxpr not in pgle_profiler_dict:
-      pgle_profiler_dict[jaxpr] = profiler.PGLEProfiler(
+    compilation_target_key = jaxpr
+    pgle_profiler = _pgle_profiler_dict.get(compilation_target_key)
+    if pgle_profiler is None:
+      pgle_profiler = profiler.PGLEProfiler(
           config.pgle_profiling_runs.value,
           config.pgle_aggregation_percentile.value)
+      _pgle_profiler_dict[compilation_target_key] = pgle_profiler
 
-    pgle_profiler = pgle_profiler_dict[jaxpr]
     # The method below will return FDO profile when module was profiled
     # config.jax_pgle_profiling_runs amount of times, otherwise the result will
     # be None.
@@ -1652,7 +1646,6 @@ def _pjit_call_impl_python(
       compiler_options_kvs=compiler_options_kvs,
   ).compile()
 
-  _most_recent_pjit_call_executable.weak_key_dict[jaxpr] = compiled
   # This check is expensive so only do it if enable_checks is on.
   if compiled._auto_spmd_lowering and config.enable_checks.value:
     pxla.check_array_xla_sharding_layout_match(
@@ -1674,7 +1667,7 @@ def _pjit_call_impl_python(
                           ("abstract args", map(xla.abstractify, args)),
                           ("fingerprint", fingerprint))
   try:
-    return compiled.unsafe_call(*args), compiled
+    return compiled.unsafe_call(*args), compiled, pgle_profiler
   except FloatingPointError as e:
     assert config.debug_nans.value or config.debug_infs.value  # compiled_fun can only raise in this case
 
@@ -1720,13 +1713,12 @@ def _pjit_call_impl(*args, jaxpr,
                     resource_env, donated_invars, name, keep_unused, inline,
                     compiler_options_kvs):
   def call_impl_cache_miss(*args_, **kwargs_):
-    out_flat, compiled = _pjit_call_impl_python(
+    out_flat, compiled, pgle_profiler = _pjit_call_impl_python(
         *args, jaxpr=jaxpr, in_shardings=in_shardings,
         out_shardings=out_shardings, in_layouts=in_layouts,
         out_layouts=out_layouts, resource_env=resource_env,
         donated_invars=donated_invars, name=name, keep_unused=keep_unused,
         inline=inline, compiler_options_kvs=compiler_options_kvs)
-    pgle_profiler = _read_pgle_profiler(jaxpr)
     fastpath_data = _get_fastpath_data(
         compiled, tree_structure(out_flat), args, out_flat, [], jaxpr.effects,
         jaxpr.consts, None, pgle_profiler)
@@ -2334,6 +2326,10 @@ def _dce_jaxpr_pjit(
 
 def dce_jaxpr_pjit_rule(used_outputs: list[bool], eqn: core.JaxprEqn
                         ) -> tuple[list[bool], core.JaxprEqn | None]:
+
+  if not any(used_outputs) and not pe.has_effects(eqn):
+    return [False] * len(eqn.invars), None
+
   dced_jaxpr, used_inputs = _dce_jaxpr_pjit(
       eqn.params['jaxpr'], tuple(used_outputs))
 

@@ -24,9 +24,11 @@ import jax
 from jax import lax
 import jax.extend as jex
 import jax.numpy as jnp
+import jax.sharding as shd
 
 from jax._src import abstract_arrays
 from jax._src import api
+from jax._src import config
 from jax._src import core
 from jax._src import linear_util
 from jax._src import prng
@@ -37,6 +39,7 @@ from jax._src.layout import DeviceLocalLayout
 from jax._src.lib import lapack
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lax import linalg as lax_linalg_internal
+from jax.experimental.shard_map import shard_map
 
 jax.config.parse_flags_with_absl()
 
@@ -70,34 +73,40 @@ class ExtendTest(jtu.JaxTestCase):
 
 class RandomTest(jtu.JaxTestCase):
 
-  def test_key_make_with_custom_impl(self):
-    shape = (4, 2, 7)
-
+  def make_custom_impl(self, shape, seed=False, split=False, fold_in=False,
+                       random_bits=False):
+    assert not split and not fold_in and not random_bits  # not yet implemented
     def seed_rule(_):
       return jnp.ones(shape, dtype=jnp.dtype('uint32'))
 
     def no_rule(*args, **kwargs):
       assert False, 'unreachable'
 
-    impl = jex.random.define_prng_impl(
-        key_shape=shape, seed=seed_rule, split=no_rule, fold_in=no_rule,
-        random_bits=no_rule)
+    return jex.random.define_prng_impl(
+        key_shape=shape, seed=seed_rule if seed else no_rule, split=no_rule,
+        fold_in=no_rule, random_bits=no_rule)
+
+  def test_key_make_with_custom_impl(self):
+    impl = self.make_custom_impl(shape=(4, 2, 7), seed=True)
     k = jax.random.key(42, impl=impl)
     self.assertEqual(k.shape, ())
     self.assertEqual(impl, jax.random.key_impl(k))
 
   def test_key_wrap_with_custom_impl(self):
-    def no_rule(*args, **kwargs):
-      assert False, 'unreachable'
-
     shape = (4, 2, 7)
-    impl = jex.random.define_prng_impl(
-        key_shape=shape, seed=no_rule, split=no_rule, fold_in=no_rule,
-        random_bits=no_rule)
+    impl = self.make_custom_impl(shape=shape)
     data = jnp.ones((3, *shape), dtype=jnp.dtype('uint32'))
     k = jax.random.wrap_key_data(data, impl=impl)
     self.assertEqual(k.shape, (3,))
     self.assertEqual(impl, jax.random.key_impl(k))
+
+  def test_key_impl_is_spec(self):
+    # this is counterpart to random_test.py:
+    # KeyArrayTest.test_key_impl_builtin_is_string_name
+    spec_ref = self.make_custom_impl(shape=(4, 2, 7), seed=True)
+    key = jax.random.key(42, impl=spec_ref)
+    spec = jax.random.key_impl(key)
+    self.assertEqual(repr(spec), f"PRNGSpec({spec_ref._impl.name!r})")
 
 
 class FfiTest(jtu.JaxTestCase):
@@ -325,6 +334,35 @@ class FfiTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError,
                                 "The use of ffi_call attributes requires"):
       jax.jit(fun).lower(jnp.ones(5)).as_text()
+
+  def testAllow64(self):
+    if config.enable_x64.value:
+      self.skipTest("Requires enable_x64=False")
+    def fun():
+      return jex.ffi.ffi_call("test", jax.ShapeDtypeStruct((), np.int64))()
+    self.assertIn("tensor<i64>", jax.jit(fun).lower().as_text())
+
+  def testInvalidResultType(self):
+    with self.assertRaisesRegex(
+        ValueError, "All elements of result_shape_dtypes.*position 0"):
+      jex.ffi.ffi_call("test", None)()
+    with self.assertRaisesRegex(
+        ValueError, "All elements of result_shape_dtypes.*position 1"):
+      jex.ffi.ffi_call("test", (jax.ShapeDtypeStruct((), np.float32), ()))()
+
+  @jtu.run_on_devices("gpu", "cpu")
+  def testShardMap(self):
+    mesh = jtu.create_mesh((1,), ("i",))
+    x = self.rng().randn(8, 4, 5).astype(np.float32)
+
+    @partial(shard_map, mesh=mesh, in_specs=shd.PartitionSpec('i'),
+             out_specs=shd.PartitionSpec('i'))
+    def f(x):
+      return ffi_call_geqrf(x)
+
+    f(x)  # eager mode doesn't crash
+    jax.jit(f)(x)  # neither does JIT
+    self.assertNotIn("all-gather", jax.jit(f).lower(x).compile().as_text())
 
 
 def ffi_call_geqrf(x, **kwargs):

@@ -17,6 +17,7 @@ import contextlib
 import re
 from functools import partial
 import logging
+import json
 import math
 import textwrap
 import threading
@@ -59,6 +60,7 @@ from jax._src.lib.mlir import dialects
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -1292,6 +1294,34 @@ class PJitTest(jtu.BufferDonationTestCase):
     with self.assertRaisesRegex(ValueError, "spmd_axis_name"):
       jax.vmap(f, spmd_axis_name='x')(xs)
 
+  def test_cache_bug(self):
+    devices = list(jax.devices())
+    if len(devices) < 2:
+      raise unittest.SkipTest("Test requires 2 devices")
+
+    def under_jvp(f):
+      return jax.jvp(f, (), ())
+
+    x0 = jnp.zeros(1, device=devices[0])
+    x1 = jnp.zeros(1, device=devices[1])
+
+    # comments describe how caches worked under the old `_most_recent_pjit_call_executable` system
+    under_jvp(lambda: jnp.sin(x0)) # cpp_pjit miss, pjit_call_impl miss
+    jnp.sin(x1)        # cpp_pjit miss, pjit_call_impl miss
+    ans1 = jnp.sin(x0) # cpp_pjit miss, pjit_call_impl hit. Bad cpp_pjit entry created
+    ans2 = jnp.sin(x0) # cpp_pjit hit with bad cache entry
+    assert(ans1.devices() == ans2.devices())
+
+  def test_zero_literal_equality(self):
+    # This test verifies that we don't accidentally conflate positive and
+    # negative zeros when deduplicating literals in the IR.
+    f = jax.jit(lambda x: (x / np.float32(-0.0), x / np.float32(0.0)))
+    a, b = f(np.float32(1.0))
+    self.assertEqual(a, -np.inf)
+    self.assertEqual(b, np.inf)
+    ir = f.lower(np.float32(1.0)).as_text()
+    self.assertIn("stablehlo.constant dense<0.000000e+00>", ir)
+    self.assertIn("stablehlo.constant dense<-0.000000e+00>", ir)
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class CustomPartitionerTest(jtu.JaxTestCase):
@@ -3808,6 +3838,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P()))
     self.assertEqual(out.sharding.memory_kind, 'device')
 
+  @unittest.skipIf(xla_extension_version < 297, "Requires jaxlib 0.4.36+")
+  def test_jit_static_argnames_non_interned(self):
+    def do_nothing(foobar: int):
+      return foobar
+
+    argname = "foobar"
+    # Has the side effect of ensuring argname is not interned.
+    argname = str(json.loads(json.dumps(argname)))
+    jax.jit(do_nothing, static_argnames=[argname])(foobar=2)  # doesn't crash
+
   def test_most_recent_executable_outer_inner_cache(self):
     x = np.zeros((20, 20), dtype=jnp.float64)
 
@@ -4595,6 +4635,14 @@ class ArrayPjitTest(jtu.JaxTestCase):
       jax.jit(f, out_shardings=s)(np.arange(8))
     self.assertEqual(count[0], 1)
 
+  def test_input_shardings_single_device(self):
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    ins, _ = f.lower(np.arange(8)).compile().input_shardings
+    self.assertEqual(ins[0], SingleDeviceSharding(jax.devices()[0]))
+
 
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
@@ -4942,6 +4990,21 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     lowered_text = f.lower(arr).as_text()
     self.assertIn('@Sharding', lowered_text)
 
+  def test_broadcasting_nary_error(self):
+    mesh1 = Mesh([jax.devices()[0]], 'x')
+    mesh2 = Mesh([jax.devices()[0]], 'y')
+
+    arr1 = jax.device_put(np.arange(8), NamedSharding(mesh1, P()))
+    arr2 = jax.device_put(np.arange(8), NamedSharding(mesh2, P()))
+
+    @jax.jit
+    def f(x, y):
+      return x + y
+
+    with self.assertRaisesRegex(
+        ValueError, "Mesh for all inputs should be equal"):
+      f(arr1, arr2)
+
   def test_sin_unop(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     np_inp = np.arange(16.).reshape(8, 2)
@@ -5170,6 +5233,56 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = f(arr)
     self.assertArraysEqual(out, np_inp)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
+  def test_shard_map_full_manual(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
+    arr2 = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
+
+    def g(x, y):
+      self.assertTrue(x.sharding.mesh._are_all_axes_collective)
+      self.assertTrue(y.sharding.mesh._are_all_axes_collective)
+      return x * y
+
+    @jax.jit
+    def f(x, y):
+      z = shard_map(g, mesh=mesh, in_specs=(x.sharding.spec, y.sharding.spec),
+                    out_specs=P('x', 'y'))(x, y)
+      self.assertEqual(z.sharding.spec, P('x', 'y'))
+      out = z * 2
+      self.assertEqual(out.sharding.spec, P('x', 'y'))
+      return out
+
+    out = f(arr, arr2)
+    self.assertArraysEqual(out, (np_inp * np_inp) * 2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+
+  def test_shard_map_dot(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
+    arr2 = jax.device_put(np_inp.T, NamedSharding(mesh, P('y', 'x')))
+
+    def g(x, y):
+      self.assertTrue(x.sharding.mesh._are_all_axes_collective)
+      self.assertTrue(y.sharding.mesh._are_all_axes_collective)
+      allgatherd_y = jax.lax.all_gather(y, axis_name='x', axis=1, tiled=True)
+      z = x @ allgatherd_y
+      return jax.lax.psum(z, axis_name='y')
+
+    @jax.jit
+    def f(x, y):
+      z = shard_map(g, mesh=mesh, in_specs=(x.sharding.spec, y.sharding.spec),
+                    out_specs=P('x', None))(x, y)
+      self.assertEqual(z.sharding.spec, P('x', None))
+      out = z * 2
+      self.assertEqual(out.sharding.spec, P('x', None))
+      return out
+
+    out = f(arr, arr2)
+    self.assertArraysEqual(out, (np_inp @ np_inp.T) * 2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
 
 

@@ -21,12 +21,9 @@ import sys
 from typing import Any
 import unittest
 
-import numpy as np
 from absl.testing import absltest
 from absl.testing import parameterized
-
 import jax
-import jax.numpy as jnp
 from jax import lax
 from jax import random
 from jax._src import config
@@ -34,8 +31,10 @@ from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import test_util as jtu
-from jax.interpreters import partial_eval as pe
 from jax.experimental import pallas as pl
+from jax.interpreters import partial_eval as pe
+import jax.numpy as jnp
+import numpy as np
 
 if sys.platform != "win32":
   from jax.experimental.pallas import triton as plgpu
@@ -1417,17 +1416,25 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_allclose(f(x), expected)
 
   @parameterized.product(
-      size=[16, 32, 64],
-      dtype=["float32", "float16"],
+      size=[16, 32, 64, 128, 256],
+      dtype=[jnp.float32, jnp.float16, jnp.bfloat16],
       trans_x=[False, True],
       trans_y=[False, True],
   )
   def test_dot(self, size, dtype, trans_x, trans_y):
-    if jtu.test_device_matches(["tpu"]) and jnp.dtype(dtype).itemsize == 2:
-      self.skipTest("16-bit types are not supported on TPU")
+    if jtu.test_device_matches(["tpu"]):
+      if dtype == jnp.float16:
+        self.skipTest("float16 type is not supported on TPU")
+      if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4):
+        self.skipTest("bfloat16 matmul is supported on TPUv4+")
+      if trans_x:
+        self.skipTest("Not implemented: Transposed LHS")
 
-    if jtu.test_device_matches(["tpu"]) and trans_x:
-      self.skipTest("Not implemented: Transposed LHS")
+    if jtu.test_device_matches(["gpu"]):
+      if dtype == jnp.bfloat16:
+        self.skipTest("bfloat16 type are not supported on GPU")
+      if size > 128:
+        self.skipTest("Shared memory size limit exceeded")
 
     @functools.partial(
         self.pallas_call,
@@ -1444,7 +1451,12 @@ class OpsTest(PallasBaseTest):
     y = random.normal(k2, (size, size), dtype=dtype)
     out = dot(x, y)
     expected = jnp.dot(x.T if trans_x else x, y.T if trans_y else y)
-    np.testing.assert_allclose(out, expected, atol=0.05, rtol=0.05)
+    np.testing.assert_allclose(
+        out.astype(jnp.float32),
+        expected.astype(jnp.float32),
+        atol=0.05,
+        rtol=0.05,
+    )
 
   @parameterized.product(
       size=[1, 2, 64, 129, 1021],
@@ -1926,6 +1938,98 @@ class OpsTest(PallasBaseTest):
         kernel, out_shape=jax.ShapeDtypeStruct((128, 256), dtype)
     )(x)
     np.testing.assert_array_equal(out, np.triu(x, k=k))
+
+  @parameterized.parameters(
+      (jnp.float16, jnp.float16),  # Noop
+      (jnp.int16, jnp.float16),
+      (jnp.int16, jnp.bfloat16),
+      (jnp.float32, jnp.int32),
+  )
+  def test_bitcast_convert_type(self, in_dtype, out_dtype):
+    if jtu.test_device_matches(["tpu"]):
+      self.skipTest("Not implemented on TPU")
+
+    m, n = 4, 4
+    out_shape = jax.ShapeDtypeStruct((m, n), out_dtype)
+    grid = ()
+
+    @functools.partial(self.pallas_call, out_shape=out_shape, grid=grid)
+    def convert(x_ref, y_ref):
+      y_ref[...] = jax.lax.bitcast_convert_type(x_ref[...], out_shape)
+
+    x = jnp.arange(m * n, dtype=in_dtype).reshape((m, n))
+    y = convert(x)
+    y_ref = jax.lax.bitcast_convert_type(x, out_dtype)
+    np.testing.assert_array_equal(y, y_ref)
+
+  def test_bitcast_convert_type_scalar(self):
+    if jtu.test_device_matches(["tpu"]):
+      self.skipTest("Not implemented on TPU")
+
+    x = jnp.int32(42)
+    out_dtype = jnp.float32
+    out_shape = jax.ShapeDtypeStruct(x.shape, out_dtype)
+    grid = ()
+
+    @functools.partial(self.pallas_call, out_shape=out_shape, grid=grid)
+    def convert(x_ref, y_ref):
+      y_ref[...] = jax.lax.bitcast_convert_type(x_ref[...], out_dtype)
+
+    y = convert(x)
+    y_ref = jax.lax.bitcast_convert_type(x, out_dtype)
+    np.testing.assert_array_equal(y, y_ref)
+
+  @parameterized.product(
+      array_shapes=[(4, 128), (10, 100), (8, 128), (17, 257)],
+      padding=[
+          ((5, 8), (0, 0)),
+          ((0, 0), (5, 100)),
+          ((1, 1), (1, 1)),
+          ((0, 0), (0, 0)),
+      ],
+      pad_type=["constant", "wrap"],
+      dtype=(
+          jnp.float32,
+          jnp.bfloat16,
+      ),
+  )
+  def test_arbitrary_padding_jnp_pad(
+      self, array_shapes, padding, pad_type, dtype
+  ):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("Not implemented on GPU")
+
+    x = jnp.arange(np.prod(array_shapes), dtype=dtype).reshape(array_shapes)
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.pad(x_ref[...], padding, mode=pad_type)
+
+    ref = jnp.pad(x, padding, mode=pad_type)
+
+    out_shape = jax.ShapeDtypeStruct(ref.shape, x.dtype)
+    try:
+      out = self.pallas_call(
+          kernel,
+          out_shape=out_shape,
+      )(x)
+      np.testing.assert_array_equal(out, jnp.pad(x, padding, mode=pad_type))
+    except Exception as e:
+      self.assertEqual(
+          dtype,
+          jnp.bfloat16,
+          "some bfloat16 combinations can fail with not implemented",
+      )
+      # The first two options are expected to fail due to current limitations
+      # in the Pallas TPU lowering. However, the last one is unexpected, and
+      # should be fixed, it is a pjrt bug.
+      # b/379787665
+      acceptable_errors = (
+          "Only 32-bit types supported" in str(e)
+          or "Not implemented" in str(e)
+          or "Expected mask vector type" in str(e)
+      )
+      self.assertTrue(acceptable_errors, "Failed with error: " + str(e))
+
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True

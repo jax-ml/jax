@@ -623,10 +623,6 @@ class FragmentedArray:
     )
 
   def _pointwise(self, op, *other, output_is_signed: bool | None = None):
-    is_signed = (
-        output_is_signed if output_is_signed is not None else self.is_signed
-    )
-
     other_arrs = []
     for o in other:
       if not isinstance(o, FragmentedArray):
@@ -636,7 +632,7 @@ class FragmentedArray:
           raise NotImplementedError(o)
 
         o = FragmentedArray.splat(
-            o, shape=self.shape, layout=self.layout, is_signed=is_signed
+            o, shape=self.shape, layout=self.layout, is_signed=self.is_signed
         )
 
       if isinstance(o.layout, WGSplatFragLayout):
@@ -646,7 +642,7 @@ class FragmentedArray:
             o.registers.flat[0],
             shape=self.shape,
             layout=self.layout,
-            is_signed=is_signed,
+            is_signed=self.is_signed,
         )
       else:
         if self.layout != o.layout:
@@ -659,8 +655,13 @@ class FragmentedArray:
 
     for idx, reg in np.ndenumerate(self.registers):
       new_regs[idx] = op(reg, *(o.registers[idx] for o in other_arrs))
+    reg_ty = new_regs.flat[0].type
+    if ir.VectorType.isinstance(reg_ty):
+      reg_ty = ir.VectorType(reg_ty).element_type
+    if output_is_signed is None and ir.IntegerType.isinstance(reg_ty):
+      output_is_signed = self.is_signed
     return FragmentedArray(
-        _registers=new_regs, _layout=self.layout, _is_signed=is_signed
+        _registers=new_regs, _layout=self.layout, _is_signed=output_is_signed
     )
 
   def __pos__(self):
@@ -928,7 +929,9 @@ class FragmentedArray:
         raise NotImplementedError(x.type)
     return fast_instr
 
-  def bitcast(self, elt: ir.Type):
+  def bitcast(self, elt: ir.Type, *, output_is_signed: bool | None = None):
+    if elt == self.mlir_dtype:
+      return self
     reg_type = self.registers.flat[0].type
     if ir.VectorType.isinstance(reg_type):
       reg_shape = ir.VectorType(reg_type).shape
@@ -936,7 +939,9 @@ class FragmentedArray:
     else:
       ty = elt
 
-    return self._pointwise(lambda x: arith.bitcast(ty, x))
+    return self._pointwise(
+        lambda x: arith.bitcast(ty, x), output_is_signed=output_is_signed
+    )
 
   def __getitem__(self, idx):
     if self.layout != WGMMA_LAYOUT:
@@ -1184,7 +1189,11 @@ class FragmentedArray:
         or ir.IntegerType(self.mlir_dtype).width != 1
     ):
       raise NotImplementedError
-    return self._pointwise(arith.select, on_true, on_false)
+    # We change the receiver here, because the return type is defined by
+    # `on_true` and `on_false` and not the predicate `self`.
+    return on_true._pointwise(
+        lambda t, p, f: arith.select(p, t, f), self, on_false,
+    )
 
   def foreach(self, fn: Callable[[ir.Value, tuple[ir.Value, ...]], None]):
     """Call a function for each value and index."""

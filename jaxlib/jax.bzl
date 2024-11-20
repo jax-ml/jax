@@ -66,6 +66,7 @@ _py_deps = {
     "filelock": ["@pypi_filelock//:pkg"],
     "flatbuffers": ["@pypi_flatbuffers//:pkg"],
     "hypothesis": ["@pypi_hypothesis//:pkg"],
+    "magma": [],
     "matplotlib": ["@pypi_matplotlib//:pkg"],
     "mpmath": [],
     "opt_einsum": ["@pypi_opt_einsum//:pkg"],

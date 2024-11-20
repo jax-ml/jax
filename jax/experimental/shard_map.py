@@ -46,11 +46,12 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.core import Tracer
-from jax._src.mesh import AbstractMesh, Mesh
+from jax._src.mesh import AbstractMesh, Mesh, AxisTypes
 from jax._src.api import _shared_code_pmap, _prepare_pmap
 from jax._src.lax import (lax, parallel as lax_parallel, slicing,
                           windowed_reductions, convolution, fft, linalg,
                           special, control_flow, ann)
+from jax._src.extend import ffi
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import (HashableFunction, HashablePartial, unzip2,
@@ -528,17 +529,30 @@ def _unshard_aval(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
     raise NotImplementedError(f"Unsupported aval type: {type(aval)}")
 
 def _shard_shaped_array(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
-                       ) -> core.AbstractValue:
+                        ) -> core.AbstractValue:
   assert isinstance(aval, core.ShapedArray)
-  return aval.update(tuple(sz // prod(mesh.shape[n] for n in names.get(i, ()))
-                            for i, sz in enumerate(aval.shape)))
+  new_shape = tuple(sz // prod(mesh.shape[n] for n in names.get(i, ()))
+                    for i, sz in enumerate(aval.shape))
+  if config.sharding_in_types.value:
+    new_mesh = AbstractMesh(
+        mesh.shape_tuple, {AxisTypes.Collective: mesh.axis_names})
+    new_sharding = NamedSharding(new_mesh, P(*[None] * aval.ndim))
+  else:
+    new_sharding = None
+  return aval.update(shape=new_shape, sharding=new_sharding)
 core.shard_aval_handlers[core.ShapedArray] = _shard_shaped_array
 
 def _unshard_shaped_array(mesh: Mesh, names: AxisNames,
                           aval: core.AbstractValue,) -> core.AbstractValue:
   assert isinstance(aval, core.ShapedArray)
-  return aval.update(tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
-                            for i, sz in enumerate(aval.shape)))
+  new_shape = tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
+                    for i, sz in enumerate(aval.shape))
+  if config.sharding_in_types.value:
+    spec = _names_to_pspec(names)._normalized_spec(aval.ndim)
+    new_sharding = NamedSharding(AbstractMesh(mesh.shape_tuple), spec)
+  else:
+    new_sharding = None
+  return aval.update(shape=new_shape, sharding=new_sharding)
 core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
 
 # Type-checking
@@ -1274,6 +1288,40 @@ def _scan_rewrite(mesh, in_rep, *args, jaxpr, num_consts, num_carry, **params):
       *args, jaxpr=jaxpr_, num_consts=num_consts, num_carry=num_carry, **params)
   return out_vals, out_rep
 
+@register_check(control_flow.conditionals.cond_p)
+def _cond_rule(mesh, *in_rep, branches):
+  _, *args_rep = in_rep
+  out_rep = _check_rep(mesh, branches[0].jaxpr, args_rep)
+  for branch in branches[1:]:
+    out_rep_ = _check_rep(mesh, branch.jaxpr, args_rep)
+    if not out_rep_ == out_rep:
+      raise Exception("The branches of cond produced mismatched replication "
+                      "types. Please open an issue at "
+                      "https://github.com/jax-ml/jax/issues, and as a "
+                      "temporary workaround pass the check_rep=False argument "
+                      "to shard_map")
+  return out_rep
+
+@register_rewrite(control_flow.conditionals.cond_p)
+def _cond_rewrite(mesh, in_rep, *args, branches):
+  pred_rep, *args_rep = in_rep
+  _, out_rep = _replication_rewrite_nomatch(mesh, branches[0], args_rep)
+  for branch in branches[1:]:
+    _, out_rep_ = _replication_rewrite_nomatch(mesh, branch, args_rep)
+    if out_rep:
+      out_rep = map(op.and_, out_rep, out_rep_)
+    else:
+      out_rep = out_rep_
+  out_rep = map(partial(op.and_, pred_rep), out_rep)
+  branches_ = tuple(_replication_rewrite_match(mesh, branch, args_rep, out_rep)
+                    for branch in branches)
+  out_vals = control_flow.conditionals.cond_p.bind(*args, branches=branches_)
+  return out_vals, out_rep
+
+@register_check(control_flow.conditionals.platform_index_p)
+def _platform_index_rule(mesh, *_, **__):
+  return set(mesh.axis_names)
+register_norewrite(control_flow.conditionals.platform_index_p)
 
 @register_rewrite(core.closed_call_p)
 def _closed_call_rewrite(mesh, in_rep, *args, call_jaxpr, **kwargs):
@@ -1324,20 +1372,17 @@ def _custom_vjp_call_jaxpr_rewrite(
 def _custom_vjp_call_jaxpr_check(mesh, *in_rep, fun_jaxpr, **_):
   return _check_rep(mesh, fun_jaxpr.jaxpr, in_rep)
 
-
-# TODO(mattjj): make standard_check handle multiple outputs, share code
 @register_check(control_flow.solves.linear_solve_p)
-def _linear_solve_check(mesh, *in_rep, const_lengths, jaxprs):
-  in_rep_ = [r for r in in_rep if r is not None]
-  assert in_rep
-  if not in_rep_[:-1] == in_rep_[1:]:
-    msg = ("shard_map check_rep rewrite failed. Please open an issue at "
-           "https://github.com/jax-ml/jax/issues and as a workaround pass the "
-           "check_rep=False argument to shard_map")
-    raise Exception(msg)
-  return [in_rep_[0]] * len(jaxprs.solve.out_avals)
+def _linear_solve_check(mesh, *in_rep, jaxprs, **_):
+  out_rep = _standard_check(control_flow.solves.linear_solve_p, mesh, *in_rep)
+  return [out_rep] * len(jaxprs.solve.out_avals)
 register_standard_rewrite(control_flow.solves.linear_solve_p)
 
+@register_check(ffi.ffi_call_p)
+def _ffi_call_check(mesh, *in_rep, result_avals, **_):
+  out_rep = _standard_check(ffi.ffi_call_p, mesh, *in_rep)
+  return [out_rep] * len(result_avals)
+register_standard_rewrite(ffi.ffi_call_p)
 
 del _check_rules[lax.tie_p]
 
@@ -1479,15 +1524,15 @@ def _shard_map_partial_eval(trace, shard_map_p, f, tracers, mesh, in_names,
   return pe.merge_lists(out_knowns, out_tracers, out_consts)
 pe.JaxprTrace.process_shard_map = _shard_map_partial_eval
 
-@lu.transformation
-def _promote_scalar_residuals(*args, **kwargs):
-  jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env) = yield args, kwargs
+@lu.transformation2
+def _promote_scalar_residuals(f, *args, **kwargs):
+  jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env) = f(*args, **kwargs)
   which = [f1 is None and f2 is None and not v.aval.shape
            for f1, f2, v in zip(in_fwds, out_fwds, jaxpr.constvars)]
   jaxpr = _promote_scalar_residuals_jaxpr(jaxpr, which)
   out_consts = [jax.lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
                 for x in out_consts]
-  yield jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env)
+  return jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env)
 
 def _promote_scalar_residuals_jaxpr(jaxpr, which):
   @lu.wrap_init
@@ -1502,10 +1547,11 @@ def _promote_scalar_residuals_jaxpr(jaxpr, which):
   return jaxpr
 
 
-def _unmentioned2(mesh: Mesh, names: AxisNames) -> list[AxisName]:
+def _unmentioned2(mesh: Mesh, names: AxisNames,
+                  auto: frozenset[AxisName]) -> list[AxisName]:
   # We use a filtered-down version of unmentioned to avoid defensive-psum over
   # more chips than required in the transpose-no-check-rep case.
-  name_set = {n for ns in names.values() for n in ns}
+  name_set = {n for ns in names.values() for n in ns} | auto
   return [n for n in _all_mesh_names_except_spmd(mesh) if n not in name_set]
 
 
@@ -1514,7 +1560,7 @@ def _shard_map_transpose(out_cts, *args, jaxpr, mesh, in_names, out_names,
   mb_div = lambda x, y: x / y if y != 1 else x
   out_cts = [ad.Zero(_shard_aval(mesh, ns, x.aval)) if type(x) is ad.Zero
       else x if rewrite or dtypes.dtype(x) == dtypes.float0
-      else mb_div(x, prod(map(mesh.shape.get, _unmentioned2(mesh, ns))))
+      else mb_div(x, prod(map(mesh.shape.get, _unmentioned2(mesh, ns, auto))))
       for ns, x in zip(out_names, out_cts)]
   args = [x if type(x) is not ad.UndefinedPrimal else
           ad.UndefinedPrimal(_shard_aval(mesh, ns, x.aval))
@@ -1532,7 +1578,7 @@ def _shard_map_transpose(out_cts, *args, jaxpr, mesh, in_names, out_names,
     )
     out = [ad.Zero(_unshard_aval(mesh, ns, x.aval)) if type(x) is ad.Zero
         else x if rewrite
-        else jax.lax.psum(x, tuple(_unmentioned2(mesh, ns)))
+        else jax.lax.psum(x, tuple(_unmentioned2(mesh, ns, auto)))
         for ns, x in zip(in_names, out)]
     return out
 
@@ -1660,6 +1706,8 @@ def _all_mesh_names_except_spmd(mesh: Mesh, trace=None) -> tuple[AxisName, ...]:
 # TODO(mattjj): de-duplicate with pe.dce_jaxpr_call_rule, and/or _pmap_dce_rule?
 def _shard_map_dce(used_outputs: list[bool], eqn: core.JaxprEqn
                    ) -> tuple[list[bool], core.JaxprEqn | None]:
+  if not any(used_outputs) and not pe.has_effects(eqn):
+    return [False] * len(eqn.invars), None
   mesh = eqn.params["mesh"]
   with core.extend_axis_env_nd(mesh.shape.items()):
     jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs)
@@ -1726,13 +1774,13 @@ def _cached_shard_map(flat_fun, mesh, in_axes_flat, out_axes_thunk, axis_name):
                      check_rep=False, auto=frozenset()),
           in_specs, out_specs)
 
-@lu.transformation
-def _handle_reshapes(in_axes, out_axes_thunk, *args, **kwargs):
+@lu.transformation2
+def _handle_reshapes(f, in_axes, out_axes_thunk, *args, **kwargs):
   args = tree_map(lambda x, ax: x if ax is None else jnp.squeeze(x, axis=ax),
                   list(args), list(in_axes))
-  out = yield args, {}
-  yield tree_map(lambda x, ax: x if ax is None else jnp.expand_dims(x, axis=ax),
-                 list(out), list(out_axes_thunk()))
+  out = f(*args)
+  return tree_map(lambda x, ax: x if ax is None else jnp.expand_dims(x, axis=ax),
+                  list(out), list(out_axes_thunk()))
 
 def _axis_to_spec(axis_name, ax):
   if isinstance(ax, int):
@@ -1853,27 +1901,28 @@ def _efficient_transpose_rewrite(fun, mesh, in_names, out_names_thunk):
   fun, out_reps_src = _efficient_transpose_rewrite_nomatch(fun, mesh, in_reps)
   return _match_rep(fun, mesh, out_reps_src, out_reps_dst)
 
-@lu.transformation_with_aux
-def _efficient_transpose_rewrite_nomatch(mesh, in_reps, *args):
+@lu.transformation_with_aux2
+def _efficient_transpose_rewrite_nomatch(f, store, mesh, in_reps, *args):
   with core.take_current_trace() as parent:
     tag = core.TraceTag()
     t = RewriteTrace(parent_trace = parent, tag = tag, mesh=mesh)
     in_tracers = map(partial(RewriteTracer, t), in_reps, args)
     with core.set_current_trace(t):
-      ans = yield in_tracers, {}
+      ans = f(*in_tracers)
     out_vals, out_reps = unzip2(map(t.to_val_rep_pair, ans))
     del t, in_tracers, ans
-  yield out_vals, out_reps
+  store.store(out_reps)
+  return out_vals
 
-@lu.transformation
-def _match_rep(mesh, out_reps_src_, out_reps_dst_, *args):
-  outs = yield args, {}
+@lu.transformation2
+def _match_rep(f, mesh, out_reps_src_, out_reps_dst_, *args):
+  outs = f(*args)
   out_reps_src = out_reps_src_() if callable(out_reps_src_) else out_reps_src_
   out_reps_dst = out_reps_dst_() if callable(out_reps_dst_) else out_reps_dst_
   _check_reps2(mesh, out_reps_dst, out_reps_src)
   outs = [pbroadcast(x, tuple(n for n in src if n not in dst)) if src - dst
           else x for x, src, dst in zip(outs, out_reps_src, out_reps_dst)]
-  yield outs
+  return outs
 
 # TODO(mattjj): caching
 def _replication_rewrite_match(
@@ -1899,16 +1948,17 @@ def _replication_rewrite_nomatch(
   jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(f, jaxpr.in_avals)
   return core.ClosedJaxpr(jaxpr_, consts), out_rep()
 
-@lu.transformation_with_aux
-def _rewrite_subtrace(tag, mesh, in_reps, *in_vals):
+@lu.transformation_with_aux2
+def _rewrite_subtrace(f, store, tag, mesh, in_reps, *in_vals):
   with core.take_current_trace() as parent_trace:
     assert len(in_reps) == len(in_vals), (len(in_reps), len(in_vals))
     t = RewriteTrace(parent_trace, tag, mesh)
     in_tracers = map(partial(RewriteTracer, t), in_reps, in_vals)
     with core.set_current_trace(t):
-      outs = yield in_tracers, {}
-    ans = unzip2(map(t.to_val_rep_pair, outs))
-    yield ans
+      outs = f(*in_tracers)
+    out_vals, out_reps = unzip2(map(t.to_val_rep_pair, outs))
+    store.store(out_reps)
+    return out_vals
 
 def _rewrite_bwd(bwd, mesh, in_reps, reps_dst):
   def new_bwd(*args):

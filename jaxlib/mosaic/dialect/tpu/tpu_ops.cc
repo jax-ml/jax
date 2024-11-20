@@ -28,9 +28,12 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "absl/log/check.h"
+#include "absl/strings/str_format.h"
+#include "mlir/include/mlir/IR/Builders.h"
 #include "mlir/include/mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/include/mlir/IR/BuiltinTypes.h"
 #include "mlir/include/mlir/IR/IRMapping.h"
+#include "mlir/include/mlir/IR/OperationSupport.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 
@@ -440,6 +443,31 @@ LogicalResult StridedStoreOp::verify() {
                                          getValueToStore().getType());
 }
 
+LogicalResult VectorStoreOp::verify() {
+  if (!getStrides().empty()) {
+    return emitError("Not implemented: general vector store with strides.");
+  }
+  VectorType value_ty = getValueToStore().getType();
+  MemRefType ref_ty = getBase().getType();
+
+  if (value_ty.getElementType() != ref_ty.getElementType()) {
+    return emitOpError(
+        "Expected base and valueToStore element type should match");
+  }
+  if (llvm::size(getIndices()) != ref_ty.getRank()) {
+    return emitOpError("Expected ") << ref_ty.getRank() << " indices";
+  }
+  if (getMask()) {
+    if (value_ty.getElementTypeBitWidth() != 32) {
+      return emitError(
+          "Not implemented: masked store with non-32-bit element type");
+    }
+    if (value_ty.getShape() != getMask().getType().getShape())
+      return emitOpError("Expected valueToStore shape to match mask shape");
+  }
+  return success();
+}
+
 LogicalResult ReinterpretCastOp::verify() {
   auto source_type = getMemRefType(getInput());
   auto target_type = getType();
@@ -468,7 +496,7 @@ LogicalResult verifyRotateOp(Op op) {
   }
   if (op.getStride().has_value() != op.getStrideDimension().has_value()) {
     op.emitOpError(
-        "Expected  either none or both stride and stride dimension are "
+        "Expected either none or both stride and stride dimension are "
         "present");
     return failure();
   }
@@ -812,10 +840,59 @@ LogicalResult GetBarrierSemaphoreOp::verify() {
   return success();
 }
 
+void SemaphoreSignalOp::build(OpBuilder &builder, OperationState &state,
+                              Value semaphore, Value amount, Value device_id,
+                              Value core_id) {
+  build(builder, state, semaphore, amount, device_id, core_id,
+        /*subcore_id=*/nullptr, /*core_type=*/nullptr);
+}
+
 LogicalResult SemaphoreSignalOp::verify() {
   auto sem_type = getMemRefType(getSemaphore());
   if (sem_type.getRank() != 0) {
     return emitOpError("Semaphore reference must be rank 0");
+  }
+
+  FailureOr<std::optional<CoreType>> issuing_core_type_maybe =
+      GetCoreTypeOfParentFunc(**this);
+  if (failed(issuing_core_type_maybe)) {
+    return issuing_core_type_maybe;
+  }
+  CoreType issuing_core_type = issuing_core_type_maybe->value_or(CoreType::kTc);
+  CoreType target_core_type = getCoreType().value_or(issuing_core_type);
+
+  if (getCoreId() == nullptr && getDeviceId() == nullptr &&
+      getSubcoreId() == nullptr) {
+    if (target_core_type != issuing_core_type) {
+      return emitOpError(absl::StrFormat(
+          "Target core type (%s) must match source core type "
+          "(%s) when device_id, core_id and subcore_id are not specified",
+          stringifyCoreType(target_core_type),
+          stringifyCoreType(issuing_core_type)));
+    }
+  }
+  if (target_core_type == CoreType::kScVectorSubcore &&
+      issuing_core_type != CoreType::kScVectorSubcore &&
+      getSubcoreId() == nullptr) {
+    return emitOpError(
+        "Subcore ID must be specified for the SC vector subcore");
+  }
+  if (target_core_type != CoreType::kScVectorSubcore &&
+      getSubcoreId() != nullptr) {
+    return emitOpError(
+        "Subcore ID must be specified only for the SC vector subcore");
+  }
+  if ((issuing_core_type == CoreType::kTc &&
+       (target_core_type == CoreType::kScScalarSubcore ||
+        target_core_type == CoreType::kScVectorSubcore)) ||
+      ((issuing_core_type == CoreType::kScScalarSubcore ||
+        issuing_core_type == CoreType::kScVectorSubcore) &&
+       target_core_type == CoreType::kTc)) {
+    return emitOpError("Signalling between TC and SC is not implemented");
+  }
+  if (target_core_type == CoreType::kScVectorSubcore &&
+      (getCoreId() != nullptr || getDeviceId() != nullptr)) {
+    return emitOpError("Signalling remote SC vector subcores is not supported");
   }
   return success();
 }
@@ -974,6 +1051,30 @@ LogicalResult ConcatenateOp::verify() {
     }
   }
   return success();
+}
+
+LogicalResult LogOp::verify() {
+  FailureOr<std::optional<CoreType>> logging_core_type_maybe =
+      GetCoreTypeOfParentFunc(**this);
+  if (failed(logging_core_type_maybe)) {
+    return failure();
+  }
+  CoreType logging_core_type = logging_core_type_maybe->value_or(CoreType::kTc);
+  if ((logging_core_type == CoreType::kScScalarSubcore ||
+       logging_core_type == CoreType::kScVectorSubcore) &&
+      getFormattedAttr() != nullptr && getFormattedAttr().getValue()) {
+    return emitOpError("Formatted logging is not supported on SC");
+  }
+  switch (logging_core_type) {
+    case CoreType::kTc:
+    case CoreType::kScScalarSubcore:
+      return success();
+    case CoreType::kScVectorSubcore:
+      return emitOpError("Log op is not supported on the SC vector subcore");
+  }
+  return emitOpError(
+      absl::StrFormat("Unexpected core type: %s",
+                      stringifyCoreType(logging_core_type_maybe->value())));
 }
 
 }  // namespace tpu

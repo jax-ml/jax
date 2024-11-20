@@ -18,7 +18,6 @@ from jax._src.lib import xla_client as _xc
 get_topology_for_devices = _xc.get_topology_for_devices
 heap_profile = _xc.heap_profile
 mlir_api_version = _xc.mlir_api_version
-ArrayImpl = _xc.ArrayImpl
 Client = _xc.Client
 CompileOptions = _xc.CompileOptions
 DeviceAssignment = _xc.DeviceAssignment
@@ -95,6 +94,11 @@ _deprecations = {
         "XlaComputation is deprecated; use StableHLO instead.",
         _xc.XlaComputation,
     ),
+    # Added Nov 20 2024
+    "ArrayImpl": (
+        "jax.lib.xla_client.ArrayImpl is deprecated; use jax.Array instead.",
+        _xc.ArrayImpl,
+    ),
 }
 
 import typing as _typing
@@ -106,6 +110,7 @@ if _typing.TYPE_CHECKING:
   ops = _xc.ops
   register_custom_call_target = _xc.register_custom_call_target
   shape_from_pyval = _xc.shape_from_pyval
+  ArrayImpl = _xc.ArrayImpl
   Device = _xc.Device
   FftType = _FftType
   PaddingType = _xc.PaddingType

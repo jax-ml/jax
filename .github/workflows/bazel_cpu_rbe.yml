@@ -1,4 +1,4 @@
-name: Run Bazel CPU tests (RBE)
+name: CI - Bazel CPU tests (RBE)
 
 on:
   # pull_request:
@@ -15,32 +15,31 @@ on:
         - 'yes'
         - 'no'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  run_bazel_rbe_cpu_tests:
-    continue-on-error: true
-    defaults:
-      run:
-        # Explicitly set the shell to bash to override the default Windows environment, i.e, cmd.
-        shell: bash
+  run_tests:
+    if: github.event.repository.fork == false
     strategy:
       matrix:
         runner: ["windows-x86-n2-64", "linux-x86-n2-16", "linux-arm64-t2a-16"]
 
     runs-on: ${{ matrix.runner }}
-    container: ${{ (contains(matrix.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/build:670606426-python3.12') ||
-                   (contains(matrix.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/linux-arm64-arc-container:latest') ||
+    container: ${{ (contains(matrix.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest') ||
+                   (contains(matrix.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') ||
                    (contains(matrix.runner, 'windows-x86') && null) }}
 
+
     env:
-      JAXCI_CLONE_MAIN_XLA: 1
       JAXCI_HERMETIC_PYTHON_VERSION: "3.12"
 
     steps:
       - uses: actions/checkout@v3
-      # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@main
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      - name: Run Bazel CPU Tests
+      - name: Run Bazel CPU Tests with RBE
         run: ./ci/run_bazel_test_cpu_rbe.sh

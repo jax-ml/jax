@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_
 #define THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_
 
+include "mlir/Dialect/LLVMIR/LLVMOpBase.td"
 include "mlir/Dialect/LLVMIR/BasicPtxBuilderInterface.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/IR/AttrTypeBase.td"
@@ -48,19 +49,26 @@ def MosaicGPU_Barrier : MosaicGPU_Type<"Barrier", "barrier", [MemRefElementTypeI
   let description = "A barrier to use for synchronizing threads";
 }
 
+def LLVM_PointerShared : LLVM_PointerInAddressSpace<3>;
+
 def MosaicGPU_InitializeBarrierOp : Op<MosaicGPU_Dialect, "initialize_barrier",
                                       []> {
   let summary = "Initializes a memref of barriers";
   let description = [{
     Initializes a memref of barriers each meant to synchronize exactly
     `arrival_count` threads.
+
+    The base pointer of the result memref corresponds to `base_pointer`, which
+    must be a pointer to a shared memory location.
   }];
 
-  let arguments = (ins ConfinedAttr<I64Attr, [IntPositive]>:$arrival_count);
+  let arguments = (ins
+    LLVM_PointerShared:$base_pointer,
+    ConfinedAttr<I64Attr, [IntPositive]>:$arrival_count);
   let results = (outs MemRefOf<[MosaicGPU_Barrier]>:$barriers_ref);
 
   let assemblyFormat = [{
-    $arrival_count attr-dict `:` type($barriers_ref)
+    $base_pointer $arrival_count attr-dict `:` type($barriers_ref)
   }];
 }
 

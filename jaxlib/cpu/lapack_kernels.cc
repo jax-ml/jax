@@ -1094,34 +1094,6 @@ template struct EigenvalueDecompositionSymmetric<ffi::DataType::F64>;
 template struct EigenvalueDecompositionHermitian<ffi::DataType::C64>;
 template struct EigenvalueDecompositionHermitian<ffi::DataType::C128>;
 
-// LAPACK uses a packed representation to represent a mixture of real
-// eigenvectors and complex conjugate pairs. This helper unpacks the
-// representation into regular complex matrices.
-template <typename T>
-static void UnpackEigenvectors(lapack_int n, const T* eigenvals_imag,
-                               const T* packed, std::complex<T>* unpacked) {
-  for (int j = 0; j < n;) {
-    if (eigenvals_imag[j] == 0. || std::isnan(eigenvals_imag[j])) {
-      // Real values in each row without imaginary part
-      // Second row of the imaginary part is not provided
-      for (int i = 0; i < n; ++i) {
-        unpacked[j * n + i] = {packed[j * n + i], 0.};
-      }
-      ++j;
-    } else {
-      // Complex values where the real part is in the jth row
-      // and the imaginary part is in the next row (j + 1)
-      for (int i = 0; i < n; ++i) {
-        const T real_part = packed[j * n + i];
-        const T imag_part = packed[(j + 1) * n + i];
-        unpacked[j * n + i] = {real_part, imag_part};
-        unpacked[(j + 1) * n + i] = {real_part, -imag_part};
-      }
-      j += 2;
-    }
-  }
-}
-
 // lapack geev
 
 template <typename T>

@@ -879,11 +879,11 @@ class DotAlgorithmPreset(enum.Enum):
   def lhs_precision_type(self) -> DTypeLike | tuple[DTypeLike, ...] | None:
     match self:
       case (
-          DotAlgorithmPreset.DEFAULT |
-          DotAlgorithmPreset.ANY_F8_ANY_F8_F32 |
-          DotAlgorithmPreset.ANY_F8_ANY_F8_F32_FAST_ACCUM |
-          DotAlgorithmPreset.ANY_F8_ANY_F8_ANY |
-          DotAlgorithmPreset.ANY_F8_ANY_F8_ANY_FAST_ACCUM
+          DotAlgorithmPreset.DEFAULT
+          | DotAlgorithmPreset.ANY_F8_ANY_F8_F32
+          | DotAlgorithmPreset.ANY_F8_ANY_F8_F32_FAST_ACCUM
+          | DotAlgorithmPreset.ANY_F8_ANY_F8_ANY
+          | DotAlgorithmPreset.ANY_F8_ANY_F8_ANY_FAST_ACCUM
       ):
         return None
       case DotAlgorithmPreset.F16_F16_F16 | DotAlgorithmPreset.F16_F16_F32:
@@ -909,9 +909,9 @@ class DotAlgorithmPreset(enum.Enum):
   def accumulation_type(self) -> DTypeLike | None:
     match self:
       case (
-          DotAlgorithmPreset.DEFAULT |
-          DotAlgorithmPreset.ANY_F8_ANY_F8_ANY |
-          DotAlgorithmPreset.ANY_F8_ANY_F8_ANY_FAST_ACCUM
+          DotAlgorithmPreset.DEFAULT
+          | DotAlgorithmPreset.ANY_F8_ANY_F8_ANY
+          | DotAlgorithmPreset.ANY_F8_ANY_F8_ANY_FAST_ACCUM
       ):
         return None
       case DotAlgorithmPreset.F16_F16_F16:
@@ -923,6 +923,22 @@ class DotAlgorithmPreset(enum.Enum):
       case _:
         return np.float32
 
+  @property
+  def supported_output_types(self) -> tuple[DTypeLike, ...] | None:
+    match self:
+      case (
+          DotAlgorithmPreset.ANY_F8_ANY_F8_F32 |
+          DotAlgorithmPreset.ANY_F8_ANY_F8_F32_FAST_ACCUM
+      ):
+        return (np.float32, np.float16, dtypes.bfloat16, dtypes.float8_e4m3fn,
+                dtypes.float8_e5m2, dtypes.float8_e5m2fnuz,
+                dtypes.float8_e4m3fnuz, dtypes.float8_e4m3b11fnuz)
+      case DotAlgorithmPreset.F16_F16_F32:
+        return (np.float32, np.float16)
+      case _:
+        accumulation_type = self.accumulation_type
+        return None if accumulation_type is None else (accumulation_type,)
+
   def _convert_to_hlo_attr(self, lhs_dtype: DTypeLike,
                             rhs_dtype: DTypeLike) -> hlo.DotAlgorithm | None:
     f16 = ir.F16Type.get()
@@ -932,26 +948,39 @@ class DotAlgorithmPreset(enum.Enum):
     tf32 = ir.FloatTF32Type.get()
     match self:
       case (
-          DotAlgorithmPreset.ANY_F8_ANY_F8_F32 |
-          DotAlgorithmPreset.ANY_F8_ANY_F8_F32_FAST_ACCUM |
-          DotAlgorithmPreset.ANY_F8_ANY_F8_ANY |
-          DotAlgorithmPreset.ANY_F8_ANY_F8_ANY_FAST_ACCUM
+          DotAlgorithmPreset.ANY_F8_ANY_F8_F32
+          | DotAlgorithmPreset.ANY_F8_ANY_F8_F32_FAST_ACCUM
+          | DotAlgorithmPreset.ANY_F8_ANY_F8_ANY
+          | DotAlgorithmPreset.ANY_F8_ANY_F8_ANY_FAST_ACCUM
       ):
-        fp8_dtypes = (np.dtype(dtypes.float8_e4m3b11fnuz),
-                      np.dtype(dtypes.float8_e4m3fn),
-                      np.dtype(dtypes.float8_e4m3fnuz),
-                      np.dtype(dtypes.float8_e5m2),
-                      np.dtype(dtypes.float8_e5m2fnuz))
+        fp8_dtypes = [
+            np.dtype(dtypes.float8_e4m3b11fnuz),
+            np.dtype(dtypes.float8_e4m3fn),
+            np.dtype(dtypes.float8_e4m3fnuz),
+            np.dtype(dtypes.float8_e5m2),
+            np.dtype(dtypes.float8_e5m2fnuz),
+        ]
+        if dtypes.float8_e3m4 is not None:
+          fp8_dtypes += [np.dtype(dtypes.float8_e3m4)]
+        if dtypes.float8_e4m3 is not None:
+          fp8_dtypes += [np.dtype(dtypes.float8_e4m3)]
         if lhs_dtype not in fp8_dtypes or rhs_dtype not in fp8_dtypes:
           raise ValueError(
               f"The dot algorithm '{self}' requires both inputs to have float8 "
-              f"dtypes. Got {lhs_dtype} and {rhs_dtype} instead.")
+              f'dtypes. Got {lhs_dtype} and {rhs_dtype} instead.'
+          )
         lhs = mlir.dtype_to_ir_type(dtypes.dtype(lhs_dtype))
         rhs = mlir.dtype_to_ir_type(dtypes.dtype(rhs_dtype))
         acc = ir.F32Type.get()
         return hlo.DotAlgorithm.get(
-            lhs, rhs, acc, 1, 1, 1,
-            self == DotAlgorithmPreset.ANY_F8_ANY_F8_F32_FAST_ACCUM)
+            lhs,
+            rhs,
+            acc,
+            1,
+            1,
+            1,
+            self == DotAlgorithmPreset.ANY_F8_ANY_F8_F32_FAST_ACCUM,
+        )
       case DotAlgorithmPreset.F16_F16_F16:
         return hlo.DotAlgorithm.get(f16, f16, f16, 1, 1, 1, False)
       case DotAlgorithmPreset.F16_F16_F32:
@@ -1906,7 +1935,7 @@ def batch_matmul(lhs: Array, rhs: Array,
 
 def square(x: ArrayLike) -> Array:
   r"""Elementwise square: :math:`x^2`."""
-  return integer_pow(x, 2)
+  return square_p.bind(x)
 
 def reciprocal(x: ArrayLike) -> Array:
   r"""Elementwise reciprocal: :math:`1 \over x`."""
@@ -2083,11 +2112,11 @@ def broadcasting_sharding_rule(name, *avals):
   mesh = None
   for a in avals:
     if a.sharding is not None:
-      mesh = a.sharding.mesh
       if mesh is not None and mesh != a.sharding.mesh:
         raise ValueError(
             f'Mesh for all inputs should be equal. Got one mesh: {mesh} and'
             f' another mesh: {a.sharding.mesh}')
+      mesh = a.sharding.mesh
   assert mesh is not None
 
   shapes = [aval.shape for aval in avals if aval.shape]
@@ -2195,14 +2224,8 @@ def multi_sharding_in_dim(ctx, ops, in_avals, out_aval):
     if in_aval.sharding == out_aval.sharding or in_aval.sharding is None:
       out.append(op)
     else:
-      # TODO(yashkatariya, dougalm): If `in_aval.sharding` contains
-      # CompilerShardingAxis, then specify `unspecified_dims` via
-      # `wrap_with_sharding_op`.
-      if config.use_shardy_partitioner.value:
-        sp = in_aval.sharding._to_sdy_sharding(in_aval.ndim)
-      else:
-        sp = in_aval.sharding._to_xla_hlo_sharding(in_aval.ndim).to_proto()
-      out.append(mlir.wrap_with_sharding_op(ctx, op, out_aval, sp))
+      proto = in_aval.sharding._to_xla_hlo_sharding(in_aval.ndim).to_proto()
+      out.append(mlir.lower_sharding_under_shit(ctx, op, out_aval, proto))
   return out
 
 
@@ -2218,11 +2241,7 @@ def _nary_lower_hlo(op: Callable, ctx,
 
   out = op(*args)
   if config.sharding_in_types.value:
-    if config.use_shardy_partitioner.value:
-      out_sp = aval_out.sharding._to_sdy_sharding(aval_out.ndim)
-    else:
-      out_sp = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
-    return [mlir.wrap_with_sharding_op(ctx, out, aval_out, out_sp)]
+    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
   else:
     return [out]
 
@@ -2515,6 +2534,27 @@ ad.defjvp2(cbrt_p,
            lambda g, ans, x: mul(g, mul(_const(x, 1/3), integer_pow(ans, -2))))
 mlir.register_lowering(cbrt_p, partial(_nary_lower_hlo, hlo.cbrt))
 
+square_p = standard_unop(_int | _float | _complex, 'square')
+
+def _square_complex(x):
+  a, b = real(x), imag(x)
+  # zero square(x).real is handled explicitly for abs(a)==abs(b) cases
+  # where for finite a, 2 * a is non-finite:
+  zero_re = is_finite(a) & (eq(a, b) | eq(a, -b))
+  # equivalent to a**2 - b**2 but avoids overflow errors for large a
+  # and large b cases:
+  re = (a - b) * (a + b)
+  im = a * b * 2
+  return select(zero_re, complex(_const(a, 0), im), complex(re, im))
+
+def _square_lower_hlo(ctx, x):
+  if dtypes.issubdtype(ctx.avals_in[0].dtype, np.complexfloating):
+    return mlir.lower_fun(_square_complex, multiple_results=False)(ctx, x)
+  return [hlo.multiply(x, x)]
+
+ad.defjvp2(square_p, lambda g, ans, x: mul(g, mul(_const(x, 2), x)))
+mlir.register_lowering(square_p, _square_lower_hlo)  # TODO(pearu): use chlo.square
+
 def _pow_dtype_rule(x, y):
   if (dtypes.issubdtype(x.dtype, np.inexact) and
       dtypes.issubdtype(y.dtype, np.integer)):
@@ -2554,15 +2594,12 @@ ad.defjvp2(pow_p, _pow_jvp_lhs, _pow_jvp_rhs)
 
 def _pow_lower(ctx, x, y):
   x_aval, y_aval = ctx.avals_in
-  out_aval, = ctx.avals_out
-  convert = mlir.lower_fun(
-      partial(convert_element_type, new_dtype=out_aval.dtype), False)
-  x_aval_ = x_aval.update(dtype=out_aval.dtype)
-  y_aval_ = y_aval.update(dtype=out_aval.dtype)
-  [x_] = convert(ctx.replace(avals_in=[x_aval], avals_out=[x_aval_]), x)
-  [y_] = convert(ctx.replace(avals_in=[y_aval], avals_out=[y_aval_]), y)
-  ctx_ = ctx.replace(avals_in=[x_aval_, y_aval_])
-  return _nary_lower_hlo(hlo.power, ctx_, x_, y_)
+  if x_aval.dtype != y_aval.dtype:
+    out_aval, = ctx.avals_out
+    y_aval = y_aval.update(dtype=out_aval.dtype)
+    y = hlo.convert(mlir.aval_to_ir_type(y_aval), y)
+    ctx = ctx.replace(avals_in=[x_aval, y_aval])
+  return _nary_lower_hlo(hlo.power, ctx, x, y)
 mlir.register_lowering(pow_p, _pow_lower)
 
 def _integer_pow_dtype_rule(x, *, y):
@@ -2603,24 +2640,23 @@ def _integer_pow(x, *, y):
 def _integer_pow_lowering(ctx, x, *, y):
   # These cases are subsumed by the general case, but it's faster to emit these
   # common cases directly.
-  if y == 2:
+  if y == 1:
+    out = x
+  elif y == 2:
     out = hlo.multiply(x, x)
   elif y == 3:
     out = hlo.multiply(hlo.multiply(x, x), x)
+  elif y == -1:
+    out = hlo.divide(mlir.full_like_aval(ctx, 1, ctx.avals_in[0]), x)
   else:
     lowering = mlir.lower_fun(_integer_pow, multiple_results=False)
-    # TODO(b/217551391): emitting an out-of-line call leads to a large
-    # expansion when the MLIR is lowered to HLO, because the HLO lowering
-    # clones the callee. Consider unconditionally caching when the MLIR->HLO
-    # lowering doesn't expand the program.
-    lowering = mlir.cache_lowering(lowering)
-    out = lowering(ctx, x, y=y)
+    if builtins.abs(y) >= 3:
+      lowering = mlir.cache_lowering(lowering)
+    out, = lowering(ctx, x, y=y)
   if config.sharding_in_types.value:
     aval_out, = ctx.avals_out
-    proto = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
-    out = out[0] if isinstance(out, list) else out
-    return [mlir.wrap_with_sharding_op(ctx, out, aval_out, proto)]
-  return out if isinstance(out, list) else [out]
+    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
+  return [out]
 
 mlir.register_lowering(integer_pow_p, _integer_pow_lowering)
 
@@ -3001,8 +3037,7 @@ def _convert_element_type_lower(ctx, operand, *, new_dtype, weak_type,
   if config.sharding_in_types.value:
     if sharding is not None:
       assert aval_out.sharding == sharding
-    proto = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
-    return [mlir.wrap_with_sharding_op(ctx, out, aval_out, proto)]
+    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
   return [out]
 
 mlir.register_lowering(convert_element_type_p, _convert_element_type_lower)
@@ -3619,12 +3654,51 @@ def dot_algorithm_attr(precision: CanonicalPrecision, lhs_dtype: DTypeLike,
   return precision._convert_to_hlo_attr(lhs_dtype, rhs_dtype)
 
 
+def get_algorithm_compute_types(
+    algorithm: DotAlgorithm | DotAlgorithmPreset,
+    lhs_dtype: DTypeLike,
+    rhs_dtype: DTypeLike,
+    out_dtype: DTypeLike | None = None,
+) -> tuple[DTypeLike | None, DTypeLike | None, DTypeLike | None]:
+  def maybe_convert_dtype(input_dtype, target_dtype):
+    if target_dtype is None:
+      return input_dtype
+    if not isinstance(target_dtype, tuple):
+      target_dtype = (target_dtype,)
+    return input_dtype if input_dtype in target_dtype else target_dtype[0]
+
+  if algorithm == DotAlgorithmPreset.BF16_BF16_F32:
+    lhs_dtype = maybe_convert_dtype(lhs_dtype, algorithm.lhs_precision_type)
+    rhs_dtype = maybe_convert_dtype(rhs_dtype, algorithm.rhs_precision_type)
+    if lhs_dtype == dtypes.bfloat16:
+      out_dtype = maybe_convert_dtype(out_dtype,
+                                      (np.float32, dtypes.bfloat16))
+    else:
+      out_dtype = maybe_convert_dtype(out_dtype, np.float32)
+    return lhs_dtype, rhs_dtype, out_dtype
+  else:
+    if isinstance(algorithm, DotAlgorithmPreset):
+      supported_output_types = algorithm.supported_output_types
+    else:
+      supported_output_types = (algorithm.accumulation_type,)
+
+    return (
+        maybe_convert_dtype(lhs_dtype, algorithm.lhs_precision_type),
+        maybe_convert_dtype(rhs_dtype, algorithm.rhs_precision_type),
+        maybe_convert_dtype(out_dtype, supported_output_types),
+    )
+
+
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                        precision, preferred_element_type: np.dtype | None,
                        out_type, platform: str = "default"):
   def _is_fp8_mixed_precision_matmul(_lhs_dtypes, _rhs_dtypes):
     fp8_dtypes = (dtypes.float8_e4m3fn, dtypes.float8_e5m2,
                   dtypes.float8_e5m2fnuz, dtypes.float8_e4m3fnuz)
+    if dtypes.float8_e3m4 is not None:
+      fp8_dtypes += (dtypes.float8_e3m4,)
+    if dtypes.float8_e4m3 is not None:
+      fp8_dtypes += (dtypes.float8_e4m3,)
     return _lhs_dtypes in fp8_dtypes and _rhs_dtypes in fp8_dtypes
   del preferred_element_type  # Implied by the output aval
   lhs_aval, rhs_aval = ctx.avals_in
@@ -3656,20 +3730,17 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
     # If an explicit algorithm was specified, we always cast the input types to
     # the correct types.
     def maybe_convert_dtype(operand, operand_aval, target_dtype):
-      if target_dtype is None:
-        return operand, operand_aval.dtype
-      if not isinstance(target_dtype, tuple):
-        target_dtype = (target_dtype,)
-      if any(operand_aval.dtype == d for d in target_dtype):
-        return operand, operand_aval.dtype
-      aval = core.ShapedArray(operand_aval.shape, target_dtype[0])
-      return mlir.convert_hlo(ctx, operand, operand_aval, aval), target_dtype[0]
+      if target_dtype is None or operand_aval.dtype == target_dtype:
+        return operand
+      aval = core.ShapedArray(operand_aval.shape, target_dtype)
+      return mlir.convert_hlo(ctx, operand, operand_aval, aval)
 
-    lhs, lhs_dtype = maybe_convert_dtype(lhs, lhs_aval, precision.lhs_precision_type)
-    rhs, rhs_dtype = maybe_convert_dtype(rhs, rhs_aval, precision.rhs_precision_type)
-    accumulation_type = precision.accumulation_type
-    if accumulation_type is not None:
-      accumulation_aval = core.ShapedArray(aval_out.shape, accumulation_type)
+    lhs_dtype, rhs_dtype, accumulation_dtype = get_algorithm_compute_types(
+        precision, lhs_dtype, rhs_dtype, aval_out.dtype)
+    lhs = maybe_convert_dtype(lhs, lhs_aval, lhs_dtype)
+    rhs = maybe_convert_dtype(rhs, rhs_aval, rhs_dtype)
+    if accumulation_dtype is not None:
+      accumulation_aval = core.ShapedArray(aval_out.shape, accumulation_dtype)
 
     if precision != DotAlgorithmPreset.DEFAULT:
       algorithm_kwarg = {
@@ -3690,7 +3761,6 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                                  core.ShapedArray(lhs_aval.shape, aval_out.dtype))
           rhs = mlir.convert_hlo(ctx, rhs, rhs_aval,
                                  core.ShapedArray(rhs_aval.shape, aval_out.dtype))
-          lhs_dtype = rhs_dtype = aval_out.dtype
       else:  # cpu and gpu
         # Do not convert mixed fp8 types to output type.
         if not _is_fp8_mixed_precision_matmul(lhs_dtype, rhs_dtype):
@@ -3698,7 +3768,6 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                                  core.ShapedArray(lhs_aval.shape, aval_out.dtype))
           rhs = mlir.convert_hlo(ctx, rhs, rhs_aval,
                                  core.ShapedArray(rhs_aval.shape, aval_out.dtype))
-          lhs_dtype = rhs_dtype = aval_out.dtype
 
   result = hlo.dot_general(
       mlir.aval_to_ir_type(accumulation_aval),
@@ -3711,8 +3780,7 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
   if config.sharding_in_types.value:
     if out_type is not None:
       assert aval_out.sharding == out_type
-    out_sp = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
-    result = mlir.wrap_with_sharding_op(ctx, result, aval_out, out_sp)
+    result = mlir.lower_sharding_under_shit(ctx, result, aval_out)
   if accumulation_aval.dtype != aval_out.dtype:
     result = mlir.convert_hlo(ctx, result, accumulation_aval, aval_out)
   return [result]
@@ -4177,8 +4245,7 @@ def _broadcast_in_dim_lower(ctx, x, *dyn_shape, shape, broadcast_dimensions,
   if config.sharding_in_types.value:
     if sharding is not None:
       assert sharding == aval_out.sharding
-    proto = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
-    return [mlir.wrap_with_sharding_op(ctx, out, aval_out, proto)]
+    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
   return [out]
 
 def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions,
@@ -4505,6 +4572,8 @@ def shape_as_value(shape: core.Shape):
   """Converts a shape that may contain Poly values into a JAX value."""
   if len(shape) == 0:
     return full((0,), np.array(0, np.int64))
+  if core.is_constant_shape(shape):
+    return np.asarray(shape, dtype=np.int64)
   dims = [
       expand_dims(convert_element_type(core.dimension_as_value(d), np.int64),
                   (0,))
@@ -4591,8 +4660,7 @@ def _reshape_lower(ctx, x, *dyn_shape, new_sizes, dimensions):
     aval_out = aval_out.update(shape=_merge_dyn_shape(new_sizes, dyn_shape))
   out = mlir.reshape(ctx, x, aval_out)
   if config.sharding_in_types.value:
-    proto = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
-    return [mlir.wrap_with_sharding_op(ctx, out, aval_out, proto)]
+    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
   return [out]
 
 def _reshape_staging_rule(
@@ -4672,8 +4740,7 @@ def _transpose_lower(ctx, x, *, permutation):
     permutation = [*permutation, *trailing_dims]
   out = hlo.transpose(x, mlir.dense_int_array(permutation))
   if config.sharding_in_types.value:
-    proto = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
-    return [mlir.wrap_with_sharding_op(ctx, out, aval_out, proto)]
+    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
   return [out]
 
 transpose_p = standard_primitive(
@@ -4814,8 +4881,7 @@ def _select_hlo_lowering_opaque(ctx, which, *cases):
 
 def _add_shit_to_select(ctx, op, aval_out):
   if config.sharding_in_types.value:
-    proto = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
-    return mlir.wrap_with_sharding_op(ctx, op, aval_out, proto)
+    return mlir.lower_sharding_under_shit(ctx, op, aval_out)
   return op
 
 def _select_hlo_lowering(ctx, which, *cases):
@@ -5187,8 +5253,7 @@ def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes):
   with ir.InsertionPoint(reducer_region):
     hlo.return_([reducer(*reducer_region.arguments)])
   if config.sharding_in_types.value:
-    out_sp = aval_out.sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
-    return [mlir.wrap_with_sharding_op(ctx, op.result, aval_out, out_sp)]
+    return [mlir.lower_sharding_under_shit(ctx, op.result, aval_out)]
   return op.results
 
 mlir.register_lowering(reduce_sum_p, partial(_unary_reduce_lower, hlo.AddOp,
@@ -5317,14 +5382,14 @@ def _sort_jvp(primals, tangents, *, dimension, is_stable, num_keys):
   shape = primals[0].shape
   iotas = []
   for dim, size in enumerate(shape):
-    dtype = np.int32 if size < np.iinfo(np.int32).max else np.int64
-    iotas.append(broadcasted_iota(dtype, shape, dim))
-  primals = sort_p.bind(*(primals + (iotas[dimension],)), dimension=dimension,
-                        is_stable=is_stable, num_keys=num_keys)
-  idx = tuple(primals[-1] if i == dimension else iotas[i]
+    iotas.append(broadcasted_iota(np.int64, shape, dim))
+  sorted_primals_and_idx = sort_p.bind(
+      *primals, iotas[dimension], dimension=dimension,
+      is_stable=is_stable, num_keys=num_keys)
+  idx = tuple(sorted_primals_and_idx[-1] if i == dimension else iotas[i]
               for i in range(len(shape)))
   tangents_out = tuple(t if type(t) is ad_util.Zero else t[idx] for t in tangents)
-  return tuple(primals[:-1]), tangents_out
+  return tuple(sorted_primals_and_idx[:-1]), tangents_out
 
 def _sort_batch_rule(batched_args, batch_dims, *, dimension, is_stable, num_keys):
   prototype_arg, new_bdim = next(
@@ -5887,8 +5952,7 @@ def _iota_lower(ctx, *dyn_shape, dtype, shape, dimension, sharding):
   out = mlir.iota(ctx, aval_out, dimension=dimension)
   if config.sharding_in_types.value:
     assert aval_out.sharding == sharding
-    proto = sharding._to_xla_hlo_sharding(aval_out.ndim).to_proto()
-    return [mlir.wrap_with_sharding_op(ctx, out, aval_out, proto)]
+    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
   return [out]
 mlir.register_lowering(iota_p, _iota_lower)
 

@@ -360,7 +360,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     staged_out_axes, _ = partition_list(out_knowns, out_axes)
     staged_in_axes = (0,) * len(res) + (None,) * len(env) + (*unk_in_axes,)
 
-    # Create the input tracers for the staged-out (unkonwn-value) call.
+    # Create the input tracers for the staged-out (unknown-value) call.
     const_tracers = map(self.new_instantiated_const, res)
     env_tracers = map(self.to_jaxpr_tracer, env)
     unknown_arg_tracers = [t for t in tracers if not t.is_known()]
@@ -475,18 +475,19 @@ def partition_pvals(
   consts = [pval.get_known() for pval in pvals if     pval.is_known()]
   return knowns, avals, consts
 
-@lu.transformation_with_aux
+@lu.transformation_with_aux2
 def partial_eval_wrapper_nounits(
-    in_knowns: Sequence[bool], in_avals: Sequence[AbstractValue],
+    f, store, in_knowns: Sequence[bool], in_avals: Sequence[AbstractValue],
     *in_consts: Any):
   in_avals_, in_consts_ = iter(in_avals), iter(in_consts)
   in_pvals = [PartialVal.known(next(in_consts_)) if known else
               PartialVal.unknown(next(in_avals_)) for known in in_knowns]
   sentinel = object()
   assert next(in_avals_, sentinel) is next(in_consts_, sentinel) is sentinel
-  jaxpr, (*maybe_fwds, out_pvals, res, env) = yield (in_pvals,), {}
+  jaxpr, (*maybe_fwds, out_pvals, res, env) = f(in_pvals)
   out_knowns, out_avals, out_consts = partition_pvals(out_pvals)
-  yield (*out_consts, *res), (*maybe_fwds, out_knowns, out_avals, jaxpr, env)
+  store.store((*maybe_fwds, out_knowns, out_avals, jaxpr, env))
+  return (*out_consts, *res)
 
 custom_partial_eval_rules: dict[Primitive, Callable] = {}
 call_partial_eval_rules: dict[Primitive, Callable] = {}
@@ -574,20 +575,22 @@ def trace_to_jaxpr_nounits(
       return jaxpr, out_pvals, consts
 
 # TODO(mattjj): superfluous wrapper...?
-@lu.transformation
+@lu.transformation2
 def trace_to_subjaxpr_nounits(
+    f,
     trace: JaxprTrace,
     instantiate: bool | Sequence[bool],
     in_pvals: Sequence[PartialVal]):
   assert all(isinstance(pv, PartialVal) for pv in in_pvals), in_pvals
-  out_tracers, jaxpr, out_consts, env = yield from _trace_to_subjaxpr_nounits(
-      trace, instantiate, in_pvals)
+  out_tracers, jaxpr, out_consts, env = _trace_to_subjaxpr_nounits(
+      f, trace, instantiate, in_pvals)
   out_pvals = [t.pval for t in out_tracers]
   del out_tracers
-  yield jaxpr, (out_pvals, out_consts, env)
+  return jaxpr, (out_pvals, out_consts, env)
 
-@lu.transformation
+@lu.transformation2
 def trace_to_subjaxpr_nounits2(
+    f,
     tag: TraceTag,
     instantiate: bool | Sequence[bool],
     in_pvals: Sequence[PartialVal]):
@@ -596,19 +599,19 @@ def trace_to_subjaxpr_nounits2(
   current_name_stack = source_info_util.current_name_stack()
   with core.take_current_trace() as parent_trace:
     trace = JaxprTrace(parent_trace, current_name_stack, tag)
-    out_tracers, jaxpr, out_consts, env = yield from _trace_to_subjaxpr_nounits(
-        trace, instantiate, in_pvals)
+    out_tracers, jaxpr, out_consts, env = _trace_to_subjaxpr_nounits(
+        f, trace, instantiate, in_pvals)
     out_pvals = [t.pval for t in out_tracers]
     del out_tracers
-  yield jaxpr, (out_pvals, out_consts, env)
+  return jaxpr, (out_pvals, out_consts, env)
 
-def _trace_to_subjaxpr_nounits(trace:JaxprTrace, instantiate, in_pvals):
+def _trace_to_subjaxpr_nounits(f, trace:JaxprTrace, instantiate, in_pvals):
   in_knowns  = [pval.is_known()     for pval in in_pvals]
   in_consts  = [pval.get_known()    for pval in in_pvals if     pval.is_known()]
   in_tracers = [trace.new_arg(pval) for pval in in_pvals if not pval.is_known()]
   in_args = merge_lists(in_knowns, in_tracers, in_consts)
   with core.set_current_trace(trace):
-    ans = yield in_args, {}
+    ans = f(*in_args)
   assert isinstance(ans, (list, tuple)), (
       f"Got unexpected return type when tracing function to jaxpr: {ans}")
   assert all(isinstance(x, core.Tracer) or core.valid_jaxtype(x) for x in ans), (
@@ -625,8 +628,9 @@ def _trace_to_subjaxpr_nounits(trace:JaxprTrace, instantiate, in_pvals):
 # The below variant implements an optimization where residuals which are also
 # inputs are indicated in auxiliary data rather than passed as outputs.
 # TODO(mattjj): update all callers to use this version, delete other version.
-@lu.transformation
+@lu.transformation2
 def trace_to_subjaxpr_nounits_fwd(
+    f,
     tag: TraceTag,
     instantiate: bool | Sequence[bool],
     in_pvals: Sequence[PartialVal]):
@@ -635,8 +639,8 @@ def trace_to_subjaxpr_nounits_fwd(
   with core.take_current_trace() as parent_trace:
     trace = JaxprTrace(parent_trace, current_name_stack, tag)
     with core.set_current_trace(trace):
-      out_tracers, jaxpr, out_consts, env = yield from _trace_to_subjaxpr_nounits(
-          trace, instantiate, in_pvals)
+      out_tracers, jaxpr, out_consts, env = _trace_to_subjaxpr_nounits(
+          f, trace, instantiate, in_pvals)
     out_pvals = [t.pval for t in out_tracers]
 
     # Which out_consts (aka residuals) are just forwarded inputs? Check obj id.
@@ -646,15 +650,16 @@ def trace_to_subjaxpr_nounits_fwd(
     pruned_consts = [c for c, fwd in zip(out_consts, fwds) if fwd is None]
 
     del out_tracers
-  yield jaxpr, (fwds, out_pvals, pruned_consts, env)
+  return jaxpr, (fwds, out_pvals, pruned_consts, env)
 
 # The below variant implements two optimizations:
 #  1. residuals that are also primal inputs are indicated in aux data rather
 #     than passed as outputs;
 #  2. residuals that are also primal outputs are indicated in aux data rather
 #     than passed as redundant outputs.
-@lu.transformation
+@lu.transformation2
 def trace_to_subjaxpr_nounits_fwd2(
+    f,
     tag: TraceTag,
     instantiate: bool | Sequence[bool],
     in_pvals: Sequence[PartialVal]):
@@ -662,8 +667,8 @@ def trace_to_subjaxpr_nounits_fwd2(
   current_name_stack = source_info_util.current_name_stack()
   with core.take_current_trace() as parent_trace:
     trace = JaxprTrace(parent_trace, current_name_stack, tag)
-    out_tracers, jaxpr, consts, env = yield from _trace_to_subjaxpr_nounits(
-        trace, instantiate, in_pvals)
+    out_tracers, jaxpr, consts, env = _trace_to_subjaxpr_nounits(
+        f, trace, instantiate, in_pvals)
     out_pvals = [t.pval for t in out_tracers]
 
   # Which consts (aka residuals) are just forwarded inputs? Check obj id.
@@ -680,7 +685,7 @@ def trace_to_subjaxpr_nounits_fwd2(
                    if f1 is None and f2 is None]
 
   del out_tracers
-  yield jaxpr, (input_fwds, output_fwds, out_pvals, pruned_consts, env)
+  return jaxpr, (input_fwds, output_fwds, out_pvals, pruned_consts, env)
 
 
 FreeVar = namedtuple('FreeVar', ['val'])
@@ -1382,6 +1387,11 @@ def dce_jaxpr_consts(jaxpr: Jaxpr, used_outputs: Sequence[bool],
   return new_jaxpr, used_consts, used_inputs
 
 
+def has_effects(eqn: JaxprEqn) -> bool:
+  effs = {e for e in eqn.effects if not isinstance(e, core.NamedAxisEffect)}
+  return bool(effs)
+
+
 @weakref_lru_cache
 def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
                instantiate: tuple[bool, ...]
@@ -1395,21 +1405,14 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
     if type(x) is Var:
       env[x] = read(x) or b
 
-  def has_effects(eqn: JaxprEqn) -> bool:
-    effs = {e for e in eqn.effects if not isinstance(e, core.NamedAxisEffect)}
-    return bool(effs) or core.primitive_uses_outfeed(eqn.primitive, eqn.params)
-
   new_eqns = []
   map(write, jaxpr.outvars, used_outputs)
   for eqn in jaxpr.eqns[::-1]:
     used_outs = map(read, eqn.outvars)
-    if not any(used_outs) and not has_effects(eqn):
-      used_ins = [False] * len(eqn.invars)
-    else:
-      rule = dce_rules.get(eqn.primitive, _default_dce_rule)
-      used_ins, new_eqn = rule(used_outs, eqn)
-      if new_eqn is not None:
-        new_eqns.append(new_eqn)
+    rule = dce_rules.get(eqn.primitive, _default_dce_rule)
+    used_ins, new_eqn = rule(used_outs, eqn)
+    if new_eqn is not None:
+      new_eqns.append(new_eqn)
     map(write, eqn.invars, used_ins)
   used_inputs = map(read, jaxpr.invars)
   used_inputs = map(op.or_, instantiate, used_inputs)
@@ -1433,7 +1436,9 @@ DCERule = Callable[[list[bool], JaxprEqn],
 
 def _default_dce_rule(
     used_outs: list[bool], eqn: JaxprEqn
-  ) -> tuple[list[bool], JaxprEqn]:
+  ) -> tuple[list[bool], JaxprEqn | None]:
+  if not any(used_outs) and not has_effects(eqn):
+    return [False] * len(eqn.invars), None
   return [True] * len(eqn.invars), eqn
 
 dce_rules: dict[Primitive, DCERule] = {}
@@ -1441,6 +1446,8 @@ dce_rules: dict[Primitive, DCERule] = {}
 
 def dce_jaxpr_call_rule(used_outputs: list[bool], eqn: JaxprEqn
                         ) -> tuple[list[bool], JaxprEqn | None]:
+  if not any(used_outputs) and not has_effects(eqn):
+    return [False] * len(eqn.invars), None
   new_jaxpr, used_inputs = dce_jaxpr(eqn.params['call_jaxpr'], used_outputs)
   new_params = dict(eqn.params, call_jaxpr=new_jaxpr)
   update_params = call_param_updaters.get(eqn.primitive)
@@ -1454,6 +1461,7 @@ def dce_jaxpr_call_rule(used_outputs: list[bool], eqn: JaxprEqn
         [v for v, used in zip(eqn.outvars, used_outputs) if used],
         eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info, eqn.ctx)
     return used_inputs, new_eqn
+
 dce_rules[core.call_p] = dce_jaxpr_call_rule
 
 
@@ -1465,8 +1473,10 @@ def _cached_closed_call_dce(jaxpr_, used_outputs: tuple[bool, ...]
   return core.ClosedJaxpr(new_jaxpr, consts), used_inputs
 
 def dce_jaxpr_closed_call_rule(used_outputs: list[bool], eqn: JaxprEqn
-                               ) -> tuple[list[bool], JaxprEqn]:
+                               ) -> tuple[list[bool], JaxprEqn | None]:
   # TODO(mattjj): de-duplicate with above rule?
+  if not any(used_outputs) and not has_effects(eqn):
+    return [False] * len(eqn.invars), None
   jaxpr_ = eqn.params['call_jaxpr']
   closed_jaxpr, used_inputs = _cached_closed_call_dce(jaxpr_, tuple(used_outputs))
   new_params = dict(eqn.params, call_jaxpr=closed_jaxpr)
@@ -2061,10 +2071,10 @@ class DynamicJaxprTrace(core.Trace):
 
 custom_staging_rules: dict[Primitive, Callable] = {}
 
-@lu.transformation
-def _interleave_fun(every_others, *args, **kwargs):
+@lu.transformation2
+def _interleave_fun(f, every_others, *args, **kwargs):
   args_ = [x for pair in zip(args, every_others) for x in pair]
-  yield (yield (args_, kwargs))
+  return f(*args_, **kwargs)
 
 # TODO: consider renaming to "lazy_thunk"
 def _memoize(fn):
@@ -2078,18 +2088,19 @@ def _memoize(fn):
     return out
   return memoized
 
-@lu.transformation_with_aux
-def _jvp_jaxpr_zeros(in_zeros, zero_avals, *primal_tangent_avals):
+@lu.transformation_with_aux2
+def _jvp_jaxpr_zeros(f, store, in_zeros, zero_avals, *primal_tangent_avals):
   in_primals, nz_in_tangents = split_list(primal_tangent_avals, [len(in_zeros)])
   symbolic_zeros = map(ad_util.SymbolicZero, zero_avals)
   tangents = merge_lists(in_zeros, nz_in_tangents, symbolic_zeros)
-  out = yield (*in_primals, *tangents), {}
+  out = f(*in_primals, *tangents)
   n, ragged = divmod(len(out), 2)
   assert not ragged
   out_primals, out_tangents = out[:n], out[n:]
   out_zeros = [type(t) is ad_util.SymbolicZero for t in out_tangents]
   out_nz_tangents, _ = partition_list(out_zeros, out_tangents)
-  yield [*out_primals, *out_nz_tangents], out_zeros
+  store.store(out_zeros)
+  return [*out_primals, *out_nz_tangents]
 
 # TODO(mattjj): remove this DebugInfo and helper functions, replace with
 # api_util.py versions

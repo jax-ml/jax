@@ -446,8 +446,16 @@ class Primitive:
     # TODO: figure out how to handle function arguments
     # assert (not config.enable_checks.value or
     #         all(isinstance(arg, Tracer) or valid_jaxtype(arg) for arg in args)), args
-    with take_current_trace() as cur_trace:
-      return self.bind_with_trace(cur_trace, args, params)
+
+    # This is equivalent to "with take_current_trace()", but the bind() code
+    # is called frequently and it's slightly faster to avoid using a context
+    # manager object.
+    prev_trace = trace_ctx.trace
+    trace_ctx.set_trace(eval_trace)
+    try:
+      return self.bind_with_trace(prev_trace, args, params)
+    finally:
+      trace_ctx.set_trace(prev_trace)
 
   def bind_with_trace(self, trace, args, params):
     return trace.process_primitive(self, args, params)
@@ -892,6 +900,11 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
 aval_property = namedtuple("aval_property", ["fget"])
 aval_method = namedtuple("aval_method", ["fun"])
 
+def check_eval_args(args):
+  for arg in args:
+    if isinstance(arg, Tracer):
+      raise escaped_tracer_error(arg)
+
 class EvalTrace(Trace):
 
   def process_primitive(self, primitive, args, params):
@@ -902,12 +915,11 @@ class EvalTrace(Trace):
     else:
       # TODO(dougalm): delete. this shouldn't be necessary
       args = map(full_lower, args)
-      for arg in args:
-        if isinstance(arg, Tracer):
-          if config.data_dependent_tracing_fallback.value:
+      if config.data_dependent_tracing_fallback.value:
+        for arg in args:
+          if isinstance(arg, Tracer):
             return primitive.bind_with_trace(arg._trace, args, params)
-          else:
-            raise escaped_tracer_error(arg)
+      check_eval_args(args)
       return primitive.impl(*args, **params)
 
   def process_call(self, primitive, f, tracers, params):
@@ -1644,8 +1656,10 @@ class ShapedArray(UnshapedArray):
               self.dtype.name)
     dt_str = dt_str.replace('void', 'float0')
     if hasattr(self, 'sharding') and self.sharding is not None:
-      shapestr = ','.join(_get_shape_sharding_str(self.shape, self.sharding.spec))
-      return f'{dt_str}[{shapestr}]'
+      shapestr = _get_shape_sharding_str(self.shape, self.sharding.spec)
+      axis_types = self.sharding.mesh.axis_types
+      axt = _get_axis_type_str(axis_types) if axis_types is not None else ''
+      return f'{dt_str}[{shapestr}]{axt}'
     else:
       shapestr = ','.join(map(str, self.shape))
       return f'{dt_str}[{shapestr}]'
@@ -1657,15 +1671,32 @@ class ShapedArray(UnshapedArray):
       raise TypeError("len() of unsized object") from err  # same as numpy error
 
 
+def _get_axis_type_str(axis_types):
+  from jax._src.mesh import AxisTypes  # type: ignore
+
+  out = []
+  for t, axes in axis_types.items():
+    a = f"({','.join(a for a in axes)})" if isinstance(axes, tuple) else axes
+    if t == AxisTypes.Collective:
+      out.append(f"C:{a}")
+    elif t == AxisTypes.User:
+      out.append(f"U:{a}")
+    else:
+      assert t == AxisTypes.Auto
+      out.append(f"A:{a}")
+  return f"{{{', '.join(out)}}}"
+
 def _get_shape_sharding_str(shape, spec):
+  out = []
   for s1, s2 in zip(shape, spec):
     if s2 is None:
-      yield f"{s1}"
+      out.append(f"{s1}")
     elif isinstance(s2, tuple):
       ss = ','.join(s for s in s2)
-      yield f"{s1}@({ss})"
+      out.append(f"{s1}@({ss})")
     else:
-      yield f"{s1}@{s2}"
+      out.append(f"{s1}@{s2}")
+  return ','.join(out)
 
 def _get_abstract_sharding(val):
   from jax._src.sharding_impls import NamedSharding  # pytype: disable=import-error
@@ -1673,7 +1704,7 @@ def _get_abstract_sharding(val):
   if (config.sharding_in_types.value and hasattr(val, 'sharding') and
       isinstance(val.sharding, NamedSharding)):
     return NamedSharding(val.sharding.mesh.abstract_mesh,
-                         val.sharding._normalized_spec(val.ndim))
+                         val.sharding.spec._normalized_spec(val.ndim))
   return None
 
 def primal_dtype_to_tangent_dtype(primal_dtype):
@@ -2106,33 +2137,6 @@ closed_call_p: ClosedCallPrimitive = ClosedCallPrimitive('closed_call')
 closed_call_p.def_impl(call_impl)
 closed_call_p.def_effectful_abstract_eval(
     lambda *_, call_jaxpr: (call_jaxpr.out_avals, call_jaxpr.effects))
-
-
-outfeed_primitives: set[Primitive] = set()
-def jaxpr_uses_outfeed(jaxpr: Jaxpr) -> bool:
-  """Finds if there are outfeed primitives anywhere inside a Jaxpr."""
-  return any(primitive_uses_outfeed(eqn.primitive, eqn.params)
-             for eqn in jaxpr.eqns)
-
-def _param_uses_outfeed(param):
-  if type(param) is Jaxpr:
-    if jaxpr_uses_outfeed(param):
-      return True
-  elif type(param) is ClosedJaxpr:
-    if jaxpr_uses_outfeed(param.jaxpr):
-      return True
-  return False
-
-def primitive_uses_outfeed(prim: Primitive, params: dict) -> bool:
-  if prim in outfeed_primitives:
-    return True
-  for param in params.values():
-    if isinstance(param, tuple):
-      if any(unsafe_map(_param_uses_outfeed, param)):
-        return True
-    elif _param_uses_outfeed(param):
-      return True
-  return False
 
 # ------------------- Map -------------------
 

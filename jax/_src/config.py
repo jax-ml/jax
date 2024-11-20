@@ -219,6 +219,7 @@ if xla_extension_version >= 295:
             threefry_partitionable.value,
             threefry_gpu_kernel_lowering.value,
             sharding_in_types.value,
+            use_direct_linearize.value,
             softmax_custom_jvp.value,
             enable_memories.value,
             disable_jit.value,
@@ -263,6 +264,7 @@ else:
             threefry_partitionable.value,
             threefry_gpu_kernel_lowering.value,
             sharding_in_types.value,
+            use_direct_linearize.value,
             softmax_custom_jvp.value,
             enable_memories.value,
             disable_jit.value,
@@ -983,6 +985,7 @@ else:
     threefry_partitionable: bool = False
     threefry_gpu_kernel_lowering: bool = False
     sharding_in_types: bool = False
+    use_direct_linearize: bool = False
     softmax_custom_jvp: bool = False
     xla_profile_version: int = 0
     pgle_profiling_runs: int = 0
@@ -1025,6 +1028,7 @@ else:
     threefry_partitionable: bool | None = None
     threefry_gpu_kernel_lowering: bool | None = None
     sharding_in_types: bool | None = None
+    use_direct_linearize: bool | None = None
     softmax_custom_jvp: bool | None = None
     xla_profile_version: int | None = None
     pgle_profiling_runs: int | None = None
@@ -1318,6 +1322,12 @@ sharding_in_types = bool_state(
           'avals have sharding on them.'),
     include_in_jit_key=True)
 
+use_direct_linearize = bool_state(
+    name='jax_use_direct_linearize',
+    default=False,
+    help=('Use direct linearization instead JVP followed by partial eval'),
+    include_in_jit_key=True)
+
 data_dependent_tracing_fallback = bool_state(
     name='jax_data_dependent_tracing_fallback',
     default=False,
@@ -1368,6 +1378,15 @@ persistent_cache_min_entry_size_bytes = int_state(
           '  typically ensure that the minimum size is optimal for the '
           '  filesystem being used for the cache. '
           '* > 0: the actual minimum size desired; no overrides.'))
+
+# TODO: Change default to all
+persistent_cache_enable_xla_caches = optional_string_state(
+    name='jax_persistent_cache_enable_xla_caches',
+    default='xla_gpu_per_fusion_autotune_cache_dir',
+    help=('When the persistent cache is enabled, additional XLA caching will '
+          'also be enabled automatically. This option can be used to configure'
+          'which XLA caching methods will be enabled.'),
+)
 
 compilation_cache_include_metadata_in_key = bool_state(
     name='jax_compilation_cache_include_metadata_in_key',
@@ -1561,7 +1580,9 @@ def _update_default_device_thread_local(val):
 
 
 def _validate_default_device(val):
-  if val is not None and not isinstance(val, xla_client.Device):
+  if (val is not None and
+      not isinstance(val, xla_client.Device) and
+      val not in ['cpu', 'gpu', 'tpu']):
     # TODO(skyewm): this is a workaround for non-PJRT Device types. Remove when
     # all JAX backends use a single C++ device interface.
     if 'Device' in str(type(val)):
@@ -1569,12 +1590,11 @@ def _validate_default_device(val):
           'Allowing non-`xla_client.Device` default device: %s, type: %s',
           repr(val), type(val))
       return
-    raise ValueError('jax.default_device must be passed a Device object (e.g. '
-                     f"`jax.devices('cpu')[0]`), got: {val!r}")
+    raise ValueError('jax.default_device must be passed either a Device object (e.g. '
+                     f"`jax.devices('cpu')[0]`) or a platform name string like 'cpu' or 'gpu'"
+                     f", got: {val!r}")
 
 
-# TODO(skye): default_device only accepts devices for now. Make it work with
-# platform names as well (e.g. "cpu" to mean the same as jax.devices("cpu")[0]).
 default_device = string_or_object_state(
     name='jax_default_device',
     default=None,
@@ -1952,4 +1972,15 @@ use_shardy_partitioner = bool_state(
         'www.github.com/openxla/shardy'
     ),
     include_in_jit_key=True,
+)
+
+gpu_use_magma = enum_state(
+    name='jax_use_magma',
+    enum_values=['off', 'on', 'auto'],
+    default='auto',
+    help=(
+        'Enable experimental support for MAGMA-backed lax.linalg.eig on GPU. '
+        'See the documentation for lax.linalg.eig for more details about how '
+        'to use this feature.'
+    ),
 )

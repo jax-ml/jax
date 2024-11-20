@@ -1472,6 +1472,40 @@ class PallasCallDMATest(PallasBaseTest):
       np.testing.assert_array_equal(y, i)
       del y
 
+  def test_dynamic_dma_on_2nd_minor(self):
+    def kernel(array, data, index, size, _, sem):
+      pltpu.async_copy(
+            data.at[pl.ds(0, size[0])], array.at[pl.ds(index[0], size[0])], sem
+        ).wait()
+
+    def run(array, data, index, size):
+      return pl.pallas_call(
+            kernel,
+            out_shape=array,
+            in_specs=[
+                pl.BlockSpec(memory_space=pltpu.ANY),
+                pl.BlockSpec(memory_space=pltpu.VMEM),
+                pl.BlockSpec(memory_space=pltpu.SMEM),
+                pl.BlockSpec(memory_space=pltpu.SMEM),
+            ],
+            scratch_shapes=[
+                pltpu.SemaphoreType.DMA,
+            ],
+            out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+            input_output_aliases={0: 0},
+        )(array, data, index, size)
+
+    array = jnp.zeros((1024, 128), jnp.int32)
+    data = jnp.ones((8, 128), jnp.int32)
+    index = jnp.array([3], jnp.int32)
+    size = jnp.array([5], jnp.int32)
+
+    expected = array.at[index[0] : index[0] + size[0]].set(
+        data[index[0] : index[0] + size[0]]
+    )
+    result = run(array, data, index, size)
+    np.testing.assert_array_equal(result, expected)
+
 
 class PallasCallDMAInterpretTest(PallasCallDMATest):
   INTERPRET = True

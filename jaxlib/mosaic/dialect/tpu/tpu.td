@@ -214,6 +214,22 @@ def TPU_LoadOp : TPU_Op<"load"> {
   }];
 }
 
+// TODO(jevinjiang): migrate tpu.strided_store to general vector store op.
+def TPU_VectorStoreOp :TPU_Op<"vector_store", [AttrSizedOperandSegments]> {
+  let arguments = (ins
+    AnyVector:$valueToStore,
+    AnyMemRef:$base,
+    Variadic<Index>:$indices,
+    DenseI32ArrayAttr:$strides,
+    Optional<AnyVector>:$mask   // Elementwise mask.
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    $base `[` $indices `]` `,` $valueToStore (`masked` $mask^)? attr-dict `:` type($base) `,` type($valueToStore) `,` type($mask)
+  }];
+  let hasVerifier = 1;
+}
+
 def TPU_StridedLoadOp : TPU_Op<"strided_load"> {
   let arguments = (ins
     AnyMemRef:$base,
@@ -637,12 +653,19 @@ def TPU_SemaphoreSignalOp : TPU_Op<"sem_signal", [AttrSizedOperandSegments]> {
     MemRefOf<[TPU_SemaphoreType]>:$semaphore,
     I32:$amount,
     Optional<I32>:$device_id, // For remote DMAs
-    Optional<I32>:$core_id // For megacore
+    Optional<I32>:$core_id, // For megacore
+    Optional<I32>:$subcore_id, // For the SC vector subcore
+    OptionalAttr<TPU_CoreTypeEnum>:$core_type
   );
-  let assemblyFormat = [{
-    $semaphore `,` $amount (`,` $device_id^)? (`,` $core_id^)? attr-dict `:` type($semaphore)
+let assemblyFormat = [{
+    $semaphore `,` $amount (`device_id` $device_id^)? (`core_id` $core_id^)? (`subcore_id` $subcore_id^)? (`core_type` $core_type^)? attr-dict `:` type($semaphore)
   }];
   let hasVerifier = 1;
+  let builders = [
+    // A backward-compatible builder that sets `subcore_id` and `core_type` to nullptr.
+    OpBuilder<(ins "Value":$semaphore, "Value":$amount,
+               "Value":$device_id, "Value":$core_id)>,
+  ];
 }
 
 def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
@@ -738,6 +761,7 @@ def TPU_LogOp : TPU_Op<"log"> {
   );
   let results = (outs);
   let assemblyFormat = [{ $tag attr-dict (`:`  `[` $inputs^ `]` `:` type($inputs))? }];
+  let hasVerifier = 1;
 }
 
 def DebugAssertInsertionPass : Pass<"debug-assert-insertion", "::mlir::func::FuncOp"> {

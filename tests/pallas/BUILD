@@ -57,6 +57,20 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "pallas_cost_estimate_test",
+    srcs = [
+        "pallas_cost_estimate_test.py",
+    ],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_gpu",
+        "//jax:pallas_gpu_ops",
+        "//jax:pallas_tpu",
+        "//jax:pallas_tpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
     name = "pallas_jumble_test",
     srcs = [
         "pallas_jumble_test.py",
@@ -380,9 +394,13 @@ jax_multiplatform_test(
         "tpu_pallas_random_test.py",
     ],
     enable_backends = ["tpu"],
+    enable_configs = [
+        "tpu_v5p_2x2",
+    ],
     deps = [
         "//jax:pallas",
         "//jax:pallas_tpu",
+        "//jax:pallas_tpu_ops",
         "//jax/_src/pallas/mosaic:random",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )

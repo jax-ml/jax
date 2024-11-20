@@ -15,19 +15,21 @@ limitations under the License.
 
 // We need to keep some extra headers for the code in tpu_passes.h.inc.
 
+#include <cstdint>
 #include <memory>  // IWYU pragma: keep
 #include <optional>
 #include <string>
 #include <string_view>
 
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Visitors.h"
 #include "mlir/Pass/Pass.h"  // IWYU pragma: keep
 #include "mlir/Support/LLVM.h"
+#include "absl/strings/str_format.h"
 #include "mlir/include/mlir/IR/BuiltinAttributes.h"
 #include "mlir/include/mlir/IR/OpDefinition.h"
 #include "mlir/include/mlir/IR/OperationSupport.h"
@@ -43,7 +45,7 @@ namespace {
 
 constexpr std::string_view kMangledDialect = "stable_mosaic.";
 constexpr StringRef kVersionAttrName = "stable_mosaic.version";
-constexpr int kVersion = 3;
+constexpr int kVersion = 4;
 
 StringRef mangle(StringRef name, std::string* storage) {
   storage->clear();
@@ -86,18 +88,37 @@ LogicalResult enqueue_dma_rule(Operation* op, int version) {
 
 LogicalResult semaphore_signal_rule(Operation* op, int version) {
   // Added AttrSizedOperandSegments and core_id in version 2.
+  // Added subcore_id in version 4.
   if (version < 2) {
     if (op->getNumOperands() == 2) {  // Local signal.
-      op->setAttr(OpTrait::AttrSizedOperandSegments<
-                      EnqueueDMAOp>::getOperandSegmentSizeAttr(),
-                  mlir::DenseI32ArrayAttr::get(op->getContext(), {1, 1, 0, 0}));
+      op->setAttr(
+          OpTrait::AttrSizedOperandSegments<
+              EnqueueDMAOp>::getOperandSegmentSizeAttr(),
+          mlir::DenseI32ArrayAttr::get(op->getContext(), {1, 1, 0, 0, 0}));
     } else if (op->getNumOperands() == 3) {  // Remote signal.
-      op->setAttr(OpTrait::AttrSizedOperandSegments<
-                      EnqueueDMAOp>::getOperandSegmentSizeAttr(),
-                  mlir::DenseI32ArrayAttr::get(op->getContext(), {1, 1, 1, 0}));
-    } else {
-      return op->emitError("Unexpected operand count in tpu.semaphore_signal");
+      op->setAttr(
+          OpTrait::AttrSizedOperandSegments<
+              EnqueueDMAOp>::getOperandSegmentSizeAttr(),
+          mlir::DenseI32ArrayAttr::get(op->getContext(), {1, 1, 1, 0, 0}));
     }
+    return op->emitError("Unexpected operand count in tpu.semaphore_signal");
+  } else if (version < 4) {
+    ArrayRef<int32_t> operand_segment_sizes =
+        op->getAttrOfType<DenseI32ArrayAttr>(
+            OpTrait::AttrSizedOperandSegments<
+                SemaphoreSignalOp>::getOperandSegmentSizeAttr());
+    if (operand_segment_sizes.size() != 4) {
+      return op->emitError(absl::StrFormat(
+          "Expected operand count to be 4 in tpu.semaphore_signal. Got %d",
+          operand_segment_sizes.size()));
+    }
+    SmallVector<int32_t, 5> new_operand_segment_sizes(
+        operand_segment_sizes.begin(), operand_segment_sizes.end());
+    new_operand_segment_sizes.push_back(0);
+    op->setAttr(OpTrait::AttrSizedOperandSegments<
+                    EnqueueDMAOp>::getOperandSegmentSizeAttr(),
+                mlir::DenseI32ArrayAttr::get(op->getContext(),
+                                             new_operand_segment_sizes));
   }
   return success();
 }

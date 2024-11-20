@@ -24,7 +24,6 @@ limitations under the License.
 #include <ostream>
 #include <tuple>
 
-#include "absl/log/check.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/bit.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -39,6 +38,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
+#include "absl/log/check.h"
 
 namespace mlir::tpu {
 
@@ -259,17 +259,22 @@ class VectorLayout {
   int layout_rank() const { return layout_rank(implicit_dim_); }
 
   bool operator==(const VectorLayout &other) const;
-  bool operator!=(const VectorLayout &other) const {
-    return !(*this == other);
-  }
+  bool operator!=(const VectorLayout &other) const { return !(*this == other); }
 
-  // How many tiles fit in each vector register.
-  int64_t tilesPerVreg(const std::array<int64_t, 2> target_shape) const {
-    const int64_t tile_elems = tiling_[0] * tiling_[1];
-    const int64_t vreg_capacity = packing() * target_shape[0] * target_shape[1];
+  static int64_t tilesPerVreg(const std::array<int64_t, 2> target_shape,
+                              const int8_t bitwidth,
+                              const std::array<int64_t, 2> tiling) {
+    CHECK_NE(0, bitwidth) << "bitwidth cannot be 0";
+    const int64_t tile_elems = tiling[0] * tiling[1];
+    const int64_t vreg_capacity =
+        (32 / bitwidth) * target_shape[0] * target_shape[1];
     const auto [tiles_per_vreg, rem] = std::div(vreg_capacity, tile_elems);
     CHECK_EQ(rem, 0);
     return tiles_per_vreg;
+  }
+  // How many tiles fit in each vector register.
+  int64_t tilesPerVreg(const std::array<int64_t, 2> target_shape) const {
+    return VectorLayout::tilesPerVreg(target_shape, bitwidth_, tiling_);
   }
 
   int64_t sublanesPerTile(const std::array<int64_t, 2> target_shape) const {
@@ -283,8 +288,16 @@ class VectorLayout {
   //
   // We never reuse the same vector register to store data of multiple rows,
   // so only the minormost dimension can increase.
+  static std::array<int64_t, 2> vregSlice(std::array<int64_t, 2> target_shape,
+                                          const int8_t bitwidth,
+                                          const std::array<int64_t, 2> tiling) {
+    return {
+        tiling[0],
+        VectorLayout::tilesPerVreg(target_shape, bitwidth, tiling) * tiling[1]};
+  }
+
   std::array<int64_t, 2> vregSlice(std::array<int64_t, 2> target_shape) const {
-    return {tiling_[0], tilesPerVreg(target_shape) * tiling_[1]};
+    return VectorLayout::vregSlice(target_shape, bitwidth_, tiling_);
   }
 
   template <typename T>

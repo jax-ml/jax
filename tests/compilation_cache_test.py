@@ -40,6 +40,7 @@ from jax._src import path as pathlib
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.compilation_cache_interface import CacheInterface
+from jax._src.lib import xla_client as xc
 from jax.experimental.pjit import pjit
 from jax.sharding import PartitionSpec as P
 import numpy as np
@@ -535,6 +536,42 @@ class CompilationCacheTest(CompilationCacheTestCase):
     self.assertEqual(
         executable.fingerprint, deserialized_executable.fingerprint)
 
+  def test_persistent_cache_enable_xla_caches(self):
+    if jtu.jaxlib_version() <= (0, 4, 35):
+      self.skipTest("Test requires AutotuneCacheMode bindings")
+    with config.compilation_cache_dir("jax-cache"):
+      with config.persistent_cache_enable_xla_caches("none"):
+        compile_options = compiler.get_compile_options(
+          num_replicas=1, num_partitions=1
+        )
+        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_kernel_cache_file, "")
+        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_enable_llvm_module_compilation_parallelism, False)
+        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_per_fusion_autotune_cache_dir, "")
+        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_experimental_autotune_cache_mode, xc.AutotuneCacheMode.UPDATE)
+      with config.persistent_cache_enable_xla_caches("all"):
+        compile_options = compiler.get_compile_options(
+          num_replicas=1, num_partitions=1
+        )
+        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_kernel_cache_file, "jax-cache/xla_gpu_kernel_cache_file")
+        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_enable_llvm_module_compilation_parallelism, True)
+        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_per_fusion_autotune_cache_dir, "jax-cache/xla_gpu_per_fusion_autotune_cache_dir")
+        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_experimental_autotune_cache_mode, xc.AutotuneCacheMode.UPDATE)
+      with config.persistent_cache_enable_xla_caches("xla_gpu_kernel_cache_file"):
+        compile_options = compiler.get_compile_options(
+          num_replicas=1, num_partitions=1
+        )
+        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_kernel_cache_file, "jax-cache/xla_gpu_kernel_cache_file")
+        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_enable_llvm_module_compilation_parallelism, True)
+        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_per_fusion_autotune_cache_dir, "")
+        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_experimental_autotune_cache_mode, xc.AutotuneCacheMode.UPDATE)
+      with config.persistent_cache_enable_xla_caches("xla_gpu_per_fusion_autotune_cache_dir"):
+        compile_options = compiler.get_compile_options(
+          num_replicas=1, num_partitions=1
+        )
+        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_kernel_cache_file, "")
+        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_enable_llvm_module_compilation_parallelism, False)
+        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_per_fusion_autotune_cache_dir, "jax-cache/xla_gpu_per_fusion_autotune_cache_dir")
+        self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_experimental_autotune_cache_mode, xc.AutotuneCacheMode.UPDATE)
 
 @jtu.with_config(
     jax_enable_compilation_cache=False,
@@ -569,6 +606,18 @@ class CompilationCacheDisabledTest(CompilationCacheTestCase):
       count_after_second_use = _counts[
           "/jax/compilation_cache/task_disabled_cache"]
       self.assertEqual(count_after_second_use, count_after_first_use)
+
+  def test_persistent_cache_enable_xla_caches_disabled(self):
+    if jtu.jaxlib_version() <= (0, 4, 35):
+      self.skipTest("Test requires AutotuneCacheMode bindings")
+    with config.enable_compilation_cache(False):
+      compile_options = compiler.get_compile_options(
+        num_replicas=1, num_partitions=1
+      )
+      self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_kernel_cache_file, "")
+      self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_enable_llvm_module_compilation_parallelism, False)
+      self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_per_fusion_autotune_cache_dir, "")
+      self.assertEqual(compile_options.executable_build_options.debug_options.xla_gpu_experimental_autotune_cache_mode, xc.AutotuneCacheMode.UPDATE)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

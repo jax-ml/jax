@@ -45,8 +45,8 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
     if attention_mgpu is None:
       self.skipTest("Mosaic GPU not available.")
     if (not jtu.test_device_matches(["cuda"]) or
-        not jtu.is_cuda_compute_capability_at_least("9.0")):
-      self.skipTest("Only works on GPU with capability >= sm90")
+        not jtu.is_cuda_compute_capability_equal("9.0")):
+      self.skipTest("Only works on GPU with capability sm90a")
 
   @parameterized.product(
       batch_size=(1,),

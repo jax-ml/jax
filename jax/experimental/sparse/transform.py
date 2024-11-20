@@ -97,6 +97,7 @@ _zero_preserving_unary_primitives = [
   lax.sin_p,
   lax.sinh_p,
   lax.sqrt_p,
+  lax.square_p,
   lax.tan_p,
   lax.tanh_p,
   lax.convert_element_type_p,
@@ -340,16 +341,17 @@ class SparseTrace(core.Trace):
     with core.set_current_trace(self):
       return fun.call_wrapped(*tracers)
 
-@lu.transformation_with_aux
-def sparsify_subtrace(tag, spenv, spvalues, *bufs):
+@lu.transformation_with_aux2
+def sparsify_subtrace(f, store, tag, spenv, spvalues, *bufs):
   with core.take_current_trace() as parent:
     trace = SparseTrace(parent, tag, spenv)
     with core.set_current_trace(trace):
       in_tracers = [SparseTracer(trace, spvalue=spvalue) for spvalue in spvalues]
-      outs = yield in_tracers, {}
+      outs = f(*in_tracers)
       out_traces = [trace.to_sparse_tracer(out) for out in outs]
       buffers = spenv._buffers
-    yield buffers, [out._spvalue for out in out_traces]
+  store.store([out._spvalue for out in out_traces])
+  return buffers
 
 def sparsify_fun(wrapped_fun, args: list[ArrayOrSparse]):
   tag = core.TraceTag()

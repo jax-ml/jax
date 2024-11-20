@@ -193,8 +193,7 @@ You can mix `jit` and `grad` and any other JAX transformation however you like.
 
 Using `jit` puts constraints on the kind of Python control flow
 the function can use; see
-the [Gotchas
-Notebook](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#python-control-flow-+-JIT)
+the tutorial on [Control Flow and Logical Operators with JIT](https://jax.readthedocs.io/en/latest/control-flow.html)
 for more.
 
 ### Auto-vectorization with `vmap`
@@ -353,7 +352,7 @@ Some standouts:
 1. [In-place mutating updates of
    arrays](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#in-place-updates), like `x[i] += y`, aren't supported, but [there are functional alternatives](https://jax.readthedocs.io/en/latest/jax.ops.html). Under a `jit`, those functional alternatives will reuse buffers in-place automatically.
 1. [Random numbers are
-   different](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#random-numbers), but for [good reasons](https://github.com/jax-ml/jax/blob/main/docs/jep/263-prng.md).
+   different](https://jax.readthedocs.io/en/latest/random-numbers.html), but for [good reasons](https://github.com/jax-ml/jax/blob/main/docs/jep/263-prng.md).
 1. If you're looking for [convolution
    operators](https://jax.readthedocs.io/en/latest/notebooks/convolutions.html),
    they're in the `jax.lax` package.
@@ -373,7 +372,7 @@ Some standouts:
    and NumPy types aren't preserved, namely `np.add(1, np.array([2],
    np.float32)).dtype` is `float64` rather than `float32`.
 1. Some transformations, like `jit`, [constrain how you can use Python control
-   flow](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#control-flow).
+   flow](https://jax.readthedocs.io/en/latest/control-flow.html).
    You'll always get loud errors if something goes wrong. You might have to use
    [`jit`'s `static_argnums`
    parameter](https://jax.readthedocs.io/en/latest/jax.html#just-in-time-compilation-jit),
@@ -394,6 +393,7 @@ Some standouts:
 | Google TPU | yes          | n/a           | n/a          | n/a          | n/a            | n/a                 |
 | AMD GPU    | yes          | no            | experimental | n/a          | no             | no                  |
 | Apple GPU  | n/a          | no            | n/a          | experimental | n/a            | n/a                 |
+| Intel GPU  | experimental | n/a           | n/a          | n/a          | no             | no                  |
 
 
 ### Instructions
@@ -405,6 +405,7 @@ Some standouts:
 | Google TPU      | `pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html`                 |
 | AMD GPU (Linux) | Use [Docker](https://hub.docker.com/r/rocm/jax-community/tags), [pre-built wheels](https://github.com/ROCm/jax/releases), or [build from source](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-a-rocm-jaxlib-for-amd-gpus). |
 | Mac GPU         | Follow [Apple's instructions](https://developer.apple.com/metal/jax/).                                          |
+| Intel GPU       | Follow [Intel's instructions](https://github.com/intel/intel-extension-for-openxla/blob/main/docs/acc_jax.md).  |
 
 See [the documentation](https://jax.readthedocs.io/en/latest/installation.html)
 for information on alternative installation strategies. These include compiling

@@ -75,13 +75,14 @@ _stop_gradient = partial(
 
 
 # like the api_util.py function, but also grabs output avals for error checking
-@lu.transformation_with_aux
-def _flatten_fun_nokwargs(in_tree, *args_flat):
+@lu.transformation_with_aux2
+def _flatten_fun_nokwargs(f, store, in_tree, *args_flat):
   py_args = tree_unflatten(in_tree, args_flat)
-  ans = yield py_args, {}
+  ans = f(*py_args)
   ans_flat, ans_tree = tree_flatten(ans)
   ans_avals = [core.get_aval(x) for x in ans_flat]
-  yield ans_flat, (ans_tree, ans_avals)
+  store.store((ans_tree, ans_avals))
+  return ans_flat
 
 
 ### JVPs
@@ -266,18 +267,18 @@ class custom_jvp(Generic[ReturnValue]):
 def _add_args(f, extra_args):
   return _add_args_(f, tuple(Unhashable(arg) for arg in extra_args))
 
-@lu.transformation
-def _add_args_(extra_args, *args, **kwargs):
+@lu.transformation2
+def _add_args_(f, extra_args, *args, **kwargs):
   extra_args = tuple(arg.val for arg in extra_args)
   all_args = (extra_args + args)
-  yield (yield all_args, kwargs)
+  return f(*all_args, **kwargs)
 
-@partial(lu.transformation_with_aux, use_eq_store=True)
-def _flatten_jvp(primal_name, jvp_name, in_tree, maybe_out_type, *args):
+@partial(lu.transformation_with_aux2, use_eq_store=True)
+def _flatten_jvp(f, store, primal_name, jvp_name, in_tree, maybe_out_type, *args):
   primals_in, tangents_in = split_list(args, [len(args) // 2])
   py_primals = tree_unflatten(in_tree, primals_in)
   py_tangents = tree_unflatten(in_tree, tangents_in)
-  pair_out = yield (py_primals, py_tangents), {}
+  pair_out = f(py_primals, py_tangents)
   if not isinstance(pair_out, (list, tuple)) or len(pair_out) != 2:
     msg = (f"Custom JVP rule {jvp_name} for function {primal_name} "
            "must produce a pair (list or tuple of length two) representing "
@@ -348,7 +349,8 @@ def _flatten_jvp(primal_name, jvp_name, in_tree, maybe_out_type, *args):
           if av_et != av_t)
 
       raise TypeError(msg.format('\n'.join(disagreements)))
-  yield primals_out + tangents_out, (out_tree, primal_avals)
+  store.store((out_tree, primal_avals))
+  return primals_out + tangents_out
 
 class CustomJVPCallPrimitive(core.Primitive):
   multiple_results = True
@@ -652,15 +654,15 @@ def _check_for_tracers(x):
             "arguments should typically not be indicated as nondiff_argnums.")
       raise UnexpectedTracerError(msg)
 
-@partial(lu.transformation_with_aux, use_eq_store=True)
-def _flatten_fwd(symbolic_zeros, primal_name, fwd_name, in_tree, maybe_out_type,
+@partial(lu.transformation_with_aux2, use_eq_store=True)
+def _flatten_fwd(f, store, symbolic_zeros, primal_name, fwd_name, in_tree, maybe_out_type,
                  *args):
   if symbolic_zeros:
     args = [CustomVJPPrimal(x, z) for x, z in zip(args[::2], args[1::2])]
   else:
     args = args[::2]
   py_args = tree_unflatten(in_tree, args)
-  pair_out = yield py_args, {}
+  pair_out = f(*py_args)
   if not isinstance(pair_out, (list, tuple)) or len(pair_out) != 2:
     msg = (f"Custom VJP fwd rule {fwd_name} for function {primal_name} "
            "must produce a pair (list or tuple of length two) where the first "
@@ -710,16 +712,17 @@ def _flatten_fwd(symbolic_zeros, primal_name, fwd_name, in_tree, maybe_out_type,
            "shapes/dtypes of:\n"
            f"""    {str(ty_tree_).replace("'", "")}""")
       raise TypeError(m)
-  yield (*res, *primals_out), (out_tree, res_tree)
+  store.store((out_tree, res_tree))
+  return (*res, *primals_out)
 
-@lu.transformation
-def _flatten_bwd(in_tree, in_avals, out_trees, *args):
+@lu.transformation2
+def _flatten_bwd(f, in_tree, in_avals, out_trees, *args):
   out_tree, res_tree = out_trees()
   assert len(args) == res_tree.num_leaves + out_tree.num_leaves
   res, cts_out = split_list(args, [res_tree.num_leaves])
   py_res = tree_unflatten(res_tree, res)
   py_cts_out = tree_unflatten(out_tree, cts_out)
-  py_cts_in = yield (py_res, py_cts_out), {}
+  py_cts_in = f(py_res, py_cts_out)
   if isinstance(py_cts_in, list) and len(py_cts_in) == len(treedef_children(in_tree)):
     py_cts_in = tuple(py_cts_in)
   # For each None in py_cts_in, indicating an argument for which the rule
@@ -775,7 +778,7 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
                f"to an input of shape/dtype {a.str_short()}.")
         raise ValueError(msg)
       results.append(ct)
-  yield results
+  return results
 
 # TODO(mattjj): remove both these exceptions to cotangent compatibility check
 def _temporary_dtype_exception(a, a_) -> bool:
@@ -1425,11 +1428,11 @@ def optimize_remat_of_custom_vjp_fwd(
 
   return wrapped_fwd
 
-@lu.transformation
-def _fix_fwd_args(*args):
+@lu.transformation2
+def _fix_fwd_args(f, *args):
   args = [(x, True) for x in args]
   args = [x for pair in args for x in pair]
-  yield (yield args, {})
+  return f(*args)
 
 def _remat_opt_impl(
     *args,
@@ -1531,6 +1534,8 @@ def _remat_opt_transpose(
       "remat optimization for custom_vjp does not support higher-order AD")
 
 def _remat_opt_dce(used_outs: list[bool], eqn: core.JaxprEqn):
+  if not any(used_outs) and not pe.has_effects(eqn):
+    return [False] * len(eqn.invars), None
   used_res, used_prims = split_list(used_outs, [eqn.params["num_res"]])
   outvars = [v for used, v in zip(used_outs, eqn.outvars) if used]
   if any(used_res):

@@ -33,6 +33,8 @@ from jax._src.util import canonicalize_axis, set_module
 import numpy as np
 
 
+export = set_module("jax.numpy")
+
 _AT_INPLACE_WARNING = """\
 Because JAX arrays are immutable, jnp.ufunc.at() cannot operate inplace like
 np.ufunc.at(). Instead, you can pass inplace=False and capture the result; e.g.
@@ -40,7 +42,7 @@ np.ufunc.at(). Instead, you can pass inplace=False and capture the result; e.g.
 """
 
 
-@set_module('jax.numpy')
+@export
 class ufunc:
   """Universal functions which operation element-by-element on arrays.
 
@@ -586,6 +588,7 @@ class ufunc:
     return result.reshape(*np.shape(A), *np.shape(B))
 
 
+@export
 def frompyfunc(func: Callable[..., Any], /, nin: int, nout: int,
                *, identity: Any = None) -> ufunc:
   """Create a JAX ufunc from an arbitrary JAX-compatible scalar function.

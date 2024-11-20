@@ -53,6 +53,22 @@ def _is_required_cuda_version_satisfied(cuda_version):
   else:
     return int(version.split()[-1]) >= cuda_version
 
+
+def osp_linalg_toeplitz(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarray:
+  """scipy.linalg.toeplitz with v1.17+ batching semantics."""
+  if scipy_version >= (1, 17, 0):
+    return scipy.linalg.toeplitz(c, r)
+  elif r is None:
+    c = np.atleast_1d(c)
+    return np.vectorize(
+      scipy.linalg.toeplitz, signature="(m)->(m,m)", otypes=(c.dtype,))(c)
+  else:
+    c = np.atleast_1d(c)
+    r = np.atleast_1d(r)
+    return np.vectorize(
+      scipy.linalg.toeplitz, signature="(m),(n)->(m,n)", otypes=(np.result_type(c, r),))(c, r)
+
+
 class NumpyLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
@@ -234,11 +250,11 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     compute_left_eigenvectors=[False, True],
     compute_right_eigenvectors=[False, True],
   )
-  # TODO(phawkins): enable when there is an eigendecomposition implementation
-  # for GPU/TPU.
-  @jtu.run_on_devices("cpu")
+  @jtu.run_on_devices("cpu", "gpu")
   def testEig(self, shape, dtype, compute_left_eigenvectors,
               compute_right_eigenvectors):
+    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
+      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     rng = jtu.rand_default(self.rng())
     n = shape[-1]
     args_maker = lambda: [rng(shape, dtype)]
@@ -277,12 +293,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     compute_left_eigenvectors=[False, True],
     compute_right_eigenvectors=[False, True],
   )
-  # TODO(phawkins): enable when there is an eigendecomposition implementation
-  # for GPU/TPU.
-  @jtu.run_on_devices("cpu")
+  @jtu.run_on_devices("cpu", "gpu")
   def testEigHandlesNanInputs(self, shape, dtype, compute_left_eigenvectors,
                               compute_right_eigenvectors):
     """Verifies that `eig` fails gracefully if given non-finite inputs."""
+    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
+      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     a = jnp.full(shape, jnp.nan, dtype)
     results = lax.linalg.eig(
         a, compute_left_eigenvectors=compute_left_eigenvectors,
@@ -293,15 +309,15 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   @jtu.sample_product(
     shape=[(4, 4), (5, 5), (8, 8), (7, 6, 6)],
     dtype=float_types + complex_types,
-  )
-  # TODO(phawkins): enable when there is an eigendecomposition implementation
-  # for GPU/TPU.
-  @jtu.run_on_devices("cpu")
+ )
+  @jtu.run_on_devices("cpu", "gpu")
   def testEigvalsGrad(self, shape, dtype):
     # This test sometimes fails for large matrices. I (@j-towns) suspect, but
     # haven't checked, that might be because of perturbations causing the
     # ordering of eigenvalues to change, which will trip up check_grads. So we
     # just test on small-ish matrices.
+    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
+      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     a, = args_maker()
@@ -313,10 +329,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     shape=[(4, 4), (5, 5), (50, 50)],
     dtype=float_types + complex_types,
   )
-  # TODO: enable when there is an eigendecomposition implementation
-  # for GPU/TPU.
-  @jtu.run_on_devices("cpu")
+  @jtu.run_on_devices("cpu", "gpu")
   def testEigvals(self, shape, dtype):
+    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
+      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     a, = args_maker()
@@ -324,9 +340,11 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     w2 = jnp.linalg.eigvals(a)
     self.assertAllClose(w1, w2, rtol={np.complex64: 1e-5, np.complex128: 2e-14})
 
-  @jtu.run_on_devices("cpu")
+  @jtu.run_on_devices("cpu", "gpu")
   def testEigvalsInf(self):
     # https://github.com/jax-ml/jax/issues/2661
+    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
+      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     x = jnp.array([[jnp.inf]])
     self.assertTrue(jnp.all(jnp.isnan(jnp.linalg.eigvals(x))))
 
@@ -334,8 +352,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     shape=[(1, 1), (4, 4), (5, 5)],
     dtype=float_types + complex_types,
   )
-  @jtu.run_on_devices("cpu")
+  @jtu.run_on_devices("cpu", "gpu")
   def testEigBatching(self, shape, dtype):
+    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
+      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     rng = jtu.rand_default(self.rng())
     shape = (10,) + shape
     args = rng(shape, dtype)
@@ -1990,11 +2010,11 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(root, expected, check_dtypes=False)
 
   @jtu.sample_product(
-    cshape=[(), (4,), (8,), (3, 7), (0, 5, 1)],
+    cshape=[(), (4,), (8,), (4, 7), (2, 1, 5)],
     cdtype=float_types + complex_types,
-    rshape=[(), (3,), (7,), (2, 1, 4), (19, 0)],
+    rshape=[(), (3,), (7,), (4, 4), (2, 4, 0)],
     rdtype=float_types + complex_types + int_types)
-  def testToeplitzConstrcution(self, rshape, rdtype, cshape, cdtype):
+  def testToeplitzConstruction(self, rshape, rdtype, cshape, cdtype):
     if ((rdtype in [np.float64, np.complex128]
          or cdtype in [np.float64, np.complex128])
         and not config.enable_x64.value):
@@ -2007,10 +2027,11 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(cshape, cdtype), rng(rshape, rdtype)]
-    with jtu.strict_promotion_if_dtypes_match([rdtype, cdtype]):
-      self._CheckAgainstNumpy(jtu.promote_like_jnp(osp.linalg.toeplitz),
-                              jsp.linalg.toeplitz, args_maker)
-      self._CompileAndCheck(jsp.linalg.toeplitz, args_maker)
+    with jax.numpy_rank_promotion("allow"):
+      with jtu.strict_promotion_if_dtypes_match([rdtype, cdtype]):
+        self._CheckAgainstNumpy(jtu.promote_like_jnp(osp_linalg_toeplitz),
+                                jsp.linalg.toeplitz, args_maker)
+        self._CompileAndCheck(jsp.linalg.toeplitz, args_maker)
 
   @jtu.sample_product(
     shape=[(), (3,), (1, 4), (1, 5, 9), (11, 0, 13)],
@@ -2028,8 +2049,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(jtu.promote_like_jnp(osp.linalg.toeplitz),
-                            jsp.linalg.toeplitz, args_maker)
+    self._CheckAgainstNumpy(osp_linalg_toeplitz, jsp.linalg.toeplitz, args_maker)
     self._CompileAndCheck(jsp.linalg.toeplitz, args_maker)
 
   def testToeplitzConstructionWithKnownCases(self):

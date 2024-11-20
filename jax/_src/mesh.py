@@ -18,6 +18,7 @@ from __future__ import annotations
 import collections
 from collections.abc import Hashable, Sequence
 import contextlib
+import enum
 import functools
 import math
 import threading
@@ -101,6 +102,23 @@ def _get_local_mesh(global_mesh: Mesh, process_index: int) -> Mesh:
   return Mesh(global_mesh.devices[subcube_indices_tuple], global_mesh.axis_names)
 
 
+class AxisTypes(enum.Enum):
+  Auto = enum.auto()
+  User = enum.auto()
+  Collective = enum.auto()
+
+def axis_names_to_types(axis_types) -> dict[str, AxisTypes]:
+  if axis_types is None:
+    return {}
+  d = {}
+  for t, names in axis_types.items():
+    if isinstance(names, tuple):
+      for n in names:
+        d[n] = t
+    else:
+      d[names] = t
+  return d
+
 _mesh_object_dict = {}  # type: ignore
 
 
@@ -157,9 +175,11 @@ class Mesh(contextlib.ContextDecorator):
 
   devices: np.ndarray
   axis_names: tuple[MeshAxisName, ...]
+  axis_types: dict[AxisTypes, str | tuple[str, ...]] | None
 
   def __new__(cls, devices: np.ndarray | Sequence[xc.Device],
-              axis_names: str | Sequence[MeshAxisName]):
+              axis_names: str | Sequence[MeshAxisName],
+              axis_types: dict[AxisTypes, str | tuple[str, ...]] | None = None):
     if not isinstance(devices, np.ndarray):
       devices = np.array(devices)
     if isinstance(axis_names, str):
@@ -175,7 +195,10 @@ class Mesh(contextlib.ContextDecorator):
           f"devices.ndim == {devices.ndim} and "
           f"len(axis_names) == {len(axis_names)}.")
 
-    key = (axis_names, devices.shape, tuple(devices.flat))
+    # TODO(yashkatariya): If axis_types is None, set all axes to AUTO.
+    axis_types_tuple = (None if axis_types is None else
+                        tuple(axis_types.items()))
+    key = (axis_names, devices.shape, tuple(devices.flat), axis_types_tuple)
     val = _mesh_object_dict.get(key, None)
     if val is not None:
       return val
@@ -184,11 +207,13 @@ class Mesh(contextlib.ContextDecorator):
     self.devices = devices.copy()
     self.devices.flags.writeable = False
     self.axis_names = axis_names
+    self.axis_types = axis_types
+    self._axis_types_tuple = axis_types_tuple
     _mesh_object_dict[key] = self
     return self
 
   def __reduce__(self):
-    return (type(self), (self.devices, self.axis_names))
+    return (type(self), (self.devices, self.axis_names, self.axis_types))
 
   def __eq__(self, other):
     if not isinstance(other, Mesh):
@@ -199,12 +224,14 @@ class Mesh(contextlib.ContextDecorator):
       return True
     return (self.axis_names == other.axis_names and
             self.devices.shape == other.devices.shape and
+            self._axis_types_tuple == other._axis_types_tuple and
             self._internal_device_list == other._internal_device_list)
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
       self._hash = hash(
-          (self.axis_names, self._internal_device_list, self.devices.shape))
+          (self.axis_names, self._internal_device_list, self.devices.shape,
+           self._axis_types_tuple))
     return self._hash
 
   def __setattr__(self, name, value):
@@ -252,6 +279,10 @@ class Mesh(contextlib.ContextDecorator):
   @property
   def axis_sizes(self) -> tuple[int, ...]:
     return self.devices.shape
+
+  @functools.cached_property
+  def _name_to_type(self):
+    return axis_names_to_types(self.axis_types)
 
   @property
   def size(self):
@@ -301,7 +332,8 @@ class Mesh(contextlib.ContextDecorator):
   def _repr(self):
     if self.empty:
       return "Mesh(device_ids=[], axis_names=())"
-    return f"Mesh(device_ids={self.device_ids!r}, axis_names={self.axis_names!r})"
+    atr = '' if self.axis_types is None else f", axis_types={self.axis_types}"
+    return f"Mesh(device_ids={self.device_ids!r}, axis_names={self.axis_names!r}{atr})"
 
   def __repr__(self):
     return self._repr
@@ -313,7 +345,7 @@ class Mesh(contextlib.ContextDecorator):
 
   @functools.cached_property
   def abstract_mesh(self):
-    return AbstractMesh(self.shape_tuple)
+    return AbstractMesh(self.shape_tuple, self.axis_types)
 
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
@@ -338,25 +370,32 @@ class AbstractMesh:
   details.
   """
 
-  def __init__(self, shape_tuple: tuple[tuple[str, int], ...]):
+  def __init__(self, shape_tuple: tuple[tuple[str, int], ...],
+               axis_types: dict[AxisTypes, str | tuple[str, ...]] | None = None):
     self.shape_tuple = shape_tuple
+    self.axis_types = axis_types
     if self.shape_tuple:
       self._axis_names, self._axis_sizes = list(zip(*self.shape_tuple))
     else:
       self._axis_names, self._axis_sizes = (), ()
+    # TODO(yashkatariya): If axis_types is None, set all axes to AUTO.
+    self._axis_types_tuple = (None if axis_types is None else
+                              tuple(axis_types.items()))
 
   def __hash__(self):
-    return hash(self.shape_tuple)
+    return hash((self.shape_tuple, self._axis_types_tuple))
 
   def __eq__(self, other):
     if not isinstance(other, AbstractMesh):
       return False
     if id(self) == id(other):
       return True
-    return self.shape_tuple == other.shape_tuple
+    return (self.shape_tuple == other.shape_tuple and
+            self._axis_types_tuple == other._axis_types_tuple)
 
   def __repr__(self):
-    return f"AbstractMesh({self.shape_tuple})"
+    atr = '' if self.axis_types is None else f", axis_types={self.axis_types}"
+    return f"AbstractMesh({self.shape_tuple}{atr})"
 
   @property
   def axis_names(self):
@@ -365,6 +404,10 @@ class AbstractMesh:
   @property
   def axis_sizes(self) -> tuple[int, ...]:
     return self._axis_sizes
+
+  @functools.cached_property
+  def _name_to_type(self):
+    return axis_names_to_types(self.axis_types)
 
   @functools.cached_property
   def size(self):
@@ -381,6 +424,12 @@ class AbstractMesh:
   @property
   def empty(self):
     return self.size == 0
+
+  @functools.cached_property
+  def _are_all_axes_collective(self) -> bool:
+    if self.axis_types is None:
+      return False
+    return all(t == AxisTypes.Collective for t in self.axis_types.keys())
 
   @property
   def devices(self):

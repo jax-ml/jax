@@ -1040,20 +1040,20 @@ def _convert_jax_impl(impl_jax: Callable, *,
   return wrapped_tf
 
 
-@lu.transformation
-def _interpret_subtrace(in_avals: Sequence[core.ShapedArray],
+@lu.transformation2
+def _interpret_subtrace(f, in_avals: Sequence[core.ShapedArray],
                         *in_vals: TfVal):
   trace = TensorFlowTrace()
   in_tracers = tuple(
       TensorFlowTracer(trace, val, aval)
       for val, aval in zip(in_vals, in_avals))
   with core.set_current_trace(trace):
-    outs = yield in_tracers, {}  # type: Sequence[TfVal]
+    outs = f(*in_tracers)
   out_tracers: Iterable[TensorFlowTracer] = (
       map(trace.to_tf_tracer, outs))
   out_vals_with_avals: Sequence[tuple[TfVal, core.ShapedArray]] = (
       tuple((t.val, t.aval) for t in out_tracers))
-  yield out_vals_with_avals
+  return out_vals_with_avals
 
 
 def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args_tf: TfVal,
@@ -1726,6 +1726,7 @@ tf_impl[lax.atanh_p] = tf.math.atanh
 tf_impl[lax.asinh_p] = tf.math.asinh
 
 tf_impl[lax.sqrt_p] = tf.math.sqrt
+tf_impl[lax.square_p] = tf.math.square
 tf_impl[lax.rsqrt_p] = tf.math.rsqrt
 
 def _cbrt(x):

@@ -84,6 +84,8 @@ def is_cache_used(backend: xla_client.Client) -> bool:
         _cache_used = True
       return _cache_used
 
+  return False
+
 
 def get_file_cache(path: str) -> tuple[CacheInterface, str] | None:
   """Returns the file cache and the path to the cache."""

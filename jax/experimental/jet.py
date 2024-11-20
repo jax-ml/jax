@@ -141,40 +141,43 @@ def jet(fun, primals, series):
       if not treedef_is_leaf(treedef):
         raise ValueError(f"term {j} for argument {i} is not an array")
 
-  @lu.transformation_with_aux
-  def flatten_fun_output(*args):
-    ans = yield args, {}
-    yield tree_flatten(ans)
+  @lu.transformation_with_aux2
+  def flatten_fun_output(f, store, *args):
+    ans = f(*args)
+    ans, tree = tree_flatten(ans)
+    store.store(tree)
+    return ans
 
   f, out_tree = flatten_fun_output(lu.wrap_init(fun))
   out_primals, out_terms = jet_fun(jet_subtrace(f), order).call_wrapped(primals, series)
   return tree_unflatten(out_tree(), out_primals), tree_unflatten(out_tree(), out_terms)
 
-@lu.transformation
-def jet_fun(order, primals, series):
+@lu.transformation2
+def jet_fun(f, order, primals, series):
   tag = core.TraceTag()
-  out_primals, out_terms = yield (tag, order, primals, series), {}
+  out_primals, out_terms = f(tag, order, primals, series)
   out_terms = [[jnp.zeros_like(p)] * order if s is zero_series else s
                for p, s in zip(out_primals, out_terms)]
-  yield out_primals, out_terms
+  return out_primals, out_terms
 
-@lu.transformation
-def jet_subtrace(tag, order, primals, series):
+@lu.transformation2
+def jet_subtrace(f, tag, order, primals, series):
   with core.take_current_trace() as parent_trace:
     trace = JetTrace(tag, parent_trace, order)
     in_tracers = map(partial(JetTracer, trace), primals, series)
     with core.set_current_trace(trace):
-       ans = yield in_tracers, {}
+       ans = f(*in_tracers)
 
     out_primals, out_terms = unzip2(map(trace.to_primal_terms_pair, ans))
-    yield out_primals, out_terms
+    return out_primals, out_terms
 
-@lu.transformation_with_aux
-def traceable(in_tree_def, *primals_and_series):
+@lu.transformation_with_aux2
+def traceable(f, store, in_tree_def, *primals_and_series):
   primals_in, series_in = tree_unflatten(in_tree_def, primals_and_series)
-  primals_out, series_out = yield (primals_in, series_in), {}
+  primals_out, series_out = f(primals_in, series_in)
   out_flat, out_tree_def = tree_flatten((primals_out, series_out))
-  yield out_flat, out_tree_def
+  store.store(out_tree_def)
+  return out_flat
 
 
 class JetTracer(core.Tracer):
@@ -405,6 +408,7 @@ def def_comp(prim, comp):
 def_comp(lax.expm1_p, lambda x: lax.exp(x) - 1)
 def_comp(lax.log1p_p, lambda x: lax.log(1 + x))
 def_comp(lax.sqrt_p, lambda x: x ** 0.5)
+def_comp(lax.square_p, lambda x: x * x)
 def_comp(lax.rsqrt_p, lambda x: x ** -0.5)
 def_comp(lax.asinh_p, lambda x: lax.log(x + lax.sqrt(lax.square(x) + 1)))
 def_comp(lax.acosh_p, lambda x: lax.log(x + lax.sqrt(lax.square(x) - 1)))

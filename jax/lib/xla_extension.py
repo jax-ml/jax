@@ -24,7 +24,6 @@ mlir = _xe.mlir
 pmap_lib = _xe.pmap_lib
 profiler = _xe.profiler
 pytree = _xe.pytree
-ArrayImpl = _xe.ArrayImpl
 Device = _xe.Device
 DistributedRuntimeClient = _xe.DistributedRuntimeClient
 HloModule = _xe.HloModule
@@ -33,6 +32,28 @@ OpSharding = _xe.OpSharding
 PjitFunctionCache = _xe.PjitFunctionCache
 PjitFunction = _xe.PjitFunction
 PmapFunction = _xe.PmapFunction
-XlaRuntimeError = _xe.XlaRuntimeError
 
+_deprecations = {
+    # Added Nov 20 2024
+    "ArrayImpl": (
+        "jax.lib.xla_extension.ArrayImpl is deprecated; use jax.Array instead.",
+        _xe.ArrayImpl,
+    ),
+    "XlaRuntimeError": (
+        "jax.lib.xla_extension.XlaRuntimeError is deprecated; use jax.errors.JaxRuntimeError instead.",
+        _xe.XlaRuntimeError,
+    ),
+}
+
+import typing as _typing
+
+if _typing.TYPE_CHECKING:
+  ArrayImpl = _xe.ArrayImpl
+  XlaRuntimeError = _xe.XlaRuntimeError
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del _typing
 del _xe

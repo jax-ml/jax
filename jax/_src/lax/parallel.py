@@ -24,9 +24,11 @@ import math
 
 from jax import tree_util
 from jax._src import core
+from jax._src import config
 from jax._src import dispatch
 from jax._src import dtypes
-from jax._src import sharding_impls
+from jax._src.sharding_impls import (SPMDAxisContext, ShardingContext,
+                                     NamedSharding, PartitionSpec as P)
 from jax._src.core import AxisName, ShapedArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -635,9 +637,15 @@ def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
     if len(pos_axes) != 0:
       raise ValueError(f"axis_index_groups can only be used with reductions over "
                        f"named axes, but got: {axes}")
-  out_avals = [
-      ShapedArray(lax._reduce_op_shape_rule(arg, axes=pos_axes),
-                  arg.dtype) for arg in args]
+  if config.sharding_in_types.value:
+    out_avals = [
+        ShapedArray(lax._reduce_op_shape_rule(arg, axes=pos_axes), arg.dtype,
+                    sharding=lax._reduce_op_sharding_rule(arg, axes=pos_axes))
+        for arg in args
+    ]
+  else:
+    out_avals = [ShapedArray(lax._reduce_op_shape_rule(arg, axes=pos_axes), arg.dtype)
+                 for arg in args]
   return out_avals, {core.NamedAxisEffect(axis) for axis in named_axes}
 
 def _check_axis_names(axes):
@@ -673,10 +681,7 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
       _replica_groups(ctx.module_context.axis_env, named_axes,
                       axis_index_groups))
   axis_context = ctx.module_context.axis_context
-  is_spmd = isinstance(
-      axis_context,
-      (sharding_impls.SPMDAxisContext, sharding_impls.ShardingContext),
-  )
+  is_spmd = isinstance(axis_context, (SPMDAxisContext, ShardingContext))
 
   def all_reduce(aval, x):
     if is_spmd:
@@ -694,7 +699,11 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
     else:
       op = hlo.AllReduceOp(
           [x.type], [x], replica_groups=replica_groups, **other_args)
-    scalar_aval = core.ShapedArray((), aval.dtype)
+    if config.sharding_in_types.value:
+      scalar_aval = core.ShapedArray(
+          (), aval.dtype, sharding=NamedSharding(aval.sharding.mesh, P()))
+    else:
+      scalar_aval = core.ShapedArray((), aval.dtype)
     scalar_type = mlir.aval_to_ir_type(scalar_aval)
     reducer_block = op.regions[0].blocks.append(scalar_type, scalar_type)
     with ir.InsertionPoint(reducer_block):
@@ -778,7 +787,7 @@ def _ppermute_lowering(ctx, x, *, axis_name, perm):
 
   axis_context = ctx.module_context.axis_context
   is_manual = (
-      isinstance(axis_context, sharding_impls.SPMDAxisContext)
+      isinstance(axis_context, SPMDAxisContext)
       and axis_context.manual_axes
   )
   if is_manual:
@@ -896,7 +905,7 @@ def _all_to_all_lowering(
     raise ValueError('Replica groups must be equally sized')
   is_spmd = isinstance(
       ctx.module_context.axis_context,
-      (sharding_impls.SPMDAxisContext, sharding_impls.ShardingContext),
+      (SPMDAxisContext, ShardingContext),
   )
   if is_spmd:
     # We want to emit the all-gather with global device IDs and a unique
@@ -1129,10 +1138,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
   x_aval, = ctx.avals_in
   out_aval, = ctx.avals_out
   axis_context = ctx.module_context.axis_context
-  is_spmd = isinstance(
-      axis_context,
-      (sharding_impls.SPMDAxisContext, sharding_impls.ShardingContext),
-  )
+  is_spmd = isinstance(axis_context, (SPMDAxisContext, ShardingContext))
   if not tiled:
     new_shape = list(x_aval.shape)
     new_shape.insert(all_gather_dimension, 1)
@@ -1260,7 +1266,7 @@ def _reduce_scatter_lowering(
   axis_context = ctx.module_context.axis_context
   is_spmd = isinstance(
       axis_context,
-      (sharding_impls.SPMDAxisContext, sharding_impls.ShardingContext),
+      (SPMDAxisContext, ShardingContext),
   )
   if is_spmd:
     # We want to emit the all-gather with global device IDs and a unique
@@ -1489,7 +1495,7 @@ def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
   axis_context = ctx.module_context.axis_context
   is_spmd = isinstance(
       axis_context,
-      (sharding_impls.SPMDAxisContext, sharding_impls.ShardingContext),
+      (SPMDAxisContext, ShardingContext),
   )
   if is_spmd:
     device_id = hlo.partition_id()

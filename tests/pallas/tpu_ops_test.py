@@ -233,6 +233,24 @@ class OpsTest(PallasBaseTest):
 
     assert (run(cond, lhs, rhs) == lhs).all()
 
+  def test_logical_and_relayouted_mask(self):
+    def get_mask(x_ref):
+      x = x_ref[...] == 1
+      iota = jax.lax.broadcasted_iota(jnp.int32, x_ref.shape, 1)
+      iota = iota > 7
+      return jnp.logical_and(x, iota)
+
+    def body(x_ref, y_ref):
+      y_ref[...] = jnp.where(get_mask(x_ref), 0.0, -1.0)
+
+    shape = (2, 512)
+    out = jax.ShapeDtypeStruct(shape, jnp.float32)
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(shape)
+    result = self.pallas_call(body, out_shape=out)(x)
+    expected = jnp.ones(x.shape, dtype=jnp.float32)
+    expected = expected.at[...].set(jnp.where(get_mask(x), 0.0, -1.0))
+    np.testing.assert_array_equal(result, expected)
+
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True

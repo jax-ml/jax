@@ -287,13 +287,15 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertEqual(f(sticky).devices(), system_default_devices)
     self.assertEqual(f(1).devices(), system_default_devices)
 
-  # TODO(skye): make this work!
   def test_jit_default_platform(self):
-    with self.assertRaisesWithLiteralMatch(
-        ValueError, "jax.default_device must be passed a Device object "
-        "(e.g. `jax.devices('cpu')[0]`), got: 'cpu'"):
       with jax.default_device("cpu"):
-        jax.jit(lambda x: x + 1)(1)
+        result = jax.jit(lambda x: x + 1)(1)
+      self.assertEqual(result.device.platform, "cpu")
+      self.assertEqual(result.device, jax.local_devices(backend="cpu")[0])
+
+      result = jax.jit(lambda x: x + 1)(1)
+      self.assertEqual(result.device.platform, jax.default_backend())
+      self.assertEqual(result.device, jax.local_devices()[0])
 
   def test_complex_support(self):
     self.assertEqual(jit(lambda x: x + 1)(1 + 1j), 2 + 1j)
@@ -4623,7 +4625,7 @@ class APITest(jtu.JaxTestCase):
       jax.jit(operator.add)(42, 24)
 
   @parameterized.named_parameters([
-      {"testcase_name": f"{dtype}", "dtype": dtype}
+      {"testcase_name": f"{np.dtype(dtype)}", "dtype": dtype}
       for dtype in jtu.dtypes.custom_floats])
   def test_jit_custom_floats(self, dtype):
     f = lambda x: x + 1
@@ -4804,6 +4806,21 @@ class APITest(jtu.JaxTestCase):
 
     jit_add_one_dupe = jax.jit(add_one_and_dupe, inline=True)
     jax.eval_shape(jit_add_one_dupe, 0)  # don't crash
+
+  def test_use_direct_linearize(self):
+
+    def check_invariant_to_use_direct_linearize(f):
+      with config.use_direct_linearize(False):
+        ans1 = f()
+      with config.use_direct_linearize(True):
+        ans2 = f()
+
+      self.assertEqual(ans1, ans2)
+
+    def sin_of_sin(x):
+      return jnp.sin(jnp.sin(x))
+
+    check_invariant_to_use_direct_linearize(lambda: jax.grad(sin_of_sin)(1.0))
 
 
 class RematTest(jtu.JaxTestCase):

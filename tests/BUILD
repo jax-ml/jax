@@ -267,6 +267,9 @@ jax_multiplatform_test(
     backend_tags = {
         "tpu": ["requires-mem:16g"],  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
     },
+    enable_configs = [
+        "tpu_v3_2x2_shardy",
+    ],
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
@@ -312,6 +315,21 @@ jax_multiplatform_test(
     enable_backends = ["gpu"],
     enable_configs = [
         "gpu_2gpu_shardy",
+    ],
+    tags = [
+        "config-cuda-only",
+    ],
+    deps = [
+        "//jax:experimental",
+    ],
+)
+
+jax_multiplatform_test(
+    name = "mock_gpu_topology_test",
+    srcs = ["mock_gpu_topology_test.py"],
+    enable_backends = ["gpu"],
+    enable_configs = [
+        "gpu_h100",
     ],
     tags = [
         "config-cuda-only",
@@ -647,6 +665,13 @@ jax_multiplatform_test(
         "gpu": 40,
         "tpu": 40,
     },
+)
+
+jax_multiplatform_test(
+    name = "magma_linalg_test",
+    srcs = ["magma_linalg_test.py"],
+    enable_backends = ["gpu"],
+    deps = py_deps("magma"),
 )
 
 jax_multiplatform_test(
@@ -1314,6 +1339,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "for_loop_test",
     srcs = ["for_loop_test.py"],
+    disable_configs = [
+        "tpu_v5p_1x1",  # TODO(b/377666550): enable once XLA is fixed.
+    ],
     shard_count = {
         "cpu": 20,
         "gpu": 10,
@@ -1520,6 +1548,7 @@ jax_multiplatform_test(
     srcs = ["cudnn_fusion_test.py"],
     enable_backends = [],
     enable_configs = [
+        "gpu_a100",
         "gpu_h100",
     ],
     tags = ["multiaccelerator"],

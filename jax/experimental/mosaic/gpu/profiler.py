@@ -14,16 +14,15 @@
 # ==============================================================================
 
 import contextlib
-import ctypes
-import functools
 import itertools
 import json
 import math
+from typing import Callable, ParamSpec, TypeVar
 import warnings
 
 import jax
-from jax._src.interpreters import mlir
 from jax._src.lib import xla_client
+from jax.extend import ffi
 import jax.numpy as jnp
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
@@ -34,72 +33,79 @@ import numpy as np
 
 from .utils import *  # noqa: F403
 
-
 try:
   from jax._src.lib import mosaic_gpu as mosaic_gpu_lib
-
-  xla_client.register_custom_call_target(
-      "mosaic_gpu_record_event",
-      mosaic_gpu_lib._mosaic_gpu_ext._record_event_capsule(),
-      platform="CUDA",
-  )
 except ImportError:
-  pass
+  has_registrations = False
+else:
+  # TODO(slebedev): Remove the if once the minimum jaxlib is 0.4.36.
+  has_registrations = hasattr(mosaic_gpu_lib._mosaic_gpu_ext, "registrations")
+  if has_registrations:
+    for name, handler in mosaic_gpu_lib._mosaic_gpu_ext.registrations():
+      xla_client.register_custom_call_target(
+          name, handler, platform="CUDA", api_version=1
+      )
 
 # ruff: noqa: F405
 # mypy: ignore-errors
 
+T = TypeVar("T")
+P = ParamSpec("P")
 
-record_event_p = jax.core.Primitive("record_event")
-record_event_p.multiple_results = True
-
-@record_event_p.def_abstract_eval
-def _record_event_abstract_eval(*args, event):
-  del event  # Unused.
-  return args
-
-@functools.partial(mlir.register_lowering, record_event_p, platform="cuda")
-def _record_event_lowering_rule(ctx, *args, event):
-  ptr_bytes = ctypes.cast(event, ctypes.c_void_p).value.to_bytes(
-      8, byteorder="little"
-  )  # pytype: disable=attribute-error
-  op = mlir.custom_call(
-      "mosaic_gpu_record_event",
-      result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
-      operands=args,
-      backend_config=ptr_bytes,
-      operand_output_aliases={i: i for i in range(len(args))},
-  )
-  return op.results
-
-def _record_event(args, event):
+def _event_record(args, *, copy_before):
   flat_args, treedef = jax.tree.flatten(args)
-  return jax.tree.unflatten(
-      treedef, record_event_p.bind(*flat_args, event=event)
-  )
+  event, *flat_outs = ffi.ffi_call(
+      "mgpu_event_record",
+      result_shape_dtypes=(jax.core.ShapedArray((), jnp.uint64), *flat_args),
+      input_output_aliases={i: i + 1 for i in range(len(flat_args))},
+  )(*flat_args, copy_before=copy_before)
+  return event, treedef.unflatten(flat_outs)
 
-def measure(f, *args, **kwargs):
-  # TODO(apaszke): Raise if this is called under jit.
-  start_event = mosaic_gpu_lib._mosaic_gpu_ext._gpu_event_create()
-  end_event = mosaic_gpu_lib._mosaic_gpu_ext._gpu_event_create()
-  try:
 
-    @jax.jit
-    def run(*args, **kwargs):
-      flat_args, treedef = jax.tree.flatten((args, kwargs))
-      flat_args = _record_event(flat_args, start_event)
-      args, kwargs = jax.tree.unflatten(treedef, flat_args)
-      return _record_event(f(*args, **kwargs), end_event)
+def _event_elapsed(start_event, end_event):
+  return ffi.ffi_call(
+      "mgpu_event_elapsed",
+      result_shape_dtypes=jax.core.ShapedArray((), jnp.float32),
+  )(start_event, end_event)
 
-    jax.block_until_ready(run(*args, **kwargs))  # Warmup.
-    results = jax.block_until_ready(run(*args, **kwargs))
-    elapsed = mosaic_gpu_lib._mosaic_gpu_ext._gpu_event_elapsed(
-        start_event, end_event
+
+def measure(
+    f: Callable[P, T], *args: P.args, **kwargs: P.kwargs
+) -> tuple[T, float]:
+  """Measures the time it takes to execute the function on the GPU.
+
+  Args:
+    f: The function to measure. It must accept at least one argument and return
+      at least one output to be measurable.
+    *args: The arguments to pass to ``f``.
+    **kwargs: The keyword arguments to pass to ``f``.
+
+  Returns:
+    The return value of ``f`` and the elapsed time in  milliseconds.
+  """
+  if not has_registrations:
+    raise RuntimeError(
+        "This function requires jaxlib >=0.4.36 with CUDA support."
     )
-  finally:
-    mosaic_gpu_lib._mosaic_gpu_ext._gpu_event_destroy(start_event)
-    mosaic_gpu_lib._mosaic_gpu_ext._gpu_event_destroy(end_event)
-  return results, elapsed
+
+  if not (args or kwargs):
+    # We require at least one argument and at least one output to ensure
+    # that there is a data dependency between `_event_record` calls in
+    # the resulting HLO program.
+    raise ValueError("Can only measure functions with arguments")
+
+  @jax.jit
+  def run(*args, **kwargs):
+    start_event, (args, kwargs) = _event_record(
+        (args, kwargs), copy_before=True
+    )
+    end_event, outs = _event_record(f(*args, **kwargs), copy_before=False)
+    if jax.tree.structure(outs).num_leaves == 0:
+      raise ValueError("Can only measure functions with at least one output")
+    return outs, _event_elapsed(start_event, end_event)
+
+  outs, elapsed = run(*args, **kwargs)
+  return outs, float(elapsed)
 
 
 class ProfilerSpec:

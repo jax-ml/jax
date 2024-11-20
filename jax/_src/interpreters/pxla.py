@@ -690,15 +690,15 @@ def find_replicas(
   num_global_replicas = global_axis_size * jaxpr_replicas
   return ReplicaInfo(jaxpr_replicas, num_local_replicas, num_global_replicas)
 
-@lu.transformation
-def _change_argument_ranks(in_axes, out_axes_thunk, *args):
+@lu.transformation2
+def _change_argument_ranks(f, in_axes, out_axes_thunk, *args):
   args = tuple(
       arg if in_axis is None else jax.lax.squeeze(arg, dimensions=(in_axis,))
       for in_axis, arg in zip(in_axes, args)
   )
-  results = yield (args, {})
+  results = f(*args)
   out_axes = out_axes_thunk()
-  yield tuple(
+  return tuple(
       x if axis is None else jax.lax.expand_dims(x, dimensions=(axis,))
       for x, axis in zip(results, out_axes)
   )
@@ -723,7 +723,6 @@ def stage_parallel_callable(
       jaxpr, out_sharded_avals, consts, _ = pe.trace_to_jaxpr_dynamic(
           fun, sharded_avals, pe.debug_info_final(fun, "pmap"))
   jaxpr = api_util.jaxpr_debug_info(jaxpr, orig_fun.debug_info)
-  jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
 
   assert len(out_sharded_avals) == len(pci.out_axes), (
       len(out_sharded_avals), len(pci.out_axes))
@@ -1354,6 +1353,8 @@ def _pmap_partial_eval_custom_res_maker(params_known, aval):
 
 def _pmap_dce_rule(used_outputs, eqn):
   # just like pe.dce_jaxpr_call_rule, except handles in_axes / out_axes
+  if not any(used_outputs) and not pe.has_effects(eqn):
+    return [False] * len(eqn.invars), None
   axis_name = eqn.params["axis_name"]
   with core.extend_axis_env_nd([(axis_name, eqn.params["global_axis_size"])]):
     new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['call_jaxpr'], used_outputs)
@@ -1710,7 +1711,10 @@ ShardingInfo = tuple[
 
 
 def _get_default_device() -> xc.Device:
-  return config.default_device.value or xb.local_devices()[0]
+  if isinstance(config.default_device.value, str):
+    return xb.get_backend(config.default_device.value).local_devices()[0]
+  else:
+    return config.default_device.value or xb.local_devices()[0]
 
 
 def _get_and_check_device_assignment(
@@ -1783,7 +1787,6 @@ def _dce_jaxpr(closed_jaxpr, api_name, fun_name,
     donated_invars = tuple(x for i, x in enumerate(donated_invars) if i in kept_var_idx)
     del kept_const_idx
 
-  jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   return closed_jaxpr, donated_invars, kept_var_idx, name_stack
 
@@ -2744,11 +2747,11 @@ def _maybe_get_and_check_out_shardings(
   return new_out_shardings
 
 
-def finalize_out_shardings(out_shardings, device_assignment):
+def finalize_shardings(shardings, device_assignment):
   if len(device_assignment) == 1:
     return [SingleDeviceSharding(device_assignment[0], memory_kind=o.memory_kind)
-            if isinstance(o, GSPMDSharding) else o for o in out_shardings]
-  return out_shardings
+            if isinstance(o, GSPMDSharding) else o for o in shardings]
+  return shardings
 
 
 @dataclasses.dataclass
@@ -2889,7 +2892,8 @@ class UnloadedMeshExecutable:
         in_shardings, out_shardings, global_in_avals, global_out_avals,
         intermediate_shardings, context_mesh)
 
-    out_shardings = finalize_out_shardings(out_shardings, da)
+    in_shardings = finalize_shardings(in_shardings, da)
+    out_shardings = finalize_shardings(out_shardings, da)
 
     return UnloadedMeshExecutable(
         xla_executable=xla_executable,

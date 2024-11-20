@@ -1,7 +1,8 @@
 absl-py
 ipython>=8.8.0  # 8.7.0 has ipython3 lexer error
+pydata-sphinx-theme==0.14.4  # v0.15 breaks sidebar toggling
 sphinx>=7.3.2,<8.0  # 7.3.0 breaks sphinx-book-theme; 8.0 breaks myst-nb 1.1
-sphinx-book-theme>=1.0.1  # Older versions fail to pin pydata-sphinx-theme
+sphinx-book-theme==1.1.1  # v1.1.2 requires pydata-sphinx-theme v0.15
 sphinx-copybutton>=0.5.0
 sphinx-remove-toctrees
 sphinx-design

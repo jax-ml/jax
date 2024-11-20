@@ -44,6 +44,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes as _dtypes
+from jax._src import lib as _jaxlib
 from jax._src import linear_util as lu
 from jax._src import monitoring
 from jax._src import pjit as pjit_lib
@@ -451,13 +452,25 @@ def assert_num_jit_and_pmap_compilations(times):
                          f"but executed {count[0]}")
 
 
+def jaxlib_version() -> tuple[int, ...]:
+  return _jaxlib.version
+
+
 def device_under_test():
   return _TEST_DUT.value or xla_bridge.get_backend().platform
 
 def supported_dtypes():
   if device_under_test() == "tpu":
     types = {np.bool_, np.int8, np.int16, np.int32, np.uint8, np.uint16,
-             np.uint32, _dtypes.bfloat16, np.float16, np.float32, np.complex64}
+             np.uint32, _dtypes.bfloat16, np.float16, np.float32, np.complex64,
+             _dtypes.float8_e4m3fn, _dtypes.float8_e4m3b11fnuz,
+             _dtypes.float8_e5m2}
+  elif device_under_test() == "gpu":
+    types = {np.bool_, np.int8, np.int16, np.int32, np.int64,
+             np.uint8, np.uint16, np.uint32, np.uint64,
+             _dtypes.bfloat16, np.float16, np.float32, np.float64,
+             np.complex64, np.complex128, _dtypes.float8_e4m3fn,
+             _dtypes.float8_e5m2}
   elif device_under_test() == "METAL":
     types = {np.int32, np.uint32, np.float32}
   else:
@@ -537,6 +550,14 @@ def is_cuda_compute_capability_at_least(capability: str) -> bool:
   target = tuple(int(x) for x in capability.split("."))
   current = tuple(int(x) for x in d.compute_capability.split("."))
   return current >= target
+
+def is_cuda_compute_capability_equal(capability: str) -> bool:
+  if not is_device_cuda():
+    return False
+  d, *_ = jax.local_devices(backend="gpu")
+  target = tuple(int(x) for x in capability.split("."))
+  current = tuple(int(x) for x in d.compute_capability.split("."))
+  return current == target
 
 def _get_device_tags():
   """returns a set of tags defined for the device under test"""
@@ -955,6 +976,31 @@ def rand_unique_int(rng, high=None):
   def fn(shape, dtype):
     return rng.choice(np.arange(high or math.prod(shape), dtype=dtype),
                       size=shape, replace=False)
+  return fn
+
+def rand_indices_unique_along_axis(rng):
+  """Sample an array of given shape containing indices up to dim (exclusive),
+  such that the indices are unique along the given axis.
+  Optionally, convert some of the resulting indices to negative indices."""
+  def fn(dim, shape, axis, allow_negative=True):
+    batch_size = math.prod(shape[:axis] + shape[axis:][1:])
+    idx = [
+      rng.choice(dim, size=shape[axis], replace=False)
+      for _ in range(batch_size)
+    ]
+    idx = np.array(idx).reshape(batch_size, shape[axis])
+    idx = idx.reshape(shape[:axis] + shape[axis:][1:] + (shape[axis],))
+    idx = np.moveaxis(idx, -1, axis)
+
+    # assert that indices are unique along the given axis
+    count = partial(np.bincount, minlength=dim)
+    assert (np.apply_along_axis(count, axis, idx) <= 1).all()
+
+    if allow_negative:
+      mask = rng.choice([False, True], idx.shape)
+      idx[mask] -= dim
+    return idx
+
   return fn
 
 def rand_bool(rng):
@@ -1431,10 +1477,19 @@ class _LazyDtypes:
 
   @_cached_property
   def custom_floats(self):
-    return [np.dtype(t) for t in [
-      _dtypes.bfloat16, _dtypes.float8_e4m3b11fnuz,
-      _dtypes.float8_e4m3fn, _dtypes.float8_e4m3fnuz,
-      _dtypes.float8_e5m2, _dtypes.float8_e5m2fnuz]]
+    float_dtypes = [
+      _dtypes.bfloat16,
+      _dtypes.float8_e4m3b11fnuz,
+      _dtypes.float8_e4m3fn,
+      _dtypes.float8_e4m3fnuz,
+      _dtypes.float8_e5m2,
+      _dtypes.float8_e5m2fnuz,
+    ]
+    if _dtypes.float8_e3m4 is not None:
+      float_dtypes += [_dtypes.float8_e3m4]
+    if _dtypes.float8_e4m3 is not None:
+      float_dtypes += [_dtypes.float8_e4m3]
+    return self.supported(float_dtypes)
 
   @_cached_property
   def floating(self):

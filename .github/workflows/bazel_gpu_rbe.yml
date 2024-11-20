@@ -1,4 +1,4 @@
-name: Run Bazel GPU tests (RBE)
+name: CI - Bazel GPU tests (RBE)
 
 on:
   # pull_request:
@@ -15,26 +15,28 @@ on:
         - 'yes'
         - 'no'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build:
+  run_tests:
+    if: github.event.repository.fork == false
     strategy:
       matrix:
         runner: ["linux-x86-n2-16"]
 
     runs-on: ${{ matrix.runner }}
-    container:
-      image: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest"
+    container: 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest'
 
     env:
-      JAXCI_CLONE_MAIN_XLA: 1
-      JAXCI_HERMETIC_PYTHON_VERSION: 3.12
+      JAXCI_HERMETIC_PYTHON_VERSION: "3.12"
 
     steps:
       - uses: actions/checkout@v3
-      # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@main
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      - name: Run Bazel GPU tests using RBE
+      - name: Run Bazel GPU Tests with RBE
         run: ./ci/run_bazel_test_gpu_rbe.sh

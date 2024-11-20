@@ -20,9 +20,13 @@ from jax import random as jax_random
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic import random as plrandom
 from jax.experimental import pallas as pl
+from jax.experimental import shard_map
 from jax.experimental.pallas import tpu as pltpu
+from jax.experimental.pallas.ops.tpu.random import threefry  # pylint: disable=unused-import  # noqa: F401
 import jax.numpy as jnp
 import numpy as np
+
+P = jax.sharding.PartitionSpec
 
 
 jax.config.parse_flags_with_absl()
@@ -252,6 +256,53 @@ class ThreefryTest(parameterized.TestCase):
           threefry_key[0], shape=o_shape.shape, minval=0.0, maxval=1.0
       )
     np.testing.assert_array_equal(result, jax_result)
+
+  @parameterized.parameters(
+      ((512, 512),),
+      ((137, 275),),  # Non block-aligned shape
+      ((4, 512, 512),),  # Greater than 2D shape
+      ((34,),),  # 1D
+      (tuple(),),  # 0D
+  )
+  def test_threefry_kernel_matches_jax_threefry(self, shape):
+    with jax.threefry_partitionable(True):
+      key_jax = jax_random.key(0, impl="threefry2x32")
+      jax_gen = jax_random.bits(key_jax, shape=shape)
+      key_pl = jax_random.key(0, impl="pallas_threefry2x32")
+      pl_gen = jax_random.bits(key_pl, shape=shape)
+
+    np.testing.assert_array_equal(jax_gen, pl_gen)
+
+  @parameterized.parameters(
+      ((256, 256),),
+      ((35, 113),),  # Non block-aligned shape
+      ((331,),),  # 1D
+  )
+  def test_threefry_kernel_matches_jax_threefry_sharded(self, shape):
+    if jax.device_count() < 2:
+      self.skipTest("Need at least 2 devices")
+    num_devices = jax.device_count()
+    partition = P("x")
+    mesh = jax.make_mesh((num_devices,), ("x",))
+    sharding = jax.sharding.NamedSharding(mesh, partition)
+
+    with jax.threefry_partitionable(True):
+      key_jax = jax_random.split(
+          jax_random.key(0, impl="threefry2x32"), num_devices)
+      key_pallas = jax_random.split(
+          jax_random.key(0, impl="pallas_threefry2x32"), num_devices)
+      key_jax = jax.device_put(key_jax, sharding)
+      key_pallas = jax.device_put(key_pallas, sharding)
+      generate = shard_map.shard_map(
+          lambda x: jax_random.bits(x[0], shape=shape),
+          mesh=mesh,
+          in_specs=partition,
+          out_specs=partition,
+      )
+      jax_gen = generate(key_jax)
+      pl_gen = generate(key_pallas)
+
+    np.testing.assert_array_equal(jax_gen, pl_gen)
 
 
 if __name__ == "__main__":

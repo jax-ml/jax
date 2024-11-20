@@ -68,11 +68,13 @@ def _ensure_str_tuple(x: str | Iterable[str]) -> tuple[str, ...]:
   else:
     return tuple(map(_ensure_str, x))
 
-@lu.transformation_with_aux
-def flatten_fun(in_tree, *args_flat):
+@lu.transformation_with_aux2
+def flatten_fun(f, store, in_tree, *args_flat):
   py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
-  ans = yield py_args, py_kwargs
-  yield tree_flatten(ans)
+  ans = f(*py_args, **py_kwargs)
+  ans, out_tree = tree_flatten(ans)
+  store.store(out_tree)
+  return ans
 
 def apply_flat_fun(fun, io_tree, *py_args):
   in_tree_expected, out_tree = io_tree
@@ -82,11 +84,13 @@ def apply_flat_fun(fun, io_tree, *py_args):
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
-@lu.transformation_with_aux
-def flatten_fun_nokwargs(in_tree, *args_flat):
+@lu.transformation_with_aux2
+def flatten_fun_nokwargs(f, store, in_tree, *args_flat):
   py_args = tree_unflatten(in_tree, args_flat)
-  ans = yield py_args, {}
-  yield tree_flatten(ans)
+  ans = f(*py_args)
+  ans, out_tree = tree_flatten(ans)
+  store.store(out_tree)
+  return ans
 
 def apply_flat_fun_nokwargs(fun, io_tree, py_args):
   in_tree_expected, out_tree = io_tree
@@ -118,17 +122,18 @@ def flattened_fun_in_tree(
   else:
     return in_tree, lambda: out_tree_store.val, has_kwargs
 
-@lu.transformation_with_aux
-def flatten_fun_nokwargs2(in_tree, *args_flat):
+@lu.transformation_with_aux2
+def flatten_fun_nokwargs2(f, store, in_tree, *args_flat):
   py_args = tree_unflatten(in_tree, args_flat)
-  pair = yield py_args, {}
+  pair = f(*py_args)
   if not isinstance(pair, (list, tuple)) or len(pair) != 2:
     raise TypeError("expected function with aux output to return a two-element "
                     f"tuple, but got type {type(pair)} with value {pair!r}")
   ans, aux = pair
   ans_flat, ans_tree = tree_flatten(ans)
   aux_flat, aux_tree = tree_flatten(aux)
-  yield (ans_flat, aux_flat), (ans_tree, aux_tree)
+  store.store((ans_tree, aux_tree))
+  return ans_flat, aux_flat
 
 class _HashableWithStrictTypeEquality:
   """Box object used when comparing static arguments as a jit key.
@@ -277,8 +282,8 @@ def argnums_partial_except(f: lu.WrappedFun, static_argnums: tuple[int, ...],
 
   return _argnums_partial(f, dyn_argnums, tuple(fixed_args)), dyn_args
 
-@lu.transformation
-def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
+@lu.transformation2
+def _argnums_partial(f, dyn_argnums, fixed_args, *dyn_args, **kwargs):
   sentinel = object()
   args = [sentinel] * (len(fixed_args) + len(dyn_args))
   for i, arg in zip(dyn_argnums, dyn_args):
@@ -286,9 +291,7 @@ def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
   fixed_args_ = iter(fixed_args)
   args = [next(fixed_args_).val if x is sentinel else x for x in args]
   assert next(fixed_args_, sentinel) is sentinel
-  ans = yield args, kwargs
-  yield ans
-
+  return f(*args, **kwargs)
 
 def argnames_partial_except(f: lu.WrappedFun, static_argnames: tuple[str, ...],
                             kwargs: dict[str, Any]):
@@ -311,11 +314,10 @@ def argnames_partial_except(f: lu.WrappedFun, static_argnames: tuple[str, ...],
 
   return _argnames_partial(f, WrapKwArgs(fixed_kwargs)), dyn_kwargs
 
-@lu.transformation
-def _argnames_partial(fixed_kwargs: WrapKwArgs, *args, **dyn_kwargs):
+@lu.transformation2
+def _argnames_partial(f, fixed_kwargs: WrapKwArgs, *args, **dyn_kwargs):
   kwargs = dict({k: v.val for k, v in fixed_kwargs.val.items()}, **dyn_kwargs)
-  ans = yield args, kwargs
-  yield ans
+  return f(*args, **kwargs)
 
 
 @lru_cache(maxsize=4096)
@@ -435,9 +437,9 @@ def flat_out_axes(
   f, out_axes = _flat_out_axes(f, tuple(leaves), treedef)
   return f, HashableFunction(out_axes, closure=(tuple(leaves), treedef))
 
-@lu.transformation_with_aux
-def _flat_out_axes(leaves, treedef, *args, **kwargs):
-  ans = yield args, kwargs
+@lu.transformation_with_aux2
+def _flat_out_axes(f, store, leaves, treedef, *args, **kwargs):
+  ans = f(*args, **kwargs)
   spec = tree_unflatten(treedef, leaves)
   try:
     spec_flat = tuple(broadcast_prefix(spec, ans, is_leaf=lambda x: x is None))
@@ -449,7 +451,8 @@ def _flat_out_axes(leaves, treedef, *args, **kwargs):
             "that the `out_axes` argument to `pmap` is a pytree prefix of the "
             "pmapped function's output.")
     raise ValueError(msg) from None
-  yield ans, spec_flat
+  store.store(spec_flat)
+  return ans
 
 def check_callable(fun):
   # In Python 3.10+, the only thing stopping us from supporting staticmethods
@@ -683,11 +686,12 @@ def _arg_names(fn_signature, args, kwargs, static_argnums, static_argnames,
   return tuple(f'{name}{keystr(path)}' for name, x in ba.arguments.items()
                for path, l in generate_key_paths(x) if l is not static)
 
-@lu.transformation_with_aux
-def result_paths(*args, **kwargs):
+@lu.transformation_with_aux2
+def result_paths(f, store, *args, **kwargs):
   "linear_util transform to get output pytree paths of pre-flattened function."
-  ans = yield args, kwargs
-  yield ans, [keystr(path) for path, _ in generate_key_paths(ans)]
+  ans = f(*args, **kwargs)
+  store.store([keystr(path) for path, _ in generate_key_paths(ans)])
+  return ans
 
 def jaxpr_debug_info(jaxpr: core.Jaxpr, trace_debug: TracingDebugInfo | None,
                      result_paths: tuple[str, ...] | None = None,
