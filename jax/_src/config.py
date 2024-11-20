@@ -219,6 +219,7 @@ if xla_extension_version >= 295:
             threefry_partitionable.value,
             threefry_gpu_kernel_lowering.value,
             sharding_in_types.value,
+            use_direct_linearize.value,
             softmax_custom_jvp.value,
             enable_memories.value,
             disable_jit.value,
@@ -263,6 +264,7 @@ else:
             threefry_partitionable.value,
             threefry_gpu_kernel_lowering.value,
             sharding_in_types.value,
+            use_direct_linearize.value,
             softmax_custom_jvp.value,
             enable_memories.value,
             disable_jit.value,
@@ -983,6 +985,7 @@ else:
     threefry_partitionable: bool = False
     threefry_gpu_kernel_lowering: bool = False
     sharding_in_types: bool = False
+    use_direct_linearize: bool = False
     softmax_custom_jvp: bool = False
     xla_profile_version: int = 0
     pgle_profiling_runs: int = 0
@@ -1025,6 +1028,7 @@ else:
     threefry_partitionable: bool | None = None
     threefry_gpu_kernel_lowering: bool | None = None
     sharding_in_types: bool | None = None
+    use_direct_linearize: bool | None = None
     softmax_custom_jvp: bool | None = None
     xla_profile_version: int | None = None
     pgle_profiling_runs: int | None = None
@@ -1316,6 +1320,12 @@ sharding_in_types = bool_state(
     default=False,
     help=('When True, enables forward only sharding propagation in JAX and '
           'avals have sharding on them.'),
+    include_in_jit_key=True)
+
+use_direct_linearize = bool_state(
+    name='jax_use_direct_linearize',
+    default=False,
+    help=('Use direct linearization instead JVP followed by partial eval'),
     include_in_jit_key=True)
 
 data_dependent_tracing_fallback = bool_state(
