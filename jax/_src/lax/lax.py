@@ -1700,6 +1700,8 @@ def zeros_like_shaped_array(aval: ShapedArray) -> Array:
     scalar_zero = np.zeros((), dtype=aval.dtype)
   else:
     scalar_zero = _convert_element_type(0, aval.dtype, aval.weak_type)
+  if config.sharding_in_types.value:
+    return broadcast(scalar_zero, aval.shape, sharding=aval.sharding)
   return broadcast(scalar_zero, aval.shape)
 
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
@@ -4401,7 +4403,7 @@ def _concatenate_shape_rule(*operands, **kwargs):
     raise TypeError(msg.format(dimension, ", ".join([str(o.shape) for o in operands])))
   shapes = [operand.shape[:dimension] + operand.shape[dimension+1:]
             for operand in operands]
-  if not shapes[:-1] == shapes[1:]:
+  if shapes[:-1] != shapes[1:]:
     msg = ("Cannot concatenate arrays with shapes that differ in dimensions "
            "other than the one being concatenated: concatenating along "
            "dimension {} for shapes {}.")
@@ -4411,6 +4413,13 @@ def _concatenate_shape_rule(*operands, **kwargs):
   concat_size = sum(o.shape[dimension] for o in operands)
   ex_shape = operands[0].shape
   return ex_shape[:dimension] + (concat_size,) + ex_shape[dimension+1:]
+
+def _concatenate_sharding_rule(*operands, **kwargs):
+  if not all(o.sharding == operands[0].sharding for o in operands):
+    ss = ", ".join(str(o.sharding) for o in operands)
+    raise TypeError(
+        f"All operands should have the same sharding. Got shardings {ss}")
+  return operands[0].sharding
 
 def _concatenate_dtype_rule(*operands, **kwargs):
   check_same_dtypes('concatenate', *operands)
@@ -4452,14 +4461,19 @@ def _concatenate_pad_rule(in_avals, out_avals, *operands, dimension):
     raise NotImplementedError  # TODO(mattjj)
 
 concatenate_p = standard_primitive(
-    _concatenate_shape_rule, _concatenate_dtype_rule, 'concatenate')
+    _concatenate_shape_rule, _concatenate_dtype_rule, 'concatenate',
+    sharding_rule=_concatenate_sharding_rule)
 ad.deflinear2(concatenate_p, _concatenate_transpose_rule)
 ad.primitive_transposes[concatenate_p] = _concatenate_transpose_rule
 batching.primitive_batchers[concatenate_p] = _concatenate_batch_rule
 pe.padding_rules[concatenate_p] = _concatenate_pad_rule
 
 def _concatenate_lower(ctx, *xs, dimension):
-  return [hlo.concatenate(xs, mlir.i64_attr(dimension))]
+  aval_out, = ctx.avals_out
+  out = hlo.concatenate(xs, mlir.i64_attr(dimension))
+  if config.sharding_in_types.value:
+    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
+  return [out]
 mlir.register_lowering(concatenate_p, _concatenate_lower)
 
 
