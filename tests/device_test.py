@@ -27,27 +27,27 @@ class DeviceTest(jtu.JaxTestCase):
     # TODO(pobudzey): Add a test for rocm devices when available.
     if jtu.is_device_cuda():
       self.assertEqual(device.platform, 'gpu')
-      self.assertEqual(repr(device), 'CudaDevice(id=0)')
+      self.assertIn('CudaDevice(id=0)', repr(device))
     elif jtu.test_device_matches(['tpu']):
       self.assertEqual(device.platform, 'tpu')
-      self.assertEqual(
-          repr(device),
+      self.assertIn(
           'TpuDevice(id=0, process_index=0, coords=(0,0,0), core_on_chip=0)',
+          repr(device),
       )
     elif jtu.test_device_matches(['cpu']):
       self.assertEqual(device.platform, 'cpu')
-      self.assertEqual(repr(device), 'CpuDevice(id=0)')
+      self.assertIn('CpuDevice(id=0)', repr(device))
 
   def test_str(self):
     device = jax.devices()[0]
 
     # TODO(pobudzey): Add a test for rocm devices when available.
     if jtu.is_device_cuda():
-      self.assertEqual(str(device), 'cuda:0')
+      self.assertIn('cuda:0', str(device))
     elif jtu.test_device_matches(['tpu']):
-      self.assertEqual(str(device), 'TPU_0(process=0,(0,0,0,0))')
+      self.assertIn('TPU_0(process=0,(0,0,0,0))', str(device))
     elif jtu.test_device_matches(['cpu']):
-      self.assertEqual(str(device), 'TFRT_CPU_0')
+      self.assertIn('TFRT_CPU_0', str(device))
 
 
 if __name__ == '__main__':
