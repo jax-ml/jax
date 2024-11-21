@@ -46,7 +46,16 @@ class BufferedRef:
   spec: pallas_core.BlockSpec = dataclasses.field(metadata={"static": True})
   is_index_invariant: bool = dataclasses.field(metadata={"static": True})
   gmem_ref: pallas_core.AbstractMemoryRef
-  smem_ref: pallas_core.AbstractMemoryRef  # [num_slots, *spec.block_shape]
+  # ``None`` if the ref is pinned to GMEM; otherwise, has shape
+  # [num_slots, *spec.block_shape].
+  smem_ref: pallas_core.AbstractMemoryRef | None
+
+  def get_ref_for_slot(
+      self, slot: int | jax.Array
+  ) -> pallas_core.AbstractMemoryRef:
+    if self.smem_ref is None:
+      return self.gmem_ref
+    return self.smem_ref.at[slot]
 
   def compute_gmem_slice(self, grid_indices) -> tuple[pl.Slice, ...]:
     index_map = self.spec.index_map
@@ -59,6 +68,9 @@ class BufferedRef:
     )
 
   def copy_in(self, slot, grid_indices, barrier_ref):
+    if not _in_smem(self.spec):
+      return
+    assert self.smem_ref is not None
     gmem_slices = self.compute_gmem_slice(grid_indices)
     gpu_primitives.copy_gmem_to_smem(
         self.gmem_ref.at[gmem_slices],  # pytype: disable=unsupported-operands
@@ -67,6 +79,9 @@ class BufferedRef:
     )
 
   def copy_out(self, slot, grid_indices, predicate=None):
+    if not _in_smem(self.spec):
+      return
+    assert self.smem_ref is not None
     gmem_slices = self.compute_gmem_slice(grid_indices)
     gpu_primitives.copy_smem_to_gmem(
         self.smem_ref.at[slot],
@@ -88,8 +103,8 @@ def _uses_arguments(
 def _is_index_invariant(
     spec: pallas_core.BlockSpec, grid: pallas_core.StaticGrid
 ) -> bool:
-  index_map = spec.index_map
-  assert index_map is not None
+  if (index_map := spec.index_map) is None:
+    return True
   return not any(_uses_arguments(index_map, len(grid)))
 
 
@@ -103,6 +118,10 @@ def _inc_grid_by_1(
     carry = next_idx == size
     next_indices.append(lax.select(carry, 0, next_idx).astype(idx.dtype))
   return tuple(reversed(next_indices))
+
+
+def _in_smem(spec: pallas_core.BlockSpec) -> bool:
+  return spec.memory_space in (None, gpu_core.SMEM)
 
 
 # ``pl.Slice`` uses a different pytree encoding, depending on whether the
@@ -166,6 +185,7 @@ def emit_pipeline(
       if any(
           spec.block_shape[-idx] * grid[-idx] != gmem_ref.shape[-idx]  # type: ignore
           for idx in range(1, len(grid) + 1)
+          if spec.block_shape is not None
       ):
         raise NotImplementedError(
             f"Cannot emit a pipeline over the {grid=} for {gmem_ref} with block"
@@ -174,14 +194,12 @@ def emit_pipeline(
 
     in_gmem_refs, out_gmem_refs = util.split_list(gmem_refs, [len(in_specs)])
     in_smem_refs, out_smem_refs = util.split_list(
-        map(
-            lambda spec, ref: gpu_core.SMEM(
-                (max_concurrent_steps, *spec.block_shape),  # type: ignore
-                ref.dtype,
-            ),
-            it.chain(in_specs, out_specs),
-            gmem_refs,
-        ),
+        [
+            gpu_core.SMEM((max_concurrent_steps, *spec.block_shape), ref.dtype)  # type: ignore
+            if _in_smem(spec)
+            else None
+            for spec, ref in zip(it.chain(in_specs, out_specs), gmem_refs)
+        ],
         [len(in_specs)],
     )
     return pl.run_scoped(
@@ -194,7 +212,7 @@ def emit_pipeline(
         out_smem_refs=out_smem_refs,
         barrier_ref=gpu_core.Barrier(
             # TODO(slebedev): Change this to arrive only once.
-            len(in_specs),
+            sum(map(_in_smem, in_specs)),
             num_barriers=max_concurrent_steps,
         ),
     )
@@ -233,9 +251,10 @@ def emit_pipeline(
       )
 
       with pallas_core.grid_env(map(pallas_core.GridAxis, indices, grid)):
-        body(
-            *(bref.smem_ref.at[slot] for bref in it.chain(in_brefs, out_brefs))
-        )
+        body(*(
+            bref.get_ref_for_slot(slot)
+            for bref in it.chain(in_brefs, out_brefs)
+        ))
 
       if not all(bref.is_index_invariant for bref in out_brefs):
         gpu_primitives.commit_smem()

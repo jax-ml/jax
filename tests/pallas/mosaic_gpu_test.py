@@ -1186,6 +1186,39 @@ class PipelineTest(PallasTest):
     )
     np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
 
+  def test_nested_emit(self):
+    num_steps = 4
+
+    def kernel(x_gmem, o_gmem):
+      plgpu.emit_pipeline(
+          nested_kernel,
+          in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+          out_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+          grid=(),
+      )(x_gmem, o_gmem)
+
+    def nested_kernel(x_gmem, o_gmem):
+      plgpu.emit_pipeline(
+          nested_kernel_body,
+          in_specs=[pl.BlockSpec((32, 16), lambda i: (0, i))],
+          out_specs=[pl.BlockSpec((32, 16), lambda i: (0, i))],
+          grid=(num_steps,),
+          max_concurrent_steps=2,
+      )(x_gmem, o_gmem)
+
+    def nested_kernel_body(x_smem, o_smem):
+      o_smem[...] = x_smem[...] + 1.0
+
+    x = jnp.arange(32 * num_steps * 16)
+    x = x.reshape(-1, num_steps * 16).astype(jnp.float32)
+    kernel_fn = pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+    )
+    np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
+
   def test_emit_with_grid_invariant_output(self):
     num_steps = 4
 
