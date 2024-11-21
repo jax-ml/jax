@@ -29,7 +29,7 @@ class PallasCostEstimateTest(jtu.JaxTestCase):
   def test_exp_add(self):
     def exp_add(x, y):
       return jnp.exp(x + y)
-    cost = cost_estimate.cost_estimate(exp_add,
+    cost = cost_estimate.estimate_cost(exp_add,
                                        jnp.ones(10, dtype=jnp.float32),
                                        jnp.ones(10, dtype=jnp.float32))
     self.assertEqual(cost.flops, 10)
@@ -40,7 +40,7 @@ class PallasCostEstimateTest(jtu.JaxTestCase):
     def matmul(a, b):
       return a @ b
     m, k, n = 400_000, 800_000, 900_000
-    cost = cost_estimate.cost_estimate(
+    cost = cost_estimate.estimate_cost(
         matmul,
         jax.ShapeDtypeStruct((m, k), jnp.bfloat16),
         jax.ShapeDtypeStruct((k, n), jnp.bfloat16))
@@ -52,7 +52,7 @@ class PallasCostEstimateTest(jtu.JaxTestCase):
     def matmul(a, b):
       return jnp.matmul(a, b)
     b, m, k, n = 7, 37, 91, 23
-    cost = cost_estimate.cost_estimate(
+    cost = cost_estimate.estimate_cost(
         matmul,
         jax.ShapeDtypeStruct((b, m, k), jnp.float32),
         jax.ShapeDtypeStruct((b, k, n), jnp.float32))
@@ -67,7 +67,7 @@ class PallasCostEstimateTest(jtu.JaxTestCase):
     q_len = 64
     def attention(q, k, v):
       return jax.nn.softmax(q @ k.T, axis=-1) @ v
-    cost = cost_estimate.cost_estimate(
+    cost = cost_estimate.estimate_cost(
         attention,
         jnp.zeros((q_len, qk_dim), dtype=jnp.float32),
         jnp.zeros((kv_len, qk_dim), dtype=jnp.float32),
@@ -85,7 +85,7 @@ class PallasCostEstimateTest(jtu.JaxTestCase):
       (1, 0), (7, 5), (8, 4), (9, 5)
   )
   def test_integer_pow(self, power, expected_flops_per_element):
-    cost = cost_estimate.cost_estimate(lambda x: lax.integer_pow(x, power),
+    cost = cost_estimate.estimate_cost(lambda x: lax.integer_pow(x, power),
                                        jnp.ones(10, dtype=jnp.float32))
     self.assertEqual(cost.flops, 10 * expected_flops_per_element)
     self.assertEqual(cost.transcendentals, 0)
