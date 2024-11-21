@@ -4490,6 +4490,25 @@ def _pad_shape_rule(operand, padding_value, *, padding_config):
     raise ValueError(msg)
   return result
 
+def _pad_sharding_rule(operand, padding_value, *, padding_config):
+  # TODO(yashkatariya): Once JAX supports uneven sharding at the top level,
+  # change this logic to `return operand.sharding` directly.
+  out_shape = _pad_shape_rule(operand, padding_value,
+                              padding_config=padding_config)
+  mesh = operand.sharding.mesh
+  new_spec = []
+  for op_sh, out_sh, op_spec in safe_zip(
+      operand.shape, out_shape, operand.sharding.spec):
+    if (op_sh != out_sh and op_spec is not None and
+        out_sh % slicing._get_sub_spec_size(mesh, op_spec) != 0):
+      raise NotImplementedError(
+          f"padding on sharded dims where out dim ({out_sh}) is not divisble by"
+          f" mesh axes ({slicing._get_sub_spec_size(mesh, op_spec)}) with spec"
+          f" ({op_spec}) is not implemented.")
+    new_spec.append(op_spec)
+  return NamedSharding(mesh, P(*new_spec))
+
+
 def _pad_transpose(t, operand, padding_value, *, padding_config):
   if type(t) is ad_util.Zero:
     t_operand = ad_util.Zero(operand.aval) if ad.is_undefined_primal(operand) else None
@@ -4529,14 +4548,18 @@ def _pad_batch_rule(batched_args, batch_dims, *, padding_config):
                                          (operand_bdim,))
   return select(mask, x, broadcasted_padding), operand_bdim
 
-pad_p = standard_primitive(_pad_shape_rule, _pad_dtype_rule, 'pad')
+pad_p = standard_primitive(_pad_shape_rule, _pad_dtype_rule, 'pad',
+                           sharding_rule=_pad_sharding_rule)
 ad.deflinear2(pad_p, _pad_transpose)
 batching.primitive_batchers[pad_p] = _pad_batch_rule
 
 def _pad_lower(ctx, x, padding_value, *, padding_config):
   aval_out, = ctx.avals_out
   low, high, interior = util.unzip3(padding_config)
-  return [mlir.pad(ctx, aval_out, x, padding_value, low, high, interior)]
+  out = mlir.pad(ctx, aval_out, x, padding_value, low, high, interior)
+  if config.sharding_in_types.value:
+    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
+  return [out]
 
 mlir.register_lowering(pad_p, _pad_lower)
 
