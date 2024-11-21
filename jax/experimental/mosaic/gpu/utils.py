@@ -296,6 +296,12 @@ def globaltimer(kind: Literal["low", "high"] | None = None):
 
 
 def bytewidth(ty: ir.Type):
+  # The actual width of TF32 is 19 bits. However, sinc we need to treat it as
+  # 32 bits for compatibility reasons. TF32 used to be 32 bits wide in upstream
+  # MLIR, but it changed in
+  # https://github.com/llvm/llvm-project/commit/67a1fdb014790a38a205d28e1748634de34471dd.
+  if ir.FloatTF32Type.isinstance(ty):
+    return 4
   if ir.IntegerType.isinstance(ty):
     return ir.IntegerType(ty).width // 8
   if ir.FloatType.isinstance(ty):
