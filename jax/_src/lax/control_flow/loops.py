@@ -1218,14 +1218,6 @@ def scan_bind(*args, **params):
     core.check_jaxpr(params['jaxpr'].jaxpr)
   return core.AxisPrimitive.bind(scan_p, *args, **params)
 
-def _scan_edtype_rule(_,
-                      *args,
-                      jaxpr: core.ClosedJaxpr,
-                      **kwargs):
-  return scan_p.bind(*args,
-                      jaxpr=jaxpr_passes.resolve_edtypes_jaxpr(jaxpr),
-                      **kwargs)
-
 scan_p = core.AxisPrimitive("scan")
 scan_p.multiple_results = True
 scan_p.def_custom_bind(scan_bind)
@@ -1244,7 +1236,8 @@ pe.partial_eval_jaxpr_custom_rules[scan_p] = _scan_partial_eval_custom
 pe.padding_rules[scan_p] = _scan_padding_rule
 pe.dce_rules[scan_p] = _scan_dce_rule
 state_discharge.register_discharge_rule(scan_p)(_scan_state_discharge_rule)
-jaxpr_passes.register_edtype_rule(scan_p, _scan_edtype_rule, always_invoke=True)
+jaxpr_passes.register_edtype_rule(scan_p,
+  jaxpr_passes.make_hop_edtype_rule(scan_p, 'jaxpr'), always_invoke=True)
 
 def _propagate_mem_kind_scan(*xm, reverse, length, num_consts, num_carry, jaxpr,
                              linear, unroll, _split_transpose):
@@ -1901,18 +1894,6 @@ def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
       *[None] * num_carry]
   return invals_out, carry_out
 
-def _while_edtype_rule(_,
-                      *args,
-                      cond_jaxpr: core.ClosedJaxpr,
-                      body_jaxpr: core.ClosedJaxpr,
-                      cond_nconsts: int,
-                      body_nconsts: int):
-  return while_p.bind(*args,
-                      cond_jaxpr=jaxpr_passes.resolve_edtypes_jaxpr(cond_jaxpr),
-                      body_jaxpr=jaxpr_passes.resolve_edtypes_jaxpr(body_jaxpr),
-                      cond_nconsts=cond_nconsts,
-                      body_nconsts=body_nconsts)
-
 while_p = core.AxisPrimitive('while')
 while_p.multiple_results = True
 while_p.def_impl(partial(dispatch.apply_primitive, while_p))
@@ -1927,7 +1908,8 @@ pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
 mlir.register_lowering(while_p, _while_lowering)
 core.custom_typechecks[while_p] = _while_typecheck
 state_discharge.register_discharge_rule(while_p)(_while_discharge_rule)
-jaxpr_passes.register_edtype_rule(while_p, _while_edtype_rule, always_invoke=True)
+jaxpr_passes.register_edtype_rule(while_p, jaxpr_passes.make_hop_edtype_rule(
+  while_p, 'body_jaxpr', 'cond_jaxpr'), always_invoke=True)
 
 
 def _pred_bcast_select_hlo(ctx,

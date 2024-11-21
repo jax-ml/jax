@@ -838,23 +838,8 @@ def _remat_lowering(ctx, *args, jaxpr: core.Jaxpr, prevent_cse: bool,
 mlir.register_lowering(remat_p, _remat_lowering)
 mlir.register_lowering(remat_p, partial(_remat_lowering, is_gpu_platform=True),
                        platform="gpu")
-
-def _remat_edtype_rule(ctx: jaxpr_passes.ResolveEdtypesContext,
-                       *args,
-                       jaxpr,
-                       **kwargs):
-  del ctx
-  phys_jaxpr = jaxpr_passes.resolve_edtypes_jaxpr(pe.close_jaxpr(jaxpr))
-  if phys_jaxpr.consts:
-    new_jaxpr = pe.convert_constvars_jaxpr(phys_jaxpr.jaxpr)
-    args = tuple(phys_jaxpr.consts) + args
-  else:
-    new_jaxpr = phys_jaxpr.jaxpr
-  return remat_p.bind(*args,
-                      jaxpr=new_jaxpr,
-                      **kwargs)
-jaxpr_passes.register_edtype_rule(remat_p, _remat_edtype_rule,
-                                  always_invoke=True)
+jaxpr_passes.register_edtype_rule(remat_p,
+  jaxpr_passes.make_hop_edtype_rule(remat_p, 'jaxpr'), always_invoke=True)
 
 def checkpoint_name(x, name):
   return name_p.bind(x, name=name)

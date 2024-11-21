@@ -31,6 +31,11 @@ zip, unsafe_zip = util.safe_zip, zip
 
 resolve_edtypes_rules = {}
 
+@dataclasses.dataclass(frozen=True)
+class ResolveEdtypesContext:
+  avals_in: Sequence[Any]
+  avals_out: Sequence[Any]
+
 def register_edtype_rule(primitive, rule, always_invoke=False):
   def _edtype_rule(ctx, *args, **params):
     has_extended_input = any(is_extended(aval) for aval in ctx.avals_in)
@@ -46,6 +51,81 @@ def default_edtypes_rule(primitive, ctx, *args, **params):
   subfuns, bind_params = primitive.get_bind_params(params)
   return primitive.bind(*subfuns, *args, **bind_params)
 
+def make_hop_edtype_rule(primitive, *keys):
+  """Makes a rule for higher-order ops by recursively applying the jaxpr pass.
+
+  Args:
+    primitive: A JAX primitive.
+    keys: The names of parameters which correspond to Jaxprs that need
+      to be recursed over.
+
+  Returns:
+    A primitive rule for the edtype Jaxpr pass. This should be registered
+    using `register_edtype_rule`.
+  """
+  def _resolve_jaxpr(value: core.Jaxpr | core.ClosedJaxpr,
+                     mapped_idx=None):
+    extra_args = ()
+    if isinstance(value, core.Jaxpr):
+      physical_jaxpr = resolve_edtypes_jaxpr(pe.close_jaxpr(value))
+      if physical_jaxpr.consts:
+        if mapped_idx is not None:
+          new_jaxpr = pad_jaxpr_constvars(physical_jaxpr.jaxpr,
+                                          mapped_idx,
+                                          physical_jaxpr.consts)
+          extra_args = tuple(physical_jaxpr.consts)
+        else:
+          new_jaxpr = pe.convert_constvars_jaxpr(physical_jaxpr.jaxpr)
+          extra_args = tuple(physical_jaxpr.consts)
+      else:
+        new_jaxpr = physical_jaxpr.jaxpr
+    elif isinstance(value, core.ClosedJaxpr):
+      new_jaxpr = resolve_edtypes_jaxpr(value)
+    else:
+      raise ValueError(f"Parameter of type {type(value)} is not a Jaxpr.")
+    return new_jaxpr, extra_args
+
+  def rule(_, *args, **params):
+    new_params = {}
+    for key in keys:
+      value = params[key]
+      if isinstance(value, core.Jaxpr) or isinstance(value, core.ClosedJaxpr):
+        new_jaxpr, extra_args = _resolve_jaxpr(value)
+        new_params[key] = new_jaxpr
+        args = extra_args + args
+      elif isinstance(value, tuple) or isinstance(value, list):
+        mapped_jaxprs, mapped_args = zip(*map(
+          lambda x, i: _resolve_jaxpr(x, mapped_idx=i), value, range(len(value))))
+        all_new_args = tuple(new_arg for _args in mapped_args for new_arg in _args)
+        new_params[key] = tuple(mapped_jaxprs)
+        args = all_new_args + args
+      else:
+        raise ValueError(f"Parameter {key} is not a Jaxpr or sequence of Jaxprs: {value}")
+    params.update(new_params)
+    return primitive.bind(*args, **params)
+  return rule
+
+def pad_jaxpr_constvars(jaxpr: core.Jaxpr,
+                        i: int,
+                        all_const_avals: Sequence[Any]
+                        ) -> tuple[core.ClosedJaxpr]:
+  """Pads a Jaxpr with constvars from all branches.
+
+  For primitives that have multiple Jaxprs (e.g. cond_p), we need
+  to pad each Jaxpr with all consts from all branches so the
+  signatures match, but only use the consts for this branch.
+  """
+  newvar = core.gensym(suffix='_')
+  unused_const_vars = [tuple(map(newvar, const_avals))
+                       for const_avals in all_const_avals]
+  const_prefix = util.concatenate(unused_const_vars[:i])
+  const_suffix = util.concatenate(unused_const_vars[i + 1:])
+  constvars = [*const_prefix, *jaxpr.constvars, *const_suffix]
+  jaxpr = jaxpr.replace(constvars=constvars)
+  effects = pe.make_jaxpr_effects(jaxpr.constvars, jaxpr.invars,
+                                  jaxpr.outvars, jaxpr.eqns)
+  jaxpr = jaxpr.replace(effects=effects)
+  return core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
 
 def resolve_edtypes_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   """Converts a traceable JAX function `fun` into a translation rule."""
@@ -78,7 +158,6 @@ def resolve_edtypes_fun(fun: Callable, multiple_results: bool = True) -> Callabl
       return result[0]
   return _rule
 
-
 @util.weakref_lru_cache
 def resolve_edtypes_jaxpr(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
   """Replaces all extended dtypes with physical types in a jaxpr."""
@@ -94,12 +173,6 @@ def resolve_edtypes_jaxpr(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
       wrapped_fn, physical_in_avals)
   assert len(new_jaxpr.constvars) == len(consts)
   return core.ClosedJaxpr(new_jaxpr, consts)
-
-
-@dataclasses.dataclass(frozen=True)
-class ResolveEdtypesContext:
-  avals_in: Sequence[Any]
-  avals_out: Sequence[Any]
 
 def is_extended(aval: Any):
   if isinstance(aval, core.AbstractToken):

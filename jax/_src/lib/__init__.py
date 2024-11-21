@@ -128,7 +128,6 @@ mlir_api_version = xla_client.mlir_api_version
 # TODO(rocm): check if we need the same for rocm.
 
 def _cuda_path() -> str | None:
-  return None
   def _try_cuda_root_environment_variable() -> str | None:
     """Use `CUDA_ROOT` environment variable if set."""
     return os.environ.get('CUDA_ROOT', None)

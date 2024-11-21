@@ -3864,6 +3864,10 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     del xla.canonicalize_dtype_handlers[FooArray]
     del xla.pytype_aval_mappings[FooArray]
     del mlir._constant_handlers[FooArray]
+    del jaxpr_passes.resolve_edtypes_rules[make_p]
+    del jaxpr_passes.resolve_edtypes_rules[bake_p]
+    del jaxpr_passes.resolve_edtypes_rules[take_p]
+    del jaxpr_passes.resolve_edtypes_rules[jake_p]
     del batching.primitive_batchers[take_p]
     del batching.primitive_batchers[bake_p]
 
