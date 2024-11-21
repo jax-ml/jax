@@ -125,20 +125,41 @@ jax.tree_util.register_dataclass(
 
 
 def emit_pipeline(
-    body,
+    body: Callable[..., None],
     *,
     grid: pallas_core.StaticGrid,
     in_specs: Sequence[pallas_core.BlockSpec] = (),
     out_specs: Sequence[pallas_core.BlockSpec] = (),
     max_concurrent_steps: int = 1,
+    delay_release: int = 0,
 ):
-  """Creates a function to emit a manual pipeline within a Pallas kernel."""
+  """Creates a function to emit a manual pipeline within a Pallas kernel.
+
+  Args:
+    body: The pipeline body.
+    grid: The grid to use for the pipeline.
+    in_specs: The block specs for the inputs.
+    out_specs: The block specs for the outputs.
+    max_concurrent_steps: The maximum number of sequential stages that are
+      active concurrently. Defaults to 1.
+    delay_release: The number of steps to wait before reusing the input/output
+      references. Defaults to 0, and must be strictly smaller than
+      ``max_concurrent_steps``. Generally, you'll want to set it to 1 if you
+      don't await the WGMMA in the body.
+  """
   num_steps = math.prod(grid)
 
+  if max_concurrent_steps <= delay_release:
+    raise ValueError(
+        "max_concurrent_steps must be greater than delay_release, but"
+        f" {max_concurrent_steps=}, {delay_release=}"
+    )
+
   # Shrink ``max_concurrent_steps`` if the total number of steps is lower to
-  # reduce the size of the allocated buffers below.
+  # reduce the size of the refs allocated in SMEM.
   if max_concurrent_steps > num_steps:
     max_concurrent_steps = num_steps
+    delay_release = 0  # No need to delay anything.
 
   def pipeline(*gmem_refs: pallas_core.AbstractMemoryRef):
     for gmem_ref, spec in zip(gmem_refs, it.chain(in_specs, out_specs)):
@@ -208,7 +229,7 @@ def emit_pipeline(
         gpu_primitives.barrier_wait(barrier_ref.at[slot])
       # Wait for the previous output SMEM->GMEM copy to complete.
       gpu_primitives.wait_smem_to_gmem(
-          max_concurrent_steps - 1, wait_read_only=True
+          max_concurrent_steps - (1 + delay_release), wait_read_only=True
       )
 
       with pallas_core.grid_env(map(pallas_core.GridAxis, indices, grid)):
@@ -245,10 +266,10 @@ def emit_pipeline(
             predicate=lax.bitwise_or(slices_changed, is_last_step),
         )
 
-      fetch_step = step + max_concurrent_steps
+      fetch_step = step + (max_concurrent_steps - delay_release)
       fetch_slot = slot  # (x + y) % y == x % y
       jax.lax.cond(
-          fetch_step < num_steps,
+          lax.bitwise_and(fetch_step >= delay_release, fetch_step < num_steps),
           lambda: map(
               lambda bref: bref.copy_in(fetch_slot, fetch_indices, barrier_ref),
               in_brefs,
