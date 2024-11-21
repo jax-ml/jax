@@ -15,8 +15,7 @@ find_package(nanobind CONFIG REQUIRED)
 set(
   JAX_FFI_EXAMPLE_PROJECTS
   "rms_norm"
-  "attrs"
-  "counter"
+  "cpu_examples"
 )
 
 foreach(PROJECT ${JAX_FFI_EXAMPLE_PROJECTS})
@@ -27,9 +26,9 @@ endforeach()
 
 if(JAX_FFI_EXAMPLE_ENABLE_CUDA)
   enable_language(CUDA)
-  add_library(_cuda_e2e SHARED "src/jax_ffi_example/cuda_e2e.cu")
-  set_target_properties(_cuda_e2e PROPERTIES POSITION_INDEPENDENT_CODE ON
-                                             CUDA_STANDARD 17)
-  target_include_directories(_cuda_e2e PUBLIC ${XLA_DIR})
-  install(TARGETS _cuda_e2e LIBRARY DESTINATION ${SKBUILD_PROJECT_NAME})
+  add_library(_cuda_examples SHARED "src/jax_ffi_example/cuda_examples.cu")
+  set_target_properties(_cuda_examples PROPERTIES POSITION_INDEPENDENT_CODE ON
+                                                  CUDA_STANDARD 17)
+  target_include_directories(_cuda_examples PUBLIC ${XLA_DIR})
+  install(TARGETS _cuda_examples LIBRARY DESTINATION ${SKBUILD_PROJECT_NAME})
 endif()

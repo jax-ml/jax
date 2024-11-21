@@ -27,7 +27,7 @@ import jax.numpy as jnp
 import jax.extend as jex
 
 # Load the shared library with the FFI target definitions
-SHARED_LIBRARY = os.path.join(os.path.dirname(__file__), "lib_cuda_e2e.so")
+SHARED_LIBRARY = os.path.join(os.path.dirname(__file__), "lib_cuda_examples.so")
 library = ctypes.cdll.LoadLibrary(SHARED_LIBRARY)
 
 jex.ffi.register_ffi_target("foo-fwd", jex.ffi.pycapsule(library.FooFwd),

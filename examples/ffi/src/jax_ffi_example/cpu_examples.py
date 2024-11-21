@@ -12,25 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""An example demonstrating how an FFI call can maintain "state" between calls
-
-In this case, the ``counter`` call simply accumulates the number of times it
-was executed, but this pattern can also be used for more advanced use cases.
-For example, this pattern is used in jaxlib for:
-
-1. The GPU solver linear algebra kernels which require an expensive "handler"
-   initialization, and
-2. The ``triton_call`` function which caches the compiled triton modules after
-   their first use.
-"""
+import numpy as np
 
 import jax
 import jax.extend as jex
 
-from jax_ffi_example import _counter
+from jax_ffi_example import _cpu_examples
 
-for name, target in _counter.registrations().items():
+for name, target in _cpu_examples.registrations().items():
   jex.ffi.register_ffi_target(name, target)
+
+
+def array_attr(num: int):
+  return jex.ffi.ffi_call(
+      "array_attr",
+      jax.ShapeDtypeStruct((), np.int32),
+  )(array=np.arange(num, dtype=np.int32))
+
+
+def dictionary_attr(**kwargs):
+  return jex.ffi.ffi_call(
+      "dictionary_attr",
+      (jax.ShapeDtypeStruct((), np.int32), jax.ShapeDtypeStruct((), np.int32)),
+  )(**kwargs)
 
 
 def counter(index):
