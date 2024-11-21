@@ -692,3 +692,47 @@ def _commit_smem_lowering(ctx: lowering.LoweringRuleContext):
 def commit_smem():
   """Commits all writes to SMEM, making them visible to loads, TMA and WGMMA."""
   commit_smem_p.bind()
+
+
+causal_mask_p = jax_core.Primitive("causal_mask")
+
+
+@causal_mask_p.def_abstract_eval
+def _causal_mask_abstract_eval(x, k, default_value):
+  del default_value, k
+  return x
+
+
+@lowering.register_lowering_rule(causal_mask_p)
+def _causal_mask_lowering(ctx: lowering.LoweringRuleContext, x, k, default_value: float):
+  del ctx
+  if x.layout != mgpu.WGMMA_LAYOUT:
+    raise NotImplementedError(f"causal_mask only supports WGMMA layout ATM, got {x.layout}")
+
+  if not isinstance(k, int) and k.layout != mgpu.WGSplatFragLayout(shape=()):
+    raise ValueError(f"k can only be a scalar, got {k.layout}")
+
+  def causal(idx, val):
+    row, col = idx
+    index = ir.IndexType.get()
+    if isinstance(k, int):
+      mlir_k = mgpu.c(k, index)
+    else:
+      mlir_k = arith_dialect.index_cast(index, k.registers.item())
+
+    row_off = arith_dialect.addi(row, mlir_k)
+    mask = arith_dialect.cmpi(arith_dialect.CmpIPredicate.uge, row_off, col)
+    return arith_dialect.select(mask, val, mgpu.c(default_value, val.type))
+
+  ret = x.map_index(causal)
+  return ret
+
+def causal_mask(x, default_value: float, k=1):
+  """Dereference applying a causal mask using a constant as the default value."""
+  # TODO(cperivol): when mgpu supports more layouts make this a
+  # completely separate primitive.
+
+  if getattr(k, 'shape', ()):
+    raise ValueError(f"causal_mask only supports scalar k, got {k}")
+
+  return causal_mask_p.bind(x, k, default_value=default_value)

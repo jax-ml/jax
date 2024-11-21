@@ -801,12 +801,19 @@ class PallasCallTest(PallasTest):
         res, a @ (b.T if rhs_transpose else b), rtol=1e-3
     )
 
-  def test_wgmma_registers(self):
+  @parameterized.parameters(True, False)
+  def test_wgmma_registers(self, causally_mask):
     self.skip_unless_sm90a()
+    # Test non-square accumulators but causal mask assumes a square
+    cst = jnp.float32(0)
     def kernel(a_ref, b_ref, o_ref):
+      prg = pl.program_id(0) + 1
       def scope(acc_ref):
         plgpu.wgmma(acc_ref, a_ref[...], b_ref)
-        return acc_ref[...]
+        if causally_mask:
+          return plgpu.causal_mask(acc_ref[...], cst, k=prg)
+        else:
+          return acc_ref[...]
       o_ref[...] = pl.run_scoped(scope, plgpu.ACC((64, 192), jnp.float32))
 
     key1, key2 = jax.random.split(jax.random.key(42), 2)
@@ -817,13 +824,31 @@ class PallasCallTest(PallasTest):
     res = pl.pallas_call(
         kernel,
         in_specs=[
-            plgpu.GPUBlockSpec((64, 128), lambda: (0, 0), transforms=transforms),
-            plgpu.GPUBlockSpec((128, 192), lambda: (0, 0), transforms=transforms),
+            plgpu.GPUBlockSpec(
+                (64, 128), lambda _: (0, 0), transforms=transforms
+            ),
+            plgpu.GPUBlockSpec(
+                (128, 192), lambda _: (0, 0), transforms=transforms
+            ),
         ],
-        out_specs=plgpu.GPUBlockSpec((64, 192), lambda: (0, 0)),
+        out_specs=plgpu.GPUBlockSpec(
+            (64, 192),
+            lambda _: (0, 0),
+            transforms=(
+                plgpu.TilingTransform((64, 32)),
+                plgpu.SwizzleTransform(128),
+            ),
+        ),
         out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float32),
+        grid=1,
     )(a, b)
-    np.testing.assert_allclose(res, a @ b, rtol=1e-3)
+    expected = (a @ b).astype(jnp.float32)
+    if causally_mask:
+      expected = (
+          jnp.tril(expected, k=1)
+          + jnp.triu(jnp.ones_like(expected), k=2) * cst
+      )
+    np.testing.assert_allclose(res, expected, rtol=1e-3)
 
   def test_wgmma_registers_init(self):
     self.skip_unless_sm90a()

@@ -20,7 +20,7 @@ import dataclasses
 import functools
 import math
 from collections.abc import Callable
-from typing import Iterable, Sequence, TypeVar
+from typing import Iterable, Sequence, TypeVar, Literal
 
 import jax
 from jaxlib.mlir import ir
@@ -623,6 +623,38 @@ class FragmentedArray:
     )
 
   def _pointwise(self, op, *other, output_is_signed: bool | None = None):
+    if isinstance(self.layout, WGSplatFragLayout):
+      # Find either the largest operand or an operand that has a
+      # concrete layout base the layout computation of that.
+      widest_idx = None
+      for i, o in enumerate(other):
+        if not isinstance(o, FragmentedArray):
+          continue
+        elif not isinstance(o.layout, WGSplatFragLayout):
+          widest_idx = i
+          break
+        elif not o.layout.can_broadcast_to(self.layout.shape):
+          # Note: equal shapes can be broadcast to each other. Using
+          # the negation we make sure to only consider strictly larger
+          # shapes so that we don't end up ping ponging between equal
+          # shapes.
+          widest_idx = i
+
+      if widest_idx is not None:
+        # We need to retain the order of arguments that the op
+        # expects.
+        def _op(wide_o, self_o, *args):
+          pre_wide = args[:widest_idx - 1]
+          post_wide = args[widest_idx - 1:]
+          return op(self_o, *pre_wide, wide_o, *post_wide)
+        return other[widest_idx]._pointwise(
+            _op,
+            self,
+            *other[:widest_idx],
+            *other[widest_idx + 1:],
+            output_is_signed=output_is_signed,
+        )
+
     other_arrs = []
     for o in other:
       if not isinstance(o, FragmentedArray):
@@ -642,7 +674,7 @@ class FragmentedArray:
             o.registers.flat[0],
             shape=self.shape,
             layout=self.layout,
-            is_signed=self.is_signed,
+            is_signed=o.is_signed,
         )
       else:
         if self.layout != o.layout:
@@ -1329,6 +1361,38 @@ class FragmentedArray:
           llvm.store(get(self.registers), ptr)
       case _:
         raise NotImplementedError(self.layout)
+
+  def map_index(self, fn):
+    """Stores accumulator to a 2D memref. Not optimized at the moment."""
+    if self.layout != WGMMA_LAYOUT:
+      raise NotImplementedError
+
+    index = ir.IndexType.get()
+    def c(x):
+      return arith.ConstantOp(index, ir.IntegerAttr.get(index, x))
+
+    tidx = arith.remui(gpu.thread_id(gpu.Dimension.x), c(WARPGROUP_SIZE))
+    lane_id = arith.remui(tidx, c(32))  # {0, 1, ..., 31}
+    warp_id = arith.divui(tidx, c(32))  # {0, 1, 2, 3}
+    row_base = arith.addi(
+        arith.divui(lane_id, c(4)), arith.muli(warp_id, c(16))
+    )
+    col_base = arith.muli(arith.remui(lane_id, c(4)), c(2))  # {0, 2, 4, 6}
+    registers = self.registers.copy()
+    it = np.ndenumerate(registers)
+    for (row_tile, col_tile, row_idx, col_zero), elem in it:
+      row = arith.addi(row_base, c(row_tile * 64 + row_idx * 8))
+      for col_idx in range(2):
+        value = vector.extractelement(elem, position=c(col_idx))
+        col = arith.addi(col_base, c(col_tile * 8 + col_idx))
+        value = fn([row, col], value)
+        elem = vector.insertelement(value, elem, position=c(col_idx))
+
+      registers[row_tile, col_tile, row_idx, col_zero] = elem
+
+    return FragmentedArray(
+        _layout=self.layout, _registers=registers, _is_signed=self.is_signed
+    )
 
   @classmethod
   def load_tiled(
