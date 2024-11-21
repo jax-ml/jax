@@ -654,15 +654,14 @@ def TPU_SemaphoreSignalOp : TPU_Op<"sem_signal", [AttrSizedOperandSegments]> {
     I32:$amount,
     Optional<I32>:$device_id, // For remote DMAs
     Optional<I32>:$core_id, // For megacore
-    Optional<I32>:$subcore_id, // For the SC vector subcore
     OptionalAttr<TPU_CoreTypeEnum>:$core_type
   );
 let assemblyFormat = [{
-    $semaphore `,` $amount (`device_id` $device_id^)? (`core_id` $core_id^)? (`subcore_id` $subcore_id^)? (`core_type` $core_type^)? attr-dict `:` type($semaphore)
+    $semaphore `,` $amount (`device_id` $device_id^)? (`core_id` $core_id^)? (`core_type` $core_type^)? attr-dict `:` type($semaphore)
   }];
   let hasVerifier = 1;
   let builders = [
-    // A backward-compatible builder that sets `subcore_id` and `core_type` to nullptr.
+    // A backward-compatible builder that sets `core_type` to nullptr.
     OpBuilder<(ins "Value":$semaphore, "Value":$amount,
                "Value":$device_id, "Value":$core_id)>,
   ];
