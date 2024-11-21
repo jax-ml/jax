@@ -4441,7 +4441,8 @@ def _pad_dtype_rule(operand, padding_value, *, padding_config):
   return _input_dtype(operand, padding_value)
 
 def _pad_shape_rule(operand, padding_value, *, padding_config):
-  del padding_value
+  if np.ndim(padding_value) != 0:
+    raise ValueError(f"padding_value must be a scalar; got {np.shape(padding_value)=}")
   op_shape = np.shape(operand)
   if not len(padding_config) == np.ndim(operand):
     raise ValueError("length of padding_config must equal the number of axes "
