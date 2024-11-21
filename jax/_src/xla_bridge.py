@@ -793,10 +793,29 @@ _platform_aliases = {
   "rocm": "gpu",
 }
 
+_alias_to_compile_only_platform: dict[str, str] = {}
 _alias_to_platforms: dict[str, list[str]] = {}
 for _platform, _alias in _platform_aliases.items():
   _alias_to_platforms.setdefault(_alias, []).append(_platform)
 
+def set_compile_only_platform_for_alias(platform: str, alias: str):
+  if platform == alias:
+    # No aliasing needed.
+    return
+  if _platform_aliases.get(platform, None) != alias:
+    # Unknown alias or unknown platform for alias.
+    raise RuntimeError(f"Cannot register platform '{platform}' under alias "
+                       f"'{alias}' as it is not listed as a permitted "
+                       f"'{alias}' platform.")
+  if alias in _alias_to_compile_only_platform:
+    if _alias_to_compile_only_platform[alias] == platform:
+      # Already registered.
+      return
+    # Registered with different active platform.
+    raise RuntimeError(f"Cannot register two platforms ('{platform}' and "
+                       f"'{_alias_to_compile_only_platform[alias]}') for the same "
+                       f"platform alias '{alias}'.")
+  _alias_to_compile_only_platform[alias] = platform
 
 def known_platforms() -> set[str]:
   platforms = set()
@@ -830,6 +849,10 @@ def canonicalize_platform(platform: str) -> str:
   for p in platforms:
     if p in b.keys():
       return p
+
+  if platform in _alias_to_compile_only_platform:
+    return _alias_to_compile_only_platform[platform]
+
   raise RuntimeError(f"Unknown backend: '{platform}' requested, but no "
                      f"platforms that are instances of {platform} are present. "
                      "Platforms present are: " + ",".join(b.keys()))
