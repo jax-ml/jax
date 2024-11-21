@@ -45,7 +45,10 @@ def get_topology_desc(
     )
   try:
     topology = xb.make_pjrt_topology(platform, topology_name, **kwargs)
-    return TopologyDescription(topology._make_compile_only_devices())
+    devices = topology._make_compile_only_devices()
+    if platform:
+      xb.register_compile_only_backend(platform, devices[0].client)
+    return TopologyDescription(devices)
   except xla_extension.XlaRuntimeError as e:
     msg, *_ = e.args
     if msg.startswith("UNIMPLEMENTED"):

@@ -1084,7 +1084,10 @@ def lower_jaxpr_to_module(
   Handles the quirks of the argument/return value passing conventions of the
   runtime.
   """
-  platforms = tuple(map(xb.canonicalize_platform, platforms))
+  backend = (backend_or_name if isinstance(backend_or_name, xb.XlaBackend) else
+             None)
+  platforms = tuple(map(lambda p: xb.canonicalize_platform(p, backend),
+                        platforms))
 
   in_avals = (jaxpr.in_avals if arg_shardings is None else
               map(sharded_aval, jaxpr.in_avals, arg_shardings))

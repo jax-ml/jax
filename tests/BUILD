@@ -1056,6 +1056,19 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "deviceless_aot_test",
+    srcs = ["deviceless_aot_test.py"],
+    enable_backends = [ "gpu" ],
+    enable_configs = [
+        "gpu_a100",
+    ],
+    deps = [
+        "//jax:experimental",
+    ] + py_deps("numpy"),
+)
+
+
+jax_multiplatform_test(
     name = "sparsify_test",
     srcs = ["sparsify_test.py"],
     args = ["--jax_bcoo_cusparse_lowering=true"],

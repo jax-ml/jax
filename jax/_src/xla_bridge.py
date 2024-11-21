@@ -34,6 +34,7 @@ import threading
 import traceback
 from typing import Any, Union
 import warnings
+import weakref
 
 from jax._src import config
 from jax._src import distributed
@@ -191,6 +192,8 @@ class BackendRegistration:
 _backend_factories: dict[str, BackendRegistration] = {}
 _default_backend: xla_client.Client | None = None
 _backends : dict[str, xla_client.Client] = {}
+_WeakClientToStrDict = weakref.WeakKeyDictionary[xla_client.Client, str]
+_compile_only_backend_canonical_platform = _WeakClientToStrDict()
 _backend_errors : dict[str, str] = {}
 _backend_lock = threading.Lock()
 _plugins_registered: bool = False
@@ -226,6 +229,11 @@ def register_backend_factory(name: str, factory: BackendFactory, *,
   if make_topology is not None:
     _topology_factories[name] = make_topology
 
+def register_compile_only_backend(platform: str, client: xla_client.Client):
+  # Register the compile-only backend-platform mapping as long as
+  # the platform is not an alias.
+  if _alias_to_platforms.get(platform, None) == None:
+    _compile_only_backend_canonical_platform[client] = platform
 
 def make_cpu_client(
     collectives: xla_client._xla.CpuCollectives | None = None,
@@ -813,8 +821,8 @@ def is_known_platform(platform: str) -> bool:
   # we've heard of it and it isn't, e.g., a typo.
   return platform in known_platforms()
 
-
-def canonicalize_platform(platform: str) -> str:
+def canonicalize_platform(platform: str,
+                          backend: xla_client.Client | None = None) -> str:
   """Replaces platform aliases with their concrete equivalent.
 
   In particular, replaces "gpu" with either "cuda" or "rocm", depending on which
@@ -830,6 +838,12 @@ def canonicalize_platform(platform: str) -> str:
   for p in platforms:
     if p in b.keys():
       return p
+
+  if (backend and
+      backend.platform == platform and
+      backend in _compile_only_backend_canonical_platform):
+    return _compile_only_backend_canonical_platform[backend]
+
   raise RuntimeError(f"Unknown backend: '{platform}' requested, but no "
                      f"platforms that are instances of {platform} are present. "
                      "Platforms present are: " + ",".join(b.keys()))
