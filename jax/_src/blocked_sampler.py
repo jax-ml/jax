@@ -23,7 +23,7 @@ NdKeyList = Any
 Shape = random.Shape
 
 class SampleFn(Protocol):
-  def __call__(self, key: random.KeyArrayLike, *args, shape: Shape,
+  def __call__(self, key: ArrayLike, *args, shape: Shape,
                **kwargs) -> Array:
     ...
 
@@ -43,7 +43,7 @@ def _compute_scalar_index(iteration_index: Sequence[int],
 
 
 def blocked_fold_in(
-  global_key: random.KeyArrayLike,
+  global_key: ArrayLike,
   total_size: Shape,
   block_size: Shape,
   tile_size: Shape,
