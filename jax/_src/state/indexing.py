@@ -46,11 +46,11 @@ class Slice:
 
   @property
   def is_dynamic_start(self):
-    return not isinstance(self.start, int)
+    return not core.is_dim(self.start)
 
   @property
   def is_dynamic_size(self):
-    return not isinstance(self.size, int)
+    return not core.is_dim(self.size)
 
   def tree_flatten(self):
     # If `start` is statically known, we treat it as static information
@@ -72,10 +72,10 @@ class Slice:
 
   @classmethod
   def from_slice(cls, slc: slice, size: int) -> Slice:
-    start, stop, step = slc.indices(size)
+    start, step, size = core.canonicalize_slice(slc, size)
     if step < 1:
       raise ValueError(f"slice must have a step >= 1 (found: {step})")
-    return cls(start, max((stop - start + step - 1) // step, 0), step)
+    return cls(start, size, step)
 
 
 def dslice(
