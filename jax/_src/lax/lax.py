@@ -3426,7 +3426,7 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
   if config.sharding_in_types.value:
     xs = x.aval.sharding
     inverse_spec = tuple(xs.spec[o] for o in unsorted_axes)
-    ds = NamedSharding(xs.mesh, P(*inverse_spec))
+    ds = xs.with_spec(inverse_spec)
   else:
     ds = None
   dot_general_out = dot_general(g, y, dims, precision=precision,
@@ -4116,7 +4116,7 @@ def _broadcast_in_dim_sharding_rule(operand, *, shape, broadcast_dimensions,
   orig_spec = iter(operand.sharding.spec)
   new_spec = [next(orig_spec) if i in bds else None for i in range(len(shape))]
   assert next(orig_spec, None) is None
-  return NamedSharding(operand.sharding.mesh, P(*new_spec))
+  return operand.sharding.with_spec(new_spec)
 
 def _broadcast_in_dim_typecheck_rule(
     _, operand, *dyn_shape, shape, broadcast_dimensions, sharding):
@@ -4593,7 +4593,7 @@ def _squeeze_sharding_rule(operand, *, dimensions):
   dims_set = set(dimensions)
   new_spec = tuple(s for i, s in enumerate(operand.sharding.spec)
                    if i not in dims_set)
-  return NamedSharding(operand.sharding.mesh, P(*new_spec))
+  return operand.sharding.with_spec(new_spec)
 
 def _compute_squeeze_shape(shape, dimensions):
   dims_set = set(dimensions)
@@ -4688,7 +4688,7 @@ def _reshape_sharding_rule(operand, *, new_sizes, dimensions):
       if n != sh:
         raise NotImplementedError
       new_spec.append(sp)
-  return NamedSharding(operand.sharding.mesh, P(*new_spec))
+  return operand.sharding.with_spec(new_spec)
 
 def _reshape_typecheck_rule(_, operand, *dyn_shape, new_sizes, dimensions):
   if not dyn_shape:
@@ -4791,7 +4791,7 @@ def _transpose_shape_rule(operand, *, permutation):
 def _transpose_sharding_rule(operand, *, permutation):
   o_spec = operand.sharding.spec
   new_spec = [o_spec[old_idx] for old_idx in permutation]
-  return NamedSharding(operand.sharding.mesh, P(*new_spec))
+  return operand.sharding.with_spec(new_spec)
 
 def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
   operand, = batched_args
@@ -5165,7 +5165,7 @@ def _reduce_op_sharding_rule(operand, *, axes):
   axes = frozenset(axes)
   new_spec = P(*tuple(s for i, s in enumerate(operand.sharding.spec)
                       if i not in axes))
-  return NamedSharding(operand.sharding.mesh, new_spec)
+  return operand.sharding.with_spec(new_spec)
 
 reduce_sum_p = standard_primitive(
   _reduce_op_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_sum'),
@@ -6237,7 +6237,7 @@ _ones: Callable = partial(full_like, fill_value=1)
 def _one(x):
   if config.sharding_in_types.value:
     return full_like(x, shape=(), fill_value=1,
-                     sharding=NamedSharding(x.sharding.mesh, P()))
+                     sharding=x.sharding.with_spec(P()))
   return full_like(x, shape=(), fill_value=1)
 
 _twos: Callable = partial(full_like, fill_value=2)
