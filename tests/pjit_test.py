@@ -5466,6 +5466,28 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         ValueError, "0th dimension of all xs should be replicated"):
       f(carry, jax.device_put(arr, NamedSharding(mesh, P('x', None, None))))
 
+  def test_argminmax(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(16.).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    @jax.jit
+    def f(x):
+      z = jnp.argmax(x, axis=0)
+      self.assertEqual(z.sharding.spec, P('y'))
+      a = jnp.argmin(x, axis=1)
+      self.assertEqual(a.sharding.spec, P('x'))
+      return z, a
+
+    out1, out2 = f(arr)
+    self.assertArraysEqual(out1, np.argmax(np_inp, axis=0))
+    self.assertEqual(out1.sharding, NamedSharding(mesh, P('y')))
+    self.assertArraysEqual(out2, np.argmin(np_inp, axis=1))
+    self.assertEqual(out2.sharding, NamedSharding(mesh, P('x')))
+
+    self.assertIn('@Sharding', f.lower(arr).as_text())
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

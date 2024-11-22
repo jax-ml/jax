@@ -5007,6 +5007,11 @@ def _reduce_shape_rule(*avals, computation, jaxpr, dimensions):
     raise ValueError(f'reduce found non-scalar initial value: {init_val_shapes}')
   return [tuple(np.delete(op.shape, dimensions)) for op in operand_avals]
 
+def _reduce_sharding_rule(*avals, computation, jaxpr, dimensions):
+  operand_avals, _ = split_list(avals, [len(avals) // 2])
+  return [op.sharding.with_spec(tuple_delete(op.sharding.spec, dimensions))
+          for op in operand_avals]
+
 def _reduce_dtype_rule(*avals, computation, jaxpr, dimensions):
   operand_avals, init_val_avals = split_list(avals, [len(avals) // 2])
   operand_dtypes = [dtypes.canonicalize_dtype(op.dtype) for op in operand_avals]
@@ -5093,7 +5098,7 @@ reduce_p.multiple_results = True
 reduce_p.def_impl(partial(dispatch.apply_primitive, reduce_p))
 reduce_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, reduce_p, _reduce_shape_rule,
-            _reduce_dtype_rule, _reduce_weak_type_rule))
+            _reduce_dtype_rule, _reduce_weak_type_rule, _reduce_sharding_rule))
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 ad.primitive_jvps[reduce_p] = _reduce_jvp_rule
 
@@ -5115,6 +5120,9 @@ def _reduce_lower(ctx, *values, computation, jaxpr, dimensions):
                                       *reducer.arguments,
                                       dim_var_values=ctx.dim_var_values)
     hlo.return_(mlir.flatten_ir_values(out_nodes))
+  if config.sharding_in_types.value:
+    return [mlir.lower_sharding_under_shit(ctx, r, aval)
+            for r, aval in safe_zip(op.results, ctx.avals_out)]
   return op.results
 
 mlir.register_lowering(reduce_p, _reduce_lower)
@@ -5227,7 +5235,12 @@ def _argminmax_shape_rule(operand, *, axes, index_dtype):
   if operand.shape[axis] < 1:
     raise ValueError("argmin and argmax require non-empty reduced dimension. "
                      f"operand.shape={operand.shape} {axis=}")
-  return tuple(np.delete(operand.shape, axis))
+  return util.tuple_delete(operand.shape, axis)
+
+def _argminmax_sharding_rule(operand, *, axes, index_dtype):
+  axis, = axes
+  return operand.sharding.with_spec(
+      util.tuple_delete(operand.sharding.spec, axis))
 
 def _argminmax_dtype_rule(operand, *, axes, index_dtype):
   if not dtypes.issubdtype(index_dtype, np.integer):
@@ -5264,7 +5277,9 @@ def _compute_argminmax(value_comparator, get_identity,
   # value_comparator is either lax.lt (for argmin) or lax.gt
   # get_identity(operand.dtype) is inf for argmin or -inf for argmax
   axis, = axes
-  indices = broadcasted_iota(index_dtype, np.shape(operand), axis)
+  indices = broadcasted_iota(
+      index_dtype, np.shape(operand), axis,
+      _sharding=operand.sharding if config.sharding_in_types.value else None)
   res = reduce([operand, indices],
                [get_identity(operand.dtype), np.array(0, index_dtype)],
                _ArgMinMaxReducer(value_comparator),
@@ -5272,22 +5287,24 @@ def _compute_argminmax(value_comparator, get_identity,
   return res[1]
 
 argmin_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
-                              'argmin', weak_type_rule=_strip_weak_type)
+                              'argmin', weak_type_rule=_strip_weak_type,
+                              sharding_rule=_argminmax_sharding_rule)
 batching.defreducer(argmin_p, _get_min_identity)
 ad.defjvp_zero(argmin_p)
 
 argmax_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
-                              'argmax', weak_type_rule=_strip_weak_type)
+                              'argmax', weak_type_rule=_strip_weak_type,
+                              sharding_rule=_argminmax_sharding_rule)
 batching.defreducer(argmax_p, _get_max_identity)
 ad.defjvp_zero(argmax_p)
 
-mlir.register_lowering(argmin_p, mlir.cache_lowering(mlir.lower_fun(
-  partial(_compute_argminmax, lt, _get_min_identity),
-  multiple_results=False)))
+mlir.register_lowering(argmin_p, mlir.cache_lowering(
+    mlir.lower_fun(partial(_compute_argminmax, lt, _get_min_identity),
+                   multiple_results=False)))
 
-mlir.register_lowering(argmax_p, mlir.cache_lowering(mlir.lower_fun(
-  partial(_compute_argminmax, gt, _get_max_identity),
-  multiple_results=False)))
+mlir.register_lowering(argmax_p, mlir.cache_lowering(
+    mlir.lower_fun(partial(_compute_argminmax, gt, _get_max_identity),
+                   multiple_results=False)))
 
 
 def _reduce_logical_shape_rule(operand, *, axes):
@@ -5882,7 +5899,7 @@ rng_bit_generator_p.def_impl(
 rng_bit_generator_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, rng_bit_generator_p,
             _rng_bit_generator_shape_rule, _rng_bit_generator_dtype_rule,
-            _rng_bit_generator_weak_type_rule))
+            _rng_bit_generator_weak_type_rule, None))
 mlir.register_lowering(rng_bit_generator_p,
                        _rng_bit_generator_lowering)
 
