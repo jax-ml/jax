@@ -2400,11 +2400,15 @@ def _sin_lowering(ctx, x):
     return sine(ctx, x)
   return _nary_lower_hlo(hlo.sine, ctx, x)
 
+def _sin_p_lin(_, x):
+  cos_x = cos(x) # TODO: allow this to happen in the linearized computation (need to fix backward_pass)
+  return (sin_p.bind(x), True, cos_x, lambda cos_x_, t: mul(t, cos_x_))
+
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x: mul(g, cos(x)))
+ad.primitive_linearizations[sin_p] = _sin_p_lin
 mlir.register_lowering(sin_p, _sin_lowering)
 batching.ragged_prop_rules[sin_p] = batching.ragged_mask_elementwise_rule
-
 
 def _cos_complex(x):
   # cos(x) = complex(cos(real(x)) * cosh(imag(x)), -sin(real(x)) * sinh(imag(x)))
