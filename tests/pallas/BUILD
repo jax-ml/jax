@@ -427,6 +427,32 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "tpu_pallas_interpret_test",
+    srcs = [
+        "tpu_pallas_interpret_test.py",
+    ],
+    disable_configs = ["cpu_shardy"],
+    enable_backends = ["cpu"],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_tpu",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
+    name = "tpu_pallas_interpret_distributed_test",
+    srcs = [
+        "tpu_pallas_interpret_distributed_test.py",
+    ],
+    disable_configs = ["cpu_shardy"],
+    enable_backends = ["cpu"],
+    deps = [
+        "//third_party/py/jax:pallas",
+        "//third_party/py/jax:pallas_tpu",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
     name = "tpu_paged_attention_kernel_test",
     srcs = ["tpu_paged_attention_kernel_test.py"],
     disable_configs = [

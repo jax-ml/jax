@@ -148,3 +148,15 @@ py_library(
         "//jax/_src/pallas",
     ],
 )
+
+py_library(
+    name = "interpret",
+    srcs = ["interpret.py"],
+    deps = [
+        ":core",
+        ":primitives",
+        "//jax",
+        "//jax/_src/lib",
+        "//jax/_src/pallas",
+    ] + py_deps("numpy"),
+)
