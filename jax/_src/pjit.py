@@ -2107,6 +2107,52 @@ def _pjit_jvp(primals_in, tangents_in,
 ad.primitive_jvps[pjit_p] = _pjit_jvp
 
 
+def _pjit_linearization(nzs, *primals_in, jaxpr,
+                        in_shardings, out_shardings, in_layouts, out_layouts,
+                        resource_env, donated_invars, name, keep_unused, inline,
+                        compiler_options_kvs):
+  primal_jaxpr, num_residuals, nzs_out, tangent_jaxpr = ad.linearize_jaxpr(jaxpr, nzs)
+  # constvars will become residuals. Move them to the end of the ordinary args.
+  res_shardings = (UNSPECIFIED,) * num_residuals
+  res_layouts = (None,) * num_residuals
+  res_donated = (False,) * num_residuals
+  def tangent_fun(consts_, *tangents):
+    tangents_nz = _filter_zeros(nzs, tangents)
+    assert len(consts_) == num_residuals
+    return pjit_p.bind(*(*tangents_nz, *consts_),
+                       jaxpr=tangent_jaxpr,
+                       in_shardings=_filter_zeros(nzs, in_shardings) + res_shardings,
+                       out_shardings=_filter_zeros(nzs_out, out_shardings),
+                       in_layouts=_filter_zeros(nzs, in_layouts) + res_layouts,
+                       out_layouts=_filter_zeros(nzs_out, out_layouts),
+                       resource_env=resource_env,
+                       donated_invars=_filter_zeros(nzs, donated_invars) + res_donated,
+                       name=name,
+                       keep_unused=keep_unused,
+                       inline=inline,
+                       compiler_options_kvs=compiler_options_kvs)
+
+  def _filter_zeros(is_nz_l, l):
+    return tuple(x for nz, x in zip(is_nz_l, l) if nz)
+
+  ans = pjit_p.bind(*primals_in, jaxpr=primal_jaxpr,
+                    in_shardings=in_shardings,
+                    out_shardings=(*res_shardings, *out_shardings),
+                    in_layouts=in_layouts,
+                    out_layouts=(*res_layouts, *out_layouts),
+                    resource_env=resource_env,
+                    donated_invars=donated_invars,
+                    name=name,
+                    keep_unused=keep_unused,
+                    inline=inline,
+                    compiler_options_kvs=compiler_options_kvs)
+  residuals_ans, primal_ans = split_list(ans, [num_residuals])
+
+  return primal_ans, nzs_out, residuals_ans, tangent_fun
+
+ad.primitive_linearizations[pjit_p] = _pjit_linearization
+
+
 def _pjit_partial_eval(trace, *in_tracers,
                        jaxpr, in_shardings, out_shardings,
                        in_layouts, out_layouts, resource_env, donated_invars,
