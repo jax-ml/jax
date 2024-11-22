@@ -1575,6 +1575,7 @@ class DynamicJaxprTracer(core.Tracer):
     val = frame.constvar_to_val.get(frame.tracer_to_var.get(id(self)))
     return self if val is None else get_referent(val)
 
+
 def _dynamic_jaxpr_tracer_shaped_abstractify(x):
   return x.aval
 api_util._shaped_abstractify_handlers[DynamicJaxprTracer] = _dynamic_jaxpr_tracer_shaped_abstractify
@@ -1805,8 +1806,8 @@ def _inline_literals(
 
 
 class DynamicJaxprTrace(core.Trace):
-  def __init__(self, frame):
-    self.frame = frame
+  def __init__(self):
+    self.frame = JaxprStackFrame()
 
   def invalidate(self):
     # avoid cyclic refs
@@ -2068,6 +2069,9 @@ class DynamicJaxprTrace(core.Trace):
     self.frame.add_eqn(eqn)
     return out_tracers
 
+  def to_jaxpr(self, out_tracers: Sequence[Tracer]):
+    return self.frame.to_jaxpr(self, out_tracers)
+
 
 custom_staging_rules: dict[Primitive, Callable] = {}
 
@@ -2166,10 +2170,8 @@ def trace_to_jaxpr_dynamic(
            list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]]:
   keep_inputs = [True] * len(in_avals) if keep_inputs is None else keep_inputs
 
-  frame = JaxprStackFrame()
-  frame.debug_info = debug_info
-
-  trace = DynamicJaxprTrace(frame)
+  trace = DynamicJaxprTrace()
+  trace.frame.debug_info = debug_info
   with core.ensure_no_leaks(trace), source_info_util.reset_name_stack():
     in_tracers = _input_type_to_tracers(trace.new_arg, in_avals)
     in_tracers = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
@@ -2177,8 +2179,8 @@ def trace_to_jaxpr_dynamic(
       ans = fun.call_wrapped(*in_tracers)
 
     out_tracers = map(trace.to_jaxpr_tracer, ans)
-    jaxpr, consts, attrs_tracked = frame.to_jaxpr(trace, out_tracers)
-    del trace, fun, frame, in_tracers, out_tracers, ans
+    jaxpr, consts, attrs_tracked = trace.to_jaxpr(out_tracers)
+    del trace, fun, in_tracers, out_tracers, ans
 
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr, [v.aval for v in jaxpr.outvars], consts, attrs_tracked
@@ -2188,7 +2190,7 @@ def trace_to_jaxpr_dynamic2(
     fun: lu.WrappedFun, debug_info: DebugInfo | None = None
   ) -> tuple[Jaxpr, OutputType, list[Any]]:
 
-  trace = DynamicJaxprTrace(JaxprStackFrame())
+  trace = DynamicJaxprTrace()
   with core.ensure_no_leaks(trace), source_info_util.reset_name_stack():
     trace.frame.debug_info = debug_info
     in_avals, keep_inputs = unzip2(fun.in_type)
