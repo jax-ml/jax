@@ -2329,9 +2329,14 @@ def map_compute_type(c_type):
 
 def wrap_compute_type_in_place(ctx, op):
   if ctx.jaxpr_eqn_ctx is not None and ctx.jaxpr_eqn_ctx.compute_type is not None:
-    dict_attr = {"_xla_compute_type": ir.StringAttr.get(
-        map_compute_type(ctx.jaxpr_eqn_ctx.compute_type))}
-    op.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
+    if ctx.jaxpr_eqn_ctx.compute_type.startswith("gpu_stream:"):
+      stream = ctx.jaxpr_eqn_ctx.compute_type.split(":")[1]
+      dict_attr = {"_xla_stream_annotation": ir.StringAttr.get(stream)}
+      op.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
+    else:
+      dict_attr = {"_xla_compute_type": ir.StringAttr.get(
+          map_compute_type(ctx.jaxpr_eqn_ctx.compute_type))}
+      op.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
 
 
 def wrap_xla_metadata_in_place(ctx, op):
