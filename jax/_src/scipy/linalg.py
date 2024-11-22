@@ -25,6 +25,7 @@ import jax.numpy as jnp
 from jax import jit, vmap, jvp
 from jax import lax
 from jax._src import dtypes
+from jax._src import xla_bridge
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import qdwh
 from jax._src.numpy.util import (
@@ -211,18 +212,32 @@ def cho_solve(c_and_lower: tuple[ArrayLike, bool], b: ArrayLike,
   return _cho_solve(c, b, lower)
 
 @overload
-def _svd(x: ArrayLike, *, full_matrices: bool, compute_uv: Literal[True]) -> tuple[Array, Array, Array]: ...
+def _svd(x: ArrayLike, *, full_matrices: bool, compute_uv: Literal[True],
+         lapack_driver: str) -> tuple[Array, Array, Array]: ...
 
 @overload
-def _svd(x: ArrayLike, *, full_matrices: bool, compute_uv: Literal[False]) -> Array: ...
+def _svd(x: ArrayLike, *, full_matrices: bool, compute_uv: Literal[False],
+         lapack_driver: str) -> Array: ...
 
 @overload
-def _svd(x: ArrayLike, *, full_matrices: bool, compute_uv: bool) -> Array | tuple[Array, Array, Array]: ...
+def _svd(x: ArrayLike, *, full_matrices: bool, compute_uv: bool,
+         lapack_driver: str) -> Array | tuple[Array, Array, Array]: ...
 
-@partial(jit, static_argnames=('full_matrices', 'compute_uv'))
-def _svd(a: ArrayLike, *, full_matrices: bool, compute_uv: bool) -> Array | tuple[Array, Array, Array]:
+@partial(jit, static_argnames=('full_matrices', 'compute_uv', 'lapack_driver'))
+def _svd(a: ArrayLike, *, full_matrices: bool, compute_uv: bool,
+         lapack_driver: str) -> Array | tuple[Array, Array, Array]:
   a, = promote_dtypes_inexact(jnp.asarray(a))
-  return lax_linalg.svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
+
+  algorithm = lax_linalg.SvdAlgorithm.DEFAULT
+  if xla_bridge.get_backend().platform == 'cpu':
+    if lapack_driver == "gesdd":
+      pass
+    elif lapack_driver == "gesvd":
+      algorithm = lax_linalg.SvdAlgorithm.QR
+    else:
+      raise ValueError("Unknown LAPACK driver for SVD.")
+
+  return lax_linalg.svd(a, full_matrices=full_matrices, compute_uv=compute_uv, algorithm=algorithm)
 
 @overload
 def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: Literal[True] = True,
@@ -243,6 +258,26 @@ def svd(a: ArrayLike, full_matrices: bool = True, *, compute_uv: Literal[False],
 def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
         overwrite_a: bool = False, check_finite: bool = True,
         lapack_driver: str = 'gesdd') -> Array | tuple[Array, Array, Array]: ...
+
+@overload
+def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: Literal[True] = True,
+        overwrite_a: bool = False, check_finite: bool = True,
+        lapack_driver: str = 'gesvd') -> tuple[Array, Array, Array]: ...
+
+@overload
+def svd(a: ArrayLike, full_matrices: bool, compute_uv: Literal[False],
+        overwrite_a: bool = False, check_finite: bool = True,
+        lapack_driver: str = 'gesvd') -> Array: ...
+
+@overload
+def svd(a: ArrayLike, full_matrices: bool = True, *, compute_uv: Literal[False],
+        overwrite_a: bool = False, check_finite: bool = True,
+        lapack_driver: str = 'gesvd') -> Array: ...
+
+@overload
+def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
+        overwrite_a: bool = False, check_finite: bool = True,
+        lapack_driver: str = 'gesvd') -> Array | tuple[Array, Array, Array]: ...
 
 
 def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
@@ -271,7 +306,11 @@ def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
       only the singular values ``s``.
     overwrite_a: unused by JAX
     check_finite: unused by JAX
-    lapack_driver: unused by JAX
+    lapack_driver: On CPU target the parameter selects the SVD algorithm. The
+      default option 'gesdd' selects the generally more efficient
+      divide-and-conquer LAPACK method, the other valid parameter 'gesvd'
+      selects the QR based algorithm. On other targets, the parameter is
+      ignored.
 
   Returns:
     A tuple of arrays ``(u, s, vh)`` if ``compute_uv`` is True, otherwise the array ``s``.
@@ -313,8 +352,9 @@ def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
     >>> jnp.allclose(x_reconstructed, x)
     Array(True, dtype=bool)
   """
-  del overwrite_a, check_finite, lapack_driver  # unused
-  return _svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
+  del overwrite_a, check_finite  # unused
+  return _svd(a, full_matrices=full_matrices, compute_uv=compute_uv,
+              lapack_driver=lapack_driver)
 
 
 def det(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> Array:
