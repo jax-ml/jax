@@ -185,16 +185,19 @@ def _python_pjit_helper(fun, jit_info, *args, **kwargs):
     args_flat = [*init_states, *args_flat]
 
   try:
-    if (core.trace_state_clean() and
-        not config.debug_key_reuse.value and
-        not config.data_dependent_tracing_fallback.value):
-      args_flat = map(core.full_lower, args_flat)
-      core.check_eval_args(args_flat)
-      out_flat, compiled, profiler = _pjit_call_impl_python(*args_flat, **p.params)
-    else:
-      out_flat = pjit_p.bind(*args_flat, **p.params)
-      compiled = None
-      profiler = None
+    # TODO(yashkatariya): Maybe thread this into pjit params like resource_env
+    # and set the context manager down the stack?
+    with p.abstract_mesh:
+      if (core.trace_state_clean() and
+          not config.debug_key_reuse.value and
+          not config.data_dependent_tracing_fallback.value):
+        args_flat = map(core.full_lower, args_flat)
+        core.check_eval_args(args_flat)
+        out_flat, compiled, profiler = _pjit_call_impl_python(*args_flat, **p.params)
+      else:
+        out_flat = pjit_p.bind(*args_flat, **p.params)
+        compiled = None
+        profiler = None
   except pxla.DeviceAssignmentMismatchError as e:
     fails, = e.args
     api_name = 'jit' if p.params['resource_env'] is None else 'pjit'
@@ -330,9 +333,10 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
     if config.no_tracing.value:
       raise RuntimeError(f"re-tracing function {jit_info.fun_sourceinfo} for "
                          "`jit`, but 'no_tracing' is set")
-    outs, out_flat, out_tree, args_flat, jaxpr, \
-      attrs_tracked, executable, pgle_profiler = _python_pjit_helper(
-        fun, jit_info, *args, **kwargs)
+
+    (outs, out_flat, out_tree, args_flat, jaxpr, attrs_tracked, executable,
+     pgle_profiler) = _python_pjit_helper(fun, jit_info, *args, **kwargs)
+
     maybe_fastpath_data = _get_fastpath_data(
         executable, out_tree, args_flat, out_flat, attrs_tracked, jaxpr.effects,
         jaxpr.consts, jit_info.abstracted_axes,
@@ -495,10 +499,10 @@ def _make_jit_wrapper(fun: Callable, jit_info: PjitInfo):
     donate_argnums = tuple(i for i, d in enumerate(p.donated_invars) if d)
     args_info = stages.make_args_info(p.in_tree, p.in_avals, donate_argnums)
     lower_callable = partial(_resolve_and_lower, args_flat, **p.params,
-                             pgle_profiler=None)
+                            pgle_profiler=None)
     return stages.Traced(
         p.params['jaxpr'], args_info, p.params["name"], p.out_tree,
-        lower_callable, args_flat, p.arg_names, p.num_consts)
+        lower_callable, p.abstract_mesh, args_flat, p.arg_names, p.num_consts)
 
   wrapped = _cpp_pjit(fun, jit_info)
   wrapped.lower = lower
@@ -534,6 +538,7 @@ class PjitParams(NamedTuple):
   arg_names: tuple[str, ...] | None
   num_consts: int
   attrs_tracked: list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]
+  abstract_mesh: AbstractMesh
 
 
 def _infer_params_impl(
@@ -639,7 +644,9 @@ def _infer_params_impl(
 
   attr_token = _attr_token(flat_fun, in_type)
 
-  abstract_mesh = get_abstract_mesh(in_type)
+  abstract_mesh = (
+      get_abstract_mesh(in_type) if mesh_lib.mesh_context.mesh is None
+      else mesh_lib.mesh_context.mesh)
   with abstract_mesh:
     jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
         flat_fun, in_type, attr_token, dbg,
@@ -684,7 +691,7 @@ def _infer_params_impl(
   )
   return PjitParams(consts, params, in_avals, in_tree, out_tree(),
                     donated_invars, dbg.arg_names if dbg else None, len(consts),
-                    attrs_tracked), args_flat
+                    attrs_tracked, abstract_mesh), args_flat
 
 
 def get_abstract_mesh(in_avals):

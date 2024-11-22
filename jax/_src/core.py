@@ -2263,16 +2263,20 @@ def _map_shaped_array(
   assert axis is None or aval.shape[axis] == size
   # TODO: Extend the named shape
   if axis is None: return aval
+  sharding = (aval.sharding.with_spec(tuple_delete(aval.sharding.spec, axis))
+              if config.sharding_in_types.value else None)
   return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
-                     weak_type=aval.weak_type)
+                     weak_type=aval.weak_type, sharding=sharding)
 
 def _unmap_shaped_array(
     size: int, axis_name: AxisName, axis: int | None, aval: ShapedArray
   ) -> ShapedArray:
   if axis is None: return aval
   elif type(axis) is int:
+    sharding = (aval.sharding.with_spec(tuple_insert(aval.sharding.spec, axis, axis_name))
+                if config.sharding_in_types.value else None)
     return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
-                       weak_type=aval.weak_type)
+                       weak_type=aval.weak_type, sharding=sharding)
   else: raise TypeError(axis)
 
 def _map_dshaped_array(
