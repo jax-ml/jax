@@ -48,6 +48,9 @@ from jax._src.export import shape_poly
 from jax._src.export import shape_poly_decision
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
+from jax._src.state import discharge
+from jax._src.state import primitives as ref_primitives
+
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -2062,6 +2065,31 @@ class ShapePolyTest(jtu.JaxTestCase):
                        polymorphic_shapes=["b, ...", "c, ...", None])
 
 
+  @jtu.parameterized_filterable(
+      kwargs=[
+          dict(slc=slc)
+          for slc in [
+              slice(None, None, None),
+              slice(2, 5),
+          ]
+      ])
+  def test_stateful(self, slc: slice):
+    w, = export.symbolic_shape("w", constraints=["w >= 3"])
+    def f(x_ref):
+      ones = jnp.ones_like(x_ref)[slc]
+      ref_primitives.ref_addupdate(x_ref, slc, ones)
+      x1 = ref_primitives.ref_get(x_ref, slc)
+      x2 = x1 + ones
+      ref_primitives.ref_set(x_ref, slc, x2)
+
+    exp = export.export(jax.jit(discharge.run_state(f)))(
+        jax.ShapeDtypeStruct((w,), dtype=_f32))
+    x = np.ones((32,), dtype=_f32)
+    expected = np.copy(x)
+    expected[slc] = 3.
+    self.assertAllClose(exp.call(x), expected)
+
+
 # List containing either harnesses, or lists of harnesses
 _POLY_SHAPE_TEST_HARNESSES = [
     PolyHarness("add", "",
@@ -3603,7 +3631,7 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
         not harness.polymorphic_shapes[0].endswith("...") and
         jtu.test_device_matches(["tpu"])):
       raise unittest.SkipTest(
-          "Shape polymorphsim for Eigh and Svd is only supported for batch dimensions on TPU.")
+          "Shape polymorphism for Eigh and Svd is only supported for batch dimensions on TPU.")
 
     config_flags = harness.override_jax_config_flags
     # Update this here rather than in harness object because vmap_random_gamma is derived

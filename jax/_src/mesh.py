@@ -107,6 +107,20 @@ class AxisTypes(enum.Enum):
   User = enum.auto()
   Collective = enum.auto()
 
+  def __repr__(self):
+    return self.name
+
+def axis_names_to_types(axis_types) -> dict[str, AxisTypes]:
+  if axis_types is None:
+    return {}
+  d = {}
+  for t, names in axis_types.items():
+    if isinstance(names, tuple):
+      for n in names:
+        d[n] = t
+    else:
+      d[names] = t
+  return d
 
 _mesh_object_dict = {}  # type: ignore
 
@@ -269,6 +283,10 @@ class Mesh(contextlib.ContextDecorator):
   def axis_sizes(self) -> tuple[int, ...]:
     return self.devices.shape
 
+  @functools.cached_property
+  def _name_to_type(self):
+    return axis_names_to_types(self.axis_types)
+
   @property
   def size(self):
     return math.prod(self.shape.values()) if self.devices.ndim else 0
@@ -391,6 +409,10 @@ class AbstractMesh:
     return self._axis_sizes
 
   @functools.cached_property
+  def _name_to_type(self):
+    return axis_names_to_types(self.axis_types)
+
+  @functools.cached_property
   def size(self):
     return math.prod(self._axis_sizes) if self._axis_sizes else 0
 
@@ -407,7 +429,7 @@ class AbstractMesh:
     return self.size == 0
 
   @functools.cached_property
-  def are_all_axes_collective(self) -> bool:
+  def _are_all_axes_collective(self) -> bool:
     if self.axis_types is None:
       return False
     return all(t == AxisTypes.Collective for t in self.axis_types.keys())
@@ -433,14 +455,22 @@ class AbstractMesh:
     _raise_value_error("local_mesh")
 
   def __enter__(self):
-    raise RuntimeError("AbstractMesh is not a context manager")
+    mesh_context.stack.append(self)
+    mesh_context.mesh = self
+    jax_config.abstract_mesh_context_manager.set_local(
+        tuple(m for m in mesh_context.stack if m is not None))
+    return self
 
   def __exit__(self, exc_type, exc_value, traceback):
-    raise RuntimeError("AbstractMesh is not a context manager")
+    mesh_context.stack.pop()
+    mesh_context.mesh = mesh_context.stack[-1]
+    jax_config.abstract_mesh_context_manager.set_local(
+        tuple(m for m in mesh_context.stack if m is not None))
+    return False
 
   @staticmethod
   def _extremely_unsafe_enter_tracing_context(mesh: AbstractMesh):
-    jax_config.mesh_context_manager.set_local(mesh)
+    jax_config.abstract_mesh_context_manager.set_local(mesh)
     return
 
 
@@ -448,3 +478,11 @@ class AbstractMesh:
 # property raises an exception unconditionally. Remove this once that is fixed.
 def _raise_value_error(name):
   raise ValueError(f"AbstractMesh does not implement {name}")
+
+
+class MeshContext(threading.local):
+  def __init__(self):
+    self.stack = [None]
+    self.mesh = self.stack[-1]
+
+mesh_context = MeshContext()

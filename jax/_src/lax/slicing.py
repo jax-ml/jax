@@ -1270,6 +1270,39 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
   return tuple(core.stride_dim(d, window_size=1, window_stride=s)
                for d, s in zip(diff, strides))
 
+def _get_sub_spec_size(mesh, sub_spec):
+  if isinstance(sub_spec, tuple):
+    return math.prod(mesh.shape[s] for s in sub_spec)
+  return mesh.shape[sub_spec]
+
+def _get_sharding_for_varying_out_shape(out_shape, operand, name):
+  """Returns a sharding when out_shape may not be the same as operand shape"""
+  mesh = operand.sharding.mesh
+  for op_sh, out_sh, op_spec in safe_zip(
+      operand.shape, out_shape, operand.sharding.spec):
+    if (op_sh != out_sh and op_spec is not None and
+        out_sh % _get_sub_spec_size(mesh, op_spec) != 0):
+      raise NotImplementedError(
+          f"{name} on sharded dims where out dim ({out_sh}) is not divisble by"
+          f" mesh axes ({_get_sub_spec_size(mesh, op_spec)}) with spec"
+          f" ({op_spec}) is not implemented.")
+  # TODO(yashkatariya): Returning operand.sharding as is may or may not move
+  # data. So think about how to avoid it which might include creating a new
+  # mesh? For example:
+  # mesh = {'x': 4}
+  # x = jax.device_put(jnp.arange(8), NamedSharding(mesh, P('x')))`
+  # ys = lax.split(x, [4, 4])  # This will create outputs of shape (4,)
+  # According to the current logic, ys[0].sharding.spec == P('x')
+  # which involves data movement.
+  return operand.sharding
+
+def _slice_sharding_rule(operand, *, start_indices, limit_indices, strides):
+  # TODO(yashkatariya): Once JAX supports uneven sharding at the top level,
+  # change this logic to `return operand.sharding` directly.
+  out_shape = _slice_shape_rule(operand, start_indices=start_indices,
+                                limit_indices=limit_indices, strides=strides)
+  return _get_sharding_for_varying_out_shape(out_shape, operand, 'slicing')
+
 def _slice_transpose_rule(t, operand, *, start_indices, limit_indices, strides):
   assert ad.is_undefined_primal(operand)
   operand_shape = operand.aval.shape
@@ -1308,7 +1341,8 @@ def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
   out = slice(operand, new_start_indices, new_limit_indices, new_strides)
   return out, bdim
 
-slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice')
+slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice',
+                             sharding_rule=_slice_sharding_rule)
 ad.deflinear2(slice_p, _slice_transpose_rule)
 batching.primitive_batchers[slice_p] = _slice_batching_rule
 # TODO(mvoz): A better slice rule for ragged prop, enforcing boundaries
@@ -1333,14 +1367,16 @@ def _slice_impl(x, start_indices, limit_indices, strides):
 def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
   strides = strides or [1] * len(start_indices)
   aval_out, = ctx.avals_out
-  return [mlir.slice_op(ctx, x, aval_out,
-                        start_indices=start_indices, limit_indices=limit_indices, strides=strides)]
+  out = mlir.slice_op(ctx, x, aval_out, start_indices=start_indices,
+                      limit_indices=limit_indices, strides=strides)
+  if config.sharding_in_types.value:
+    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
+  return [out]
 
 mlir.register_lowering(slice_p, _slice_lower)
 
 
-def _dynamic_slice_shape_rule(
-    operand, *starts_and_dyn_sizes, slice_sizes):
+def _dynamic_slice_shape_rule(operand, *starts_and_dyn_sizes, slice_sizes):
   start_indices, dyn = util.split_list(starts_and_dyn_sizes, [operand.ndim])
   if operand.ndim != len(start_indices):
     msg = ("dynamic_slice start_indices must have length equal to the number "
@@ -1362,6 +1398,12 @@ def _dynamic_slice_shape_rule(
     raise TypeError("start_indices arguments to dynamic_slice must be scalars, "
                     f" got indices {start_indices}")
   return tuple(lax._merge_dyn_shape(slice_sizes, dyn))
+
+def _dynamic_slice_sharding_rule(operand, *starts_and_dyn_sizes, slice_sizes):
+  out_shape = _dynamic_slice_shape_rule(
+      operand, *starts_and_dyn_sizes, slice_sizes=slice_sizes)
+  return _get_sharding_for_varying_out_shape(out_shape, operand, 'dynamic_slice')
+
 
 def _dynamic_slice_dtype_rule(operand, *starts_and_dyn_sizes, slice_sizes):
   start_indices, dyn = util.split_list(starts_and_dyn_sizes, [operand.ndim])
@@ -1466,7 +1508,8 @@ def _dynamic_slice_padding_rule(in_avals, out_avals, x, *starts_and_dyn,
 
 dynamic_slice_p = standard_primitive(
     _dynamic_slice_shape_rule, _dynamic_slice_dtype_rule, 'dynamic_slice',
-    weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0),
+    sharding_rule=_dynamic_slice_sharding_rule)
 ad.primitive_jvps[dynamic_slice_p] = _dynamic_slice_jvp
 ad.primitive_transposes[dynamic_slice_p] = _dynamic_slice_transpose_rule
 batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
@@ -1480,7 +1523,10 @@ def _dynamic_slice_lower(ctx, x, *starts_and_dyn_sizes, slice_sizes):
   aval_out, = ctx.avals_out
   if dyn:
     aval_out = aval_out.update(shape=lax._merge_dyn_shape(slice_sizes, dyn))
-  return [mlir.dynamic_slice(ctx, aval_out, x, start_indices=start_indices)]
+  out = mlir.dynamic_slice(ctx, aval_out, x, start_indices=start_indices)
+  if config.sharding_in_types.value:
+    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
+  return [out]
 
 mlir.register_lowering(dynamic_slice_p, _dynamic_slice_lower)
 
@@ -1510,6 +1556,14 @@ def _dynamic_update_slice_shape_rule(operand, update, *start_indices):
     raise TypeError("start_indices arguments to dynamic_update_slice must be "
                     f"scalars, got indices {start_indices}")
   return operand.shape
+
+def _dynamic_update_slice_sharding_rule(operand, update, *start_indices):
+  if operand.sharding != update.sharding:
+    raise TypeError(
+        "dynamic_update_slice update sharding must be equal to operand"
+        f" sharding, got update sharding {update.sharding} for operand sharding"
+        f" {operand.sharding}.")
+  return operand.sharding
 
 def _dynamic_update_slice_dtype_rule(operand, update, *start_indices):
   lax.check_same_dtypes("dynamic_update_slice", operand, update)
@@ -1576,7 +1630,7 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
 
 dynamic_update_slice_p = standard_primitive(
     _dynamic_update_slice_shape_rule, _dynamic_update_slice_dtype_rule,
-    'dynamic_update_slice')
+    'dynamic_update_slice', sharding_rule=_dynamic_update_slice_sharding_rule)
 ad.primitive_jvps[dynamic_update_slice_p] = _dynamic_update_slice_jvp
 ad.primitive_transposes[dynamic_update_slice_p] = \
     _dynamic_update_slice_transpose_rule
@@ -1585,8 +1639,11 @@ batching.primitive_batchers[dynamic_update_slice_p] = \
 
 def _dynamic_update_slice_lower(ctx, x, update, *start_indices):
   aval_out, = ctx.avals_out
-  return [mlir.dynamic_update_slice(ctx, aval_out, x, update,
-                                    start_indices=start_indices)]
+  out = mlir.dynamic_update_slice(ctx, aval_out, x, update,
+                                  start_indices=start_indices)
+  if config.sharding_in_types.value:
+    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
+  return [out]
 
 mlir.register_lowering(dynamic_update_slice_p, _dynamic_update_slice_lower)
 

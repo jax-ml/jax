@@ -209,7 +209,9 @@ if xla_extension_version >= 295:
     Values included in this set should also most likely be included in
     the C++ JIT state, which is handled separately.
     """
-    return (axis_env_state.value, mesh_context_manager.value, xla_metadata_context_manager.value,
+    return (axis_env_state.value, mesh_context_manager.value,
+            xla_metadata_context_manager.value,
+            abstract_mesh_context_manager.value,
             compute_on_context_manager.value, enable_x64.value,
             numpy_rank_promotion.value, default_matmul_precision.value,
             dynamic_shapes.value,
@@ -219,6 +221,7 @@ if xla_extension_version >= 295:
             threefry_partitionable.value,
             threefry_gpu_kernel_lowering.value,
             sharding_in_types.value,
+            use_direct_linearize.value,
             softmax_custom_jvp.value,
             enable_memories.value,
             disable_jit.value,
@@ -263,6 +266,7 @@ else:
             threefry_partitionable.value,
             threefry_gpu_kernel_lowering.value,
             sharding_in_types.value,
+            use_direct_linearize.value,
             softmax_custom_jvp.value,
             enable_memories.value,
             disable_jit.value,
@@ -967,6 +971,7 @@ if xla_extension_version >= 295:
   trace_state = config_ext.Config(None, include_in_jit_key=True)
   axis_env_state = config_ext.Config((), include_in_jit_key=True)
   mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
+  abstract_mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
   compute_on_context_manager = config_ext.Config((), include_in_jit_key=True)
   xla_metadata_context_manager = config_ext.Config((), include_in_jit_key=True)
 else:
@@ -983,6 +988,7 @@ else:
     threefry_partitionable: bool = False
     threefry_gpu_kernel_lowering: bool = False
     sharding_in_types: bool = False
+    use_direct_linearize: bool = False
     softmax_custom_jvp: bool = False
     xla_profile_version: int = 0
     pgle_profiling_runs: int = 0
@@ -1025,6 +1031,7 @@ else:
     threefry_partitionable: bool | None = None
     threefry_gpu_kernel_lowering: bool | None = None
     sharding_in_types: bool | None = None
+    use_direct_linearize: bool | None = None
     softmax_custom_jvp: bool | None = None
     xla_profile_version: int | None = None
     pgle_profiling_runs: int | None = None
@@ -1316,6 +1323,12 @@ sharding_in_types = bool_state(
     default=False,
     help=('When True, enables forward only sharding propagation in JAX and '
           'avals have sharding on them.'),
+    include_in_jit_key=True)
+
+use_direct_linearize = bool_state(
+    name='jax_use_direct_linearize',
+    default=False,
+    help=('Use direct linearization instead JVP followed by partial eval'),
     include_in_jit_key=True)
 
 data_dependent_tracing_fallback = bool_state(
@@ -1962,4 +1975,15 @@ use_shardy_partitioner = bool_state(
         'www.github.com/openxla/shardy'
     ),
     include_in_jit_key=True,
+)
+
+gpu_use_magma = enum_state(
+    name='jax_use_magma',
+    enum_values=['off', 'on', 'auto'],
+    default='auto',
+    help=(
+        'Enable experimental support for MAGMA-backed lax.linalg.eig on GPU. '
+        'See the documentation for lax.linalg.eig for more details about how '
+        'to use this feature.'
+    ),
 )

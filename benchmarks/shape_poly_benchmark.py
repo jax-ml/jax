@@ -17,7 +17,6 @@ import google_benchmark as benchmark
 
 import jax
 from jax import core
-from jax._src.numpy import lax_numpy
 from jax import export
 
 jax.config.parse_flags_with_absl()
@@ -76,7 +75,7 @@ def inequalities_slice(state):
   while state:
     for _ in range(30):
       a.scope._clear_caches()
-      start, _, slice_size = lax_numpy._preprocess_slice(slice(2, a, 4), b)
+      start, _, slice_size = core.canonicalize_slice(slice(2, a, 4), b)
       _ = 0 <= slice_size <= b
       _ = start >= 0
       _ = start + slice_size <= b

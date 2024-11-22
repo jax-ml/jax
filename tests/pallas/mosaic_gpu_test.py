@@ -263,7 +263,7 @@ class PallasCallTest(PallasTest):
     )
     def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
       plgpu.copy_gmem_to_smem(
-          x_ref_gmem.at[indexer], scratch_ref.at[indexer], barrier=barrier_ref
+          x_ref_gmem.at[indexer], scratch_ref.at[indexer], barrier_ref
       )
       plgpu.barrier_wait(barrier_ref)
       o_ref[...] = scratch_ref[...] + 1
@@ -284,7 +284,7 @@ class PallasCallTest(PallasTest):
     )
     def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
       plgpu.copy_gmem_to_smem(
-          x_ref_gmem, scratch_ref, barrier=barrier_ref.at[indexer]
+          x_ref_gmem, scratch_ref, barrier_ref.at[indexer]
       )
       plgpu.barrier_wait(barrier_ref.at[indexer])
       o_ref[...] = scratch_ref[...] + 1
@@ -296,7 +296,7 @@ class PallasCallTest(PallasTest):
   def test_copy_with_transforms(self, to_smem):
     def kernel(x_ref, o_ref, barrier_ref):
       if to_smem:
-        plgpu.copy_gmem_to_smem(x_ref, o_ref, barrier=barrier_ref)
+        plgpu.copy_gmem_to_smem(x_ref, o_ref, barrier_ref)
         plgpu.barrier_wait(barrier_ref)
       else:
         plgpu.commit_smem()
@@ -329,7 +329,7 @@ class PallasCallTest(PallasTest):
     ts = (plgpu.TilingTransform((64, 32)), plgpu.SwizzleTransform(128))
     def kernel(x_ref, o_ref, barrier_ref):
       def body(tmp_ref):
-        plgpu.copy_gmem_to_smem(x_ref, tmp_ref, barrier=barrier_ref)
+        plgpu.copy_gmem_to_smem(x_ref, tmp_ref, barrier_ref)
         plgpu.barrier_wait(barrier_ref)
         o_ref[...] = tmp_ref[...] * 2
       pl.run_scoped(body, plgpu.SMEM((128, 128), jnp.float32, transforms=ts))
@@ -351,7 +351,7 @@ class PallasCallTest(PallasTest):
   def test_copy_with_transforms_and_indexing(self):
     def kernel(x_ref, o_ref, barrier_ref):
       for i in range(2):
-        plgpu.copy_gmem_to_smem(x_ref, o_ref.at[i], barrier=barrier_ref)
+        plgpu.copy_gmem_to_smem(x_ref, o_ref.at[i], barrier_ref)
         plgpu.barrier_wait(barrier_ref)
 
     in_spec = pl.BlockSpec(memory_space=plgpu.GMEM)
@@ -379,7 +379,7 @@ class PallasCallTest(PallasTest):
     def kernel(x_ref, o_ref, barrier_ref):
       for i in range(2):
         plgpu.copy_gmem_to_smem(
-            x_ref, plgpu.transpose_ref(o_ref.at[i], (1, 0, 2)), barrier=barrier_ref
+            x_ref, plgpu.transpose_ref(o_ref.at[i], (1, 0, 2)), barrier_ref
         )
         plgpu.barrier_wait(barrier_ref)
 
@@ -407,7 +407,7 @@ class PallasCallTest(PallasTest):
     def kernel(x_ref_gmem, o_ref):
       def body(barrier_ref):
         def inner_body(scratch_ref):
-          plgpu.copy_gmem_to_smem(x_ref_gmem, scratch_ref, barrier=barrier_ref)
+          plgpu.copy_gmem_to_smem(x_ref_gmem, scratch_ref, barrier_ref)
           plgpu.barrier_wait(barrier_ref)
           o_ref[...] = scratch_ref[...] + 1
         pl.run_scoped(inner_body, plgpu.SMEM((256,), jnp.float32))
@@ -672,6 +672,22 @@ class PallasCallTest(PallasTest):
       # Equivalent to 2 + 3.
       o_ref[...] = jax.lax.broadcast(
           jax.lax.fori_loop(2, 4, lambda i, x: x + i, 0), o_ref.shape
+      )
+
+    np.testing.assert_array_equal(kernel(), jnp.full([256], 5, dtype=jnp.int32))
+
+  def test_fori_loop_dynamic_bounds(self):
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
+        grid=(1,)
+    )
+    def kernel(o_ref):
+      zero = pl.program_id(0)
+      # Equivalent to 2 + 3.
+      o_ref[...] = jax.lax.broadcast(
+          jax.lax.fori_loop(2 + zero, 4 + zero, lambda i, x: x + i, 0), o_ref.shape
       )
 
     np.testing.assert_array_equal(kernel(), jnp.full([256], 5, dtype=jnp.int32))
@@ -1052,6 +1068,30 @@ class PallasCallTest(PallasTest):
         self.assertEqual(data.count('"name": "store"'), 2)
       np.testing.assert_array_equal(y, x + x)
 
+  @parameterized.parameters(
+      (jnp.float16, jnp.float16),  # Noop
+      (jnp.int16, jnp.bfloat16),
+      (jnp.int16, jnp.float16),
+      (jnp.uint16, jnp.float16),
+      (jnp.float32, jnp.int32),
+      (jnp.float32, jnp.uint32),
+      (jnp.uint32, jnp.int32),
+      (jnp.int32, jnp.uint32),
+  )
+  def test_bitcast_convert_type(self, in_dtype, out_dtype):
+    m, n = 16, 8
+    out_shape = jax.ShapeDtypeStruct((m, n), out_dtype)
+    grid = ()
+
+    @functools.partial(pl.pallas_call, out_shape=out_shape, grid=grid)
+    def convert(x_ref, y_ref):
+      y_ref[...] = jax.lax.bitcast_convert_type(x_ref[...], out_shape)
+
+    x = jnp.arange(m * n, dtype=in_dtype).reshape((m, n))
+    y = convert(x)
+    y_ref = jax.lax.bitcast_convert_type(x, out_dtype)
+    np.testing.assert_array_equal(y, y_ref)
+
 
 class PipelineTest(PallasTest):
 
@@ -1092,7 +1132,7 @@ class PipelineTest(PallasTest):
             lambda: plgpu.copy_gmem_to_smem(
                 x_gmem.at[gmem_slice, pl.ds(fetch_step * 16, 16)],
                 x_smem.at[fetch_slot],
-                barrier=barrier.at[fetch_slot],
+                barrier.at[fetch_slot],
             ),
             lambda: None,
         )
@@ -1103,7 +1143,7 @@ class PipelineTest(PallasTest):
         plgpu.copy_gmem_to_smem(
             x_gmem.at[gmem_slice, pl.ds(slot * 16, 16)],
             x_smem.at[slot],
-            barrier=barrier.at[slot],
+            barrier.at[slot],
         )
 
       jax.lax.fori_loop(0, num_steps, body, ())
@@ -1134,6 +1174,39 @@ class PipelineTest(PallasTest):
       )(x_gmem, o_gmem)
 
     def kernel_body(x_smem, o_smem):
+      o_smem[...] = x_smem[...] + 1.0
+
+    x = jnp.arange(32 * num_steps * 16)
+    x = x.reshape(-1, num_steps * 16).astype(jnp.float32)
+    kernel_fn = pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+    )
+    np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
+
+  def test_nested_emit(self):
+    num_steps = 4
+
+    def kernel(x_gmem, o_gmem):
+      plgpu.emit_pipeline(
+          nested_kernel,
+          in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+          out_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+          grid=(),
+      )(x_gmem, o_gmem)
+
+    def nested_kernel(x_gmem, o_gmem):
+      plgpu.emit_pipeline(
+          nested_kernel_body,
+          in_specs=[pl.BlockSpec((32, 16), lambda i: (0, i))],
+          out_specs=[pl.BlockSpec((32, 16), lambda i: (0, i))],
+          grid=(num_steps,),
+          max_concurrent_steps=2,
+      )(x_gmem, o_gmem)
+
+    def nested_kernel_body(x_smem, o_smem):
       o_smem[...] = x_smem[...] + 1.0
 
     x = jnp.arange(32 * num_steps * 16)
@@ -1178,33 +1251,33 @@ class PipelineTest(PallasTest):
     np.testing.assert_array_equal(kernel_fn(x)[:, :16], y[:, :16])
 
   def test_emit_with_parallel_grid(self):
-    self.skipTest("Enable once we support multiple levels of indexing")
-
-    num_steps = 4
+    num_steps1 = 4
+    num_steps2 = 5
 
     def kernel(x_gmem, o_gmem):
-      gmem_slice = pl.ds(pl.program_id(0) * 32, 32)
+      pid = pl.program_id(0)
       plgpu.emit_pipeline(
           kernel_body,
-          in_specs=[pl.BlockSpec((32, 16), lambda i: (0, i))],
-          out_specs=[pl.BlockSpec((32, 16), lambda i: (0, i))],
-          grid=(num_steps,),
+          in_specs=[pl.BlockSpec((32, 16), lambda i: (pid, i))],
+          out_specs=[pl.BlockSpec((32, 16), lambda i: (pid, i))],
+          grid=(num_steps2,),
           max_concurrent_steps=2,
-      )(x_gmem.at[gmem_slice], o_gmem.at[gmem_slice])
+      )(x_gmem, o_gmem)
 
     def kernel_body(x_smem, o_smem):
       o_smem[...] = x_smem[...] + 1.0
 
-    x = jnp.arange(4 * 32 * num_steps * 16)
-    x = x.reshape(-1, num_steps * 16).astype(jnp.float32)
+    x = jnp.arange(num_steps1 * 32 * num_steps2 * 16)
+    x = x.reshape(-1, num_steps2 * 16).astype(jnp.float32)
     kernel_fn = pl.pallas_call(
         kernel,
         in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        grid=(4, 1),
+        grid=(num_steps1,),
     )
-    np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
+    y = x + 1.0
+    np.testing.assert_array_equal(kernel_fn(x), y)
 
   def test_emit_with_2d_grid(self):
     num_steps1 = 4

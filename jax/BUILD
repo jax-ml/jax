@@ -451,6 +451,7 @@ pytype_strict_library(
         ":deprecations",
         ":dtypes",
         ":effects",
+        ":mesh",
         ":pretty_printer",
         ":source_info_util",
         ":traceback_util",
@@ -1047,7 +1048,7 @@ pytype_library(
             "experimental/array_api/*.py",
         ],
     ),
-    visibility = [":internal"] + jax_visibility("array_api"),
+    visibility = [":internal"],
     deps = [
         ":jax",
     ],

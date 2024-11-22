@@ -267,6 +267,9 @@ jax_multiplatform_test(
     backend_tags = {
         "tpu": ["requires-mem:16g"],  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
     },
+    enable_configs = [
+        "tpu_v3_2x2_shardy",
+    ],
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
@@ -662,6 +665,13 @@ jax_multiplatform_test(
         "gpu": 40,
         "tpu": 40,
     },
+)
+
+jax_multiplatform_test(
+    name = "magma_linalg_test",
+    srcs = ["magma_linalg_test.py"],
+    enable_backends = ["gpu"],
+    deps = py_deps("magma"),
 )
 
 jax_multiplatform_test(

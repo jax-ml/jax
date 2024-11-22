@@ -623,9 +623,37 @@ class FragmentedArray:
     )
 
   def _pointwise(self, op, *other, output_is_signed: bool | None = None):
-    is_signed = (
-        output_is_signed if output_is_signed is not None else self.is_signed
-    )
+    if isinstance(self.layout, WGSplatFragLayout):
+      # Find either the largest operand or an operand that has a
+      # concrete layout base the layout computation of that.
+      widest_idx = None
+      for i, o in enumerate(other):
+        if not isinstance(o, FragmentedArray):
+          continue
+        elif not isinstance(o.layout, WGSplatFragLayout):
+          widest_idx = i
+          break
+        elif not o.layout.can_broadcast_to(self.layout.shape):
+          # Note: equal shapes can be broadcast to each other. Using
+          # the negation we make sure to only consider strictly larger
+          # shapes so that we don't end up ping ponging between equal
+          # shapes.
+          widest_idx = i
+
+      if widest_idx is not None:
+        # We need to retain the order of arguments that the op
+        # expects.
+        def _op(wide_o, self_o, *args):
+          pre_wide = args[:widest_idx - 1]
+          post_wide = args[widest_idx - 1:]
+          return op(self_o, *pre_wide, wide_o, *post_wide)
+        return other[widest_idx]._pointwise(
+            _op,
+            self,
+            *other[:widest_idx],
+            *other[widest_idx + 1:],
+            output_is_signed=output_is_signed,
+        )
 
     other_arrs = []
     for o in other:
@@ -636,7 +664,7 @@ class FragmentedArray:
           raise NotImplementedError(o)
 
         o = FragmentedArray.splat(
-            o, shape=self.shape, layout=self.layout, is_signed=is_signed
+            o, shape=self.shape, layout=self.layout, is_signed=self.is_signed
         )
 
       if isinstance(o.layout, WGSplatFragLayout):
@@ -646,7 +674,7 @@ class FragmentedArray:
             o.registers.flat[0],
             shape=self.shape,
             layout=self.layout,
-            is_signed=is_signed,
+            is_signed=o.is_signed,
         )
       else:
         if self.layout != o.layout:
@@ -659,8 +687,13 @@ class FragmentedArray:
 
     for idx, reg in np.ndenumerate(self.registers):
       new_regs[idx] = op(reg, *(o.registers[idx] for o in other_arrs))
+    reg_ty = new_regs.flat[0].type
+    if ir.VectorType.isinstance(reg_ty):
+      reg_ty = ir.VectorType(reg_ty).element_type
+    if output_is_signed is None and ir.IntegerType.isinstance(reg_ty):
+      output_is_signed = self.is_signed
     return FragmentedArray(
-        _registers=new_regs, _layout=self.layout, _is_signed=is_signed
+        _registers=new_regs, _layout=self.layout, _is_signed=output_is_signed
     )
 
   def __pos__(self):
@@ -928,7 +961,9 @@ class FragmentedArray:
         raise NotImplementedError(x.type)
     return fast_instr
 
-  def bitcast(self, elt: ir.Type):
+  def bitcast(self, elt: ir.Type, *, output_is_signed: bool | None = None):
+    if elt == self.mlir_dtype:
+      return self
     reg_type = self.registers.flat[0].type
     if ir.VectorType.isinstance(reg_type):
       reg_shape = ir.VectorType(reg_type).shape
@@ -936,7 +971,9 @@ class FragmentedArray:
     else:
       ty = elt
 
-    return self._pointwise(lambda x: arith.bitcast(ty, x))
+    return self._pointwise(
+        lambda x: arith.bitcast(ty, x), output_is_signed=output_is_signed
+    )
 
   def __getitem__(self, idx):
     if self.layout != WGMMA_LAYOUT:

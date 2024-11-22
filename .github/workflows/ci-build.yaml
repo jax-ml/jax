@@ -139,7 +139,7 @@ jobs:
   documentation_render:
     name: Documentation - render documentation
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ['3.10']

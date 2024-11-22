@@ -51,12 +51,13 @@ def logpdf(x: ArrayLike, a: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1)
     - :func:`jax.scipy.stats.gamma.logsf`
   """
   x, a, loc, scale = promote_args_inexact("gamma.logpdf", x, a, loc, scale)
+  ok = lax.ge(x, loc)
   one = _lax_const(x, 1)
-  y = lax.div(lax.sub(x, loc), scale)
+  y = jnp.where(ok, lax.div(lax.sub(x, loc), scale), one)
   log_linear_term = lax.sub(xlogy(lax.sub(a, one), y), y)
   shape_terms = lax.add(gammaln(a), lax.log(scale))
   log_probs = lax.sub(log_linear_term, shape_terms)
-  return jnp.where(lax.lt(x, loc), -jnp.inf, log_probs)
+  return jnp.where(ok, log_probs, -jnp.inf)
 
 
 def pdf(x: ArrayLike, a: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:

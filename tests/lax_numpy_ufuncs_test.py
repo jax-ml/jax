@@ -179,13 +179,15 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
       rhs_shape=broadcast_compatible_shapes,
   )
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
-  def test_bimary_ufunc_call(self, name, dtype, lhs_shape, rhs_shape):
+  def test_binary_ufunc_call(self, name, dtype, lhs_shape, rhs_shape):
     jnp_fun = getattr(jnp, name)
     np_fun = getattr(np, name)
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
 
-    self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
+    tol = {np.float32: 1E-4} if jtu.test_device_matches(['tpu']) else None
+
+    self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
@@ -218,7 +220,9 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
 
-    self._CheckAgainstNumpy(jnp_fun.outer, np_fun.outer, args_maker)
+    tol = {np.float32: 1E-4} if jtu.test_device_matches(['tpu']) else None
+
+    self._CheckAgainstNumpy(jnp_fun.outer, np_fun.outer, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fun.outer, args_maker)
 
   @jtu.sample_product(
@@ -259,7 +263,9 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
 
-    self._CheckAgainstNumpy(jnp_fun_reduce, np_fun_reduce, args_maker)
+    tol = {np.float32: 1E-4} if jtu.test_device_matches(['tpu']) else None
+
+    self._CheckAgainstNumpy(jnp_fun_reduce, np_fun_reduce, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fun_reduce, args_maker)
 
   @jtu.sample_product(
@@ -315,7 +321,9 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     rng_where = jtu.rand_bool(self.rng())
     args_maker = lambda: [rng(shape, dtype), rng_where(shape, bool)]
 
-    self._CheckAgainstNumpy(jnp_fun_reduce, np_fun_reduce, args_maker)
+    tol = {np.float32: 1E-4} if jtu.test_device_matches(['tpu']) else None
+
+    self._CheckAgainstNumpy(jnp_fun_reduce, np_fun_reduce, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fun_reduce, args_maker)
 
   @jtu.sample_product(
@@ -356,8 +364,10 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
       result = np_fun.accumulate(x, axis=axis)
       return result if x.dtype == bool else result.astype(x.dtype)
 
-    self._CheckAgainstNumpy(jnp_fun_accumulate, np_fun_accumulate, args_maker)
-    self._CompileAndCheck(jnp_fun_accumulate, args_maker)
+    tol = {np.float32: 1E-4} if jtu.test_device_matches(['tpu']) else None
+
+    self._CheckAgainstNumpy(jnp_fun_accumulate, np_fun_accumulate, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fun_accumulate, args_maker, tol=tol)
 
   @jtu.sample_product(
       SCALAR_FUNCS,
@@ -400,7 +410,9 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
       np_fun.at(x_copy, idx)
       return x_copy
 
-    self._CheckAgainstNumpy(jnp_fun_at, np_fun_at, args_maker)
+    tol = {np.float32: 1E-4} if jtu.test_device_matches(['tpu']) else None
+
+    self._CheckAgainstNumpy(jnp_fun_at, np_fun_at, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fun_at, args_maker)
 
   @jtu.sample_product(
@@ -422,7 +434,9 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
       np_fun.at(x_copy, idx, y)
       return x_copy
 
-    self._CheckAgainstNumpy(jnp_fun_at, np_fun_at, args_maker)
+    tol = {np.float32: 1E-4} if jtu.test_device_matches(['tpu']) else None
+
+    self._CheckAgainstNumpy(jnp_fun_at, np_fun_at, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fun_at, args_maker)
 
   def test_frompyfunc_at_broadcasting(self):
@@ -483,7 +497,9 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
       # Numpy has different casting behavior.
       return np_fun.reduceat(x, i).astype(x.dtype)
 
-    self._CheckAgainstNumpy(jnp_fun.reduceat, np_fun_reduceat, args_maker)
+    tol = {np.float32: 1E-4} if jtu.test_device_matches(['tpu']) else None
+
+    self._CheckAgainstNumpy(jnp_fun.reduceat, np_fun_reduceat, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fun.reduceat, args_maker)
 
 

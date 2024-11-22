@@ -227,6 +227,11 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
       msg.format(', '.join(str(x) for x in xs_flat
                            if not hasattr(x, 'shape')))) from err
 
+  if (config.sharding_in_types.value and
+      not all(x.sharding.spec[0] is None for x in xs_flat)):
+    raise ValueError('0th dimension of all xs should be replicated. Got '
+                     f'{", ".join(str(x.sharding.spec) for x in xs_flat)}')
+
   if length is not None:
     try:
       length = int(length)
@@ -250,7 +255,8 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   if config.disable_jit.value:
     if length == 0:
-      raise ValueError("zero-length scan is not supported in disable_jit() mode because the output type is unknown.")
+      raise ValueError("zero-length scan is not supported in disable_jit() "
+                       "mode because the output type is unknown.")
     carry = init
     ys = []
     maybe_reversed = reversed if reverse else lambda x: x
@@ -424,7 +430,7 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
     num_trips, remainder = 0, length
   if unroll == 1:
     xss = xs_
-    yss = _map(partial(_empty_array, (length,)), y_avals)
+    yss = _map(partial(_empty_array, (length,), None), y_avals)
   else:
     if remainder:
       if not reverse:
@@ -432,7 +438,7 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
       else:
         xs_rem, xs_ = unzip2(_map(partial(_split_leading, remainder), xs_))
     xss = [lax.reshape(x, (num_trips, unroll, *x.shape[1:])) for x in xs_]
-    yss = _map(partial(_empty_array, (num_trips, unroll)), y_avals)
+    yss = _map(partial(_empty_array, (num_trips, unroll), None), y_avals)
 
   def cond_fun(while_carry):
     i, _, _ = while_carry
@@ -477,8 +483,11 @@ def _split_leading(sz, x):
 
 def _concat(a, b): return lax.concatenate([a, b], 0)
 
-def _empty_array(prefix, aval):
-  return lax.broadcast(lax.empty(aval.dtype), (*prefix, *aval.shape))
+def _empty_array(prefix, length_spec, aval):
+  sharding = (aval.sharding.with_spec((length_spec, *aval.sharding.spec))
+              if config.sharding_in_types.value else None)
+  return lax.broadcast(lax.empty(aval.dtype), (*prefix, *aval.shape),
+                       sharding=sharding)
 
 eval_jaxpr_p = core.Primitive('eval_jaxpr')
 eval_jaxpr_p.multiple_results = True
@@ -486,11 +495,13 @@ def _stage_jaxpr(trace, *tracers, jaxpr):
   params = dict(call_jaxpr=jaxpr)
   return trace.default_process_primitive(core.closed_call_p, tracers, params)
 pe.custom_staging_rules[eval_jaxpr_p] = _stage_jaxpr
+
 @eval_jaxpr_p.def_effectful_abstract_eval  # abstract eval only used for jax2tf
-def _stage_jaxpr_abstract_eval(*_, jaxpr): return jaxpr.out_avals, jaxpr.effects
+def _stage_jaxpr_abstract_eval(*_, jaxpr):
+  return jaxpr.out_avals, jaxpr.effects
 
 def _prepend_dim_to_aval(sz, aval):
-  return core.unmapped_aval(sz, core.no_axis_name, 0, aval)
+  return core.unmapped_aval(sz, None, 0, aval)
 
 def _scan_abstract_eval(*args, reverse, length, num_consts, num_carry, jaxpr,
                         linear, unroll, _split_transpose):
@@ -674,7 +685,7 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
   extensive_res = _map(trace.new_instantiated_const, extensive_res)
   # Create output tracers for jaxpr_unknown bind, adapting extensive shapes.
   carry_avals, y_avals = split_list(jaxpr_unknown.out_avals, [sum(carry_uk)])
-  ys_avals = [core.unmapped_aval(length, core.no_axis_name, 0, y_aval)
+  ys_avals = [core.unmapped_aval(length, None, 0, y_aval)
               for y_aval in y_avals]
   out_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(a), None)
                  for a in itertools.chain(carry_avals, ys_avals)]
@@ -1041,7 +1052,7 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
 
   # Create residual variables.
   intensive_avals, ext_avals_mapped = partition_list(loop_dep_res, res_avals)
-  ext_avals = [core.unmapped_aval(eqn.params['length'], core.no_axis_name, 0, a)
+  ext_avals = [core.unmapped_aval(eqn.params['length'], None, 0, a)
                for a in ext_avals_mapped]
   newvar = core.gensym()
   intensive_res = _map(newvar, intensive_avals)
@@ -1119,7 +1130,7 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts,
       jaxpr.in_avals, [num_consts, num_carry])
   carry_avals_jaxpr, y_avals_mapped = split_list(jaxpr.out_avals, [num_carry])
   x_avals_mapped = _map(partial(core.mapped_aval, length, 0), x_avals)
-  y_avals = [core.unmapped_aval(length, core.no_axis_name, 0, a)
+  y_avals = [core.unmapped_aval(length, None, 0, a)
              for a in y_avals_mapped]
 
   if not all(_map(core.typematch, init_avals_jaxpr, carry_avals_jaxpr)):

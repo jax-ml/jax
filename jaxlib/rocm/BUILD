@@ -390,6 +390,48 @@ pybind_extension(
 )
 
 cc_library(
+    name = "hip_hybrid_kernels",
+    srcs = ["//jaxlib/gpu:hybrid_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:hybrid_kernels.h"],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        "//jaxlib:ffi_helpers",
+        "//jaxlib/cpu:lapack_kernels",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+pybind_extension(
+    name = "_hybrid",
+    srcs = ["//jaxlib/gpu:hybrid.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "_hybrid",
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_hybrid_kernels",
+        ":hip_vendor",
+        "//jaxlib:kernel_nanobind_helpers",
+        "//jaxlib/cpu:lapack_kernels",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@nanobind",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+cc_library(
     name = "triton_kernels",
     srcs = ["//jaxlib/gpu:triton_kernels.cc"],
     hdrs = ["//jaxlib/gpu:triton_kernels.h"],
@@ -456,6 +498,7 @@ py_library(
     name = "rocm_gpu_support",
     deps = [
         ":_blas",
+        ":_hybrid",
         ":_linalg",
         ":_prng",
         ":_solver",

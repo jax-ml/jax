@@ -13,6 +13,21 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## jax 0.4.36
 
 * Breaking Changes
+  * This release lands "stackless", an internal change to JAX's tracing
+    machinery. We made trace dispatch purely a function of context rather than a
+    function of both context and data. This let us delete a lot of machinery for
+    managing data-dependent tracing: levels, sublevels, `post_process_call`,
+    `new_base_main`, `custom_bind`, and so on. The change should only affect
+    users that use JAX internals.
+
+    If you do use JAX internals then you may need to
+    update your code (see
+    https://github.com/jax-ml/jax/commit/c36e1f7c1ad4782060cbc8e8c596d85dfb83986f
+    for clues about how to do this). There might also be version skew
+    issues with JAX libraries that do this. If you find this change breaks your
+    non-JAX-internals-using code then try the
+    `config.jax_data_dependent_tracing_fallback` flag as a workaround, and if
+    you need help updating your code then please file a bug.
   * {func}`jax.experimental.jax2tf.convert` with `native_serialization=False`
     or with `enable_xla=False` have been deprecated since July 2024, with
     JAX version 0.4.31. Now we removed support for these use cases. `jax2tf`
@@ -43,6 +58,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.scipy.linalg.toeplitz` now does implicit batching on multi-dimensional
     inputs. To recover the previous behavior, you can call {func}`jax.numpy.ravel`
     on the function inputs.
+  * {func}`jax.scipy.special.gamma` and {func}`jax.scipy.special.gammasgn` now
+    return NaN for negative integer inputs, to match the behavior of SciPy from
+    https://github.com/scipy/scipy/pull/21827.
   * `jax.clear_backends` was removed after being deprecated in v0.4.26.
 
 * New Features
@@ -52,11 +70,21 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.tree_util.register_dataclass` now allows metadata fields to be
     declared inline via {func}`dataclasses.field`. See the function documentation
     for examples.
+  * Added {func}`jax.numpy.put_along_axis`.
+  * {func}`jax.lax.linalg.eig` and the related `jax.numpy` functions
+    ({func}`jax.numpy.linalg.eig` and {func}`jax.numpy.linalg.eigvals`) are now
+    supported on GPU. See {jax-issue}`#24663` for more details.
 
 * Bug fixes
   * Fixed a bug where the GPU implementations of LU and QR decomposition would
     result in an indexing overflow for batch sizes close to int32 max. See
     {jax-issue}`#24843` for more details.
+
+* Deprecations
+  * `jax.lib.xla_extension.ArrayImpl` and `jax.lib.xla_client.ArrayImpl` are deprecated;
+    use `jax.Array` instead.
+  * `jax.lib.xla_extension.XlaRuntimeError` is deprecated; use `jax.errors.JaxRuntimeError`
+    instead.
 
 ## jax 0.4.35 (Oct 22, 2024)
 

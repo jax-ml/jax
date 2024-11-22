@@ -1473,6 +1473,44 @@ def _scan_lowering_rule(
   return for_out
 
 
+@register_lowering_rule(lax.while_p)
+def _while_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    cond_jaxpr,
+    body_jaxpr,
+    cond_nconsts,
+    body_nconsts,
+):
+  # First try to lower via a simpler fori loop, which may optimize better.
+  fori_jaxpr, err = pallas_utils.pattern_match_while_to_fori_loop(
+      cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts
+  )
+  del cond_jaxpr, body_jaxpr
+  if fori_jaxpr is None:
+    raise NotImplementedError(err)
+
+  if fori_jaxpr.constvars:
+    raise NotImplementedError
+
+  lb_aval, ub_aval, *_ = ctx.avals_in[body_nconsts:]
+  # Reflect the changes of the pattern matcher to the context.
+  avals_in = (
+      *ctx.avals_in[cond_nconsts:body_nconsts],
+      ctx.avals_in[body_nconsts],  # the index
+      *ctx.avals_in[body_nconsts + 2:],
+  )
+
+  avals_out = tuple(ctx.avals_out[2:])
+  ctx = ctx.replace(avals_in=avals_in, avals_out=avals_out)
+  _, consts, (lb, ub, *args) = util.split_list(args, [cond_nconsts, body_nconsts])
+
+  lb, ub = _ensure_ir_value(lb, lb_aval.dtype), _ensure_ir_value(ub, ub_aval.dtype)
+  length = arith_dialect.subi(ub, lb)
+
+  for_out = _lower_jaxpr_to_for_loop(ctx, fori_jaxpr, lb, length, consts, *args, has_loop_index=True)
+  return (ub, ub, *for_out)
+
 @register_lowering_rule(lax.cond_p)
 def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
   index_aval, *_arg_avals = ctx.avals_in
@@ -1499,6 +1537,31 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
           for out, aval in zip(outs, ctx.avals_out)
       ])
   return list(switch_op.results)
+
+
+@register_lowering_rule(lax.bitcast_convert_type_p)
+def _bitcast_convert_type_lowering_rule(
+    ctx: LoweringRuleContext, operand, *, new_dtype
+):
+  # TODO(petebu) Handle case where src and dst types have different bitwidths
+  [operand_aval] = ctx.avals_in
+  operand = _ensure_fa(operand, operand_aval.dtype)
+  src_elem_type = mgpu_utils.dtype_to_ir_type(operand_aval.dtype)
+  dst_elem_type = mgpu_utils.dtype_to_ir_type(new_dtype)
+  assert isinstance(src_elem_type, (ir.IntegerType, ir.FloatType))
+  assert isinstance(dst_elem_type, (ir.IntegerType, ir.FloatType))
+  if src_elem_type.width != dst_elem_type.width:
+    raise NotImplementedError(
+        f"Can't bitcast from {operand_aval.dtype} to {new_dtype} because they"
+        " have different widths"
+    )
+  if ir.IntegerType.isinstance(dst_elem_type):
+    output_is_signed = mgpu_utils.is_signed(new_dtype)
+  else:
+    output_is_signed = None
+  return mgpu.FragmentedArray.bitcast(
+      operand, dst_elem_type, output_is_signed=output_is_signed
+  )
 
 
 def _bcast(

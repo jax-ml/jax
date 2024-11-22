@@ -752,7 +752,7 @@ class StateDischargeTest(jtu.JaxTestCase):
         lu.wrap_init(f), [scalar_ref_1, scalar_ref_2])
 
     discharged_jaxpr, _ = discharge_state(jaxpr, (), should_discharge=[False, True])
-    prim_count = lambda p, jaxpr: sum(eqn.primitive == swap_p for eqn in jaxpr.eqns)
+    prim_count = lambda p, jaxpr: sum(eqn.primitive == p for eqn in jaxpr.eqns)
     self.assertEqual(prim_count(swap_p, jaxpr) // 2, prim_count(swap_p, discharged_jaxpr))
     self.assertEqual(prim_count(get_p, jaxpr) // 2, prim_count(get_p, discharged_jaxpr))
 

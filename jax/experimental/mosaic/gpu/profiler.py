@@ -36,12 +36,15 @@ from .utils import *  # noqa: F403
 try:
   from jax._src.lib import mosaic_gpu as mosaic_gpu_lib
 except ImportError:
-  pass
+  has_registrations = False
 else:
-  for name, handler in mosaic_gpu_lib._mosaic_gpu_ext.registrations():
-    xla_client.register_custom_call_target(
-        name, handler, platform="CUDA", api_version=1
-    )
+  # TODO(slebedev): Remove the if once the minimum jaxlib is 0.4.36.
+  has_registrations = hasattr(mosaic_gpu_lib._mosaic_gpu_ext, "registrations")
+  if has_registrations:
+    for name, handler in mosaic_gpu_lib._mosaic_gpu_ext.registrations():
+      xla_client.register_custom_call_target(
+          name, handler, platform="CUDA", api_version=1
+      )
 
 # ruff: noqa: F405
 # mypy: ignore-errors
@@ -80,6 +83,11 @@ def measure(
   Returns:
     The return value of ``f`` and the elapsed time in  milliseconds.
   """
+  if not has_registrations:
+    raise RuntimeError(
+        "This function requires jaxlib >=0.4.36 with CUDA support."
+    )
+
   if not (args or kwargs):
     # We require at least one argument and at least one output to ensure
     # that there is a data dependency between `_event_record` calls in

@@ -2747,11 +2747,11 @@ def _maybe_get_and_check_out_shardings(
   return new_out_shardings
 
 
-def finalize_out_shardings(out_shardings, device_assignment):
+def finalize_shardings(shardings, device_assignment):
   if len(device_assignment) == 1:
     return [SingleDeviceSharding(device_assignment[0], memory_kind=o.memory_kind)
-            if isinstance(o, GSPMDSharding) else o for o in out_shardings]
-  return out_shardings
+            if isinstance(o, GSPMDSharding) else o for o in shardings]
+  return shardings
 
 
 @dataclasses.dataclass
@@ -2892,7 +2892,8 @@ class UnloadedMeshExecutable:
         in_shardings, out_shardings, global_in_avals, global_out_avals,
         intermediate_shardings, context_mesh)
 
-    out_shardings = finalize_out_shardings(out_shardings, da)
+    in_shardings = finalize_shardings(in_shardings, da)
+    out_shardings = finalize_shardings(out_shardings, da)
 
     return UnloadedMeshExecutable(
         xla_executable=xla_executable,

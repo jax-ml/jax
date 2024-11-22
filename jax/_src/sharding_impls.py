@@ -137,9 +137,12 @@ def named_sharding_to_xla_hlo_sharding(
   mesh_axis_pos = {name: i for i, name in enumerate(self.mesh.axis_names)}
 
   special_axes = {}
-  if self._manual_axes:
+  mesh_manual_axes = {n for n, t in self.mesh._name_to_type.items()
+                      if t == mesh_lib.AxisTypes.Collective}
+  manual_axes = self._manual_axes.union(mesh_manual_axes)
+  if manual_axes:
     axis_names = self.mesh.axis_names
-    for manual_axis in self._manual_axes:
+    for manual_axis in manual_axes:
       special_axes[axis_names.index(manual_axis)] = xc.OpSharding.Type.MANUAL
 
   replicated_mesh_axes = []
@@ -360,8 +363,10 @@ class NamedSharding(sharding.Sharding):
   def with_memory_kind(self, kind: str) -> NamedSharding:
     return NamedSharding(self.mesh, self.spec, memory_kind=kind)
 
-  def _normalized_spec(self, ndim: int) -> PartitionSpec:
-    return self.spec._normalized_spec(ndim)
+  def with_spec(self, spec: PartitionSpec | Sequence[Any]) -> NamedSharding:
+    if not isinstance(spec, PartitionSpec):
+      spec = PartitionSpec(*spec)
+    return NamedSharding(self.mesh, spec, memory_kind=self.memory_kind)
 
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return named_sharding_to_xla_hlo_sharding(self, num_dimensions)

@@ -42,6 +42,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import for_loop
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import func
@@ -1315,12 +1316,20 @@ def _masked_swap_lowering_rule(
     ctx: LoweringRuleContext, *args_flat, args_tree, **_
 ):
   ref, transforms, val, mask = args_tree.unflatten(args_flat)
-  ref_aval, transforms_avals, val_aval, _ = args_tree.unflatten(ctx.avals_in)
+  ref_aval, transforms_avals, val_aval, mask_aval = args_tree.unflatten(
+      ctx.avals_in
+  )
   (*prev_transforms, idx) = transforms
   (*_, idx_aval) = transforms_avals
 
   if mask is not None:
-    raise NotImplementedError
+    if  val_aval.dtype.itemsize != 4:
+      raise NotImplementedError("masked swap with non-32-bit data")
+    if val_aval.shape != mask_aval.shape:
+      raise ValueError(
+          "Expected value and mask to have the same shape, but got"
+          f" value shape {val_aval.shape} vs. mask shape {mask_aval.shape}."
+      )
 
   ref_block_shape, *_ = ctx.block_shapes
   ref, ref_block_shape = _transform_ref(
@@ -1351,6 +1360,8 @@ def _masked_swap_lowering_rule(
   need_stride = not all((s is None or s == 1) for s in strides)
 
   if is_smem_store:
+    if mask is not None:
+      raise ValueError("SMEM store does not support masks")
     if val_aval.shape:
       raise ValueError("Can only store scalars to SMEM")
     result = memref.load(ref, starts)
@@ -1380,7 +1391,7 @@ def _masked_swap_lowering_rule(
       1 if b is pallas_core.mapped else next(mem_slice_shape_iter)
       for b in ref_block_shape
   ]
-  mem_aval = aval_out.update(shape=tuple(mem_slice_shape))
+  mem_aval = aval_out.update(shape=tuple(mem_slice_shape), sharding=None)
   mem_aval_vec_type = ir.VectorType.get(mem_aval.shape,
     _dtype_to_ir_type(mem_aval.dtype, is_kernel_boundary=True))
   if need_stride:
@@ -1399,9 +1410,15 @@ def _masked_swap_lowering_rule(
   result = _maybe_cast_load_to_bool(val_aval, result)
 
   if need_stride:
+    if mask is not None:
+      raise NotImplementedError("masked swap with strided store")
     tpu.StridedStoreOp(val, ref, starts, strides)
-  else:
+  elif jaxlib_version <= (0, 4, 35):
+    if mask is not None:
+      raise NotImplementedError("masked swap with vector store")
     vector.StoreOp(val, ref, starts)
+  else:
+    tpu.VectorStoreOp(val, ref, starts, [], mask=mask)
   return result
 
 
@@ -3243,3 +3260,68 @@ def _iota_2x32_shape_lowering(ctx, *, shape):
 
 
 lowering_rules[prng.iota_2x32_shape_p] = _iota_2x32_shape_lowering
+
+
+def _pad_lowering_rule(ctx: LoweringRuleContext, *args, **kwargs):
+  operand, padding_value = args
+  padding_config = kwargs["padding_config"]
+
+  out_type: ir.VectorType = aval_to_ir_type(ctx.avals_in[0])
+  if not isinstance(out_type, ir.VectorType):
+    raise NotImplementedError("Only vector types are supported.")
+
+  for axis, (low, high, interior) in enumerate(padding_config):
+    if low == 0 and high == 0 and interior == 0:
+      continue
+
+    def _pad(val):
+      shape = list(operand.type.shape)
+      shape[axis] = val
+      pad_vec_type = ir.VectorType.get(
+          shape,
+          operand.type.element_type,
+      )
+
+      if isinstance(padding_value, ir.OpResult):
+        pad = vector.BroadcastOp(
+            pad_vec_type,
+            padding_value,
+        ).result
+      else:
+        scalar_attr = ir.FloatAttr.get(operand.type.element_type, padding_value)
+        pad = arith.ConstantOp(
+            pad_vec_type,
+            ir.DenseElementsAttr.get_splat(
+                pad_vec_type,
+                scalar_attr,
+            ),
+        ).result
+      return pad
+
+    if low != 0:
+      pad_low = _pad(low)
+      new_shape = out_type.shape
+      new_shape[axis] += low
+      out_type = ir.VectorType.get(
+          new_shape,
+          out_type.element_type,
+      )
+      operand = tpu.concatenate(out_type, [pad_low, operand], dimension=axis)
+
+    if high != 0:
+      pad_high = _pad(high)
+      new_shape = out_type.shape
+      new_shape[axis] += high
+      out_type = ir.VectorType.get(
+          new_shape,
+          out_type.element_type,
+      )
+      operand = tpu.concatenate(out_type, [operand, pad_high], dimension=axis)
+
+    if interior > 0:
+      raise NotImplementedError("Not implemented: interior padding")
+
+  return operand
+
+
+lowering_rules[lax.pad_p] = _pad_lowering_rule

@@ -19,6 +19,7 @@ limitations under the License.
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -93,6 +94,10 @@ std::unique_ptr<OperationPass<func::FuncOp>> createDebugAssertInsertionPass();
 
 #define GEN_PASS_DECL_MOSAICSERDEPASS
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
+
+// Determine the core type of the given op based on the `tpu.core_type`
+// annotation of its parent function.
+FailureOr<std::optional<CoreType>> GetCoreTypeOfParentFunc(Operation &op);
 
 // Changes the memory space of the value and propagates it through the program.
 LogicalResult specializeMemorySpace(TypedValue<MemRefType> value,

@@ -1318,18 +1318,21 @@ class FragmentedArrayTest(TestCase):
           operator.ne,
       ],
       dtype=[jnp.float32, jnp.int32, jnp.uint32],
+      rhs_is_literal=[False, True]
   )
-  def test_comparison(self, op, dtype, m=64, n=32):
+  def test_comparison(self, op, dtype, rhs_is_literal, m=64, n=32):
     def kernel(ctx, dst, _):
       iota = iota_tensor(m, n, dtype)
-      op(iota, iota + 1).store_untiled(dst)
+      rhs = 0 if rhs_is_literal else iota + 1
+      op(iota, rhs).store_untiled(dst)
 
     out_shape = jax.ShapeDtypeStruct((m, n), jnp.bool)
     result = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
     )()
     iota = np.arange(m * n, dtype=dtype).reshape(m, n)
-    np.testing.assert_array_equal(result, op(iota, iota + 1))
+    rhs = rhs = 0 if rhs_is_literal else iota + 1
+    np.testing.assert_array_equal(result, op(iota, rhs))
 
   @parameterized.product(
       op=[operator.and_, operator.or_, operator.xor],
@@ -1485,6 +1488,29 @@ class FragmentedArrayTest(TestCase):
         kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
     )()
     np.testing.assert_array_equal(result, np.full((128, 32), 3.14, np.float32))
+
+
+  def test_splat_binary_ops(self):
+    def kernel(ctx, src, dst, _):
+      f32 = ir.F32Type.get()
+      pi_arr = mgpu.FragmentedArray.load_strided(src)
+      assert isinstance(pi_arr.layout, mgpu.WGStridedFragLayout)
+      pi_scalar = arith.constant(f32, ir.FloatAttr.get(f32, 3.14))
+      pi_splat = mgpu.FragmentedArray.splat(pi_scalar, ())
+      assert isinstance(pi_splat.layout, mgpu.WGSplatFragLayout)
+      pi_arr_sq = pi_arr * pi_splat.broadcast(pi_arr.shape)
+      assert isinstance(pi_arr_sq.layout, mgpu.WGStridedFragLayout)
+      pi_arr_cube = pi_splat.broadcast(pi_arr.shape) * pi_arr_sq
+      assert isinstance(pi_arr_cube.layout, mgpu.WGStridedFragLayout)
+      (pi_arr_sq + pi_arr_cube).store_untiled(dst)
+
+    out_shape = jax.ShapeDtypeStruct((128, 32), jnp.float32)
+    inp = jnp.ones_like(out_shape) * 3.14
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), inp, out_shape, ()
+    )(inp)
+    np.testing.assert_allclose(result, np.full((128, 32), 3.14 ** 2 + 3.14 ** 3, np.float32))
+
 
   @parameterized.product(in_shape=((128, 128), (128, 64), (64, 128)))
   def test_strided_load_store(self, in_shape):
