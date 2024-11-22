@@ -1878,8 +1878,10 @@ def pallas_call(
             f"a different abstract value {out_aval}.")
 
     index_args, rest_args = split_list(flat_args, [grid_mapping.num_index_operands])
-    with pallas_core.interpret_mode_env(interpret):
-      out_flat = pallas_call_p.bind(
+    if interpret and backend == 'mosaic_tpu':
+      # TODO(jburnim): Fix this circular dependency.
+      from jax._src.pallas.mosaic import interpret as mosaic_tpu_interpret
+      out_flat = mosaic_tpu_interpret.interpret_pallas_call(
           *consts,
           *dynamic_grid_bounds,
           *index_args,
@@ -1888,13 +1890,29 @@ def pallas_call(
           jaxpr=jaxpr,
           name_and_src_info=name_and_src_info,
           debug=debug,
-          interpret=interpret,
           grid_mapping=grid_mapping,
           input_output_aliases=tuple(input_output_aliases.items()),
           compiler_params=compiler_params,
           cost_estimate=cost_estimate,
-          backend=backend,
       )
+    else:
+      with pallas_core.interpret_mode_env(interpret):
+        out_flat = pallas_call_p.bind(
+            *consts,
+            *dynamic_grid_bounds,
+            *index_args,
+            *rest_args,
+            out_avals=flat_out_avals,
+            jaxpr=jaxpr,
+            name_and_src_info=name_and_src_info,
+            debug=debug,
+            interpret=interpret,
+            grid_mapping=grid_mapping,
+            input_output_aliases=tuple(input_output_aliases.items()),
+            compiler_params=compiler_params,
+            cost_estimate=cost_estimate,
+            backend=backend,
+         )
     out = tree_util.tree_unflatten(out_tree, out_flat)
     return out
   return wrapped
