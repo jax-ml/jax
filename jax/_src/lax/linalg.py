@@ -2069,10 +2069,13 @@ def _svd_cpu_gpu_lowering(
         compute_uv=compute_uv,
     )
   if target_name_prefix == "cpu":
-    if algorithm is not None and algorithm != SvdAlgorithm.DEFAULT:
+    if algorithm is None or algorithm == SvdAlgorithm.DEFAULT:
+      target_name = lapack.prepare_lapack_call("gesdd_ffi", operand_aval.dtype)
+    elif algorithm == SvdAlgorithm.QR:
+      target_name = lapack.prepare_lapack_call("gesvd_ffi", operand_aval.dtype)
+    else:
       raise NotImplementedError(
-          "The SVD algorithm parameter is not implemented on CPU.")
-    target_name = lapack.prepare_lapack_call("gesdd_ffi", operand_aval.dtype)
+          "The SVD Jacobi algorithm is not implemented on CPU.")
     mode = _svd_computation_attr(compute_uv, full_matrices)
     info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
     if compute_uv:

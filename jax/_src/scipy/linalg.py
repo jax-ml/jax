@@ -271,7 +271,8 @@ def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
       only the singular values ``s``.
     overwrite_a: unused by JAX
     check_finite: unused by JAX
-    lapack_driver: unused by JAX
+    lapack_driver: unused by JAX. If you want to select a non-default SVD driver, please
+      check :func:`jax.lax.linalg.svd` which provides such functionality.
 
   Returns:
     A tuple of arrays ``(u, s, vh)`` if ``compute_uv`` is True, otherwise the array ``s``.
