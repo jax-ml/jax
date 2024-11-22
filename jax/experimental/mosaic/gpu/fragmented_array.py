@@ -937,6 +937,28 @@ class FragmentedArray:
         self._lift_fast_unary("rsqrt.approx.f32") if approx else mlir_math.rsqrt
     )
 
+  def sign(self):
+    if not ir.IntegerType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
+
+    def _sign(x):
+      is_zero = arith.cmpi(arith.CmpIPredicate.eq, x, c(0, self.mlir_dtype))
+      when_zero= scf.IfOp(is_zero, results_=[self.mlir_dtype], hasElse=True)
+      with ir.InsertionPoint(when_zero.then_block):
+        scf.YieldOp([c(1, self.mlir_dtype)])
+      with ir.InsertionPoint(when_zero.else_block):
+        is_neg = arith.cmpi(arith.CmpIPredicate.slt, x, c(0, self.mlir_dtype))
+        when_neg= scf.IfOp(is_neg, results_=[self.mlir_dtype], hasElse=True)
+        with ir.InsertionPoint(when_neg.then_block):
+          scf.YieldOp([c(-1, self.mlir_dtype)])
+        with ir.InsertionPoint(when_neg.else_block):
+          scf.YieldOp([c(1, self.mlir_dtype)])
+        scf.YieldOp([*when_neg.results])
+
+      return when_zero.results[0]
+
+    return self._pointwise(_sign)
+
   @staticmethod
   def _lift_fast_unary(
       instr: str | Callable[[ir.Value], ir.Value],
