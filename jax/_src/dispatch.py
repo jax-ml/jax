@@ -411,15 +411,12 @@ def _device_put_sharding_impl(x, aval, device, copy):
     if not s.is_fully_addressable:
       if ((isinstance(x, array.ArrayImpl) and not x._committed) or
           type(x) in array_types):
-        # TODO(yashkatariya): Move this check to `jit`.
         multihost_utils.assert_equal(
             x, fail_message=(
                 f"{type(x)} passed to device_put is not the same on each"
                 " process. Make sure you are passing the same value of"
                 f" {type(x)} on each process."))
-        return api.jit(
-            _identity_fn, out_shardings=s,
-            donate_argnums=(0 if copy == CopySemantics.DONATE else None))(x)
+        return _DeferredShardArg(x, s, aval, True, copy)
       # TODO(yashkatariya,mattjj): Link to a doc about McJAX and jax.Array.
       raise ValueError(
           "device_put's second argument must be a Device or a Sharding which"
