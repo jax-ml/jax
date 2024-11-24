@@ -31,6 +31,7 @@ from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef as WGMMAAccumula
 from jax._src.pallas.mosaic_gpu.pipeline import emit_pipeline as emit_pipeline
 from jax._src.pallas.mosaic_gpu.primitives import barrier_arrive as barrier_arrive
 from jax._src.pallas.mosaic_gpu.primitives import barrier_wait as barrier_wait
+from jax._src.pallas.mosaic_gpu.primitives import causal_mask
 from jax._src.pallas.mosaic_gpu.primitives import commit_smem as commit_smem
 from jax._src.pallas.mosaic_gpu.primitives import copy_gmem_to_smem as copy_gmem_to_smem
 from jax._src.pallas.mosaic_gpu.primitives import copy_smem_to_gmem as copy_smem_to_gmem
