@@ -729,6 +729,31 @@ class PallasCallTest(PallasTest):
     y = x + 1
     np.testing.assert_array_equal(kernel(x, y), x + y)
 
+  def test_map_indices(self):
+    x = jnp.arange(64 * 128).reshape(64, 128).astype(jnp.float32)
+
+    transforms = (plgpu.TilingTransform((64, 32)), plgpu.SwizzleTransform(128))
+    @functools.partial(
+        pl.pallas_call,
+        in_specs=[plgpu.GPUBlockSpec(x.shape, lambda: (0, 0), transforms=transforms)],
+        out_specs=plgpu.GPUBlockSpec(x.shape, lambda: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
+    )
+    def iota_like(x_ref, o_ref):
+      def f(idx, val):
+        print(idx, val)
+        return val + idx[-1]
+      st = plgpu.map_indices(x_ref[...], f)
+      # def scope(acc):
+      #   acc[...] = plgpu.map_indices(acc[...], lambda idx, val : idx[-1] + val)
+      # st = pl.run_state(scope)(plgpu.ACC.init(x_ref[...]))
+      print(st)
+      o_ref[...] = st
+
+    iota = jax.lax.broadcasted_iota(x.dtype, x.shape, 1)
+    np.testing.assert_array_equal(iota_like(x), iota + x)
+
+
   def test_cond(self):
     @functools.partial(
         pl.pallas_call,

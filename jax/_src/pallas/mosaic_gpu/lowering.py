@@ -1599,8 +1599,10 @@ def _ensure_fa(x: object, dtype: jnp.dtype) -> mgpu.FragmentedArray:
         is_signed=mgpu_utils.is_signed(dtype),
     )
   elif isinstance(x, ir.Value):
+    if isinstance(x.type, ir.IndexType):
+      x = arith_dialect.index_cast(ir.IntegerType.get_signless(32), x)
     if isinstance(x.type, (ir.IntegerType, ir.FloatType, ir.IndexType)):
-      assert x.type == mgpu_utils.dtype_to_ir_type(dtype)
+      assert x.type == mgpu_utils.dtype_to_ir_type(dtype), (x.type, dtype)
       return mgpu.FragmentedArray.splat(x, (), is_signed=mgpu_utils.is_signed(dtype))
   raise NotImplementedError(f"Unsupported type: {type(x)}")
 

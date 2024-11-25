@@ -1362,6 +1362,38 @@ class FragmentedArray:
       case _:
         raise NotImplementedError(self.layout)
 
+  def map_index(self, fn):
+    """Stores accumulator to a 2D memref. Not optimized at the moment."""
+    if self.layout != WGMMA_LAYOUT:
+      raise NotImplementedError
+
+    index = ir.IndexType.get()
+    def c(x):
+      return arith.ConstantOp(index, ir.IntegerAttr.get(index, x))
+
+    tidx = arith.remui(gpu.thread_id(gpu.Dimension.x), c(WARPGROUP_SIZE))
+    lane_id = arith.remui(tidx, c(32))  # {0, 1, ..., 31}
+    warp_id = arith.divui(tidx, c(32))  # {0, 1, 2, 3}
+    row_base = arith.addi(
+        arith.divui(lane_id, c(4)), arith.muli(warp_id, c(16))
+    )
+    col_base = arith.muli(arith.remui(lane_id, c(4)), c(2))  # {0, 2, 4, 6}
+    registers = self.registers.copy()
+    it = np.ndenumerate(registers)
+    for (row_tile, col_tile, row_idx, col_zero), elem in it:
+      row = arith.addi(row_base, c(row_tile * 64 + row_idx * 8))
+      for col_idx in range(2):
+        value = vector.extractelement(elem, position=c(col_idx))
+        col = arith.addi(col_base, c(col_tile * 8 + col_idx))
+        value = fn([row, col], value)
+        elem = vector.insertelement(value, elem, position=c(col_idx))
+
+      registers[row_tile, col_tile, row_idx, col_zero] = elem
+
+    return FragmentedArray(
+        _layout=self.layout, _registers=registers, _is_signed=self.is_signed
+    )
+
   @classmethod
   def load_tiled(
       cls,

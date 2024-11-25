@@ -1334,6 +1334,45 @@ class FragmentedArrayTest(TestCase):
     rhs = rhs = 0 if rhs_is_literal else iota + 1
     np.testing.assert_array_equal(result, op(iota, rhs))
 
+  def test_map_index(self):
+    dtype = jnp.int32
+    swizzle = 128
+    tile = 64, swizzle // jnp.dtype(dtype).itemsize
+    shape = 128, 192
+    tiled_shape = mgpu.tile_shape(shape, tile)
+    mlir_dtype = utils.dtype_to_ir_type(dtype)
+    cst = 9999
+    def causal(idx, val):
+      row, col = idx
+      mask = arith.cmpi(arith.CmpIPredicate.uge, row, col)
+      return arith.select(mask, val, c(cst, mlir_dtype))
+
+    tiling = mgpu.TileTransform(tile)
+    def kernel(ctx, src, dst, scratch):
+      smem, barrier = scratch
+      ctx.async_copy(src_ref=src, dst_ref=smem, gmem_transform=tiling, swizzle=128, barrier=barrier)
+      barrier.wait()
+      x = mgpu.FragmentedArray.load_tiled(smem, 128, is_signed=True)
+      x.map_index(causal).store_tiled(smem, 128)
+      mgpu.commit_shared()
+      ctx.async_copy(src_ref=smem, dst_ref=dst, gmem_transform=tiling, swizzle=128)
+      ctx.await_async_copy(0)
+
+    iota = np.arange(np.prod(shape), dtype=dtype).reshape(*shape)
+    result = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        iota,
+        iota,
+        (
+            jax.ShapeDtypeStruct(dtype=dtype, shape=tiled_shape),
+            mgpu.TMABarrier(),
+        ),
+    )(iota)
+    expected = jnp.tril(iota) + jnp.triu(jnp.ones(shape), k=1) * cst
+    np.testing.assert_array_equal(result, expected)
+
   @parameterized.product(
       op=[operator.and_, operator.or_, operator.xor],
       dtype=[jnp.uint32],
