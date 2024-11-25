@@ -183,6 +183,7 @@ build:macos_cache_push --config=macos_cache --remote_upload_local_results=true -
 build:ci_linux_x86_64 --config=avx_linux --config=avx_posix
 build:ci_linux_x86_64 --config=mkl_open_source_only
 build:ci_linux_x86_64 --config=clang --verbose_failures=true
+build:ci_linux_x86_64 --color=yes
 
 # TODO(b/356695103): We do not have a CPU only toolchain so we use the CUDA
 # toolchain for both CPU and GPU builds.
@@ -203,6 +204,7 @@ build:ci_linux_x86_64_cuda --config=ci_linux_x86_64
 # Linux Aarch64 CI configs
 build:ci_linux_aarch64_base --config=clang --verbose_failures=true
 build:ci_linux_aarch64_base --action_env=TF_SYSROOT="/dt10"
+build:ci_linux_aarch64_base --color=yes
 
 build:ci_linux_aarch64 --config=ci_linux_aarch64_base
 build:ci_linux_aarch64 --host_crosstool_top="@ml2014_clang_aarch64_config_aarch64//crosstool:toolchain"
@@ -221,11 +223,13 @@ build:ci_linux_aarch64_cuda --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm
 build:ci_darwin_x86_64 --macos_minimum_os=10.14
 build:ci_darwin_x86_64 --config=macos_cache_push
 build:ci_darwin_x86_64 --verbose_failures=true
+build:ci_darwin_x86_64 --color=yes
 
 # Mac Arm64 CI configs
 build:ci_darwin_arm64 --macos_minimum_os=11.0
 build:ci_darwin_arm64 --config=macos_cache_push
 build:ci_darwin_arm64 --verbose_failures=true
+build:ci_darwin_arm64 --color=yes
 
 # Windows x86 CI configs
 build:ci_windows_amd64 --config=avx_windows
@@ -233,6 +237,7 @@ build:ci_windows_amd64 --compiler=clang-cl --config=clang --verbose_failures=tru
 build:ci_windows_amd64 --crosstool_top="@xla//tools/toolchains/win/20240424:toolchain"
 build:ci_windows_amd64 --extra_toolchains="@xla//tools/toolchains/win/20240424:cc-toolchain-x64_windows-clang-cl"
 build:ci_windows_amd64 --host_linkopt=/FORCE:MULTIPLE --linkopt=/FORCE:MULTIPLE
+build:ci_windows_amd64 --color=yes
 
 # #############################################################################
 # RBE config options below. These inherit the CI configs above and set the

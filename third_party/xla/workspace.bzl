@@ -37,7 +37,7 @@ def repo():
     # local checkout by either:
     # a) overriding the TF repository on the build.py command line by passing a flag
     #    like:
-    #    python build/build.py --bazel_options=--override_repository=xla=/path/to/xla
+    #    python build/build.py build --local_xla_path=/path/to/xla
     #    or
     # b) by commenting out the http_archive above and uncommenting the following:
     # local_repository(

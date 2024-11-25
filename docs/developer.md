@@ -63,7 +63,7 @@ To build `jaxlib` from source, you must also install some prerequisites:
 To build `jaxlib` for CPU or TPU, you can run:
 
 ```
-python build/build.py
+python build/build.py build --wheels=jaxlib --verbose
 pip install dist/*.whl  # installs jaxlib (includes XLA)
 ```
 
@@ -71,7 +71,7 @@ To build a wheel for a version of Python different from your current system
 installation pass `--python_version` flag to the build command:
 
 ```
-python build/build.py --python_version=3.12
+python build/build.py build --wheels=jaxlib --python_version=3.12 --verbose
 ```
 
 The rest of this document assumes that you are building for Python version
@@ -81,13 +81,13 @@ version, simply append `--python_version=<py version>` flag every time you call
 installation regardless of whether the `--python_version` parameter is passed or
 not.
 
-There are two ways to build `jaxlib` with CUDA support: (1) use
-`python build/build.py --enable_cuda` to generate a jaxlib wheel with cuda
-support, or (2) use
-`python build/build.py --enable_cuda --build_gpu_plugin --gpu_plugin_cuda_version=12`
+If you would like to build `jaxlib` and the CUDA plugins: Run
+```
+python build/build.py build --wheels=jaxlib,jax-cuda-plugin,jax-cuda-pjrt
+```
 to generate three wheels (jaxlib without cuda, jax-cuda-plugin, and
-jax-cuda-pjrt). By default all CUDA compilation steps performed by NVCC and 
-clang, but it can be restricted to clang via the `--nouse_cuda_nvcc` flag.
+jax-cuda-pjrt). By default all CUDA compilation steps performed by NVCC and
+clang, but it can be restricted to clang via the `--build_cuda_with_clang` flag.
 
 See `python build/build.py --help` for configuration options. Here
 `python` should be the name of your Python 3 interpreter; on some systems, you
@@ -102,11 +102,16 @@ current directory.
    target dependencies.
 
    To download the specific versions of CUDA/CUDNN redistributions, you can use
-   the following command:
+   the `--cuda_version` and `--cudnn_version` flags:
 
    ```bash
-   python build/build.py --enable_cuda \
-   --cuda_version=12.3.2 --cudnn_version=9.1.1
+   python build/build.py build --wheels=jax-cuda-plugin --cuda_version=12.3.2 \
+   --cudnn_version=9.1.1
+   ```
+   or
+   ```bash
+   python build/build.py build --wheels=jax-cuda-pjrt --cuda_version=12.3.2 \
+   --cudnn_version=9.1.1
    ```
 
    Please note that these parameters are optional: by default Bazel will
@@ -118,7 +123,7 @@ current directory.
    the following command:
 
    ```bash
-   python build/build.py --enable_cuda \
+   python build/build.py build --wheels=jax-cuda-plugin \
    --bazel_options=--repo_env=LOCAL_CUDA_PATH="/foo/bar/nvidia/cuda" \
    --bazel_options=--repo_env=LOCAL_CUDNN_PATH="/foo/bar/nvidia/cudnn" \
    --bazel_options=--repo_env=LOCAL_NCCL_PATH="/foo/bar/nvidia/nccl"
@@ -141,7 +146,7 @@ ways to do this:
   line flag to `build.py` as follows:
 
   ```
-  python build/build.py --bazel_options=--override_repository=xla=/path/to/xla
+  python build/build.py build --wheels=jaxlib --local_xla_path=/path/to/xla
   ```
 
 - modify the `WORKSPACE` file in the root of the JAX source tree to point to
@@ -183,7 +188,7 @@ path of the current session. Ensure `bazel`, `patch` and `realpath` are
 accessible. Activate the conda environment.
 
 ```
-python .\build\build.py
+python .\build\build.py build --wheels=jaxlib
 ```
 
 To build with debug information, add the flag `--bazel_options='--copt=/Z7'`.
@@ -203,12 +208,14 @@ sudo apt install miopen-hip hipfft-dev rocrand-dev hipsparse-dev hipsolver-dev \
 The recommended way to install these dependencies is by running our script, `jax/build/rocm/tools/get_rocm.py`,
 and selecting the appropriate options.
 
-To build jaxlib with ROCM support, you can run the following build command,
+To build jaxlib with ROCM support, you can run the following build commands,
 suitably adjusted for your paths and ROCM version.
 
 ```
-python3 ./build/build.py --use_clang=true --clang_path=/usr/lib/llvm-18/bin/clang-18 --enable_rocm --build_gpu_plugin --gpu_plugin_rocm_version=60 --rocm_path=/opt/rocm-6.2.3
+python3 ./build/build.py build --wheels=jaxlib,jax-rocm-plugin,jax-rocm-pjrt --rocm_version=60 --rocm_path=/opt/rocm-6.2.3
 ```
+to generate three wheels (jaxlib without rocm, jax-rocm-plugin, and
+jax-rocm-pjrt)
 
 AMD's fork of the XLA repository may include fixes not present in the upstream
 XLA repository. If you experience problems with the upstream repository, you can
@@ -221,7 +228,7 @@ git clone https://github.com/ROCm/xla.git
 and override the XLA repository with which JAX is built:
 
 ```
-python3 ./build/build.py --use_clang=true --clang_path=/usr/lib/llvm-18/bin/clang-18 --enable_rocm --build_gpu_plugin --gpu_plugin_rocm_version=60 --bazel_options=--override_repository=xla=/rel/xla/ --rocm_path=/opt/rocm-6.2.3
+python3 ./build/build.py build --wheels=jax-rocm-plugin --rocm_version=60 --rocm_path=/opt/rocm-6.2.3 --local_xla_path=/rel/xla/
 ```
 
 For a simplified installation process, we also recommend checking out the `jax/build/rocm/dev_build_rocm.py script`.
@@ -246,7 +253,7 @@ run `build/build.py` script. To choose a specific version explicitly you may
 pass `--python_version` argument to the tool:
 
 ```
-python build/build.py --python_version=3.12
+python build/build.py build --python_version=3.12
 ```
 
 Under the hood, the hermetic Python version is controlled
@@ -284,7 +291,7 @@ direct dependencies list and then execute the following command (which will call
 [pip-compile](https://pypi.org/project/pip-tools/) under the hood):
 
 ```
-python build/build.py --requirements_update --python_version=3.12
+python build/build.py requirements_update --python_version=3.12
 ```
 
 Alternatively, if you need more control, you may run the bazel command
@@ -328,7 +335,7 @@ For example:
 
 ```
 echo -e "\n$(realpath jaxlib-0.4.27.dev20240416-cp312-cp312-manylinux2014_x86_64.whl)" >> build/requirements.in
-python build/build.py --requirements_update --python_version=3.12
+python build/build.py requirements_update --python_version=3.12
 ```
 
 ### Specifying dependencies on nightly wheels
@@ -338,7 +345,7 @@ dependencies we provide a special version of the dependency updater command as
 follows:
 
 ```
-python build/build.py --requirements_nightly_update --python_version=3.12
+python build/build.py requirements_update --python_version=3.12 --nightly_update
 ```
 
 Or, if you run `bazel` directly (the two commands are equivalent):
@@ -469,10 +476,13 @@ or using pytest.
 
 ### Using Bazel
 
-First, configure the JAX build by running:
+First, configure the JAX build by using the `--configure_only` flag. Pass
+`--wheel_list=jaxlib` for CPU tests and CUDA/ROCM for GPU for GPU tests:
 
 ```
-python build/build.py --configure_only
+python build/build.py build --wheels=jaxlib --configure_only
+python build/build.py build --wheels=jax-cuda-plugin --configure_only
+python build/build.py build --wheels=jax-rocm-plugin --configure_only
 ```
 
 You may pass additional options to `build.py` to configure the build; see the
@@ -494,14 +504,14 @@ make it available in the hermetic Python. To install a specific version of
 
 ```
 echo -e "\njaxlib >= 0.4.26" >> build/requirements.in
-python build/build.py --requirements_update
+python build/build.py requirements_update
 ```
 
 Alternatively, to install `jaxlib` from a local wheel (assuming Python 3.12):
 
 ```
 echo -e "\n$(realpath jaxlib-0.4.26-cp312-cp312-manylinux2014_x86_64.whl)" >> build/requirements.in
-python build/build.py --requirements_update --python_version=3.12
+python build/build.py requirements_update --python_version=3.12
 ```
 
 Once you have `jaxlib` installed hermetically, run:

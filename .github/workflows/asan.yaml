@@ -65,7 +65,7 @@ jobs:
         run: |
           source ${GITHUB_WORKSPACE}/venv/bin/activate
           cd jax
-          python build/build.py \
+          python build/build.py build --wheels=jaxlib --verbose \
             --bazel_options=--color=yes \
             --bazel_options=--copt=-fsanitize=address \
             --clang_path=/usr/bin/clang-18
