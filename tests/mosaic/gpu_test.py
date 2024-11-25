@@ -1577,6 +1577,40 @@ class FragmentedArrayTest(TestCase):
 
     _ = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), (), (), None)()
 
+  @parameterized.parameters(
+      (jnp.float16, jnp.float16),  # Noop
+      (jnp.int16, jnp.bfloat16),
+      (jnp.int16, jnp.float16),
+      (jnp.uint16, jnp.float16),
+      (jnp.float32, jnp.int32),
+      (jnp.float32, jnp.uint32),
+      (jnp.uint32, jnp.int32),
+      (jnp.int32, jnp.uint32),
+  )
+  def test_bitcast(self, in_dtype, out_dtype):
+    out_ir_type = utils.dtype_to_ir_type(out_dtype)
+    in_is_signed = utils.is_signed(in_dtype)
+    out_is_signed = utils.is_signed(out_dtype)
+
+    def kernel(ctx, inp, out, smem):
+      del ctx, smem
+      arr = mgpu.FragmentedArray.load_strided(inp, is_signed=in_is_signed)
+      arr = arr.bitcast(out_ir_type, output_is_signed=out_is_signed)
+      arr.store_untiled(out)
+
+    x = jnp.arange(256, dtype=in_dtype)
+    reference = jax.lax.bitcast_convert_type(x, out_dtype)
+
+    result = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        x,
+        reference,
+        None,
+    )(x)
+    np.testing.assert_array_equal(result, reference)
+
 
 class ProfilerTest(TestCase):
 

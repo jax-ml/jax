@@ -463,8 +463,8 @@ class FragmentedArray:
 
     if (_is_signed is not None) != ir.IntegerType.isinstance(self.mlir_dtype):
       raise TypeError(
-          "is_signed must only be non-None if the MLIR type is an integer"
-          f" type, got {_is_signed=} for {self.mlir_dtype}"
+          "is_signed must be non-None if and only if the MLIR type is an"
+          f" integer type, got {_is_signed=} for {self.mlir_dtype}"
       )
 
     match self.layout:
@@ -962,6 +962,12 @@ class FragmentedArray:
     return fast_instr
 
   def bitcast(self, elt: ir.Type, *, output_is_signed: bool | None = None):
+    if (output_is_signed is not None) != ir.IntegerType.isinstance(elt):
+      raise TypeError(
+          "output_is_signed must be non-None if and only if the MLIR type is an"
+          f" integer type, got {output_is_signed=} for {elt}"
+      )
+
     if elt == self.mlir_dtype:
       return self
     reg_type = self.registers.flat[0].type
