@@ -55,7 +55,7 @@ setup(
       'with_cuda': [
           "nvidia-cublas-cu12>=12.1.3.1",
           "nvidia-cuda-cupti-cu12>=12.1.105",
-          "nvidia-cuda-nvcc-cu12>=12.1.105",
+          "nvidia-cuda-nvcc-cu12>=12.6.85",
           "nvidia-cuda-runtime-cu12>=12.1.105",
           "nvidia-cudnn-cu12>=9.1,<10.0",
           "nvidia-cufft-cu12>=11.0.2.54",
