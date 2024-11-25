@@ -260,7 +260,6 @@ jax_multiplatform_test(
     ],
 )
 
-# TODO(b/355263220): enable on TPU once layouts is supported with Shardy.
 jax_multiplatform_test(
     name = "layout_test",
     srcs = ["layout_test.py"],
