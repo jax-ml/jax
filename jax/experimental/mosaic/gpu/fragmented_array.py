@@ -623,37 +623,27 @@ class FragmentedArray:
     )
 
   def _pointwise(self, op, *other, output_is_signed: bool | None = None):
+    # If our layout is a splat, then we should either dispatch to a non-splat
+    # layout, or broadcast ourselves to the output shape first.
     if isinstance(self.layout, WGSplatFragLayout):
-      # Find either the largest operand or an operand that has a
-      # concrete layout base the layout computation of that.
-      widest_idx = None
+      output_shape = self.shape
       for i, o in enumerate(other):
         if not isinstance(o, FragmentedArray):
           continue
         elif not isinstance(o.layout, WGSplatFragLayout):
-          widest_idx = i
-          break
-        elif not o.layout.can_broadcast_to(self.layout.shape):
-          # Note: equal shapes can be broadcast to each other. Using
-          # the negation we make sure to only consider strictly larger
-          # shapes so that we don't end up ping ponging between equal
-          # shapes.
-          widest_idx = i
-
-      if widest_idx is not None:
-        # We need to retain the order of arguments that the op
-        # expects.
-        def _op(wide_o, self_o, *args):
-          pre_wide = args[:widest_idx - 1]
-          post_wide = args[widest_idx - 1:]
-          return op(self_o, *pre_wide, wide_o, *post_wide)
-        return other[widest_idx]._pointwise(
-            _op,
-            self,
-            *other[:widest_idx],
-            *other[widest_idx + 1:],
-            output_is_signed=output_is_signed,
-        )
+          return o._pointwise(
+              lambda o, *args: op(*args[:i], o, *args[i:]),
+              self,
+              *other[:i],
+              *other[i + 1 :],
+              output_is_signed=output_is_signed,
+          )
+        else:
+          output_shape = np.broadcast_shapes(output_shape, o.shape)
+      # If we get here then we haven't found any non-splat layout.
+      return self.broadcast(output_shape)._pointwise(
+          op, *other, output_is_signed=output_is_signed
+      )
 
     other_arrs = []
     for o in other:
