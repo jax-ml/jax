@@ -1900,11 +1900,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
   )
   def test_pjit_array_multi_input_multi_output(self, mesh_shape, s1_shape,
                                                s2_shape, s3_shape, s4_shape):
-    if config.use_shardy_partitioner.value:
-      self.skipTest(
-          'TODO(b/355263220) Shardy conflict resolution is not complete. Issue '
-          'here is that for `a1 @ a1.T` GSPMD gives dim 0 sharded on `x` while '
-          'Shardy gives it fully replicated.')
     global_mesh = jtu.create_mesh(mesh_shape, ('x', 'y'))
     global_input_shape = (8, 2)
 
