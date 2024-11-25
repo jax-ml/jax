@@ -1179,6 +1179,16 @@ def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
   return _ensure_fa(x, x_aval.dtype).rsqrt(approx=ctx.module_ctx.approx_math)
 
+@register_lowering_rule(lax.tanh_p)
+def _tanh_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  return _ensure_fa(x, x_aval.dtype).tanh(approx=ctx.module_ctx.approx_math)
+
+@register_lowering_rule(lax.sign_p)
+def _sign_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  return _ensure_fa(x, x_aval.dtype).sign()
+
 @register_lowering_rule(lax.logistic_p)
 def _logistic_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
