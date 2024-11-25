@@ -244,6 +244,7 @@ else:
     tls = jax_jit.thread_local_state()
     axis_env_state = ()
     mesh_context_manager = ()
+    abstract_mesh_context_manager = ()
     xla_metadata_context_manager = ()
     compute_on_context_manager = ()
 
@@ -252,11 +253,14 @@ else:
       axis_env_state = context.axis_env_state
     if context and context.mesh_context_manager:
       mesh_context_manager = context.mesh_context_manager
+    if context and context.abstract_mesh_context_manager:
+      abstract_mesh_context_manager = context.abstract_mesh_context_manager
     if context and context.xla_metadata_context_manager:
       xla_metadata_context_manager = context.xla_metadata_context_manager
     if context and context.compute_on_context_manager:
       compute_on_context_manager = context.compute_on_context_manager
-    return (axis_env_state, mesh_context_manager, xla_metadata_context_manager,
+    return (axis_env_state, mesh_context_manager, abstract_mesh_context_manager,
+            xla_metadata_context_manager,
             compute_on_context_manager, enable_x64.value,
             numpy_rank_promotion.value, default_matmul_precision.value,
             dynamic_shapes.value,
@@ -1014,6 +1018,7 @@ else:
     trace_state: Any | None = None
     axis_env_state: Hashable = ()
     mesh_context_manager: Hashable = ()
+    abstract_mesh_context_manager: Hashable = ()
     compute_on_context_manager: Hashable = ()
     xla_metadata_context_manager: Hashable = ()
 
@@ -1080,6 +1085,7 @@ else:
   trace_state = JitConfig('trace_state')
   axis_env_state = JitConfig('axis_env_state')
   mesh_context_manager = JitConfig('mesh_context_manager')
+  abstract_mesh_context_manager = JitConfig('abstract_mesh_context_manager')
   compute_on_context_manager = JitConfig('compute_on_context_manager')
   xla_metadata_context_manager = JitConfig('xla_metadata_context_manager')
 
