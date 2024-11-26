@@ -36,6 +36,6 @@ jobs:
           # Create a link to the that will open up a new PR form to upstream and autofill the fields
           CREATE_PR_LINK="https://github.com/jax-ml/jax/compare/main...ROCm:jax:$NEW_BRANCH_NAME?expand=1&title=$TITLE_ENC&body=$BODY_ENC"
           # Add a comment with the link to the PR
-          COMMENT_BODY="Feature branch from main is ready. [Create a new PR]($CREATE_PR_LINK) destined for upstream?"
+          COMMENT_BODY="Feature branch from main is ready. [Create a new PR][1] destined for upstream?${NL}${NL}[1]: $CREATE_PR_LINK"
           gh pr comment ${{ github.event.pull_request.number }} --repo rocm/jax --body "$COMMENT_BODY"
 
