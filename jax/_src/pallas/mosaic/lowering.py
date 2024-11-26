@@ -1545,6 +1545,18 @@ def _reduce_or_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
 lowering_rules[lax.reduce_or_p] = _reduce_or_lowering_rule
 
 
+def _broadcast_to_lowering_rule(
+    ctx: LoweringRuleContext, x, shape: Sequence[int]
+):
+  raise RuntimeError(
+      "`broadcast_to` is a Triton-specific primitive. Please consider using"
+      " `jnp.broadcast_to` instead."
+  )
+
+
+lowering_rules[state_primitives.broadcast_to_p] = _broadcast_to_lowering_rule
+
+
 def _broadcast_in_dim_lowering_rule(
     ctx: LoweringRuleContext, val, *, shape, broadcast_dimensions, sharding
 ):
