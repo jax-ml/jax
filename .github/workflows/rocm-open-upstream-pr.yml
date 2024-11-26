@@ -10,11 +10,8 @@ jobs:
       contents: write
       pull-requests: write
     runs-on: ubuntu-latest
-    outputs:
-      new-pr-link: ${{ steps.create-pr.outputs.link }}
     env:
       NEW_BRANCH_NAME: "${{ github.head_ref }}-upstream"
-      NEW_PR_TITLE: "[ROCM] ${{ github.event.pull_request.title }}"
     steps:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -24,19 +21,18 @@ jobs:
           git checkout -b $NEW_BRANCH_NAME origin/${{ github.head_ref }}
           git rebase --onto origin/main
           git push origin HEAD
-      # TODO: Change the base of the PR to upstream main
-      - name: Create a PR to upstream
-        id: create-pr
-        run: |
-          echo link=$(gh pr create --repo rocm/jax --base main --head $NEW_BRANCH_NAME --title "$NEW_PR_TITLE" --body "${{ github.event.pull_request.body }}") >> "$GITHUB_OUTPUT"
-  comment-link:
-    needs: open-upstream
-    permissions:
-      pull-requests: write
-    runs-on: ubuntu-latest
-    steps:
-      - name: Leave comment on old PR
+      - name: Leave link to create PR
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh pr comment ${{ github.event.pull_request.number }} --repo rocm/jax --body ${{ needs.open-upstream.outputs.new-pr-link.link }}
+        run: |
+          # Bash is not friendly with newline characters, so make our own
+          NL=$'\n'
+          # Encode the PR title and body for passing as URL get parameters
+          TITLE_ENC=$(jq -rn --arg x "[ROCm] ${{ github.event.pull_request.title }}" '$x|@uri')
+          BODY_ENC=$(jq -rn --arg x $"${{ github.event.pull_request.body }}${NL}${NL}Created from: ${{ github.event.pull_request.url }}" '$x|@uri')
+          # Create a link to the that will open up a new PR form to upstream and autofill the fields
+          CREATE_PR_LINK="https://github.com/jax-ml/jax/compare/main...ROCm:jax:$NEW_BRANCH_NAME?expand=1&title=$TITLE_ENC&body=$BODY_ENC"
+          # Add a comment with the link to the PR
+          COMMENT_BODY="Feature branch from main is ready. [Create a new PR]($CREATE_PR_LINK) destined for upstream?"
+          gh pr comment ${{ github.event.pull_request.number }} --repo rocm/jax --body "$COMMENT_BODY"
 
