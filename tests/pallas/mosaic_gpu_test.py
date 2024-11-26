@@ -749,6 +749,24 @@ class PallasCallTest(PallasTest):
 
     self.assertIn("acc * 2:", output())
 
+  def test_cond_returning_array(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
+    )
+    def kernel(x_ref, o_ref):
+      acc = x_ref[...].sum()
+      acc2, acc = jax.lax.cond(
+          acc % 2 == 0,
+          lambda: (acc * 2, acc),
+          lambda: (acc, acc * 2),
+      )
+      o_ref[...] = jnp.broadcast_to(acc + acc2, o_ref.shape)
+
+    x = jnp.arange(256)
+    np.testing.assert_array_equal(kernel(x), jnp.broadcast_to(jnp.sum(x) * 3, [256]))
+
+
   @parameterized.parameters(jnp.float16, jnp.float32)
   def test_wgmma(self, dtype):
     self.skip_unless_sm90a()
