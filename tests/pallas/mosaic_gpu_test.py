@@ -83,6 +83,25 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_allclose(kernel(x), unary(x), rtol=rtol)
 
+  @parameterized.named_parameters(
+      ("add", lambda x, y: x + y),
+      ("mul", lambda x, y: x * y),
+      ("div", lambda x, y: x / y),
+      ("min", lambda x, y: jnp.minimum(x, y)),
+      ("max", lambda x, y: jnp.maximum(x, y)),
+  )
+  def test_binary_op(self, bop):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = bop(x_ref[...], y_ref[...])
+
+    x = jnp.arange(256).astype(jnp.float32)
+    y = x + 1
+    np.testing.assert_array_equal(kernel(x, y), bop(x, y))
+
   def test_add_first(self):
     @functools.partial(
         pl.pallas_call,
@@ -110,18 +129,6 @@ class PallasCallTest(PallasTest):
 
     x = jnp.arange(math.prod(shape1)).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x.reshape(shape2))
-
-  def test_add_xy(self):
-    @functools.partial(
-        pl.pallas_call,
-        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
-    )
-    def kernel(x_ref, y_ref, o_ref):
-      o_ref[...] = x_ref[...] + y_ref[...]
-
-    x = jnp.arange(256).astype(jnp.float32)
-    y = x + 1
-    np.testing.assert_array_equal(kernel(x, y), x + y)
 
   def test_add_xy_indexed(self):
     @functools.partial(

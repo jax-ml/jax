@@ -1256,6 +1256,7 @@ class FragmentedArrayTest(TestCase):
           operator.add,
           operator.mul,
           operator.sub,
+          (lambda x, y: mgpu.FragmentedArray.min(x, y), np.minimum),
           (lambda x, y: mgpu.FragmentedArray.max(x, y), np.maximum),
       ),
       dtype=[jnp.float32, jnp.int32, jnp.uint32],
@@ -1284,6 +1285,32 @@ class FragmentedArrayTest(TestCase):
       ref_x = np.arange(m * n, dtype=dtype).reshape(m, n)
       ref_rhs = scalar_rhs or ref_x
       np.testing.assert_array_equal(result, np_op(ref_x, ref_rhs))
+
+  def test_minimum_np_compatibility(self):
+    one = np.ones((128, 128)).astype(np.float32)
+    negz = one * -0.
+    posz = one * 0.
+    nan = one * np.nan
+    expectation = (np.minimum(negz, posz) == negz) & (np.minimum(nan, one) != one)
+    assert np.all(expectation), expectation
+
+    def kernel(ctx, dst, _):
+      f32 = ir.F32Type.get()
+      splat = lambda i: mgpu.FragmentedArray.splat(c(i, f32), (128, 128))
+      negz = splat(-0.)
+      posz = splat(0.)
+      nan = splat(np.nan)
+      one = splat(1.)
+      res = (negz.min(posz) == negz) & (one.min(nan) != one) & (nan.min(one) != one)
+      i8 = ir.IntegerType.get_signless(8)
+      res.astype(i8, is_signed=False).store_untiled(dst)
+
+    out_shape = jax.ShapeDtypeStruct((128, 128), np.int8)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+    )()
+    # astype() uses extsi so i1=True becomes -1
+    np.testing.assert_array_equal(result == -1, expectation)
 
   @parameterized.product(
       op=[operator.truediv, operator.floordiv, operator.mod],
