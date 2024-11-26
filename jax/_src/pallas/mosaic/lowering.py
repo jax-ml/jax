@@ -1849,7 +1849,8 @@ def _convert_element_type_lowering_rule(
 lowering_rules[lax.convert_element_type_p] = _convert_element_type_lowering_rule
 
 
-def _reshape_lowering_rule(ctx: LoweringRuleContext, x, new_sizes, dimensions):
+def _reshape_lowering_rule(ctx: LoweringRuleContext, x, new_sizes, dimensions,
+                           sharding):
   if dimensions is not None:
     raise NotImplementedError
   if any(d is None for d in new_sizes):

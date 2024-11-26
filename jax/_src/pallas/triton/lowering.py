@@ -1612,7 +1612,7 @@ def _squeeze_lowering_rule(ctx: LoweringRuleContext, a, *, dimensions):
 
 @register_lowering(lax.reshape_p)
 def _reshape_lowering_rule(
-    ctx: LoweringRuleContext, a, *, new_sizes, dimensions
+    ctx: LoweringRuleContext, a, *, new_sizes, dimensions, sharding,
 ):
   del new_sizes  # Unused.
   if dimensions is not None:
