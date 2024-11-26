@@ -622,10 +622,10 @@ class FragmentedArray:
         reg, self.shape, new_layout, is_signed=self.is_signed
     )
 
-  def _pointwise(self, op, *other, output_is_signed: bool | None = None, force_no_dispatch=False):
+  def _pointwise(self, op, *other, output_is_signed: bool | None = None):
     # If our layout is a splat, then we should either dispatch to a non-splat
     # layout, or broadcast ourselves to the output shape first.
-    if not force_no_dispatch and isinstance(self.layout, WGSplatFragLayout):
+    if isinstance(self.layout, WGSplatFragLayout):
       output_shape = self.shape
       for i, o in enumerate(other):
         if not isinstance(o, FragmentedArray):
@@ -641,9 +641,10 @@ class FragmentedArray:
         else:
           output_shape = np.broadcast_shapes(output_shape, o.shape)
       # If we get here then we haven't found any non-splat layout.
-      return self.broadcast(output_shape)._pointwise(
-          op, *other, output_is_signed=output_is_signed, force_no_dispatch=True,
-      )
+      if self.shape != output_shape:
+        return self.broadcast(output_shape)._pointwise(
+            op, *other, output_is_signed=output_is_signed
+        )
 
     other_arrs = []
     for o in other:
