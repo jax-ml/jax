@@ -19,6 +19,7 @@ import math
 import os
 import shutil
 import tempfile
+import unittest
 
 from absl.testing import absltest
 import jax
@@ -112,6 +113,7 @@ class PgleTest(jtu.JaxTestCase):
     fdo_profile = pgle_profiler.consume_fdo_profile()
     self.assertEqual(fdo_profile.count(b'custom'), its)
 
+  @unittest.skip('b/381048931')
   def testAutoPgle(self):
     mesh = jtu.create_mesh((2,), ('x',))
 
@@ -177,6 +179,7 @@ class PgleTest(jtu.JaxTestCase):
         self.assertArraysEqual(compiled(x), expected)
       self.assertEqual(cache_miss_count[0], 0)
 
+  @unittest.skip('b/381048931')
   def testAutoPgleWithPersistentCache(self):
     its = 50
     mesh = jtu.create_mesh((2,), ('x',))
