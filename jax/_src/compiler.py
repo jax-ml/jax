@@ -200,6 +200,9 @@ def get_compile_options(
         setattr(build_options, name, env_options_overrides.pop(name))
     compile_options.env_option_overrides = list(env_options_overrides.items())
 
+  build_options.exec_time_optimization_effort = config.exec_time_optimization_effort.value
+  build_options.memory_fitting_effort = config.memory_fitting_effort.value
+
   debug_options = compile_options.executable_build_options.debug_options
   if lib.cuda_path is not None:
     debug_options.xla_gpu_cuda_data_dir = lib.cuda_path
