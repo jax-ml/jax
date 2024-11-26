@@ -22,7 +22,8 @@ jobs:
           git fetch
           git checkout -b $NEW_BRANCH_NAME origin/${{ github.head_ref }}
           git rebase --onto origin/main origin/rocm-main
-          git push origin HEAD
+          # Force push here so that we don't run into conflicts with the origin branch
+          git push origin HEAD --force
       - name: Leave link to create PR
         env:
           GH_TOKEN: ${{ github.token }}
@@ -31,7 +32,7 @@ jobs:
           NL=$'\n'
           # Encode the PR title and body for passing as URL get parameters
           TITLE_ENC=$(jq -rn --arg x "[ROCm] ${{ github.event.pull_request.title }}" '$x|@uri')
-          BODY_ENC=$(jq -rn --arg x $"${{ github.event.pull_request.body }}${NL}${NL}Created from: ${{ github.event.pull_request.url }}" '$x|@uri')
+          BODY_ENC=$(jq -rn --arg x $"${{ github.event.pull_request.body }}${NL}${NL}Created from: rocm/jax#${{ github.event.pull_request.number }}" '$x|@uri')
           # Create a link to the that will open up a new PR form to upstream and autofill the fields
           CREATE_PR_LINK="https://github.com/jax-ml/jax/compare/main...ROCm:jax:$NEW_BRANCH_NAME?expand=1&title=$TITLE_ENC&body=$BODY_ENC"
           # Add a comment with the link to the PR
