@@ -1198,5 +1198,6 @@ pytype_library(
         ":util",
         ":xla_bridge",
         "//jax/_src/lib",
+        "//jax/extend:ifrt_programs",
     ] + py_deps("numpy") + py_deps("cloudpickle"),
 )

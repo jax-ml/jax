@@ -1387,6 +1387,7 @@ jax_multiplatform_test(
     srcs = ["colocated_python_test.py"],
     deps = [
         "//jax:experimental_colocated_python",
+        "//jax/extend:ifrt_programs",
     ],
 )
 
