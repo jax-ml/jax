@@ -1354,11 +1354,14 @@ class FragmentedArrayTest(TestCase):
       ops=(
           (lambda x: -x, jax.lax.neg),
           (lambda x: x + 42, lambda x: x + 42),
+          (lambda x: x.tanh(), jax.lax.tanh),
       ),
       dtype=[jnp.float32, jnp.int32, jnp.uint32],
   )
   def test_unary(self, ops, dtype, m=64, n=32):
     op, np_op = ops
+    if np_op is jax.lax.tanh and jnp.issubdtype(dtype, jnp.integer):
+      raise self.skipTest("Tanh not supported for integer types")
 
     def kernel(ctx, dst, _):
       iota = iota_tensor(m, n, dtype)

@@ -70,8 +70,9 @@ class PallasCallTest(PallasTest):
       ("exp", jax.lax.exp),
       ("square", lambda x: x ** 2),
       ("rsqrt", jax.lax.rsqrt),
+      ("tanh", jax.lax.tanh, 1e-6),
   )
-  def test_unary_ops(self, unary):
+  def test_unary_ops(self, unary, rtol=1e-7):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
@@ -80,7 +81,7 @@ class PallasCallTest(PallasTest):
       o_ref[...] = unary(x_ref[...])
 
     x = jnp.arange(256).astype(jnp.float32)
-    np.testing.assert_array_equal(kernel(x), unary(x))
+    np.testing.assert_allclose(kernel(x), unary(x), rtol=rtol)
 
   def test_add_first(self):
     @functools.partial(

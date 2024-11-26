@@ -918,6 +918,15 @@ class FragmentedArray:
         self._lift_fast_unary("cos.approx.f32") if approx else mlir_math.cos
     )
 
+  def tanh(self, *, approx: bool = False):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
+    if approx and self.mlir_dtype != ir.F32Type.get():
+      raise NotImplementedError
+    return self._pointwise(
+        self._lift_fast_unary("tanh.approx.f32") if approx else mlir_math.tanh
+    )
+
   def rsqrt(self, *, approx: bool = False):
     if not ir.FloatType.isinstance(self.mlir_dtype):
       raise NotImplementedError
