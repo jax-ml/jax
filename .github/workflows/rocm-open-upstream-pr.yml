@@ -19,7 +19,7 @@ jobs:
         run: |
           git fetch
           git checkout -b $NEW_BRANCH_NAME origin/${{ github.head_ref }}
-          git rebase --onto origin/main
+          git rebase --onto origin/main origin/rocm-main
           git push origin HEAD
       - name: Leave link to create PR
         env:
