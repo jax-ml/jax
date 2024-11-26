@@ -455,17 +455,10 @@ class AbstractMesh:
     _raise_value_error("local_mesh")
 
   def __enter__(self):
-    mesh_context.stack.append(self)
-    mesh_context.mesh = self
-    jax_config.abstract_mesh_context_manager.set_local(
-        tuple(m for m in mesh_context.stack if m is not None))
-    return self
+    return push_mesh_context(self)
 
   def __exit__(self, exc_type, exc_value, traceback):
-    mesh_context.stack.pop()
-    mesh_context.mesh = mesh_context.stack[-1]
-    jax_config.abstract_mesh_context_manager.set_local(
-        tuple(m for m in mesh_context.stack if m is not None))
+    pop_mesh_context()
     return False
 
   @staticmethod
@@ -486,3 +479,26 @@ class MeshContext(threading.local):
     self.mesh = self.stack[-1]
 
 mesh_context = MeshContext()
+
+def push_mesh_context(val):
+  mesh_context.stack.append(val)
+  mesh_context.mesh = val
+  jax_config.abstract_mesh_context_manager.set_local(
+      tuple(m for m in mesh_context.stack if m is not None))
+  return val
+
+def pop_mesh_context():
+  mesh_context.stack.pop()
+  mesh_context.mesh = mesh_context.stack[-1]
+  jax_config.abstract_mesh_context_manager.set_local(
+      tuple(m for m in mesh_context.stack if m is not None))
+
+
+class null_mesh_context:
+
+  def __enter__(self):
+    return push_mesh_context(None)
+
+  def __exit__(self, *excinfo):
+    pop_mesh_context()
+    return False

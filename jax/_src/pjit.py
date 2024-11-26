@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Sequence, Iterable
-import contextlib
 import dataclasses
 from functools import partial
 import inspect
@@ -696,7 +695,7 @@ def _infer_params_impl(
 
 def get_abstract_mesh(in_avals):
   if not config.sharding_in_types.value:
-    return contextlib.nullcontext()
+    return mesh_lib.null_mesh_context()
   m = None
   for a in in_avals:
     # TODO(yashkatariya): Remove this when mesh context can be set by the user.
@@ -709,7 +708,7 @@ def get_abstract_mesh(in_avals):
     m = a.sharding.mesh  # type: ignore
   # TODO(yashkatariya): Remove this when mesh context can be set by the user.
   if m is None:
-    return contextlib.nullcontext()
+    return mesh_lib.null_mesh_context()
   assert m is not None
   return m
 
