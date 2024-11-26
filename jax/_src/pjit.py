@@ -709,7 +709,7 @@ def get_abstract_mesh(in_avals):
   # TODO(yashkatariya): Remove this when mesh context can be set by the user.
   if m is None:
     return mesh_lib.null_mesh_context()
-  assert m is not None
+  assert isinstance(m, AbstractMesh)
   return m
 
 
