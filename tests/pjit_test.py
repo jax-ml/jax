@@ -4622,6 +4622,28 @@ class ArrayPjitTest(jtu.JaxTestCase):
     ins, _ = f.lower(np.arange(8)).compile().input_shardings
     self.assertEqual(ins[0], SingleDeviceSharding(jax.devices()[0]))
 
+  def test_sharding_in_types_with_set_mesh(self):
+    if config.use_shardy_partitioner.value:
+      self.skipTest("ShiT doesn't work with shardy")
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    with mesh_lib.set_mesh(mesh):
+      np_inp = np.arange(16.).reshape(8, 2)
+      s = NamedSharding(mesh, P('x', 'y'))
+      arr = jax.device_put(np_inp, s)
+
+      @jax.jit
+      def f(x):
+        self.assertEqual(x.sharding.spec, s.spec)
+        x = x * 2
+        self.assertEqual(x.sharding.spec, s.spec)
+        x = x * x
+        self.assertEqual(x.sharding.spec, s.spec)
+        return x
+
+      out = f(arr)
+      self.assertEqual(out.sharding, s)
+      self.assertArraysEqual(out, (np_inp * 2) * (np_inp * 2))
+
 
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
@@ -5229,7 +5251,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     def g(x, y):
       self.assertTrue(x.sharding.mesh._are_all_axes_collective)
       self.assertTrue(y.sharding.mesh._are_all_axes_collective)
-      self.assertTrue(mesh_lib.mesh_context.mesh._are_all_axes_collective)
+      self.assertTrue(mesh_lib.abstract_mesh_context.mesh._are_all_axes_collective)
       return x * y
 
     @jax.jit
@@ -5254,7 +5276,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     def g(x, y):
       self.assertTrue(x.sharding.mesh._are_all_axes_collective)
       self.assertTrue(y.sharding.mesh._are_all_axes_collective)
-      self.assertTrue(mesh_lib.mesh_context.mesh._are_all_axes_collective)
+      self.assertTrue(mesh_lib.abstract_mesh_context.mesh._are_all_axes_collective)
       allgatherd_y = jax.lax.all_gather(y, axis_name='x', axis=1, tiled=True)
       z = x @ allgatherd_y
       return jax.lax.psum(z, axis_name='y')
