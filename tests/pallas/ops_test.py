@@ -556,10 +556,6 @@ class OpsTest(PallasBaseTest):
       self.skipTest("Not supported: bad canonicalization")
     if from_dtype == "bool" and to_dtype in {"int16", "int8"}:
       self.skipTest("Not supported: cannot extend to sub-32 bit types")
-    if jtu.test_device_matches(["gpu"]):
-      if (from_dtype in {"bfloat16", "float32"} and
-          to_dtype in {"int8", "int16", "int32"}):
-        self.skipTest("TODO: wrong result on GPU")
 
     if from_dtype == "bfloat16":
       from_dtype = jnp.bfloat16
