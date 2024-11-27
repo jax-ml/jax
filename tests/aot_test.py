@@ -38,6 +38,9 @@ with contextlib.suppress(ImportError):
   import pytest
   pytestmark = pytest.mark.multiaccelerator
 
+def current_concrete_platform():
+  platform = jax.devices()[0].platform
+  return platform if platform != "gpu" else "cuda"
 
 class JaxAotTest(jtu.JaxTestCase):
 
@@ -65,7 +68,7 @@ class JaxAotTest(jtu.JaxTestCase):
   def test_topology_pjit_serialize(self):
     try:
       aot_topo = topologies.get_topology_desc(
-          platform=jax.devices()[0].platform
+          platform=current_concrete_platform()
       )
     except NotImplementedError:
       raise unittest.SkipTest('PJRT Topology not supported')
@@ -101,7 +104,7 @@ class JaxAotTest(jtu.JaxTestCase):
   def test_get_topology_from_devices(self):
     try:
       aot_topo = topologies.get_topology_desc(
-          platform=jax.devices()[0].platform
+          platform=current_concrete_platform()
       )
     except NotImplementedError:
       raise unittest.SkipTest('PJRT Topology not supported')
@@ -111,6 +114,11 @@ class JaxAotTest(jtu.JaxTestCase):
         topo.platform_version, aot_topo.devices[0].client.platform_version
     )
 
+  @jtu.run_on_devices('gpu')
+  def test_get_topology_for_gpu_alias_fails(self):
+    regex_str = "^topology cannot be created for platform alias 'gpu'"
+    with self.assertRaisesRegex(RuntimeError, regex_str):
+      topologies.get_topology_desc(platform="gpu")
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -380,3 +380,5 @@ try-import %workspace%/.jax_configure.bazelrc
 
 # Load rc file with user-specific options.
 try-import %workspace%/.bazelrc.user
+
+try-import %workspace%/.local_cuda.bazelrc
