@@ -399,8 +399,11 @@ async def main():
     else:
       requirements_command.append("//build:requirements.update")
 
-    await executor.run(requirements_command.get_command_as_string(), args.dry_run)
-    sys.exit(0)
+    result = await executor.run(requirements_command.get_command_as_string(), args.dry_run)
+    if result.return_code != 0:
+      raise RuntimeError(f"Command failed with return code {result.return_code}")
+    else:
+      sys.exit(0)
 
   wheel_cpus = {
       "darwin_arm64": "arm64",
@@ -594,7 +597,11 @@ async def main():
 
       wheel_build_command.append(f"--jaxlib_git_hash={git_hash}")
 
-      await executor.run(wheel_build_command.get_command_as_string(), args.dry_run)
+      result = await executor.run(wheel_build_command.get_command_as_string(), args.dry_run)
+      if result.return_code != 0:
+        raise RuntimeError(f"Command failed with return code {result.return_code}")
+      else:
+        sys.exit(0)
 
 
 if __name__ == "__main__":
