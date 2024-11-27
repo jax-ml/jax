@@ -24,6 +24,7 @@ import time
 from typing import Any, Callable
 import warnings
 
+from jax._src import cache_key as cache_key_type
 from jax._src import compilation_cache
 from jax._src import config as config
 from jax._src import distributed
@@ -33,9 +34,9 @@ from jax._src import path as pathlib
 from jax._src import profiler
 from jax._src import traceback_util
 from jax._src.interpreters import mlir
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 import numpy as np
 
@@ -356,8 +357,18 @@ def compile_or_get_cached(
   monitoring.record_event('/jax/compilation_cache/compile_requests_use_cache')
 
   try:
+    if config.remove_custom_partitioning_ptr_from_cache_key.value:
+      ignore_callbacks = cache_key_type.IgnoreCallbacks.CUSTOM_PARTITIONING
+    else:
+      ignore_callbacks = cache_key_type.IgnoreCallbacks.NO
+
     cache_key = compilation_cache.get_cache_key(
-        computation, devices, compile_options, backend)
+        computation,
+        devices,
+        compile_options,
+        backend,
+        ignore_callbacks=ignore_callbacks,
+    )
   except xc._xla.XlaRuntimeError as ex:
     logger.error("compile_or_get_cached: unable to generate cache key, "
                  "skipping the cache: %s", ex)
@@ -390,7 +401,12 @@ def compile_or_get_cached(
     compile_options.executable_build_options.fdo_profile = b"pgle profiled"
 
     pgle_profiled_module_key = compilation_cache.get_cache_key(
-        computation, devices, compile_options, backend)
+        computation,
+        devices,
+        compile_options,
+        backend,
+        cache_key_type.IgnoreCallbacks.ALL,
+    )
     compile_options.executable_build_options.fdo_profile = fdo_profile
 
     if _is_executable_in_cache(backend, pgle_profiled_module_key):
@@ -498,7 +514,11 @@ def _share_fdo_profiles(
   compile_options.executable_build_options.fdo_profile = b""
   profile_key = (
       compilation_cache.get_cache_key(
-          computation, devices, compile_options, backend
+          computation,
+          devices,
+          compile_options,
+          backend,
+          cache_key_type.IgnoreCallbacks.ALL,
       )
       + "_fdo_sync"
   )

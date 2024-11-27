@@ -104,6 +104,7 @@ def measure(
       raise ValueError("Can only measure functions with at least one output")
     return outs, _event_elapsed(start_event, end_event)
 
+  jax.block_until_ready(run(*args, **kwargs))  # Warmup.
   outs, elapsed = run(*args, **kwargs)
   return outs, float(elapsed)
 

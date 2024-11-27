@@ -641,9 +641,10 @@ class FragmentedArray:
         else:
           output_shape = np.broadcast_shapes(output_shape, o.shape)
       # If we get here then we haven't found any non-splat layout.
-      return self.broadcast(output_shape)._pointwise(
-          op, *other, output_is_signed=output_is_signed
-      )
+      if self.shape != output_shape:
+        return self.broadcast(output_shape)._pointwise(
+            op, *other, output_is_signed=output_is_signed
+        )
 
     other_arrs = []
     for o in other:
@@ -884,7 +885,17 @@ class FragmentedArray:
           arith.maxsi if self.is_signed else arith.maxui, other
       )
     else:
-      return NotImplemented
+      return NotImplementedError
+
+  def min(self, other):
+    if ir.FloatType.isinstance(self.mlir_dtype):
+      return self._pointwise(arith.minimumf, other)
+    elif ir.IntegerType.isinstance(self.mlir_dtype):
+      return self._pointwise(
+          arith.minsi if self.is_signed else arith.minui, other
+      )
+    else:
+      return NotImplementedError
 
   def exp(self, *, approx: bool = False):
     if not ir.FloatType.isinstance(self.mlir_dtype):
@@ -916,6 +927,15 @@ class FragmentedArray:
       raise NotImplementedError
     return self._pointwise(
         self._lift_fast_unary("cos.approx.f32") if approx else mlir_math.cos
+    )
+
+  def tanh(self, *, approx: bool = False):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
+    if approx and self.mlir_dtype != ir.F32Type.get():
+      raise NotImplementedError
+    return self._pointwise(
+        self._lift_fast_unary("tanh.approx.f32") if approx else mlir_math.tanh
     )
 
   def rsqrt(self, *, approx: bool = False):
@@ -1223,15 +1243,29 @@ class FragmentedArray:
         lambda t, p, f: arith.select(p, t, f), self, on_false,
     )
 
-  def foreach(self, fn: Callable[[ir.Value, tuple[ir.Value, ...]], None]):
+  def foreach(
+      self,
+      fn: Callable[[ir.Value, tuple[ir.Value, ...]], ir.Value | None],
+      *,
+      create_array=False,
+      is_signed=None,
+  ):
     """Call a function for each value and index."""
     index = ir.IndexType.get()
-    for idx, reg in zip(self.layout.thread_idxs(self.shape), self.registers.flat, strict=True):
-      assert len(idx) == len(self.shape), (idx, self.shape)
+    new_regs = None
+    if create_array:
+      new_regs = np.full_like(self.registers, llvm.mlir_undef(self.registers.flat[0].type))
+    for mlir_idx, reg_idx in zip(self.layout.thread_idxs(self.shape), np.ndindex(self.registers.shape), strict=True):
+      reg = self.registers[reg_idx]
+      assert len(mlir_idx) == len(self.shape), (mlir_idx, self.shape)
       [elems] = ir.VectorType(reg.type).shape
       for i in range(elems):
         i = c(i, index)
-        fn(vector.extractelement(reg, position=i), (*idx[:-1], arith.addi(idx[-1], i)))
+        val = fn(vector.extractelement(reg, position=i), (*mlir_idx[:-1], arith.addi(mlir_idx[-1], i)))
+        if create_array:
+          new_regs[reg_idx] = vector.insertelement(val, new_regs[reg_idx], position=i)
+
+    return FragmentedArray(_registers=new_regs, _layout=self.layout, _is_signed=is_signed)
 
   def store_untiled(self, ref: ir.Value):
     if not ir.MemRefType.isinstance(ref.type):

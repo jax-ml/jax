@@ -1605,7 +1605,7 @@ def get_sharding(sharding, ndim):
     assert len(sharding.spec) == ndim
     return sharding
 
-  context_mesh = mesh_lib.mesh_context.mesh
+  context_mesh = mesh_lib.abstract_mesh_context.mesh
   # TODO(yashkatariya): Error out and ask users to set the context mesh in their
   # code.
   if context_mesh is None:

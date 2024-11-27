@@ -46,6 +46,6 @@ bazel test --config=rbe_linux_x86_64_cuda \
       --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
       --test_tag_filters=-multiaccelerator \
       --test_env=JAX_SKIP_SLOW_TESTS=true \
-      --action_env=JAX_ENABLE_X64=0 \
+      --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
       --color=yes \
       //tests:gpu_tests //tests:backend_independent_tests //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests

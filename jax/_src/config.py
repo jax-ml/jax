@@ -212,6 +212,7 @@ if xla_extension_version >= 295:
     return (axis_env_state.value, mesh_context_manager.value,
             xla_metadata_context_manager.value,
             abstract_mesh_context_manager.value,
+            device_context.value,
             compute_on_context_manager.value, enable_x64.value,
             numpy_rank_promotion.value, default_matmul_precision.value,
             dynamic_shapes.value,
@@ -245,6 +246,7 @@ else:
     axis_env_state = ()
     mesh_context_manager = ()
     abstract_mesh_context_manager = ()
+    device_context = ()
     xla_metadata_context_manager = ()
     compute_on_context_manager = ()
 
@@ -255,12 +257,14 @@ else:
       mesh_context_manager = context.mesh_context_manager
     if context and context.abstract_mesh_context_manager:
       abstract_mesh_context_manager = context.abstract_mesh_context_manager
+    if context and context.device_context:
+      device_context = context.device_context
     if context and context.xla_metadata_context_manager:
       xla_metadata_context_manager = context.xla_metadata_context_manager
     if context and context.compute_on_context_manager:
       compute_on_context_manager = context.compute_on_context_manager
     return (axis_env_state, mesh_context_manager, abstract_mesh_context_manager,
-            xla_metadata_context_manager,
+            device_context, xla_metadata_context_manager,
             compute_on_context_manager, enable_x64.value,
             numpy_rank_promotion.value, default_matmul_precision.value,
             dynamic_shapes.value,
@@ -976,6 +980,7 @@ if xla_extension_version >= 295:
   axis_env_state = config_ext.Config((), include_in_jit_key=True)
   mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
   abstract_mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
+  device_context = config_ext.Config((), include_in_jit_key=True)
   compute_on_context_manager = config_ext.Config((), include_in_jit_key=True)
   xla_metadata_context_manager = config_ext.Config((), include_in_jit_key=True)
 else:
@@ -1019,6 +1024,7 @@ else:
     axis_env_state: Hashable = ()
     mesh_context_manager: Hashable = ()
     abstract_mesh_context_manager: Hashable = ()
+    device_context: Hashable = ()
     compute_on_context_manager: Hashable = ()
     xla_metadata_context_manager: Hashable = ()
 
@@ -1086,6 +1092,7 @@ else:
   axis_env_state = JitConfig('axis_env_state')
   mesh_context_manager = JitConfig('mesh_context_manager')
   abstract_mesh_context_manager = JitConfig('abstract_mesh_context_manager')
+  device_context = JitConfig('device_context')
   compute_on_context_manager = JitConfig('compute_on_context_manager')
   xla_metadata_context_manager = JitConfig('xla_metadata_context_manager')
 

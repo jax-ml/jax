@@ -1256,6 +1256,7 @@ class FragmentedArrayTest(TestCase):
           operator.add,
           operator.mul,
           operator.sub,
+          (lambda x, y: mgpu.FragmentedArray.min(x, y), np.minimum),
           (lambda x, y: mgpu.FragmentedArray.max(x, y), np.maximum),
       ),
       dtype=[jnp.float32, jnp.int32, jnp.uint32],
@@ -1284,6 +1285,32 @@ class FragmentedArrayTest(TestCase):
       ref_x = np.arange(m * n, dtype=dtype).reshape(m, n)
       ref_rhs = scalar_rhs or ref_x
       np.testing.assert_array_equal(result, np_op(ref_x, ref_rhs))
+
+  def test_minimum_np_compatibility(self):
+    one = np.ones((128, 128)).astype(np.float32)
+    negz = one * -0.
+    posz = one * 0.
+    nan = one * np.nan
+    expectation = (np.minimum(negz, posz) == negz) & (np.minimum(nan, one) != one)
+    assert np.all(expectation), expectation
+
+    def kernel(ctx, dst, _):
+      f32 = ir.F32Type.get()
+      splat = lambda i: mgpu.FragmentedArray.splat(c(i, f32), (128, 128))
+      negz = splat(-0.)
+      posz = splat(0.)
+      nan = splat(np.nan)
+      one = splat(1.)
+      res = (negz.min(posz) == negz) & (one.min(nan) != one) & (nan.min(one) != one)
+      i8 = ir.IntegerType.get_signless(8)
+      res.astype(i8, is_signed=False).store_untiled(dst)
+
+    out_shape = jax.ShapeDtypeStruct((128, 128), np.int8)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+    )()
+    # astype() uses extsi so i1=True becomes -1
+    np.testing.assert_array_equal(result == -1, expectation)
 
   @parameterized.product(
       op=[operator.truediv, operator.floordiv, operator.mod],
@@ -1334,6 +1361,39 @@ class FragmentedArrayTest(TestCase):
     rhs = rhs = 0 if rhs_is_literal else iota + 1
     np.testing.assert_array_equal(result, op(iota, rhs))
 
+  def test_foreach(self):
+    dtype = jnp.int32
+    swizzle = 128
+    tile = 64, swizzle // jnp.dtype(dtype).itemsize
+    shape = 128, 192
+    tiled_shape = mgpu.tile_shape(shape, tile)
+    mlir_dtype = utils.dtype_to_ir_type(dtype)
+    cst = 9999
+    def causal(val, idx):
+      row, col = idx
+      mask = arith.cmpi(arith.CmpIPredicate.uge, row, col)
+      return arith.select(mask, val, c(cst, mlir_dtype))
+
+    tiling = mgpu.TileTransform(tile)
+    def kernel(ctx, dst, smem):
+      x = iota_tensor(shape[0], shape[1], dtype)
+      x.foreach(causal, create_array=True, is_signed=False).store_untiled(smem)
+      mgpu.commit_shared()
+      ctx.async_copy(src_ref=smem, dst_ref=dst)
+      ctx.await_async_copy(0)
+
+    iota = np.arange(np.prod(shape), dtype=dtype).reshape(*shape)
+    result = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        (),
+        jax.ShapeDtypeStruct(shape=shape, dtype=dtype),
+        jax.ShapeDtypeStruct(shape=shape, dtype=dtype),
+    )()
+    expected = jnp.tril(iota) + jnp.triu(jnp.ones(shape), k=1) * cst
+    np.testing.assert_array_equal(result, expected)
+
   @parameterized.product(
       op=[operator.and_, operator.or_, operator.xor],
       dtype=[jnp.uint32],
@@ -1354,11 +1414,14 @@ class FragmentedArrayTest(TestCase):
       ops=(
           (lambda x: -x, jax.lax.neg),
           (lambda x: x + 42, lambda x: x + 42),
+          (lambda x: x.tanh(), jax.lax.tanh),
       ),
       dtype=[jnp.float32, jnp.int32, jnp.uint32],
   )
   def test_unary(self, ops, dtype, m=64, n=32):
     op, np_op = ops
+    if np_op is jax.lax.tanh and jnp.issubdtype(dtype, jnp.integer):
+      raise self.skipTest("Tanh not supported for integer types")
 
     def kernel(ctx, dst, _):
       iota = iota_tensor(m, n, dtype)

@@ -2291,7 +2291,7 @@ def _empty(*, dtype):
 tf_impl[lax_internal.empty_p] = _empty
 
 
-def _reshape(operand, *, new_sizes, dimensions, _in_avals, _out_aval):
+def _reshape(operand, *, new_sizes, dimensions, sharding, _in_avals, _out_aval):
   if dimensions is None:
     dimensions = tf.range(tf.rank(operand))
   new_sizes_tf = _eval_shape(new_sizes, _in_avals[0].dtype)

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Sequence, Iterable
-import contextlib
 import dataclasses
 from functools import partial
 import inspect
@@ -645,8 +644,8 @@ def _infer_params_impl(
   attr_token = _attr_token(flat_fun, in_type)
 
   abstract_mesh = (
-      get_abstract_mesh(in_type) if mesh_lib.mesh_context.mesh is None
-      else mesh_lib.mesh_context.mesh)
+      get_abstract_mesh(in_type) if mesh_lib.abstract_mesh_context.mesh is None
+      else mesh_lib.abstract_mesh_context.mesh)
   with abstract_mesh:
     jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
         flat_fun, in_type, attr_token, dbg,
@@ -696,7 +695,7 @@ def _infer_params_impl(
 
 def get_abstract_mesh(in_avals):
   if not config.sharding_in_types.value:
-    return contextlib.nullcontext()
+    return mesh_lib.null_mesh_context()
   m = None
   for a in in_avals:
     # TODO(yashkatariya): Remove this when mesh context can be set by the user.
@@ -709,8 +708,8 @@ def get_abstract_mesh(in_avals):
     m = a.sharding.mesh  # type: ignore
   # TODO(yashkatariya): Remove this when mesh context can be set by the user.
   if m is None:
-    return contextlib.nullcontext()
-  assert m is not None
+    return mesh_lib.null_mesh_context()
+  assert isinstance(m, AbstractMesh)
   return m
 
 

@@ -21,6 +21,11 @@ rocm_version = 0  # placeholder
 project_name = f"jax-rocm{rocm_version}-pjrt"
 package_name = f"jax_plugins.xla_rocm{rocm_version}"
 
+# Extract ROCm version from the `ROCM_PATH` environment variable.
+default_rocm_path = "/opt/rocm"
+rocm_path = os.getenv("ROCM_PATH", default_rocm_path)
+rocm_detected_version = rocm_path.split('-')[-1] if '-' in rocm_path else "unknown"
+
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
     'version', os.path.join(pkg_path, 'version.py'))
@@ -41,7 +46,7 @@ packages = find_namespace_packages(
 setup(
     name=project_name,
     version=__version__,
-    description="JAX XLA PJRT Plugin for AMD GPUs",
+    description=f"JAX XLA PJRT Plugin for AMD GPUs (ROCm:{rocm_detected_version})",
     long_description="",
     long_description_content_type="text/markdown",
     author="Ruturaj4",

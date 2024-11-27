@@ -1179,6 +1179,12 @@ def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
   return _ensure_fa(x, x_aval.dtype).rsqrt(approx=ctx.module_ctx.approx_math)
 
+@register_lowering_rule(lax.tanh_p)
+def _tanh_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  return _ensure_fa(x, x_aval.dtype).tanh(approx=ctx.module_ctx.approx_math)
+
+
 @register_lowering_rule(lax.logistic_p)
 def _logistic_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
@@ -1514,8 +1520,24 @@ def _while_lowering_rule(
 @register_lowering_rule(lax.cond_p)
 def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
   index_aval, *_arg_avals = ctx.avals_in
+
+  # We need the branch return mlir types in order to construct the
+  # switch operation. To avoid leaking information about what kind of
+  # mlir types are internal to FragmentedArrays and other mgpu types,
+  # we run one of the branches in a dummy module that we throw away to
+  # extract the return types
+  with ir.InsertionPoint(ir.Module.create().body):
+    outs = lower_jaxpr_to_mosaic_gpu(
+        ctx.module_ctx, ctx.launch_ctx, branches[0].jaxpr, args
+    )
+    yielded = [
+        _ensure_ir_value(out, aval.dtype) or out
+        for out, aval in zip(outs, ctx.avals_out)
+    ]
+    yielded_leaves, _ = jax.tree.flatten(yielded)
+
   switch_op = scf_dialect.IndexSwitchOp(
-      map(mgpu_utils.dtype_to_ir_type, ctx.avals_out),
+      [v.type for v in yielded_leaves],
       _as_index(_ensure_ir_value(index, index_aval.dtype)),
       ir.DenseI64ArrayAttr.get(range(len(branches) - 1)),
       num_caseRegions=len(branches) - 1,
@@ -1527,16 +1549,27 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
   regions = list(switch_op.regions)
   # Move the default region to the back.
   regions = regions[1:] + regions[:1]
+  treedef = None
   for branch, region in zip(branches, regions):
     with ir.InsertionPoint(region.blocks.append()):
       outs = lower_jaxpr_to_mosaic_gpu(
-          ctx.module_ctx, ctx.launch_ctx, branch.jaxpr, args
+          ctx.module_ctx, ctx.launch_ctx, branch.jaxpr, args, consts=branch.consts
       )
-      scf_dialect.yield_([
-          _ensure_ir_value(out, aval.dtype)
+
+      yielded = [
+          _ensure_ir_value(out, aval.dtype) or out
           for out, aval in zip(outs, ctx.avals_out)
-      ])
-  return list(switch_op.results)
+      ]
+      yielded_leaves, yielded_treedef = jax.tree.flatten(yielded)
+      if treedef is None:
+        treedef = yielded_treedef
+      else:
+        assert treedef == yielded_treedef
+
+      scf_dialect.yield_(yielded_leaves)
+
+  assert treedef is not None
+  return treedef.unflatten(list(switch_op.results))
 
 
 @register_lowering_rule(lax.bitcast_convert_type_p)

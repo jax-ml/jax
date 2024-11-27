@@ -91,7 +91,7 @@ pytype_strict_library(
         ":lowering",
         "//jax",
         "//jax:core",
-        "//jax:effects",
+        "//jax:mlir",
         "//jax:mosaic_gpu",
         "//jax:tree_util",
         "//jax:util",

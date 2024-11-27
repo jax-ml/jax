@@ -426,6 +426,7 @@ pytype_strict_library(
     name = "compiler",
     srcs = ["_src/compiler.py"],
     deps = [
+        ":cache_key",
         ":compilation_cache_internal",
         ":config",
         ":mlir",
@@ -1197,5 +1198,6 @@ pytype_library(
         ":util",
         ":xla_bridge",
         "//jax/_src/lib",
+        "//jax/extend:ifrt_programs",
     ] + py_deps("numpy") + py_deps("cloudpickle"),
 )

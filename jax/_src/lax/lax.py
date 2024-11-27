@@ -1231,7 +1231,8 @@ def broadcast_to_rank(x: ArrayLike, rank: int) -> Array:
   return broadcast(x, (1,) * (rank - ndim))
 
 def reshape(operand: ArrayLike, new_sizes: Shape,
-            dimensions: Sequence[int] | None = None) -> Array:
+            dimensions: Sequence[int] | None = None,
+            sharding: NamedSharding | None = None) -> Array:
   """Wraps XLA's `Reshape
   <https://www.tensorflow.org/xla/operation_semantics#reshape>`_
   operator.
@@ -1285,7 +1286,8 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
 
     return reshape_p.bind(
       operand, *dyn_shape, new_sizes=tuple(static_new_sizes),
-      dimensions=None if dims is None or same_dims else dims)
+      dimensions=None if dims is None or same_dims else dims,
+      sharding=sharding)
 
 def pad(operand: ArrayLike, padding_value: ArrayLike,
         padding_config: Sequence[tuple[int, int, int]]) -> Array:
@@ -4654,7 +4656,7 @@ def shape_as_value(shape: core.Shape):
   ]
   return concatenate(dims, dimension=0)
 
-def _reshape_shape_rule(operand, *, new_sizes, dimensions):
+def _reshape_shape_rule(operand, *, new_sizes, dimensions, sharding):
   if not all(d >= 0 for d in new_sizes):
     msg = 'reshape new_sizes must all be positive, got {}.'
     raise TypeError(msg.format(new_sizes))
@@ -4674,7 +4676,9 @@ def _reshape_shape_rule(operand, *, new_sizes, dimensions):
       raise TypeError(msg.format(dimensions, np.shape(operand)))
   return tuple(new_sizes)
 
-def _reshape_sharding_rule(operand, *, new_sizes, dimensions):
+def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
+  if sharding is not None:
+    return sharding
   filtered_spec = [
       (sh, sp) for sh, sp in zip(operand.shape, operand.sharding.spec)
       if sh != 1
@@ -4687,14 +4691,18 @@ def _reshape_sharding_rule(operand, *, new_sizes, dimensions):
     else:
       sh, sp = next(fs)
       if n != sh:
-        raise NotImplementedError
+        raise ValueError(
+            'This reshape is not supported. Please specify the sharding of the'
+            ' output via the `sharding` argument of reshape.')
       new_spec.append(sp)
   return operand.sharding.with_spec(new_spec)
 
-def _reshape_typecheck_rule(_, operand, *dyn_shape, new_sizes, dimensions):
+def _reshape_typecheck_rule(_, operand, *dyn_shape, new_sizes, dimensions,
+                            sharding):
   if not dyn_shape:
     out_aval, effects = reshape_p.abstract_eval(
-        operand.aval, new_sizes=new_sizes, dimensions=dimensions)
+        operand.aval, new_sizes=new_sizes, dimensions=dimensions,
+        sharding=sharding)
     return [out_aval], effects
   else:
     # TODO(mattjj, necula): perform more checks like _reshape_shape_rule
@@ -4705,18 +4713,29 @@ def _reshape_typecheck_rule(_, operand, *dyn_shape, new_sizes, dimensions):
     return [out_aval], core.no_effects
 
 
-def _reshape_dtype_rule(operand, *, new_sizes, dimensions):
+def _reshape_dtype_rule(operand, *, new_sizes, dimensions, sharding):
   return operand.dtype
 
-def _reshape_transpose_rule(t, operand, *, new_sizes, dimensions):
+def _reshape_transpose_rule(t, operand, *, new_sizes, dimensions, sharding):
   assert ad.is_undefined_primal(operand)
   if dimensions is None:
+    if config.sharding_in_types.value:
+      return [reshape(t, operand.aval.shape, sharding=operand.aval.sharding)]
     return [reshape(t, operand.aval.shape)]
   else:
-    return [transpose(reshape(t, np.take(operand.aval.shape, dimensions)),
+    if config.sharding_in_types.value:
+      t_s = operand.sharding.with_spec(
+          tuple(map(str, np.take(operand.aval.sharding.spec, dimensions))))
+    else:
+      t_s = None
+    return [transpose(reshape(t, np.take(operand.aval.shape, dimensions),
+                              sharding=t_s),
                       np.argsort(dimensions))]
 
-def _reshape_batch_rule(batched_args, batch_dims, *, new_sizes, dimensions):
+def _reshape_batch_rule(batched_args, batch_dims, *, new_sizes, dimensions,
+                        sharding):
+  if sharding is not None:
+    raise NotImplementedError
   operand, = batched_args
   bdim, = batch_dims
   operand = batching.moveaxis(operand, bdim, 0)
@@ -4725,7 +4744,7 @@ def _reshape_batch_rule(batched_args, batch_dims, *, new_sizes, dimensions):
   return reshape(operand, operand.shape[:1] + new_sizes, dimensions), 0
 
 
-def _reshape_lower(ctx, x, *dyn_shape, new_sizes, dimensions):
+def _reshape_lower(ctx, x, *dyn_shape, new_sizes, dimensions, sharding):
   aval_out, = ctx.avals_out
   if dimensions is not None:
     x = hlo.transpose(x, mlir.dense_int_array(dimensions))
@@ -4733,12 +4752,14 @@ def _reshape_lower(ctx, x, *dyn_shape, new_sizes, dimensions):
     aval_out = aval_out.update(shape=_merge_dyn_shape(new_sizes, dyn_shape))
   out = mlir.reshape(ctx, x, aval_out)
   if config.sharding_in_types.value:
+    if sharding is not None:
+      assert sharding == aval_out.sharding
     return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
   return [out]
 
 def _reshape_staging_rule(
-    trace, x, *dyn, new_sizes, dimensions):
-  params = dict(new_sizes=new_sizes, dimensions=dimensions)
+    trace, x, *dyn, new_sizes, dimensions, sharding):
+  params = dict(new_sizes=new_sizes, dimensions=dimensions, sharding=sharding)
   if not dyn:
     return trace.default_process_primitive(reshape_p, (x,), params)
   av = core.DShapedArray(_merge_dyn_shape(new_sizes, dyn), x.dtype, x.weak_type)
