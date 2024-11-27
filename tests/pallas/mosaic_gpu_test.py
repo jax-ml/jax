@@ -241,6 +241,17 @@ class PallasCallTest(PallasTest):
     # are never written to.
     np.testing.assert_array_equal(kernel(x)[:, :16], y[:, :16])
 
+  def test_iota(self):
+    dtype, dimension = jnp.int8, 1
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((128, 128), dtype),
+    )
+    def kernel(o_ref):
+      o_ref[...] = plgpu.broadcasted_iota(dtype, (128, 128), dimension, layout=plgpu.Layout.WGMMA)
+
+    np.testing.assert_array_equal(kernel(), jax.lax.broadcasted_iota(dtype, (128, 128), dimension))
+
   @parameterized.product(indexer=[..., slice(128), slice(None, 128)])
   def test_copy_smem_to_gmem(self, indexer):
     @functools.partial(

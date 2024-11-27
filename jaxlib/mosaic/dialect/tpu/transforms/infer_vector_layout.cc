@@ -1110,12 +1110,10 @@ class VectorLayoutInferer {
       return success();
     }
     if (auto src_ty = dyn_cast<VectorType>(some_src_ty)) {
-      TPU_CHECK_OP(src_ty.getRank() >= 2, "source rank below 2D unsupported");
-      TPU_CHECK_OP(res_ty.getRank() >= 2, "result rank below 2D unsupported");
       auto some_layout = getLayout(op.getSource());
       TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
       auto &layout = *some_layout;
-      if (layout.implicit_dim() != ImplicitDim::kNone) {
+      if (layout.implicit_dim() != ImplicitDim::kNone && src_ty.getRank() > 1) {
         VectorLayout layout_2d(layout.bitwidth(), layout.offsets(),
                                layout.tiling(), ImplicitDim::kNone);
         if (layout_2d.equivalentTo(layout, src_ty.getShape(), target_shape_)) {

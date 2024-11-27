@@ -1243,15 +1243,29 @@ class FragmentedArray:
         lambda t, p, f: arith.select(p, t, f), self, on_false,
     )
 
-  def foreach(self, fn: Callable[[ir.Value, tuple[ir.Value, ...]], None]):
+  def foreach(
+      self,
+      fn: Callable[[ir.Value, tuple[ir.Value, ...]], ir.Value | None],
+      *,
+      create_array=False,
+      is_signed=None,
+  ):
     """Call a function for each value and index."""
     index = ir.IndexType.get()
-    for idx, reg in zip(self.layout.thread_idxs(self.shape), self.registers.flat, strict=True):
-      assert len(idx) == len(self.shape), (idx, self.shape)
+    new_regs = None
+    if create_array:
+      new_regs = np.full_like(self.registers, llvm.mlir_undef(self.registers.flat[0].type))
+    for mlir_idx, reg_idx in zip(self.layout.thread_idxs(self.shape), np.ndindex(self.registers.shape), strict=True):
+      reg = self.registers[reg_idx]
+      assert len(mlir_idx) == len(self.shape), (mlir_idx, self.shape)
       [elems] = ir.VectorType(reg.type).shape
       for i in range(elems):
         i = c(i, index)
-        fn(vector.extractelement(reg, position=i), (*idx[:-1], arith.addi(idx[-1], i)))
+        val = fn(vector.extractelement(reg, position=i), (*mlir_idx[:-1], arith.addi(mlir_idx[-1], i)))
+        if create_array:
+          new_regs[reg_idx] = vector.insertelement(val, new_regs[reg_idx], position=i)
+
+    return FragmentedArray(_registers=new_regs, _layout=self.layout, _is_signed=is_signed)
 
   def store_untiled(self, ref: ir.Value):
     if not ir.MemRefType.isinstance(ref.type):

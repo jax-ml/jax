@@ -36,6 +36,7 @@ from jax._src.pallas.mosaic_gpu.primitives import copy_gmem_to_smem as copy_gmem
 from jax._src.pallas.mosaic_gpu.primitives import copy_smem_to_gmem as copy_smem_to_gmem
 from jax._src.pallas.mosaic_gpu.primitives import Layout as Layout
 from jax._src.pallas.mosaic_gpu.primitives import layout_cast as layout_cast
+from jax._src.pallas.mosaic_gpu.primitives import broadcasted_iota as broadcasted_iota
 from jax._src.pallas.mosaic_gpu.primitives import set_max_registers as set_max_registers
 from jax._src.pallas.mosaic_gpu.primitives import wait_smem_to_gmem as wait_smem_to_gmem
 from jax._src.pallas.mosaic_gpu.primitives import wgmma as wgmma

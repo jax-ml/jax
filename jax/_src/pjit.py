@@ -644,8 +644,8 @@ def _infer_params_impl(
   attr_token = _attr_token(flat_fun, in_type)
 
   abstract_mesh = (
-      get_abstract_mesh(in_type) if mesh_lib.mesh_context.mesh is None
-      else mesh_lib.mesh_context.mesh)
+      get_abstract_mesh(in_type) if mesh_lib.abstract_mesh_context.mesh is None
+      else mesh_lib.abstract_mesh_context.mesh)
   with abstract_mesh:
     jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
         flat_fun, in_type, attr_token, dbg,

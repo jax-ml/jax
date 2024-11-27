@@ -1361,6 +1361,39 @@ class FragmentedArrayTest(TestCase):
     rhs = rhs = 0 if rhs_is_literal else iota + 1
     np.testing.assert_array_equal(result, op(iota, rhs))
 
+  def test_foreach(self):
+    dtype = jnp.int32
+    swizzle = 128
+    tile = 64, swizzle // jnp.dtype(dtype).itemsize
+    shape = 128, 192
+    tiled_shape = mgpu.tile_shape(shape, tile)
+    mlir_dtype = utils.dtype_to_ir_type(dtype)
+    cst = 9999
+    def causal(val, idx):
+      row, col = idx
+      mask = arith.cmpi(arith.CmpIPredicate.uge, row, col)
+      return arith.select(mask, val, c(cst, mlir_dtype))
+
+    tiling = mgpu.TileTransform(tile)
+    def kernel(ctx, dst, smem):
+      x = iota_tensor(shape[0], shape[1], dtype)
+      x.foreach(causal, create_array=True, is_signed=False).store_untiled(smem)
+      mgpu.commit_shared()
+      ctx.async_copy(src_ref=smem, dst_ref=dst)
+      ctx.await_async_copy(0)
+
+    iota = np.arange(np.prod(shape), dtype=dtype).reshape(*shape)
+    result = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        (),
+        jax.ShapeDtypeStruct(shape=shape, dtype=dtype),
+        jax.ShapeDtypeStruct(shape=shape, dtype=dtype),
+    )()
+    expected = jnp.tril(iota) + jnp.triu(jnp.ones(shape), k=1) * cst
+    np.testing.assert_array_equal(result, expected)
+
   @parameterized.product(
       op=[operator.and_, operator.or_, operator.xor],
       dtype=[jnp.uint32],
