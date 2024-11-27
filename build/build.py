@@ -598,10 +598,12 @@ async def main():
       wheel_build_command.append(f"--jaxlib_git_hash={git_hash}")
 
       result = await executor.run(wheel_build_command.get_command_as_string(), args.dry_run)
+      # Exit with error if any wheel build fails.
       if result.return_code != 0:
         raise RuntimeError(f"Command failed with return code {result.return_code}")
-      else:
-        sys.exit(0)
+
+  # Exit with success if all wheels in the list were built successfully.
+  sys.exit(0)
 
 
 if __name__ == "__main__":
