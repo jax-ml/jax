@@ -12,100 +12,225 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-# Helper script for the JAX build CLI for running subprocess commands.
-import asyncio
-import dataclasses
-import datetime
-import os
+# Helper script for tools/utilities used by the JAX build CLI.
+import collections
+import hashlib
 import logging
-from typing import Dict, Optional
+import os
+import pathlib
+import platform
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import urllib.request
 
 logger = logging.getLogger(__name__)
 
-class CommandBuilder:
-  def __init__(self, base_command: str):
-    self.command = [base_command]
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/6.5.0/"
+BazelPackage = collections.namedtuple(
+    "BazelPackage", ["base_uri", "file", "sha256"]
+)
+bazel_packages = {
+    ("Linux", "x86_64"): BazelPackage(
+        base_uri=None,
+        file="bazel-6.5.0-linux-x86_64",
+        sha256=(
+            "a40ac69263440761199fcb8da47ad4e3f328cbe79ffbf4ecc14e5ba252857307"
+        ),
+    ),
+    ("Linux", "aarch64"): BazelPackage(
+        base_uri=None,
+        file="bazel-6.5.0-linux-arm64",
+        sha256=(
+            "5afe973cadc036496cac66f1414ca9be36881423f576db363d83afc9084c0c2f"
+        ),
+    ),
+    ("Darwin", "x86_64"): BazelPackage(
+        base_uri=None,
+        file="bazel-6.5.0-darwin-x86_64",
+        sha256=(
+            "bbf9c2c03bac48e0514f46db0295027935535d91f6d8dcd960c53393559eab29"
+        ),
+    ),
+    ("Darwin", "arm64"): BazelPackage(
+        base_uri=None,
+        file="bazel-6.5.0-darwin-arm64",
+        sha256=(
+            "c6b6dc17efcdf13fba484c6fe0b6c3361b888ae7b9573bc25a2dbe8c502448eb"
+        ),
+    ),
+    ("Windows", "AMD64"): BazelPackage(
+        base_uri=None,
+        file="bazel-6.5.0-windows-x86_64.exe",
+        sha256=(
+            "6eae8e7f28e1b68b833503d1a58caf139c11e52de19df0d787d974653a0ea4c6"
+        ),
+    ),
+}
 
-  def append(self, parameter: str):
-    self.command.append(parameter)
-    return self
+def download_and_verify_bazel():
+  """Downloads a bazel binary from GitHub, verifying its SHA256 hash."""
+  package = bazel_packages.get((platform.system(), platform.machine()))
+  if package is None:
+    return None
 
-  def get_command_as_string(self) -> str:
-    return " ".join(self.command)
+  if not os.access(package.file, os.X_OK):
+    uri = (package.base_uri or BAZEL_BASE_URI) + package.file
+    sys.stdout.write(f"Downloading bazel from: {uri}\n")
 
-  def get_command_as_list(self) -> list[str]:
-    return self.command
+    def progress(block_count, block_size, total_size):
+      if total_size <= 0:
+        total_size = 170**6
+      progress = (block_count * block_size) / total_size
+      num_chars = 40
+      progress_chars = int(num_chars * progress)
+      sys.stdout.write(
+          "{} [{}{}] {}%\r".format(
+              package.file,
+              "#" * progress_chars,
+              "." * (num_chars - progress_chars),
+              int(progress * 100.0),
+          )
+      )
 
-@dataclasses.dataclass
-class CommandResult:
+    tmp_path, _ = urllib.request.urlretrieve(
+        uri, None, progress if sys.stdout.isatty() else None
+    )
+    sys.stdout.write("\n")
+
+    # Verify that the downloaded Bazel binary has the expected SHA256.
+    with open(tmp_path, "rb") as downloaded_file:
+      contents = downloaded_file.read()
+
+    digest = hashlib.sha256(contents).hexdigest()
+    if digest != package.sha256:
+      print(
+          "Checksum mismatch for downloaded bazel binary (expected {}; got {})."
+          .format(package.sha256, digest)
+      )
+      sys.exit(-1)
+
+    # Write the file as the bazel file name.
+    with open(package.file, "wb") as out_file:
+      out_file.write(contents)
+
+    # Mark the file as executable.
+    st = os.stat(package.file)
+    os.chmod(
+        package.file, st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+    )
+
+  return os.path.join(".", package.file)
+
+def get_bazel_paths(bazel_path_flag):
+  """Yields a sequence of guesses about bazel path.
+
+  Some of sequence elements can be None. The resulting iterator is lazy and
+  potentially has a side effects.
   """
-  Represents the result of executing a subprocess command.
-  """
+  yield bazel_path_flag
+  yield shutil.which("bazel")
+  yield download_and_verify_bazel()
 
-  command: str
-  return_code: int = 2  # Defaults to not successful
-  logs: str = ""
-  start_time: datetime.datetime = dataclasses.field(
-    default_factory=datetime.datetime.now
+def get_bazel_path(bazel_path_flag):
+  """Returns the path to a Bazel binary, downloading Bazel if not found.
+
+  Also, checks Bazel's version is at least newer than 6.5.0
+
+  A manual version check is needed only for really old bazel versions.
+  Newer bazel releases perform their own version check against .bazelversion
+  (see for details
+  https://blog.bazel.build/2019/12/19/bazel-2.0.html#other-important-changes).
+  """
+  for path in filter(None, get_bazel_paths(bazel_path_flag)):
+    version = get_bazel_version(path)
+    if version is not None and version >= (6, 5, 0):
+      return path, ".".join(map(str, version))
+
+  print(
+      "Cannot find or download a suitable version of bazel."
+      "Please install bazel >= 6.5.0."
   )
-  end_time: Optional[datetime.datetime] = None
+  sys.exit(-1)
 
+def get_bazel_version(bazel_path):
+  try:
+    version_output = subprocess.run(
+        [bazel_path, "--version"],
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+  except (subprocess.CalledProcessError, OSError):
+    return None
+  match = re.search(r"bazel *([0-9\\.]+)", version_output)
+  if match is None:
+    return None
+  return tuple(int(x) for x in match.group(1).split("."))
 
-async def _process_log_stream(stream, result: CommandResult):
-  """Logs the output of a subprocess stream."""
-  while True:
-    line_bytes = await stream.readline()
-    if not line_bytes:
-      break
-    line = line_bytes.decode().rstrip()
-    result.logs += line
-    logger.info("%s", line)
-
-
-class SubprocessExecutor:
-  """
-  Manages execution of subprocess commands with reusable environment and logging.
-  """
-
-  def __init__(self, environment: Dict[str, str] = None):
-    """
-
-    Args:
-      environment:
-    """
-    self.environment = environment or dict(os.environ)
-
-  async def run(self, cmd: str, dry_run: bool = False) -> CommandResult:
-    """
-    Executes a subprocess command.
-
-    Args:
-        cmd: The command to execute.
-        dry_run: If True, prints the command instead of executing it.
-
-    Returns:
-        A CommandResult instance.
-    """
-    result = CommandResult(command=cmd)
-    if dry_run:
-      logger.info("[DRY RUN] %s", cmd)
-      result.return_code = 0  # Dry run is a success
-      return result
-
-    logger.info("[EXECUTING] %s", cmd)
-
-    process = await asyncio.create_subprocess_shell(
-      cmd,
-      stdout=asyncio.subprocess.PIPE,
-      stderr=asyncio.subprocess.PIPE,
-      env=self.environment,
+def get_clang_path_or_exit():
+  which_clang_output = shutil.which("clang")
+  if which_clang_output:
+    # If we've found a clang on the path, need to get the fully resolved path
+    # to ensure that system headers are found.
+    return str(pathlib.Path(which_clang_output).resolve())
+  else:
+    print(
+        "--clang_path is unset and clang cannot be found"
+        " on the PATH. Please pass --clang_path directly."
     )
+    sys.exit(-1)
 
-    await asyncio.gather(
-      _process_log_stream(process.stdout, result), _process_log_stream(process.stderr, result)
-    )
+def get_clang_major_version(clang_path):
+  clang_version_proc = subprocess.run(
+      [clang_path, "-E", "-P", "-"],
+      input="__clang_major__",
+      check=True,
+      capture_output=True,
+      text=True,
+  )
+  major_version = int(clang_version_proc.stdout)
 
-    result.return_code = await process.wait()
-    result.end_time = datetime.datetime.now()
-    logger.debug("Command finished with return code %s", result.return_code)
-    return result
+  return major_version
+
+def get_jax_configure_bazel_options(bazel_command: list[str]):
+  """Returns the bazel options to be written to .jax_configure.bazelrc."""
+  # Get the index of the "run" parameter. Build options will come after "run" so
+  # we find the index of "run" and filter everything after it.
+  start = bazel_command.index("run")
+  jax_configure_bazel_options = ""
+  try:
+    for i in range(start + 1, len(bazel_command)):
+      bazel_flag = bazel_command[i]
+      # On Windows, replace all backslashes with double backslashes to avoid
+      # unintended escape sequences.
+      if platform.system() == "Windows":
+        bazel_flag = bazel_flag.replace("\\", "\\\\")
+      jax_configure_bazel_options += f"build {bazel_flag}\n"
+    return jax_configure_bazel_options
+  except ValueError:
+    logging.error("Unable to find index for 'run' in the Bazel command")
+    return ""
+
+def get_githash():
+  try:
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+  except OSError:
+    return ""
+
+def _parse_string_as_bool(s):
+  """Parses a string as a boolean value."""
+  lower = s.lower()
+  if lower == "true":
+    return True
+  elif lower == "false":
+    return False
+  else:
+    raise ValueError(f"Expected either 'true' or 'false'; got {s}")
