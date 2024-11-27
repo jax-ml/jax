@@ -1714,6 +1714,7 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   """
   if devices is None:
     devices = xla_bridge.devices()
+  mesh_utils._validate_axis_shapes(axis_shapes, 'axis_shapes', 'make_mesh')
   axis_size = math.prod(axis_shapes)
   if axis_size > len(devices):
     raise ValueError(

@@ -353,6 +353,12 @@ class MeshUtilsTest(test_util.JaxTestCase):
         )
     self.assertArraysEqual(assignment, expected_assignment_matrix)
 
+  def test_create_device_mesh_non_int_error(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        "mesh_shape passed to create_device_mesh should be a sequence of ints"):
+      mesh_utils.create_device_mesh(((4,), 4))
+
   @parameterized.named_parameters(
       ('2x2x1', mock_2x2x1_devices,),
       ('2x2x4', mock_2x2x4_devices, ),

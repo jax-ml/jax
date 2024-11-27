@@ -1469,10 +1469,22 @@ def _float_int_cast(
   dst_element_type = ir.IntegerType(_element_type(dst_type))
   if dst_element_type.width == 1:
     return _not_equal(src, _full(src.type, 0), signed=signed)
-  elif signed:
-    return arith_dialect.fptosi(dst_type, src)
   else:
-    return arith_dialect.fptoui(dst_type, src)
+    # We clamp the float value to the min/max integer destination value
+    # in order to match JAX/XLA casting behavior. Note that this differs
+    # from numpy casting behavior.
+    if signed:
+      maxint = 2**(dst_element_type.width-1) - 1
+      minint = -2**(dst_element_type.width-1)
+    else:
+      maxint = 2**dst_element_type.width - 1
+      minint = 0
+    src = arith_dialect.minimumf(src, _full(src.type, maxint))
+    src = arith_dialect.maximumf(src, _full(src.type, minint))
+    if signed:
+      return arith_dialect.fptosi(dst_type, src)
+    else:
+      return arith_dialect.fptoui(dst_type, src)
 
 
 def _int_float_cast(
@@ -1499,10 +1511,12 @@ def _cast(
       src,
       _dtype_to_ir_type(dst_type),
       signed=jnp.issubdtype(src_type, jnp.signedinteger),
+      dst_signed=jnp.issubdtype(dst_type, jnp.signedinteger),
   )
 
 
-def _ir_cast(src: ir.Value, dst_type: ir.Type, *, signed: bool) -> ir.Value:
+def _ir_cast(src: ir.Value, dst_type: ir.Type, *,
+             signed: bool, dst_signed: bool = False) -> ir.Value:
   if ir.RankedTensorType.isinstance(
       src.type
   ) and not ir.RankedTensorType.isinstance(dst_type):
@@ -1527,7 +1541,8 @@ def _ir_cast(src: ir.Value, dst_type: ir.Type, *, signed: bool) -> ir.Value:
       dst_element_type, ir.F32Type
   ):
     return _ir_cast(
-        _ir_cast(src, ir.F32Type.get(), signed=False), dst_type, signed=False
+        _ir_cast(src, ir.F32Type.get(), signed=False),
+        dst_type, signed=False, dst_signed=dst_signed
     )
 
   if isinstance(src_element_type, ir.FloatType) and isinstance(
@@ -1543,7 +1558,7 @@ def _ir_cast(src: ir.Value, dst_type: ir.Type, *, signed: bool) -> ir.Value:
   if isinstance(src_element_type, ir.FloatType) and isinstance(
       dst_element_type, ir.IntegerType
   ):
-    return _float_int_cast(src, dst_type, signed=signed)
+    return _float_int_cast(src, dst_type, signed=dst_signed)
   if isinstance(src_element_type, ir.IntegerType) and isinstance(
       dst_element_type, ir.FloatType
   ):

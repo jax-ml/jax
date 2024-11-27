@@ -705,6 +705,12 @@ def _transpose_trick(
       *_TRANSPOSE_TRICKS[topology][mesh_shape_no_trivial_dims]
   )
 
+def _validate_axis_shapes(axis_shapes: Sequence[int], arg_name: str,
+                          fun_name: str):
+  if not all(isinstance(s, int) for s in axis_shapes):
+    raise ValueError(
+        f'{arg_name} passed to {fun_name} should be a sequence of ints. Got'
+        f' {axis_shapes}')
 
 def create_device_mesh(
     mesh_shape: Sequence[int],
@@ -740,7 +746,8 @@ def create_device_mesh(
   """
   if devices is None:
     devices = xb.devices()
-  if np.prod(mesh_shape) != len(devices):
+  _validate_axis_shapes(mesh_shape, 'mesh_shape', 'create_device_mesh')
+  if math.prod(mesh_shape) != len(devices):
     raise ValueError(
         f'Number of devices {len(devices)} must equal the product '
         f'of mesh_shape {mesh_shape}'
