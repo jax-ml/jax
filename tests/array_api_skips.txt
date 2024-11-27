@@ -6,6 +6,7 @@ array_api_tests/test_data_type_functions.py::test_finfo[float32]
 # Test suite attempts in-place mutation:
 array_api_tests/test_array_object.py::test_setitem
 array_api_tests/test_array_object.py::test_setitem_masking
+array_api_tests/test_creation_functions.py::test_asarray_arrays
 
 # Returns wrong zero sign
 array_api_tests/test_special_cases.py::test_unary[sign((x_i is -0 or x_i == +0)) -> 0]

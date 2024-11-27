@@ -40,40 +40,36 @@ arch=$(uname -m)
 
 # Adjust the values when running on Windows x86 to match the config in
 # .bazelrc
-if [[ $os =~ "msys_nt" ]] && [[ $arch == "x86_64" ]]; then
+if [[ $os =~ "msys_nt"  && $arch == "x86_64" ]]; then
   os="windows"
   arch="amd64"
 fi
 
-if [[ " ${allowed_artifacts[@]} " =~ " ${artifact} " ]]; then
+if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
 
   # Build the jax artifact
   if [[ "$artifact" == "jax" ]]; then
     python -m build --outdir $JAXCI_OUTPUT_DIR
   else
 
-    # For bazel builds, use the "rbe_" config for Linux x86/Windows and "ci_" for other platforms
+    # Figure out the bazelrc config to use. We will use one of the "rbe_"/"ci_"
+    # flags in the .bazelrc depending upon the platform we are building for.
     bazelrc_config="${os}_${arch}"
-    if ( [[ "$os" == "linux" ]] && [[ "$arch" == "x86_64" ]] ) || [[ "$os" == "windows" ]]; then
-      bazelrc_config="rbe_$bazelrc_config"
+
+    # TODO(b/379903748): Add remote cache options for Linux and Windows.
+    if [[ "$JAXCI_BUILD_ARTIFACT_WITH_RBE" == 1 ]]; then
+      bazelrc_config="rbe_${bazelrc_config}"
     else
-      bazelrc_config="ci_$bazelrc_config"
+      bazelrc_config="ci_${bazelrc_config}"
     fi
 
-    # Build the jaxlib CPU artifact
-    if [[ "$artifact" == "jaxlib" ]]; then
-      python build/build.py build --wheels="jaxlib" --bazel_options=--config="$bazelrc_config" --python_version=$JAXCI_HERMETIC_PYTHON_VERSION --verbose
+    # Use the "_cuda" configs when building the CUDA artifacts.
+    if [[ ("$artifact" == "jax-cuda-plugin") || ("$artifact" == "jax-cuda-pjrt") ]]; then
+      bazelrc_config="${bazelrc_config}_cuda"
     fi
 
-    # Build the jax-cuda-plugin artifact
-    if [[ "$artifact" == "jax-cuda-plugin" ]]; then
-      python build/build.py build --wheels="jax-cuda-plugin" --bazel_options=--config="${bazelrc_config}_cuda" --python_version=$JAXCI_HERMETIC_PYTHON_VERSION --verbose
-    fi
-
-    # Build the jax-cuda-pjrt artifact
-    if [[ "$artifact" == "jax-cuda-pjrt" ]]; then
-      python build/build.py build --wheels="jax-cuda-pjrt" --bazel_options=--config="${bazelrc_config}_cuda" --verbose
-    fi
+    # Build the artifact.
+    python build/build.py build --wheels="$artifact" --bazel_options=--config="$bazelrc_config" --python_version=$JAXCI_HERMETIC_PYTHON_VERSION --verbose
 
     # If building `jaxlib` or `jax-cuda-plugin` or `jax-cuda-pjrt` for Linux, we
     # run `auditwheel show` to verify manylinux compliance.

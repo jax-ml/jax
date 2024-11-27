@@ -1022,11 +1022,9 @@ def dot_product_attention(query: Array,
   Returns:
     Output of the same shape as the query.
   """
-  # check if cuDNN is installed
+  # TODO(b/380898464): Check the compute capability, e.g., require GPU device,
+  # in the kernel implementation (c++) code.
   cudnn_version = check_cudnn_version()
-  # only support at least Ampere
-  if not check_compute_capability("8.0"):
-    raise RuntimeError("Require at least Ampere arch to run")
   layout = _normalize_layout(qkv_layout)
   if has_padding(mask_type) and (q_seqlen is None or kv_seqlen is None):
     raise ValueError("Require q_seqlen and kv_seqlen to generate padding mask")
@@ -1047,7 +1045,7 @@ def dot_product_attention(query: Array,
 
   # combine bias and mask
   if bias is None:
-      bias = mask
+    bias = mask
   else:
     if mask is not None:
       # should be broadcast to same shape

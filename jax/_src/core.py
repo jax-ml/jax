@@ -38,6 +38,7 @@ from jax._src import dtypes
 from jax._src import config
 from jax._src import effects
 from jax._src import compute_on
+from jax._src import mesh as mesh_lib
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
     TracerIntegerConversionError, UnexpectedTracerError)
@@ -1596,6 +1597,23 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 
   return TypeError(msg)
 
+
+def get_sharding(sharding, ndim):
+  from jax._src.sharding_impls import NamedSharding, PartitionSpec as P  # type: ignore
+
+  if sharding is not None:
+    assert len(sharding.spec) == ndim
+    return sharding
+
+  context_mesh = mesh_lib.mesh_context.mesh
+  # TODO(yashkatariya): Error out and ask users to set the context mesh in their
+  # code.
+  if context_mesh is None:
+    return None
+  assert sharding is None
+  return NamedSharding(context_mesh, P(*[None] * ndim))
+
+
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape', 'sharding']  # inherits slots from parent
   array_abstraction_level = 2
@@ -1605,20 +1623,18 @@ class ShapedArray(UnshapedArray):
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
     if config.sharding_in_types.value:
-      if sharding is not None:
-        assert len(sharding.spec) == len(self.shape)
-      self.sharding = sharding
+      self.sharding = get_sharding(sharding, len(self.shape))
 
-  def update(self, shape=None, dtype=None, weak_type=None, sharding=None):
+  def update(self, shape=None, dtype=None, weak_type=None, **kwargs):
     if shape is None:
       shape = self.shape
     if dtype is None:
       dtype = self.dtype
     if weak_type is None:
       weak_type = self.weak_type
-    if sharding is None:
-      sharding = getattr(self, 'sharding', None)
-    return ShapedArray(shape, dtype, weak_type, sharding=sharding)
+    if 'sharding' not in kwargs:
+      kwargs['sharding'] = getattr(self, 'sharding', None)
+    return ShapedArray(shape, dtype, weak_type, **kwargs)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self:
@@ -2047,6 +2063,70 @@ def dimension_as_value(d: DimSize):
   if hasattr(d, "dimension_as_value"): return d.dimension_as_value()
   return operator.index(d)
 
+def canonicalize_slice(
+    s: slice,
+    axis_size: DimSize
+  ) -> tuple[DimSize, DimSize, DimSize]:
+  """Computes the start index, step, and size of the slice `x[s]`.
+
+  This is similar to `s.indices(axis_size)`, except that it returns
+  `(start, step, size)`, and it works when the slice and/or the
+  `axis_size` are symbolic.
+
+  See https://numpy.org/doc/stable/user/basics.indexing.html#slicing-and-striding
+  """
+  def convert_to_index(d: DimSize) -> DimSize:
+    # Convert np.array and jax.Array to int, leave symbolic dimensions alone
+    try:
+      return operator.index(d)
+    except:
+      return d
+
+  # Must resolve statically if step is {<0, ==0, >0}
+  step = convert_to_index(s.step) if s.step is not None else 1
+  try:
+    if step == 0:
+      raise ValueError("slice step cannot be zero")
+    step_gt_0 = (step > 0)
+  except InconclusiveDimensionOperation as e:
+    raise InconclusiveDimensionOperation(
+        f"In slice with non-constant elements the step ({step}) must " +
+        f"be resolved statically if it is > 0 or < 0.\nDetails: {e}")
+
+  def clamp_index(i: DimSize, which: str):
+    try:
+      i_ge_0 = (i >= 0)
+    except InconclusiveDimensionOperation as e:
+      raise InconclusiveDimensionOperation(
+          f"In slice with non-constant elements the {which} ({i}) must " +
+          f"be resolved statically if it is >= 0.\nDetails: {e}")
+    if i_ge_0:
+      if step_gt_0:
+        return min_dim(axis_size, i)
+      else:
+        return min_dim(axis_size - 1, i)
+    else:
+      if step_gt_0:
+        return max_dim(0, axis_size + i)
+      else:
+        return max_dim(-1, axis_size + i)
+
+  if s.start is None:
+    start = 0 if step_gt_0 else axis_size - 1
+  else:
+    start = clamp_index(convert_to_index(s.start), "start")
+
+  if s.stop is None:
+    stop = axis_size if step_gt_0 else -1
+  else:
+    stop = clamp_index(convert_to_index(s.stop), "stop")
+
+  gap = step if step_gt_0 else - step
+  distance = (stop - start) if step_gt_0 else (start - stop)
+  slice_size = max_dim(0, distance + gap - 1) // gap
+  return start, step, slice_size
+
+
 class SomeTracer:
   __slots__ = ()
   def __repr__(self): return "[dynamic]"
@@ -2183,16 +2263,20 @@ def _map_shaped_array(
   assert axis is None or aval.shape[axis] == size
   # TODO: Extend the named shape
   if axis is None: return aval
+  sharding = (aval.sharding.with_spec(tuple_delete(aval.sharding.spec, axis))
+              if config.sharding_in_types.value else None)
   return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
-                     weak_type=aval.weak_type)
+                     weak_type=aval.weak_type, sharding=sharding)
 
 def _unmap_shaped_array(
     size: int, axis_name: AxisName, axis: int | None, aval: ShapedArray
   ) -> ShapedArray:
   if axis is None: return aval
   elif type(axis) is int:
+    sharding = (aval.sharding.with_spec(tuple_insert(aval.sharding.spec, axis, axis_name))
+                if config.sharding_in_types.value else None)
     return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
-                       weak_type=aval.weak_type)
+                       weak_type=aval.weak_type, sharding=sharding)
   else: raise TypeError(axis)
 
 def _map_dshaped_array(

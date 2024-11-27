@@ -69,7 +69,8 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
     raise TypeError(avals, least_specialized)
 
 def standard_multi_result_abstract_eval(
-    prim, shape_rule, dtype_rule, weak_type_rule, *avals, **kwargs):
+    prim, shape_rule, dtype_rule, weak_type_rule, sharding_rule,
+    *avals, **kwargs):
   assert prim.multiple_results
   assert all(isinstance(aval, core.UnshapedArray) for aval in avals), avals
   least_specialized = max(map(type, avals), key=_get_array_abstraction_level)
@@ -77,8 +78,12 @@ def standard_multi_result_abstract_eval(
   if least_specialized is core.ShapedArray:
     out_shapes = shape_rule(*avals, **kwargs)
     out_dtypes = dtype_rule(*avals, **kwargs)
-    return [core.ShapedArray(s, d, weak_type=weak_type)
-            for s, d, weak_type in zip(out_shapes, out_dtypes, weak_types)]
+    out_shardings = (sharding_rule(*avals, **kwargs)
+                     if config.sharding_in_types.value else
+                     [None] * len(out_shapes))
+    return [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh)
+            for s, d, weak_type, sh in zip(out_shapes, out_dtypes, weak_types,
+                                           out_shardings)]
   elif least_specialized is core.UnshapedArray:
     out_dtypes = dtype_rule(*avals, **kwargs)
     return [core.UnshapedArray(dtype, weak_type=weak_type)

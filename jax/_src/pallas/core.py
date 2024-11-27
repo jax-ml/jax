@@ -219,6 +219,10 @@ class AbstractMemoryRef(state.AbstractRef):
   def __repr__(self) -> str:
     return f'MemRef<{self.memory_space}>{{{self.inner_aval.str_short()}}}'
 
+  @property
+  def sharding(self):
+    return self.inner_aval.sharding
+
   def update_weak_type(self, weak_type):
     return AbstractMemoryRef(
         self.inner_aval.update_weak_type(weak_type), self.memory_space)
@@ -873,7 +877,7 @@ def get_grid_mapping(
   )
   # The inputs for the index maps
   index_map_avals = (
-      (index_map_grid_aval,) * len(grid_spec.grid))
+      (index_map_grid_aval.update(sharding=None),) * len(grid_spec.grid))
   index_map_tree = tree_util.tree_structure((index_map_avals, {}))
 
   num_scalar_prefetch: int = getattr(grid_spec, "num_scalar_prefetch", 0)

@@ -184,16 +184,19 @@ def _python_pjit_helper(fun, jit_info, *args, **kwargs):
     args_flat = [*init_states, *args_flat]
 
   try:
-    if (core.trace_state_clean() and
-        not config.debug_key_reuse.value and
-        not config.data_dependent_tracing_fallback.value):
-      args_flat = map(core.full_lower, args_flat)
-      core.check_eval_args(args_flat)
-      out_flat, compiled, profiler = _pjit_call_impl_python(*args_flat, **p.params)
-    else:
-      out_flat = pjit_p.bind(*args_flat, **p.params)
-      compiled = None
-      profiler = None
+    # TODO(yashkatariya): Maybe thread this into pjit params like resource_env
+    # and set the context manager down the stack?
+    with p.abstract_mesh:
+      if (core.trace_state_clean() and
+          not config.debug_key_reuse.value and
+          not config.data_dependent_tracing_fallback.value):
+        args_flat = map(core.full_lower, args_flat)
+        core.check_eval_args(args_flat)
+        out_flat, compiled, profiler = _pjit_call_impl_python(*args_flat, **p.params)
+      else:
+        out_flat = pjit_p.bind(*args_flat, **p.params)
+        compiled = None
+        profiler = None
   except pxla.DeviceAssignmentMismatchError as e:
     fails, = e.args
     api_name = 'jit' if p.params['resource_env'] is None else 'pjit'
@@ -329,9 +332,10 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
     if config.no_tracing.value:
       raise RuntimeError(f"re-tracing function {jit_info.fun_sourceinfo} for "
                          "`jit`, but 'no_tracing' is set")
-    outs, out_flat, out_tree, args_flat, jaxpr, \
-      attrs_tracked, executable, pgle_profiler = _python_pjit_helper(
-        fun, jit_info, *args, **kwargs)
+
+    (outs, out_flat, out_tree, args_flat, jaxpr, attrs_tracked, executable,
+     pgle_profiler) = _python_pjit_helper(fun, jit_info, *args, **kwargs)
+
     maybe_fastpath_data = _get_fastpath_data(
         executable, out_tree, args_flat, out_flat, attrs_tracked, jaxpr.effects,
         jaxpr.consts, jit_info.abstracted_axes,
@@ -494,10 +498,10 @@ def _make_jit_wrapper(fun: Callable, jit_info: PjitInfo):
     donate_argnums = tuple(i for i, d in enumerate(p.donated_invars) if d)
     args_info = stages.make_args_info(p.in_tree, p.in_avals, donate_argnums)
     lower_callable = partial(_resolve_and_lower, args_flat, **p.params,
-                             pgle_profiler=None)
+                            pgle_profiler=None)
     return stages.Traced(
         p.params['jaxpr'], args_info, p.params["name"], p.out_tree,
-        lower_callable, args_flat, p.arg_names, p.num_consts)
+        lower_callable, p.abstract_mesh, args_flat, p.arg_names, p.num_consts)
 
   wrapped = _cpp_pjit(fun, jit_info)
   wrapped.lower = lower
@@ -533,6 +537,7 @@ class PjitParams(NamedTuple):
   arg_names: tuple[str, ...] | None
   num_consts: int
   attrs_tracked: list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]
+  abstract_mesh: AbstractMesh
 
 
 def _infer_params_impl(
@@ -637,10 +642,15 @@ def _infer_params_impl(
       in_avals, in_tree, dbg, device_or_backend_set, have_kwargs)
 
   attr_token = _attr_token(flat_fun, in_type)
-  jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
-      flat_fun, in_type, attr_token, dbg,
-      HashableFunction(res_paths, closure=()),
-      IgnoreKey(ji.inline))
+
+  abstract_mesh = (
+      get_abstract_mesh(in_type) if mesh_lib.mesh_context.mesh is None
+      else mesh_lib.mesh_context.mesh)
+  with abstract_mesh:
+    jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
+        flat_fun, in_type, attr_token, dbg,
+        HashableFunction(res_paths, closure=()),
+        IgnoreKey(ji.inline))
   _attr_update(flat_fun, in_type, attr_token, attrs_tracked)
 
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
@@ -680,7 +690,27 @@ def _infer_params_impl(
   )
   return PjitParams(consts, params, in_avals, in_tree, out_tree(),
                     donated_invars, dbg.arg_names if dbg else None, len(consts),
-                    attrs_tracked), args_flat
+                    attrs_tracked, abstract_mesh), args_flat
+
+
+def get_abstract_mesh(in_avals):
+  if not config.sharding_in_types.value:
+    return mesh_lib.null_mesh_context()
+  m = None
+  for a in in_avals:
+    # TODO(yashkatariya): Remove this when mesh context can be set by the user.
+    if a.sharding is None:  # type: ignore
+      continue
+    if m is not None and m != a.sharding.mesh:
+      raise ValueError(
+          f'Mesh for all inputs should be equal. Got one mesh: {m} and'
+          f' another mesh: {a.sharding.mesh}')
+    m = a.sharding.mesh  # type: ignore
+  # TODO(yashkatariya): Remove this when mesh context can be set by the user.
+  if m is None:
+    return mesh_lib.null_mesh_context()
+  assert isinstance(m, AbstractMesh)
+  return m
 
 
 class InferParamsCacheEntry:
@@ -1634,7 +1664,8 @@ def _pjit_call_impl_python(
   compiler_options_kvs = compiler_options_kvs + tuple(pgle_compile_options.items())
   # TODO(patrios): Do not pass mutable profile session through cached lowering
   # chain. Instead we need to move profilers dictionary to pxla module and use
-  # module as key. Right now we can't do that since there is no way to evict _pjit_lower_cached cache for in PGLE mode.
+  # module as key. Right now we can't do that since there is no way to evict
+  # _pjit_lower_cached cache for in PGLE mode.
   compiled = _resolve_and_lower(
       args, jaxpr=jaxpr, in_shardings=in_shardings,
       out_shardings=out_shardings, in_layouts=in_layouts,
@@ -1745,12 +1776,7 @@ def _pjit_call_impl(*args, jaxpr,
 pjit_p.def_impl(_pjit_call_impl)
 
 
-def _pjit_lower(*args, **kwargs):
-  return _pjit_lower_cached(*args, **kwargs)
-
-
-@weakref_lru_cache
-def _pjit_lower_cached(
+def _pjit_lower(
     jaxpr: core.ClosedJaxpr,
     in_shardings,
     out_shardings,
@@ -2074,6 +2100,52 @@ def _pjit_jvp(primals_in, tangents_in,
   return primals_out, [next(tangents_out_it) if nz else ad.Zero(aval)
                        for nz, aval in zip(is_nz_tangents_out, jaxpr.out_avals)]
 ad.primitive_jvps[pjit_p] = _pjit_jvp
+
+
+def _pjit_linearization(nzs, *primals_in, jaxpr,
+                        in_shardings, out_shardings, in_layouts, out_layouts,
+                        resource_env, donated_invars, name, keep_unused, inline,
+                        compiler_options_kvs):
+  primal_jaxpr, num_residuals, nzs_out, tangent_jaxpr = ad.linearize_jaxpr(jaxpr, nzs)
+  # constvars will become residuals. Move them to the end of the ordinary args.
+  res_shardings = (UNSPECIFIED,) * num_residuals
+  res_layouts = (None,) * num_residuals
+  res_donated = (False,) * num_residuals
+  def tangent_fun(consts_, *tangents):
+    tangents_nz = _filter_zeros(nzs, tangents)
+    assert len(consts_) == num_residuals
+    return pjit_p.bind(*(*tangents_nz, *consts_),
+                       jaxpr=tangent_jaxpr,
+                       in_shardings=_filter_zeros(nzs, in_shardings) + res_shardings,
+                       out_shardings=_filter_zeros(nzs_out, out_shardings),
+                       in_layouts=_filter_zeros(nzs, in_layouts) + res_layouts,
+                       out_layouts=_filter_zeros(nzs_out, out_layouts),
+                       resource_env=resource_env,
+                       donated_invars=_filter_zeros(nzs, donated_invars) + res_donated,
+                       name=name,
+                       keep_unused=keep_unused,
+                       inline=inline,
+                       compiler_options_kvs=compiler_options_kvs)
+
+  def _filter_zeros(is_nz_l, l):
+    return tuple(x for nz, x in zip(is_nz_l, l) if nz)
+
+  ans = pjit_p.bind(*primals_in, jaxpr=primal_jaxpr,
+                    in_shardings=in_shardings,
+                    out_shardings=(*res_shardings, *out_shardings),
+                    in_layouts=in_layouts,
+                    out_layouts=(*res_layouts, *out_layouts),
+                    resource_env=resource_env,
+                    donated_invars=donated_invars,
+                    name=name,
+                    keep_unused=keep_unused,
+                    inline=inline,
+                    compiler_options_kvs=compiler_options_kvs)
+  residuals_ans, primal_ans = split_list(ans, [num_residuals])
+
+  return primal_ans, nzs_out, residuals_ans, tangent_fun
+
+ad.primitive_linearizations[pjit_p] = _pjit_linearization
 
 
 def _pjit_partial_eval(trace, *in_tracers,

@@ -209,7 +209,9 @@ if xla_extension_version >= 295:
     Values included in this set should also most likely be included in
     the C++ JIT state, which is handled separately.
     """
-    return (axis_env_state.value, mesh_context_manager.value, xla_metadata_context_manager.value,
+    return (axis_env_state.value, mesh_context_manager.value,
+            xla_metadata_context_manager.value,
+            abstract_mesh_context_manager.value,
             compute_on_context_manager.value, enable_x64.value,
             numpy_rank_promotion.value, default_matmul_precision.value,
             dynamic_shapes.value,
@@ -242,6 +244,7 @@ else:
     tls = jax_jit.thread_local_state()
     axis_env_state = ()
     mesh_context_manager = ()
+    abstract_mesh_context_manager = ()
     xla_metadata_context_manager = ()
     compute_on_context_manager = ()
 
@@ -250,11 +253,14 @@ else:
       axis_env_state = context.axis_env_state
     if context and context.mesh_context_manager:
       mesh_context_manager = context.mesh_context_manager
+    if context and context.abstract_mesh_context_manager:
+      abstract_mesh_context_manager = context.abstract_mesh_context_manager
     if context and context.xla_metadata_context_manager:
       xla_metadata_context_manager = context.xla_metadata_context_manager
     if context and context.compute_on_context_manager:
       compute_on_context_manager = context.compute_on_context_manager
-    return (axis_env_state, mesh_context_manager, xla_metadata_context_manager,
+    return (axis_env_state, mesh_context_manager, abstract_mesh_context_manager,
+            xla_metadata_context_manager,
             compute_on_context_manager, enable_x64.value,
             numpy_rank_promotion.value, default_matmul_precision.value,
             dynamic_shapes.value,
@@ -969,6 +975,7 @@ if xla_extension_version >= 295:
   trace_state = config_ext.Config(None, include_in_jit_key=True)
   axis_env_state = config_ext.Config((), include_in_jit_key=True)
   mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
+  abstract_mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
   compute_on_context_manager = config_ext.Config((), include_in_jit_key=True)
   xla_metadata_context_manager = config_ext.Config((), include_in_jit_key=True)
 else:
@@ -1011,6 +1018,7 @@ else:
     trace_state: Any | None = None
     axis_env_state: Hashable = ()
     mesh_context_manager: Hashable = ()
+    abstract_mesh_context_manager: Hashable = ()
     compute_on_context_manager: Hashable = ()
     xla_metadata_context_manager: Hashable = ()
 
@@ -1077,6 +1085,7 @@ else:
   trace_state = JitConfig('trace_state')
   axis_env_state = JitConfig('axis_env_state')
   mesh_context_manager = JitConfig('mesh_context_manager')
+  abstract_mesh_context_manager = JitConfig('abstract_mesh_context_manager')
   compute_on_context_manager = JitConfig('compute_on_context_manager')
   xla_metadata_context_manager = JitConfig('xla_metadata_context_manager')
 

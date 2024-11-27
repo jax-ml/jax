@@ -1597,6 +1597,8 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
 
   def testPadErrors(self):
+    with self.assertRaisesRegex(ValueError, "padding_value must be a scalar"):
+      lax.pad(np.zeros(2), np.zeros(2), [(0, 0, 0)])
     with self.assertRaisesRegex(ValueError, "padding_config"):
       lax.pad(np.zeros(2), 0., [(0, 1, 0), (0, 1, 0)])
     with self.assertRaisesRegex(ValueError, "interior padding in padding_config must be nonnegative"):

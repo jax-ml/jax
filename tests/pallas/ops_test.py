@@ -1941,9 +1941,13 @@ class OpsTest(PallasBaseTest):
 
   @parameterized.parameters(
       (jnp.float16, jnp.float16),  # Noop
-      (jnp.int16, jnp.float16),
       (jnp.int16, jnp.bfloat16),
+      (jnp.int16, jnp.float16),
+      (jnp.uint16, jnp.float16),
       (jnp.float32, jnp.int32),
+      (jnp.float32, jnp.uint32),
+      (jnp.uint32, jnp.int32),
+      (jnp.int32, jnp.uint32),
   )
   def test_bitcast_convert_type(self, in_dtype, out_dtype):
     if jtu.test_device_matches(["tpu"]):

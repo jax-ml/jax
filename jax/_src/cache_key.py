@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import copy
+import enum
 import hashlib
 import io
 import logging
@@ -23,6 +24,7 @@ from typing import cast as type_cast
 from jax._src import config
 from jax._src.lib import version_str as jaxlib_version_str
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager as pm
 import numpy as np
@@ -61,11 +63,23 @@ def custom_hook() -> str:
   return ""
 
 
-def get(module: ir.Module,
-        devices: np.ndarray,
-        compile_options: xla_client.CompileOptions,
-        backend: xla_client.Client,
-        compression_algorithm: str = "zstandard") -> str:
+class IgnoreCallbacks(enum.IntEnum):
+  # Do not remove any callback pointers from precompiled IR.
+  NO = enum.auto()
+  # Remove all callback pointers from precompiled IR.
+  ALL = enum.auto()
+  # Remove only custom_partitioning callback pointer from precompiled IR.
+  CUSTOM_PARTITIONING = enum.auto()
+
+
+def get(
+    module: ir.Module,
+    devices: np.ndarray,
+    compile_options: xla_client.CompileOptions,
+    backend: xla_client.Client,
+    compression_algorithm: str = "zstandard",
+    ignore_callbacks: IgnoreCallbacks = IgnoreCallbacks.NO,
+) -> str:
   """Creates a hashed string to use as a key to the compilation cache.
 
   Creates a cache key that is a hex-encoded string of a unique hash based on
@@ -78,28 +92,47 @@ def get(module: ir.Module,
     backend: description of the platform (e.g., TPU version)
     compression_algorithm: a string representing the compression algorithm used
       for the executable before persisting in the cache
+    ignore_callbacks: whether to remove the all callback pointer from the
+      computation.
 
   Typical return value example:
    'jit__psum-14ac577cdb2ef6d986078b4054cc9893a9a14a16dbb0d8f37b89167c1f1aacdf'
   """
   entries = [
-      ("computation",
-       lambda hash_obj: _hash_computation(hash_obj, module)),
-      ("jax_lib version",
-       lambda hash_obj: hash_obj.update(
-           bytes(jaxlib_version_str.encode("utf-8")))),
-      ("XLA flags",
-       lambda hash_obj: _hash_xla_flags(hash_obj, get_flag_prefixes())),
-      ("compile_options",
-       lambda hash_obj: _hash_serialized_compile_options(
-           hash_obj, compile_options,
-           # In case of GPU multi-process tasks we need to strip device
-           # assignment to use cache key as invariant between processes.
-           strip_device_assignment=(backend.platform == "gpu"))),
-      ("accelerator_config",
-         lambda hash_obj: _hash_accelerator_config(hash_obj, devices, backend)),
-      ("compression",
-       lambda hash_obj: _hash_string(hash_obj, compression_algorithm)),
+      (
+          "computation",
+          lambda hash_obj: _hash_computation(
+              hash_obj, module, ignore_callbacks
+          ),
+      ),
+      (
+          "jax_lib version",
+          lambda hash_obj: hash_obj.update(
+              bytes(jaxlib_version_str.encode("utf-8"))
+          ),
+      ),
+      (
+          "XLA flags",
+          lambda hash_obj: _hash_xla_flags(hash_obj, get_flag_prefixes()),
+      ),
+      (
+          "compile_options",
+          lambda hash_obj: _hash_serialized_compile_options(
+              hash_obj,
+              compile_options,
+              # In case of GPU multi-process tasks we need to strip device
+              # assignment to use cache key as invariant between processes.
+              strip_device_assignment=(backend.platform == "gpu"),
+          ),
+      ),
+      (
+          "accelerator_config",
+          lambda hash_obj: _hash_accelerator_config(hash_obj, devices, backend),
+      ),
+      (
+          "compression",
+          lambda hash_obj: _hash_string(hash_obj, compression_algorithm),
+      ),
       ("custom_hook", lambda hash_obj: _hash_string(hash_obj, custom_hook())),
   ]
 
@@ -130,45 +163,56 @@ def _log_cache_key_hash(hash_obj, last_serialized: str, hashfn):
     )
 
 
-def _remove_custom_partitioning_ptr(m: ir.Module):
-  """
-  Removes custom_partitioning callback pointer from precompiled IR.
+def _remove_callbacks(m: ir.Module, ignore_callbacks: IgnoreCallbacks):
+  """Removes callback pointers from precompiled IR.
+
   Python function pointers are not deterministic across executions.
   """
   def _update_bc_attribute(op: ir.Operation) -> ir.WalkResult:
-    if (op.name == "stablehlo.custom_call" and
-        op.attributes["call_target_name"].value == "CustomSPMDPartitioning"):
+    if op.name == "stablehlo.custom_call" and (
+        (
+            ignore_callbacks == IgnoreCallbacks.ALL
+            and op.attributes["call_target_name"].value.endswith("callback")
+        )
+        or op.attributes["call_target_name"].value == "CustomSPMDPartitioning"
+    ):
       op.attributes["backend_config"] = ir.StringAttr.get("REMOVED")
     return ir.WalkResult.ADVANCE
+
+  if ignore_callbacks == IgnoreCallbacks.NO:
+    return m
 
   m.operation.walk(_update_bc_attribute)
   return m
 
 
-def _serialize_ir(m: ir.Module) -> bytes:
+def _serialize_ir(m: ir.Module, ignore_callbacks: IgnoreCallbacks) -> bytes:
   output = io.BytesIO()
-  if config.remove_custom_partitioning_ptr_from_cache_key.value:
-    m = _remove_custom_partitioning_ptr(type_cast(ir.Module,
-                                                  m.operation.clone()))
+  if ignore_callbacks != IgnoreCallbacks.NO:
+    m = _remove_callbacks(
+        type_cast(ir.Module, m.operation.clone()), ignore_callbacks
+    )
   m.operation.write_bytecode(file=output)
   return output.getvalue()
 
 
-def _canonicalize_ir(m_original: ir.Module) -> bytes:
+def _canonicalize_ir(
+    m_original: ir.Module, ignore_callbacks: IgnoreCallbacks
+) -> bytes:
   with m_original.context:
     m = type_cast(ir.Module, m_original.operation.clone())
     passes = pm.PassManager.parse(
         "builtin.module(strip-debuginfo)"
     )
     passes.run(m.operation)
-    return _serialize_ir(m)
+    return _serialize_ir(m, ignore_callbacks)
 
 
-def _hash_computation(hash_obj, module):
+def _hash_computation(hash_obj, module, ignore_callbacks: IgnoreCallbacks):
   if config.compilation_cache_include_metadata_in_key.value:
-    canonical_ir = _serialize_ir(module)
+    canonical_ir = _serialize_ir(module, ignore_callbacks)
   else:
-    canonical_ir = _canonicalize_ir(module)
+    canonical_ir = _canonicalize_ir(module, ignore_callbacks)
   hash_obj.update(canonical_ir)
 
 
@@ -225,6 +269,11 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj,
   debug_options.xla_dump_hlo_as_long_text = False
   debug_options.xla_dump_disable_metadata = False
   debug_options.xla_dump_hlo_pipeline_re = ""
+
+  # "Requires jaxlib 0.4.36+"
+  if xla_extension_version > 296:
+    debug_options.xla_gpu_experimental_autotune_cache_mode = 0
+
   # Optional way to specify the cuda install path to be used by the compiler.
   # This could possibly affect the cuda version compiled with, but this should
   # already be included in the platform information (and might not be reflected

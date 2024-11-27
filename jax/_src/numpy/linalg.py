@@ -35,8 +35,11 @@ from jax._src.lax import linalg as lax_linalg
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import reductions, ufuncs
 from jax._src.numpy.util import promote_dtypes_inexact, check_arraylike
-from jax._src.util import canonicalize_axis
+from jax._src.util import canonicalize_axis, set_module
 from jax._src.typing import ArrayLike, Array, DTypeLike, DeprecatedArg
+
+
+export = set_module('jax.numpy.linalg')
 
 
 class EighResult(NamedTuple):
@@ -67,6 +70,7 @@ def _H(x: ArrayLike) -> Array:
 def _symmetrize(x: Array) -> Array: return (x + _H(x)) / 2
 
 
+@export
 @partial(jit, static_argnames=['upper'])
 def cholesky(a: ArrayLike, *, upper: bool = False) -> Array:
   """Compute the Cholesky decomposition of a matrix.
@@ -191,6 +195,7 @@ def svd(
   ...
 
 
+@export
 @partial(
     jit,
     static_argnames=(
@@ -311,6 +316,7 @@ def svd(
     )
 
 
+@export
 @partial(jit, static_argnames=('n',))
 def matrix_power(a: ArrayLike, n: int) -> Array:
   """Raise a square matrix to an integer power.
@@ -392,6 +398,7 @@ def matrix_power(a: ArrayLike, n: int) -> Array:
   return result
 
 
+@export
 @jit
 def matrix_rank(
   M: ArrayLike, rtol: ArrayLike | None = None, *,
@@ -496,6 +503,7 @@ def _slogdet_qr(a: Array) -> tuple[Array, Array]:
   return sign_diag * sign_taus, log_abs_det
 
 
+@export
 @partial(jit, static_argnames=('method',))
 def slogdet(a: ArrayLike, *, method: str | None = None) -> SlogdetResult:
   """
@@ -675,6 +683,7 @@ def _det_jvp(primals, tangents):
   return y, jnp.trace(z, axis1=-1, axis2=-2)
 
 
+@export
 @jit
 def det(a: ArrayLike) -> Array:
   """
@@ -711,6 +720,7 @@ def det(a: ArrayLike) -> Array:
     raise ValueError(msg.format(a_shape))
 
 
+@export
 def eig(a: ArrayLike) -> tuple[Array, Array]:
   """
   Compute the eigenvalues and eigenvectors of a square array.
@@ -756,6 +766,7 @@ def eig(a: ArrayLike) -> tuple[Array, Array]:
   return w, v
 
 
+@export
 @jit
 def eigvals(a: ArrayLike) -> Array:
   """
@@ -793,6 +804,7 @@ def eigvals(a: ArrayLike) -> Array:
                         compute_right_eigenvectors=False)[0]
 
 
+@export
 @partial(jit, static_argnames=('UPLO', 'symmetrize_input'))
 def eigh(a: ArrayLike, UPLO: str | None = None,
          symmetrize_input: bool = True) -> EighResult:
@@ -848,6 +860,7 @@ def eigh(a: ArrayLike, UPLO: str | None = None,
   return EighResult(w, v)
 
 
+@export
 @partial(jit, static_argnames=('UPLO',))
 def eigvalsh(a: ArrayLike, UPLO: str | None = 'L') -> Array:
   """
@@ -884,6 +897,7 @@ def eigvalsh(a: ArrayLike, UPLO: str | None = 'L') -> Array:
 
 
 # TODO(micky774): deprecated 2024-5-14, remove wrapper after deprecation expires.
+@export
 def pinv(a: ArrayLike, rtol: ArrayLike | None = None,
          hermitian: bool = False, *,
          rcond: ArrayLike | DeprecatedArg | None = DeprecatedArg()) -> Array:
@@ -997,6 +1011,7 @@ def _pinv_jvp(rtol, hermitian, primals, tangents):
   return p, p_dot
 
 
+@export
 @jit
 def inv(a: ArrayLike) -> Array:
   """Return the inverse of a square matrix
@@ -1057,6 +1072,7 @@ def inv(a: ArrayLike) -> Array:
     arr, lax.broadcast(jnp.eye(arr.shape[-1], dtype=arr.dtype), arr.shape[:-2]))
 
 
+@export
 @partial(jit, static_argnames=('ord', 'axis', 'keepdims'))
 def norm(x: ArrayLike, ord: int | str | None = None,
          axis: None | tuple[int, ...] | int = None,
@@ -1222,6 +1238,7 @@ def qr(a: ArrayLike, mode: Literal["r"]) -> Array: ...
 @overload
 def qr(a: ArrayLike, mode: str = "reduced") -> Array | QRResult: ...
 
+@export
 @partial(jit, static_argnames=('mode',))
 def qr(a: ArrayLike, mode: str = "reduced") -> Array | QRResult:
   """Compute the QR decomposition of an array
@@ -1305,6 +1322,7 @@ def qr(a: ArrayLike, mode: str = "reduced") -> Array | QRResult:
   return QRResult(q, r)
 
 
+@export
 @jit
 def solve(a: ArrayLike, b: ArrayLike) -> Array:
   """Solve a linear system of equations
@@ -1408,6 +1426,7 @@ def _lstsq(a: ArrayLike, b: ArrayLike, rcond: float | None, *,
 _jit_lstsq = jit(partial(_lstsq, numpy_resid=False))
 
 
+@export
 def lstsq(a: ArrayLike, b: ArrayLike, rcond: float | None = None, *,
           numpy_resid: bool = False) -> tuple[Array, Array, Array, Array]:
   """
@@ -1448,6 +1467,7 @@ def lstsq(a: ArrayLike, b: ArrayLike, rcond: float | None = None, *,
   return _jit_lstsq(a, b, rcond)
 
 
+@export
 def cross(x1: ArrayLike, x2: ArrayLike, /, *, axis=-1):
   r"""Compute the cross-product of two 3D vectors
 
@@ -1493,6 +1513,7 @@ def cross(x1: ArrayLike, x2: ArrayLike, /, *, axis=-1):
   return jnp.cross(x1, x2, axis=axis)
 
 
+@export
 def outer(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   """Compute the outer product of two 1-dimensional arrays.
 
@@ -1523,6 +1544,7 @@ def outer(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   return x1[:, None] * x2[None, :]
 
 
+@export
 def matrix_norm(x: ArrayLike, /, *, keepdims: bool = False, ord: str = 'fro') -> Array:
   """Compute the norm of a matrix or stack of matrices.
 
@@ -1553,6 +1575,7 @@ def matrix_norm(x: ArrayLike, /, *, keepdims: bool = False, ord: str = 'fro') ->
   return norm(x, ord=ord, keepdims=keepdims, axis=(-2, -1))
 
 
+@export
 def matrix_transpose(x: ArrayLike, /) -> Array:
   """Transpose a matrix or stack of matrices.
 
@@ -1608,6 +1631,7 @@ def matrix_transpose(x: ArrayLike, /) -> Array:
   return jax.lax.transpose(x_arr, (*range(ndim - 2), ndim - 1, ndim - 2))
 
 
+@export
 def vector_norm(x: ArrayLike, /, *, axis: int | None = None, keepdims: bool = False,
                 ord: int | str = 2) -> Array:
   """Compute the vector norm of a vector or batch of vectors.
@@ -1652,6 +1676,7 @@ def vector_norm(x: ArrayLike, /, *, axis: int | None = None, keepdims: bool = Fa
   return norm(x, axis=axis, keepdims=keepdims, ord=ord)
 
 
+@export
 def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
            precision: PrecisionLike = None,
            preferred_element_type: DTypeLike | None = None) -> Array:
@@ -1702,6 +1727,7 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
                     preferred_element_type=preferred_element_type)
 
 
+@export
 def matmul(x1: ArrayLike, x2: ArrayLike, /, *,
            precision: PrecisionLike = None,
            preferred_element_type: DTypeLike | None = None) -> Array:
@@ -1762,6 +1788,7 @@ def matmul(x1: ArrayLike, x2: ArrayLike, /, *,
                     preferred_element_type=preferred_element_type)
 
 
+@export
 def tensordot(x1: ArrayLike, x2: ArrayLike, /, *,
               axes: int | tuple[Sequence[int], Sequence[int]] = 2,
               precision: PrecisionLike = None,
@@ -1843,6 +1870,7 @@ def tensordot(x1: ArrayLike, x2: ArrayLike, /, *,
                        preferred_element_type=preferred_element_type)
 
 
+@export
 def svdvals(x: ArrayLike, /) -> Array:
   """Compute the singular values of a matrix.
 
@@ -1867,6 +1895,7 @@ def svdvals(x: ArrayLike, /) -> Array:
   return svd(x, compute_uv=False, hermitian=False)
 
 
+@export
 def diagonal(x: ArrayLike, /, *, offset: int = 0) -> Array:
   """Extract the diagonal of an matrix or stack of matrices.
 
@@ -1907,6 +1936,7 @@ def diagonal(x: ArrayLike, /, *, offset: int = 0) -> Array:
   return jnp.diagonal(x, offset=offset, axis1=-2, axis2=-1)
 
 
+@export
 def tensorinv(a: ArrayLike, ind: int = 2) -> Array:
   """Compute the tensor inverse of an array.
 
@@ -1949,6 +1979,7 @@ def tensorinv(a: ArrayLike, ind: int = 2) -> Array:
   return inv(arr.reshape(flatshape)).reshape(*batch_shape, *contracting_shape)
 
 
+@export
 def tensorsolve(a: ArrayLike, b: ArrayLike, axes: tuple[int, ...] | None = None) -> Array:
   """Solve the tensor equation a x = b for x.
 
@@ -1998,6 +2029,7 @@ def tensorsolve(a: ArrayLike, b: ArrayLike, axes: tuple[int, ...] | None = None)
   return solve(a_arr, b_arr.ravel()).reshape(out_shape)
 
 
+@export
 def multi_dot(arrays: Sequence[ArrayLike], *, precision: PrecisionLike = None) -> Array:
   """Efficiently compute matrix products between a sequence of arrays.
 
@@ -2090,6 +2122,7 @@ def multi_dot(arrays: Sequence[ArrayLike], *, precision: PrecisionLike = None) -
                     optimize='optimal', precision=precision)
 
 
+@export
 @partial(jit, static_argnames=['p'])
 def cond(x: ArrayLike, p=None):
   """Compute the condition number of a matrix.
@@ -2149,6 +2182,7 @@ def cond(x: ArrayLike, p=None):
   return jnp.where(ufuncs.isnan(r) & ~ufuncs.isnan(x).any(axis=(-2, -1)), jnp.inf, r)
 
 
+@export
 def trace(x: ArrayLike, /, *,
           offset: int = 0, dtype: DTypeLike | None = None) -> Array:
   """Compute the trace of a matrix.

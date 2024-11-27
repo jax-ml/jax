@@ -486,12 +486,11 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
             + [pltpu.SemaphoreType.DMA] * 4
             + inner_allocs
         ),
-        compiler_params=dict(
-            mosaic=dict(collective_id=0,
-                        # must set scoped vmem flag *larger* than below! e.g.:
-                        # flags.FLAGS.xla_tpu_scoped_vmem_limit_kib = 131072
-                        vmem_limit_bytes=int(134217728 * 0.9)  # 0.9 * 128MiB
-                       )
+        compiler_params=pltpu.TPUCompilerParams(
+                    collective_id=0,
+                    # must set scoped vmem flag *larger* than below! e.g.:
+                    # flags.FLAGS.xla_tpu_scoped_vmem_limit_kib = 131072
+                    vmem_limit_bytes=int(134217728 * 0.9)  # 0.9 * 128MiB
         ),
     )
 

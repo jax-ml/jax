@@ -260,7 +260,6 @@ jax_multiplatform_test(
     ],
 )
 
-# TODO(b/355263220): enable on TPU once layouts is supported with Shardy.
 jax_multiplatform_test(
     name = "layout_test",
     srcs = ["layout_test.py"],
@@ -279,9 +278,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "shard_alike_test",
     srcs = ["shard_alike_test.py"],
-    disable_configs = [
-        "cpu_shardy",  # TODO(b/355263220): enable once shard_alike is supported.
-    ],
     enable_configs = [
         "tpu_v3_2x2",
         "tpu_v5e_4x2",
@@ -1391,6 +1387,7 @@ jax_multiplatform_test(
     srcs = ["colocated_python_test.py"],
     deps = [
         "//jax:experimental_colocated_python",
+        "//jax/extend:ifrt_programs",
     ],
 )
 

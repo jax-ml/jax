@@ -54,26 +54,14 @@ From the root directory of the JAX repository, run
   `python build/build.py requirements_update`
 """
 
-# Define the build target for each artifact.
-ARTIFACT_BUILD_TARGET_DICT = {
+# Define the build target for each wheel.
+WHEEL_BUILD_TARGET_DICT = {
     "jaxlib": "//jaxlib/tools:build_wheel",
     "jax-cuda-plugin": "//jaxlib/tools:build_gpu_kernels_wheel",
     "jax-cuda-pjrt": "//jaxlib/tools:build_gpu_plugin_wheel",
     "jax-rocm-plugin": "//jaxlib/tools:build_gpu_kernels_wheel",
     "jax-rocm-pjrt": "//jaxlib/tools:build_gpu_plugin_wheel",
 }
-
-
-def add_requirements_nightly_update_argument(parser: argparse.ArgumentParser):
-  parser.add_argument(
-      "--nightly_update",
-      action="store_true",
-      help="""
-        If true, updates requirements_lock.txt for a corresponding version of
-        Python and will consider dev, nightly and pre-release versions of
-        packages.
-        """,
-  )
 
 
 def add_global_arguments(parser: argparse.ArgumentParser):
@@ -136,17 +124,18 @@ def add_global_arguments(parser: argparse.ArgumentParser):
   )
 
 
-def add_artifact_subcommand_global_arguments(parser: argparse.ArgumentParser):
-  """Adds all the global arguments that applies to the artifact subcommands."""
+def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
+  """Adds all the arguments that applies to the artifact subcommands."""
   parser.add_argument(
       "--wheels",
       type=str,
       default="jaxlib",
       help=
-        f"""
-        A comma separated list of JAX artifacts to build. E.g: --wheels="jaxlib",
+        """
+        A comma separated list of JAX wheels to build. E.g: --wheels="jaxlib",
         --wheels="jaxlib,jax-cuda-plugin", etc.
-        Valid options are: {','.join(ARTIFACT_BUILD_TARGET_DICT.keys())}
+        Valid options are: jaxlib, jax-cuda-plugin or cuda-plugin, jax-cuda-pjrt or cuda-pjrt,
+        jax-rocm-plugin or rocm-plugin, jax-rocm-pjrt or rocm-pjrt
         """,
   )
 
@@ -177,26 +166,32 @@ def add_artifact_subcommand_global_arguments(parser: argparse.ArgumentParser):
   cuda_group.add_argument(
       "--cuda_version",
       type=str,
-      # LINT.IfChange(cuda_version)
-      default="12.3.2",
-      # LINT.ThenChange(//depot/google3/third_party/py/jax/oss/.bazelrc)
       help=
         """
         Hermetic CUDA version to use. Default is to use the version specified
-        in the .bazelrc (12.3.2).
+        in the .bazelrc.
+        """,
+  )
+
+  cuda_group.add_argument(
+      "--cuda_major_version",
+      type=str,
+      default="12",
+      help=
+        """
+        Which CUDA major version should the wheel be tagged as? Auto-detected if
+        --cuda_version is set. When --cuda_version is not set, the default is to
+        set the major version to 12 to match the default in .bazelrc.
         """,
   )
 
   cuda_group.add_argument(
       "--cudnn_version",
       type=str,
-      # LINT.IfChange(cudnn_version)
-      default="9.1.1",
-      # LINT.ThenChange(//depot/google3/third_party/py/jax/oss/.bazelrc)
       help=
         """
         Hermetic cuDNN version to use. Default is to use the version specified
-        in the .bazelrc (9.1.1).
+        in the .bazelrc.
         """,
   )
 
@@ -253,6 +248,18 @@ def add_artifact_subcommand_global_arguments(parser: argparse.ArgumentParser):
   compile_group = parser.add_argument_group('Compile Options')
 
   compile_group.add_argument(
+      "--use_clang",
+      type=utils._parse_string_as_bool,
+      default="true",
+      const=True,
+      nargs="?",
+      help="""
+        Whether to use Clang as the compiler. Not recommended to set this to
+        False as JAX uses Clang as the default compiler.
+        """,
+  )
+
+  compile_group.add_argument(
       "--clang_path",
       type=str,
       default="",
@@ -286,7 +293,7 @@ def add_artifact_subcommand_global_arguments(parser: argparse.ArgumentParser):
   compile_group.add_argument(
       "--target_cpu",
       default=None,
-      help="CPU platform to target. Default is the same as the host machine. ",
+      help="CPU platform to target. Default is the same as the host machine.",
   )
 
   compile_group.add_argument(
@@ -309,21 +316,29 @@ async def main():
       formatter_class=argparse.RawDescriptionHelpFormatter
   )
 
-  # Create subparsers for build_artifacts and requirements_update
+  # Create subparsers for build and requirements_update
   subparsers = parser.add_subparsers(dest="command", required=True)
 
   # requirements_update subcommand
   requirements_update_parser = subparsers.add_parser(
       "requirements_update", help="Updates the requirements_lock.txt files"
   )
-  add_requirements_nightly_update_argument(requirements_update_parser)
+  requirements_update_parser.add_argument(
+    "--nightly_update",
+    action="store_true",
+    help="""
+      If true, updates requirements_lock.txt for a corresponding version of
+      Python and will consider dev, nightly and pre-release versions of
+      packages.
+      """,
+  )
   add_global_arguments(requirements_update_parser)
 
   # Artifact build subcommand
   build_artifact_parser = subparsers.add_parser(
       "build", help="Builds the jaxlib, plugin, and pjrt artifact"
   )
-  add_artifact_subcommand_global_arguments(build_artifact_parser)
+  add_artifact_subcommand_arguments(build_artifact_parser)
   add_global_arguments(build_artifact_parser)
 
   arch = platform.machine()
@@ -362,8 +377,7 @@ async def main():
         f"--repo_env=HERMETIC_PYTHON_VERSION={args.python_version}"
     )
 
-  # Enable color in the Bazel output and verbose failures.
-  bazel_command_base.append("--color=yes")
+  # Enable verbose failures.
   bazel_command_base.append("--verbose_failures=true")
 
   # Requirements update subcommand execution
@@ -377,7 +391,7 @@ async def main():
         requirements_command.append(option)
 
     if args.nightly_update:
-      logging.debug(
+      logging.info(
           "--nightly_update is set. Bazel will run"
           " //build:requirements_nightly.update"
       )
@@ -385,8 +399,11 @@ async def main():
     else:
       requirements_command.append("//build:requirements.update")
 
-    await executor.run(requirements_command.get_command_as_string(), args.dry_run)
-    sys.exit(0)
+    result = await executor.run(requirements_command.get_command_as_string(), args.dry_run)
+    if result.return_code != 0:
+      raise RuntimeError(f"Command failed with return code {result.return_code}")
+    else:
+      sys.exit(0)
 
   wheel_cpus = {
       "darwin_arm64": "arm64",
@@ -414,8 +431,16 @@ async def main():
 
   # Wheel build command execution
   for wheel in args.wheels.split(","):
-    if wheel not in ARTIFACT_BUILD_TARGET_DICT.keys():
-      logging.error("Incorrect wheel name provided: %s, valid choices are: %s", wheel, ",".join(ARTIFACT_BUILD_TARGET_DICT.keys()))
+    # Allow CUDA/ROCm wheels without the "jax-" prefix.
+    if ("plugin" in wheel or "pjrt" in wheel) and "jax" not in wheel:
+      wheel = "jax-" + wheel
+
+    if wheel not in WHEEL_BUILD_TARGET_DICT.keys():
+      logging.error(
+          "Incorrect wheel name provided, valid choices are jaxlib,"
+          " jax-cuda-plugin or cuda-plugin, jax-cuda-pjrt or cuda-pjrt,"
+          " jax-rocm-plugin or rocm-plugin, jax-rocm-pjrt or rocm-pjrt"
+      )
       sys.exit(1)
 
     wheel_build_command = copy.deepcopy(bazel_command_base)
@@ -427,13 +452,22 @@ async def main():
       arch,
     )
 
-    clang_path = args.clang_path or utils.get_clang_path_or_exit()
-    logging.debug("Using Clang as the compiler, clang path: %s", clang_path)
+    clang_path = ""
+    if args.use_clang:
+      clang_path = args.clang_path or utils.get_clang_path_or_exit()
+      clang_major_version = utils.get_clang_major_version(clang_path)
+      logging.debug(
+          "Using Clang as the compiler, clang path: %s, clang version: %s",
+          clang_path,
+          clang_major_version,
+      )
 
-    # Use double quotes around clang path to avoid path issues on Windows.
-    wheel_build_command.append(f"--action_env=CLANG_COMPILER_PATH=\"{clang_path}\"")
-    wheel_build_command.append(f"--repo_env=CC=\"{clang_path}\"")
-    wheel_build_command.append(f"--repo_env=BAZEL_COMPILER=\"{clang_path}\"")
+      # Use double quotes around clang path to avoid path issues on Windows.
+      wheel_build_command.append(f"--action_env=CLANG_COMPILER_PATH=\"{clang_path}\"")
+      wheel_build_command.append(f"--repo_env=CC=\"{clang_path}\"")
+      wheel_build_command.append(f"--repo_env=BAZEL_COMPILER=\"{clang_path}\"")
+    else:
+      logging.debug("Use Clang: False")
 
     # Do not apply --config=clang on Mac as these settings do not apply to
     # Apple Clang.
@@ -445,11 +479,11 @@ async def main():
       wheel_build_command.append("--config=mkl_open_source_only")
 
     if args.target_cpu_features == "release":
-      logging.debug(
-          "Using release cpu features: --config=avx_%s",
-          "windows" if os_name == "windows" else "posix",
-      )
       if arch in ["x86_64", "AMD64"]:
+        logging.debug(
+            "Using release cpu features: --config=avx_%s",
+            "windows" if os_name == "windows" else "posix",
+        )
         wheel_build_command.append(
             "--config=avx_windows"
             if os_name == "windows"
@@ -499,7 +533,10 @@ async def main():
         )
 
     if "rocm" in wheel:
-      wheel_build_command.append("--config=rocm")
+      wheel_build_command.append("--config=rocm_base")
+      if args.use_clang:
+        wheel_build_command.append("--config=rocm")
+        wheel_build_command.append(f"--action_env=CLANG_COMPILER_PATH=\"{clang_path}\"")
       if args.rocm_path:
         logging.debug("ROCm tookit path: %s", args.rocm_path)
         wheel_build_command.append(f"--action_env=ROCM_PATH=\"{args.rocm_path}\"")
@@ -518,18 +555,19 @@ async def main():
       for option in args.bazel_options:
         wheel_build_command.append(option)
 
+    with open(".jax_configure.bazelrc", "w") as f:
+      jax_configure_options = utils.get_jax_configure_bazel_options(wheel_build_command.get_command_as_list())
+      if not jax_configure_options:
+        logging.error("Error retrieving the Bazel options to be written to .jax_configure.bazelrc, exiting.")
+        sys.exit(1)
+      f.write(jax_configure_options)
+      logging.info("Bazel options written to .jax_configure.bazelrc")
+
     if args.configure_only:
-      with open(".jax_configure.bazelrc", "w") as f:
-        jax_configure_options = utils.get_jax_configure_bazel_options(wheel_build_command.get_command_as_list())
-        if not jax_configure_options:
-          logging.error("Error retrieving the Bazel options to be written to .jax_configure.bazelrc, exiting.")
-          sys.exit(1)
-        f.write(jax_configure_options)
-        logging.info("Bazel options written to .jax_configure.bazelrc")
-        logging.info("--configure_only is set so not running any Bazel commands.")
+      logging.info("--configure_only is set so not running any Bazel commands.")
     else:
       # Append the build target to the Bazel command.
-      build_target = ARTIFACT_BUILD_TARGET_DICT[wheel]
+      build_target = WHEEL_BUILD_TARGET_DICT[wheel]
       wheel_build_command.append(build_target)
 
       wheel_build_command.append("--")
@@ -538,7 +576,7 @@ async def main():
       logger.debug("Artifacts output directory: %s", output_path)
 
       if args.editable:
-        logger.debug("Building an editable build")
+        logger.info("Building an editable build")
         output_path = os.path.join(output_path, wheel)
         wheel_build_command.append("--editable")
 
@@ -547,7 +585,10 @@ async def main():
 
       if "cuda" in wheel:
         wheel_build_command.append("--enable-cuda=True")
-        cuda_major_version = args.cuda_version.split(".")[0]
+        if args.cuda_version:
+          cuda_major_version = args.cuda_version.split(".")[0]
+        else:
+          cuda_major_version = args.cuda_major_version
         wheel_build_command.append(f"--platform_version={cuda_major_version}")
 
       if "rocm" in wheel:
@@ -556,7 +597,11 @@ async def main():
 
       wheel_build_command.append(f"--jaxlib_git_hash={git_hash}")
 
-      await executor.run(wheel_build_command.get_command_as_string(), args.dry_run)
+      result = await executor.run(wheel_build_command.get_command_as_string(), args.dry_run)
+      if result.return_code != 0:
+        raise RuntimeError(f"Command failed with return code {result.return_code}")
+      else:
+        sys.exit(0)
 
 
 if __name__ == "__main__":

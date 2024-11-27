@@ -70,8 +70,9 @@ class PallasCallTest(PallasTest):
       ("exp", jax.lax.exp),
       ("square", lambda x: x ** 2),
       ("rsqrt", jax.lax.rsqrt),
+      ("tanh", jax.lax.tanh, 1e-6),
   )
-  def test_unary_ops(self, unary):
+  def test_unary_ops(self, unary, rtol=1e-7):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
@@ -80,7 +81,26 @@ class PallasCallTest(PallasTest):
       o_ref[...] = unary(x_ref[...])
 
     x = jnp.arange(256).astype(jnp.float32)
-    np.testing.assert_array_equal(kernel(x), unary(x))
+    np.testing.assert_allclose(kernel(x), unary(x), rtol=rtol)
+
+  @parameterized.named_parameters(
+      ("add", lambda x, y: x + y),
+      ("mul", lambda x, y: x * y),
+      ("div", lambda x, y: x / y),
+      ("min", lambda x, y: jnp.minimum(x, y)),
+      ("max", lambda x, y: jnp.maximum(x, y)),
+  )
+  def test_binary_op(self, bop):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = bop(x_ref[...], y_ref[...])
+
+    x = jnp.arange(256).astype(jnp.float32)
+    y = x + 1
+    np.testing.assert_array_equal(kernel(x, y), bop(x, y))
 
   def test_add_first(self):
     @functools.partial(
@@ -109,18 +129,6 @@ class PallasCallTest(PallasTest):
 
     x = jnp.arange(math.prod(shape1)).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x.reshape(shape2))
-
-  def test_add_xy(self):
-    @functools.partial(
-        pl.pallas_call,
-        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
-    )
-    def kernel(x_ref, y_ref, o_ref):
-      o_ref[...] = x_ref[...] + y_ref[...]
-
-    x = jnp.arange(256).astype(jnp.float32)
-    y = x + 1
-    np.testing.assert_array_equal(kernel(x, y), x + y)
 
   def test_add_xy_indexed(self):
     @functools.partial(
@@ -749,6 +757,24 @@ class PallasCallTest(PallasTest):
 
     self.assertIn("acc * 2:", output())
 
+  def test_cond_returning_array(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
+    )
+    def kernel(x_ref, o_ref):
+      acc = x_ref[...].sum()
+      acc2, acc = jax.lax.cond(
+          acc % 2 == 0,
+          lambda: (acc * 2, acc),
+          lambda: (acc, acc * 2),
+      )
+      o_ref[...] = jnp.broadcast_to(acc + acc2, o_ref.shape)
+
+    x = jnp.arange(256)
+    np.testing.assert_array_equal(kernel(x), jnp.broadcast_to(jnp.sum(x) * 3, [256]))
+
+
   @parameterized.parameters(jnp.float16, jnp.float32)
   def test_wgmma(self, dtype):
     self.skip_unless_sm90a()
@@ -1174,6 +1200,39 @@ class PipelineTest(PallasTest):
       )(x_gmem, o_gmem)
 
     def kernel_body(x_smem, o_smem):
+      o_smem[...] = x_smem[...] + 1.0
+
+    x = jnp.arange(32 * num_steps * 16)
+    x = x.reshape(-1, num_steps * 16).astype(jnp.float32)
+    kernel_fn = pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+    )
+    np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
+
+  def test_nested_emit(self):
+    num_steps = 4
+
+    def kernel(x_gmem, o_gmem):
+      plgpu.emit_pipeline(
+          nested_kernel,
+          in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+          out_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+          grid=(),
+      )(x_gmem, o_gmem)
+
+    def nested_kernel(x_gmem, o_gmem):
+      plgpu.emit_pipeline(
+          nested_kernel_body,
+          in_specs=[pl.BlockSpec((32, 16), lambda i: (0, i))],
+          out_specs=[pl.BlockSpec((32, 16), lambda i: (0, i))],
+          grid=(num_steps,),
+          max_concurrent_steps=2,
+      )(x_gmem, o_gmem)
+
+    def nested_kernel_body(x_smem, o_smem):
       o_smem[...] = x_smem[...] + 1.0
 
     x = jnp.arange(32 * num_steps * 16)

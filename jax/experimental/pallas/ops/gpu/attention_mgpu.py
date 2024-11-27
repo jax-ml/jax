@@ -59,17 +59,27 @@ def attention(q, k, v, config: TuningConfig):
   q_heads_per_kv_head = num_q_heads // num_kv_heads
   if head_dim % 64:
     raise ValueError(f"{head_dim=} must be divisible by 64")
-  if batch_size != 1:
-    raise NotImplementedError(f"Only batch_size=1 is supported, got: {batch_size=}")
   if jnp.dtype(dtype) not in map(jnp.dtype, [jnp.float16, jnp.bfloat16]):
     raise NotImplementedError(f"Only f16 and bf16 are supported, got dtype: {dtype}")
-  q, k, v = map(lambda x: x[0], (q, k, v))
+  # Squash batch and sequence dimensions.
+  # This is required because CUDA grid/TMA descriptors have a limited number of
+  # slice dimensions.
+  # TODO(apaszke): Implement slice squashing for TMAs.
+  q = jnp.reshape(q, (batch_size * q_seq_len, num_q_heads, head_dim))
+  k = jnp.reshape(k, (batch_size * kv_seq_len, num_kv_heads, head_dim))
+  v = jnp.reshape(v, (batch_size * kv_seq_len, num_kv_heads, head_dim))
+
   max_concurrent_steps = min(
       config.max_concurrent_steps, kv_seq_len // config.block_kv
   )
   block_q, block_kv = config.block_q, config.block_kv
+  num_q_tiles, rem = divmod(q_seq_len, block_q * 2)
+  if rem:
+    raise NotImplementedError(f"{q_seq_len=} must be a multiple of {block_q * 2=}")
 
   def kernel(q_ref, k_ref, v_ref, out_ref, scoped):
+    bidx = lax.div(lax.axis_index("bq"), num_q_tiles)
+    qidx = lax.rem(lax.axis_index("bq"), num_q_tiles)
     smem_buffers, buffer_barriers, consumed_barriers, schedule_barrier = scoped
     wg_idx = lax.axis_index("wg")
     qo_smem2, k_smem, v_smem = smem_buffers
@@ -83,7 +93,7 @@ def attention(q, k, v, config: TuningConfig):
     def _compute_wg():
       plgpu.set_max_registers(232, action="increase")
       qo_smem = qo_smem2.at[wg_idx]
-      q_seq_base = lax.axis_index("q") * (2 * block_q) + wg_idx * block_q
+      q_seq_base = qidx * (2 * block_q) + wg_idx * block_q + bidx * q_seq_len
       q_head = lax.axis_index("heads")
 
       plgpu.copy_gmem_to_smem(
@@ -165,14 +175,16 @@ def attention(q, k, v, config: TuningConfig):
       plgpu.set_max_registers(40, action="decrease")
       kv_head = lax.div(lax.axis_index("heads"), q_heads_per_kv_head)
       for i in range(max_concurrent_steps):
-        s = (pl.ds(i * block_kv, block_kv), kv_head)
+        start = i * block_kv + bidx * kv_seq_len
+        s = (pl.ds(start, block_kv), kv_head)
         plgpu.copy_gmem_to_smem(k_ref.at[s], k_smem.at[i], k_barriers.at[i])
         plgpu.copy_gmem_to_smem(v_ref.at[s], v_smem.at[i], v_barriers.at[i])
 
       def kv_loop(kv_step, _):
         tma_step = kv_step + max_concurrent_steps
         tma_slot = lax.rem(kv_step, max_concurrent_steps)
-        s = (pl.ds(tma_step * block_kv, block_kv), kv_head)
+        start = tma_step * block_kv + bidx * kv_seq_len
+        s = (pl.ds(start, block_kv), kv_head)
         plgpu.barrier_wait(k_consumed_barrier)
         plgpu.copy_gmem_to_smem(k_ref.at[s], k_smem.at[tma_slot], k_barriers.at[tma_slot])
         plgpu.barrier_wait(v_consumed_barrier)
@@ -187,13 +199,10 @@ def attention(q, k, v, config: TuningConfig):
   def run(refs):
     q_ref, k_ref, v_ref, out_ref = refs
 
-    num_q_tiles, rem = divmod(q_seq_len, block_q * 2)
-    if rem:
-      raise NotImplementedError(f"{q_seq_len=} must be a multiple of {block_q * 2=}")
     mesh = plgpu.GPUMesh(
-        grid=(num_q_tiles, num_q_heads),
+        grid=(batch_size * num_q_tiles, num_q_heads),
         num_threads=3,
-        axis_names=("q", "heads", "wg"),
+        axis_names=("bq", "heads", "wg"),
         approx_math=True,
     )
     @pl.core_map(mesh)
@@ -227,7 +236,7 @@ def attention(q, k, v, config: TuningConfig):
       )
 
   _, _, _, out = pl.run_state(run)((q, k, v, jnp.full_like(q, jnp.inf)))
-  return out[None]
+  return jnp.reshape(out, [batch_size, q_seq_len, num_q_heads, head_dim])
 
 
 @jax.jit
@@ -247,13 +256,13 @@ def attention_reference(q, k, v):
 
 
 def main(unused_argv):
-  batch_size = 1
   num_q_heads = 1
   num_kv_heads = 1
-  problem_it = itertools.product((4096, 32768,), (64, 128, 256,))
-  for seq_len, head_dim in problem_it:
+  problem_it = itertools.product((1, 2), (4096, 32768,), (64, 128, 256,))
+  for batch_size, seq_len, head_dim in problem_it:
     q_seq_len = kv_seq_len = seq_len
-    print(f"==== {kv_seq_len=:<6} {q_seq_len=:<6} {num_q_heads=:<4} {head_dim=:<6} ====")
+    print(f"==== {batch_size=:<6} {kv_seq_len=:<6} {q_seq_len=:<6}"
+          f"{num_q_heads=:<4} {head_dim=:<6} ====")
     param_it = itertools.product((64,), (64, 128, 256))
     best = None
     k1, k2, k3 = jax.random.split(jax.random.key(42), 3)

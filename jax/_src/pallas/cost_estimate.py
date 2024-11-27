@@ -16,9 +16,12 @@ import dataclasses
 import math
 from typing import Any, Sequence
 
+import jax
 from jax._src import core as jax_core
-from jax._src.pallas import core as pallas_core
+from jax._src import custom_derivatives
 from jax._src import linear_util as lu
+from jax._src import pjit
+from jax._src.pallas import core as pallas_core
 from jax._src.interpreters import partial_eval as pe
 from jax._src.util import safe_map
 from jax._src.util import safe_zip
@@ -71,22 +74,28 @@ def cost_estimate_jaxpr(
       bytes_accessed=total_cost.bytes_accessed,
   )
 
-def cost_estimate(fun, *args) -> pallas_core.CostEstimate:
+def estimate_cost(fun, *args, **kwargs) -> pallas_core.CostEstimate:
   """Computes a cost estimate for the given function.
 
   Args:
     fun: The function to compute the cost estimate for.
     *args: The arguments to the function. Can be jax.ShapeDtypeStruct or
       jax.Array.
+    **kwargs: The keyword arguments to the function.
 
   Returns:
     A pallas_core.CostEstimate object containing the cost estimate.
   """
-  wrapped_fun = lu.wrap_init(lambda *args, **kwargs: (fun(*args, **kwargs),))
-  avals = [jax_core.ShapedArray(a.shape, a.dtype) for a in args]
+  flattened_args, treedef = jax.tree.flatten(args)
+  def _partial_fun(*flat_args):
+    return fun(*jax.tree.unflatten(treedef, flat_args), **kwargs)
+  wrapped_fun = lu.wrap_init(
+      lambda *args, **kwargs: (_partial_fun(*args, **kwargs),))
+  avals = [jax_core.ShapedArray(a.shape, a.dtype) for a in flattened_args]
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
   estimate = cost_estimate_jaxpr(jax_core.ClosedJaxpr(jaxpr, consts))
-  input_bytes = sum(math.prod(a.shape) * a.dtype.itemsize for a in args)
+  input_bytes = sum(
+      math.prod(a.shape) * a.dtype.itemsize for a in flattened_args)
   output_bytes = sum(
       math.prod(a.aval.shape) * a.aval.dtype.itemsize for a in jaxpr.outvars)
   return pallas_core.CostEstimate(
@@ -213,3 +222,24 @@ def dot_general_cost_rule(ctx: Context,
       bytes_accessed=0,
   )
 register_cost_rule(lax.dot_general_p, dot_general_cost_rule)
+
+# Higher-order primitives
+def _pjit_cost_rule(ctx, *, jaxpr: jax_core.ClosedJaxpr, **_):
+  del ctx
+  inner_cost = cost_estimate_jaxpr(jaxpr)
+  return CostEstimate(
+      flops=inner_cost.flops,
+      transcendentals=inner_cost.transcendentals,
+      bytes_accessed=inner_cost.bytes_accessed,
+  )
+register_cost_rule(pjit.pjit_p, _pjit_cost_rule)
+
+def _custom_vjp_rule(ctx, *, fun_jaxpr: jax_core.ClosedJaxpr, **_):
+  del ctx
+  inner_cost = cost_estimate_jaxpr(fun_jaxpr)
+  return CostEstimate(
+      flops=inner_cost.flops,
+      transcendentals=inner_cost.transcendentals,
+      bytes_accessed=inner_cost.bytes_accessed,
+  )
+register_cost_rule(custom_derivatives.custom_vjp_call_jaxpr_p, _custom_vjp_rule)

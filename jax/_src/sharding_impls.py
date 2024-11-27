@@ -363,6 +363,11 @@ class NamedSharding(sharding.Sharding):
   def with_memory_kind(self, kind: str) -> NamedSharding:
     return NamedSharding(self.mesh, self.spec, memory_kind=kind)
 
+  def with_spec(self, spec: PartitionSpec | Sequence[Any]) -> NamedSharding:
+    if not isinstance(spec, PartitionSpec):
+      spec = PartitionSpec(*spec)
+    return NamedSharding(self.mesh, spec, memory_kind=self.memory_kind)
+
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return named_sharding_to_xla_hlo_sharding(self, num_dimensions)
 

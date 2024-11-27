@@ -22,6 +22,8 @@ from jax._src import test_util as jtu
 from jax._src.lib import xla_extension_version  # pylint: disable=g-importing-member
 from jax.experimental import colocated_python
 from jax.experimental.colocated_python import func as colocated_python_func
+from jax.experimental.colocated_python import serialization
+from jax.extend.ifrt_programs import ifrt_programs
 import jax.numpy as jnp
 import numpy as np
 
@@ -77,8 +79,22 @@ class ColocatedPythonTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if xla_extension_version < 290:
-      self.skipTest("Requires xla_extension_version >= 290")
+    if xla_extension_version < 298:
+      self.skipTest("Requires xla_extension_version >= 298")
+
+  def testMakeColocatedPythonProgram(self):
+    def add_one(x):
+      return x + 1
+
+    cpu_devices = _colocated_cpu_devices(jax.local_devices())
+    sharding = jax.sharding.SingleDeviceSharding(cpu_devices[0])
+    aval = jax.ShapeDtypeStruct((), jnp.int32, sharding=sharding)
+
+    pickled_function = serialization._serialize(add_one)
+    program = ifrt_programs.make_colocated_python_program(
+        "add_one", pickled_function, [cpu_devices[0]], [aval], [aval]
+    )
+    del program
 
   def testSimpleFunction(self):
     @colocated_python.colocated_python

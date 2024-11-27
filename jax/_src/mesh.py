@@ -107,6 +107,9 @@ class AxisTypes(enum.Enum):
   User = enum.auto()
   Collective = enum.auto()
 
+  def __repr__(self):
+    return self.name
+
 def axis_names_to_types(axis_types) -> dict[str, AxisTypes]:
   if axis_types is None:
     return {}
@@ -452,14 +455,15 @@ class AbstractMesh:
     _raise_value_error("local_mesh")
 
   def __enter__(self):
-    raise RuntimeError("AbstractMesh is not a context manager")
+    return push_mesh_context(self)
 
   def __exit__(self, exc_type, exc_value, traceback):
-    raise RuntimeError("AbstractMesh is not a context manager")
+    pop_mesh_context()
+    return False
 
   @staticmethod
   def _extremely_unsafe_enter_tracing_context(mesh: AbstractMesh):
-    jax_config.mesh_context_manager.set_local(mesh)
+    jax_config.abstract_mesh_context_manager.set_local(mesh)
     return
 
 
@@ -467,3 +471,38 @@ class AbstractMesh:
 # property raises an exception unconditionally. Remove this once that is fixed.
 def _raise_value_error(name):
   raise ValueError(f"AbstractMesh does not implement {name}")
+
+
+class MeshContext(threading.local):
+  def __init__(self):
+    self.stack = [None]
+    self.mesh = self.stack[-1]
+
+mesh_context = MeshContext()
+
+def push_mesh_context(val):
+  mesh_context.stack.append(val)
+  mesh_context.mesh = val
+  # TODO(yashkatariya): Allow setting empty tuples and tuples with None in them.
+  # Right now that leads to weird numerical issues.
+  non_none_meshes = tuple(m for m in mesh_context.stack if m is not None)
+  if non_none_meshes:
+    jax_config.abstract_mesh_context_manager.set_local(non_none_meshes)
+  return val
+
+def pop_mesh_context():
+  mesh_context.stack.pop()
+  mesh_context.mesh = mesh_context.stack[-1]
+  non_none_meshes = tuple(m for m in mesh_context.stack if m is not None)
+  if non_none_meshes:
+    jax_config.abstract_mesh_context_manager.set_local(non_none_meshes)
+
+
+class null_mesh_context:
+
+  def __enter__(self):
+    return push_mesh_context(None)
+
+  def __exit__(self, *excinfo):
+    pop_mesh_context()
+    return False

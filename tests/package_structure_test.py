@@ -40,6 +40,7 @@ class PackageStructureTest(jtu.JaxTestCase):
                    "number", "object_", "printoptions", "save", "savez", "set_printoptions",
                    "shape", "signedinteger", "size", "s_", "unsignedinteger", "ComplexWarning"]
       ),
+      _mod("jax.numpy.linalg"),
       _mod("jax.nn.initializers"),
       _mod(
           "jax.tree_util",

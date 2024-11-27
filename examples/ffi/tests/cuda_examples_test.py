@@ -28,8 +28,8 @@ class CudaE2eTests(jtu.JaxTestCase):
       self.skipTest("Unsupported platform")
 
     # Import here to avoid trying to load the library when it's not built.
-    from jax_ffi_example import cuda_e2e
-    self.foo = cuda_e2e.foo
+    from jax_ffi_example import cuda_examples
+    self.foo = cuda_examples.foo
 
   def test_fwd_interpretable(self):
     shape = (2, 3)

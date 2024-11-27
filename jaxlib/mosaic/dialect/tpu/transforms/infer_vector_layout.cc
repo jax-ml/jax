@@ -1640,14 +1640,14 @@ class VectorLayoutInferer {
         // Since it is untiled, we can store to any arbitrary address which
         // means the sublane offset can be any value and we can fold it to
         // 2nd minor index.
-        // TODO(jevinjiang): We can fold the sublane offset into the 2nd minor
-        // index. But we need to handle negative index in lower-to-llo. For
-        // now, we just force the sublane offset to be 0.
+        auto prev_store_layout = getLayout(op.getValueToStore());
+        TPU_CHECK_OP(prev_store_layout.has_value(), "missing vector layout");
+        offsets[0] = prev_store_layout->offsets()[0].value_or(0);
         if (offsets[1].value_or(0) >= tiling[1]) {
           offsets[1] = 0;
         }
-        store_layout = VectorLayout(bitwidth, {0, offsets[1]},
-                                    nativeTiling(bitwidth), ImplicitDim::kNone);
+        store_layout = VectorLayout(bitwidth, offsets, nativeTiling(bitwidth),
+                                    ImplicitDim::kNone);
       } else {
         store_layout = VectorLayout(bitwidth, offsets, {tiling[0], tiling[1]},
                                     ImplicitDim::kNone);

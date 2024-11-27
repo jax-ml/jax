@@ -50,7 +50,7 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
             --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
             --test_env=JAX_NUM_GENERATED_CASES=25 \
             --test_env=JAX_SKIP_SLOW_TESTS=true \
-            --action_env=JAX_ENABLE_X64=0 \
+            --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
             --test_output=errors \
             --color=yes \
             //tests:cpu_tests //tests:backend_independent_tests
@@ -61,7 +61,7 @@ else
             --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
             --test_env=JAX_NUM_GENERATED_CASES=25 \
             --test_env=JAX_SKIP_SLOW_TESTS=true \
-            --action_env=JAX_ENABLE_X64=0 \
+            --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
             --test_output=errors \
             --color=yes \
             //tests:cpu_tests //tests:backend_independent_tests

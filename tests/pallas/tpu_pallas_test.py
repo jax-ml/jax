@@ -1723,6 +1723,42 @@ class PallasCallTest(PallasBaseTest):
     y = test(x)
     np.testing.assert_array_equal(y, jnp.concatenate([x, x], axis=1))
 
+  def test_masked_store(self):
+    if jtu.jaxlib_version() <= (0, 4, 35):
+      self.skipTest("Test requires masked store support")
+    shape = (16, 256)
+    mask_shape = (10, 130)
+    mask_start = (4, 5)
+    dtype = jnp.float32
+    def body(scalar_ref, x_ref, o_ref):
+      o_ref[...] = jnp.full(shape, -1, dtype=dtype)
+      b0, b1 = scalar_ref[0], scalar_ref[1]
+      e0, e1 = b0 + mask_shape[0], b1 + mask_shape[1]
+      iota0 = lax.broadcasted_iota(jnp.int32, shape, 0)
+      iota1 = lax.broadcasted_iota(jnp.int32, shape, 1)
+      mask0 = jnp.logical_and(b0 <= iota0, iota0 < e0)
+      mask1 = jnp.logical_and(b1 <= iota1, iota1 < e1)
+      pl.store(
+          o_ref,
+          (slice(None), slice(None)),
+          x_ref[...],
+          mask=jnp.logical_and(mask0, mask1),
+      )
+
+    s = jnp.array(mask_start, jnp.int32)
+    x = jnp.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    out = pl.pallas_call(
+        body,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+          num_scalar_prefetch=1,
+        ),
+    )(s, x)
+    slices = tuple(slice(b, b + l) for b, l in zip(mask_start, mask_shape))
+    expected = jnp.full(shape, -1, dtype=dtype)
+    expected = expected.at[slices].set(x[slices])
+    np.testing.assert_array_equal(out, expected)
+
 
 class PallasUXTest(PallasBaseTest):
 

@@ -50,6 +50,18 @@ class CommandResult:
   )
   end_time: Optional[datetime.datetime] = None
 
+
+async def _process_log_stream(stream, result: CommandResult):
+  """Logs the output of a subprocess stream."""
+  while True:
+    line_bytes = await stream.readline()
+    if not line_bytes:
+      break
+    line = line_bytes.decode().rstrip()
+    result.logs += line
+    logger.info("%s", line)
+
+
 class SubprocessExecutor:
   """
   Manages execution of subprocess commands with reusable environment and logging.
@@ -89,17 +101,8 @@ class SubprocessExecutor:
       env=self.environment,
     )
 
-    async def log_stream(stream, result: CommandResult):
-      while True:
-        line_bytes = await stream.readline()
-        if not line_bytes:
-          break
-        line = line_bytes.decode().rstrip()
-        result.logs += line
-        logger.info("%s", line)
-
     await asyncio.gather(
-      log_stream(process.stdout, result), log_stream(process.stderr, result)
+      _process_log_stream(process.stdout, result), _process_log_stream(process.stderr, result)
     )
 
     result.return_code = await process.wait()

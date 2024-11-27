@@ -4818,7 +4818,7 @@ class APITest(jtu.JaxTestCase):
       self.assertEqual(ans1, ans2)
 
     def sin_of_sin(x):
-      return jnp.sin(jnp.sin(x))
+      return lax.sin(jax.jit(lax.sin)(x))
 
     check_invariant_to_use_direct_linearize(lambda: jax.grad(sin_of_sin)(1.0))
 

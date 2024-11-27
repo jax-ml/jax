@@ -844,7 +844,7 @@ void SemaphoreSignalOp::build(OpBuilder &builder, OperationState &state,
                               Value semaphore, Value amount, Value device_id,
                               Value core_id) {
   build(builder, state, semaphore, amount, device_id, core_id,
-        /*subcore_id=*/nullptr, /*core_type=*/nullptr);
+        /*core_type=*/nullptr);
 }
 
 LogicalResult SemaphoreSignalOp::verify() {
@@ -861,38 +861,20 @@ LogicalResult SemaphoreSignalOp::verify() {
   CoreType issuing_core_type = issuing_core_type_maybe->value_or(CoreType::kTc);
   CoreType target_core_type = getCoreType().value_or(issuing_core_type);
 
-  if (getCoreId() == nullptr && getDeviceId() == nullptr &&
-      getSubcoreId() == nullptr) {
+  if (getCoreId() == nullptr && getDeviceId() == nullptr) {
     if (target_core_type != issuing_core_type) {
-      return emitOpError(absl::StrFormat(
-          "Target core type (%s) must match source core type "
-          "(%s) when device_id, core_id and subcore_id are not specified",
-          stringifyCoreType(target_core_type),
-          stringifyCoreType(issuing_core_type)));
+      return emitOpError(
+          absl::StrFormat("Target core type (%s) must match source core type "
+                          "(%s) when device_id and core_id are not specified",
+                          stringifyCoreType(target_core_type),
+                          stringifyCoreType(issuing_core_type)));
     }
   }
-  if (target_core_type == CoreType::kScVectorSubcore &&
-      issuing_core_type != CoreType::kScVectorSubcore &&
-      getSubcoreId() == nullptr) {
-    return emitOpError(
-        "Subcore ID must be specified for the SC vector subcore");
-  }
-  if (target_core_type != CoreType::kScVectorSubcore &&
-      getSubcoreId() != nullptr) {
-    return emitOpError(
-        "Subcore ID must be specified only for the SC vector subcore");
-  }
   if ((issuing_core_type == CoreType::kTc &&
-       (target_core_type == CoreType::kScScalarSubcore ||
-        target_core_type == CoreType::kScVectorSubcore)) ||
-      ((issuing_core_type == CoreType::kScScalarSubcore ||
-        issuing_core_type == CoreType::kScVectorSubcore) &&
+       target_core_type == CoreType::kScScalarSubcore) ||
+      (issuing_core_type == CoreType::kScScalarSubcore &&
        target_core_type == CoreType::kTc)) {
     return emitOpError("Signalling between TC and SC is not implemented");
-  }
-  if (target_core_type == CoreType::kScVectorSubcore &&
-      (getCoreId() != nullptr || getDeviceId() != nullptr)) {
-    return emitOpError("Signalling remote SC vector subcores is not supported");
   }
   return success();
 }
