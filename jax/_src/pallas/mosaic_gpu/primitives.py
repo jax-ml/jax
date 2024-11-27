@@ -24,7 +24,10 @@ import jax
 from jax._src import core as jax_core
 from jax._src import state
 from jax._src import tree_util
+from jax._src import api_util
 from jax._src import util
+from jax._src import linear_util as lu
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
@@ -692,3 +695,62 @@ def _commit_smem_lowering(ctx: lowering.LoweringRuleContext):
 def commit_smem():
   """Commits all writes to SMEM, making them visible to loads, TMA and WGMMA."""
   commit_smem_p.bind()
+
+
+map_indices_p = jax_core.Primitive("map_indices")
+
+
+@map_indices_p.def_abstract_eval
+def _map_indices_abstract_eval(x, *consts, jaxpr):
+  del consts
+  if jaxpr.effects:
+    raise NotImplementedError("map_indices assumes a pure argument function.")
+  outvar, = jaxpr.outvars
+  return jax_core.ShapedArray(shape=x.shape, dtype=outvar.aval.dtype)
+
+@discharge.register_discharge_rule(map_indices_p)
+def _map_indices_discharge(in_avals, out_avals, acc):
+  return (None,), wgmma_accumulator_deref_p.bind(acc)
+
+@lowering.register_lowering_rule(map_indices_p)
+def _map_indices_lowering(ctx: lowering.LoweringRuleContext, x, *consts, jaxpr):
+  if x.layout != mgpu.WGMMA_LAYOUT:
+    raise NotImplementedError(f"map_indices only supports WGMMA layout ATM, got {x.layout}")
+
+  def fn(idx, val):
+    ret = lowering.lower_jaxpr_to_mosaic_gpu(
+        ctx.module_ctx,
+        ctx.launch_ctx,
+        jaxpr=jaxpr,
+        args=[*idx, val],
+        consts=consts
+    )
+    if len(ret) != 1:
+      raise ValueError(f"Expected one output to the output of jaxpr, got {ret}.")
+
+    ret = ret[0]
+    if not isinstance(ret, mgpu.FragmentedArray) or ret.shape != ():
+      raise ValueError(f"Expected an 0D array but got {ret}")
+    return ret.registers.flat[0]
+
+  return x.map_index(fn)
+
+
+def map_indices(arr, fn):
+  if not callable(fn):
+    raise TypeError("Expected a callable argument.")
+
+  inp_example = jnp.array(0).astype(arr.dtype)
+  _, in_tree = tree_util.tree_flatten((arr.shape, inp_example))
+  flat_fn, _ = api_util.flatten_fun_nokwargs(lu.wrap_init(fn), in_tree)
+  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
+      flat_fn,
+      (
+          *[jax_core.concrete_aval(x) for x in arr.shape],
+          jax_core.get_aval(inp_example),
+      ),
+  )
+  if len(jaxpr.outvars) > 1 or jaxpr.outvars[0].aval.shape != ():
+    raise ValueError(f"Map function should return a single scalar, got {jaxpr.outvars}.")
+
+  return map_indices_p.bind(arr, *consts, jaxpr=jaxpr)
