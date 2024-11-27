@@ -1662,10 +1662,8 @@ def _pjit_call_impl_python(
       pgle_compile_options['fdo_profile'] = fdo_profile
 
   compiler_options_kvs = compiler_options_kvs + tuple(pgle_compile_options.items())
-  # TODO(patrios): Do not pass mutable profile session through cached lowering
-  # chain. Instead we need to move profilers dictionary to pxla module and use
-  # module as key. Right now we can't do that since there is no way to evict
-  # _pjit_lower_cached cache for in PGLE mode.
+  # Passing mutable PGLE profile here since it should be extracted by JAXPR to
+  # initialize the fdo_profile compile option.
   compiled = _resolve_and_lower(
       args, jaxpr=jaxpr, in_shardings=in_shardings,
       out_shardings=out_shardings, in_layouts=in_layouts,
