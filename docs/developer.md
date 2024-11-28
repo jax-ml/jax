@@ -359,99 +359,162 @@ accept pre-release, dev and nightly packages, it will also
 search https://pypi.anaconda.org/scientific-python-nightly-wheels/simple as an
 extra index url and will not put hashes in the resultant requirements lock file.
 
-### Building with pre-release Python version
+### Customizing hermetic Python (Advanced Usage)
 
-We support all of the current versions of Python out of the box, but if you need
-to build and test against a different version (for example the latest unstable
-version which hasn't been released officially yet) please follow the
-instructions below.
+We support all of the current versions of Python out of the box, so unless your
+workflow has very special requirements (such as ability to use your own custom
+Python interpreter) you may safely skip this section entirely.
 
-1) Make sure you have installed necessary linux packages needed to build Python
-   interpreter itself and key packages (like `numpy` or `scipy`) from source. On
-   a typical Debian system you may need to install the following packages:
+In short, if you rely on a non-standard Python workflow you still can achieve
+the great level of flexibility in hermetic Python setup. Conceptually there will
+be only one difference compared to non-hermetic case: you will need to think in
+terms of files, not installations (i.e. think what files your build actually
+depends on, not what files need to be installed on your system), the rest is
+pretty much the same.
 
+So, in practice, to gain full control over your Python environment, hermetic or
+not you need to be able to do the following three things:
+
+1) Specify which python interpreter to use (i.e. pick actual `python` or
+   `python3` binary and libs that come with it in the same folder).
+2) Specify a list of Python dependencies (e.g. `numpy`) and their actual
+   versions.
+3) Be able to add/remove/update dependencies in the list easily. Each
+   dependency itself could be custom too (self-built for example).
+
+You already know how to do all of the steps above in a non-hermetic Python
+environment, here is how you do the same in the hermetic one (by approaching it
+in terms of files, not installations):
+
+1) Instead of installing Python, get Python interpreter in a `tar` or `zip`
+   file. Depending on your case you may simply pull one of many existing ones
+   (such as [python-build-standalone](https://github.com/indygreg/python-build-standalone/releases)),
+   or build your own and pack it in an archive (following official
+   [build instructions](https://devguide.python.org/getting-started/setup-building/#compile-and-build)
+   will do just fine). E.g. on Linux it will look something like the following:
+   ```
+   ./configure --prefix python
+   make -j12
+   make altinstall
+   tar -czpf my_python.tgz python
+   ```
+   Once you have the tarball ready, plug it in the build by pointing
+   `HERMETIC_PYTHON_URL` env var to the archive (either local one or from the
+   internet):
+   ```
+   --repo_env=HERMETIC_PYTHON_URL="file:///local/path/to/my_python.tgz"
+   --repo_env=HERMETIC_PYTHON_SHA256=<file's_sha256_sum>
+
+   # OR
+   --repo_env=HERMETIC_PYTHON_URL="https://remote/url/to/my_python.tgz"
+   --repo_env=HERMETIC_PYTHON_SHA256=<file's_sha256_sum>
+
+   # We assume that top-level folder in the tarbal is called "python", if it is
+   # something different just pass additional HERMETIC_PYTHON_PREFIX parameter
+   --repo_env=HERMETIC_PYTHON_URL="https://remote/url/to/my_python.tgz"
+   --repo_env=HERMETIC_PYTHON_SHA256=<file's_sha256_sum>
+   --repo_env=HERMETIC_PYTHON_PREFIX="my_python/install"
+   ```
+
+2) Instead of doing `pip install` create `requirements_lock.txt` file with
+   full transitive closure of your dependencies. You may also depend on the
+   existing ones already checked in this repo (as long as they work with your
+   custom Python version). There are no special instructions on how you do it,
+   you may follow steps recommended in [Specifying Python dependencies](#specifying-python-dependencies)
+   from this doc, just call pip-compile directly (note, the lock file must be
+   hermetic, but you can always generate it from non-hermetic python if you'd
+   like) or even create it manually (note, hashes are optional in lock files).
+
+
+3) If you need to update or customize your dependencies list, you may once again
+   follow the [Specifying Python dependencies](#specifying-python-dependencies)
+   instructions to update `requirements_lock.txt`, call pip-compile directly or
+   modify it manually. If you have a custom package you want to use just point
+   to its `.whl` file directly (remember, work in terms of files, not
+   installations) from your lock (note, `requirements.txt` and
+   `requirements_lock.txt` files support local wheel references). If your
+   `requirements_lock.txt` is already specified as a dependency to
+   `python_init_repositories()` in `WORKSPACE` file you don't have to do
+   anything else. Otherwise you can point to your custom file as follows:
+   ```
+   --repo_env=HERMETIC_REQUIREMENTS_LOCK="/absolute/path/to/custom_requirements_lock.txt"
+   ```
+   Also note if you use `HERMETIC_REQUIREMENTS_LOCK` then it fully controls list
+   of your dependencies and the automatic local wheels resolution logic
+   described in [Specifying dependencies on local wheels](#specifying-dependencies-on-local-wheels)
+   gets disabled to not interfere with it.
+
+That is it. To summarize: if you have an archive with Python interpreter in it
+and a requirements_lock.txt file with full transitive closure of your
+dependencies then you fully control your Python environment.
+
+#### Custom hermetic Python examples
+
+Note, for all of the examples below you may also set the environment variables
+globally (i.e. `export` in your shell instead of `--repo_env` argument to your
+command) so calling bazel via `build/build.py` will work just fine.
+
+Build with custom `Python 3.13` from the internet, using default
+`requirements_lock_3_13.txt` already checked in this repo (i.e. custom
+interpreter but default dependencies):
 ```
-sudo apt-get update
-sudo apt-get build-dep python3 -y
-sudo apt-get install pkg-config zlib1g-dev libssl-dev -y
-# to  build scipy
-sudo apt-get install libopenblas-dev -y
+bazel build <target>
+  --repo_env=HERMETIC_PYTHON_VERSION=3.13
+  --repo_env=HERMETIC_PYTHON_URL="https://github.com/indygreg/python-build-standalone/releases/download/20241016/cpython-3.13.0+20241016-x86_64-unknown-linux-gnu-install_only.tar.gz"
+  --repo_env=HERMETIC_PYTHON_SHA256="2c8cb15c6a2caadaa98af51df6fe78a8155b8471cb3dd7b9836038e0d3657fb4"
 ```
 
-2) Check your `WORKSPACE` file and make sure it
-   has `custom_python_interpreter()` entry there, pointing to the version of
-   Python you want to build.
-
-3) Run `bazel build @python_dev//:python_dev -repo_env=HERMETIC_PYTHON_VERSION=3.12`
-   to build Python interpreter. Note, it is easy to confuse Python version used
-   to conduct the build (which is needed for technical reasons and is defined by
-   `HERMETIC_PYTHON_VERSION=3.12`) and the version of Python you are building
-   (defined by whichever version you specified in `custom_python_interpreter()`
-   on step 2). For build to succeed, please make sure that hermetic Python you
-   choose to conduct the build already exists in your configuraiton (the actual
-   version does not matter, as long as it is a working one). By default, Python
-   binary will be built with GCC compiler. If you wish to build it with clang,
-   you need to set corresponding env variables to do so (
-   e.g. `--repo_env=CC=/usr/lib/llvm-17/bin/clang --repo_env=CXX=/usr/lib/llvm-17/bin/clang++`).
-
-4) Check the output of the previous command. At the very end of it you will find
-   a code snippet for `python_register_toolchains()` entry with your newly built
-   Python in it. Copy that code snippet in your `WORKSPACE` file either right
-   after  `python_init_toolchains()` entry (to add the new version of Python) or
-   instead of it (to replace an existing version, like replacing `3.12` with
-   custom built variant of `3.12`). The code snippet is generated to match your
-   actual setup, so it should work as is, but you can customize it if you choose
-   so (for example to change location of Python's `.tgz` file so it could be
-   downloaded remotely instead of being on local machine).
-
-5) Make sure there is an entry for your Python's version in `requirements`
-   parameter for `python_init_repositories()` in your WORKSPACE file. For
-   example for `Python 3.13` it should have something
-   like `"3.13": "//build:requirements_lock_3_13.txt"`. Note, the key in the
-   `requirements` parameter must always be in `"major.minor"` version format, so
-   even if you are building Python version `3.13.0rc1` the corresponding
-   `requirements` entry must still be `"3.13": "//build:requirements_lock_3_13.txt"`,
-   **not** `"3.13.0rc1": "//build:requirements_lock_3_13_0rc1.txt"`.
-
-6) For unstable versions of Python, optionally (but highly recommended)
-   run `bazel build //build:all_py_deps --repo_env=HERMETIC_PYTHON_VERSION="3.13"`,
-   where `3.13` is the version of Python interpreter you built on step 3.
-   This will make `pip` pull and build from sources (for packages which don't
-   have binaries published yet, for
-   example `numpy`, `scipy`, `matplotlib`, `zstandard`) all of the JAX's python
-   dependencies. It is recommended to do this step first (i.e. independently of
-   actual JAX build) for all unstable versions of Python to avoid conflict
-   between building JAX itself and building of its Python dependencies. For
-   example, we normally build JAX with clang but building `matplotlib` from
-   sources with clang fails out of the box due to differences in LTO behavior (
-   Link Time Optimization, triggered by `-flto` flag) between GCC and clang, and
-   matplotlib assumes GCC by default.
-   If you build against a stable version of Python, or in general you do not
-   expect any of your Python dependencies to be built from sources (i.e. binary
-   distributions for the corresponding Python version already exist in the
-   repository) this step is not needed.
-
-7) Congrats, you've built and configured your custom Python for JAX project! You
-   may now execute your built/test commands as usual, just make
-   sure `HERMETIC_PYTHON_VERSION` environment variable is set and points to your
-   new version.
-
-8) Note, if you were building a pre-release version of Python, updating of
-   `requirements_lock_<python_version>.txt` files with your newly built Python
-   is likely to fail, because package repositories will not have matching
-   binary packages. When there are no binary packages available `pip-compile`
-   proceeds with building them from sources, which is likely to fail because it
-   is more restrictive than doing the same thing during `pip` installation.
-   The recommended way to update requirements lock file for unstable versions of
-   Python is to update requirements for the latest stable version (e.g. `3.12`)
-   without hashes (therefore special `//build:requirements_dev.update` target)
-   and then copy the results to the unstable Python's lock file (e.g. `3.13`):
+Build with custom Python 3.13 from local file system and custom lock file
+(assuming the lock file was put in `jax/build` folder of this repo before
+running the command):
 ```
-bazel run //build:requirements_dev.update --repo_env=HERMETIC_PYTHON_VERSION="3.12"
-cp build/requirements_lock_3_12.txt build/requirements_lock_3_13.txt
-bazel build //build:all_py_deps --repo_env=HERMETIC_PYTHON_VERSION="3.13"
-# You may need to edit manually the resultant lock file, depending on how ready
-# your dependencies are for the new version of Python.
+bazel test <target>
+  --repo_env=HERMETIC_PYTHON_VERSION=3.13
+  --repo_env=HERMETIC_PYTHON_URL="file:///path/to/cpython.tar.gz"
+  --repo_env=HERMETIC_PYTHON_PREFIX="prefix/to/strip/in/cython/tar/gz/archive"
+  --repo_env=HERMETIC_PYTHON_SHA256=<sha256_sum>
+  --repo_env=HERMETIC_REQUIREMENTS_LOCK="/absolute/path/to/build:custom_requirements_lock.txt"
+```
+
+If default python interpreter is good enough for you and you just need a custom 
+set of dependencies:
+```
+bazel test <target>
+  --repo_env=HERMETIC_PYTHON_VERSION=3.13
+  --repo_env=HERMETIC_REQUIREMENTS_LOCK="/absolute/path/to/build:custom_requirements_lock.txt"
+```
+
+Note, you can have multiple different `requirement_lock.txt` files corresponding
+to the same Python version to support different scenarios. You can control
+which one is selected by specifying `HERMETIC_PYTHON_VERSION`. For example in
+`WORKSPACE` file:
+```
+requirements = {
+  "3.10": "//build:requirements_lock_3_10.txt",
+  "3.11": "//build:requirements_lock_3_11.txt",
+  "3.12": "//build:requirements_lock_3_12.txt",
+  "3.13": "//build:requirements_lock_3_13.txt",
+  "3.13-scenario1": "//build:scenario1_requirements_lock_3_13.txt",
+  "3.13-scenario2": "//build:scenario2_requirements_lock_3_13.txt",
+},
+```
+Then you can build and test different combinations of stuff without changing
+anything in your environment:
+```
+# To build with scenario1 dependendencies:
+bazel test <target> --repo_env=HERMETIC_PYTHON_VERSION=3.13-scenario1
+
+# To build with scenario2 dependendencies:
+bazel test <target> --repo_env=HERMETIC_PYTHON_VERSION=3.13-scenario2
+
+# To build with default dependendencies:
+bazel test <target> --repo_env=HERMETIC_PYTHON_VERSION=3.13
+
+# To build with scenario1 dependendencies and custom Python 3.13 interpreter:
+bazel test <target>
+  --repo_env=HERMETIC_PYTHON_VERSION=3.13-scenario1
+  --repo_env=HERMETIC_PYTHON_URL="file:///path/to/cpython.tar.gz"
+  --repo_env=HERMETIC_PYTHON_SHA256=<sha256_sum>
 ```
 
 ## Installing `jax`
