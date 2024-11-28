@@ -356,7 +356,7 @@ class LaunchContext:
       arrive: bool | None = None,
       uniform: bool = True,
       collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
-      predicate: ir.Value | None = None,
+      predicate: ir.Value | None = None,  # Should select 0 or 1 threads from the WG.
   ):
     index = ir.IndexType.get()
     i16 = ir.IntegerType.get_signless(16)
@@ -504,7 +504,7 @@ class LaunchContext:
 
     uniform_ctx = (
         functools.partial(utils.single_thread, per_block=False)
-        if uniform
+        if uniform and predicate is None
         else contextlib.nullcontext
     )
 
