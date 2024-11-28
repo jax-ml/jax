@@ -4458,6 +4458,14 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out2.sharding, s)
     self.assertEqual(out2.dtype, np.float32)
 
+  def test_make_mesh_non_int_error(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        "`axis_shapes` passed to `make_mesh` should be a sequence of ints"):
+      jax.make_mesh(((4,), 4), ('x', 'y'))
+
+    jax.make_mesh((1, np.int32(1), np.int64(1)), ('x', 'y', 'z'))  # doesn't crash
+
   def test_jnp_array_reshard_error(self):
     if jax.device_count() < 2:
       self.skipTest('Requires >=2 devices')
