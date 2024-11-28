@@ -1608,19 +1608,19 @@ class FragmentedArrayTest(TestCase):
 
     np.testing.assert_array_equal(result, x)
 
-  @parameterized.named_parameters(
-      ("_bf16", jnp.bfloat16)
-  )
-  def test_fast_i8_convert(self, jax_dtype_to):
-    jax_dtype_to = jnp.dtype(jax_dtype_to)
+  @parameterized.parameters(2, 4)
+  def test_fast_i8_convert(self, reg_length):
+    jax_dtype_to = jnp.dtype(jnp.bfloat16)
     jax_dtype_from = jnp.dtype(jnp.int8)
     mlir_dtype_to = utils.dtype_to_ir_type(jax_dtype_to)
     def kernel(ctx, inp, out, smem):
       del ctx, smem
       arr = mgpu.FragmentedArray.load_strided(inp, is_signed=True)
+      assert ir.VectorType(arr.registers.flat[0].type).shape == [reg_length]
       arr.astype(mlir_dtype_to).store_untiled(out)
 
     x = jnp.arange(-128, 128, dtype=jax_dtype_from)
+    x = jnp.tile(x, reg_length // 2)
     reference = x.astype(jax_dtype_to)
 
     result = mgpu.as_gpu_kernel(
