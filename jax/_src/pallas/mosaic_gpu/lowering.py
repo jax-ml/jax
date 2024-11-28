@@ -1230,7 +1230,7 @@ def _reduce_max_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
         raise NotImplementedError
       if not jnp.issubdtype(x_aval.dtype, jnp.floating):
         raise NotImplementedError
-      return x.reduce(arith_dialect.maxnumf, axes[0])
+      return x.reduce("max", axes[0])
     case _:
       raise NotImplementedError(f"Unsupported layout {x.layout}")
 

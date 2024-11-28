@@ -879,7 +879,10 @@ class FragmentedArray:
 
   def max(self, other):
     if ir.FloatType.isinstance(self.mlir_dtype):
-      return self._pointwise(arith.maximumf, other)
+      maximumf = arith.maximumf
+      if ir.F32Type.isinstance(self.mlir_dtype):
+        maximumf = self._lift_fast_instr("max.NaN.f32")
+      return self._pointwise(maximumf, other)
     elif ir.IntegerType.isinstance(self.mlir_dtype):
       return self._pointwise(
           arith.maxsi if self.is_signed else arith.maxui, other
@@ -907,8 +910,8 @@ class FragmentedArray:
       log2e = arith.constant(f32, ir.FloatAttr.get(f32, 1.4426950408889634))
       def fast_exp(x):
         scaled = arith.mulf(x, log2e)
-        return llvm.inline_asm(f32, [scaled], "ex2.approx.f32 $0, $1;", "=f,f")
-      return self._pointwise(self._lift_fast_unary(fast_exp))
+        return llvm.inline_asm(f32, [scaled], "ex2.approx.ftz.f32 $0, $1;", "=f,f")
+      return self._pointwise(self._lift_fast_instr(fast_exp))
     return self._pointwise(mlir_math.exp)
 
   def sin(self, *, approx: bool = False):
@@ -917,7 +920,7 @@ class FragmentedArray:
     if approx and self.mlir_dtype != ir.F32Type.get():
       raise NotImplementedError
     return self._pointwise(
-        self._lift_fast_unary("sin.approx.f32") if approx else mlir_math.sin
+        self._lift_fast_instr("sin.approx.f32") if approx else mlir_math.sin
     )
 
   def cos(self, *, approx: bool = False):
@@ -926,7 +929,7 @@ class FragmentedArray:
     if approx and self.mlir_dtype != ir.F32Type.get():
       raise NotImplementedError
     return self._pointwise(
-        self._lift_fast_unary("cos.approx.f32") if approx else mlir_math.cos
+        self._lift_fast_instr("cos.approx.f32") if approx else mlir_math.cos
     )
 
   def tanh(self, *, approx: bool = False):
@@ -935,7 +938,7 @@ class FragmentedArray:
     if approx and self.mlir_dtype != ir.F32Type.get():
       raise NotImplementedError
     return self._pointwise(
-        self._lift_fast_unary("tanh.approx.f32") if approx else mlir_math.tanh
+        self._lift_fast_instr("tanh.approx.f32") if approx else mlir_math.tanh
     )
 
   def rsqrt(self, *, approx: bool = False):
@@ -944,31 +947,36 @@ class FragmentedArray:
     if approx and self.mlir_dtype != ir.F32Type.get():
       raise NotImplementedError
     return self._pointwise(
-        self._lift_fast_unary("rsqrt.approx.f32") if approx else mlir_math.rsqrt
+        self._lift_fast_instr("rsqrt.approx.f32") if approx else mlir_math.rsqrt
     )
 
   @staticmethod
-  def _lift_fast_unary(
+  def _lift_fast_instr(
       instr: str | Callable[[ir.Value], ir.Value],
   ) -> Callable[[ir.Value], ir.Value]:
-    def fast_instr(x):
+    def fast_instr(*args):
       f32 = ir.F32Type.get()
-      if x.type == f32:
+      arg_ty = args[0].type
+      assert all(a.type == arg_ty for a in args)
+      if arg_ty == f32:
         if isinstance(instr, str):
-          return llvm.inline_asm(f32, [x], instr + " $0, $1;", "=f,f")
+          args_ptx = ", ".join(f"${i}" for i in range(len(args) + 1))
+          return llvm.inline_asm(
+              f32, args, f"{instr} {args_ptx};", "=f" + ",f" * len(args)
+          )
         else:
-          return instr(x)
-      elif ir.VectorType.isinstance(x.type):
+          return instr(*args)
+      elif ir.VectorType.isinstance(arg_ty):
         index = ir.IndexType.get()
-        result = llvm.mlir_undef(x.type)
-        [vec_len] = ir.VectorType(x.type).shape
+        result = llvm.mlir_undef(arg_ty)
+        [vec_len] = ir.VectorType(arg_ty).shape
         for i in range(vec_len):
-          v = vector.extractelement(x, position=c(i, index))
-          vr = fast_instr(v)
+          vs = [vector.extractelement(a, position=c(i, index)) for a in args]
+          vr = fast_instr(*vs)
           result = vector.insertelement(vr, result, position=c(i, index))
         return result
       else:
-        raise NotImplementedError(x.type)
+        raise NotImplementedError(arg_ty)
     return fast_instr
 
   def bitcast(self, elt: ir.Type, *, output_is_signed: bool | None = None):
@@ -1156,7 +1164,20 @@ class FragmentedArray:
     utils.warpgroup_barrier()  # Make sure everyone is done using scratch.
     return result
 
-  def reduce(self, op, axis):
+  def reduce(self, op: str | Callable[[ir.Value, ir.Value], ir.Value], axis):
+    if isinstance(op, str):
+      match op:
+        case "max":
+          if ir.F32Type.isinstance(self.mlir_dtype):
+            op = self._lift_fast_instr("max.NaN.f32")
+          elif ir.FloatType.isinstance(self.mlir_dtype):
+            op = arith.maximumf
+          elif ir.IntegerType.isinstance(self.mlir_dtype):
+            op = arith.maxsi if self.is_signed else arith.maxui
+          else:
+            raise NotImplementedError(self.mlir_dtype)
+        case _:
+          raise ValueError(f"Unrecognized reduction operator: {op}")
     if self.layout != WGMMA_LAYOUT:
       raise NotImplementedError(self.layout)
     if axis != 1:
@@ -1421,7 +1442,7 @@ class FragmentedArray:
         tiled_shape = ref_ty.shape
         if len(tiled_shape) % 2:
           raise ValueError("Tiled reference must have even rank")
-        tiling = Tiling((tiled_shape[len(tiled_shape) // 2:],))
+        tiling = Tiling((tiled_shape[len(tiled_shape) // 2 :],))
         shape = tiling.untile_shape(tiled_shape)
         registers = np.full(layout.registers_shape(shape), None, dtype=object)
         reg_ty = ir.VectorType.get((layout.vector_length,), ref_ty.element_type)
