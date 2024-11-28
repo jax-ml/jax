@@ -108,19 +108,20 @@ def c(val: int | float, ty):
   return arith.constant(ty, attr)
 
 def _debug_scalar_ty_format(arg):
-  ty_format = None
   if ir.IndexType.isinstance(arg.type):
-    return "%llu"
-  if ir.IntegerType.isinstance(arg.type):
+    ty_format = "%llu"
+  elif ir.IntegerType.isinstance(arg.type):
     width = ir.IntegerType(arg.type).width
     ty_format = "%llu"
     if width < 64:
       arg = arith.extui(ir.IntegerType.get_signless(64), arg)
-  if ir.F32Type.isinstance(arg.type):
+  elif ir.F32Type.isinstance(arg.type):
     ty_format = "%f"
-  if ir.F16Type.isinstance(arg.type):
+  elif ir.F16Type.isinstance(arg.type):
     ty_format = "%f"
     arg = arith.extf(ir.F32Type.get(), arg)
+  else:
+    raise ValueError(f"Can't print the type {arg.type}")
 
   return ty_format, arg
 
