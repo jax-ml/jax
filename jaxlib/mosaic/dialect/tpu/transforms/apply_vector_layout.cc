@@ -3303,6 +3303,8 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
       return op.emitOpError("Not implemented: Changing tiling mid-broadcast");
     }
     auto tiling = layout_in.tiling();
+    const int64_t bitwidth = layout_in.bitwidth();
+    const int64_t packing = 32 / bitwidth;
 
     const int64_t expand_rank = dst_ty.getRank() - src_ty.getRank();
     const ArrayRef<int64_t> src_shape = src_ty.getShape();
@@ -3375,25 +3377,26 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
         *tile = src_tiles(src_idx);
       });
     } else {
-      if (tiling[1] != ctx.target_shape[1]) {
-        return op.emitOpError("Not implemented: unsupported tiling");
-      }
-      int64_t num_tiles = layout_in.tilesPerVreg(ctx.target_shape);
+      const int64_t num_tiles = layout_in.tilesPerVreg(ctx.target_shape);
+      const int64_t sublanes_per_tile =
+          layout_in.sublanesPerTile(ctx.target_shape);
+      const auto [rows_in_sublane, rem] =
+          std::div(ctx.target_shape[1] * packing, tiling[1]);
+      CHECK_EQ(rem, 0);
       if (needs_physical_broadcast ==
           std::array{true, false}) {  // Sublane broadcast
-        if (layout_in.bitwidth() != 32) {
-          return op.emitOpError(
-              "Not implemented: Only 32-bit supported for sublane broadcast");
-        }
-        if (num_tiles != 1) {
-          return op.emitOpError(
-              "Not implemented: Only native tiling supported");
-        }
         TPU_ASSERT_EQ_OP(*(src_tiles.dimensions().end() - 2), 1);
         TPU_ASSERT_OP(offsets_in[0].has_value());
         const int64_t offset = *offsets_in[0];
-        const DenseI32ArrayAttr indices = builder.getDenseI32ArrayAttr(
-            SmallVector<int32_t>(ctx.target_shape[0], offset));
+        SmallVector<int32_t> pattern;
+        pattern.reserve(ctx.target_shape[0]);
+        for (int32_t t = 0; t < num_tiles; ++t) {
+          for (int32_t i = 0; i < sublanes_per_tile; ++i) {
+            pattern.push_back(sublanes_per_tile * t + offset / rows_in_sublane);
+          }
+        }
+        const DenseI32ArrayAttr sublane_pattern =
+            builder.getDenseI32ArrayAttr(pattern);
         src_tiles.Each([&](const absl::Span<const int64_t> src_idx,
                            Value *const src_tile) {
           SmallVector<int64_t> dst_starts(dst_tiles_implicit_shape.size());
@@ -3407,17 +3410,65 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
               dst_limits[i] = dst_starts[i] + 1;
             }
           }
-          updateSlice<Value>(dst_tiles,
-                             builder.create<tpu::GatherOp>(
-                                 src_tile->getType(), *src_tile, indices, 0),
-                             dst_starts, dst_limits);
+          Value vreg = *src_tile;
+          CHECK_EQ(packing % rows_in_sublane, 0);
+          if (rows_in_sublane > 1) {  // Broadcast within sublanes
+            // How many half/quarter/etc-sublanes make up a row:
+            auto [sublane_pieces_in_row, rem] =
+                std::div(packing, rows_in_sublane);
+            CHECK_EQ(rem, 0);
+            const int64_t row_offset_in_sublane = offset % rows_in_sublane;
+            const int64_t shift_amt = sublane_pieces_in_row * bitwidth;
+            const int64_t offset_amt = row_offset_in_sublane * shift_amt;
+            // The mask has bits offset_amt:(offset_amt + shift_amt) set
+            const int64_t row_mask =
+                (1 << (offset_amt + shift_amt)) - (1 << offset_amt);
+            VectorType bits_vreg_ty =
+                VectorType::get(ctx.target_shape, builder.getI32Type());
+            // Mask to get the row we want to broadcast:
+            vreg = builder.create<tpu::BitcastVregOp>(bits_vreg_ty, vreg);
+            Value mask_cst = builder.create<arith::ConstantOp>(
+                broadcast_op.getLoc(), bits_vreg_ty,
+                DenseElementsAttr::get(bits_vreg_ty,
+                                       builder.getI32IntegerAttr(row_mask)));
+            vreg = builder.create<arith::AndIOp>(broadcast_op.getLoc(), vreg,
+                                                 mask_cst);
+
+            // TODO(tlongeri): If we don't want a replicated offset, then we
+            //                 might not need the full within-sublane broadcast.
+            for (int64_t i = 1; i < rows_in_sublane; i <<= 1) {
+              // On each iteration, we double the amount of rows that are set
+              Value shift_cst = builder.create<arith::ConstantOp>(
+                  broadcast_op.getLoc(), bits_vreg_ty,
+                  DenseElementsAttr::get(
+                      bits_vreg_ty, builder.getI32IntegerAttr(shift_amt * i)));
+              Value shifted_vreg;
+              if (row_offset_in_sublane & i) {  // Shift right
+                shifted_vreg = builder.create<arith::ShRUIOp>(
+                    broadcast_op.getLoc(), vreg, shift_cst);
+              } else {  // Shift left
+                shifted_vreg = builder.create<arith::ShLIOp>(
+                    broadcast_op.getLoc(), vreg, shift_cst);
+              }
+              vreg = builder.create<arith::OrIOp>(broadcast_op.getLoc(), vreg,
+                                                  shifted_vreg);
+            }
+            vreg =
+                builder.create<tpu::BitcastVregOp>(src_tile->getType(), vreg);
+          }
+          // Broadcast across sublanes:
+          vreg = builder.create<tpu::GatherOp>(src_tile->getType(), vreg,
+                                               sublane_pattern, 0);
+          updateSlice<Value>(dst_tiles, vreg, dst_starts, dst_limits);
         });
       } else if (needs_physical_broadcast ==
                  std::array{false, true}) {  // Lane broadcast
         TPU_ASSERT_EQ_OP(*(src_tiles.dimensions().end() - 1), 1);
         TPU_ASSERT_OP(offsets_in[1].has_value());
-        const int64_t sublanes_per_tile =
-            layout_in.sublanesPerTile(ctx.target_shape);
+        if (tiling[1] != ctx.target_shape[1]) {
+          return op.emitOpError(
+              "Not implemented: Unsupported tiling for lane broadcast");
+        }
         const int64_t offset = *offsets_in[1];
         const int64_t lane_offset = offset % ctx.target_shape[1];
         const int64_t tile_offset = offset / ctx.target_shape[1];
