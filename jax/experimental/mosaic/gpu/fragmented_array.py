@@ -1265,7 +1265,8 @@ class FragmentedArray:
         if create_array:
           new_regs[reg_idx] = vector.insertelement(val, new_regs[reg_idx], position=i)
 
-    return FragmentedArray(_registers=new_regs, _layout=self.layout, _is_signed=is_signed)
+    if create_array:
+      return FragmentedArray(_registers=new_regs, _layout=self.layout, _is_signed=is_signed)
 
   def store_untiled(self, ref: ir.Value):
     if not ir.MemRefType.isinstance(ref.type):
