@@ -1534,10 +1534,15 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
         _ensure_ir_value(out, aval.dtype) or out
         for out, aval in zip(outs, ctx.avals_out)
     ]
-    yielded_leaves, _ = jax.tree.flatten(yielded)
+    yielded_types_str = [str(v.type) for v in jax.tree.flatten(yielded)[0]]
+
+  # Context seems to be GCed and causing a sigseg when created in the
+  # temporary module. Serialize-deserialize the types to update the
+  # context.
+  yielded_types = [ir.Type.parse(t_str) for t_str in yielded_types_str]
 
   switch_op = scf_dialect.IndexSwitchOp(
-      [v.type for v in yielded_leaves],
+      yielded_types,
       _as_index(_ensure_ir_value(index, index_aval.dtype)),
       ir.DenseI64ArrayAttr.get(range(len(branches) - 1)),
       num_caseRegions=len(branches) - 1,
