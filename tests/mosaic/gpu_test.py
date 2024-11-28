@@ -1240,7 +1240,7 @@ class TMATest(TestCase):
       x = np.arange(np.prod(shape)).reshape(shape)
       _ = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, x)(x)
 
-    with self.assertRaisesRegex(ValueError, "only support striding up to 5"):
+    with self.assertRaisesRegex(ValueError, "all GMEM strides except the last"):
       run_kernel([1] * 6)
 
     with self.assertRaisesRegex(

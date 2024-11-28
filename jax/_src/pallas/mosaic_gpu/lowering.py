@@ -360,10 +360,6 @@ def lower_jaxpr_to_module(
 
   assert len(jaxpr.outvars) == 0
   assert not grid_mapping.vmapped_dims
-  if len(grid_mapping.grid) > 3:
-    raise NotImplementedError(
-        "Only <=3D grids are supported in Mosaic GPU lowering."
-    )
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(
         "Dynamic grid bounds not supported in the Mosaic GPU lowering."
@@ -397,16 +393,19 @@ def lower_jaxpr_to_module(
         f" {max_concurrent_steps=}, {delay_release=}"
     )
 
-  block = (128, 1, 1)
-  grid = grid_mapping.grid
   if grid_mapping.grid_names:  # Last dim corresponds to the warpgroup count
     block = (128 * grid_mapping.grid[-1], 1, 1)
-    grid = grid[:-1]
-
-  grid = [d for i, d in enumerate(grid) if i not in sequential_axes]
-  if len(grid) < 3:
-    grid += (1,) * (3 - len(grid))
+    logical_grid = grid_mapping.grid[:-1]
   else:
+    block = (128, 1, 1)
+    logical_grid = grid_mapping.grid
+
+  parallel_grid = [
+      d for i, d in enumerate(logical_grid) if i not in sequential_axes
+  ]
+  if len(parallel_grid) < 3:
+    parallel_grid += (1,) * (3 - len(parallel_grid))
+  elif len(parallel_grid) > 3:
     raise NotImplementedError(
         "Only <=3D grids are supported in Mosaic GPU lowering."
     )
@@ -500,7 +499,7 @@ def lower_jaxpr_to_module(
         _program_id(next(parallel_count))
         if axis not in sequential_axes
         else None
-        for axis in range(len(grid_mapping.grid))
+        for axis in range(len(logical_grid))
     ]
 
     def make_program_ids(step: ir.Value):
@@ -788,7 +787,7 @@ def lower_jaxpr_to_module(
     prof_ctx = ProfilerContext(params["profile_dir"], prof_spec)
   module, out_structs_gmem, _ = mgpu_core._lower_as_gpu_kernel(
       body,
-      grid=grid,
+      grid=parallel_grid,
       cluster=(),
       block=block,
       in_shapes=in_structs_gmem,
@@ -806,7 +805,9 @@ def lower_jaxpr_to_module(
       prof_spec=prof_spec,
   )
 
-  return LoweringResult(module, grid, block, out_structs_gmem, prof_ctx)
+  return LoweringResult(
+      module, parallel_grid, block, out_structs_gmem, prof_ctx
+  )
 
 
 mosaic_lowering_rules = {}
