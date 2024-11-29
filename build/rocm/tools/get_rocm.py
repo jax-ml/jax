@@ -229,7 +229,7 @@ def _build_installer_url(rocm_version, metadata):
 
     rv = parse_version(rocm_version)
 
-    base_url = "http://artifactory-cdn.amd.com/artifactory/list"
+    base_url = "https://artifactory-cdn.amd.com/artifactory/list"
 
     if md["ID"] == "ubuntu":
         fmt = "amdgpu-install-internal_%(rocm_major)s.%(rocm_minor)s-%(os_version)s-1_all.deb"
