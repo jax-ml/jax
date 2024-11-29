@@ -1199,6 +1199,13 @@ def _exp_lowering_rule(ctx: LoweringRuleContext, x):
   return a.exp(approx=ctx.module_ctx.approx_math)
 
 
+@register_lowering_rule(lax.exp2_p)
+def _exp2_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  a = _ensure_fa(x, x_aval.dtype)
+  return a.exp2(approx=ctx.module_ctx.approx_math)
+
+
 @register_lowering_rule(lax.reduce_sum_p)
 def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
   [x_aval] = ctx.avals_in
@@ -1216,7 +1223,7 @@ def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
         raise NotImplementedError
       if not jnp.issubdtype(x_aval.dtype, jnp.floating):
         raise NotImplementedError
-      return x.reduce(arith_dialect.addf, axes[0])
+      return x.reduce("add", axes[0])
     case _:
       raise NotImplementedError(f"Unsupported layout {x.layout}")
 

@@ -16,6 +16,7 @@
 import dataclasses
 import functools
 import itertools
+import math
 import jax
 from jax import lax
 from jax._src import test_util as jtu  # noqa: F401
@@ -118,11 +119,13 @@ def attention(q, k, v, config: TuningConfig):
         plgpu.barrier_arrive(k_consumed_barrier)
 
         # Softmax
-        m_ij = jnp.maximum(m_i, qk.max(axis=1))
-        alpha = jnp.exp(m_i - m_ij)
+        # We keep m scaled by log2e to use FMA instructions when computing p.
+        log2e = math.log2(math.e)
+        m_ij = jnp.maximum(m_i, qk.max(axis=1) * log2e)
+        alpha = jnp.exp2(m_i - m_ij)
         m_i = m_ij
-        p = jnp.exp(qk - lax.broadcast_in_dim(m_ij, (block_q, block_kv), [0]))
-        acc *= lax.broadcast_in_dim(alpha, (block_q, head_dim), [0])
+        p = jnp.exp2(qk * log2e - lax.broadcast_in_dim(m_ij, qk.shape, [0]))
+        acc *= lax.broadcast_in_dim(alpha, acc.shape, [0])
         l_i *= alpha
         p16 = p.astype(dtype)
 

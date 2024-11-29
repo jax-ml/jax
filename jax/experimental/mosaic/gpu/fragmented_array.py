@@ -700,7 +700,7 @@ class FragmentedArray:
 
   def __add__(self, other):
     if ir.FloatType.isinstance(self.mlir_dtype):
-      return self._pointwise(arith.addf, other)
+      return self._pointwise(addf, other)
     elif ir.IntegerType.isinstance(self.mlir_dtype):
       return self._pointwise(arith.addi, other)
     else:
@@ -711,7 +711,7 @@ class FragmentedArray:
 
   def __mul__(self, other):
     if ir.FloatType.isinstance(self.mlir_dtype):
-      return self._pointwise(arith.mulf, other)
+      return self._pointwise(mulf, other)
     elif ir.IntegerType.isinstance(self.mlir_dtype):
       return self._pointwise(arith.muli, other)
     else:
@@ -722,7 +722,7 @@ class FragmentedArray:
 
   def __sub__(self, other):
     if ir.FloatType.isinstance(self.mlir_dtype):
-      return self._pointwise(arith.subf, other)
+      return self._pointwise(subf, other)
     elif ir.IntegerType.isinstance(self.mlir_dtype):
       return self._pointwise(arith.subi, other)
     else:
@@ -730,7 +730,7 @@ class FragmentedArray:
 
   def __rsub__(self, other):
     if ir.FloatType.isinstance(self.mlir_dtype):
-      return self._pointwise(lambda s, o: arith.subf(o, s), other)
+      return self._pointwise(lambda s, o: subf(o, s), other)
     elif ir.IntegerType.isinstance(self.mlir_dtype):
       return self._pointwise(lambda s, o: arith.subi(o, s), other)
     else:
@@ -904,15 +904,19 @@ class FragmentedArray:
     if not ir.FloatType.isinstance(self.mlir_dtype):
       raise NotImplementedError
     if approx:
-      f32 = ir.F32Type.get()
-      if self.mlir_dtype != f32:
-        raise NotImplementedError
-      log2e = arith.constant(f32, ir.FloatAttr.get(f32, 1.4426950408889634))
-      def fast_exp(x):
-        scaled = arith.mulf(x, log2e)
-        return llvm.inline_asm(f32, [scaled], "ex2.approx.ftz.f32 $0, $1;", "=f,f")
-      return self._pointwise(self._lift_fast_instr(fast_exp))
+      dtype = self.mlir_dtype
+      log2e = arith.constant(dtype, ir.FloatAttr.get(dtype, 1.4426950408889634))
+      return (self * log2e).exp2()
     return self._pointwise(mlir_math.exp)
+
+  def exp2(self, *, approx: bool = False):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
+    if approx:
+      if not ir.F32Type.isinstance(self.mlir_dtype):
+        raise NotImplementedError(self.mlir_dtype)
+      return self._pointwise(self._lift_fast_instr("ex2.approx.ftz.f32"))
+    return self._pointwise(mlir_math.exp2)
 
   def sin(self, *, approx: bool = False):
     if not ir.FloatType.isinstance(self.mlir_dtype):
@@ -1125,7 +1129,7 @@ class FragmentedArray:
   # NOTE: scratch can be reused immediately once this function returns.
   def reduce_sum(self, scratch) -> ir.Value:
     if ir.FloatType.isinstance(self.mlir_dtype):
-      op = arith.addf
+      op = addf
     elif ir.IntegerType.isinstance(self.mlir_dtype):
       op = arith.addi
     else:
@@ -1167,6 +1171,13 @@ class FragmentedArray:
   def reduce(self, op: str | Callable[[ir.Value, ir.Value], ir.Value], axis):
     if isinstance(op, str):
       match op:
+        case "add":
+          if ir.FloatType.isinstance(self.mlir_dtype):
+            op = addf
+          elif ir.IntegerType.isinstance(self.mlir_dtype):
+            op = arith.addi
+          else:
+            raise NotImplementedError(self.mlir_dtype)
         case "max":
           if ir.F32Type.isinstance(self.mlir_dtype):
             op = self._lift_fast_instr("max.NaN.f32")
@@ -1653,3 +1664,15 @@ class FragmentedArray:
     layout, reg_shape, is_signed = aux
     registers = np.asarray(flat_registers, dtype=object).reshape(reg_shape)
     return cls(_registers=registers, _layout=layout, _is_signed=is_signed)
+
+
+# We allow contractions, to potentially take advantage of FMA instructions.
+# They can change the results, but the precision should only increase.
+def addf(a: ir.Value, b: ir.Value):
+  return arith.addf(a, b, fastmath=arith.FastMathFlags.contract)
+
+def subf(a: ir.Value, b: ir.Value):
+  return arith.subf(a, b, fastmath=arith.FastMathFlags.contract)
+
+def mulf(a: ir.Value, b: ir.Value):
+  return arith.mulf(a, b, fastmath=arith.FastMathFlags.contract)
