@@ -1565,14 +1565,14 @@ class FragmentedArrayTest(TestCase):
       assert isinstance(pi_arr_sq.layout, mgpu.WGStridedFragLayout)
       pi_arr_cube = pi_splat.broadcast(pi_arr.shape) * pi_arr_sq
       assert isinstance(pi_arr_cube.layout, mgpu.WGStridedFragLayout)
-      (pi_arr_sq + pi_arr_cube).store_untiled(dst)
+      (pi_arr == pi_arr).select(pi_splat, pi_arr_cube).store_untiled(dst)
 
     out_shape = jax.ShapeDtypeStruct((128, 32), jnp.float32)
     inp = jnp.ones_like(out_shape) * 3.14
     result = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), inp, out_shape, ()
     )(inp)
-    np.testing.assert_allclose(result, np.full((128, 32), 3.14 ** 2 + 3.14 ** 3, np.float32))
+    np.testing.assert_allclose(result, np.full((128, 32), 3.14, np.float32))
 
 
   @parameterized.product(in_shape=((128, 128), (128, 64), (64, 128)))

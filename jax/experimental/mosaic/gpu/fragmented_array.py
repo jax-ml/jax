@@ -632,7 +632,7 @@ class FragmentedArray:
           continue
         elif not isinstance(o.layout, WGSplatFragLayout):
           return o._pointwise(
-              lambda o, *args: op(*args[:i], o, *args[i:]),
+              lambda o, this, *args: op(this, *args[:i], o, *args[i:]),
               self,
               *other[:i],
               *other[i + 1 :],
