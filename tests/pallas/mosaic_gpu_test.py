@@ -241,8 +241,9 @@ class PallasCallTest(PallasTest):
     # are never written to.
     np.testing.assert_array_equal(kernel(x)[:, :16], y[:, :16])
 
-  def test_iota(self):
-    dtype, dimension = jnp.int8, 1
+  @parameterized.parameters(jnp.float32, jnp.int32, jnp.uint32)
+  def test_iota(self, dtype):
+    dimension = 1
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct((128, 128), dtype),
