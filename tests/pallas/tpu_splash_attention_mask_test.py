@@ -18,9 +18,10 @@ from __future__ import annotations
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import test_util as jtu
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask_info as mask_info_lib
-from jax._src import test_util as jtu
+import jax.numpy as jnp
 import numpy as np
 
 jax.config.parse_flags_with_absl()
@@ -2090,6 +2091,89 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
         mask_info_lib._check_mask(mask)
 
     self.assertIn("softmax", str(ctx.exception))
+
+  @parameterized.parameters((False,), (True,))
+  def test_dynamic_mask(self, is_dkv: bool):
+    head_count, q_seq_len, kv_seq_len = 1, 8, 8
+    block_shape = (2, 4)
+
+    def make_causal_mask(q_seq_len: int, kv_seq_len: int):
+      idx_q = jnp.arange(q_seq_len, dtype=np.int32)
+      idx_kv = jnp.arange(kv_seq_len, dtype=np.int32)
+
+      return idx_q[:, None] >= idx_kv[None, :]
+
+    mask = jnp.stack([make_causal_mask(q_seq_len, kv_seq_len)] * head_count)
+
+    mask_info, _ = mask_info_lib.process_dynamic_mask(
+        mask, block_shape=block_shape, is_dkv=is_dkv
+    )
+
+    _expected_block_mask = np.array(
+        [[
+            [1, 0],
+            [1, 0],
+            [2, 1],
+            [2, 1],
+        ]],
+        dtype=np.int8,
+    )
+
+    _expected_partial_mask_blocks = np.array(
+        [
+            [[1, 0, 0, 0], [1, 1, 0, 0]],
+            [[0, 0, 0, 0], [0, 0, 0, 0]],
+            [[1, 1, 1, 0], [1, 1, 1, 1]],
+            [[0, 0, 0, 0], [0, 0, 0, 0]],
+            [[1, 1, 1, 1], [1, 1, 1, 1]],
+            [[1, 0, 0, 0], [1, 1, 0, 0]],
+            [[1, 1, 1, 1], [1, 1, 1, 1]],
+            [[1, 1, 1, 0], [1, 1, 1, 1]],
+        ],
+        dtype=np.int32,
+    )
+
+    _expected_mask_next = np.array(
+        [[
+            [0, 0],
+            [2, 0],
+            [0, 5],
+            [0, 7],
+        ]],
+        dtype=np.int8,
+    )
+
+    _expected_data_next = np.array(
+        [[
+            [0, 0],
+            [0, 0],
+            [0, 1],
+            [0, 1],
+        ]],
+        dtype=np.int8,
+    )
+
+    if is_dkv:
+      _expected_partial_mask_blocks = _expected_partial_mask_blocks.swapaxes(
+          -1, -2
+      )
+      _expected_data_next = np.array(
+          [[
+              [0, 0],
+              [1, 0],
+              [2, 2],
+              [3, 3],
+          ]],
+          dtype=np.int8,
+      )
+
+    self.assertArraysEqual(mask_info.block_mask, _expected_block_mask)
+    self.assertArraysEqual(
+        mask_info.partial_mask_blocks,
+        _expected_partial_mask_blocks,
+    )
+    self.assertArraysEqual(mask_info.mask_next, _expected_mask_next)
+    self.assertArraysEqual(mask_info.data_next, _expected_data_next)
 
 
 if __name__ == "__main__":
