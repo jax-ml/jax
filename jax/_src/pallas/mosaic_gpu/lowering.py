@@ -201,6 +201,7 @@ class ModuleContext:
   ]
   name_stack: source_info_util.NameStack
   traceback_caches: mlir.TracebackCaches
+  squashed_dims: tuple[int, ...]
 
   def reserve_barrier(self, barrier: mgpu.Barrier) -> mgpu.BarrierRef:
     """Reserves a barrier.
@@ -403,12 +404,15 @@ def lower_jaxpr_to_module(
   parallel_grid = [
       d for i, d in enumerate(logical_grid) if i not in sequential_axes
   ]
-  if len(parallel_grid) < 3:
+  if len(parallel_grid) <= 3:
+    squashed_dims = ()
     parallel_grid += (1,) * (3 - len(parallel_grid))
-  elif len(parallel_grid) > 3:
-    raise NotImplementedError(
-        "Only <=3D grids are supported in Mosaic GPU lowering."
-    )
+  else:
+    # If we have >3 parallel dimensions, we merge all leading dimensions
+    # into the first (Dimension.x) CUDA grid dimension.
+    squashed_dims = parallel_grid[:-2]
+    parallel_grid = [math.prod(parallel_grid[:-2]), *parallel_grid[-2:]]
+
   if sequential_axes:
     # TODO(slebedev): Support multiple sequential axes.
     if len(sequential_axes) > 1:
@@ -496,7 +500,7 @@ def lower_jaxpr_to_module(
 
     parallel_count = it.count()
     program_ids_template = [
-        _program_id(next(parallel_count))
+        _program_id(next(parallel_count), squashed_dims=squashed_dims)
         if axis not in sequential_axes
         else None
         for axis in range(len(logical_grid))
@@ -520,6 +524,7 @@ def lower_jaxpr_to_module(
         runtime_barriers=grouped_barriers,
         name_stack=source_info_util.NameStack(),
         traceback_caches=mlir.TracebackCaches(),
+        squashed_dims=squashed_dims,
     )
     del runtime_smem, grouped_barriers, runtime_barriers
 
@@ -911,12 +916,42 @@ def _program_id_lowering_rule(ctx: LoweringRuleContext, axis):
     raise NotImplementedError("pl.program_id() is not supported in this context")
   return ctx.module_ctx.program_ids[axis]
 
+def _unravel_program_id(
+    block_id: ir.Value,
+    axis: int,
+    dimensions: tuple[int, ...],
+    row_major: bool = False
+) -> ir.Value:
+  """Computes the program ID for axes compressed into one block dimension."""
+  if row_major:
+    div_value = math.prod(dimensions[axis+1:])
+  else:
+    div_value = math.prod(dimensions[:axis])
+  div_value = _as_index(_i32_constant(div_value))
+  pid = arith_dialect.divui(block_id, div_value)
+  axis_size = _as_index(_i32_constant(dimensions[axis]))
+  pid = arith_dialect.remui(pid, axis_size)
+  return arith_dialect.index_cast(ir.IntegerType.get_signless(32), pid)
 
-def _program_id(axis: int) -> ir.Value:
-  return arith_dialect.index_cast(
-      ir.IntegerType.get_signless(32),
-      gpu_dialect.block_id(gpu_dialect.Dimension(axis)),
-  )
+
+def _program_id(parallel_axis: int, squashed_dims: tuple[int, ...]) -> ir.Value:
+  if squashed_dims:
+    if parallel_axis < len(squashed_dims):
+      # All squashed dimensions are mapped to Dimension.x.
+      block_id = gpu_dialect.block_id(gpu_dialect.Dimension.x)
+      return _unravel_program_id(block_id, parallel_axis, squashed_dims)
+    else:
+      # Handle unsquashed axes.
+      return arith_dialect.index_cast(
+          ir.IntegerType.get_signless(32),
+          gpu_dialect.block_id(gpu_dialect.Dimension(
+              parallel_axis - len(squashed_dims) + 1)),
+      )
+  else:
+    return arith_dialect.index_cast(
+        ir.IntegerType.get_signless(32),
+        gpu_dialect.block_id(gpu_dialect.Dimension(parallel_axis)),
+    )
 
 
 @register_lowering_rule(primitives.num_programs_p)
@@ -1244,16 +1279,44 @@ def _reduce_max_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
 
 @register_lowering_rule(lax.axis_index_p)
 def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
+  i32 = ir.IntegerType.get_signless(32)
   grid_names = ctx.module_ctx.grid_mapping.grid_names
+  squashed_dims = ctx.module_ctx.squashed_dims
+  if squashed_dims:
+    unsquashed_names = grid_names[-3:]
+    squashed_names = grid_names[:-3]
+  else:
+    # These are unused but initialized for type checkers.
+    unsquashed_names = ()
+    squashed_names = ()
   if grid_names and axis_name in grid_names:
     if axis_name == grid_names[-1]:
       return mgpu.warpgroup_idx(sync=True)
     else:
-      idx = grid_names.index(axis_name)
-      return arith_dialect.index_cast(
-          ir.IntegerType.get_signless(32),
-          gpu_dialect.block_id(gpu_dialect.Dimension(idx)),
-      )
+      if squashed_dims:
+        if axis_name in unsquashed_names:
+          # We add 1 to the index because the first dimension is the
+          # squashed dimension.
+          # e.g. for the grid (a, b, c, d, wg)
+          # squashed = (a, b)  Mapped to Dimension.x (0)
+          # unsquashed = (c, d)  Mapped to Dimension.y (1) and Dimension.z (2)
+          idx = unsquashed_names.index(axis_name) + 1
+          return arith_dialect.index_cast(
+            i32,
+            gpu_dialect.block_id(gpu_dialect.Dimension(idx)),
+          )
+        elif axis_name in squashed_names:
+          # All squashed dimensions are mapped to Dimension.x.
+          block_id = gpu_dialect.block_id(gpu_dialect.Dimension.x)
+          axis = squashed_names.index(axis_name)
+          return _unravel_program_id(block_id, axis, squashed_dims)
+      else:
+        if axis_name in grid_names:
+          idx = grid_names.index(axis_name)
+          return arith_dialect.index_cast(
+            i32,
+            gpu_dialect.block_id(gpu_dialect.Dimension(idx)),
+          )
   raise ValueError(
       "Named axes can only refer to GPUMesh axes in Mosaic GPU kernels"
   )
@@ -1669,10 +1732,14 @@ def _ir_constant(v: object, t: ir.Type) -> ir.Value:
 
 
 def _i32_constant(v: int) -> ir.Value:
+  if v < jnp.iinfo(jnp.int32).min or v > jnp.iinfo(jnp.int32).max:
+    raise ValueError(f"Integer constant out of range for i32: {v}")
   return arith_dialect.constant(ir.IntegerType.get_signless(32), v)
 
 
 def _i64_constant(v: int) -> ir.Value:
+  if v < jnp.iinfo(jnp.int64).min or v > jnp.iinfo(jnp.int64).max:
+    raise ValueError(f"Integer constant out of range for i64: {v}")
   return arith_dialect.constant(ir.IntegerType.get_signless(64), v)
 
 

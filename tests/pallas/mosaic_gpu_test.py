@@ -609,6 +609,30 @@ class PallasCallTest(PallasTest):
         jnp.array([0] * 128 + [1] * 128, dtype=jnp.int32),
     )
 
+  def test_program_id_in_squashed_grid(self):
+    # Tests whether a grid with >3 logical dimensions is correctly squashed to
+    # 3 CUDA grid dimensions.
+    grid = (2, 3, 4, 5)
+    @functools.partial(
+        pl.pallas_call,
+        in_specs=(),
+        out_specs=pl.BlockSpec((1,) * len(grid) + (128,), lambda *i: (*i, 0)),
+        out_shape=jax.ShapeDtypeStruct([*grid, 128], jnp.int32),
+        grid=grid,
+    )
+    def kernel(o_ref):
+      mult = 1
+      idx = 0
+      for axis in range(len(grid)-1, -1, -1):
+        idx += pl.program_id(axis) * mult
+        mult *= pl.num_programs(axis)
+      o_ref[...] = jnp.full(o_ref.shape, idx)
+
+    np.testing.assert_array_equal(
+        kernel()[:, :, :, :, 0],
+        jnp.arange(math.prod(grid), dtype=jnp.int32).reshape(*grid)
+    )
+
   def test_program_id_in_block_spec(self):
     @functools.partial(
         pl.pallas_call,
@@ -1382,6 +1406,41 @@ class CoreMapTest(PallasTest):
     np.testing.assert_array_equal(
         f(), np.repeat([0, 1, 4, 5, 2, 3, 6, 7], 128).reshape(4, 2, 128)
     )
+
+  def test_multiple_wg_with_squashed_grid(self):
+    # Tests whether a grid with >3 logical dimensions is correctly squashed to
+    # 3 CUDA grid dimensions.
+    b = 4
+    x_dim = 3
+    y_dim = 5
+    z_dim = 7
+    num_threads = 2
+    mesh = plgpu.GPUMesh(grid=(b, x_dim, y_dim, z_dim),
+                         num_threads=num_threads,
+                         axis_names=("b", "x", "y", "z", "wg"))
+
+    @jax.jit
+    def f():
+      @pl.run_state
+      def inner(y_ref):
+        @pl.core_map(mesh)
+        def _():
+          b_idx = jax.lax.axis_index("b")
+          x_idx = jax.lax.axis_index("x")
+          y_idx = jax.lax.axis_index("y")
+          z_idx = jax.lax.axis_index("z")
+          wg_idx = jax.lax.axis_index("wg")
+          bxyzw_idx = jax.lax.axis_index(("b", "x", "y", "z", "wg"))
+          y_ref[b_idx, x_idx, y_idx, z_idx, wg_idx] = jnp.broadcast_to(
+            bxyzw_idx, (128,)
+          )
+      y_init = jnp.zeros((b, x_dim, y_dim, z_dim, num_threads, 128), np.int32)
+      return inner(y_init)
+    result = f()[:, :, :, :, :, 0]
+    ref = np.arange(b * x_dim * y_dim * z_dim * num_threads).reshape(
+        result.shape)
+    np.testing.assert_array_equal(result, ref)
+
 
   def test_cross_wg_barrier(self):
     mesh = plgpu.GPUMesh(num_threads=2, axis_names=("wg",))
