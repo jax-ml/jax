@@ -87,6 +87,7 @@ def switch(index, branches: Sequence[Callable], *operands,
   Args:
     index: Integer scalar type, indicating which branch function to apply.
     branches: Sequence of functions (A -> B) to be applied based on ``index``.
+      All branches must return the same output structure.
     operands: Operands (A) input to whichever branch is applied.
 
   Returns:
