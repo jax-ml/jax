@@ -4400,34 +4400,14 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     elif name == 'tanh':
       regions_with_inaccuracies_keep('ninf', 'pinf', 'ninfj', 'pinfj')
 
-    elif name == 'arcsin':
-      if is_arm_cpu and platform.system() == 'Darwin':
-        regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'neg.real', 'pos.real')
-      else:
-        regions_with_inaccuracies.clear()
-
-    elif name == 'arcsinh':
-      if is_arm_cpu and platform.system() == 'Darwin':
-        regions_with_inaccuracies_keep('q1.imag', 'q2.imag', 'q3.imag', 'q4.imag',
-                                       'negj.imag', 'posj.imag')
-      else:
-        regions_with_inaccuracies.clear()
-
     elif name == 'arccos':
       regions_with_inaccuracies_keep('q4.imag', 'ninf', 'pinf', 'ninfj', 'pinfj.real')
 
     elif name in {'cos', 'sin'}:
       regions_with_inaccuracies_keep('ninf.imag', 'pinf.imag')
 
-    elif name == 'log1p':
-      if is_arm_cpu and platform.system() == 'Darwin':
-        regions_with_inaccuracies_keep('q1.imag', 'q2.imag', 'q3.imag', 'q4.imag', 'negj.imag',
-                                       'posj.imag')
-      else:
-        regions_with_inaccuracies.clear()
-
-    elif name in {'positive', 'negative', 'conjugate', 'sin', 'cos', 'sqrt', 'expm1', 'tan',
-                  'arcsinh', 'arccosh', 'arctan', 'arctanh', 'square'}:
+    elif name in {'positive', 'negative', 'conjugate', 'sin', 'cos', 'sqrt', 'expm1', 'tan', 'log1p',
+                  'arcsin', 'arcsinh', 'arccosh', 'arctan', 'arctanh', 'square'}:
       regions_with_inaccuracies.clear()
     else:
       assert 0  # unreachable

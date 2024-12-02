@@ -25,6 +25,7 @@ import inspect
 import logging
 import math
 import os
+import platform
 import re
 import sys
 import tempfile
@@ -1704,6 +1705,10 @@ def complex_plane_sample(dtype, size_re=10, size_im=None):
     size_im = size_re
   finfo = np.finfo(dtype)
 
+  machine = platform.machine()
+  is_arm_cpu = machine.startswith('aarch') or machine.startswith('arm')
+  smallest = np.nextafter(finfo.tiny, finfo.max) if is_arm_cpu and platform.system() == 'Darwin' else finfo.tiny
+
   def make_axis_points(size):
     prec_dps_ratio = 3.3219280948873626
     logmin = logmax = finfo.maxexp / prec_dps_ratio
@@ -1722,8 +1727,8 @@ def complex_plane_sample(dtype, size_re=10, size_im=None):
       axis_points[1] = finfo.min
       axis_points[-2] = finfo.max
     if size > 0:
-      axis_points[size] = -finfo.tiny
-      axis_points[-size - 1] = finfo.tiny
+      axis_points[size] = -smallest
+      axis_points[-size - 1] = smallest
     axis_points[0] = -np.inf
     axis_points[-1] = np.inf
     return axis_points
