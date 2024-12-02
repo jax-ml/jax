@@ -20,7 +20,7 @@ import dataclasses
 import functools
 import math
 from collections.abc import Callable
-from typing import Iterable, Sequence, TypeVar
+from typing import Iterable, Protocol, Sequence, TypeVar
 
 import jax
 from jaxlib.mlir import ir
@@ -42,6 +42,8 @@ T = TypeVar("T")
 WARPGROUP_SIZE = utils.WARPGROUP_SIZE
 WARP_SIZE = 32
 WARPS_IN_WARPGROUP = WARPGROUP_SIZE // WARP_SIZE
+SMEM_BANKS = 32
+SMEM_BANK_BYTES = 4
 c = utils.c
 
 
@@ -1455,11 +1457,15 @@ class FragmentedArray:
           raise ValueError("Tiled reference must have even rank")
         tiling = Tiling((tiled_shape[len(tiled_shape) // 2 :],))
         shape = tiling.untile_shape(tiled_shape)
-        registers = np.full(layout.registers_shape(shape), None, dtype=object)
+        zero = (
+            vector.splat(
+                ir.VectorType.get((layout.vector_length,), dtype), c(0, dtype)
+            ),
+        )
+        registers = np.full(layout.registers_shape(shape), zero, dtype=object)
         reg_ty = ir.VectorType.get((layout.vector_length,), ref_ty.element_type)
         for _, update, ptr in cls.transfer_tiled2(ref, swizzle, layout, shape):
           update(registers, llvm.load(reg_ty, ptr))
-        assert all(r is not None for r in registers.flat)
       case WGMMAFragLayout():
         bw = mgpu.bytewidth(dtype)
         m_tiles, n_tiles, m_tile_size, n_tile_size = ref_ty.shape
@@ -1611,6 +1617,8 @@ class FragmentedArray:
 
     tiled_strides = list(tiling.tile_strides(tuple(ref_strides)))
     tiled_shape = list(tiling.tile_shape(tuple(ref_ty.shape)))
+    lane_strides = [tiled_strides[d] for d in layout.lane_dims]
+    lane_shape = [tiled_shape[d] for d in layout.lane_dims]
     if tiled_strides[layout.vector_dim] != 1:
       raise ValueError("Stride of the vectorized dimension should be 1")
     for d in (layout.warp_dim, *layout.lane_dims, layout.vector_dim):
@@ -1618,12 +1626,9 @@ class FragmentedArray:
     full_tiling = Tiling((ref_tiling_shape, *tiling.tiles))
     full_layout = dataclasses.replace(layout, tiling=full_tiling)
 
-    # XXX: This method is still slightly incompete. For example, it does not
-    # verify that the vector transfers don't cross swizzle tile boundaries. It
-    # also does not guarantee that the transfer pattern does not cause bank
-    # conflicts. For that reason, we only allow a select subset of layouts.
-    if layout != _tiled_wgmma_layout(shape) or bw > 2:
-      raise NotImplementedError("transfer_tiled2 not general enough yet")
+    plan = plan_tiled_transfer(
+        tiled_shape, tiled_strides, lane_shape, lane_strides, layout, bw, swizzle
+    )
 
     dyn_tiled_strides = [c(s) for s in tiled_strides]
     lane_offset = utils.dyn_dot(full_layout.lane_indices(), dyn_tiled_strides)
@@ -1632,14 +1637,20 @@ class FragmentedArray:
     if ref_ty.memory_space != ir.Attribute.parse("#gpu.address_space<workgroup>"):
       raise ValueError("Tiled stores can be performed into SMEM")
     ptr = utils.memref_ptr(ref, memory_space=3)
+    _as_consts = lambda consts: [c(const) for const in consts.tolist()]
+    # This has bits set only for the offset bits that influence swizzling.
+    swizzle_mask = swizzle_block_elems - swizzle_tile_elems
     for tile_idx in np.ndindex(*tiled_shape):
-      const_offset = sum(i * s for i, s in zip(tile_idx, tiled_strides))
+      indices = np.asarray([f(tile_idx) for f in plan.tile_index_transforms])
+      const_offset = np.dot(indices, tiled_strides)
       # We split the offset into a part that interacts with swizzling and a
       # part that doesn't. This lets us generate better code because constant
       # offsets can be fused into load and store instructions.
-      const_offset_swizzle = const_offset % swizzle_block_elems
+      const_offset_swizzle = const_offset & swizzle_mask
       const_offset_no_swizzle = const_offset - const_offset_swizzle
-      offset_pre_swizzle = arith.addi(dyn_offset, c(const_offset_swizzle))
+      offset_pre_swizzle = arith.addi(
+          dyn_offset, plan.select(_as_consts(const_offset_swizzle))
+      )
       swizzle_group = arith.remui(
           arith.divui(offset_pre_swizzle, c(swizzle_group_elems)),
           c(swizzle_groups_per_block),
@@ -1647,12 +1658,24 @@ class FragmentedArray:
       swizzle_bits = arith.muli(swizzle_group, c(swizzle_tile_elems))
       offset = arith.xori(offset_pre_swizzle, swizzle_bits)
       reg_ptr = utils.getelementptr(ptr, [offset], dtype)
-      reg_ptr = utils.getelementptr(reg_ptr, [const_offset_no_swizzle], dtype)
-      reg_idx = tiling.tile_indices(full_tiling.untile_indices(tile_idx))
-      def get_register(regs, reg_idx=reg_idx):
-        return regs[reg_idx]
-      def update_registers(regs, new, reg_idx=reg_idx):
-        regs[reg_idx] = new
+      offset_no_swizzle = plan.select(_as_consts(const_offset_no_swizzle))
+      reg_ptr = utils.getelementptr(reg_ptr, [offset_no_swizzle], dtype)
+      reg_idxs = [
+          tiling.tile_indices(full_tiling.untile_indices(idx))
+          for idx in indices.tolist()
+      ]
+      def get_register(regs, reg_idxs=reg_idxs):
+        return plan.select([regs[reg_idx] for reg_idx in reg_idxs])
+      def update_registers(regs, new, reg_idxs=reg_idxs):
+        # TODO(apaszke): If the staggering forms a permutation with a small
+        # cycle length, then instead of blending at each step we could construct
+        # a small routing network (kind of like a sorting network) to fix up
+        # each cycle separately after all the loads are performed.
+        # This would be especially useful for dims that are powers of two and
+        # staggered by another power of 2, since all cycles are of length 2 (and
+        # we could save half the selects).
+        for i, reg_idx in enumerate(reg_idxs):
+          regs[reg_idx] = plan.select_if_group(i, regs[reg_idx], new)
       yield get_register, update_registers, reg_ptr
 
   def tree_flatten(self):
@@ -1665,6 +1688,173 @@ class FragmentedArray:
     registers = np.asarray(flat_registers, dtype=object).reshape(reg_shape)
     return cls(_registers=registers, _layout=layout, _is_signed=is_signed)
 
+
+class TransferPlan(Protocol):
+  IndexTransform = Callable[[tuple[int, ...]], tuple[int, ...]]
+  tile_index_transforms: tuple[IndexTransform, ...]
+
+  def select(self, group_elems: Sequence[ir.Value]) -> ir.Value:
+    """Selects the value corresponding to the group of the current thread.
+
+    The argument must be of the same length as tile_index_transforms.
+    """
+    raise NotImplementedError
+
+  def select_if_group(self, group_idx: int, old: ir.Value, new: ir.Value) -> ir.Value:
+    """Returns `new` if the current thread belongs to the given group and `old` otherwise.
+
+    group_idx must be between 0 and len(tile_index_transforms) - 1.
+    """
+    raise NotImplementedError
+
+
+@dataclasses.dataclass(frozen=True)
+class TrivialTransferPlan(TransferPlan):
+  @property
+  def tile_index_transforms(self):
+    return (lambda x: x,)
+
+  def select(self, group_elems: Sequence[ir.Value]) -> ir.Value:
+    assert len(group_elems) == 1
+    return group_elems[0]
+
+  def select_if_group(self, group_idx: int, old: ir.Value, new: ir.Value) -> ir.Value:
+    assert group_idx == 0
+    return new
+
+
+@dataclasses.dataclass(frozen=True)
+class StaggeredTransferPlan(TransferPlan):
+  stagger: int
+  dim: int
+  size: int
+  group_pred: ir.Value
+
+  @property
+  def tile_index_transforms(self):
+    dim = self.dim
+    def rotate(idx: tuple[int, ...]) -> tuple[int, ...]:
+      return (
+          *idx[:dim], (idx[dim] + self.stagger) % self.size, *idx[dim + 1 :],
+      )
+    return (lambda x: x, rotate)
+
+  def select(self, group_elems: Sequence[ir.Value]) -> ir.Value:
+    assert len(group_elems) == 2
+    return arith.select(self.group_pred, group_elems[1], group_elems[0])
+
+  def select_if_group(self, group_idx: int, old: ir.Value, new: ir.Value) -> ir.Value:
+    assert 0 <= group_idx <= 1
+    sides = [old, new] if group_idx == 0 else [new, old]
+    return arith.select(self.group_pred, *sides)
+
+
+def plan_tiled_transfer(
+    tiled_shape: Sequence[int],
+    tiled_strides: Sequence[int],
+    lane_shape: Sequence[int],
+    lane_strides: Sequence[int],
+    layout: TiledLayout,
+    bw: int,
+    swizzle: int,
+) -> TransferPlan:
+  i32 = ir.IntegerType.get_signless(32)
+  c = lambda x: arith.constant(i32, x)
+  swizzle_tile_elems = 16 // bw
+  swizzle_group_elems = 128 // bw
+  # Below, all calculations are in elements, not in bytes, since it should
+  # generalize better to sub-byte types.
+  # Here, we verify two conditions:
+  # 1. Each vector transfer only accesses addresses that fall within a single
+  # swizzle tile (if not we'd need to split it and swizzle parts differently).
+  transfer_alignment = math.gcd(*(
+      s
+      for i, (s, d) in enumerate_negative(list(zip(tiled_strides, tiled_shape)))
+      if d > 1 or i in {layout.warp_dim, *layout.lane_dims}
+  ))
+  if (
+      swizzle_tile_elems % transfer_alignment
+      and layout.vector_length <= transfer_alignment
+  ):
+    raise ValueError(
+        "Failed to prove that vector transfers don't cross swizzle tile"
+        " boundaries. This check is incomplete, and does not guarantee that"
+        " this is a user error, but it might be." + str(transfer_alignment)
+    )
+
+  # 2. The transfer pattern does not cause bank conflicts.
+  # TODO(apaszke): For now, when performing transfers narrower than a bank,
+  # we simply narrow each bank to the transfer width. The truth is more likely
+  # that bank conflicts only don't occur if the addresses mapping to the same
+  # bank are contiguous, but that's a more complicated check to perform.
+  transfer_bytes = layout.vector_length * bw
+  if transfer_bytes > SMEM_BANK_BYTES * 4:
+    raise NotImplementedError
+  if bw > SMEM_BANK_BYTES:
+    raise NotImplementedError
+  smem_bank_bytes = min(SMEM_BANK_BYTES, transfer_bytes)
+  num_banks = SMEM_BANKS * (SMEM_BANK_BYTES // smem_bank_bytes)
+  elems_per_bank = smem_bank_bytes // bw
+  num_wavefronts = max(transfer_bytes // smem_bank_bytes, 1)
+  wavefront_lanes = WARP_SIZE // num_wavefronts
+
+  lane_offsets_in_tile = np.dot(list(np.ndindex(*lane_shape)), lane_strides)
+  def has_bank_conflicts(tile_idx_transform):
+    tile_idxs = np.unravel_index(np.arange(math.prod(tiled_shape)), tiled_shape)
+    tile_idxs = np.expand_dims(np.stack(tile_idxs, 1), 1)  # [#tiles, 1, #dims]
+    lane_tile_idx = tile_idx_transform(tile_idxs)  # [#tiles, #lanes/1, #dims]
+    assert lane_tile_idx.shape[1] in {1, WARP_SIZE}
+    lane_tile_offsets = np.dot(lane_tile_idx, tiled_strides)
+    offsets = lane_tile_offsets + lane_offsets_in_tile  # [#tiles, #lanes]
+    assert offsets.shape[-1] == WARP_SIZE
+    swizzle_groups = (offsets // swizzle_group_elems) % (swizzle // 16)
+    swizzle_bits = swizzle_groups * swizzle_tile_elems
+    lane_banks = ((offsets ^ swizzle_bits) // elems_per_bank) % num_banks
+    wavefront_banks = lane_banks.reshape(-1, num_wavefronts, wavefront_lanes)
+    # Order of threads within the wavefront is unimportant.
+    wavefront_banks = np.sort(wavefront_banks, axis=-1)
+    # There are no conflicts if each wavefront only contains unique banks.
+    return np.any(wavefront_banks[..., 1:] == wavefront_banks[..., :-1])
+
+  # We don't need any special treatment if there are no conflicts when each lane
+  # transfers the same tile at a time.
+  if not has_bank_conflicts(lambda tile_idx: tile_idx):
+    return TrivialTransferPlan()
+
+  # Otherwise, we will try to partition the lanes into two groups and have
+  # each group store to different tile. The only tile dimensions that can help
+  # us with bank conflicts are those that have multiple elements and a stride
+  # that's not a multiple of the number of banks.
+  #
+  # Note that the code is set up so that we could also consider partitioning
+  # the lanes into more groups, but the selects will become more expensive if
+  # we do that. It's a possibility we have if we need it.
+  candidate_dims = (
+      i for i, (s, d) in enumerate(zip(tiled_strides, tiled_shape))
+      if d > 1 and s % (SMEM_BANKS * elems_per_bank)
+  )
+  for dim in candidate_dims:
+    for group_stride in (1, 2, 4, 8, 16):
+      # We change the group assignment each group_stride lanes.
+      lane_id = np.arange(WARP_SIZE)[:, None]
+      lane_group = (lane_id // group_stride) % 2
+      # We only consider a transformation where the second group stores to a
+      # tile that's a constant offset (modulo dim size) from the first one.
+      for stagger in range(1, tiled_shape[dim]):
+        offset = np.zeros(len(tiled_shape), np.int64)
+        offset[dim] = stagger
+        transform = lambda idx: (idx + offset * lane_group) % tiled_shape
+        if not has_bank_conflicts(transform):
+          # We've found a strategy that avoids bank conflicts!
+          lane_idx = arith.remui(utils.thread_idx(), c(WARP_SIZE))
+          group_idx = arith.remui(arith.divui(lane_idx, c(group_stride)), c(2))
+          group_pred = arith.cmpi(arith.CmpIPredicate.ne, group_idx, c(0))
+          return StaggeredTransferPlan(
+              stagger, dim, tiled_shape[dim], group_pred
+          )
+  raise ValueError(
+      "Failed to synthesize a transfer pattern that avoids bank conflicts"
+  )
 
 # We allow contractions, to potentially take advantage of FMA instructions.
 # They can change the results, but the precision should only increase.

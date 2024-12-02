@@ -1755,18 +1755,21 @@ class LayoutTest(TestCase):
   @parameterized.product(
       load_tiled=[False, True],
       store_tiled=[False, True],
-      dtype=[jnp.int16],
+      dtype=[jnp.int8, jnp.int16, jnp.int32],
       swizzle=[32, 64, 128],
-      num_col_tiles=[1, 2, 4],
+      num_col_tiles=[1, 2, 3],
   )
   def test_copy_tiled(self, load_tiled, store_tiled, dtype, swizzle, num_col_tiles):
     mlir_dtype = utils.dtype_to_ir_type(dtype)
-    col_tiling = swizzle // bytewidth(mlir_dtype)
+    bw = bytewidth(mlir_dtype)
+    col_tiling = swizzle // bw
     m, n = 128, col_tiling * num_col_tiles
     tiling = (64, col_tiling)
     tiled_layout = fa._tiled_wgmma_layout((m, n))
     load_layout = tiled_layout if load_tiled else mgpu.WGMMA_LAYOUT
     store_layout = tiled_layout if store_tiled else mgpu.WGMMA_LAYOUT
+    if (not load_tiled or not store_tiled) and bw == 4 and swizzle == 32:
+      self.skipTest("Old code path does not support this")
     def kernel(ctx, in_, out, smems):
       smem_in, smem_out, barrier = smems
       ctx.async_copy(src_ref=in_, dst_ref=smem_in, swizzle=swizzle, barrier=barrier)
@@ -1800,14 +1803,21 @@ class LayoutTest(TestCase):
     # Verify that we don't use too many registers for the transfers.
     # We verify LDS and STS separately, because they might use two different
     # methods of computing offsets and we don't rely on CSE between them.
-    register_pattern = re.compile(r"(R[0-9]+)")
     expected_regs = swizzle // bytewidth(mlir_dtype) // 8
+    # When the bytewidth is smaller than 2 the swizzle pattern changes every 2
+    # column tiles, so we only need half the registers.
+    if load_tiled and store_tiled:  # The old code doesn't optimize properly.
+      if bytewidth(mlir_dtype) < 2:
+        expected_regs //= 2
     for instr in ("STS", "LDS"):
       with self.subTest(instr + " count"):
         addrs = re.findall(instr + r".* \[(.*)\]", get_sass())
-        chain = itertools.chain.from_iterable
-        used_regs = set(chain(register_pattern.findall(addr) for addr in addrs))
-        self.assertLen(used_regs, expected_regs)
+        def get_reg(addr):
+          if (pos := addr.find("+")) != -1:
+            return addr[:pos]
+          return addr
+        used_regs = {get_reg(addr) for addr in addrs}
+        self.assertLessEqual(len(used_regs), expected_regs)
 
 
 if __name__ == "__main__":
