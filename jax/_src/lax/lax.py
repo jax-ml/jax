@@ -3704,12 +3704,14 @@ def get_algorithm_compute_types(
       return input_dtype
     if not isinstance(target_dtype, tuple):
       target_dtype = (target_dtype,)
-    return input_dtype if input_dtype in target_dtype else target_dtype[0]
+    if np.dtype(input_dtype) in map(np.dtype, target_dtype):
+      return input_dtype
+    return target_dtype[0]
 
   if algorithm == DotAlgorithmPreset.BF16_BF16_F32:
     lhs_dtype = maybe_convert_dtype(lhs_dtype, algorithm.lhs_precision_type)
     rhs_dtype = maybe_convert_dtype(rhs_dtype, algorithm.rhs_precision_type)
-    if lhs_dtype == dtypes.bfloat16:
+    if np.dtype(lhs_dtype) == dtypes.bfloat16:
       out_dtype = maybe_convert_dtype(out_dtype,
                                       (np.float32, dtypes.bfloat16))
     else:
