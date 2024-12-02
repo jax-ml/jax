@@ -1538,14 +1538,13 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
     outs = lower_jaxpr_to_mosaic_gpu(
         ctx.module_ctx, ctx.launch_ctx, branches[0].jaxpr, args
     )
-    yielded = [
-        _ensure_ir_value(out, aval.dtype) or out
+    yielded_types, _ = jax.tree.flatten([
+        (_ensure_ir_value(out, aval.dtype) or out).type
         for out, aval in zip(outs, ctx.avals_out)
-    ]
-    yielded_leaves, _ = jax.tree.flatten(yielded)
+    ])
 
   switch_op = scf_dialect.IndexSwitchOp(
-      [v.type for v in yielded_leaves],
+      yielded_types,
       _as_index(_ensure_ir_value(index, index_aval.dtype)),
       ir.DenseI64ArrayAttr.get(range(len(branches) - 1)),
       num_caseRegions=len(branches) - 1,
