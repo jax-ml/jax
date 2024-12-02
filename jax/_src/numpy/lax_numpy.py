@@ -2143,20 +2143,11 @@ def reshape(
   __tracebackhide__ = True
   util.check_arraylike("reshape", a)
 
-  # TODO(micky774): deprecated 2024-5-9, remove after deprecation expires.
+  # TODO(jakevdp): finalized 2024-12-2; remove argument after JAX v0.4.40.
   if not isinstance(newshape, DeprecatedArg):
-    if shape is not None:
-      raise ValueError(
-        "jnp.reshape received both `shape` and `newshape` arguments. Note that "
-        "using `newshape` is deprecated, please only use `shape` instead."
-      )
-    deprecations.warn(
-      "jax-numpy-reshape-newshape",
-      ("The newshape argument of jax.numpy.reshape is deprecated. "
-       "Please use the shape argument instead."), stacklevel=2)
-    shape = newshape
-    del newshape
-  elif shape is None:
+    raise TypeError("The newshape argument to jnp.reshape was removed in JAX v0.4.36."
+                    " Use shape instead.")
+  if shape is None:
     raise TypeError(
       "jnp.shape requires passing a `shape` argument, but none was given."
     )
