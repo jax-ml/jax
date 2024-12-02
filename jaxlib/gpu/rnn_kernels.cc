@@ -30,7 +30,7 @@ namespace jax {
 namespace JAX_GPU_NAMESPACE {
 
 std::string ErrorString(gpudnnStatus_t status) {
-  return cudnnGetErrorString(status);
+  return gpudnnGetErrorString(status);
 }
 
 template <typename T>
@@ -80,63 +80,88 @@ DoRnnComputeWorkspaceReserveSpaceSizes(int input_size, int hidden_size,
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
 
-  cudnnRNNDescriptor_t rnn_desc;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnCreateRNNDescriptor(&rnn_desc)));
+  gpudnnRNNDescriptor_t rnn_desc;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnCreateRNNDescriptor(&rnn_desc)));
 
-  cudnnDropoutDescriptor_t dropout_desc;
+  gpudnnDropoutDescriptor_t dropout_desc;
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cudnnCreateDropoutDescriptor(&dropout_desc)));
+      JAX_AS_STATUS(gpudnnCreateDropoutDescriptor(&dropout_desc)));
   size_t state_size;
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cudnnDropoutGetStatesSize(handle.get(), &state_size)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnSetDropoutDescriptor(
+      JAX_AS_STATUS(gpudnnDropoutGetStatesSize(handle.get(), &state_size)));
+
+#ifdef JAX_GPU_HIP
+  void* dropout_states_dev = nullptr;
+  // Allocate minimal memory for dropout states (can be very small since it's not used)
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMalloc(&dropout_states_dev, state_size)));
+  if (!dropout_states_dev) {
+    return absl::InternalError("Failed to allocate minimal GPU memory for dropout states.");
+  }
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnSetDropoutDescriptor(
+      dropout_desc, handle.get(), dropout, dropout_states_dev, state_size, 123, false, false,
+      MIOPEN_RNG_PSEUDO_XORWOW)));
+#else // JAX_GPU_CUDA
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnSetDropoutDescriptor(
       dropout_desc, handle.get(), dropout, nullptr, state_size, 123)));
+#endif // JAX_GPU_HIP
 
   // TODO(zhangqiaorjc): Handle other kinds of RNN.
-  cudnnRNNMode_t cell_mode = CUDNN_LSTM;
-  cudnnRNNBiasMode_t bias_mode = CUDNN_RNN_DOUBLE_BIAS;
+  gpudnnRNNMode_t cell_mode = GPUDNN_LSTM;
+  gpudnnRNNBiasMode_t bias_mode = GPUDNN_RNN_DOUBLE_BIAS;
   int num_directions = 1;
-  cudnnDirectionMode_t dir_mode = CUDNN_UNIDIRECTIONAL;
+  gpudnnDirectionMode_t dir_mode = GPUDNN_UNIDIRECTIONAL;
   if (bidirectional) {
-    dir_mode = CUDNN_BIDIRECTIONAL;
+    dir_mode = GPUDNN_BIDIRECTIONAL;
     num_directions = 2;
   }
-  cudnnRNNInputMode_t input_mode = CUDNN_LINEAR_INPUT;
-  cudnnDataType_t data_type = CUDNN_DATA_FLOAT;
-  cudnnDataType_t math_prec = CUDNN_DATA_FLOAT;
-  cudnnMathType_t math_type = cudnn_allow_tf32? CUDNN_DEFAULT_MATH: CUDNN_FMA_MATH;
+  gpudnnRNNInputMode_t input_mode = GPUDNN_LINEAR_INPUT;
+  gpudnnDataType_t data_type = GPUDNN_DATA_FLOAT;
+
+#ifdef JAX_GPU_HIP
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnSetRNNDescriptor(
+      rnn_desc, hidden_size, num_layers, dropout_desc, input_mode, dir_mode,
+      cell_mode, bias_mode, GPUDNN_RNN_ALGO_STANDARD, data_type)));
+#else // JAX_GPU_CUDA
+  gpudnnDataType_t math_prec = GPUDNN_DATA_FLOAT;
+  gpudnnMathType_t math_type = cudnn_allow_tf32? GPUDNN_DEFAULT_MATH: GPUDNN_FMA_MATH;
   int32_t proj_size = hidden_size;
-  uint32_t aux_flags = CUDNN_RNN_PADDED_IO_ENABLED;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnSetRNNDescriptor_v8(
-      rnn_desc, CUDNN_RNN_ALGO_STANDARD, cell_mode, bias_mode, dir_mode,
+  uint32_t aux_flags = GPUDNN_RNN_PADDED_IO_ENABLED;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnSetRNNDescriptor(
+      rnn_desc, GPUDNN_RNN_ALGO_STANDARD, cell_mode, bias_mode, dir_mode,
       input_mode, data_type, math_prec, math_type, input_size, hidden_size,
       proj_size, num_layers, dropout_desc, aux_flags)));
+#endif // JAX_GPU_HIP
 
-  cudnnForwardMode_t fwdMode = CUDNN_FWD_MODE_TRAINING;
-  cudnnRNNDataLayout_t layout = CUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED;
+  gpudnnForwardMode_t fwdMode = GPUDNN_FWD_MODE_TRAINING;
+  gpudnnRNNDataLayout_t layout = GPUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED;
   float padding = 0.0f;
 
   std::vector<int32_t> seq_length_vector(batch_size, max_seq_length);
   int32_t* seq_length_array = &seq_length_vector[0];
 
-  cudnnRNNDataDescriptor_t input_data_desc;
+  gpudnnRNNDataDescriptor_t input_data_desc;
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cudnnCreateRNNDataDescriptor(&input_data_desc)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnSetRNNDataDescriptor(
+      JAX_AS_STATUS(gpudnnCreateRNNDataDescriptor(&input_data_desc)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnSetRNNDataDescriptor(
       input_data_desc, data_type, layout, max_seq_length, batch_size,
       input_size, seq_length_array, &padding)));
 
   size_t workSpaceSize;
   size_t reserveSpaceSize;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnGetRNNTempSpaceSizes(
+#ifdef JAX_GPU_HIP
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnGetRNNTempSpaceSizes(
+      handle.get(), rnn_desc, input_data_desc, fwdMode, &workSpaceSize,
+      &reserveSpaceSize)));
+#else // JAX_GPU_CUDA
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnGetRNNTempSpaceSizes(
       handle.get(), rnn_desc, fwdMode, input_data_desc, &workSpaceSize,
       &reserveSpaceSize)));
-
+#endif // JAX_GPU_HIP
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cudnnDestroyDropoutDescriptor(dropout_desc)));
+      JAX_AS_STATUS(gpudnnDestroyDropoutDescriptor(dropout_desc)));
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cudnnDestroyRNNDataDescriptor(input_data_desc)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnDestroyRNNDescriptor(rnn_desc)));
+      JAX_AS_STATUS(gpudnnDestroyRNNDataDescriptor(input_data_desc)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnDestroyRNNDescriptor(rnn_desc)));
 
   // Round up to nearest multiples of 4 so we can return them as f32 arrays.
   workSpaceSize += (workSpaceSize % 4);
@@ -162,41 +187,60 @@ static absl::Status DnnRNNForward_(gpuStream_t stream, void** buffers,
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
 
-  cudnnRNNDescriptor_t rnn_desc;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnCreateRNNDescriptor(&rnn_desc)));
+  gpudnnRNNDescriptor_t rnn_desc;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnCreateRNNDescriptor(&rnn_desc)));
 
-  cudnnDropoutDescriptor_t dropout_desc;
+  gpudnnDropoutDescriptor_t dropout_desc;
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cudnnCreateDropoutDescriptor(&dropout_desc)));
+      JAX_AS_STATUS(gpudnnCreateDropoutDescriptor(&dropout_desc)));
   size_t state_size;
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cudnnDropoutGetStatesSize(handle.get(), &state_size)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnSetDropoutDescriptor(
+      JAX_AS_STATUS(gpudnnDropoutGetStatesSize(handle.get(), &state_size)));
+
+#ifdef JAX_GPU_HIP
+  void* dropout_states_dev = nullptr;
+  // Allocate minimal memory for dropout states (can be very small since it's not used).
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMalloc(&dropout_states_dev, state_size)));
+  if (!dropout_states_dev) {
+    return absl::InternalError("Failed to allocate minimal GPU memory for dropout states.");
+  }
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnSetDropoutDescriptor(
+      dropout_desc, handle.get(), d.dropout, dropout_states_dev, state_size, 123, false, false,
+      MIOPEN_RNG_PSEUDO_XORWOW)));
+#else // JAX_GPU_CUDA
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnSetDropoutDescriptor(
       dropout_desc, handle.get(), d.dropout, nullptr, state_size, 123)));
+#endif // JAX_GPU_HIP
 
   // TODO(zhangqiaorjc): Handle other kinds of RNN.
-  cudnnRNNMode_t cell_mode = CUDNN_LSTM;
-  cudnnRNNBiasMode_t bias_mode = CUDNN_RNN_DOUBLE_BIAS;
+  gpudnnRNNMode_t cell_mode = GPUDNN_LSTM;
+  gpudnnRNNBiasMode_t bias_mode = GPUDNN_RNN_DOUBLE_BIAS;
   int num_directions = 1;
-  cudnnDirectionMode_t dir_mode = CUDNN_UNIDIRECTIONAL;
+  gpudnnDirectionMode_t dir_mode = GPUDNN_UNIDIRECTIONAL;
   if (d.bidirectional) {
-    dir_mode = CUDNN_BIDIRECTIONAL;
+    dir_mode = GPUDNN_BIDIRECTIONAL;
     num_directions = 2;
   }
-  cudnnRNNInputMode_t input_mode = CUDNN_LINEAR_INPUT;
-  cudnnDataType_t data_type = CUDNN_DATA_FLOAT;
-  cudnnDataType_t math_prec = CUDNN_DATA_FLOAT;
-  cudnnMathType_t math_type = d.cudnn_allow_tf32? CUDNN_DEFAULT_MATH: CUDNN_FMA_MATH;
-  int32_t proj_size = d.hidden_size;
-  uint32_t aux_flags = CUDNN_RNN_PADDED_IO_ENABLED;
+  gpudnnRNNInputMode_t input_mode = GPUDNN_LINEAR_INPUT;
+  gpudnnDataType_t data_type = GPUDNN_DATA_FLOAT;
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnSetRNNDescriptor_v8(
-      rnn_desc, CUDNN_RNN_ALGO_STANDARD, cell_mode, bias_mode, dir_mode,
+#ifdef JAX_GPU_HIP
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnSetRNNDescriptor(
+      rnn_desc, d.hidden_size, d.num_layers, dropout_desc, input_mode, dir_mode,
+      cell_mode, bias_mode, GPUDNN_RNN_ALGO_STANDARD, data_type)));
+#else // JAX_GPU_CUDA
+  gpudnnDataType_t math_prec = GPUDNN_DATA_FLOAT;
+  gpudnnMathType_t math_type = d.cudnn_allow_tf32? GPUDNN_DEFAULT_MATH: GPUDNN_FMA_MATH;
+  int32_t proj_size = d.hidden_size;
+  uint32_t aux_flags = GPUDNN_RNN_PADDED_IO_ENABLED;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnSetRNNDescriptor(
+      rnn_desc, GPUDNN_RNN_ALGO_STANDARD, cell_mode, bias_mode, dir_mode,
       input_mode, data_type, math_prec, math_type, d.input_size, d.hidden_size,
       proj_size, d.num_layers, dropout_desc, aux_flags)));
+#endif // JAX_GPU_HIP
 
-  cudnnForwardMode_t fwdMode = CUDNN_FWD_MODE_TRAINING;
-  cudnnRNNDataLayout_t layout = CUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED;
+  gpudnnForwardMode_t fwdMode = GPUDNN_FWD_MODE_TRAINING;
+  gpudnnRNNDataLayout_t layout = GPUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED;
   float padding = 0.0f;
 
   // TODO(zhangqiaorjc): Avoid this cudaMemcpy if possible.
@@ -209,17 +253,17 @@ static absl::Status DnnRNNForward_(gpuStream_t stream, void** buffers,
                                    gpuMemcpyDeviceToHost, stream)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
 
-  cudnnRNNDataDescriptor_t input_data_desc;
+  gpudnnRNNDataDescriptor_t input_data_desc;
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cudnnCreateRNNDataDescriptor(&input_data_desc)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnSetRNNDataDescriptor(
+      JAX_AS_STATUS(gpudnnCreateRNNDataDescriptor(&input_data_desc)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnSetRNNDataDescriptor(
       input_data_desc, data_type, layout, d.max_seq_length, d.batch_size,
       d.input_size, seq_length_array, &padding)));
 
-  cudnnRNNDataDescriptor_t output_data_desc;
+  gpudnnRNNDataDescriptor_t output_data_desc;
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cudnnCreateRNNDataDescriptor(&output_data_desc)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnSetRNNDataDescriptor(
+      JAX_AS_STATUS(gpudnnCreateRNNDataDescriptor(&output_data_desc)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnSetRNNDataDescriptor(
       output_data_desc, data_type, layout, d.max_seq_length, d.batch_size,
       d.hidden_size * num_directions, seq_length_array, &padding)));
 
@@ -232,19 +276,31 @@ static absl::Status DnnRNNForward_(gpuStream_t stream, void** buffers,
   strides[0] = dims[1] * dims[2];
   strides[1] = dims[2];
   strides[2] = 1;
-  cudnnTensorDescriptor_t h_desc;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnCreateTensorDescriptor(&h_desc)));
+  gpudnnTensorDescriptor_t h_desc;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnCreateTensorDescriptor(&h_desc)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      cudnnSetTensorNdDescriptor(h_desc, data_type, 3, dims, strides)));
+      gpudnnSetTensorNdDescriptor(h_desc, data_type, 3, dims, strides)));
 
-  cudnnTensorDescriptor_t c_desc;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnCreateTensorDescriptor(&c_desc)));
+  gpudnnTensorDescriptor_t c_desc;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnCreateTensorDescriptor(&c_desc)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      cudnnSetTensorNdDescriptor(c_desc, data_type, 3, dims, strides)));
+      gpudnnSetTensorNdDescriptor(c_desc, data_type, 3, dims, strides)));
 
   size_t weight_space_size;
+#ifdef JAX_GPU_HIP
+miopenTensorDescriptor_t input_tensor_desc;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(miopenCreateTensorDescriptor(&input_tensor_desc)));
+  int dimsA[2] = {d.batch_size, d.input_size};
+  int stridesA[2] = {dimsA[1], 1}; // Row-major order, similar to GPUDNN
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(miopenSetTensorDescriptor(
+    input_tensor_desc, data_type, 2, dimsA, stridesA)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      cudnnGetRNNWeightSpaceSize(handle.get(), rnn_desc, &weight_space_size)));
+      gpudnnGetRNNWeightSpaceSize(handle.get(), rnn_desc, input_tensor_desc,
+      &weight_space_size, data_type)));
+#else // JAX_GPU_CUDA
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+      gpudnnGetRNNWeightSpaceSize(handle.get(), rnn_desc, &weight_space_size)));
+#endif // JAX_GPU_HIP
 
   auto input_buf = buffers[0];
   auto h_0_buf = buffers[1];
@@ -255,22 +311,31 @@ static absl::Status DnnRNNForward_(gpuStream_t stream, void** buffers,
   auto c_n_buf = buffers[7];
   auto workspace_buf = buffers[8];
   auto reserve_space_buf = buffers[9];
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnRNNForward(
+
+#ifdef JAX_GPU_HIP
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnRNNForward(
+      handle.get(), rnn_desc, fwdMode, input_data_desc, input_buf,
+      h_desc, h_0_buf, h_n_buf, c_desc, c_0_buf, c_n_buf,
+      output_data_desc, output_buf, weights_buf, weight_space_size,
+      workspace_buf, d.workspace_size, reserve_space_buf, d.reserve_space_size)));
+#else // JAX_GPU_CUDA
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnRNNForward(
       handle.get(), rnn_desc, fwdMode, (const int32_t*)seq_lengths_buf,
       input_data_desc, input_buf, output_data_desc, output_buf, h_desc, h_0_buf,
       h_n_buf, c_desc, c_0_buf, c_n_buf, weight_space_size, weights_buf,
       d.workspace_size, workspace_buf, d.reserve_space_size,
       reserve_space_buf)));
+#endif // JAX_GPU_HIP
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnDestroyTensorDescriptor(h_desc)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnDestroyTensorDescriptor(c_desc)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnDestroyTensorDescriptor(h_desc)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnDestroyTensorDescriptor(c_desc)));
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cudnnDestroyDropoutDescriptor(dropout_desc)));
+      JAX_AS_STATUS(gpudnnDestroyRNNDataDescriptor(input_data_desc)));
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cudnnDestroyRNNDataDescriptor(input_data_desc)));
+      JAX_AS_STATUS(gpudnnDestroyRNNDataDescriptor(output_data_desc)));
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cudnnDestroyRNNDataDescriptor(output_data_desc)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnDestroyRNNDescriptor(rnn_desc)));
+      JAX_AS_STATUS(gpudnnDestroyDropoutDescriptor(dropout_desc)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnDestroyRNNDescriptor(rnn_desc)));
 
   return absl::OkStatus();
 }
@@ -284,40 +349,59 @@ static absl::Status DnnRNNBackward_(gpuStream_t stream, void** buffers,
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
 
-  cudnnRNNDescriptor_t rnn_desc;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnCreateRNNDescriptor(&rnn_desc)));
+  gpudnnRNNDescriptor_t rnn_desc;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnCreateRNNDescriptor(&rnn_desc)));
 
-  cudnnDropoutDescriptor_t dropout_desc;
+  gpudnnDropoutDescriptor_t dropout_desc;
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cudnnCreateDropoutDescriptor(&dropout_desc)));
+      JAX_AS_STATUS(gpudnnCreateDropoutDescriptor(&dropout_desc)));
   size_t state_size;
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cudnnDropoutGetStatesSize(handle.get(), &state_size)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnSetDropoutDescriptor(
+      JAX_AS_STATUS(gpudnnDropoutGetStatesSize(handle.get(), &state_size)));
+
+#ifdef JAX_GPU_HIP
+  void* dropout_states_dev = nullptr;
+  // Allocate minimal memory for dropout states (can be very small since it's not used)
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMalloc(&dropout_states_dev, state_size)));
+  if (!dropout_states_dev) {
+    return absl::InternalError("Failed to allocate minimal GPU memory for dropout states.");
+  }
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnSetDropoutDescriptor(
+      dropout_desc, handle.get(), d.dropout, dropout_states_dev, state_size, 123, false, false,
+      MIOPEN_RNG_PSEUDO_XORWOW)));
+#else // JAX_GPU_CUDA
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnSetDropoutDescriptor(
       dropout_desc, handle.get(), d.dropout, nullptr, state_size, 123)));
+#endif // JAX_GPU_HIP
 
   // TODO(zhangqiaorjc): Handle other kinds of RNN.
-  cudnnRNNMode_t cell_mode = CUDNN_LSTM;
-  cudnnRNNBiasMode_t bias_mode = CUDNN_RNN_DOUBLE_BIAS;
+  gpudnnRNNMode_t cell_mode = GPUDNN_LSTM;
+  gpudnnRNNBiasMode_t bias_mode = GPUDNN_RNN_DOUBLE_BIAS;
   int num_directions = 1;
-  cudnnDirectionMode_t dir_mode = CUDNN_UNIDIRECTIONAL;
+  gpudnnDirectionMode_t dir_mode = GPUDNN_UNIDIRECTIONAL;
   if (d.bidirectional) {
-    dir_mode = CUDNN_BIDIRECTIONAL;
+    dir_mode = GPUDNN_BIDIRECTIONAL;
     num_directions = 2;
   }
-  cudnnRNNInputMode_t input_mode = CUDNN_LINEAR_INPUT;
-  cudnnDataType_t data_type = CUDNN_DATA_FLOAT;
-  cudnnDataType_t math_prec = CUDNN_DATA_FLOAT;
-  cudnnMathType_t math_type = d.cudnn_allow_tf32? CUDNN_DEFAULT_MATH: CUDNN_FMA_MATH;
-  int32_t proj_size = d.hidden_size;
-  uint32_t aux_flags = CUDNN_RNN_PADDED_IO_ENABLED;
+  gpudnnRNNInputMode_t input_mode = GPUDNN_LINEAR_INPUT;
+  gpudnnDataType_t data_type = GPUDNN_DATA_FLOAT;
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnSetRNNDescriptor_v8(
-      rnn_desc, CUDNN_RNN_ALGO_STANDARD, cell_mode, bias_mode, dir_mode,
+#ifdef JAX_GPU_HIP
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnSetRNNDescriptor(
+      rnn_desc, d.hidden_size, d.num_layers, dropout_desc, input_mode, dir_mode,
+      cell_mode, bias_mode, GPUDNN_RNN_ALGO_STANDARD, data_type)));
+#else // JAX_GPU_CUDA
+  gpudnnDataType_t math_prec = GPUDNN_DATA_FLOAT;
+  gpudnnMathType_t math_type = d.cudnn_allow_tf32? GPUDNN_DEFAULT_MATH: GPUDNN_FMA_MATH;
+  int32_t proj_size = d.hidden_size;
+  uint32_t aux_flags = GPUDNN_RNN_PADDED_IO_ENABLED;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnSetRNNDescriptor(
+      rnn_desc, GPUDNN_RNN_ALGO_STANDARD, cell_mode, bias_mode, dir_mode,
       input_mode, data_type, math_prec, math_type, d.input_size, d.hidden_size,
       proj_size, d.num_layers, dropout_desc, aux_flags)));
+#endif // JAX_GPU_HIP
 
-  cudnnRNNDataLayout_t layout = CUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED;
+  gpudnnRNNDataLayout_t layout = GPUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED;
   float padding = 0.0f;
 
   auto seq_lengths_buf = buffers[10];
@@ -329,17 +413,17 @@ static absl::Status DnnRNNBackward_(gpuStream_t stream, void** buffers,
                                    gpuMemcpyDeviceToHost, stream)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
 
-  cudnnRNNDataDescriptor_t input_data_desc;
+  gpudnnRNNDataDescriptor_t input_data_desc;
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cudnnCreateRNNDataDescriptor(&input_data_desc)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnSetRNNDataDescriptor(
+      JAX_AS_STATUS(gpudnnCreateRNNDataDescriptor(&input_data_desc)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnSetRNNDataDescriptor(
       input_data_desc, data_type, layout, d.max_seq_length, d.batch_size,
       d.input_size, seq_length_array, &padding)));
 
-  cudnnRNNDataDescriptor_t output_data_desc;
+  gpudnnRNNDataDescriptor_t output_data_desc;
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cudnnCreateRNNDataDescriptor(&output_data_desc)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnSetRNNDataDescriptor(
+      JAX_AS_STATUS(gpudnnCreateRNNDataDescriptor(&output_data_desc)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnSetRNNDataDescriptor(
       output_data_desc, data_type, layout, d.max_seq_length, d.batch_size,
       d.hidden_size * num_directions, seq_length_array, &padding)));
 
@@ -352,19 +436,31 @@ static absl::Status DnnRNNBackward_(gpuStream_t stream, void** buffers,
   strides[0] = dims[1] * dims[2];
   strides[1] = dims[2];
   strides[2] = 1;
-  cudnnTensorDescriptor_t h_desc;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnCreateTensorDescriptor(&h_desc)));
+  gpudnnTensorDescriptor_t h_desc;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnCreateTensorDescriptor(&h_desc)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      cudnnSetTensorNdDescriptor(h_desc, data_type, 3, dims, strides)));
+      gpudnnSetTensorNdDescriptor(h_desc, data_type, 3, dims, strides)));
 
-  cudnnTensorDescriptor_t c_desc;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnCreateTensorDescriptor(&c_desc)));
+  gpudnnTensorDescriptor_t c_desc;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnCreateTensorDescriptor(&c_desc)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      cudnnSetTensorNdDescriptor(c_desc, data_type, 3, dims, strides)));
+      gpudnnSetTensorNdDescriptor(c_desc, data_type, 3, dims, strides)));
 
   size_t weight_space_size;
+#ifdef JAX_GPU_HIP
+  miopenTensorDescriptor_t input_tensor_desc;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(miopenCreateTensorDescriptor(&input_tensor_desc)));
+  int input_dims[2] = {d.batch_size, d.input_size};
+  int input_strides[2] = {input_dims[1], 1}; // row-major order
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(miopenSetTensorDescriptor(
+    input_tensor_desc, data_type, 2, input_dims, input_strides)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      cudnnGetRNNWeightSpaceSize(handle.get(), rnn_desc, &weight_space_size)));
+      gpudnnGetRNNWeightSpaceSize(handle.get(), rnn_desc, input_tensor_desc,
+      &weight_space_size, data_type)));
+#else // JAX_GPU_CUDA
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+      gpudnnGetRNNWeightSpaceSize(handle.get(), rnn_desc, &weight_space_size)));
+#endif // JAX_GPU_HIP
 
   auto dy_buf = buffers[0];
   auto dh_n_buf = buffers[1];
@@ -384,29 +480,43 @@ static absl::Status DnnRNNBackward_(gpuStream_t stream, void** buffers,
   // auto dw_buf = buffers[14];
   auto workspace_buf = buffers[15];
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnRNNBackwardData_v8(
+#ifdef JAX_GPU_HIP
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnRNNBackwardData(
+      handle.get(), rnn_desc, output_data_desc, y_buf, dy_buf,
+      h_desc, h_0_buf, dh_n_buf, dh_0_buf,
+      c_desc, c_0_buf, dc_n_buf, dc_0_buf,
+      input_data_desc, dx_buf, w_buf, weight_space_size,
+      workspace_buf, d.workspace_size, reserve_space_buf, d.reserve_space_size)));
+
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnRNNBackwardWeights(
+      handle.get(), rnn_desc, input_data_desc, x_buf, h_desc, h_0_buf,
+      output_data_desc, y_buf, zeroed_dw_buf, weight_space_size,
+      workspace_buf, d.workspace_size, reserve_space_buf, d.reserve_space_size)));
+#else // JAX_GPU_CUDA
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnRNNBackwardData(
       handle.get(), rnn_desc, (const int32_t*)seq_lengths_buf, output_data_desc,
       y_buf, dy_buf, input_data_desc, dx_buf, h_desc, h_0_buf, dh_n_buf,
       dh_0_buf, c_desc, c_0_buf, dc_n_buf, dc_0_buf, weight_space_size, w_buf,
       d.workspace_size, workspace_buf, d.reserve_space_size,
       reserve_space_buf)));
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnRNNBackwardWeights_v8(
-      handle.get(), rnn_desc, CUDNN_WGRAD_MODE_ADD,
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnRNNBackwardWeights(
+      handle.get(), rnn_desc, GPUDNN_WGRAD_MODE_ADD,
       (const int32_t*)seq_lengths_buf, input_data_desc, x_buf, h_desc, h_0_buf,
       output_data_desc, y_buf, weight_space_size, zeroed_dw_buf,
       d.workspace_size, workspace_buf, d.reserve_space_size,
       reserve_space_buf)));
+#endif // JAX_GPU_HIP
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnDestroyTensorDescriptor(h_desc)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnDestroyTensorDescriptor(c_desc)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnDestroyTensorDescriptor(h_desc)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnDestroyTensorDescriptor(c_desc)));
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cudnnDestroyDropoutDescriptor(dropout_desc)));
+      JAX_AS_STATUS(gpudnnDestroyRNNDataDescriptor(input_data_desc)));
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cudnnDestroyRNNDataDescriptor(input_data_desc)));
+      JAX_AS_STATUS(gpudnnDestroyRNNDataDescriptor(output_data_desc)));
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cudnnDestroyRNNDataDescriptor(output_data_desc)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnDestroyRNNDescriptor(rnn_desc)));
+      JAX_AS_STATUS(gpudnnDestroyDropoutDescriptor(dropout_desc)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpudnnDestroyRNNDescriptor(rnn_desc)));
 
   return absl::OkStatus();
 }
