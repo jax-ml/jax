@@ -364,7 +364,7 @@ def transform_swap_array(x, transforms, val):
       case indexing.NDIndexer():
         indexer = transform
         if _is_trivial_indexer(indexer):
-          _results.append(None)
+          _results.append(_results[-1])
           continue
         # If everything in the indexer is a slice or ()-shaped, we can also
         # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
