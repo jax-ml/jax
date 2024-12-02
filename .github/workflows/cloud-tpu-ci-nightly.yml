@@ -63,9 +63,11 @@ jobs:
           $PYTHON -m pip uninstall -y jax jaxlib libtpu
           if [ "${{ matrix.jaxlib-version }}" == "head" ]; then
             # Build and install jaxlib at head
-            $PYTHON build/build.py --bazel_options=--config=rbe_linux_x86_64 \
-                    --bazel_options="--override_repository=xla=$(pwd)/xla" \
-                    --bazel_options=--color=yes
+            $PYTHON build/build.py build --wheels=jaxlib \
+                    --bazel_options=--config=rbe_linux_x86_64 \
+                    --local_xla_path=$(pwd)/xla" \
+                    --verbose
+
             $PYTHON -m pip install dist/*.whl
 
             # Install "jax" at head
