@@ -492,9 +492,7 @@ class PallasCallTest(PallasTest):
         jax.random.uniform(jax.random.key(42), shape=(256,), dtype=jnp.float32)
         * input_factor
     )
-    # TODO(cperivol): find out why in this particular case we have a small-ish error.
-    rtol = 1e-07 if input_factor > 10 else 5e-5
-    np.testing.assert_allclose(layer_norm(x), layer_norm_np(x), rtol=rtol)
+    np.testing.assert_allclose(layer_norm(x), layer_norm_np(x), rtol=5e-5)
 
   def test_print(self):
     @functools.partial(
