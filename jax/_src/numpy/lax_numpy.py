@@ -9076,7 +9076,7 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
 
   Returns:
     array containing the matrix product of the inputs. Shape is ``a.shape[:-1]``
-    if ``b.ndim == 1``, otherwise the shape is ``(..., M)``, where leading
+    if ``b.ndim == 1``, otherwise the shape is ``(..., K, M)``, where leading
     dimensions of ``a`` and ``b`` are broadcast together.
 
   See Also:
