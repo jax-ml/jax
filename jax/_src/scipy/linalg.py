@@ -1679,7 +1679,7 @@ def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: float
 
     U is a Unitary Matrix:
 
-    >>> jnp.round(U.T @ U)
+    >>> jnp.round(U.T @ U)  # doctest: +SKIP
     Array([[ 1., -0., -0.],
            [-0.,  1.,  0.],
            [-0.,  0.,  1.]], dtype=float32)

@@ -2193,8 +2193,15 @@ def lower_sharding_computation(
   assert len(out_shardings) == len(out_layouts) == len(global_out_avals), (
       len(out_shardings), len(out_layouts), len(global_out_avals))
 
-  devices_from_context = (None if context_mesh is None or context_mesh.empty
-                          else context_mesh._flat_devices_tuple)
+  if config.sharding_in_types.value:
+    # TODO(yashkatariya): Thread it via jit path and remove the None check by
+    # making tests go via set_mesh API always.
+    devices_from_context = (
+        None if mesh_lib.device_context.concrete_mesh is None
+        else mesh_lib.device_context.concrete_mesh._flat_devices_tuple)
+  else:
+    devices_from_context = (None if context_mesh is None or context_mesh.empty
+                            else context_mesh._flat_devices_tuple)
   # Device assignment across all inputs, outputs and shardings inside jaxpr
   # should be the same.
   unique_intermediate_shardings = util.stable_unique(

@@ -196,7 +196,7 @@ def rms_norm_backward(
   out_shape_dx = jax.ShapeDtypeStruct(shape=(n,), dtype=x.dtype)
   method = pl.pallas_call(
       kernel,
-      compiler_params=dict(triton=dict(num_warps=num_warps)),
+      compiler_params=plgpu.TritonCompilerParams(num_warps=num_warps),
       grid=(),
       out_shape=out_shape_dx,
       debug=False,

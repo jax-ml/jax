@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Sequence, Iterable
-import contextlib
 import dataclasses
 from functools import partial
 import inspect
@@ -645,8 +644,8 @@ def _infer_params_impl(
   attr_token = _attr_token(flat_fun, in_type)
 
   abstract_mesh = (
-      get_abstract_mesh(in_type) if mesh_lib.mesh_context.mesh is None
-      else mesh_lib.mesh_context.mesh)
+      get_abstract_mesh(in_type) if mesh_lib.abstract_mesh_context.mesh is None
+      else mesh_lib.abstract_mesh_context.mesh)
   with abstract_mesh:
     jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
         flat_fun, in_type, attr_token, dbg,
@@ -696,7 +695,7 @@ def _infer_params_impl(
 
 def get_abstract_mesh(in_avals):
   if not config.sharding_in_types.value:
-    return contextlib.nullcontext()
+    return mesh_lib.null_mesh_context()
   m = None
   for a in in_avals:
     # TODO(yashkatariya): Remove this when mesh context can be set by the user.
@@ -709,8 +708,8 @@ def get_abstract_mesh(in_avals):
     m = a.sharding.mesh  # type: ignore
   # TODO(yashkatariya): Remove this when mesh context can be set by the user.
   if m is None:
-    return contextlib.nullcontext()
-  assert m is not None
+    return mesh_lib.null_mesh_context()
+  assert isinstance(m, AbstractMesh)
   return m
 
 
@@ -1663,9 +1662,8 @@ def _pjit_call_impl_python(
       pgle_compile_options['fdo_profile'] = fdo_profile
 
   compiler_options_kvs = compiler_options_kvs + tuple(pgle_compile_options.items())
-  # TODO(patrios): Do not pass mutable profile session through cached lowering
-  # chain. Instead we need to move profilers dictionary to pxla module and use
-  # module as key. Right now we can't do that since there is no way to evict _pjit_lower_cached cache for in PGLE mode.
+  # Passing mutable PGLE profile here since it should be extracted by JAXPR to
+  # initialize the fdo_profile compile option.
   compiled = _resolve_and_lower(
       args, jaxpr=jaxpr, in_shardings=in_shardings,
       out_shardings=out_shardings, in_layouts=in_layouts,
@@ -1776,12 +1774,7 @@ def _pjit_call_impl(*args, jaxpr,
 pjit_p.def_impl(_pjit_call_impl)
 
 
-def _pjit_lower(*args, **kwargs):
-  return _pjit_lower_cached(*args, **kwargs)
-
-
-@weakref_lru_cache
-def _pjit_lower_cached(
+def _pjit_lower(
     jaxpr: core.ClosedJaxpr,
     in_shardings,
     out_shardings,
@@ -2105,6 +2098,52 @@ def _pjit_jvp(primals_in, tangents_in,
   return primals_out, [next(tangents_out_it) if nz else ad.Zero(aval)
                        for nz, aval in zip(is_nz_tangents_out, jaxpr.out_avals)]
 ad.primitive_jvps[pjit_p] = _pjit_jvp
+
+
+def _pjit_linearization(nzs, *primals_in, jaxpr,
+                        in_shardings, out_shardings, in_layouts, out_layouts,
+                        resource_env, donated_invars, name, keep_unused, inline,
+                        compiler_options_kvs):
+  primal_jaxpr, num_residuals, nzs_out, tangent_jaxpr = ad.linearize_jaxpr(jaxpr, nzs)
+  # constvars will become residuals. Move them to the end of the ordinary args.
+  res_shardings = (UNSPECIFIED,) * num_residuals
+  res_layouts = (None,) * num_residuals
+  res_donated = (False,) * num_residuals
+  def tangent_fun(consts_, *tangents):
+    tangents_nz = _filter_zeros(nzs, tangents)
+    assert len(consts_) == num_residuals
+    return pjit_p.bind(*(*tangents_nz, *consts_),
+                       jaxpr=tangent_jaxpr,
+                       in_shardings=_filter_zeros(nzs, in_shardings) + res_shardings,
+                       out_shardings=_filter_zeros(nzs_out, out_shardings),
+                       in_layouts=_filter_zeros(nzs, in_layouts) + res_layouts,
+                       out_layouts=_filter_zeros(nzs_out, out_layouts),
+                       resource_env=resource_env,
+                       donated_invars=_filter_zeros(nzs, donated_invars) + res_donated,
+                       name=name,
+                       keep_unused=keep_unused,
+                       inline=inline,
+                       compiler_options_kvs=compiler_options_kvs)
+
+  def _filter_zeros(is_nz_l, l):
+    return tuple(x for nz, x in zip(is_nz_l, l) if nz)
+
+  ans = pjit_p.bind(*primals_in, jaxpr=primal_jaxpr,
+                    in_shardings=in_shardings,
+                    out_shardings=(*res_shardings, *out_shardings),
+                    in_layouts=in_layouts,
+                    out_layouts=(*res_layouts, *out_layouts),
+                    resource_env=resource_env,
+                    donated_invars=donated_invars,
+                    name=name,
+                    keep_unused=keep_unused,
+                    inline=inline,
+                    compiler_options_kvs=compiler_options_kvs)
+  residuals_ans, primal_ans = split_list(ans, [num_residuals])
+
+  return primal_ans, nzs_out, residuals_ans, tangent_fun
+
+ad.primitive_linearizations[pjit_p] = _pjit_linearization
 
 
 def _pjit_partial_eval(trace, *in_tracers,

@@ -227,6 +227,7 @@ py_library_providing_imports_info(
             "_src/state/**/*.py",
             "_src/third_party/**/*.py",
             "experimental/key_reuse/**/*.py",
+            "experimental/roofline/**/*.py",
             "image/**/*.py",
             "interpreters/**/*.py",
             "lax/**/*.py",
@@ -426,6 +427,7 @@ pytype_strict_library(
     name = "compiler",
     srcs = ["_src/compiler.py"],
     deps = [
+        ":cache_key",
         ":compilation_cache_internal",
         ":config",
         ":mlir",
@@ -1197,5 +1199,6 @@ pytype_library(
         ":util",
         ":xla_bridge",
         "//jax/_src/lib",
+        "//jax/extend:ifrt_programs",
     ] + py_deps("numpy") + py_deps("cloudpickle"),
 )

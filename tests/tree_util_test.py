@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import collections
+from collections.abc import Hashable
 import dataclasses
 import functools
 import pickle
@@ -24,13 +25,19 @@ import jax
 from jax import flatten_util
 from jax import tree_util
 from jax._src import test_util as jtu
+from jax._src.lib import xla_extension_version
 from jax._src.tree_util import flatten_one_level, prefix_errors
 import jax.numpy as jnp
+
+# Easier to read.
+SequenceKey = tree_util.SequenceKey
+DictKey = tree_util.DictKey
+GetAttrKey = tree_util.GetAttrKey
+FlattenedIndexKey = tree_util.FlattenedIndexKey
 
 
 def _dummy_func(*args, **kwargs):
   return
-
 
 ATuple = collections.namedtuple("ATuple", ("foo", "bar"))
 
@@ -758,6 +765,78 @@ class TreeTest(jtu.JaxTestCase):
         ],
     )
 
+  def testTreeFlattenWithPathBuiltin(self):
+    x = (1, {"a": 2, "b": 3})
+    flattened = tree_util.tree_flatten_with_path(x)
+    _, tdef = tree_util.tree_flatten(x)
+    self.assertEqual(
+        flattened[0],
+        [
+            ((SequenceKey(0),), 1),
+            ((SequenceKey(1), DictKey("a")), 2),
+            ((SequenceKey(1), DictKey("b")), 3),
+        ],
+    )
+    self.assertEqual(flattened[1], tdef)
+
+  def testTreeFlattenWithPathCustom(self):
+    x = [
+        AnObject2(
+            x=12,
+            y={"foo": SpecialWithKeys(x=2, y=3), "bar": None},
+            z="constantdef",
+        ),
+        5,
+    ]
+    flattened, _ = tree_util.tree_flatten_with_path(x)
+    self.assertEqual(
+        flattened,
+        [
+            ((SequenceKey(0), "x"), 12),
+            ((SequenceKey(0), "y", DictKey("foo"), GetAttrKey("x")), 2),
+            ((SequenceKey(0), "y", DictKey("foo"), GetAttrKey("y")), 3),
+            ((SequenceKey(1),), 5),
+        ],
+    )
+
+  def testFlattenWithPathDefaultDict(self):
+    if xla_extension_version < 299:
+      self.skipTest("Skipping for Python-based with path APIs.")
+    d = collections.defaultdict(int, {"b": 2, "a": 1, "c": {"b": 2, "a": 1}})
+    leaves, treedef = tree_util.tree_flatten_with_path(d)
+    self.assertEqual(
+        leaves,
+        [
+            ((DictKey("a"),), 1),
+            ((DictKey("b"),), 2),
+            ((DictKey("c"), DictKey("a")), 1),
+            ((DictKey("c"), DictKey("b")), 2),
+        ],
+    )
+    restored_d = tree_util.tree_unflatten(treedef, [l for _, l in leaves])
+    self.assertEqual(list(restored_d.keys()), ["a", "b", "c"])
+    _, from_flatten = tree_util.tree_flatten(d)
+    self.assertEqual(treedef, from_flatten)
+
+  def testFlattenWithPathOrderedDict(self):
+    if xla_extension_version < 299:
+      self.skipTest("Skipping for Python-based with path APIs.")
+    d = collections.OrderedDict({"b": 2, "a": 1, "c": {"b": 2, "a": 1}})
+    leaves, treedef = tree_util.tree_flatten_with_path(d)
+    self.assertEqual(
+        leaves,
+        [
+            ((DictKey("b"),), 2),
+            ((DictKey("a"),), 1),
+            ((DictKey("c"), DictKey("a")), 1),
+            ((DictKey("c"), DictKey("b")), 2),
+        ],
+    )
+    restored_d = tree_util.tree_unflatten(treedef, [l for _, l in leaves])
+    self.assertEqual(list(restored_d.keys()), ["b", "a", "c"])
+    _, from_flatten = tree_util.tree_flatten(d)
+    self.assertEqual(treedef, from_flatten)
+
   def testFlattenOneLevel(self):
     EmptyTuple = collections.namedtuple("EmptyTuple", ())
     tree1 = {'a': 1,
@@ -836,6 +915,90 @@ class TreeTest(jtu.JaxTestCase):
         r"\(7, 7\)",
     ):
       tree_util.tree_flatten(t)
+
+
+class TreeKeyTest(absltest.TestCase):
+
+  def testBasic(self):
+    if xla_extension_version < 299:
+      self.skipTest("Skipping for Python-based with path APIs.")
+
+    def assert_equal_and_hash_equal(a, b):
+      self.assertEqual(a, b)
+      self.assertEqual(hash(a), hash(b))
+
+    key = SequenceKey(idx=1)
+    self.assertEqual(str(key), "[1]")
+    self.assertEqual(key.idx, 1)
+    assert_equal_and_hash_equal(key, SequenceKey(1))
+
+    class DictKeyEntry(Hashable):
+
+      def __init__(self, s: str):
+        self.s = s
+
+      def __hash__(self):
+        return hash(self.s)
+
+      def __eq__(self, other):
+        return self.s == other.s
+
+    key = DictKey(key="foo")
+    self.assertEqual(str(key), "['foo']")
+    self.assertEqual(key.key, "foo")
+    assert_equal_and_hash_equal(key, DictKey("foo"))
+    assert_equal_and_hash_equal(
+        DictKey(DictKeyEntry("foo")), DictKey(DictKeyEntry("foo"))
+    )
+
+    key = GetAttrKey(name="bar")
+    self.assertEqual(str(key), ".bar")
+    self.assertEqual(key.name, "bar")
+    assert_equal_and_hash_equal(key, GetAttrKey("bar"))
+
+    key = FlattenedIndexKey(1)
+    self.assertEqual(str(key), "[<flat index 1>]")
+    self.assertEqual(key.key, 1)
+    assert_equal_and_hash_equal(key, FlattenedIndexKey(1))
+    self.assertNotEqual(hash(key), hash(SequenceKey(1)))
+
+  def testPatternMatching(self):
+    keys = [
+        SequenceKey(1),
+        DictKey("foo"),
+        GetAttrKey("bar"),
+        FlattenedIndexKey(1),
+    ]
+    for key in keys:
+      match key:
+        case jax.tree_util.SequenceKey(idx=idx):
+          self.assertEqual(idx, 1)
+        case jax.tree_util.DictKey(key=key):
+          self.assertEqual(key, "foo")
+        case jax.tree_util.GetAttrKey(name=name):
+          self.assertEqual(name, "bar")
+        case jax.tree_util.FlattenedIndexKey(key=idx_key):
+          self.assertEqual(idx_key, 1)
+        case _:
+          raise ValueError(f"key not matched: {key}")
+    match [
+        DictKey("foo"),
+    ]:
+      case [DictKey("foo"), *_]:
+        pass
+      case _:
+        raise ValueError(f"keys are not matched: {keys}")
+
+  def testPickle(self):
+    keys = [
+        SequenceKey(1),
+        DictKey("foo"),
+        GetAttrKey("bar"),
+        FlattenedIndexKey(1),
+    ]
+    for key in keys:
+      unpickled = pickle.loads(pickle.dumps(key))
+      self.assertEqual(key, unpickled)
 
 
 class StaticTest(parameterized.TestCase):

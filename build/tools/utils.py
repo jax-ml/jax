@@ -28,25 +28,6 @@ import urllib.request
 
 logger = logging.getLogger(__name__)
 
-def is_windows():
-  return sys.platform.startswith("win32")
-
-def shell(cmd):
-  try:
-    logger.info("shell(): %s", cmd)
-    output = subprocess.check_output(cmd)
-  except subprocess.CalledProcessError as e:
-    logger.info("subprocess raised: %s", e)
-    if e.output:
-      print(e.output)
-    raise
-  except Exception as e:
-    logger.info("subprocess raised: %s", e)
-    raise
-  return output.decode("UTF-8").strip()
-
-
-# Bazel
 BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/6.5.0/"
 BazelPackage = collections.namedtuple(
     "BazelPackage", ["base_uri", "file", "sha256"]
@@ -88,7 +69,6 @@ bazel_packages = {
         ),
     ),
 }
-
 
 def download_and_verify_bazel():
   """Downloads a bazel binary from GitHub, verifying its SHA256 hash."""
@@ -144,7 +124,6 @@ def download_and_verify_bazel():
 
   return os.path.join(".", package.file)
 
-
 def get_bazel_paths(bazel_path_flag):
   """Yields a sequence of guesses about bazel path.
 
@@ -154,7 +133,6 @@ def get_bazel_paths(bazel_path_flag):
   yield bazel_path_flag
   yield shutil.which("bazel")
   yield download_and_verify_bazel()
-
 
 def get_bazel_path(bazel_path_flag):
   """Returns the path to a Bazel binary, downloading Bazel if not found.
@@ -177,17 +155,20 @@ def get_bazel_path(bazel_path_flag):
   )
   sys.exit(-1)
 
-
 def get_bazel_version(bazel_path):
   try:
-    version_output = shell([bazel_path, "--version"])
+    version_output = subprocess.run(
+        [bazel_path, "--version"],
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
   except (subprocess.CalledProcessError, OSError):
     return None
   match = re.search(r"bazel *([0-9\\.]+)", version_output)
   if match is None:
     return None
   return tuple(int(x) for x in match.group(1).split("."))
-
 
 def get_clang_path_or_exit():
   which_clang_output = shutil.which("clang")
@@ -202,7 +183,6 @@ def get_clang_path_or_exit():
     )
     sys.exit(-1)
 
-
 def get_clang_major_version(clang_path):
   clang_version_proc = subprocess.run(
       [clang_path, "-E", "-P", "-"],
@@ -215,35 +195,42 @@ def get_clang_major_version(clang_path):
 
   return major_version
 
-
-# Python
-def get_python_bin_path(python_bin_path_flag):
-  """Returns the path to the Python interpreter to use."""
-  path = python_bin_path_flag or sys.executable
-  return path.replace(os.sep, "/")
-
-
-def get_python_version(python_bin_path):
-  version_output = shell([
-      python_bin_path,
-      "-c",
-      (
-          'import sys; print("{}.{}".format(sys.version_info[0], '
-          "sys.version_info[1]))"
-      ),
-  ])
-  major, minor = map(int, version_output.split("."))
-  return major, minor
-
-def check_python_version(python_version):
-  if python_version < (3, 10):
-    print("ERROR: JAX requires Python 3.10 or newer, found ", python_version)
-    sys.exit(-1)
+def get_jax_configure_bazel_options(bazel_command: list[str]):
+  """Returns the bazel options to be written to .jax_configure.bazelrc."""
+  # Get the index of the "run" parameter. Build options will come after "run" so
+  # we find the index of "run" and filter everything after it.
+  start = bazel_command.index("run")
+  jax_configure_bazel_options = ""
+  try:
+    for i in range(start + 1, len(bazel_command)):
+      bazel_flag = bazel_command[i]
+      # On Windows, replace all backslashes with double backslashes to avoid
+      # unintended escape sequences.
+      if platform.system() == "Windows":
+        bazel_flag = bazel_flag.replace("\\", "\\\\")
+      jax_configure_bazel_options += f"build {bazel_flag}\n"
+    return jax_configure_bazel_options
+  except ValueError:
+    logging.error("Unable to find index for 'run' in the Bazel command")
+    return ""
 
 def get_githash():
   try:
     return subprocess.run(
-        ["git", "rev-parse", "HEAD"], encoding="utf-8", capture_output=True
+        ["git", "rev-parse", "HEAD"],
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
     ).stdout.strip()
   except OSError:
     return ""
+
+def _parse_string_as_bool(s):
+  """Parses a string as a boolean value."""
+  lower = s.lower()
+  if lower == "true":
+    return True
+  elif lower == "false":
+    return False
+  else:
+    raise ValueError(f"Expected either 'true' or 'false'; got {s}")

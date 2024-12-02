@@ -112,47 +112,73 @@ class PgleTest(jtu.JaxTestCase):
     fdo_profile = pgle_profiler.consume_fdo_profile()
     self.assertEqual(fdo_profile.count(b'custom'), its)
 
+  def get_fdo_profiles(self, dump_dir):
+    jit_f_fdo_profiles = [
+        x
+        for x in os.listdir(dump_dir)
+        if 'jit_f' in x and x.endswith('.fdo_profile')
+    ]
+    return jit_f_fdo_profiles
+
   def testAutoPgle(self):
     mesh = jtu.create_mesh((2,), ('x',))
 
-    @partial(
-        jax.jit,
-        in_shardings=NamedSharding(mesh, PartitionSpec('x')),
-        out_shardings=NamedSharding(mesh, PartitionSpec('x')),
-        compiler_options={
-            'xla_gpu_enable_latency_hiding_scheduler': 'True',
-            # TODO(patrios): Remove this flag once b/376647494 is fixed.
-            'xla_gpu_graph_min_graph_size': '100000',
-        },
-    )
-    def f(x):
-      return x * 2
+    with tempfile.TemporaryDirectory() as dump_dir:
+      @partial(
+          jax.jit,
+          in_shardings=NamedSharding(mesh, PartitionSpec('x')),
+          out_shardings=NamedSharding(mesh, PartitionSpec('x')),
+          compiler_options={
+              'xla_gpu_enable_latency_hiding_scheduler': 'True',
+              # TODO(patrios): Remove this flag once b/376647494 is fixed.
+              'xla_gpu_graph_min_graph_size': '100000',
+              'xla_dump_to': dump_dir,
+              'xla_gpu_experimental_dump_fdo_profiles': 'True'
+          },
+      )
+      def f(x):
+        return x * 2
 
-    shape = (16, 16)
-    x = jnp.arange(math.prod(shape)).reshape(shape).astype(np.float32)
-    expected = x * 2
+      shape = (16, 16)
+      x = jnp.arange(math.prod(shape)).reshape(shape).astype(np.float32)
+      expected = x * 2
 
-    with config.pgle_profiling_runs(2), config.enable_pgle(True):
-      # Run 1: Module should be compiled without FDO. Two modules are expected
-      # One is the funtion f, the other one is multi slice module
-      with jtu.count_cached_compilation_cache_miss() as cache_miss_count:
-        self.assertArraysEqual(f(x), expected)
-      self.assertEqual(cache_miss_count[0], 2)
+      with config.pgle_profiling_runs(2), config.enable_pgle(True):
+        # Run 1: Module should be compiled without FDO. Two modules are expected
+        # One is the funtion f, the other one is multi slice module
+        with jtu.count_cached_compilation_cache_miss() as cache_miss_count:
+          self.assertArraysEqual(f(x), expected)
+        self.assertEqual(cache_miss_count[0], 2)
 
-      # Run 2: Second PGLE run should not recompile the module
-      with jtu.count_cached_compilation_cache_miss() as cache_miss_count:
-        self.assertArraysEqual(f(x), expected)
-      self.assertLess(cache_miss_count[0], 2)
+        # Run 2: Second PGLE run. Profile should be empty.
+        with jtu.count_cached_compilation_cache_miss() as cache_miss_count:
+          self.assertArraysEqual(f(x), expected)
+        self.assertEqual(cache_miss_count[0], 2)
+        fdo_profiles_before_pgle = self.get_fdo_profiles(dump_dir)
+        # One for before and one for after optimization.
+        self.assertLen(fdo_profiles_before_pgle, 2)
+        # The FDO profile file should be empty.
+        self.assertEqual(
+            os.path.getsize(os.path.join(dump_dir, fdo_profiles_before_pgle[0])), 0)
 
-      # Run 3: The module should be recompiled with FDO profiles
-      with jtu.count_cached_compilation_cache_miss() as cache_miss_count:
-        self.assertArraysEqual(f(x), expected)
-      self.assertEqual(cache_miss_count[0], 2)
+        # Run 3: The module should be recompiled with FDO profiles
+        with jtu.count_cached_compilation_cache_miss() as cache_miss_count:
+          self.assertArraysEqual(f(x), expected)
+        self.assertEqual(cache_miss_count[0], 2)
+        fdo_profiles_after_pgle = self.get_fdo_profiles(dump_dir)
+        # One for before and one for after optimization.
+        self.assertLen(fdo_profiles_after_pgle, 4)
 
-      # Run 4: Fast-path should be used after PGLE is done
-      with jtu.count_cached_compilation_cache_miss() as cache_miss_count:
-        self.assertArraysEqual(f(x), expected)
-      self.assertLess(cache_miss_count[0], 2)
+        for fdo_profile in fdo_profiles_after_pgle:
+          if fdo_profile not in fdo_profiles_before_pgle:
+            self.assertGreater(
+                os.path.getsize(os.path.join(dump_dir, fdo_profile)), 0
+            )
+
+        # Run 4: Fast-path should be used after PGLE is done
+        with jtu.count_cached_compilation_cache_miss() as cache_miss_count:
+          self.assertArraysEqual(f(x), expected)
+        self.assertLess(cache_miss_count[0], 2)
 
   def testAutoPgleWithAot(self):
     @jax.jit
@@ -225,38 +251,27 @@ class PgleTest(jtu.JaxTestCase):
         # Run 2: Compilation should not be called
         with jtu.count_cached_compilation_cache_miss() as cache_miss_count:
           f(x)
-        self.assertLess(cache_miss_count[0], 2)
+        self.assertGreater(cache_miss_count[0], 0)
 
-        module_before_pgle = os.listdir(dump_dir)
-        self.assertNotEmpty(module_before_pgle)
+        fdo_profiles_before_pgle = self.get_fdo_profiles(dump_dir)
         # Run 3: Module should be compiled with FDO and stored to persistent cache
         with jtu.count_cached_compilation_cache_miss() as cache_miss_count:
           f(x)
         self.assertGreater(cache_miss_count[0], 0)
 
         # Check if FDO profile file of the biggest module is not empty
-        module_after_pgle = [
+        fdo_profiles_after_pgle = [
             x
-            for x in os.listdir(dump_dir)
-            if x not in module_before_pgle
+            for x in self.get_fdo_profiles(dump_dir)
+            if x not in fdo_profiles_before_pgle
         ]
-        self.assertNotEmpty(module_after_pgle)
-        biggest_module_after_pgle = max(
-            module_after_pgle,
-            key=lambda x: os.path.getsize(
-                os.path.join(dump_dir, x)
-            ),
-        )
-        base_module_name = '.'.join(biggest_module_after_pgle.split('.')[0:1])
+        self.assertNotEmpty(fdo_profiles_after_pgle)
 
         # Check if FDO profile file in dump directory is not empty
-        for module in module_after_pgle:
-          if module.startswith(base_module_name) and module.endswith(
-              '.fdo_profile'
-          ):
-            self.assertGreater(
-                os.path.getsize(os.path.join(dump_dir, module)), 0
-            )
+        for fdo_profile in fdo_profiles_after_pgle:
+          self.assertGreater(
+              os.path.getsize(os.path.join(dump_dir, fdo_profile)), 0
+          )
 
         for pgle_profiler in pjit._pgle_profiler_dict.values():
           self.assertTrue(pgle_profiler.is_enabled())
@@ -293,42 +308,42 @@ class PgleTest(jtu.JaxTestCase):
 
         self.assertGreater(cache_hit, 0)
 
-    def testPassingFDOProfile(self):
-      mesh = jtu.create_mesh((2,), ('x',))
+  def testPassingFDOProfile(self):
+    mesh = jtu.create_mesh((2,), ('x',))
 
-      @partial(
-          jax.jit,
-          in_shardings=NamedSharding(mesh, PartitionSpec('x')),
-          out_shardings=NamedSharding(mesh, PartitionSpec('x')),
-          compiler_options={'xla_gpu_enable_latency_hiding_scheduler': 'True'},
-      )
-      def f(x, y):
-        return x @ y
+    @partial(
+        jax.jit,
+        in_shardings=NamedSharding(mesh, PartitionSpec('x')),
+        out_shardings=NamedSharding(mesh, PartitionSpec('x')),
+        compiler_options={'xla_gpu_enable_latency_hiding_scheduler': 'True'},
+    )
+    def f(x, y):
+      return x @ y
 
-      shape = (16, 16)
-      x = jnp.arange(math.prod(shape)).reshape(shape).astype(np.float32)
-      y = x + 1
+    shape = (16, 16)
+    x = jnp.arange(math.prod(shape)).reshape(shape).astype(np.float32)
+    y = x + 1
 
-      with config.pgle_profiling_runs(0):
-        f_lowered = f.lower(x, y)
-        compiled = f_lowered.compile()
+    with config.pgle_profiling_runs(0):
+      f_lowered = f.lower(x, y)
+      compiled = f_lowered.compile()
 
-      with tempfile.TemporaryDirectory() as cache_dir:
-        jax.profiler.start_trace(cache_dir)
-        compiled(x, y)
-        jax.profiler.stop_trace()
-        directories = glob.glob(os.path.join(cache_dir, 'plugins/profile/**/'))
-        directories = [d for d in directories if os.path.isdir(d)]
-        rundir = directories[-1]
-        logging.info('rundir: %s', rundir)
-        fdo_profile = exp_profiler.get_profiled_instructions_proto(rundir)
+    with tempfile.TemporaryDirectory() as cache_dir:
+      jax.profiler.start_trace(cache_dir)
+      compiled(x, y)
+      jax.profiler.stop_trace()
+      directories = glob.glob(os.path.join(cache_dir, 'plugins/profile/**/'))
+      directories = [d for d in directories if os.path.isdir(d)]
+      rundir = directories[-1]
+      logging.info('rundir: %s', rundir)
+      fdo_profile = exp_profiler.get_profiled_instructions_proto(rundir)
 
-      if jtu.test_device_matches(['gpu']) and jtu.is_device_cuda():
-        self.assertIn(b'custom', fdo_profile)
+    if jtu.test_device_matches(['gpu']) and jtu.is_device_cuda():
+      self.assertIn(b'custom', fdo_profile)
 
-      logging.info('fdo_profile: %s', fdo_profile)
-      # Test pass fdo_profile as compiler_options API works.
-      f_lowered.compile(compiler_options={'fdo_profile': fdo_profile})
+    logging.info('fdo_profile: %s', fdo_profile)
+    # Test pass fdo_profile as compiler_options API works.
+    f_lowered.compile(compiler_options={'fdo_profile': fdo_profile})
 
 
 if __name__ == '__main__':

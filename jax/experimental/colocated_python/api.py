@@ -32,7 +32,7 @@ def colocated_cpu_devices(
     raise NotImplementedError("Requires xla_extension_version >= 290")
 
   cpu_devices_by_colocation_id = collections.defaultdict(list)
-  for device in devices[0].backend._get_all_devices():  # pylint: disable=protected-access
+  for device in devices[0].client._get_all_devices():  # pylint: disable=protected-access
     if device.device_kind == "cpu":
       cpu_devices_by_colocation_id[device.colocation_id].append(device)
   if not cpu_devices_by_colocation_id:

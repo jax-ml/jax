@@ -20,6 +20,7 @@ load(
     "jax_visibility",
     "xla_py_proto_library",
 )
+# Placeholder: load proto_library
 
 licenses(["notice"])
 

@@ -40,7 +40,7 @@ jobs:
           python -m pip install -r build/test-requirements.txt
           python -m pip install --upgrade numpy==2.0.0 scipy==1.13.1
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
-          python.exe build\build.py `
+          python.exe build\build.py build --wheels=jaxlib `
             --bazel_options=--color=yes `
             --bazel_options=--config=win_clang `
             --verbose

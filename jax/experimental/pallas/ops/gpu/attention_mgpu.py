@@ -16,6 +16,7 @@
 import dataclasses
 import functools
 import itertools
+import math
 import jax
 from jax import lax
 from jax._src import test_util as jtu  # noqa: F401
@@ -59,17 +60,16 @@ def attention(q, k, v, config: TuningConfig):
   q_heads_per_kv_head = num_q_heads // num_kv_heads
   if head_dim % 64:
     raise ValueError(f"{head_dim=} must be divisible by 64")
-  if batch_size != 1:
-    raise NotImplementedError(f"Only batch_size=1 is supported, got: {batch_size=}")
   if jnp.dtype(dtype) not in map(jnp.dtype, [jnp.float16, jnp.bfloat16]):
     raise NotImplementedError(f"Only f16 and bf16 are supported, got dtype: {dtype}")
-  q, k, v = map(lambda x: x[0], (q, k, v))
+
   max_concurrent_steps = min(
       config.max_concurrent_steps, kv_seq_len // config.block_kv
   )
   block_q, block_kv = config.block_q, config.block_kv
 
   def kernel(q_ref, k_ref, v_ref, out_ref, scoped):
+    batch = lax.axis_index("batch")
     smem_buffers, buffer_barriers, consumed_barriers, schedule_barrier = scoped
     wg_idx = lax.axis_index("wg")
     qo_smem2, k_smem, v_smem = smem_buffers
@@ -83,11 +83,11 @@ def attention(q, k, v, config: TuningConfig):
     def _compute_wg():
       plgpu.set_max_registers(232, action="increase")
       qo_smem = qo_smem2.at[wg_idx]
-      q_seq_base = lax.axis_index("q") * (2 * block_q) + wg_idx * block_q
+      q_seq_base = lax.axis_index("q_seq") * (2 * block_q) + wg_idx * block_q
       q_head = lax.axis_index("heads")
 
       plgpu.copy_gmem_to_smem(
-          q_ref.at[pl.ds(q_seq_base, block_q), q_head],
+          q_ref.at[batch, pl.ds(q_seq_base, block_q), q_head],
           qo_smem,
           q_barriers.at[wg_idx],
       )
@@ -119,11 +119,13 @@ def attention(q, k, v, config: TuningConfig):
         plgpu.barrier_arrive(k_consumed_barrier)
 
         # Softmax
-        m_ij = jnp.maximum(m_i, qk.max(axis=1))
-        alpha = jnp.exp(m_i - m_ij)
+        # We keep m scaled by log2e to use FMA instructions when computing p.
+        log2e = math.log2(math.e)
+        m_ij = jnp.maximum(m_i, qk.max(axis=1) * log2e)
+        alpha = jnp.exp2(m_i - m_ij)
         m_i = m_ij
-        p = jnp.exp(qk - lax.broadcast_in_dim(m_ij, (block_q, block_kv), [0]))
-        acc *= lax.broadcast_in_dim(alpha, (block_q, head_dim), [0])
+        p = jnp.exp2(qk * log2e - lax.broadcast_in_dim(m_ij, qk.shape, [0]))
+        acc *= lax.broadcast_in_dim(alpha, acc.shape, [0])
         l_i *= alpha
         p16 = p.astype(dtype)
 
@@ -157,7 +159,7 @@ def attention(q, k, v, config: TuningConfig):
       qo_smem[...] = acc.astype(dtype)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(
-          qo_smem, out_ref.at[pl.ds(q_seq_base, block_q), q_head],
+          qo_smem, out_ref.at[batch, pl.ds(q_seq_base, block_q), q_head],
       )
       plgpu.wait_smem_to_gmem(0)
     @pl.when(wg_idx == 2)
@@ -165,14 +167,14 @@ def attention(q, k, v, config: TuningConfig):
       plgpu.set_max_registers(40, action="decrease")
       kv_head = lax.div(lax.axis_index("heads"), q_heads_per_kv_head)
       for i in range(max_concurrent_steps):
-        s = (pl.ds(i * block_kv, block_kv), kv_head)
+        s = (batch, pl.ds(i * block_kv, block_kv), kv_head)
         plgpu.copy_gmem_to_smem(k_ref.at[s], k_smem.at[i], k_barriers.at[i])
         plgpu.copy_gmem_to_smem(v_ref.at[s], v_smem.at[i], v_barriers.at[i])
 
       def kv_loop(kv_step, _):
         tma_step = kv_step + max_concurrent_steps
         tma_slot = lax.rem(kv_step, max_concurrent_steps)
-        s = (pl.ds(tma_step * block_kv, block_kv), kv_head)
+        s = (batch, pl.ds(tma_step * block_kv, block_kv), kv_head)
         plgpu.barrier_wait(k_consumed_barrier)
         plgpu.copy_gmem_to_smem(k_ref.at[s], k_smem.at[tma_slot], k_barriers.at[tma_slot])
         plgpu.barrier_wait(v_consumed_barrier)
@@ -191,9 +193,9 @@ def attention(q, k, v, config: TuningConfig):
     if rem:
       raise NotImplementedError(f"{q_seq_len=} must be a multiple of {block_q * 2=}")
     mesh = plgpu.GPUMesh(
-        grid=(num_q_tiles, num_q_heads),
+        grid=(batch_size, num_q_tiles, num_q_heads),
         num_threads=3,
-        axis_names=("q", "heads", "wg"),
+        axis_names=("batch", "q_seq", "heads", "wg"),
         approx_math=True,
     )
     @pl.core_map(mesh)
@@ -227,7 +229,7 @@ def attention(q, k, v, config: TuningConfig):
       )
 
   _, _, _, out = pl.run_state(run)((q, k, v, jnp.full_like(q, jnp.inf)))
-  return out[None]
+  return out
 
 
 @jax.jit
@@ -247,13 +249,13 @@ def attention_reference(q, k, v):
 
 
 def main(unused_argv):
-  batch_size = 1
   num_q_heads = 1
   num_kv_heads = 1
-  problem_it = itertools.product((4096, 32768,), (64, 128, 256,))
-  for seq_len, head_dim in problem_it:
+  problem_it = itertools.product((1, 2), (4096, 32768,), (64, 128, 256,))
+  for batch_size, seq_len, head_dim in problem_it:
     q_seq_len = kv_seq_len = seq_len
-    print(f"==== {kv_seq_len=:<6} {q_seq_len=:<6} {num_q_heads=:<4} {head_dim=:<6} ====")
+    print(f"==== {batch_size=:<6} {kv_seq_len=:<6} {q_seq_len=:<6}"
+          f"{num_q_heads=:<4} {head_dim=:<6} ====")
     param_it = itertools.product((64,), (64, 128, 256))
     best = None
     k1, k2, k3 = jax.random.split(jax.random.key(42), 3)

@@ -25,8 +25,10 @@ from jax._src import core as jax_core
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
+from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
+from jax._src.lib.mlir.dialects import llvm as llvm_dialect
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
@@ -692,3 +694,47 @@ def _commit_smem_lowering(ctx: lowering.LoweringRuleContext):
 def commit_smem():
   """Commits all writes to SMEM, making them visible to loads, TMA and WGMMA."""
   commit_smem_p.bind()
+
+
+broadcasted_iota_p = jax_core.Primitive("broadcasted_iota")
+
+@broadcasted_iota_p.def_abstract_eval
+def _broadcasted_iota_abstract_eval(dtype, shape, dimension, layout):
+  del layout, dimension
+  return jax_core.ShapedArray(shape, dtype)
+
+@lowering.register_lowering_rule(broadcasted_iota_p)
+def _broadcasted_iota_lowering(ctx: lowering.LoweringRuleContext, dtype, shape, dimension, layout):
+  del ctx
+  # Unsigned integers (as opposed to signless) cause MLIR verification
+  # errors so we only use signless like Mosaic GPU does.
+  #
+  # TODO(cperivol): use mgpu.utils.dtype_to_ir_type() instead.
+  mlir_dtype = (
+      ir.IntegerType.get_signless(dtype.itemsize * 8)
+      if jnp.issubdtype(dtype, jnp.integer)
+      else mlir.dtype_to_ir_type(dtype)
+  )
+  undef = llvm_dialect.mlir_undef(mlir_dtype)
+  is_signed = (
+      jnp.issubdtype(dtype, jnp.signedinteger)
+      if jnp.issubdtype(dtype, jnp.integer)
+      else None
+  )
+
+  i32 = ir.IntegerType.get_signless(32)
+  def _cast(x):
+    if ir.FloatType.isinstance(mlir_dtype):
+      x = arith_dialect.index_cast(i32, x)
+      return arith_dialect.uitofp(mlir_dtype, x)
+    else:
+      return arith_dialect.index_cast(mlir_dtype, x)
+  return mgpu.FragmentedArray.splat(
+      undef, shape, layout.value, is_signed=is_signed
+  ).foreach(
+      lambda _, idx: _cast(idx[dimension]), create_array=True, is_signed=is_signed
+  )
+
+
+def broadcasted_iota(dtype, shape, dimension, *, layout: Layout | None = None):
+  return broadcasted_iota_p.bind(dtype=jnp.dtype(dtype), shape=shape, dimension=dimension, layout=layout)

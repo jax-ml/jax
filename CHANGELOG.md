@@ -55,6 +55,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
         `platforms` instead.
   * Hashing of tracers, which has been deprecated since version 0.4.30, now
     results in a `TypeError`.
+  * Refactor: JAX build CLI (build/build.py) now uses a subcommand structure and
+    replaces previous build.py usage. Run `python build/build.py --help` for
+    more details. Brief overview of the new subcommand options:
+    * `build`: Builds JAX wheel packages. For e.g., `python build/build.py build --wheels=jaxlib,jax-cuda-pjrt`
+    * `requirements_update`: Updates requirements_lock.txt files.
   * {func}`jax.scipy.linalg.toeplitz` now does implicit batching on multi-dimensional
     inputs. To recover the previous behavior, you can call {func}`jax.numpy.ravel`
     on the function inputs.

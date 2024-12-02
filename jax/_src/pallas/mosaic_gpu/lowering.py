@@ -360,10 +360,6 @@ def lower_jaxpr_to_module(
 
   assert len(jaxpr.outvars) == 0
   assert not grid_mapping.vmapped_dims
-  if len(grid_mapping.grid) > 3:
-    raise NotImplementedError(
-        "Only <=3D grids are supported in Mosaic GPU lowering."
-    )
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(
         "Dynamic grid bounds not supported in the Mosaic GPU lowering."
@@ -397,16 +393,19 @@ def lower_jaxpr_to_module(
         f" {max_concurrent_steps=}, {delay_release=}"
     )
 
-  block = (128, 1, 1)
-  grid = grid_mapping.grid
   if grid_mapping.grid_names:  # Last dim corresponds to the warpgroup count
     block = (128 * grid_mapping.grid[-1], 1, 1)
-    grid = grid[:-1]
-
-  grid = [d for i, d in enumerate(grid) if i not in sequential_axes]
-  if len(grid) < 3:
-    grid += (1,) * (3 - len(grid))
+    logical_grid = grid_mapping.grid[:-1]
   else:
+    block = (128, 1, 1)
+    logical_grid = grid_mapping.grid
+
+  parallel_grid = [
+      d for i, d in enumerate(logical_grid) if i not in sequential_axes
+  ]
+  if len(parallel_grid) < 3:
+    parallel_grid += (1,) * (3 - len(parallel_grid))
+  elif len(parallel_grid) > 3:
     raise NotImplementedError(
         "Only <=3D grids are supported in Mosaic GPU lowering."
     )
@@ -500,7 +499,7 @@ def lower_jaxpr_to_module(
         _program_id(next(parallel_count))
         if axis not in sequential_axes
         else None
-        for axis in range(len(grid_mapping.grid))
+        for axis in range(len(logical_grid))
     ]
 
     def make_program_ids(step: ir.Value):
@@ -788,7 +787,7 @@ def lower_jaxpr_to_module(
     prof_ctx = ProfilerContext(params["profile_dir"], prof_spec)
   module, out_structs_gmem, _ = mgpu_core._lower_as_gpu_kernel(
       body,
-      grid=grid,
+      grid=parallel_grid,
       cluster=(),
       block=block,
       in_shapes=in_structs_gmem,
@@ -806,7 +805,9 @@ def lower_jaxpr_to_module(
       prof_spec=prof_spec,
   )
 
-  return LoweringResult(module, grid, block, out_structs_gmem, prof_ctx)
+  return LoweringResult(
+      module, parallel_grid, block, out_structs_gmem, prof_ctx
+  )
 
 
 mosaic_lowering_rules = {}
@@ -1179,6 +1180,12 @@ def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
   return _ensure_fa(x, x_aval.dtype).rsqrt(approx=ctx.module_ctx.approx_math)
 
+@register_lowering_rule(lax.tanh_p)
+def _tanh_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  return _ensure_fa(x, x_aval.dtype).tanh(approx=ctx.module_ctx.approx_math)
+
+
 @register_lowering_rule(lax.logistic_p)
 def _logistic_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
@@ -1190,6 +1197,13 @@ def _exp_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
   a = _ensure_fa(x, x_aval.dtype)
   return a.exp(approx=ctx.module_ctx.approx_math)
+
+
+@register_lowering_rule(lax.exp2_p)
+def _exp2_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  a = _ensure_fa(x, x_aval.dtype)
+  return a.exp2(approx=ctx.module_ctx.approx_math)
 
 
 @register_lowering_rule(lax.reduce_sum_p)
@@ -1209,7 +1223,7 @@ def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
         raise NotImplementedError
       if not jnp.issubdtype(x_aval.dtype, jnp.floating):
         raise NotImplementedError
-      return x.reduce(arith_dialect.addf, axes[0])
+      return x.reduce("add", axes[0])
     case _:
       raise NotImplementedError(f"Unsupported layout {x.layout}")
 
@@ -1223,7 +1237,7 @@ def _reduce_max_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
         raise NotImplementedError
       if not jnp.issubdtype(x_aval.dtype, jnp.floating):
         raise NotImplementedError
-      return x.reduce(arith_dialect.maxnumf, axes[0])
+      return x.reduce("max", axes[0])
     case _:
       raise NotImplementedError(f"Unsupported layout {x.layout}")
 
@@ -1514,8 +1528,24 @@ def _while_lowering_rule(
 @register_lowering_rule(lax.cond_p)
 def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
   index_aval, *_arg_avals = ctx.avals_in
+
+  # We need the branch return mlir types in order to construct the
+  # switch operation. To avoid leaking information about what kind of
+  # mlir types are internal to FragmentedArrays and other mgpu types,
+  # we run one of the branches in a dummy module that we throw away to
+  # extract the return types
+  with ir.InsertionPoint(ir.Module.create().body):
+    outs = lower_jaxpr_to_mosaic_gpu(
+        ctx.module_ctx, ctx.launch_ctx, branches[0].jaxpr, args
+    )
+    yielded = [
+        _ensure_ir_value(out, aval.dtype) or out
+        for out, aval in zip(outs, ctx.avals_out)
+    ]
+    yielded_leaves, _ = jax.tree.flatten(yielded)
+
   switch_op = scf_dialect.IndexSwitchOp(
-      map(mgpu_utils.dtype_to_ir_type, ctx.avals_out),
+      [v.type for v in yielded_leaves],
       _as_index(_ensure_ir_value(index, index_aval.dtype)),
       ir.DenseI64ArrayAttr.get(range(len(branches) - 1)),
       num_caseRegions=len(branches) - 1,
@@ -1527,16 +1557,27 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
   regions = list(switch_op.regions)
   # Move the default region to the back.
   regions = regions[1:] + regions[:1]
+  treedef = None
   for branch, region in zip(branches, regions):
     with ir.InsertionPoint(region.blocks.append()):
       outs = lower_jaxpr_to_mosaic_gpu(
-          ctx.module_ctx, ctx.launch_ctx, branch.jaxpr, args
+          ctx.module_ctx, ctx.launch_ctx, branch.jaxpr, args, consts=branch.consts
       )
-      scf_dialect.yield_([
-          _ensure_ir_value(out, aval.dtype)
+
+      yielded = [
+          _ensure_ir_value(out, aval.dtype) or out
           for out, aval in zip(outs, ctx.avals_out)
-      ])
-  return list(switch_op.results)
+      ]
+      yielded_leaves, yielded_treedef = jax.tree.flatten(yielded)
+      if treedef is None:
+        treedef = yielded_treedef
+      else:
+        assert treedef == yielded_treedef
+
+      scf_dialect.yield_(yielded_leaves)
+
+  assert treedef is not None
+  return treedef.unflatten(list(switch_op.results))
 
 
 @register_lowering_rule(lax.bitcast_convert_type_p)

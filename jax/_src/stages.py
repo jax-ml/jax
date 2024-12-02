@@ -30,7 +30,6 @@ executable protocols described above.
 """
 from __future__ import annotations
 
-import contextlib
 import functools
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -44,6 +43,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
+from jax._src import mesh as mesh_lib
 from jax._src.sharding_impls import UnspecifiedValue, AUTO
 from jax._src.layout import Layout
 from jax._src.interpreters import mlir
@@ -717,7 +717,7 @@ class Traced(Stage):
                "_args_flat", "_arg_names", "_num_consts"]
 
   def __init__(self, jaxpr: core.ClosedJaxpr, args_info, fun_name, out_tree,
-               lower_callable, abstract_mesh=contextlib.nullcontext(),
+               lower_callable, abstract_mesh=mesh_lib.null_mesh_context(),
                args_flat=None, arg_names=None, num_consts: int = 0):
     self.jaxpr = jaxpr
     self.args_info = args_info

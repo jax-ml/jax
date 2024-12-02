@@ -28,7 +28,8 @@ from jax._src.lib import xla_client as xc
 from jax._src.traceback_util import api_boundary
 from jax._src.util import wraps
 from jax.experimental.colocated_python import func_backend
-from jax.experimental.colocated_python.serialization import _deserialize_specs, _make_specs_for_serialized_specs, _serialize_specs
+from jax.experimental.colocated_python.serialization import _deserialize_specs, _make_specs_for_serialized_specs, _serialize, _serialize_specs
+from jax.extend.ifrt_programs import ifrt_programs
 
 ShapeDtypeStructTree = Any  # PyTree[api.ShapeDtypeStruct]
 
@@ -141,8 +142,13 @@ def _compile_to_executable(
     devices: xc.DeviceList,
 ) -> Callable[..., Any]:
   """Compiles a Python function into a runtime executable."""
-  # TODO(hyeontaek): Wrap fun as CustomCallProgram and compile it into an
-  # executable.
+  pickled_function = _serialize(fun)
+  program = ifrt_programs.make_colocated_python_program(
+      name, pickled_function, devices, in_specs_leaves, out_specs_leaves
+  )
+  # TODO(hyeontaek): Compile the program and use the executable.
+  del program
+
   del name
   del in_specs_leaves
   del out_specs_leaves
