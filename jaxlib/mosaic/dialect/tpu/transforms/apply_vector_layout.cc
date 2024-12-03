@@ -1764,19 +1764,6 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
   // TODO(tlongeri): This should be part of the tpu::MatmulOp verifier
   TPU_ASSERT_EQ_OP(lhs_shape.size(), 2);
   TPU_ASSERT_EQ_OP(rhs_shape.size(), 2);
-  // The code below puts no constraints on the second dimension of both lhs and
-  // rhs. However, leading axis of lhs and rhs needs to be a multiple of native
-  // tiling for packed types.
-  if (layout_lhs.packing() != 1 && lhs_shape[0] % layout_lhs.tiling()[0] != 0) {
-    return op.emitOpError(
-        "Not implemented: Unsupported LHS shape with padded tiling and "
-        "narrower data type");
-  }
-  if (layout_rhs.packing() != 1 && rhs_shape[0] % layout_rhs.tiling()[0] != 0) {
-    return op.emitOpError(
-        "Not implemented: Unsupported RHS shape with padded tiling and "
-        "narrower data type");
-  }
 
   const int64_t padded_lhs_rows =
       llvm::alignTo(lhs_shape[0], layout_lhs.tiling()[0]);
@@ -1787,10 +1774,6 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
   const int64_t padded_rhs_cols =
       llvm::alignTo(rhs_shape[1], layout_rhs.tiling()[1]);
 
-  if (llvm::alignTo(lhs_shape[0], layout_acc.tiling()[0]) != padded_lhs_rows) {
-    return op.emitOpError(
-        "Not implemented: Matmul acc requires less padding than lhs");
-  }
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> lhs_vregs,
       disassemble(builder, layout_lhs, lhs, ctx.target_shape));
@@ -1801,7 +1784,6 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
       xla::Array<Value> rhs_vregs,
       disassemble(builder, layout_rhs, rhs, ctx.target_shape));
   TPU_ASSERT_EQ_OP(padded_lhs_rows, lhs_vregs.dim(0) * layout_lhs.tiling()[0]);
-  TPU_ASSERT_EQ_OP(padded_lhs_rows, acc_vregs.dim(0) * layout_acc.tiling()[0]);
   TPU_ASSERT_EQ_OP(padded_rhs_rows, rhs_vregs.dim(0) * layout_rhs.tiling()[0]);
 
   const VectorType i32_vreg_ty =
@@ -1823,12 +1805,14 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
 
   // We can also extend this helper function with padding_top and padding_left
   // based on the offsets in vregs.
-  // TODO(b/341729764): Support mask subelements.
+  const Value i32_zeros_vreg = builder.create<arith::ConstantOp>(
+      op.getLoc(),
+      DenseElementsAttr::get(i32_vreg_ty, builder.getI32IntegerAttr(0)));
+  const Value i32_max_vreg = builder.create<arith::ConstantOp>(
+      op.getLoc(), DenseElementsAttr::get(
+                       i32_vreg_ty, builder.getI32IntegerAttr(0xffffffff)));
   auto maskVregs = [&](xla::Array<Value> &vregs, int64_t padding_bottom,
                        int64_t padding_right) {
-    const Value i32_zeros_vreg = builder.create<arith::ConstantOp>(
-        op.getLoc(),
-        DenseElementsAttr::get(i32_vreg_ty, builder.getI32IntegerAttr(0)));
     auto vreg_ty = cast<VectorType>(vregs.begin()->getType());
     int packing = vreg_ty.getRank() > 2 ? vreg_ty.getShape()[2] : 1;
     // Mask out the bottom.
@@ -1836,14 +1820,49 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
       // We have limited the row size of LHS and RHS need to be a multiple of
       // native tiling at the beginning of this rule. Therefore, it is safe to
       // bitcast to x32 vreg for masking.
-      CHECK_EQ(padding_bottom % packing, 0);
-      padding_bottom /= packing;
-      auto mask_bottom = getX32VmaskByPaddingEnd(0, padding_bottom);
+      int sub_padding = padding_bottom % packing;
+      int x32_padding_bottom = padding_bottom / packing;
+      auto mask_bottom = getX32VmaskByPaddingEnd(0, x32_padding_bottom);
+      // Create an int32 vreg which contains subelement masking and then
+      // logical_and with target vreg to mask out the unaligned paddings.
+      // Eg. if padding_bottom = 5, packing = 2, and assume the vreg shape is
+      // [8, 128], then the mask will be:
+      //
+      // sublane 0: [0xffffffff, 0xffffffff, ..., 0xffffffff]
+      // sublane 1: [0xffffffff, 0xffffffff, ..., 0xffffffff]
+      // sublane 2: [0xffffffff, 0xffffffff, ..., 0xffffffff]
+      // sublane 3: [0xffffffff, 0xffffffff, ..., 0xffffffff]
+      // sublane 4: [0xffffffff, 0xffffffff, ..., 0xffffffff]
+      // sublane 5: [0x0000ffff, 0x0000ffff, ..., 0x0000ffff]
+      // sublane 6: [0         , 0         , ..., 0         ]
+      // sublane 7: [0         , 0         , ..., 0         ]
+      //
+      // Through this way, in order to mask sub-elements, each target vreg only
+      // needs to apply 1 op (logical_and) instead of 3 ops (unpacking + select
+      // + packing).
+      Value partial_sublane_mask = builder.create<arith::ConstantOp>(
+          op.getLoc(),
+          DenseElementsAttr::get(
+              i32_vreg_ty,
+              builder.getI32IntegerAttr(
+                  0xffffffff >>
+                  (sub_padding * vreg_ty.getElementTypeBitWidth()))));
+      // Insert 0xffffffff above the blended sublane.
+      Value sublane_mask = builder.create<arith::SelectOp>(
+          getX32VmaskByPaddingEnd(0, x32_padding_bottom + 1), i32_max_vreg,
+          partial_sublane_mask);
+      // Insert 0 below the blended sublane.
+      sublane_mask = builder.create<arith::SelectOp>(mask_bottom, sublane_mask,
+                                                     i32_zeros_vreg);
       for (int64_t i = 0; i < vregs.dim(1); ++i) {
         Value &vreg = vregs({vregs.dim(0) - 1, i});
         Value i32_vreg = builder.create<tpu::BitcastVregOp>(i32_vreg_ty, vreg);
-        i32_vreg = builder.create<arith::SelectOp>(mask_bottom, i32_vreg,
-                                                   i32_zeros_vreg);
+        if (sub_padding > 0) {
+          i32_vreg = builder.create<arith::AndIOp>(i32_vreg, sublane_mask);
+        } else {
+          i32_vreg = builder.create<arith::SelectOp>(mask_bottom, i32_vreg,
+                                                     i32_zeros_vreg);
+        }
         vreg = builder.create<tpu::BitcastVregOp>(vreg_ty, i32_vreg);
       }
     }
@@ -1929,8 +1948,9 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
                                      lhs_zeros_vreg);
   xla::Array<Value> target_rhs_vregs(
       {target_rhs_row_vregs, target_rhs_col_vregs}, rhs_zeros_vreg);
-  xla::Array<Value> target_acc_vregs({acc_vregs.dim(0), target_acc_col_vregs},
-                                     acc_zeros_vreg);
+  xla::Array<Value> target_acc_vregs(
+      {lhs_vregs.dim(0) * layout_lhs.packing(), target_acc_col_vregs},
+      acc_zeros_vreg);
   target_lhs_vregs.UpdateSlice(lhs_vregs, {0, 0});
   target_rhs_vregs.UpdateSlice(rhs_vregs, {0, 0});
   target_acc_vregs.UpdateSlice(acc_vregs, {0, 0});

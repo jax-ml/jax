@@ -903,66 +903,21 @@ class VectorLayoutInferer {
   }
 
   LogicalResult infer(tpu::MatmulOp op) {
-    auto get_operand_layout =
-        [&](Value v, llvm::StringRef operand_name,
-            std::optional<int64_t> major_multiple = std::nullopt,
-            std::optional<int64_t> minor_multiple =
-                std::nullopt) -> std::optional<VectorLayout> {
-      auto layout = getLayout(v);
-      if (!layout.has_value()) {
-        op->emitOpError("Internal error: assert failed: Operand ")
-            << operand_name << " has no vector layout";
-        return std::nullopt;
-      }
-      auto vty = cast<VectorType>(v.getType());
-      auto tiling = nativeTiling(vty.getElementTypeBitWidth());
-      auto shape = vty.getShape().take_back(2);
-      if (shape[0] % major_multiple.value_or(tiling[0]) != 0 ||
-          shape[1] % minor_multiple.value_or(tiling[1]) != 0) {
-        op->emitOpError("Matmul operand ")
-            << operand_name << " must have a shape divisible by ("
-            << major_multiple.value_or(tiling[0]) << ", "
-            << minor_multiple.value_or(tiling[1]) << "), but got: (" << shape[0]
-            << ", " << shape[1] << ")";
-        return std::nullopt;
-      }
-      // Override tiling to match the native one.
-      return VectorLayout(layout->bitwidth(), {0, 0}, tiling,
-                          ImplicitDim::kNone);
-    };
-    auto res_ty = dyn_cast<VectorType>(op->getResult(0).getType());
-    TPU_CHECK_OP(res_ty, "only vector results supported");
-    TPU_CHECK_OP(res_ty.getElementTypeBitWidth() == kNativeBitwidth,
-                 "only 32-bit matmul results supported");
-    std::array<Layout, 3> in_layout;
-    CHECK_EQ(op->getNumOperands(), 3);
-    std::optional<int64_t> lhs_major_multiple;
-    std::optional<int64_t> rhs_major_multiple;
-    // We don't restrict the first lhs axis when the data is not packed.
-    if (cast<VectorType>(op->getOperand(0).getType())
-            .getElementTypeBitWidth() == kNativeBitwidth) {
-      lhs_major_multiple = 1;
-    }
-    // We don't restrict the first rhs axis when the data is not packed.
-    if (cast<VectorType>(op->getOperand(1).getType())
-            .getElementTypeBitWidth() == kNativeBitwidth) {
-      rhs_major_multiple = 1;
-    }
-    in_layout[0] =
-        get_operand_layout(op->getOperand(0), "lhs", lhs_major_multiple, 1);
-    if (!in_layout[0].has_value()) {
-      return failure();
-    }
-    in_layout[1] =
-        get_operand_layout(op->getOperand(1), "rhs", rhs_major_multiple, 1);
-    if (!in_layout[1].has_value()) {
-      return failure();
-    }
-    in_layout[2] = get_operand_layout(op->getOperand(2), "result", 1, 1);
-    if (!in_layout[2].has_value()) {
-      return failure();
-    }
-    setLayout(op, in_layout,
+    auto lhs_bitwidth = op.getLhs().getType().getElementTypeBitWidth();
+    auto rhs_bitwidth = op.getRhs().getType().getElementTypeBitWidth();
+    auto acc_bitwidth = op.getAcc().getType().getElementTypeBitWidth();
+    auto res_bitwidth = op.getResult().getType().getElementTypeBitWidth();
+    TPU_CHECK_OP(acc_bitwidth == kNativeBitwidth,
+                 "Expected 32-bit acc in tpu::MatmulOp");
+    TPU_CHECK_OP(res_bitwidth == kNativeBitwidth,
+                 "Expected 32-bit result in tpu::MatmulOp");
+    auto lhs_layout = VectorLayout(
+        lhs_bitwidth, {0, 0}, nativeTiling(lhs_bitwidth), ImplicitDim::kNone);
+    auto rhs_layout = VectorLayout(
+        rhs_bitwidth, {0, 0}, nativeTiling(rhs_bitwidth), ImplicitDim::kNone);
+    auto acc_layout = VectorLayout(
+        acc_bitwidth, {0, 0}, nativeTiling(acc_bitwidth), ImplicitDim::kNone);
+    setLayout(op, {lhs_layout, rhs_layout, acc_layout},
               VectorLayout(kNativeBitwidth, {0, 0}, default_tiling_,
                            ImplicitDim::kNone));
     return success();

@@ -544,6 +544,15 @@ LogicalResult MatmulOp::verify() {
   // however, a good start and the recommended place to add more invariants.
   const VectorType lhs_ty = getLhs().getType();
   const VectorType rhs_ty = getRhs().getType();
+  const VectorType acc_ty = getAcc().getType();
+  const VectorType res_ty = getResult().getType();
+  if (acc_ty != res_ty) {
+    return emitOpError(
+        "Not implemented: matmul acc and result have different types");
+  }
+  if (acc_ty.getElementTypeBitWidth() != 32) {
+    return emitOpError("Expected matmul acc to be 32-bit");
+  }
 
   if (getTransposeLhs()) {
     emitOpError(
