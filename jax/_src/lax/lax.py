@@ -923,8 +923,15 @@ class DotAlgorithmPreset(enum.Enum):
       case _:
         return np.float32
 
-  @property
-  def supported_output_types(self) -> tuple[DTypeLike, ...] | None:
+  def supported_output_types(
+      self, lhs_dtype: DTypeLike, rhs_dtype: DTypeLike
+  ) -> tuple[DTypeLike, ...] | None:
+    if np.dtype(lhs_dtype) != np.dtype(rhs_dtype):
+      raise ValueError(
+          f"The dot algorithm '{self}' requires both inputs to have the same "
+          f'dtypes. Got {lhs_dtype} and {rhs_dtype} instead.'
+      )
+
     match self:
       case (
           DotAlgorithmPreset.ANY_F8_ANY_F8_F32
@@ -942,6 +949,11 @@ class DotAlgorithmPreset(enum.Enum):
         )
       case DotAlgorithmPreset.F16_F16_F32:
         return (np.float32, np.float16)
+      case DotAlgorithmPreset.BF16_BF16_F32:
+        if np.dtype(lhs_dtype) == dtypes.bfloat16:
+          return (np.float32, dtypes.bfloat16)
+        else:
+          return (np.float32,)
       case _:
         accumulation_type = self.accumulation_type
         return None if accumulation_type is None else (accumulation_type,)
@@ -3713,13 +3725,6 @@ def get_algorithm_compute_types(
         algorithm.accumulation_type,
     )
 
-  supported_output_types = algorithm.supported_output_types
-
-  if algorithm == DotAlgorithmPreset.BF16_BF16_F32:
-    # If dtype is anything other than float32, it will be cast to bfloat16.
-    if np.dtype(lhs_dtype) != np.float32:
-      supported_output_types = (np.float32, dtypes.bfloat16)
-
   def maybe_convert_dtype(input_dtype, target_dtypes):
     if target_dtypes is None:
       return input_dtype
@@ -3727,11 +3732,12 @@ def get_algorithm_compute_types(
       return input_dtype
     return target_dtypes[0]
 
-  return (
-      maybe_convert_dtype(lhs_dtype, algorithm.supported_lhs_types),
-      maybe_convert_dtype(rhs_dtype, algorithm.supported_rhs_types),
-      maybe_convert_dtype(out_dtype, supported_output_types),
+  lhs_dtype = maybe_convert_dtype(lhs_dtype, algorithm.supported_lhs_types)
+  rhs_dtype = maybe_convert_dtype(rhs_dtype, algorithm.supported_rhs_types)
+  out_type = maybe_convert_dtype(
+      out_dtype, algorithm.supported_output_types(lhs_dtype, rhs_dtype)
   )
+  return lhs_dtype, rhs_dtype, out_type
 
 
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
