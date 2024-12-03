@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "jax_generate_backend_suites",
@@ -44,10 +45,32 @@ jax_multiplatform_test(
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
-jax_py_test(
-    name = "gpu_dialect_test",
-    srcs = ["gpu_dialect_test.py"],
+py_library(
+    name = "gpu_dialect_test_util",
+    testonly = True,
+    srcs = ["gpu_dialect_test_util.py"],
     deps = [
+        "//jax",
+        "//jax:mosaic_gpu",
+    ],
+)
+
+jax_py_test(
+    name = "gpu_dialect_verifier_test",
+    srcs = ["gpu_dialect_verifier_test.py"],
+    deps = [
+        ":gpu_dialect_test_util",
+        "//jax",
+        "//jax:mosaic_gpu",
+        "//jax:test_util",
+    ] + py_deps("absl/testing"),
+)
+
+jax_py_test(
+    name = "gpu_dialect_lowering_test",
+    srcs = ["gpu_dialect_lowering_test.py"],
+    deps = [
+        ":gpu_dialect_test_util",
         "//jax",
         "//jax:mosaic_gpu",
         "//jax:test_util",
