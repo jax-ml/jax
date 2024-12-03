@@ -6262,6 +6262,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
             'isnat',
             'loadtxt',
             'matrix',
+            'matvec',
             'may_share_memory',
             'memmap',
             'min_scalar_type',
@@ -6287,7 +6288,8 @@ class NumpySignaturesTest(jtu.JaxTestCase):
             'show_runtime',
             'test',
             'trapz',
-            'typename'}
+            'typename',
+            'vecmat'}
 
     # symbols removed in NumPy 2.0
     skip |= {'add_docstring',
