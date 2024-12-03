@@ -112,7 +112,7 @@ don't seem useful for multi-host communication yet.
 
 ## Multi-Process
 
-We recommand using one process per GPU and not one per node.  In some
+We recommend using one process per GPU and not one per node.  In some
 cases, this can speed up jitted computation. The
 {func}`jax.distributed.initialize` API will automatically understand
 that configuration when run under SLURM. However, this only a rule of
