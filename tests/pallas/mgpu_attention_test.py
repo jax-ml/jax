@@ -49,7 +49,7 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
       self.skipTest("Only works on GPU with capability sm90a")
 
   @parameterized.product(
-      batch_size=(1,),
+      batch_size=(1, 4),
       q_seq_len=(4096,),
       kv_seq_len=(4096,),
       num_q_and_kv_heads=((4, 1),    # MQA
