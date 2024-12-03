@@ -808,14 +808,6 @@ class OpsTest(PallasBaseTest):
     ):
       self.skipTest(f"{fn.__name__} not implemented on TPU")
 
-    # TODO: https://github.com/jax-ml/jax/issues/24243
-    if (
-        jtu.test_device_matches(["tpu"])
-        and fn == jnp.logical_not
-        and not self.INTERPRET
-    ):
-      self.skipTest("logical_not on TPU is only supported in interpret mode")
-
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((8, 128), dtype),
