@@ -1,0 +1,113 @@
+# CI - Pytest CPU
+#
+# This workflow builds jaxlib artifact and then runs the CPU tests with Pytest.
+#
+# It consists of two jobs:
+# 1. build-artifacts:
+#    - This job uses a reusable workflow (`build_artifacts.yml`) to build the necessary jaxlib wheel
+#    - The built wheel is then uploaded to a Google Cloud Storage (GCS) bucket for later use.
+# 2. run-tests:
+#    - This job downloads the jaxlib wheel built in the `build-artifacts` job from the GCS bucket.
+#    - It then executes the `run_pytest_cpu.sh` script, which performs the following actions:
+#      - Installs the downloaded jaxlib wheel.
+#      - Runs the CPU tests with Pytest.
+name: CI - Pytest CPU
+
+on:
+  # TODO: For testing purposes, remove before submitting
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: choice
+        required: false
+        default: 'no'
+        options:
+        - 'yes'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-artifacts:
+    uses: ./.github/workflows/build_artifacts.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:  # Runner and Python values need to match the matrix stategy in the run-tests job
+          # Disable Windows until we have fixed the runner issue
+          runner: ["linux-x86-n2-16", "linux-arm64-c4a-64",] # "windows-x86-n2-16"]
+          artifact: ["jaxlib"]
+          python: ["3.10"]
+    with:
+      runner: ${{ matrix.runner }}
+      artifact: ${{ matrix.artifact }}
+      python: ${{ matrix.python }}
+      clone_main_xla: 1
+      upload_artifacts: true
+      upload_destination_prefix: '${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+
+  run-tests:
+    needs: build-artifacts
+    defaults:
+      run:
+        # Explicitly set the shell to bash to override Windows's default (cmd)
+        shell: bash
+
+    strategy:
+      fail-fast: false # don't cancel all jobs on failure
+      matrix:
+        # Disable Windows until we have fixed the runner issue
+        runner: ["linux-x86-n2-64", "linux-arm64-c4a-64",] # "windows-x86-n2-64"]
+        python: ["3.10"]
+        enable-x_64: [1, 0]
+
+    runs-on: ${{ matrix.runner }}
+    container: ${{ (contains(matrix.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest') ||
+                   (contains(matrix.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') ||
+                   (contains(matrix.runner, 'windows-x86') && null) }}
+
+    name: "Pytest CPU (${{ matrix.runner }}, Python ${{ matrix.python }}, x64=${{ matrix.enable-x_64 }})"
+
+    env:
+      JAXCI_HERMETIC_PYTHON_VERSION: ${{ matrix.python }}
+      JAXCI_ENABLE_X64: ${{ matrix.enable-x_64 }} # Whether to enable/disabe x64 mode
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # Halt for testing
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@main
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Set Platform env var for use in artifact download URL
+        run: |
+          os=$(uname -s | awk '{print tolower($0)}')
+          arch=$(uname -m)
+
+          # Adjust name for Windows
+          if [[  $os  =~ "msys_nt" ]]; then
+            os="windows"
+          fi
+
+          echo "PLATFORM=${os}_${arch}" >> $GITHUB_ENV
+      - name: Download artifacts that were built in the "build-artifacts" job (non-Windows runs)
+        if: ${{ !contains(matrix.runner, 'windows-x86') }}
+        run: >-
+          mkdir -p $(pwd)/dist &&
+          gsutil -m cp -r gs://general-ml-ci-transient/jax-github-actions/"${{ github.workflow }}"/${{ github.run_number }}/${{ github.run_attempt }}/$PLATFORM/python${JAXCI_HERMETIC_PYTHON_VERSION}/*.whl $(pwd)/dist/
+      - name: Download artifacts that were built in the "build-artifacts" job (Windows runs)
+        if: ${{ contains(matrix.runner, 'windows-x86') }}
+        shell: cmd
+        run: >-
+          mkdir dist &&
+          gsutil -m cp -r gs://general-ml-ci-transient/jax-github-actions/"${{ github.workflow }}"/${{ github.run_number }}/${{ github.run_attempt }}/$PLATFORM/python${JAXCI_HERMETIC_PYTHON_VERSION}/*.whl dist/
+      - name: Install dependencies
+        env:
+          JAXCI_PYTHON: python${{ matrix.python }}
+        run: $JAXCI_PYTHON -m pip install -r build/requirements.in
+      - name: Run Pytest CPU tests
+        run: ./ci/run_pytest_cpu.sh
