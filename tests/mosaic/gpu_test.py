@@ -1674,6 +1674,20 @@ class FragmentedArrayTest(TestCase):
     )(x)
     np.testing.assert_array_equal(result, reference)
 
+  @parameterized.parameters(jnp.float32, jnp.float16, jnp.bfloat16)
+  def test_optimization_barrier(self, dtype):
+    def kernel(ctx, inp, out, smem):
+      del ctx, smem
+      arr = mgpu.FragmentedArray.load_strided(inp)
+      arr2 = arr * 2
+      arr, arr2 = mgpu.optimization_barrier(arr, arr2)
+      (arr + arr2).store_untiled(out)
+
+    x = jnp.arange(256, dtype=dtype)
+
+    f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, None)
+    np.testing.assert_array_equal(f(x), x * 3)
+
 
 class ProfilerTest(TestCase):
 

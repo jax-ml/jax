@@ -1681,6 +1681,12 @@ def _bitcast_convert_type_lowering_rule(
   )
 
 
+@register_lowering_rule(lax.optimization_barrier_p)
+def _optimization_barrier_lowering(ctx: LoweringRuleContext, *args):
+  args = (_ensure_fa(arg, aval.dtype) for arg, aval in zip(args, ctx.avals_in))
+  return mgpu.optimization_barrier(*args)
+
+
 def _bcast(
     x: ir.Value,
     y: ir.Value,

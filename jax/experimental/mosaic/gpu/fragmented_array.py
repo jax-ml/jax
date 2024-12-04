@@ -1866,3 +1866,108 @@ def subf(a: ir.Value, b: ir.Value):
 
 def mulf(a: ir.Value, b: ir.Value):
   return arith.mulf(a, b, fastmath=arith.FastMathFlags.contract)
+
+
+def optimization_barrier(*arrays: mgpu.FragmentedArray):
+  """Acts as an optimization barrier for LLVM.
+
+  Passing arrays through this function will make sure that they are computed
+  before any side-effecting operations that follow this barrier.
+  """
+  index = ir.IndexType.get()
+  i32 = ir.IntegerType.get_signless(32)
+
+  regs = []
+  reg_dtypes = []
+  reg_constraints = []
+  ptx_lines = ["// Optimization barrier"]
+  repack_fns = []
+  # We unpack each array into a flat list of registers, and prepare the
+  # functions that invert the transform in repack_fns.
+  for array in arrays:
+    ptx_lines.append("// Next array")
+    reg_ty = array.registers.flat[0].type
+    dtype = array.mlir_dtype
+    num_prev_cstr = len(reg_constraints)
+    if ir.F32Type.isinstance(dtype):
+      if ir.VectorType.isinstance(reg_ty):
+        [vec_len] = ir.VectorType(reg_ty).shape
+        array_regs = [  # pylint: disable=g-complex-comprehension
+            vector.extractelement(reg, position=c(pos, index))
+            for reg in array.registers.flat
+            for pos in range(vec_len)
+        ]
+        def _repack(regs, reg_ty=reg_ty):
+          reg = llvm.mlir_undef(reg_ty)
+          [vec_len] = ir.VectorType(reg_ty).shape
+          for i_elem in range(vec_len):
+            reg = llvm.insertelement(
+                reg, next(regs), arith.constant(i32, i_elem)
+            )
+          return reg
+        repack_fns.append(_repack)
+      else:
+        array_regs = list(array.registers.flat)
+        repack_fns.append(lambda regs: next(regs))
+      reg_constraint = "f"
+    elif ir.BF16Type.isinstance(dtype) or ir.F16Type.isinstance(dtype):
+      if not ir.VectorType.isinstance(reg_ty):
+        raise NotImplementedError(array.mlir_dtype)
+      [vec_len] = ir.VectorType(reg_ty).shape
+      if vec_len != 2:
+        raise NotImplementedError(vec_len)
+      i32_reg_ty = ir.VectorType.get((1,), i32)
+      array_regs = [
+          vector.extractelement(
+              vector.bitcast(i32_reg_ty, reg), position=c(0, index)
+          )
+          for reg in array.registers.flat
+      ]
+      reg_constraint = "r"
+      def _repack(regs, reg_ty=reg_ty, i32_reg_ty=i32_reg_ty):
+        return vector.bitcast(reg_ty, vector.splat(i32_reg_ty, next(regs)))
+      repack_fns.append(_repack)
+    else:
+      raise NotImplementedError(array.mlir_dtype)
+    regs += array_regs
+    reg_dtypes += [array_regs[0].type] * len(array_regs)
+    reg_constraints += [f"={reg_constraint}"] * len(array_regs)
+    reg_constraints += [reg_constraint] * len(array_regs)
+    ptx_lines += [
+        f"mov.b32 ${i}, ${len(array_regs)+i}"
+        for i in range(num_prev_cstr, num_prev_cstr + len(array_regs))
+    ]
+  reg_constraints = ",".join(reg_constraints)
+  ptx = ";\n\t".join(ptx_lines) + ";"
+  struct_ty = ir.Type.parse(
+      f"!llvm.struct<({','.join(map(str, reg_dtypes))})>"
+  )
+  result_struct = llvm.inline_asm(
+      struct_ty, regs, ptx, reg_constraints,
+      asm_dialect=0, has_side_effects=True,
+  )
+  regs = [
+      llvm.extractvalue(dtype, result_struct, [i])
+      for i, dtype in enumerate(reg_dtypes)
+  ]
+  i32 = ir.IntegerType.get_signless(32)
+  results = []
+  regs_it = iter(regs)
+  for array, repack_fn in zip(arrays, repack_fns, strict=True):
+    num_regs = array.registers.size
+    reg_ty = array.registers.flat[0].type
+    if ir.VectorType.isinstance(reg_ty):
+      reg_ty = ir.VectorType(reg_ty)
+    new_registers = np.empty((num_regs,), dtype=object)
+    for i_vreg in range(num_regs):
+      reg = repack_fn(regs_it)
+      assert reg.type == reg_ty, (reg.type, reg_ty)
+      new_registers[i_vreg] = reg
+    results.append(
+        FragmentedArray(
+            _registers=new_registers.reshape(array.registers.shape),
+                        _layout=array.layout,
+            _is_signed=array.is_signed,
+        )
+    )
+  return results[0] if len(arrays) == 1 else results

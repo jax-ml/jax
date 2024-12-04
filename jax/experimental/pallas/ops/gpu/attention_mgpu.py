@@ -129,10 +129,19 @@ def attention(q, k, v, config: TuningConfig):
         l_i *= alpha
         p16 = p.astype(dtype)
 
-        plgpu.barrier_wait(v_barriers.at[slot])
-        perform_schedule_barrier()
-
-        l_i += p.sum(axis=1)
+        def end_softmax_barriers():
+          plgpu.barrier_arrive(schedule_barrier)  # Done with softmax!
+          plgpu.barrier_wait(v_barriers.at[slot])
+          plgpu.barrier_wait(schedule_barrier)  # Wait until TensorCore is free.
+        # Can't fully explain why, but empirically the ordering here influences
+        # the performance of the final kernel quite significantly.
+        if head_dim <= 128:
+          l_i += p.sum(axis=1)
+          acc, l_i, m_i, p16 = lax.optimization_barrier((acc, l_i, m_i, p16))
+          end_softmax_barriers()
+        else:
+          end_softmax_barriers()
+          l_i += p.sum(axis=1)
 
         # PV
         def compute_pv(acc_ref):
