@@ -707,9 +707,6 @@ def get_abstract_mesh(in_avals):
           f'Mesh for all inputs should be equal. Got one mesh: {m} and'
           f' another mesh: {a.sharding.mesh}')
     m = a.sharding.mesh  # type: ignore
-  # TODO(yashkatariya): Remove this when mesh context can be set by the user.
-  if m is None:
-    return contextlib.nullcontext()
   assert isinstance(m, AbstractMesh)
   return m
 
@@ -1791,8 +1788,12 @@ def _pjit_lower(
     lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
     pgle_profiler: profiler.PGLEProfiler | None):
-  mesh, api_name = ((resource_env.physical_mesh, 'pjit')
-                    if resource_env is not None else (None, 'jit'))
+  if config.sharding_in_types.value:
+    mesh = mesh_lib.device_context.concrete_mesh
+    api_name = 'jit'
+  else:
+    mesh, api_name = ((resource_env.physical_mesh, 'pjit')
+                      if resource_env is not None else (None, 'jit'))
   return pxla.lower_sharding_computation(
       jaxpr, api_name, name, in_shardings, out_shardings,
       in_layouts, out_layouts, tuple(donated_invars),

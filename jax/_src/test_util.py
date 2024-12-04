@@ -51,6 +51,7 @@ from jax._src import monitoring
 from jax._src import pjit as pjit_lib
 from jax._src import stages
 from jax._src import xla_bridge
+from jax._src import mesh as mesh_lib
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
@@ -1441,6 +1442,16 @@ def with_and_without_mesh(f):
       ('', (), ()),
       ('Mesh', (('x', 2),), (('i', 'x'),))
     ))(with_mesh_from_kwargs(f))
+
+def with_user_mesh(sizes, names):
+  def decorator(fn):
+    def mesh_fn(*args, **kwargs):
+      mesh = create_mesh(sizes, names)
+      with mesh_lib.set_mesh(mesh):
+        return fn(*args, **kwargs, mesh=mesh)
+    return mesh_fn
+  return decorator
+
 
 def create_mesh(mesh_shape, axis_names, iota_order=False):
   size = math.prod(mesh_shape)
