@@ -629,7 +629,8 @@ def _multi_slice(self: Array,
 # avoid circular imports.
 @jax.jit
 def _unstack(x: Array) -> list[Array]:
-  return [lax.index_in_dim(x, i, keepdims=False) for i in range(x.shape[0])]
+  dims = (0,)
+  return [lax.squeeze(t, dims) for t in lax.split(x, (1,) * x.shape[0])]
 
 def _chunk_iter(x, size):
   if size > x.shape[0]:
