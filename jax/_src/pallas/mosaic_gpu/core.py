@@ -104,7 +104,6 @@ class GPUMemorySpace(enum.Enum):
     return self.value
 
   def __call__(
-
       self,
       shape: tuple[int, ...],
       dtype: jnp.dtype,
@@ -161,7 +160,6 @@ class TilingTransform(MemoryRefTransform):
   shape of (M // X, N // Y, X, Y). Ex. A (256, 256) block that is tiled with a
   tiling of (64, 32) will be tiled as (4, 8, 64, 32).
   """
-
   tiling: tuple[int, ...]
 
   def undo(self, ref: pallas_core.TransformedRef) -> pallas_core.TransformedRef:
@@ -176,10 +174,10 @@ class TilingTransform(MemoryRefTransform):
     return mgpu.TileTransform(self.tiling)
 
 
-@tree_util.register_pytree_node_class
+@tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class UntileRef(state_types.Transform):
-  tiling: tuple[int, ...]
+  tiling: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
 
   def transform_shape(self, shape):
     if shape is None:
@@ -213,14 +211,6 @@ class UntileRef(state_types.Transform):
 
   def undo_to_gpu_transform(self) -> mgpu.MemRefTransform:
     return mgpu.TileTransform(self.tiling)
-
-  def tree_flatten(self):
-    return (), (self.tiling,)
-
-  @classmethod
-  def tree_unflatten(cls, metadata, arrays):
-    assert not arrays
-    return cls(*metadata)
 
 
 def _perm_inverse(permutation: tuple[int, ...]) -> tuple[int, ...]:
@@ -257,7 +247,7 @@ class TransposeTransform(MemoryRefTransform):
     return mgpu.TransposeTransform(self.permutation)
 
 
-@tree_util.register_pytree_node_class
+@tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class TransposeRef(state_types.Transform):
   permutation: tuple[int, ...]
@@ -286,14 +276,6 @@ class TransposeRef(state_types.Transform):
 
   def undo_to_gpu_transform(self) -> mgpu.MemRefTransform:
     return mgpu.TransposeTransform(_perm_inverse(self.permutation))
-
-  def tree_flatten(self):
-    return (), (self.permutation,)
-
-  @classmethod
-  def tree_unflatten(cls, metadata, arrays):
-    assert not arrays
-    return cls(*metadata)
 
 
 def transpose_ref(
@@ -345,10 +327,10 @@ class SwizzleTransform(MemoryRefTransform):
     return aval
 
 
-@tree_util.register_pytree_node_class
+@tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class UnswizzleRef(state_types.Transform):
-  swizzle: int
+  swizzle: int = dataclasses.field(metadata=dict(static=True))
 
   def untransform_index(
       self, idxs: tuple[Index, ...]
@@ -368,14 +350,6 @@ class UnswizzleRef(state_types.Transform):
     ):
       raise ValueError("Swizzled dims cannot be sliced")
     return idxs, self
-
-  def tree_flatten(self):
-    return (), (self.swizzle,)
-
-  @classmethod
-  def tree_unflatten(cls, metadata, arrays):
-    assert not arrays
-    return cls(*metadata)
 
 
 @dataclasses.dataclass
