@@ -2220,7 +2220,10 @@ def lower_sharding_computation(
     out_shardings = _concretize_abstract_shardings(
         out_shardings, global_out_avals, device_assignment)
 
-  platforms = lowering_platforms or (backend.platform,)
+  # TODO(parkers): One _raw_platform has been unified with platform,
+  # change this back to just read platform.
+  platforms = lowering_platforms or (
+      getattr(backend, "_raw_platform", backend.platform),)
 
   committed = bool(
       devices_from_context or
