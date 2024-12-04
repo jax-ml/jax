@@ -213,6 +213,52 @@ struct QrFactorization {
   static int64_t GetWorkspaceSize(lapack_int x_rows, lapack_int x_cols);
 };
 
+//== Column Pivoting QR Factorization ==//
+
+// lapack geqp3
+template <::xla::ffi::DataType dtype>
+struct PivotingQrFactorization {
+  static_assert(!::xla::ffi::IsComplexType<dtype>(),
+              "There exists a separate implementation for Complex types");
+
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using FnType = void(lapack_int* m, lapack_int* n, ValueType* a,
+                      lapack_int* lda, lapack_int* jpvt, ValueType* tau,
+                      ValueType* work, lapack_int* lwork, lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+
+  static ::xla::ffi::Error Kernel(::xla::ffi::Buffer<dtype> x,
+                                  ::xla::ffi::Buffer<LapackIntDtype> jpvt,
+                                  ::xla::ffi::ResultBuffer<dtype> x_out,
+                                  ::xla::ffi::ResultBuffer<LapackIntDtype> jpvt_out,
+                                  ::xla::ffi::ResultBuffer<dtype> tau);
+
+  static int64_t GetWorkspaceSize(lapack_int x_rows, lapack_int x_cols);
+};
+
+template <::xla::ffi::DataType dtype>
+struct PivotingQrFactorizationComplex {
+  static_assert(::xla::ffi::IsComplexType<dtype>());
+
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using RealType = ::xla::ffi::NativeType<::xla::ffi::ToReal(dtype)>;
+  using FnType = void(lapack_int* m, lapack_int* n, ValueType* a, lapack_int* lda,
+                      lapack_int* jpvt, ValueType* tau, ValueType* work,
+                      lapack_int* lwork, RealType* rwork, lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+
+  static ::xla::ffi::Error Kernel(::xla::ffi::Buffer<dtype> x,
+                                  ::xla::ffi::Buffer<LapackIntDtype> jpvt,
+                                  ::xla::ffi::ResultBuffer<dtype> x_out,
+                                  ::xla::ffi::ResultBuffer<LapackIntDtype> jpvt_out,
+                                  ::xla::ffi::ResultBuffer<dtype> tau);
+
+  static int64_t GetWorkspaceSize(lapack_int x_rows, lapack_int x_cols);
+};
+
+
 //== Orthogonal QR ==//
 
 // lapack orgqr
@@ -753,6 +799,10 @@ XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sgeqrf_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dgeqrf_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cgeqrf_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_zgeqrf_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sgeqp3_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dgeqp3_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cgeqp3_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_zgeqp3_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sorgqr_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dorgqr_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cungqr_ffi);
