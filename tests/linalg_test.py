@@ -1714,11 +1714,16 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     shape=[(3, 4), (3, 3), (4, 3)],
     dtype=[np.float32],
     mode=["full", "r", "economic"],
+    pivoting=[False, True]
   )
-  def testScipyQrModes(self, shape, dtype, mode):
+  def testScipyQrModes(self, shape, dtype, mode, pivoting):
+    is_not_cpu_test_device = not jtu.test_device_matches(["cpu"])
+    is_not_valid_jaxlib_version = jtu.jaxlib_version() <= (0, 4, 38)
+    if pivoting and not (is_not_cpu_test_device or is_not_valid_jaxlib_version):
+      self.skipTest("Pivoting is only supported on CPU with jaxlib > 0.4.38")
     rng = jtu.rand_default(self.rng())
-    jsp_func = partial(jax.scipy.linalg.qr, mode=mode)
-    sp_func = partial(scipy.linalg.qr, mode=mode)
+    jsp_func = partial(jax.scipy.linalg.qr, mode=mode, pivoting=pivoting)
+    sp_func = partial(scipy.linalg.qr, mode=mode, pivoting=pivoting)
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(sp_func, jsp_func, args_maker, rtol=1E-5, atol=1E-5)
     self._CompileAndCheck(jsp_func, args_maker)
