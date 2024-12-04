@@ -52,7 +52,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Changes:
   * `jax.tree.flatten_with_path` and `jax.tree.map_with_path` are added
     as shortcuts of the corresponding `tree_util` functions.
-
+  * The `jax2tf.PolyShape` has been removed (was deprecated since January 2024).
+    Use instead string specifications for the symbolic dimensions.
+    E.g., instead of `PolyShape("d1", "d2")` you can use `"d1, d2"`.
 * Deprecations
   * a number of APIs in the internal `jax.core` namespace have been deprecated.
     Most were no-ops, were little-used, or can be replaced by APIs of the same
@@ -64,6 +66,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     * from {mod}`jax.lib.xla_bridge`: `xla_client` and `default_backend`.
     * from {mod}`jax.lib.xla_client`: `_xla` and `bfloat16`.
     * from {mod}`jax.numpy`: `round_`.
+
 
 * New Features
   * {func}`jax.export.export` can be used for device-polymorphic export with
