@@ -259,32 +259,99 @@ mlir.register_lowering(custom_vmap_p, mlir.lower_fun(
     custom_vmap_impl, multiple_results=True))
 
 
-# -- custom vmap applications
+@custom_api_util.register_custom_decorator_type
+class simple_custom_vmap:
+  fun: Callable
+  vmap_method: str
+
+  # TODO(dfm): Add static_argnums?
+  def __init__(self, fun: Callable, *, vmap_method: str = "sequential"):
+    functools.update_wrapper(self, fun)
+    self.fun = fun
+    self.vmap_method = vmap_method
+
+  __getattr__ = custom_api_util.forward_attr
+
+  @traceback_util.api_boundary
+  def __call__(self, *args, **kwargs):
+    args = resolve_kwargs(self.fun, args, kwargs)
+    args_flat, in_tree = tree_flatten(args)
+    flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(self.fun), in_tree)
+    out_flat = simple_custom_vmap_p.bind(
+        flat_fun, *args_flat, vmap_method=self.vmap_method)
+    return tree_unflatten(out_tree(), out_flat)
 
 
-def tree_split(mask, tree):
-  lhs = tree_map(lambda l, x: x if l else None, mask, tree)
-  rhs = tree_map(lambda l, x: None if l else x, mask, tree)
-  return lhs, rhs
+class SimpleCustomVmapCallPrimitive(core.CallPrimitive):
+  def bind_with_trace(self, trace, args, params):
+    fun, tracers = args[0], args[1:]
+    if not hasattr(trace, "process_simple_custom_vmap_call"):
+      return trace.process_call(self, fun, tracers, params)
+    return trace.process_simple_custom_vmap_call(self, fun, tracers, params)
 
-def tree_merge(mask, lhs_tree, rhs_tree):
-  return tree_map(lambda l, x_l, x_r: x_l if l else x_r,
-                  mask, lhs_tree, rhs_tree)
+  def impl(self, fun, *args, **_):
+    return fun.call_wrapped(*args)
 
-def sequential_vmap(f):
-  f = custom_vmap(f)
+simple_custom_vmap_p = SimpleCustomVmapCallPrimitive("simple_custom_vmap_call")
 
-  @f.def_vmap
-  def rule(axis_size, in_batched, *args):
-    del axis_size
+def simple_custom_vmap_batching(trace, primitive, fun, tracers, params):
+  vmap_method = params["vmap_method"]
+  in_vals, in_dims = util.unzip2(map(trace.to_batch_info, tracers))
+  if all(d is batching.not_mapped for d in in_dims):
+    return primitive.bind_with_trace(
+        trace.parent_trace, (fun, *in_vals), params)
+  batched_fun = _simple_batch_fun(fun, vmap_method, in_dims)
+  out_vals = primitive.bind_with_trace(
+      trace.parent_trace, (batched_fun, *in_vals), params)
+  src = source_info_util.current()
+  return [batching.BatchTracer(trace, v, 0, src) for v in out_vals]
+batching.BatchTrace.process_simple_custom_vmap_call = simple_custom_vmap_batching
 
-    def to_map(mapped_args):
-      args = tree_merge(in_batched, mapped_args, bcast_args)
-      return f(*args)
+@lu.transformation2
+def _simple_batch_fun(fun, vmap_method, in_dims, *args):
+  axis_size, = {a.shape[d] for a, d in zip(args, in_dims)
+                if d is not batching.not_mapped}
+  args = map(maybe_bdim_at_front, args, in_dims)
+  if vmap_method == "expand_dims" or vmap_method == "broadcast_all":
+    size = axis_size if vmap_method == "broadcast_all" else 1
+    bcast_args = [
+        lax.broadcast(x, (size,)) if d is batching.not_mapped else x
+        for x, d in zip(args, in_dims)]
+    return fun(*bcast_args)
+  elif vmap_method == "sequential":
+    in_batched = [d is not batching.not_mapped for d in in_dims]
+    unbatched_args, batched_args = util.partition_list(in_batched, args)
+    def to_map(batched_args):
+      merged_args = util.merge_lists(in_batched, unbatched_args, batched_args)
+      return fun(*merged_args)
+    return lax.map(to_map, batched_args)
+  else:
+    raise NotImplementedError(
+        f"Unsupported {vmap_method=} parameter used with simple_custom_vmap. "
+        "Supported methods are 'sequential', 'expand_dims', or 'broadcast_all'."
+    )
 
-    mapped_args, bcast_args = tree_split(in_batched, list(args))
-    out = lax.map(to_map, mapped_args)
-    out_batched = tree_map(lambda _: True, out)
-    return out, out_batched
 
-  return f
+ad.primitive_transposes[simple_custom_vmap_p] = functools.partial(
+    ad.call_transpose, simple_custom_vmap_p)
+mlir.register_lowering(
+    simple_custom_vmap_p, functools.partial(mlir.core_call_lowering,
+                                            name="simple_custom_vmap_call"))
+
+
+@custom_api_util.register_custom_decorator_type
+class sequential_vmap(simple_custom_vmap):
+  def __init__(self, fun: Callable):
+    super().__init__(fun, vmap_method="sequential")
+
+
+@custom_api_util.register_custom_decorator_type
+class expand_dims_vmap(simple_custom_vmap):
+  def __init__(self, fun: Callable):
+    super().__init__(fun, vmap_method="expand_dims")
+
+
+@custom_api_util.register_custom_decorator_type
+class broadcast_all_vmap(simple_custom_vmap):
+  def __init__(self, fun: Callable):
+    super().__init__(fun, vmap_method="broadcast_all")
