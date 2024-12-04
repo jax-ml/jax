@@ -1522,6 +1522,7 @@ tf_not_yet_impl = [
     "lu_pivots_to_permutation",
     "xla_pmap",
     "geqrf",
+    "geqp3",
     "householder_product",
     "hessenberg",
     "tridiagonal",

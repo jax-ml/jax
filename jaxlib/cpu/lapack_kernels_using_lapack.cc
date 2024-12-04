@@ -41,6 +41,11 @@ jax::QrFactorization<ffi::DataType::F64>::FnType dgeqrf_;
 jax::QrFactorization<ffi::DataType::C64>::FnType cgeqrf_;
 jax::QrFactorization<ffi::DataType::C128>::FnType zgeqrf_;
 
+jax::PivotingQrFactorization<ffi::DataType::F32>::FnType sgeqp3_;
+jax::PivotingQrFactorization<ffi::DataType::F64>::FnType dgeqp3_;
+jax::PivotingQrFactorization<ffi::DataType::C64>::FnType cgeqp3_;
+jax::PivotingQrFactorization<ffi::DataType::C128>::FnType zgeqp3_;
+
 jax::OrthogonalQr<ffi::DataType::F32>::FnType sorgqr_;
 jax::OrthogonalQr<ffi::DataType::F64>::FnType dorgqr_;
 jax::OrthogonalQr<ffi::DataType::C64>::FnType cungqr_;
@@ -334,6 +339,11 @@ static auto init = []() -> int {
   AssignKernelFn<QrFactorization<ffi::DataType::F64>>(dgeqrf_);
   AssignKernelFn<QrFactorization<ffi::DataType::C64>>(cgeqrf_);
   AssignKernelFn<QrFactorization<ffi::DataType::C128>>(zgeqrf_);
+
+  AssignKernelFn<PivotingQrFactorization<ffi::DataType::F32>>(sgeqp3_);
+  AssignKernelFn<PivotingQrFactorization<ffi::DataType::F64>>(dgeqp3_);
+  AssignKernelFn<PivotingQrFactorization<ffi::DataType::C64>>(cgeqp3_);
+  AssignKernelFn<PivotingQrFactorization<ffi::DataType::C128>>(zgeqp3_);
 
   AssignKernelFn<OrthogonalQr<ffi::DataType::F32>>(sorgqr_);
   AssignKernelFn<OrthogonalQr<ffi::DataType::F64>>(dorgqr_);
