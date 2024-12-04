@@ -300,36 +300,33 @@ def simple_custom_vmap_batching(trace, primitive, fun, tracers, params):
   if all(d is batching.not_mapped for d in in_dims):
     return primitive.bind_with_trace(
         trace.parent_trace, (fun, *in_vals), params)
-  batched_fun = _simple_batch_fun(fun, vmap_method, in_dims)
-  out_vals = primitive.bind_with_trace(
-      trace.parent_trace, (batched_fun, *in_vals), params)
-  src = source_info_util.current()
-  return [batching.BatchTracer(trace, v, 0, src) for v in out_vals]
-batching.BatchTrace.process_simple_custom_vmap_call = simple_custom_vmap_batching
 
-@lu.transformation2
-def _simple_batch_fun(fun, vmap_method, in_dims, *args):
-  axis_size, = {a.shape[d] for a, d in zip(args, in_dims)
+  axis_size, = {a.shape[d] for a, d in zip(in_vals, in_dims)
                 if d is not batching.not_mapped}
-  args = map(maybe_bdim_at_front, args, in_dims)
+  args = map(maybe_bdim_at_front, in_vals, in_dims)
   if vmap_method == "expand_dims" or vmap_method == "broadcast_all":
     size = axis_size if vmap_method == "broadcast_all" else 1
     bcast_args = [
         lax.broadcast(x, (size,)) if d is batching.not_mapped else x
         for x, d in zip(args, in_dims)]
-    return fun(*bcast_args)
+    out_vals = primitive.bind_with_trace(
+        trace.parent_trace, (fun, *bcast_args), params)
   elif vmap_method == "sequential":
     in_batched = [d is not batching.not_mapped for d in in_dims]
     unbatched_args, batched_args = util.partition_list(in_batched, args)
     def to_map(batched_args):
       merged_args = util.merge_lists(in_batched, unbatched_args, batched_args)
-      return fun(*merged_args)
-    return lax.map(to_map, batched_args)
+      return primitive.bind(fun, *merged_args, **params)
+    with core.set_current_trace(trace.parent_trace):
+      out_vals = lax.map(to_map, batched_args)
   else:
     raise NotImplementedError(
         f"Unsupported {vmap_method=} parameter used with simple_custom_vmap. "
         "Supported methods are 'sequential', 'expand_dims', or 'broadcast_all'."
     )
+  src = source_info_util.current()
+  return [batching.BatchTracer(trace, v, 0, src) for v in out_vals]
+batching.BatchTrace.process_simple_custom_vmap_call = simple_custom_vmap_batching
 
 
 ad.primitive_transposes[simple_custom_vmap_p] = functools.partial(
