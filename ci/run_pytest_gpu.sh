@@ -13,11 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-<<<<<<< HEAD
-# Runs Pyest CPU tests. Requires all jaxlib, jax-cuda-plugin, and jax-cuda-pjrt
-=======
 # Runs Pyest CPU tests. Requires the jaxlib, jax-cuda-plugin, and jax-cuda-pjrt
->>>>>>> 5ade371c88a1f879556ec29867b173da49ae57f0
 # wheels to be present inside $JAXCI_OUTPUT_DIR (../dist)
 #
 # -e: abort script if one command fails
@@ -27,39 +23,17 @@
 # -o allexport: export all functions and variables to be available to subscripts
 set -exu -o history -o allexport
 
-<<<<<<< HEAD
-# Inherit default JAXCI environment variables.
-source ci/envs/default.env
-
-# Install jaxlib, jax-cuda-plugin, and jax-cuda-pjrt wheels on the system.
-=======
 # Source default JAXCI environment variables.
 source ci/envs/default.env
 
 # Install jaxlib, jax-cuda-plugin, and jax-cuda-pjrt wheels inside the
 # $JAXCI_OUTPUT_DIR directory on the system.
->>>>>>> 5ade371c88a1f879556ec29867b173da49ae57f0
 echo "Installing wheels locally..."
 source ./ci/utilities/install_wheels_locally.sh
 
 # Set up the build environment.
 source "ci/utilities/setup_build_environment.sh"
 
-<<<<<<< HEAD
-export PY_COLORS=1
-export JAX_SKIP_SLOW_TESTS=true
-
-"$JAXCI_PYTHON" -c "import jax; print(jax.default_backend()); print(jax.devices()); print(len(jax.devices()))"
-
-nvidia-smi
-export NCCL_DEBUG=WARN
-export TF_CPP_MIN_LOG_LEVEL=0
-
-echo "Running GPU tests..."
-export XLA_PYTHON_CLIENT_ALLOCATOR=platform
-export XLA_FLAGS=--xla_gpu_force_compilation_parallelism=1
-"$JAXCI_PYTHON" -m pytest -n 8 --tb=short --maxfail=20 \
-=======
 "$JAXCI_PYTHON" -c "import jax; print(jax.default_backend()); print(jax.devices()); print(len(jax.devices()))"
 
 nvidia-smi
@@ -80,7 +54,6 @@ export XLA_FLAGS=--xla_gpu_force_compilation_parallelism=1
 
 echo "Running GPU tests..."
 "$JAXCI_PYTHON" -m pytest -n $num_processes --tb=short --maxfail=20 \
->>>>>>> 5ade371c88a1f879556ec29867b173da49ae57f0
 tests examples \
 --deselect=tests/multi_device_test.py::MultiDeviceTest::test_computation_follows_data \
 --deselect=tests/xmap_test.py::XMapTest::testCollectivePermute2D \
