@@ -93,6 +93,25 @@ LogicalResult MemRefSliceOp::verify() {
   auto target_type = getType();
   auto target_layout = target_type.getLayout();
   auto target_memory_space = target_type.getMemorySpace();
+  auto indices = getBaseIdx();
+  auto slice_shape = getResult().getType().getShape();
+  if (!source_type.hasStaticShape()) {
+    return emitOpError(
+        "Only slicing of memrefs with static shapes is supported.");
+  }
+  auto source_shape = source_type.getShape();
+  bool is_semaphore =
+      HasMemorySpace(source_type, tpu::MemorySpace::kSemaphoreMem);
+  if (is_semaphore &&
+      !isa<SemaphoreType, DMASemaphoreType>(source_type.getElementType())) {
+    return emitOpError(
+        "References to semaphore memory space must have a semaphore element "
+        "type.");
+  }
+  if (indices.size() != slice_shape.size() ||
+      indices.size() != source_shape.size()) {
+    return emitOpError("Indices and slice shapes must match.");
+  }
   // TODO(apaszke): Check that the result has a smaller shape.
   // TODO(apaszke): Check that strides are equivalent.
   // Source and target attributes may be different before propagation is done by
