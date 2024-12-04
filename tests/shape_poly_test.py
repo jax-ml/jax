@@ -128,11 +128,11 @@ class DimExprTest(jtu.JaxTestCase):
                         ):
     """Checks `assertion(e, fun(*operands))` symbolically and concretely.
 
-    For the concrete check, it will same the space of dimension variable
+    For the concrete check, it will sample the space of dimension variable
     assignments for the dimension variables in `e`.
 
-    This is useful when `fun` can operate both with polynomials and with
-    concrete values, and we want to double-check that the behavior is sound.
+    This is useful when `fun` can operate both with symbolic and with
+    concrete values, and we want to check that the behavior is sound.
     """
     computed_sym = fun(*operands_sym)
     assertion_fun = {
@@ -1428,6 +1428,29 @@ class ShapePolyTest(jtu.JaxTestCase):
       lambda x: x[0] * 0 + expr(x.shape[0]),
       arg_descriptors=[RandArg((3,), np.int64)],
       polymorphic_shapes=["b"])
+
+  @jtu.parameterized_filterable(
+      # The function `f` will be called with x: f32[b]
+      kwargs=[
+          dict(testcase_name="cube", f=lambda x: x.shape[0] ** 3),
+          dict(testcase_name="zero", f=lambda x: x.shape[0] ** 0),
+          dict(testcase_name="rpow", f=lambda x: 2 ** x.shape[0]),
+          dict(testcase_name="negative",
+               f=lambda x: x.shape[0] ** -2,
+               expect_error=(ValueError, "cannot be raised to negative powers")),
+          dict(testcase_name="non_integer",
+               f=lambda x: x.shape[0] ** 1.5,
+               expect_error=(ValueError, "cannot be raised to non-integer powers")),
+          dict(testcase_name="sym_pow",
+               f=lambda x: x.shape[0] ** x.shape[0]),
+      ]
+  )
+  def test_pow(self, f, expect_error: tuple[Exception, str] | None = None):
+    check_shape_poly(self,
+                     f,
+                     arg_descriptors=[RandArg((3,), np.float32)],
+                     polymorphic_shapes=["b"],
+                     expect_error=expect_error)
 
   def test_static_shape_result(self):
     """The result has static shape."""
