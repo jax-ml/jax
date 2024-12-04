@@ -847,6 +847,7 @@ def _lower_as_gpu_kernel(
     out_shape,
     smem_scratch_shape: ShapeTree | Union[ShapeTree],
     module_name: str,
+    kernel_name: str | None = None,
     prof_spec: profiler.ProfilerSpec | None = None,
 ):
   ptr_ty = ir.Type.parse("!llvm.ptr")
@@ -873,6 +874,8 @@ def _lower_as_gpu_kernel(
   module = ir.Module.create()
   attrs = module.operation.attributes
   attrs["sym_name"] = ir.StringAttr.get(module_name)
+  if kernel_name is None:
+    kernel_name = getattr(body, "__name__", "anonymous")
   with ir.InsertionPoint(module.body):
     _declare_runtime_functions()
     gmem_scratch_bytes = 0
@@ -882,7 +885,7 @@ def _lower_as_gpu_kernel(
         ir.Attribute.parse("#llvm.linkage<external>"),
         addr_space=ir.IntegerAttr.get(i32, 4),  # GPU constant memory.
     )
-    @func.FuncOp.from_py_func(ptr_ty, ptr_ty)
+    @func.FuncOp.from_py_func(ptr_ty, ptr_ty, name=f"mosaic_gpu_{kernel_name}")
     def main(token_ptr, buffers):
       nonlocal gmem_scratch_bytes
       token = builtin.unrealized_conversion_cast([token_ty], [token_ptr])
@@ -947,6 +950,7 @@ def as_gpu_kernel(
     prof_spec: profiler.ProfilerSpec | None = None,
     cluster: tuple[int, int, int] = (1, 1, 1),
     module_name: str = "unknown",
+    kernel_name: str | None = None,
 ):
   if isinstance(in_shape, list):
     in_shape = tuple(in_shape)
@@ -956,7 +960,7 @@ def as_gpu_kernel(
   module, out_shape, unwrap_output_tuple = (
       _lower_as_gpu_kernel(
           body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape,
-          module_name, prof_spec
+          module_name, kernel_name, prof_spec
       )
   )
 
@@ -1014,6 +1018,7 @@ def as_torch_gpu_kernel(
     prof_spec: profiler.ProfilerSpec | None = None,
     cluster: tuple[int, int, int] = (1, 1, 1),
     module_name: str = "unknown",
+    kernel_name: str | None = None,
 ):
   try:
     import torch
@@ -1032,7 +1037,7 @@ def as_torch_gpu_kernel(
   module, out_shape, unwrap_output_tuple = (
       _lower_as_gpu_kernel(
           body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape,
-          module_name, prof_spec
+          module_name, kernel_name, prof_spec
       )
   )
 
