@@ -574,6 +574,18 @@ class PallasCallTest(PallasTest):
 
     self.assertIn(f"x: [1, 0, 43, 23]/{in_shape}: 6871\n", output())
 
+  def test_load_scalar(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((128,), jnp.int32),
+        in_specs=[plgpu.GPUBlockSpec(memory_space=plgpu.GPUMemorySpace.GMEM)],
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.broadcast_to(x_ref[10], (128,))
+
+    np.testing.assert_array_equal(kernel(jnp.arange(11, dtype=jnp.int32)),
+                                  jnp.full((128,), 10, dtype=jnp.int32))
+
   def test_run_scoped(self):
     def kernel(x_ref, o_ref):
       def body(tmp_ref):

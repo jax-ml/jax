@@ -1039,10 +1039,15 @@ def _ndindexer_indices(indexer: indexing.NDIndexer) -> tuple[gpu_core.Index, ...
 def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *leaves, tree):
   if not isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem):
     raise TypeError(f"Can only load from references (got {x_smem}).")
+
   x_aval = ctx.avals_in[0]
+
   transforms = jax.tree.unflatten(tree, leaves)
   x_smem, transforms = _handle_reshaping(x_smem, transforms)
   x_smem, transforms = _handle_indexing(x_smem, transforms)
+
+  print("ctx:", ctx)
+  print("transforms:", transforms)
   match transforms:
     case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
       if tiling != (64, swizzle // x_aval.dtype.itemsize):
@@ -1051,6 +1056,12 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *leaves, tree):
           x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype), swizzle=swizzle
       )
     case ():
+      # Handle scalar indexing.
+      if not ctx.avals_out[0].shape:
+        is_signed = mgpu_utils.is_signed(x_aval.dtype)
+        val = memref_dialect.load(x_smem, [])
+        return mgpu.FragmentedArray.splat(val, shape=(), is_signed=is_signed)
+
       return mgpu.FragmentedArray.load_strided(
           x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
       )
