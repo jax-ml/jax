@@ -46,6 +46,9 @@ class PgleTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    if not jtu.test_device_matches(["gpu"]):
+      self.skipTest('Profile-guideded latency estimation only supported on GPU')
+
     cc.set_cache_dir(None)
     cc.reset_cache()
 
