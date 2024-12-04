@@ -195,7 +195,13 @@ def emit_pipeline(
     in_gmem_refs, out_gmem_refs = util.split_list(gmem_refs, [len(in_specs)])
     in_smem_refs, out_smem_refs = util.split_list(
         [
-            gpu_core.SMEM((max_concurrent_steps, *spec.block_shape), ref.dtype)  # type: ignore
+            gpu_core.SMEM(
+                (max_concurrent_steps, *spec.block_shape),  # type: ignore
+                ref.dtype,
+                transforms=tuple(
+                    t.batch(1) for t in getattr(spec, "transforms", ())
+                ),
+            )
             if _in_smem(spec)
             else None
             for spec, ref in zip(it.chain(in_specs, out_specs), gmem_refs)

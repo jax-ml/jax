@@ -138,6 +138,14 @@ class MemoryRefTransform(pallas_core.MemoryRefTransform, abc.ABC):
   def to_gpu_transform(self) -> mgpu.MemRefTransform:
     pass
 
+  def batch(self, leading_rank: int):
+    """Returns a transform that accepts a ref with the extra `leading_rank` dims.
+
+    The returned transform should leave the leading dimensions unchanged and
+    only apply to the suffix of the shape.
+    """
+    raise NotImplementedError
+
   def __call__(self, aval: jax_core.ShapedArray) -> jax_core.ShapedArray:
     return aval.update(
         shape=self.to_gpu_transform().transform_shape(aval.shape)
@@ -160,6 +168,9 @@ class TilingTransform(MemoryRefTransform):
     return dataclasses.replace(
         ref, transforms=(*ref.transforms, UntileRef(self.tiling))
     )
+
+  def batch(self, leading_rank: int):
+    return self
 
   def to_gpu_transform(self) -> mgpu.MemRefTransform:
     return mgpu.TileTransform(self.tiling)
@@ -227,6 +238,11 @@ class TransposeTransform(MemoryRefTransform):
   def __post_init__(self):
     if set(self.permutation) != set(range(len(self.permutation))):
       raise ValueError(f"Permutation {self.permutation} is not a permutation.")
+
+  def batch(self, leading_rank: int):
+    return TransposeTransform(
+        (*range(leading_rank), *(d + leading_rank for d in self.permutation))
+    )
 
   def undo(self, ref: pallas_core.TransformedRef) -> pallas_core.TransformedRef:
     return dataclasses.replace(
@@ -303,6 +319,9 @@ class SwizzleTransform(MemoryRefTransform):
           f"Swizzle {self.swizzle} is not supported. Only 32, 64 and 128 are"
           " accepted."
       )
+
+  def batch(self, leading_rank: int):
+    return self
 
   def undo(self, ref: pallas_core.TransformedRef) -> pallas_core.TransformedRef:
     return dataclasses.replace(

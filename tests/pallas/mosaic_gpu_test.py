@@ -820,7 +820,6 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256)
     np.testing.assert_array_equal(kernel(x), jnp.broadcast_to(jnp.sum(x) * 3, [256]))
 
-
   @parameterized.parameters(jnp.float16, jnp.float32)
   def test_wgmma(self, dtype):
     self.skip_unless_sm90a()
@@ -1233,23 +1232,37 @@ class PipelineTest(PallasTest):
     )
     np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
 
-  def test_emit(self):
+  @parameterized.parameters(
+      ((),),
+      ((plgpu.TilingTransform((64, 32)), plgpu.SwizzleTransform(128)),),
+  )
+  def test_emit(self, transforms):
     num_steps = 4
 
     def kernel(x_gmem, o_gmem):
       plgpu.emit_pipeline(
           kernel_body,
-          in_specs=[pl.BlockSpec((32, 16), lambda i: (0, i))],
-          out_specs=[pl.BlockSpec((32, 16), lambda i: (0, i))],
+          in_specs=[
+              plgpu.GPUBlockSpec(
+                  (64, 64), lambda i: (0, i), transforms=transforms
+              )
+          ],
+          out_specs=[
+              plgpu.GPUBlockSpec(
+                  (64, 64), lambda i: (0, i), transforms=transforms
+              )
+          ],
           grid=(num_steps,),
           max_concurrent_steps=2,
       )(x_gmem, o_gmem)
 
     def kernel_body(x_smem, o_smem):
+      # +1 for the indexing done by ``emit_pipeline`.
+      self.assertLen(x_smem.transforms, len(transforms) + 1)
       o_smem[...] = x_smem[...] + 1.0
 
-    x = jnp.arange(32 * num_steps * 16)
-    x = x.reshape(-1, num_steps * 16).astype(jnp.float32)
+    x = jnp.arange(64 * num_steps * 64)
+    x = x.reshape(-1, num_steps * 64).astype(jnp.float32)
     kernel_fn = pl.pallas_call(
         kernel,
         in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
