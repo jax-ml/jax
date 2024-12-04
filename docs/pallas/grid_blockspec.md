@@ -44,39 +44,7 @@ For example, for invocation `(1, 2)`, `program_id(axis=0)` returns `1` and
 You can also use {func}`jax.experimental.pallas.num_programs` to get the
 grid size for a given axis.
 
-Here's an example kernel that uses a `grid` and `program_id`.
-
-```python
->>> import jax
->>> from jax.experimental import pallas as pl
-
->>> def iota_kernel(o_ref):
-...   i = pl.program_id(0)
-...   o_ref[i] = i
-
-```
-
-We now execute it using `pallas_call` with an additional `grid` argument.
-
-```python
->>> def iota(size: int):
-...   return pl.pallas_call(iota_kernel,
-...                         out_shape=jax.ShapeDtypeStruct((size,), jnp.int32),
-...                         grid=(size,), interpret=True)()
->>> iota(8)
-Array([0, 1, 2, 3, 4, 5, 6, 7], dtype=int32)
-
-```
-
-On GPUs, each program is executed in parallel on separate thread blocks.
-Thus, we need to think about race conditions on writes to HBM.
-A reasonable approach is to write our kernels in such a way that different
-programs write to disjoint places in HBM to avoid these parallel writes.
-
-On TPUs, programs are executed in a combination of parallel and sequential
-(depending on the architecture) so there are slightly different considerations.
-
-See {ref}`pallas_tpu_noteworthy_properties`.
+See {ref}`grids_by_example` for a simple kernel that uses this API.
 
 (pallas_blockspec)=
 
@@ -131,6 +99,8 @@ shape `x_shape` are computed as in the function `slice_for_invocation`
 below:
 
 ```python
+>>> import jax
+>>> from jax.experimental import pallas as pl
 >>> def slices_for_invocation(x_shape: tuple[int, ...],
 ...                           x_spec: pl.BlockSpec,
 ...                           grid: tuple[int, ...],
