@@ -35,6 +35,7 @@ from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import sharding_impls
 from jax._src import xla_bridge as xb
+from jax._src.custom_partitioning_sharding_rule import SdyShardingRule
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_client as xc
@@ -225,18 +226,20 @@ def _custom_partitioning_abstract_eval(*avals, call, in_tree, out_tree,
                                        propagate_user_sharding, partition,
                                        infer_sharding_from_operands,
                                        decode_shardings,
+                                       sharding_rule,
                                        static_args):
   del in_tree, out_tree, propagate_user_sharding, partition
-  del infer_sharding_from_operands, decode_shardings, static_args
+  del infer_sharding_from_operands, decode_shardings, sharding_rule
+  del static_args
   return call.out_avals
 
 
 def _custom_partitioning_impl(*args, call, in_tree, out_tree,
                               propagate_user_sharding,
                               partition, infer_sharding_from_operands,
-                              decode_shardings, static_args):
+                              decode_shardings, sharding_rule, static_args):
   del in_tree, out_tree, propagate_user_sharding, partition
-  del infer_sharding_from_operands, decode_shardings, static_args
+  del infer_sharding_from_operands, decode_shardings, static_args, sharding_rule
   return core.jaxpr_as_fun(call)(*args)
 
 
@@ -280,8 +283,11 @@ class custom_partitioning:
       '''Compute the result sharding from the sharding of the operands.'''
       arg_shardings = jax.tree.map(lambda x: x.sharding, arg_shapes)
 
+    If Shardy is not used:
+      f.def_partition(partition, propagate_user_sharding, infer_sharding_from_operands)
 
-    f.def_partition(partition, propagate_user_sharding, infer_sharding_from_operands)
+    If Shardy is used:
+      f.def_partition(partition, None, sharding_rule='i j -> 'i j', **factor_sizes)
 
   The args to ``def_partition`` are as follows:
 
@@ -298,6 +304,13 @@ class custom_partitioning:
   * ``decode_shardings``: When set to True, convert input ``GSPMDSharding``s to
     ``NamedSharding`` if possible. This may not be possible if the user does not
     provide a contextual mesh.
+  * ``sharding_rule``: An  Einsum-like notation string describes the sharding
+    rule. We borrow the idea from  einops.rearrange string , to use a space
+    separator between factors to allow multiple letters factor names.
+  * ``**factor_sizes``: A trailing argument provides the sizes for the needed
+    factors. In particular, if a factor ever represents a whole tensor dimension,
+    its size should be provided; if a factor is only used in compound factors and
+    never represents a whole tensor dimension, its size needed to be provided.
 
   Positional arguments can be specified as static using static_argnums. JAX uses
   :code:`inspect.signature(fun)` to resolve these positional arguments.
@@ -311,6 +324,8 @@ class custom_partitioning:
     However, since ``jax.numpy.fft.fft`` is batched along the first N-1 dimensions,
     this is unnecessary. We will create a new ``my_fft`` op that, instead, does not alter the sharding
     along the first `N-1` dimensions, and only gathers the input along the last dimension if needed.
+
+    TODO: add an example using shardy sharding rule.
 
     .. code-block:: python
 
@@ -350,9 +365,16 @@ class custom_partitioning:
       def my_fft(x):
           return fft(x)
 
-      my_fft.def_partition(
+      If Shardy is not used:
+        my_fft.def_partition(
           infer_sharding_from_operands=infer_sharding_from_operands,
           partition=partition)
+
+      If Shardy is used:
+        my_fft.def_partition(
+          infer_sharding_from_operands=None,
+          partition=partition,
+          sharding_rule='...i -> ...i')
 
     Now create a 2D array sharded along the first axis, pass it through ``my_fft``
     and notice how it is still sharded as expected, and identical to the output
@@ -425,15 +447,24 @@ class custom_partitioning:
     self.static_argnums = static_argnums
     self.propagate_user_sharding = None
     self.infer_sharding_from_operands = None
+    self.sharding_rule = None
 
   __getattr__: Any = custom_api_util.forward_attr
 
   def def_partition(self, partition, infer_sharding_from_operands,
-                    propagate_user_sharding=None, decode_shardings=True):
+                    propagate_user_sharding=None, decode_shardings=True,
+                    sharding_rule=None, **factor_sizes):
+    if (infer_sharding_from_operands and sharding_rule):
+      raise ValueError(
+          "sharding_rule and infer_sharding_from_operands cannot be specified"
+          " at the same time."
+      )
     self.partition = partition
     self.propagate_user_sharding = propagate_user_sharding
     self.infer_sharding_from_operands = infer_sharding_from_operands
     self.decode_shardings = decode_shardings
+    self.sharding_rule = None if sharding_rule is None \
+      else SdyShardingRule(sharding_rule, **factor_sizes)
     return partition
 
   def __call__(self, *args, **kwargs):
@@ -471,6 +502,7 @@ class custom_partitioning:
         propagate_user_sharding=self.propagate_user_sharding,
         infer_sharding_from_operands=self.infer_sharding_from_operands,
         decode_shardings=self.decode_shardings,
+        sharding_rule=self.sharding_rule,
         in_tree=in_tree,
         out_tree=out_tree(),
         static_args=static_args
@@ -483,6 +515,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
                                        propagate_user_sharding, partition,
                                        infer_sharding_from_operands,
                                        decode_shardings,
+                                       sharding_rule,
                                        static_args):
   axis_context = ctx.module_context.axis_context
   if (isinstance(axis_context, sharding_impls.SPMDAxisContext) and
@@ -539,6 +572,9 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       backend_config=ir.StringAttr.get(key),
       operand_layouts=None,
       result_layouts=None)
+  if sharding_rule is not None:
+    value_types = [mlir.aval_to_ir_type(s) for s in call.in_avals]
+    out.attributes['sdy.sharding_rule'] = sharding_rule.build(value_types, result_types)
   return out.results
 
 mlir.register_lowering(custom_partitioning_p,

@@ -19,3 +19,6 @@ from jax._src.custom_partitioning import (
     custom_partitioning as custom_partitioning,
     custom_partitioning_p as custom_partitioning_p,
 )
+from jax._src.custom_partitioning_sharding_rule import (
+    SdyShardingRule as SdyShardingRule,
+)

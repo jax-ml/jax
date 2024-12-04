@@ -1328,9 +1328,6 @@ class CustomPartitionerTest(jtu.JaxTestCase):
   def skip_if_custom_partitioning_not_supported(self):
     if jtu.is_cloud_tpu():
       raise unittest.SkipTest("Custom partitioning is not supported on libtpu.")
-    if config.use_shardy_partitioner.value:
-      self.skipTest(
-          'Custom partitioning is not supported with Shardy yet.')
 
   @jtu.skip_on_devices('cpu')  # Collectives don't seem to work on CPU.
   @jtu.with_mesh([('x', 4), ('y', 2)])
@@ -1370,9 +1367,11 @@ class CustomPartitionerTest(jtu.JaxTestCase):
       z = jnp.matmul(x, y, precision=precision)
       return z, z * z
 
+    use_shardy = config.use_shardy_partitioner.value
     f.def_partition(
-        infer_sharding_from_operands=infer_sharding_from_operands,
-        partition=partition)
+        infer_sharding_from_operands=None if use_shardy else infer_sharding_from_operands,
+        partition=partition,
+        sharding_rule=None if not use_shardy else 'i j, j k -> i k, i k')
 
     pjit_f = pjit(f, in_shardings=(P('x'), P('y')), out_shardings=P('x'))
     x = np.asarray(np.random.randint(0, 20, (32, 16)), dtype=np.float32)
@@ -1408,10 +1407,12 @@ class CustomPartitionerTest(jtu.JaxTestCase):
     def f(x):
       return x
 
+    use_shardy = config.use_shardy_partitioner.value
     f.def_partition(
-        infer_sharding_from_operands=infer_sharding_from_operands,
+        infer_sharding_from_operands=None if use_shardy else infer_sharding_from_operands,
         partition=partition,
-        propagate_user_sharding=propagate_user_sharding,
+        propagate_user_sharding=None if use_shardy else propagate_user_sharding,
+        sharding_rule=None if not use_shardy else 'i j -> i j',
     )
 
     def f2(a):
@@ -1445,9 +1446,11 @@ class CustomPartitionerTest(jtu.JaxTestCase):
     def f(x):
       return x
 
+    use_shardy = config.use_shardy_partitioner.value
     f.def_partition(
-        infer_sharding_from_operands=infer_sharding_from_operands,
+        infer_sharding_from_operands=None if use_shardy else infer_sharding_from_operands,
         partition=partition,
+        sharding_rule=None if not use_shardy else 'i j -> i j',
     )
 
     pjit_f = pjit(f, in_shardings=(P(None, 'x')), out_shardings=P('x'))
@@ -1477,9 +1480,11 @@ class CustomPartitionerTest(jtu.JaxTestCase):
     def f(x):
       return x
 
+    use_shardy = config.use_shardy_partitioner.value
     f.def_partition(
-        infer_sharding_from_operands=infer_sharding_from_operands,
+        infer_sharding_from_operands=None if use_shardy else infer_sharding_from_operands,
         partition=partition,
+        sharding_rule=None if not use_shardy else 'i j -> i j',
     )
 
     pjit_f = pjit(f, in_shardings=(P(None, 'x')), out_shardings=P('x'))
@@ -1523,9 +1528,11 @@ class CustomPartitionerTest(jtu.JaxTestCase):
       x_shard = arg_shapes[0].sharding
       return NamedSharding(x_shard.mesh, P('x'))
 
+    use_shardy = config.use_shardy_partitioner.value
     f.def_partition(
-        infer_sharding_from_operands=infer_sharding_from_operands,
+        infer_sharding_from_operands=None if use_shardy else infer_sharding_from_operands,
         partition=partition,
+        sharding_rule=None if not use_shardy else 'i -> i',
     )
 
     jit_f = jax.jit(f)
@@ -1536,6 +1543,11 @@ class CustomPartitionerTest(jtu.JaxTestCase):
   @jtu.with_mesh([('x', 4)])
   def test_custom_partitioner_with_scan(self):
     self.skip_if_custom_partitioning_not_supported()
+    use_shardy = config.use_shardy_partitioner.value
+
+    # TODO(bixia): Enable this test on shardy.
+    if use_shardy:
+      self.skipTest('Skip failing test on shardy')
 
     # This is a reproducer from https://github.com/jax-ml/jax/issues/20864.
 
@@ -1557,8 +1569,9 @@ class CustomPartitionerTest(jtu.JaxTestCase):
 
     f.def_partition(
         partition,
-        infer_sharding_from_operands=lambda mesh, *_: NamedSharding(mesh, P()),
-        propagate_user_sharding=lambda _, user_shape: user_shape.sharding)
+        infer_sharding_from_operands=None if use_shardy else lambda mesh, *_: NamedSharding(mesh, P()),
+        propagate_user_sharding=None if use_shardy else lambda _, user_shape: user_shape.sharding,
+        sharding_rule=None if not use_shardy else 'i j -> ')  # Result is a scalar.
 
     pjit_f = pjit(f, in_shardings=P(None, 'x'))
     xs = jnp.ones([32, 16])
@@ -1591,9 +1604,11 @@ class CustomPartitionerTest(jtu.JaxTestCase):
       x_shard = arg_shapes[0].sharding
       return NamedSharding(x_shard.mesh, P('x'))
 
+    use_shardy = config.use_shardy_partitioner.value
     f.def_partition(
-        infer_sharding_from_operands=infer_sharding_from_operands,
+        infer_sharding_from_operands=None if use_shardy else infer_sharding_from_operands,
         partition=partition,
+        sharding_rule=None if not use_shardy else 'i -> i',
     )
 
     mesh = jtu.create_mesh((4,), ('x',))
