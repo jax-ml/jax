@@ -454,6 +454,12 @@ class AbstractMesh:
   def local_mesh(self):
     _raise_value_error("local_mesh")
 
+  def __enter__(self):
+    _raise_value_error("__enter__")
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    _raise_value_error("__exit__")
+
   @staticmethod
   def _extremely_unsafe_enter_tracing_context(mesh: AbstractMesh):
     jax_config.abstract_mesh_context_manager.set_local(mesh)
