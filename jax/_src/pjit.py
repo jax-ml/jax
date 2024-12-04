@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Sequence, Iterable
-import contextlib
 import dataclasses
 from functools import partial
 import inspect
@@ -187,7 +186,7 @@ def _python_pjit_helper(fun, jit_info, *args, **kwargs):
   try:
     # TODO(yashkatariya): Maybe thread this into pjit params like resource_env
     # and set the context manager down the stack?
-    with p.abstract_mesh:
+    with mesh_lib.set_abstract_mesh(p.abstract_mesh):
       if (core.trace_state_clean() and
           not config.debug_key_reuse.value and
           not config.data_dependent_tracing_fallback.value):
@@ -645,9 +644,9 @@ def _infer_params_impl(
   attr_token = _attr_token(flat_fun, in_type)
 
   abstract_mesh = (
-      get_abstract_mesh(in_type) if mesh_lib.abstract_mesh_context.mesh is None
-      else mesh_lib.abstract_mesh_context.mesh)
-  with abstract_mesh:
+      get_abstract_mesh_from_avals(in_type)
+      if not mesh_lib.get_abstract_mesh() else mesh_lib.get_abstract_mesh())
+  with mesh_lib.set_abstract_mesh(abstract_mesh):
     jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
         flat_fun, in_type, attr_token, dbg,
         HashableFunction(res_paths, closure=()),
@@ -694,9 +693,9 @@ def _infer_params_impl(
                     attrs_tracked, abstract_mesh), args_flat
 
 
-def get_abstract_mesh(in_avals):
+def get_abstract_mesh_from_avals(in_avals):
   if not config.sharding_in_types.value:
-    return contextlib.nullcontext()
+    return None
   m = None
   for a in in_avals:
     # TODO(yashkatariya): Remove this when mesh context can be set by the user.
@@ -1789,7 +1788,8 @@ def _pjit_lower(
     lowering_parameters: mlir.LoweringParameters,
     pgle_profiler: profiler.PGLEProfiler | None):
   if config.sharding_in_types.value:
-    mesh = mesh_lib.device_context.concrete_mesh
+    cur_mesh = mesh_lib.get_concrete_mesh()
+    mesh = cur_mesh if isinstance(cur_mesh, mesh_lib.Mesh) else None
     api_name = 'jit'
   else:
     mesh, api_name = ((resource_env.physical_mesh, 'pjit')

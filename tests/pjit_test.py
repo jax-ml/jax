@@ -5237,7 +5237,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     def g(x, y):
       self.assertTrue(x.sharding.mesh._are_all_axes_collective)
       self.assertTrue(y.sharding.mesh._are_all_axes_collective)
-      self.assertTrue(mesh_lib.abstract_mesh_context.mesh._are_all_axes_collective)
+      self.assertTrue(mesh_lib.get_abstract_mesh()._are_all_axes_collective)
       return x * y
 
     @jax.jit
@@ -5262,7 +5262,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     def g(x, y):
       self.assertTrue(x.sharding.mesh._are_all_axes_collective)
       self.assertTrue(y.sharding.mesh._are_all_axes_collective)
-      self.assertTrue(mesh_lib.abstract_mesh_context.mesh._are_all_axes_collective)
+      self.assertTrue(mesh_lib.get_abstract_mesh()._are_all_axes_collective)
       allgatherd_y = jax.lax.all_gather(y, axis_name='x', axis=1, tiled=True)
       z = x @ allgatherd_y
       return jax.lax.psum(z, axis_name='y')

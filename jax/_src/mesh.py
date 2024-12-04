@@ -454,18 +454,6 @@ class AbstractMesh:
   def local_mesh(self):
     _raise_value_error("local_mesh")
 
-  def __enter__(self):
-    abstract_mesh_context.stack.append(self)
-    abstract_mesh_context.mesh = self
-    jax_config.abstract_mesh_context_manager.set_local(abstract_mesh_context.mesh)
-    return self
-
-  def __exit__(self, exc_type, exc_value, traceback):
-    abstract_mesh_context.stack.pop()
-    abstract_mesh_context.mesh = abstract_mesh_context.stack[-1]
-    jax_config.abstract_mesh_context_manager.set_local(abstract_mesh_context.mesh)
-    return False
-
   @staticmethod
   def _extremely_unsafe_enter_tracing_context(mesh: AbstractMesh):
     jax_config.abstract_mesh_context_manager.set_local(mesh)
@@ -478,37 +466,32 @@ def _raise_value_error(name):
   raise ValueError(f"AbstractMesh does not implement {name}")
 
 
-class AbstractMeshContext(threading.local):
-  def __init__(self):
-    self.stack = [None]
-    self.mesh = self.stack[-1]
+@contextlib.contextmanager
+def set_abstract_mesh(mesh: AbstractMesh):
+  prev_val = jax_config.abstract_mesh_context_manager.swap_local(mesh)
+  try:
+    yield
+  finally:
+    jax_config.abstract_mesh_context_manager.set_local(prev_val)
 
-abstract_mesh_context = AbstractMeshContext()
+def get_abstract_mesh():
+  return jax_config.abstract_mesh_context_manager.value
+
+
+@contextlib.contextmanager
+def set_concrete_mesh(mesh: Mesh):
+  prev_val = jax_config.device_context.swap_local(mesh)
+  try:
+    yield
+  finally:
+    jax_config.device_context.set_local(prev_val)
+
+def get_concrete_mesh():
+  return jax_config.device_context.value
 
 
 @contextlib.contextmanager
 def set_mesh(mesh: Mesh):
-  with (mesh.abstract_mesh, jax_config.sharding_in_types(True),
-        enter_device_context(mesh)):
+  with (set_abstract_mesh(mesh.abstract_mesh),
+        jax_config.sharding_in_types(True), set_concrete_mesh(mesh)):
     yield
-
-
-class DeviceContext(threading.local):
-  def __init__(self):
-    self.stack = [None]
-    self.concrete_mesh = self.stack[-1]
-
-device_context = DeviceContext()
-
-
-@contextlib.contextmanager
-def enter_device_context(mesh: Mesh):
-  device_context.stack.append(mesh)
-  device_context.concrete_mesh = mesh
-  jax_config.device_context.set_local(device_context.concrete_mesh)
-  try:
-    yield
-  finally:
-    device_context.stack.pop()
-    device_context.concrete_mesh = device_context.stack[-1]
-    jax_config.device_context.set_local(device_context.concrete_mesh)
