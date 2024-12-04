@@ -33,6 +33,7 @@ from jax._src.pallas import primitives as primitives
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax.experimental import pallas as pl
+from jax.extend.backend import get_default_device
 import jax.numpy as jnp
 import numpy as np
 
@@ -75,7 +76,7 @@ def _broadcast_pytree_to(from_pytree, to_pytree):
 
 @jax_util.cache(trace_context_in_key=False)
 def _get_tpu_generation() -> int:
-  kind = jax.devices()[0].device_kind
+  kind = get_default_device().device_kind
   if kind.endswith(' lite'):
     kind = kind[:-len(' lite')]
   assert kind[:5] == "TPU v", kind

@@ -440,7 +440,7 @@ def _device_put_sharding_impl(x, aval, device, copy):
       return pxla.batched_device_put(aval, SingleDeviceSharding(device), [x],
                                      [device])
 
-  sh = SingleDeviceSharding(pxla._get_default_device()
+  sh = SingleDeviceSharding(pxla.get_default_device()
                             if device is None else device)
   return _DeferredShardArg(x, sh, aval, device is not None, copy)
 

@@ -1710,7 +1710,7 @@ ShardingInfo = tuple[
 ]
 
 
-def _get_default_device() -> xc.Device:
+def get_default_device() -> xc.Device:
   if isinstance(config.default_device.value, str):
     return xb.get_backend(config.default_device.value).local_devices()[0]
   else:
@@ -1749,7 +1749,7 @@ def _get_and_check_device_assignment(
   if first_sharding_info is None and devices:
     final_device_assignment = devices
   elif first_sharding_info is None:
-    final_device_assignment = (_get_default_device(),)
+    final_device_assignment = (get_default_device(),)
   else:
     final_device_assignment = first_sharding_info[0]  # type: ignore
   return xb.get_device_backend(final_device_assignment[0]), final_device_assignment
