@@ -142,6 +142,7 @@ def _estimate_resources(jaxpr: jax_core.Jaxpr) -> Resources:
       # Assume that unsupported primitives are neutral wrt resource usage.
       continue
     rs |= rule(*(invar.aval for invar in eqn.invars), **eqn.params)
+
   return rs
 
 
@@ -1592,6 +1593,15 @@ def _while_lowering_rule(
 def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
   index_aval, *_arg_avals = ctx.avals_in
 
+  def _yielded_values(outs, avals):
+    ret = []
+    for out, aval in zip(outs, avals):
+      if isinstance(out, mgpu.FragmentedArray):
+        ret.append(out)
+      else:
+        ret.append(_ensure_ir_value(out, aval.dtype))
+    return ret
+
   # We need the branch return mlir types in order to construct the
   # switch operation. To avoid leaking information about what kind of
   # mlir types are internal to FragmentedArrays and other mgpu types,
@@ -1601,10 +1611,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
     outs = lower_jaxpr_to_mosaic_gpu(
         ctx.module_ctx, ctx.launch_ctx, branches[0].jaxpr, args
     )
-    yielded_types, _ = jax.tree.flatten([
-        (_ensure_ir_value(out, aval.dtype) or out).type
-        for out, aval in zip(outs, ctx.avals_out)
-    ])
+    yielded_types = [v.type for v in jax.tree.leaves(_yielded_values(outs, ctx.avals_out))]
 
   switch_op = scf_dialect.IndexSwitchOp(
       yielded_types,
@@ -1626,11 +1633,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
           ctx.module_ctx, ctx.launch_ctx, branch.jaxpr, args, consts=branch.consts
       )
 
-      yielded = [
-          _ensure_ir_value(out, aval.dtype) or out
-          for out, aval in zip(outs, ctx.avals_out)
-      ]
-      yielded_leaves, yielded_treedef = jax.tree.flatten(yielded)
+      yielded_leaves, yielded_treedef = jax.tree.flatten(_yielded_values(outs, ctx.avals_out))
       if treedef is None:
         treedef = yielded_treedef
       else:
