@@ -142,6 +142,7 @@ def _estimate_resources(jaxpr: jax_core.Jaxpr) -> Resources:
       # Assume that unsupported primitives are neutral wrt resource usage.
       continue
     rs |= rule(*(invar.aval for invar in eqn.invars), **eqn.params)
+
   return rs
 
 
@@ -201,6 +202,7 @@ class ModuleContext:
   ]
   name_stack: source_info_util.NameStack
   traceback_caches: mlir.TracebackCaches
+  squashed_dims: tuple[int, ...]
 
   def reserve_barrier(self, barrier: mgpu.Barrier) -> mgpu.BarrierRef:
     """Reserves a barrier.
@@ -360,10 +362,6 @@ def lower_jaxpr_to_module(
 
   assert len(jaxpr.outvars) == 0
   assert not grid_mapping.vmapped_dims
-  if len(grid_mapping.grid) > 3:
-    raise NotImplementedError(
-        "Only <=3D grids are supported in Mosaic GPU lowering."
-    )
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(
         "Dynamic grid bounds not supported in the Mosaic GPU lowering."
@@ -397,19 +395,25 @@ def lower_jaxpr_to_module(
         f" {max_concurrent_steps=}, {delay_release=}"
     )
 
-  block = (128, 1, 1)
-  grid = grid_mapping.grid
   if grid_mapping.grid_names:  # Last dim corresponds to the warpgroup count
     block = (128 * grid_mapping.grid[-1], 1, 1)
-    grid = grid[:-1]
-
-  grid = [d for i, d in enumerate(grid) if i not in sequential_axes]
-  if len(grid) < 3:
-    grid += (1,) * (3 - len(grid))
+    logical_grid = grid_mapping.grid[:-1]
   else:
-    raise NotImplementedError(
-        "Only <=3D grids are supported in Mosaic GPU lowering."
-    )
+    block = (128, 1, 1)
+    logical_grid = grid_mapping.grid
+
+  parallel_grid = [
+      d for i, d in enumerate(logical_grid) if i not in sequential_axes
+  ]
+  if len(parallel_grid) <= 3:
+    squashed_dims = ()
+    parallel_grid += (1,) * (3 - len(parallel_grid))
+  else:
+    # If we have >3 parallel dimensions, we merge all leading dimensions
+    # into the first (Dimension.x) CUDA grid dimension.
+    squashed_dims = parallel_grid[:-2]
+    parallel_grid = [math.prod(parallel_grid[:-2]), *parallel_grid[-2:]]
+
   if sequential_axes:
     # TODO(slebedev): Support multiple sequential axes.
     if len(sequential_axes) > 1:
@@ -497,10 +501,10 @@ def lower_jaxpr_to_module(
 
     parallel_count = it.count()
     program_ids_template = [
-        _program_id(next(parallel_count))
+        _program_id(next(parallel_count), squashed_dims=squashed_dims)
         if axis not in sequential_axes
         else None
-        for axis in range(len(grid_mapping.grid))
+        for axis in range(len(logical_grid))
     ]
 
     def make_program_ids(step: ir.Value):
@@ -521,6 +525,7 @@ def lower_jaxpr_to_module(
         runtime_barriers=grouped_barriers,
         name_stack=source_info_util.NameStack(),
         traceback_caches=mlir.TracebackCaches(),
+        squashed_dims=squashed_dims,
     )
     del runtime_smem, grouped_barriers, runtime_barriers
 
@@ -788,7 +793,7 @@ def lower_jaxpr_to_module(
     prof_ctx = ProfilerContext(params["profile_dir"], prof_spec)
   module, out_structs_gmem, _ = mgpu_core._lower_as_gpu_kernel(
       body,
-      grid=grid,
+      grid=parallel_grid,
       cluster=(),
       block=block,
       in_shapes=in_structs_gmem,
@@ -806,7 +811,9 @@ def lower_jaxpr_to_module(
       prof_spec=prof_spec,
   )
 
-  return LoweringResult(module, grid, block, out_structs_gmem, prof_ctx)
+  return LoweringResult(
+      module, parallel_grid, block, out_structs_gmem, prof_ctx
+  )
 
 
 mosaic_lowering_rules = {}
@@ -910,12 +917,42 @@ def _program_id_lowering_rule(ctx: LoweringRuleContext, axis):
     raise NotImplementedError("pl.program_id() is not supported in this context")
   return ctx.module_ctx.program_ids[axis]
 
+def _unravel_program_id(
+    block_id: ir.Value,
+    axis: int,
+    dimensions: tuple[int, ...],
+    row_major: bool = False
+) -> ir.Value:
+  """Computes the program ID for axes compressed into one block dimension."""
+  if row_major:
+    div_value = math.prod(dimensions[axis+1:])
+  else:
+    div_value = math.prod(dimensions[:axis])
+  div_value = _as_index(_i32_constant(div_value))
+  pid = arith_dialect.divui(block_id, div_value)
+  axis_size = _as_index(_i32_constant(dimensions[axis]))
+  pid = arith_dialect.remui(pid, axis_size)
+  return arith_dialect.index_cast(ir.IntegerType.get_signless(32), pid)
 
-def _program_id(axis: int) -> ir.Value:
-  return arith_dialect.index_cast(
-      ir.IntegerType.get_signless(32),
-      gpu_dialect.block_id(gpu_dialect.Dimension(axis)),
-  )
+
+def _program_id(parallel_axis: int, squashed_dims: tuple[int, ...]) -> ir.Value:
+  if squashed_dims:
+    if parallel_axis < len(squashed_dims):
+      # All squashed dimensions are mapped to Dimension.x.
+      block_id = gpu_dialect.block_id(gpu_dialect.Dimension.x)
+      return _unravel_program_id(block_id, parallel_axis, squashed_dims)
+    else:
+      # Handle unsquashed axes.
+      return arith_dialect.index_cast(
+          ir.IntegerType.get_signless(32),
+          gpu_dialect.block_id(gpu_dialect.Dimension(
+              parallel_axis - len(squashed_dims) + 1)),
+      )
+  else:
+    return arith_dialect.index_cast(
+        ir.IntegerType.get_signless(32),
+        gpu_dialect.block_id(gpu_dialect.Dimension(parallel_axis)),
+    )
 
 
 @register_lowering_rule(primitives.num_programs_p)
@@ -1002,10 +1039,15 @@ def _ndindexer_indices(indexer: indexing.NDIndexer) -> tuple[gpu_core.Index, ...
 def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *leaves, tree):
   if not isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem):
     raise TypeError(f"Can only load from references (got {x_smem}).")
+
   x_aval = ctx.avals_in[0]
+
   transforms = jax.tree.unflatten(tree, leaves)
   x_smem, transforms = _handle_reshaping(x_smem, transforms)
   x_smem, transforms = _handle_indexing(x_smem, transforms)
+
+  print("ctx:", ctx)
+  print("transforms:", transforms)
   match transforms:
     case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
       if tiling != (64, swizzle // x_aval.dtype.itemsize):
@@ -1014,6 +1056,12 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *leaves, tree):
           x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype), swizzle=swizzle
       )
     case ():
+      # Handle scalar indexing.
+      if not ctx.avals_out[0].shape:
+        is_signed = mgpu_utils.is_signed(x_aval.dtype)
+        val = memref_dialect.load(x_smem, [])
+        return mgpu.FragmentedArray.splat(val, shape=(), is_signed=is_signed)
+
       return mgpu.FragmentedArray.load_strided(
           x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
       )
@@ -1198,6 +1246,13 @@ def _exp_lowering_rule(ctx: LoweringRuleContext, x):
   return a.exp(approx=ctx.module_ctx.approx_math)
 
 
+@register_lowering_rule(lax.exp2_p)
+def _exp2_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  a = _ensure_fa(x, x_aval.dtype)
+  return a.exp2(approx=ctx.module_ctx.approx_math)
+
+
 @register_lowering_rule(lax.reduce_sum_p)
 def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
   [x_aval] = ctx.avals_in
@@ -1215,7 +1270,7 @@ def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
         raise NotImplementedError
       if not jnp.issubdtype(x_aval.dtype, jnp.floating):
         raise NotImplementedError
-      return x.reduce(arith_dialect.addf, axes[0])
+      return x.reduce("add", axes[0])
     case _:
       raise NotImplementedError(f"Unsupported layout {x.layout}")
 
@@ -1229,23 +1284,51 @@ def _reduce_max_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
         raise NotImplementedError
       if not jnp.issubdtype(x_aval.dtype, jnp.floating):
         raise NotImplementedError
-      return x.reduce(arith_dialect.maxnumf, axes[0])
+      return x.reduce("max", axes[0])
     case _:
       raise NotImplementedError(f"Unsupported layout {x.layout}")
 
 
 @register_lowering_rule(lax.axis_index_p)
 def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
+  i32 = ir.IntegerType.get_signless(32)
   grid_names = ctx.module_ctx.grid_mapping.grid_names
+  squashed_dims = ctx.module_ctx.squashed_dims
+  if squashed_dims:
+    unsquashed_names = grid_names[-3:]
+    squashed_names = grid_names[:-3]
+  else:
+    # These are unused but initialized for type checkers.
+    unsquashed_names = ()
+    squashed_names = ()
   if grid_names and axis_name in grid_names:
     if axis_name == grid_names[-1]:
       return mgpu.warpgroup_idx(sync=True)
     else:
-      idx = grid_names.index(axis_name)
-      return arith_dialect.index_cast(
-          ir.IntegerType.get_signless(32),
-          gpu_dialect.block_id(gpu_dialect.Dimension(idx)),
-      )
+      if squashed_dims:
+        if axis_name in unsquashed_names:
+          # We add 1 to the index because the first dimension is the
+          # squashed dimension.
+          # e.g. for the grid (a, b, c, d, wg)
+          # squashed = (a, b)  Mapped to Dimension.x (0)
+          # unsquashed = (c, d)  Mapped to Dimension.y (1) and Dimension.z (2)
+          idx = unsquashed_names.index(axis_name) + 1
+          return arith_dialect.index_cast(
+            i32,
+            gpu_dialect.block_id(gpu_dialect.Dimension(idx)),
+          )
+        elif axis_name in squashed_names:
+          # All squashed dimensions are mapped to Dimension.x.
+          block_id = gpu_dialect.block_id(gpu_dialect.Dimension.x)
+          axis = squashed_names.index(axis_name)
+          return _unravel_program_id(block_id, axis, squashed_dims)
+      else:
+        if axis_name in grid_names:
+          idx = grid_names.index(axis_name)
+          return arith_dialect.index_cast(
+            i32,
+            gpu_dialect.block_id(gpu_dialect.Dimension(idx)),
+          )
   raise ValueError(
       "Named axes can only refer to GPUMesh axes in Mosaic GPU kernels"
   )
@@ -1521,6 +1604,15 @@ def _while_lowering_rule(
 def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
   index_aval, *_arg_avals = ctx.avals_in
 
+  def _yielded_values(outs, avals):
+    ret = []
+    for out, aval in zip(outs, avals):
+      if isinstance(out, mgpu.FragmentedArray):
+        ret.append(out)
+      else:
+        ret.append(_ensure_ir_value(out, aval.dtype))
+    return ret
+
   # We need the branch return mlir types in order to construct the
   # switch operation. To avoid leaking information about what kind of
   # mlir types are internal to FragmentedArrays and other mgpu types,
@@ -1530,14 +1622,10 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
     outs = lower_jaxpr_to_mosaic_gpu(
         ctx.module_ctx, ctx.launch_ctx, branches[0].jaxpr, args
     )
-    yielded = [
-        _ensure_ir_value(out, aval.dtype) or out
-        for out, aval in zip(outs, ctx.avals_out)
-    ]
-    yielded_leaves, _ = jax.tree.flatten(yielded)
+    yielded_types = [v.type for v in jax.tree.leaves(_yielded_values(outs, ctx.avals_out))]
 
   switch_op = scf_dialect.IndexSwitchOp(
-      [v.type for v in yielded_leaves],
+      yielded_types,
       _as_index(_ensure_ir_value(index, index_aval.dtype)),
       ir.DenseI64ArrayAttr.get(range(len(branches) - 1)),
       num_caseRegions=len(branches) - 1,
@@ -1556,11 +1644,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
           ctx.module_ctx, ctx.launch_ctx, branch.jaxpr, args, consts=branch.consts
       )
 
-      yielded = [
-          _ensure_ir_value(out, aval.dtype) or out
-          for out, aval in zip(outs, ctx.avals_out)
-      ]
-      yielded_leaves, yielded_treedef = jax.tree.flatten(yielded)
+      yielded_leaves, yielded_treedef = jax.tree.flatten(_yielded_values(outs, ctx.avals_out))
       if treedef is None:
         treedef = yielded_treedef
       else:
@@ -1595,6 +1679,12 @@ def _bitcast_convert_type_lowering_rule(
   return mgpu.FragmentedArray.bitcast(
       operand, dst_elem_type, output_is_signed=output_is_signed
   )
+
+
+@register_lowering_rule(lax.optimization_barrier_p)
+def _optimization_barrier_lowering(ctx: LoweringRuleContext, *args):
+  args = (_ensure_fa(arg, aval.dtype) for arg, aval in zip(args, ctx.avals_in))
+  return mgpu.optimization_barrier(*args)
 
 
 def _bcast(
@@ -1662,10 +1752,14 @@ def _ir_constant(v: object, t: ir.Type) -> ir.Value:
 
 
 def _i32_constant(v: int) -> ir.Value:
+  if v < jnp.iinfo(jnp.int32).min or v > jnp.iinfo(jnp.int32).max:
+    raise ValueError(f"Integer constant out of range for i32: {v}")
   return arith_dialect.constant(ir.IntegerType.get_signless(32), v)
 
 
 def _i64_constant(v: int) -> ir.Value:
+  if v < jnp.iinfo(jnp.int64).min or v > jnp.iinfo(jnp.int64).max:
+    raise ValueError(f"Integer constant out of range for i64: {v}")
   return arith_dialect.constant(ir.IntegerType.get_signless(64), v)
 
 

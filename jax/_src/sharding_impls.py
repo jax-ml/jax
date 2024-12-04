@@ -1714,12 +1714,18 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   """
   if devices is None:
     devices = xla_bridge.devices()
-  mesh_utils._validate_axis_shapes(axis_shapes, 'axis_shapes', 'make_mesh')
-  axis_size = math.prod(axis_shapes)
+  new_axis_shapes = mesh_utils._canonicalize_axis_sizes(axis_shapes)
+  if new_axis_shapes is None:
+    raise ValueError(
+        '`axis_shapes` passed to `make_mesh` should be a sequence of ints.'
+        f' Got {axis_shapes}')
+  del axis_shapes
+
+  axis_size = math.prod(new_axis_shapes)
   if axis_size > len(devices):
     raise ValueError(
         f'Number of devices {len(devices)} must be >= the product '
-        f'of mesh_shape {axis_shapes}')
+        f'of mesh_shape {new_axis_shapes}')
   elif axis_size < len(devices):
     devices = devices[:axis_size]
   if devices[0].device_kind in (mesh_utils._TPU_V5_LITE, mesh_utils._TPU_V5E):
@@ -1727,5 +1733,6 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   else:
     allow_split_physical_axes = False
   mesh_devices = mesh_utils.create_device_mesh(
-      axis_shapes, devices, allow_split_physical_axes=allow_split_physical_axes)
+      new_axis_shapes, devices,
+      allow_split_physical_axes=allow_split_physical_axes)
   return mesh_lib.Mesh(mesh_devices, axis_names)

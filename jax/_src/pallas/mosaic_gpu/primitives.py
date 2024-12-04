@@ -401,7 +401,7 @@ def wgmma(
     a,
     b: pallas_core.TransformedRef,
 ) -> None:
-  """Performs and asynchronous warp group matmul-accumulate on the given references.
+  """Performs an asynchronous warp group matmul-accumulate on the given references.
 
   Conceptually, this is equivalent to doing ``acc[...] += a[...] @ b[...]``,
   except that the computation is performed asynchronously.
@@ -706,17 +706,33 @@ def _broadcasted_iota_abstract_eval(dtype, shape, dimension, layout):
 @lowering.register_lowering_rule(broadcasted_iota_p)
 def _broadcasted_iota_lowering(ctx: lowering.LoweringRuleContext, dtype, shape, dimension, layout):
   del ctx
-  undef = llvm_dialect.mlir_undef(mlir.dtype_to_ir_type(dtype))
+  # Unsigned integers (as opposed to signless) cause MLIR verification
+  # errors so we only use signless like Mosaic GPU does.
+  #
+  # TODO(cperivol): use mgpu.utils.dtype_to_ir_type() instead.
+  mlir_dtype = (
+      ir.IntegerType.get_signless(dtype.itemsize * 8)
+      if jnp.issubdtype(dtype, jnp.integer)
+      else mlir.dtype_to_ir_type(dtype)
+  )
+  undef = llvm_dialect.mlir_undef(mlir_dtype)
   is_signed = (
       jnp.issubdtype(dtype, jnp.signedinteger)
       if jnp.issubdtype(dtype, jnp.integer)
       else None
   )
-  mlir_dtype = mlir.dtype_to_ir_type(dtype)
+
+  i32 = ir.IntegerType.get_signless(32)
+  def _cast(x):
+    if ir.FloatType.isinstance(mlir_dtype):
+      x = arith_dialect.index_cast(i32, x)
+      return arith_dialect.uitofp(mlir_dtype, x)
+    else:
+      return arith_dialect.index_cast(mlir_dtype, x)
   return mgpu.FragmentedArray.splat(
       undef, shape, layout.value, is_signed=is_signed
   ).foreach(
-      lambda _, idx: arith_dialect.index_cast(mlir_dtype, idx[dimension]), create_array=True, is_signed=is_signed
+      lambda _, idx: _cast(idx[dimension]), create_array=True, is_signed=is_signed
   )
 
 

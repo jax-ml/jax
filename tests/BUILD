@@ -1201,6 +1201,12 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "roofline_test",
+    srcs = ["roofline_test.py"],
+    enable_backends = ["cpu"],
+)
+
+jax_multiplatform_test(
     name = "x64_context_test",
     srcs = ["x64_context_test.py"],
     deps = [

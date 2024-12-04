@@ -89,9 +89,9 @@ def dist_wheels(
 
     mounts = [
         "-v",
-        "./:/jax",
+        os.path.abspath("./") + ":/jax",
         "-v",
-        "./wheelhouse:/wheelhouse",
+        os.path.abspath("./wheelhouse") + ":/wheelhouse",
     ]
 
     if xla_path:
@@ -143,6 +143,7 @@ def _fetch_jax_metadata(xla_path):
 
 def dist_docker(
     rocm_version,
+    base_docker,
     python_versions,
     xla_path,
     rocm_build_job="",
@@ -168,6 +169,7 @@ def dist_docker(
         "--build-arg=ROCM_VERSION=%s" % rocm_version,
         "--build-arg=ROCM_BUILD_JOB=%s" % rocm_build_job,
         "--build-arg=ROCM_BUILD_NUM=%s" % rocm_build_num,
+        "--build-arg=BASE_DOCKER=%s" % base_docker,
         "--build-arg=PYTHON_VERSION=%s" % python_version,
         "--build-arg=JAX_VERSION=%(jax_version)s" % md,
         "--build-arg=JAX_COMMIT=%(jax_commit)s" % md,
@@ -210,7 +212,7 @@ def test(image_name):
     # JAX and jaxlib are already installed from wheels
     mounts = [
         "-v",
-        "./:/jax",
+        os.path.abspath("./") + ":/jax",
     ]
 
     cmd.extend(mounts)
@@ -231,6 +233,12 @@ def test(image_name):
 
 def parse_args():
     p = argparse.ArgumentParser()
+    p.add_argument(
+        "--base-docker",
+         default="",
+        help="Argument to override base docker in dockerfile",
+    )
+
     p.add_argument(
         "--python-versions",
         type=lambda x: x.split(","),
@@ -308,6 +316,7 @@ def main():
         )
         dist_docker(
             args.rocm_version,
+            args.base_docker,
             args.python_versions,
             args.xla_source_dir,
             rocm_build_job=args.rocm_build_job,

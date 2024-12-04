@@ -70,9 +70,9 @@ if [[ ! -z ${JAXCI_XLA_GIT_DIR} ]]; then
   echo "XLA to run."
 fi
 
-# For Windows, convert MSYS Linux-like paths to Windows paths.
+# On Windows, convert MSYS Linux-like paths to Windows paths.
 if [[ $(uname -s) =~ "MSYS_NT" ]]; then
-  echo 'Converting MSYS Linux-like paths to Windows paths (for Docker, Python, etc.)'
-  # Convert all "_DIR" variables to Windows paths.
-  source <(python3 ./ci/utilities/convert_msys_paths_to_win_paths.py)
+  echo 'Converting MSYS Linux-like paths to Windows paths (for Bazel, Python, etc.)'
+  # Convert all "JAXCI.*DIR" variables
+  source <(python3 ./ci/utilities/convert_msys_paths_to_win_paths.py --convert $(env | grep "JAXCI.*DIR" | awk -F= '{print $1}'))
 fi

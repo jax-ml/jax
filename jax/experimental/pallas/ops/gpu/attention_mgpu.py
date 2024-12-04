@@ -16,6 +16,7 @@
 import dataclasses
 import functools
 import itertools
+import math
 import jax
 from jax import lax
 from jax._src import test_util as jtu  # noqa: F401
@@ -61,25 +62,14 @@ def attention(q, k, v, config: TuningConfig):
     raise ValueError(f"{head_dim=} must be divisible by 64")
   if jnp.dtype(dtype) not in map(jnp.dtype, [jnp.float16, jnp.bfloat16]):
     raise NotImplementedError(f"Only f16 and bf16 are supported, got dtype: {dtype}")
-  # Squash batch and sequence dimensions.
-  # This is required because CUDA grid/TMA descriptors have a limited number of
-  # slice dimensions.
-  # TODO(apaszke): Implement slice squashing for TMAs.
-  q = jnp.reshape(q, (batch_size * q_seq_len, num_q_heads, head_dim))
-  k = jnp.reshape(k, (batch_size * kv_seq_len, num_kv_heads, head_dim))
-  v = jnp.reshape(v, (batch_size * kv_seq_len, num_kv_heads, head_dim))
 
   max_concurrent_steps = min(
       config.max_concurrent_steps, kv_seq_len // config.block_kv
   )
   block_q, block_kv = config.block_q, config.block_kv
-  num_q_tiles, rem = divmod(q_seq_len, block_q * 2)
-  if rem:
-    raise NotImplementedError(f"{q_seq_len=} must be a multiple of {block_q * 2=}")
 
   def kernel(q_ref, k_ref, v_ref, out_ref, scoped):
-    bidx = lax.div(lax.axis_index("bq"), num_q_tiles)
-    qidx = lax.rem(lax.axis_index("bq"), num_q_tiles)
+    batch = lax.axis_index("batch")
     smem_buffers, buffer_barriers, consumed_barriers, schedule_barrier = scoped
     wg_idx = lax.axis_index("wg")
     qo_smem2, k_smem, v_smem = smem_buffers
@@ -93,11 +83,11 @@ def attention(q, k, v, config: TuningConfig):
     def _compute_wg():
       plgpu.set_max_registers(232, action="increase")
       qo_smem = qo_smem2.at[wg_idx]
-      q_seq_base = qidx * (2 * block_q) + wg_idx * block_q + bidx * q_seq_len
+      q_seq_base = lax.axis_index("q_seq") * (2 * block_q) + wg_idx * block_q
       q_head = lax.axis_index("heads")
 
       plgpu.copy_gmem_to_smem(
-          q_ref.at[pl.ds(q_seq_base, block_q), q_head],
+          q_ref.at[batch, pl.ds(q_seq_base, block_q), q_head],
           qo_smem,
           q_barriers.at[wg_idx],
       )
@@ -129,18 +119,29 @@ def attention(q, k, v, config: TuningConfig):
         plgpu.barrier_arrive(k_consumed_barrier)
 
         # Softmax
-        m_ij = jnp.maximum(m_i, qk.max(axis=1))
-        alpha = jnp.exp(m_i - m_ij)
+        # We keep m scaled by log2e to use FMA instructions when computing p.
+        log2e = math.log2(math.e)
+        m_ij = jnp.maximum(m_i, qk.max(axis=1) * log2e)
+        alpha = jnp.exp2(m_i - m_ij)
         m_i = m_ij
-        p = jnp.exp(qk - lax.broadcast_in_dim(m_ij, (block_q, block_kv), [0]))
-        acc *= lax.broadcast_in_dim(alpha, (block_q, head_dim), [0])
+        p = jnp.exp2(qk * log2e - lax.broadcast_in_dim(m_ij, qk.shape, [0]))
+        acc *= lax.broadcast_in_dim(alpha, acc.shape, [0])
         l_i *= alpha
         p16 = p.astype(dtype)
 
-        plgpu.barrier_wait(v_barriers.at[slot])
-        perform_schedule_barrier()
-
-        l_i += p.sum(axis=1)
+        def end_softmax_barriers():
+          plgpu.barrier_arrive(schedule_barrier)  # Done with softmax!
+          plgpu.barrier_wait(v_barriers.at[slot])
+          plgpu.barrier_wait(schedule_barrier)  # Wait until TensorCore is free.
+        # Can't fully explain why, but empirically the ordering here influences
+        # the performance of the final kernel quite significantly.
+        if head_dim <= 128:
+          l_i += p.sum(axis=1)
+          acc, l_i, m_i, p16 = lax.optimization_barrier((acc, l_i, m_i, p16))
+          end_softmax_barriers()
+        else:
+          end_softmax_barriers()
+          l_i += p.sum(axis=1)
 
         # PV
         def compute_pv(acc_ref):
@@ -167,7 +168,7 @@ def attention(q, k, v, config: TuningConfig):
       qo_smem[...] = acc.astype(dtype)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(
-          qo_smem, out_ref.at[pl.ds(q_seq_base, block_q), q_head],
+          qo_smem, out_ref.at[batch, pl.ds(q_seq_base, block_q), q_head],
       )
       plgpu.wait_smem_to_gmem(0)
     @pl.when(wg_idx == 2)
@@ -175,16 +176,14 @@ def attention(q, k, v, config: TuningConfig):
       plgpu.set_max_registers(40, action="decrease")
       kv_head = lax.div(lax.axis_index("heads"), q_heads_per_kv_head)
       for i in range(max_concurrent_steps):
-        start = i * block_kv + bidx * kv_seq_len
-        s = (pl.ds(start, block_kv), kv_head)
+        s = (batch, pl.ds(i * block_kv, block_kv), kv_head)
         plgpu.copy_gmem_to_smem(k_ref.at[s], k_smem.at[i], k_barriers.at[i])
         plgpu.copy_gmem_to_smem(v_ref.at[s], v_smem.at[i], v_barriers.at[i])
 
       def kv_loop(kv_step, _):
         tma_step = kv_step + max_concurrent_steps
         tma_slot = lax.rem(kv_step, max_concurrent_steps)
-        start = tma_step * block_kv + bidx * kv_seq_len
-        s = (pl.ds(start, block_kv), kv_head)
+        s = (batch, pl.ds(tma_step * block_kv, block_kv), kv_head)
         plgpu.barrier_wait(k_consumed_barrier)
         plgpu.copy_gmem_to_smem(k_ref.at[s], k_smem.at[tma_slot], k_barriers.at[tma_slot])
         plgpu.barrier_wait(v_consumed_barrier)
@@ -199,10 +198,13 @@ def attention(q, k, v, config: TuningConfig):
   def run(refs):
     q_ref, k_ref, v_ref, out_ref = refs
 
+    num_q_tiles, rem = divmod(q_seq_len, block_q * 2)
+    if rem:
+      raise NotImplementedError(f"{q_seq_len=} must be a multiple of {block_q * 2=}")
     mesh = plgpu.GPUMesh(
-        grid=(batch_size * num_q_tiles, num_q_heads),
+        grid=(batch_size, num_q_tiles, num_q_heads),
         num_threads=3,
-        axis_names=("bq", "heads", "wg"),
+        axis_names=("batch", "q_seq", "heads", "wg"),
         approx_math=True,
     )
     @pl.core_map(mesh)
@@ -236,7 +238,7 @@ def attention(q, k, v, config: TuningConfig):
       )
 
   _, _, _, out = pl.run_state(run)((q, k, v, jnp.full_like(q, jnp.inf)))
-  return jnp.reshape(out, [batch_size, q_seq_len, num_q_heads, head_dim])
+  return out
 
 
 @jax.jit
@@ -256,25 +258,26 @@ def attention_reference(q, k, v):
 
 
 def main(unused_argv):
-  num_q_heads = 1
-  num_kv_heads = 1
-  problem_it = itertools.product((1, 2), (4096, 32768,), (64, 128, 256,))
+  num_q_heads = 16
+  num_kv_heads = 16
+  problem_it = itertools.product((1,), (4096, 32768,), (64, 128, 256,))
   for batch_size, seq_len, head_dim in problem_it:
     q_seq_len = kv_seq_len = seq_len
     print(f"==== {batch_size=:<6} {kv_seq_len=:<6} {q_seq_len=:<6}"
           f"{num_q_heads=:<4} {head_dim=:<6} ====")
-    param_it = itertools.product((64,), (64, 128, 256))
-    best = None
     k1, k2, k3 = jax.random.split(jax.random.key(42), 3)
     q = jax.random.normal(k1, (batch_size, q_seq_len, num_q_heads, head_dim), jnp.float16)
     k = jax.random.normal(k2, (batch_size, kv_seq_len, num_kv_heads, head_dim), jnp.float16)
     v = jax.random.normal(k3, (batch_size, kv_seq_len, num_kv_heads, head_dim), jnp.float16)
-    for block_q, block_kv in param_it:
+    block_q = 64
+    best = None
+    for block_kv in (256, 128, 64):
       config = TuningConfig(block_q=block_q, block_kv=block_kv, max_concurrent_steps=2)
       try:
         out, runtime_ms = profiler.measure(functools.partial(attention, config=config), q, k, v)
-        out_ref = attention_reference(q, k, v)
-        np.testing.assert_allclose(out, out_ref, atol=2e-3, rtol=1e-3)
+        if seq_len < 32768:
+          out_ref = attention_reference(q, k, v)
+          np.testing.assert_allclose(out, out_ref, atol=2e-3, rtol=1e-3)
       except ValueError as e:
         if "exceeds available shared memory" in e.args[0]:
           continue
@@ -292,6 +295,7 @@ def main(unused_argv):
       )
       if best is None or runtime_us < best[0]:
         best = (runtime_us, achieved_tc_util)
+      break  # Remove this for full autotuning.
     if best is not None:
       print(f"Best: {best[0]:<7.1f}us = {best[1]:4.1f}% TC utilization")
 

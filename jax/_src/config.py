@@ -1079,14 +1079,20 @@ else:
     def __init__(self, name):
       self._name = name
 
+    @property
     def value(self):
-      return getattr(jax_jit.thread_local_state().extra_jit_context, self._name)
+      return self.get_local()
 
     def get_local(self):
       return getattr(jax_jit.thread_local_state().extra_jit_context, self._name)
 
     def set_local(self, value):
       update_thread_local_jit_state(**{self._name: value})
+
+    def swap_local(self, new_value):
+      prev_value = self.value
+      self.set_local(new_value)
+      return prev_value
 
   trace_state = JitConfig('trace_state')
   axis_env_state = JitConfig('axis_env_state')

@@ -186,7 +186,7 @@ def _python_pjit_helper(fun, jit_info, *args, **kwargs):
   try:
     # TODO(yashkatariya): Maybe thread this into pjit params like resource_env
     # and set the context manager down the stack?
-    with p.abstract_mesh:
+    with mesh_lib.set_abstract_mesh(p.abstract_mesh):
       if (core.trace_state_clean() and
           not config.debug_key_reuse.value and
           not config.data_dependent_tracing_fallback.value):
@@ -644,9 +644,9 @@ def _infer_params_impl(
   attr_token = _attr_token(flat_fun, in_type)
 
   abstract_mesh = (
-      get_abstract_mesh(in_type) if mesh_lib.abstract_mesh_context.mesh is None
-      else mesh_lib.abstract_mesh_context.mesh)
-  with abstract_mesh:
+      get_abstract_mesh_from_avals(in_type)
+      if not mesh_lib.get_abstract_mesh() else mesh_lib.get_abstract_mesh())
+  with mesh_lib.set_abstract_mesh(abstract_mesh):
     jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
         flat_fun, in_type, attr_token, dbg,
         HashableFunction(res_paths, closure=()),
@@ -693,9 +693,9 @@ def _infer_params_impl(
                     attrs_tracked, abstract_mesh), args_flat
 
 
-def get_abstract_mesh(in_avals):
+def get_abstract_mesh_from_avals(in_avals):
   if not config.sharding_in_types.value:
-    return mesh_lib.null_mesh_context()
+    return None
   m = None
   for a in in_avals:
     # TODO(yashkatariya): Remove this when mesh context can be set by the user.
@@ -706,9 +706,6 @@ def get_abstract_mesh(in_avals):
           f'Mesh for all inputs should be equal. Got one mesh: {m} and'
           f' another mesh: {a.sharding.mesh}')
     m = a.sharding.mesh  # type: ignore
-  # TODO(yashkatariya): Remove this when mesh context can be set by the user.
-  if m is None:
-    return mesh_lib.null_mesh_context()
   assert isinstance(m, AbstractMesh)
   return m
 
@@ -1790,8 +1787,13 @@ def _pjit_lower(
     lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
     pgle_profiler: profiler.PGLEProfiler | None):
-  mesh, api_name = ((resource_env.physical_mesh, 'pjit')
-                    if resource_env is not None else (None, 'jit'))
+  if config.sharding_in_types.value:
+    cur_mesh = mesh_lib.get_concrete_mesh()
+    mesh = cur_mesh if isinstance(cur_mesh, mesh_lib.Mesh) else None
+    api_name = 'jit'
+  else:
+    mesh, api_name = ((resource_env.physical_mesh, 'pjit')
+                      if resource_env is not None else (None, 'jit'))
   return pxla.lower_sharding_computation(
       jaxpr, api_name, name, in_shardings, out_shardings,
       in_layouts, out_layouts, tuple(donated_invars),

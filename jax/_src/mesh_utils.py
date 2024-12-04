@@ -705,12 +705,15 @@ def _transpose_trick(
       *_TRANSPOSE_TRICKS[topology][mesh_shape_no_trivial_dims]
   )
 
-def _validate_axis_shapes(axis_shapes: Sequence[int], arg_name: str,
-                          fun_name: str):
-  if not all(isinstance(s, int) for s in axis_shapes):
-    raise ValueError(
-        f'{arg_name} passed to {fun_name} should be a sequence of ints. Got'
-        f' {axis_shapes}')
+def _canonicalize_axis_sizes(axis_sizes: Sequence[int]
+                             ) -> tuple[int, ...] | None:
+  new_sizes = []
+  for s in axis_sizes:
+    try:
+      new_sizes.append(int(s))
+    except:
+      return None
+  return tuple(new_sizes)
 
 def create_device_mesh(
     mesh_shape: Sequence[int],
@@ -746,18 +749,25 @@ def create_device_mesh(
   """
   if devices is None:
     devices = xb.devices()
-  _validate_axis_shapes(mesh_shape, 'mesh_shape', 'create_device_mesh')
-  if math.prod(mesh_shape) != len(devices):
+
+  new_mesh_shape = _canonicalize_axis_sizes(mesh_shape)
+  if new_mesh_shape is None:
+    raise ValueError(
+        f'`mesh_shape` passed to `create_device_mesh` should be a sequence of'
+        f' ints. Got {mesh_shape}')
+  del mesh_shape
+
+  if math.prod(new_mesh_shape) != len(devices):
     raise ValueError(
         f'Number of devices {len(devices)} must equal the product '
-        f'of mesh_shape {mesh_shape}'
+        f'of mesh_shape {new_mesh_shape}'
     )
   last_device = devices[-1]
 
   handler = device_kind_handler_dict.get(last_device.device_kind, None)
   if handler is not None:
     result = handler(
-        mesh_shape, devices, contiguous_submeshes=contiguous_submeshes
+        new_mesh_shape, devices, contiguous_submeshes=contiguous_submeshes
     )
     if result is not None:
       return result
@@ -765,15 +775,15 @@ def create_device_mesh(
   if last_device.platform == 'tpu':
     physical_mesh = _get_physical_tpu_mesh(devices)
     if contiguous_submeshes:
-      physical_mesh = _transpose_trick(physical_mesh, mesh_shape)
+      physical_mesh = _transpose_trick(physical_mesh, new_mesh_shape)
     device_mesh, _ = _create_device_mesh_for_nd_torus(
         physical_mesh,
-        mesh_shape,
+        new_mesh_shape,
         allow_split_physical_axes=allow_split_physical_axes,
     )
     return device_mesh
   else:
-    device_mesh = np.asarray(devices).reshape(mesh_shape)
+    device_mesh = np.asarray(devices).reshape(new_mesh_shape)
     return device_mesh
 
 

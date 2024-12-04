@@ -356,7 +356,7 @@ class MeshUtilsTest(test_util.JaxTestCase):
   def test_create_device_mesh_non_int_error(self):
     with self.assertRaisesRegex(
         ValueError,
-        "mesh_shape passed to create_device_mesh should be a sequence of ints"):
+        "`mesh_shape` passed to `create_device_mesh` should be a sequence of ints"):
       mesh_utils.create_device_mesh(((4,), 4))
 
   @parameterized.named_parameters(

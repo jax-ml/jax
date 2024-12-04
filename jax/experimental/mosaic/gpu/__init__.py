@@ -43,6 +43,7 @@ from .fragmented_array import (
     WGMMA_ROW_LAYOUT as WGMMA_ROW_LAYOUT,
     WGSplatFragLayout as WGSplatFragLayout,
     WGStridedFragLayout as WGStridedFragLayout,
+    optimization_barrier as optimization_barrier,
 )
 from .utils import (
     BarrierRef as BarrierRef,

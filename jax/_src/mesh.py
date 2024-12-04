@@ -454,13 +454,6 @@ class AbstractMesh:
   def local_mesh(self):
     _raise_value_error("local_mesh")
 
-  def __enter__(self):
-    return push_abstract_mesh_context(self)
-
-  def __exit__(self, exc_type, exc_value, traceback):
-    pop_abstract_mesh_context()
-    return False
-
   @staticmethod
   def _extremely_unsafe_enter_tracing_context(mesh: AbstractMesh):
     jax_config.abstract_mesh_context_manager.set_local(mesh)
@@ -473,70 +466,32 @@ def _raise_value_error(name):
   raise ValueError(f"AbstractMesh does not implement {name}")
 
 
-class AbstractMeshContext(threading.local):
-  def __init__(self):
-    self.stack = [None]
-    self.mesh = self.stack[-1]
+@contextlib.contextmanager
+def set_abstract_mesh(mesh: AbstractMesh):
+  prev_val = jax_config.abstract_mesh_context_manager.swap_local(mesh)
+  try:
+    yield
+  finally:
+    jax_config.abstract_mesh_context_manager.set_local(prev_val)
 
-abstract_mesh_context = AbstractMeshContext()
-
-def push_abstract_mesh_context(val):
-  abstract_mesh_context.stack.append(val)
-  abstract_mesh_context.mesh = val
-  # TODO(yashkatariya): Allow setting empty tuples and tuples with None in them.
-  # Right now that leads to weird numerical issues.
-  non_none_meshes = tuple(m for m in abstract_mesh_context.stack
-                          if m is not None)
-  if non_none_meshes:
-    jax_config.abstract_mesh_context_manager.set_local(non_none_meshes)
-  return val
-
-def pop_abstract_mesh_context():
-  abstract_mesh_context.stack.pop()
-  abstract_mesh_context.mesh = abstract_mesh_context.stack[-1]
-  non_none_meshes = tuple(m for m in abstract_mesh_context.stack
-                          if m is not None)
-  if non_none_meshes:
-    jax_config.abstract_mesh_context_manager.set_local(non_none_meshes)
+def get_abstract_mesh():
+  return jax_config.abstract_mesh_context_manager.value
 
 
-class null_mesh_context:
+@contextlib.contextmanager
+def set_concrete_mesh(mesh: Mesh):
+  prev_val = jax_config.device_context.swap_local(mesh)
+  try:
+    yield
+  finally:
+    jax_config.device_context.set_local(prev_val)
 
-  def __enter__(self):
-    return push_abstract_mesh_context(None)
-
-  def __exit__(self, *excinfo):
-    pop_abstract_mesh_context()
-    return False
+def get_concrete_mesh():
+  return jax_config.device_context.value
 
 
 @contextlib.contextmanager
 def set_mesh(mesh: Mesh):
-  with (mesh.abstract_mesh, jax_config.sharding_in_types(True),
-        enter_device_context(mesh)):
+  with (set_abstract_mesh(mesh.abstract_mesh),
+        jax_config.sharding_in_types(True), set_concrete_mesh(mesh)):
     yield
-
-
-class DeviceContext(threading.local):
-  def __init__(self):
-    self.stack = [None]
-    self.concrete_mesh = self.stack[-1]
-
-device_context = DeviceContext()
-
-
-@contextlib.contextmanager
-def enter_device_context(mesh: Mesh):
-  device_context.stack.append(mesh)
-  device_context.concrete_mesh = mesh
-  non_none_meshes = tuple(m for m in device_context.stack if m is not None)
-  if non_none_meshes:
-    jax_config.device_context.set_local(non_none_meshes)
-  try:
-    yield
-  finally:
-    device_context.stack.pop()
-    device_context.concrete_mesh = device_context.stack[-1]
-    non_none_meshes = tuple(m for m in device_context.stack if m is not None)
-    if non_none_meshes:
-      jax_config.device_context.set_local(non_none_meshes)

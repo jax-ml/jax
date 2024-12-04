@@ -14,7 +14,11 @@
 # limitations under the License.
 # ==============================================================================
 # Runs Pyest CPU tests. Requires a jaxlib wheel to be present
+<<<<<<< HEAD
 # inside $JAXCI_OUTPUT_DIR (../dist)
+=======
+# inside the $JAXCI_OUTPUT_DIR (../dist)
+>>>>>>> 5ade371c88a1f879556ec29867b173da49ae57f0
 #
 # -e: abort script if one command fails
 # -u: error if undefined variable used
@@ -23,20 +27,38 @@
 # -o allexport: export all functions and variables to be available to subscripts
 set -exu -o history -o allexport
 
+<<<<<<< HEAD
 # Inherit default JAXCI environment variables.
 source ci/envs/default.env
 
+=======
+# Source default JAXCI environment variables.
+source ci/envs/default.env
+
+# Install jaxlib wheel inside the $JAXCI_OUTPUT_DIR directory on the system.
+>>>>>>> 5ade371c88a1f879556ec29867b173da49ae57f0
 echo "Installing wheels locally..."
 source ./ci/utilities/install_wheels_locally.sh
 
 # Set up the build environment.
 source "ci/utilities/setup_build_environment.sh"
 
+<<<<<<< HEAD
 export PY_COLORS=1
 export JAX_SKIP_SLOW_TESTS=true
 
 "$JAXCI_PYTHON" -c "import jax; print(jax.default_backend()); print(jax.devices()); print(len(jax.devices()))"
 
 export TF_CPP_MIN_LOG_LEVEL=0
+=======
+"$JAXCI_PYTHON" -c "import jax; print(jax.default_backend()); print(jax.devices()); print(len(jax.devices()))"
+
+# Set up all test environment variables
+export PY_COLORS=1
+export JAX_SKIP_SLOW_TESTS=true
+export TF_CPP_MIN_LOG_LEVEL=0
+# End of test environment variable setup
+
+>>>>>>> 5ade371c88a1f879556ec29867b173da49ae57f0
 echo "Running CPU tests..."
 "$JAXCI_PYTHON" -m pytest -n auto --tb=short --maxfail=20 tests examples

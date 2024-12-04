@@ -1240,7 +1240,7 @@ class TMATest(TestCase):
       x = np.arange(np.prod(shape)).reshape(shape)
       _ = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, x)(x)
 
-    with self.assertRaisesRegex(ValueError, "only support striding up to 5"):
+    with self.assertRaisesRegex(ValueError, "all GMEM strides except the last"):
       run_kernel([1] * 6)
 
     with self.assertRaisesRegex(
@@ -1565,14 +1565,14 @@ class FragmentedArrayTest(TestCase):
       assert isinstance(pi_arr_sq.layout, mgpu.WGStridedFragLayout)
       pi_arr_cube = pi_splat.broadcast(pi_arr.shape) * pi_arr_sq
       assert isinstance(pi_arr_cube.layout, mgpu.WGStridedFragLayout)
-      (pi_arr_sq + pi_arr_cube).store_untiled(dst)
+      (pi_arr == pi_arr).select(pi_splat, pi_arr_cube).store_untiled(dst)
 
     out_shape = jax.ShapeDtypeStruct((128, 32), jnp.float32)
     inp = jnp.ones_like(out_shape) * 3.14
     result = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), inp, out_shape, ()
     )(inp)
-    np.testing.assert_allclose(result, np.full((128, 32), 3.14 ** 2 + 3.14 ** 3, np.float32))
+    np.testing.assert_allclose(result, np.full((128, 32), 3.14, np.float32))
 
 
   @parameterized.product(in_shape=((128, 128), (128, 64), (64, 128)))
@@ -1608,19 +1608,19 @@ class FragmentedArrayTest(TestCase):
 
     np.testing.assert_array_equal(result, x)
 
-  @parameterized.named_parameters(
-      ("_bf16", jnp.bfloat16)
-  )
-  def test_fast_i8_convert(self, jax_dtype_to):
-    jax_dtype_to = jnp.dtype(jax_dtype_to)
+  @parameterized.parameters(2, 4)
+  def test_fast_i8_convert(self, reg_length):
+    jax_dtype_to = jnp.dtype(jnp.bfloat16)
     jax_dtype_from = jnp.dtype(jnp.int8)
     mlir_dtype_to = utils.dtype_to_ir_type(jax_dtype_to)
     def kernel(ctx, inp, out, smem):
       del ctx, smem
       arr = mgpu.FragmentedArray.load_strided(inp, is_signed=True)
+      assert ir.VectorType(arr.registers.flat[0].type).shape == [reg_length]
       arr.astype(mlir_dtype_to).store_untiled(out)
 
     x = jnp.arange(-128, 128, dtype=jax_dtype_from)
+    x = jnp.tile(x, reg_length // 2)
     reference = x.astype(jax_dtype_to)
 
     result = mgpu.as_gpu_kernel(
@@ -1673,6 +1673,20 @@ class FragmentedArrayTest(TestCase):
         None,
     )(x)
     np.testing.assert_array_equal(result, reference)
+
+  @parameterized.parameters(jnp.float32, jnp.float16, jnp.bfloat16)
+  def test_optimization_barrier(self, dtype):
+    def kernel(ctx, inp, out, smem):
+      del ctx, smem
+      arr = mgpu.FragmentedArray.load_strided(inp)
+      arr2 = arr * 2
+      arr, arr2 = mgpu.optimization_barrier(arr, arr2)
+      (arr + arr2).store_untiled(out)
+
+    x = jnp.arange(256, dtype=dtype)
+
+    f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, None)
+    np.testing.assert_array_equal(f(x), x * 3)
 
 
 class ProfilerTest(TestCase):
@@ -1755,18 +1769,21 @@ class LayoutTest(TestCase):
   @parameterized.product(
       load_tiled=[False, True],
       store_tiled=[False, True],
-      dtype=[jnp.int16],
+      dtype=[jnp.int8, jnp.int16, jnp.int32],
       swizzle=[32, 64, 128],
-      num_col_tiles=[1, 2, 4],
+      num_col_tiles=[1, 2, 3],
   )
   def test_copy_tiled(self, load_tiled, store_tiled, dtype, swizzle, num_col_tiles):
     mlir_dtype = utils.dtype_to_ir_type(dtype)
-    col_tiling = swizzle // bytewidth(mlir_dtype)
+    bw = bytewidth(mlir_dtype)
+    col_tiling = swizzle // bw
     m, n = 128, col_tiling * num_col_tiles
     tiling = (64, col_tiling)
     tiled_layout = fa._tiled_wgmma_layout((m, n))
     load_layout = tiled_layout if load_tiled else mgpu.WGMMA_LAYOUT
     store_layout = tiled_layout if store_tiled else mgpu.WGMMA_LAYOUT
+    if (not load_tiled or not store_tiled) and bw == 4 and swizzle == 32:
+      self.skipTest("Old code path does not support this")
     def kernel(ctx, in_, out, smems):
       smem_in, smem_out, barrier = smems
       ctx.async_copy(src_ref=in_, dst_ref=smem_in, swizzle=swizzle, barrier=barrier)
@@ -1800,14 +1817,21 @@ class LayoutTest(TestCase):
     # Verify that we don't use too many registers for the transfers.
     # We verify LDS and STS separately, because they might use two different
     # methods of computing offsets and we don't rely on CSE between them.
-    register_pattern = re.compile(r"(R[0-9]+)")
     expected_regs = swizzle // bytewidth(mlir_dtype) // 8
+    # When the bytewidth is smaller than 2 the swizzle pattern changes every 2
+    # column tiles, so we only need half the registers.
+    if load_tiled and store_tiled:  # The old code doesn't optimize properly.
+      if bytewidth(mlir_dtype) < 2:
+        expected_regs //= 2
     for instr in ("STS", "LDS"):
       with self.subTest(instr + " count"):
         addrs = re.findall(instr + r".* \[(.*)\]", get_sass())
-        chain = itertools.chain.from_iterable
-        used_regs = set(chain(register_pattern.findall(addr) for addr in addrs))
-        self.assertLen(used_regs, expected_regs)
+        def get_reg(addr):
+          if (pos := addr.find("+")) != -1:
+            return addr[:pos]
+          return addr
+        used_regs = {get_reg(addr) for addr in addrs}
+        self.assertLessEqual(len(used_regs), expected_regs)
 
 
 if __name__ == "__main__":

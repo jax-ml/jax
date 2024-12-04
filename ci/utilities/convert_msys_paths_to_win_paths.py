@@ -16,7 +16,11 @@
 Converts MSYS Linux-like paths stored in env variables to Windows paths.
 
 This is necessary on Windows, because some applications do not understand/handle
+<<<<<<< HEAD
 Linux-like paths MSYS uses, for example, Docker.
+=======
+Linux-like paths MSYS uses, for example, Bazel.
+>>>>>>> 5ade371c88a1f879556ec29867b173da49ae57f0
 """
 import argparse
 import os
@@ -43,15 +47,34 @@ def msys_to_windows_path(msys_path):
     print(f"Error converting path: {e}")
     return None
 
+<<<<<<< HEAD
+=======
+def should_convert(var: str,
+                   convert: list[str] | None):
+  """Check the variable name against convert list"""
+  if var in convert:
+    return True
+  else:
+    return False
+
+>>>>>>> 5ade371c88a1f879556ec29867b173da49ae57f0
 def main(parsed_args: argparse.Namespace):
   converted_paths = {}
 
   for var, value in os.environ.items():
+<<<<<<< HEAD
     if (parsed_args.blacklist and var in parsed_args.blacklist) or not value:
       continue
     if "_DIR" in var or (args.whitelist and var in parsed_args.whitelist):
       converted_path = msys_to_windows_path(value)
       converted_paths[var] = converted_path
+=======
+    if not value or not should_convert(var,
+                                       parsed_args.convert):
+      continue
+    converted_path = msys_to_windows_path(value)
+    converted_paths[var] = converted_path
+>>>>>>> 5ade371c88a1f879556ec29867b173da49ae57f0
 
   var_str = '\n'.join(f'export {k}="{v}"'
                       for k, v in converted_paths.items())
@@ -63,12 +86,19 @@ def main(parsed_args: argparse.Namespace):
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description=(
       'Convert MSYS paths in environment variables to Windows paths.'))
+<<<<<<< HEAD
   parser.add_argument('--blacklist',
                       nargs='*',
                       help='List of variables to ignore')
   parser.add_argument('--whitelist',
                       nargs='*',
                       help='List of variables to include')
+=======
+  parser.add_argument('--convert',
+                      nargs='+',
+                      required=True,
+                      help='Space separated list of environment variables to convert. E.g: --convert env_var1 env_var2')
+>>>>>>> 5ade371c88a1f879556ec29867b173da49ae57f0
   args = parser.parse_args()
 
   main(args)

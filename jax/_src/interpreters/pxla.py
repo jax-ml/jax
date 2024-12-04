@@ -1710,7 +1710,7 @@ ShardingInfo = tuple[
 ]
 
 
-def _get_default_device() -> xc.Device:
+def get_default_device() -> xc.Device:
   if isinstance(config.default_device.value, str):
     return xb.get_backend(config.default_device.value).local_devices()[0]
   else:
@@ -1749,7 +1749,7 @@ def _get_and_check_device_assignment(
   if first_sharding_info is None and devices:
     final_device_assignment = devices
   elif first_sharding_info is None:
-    final_device_assignment = (_get_default_device(),)
+    final_device_assignment = (get_default_device(),)
   else:
     final_device_assignment = first_sharding_info[0]  # type: ignore
   return xb.get_device_backend(final_device_assignment[0]), final_device_assignment
@@ -2193,15 +2193,8 @@ def lower_sharding_computation(
   assert len(out_shardings) == len(out_layouts) == len(global_out_avals), (
       len(out_shardings), len(out_layouts), len(global_out_avals))
 
-  if config.sharding_in_types.value:
-    # TODO(yashkatariya): Thread it via jit path and remove the None check by
-    # making tests go via set_mesh API always.
-    devices_from_context = (
-        None if mesh_lib.device_context.concrete_mesh is None
-        else mesh_lib.device_context.concrete_mesh._flat_devices_tuple)
-  else:
-    devices_from_context = (None if context_mesh is None or context_mesh.empty
-                            else context_mesh._flat_devices_tuple)
+  devices_from_context = (None if context_mesh is None or context_mesh.empty
+                          else context_mesh._flat_devices_tuple)
   # Device assignment across all inputs, outputs and shardings inside jaxpr
   # should be the same.
   unique_intermediate_shardings = util.stable_unique(
@@ -2220,7 +2213,10 @@ def lower_sharding_computation(
     out_shardings = _concretize_abstract_shardings(
         out_shardings, global_out_avals, device_assignment)
 
-  platforms = lowering_platforms or (backend.platform,)
+  # TODO(parkers): One _raw_platform has been unified with platform,
+  # change this back to just read platform.
+  platforms = lowering_platforms or (
+      getattr(backend, "_raw_platform", backend.platform),)
 
   committed = bool(
       devices_from_context or
