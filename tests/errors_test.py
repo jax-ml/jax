@@ -335,6 +335,47 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         ('bwd_err', 'g = err(g)'),
         ('err', 'assert False')], filter_mode=filter_mode)
 
+  def test_jvp(self, filter_mode):
+    def err(_):
+      assert False
+      return ()
+
+    def f():
+      p = (1.,)
+      t = (0.,)
+      return jax.jvp(err, p, t)
+
+    check_filtered_stack_trace(self, AssertionError, f, [
+        ('f', 'return jax.jvp(err, p, t)'),
+        ('err', 'assert False')], filter_mode=filter_mode)
+
+  def test_vjp(self, filter_mode):
+    def err(_):
+      assert False
+      return ()
+
+    def f():
+      x = 1.
+      return jax.vjp(err, x)[0]
+
+    check_filtered_stack_trace(self, AssertionError, f, [
+        ('f', 'return jax.vjp(err, x)[0]'),
+        ('err', 'assert False')], filter_mode=filter_mode)
+
+  def test_debug_nans(self, filter_mode):
+    @jax.jit
+    def f(x):
+      return 0. / x
+
+    f(2.)
+    def g():
+      return f(0.)
+
+    with jax.debug_nans(True):
+      check_filtered_stack_trace(self, ZeroDivisionError, g, [
+          ('g', 'return f(0.)'),
+          ('f', 'return 0. / x')], filter_mode=filter_mode)
+
   def test_cause_chain(self, filter_mode):
     @jit
     def inner(x):
