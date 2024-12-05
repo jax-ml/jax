@@ -749,7 +749,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     jnp_result = jnp.floor_divide(x1, x2)
     np_result = np.floor_divide(x1, x2)
     self.assertAllClose(jnp_result, np_result, check_dtypes=True)
-    self.assertAllClose(jnp.signbit(jnp_result), jnp.signbit(np_result), check_dtypes=True)
+    self.assertAllClose(lax.sign(jnp_result), lax.sign(np_result), check_dtypes=True)
 
 
 if __name__ == "__main__":
