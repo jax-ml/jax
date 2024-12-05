@@ -36,6 +36,7 @@ from jax._src import traceback_util
 from jax._src.interpreters import mlir
 from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 import numpy as np
 
@@ -190,6 +191,10 @@ def get_compile_options(
     assert device_assignment.replica_count() == num_replicas
     assert device_assignment.computation_count() == num_partitions
     compile_options.device_assignment = device_assignment
+
+  if xla_extension_version >= 294:
+    build_options.exec_time_optimization_effort = config.exec_time_optimization_effort.value
+    build_options.memory_fitting_effort = config.memory_fitting_effort.value
 
   if env_options_overrides is not None:
     # Some overrides are passed directly on build_options.

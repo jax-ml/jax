@@ -79,6 +79,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.lax.linalg.eig` and the related `jax.numpy` functions
     ({func}`jax.numpy.linalg.eig` and {func}`jax.numpy.linalg.eigvals`) are now
     supported on GPU. See {jax-issue}`#24663` for more details.
+  * Added two new configuration flags, `jax_exec_time_optimization_effort` and `jax_memory_fitting_effort`, to control the amount of effort the compiler spends minimizing execution time and memory usage, respectively.  Valid values are between -1.0 and 1.0, default is 0.0.
 
 * Bug fixes
   * Fixed a bug where the GPU implementations of LU and QR decomposition would
