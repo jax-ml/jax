@@ -70,6 +70,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     return NaN for negative integer inputs, to match the behavior of SciPy from
     https://github.com/scipy/scipy/pull/21827.
   * `jax.clear_backends` was removed after being deprecated in v0.4.26.
+  * We removed the custom call "__gpu$xla.gpu.triton" from the list of custom
+    call that we guarantee export stability. This is because this custom call
+    relies on Triton IR, which is not guaranteed to be stable. If you need
+    to export code that uses this custom call, you can use the `disabled_checks`
+    parameter. See more details in the [documentation](https://jax.readthedocs.io/en/latest/export/export.html#compatibility-guarantees-for-custom-calls).
 
 * New Features
   * {func}`jax.jit` got a new `compiler_options: dict[str, Any]` argument, for

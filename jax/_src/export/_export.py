@@ -1005,7 +1005,8 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     *_CPU_FFI_KERNELS,
     "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape",
     "cu_threefry2x32", "cu_threefry2x32_ffi",
-    "__gpu$xla.gpu.triton",  # Pallas call on GPU
+    # Triton IR does not guarantee stability.
+    # "__gpu$xla.gpu.triton",
     # cholesky on CPU
     "lapack_spotrf", "lapack_dpotrf", "lapack_cpotrf", "lapack_zpotrf",
     # eigh on TPU
