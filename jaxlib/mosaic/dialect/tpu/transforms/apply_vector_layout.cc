@@ -6116,6 +6116,42 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
   }
   const int packing = src.packing();
   const int8_t bitwidth = src.bitwidth();
+  // Handle retiling from (1, 128) to (8, 128) for 32-bit data with replicating
+  // sublanes.
+  if (try_replicate_rows && packing == 1 &&
+      *(vregs.dimensions().end() - 2) == 1 &&
+      src.tiling() == std::array<int64_t, 2>{1, ctx.target_shape[1]} &&
+      dst_tiling == ctx.target_shape) {
+    DCHECK_EQ(src.offsets()[0].value_or(0), 0);
+    const LayoutOffset dst_minor_offset =
+        src.offsets()[1] ? LayoutOffset(*src.offsets()[1] % target_shape[1])
+                         : std::nullopt;
+    const VectorLayout dst(bitwidth, {std::nullopt, dst_minor_offset},
+                           dst_tiling, src.implicit_dim());
+    xla::Array<Value> retiled(
+        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
+    retiled.Each([&](absl::Span<const int64_t> idx, Value *tile) {
+      SmallVector<int64_t> src_idx(idx.begin(), idx.end());
+      *(src_idx.end() - 2) *= target_shape[0];
+      if (!src.offsets()[1].has_value()) {
+        // With (1, 128) tiling each vreg holds values from a single row. This
+        // means that if the columns are replicated, then the whole vreg is
+        // already replicated.
+        *(src_idx.end() - 1) = 0;
+        *tile = vregs(src_idx);
+      } else {
+        // The column (in units of sublanes) of the sublane we want:
+        const int64_t sublane_column =
+            *(src_idx.end() - 1) + *src.offsets()[1] / target_shape[1];
+        *(src_idx.end() - 1) = sublane_column / target_shape[0];
+        const int64_t src_sl_idx = sublane_column % target_shape[0];
+        *tile =
+            broadcastSublane(builder, vregs(src_idx), src_sl_idx, target_shape);
+      }
+    });
+    // We have successfully replicated sublanes
+    return std::pair(dst, std::move(retiled));
+  }
   VectorLayout dst(src.bitwidth(), src.offsets(), dst_tiling,
                    src.implicit_dim());
   if (!dst.isValid(target_shape)) {
@@ -6123,28 +6159,6 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
   }
   auto dst_tiles_shape =
       dst.tileArrayImplicitShape(vty.getShape(), target_shape);
-  // Handle retiling from (1, 128) to (8, 128) for 32-bit data with replicating
-  // sublanes.
-  if (try_replicate_rows && packing == 1 &&
-      *(vregs.dimensions().end() - 2) == 1 &&
-      src.offsets() == LayoutOffsets{0, 0} &&
-      src.tiling() == std::array<int64_t, 2>{1, ctx.target_shape[1]} &&
-      dst_tiling == ctx.target_shape) {
-    xla::Array<Value> retiled(dst_tiles_shape);
-    retiled.Each([&](absl::Span<const int64_t> idx, Value *tile) {
-      SmallVector<int64_t> src_idx(idx.begin(), idx.end());
-      *(src_idx.end() - 2) *= target_shape[0];
-      *(src_idx.end() - 1) /= target_shape[0];
-      const int64_t src_sl_idx = *(idx.end() - 1) % target_shape[0];
-      CHECK_EQ(src.getImplicitTiledDims(vty.getShape(), 1)[0], 1);
-      *tile =
-          broadcastSublane(builder, vregs(src_idx), src_sl_idx, target_shape);
-    });
-    // We have successfully replicated sublanes.
-    dst = VectorLayout(bitwidth, {std::nullopt, dst.offsets()[1]}, dst_tiling,
-                       dst.implicit_dim());
-    return std::pair(dst, std::move(retiled));
-  }
   // (8,128) -> (8 * packing,128) tiling change for packed type.
   if (bitwidth < 32 && 32 % bitwidth == 0 && src_tiling == ctx.target_shape &&
       dst_tiling == std::array<int64_t, 2>{ctx.target_shape[0] * dst.packing(),
