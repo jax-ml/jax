@@ -342,8 +342,13 @@ def TPU_RepeatOp : TPU_Op<"repeat", [Pure]> {
 }
 
 def TPU_BroadcastInSublanesOp : TPU_Op<"broadcast_in_sublanes", [Pure]> {
+  let description = [{
+    For each sublane `i`, broadcasts the value in lane `lane + i` along the entire
+    sublane. If `lane + i` is not in [0, lane_count), then the value in sublane `i`
+    is not defined (can be anything).
+  }];
   let arguments = (ins
-    AnyVectorOfNonZeroRank:$source,  // All sublanes should be equal.
+    TPU_Vreg:$source,  // All sublanes should be equal.
     I32Attr:$lane  // Coordinates of the first element to take.
   );
   // Output shape should be the same, except for position dim which contains
