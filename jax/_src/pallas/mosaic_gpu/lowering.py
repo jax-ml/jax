@@ -1046,8 +1046,6 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *leaves, tree):
   x_smem, transforms = _handle_reshaping(x_smem, transforms)
   x_smem, transforms = _handle_indexing(x_smem, transforms)
 
-  print("ctx:", ctx)
-  print("transforms:", transforms)
   match transforms:
     case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
       if tiling != (64, swizzle // x_aval.dtype.itemsize):
