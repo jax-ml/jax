@@ -277,9 +277,6 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
           call_jaxpr = params.pop('call_jaxpr')
           cts_out = get_primitive_transpose(eqn.primitive)(
               params, call_jaxpr, invals, cts_in, cts_in_avals)
-        elif eqn.primitive in reducing_transposes:
-          cts_out = reducing_transposes[eqn.primitive](
-              cts_in, *invals, **eqn.params)
         else:
           cts_out = get_primitive_transpose(eqn.primitive)(
               cts_in, *invals, **eqn.params)
@@ -586,8 +583,6 @@ class LinearizeTracer(Tracer):
 
 primitive_jvps : dict[core.Primitive, Callable] = {}
 primitive_transposes: dict[core.Primitive, Callable] = {}
-# transpose rules that internally perform reductions over the given named axes
-reducing_transposes: dict[core.Primitive, Callable] = {}
 primitive_linearizations : dict[core.Primitive, Callable]  = {}
 
 def deflinear(primitive, transpose_rule):
@@ -871,3 +866,6 @@ class CustomVJPException(Exception):
            "closed-over value into the custom_vjp function as an argument, and "
            "adapting the custom_vjp fwd and bwd rules.")
     super().__init__(msg)
+
+# TODO(mattjj): remove this vestigial dict
+reducing_transposes: dict[core.Primitive, Callable] = {}

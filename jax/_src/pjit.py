@@ -2385,7 +2385,7 @@ def _pjit_transpose(cts_in, *primals_in,
     _set_states(attrs_tracked, final_states)
 
   return tree_unflatten(cts_out_treedef, nz_cts_out)
-ad.reducing_transposes[pjit_p] = _pjit_transpose
+ad.primitive_transposes[pjit_p] = _pjit_transpose
 
 
 @weakref_lru_cache
