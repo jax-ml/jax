@@ -848,6 +848,15 @@ def _match(mesh, check_rep, pspec, x):
 def _rem_singleton(x): return x.reshape(x.shape[1:])
 def _add_singleton(x): return x.reshape(1, *x.shape)
 
+def _maybe_check_special(outs):
+  if not config.debug_nans.value and not config.debug_infs.value: return
+  bufs = [s.data for leaf in tree_leaves(outs)
+          for s in getattr(leaf, 'addressable_shards', [])]
+  try:
+    dispatch.check_special('shard_map', bufs)
+  except dispatch.InternalFloatingPointError as e:
+    raise FloatingPointError(f'Invalid value ({e.ty}) encountered in sharded computation.')
+
 class ShardMapTrace(core.Trace):
   mesh: Mesh
   check: bool
@@ -872,8 +881,9 @@ class ShardMapTrace(core.Trace):
       out_vals = eager_rule(self.mesh, *in_vals, **params)
     else:
       f = HashablePartial(_prim_applier, prim, tuple(params.items()), self.mesh)
-      with core.eval_context(), jax.disable_jit(False):
+      with core.eval_context(), jax.disable_jit(False), jax.debug_nans(False), jax.debug_infs(False):
         out_vals = jax.jit(f)(*in_vals)
+      _maybe_check_special(out_vals)
     rep_rule = _check_rules.get(prim, partial(_rule_missing, prim))
     out_rep = rep_rule(self.mesh, *in_rep, **params) if self.check else set()
     if prim.multiple_results:
