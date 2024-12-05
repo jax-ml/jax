@@ -1557,6 +1557,16 @@ jax_multiplatform_test(
     tags = ["multiaccelerator"],
 )
 
+jax_py_test(
+    name = "custom_partitioning_sharding_rule_test",
+    srcs = ["custom_partitioning_sharding_rule_test.py"],
+    deps = [
+        "//jax",
+        "//jax:experimental",
+        "//jax:test_util",
+    ],
+)
+
 exports_files(
     [
         "api_test.py",
