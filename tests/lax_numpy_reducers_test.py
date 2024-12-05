@@ -448,6 +448,34 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, atol=tol, rtol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @jtu.sample_product(rec=JAX_REDUCER_INITIAL_RECORDS)
+  def testReducerWhereNonBooleanErrorInitial(self, rec):
+    dtype = rec.dtypes[0]
+    x = jnp.zeros((10,), dtype)
+    where = jnp.ones(10, dtype=int)
+    func = getattr(jnp, rec.name)
+    def assert_warns_or_errors(msg):
+      if deprecations.is_accelerated("jax-numpy-reduction-non-boolean-where"):
+        return self.assertRaisesRegex(ValueError, msg)
+      else:
+        return self.assertWarnsRegex(DeprecationWarning, msg)
+    with assert_warns_or_errors(f"jnp.{rec.name}: where must be None or a boolean array"):
+      func(x, where=where, initial=jnp.array(0, dtype=dtype))
+
+  @jtu.sample_product(rec=JAX_REDUCER_WHERE_NO_INITIAL_RECORDS)
+  def testReducerWhereNonBooleanErrorNoInitial(self, rec):
+    dtype = rec.dtypes[0]
+    x = jnp.zeros((10,), dtype)
+    where = jnp.ones(10, dtype=int)
+    func = getattr(jnp, rec.name)
+    def assert_warns_or_errors(msg):
+      if deprecations.is_accelerated("jax-numpy-reduction-non-boolean-where"):
+        return self.assertRaisesRegex(ValueError, msg)
+      else:
+        return self.assertWarnsRegex(DeprecationWarning, msg)
+    with assert_warns_or_errors(f"jnp.{rec.name}: where must be None or a boolean array"):
+      func(x, where=where)
+
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
       [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact,
