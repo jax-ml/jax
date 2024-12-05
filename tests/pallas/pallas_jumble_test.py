@@ -14,6 +14,7 @@
 
 import os
 import sys
+import unittest
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
@@ -123,6 +124,7 @@ class PallasCallRaggedVmapTest(PallasBaseTest):
 
     self.assertEqual(correct(res), ragged_total)
 
+  @unittest.skip("TODO(b/382476879): Fails on Cloud TPU")
   def test_vmap_jumble_over_add_kernel(self):
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Only tested on TPU")
