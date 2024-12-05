@@ -53,6 +53,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
          use `uses_global_constants`.
       * the `lowering_platforms` kwarg for {func}`jax.export.export`: use
         `platforms` instead.
+  * The kwargs `symbolic_scope` and `symbolic_constraints` from
+    {func}`jax.export.symbolic_args_specs` have been removed. They were
+    deprecated in June 2024. Use `scope` and `constraints` instead.
+  * The `jax2tf.PolyShape` has been removed. Use instead string specifications
+    for the symbolic dimensions. E.g., instead of `PolyShape("d1", "d2")` you
+    can use `"d1, d2"`.
   * Hashing of tracers, which has been deprecated since version 0.4.30, now
     results in a `TypeError`.
   * Refactor: JAX build CLI (build/build.py) now uses a subcommand structure and
