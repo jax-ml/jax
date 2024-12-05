@@ -51,8 +51,22 @@ def _get_cpu_device_map() -> dict[int, jax.Device]:
   # associated with colocated_python. When deserializing on the colocated_python
   # executor, it should be the CPU backend visible to the user function running
   # under colocated_python.
-  for backed in xb.backends().values():
-    for d in backed._get_all_devices():  # pylint: disable=protected-access
+
+  # Look for CPU devices in the default backend.
+  for d in xb.local_devices()[0].client._get_all_devices():  # pylint: disable=protected-access
+    if d.device_kind == "cpu":
+      if d.id in cpu_device_map:
+        raise ValueError(
+            f"Multiple CPU devices with id {d.id} found:"
+            f" {cpu_device_map[d.id]} and {d}"
+        )
+      cpu_device_map[d.id] = d
+  if cpu_device_map:
+    return cpu_device_map
+
+  # Fall back to searching CPU devices in all backends.
+  for backend in xb.backends().values():
+    for d in backend._get_all_devices():  # pylint: disable=protected-access
       if d.device_kind == "cpu":
         if d.id in cpu_device_map:
           raise ValueError(
@@ -87,7 +101,7 @@ def _reduce_device_list(
     devices = np.vectorize(lambda device_id: cpu_device_map[device_id])(
         device_ids
     )
-    return DeviceList(devices)
+    return DeviceList(tuple(devices))
 
   device_ids = [d.id for d in device_list]
   return make_device_list, (device_ids,)

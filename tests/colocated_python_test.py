@@ -34,15 +34,20 @@ def _colocated_cpu_devices(
     devices: Sequence[jax.Device],
 ) -> Sequence[jax.Device]:
   """Returns CPU devices colocated with the given devices."""
-  # TODO(hyeontaek): Use `colocated_python.colocated_cpu_devices(devices)` once
-  # PjRt-IFRT prepares CPU devices by its own.
-  cpu_backend_devices = jax.local_devices(backend="cpu")
-  device_index_map = {device.id: i for i, device in enumerate(jax.devices())}
+  try:
+    return colocated_python.colocated_cpu_devices(devices)
+  except (ValueError, AttributeError):
+    # PjRt-IFRT prepares CPU devices by its own.
+    # TODO(hyeontaek): Remove this fallback path once PjRt-IFRT prepares CPU
+    # devices by its own.
+    cpu_backend_devices = jax.local_devices(backend="cpu")
+    device_index_map = {device.id: i for i, device in enumerate(jax.devices())}
 
-  available_devices = devices[:min(len(cpu_backend_devices), len(devices))]
-  return [
-      cpu_backend_devices[device_index_map[d.id]] for d in available_devices
-  ]
+    available_devices = devices[: min(len(cpu_backend_devices), len(devices))]
+    return [
+        cpu_backend_devices[device_index_map[d.id]] for d in available_devices
+    ]
+
 
 @contextlib.contextmanager
 def _count_colocated_python_specialization_cache_miss() -> list[int]:
@@ -79,8 +84,8 @@ class ColocatedPythonTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if xla_extension_version < 298:
-      self.skipTest("Requires xla_extension_version >= 298")
+    if xla_extension_version < 300:
+      self.skipTest("Requires xla_extension_version >= 300")
 
   def testMakeColocatedPythonProgram(self):
     def add_one(x):
@@ -88,11 +93,11 @@ class ColocatedPythonTest(jtu.JaxTestCase):
 
     cpu_devices = _colocated_cpu_devices(jax.local_devices())
     sharding = jax.sharding.SingleDeviceSharding(cpu_devices[0])
-    aval = jax.ShapeDtypeStruct((), jnp.int32, sharding=sharding)
+    sds = jax.ShapeDtypeStruct((), jnp.int32, sharding=sharding)
 
     pickled_function = serialization._serialize(add_one)
     program = ifrt_programs.make_colocated_python_program(
-        "add_one", pickled_function, [cpu_devices[0]], [aval], [aval]
+        "add_one", pickled_function, [cpu_devices[0]], [sds], [sds]
     )
     del program
 
@@ -107,10 +112,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
 
     with _count_colocated_python_specialization_cache_miss() as count:
       out = add_one(x)
+      out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
       self.assertEqual(count[0], 1)
 
       out = add_one(x)
+      out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
       self.assertEqual(count[0], 1)
 
@@ -125,10 +132,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
 
     with _count_colocated_python_specialization_cache_miss() as count:
       out = add_one(x)
+      out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
       self.assertEqual(count[0], 1)
 
       out = add_one(x)
+      out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
       self.assertEqual(count[0], 1)
 
@@ -154,10 +163,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     with _count_colocated_python_specialization_cache_miss() as count:
       make_zero = make_zero.specialize(devices=cpu_devices[:1])
       out = make_zero()
+      out = jax.device_get(out)
       self.assertEqual(out, np.array(0))
       self.assertEqual(count[0], 1)
 
       out = make_zero()
+      out = jax.device_get(out)
       self.assertEqual(out, np.array(0))
       self.assertEqual(count[0], 1)
 
@@ -172,10 +183,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
 
     with _count_colocated_python_specialization_cache_miss() as count:
       out = add_one(x)
+      out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
       self.assertEqual(count[0], 1)
 
       out = add_one(x)
+      out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
       self.assertEqual(count[0], 1)
 
@@ -184,10 +197,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       x = jax.device_put(x, jax.sharding.SingleDeviceSharding(cpu_devices[0]))
 
       out = add_one(x)
+      out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
       self.assertEqual(count[0], 2)
 
       out = add_one(x)
+      out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
       self.assertEqual(count[0], 2)
 
@@ -203,22 +218,26 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     with _count_colocated_python_specialization_cache_miss() as count:
       add_one = add_one.specialize(out_specs_fn=lambda x: x)
       out = add_one(x)
+      out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
       self.assertEqual(count[0], 1)
 
       out = add_one(x)
+      out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
       self.assertEqual(count[0], 1)
 
       # Different input tree structure and dtype/shape.
-      x = [np.array(1), (np.array(2), {"v": jnp.array(3)})]
+      x = [np.array(1), (np.array(2), {"v": np.array(3)})]
       x = jax.device_put(x, jax.sharding.SingleDeviceSharding(cpu_devices[0]))
 
       out = add_one(x)
+      out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
       self.assertEqual(count[0], 2)
 
       out = add_one(x)
+      out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
       self.assertEqual(count[0], 2)
 
