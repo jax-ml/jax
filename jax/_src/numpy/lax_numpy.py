@@ -374,6 +374,10 @@ def load(file: IO[bytes] | str | os.PathLike[Any], *args: Any, **kwargs: Any) ->
   # Note: this will only work for files created via np.save(), not np.savez().
   out = np.load(file, *args, **kwargs)
   if isinstance(out, np.ndarray):
+
+    if out.dtype == np.object_:
+      return out
+
     # numpy does not recognize bfloat16, so arrays are serialized as void16
     if out.dtype == 'V2':
       out = out.view(bfloat16)
@@ -5574,6 +5578,16 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
       device is None):
     # Keep the output uncommitted.
     return jax.device_put(object)
+
+  # 2DO: Comment.
+  if isinstance(object, np.ndarray) and (
+      object.dtype == np.dtypes.StringDType()
+  ):
+    if (ndmin > 0) and (ndmin != object.ndim):
+      raise TypeError(
+          f"ndmin {ndmin} does not match ndims {object.ndim} of input array"
+      )
+    return jax.device_put(x=object, device=device)
 
   # For Python scalar literals, call coerce_to_array to catch any overflow
   # errors. We don't use dtypes.is_python_scalar because we don't want this
