@@ -36,7 +36,6 @@ from jax._src.util import set_module
 
 export = set_module('jax.nn.initializers')
 
-KeyArray = Array
 # TODO: Import or define these to match
 # https://github.com/numpy/numpy/blob/main/numpy/typing/_dtype_like.py.
 DTypeLikeFloat = Any
@@ -48,13 +47,13 @@ RealNumeric = Any  # Scalar jnp array or float
 @typing.runtime_checkable
 class Initializer(Protocol):
   @staticmethod
-  def __call__(key: KeyArray,
+  def __call__(key: Array,
                shape: core.Shape,
                dtype: DTypeLikeInexact = jnp.float_) -> Array:
     raise NotImplementedError
 
 @export
-def zeros(key: KeyArray,
+def zeros(key: Array,
           shape: core.Shape,
           dtype: DTypeLikeInexact = jnp.float_) -> Array:
   """An initializer that returns a constant array full of zeros.
@@ -69,7 +68,7 @@ def zeros(key: KeyArray,
   return jnp.zeros(shape, dtypes.canonicalize_dtype(dtype))
 
 @export
-def ones(key: KeyArray,
+def ones(key: Array,
          shape: core.Shape,
          dtype: DTypeLikeInexact = jnp.float_) -> Array:
   """An initializer that returns a constant array full of ones.
@@ -100,7 +99,7 @@ def constant(value: ArrayLike,
   Array([[-7., -7., -7.],
          [-7., -7., -7.]], dtype=float32)
   """
-  def init(key: KeyArray,
+  def init(key: Array,
            shape: core.Shape,
            dtype: DTypeLikeInexact = dtype) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
@@ -126,7 +125,7 @@ def uniform(scale: RealNumeric = 1e-2,
   Array([[7.298188 , 8.691938 , 8.7230015],
          [2.0818567, 1.8662417, 5.5022564]], dtype=float32)
   """
-  def init(key: KeyArray,
+  def init(key: Array,
            shape: core.Shape,
            dtype: DTypeLikeInexact = dtype) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
@@ -152,7 +151,7 @@ def normal(stddev: RealNumeric = 1e-2,
   Array([[ 3.0613258 ,  5.6129413 ,  5.6866574 ],
          [-4.063663  , -4.4520254 ,  0.63115686]], dtype=float32)
   """
-  def init(key: KeyArray,
+  def init(key: Array,
            shape: core.Shape,
            dtype: DTypeLikeInexact = dtype) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
@@ -189,7 +188,7 @@ def truncated_normal(stddev: RealNumeric = 1e-2,
          [-3.836303 , -4.192359 ,  0.6022964]], dtype=float32)
   """
 
-  def init(key: KeyArray,
+  def init(key: Array,
            shape: core.Shape,
            dtype: DTypeLikeInexact = dtype) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
@@ -230,7 +229,7 @@ def _compute_fans(shape: Sequence[int],
   fan_out = out_size * receptive_field_size
   return fan_in, fan_out
 
-def _complex_uniform(key: KeyArray,
+def _complex_uniform(key: Array,
                      shape: Sequence[int],
                      dtype: DTypeLikeInexact) -> Array:
   """
@@ -244,7 +243,7 @@ def _complex_uniform(key: KeyArray,
   theta = 2 * jnp.pi * random.uniform(key_theta, shape, real_dtype).astype(dtype)
   return r * jnp.exp(1j * theta)
 
-def _complex_truncated_normal(key: KeyArray, upper: ArrayLike,
+def _complex_truncated_normal(key: Array, upper: ArrayLike,
                               shape: Sequence[int],
                               dtype: DTypeLikeInexact) -> Array:
   """
@@ -314,7 +313,7 @@ def variance_scaling(
     dtype: the dtype of the weights.
   """
 
-  def init(key: KeyArray,
+  def init(key: Array,
            shape: core.Shape,
            dtype: DTypeLikeInexact = dtype) -> Array:
     shape = core.canonicalize_shape(shape)
@@ -599,7 +598,7 @@ def orthogonal(scale: RealNumeric = 1.0,
   Array([[ 3.9026976e-01,  7.2495741e-01, -5.6756169e-01],
          [ 8.8047469e-01, -4.7409311e-01, -1.3157725e-04]],            dtype=float32)
   """
-  def init(key: KeyArray,
+  def init(key: Array,
            shape: core.Shape,
            dtype: DTypeLikeInexact = dtype) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
@@ -654,7 +653,7 @@ def delta_orthogonal(
 
   .. _delta orthogonal initializer: https://arxiv.org/abs/1806.05393
   """
-  def init(key: KeyArray,
+  def init(key: Array,
            shape: core.Shape,
            dtype: DTypeLikeInexact = dtype) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)

@@ -25,7 +25,10 @@ from jax._src import core as jax_core
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
+from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import arith as arith_dialect
+from jax._src.lib.mlir.dialects import llvm as llvm_dialect
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
@@ -34,6 +37,7 @@ from jax._src.state import discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 import jax.experimental.mosaic.gpu as mgpu
+import jax.numpy as jnp
 
 
 WARPGROUP_SIZE = 128
@@ -54,20 +58,31 @@ def _copy_smem_to_gmem_lowering(
     ctx: lowering.LoweringRuleContext,
     src,
     dst,
-    *flat_transforms,
+    *flat_args,
     src_transforms_treedef,
     dst_transforms_treedef,
+    has_user_predicate,
 ):
+  predicate = ctx.predicate
+  if has_user_predicate:
+    flat_args, user_predicate = flat_args[:-1], flat_args[-1]
+    predicate = arith_dialect.andi(
+        predicate, lowering._ensure_ir_value(user_predicate, jnp.bool)
+    )
   flat_src_transforms, flat_dst_transforms = util.split_list(
-      flat_transforms,
+      flat_args,
       [src_transforms_treedef.num_leaves],
   )
   src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
   src, src_transforms = lowering._handle_indexing(src, src_transforms)
   copy_params = _extract_gmem_copy_params(dst_transforms) | _extract_smem_copy_params(src_transforms)
-  mgpu.commit_shared()
-  ctx.launch_ctx.async_copy(src_ref=src, dst_ref=dst, **copy_params)
+  ctx.launch_ctx.async_copy(
+      src_ref=src,
+      dst_ref=dst,
+      predicate=predicate,
+      **copy_params,
+  )
   return ()
 
 
@@ -99,16 +114,25 @@ def _extract_smem_copy_params(transforms):
 
 
 def copy_smem_to_gmem(
-    src: pallas_core.AbstractMemoryRef, dst: pallas_core.AbstractMemoryRef
+    src: pallas_core.AbstractMemoryRef,
+    dst: pallas_core.AbstractMemoryRef,
+    predicate: jax.Array | None = None,
 ) -> None:
   """Asynchronously copies a SMEM reference to a GMEM reference.
 
+  Args:
+    src: The SMEM reference to copy from.
+    dst: The GMEM reference to copy to.
+    predicate: A boolean indicating whether the copy should be performed. If
+      ``None``, the copy is always performed.
+
   See also:
     :func:`jax.experimental.mosaic.gpu.wait_smem_to_gmem`
+    :func:`jax.experimental.mosaic.gpu.commit_smem`
   """
   if src.memory_space is not gpu_core.SMEM:
     raise TypeError(f"src must be a SMEM reference, got {src.memory_space}")
-  if dst.memory_space is not gpu_core.GMEM:
+  if getattr(dst, "memory_space", gpu_core.GMEM) is not gpu_core.GMEM:
     raise ValueError(f"dst must be a GMEM reference, got {dst.memory_space}")
   src, src_transforms = state_primitives.get_ref_and_transforms(
       src, None, "copy_smem_to_gmem", force_trailing_indexer=False,
@@ -127,8 +151,10 @@ def copy_smem_to_gmem(
       dst,
       *flat_src_transforms,
       *flat_dst_transforms,
+      *[] if predicate is None else [predicate],
       src_transforms_treedef=src_transforms_treedef,
       dst_transforms_treedef=dst_transforms_treedef,
+      has_user_predicate=predicate is not None,
   )
   return None
 
@@ -194,7 +220,6 @@ def _copy_gmem_to_smem_lowering(
 def copy_gmem_to_smem(
     src: pallas_core.AbstractMemoryRef,
     dst: pallas_core.AbstractMemoryRef,
-    *,
     barrier: pallas_core.AbstractMemoryRef,
 ) -> None:
   """Asynchronously copies a GMEM reference to a SMEM reference.
@@ -203,7 +228,7 @@ def copy_gmem_to_smem(
     :func:`jax.experimental.mosaic.gpu.barrier_arrive`
     :func:`jax.experimental.mosaic.gpu.barrier_wait`
   """
-  if src.memory_space is not gpu_core.GMEM:
+  if getattr(src, "memory_space", gpu_core.GMEM) is not gpu_core.GMEM:
     raise TypeError(f"src must be a GMEM reference, got {src.memory_space}")
   if dst.memory_space is not gpu_core.SMEM:
     raise ValueError(f"dst must be a SMEM reference, got {dst.memory_space}")
@@ -340,20 +365,30 @@ wait_smem_to_gmem_p.multiple_results = True
 
 
 @wait_smem_to_gmem_p.def_effectful_abstract_eval
-def _wait_smem_to_gmem_abstract_eval(n):
-  del n  # Unused.
+def _wait_smem_to_gmem_abstract_eval(n, *, wait_read_only):
+  del n, wait_read_only  # Unused.
   return (), {gpu_core._memory_effect}
 
 
 @lowering.register_lowering_rule(wait_smem_to_gmem_p)
-def _wait_smem_to_gmem_lowering(ctx: lowering.LoweringRuleContext, n):
-  ctx.launch_ctx.await_async_copy(allow_groups=n)
+def _wait_smem_to_gmem_lowering(
+    ctx: lowering.LoweringRuleContext, n, *, wait_read_only
+):
+  ctx.launch_ctx.await_async_copy(
+      allow_groups=n, await_read_only=wait_read_only
+  )
   return ()
 
 
-def wait_smem_to_gmem(n: int) -> None:
-  """Waits until there are no more than ``n`` SMEM->GMEM copies in flight."""
-  wait_smem_to_gmem_p.bind(n)
+def wait_smem_to_gmem(n: int, wait_read_only: bool = False) -> None:
+  """Waits until there are no more than ``n`` SMEM->GMEM copies in flight.
+
+  Args:
+    n: The maximum number of copies in flight to wait for.
+    wait_read_only: If ``True``, wait for the in flight copies to finish
+      reading from SMEM. The writes to GMEM are not waited for.
+  """
+  wait_smem_to_gmem_p.bind(n, wait_read_only=wait_read_only)
 
 
 # WGMMA on an accumulator reference
@@ -366,7 +401,7 @@ def wgmma(
     a,
     b: pallas_core.TransformedRef,
 ) -> None:
-  """Performs and asynchronous warp group matmul-accumulate on the given references.
+  """Performs an asynchronous warp group matmul-accumulate on the given references.
 
   Conceptually, this is equivalent to doing ``acc[...] += a[...] @ b[...]``,
   except that the computation is performed asynchronously.
@@ -567,7 +602,7 @@ def wgmma_accumulator_deref(acc):
 @wgmma_accumulator_deref_p.def_effectful_abstract_eval
 def _wgmma_accumulator_deref_abstract_eval(acc):
   # Dereferencing implies flushing so we have a wgmma pipeline effect.
-  ret = acc.inner_aval if isinstance(acc, gpu_core.WGMMAAbstractAccumulatorRef) else acc
+  ret = acc.inner_aval if isinstance(acc, state.AbstractRef) else acc
   assert isinstance(ret, jax_core.ShapedArray), acc
   return ret, {gpu_core._wgmma_pipeline_effect}
 
@@ -659,3 +694,47 @@ def _commit_smem_lowering(ctx: lowering.LoweringRuleContext):
 def commit_smem():
   """Commits all writes to SMEM, making them visible to loads, TMA and WGMMA."""
   commit_smem_p.bind()
+
+
+broadcasted_iota_p = jax_core.Primitive("broadcasted_iota")
+
+@broadcasted_iota_p.def_abstract_eval
+def _broadcasted_iota_abstract_eval(dtype, shape, dimension, layout):
+  del layout, dimension
+  return jax_core.ShapedArray(shape, dtype)
+
+@lowering.register_lowering_rule(broadcasted_iota_p)
+def _broadcasted_iota_lowering(ctx: lowering.LoweringRuleContext, dtype, shape, dimension, layout):
+  del ctx
+  # Unsigned integers (as opposed to signless) cause MLIR verification
+  # errors so we only use signless like Mosaic GPU does.
+  #
+  # TODO(cperivol): use mgpu.utils.dtype_to_ir_type() instead.
+  mlir_dtype = (
+      ir.IntegerType.get_signless(dtype.itemsize * 8)
+      if jnp.issubdtype(dtype, jnp.integer)
+      else mlir.dtype_to_ir_type(dtype)
+  )
+  undef = llvm_dialect.mlir_undef(mlir_dtype)
+  is_signed = (
+      jnp.issubdtype(dtype, jnp.signedinteger)
+      if jnp.issubdtype(dtype, jnp.integer)
+      else None
+  )
+
+  i32 = ir.IntegerType.get_signless(32)
+  def _cast(x):
+    if ir.FloatType.isinstance(mlir_dtype):
+      x = arith_dialect.index_cast(i32, x)
+      return arith_dialect.uitofp(mlir_dtype, x)
+    else:
+      return arith_dialect.index_cast(mlir_dtype, x)
+  return mgpu.FragmentedArray.splat(
+      undef, shape, layout.value, is_signed=is_signed
+  ).foreach(
+      lambda _, idx: _cast(idx[dimension]), create_array=True, is_signed=is_signed
+  )
+
+
+def broadcasted_iota(dtype, shape, dimension, *, layout: Layout | None = None):
+  return broadcasted_iota_p.bind(dtype=jnp.dtype(dtype), shape=shape, dimension=dimension, layout=layout)

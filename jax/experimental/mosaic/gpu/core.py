@@ -97,7 +97,7 @@ def _mosaic_gpu_lowering_rule(
     out_types,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
 ):
-  del out_types  # Unused.
+  assert len(out_types) == len(ctx.avals_out)
   kernel_id = hashlib.sha256(module).digest()
   # Note that this is technically only a half measure. Someone might load a
   # compiled module with a hash collision from disk. But that's so unlikely with
@@ -131,6 +131,14 @@ class MemRefTransform:
     raise NotImplementedError("Subclasses should override this method")
 
   def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    raise NotImplementedError("Subclasses should override this method")
+
+  def batch(self, leading_rank: int) -> 'MemRefTransform':
+    """Returns a transform that accepts a ref with the extra `leading_rank` dims.
+
+    The returned transform should leave the leading dimensions unchanged and
+    only apply to the suffix of the shape.
+    """
     raise NotImplementedError("Subclasses should override this method")
 
 
@@ -198,6 +206,9 @@ class TileTransform(MemRefTransform):
         *self.tiling,
     )
 
+  def batch(self, leading_rank: int) -> MemRefTransform:
+    return self
+
 
 @dataclasses.dataclass(frozen=True)
 class TransposeTransform(MemRefTransform):
@@ -216,6 +227,62 @@ class TransposeTransform(MemRefTransform):
 
   def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
     return tuple(shape[p] for p in self.permutation)
+
+  def batch(self, leading_rank: int) -> MemRefTransform:
+    return TransposeTransform(
+        (*range(leading_rank), *(d + leading_rank for d in self.permutation))
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class CollapseLeadingIndicesTransform(MemRefTransform):
+  """Collapses leading indices into one."""
+  strides: tuple[int, ...]
+
+  @functools.cached_property
+  def common_stride(self) -> int:
+    return math.gcd(*self.strides)
+
+  def apply(self, ref: ir.Value) -> ir.Value:
+    ref_ty = ir.MemRefType(ref.type)
+    strides, offset = ref_ty.get_strides_and_offset()
+    if offset == ir.ShapedType.get_dynamic_stride_or_offset():
+      raise NotImplementedError("Dynamic offsets are not supported")
+    max_bound = sum(
+        (d - 1) * s // self.common_stride
+        for d, s in zip(
+            ref_ty.shape[: len(self.strides)], strides[: len(self.strides)]
+        )
+    ) + 1
+    new_shape = [max_bound, *ref_ty.shape[len(self.strides):]]
+    new_strides = [self.common_stride, *strides[len(self.strides):]]
+    new_layout = ir.StridedLayoutAttr.get(offset, new_strides)
+    new_ref_ty = ir.MemRefType.get(
+        new_shape, ref_ty.element_type, new_layout, ref_ty.memory_space
+    )
+    return memref.reinterpret_cast(
+        new_ref_ty, ref, [], [], [],
+        static_offsets=[offset],
+        static_sizes=new_shape,
+        static_strides=new_strides,
+    )
+
+  def transform_index(self, idx: Sequence[ir.Value]) -> tuple[ir.Value, ...]:
+    index = ir.IndexType.get()
+    flat_idx = c(0, index)
+    for i, s in zip(idx[:len(self.strides)], self.strides):
+      flat_idx = arith.addi(
+          flat_idx, arith.muli(i, c(s // self.common_stride, index))
+      )
+    return (flat_idx, *idx[len(self.strides):])
+
+  def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    if any(s != 1 for s in shape[:len(self.strides)]):
+      raise ValueError("Expected leading indices to be squeezed")
+    return (1, *shape[len(self.strides):])
+
+  def batch(self, leading_rank: int) -> MemRefTransform:
+    raise NotImplementedError  # Unused
 
 
 OnDeviceProfiler = profiler.OnDeviceProfiler
@@ -340,7 +407,7 @@ class LaunchContext:
       arrive: bool | None = None,
       uniform: bool = True,
       collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
-      predicate: ir.Value | None = None,
+      predicate: ir.Value | None = None,  # Should select 0 or 1 threads from the WG.
   ):
     index = ir.IndexType.get()
     i16 = ir.IntegerType.get_signless(16)
@@ -381,6 +448,17 @@ class LaunchContext:
         or gmem_ref.owner.opview.OPERATION_NAME != expected_name
     ):
       raise ValueError("GMEM reference in async_copy must be a kernel argument")
+    gmem_ref_ty = ir.MemRefType(gmem_ref.type)
+    gmem_strides, _ = gmem_ref_ty.get_strides_and_offset()
+    if gmem_strides != utils.get_contiguous_strides(gmem_ref_ty.shape):
+      raise NotImplementedError(
+          "async_copy assumes the GMEM reference is contiguous"
+      )
+    if any(s * element_bytewidth % 16 != 0 for s in gmem_strides[:-1]):
+      raise ValueError(
+          "async_copy requires all GMEM strides except the last one to be a"
+          " multiple of 16 bytes"
+      )
 
     base_indices, slice_shape, is_squeezed = utils.parse_indices(
         gmem_slice, ir.MemRefType(gmem_ref.type).shape
@@ -388,16 +466,42 @@ class LaunchContext:
     dyn_base_indices = tuple(
         c(i, index) if not isinstance(i, ir.Value) else i for i in base_indices
     )
+    squeezed_dims = [i for i, squeezed in enumerate(is_squeezed) if squeezed]
+    sliced_dims = [i for i, squeezed in enumerate(is_squeezed) if not squeezed]
+    # Indexing is really slicing + squeezing, and user transforms are meant to
+    # apply after that. However, we actually have to apply the indexing last
+    # (it's fused into the TMA) and so we need to commute it with all the user
+    # transforms. For slicing this is done using transform_index and
+    # transform_shape. For squeezing we actually move all the squeezed dims to
+    # the front, and then batch each transform, making it ignore the extra dims.
+    if squeezed_dims:
+      gmem_transform = (TransposeTransform((*squeezed_dims, *sliced_dims)),
+                        *(t.batch(len(squeezed_dims)) for t in gmem_transform))
+
     slice_shape = tuple(slice_shape)
     for t in gmem_transform:
       dyn_base_indices = t.transform_index(dyn_base_indices)
       slice_shape = t.transform_shape(slice_shape)
-    for dim, squeezed in enumerate(is_squeezed):
-      if squeezed:
-        smem_ref = utils.memref_unsqueeze(smem_ref, dim)
-    smem_ref_ty = ir.MemRefType(smem_ref.type)
 
-    if slice_shape != tuple(smem_ref_ty.shape):
+    num_squeezed_dims = len(squeezed_dims)
+    if len(slice_shape) > 5:
+      # We can try to collapse all squeezed dims into one.
+      if len(slice_shape) - num_squeezed_dims + 1 > 5:
+        raise ValueError(
+            "Async copies only support striding up to 5 dimensions"
+        )
+      collapse = CollapseLeadingIndicesTransform(
+          tuple(gmem_strides[d] for d in squeezed_dims)
+      )
+      gmem_transform = (*gmem_transform, collapse)
+      dyn_base_indices = collapse.transform_index(dyn_base_indices)
+      slice_shape = collapse.transform_shape(slice_shape)
+      num_squeezed_dims = 1
+    del squeezed_dims, sliced_dims  # Those no longer make sense.
+
+    smem_ref_ty = ir.MemRefType(smem_ref.type)
+    # We moved all squeezed dims to the front.
+    if slice_shape[num_squeezed_dims:] != tuple(smem_ref_ty.shape):
       raise ValueError(
           "Expected the SMEM reference to have the same shape as the"
           f" transformed slice: {tuple(smem_ref_ty.shape)} != {slice_shape}"
@@ -411,6 +515,7 @@ class LaunchContext:
 
     dyn_base_indices = list(dyn_base_indices)
     slice_shape = list(slice_shape)
+    assert all(d == 1 for d in slice_shape[:num_squeezed_dims])
     collective_size = 1
     if collective is not None:
       if isinstance(collective, gpu.Dimension):
@@ -418,13 +523,16 @@ class LaunchContext:
       collective_size = math.prod(self.cluster_size[d] for d in collective)
     if collective_size > 1:
       def partition_dim(dim: int, idx: ir.Value, num_chunks: int):
+        # No need to partition squeezed dims. They don't even exist in smem_ref.
+        assert dim >= num_squeezed_dims
         nonlocal smem_ref
         slice_shape[dim] //= num_chunks
         block_offset = arith.muli(idx, c(slice_shape[dim], index))
         dyn_base_indices[dim] = arith.addi(dyn_base_indices[dim], block_offset)
         smem_ref = utils.memref_slice(
             smem_ref,
-            (slice(None),) * dim + (utils.ds(block_offset, slice_shape[dim]),)
+            (slice(None),) * (dim - num_squeezed_dims)
+            + (utils.ds(block_offset, slice_shape[dim]),),
         )
       stride = 1
       idx = c(0, index)
@@ -440,10 +548,12 @@ class LaunchContext:
           rem_collective_size = 1
           break
         elif rem_collective_size % slice_size == 0:
-          dim_idx = arith.remui(idx, c(slice_size, index))
-          partition_dim(dim, dim_idx, slice_size)
-          idx = arith.divui(idx, c(slice_size, index))
-          rem_collective_size //= slice_size
+          # This is an optimization and it lets us skip squeezed dims.
+          if slice_size > 1:
+            dim_idx = arith.remui(idx, c(slice_size, index))
+            partition_dim(dim, dim_idx, slice_size)
+            idx = arith.divui(idx, c(slice_size, index))
+            rem_collective_size //= slice_size
         else:
           break  # We failed to partition the leading dimensions.
       del idx  # We overwrote the block index in the loop.
@@ -472,13 +582,10 @@ class LaunchContext:
 
     uniform_ctx = (
         functools.partial(utils.single_thread, per_block=False)
-        if uniform
+        if uniform and predicate is None
         else contextlib.nullcontext
     )
 
-    rank = len(slice_shape)
-    if rank > 5:  # TODO: apaszke - Implement stride compression
-      raise ValueError("Async copies only support striding up to 5 dimensions")
     if max(slice_shape) > 256:
       raise ValueError(
           "Async copies only support copying <=256 elements along each"
@@ -699,16 +806,6 @@ def _launch(
         )
     )
 
-    smem_ref_tree = _construct_smem_reftree(
-        cluster, dynamic_smem, smem_buffers
-    )
-    # TODO(apaszke): Skip the following if no barriers were initialized.
-    nvvm.fence_mbarrier_init()
-    if math.prod(cluster) != 1:
-      nvvm.cluster_arrive_relaxed(aligned=ir.UnitAttr.get())
-      nvvm.cluster_wait(aligned=ir.UnitAttr.get())
-    gpu.barrier()
-
     if profiler_spec:
       prof_smem = memref.view(
           ir.MemRefType.get(
@@ -725,7 +822,19 @@ def _launch(
 
     ptr_ty = ir.Type.parse("!llvm.ptr")
     scratch_ptr = builtin.unrealized_conversion_cast([ptr_ty], [scratch_arr])
-    yield LaunchContext(launch_op, scratch_ptr, cluster, prof), smem_ref_tree
+    ctx = LaunchContext(launch_op, scratch_ptr, cluster, prof)
+    with ctx.named_region("Init"):
+      smem_ref_tree = _construct_smem_reftree(
+          cluster, dynamic_smem, smem_buffers
+      )
+      # TODO(apaszke): Skip the following if no barriers were initialized.
+      nvvm.fence_mbarrier_init()
+      if math.prod(cluster) != 1:
+        nvvm.cluster_arrive_relaxed(aligned=ir.UnitAttr.get())
+        nvvm.cluster_wait(aligned=ir.UnitAttr.get())
+      gpu.barrier()
+
+    yield ctx, smem_ref_tree
     if prof is not None:
       prof.finalize(grid=grid, block=block)
     gpu.terminator()
@@ -740,6 +849,7 @@ def _lower_as_gpu_kernel(
     out_shape,
     smem_scratch_shape: ShapeTree | Union[ShapeTree],
     module_name: str,
+    kernel_name: str | None = None,
     prof_spec: profiler.ProfilerSpec | None = None,
 ):
   ptr_ty = ir.Type.parse("!llvm.ptr")
@@ -766,6 +876,8 @@ def _lower_as_gpu_kernel(
   module = ir.Module.create()
   attrs = module.operation.attributes
   attrs["sym_name"] = ir.StringAttr.get(module_name)
+  if kernel_name is None:
+    kernel_name = getattr(body, "__name__", "anonymous")
   with ir.InsertionPoint(module.body):
     _declare_runtime_functions()
     gmem_scratch_bytes = 0
@@ -775,7 +887,7 @@ def _lower_as_gpu_kernel(
         ir.Attribute.parse("#llvm.linkage<external>"),
         addr_space=ir.IntegerAttr.get(i32, 4),  # GPU constant memory.
     )
-    @func.FuncOp.from_py_func(ptr_ty, ptr_ty)
+    @func.FuncOp.from_py_func(ptr_ty, ptr_ty, name=f"mosaic_gpu_{kernel_name}")
     def main(token_ptr, buffers):
       nonlocal gmem_scratch_bytes
       token = builtin.unrealized_conversion_cast([token_ty], [token_ptr])
@@ -840,6 +952,7 @@ def as_gpu_kernel(
     prof_spec: profiler.ProfilerSpec | None = None,
     cluster: tuple[int, int, int] = (1, 1, 1),
     module_name: str = "unknown",
+    kernel_name: str | None = None,
 ):
   if isinstance(in_shape, list):
     in_shape = tuple(in_shape)
@@ -849,7 +962,7 @@ def as_gpu_kernel(
   module, out_shape, unwrap_output_tuple = (
       _lower_as_gpu_kernel(
           body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape,
-          module_name, prof_spec
+          module_name, kernel_name, prof_spec
       )
   )
 
@@ -907,6 +1020,7 @@ def as_torch_gpu_kernel(
     prof_spec: profiler.ProfilerSpec | None = None,
     cluster: tuple[int, int, int] = (1, 1, 1),
     module_name: str = "unknown",
+    kernel_name: str | None = None,
 ):
   try:
     import torch
@@ -925,7 +1039,7 @@ def as_torch_gpu_kernel(
   module, out_shape, unwrap_output_tuple = (
       _lower_as_gpu_kernel(
           body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape,
-          module_name, prof_spec
+          module_name, kernel_name, prof_spec
       )
   )
 

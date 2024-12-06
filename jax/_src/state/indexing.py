@@ -46,11 +46,11 @@ class Slice:
 
   @property
   def is_dynamic_start(self):
-    return not isinstance(self.start, int)
+    return not core.is_dim(self.start)
 
   @property
   def is_dynamic_size(self):
-    return not isinstance(self.size, int)
+    return not core.is_dim(self.size)
 
   def tree_flatten(self):
     # If `start` is statically known, we treat it as static information
@@ -72,10 +72,10 @@ class Slice:
 
   @classmethod
   def from_slice(cls, slc: slice, size: int) -> Slice:
-    start, stop, step = slc.indices(size)
+    start, step, size = core.canonicalize_slice(slc, size)
     if step < 1:
       raise ValueError(f"slice must have a step >= 1 (found: {step})")
-    return cls(start, max((stop - start + step - 1) // step, 0), step)
+    return cls(start, size, step)
 
 
 def dslice(
@@ -123,12 +123,7 @@ def _maybe_concretize(x: Any):
   # This is roughly the same logic as core.concrete_or_error, but we avoid
   # calling that because constructing the ConcretizationTypeError can be
   # expensive as the size of the tracing context (i.e. the jaxpr) grows.
-  if isinstance(x, core.Tracer):
-    if isinstance(x.aval, core.ConcreteArray):
-      return x.aval.val
-    else:
-      return None
-  return x
+  return core.to_concrete_value(x)
 
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass

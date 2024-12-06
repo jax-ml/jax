@@ -15,6 +15,7 @@
 from functools import partial
 import itertools
 
+from jax._src import config
 from jax._src import core
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
@@ -24,7 +25,7 @@ from jax._src.interpreters import batching
 from jax._src.util import safe_zip
 from jax._src.lib import xla_client as xc
 from jax._src.api_util import shaped_abstractify
-from jax._src.lib.mlir import ir
+from jax._src.lib.mlir import dialects, ir
 
 _next_shard_group_id = itertools.count()
 
@@ -90,6 +91,11 @@ def _group_shard(
     y_aval_out: core.AbstractValue,
 ) -> tuple[ir.Value, ir.Value]:
   shard_group_id = next(_next_shard_group_id)
+
+  if config.use_shardy_partitioner.value:
+    dialects.sdy.ShardingGroupOp(x, shard_group_id)
+    dialects.sdy.ShardingGroupOp(y, shard_group_id)
+    return x, y
 
   unknown_op_sharding = xc.OpSharding()
   unknown_op_sharding.type = xc.OpSharding.Type.UNKNOWN

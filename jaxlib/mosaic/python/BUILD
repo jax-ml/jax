@@ -17,6 +17,20 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_filegroup")
 load("@rules_python//python:defs.bzl", "py_library")
 
+py_library(
+    name = "gpu_dialect",
+    srcs = [
+        "mosaic_gpu.py",
+        "//jaxlib/mosaic/dialect/gpu:_mosaic_gpu_gen_enums.py",
+        "//jaxlib/mosaic/dialect/gpu:_mosaic_gpu_gen_ops.py",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//jaxlib/mlir",
+        "//jaxlib/mlir/_mlir_libs:_mosaic_gpu_ext",
+    ],
+)
+
 gentbl_filegroup(
     name = "tpu_python_gen_raw",
     tbl_outs = [

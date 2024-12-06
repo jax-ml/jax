@@ -42,6 +42,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import for_loop
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import func
@@ -50,6 +51,7 @@ from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
@@ -501,8 +503,13 @@ def _check_block_mappings(
         )
     else:
       assert rank == 1
-      # TODO(necula): test this for bool. What should it do?
-      tiling_size = 128 * (32 // lax_internal._bit_width(bm.array_shape_dtype.dtype))
+      # bools get a bitwidth of 32 due to how mosaic handles them
+      if bm.array_shape_dtype.dtype == jnp.bool_:
+        bitwidth = 32
+      else:
+        bitwidth = lax_internal._bit_width(bm.array_shape_dtype.dtype)
+      packing = 32 // bitwidth
+      tiling_size = 128 * packing
       evenly_divisible = (bs0 == as0 or bs0 % tiling_size == 0)
       if not evenly_divisible:
         raise ValueError(
@@ -837,6 +844,8 @@ def jaxpr_subcomp(
         except LoweringException:
           raise  # We only add the extra info to the innermost exception.
         except Exception as e:
+          if not pallas_call._verbose_errors_enabled():
+            raise
           msg = (f"{type(e).__name__}: {e}\n" +
                 "Additional diagnostics: \n" +
                 f"Failing jaxpr equation: {eqn}\n")
@@ -1307,12 +1316,20 @@ def _masked_swap_lowering_rule(
     ctx: LoweringRuleContext, *args_flat, args_tree, **_
 ):
   ref, transforms, val, mask = args_tree.unflatten(args_flat)
-  ref_aval, transforms_avals, val_aval, _ = args_tree.unflatten(ctx.avals_in)
+  ref_aval, transforms_avals, val_aval, mask_aval = args_tree.unflatten(
+      ctx.avals_in
+  )
   (*prev_transforms, idx) = transforms
   (*_, idx_aval) = transforms_avals
 
   if mask is not None:
-    raise NotImplementedError
+    if  val_aval.dtype.itemsize != 4:
+      raise NotImplementedError("masked swap with non-32-bit data")
+    if val_aval.shape != mask_aval.shape:
+      raise ValueError(
+          "Expected value and mask to have the same shape, but got"
+          f" value shape {val_aval.shape} vs. mask shape {mask_aval.shape}."
+      )
 
   ref_block_shape, *_ = ctx.block_shapes
   ref, ref_block_shape = _transform_ref(
@@ -1343,6 +1360,8 @@ def _masked_swap_lowering_rule(
   need_stride = not all((s is None or s == 1) for s in strides)
 
   if is_smem_store:
+    if mask is not None:
+      raise ValueError("SMEM store does not support masks")
     if val_aval.shape:
       raise ValueError("Can only store scalars to SMEM")
     result = memref.load(ref, starts)
@@ -1372,7 +1391,7 @@ def _masked_swap_lowering_rule(
       1 if b is pallas_core.mapped else next(mem_slice_shape_iter)
       for b in ref_block_shape
   ]
-  mem_aval = aval_out.update(shape=tuple(mem_slice_shape))
+  mem_aval = aval_out.update(shape=tuple(mem_slice_shape), sharding=None)
   mem_aval_vec_type = ir.VectorType.get(mem_aval.shape,
     _dtype_to_ir_type(mem_aval.dtype, is_kernel_boundary=True))
   if need_stride:
@@ -1391,9 +1410,15 @@ def _masked_swap_lowering_rule(
   result = _maybe_cast_load_to_bool(val_aval, result)
 
   if need_stride:
+    if mask is not None:
+      raise NotImplementedError("masked swap with strided store")
     tpu.StridedStoreOp(val, ref, starts, strides)
-  else:
+  elif jaxlib_version <= (0, 4, 35):
+    if mask is not None:
+      raise NotImplementedError("masked swap with vector store")
     vector.StoreOp(val, ref, starts)
+  else:
+    tpu.VectorStoreOp(val, ref, starts, [], mask=mask)
   return result
 
 
@@ -1520,6 +1545,18 @@ def _reduce_or_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
 lowering_rules[lax.reduce_or_p] = _reduce_or_lowering_rule
 
 
+def _broadcast_to_lowering_rule(
+    ctx: LoweringRuleContext, x, shape: Sequence[int]
+):
+  raise RuntimeError(
+      "`broadcast_to` is a Triton-specific primitive. Please consider using"
+      " `jnp.broadcast_to` instead."
+  )
+
+
+lowering_rules[state_primitives.broadcast_to_p] = _broadcast_to_lowering_rule
+
+
 def _broadcast_in_dim_lowering_rule(
     ctx: LoweringRuleContext, val, *, shape, broadcast_dimensions, sharding
 ):
@@ -1561,6 +1598,71 @@ def _broadcast_in_dim_lowering_rule(
 lowering_rules[lax.broadcast_in_dim_p] = _broadcast_in_dim_lowering_rule
 
 
+def jax_dot_dims_to_tpu_dot_dot_dims(dimension_numbers, lhs_shape, rhs_shape):
+  """Converts a jax dot dimension numbers to a tpu dot dimension numbers.
+
+  Jax dot dimension numbers are given as a tuple of tuples of sequences of ints
+  of the form ((lhs_contracting_dims, rhs_contracting_dims), (lhs_batch_dims,
+  rhs_batch_dims)).
+
+  TPU dot dimension numbers are given as an MLIR definition of the form
+  #tpu.dot_dimension_numbers - which can be found in the tpu dilect definition
+  # file, tpu.td .
+  """
+  (contracting_dims, batch_dims) = dimension_numbers
+  lhs_contracting_dims, rhs_contracting_dims = contracting_dims
+  lhs_batch_dims, rhs_batch_dims = batch_dims
+
+  lhs_total_dims = set(range(len(lhs_shape)))
+  rhs_total_dims = set(range(len(rhs_shape)))
+
+  lhs_non_contracting_dims = sorted(
+      lhs_total_dims - set(lhs_contracting_dims) - set(lhs_batch_dims)
+  )
+  rhs_non_contracting_dims = sorted(
+      rhs_total_dims - set(rhs_contracting_dims) - set(rhs_batch_dims)
+  )
+
+  # Create output_dim_order
+  # Note: we assume that the output dimensions are ordered as batch dims, lhs_non_contracting_dims,
+  # rhs_non_contracting_dims - this assumption is safe to make, as it is
+  # the same one made in jax's dot_general.
+  output_dim_order = []
+
+  lhs_dim_map = {dim: idx for idx, dim in enumerate(range(len(lhs_shape)))}
+  rhs_dim_map = {dim: idx for idx, dim in enumerate(range(len(rhs_shape)))}
+
+  for dim in lhs_batch_dims:
+    output_dim_order.append(0)
+    output_dim_order.append(lhs_dim_map[dim])
+
+  for dim in lhs_non_contracting_dims:
+    output_dim_order.append(0)
+    output_dim_order.append(lhs_dim_map[dim])
+
+  for dim in rhs_non_contracting_dims:
+    output_dim_order.append(1)
+    output_dim_order.append(rhs_dim_map[dim])
+
+  def format_dims(dims):
+    return "[" + ", ".join(str(d) for d in dims) + "]"
+
+  all_dims = (
+      lhs_contracting_dims,
+      rhs_contracting_dims,
+      lhs_non_contracting_dims,
+      rhs_non_contracting_dims,
+      output_dim_order,
+      lhs_batch_dims,
+      rhs_batch_dims,
+  )
+  tpu_dim_numbers_str = (
+      f"#tpu.dot_dimension_numbers<{','.join(map(format_dims, all_dims))}>"
+  )
+
+  return ir.Attribute.parse(tpu_dim_numbers_str)
+
+
 def _dot_general_lowering_rule(
     ctx: LoweringRuleContext, x, y, dimension_numbers, precision, **_
 ):
@@ -1586,7 +1688,7 @@ def _dot_general_lowering_rule(
     raise NotImplementedError(
         f"Only 2D tensors supported in dot; received: {ctx.avals_in}"
     )
-  lhs_aval, _ = ctx.avals_in
+  lhs_aval, rhs_aval = ctx.avals_in
   # This is really a matrix-vector product. It only looks like matrix-matrix.
   if lhs_dims == (1,) and rhs_dims == (1,) and ctx.avals_in[1].shape[0] == 1:
     if ctx.avals_in[0].shape != ctx.avals_in[1].shape:
@@ -1612,18 +1714,10 @@ def _dot_general_lowering_rule(
     )
     return vector.shape_cast(out_type, red)
 
-  if lhs_dims == (1,):
-    transpose_lhs = False
-  elif lhs_dims == (0,):
-    transpose_lhs = True
-  else:
-    raise NotImplementedError
-  if rhs_dims == (0,):
-    transpose_rhs = False
-  elif rhs_dims == (1,):
-    transpose_rhs = True
-  else:
-    raise NotImplementedError
+  tpu_dot_dims = jax_dot_dims_to_tpu_dot_dot_dims(
+      dimension_numbers, lhs_aval.shape, rhs_aval.shape
+  )
+
   if precision is not None:
     if precision[0] != precision[1]:
       raise NotImplementedError("Per-operand dot precision unsupported")
@@ -1640,9 +1734,12 @@ def _dot_general_lowering_rule(
       out_type, ir.DenseElementsAttr.get_splat(out_type, val)
   )
   return tpu.matmul(
-      out_type, x, y, out_tile,
-      transpose_lhs=transpose_lhs, transpose_rhs=transpose_rhs,
-      precision=precision_attr
+      out_type,
+      x,
+      y,
+      out_tile,
+      dimension_numbers=tpu_dot_dims,
+      precision=precision_attr,
   )
 
 
@@ -1764,7 +1861,8 @@ def _convert_element_type_lowering_rule(
 lowering_rules[lax.convert_element_type_p] = _convert_element_type_lowering_rule
 
 
-def _reshape_lowering_rule(ctx: LoweringRuleContext, x, new_sizes, dimensions):
+def _reshape_lowering_rule(ctx: LoweringRuleContext, x, new_sizes, dimensions,
+                           sharding):
   if dimensions is not None:
     raise NotImplementedError
   if any(d is None for d in new_sizes):
@@ -1910,7 +2008,7 @@ def _sub_lowering_rule(ctx: LoweringRuleContext, x, y):
 
 
 lowering_rules[lax.sub_p] = _sub_lowering_rule
-skip_mlir_conversions.add(lax.max_p)
+skip_mlir_conversions.add(lax.sub_p)
 
 
 def _mul_lowering_rule(ctx: LoweringRuleContext, x, y):
@@ -1930,7 +2028,7 @@ skip_mlir_conversions.add(lax.mul_p)
 def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   (aval_out,) = ctx.avals_out
-  if jnp.issubdtype(aval_out.dtype, jnp.integer):
+  if jnp.issubdtype(aval_out.dtype, jnp.signedinteger):
     return arith.divsi(x, y)
   if jnp.issubdtype(aval_out.dtype, jnp.unsignedinteger):
     return arith.divui(x, y)
@@ -1993,6 +2091,15 @@ def _sign_lowering_rule(ctx: LoweringRuleContext, x):
 lowering_rules[lax.sign_p] = _sign_lowering_rule
 
 
+def _nextafter_lowering_rule(ctx: LoweringRuleContext, x, y):
+  return lower_fun(
+      pallas_utils.nextafter_lowering_helper, multiple_results=False,
+  )(ctx, x, y)
+
+
+lowering_rules[lax.nextafter_p] = _nextafter_lowering_rule
+
+
 def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):
   return math.rsqrt(x)
 
@@ -2005,6 +2112,15 @@ def _sqrt_lowering_rule(ctx: LoweringRuleContext, x):
 
 
 lowering_rules[lax.sqrt_p] = _sqrt_lowering_rule
+
+
+def _square_lowering_rule(ctx: LoweringRuleContext, x):
+  if jnp.issubdtype(ctx.avals_in[0].dtype, jnp.integer):
+    return arith.muli(x, x)
+  return arith.mulf(x, x)
+
+
+lowering_rules[lax.square_p] = _square_lowering_rule
 
 
 def _exp_lowering_rule(ctx: LoweringRuleContext, x):
@@ -2801,16 +2917,17 @@ def _device_id_to_logical(
     # Mesh means we are passed the mesh coordinates for the device
     device_ids = tree_util.tree_leaves(device_id)
     mesh_strides = ctx.lowering_context.mesh_context.mesh_strides
-    def _linearize_mesh_indices(*indices):
-      return sum(a * b for a, b in zip(indices, mesh_strides))
-    lower_ctx = LoweringRuleContext(
-        lowering_context=ctx.lowering_context,
-        avals_in=[pallas_core.index_map_grid_aval] * len(device_ids),
-        avals_out=[pallas_core.index_map_grid_aval],
-        block_shapes=(None,) * len(device_ids),
+
+    i32 = ir.IntegerType.get_signless(32)
+    if len(device_ids) == 0:
+      return arith.constant(i32, 0)
+    return functools.reduce(
+        arith.addi,
+        (
+            arith.muli(a, arith.constant(i32, b))
+            for a, b in zip(device_ids, mesh_strides)
+        ),
     )
-    return lower_fun(_linearize_mesh_indices, multiple_results=False)(
-        lower_ctx, *device_ids)
   elif device_id_type is tpu_primitives.DeviceIdType.LOGICAL:
     return device_id
   raise NotImplementedError(f"Unsupported device id type: {device_id_type}")
@@ -3156,3 +3273,68 @@ def _iota_2x32_shape_lowering(ctx, *, shape):
 
 
 lowering_rules[prng.iota_2x32_shape_p] = _iota_2x32_shape_lowering
+
+
+def _pad_lowering_rule(ctx: LoweringRuleContext, *args, **kwargs):
+  operand, padding_value = args
+  padding_config = kwargs["padding_config"]
+
+  out_type: ir.VectorType = aval_to_ir_type(ctx.avals_in[0])
+  if not isinstance(out_type, ir.VectorType):
+    raise NotImplementedError("Only vector types are supported.")
+
+  for axis, (low, high, interior) in enumerate(padding_config):
+    if low == 0 and high == 0 and interior == 0:
+      continue
+
+    def _pad(val):
+      shape = list(operand.type.shape)
+      shape[axis] = val
+      pad_vec_type = ir.VectorType.get(
+          shape,
+          operand.type.element_type,
+      )
+
+      if isinstance(padding_value, ir.OpResult):
+        pad = vector.BroadcastOp(
+            pad_vec_type,
+            padding_value,
+        ).result
+      else:
+        scalar_attr = ir.FloatAttr.get(operand.type.element_type, padding_value)
+        pad = arith.ConstantOp(
+            pad_vec_type,
+            ir.DenseElementsAttr.get_splat(
+                pad_vec_type,
+                scalar_attr,
+            ),
+        ).result
+      return pad
+
+    if low != 0:
+      pad_low = _pad(low)
+      new_shape = out_type.shape
+      new_shape[axis] += low
+      out_type = ir.VectorType.get(
+          new_shape,
+          out_type.element_type,
+      )
+      operand = tpu.concatenate(out_type, [pad_low, operand], dimension=axis)
+
+    if high != 0:
+      pad_high = _pad(high)
+      new_shape = out_type.shape
+      new_shape[axis] += high
+      out_type = ir.VectorType.get(
+          new_shape,
+          out_type.element_type,
+      )
+      operand = tpu.concatenate(out_type, [operand, pad_high], dimension=axis)
+
+    if interior > 0:
+      raise NotImplementedError("Not implemented: interior padding")
+
+  return operand
+
+
+lowering_rules[lax.pad_p] = _pad_lowering_rule

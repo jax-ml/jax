@@ -22,6 +22,11 @@ rocm_version = 0  # placeholder
 project_name = f"jax-rocm{rocm_version}-plugin"
 package_name = f"jax_rocm{rocm_version}_plugin"
 
+# Extract ROCm version from the `ROCM_PATH` environment variable.
+default_rocm_path = "/opt/rocm"
+rocm_path = os.getenv("ROCM_PATH", default_rocm_path)
+rocm_detected_version = rocm_path.split('-')[-1] if '-' in rocm_path else "unknown"
+
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
     'version', os.path.join(pkg_path, 'version.py'))
@@ -43,7 +48,7 @@ setup(
     name=project_name,
     version=__version__,
     cmdclass=_cmdclass,
-    description="JAX Plugin for AMD GPUs",
+    description=f"JAX Plugin for AMD GPUs (ROCm:{rocm_detected_version})",
     long_description="",
     long_description_content_type="text/markdown",
     author="Ruturaj4",

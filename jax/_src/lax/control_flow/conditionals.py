@@ -35,7 +35,7 @@ from jax._src import source_info_util
 from jax._src import util
 from jax._src.state.discharge import register_partial_discharge_rule, discharge_state
 from jax._src.state.types import AbstractRef, RefEffect
-from jax._src.core import ConcreteArray, raise_to_shaped, replace_jaxpr_effects
+from jax._src.core import replace_jaxpr_effects
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -87,6 +87,7 @@ def switch(index, branches: Sequence[Callable], *operands,
   Args:
     index: Integer scalar type, indicating which branch function to apply.
     branches: Sequence of functions (A -> B) to be applied based on ``index``.
+      All branches must return the same output structure.
     operands: Operands (A) input to whichever branch is applied.
 
   Returns:
@@ -130,8 +131,7 @@ def switch(index, branches: Sequence[Callable], *operands,
   hi = np.array(len(branches) - 1, np.int32)
   index = lax.clamp(lo, index, hi)
 
-  if (config.disable_jit.value and
-      isinstance(core.get_aval(index), ConcreteArray)):
+  if (config.disable_jit.value and core.is_concrete(index)):
     return branches[int(index)](*operands)
 
   ops, ops_tree = tree_flatten(operands)
@@ -148,11 +148,6 @@ def switch(index, branches: Sequence[Callable], *operands,
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `switch`: {disallowed_effects}')
-  if joined_effects:
-    # Raise index in case of effects to allow data-dependence-based discharging
-    # of those effects (even if they don't have an explicit data dependence).
-    index = core.raise_as_much_as_possible(index)
-
   out = cond_p.bind(index, *consts, *ops, branches=tuple(jaxprs))
   return tree_unflatten(out_trees[0], out)
 
@@ -225,7 +220,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
       msg = ("Pred type must be either boolean or number, got {}.")
       raise TypeError(msg.format(pred_dtype))
 
-  if config.disable_jit.value and isinstance(core.get_aval(pred), ConcreteArray):
+  if config.disable_jit.value and core.is_concrete(pred):
     if pred:
       return true_fun(*operands)
     else:
@@ -263,10 +258,6 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
         f'Effects not supported in `cond`: {disallowed_effects}')
 
   index = lax.convert_element_type(pred, np.int32)
-  if joined_effects:
-    # Raise index in case of effects to allow data-dependence-based discharging
-    # of those effects (even if they don't have an explicit data dependence).
-    index = core.raise_as_much_as_possible(index)
   false_jaxpr = replace_jaxpr_effects(false_jaxpr, joined_effects)
   true_jaxpr = replace_jaxpr_effects(true_jaxpr, joined_effects)
 
@@ -338,7 +329,7 @@ def _cond_abstract_eval(*avals, branches, **_):
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `cond`: {disallowed_effects}')
-  return map(raise_to_shaped, branches[0].out_avals), joined_effects
+  return branches[0].out_avals, joined_effects
 
 def _bcast_select(pred, on_true, on_false):
   if np.ndim(pred) != np.ndim(on_true):
@@ -352,8 +343,7 @@ def _bcast_select_n(pred, *cases):
     pred = lax.broadcast_in_dim(pred, np.shape(cases[0]), idx)
   return lax.select_n(pred, *cases)
 
-def _cond_batching_rule(spmd_axis_name, axis_size, axis_name, main_type, args,
-                        dims, branches):
+def _cond_batching_rule(axis_data, args, dims, branches):
   index, *ops = args
   index_dim, *op_dims = dims
   # TODO(sharadmv): clean this up by adding a specific blocklist
@@ -375,15 +365,13 @@ def _cond_batching_rule(spmd_axis_name, axis_size, axis_name, main_type, args,
     # optimizations to XLA.
     # TODO(mattjj,frostig): assumes branches are side-effect-free, revise!
     index, *ops = (
-        batching.bdim_at_front(x, d, axis_size) for x, d in zip(args, dims))
+        batching.bdim_at_front(x, d, axis_data.size) for x, d in zip(args, dims))
 
     in_batched  = [True] * len(branches[0].in_avals)
     out_batched = [True] * len(branches[0].out_avals)
 
     branches_batched = [
-        batching.batch_jaxpr(
-            jaxpr, axis_size, in_batched, out_batched, axis_name, spmd_axis_name,
-            main_type)[0]
+        batching.batch_jaxpr(jaxpr, axis_data, in_batched, out_batched)[0]
         for jaxpr in branches]
 
     branch_outs = []
@@ -401,13 +389,11 @@ def _cond_batching_rule(spmd_axis_name, axis_size, axis_name, main_type, args,
            for b, x, d in zip(ops_bat, ops, op_dims)]
 
     branches_out_bat = [
-        batching.batch_jaxpr(jaxpr, axis_size, ops_bat, False, axis_name,
-                             spmd_axis_name, main_type)[1]
+        batching.batch_jaxpr(jaxpr, axis_data, ops_bat, False)[1]
         for jaxpr in branches]
     out_bat = [any(bat) for bat in zip(*branches_out_bat)]
     branches_batched = tuple(
-        batching.batch_jaxpr(jaxpr, axis_size, ops_bat, out_bat, axis_name,
-                             spmd_axis_name, main_type)[0]
+        batching.batch_jaxpr(jaxpr, axis_data, ops_bat, out_bat)[0]
         for jaxpr in branches)
 
     out_dims = [0 if b else batching.not_mapped for b in out_bat]
@@ -657,7 +643,11 @@ def _ordered_unique(xs):
   return list(d.keys())
 
 def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
-                   ) -> tuple[list[bool], core.JaxprEqn]:
+                   ) -> tuple[list[bool], core.JaxprEqn | None]:
+
+  if not any(used_outputs) and not pe.has_effects(eqn):
+    return [False] * len(eqn.invars), None
+
   closed_branches = eqn.params['branches']
   branches = [closed_jaxpr.jaxpr for closed_jaxpr in closed_branches]
 
@@ -691,7 +681,6 @@ def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
 
 def _transpose_cond_jaxpr(jaxpr, num_res):
   res_avals, primal_avals = split_list(jaxpr.in_avals, [num_res])
-  primal_avals = map(raise_to_shaped, primal_avals)
 
   @lu.wrap_init
   def transposed(*args):
@@ -708,7 +697,7 @@ def _cond_transpose(cts, *args, branches):
   index, *ops = args
   assert type(index) is not ad.UndefinedPrimal
   linear = [type(x) is ad.UndefinedPrimal for x in ops]
-  in_avals = map(raise_to_shaped, branches[0].in_avals)
+  in_avals = branches[0].in_avals
   num_res = len(ops) - sum(linear)
   if any(isinstance(eff, RefEffect) for branch in branches for eff in
       branch.jaxpr.effects):
@@ -716,8 +705,7 @@ def _cond_transpose(cts, *args, branches):
 
   branches_trans = tuple(
       _transpose_cond_jaxpr(jaxpr, num_res) for jaxpr in branches)
-  lin_in_avals = [raise_to_shaped(a, weak_type=False)
-                  for a, l in zip(in_avals, linear) if l]
+  lin_in_avals = [a.strip_weak_type() for a, l in zip(in_avals, linear) if l]
   assert all(core.typematch(out_aval, lin_in_aval)
              for jaxpr in branches_trans
              for out_aval, lin_in_aval in zip(jaxpr.out_avals, lin_in_avals))
@@ -732,12 +720,6 @@ def _cond_transpose(cts, *args, branches):
   out = [next(out_iter) if l else None for l in linear]
   assert next(out_iter, None) is None
   return [None] + out
-
-def _cond_axis_substitution(params, subst, traverse):
-  if not traverse:
-    return params
-  branches = tuple(core.subst_axis_names_jaxpr(jaxpr, subst) for jaxpr in params['branches'])
-  return dict(params, branches=branches)
 
 def _cond_typecheck(bind_time, *in_atoms, branches):
   if not bind_time:
@@ -793,28 +775,16 @@ def _cond_typecheck(bind_time, *in_atoms, branches):
       f'called with operands of type {_avals_short(op_avals)}')
   return jaxpr0.out_avals, joined_effects
 
-def cond_bind(*args, branches):
-  if config.enable_checks.value:
-    avals = map(core.get_aval, args)
-    in_atoms = [core.Var('', a) for a in avals]  # dummies
-    _cond_typecheck(True, *in_atoms, branches=branches)
-    for jaxpr in branches:
-      core.check_jaxpr(jaxpr.jaxpr)
-  return core.AxisPrimitive.bind(cond_p, *args, branches=branches)
-
-cond_p = core.AxisPrimitive('cond')
+cond_p = core.Primitive('cond')
 cond_p.multiple_results = True
 cond_p.def_impl(partial(dispatch.apply_primitive, cond_p))
 cond_p.def_effectful_abstract_eval(_cond_abstract_eval)
-cond_p.def_custom_bind(cond_bind)
 ad.primitive_jvps[cond_p] = _cond_jvp
-ad.reducing_transposes[cond_p] = _cond_transpose
+ad.primitive_transposes[cond_p] = _cond_transpose
 pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
-batching.spmd_axis_primitive_batchers[cond_p] = _cond_batching_rule
-batching.axis_primitive_batchers[cond_p] = partial(_cond_batching_rule, None)
+batching.fancy_primitive_batchers[cond_p] = _cond_batching_rule
 xla.register_initial_style_primitive(cond_p)
 core.custom_typechecks[cond_p] = partial(_cond_typecheck, False)
-core.axis_substitution_rules[cond_p] = _cond_axis_substitution
 pe.partial_eval_jaxpr_custom_rules[cond_p] = _cond_partial_eval_custom
 pe.dce_rules[cond_p] = _cond_dce_rule
 batching.ragged_prop_rules[cond_p] = batching.ragged_mask_assert_no_op_rule

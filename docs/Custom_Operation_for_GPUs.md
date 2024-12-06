@@ -623,16 +623,16 @@ be used with the custom_partitioning registration and for the
 gradient. (And if you implement the interface to support vmat, it will
 also be on the outer primitive).
 
-JAX custom_partitioning implementation are callbacks from XLA to Python during XLA sharding logic.
+JAX custom_partitioning implementations are callbacks from XLA to Python during XLA sharding logic.
 XLA sharding goes in two phases: a sharding propagation phase and a partition phase.
-The propagation phase is when XLA plan the sharding to be created. It is the partition phase that create the sharded graph.
+The propagation phase is when XLA plan the sharding to be created. It is the partition phase that creates the sharded graph.
 For XLA to be able to shard our custom operations, it needs us to define 2 extra functions:
 infer_sharding_from_operands() and partition(). They are used in the first and second phase respectively.
 
 The infer_sharding_from_operands() function must do what its name say: infer the output sharding from the input sharding.
 
 The partition() function will do a few things:
-- tell which input sharding will be expected. XLA will reshad if needed.
+- tell which input sharding will be expected. XLA will reshard if needed.
 - tell the final version of the output sharding.
 - give a function that will create the new instruction from the sharded inputs.
 
@@ -679,7 +679,7 @@ class RmsNormFwdClass:
                          NamedSharding(mesh, PartitionSpec(None, None)))
         invvar_sharding = NamedSharding(mesh, PartitionSpec(x_spec[0]))
         output_shardings = (arg_shardings[0], invvar_sharding)
-        # Sharded_impl only accepts positional arugments
+        # Sharded_impl only accepts positional arguments
         # And they should be Jax traceable variables
         impl = partial(RmsNormFwdClass.impl, eps=eps)
 
@@ -739,7 +739,7 @@ class RmsNormBwdClass:
         output_shardings = (output_sharding, invvar_sharding, invvar_sharding)
 
 
-        # Sharded_impl only accepts positional arugments
+        # Sharded_impl only accepts positional arguments
         # And they should be Jax traceable variables
         def impl(g, invvar, x, weight):
             grad_input, grad_weight, part_grad = _rms_norm_bwd_p.bind(

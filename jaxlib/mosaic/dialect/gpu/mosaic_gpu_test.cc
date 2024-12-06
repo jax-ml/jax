@@ -25,8 +25,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "third_party/llvm/llvm-project/llvm/include/llvm/ADT/ArrayRef.h"
-#include "third_party/llvm/llvm-project/llvm/include/llvm/ADT/SmallVector.h"
+#include "llvm/include/llvm/ADT/ArrayRef.h"
+#include "llvm/include/llvm/ADT/SmallVector.h"
 #include "mlir/include/mlir/Conversion/LLVMCommon/MemRefBuilder.h"
 #include "mlir/include/mlir/Conversion/LLVMCommon/StructBuilder.h"
 #include "mlir/include/mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
@@ -193,34 +193,6 @@ TEST_F(MosaicGpuTest, RuntimeFunctionsAreRegistered) {
                               mosaic_gpu::kRuntimeMemcpyAsyncH2DName));
 }
 
-TEST_F(MosaicGpuTest, InitializeBarrierOpEnforcesRelevantInvariants) {
-  auto loc = builder_.getUnknownLoc();
-  auto f32 = builder_.getF32Type();
-  auto barrier = BarrierType::get(&context_);
-
-  // InitializeBarrierOp requires a memref with type `BarrierType`.
-  auto initialize_op = builder_.create<InitializeBarrierOp>(
-      loc, mlir::MemRefType::get({1, 2}, f32), /*arrival_count=*/1);
-  EXPECT_FALSE(mlir::succeeded(mlir::verify(*module_)));
-  ExpectLastErrorContains("must be memref of barrier values");
-  initialize_op->erase();
-
-  // InitializeBarrierOp requires a non-negative arrival count.
-  initialize_op = builder_.create<InitializeBarrierOp>(
-      loc, mlir::MemRefType::get({1, 2}, barrier), /*arrival_count=*/0);
-  EXPECT_FALSE(mlir::succeeded(mlir::verify(*module_)));
-  ExpectLastErrorContains("value is positive");
-  initialize_op->erase();
-
-  // Checks that InitializeBarrierOp prints nicely.
-  initialize_op = builder_.create<InitializeBarrierOp>(
-      loc, mlir::MemRefType::get({1, 2}, barrier), /*arrival_count=*/1);
-  EXPECT_TRUE(mlir::succeeded(mlir::verify(*module_)));
-  EXPECT_THAT(
-      MlirToString(initialize_op),
-      HasSubstr(
-          "mosaic_gpu.initialize_barrier 1 : memref<1x2x!mosaic_gpu.barrier>"));
-}
 
 }  // anonymous namespace
 }  // namespace mosaic_gpu

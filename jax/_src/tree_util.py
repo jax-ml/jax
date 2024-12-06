@@ -22,10 +22,11 @@ import functools
 from functools import partial
 import operator as op
 import textwrap
-from typing import Any, NamedTuple, TypeVar, Union, overload
+from typing import Any, NamedTuple, TypeVar, overload
 
 from jax._src import traceback_util
 from jax._src.lib import pytree
+from jax._src.lib import xla_extension_version
 from jax._src.util import safe_zip, set_module
 from jax._src.util import unzip2
 
@@ -209,12 +210,21 @@ def all_leaves(iterable: Iterable[Any],
 
 _Children = TypeVar("_Children", bound=Iterable[Any])
 _AuxData = TypeVar("_AuxData", bound=Hashable)
+KeyEntry = TypeVar("KeyEntry", bound=Any)
+KeyLeafPair = tuple[KeyEntry, Any]
+KeyLeafPairs = Iterable[KeyLeafPair]
+KeyPath = tuple[KeyEntry, ...]
 
 
 @export
-def register_pytree_node(nodetype: type[T],
-                         flatten_func: Callable[[T], tuple[_Children, _AuxData]],
-                         unflatten_func: Callable[[_AuxData, _Children], T]) -> None:
+def register_pytree_node(
+    nodetype: type[T],
+    flatten_func: Callable[[T], tuple[_Children, _AuxData]],
+    unflatten_func: Callable[[_AuxData, _Children], T],
+    flatten_with_keys_func: (
+        Callable[[T], tuple[KeyLeafPairs, _AuxData]] | None
+    ) = None,
+) -> None:
   """Extends the set of types that are considered internal nodes in pytrees.
 
   See :ref:`example usage <pytrees>`.
@@ -279,9 +289,20 @@ def register_pytree_node(nodetype: type[T],
     >>> jax.jit(f)(m)
     Array([1., 2., 3., 4., 5.], dtype=float32)
   """
-  default_registry.register_node(nodetype, flatten_func, unflatten_func)
-  none_leaf_registry.register_node(nodetype, flatten_func, unflatten_func)
-  dispatch_registry.register_node(nodetype, flatten_func, unflatten_func)
+  if xla_extension_version >= 299:
+    default_registry.register_node(  # type: ignore[call-arg]
+        nodetype, flatten_func, unflatten_func, flatten_with_keys_func
+    )
+    none_leaf_registry.register_node(  # type: ignore[call-arg]
+        nodetype, flatten_func, unflatten_func, flatten_with_keys_func
+    )
+    dispatch_registry.register_node(  # type: ignore[call-arg]
+        nodetype, flatten_func, unflatten_func, flatten_with_keys_func
+    )
+  else:
+    default_registry.register_node(nodetype, flatten_func, unflatten_func)
+    none_leaf_registry.register_node(nodetype, flatten_func, unflatten_func)
+    dispatch_registry.register_node(nodetype, flatten_func, unflatten_func)
   _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
 
 
@@ -452,21 +473,6 @@ def tree_all(tree: Any, *, is_leaf: Callable[[Any], bool] | None = None) -> bool
   return all(tree_leaves(tree, is_leaf=is_leaf))
 
 
-register_pytree_node(
-  collections.OrderedDict,
-  lambda x: (tuple(x.values()), tuple(x.keys())),
-  lambda keys, values: collections.OrderedDict(safe_zip(keys, values)))
-
-def _flatten_defaultdict(d):
-  keys = tuple(sorted(d))
-  return tuple(d[k] for k in keys), (d.default_factory, keys)
-
-register_pytree_node(
-  collections.defaultdict,
-  _flatten_defaultdict,
-  lambda s, values: collections.defaultdict(s[0], safe_zip(s[1], values)))
-
-
 class _HashableCallableShim:
   """Object that delegates __call__, __hash__, and __eq__ to another object."""
 
@@ -578,11 +584,11 @@ def broadcast_prefix(prefix_tree: Any, full_tree: Any,
 
 
 # flatten_one_level is not exported.
-def flatten_one_level(pytree: Any) -> tuple[Iterable[Any], Hashable]:
+def flatten_one_level(tree: Any) -> tuple[Iterable[Any], Hashable]:
   """Flatten the given pytree node by one level.
 
   Args:
-    pytree: A valid pytree node, either built-in or registered via
+    tree: A valid pytree node, either built-in or registered via
       :func:`register_pytree_node` or related functions.
 
   Returns:
@@ -601,9 +607,9 @@ def flatten_one_level(pytree: Any) -> tuple[Iterable[Any], Hashable]:
     >>> meta
     ('a', 'b')
   """
-  out = default_registry.flatten_one_level(pytree)
+  out = default_registry.flatten_one_level(tree)
   if out is None:
-    raise ValueError(f"can't tree-flatten type: {type(pytree)}")
+    raise ValueError(f"can't tree-flatten type: {type(tree)}")
   else:
     return out
 
@@ -739,10 +745,12 @@ class FlattenedIndexKey():
   def __str__(self):
     return f'[<flat index {self.key}>]'
 
-BuiltInKeyEntry = Union[SequenceKey, DictKey, GetAttrKey, FlattenedIndexKey]
 
-KeyEntry = TypeVar("KeyEntry", bound=Hashable)
-KeyPath = tuple[KeyEntry, ...]
+if xla_extension_version >= 299:
+  SequenceKey = pytree.SequenceKey  # type: ignore
+  DictKey = pytree.DictKey  # type: ignore
+  GetAttrKey = pytree.GetAttrKey  # type: ignore
+  FlattenedIndexKey = pytree.FlattenedIndexKey  # type: ignore
 
 
 @export
@@ -764,6 +772,7 @@ def keystr(keys: KeyPath):
   return ''.join(map(str, keys))
 
 
+# TODO(ivyzheng): remove this after _child_keys() also moved to C++.
 class _RegistryWithKeypathsEntry(NamedTuple):
   flatten_with_keys: Callable[..., Any]
   unflatten_func: Callable[..., Any]
@@ -779,7 +788,6 @@ def _register_keypaths(
     _registry_with_keypaths[ty] = _RegistryWithKeypathsEntry(
         flatten_with_keys, _registry[ty].from_iter
     )
-
 
 _registry_with_keypaths: dict[type[Any], _RegistryWithKeypathsEntry] = {}
 
@@ -803,13 +811,9 @@ _register_keypaths(
 @export
 def register_pytree_with_keys(
     nodetype: type[T],
-    flatten_with_keys: Callable[
-        [T], tuple[Iterable[tuple[KeyEntry, Any]], _AuxData]
-    ],
+    flatten_with_keys: Callable[[T], tuple[Iterable[KeyLeafPair], _AuxData]],
     unflatten_func: Callable[[_AuxData, Iterable[Any]], T],
-    flatten_func: None | (
-        Callable[[T], tuple[Iterable[Any], _AuxData]]
-    ) = None,
+    flatten_func: None | (Callable[[T], tuple[Iterable[Any], _AuxData]]) = None,
 ):
   """Extends the set of types that are considered internal nodes in pytrees.
 
@@ -870,7 +874,9 @@ def register_pytree_with_keys(
       return [c for _, c in key_children], treedef
     flatten_func = flatten_func_impl
 
-  register_pytree_node(nodetype, flatten_func, unflatten_func)
+  register_pytree_node(
+      nodetype, flatten_func, unflatten_func, flatten_with_keys
+  )
   _registry_with_keypaths[nodetype] = _RegistryWithKeypathsEntry(
       flatten_with_keys, unflatten_func
   )
@@ -927,8 +933,8 @@ def register_pytree_with_keys_class(cls: Typ) -> Typ:
 @export
 def register_dataclass(
     nodetype: Typ,
-    data_fields: Sequence[str],
-    meta_fields: Sequence[str],
+    data_fields: Sequence[str] | None = None,
+    meta_fields: Sequence[str] | None = None,
     drop_fields: Sequence[str] = (),
 ) -> Typ:
   """Extends the set of types that are considered internal nodes in pytrees.
@@ -945,24 +951,33 @@ def register_dataclass(
       attributes represent the whole of the object state, and can be passed
       as keywords to the class constructor to create a copy of the object.
       All defined attributes should be listed among ``meta_fields`` or ``data_fields``.
-    meta_fields: auxiliary data field names. These fields *must* contain static,
-      hashable, immutable objects, as these objects are used to generate JIT cache
-      keys. In particular, ``meta_fields`` cannot contain :class:`jax.Array` or
-      :class:`numpy.ndarray` objects.
-    data_fields: data field names. These fields *must* be JAX-compatible objects
-      such as arrays (:class:`jax.Array` or :class:`numpy.ndarray`), scalars, or
-      pytrees whose leaves are arrays or scalars. Note that ``data_fields`` may be
-      ``None``, as this is recognized by JAX as an empty pytree.
+    meta_fields: metadata field names: these are attributes which will be treated as
+      {term}`static` when this pytree is passed to :func:`jax.jit`. ``meta_fields`` is
+      optional only if ``nodetype`` is a dataclass, in which case individual fields can
+      be marked static via :func:`dataclasses.field` (see examples below).
+      Metadata fields *must* be static, hashable, immutable objects, as these objects
+      are used to generate JIT cache keys. In particular, metadata fields cannot contain
+      :class:`jax.Array` or :class:`numpy.ndarray` objects.
+    data_fields: data field names: these are attributes which will be treated as non-static
+      when this pytree is passed to :func:`jax.jit`. ``data_fields`` is optional only if
+      ``nodetype`` is a dataclass, in which case fields are assumed data fields unless
+      marked via :func:`dataclasses.field` (see examples below).
+      Data fields *must* be JAX-compatible objects such as arrays (:class:`jax.Array`
+      or :class:`numpy.ndarray`), scalars, or pytrees whose leaves are arrays or scalars.
+      Note that ``None`` is a valid data field, as JAX recognizes this as an empty pytree.
 
   Returns:
     The input class ``nodetype`` is returned unchanged after being added to JAX's
-    pytree registry. This return value allows ``register_dataclass`` to be partially
-    evaluated and used as a decorator as in the example below.
+    pytree registry, so that :func:`register_dataclass` can be used as a decorator.
 
   Examples:
+    In JAX v0.4.35 or older, you must specify ``data_fields`` and ``meta_fields``
+    in order to use this decorator:
+
+    >>> import jax
     >>> from dataclasses import dataclass
     >>> from functools import partial
-    >>>
+    ...
     >>> @partial(jax.tree_util.register_dataclass,
     ...          data_fields=['x', 'y'],
     ...          meta_fields=['op'])
@@ -976,7 +991,26 @@ def register_dataclass(
     >>> m
     MyStruct(x=Array([1., 1., 1.], dtype=float32), y=Array([0, 1, 2], dtype=int32), op='add')
 
-    Now that this class is registered, it can be used with functions in :mod:`jax.tree_util`:
+    Starting in JAX v0.4.36, the ``data_fields`` and ``meta_fields`` arguments are optional
+    for :func:`~dataclasses.dataclass` inputs, with fields defaulting to ``data_fields``
+    unless marked as static using `static` metadata in :func:`dataclasses.field`.
+
+    >>> import jax
+    >>> from dataclasses import dataclass, field
+    ...
+    >>> @jax.tree_util.register_dataclass
+    ... @dataclass
+    ... class MyStruct:
+    ...   x: jax.Array  # defaults to non-static data field
+    ...   y: jax.Array  # defaults to non-static data field
+    ...   op: str = field(metadata=dict(static=True))  # marked as static meta field.
+    ...
+    >>> m = MyStruct(x=jnp.ones(3), y=jnp.arange(3), op='add')
+    >>> m
+    MyStruct(x=Array([1., 1., 1.], dtype=float32), y=Array([0, 1, 2], dtype=int32), op='add')
+
+    Once this class is registered, it can be used with functions in :mod:`jax.tree` and
+    :mod:`jax.tree_util`:
 
     >>> leaves, treedef = jax.tree.flatten(m)
     >>> leaves
@@ -987,7 +1021,8 @@ def register_dataclass(
     MyStruct(x=Array([1., 1., 1.], dtype=float32), y=Array([0, 1, 2], dtype=int32), op='add')
 
     In particular, this registration allows ``m`` to be passed seamlessly through code
-    wrapped in :func:`jax.jit` and other JAX transformations:
+    wrapped in :func:`jax.jit` and other JAX transformations, with ``data_fields`` being
+    treated as dynamic arguments, and ``meta_fields`` being treated as static arguments:
 
     >>> @jax.jit
     ... def compiled_func(m):
@@ -999,6 +1034,21 @@ def register_dataclass(
     >>> compiled_func(m)
     Array([1., 2., 3.], dtype=float32)
   """
+  if data_fields is None or meta_fields is None:
+    if (data_fields is None) != (meta_fields is None):
+      raise TypeError("register_dataclass: data_fields and meta_fields must both be specified"
+                      f" when either is specified. Got {data_fields=} {meta_fields=}.")
+    if not dataclasses.is_dataclass(nodetype):
+      raise TypeError("register_dataclass: data_fields and meta_fields are required when"
+                      f" nodetype is not a dataclass. Got {nodetype=}.")
+    data_fields = [f.name for f in dataclasses.fields(nodetype)
+                   if not f.metadata.get('static', False)]
+    meta_fields = [f.name for f in dataclasses.fields(nodetype)
+                   if f.metadata.get('static', False)]
+
+  assert meta_fields is not None
+  assert data_fields is not None
+
   # Store inputs as immutable tuples in this scope, because we close over them
   # for later evaluation. This prevents potentially confusing behavior if the
   # caller were to pass in lists that are later mutated.
@@ -1046,6 +1096,40 @@ def register_dataclass(
       flatten_with_keys, unflatten_func
   )
   return nodetype
+
+
+if xla_extension_version >= 299:
+  register_pytree_with_keys(
+      collections.OrderedDict,
+      lambda x: (tuple((DictKey(k), x[k]) for k in x.keys()), tuple(x.keys())),
+      lambda keys, values: collections.OrderedDict(safe_zip(keys, values)),
+  )
+
+  def _flatten_defaultdict_with_keys(d):
+    keys = tuple(sorted(d))
+    return tuple((DictKey(k), d[k]) for k in keys), (d.default_factory, keys)
+
+  register_pytree_with_keys(
+      collections.defaultdict,
+      _flatten_defaultdict_with_keys,
+      lambda s, values: collections.defaultdict(s[0], safe_zip(s[1], values)),
+  )
+else:
+  register_pytree_node(
+      collections.OrderedDict,
+      lambda x: (tuple(x.values()), tuple(x.keys())),
+      lambda keys, values: collections.OrderedDict(safe_zip(keys, values)),
+  )
+
+  def _flatten_defaultdict(d):
+    keys = tuple(sorted(d))
+    return tuple(d[k] for k in keys), (d.default_factory, keys)
+
+  register_pytree_node(
+      collections.defaultdict,
+      _flatten_defaultdict,
+      lambda s, values: collections.defaultdict(s[0], safe_zip(s[1], values)),
+  )
 
 
 @export
@@ -1100,6 +1184,8 @@ def tree_flatten_with_path(
     which contains a leaf and its key path. The second element is a treedef
     representing the structure of the flattened tree.
   """
+  if xla_extension_version >= 299:
+    return default_registry.flatten_with_path(tree, is_leaf)
   _, tree_def = tree_flatten(tree, is_leaf)
   return _generate_key_paths(tree, is_leaf), tree_def
 
@@ -1120,13 +1206,15 @@ def tree_leaves_with_path(
     - :func:`jax.tree_util.tree_leaves`
     - :func:`jax.tree_util.tree_flatten_with_path`
   """
-  return _generate_key_paths(tree, is_leaf)
+  return tree_flatten_with_path(tree, is_leaf)[0]
 
 
 # generate_key_paths is not exported.
 def generate_key_paths(
     tree: Any, is_leaf: Callable[[Any], bool] | None = None
 ) -> list[tuple[KeyPath, Any]]:
+  if xla_extension_version >= 299:
+    return tree_leaves_with_path(tree, is_leaf)
   return list(_generate_key_paths_((), tree, is_leaf))
 _generate_key_paths = generate_key_paths  # alias for backward compat
 

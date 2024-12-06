@@ -60,7 +60,11 @@ def _version_from_git_tree(base_version: str) -> str | None:
   except:
     return None
   else:
-    return f"{base_version}.dev{datestring}+{commit_hash}"
+    version = f"{base_version}.dev{datestring}+{commit_hash}"
+    suffix = os.environ.get("JAX_CUSTOM_VERSION_SUFFIX", None)
+    if suffix:
+      return version + "." + suffix
+    return version
 
 
 def _get_version_for_build() -> str:
@@ -133,7 +137,7 @@ def _get_cmdclass(pkg_source_path):
 
 
 __version__ = _get_version_string()
-_minimum_jaxlib_version = "0.4.35"
+_minimum_jaxlib_version = "0.4.36"
 
 def _version_as_tuple(version_str):
   return tuple(int(i) for i in version_str.split(".") if i.isdigit())

@@ -22,5 +22,3 @@ from jax._src.sharding_impls import (
   AUTO as AUTO,
   UNSPECIFIED as _UNSPECIFIED,
 )
-
-from jax._src.pjit import _pjit_lower_cached, _pjit_lower

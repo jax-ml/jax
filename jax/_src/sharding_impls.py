@@ -137,9 +137,12 @@ def named_sharding_to_xla_hlo_sharding(
   mesh_axis_pos = {name: i for i, name in enumerate(self.mesh.axis_names)}
 
   special_axes = {}
-  if self._manual_axes:
+  mesh_manual_axes = {n for n, t in self.mesh._name_to_type.items()
+                      if t == mesh_lib.AxisTypes.Collective}
+  manual_axes = self._manual_axes.union(mesh_manual_axes)
+  if manual_axes:
     axis_names = self.mesh.axis_names
-    for manual_axis in self._manual_axes:
+    for manual_axis in manual_axes:
       special_axes[axis_names.index(manual_axis)] = xc.OpSharding.Type.MANUAL
 
   replicated_mesh_axes = []
@@ -360,20 +363,10 @@ class NamedSharding(sharding.Sharding):
   def with_memory_kind(self, kind: str) -> NamedSharding:
     return NamedSharding(self.mesh, self.spec, memory_kind=kind)
 
-  def _normalized_spec(self, ndim: int) -> PartitionSpec:
-    out = []  # type: ignore
-    for p in self._parsed_pspec:
-      if p is None:
-        raise ValueError("UNCONSTRAINED is not supported yet.")
-      if not p:
-        out.append(None)
-      elif isinstance(p, tuple) and len(p) == 1:
-        out.append(p[0])
-      else:
-        out.append(p)
-    if len(out) < ndim:
-      out.extend([None] * (ndim - len(out)))
-    return PartitionSpec(*out)
+  def with_spec(self, spec: PartitionSpec | Sequence[Any]) -> NamedSharding:
+    if not isinstance(spec, PartitionSpec):
+      spec = PartitionSpec(*spec)
+    return NamedSharding(self.mesh, spec, memory_kind=self.memory_kind)
 
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return named_sharding_to_xla_hlo_sharding(self, num_dimensions)
@@ -535,7 +528,7 @@ class PmapSharding(sharding.Sharding):
 
   # TODO(yashkatariya): Expose `sharded_dim_size` in the API if required.
   @classmethod
-  def default(cls, shape: Shape, sharded_dim: int = 0,
+  def default(cls, shape: Shape, sharded_dim: int | None = 0,
               devices: Sequence[xc.Device] | None = None) -> PmapSharding:
     """Creates a :class:`PmapSharding` which matches the default placement
     used by :func:`jax.pmap`.
@@ -547,6 +540,13 @@ class PmapSharding(sharding.Sharding):
       device order used by pmap is used, which is the order of
         :func:`jax.local_devices`.
     """
+    if sharded_dim is None:
+      if devices is None:
+        raise ValueError("One of sharded_dim or devices must be set.")
+      nrep = len(devices)
+      return cls(np.array(devices),
+          sharding_specs.pmap_sharding_spec(nrep, nrep, shape, None))
+
     # The dtype doesn't matter here. Its only used for creating the
     # sharding_spec.
     sharding_spec = sharding_specs.create_pmap_sharding_spec(
@@ -564,11 +564,6 @@ class PmapSharding(sharding.Sharding):
         else:
           raise NotImplementedError(
               'Multiple chunks in Chunked dimension not supported.')
-
-    if num_ways_sharded is None:
-      raise NotImplementedError(
-          '`None` to sharded_dim is not supported. Please file a jax '
-          'issue if you need this feature.')
 
     if devices is None:
       pmap_devices: np.ndarray = np.array(
@@ -1719,17 +1714,25 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   """
   if devices is None:
     devices = xla_bridge.devices()
-  axis_size = math.prod(axis_shapes)
+  new_axis_shapes = mesh_utils._canonicalize_axis_sizes(axis_shapes)
+  if new_axis_shapes is None:
+    raise ValueError(
+        '`axis_shapes` passed to `make_mesh` should be a sequence of ints.'
+        f' Got {axis_shapes}')
+  del axis_shapes
+
+  axis_size = math.prod(new_axis_shapes)
   if axis_size > len(devices):
     raise ValueError(
         f'Number of devices {len(devices)} must be >= the product '
-        f'of mesh_shape {axis_shapes}')
+        f'of mesh_shape {new_axis_shapes}')
   elif axis_size < len(devices):
     devices = devices[:axis_size]
-  if devices[0].device_kind == mesh_utils._TPU_V5_LITE:
+  if devices[0].device_kind in (mesh_utils._TPU_V5_LITE, mesh_utils._TPU_V5E):
     allow_split_physical_axes = True
   else:
     allow_split_physical_axes = False
   mesh_devices = mesh_utils.create_device_mesh(
-      axis_shapes, devices, allow_split_physical_axes=allow_split_physical_axes)
+      new_axis_shapes, devices,
+      allow_split_physical_axes=allow_split_physical_axes)
   return mesh_lib.Mesh(mesh_devices, axis_names)

@@ -1826,7 +1826,9 @@ def bcoo_concatenate(operands: Sequence[BCOO], *, dimension: int) -> BCOO:
   return BCOO((new_data, new_indices), shape=out_aval.shape)
 
 
-def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int], dimensions: Sequence[int] | None = None) -> BCOO:
+def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int],
+                 dimensions: Sequence[int] | None = None,
+                 sharding=None) -> BCOO:
   """Sparse implementation of {func}`jax.lax.reshape`.
 
   Args:

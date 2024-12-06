@@ -979,8 +979,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       self.assertIn("my_test_function_jax/mul", self.TfToHlo(run_tf))
     else:
       graph_def = str(tf.function(run_tf, autograph=False).get_concrete_function().graph.as_graph_def())
-      if "my_test_function_jax/pjit__multiply_/Mul" not in graph_def:
-        self.assertIn("my_test_function_jax/jit__multiply_/Mul", graph_def)
+      if "my_test_function_jax/pjit_multiply_/Mul" not in graph_def:
+        self.assertIn("my_test_function_jax/jit_multiply_/Mul", graph_def)
 
   def test_bfloat16_constant(self):
     # Re: https://github.com/jax-ml/jax/issues/3942
@@ -1531,7 +1531,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       _ = func_to_convert(*args)
       exported = export.export(
           (jax.jit(func_to_convert) if not hasattr(func_to_convert, "trace") else func_to_convert),
-          lowering_platforms=("tpu",)
+          platforms=("tpu",)
       )(*(core.ShapedArray(a.shape, a.dtype) for a in args))
 
     if transform1 == "shard_map":
@@ -1690,11 +1690,10 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         res,
         x + _testing_multi_platform_to_add[tf_device_jax_platform])
 
-  @unittest.skip("TODO(danfm): Test fails at head with segfault in GH")
   def test_dot_algorithm(self):
     # ref: https://github.com/jax-ml/jax/issues/24236
-    if tf.version.VERSION.split(".") <= ["2", "17", "0"]:
-      self.skipTest("This test works only with newer versions of TF")
+    if tf.version.VERSION.split(".") <= ["2", "18", "0"]:
+      self.skipTest("Because of an XLA bug this test segfaults with TF v2.18.0")
 
     if jtu.test_device_matches(["tpu"]):
       algorithm = "BF16_BF16_F32"

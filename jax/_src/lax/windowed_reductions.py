@@ -23,7 +23,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import util
-from jax._src.core import ConcreteArray, ShapedArray
+from jax._src.core import ShapedArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -142,14 +142,15 @@ def _get_monoid_window_reducer(
     return None
   x, = xs
   aval = core.get_aval(x)
-  if (type(aval) is ConcreteArray) and aval.shape == ():
+  if core.is_concrete(x) and aval.shape == ():
+    val = core.to_concrete_value(x)
     if monoid_op is lax.add:
-      return aval.val == 0 and _reduce_window_sum
+      return val == 0 and _reduce_window_sum
     elif monoid_op is lax.max:
-      return (aval.val == lax._get_max_identity(aval.dtype)
+      return (val == lax._get_max_identity(aval.dtype)
               and _reduce_window_max)
     elif monoid_op is lax.min:
-      return (aval.val == lax._get_min_identity(aval.dtype)
+      return (val == lax._get_min_identity(aval.dtype)
               and _reduce_window_min)
   return None
 

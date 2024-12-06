@@ -43,7 +43,8 @@ def _addressable_devices_indices_map(
           if d.process_index == d.client.process_index()}
 
 @cache(max_size=4096, trace_context_in_key=False)
-def common_devices_indices_map(s, global_shape: Shape) -> Mapping[Device, Index]:
+def common_devices_indices_map(
+    s: Sharding, global_shape: Shape) -> Mapping[Device, Index]:
   s.shard_shape(global_shape)  # raises a good error message
   hlo_sharding = s._to_xla_hlo_sharding(len(global_shape))
   indices = op_sharding_to_indices(hlo_sharding, global_shape,

@@ -870,8 +870,9 @@ class PallasCallDMATest(PallasBaseTest):
       pl.run_scoped(scope)
       return []
 
-    aref = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
-    in_avals = [aref, aref]
+    aref1 = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
+    aref2 = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
+    in_avals = [aref1, aref2]
     stateful_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
                                                           in_avals)
     discharged_jaxpr, _ = state_discharge.discharge_state(
@@ -1471,6 +1472,40 @@ class PallasCallDMATest(PallasBaseTest):
       np.testing.assert_array_equal(y, i)
       del y
 
+  def test_dynamic_dma_on_2nd_minor(self):
+    def kernel(array, data, index, size, _, sem):
+      pltpu.async_copy(
+            data.at[pl.ds(0, size[0])], array.at[pl.ds(index[0], size[0])], sem
+        ).wait()
+
+    def run(array, data, index, size):
+      return pl.pallas_call(
+            kernel,
+            out_shape=array,
+            in_specs=[
+                pl.BlockSpec(memory_space=pltpu.ANY),
+                pl.BlockSpec(memory_space=pltpu.VMEM),
+                pl.BlockSpec(memory_space=pltpu.SMEM),
+                pl.BlockSpec(memory_space=pltpu.SMEM),
+            ],
+            scratch_shapes=[
+                pltpu.SemaphoreType.DMA,
+            ],
+            out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+            input_output_aliases={0: 0},
+        )(array, data, index, size)
+
+    array = jnp.zeros((1024, 128), jnp.int32)
+    data = jnp.ones((8, 128), jnp.int32)
+    index = jnp.array([3], jnp.int32)
+    size = jnp.array([5], jnp.int32)
+
+    expected = array.at[index[0] : index[0] + size[0]].set(
+        data[index[0] : index[0] + size[0]]
+    )
+    result = run(array, data, index, size)
+    np.testing.assert_array_equal(result, expected)
+
 
 class PallasCallDMAInterpretTest(PallasCallDMATest):
   INTERPRET = True
@@ -1587,7 +1622,6 @@ class PallasCallTest(PallasBaseTest):
     self.assertEqual(analysis_result['transcendentals'], 21)
     self.assertEqual(analysis_result['bytes accessed'], 12345)
 
-
   def test_cost_analysis_vmap(self):
     def kernel(x, y):
       y[:] = x[:]
@@ -1605,7 +1639,6 @@ class PallasCallTest(PallasBaseTest):
     self.assertEqual(analysis_result['flops'], batch_size * 1234)
     self.assertEqual(analysis_result['transcendentals'], batch_size * 21)
     self.assertEqual(analysis_result['bytes accessed'], batch_size * 12345)
-
 
   def test_vmem_limit(self):
     shape = (128, 128)
@@ -1672,6 +1705,59 @@ class PallasCallTest(PallasBaseTest):
               internal_scratch_in_bytes=requested_bytes,
           ),
       )(x)
+
+  @parameterized.product(dtype=[jnp.bfloat16, jnp.float32])
+  def test_pltpu_repeat(self, dtype):
+    def test_kernel(x_ref, o_ref):
+      x = x_ref[...]
+      o_ref[...] = pltpu.repeat(x, 2, axis=1)
+
+    @jax.jit
+    def test(x: jax.Array) -> jax.Array:
+      return pl.pallas_call(
+          test_kernel,
+          out_shape=jax.ShapeDtypeStruct([x.shape[0], x.shape[1] * 2], x.dtype),
+      )(x)
+
+    x = jnp.arange(2048, dtype=dtype).reshape((8, 256))
+    y = test(x)
+    np.testing.assert_array_equal(y, jnp.concatenate([x, x], axis=1))
+
+  def test_masked_store(self):
+    if jtu.jaxlib_version() <= (0, 4, 35):
+      self.skipTest("Test requires masked store support")
+    shape = (16, 256)
+    mask_shape = (10, 130)
+    mask_start = (4, 5)
+    dtype = jnp.float32
+    def body(scalar_ref, x_ref, o_ref):
+      o_ref[...] = jnp.full(shape, -1, dtype=dtype)
+      b0, b1 = scalar_ref[0], scalar_ref[1]
+      e0, e1 = b0 + mask_shape[0], b1 + mask_shape[1]
+      iota0 = lax.broadcasted_iota(jnp.int32, shape, 0)
+      iota1 = lax.broadcasted_iota(jnp.int32, shape, 1)
+      mask0 = jnp.logical_and(b0 <= iota0, iota0 < e0)
+      mask1 = jnp.logical_and(b1 <= iota1, iota1 < e1)
+      pl.store(
+          o_ref,
+          (slice(None), slice(None)),
+          x_ref[...],
+          mask=jnp.logical_and(mask0, mask1),
+      )
+
+    s = jnp.array(mask_start, jnp.int32)
+    x = jnp.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    out = pl.pallas_call(
+        body,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+          num_scalar_prefetch=1,
+        ),
+    )(s, x)
+    slices = tuple(slice(b, b + l) for b, l in zip(mask_start, mask_shape))
+    expected = jnp.full(shape, -1, dtype=dtype)
+    expected = expected.at[slices].set(x[slices])
+    np.testing.assert_array_equal(out, expected)
 
 
 class PallasUXTest(PallasBaseTest):

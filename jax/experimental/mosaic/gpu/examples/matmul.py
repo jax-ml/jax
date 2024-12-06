@@ -20,6 +20,7 @@ from typing import Any
 
 import jax
 from jax import random
+from jax._src import test_util as jtu  # noqa: F401
 from jax._src.interpreters import mlir
 from jax.experimental.mosaic.gpu import profiler
 from jax.experimental.mosaic.gpu import *  # noqa: F403
@@ -378,7 +379,7 @@ def verify(
         x,
         y,
         dimension_numbers=dimension_numbers,
-        preferred_element_type=jnp.float32,
+        preferred_element_type=out_dtype,
     ).astype(out_dtype)
 
   ref, ref_runtime = profiler.measure(ref_f, x, y)

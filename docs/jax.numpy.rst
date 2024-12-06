@@ -138,6 +138,7 @@ namespace; they are listed below.
     csingle
     cumprod
     cumsum
+    cumulative_prod
     cumulative_sum
     deg2rad
     degrees
@@ -336,6 +337,7 @@ namespace; they are listed below.
     promote_types
     ptp
     put
+    put_along_axis
     quantile
     r_
     rad2deg

@@ -49,17 +49,3 @@ from jax._src.nn.functions import (
   squareplus as squareplus,
   mish as mish,
 )
-
-# Deprecations
-
-_deprecations = {
-    # Finalized 2024-05-13; remove after 2024-08-13
-    "normalize": (
-        "jax.nn.normalize is deprecated. Use jax.nn.standardize instead.",
-        None,
-    ),
-}
-
-from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-__getattr__ = _deprecation_getattr(__name__, _deprecations)
-del _deprecation_getattr

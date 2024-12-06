@@ -55,8 +55,8 @@ class MatmulTestCase(jtu.JaxTestCase):
     if matmul is None:
       self.skipTest("Mosaic GPU not available.")
     if (not jtu.test_device_matches(["cuda"]) or
-        not jtu.is_cuda_compute_capability_at_least("9.0")):
-      self.skipTest("Only works on GPU with capability >= sm90")
+        not jtu.is_cuda_compute_capability_equal("9.0")):
+      self.skipTest("Only works on GPU with capability sm90a")
 
   @parameterized.named_parameters(
       (f"_shard{i}", i) for i in range(5)

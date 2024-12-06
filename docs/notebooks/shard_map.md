@@ -627,7 +627,7 @@ def psum(x, axis_name):
 Indeed, this implementation is often used on both TPU and GPU!
 
 The reason `psum_scatter` can require about half the communication as a full
-`psum` is illustrated the `ppermute` section.
+`psum` is illustrated in the `ppermute` section.
 
 Another intuition is that we can use `psum_scatter` to implement a distributed
 matrix multiplication with inputs and outputs sharded over the same axis. In

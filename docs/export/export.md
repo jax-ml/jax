@@ -247,7 +247,7 @@ for which the code was exported.
 You can specify explicitly for what platforms the code should be exported.
 This allows you to specify a different accelerator than you have
 available at export time,
-and it even allows you to specify multi-platform lexport to
+and it even allows you to specify multi-platform export to
 obtain an `Exported` object that can be compiled and executed
 on multiple platforms.
 
@@ -273,7 +273,7 @@ ValueError: Function 'cos' was lowered for platforms '('tpu',)' but it is used o
 >>> # compilation platform (which is the case for `cos` in this
 >>> # example):
 >>> exp_unsafe = export.export(jax.jit(lax.cos),
-...    lowering_platforms=['tpu'],
+...    platforms=['tpu'],
 ...    disabled_checks=[export.DisabledSafetyCheck.platform()])(1.)
 
 >>> exp_unsafe.call(1.)
@@ -281,7 +281,7 @@ Array(0.5403023, dtype=float32, weak_type=True)
 
 # and similarly with multi-platform lowering
 >>> exp_multi = export.export(jax.jit(lax.cos),
-...    lowering_platforms=['tpu', 'cpu', 'cuda'])(1.)
+...    platforms=['tpu', 'cpu', 'cuda'])(1.)
 >>> exp_multi.call(1.)
 Array(0.5403023, dtype=float32, weak_type=True)
 
@@ -293,7 +293,7 @@ resulting module size should be only marginally larger than the
 size of a module with default export.
 As an extreme case, when serializing a module without any
 primitives with platform-specific lowering, you will get
-the same StableHLO as for the single-plaform export.
+the same StableHLO as for the single-platform export.
 
 ```python
 >>> import jax
@@ -310,7 +310,7 @@ the same StableHLO as for the single-plaform export.
 9220
 
 >>> exp_multi = export.export(jax.jit(f),
-...                           lowering_platforms=["cpu", "tpu", "cuda"])(1.)
+...                           platforms=["cpu", "tpu", "cuda"])(1.)
 >>> len(exp_multi.mlir_module_serialized)  # doctest: +SKIP
 9282
 

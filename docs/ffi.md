@@ -34,10 +34,7 @@ JAX's FFI support is provided in two parts:
 In this tutorial we demonstrate the use of both of these components using a simple example, and then go on to discuss some lower-level extensions for more complicated use cases.
 We start by presenting the FFI on CPU, and discuss generalizations to GPU or multi-device environments below.
 
-This tutorial comes with two supplementary files:
-
-* [`rms_norm.cc`](ffi/rms_norm.cc), which includes all the backend code, and
-* [`CMakeLists.txt`](ffi/CMakeLists.txt), which tells [CMake](https://cmake.org) how to build the code.
+The end-to-end code for this example and some other more advanced use cases can be found in the JAX FFI examples project on GitHub at [`examples/ffi` in the JAX repository](https://github.com/jax-ml/jax/tree/main/examples/ffi).
 
 ## A simple example
 
@@ -96,7 +93,7 @@ and, for our example, this is the function that we want to expose to JAX via the
 
 To expose our library function to JAX and XLA, we need to write a thin wrapper using the APIs provided by the header-only library in the [`xla/ffi/api`](https://github.com/openxla/xla/tree/main/xla/ffi/api) directory of the [XLA project](https://github.com/openxla/xla).
 For more information about this interface, take a look at [the XLA custom call documentation](https://openxla.org/xla/custom_call).
-The full source listing can be downloaded [here](ffi/rms_norm.cc), but the key implementation details are reproduced here:
+The full source listing can be downloaded [here](https://github.com/jax-ml/jax/blob/main/examples/ffi/src/jax_ffi_example/rms_norm.cc), but the key implementation details are reproduced here:
 
 ```c++
 #include <functional>
@@ -124,12 +121,11 @@ std::pair<int64_t, int64_t> GetDims(const ffi::Buffer<T> &buffer) {
 // A wrapper function providing the interface between the XLA FFI call and our
 // library function `ComputeRmsNorm` above. This function handles the batch
 // dimensions by calling `ComputeRmsNorm` within a loop.
-ffi::Error RmsNormImpl(float eps, ffi::Buffer<ffi::DataType::F32> x,
-                       ffi::Result<ffi::Buffer<ffi::DataType::F32>> y) {
+ffi::Error RmsNormImpl(float eps, ffi::Buffer<ffi::F32> x,
+                       ffi::ResultBuffer<ffi::F32> y) {
   auto [totalSize, lastDim] = GetDims(x);
   if (lastDim == 0) {
-    return ffi::Error(ffi::ErrorCode::kInvalidArgument,
-                      "RmsNorm input must be an array");
+    return ffi::Error::InvalidArgument("RmsNorm input must be an array");
   }
   for (int64_t n = 0; n < totalSize; n += lastDim) {
     ComputeRmsNorm(eps, lastDim, &(x.typed_data()[n]), &(y->typed_data()[n]));
@@ -138,14 +134,14 @@ ffi::Error RmsNormImpl(float eps, ffi::Buffer<ffi::DataType::F32> x,
 }
 
 // Wrap `RmsNormImpl` and specify the interface to XLA. If you need to declare
-// this handler in a header, you can use the `XLA_FFI_DECLASE_HANDLER_SYMBOL`
-// macro: `XLA_FFI_DECLASE_HANDLER_SYMBOL(RmsNorm)`.
+// this handler in a header, you can use the `XLA_FFI_DECLARE_HANDLER_SYMBOL`
+// macro: `XLA_FFI_DECLARE_HANDLER_SYMBOL(RmsNorm)`.
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     RmsNorm, RmsNormImpl,
     ffi::Ffi::Bind()
         .Attr<float>("eps")
-        .Arg<ffi::Buffer<ffi::DataType::F32>>()  // x
-        .Ret<ffi::Buffer<ffi::DataType::F32>>()  // y
+        .Arg<ffi::Buffer<ffi::F32>>()  // x
+        .Ret<ffi::Buffer<ffi::F32>>()  // y
 );
 ```
 
@@ -166,7 +162,6 @@ Now that we have our minimal FFI wrapper implemented, we need to expose this fun
 In this tutorial, we compile `RmsNorm` into a shared library and load it using [ctypes](https://docs.python.org/3/library/ctypes.html), but another common pattern is to use [nanobind](https://nanobind.readthedocs.io/) or [pybind11](https://pybind11.readthedocs.io/) as discussed below.
 
 To compile the shared library, we're using CMake here, but you should be able to use your favorite build system without too much trouble.
-The full `CMakeLists.txt` can be downloaded [here](ffi/CMakeLists.txt).
 
 ```{code-cell} ipython3
 :tags: [hide-output]
@@ -357,7 +352,7 @@ In this case, we actually define two new FFI calls:
 1. `rms_norm_fwd` returns two outputs: (a) the "primal" result, and (b) the "residuals" which are used in the backwards pass.
 2. `rms_norm_bwd` takes the residuals and the output co-tangents, and returns the input co-tangents.
 
-We won't get into the details of the RMS normalization backwards pass, but take a look at the [C++ source code](ffi/rms_norm.cc) to see how these functions are implemented on the back end.
+We won't get into the details of the RMS normalization backwards pass, but take a look at the [C++ source code](https://github.com/jax-ml/jax/blob/main/examples/ffi/src/jax_ffi_example/rms_norm.cc) to see how these functions are implemented on the back end.
 The main point to emphasize here is that the "residual" computed has a different shape than the primal output, therefore, in the {func}`~jax.extend.ffi.ffi_call` to `res_norm_fwd`, the output type has two elements with different shapes.
 
 This custom derivative rule can be wired in as follows:
@@ -422,16 +417,16 @@ Since this documentation page is automatically generated on a machine without ac
 When defining our FFI wrapper for CPU, the function signature that we used was:
 
 ```c++
-ffi::Error RmsNormImpl(float eps, ffi::Buffer<ffi::DataType::F32> x,
-                       ffi::Result<ffi::Buffer<ffi::DataType::F32>> y)
+ffi::Error RmsNormImpl(float eps, ffi::Buffer<ffi::F32> x,
+                       ffi::ResultBuffer<ffi::F32> y)
 ```
 
 To update this to interface with a CUDA kernel, this signature becomes:
 
 ```c++
 ffi::Error RmsNormImpl(cudaStream_t stream, float eps,
-                       ffi::Buffer<ffi::DataType::F32> x,
-                       ffi::Result<ffi::Buffer<ffi::DataType::F32>> y)
+                       ffi::Buffer<ffi::F32> x,
+                       ffi::ResultBuffer<ffi::F32> y)
 ```
 
 And the handler definition is updated to include a `Ctx` in its binding:
@@ -442,8 +437,8 @@ XLA_FFI_DEFINE_HANDLER(
     ffi::Ffi::Bind()
         .Ctx<ffi::PlatformStream<cudaStream_t>>()
         .Attr<float>("eps")
-        .Arg<ffi::Buffer<ffi::DataType::F32>>()  // x
-        .Ret<ffi::Buffer<ffi::DataType::F32>>()  // y
+        .Arg<ffi::Buffer<ffi::F32>>()  // x
+        .Ret<ffi::Buffer<ffi::F32>>()  // y
 );
 ```
 

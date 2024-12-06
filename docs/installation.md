@@ -35,6 +35,7 @@ The table below shows all supported platforms and installation options. Check if
 | Google Cloud TPU | {ref}`yes <install-google-tpu>`       | n/a                             | n/a                                   | n/a                                   | n/a                      | n/a                                      |
 | AMD GPU          | {ref}`experimental <install-amd-gpu>` | no                              | {ref}`experimental <install-mac-gpu>` | n/a                                   | no                       | no                                       |
 | Apple GPU        | n/a                                   | no                              | n/a                                   | {ref}`experimental <install-mac-gpu>` | n/a                      | n/a                                      |
+| Intel GPU        | {ref}`experimental <install-intel-gpu>`| n/a                            | n/a                                   | n/a                                     | no                       | no                                       |
 
 
 (install-cpu)=
@@ -230,6 +231,17 @@ JAX has experimental ROCm support. There are two ways to install JAX:
 * Use [AMD's Docker container](https://hub.docker.com/r/rocm/jax); or
 * Build from source (refer to {ref}`building-from-source` — a section called _Additional notes for building a ROCM `jaxlib` for AMD GPUs_).
 
+(install-intel-gpu)=
+## Intel GPU
+
+Intel provides an experimental OneAPI plugin: intel-extension-for-openxla for Intel GPU hardware. For more details and installation instructions, refer to one of the following two methods:
+1. Pip installation: [JAX acceleration on Intel GPU](https://github.com/intel/intel-extension-for-openxla/blob/main/docs/acc_jax.md).
+2. Using [Intel's XLA Docker container](https://hub.docker.com/r/intel/intel-optimized-xla).
+
+Please report any issues related to:
+* JAX: [JAX issue tracker](https://github.com/jax-ml/jax/issues).
+* Intel's OpenXLA plugin: [Intel-extension-for-openxla issue tracker](https://github.com/intel/intel-extension-for-openxla/issues).
+
 ## Conda (community-supported)
 
 ### Conda installation
@@ -244,7 +256,7 @@ conda install jax -c conda-forge
 To install it on a machine with an NVIDIA GPU, run:
 
 ```bash
-conda install jaxlib=*=*cuda* jax cuda-nvcc -c conda-forge -c nvidia
+conda install "jaxlib=*=*cuda*" jax cuda-nvcc -c conda-forge -c nvidia
 ```
 
 Note the `cudatoolkit` distributed by `conda-forge` is missing `ptxas`, which

@@ -122,6 +122,14 @@ void tpu_strided_store_rule(tpu::StridedStoreOp op) {
       /*strides=*/op.getStrides());
 }
 
+void tpu_vector_store_rule(tpu::VectorStoreOp op) {
+  // TODO(b/379925823): Take strides into account.
+  assertIsValidSubwindow(
+      op, op.getIndices(),
+      /*window_shape=*/op.getValueToStore().getType().getShape(),
+      /*full_shape=*/op.getBase().getType().getShape());
+}
+
 const llvm::StringMap<rule_type> &rules() {
   static auto rules = new llvm::StringMap<rule_type>{
       // TODO: tpu::LoadOp, tpu::StoreOp
@@ -133,6 +141,8 @@ const llvm::StringMap<rule_type> &rules() {
        as_generic_rule(tpu_strided_load_rule)},
       {tpu::StridedStoreOp::getOperationName(),
        as_generic_rule(tpu_strided_store_rule)},
+      {tpu::VectorStoreOp::getOperationName(),
+       as_generic_rule(tpu_vector_store_rule)},
   };
   return *rules;
 }

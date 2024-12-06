@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import atexit
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 import contextlib
 import dataclasses
 import enum
@@ -95,7 +95,8 @@ def apply_primitive(prim, *args, **params):
 @util.cache()
 def xla_primitive_callable(prim: core.Primitive, **params):
   def prim_fun(*args):
-    return prim.bind(*args, **params)
+    with config.eager_constant_folding(False):
+      return prim.bind(*args, **params)
   prim_fun.__name__ = prim.name
   prim_fun.__qualname__ = prim.name
   return api.jit(prim_fun)
@@ -136,7 +137,7 @@ class RuntimeTokenSet(threading.local):
     # We only use replicated sharding for the first time when the token for the
     # order effect hasn't been created.
     s = jax.sharding.GSPMDSharding.get_replicated(devices)
-    sharded_tok = core.Token(pxla.shard_args([s], [None], [tok])[0])
+    sharded_tok = core.Token(pxla.shard_args([s], [None], [None], [tok])[0])
     self.current_tokens[eff] = sharded_tok
     return sharded_tok
 
@@ -277,17 +278,6 @@ def _is_bint_axis_size(d: core.AxisSize) -> bool:
   return False
 
 
-# We can optionally set a Jaxpr rewriter that can be applied just before
-# compilation. This mechanism is used for compiling id_tap, we can
-# remove it once we bring the id_tap implementation into the core.
-outfeed_rewriter: Callable[[core.Jaxpr], core.Jaxpr] | None = None
-def apply_outfeed_rewriter(jaxpr: core.Jaxpr) -> core.Jaxpr:
-  if outfeed_rewriter is not None:
-    return outfeed_rewriter(jaxpr)
-  else:
-    return jaxpr
-
-
 def check_arg(arg: Any):
   if not (isinstance(arg, core.Tracer) or core.valid_jaxtype(arg)):
     raise TypeError(f"Argument '{arg}' of type {type(arg)} is not a valid "
@@ -390,6 +380,7 @@ class _DeferredShardArg:
   s: Sharding
   aval: core.AbstractValue
   committed: bool
+  copy_semantics: CopySemantics
 
   @property
   def result_handler(self):
@@ -420,21 +411,18 @@ def _device_put_sharding_impl(x, aval, device, copy):
     if not s.is_fully_addressable:
       if ((isinstance(x, array.ArrayImpl) and not x._committed) or
           type(x) in array_types):
-        # TODO(yashkatariya): Move this check to `jit`.
         multihost_utils.assert_equal(
             x, fail_message=(
                 f"{type(x)} passed to device_put is not the same on each"
                 " process. Make sure you are passing the same value of"
                 f" {type(x)} on each process."))
-        return api.jit(
-            _identity_fn, out_shardings=s,
-            donate_argnums=(0 if copy == CopySemantics.DONATE else None))(x)
+        return _DeferredShardArg(x, s, aval, True, copy)
       # TODO(yashkatariya,mattjj): Link to a doc about McJAX and jax.Array.
       raise ValueError(
           "device_put's second argument must be a Device or a Sharding which"
           f" represents addressable devices, but got {s}. Please pass device or"
           " Sharding which represents addressable devices.")
-    return _DeferredShardArg(x, s, aval, True)
+    return _DeferredShardArg(x, s, aval, True, copy)
 
   # Only `Device` exists below. `Sharding` instance is handled above.
   if isinstance(x, array.ArrayImpl):
@@ -442,16 +430,19 @@ def _device_put_sharding_impl(x, aval, device, copy):
       raise ValueError(
           "device_put's first argument must be a fully addressable array, but "
           f"got value with devices {x.devices()}")
-    if device is None and copy == CopySemantics.ALIAS:
-      return x
+    if device is None:
+      if copy == CopySemantics.ALIAS:
+        return x
+      else:
+        return _DeferredShardArg(x, x.sharding, aval, x.committed, copy)
     elif is_single_device_sharding(x.sharding):
       device = x.sharding._device_assignment[0] if device is None else device
       return pxla.batched_device_put(aval, SingleDeviceSharding(device), [x],
                                      [device])
 
-  sh = SingleDeviceSharding(pxla._get_default_device()
+  sh = SingleDeviceSharding(pxla.get_default_device()
                             if device is None else device)
-  return _DeferredShardArg(x, sh, aval, device is not None)
+  return _DeferredShardArg(x, sh, aval, device is not None, copy)
 
 
 def _device_put_impl(
@@ -500,12 +491,14 @@ def _batched_device_put_impl(
     copy_semantics: Sequence[CopySemantics]):
   ys = []
   shard_arg_indices, shard_arg_xs, shard_arg_shardings = [], [], []
+  shard_arg_copy_semantics = []
   for i, (x, device, src, cp) in enumerate(zip(xs, devices, srcs, copy_semantics)):
     y = _device_put_impl(x, device=device, src=src, copy=cp)
     if isinstance(y, _DeferredShardArg):
       shard_arg_indices.append(i)
       shard_arg_xs.append(y.x)
       shard_arg_shardings.append(y.s)
+      shard_arg_copy_semantics.append(y.copy_semantics)
     ys.append(y)
 
   if shard_arg_xs:
@@ -514,7 +507,8 @@ def _batched_device_put_impl(
     # device_put handles `Layout` via a different path, so just pass `None` as
     # the layout here.
     shard_arg_results = pxla.shard_args(
-        shard_arg_shardings, [None] * len(shard_arg_xs), shard_arg_xs)
+        shard_arg_shardings, [None] * len(shard_arg_xs),
+        shard_arg_copy_semantics, shard_arg_xs)
     for i, shard_arg_result in zip(shard_arg_indices, shard_arg_results):
       assert isinstance(ys[i], _DeferredShardArg)
       ys[i] = ys[i].result_handler(shard_arg_result)
@@ -525,7 +519,12 @@ def _batched_device_put_impl(
 device_put_p = core.Primitive('device_put')
 device_put_p.multiple_results = True
 device_put_p.def_impl(_batched_device_put_impl)
-device_put_p.def_abstract_eval(lambda *xs, devices, srcs, copy_semantics: xs)
+
+def _device_put_abstract_eval(*xs, devices, srcs, copy_semantics):
+  if config.sharding_in_types.value:
+    return [x.update(sharding=s) for x, s in zip(xs, devices)]
+  return xs
+device_put_p.def_abstract_eval(_device_put_abstract_eval)
 
 def _device_put_transpose(cts, *_, devices, srcs, copy_semantics):
   results = [None] * len(cts)
@@ -566,6 +565,12 @@ def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
   # TODO(yashkatariya): Maybe we should add the custom calls anyways if it's
   # being used inside jit? Atleast for now, this preserves the old behavior.
   if ctx.module_context.all_default_mem_kind:
+    if config.sharding_in_types.value:
+      return [
+          mlir.wrap_with_sharding_op(
+              ctx, x, a, a.sharding._to_xla_hlo_sharding(a.ndim).to_proto())
+          for x, a in zip(xs, ctx.avals_out)
+      ]
     return xs
   def lower(x, device, aval, out_aval):
     if (isinstance(device, (Sharding, TransferToMemoryKind)) and
@@ -591,6 +596,12 @@ mlir.register_lowering(
 
 
 def _common_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
+  if config.sharding_in_types.value:
+    return [
+        mlir.wrap_with_sharding_op(
+            ctx, x, a, a.sharding._to_xla_hlo_sharding(a.ndim).to_proto())
+        for x, a in zip(xs, ctx.avals_out)
+    ]
   return xs
 mlir.register_lowering(device_put_p, _common_device_put_lowering)
 

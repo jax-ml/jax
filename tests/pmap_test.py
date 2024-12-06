@@ -2057,7 +2057,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def test_axis_env_length(self):
     f = lambda x: jax.pmap(g)(jnp.array([x]))[0]
     def g(x):
-      assert len(core.thread_local_state.trace_state.axis_env) == 1
+      assert len(core.get_axis_env().axis_names()) == 1
       return x
     jax.grad(f)(3.)  # doesn't fail
 
@@ -2214,8 +2214,6 @@ class CppPmapTest(PythonPmapTest):
     pmaped_f = self.pmap(f)
     pmaped_f(inputs)
     self.assertEqual(pmaped_f._cache_size, 1)
-
-    config.update_thread_local_jit_state()
 
     pmaped_f(inputs)
     self.assertEqual(pmaped_f._cache_size, 1)
@@ -3015,7 +3013,7 @@ class ShardArgsTest(jtu.JaxTestCase):
     x = np.arange(math.prod(shape)).reshape(shape)
     arg = make_arg(x)
     sharding = jax.sharding.PmapSharding(jax.devices()[:nshards], spec)
-    results = pxla.shard_args([sharding], [None], [arg])
+    results = pxla.shard_args([sharding], [None], [None], [arg])
     self.assertEqual(len(results), 1)
     if isinstance(results[0], array.ArrayImpl):
       bufs = results[0]._arrays

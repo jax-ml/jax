@@ -20,8 +20,8 @@ load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_roc
 load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
 load("@rules_cc//cc:defs.bzl", _cc_proto_library = "cc_proto_library")
 load("@rules_python//python:defs.bzl", "py_test")
-load("@tsl//tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_cuda_tests_tags", _tf_exec_properties = "tf_exec_properties")
 load("@xla//xla/tsl:tsl.bzl", _if_windows = "if_windows", _pybind_extension = "tsl_pybind_extension_opensource")
+load("@xla//xla/tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_cuda_tests_tags", _tf_exec_properties = "tf_exec_properties")
 
 # Explicitly re-exports names to avoid "unused variable" warnings from .bzl
 # lint tools.
@@ -43,6 +43,7 @@ mosaic_gpu_internal_users = []
 mosaic_internal_users = []
 pallas_gpu_internal_users = []
 pallas_tpu_internal_users = []
+pallas_extension_deps = []
 
 jax_internal_export_back_compat_test_util_visibility = []
 jax_internal_test_harnesses_visibility = []
@@ -65,7 +66,9 @@ _py_deps = {
     "filelock": ["@pypi_filelock//:pkg"],
     "flatbuffers": ["@pypi_flatbuffers//:pkg"],
     "hypothesis": ["@pypi_hypothesis//:pkg"],
+    "magma": [],
     "matplotlib": ["@pypi_matplotlib//:pkg"],
+    "mpmath": [],
     "opt_einsum": ["@pypi_opt_einsum//:pkg"],
     "pil": ["@pypi_pillow//:pkg"],
     "portpicker": ["@pypi_portpicker//:pkg"],

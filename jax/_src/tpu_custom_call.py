@@ -204,9 +204,6 @@ class CustomCallBackendConfig:
         if i + 1 != len(self.flags):
           config.write(b",")
       config.write(b"]")
-    # Prevent the compiler from sharding the custom call beyond what Mosaic does
-    # based on user annotations
-    config.write(b', "implicit_sharding": {"type": "MANUAL"}')
     config.write(b"}")
     return config.getvalue()
 
@@ -281,6 +278,7 @@ def _lower_tpu_kernel(
     module: ir.Module,
     hardware_generation: int,
     target_shape: tuple[int, int],
+    kernel_name: str | None = None,
 ) -> ir.Module:
   """Runs MLIR passes lowering the given module to an MLIR module.
 
@@ -306,8 +304,7 @@ def _lower_tpu_kernel(
     tpu.register_dialect(ctx)
     mhlo.register_mhlo_dialect(ctx)
     mhlo.register_mhlo_passes()
-
-    dump_mlir(module, "original")
+    dump_mlir(module, "original", kernel_name)
 
     if _MOSAIC_ALLOW_HLO.value:
       # Run hlo dialect conversion: hlo -> linalg -> vector.
@@ -409,6 +406,7 @@ def _lower_mosaic_module_to_asm(
     *,
     backend: str,
     device_type: str | None,
+    kernel_name: str | None,
 ) -> tuple[ir.Module, tuple[bool, bool, bool, bool]]:
   has_communication, has_custom_barrier = tpu.private_has_communication(
       module.operation
@@ -432,7 +430,7 @@ def _lower_mosaic_module_to_asm(
       hardware_generation = int(device_kind[len("TPU v")])
       target_shape = get_target_shape(hardware_generation)
       module = _lower_tpu_kernel(
-          module, hardware_generation, target_shape=target_shape
+          module, hardware_generation, target_shape=target_shape, kernel_name=kernel_name,
       )
       needs_hlo_passes = False
       needs_layout_passes = False
@@ -456,6 +454,44 @@ def _lower_mosaic_module_to_asm(
     )
 
 
+def _get_device_type(module: ir.Module) -> str | None:
+  """Determines the device type based on the core_type annotations."""
+  sparsecore_func_found = False
+  tensorcore_func_found = False
+
+  def assign_device_type_based_on_core_type(op: ir.Operation) -> ir.WalkResult:
+    nonlocal sparsecore_func_found
+    nonlocal tensorcore_func_found
+    if op.name == "func.func":
+      if "tpu.core_type" in op.attributes:
+        core_type = op.attributes["tpu.core_type"]
+        if str(core_type) in [
+            f"#tpu.core_type<{c}>"
+            for c in ["sc_scalar_subcore", "sc_vector_subcore"]
+        ]:
+          sparsecore_func_found = True
+          if tensorcore_func_found:
+            return ir.WalkResult.INTERRUPT
+          return ir.WalkResult.SKIP
+        if str(core_type) == "#tpu.core_type<tc>":
+          tensorcore_func_found = True
+          return ir.WalkResult.SKIP
+        raise ValueError(f"Unknown core type: {core_type}")
+    return ir.WalkResult.ADVANCE
+
+  module.operation.walk(
+      assign_device_type_based_on_core_type, walk_order=ir.WalkOrder.PRE_ORDER
+  )
+  if tensorcore_func_found and sparsecore_func_found:
+    raise ValueError(
+        "A single Mosaic kernel cannot contain both "
+        "TensorCore and SparseCore functions."
+    )
+  if sparsecore_func_found:
+    return "sparsecore"
+  return None
+
+
 def _lower_to_custom_call_config(
     module: ir.Module,
     *,
@@ -469,6 +505,7 @@ def _lower_to_custom_call_config(
     collective_id: int | None,
     serialization_format: int | None,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
+    kernel_name: str | None = None,
 ) -> CustomCallBackendConfig:
   lowered_module_asm, (
       has_communication,
@@ -479,6 +516,7 @@ def _lower_to_custom_call_config(
       module,
       backend=backend,
       device_type=device_type,
+      kernel_name=kernel_name,
   )
   return _lowered_to_custom_call_config(
       lowered_module_asm,
@@ -578,6 +616,7 @@ def lower_module_to_custom_call(
       device_type=device_type,
       serialization_format=serialization_format,
       output_memory_spaces=output_memory_spaces,
+      kernel_name=kernel_name,
   )
   return _tpu_custom_call_lowering(
       ctx,
@@ -595,7 +634,6 @@ def as_tpu_kernel(
     *,
     cost_estimate: CostEstimate | None = None,
     backend: str | xla_client.Client = "tpu",
-    device_type: str | None = None,
     kernel_name: str | None = None,
     vmem_limit_bytes: int | None = None,
     flags: dict[str, bool | int | float] | None = None,
@@ -607,6 +645,7 @@ def as_tpu_kernel(
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
+  device_type = _get_device_type(module)
   config = _lower_to_custom_call_config(
       module,
       backend=backend,
@@ -619,6 +658,7 @@ def as_tpu_kernel(
       collective_id=collective_id,
       serialization_format=serialization_format,
       output_memory_spaces=output_memory_spaces,
+      kernel_name=kernel_name,
   )
   return _as_jax_callable(
       config,
@@ -700,7 +740,7 @@ def _as_jax_callable(
   return jax.jit(apply_kernel)
 
 
-def dump_mlir(module: ir.Module, name: str):
+def dump_mlir(module: ir.Module, name: str, kernel_name: str | None = None):
   """A helper function to dump mosaic mlir module"""
   try:
     should_dump = FLAGS["xla_mosaic_dump_to"].value
@@ -709,6 +749,8 @@ def dump_mlir(module: ir.Module, name: str):
   if should_dump == "sponge":
     outdir = os.environ.get("TEST_UNDECLARED_OUTPUTS_DIR", None)
     if outdir:
+      if kernel_name:
+        name = f"{kernel_name}-{name}"
       path = os.path.join(outdir, f"{time.time_ns()}-mosaic-dump-{name}-py.txt")
       with open(path, "w") as f:
         f.write(str(module))

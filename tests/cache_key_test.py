@@ -31,6 +31,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.mesh import Mesh
 from jax._src.partition_spec import PartitionSpec as P
@@ -68,6 +69,8 @@ class CacheKeyTest(jtu.JaxTestCase):
     debug_options.xla_dump_hlo_as_long_text = True
     debug_options.xla_dump_disable_metadata = True
     debug_options.xla_dump_hlo_pipeline_re = "xyzzy"
+    if jaxlib_version > (0, 4, 35):
+      debug_options.xla_gpu_experimental_autotune_cache_mode = 2
     hash2 = self.get_hashed_value(
         cache_key._hash_serialized_compile_options, compile_options
     )
@@ -173,7 +176,7 @@ class CacheKeyTest(jtu.JaxTestCase):
 
     @custom_partitioning
     def _cp_add(x, y):
-        return jax.numpy.add(x, y)
+      return jax.numpy.add(x, y)
 
     _cp_add.def_partition(
       infer_sharding_from_operands=_infer_sharding_from_operands,
@@ -196,14 +199,59 @@ class CacheKeyTest(jtu.JaxTestCase):
           r'(.*?backend_config\s*=\s*"([^"]*)".*?)'
           r'\}'
       )
-      with config.remove_custom_partitioning_ptr_from_cache_key(True):
-        with computation.context:
-          updated_module = cache_key._remove_custom_partitioning_ptr(
-            type_cast(ir.Module, computation.operation.clone()))
-          bcs = [match[2] for
-                 match in re.findall(pattern, str(updated_module), re.DOTALL)]
-          for bc in bcs:
-            self.assertEqual(bc, "REMOVED")
+      with computation.context:
+        updated_module = cache_key._remove_callbacks(
+            type_cast(ir.Module, computation.operation.clone()),
+            ignore_callbacks=cache_key.IgnoreCallbacks.ALL,
+        )
+        bcs = [
+            match[2]
+            for match in re.findall(pattern, str(updated_module), re.DOTALL)
+        ]
+        for bc in bcs:
+          self.assertEqual(bc, "REMOVED")
+
+      compile_options = compiler.get_compile_options(
+          num_replicas=1, num_partitions=1
+      )
+      backend = xla_bridge.get_backend()
+      hash_without_callback_ptrs = cache_key.get(
+          computation,
+          devices,
+          compile_options,
+          backend,
+          ignore_callbacks=cache_key.IgnoreCallbacks.CUSTOM_PARTITIONING,
+      )
+      expected_hash = cache_key.get(
+          updated_module, devices, compile_options, backend
+      )
+      self.assertEqual(expected_hash, hash_without_callback_ptrs)
+
+  @jtu.skip_on_devices("cpu")
+  def test_host_callbacks_ptrs_removed(self):
+    def _host_callback(x, y):
+      jax.debug.print("x={x[0]} y={y[0]}", x=x, y=y)
+
+    computation = (
+        jax.jit(_host_callback)
+        .lower(
+            jax.ShapeDtypeStruct([1024], dtype=jax.numpy.float32),
+            jax.ShapeDtypeStruct([1024], dtype=jax.numpy.float32),
+        )
+        .compiler_ir()
+    )
+    pattern = r'(.*?backend_config\s*=\s*"([^"]*)".*?)'
+    with computation.context:
+      updated_module = cache_key._remove_callbacks(
+          type_cast(ir.Module, computation.operation.clone()),
+          ignore_callbacks=cache_key.IgnoreCallbacks.ALL,
+      )
+      bcs = [
+          match[1]
+          for match in re.findall(pattern, str(updated_module), re.DOTALL)
+      ]
+      for bc in bcs:
+        self.assertEqual(bc, "REMOVED")
 
   def test_different_device_assignment(self):
     computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()

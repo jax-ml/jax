@@ -20,6 +20,11 @@ Remember to align the itemized text with the first line of an item within a list
     {func}`jax.experimental.tpu.run_scoped`. Both  are now available in
     {mod}`jax.experimental.pallas`.
 
+* New functionality
+
+  * Added a cost estimate tool {func}`pl.estimate_cost` for automatically
+  constructing a kernel cost estimate from a JAX reference function.
+
 ## Released with jax 0.4.34 (October 4, 2024)
 
 * Changes

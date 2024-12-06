@@ -116,7 +116,7 @@ code in JAX's internal representation, typically because it makes heavy use of
 Python control flow such as ``for`` loops. For a handful of loop iterations,
 Python is OK, but if you need *many* loop iterations, you should rewrite your
 code to make use of JAX's
-`structured control flow primitives <https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#Structured-control-flow-primitives>`_
+`structured control flow primitives <https://jax.readthedocs.io/en/latest/control-flow.html#Structured-control-flow-primitives>`_
 (such as :func:`lax.scan`) or avoid wrapping the loop with ``jit`` (you can
 still use ``jit`` decorated functions *inside* the loop).
 
@@ -847,6 +847,6 @@ see the page on `JAX GPU memory allocation`_.
 .. _IO callback example: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html#exploring-jax-experimental-io-callback
 .. _Heaviside Step Function: https://en.wikipedia.org/wiki/Heaviside_step_function
 .. _Sigmoid Function: https://en.wikipedia.org/wiki/Sigmoid_function
-.. _algebraic_simplifier.cc: https://github.com/tensorflow/tensorflow/blob/v2.10.0/tensorflow/compiler/xla/service/algebraic_simplifier.cc#L3266
+.. _algebraic_simplifier.cc: https://github.com/openxla/xla/blob/33f815e190982dac4f20d1f35adb98497a382377/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc#L4851
 .. _JAX GPU memory allocation: https://jax.readthedocs.io/en/latest/gpu_memory_allocation.html
 .. _dynamic linker search pattern: https://man7.org/linux/man-pages/man8/ld.so.8.html

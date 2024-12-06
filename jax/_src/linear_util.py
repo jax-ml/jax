@@ -71,7 +71,6 @@ import weakref
 from jax._src import config
 from jax._src import core
 from jax._src import traceback_util
-from jax._src.tree_util import tree_map
 from jax._src.util import curry, cache_clearing_funs
 
 
@@ -151,10 +150,11 @@ class WrappedFun:
     params: extra parameters to pass as keyword arguments to `f`, along with the
       transformed keyword arguments.
   """
-  __slots__ = ("f", "transforms", "stores", "params", "in_type", "debug_info")
+  __slots__ = ("f", "f_transformed", "transforms", "stores", "params", "in_type", "debug_info")
 
-  def __init__(self, f, transforms, stores, params, in_type, debug_info):
+  def __init__(self, f, f_transformed, transforms, stores, params, in_type, debug_info):
     self.f = f
+    self.f_transformed = f_transformed
     self.transforms = transforms
     self.stores = stores
     self.params = params
@@ -167,8 +167,14 @@ class WrappedFun:
 
   def wrap(self, gen, gen_static_args, out_store) -> WrappedFun:
     """Add another transform and its store."""
-    return WrappedFun(self.f, ((gen, gen_static_args),) + self.transforms,
-                      (out_store,) + self.stores, self.params, None, None)
+    if out_store is None:
+      return WrappedFun(self.f, partial(gen, self.f_transformed, *gen_static_args),
+                        ((gen, gen_static_args),) + self.transforms,
+                        (out_store,) + self.stores, self.params, None, None)
+    else:
+      return WrappedFun(self.f, partial(gen, self.f_transformed, out_store, *gen_static_args),
+                        ((gen, gen_static_args),) + self.transforms,
+                        (out_store,) + self.stores, self.params, None, None)
 
   def populate_stores(self, stores):
     """Copy the values from the `stores` into `self.stores`."""
@@ -177,47 +183,8 @@ class WrappedFun:
         self_store.store(other_store.val)
 
   def call_wrapped(self, *args, **kwargs):
-    """Calls the underlying function, applying the transforms.
-
-    The positional `args` and keyword `kwargs` are passed to the first
-    transformation generator.
-    """
-    stack = []
-    for (gen, gen_static_args), out_store in zip(self.transforms, self.stores):
-      gen = gen(*(gen_static_args + tuple(args)), **kwargs)
-      args, kwargs = next(gen)
-      stack.append((gen, out_store))
-    gen = gen_static_args = out_store = None
-
-    try:
-      ans = self.f(*args, **dict(self.params, **kwargs))
-    except:
-      # Some transformations yield from inside context managers, so we have to
-      # interrupt them before reraising the exception. Otherwise they will only
-      # get garbage-collected at some later time, running their cleanup tasks
-      # only after this exception is handled, which can corrupt the global
-      # state.
-      while stack:
-        stack.pop()[0].close()
-      raise
-
-    args = kwargs = None
-    while stack:
-      gen, out_store = stack.pop()
-      try:
-        ans = gen.send(ans)
-      except:
-        # As above does for the first half of the transformation, exceptions
-        # raised in the second half of the transformation also require us to
-        # clean up references here.
-        while stack:
-          stack.pop()[0].close()
-        raise
-      if out_store is not None:
-        ans, side = ans
-        out_store.store(side)
-
-    return ans
+    """Calls the transformed function"""
+    return self.f_transformed(*args, **kwargs)
 
   def __repr__(self):
     def transform_to_str(x):
@@ -236,7 +203,7 @@ class WrappedFun:
             self.debug_info == other.debug_info)
 
 @curry
-def transformation(gen, fun: WrappedFun, *gen_static_args) -> WrappedFun:
+def transformation2(gen, fun: WrappedFun, *gen_static_args) -> WrappedFun:
   """Adds one more transformation to a WrappedFun.
 
   Args:
@@ -246,8 +213,28 @@ def transformation(gen, fun: WrappedFun, *gen_static_args) -> WrappedFun:
   """
   return fun.wrap(gen, gen_static_args, None)
 
+# Backwards compat only. TODO: deprecate
 @curry
-def transformation_with_aux(
+def transformation(gen, fun: WrappedFun, *gen_static_args) -> WrappedFun:
+  def gen2(f, *args, **kwargs):
+    gen_inst = gen(*args, **kwargs)
+    args_, kwargs_ = next(gen_inst)
+    return gen_inst.send(f(*args_, **kwargs_))
+  return transformation2(gen2, fun, *gen_static_args)()
+
+# Backwards compat only. TODO: deprecate
+@curry
+def transformation_with_aux(gen, fun: WrappedFun, *gen_static_args) -> WrappedFun:
+  def gen2(f, store, *args, **kwargs):
+    gen_inst = gen(*args, **kwargs)
+    args_, kwargs_ = next(gen_inst)
+    ans, aux = gen_inst.send(f(*args_, **kwargs_))
+    store.store(aux)
+    return ans
+  return transformation_with_aux2(gen2, fun, *gen_static_args)()
+
+@curry
+def transformation_with_aux2(
     gen, fun: WrappedFun, *gen_static_args, use_eq_store: bool = False
 ) -> tuple[WrappedFun, Callable[[], Any]]:
   """Adds one more transformation with auxiliary output to a WrappedFun."""
@@ -263,8 +250,9 @@ def fun_name(f):
 
 def wrap_init(f, params=None) -> WrappedFun:
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
+  params_dict = {} if params is None else params
   params = () if params is None else tuple(sorted(params.items()))
-  return WrappedFun(f, (), (), params, None, None)
+  return WrappedFun(f, partial(f, **params_dict), (), (), params, None, None)
 
 
 def annotate(f: WrappedFun, in_type: core.InputType | None) -> WrappedFun:
@@ -272,13 +260,13 @@ def annotate(f: WrappedFun, in_type: core.InputType | None) -> WrappedFun:
   if in_type is None:
     return f
   _check_input_type(in_type)
-  return WrappedFun(f.f, f.transforms, f.stores, f.params, in_type, f.debug_info)
+  return WrappedFun(f.f, f.f_transformed, f.transforms, f.stores, f.params, in_type, f.debug_info)
 
 def _check_input_type(in_type: core.InputType) -> None:
   # Check that in_type is syntactically well-formed
   assert type(in_type) is tuple and all(type(e) is tuple for e in in_type)
   assert all(isinstance(a, core.AbstractValue) and type(b) is bool
-             and not isinstance(a, core.ConcreteArray) for a, b in in_type)
+             for a, b in in_type)
 
   def valid_size(d) -> bool:
     if isinstance(d, core.DBIdx) and type(d.val) is int and d.val >= 0:
@@ -319,7 +307,7 @@ def add_debug_info(f: WrappedFun, debug_info: TracingDebugInfo | None
   assert f.debug_info is None
   if debug_info is None:
     return f
-  return WrappedFun(f.f, f.transforms, f.stores, f.params, f.in_type, debug_info)
+  return WrappedFun(f.f, f.f_transformed, f.transforms, f.stores, f.params, f.in_type, debug_info)
 
 
 def cache(call: Callable, *, explain: Callable | None = None):
@@ -337,13 +325,8 @@ def cache(call: Callable, *, explain: Callable | None = None):
 
   def memoized_fun(fun: WrappedFun, *args):
     cache = fun_caches.setdefault(fun.f, new_cache := {})  # type: ignore
-    if config.check_tracer_leaks.value:
-      key = (_copy_main_traces(fun.transforms), fun.params, fun.in_type, args,
-             config.enable_x64.value, config.default_device.value,
-             config.trace_context())
-    else:
-      key = (fun.transforms, fun.params, fun.in_type, args, config.enable_x64.value,
-             config.default_device.value, config.trace_context())
+    key = (fun.transforms, fun.params, fun.in_type, args, config.enable_x64.value,
+           config.default_device.value, config.trace_context())
     result = cache.get(key, None)
     if result is not None:
       ans, stores = result
@@ -364,20 +347,9 @@ def cache(call: Callable, *, explain: Callable | None = None):
   cache_clearing_funs.add(memoized_fun.cache_clear)
   return memoized_fun
 
-
-def _copy_main_trace(x):
-  if isinstance(x, core.MainTrace):
-    return core.MainTrace(x.level, x.trace_type, **x.payload)
-  else:
-    return x
-
-_copy_main_traces = partial(tree_map, _copy_main_trace)
-
-
-
-@transformation
-def hashable_partial(*args):
-  yield (yield args, {})
+@transformation2
+def hashable_partial(f, *args):
+  return f(*args)
 
 
 def merge_linear_aux(aux1, aux2):

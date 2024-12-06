@@ -582,20 +582,15 @@ def _fwd_cost_estimate(
     kernel_inputs_specs,
     kernel_outputs_specs,
 ) -> pl.CostEstimate | None:
-  full_cost = (
-      mha_reference.lower(
-          q, k, v, ab, segment_ids, causal=causal, sm_scale=sm_scale
-      )
-      .compile()
-      .cost_analysis()
+  body_cost = pl.estimate_cost(
+    mha_reference,
+    q, k, v, ab, segment_ids, causal=causal, sm_scale=sm_scale
   )
-  if not full_cost:
-    return None
   input_bytes = sum(_bytes(x) for x in jax.tree.leaves(kernel_inputs_specs))
   output_bytes = sum(_bytes(x) for x in jax.tree.leaves(kernel_outputs_specs))
   return pl.CostEstimate(
-      flops=full_cost[0]["flops"],
-      transcendentals=full_cost[0]["transcendentals"],
+      flops=body_cost.flops,
+      transcendentals=body_cost.transcendentals,
       bytes_accessed=input_bytes + output_bytes,
   )
 

@@ -93,11 +93,12 @@ def build_jaxlib_wheel(
     cmd = [
         "python",
         "build/build.py",
-        "--enable_rocm",
-        "--build_gpu_plugin",
-        "--gpu_plugin_rocm_version=60",
+        "build"
+        "--wheels=jaxlib,jax-rocm-plugin,jax-rocm-pjrt"
         "--rocm_path=%s" % rocm_path,
+        "--rocm_version=60",
         "--use_clang=%s" % use_clang,
+        "--verbose"
     ]
 
     # Add clang path if clang is used.

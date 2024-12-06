@@ -52,7 +52,7 @@ from jax._src import dtypes
 from jax._src import xla_bridge
 from jax._src.api_util import _ensure_index_tuple
 from jax._src.array import ArrayImpl
-from jax._src.core import ConcreteArray, ShapedArray
+from jax._src.core import ShapedArray
 from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.lax import ( PrecisionLike,_array_copy,
@@ -68,12 +68,15 @@ from jax._src.typing import (
 )
 from jax._src.util import (
     NumpyComplexWarning, canonicalize_axis as _canonicalize_axis,
-    ceil_of_ratio, partition_list, safe_zip, subvals,unzip2)
+    ceil_of_ratio, partition_list, safe_zip, set_module, subvals,unzip2,
+    tuple_replace)
 from jax.sharding import (Sharding, SingleDeviceSharding, NamedSharding,
                           PartitionSpec as P)
 from jax.tree_util import tree_flatten, tree_leaves, tree_map
 import numpy as np
 import opt_einsum
+
+export = set_module('jax.numpy')
 
 for pkg_name in ['jax_cuda12_plugin', 'jax.jaxlib']:
   try:
@@ -116,6 +119,7 @@ get_printoptions = np.get_printoptions
 printoptions = np.printoptions
 set_printoptions = np.set_printoptions
 
+@export
 def iscomplexobj(x: Any) -> bool:
   """Check if the input is a complex number or an array containing complex elements.
 
@@ -194,6 +198,12 @@ def _make_scalar_type(np_scalar_type: type) -> _ScalarMeta:
   meta = _ScalarMeta(np_scalar_type.__name__, (object,),
                      {"dtype": np.dtype(np_scalar_type)})
   meta.__module__ = _PUBLIC_MODULE_NAME
+  meta.__doc__ =\
+  f"""A JAX scalar constructor of type {np_scalar_type.__name__}.
+
+  While NumPy defines scalar types for each data type, JAX represents
+  scalars as zero-dimensional arrays.
+  """
   return meta
 
 bool_ = _make_scalar_type(np.bool_)
@@ -211,6 +221,10 @@ int8 = _make_scalar_type(np.int8)
 int16 = _make_scalar_type(np.int16)
 int32 = _make_scalar_type(np.int32)
 int64 = _make_scalar_type(np.int64)
+if dtypes.float8_e3m4 is not None:
+  float8_e3m4 = _make_scalar_type(dtypes.float8_e3m4)
+if dtypes.float8_e4m3 is not None:
+  float8_e4m3 = _make_scalar_type(dtypes.float8_e4m3)
 float8_e4m3fn = _make_scalar_type(dtypes.float8_e4m3fn)
 float8_e4m3fnuz = _make_scalar_type(dtypes.float8_e4m3fnuz)
 float8_e5m2 = _make_scalar_type(dtypes.float8_e5m2)
@@ -321,6 +335,7 @@ def _convert_and_clip_integer(val: ArrayLike, dtype: DType) -> Array:
   return clip(val, min_val, max_val).astype(dtype)
 
 
+@export
 def load(file: IO[bytes] | str | os.PathLike[Any], *args: Any, **kwargs: Any) -> Array:
   """Load JAX arrays from npy files.
 
@@ -370,6 +385,7 @@ def load(file: IO[bytes] | str | os.PathLike[Any], *args: Any, **kwargs: Any) ->
 
 ### implementations of numpy functions in terms of lax
 
+@export
 @jit
 def fmin(x1: ArrayLike, x2: ArrayLike) -> Array:
   """Return element-wise minimum of the input arrays.
@@ -421,6 +437,7 @@ def fmin(x1: ArrayLike, x2: ArrayLike) -> Array:
   return where(ufuncs.less(x1, x2) | ufuncs.isnan(x2), x1, x2)
 
 
+@export
 @jit
 def fmax(x1: ArrayLike, x2: ArrayLike) -> Array:
   """Return element-wise maximum of the input arrays.
@@ -470,6 +487,7 @@ def fmax(x1: ArrayLike, x2: ArrayLike) -> Array:
   return where(ufuncs.greater(x1, x2) | ufuncs.isnan(x2), x1, x2)
 
 
+@export
 def issubdtype(arg1: DTypeLike, arg2: DTypeLike) -> bool:
   """Return True if arg1 is equal or lower than arg2 in the type hierarchy.
 
@@ -516,6 +534,7 @@ def issubdtype(arg1: DTypeLike, arg2: DTypeLike) -> bool:
   return dtypes.issubdtype(arg1, arg2)
 
 
+@export
 def isscalar(element: Any) -> bool:
   """Return True if the input is a scalar.
 
@@ -605,15 +624,18 @@ def isscalar(element: Any) -> bool:
     >>> jnp.isscalar(slice(10))
     False
   """
-  if (isinstance(element, (np.ndarray, jax.Array))
-      or hasattr(element, '__jax_array__')
-      or np.isscalar(element)):
+  if np.isscalar(element):
+    return True
+  elif isinstance(element, (np.ndarray, jax.Array)):
+    return element.ndim == 0
+  elif hasattr(element, '__jax_array__'):
     return asarray(element).ndim == 0
   return False
 
 iterable = np.iterable
 
 
+@export
 def result_type(*args: Any) -> DType:
   """Return the result of applying JAX promotion rules to the inputs.
 
@@ -657,6 +679,7 @@ def result_type(*args: Any) -> DType:
   return dtypes.result_type(*args)
 
 
+@export
 @jit
 def trunc(x: ArrayLike) -> Array:
   """Round input to the nearest integer towards zero.
@@ -733,6 +756,7 @@ def _conv(x: Array, y: Array, mode: str, op: str, precision: PrecisionLike,
   return result[0, 0, out_order]
 
 
+@export
 @partial(jit, static_argnames=('mode', 'precision', 'preferred_element_type'))
 def convolve(a: ArrayLike, v: ArrayLike, mode: str = 'full', *,
              precision: PrecisionLike = None,
@@ -808,6 +832,7 @@ def convolve(a: ArrayLike, v: ArrayLike, mode: str = 'full', *,
                precision=precision, preferred_element_type=preferred_element_type)
 
 
+@export
 @partial(jit, static_argnames=('mode', 'precision', 'preferred_element_type'))
 def correlate(a: ArrayLike, v: ArrayLike, mode: str = 'valid', *,
               precision: PrecisionLike = None,
@@ -893,6 +918,7 @@ def correlate(a: ArrayLike, v: ArrayLike, mode: str = 'valid', *,
                precision=precision, preferred_element_type=preferred_element_type)
 
 
+@export
 def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
                         range: None | Array | Sequence[ArrayLike] = None,
                         weights: ArrayLike | None = None) -> Array:
@@ -944,6 +970,7 @@ def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
   return linspace(range[0], range[1], bins_int + 1, dtype=dtype)
 
 
+@export
 def histogram(a: ArrayLike, bins: ArrayLike = 10,
               range: Sequence[ArrayLike] | None = None,
               weights: ArrayLike | None = None,
@@ -1025,6 +1052,7 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
   return counts, bin_edges
 
 
+@export
 def histogram2d(x: ArrayLike, y: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
                 range: Sequence[None | Array | Sequence[ArrayLike]] | None = None,
                 weights: ArrayLike | None = None,
@@ -1114,6 +1142,7 @@ def histogram2d(x: ArrayLike, y: ArrayLike, bins: ArrayLike | list[ArrayLike] = 
   return hist, edges[0], edges[1]
 
 
+@export
 def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
                 range: Sequence[None | Array | Sequence[ArrayLike]] | None = None,
                 weights: ArrayLike | None = None,
@@ -1223,6 +1252,7 @@ def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
   return hist, bin_edges_by_dim
 
 
+@export
 def transpose(a: ArrayLike, axes: Sequence[int] | None = None) -> Array:
   """Return a transposed version of an N-dimensional array.
 
@@ -1301,6 +1331,7 @@ def transpose(a: ArrayLike, axes: Sequence[int] | None = None) -> Array:
   return lax.transpose(a, axes_)
 
 
+@export
 def permute_dims(a: ArrayLike, /, axes: tuple[int, ...]) -> Array:
   """Permute the axes/dimensions of an array.
 
@@ -1330,6 +1361,7 @@ def permute_dims(a: ArrayLike, /, axes: tuple[int, ...]) -> Array:
   return lax.transpose(a, axes)
 
 
+@export
 def matrix_transpose(x: ArrayLike, /) -> Array:
   """Transpose the last two dimensions of an array.
 
@@ -1383,6 +1415,7 @@ def matrix_transpose(x: ArrayLike, /) -> Array:
   return lax.transpose(x, axes)
 
 
+@export
 @partial(jit, static_argnames=('k', 'axes'))
 def rot90(m: ArrayLike, k: int = 1, axes: tuple[int, int] = (0, 1)) -> Array:
   """Rotate an array by 90 degrees counterclockwise in the plane specified by axes.
@@ -1466,6 +1499,7 @@ def rot90(m: ArrayLike, k: int = 1, axes: tuple[int, int] = (0, 1)) -> Array:
       return flip(transpose(m, perm), ax2)
 
 
+@export
 def flip(m: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
   """Reverse the order of elements of an array along the given axis.
 
@@ -1533,6 +1567,7 @@ def _flip(m: Array, axis: int | tuple[int, ...] | None = None) -> Array:
   return lax.rev(m, [_canonicalize_axis(ax, ndim(m)) for ax in axis])
 
 
+@export
 def fliplr(m: ArrayLike) -> Array:
   """Reverse the order of elements of an array along axis 1.
 
@@ -1559,6 +1594,7 @@ def fliplr(m: ArrayLike) -> Array:
   return _flip(asarray(m), 1)
 
 
+@export
 def flipud(m: ArrayLike) -> Array:
   """Reverse the order of elements of an array along axis 0.
 
@@ -1584,6 +1620,8 @@ def flipud(m: ArrayLike) -> Array:
   util.check_arraylike("flipud", m)
   return _flip(asarray(m), 0)
 
+
+@export
 @jit
 def iscomplex(x: ArrayLike) -> Array:
   """Return boolean array showing where the input is complex.
@@ -1607,6 +1645,8 @@ def iscomplex(x: ArrayLike) -> Array:
   i = ufuncs.imag(x)
   return lax.ne(i, _lax_const(i, 0))
 
+
+@export
 @jit
 def isreal(x: ArrayLike) -> Array:
   """Return boolean array showing where the input is real.
@@ -1631,6 +1671,7 @@ def isreal(x: ArrayLike) -> Array:
   return lax.eq(i, _lax_const(i, 0))
 
 
+@export
 @partial(jit, static_argnames=['deg'])
 def angle(z: ArrayLike, deg: bool = False) -> Array:
   """Return the angle of a complex valued number or array.
@@ -1682,6 +1723,7 @@ def angle(z: ArrayLike, deg: bool = False) -> Array:
   return ufuncs.degrees(result) if deg else result
 
 
+@export
 @partial(jit, static_argnames=('n', 'axis'))
 def diff(a: ArrayLike, n: int = 1, axis: int = -1,
          prepend: ArrayLike | None = None,
@@ -1794,6 +1836,7 @@ def diff(a: ArrayLike, n: int = 1, axis: int = -1,
   return arr
 
 
+@export
 @jit
 def ediff1d(ary: ArrayLike, to_end: ArrayLike | None = None,
             to_begin: ArrayLike | None = None) -> Array:
@@ -1856,6 +1899,8 @@ def ediff1d(ary: ArrayLike, to_end: ArrayLike | None = None,
     result = concatenate((result, ravel(asarray(to_end, dtype=arr.dtype))))
   return result
 
+
+@export
 @partial(jit, static_argnames=("axis", "edge_order"))
 def gradient(
     f: ArrayLike,
@@ -1986,6 +2031,7 @@ def gradient(
   return a_grad[0] if len(axis_tuple) == 1 else a_grad
 
 
+@export
 def isrealobj(x: Any) -> bool:
   """Check if the input is not a complex number or an array containing complex elements.
 
@@ -2020,6 +2066,7 @@ def isrealobj(x: Any) -> bool:
   return not iscomplexobj(x)
 
 
+@export
 def reshape(
     a: ArrayLike, shape: DimSize | Shape | None = None, order: str = "C", *,
     newshape: DimSize | Shape | DeprecatedArg = DeprecatedArg(),
@@ -2098,20 +2145,11 @@ def reshape(
   __tracebackhide__ = True
   util.check_arraylike("reshape", a)
 
-  # TODO(micky774): deprecated 2024-5-9, remove after deprecation expires.
+  # TODO(jakevdp): finalized 2024-12-2; remove argument after JAX v0.4.40.
   if not isinstance(newshape, DeprecatedArg):
-    if shape is not None:
-      raise ValueError(
-        "jnp.reshape received both `shape` and `newshape` arguments. Note that "
-        "using `newshape` is deprecated, please only use `shape` instead."
-      )
-    deprecations.warn(
-      "jax-numpy-reshape-newshape",
-      ("The newshape argument of jax.numpy.reshape is deprecated. "
-       "Please use the shape argument instead."), stacklevel=2)
-    shape = newshape
-    del newshape
-  elif shape is None:
+    raise TypeError("The newshape argument to jnp.reshape was removed in JAX v0.4.36."
+                    " Use shape instead.")
+  if shape is None:
     raise TypeError(
       "jnp.shape requires passing a `shape` argument, but none was given."
     )
@@ -2123,6 +2161,7 @@ def reshape(
   return asarray(a).reshape(shape, order=order)
 
 
+@export
 @partial(jit, static_argnames=('order',), inline=True)
 def ravel(a: ArrayLike, order: str = "C") -> Array:
   """Flatten array into a 1-dimensional shape.
@@ -2176,6 +2215,7 @@ def ravel(a: ArrayLike, order: str = "C") -> Array:
   return reshape(a, (size(a),), order)
 
 
+@export
 def ravel_multi_index(multi_index: Sequence[ArrayLike], dims: Sequence[int],
                       mode: str = 'raise', order: str = 'C') -> Array:
   """Convert multi-dimensional indices into flat indices.
@@ -2267,6 +2307,7 @@ def ravel_multi_index(multi_index: Sequence[ArrayLike], dims: Sequence[int],
   return result
 
 
+@export
 def unravel_index(indices: ArrayLike, shape: Shape) -> tuple[Array, ...]:
   """Convert flat indices into multi-dimensional indices.
 
@@ -2330,6 +2371,7 @@ def unravel_index(indices: ArrayLike, shape: Shape) -> tuple[Array, ...]:
                for s, i in safe_zip(shape, out_indices))
 
 
+@export
 @partial(jit, static_argnames=('new_shape',))
 def resize(a: ArrayLike, new_shape: Shape) -> Array:
   """Return a new array with specified shape.
@@ -2381,6 +2423,7 @@ def resize(a: ArrayLike, new_shape: Shape) -> Array:
   return reshape(arr, new_shape)
 
 
+@export
 def squeeze(a: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
   """Remove one or more length-1 axes from array
 
@@ -2451,6 +2494,7 @@ def _squeeze(a: Array, axis: tuple[int, ...]) -> Array:
   return lax.squeeze(a, axis)
 
 
+@export
 def expand_dims(a: ArrayLike, axis: int | Sequence[int]) -> Array:
   """Insert dimensions of length 1 into array
 
@@ -2521,6 +2565,7 @@ def expand_dims(a: ArrayLike, axis: int | Sequence[int]) -> Array:
   return lax.expand_dims(a, axis)
 
 
+@export
 @partial(jit, static_argnames=('axis1', 'axis2'), inline=True)
 def swapaxes(a: ArrayLike, axis1: int, axis2: int) -> Array:
   """Swap two axes of an array.
@@ -2568,6 +2613,7 @@ def swapaxes(a: ArrayLike, axis1: int, axis2: int) -> Array:
   return lax.transpose(a, list(perm))
 
 
+@export
 def moveaxis(a: ArrayLike, source: int | Sequence[int],
              destination: int | Sequence[int]) -> Array:
   """Move an array axis to a new position
@@ -2633,6 +2679,7 @@ def _moveaxis(a: Array, source: tuple[int, ...], destination: tuple[int, ...]) -
   return lax.transpose(a, perm)
 
 
+@export
 @partial(jit, static_argnames=('equal_nan',))
 def isclose(a: ArrayLike, b: ArrayLike, rtol: ArrayLike = 1e-05, atol: ArrayLike = 1e-08,
             equal_nan: bool = False) -> Array:
@@ -2777,6 +2824,7 @@ def _interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
   return f
 
 
+@export
 def interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
            left: ArrayLike | str | None = None,
            right: ArrayLike | str | None = None,
@@ -2859,6 +2907,7 @@ def where(condition: ArrayLike, x: ArrayLike | None = None,
           ) -> Array | tuple[Array, ...]: ...
 
 
+@export
 def where(condition, x=None, y=None, /, *, size=None, fill_value=None):
   """Select elements from two arrays based on a condition.
 
@@ -2934,6 +2983,7 @@ def where(condition, x=None, y=None, /, *, size=None, fill_value=None):
     return util._where(condition, x, y)
 
 
+@export
 def select(
     condlist: Sequence[ArrayLike],
     choicelist: Sequence[ArrayLike],
@@ -3001,6 +3051,7 @@ def select(
   return lax.select_n(*broadcast_arrays(idx, *choicelist))
 
 
+@export
 def bincount(x: ArrayLike, weights: ArrayLike | None = None,
              minlength: int = 0, *, length: int | None = None
              ) -> Array:
@@ -3064,6 +3115,8 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
     Array([2, 1, 0, 1, 0], dtype=int32)
   """
   util.check_arraylike("bincount", x)
+  if _dtype(x) == bool:
+    x = lax.convert_element_type(x, 'int32')
   if not issubdtype(_dtype(x), integer):
     raise TypeError(f"x argument to bincount must have an integer type; got {_dtype(x)}")
   if ndim(x) != 1:
@@ -3074,7 +3127,7 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
     x_arr = core.concrete_or_error(asarray, x,
       "The error occurred because of argument 'x' of jnp.bincount. "
       "To avoid this error, pass a static `length` argument.")
-    length = max(minlength, x_arr.size and int(x_arr.max()) + 1)
+    length = max(minlength, x_arr.size and int(max(0, x_arr.max())) + 1)
   else:
     length = core.concrete_dim_or_error(length,
         "The error occurred because of argument 'length' of jnp.bincount.")
@@ -3091,6 +3144,7 @@ def broadcast_shapes(*shapes: Sequence[int]) -> tuple[int, ...]: ...
 def broadcast_shapes(*shapes: Sequence[int | core.Tracer]
                      ) -> tuple[int | core.Tracer, ...]: ...
 
+@export
 def broadcast_shapes(*shapes):
   """Broadcast input shapes to a common output shape.
 
@@ -3131,6 +3185,7 @@ def broadcast_shapes(*shapes):
   return lax.broadcast_shapes(*shapes)
 
 
+@export
 def broadcast_arrays(*args: ArrayLike) -> list[Array]:
   """Broadcast arrays to a common shape.
 
@@ -3170,6 +3225,7 @@ def broadcast_arrays(*args: ArrayLike) -> list[Array]:
   return util._broadcast_arrays(*args)
 
 
+@export
 def broadcast_to(array: ArrayLike, shape: DimSize | Shape) -> Array:
   """Broadcast an array to a specified shape.
 
@@ -3246,6 +3302,7 @@ def _split(op: str, ary: ArrayLike,
           for start, end in zip(split_indices[:-1], split_indices[1:])]
 
 
+@export
 def split(ary: ArrayLike, indices_or_sections: int | Sequence[int] | ArrayLike,
           axis: int = 0) -> list[Array]:
   """Split an array into sub-arrays.
@@ -3309,6 +3366,7 @@ def split(ary: ArrayLike, indices_or_sections: int | Sequence[int] | ArrayLike,
   return _split("split", ary, indices_or_sections, axis=axis)
 
 
+@export
 def vsplit(ary: ArrayLike, indices_or_sections: int | Sequence[int] | ArrayLike) -> list[Array]:
   """Split an array into sub-arrays vertically.
 
@@ -3343,6 +3401,7 @@ def vsplit(ary: ArrayLike, indices_or_sections: int | Sequence[int] | ArrayLike)
   return _split("vsplit", ary, indices_or_sections, axis=0)
 
 
+@export
 def hsplit(ary: ArrayLike, indices_or_sections: int | Sequence[int] | ArrayLike) -> list[Array]:
   """Split an array into sub-arrays horizontally.
 
@@ -3383,6 +3442,7 @@ def hsplit(ary: ArrayLike, indices_or_sections: int | Sequence[int] | ArrayLike)
   return _split("hsplit", a, indices_or_sections, axis=0 if a.ndim == 1 else 1)
 
 
+@export
 def dsplit(ary: ArrayLike, indices_or_sections: int | Sequence[int] | ArrayLike) -> list[Array]:
   """Split an array into sub-arrays depth-wise.
 
@@ -3424,6 +3484,7 @@ def dsplit(ary: ArrayLike, indices_or_sections: int | Sequence[int] | ArrayLike)
   return _split("dsplit", ary, indices_or_sections, axis=2)
 
 
+@export
 def array_split(ary: ArrayLike, indices_or_sections: int | Sequence[int] | ArrayLike,
                 axis: int = 0) -> list[Array]:
   """Split an array into sub-arrays.
@@ -3449,6 +3510,7 @@ def array_split(ary: ArrayLike, indices_or_sections: int | Sequence[int] | Array
   return _split("array_split", ary, indices_or_sections, axis=axis)
 
 
+@export
 @jit
 def clip(
   arr: ArrayLike | None = None,
@@ -3520,6 +3582,7 @@ def clip(
   return asarray(arr)
 
 
+@export
 @partial(jit, static_argnames=('decimals',))
 def round(a: ArrayLike, decimals: int = 0, out: None = None) -> Array:
   """Round input evenly to the given number of decimals.
@@ -3591,12 +3654,14 @@ def round(a: ArrayLike, decimals: int = 0, out: None = None) -> Array:
     return _round_float(a)
 
 
+@export
 @partial(jit, static_argnames=('decimals',))
 def around(a: ArrayLike, decimals: int = 0, out: None = None) -> Array:
   """Alias of :func:`jax.numpy.round`"""
   return round(a, decimals, out)
 
 
+@export
 @jit
 def fix(x: ArrayLike, out: None = None) -> Array:
   """Round input to the nearest integer towards zero.
@@ -3635,6 +3700,7 @@ def fix(x: ArrayLike, out: None = None) -> Array:
   return where(lax.ge(x, zero), ufuncs.floor(x), ufuncs.ceil(x))
 
 
+@export
 @jit
 def nan_to_num(x: ArrayLike, copy: bool = True, nan: ArrayLike = 0.0,
                posinf: ArrayLike | None = None,
@@ -3700,6 +3766,7 @@ def nan_to_num(x: ArrayLike, copy: bool = True, nan: ArrayLike = 0.0,
   return out
 
 
+@export
 @partial(jit, static_argnames=('equal_nan',))
 def allclose(a: ArrayLike, b: ArrayLike, rtol: ArrayLike = 1e-05,
              atol: ArrayLike = 1e-08, equal_nan: bool = False) -> Array:
@@ -3748,6 +3815,7 @@ def allclose(a: ArrayLike, b: ArrayLike, rtol: ArrayLike = 1e-05,
   return reductions.all(isclose(a, b, rtol, atol, equal_nan))
 
 
+@export
 def nonzero(a: ArrayLike, *, size: int | None = None,
             fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
     ) -> tuple[Array, ...]:
@@ -3855,6 +3923,7 @@ def nonzero(a: ArrayLike, *, size: int | None = None,
   return out
 
 
+@export
 def flatnonzero(a: ArrayLike, *, size: int | None = None,
                 fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None) -> Array:
   """Return indices of nonzero elements in a flattened array
@@ -3900,6 +3969,7 @@ def flatnonzero(a: ArrayLike, *, size: int | None = None,
   return nonzero(ravel(a), size=size, fill_value=fill_value)[0]
 
 
+@export
 @partial(jit, static_argnames=('axis',))
 def unwrap(p: ArrayLike, discont: ArrayLike | None = None,
            axis: int = -1, period: ArrayLike = 2 * pi) -> Array:
@@ -4040,15 +4110,37 @@ def _check_no_padding(axis_padding: tuple[Any, Any], mode: str):
 
 def _pad_constant(array: Array, pad_width: PadValue[int], constant_values: Array) -> Array:
   nd = ndim(array)
-  constant_values = broadcast_to(constant_values, (nd, 2))
   constant_values = lax_internal._convert_element_type(
       constant_values, array.dtype, dtypes.is_weakly_typed(array))
+  constant_values_nd = ndim(constant_values)
+
+  if constant_values_nd == 0:
+    widths = [(low, high, 0) for (low, high) in pad_width]
+    return lax.pad(array, constant_values, widths)
+
+  if constant_values_nd == 1:
+    if constant_values.shape[-1] == 1:
+      widths = [(low, high, 0) for (low, high) in pad_width]
+      return lax.pad(array, squeeze(constant_values), widths)
+    elif constant_values.shape[-1] == 2:
+      widths = [(low, 0, 0) for (low, _) in pad_width]
+      array = lax.pad(array, constant_values[0], widths)
+      widths = [(0, high, 0) for (_, high) in pad_width]
+      return lax.pad(array, constant_values[1], widths)
+    else:
+      raise ValueError("jnp.pad: constant_values has unsupported shape "
+                      f"{constant_values.shape}. If the shape is 1D or 2D, the "
+                      "last dimension must be of size 1 or 2.")
+
+  constant_values = broadcast_to(constant_values, (nd, 2))
   for i in range(nd):
     widths = [(0, 0, 0)] * nd
-    widths[i] = (pad_width[i][0], 0, 0)
-    array = lax.pad(array, constant_values[i, 0], widths)
-    widths[i] = (0, pad_width[i][1], 0)
-    array = lax.pad(array, constant_values[i, 1], widths)
+    if pad_width[i][0] != 0:
+      widths[i] = (pad_width[i][0], 0, 0)
+      array = lax.pad(array, constant_values[i, 0], widths)
+    if pad_width[i][1] != 0:
+      widths[i] = (0, pad_width[i][1], 0)
+      array = lax.pad(array, constant_values[i, 1], widths)
   return array
 
 
@@ -4307,6 +4399,7 @@ def _pad(array: ArrayLike, pad_width: PadValueLike[int], mode: str,
                    "not implemented modes")
 
 
+@export
 def pad(array: ArrayLike, pad_width: PadValueLike[int | Array | np.ndarray],
         mode: str | Callable[..., Any] = "constant", **kwargs) -> Array:
   """Add padding to an array.
@@ -4463,6 +4556,7 @@ def pad(array: ArrayLike, pad_width: PadValueLike[int | Array | np.ndarray],
 ### Array-creation functions
 
 
+@export
 def stack(arrays: np.ndarray | Array | Sequence[ArrayLike],
           axis: int = 0, out: None = None, dtype: DTypeLike | None = None) -> Array:
   """Join arrays along a new axis.
@@ -4529,6 +4623,7 @@ def stack(arrays: np.ndarray | Array | Sequence[ArrayLike],
     return concatenate(new_arrays, axis=axis, dtype=dtype)
 
 
+@export
 @partial(jit, static_argnames="axis")
 def unstack(x: ArrayLike, /, *, axis: int = 0) -> tuple[Array, ...]:
   """Unstack an array along an axis.
@@ -4569,6 +4664,8 @@ def unstack(x: ArrayLike, /, *, axis: int = 0) -> tuple[Array, ...]:
     )
   return tuple(moveaxis(x, axis, 0))
 
+
+@export
 def tile(A: ArrayLike, reps: DimSize | Sequence[DimSize]) -> Array:
   """Construct an array by repeating ``A`` along specified dimensions.
 
@@ -4632,6 +4729,7 @@ def _concatenate_array(arr: ArrayLike, axis: int | None,
   return lax.reshape(arr, shape, dimensions)
 
 
+@export
 def concatenate(arrays: np.ndarray | Array | Sequence[ArrayLike],
                 axis: int | None = 0, dtype: DTypeLike | None = None) -> Array:
   """Join arrays along an existing axis.
@@ -4695,6 +4793,7 @@ def concatenate(arrays: np.ndarray | Array | Sequence[ArrayLike],
   return arrays_out[0]
 
 
+@export
 def concat(arrays: Sequence[ArrayLike], /, *, axis: int | None = 0) -> Array:
   """Join arrays along an existing axis.
 
@@ -4735,6 +4834,7 @@ def concat(arrays: Sequence[ArrayLike], /, *, axis: int | None = 0) -> Array:
   return jax.numpy.concatenate(arrays, axis=axis)
 
 
+@export
 def vstack(tup: np.ndarray | Array | Sequence[ArrayLike],
            dtype: DTypeLike | None = None) -> Array:
   """Vertically stack arrays.
@@ -4795,6 +4895,7 @@ def vstack(tup: np.ndarray | Array | Sequence[ArrayLike],
   return concatenate(arrs, axis=0, dtype=dtype)
 
 
+@export
 def hstack(tup: np.ndarray | Array | Sequence[ArrayLike],
            dtype: DTypeLike | None = None) -> Array:
   """Horizontally stack arrays.
@@ -4855,6 +4956,7 @@ def hstack(tup: np.ndarray | Array | Sequence[ArrayLike],
   return concatenate(arrs, axis=0 if arr0_ndim == 1 else 1, dtype=dtype)
 
 
+@export
 def dstack(tup: np.ndarray | Array | Sequence[ArrayLike],
            dtype: DTypeLike | None = None) -> Array:
   """Stack arrays depth-wise.
@@ -4915,6 +5017,7 @@ def dstack(tup: np.ndarray | Array | Sequence[ArrayLike],
   return concatenate(arrs, axis=2, dtype=dtype)
 
 
+@export
 def column_stack(tup: np.ndarray | Array | Sequence[ArrayLike]) -> Array:
   """Stack arrays column-wise.
 
@@ -4975,6 +5078,7 @@ def column_stack(tup: np.ndarray | Array | Sequence[ArrayLike]) -> Array:
   return concatenate(arrs, axis=1)
 
 
+@export
 def choose(a: ArrayLike, choices: Array | np.ndarray | Sequence[ArrayLike],
            out: None = None, mode: str = 'raise') -> Array:
   """Construct an array by stacking slices of choice arrays.
@@ -5099,6 +5203,7 @@ def _block(xs: ArrayLike | list[ArrayLike]) -> tuple[Array, int]:
     return asarray(xs), 1
 
 
+@export
 @jit
 def block(arrays: ArrayLike | list[ArrayLike]) -> Array:
   """Create an array from a list of blocks.
@@ -5182,6 +5287,7 @@ def atleast_1d(x: ArrayLike, /) -> Array:
 @overload
 def atleast_1d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
   ...
+@export
 @jit
 def atleast_1d(*arys: ArrayLike) -> Array | list[Array]:
   """Convert inputs to arrays with at least 1 dimension.
@@ -5236,6 +5342,7 @@ def atleast_2d(x: ArrayLike, /) -> Array:
 @overload
 def atleast_2d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
   ...
+@export
 @jit
 def atleast_2d(*arys: ArrayLike) -> Array | list[Array]:
   """Convert inputs to arrays with at least 2 dimensions.
@@ -5299,6 +5406,7 @@ def atleast_3d(x: ArrayLike, /) -> Array:
 @overload
 def atleast_3d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
   ...
+@export
 @jit
 def atleast_3d(*arys: ArrayLike) -> Array | list[Array]:
   """Convert inputs to arrays with at least 3 dimensions.
@@ -5375,6 +5483,7 @@ def _supports_buffer_protocol(obj):
     return True
 
 
+@export
 def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
           order: str | None = "K", ndmin: int = 0,
           *, device: xc.Device | Sharding | None = None) -> Array:
@@ -5567,6 +5676,7 @@ def _convert_to_array_if_dtype_fails(x: ArrayLike) -> ArrayLike:
     return x
 
 
+@export
 def astype(x: ArrayLike, dtype: DTypeLike | None,
            /, *, copy: bool = False,
            device: xc.Device | Sharding | None = None) -> Array:
@@ -5632,6 +5742,7 @@ def astype(x: ArrayLike, dtype: DTypeLike | None,
   return _array_copy(result) if copy else result
 
 
+@export
 def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None,
             *, copy: bool | None = None,
             device: xc.Device | Sharding | None = None) -> Array:
@@ -5713,6 +5824,7 @@ def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None,
   return array(a, dtype=dtype, copy=bool(copy), order=order, device=device)
 
 
+@export
 def copy(a: ArrayLike, order: str | None = None) -> Array:
   """Return a copy of the array.
 
@@ -5761,6 +5873,7 @@ def copy(a: ArrayLike, order: str | None = None) -> Array:
   return array(a, copy=True, order=order)
 
 
+@export
 def zeros_like(a: ArrayLike | DuckTypedArray,
                dtype: DTypeLike | None = None,
                shape: Any = None, *,
@@ -5803,6 +5916,7 @@ def zeros_like(a: ArrayLike | DuckTypedArray,
   return lax.full_like(a, 0, dtype, shape, sharding=_normalize_to_sharding(device))
 
 
+@export
 def ones_like(a: ArrayLike | DuckTypedArray,
               dtype: DTypeLike | None = None,
               shape: Any = None, *,
@@ -5845,6 +5959,7 @@ def ones_like(a: ArrayLike | DuckTypedArray,
   return lax.full_like(a, 1, dtype, shape, sharding=_normalize_to_sharding(device))
 
 
+@export
 def empty_like(prototype: ArrayLike | DuckTypedArray,
                dtype: DTypeLike | None = None,
                shape: Any = None, *,
@@ -5894,6 +6009,7 @@ def _normalize_to_sharding(device: xc.Device | Sharding | None) -> Sharding | No
     return device
 
 
+@export
 def full(shape: Any, fill_value: ArrayLike,
          dtype: DTypeLike | None = None, *,
          device: xc.Device | Sharding | None = None) -> Array:
@@ -5942,6 +6058,7 @@ def full(shape: Any, fill_value: ArrayLike,
         broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
 
 
+@export
 def full_like(a: ArrayLike | DuckTypedArray,
               fill_value: ArrayLike, dtype: DTypeLike | None = None,
               shape: Any = None, *,
@@ -5998,6 +6115,7 @@ def full_like(a: ArrayLike | DuckTypedArray,
         broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
 
 
+@export
 def zeros(shape: Any, dtype: DTypeLike | None = None, *,
           device: xc.Device | Sharding | None = None) -> Array:
   """Create an array full of zeros.
@@ -6034,6 +6152,7 @@ def zeros(shape: Any, dtype: DTypeLike | None = None, *,
   return lax.full(shape, 0, _jnp_dtype(dtype), sharding=_normalize_to_sharding(device))
 
 
+@export
 def ones(shape: Any, dtype: DTypeLike | None = None, *,
          device: xc.Device | Sharding | None = None) -> Array:
   """Create an array full of ones.
@@ -6070,6 +6189,7 @@ def ones(shape: Any, dtype: DTypeLike | None = None, *,
   return lax.full(shape, 1, _jnp_dtype(dtype), sharding=_normalize_to_sharding(device))
 
 
+@export
 def empty(shape: Any, dtype: DTypeLike | None = None, *,
           device: xc.Device | Sharding | None = None) -> Array:
   """Create an empty array.
@@ -6113,6 +6233,7 @@ def _check_forgot_shape_tuple(name, shape, dtype) -> str | None:  # type: ignore
             "with a single tuple argument for the shape?")
 
 
+@export
 def array_equal(a1: ArrayLike, a2: ArrayLike, equal_nan: bool = False) -> Array:
   """Check if two arrays are element-wise equal.
 
@@ -6154,6 +6275,7 @@ def array_equal(a1: ArrayLike, a2: ArrayLike, equal_nan: bool = False) -> Array:
   return reductions.all(eq)
 
 
+@export
 def array_equiv(a1: ArrayLike, a2: ArrayLike) -> Array:
   """Check if two arrays are element-wise equal.
 
@@ -6194,6 +6316,7 @@ def array_equiv(a1: ArrayLike, a2: ArrayLike) -> Array:
 
 # General np.from* style functions mostly delegate to numpy.
 
+@export
 def frombuffer(buffer: bytes | Any, dtype: DTypeLike = float,
                count: int = -1, offset: int = 0) -> Array:
   r"""Convert a buffer into a 1-D JAX array.
@@ -6241,6 +6364,7 @@ def frombuffer(buffer: bytes | Any, dtype: DTypeLike = float,
   return asarray(np.frombuffer(buffer=buffer, dtype=dtype, count=count, offset=offset))
 
 
+@export
 def fromfile(*args, **kwargs):
   """Unimplemented JAX wrapper for jnp.fromfile.
 
@@ -6259,6 +6383,7 @@ def fromfile(*args, **kwargs):
     "https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions")
 
 
+@export
 def fromiter(*args, **kwargs):
   """Unimplemented JAX wrapper for jnp.fromiter.
 
@@ -6277,6 +6402,7 @@ def fromiter(*args, **kwargs):
     "https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions")
 
 
+@export
 def from_dlpack(x: Any, /, *, device: xc.Device | Sharding | None = None,
                 copy: bool | None = None) -> Array:
   """Construct a JAX array via DLPack.
@@ -6337,6 +6463,7 @@ def from_dlpack(x: Any, /, *, device: xc.Device | Sharding | None = None,
   return from_dlpack(x, device=device, copy=copy)
 
 
+@export
 def fromfunction(function: Callable[..., Array], shape: Any,
                  *, dtype: DTypeLike = float, **kwargs) -> Array:
   """Create an array from a function applied over indices.
@@ -6423,6 +6550,7 @@ def fromfunction(function: Callable[..., Array], shape: Any,
   return function(*(arange(s, dtype=dtype) for s in shape), **kwargs)
 
 
+@export
 def fromstring(string: str, dtype: DTypeLike = float, count: int = -1, *, sep: str) -> Array:
   """Convert a string of text into 1-D JAX array.
 
@@ -6451,6 +6579,7 @@ def fromstring(string: str, dtype: DTypeLike = float, count: int = -1, *, sep: s
   return asarray(np.fromstring(string=string, dtype=dtype, count=count, sep=sep))
 
 
+@export
 def eye(N: DimSize, M: DimSize | None = None,
         k: int | ArrayLike = 0,
         dtype: DTypeLike | None = None,
@@ -6530,6 +6659,7 @@ def _eye(N: DimSize, M: DimSize | None = None,
   return (i + offset == j).astype(dtype)
 
 
+@export
 def identity(n: DimSize, dtype: DTypeLike | None = None) -> Array:
   """Create a square identity matrix
 
@@ -6563,6 +6693,7 @@ def identity(n: DimSize, dtype: DTypeLike | None = None) -> Array:
   return eye(n, dtype=dtype)
 
 
+@export
 def arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
            step: ArrayLike | None = None, dtype: DTypeLike | None = None,
            *, device: xc.Device | Sharding | None = None) -> Array:
@@ -6730,6 +6861,7 @@ def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              dtype: DTypeLike | None = None,
              axis: int = 0,
              *, device: xc.Device | Sharding | None = None) -> Array | tuple[Array, Array]: ...
+@export
 def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: bool = True, retstep: bool = False,
              dtype: DTypeLike | None = None,
@@ -6855,6 +6987,7 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
   return (result, delta) if retstep else result
 
 
+@export
 def logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: bool = True, base: ArrayLike = 10.0,
              dtype: DTypeLike | None = None, axis: int = 0) -> Array:
@@ -6940,6 +7073,7 @@ def _logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
   return lax.convert_element_type(ufuncs.power(base, lin), dtype)
 
 
+@export
 def geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool = True,
               dtype: DTypeLike | None = None, axis: int = 0) -> Array:
   """Generate geometrically-spaced values.
@@ -7014,6 +7148,7 @@ def _geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool 
   return lax.convert_element_type(res, dtype)
 
 
+@export
 def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
              indexing: str = 'xy') -> list[Array]:
   """Construct N-dimensional grid arrays from N 1-dimensional vectors.
@@ -7095,6 +7230,7 @@ def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
   return output
 
 
+@export
 @jit
 def i0(x: ArrayLike) -> Array:
   r"""Calculate modified Bessel function of first kind, zeroth order.
@@ -7144,6 +7280,7 @@ def _i0_jvp(primals, tangents):
   primal_out, tangent_out = jax.jvp(_i0.fun, primals, tangents)
   return primal_out, where(primals[0] == 0, 0.0, tangent_out)
 
+@export
 def ix_(*args: ArrayLike) -> tuple[Array, ...]:
   """Return a multi-dimensional grid (open mesh) from N one-dimensional sequences.
 
@@ -7207,6 +7344,7 @@ def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
 @overload
 def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
             sparse: bool = False) -> Array | tuple[Array, ...]: ...
+@export
 def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
             sparse: bool = False) -> Array | tuple[Array, ...]:
   """Generate arrays of grid indices.
@@ -7257,6 +7395,7 @@ def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
   return stack(output, 0) if output else array([], dtype=dtype)
 
 
+@export
 def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
            total_repeat_length: int | None = None) -> Array:
   """Construct an array from repeated elements.
@@ -7401,6 +7540,7 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
   return take(a, gather_indices, axis=axis)
 
 
+@export
 @partial(jit, static_argnames=('axis',))
 def trapezoid(y: ArrayLike, x: ArrayLike | None = None, dx: ArrayLike = 1.0,
               axis: int = -1) -> Array:
@@ -7460,6 +7600,7 @@ def trapezoid(y: ArrayLike, x: ArrayLike | None = None, dx: ArrayLike = 1.0,
   return 0.5 * (dx_array * (y_arr[..., 1:] + y_arr[..., :-1])).sum(-1)
 
 
+@export
 def tri(N: int, M: int | None = None, k: int = 0, dtype: DTypeLike | None = None) -> Array:
   r"""Return an array with ones on and below the diagonal and zeros elsewhere.
 
@@ -7516,6 +7657,7 @@ def tri(N: int, M: int | None = None, k: int = 0, dtype: DTypeLike | None = None
   return lax_internal._tri(dtype, (N, M), k)
 
 
+@export
 @partial(jit, static_argnames=('k',))
 def tril(m: ArrayLike, k: int = 0) -> Array:
   r"""Return lower triangle of an array.
@@ -7577,6 +7719,7 @@ def tril(m: ArrayLike, k: int = 0) -> Array:
   return lax.select(lax.broadcast(mask, m_shape[:-2]), m, zeros_like(m))
 
 
+@export
 @partial(jit, static_argnames=('k',))
 def triu(m: ArrayLike, k: int = 0) -> Array:
   r"""Return upper triangle of an array.
@@ -7642,6 +7785,7 @@ def triu(m: ArrayLike, k: int = 0) -> Array:
   return lax.select(lax.broadcast(mask, m_shape[:-2]), zeros_like(m), m)
 
 
+@export
 @partial(jit, static_argnames=('axis1', 'axis2', 'dtype'))
 def trace(a: ArrayLike, offset: int | ArrayLike = 0, axis1: int = 0, axis2: int = 1,
           dtype: DTypeLike | None = None, out: None = None) -> Array:
@@ -7707,6 +7851,7 @@ def trace(a: ArrayLike, offset: int | ArrayLike = 0, axis1: int = 0, axis2: int 
   return reductions.sum(a, axis=(-2, -1), dtype=dtype)
 
 
+@export
 def mask_indices(n: int,
                  mask_func: Callable[[ArrayLike, int], Array],
                  k: int = 0, *, size: int | None = None) -> tuple[Array, Array]:
@@ -7766,6 +7911,7 @@ def _triu_size(n, m, k):
     return mk * (mk + 1) // 2 + mk * (m - k - mk)
 
 
+@export
 def triu_indices(n: int, k: int = 0, m: int | None = None) -> tuple[Array, Array]:
   """Return the indices of upper triangle of an array of size ``(n, m)``.
 
@@ -7824,6 +7970,7 @@ def triu_indices(n: int, k: int = 0, m: int | None = None) -> tuple[Array, Array
   return i, j
 
 
+@export
 def tril_indices(n: int, k: int = 0, m: int | None = None) -> tuple[Array, Array]:
   """Return the indices of lower triangle of an array of size ``(n, m)``.
 
@@ -7882,6 +8029,7 @@ def tril_indices(n: int, k: int = 0, m: int | None = None) -> tuple[Array, Array
   return i, j
 
 
+@export
 def triu_indices_from(arr: ArrayLike, k: int = 0) -> tuple[Array, Array]:
   """Return the indices of upper triangle of a given array.
 
@@ -7939,6 +8087,7 @@ def triu_indices_from(arr: ArrayLike, k: int = 0) -> tuple[Array, Array]:
   return triu_indices(arr_shape[0], k=k, m=arr_shape[1])
 
 
+@export
 def tril_indices_from(arr: ArrayLike, k: int = 0) -> tuple[Array, Array]:
   """Return the indices of lower triangle of a given array.
 
@@ -7996,6 +8145,7 @@ def tril_indices_from(arr: ArrayLike, k: int = 0) -> tuple[Array, Array]:
   return tril_indices(arr_shape[0], k=k, m=arr_shape[1])
 
 
+@export
 def fill_diagonal(a: ArrayLike, val: ArrayLike, wrap: bool = False, *,
                   inplace: bool = True) -> Array:
   """Return a copy of the array with the diagonal overwritten.
@@ -8077,6 +8227,7 @@ def fill_diagonal(a: ArrayLike, val: ArrayLike, wrap: bool = False, *,
   return a.at[idx].set(val if val.ndim == 0 else _tile_to_size(val.ravel(), n))
 
 
+@export
 def diag_indices(n: int, ndim: int = 2) -> tuple[Array, ...]:
   """Return indices for accessing the main diagonal of a multidimensional array.
 
@@ -8112,6 +8263,8 @@ def diag_indices(n: int, ndim: int = 2) -> tuple[Array, ...]:
                      .format(ndim))
   return (lax.iota(int_, n),) * ndim
 
+
+@export
 def diag_indices_from(arr: ArrayLike) -> tuple[Array, ...]:
   """Return indices for accessing the main diagonal of a given array.
 
@@ -8153,6 +8306,8 @@ def diag_indices_from(arr: ArrayLike) -> tuple[Array, ...]:
 
   return diag_indices(s[0], ndim=nd)
 
+
+@export
 @partial(jit, static_argnames=('offset', 'axis1', 'axis2'))
 def diagonal(a: ArrayLike, offset: int = 0, axis1: int = 0,
              axis2: int = 1) -> Array:
@@ -8204,6 +8359,7 @@ def diagonal(a: ArrayLike, offset: int = 0, axis1: int = 0,
   return a[..., i, j] if offset >= 0 else a[..., j, i]
 
 
+@export
 def diag(v: ArrayLike, k: int = 0) -> Array:
   """Returns the specified diagonal or constructs a diagonal array.
 
@@ -8267,6 +8423,8 @@ def _diag(v, k):
   else:
     raise ValueError("diag input must be 1d or 2d")
 
+
+@export
 def diagflat(v: ArrayLike, k: int = 0) -> Array:
   """Return a 2-D array with the flattened input array laid out on the diagonal.
 
@@ -8322,6 +8480,8 @@ def diagflat(v: ArrayLike, k: int = 0) -> Array:
   return res
 
 
+# TODO(jakevdp): add support for N-dimensional inputs as in NumPy v2.2
+@export
 def trim_zeros(filt: ArrayLike, trim: str ='fb') -> Array:
   """Trim leading and/or trailing zeros of the input array.
 
@@ -8376,6 +8536,8 @@ def trim_zeros_tol(filt, tol, trim='fb'):
   end = argmin(nz[::-1]) if 'b' in trim.lower() else 0
   return filt[start:len(filt) - end]
 
+
+@export
 @partial(jit, static_argnames=('axis',))
 def append(
     arr: ArrayLike, values: ArrayLike, axis: int | None = None
@@ -8430,6 +8592,7 @@ def append(
     return concatenate([arr, values], axis=axis)
 
 
+@export
 def delete(
     arr: ArrayLike,
     obj: ArrayLike | slice,
@@ -8554,6 +8717,7 @@ def delete(
   return a[tuple(slice(None) for i in range(axis)) + (mask,)]
 
 
+@export
 def insert(arr: ArrayLike, obj: ArrayLike | slice, values: ArrayLike,
            axis: int | None = None) -> Array:
   """Insert entries into an array at specified indices.
@@ -8653,6 +8817,7 @@ def insert(arr: ArrayLike, obj: ArrayLike | slice, values: ArrayLike,
   return out
 
 
+@export
 def apply_along_axis(
     func1d: Callable, axis: int, arr: ArrayLike, *args, **kwargs
 ) -> Array:
@@ -8730,6 +8895,7 @@ def apply_along_axis(
   return func(arr)
 
 
+@export
 def apply_over_axes(func: Callable[[ArrayLike, int], Array], a: ArrayLike,
                     axes: Sequence[int]) -> Array:
   """Apply a function repeatedly over specified axes.
@@ -8788,6 +8954,7 @@ def apply_over_axes(func: Callable[[ArrayLike, int], Array], a: ArrayLike,
 
 ### Tensor contraction operations
 
+@export
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def dot(a: ArrayLike, b: ArrayLike, *,
         precision: PrecisionLike = None,
@@ -8877,6 +9044,7 @@ def dot(a: ArrayLike, b: ArrayLike, *,
                                             output_weak_type)
 
 
+@export
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def matmul(a: ArrayLike, b: ArrayLike, *,
            precision: PrecisionLike = None,
@@ -8901,7 +9069,7 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
 
   Returns:
     array containing the matrix product of the inputs. Shape is ``a.shape[:-1]``
-    if ``b.ndim == 1``, otherwise the shape is ``(..., M)``, where leading
+    if ``b.ndim == 1``, otherwise the shape is ``(..., K, M)``, where leading
     dimensions of ``a`` and ``b`` are broadcast together.
 
   See Also:
@@ -9000,6 +9168,7 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
   return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
+@export
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def vdot(
     a: ArrayLike, b: ArrayLike, *,
@@ -9048,6 +9217,7 @@ def vdot(
              preferred_element_type=preferred_element_type)
 
 
+@export
 def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
            precision: PrecisionLike = None,
            preferred_element_type: DTypeLike | None = None) -> Array:
@@ -9103,6 +9273,7 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
                    signature="(n),(n)->()")(x1_arr, x2_arr)
 
 
+@export
 def tensordot(a: ArrayLike, b: ArrayLike,
               axes: int | Sequence[int] | Sequence[Sequence[int]] = 2,
               *, precision: PrecisionLike = None,
@@ -9248,6 +9419,7 @@ def einsum(
     out_type=None,
 ) -> Array: ...
 
+@export
 def einsum(
     subscripts, /,
     *operands,
@@ -9523,6 +9695,7 @@ def einsum_path(
     optimize: bool | str | list[tuple[int, ...]] =  ...,
 ) -> tuple[list[tuple[int, ...]], Any]: ...
 
+@export
 def einsum_path(
     subscripts, /,
     *operands,
@@ -9756,6 +9929,7 @@ def _einsum(
                                             output_weak_type)
 
 
+@export
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def inner(
     a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = None,
@@ -9812,6 +9986,7 @@ def inner(
                    preferred_element_type=preferred_element_type)
 
 
+@export
 @partial(jit, inline=True)
 def outer(a: ArrayLike, b: ArrayLike, out: None = None) -> Array:
   """Compute the outer product of two arrays.
@@ -9846,6 +10021,7 @@ def outer(a: ArrayLike, b: ArrayLike, out: None = None) -> Array:
   return ravel(a)[:, None] * ravel(b)[None, :]
 
 
+@export
 @partial(jit, static_argnames=('axisa', 'axisb', 'axisc', 'axis'))
 def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
           axis: int | None = None):
@@ -9946,6 +10122,7 @@ def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
   return moveaxis(c, 0, axisc)
 
 
+@export
 @jit
 def kron(a: ArrayLike, b: ArrayLike) -> Array:
   """Compute the Kronecker product of two input arrays.
@@ -9991,6 +10168,7 @@ def kron(a: ArrayLike, b: ArrayLike) -> Array:
   return reshape(lax.mul(a_reshaped, b_reshaped), out_shape)
 
 
+@export
 @partial(jit, static_argnames=('N', 'increasing'))
 def vander(
     x: ArrayLike, N: int | None = None, increasing: bool = False
@@ -10054,6 +10232,7 @@ def vander(
 
 ### Misc
 
+@export
 def argwhere(
     a: ArrayLike,
     *,
@@ -10119,6 +10298,7 @@ def argwhere(
   return result.reshape(result.shape[0], ndim(a))
 
 
+@export
 def argmax(a: ArrayLike, axis: int | None = None, out: None = None,
            keepdims: bool | None = None) -> Array:
   """Return the index of the maximum value of an array.
@@ -10174,22 +10354,23 @@ def _argmax(a: Array, axis: int | None = None, keepdims: bool = False) -> Array:
   return expand_dims(result, dims) if keepdims else result
 
 
+@export
 def argmin(a: ArrayLike, axis: int | None = None, out: None = None,
            keepdims: bool | None = None) -> Array:
   """Return the index of the minimum value of an array.
 
-  JAX implementation of :func:`numpy.argmax`.
+  JAX implementation of :func:`numpy.argmin`.
 
   Args:
     a: input array
-    axis: optional integer specifying the axis along which to find the maximum
+    axis: optional integer specifying the axis along which to find the minimum
       value. If ``axis`` is not specified, ``a`` will be flattened.
     out: unused by JAX
     keepdims: if True, then return an array with the same number of dimensions
       as ``a``.
 
   Returns:
-    an array containing the index of the maximum value along the specified axis.
+    an array containing the index of the minimum value along the specified axis.
 
   See also:
     - :func:`jax.numpy.argmax`: return the index of the maximum value.
@@ -10229,6 +10410,7 @@ def _argmin(a: Array, axis: int | None = None, keepdims: bool = False) -> Array:
   return expand_dims(result, dims) if keepdims else result
 
 
+@export
 def nanargmax(
     a: ArrayLike,
     axis: int | None = None,
@@ -10296,6 +10478,7 @@ def _nanargmax(a, axis: int | None = None, keepdims: bool = False):
   return where(reductions.all(nan_mask, axis=axis, keepdims=keepdims), -1, res)
 
 
+@export
 def nanargmin(
     a: ArrayLike,
     axis: int | None = None,
@@ -10356,6 +10539,7 @@ def _nanargmin(a, axis: int | None = None, keepdims : bool = False):
   return where(reductions.all(nan_mask, axis=axis, keepdims=keepdims), -1, res)
 
 
+@export
 @partial(jit, static_argnames=('axis', 'kind', 'order', 'stable', 'descending'))
 def sort(
     a: ArrayLike,
@@ -10419,6 +10603,7 @@ def sort(
   return lax.rev(result, dimensions=[dimension]) if descending else result
 
 
+@export
 @jit
 def sort_complex(a: ArrayLike) -> Array:
   """Return a sorted copy of complex array.
@@ -10456,6 +10641,7 @@ def sort_complex(a: ArrayLike) -> Array:
   return lax.convert_element_type(a, dtypes.to_complex_dtype(a.dtype))
 
 
+@export
 @partial(jit, static_argnames=('axis',))
 def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1) -> Array:
   """Sort a sequence of keys in lexicographic order.
@@ -10533,6 +10719,7 @@ def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1) -> A
   return lax.sort((*key_arrays[::-1], iota), dimension=axis, num_keys=len(key_arrays))[-1]
 
 
+@export
 @partial(jit, static_argnames=('axis', 'kind', 'order', 'stable', 'descending'))
 def argsort(
     a: ArrayLike,
@@ -10613,6 +10800,7 @@ def argsort(
   return lax.rev(indices, dimensions=[dimension]) if descending else indices
 
 
+@export
 @partial(jit, static_argnames=['kth', 'axis'])
 def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   """Returns a partially-sorted copy of an array.
@@ -10683,6 +10871,7 @@ def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   return swapaxes(out, -1, axis)
 
 
+@export
 @partial(jit, static_argnames=['kth', 'axis'])
 def argpartition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   """Returns indices that partially sort an array.
@@ -10787,6 +10976,8 @@ def _roll_static(a: Array, shift: Sequence[int], axis: Sequence[int]) -> Array:
                         dimension=ax)
   return a
 
+
+@export
 def roll(a: ArrayLike, shift: ArrayLike | Sequence[int],
          axis: int | Sequence[int] | None = None) -> Array:
   """Roll the elements of an array along a specified axis.
@@ -10840,6 +11031,7 @@ def roll(a: ArrayLike, shift: ArrayLike | Sequence[int],
     return _roll_static(arr, shift, axis)
 
 
+@export
 @partial(jit, static_argnames=('axis', 'start'))
 def rollaxis(a: ArrayLike, axis: int, start: int = 0) -> Array:
   """Roll the specified axis to a given position.
@@ -10905,6 +11097,7 @@ def rollaxis(a: ArrayLike, axis: int, start: int = 0) -> Array:
   return moveaxis(a, axis, start)
 
 
+@export
 @partial(jit, static_argnames=('axis', 'bitorder'))
 def packbits(a: ArrayLike, axis: int | None = None, bitorder: str = "big") -> Array:
   """Pack array of bits into a uint8 array.
@@ -10989,6 +11182,7 @@ def packbits(a: ArrayLike, axis: int | None = None, bitorder: str = "big") -> Ar
   return swapaxes(packed, axis, -1)
 
 
+@export
 @partial(jit, static_argnames=('axis', 'count', 'bitorder'))
 def unpackbits(
     a: ArrayLike,
@@ -11080,6 +11274,7 @@ def unpackbits(
   return swapaxes(unpacked, axis, -1)
 
 
+@export
 def take(
     a: ArrayLike,
     indices: ArrayLike,
@@ -11237,6 +11432,7 @@ def _normalize_index(index, axis_size):
     return lax.select(index < 0, lax.add(index, axis_size_val), index)
 
 
+@export
 @partial(jit, static_argnames=('axis', 'mode', 'fill_value'))
 def take_along_axis(
     arr: ArrayLike,
@@ -11422,6 +11618,106 @@ def take_along_axis(
     start_indices_batching_dims=tuple(start_indices_batching_dims))
   return lax.gather(a, gather_indices_arr, dnums, tuple(slice_sizes),
                     mode="fill" if mode is None else mode, fill_value=fill_value)
+
+
+_indices = indices  # argument below named 'indices' shadows the function
+
+
+def _make_along_axis_idx(shape, indices, axis):
+  return tuple_replace(_indices(shape, sparse=True), axis, indices)
+
+
+@export
+@partial(jit, static_argnames=('axis', 'inplace', 'mode'))
+def put_along_axis(
+  arr: ArrayLike,
+  indices: ArrayLike,
+  values: ArrayLike,
+  axis: int | None,
+  inplace: bool = True,
+  *,
+  mode: str | None = None,
+) -> Array:
+  """Put values into the destination array by matching 1d index and data slices.
+
+  JAX implementation of :func:`numpy.put_along_axis`.
+
+  The semantics of :func:`numpy.put_along_axis` are to modify arrays in-place, which
+  is not possible for JAX's immutable arrays. The JAX version returns a modified
+  copy of the input, and adds the ``inplace`` parameter which must be set to
+  `False`` by the user as a reminder of this API difference.
+
+  Args:
+    arr: array into which values will be put.
+    indices: array of indices at which to put values.
+    values: array of values to put into the array.
+    axis: the axis along which to put values. If not specified, the array will
+      be flattened before indexing is applied.
+    inplace: must be set to False to indicate that the input is not modified
+      in-place, but rather a modified copy is returned.
+    mode: Out-of-bounds indexing mode. For more discussion of ``mode`` options,
+      see :attr:`jax.numpy.ndarray.at`.
+
+  Returns:
+    A copy of ``a`` with specified entries updated.
+
+  See Also:
+    - :func:`jax.numpy.put`: put elements into an array at given indices.
+    - :func:`jax.numpy.place`: place elements into an array via boolean mask.
+    - :func:`jax.numpy.ndarray.at`: array updates using NumPy-style indexing.
+    - :func:`jax.numpy.take`: extract values from an array at given indices.
+    - :func:`jax.numpy.take_along_axis`: extract values from an array along an axis.
+
+  Examples:
+    >>> from jax import numpy as jnp
+    >>> a = jnp.array([[10, 30, 20], [60, 40, 50]])
+    >>> i = jnp.argmax(a, axis=1, keepdims=True)
+    >>> print(i)
+    [[1]
+     [0]]
+    >>> b = jnp.put_along_axis(a, i, 99, axis=1, inplace=False)
+    >>> print(b)
+    [[10 99 20]
+     [99 40 50]]
+  """
+  if inplace:
+    raise ValueError(
+      "jax.numpy.put_along_axis cannot modify arrays in-place, because JAX arrays"
+      "are immutable. Pass inplace=False to instead return an updated array.")
+
+  util.check_arraylike("put_along_axis", arr, indices, values)
+  arr = asarray(arr)
+  indices = asarray(indices)
+  values = asarray(values)
+
+  original_axis = axis
+  original_arr_shape = arr.shape
+
+  if axis is None:
+    arr = arr.ravel()
+    axis = 0
+
+  if not arr.ndim == indices.ndim:
+    raise ValueError(
+      "put_along_axis arguments 'arr' and 'indices' must have same ndim. Got "
+      f"{arr.ndim=} and {indices.ndim=}."
+    )
+
+  try:
+    values = broadcast_to(values, indices.shape)
+  except ValueError:
+    raise ValueError(
+      "put_along_axis argument 'values' must be broadcastable to 'indices'. Got "
+      f"{values.shape=} and {indices.shape=}."
+    )
+
+  idx = _make_along_axis_idx(arr.shape, indices, axis)
+  result = arr.at[idx].set(values, mode=mode)
+
+  if original_axis is None:
+    result = result.reshape(original_arr_shape)
+
+  return result
 
 
 ### Indexing
@@ -11675,6 +11971,14 @@ def _int(aval):
 
 def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
                      normalize_indices: bool = True) -> _Indexer:
+  # Check whether advanced indices are contiguous. We must do this before
+  # removing ellipses (https://github.com/jax-ml/jax/issues/25109)
+  # If advanced idexing axes do not appear contiguously, NumPy semantics
+  # move the advanced axes to the front.
+  is_advanced, = np.nonzero([isinstance(e, (int, Sequence, Array, np.ndarray))
+                             or isscalar(e) for e in idx])
+  advanced_axes_are_contiguous = np.all(np.diff(is_advanced) == 1)
+
   # Remove ellipses and add trailing slice(None)s.
   idx = _canonicalize_tuple_index(len(x_shape), idx)
 
@@ -11690,10 +11994,6 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
 
   # Check for advanced indexing:
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
-
-  # Do the advanced indexing axes appear contiguously? If not, NumPy semantics
-  # move the advanced axes to the front.
-  advanced_axes_are_contiguous = False
 
   advanced_indexes: Sequence[Array | np.ndarray] | None = None
 
@@ -11713,7 +12013,6 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
       advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
                         for e, i, j in advanced_pairs)
     advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
-    advanced_axes_are_contiguous = bool(np.all(np.diff(idx_advanced_axes) == 1))
 
   x_axis = 0  # Current axis in x.
   y_axis = 0  # Current axis in y, before collapsing. See below.
@@ -11783,7 +12082,7 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
     except TypeError:
       abstract_i = None
     # Handle basic int indexes.
-    if isinstance(abstract_i, (ConcreteArray, ShapedArray)) and _int(abstract_i):
+    if isinstance(abstract_i, ShapedArray) and _int(abstract_i):
       if core.definitely_equal(x_shape[x_axis], 0):
         # XLA gives error when indexing into an axis of size 0
         raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
@@ -11813,7 +12112,7 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
                "arrays within JIT compiled functions).")
         raise IndexError(msg)
 
-      start, step, slice_size = _preprocess_slice(i, x_shape[x_axis])
+      start, step, slice_size = core.canonicalize_slice(i, x_shape[x_axis])
       slice_shape.append(slice_size)
 
       if core.definitely_equal(step, 1):
@@ -11939,7 +12238,7 @@ def _expand_bool_indices(idx, shape):
         i = array(i)
         abstract_i = core.get_aval(i)
 
-      if not type(abstract_i) is ConcreteArray:
+      if not core.is_concrete(i):
         # TODO(mattjj): improve this error by tracking _why_ the indices are not concrete
         raise errors.NonConcreteBooleanIndexError(abstract_i)
       elif _ndim(i) == 0:
@@ -11969,7 +12268,7 @@ def _is_slice_element_none_or_constant_or_symbolic(elt):
   if elt is None: return True
   if core.is_symbolic_dim(elt): return True
   try:
-    return type(core.get_aval(elt)) is ConcreteArray
+    return core.is_concrete(elt)
   except TypeError:
     return False
 
@@ -12016,66 +12315,8 @@ def _canonicalize_tuple_index(arr_ndim, idx):
     idx = tuple(idx) + colons
   return idx
 
-def _preprocess_slice(
-    s: slice,
-    axis_size: core.DimSize
-  ) -> tuple[core.DimSize, core.DimSize, core.DimSize]:
-  """Computes the start index, step, and size of the slice `x[s]`."""
-  # See https://numpy.org/doc/stable/user/basics.indexing.html#slicing-and-striding
-  # "this is harder to get right than you may think"
-  # (from https://github.com/python/cpython/blob/939fc6d6eab9b7ea8c244d513610dbdd556503a7/Objects/sliceobject.c#L275)
-  def convert_to_index(d: DimSize) -> DimSize:
-    # Convert np.array and jax.Array to int, leave symbolic dimensions alone
-    try:
-      return operator.index(d)
-    except:
-      return d
 
-  # Must resolve statically if step is {<0, ==0, >0}
-  step = convert_to_index(s.step) if s.step is not None else 1
-  try:
-    if step == 0:
-      raise ValueError("slice step cannot be zero")
-    step_gt_0 = (step > 0)
-  except core.InconclusiveDimensionOperation as e:
-    raise core.InconclusiveDimensionOperation(
-        f"In slice with non-constant elements the step ({step}) must " +
-        f"be resolved statically if it is > 0 or < 0.\nDetails: {e}")
-
-  def clamp_index(i: DimSize, which: str):
-    try:
-      i_ge_0 = (i >= 0)
-    except core.InconclusiveDimensionOperation as e:
-      raise core.InconclusiveDimensionOperation(
-          f"In slice with non-constant elements the {which} ({i}) must " +
-          f"be resolved statically if it is >= 0.\nDetails: {e}")
-    if i_ge_0:
-      if step_gt_0:
-        return core.min_dim(axis_size, i)
-      else:
-        return core.min_dim(axis_size - 1, i)
-    else:
-      if step_gt_0:
-        return core.max_dim(0, axis_size + i)
-      else:
-        return core.max_dim(-1, axis_size + i)
-
-  if s.start is None:
-    start = 0 if step_gt_0 else axis_size - 1
-  else:
-    start = clamp_index(convert_to_index(s.start), "start")
-
-  if s.stop is None:
-    stop = axis_size if step_gt_0 else -1
-  else:
-    stop = clamp_index(convert_to_index(s.stop), "stop")
-
-  gap = step if step_gt_0 else - step
-  distance = (stop - start) if step_gt_0 else (start - stop)
-  slice_size = core.max_dim(0, distance + gap - 1) // gap
-  return start, step, slice_size
-
-
+@export
 def blackman(M: int) -> Array:
   """Return a Blackman window of size M.
 
@@ -12106,6 +12347,7 @@ def blackman(M: int) -> Array:
   return 0.42 - 0.5 * ufuncs.cos(2 * pi * n / (M - 1)) + 0.08 * ufuncs.cos(4 * pi * n / (M - 1))
 
 
+@export
 def bartlett(M: int) -> Array:
   """Return a Bartlett window of size M.
 
@@ -12136,6 +12378,7 @@ def bartlett(M: int) -> Array:
   return 1 - ufuncs.abs(2 * n + 1 - M) / (M - 1)
 
 
+@export
 def hamming(M: int) -> Array:
   """Return a Hamming window of size M.
 
@@ -12166,6 +12409,7 @@ def hamming(M: int) -> Array:
   return 0.54 - 0.46 * ufuncs.cos(2 * pi * n / (M - 1))
 
 
+@export
 def hanning(M: int) -> Array:
   """Return a Hanning window of size M.
 
@@ -12196,6 +12440,7 @@ def hanning(M: int) -> Array:
   return 0.5 * (1 - ufuncs.cos(2 * pi * n / (M - 1)))
 
 
+@export
 def kaiser(M: int, beta: ArrayLike) -> Array:
   """Return a Kaiser window of size M.
 
@@ -12238,6 +12483,8 @@ def _gcd_body_fn(xs: tuple[Array, Array]) -> tuple[Array, Array]:
             where(x2 != 0, lax.rem(x1, x2), _lax_const(x2, 0)))
   return (where(x1 < x2, x2, x1), where(x1 < x2, x1, x2))
 
+
+@export
 @jit
 def gcd(x1: ArrayLike, x2: ArrayLike) -> Array:
   """Compute the greatest common divisor of two arrays.
@@ -12284,6 +12531,7 @@ def gcd(x1: ArrayLike, x2: ArrayLike) -> Array:
   return gcd
 
 
+@export
 @jit
 def lcm(x1: ArrayLike, x2: ArrayLike) -> Array:
   """Compute the least common multiple of two arrays.
@@ -12331,6 +12579,7 @@ def lcm(x1: ArrayLike, x2: ArrayLike) -> Array:
                ufuncs.multiply(x1, ufuncs.floor_divide(x2, d)))
 
 
+@export
 def extract(condition: ArrayLike, arr: ArrayLike,
             *, size: int | None = None, fill_value: ArrayLike = 0) -> Array:
   """Return the elements of an array that satisfy a condition.
@@ -12392,6 +12641,7 @@ def extract(condition: ArrayLike, arr: ArrayLike,
   return compress(ravel(condition), ravel(arr), size=size, fill_value=fill_value)
 
 
+@export
 def compress(condition: ArrayLike, a: ArrayLike, axis: int | None = None,
              *, size: int | None = None, fill_value: ArrayLike = 0, out: None = None) -> Array:
   """Compress an array along a given axis using a boolean condition.
@@ -12486,6 +12736,7 @@ def compress(condition: ArrayLike, a: ArrayLike, axis: int | None = None,
   return moveaxis(result, 0, axis)
 
 
+@export
 @partial(jit, static_argnames=('rowvar', 'bias', 'ddof'))
 def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
         bias: bool = False, ddof: int | None = None,
@@ -12644,6 +12895,7 @@ def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
   return ufuncs.true_divide(dot(X, X_T.conj()), f).squeeze()
 
 
+@export
 @partial(jit, static_argnames=('rowvar',))
 def corrcoef(x: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True) -> Array:
   r"""Compute the Pearson correlation coefficients.
@@ -12773,6 +13025,7 @@ def _searchsorted_via_compare_all(sorted_arr: Array, query: Array, side: str, dt
   return comparisons.sum(dtype=dtype, axis=0)
 
 
+@export
 @partial(jit, static_argnames=('side', 'method'))
 def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
                  sorter: ArrayLike | None = None, *, method: str = 'scan') -> Array:
@@ -12862,6 +13115,7 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
   return impl(asarray(a), asarray(v), side, dtype)  # type: ignore
 
 
+@export
 @partial(jit, static_argnames=('right', 'method'))
 def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False,
              *, method: str | None = None) -> Array:
@@ -12917,6 +13171,7 @@ def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False,
   )
 
 
+@export
 def piecewise(x: ArrayLike, condlist: Array | Sequence[ArrayLike],
               funclist: list[ArrayLike | Callable[..., Array]],
               *args, **kw) -> Array:
@@ -13024,6 +13279,7 @@ def _tile_to_size(arr: Array, size: int) -> Array:
   return arr[:size] if arr.size > size else arr
 
 
+@export
 def place(arr: ArrayLike, mask: ArrayLike, vals: ArrayLike, *,
           inplace: bool = True) -> Array:
   """Update array elements based on a mask.
@@ -13099,6 +13355,7 @@ def place(arr: ArrayLike, mask: ArrayLike, vals: ArrayLike, *,
   return data.ravel().at[indices].set(vals_arr, mode='drop').reshape(data.shape)
 
 
+@export
 def put(a: ArrayLike, ind: ArrayLike, v: ArrayLike,
         mode: str | None = None, *, inplace: bool = True) -> Array:
   """Put elements into an array at given indices.

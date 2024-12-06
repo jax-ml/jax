@@ -120,7 +120,14 @@ xla_extension_version: int = getattr(xla_client, '_version', 0)
 import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error  # noqa: F401
 import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error  # noqa: F401
 
-import jaxlib.mosaic.python.tpu as tpu # pytype: disable=import-error  # noqa: F401
+try:
+  import jaxlib.mosaic.python.mosaic_gpu as mosaic_gpu_dialect  # pytype: disable=import-error
+except ImportError:
+  # TODO(bchetioui): Remove this when minimum jaxlib version >= 0.4.36.
+  # Jaxlib doesn't contain Mosaic GPU dialect bindings.
+  mosaic_gpu_dialect = None  # type: ignore
+
+import jaxlib.mosaic.python.tpu as tpu  # pytype: disable=import-error  # noqa: F401
 
 # Version number for MLIR:Python APIs, provided by jaxlib.
 mlir_api_version = xla_client.mlir_api_version
@@ -143,7 +150,20 @@ def _cuda_path() -> str | None:
       from nvidia import cuda_nvcc  # pytype: disable=import-error
     except ImportError:
       return None
-    cuda_nvcc_path = pathlib.Path(cuda_nvcc.__file__).parent
+
+    if hasattr(cuda_nvcc, '__file__') and cuda_nvcc.__file__ is not None:
+      # `cuda_nvcc` is a regular package.
+      cuda_nvcc_path = pathlib.Path(cuda_nvcc.__file__).parent
+    elif hasattr(cuda_nvcc, '__path__') and cuda_nvcc.__path__ is not None:
+      # `cuda_nvcc` is a namespace package, which might have multiple paths.
+      cuda_nvcc_path = None
+      for path in cuda_nvcc.__path__:
+        if (pathlib.Path(path) / 'bin' / 'ptxas').exists():
+          cuda_nvcc_path = pathlib.Path(path)
+          break
+    else:
+      return None
+
     return str(cuda_nvcc_path)
 
   if (path := _try_cuda_root_environment_variable()) is not None:
@@ -155,9 +175,5 @@ def _cuda_path() -> str | None:
 
 cuda_path = _cuda_path()
 
-if version >= (0, 4, 35):
-  guard_lib = xla_client._xla.guard_lib
-else:
-  guard_lib = xla_client._xla.transfer_guard_lib
-
+guard_lib = xla_client._xla.guard_lib
 Device = xla_client._xla.Device

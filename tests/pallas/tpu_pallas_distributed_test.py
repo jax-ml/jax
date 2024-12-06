@@ -15,6 +15,8 @@
 """Tests for distributed pallas TPU operations."""
 
 import functools
+import os
+import tempfile
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -512,6 +514,63 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
                                result_noninterpret,
                                atol=1e-5,
                                rtol=1e-3)
+
+
+class VerificationTest(jtu.JaxTestCase):
+
+  def test_verification(self):
+    if (num_devices := jax.local_device_count()) <= 1:
+      self.skipTest('Test requires multiple devices.')
+    if not jtu.is_device_tpu_at_least(4) or jax.devices()[0].num_cores > 1:
+      self.skipTest('Test requires a new single-core TPU.')
+    def kernel_body(in_ref, out_ref, scratch_ref, send_sem, recv_sem, capacity_sem):
+      my_id = lax.axis_index('x')
+      dst_id = jnp.where(my_id == num_devices - 1, 0, my_id + 1)
+      src_id = jnp.where(my_id == 0, num_devices - 1, my_id - 1)
+      pltpu.semaphore_signal(capacity_sem, 1, device_id=src_id)
+      out_ref[...] = jnp.zeros_like(out_ref)
+      scratch_ref[0] = in_ref[0]
+
+      @functools.partial(lax.fori_loop, 0, num_devices - 1, init_val=None)
+      def _(i, _):
+        slot = i % 2
+        next_slot = 1 - slot
+        pltpu.semaphore_wait(capacity_sem, 1)
+        copy = pltpu.async_remote_copy(
+            scratch_ref.at[slot],
+            scratch_ref.at[next_slot],
+            send_sem,
+            recv_sem,
+            device_id=dst_id,
+        )
+        out_ref[...] += scratch_ref[slot]
+        copy.wait()
+        pltpu.semaphore_signal(capacity_sem, 1, device_id=src_id)
+      out_ref[...] += scratch_ref[(num_devices - 1) % 2]
+      pltpu.semaphore_wait(capacity_sem, 1)
+
+    kernel = pl.pallas_call(
+        kernel_body,
+        out_shape=jax.ShapeDtypeStruct((128, 128), jnp.float32),
+        scratch_shapes=[
+            pltpu.VMEM((2, 128, 128), jnp.float32),
+            pltpu.SemaphoreType.DMA,
+            pltpu.SemaphoreType.DMA,
+            pltpu.SemaphoreType.REGULAR,
+        ],
+    )
+    devices = mesh_utils.create_device_mesh((num_devices,))
+    mesh = jax.sharding.Mesh(devices, ['x'])
+    # This is just a smoke test to ensure that the verification does not crash.
+    with tempfile.TemporaryDirectory() as tmpdir:
+      previous_config = jax.config.read('jax_pallas_dump_promela_to')
+      jax.config.update('jax_pallas_dump_promela_to', tmpdir)
+      shard_map.shard_map(
+          kernel, mesh=mesh, in_specs=P('x'), out_specs=P(None), check_rep=False
+      )(jnp.ones((8, 128, 128), jnp.float32))
+      jax.config.update('jax_pallas_dump_promela_to', previous_config)
+      self.assertNotEmpty(os.listdir(tmpdir))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

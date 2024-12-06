@@ -22,6 +22,7 @@ from absl.testing import absltest
 import jax
 from jax import random
 from jax._src import config
+from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax.experimental import pallas as pl
@@ -35,6 +36,10 @@ import numpy as np
 config.parse_flags_with_absl()
 
 
+intx = dtypes.canonicalize_dtype(jnp.int64)
+floatx = dtypes.canonicalize_dtype(jnp.float64)
+
+
 @jtu.with_config(jax_traceback_filtering="off")
 class PallasBaseTest(jtu.JaxTestCase):
   INTERPRET = False
@@ -42,8 +47,6 @@ class PallasBaseTest(jtu.JaxTestCase):
   def setUp(self):
     if jtu.test_device_matches(["cpu"]) and not self.INTERPRET:
       self.skipTest("On CPU the test works only in interpret mode")
-    if jtu.test_device_matches(["gpu"]) and jax.config.x64_enabled:
-      self.skipTest("On GPU the test works only in 32-bit")
     if (jtu.test_device_matches(["cuda"]) and
         not jtu.is_cuda_compute_capability_at_least("8.0")):
       self.skipTest("Only works on GPU with capability >= sm80")
@@ -67,7 +70,7 @@ class PallasCallVmapTest(PallasBaseTest):
 
   def test_vmap_of_simple_kernel(self):
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.int32),
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), intx),
     )
     def add_one(x_ref, o_ref):
       o_ref[()] = x_ref[()] + 1
@@ -77,7 +80,7 @@ class PallasCallVmapTest(PallasBaseTest):
 
   def test_vmap_of_simple_kernel_with_in_axes_None(self):
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.int32),
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), intx),
     )
     def add(x_ref, y_ref, o_ref):
       o_ref[()] = x_ref[()] + y_ref[()]
@@ -87,7 +90,7 @@ class PallasCallVmapTest(PallasBaseTest):
 
   def test_double_vmap_of_simple_kernel(self):
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.int32),
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), intx),
     )
     def add_one(x_ref, o_ref):
       o_ref[()] = x_ref[()] + 1
@@ -97,7 +100,7 @@ class PallasCallVmapTest(PallasBaseTest):
 
   def test_quadruple_vmap_of_simple_kernel(self):
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.int32),
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), intx),
     )
     def add_one(x_ref, o_ref):
       o_ref[()] = x_ref[()] + 1
@@ -108,7 +111,7 @@ class PallasCallVmapTest(PallasBaseTest):
 
   def test_quadruple_vmap_of_batched_kernel(self):
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((7,), jnp.int32),
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((7,), intx),
         grid=(7,))
     def add_one(x_ref, o_ref):
       i = pl.program_id(0)
@@ -120,7 +123,7 @@ class PallasCallVmapTest(PallasBaseTest):
 
   def test_vmap_of_slicing_kernel(self):
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), intx),
         grid=(2,))
     def add_one(x_ref, o_ref):
       i = pl.program_id(0)
@@ -151,7 +154,7 @@ class PallasCallVmapTest(PallasBaseTest):
 
   def test_vmap_of_kernel_with_input_output_aliases(self):
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.int32),
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), intx),
         input_output_aliases={1:0},
         grid=())
     def add(x_ref, _, o_ref):
@@ -163,7 +166,7 @@ class PallasCallVmapTest(PallasBaseTest):
   def test_vmap_of_kernel_with_input_output_aliases_different_axes(self):
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((4,), jnp.int32),
+        out_shape=jax.ShapeDtypeStruct((4,), intx),
         input_output_aliases={0: 0},
         grid=(),
     )
@@ -176,7 +179,7 @@ class PallasCallVmapTest(PallasBaseTest):
 
   def test_vmap_of_slicing_kernel_different_axes(self):
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), intx),
         grid=(2,))
     def add_one(x_ref, o_ref):
       i = pl.program_id(0)
@@ -194,7 +197,7 @@ class PallasCallVmapTest(PallasBaseTest):
 
   def test_double_vmap_of_slicing_kernel_different_axes(self):
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), jnp.float32),
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), floatx),
         grid=(4,))
     def sin(x_ref, o_ref):
       i = pl.program_id(0)
@@ -211,7 +214,7 @@ class PallasCallVmapTest(PallasBaseTest):
   def test_small_large_vmap(self):
     # Catches https://github.com/jax-ml/jax/issues/18361
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), intx),
         grid=(2,))
     def add_one(x_ref, o_ref):
       o_ref[()] = x_ref[()] + 1
@@ -230,7 +233,7 @@ class PallasCallVmapTest(PallasBaseTest):
   def test_small_small_large_vmap(self):
 
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), intx),
         grid=(2,))
     def add_one(x_ref, o_ref):
       o_ref[()] = x_ref[()] + 1
@@ -248,12 +251,6 @@ class PallasCallVmapTest(PallasBaseTest):
 
 class PallasCallVmapInterpretTest(PallasCallVmapTest):
   INTERPRET = True
-
-  def setUp(self):
-    super().setUp()
-    if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
-      # TODO: assertion failures on CPU in 64-bit mode
-      self.skipTest("On CPU the test works only in 32-bit mode")
 
 
 if __name__ == "__main__":

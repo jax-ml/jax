@@ -17,8 +17,12 @@
 
 from __future__ import annotations
 
+import os
+import time
 from typing import Any
+import warnings
 
+import jax
 from jax import core as jax_core
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pallas_core
@@ -63,10 +67,41 @@ def pallas_call_lowering(
     print(lowering_result.module.operation)
 
   module = lowering_result.module
-  return mosaic_core._mosaic_gpu_lowering_rule(
-      ctx,
+  new_avals_out = [
+      jax_core.ShapedArray(t.shape, t.dtype) for t in lowering_result.out_structs
+  ]
+  outs = mosaic_core._mosaic_gpu_lowering_rule(
+      ctx.replace(avals_out=new_avals_out),
       *args,
       module=module.operation.get_asm(binary=True, enable_debug_info=True),
       out_types=lowering_result.out_structs,
       input_output_aliases=input_output_aliases,
   )
+  if (prof_ctx := lowering_result.profiler_context) is not None:
+    *outs, prof_buffer = outs
+    if (dump_path := prof_ctx.dump_path) == "sponge":
+      dump_path = os.getenv("TEST_UNDECLARED_OUTPUTS_DIR")  # type: ignore
+    out_file = os.path.join(
+        dump_path, f"{name_and_src_info.name}-{time.time_ns()}-trace.json"
+    )
+    def dump_profile(prof_buffer):
+      try:
+        with open(out_file, "x") as f:
+          prof_ctx.spec.dump(
+              prof_buffer,
+              f,
+              grid=lowering_result.grid,
+              block=lowering_result.block,
+          )
+      except FileExistsError:
+        warnings.warn(
+            f"Failed to dump profile for pallas_call {name_and_src_info}, "
+            f"profile already exists at {out_file}"
+        )
+    def do_callback(prof_buffer):
+      jax.debug.callback(dump_profile, prof_buffer)
+      return ()
+    mlir.lower_fun(do_callback, multiple_results=True)(
+        ctx.replace(avals_in=(new_avals_out[-1],)), prof_buffer
+    )
+  return outs

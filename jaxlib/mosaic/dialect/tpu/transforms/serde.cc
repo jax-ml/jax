@@ -92,6 +92,9 @@ LogicalResult semaphore_signal_rule(Operation* op, int version) {
                       EnqueueDMAOp>::getOperandSegmentSizeAttr(),
                   mlir::DenseI32ArrayAttr::get(op->getContext(), {1, 1, 0, 0}));
     } else if (op->getNumOperands() == 3) {  // Remote signal.
+      // Hardcoding that one optional value is device_id, not core_id. This
+      // could misinterpret sem_signals where core_id is specified, but
+      // device_id isn't.
       op->setAttr(OpTrait::AttrSizedOperandSegments<
                       EnqueueDMAOp>::getOperandSegmentSizeAttr(),
                   mlir::DenseI32ArrayAttr::get(op->getContext(), {1, 1, 1, 0}));

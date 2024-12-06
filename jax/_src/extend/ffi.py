@@ -18,7 +18,7 @@ from collections.abc import Callable, Mapping, Sequence
 import ctypes
 import functools
 import os
-from typing import Any
+from typing import Any, overload
 
 import numpy as np
 
@@ -27,7 +27,7 @@ from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import effects
 from jax._src import util
-from jax._src.callback import _check_shape_dtype, callback_batching_rule
+from jax._src.callback import callback_batching_rule
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -209,11 +209,14 @@ ResultMetadata = DuckTypedArray | core.AbstractToken
 
 def _result_avals(results: Sequence[ResultMetadata]) -> tuple[core.AbstractValue, ...]:
   avals: list[core.AbstractValue] = []
-  for result in results:
+  for idx, result in enumerate(results):
     if isinstance(result, core.AbstractToken):
       avals.append(result)
     else:
-      _check_shape_dtype(result)
+      if not hasattr(result, "shape") or not hasattr(result, "dtype"):
+        raise ValueError(
+            "All elements of result_shape_dtypes must have 'shape' and 'dtype' "
+            f"attributes. Got {result} at position {idx}.")
       avals.append(core.ShapedArray(result.shape, result.dtype))
   return tuple(avals)
 
@@ -238,6 +241,43 @@ def _convert_layouts_for_ffi_call(
           else layout[::-1]
       )
       for aval, layout in zip(avals, layouts))
+
+
+# ffi_call() returns as many results as result_shape_dtypes.
+@overload
+def ffi_call(
+    target_name: str,
+    result_shape_dtypes: ResultMetadata,
+    *deprecated_args: ArrayLike,
+    has_side_effect: bool = ...,
+    vmap_method: str | None = ...,
+    input_layouts: Sequence[FfiLayoutOptions] | None = ...,
+    output_layouts: FfiLayoutOptions | Sequence[FfiLayoutOptions] | None = ...,
+    input_output_aliases: dict[int, int] | None = ...,
+    custom_call_api_version: int = ...,
+    legacy_backend_config: str | None = ...,
+    vectorized: bool | DeprecatedArg = ...,
+    **deprecated_kwargs: Any,
+) -> Callable[..., Array] | Array:
+  ...
+
+
+@overload
+def ffi_call(
+    target_name: str,
+    result_shape_dtypes: Sequence[ResultMetadata],
+    *deprecated_args: ArrayLike,
+    has_side_effect: bool = ...,
+    vmap_method: str | None = ...,
+    input_layouts: Sequence[FfiLayoutOptions] | None = ...,
+    output_layouts: FfiLayoutOptions | Sequence[FfiLayoutOptions] | None = ...,
+    input_output_aliases: dict[int, int] | None = ...,
+    custom_call_api_version: int = ...,
+    legacy_backend_config: str | None = ...,
+    vectorized: bool | DeprecatedArg = ...,
+    **deprecated_kwargs: Any,
+) -> Callable[..., Sequence[Array]] | Sequence[Array]:
+  ...
 
 
 def ffi_call(

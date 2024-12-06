@@ -35,7 +35,7 @@ from jax._src import source_info_util
 from jax._src import state
 from jax._src import util
 from jax._src.api_util import shaped_abstractify
-from jax._src.core import ConcreteArray, ShapedArray, raise_to_shaped
+from jax._src.core import ShapedArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -227,6 +227,11 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
       msg.format(', '.join(str(x) for x in xs_flat
                            if not hasattr(x, 'shape')))) from err
 
+  if (config.sharding_in_types.value and
+      not all(x.sharding.spec[0] is None for x in xs_flat)):
+    raise ValueError('0th dimension of all xs should be replicated. Got '
+                     f'{", ".join(str(x.sharding.spec) for x in xs_flat)}')
+
   if length is not None:
     try:
       length = int(length)
@@ -250,7 +255,8 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   if config.disable_jit.value:
     if length == 0:
-      raise ValueError("zero-length scan is not supported in disable_jit() mode because the output type is unknown.")
+      raise ValueError("zero-length scan is not supported in disable_jit() "
+                       "mode because the output type is unknown.")
     carry = init
     ys = []
     maybe_reversed = reversed if reverse else lambda x: x
@@ -262,7 +268,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     stacked_y = tree_map(stack, *maybe_reversed(ys))
     return carry, stacked_y
 
-  xs_avals = [core.raise_to_shaped(core.get_aval(x)) for x in xs_flat]
+  xs_avals = [core.get_aval(x) for x in xs_flat]
   x_avals = [core.mapped_aval(length, 0, aval) for aval in xs_avals]
 
   def _create_jaxpr(init):
@@ -418,9 +424,13 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
   consts, carry, xs_ = split_list(args, [num_consts, num_carry])
   _, y_avals = split_list(jaxpr.out_avals, [num_carry])
   num_trips, remainder = divmod(length, unroll)
+  if unroll != 1 and num_trips == 1 and remainder == 0:
+    # In that case, we explicitly want to fully unroll the loop. Put everything
+    # into the remainder block and avoid lowering to a while loop.
+    num_trips, remainder = 0, length
   if unroll == 1:
     xss = xs_
-    yss = _map(partial(_empty_array, (length,)), y_avals)
+    yss = _map(partial(_empty_array, (length,), None), y_avals)
   else:
     if remainder:
       if not reverse:
@@ -428,7 +438,7 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
       else:
         xs_rem, xs_ = unzip2(_map(partial(_split_leading, remainder), xs_))
     xss = [lax.reshape(x, (num_trips, unroll, *x.shape[1:])) for x in xs_]
-    yss = _map(partial(_empty_array, (num_trips, unroll)), y_avals)
+    yss = _map(partial(_empty_array, (num_trips, unroll), None), y_avals)
 
   def cond_fun(while_carry):
     i, _, _ = while_carry
@@ -473,8 +483,11 @@ def _split_leading(sz, x):
 
 def _concat(a, b): return lax.concatenate([a, b], 0)
 
-def _empty_array(prefix, aval):
-  return lax.broadcast(lax.empty(aval.dtype), (*prefix, *aval.shape))
+def _empty_array(prefix, length_spec, aval):
+  sharding = (aval.sharding.with_spec((length_spec, *aval.sharding.spec))
+              if config.sharding_in_types.value else None)
+  return lax.broadcast(lax.empty(aval.dtype), (*prefix, *aval.shape),
+                       sharding=sharding)
 
 eval_jaxpr_p = core.Primitive('eval_jaxpr')
 eval_jaxpr_p.multiple_results = True
@@ -482,11 +495,13 @@ def _stage_jaxpr(trace, *tracers, jaxpr):
   params = dict(call_jaxpr=jaxpr)
   return trace.default_process_primitive(core.closed_call_p, tracers, params)
 pe.custom_staging_rules[eval_jaxpr_p] = _stage_jaxpr
+
 @eval_jaxpr_p.def_effectful_abstract_eval  # abstract eval only used for jax2tf
-def _stage_jaxpr_abstract_eval(*_, jaxpr): return jaxpr.out_avals, jaxpr.effects
+def _stage_jaxpr_abstract_eval(*_, jaxpr):
+  return jaxpr.out_avals, jaxpr.effects
 
 def _prepend_dim_to_aval(sz, aval):
-  return core.unmapped_aval(sz, core.no_axis_name, 0, aval)
+  return core.unmapped_aval(sz, None, 0, aval)
 
 def _scan_abstract_eval(*args, reverse, length, num_consts, num_carry, jaxpr,
                         linear, unroll, _split_transpose):
@@ -670,7 +685,7 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
   extensive_res = _map(trace.new_instantiated_const, extensive_res)
   # Create output tracers for jaxpr_unknown bind, adapting extensive shapes.
   carry_avals, y_avals = split_list(jaxpr_unknown.out_avals, [sum(carry_uk)])
-  ys_avals = [core.unmapped_aval(length, core.no_axis_name, 0, y_aval)
+  ys_avals = [core.unmapped_aval(length, None, 0, y_aval)
               for y_aval in y_avals]
   out_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(a), None)
                  for a in itertools.chain(carry_avals, ys_avals)]
@@ -700,7 +715,7 @@ def _maybe_put(x):
     aval = shaped_abstractify(x)
     s = sharding.SingleDeviceSharding(xb.local_devices(backend='cpu')[0])
     result_handler = pxla.global_aval_to_result_handler(aval, s, False)
-    return result_handler(pxla.shard_args([s], [None], [x]))
+    return result_handler(pxla.shard_args([s], [None], [None], [x]))
   else:
     return x
 
@@ -885,7 +900,7 @@ def _transpose_scan_jaxpr(jaxpr, num_res1, num_c, num_res2,
                         b_ys_avals_stripped + res2_avals))
 
 
-def _scan_batching_rule(spmd_axis_name, axis_size, axis_name, main_type, args,
+def _scan_batching_rule(axis_data, args,
                         dims, reverse, length,
                         jaxpr, num_consts, num_carry, linear, unroll,
                         _split_transpose):
@@ -902,11 +917,8 @@ def _scan_batching_rule(spmd_axis_name, axis_size, axis_name, main_type, args,
   for _ in range(1 + len(carry_batched)):
     batched = const_batched + carry_batched + xs_batched
     jaxpr_batched, batched_out = batching.batch_jaxpr(
-        jaxpr, axis_size, batched,
-        instantiate=carry_batched + [False] * num_ys,
-        axis_name=axis_name,
-        spmd_axis_name=spmd_axis_name,
-        main_type=main_type)
+        jaxpr, axis_data, batched,
+        instantiate=carry_batched + [False] * num_ys)
     carry_batched_out, ys_batched = batched_out[:num_carry], batched_out[num_carry:]
     if carry_batched_out == carry_batched:
       break
@@ -919,7 +931,7 @@ def _scan_batching_rule(spmd_axis_name, axis_size, axis_name, main_type, args,
   consts_bdims, init_bdims, xs_bdims = split_list(dims, [num_consts, num_carry])
   new_consts = [batching.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
                 else x for x, d in zip(consts, consts_bdims)]
-  new_init = [batching.broadcast(x, axis_size, 0) if now_batched and not was_batched
+  new_init = [batching.broadcast(x, axis_data.size, 0) if now_batched and not was_batched
               else batching.moveaxis(x, d, 0) if now_batched else x
               for x, d, was_batched, now_batched in
               zip(init, init_bdims, init_batched, carry_batched)]
@@ -943,7 +955,9 @@ def _scan_padding_rule(in_avals, out_avals, *args, jaxpr, **params):
   return scan_p.bind(*args, jaxpr=_cached_scan_pad_jaxpr(jaxpr), **params)
 
 def _scan_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn
-                   ) -> tuple[list[bool], core.JaxprEqn]:
+                   ) -> tuple[list[bool], core.JaxprEqn | None]:
+  if not any(used_outputs) and not pe.has_effects(eqn):
+    return [False] * len(eqn.invars), None
   jaxpr = eqn.params['jaxpr']
   num_consts, num_carry = eqn.params['num_consts'], eqn.params['num_carry']
   num_xs = len(jaxpr.in_avals) - num_consts - num_carry
@@ -1038,7 +1052,7 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
 
   # Create residual variables.
   intensive_avals, ext_avals_mapped = partition_list(loop_dep_res, res_avals)
-  ext_avals = [core.unmapped_aval(eqn.params['length'], core.no_axis_name, 0, a)
+  ext_avals = [core.unmapped_aval(eqn.params['length'], None, 0, a)
                for a in ext_avals_mapped]
   newvar = core.gensym()
   intensive_res = _map(newvar, intensive_avals)
@@ -1116,7 +1130,7 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts,
       jaxpr.in_avals, [num_consts, num_carry])
   carry_avals_jaxpr, y_avals_mapped = split_list(jaxpr.out_avals, [num_carry])
   x_avals_mapped = _map(partial(core.mapped_aval, length, 0), x_avals)
-  y_avals = [core.unmapped_aval(length, core.no_axis_name, 0, a)
+  y_avals = [core.unmapped_aval(length, None, 0, a)
              for a in y_avals_mapped]
 
   if not all(_map(core.typematch, init_avals_jaxpr, carry_avals_jaxpr)):
@@ -1209,27 +1223,17 @@ def _scan_state_discharge_rule(in_avals, out_avals, *args, jaxpr, num_consts,
   assert len(refs_out_matching_in_avals) == len(in_avals)
   return refs_out_matching_in_avals, [*carry_out, *ys]
 
-def scan_bind(*args, **params):
-  if config.enable_checks.value:
-    avals = _map(core.get_aval, args)
-    in_atoms = [core.Var('', a) for a in avals]  # dummies
-    _scan_typecheck(True, *in_atoms, **params)
-    core.check_jaxpr(params['jaxpr'].jaxpr)
-  return core.AxisPrimitive.bind(scan_p, *args, **params)
-
-scan_p = core.AxisPrimitive("scan")
+scan_p = core.Primitive("scan")
 scan_p.multiple_results = True
-scan_p.def_custom_bind(scan_bind)
 scan_p.def_impl(partial(dispatch.apply_primitive, scan_p))
 scan_p.def_effectful_abstract_eval(_scan_abstract_eval)
 ad.primitive_jvps[scan_p] = _scan_jvp
-ad.reducing_transposes[scan_p] = _scan_transpose
+ad.primitive_transposes[scan_p] = _scan_transpose
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
 xla.register_initial_style_primitive(scan_p)
 mlir.register_lowering(scan_p,
                        mlir.lower_fun(_scan_impl, multiple_results=True))
-batching.axis_primitive_batchers[scan_p] = partial(_scan_batching_rule, None)
-batching.spmd_axis_primitive_batchers[scan_p] = _scan_batching_rule
+batching.fancy_primitive_batchers[scan_p] = _scan_batching_rule
 core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = _scan_partial_eval_custom
 pe.padding_rules[scan_p] = _scan_padding_rule
@@ -1379,11 +1383,10 @@ def _while_loop_abstract_eval(*avals, cond_jaxpr, body_jaxpr, body_nconsts,
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `while`: {disallowed_effects}')
-  return _map(raise_to_shaped, body_jaxpr.out_avals), joined_effects
+  return body_jaxpr.out_avals, joined_effects
 
 
-def _while_loop_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
-                              args, dims, cond_nconsts, cond_jaxpr,
+def _while_loop_batching_rule(axis_data, args, dims, cond_nconsts, cond_jaxpr,
                               body_nconsts, body_jaxpr):
   from jax._src.callback import _IOEffect, _OrderedIOEffect
   if any(_OrderedIOEffect in fn.effects for fn in [body_jaxpr, cond_jaxpr]):
@@ -1401,8 +1404,7 @@ def _while_loop_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
   # reach a fixpoint.
   for _ in range(1 + len(carry_bat)):
     _, carry_bat_out = batching.batch_jaxpr(
-        body_jaxpr, axis_size, bconst_bat + carry_bat, instantiate=carry_bat,
-        axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+        body_jaxpr, axis_data, bconst_bat + carry_bat, instantiate=carry_bat)
     if carry_bat == carry_bat_out:
       break
     carry_bat = safe_map(operator.or_, carry_bat, carry_bat_out)
@@ -1412,8 +1414,7 @@ def _while_loop_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
   # Knowing how the carry is batched now, we can determine if the predicate is
   # batched.
   _, (pred_bat,) = batching.batch_jaxpr(
-      cond_jaxpr, axis_size, cconst_bat + carry_bat, instantiate=False,
-      axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+      cond_jaxpr, axis_data, cconst_bat + carry_bat, instantiate=False)
 
   if pred_bat:
     # If the predicate is batched, we have to batch *all* of the carry
@@ -1424,13 +1425,9 @@ def _while_loop_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
     carry_bat = [True] * len(carry_bat)
     carry_dims = [0] * len(carry_bat)
     body_jaxpr_batched, _ = batching.batch_jaxpr_axes(
-        body_jaxpr, axis_size, bconst_dims + carry_dims,
-        carry_dims, axis_name=axis_name, spmd_axis_name=spmd_axis_name,
-        main_type=main_type)
+        body_jaxpr, axis_data, bconst_dims + carry_dims, carry_dims)
     cond_jaxpr_batched, _ = batching.batch_jaxpr_axes(
-        cond_jaxpr, axis_size, cconst_dims + carry_dims, [0],
-        axis_name=axis_name, spmd_axis_name=spmd_axis_name,
-        main_type=main_type)
+        cond_jaxpr, axis_data, cconst_dims + carry_dims, [0])
   else:
     # If the predicate is not batched, we can look at the `cond_jaxpr`'s out
     # shape to determine the rank of the predicate. From this rank we pick the
@@ -1440,13 +1437,11 @@ def _while_loop_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
     cond_rank = len(cond_jaxpr.out_avals[0].shape)
     carry_dims = [cond_rank if b else None for b in carry_bat]
     body_jaxpr_batched, _ = batching.batch_jaxpr_axes(
-        body_jaxpr, axis_size, bconst_dims + carry_dims, carry_dims,
-        axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+        body_jaxpr, axis_data, bconst_dims + carry_dims, carry_dims)
     # Now we need to rebatch the `cond_jaxpr` according to the new dims of the
     # carry.
     cond_jaxpr_batched, _ = batching.batch_jaxpr_axes(
-        cond_jaxpr, axis_size, cconst_dims + carry_dims, (None,),
-        axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+        cond_jaxpr, axis_data, cconst_dims + carry_dims, (None,))
 
   # To prepare the `init` to the `while_p`, we broadcast values if they are
   # unbatched and need to have an out axis. If their current batch axis does not
@@ -1455,7 +1450,7 @@ def _while_loop_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
   new_init = []
   for x, old_axis, new_axis in zip(init, init_dims, carry_dims):
     if old_axis is batching.not_mapped and new_axis is not batching.not_mapped:
-      new_init.append(batching.broadcast(x, axis_size, new_axis))
+      new_init.append(batching.broadcast(x, axis_data.size, new_axis))
     elif old_axis is batching.not_mapped and new_axis is batching.not_mapped:
       new_init.append(x)
     else:
@@ -1891,7 +1886,7 @@ def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
       *[None] * num_carry]
   return invals_out, carry_out
 
-while_p = core.AxisPrimitive('while')
+while_p = core.Primitive('while')
 while_p.multiple_results = True
 while_p.def_impl(partial(dispatch.apply_primitive, while_p))
 while_p.def_effectful_abstract_eval(_while_loop_abstract_eval)
@@ -1899,8 +1894,7 @@ ad.primitive_jvps[while_p] = _while_loop_jvp
 pe.custom_partial_eval_rules[while_p] = _while_partial_eval
 xla.register_initial_style_primitive(while_p)
 ad.primitive_transposes[while_p] = _while_transpose_error
-batching.axis_primitive_batchers[while_p] = partial(_while_loop_batching_rule, None)
-batching.spmd_axis_primitive_batchers[while_p] = _while_loop_batching_rule
+batching.fancy_primitive_batchers[while_p] = _while_loop_batching_rule
 pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
 mlir.register_lowering(while_p, _while_lowering)
 core.custom_typechecks[while_p] = _while_typecheck
@@ -2034,12 +2028,11 @@ def fori_loop(lower, upper, body_fun, init_val,
 
   # If we can specialize on the trip count, call scan instead of a while_loop
   # to enable efficient reverse-mode differentiation.
-  if (isinstance(core.get_aval(lower), ConcreteArray) and
-      isinstance(core.get_aval(upper), ConcreteArray)):
+  if core.is_concrete(lower) and core.is_concrete(upper):
     try:
       lower_ = int(lower)
       upper_ = int(upper)
-    except TypeError:
+    except (TypeError, core.InconclusiveDimensionOperation):
       use_scan = False
     else:
       use_scan = True

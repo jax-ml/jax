@@ -25,6 +25,7 @@ import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.lib import xla_extension_version
 from jax._src.layout import DeviceLocalLayout as DLL, Layout
 from jax._src import config
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
@@ -695,6 +696,38 @@ class DevicePutTest(jtu.JaxTestCase):
     if compiled_text is not None:
       self.assertIn('custom_call_target="AllocateBuffer"', compiled_text)
 
+  def test_disallow_alias_copies_arrays(self):
+    if xla_extension_version < 296:
+      self.skipTest("Requires xla_extension_version >= 296")
+    mesh = jtu.create_mesh((2,), ("x",))
+    np_inp = np.arange(16).reshape(8, 2)
+    s = NamedSharding(mesh, P("x"), memory_kind="pinned_host")
+    inp_host = jax.device_put(np_inp, s)
+
+    inp_host_copy = jax.device_put(inp_host, may_alias=False)
+
+    for a in jax.tree.leaves(inp_host):
+      a.delete()
+
+    jax.block_until_ready(inp_host_copy)
+
+  def test_disallow_alias_copies_arrays_with_donated_input(self):
+    if xla_extension_version < 296:
+      self.skipTest("Requires xla_extension_version >= 296")
+    mesh = jtu.create_mesh((2,), ("x",))
+    np_inp = np.arange(16).reshape(8, 2)
+    s = NamedSharding(mesh, P("x"), memory_kind="pinned_host")
+    inp_host = jax.device_put(np_inp, s)
+
+    inp_host_donate = jax.jit(lambda x: x, donate_argnums=0)(inp_host)
+
+    inp_host_donate_copy = jax.device_put(inp_host_donate, may_alias=False)
+
+    for a in jax.tree.leaves(inp_host_donate):
+      a.delete()
+
+    jax.block_until_ready(inp_host_donate_copy)
+
 
 class ComputeOffload(jtu.BufferDonationTestCase):
 
@@ -774,6 +807,46 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     out2 = h(inp)
     self.assertArraysEqual(out2, inp * 6)
     self.assertEqual(out2.sharding.memory_kind, 'pinned_host')
+
+  def test_compute_on_host_shared_sharding(self):
+    mesh = jtu.create_mesh((2,), ("x"))
+    device_sharding = NamedSharding(mesh, P("x"))
+    host_sharding = device_sharding.with_memory_kind("pinned_host")
+
+    @compute_on("device_host")
+    @functools.partial(
+        jax.jit,
+        in_shardings=(host_sharding, device_sharding),
+        out_shardings=(host_sharding, device_sharding),
+        donate_argnums=(0, 1),
+    )
+    def host_func(x, y):
+      return (x * y), ((x**2) * (y**2))
+
+    @functools.partial(
+        jax.jit,
+        in_shardings=(host_sharding, device_sharding),
+        out_shardings=(host_sharding, device_sharding),
+        donate_argnums=(0),
+    )
+    def device_func(host_data, device_data):
+      host_data, device_data = host_func(host_data, device_data)
+      device_data = device_data * 2
+      host_data, device_data = host_func(host_data, device_data)
+      return (host_data, device_data)
+
+    input_x = jnp.ones(8)
+    input_host = jax.device_put(input_x, host_sharding)
+
+    input_device = jnp.arange(8)
+    input_device = jnp.where(input_device < 4, 0, 1)
+    input_device = jax.device_put(input_device, device_sharding)
+
+    output_host, output_device = device_func(input_host, input_device)
+    self.assertEqual(output_host.sharding.memory_kind, 'pinned_host')
+    self.assertEqual(output_device.sharding.memory_kind, 'device')
+    self.assertArraysEqual(output_host, [0., 0., 0., 0., 2., 2., 2., 2.])
+    self.assertArraysEqual(output_device, [0., 0., 0., 0., 4., 4., 4., 4.])
 
   def test_compute_on_basic_inline(self):
     @compute_on('device_host')
@@ -1505,7 +1578,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
         test_fn,
         out_shardings=(
             Layout(custom_dll, sharding),
-            Layout(custom_dll, p_sharding),
+            Layout(custom_dll_linear, p_sharding),
         ),
     )
     x_out, y_out = jit_fn(x, y)
@@ -1548,7 +1621,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
         test_fn,
         out_shardings=(
             Layout(custom_dll, sharding),
-            Layout(custom_dll, p_sharding),
+            Layout(custom_dll_linear, p_sharding),
         ),
     )
     x_out, y_out = jit_fn(x, y)

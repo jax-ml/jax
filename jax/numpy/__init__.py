@@ -202,6 +202,7 @@ from jax._src.numpy.lax_numpy import (
     printoptions as printoptions,
     promote_types as promote_types,
     put as put,
+    put_along_axis as put_along_axis,
     ravel as ravel,
     ravel_multi_index as ravel_multi_index,
     repeat as repeat,
@@ -273,6 +274,15 @@ try:
 except ImportError:
   pass
 
+# TODO: Remove the try-except once we upgrade to ml_dtypes 0.5.0
+try:
+  from jax._src.numpy.lax_numpy import (
+    float8_e3m4 as float8_e3m4,
+    float8_e4m3 as float8_e4m3,
+  )
+except ImportError:
+  pass
+
 from jax._src.numpy.array_api_metadata import (
   __array_api_version__ as __array_api_version__,
   __array_namespace_info__ as __array_namespace_info__,
@@ -307,8 +317,9 @@ from jax._src.numpy.reductions import (
     all as all,
     average as average,
     count_nonzero as count_nonzero,
-    cumsum as cumsum,
     cumprod as cumprod,
+    cumsum as cumsum,
+    cumulative_prod as cumulative_prod,
     cumulative_sum as cumulative_sum,
     max as max,
     mean as mean,
@@ -470,11 +481,6 @@ _deprecations = {
   "round_": (
     "jnp.round_ is deprecated; use jnp.round instead.",
     round
-  ),
-  # Deprecated 18 Sept 2023 and removed 06 Feb 2024
-  "trapz": (
-    "jnp.trapz is deprecated; use jnp.trapezoid instead.",
-    None
   ),
 }
 

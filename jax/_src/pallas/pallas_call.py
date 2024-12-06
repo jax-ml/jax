@@ -72,10 +72,6 @@ pallas_call_p = jax_core.Primitive('pallas_call')
 pallas_call_p.multiple_results = True
 
 def _maybe_dynamic_slice(start_idx, block_shape, value, is_indexing):
-  if start_idx is None:
-    assert is_indexing is None
-    return value
-  assert is_indexing is not None
   start_idx = tuple(jnp.asarray(s, dtype=jnp.int32) for s in start_idx)
   output = lax.dynamic_slice(value, start_idx, slice_sizes=block_shape)
   squeeze_dims = tuple(np.arange(len(is_indexing))[np.array(is_indexing,
@@ -84,10 +80,6 @@ def _maybe_dynamic_slice(start_idx, block_shape, value, is_indexing):
 
 def _maybe_dynamic_update_slice(start_idx, block_shape, value, update,
                                 is_indexing):
-  if start_idx is None:
-    assert is_indexing is None
-    return update
-  assert is_indexing is not None
   start_idx = tuple(jnp.asarray(s, dtype=jnp.int32) for s in start_idx)
   broadcast_dims = tuple(i for i, b in enumerate(is_indexing)
                          if not b)
@@ -234,8 +226,7 @@ def _pallas_call_impl_interpret(
       for bm in grid_mapping.block_mappings
   ]
   block_shapes = [
-      None if iid is None
-      else tuple(1 if i else b for i, b in zip(iid, bm.block_shape))
+      tuple(1 if i else b for i, b in zip(iid, bm.block_shape))
       for iid, bm in zip(is_indexing_dim, grid_mapping.block_mappings)
   ]
 
@@ -284,8 +275,9 @@ def _pallas_call_impl_interpret(
           aval = jax_core.get_aval(s)
           s.aval = aval.update(dtype=jnp.int32)
       start_indices = [
-          None if bm is None else bm.compute_start_indices_interpret(loop_idx, *scalars)
-          for bm in grid_mapping.block_mappings]
+          bm.compute_start_indices_interpret(loop_idx, *scalars)
+          for bm in grid_mapping.block_mappings
+      ]
     blocks = map(_maybe_dynamic_slice, start_indices, block_shapes,
                  carry_consts_ins, is_indexing_dim)
     with pallas_core.grid_env(local_grid_env):
@@ -1448,6 +1440,17 @@ _PALLAS_USE_MOSAIC_GPU = config.bool_flag(
         " dialect, instead of Trition IR."
     ),
 )
+_PALLAS_VERBOSE_ERRORS = config.bool_flag(
+    "jax_pallas_verbose_errors",
+    default=config.bool_env("JAX_PALLAS_VERBOSE_ERRORS", True),
+    help=(
+        "If True, print verbose error messages for Pallas kernels."
+    ),
+)
+
+
+def _verbose_errors_enabled() -> bool:
+  return _PALLAS_VERBOSE_ERRORS.value
 
 
 def _unsupported_lowering_error(platform: str) -> Exception:
@@ -1556,12 +1559,6 @@ def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
       if not (hasattr(out_shape, "shape") and hasattr(out_shape, "dtype")):
         raise ValueError(f"Invalid out_shape type: {type(out_shape)}")
       return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype)
-
-
-def _get_memory_space_from_ref(ref_aval: state.AbstractRef) -> Any:
-  if isinstance(ref_aval, pallas_core.AbstractMemoryRef):
-    return ref_aval.memory_space
-  return pallas_core.MemorySpace.ANY
 
 
 @state_discharge.register_discharge_rule(pallas_call_p)

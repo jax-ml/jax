@@ -243,7 +243,6 @@ pybind_extension(
         "@local_config_rocm//rocm:rocm_headers",
         "@nanobind",
         "@xla//third_party/python_runtime:headers",
-        "@xla//xla:status",
         "@xla//xla:util",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/pjrt:status_casters",

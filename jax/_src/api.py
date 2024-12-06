@@ -34,7 +34,7 @@ from typing import (Any, Literal, NamedTuple, TypeVar, overload,
 import weakref
 
 import numpy as np
-from contextlib import contextmanager, ExitStack
+from contextlib import contextmanager
 
 from jax._src import linear_util as lu
 from jax._src import stages
@@ -56,7 +56,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import pjit
 from jax._src import xla_bridge as xb
-from jax._src.core import eval_jaxpr, ShapedArray, ConcreteArray
+from jax._src.core import eval_jaxpr, ShapedArray
 from jax._src.api_util import (
     flatten_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2, argnums_partial,
     flatten_axes, donation_vector,
@@ -123,8 +123,8 @@ def _update_debug_special_global(_):
     jax_jit.global_state().post_hook = None
 
 def _update_debug_special_thread_local(_):
-  if (getattr(config._thread_local_state, "jax_debug_nans", False) or
-      getattr(config._thread_local_state, "jax_debug_infs", False)):
+  if (config.debug_nans.get_local() == True or
+      config.debug_infs.get_local() == True):
     jax_jit.thread_local_state().post_hook = _nan_check_posthook
   else:
     jax_jit.thread_local_state().post_hook = None
@@ -151,6 +151,7 @@ def jit(
   backend: str | None = None,
   inline: bool = False,
   abstracted_axes: Any | None = None,
+  compiler_options: dict[str, Any] | None = None,
 ) -> pjit.JitWrapped:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
@@ -280,7 +281,7 @@ def jit(
   return pjit.make_jit(
         fun, in_shardings, out_shardings, donate_argnums, donate_argnames,
         static_argnums, static_argnames, device, backend, abstracted_axes,
-        keep_unused, inline, use_resource_env=False)
+        keep_unused, inline, compiler_options, use_resource_env=False)
 
 
 @contextmanager
@@ -989,10 +990,10 @@ def vmap(fun: F,
     axis_size_ = (axis_size if axis_size is not None else
                   _mapped_axis_size(fun, in_tree, args_flat, in_axes_flat, "vmap"))
     try:
+      axis_data = batching.AxisData(axis_name, axis_size_, spmd_axis_name)
       out_flat = batching.batch(
-          flat_fun, axis_name, axis_size_, in_axes_flat,
-          lambda: flatten_axes("vmap out_axes", out_tree(), out_axes),
-          spmd_axis_name=spmd_axis_name
+          flat_fun, axis_data, in_axes_flat,
+          lambda: flatten_axes("vmap out_axes", out_tree(), out_axes)
       ).call_wrapped(*args_flat)
     except batching.SpecMatchError as e:
       out_axes_flat = flatten_axes("vmap out_axes", out_tree(), out_axes)
@@ -1038,27 +1039,35 @@ def _mapped_axis_size(fn, tree, vals, dims, name):
   def _get_argument_type(x):
     try:
       return shaped_abstractify(x).str_short()
-    except TypeError: #Catch all for user specified objects that can't be interpreted as a data type
+    except TypeError: # Catch all for user specified objects that can't be interpreted as a data type
       return "unknown"
   msg = [f"{name} got inconsistent sizes for array axes to be mapped:\n"]
   args, kwargs = tree_unflatten(tree, vals)
   try:
     ba = inspect.signature(fn).bind(*args, **kwargs)
+    signature_parameters: list[str] = list(ba.signature.parameters.keys())
   except (TypeError, ValueError):
-    ba = None
-  if ba is None:
-    args_paths = [f'args{keystr(p)} '
-                  f'of type {_get_argument_type(x)}'
-                  for p, x in generate_key_paths(args)]
-    kwargs_paths = [f'kwargs{keystr(p)} '
-                    f'of type {_get_argument_type(x)}'
-                    for p, x in generate_key_paths(kwargs)]
-    key_paths = [*args_paths, *kwargs_paths]
-  else:
-    key_paths = [f'argument {name}{keystr(p)} '
-                 f'of type {_get_argument_type(x)}'
-                 for name, arg in ba.arguments.items()
-                 for p, x in generate_key_paths(arg)]
+    signature_parameters = None
+
+  def arg_name(key_path):
+    if signature_parameters is None:
+      return f"args{keystr(key_path)}"
+    # args is a tuple, so key_path[0].idx is the index into args.
+    i = key_path[0].idx
+    res = f"argument {signature_parameters[i]}"
+    if len(key_path) > 1:
+      res += keystr(key_path[1:])
+    return res
+
+  args_paths = [
+    f"{arg_name(p)} of type {_get_argument_type(x)}"
+    for (p, x) in generate_key_paths(args)
+  ]
+  kwargs_paths = [
+    f"kwargs{keystr(p)} of type {_get_argument_type(x)}"
+    for p, x in generate_key_paths(kwargs)
+  ]
+  key_paths = [*args_paths, *kwargs_paths]
   all_sizes = [_get_axis_size(name, np.shape(x), d) if d is not None else None
                for x, d in zip(vals, dims)]
   size_counts = collections.Counter(s for s in all_sizes if s is not None)
@@ -1538,16 +1547,13 @@ def _cpp_pmap(
         is_explicit_global_axis_size=p.is_explicit_global_axis_size,
     )
 
-    map_bind_continuation, top_trace, fun_, tracers, params = (
-        core.map_bind_with_continuation(pxla.xla_pmap_p, p.flat_fun,
-                                        *p.flat_args, **params))
     execute: Callable | None = None
-    if isinstance(top_trace, core.EvalTrace):
-      execute = pxla.xla_pmap_impl_lazy(fun_, *tracers, **params)
-      out = map_bind_continuation(execute(*tracers))
-    else:
-      out = map_bind_continuation(
-          pxla.xla_pmap_p.process(top_trace, fun_, tracers, params))
+    with core.take_current_trace() as trace:
+      if isinstance(trace, core.EvalTrace):
+        execute = pxla.xla_pmap_impl_lazy(p.flat_fun, *p.flat_args, **params)
+        out = execute(*p.flat_args)
+      else:
+        out = pxla.xla_pmap_p.bind_with_trace(trace, (p.flat_fun, *p.flat_args), params)
 
     out_tree, out_flat = p.out_tree, out
     out_pytree_def = out_tree()
@@ -1593,7 +1599,7 @@ def _cpp_pmap(
 
   cpp_mapped_f = pmap_lib.pmap(
       fun, cache_miss, static_broadcasted_tuple,
-      lambda x, s: pxla.shard_args([s], [None], [x])[0],
+      lambda x, s: pxla.shard_args([s], [None], [None], [x])[0],
       pytree_registry=tree_util.default_registry)
   _pmap_cache_clears.add(cpp_mapped_f)
 
@@ -1794,7 +1800,7 @@ def linearize(fun: Callable, *primals, has_aux: bool = False
   >>> def f(x): return 3. * jnp.sin(x) + jnp.cos(x / 2.)
   ...
   >>> jax.jvp(f, (2.,), (3.,))
-  (Array(3.26819, dtype=float32, weak_type=True), Array(-5.00753, dtype=float32, weak_type=True))
+  (Array(3.2681944, dtype=float32, weak_type=True), Array(-5.007528, dtype=float32, weak_type=True))
   >>> y, f_jvp = jax.linearize(f, 2.)
   >>> print(y)
   3.2681944
@@ -2152,9 +2158,7 @@ def make_jaxpr(
   @wraps(fun)
   @api_boundary
   def make_jaxpr_f(*args, **kwargs):
-    with ExitStack() as stack:
-      for axis_name, size in axis_env or []:
-        stack.enter_context(core.extend_axis_env(axis_name, size, None))
+    with core.extend_axis_env_nd(axis_env or []):
       traced = jit(fun, static_argnums=static_argnums,
                    abstracted_axes=abstracted_axes).trace(*args, **kwargs)
     # `jit` converts tracers in consts to args but that breaks the semantics of
@@ -2180,14 +2184,15 @@ def make_jaxpr(
 
 def _infer_src_sharding(src, x) -> Sharding | None:
   if src is not None:
-    # TODO(slebedev): This looks like an error and needs investigation.
     return src  # pytype: disable=bad-return-type
   if isinstance(x, array.ArrayImpl):
     return x.sharding
-  elif isinstance(x, core.Tracer):
-    aval = core.get_aval(x)
-    if isinstance(aval, ConcreteArray) and isinstance(aval.val, array.ArrayImpl):
-      return aval.val.sharding
+  if config.sharding_in_types.value and hasattr(x, 'sharding'):
+    return x.sharding
+  if isinstance(x, core.Tracer):
+    val = x.to_concrete_value()
+    if val is not None and isinstance(val, array.ArrayImpl):
+      return val.sharding
   return None
 
 
@@ -2437,6 +2442,13 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
 def _device_get(x):
   if isinstance(x, core.Tracer):
     return x
+
+  # Extended dtypes dispatch via their device_get rule.
+  if isinstance(x, basearray.Array) and dtypes.issubdtype(x.dtype, dtypes.extended):
+    bufs, tree = tree_util.dispatch_registry.flatten(x)
+    return tree.unflatten(device_get(bufs))
+
+  # Other types dispatch via their __array__ method.
   try:
     toarray = x.__array__
   except AttributeError:
@@ -2765,7 +2777,6 @@ def clear_backends():
   dispatch.xla_primitive_callable.cache_clear()
   util.clear_all_caches()
   pjit._infer_params_cached.cache_clear()
-  pjit._pjit_lower_cached.cache_clear()
   pjit._create_pjit_jaxpr.cache_clear()  # pytype: disable=attribute-error
   pjit._cpp_pjit_cache_fun_only.clear()
   pjit._cpp_pjit_cache_explicit_attributes.clear()

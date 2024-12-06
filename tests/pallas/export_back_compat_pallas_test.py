@@ -18,6 +18,7 @@ update these tests.
 """
 
 import math
+import unittest
 
 from absl.testing import absltest
 import jax
@@ -47,6 +48,10 @@ class CompatTest(bctu.CompatTestBase):
       self.skipTest("Only works on GPUs with capability >= sm80")
     super().setUp()
 
+  @unittest.skip("This test is checking backwards compatibility "
+                 "of Triton IR, but Triton doesn't promise backwards "
+                 "compatibility for its IR, and we have since removed "
+                 "the corresponding custom call from the guaranteed stable list.")
   def test_triton_add_one(self):
     def func(x):
       def add_one(x_ref, o_ref):

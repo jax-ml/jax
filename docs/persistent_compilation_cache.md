@@ -1,10 +1,17 @@
 # Persistent compilation cache
 
-<!--* freshness: { reviewed: '2024-04-09' } *-->
+<!--* freshness: { reviewed: '2024-11-07' } *-->
 
 JAX has an optional disk cache for compiled programs. If enabled, JAX will
 store copies of compiled programs on disk, which can save recompilation time
 when running the same or similar tasks repeatedly.
+
+Note: if the compilation cache is not on a local filesystem,
+[etils](https://pypi.org/project/etils/) needs to be installed.
+
+```python
+pip install etils
+```
 
 ## Usage
 
@@ -17,6 +24,7 @@ import jax.numpy as jnp
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+jax.config.update("jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir")
 
 @jax.jit
 def f(x):
@@ -70,15 +78,32 @@ cc.set_cache_dir("/tmp/jax_cache")
 * `jax_persistent_cache_min_entry_size_bytes`: The minimum size (in bytes)
    of an entry that will be cached in the persistent compilation cache:
 
-   *  `-1`: disable the size restriction and prevent overrides. 
+   *  `-1`: disable the size restriction and prevent overrides.
 
    *  Leave at default (`0`) to allow for overrides. The override will
       typically ensure that the minimum size is optimal for the file system
-      being used for the cache. 
+      being used for the cache.
 
    *  `> 0`: the actual minimum size desired; no overrides.
 
 Note that both criteria need to be satisfied for a function to be cached.
+
+### Additional caching
+
+XLA supports additional caching mechanism which can be enabled alongside JAX's
+persistent compilation cache to further improve recompilation time.
+
+* `jax_persistent_cache_enable_xla_caches`: Possible values:
+
+   * `all`: enable all XLA caching features
+
+   * `none`: don't enable any extra XLA caching features
+
+   * `xla_gpu_kernel_cache_file`: only enable the kernel cache
+
+   * `xla_gpu_per_fusion_autotune_cache_dir`: (default value) only enable the
+      autotuning cache
+
 
 ### Google Cloud
 
@@ -155,7 +180,14 @@ import os
 os.environ["JAX_DEBUG_LOG_MODULES"] = "jax._src.compiler,jax._src.lru_cache"
 ```
 
-on the top of the script.
+on the top of the script. Alternatively, you can change the global jax logging level with
+
+```python
+import os
+os.environ["JAX_LOGGING_LEVEL"] = "DEBUG"
+# or locally with
+jax.config.update("jax_logging_level", "DEBUG")
+```
 
 ### Examining cache misses
 

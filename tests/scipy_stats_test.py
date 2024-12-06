@@ -543,6 +543,13 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self.assertAllClose(
       osp_stats.gamma.pdf(0.0, 1.0), lsp_stats.gamma.pdf(0.0, 1.0), atol=1E-6)
 
+  def testGammaDebugNans(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/24939
+    with jax.debug_nans(True):
+      self.assertAllClose(
+          osp_stats.gamma.pdf(0.0, 1.0, 1.0), lsp_stats.gamma.pdf(0.0, 1.0, 1.0)
+      )
+
   @genNamedParametersNArgs(4)
   def testGammaLogCdf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())

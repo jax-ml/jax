@@ -12,22 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""An example demonstrating the different ways that attributes can be passed to
-the FFI.
-
-For example, we can pass arrays, variadic attributes, and user-defined types.
-Full support of user-defined types isn't yet supported by XLA, so that example
-will be added in the future.
-"""
-
 import numpy as np
 
 import jax
 import jax.extend as jex
 
-from jax_ffi_example import _attrs
+from jax_ffi_example import _cpu_examples
 
-for name, target in _attrs.registrations().items():
+for name, target in _cpu_examples.registrations().items():
   jex.ffi.register_ffi_target(name, target)
 
 
@@ -43,3 +35,8 @@ def dictionary_attr(**kwargs):
       "dictionary_attr",
       (jax.ShapeDtypeStruct((), np.int32), jax.ShapeDtypeStruct((), np.int32)),
   )(**kwargs)
+
+
+def counter(index):
+  return jex.ffi.ffi_call(
+    "counter", jax.ShapeDtypeStruct((), jax.numpy.int32))(index=int(index))

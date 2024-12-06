@@ -19,17 +19,23 @@ limitations under the License.
 #include <cstdint>
 #include <string>
 
+#include "llvm/ADT/StringRef.h"
+#include "llvm/Support/raw_ostream.h"
+#include "mlir/Dialect/LLVMIR/LLVMTypes.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Value.h"
+#include "mlir/Interfaces/InferTypeOpInterface.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Support/LLVM.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
-#include "third_party/llvm/llvm-project/llvm/include/llvm/Support/raw_ostream.h"
-#include "mlir/include/mlir/Dialect/LLVMIR/LLVMTypes.h"
-#include "mlir/include/mlir/IR/Builders.h"
-#include "mlir/include/mlir/IR/BuiltinTypes.h"
-#include "mlir/include/mlir/IR/Value.h"
-#include "mlir/include/mlir/Support/LLVM.h"
 
 // Generated definitions.
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_dialect.h.inc"  // IWYU pragma: keep
+#include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_enums.h.inc"
+#define GET_ATTRDEF_CLASSES
+#include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_attrdefs.h.inc"
 #define GET_TYPEDEF_CLASSES
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_types.h.inc"
 #define GET_OP_CLASSES
@@ -39,6 +45,10 @@ namespace mosaic_gpu {
 
 using Memref = ::mlir::TypedValue<::mlir::MemRefType>;
 using Pointer = ::mlir::TypedValue<::mlir::LLVM::LLVMPointerType>;
+
+struct GlobalMemory : public mlir::SideEffects::Resource::Base<GlobalMemory> {
+  llvm::StringRef getName() final { return "<GlobalMemory>"; }
+};
 
 constexpr absl::string_view kRuntimeTmaDescriptorInitializerName =
     "mosaic_gpu_init_tma_desc";

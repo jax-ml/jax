@@ -24,15 +24,19 @@ import time
 from typing import Any, Callable
 import warnings
 
+from jax._src import cache_key as cache_key_type
 from jax._src import compilation_cache
 from jax._src import config as config
 from jax._src import distributed
 from jax._src import lib
 from jax._src import monitoring
+from jax._src import path as pathlib
 from jax._src import profiler
 from jax._src import traceback_util
 from jax._src.interpreters import mlir
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 import numpy as np
 
@@ -188,7 +192,18 @@ def get_compile_options(
     assert device_assignment.computation_count() == num_partitions
     compile_options.device_assignment = device_assignment
 
+  if xla_extension_version >= 294:
+    build_options.exec_time_optimization_effort = config.exec_time_optimization_effort.value
+    build_options.memory_fitting_effort = config.memory_fitting_effort.value
+
   if env_options_overrides is not None:
+    # Some overrides are passed directly on build_options.
+    overrides_on_build_options = [
+        'exec_time_optimization_effort', 'memory_fitting_effort']
+    env_options_overrides = dict(env_options_overrides)
+    for name in overrides_on_build_options:
+      if name in env_options_overrides:
+        setattr(build_options, name, env_options_overrides.pop(name))
     compile_options.env_option_overrides = list(env_options_overrides.items())
 
   debug_options = compile_options.executable_build_options.debug_options
@@ -233,6 +248,31 @@ def get_compile_options(
                      "XLA-AutoFDO profile version is 0; this should not happen")
 
   debug_options.xla_detailed_logging = detailed_logging
+
+  # If persistent cache is enabled, also enable additional XLA caching features.
+  if compilation_cache.is_persistent_cache_enabled() and jaxlib_version > (0, 4, 35):
+    # compilation_cache_dir can't be None here, but the type checker is a bit
+    # strict.
+    path = pathlib.Path(config.compilation_cache_dir.value or "")
+    enabled_flags = config.persistent_cache_enable_xla_caches.value or ""
+
+    if enabled_flags == "all" or "xla_gpu_kernel_cache_file" in enabled_flags:
+      kernel_cache_path = path / "xla_gpu_kernel_cache_file"
+      debug_options.xla_gpu_kernel_cache_file = str(kernel_cache_path)
+      # This option is required to use the kernel cache.
+      debug_options.xla_gpu_enable_llvm_module_compilation_parallelism = True
+      logger.debug("Enabling XLA kernel cache at '%s'", kernel_cache_path)
+
+    if enabled_flags == "all" or "xla_gpu_per_fusion_autotune_cache_dir" in enabled_flags:
+      autotune_cache_path = path / "xla_gpu_per_fusion_autotune_cache_dir"
+      debug_options.xla_gpu_per_fusion_autotune_cache_dir = str(autotune_cache_path)
+      logger.debug("Enabling XLA autotuning cache at '%s'", autotune_cache_path)
+
+      # Set caching mode so that only process 0 can write to the cache.
+      if distributed.global_state.process_id == 0:
+        debug_options.xla_gpu_experimental_autotune_cache_mode = xc.AutotuneCacheMode.UPDATE
+      else:
+        debug_options.xla_gpu_experimental_autotune_cache_mode = xc.AutotuneCacheMode.READ
 
   return compile_options
 
@@ -317,8 +357,18 @@ def compile_or_get_cached(
   monitoring.record_event('/jax/compilation_cache/compile_requests_use_cache')
 
   try:
+    if config.remove_custom_partitioning_ptr_from_cache_key.value:
+      ignore_callbacks = cache_key_type.IgnoreCallbacks.CUSTOM_PARTITIONING
+    else:
+      ignore_callbacks = cache_key_type.IgnoreCallbacks.NO
+
     cache_key = compilation_cache.get_cache_key(
-        computation, devices, compile_options, backend)
+        computation,
+        devices,
+        compile_options,
+        backend,
+        ignore_callbacks=ignore_callbacks,
+    )
   except xc._xla.XlaRuntimeError as ex:
     logger.error("compile_or_get_cached: unable to generate cache key, "
                  "skipping the cache: %s", ex)
@@ -351,7 +401,12 @@ def compile_or_get_cached(
     compile_options.executable_build_options.fdo_profile = b"pgle profiled"
 
     pgle_profiled_module_key = compilation_cache.get_cache_key(
-        computation, devices, compile_options, backend)
+        computation,
+        devices,
+        compile_options,
+        backend,
+        cache_key_type.IgnoreCallbacks.ALL,
+    )
     compile_options.executable_build_options.fdo_profile = fdo_profile
 
     if _is_executable_in_cache(backend, pgle_profiled_module_key):
@@ -459,7 +514,11 @@ def _share_fdo_profiles(
   compile_options.executable_build_options.fdo_profile = b""
   profile_key = (
       compilation_cache.get_cache_key(
-          computation, devices, compile_options, backend
+          computation,
+          devices,
+          compile_options,
+          backend,
+          cache_key_type.IgnoreCallbacks.ALL,
       )
       + "_fdo_sync"
   )

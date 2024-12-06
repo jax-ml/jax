@@ -25,6 +25,7 @@ import inspect
 import logging
 import math
 import os
+import platform
 import re
 import sys
 import tempfile
@@ -44,11 +45,13 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes as _dtypes
+from jax._src import lib as _jaxlib
 from jax._src import linear_util as lu
 from jax._src import monitoring
 from jax._src import pjit as pjit_lib
 from jax._src import stages
 from jax._src import xla_bridge
+from jax._src import mesh as mesh_lib
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
@@ -451,13 +454,25 @@ def assert_num_jit_and_pmap_compilations(times):
                          f"but executed {count[0]}")
 
 
+def jaxlib_version() -> tuple[int, ...]:
+  return _jaxlib.version
+
+
 def device_under_test():
   return _TEST_DUT.value or xla_bridge.get_backend().platform
 
 def supported_dtypes():
   if device_under_test() == "tpu":
     types = {np.bool_, np.int8, np.int16, np.int32, np.uint8, np.uint16,
-             np.uint32, _dtypes.bfloat16, np.float16, np.float32, np.complex64}
+             np.uint32, _dtypes.bfloat16, np.float16, np.float32, np.complex64,
+             _dtypes.float8_e4m3fn, _dtypes.float8_e4m3b11fnuz,
+             _dtypes.float8_e5m2}
+  elif device_under_test() == "gpu":
+    types = {np.bool_, np.int8, np.int16, np.int32, np.int64,
+             np.uint8, np.uint16, np.uint32, np.uint64,
+             _dtypes.bfloat16, np.float16, np.float32, np.float64,
+             np.complex64, np.complex128, _dtypes.float8_e4m3fn,
+             _dtypes.float8_e5m2}
   elif device_under_test() == "METAL":
     types = {np.int32, np.uint32, np.float32}
   else:
@@ -537,6 +552,14 @@ def is_cuda_compute_capability_at_least(capability: str) -> bool:
   target = tuple(int(x) for x in capability.split("."))
   current = tuple(int(x) for x in d.compute_capability.split("."))
   return current >= target
+
+def is_cuda_compute_capability_equal(capability: str) -> bool:
+  if not is_device_cuda():
+    return False
+  d, *_ = jax.local_devices(backend="gpu")
+  target = tuple(int(x) for x in capability.split("."))
+  current = tuple(int(x) for x in d.compute_capability.split("."))
+  return current == target
 
 def _get_device_tags():
   """returns a set of tags defined for the device under test"""
@@ -957,6 +980,31 @@ def rand_unique_int(rng, high=None):
                       size=shape, replace=False)
   return fn
 
+def rand_indices_unique_along_axis(rng):
+  """Sample an array of given shape containing indices up to dim (exclusive),
+  such that the indices are unique along the given axis.
+  Optionally, convert some of the resulting indices to negative indices."""
+  def fn(dim, shape, axis, allow_negative=True):
+    batch_size = math.prod(shape[:axis] + shape[axis:][1:])
+    idx = [
+      rng.choice(dim, size=shape[axis], replace=False)
+      for _ in range(batch_size)
+    ]
+    idx = np.array(idx).reshape(batch_size, shape[axis])
+    idx = idx.reshape(shape[:axis] + shape[axis:][1:] + (shape[axis],))
+    idx = np.moveaxis(idx, -1, axis)
+
+    # assert that indices are unique along the given axis
+    count = partial(np.bincount, minlength=dim)
+    assert (np.apply_along_axis(count, axis, idx) <= 1).all()
+
+    if allow_negative:
+      mask = rng.choice([False, True], idx.shape)
+      idx[mask] -= dim
+    return idx
+
+  return fn
+
 def rand_bool(rng):
   def generator(shape, dtype):
     return _cast_to_shape(
@@ -1162,10 +1210,8 @@ class JaxTestCase(parameterized.TestCase):
 
   _compilation_cache_exit_stack: ExitStack | None = None
 
-  # TODO(mattjj): this obscures the error messages from failures, figure out how
-  # to re-enable it
-  # def tearDown(self) -> None:
-  #   assert core.reset_trace_state()
+  def tearDown(self) -> None:
+    assert core.reset_trace_state()
 
   def setUp(self):
     super().setUp()
@@ -1397,6 +1443,16 @@ def with_and_without_mesh(f):
       ('Mesh', (('x', 2),), (('i', 'x'),))
     ))(with_mesh_from_kwargs(f))
 
+def with_user_mesh(sizes, names):
+  def decorator(fn):
+    def mesh_fn(*args, **kwargs):
+      mesh = create_mesh(sizes, names)
+      with mesh_lib.set_mesh(mesh):
+        return fn(*args, **kwargs, mesh=mesh)
+    return mesh_fn
+  return decorator
+
+
 def create_mesh(mesh_shape, axis_names, iota_order=False):
   size = math.prod(mesh_shape)
   if len(jax.devices()) < size:
@@ -1433,10 +1489,19 @@ class _LazyDtypes:
 
   @_cached_property
   def custom_floats(self):
-    return [np.dtype(t) for t in [
-      _dtypes.bfloat16, _dtypes.float8_e4m3b11fnuz,
-      _dtypes.float8_e4m3fn, _dtypes.float8_e4m3fnuz,
-      _dtypes.float8_e5m2, _dtypes.float8_e5m2fnuz]]
+    float_dtypes = [
+      _dtypes.bfloat16,
+      _dtypes.float8_e4m3b11fnuz,
+      _dtypes.float8_e4m3fn,
+      _dtypes.float8_e4m3fnuz,
+      _dtypes.float8_e5m2,
+      _dtypes.float8_e5m2fnuz,
+    ]
+    if _dtypes.float8_e3m4 is not None:
+      float_dtypes += [_dtypes.float8_e3m4]
+    if _dtypes.float8_e4m3 is not None:
+      float_dtypes += [_dtypes.float8_e4m3]
+    return self.supported(float_dtypes)
 
   @_cached_property
   def floating(self):
@@ -1452,8 +1517,7 @@ class _LazyDtypes:
 
   @_cached_property
   def all_integer(self):
-    return self.supported([
-        _dtypes.int4, np.int8, np.int16, np.int32, np.int64])
+    return self.supported([np.int8, np.int16, np.int32, np.int64])
 
   @_cached_property
   def unsigned(self):
@@ -1461,8 +1525,7 @@ class _LazyDtypes:
 
   @_cached_property
   def all_unsigned(self):
-    return self.supported([
-        _dtypes.uint4, np.uint8, np.uint16, np.uint32, np.uint64])
+    return self.supported([np.uint8, np.uint16, np.uint32, np.uint64])
 
   @_cached_property
   def complex(self):
@@ -1653,6 +1716,10 @@ def complex_plane_sample(dtype, size_re=10, size_im=None):
     size_im = size_re
   finfo = np.finfo(dtype)
 
+  machine = platform.machine()
+  is_arm_cpu = machine.startswith('aarch') or machine.startswith('arm')
+  smallest = np.nextafter(finfo.tiny, finfo.max) if is_arm_cpu and platform.system() == 'Darwin' else finfo.tiny
+
   def make_axis_points(size):
     prec_dps_ratio = 3.3219280948873626
     logmin = logmax = finfo.maxexp / prec_dps_ratio
@@ -1671,8 +1738,8 @@ def complex_plane_sample(dtype, size_re=10, size_im=None):
       axis_points[1] = finfo.min
       axis_points[-2] = finfo.max
     if size > 0:
-      axis_points[size] = -finfo.tiny
-      axis_points[-size - 1] = finfo.tiny
+      axis_points[size] = -smallest
+      axis_points[-size - 1] = smallest
     axis_points[0] = -np.inf
     axis_points[-1] = np.inf
     return axis_points

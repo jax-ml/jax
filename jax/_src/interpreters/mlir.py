@@ -184,13 +184,13 @@ _dtype_to_ir_type : dict[np.dtype, Callable[[], ir.Type]] = {
 
 if dtypes.int2 is not None:
   assert dtypes.uint2 is not None
-  _dtype_to_ir_type[np.dtype(dtypes.int2)] = partial(
-      ir.IntegerType.get_signless, 2
-  )
-  _dtype_to_ir_type[np.dtype(dtypes.uint2)] = partial(
-      ir.IntegerType.get_unsigned, 2
-  )
+  _dtype_to_ir_type[np.dtype(dtypes.int2)] = partial(ir.IntegerType.get_signless, 2)
+  _dtype_to_ir_type[np.dtype(dtypes.uint2)] = partial(ir.IntegerType.get_unsigned, 2)
 
+if dtypes.float8_e3m4 is not None:
+  _dtype_to_ir_type[np.dtype(dtypes.float8_e3m4)] = ir.Float8E3M4Type.get
+if dtypes.float8_e4m3 is not None:
+  _dtype_to_ir_type[np.dtype(dtypes.float8_e4m3)] = ir.Float8E4M3Type.get
 
 def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
   if isinstance(dtype, core.bint):
@@ -230,7 +230,6 @@ def aval_to_ir_type(aval: core.AbstractValue) -> IrTypes:
     raise TypeError(f"No ir_type_handler for aval type: {type(aval)}") from err
 
 ir_type_handlers[core.ShapedArray] = _array_ir_types
-ir_type_handlers[core.ConcreteArray] = _array_ir_types
 ir_type_handlers[core.AbstractToken] = lambda _: hlo.TokenType.get()
 ir_type_handlers[core.DShapedArray] = _dynamic_array_ir_types
 
@@ -587,9 +586,18 @@ def module_to_bytecode(module: ir.Module) -> bytes:
   return output.getvalue()
 
 # Translation rules
+
+class JaxIrContext(ir.Context):
+  def __init__(self, *args, **kwargs):
+    # Note: we're very intentionally *not* calling the __init__() of our
+    # immediate superclass ir.Context, whose __init__() has the unfortunate side
+    # effect of loading all the dialects linked into the binary into the
+    # context. We want to ensure that only the dialects we need are loaded.
+    super(ir.Context, self).__init__(*args, **kwargs)
+
 def make_ir_context() -> ir.Context:
   """Creates an MLIR context suitable for JAX IR."""
-  context = ir.Context()
+  context = JaxIrContext()
   context.append_dialect_registry(upstream_dialects)
   context.load_all_available_dialects()
 
@@ -762,7 +770,13 @@ class ModuleContext:
     return self.backend_or_name
 
   def new_channel(self) -> int:
-    return next(self.channel_iterator)
+    channel = next(self.channel_iterator)
+    # `xla::HostCallback` requires a 16-bit channel ID.
+    if channel >= (1 << 16):
+      raise RuntimeError(
+          "Host callback lowering created too many channels. PjRt does not"
+          " support more than 65535 channels")
+    return channel
 
   # Adds an IFRT host callback object to the context. A reference to these
   # callbacks will be provided to IFRT during compilation so it can do things
@@ -1738,6 +1752,44 @@ def _emit_lowering_rule_as_fun(lowering_rule,
   return func_op
 
 
+class HashableLiteral:
+  """Hashable wrapper of core.Literal, used for deduplicating IR constants."""
+
+  __slots__ = ["value", "data"]
+
+  value: core.Literal
+
+  # Copy of the value suitable for an equality comparison. We are careful to
+  # avoid floating point comparisons here, because in particular we don't want
+  # 0.0 and -0.0 to be considered equal, but we are fine with NaNs being equal.
+  data: bytes | int | bool | None
+
+  def __init__(self, value):
+    self.value = value
+    if isinstance(value.val, (np.generic, np.ndarray)):
+      self.data = value.val.tobytes()
+    elif isinstance(value.val, (bool, int)):
+      self.data = value.val
+    elif isinstance(value.val, float):
+      self.data = np.float64(value.val).tobytes()
+    elif isinstance(value.val, complex):
+      self.data = np.complex128(value.val).tobytes()
+    else:
+      self.data = None  # Unhandled case.
+
+  def __hash__(self):
+    return hash(self.data)
+
+  def __eq__(self, other):
+    if type(self.value.val) != type(other.value.val):
+      return False
+    if self.value.aval != other.value.aval:
+      return False
+    if self.data is None:
+      return id(self) == id(other)
+    return self.data == other.data
+
+
 def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
                   name_stack: source_info_util.NameStack,
                   tokens: TokenSet,
@@ -1753,9 +1805,16 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     IR function, in the order of ctx.shape_poly_state.dim_vars.
   """
   assert "gpu" not in ctx.platforms
+  cached_ir_consts: dict[HashableLiteral, IrValues] = {}
+
   def read(v: core.Atom) -> IrValues:
     if type(v) is core.Literal:
-      return ir_constant(xla.canonicalize_dtype(v.val))
+      h = HashableLiteral(v)
+      c = cached_ir_consts.get(h)
+      if c is None:
+        c = ir_constant(xla.canonicalize_dtype(v.val))
+        cached_ir_consts[h] = c
+      return c
     else:
       assert isinstance(v, core.Var)
       return env[v]
@@ -1878,6 +1937,8 @@ def _platforms_for_eqn_ctx(eqn_ctx: core.JaxprEqnContext | None
     return ()
   if eqn_ctx.compute_type == 'device_host':
     return ('cpu',)
+  if eqn_ctx.compute_type == 'tpu_sparsecore':
+    return ('tpu',)
   return ()
 
 
@@ -2160,8 +2221,10 @@ def map_compute_type(c_type):
     return 'host'
   elif c_type == 'device':
     return 'dense'
+  elif c_type == 'tpu_sparsecore':
+    return 'sparse'
   raise ValueError('Invalid compute type received. Current supported values '
-                   'are `device_host` and `device`')
+                   'are `device_host`, `device` and `tpu_sparsecore')
 
 def wrap_compute_type_in_place(ctx, op):
   if ctx.jaxpr_eqn_ctx is not None and ctx.jaxpr_eqn_ctx.compute_type is not None:
@@ -2454,6 +2517,18 @@ wrap_with_sharding_op = partial(_wrap_with_spmd_op, "Sharding",
                                 allow_shardy_lowering=True)
 wrap_with_full_to_shard_op = partial(_wrap_with_spmd_op, "SPMDFullToShardShape")
 wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
+
+
+def lower_sharding_under_shit(ctx, op, aval, sharding_proto=None):
+  # Don't emit a wsc under full manual mode to avoid increasing HLO size.
+  if aval.sharding.mesh._are_all_axes_collective:
+    return op
+  proto = (aval.sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
+           if sharding_proto is None else sharding_proto)
+  # TODO(yashkatariya): Enable this
+  # unspecified_dims = (set(range(aval.ndim))
+  #                     if aval.sharding.mesh._any_axis_collective else None)
+  return wrap_with_sharding_op(ctx, op, aval, proto)
 
 
 def set_sharding(op, sharding: xc.OpSharding | sharding_impls.SdyArraySharding):

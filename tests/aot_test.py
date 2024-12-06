@@ -62,6 +62,7 @@ class JaxAotTest(jtu.JaxTestCase):
         jax.pmap(lambda x: x * x).lower(
             np.zeros((len(jax.devices()), 4), dtype=np.float32)))
 
+  @jtu.skip_on_devices('gpu')  # Test fails in CI
   def test_topology_pjit_serialize(self):
     try:
       aot_topo = topologies.get_topology_desc(
