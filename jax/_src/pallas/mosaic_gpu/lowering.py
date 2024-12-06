@@ -1256,13 +1256,11 @@ def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
   [x_aval] = ctx.avals_in
   match x.layout:
     case mgpu.WGStridedFragLayout():
-      if axes != (0,):
-        raise NotImplementedError("No support for axes other than 0 yet")
+      if set(axes) != set(range(x_aval.ndim)):
+        raise NotImplementedError("No support for axes yet")
       scratch_ty = jax.ShapeDtypeStruct(shape=(4,), dtype=x_aval.dtype)
       with ctx.module_ctx.scratch_view([scratch_ty]) as [scratch]:
-        return mgpu.FragmentedArray.splat(
-            x.reduce_sum(scratch), (), is_signed=mgpu_utils.is_signed(x_aval.dtype)
-        )
+        return x.reduce_sum(scratch)
     case mgpu.WGMMA_LAYOUT:
       if axes != (x_aval.ndim - 1,):
         raise NotImplementedError
@@ -1560,6 +1558,42 @@ def _scan_lowering_rule(
   return for_out
 
 
+def _lower_while_via_fori(
+    ctx: LoweringRuleContext,
+    *args,
+    fori_jaxpr,
+    cond_nconsts,
+    body_nconsts,
+):
+  assert not fori_jaxpr.constvars
+
+  # Reflect the changes of the pattern matcher to the context.
+  ctx = ctx.replace(
+      avals_in=(
+          *ctx.avals_in[cond_nconsts:body_nconsts],
+          ctx.avals_in[body_nconsts],  # the index
+          *ctx.avals_in[body_nconsts + 2 :],
+      ),
+      avals_out=tuple(ctx.avals_out[2:]),
+  )
+  _, consts, (lb, ub, *args) = util.split_list(
+      args, [cond_nconsts, body_nconsts]
+  )
+  lb_aval, ub_aval, *_ = ctx.avals_in[body_nconsts:]
+  lb = _ensure_ir_value(lb, lb_aval.dtype)
+  ub = _ensure_ir_value(ub, ub_aval.dtype)
+  for_out = _lower_jaxpr_to_for_loop(
+      ctx,
+      fori_jaxpr,
+      lb,
+      arith_dialect.subi(ub, lb),
+      consts,
+      *args,
+      has_loop_index=True,
+  )
+  return ub, ub, *for_out
+
+
 @register_lowering_rule(lax.while_p)
 def _while_lowering_rule(
     ctx: LoweringRuleContext,
@@ -1570,33 +1604,48 @@ def _while_lowering_rule(
     body_nconsts,
 ):
   # First try to lower via a simpler fori loop, which may optimize better.
-  fori_jaxpr, err = pallas_utils.pattern_match_while_to_fori_loop(
+  fori_jaxpr, _ = pallas_utils.pattern_match_while_to_fori_loop(
       cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts
   )
-  del cond_jaxpr, body_jaxpr
-  if fori_jaxpr is None:
-    raise NotImplementedError(err)
+  if fori_jaxpr is not None:
+    return _lower_while_via_fori(
+        ctx,
+        *args,
+        fori_jaxpr=fori_jaxpr,
+        cond_nconsts=cond_nconsts,
+        body_nconsts=body_nconsts,
+    )
 
-  if fori_jaxpr.constvars:
-    raise NotImplementedError
-
-  lb_aval, ub_aval, *_ = ctx.avals_in[body_nconsts:]
-  # Reflect the changes of the pattern matcher to the context.
-  avals_in = (
-      *ctx.avals_in[cond_nconsts:body_nconsts],
-      ctx.avals_in[body_nconsts],  # the index
-      *ctx.avals_in[body_nconsts + 2:],
+  # If we fail conversion to fori, fallback to an ordinary while loop.
+  cond_consts, body_consts, carry = util.split_list(
+      args, [cond_nconsts, body_nconsts]
   )
+  cond_avals, body_avals, carry_avals = util.split_list(
+      ctx.avals_in, [cond_nconsts, body_nconsts]
+  )
+  carry = map(_ensure_fa, carry, carry_avals)
+  flat_carry, carry_treedef = jax.tree.flatten(carry)
+  flat_carry_types = [a.type for a in flat_carry]
+  while_op = scf_dialect.WhileOp(flat_carry_types, flat_carry)
 
-  avals_out = tuple(ctx.avals_out[2:])
-  ctx = ctx.replace(avals_in=avals_in, avals_out=avals_out)
-  _, consts, (lb, ub, *args) = util.split_list(args, [cond_nconsts, body_nconsts])
+  before_block = while_op.before.blocks.append(*flat_carry_types)
+  with ir.InsertionPoint.at_block_begin(before_block):
+    cond_args = [*cond_consts, *before_block.arguments]
+    [cond] = lower_jaxpr_to_mosaic_gpu(
+        ctx.module_ctx, ctx.launch_ctx, cond_jaxpr.jaxpr, cond_args
+    )
+    scf_dialect.condition(_ensure_ir_value(cond, *cond_jaxpr.out_avals), before_block.arguments)
 
-  lb, ub = _ensure_ir_value(lb, lb_aval.dtype), _ensure_ir_value(ub, ub_aval.dtype)
-  length = arith_dialect.subi(ub, lb)
+  after_block = while_op.after.blocks.append(*flat_carry_types)
+  with ir.InsertionPoint.at_block_begin(after_block):
+    body_args = [*body_consts, *after_block.arguments]
+    loop_out = lower_jaxpr_to_mosaic_gpu(
+        ctx.module_ctx, ctx.launch_ctx, body_jaxpr.jaxpr, body_args
+    )
+    if loop_out:
+      scf_dialect.yield_(carry_treedef.flatten_up_to(loop_out))
+  return carry_treedef.unflatten(list(while_op.results))
 
-  for_out = _lower_jaxpr_to_for_loop(ctx, fori_jaxpr, lb, length, consts, *args, has_loop_index=True)
-  return (ub, ub, *for_out)
 
 @register_lowering_rule(lax.cond_p)
 def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):

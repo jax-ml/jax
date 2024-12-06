@@ -783,6 +783,27 @@ class PallasCallTest(PallasTest):
     y = x + 1
     np.testing.assert_array_equal(kernel(x, y), x + y)
 
+  def test_while_loop(self):
+    @functools.partial(
+        pl.pallas_call, out_shape=jax.ShapeDtypeStruct([128], jnp.int32)
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.zeros(o_ref.shape, dtype=jnp.int32)
+      n_iter = x_ref[...].sum()
+
+      def cond(i):
+        return i < n_iter
+
+      def body(i):
+        o_ref[...] += 1
+        return i + 1
+
+      _ = jax.lax.while_loop(cond, body, 0)
+
+    np.testing.assert_array_equal(
+        kernel(jnp.full([128], 32)), jnp.full([128], 128 * 32)
+    )
+
   def test_cond(self):
     @functools.partial(
         pl.pallas_call,
