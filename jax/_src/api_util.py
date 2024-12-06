@@ -615,7 +615,9 @@ _shaped_abstractify_handlers[str] = _str_abstractify
 
 def _numpy_array_abstractify(x: np.ndarray) -> ShapedArray:
   dtype = x.dtype
-  dtypes.check_valid_dtype(dtype)
+  if dtype != np.dtypes.StringDType():
+    dtypes.check_valid_dtype(dtype)
+
   return ShapedArray(x.shape,
       dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True))
 _shaped_abstractify_handlers[np.ndarray] = _numpy_array_abstractify
