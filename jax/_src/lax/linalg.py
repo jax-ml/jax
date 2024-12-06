@@ -48,6 +48,7 @@ from jax._src.lax.lax import (
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
 from jax._src.lib import lapack
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -2616,37 +2617,54 @@ def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
   batch_dims = operand_aval.shape[:-2]
 
   a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-  gees_result = lapack.gees_hlo(operand_aval.dtype, operand,
+  # TODO(b/344892332): Remove the conditional after the compatibility period.
+  ctx_args = (ctx,) if jaxlib_version >= (0, 4, 37) else ()
+  gees_result = lapack.gees_hlo(*ctx_args, operand_aval.dtype, operand,
                                 jobvs=compute_schur_vectors,
                                 sort=sort_eig_vals,
                                 select=select_callable,
                                 a_shape_vals=a_shape_vals)
-
-  # Number of return values depends on value of sort_eig_vals.
-  T, vs, *_, info = gees_result
+  if jaxlib_version >= (0, 4, 37) and not ctx.is_forward_compat():
+    schur_form, schur_vectors, _eig_vals, _selected_eig_vals, info = gees_result
+  else:
+    # Number of return values depends on value of sort_eig_vals.
+    schur_form, schur_vectors, *_, info = gees_result
 
   ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "EQ", "SIGNED")
 
-  select_T_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-  T = _broadcasting_select_hlo(
+  select_schur_form_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
+  schur_form = _broadcasting_select_hlo(
       ctx,
-      mlir.broadcast_in_dim(ctx, ok, select_T_aval,
-                            broadcast_dimensions=range(len(batch_dims))),
-      select_T_aval,
-      T, ctx.avals_out[0],_nan_like_hlo(ctx, ctx.avals_out[0]), ctx.avals_out[0])
-  output = [T]
+      mlir.broadcast_in_dim(
+          ctx,
+          ok,
+          select_schur_form_aval,
+          broadcast_dimensions=range(len(batch_dims)),
+      ),
+      select_schur_form_aval,
+      schur_form,
+      ctx.avals_out[0],
+      _nan_like_hlo(ctx, ctx.avals_out[0]),
+      ctx.avals_out[0],
+  )
+  output = [schur_form]
   if compute_schur_vectors:
     select_vs_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-    vs = _broadcasting_select_hlo(
+    schur_vectors = _broadcasting_select_hlo(
         ctx,
-        mlir.broadcast_in_dim(ctx, ok, select_vs_aval,
-                              broadcast_dimensions=range(len(batch_dims))),
+        mlir.broadcast_in_dim(
+            ctx, ok, select_vs_aval, broadcast_dimensions=range(len(batch_dims))
+        ),
         select_vs_aval,
-        vs, ctx.avals_out[1], _nan_like_hlo(ctx, ctx.avals_out[1]), ctx.avals_out[1])
+        schur_vectors,
+        ctx.avals_out[1],
+        _nan_like_hlo(ctx, ctx.avals_out[1]),
+        ctx.avals_out[1],
+    )
 
-    output.append(vs)
+    output.append(schur_vectors)
 
   return output
 
