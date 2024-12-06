@@ -13,7 +13,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-# Set up the Docker container and start it for JAX CI jobs.
+# Sets up a Docker container for JAX CI.
+
+# This script creates and starts a Docker container named "jax" for internal
+# JAX CI jobs. These jobs primarily handle building and publishing JAX artifacts
+# to PyPI and/or GCS.
+
+# Note: GitHub Actions workflows do not utilize this script, as they leverage
+# built-in containerization features to run jobs within a container. However,
+# they use the same Docker image to maintain consistency. This script also helps
+# ensure that local build environments mirror the behavior of CI builds.
+# Usage:
+#     ./ci/utilities/run_docker_container.sh
+#     docker exec -it jax <build-script>
+#     E.g: docker exec -it jax ./ci/build_artifacts.sh jaxlib
 #
 # -e: abort script if one command fails
 # -u: error if undefined variable used
@@ -46,13 +59,13 @@ if ! docker container inspect jax >/dev/null 2>&1 ; then
     JAXCI_DOCKER_ARGS="$JAXCI_DOCKER_ARGS -v $HOME/.config/gcloud:/root/.config/gcloud"
   fi
 
-  # Start the container. `user_set_jaxci_envs` is read after `jax_ci_envs` to
-  # allow the user to override any environment variables set by JAXCI_ENV_FILE.
+  # Start the container.
   docker run $JAXCI_DOCKER_ARGS --name jax \
-      -w "$JAXCI_DOCKER_WORK_DIR" -itd --rm \
-      -v "$JAXCI_JAX_GIT_DIR:$JAXCI_DOCKER_WORK_DIR" \
-      "$JAXCI_DOCKER_IMAGE" \
-    bash
+          --env-file <(env | grep JAXCI_) \
+          -w "$JAXCI_DOCKER_WORK_DIR" -itd --rm \
+          -v "$JAXCI_JAX_GIT_DIR:$JAXCI_DOCKER_WORK_DIR" \
+          "$JAXCI_DOCKER_IMAGE" \
+          bash
 
   if [[ "$(uname -s)" =~ "MSYS_NT" ]]; then
     # Allow requests from the container.
