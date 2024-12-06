@@ -1256,13 +1256,11 @@ def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
   [x_aval] = ctx.avals_in
   match x.layout:
     case mgpu.WGStridedFragLayout():
-      if axes != (0,):
-        raise NotImplementedError("No support for axes other than 0 yet")
+      if set(axes) != set(range(x_aval.ndim)):
+        raise NotImplementedError("No support for axes yet")
       scratch_ty = jax.ShapeDtypeStruct(shape=(4,), dtype=x_aval.dtype)
       with ctx.module_ctx.scratch_view([scratch_ty]) as [scratch]:
-        return mgpu.FragmentedArray.splat(
-            x.reduce_sum(scratch), (), is_signed=mgpu_utils.is_signed(x_aval.dtype)
-        )
+        return x.reduce_sum(scratch)
     case mgpu.WGMMA_LAYOUT:
       if axes != (x_aval.ndim - 1,):
         raise NotImplementedError
