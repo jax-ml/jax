@@ -61,7 +61,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.layout import DeviceLocalLayout, AutoLayout, Layout
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
@@ -108,8 +107,6 @@ ShardingSpec = sharding_specs.ShardingSpec
 
 
 def to_xc_copy_semantics(copy_semantics):
-  if xla_extension_version < 296:
-    return [None] * len(copy_semantics)
   out = []
   for cs in copy_semantics:
     if cs is None or cs == dispatch.CopySemantics.ALIAS:
