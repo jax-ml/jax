@@ -13,14 +13,17 @@
 # limitations under the License.
 """Helper tool for automatic cost estimation."""
 import dataclasses
+import functools
 import math
 from typing import Any, Sequence
 
 import jax
+from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import custom_derivatives
 from jax._src import linear_util as lu
 from jax._src import pjit
+from jax._src.state import discharge
 from jax._src.pallas import core as pallas_core
 from jax._src.interpreters import partial_eval as pe
 from jax._src.util import safe_map
@@ -87,10 +90,9 @@ def estimate_cost(fun, *args, **kwargs) -> pallas_core.CostEstimate:
     A pallas_core.CostEstimate object containing the cost estimate.
   """
   flattened_args, treedef = jax.tree.flatten(args)
-  def _partial_fun(*flat_args):
-    return fun(*jax.tree.unflatten(treedef, flat_args), **kwargs)
-  wrapped_fun = lu.wrap_init(
-      lambda *args, **kwargs: (_partial_fun(*args, **kwargs),))
+  partial_fun = functools.partial(fun, **kwargs)
+  wrapped_fun, _ = api_util.flatten_fun_nokwargs(lu.wrap_init(partial_fun),
+                                                 treedef)
   avals = [jax_core.ShapedArray(a.shape, a.dtype) for a in flattened_args]
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
   estimate = cost_estimate_jaxpr(jax_core.ClosedJaxpr(jaxpr, consts))
@@ -243,3 +245,12 @@ def _custom_vjp_rule(ctx, *, fun_jaxpr: jax_core.ClosedJaxpr, **_):
       bytes_accessed=inner_cost.bytes_accessed,
   )
 register_cost_rule(custom_derivatives.custom_vjp_call_jaxpr_p, _custom_vjp_rule)
+
+def _run_state_rule(*_, jaxpr: jax_core.Jaxpr, **_2):
+  inner_cost = cost_estimate_jaxpr(pe.close_jaxpr(jaxpr))
+  return CostEstimate(
+      flops=inner_cost.flops,
+      transcendentals=inner_cost.transcendentals,
+      bytes_accessed=inner_cost.bytes_accessed,
+  )
+register_cost_rule(discharge.run_state_p, _run_state_rule)
