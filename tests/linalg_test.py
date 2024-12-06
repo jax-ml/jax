@@ -2010,6 +2010,57 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(root, expected, check_dtypes=False)
 
   @jtu.sample_product(
+    shape=[(4, 4), (15, 15), (50, 50), (100, 100)],
+    dtype=float_types + complex_types,
+  )
+  @jtu.run_on_devices("cpu")
+  def testLogmPSDMatrix(self, shape, dtype):
+    # Checks against scipy.linalg.sqrtm when the principal square root
+    # is guaranteed to be unique (i.e no negative real eigenvalue)
+    rng = jtu.rand_default(self.rng())
+    arg = rng(shape, dtype)
+    mat = arg @ arg.T
+    args_maker = lambda : [mat]
+    if dtype == np.float32 or dtype == np.complex64:
+      tol = 1e-4
+    else:
+      tol = 1e-8
+    self._CheckAgainstNumpy(osp.linalg.logm,
+                            jsp.linalg.logm,
+                            args_maker,
+                            tol=tol,
+                            check_dtypes=False)
+    self._CompileAndCheck(jsp.linalg.sqrtm, args_maker)
+
+  @jtu.sample_product(
+    shape=[(4, 4), (15, 15), (50, 50), (100, 100)],
+    dtype=float_types,
+  )
+  def testOneNormEstimator(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    #  scipy algorithm is not deterministic so set seed for reproducibility
+    np.random.seed(0)
+
+    arg = rng(shape, dtype)
+    mat = arg @ arg.T
+    key = jax.random.key(0)
+    args_maker = lambda: [mat, key]
+    if dtype == np.float32 or dtype == np.complex64:
+      tol = 1e-4
+    else:
+      tol = 1e-8
+
+    
+    # use big t and itmax to find the exact answer
+    lax_ans = jsp.linalg.onenormest(mat, key, t=50, itmax=50)
+    numpy_ans = osp.sparse.linalg._onenormest.onenormest(mat, t=50, itmax=50)
+
+    self.assertAllClose(numpy_ans, lax_ans, check_dtypes=False,
+                        atol=tol, rtol=tol,
+                        canonicalize_dtypes=True)
+    self._CompileAndCheck(jsp.linalg.onenormest, args_maker)
+
+  @jtu.sample_product(
     cshape=[(), (4,), (8,), (4, 7), (2, 1, 5)],
     cdtype=float_types + complex_types,
     rshape=[(), (3,), (7,), (4, 4), (2, 4, 0)],

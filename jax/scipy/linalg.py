@@ -36,6 +36,8 @@ from jax._src.scipy.linalg import (
   rsf2csf as rsf2csf,
   schur as schur,
   sqrtm as sqrtm,
+  logm as logm,
+  onenormest as onenormest,
   solve as solve,
   solve_triangular as solve_triangular,
   svd as svd,
