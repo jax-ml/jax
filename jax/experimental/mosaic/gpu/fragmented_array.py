@@ -662,7 +662,8 @@ class FragmentedArray:
 
       if isinstance(o.layout, WGSplatFragLayout):
         if not o.layout.can_broadcast_to(self.shape):
-          raise ValueError("Can't broadcast shape.")
+          raise ValueError(
+              f"Cannot broadcast shape {self.shape} to layout {o.layout}")
         o = FragmentedArray.splat(
             o.registers.flat[0],
             shape=self.shape,
