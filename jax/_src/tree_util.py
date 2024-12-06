@@ -291,13 +291,13 @@ def register_pytree_node(
   """
   if xla_extension_version >= 299:
     default_registry.register_node(  # type: ignore[call-arg]
-        nodetype, flatten_func, unflatten_func, flatten_with_keys_func
+        nodetype, flatten_func, unflatten_func, flatten_with_keys_func  # type: ignore[arg-type]
     )
     none_leaf_registry.register_node(  # type: ignore[call-arg]
-        nodetype, flatten_func, unflatten_func, flatten_with_keys_func
+        nodetype, flatten_func, unflatten_func, flatten_with_keys_func  # type: ignore[arg-type]
     )
     dispatch_registry.register_node(  # type: ignore[call-arg]
-        nodetype, flatten_func, unflatten_func, flatten_with_keys_func
+        nodetype, flatten_func, unflatten_func, flatten_with_keys_func  # type: ignore[arg-type]
     )
   else:
     default_registry.register_node(nodetype, flatten_func, unflatten_func)

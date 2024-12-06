@@ -10,7 +10,9 @@ Remember to align the itemized text with the first line of an item within a list
 When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
-## jax 0.4.36
+## jax 0.4.37
+
+## jax 0.4.36 (Dec 5, 2024)
 
 * Breaking Changes
   * This release lands "stackless", an internal change to JAX's tracing
