@@ -764,13 +764,23 @@ class _DimExpr:
       return _DimExpr._linear_combination(self, other, 0, 0, self.scope)
     return _ensure_poly(other, "mul", self.scope).__mul__(self)
 
-  def __pow__(self, power, modulo=None):
-    assert modulo is None
-    try:
-      power = int(power)
-    except:
-      raise InconclusiveDimensionOperation(f"Symbolic dimension cannot be raised to non-integer power '{self}' ^ '{power}'")
-    return functools.reduce(op.mul, [self] * power)
+  def __pow__(self, power: core.DimSize, modulo=None):
+    if modulo is not None:
+      raise NotImplementedError("__pow__ modulo not implemented")
+    if is_symbolic_dim(power):
+      return power.__rpow__(self)  # type: ignore
+    if power != int(power):
+      raise ValueError(f"Symbolic dimension cannot be raised to non-integer powers: '{self}' ** '{power}'")
+    if power >= 0:
+      return functools.reduce(op.mul, [self] * power, 1)
+    # We don't support negative powers, because JAX does not allow negative
+    # powers for integers
+    raise ValueError(f"Symbolic dimension cannot be raised to negative powers: '{self}' ** '{power}'")
+
+  def __rpow__(self, other, modulo=None):
+    if modulo is not None:
+      raise NotImplementedError("__rpow__ modulo not implemented")
+    return self.__jax_array__().__rpow__(other)
 
   def __floordiv__(self, divisor):
     if isinstance(divisor, core.Tracer) or not _convertible_to_poly(divisor):
