@@ -792,7 +792,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
       y = g(x)
       return y * 3
 
-    inp = jnp.arange(8)
+    inp = jnp.arange(4096.0)
+    inp = jnp.reshape(inp, (16, 256))
     out = f(inp)
     self.assertArraysEqual(out, inp * 6)
 
