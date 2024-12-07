@@ -2381,6 +2381,15 @@ lowering_rules[lax.and_p] = _and_lowering_rule
 skip_mlir_conversions.add(lax.and_p)
 
 
+def _is_finite_lowering_rule(ctx: LoweringRuleContext, x):
+  out_aval, = ctx.avals_out
+  out_type = aval_to_ir_type(out_aval)
+  return _not_lowering_rule(ctx, tpu.weird(out_type, x))
+
+
+lowering_rules[lax.is_finite_p] = _is_finite_lowering_rule
+
+
 def _or_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
   return arith.ori(x, y)

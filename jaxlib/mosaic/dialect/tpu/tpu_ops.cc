@@ -1087,6 +1087,15 @@ LogicalResult LogOp::verify() {
                       stringifyCoreType(logging_core_type_maybe->value())));
 }
 
+LogicalResult WeirdOp::verify() {
+  const auto input_ty = getInput().getType();
+  const auto vec_ty = dyn_cast<VectorType>(input_ty);
+  if (!((vec_ty && vec_ty.getElementType().isF32()) || input_ty.isF32())) {
+    return emitOpError("Input must be a F32 vector or scalar");
+  }
+  return success();
+}
+
 }  // namespace tpu
 }  // namespace mlir
 
