@@ -29,6 +29,7 @@ import numpy as np
 
 import jax
 from jax._src import core
+from jax import jvp, grad
 from jax import lax
 import jax.numpy as jnp
 from jax.test_util import check_grads
@@ -4493,6 +4494,60 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
         raise unittest.SkipTest(
           f"detected success in regions {', '.join(unexpected_success_regions)}, please update regions_with_inaccuracies!"
         )
+
+
+class CompositeTest(jtu.JaxTestCase):
+
+  def tangent_composite(self, x):
+    return lax.composite(
+        lambda x: lax.sin(x) / lax.cos(x), x, name="my.tangent"
+    )
+
+  def acos_composite(self, x):
+    return lax.composite(
+        jnp.acos, x, name="my.acos", attributes={"foo": "bar", "baz": 1}
+    )
+
+  def sine_times_y_composite(self, x, y):
+    def sine_times_y(x, y):
+      return jnp.sin(x) * y
+    return lax.composite(sine_times_y, x, y, name="my.sine_times_y")
+
+  def test_tangent_composite(self):
+    pi = jnp.pi
+    x = jnp.array([pi / 4, pi / 2, 3 * pi / 4, pi])
+    self.assertAllClose(jnp.tan(x), self.tangent_composite(x))
+
+    mlir_module = jax.jit(self.tangent_composite).lower(x).as_text()
+    self.assertIn('stablehlo.composite "my.tangent"', mlir_module)
+    self.assertIn("@my.tangent", mlir_module)
+
+  def test_composite_with_attributes(self):
+    x = jnp.array(1.0, dtype=jnp.float32)
+    mlir_module = jax.jit(self.acos_composite).lower(x).as_text()
+    self.assertIn('stablehlo.composite "my.acos"', mlir_module)
+    self.assertIn("@my.acos", mlir_module)
+    self.assertIn(
+        'composite_attributes = {baz = 1 : i64, foo = "bar"}', mlir_module
+    )
+
+  def test_composite_jvp(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        "JVP rule for composite not implemented. You can use `jax.custom_jvp` "
+        "to add support. See "
+        "https://jax.readthedocs.io/en/latest/_autosummary/jax.custom_jvp.html"
+    ):
+      jvp(self.sine_times_y_composite, (2.0, 3.0), (1.0, 0.0))
+
+  def test_composite_grad(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        "JVP rule for composite not implemented. You can use `jax.custom_jvp` "
+        "to add support. See "
+        "https://jax.readthedocs.io/en/latest/_autosummary/jax.custom_jvp.html"
+    ):
+      grad(self.sine_times_y_composite)(1.0, 2.0)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

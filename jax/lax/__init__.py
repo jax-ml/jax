@@ -72,6 +72,8 @@ from jax._src.lax.lax import (
   collapse as collapse,
   complex as complex,
   complex_p as complex_p,
+  composite as composite,
+  composite_p as composite_p,
   concatenate as concatenate,
   concatenate_p as concatenate_p,
   conj as conj,
