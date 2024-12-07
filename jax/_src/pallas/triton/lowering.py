@@ -1983,81 +1983,6 @@ def _transpose_lowering(ctx: LoweringRuleContext, x, *, permutation):
   return tt_dialect.trans(x, permutation)
 
 
-def _check_dot_operands(
-    x_type: ir.RankedTensorType, y_type: ir.RankedTensorType, options: Any
-):
-  # TODO(slebedev): Ensure that the dtypes are supported by CUDA.
-  return
-
-
-def _dot(
-    x: ir.Value,
-    y: ir.Value,
-    acc: ir.Value | None = None,
-    *,
-    allow_tf32: bool = True,
-    max_num_imprecise_acc: int | None = None,
-    out_type: ir.Type | None = None,
-) -> ir.Value:
-  if out_type is None:
-    out_type = ir.F32Type.get()
-  elif isinstance(out_type, ir.BF16Type):
-    raise NotImplementedError(f"unsupported output type: {out_type}")
-
-  x_type = ir.RankedTensorType(x.type)
-  y_type = ir.RankedTensorType(y.type)
-  if min(*x_type.shape, *y_type.shape) < 16:
-    raise ValueError("all dimensions of x and y must be >= 16 ")
-  if x_type.element_type != y_type.element_type:
-    raise ValueError(
-        "x and y must have the same element type, but got:"
-        f" {x_type.element_type} and {y_type.element_type}"
-    )
-
-  _check_dot_operands(x_type, y_type, object())
-
-  element_type = x_type.element_type
-  if isinstance(element_type, ir.IntegerType):
-    if element_type.width != 8:
-      raise TypeError(f"unsupported element type: {element_type}")
-    element_type = ir.IntegerType.get_signless(32)
-  elif isinstance(element_type, (ir.F32Type, ir.BF16Type)):
-    element_type = ir.F32Type.get()
-  else:
-    element_type = out_type
-
-  if element_type != out_type:
-    raise TypeError(
-        f"output type {out_type} does not match element type {element_type}"
-    )
-
-  m, _ = x_type.shape
-  _, n = y_type.shape
-
-  if acc is None:
-    acc = _full(ir.RankedTensorType.get([m, n], element_type), 0)
-
-  if max_num_imprecise_acc is None:
-    if isinstance(element_type, ir.FloatType) and element_type.width == 8:
-      # TODO(slebedev): Fill in from options.
-      raise NotImplementedError
-    else:
-      max_num_imprecise_acc = 0
-
-  # Ideally, replace all allow_tf32 usages with InputPrecision directly.
-  input_precision = tt_dialect.InputPrecision.IEEE
-  if allow_tf32:
-    input_precision = tt_dialect.InputPrecision.TF32
-
-  return tt_dialect.dot(
-      x,
-      y,
-      acc,
-      max_num_imprecise_acc=max_num_imprecise_acc,
-      input_precision=input_precision
-  )
-
-
 _TF32_PRECISIONS = (lax.Precision.HIGH, lax.Precision.DEFAULT)
 
 
@@ -2081,27 +2006,63 @@ def _dot_general_lowering(
   if b_contract_dim == 1:
     b = tt_dialect.trans(b, (1, 0))
 
-  if precision is None:
-    allow_tf32 = True
-  else:
-    prec_a, prec_b = precision
-    allow_tf32 = prec_a in _TF32_PRECISIONS or prec_b in _TF32_PRECISIONS
-
+  a_aval, b_aval = ctx.avals_in
   [out_aval] = ctx.avals_out
-  out_dtype = acc_dtype = out_aval.dtype
-  if acc_dtype != jnp.int32 and acc_dtype != jnp.float16:
-    acc_dtype = jnp.dtype(jnp.float32)
 
-  return _cast(
-      _dot(
-          a,
-          b,
-          allow_tf32=allow_tf32,
-          out_type=_dtype_to_ir_type(acc_dtype),
-      ),
-      acc_dtype,
-      out_dtype,
-  )
+  if precision is None or (precision == lax.DotAlgorithmPreset.DEFAULT):
+    precision = (lax.Precision.DEFAULT, lax.Precision.DEFAULT)
+
+  if isinstance(precision, lax.DotAlgorithmPreset):
+    match precision:
+      case lax.DotAlgorithmPreset.TF32_TF32_F32:
+        input_precision = tt_dialect.InputPrecision.TF32
+      case lax.DotAlgorithmPreset.TF32_TF32_F32_X3:
+        input_precision = tt_dialect.InputPrecision.TF32x3
+      case lax.DotAlgorithmPreset.F32_F32_F32:
+        input_precision = tt_dialect.InputPrecision.IEEE
+      case (
+          lax.DotAlgorithmPreset.F16_F16_F16
+          | lax.DotAlgorithmPreset.F16_F16_F32
+          | lax.DotAlgorithmPreset.BF16_BF16_BF16
+          | lax.DotAlgorithmPreset.BF16_BF16_F32
+      ):
+        input_precision = None
+      case _:
+        raise NotImplementedError(f"Unsupported dot algorithm: {precision}.")
+
+    a = _cast(a, a_aval.dtype, precision.supported_lhs_types[0])
+    b = _cast(b, b_aval.dtype, precision.supported_rhs_types[0])
+    acc_dtype = precision.accumulation_type
+  elif isinstance(precision, tuple):
+    a_precision, b_precision = precision
+    if a_precision in _TF32_PRECISIONS or b_precision in _TF32_PRECISIONS:
+      input_precision = tt_dialect.InputPrecision.TF32
+    elif a_aval.dtype == jnp.float32:
+      input_precision = tt_dialect.InputPrecision.IEEE
+    else:
+      input_precision = None
+
+    acc_dtype = out_aval.dtype
+    if acc_dtype != jnp.int32 and acc_dtype != jnp.float16:
+      acc_dtype = jnp.float32
+  else:
+    raise NotImplementedError(f"Unsupported dot precision: {precision}.")
+
+  a_type = ir.RankedTensorType(a.type)
+  b_type = ir.RankedTensorType(b.type)
+  if min(*a_type.shape, *b_type.shape) < 16:
+    raise ValueError("all dimensions of a and b must be >= 16 ")
+  if a_type.element_type != b_type.element_type:
+    raise ValueError(
+        "a and b must have the same element type, but got:"
+        f" {a_type.element_type} and {b_type.element_type}"
+    )
+
+  m, _ = a_type.shape
+  _, n = b_type.shape
+  acc = _full(ir.RankedTensorType.get([m, n], _dtype_to_ir_type(acc_dtype)), 0)
+  acc = tt_dialect.dot(a, b, acc, input_precision=input_precision)
+  return _cast(acc, acc_dtype, out_aval.dtype)
 
 
 def _reduction_lowering(body, ctx: LoweringRuleContext, a, axes):
@@ -2623,7 +2584,8 @@ def _i64_constant(v: int) -> ir.Value:
   return arith_dialect.constant(ir.IntegerType.get_signless(64), v)
 
 
-def _dtype_to_ir_type(dtype: jnp.dtype) -> ir.Type:
+def _dtype_to_ir_type(dtype: jax.typing.DTypeLike) -> ir.Type:
+  dtype = jnp.dtype(dtype)
   if jnp.issubdtype(dtype, np.integer):
     # All integer types in Triton are signless.
     return ir.IntegerType.get_signless(dtype.itemsize * 8)

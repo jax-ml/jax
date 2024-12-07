@@ -11,7 +11,16 @@ For the overall JAX change log see [here](https://jax.readthedocs.io/en/latest/c
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## Released with jax 0.4.35
+## Released with jax 0.4.37
+
+* New functionality
+
+  * Added support for `DotAlgorithmPreset` precision arguments for `dot`
+    lowering on Triton backend.
+
+## Released with jax 0.4.36 (December 6, 2024)
+
+## Released with jax 0.4.35 (October 22, 2024)
 
 * Removals
 
