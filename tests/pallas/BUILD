@@ -429,7 +429,7 @@ jax_multiplatform_test(
         "tpu_splash_attention_kernel_test.py",
     ],
     enable_backends = ["tpu"],
-    shard_count = 24,
+    shard_count = 48,
     tags = [
         "noasan",  # Times out.
         "nomsan",  # Times out.
