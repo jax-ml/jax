@@ -56,7 +56,7 @@ class MaskInfo(NamedTuple):
       indicates that the corresponding block in the full mask contained both
       zeros and ones. An entry of 2 indicates the corresponding block was
       entirely ones.
-    partial_mask_blocks: A i32[num_partial_blocks, block_q, block_kv] NumPy
+    partial_mask_blocks: A bool[num_partial_blocks, block_q, block_kv] NumPy
       array that contains the blocks of the original mask that contained both
       zeros and ones. The entries in `mask_next` point to indices in the first
       axis of this array.
@@ -526,13 +526,9 @@ def _process_mask(
 
   partial_mask_blocks = None
   has_mask_next = False
-  if len(unique_partial_mask_blocks) == 1:
+  if len(unique_partial_mask_blocks) >= 1:
     partial_mask_blocks = [x.array for x in unique_partial_mask_blocks]
-    partial_mask_blocks = partial_mask_blocks[0][None].astype(np.int32)
-    has_mask_next = True
-  elif len(unique_partial_mask_blocks) > 1:
-    partial_mask_blocks = [x.array for x in unique_partial_mask_blocks]
-    partial_mask_blocks = np.stack(partial_mask_blocks, axis=0).astype(np.int32)
+    partial_mask_blocks = np.stack(partial_mask_blocks, axis=0).astype(np.bool_)
     has_mask_next = True
   if is_dkv and partial_mask_blocks is not None:
     partial_mask_blocks = np.swapaxes(partial_mask_blocks, -1, -2)
