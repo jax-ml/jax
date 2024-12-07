@@ -54,10 +54,30 @@ SCALAR_FUNCS = [
   {'func': scalar_sub, 'nin': 2, 'nout': 1, 'identity': None},
 ]
 
+NUMPY_ALIASES = {
+  'acos': 'arccos',
+  'acosh': 'arccosh',
+  'asin': 'arcsin',
+  'asinh': 'arcsinh',
+  'atan': 'arctan',
+  'atanh': 'arctanh',
+  'atan2': 'arctan2',
+  'bitwise_invert': 'invert',
+}
+
+
+def get_np_fun(name):
+  if hasattr(np, name):
+    return getattr(np, name)
+  return getattr(np, NUMPY_ALIASES.get(name, name), None)
+
+
 def _jnp_ufunc_props(name):
   jnp_func = getattr(jnp, name)
   assert isinstance(jnp_func, jnp.ufunc)
-  np_func = getattr(np, name)
+  np_func = get_np_fun(name)
+  if np_func is None:
+    return []
   dtypes = [np.dtype(c) for c in "Ffi?" if f"{c}{c}->{c}" in np_func.types or f"{c}->{c}" in np_func.types]
   return [dict(name=name, dtype=dtype) for dtype in dtypes]
 
@@ -110,7 +130,9 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   @jtu.sample_product(name=JAX_NUMPY_UFUNCS)
   def test_ufunc_properties(self, name):
     jnp_fun = getattr(jnp, name)
-    np_fun = getattr(np, name)
+    np_fun = get_np_fun(name)
+    if np_fun is None:
+      self.skipTest(f"Numpy version {np.__version__} does not have np.{name}")
     self.assertEqual(jnp_fun.identity, np_fun.identity)
     self.assertEqual(jnp_fun.nin, np_fun.nin)
     self.assertEqual(jnp_fun.nout, np_fun.nout)
@@ -164,9 +186,17 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
       UNARY_UFUNCS_WITH_DTYPES,
       shape=broadcast_compatible_shapes,
   )
+  @jtu.ignore_warning(category=RuntimeWarning, message="divide by zero.*")
+  @jtu.ignore_warning(category=RuntimeWarning, message="invalid value.*")
+  @jtu.ignore_warning(category=RuntimeWarning, message="overflow encountered.*")
   def test_unary_ufunc_call(self, name, dtype, shape):
+    if name == 'reciprocal' and jnp.issubdtype(dtype, np.integer):
+      self.skipTest("reciprocal of integers has different return values.")
+    if (name == 'sign' and jnp.issubdtype(dtype, np.complexfloating)
+        and jtu.numpy_version() < (2, 0, 0)):
+      self.skipTest('jnp.sign and np.sign differ in NumPy < 2.0')
     jnp_fun = getattr(jnp, name)
-    np_fun = getattr(np, name)
+    np_fun = get_np_fun(name)
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
 
@@ -181,7 +211,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def test_binary_ufunc_call(self, name, dtype, lhs_shape, rhs_shape):
     jnp_fun = getattr(jnp, name)
-    np_fun = getattr(np, name)
+    np_fun = get_np_fun(name)
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
 
@@ -215,7 +245,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   )
   def test_binary_ufunc_outer(self, name, lhs_shape, rhs_shape, dtype):
     jnp_fun = getattr(jnp, name)
-    np_fun = getattr(np, name)
+    np_fun = get_np_fun(name)
 
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
@@ -252,7 +282,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   )
   def test_binary_ufunc_reduce(self, name, shape, axis, dtype):
     jnp_fun = getattr(jnp, name)
-    np_fun = getattr(np, name)
+    np_fun = get_np_fun(name)
 
     if jnp_fun.identity is None and axis is None and len(shape) > 1:
       self.skipTest("Multiple-axis reduction over non-reorderable ufunc.")
@@ -309,7 +339,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   )
   def test_binary_ufunc_reduce_where(self, name, shape, axis, dtype):
     jnp_fun = getattr(jnp, name)
-    np_fun = getattr(np, name)
+    np_fun = get_np_fun(name)
 
     if jnp_fun.identity is None:
       self.skipTest("reduce with where requires identity")
@@ -353,7 +383,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   )
   def test_binary_ufunc_accumulate(self, name, shape, axis, dtype):
     jnp_fun = getattr(jnp, name)
-    np_fun = getattr(np, name)
+    np_fun = get_np_fun(name)
 
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
@@ -396,9 +426,17 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
       shape=nonscalar_shapes,
       idx_shape=[(), (2,)],
   )
+  @jtu.ignore_warning(category=RuntimeWarning, message="divide by zero.*")
+  @jtu.ignore_warning(category=RuntimeWarning, message="invalid value.*")
+  @jtu.ignore_warning(category=RuntimeWarning, message="overflow encountered.*")
   def test_unary_ufunc_at(self, name, shape, idx_shape, dtype):
+    if name == 'reciprocal' and jnp.issubdtype(dtype, np.integer):
+      self.skipTest("reciprocal of integers has different return values.")
+    if (name == 'sign' and jnp.issubdtype(dtype, np.complexfloating)
+        and jtu.numpy_version() < (2, 0, 0)):
+      self.skipTest('jnp.sign and np.sign differ in NumPy < 2.0')
     jnp_fun = getattr(jnp, name)
-    np_fun = getattr(np, name)
+    np_fun = get_np_fun(name)
 
     rng = jtu.rand_default(self.rng())
     idx_rng = jtu.rand_int(self.rng(), low=-shape[0], high=shape[0])
@@ -422,7 +460,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   )
   def test_binary_ufunc_at(self, name, shape, idx_shape, dtype):
     jnp_fun = getattr(jnp, name)
-    np_fun = getattr(np, name)
+    np_fun = get_np_fun(name)
 
     rng = jtu.rand_default(self.rng())
     idx_rng = jtu.rand_int(self.rng(), low=-shape[0], high=shape[0])
@@ -482,7 +520,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   )
   def test_binary_ufunc_reduceat(self, name, shape, axis, idx_shape, dtype):
     jnp_fun = getattr(jnp, name)
-    np_fun = getattr(np, name)
+    np_fun = get_np_fun(name)
     if (jnp_fun.nin, jnp_fun.nout) != (2, 1):
       self.skipTest(f"accumulate requires (nin, nout)=(2, 1); got {(jnp_fun.nin, jnp_fun.nout)=}")
     if name in ['add', 'multiply'] and dtype == bool:
