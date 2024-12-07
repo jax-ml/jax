@@ -69,7 +69,7 @@ def _event_elapsed(start_event, end_event):
   )(start_event, end_event)
 
 
-def measure(
+def _measure_events(
     f: Callable[P, T], *args: P.args, **kwargs: P.kwargs
 ) -> tuple[T, float]:
   """Measures the time it takes to execute the function on the GPU.
@@ -107,6 +107,36 @@ def measure(
   jax.block_until_ready(run(*args, **kwargs))  # Warmup.
   outs, elapsed = run(*args, **kwargs)
   return outs, float(elapsed)
+
+
+def _measure_cupti(f, aggregate):
+  def wrapper(*args, **kwargs):
+    mosaic_gpu_lib._mosaic_gpu_ext._cupti_init()
+    try:
+      results = jax.block_until_ready(jax.jit(f)(*args, **kwargs))
+    finally:
+      timings = mosaic_gpu_lib._mosaic_gpu_ext._cupti_get_timings()
+    if not timings:
+      return results, None
+    elif aggregate:
+      return results, sum(item[1] for item in timings)
+    else:
+      return results, timings
+  return wrapper
+
+
+def measure(f, mode="cupti", aggregate=True):
+  match mode:
+    case "cupti":
+      return _measure_cupti(f, aggregate)
+    case "events":
+      if aggregate == False:
+        raise ValueError(f"{aggregate=} is not supported with {mode=}")
+      def measure_events_wrapper(*args, **kwargs):
+        return _measure_events(f, *args, **kwargs)
+      return measure_events_wrapper
+    case _:
+      raise ValueError(f"Unrecognized profiler mode {mode}")
 
 
 class ProfilerSpec:
