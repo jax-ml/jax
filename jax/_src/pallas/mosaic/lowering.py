@@ -112,10 +112,18 @@ class LoweringContext:
   replace = dataclasses.replace
   traceback_caches: mlir.TracebackCaches
   for_verification: bool
+  platforms: Sequence[str]
 
   @property
   def grid_rank(self):
     return len(self.grid_sizes)
+
+  @property
+  def current_platform_idx(self):
+    for i, platform in enumerate(self.platforms):
+      if platform == "mosaic":
+        return i
+    assert False, "No mosaic platform found?!"
 
   @contextlib.contextmanager
   def grid_name_context(self):
@@ -547,9 +555,16 @@ def lower_jaxpr_to_module(
   module_name = name_and_src_info.name
   attrs["sym_name"] = ir.StringAttr.get(module_name)
   sym_tab = ir.SymbolTable(m.operation)
+  platforms = lowering_context.module_context.platforms
+  platforms = platforms + ("mosaic",)
+
   func_op = lower_jaxpr_to_func(
-      ctx, jaxpr, mosaic_grid_mapping=mosaic_grid_mapping,
-      name="main", for_verification=for_verification,
+      ctx,
+      jaxpr,
+      mosaic_grid_mapping=mosaic_grid_mapping,
+      name="main",
+      for_verification=for_verification,
+      platforms=platforms,
   )
   m.body.append(func_op)
   sym_tab.insert(func_op)
@@ -568,6 +583,9 @@ def lower_jaxpr_to_module(
         # We checked above that the block does not require windowing.
         window_params.append(ir.DictAttr.get())
         continue
+
+      platforms = lowering_context.module_context.platforms
+      platforms = platforms + ("mosaic",)
       mlir_func = lower_jaxpr_to_transform_func(
           ctx,
           bm.index_map_jaxpr.jaxpr,
@@ -575,6 +593,7 @@ def lower_jaxpr_to_module(
           name=func_name,
           mosaic_grid_mapping=mosaic_grid_mapping,
           for_verification=for_verification,
+          platforms=platforms,
       )
       assert mlir_func.verify(), mlir_func
       block_shape = [
@@ -623,6 +642,7 @@ def lower_jaxpr_to_transform_func(
     name: str,
     mosaic_grid_mapping: MosaicGridMapping,
     for_verification: bool,
+    platforms: Sequence[str] | None = None,
 ) -> func.FuncOp:
   num_grid = len(mosaic_grid_mapping.grid_types)
   arg_types = [
@@ -657,6 +677,7 @@ def lower_jaxpr_to_transform_func(
         mesh_context=mesh_context,
         traceback_caches=mlir.TracebackCaches(),
         for_verification=for_verification,
+        platforms=platforms,
     )
     out = jaxpr_subcomp(lowering_context, jaxpr, *jaxpr_indices,
                         *scalar_prefetch)
@@ -684,6 +705,7 @@ def lower_jaxpr_to_func(
     mosaic_grid_mapping: MosaicGridMapping,
     name: str,
     for_verification: bool,
+    platforms: Sequence[str] | None = None,
 ) -> func.FuncOp:
   num_grid = len(mosaic_grid_mapping.grid_types)
   num_scalar_prefetch = len(mosaic_grid_mapping.scalar_prefetch_types)
@@ -722,6 +744,7 @@ def lower_jaxpr_to_func(
         mesh_context=mesh_context,
         traceback_caches=mlir.TracebackCaches(),
         for_verification=for_verification,
+        platforms=platforms,
     )
     return jaxpr_subcomp(
         lowering_context, jaxpr, *scalar_prefetch, *operands_and_scratch
@@ -1965,6 +1988,31 @@ lowering_rules[ad_util.add_any_p] = _add_lowering_rule
 skip_mlir_conversions.add(ad_util.add_any_p)
 
 
+class FoldingError(Exception):
+  pass
+
+
+def _fold_and_get_constant_value(x):
+  def _fold(x, fuel):
+    if fuel <= 0:
+      raise FoldingError("Folding depth exceeded")
+    op_name = getattr(x.owner, "name", None)
+    binop_folds = {
+        "arith.maxsi": max,
+        "arith.minsi": min,
+    }
+    if op_name == "arith.constant":
+      return ir.IntegerAttr(x.owner.attributes["value"]).value
+    if op_name in binop_folds:
+      return binop_folds[op_name](_fold(v, fuel - 1) for v in x.owner.operands)
+    raise NotImplementedError(f"Folding not supported for {x.owner}")
+
+  try:
+    return _fold(x, 10)
+  except FoldingError:
+    return None
+
+
 def _max_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   (aval_out,) = ctx.avals_out
@@ -2668,6 +2716,11 @@ lowering_rules[lax.while_p] = _while_lowering_rule
 
 def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches):
   index, *args = args
+  constant_index = _fold_and_get_constant_value(index)
+  if constant_index is not None:
+    return jaxpr_subcomp(
+        ctx.lowering_context, branches[constant_index].jaxpr, *args
+    )
   out_types = map(aval_to_ir_type, ctx.avals_out)
   pred = arith.cmpi(
       arith.CmpIPredicate.ne, index, ir_constant(0, index.type)
@@ -3338,3 +3391,81 @@ def _pad_lowering_rule(ctx: LoweringRuleContext, *args, **kwargs):
 
 
 lowering_rules[lax.pad_p] = _pad_lowering_rule
+
+
+def _platform_index_lowering(
+    ctx: mlir.LoweringRuleContext,
+    *,
+    platforms: Sequence[Sequence[str]],
+    has_default: bool,
+):
+  def lower_constant(
+      ctx: mlir.LoweringRuleContext, *, i: int
+  ) -> Sequence[ir.Value]:
+    v = ir_constant(i)
+    return v
+
+  platform_rules: dict[str, mlir.LoweringRule] = {}
+  for i, ps in enumerate(platforms):
+    rule = partial(lower_constant, i=i)
+    for p in ps:
+      platform_rules[p] = rule
+
+  default_rule = (
+      partial(lower_constant, i=len(platforms)) if has_default else None
+  )
+
+  platforms = ctx.lowering_context.platforms
+  # Special case the common case (single-platform lowering)
+  if len(platforms) == 1:
+    rule = platform_rules.get(platforms[0], default_rule)
+    if rule is None:
+      raise NotImplementedError(
+          f"MLIR translation rule for primitive '{description}' not "
+          f"found for platform {platforms[0]}"
+      )
+
+  # Multi-platform lowering
+  kept_rules: list[mlir.LoweringRule] = (
+      []
+  )  # Only the rules for the platforms of interest
+  platform_to_kept_rules_idx: dict[str, int] = {}
+  for p, prule in platform_rules.items():
+    if p not in platforms:
+      continue
+    platform_to_kept_rules_idx[p] = len(kept_rules)
+    kept_rules.append(prule)
+
+  platforms_without_specific_rule = [
+      p for p in platforms if p not in platform_to_kept_rules_idx
+  ]
+  if platforms_without_specific_rule:
+    if default_rule is None:
+      raise NotImplementedError(
+          f"MLIR translation rule for primitive '{description}' not "
+          f"found for platforms {platforms_without_specific_rule}"
+      )
+    for p in platforms_without_specific_rule:
+      platform_to_kept_rules_idx[p] = len(kept_rules)
+    kept_rules.append(default_rule)
+
+  assert kept_rules
+  # If there is a single rule left just apply the rule.
+  if len(kept_rules) == 1:
+    return kept_rules[0](ctx)
+
+  # is there a mosaic rule? this supersedes device specific rules.
+  mosaic_rule = platform_rules.get("mosaic", None)
+  if mosaic_rule is not None:
+    return mosaic_rule(ctx)
+
+  # are we on tpu or gpu?
+  if "tpu" in platforms and "tpu" in platform_rules:
+    return platform_rules["tpu"](ctx)
+  elif "gpu" in platforms and "gpu" in platform_rules:
+    return platform_rules["gpu"](ctx)
+
+  return default_rule(ctx)
+
+
+lowering_rules[lax.platform_index_p] = _platform_index_lowering

@@ -8345,18 +8345,38 @@ def diagonal(a: ArrayLike, offset: int = 0, axis1: int = 0,
     Array([4, 8], dtype=int32)
   """
   util.check_arraylike("diagonal", a)
-  a_shape = shape(a)
+
   if ndim(a) < 2:
     raise ValueError("diagonal requires an array of at least two dimensions.")
   offset = core.concrete_or_error(operator.index, offset, "'offset' argument of jnp.diagonal()")
 
-  a = moveaxis(a, (axis1, axis2), (-2, -1))
+  def _default_diag(a):
+    a_shape = shape(a)
 
-  diag_size = max(0, min(a_shape[axis1] + min(offset, 0),
-                         a_shape[axis2] - max(offset, 0)))
-  i = arange(diag_size)
-  j = arange(abs(offset), abs(offset) + diag_size)
-  return a[..., i, j] if offset >= 0 else a[..., j, i]
+    a = moveaxis(a, (axis1, axis2), (-2, -1))
+
+    diag_size = max(
+        0, min(a_shape[axis1] + min(offset, 0), a_shape[axis2] - max(offset, 0))
+    )
+    i = arange(diag_size)
+    j = arange(abs(offset), abs(offset) + diag_size)
+    return a[..., i, j] if offset >= 0 else a[..., j, i]
+
+  def _mosaic_diag(a):
+    def _sum(x, axis):
+      return lax.reduce(
+          x,
+          np.array(0, x.dtype),
+          lax.add if x.dtype != bool_ else lax.bitwise_or,
+          (axis,),
+      )
+
+    if a.shape[0] != a.shape[1]:
+      raise ValueError("Mosaic diagonal requires a square array for now.")
+
+    return _sum(lax.mul(eye(a.shape[0]), a), axis=0)
+
+  return lax.platform_dependent(a, mosaic=_mosaic_diag, default=_default_diag)
 
 
 @export
