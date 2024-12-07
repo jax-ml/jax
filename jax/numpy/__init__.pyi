@@ -458,6 +458,7 @@ float8_e4m3fn: Any
 float8_e4m3fnuz: Any
 float8_e5m2: Any
 float8_e5m2fnuz: Any
+float8_e8m0fnu: Any
 float_: Any
 def float_power(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 floating = _np.floating
