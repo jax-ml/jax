@@ -51,17 +51,22 @@ if ! docker container inspect jax >/dev/null 2>&1 ; then
     export IP_ADDR=$(powershell -command "(Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias 'vEthernet (nat)').IPAddress")
     netsh interface portproxy add v4tov4 listenaddress=$IP_ADDR listenport=80 connectaddress=169.254.169.254 connectport=80
     JAXCI_DOCKER_ARGS="$JAXCI_DOCKER_ARGS -e GCE_METADATA_HOST=$IP_ADDR"
-  else
-    # The volume mapping flag below shares the user's gcloud credentials, if any,
-    # with the container, in case the user has credentials stored there.
-    # This would allow Bazel to authenticate for RBE.
-    # Note: JAX's CI does not have any credentials stored there.
-    JAXCI_DOCKER_ARGS="$JAXCI_DOCKER_ARGS -v $HOME/.config/gcloud:/root/.config/gcloud"
+  fi
+
+  # Create a temporary file to store all JAXCI variables
+  JAXCI_TEMP_ENVFILE_DIR=$(mktemp)
+  env | grep "JAXCI_" > "$JAXCI_TEMP_ENVFILE_DIR"
+
+  # On Windows, convert MSYS Linux-like paths to Windows paths.
+  if [[ "$(uname -s)" =~ "MSYS_NT" ]]; then
+    echo 'Converting MSYS Linux-like paths to Windows paths (for Bazel, Python, etc.)'
+    # Convert all "JAXCI.*DIR" variables
+    source <(python3 ./ci/utilities/convert_msys_paths_to_win_paths.py --convert $(env | grep "JAXCI.*DIR" | awk -F= '{print $1}'))
   fi
 
   # Start the container.
   docker run $JAXCI_DOCKER_ARGS --name jax \
-          --env-file <(env | grep JAXCI_) \
+          --env-file $JAXCI_TEMP_ENVFILE_DIR \
           -w "$JAXCI_DOCKER_WORK_DIR" -itd --rm \
           -v "$JAXCI_JAX_GIT_DIR:$JAXCI_DOCKER_WORK_DIR" \
           "$JAXCI_DOCKER_IMAGE" \
