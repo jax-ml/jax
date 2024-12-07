@@ -3773,6 +3773,8 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
     if platform == "cpu" and precision not in {
         DotAlgorithmPreset.DEFAULT, DotAlgorithmPreset.F16_F16_F16,
         DotAlgorithmPreset.F32_F32_F32, DotAlgorithmPreset.F64_F64_F64,
+        DotAlgorithmPreset.BF16_BF16_F32, DotAlgorithmPreset.BF16_BF16_F32_X3,
+        DotAlgorithmPreset.BF16_BF16_F32_X6,
     }:
       raise ValueError(
           f"The precision '{precision}' is not supported by dot_general on CPU")

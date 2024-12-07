@@ -1082,6 +1082,9 @@ class LaxTest(jtu.JaxTestCase):
           lax.DotAlgorithmPreset.F16_F16_F16,
           lax.DotAlgorithmPreset.F32_F32_F32,
           lax.DotAlgorithmPreset.F64_F64_F64,
+          lax.DotAlgorithmPreset.BF16_BF16_F32,
+          lax.DotAlgorithmPreset.BF16_BF16_F32_X3,
+          lax.DotAlgorithmPreset.BF16_BF16_F32_X6,
       }:
         raise SkipTest(
             f"The dot algorithm '{algorithm}' is not supported on CPU.")
