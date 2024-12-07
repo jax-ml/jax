@@ -1437,6 +1437,37 @@ class ComputeOffload(jtu.BufferDonationTestCase):
                             out_specs=P('x', 'y')))(arr)
     self.assertArraysEqual(out, np_inp * 24)
 
+  def test_stream_annotation_inside_shmap(self):
+    if xla_extension_version < 1000 :
+      self.skipTest("Requires xla_extension_version >= 1000 (not yet released)")
+    if not jtu.test_device_matches(["gpu"]):
+      self.skipTest("Stream annotation is only supported on GPU.")
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    np_inp = np.ones((8, 8))
+    arr1 = jax.device_put(np_inp, s)
+    arr2 = jax.device_put(np_inp, s)
+
+    @compute_on('stream:1')
+    @jax.jit
+    def g(x, y):
+      return x @ y
+  
+    @compute_on('stream:2')
+    @jax.jit
+    def h(x, y):
+      return x @ y
+
+    def f(x):
+      z = g(x, y)
+      w = h(3 * x, 2 * y)
+      return z + w
+
+    out = jax.jit(shard_map(f, mesh=mesh,
+                            in_specs=(P('x', 'y'), P('x', 'y')),
+                            out_specs=P('x', 'y')))(arr1, arr2)
+    self.assertArraysEqual(out, arr1 * 28)
+
   def test_qr_decomposition_offload(self):
     if jtu.is_cloud_tpu():
       self.skipTest("Test fails on cloud TPU")
