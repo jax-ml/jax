@@ -370,13 +370,35 @@ def TPU_UnpackSubelementsOp : TPU_Op<"unpack_subelements", [Pure]> {
 }
 
 // Integer packs are always signed at the moment.
-def TPU_PackSubelementsOp : TPU_Op<"pack_subelements", [Pure]> {
+def TPU_PackSubelementsOp : TPU_Op<"pack_subelements", [Pure, SameTypeOperands]> {
+  let description = [{
+    Packs multiple vregs into one vreg of a narrower type.
+
+    The position of the each input vreg is specified in the output vreg is specified by `positions`.
+
+    For example, for:
+
+    ```mlir
+
+    ```
+    if the first source is of type `vector<8x128xf32`, and the
+    output type is 
+  }];
   let arguments = (ins
-    Variadic<AnyVectorOfNonZeroRank>:$sources,
+    Variadic<TPU_Vreg>:$sources,
+    DenseI32ArrayAttr:$positions,
     TPU_PackFormatEnum:$pack_format
   );
   let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{ $sources attr-dict `:` type($sources) `->` type($output) }];
+  let builders = [
+    // A backward-compatible builder that sets `core_type` to nullptr.
+    OpBuilder<(ins "::mlir::VectorType":$output_type, "::mlir::ArrayRef<::mlir::Value>":$padded_sources, "::mlir::tpu::PackFormat":$pack_format)>,
+  ];
+  let extraClassDeclaration = [{
+    static ::mlir::SmallVector<::mlir::Value> getPaddedSources(::mlir::ValueRange sources, ::mlir::ArrayRef<int32_t> positions, int packing_factor);
+  }];
+  let hasVerifier = 1;
 }
 
 def TPU_GatherOp : TPU_Op<"gather", [Pure]> {
