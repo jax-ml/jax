@@ -582,12 +582,15 @@ def parse_indices(
     if isinstance(idx, (ir.Operation, ir.OpView)):
       idx = idx.result
     if isinstance(idx, int):
+      assert idx < bound
       base_indices.append(idx)
       slice_shape.append(1)
       is_squeezed.append(True)
     elif isinstance(idx, slice):
       if idx.step is not None and idx.step != 1:
         raise NotImplementedError("Strided slices not implemented")
+      assert idx.start is None or idx.start <= idx.stop
+      assert idx.stop is None or idx.stop <= bound
       base_indices.append(idx.start or 0)
       slice_shape.append((idx.stop or bound) - (idx.start or 0))
       is_squeezed.append(False)
