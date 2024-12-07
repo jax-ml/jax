@@ -14,15 +14,9 @@
 # limitations under the License.
 # ==============================================================================
 #
-<<<<<<< HEAD
-# Install wheels stored in `JAXCI_OUTPUT_DIR` locally using the Python binary
-# set in JAXCI_PYTHON. Use the absolute path to the `find` utility to avoid
-# using the Windows version of `find` on Msys.
-=======
 # Install wheels stored in `JAXCI_OUTPUT_DIR` on the system using the Python
 # binary set in JAXCI_PYTHON. Use the absolute path to the `find` utility to
 # avoid using the Windows version of `find` on Msys.
->>>>>>> 5ade371c88a1f879556ec29867b173da49ae57f0
 WHEELS=( $(/usr/bin/find "$JAXCI_OUTPUT_DIR/" -type f \( -name "*jaxlib*" -o -name "*jax*cuda*pjrt*" -o -name "*jax*cuda*plugin*" \)) )
 
 if [[ -z "$WHEELS" ]]; then
