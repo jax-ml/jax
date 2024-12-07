@@ -14,7 +14,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+import dataclasses
 from typing import Any, TypeVar, overload
+from typing_extensions import dataclass_transform
 
 from jax._src import tree_util
 
@@ -284,3 +286,59 @@ def unflatten(treedef: tree_util.PyTreeDef,
     - :func:`jax.tree.structure`
   """
   return tree_util.tree_unflatten(treedef, leaves)
+
+
+def field(*, static: bool = False, metadata: dict[str, Any] | None = None, **kwds) -> dataclasses.Field:
+  """Used to mark a jax.dataclass field as static.
+
+  See {func}`jax.tree.dataclass` for details.
+  """
+  return dataclasses.field(metadata={**(metadata or {}), 'static': static}, **kwds)
+
+
+@dataclass_transform(field_specifiers=(field, dataclasses.Field), frozen_default=True)
+def dataclass(cls: T, /, **kwargs) -> T:
+  """Create a pytree-compatible dataclass.
+
+  Examples:
+    >>> import jax
+    >>> @jax.tree.dataclass
+    ... class OpDescription:
+    ...   op: str = jax.tree.field(static=True)
+    ...   val1: jax.Array
+    ...   val2: jax.Array
+    ...
+    >>> @jax.jit
+    ... def f(desc: OpDescription):
+    ...   if desc.op == "add":
+    ...     return desc.val1 + desc.val2
+    ...   else:
+    ...     raise NotImplementedError(f"{desc.op=}")
+    ...
+    >>> x = OpDescription("add", jnp.arange(4), 10)
+    >>> f(x)
+    Array([10, 11, 12, 13], dtype=int32)
+
+    The output is a Python dataclass, and is compatible with functionality
+    in Python's :mod:`dataclasses` module:
+
+    >>> import dataclasses
+    >>> dataclasses.is_dataclass(x)
+    True
+    >>> dataclasses.replace(x, op="mul")
+    OpDescription(op='mul', val1=Array([0, 1, 2, 3], dtype=int32), val2=10)
+
+    For convenience, dataclass adds a ``replace`` method equivalent to
+    :func:`dataclasses.replace`:
+
+    >>> x.replace(op="mul")
+    OpDescription(op='mul', val1=Array([0, 1, 2, 3], dtype=int32), val2=10)
+  """
+  if '_jax_dataclass' in cls.__dict__:
+    return cls
+  kwargs.setdefault('frozen', True)
+  dcls = dataclasses.dataclass(**kwargs)(cls)  # type: ignore
+  dcls._jax_dataclass = True
+  dcls.replace = dataclasses.replace
+  tree_util.register_dataclass(dcls)
+  return dcls  # type: ignore
