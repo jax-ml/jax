@@ -589,11 +589,7 @@ def module_to_bytecode(module: ir.Module) -> bytes:
 
 class JaxIrContext(ir.Context):
   def __init__(self, *args, **kwargs):
-    # Note: we're very intentionally *not* calling the __init__() of our
-    # immediate superclass ir.Context, whose __init__() has the unfortunate side
-    # effect of loading all the dialects linked into the binary into the
-    # context. We want to ensure that only the dialects we need are loaded.
-    super(ir.Context, self).__init__(*args, **kwargs)
+    super().__init__(*args, **kwargs)
 
 def make_ir_context() -> ir.Context:
   """Creates an MLIR context suitable for JAX IR."""
