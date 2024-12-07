@@ -15,6 +15,7 @@
 # ruff: noqa: F401
 
 import functools
+import logging
 import math
 import os
 import sys
@@ -154,12 +155,9 @@ class ShapePolyTest(jtu.JaxTestCase,
     self.assertAllClose(res, x1)
 
     w, h = export.symbolic_shape("w, h")
-    with self.assertRaisesRegex(
-        ValueError,
-        "shape polymorphism for Pallas does not support dynamically-shaped blocks"):
-      export.export(
-          jax.jit(f),
-          platforms=["tpu"])(jax.ShapeDtypeStruct((w, h), jnp.int32))
+    export.export(
+        jax.jit(f),
+        platforms=["tpu"])(jax.ShapeDtypeStruct((w, h), jnp.int32))
 
   def test_block_sizes_must_be_static(self):
     def f(x, *, eager=False):  # x: f32[w, h]
@@ -180,13 +178,9 @@ class ShapePolyTest(jtu.JaxTestCase,
     self.assertAllClose(res, x1)
 
     w, h = export.symbolic_shape("w, h")
-    with self.assertRaisesRegex(
-        ValueError,
-        "shape polymorphism for Pallas does not support dynamically-shaped blocks"):
-
-      export.export(
-          jax.jit(f),
-          platforms=["tpu"])(jax.ShapeDtypeStruct((w, h), jnp.int32))
+    export.export(
+        jax.jit(f),
+        platforms=["tpu"])(jax.ShapeDtypeStruct((w, h), jnp.int32))
 
   @jtu.run_on_devices("tpu")
   def test_matmul(self):
@@ -205,11 +199,16 @@ class ShapePolyTest(jtu.JaxTestCase,
                                     constraints=["mod(m, 128) == 0",
                                                  "mod(n, 128) == 0",
                                                  "mod(l, 128) == 0"])
+    jaxpr = jax.make_jaxpr(matmul)(
+        jax.ShapeDtypeStruct((m, l), jnp.float32),
+        jax.ShapeDtypeStruct((l, n), jnp.float32))
+    logging.info("Jaxpr: %s", jaxpr)
     exp = export.export(
         matmul,
         platforms=["tpu"])(
             jax.ShapeDtypeStruct((m, l), jnp.float32),
             jax.ShapeDtypeStruct((l, n), jnp.float32))
+    logging.info("mlir module: %s", exp.mlir_module())
     if jtu.test_device_matches(["tpu"]):
       res_exp = exp.call(x, y)
       self.assertAllClose(res_exp, x @ y, atol=1e-4)
