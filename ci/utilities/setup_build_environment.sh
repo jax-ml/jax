@@ -74,5 +74,5 @@ fi
 if [[ $(uname -s) =~ "MSYS_NT" ]]; then
   echo 'Converting MSYS Linux-like paths to Windows paths (for Bazel, Python, etc.)'
   # Convert all "JAXCI.*DIR" variables
-  source <(python3 ./ci/utilities/convert_msys_paths_to_win_paths.py --convert $(env | grep "JAXCI.*DIR" | awk -F= '{print $1}'))
+  source <(python ./ci/utilities/convert_msys_paths_to_win_paths.py --convert $(env | grep "JAXCI.*DIR" | awk -F= '{print $1}'))
 fi
