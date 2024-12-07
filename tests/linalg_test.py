@@ -23,6 +23,7 @@ import scipy.linalg
 import scipy as osp
 
 from absl.testing import absltest, parameterized
+import scipy.linalg._matfuncs_inv_ssq
 
 import jax
 from jax import jit, grad, jvp, vmap
@@ -31,6 +32,7 @@ from jax import numpy as jnp
 from jax import scipy as jsp
 from jax._src import config
 from jax._src import deprecations
+import jax._src
 from jax._src.lax import linalg as lax_linalg
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
@@ -2039,26 +2041,61 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testOneNormEstimator(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     #  scipy algorithm is not deterministic so set seed for reproducibility
-    np.random.seed(0)
+    np.random.seed(111)
+    key = jax.random.key(111)
 
     arg = rng(shape, dtype)
     mat = arg @ arg.T
-    key = jax.random.key(0)
-    args_maker = lambda: [mat, key]
+    args_maker = lambda: [mat]
     if dtype == np.float32 or dtype == np.complex64:
       tol = 1e-4
     else:
       tol = 1e-8
 
-    
-    # use big t and itmax to find the exact answer
-    lax_ans = jsp.linalg.onenormest(mat, key, t=50, itmax=50)
-    numpy_ans = osp.sparse.linalg._onenormest.onenormest(mat, t=50, itmax=50)
+    logm = partial(jsp.linalg.onenormest, key=key, t=50, itmax=50)
+    scipy_logm = partial(osp.sparse.linalg._onenormest.onenormest, t=50, itmax=50)
+    self._CheckAgainstNumpy(scipy_logm,
+                        logm,
+                        args_maker,
+                        tol=tol,
+                        check_dtypes=False)
+    self._CompileAndCheck(logm, args_maker)
 
-    self.assertAllClose(numpy_ans, lax_ans, check_dtypes=False,
-                        atol=tol, rtol=tol,
-                        canonicalize_dtypes=True)
-    self._CompileAndCheck(jsp.linalg.onenormest, args_maker)
+  @jtu.sample_product(
+    # shape=[(4, 4), (15, 15), (50, 50), (100, 100)],
+    shape=[(4, 4)],
+    dtype=float_types,
+  )
+  def testInverseSquaring(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    #  scipy algorithm is not deterministic so set seed for reproducibility
+    np.random.seed(111)
+    key = jax.random.key(111)
+    
+    theta_m = [float('nan'), 1.59e-5, 2.31e-3, 1.94e-2, 6.21e-2, 1.28e-1, 2.06e-1, 2.88e-1, 3.67e-1, 4.39e-1, 5.03e-1, 5.60e-1, 6.09e-1, 6.52e-1, 6.89e-1, 7.21e-1, 7.49e-1]
+
+    arg = rng(shape, dtype)
+    mat = arg @ arg.T
+
+    for i in range(1, mat.shape[0]):
+      for j in range(i):
+        mat[i,j] = 0.0
+
+    args_maker = lambda: [mat, theta_m]
+    if dtype == np.float32 or dtype == np.complex64:
+      tol = 1e-4
+    else:
+      tol = 1e-8
+
+    fn = partial(jsp.linalg._inverse_squaring, key=key)
+    scipy_fn = partial(scipy.linalg._matfuncs_inv_ssq._inverse_squaring_helper)
+    
+    self._CheckAgainstNumpy(scipy_fn,
+                        fn,
+                        args_maker,
+                        tol=tol,
+                        check_dtypes=False)
+    self._CompileAndCheck(fn, args_maker)
 
   @jtu.sample_product(
     cshape=[(), (4,), (8,), (4, 7), (2, 1, 5)],

@@ -38,6 +38,7 @@ from jax._src.scipy.linalg import (
   sqrtm as sqrtm,
   logm as logm,
   onenormest as onenormest,
+  _inverse_squaring as _inverse_squaring,
   solve as solve,
   solve_triangular as solve_triangular,
   svd as svd,
