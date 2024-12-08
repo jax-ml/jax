@@ -25,7 +25,6 @@ import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
-from jax._src.lib import xla_extension_version
 from jax._src.layout import DeviceLocalLayout as DLL, Layout
 from jax._src import config
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
@@ -697,8 +696,6 @@ class DevicePutTest(jtu.JaxTestCase):
       self.assertIn('custom_call_target="AllocateBuffer"', compiled_text)
 
   def test_disallow_alias_copies_arrays(self):
-    if xla_extension_version < 296:
-      self.skipTest("Requires xla_extension_version >= 296")
     mesh = jtu.create_mesh((2,), ("x",))
     np_inp = np.arange(16).reshape(8, 2)
     s = NamedSharding(mesh, P("x"), memory_kind="pinned_host")
@@ -712,8 +709,6 @@ class DevicePutTest(jtu.JaxTestCase):
     jax.block_until_ready(inp_host_copy)
 
   def test_disallow_alias_copies_arrays_with_donated_input(self):
-    if xla_extension_version < 296:
-      self.skipTest("Requires xla_extension_version >= 296")
     mesh = jtu.create_mesh((2,), ("x",))
     np_inp = np.arange(16).reshape(8, 2)
     s = NamedSharding(mesh, P("x"), memory_kind="pinned_host")

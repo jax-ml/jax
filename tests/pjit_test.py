@@ -59,7 +59,6 @@ from jax._src.lib.mlir import dialects
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -3817,7 +3816,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P()))
     self.assertEqual(out.sharding.memory_kind, 'device')
 
-  @unittest.skipIf(xla_extension_version < 297, "Requires jaxlib 0.4.36+")
   def test_jit_static_argnames_non_interned(self):
     def do_nothing(foobar: int):
       return foobar
