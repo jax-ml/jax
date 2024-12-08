@@ -575,27 +575,38 @@ class EffectOrderingTest(jtu.JaxTestCase):
   def test_different_threads_get_different_tokens(self):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices.")
-    tokens = []
-    def _noop(_):
-      return ()
 
-    def f(x):
-      # Runs in a thread.
-      res = jax.jit(
-          lambda x: callback_p.bind(
-              x, callback=_noop, effect=log_effect, out_avals=[])
-      )(x)
-      tokens.append(dispatch.runtime_tokens.current_tokens[log_effect])
-      return res
+    # Capture ThreadSanitizer warnings and fail the test if anything reported
+    with jtu.capture_stderr() as get_output:
+      tokens = []
+      def _noop(_):
+        return ()
 
-    t1 = threading.Thread(target=lambda: f(2.))
-    t2 = threading.Thread(target=lambda: f(3.))
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
-    token1, token2 = tokens
-    self.assertIsNot(token1, token2)
+      def f(x):
+        # Runs in a thread.
+        res = jax.jit(
+            lambda x: callback_p.bind(
+                x, callback=_noop, effect=log_effect, out_avals=[])
+        )(x)
+        # This is necessary for free-threading mode
+        with threading.Lock():
+          tokens.append(dispatch.runtime_tokens.current_tokens[log_effect])
+        return res
+
+      t1 = threading.Thread(target=lambda: f(2.))
+      t2 = threading.Thread(target=lambda: f(3.))
+      t1.start()
+      t2.start()
+      t1.join()
+      t2.join()
+      assert len(tokens) == 2, tokens
+      token1, token2 = tokens
+      self.assertIsNot(token1, token2)
+
+    captured = get_output()
+    if len(captured) > 0 and "ThreadSanitizer" in captured:
+      raise RuntimeError(f"ThreadSanitizer reported warnings:\n{captured}")
+
 
 class ParallelEffectsTest(jtu.JaxTestCase):
 
