@@ -1828,26 +1828,36 @@ def _fractional_power_superdiag_entry(l1, l2, t12, p):
            32 (3). pp. 1056-1078. ISSN 0895-4798
 
     """
-  if l1==l2:
-    return t12*p*l1**(p-1)
-  if jnp.abs(l1) < jnp.abs(l2)/2 or jnp.abs(l2) < jnp.abs(l1)/2:
-    return t12 * ((l2**p)-(l1**p))/(l2-l1)
-
-  log_l1 = jnp.log(l1)
-  log_l2 = jnp.log(l2)
+  
   def unwinding_number(z):
     """Equation 5.3"""
     return jnp.ceil((z.imag - jnp.pi) / (2*jnp.pi))
+  def last_case():
+    """Equation 5.5"""
+    log_l1 = jnp.log(l1)
+    log_l2 = jnp.log(l2)
 
-  z = (l2-l1)/(l2+l1)
+    z = (l2-l1)/(l2+l1)
 
-  if jnp.isrealobj(l1):
-    #  for real values U is always 0 so return early to avoid casting to complex value
-    return t12 * jnp.exp(p/2*(log_l2+log_l1)) * (2* jnp.sinh(p*(jnp.arctanh(z)))) / (l2-l1)
+    if jnp.isrealobj(l1):
+      #  for real values U is always 0 so return early to avoid casting to complex value
+      return t12 * jnp.exp(p/2*(log_l2+log_l1)) * (2* jnp.sinh(p*(jnp.arctanh(z)))) / (l2-l1)
 
-  U = unwinding_number(log_l2-log_l1)
+    U = unwinding_number(log_l2-log_l1)
 
-  return t12 * jnp.exp(p/2*(log_l2+log_l1)) * (2* jnp.sinh(p*(jnp.arctanh(z) + jnp.pi*1.0j*U.astype(jnp.complex64)))) / (l2-l1)
+    return t12 * jnp.exp(p/2*(log_l2+log_l1)) * (2* jnp.sinh(p*(jnp.arctanh(z) + jnp.pi*1.0j*U.astype(jnp.complex64)))) / (l2-l1)
+
+  case = lax.select(l1==l2, 0, 2)
+  case = lax.select(jnp.logical_or(jnp.abs(l1) < jnp.abs(l2)/2, jnp.abs(l2) < jnp.abs(l1)/2), 1, case)
+
+  return lax.switch(
+    case, 
+    [
+      lambda: t12*p*l1**(p-1),
+      lambda: t12 * ((l2**p)-(l1**p))/(l2-l1),
+      last_case
+    ]
+  )
 
 def _briggs_helper_function(a: float, k:int)->float:
   """
@@ -1857,15 +1867,20 @@ def _briggs_helper_function(a: float, k:int)->float:
   """
   pi_half = jnp.pi/2
   k_hat = k
-  if jnp.angle(a) >= pi_half:
-    a = jnp.sqrt(a)
-    k_hat = k-1
+  # if jnp.angle(a) >= pi_half:
+  #   a = jnp.sqrt(a)
+  #   k_hat = k-1
+  a, k_hat = lax.cond(jnp.angle(a) >= pi_half, lambda: (jnp.sqrt(a), k-1), lambda: (a, k))
   z_0 = a-1
   a = jnp.sqrt(a)
   r = 1 + a
-  for _ in range(1, k_hat):
+  def loop_body(i, x):
+    a, r = x
     a = jnp.sqrt(a)
     r = r * (1 + a)
+    return a, r
+
+  a, r = lax.fori_loop(1, k_hat, loop_body, (a, r))
   r = z_0/r
   return r
 
@@ -1991,9 +2006,9 @@ def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5)->float:
 
 
 
-
-def _inverse_squaring(T_0: Array, theta: list[float], key:ArrayLike):
-  print('inverse squaring jax')
+# @partial(jit, static_argnames=("theta"))
+@jit
+def _inverse_squaring(T_0: Array, theta: tuple[float], key: ArrayLike):
   def normest(T: Array, p: int, key:ArrayLike):
     T = jnp.linalg.matrix_power(T-jnp.eye(T.shape[0]), p)
     return _onenormest(T, key)
@@ -2001,50 +2016,65 @@ def _inverse_squaring(T_0: Array, theta: list[float], key:ArrayLike):
   T = T_0
   diag = jnp.diag(T)
   s_0 = 0
-  while jnp.max(jnp.abs(diag-1)) > theta[7]:
+  def cond(x):
+    diag, s_0 = x
+    return jnp.max(jnp.abs(diag-1)) > theta[7]
+  def body(x):
+    diag, s_0 = x
     diag = jnp.sqrt(diag)
     s_0 +=1
+    return diag, s_0
 
-  for _ in range(s_0):
-    T = _sqrtm_triu(T)
+  diag, s_0 = jax.lax.while_loop(cond, body, (diag, s_0))
+
+  T = jax.lax.fori_loop(0, s_0, lambda i, T: _sqrtm_triu(T), T)
 
   s = s_0
   k = 0
-  d_2= normest(T, 2, key)**(1/2)
+  d_2 = normest(T, 2, key)**(1/2)
   d_3 = normest(T, 3, key)**(1/3)
-  a_2 = max(d_2, d_3)
+  a_2 = jnp.maximum(d_2, d_3)
   m=0
   for i in (1, 2):
-    if a_2 < theta[i]:
-      m = i
+    m = jax.lax.cond(a_2 < theta[i], lambda m: i, lambda m: m, m)
 
-  #  in this loop replace goto line 32 with continue and 35 with break
-  while m==0:
-    if s>s_0:
-      d_3 = normest(T, 3, key)**(1/3)
+  def main_loop_cond(x):
+    T, s, m = x
+    return m==0
+  
+  def main_loop_body(x):
+    T, s, m = x
+    nonlocal d_3
+    nonlocal k
+    d_3 = jax.lax.cond(s>s_0, lambda x: normest(T, 3, key)**(1/3), lambda x: x, d_3)
     d_4 = normest(T, 4, key)**(1/4)
-    a_3 = max(d_3, d_4)
-    if a_3 < theta[7]:
-      j_1 = min(i for i in range(3, 8) if a_3 < theta[i])
-      if j_1<=6:
-        m = j_1
-        # goto
-        break
-      if a_3/2<=theta[5] and k<2:
-        k += 1
-        T = _sqrtm_triu(T)
-        s += 1
-        continue
-    d_5 = normest(T, 5, key)**(1/5)
-    a_4 = max(d_4, d_5)
-    eta = max(a_3, a_4)
-    for i in (6, 7):
-      if eta < theta[i]:
-        m = i
-        break
+    a_3 = jnp.maximum(d_3, d_4)
+    def fun(m, k):
+      # 18 to 27
+      ind = jnp.arange(3, 8)
+      for i, idx in enumerate(ind):
+        ind = jax.lax.cond(a_3<=theta[ind[i]], lambda: ind, lambda: ind.at[i].set(8))
 
-    T = _sqrtm_triu(T)
-    s += 1
+      j_1 = jnp.min(ind)
+      m = jax.lax.cond(j_1<=6, lambda m: j_1, lambda m: m, m)
+
+      k, should_continue =jax.lax.cond(jnp.logical_and(jnp.logical_and(a_3/2<=theta[5], k<2), m==0), lambda: (k+1, True), lambda: (k, False))
+      return m, k, should_continue
+    # 17
+    m, k, should_continue = jax.lax.cond(a_3 < theta[7], fun, lambda m, k: (m, k, False), m, k)
+    # should continue is goto 33 from original algorithm
+    d_5 = normest(T, 5, key)**(1/5)
+    a_4 = jnp.maximum(d_4, d_5)
+    eta = jnp.maximum(a_3, a_4)
+    for i in (6, 7):
+      condition = jnp.logical_and(m==0, eta < theta[i])
+      condition = jnp.logical_and(condition, ~should_continue)
+      m = jax.lax.cond(condition, lambda: i, lambda: m)
+
+    T, s = jax.lax.cond(m==0, lambda: (_sqrtm_triu(T), s + 1), lambda: (T, s))
+    return T, s, m
+
+  T, s, m = jax.lax.while_loop(main_loop_cond, main_loop_body, (T, s, m))
 
   #  R = (T - I), but we compute it with briggs algorithm to avoid cancellation on diagonal
   R = T
