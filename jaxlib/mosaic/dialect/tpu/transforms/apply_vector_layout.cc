@@ -1046,10 +1046,11 @@ LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
       SmallVector<int64_t> idxs_local(toArrayRef(idxs));
       idxs_local.back() *= packing;
       for (int64_t i = 0; i < packing; ++i) {
-        parts.push_back(input_vregs(idxs_local));
-        // Pack any data lying around if OOB
-        if (idxs_local.back() < input_vregs.dimensions().back() - 1) {
+        if (idxs_local.back() < input_vregs.dimensions().back()) {
+          parts.push_back(input_vregs(idxs_local));
           ++idxs_local.back();
+        } else {
+          parts.push_back(nullptr);
         }
       }
       *v = builder.create<PackSubelementsOp>(res_vreg_ty, parts,
@@ -1070,8 +1071,7 @@ LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
           parts.push_back(input_vregs(idxs_local));
           idxs_local[idxs.size() - 2]++;
         } else {
-          // Once we run out of tiles, we can pick any one we like.
-          parts.push_back(parts.back());
+          parts.push_back(nullptr);
         }
       }
       *v = builder.create<PackSubelementsOp>(res_vreg_ty, parts,
@@ -6240,15 +6240,17 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
         src_idx[src_idx.size() - 2] *= vty_packing;
         src_idx[src_idx.size() - 1] /= vty_packing;
         for (int i = 0; i < vty_packing; ++i) {
-          parts.push_back(builder.create<tpu::UnpackSubelementsOp>(
-              loc, vreg_x32, vregs(src_idx), vreg_part));
-          if (src_idx[src_idx.size() - 2] <
-              vregs.dim(vregs.num_dimensions() - 2) - 1) {
-            ++src_idx[src_idx.size() - 2];
+          if (*(src_idx.end() - 2) < *(vregs.dimensions().end() - 2)) {
+            parts.push_back(builder.create<tpu::UnpackSubelementsOp>(
+                loc, vreg_x32, vregs(src_idx), vreg_part));
+            ++*(src_idx.end() - 2);
+          } else {
+            parts.push_back(nullptr);
           }
         }
         *tile = builder.create<tpu::PackSubelementsOp>(
-            loc, vregs.begin()->getType(), parts, tpu::PackFormat::kCompressed);
+            loc, cast<VectorType>(vregs.begin()->getType()), parts,
+            tpu::PackFormat::kCompressed);
       });
       return std::pair(dst, std::move(retiled));
     }
@@ -6320,15 +6322,17 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
       const int64_t vreg_part = *(src_idx.end() - 1) % packing;
       *(src_idx.end() - 1) /= packing;
       for (int i = 0; i < packing; ++i) {
-        parts.push_back(builder.create<tpu::UnpackSubelementsOp>(
-            loc, vreg_x32, vregs(src_idx), vreg_part));
-        if (*(src_idx.end() - 2) < *(vregs.dimensions().end() - 2) - 1) {
+        if (*(src_idx.end() - 2) < *(vregs.dimensions().end() - 2)) {
+          parts.push_back(builder.create<tpu::UnpackSubelementsOp>(
+              loc, vreg_x32, vregs(src_idx), vreg_part));
           ++*(src_idx.end() - 2);
-        }  // The rest is padding, so just pick any of the input parts (but not
-           // an arbitrary vreg so we don't add an extra dependency).
+        } else {
+          parts.push_back(nullptr);
+        }
       }
       *tile = builder.create<tpu::PackSubelementsOp>(
-          loc, vregs.begin()->getType(), parts, tpu::PackFormat::kInterleaved);
+          loc, cast<VectorType>(vregs.begin()->getType()), parts,
+          tpu::PackFormat::kInterleaved);
     });
     return std::pair(dst, std::move(retiled));
   }
