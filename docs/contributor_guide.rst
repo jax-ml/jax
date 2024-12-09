@@ -25,4 +25,3 @@ some of JAX's (extensible) internals.
 
    autodidax
    jep/index
-   jax_internal_api

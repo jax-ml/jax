@@ -16,6 +16,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Fix a bug that will throw `index out of range` error in
     {func}`jax.lax.while_loop` if the user register pytree node class with
     different aux data for the flatten and flatten_with_path.
+* Deprecations
+  * a number of APIs in the internal `jax.core` namespace have been deprecated, including
+    `ClosedJaxpr`, `full_lower`, `Jaxpr`, `JaxprEqn`, `jaxpr_as_fun`, `lattice_join`,
+    `Literal`, `Primitive`, `raise_to_shaped`, `Token`, `Var`. Most can be replaced by
+    APIs of the same name in {mod}`jax.extend.core`; see the documentation for
+    {mod}`jax.extend` for information on the compatibility guarantees of these
+    semi-public extensions. 
 
 ## jax 0.4.36 (Dec 5, 2024)
 
