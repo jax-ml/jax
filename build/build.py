@@ -485,7 +485,10 @@ async def main():
 
     if not args.disable_mkl_dnn:
       logging.debug("Enabling MKL DNN")
-      wheel_build_command.append("--config=mkl_open_source_only")
+      if target_cpu == "aarch64":
+          wheel_build_command.append("--config=mkl_aarch64_threadpool")
+      else:
+          wheel_build_command.append("--config=mkl_open_source_only")
 
     if args.target_cpu_features == "release":
       if arch in ["x86_64", "AMD64"]:
