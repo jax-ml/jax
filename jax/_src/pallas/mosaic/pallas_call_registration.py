@@ -21,7 +21,6 @@ import tempfile
 from typing import Any
 
 import jax
-from jax import core as jax_core
 from jax import dtypes
 from jax._src import config
 from jax._src import core as jax_src_core
@@ -37,7 +36,7 @@ from jax.experimental import mosaic
 from jax.experimental.mosaic.dialects import tpu
 
 
-def _maybe_cast_to_int(x: jax.Array | jax_core.AbstractValue):
+def _maybe_cast_to_int(x: jax.Array | jax_src_core.AbstractValue):
   """Casts boolean values to integers.
 
   We perform this cast because Mosaic does not directly support bool values
@@ -45,7 +44,7 @@ def _maybe_cast_to_int(x: jax.Array | jax_core.AbstractValue):
   after loading from a memref inside of the kernel.
   """
   assert isinstance(
-      x, (jax.Array, jax_core.ShapedArray, jax_core.DShapedArray)
+      x, (jax.Array, jax_src_core.ShapedArray, jax_src_core.DShapedArray)
   ), type(x)
   if isinstance(x, jax.Array):
     if dtypes.issubdtype(x.dtype, jax.numpy.bool_):
@@ -53,7 +52,7 @@ def _maybe_cast_to_int(x: jax.Array | jax_core.AbstractValue):
     return x
   else:
     if dtypes.issubdtype(x.dtype, jax.numpy.bool_):
-      return jax_core.ShapedArray(x.shape, lowering.BOOL_MEMREF_TYPE)
+      return jax_src_core.ShapedArray(x.shape, lowering.BOOL_MEMREF_TYPE)
     return x
 
 _DUMP_PROMELA_TO = config.string_flag(
@@ -68,9 +67,9 @@ _DUMP_PROMELA_TO = config.string_flag(
 
 
 def _get_memory_space_from_aval(
-    out_aval: jax_core.AbstractValue,
+    out_aval: jax_src_core.AbstractValue,
 ) -> tpu_custom_call.MemorySpace | None:
-  if not isinstance(out_aval, jax_core.ShapedArray):
+  if not isinstance(out_aval, jax_src_core.ShapedArray):
     raise ValueError('Memory spaces not defined for non-ShapedArrays')
   if not isinstance(out_aval, core.ShapedArrayWithMemorySpace):
     # If we are passed a regular old ShapedArray, we don't constrain the
@@ -91,7 +90,7 @@ def _get_memory_space_from_aval(
 
 
 def _get_memory_spaces_from_avals(
-    out_avals: tuple[jax_core.AbstractValue, ...],
+    out_avals: tuple[jax_src_core.AbstractValue, ...],
 ) -> tuple[tpu_custom_call.MemorySpace | None, ...] | None:
   output_memory_spaces = None
   if any(
@@ -105,7 +104,7 @@ def _get_memory_spaces_from_avals(
 def pallas_call_tpu_lowering_rule(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
-    jaxpr: jax_core.Jaxpr,
+    jaxpr: jax_src_core.Jaxpr,
     name_and_src_info: core.NameAndSrcInfo,
     grid_mapping: core.GridMapping,
     input_output_aliases: tuple[tuple[int, int], ...],
@@ -113,7 +112,7 @@ def pallas_call_tpu_lowering_rule(
     interpret: bool,
     compiler_params: dict[str, Any],
     cost_estimate: core.CostEstimate | None,
-    out_avals: tuple[jax_core.AbstractValue, ...],
+    out_avals: tuple[jax_src_core.AbstractValue, ...],
 ):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
   del interpret

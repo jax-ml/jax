@@ -29,7 +29,7 @@ import time
 from typing import Any
 
 import jax
-from jax import core
+from jax._src import core
 from jax._src import config
 from jax._src import sharding_impls
 from jax._src.interpreters import mlir

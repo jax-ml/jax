@@ -18,8 +18,8 @@ import operator
 
 import numpy as np
 import jax
-from jax import core
 import jax.numpy as jnp
+from jax._src import core
 from jax._src import prng
 from jax._src import random
 from jax._src import test_util as jtu
