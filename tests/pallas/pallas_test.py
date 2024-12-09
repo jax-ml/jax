@@ -687,6 +687,46 @@ class PallasCallTest(PallasBaseTest):
     self.assertEqual(f(x), 2.)
     self.assertEqual(trace_count, 1)
 
+  @parameterized.parameters(
+      ("float32", None),
+      ("float32", jax.lax.Precision.DEFAULT),
+      ("float32", jax.lax.Precision.HIGH),
+      ("float32", jax.lax.Precision.HIGHEST),
+      ("float32", jax.lax.DotAlgorithmPreset.DEFAULT),
+      ("float32", jax.lax.DotAlgorithmPreset.F16_F16_F32),
+      ("float32", jax.lax.DotAlgorithmPreset.BF16_BF16_F32),
+      ("float32", jax.lax.DotAlgorithmPreset.TF32_TF32_F32),
+      ("float32", jax.lax.DotAlgorithmPreset.TF32_TF32_F32_X3),
+      ("float32", jax.lax.DotAlgorithmPreset.F32_F32_F32),
+      ("bfloat16", None),
+      ("bfloat16", jax.lax.Precision.DEFAULT),
+      ("bfloat16", jax.lax.Precision.HIGHEST),
+      ("bfloat16", jax.lax.DotAlgorithmPreset.DEFAULT),
+      ("bfloat16", jax.lax.DotAlgorithmPreset.BF16_BF16_F32),
+  )
+  def test_dot_precision(self, dtype, precision):
+    if not jtu.test_device_matches(["gpu"]):
+      self.skipTest("`DotAlgorithmPreset` only supported on GPU.")
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((32, 64), jnp.float32),
+        grid=1,
+    )
+    def dot_kernel(x_ref, y_ref, o_ref):
+      o_ref[()] = pl.dot(x_ref[()], y_ref[()], precision=precision)
+
+    key0, key1 = random.split(random.key(0))
+    x = random.normal(key0, (32, 16), dtype=dtype)
+    y = random.normal(key1, (16, 64), dtype=dtype)
+    expected = jnp.dot(
+        x,
+        y,
+        precision=jax.lax.Precision.HIGHEST,
+        preferred_element_type=jnp.float32,
+    )
+    self.assertAllClose(dot_kernel(x, y), expected, atol=5e-2, rtol=5e-3)
+
 
 class PallasCallInterpretTest(PallasCallTest):
   INTERPRET = True
