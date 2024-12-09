@@ -273,6 +273,20 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
     with self.assertRaises(TypeError):
       lsp_special.beta(x=1, y=1)
 
+  @jtu.sample_product(
+      n=[1, 2, 3, 10, 50]
+  )
+  def testRootsLegendre(self, n):
+    args_maker = lambda: [n]
+    rtol = 1e-5
+
+    def jax_roots_legendre(n):
+      nodes, weights = lsp_special.roots_legendre(n, max_n=50)
+      return nodes[:n], weights[:n]
+
+    self._CheckAgainstNumpy(osp_special.roots_legendre, jax_roots_legendre, args_maker, rtol=rtol)
+    self._CompileAndCheck(functools.partial(lsp_special.roots_legendre, max_n=50), args_maker, rtol=rtol)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

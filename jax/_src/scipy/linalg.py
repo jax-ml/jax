@@ -1843,11 +1843,12 @@ def _fractional_power_superdiag_entry(l1, l2, t12, p):
       #  for real values U is always 0 so return early to avoid casting to complex value
       return t12 * jnp.exp(p/2*(log_l2+log_l1)) * (2* jnp.sinh(p*(jnp.arctanh(z)))) / (l2-l1)
 
-    U = unwinding_number(log_l2-log_l1)
+    # Equation 5.3
+    U = jnp.ceil(((log_l2-log_l1).imag - jnp.pi) / (2*jnp.pi))
 
-    return t12 * jnp.exp(p/2*(log_l2+log_l1)) * (2* jnp.sinh(p*(jnp.arctanh(z) + jnp.pi*1.0j*U.astype(jnp.complex64)))) / (l2-l1)
+    return t12 * jnp.exp(p/2*(log_l2+log_l1)) * (2* jnp.sinh(p*(jnp.arctanh(z) + jnp.pi*1.0j*U.astype(l1.dtype)))) / (l2-l1)
 
-  case = lax.select(l1==l2, 0, 2)
+  case = lax.select(l1 == l2, 0, 2)
   case = lax.select(jnp.logical_or(jnp.abs(l1) < jnp.abs(l2)/2, jnp.abs(l2) < jnp.abs(l1)/2), 1, case)
 
   return lax.switch(
@@ -1859,7 +1860,67 @@ def _fractional_power_superdiag_entry(l1, l2, t12, p):
     ]
   )
 
-def _briggs_helper_function(a: float, k:int)->float:
+def _logm_superdiag_entry(l1, l2, t12):
+  """
+  Compute a superdiagonal entry of a matrix logarithm.
+
+  This is like Eq. (11.28) in [1]_, except the determination of whether
+  l1 and l2 are sufficiently far apart has been modified.
+
+  Parameters
+  ----------
+  l1 : complex
+      A diagonal entry of the matrix.
+  l2 : complex
+      A diagonal entry of the matrix.
+  t12 : complex
+      A superdiagonal entry of the matrix.
+
+  Returns
+  -------
+  f12 : complex
+      A superdiagonal entry of the matrix logarithm.
+
+  Notes
+  -----
+  Care has been taken to return a real number if possible when
+  all of the inputs are real numbers.
+
+  References
+  ----------
+  .. [1] Nicholas J. Higham (2008)
+          "Functions of Matrices: Theory and Computation"
+          ISBN 978-0-898716-46-7
+
+  """
+
+  def last_case():
+    z = (l2 - l1) / (l2 + l1)
+
+    if jnp.isrealobj(l1):
+      #  for real values U is always 0 so return early to avoid casting to complex value
+      return t12 * 2.0 * jnp.arctanh(z) / (l2 - l1)
+
+    log_diff = jnp.log(l2) - jnp.log(l1)
+    U = jnp.ceil((log_diff.imag - jnp.pi) / (2*jnp.pi))
+
+    return t12 * 2.0 * (jnp.arctanh(z) + jnp.pi*1j*U.astype(l1.dtype)) / (l2 - l1)
+
+
+  case = lax.select(l1 == l2, 0, 2)
+  case = lax.select(jnp.abs(l2-l1) > jnp.abs(l1+l2)/2, 1, case)
+
+  return lax.switch(
+    case,
+    [
+      lambda: t12/l1,
+      lambda: t12 * (jnp.log(l2) - jnp.log(l1)) / (l2 - l1),
+      last_case
+    ]
+  )
+
+
+def _briggs_helper_function(a: float, k:int) -> float:
   """
     References:
     .. [1] Awad H. Al-Mohy (2012) "A more accurate Briggs method for the logarithm",
@@ -1884,8 +1945,8 @@ def _briggs_helper_function(a: float, k:int)->float:
   r = z_0/r
   return r
 
-def onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5)->float:
-  if t>=A.shape[-1]:
+def onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> float:
+  if t >= A.shape[-1]:
     # if t is greater than number of columns it is faster to just compute exact value
     # we also avoid getting stuck in an infinite loop when generating vectors that are not parallel in algorithm
     return jnp.linalg.norm(A, 1, axis=(-2, -1))
@@ -1893,7 +1954,7 @@ def onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5)->float:
     return _onenormest(A, key, t, itmax)
 
 @partial(jit, static_argnames=("t","itmax"))
-def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5)->float:
+def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> float:
   """
     .. [1] Nicholas J. Higham and Francoise Tisseur (2000),
           "A Block Algorithm for Matrix 1-Norm Estimation,
@@ -1962,12 +2023,12 @@ def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5)->float:
     ind_j = jnp.argmax(summed_abs_cols)
     ind_best = ind[ind_j]
 
-    est, k = jax.lax.cond(jnp.logical_and(k>=2, est<=est_old), (lambda est, est_old, k: (est_old, itmax)), (lambda est, est_old, k: (est, k)), est, est_old, k)
+    est, k = jax.lax.cond(jnp.logical_and(k >= 2, est <= est_old), (lambda est, est_old, k: (est_old, itmax)), (lambda est, est_old, k: (est, k)), est, est_old, k)
 
-    est_old=est
+    est_old = est
     S_old = S
 
-    S = (Y+(Y==0).astype(Y.dtype))/jnp.abs(Y).astype(Y.dtype)
+    S = (Y+(Y == 0).astype(Y.dtype))/jnp.abs(Y).astype(Y.dtype)
 
     # if all vectors in S are parallel to vector in S_old finish iterating
     k = jax.lax.cond((S.T@S_old == n).all(), lambda old_k: itmax, lambda old_k: old_k, k)
@@ -1980,7 +2041,7 @@ def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5)->float:
 
     Z = A.T @ S
     h = jnp.abs(Z).max(1)
-    k = jax.lax.cond(jnp.logical_and(k>=2, (jnp.max(h)==h[ind_best]).all()), lambda old_k: itmax, lambda old_k: old_k, k)
+    k = jax.lax.cond(jnp.logical_and(k >= 2, (jnp.max(h) == h[ind_best]).all()), lambda old_k: itmax, lambda old_k: old_k, k)
     ind = jnp.argsort(h, descending=True)[:t+len(ind_hist)]
     if t > 1:
       k = jax.lax.cond(jnp.isin(ind[:t], ind_hist).all(), lambda old_k: itmax, lambda old_k: old_k, k)
@@ -2021,7 +2082,7 @@ def _inverse_squaring(T_0: Array, theta: tuple[float], key: ArrayLike):
   def body(x):
     diag, s_0 = x
     diag = jnp.sqrt(diag)
-    s_0 +=1
+    s_0 += 1
     return diag, s_0
 
   diag, s_0 = jax.lax.while_loop(cond, body, (diag, s_0))
@@ -2033,30 +2094,30 @@ def _inverse_squaring(T_0: Array, theta: tuple[float], key: ArrayLike):
   d_2 = normest(T, 2, key)**(1/2)
   d_3 = normest(T, 3, key)**(1/3)
   a_2 = jnp.maximum(d_2, d_3)
-  m=0
+  m = 0
   for i in (1, 2):
     m = jax.lax.cond(a_2 < theta[i], lambda m: i, lambda m: m, m)
 
   def main_loop_cond(x):
     T, s, m = x
-    return m==0
+    return m == 0
 
   def main_loop_body(x):
     T, s, m = x
     nonlocal d_3
     nonlocal k
-    d_3 = jax.lax.cond(s>s_0, lambda x: normest(T, 3, key)**(1/3), lambda x: x, d_3)
+    d_3 = jax.lax.cond(s > s_0, lambda x: normest(T, 3, key)**(1/3), lambda x: x, d_3)
     d_4 = normest(T, 4, key)**(1/4)
     a_3 = jnp.maximum(d_3, d_4)
     def fun(m, k):
       # 18 to 27
       ind = jnp.arange(3, 8)
       for i, idx in enumerate(ind):
-        ind = jax.lax.select(a_3<=theta[ind[i]], ind, ind.at[i].set(8))
+        ind = jax.lax.select(a_3 <= theta[ind[i]], ind, ind.at[i].set(8))
 
       j_1 = jnp.min(ind)
-      m = jax.lax.select(j_1<=6, j_1, m)
-      should_continue = jnp.logical_and(jnp.logical_and(a_3/2<=theta[5], k<2), m==0)
+      m = jax.lax.select(j_1 <= 6, j_1, m)
+      should_continue = jnp.logical_and(jnp.logical_and(a_3/2 <= theta[5], k < 2), m == 0)
       k = jax.lax.select(should_continue, k+1, k)
       return m, k, should_continue
     # 17
@@ -2066,11 +2127,11 @@ def _inverse_squaring(T_0: Array, theta: tuple[float], key: ArrayLike):
     a_4 = jnp.maximum(d_4, d_5)
     eta = jnp.minimum(a_3, a_4)
     for i in (6, 7):
-      condition = jnp.logical_and(m==0, eta < theta[i])
+      condition = jnp.logical_and(m == 0, eta < theta[i])
       condition = jnp.logical_and(condition, ~should_continue)
       m = jax.lax.select(condition, i, m)
 
-    T, s = jax.lax.cond(m==0, lambda: (_sqrtm_triu(T), s + 1), lambda: (T, s))
+    T, s = jax.lax.cond(m == 0, lambda: (_sqrtm_triu(T), s + 1), lambda: (T, s))
     return T, s, m
 
   T, s, m = jax.lax.while_loop(main_loop_cond, main_loop_body, (T, s, m))
@@ -2094,29 +2155,79 @@ def _inverse_squaring(T_0: Array, theta: tuple[float], key: ArrayLike):
 
 
 @jit
-def _logm_triu(T: Array) -> Array:
+def _logm_triu(T: Array, key:ArrayLike) -> Array:
   """
   """
-
-  diag = jnp.sqrt(jnp.diag(T))
-  keep_real = jnp.isrealobj(T) and jnp.min(diag, initial=0.0) >= 0.0
+  diag = jnp.diag(T)
   T_0 = T
-  if not keep_real:
-    T_0 = T_0.astype(jnp.complex64)
   #  Bounds defined in table 2.1 from Awad H. et al.
   #  first entry set to NaN to offset indexes by 1 because they start from 1 in the paper
-  theta_m = [float('nan'), 1.59e-5, 2.31e-3, 1.94e-2, 6.21e-2, 1.28e-1, 2.06e-1, 2.88e-1, 3.67e-1, 4.39e-1, 5.03e-1, 5.60e-1, 6.09e-1, 6.52e-1, 6.89e-1, 7.21e-1, 7.49e-1]
+  theta_m = jnp.array([float('nan'), 1.59e-5, 2.31e-3, 1.94e-2, 6.21e-2, 1.28e-1, 2.06e-1, 2.88e-1, 3.67e-1, 4.39e-1, 5.03e-1, 5.60e-1, 6.09e-1, 6.52e-1, 6.89e-1, 7.21e-1, 7.49e-1])
 
-  R, s, m = _inverse_squaring(T_0, theta_m)
+  R, s, m = _inverse_squaring(T_0, theta_m, key=key)
 
+  # line 36 of algorithm 4.1
+  # evaluate U = 2^s * r_m(T-I)
+  nodes, weights = jax.scipy.special.roots_legendre(m, max_n=7)
+  # move nodes and weights from range [-1,1] to [0,1]
+  nodes = ((nodes+1.0)/2.0).astype(R.dtype)
+  weights = (weights/2.0).astype(R.dtype)
+  identity = jnp.identity(T.shape[-1], dtype=T.dtype)
+  U = jnp.zeros_like(R)
+  U = lax.fori_loop(0, m, lambda i, U: U + solve_triangular(identity+R*nodes[i], R*weights[i]), U)
+  U = U*jnp.exp2(s)
 
+  # replace diagonal
+  U = jnp.fill_diagonal(U, jnp.log(diag), inplace=False)
+  # replace superdiagonal
+  for i in range(T.shape[-1]-1):
+    l1 = T_0[i, i]
+    l2 = T_0[i+1, i+1]
+    t12 = T_0[i, i+1]
+    U = U.at[i, i+1].set(_logm_superdiag_entry(l1, l2, t12))
 
   return U
 
 @jit
-def logm(A: ArrayLike) -> Array:
+def logm(A: ArrayLike, key:ArrayLike) -> Array:
+  """Compute matrix logarithm
+
+  JAX implementation of :func:`scipy.linalg.logm`.
+
+  Args:
+    A: array of shape ``(N, N)``
+
+  Returns:
+    An array of shape ``(N, N)`` containing the matrix logarithm of ``A``.
+
+  Examples:
+    >>> A = jnp.array([[1., 2., 3.],
+    ...                [2., 4., 2.],
+    ...                [3., 2., 1.]])
+    >>> log_a = jax.scipy.linalg.logm(a, key=jax.random.key(0))
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(log_a)
+    [[0.87+1.57j 0.62+0.j   0.17-1.57j]
+     [0.62-0.j   1.04-0.j   0.62+0.j  ]
+     [0.17-1.57j 0.62-0.j   0.87+1.57j]]
+
+     By definition, matrix multiplication is inverse of exponentiation:
+
+    >>> jnp.allclose(a, jax.scipy.linalg.expm(log_a))
+    Array(True, dtype=bool)
+
+  Notes:
+    This uses the inverse scaling-and-squaring approximation method.
+
+  References:
+    .. [1] Awad H. Al-Mohy and Nicholas J. Higham (2012)
+           "Improved Inverse Scaling and Squaring Algorithms for the Matrix Logarithm."
+           SIAM Journal on Scientific Computing, 34 (4). C152-C169.
+           ISSN 1095-7197
+  """
   T, Z = schur(A, output='complex')
-  logm_T = _logm_triu(T)
+
+  logm_T = _logm_triu(T, key=key)
   return jnp.matmul(jnp.matmul(Z, logm_T, precision=lax.Precision.HIGHEST),
                     jnp.conj(Z.T), precision=lax.Precision.HIGHEST)
 

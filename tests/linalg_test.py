@@ -2017,7 +2017,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("cpu")
   def testLogmPSDMatrix(self, shape, dtype):
-    # Checks against scipy.linalg.sqrtm when the principal square root
+    # Checks against scipy.linalg.logm when the principal logm
     # is guaranteed to be unique (i.e no negative real eigenvalue)
     rng = jtu.rand_default(self.rng())
     arg = rng(shape, dtype)
@@ -2027,12 +2027,19 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       tol = 1e-4
     else:
       tol = 1e-8
+
+    def jax_logm(mat):
+      result = jsp.linalg.logm(mat, key=jax.random.key(0))
+      if (result.imag == 0).all():
+        return result.real
+      return result
+
     self._CheckAgainstNumpy(osp.linalg.logm,
-                            jsp.linalg.logm,
+                            jax_logm,
                             args_maker,
                             tol=tol,
                             check_dtypes=False)
-    self._CompileAndCheck(jsp.linalg.sqrtm, args_maker)
+    self._CompileAndCheck(partial(jsp.linalg.logm, key=jax.random.key(0)), args_maker)
 
   @jtu.sample_product(
     shape=[(4, 4), (15, 15), (50, 50), (100, 100)],
