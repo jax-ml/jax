@@ -513,7 +513,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   # jaxpr for each branch.
   branches_known_ : list[core.ClosedJaxpr] = []
   branches_staged_: list[core.ClosedJaxpr] = []
-  branch_res_avals: list[core.AbstractValue] = []
+  branch_res_avals: list[list[core.AbstractValue]] = []
   for jaxpr in branches:
     jaxpr_known, jaxpr_staged, _, inst_out, num_res = \
         pe.partial_eval_jaxpr_custom(

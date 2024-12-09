@@ -1651,7 +1651,7 @@ pe.partial_eval_jaxpr_custom_rules[shard_map_p] = \
 
 def _add_reshapes(which, jaxpr_known, jaxpr_staged):
   # add singleton axes to residuals which are from jaxpr_known and are scalars
-  which_ = [w and not v.aval.shape
+  which_ = [w and not v.aval.shape  # pytype: disable=attribute-error
             for w, v in zip(which, jaxpr_staged.invars[:len(which)])]
   if not any(which_): return jaxpr_known, jaxpr_staged
   assert not jaxpr_known.constvars and not jaxpr_staged.constvars

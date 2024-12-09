@@ -1120,7 +1120,7 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
         bufs.append(buf)
         break
     else:
-      bufs.append(buf)
+      bufs.append(candidates_list[-1])
   return pxla.batched_device_put(x.aval, sharding, bufs, devices)
 
 

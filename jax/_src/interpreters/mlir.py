@@ -1699,6 +1699,7 @@ def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
   # For example: if the key.shape is (8, 2) and key_data(key).shape is (8, 2, 2),
   # then the sharding will be P(P.UNCONSTRAINED, P.UNCONSTRAINED, None).
   # The below custom call achieves the sharding like above example.
+  assert isinstance(aval, (core.ShapedArray, core.DShapedArray))
   if config.use_shardy_partitioner.value:
     physical_ndim = core.physical_aval(aval).ndim
     s = sharding_impls.SdyArraySharding(

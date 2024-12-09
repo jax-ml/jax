@@ -1992,7 +1992,8 @@ def compute_dim_vars_from_arg_shapes(
   generate the code for computing the dimension variables. It also generates
   the shape assertions.
 
-  Returns: the values of the dimension variables, in the order determined by
+  Returns:
+    The values of the dimension variables, in the order determined by
     `all_dim_vars(args_avals)`.
   """
   dim_vars = all_dim_vars(args_avals)
@@ -2006,8 +2007,7 @@ def compute_dim_vars_from_arg_shapes(
   }
   synthetic_eval = ShapeEvaluator(synthetic_env)
   shape_constraints.shape_assertions(synthetic_eval)
-  dim_values = [synthetic_eval.evaluate(solution[var]) for var in dim_vars]
-  return tuple(dim_values)
+  return tuple(synthetic_eval.evaluate(solution[var]) for var in dim_vars)
 
 def _solve_dim_equations(
     eqns: list[_DimEquation],
@@ -2141,7 +2141,8 @@ def _solve_dim_equations(
     eqns = [eqn for eqn in eqns if not process_one_eqn(eqn)]
     if not eqns:
       add_explicit_symbolic_constraints(shape_env)
-      return shape_env, shape_constraints  # SUCCESS
+      # SUCCESS
+      return shape_env, shape_constraints  # pytype: disable=bad-return-type
     elif len(eqns) >= nr_eqns:
       break
 
