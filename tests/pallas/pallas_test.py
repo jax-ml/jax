@@ -1340,11 +1340,7 @@ class PallasControlFlowTest(PallasBaseTest):
     np.testing.assert_allclose(f(jnp.bool_(False), arg),
                                -arg)
 
-    # We actually expect the assertion failure in linearize, but this also
-    # covers another case where an effect was causing an earlier assertion
-    # failure.
-    with self.assertRaises(AssertionError):
-      # Notably, we should not have a ValueError for mismatched Read<N> effect.
+    with self.assertRaisesRegex(ValueError, "Linearization failed"):
       _ = jax.grad(lambda x: jnp.sum(f(jnp.bool_(True), x)**2))(arg)
       # np.testing.assert_allclose(
       #     dx, jnp.float32([0., 2, 4, 6, 0, 10, 12 + 12, 14]))
@@ -1397,7 +1393,7 @@ class PallasControlFlowTest(PallasBaseTest):
                 16 * x * params[4, 2])
     np.testing.assert_allclose(f(program, params, x), expected)
 
-    with self.assertRaises(AssertionError):
+    with self.assertRaisesRegex(ValueError, "Linearization failed"):
       jax.value_and_grad(lambda params, x: f(program, params, x).sum())(
           params, x)
 
@@ -1451,7 +1447,7 @@ class PallasControlFlowTest(PallasBaseTest):
                 16 * x * params[4, 2])
     np.testing.assert_allclose(f(program, params, x), expected)
 
-    with self.assertRaises(AssertionError):
+    with self.assertRaisesRegex(ValueError, "Linearization failed"):
       jax.value_and_grad(lambda params, x: f(program, params, x).sum())(
           params, x)
 
