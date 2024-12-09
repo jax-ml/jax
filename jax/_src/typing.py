@@ -94,3 +94,12 @@ class DLDeviceType(enum.IntEnum):
   kDLCPU = 1
   kDLCUDA = 2
   kDLROCM = 10
+
+# Annotation for static arguments.
+StaticTag = object()
+
+# In Python 3.12, switch to this:
+# type Static[T] = typing.Annotated[T, StaticTag]
+
+T = typing.TypeVar('T')
+Static: typing.TypeAlias = typing.Annotated[T, StaticTag]
