@@ -2205,7 +2205,7 @@ def call_lowering(fn_name, name_stack, call_jaxpr, backend,
   return out_nodes, tokens_out
 
 def core_call_lowering(ctx: LoweringRuleContext,
-                       *args, name, backend=None, call_jaxpr):
+                       *args, name, backend=None, call_jaxpr, **_):
   out_nodes, tokens = call_lowering(
       name, ctx.name_stack, call_jaxpr, backend, ctx.module_context,
       ctx.avals_in, ctx.avals_out, ctx.tokens_in, *args,
