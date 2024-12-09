@@ -9399,7 +9399,7 @@ def einsum(
     subscript: str, /,
     *operands: ArrayLike,
     out: None = None,
-    optimize: str | bool | list[tuple[int, ...]] = "optimal",
+    optimize: str | bool | list[tuple[int, ...]] = "auto",
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
@@ -9412,7 +9412,7 @@ def einsum(
     axes: Sequence[Any], /,
     *operands: ArrayLike | Sequence[Any],
     out: None = None,
-    optimize: str | bool | list[tuple[int, ...]] = "optimal",
+    optimize: str | bool | list[tuple[int, ...]] = "auto",
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
@@ -9424,7 +9424,7 @@ def einsum(
     subscripts, /,
     *operands,
     out: None = None,
-    optimize: str | bool | list[tuple[int, ...]] = "optimal",
+    optimize: str | bool | list[tuple[int, ...]] = "auto",
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
@@ -9444,10 +9444,10 @@ def einsum(
     subscripts: string containing axes names separated by commas.
     *operands: sequence of one or more arrays corresponding to the subscripts.
     optimize: specify how to optimize the order of computation. In JAX this defaults
-      to ``"optimal"`` which produces optimized expressions via the opt_einsum_
+      to ``"auto"`` which produces optimized expressions via the opt_einsum_
       package. Other options are ``True`` (same as ``"optimal"``), ``False``
       (unoptimized), or any string supported by ``opt_einsum``, which
-      includes ``"auto"``, ``"greedy"``, ``"eager"``, and others. It may also
+      includes ``"optimal"``, ``"greedy"``, ``"eager"``, and others. It may also
       be a pre-computed path (see :func:`~jax.numpy.einsum_path`).
     precision: either ``None`` (default), which means the default precision for
       the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
