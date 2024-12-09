@@ -12,6 +12,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## jax 0.4.37
 
+* Bug fixes
+  * Fix a bug that will throw `index out of range` error in
+    {func}`jax.lax.while_loop` if the user register pytree node class with
+    different aux data for the flatten and flatten_with_path.
+
 ## jax 0.4.36 (Dec 5, 2024)
 
 * Breaking Changes

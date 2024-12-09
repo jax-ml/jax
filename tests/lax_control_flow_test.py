@@ -322,6 +322,19 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       lax.while_loop(lambda c: True, lambda c: (True, True),
                      (np.bool_(True), np.float32(0.)))
 
+  def testWhileLoopCustomPytreeDiffAuxData(self):
+    class Node:
+      def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    tree_util.register_pytree_with_keys(
+        Node,
+        lambda o: ((("x", o.x), ("y", o.y)), 'with_keys'),  # flatten_with_keys
+        lambda _, xy: Node(xy[0], xy[1]),   # unflatten (no key involved)
+        lambda o: ((o.x, o.y), 'without_keys'),    # flatten
+    )
+    lax.while_loop(lambda o: o.x > 0., lambda c: Node(0., 0.), Node(1., 1.))
+
   def testNestedWhileWithDynamicUpdateSlice(self):
     num = 5
 
