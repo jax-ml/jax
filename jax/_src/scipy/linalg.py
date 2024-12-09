@@ -1828,7 +1828,7 @@ def _fractional_power_superdiag_entry(l1, l2, t12, p):
            32 (3). pp. 1056-1078. ISSN 0895-4798
 
     """
-  
+
   def unwinding_number(z):
     """Equation 5.3"""
     return jnp.ceil((z.imag - jnp.pi) / (2*jnp.pi))
@@ -1851,7 +1851,7 @@ def _fractional_power_superdiag_entry(l1, l2, t12, p):
   case = lax.select(jnp.logical_or(jnp.abs(l1) < jnp.abs(l2)/2, jnp.abs(l2) < jnp.abs(l1)/2), 1, case)
 
   return lax.switch(
-    case, 
+    case,
     [
       lambda: t12*p*l1**(p-1),
       lambda: t12 * ((l2**p)-(l1**p))/(l2-l1),
@@ -1905,11 +1905,11 @@ def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5)->float:
   est_old = 0.0
   idx_size = min(n,t*itmax+t)
   ind = jnp.zeros((idx_size, ), dtype=jnp.int32)
-  S = jnp.zeros((n,t))
+  S = jnp.zeros((n,t), dtype=A.dtype)
 
   #  initialize starting matrix X with columns of unit 1-norm
   #  choice of columns is explained in scipy/sparse/linalg/_onenormest.py
-  X = jnp.ones((n, t))
+  X = jnp.ones((n, t), dtype=A.dtype)
 
   def needs_resampling(data, i:int):
     X, key = data
@@ -1967,7 +1967,7 @@ def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5)->float:
     est_old=est
     S_old = S
 
-    S = (Y+(Y==0).astype(Y.dtype))/jnp.abs(Y)
+    S = (Y+(Y==0).astype(Y.dtype))/jnp.abs(Y).astype(Y.dtype)
 
     # if all vectors in S are parallel to vector in S_old finish iterating
     k = jax.lax.cond((S.T@S_old == n).all(), lambda old_k: itmax, lambda old_k: old_k, k)
@@ -1990,7 +1990,7 @@ def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5)->float:
       ind = ind[idx]
 
     elementary_vectors = jax.nn.one_hot(ind, n).T
-    X = elementary_vectors[:, :t]
+    X = elementary_vectors[:, :t].astype(A.dtype)
     new_ind = ind[:t].copy()
     ind_hist = jax.lax.dynamic_update_slice(ind_hist, new_ind, (k*t,))
     k += 1
@@ -2006,11 +2006,10 @@ def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5)->float:
 
 
 
-# @partial(jit, static_argnames=("theta"))
 @jit
 def _inverse_squaring(T_0: Array, theta: tuple[float], key: ArrayLike):
   def normest(T: Array, p: int, key:ArrayLike):
-    T = jnp.linalg.matrix_power(T-jnp.eye(T.shape[0]), p)
+    T = jnp.linalg.matrix_power(T-jnp.eye(T.shape[0], dtype=T.dtype), p)
     return _onenormest(T, key)
 
   T = T_0
@@ -2041,7 +2040,7 @@ def _inverse_squaring(T_0: Array, theta: tuple[float], key: ArrayLike):
   def main_loop_cond(x):
     T, s, m = x
     return m==0
-  
+
   def main_loop_body(x):
     T, s, m = x
     nonlocal d_3
@@ -2053,23 +2052,23 @@ def _inverse_squaring(T_0: Array, theta: tuple[float], key: ArrayLike):
       # 18 to 27
       ind = jnp.arange(3, 8)
       for i, idx in enumerate(ind):
-        ind = jax.lax.cond(a_3<=theta[ind[i]], lambda: ind, lambda: ind.at[i].set(8))
+        ind = jax.lax.select(a_3<=theta[ind[i]], ind, ind.at[i].set(8))
 
       j_1 = jnp.min(ind)
-      m = jax.lax.cond(j_1<=6, lambda m: j_1, lambda m: m, m)
-
-      k, should_continue =jax.lax.cond(jnp.logical_and(jnp.logical_and(a_3/2<=theta[5], k<2), m==0), lambda: (k+1, True), lambda: (k, False))
+      m = jax.lax.select(j_1<=6, j_1, m)
+      should_continue = jnp.logical_and(jnp.logical_and(a_3/2<=theta[5], k<2), m==0)
+      k = jax.lax.select(should_continue, k+1, k)
       return m, k, should_continue
     # 17
     m, k, should_continue = jax.lax.cond(a_3 < theta[7], fun, lambda m, k: (m, k, False), m, k)
     # should continue is goto 33 from original algorithm
     d_5 = normest(T, 5, key)**(1/5)
     a_4 = jnp.maximum(d_4, d_5)
-    eta = jnp.maximum(a_3, a_4)
+    eta = jnp.minimum(a_3, a_4)
     for i in (6, 7):
       condition = jnp.logical_and(m==0, eta < theta[i])
       condition = jnp.logical_and(condition, ~should_continue)
-      m = jax.lax.cond(condition, lambda: i, lambda: m)
+      m = jax.lax.select(condition, i, m)
 
     T, s = jax.lax.cond(m==0, lambda: (_sqrtm_triu(T), s + 1), lambda: (T, s))
     return T, s, m
@@ -2085,7 +2084,7 @@ def _inverse_squaring(T_0: Array, theta: tuple[float], key: ArrayLike):
 
   # replace superdiagonal
   p = jnp.exp2(-s)
-  for i in range(T.shape[-1]-1):    
+  for i in range(T.shape[-1]-1):
     l1 = T_0[i, i]
     l2 = T_0[i+1, i+1]
     t12 = T_0[i, i+1]

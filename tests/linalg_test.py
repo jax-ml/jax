@@ -2036,7 +2036,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     shape=[(4, 4), (15, 15), (50, 50), (100, 100)],
-    dtype=float_types,
+    dtype=float_types+complex_types,
   )
   def testOneNormEstimator(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
@@ -2070,7 +2070,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     #  scipy algorithm is not deterministic so set seed for reproducibility
     np.random.seed(111)
     key = jax.random.key(111)
-    
+
     theta_m = np.array([float('nan'), 1.59e-5, 2.31e-3, 1.94e-2, 6.21e-2, 1.28e-1, 2.06e-1, 2.88e-1, 3.67e-1, 4.39e-1, 5.03e-1, 5.60e-1, 6.09e-1, 6.52e-1, 6.89e-1, 7.21e-1, 7.49e-1])
 
     arg = rng(shape, dtype)
@@ -2088,7 +2088,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
     fn = partial(jsp.linalg._inverse_squaring, key=key)
     scipy_fn = partial(scipy.linalg._matfuncs_inv_ssq._inverse_squaring_helper)
-    
+
     self._CheckAgainstNumpy(scipy_fn,
                         fn,
                         args_maker,
