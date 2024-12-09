@@ -915,7 +915,8 @@ ffi::Error GesvdjImpl(int64_t batch, int64_t rows, int64_t cols,
 
   auto a_data = static_cast<T*>(a.untyped_data());
   auto out_data = static_cast<T*>(out->untyped_data());
-  auto s_data = static_cast<typename solver::RealType<T>::value*>(s->untyped_data());
+  auto s_data =
+      static_cast<typename solver::RealType<T>::value*>(s->untyped_data());
   auto u_data = static_cast<T*>(u->untyped_data());
   auto v_data = static_cast<T*>(v->untyped_data());
   auto info_data = info->typed_data();
@@ -1013,6 +1014,101 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GesvdjFfi, GesvdjDispatch,
 );
 
 #endif  // JAX_GPU_CUDA
+
+// Symmetric tridiagonal reduction: sytrd
+
+template <typename T>
+ffi::Error SytrdImpl(int64_t batch, int64_t size, gpuStream_t stream,
+                     ffi::ScratchAllocator& scratch, bool lower,
+                     ffi::AnyBuffer a, ffi::Result<ffi::AnyBuffer> out,
+                     ffi::Result<ffi::AnyBuffer> d,
+                     ffi::Result<ffi::AnyBuffer> e,
+                     ffi::Result<ffi::AnyBuffer> tau,
+                     ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int>(size));
+  FFI_ASSIGN_OR_RETURN(auto handle, SolverHandlePool::Borrow(stream));
+
+  gpusolverFillMode_t uplo =
+      lower ? GPUSOLVER_FILL_MODE_LOWER : GPUSOLVER_FILL_MODE_UPPER;
+  FFI_ASSIGN_OR_RETURN(int lwork,
+                       solver::SytrdBufferSize<T>(handle.get(), uplo, n));
+  FFI_ASSIGN_OR_RETURN(auto workspace,
+                       AllocateWorkspace<T>(scratch, lwork, "sytrd"));
+
+  auto* a_data = static_cast<T*>(a.untyped_data());
+  auto* out_data = static_cast<T*>(out->untyped_data());
+  auto* d_data =
+      static_cast<typename solver::RealType<T>::value*>(d->untyped_data());
+  auto* e_data =
+      static_cast<typename solver::RealType<T>::value*>(e->untyped_data());
+  auto* tau_data = static_cast<T*>(tau->untyped_data());
+  auto* info_data = info->typed_data();
+  if (a_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+
+  int out_step = n * n;
+  for (int64_t i = 0; i < batch; ++i) {
+    FFI_RETURN_IF_ERROR_STATUS(solver::Sytrd<T>(handle.get(), uplo, n, out_data,
+                                                d_data, e_data, tau_data,
+                                                workspace, lwork, info_data));
+    out_data += out_step;
+    d_data += n;
+    e_data += n - 1;
+    tau_data += n - 1;
+    ++info_data;
+  }
+  return ffi::Error::Success();
+}
+
+ffi::Error SytrdDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
+                         bool lower, ffi::AnyBuffer a,
+                         ffi::Result<ffi::AnyBuffer> out,
+                         ffi::Result<ffi::AnyBuffer> d,
+                         ffi::Result<ffi::AnyBuffer> e,
+                         ffi::Result<ffi::AnyBuffer> tau,
+                         ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  auto dataType = a.element_type();
+  if (out->element_type() != dataType ||
+      d->element_type() != ffi::ToReal(dataType) ||
+      e->element_type() != ffi::ToReal(dataType) ||
+      tau->element_type() != dataType) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to sytrd must have the same element type");
+  }
+  FFI_ASSIGN_OR_RETURN((auto [batch, rows, cols]),
+                       SplitBatch2D(a.dimensions()));
+  if (rows != cols) {
+    return ffi::Error::InvalidArgument(
+        "The input matrix to sytrd must be square");
+  }
+  FFI_RETURN_IF_ERROR(
+      CheckShape(out->dimensions(), {batch, rows, cols}, "out", "sytrd"));
+  FFI_RETURN_IF_ERROR(CheckShape(d->dimensions(), {batch, cols}, "d", "sytrd"));
+  FFI_RETURN_IF_ERROR(
+      CheckShape(e->dimensions(), {batch, cols - 1}, "e", "sytrd"));
+  FFI_RETURN_IF_ERROR(
+      CheckShape(tau->dimensions(), {batch, cols - 1}, "tau", "sytrd"));
+  FFI_RETURN_IF_ERROR(CheckShape(info->dimensions(), batch, "info", "sytrd"));
+  SOLVER_DISPATCH_IMPL(SytrdImpl, batch, rows, stream, scratch, lower, a, out,
+                       d, e, tau, info);
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in sytrd", absl::FormatStreamed(dataType)));
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(SytrdFfi, SytrdDispatch,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Attr<bool>("lower")
+                                  .Arg<ffi::AnyBuffer>()         // a
+                                  .Ret<ffi::AnyBuffer>()         // out
+                                  .Ret<ffi::AnyBuffer>()         // d
+                                  .Ret<ffi::AnyBuffer>()         // e
+                                  .Ret<ffi::AnyBuffer>()         // tau
+                                  .Ret<ffi::Buffer<ffi::S32>>()  // info
+);
 
 #undef SOLVER_DISPATCH_IMPL
 #undef SOLVER_BLAS_DISPATCH_IMPL
