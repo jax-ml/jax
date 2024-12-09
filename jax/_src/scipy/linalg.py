@@ -1864,27 +1864,9 @@ def _logm_superdiag_entry(l1, l2, t12):
   """
   Compute a superdiagonal entry of a matrix logarithm.
 
+  JAX implementation of the same function from scipy.
   This is like Eq. (11.28) in [1]_, except the determination of whether
   l1 and l2 are sufficiently far apart has been modified.
-
-  Parameters
-  ----------
-  l1 : complex
-      A diagonal entry of the matrix.
-  l2 : complex
-      A diagonal entry of the matrix.
-  t12 : complex
-      A superdiagonal entry of the matrix.
-
-  Returns
-  -------
-  f12 : complex
-      A superdiagonal entry of the matrix logarithm.
-
-  Notes
-  -----
-  Care has been taken to return a real number if possible when
-  all of the inputs are real numbers.
 
   References
   ----------
@@ -1922,8 +1904,7 @@ def _logm_superdiag_entry(l1, l2, t12):
 
 def _briggs_helper_function(a: Array, k:int) -> Array:
   """
-    References:
-    .. [1] Awad H. Al-Mohy (2012) "A more accurate Briggs method for the logarithm",
+    Implements Awad H. Al-Mohy (2012) "A more accurate Briggs method for the logarithm",
            Numerical Algorithms, 59 : 393--402.
   """
   pi_half = jnp.pi/2
@@ -1953,7 +1934,9 @@ def onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> float:
 @partial(jit, static_argnames=("t","itmax"))
 def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> float:
   """
-    .. [1] Nicholas J. Higham and Francoise Tisseur (2000),
+    Estimate of the 1-norm of a matrix A.
+
+    Implements Nicholas J. Higham and Francoise Tisseur (2000),
           "A Block Algorithm for Matrix 1-Norm Estimation,
           with an Application to 1-Norm Pseudospectra."
           SIAM J. Matrix Anal. Appl. Vol. 21, No. 4, pp. 1185-1201.
@@ -1989,10 +1972,6 @@ def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> float:
         #  resample if column of X is parallel to a previous column
         #  Parrarel vectors will are equal or opposite in this case so their dot product is n
         X, key = jax.lax.while_loop(partial(needs_resampling, i=i), partial(resample, i=i), (X, key))
-        # while (X[:, :i].T @ X[:, i] == n).any():
-        #     key, subkey = jax.random.split(key)
-        #     rand_val = jax.random.randint(subkey, shape=X.shape[0], minval=0, maxval=2)*2 - 1
-        #     X = X.at[:, i].set(rand_val.astype(X.dtype))
 
   X /= n
 
@@ -2062,13 +2041,15 @@ def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> float:
 
   return est
 
-
-
 @jit
 def _inverse_squaring(T_0: Array, theta: tuple[float], key: ArrayLike):
+  """
+  Implements lines 3--34 of algoritm 4.1 in Awad H. Al-Mohy and Nicholas J. Higham (2012)
+           "Improved Inverse Scaling and Squaring Algorithms
+           for the Matrix Logarithm."
+  """
   def normest(T: Array, p: int, key:ArrayLike):
     T = jnp.linalg.matrix_power(T-jnp.eye(T.shape[0], dtype=T.dtype), p)
-    return jnp.abs(T).sum(-1).max()
     return _onenormest(T, key)
 
   T = T_0
