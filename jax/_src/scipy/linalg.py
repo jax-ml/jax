@@ -1920,7 +1920,7 @@ def _logm_superdiag_entry(l1, l2, t12):
   )
 
 
-def _briggs_helper_function(a: float, k:int) -> float:
+def _briggs_helper_function(a: Array, k:int) -> Array:
   """
     References:
     .. [1] Awad H. Al-Mohy (2012) "A more accurate Briggs method for the logarithm",
@@ -1928,17 +1928,14 @@ def _briggs_helper_function(a: float, k:int) -> float:
   """
   pi_half = jnp.pi/2
   k_hat = k
-  # if jnp.angle(a) >= pi_half:
-  #   a = jnp.sqrt(a)
-  #   k_hat = k-1
   a, k_hat = lax.cond(jnp.angle(a) >= pi_half, lambda: (jnp.sqrt(a), k-1), lambda: (a, k))
-  z_0 = a-1
+  z_0 = a-1.0
   a = jnp.sqrt(a)
-  r = 1 + a
-  def loop_body(i, x):
+  r = a + 1.0
+  def loop_body(i, x:tuple[Array, Array]) -> tuple[Array, Array]:
     a, r = x
     a = jnp.sqrt(a)
-    r = r * (1 + a)
+    r = r * (a+1.0)
     return a, r
 
   a, r = lax.fori_loop(1, k_hat, loop_body, (a, r))
@@ -1986,7 +1983,7 @@ def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> float:
   if t > 1:
     for i in range(1, t):
         key, subkey = jax.random.split(key)
-        rand_val = jax.random.randint(subkey, shape=X.shape[0], minval=0, maxval=2)*2 - 1
+        rand_val = jax.random.randint(subkey, shape=[X.shape[0]], minval=0, maxval=2)*2 - 1
         X = X.at[:, i].set(rand_val.astype(X.dtype))
     for i in range(t):
         #  resample if column of X is parallel to a previous column
@@ -2071,6 +2068,7 @@ def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> float:
 def _inverse_squaring(T_0: Array, theta: tuple[float], key: ArrayLike):
   def normest(T: Array, p: int, key:ArrayLike):
     T = jnp.linalg.matrix_power(T-jnp.eye(T.shape[0], dtype=T.dtype), p)
+    return jnp.abs(T).sum(-1).max()
     return _onenormest(T, key)
 
   T = T_0
@@ -2151,12 +2149,16 @@ def _inverse_squaring(T_0: Array, theta: tuple[float], key: ArrayLike):
     t12 = T_0[i, i+1]
     R = R.at[i, i+1].set(_fractional_power_superdiag_entry(l1, l2, t12, p))
 
+  has_principal_branch = jnp.logical_or(diag.real > 0, diag.imag != 0).all()
+  R = lax.select(has_principal_branch, R, T-jnp.identity(T.shape[-1]).astype(T.dtype))
+
   return R, s, m
 
 
 @jit
 def _logm_triu(T: Array, key:ArrayLike) -> Array:
   """
+  Implements Awad H. Al-Mohy and Nicholas J. Higham (2012) "Improved Inverse Scaling and Squaring Algorithms for the Matrix Logarithm."
   """
   diag = jnp.diag(T)
   T_0 = T
@@ -2177,14 +2179,18 @@ def _logm_triu(T: Array, key:ArrayLike) -> Array:
   U = lax.fori_loop(0, m, lambda i, U: U + solve_triangular(identity+R*nodes[i], R*weights[i]), U)
   U = U*jnp.exp2(s)
 
+  has_principal_branch = jnp.logical_or(diag.real > 0, diag.imag != 0).all()
   # replace diagonal
-  U = jnp.fill_diagonal(U, jnp.log(diag), inplace=False)
+
+  U2 = jnp.fill_diagonal(U, jnp.log(diag), inplace=False)
   # replace superdiagonal
   for i in range(T.shape[-1]-1):
     l1 = T_0[i, i]
     l2 = T_0[i+1, i+1]
     t12 = T_0[i, i+1]
-    U = U.at[i, i+1].set(_logm_superdiag_entry(l1, l2, t12))
+    U2 = U.at[i, i+1].set(_logm_superdiag_entry(l1, l2, t12))
+
+  U = lax.select(has_principal_branch, U2, U)
 
   return U
 
@@ -2225,7 +2231,13 @@ def logm(A: ArrayLike, key:ArrayLike) -> Array:
            SIAM Journal on Scientific Computing, 34 (4). C152-C169.
            ISSN 1095-7197
   """
-  T, Z = schur(A, output='complex')
+  if jnp.isrealobj(A):
+    T, Z = schur(A, output='real')
+    T = T.astype(complex)
+    Z = Z.astype(complex)
+    T, Z = lax.cond(~jnp.array_equal(T, jnp.triu(T)), rsf2csf, lambda T, Z: (T, Z), T, Z)
+  else:
+    T, Z = schur(A, output='complex')
 
   logm_T = _logm_triu(T, key=key)
   return jnp.matmul(jnp.matmul(Z, logm_T, precision=lax.Precision.HIGHEST),

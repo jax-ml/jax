@@ -2043,6 +2043,21 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     shape=[(4, 4), (15, 15), (50, 50), (100, 100)],
+    dtype=float_types + complex_types,
+  )
+  @jtu.run_on_devices("cpu")
+  def testLogmGenMatrix(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    arg = rng(shape, dtype)
+    if dtype == np.float32 or dtype == np.complex64:
+      tol = 2e-3
+    else:
+      tol = 1e-8
+    R = jsp.linalg.logm(arg, key=jax.random.key(0))
+    self.assertAllClose(jax.scipy.linalg.expm(R), arg, atol=tol, check_dtypes=False)
+
+  @jtu.sample_product(
+    shape=[(4, 4), (15, 15), (50, 50), (100, 100)],
     dtype=float_types+complex_types,
   )
   def testOneNormEstimator(self, shape, dtype):
@@ -2082,10 +2097,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
     arg = rng(shape, dtype)
     mat = arg @ arg.T
-
-    for i in range(1, mat.shape[0]):
-      for j in range(i):
-        mat[i,j] = 0.0
 
     args_maker = lambda: [mat, theta_m]
     if dtype == np.float32 or dtype == np.complex64:
