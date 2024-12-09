@@ -2156,8 +2156,18 @@ def _pjit_partial_eval(trace, *in_tracers,
 
   known_ins = tuple(pv.is_known() for pv in in_pvals)
   unknown_ins = tuple(not k for k in known_ins)
-  known_jaxpr, unknown_jaxpr, unknown_outs, res_avals = \
-      pe.partial_eval_jaxpr_nounits(jaxpr, unknown_ins, instantiate=False)
+  if any(isinstance(e, (RefEffect, core.InternalMutableArrayEffect))
+         for e in jaxpr.effects):
+    known_jaxpr_, unknown_jaxpr_, unknown_outs, _, num_res_val, num_res_ref = \
+        pe.partial_eval_jaxpr_stateful(jaxpr.jaxpr, unknown_ins, unknown_ins,
+                                       False, False, None)
+    if num_res_ref: raise NotImplementedError
+    known_jaxpr = pe.ClosedJaxpr(known_jaxpr_, jaxpr.consts)
+    unknown_jaxpr = pe.ClosedJaxpr(unknown_jaxpr_, jaxpr.consts)
+    res_avals = unknown_jaxpr.in_avals[:num_res_val]
+  else:
+    known_jaxpr, unknown_jaxpr, unknown_outs, res_avals = \
+        pe.partial_eval_jaxpr_nounits(jaxpr, unknown_ins, instantiate=False)
   unknown_outs = tuple(unknown_outs)
   known_outs = tuple(not uk for uk in unknown_outs)
   num_residuals = len(res_avals)

@@ -232,5 +232,18 @@ class MutableArrayTest(jtu.JaxTestCase):
     x = f()
     self.assertArraysEqual(x, jnp.zeros(8))
 
+  def test_grad_mutable_array(self):
+    @jax.jit
+    def f(x):
+      x_ = core.mutable_array(x)
+      x_[()] = x_[()] + x_[()]
+      y = core.freeze(x_)
+      return y
+
+    ans = jax.grad(f)(1.)
+    expected = 2.0
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

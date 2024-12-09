@@ -431,6 +431,8 @@ class Primitive:
   call_primitive: bool = False
   # set for map primitives processed in final style.
   map_primitive: bool = False
+  # set for ref primitives
+  ref_primitive: bool = False
 
   def __init__(self, name: str):
     self.name = name
@@ -1882,6 +1884,7 @@ pytype_aval_mappings[MutableArray] = lambda x: x._aval
 def mutable_array(init_val):
   return mutable_array_p.bind(init_val)
 mutable_array_p = Primitive('mutable_array')
+mutable_array_p.ref_primitive = True
 
 class InternalMutableArrayEffect(effects.Effect):
   pass
@@ -1899,6 +1902,18 @@ def _mutable_array_impl(init_val):
   aval = get_aval(init_val)
   return MutableArray(AbstractRef(aval), init_val)
 
+def freeze(ref):
+  return freeze_p.bind(ref)
+freeze_p = Primitive('freeze')
+freeze_p.ref_primitive = True
+
+@freeze_p.def_effectful_abstract_eval
+def freeze_abstract_eval(ref_aval):
+  return ref_aval.inner_aval, {internal_mutable_array_effect}
+
+@freeze_p.def_impl
+def _freeze_impl(ref):
+  return ref[()]
 
 class AbstractToken(AbstractValue):
   def str_short(self, short_dtypes=False): return 'Tok'
@@ -2516,10 +2531,11 @@ def _check_jaxpr(
 
       # Check the computed effect type matches the eqn's annotation, and is
       # included in the jaxpr's annotation.
-      if prim is mutable_array_p:
-        outvar, = eqn.outvars
-        in_idx[outvar] = None  # type: ignore
-        mut_arrays.add(outvar)
+      if prim.ref_primitive:
+        if prim is mutable_array_p:
+          outvar, = eqn.outvars
+          in_idx[outvar] = None  # type: ignore
+          mut_arrays.add(outvar)
       if eqn.effects != eqn_effects:
         raise JaxprTypeError("Inferred effects do not match equation effects. "
                              f"Equation effects: {eqn.effects}. "
