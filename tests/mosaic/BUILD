@@ -88,3 +88,17 @@ jax_multiplatform_test(
         "//jax/experimental/mosaic/gpu/examples:flash_attention",
     ] + py_deps("absl/testing"),
 )
+
+jax_multiplatform_test(
+    name = "profiler_cupti_test",
+    srcs = ["profiler_cupti_test.py"],
+    enable_backends = [],
+    enable_configs = ["gpu_h100"],
+    deps = [
+        "//jax:mosaic_gpu",
+    ] + py_deps("absl/testing"),
+    tags = [
+        "noasan",  # CUPTI leaks memory
+        "nomsan",
+    ],
+)
