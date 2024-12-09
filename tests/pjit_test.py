@@ -3411,6 +3411,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_device_put_grad(self):
     if jax.device_count() < 8:
       self.skipTest("Requires >=8 devices.")
+    if jtu.is_device_tpu(5, 'e'):
+      self.skipTest('TPU v5e does not support computations that run on a '
+                    'non-singleton subset of cores.')
 
     def _test(fun, inp, np_inp, in_s):
       out = fun(inp)
