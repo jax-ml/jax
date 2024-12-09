@@ -142,7 +142,8 @@ class VectorLayoutInferer {
       // TODO: b/342235360 - This check is temporary while we increase and test
       // support for offsets outside of the first tile. When support is more
       // broad, any op without support should check it within their own rule.
-      if (!isa<vector::BroadcastOp, vector::ExtractStridedSliceOp>(any_op)) {
+      if (!isa<arith::TruncIOp, arith::TruncFOp, vector::BroadcastOp,
+               vector::ExtractStridedSliceOp>(any_op)) {
         const SmallVector<Layout> layouts_in = getLayoutFromOperands(&any_op);
         for (const Layout &layout : layouts_in) {
           if (layout &&
@@ -1715,12 +1716,13 @@ class VectorLayoutInferer {
     }
     auto &layout = *some_layout;
     bool select_native = allUsersRequireNativeTiling(op->getResult(0));
-    auto src_layout = VectorLayout(32, layout.offsets(), default_tiling_,
-                                   layout.implicit_dim());
+    auto src_layout = VectorLayout(
+        32, layout.offsets(), select_native ? default_tiling_ : layout.tiling(),
+        layout.implicit_dim());
     auto dst_layout = VectorLayout(
         dst_ty.getElementTypeBitWidth(), layout.offsets(),
         select_native ? nativeTiling(dst_ty.getElementTypeBitWidth())
-                      : default_tiling_,
+                      : layout.tiling(),
         layout.implicit_dim());
     setLayout(op, src_layout, dst_layout);
     return success();
