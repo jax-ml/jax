@@ -780,7 +780,10 @@ def DebugAssertInsertionPass : Pass<"debug-assert-insertion", "::mlir::func::Fun
 }
 
 def MosaicSerdePass : Pass<"mosaic-serde", "::mlir::ModuleOp"> {
-  let options = [Option<"serialize", "serialize", "bool", "", "">];
+  let options = [
+    Option<"serialize", "serialize", "bool", "", "">,
+    Option<"target_version", "target-version", "int", "", "">  // Only used when serialize=true.
+  ];
 }
 
 def LogicalToPhysicalDeviceIdPass : Pass<"logical-to-physical-device-id", "::mlir::func::FuncOp"> {
