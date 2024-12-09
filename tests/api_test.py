@@ -10844,6 +10844,67 @@ class CustomVmapTest(jtu.JaxTestCase):
     ys = api.vmap(f)(x=xs)
     self.assertAllClose(ys, jnp.cos(xs))
 
+  def test_partial_eval_raises(self):
+    @jax.custom_batching.custom_vmap
+    def f(x):
+      return jnp.sin(x)
+
+    @f.def_vmap
+    def rule(axis_size, in_batched, xs):
+      del axis_size  # unused
+      return jnp.cos(xs), in_batched[0]
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Linearization failed to produce known values for all output primals",
+    ):
+      jax.grad(f)(0.5)
+
+  def test_compose_custom_vjp(self):
+    @jax.custom_vjp
+    @jax.custom_batching.custom_vmap
+    def f(x, y):
+      return jnp.sin(x) * y
+
+    @f.def_vmap
+    def f_vmap_rule(axis_size, in_batched, xs, ys):
+      return jnp.cos(xs) * ys, True
+
+    def f_fwd(x, y):
+      return f(x, y), (jnp.cos(x), jnp.sin(x), y)
+
+    def f_bwd(res, g):
+      cos_x, sin_x, y = res
+      return (cos_x * g * y, sin_x * g)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    xs = jnp.linspace(0, 1, 5)
+    ys = jnp.linspace(-0.1, 0.1, 5)
+    self.assertAllClose(jax.vmap(f)(xs, ys), jnp.cos(xs) * ys)
+    jax.grad(f)(xs[0], ys[0])  # Doesn't crash.
+
+  def test_compose_custom_vjp_bwd_rule(self):
+    # This tests the case where both the forward and backward rules are wrapped
+    # in custom_vmap.
+    @jax.custom_batching.sequential_vmap
+    def fun_fwd(x, y):
+      return jnp.sin(x) * y, (x, y)
+
+    @jax.custom_batching.sequential_vmap
+    def fun_bwd(res, ct):
+      x, y = res
+      return x * ct, y * ct
+
+    fun = jax.custom_vjp(lambda *args: fun_fwd(*args)[0])
+    fun.defvjp(fun_fwd, fun_bwd)
+
+    xs = jnp.linspace(0, 1, 5)
+    y = jnp.array(0.5, dtype=xs.dtype)
+    f = jax.vmap(jax.jit(fun), in_axes=(0, None))
+    out, f_vjp = jax.vjp(f, xs, y)
+    f_vjp(out)  # Doesn't crash.
+
 
 class CustomApiTest(jtu.JaxTestCase):
   """Test interactions among the custom_{vmap,jvp,vjp,transpose,*} APIs"""

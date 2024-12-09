@@ -175,7 +175,11 @@ def linearize(traceable, *primals, **kwargs):
   jvpfun_flat, out_tree = flatten_fun(jvpfun, in_tree)
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr_nounits(jvpfun_flat, in_pvals)
   out_primals_pvals, out_tangents_pvals = tree_unflatten(out_tree(), out_pvals)
-  assert all(out_primal_pval.is_known() for out_primal_pval in out_primals_pvals)
+  if any(not out_primal_pval.is_known() for out_primal_pval in out_primals_pvals):
+    raise ValueError(
+        "Linearization failed to produce known values for all output primals. "
+        "This is typically caused by attempting to differentiate a function "
+        "uses an operation that does not support reverse-mode autodiff.")
   out_primals_consts = [pval.get_known() for pval in out_primals_pvals]
   if not has_aux:
     return out_primals_consts, out_tangents_pvals, jaxpr, consts
