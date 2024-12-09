@@ -343,7 +343,9 @@ def _get_specialized_func(
           async_execution_func = _make_async_execution_fun(info, specialization)
           # Fall-through.
 
-      return async_execution_func(*args, **kwargs)
+    # Asynchronous execution runs outside of the mutex to allow concurrent
+    # execution for inline executors.
+    return async_execution_func(*args, **kwargs)
 
   return specialized_func
 
