@@ -1517,7 +1517,7 @@ def outer(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
 
 @export
-def matrix_norm(x: ArrayLike, /, *, keepdims: bool = False, ord: str = 'fro') -> Array:
+def matrix_norm(x: ArrayLike, /, *, keepdims: bool = False, ord: str | int = 'fro') -> Array:
   """Compute the norm of a matrix or stack of matrices.
 
   JAX implementation of :func:`numpy.linalg.matrix_norm`
