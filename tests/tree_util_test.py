@@ -25,7 +25,6 @@ import jax
 from jax import flatten_util
 from jax import tree_util
 from jax._src import test_util as jtu
-from jax._src.lib import xla_extension_version
 from jax._src.tree_util import flatten_one_level, prefix_errors
 import jax.numpy as jnp
 
@@ -800,8 +799,6 @@ class TreeTest(jtu.JaxTestCase):
     )
 
   def testFlattenWithPathDefaultDict(self):
-    if xla_extension_version < 299:
-      self.skipTest("Skipping for Python-based with path APIs.")
     d = collections.defaultdict(int, {"b": 2, "a": 1, "c": {"b": 2, "a": 1}})
     leaves, treedef = tree_util.tree_flatten_with_path(d)
     self.assertEqual(
@@ -819,8 +816,6 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(treedef, from_flatten)
 
   def testFlattenWithPathOrderedDict(self):
-    if xla_extension_version < 299:
-      self.skipTest("Skipping for Python-based with path APIs.")
     d = collections.OrderedDict({"b": 2, "a": 1, "c": {"b": 2, "a": 1}})
     leaves, treedef = tree_util.tree_flatten_with_path(d)
     self.assertEqual(
@@ -920,9 +915,6 @@ class TreeTest(jtu.JaxTestCase):
 class TreeKeyTest(absltest.TestCase):
 
   def testBasic(self):
-    if xla_extension_version < 299:
-      self.skipTest("Skipping for Python-based with path APIs.")
-
     def assert_equal_and_hash_equal(a, b):
       self.assertEqual(a, b)
       self.assertEqual(hash(a), hash(b))

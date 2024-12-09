@@ -60,7 +60,7 @@ from jax._src.ad_checkpoint import saved_residuals
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
-from jax._src.lib import xla_extension, xla_extension_version
+from jax._src.lib import xla_extension
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.custom_batching
@@ -1388,9 +1388,6 @@ class JitTest(jtu.BufferDonationTestCase):
         })(1.0)  # doesn't crash.
 
   def test_exec_time_optimization_effort_compiler_option(self):
-    if xla_extension_version < 294:
-      raise unittest.SkipTest("test requires newer xla extension version")
-
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
 
