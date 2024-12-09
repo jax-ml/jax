@@ -14,6 +14,8 @@ kernelspec:
 
 +++ {"id": "ZHuzXqQ-9JUQ"}
 
+(pallas_scalar_prefetch_guide)=
+
 # Scalar Prefetch and Block-Sparse Computation
 
 In this tutorial, we will cover the basics of block-sparse computing in Pallas. Sparse computation is a major reason to write custom Pallas kernels over simply using JAX/XLA, since it is generally difficult to express programs that perform a dynamic amount of computation in XLA due to static array shapes. In this tutorial we will learn how to use the scalar prefetch feature of Pallas in order to write block-sparse kernels that can dynamically skip over computation and blocks of memory.
