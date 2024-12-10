@@ -275,8 +275,8 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
           ct_out = core.freeze(ref)
           write_cotangent(eqn.primitive, val_var, ct_out)
         elif eqn.primitive is core.freeze_p:
-          val_var, = eqn.outvars
-          ref_var, = eqn.invars
+          val_var, = eqn.outvars  # type: ignore
+          ref_var, = eqn.invars   # type: ignore
           ct_in = instantiate_zeros(read_cotangent(val_var))
           write_primal(ref_var, core.mutable_array(ct_in))
         continue
