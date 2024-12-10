@@ -18,9 +18,9 @@ from __future__ import annotations
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import test_util as jtu
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask_info as mask_info_lib
-from jax._src import test_util as jtu
 import numpy as np
 
 jax.config.parse_flags_with_absl()
@@ -798,7 +798,7 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
         self._expected_causal_data_next[None],
         self._expected_causal_mask_next(0)[None] if not is_lazy_mask else None,
         self._expected_causal_block_mask[None],
-        np.expand_dims(np.tril(np.ones(block_shape, dtype=np.int32)), 0)
+        np.expand_dims(np.tril(np.ones(block_shape, dtype=np.bool_)), 0)
         if not is_lazy_mask
         else None,
         np.arange(sequence_lengths[0], dtype=np.int32)
@@ -813,7 +813,7 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
         else None,
         self._expected_causal_block_mask_dkv[None],
         np.expand_dims(
-            np.tril(np.ones(block_shape, dtype=np.int32)), 0
+            np.tril(np.ones(block_shape, dtype=np.bool_)), 0
         ).swapaxes(-1, -2)
         if not is_lazy_mask
         else None,
@@ -851,7 +851,7 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
         self._expected_causal_data_next[None],
         self._expected_causal_mask_next(0)[None] if not is_lazy_mask else None,
         self._expected_causal_block_mask[None],
-        np.expand_dims(np.tril(np.ones(block_shape, dtype=np.int32)), 0)
+        np.expand_dims(np.tril(np.ones(block_shape, dtype=np.bool_)), 0)
         if not is_lazy_mask
         else None,
         np.arange(sequence_lengths[0], dtype=np.int32)
@@ -894,7 +894,7 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
         expected_causal_mask_next_dkv if not is_lazy_mask else None,
         expected_causal_block_mask_dkv,
         np.expand_dims(
-            np.tril(np.ones(block_shape, dtype=np.int32)), 0
+            np.tril(np.ones(block_shape, dtype=np.bool_)), 0
         ).swapaxes(-1, -2)
         if not is_lazy_mask
         else None,
@@ -974,7 +974,7 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
         expected_causal_data_next,
         expected_causal_mask_next if not is_lazy_mask else None,
         expected_causal_block_mask,
-        np.expand_dims(np.tril(np.ones(block_shape, dtype=np.int32)), 0)
+        np.expand_dims(np.tril(np.ones(block_shape, dtype=np.bool_)), 0)
         if not is_lazy_mask
         else None,
         np.arange(sequence_lengths[0], dtype=np.int32)
@@ -1029,7 +1029,7 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
         expected_causal_mask_next_dkv if not is_lazy_mask else None,
         expected_causal_block_mask_dkv,
         np.expand_dims(
-            np.tril(np.ones(block_shape, dtype=np.int32)), 0
+            np.tril(np.ones(block_shape, dtype=np.bool_)), 0
         ).swapaxes(-1, -2)
         if not is_lazy_mask
         else None,
@@ -1069,10 +1069,10 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
     expected_partial_mask_blocks = self._stack(
         [
             np.triu(
-                np.tri(*block_shape, window_size, dtype=np.int32), -window_size
+                np.tri(*block_shape, window_size, dtype=np.bool_), -window_size
             ),
-            np.tri(*block_shape, -window_size, dtype=np.int32),
-            np.triu(np.ones(block_shape, dtype=np.int32), window_size),
+            np.tri(*block_shape, -window_size, dtype=np.bool_),
+            np.triu(np.ones(block_shape, dtype=np.bool_), window_size),
         ],
     )
 
@@ -1179,8 +1179,8 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
 
     expected_partial_mask_blocks = self._stack(
         [
-            np.triu(np.tri(*block_shape, 0, dtype=np.int32), -window_size),
-            np.triu(np.ones(block_shape, dtype=np.int32), window_size),
+            np.triu(np.tri(*block_shape, 0, dtype=np.bool_), -window_size),
+            np.triu(np.ones(block_shape, dtype=np.bool_), window_size),
         ],
     )
 
@@ -1298,13 +1298,13 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
     )
 
     expected_partial_mask_blocks = self._stack([
-        np.tril(np.ones(block_shape, dtype=np.int32)),
+        np.tril(np.ones(block_shape, dtype=np.bool_)),
         np.triu(
-            np.tri(*block_shape, window_size, dtype=np.int32),
+            np.tri(*block_shape, window_size, dtype=np.bool_),
             -window_size,
         ),
-        np.tri(*block_shape, -window_size, dtype=np.int32),
-        np.triu(np.ones(block_shape, dtype=np.int32), window_size),
+        np.tri(*block_shape, -window_size, dtype=np.bool_),
+        np.triu(np.ones(block_shape, dtype=np.bool_), window_size),
     ])
 
     expected_block_mask_dkv = self._stack(
@@ -1384,7 +1384,7 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
     ])
 
     expected_partial_mask_blocks = np.expand_dims(
-        np.tril(np.ones(block_shape, dtype=np.int32)), 0
+        np.tril(np.ones(block_shape, dtype=np.bool_)), 0
     )
 
     expected_mask_info = mask_info_lib.MaskInfo(
@@ -1460,13 +1460,13 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
     )
 
     expected_partial_mask_blocks = self._stack([
-        np.tril(np.ones(block_shape, dtype=np.int32)),
+        np.tril(np.ones(block_shape, dtype=np.bool_)),
         np.triu(
-            np.tri(*block_shape, window_size, dtype=np.int32),
+            np.tri(*block_shape, window_size, dtype=np.bool_),
             -window_size,
         ),
-        np.tri(*block_shape, -window_size, dtype=np.int32),
-        np.triu(np.ones(block_shape, dtype=np.int32), window_size),
+        np.tri(*block_shape, -window_size, dtype=np.bool_),
+        np.triu(np.ones(block_shape, dtype=np.bool_), window_size),
     ])
 
     expected_mask_info = mask_info_lib.MaskInfo(
@@ -1577,13 +1577,13 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
     )
 
     expected_partial_mask_blocks = self._stack([
-        np.tril(np.ones(block_shape, dtype=np.int32)),
+        np.tril(np.ones(block_shape, dtype=np.bool_)),
         np.triu(
-            np.tri(*block_shape, window_size, dtype=np.int32),
+            np.tri(*block_shape, window_size, dtype=np.bool_),
             -window_size,
         ),
-        np.tri(*block_shape, -window_size, dtype=np.int32),
-        np.triu(np.ones(block_shape, dtype=np.int32), window_size),
+        np.tri(*block_shape, -window_size, dtype=np.bool_),
+        np.triu(np.ones(block_shape, dtype=np.bool_), window_size),
     ])
 
     expected_mask_info = mask_info_lib.MaskInfo(
@@ -1749,13 +1749,13 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
     expected_partial_mask_blocks = self._stack([
         # Wide
         np.triu(
-            np.tri(*block_shape, window_size, dtype=np.int32),
+            np.tri(*block_shape, window_size, dtype=np.bool_),
             -window_size,
         ),
-        np.tri(*block_shape, -window_size, dtype=np.int32),
-        np.triu(np.ones(block_shape, dtype=np.int32), window_size),
+        np.tri(*block_shape, -window_size, dtype=np.bool_),
+        np.triu(np.ones(block_shape, dtype=np.bool_), window_size),
         # Narrow
-        np.triu(np.tri(*block_shape, 0, dtype=np.int32), -window_size),
+        np.triu(np.tri(*block_shape, 0, dtype=np.bool_), -window_size),
     ])
 
     expected_mask_info = mask_info_lib.MaskInfo(
@@ -1890,7 +1890,7 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
     )
 
     expected_partial_mask_blocks = np.expand_dims(
-        np.tril(np.ones(block_shape, dtype=np.int32)), 0
+        np.tril(np.ones(block_shape, dtype=np.bool_)), 0
     )
 
     expected_mask_info = mask_info_lib.MaskInfo(
@@ -1979,13 +1979,13 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
 
     expected_partial_mask_blocks = self._stack(
         [
-            np.tril(np.ones(block_shape, dtype=np.int32)),
+            np.tril(np.ones(block_shape, dtype=np.bool_)),
             np.triu(
-                np.tri(*block_shape, window_size, dtype=np.int32),
+                np.tri(*block_shape, window_size, dtype=np.bool_),
                 -window_size,
             ),
-            np.tri(*block_shape, -window_size, dtype=np.int32),
-            np.triu(np.ones(block_shape, dtype=np.int32), window_size),
+            np.tri(*block_shape, -window_size, dtype=np.bool_),
+            np.triu(np.ones(block_shape, dtype=np.bool_), window_size),
         ],
     )
 
