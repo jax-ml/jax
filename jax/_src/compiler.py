@@ -348,7 +348,33 @@ def compile_or_get_cached(
 
   use_compilation_cache = compilation_cache.is_cache_used(backend)
 
+  is_multi_process = (
+      len({device.process_index for device in devices.flatten()}) > 1
+  )
+  min_device_process_id = min(
+      devices.flatten(), key=lambda device: device.id
+  ).process_index
+  is_auto_pgle_used = (
+      config.enable_pgle.value and config.pgle_profiling_runs.value > 0
+  )
+
   if not use_compilation_cache:
+    if (
+        is_multi_process
+        and is_auto_pgle_used
+        and distributed.global_state.client is not None
+    ):
+      compile_options.executable_build_options.fdo_profile = (
+          _share_fdo_profiles(
+              computation,
+              devices,
+              compile_options,
+              backend,
+              distributed.global_state.client,
+              min_device_process_id,
+          )
+      )
+
     return backend_compile(backend, computation, compile_options,
                            host_callbacks)
 
@@ -373,14 +399,7 @@ def compile_or_get_cached(
     return backend_compile(backend, computation, compile_options,
                            host_callbacks)
 
-  is_multi_process = (
-      len({device.process_index for device in devices.flatten()}) > 1
-  )
-  min_device_process_id = min(
-      devices.flatten(), key=lambda device: device.id
-  ).process_index
-
-  if config.enable_pgle.value and config.pgle_profiling_runs.value > 0:
+  if is_auto_pgle_used:
     cache_key = _resolve_pgle_module_cache_key(
         computation,
         devices,
