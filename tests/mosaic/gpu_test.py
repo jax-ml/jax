@@ -1476,7 +1476,7 @@ class FragmentedArrayTest(TestCase):
       m=[128],
       n=[32, 64],
   )
-  def test_reduce_sum(self, dtype, m, n):
+  def test_strided_reduce_sum(self, dtype, m, n):
     def kernel(ctx, src, dst, scratch):
       src = mgpu.FragmentedArray.load_strided(
           src, is_signed=utils.is_signed(dtype)
@@ -1496,6 +1496,31 @@ class FragmentedArrayTest(TestCase):
     )
     x = np.arange(m * n, dtype=dtype).reshape(m, n)
     np.testing.assert_array_equal(kernel_fn(x), jnp.full((m,), x.sum()))
+
+  @parameterized.product(
+      dtype=[jnp.float32, jnp.int32],
+      m=[128],
+      n=[32, 64],
+  )
+  def test_splat_reduce_sum(self, dtype, m, n):
+    def kernel(ctx, dst, _):
+      src = mgpu.FragmentedArray.splat(
+          utils.c(1, utils.dtype_to_ir_type(dtype)),
+          (m, n),
+          is_signed=utils.is_signed(dtype),
+      )
+      acc = src.reduce_sum().broadcast((m,))
+      acc.store_untiled(dst)
+
+    kernel_fn = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        in_shape=(),
+        out_shape=jax.ShapeDtypeStruct((m,), dtype),
+        smem_scratch_shape=(),
+    )
+    np.testing.assert_array_equal(kernel_fn(), jnp.full((m,), m * n * 1.0))
 
   @parameterized.product(
       op=(arith.addf, arith.maximumf),
@@ -1548,7 +1573,6 @@ class FragmentedArrayTest(TestCase):
     )()
     np.testing.assert_array_equal(result, np.full((128, 32), 3.14, np.float32))
 
-
   def test_splat_binary_ops(self):
     def kernel(ctx, src, dst, _):
       f32 = ir.F32Type.get()
@@ -1569,7 +1593,6 @@ class FragmentedArrayTest(TestCase):
         kernel, (1, 1, 1), (128, 1, 1), inp, out_shape, ()
     )(inp)
     np.testing.assert_allclose(result, np.full((128, 32), 3.14, np.float32))
-
 
   @parameterized.product(in_shape=((128, 128), (128, 64), (64, 128)))
   def test_strided_load_store(self, in_shape):

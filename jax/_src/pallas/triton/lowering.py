@@ -2452,6 +2452,7 @@ def _while_lowering_rule(
   args = map(_ensure_ir_value, args, ctx.avals_in)
 
   # First, try to pattern match to fori_loop and lower to scf.for if possible
+  # TODO(slebedev): Use `pallas_utils.pattern_match_while_to_fori_loop`.
   result = _maybe_pattern_match_fori_loop(ctx, *args, cond_nconsts=cond_nconsts,
                                           body_nconsts=body_nconsts, cond_jaxpr=cond_jaxpr,
                                           body_jaxpr=body_jaxpr)
