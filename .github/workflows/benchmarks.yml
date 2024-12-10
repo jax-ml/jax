@@ -19,9 +19,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -U jax
-          pip install -U "jax[cuda12]"
       - name: Run Multiprocess GPU Test
         run: |
           export CUDA_VISIBLE_DEVICES="0-$((${matrix.gpu-count} - 1))"
           python -m pytest -n ${matrix.gpu-count} tests/multiprocess_gpu_test.py 
+        shell: bash
