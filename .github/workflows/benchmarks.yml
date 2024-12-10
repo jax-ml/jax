@@ -22,6 +22,7 @@ jobs:
           pip install -U jax
           pip install -U "jax[cuda12]"
           pip install pytest
+          pip install absl-py
       - name: Run Multiprocess GPU Test
         run: |
           python -m pytest tests/multiprocess_gpu_test.py
