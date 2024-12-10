@@ -47,6 +47,13 @@ def dist_wheels(
     # create manylinux image with requested ROCm installed
     image = "jax-manylinux_2_28_x86_64_rocm%s" % rocm_version.replace(".", "")
 
+    # Try removing the Docker image.
+    try:
+        subprocess.run(["docker", "rmi", image], check=True)
+        print(f"Image {image} removed successfully.")
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to remove Docker image {image}: {e}")
+
     cmd = [
         "docker",
         "build",
