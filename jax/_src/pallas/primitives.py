@@ -26,6 +26,7 @@ from jax import lax
 from jax import tree_util
 from jax._src import ad_util
 from jax._src import api_util
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
@@ -39,8 +40,8 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
-from jax._src.state import types as state_types
 from jax._src.state import primitives as sp
+from jax._src.state import types as state_types
 from jax.interpreters import mlir
 import jax.numpy as jnp
 
@@ -50,6 +51,16 @@ NDIndexer = indexing.NDIndexer
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
+
+
+def _enable_x64(f):
+  @functools.wraps(f)
+  def wrapper(*args, **kwargs):
+    with config.enable_x64():
+      return f(*args, **kwargs)
+
+  return wrapper
+
 
 program_id_p = jax_core.Primitive("program_id")
 batching.ragged_prop_rules[program_id_p] = batching.ragged_mask_no_op_rule
@@ -182,6 +193,7 @@ def _atomic_abstract_eval(*avals_flat, args_tree, atomic_type: AtomicOpType):
   return _swap_abstract_eval(*avals_flat, args_tree=args_tree)
 
 
+@_enable_x64
 def _atomic_rmw(x_ref_or_view, idx, val, *, mask: Any | None = None,
                 atomic_type: AtomicOpType):
   x_ref, transforms = sp.get_ref_and_transforms(
@@ -629,6 +641,7 @@ def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
   return (x_new,) + (None,) * (len(in_avals) - 1), out
 
 
+@_enable_x64
 def load(x_ref_or_view, idx, *, mask=None, other=None, cache_modifier=None,
          eviction_policy=None, volatile=False) -> jax.Array:
   """Returns an array loaded from the given index.
@@ -659,6 +672,8 @@ def load(x_ref_or_view, idx, *, mask=None, other=None, cache_modifier=None,
       is_volatile=volatile,
   )
 
+
+@_enable_x64
 def swap(x_ref_or_view, idx, val, *, mask=None, eviction_policy=None,
          _function_name="swap") -> jax.Array:
   """Swaps the value at the given index and returns the old value.
