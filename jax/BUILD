@@ -307,6 +307,7 @@ py_library_providing_imports_info(
         ":xla_bridge",
         ":xla_metadata",
         "//jax/_src/lib",
+        "//third_party/py/absl/logging",
     ] + py_deps("numpy") + py_deps("scipy") + py_deps("opt_einsum") + py_deps("flatbuffers") + jax_extra_deps,
 )
 

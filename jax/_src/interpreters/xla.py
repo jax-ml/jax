@@ -20,17 +20,15 @@ from collections.abc import Callable, Sequence
 from functools import partial
 from typing import Any, Union
 
-import numpy as np
-
 from jax._src import core
 from jax._src import dtypes
 from jax._src.abstract_arrays import numpy_scalar_types
 from jax._src.core import ShapedArray
-from jax._src.util import safe_zip, safe_map
-
-from jax._src.typing import Shape
-
 from jax._src.lib import xla_client as xc
+from jax._src.typing import Shape
+from jax._src.util import safe_map, safe_zip
+import numpy as np
+import numpy.dtypes as np_dtypes
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -170,7 +168,8 @@ def _make_shaped_array_for_numpy_scalar(x: np.generic) -> ShapedArray:
 
 def _make_shaped_array_for_numpy_array(x: np.ndarray) -> ShapedArray:
   dtype = x.dtype
-  dtypes.check_valid_dtype(dtype)
+  if dtype != np_dtypes.StringDType():
+    dtypes.check_valid_dtype(dtype)
   return ShapedArray(x.shape, dtypes.canonicalize_dtype(dtype))
 
 
