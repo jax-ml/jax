@@ -22,7 +22,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
-#include "third_party/gpus/cuda/include/cuda.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
