@@ -153,6 +153,10 @@ def _eval_jaxpr_discharge_state(
       [invar], [outvar] = eqn.invars, eqn.outvars
       ans = env.read(invar)
       refs_to_discharge.add(id(outvar.aval))
+    elif eqn.primitive is core.freeze_p:
+      [invar], [outvar] = eqn.invars, eqn.outvars
+      ans = env.read(invar)
+      refs_to_discharge.remove(id(invar.aval))
     elif (any(should_discharge)
           or core.internal_mutable_array_effect in eqn.effects
       ):

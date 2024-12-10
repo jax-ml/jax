@@ -654,3 +654,8 @@ def _broadcast_to_abstract_eval(aval, *, shape):
 mlir.register_lowering(
     broadcast_to_p, mlir.lower_fun(_broadcast_to_impl, False)
 )
+
+# === AD rules for mutable arrays ===
+
+ad.defjvp(core.mutable_array_p, lambda g, _: core.mutable_array(g))
+ad.defjvp(core.freeze_p, lambda g, _: core.freeze(g))

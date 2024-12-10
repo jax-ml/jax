@@ -267,6 +267,20 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
   with ctx:
     map(partial(write_cotangent, 'outvars'), jaxpr.outvars, cotangents_in)
     for eqn in jaxpr.eqns[::-1]:
+      if eqn.primitive.ref_primitive:
+        if eqn.primitive is core.mutable_array_p:
+          val_var, = eqn.invars
+          ref_var, = eqn.outvars
+          ref = read_primal(ref_var)
+          ct_out = core.freeze(ref)
+          write_cotangent(eqn.primitive, val_var, ct_out)
+        elif eqn.primitive is core.freeze_p:
+          val_var, = eqn.outvars
+          ref_var, = eqn.invars
+          ct_in = instantiate_zeros(read_cotangent(val_var))
+          write_primal(ref_var, core.mutable_array(ct_in))
+        continue
+
       invals = map(read_primal, eqn.invars)
       if eqn.primitive.multiple_results:
         cts_in = map(read_cotangent, eqn.outvars)
