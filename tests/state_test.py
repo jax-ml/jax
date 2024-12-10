@@ -776,6 +776,29 @@ class StateDischargeTest(jtu.JaxTestCase):
     self.assertEqual(prim_count(swap_p, jaxpr) // 2, prim_count(swap_p, discharged_jaxpr))
     self.assertEqual(prim_count(get_p, jaxpr) // 2, prim_count(get_p, discharged_jaxpr))
 
+  def test_partial_fori_discharge(self):
+    def f(a_ref, b_ref):
+      def body(i, st):
+        a_ref[...] += 2 * i
+        b_ref[...] += i
+        return ()
+      lax.fori_loop(0, 5, body, init_val=())
+      return a_ref[...], b_ref[...]
+
+    ref = lambda x: AbstractRef(core.raise_to_shaped(core.get_aval(x)))
+    f_jaxpr = jax.make_jaxpr(f)(ref(1.), ref(2.))
+    jaxpr, _ = discharge_state(f_jaxpr.jaxpr, (), should_discharge=[False, True])
+    # Effects on y_ref were discharged away but not the effects on x_ref
+    self.assertEqual(f_jaxpr.effects, {ReadEffect(0), WriteEffect(0), ReadEffect(1), WriteEffect(1)})
+    self.assertEqual(jaxpr.effects, {ReadEffect(0), WriteEffect(0)})
+    # x_ref arg is still a reference but y_ref is discharged
+    self.assertNotIsInstance(jaxpr.invars[1].aval, AbstractRef)
+    self.assertIsInstance(jaxpr.invars[0].aval, AbstractRef)
+    # x_ref value is returned as part of the discharged refs set.
+    self.assertLen(f_jaxpr.out_avals, 2)
+    self.assertLen(jaxpr.outvars, 3)
+
+
 if CAN_USE_HYPOTHESIS:
 
   def index_arrays(size, idx_shape):
