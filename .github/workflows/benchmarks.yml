@@ -23,4 +23,4 @@ jobs:
       - name: Run Multiprocess GPU Test
         run: |
           python -m pytest tests/multiprocess_gpu_test.py
-          python -m pytests benchmarks/*.py
+          python -m pytest benchmarks/*.py
