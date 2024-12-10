@@ -1087,6 +1087,34 @@ LogicalResult LogOp::verify() {
                       stringifyCoreType(logging_core_type_maybe->value())));
 }
 
+LogicalResult WeirdOp::verify() {
+  const auto inputTy = getInput().getType();
+  const auto outputTy = getResult().getType();
+  const auto vecTy = dyn_cast<VectorType>(inputTy);
+
+  if (vecTy) {  // Vector case.
+    if (!vecTy.getElementType().isF32()) {
+      return emitOpError("Input type must be F32");
+    }
+    const auto outputTyVec = dyn_cast<VectorType>(outputTy);
+    if (!outputTyVec) {
+      return emitOpError("Output type must be a vector when input is a vector");
+    }
+    if (!outputTyVec.getElementType().isInteger(1)) {
+      return emitOpError("Output type must be I1");
+    }
+  } else {  // Scalar case.
+    if (!inputTy.isF32()) {
+      return emitOpError("Input type must be F32");
+    }
+    if (!outputTy.isInteger(1)) {
+      return emitOpError("Output type must be I1 scalar");
+    }
+  }
+
+  return success();
+}
+
 }  // namespace tpu
 }  // namespace mlir
 

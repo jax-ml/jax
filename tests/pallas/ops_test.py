@@ -752,6 +752,49 @@ class OpsTest(PallasBaseTest):
     expected = lax.erf_inv(x)
     np.testing.assert_array_equal(out, expected)
 
+  IS_FINITE_TEST_VALUES = [
+      -0.2, jnp.inf, -jnp.inf, jnp.nan, 0.0, 1.0, -1.0, 0.5,
+  ]
+
+  def test_is_finite(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("Not supported on GPU")
+
+    size = len(self.IS_FINITE_TEST_VALUES)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((size,), jnp.bool_),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = lax.is_finite(x_ref[...])
+
+    x = jnp.array(self.IS_FINITE_TEST_VALUES, dtype=jnp.float32)
+    out = kernel(x)
+    expected = lax.is_finite(x)
+    self.assertArraysEqual(out, expected)
+
+  def test_is_finite_scalar(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("Not supported on GPU")
+
+    size = len(self.IS_FINITE_TEST_VALUES)
+
+    @functools.partial(
+        self.pallas_call,
+        in_specs=(pl.BlockSpec(memory_space=smem_on_tpu()),),
+        out_specs=pl.BlockSpec(memory_space=smem_on_tpu()),
+        out_shape=jax.ShapeDtypeStruct((size,), jnp.bool_),
+    )
+    def kernel(x_ref, o_ref):
+      for i in range(8):
+        o_ref[i] = jnp.isfinite(x_ref[i])
+
+    x = jnp.array(self.IS_FINITE_TEST_VALUES, dtype=jnp.float32)
+    out = kernel(x)
+    expected = lax.is_finite(x)
+    self.assertArraysEqual(out, expected)
+
   ELEMENTWISE_OPS = [
       (
           [jnp.abs, jnp.negative],
