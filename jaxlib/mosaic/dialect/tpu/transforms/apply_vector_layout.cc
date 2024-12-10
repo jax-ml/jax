@@ -6159,45 +6159,68 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
                             ctx.target_shape[0] * (ctx.target_shape[0] + 1);
   const auto &target_shape = ctx.target_shape;
   const std::array<int64_t, 2> src_tiling = src.tiling();
+  const LayoutOffsets src_offsets =
+      src.getCanonicalOffsets(vty.getShape(), ctx.target_shape);
   if (src_tiling == dst_tiling) {
     return std::pair(src, std::move(vregs));
   }
   const int packing = src.packing();
   const int8_t bitwidth = src.bitwidth();
-  // Handle retiling from (1, 128) to (8, 128) for 32-bit data with replicating
-  // sublanes.
-  if (try_replicate_rows && packing == 1 &&
-      *(vregs.dimensions().end() - 2) == 1 &&
-      src.tiling() == std::array<int64_t, 2>{1, ctx.target_shape[1]} &&
-      dst_tiling == ctx.target_shape) {
-    DCHECK_EQ(src.offsets()[0].value_or(0), 0);
-    const LayoutOffset dst_minor_offset =
-        src.offsets()[1] ? LayoutOffset(*src.offsets()[1] % target_shape[1])
-                         : std::nullopt;
+  const std::array<int64_t, 2> dst_vreg_slice =
+      VectorLayout::vregSlice(ctx.target_shape, bitwidth, dst_tiling);
+
+  // Fully replicated offsets are handled efficiently elsewhere (in relayout)
+  CHECK(src.offsets()[0].has_value() || src.offsets()[1].has_value());
+
+  // Handle small-to-large retiling with replicated 2nd minor.
+  // This retiling is one-to-many vregs.
+  // TODO(tlongeri): Large-to-small retiling with replicated minor is analogous
+  // to this.
+  if (src_tiling[1] == ctx.target_shape[1] &&
+      dst_tiling[1] == ctx.target_shape[1] &&
+      dst_tiling[0] % src_tiling[0] == 0 && !src_offsets[0].has_value() &&
+      // For (packing, 128) tiling, prefer scratch retiling for older
+      // generations, where gather/broadcast is more expensive:
+      (try_replicate_rows || src_tiling[0] > packing ||
+       ctx.hardware_generation >= 5)) {
+    DCHECK(src_offsets[1].has_value());  // Otherwise handled elsewhere
+    const int64_t dst_minor_offset = *src.offsets()[1] % dst_vreg_slice[1];
     const VectorLayout dst(bitwidth, {std::nullopt, dst_minor_offset},
                            dst_tiling, src.implicit_dim());
-    xla::Array<Value> retiled(
-        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
-    retiled.Each([&](absl::Span<const int64_t> idx, Value *tile) {
-      SmallVector<int64_t> src_idx(idx.begin(), idx.end());
-      *(src_idx.end() - 2) *= target_shape[0];
-      if (!src.offsets()[1].has_value()) {
-        // With (1, 128) tiling each vreg holds values from a single row. This
-        // means that if the columns are replicated, then the whole vreg is
-        // already replicated.
-        *(src_idx.end() - 1) = 0;
-        *tile = vregs(src_idx);
-      } else {
-        // The column (in units of sublanes) of the sublane we want:
-        const int64_t sublane_column =
-            *(src_idx.end() - 1) + *src.offsets()[1] / target_shape[1];
-        *(src_idx.end() - 1) = sublane_column / target_shape[0];
-        const int64_t src_sl_idx = sublane_column % target_shape[0];
-        *tile =
-            broadcastSublane(builder, vregs(src_idx), src_sl_idx, target_shape);
+    const SmallVector<int64_t> dst_vreg_array_shape =
+        dst.tileArrayImplicitShape(vty.getShape(), target_shape);
+    const int64_t dst_tiles_per_vreg = dst.tilesPerVreg(ctx.target_shape);
+    const int64_t src_sublanes_per_tile = src.sublanesPerTile(ctx.target_shape);
+    const int64_t dst_sublanes_per_tile = dst.sublanesPerTile(ctx.target_shape);
+    const int64_t tiling_ratio = dst_tiling[0] / src_tiling[0];
+    xla::Array<Value> retiled(dst_vreg_array_shape);
+    SmallVector<int64_t> idxs;
+    retiled.Each([&](absl::Span<const int64_t> dst_idx, Value *vreg) {
+      const int64_t dst_col_idx = *(dst_idx.end() - 1);
+      const int64_t dst_col_idx_with_offsets =
+          dst_col_idx + *src.offsets()[1] / dst_vreg_slice[1];
+      const int64_t src_col_idx = dst_col_idx_with_offsets / tiling_ratio;
+      const int64_t src_part_idx = dst_col_idx_with_offsets % tiling_ratio;
+      SmallVector<int32_t, 8> gather_pattern;
+      // Iterate over the sublanes in the dst vreg:
+      for (int32_t sublane = 0; sublane < ctx.target_shape[0]; ++sublane) {
+        const int64_t src_tile_idx =
+            sublane / dst_sublanes_per_tile + src_part_idx * dst_tiles_per_vreg;
+        // Although replication may give us several sublanes to choose from,
+        // we always gather from the first sublane in the source tile. This
+        // degenerates to a broadcast when dst_tiling is native, which can
+        // be cheaper than an arbitrary gather (for some hardware gens).
+        const int64_t src_sublane = src_tile_idx * src_sublanes_per_tile;
+        gather_pattern.push_back(src_sublane);
       }
+      idxs.assign(dst_idx.begin(), dst_idx.end());
+      *(idxs.end() - 2) = 0;
+      *(idxs.end() - 1) = src_col_idx;
+      Value src_vreg = vregs(idxs);
+      *vreg = builder.create<tpu::GatherOp>(loc, src_vreg.getType(), src_vreg,
+                                            gather_pattern,
+                                            /*dimension=*/0);
     });
-    // We have successfully replicated sublanes
     return std::pair(dst, std::move(retiled));
   }
   VectorLayout dst(src.bitwidth(), src.offsets(), dst_tiling,
@@ -6212,7 +6235,8 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
       dst_tiling == std::array<int64_t, 2>{ctx.target_shape[0] * dst.packing(),
                                            ctx.target_shape[1]}) {
     // Note: for int4, retiling with scratch is always faster.
-    if (bitwidth != 4 || !has_enough_scratch) {
+    if (bitwidth > 4 || !has_enough_scratch) {
+      DCHECK(src_offsets[0].has_value());  // Otherwise handled above
       xla::Array<Value> retiled(dst_tiles_shape);
       int vty_packing = dst.packing();
       VectorType vreg_x32 =
@@ -6574,8 +6598,11 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
     return assemble_with_mask_check(src_tiles,
                                     /*use_implicit_shape=*/true);
   }
-  if (src.layout_rank() >= dst.layout_rank() && !src.offsets()[0].has_value() &&
-      !src.offsets()[1].has_value()) {
+
+  if (const LayoutOffsets src_offsets =
+          src.getCanonicalOffsets(vty.getShape(), ctx.target_shape);
+      src.layout_rank() >= dst.layout_rank() && !src_offsets[0].has_value() &&
+      !src_offsets[1].has_value()) {
     // A fully replicated value is always easy to relayout
     xla::Array<Value> dst_tiles(
         dst.tileArrayImplicitShape(vty.getShape(), target_shape));
