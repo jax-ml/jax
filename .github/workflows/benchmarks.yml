@@ -19,6 +19,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          pip install -U jax
+          pip install -U "jax[cuda12]"
+          pip install pytest
       - name: Run Multiprocess GPU Test
         run: |
           python -m pytest tests/multiprocess_gpu_test.py
