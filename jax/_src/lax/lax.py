@@ -6496,3 +6496,7 @@ optimization_barrier_p.def_impl(
 optimization_barrier_p.def_abstract_eval(_optimization_barrier_abstract_eval)
 mlir.register_lowering(optimization_barrier_p,
                        _optimization_barrier_lowering_rule)
+
+def _optimization_barrier_batcher(batched_args, batch_dims, **params):
+  return optimization_barrier_p.bind(*batched_args, **params), batch_dims
+batching.primitive_batchers[optimization_barrier_p] = _optimization_barrier_batcher
