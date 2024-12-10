@@ -56,6 +56,7 @@ from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
@@ -650,6 +651,20 @@ def skip_on_flag(flag_name, skip_value):
         test_name = getattr(test_method, '__name__', '[unknown test]')
         raise unittest.SkipTest(
           f"{test_name} not supported when FLAGS.{flag_name} is {flag_value}")
+      return test_method(self, *args, **kwargs)
+    return test_method_wrapper
+  return skip
+
+
+def skip_on_xla_extension_version_lower_than(minimum_version : int):
+  """A decorator for test methods to skip the test when the XLA extension version is lower than the given minimum."""
+  def skip(test_method):        # pylint: disable=missing-docstring
+    @functools.wraps(test_method)
+    def test_method_wrapper(self, *args, **kwargs):
+      if xla_extension_version < minimum_version:
+        test_name = getattr(test_method, '__name__', '[unknown test]')
+        raise unittest.SkipTest(
+          f"{test_name} not supported when the XLA extension version {xla_extension_version} is smaller than the minimum required version {minimum_version}.")
       return test_method(self, *args, **kwargs)
     return test_method_wrapper
   return skip
