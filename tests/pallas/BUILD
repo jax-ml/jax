@@ -257,7 +257,7 @@ jax_multiplatform_test(
     srcs = [
         "tpu_all_gather_test.py",
     ],
-    enable_backends = ["tpu"],
+    enable_backends = [],
     enable_configs = [
         "tpu_v5e_4x2",
     ],
