@@ -1,0 +1,74 @@
+name: CI - Build JAX Artifacts
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: choice
+        required: true
+        default: 'no'
+        options:
+        - 'yes'
+        - 'no'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-artifacts:
+    if: github.event.repository.fork == false
+
+    defaults:
+      run:
+        # Explicitly set the shell to bash to override the default Windows environment, i.e, cmd.
+        shell: bash
+
+    strategy:
+      fail-fast: false # don't cancel all jobs on failure
+      matrix:
+        # Use the small runner on Linux 86 and Windows as we can use RBE on these platforms.
+        runner: ["windows-x86-n2-16", "linux-x86-n2-16", "linux-arm64-t2a-48"]
+        artifact: ["jaxlib", "jax-cuda-pjrt", "jax-cuda-plugin"]
+        python: ["3.10", "3.11", "3.12", "3.13"]
+        exclude:
+          # Windows doesn't support CUDA artifacts
+          - runner: "windows-x86-n2-16"
+            artifact: "jax-cuda-pjrt"
+          - runner: "windows-x86-n2-16"
+            artifact: "jax-cuda-plugin"
+          # cuda-pjrt is a pure Python package, so it doesn't need to be built for all Python versions.
+          - artifact: "jax-cuda-pjrt"
+            python: 3.10
+          - artifact: "jax-cuda-pjrt"
+            python: 3.11
+          - artifact: "jax-cuda-pjrt"
+            python: 3.12
+
+    runs-on: ${{ matrix.runner }}
+
+    container: ${{ (contains(matrix.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest') ||
+                   (contains(matrix.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') ||
+                   (contains(matrix.runner, 'windows-x86') && null) }}
+
+    env:
+      JAXCI_HERMETIC_PYTHON_VERSION: "${{ matrix.python }}"
+
+    name: Build ${{ matrix.artifact }} on ${{ matrix.runner }} with Python ${{ matrix.python }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable RBE if building on Linux x86 or Windows x86
+        if: contains(matrix.runner, 'linux-x86') || contains(matrix.runner, 'windows-x86')
+        run: echo "JAXCI_BUILD_ARTIFACT_WITH_RBE=1" >> $GITHUB_ENV
+      # Halt for testing
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@main
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Build ${{ matrix.artifact }}
+        run: ./ci/build_artifacts.sh "${{ matrix.artifact }}"
