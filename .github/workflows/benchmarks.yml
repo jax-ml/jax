@@ -21,6 +21,4 @@ jobs:
           python -m pip install --upgrade pip
       - name: Run Multiprocess GPU Test
         run: |
-          export CUDA_VISIBLE_DEVICES="0-$((${matrix.gpu-count} - 1))"
-          python -m pytest -n ${matrix.gpu-count} tests/multiprocess_gpu_test.py 
-        shell: bash
+          python -m pytest tests/multiprocess_gpu_test.py
