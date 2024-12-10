@@ -21,10 +21,7 @@ from functools import partial
 import math
 from typing import Any, Literal, TypeVar, overload
 
-import numpy as np
-
 from jax import lax
-
 from jax._src import ad_util
 from jax._src import api
 from jax._src import config
@@ -42,9 +39,12 @@ from jax._src.lax import control_flow
 from jax._src.lax import eigh as lax_eigh
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import svd as lax_svd
-from jax._src.lax.lax import (
-    standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
-    _input_dtype)
+from jax._src.lax.lax import ( _complex, _float,
+    _input_dtype, naryop_dtype_rule,
+    standard_primitive, standard_unop)
+# The following import is unused but needed to register the custom_call targets
+# in the gpu_linalg module.
+from jax._src.lib import gpu_linalg  # noqa: F401
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
 from jax._src.lib import lapack
@@ -53,10 +53,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.typing import Array, ArrayLike
-
-# The following import is unused but needed to register the custom_call targets
-# in the gpu_linalg module.
-from jax._src.lib import gpu_linalg  # noqa: F401
+import numpy as np
 
 TFun = TypeVar('TFun', bound=Callable[..., Any])
 
@@ -1329,7 +1326,6 @@ def _triangular_solve_lowering(
       ir.BoolAttr.get(lower), ir.BoolAttr.get(unit_diagonal),
       hlo.TransposeAttr.get(transpose))]
 
-mlir.register_lowering(triangular_solve_p, _triangular_solve_lowering)
 
 def _triangular_solve_cpu_lower(
     ctx, a, b, *, left_side, lower, transpose_a,
@@ -1342,10 +1338,21 @@ def _triangular_solve_cpu_lower(
   if len(a_aval.shape) == 2 and np.dtype(a_aval.dtype) in _cpu_lapack_types:
     alpha = mlir.ir_constant(np.array(1, dtype=a_aval.dtype))
     b_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, b_aval.shape)
+    # TODO(b/344892332): Remove the conditional after the compatibility period.
+    ctx_args = (ctx,) if jaxlib_version >= (0, 4, 37) else ()
     return lapack.trsm_hlo(
-      a_aval.dtype, alpha,
-      a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal,
-      b_shape_vals=b_shape_vals)
+        *ctx_args,
+        a_aval.dtype,
+        alpha,
+        a,
+        b,
+        left_side,
+        lower,
+        transpose_a,
+        conjugate_a,
+        unit_diagonal,
+        b_shape_vals=b_shape_vals,
+    )
   else:
     # Fall back to the HLO implementation for unsupported types or batching.
     # TODO: Consider swapping XLA for LAPACK in batched case
@@ -1358,6 +1365,8 @@ def _triangular_solve_cpu_lower(
                                  ir.BoolAttr.get(unit_diagonal),
                                  hlo.TransposeAttr.get(transpose))]
 
+
+mlir.register_lowering(triangular_solve_p, _triangular_solve_lowering)
 mlir.register_lowering(triangular_solve_p, _triangular_solve_cpu_lower,
                        platform='cpu')
 

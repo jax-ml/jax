@@ -24,52 +24,47 @@ import math
 from absl.testing import absltest, parameterized
 
 import numpy as np
-
 import jax
 from jax import lax
+from jax._src import config
+from jax._src import test_util as jtu
 from jax._src.export import _export
-
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
-
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_cholesky_lapack_potrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_eig_lapack_geev
-from jax._src.internal_test_util.export_back_compat_test_data import cuda_eigh_cusolver_syev
-from jax._src.internal_test_util.export_back_compat_test_data import rocm_eigh_hipsolver_syev
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_eigh_lapack_syev
+from jax._src.internal_test_util.export_back_compat_test_data import cpu_hessenberg_lapack_gehrd
+from jax._src.internal_test_util.export_back_compat_test_data import cpu_tridiagonal_lapack_sytrd_hetrd
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_lu_lapack_getrf
-from jax._src.internal_test_util.export_back_compat_test_data import cuda_qr_cusolver_geqrf
-from jax._src.internal_test_util.export_back_compat_test_data import rocm_qr_hipsolver_geqrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_qr_lapack_geqrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_schur_lapack_gees
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_svd_lapack_gesdd
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_triangular_solve_blas_trsm
-from jax._src.internal_test_util.export_back_compat_test_data import cpu_hessenberg_lapack_gehrd
-from jax._src.internal_test_util.export_back_compat_test_data import cpu_tridiagonal_lapack_sytrd_hetrd
-from jax._src.internal_test_util.export_back_compat_test_data import cuda_threefry2x32
-from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_pivots_to_permutation
+from jax._src.internal_test_util.export_back_compat_test_data import cuda_eigh_cusolver_syev
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_cusolver_getrf
+from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_pivots_to_permutation
+from jax._src.internal_test_util.export_back_compat_test_data import cuda_qr_cusolver_geqrf
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_svd_cusolver_gesvd
+from jax._src.internal_test_util.export_back_compat_test_data import cuda_threefry2x32
+from jax._src.internal_test_util.export_back_compat_test_data import rocm_eigh_hipsolver_syev
+from jax._src.internal_test_util.export_back_compat_test_data import rocm_qr_hipsolver_geqrf
+from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_approx_top_k
+from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_rng_bit_generator
+from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_top_k
+from jax._src.internal_test_util.export_back_compat_test_data import tpu_ApproxTopK
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Eigh
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Lu
-from jax._src.internal_test_util.export_back_compat_test_data import tpu_ApproxTopK
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Qr
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Sharding
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_stablehlo_dynamic_reduce_window
-from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_rng_bit_generator
-from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_top_k
-from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_approx_top_k
-
+from jax._src.lib import cuda_versions
+from jax._src.lib import version as jaxlib_version
 from jax.experimental import pjit
 from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
-
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 
-from jax._src import config
-from jax._src import test_util as jtu
-from jax._src.lib import cuda_versions
-from jax._src.lib import version as jaxlib_version
 
 config.parse_flags_with_absl()
 
@@ -122,6 +117,7 @@ class CompatTest(bctu.CompatTestBase):
         cpu_eigh_lapack_syev.data_2024_08_19,
         cpu_lu_lapack_getrf.data_2024_05_31,
         cpu_schur_lapack_gees.data_2024_11_29,
+        cpu_triangular_solve_blas_trsm.data_2024_12_02,
         cpu_svd_lapack_gesdd.data_2024_08_13,
         cpu_hessenberg_lapack_gehrd.data_2024_08_31,
         cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_12_01,
@@ -741,6 +737,21 @@ class CompatTest(bctu.CompatTestBase):
 
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=check_triangular_solve_results)
+    # TODO(b/344892332): Remove the check after the compatibility period.
+    has_xla_ffi_support = jaxlib_version >= (0, 4, 37)
+    if has_xla_ffi_support:
+      with config.export_ignore_forward_compatibility(True):
+        # FFI Kernel test
+        data = self.load_testdata(
+            cpu_triangular_solve_blas_trsm.data_2024_12_02[dtype_name]
+        )
+        self.run_one_test(
+            func,
+            data,
+            rtol=rtol,
+            atol=atol,
+            check_results=check_triangular_solve_results,
+        )
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
