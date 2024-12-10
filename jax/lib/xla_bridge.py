@@ -17,7 +17,6 @@ from jax._src.xla_bridge import (
   default_backend as _deprecated_default_backend,
   get_backend as _deprecated_get_backend,
   xla_client as _deprecated_xla_client,
-  _backends as _backends,
 )
 
 from jax._src.compiler import (
