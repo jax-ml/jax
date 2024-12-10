@@ -193,6 +193,7 @@ py_library_providing_imports_info(
         "_src/custom_batching.py",
         "_src/custom_derivatives.py",
         "_src/custom_partitioning.py",
+        "_src/custom_partitioning_sharding_rule.py",
         "_src/custom_transpose.py",
         "_src/debugging.py",
         "_src/dispatch.py",

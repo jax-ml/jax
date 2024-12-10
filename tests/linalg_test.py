@@ -16,6 +16,8 @@
 
 from functools import partial
 import itertools
+from typing import Iterator
+from unittest import skipIf
 
 import numpy as np
 import scipy
@@ -52,6 +54,20 @@ def _is_required_cuda_version_satisfied(cuda_version):
     return False
   else:
     return int(version.split()[-1]) >= cuda_version
+
+
+def _axis_for_ndim(ndim: int) -> Iterator[None | int | tuple[int, ...]]:
+  """
+  Generate a range of valid axis arguments for a reduction over
+  an array with a given number of dimensions.
+  """
+  yield from (None, ())
+  if ndim > 0:
+    yield from (0, (-1,))
+  if ndim > 1:
+    yield from (1, (0, 1), (-1, 0))
+  if ndim > 2:
+    yield (-1, 0, 1)
 
 
 def osp_linalg_toeplitz(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarray:
@@ -707,29 +723,25 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=1e-3)
     self._CompileAndCheck(jnp_fn, args_maker)
 
+  @skipIf(jtu.numpy_version() < (2, 0, 0), "np.linalg.vector_norm requires NumPy 2.0")
   @jtu.sample_product(
-      shape=[(3,), (3, 4), (2, 3, 4, 5)],
+      [
+        dict(shape=shape, axis=axis)
+        for shape in [(3,), (3, 4), (2, 3, 4, 5)]
+        for axis in _axis_for_ndim(len(shape))
+      ],
       dtype=float_types + complex_types,
       keepdims=[True, False],
-      axis=[0, None],
       ord=[1, -1, 2, -2, np.inf, -np.inf],
   )
   def testVectorNorm(self, shape, dtype, keepdims, axis, ord):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    if jtu.numpy_version() < (2, 0, 0):
-      def np_fn(x, *, ord, keepdims, axis):
-        x = np.asarray(x)
-        if axis is None:
-          result = np_fn(x.ravel(), ord=ord, keepdims=False, axis=0)
-          return np.reshape(result, (1,) * x.ndim) if keepdims else result
-        return np.linalg.norm(x, ord=ord, keepdims=keepdims, axis=axis)
-    else:
-      np_fn = np.linalg.vector_norm
-    np_fn = partial(np_fn, ord=ord, keepdims=keepdims, axis=axis)
+    np_fn = partial(np.linalg.vector_norm, ord=ord, keepdims=keepdims, axis=axis)
     jnp_fn = partial(jnp.linalg.vector_norm, ord=ord, keepdims=keepdims, axis=axis)
-    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=1e-3)
-    self._CompileAndCheck(jnp_fn, args_maker)
+    tol = 1E-3 if jtu.test_device_matches(['tpu']) else None
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fn, args_maker, tol=tol)
 
   # jnp.linalg.vecdot is an alias of jnp.vecdot; do a minimal test here.
   @jtu.sample_product(

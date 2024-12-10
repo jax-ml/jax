@@ -1341,9 +1341,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "for_loop_test",
     srcs = ["for_loop_test.py"],
-    disable_configs = [
-        "tpu_v5p_1x1",  # TODO(b/377666550): enable once XLA is fixed.
-    ],
     shard_count = {
         "cpu": 20,
         "gpu": 10,
@@ -1557,11 +1554,22 @@ jax_multiplatform_test(
     tags = ["multiaccelerator"],
 )
 
+jax_py_test(
+    name = "custom_partitioning_sharding_rule_test",
+    srcs = ["custom_partitioning_sharding_rule_test.py"],
+    deps = [
+        "//jax",
+        "//jax:experimental",
+        "//jax:test_util",
+    ],
+)
+
 exports_files(
     [
         "api_test.py",
         "array_test.py",
         "cache_key_test.py",
+        "colocated_python_test.py",
         "compilation_cache_test.py",
         "memories_test.py",
         "pmap_test.py",

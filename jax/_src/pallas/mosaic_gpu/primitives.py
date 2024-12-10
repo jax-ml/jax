@@ -401,7 +401,7 @@ def wgmma(
     a,
     b: pallas_core.TransformedRef,
 ) -> None:
-  """Performs and asynchronous warp group matmul-accumulate on the given references.
+  """Performs an asynchronous warp group matmul-accumulate on the given references.
 
   Conceptually, this is equivalent to doing ``acc[...] += a[...] @ b[...]``,
   except that the computation is performed asynchronously.

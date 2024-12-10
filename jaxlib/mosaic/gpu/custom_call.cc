@@ -38,6 +38,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "llvm/include/llvm/ADT/SmallVector.h"
 #include "llvm/include/llvm/Support/CodeGen.h"
@@ -415,6 +416,40 @@ GetKernelCache() {
   return std::make_pair(&context_cache, &mutex);
 }
 
+absl::StatusOr<std::pair<std::string, std::string>> GetHostAndInitFuncNames(
+    mlir::ModuleOp module_op) {
+  // We look for two top level C-interface functions:
+  // - "host" function with symbol name "_mlir_ciface_<foo>"
+  // - "init" function with symbol name "_mlir_ciface_<foo>_init"
+  constexpr std::string_view prefix = "_mlir_ciface_";
+  std::vector<std::string> names;
+  for (mlir::LLVM::LLVMFuncOp llvm_func :
+       module_op.getOps<mlir::LLVM::LLVMFuncOp>()) {
+    if (llvm_func.getName().starts_with(prefix)) {
+      names.push_back(llvm_func.getName().str());
+    }
+  }
+  if (auto size = names.size(); size != 2) {
+    return absl::InternalError(absl::StrFormat(
+        "Expected to locate 2 symbols with %s prefix in the MLIR module, found "
+        "%d instead.",
+        prefix, size));
+  }
+  // _mlir_ciface_<foo>_init now follows _mlir_ciface_<foo>
+  std::sort(names.begin(), names.end());
+
+  std::string host_func_name = names[0];
+  std::string init_func_name = names[1];
+
+  if (init_func_name != absl::StrCat(host_func_name, "_init")) {
+    return absl::InternalError(absl::StrFormat(
+        "Expected init function name to equal the concatenation of the host "
+        "function name and the \"_init\" suffix, instead got "
+        "init_func_name=%s, host_func_name=%s.",
+        init_func_name, host_func_name));
+  }
+  return std::make_pair(host_func_name, init_func_name);
+}
 
 absl::StatusOr<CompiledKernel> CompileAndInit(const char* module) {
   mlir::MLIRContext context(mlir::MLIRContext::Threading::DISABLED);
@@ -430,9 +465,16 @@ absl::StatusOr<CompiledKernel> CompileAndInit(const char* module) {
     return maybe_engine.status();
   }
   mlir::ExecutionEngine* execution_engine = maybe_engine->get();
-  auto main = execution_engine->lookupPacked("_mlir_ciface_main");
-  auto init = execution_engine->lookupPacked("_mlir_ciface_main_init");
-  if (!init || !main) {
+
+  auto host_and_init_func_names = GetHostAndInitFuncNames(*module_op);
+  if (!host_and_init_func_names.ok()) {
+    return host_and_init_func_names.status();
+  }
+  auto [host_name, init_name] = host_and_init_func_names.value();
+
+  auto host = execution_engine->lookupPacked(host_name);
+  auto init = execution_engine->lookupPacked(init_name);
+  if (!init || !host) {
     return absl::InternalError("Failed to retrieve kernel function");
   }
   void* module_ptr = nullptr;
@@ -442,7 +484,7 @@ absl::StatusOr<CompiledKernel> CompileAndInit(const char* module) {
   void*** init_args[2] = {&module_ptr_ptr, &kernel_ptr_ptr};
   reinterpret_cast<MosaicInitFunc*>(*init)(init_args);
   return CompiledKernel(std::move(*maybe_engine), kernel_ptr,
-                          reinterpret_cast<MosaicHostFunc*>(*main));
+                        reinterpret_cast<MosaicHostFunc*>(*host));
 }
 
 // Each compiled kernel has a unique init func, and each kernel is used from

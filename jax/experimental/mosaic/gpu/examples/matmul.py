@@ -20,6 +20,7 @@ from typing import Any
 
 import jax
 from jax import random
+from jax._src import test_util as jtu  # noqa: F401
 from jax._src.interpreters import mlir
 from jax.experimental.mosaic.gpu import profiler
 from jax.experimental.mosaic.gpu import *  # noqa: F403

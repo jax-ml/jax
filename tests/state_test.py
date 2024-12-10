@@ -639,6 +639,26 @@ class StateDischargeTest(jtu.JaxTestCase):
     refval, = core.eval_jaxpr(discharged_jaxpr, discharged_consts, inval)
     self.assertTrue((refval == inval.at[jnp.array([0, 1])].set(1.)).all())
 
+  def test_discharge_swap(self):
+    def f(a_ref):
+      a = ref_swap(
+          a_ref.at[0:4, 0:3, 0:2].at[1:3, :, 0],
+          (slice(None), slice(1, 3)),
+          jnp.zeros((2, 2), jnp.float32))
+      return [a + 1]
+    in_avals = [shaped_array_ref((4, 3, 2), jnp.float32)]
+    stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
+        lu.wrap_init(f), in_avals)
+
+    discharged_jaxpr, () = discharge_state(stateful_jaxpr, consts)
+    self.assertLen(discharged_jaxpr.invars, 1)
+    self.assertLen(discharged_jaxpr.outvars, 2)
+
+    inval = jnp.arange(24., dtype=jnp.float32).reshape((4, 3, 2))
+    outval, refval = core.eval_jaxpr(discharged_jaxpr, (), inval)
+    self.assertArraysEqual(outval, inval[1:3, 1:3, 0] + 1)
+    self.assertArraysEqual(refval, inval.at[1:3, 1:3, 0].set(0))
+
   def test_discharge_addupdate(self):
     def f(a_ref, b):
       ref_addupdate(a_ref, (), b + 1)

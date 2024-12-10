@@ -25,6 +25,7 @@ import inspect
 import logging
 import math
 import os
+import platform
 import re
 import sys
 import tempfile
@@ -50,6 +51,7 @@ from jax._src import monitoring
 from jax._src import pjit as pjit_lib
 from jax._src import stages
 from jax._src import xla_bridge
+from jax._src import mesh as mesh_lib
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
@@ -1441,6 +1443,16 @@ def with_and_without_mesh(f):
       ('Mesh', (('x', 2),), (('i', 'x'),))
     ))(with_mesh_from_kwargs(f))
 
+def with_user_mesh(sizes, names):
+  def decorator(fn):
+    def mesh_fn(*args, **kwargs):
+      mesh = create_mesh(sizes, names)
+      with mesh_lib.set_mesh(mesh):
+        return fn(*args, **kwargs, mesh=mesh)
+    return mesh_fn
+  return decorator
+
+
 def create_mesh(mesh_shape, axis_names, iota_order=False):
   size = math.prod(mesh_shape)
   if len(jax.devices()) < size:
@@ -1704,6 +1716,10 @@ def complex_plane_sample(dtype, size_re=10, size_im=None):
     size_im = size_re
   finfo = np.finfo(dtype)
 
+  machine = platform.machine()
+  is_arm_cpu = machine.startswith('aarch') or machine.startswith('arm')
+  smallest = np.nextafter(finfo.tiny, finfo.max) if is_arm_cpu and platform.system() == 'Darwin' else finfo.tiny
+
   def make_axis_points(size):
     prec_dps_ratio = 3.3219280948873626
     logmin = logmax = finfo.maxexp / prec_dps_ratio
@@ -1722,8 +1738,8 @@ def complex_plane_sample(dtype, size_re=10, size_im=None):
       axis_points[1] = finfo.min
       axis_points[-2] = finfo.max
     if size > 0:
-      axis_points[size] = -finfo.tiny
-      axis_points[-size - 1] = finfo.tiny
+      axis_points[size] = -smallest
+      axis_points[-size - 1] = smallest
     axis_points[0] = -np.inf
     axis_points[-1] = np.inf
     return axis_points

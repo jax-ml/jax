@@ -24,6 +24,7 @@ from typing import Any, Callable, Sequence
 import jax
 from jax._src import api
 from jax._src import tree_util
+from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
 from jax._src.traceback_util import api_boundary
 from jax._src.util import wraps
@@ -137,23 +138,54 @@ def _infer_devices_from_args(args: Sequence[Any]) -> xc.DeviceList | None:
 def _compile_to_executable(
     name: str,
     fun: Callable[..., Any],
+    in_specs_treedef: tree_util.PyTreeDef,
     in_specs_leaves: tuple[api.ShapeDtypeStruct, ...],
+    out_specs_treedef: tree_util.PyTreeDef,
     out_specs_leaves: tuple[api.ShapeDtypeStruct, ...],
     devices: xc.DeviceList,
 ) -> Callable[..., Any]:
   """Compiles a Python function into a runtime executable."""
-  pickled_function = _serialize(fun)
+  fun_and_specialization = (
+      fun,
+      in_specs_treedef,
+      in_specs_leaves,
+      out_specs_treedef,
+      out_specs_leaves,
+      devices,
+  )
+  pickled_function = _serialize(fun_and_specialization)
   program = ifrt_programs.make_colocated_python_program(
       name, pickled_function, devices, in_specs_leaves, out_specs_leaves
   )
-  # TODO(hyeontaek): Compile the program and use the executable.
-  del program
+  ifrt_client = devices[0].client
+  out_sdss = tuple(
+      jax.core.ShapedArray(sds.shape, sds.dtype) for sds in out_specs_leaves
+  )
+  out_shardings = tuple(sds.sharding for sds in out_specs_leaves)
+  try:
+    compile_options = ifrt_programs.make_colocated_python_compile_options()
+    loaded_executable = ifrt_client.compile_ifrt_program(
+        program, compile_options
+    )
+    out_handlers = pxla.global_avals_to_results_handler(
+        out_sdss, out_shardings, committed=True
+    ).handlers
 
-  del name
-  del in_specs_leaves
-  del out_specs_leaves
-  del devices
-  return fun
+    def call(*args, **kwargs):
+      args_leaves = tree_util.tree_leaves((args, kwargs))
+      execute_result = loaded_executable.execute_sharded(
+          args_leaves, with_tokens=False
+      )
+      results = execute_result.consume_with_handlers(out_handlers)
+      return tree_util.tree_unflatten(out_specs_treedef, results)
+
+    return call
+  except jax.errors.JaxRuntimeError as e:
+    # TODO(hyeontaek): Implement colocated Python support in McJAX and remove
+    # this fallback path.
+    if "PjRtCompiler requires an HloProgram" in str(e):
+      return fun
+    raise
 
 
 def _make_output_specs_and_push_result_fun(
@@ -170,12 +202,12 @@ def _make_output_specs_and_push_result_fun(
 
   def lowered_fun(*args, **kwargs) -> Sequence[jax.Array]:
     result = info.fun(*args, **kwargs)
-    out_leaves, out_treedef = tree_util.tree_flatten(result)
-    out_spec_leaves = tuple(_get_spec(x) for x in out_leaves)
-    func_backend.SINGLETON_RESULT_STORE.push(uid, out_leaves)
+    result_leaves, out_treedef = tree_util.tree_flatten(result)
+    out_spec_leaves = tuple(_get_spec(x) for x in result_leaves)
+    func_backend.SINGLETON_RESULT_STORE.push(uid, result_leaves)
     return _serialize_specs(out_treedef, out_spec_leaves, devices)
 
-  out_specs_leaves, _ = tree_util.tree_flatten(
+  out_specs_leaves, out_specs_treedef = tree_util.tree_flatten(
       _make_specs_for_serialized_specs(specialization.devices),
   )
   name = getattr(info.fun, "__name__", "unknown")
@@ -183,7 +215,9 @@ def _make_output_specs_and_push_result_fun(
   return _compile_to_executable(
       name=name,
       fun=lowered_fun,
+      in_specs_treedef=specialization.in_specs_treedef,
       in_specs_leaves=specialization.in_specs_leaves,
+      out_specs_treedef=out_specs_treedef,
       out_specs_leaves=tuple(out_specs_leaves),
       devices=specialization.devices,
   )
@@ -200,21 +234,23 @@ def _make_pop_result_fun(
   out_specs_treedef = specialization.out_specs_treedef
 
   def lowered_fun() -> Any:
-    flat_result = func_backend.SINGLETON_RESULT_STORE.pop(uid)
-    return tree_util.tree_unflatten(out_specs_treedef, flat_result)
+    result_leaves = func_backend.SINGLETON_RESULT_STORE.pop(uid)
+    return tree_util.tree_unflatten(out_specs_treedef, result_leaves)
 
-  in_specs, _ = tree_util.tree_flatten((
+  in_specs_leaves, in_specs_treedef = tree_util.tree_flatten((
       # args
       (),
       # kwargs
-      (),
+      {},
   ))
   name = getattr(info.fun, "__name__", "unknown")
   name = f"{name}_pop_result"
   return _compile_to_executable(
       name=name,
       fun=lowered_fun,
-      in_specs_leaves=tuple(in_specs),
+      in_specs_treedef=in_specs_treedef,
+      in_specs_leaves=tuple(in_specs_leaves),
+      out_specs_treedef=specialization.out_specs_treedef,
       out_specs_leaves=specialization.out_specs_leaves,
       devices=specialization.devices,
   )
@@ -234,7 +270,9 @@ def _make_async_execution_fun(
   return _compile_to_executable(
       name=name,
       fun=info.fun,
+      in_specs_treedef=specialization.in_specs_treedef,
       in_specs_leaves=specialization.in_specs_leaves,
+      out_specs_treedef=specialization.out_specs_treedef,
       out_specs_leaves=specialization.out_specs_leaves,
       devices=specialization.devices,
   )
@@ -283,7 +321,10 @@ def _get_specialized_func(
             return _make_pop_result_fun(info, specialization, uid)()
           else:
             # Compute out_specs using out_specs_fn and inputs.
-            out_specs = specialization.out_specs_fn(*args, **kwargs)
+            args_specs, kwargs_specs = tree_util.tree_map(
+                _get_spec, (args, kwargs)
+            )
+            out_specs = specialization.out_specs_fn(*args_specs, **kwargs_specs)
             # Type checking is ignored to silence mypy error: Incompatible types
             # in assignment (expression has type "list[Any]", variable has type
             # "tuple[ShapeDtypeStruct, ...]")  [assignment]
@@ -302,7 +343,9 @@ def _get_specialized_func(
           async_execution_func = _make_async_execution_fun(info, specialization)
           # Fall-through.
 
-      return async_execution_func(*args, **kwargs)
+    # Asynchronous execution runs outside of the mutex to allow concurrent
+    # execution for inline executors.
+    return async_execution_func(*args, **kwargs)
 
   return specialized_func
 

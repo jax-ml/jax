@@ -93,6 +93,25 @@ LogicalResult MemRefSliceOp::verify() {
   auto target_type = getType();
   auto target_layout = target_type.getLayout();
   auto target_memory_space = target_type.getMemorySpace();
+  auto indices = getBaseIdx();
+  auto slice_shape = getResult().getType().getShape();
+  if (!source_type.hasStaticShape()) {
+    return emitOpError(
+        "Only slicing of memrefs with static shapes is supported.");
+  }
+  auto source_shape = source_type.getShape();
+  bool is_semaphore =
+      HasMemorySpace(source_type, tpu::MemorySpace::kSemaphoreMem);
+  if (is_semaphore &&
+      !isa<SemaphoreType, DMASemaphoreType>(source_type.getElementType())) {
+    return emitOpError(
+        "References to semaphore memory space must have a semaphore element "
+        "type.");
+  }
+  if (indices.size() != slice_shape.size() ||
+      indices.size() != source_shape.size()) {
+    return emitOpError("Indices and slice shapes must match.");
+  }
   // TODO(apaszke): Check that the result has a smaller shape.
   // TODO(apaszke): Check that strides are equivalent.
   // Source and target attributes may be different before propagation is done by
@@ -544,6 +563,15 @@ LogicalResult MatmulOp::verify() {
   // however, a good start and the recommended place to add more invariants.
   const VectorType lhs_ty = getLhs().getType();
   const VectorType rhs_ty = getRhs().getType();
+  const VectorType acc_ty = getAcc().getType();
+  const VectorType res_ty = getResult().getType();
+  if (acc_ty != res_ty) {
+    return emitOpError(
+        "Not implemented: matmul acc and result have different types");
+  }
+  if (acc_ty.getElementTypeBitWidth() != 32) {
+    return emitOpError("Expected matmul acc to be 32-bit");
+  }
 
   if (getTransposeLhs()) {
     emitOpError(

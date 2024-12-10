@@ -624,9 +624,11 @@ def isscalar(element: Any) -> bool:
     >>> jnp.isscalar(slice(10))
     False
   """
-  if (isinstance(element, (np.ndarray, jax.Array))
-      or hasattr(element, '__jax_array__')
-      or np.isscalar(element)):
+  if np.isscalar(element):
+    return True
+  elif isinstance(element, (np.ndarray, jax.Array)):
+    return element.ndim == 0
+  elif hasattr(element, '__jax_array__'):
     return asarray(element).ndim == 0
   return False
 
@@ -2143,20 +2145,11 @@ def reshape(
   __tracebackhide__ = True
   util.check_arraylike("reshape", a)
 
-  # TODO(micky774): deprecated 2024-5-9, remove after deprecation expires.
+  # TODO(jakevdp): finalized 2024-12-2; remove argument after JAX v0.4.40.
   if not isinstance(newshape, DeprecatedArg):
-    if shape is not None:
-      raise ValueError(
-        "jnp.reshape received both `shape` and `newshape` arguments. Note that "
-        "using `newshape` is deprecated, please only use `shape` instead."
-      )
-    deprecations.warn(
-      "jax-numpy-reshape-newshape",
-      ("The newshape argument of jax.numpy.reshape is deprecated. "
-       "Please use the shape argument instead."), stacklevel=2)
-    shape = newshape
-    del newshape
-  elif shape is None:
+    raise TypeError("The newshape argument to jnp.reshape was removed in JAX v0.4.36."
+                    " Use shape instead.")
+  if shape is None:
     raise TypeError(
       "jnp.shape requires passing a `shape` argument, but none was given."
     )
@@ -9076,7 +9069,7 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
 
   Returns:
     array containing the matrix product of the inputs. Shape is ``a.shape[:-1]``
-    if ``b.ndim == 1``, otherwise the shape is ``(..., M)``, where leading
+    if ``b.ndim == 1``, otherwise the shape is ``(..., K, M)``, where leading
     dimensions of ``a`` and ``b`` are broadcast together.
 
   See Also:
@@ -11978,6 +11971,14 @@ def _int(aval):
 
 def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
                      normalize_indices: bool = True) -> _Indexer:
+  # Check whether advanced indices are contiguous. We must do this before
+  # removing ellipses (https://github.com/jax-ml/jax/issues/25109)
+  # If advanced idexing axes do not appear contiguously, NumPy semantics
+  # move the advanced axes to the front.
+  is_advanced, = np.nonzero([isinstance(e, (int, Sequence, Array, np.ndarray))
+                             or isscalar(e) for e in idx])
+  advanced_axes_are_contiguous = np.all(np.diff(is_advanced) == 1)
+
   # Remove ellipses and add trailing slice(None)s.
   idx = _canonicalize_tuple_index(len(x_shape), idx)
 
@@ -11993,10 +11994,6 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
 
   # Check for advanced indexing:
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
-
-  # Do the advanced indexing axes appear contiguously? If not, NumPy semantics
-  # move the advanced axes to the front.
-  advanced_axes_are_contiguous = False
 
   advanced_indexes: Sequence[Array | np.ndarray] | None = None
 
@@ -12016,7 +12013,6 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
       advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
                         for e, i, j in advanced_pairs)
     advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
-    advanced_axes_are_contiguous = bool(np.all(np.diff(idx_advanced_axes) == 1))
 
   x_axis = 0  # Current axis in x.
   y_axis = 0  # Current axis in y, before collapsing. See below.

@@ -11,7 +11,16 @@ For the overall JAX change log see [here](https://jax.readthedocs.io/en/latest/c
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## Released with jax 0.4.35
+## Released with jax 0.4.37
+
+* New functionality
+
+  * Added support for `DotAlgorithmPreset` precision arguments for `dot`
+    lowering on Triton backend.
+
+## Released with jax 0.4.36 (December 6, 2024)
+
+## Released with jax 0.4.35 (October 22, 2024)
 
 * Removals
 
@@ -19,6 +28,11 @@ Remember to align the itemized text with the first line of an item within a list
     {class}`jax.experimental.pallas.tpu.CostEstimate` and
     {func}`jax.experimental.tpu.run_scoped`. Both  are now available in
     {mod}`jax.experimental.pallas`.
+
+* New functionality
+
+  * Added a cost estimate tool {func}`pl.estimate_cost` for automatically
+  constructing a kernel cost estimate from a JAX reference function.
 
 ## Released with jax 0.4.34 (October 4, 2024)
 

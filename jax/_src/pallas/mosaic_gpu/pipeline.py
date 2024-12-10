@@ -181,21 +181,16 @@ def emit_pipeline(
     delay_release = 0  # No need to delay anything.
 
   def pipeline(*gmem_refs: pallas_core.AbstractMemoryRef):
-    for gmem_ref, spec in zip(gmem_refs, it.chain(in_specs, out_specs)):
-      if any(
-          spec.block_shape[-idx] * grid[-idx] != gmem_ref.shape[-idx]  # type: ignore
-          for idx in range(1, len(grid) + 1)
-          if spec.block_shape is not None
-      ):
-        raise NotImplementedError(
-            f"Cannot emit a pipeline over the {grid=} for {gmem_ref} with block"
-            f" shape {spec.block_shape}."
-        )
-
     in_gmem_refs, out_gmem_refs = util.split_list(gmem_refs, [len(in_specs)])
     in_smem_refs, out_smem_refs = util.split_list(
         [
-            gpu_core.SMEM((max_concurrent_steps, *spec.block_shape), ref.dtype)  # type: ignore
+            gpu_core.SMEM(
+                (max_concurrent_steps, *spec.block_shape),  # type: ignore
+                ref.dtype,
+                transforms=tuple(
+                    t.batch(1) for t in getattr(spec, "transforms", ())
+                ),
+            )
             if _in_smem(spec)
             else None
             for spec, ref in zip(it.chain(in_specs, out_specs), gmem_refs)

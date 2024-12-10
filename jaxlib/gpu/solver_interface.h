@@ -188,8 +188,8 @@ JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::StatusOr<int>, GesvdjBufferSize);
 
 #define JAX_GPU_SOLVER_Gesvdj_ARGS(Type, Real)                                \
   gpusolverDnHandle_t handle, gpusolverEigMode_t job, int econ, int m, int n, \
-      Type *a, Real *s, Type *u, Type *v, Type *workspace,   \
-      int lwork, int *info, gesvdjInfo_t params
+      Type *a, Real *s, Type *u, Type *v, Type *workspace, int lwork,         \
+      int *info, gesvdjInfo_t params
 JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, Gesvdj);
 #undef JAX_GPU_SOLVER_Gesvdj_ARGS
 
@@ -199,14 +199,27 @@ JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, Gesvdj);
 JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::StatusOr<int>, GesvdjBatchedBufferSize);
 #undef JAX_GPU_SOLVER_GesvdjBatchedBufferSize_ARGS
 
-#define JAX_GPU_SOLVER_GesvdjBatched_ARGS(Type, Real)                         \
-  gpusolverDnHandle_t handle, gpusolverEigMode_t job, int m, int n, Type *a,  \
-      Real *s, Type *u, Type *v, Type *workspace, int lwork, \
-      int *info, gpuGesvdjInfo_t params, int batch
+#define JAX_GPU_SOLVER_GesvdjBatched_ARGS(Type, Real)                        \
+  gpusolverDnHandle_t handle, gpusolverEigMode_t job, int m, int n, Type *a, \
+      Real *s, Type *u, Type *v, Type *workspace, int lwork, int *info,      \
+      gpuGesvdjInfo_t params, int batch
 JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, GesvdjBatched);
 #undef JAX_GPU_SOLVER_GesvdjBatched_ARGS
 
 #endif  // JAX_GPU_CUDA
+
+// Symmetric tridiagonal reduction: sytrd
+
+#define JAX_GPU_SOLVER_SytrdBufferSize_ARGS(Type, ...) \
+  gpusolverDnHandle_t handle, gpublasFillMode_t uplo, int n
+JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::StatusOr<int>, SytrdBufferSize);
+#undef JAX_GPU_SOLVER_SytrdBufferSize_ARGS
+
+#define JAX_GPU_SOLVER_Sytrd_ARGS(Type, Real)                                  \
+  gpusolverDnHandle_t handle, gpublasFillMode_t uplo, int n, Type *a, Real *d, \
+      Real *e, Type *tau, Type *workspace, int lwork, int *info
+JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, Sytrd);
+#undef JAX_GPU_SOLVER_Sytrd_ARGS
 
 #undef JAX_GPU_SOLVER_EXPAND_DEFINITION
 

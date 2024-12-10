@@ -764,13 +764,23 @@ class _DimExpr:
       return _DimExpr._linear_combination(self, other, 0, 0, self.scope)
     return _ensure_poly(other, "mul", self.scope).__mul__(self)
 
-  def __pow__(self, power, modulo=None):
-    assert modulo is None
-    try:
-      power = int(power)
-    except:
-      raise InconclusiveDimensionOperation(f"Symbolic dimension cannot be raised to non-integer power '{self}' ^ '{power}'")
-    return functools.reduce(op.mul, [self] * power)
+  def __pow__(self, power: core.DimSize, modulo=None):
+    if modulo is not None:
+      raise NotImplementedError("__pow__ modulo not implemented")
+    if is_symbolic_dim(power):
+      return power.__rpow__(self)  # type: ignore
+    if power != int(power):
+      raise ValueError(f"Symbolic dimension cannot be raised to non-integer powers: '{self}' ** '{power}'")
+    if power >= 0:
+      return functools.reduce(op.mul, [self] * power, 1)
+    # We don't support negative powers, because JAX does not allow negative
+    # powers for integers
+    raise ValueError(f"Symbolic dimension cannot be raised to negative powers: '{self}' ** '{power}'")
+
+  def __rpow__(self, other, modulo=None):
+    if modulo is not None:
+      raise NotImplementedError("__rpow__ modulo not implemented")
+    return self.__jax_array__().__rpow__(other)
 
   def __floordiv__(self, divisor):
     if isinstance(divisor, core.Tracer) or not _convertible_to_poly(divisor):
@@ -1198,12 +1208,6 @@ def is_symbolic_dim(p: DimSize) -> bool:
   """
   return isinstance(p, _DimExpr)
 
-def is_poly_dim(p: DimSize) -> bool:
-  # TODO: deprecated January 2024, remove June 2024.
-  warnings.warn("is_poly_dim is deprecated, use export.is_symbolic_dim",
-                DeprecationWarning, stacklevel=2)
-  return is_symbolic_dim(p)
-
 dtypes.python_scalar_dtypes[_DimExpr] = dtypes.python_scalar_dtypes[int]
 
 def _einsum_contract_path(*operands, **kwargs):
@@ -1413,8 +1417,6 @@ def symbolic_args_specs(
     shapes_specs,  # prefix pytree of strings
     constraints: Sequence[str] = (),
     scope: SymbolicScope | None = None,
-    symbolic_constraints: Sequence[str] = (),  # DEPRECATED on 6/14/24
-    symbolic_scope: SymbolicScope | None = None,  # DEPRECATED on 6/14/24
 ):
   """Constructs a pytree of jax.ShapeDtypeSpec arguments specs for `export`.
 
@@ -1435,25 +1437,10 @@ def symbolic_args_specs(
       arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
     constraints: as for :func:`jax.export.symbolic_shape`.
     scope: as for :func:`jax.export.symbolic_shape`.
-    symbolic_constraints: DEPRECATED, use `constraints`.
-    symbolic_scope: DEPRECATED, use `scope`.
 
   Returns: a pytree of jax.ShapeDTypeStruct matching the `args` with the shapes
     replaced with symbolic dimensions as specified by `shapes_specs`.
   """
-  if symbolic_constraints:
-    warnings.warn("symbolic_constraints is deprecated, use constraints",
-                  DeprecationWarning, stacklevel=2)
-    if constraints:
-      raise ValueError("Cannot use both symbolic_constraints and constraints")
-    constraints = symbolic_constraints
-  if symbolic_scope is not None:
-    warnings.warn("symbolic_scope is deprecated, use scope",
-                  DeprecationWarning, stacklevel=2)
-    if scope is not None:
-      raise ValueError("Cannot use both symbolic_scope and scope")
-    scope = symbolic_scope
-
   polymorphic_shapes = shapes_specs
   args_flat, args_tree = tree_util.tree_flatten(args)
 
@@ -2005,7 +1992,8 @@ def compute_dim_vars_from_arg_shapes(
   generate the code for computing the dimension variables. It also generates
   the shape assertions.
 
-  Returns: the values of the dimension variables, in the order determined by
+  Returns:
+    The values of the dimension variables, in the order determined by
     `all_dim_vars(args_avals)`.
   """
   dim_vars = all_dim_vars(args_avals)
@@ -2019,8 +2007,7 @@ def compute_dim_vars_from_arg_shapes(
   }
   synthetic_eval = ShapeEvaluator(synthetic_env)
   shape_constraints.shape_assertions(synthetic_eval)
-  dim_values = [synthetic_eval.evaluate(solution[var]) for var in dim_vars]
-  return tuple(dim_values)
+  return tuple(synthetic_eval.evaluate(solution[var]) for var in dim_vars)
 
 def _solve_dim_equations(
     eqns: list[_DimEquation],
@@ -2154,7 +2141,8 @@ def _solve_dim_equations(
     eqns = [eqn for eqn in eqns if not process_one_eqn(eqn)]
     if not eqns:
       add_explicit_symbolic_constraints(shape_env)
-      return shape_env, shape_constraints  # SUCCESS
+      # SUCCESS
+      return shape_env, shape_constraints  # pytype: disable=bad-return-type
     elif len(eqns) >= nr_eqns:
       break
 

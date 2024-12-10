@@ -689,22 +689,21 @@ minimization phase.
 ### Doctests
 
 JAX uses pytest in doctest mode to test the code examples within the documentation.
-You can run this using
+You can find the up-to-date command to run doctests in
+[`ci-build.yaml`](https://github.com/jax-ml/jax/blob/main/.github/workflows/ci-build.yaml).
+E.g., you can run:
 
 ```
-pytest docs
+JAX_TRACEBACK_FILTERING=off XLA_FLAGS=--xla_force_host_platform_device_count=8 pytest -n auto --tb=short --doctest-glob='*.md' --doctest-glob='*.rst' docs --doctest-continue-on-failure --ignore=docs/multi_process.md --ignore=docs/jax.experimental.array_api.rst
 ```
 
 Additionally, JAX runs pytest in `doctest-modules` mode to ensure code examples in
 function docstrings will run correctly. You can run this locally using, for example:
 
 ```
-pytest --doctest-modules jax/_src/numpy/lax_numpy.py
+JAX_TRACEBACK_FILTERING=off XLA_FLAGS=--xla_force_host_platform_device_count=8 pytest --doctest-modules jax/_src/numpy/lax_numpy.py
 ```
 
-Keep in mind that there are several files that are marked to be skipped when the
-doctest command is run on the full package; you can see the details in
-[`ci-build.yaml`](https://github.com/jax-ml/jax/blob/main/.github/workflows/ci-build.yaml)
 
 ## Type checking
 

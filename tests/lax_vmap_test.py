@@ -692,6 +692,25 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op2, 5, bdims, (shape,), (dtype,), rng)
 
   @jtu.sample_product(
+    [dict(shape=shape, bdims=bdims)
+      for shape in [(8,), (3, 4, 5)]
+      for bdims in lax_test_util.all_bdims(shape)],
+    dtype=lax_test_util.default_dtypes,
+  )
+  def test_optimization_barrier_vmap(self, shape, dtype, bdims):
+    rng = jtu.rand_small(self.rng())
+    self._CheckBatching(lax.optimization_barrier, 5, bdims, (shape,), (dtype,),
+                        rng)
+
+  def test_optimization_barrier_vmap_out_axes(self):
+    x = jnp.arange(8)
+    y = x.reshape(1, 8)
+    out = jax.vmap(lax.optimization_barrier, in_axes=((0, 1),),
+                   out_axes=(0, 1))((x, y))
+    self.assertArraysEqual(out[0], x)
+    self.assertArraysEqual(out[1], y)
+
+  @jtu.sample_product(
     [dict(shape=shape, bdims=bdims, dimension=dimension, arity=arity)
       for shape in [(2, 3)]
       for dimension in [0, 1]

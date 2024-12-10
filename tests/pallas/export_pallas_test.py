@@ -50,6 +50,10 @@ class ExportTest(jtu.JaxTestCase):
     exp = export.export(
         add_vectors,
         platforms=["tpu", "cuda"],
+        # The Pallas GPU custom call is not enabled for export by default.
+        disabled_checks=[
+            export.DisabledSafetyCheck.custom_call("__gpu$xla.gpu.triton")
+        ]
     )(a, a)
 
     if (jtu.device_under_test() == "tpu" or

@@ -87,6 +87,7 @@ def switch(index, branches: Sequence[Callable], *operands,
   Args:
     index: Integer scalar type, indicating which branch function to apply.
     branches: Sequence of functions (A -> B) to be applied based on ``index``.
+      All branches must return the same output structure.
     operands: Operands (A) input to whichever branch is applied.
 
   Returns:
@@ -512,7 +513,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   # jaxpr for each branch.
   branches_known_ : list[core.ClosedJaxpr] = []
   branches_staged_: list[core.ClosedJaxpr] = []
-  branch_res_avals: list[core.AbstractValue] = []
+  branch_res_avals: list[list[core.AbstractValue]] = []
   for jaxpr in branches:
     jaxpr_known, jaxpr_staged, _, inst_out, num_res = \
         pe.partial_eval_jaxpr_custom(
@@ -779,7 +780,7 @@ cond_p.multiple_results = True
 cond_p.def_impl(partial(dispatch.apply_primitive, cond_p))
 cond_p.def_effectful_abstract_eval(_cond_abstract_eval)
 ad.primitive_jvps[cond_p] = _cond_jvp
-ad.reducing_transposes[cond_p] = _cond_transpose
+ad.primitive_transposes[cond_p] = _cond_transpose
 pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
 batching.fancy_primitive_batchers[cond_p] = _cond_batching_rule
 xla.register_initial_style_primitive(cond_p)

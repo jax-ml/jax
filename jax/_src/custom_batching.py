@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 import functools
 import operator
 
@@ -48,17 +49,93 @@ zip, unsafe_zip = util.safe_zip, zip
 
 @custom_api_util.register_custom_decorator_type
 class custom_vmap:
-  fun: Callable
-  vmap_rule: Callable | None
+  """Customize the vmap behavior of a JAX-transformable function.
 
-  def __init__(self, fun: Callable):
+  This decorator is used to customize the behavior of a JAX function under the
+  :func:`jax.vmap` transformation. A ``custom_vmap``-decorated function will
+  mostly (see below for caveats) have the same behavior as the underlying
+  function, except when batched using :py:func:`jax.vmap`. When batched, the
+  rule defined using :py:func:`~jax.custom_batching.custom_vmap.def_vmap` will
+  be used.
+
+  For example:
+
+    >>> @jax.custom_batching.custom_vmap
+    ... def f(x, y):
+    ...   return x + y
+    ...
+    >>> @f.def_vmap
+    ... def f_vmap_rule(axis_size, in_batched, xs, ys):
+    ...   assert all(in_batched)
+    ...   assert xs.shape[0] == axis_size
+    ...   assert ys.shape[0] == axis_size
+    ...   out_batched = True
+    ...   return xs * ys, out_batched
+    ...
+    >>> xs = jnp.arange(3)
+    >>> ys = jnp.arange(1, 4)
+    >>> jax.vmap(f)(xs, ys)  # prints xs * ys instead of xs + ys
+    Array([0, 2, 6], dtype=int32)
+
+  Of note, ``custom_vmap`` functions do not support reverse-mode autodiff. To
+  customize both vmap and reverse-mode autodiff, combine ``custom_vmap`` with
+  :py:class:`jax.custom_vjp`. For example:
+
+    >>> @jax.custom_vjp
+    ... @jax.custom_batching.custom_vmap
+    ... def f(x, y):
+    ...   return jnp.sin(x) * y
+    ...
+    >>> @f.def_vmap
+    ... def f_vmap_rule(axis_size, in_batched, xs, ys):
+    ...   return jnp.cos(xs) * ys, True
+    ...
+    >>> def f_fwd(x, y):
+    ...   return f(x, y), (jnp.cos(x), jnp.sin(x), y)
+    ...
+    >>> def f_bwd(res, g):
+    ...   cos_x, sin_x, y = res
+    ...   return (cos_x * g * y, sin_x * g)
+    ...
+    >>> f.defvjp(f_fwd, f_bwd)
+    >>> jax.vmap(f)(jnp.zeros(3), jnp.ones(3))
+    Array([1., 1., 1.], dtype=float32)
+    >>> jax.grad(f)(jnp.zeros(()), jnp.ones(()))
+    Array(1., dtype=float32)
+
+  Note that the :py:class:`jax.custom_vjp` must be on the ouside, wrapping the
+  ``custom_vmap``-decorated function.
+  """
+
+  fun: Callable[..., Any]
+  vmap_rule: Callable[..., tuple[Any, Any]] | None
+
+  def __init__(self, fun: Callable[..., Any]):
     functools.update_wrapper(self, fun)
     self.fun = fun
     self.vmap_rule = None
 
   __getattr__ = custom_api_util.forward_attr
 
-  def def_vmap(self, vmap_rule: Callable) -> Callable:
+  def def_vmap(
+      self,
+      vmap_rule: Callable[..., tuple[Any, Any]],
+  ) -> Callable[..., tuple[Any, Any]]:
+    """Define the vmap rule for this custom_vmap function.
+
+    Args:
+      vmap_rule: A function that implements the vmap rule. This function should
+        accept the following arguments: (1) an integer ``axis_size`` as its
+        first argument, (2) a pytree of booleans with the same structure as the
+        inputs to the function, specifying whether each argument is batched,
+        and (3) the batched arguments. It should return a tuple of the batched
+        output and a pytree of booleans with the same structure as the output,
+        specifying whether each output element is batched. See the documentation
+        for :py:func:`jax.custom_batching.custom_vmap` for some examples.
+
+    Returns:
+      This method passes the rule through, returning ``vmap_rule`` unchanged.
+    """
     self.vmap_rule = vmap_rule
     return vmap_rule
 
@@ -272,6 +349,31 @@ def tree_merge(mask, lhs_tree, rhs_tree):
                   mask, lhs_tree, rhs_tree)
 
 def sequential_vmap(f):
+  """A special case of ``custom_vmap`` that uses a loop.
+
+  A function decorated with ``sequential_vmap`` will be called sequentially
+  within a loop when batched. This is useful for functions that don't natively
+  support batch dimensions.
+
+  For example:
+
+    >>> @jax.custom_batching.sequential_vmap
+    ... def f(x):
+    ...   jax.debug.print("{}", x)
+    ...   return x + 1
+    ...
+    >>> jax.vmap(f)(jnp.arange(3))
+    0
+    1
+    2
+    Array([1, 2, 3], dtype=int32)
+
+  Where the print statements demonstrate that this :py:func:`~jax.vmap` is being
+  generated using a loop.
+
+  See the documentation for :py:class:`~jax.custom_batching.custom_vmap` for
+  more details.
+  """
   f = custom_vmap(f)
 
   @f.def_vmap

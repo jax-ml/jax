@@ -104,6 +104,8 @@ build:mkl_open_source_only --define=tensorflow_mkldnn_contraction_kernel=1
 build:clang --copt=-Wno-gnu-offsetof-extensions
 # Disable clang extention that rejects unknown arguments.
 build:clang --copt=-Qunused-arguments
+# Error on struct/class mismatches, since this causes link failures on Windows.
+build:clang --copt=-Werror=mismatched-tags
 
 # Configs for CUDA
 build:cuda --repo_env TF_NEED_CUDA=1

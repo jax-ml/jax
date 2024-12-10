@@ -1082,6 +1082,9 @@ class LaxTest(jtu.JaxTestCase):
           lax.DotAlgorithmPreset.F16_F16_F16,
           lax.DotAlgorithmPreset.F32_F32_F32,
           lax.DotAlgorithmPreset.F64_F64_F64,
+          lax.DotAlgorithmPreset.BF16_BF16_F32,
+          lax.DotAlgorithmPreset.BF16_BF16_F32_X3,
+          lax.DotAlgorithmPreset.BF16_BF16_F32_X6,
       }:
         raise SkipTest(
             f"The dot algorithm '{algorithm}' is not supported on CPU.")
@@ -1342,6 +1345,56 @@ class LaxTest(jtu.JaxTestCase):
     op = lambda x, y: lax.dot_general(x, y, dimension_numbers)
     numpy_op = lambda x, y: lax_reference.dot_general(x, y, dimension_numbers)
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
+
+  def testRaggedAllToAllErrors(self):
+    operand = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=jnp.float32)
+    output = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
+    input_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
+    send_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
+    output_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
+    recv_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
+
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all input and output shapes must be equal."):
+      jax.jit(lax.ragged_all_to_all).lower(operand, jnp.array([0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32), input_offsets, send_sizes, output_offsets, recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all input_offsets must be integer type."):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, jnp.array([0.0, 1.0, 3.0], dtype=jnp.float32), send_sizes, output_offsets, recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all send_sizes must be integer type."):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32), output_offsets, recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all output_offsets must be integer type."):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, jnp.array([0.0, 1.0, 3.0], dtype=jnp.float32), recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all recv_sizes must be integer type."):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, output_offsets, jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32))
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all input_offsets must be rank 1 with positive dimension size, but got shape (1, 3)"):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, jnp.array([[0, 1, 3]], dtype=jnp.int32), send_sizes, output_offsets, recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all input_offsets must be rank 1 with positive dimension size, but got shape (0,)"):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, jnp.array([], dtype=jnp.int32), send_sizes, output_offsets, recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all send_sizes must be rank 1 with positive dimension size, but got shape (1, 3)"):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, jnp.array([[1, 2, 3]], dtype=jnp.int32), output_offsets, recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all send_sizes must be rank 1 with positive dimension size, but got shape (0,)"):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, jnp.array([], dtype=jnp.int32), output_offsets, recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all output_offsets must be rank 1 with positive dimension size, but got shape (1, 3)"):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, jnp.array([[0, 1, 3]], dtype=jnp.int32), recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all output_offsets must be rank 1 with positive dimension size, but got shape (0,)"):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, jnp.array([], dtype=jnp.int32), recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all recv_sizes must be rank 1 with positive dimension size, but got shape (1, 3)"):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, output_offsets, jnp.array([[1, 2, 3]], dtype=jnp.int32))
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all recv_sizes must be rank 1 with positive dimension size, but got shape (0,)"):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, output_offsets, jnp.array([], dtype=jnp.int32))
+
+  def testRaggedAllToAll(self):
+    operand = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=jnp.float32)
+    output = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
+    input_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
+    send_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
+    output_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
+    recv_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
+    mlir_module = jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, output_offsets, recv_sizes).as_text()
+    self.assertIn("stablehlo.custom_call @ragged_all_to_all", mlir_module)
+    self.assertIn(
+        "backend_config = {replica_groups = dense<[[0, 1, 2]]> :"
+        " tensor<1x3xi64>}}",
+        mlir_module,
+    )
 
   @jtu.sample_product(
       [
@@ -3548,7 +3601,7 @@ class LaxTest(jtu.JaxTestCase):
     with jax.transfer_guard('disallow'):
       jax.jit(asarray_closure)()
 
-  def testOptimizationBarrier(self):
+  def test_optimization_barrier(self):
     x = lax.optimization_barrier((2, 3))
     self.assertEqual((2, 3), x)
 
@@ -4400,34 +4453,14 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     elif name == 'tanh':
       regions_with_inaccuracies_keep('ninf', 'pinf', 'ninfj', 'pinfj')
 
-    elif name == 'arcsin':
-      if is_arm_cpu and platform.system() == 'Darwin':
-        regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'neg.real', 'pos.real')
-      else:
-        regions_with_inaccuracies.clear()
-
-    elif name == 'arcsinh':
-      if is_arm_cpu and platform.system() == 'Darwin':
-        regions_with_inaccuracies_keep('q1.imag', 'q2.imag', 'q3.imag', 'q4.imag',
-                                       'negj.imag', 'posj.imag')
-      else:
-        regions_with_inaccuracies.clear()
-
     elif name == 'arccos':
       regions_with_inaccuracies_keep('q4.imag', 'ninf', 'pinf', 'ninfj', 'pinfj.real')
 
     elif name in {'cos', 'sin'}:
       regions_with_inaccuracies_keep('ninf.imag', 'pinf.imag')
 
-    elif name == 'log1p':
-      if is_arm_cpu and platform.system() == 'Darwin':
-        regions_with_inaccuracies_keep('q1.imag', 'q2.imag', 'q3.imag', 'q4.imag', 'negj.imag',
-                                       'posj.imag')
-      else:
-        regions_with_inaccuracies.clear()
-
-    elif name in {'positive', 'negative', 'conjugate', 'sin', 'cos', 'sqrt', 'expm1', 'tan',
-                  'arcsinh', 'arccosh', 'arctan', 'arctanh', 'square'}:
+    elif name in {'positive', 'negative', 'conjugate', 'sin', 'cos', 'sqrt', 'expm1', 'tan', 'log1p',
+                  'arcsin', 'arcsinh', 'arccosh', 'arctan', 'arctanh', 'square'}:
       regions_with_inaccuracies.clear()
     else:
       assert 0  # unreachable

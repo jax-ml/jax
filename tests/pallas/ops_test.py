@@ -808,14 +808,6 @@ class OpsTest(PallasBaseTest):
     ):
       self.skipTest(f"{fn.__name__} not implemented on TPU")
 
-    # TODO: https://github.com/jax-ml/jax/issues/24243
-    if (
-        jtu.test_device_matches(["tpu"])
-        and fn == jnp.logical_not
-        and not self.INTERPRET
-    ):
-      self.skipTest("logical_not on TPU is only supported in interpret mode")
-
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((8, 128), dtype),
@@ -959,16 +951,17 @@ class OpsTest(PallasBaseTest):
   ]
 
   @parameterized.named_parameters(
-      (f"{fn.__name__}_{dtype}", fn, dtype)
+      (f"{fn.__name__}_{dtype.__name__}", fn, dtype)
       for fn, dtype in itertools.product(
-          COMPARISON_OPS, ["int32", "uint32", "float16", "float32", "bool"]
+          COMPARISON_OPS,
+          (jnp.int32, jnp.uint32, jnp.float16, jnp.float32, jnp.bool_),
       )
   )
   def test_comparison(self, fn, dtype):
-    if jtu.test_device_matches(["gpu"]) and dtype == "bool":
+    if jtu.test_device_matches(["gpu"]) and dtype == jnp.bool_:
       self.skipTest("Not implemented on GPU.")
 
-    if jtu.test_device_matches(["tpu"]) and dtype == "float16":
+    if jtu.test_device_matches(["tpu"]) and dtype == jnp.float16:
       self.skipTest("float16 is not supported on TPU")
 
     @functools.partial(
@@ -981,16 +974,19 @@ class OpsTest(PallasBaseTest):
 
     x = jnp.array([0, 3, -4, -6, 0, 5, 4, -7]).astype(dtype)
     y = jnp.array([3, 1, -4, -5, 0, -2, 2, 4]).astype(dtype)
-    np.testing.assert_allclose(kernel(x, y), fn(x, y))
+    out = kernel(x, y)
+    expected = fn(x, y)
+    self.assertArraysEqual(out, expected)
 
   @parameterized.named_parameters(
-      (f"{fn.__name__}_{dtype}", fn, dtype)
+      (f"{fn.__name__}_{dtype.__name__}", fn, dtype)
       for fn, dtype in itertools.product(
-          COMPARISON_OPS, ["int32", "uint32", "float16", "float32", "bool"]
+          COMPARISON_OPS,
+          (jnp.int32, jnp.uint32, jnp.float16, jnp.float32, jnp.bool_),
       )
   )
   def test_comparison_scalar(self, fn, dtype):
-    if jtu.test_device_matches(["tpu"]) and dtype == "float16":
+    if jtu.test_device_matches(["tpu"]) and dtype == jnp.float16:
       self.skipTest("float16 is not supported on TPU")
 
     if (
@@ -1015,7 +1011,9 @@ class OpsTest(PallasBaseTest):
 
     x = jnp.array([0, 3, -4, -6, 0, 5, 4, -7]).astype(dtype)
     y = jnp.array([3, 1, -4, -5, 0, -2, 2, 4]).astype(dtype)
-    np.testing.assert_allclose(kernel(x, y), fn(x, y))
+    out = kernel(x, y)
+    expected = fn(x, y)
+    self.assertArraysEqual(out, expected)
 
   def test_isnan(self):
     @functools.partial(

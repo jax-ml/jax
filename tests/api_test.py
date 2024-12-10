@@ -60,7 +60,7 @@ from jax._src.ad_checkpoint import saved_residuals
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
-from jax._src.lib import xla_extension, xla_extension_version
+from jax._src.lib import xla_extension
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.custom_batching
@@ -1388,9 +1388,6 @@ class JitTest(jtu.BufferDonationTestCase):
         })(1.0)  # doesn't crash.
 
   def test_exec_time_optimization_effort_compiler_option(self):
-    if xla_extension_version < 294:
-      raise unittest.SkipTest("test requires newer xla extension version")
-
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
 
@@ -10846,6 +10843,67 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertAllClose(y, jnp.sin(x))
     ys = api.vmap(f)(x=xs)
     self.assertAllClose(ys, jnp.cos(xs))
+
+  def test_partial_eval_raises(self):
+    @jax.custom_batching.custom_vmap
+    def f(x):
+      return jnp.sin(x)
+
+    @f.def_vmap
+    def rule(axis_size, in_batched, xs):
+      del axis_size  # unused
+      return jnp.cos(xs), in_batched[0]
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Linearization failed to produce known values for all output primals",
+    ):
+      jax.grad(f)(0.5)
+
+  def test_compose_custom_vjp(self):
+    @jax.custom_vjp
+    @jax.custom_batching.custom_vmap
+    def f(x, y):
+      return jnp.sin(x) * y
+
+    @f.def_vmap
+    def f_vmap_rule(axis_size, in_batched, xs, ys):
+      return jnp.cos(xs) * ys, True
+
+    def f_fwd(x, y):
+      return f(x, y), (jnp.cos(x), jnp.sin(x), y)
+
+    def f_bwd(res, g):
+      cos_x, sin_x, y = res
+      return (cos_x * g * y, sin_x * g)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    xs = jnp.linspace(0, 1, 5)
+    ys = jnp.linspace(-0.1, 0.1, 5)
+    self.assertAllClose(jax.vmap(f)(xs, ys), jnp.cos(xs) * ys)
+    jax.grad(f)(xs[0], ys[0])  # Doesn't crash.
+
+  def test_compose_custom_vjp_bwd_rule(self):
+    # This tests the case where both the forward and backward rules are wrapped
+    # in custom_vmap.
+    @jax.custom_batching.sequential_vmap
+    def fun_fwd(x, y):
+      return jnp.sin(x) * y, (x, y)
+
+    @jax.custom_batching.sequential_vmap
+    def fun_bwd(res, ct):
+      x, y = res
+      return x * ct, y * ct
+
+    fun = jax.custom_vjp(lambda *args: fun_fwd(*args)[0])
+    fun.defvjp(fun_fwd, fun_bwd)
+
+    xs = jnp.linspace(0, 1, 5)
+    y = jnp.array(0.5, dtype=xs.dtype)
+    f = jax.vmap(jax.jit(fun), in_axes=(0, None))
+    out, f_vjp = jax.vjp(f, xs, y)
+    f_vjp(out)  # Doesn't crash.
 
 
 class CustomApiTest(jtu.JaxTestCase):
