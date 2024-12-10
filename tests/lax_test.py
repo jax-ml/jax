@@ -29,6 +29,7 @@ import numpy as np
 
 import jax
 from jax._src import core
+from jax import jvp, grad
 from jax import lax
 import jax.numpy as jnp
 from jax.test_util import check_grads
@@ -4493,6 +4494,51 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
         raise unittest.SkipTest(
           f"detected success in regions {', '.join(unexpected_success_regions)}, please update regions_with_inaccuracies!"
         )
+
+
+@lax.composite_def("my.tangent")
+def my_tangent(x):
+  return lax.sin(x) / lax.cos(x)
+
+@lax.composite_def("my.acos", attributes={"foo": "bar", "baz": 1, "arrays": np.zeros((1, 2), dtype=np.float32)})
+def my_acos(x):
+    return jnp.acos(x)
+
+class CompositeTest(jtu.JaxTestCase):
+
+  def test_tangent_composite(self):
+    pi = jnp.pi
+    x = jnp.array([pi / 4, pi / 2, 3 * pi / 4, pi])
+    mlir_module = jax.jit(my_tangent).lower(x).as_text()
+    self.assertIn('stablehlo.composite "my.tangent"', mlir_module)
+    self.assertIn("@my.tangent", mlir_module)
+
+  def test_composite_with_attributes(self):
+    x = jnp.array(1.0, dtype=jnp.float32)
+    mlir_module = jax.jit(my_acos).lower(x).as_text()
+    self.assertIn('stablehlo.composite "my.acos"', mlir_module)
+    self.assertIn("@my.acos", mlir_module)
+    self.assertIn(
+        'composite_attributes = {arrays = dense<0.000000e+00> : tensor<1x2xf32>, baz = 1 : i64, foo = "bar"}', mlir_module
+    )
+
+  def test_composite_jvp(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        "JVP rule for composite not implemented. You can use `jax.custom_jvp` "
+        "to add support. See "
+        "https://jax.readthedocs.io/en/latest/_autosummary/jax.custom_jvp.html"
+    ):
+      jvp(my_tangent, (1.0,), (2.0,))
+
+  def test_composite_grad(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        "JVP rule for composite not implemented. You can use `jax.custom_jvp` "
+        "to add support. See "
+        "https://jax.readthedocs.io/en/latest/_autosummary/jax.custom_jvp.html"
+    ):
+      grad(my_tangent)(1.0)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
