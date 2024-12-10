@@ -2114,6 +2114,35 @@ class PallasCallPrintTest(PallasBaseTest):
       jax.block_until_ready(compiled_kernel(x))
     self.assertIn('x[0] == 42', get_output())
 
+  @parameterized.named_parameters(
+      (f"{shape}_{dtype.__name__}", shape, dtype)
+      for shape in (
+          (2, 1, 4),
+          (2, 8, 128),
+          (2, 9, 129),  # test a shape that is not aligned
+      )
+      for dtype in (jnp.int32, jnp.uint32, jnp.float32)
+  )
+  def test_debug_print_vector(self, shape, dtype):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+    )
+    def kernel(x_ref, o_ref):
+      pl.debug_print("{}", x_ref[...])
+      o_ref[...] = x_ref[...]
+
+    value = 499539281  # a random value
+    x = jnp.full(shape, value, dtype=dtype)
+    compiled_kernel = (
+        jax.jit(kernel)
+        .lower(x)
+        .compile({'xla_tpu_enable_log_recorder': 'true'})
+    )
+    with jtu.capture_stderr() as get_output:
+      jax.block_until_ready(compiled_kernel(x))
+    self.assertIn(str(value), get_output())
+
 
 class PallasCallTraceTest(PallasBaseTest):
 
