@@ -21,7 +21,7 @@ import jax.numpy as jnp
 
 gmm = jax.custom_vjp(
     backend.gmm,
-    nondiff_argnums=(3, 4, 7, 8),
+    nondiff_argnums=(3, 4, 7, 8, 9),
 )
 
 
@@ -35,6 +35,7 @@ def _gmm_fwd(
     existing_out: jnp.ndarray | None = None,
     transpose_rhs: bool = False,
     interpret: bool = False,
+    quant: bool = False,
 ) -> tuple[
     jnp.ndarray,
     tuple[
@@ -56,6 +57,7 @@ def _gmm_fwd(
       existing_out,
       transpose_rhs=transpose_rhs,
       interpret=interpret,
+      quant=quant,
   )
   return out, (lhs, rhs, group_sizes, group_offset, rhs.shape[0])
 
@@ -65,6 +67,7 @@ def _gmm_bwd(
     tiling: tuple[int, int, int],
     transpose_rhs: bool,
     interpret: bool,
+    quant: bool,
     residual: tuple[
         jnp.ndarray,
         jnp.ndarray,
@@ -86,6 +89,7 @@ def _gmm_bwd(
       group_offset,
       transpose_rhs=not transpose_rhs,
       interpret=interpret,
+      quant=quant,
   )
   grad_rhs = backend.tgmm(
       lhs.swapaxes(0, 1),
