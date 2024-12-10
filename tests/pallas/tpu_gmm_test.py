@@ -175,8 +175,15 @@ if CAN_USE_HYPOTHESIS:
 
 
   def tolerances(
-      lhs_dtype: jnp.dtype, rhs_dtype: jnp.dtype, out_dtype: jnp.dtype
+      lhs_dtype: jnp.dtype,
+      rhs_dtype: jnp.dtype,
+      out_dtype: jnp.dtype,
+      quant: bool = False,
   ) -> tuple[float, float]:
+    if quant:
+      # Assign high tolerances for quantized tests. As the reference
+      # implementation is not quantized, the error is expected to be high.
+      return 1, 0  # atol, rtol
     if (
         lhs_dtype == jnp.bfloat16
         or rhs_dtype == jnp.bfloat16
@@ -184,7 +191,6 @@ if CAN_USE_HYPOTHESIS:
     ):
       return 1e-3, 1e-2  # atol, rtol
     return 1e-3, 1e-5  # atol, rtol
-
 
   # TODO(tgale): Fix errors with strict dtype promotion.
   @jtu.with_config(jax_numpy_dtype_promotion="standard")
@@ -224,6 +230,7 @@ if CAN_USE_HYPOTHESIS:
         transpose_rhs: bool,
         data: hps.SearchStrategy[hps.DataObject],
         interpret: bool = False,
+        quant: bool =False,
     ):
       seed = data.draw(seed_strategy())
       num_groups, _ = data.draw(group_strategy(max_stride=1))
@@ -240,6 +247,7 @@ if CAN_USE_HYPOTHESIS:
               preferred_element_type=out_dtype,
               transpose_rhs=transpose_rhs,
               interpret=interpret,
+              quant=quant,
           ),
           lhs,
           rhs.swapaxes(1, 2) if transpose_rhs else rhs,
@@ -261,7 +269,7 @@ if CAN_USE_HYPOTHESIS:
       self.assertEqual(out.dtype, out_dtype)
       self.assertEqual(expected_out.dtype, out_dtype)
 
-      atol, rtol = tolerances(lhs_dtype, rhs_dtype, out_dtype)
+      atol, rtol = tolerances(lhs_dtype, rhs_dtype, out_dtype, quant)
       self.assert_allclose(out, expected_out, atol=atol, rtol=rtol)
 
       cotangent = random_dense((m, n), k1, out_dtype, limit=1)
@@ -286,6 +294,36 @@ if CAN_USE_HYPOTHESIS:
         data: hps.SearchStrategy[hps.DataObject],
     ):
       self.gmm_test(m, k, n, lhs_dtype, rhs_dtype, out_dtype, transpose_rhs, data)
+
+    @parameterized.parameters(
+        *with_transpose_argument(with_dtype_arguments(GROUPED_MATMUL_TESTS))
+    )
+    @hp.given(hps.data())
+    def test_gmm_quant(
+        self,
+        m: int,
+        k: int,
+        n: int,
+        lhs_dtype: jnp.dtype,
+        rhs_dtype: jnp.dtype,
+        out_dtype: jnp.dtype,
+        transpose_rhs: bool,
+        data: hps.SearchStrategy[hps.DataObject],
+    ):
+      device = jax.devices()[0]
+      if "v5" not in device.device_kind or "v6" in device.device_kind:
+        self.skipTest("Quantized gmm is only supported on v5+ TPUs.")
+      self.gmm_test(
+          m,
+          k,
+          n,
+          lhs_dtype,
+          rhs_dtype,
+          out_dtype,
+          transpose_rhs,
+          data,
+          quant=True,
+      )
 
     # NOTE: Run fewer tests with interpret mode. We just want to sanity check that
     # changes do not break running these kernels with interpret=True.
