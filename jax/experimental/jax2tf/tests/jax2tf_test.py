@@ -44,20 +44,8 @@ from jax.sharding import PartitionSpec as P
 
 import numpy as np
 import tensorflow as tf
-# pylint: disable=g-direct-tensorflow-import
-from tensorflow.compiler.tf2xla.python import xla as tfxla
-# pylint: enable=g-direct-tensorflow-import
 
 config.parse_flags_with_absl()
-_exit_stack = contextlib.ExitStack()
-
-# TODO(necula): Remove once tensorflow is 2.10.0 everywhere.
-def setUpModule():
-  if not hasattr(tfxla, "optimization_barrier"):
-    _exit_stack.enter_context(jtu.global_config_context(jax_remat_opt_barrier=False))
-
-def tearDownModule():
-  _exit_stack.close()
 
 
 class Jax2TfTest(tf_test_util.JaxToTfTestCase):

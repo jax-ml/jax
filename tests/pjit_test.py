@@ -3837,7 +3837,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
               constant_values= ((0.0, 0.0), (0.0, 0.0)))
 
     jaxpr = jax.make_jaxpr(trace_to_jaxpr)(x)
-    jax.core.jaxpr_as_fun(jaxpr)(x)
+    jax._src.core.jaxpr_as_fun(jaxpr)(x)
 
     jnp.pad(x, [(0, 1), (0, 0)], mode= 'wrap')
     jnp.pad(x, [(0, 1), (0, 0)], mode= 'wrap')  # doesn't crash
