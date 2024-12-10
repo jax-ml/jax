@@ -14,10 +14,15 @@
 
 # JAX is Autograd and XLA
 
-load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@jax_wheel_version//:wheel_version.bzl", "WHEEL_VERSION")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
+load(
+    "@tsl//third_party/py:py_import.bzl",
+    "py_import",
+)
+load("@xla//xla/tsl:tsl.bzl", "if_cuda_libs")
 load("//jaxlib:jax.bzl", "if_windows", "jax_py_test", "jax_wheel")
 
 licenses(["notice"])  # Apache 2
@@ -141,48 +146,32 @@ py_binary(
     ],
 )
 
-selects.config_setting_group(
-    name = "macos",
-    match_any = [
-        "@platforms//os:osx",
-        "@platforms//os:macos",
-    ],
-)
-
-selects.config_setting_group(
-    name = "arm64",
-    match_any = [
-        "@platforms//cpu:aarch64",
-        "@platforms//cpu:arm64",
-    ],
-)
-
-selects.config_setting_group(
-    name = "macos_arm64",
-    match_all = [
-        ":arm64",
-        ":macos",
-    ],
-)
-
-selects.config_setting_group(
-    name = "win_amd64",
-    match_all = [
-        "@platforms//cpu:x86_64",
-        "@platforms//os:windows",
-    ],
-)
-
+# Empty by default. Use `--//jaxlib/tools:git_hash=$(git rev-parse HEAD)` flag in
+# bazel command to pass the git hash for nightly or release builds.
 string_flag(
-    name = "jaxlib_git_hash",
+    name = "git_hash",
     build_setting_default = "",
 )
 
-config_setting(
-    name = "jaxlib_git_hash_nightly_or_release",
-    flag_values = {
-        ":jaxlib_git_hash": "nightly",
-    },
+string_flag(
+    name = "output_path",
+    build_setting_default = "dist",
+)
+
+string_flag(
+    name = "wheel_type",
+    build_setting_default = "snapshot",
+    values = ["snapshot", "nightly", "release"],
+)
+
+string_flag(
+    name = "custom_version_suffix",
+    build_setting_default = "",
+)
+
+string_flag(
+    name = "build_date",
+    build_setting_default = "",
 )
 
 jax_wheel(
@@ -204,4 +193,100 @@ jax_wheel(
     # TODO(b/371217563) May use hermetic cuda version here.
     platform_version = "12",
     wheel_binary = ":build_gpu_plugin_wheel",
+)
+
+# py_binary(
+#     name = "rename_jaxlib_wheel",
+#     srcs = [
+#         "rename_wheel.py",
+#         "//jaxlib:version",
+#     ],
+#     data = [
+#         ":jaxlib_wheel",
+#     ],
+#     env = {
+#         "WHEEL_DIR": "jaxlib_wheel",
+#         "WHEEL_VERSION": WHEEL_VERSION,
+#     },
+#     main = "rename_wheel.py",
+# )
+
+# py_binary(
+#     name = "rename_jax_cuda_plugin_wheel",
+#     srcs = [
+#         "rename_wheel.py",
+#         "//jaxlib:version",
+#     ],
+#     data = [
+#         ":jax_cuda_plugin_wheel",
+#     ],
+#     env = {
+#         "WHEEL_DIR": "jax_cuda_plugin_wheel",
+#         "WHEEL_VERSION": WHEEL_VERSION,
+#     },
+#     main = "rename_wheel.py",
+# )
+
+# py_binary(
+#     name = "rename_jax_cuda_pjrt_wheel",
+#     srcs = [
+#         "rename_wheel.py",
+#         "//jaxlib:version",
+#     ],
+#     data = [
+#         ":jax_cuda_pjrt_wheel",
+#     ],
+#     env = {
+#         "WHEEL_DIR": "jax_cuda_pjrt_wheel",
+#         "WHEEL_VERSION": WHEEL_VERSION,
+#     },
+#     main = "rename_wheel.py",
+# )
+
+py_import(
+    name = "jaxlib_py_import",
+    wheel = ":jaxlib_wheel",
+    deps = [
+        "@pypi_ml_dtypes//:pkg",
+        "@pypi_numpy//:pkg",
+        "@pypi_scipy//:pkg",
+    ],
+)
+
+py_import(
+    name = "jax_cuda_plugin_py_import",
+    cc_deps = if_cuda_libs([
+        "@cuda_cublas//:cublas",
+        "@cuda_cublas//:cublasLt",
+        "@cuda_cudart//:cudart",
+        "@cuda_cudnn//:cudnn",
+        "@cuda_cufft//:cufft",
+        "@cuda_cupti//:cupti",
+        "@cuda_curand//:curand",
+        "@cuda_cusolver//:cusolver",
+        "@cuda_cusparse//:cusparse",
+        "@cuda_nccl//:nccl",
+        "@cuda_nvjitlink//:nvjitlink",
+        "@cuda_nvrtc//:nvrtc",
+    ]),
+    wheel = ":jax_cuda_plugin_wheel",
+)
+
+py_import(
+    name = "jax_cuda_pjrt_py_import",
+    cc_deps = if_cuda_libs([
+        "@cuda_cublas//:cublas",
+        "@cuda_cublas//:cublasLt",
+        "@cuda_cudart//:cudart",
+        "@cuda_cudnn//:cudnn",
+        "@cuda_cufft//:cufft",
+        "@cuda_cupti//:cupti",
+        "@cuda_curand//:curand",
+        "@cuda_cusolver//:cusolver",
+        "@cuda_cusparse//:cusparse",
+        "@cuda_nccl//:nccl",
+        "@cuda_nvjitlink//:nvjitlink",
+        "@cuda_nvrtc//:nvrtc",
+    ]),
+    wheel = ":jax_cuda_pjrt_wheel",
 )
