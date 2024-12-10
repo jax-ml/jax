@@ -173,6 +173,7 @@ _dtype_to_ir_type : dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(dtypes.float8_e4m3fnuz): ir.Float8E4M3FNUZType.get,
   np.dtype(dtypes.float8_e5m2): ir.Float8E5M2Type.get,
   np.dtype(dtypes.float8_e5m2fnuz): ir.Float8E5M2FNUZType.get,
+  np.dtype(dtypes.float8_e8m0fnu): ir.Float8E8M0FNUType.get,
   np.dtype(dtypes.bfloat16): ir.BF16Type.get,
   np.dtype(np.float16): ir.F16Type.get,
   np.dtype(np.float32): ir.F32Type.get,
