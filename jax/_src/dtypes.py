@@ -419,7 +419,7 @@ def _issubdtype_cached(a: type | np.dtype | ExtendedDType,
     return b_sctype in {a_sctype, np.unsignedinteger, np.integer, np.number, np.generic}
 
   # Otherwise, fall back to numpy.issubdtype
-  return np.issubdtype(a_sctype, b_sctype)
+  return bool(np.issubdtype(a_sctype, b_sctype))
 
 can_cast = np.can_cast
 

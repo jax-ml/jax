@@ -1374,7 +1374,7 @@ def _lstsq(a: ArrayLike, b: ArrayLike, rcond: float | None, *,
     x = jnp.empty((n, *b.shape[1:]), dtype=a.dtype)
   else:
     if rcond is None:
-      rcond = jnp.finfo(dtype).eps * max(n, m)
+      rcond = float(jnp.finfo(dtype).eps) * max(n, m)
     else:
       rcond = jnp.where(rcond < 0, jnp.finfo(dtype).eps, rcond)
     u, s, vt = svd(a, full_matrices=False)
