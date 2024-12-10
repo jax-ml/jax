@@ -578,16 +578,30 @@ def parse_indices(
   base_indices = []
   slice_shape = []
   is_squeezed = []
-  for idx, bound in zip(index, shape):
+  for axis, (idx, bound) in enumerate(zip(index, shape)):
     if isinstance(idx, (ir.Operation, ir.OpView)):
       idx = idx.result
     if isinstance(idx, int):
+      if idx >= bound:
+        raise IndexError(
+            f"Index {idx} along axis {axis} is out of bounds for shape {shape}"
+        )
       base_indices.append(idx)
       slice_shape.append(1)
       is_squeezed.append(True)
     elif isinstance(idx, slice):
       if idx.step is not None and idx.step != 1:
         raise NotImplementedError("Strided slices not implemented")
+      if (
+          idx.start is not None
+          and idx.start >= bound
+          or idx.stop is not None
+          and idx.stop > bound
+      ):
+        print(index, shape)
+        raise IndexError(
+            f"Slice {idx} along axis {axis} is out of bounds for shape {shape}"
+        )
       base_indices.append(idx.start or 0)
       slice_shape.append((idx.stop or bound) - (idx.start or 0))
       is_squeezed.append(False)
