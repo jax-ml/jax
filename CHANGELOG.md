@@ -12,6 +12,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## jax 0.4.38
 
+* New features
+  * Added {func}`jax.lax.split`. This is a primitive version of
+    {func}`jax.numpy.split`, added because it yields a more compact
+    transpose during automatic differentiation.
+
 ## jax 0.4.37 (Dec 9, 2024)
 
 This is a patch release of jax 0.4.36. Only "jax" was released at this version.
