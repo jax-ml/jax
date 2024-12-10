@@ -17,18 +17,167 @@
 from collections.abc import Callable
 import functools
 import operator
-from typing import Sequence, Type
+from typing import Any, List, Sequence, Tuple, Type, cast
 
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib import mosaic_gpu_dialect as mgpu
-
+from jax._src.util import safe_zip
 from jaxlib.mlir import ir
+from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import nvvm
+
 from .utils import c, ptr_as_memref, single_thread_predicate
 
 # mypy: ignore-errors
+
+
+def strided_fragmented_layout():
+  layout = mgpu.FragmentedLayout.WGStridedFragLayout
+  return ir.Attribute.parse(f"#mosaic_gpu.fragmented_layout<{layout}>")
+
+
+def splat_fragmented_layout():
+  layout = mgpu.FragmentedLayout.WGSplatFragLayout
+  return ir.Attribute.parse(f"#mosaic_gpu.fragmented_layout<{layout}>")
+
+
+def set_layout_attributes(
+    op: ir.OpView,
+    in_layouts: List[ir.Attribute],
+    out_layouts: List[ir.Attribute],
+):
+  op.attributes["in_layouts"] = ir.ArrayAttr.get(in_layouts)
+  op.attributes["out_layouts"] = ir.ArrayAttr.get(out_layouts)
+
+
+def _extract_any_layout_from_op(op: ir.OpView) -> ir.Attribute | None:
+  if "in_layouts" in op.attributes and len(op.operands) > 0:
+    return cast(ir.ArrayAttr, op.attributes["in_layouts"])[0]
+  elif "out_layouts" in op.attributes and len(op.results) > 0:
+    return cast(ir.ArrayAttr, op.attributes["out_layouts"])[0]
+
+  return None
+
+
+def _infer_pointwise_op_layouts(
+    op: ir.OpView,
+) -> Tuple[List[ir.Attribute], List[ir.Attribute]] | None:
+  layout = _extract_any_layout_from_op(op)
+  # The op had no layout set. Since we're annotating ops, we may need to
+  # derive layout information from user or producer ops.
+  if not layout:
+    # First, we iterate on users.
+    for op_result in op.results:
+      for op_user in cast(ir.OpResult, op_result).uses:
+        layout = _extract_any_layout_from_op(op_user.owner)
+        if layout:
+          break
+      else:
+        continue
+      break
+
+  if not layout:
+    # Still no layout set. We iterate on producers.
+    for operand in op.operands:
+      layout = _extract_any_layout_from_op(operand.owner)
+      if layout:
+        break
+
+  if not layout:
+    return None
+
+  return ([layout for _ in op.operands], [layout for _ in op.results])
+
+
+def _check_pointwise_op_layouts_match_inferred_layouts(
+    op: ir.OpView,
+    in_layouts: List[ir.Attribute],
+    out_layouts: List[ir.Attribute],
+):
+  """Checks whether the layouts associated with the operation match the inferred layouts.
+
+  Returns:
+    'false' if all the layouts are set on the input operation, and 'true' if
+    any of the layouts was not set.
+  Raises:
+    ValueError: if the layouts of the operation do not match the inferred ones.
+  """
+  # TODO(bchetioui): abstract prototype and move comment there.
+
+  # TODO(bchetioui): allow checking for only partially set in_layouts or
+  # out_layouts? I imagine that may come in handy.
+  has_in_layouts = "in_layouts" in op.attributes
+  has_out_layouts = "out_layouts" in op.attributes
+
+  if has_in_layouts:
+    op_in_layouts = op.attributes["in_layouts"]
+    for i, (op_in_layout, in_layout) in enumerate(
+        safe_zip(op_in_layouts, in_layouts)
+    ):
+      if op_in_layout != in_layout:
+        raise ValueError(
+            f"Inferred in_layout {in_layout} for operand {i} of operation {op},"
+            f" but operand has layout {op_in_layout}."
+        )
+
+  if has_out_layouts:
+    op_out_layouts = op.attributes["out_layouts"]
+    for i, (op_out_layout, out_layout) in enumerate(
+        safe_zip(op_out_layouts, out_layouts)
+    ):
+      if op_out_layout != out_layout:
+        raise ValueError(
+            f"Inferred out_layout {out_layout} for result {i} of operation"
+            f" {op}, but result has layout {op_out_layout}."
+        )
+
+  return not (has_in_layouts and has_out_layouts)
+
+
+def trivially_replicates_layout(op: ir.OpView) -> bool:
+  """Returns 'true' if the parameter operation carries over a layout."""
+  query = lambda cls: isinstance(op, cls)
+  # TODO(bchetioui): complete this list with every possible pointwise ops.
+  if query(arith.AddFOp) or query(arith.MulFOp) or query(llvm.UndefOp):
+    return True
+  return False
+
+
+def infer_layout(module: ir.Module):
+  progress = True
+
+  def inference_step(op: ir.Operation):
+    if trivially_replicates_layout(op):
+      inference_rule = _infer_pointwise_op_layouts
+      check_rule = _check_pointwise_op_layouts_match_inferred_layouts
+    else:
+      raise NotImplementedError(f"Can not infer layout for {op}")
+
+    maybe_layouts = inference_rule(op)
+    if maybe_layouts is None:
+      return False
+
+    inferred_operands_layout, inferred_results_layout = maybe_layouts
+
+    nonlocal progress
+    progress = progress or check_rule(
+        op, inferred_operands_layout, inferred_results_layout
+    )
+    set_layout_attributes(op, inferred_operands_layout, inferred_results_layout)
+
+  def run_layout_inference(op: ir.OpView):
+    for region in op.operation.regions:
+      for block in region:
+        for block_op in list(block):
+          inference_step(block_op)
+    inference_step(op)
+
+  while progress:
+    progress = False
+    for op in module.body:
+      run_layout_inference(op)
 
 
 MlirLoweringRule = Callable[[ir.Operation | ir.OpView], Sequence[ir.Value]]
