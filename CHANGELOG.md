@@ -12,6 +12,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## jax 0.4.38
 
+* Deprecations
+  * a number of APIs in the internal `jax.core` namespace have been deprecated, including
+    `ClosedJaxpr`, `full_lower`, `Jaxpr`, `JaxprEqn`, `jaxpr_as_fun`, `lattice_join`,
+    `Literal`, `Primitive`, `raise_to_shaped`, `Token`, `Var`. Most can be replaced by
+    APIs of the same name in {mod}`jax.extend.core`; see the documentation for
+    {mod}`jax.extend` for information on the compatibility guarantees of these
+    semi-public extensions.
+
 ## jax 0.4.37 (Dec 9, 2024)
 
 This is a patch release of jax 0.4.36. Only "jax" was released at this version.

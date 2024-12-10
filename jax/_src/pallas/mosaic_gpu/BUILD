@@ -44,6 +44,7 @@ pytype_strict_library(
     deps = [
         ":lowering",
         "//jax",
+        "//jax:core",
         "//jax:mlir",
         "//jax:mosaic_gpu",
         "//jax/_src/pallas",

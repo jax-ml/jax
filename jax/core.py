@@ -23,7 +23,6 @@ from jax._src.core import (
   AxisSize as AxisSize,
   AxisName as AxisName,
   CallPrimitive as CallPrimitive,
-  ClosedJaxpr as ClosedJaxpr,
   ConcretizationTypeError as ConcretizationTypeError,
   DShapedArray as DShapedArray,
   DropVar as DropVar,
@@ -34,23 +33,18 @@ from jax._src.core import (
   InDBIdx as InDBIdx,
   InconclusiveDimensionOperation as InconclusiveDimensionOperation,
   InputType as InputType,
-  Jaxpr as Jaxpr,
   JaxprDebugInfo as JaxprDebugInfo,
-  JaxprEqn as JaxprEqn,
   JaxprPpContext as JaxprPpContext,
   JaxprPpSettings as JaxprPpSettings,
   JaxprTypeError as JaxprTypeError,
-  Literal as Literal,
   MapPrimitive as MapPrimitive,
   nonempty_axis_env as nonempty_axis_env_DO_NOT_USE,  # noqa: F401
   OpaqueTraceState as OpaqueTraceState,
   OutDBIdx as OutDBIdx,
   OutputType as OutputType,
   ParamDict as ParamDict,
-  Primitive as Primitive,
   ShapedArray as ShapedArray,
   TRACER_LEAK_DEBUGGER_WARNING as TRACER_LEAK_DEBUGGER_WARNING,
-  Token as Token,
   Trace as Trace,
   Tracer as Tracer,
   unsafe_am_i_under_a_jit as unsafe_am_i_under_a_jit_DO_NOT_USE,  # noqa: F401
@@ -59,7 +53,6 @@ from jax._src.core import (
   unsafe_get_current_trace as unsafe_get_current_trace_DO_NOT_USE,  # noqa: F401
   UnshapedArray as UnshapedArray,
   Value as Value,
-  Var as Var,
   abstract_token as abstract_token,
   aval_mapping_handlers as aval_mapping_handlers,
   call as call,
@@ -78,7 +71,6 @@ from jax._src.core import (
   eval_jaxpr as eval_jaxpr,
   extend_axis_env_nd as extend_axis_env_nd,
   find_top_trace as find_top_trace,
-  full_lower as full_lower,
   gensym as gensym,
   get_aval as get_aval,
   get_type as get_type,
@@ -86,10 +78,8 @@ from jax._src.core import (
   is_concrete as is_concrete,
   is_constant_dim as is_constant_dim,
   is_constant_shape as is_constant_shape,
-  jaxpr_as_fun as jaxpr_as_fun,
   jaxprs_in_params as jaxprs_in_params,
   join_effects as join_effects,
-  lattice_join as lattice_join,
   leaked_tracer_error as leaked_tracer_error,
   literalable_types as literalable_types,
   mapped_aval as mapped_aval,
@@ -101,7 +91,6 @@ from jax._src.core import (
   no_effects as no_effects,
   primal_dtype_to_tangent_dtype as primal_dtype_to_tangent_dtype,
   pytype_aval_mappings as pytype_aval_mappings,
-  raise_to_shaped as raise_to_shaped,
   raise_to_shaped_mappings as raise_to_shaped_mappings,
   reset_trace_state as reset_trace_state,
   set_current_trace as set_current_trace,
@@ -124,6 +113,37 @@ from jax._src.core import (
 
 from jax._src import core as _src_core
 _deprecations = {
+    # Added 2024-12-10
+    "ClosedJaxpr": ("jax.core.ClosedJaxpr is deprecated. Use jax.extend.core.ClosedJaxpr instead, "
+                    "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
+                    _src_core.ClosedJaxpr),
+    "full_lower": ("jax.core.full_lower is deprecated. It is a no-op as of JAX v0.4.36.",
+                   _src_core.full_lower),
+    "Jaxpr": ("jax.core.Jaxpr is deprecated. Use jax.extend.core.Jaxpr instead, "
+              "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
+              _src_core.Jaxpr),
+    "JaxprEqn": ("jax.core.JaxprEqn is deprecated. Use jax.extend.core.JaxprEqn instead, "
+                 "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
+                 _src_core.JaxprEqn),
+    "jaxpr_as_fun": ("jax.core.jaxpr_as_fun is deprecated. Use jax.extend.core.jaxpr_as_fun instead, "
+                     "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
+                     _src_core.jaxpr_as_fun),
+    "lattice_join": ("jax.core.lattice_join is deprecated. It is a no-op as of JAX v0.4.36.",
+                     _src_core.lattice_join),
+    "Literal": ("jax.core.Literal is deprecated. Use jax.extend.core.Literal instead, "
+                "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
+                _src_core.Literal),
+    "Primitive": ("jax.core.Primitive is deprecated. Use jax.extend.core.Primitive instead, "
+                  "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
+                  _src_core.Primitive),
+    "raise_to_shaped": ("jax.core.raise_to_shaped is deprecated. It is a no-op as of JAX v0.4.36.",
+                        _src_core.raise_to_shaped),
+    "Token": ("jax.core.Token is deprecated. Use jax.extend.core.Token instead, "
+              "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
+              _src_core.Token),
+    "Var": ("jax.core.Var is deprecated. Use jax.extend.core.Var instead, "
+            "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
+            _src_core.Var),
     # Added 2024-08-14
     "check_eqn": ("jax.core.check_eqn is deprecated.", _src_core.check_eqn),
     "check_type": ("jax.core.check_type is deprecated.", _src_core.check_type),
@@ -152,10 +172,21 @@ _deprecations = {
 
 import typing
 if typing.TYPE_CHECKING:
+  ClosedJaxpr = _src_core.ClosedJaxpr
+  Jaxpr = _src_core.Jaxpr
+  JaxprEqn = _src_core.JaxprEqn
+  Literal = _src_core.Literal
+  Primitive = _src_core.Primitive
+  Token = _src_core.Token
+  Var = _src_core.Var
   check_eqn = _src_core.check_eqn
   check_type = _src_core.check_type
   check_valid_jaxtype = _src_core.check_valid_jaxtype
+  full_lower = _src_core.full_lower
+  jaxpr_as_fun = _src_core.jaxpr_as_fun
+  lattice_join = _src_core.lattice_join
   non_negative_dim = _src_core.non_negative_dim
+  raise_to_shaped = _src_core.raise_to_shaped
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)

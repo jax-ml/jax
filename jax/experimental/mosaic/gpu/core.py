@@ -77,7 +77,7 @@ if RUNTIME_PATH and RUNTIME_PATH.exists():
   os.environ["MOSAIC_GPU_RUNTIME_LIB_PATH"] = str(RUNTIME_PATH)
 
 
-mosaic_gpu_p = jax.core.Primitive("mosaic_gpu_p")
+mosaic_gpu_p = jax._src.core.Primitive("mosaic_gpu_p")
 mosaic_gpu_p.multiple_results = True
 
 

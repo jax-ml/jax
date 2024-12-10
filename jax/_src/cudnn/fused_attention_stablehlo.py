@@ -18,8 +18,8 @@ import json
 import math
 
 import jax
-from jax import core
 from jax import dtypes
+from jax._src import core
 from jax._src import dispatch
 from jax._src.custom_partitioning import custom_partitioning
 from jax._src.interpreters import batching
