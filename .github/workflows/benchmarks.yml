@@ -10,17 +10,17 @@ on:
 
 jobs:
   multiprocess_gpu_test:
-    runs-on: ubuntu-latest
-    container:
-      image: gcr.io/jax-builds/cuda12-cudnn85-ubuntu2204  # GPU support?
+    runs-on: ubuntu-latest  #  For self-hosted runners with GPUs, update accordingly.
     strategy:
       matrix:
-        gpu-count: [2, 4, 8] # Adjust based on available GPUs
+        gpu-count: [2, 4, 8] # Adjust based on the runner's available GPUs
     steps:
       - uses: actions/checkout@v3
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          pip install -U jax
+          pip install -U "jax[cuda12]"
       - name: Run Multiprocess GPU Test
         run: |
           export CUDA_VISIBLE_DEVICES="0-$((${matrix.gpu-count} - 1))"
