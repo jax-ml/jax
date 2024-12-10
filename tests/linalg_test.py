@@ -2061,6 +2061,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     dtype=float_types+complex_types,
   )
   def testOneNormEstimator(self, shape, dtype):
+    from jax._src.scipy.linalg import _onenormest
     rng = jtu.rand_default(self.rng())
     #  scipy algorithm is not deterministic so set seed for reproducibility
     np.random.seed(111)
@@ -2074,20 +2075,21 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     else:
       tol = 1e-8
 
-    logm = partial(jsp.linalg.onenormest, key=key, t=50, itmax=50)
-    scipy_logm = partial(osp.sparse.linalg._onenormest.onenormest, t=50, itmax=50)
-    self._CheckAgainstNumpy(scipy_logm,
-                        logm,
+    normest = partial(_onenormest, key=key, t=50, itmax=50)
+    scipy_normest = partial(osp.sparse.linalg._onenormest.onenormest, t=50, itmax=50)
+    self._CheckAgainstNumpy(scipy_normest,
+                        normest,
                         args_maker,
                         tol=tol,
                         check_dtypes=False)
-    self._CompileAndCheck(logm, args_maker)
+    self._CompileAndCheck(normest, args_maker)
 
   @jtu.sample_product(
     shape=[(4, 4), (15, 15), (50, 50), (100, 100)],
     dtype=float_types+complex_types,
   )
   def testInverseSquaring(self, shape, dtype):
+    from jax._src.scipy.linalg import _inverse_squaring
     rng = jtu.rand_default(self.rng())
     #  scipy algorithm is not deterministic so set seed for reproducibility
     np.random.seed(111)
@@ -2104,7 +2106,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     else:
       tol = 1e-8
 
-    fn = partial(jsp.linalg._inverse_squaring, key=key)
+    fn = partial(_inverse_squaring, key=key)
     scipy_fn = partial(scipy.linalg._matfuncs_inv_ssq._inverse_squaring_helper)
 
     self._CheckAgainstNumpy(scipy_fn,

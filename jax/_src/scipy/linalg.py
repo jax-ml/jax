@@ -1828,10 +1828,6 @@ def _fractional_power_superdiag_entry(l1, l2, t12, p):
            32 (3). pp. 1056-1078. ISSN 0895-4798
 
     """
-
-  def unwinding_number(z):
-    """Equation 5.3"""
-    return jnp.ceil((z.imag - jnp.pi) / (2*jnp.pi))
   def last_case():
     """Equation 5.5"""
     log_l1 = jnp.log(l1)
@@ -1908,8 +1904,9 @@ def _briggs_helper_function(a: Array, k:int) -> Array:
            Numerical Algorithms, 59 : 393--402.
   """
   pi_half = jnp.pi/2
-  k_hat = k
-  a, k_hat = lax.cond(jnp.angle(a) >= pi_half, lambda: (jnp.sqrt(a), k-1), lambda: (a, k))
+  a_angle = jnp.angle(a)
+  condition = a_angle >= pi_half
+  a = jnp.where(condition, jnp.sqrt(a), a)
   z_0 = a-1.0
   a = jnp.sqrt(a)
   r = a + 1.0
@@ -1919,17 +1916,12 @@ def _briggs_helper_function(a: Array, k:int) -> Array:
     r = r * (a+1.0)
     return a, r
 
-  a, r = lax.fori_loop(1, k_hat, loop_body, (a, r))
+  a, r = lax.fori_loop(1, k-1, loop_body, (a, r))
+  #  one more loop step for k_hat=k
+  _next_a, next_r = loop_body(0, (a,r))
+  r = jnp.where(condition, r, next_r)
   r = z_0/r
   return r
-
-def onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> float:
-  if t >= A.shape[-1]:
-    # if t is greater than number of columns it is faster to just compute exact value
-    # we also avoid getting stuck in an infinite loop when generating vectors that are not parallel in algorithm
-    return jnp.linalg.norm(A, 1, axis=(-2, -1))
-  else:
-    return _onenormest(A, key, t, itmax)
 
 @partial(jit, static_argnames=("t","itmax"))
 def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> float:
@@ -1942,6 +1934,10 @@ def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> float:
           SIAM J. Matrix Anal. Appl. Vol. 21, No. 4, pp. 1185-1201.
   """
   n = A.shape[-1]
+  if t >= n:
+    # if t is greater than number of columns it is faster to just compute exact value
+    # we also avoid getting stuck in an infinite loop when generating vectors that are not parallel in algorithm
+    return jnp.linalg.norm(A, 1, axis=(-2, -1))
   ind_hist = jnp.ones(t*itmax, dtype=jnp.int32) * -1
   est_old = 0.0
   idx_size = min(n,t*itmax+t)
@@ -1988,7 +1984,7 @@ def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> float:
     S = S.at[:, i].set(rand_val.astype(S.dtype))
     return S, S_old, key
 
-  def body_fun(x):
+  def main_loop_body(x):
     #  In this function instead of using break or goto we set k to itmax
     #  This way loop will terminate after ending current iteration
     A, X, S, ind, ind_hist, est_old, key, k = x
@@ -2033,11 +2029,11 @@ def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> float:
     k += 1
     return A, X, S, ind, ind_hist, est_old, key, k
 
-  def cond_fun(x):
+  def main_loop_cond(x):
     A, X, S, ind, ind_hist, est_old, key, k = x
     return k < itmax
 
-  A, X, S, ind, ind_hist, est, key, k = jax.lax.while_loop(cond_fun, body_fun, (A, X, S, ind, ind_hist, est_old, key, 1))
+  A, X, S, ind, ind_hist, est, key, k = jax.lax.while_loop(main_loop_cond, main_loop_body, (A, X, S, ind, ind_hist, est_old, key, 1))
 
   return est
 
@@ -2085,14 +2081,14 @@ def _inverse_squaring(T_0: Array, theta: tuple[float], key: ArrayLike):
     T, s, m = x
     nonlocal d_3
     nonlocal k
-    d_3 = jax.lax.cond(s > s_0, lambda x: normest(T, 3, key)**(1/3), lambda x: x, d_3)
+    d_3 = jax.lax.cond(s > s_0, lambda: normest(T, 3, key)**(1/3), lambda: d_3)
     d_4 = normest(T, 4, key)**(1/4)
     a_3 = jnp.maximum(d_3, d_4)
     def fun(m, k):
       # 18 to 27
       ind = jnp.arange(3, 8)
       for i, idx in enumerate(ind):
-        ind = jax.lax.select(a_3 <= theta[ind[i]], ind, ind.at[i].set(8))
+        ind = jax.lax.select(a_3 <= theta[idx], ind, ind.at[i].set(8))
 
       j_1 = jnp.min(ind)
       m = jax.lax.select(j_1 <= 6, j_1, m)
@@ -2117,18 +2113,17 @@ def _inverse_squaring(T_0: Array, theta: tuple[float], key: ArrayLike):
 
   #  R = (T - I), but we compute it with briggs algorithm to avoid cancellation on diagonal
   R = T
-
-  for i in range(T.shape[-1]):
-    a = T_0[..., i, i]
-    R = R.at[..., i, i].set(_briggs_helper_function(a, s))
+  a = jnp.diag(T_0)
+  R = jnp.fill_diagonal(R, _briggs_helper_function(a, s), inplace=False)
 
   # replace superdiagonal
   p = jnp.exp2(-s)
-  for i in range(T.shape[-1]-1):
+  def replace_superdiag_fn(i, A):
     l1 = T_0[i, i]
     l2 = T_0[i+1, i+1]
     t12 = T_0[i, i+1]
-    R = R.at[i, i+1].set(_fractional_power_superdiag_entry(l1, l2, t12, p))
+    return A.at[i, i+1].set(_fractional_power_superdiag_entry(l1, l2, t12, p))
+  R = lax.fori_loop(0, T.shape[-1]-1, replace_superdiag_fn, R)
 
   has_principal_branch = jnp.logical_or(diag.real > 0, diag.imag != 0).all()
   R = lax.select(has_principal_branch, R, T-jnp.identity(T.shape[-1]).astype(T.dtype))
@@ -2141,6 +2136,7 @@ def _logm_triu(T: Array, key:ArrayLike) -> Array:
   """
   Implements Awad H. Al-Mohy and Nicholas J. Higham (2012) "Improved Inverse Scaling and Squaring Algorithms for the Matrix Logarithm."
   """
+  n = T.shape[-1]
   diag = jnp.diag(T)
   T_0 = T
   #  Bounds defined in table 2.1 from Awad H. et al.
@@ -2155,21 +2151,22 @@ def _logm_triu(T: Array, key:ArrayLike) -> Array:
   # move nodes and weights from range [-1,1] to [0,1]
   nodes = ((nodes+1.0)/2.0).astype(R.dtype)
   weights = (weights/2.0).astype(R.dtype)
-  identity = jnp.identity(T.shape[-1], dtype=T.dtype)
+  identity = jnp.identity(n, dtype=T.dtype)
   U = jnp.zeros_like(R)
   U = lax.fori_loop(0, m, lambda i, U: U + solve_triangular(identity+R*nodes[i], R*weights[i]), U)
   U = U*jnp.exp2(s)
 
   has_principal_branch = jnp.logical_or(diag.real > 0, diag.imag != 0).all()
   # replace diagonal
-
   U2 = jnp.fill_diagonal(U, jnp.log(diag), inplace=False)
   # replace superdiagonal
-  for i in range(T.shape[-1]-1):
+  def replace_superdiag_fn(i, A):
     l1 = T_0[i, i]
     l2 = T_0[i+1, i+1]
     t12 = T_0[i, i+1]
-    U2 = U.at[i, i+1].set(_logm_superdiag_entry(l1, l2, t12))
+    return A.at[i, i+1].set(_logm_superdiag_entry(l1, l2, t12))
+
+  U2 = lax.fori_loop(0, n-1, replace_superdiag_fn, U)
 
   U = lax.select(has_principal_branch, U2, U)
 
