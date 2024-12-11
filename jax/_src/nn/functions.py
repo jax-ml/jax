@@ -67,7 +67,7 @@ def relu(x: ArrayLike) -> Array:
 
   For more information see
   `Numerical influence of ReLU’(0) on backpropagation
-  <https://openreview.net/forum?id=urrcVI-_jRm>`_.
+  <https://dl.acm.org/doi/10.5555/3540261.3540297>`_.
 
   Args:
     x : input array
@@ -84,7 +84,7 @@ def relu(x: ArrayLike) -> Array:
 
   """
   return jnp.maximum(x, 0)
-# For behavior at 0, see https://openreview.net/forum?id=urrcVI-_jRm
+# For behavior at 0, see https://dl.acm.org/doi/10.5555/3540261.3540297
 relu.defjvps(lambda g, ans, x: lax.select(x > 0, g, lax.full_like(g, 0)))
 
 @jax.jit
