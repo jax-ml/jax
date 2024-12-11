@@ -81,7 +81,8 @@ def relu(x: ArrayLike) -> Array:
     :func:`relu6`
 
   """
-  return jnp.where(jnp.greater(x, 0), x, lax.zeros_like_array(x))
+  z = lax.zeros_like_array(x)
+  return lax.select(lax.ge(x, z), x, z)
 
 @jax.jit
 def squareplus(x: ArrayLike, b: ArrayLike = 4) -> Array:
