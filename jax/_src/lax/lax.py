@@ -159,24 +159,17 @@ def _broadcast_shapes_uncached(*shapes):
   if not rst: return fst
 
   # First check if we need only rank promotion (and not singleton-broadcasting).
-  try: return _reduce(_broadcast_ranks, rst, fst)
-  except ValueError: pass
+  result_shape = _max(shapes, key=len)
+  ndim = len(result_shape)
+  if ndim == 0 or all(core.definitely_equal_shape(result_shape[ndim - len(s):], s) for s in shapes):
+    return result_shape
 
   # Next try singleton-broadcasting, padding out ranks using singletons.
-  ndim = _max(len(shape) for shape in shapes)
   shape_list = [(1,) * (ndim - len(shape)) + shape for shape in shapes]
   result_shape = _try_broadcast_shapes(shape_list)
   if result_shape is None:
     raise ValueError(f"Incompatible shapes for broadcasting: shapes={list(shapes)}")
   return result_shape
-
-def _broadcast_ranks(s1, s2):
-  if len(s1) > len(s2):
-    s1, s2 = s2, s1
-  assert len(s1) <= len(s2)
-  s1_ = s2[len(s2) - len(s1):]
-  if core.definitely_equal_shape(s1_, s1): return s2
-  else: raise ValueError
 
 def _identity(x): return x
 
