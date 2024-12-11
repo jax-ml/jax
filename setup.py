@@ -62,6 +62,7 @@ setup(
         'opt_einsum',
         'scipy>=1.10',
         "scipy>=1.11.1; python_version>='3.12'",
+        "typing_extensions>=4.5.0",
     ],
     extras_require={
         # Minimum jaxlib version; used in testing.

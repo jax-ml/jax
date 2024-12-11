@@ -895,9 +895,14 @@ def register_dataclass(
 ) -> Typ:
   """Extends the set of types that are considered internal nodes in pytrees.
 
-  This differs from ``register_pytree_with_keys_class`` in that the C++
-  registries use the optimized C++ dataclass builtin instead of the argument
-  functions.
+  .. note::
+
+     This is a lower-level API, and most users of this function will be better
+     served by using :func:`jax.tree.dataclass`; see Examples below.
+
+  :func:`register_dataclass` differs from :func:`register_pytree_with_keys_class`
+  in that the C++ registries use the optimized C++ dataclass builtin instead of
+  the argument functions.
 
   See :ref:`extending-pytrees` for more information about registering pytrees.
 

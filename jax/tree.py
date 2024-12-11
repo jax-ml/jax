@@ -19,6 +19,8 @@ The :mod:`jax.tree` namespace contains aliases of utilities from :mod:`jax.tree_
 
 from jax._src.tree import (
     all as all,
+    dataclass as dataclass,
+    field as field,
     flatten as flatten,
     leaves as leaves,
     map as map,
