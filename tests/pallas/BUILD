@@ -481,7 +481,7 @@ jax_multiplatform_test(
         "gpu_a100_x32",
         "gpu_h100_x32",
     ],
-    shard_count = 2,
+    shard_count = 6,
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",
