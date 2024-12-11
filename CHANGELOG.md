@@ -24,6 +24,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 This is a patch release of jax 0.4.36. Only "jax" was released at this version.
 
+* Breaking changes
+  * Enable `jax_threefry_partitionable` by default (see [the update note](https://github.com/jax-ml/jax/discussions/18480)).
+
 * Bug fixes
   * Fixed a bug where `jit` would error if an argument was named `f` (#25329).
   * Fix a bug that will throw `index out of range` error in
