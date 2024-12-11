@@ -36,9 +36,9 @@ class Slice:
   and compilation time, or dynamic.
   """
 
-  start: int | Array
-  size: int | Array
-  stride: int = 1
+  start: core.DimSize | Array
+  size: core.DimSize | Array
+  stride: core.DimSize = 1
 
   def __post_init__(self):
     if self.stride < 1:
