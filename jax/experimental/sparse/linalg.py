@@ -132,7 +132,7 @@ def _lobpcg_standard_callable(
   _check_inputs(A, X)
 
   if tol is None:
-    tol = jnp.finfo(dt).eps
+    tol = float(jnp.finfo(dt).eps)
 
   X = _orthonormalize(X)
   P = _extend_basis(X, X.shape[1])

@@ -246,7 +246,7 @@ def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
 
   # set rcond
   if rcond is None:
-    rcond = len(x_arr) * finfo(x_arr.dtype).eps
+    rcond = len(x_arr) * float(finfo(x_arr.dtype).eps)
   rcond = core.concrete_or_error(float, rcond, "rcond must be float")
   # set up least squares equation for powers of x
   lhs = vander(x_arr, order)
