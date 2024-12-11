@@ -274,6 +274,7 @@ namespace; they are listed below.
     mask_indices
     matmul
     matrix_transpose
+    matvec
     max
     maximum
     mean
@@ -428,6 +429,7 @@ namespace; they are listed below.
     var
     vdot
     vecdot
+    vecmat
     vectorize
     vsplit
     vstack
