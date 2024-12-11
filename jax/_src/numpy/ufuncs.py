@@ -2495,12 +2495,12 @@ def floor_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   x1, x2 = promote_args_numeric("floor_divide", x1, x2)
   dtype = dtypes.dtype(x1)
   if dtypes.issubdtype(dtype, np.unsignedinteger):
-    return lax.div(x1, x2)
+    return _where(x2 == 0, 0, lax.div(x1, x2))
   elif dtypes.issubdtype(dtype, np.integer):
     quotient = lax.div(x1, x2)
     select = logical_and(lax.sign(x1) != lax.sign(x2), lax.rem(x1, x2) != 0)
     # TODO(mattjj): investigate why subtracting a scalar was causing promotion
-    return _where(select, quotient - 1, quotient)
+    return _where(x2 == 0, 0, _where(select, quotient - 1, quotient))
   elif dtypes.issubdtype(dtype, np.complexfloating):
     raise TypeError("floor_divide does not support complex-valued inputs")
   else:
@@ -2558,6 +2558,7 @@ def _float_divmod(x1: ArrayLike, x2: ArrayLike) -> tuple[Array, Array]:
   ind = lax.bitwise_and(mod != 0, lax.sign(x2) != lax.sign(mod))
   mod = lax.select(ind, mod + x2, mod)
   div = lax.select(ind, div - _constant_like(div, 1), div)
+  div = _where(x2 == 0., lax.div(x1, x2), div)
 
   return lax.round(div), mod
 
