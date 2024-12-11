@@ -650,6 +650,57 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fn, args_maker, tol=tol)
 
   @jtu.sample_product(
+      lhs_batch=broadcast_compatible_shapes,
+      rhs_batch=broadcast_compatible_shapes,
+      mat_size=[1, 2, 3],
+      vec_size=[2, 3, 4],
+      dtype=number_dtypes,
+  )
+  @jax.default_matmul_precision("float32")
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  def testMatvec(self, lhs_batch, rhs_batch, mat_size, vec_size, dtype):
+    rng = jtu.rand_default(self.rng())
+    lhs_shape = (*lhs_batch, mat_size, vec_size)
+    rhs_shape = (*rhs_batch, vec_size)
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+    jnp_fn = jnp.matvec
+    @jtu.promote_like_jnp
+    def np_fn(x, y):
+      f = (np.vectorize(np.matmul, signature="(m,n),(n)->(m)")
+           if jtu.numpy_version() < (2, 2, 0) else np.matvec)
+      return f(x, y).astype(x.dtype)
+    tol = {np.float16: 1e-2, np.float32: 1E-3, np.float64: 1e-12,
+           np.complex64: 1E-3, np.complex128: 1e-12, jnp.bfloat16: 1e-1}
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fn, args_maker, tol=tol)
+
+  @jtu.sample_product(
+      lhs_batch=broadcast_compatible_shapes,
+      rhs_batch=broadcast_compatible_shapes,
+      mat_size=[1, 2, 3],
+      vec_size=[2, 3, 4],
+      dtype=number_dtypes,
+  )
+  @jax.default_matmul_precision("float32")
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  def testVecmat(self, lhs_batch, rhs_batch, mat_size, vec_size, dtype):
+    rng = jtu.rand_default(self.rng())
+    lhs_shape = (*lhs_batch, vec_size)
+    rhs_shape = (*rhs_batch, vec_size, mat_size)
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+    jnp_fn = jnp.vecmat
+    @jtu.promote_like_jnp
+    def np_fn(x, y):
+      f = (np.vectorize(lambda x, y: np.matmul(np.conj(x), y),
+                        signature="(m),(m,n)->(n)")
+           if jtu.numpy_version() < (2, 2, 0) else np.vecmat)
+      return f(x, y).astype(x.dtype)
+    tol = {np.float16: 1e-2, np.float32: 1E-3, np.float64: 1e-12,
+           np.complex64: 1E-3, np.complex128: 1e-12, jnp.bfloat16: 1e-1}
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fn, args_maker, tol=tol)
+
+  @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape, axes=axes)
       for lhs_shape, rhs_shape, axes in [
           [(3,), (), 0],
@@ -6257,7 +6308,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
             'isnat',
             'loadtxt',
             'matrix',
-            'matvec',
             'may_share_memory',
             'memmap',
             'min_scalar_type',
@@ -6283,8 +6333,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
             'show_runtime',
             'test',
             'trapz',
-            'typename',
-            'vecmat'}
+            'typename'}
 
     # symbols removed in NumPy 2.0
     skip |= {'add_docstring',
