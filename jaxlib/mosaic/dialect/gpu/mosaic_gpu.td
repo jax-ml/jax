@@ -120,16 +120,18 @@ def MosaicGPU_DimensionAttr : EnumAttr<MosaicGPU_Dialect, MosaicGPU_Dimension, "
 def MosaicGPU_SwizzlingMode : I32EnumAttr<"SwizzlingMode",
     "What swizzling to use for a memory access.",
     [
-      I32EnumAttrCase<"kNoSwizzle", 0, "none">,
-      I32EnumAttrCase<"k32ByteSwizzle", 1, "32">,
-      I32EnumAttrCase<"k64ByteSwizzle", 2, "64">,
-      I32EnumAttrCase<"k128ByteSwizzle", 3, "128">
+      I32EnumAttrCase<"kNoSwizzle", 16, "swizzle_none">,
+      I32EnumAttrCase<"k32ByteSwizzle", 32, "swizzle_32">,
+      I32EnumAttrCase<"k64ByteSwizzle", 64, "swizzle_64">,
+      I32EnumAttrCase<"k128ByteSwizzle", 128, "swizzle_128">
     ]>{
   let cppNamespace = "::mosaic_gpu";
   let genSpecializedAttr = 0;
 }
 
-def MosaicGPU_SwizzlingModeAttr : EnumAttr<MosaicGPU_Dialect, MosaicGPU_SwizzlingMode, "swizzle">;
+def MosaicGPU_SwizzlingModeAttr : EnumAttr<MosaicGPU_Dialect, MosaicGPU_SwizzlingMode, "swizzle"> {
+  let assemblyFormat = "`<` $value `>`";
+}
 
 def TileTransformAttr : MosaicGPU_Attr<"TileTransform", "tile"> {
   let parameters = (ins Variadic<I64>:$tiling);
@@ -270,6 +272,80 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
     `destination` `(` $destination `:` type($destination) `)`
     `indices` `(` $indices `)`
     `predicate` `(` $predicate `)`
+    attr-dict
+  }];
+
+  let hasVerifier = 1;
+}
+
+def MosaicGPU_WGMMASupportedType : AnyTypeOf<[F16, BF16, F32],
+    "A type supported by the WGMMA operation">;
+
+def MosaicGPU_WGMMALayout :
+  I32EnumAttr<"WGMMALayout", "The layout of the tiles of a WGMMA operation", [
+    I32EnumAttrCase<"RowMajor", 0>,
+    I32EnumAttrCase<"ColumnMajor", 1>
+  ]> {
+  let cppNamespace = "::mosaic_gpu";
+  let genSpecializedAttr = 0;
+}
+
+def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", []> {
+  let summary = "Multiply two matrices asyncronously using warpgroup level matrix multiply operations.";
+  let description = [{
+    Schedules WGMMA operations that perform the following matrix multiple and
+    accumulate:
+
+      accumulator = a * b + accumulator
+
+    This operation supports larger inputs than the PTX-level WGMMA operation
+    and will schedule as many PTX-level WGMMA operations as needed to
+    accomplish the calculation. The `b` matrix, and optionally `a`, needs to be
+    provided in a 4-dimensional form, where the two minor-most dimensions
+    express the tile (group) size and the two major-most dimensions represent
+    the total number of tiles in each direction.
+
+    The inputs should have the following shapes:
+      - If `a` is in shared memory:
+        - a: [groups_m, groups_k, 64,     k]
+      - If `a` is in registers:
+        - a: [groups_m * 64, groups_k * k]
+      - b: [groups_k, groups_n,  k, k]
+      - accumulator: [groups_m * 64, groups_n * k]
+    Where:
+      - `k == swizzle/element_bytediwth` (for `kNoSwizzle`, `swizzle` is 16.)
+
+    The `accumulator` is always in registers and `b` is always in shared memory.
+    The last two dimensions of any input in shared memory may be physically
+    transposed in memory. This is inferred from the strides of the provided
+    memrefs. `a` and `b` must have the same element type and when `a` is in
+    registers only F16 or BF16 are supported.
+
+    The `accumulator` must be a tensor with a FragmentedLayout. The WGMMA
+    operation will be executed in the async proxy and any inputs in
+    registers need to be synchronized with a memory fence.
+
+    Usually `a` is read from shared memory if it is used directly in the WGMMA
+    operation. If `a` needs to be transfromed before it is used in the WGMMA
+    operation, it may be more convenient to read it directly form registers.
+    This avoids the need to store the data and wait for a fence.
+  }];
+
+  let arguments = (ins
+    TensorOf<[MosaicGPU_WGMMASupportedType]>:$accumulator,
+    AnyTypeOf<[
+      MemRefOf<[MosaicGPU_WGMMASupportedType]>,
+      TensorOf<[MosaicGPU_WGMMASupportedType]>]>:$a,
+    MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b,
+
+    // Attributes
+    DefaultValuedAttr<MosaicGPU_SwizzlingModeAttr, "SwizzlingMode::k128ByteSwizzle">:$swizzle
+  );
+
+  let assemblyFormat = [{
+    `accumulator` `(` $accumulator `:` type($accumulator) `)`
+    `a` `(` $a `:` type($a) `)`
+    `b` `(` $b `:` type($b) `)`
     attr-dict
   }];
 

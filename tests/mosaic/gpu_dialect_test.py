@@ -475,6 +475,98 @@ class DialectTest(parameterized.TestCase):
     ):
       self.module.operation.verify()
 
+  def test_wgmma_types_match(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.RankedTensorType.get([128, 160], ir.BF16Type.get()),
+          ir.MemRefType.get([2, 4, 64, 32], ir.F16Type.get()),
+          ir.MemRefType.get([4, 5, 32, 32], ir.BF16Type.get()),
+          name="wgmma",
+      )(
+          lambda accumulator, a, b: mgpu.wgmma(
+              accumulator,
+              a,
+              b,
+              swizzle=ir.Attribute.parse("#mosaic_gpu.swizzle<swizzle_64>"),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The `a` and `b` inputs must have the same element type.",
+    ):
+      self.module.operation.verify()
+
+  def test_wgmma_b_rank_is_4(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.RankedTensorType.get([128, 160], ir.BF16Type.get()),
+          ir.MemRefType.get([2, 4, 64, 32], ir.BF16Type.get()),
+          ir.MemRefType.get([5, 32, 32], ir.BF16Type.get()),
+          name="wgmma",
+      )(
+          lambda accumulator, a, b: mgpu.wgmma(
+              accumulator,
+              a,
+              b,
+              swizzle=ir.Attribute.parse("#mosaic_gpu.swizzle<swizzle_64>"),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The `b` input must have rank 4.",
+    ):
+      self.module.operation.verify()
+
+  def test_wgmma_b_shape_dim_3(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.RankedTensorType.get([128, 160], ir.BF16Type.get()),
+          ir.MemRefType.get([2, 4, 64, 32], ir.BF16Type.get()),
+          ir.MemRefType.get([4, 5, 32, 16], ir.BF16Type.get()),
+          name="wgmma",
+      )(
+          lambda accumulator, a, b: mgpu.wgmma(
+              accumulator,
+              a,
+              b,
+              swizzle=ir.Attribute.parse("#mosaic_gpu.swizzle<swizzle_64>"),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"The n group size \(16\) must be equal to swizzle/element_bytewidth "
+        r"\(32\)",
+    ):
+      self.module.operation.verify()
+
+  def test_wgmma_b_shape_dim_2(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.RankedTensorType.get([128, 160], ir.BF16Type.get()),
+          ir.MemRefType.get([2, 4, 64, 32], ir.BF16Type.get()),
+          ir.MemRefType.get([4, 5, 64, 32], ir.BF16Type.get()),
+          name="wgmma",
+      )(
+          lambda accumulator, a, b: mgpu.wgmma(
+              accumulator,
+              a,
+              b,
+              swizzle=ir.Attribute.parse("#mosaic_gpu.swizzle<swizzle_64>"),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"The k group size \(64\) must be equal to swizzle/element_bytewidth "
+        r"\(32\)",
+    ):
+      self.module.operation.verify()
+
+  # TODO(b/381371456): Add tests for the other WGMMA inputs.
+
 
 class DialectLoweringTest(DialectTest):
 
