@@ -222,7 +222,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
-        "@local_config_cuda//cuda:cuda_headers",
         "@nanobind",
         "@tsl//tsl/platform:statusor",
         "@xla//xla:util",
