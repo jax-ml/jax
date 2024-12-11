@@ -92,8 +92,11 @@ class _SymbolicConstraint:
   # Either e1 == e2 if cmp == Comparator.EQ else e1 >= e2
   cmp: Comparator
   debug_str: str  # The form in which the user expressed it, for error messages
-  e1: DimSize  # This has been normalized w.r.t. previous constraints only
-  e2: DimSize  # This has been normalized w.r.t. previous constraints only
+  # e1, e2, and diff == e1 - e2, are normalized w.r.t. previous constraints only
+  e1: DimSize
+  e2: DimSize
+  # we pre-compute diff to avoid having the normalization rule kick in later.
+  diff: DimSize
 
   def __repr__(self):
     return f"Constraint({self.debug_str})"
@@ -1061,29 +1064,33 @@ class SymbolicScope:
     if cmp == Comparator.GEQ and not is_geq:
       e1, e2 = e2, e1
 
-    diff = e1 - e2
-    if (diff_const := _DimExpr._to_constant(diff)) is not None:
-      if ((cmp == Comparator.EQ and diff_const != 0) or
-          (cmp == Comparator.GEQ and diff_const < 0)):
-        raise ValueError(f"Unsatisfiable explicit constraint: {c_str}")
+    # Compute e1 - e2 before we add to normalization rules
+    constr = _SymbolicConstraint(debug_str=c_str, cmp=cmp, e1=e1, e2=e2,
+                                 diff=e1 - e2)
+    self._process_explicit_constraint(constr)
+
+  def _process_explicit_constraint(self, constr: _SymbolicConstraint):
+    if (diff_const := _DimExpr._to_constant(constr.diff)) is not None:
+      if ((constr.cmp == Comparator.EQ and diff_const != 0) or
+          (constr.cmp == Comparator.GEQ and diff_const < 0)):
+        raise ValueError(f"Unsatisfiable explicit constraint: {constr.debug_str}")
       return
 
-    if cmp == Comparator.EQ:
-      if not isinstance(e1, _DimExpr):
+    if constr.cmp == Comparator.EQ:
+      if not isinstance(constr.e1, _DimExpr):
         raise ValueError("Invalid equality constraint: {e1} == {e2}. "
                          "The left-hand-side must be of the form `term * coefficient`.")
-      (before, before_k), *rest = e1._sorted_terms
+      (before, before_k), *rest = constr.e1._sorted_terms
       if rest:
         raise ValueError("Invalid equality constraint: {e1} == {e2}. "
                          "The left-hand-side must be of the form `term * coefficient`.")
 
-      after = _ensure_poly(e2, "parse_constraint", e1.scope)  # type: ignore[name-error,unused-ignore]
+      after = _ensure_poly(constr.e2, "parse_constraint", constr.e1.scope)  # type: ignore[name-error,unused-ignore]
       if before in self._normalization_rules:
         raise NotImplementedError(
             f"Found multiple equality constraints with the same left-hand-side: {before}")
       self._normalization_rules[before] = (after, before_k)
 
-    constr = _SymbolicConstraint(debug_str=c_str, cmp=cmp, e1=e1, e2=e2)
     self._explicit_constraints.append(constr)
 
   def _check_same_scope(self, other: _DimExpr,
@@ -2120,14 +2127,12 @@ def _solve_dim_equations(
     for constr in scope._explicit_constraints:
       # We can't just construct constr.e1 - constr.e2 because for an equality
       # constraint it would be reduced to 0.
-      c_e1 = constr.e1._evaluate(shape_env) if not core.is_constant_dim(constr.e1) else constr.e1  # type: ignore
-      c_e2 = constr.e2._evaluate(shape_env) if not core.is_constant_dim(constr.e2) else constr.e2  # type: ignore
-      c_diff = c_e1 - c_e2
+      c_diff = constr.diff._evaluate(shape_env) if not core.is_constant_dim(constr.diff) else constr.diff  # type: ignore
       shape_constraints.add_constraint(
           constr.cmp, c_diff, 0,
           error_message_pieces=[
                 f"Input shapes do not match the symbolic shape constraint {constr.debug_str}. "
-                f"Expected '{constr.e1} - {constr.e2}' to be "
+                f"Expected '{constr.diff}' to be "
                 f"{'greater or equal' if constr.cmp == Comparator.GEQ else 'equal'} to 0, "
                 "but found ", c_diff,
 
