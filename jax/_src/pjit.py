@@ -698,9 +698,6 @@ def get_abstract_mesh_from_avals(in_avals):
     return None
   m = None
   for a in in_avals:
-    # TODO(yashkatariya): Remove this when mesh context can be set by the user.
-    if a.sharding is None:  # type: ignore
-      continue
     if m is not None and m != a.sharding.mesh:
       raise ValueError(
           f'Mesh for all inputs should be equal. Got one mesh: {m} and'
@@ -1788,9 +1785,7 @@ def _pjit_lower(
     lowering_parameters: mlir.LoweringParameters,
     pgle_profiler: profiler.PGLEProfiler | None):
   if config.sharding_in_types.value:
-    cur_mesh = mesh_lib.get_concrete_mesh()
-    mesh = cur_mesh if isinstance(cur_mesh, mesh_lib.Mesh) else None
-    api_name = 'jit'
+    mesh, api_name = mesh_lib.get_concrete_mesh(), 'jit'
   else:
     mesh, api_name = ((resource_env.physical_mesh, 'pjit')
                       if resource_env is not None else (None, 'jit'))

@@ -1626,10 +1626,8 @@ def get_sharding(sharding, ndim):
     return _maybe_modify_sharding(sharding)
 
   context_mesh = mesh_lib.get_abstract_mesh()
-  # TODO(yashkatariya): Error out and ask users to set the context mesh in their
-  # code.
   if not context_mesh:
-    return None
+    return RuntimeError("Please set the mesh via `jax.set_mesh` API.")
   assert sharding is None
   return NamedSharding(context_mesh, P(*[None] * ndim))
 
@@ -1692,7 +1690,7 @@ class ShapedArray(UnshapedArray):
               self.dtype.name)
     dt_str = dt_str.replace('void', 'float0')
     if hasattr(self, 'sharding') and self.sharding is not None:
-      shapestr = _get_shape_sharding_str(self.shape, self.sharding.spec)
+      shapestr = _get_shape_sharding_str(self.shape, self.sharding.spec)  # type: ignore
       return f'{dt_str}[{shapestr}]'
     else:
       shapestr = ','.join(map(str, self.shape))
@@ -2658,16 +2656,10 @@ def _check_call(ctx_factory, prim, in_atoms, params):
     return aval
   for v, x in zip(call_jaxpr.invars, in_atoms):
     if not typecompat(substitute(v.aval), x.aval):
-      # TODO(yashkatariya): Remove this once numpy array's aval has a sharding
-      # on it.
-      if (config.sharding_in_types.value and isinstance(x, Literal) and
-          v.aval.sharding is not None and x.val.ndim == 0):
-        pass
-      else:
-        # TODO(mattjj): vars in error message are confusing b/c of Var.__repr__
-        raise JaxprTypeError(f"Call primitive {prim} passes operand {x} of type "
-                            f"{x.aval} to jaxpr expecting type "
-                            f"{substitute(v.aval)}")
+      # TODO(mattjj): vars in error message are confusing b/c of Var.__repr__
+      raise JaxprTypeError(f"Call primitive {prim} passes operand {x} of type "
+                           f"{x.aval} to jaxpr expecting type "
+                           f"{substitute(v.aval)}")
     env[v] = x if type(x) is Var else x.val
 
   _check_jaxpr(ctx_factory, call_jaxpr)

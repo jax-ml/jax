@@ -5483,6 +5483,24 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     self.assertIn('@Sharding', f.lower(arr).as_text())
 
+  @jtu.with_user_mesh((2, 2), ('x', 'y'), {mesh_lib.AxisTypes.Auto: ('x', 'y')})
+  def test_only_auto(self, mesh):
+    np_inp = np.arange(16.).reshape(8, 2)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x', None)))
+
+    @jax.jit
+    def f(x, x2):
+      y = x * 2
+      self.assertEqual(y.sharding.spec, P(P.UNCONSTRAINED, None))
+      z = jnp.sin(y)
+      self.assertEqual(z.sharding.spec, P(P.UNCONSTRAINED, None))
+      a = z @ x2
+      self.assertEqual(a.sharding.spec, P(P.UNCONSTRAINED, P.UNCONSTRAINED))
+      return a
+
+    out = f(arr, arr.T)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
   def test_auto_user(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'),
                            axis_types={mesh_lib.AxisTypes.Auto: ('x', 'y')})

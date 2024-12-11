@@ -111,8 +111,6 @@ class AxisTypes(enum.Enum):
     return self.name
 
 def axis_names_to_types(axis_types) -> dict[str, AxisTypes]:
-  if axis_types is None:
-    return {}
   d = {}
   for t, names in axis_types.items():
     if isinstance(names, tuple):
@@ -179,7 +177,7 @@ class Mesh(contextlib.ContextDecorator):
 
   devices: np.ndarray
   axis_names: tuple[MeshAxisName, ...]
-  axis_types: MeshAxisType | None
+  axis_types: MeshAxisType
 
   def __new__(cls, devices: np.ndarray | Sequence[xc.Device],
               axis_names: str | Sequence[MeshAxisName], *,
@@ -199,9 +197,9 @@ class Mesh(contextlib.ContextDecorator):
           f"devices.ndim == {devices.ndim} and "
           f"len(axis_names) == {len(axis_names)}.")
 
-    # TODO(yashkatariya): If axis_types is None, set all axes to AUTO.
-    axis_types_tuple = (None if axis_types is None else
-                        tuple(axis_types.items()))
+    axis_types = ({AxisTypes.Auto: axis_names} if axis_types is None else
+                  axis_types)
+    axis_types_tuple = tuple(axis_types.items())
     key = (axis_names, devices.shape, tuple(devices.flat), axis_types_tuple)
     val = _mesh_object_dict.get(key, None)
     if val is not None:
@@ -337,7 +335,7 @@ class Mesh(contextlib.ContextDecorator):
   def _repr(self):
     if self.empty:
       return "Mesh(device_ids=[], axis_names=())"
-    atr = '' if self.axis_types is None else f", axis_types={self.axis_types}"
+    atr = f", axis_types={self.axis_types}"
     return f"Mesh(device_ids={self.device_ids!r}, axis_names={self.axis_names!r}{atr})"
 
   def __repr__(self):
@@ -378,14 +376,13 @@ class AbstractMesh:
   def __init__(self, shape_tuple: tuple[tuple[str, int], ...], *,
                axis_types: MeshAxisType | None = None):
     self.shape_tuple = shape_tuple
-    self.axis_types = axis_types
     if self.shape_tuple:
       self._axis_names, self._axis_sizes = list(zip(*self.shape_tuple))
     else:
       self._axis_names, self._axis_sizes = (), ()
-    # TODO(yashkatariya): If axis_types is None, set all axes to AUTO.
-    self._axis_types_tuple = (None if axis_types is None else
-                              tuple(axis_types.items()))
+    self.axis_types = ({AxisTypes.Auto: self._axis_names} if axis_types is None
+                       else axis_types)
+    self._axis_types_tuple = tuple(self.axis_types.items())
 
   def __hash__(self):
     return hash((self.shape_tuple, self._axis_types_tuple))
@@ -399,7 +396,7 @@ class AbstractMesh:
             self._axis_types_tuple == other._axis_types_tuple)
 
   def __repr__(self):
-    atr = '' if self.axis_types is None else f", axis_types={self.axis_types}"
+    atr = f", axis_types={self.axis_types}"
     return f"AbstractMesh({self.shape_tuple}{atr})"
 
   @property
@@ -432,26 +429,18 @@ class AbstractMesh:
 
   @functools.cached_property
   def _are_all_axes_collective(self) -> bool:
-    if self.axis_types is None:
-      return False
     return all(t == AxisTypes.Collective for t in self.axis_types.keys())
 
   @functools.cached_property
   def _are_all_axes_auto(self) -> bool:
-    if self.axis_types is None:
-      return False
     return all(t == AxisTypes.Auto for t in self.axis_types.keys())
 
   @functools.cached_property
   def _any_axis_collective(self) -> bool:
-    if self.axis_types is None:
-      return False
     return any(t == AxisTypes.Collective for t in self.axis_types.keys())
 
   @functools.cached_property
   def _any_axis_auto(self) -> bool:
-    if self.axis_types is None:
-      return False
     return any(t == AxisTypes.Auto for t in self.axis_types.keys())
 
   @property
@@ -494,8 +483,6 @@ def _raise_value_error(name):
 
 @contextlib.contextmanager
 def set_abstract_mesh(mesh: AbstractMesh):
-  if mesh is not None and mesh.axis_types is None:
-    raise RuntimeError('Please set the AxisTypes of Mesh.')
   prev_val = jax_config.abstract_mesh_context_manager.swap_local(mesh)
   try:
     yield
