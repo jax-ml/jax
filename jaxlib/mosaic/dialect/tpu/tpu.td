@@ -473,6 +473,13 @@ def TPU_BitcastVregOp : TPU_Op<"bitcast_vreg", [Pure]> {
   let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
 }
 
+def TPU_WeirdOp : TPU_Op<"weird", [Pure, ElementwiseMappable]> {
+  let arguments = (ins AnyType:$input);  // F32 vector or scalar
+  let results = (outs AnyType:$output);  // I1 vector or scalar
+  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+  let hasVerifier = 1;
+}
+
 def TPU_RollVectorsOp : TPU_Op<"roll_vectors", [Pure]> {
   let arguments = (ins Variadic<AnyVectorOfNonZeroRank>:$input);
   let results = (outs AnyVectorOfNonZeroRank:$output);
