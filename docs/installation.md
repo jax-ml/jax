@@ -253,17 +253,13 @@ simply run:
 conda install jax -c conda-forge
 ```
 
-To install it on a machine with an NVIDIA GPU, run:
+If you run this command on machine with an NVIDIA GPU, this should install a CUDA-enabled package of `jaxlib`.
+
+To ensure that the jax version you are installing is indeed CUDA-enabled, run:
 
 ```bash
-conda install "jaxlib=*=*cuda*" jax cuda-nvcc -c conda-forge -c nvidia
+conda install "jaxlib=*=*cuda*" jax -c conda-forge
 ```
-
-Note the `cudatoolkit` distributed by `conda-forge` is missing `ptxas`, which
-JAX requires. You must therefore either install the `cuda-nvcc` package from
-the `nvidia` channel, or install CUDA on your machine separately so that `ptxas`
-is in your path. The channel order above is important (`conda-forge` before
-`nvidia`).
 
 If you would like to override which release of CUDA is used by JAX, or to
 install the CUDA build on a machine without GPUs, follow the instructions in the

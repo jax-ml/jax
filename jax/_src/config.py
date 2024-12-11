@@ -14,30 +14,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 import contextlib
 import functools
 import itertools
 import logging
 import os
 import sys
-import threading
-from typing import Any, Generic, NamedTuple, NoReturn, Optional, Protocol, TypeVar, cast
+from typing import Any, Generic, NoReturn, Optional, Protocol, TypeVar, cast
 
-from jax._src import lib
 from jax._src.lib import guard_lib
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 from jax._src import logging_config
 
-# TODO(phawkins): reenable pytype after xla_extension_version >= 295
-# pytype: skip-file
-
-if xla_extension_version >= 295:
-  config_ext = xla_client._xla.config
-else:
-  config_ext = None
+config_ext = xla_client._xla.config
 
 logger = logging.getLogger(__name__)
 
@@ -200,91 +191,38 @@ class Config:
       already_configured_with_absl = True
 
 
-if xla_extension_version >= 295:
-  def trace_context():
-    """Returns a tuple of configuration values that affect tracing.
+def trace_context():
+  """Returns a tuple of configuration values that affect tracing.
 
-    These values are included in the cache key for linear_util.cache.
+  These values are included in the cache key for linear_util.cache.
 
-    Values included in this set should also most likely be included in
-    the C++ JIT state, which is handled separately.
-    """
-    return (axis_env_state.value, mesh_context_manager.value,
-            xla_metadata_context_manager.value,
-            abstract_mesh_context_manager.value,
-            device_context.value,
-            compute_on_context_manager.value, enable_x64.value,
-            numpy_rank_promotion.value, default_matmul_precision.value,
-            dynamic_shapes.value,
-            eager_constant_folding.value,
-            numpy_dtype_promotion.value,
-            default_device.value, random_seed_offset.value,
-            threefry_partitionable.value,
-            threefry_gpu_kernel_lowering.value,
-            sharding_in_types.value,
-            use_direct_linearize.value,
-            softmax_custom_jvp.value,
-            enable_memories.value,
-            disable_jit.value,
-            debug_key_reuse.value,
-            jax_xla_profile_version.value,
-            # Technically this affects jaxpr->stablehlo lowering, not tracing.
-            hlo_source_file_canonicalization_regex.value,
-            pgle_profiling_runs.value,
-            enable_pgle.value,
-            use_shardy_partitioner.value)
-else:
-  def trace_context():
-    """Returns a tuple of configuration values that affect tracing.
-
-    These values are included in the cache key for linear_util.cache.
-
-    Values included in this set should also most likely be included in
-    the C++ JIT state, which is handled separately.
-    """
-    tls = jax_jit.thread_local_state()
-    axis_env_state = ()
-    mesh_context_manager = ()
-    abstract_mesh_context_manager = ()
-    device_context = ()
-    xla_metadata_context_manager = ()
-    compute_on_context_manager = ()
-
-    context: Any = tls.extra_jit_context
-    if context and context.axis_env_state is not None:
-      axis_env_state = context.axis_env_state
-    if context and context.mesh_context_manager:
-      mesh_context_manager = context.mesh_context_manager
-    if context and context.abstract_mesh_context_manager:
-      abstract_mesh_context_manager = context.abstract_mesh_context_manager
-    if context and context.device_context:
-      device_context = context.device_context
-    if context and context.xla_metadata_context_manager:
-      xla_metadata_context_manager = context.xla_metadata_context_manager
-    if context and context.compute_on_context_manager:
-      compute_on_context_manager = context.compute_on_context_manager
-    return (axis_env_state, mesh_context_manager, abstract_mesh_context_manager,
-            device_context, xla_metadata_context_manager,
-            compute_on_context_manager, enable_x64.value,
-            numpy_rank_promotion.value, default_matmul_precision.value,
-            dynamic_shapes.value,
-            eager_constant_folding.value,
-            numpy_dtype_promotion.value,
-            default_device.value, random_seed_offset.value,
-            threefry_partitionable.value,
-            threefry_gpu_kernel_lowering.value,
-            sharding_in_types.value,
-            use_direct_linearize.value,
-            softmax_custom_jvp.value,
-            enable_memories.value,
-            disable_jit.value,
-            debug_key_reuse.value,
-            jax_xla_profile_version.value,
-            # Technically this affects jaxpr->stablehlo lowering, not tracing.
-            hlo_source_file_canonicalization_regex.value,
-            pgle_profiling_runs.value,
-            enable_pgle.value,
-            use_shardy_partitioner.value)
+  Values included in this set should also most likely be included in
+  the C++ JIT state, which is handled separately.
+  """
+  return (axis_env_state.value, mesh_context_manager.value,
+          xla_metadata_context_manager.value,
+          abstract_mesh_context_manager.value,
+          device_context.value,
+          compute_on_context_manager.value, enable_x64.value,
+          numpy_rank_promotion.value, default_matmul_precision.value,
+          dynamic_shapes.value,
+          eager_constant_folding.value,
+          numpy_dtype_promotion.value,
+          default_device.value, random_seed_offset.value,
+          threefry_partitionable.value,
+          threefry_gpu_kernel_lowering.value,
+          sharding_in_types.value,
+          use_direct_linearize.value,
+          softmax_custom_jvp.value,
+          enable_memories.value,
+          disable_jit.value,
+          debug_key_reuse.value,
+          jax_xla_profile_version.value,
+          # Technically this affects jaxpr->stablehlo lowering, not tracing.
+          hlo_source_file_canonicalization_regex.value,
+          pgle_profiling_runs.value,
+          enable_pgle.value,
+          use_shardy_partitioner.value)
 
 config = Config()
 
@@ -296,185 +234,85 @@ parse_flags_with_absl = config.parse_flags_with_absl
 class NoDefault: pass
 no_default = NoDefault()
 
-if xla_extension_version >= 295:
-  class State(config_ext.Config[_T]):
+class State(config_ext.Config[_T]):
 
-    __slots__ = (
-        '_name', '_update_thread_local_hook', '_update_global_hook',
-        '_validator', '_default_context_manager_value', '__doc__', '__name__',
-    )
+  __slots__ = (
+      '_name', '_update_thread_local_hook', '_update_global_hook',
+      '_validator', '_default_context_manager_value', '__doc__', '__name__',
+  )
 
-    def __init__(
-        self,
-        name: str,
-        default: _T,
-        help,
-        update_global_hook: Callable[[_T], None] | None = None,
-        update_thread_local_hook: Callable[[_T | None], None] | None = None,
-        validator: Callable[[Any], None] | None = None,
-        extra_description: str = '',
-        default_context_manager_value: Any = no_default,
-        include_in_jit_key: bool = False,
-    ):
-      super().__init__(default, include_in_jit_key)
-      self._name = name
-      self.__name__ = name[4:] if name.startswith('jax_') else name
-      self.__doc__ = (f"Context manager for `{name}` config option"
-                      f"{extra_description}.\n\n{help}")
-      self._update_global_hook = update_global_hook
-      self._update_thread_local_hook = update_thread_local_hook
-      self._validator = validator
-      self._default_context_manager_value = default_context_manager_value
-      if self._validator:
-        self._validator(default)
-      if self._update_global_hook:
-        self._update_global_hook(default)
+  def __init__(
+      self,
+      name: str,
+      default: _T,
+      help,
+      update_global_hook: Callable[[_T], None] | None = None,
+      update_thread_local_hook: Callable[[_T | None], None] | None = None,
+      validator: Callable[[Any], None] | None = None,
+      extra_description: str = '',
+      default_context_manager_value: Any = no_default,
+      include_in_jit_key: bool = False,
+  ):
+    super().__init__(default, include_in_jit_key)
+    self._name = name
+    self.__name__ = name[4:] if name.startswith('jax_') else name
+    self.__doc__ = (f"Context manager for `{name}` config option"
+                    f"{extra_description}.\n\n{help}")
+    self._update_global_hook = update_global_hook
+    self._update_thread_local_hook = update_thread_local_hook
+    self._validator = validator
+    self._default_context_manager_value = default_context_manager_value
+    if self._validator:
+      self._validator(default)
+    if self._update_global_hook:
+      self._update_global_hook(default)
 
-    def __bool__(self) -> NoReturn:
-      raise TypeError(
-          "bool() not supported for instances of type '{0}' "
-          "(did you mean to use '{0}.value' instead?)".format(
-              type(self).__name__))
+  def __bool__(self) -> NoReturn:
+    raise TypeError(
+        "bool() not supported for instances of type '{0}' "
+        "(did you mean to use '{0}.value' instead?)".format(
+            type(self).__name__))
 
-    def _set(self, value: _T) -> None:
-      if self._validator:
-        self._validator(value)
-      self.set_global(value)
-      if self._update_global_hook:
-        self._update_global_hook(value)
+  def _set(self, value: _T) -> None:
+    if self._validator:
+      self._validator(value)
+    self.set_global(value)
+    if self._update_global_hook:
+      self._update_global_hook(value)
 
-    @contextlib.contextmanager
-    def __call__(self, new_val: Any = no_default):
-      if new_val is no_default:
-        if self._default_context_manager_value is not no_default:
-          new_val = self._default_context_manager_value  # default_context_manager_value provided to constructor
-        else:
-          # no default_value provided to constructor and no value provided as an
-          # argument, so we raise an error
-          raise TypeError(f"Context manager for {self.__name__} config option "
-                          "requires an argument representing the new value for "
-                          "the config option.")
-      if self._validator:
-        self._validator(new_val)
-      prev_val = self.swap_local(new_val)
+  @contextlib.contextmanager
+  def __call__(self, new_val: Any = no_default):
+    if new_val is no_default:
+      if self._default_context_manager_value is not no_default:
+        new_val = self._default_context_manager_value  # default_context_manager_value provided to constructor
+      else:
+        # no default_value provided to constructor and no value provided as an
+        # argument, so we raise an error
+        raise TypeError(f"Context manager for {self.__name__} config option "
+                        "requires an argument representing the new value for "
+                        "the config option.")
+    if self._validator:
+      self._validator(new_val)
+    prev_val = self.swap_local(new_val)
+    if self._update_thread_local_hook:
+      self._update_thread_local_hook(new_val)
+    try:
+      yield
+    finally:
+      self.set_local(prev_val)
       if self._update_thread_local_hook:
-        self._update_thread_local_hook(new_val)
-      try:
-        yield
-      finally:
-        self.set_local(prev_val)
-        if self._update_thread_local_hook:
-          if prev_val is config_ext.unset:
-            self._update_thread_local_hook(None)
-          else:
-            self._update_thread_local_hook(cast(Optional[Any], prev_val))
-
-    def _add_hooks(self, update_global_hook, update_thread_local_hook):
-      """Private method that adds hooks to an existing context-manager.
-
-      Used to avoid cyclic import dependencies."""
-      self._update_thread_local_hook = update_thread_local_hook
-      self._update_global_hook = update_global_hook
-      update_global_hook(self.get_global())
-
-else:
-  class _Unset: pass
-  unset = _Unset()
-
-  _thread_local_state = threading.local()
-
-  class State(Generic[_T]):  # type: ignore[no-redef]
-
-    __slots__ = (
-        '_name', '_value', '_update_thread_local_hook', '_update_global_hook',
-        '_validator', '_default_context_manager_value', '__doc__', '__name__',
-    )
-
-    def __init__(
-        self,
-        name: str,
-        default: _T,
-        help,
-        update_global_hook: Callable[[_T], None] | None = None,
-        update_thread_local_hook: Callable[[_T | None], None] | None = None,
-        validator: Callable[[Any], None] | None = None,
-        extra_description: str = '',
-        default_context_manager_value: Any = no_default,
-        include_in_jit_key: bool = False,
-    ):
-      self._name = name
-      self.__name__ = name[4:] if name.startswith('jax_') else name
-      self.__doc__ = (f"Context manager for `{name}` config option"
-                      f"{extra_description}.\n\n{help}")
-      if include_in_jit_key:
-        assert update_global_hook is None
-        assert update_thread_local_hook is None
-        update_global_hook = lambda val: _update_global_jit_state(
-            **{self.__name__: val})
-        update_thread_local_hook = lambda val: update_thread_local_jit_state(
-            **{self.__name__: val})
-      self._update_global_hook = update_global_hook
-      self._update_thread_local_hook = update_thread_local_hook
-      self._validator = validator
-      self._default_context_manager_value = default_context_manager_value
-      self._set(default)
-    def __bool__(self) -> NoReturn:
-      raise TypeError(
-          "bool() not supported for instances of type '{0}' "
-          "(did you mean to use '{0}.value' instead?)".format(
-              type(self).__name__))
-
-    def _set(self, value: _T) -> None:
-      if self._validator:
-        self._validator(value)
-      self._value = value
-      if self._update_global_hook:
-        self._update_global_hook(value)
-
-    @property
-    def value(self) -> _T:
-      val = _thread_local_state.__dict__.get(self._name, unset)
-      return cast(_T, val) if val is not unset else self._value
-
-    def get_local(self) -> Any:
-      return _thread_local_state.__dict__.get(self._name, unset)
-
-    @contextlib.contextmanager
-    def __call__(self, new_val: Any = no_default):
-      if new_val is no_default:
-        if self._default_context_manager_value is not no_default:
-          new_val = self._default_context_manager_value  # default_context_manager_value provided to constructor
+        if prev_val is config_ext.unset:
+          self._update_thread_local_hook(None)
         else:
-          # no default_value provided to constructor and no value provided as an
-          # argument, so we raise an error
-          raise TypeError(f"Context manager for {self.__name__} config option "
-                          "requires an argument representing the new value for "
-                          "the config option.")
-      if self._validator:
-        self._validator(new_val)
-      prev_val = getattr(_thread_local_state, self._name, unset)
-      setattr(_thread_local_state, self._name, new_val)
-      if self._update_thread_local_hook:
-        self._update_thread_local_hook(new_val)
-      try:
-        yield
-      finally:
-        if prev_val is unset:
-          delattr(_thread_local_state, self._name)
-          if self._update_thread_local_hook:
-            self._update_thread_local_hook(None)
-        else:
-          setattr(_thread_local_state, self._name, prev_val)
-          if self._update_thread_local_hook:
-            self._update_thread_local_hook(cast(_T, prev_val))
+          self._update_thread_local_hook(cast(Optional[Any], prev_val))
 
-    def _add_hooks(self, update_global_hook, update_thread_local_hook):
-      """Private method that adds hooks to an existing context-manager.
+  def _add_hooks(self, update_global_hook, update_thread_local_hook):
+    """Private method that adds hooks to an existing context-manager.
 
-      Used to avoid cyclic import dependencies."""
-      self._update_thread_local_hook = update_thread_local_hook
-      self._update_global_hook = update_global_hook
-      update_global_hook(self._value)
+    Used to avoid cyclic import dependencies."""
+    self._update_thread_local_hook = update_thread_local_hook
+    self._update_global_hook = update_global_hook
+    update_global_hook(self.get_global())
 
 
 UPGRADE_BOOL_HELP = (
@@ -975,132 +813,13 @@ def enum_flag(name, default, *args, **kwargs) -> Flag[str]:
 already_configured_with_absl = False
 
 
-if xla_extension_version >= 295:
-  trace_state = config_ext.Config(None, include_in_jit_key=True)
-  axis_env_state = config_ext.Config((), include_in_jit_key=True)
-  mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
-  abstract_mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
-  device_context = config_ext.Config((), include_in_jit_key=True)
-  compute_on_context_manager = config_ext.Config((), include_in_jit_key=True)
-  xla_metadata_context_manager = config_ext.Config((), include_in_jit_key=True)
-else:
-  # The C++ JIT maintains its own copy of several configuration items as
-  # a global/thread-local state. These methods allow updates to part of the
-  # state when a configuration value changes.
-  class _GlobalExtraJitContext(NamedTuple):
-    numpy_rank_promotion: str | None = None
-    numpy_dtype_promotion: str | None = None
-    default_matmul_precision: Any | None = None
-    dynamic_shapes: bool = False
-    eager_constant_folding: bool = False
-    random_seed_offset: int = 0
-    threefry_partitionable: bool = False
-    threefry_gpu_kernel_lowering: bool = False
-    sharding_in_types: bool = False
-    use_direct_linearize: bool = False
-    softmax_custom_jvp: bool = False
-    xla_profile_version: int = 0
-    pgle_profiling_runs: int = 0
-    enable_pgle: bool = False
-    use_shardy_partitioner: bool = False
-
-
-  def _update_global_jit_state(**kw):
-    gs = jax_jit.global_state()
-    context = gs.extra_jit_context or _GlobalExtraJitContext()
-    gs.extra_jit_context = context._replace(**kw)
-
-
-  class _ThreadLocalExtraJitContext(NamedTuple):
-    """A namedtuple containing states to add to the cache key.
-
-    Just in time compilation (for jit, pmap, etc) behavior is configurable through
-    global and thread-local options, used in the cache key.
-
-    The initialization, which uses both config.py and core.py is done using
-    `_update_thread_local_jit_state` in core.py to prevent circular imports.
-    """
-    trace_state: Any | None = None
-    axis_env_state: Hashable = ()
-    mesh_context_manager: Hashable = ()
-    abstract_mesh_context_manager: Hashable = ()
-    device_context: Hashable = ()
-    compute_on_context_manager: Hashable = ()
-    xla_metadata_context_manager: Hashable = ()
-
-    # Values set by _StateContextManager context managers.
-    # CAUTION: these must be initialized to `None`! The state context manager
-    # restores these to None on exit. If the object default is not `None`, the
-    # context manager is not a no-op, which leads to problems with stale state
-    # (e.g. spurious cache misses in tests).
-    numpy_rank_promotion: str | None = None
-    numpy_dtype_promotion: str | None = None
-    default_matmul_precision: Any | None = None
-    dynamic_shapes: bool | None = None
-    eager_constant_folding : bool | None = None
-    random_seed_offset: int | None = None
-    threefry_partitionable: bool | None = None
-    threefry_gpu_kernel_lowering: bool | None = None
-    sharding_in_types: bool | None = None
-    use_direct_linearize: bool | None = None
-    softmax_custom_jvp: bool | None = None
-    xla_profile_version: int | None = None
-    pgle_profiling_runs: int | None = None
-    enable_pgle: bool | None = None
-    use_shardy_partitioner: bool | None = None
-
-
-  class _ThreadLocalStateCache(threading.local):
-    """"A thread local cache for _ThreadLocalExtraJitContext
-
-    The extra_jit_context in jax_jit.thread_local_state() may get updated and thus
-    incurring dispatch overhead for comparing this python object during jit calls.
-    We want to deduplicate the objects that have the same hash/equality to also
-    have the same object ID, since the equality check is much faster if the object
-    IDs match.
-    """
-    def __init__(self):
-      self.canonicalize = functools.lru_cache(128)(lambda x: x)
-
-
-  _thread_local_state_cache = _ThreadLocalStateCache()
-
-
-  def update_thread_local_jit_state(**kw):
-    tls = jax_jit.thread_local_state()
-    # After xla_client._version >= 70, the thread_local object will necessarily
-    # be initialized when accessed. The following line can be removed when the
-    # minimum  jaxlib version is past version 70
-    context = tls.extra_jit_context or _ThreadLocalExtraJitContext()
-    tmp = context._replace(**kw)
-    tls.extra_jit_context = _thread_local_state_cache.canonicalize(tmp)
-
-  class JitConfig:
-    def __init__(self, name):
-      self._name = name
-
-    @property
-    def value(self):
-      return self.get_local()
-
-    def get_local(self):
-      return getattr(jax_jit.thread_local_state().extra_jit_context, self._name)
-
-    def set_local(self, value):
-      update_thread_local_jit_state(**{self._name: value})
-
-    def swap_local(self, new_value):
-      prev_value = self.value
-      self.set_local(new_value)
-      return prev_value
-
-  trace_state = JitConfig('trace_state')
-  axis_env_state = JitConfig('axis_env_state')
-  mesh_context_manager = JitConfig('mesh_context_manager')
-  abstract_mesh_context_manager = JitConfig('abstract_mesh_context_manager')
-  device_context = JitConfig('device_context')
-  compute_on_context_manager = JitConfig('compute_on_context_manager')
-  xla_metadata_context_manager = JitConfig('xla_metadata_context_manager')
+trace_state = config_ext.Config(None, include_in_jit_key=True)
+axis_env_state = config_ext.Config((), include_in_jit_key=True)
+mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
+abstract_mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
+device_context = config_ext.Config((), include_in_jit_key=True)
+compute_on_context_manager = config_ext.Config((), include_in_jit_key=True)
+xla_metadata_context_manager = config_ext.Config((), include_in_jit_key=True)
 
 
 # TODO(b/214340779): remove flag when XLA:CPU is improved.
@@ -1254,10 +973,10 @@ pmap_shmap_merge = bool_state(
     help='If True, pmap and shard_map API will be merged.')
 
 def _update_jax_memories_global(val):
-  lib.jax_jit.global_state().enable_memories = val
+  jax_jit.global_state().enable_memories = val
 
 def _update_jax_memories_thread_local(val):
-  lib.jax_jit.thread_local_state().enable_memories = val
+  jax_jit.thread_local_state().enable_memories = val
 
 enable_memories = bool_state(
     'jax_enable_memories',
@@ -1576,10 +1295,10 @@ disallow_mesh_context_manager = bool_state(
 )
 
 def _update_x64_global(val):
-  lib.jax_jit.global_state().enable_x64 = val
+  jax_jit.global_state().enable_x64 = val
 
 def _update_x64_thread_local(val):
-  lib.jax_jit.thread_local_state().enable_x64 = val
+  jax_jit.thread_local_state().enable_x64 = val
 
 enable_x64 = bool_state(
     name='jax_enable_x64',
@@ -1594,11 +1313,11 @@ config._contextmanager_flags.remove('jax_enable_x64')
 setattr(Config, "x64_enabled", property(lambda _: enable_x64.value))
 
 def _update_default_device_global(val):
-  lib.jax_jit.global_state().default_device = val
+  jax_jit.global_state().default_device = val
 
 
 def _update_default_device_thread_local(val):
-  lib.jax_jit.thread_local_state().default_device = val
+  jax_jit.thread_local_state().default_device = val
 
 
 def _validate_default_device(val):
@@ -1632,10 +1351,10 @@ default_device = string_or_object_state(
     validator=_validate_default_device)
 
 def _update_disable_jit_global(val):
-  lib.jax_jit.global_state().disable_jit = val
+  jax_jit.global_state().disable_jit = val
 
 def _update_disable_jit_thread_local(val):
-  lib.jax_jit.thread_local_state().disable_jit = val
+  jax_jit.thread_local_state().disable_jit = val
 
 disable_jit = bool_state(
     name='jax_disable_jit',
@@ -2005,4 +1724,16 @@ gpu_use_magma = enum_state(
         'See the documentation for lax.linalg.eig for more details about how '
         'to use this feature.'
     ),
+)
+
+exec_time_optimization_effort = float_state(
+    name='jax_exec_time_optimization_effort',
+    default=0.0,
+    help='Effort for minimizing execution time (higher means more effort), valid range [-1.0, 1.0].'
+)
+
+memory_fitting_effort = float_state(
+    name='jax_memory_fitting_effort',
+    default=0.0,
+    help='Effort for minimizing memory usage (higher means more effort), valid range [-1.0, 1.0].'
 )

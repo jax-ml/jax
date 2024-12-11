@@ -923,8 +923,9 @@ class DotAlgorithmPreset(enum.Enum):
       case _:
         return np.float32
 
-  @property
-  def supported_output_types(self) -> tuple[DTypeLike, ...] | None:
+  def supported_output_types(
+      self, lhs_dtype: DTypeLike, rhs_dtype: DTypeLike
+  ) -> tuple[DTypeLike, ...] | None:
     match self:
       case (
           DotAlgorithmPreset.ANY_F8_ANY_F8_F32
@@ -941,7 +942,17 @@ class DotAlgorithmPreset(enum.Enum):
             dtypes.float8_e4m3b11fnuz,
         )
       case DotAlgorithmPreset.F16_F16_F32:
-        return (np.float32, np.float16)
+        # F16 output is only supported with F16 inputs.
+        if dtypes.promote_types(lhs_dtype, rhs_dtype) == np.float16:
+          return (np.float32, np.float16)
+        else:
+          return (np.float32,)
+      case DotAlgorithmPreset.BF16_BF16_F32:
+        # BF16 output is only supported with BF16 inputs.
+        if dtypes.promote_types(lhs_dtype, rhs_dtype) == dtypes.bfloat16:
+          return (np.float32, dtypes.bfloat16)
+        else:
+          return (np.float32,)
       case _:
         accumulation_type = self.accumulation_type
         return None if accumulation_type is None else (accumulation_type,)
@@ -1719,6 +1730,9 @@ def zeros_like_abstract_ref(aval: state.AbstractRef) -> core.MutableArray:
   val = ad_util.zeros_like_aval(aval.inner_aval)
   return core.mutable_array(val)
 
+# TODO(dougalm): this is nonsense but it's here because in places like
+# custom_vjp we assume that all arguments have tangent spaces. We could have
+# a distinct NotATangentType value instead.
 ad_util.aval_zeros_likers[state.AbstractRef] = zeros_like_abstract_ref  # type: ignore
 
 def iota(dtype: DTypeLike, size: int) -> Array:
@@ -3713,13 +3727,6 @@ def get_algorithm_compute_types(
         algorithm.accumulation_type,
     )
 
-  supported_output_types = algorithm.supported_output_types
-
-  if algorithm == DotAlgorithmPreset.BF16_BF16_F32:
-    # If dtype is anything other than float32, it will be cast to bfloat16.
-    if np.dtype(lhs_dtype) != np.float32:
-      supported_output_types = (np.float32, dtypes.bfloat16)
-
   def maybe_convert_dtype(input_dtype, target_dtypes):
     if target_dtypes is None:
       return input_dtype
@@ -3727,11 +3734,12 @@ def get_algorithm_compute_types(
       return input_dtype
     return target_dtypes[0]
 
-  return (
-      maybe_convert_dtype(lhs_dtype, algorithm.supported_lhs_types),
-      maybe_convert_dtype(rhs_dtype, algorithm.supported_rhs_types),
-      maybe_convert_dtype(out_dtype, supported_output_types),
+  lhs_dtype = maybe_convert_dtype(lhs_dtype, algorithm.supported_lhs_types)
+  rhs_dtype = maybe_convert_dtype(rhs_dtype, algorithm.supported_rhs_types)
+  out_type = maybe_convert_dtype(
+      out_dtype, algorithm.supported_output_types(lhs_dtype, rhs_dtype)
   )
+  return lhs_dtype, rhs_dtype, out_type
 
 
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
@@ -3768,6 +3776,8 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
     if platform == "cpu" and precision not in {
         DotAlgorithmPreset.DEFAULT, DotAlgorithmPreset.F16_F16_F16,
         DotAlgorithmPreset.F32_F32_F32, DotAlgorithmPreset.F64_F64_F64,
+        DotAlgorithmPreset.BF16_BF16_F32, DotAlgorithmPreset.BF16_BF16_F32_X3,
+        DotAlgorithmPreset.BF16_BF16_F32_X6,
     }:
       raise ValueError(
           f"The precision '{precision}' is not supported by dot_general on CPU")
@@ -6489,3 +6499,7 @@ optimization_barrier_p.def_impl(
 optimization_barrier_p.def_abstract_eval(_optimization_barrier_abstract_eval)
 mlir.register_lowering(optimization_barrier_p,
                        _optimization_barrier_lowering_rule)
+
+def _optimization_barrier_batcher(batched_args, batch_dims, **params):
+  return optimization_barrier_p.bind(*batched_args, **params), batch_dims
+batching.primitive_batchers[optimization_barrier_p] = _optimization_barrier_batcher

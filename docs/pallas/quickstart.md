@@ -53,8 +53,9 @@ def add_vectors_kernel(x_ref, y_ref, o_ref):
 
 Let's dissect this function a bit. Unlike most JAX functions you've probably written,
 it does not take in `jax.Array`s as inputs and doesn't return any values.
-Instead, it takes in *`Ref`* objects as inputs. Note that we also don't have any outputs
-but we are given an `o_ref`, which corresponds to the desired output.
+Instead, it takes in *`Ref`* objects as inputs, which represent mutable buffers in memory.
+Note that we also don't have any outputs but we are given an `o_ref`, which corresponds
+to the desired output.
 
 **Reading from `Ref`s**
 
@@ -101,7 +102,8 @@ thereof).
 **What's actually happening here?**
 
 Thus far we've described how to think about Pallas kernels but what we've actually
-accomplished is we're writing a function that's executed very close to the compute units.
+accomplished is we're writing a function that's executed very close to the compute units
+since values are loaded into the innermost (fastest) portion of the memory hierarchy.
 
 On GPU, `x_ref` corresponds to a value in high-bandwidth memory (HBM) and when
 we do `x_ref[...]` we are copying the value from HBM into static RAM (SRAM)
@@ -133,6 +135,8 @@ In most real-world applications, this will not be the case!
 Part of writing Pallas kernels is thinking about how to take big arrays that
 live in high-bandwidth memory (HBM, also known as DRAM) and expressing computations
 that operate on "blocks" of those arrays that can fit in SRAM.
+
+(grids_by_example)=
 
 ### Grids by example
 
@@ -169,8 +173,10 @@ def iota_kernel(o_ref):
 ```
 
 We now execute it using `pallas_call` with an additional `grid` argument.
+On GPUs, we can call the kernel directly like so:
 
 ```{code-cell} ipython3
+# GPU version
 def iota(size: int):
   return pl.pallas_call(iota_kernel,
                         out_shape=jax.ShapeDtypeStruct((size,), jnp.int32),
@@ -178,19 +184,13 @@ def iota(size: int):
 iota(8)
 ```
 
-On GPUs, each program is executed in parallel on separate threads.
-Thus, we need to think about race conditions on writes to HBM.
-A reasonable approach is to write our kernels in such a way that different
-programs write to disjoint places in HBM to avoid these parallel writes.
-On the other hand, parallelizing the computation is how we can execute
-operations like matrix multiplications really quickly.
-
-On TPUs, programs are executed in a combination of parallel and sequential
-(depending on the architecture) so there are slightly different considerations.
-
+TPUs distinguish between vector and scalar memory spaces and in this case the
+output must be placed in scalar memory (`TPUMemorySpace.SMEM`) since `i` is
+a scalar. For more details read {ref}`tpu_and_its_memory_spaces`.
 To call the above kernel on TPU, run:
 
 ```{code-cell} ipython3
+# TPU version
 from jax.experimental.pallas import tpu as pltpu
 
 def iota(size: int):
@@ -201,11 +201,22 @@ def iota(size: int):
 iota(8)
 ```
 
-TPUs distinguish between vector and scalar memory spaces and in this case the
-output must be placed in scalar memory (`TPUMemorySpace.SMEM`) since `i` is
-a scalar. For more details read {ref}`pallas_tpu_pipelining`.
+### Grid semantics
 
-You can read more details at {ref}`pallas_grid`.
+On GPUs, each program is executed in parallel on separate threads.
+Thus, we need to think about race conditions on writes to HBM.
+A reasonable approach is to write our kernels in such a way that different
+programs write to disjoint locations in HBM to avoid these parallel writes.
+On the other hand, parallelizing the computation is how we can execute
+operations like matrix multiplications really quickly.
+
+In contrast, TPUs operate like a very wide SIMD machine.
+Some TPU models contain multiple cores, but in many cases a TPU can be
+treated as a single-threaded processor. The grid on a TPU can be
+specified in a combination of parallel and sequential dimensions, where sequential
+dimensions are guaranteed to run serially.
+
+You can read more details at {ref}`pallas_grid` and {ref}`pallas_tpu_noteworthy_properties`.
 
 +++
 

@@ -77,7 +77,7 @@ if RUNTIME_PATH and RUNTIME_PATH.exists():
   os.environ["MOSAIC_GPU_RUNTIME_LIB_PATH"] = str(RUNTIME_PATH)
 
 
-mosaic_gpu_p = jax.core.Primitive("mosaic_gpu_p")
+mosaic_gpu_p = jax._src.core.Primitive("mosaic_gpu_p")
 mosaic_gpu_p.multiple_results = True
 
 
@@ -806,16 +806,6 @@ def _launch(
         )
     )
 
-    smem_ref_tree = _construct_smem_reftree(
-        cluster, dynamic_smem, smem_buffers
-    )
-    # TODO(apaszke): Skip the following if no barriers were initialized.
-    nvvm.fence_mbarrier_init()
-    if math.prod(cluster) != 1:
-      nvvm.cluster_arrive_relaxed(aligned=ir.UnitAttr.get())
-      nvvm.cluster_wait(aligned=ir.UnitAttr.get())
-    gpu.barrier()
-
     if profiler_spec:
       prof_smem = memref.view(
           ir.MemRefType.get(
@@ -832,7 +822,19 @@ def _launch(
 
     ptr_ty = ir.Type.parse("!llvm.ptr")
     scratch_ptr = builtin.unrealized_conversion_cast([ptr_ty], [scratch_arr])
-    yield LaunchContext(launch_op, scratch_ptr, cluster, prof), smem_ref_tree
+    ctx = LaunchContext(launch_op, scratch_ptr, cluster, prof)
+    with ctx.named_region("Init"):
+      smem_ref_tree = _construct_smem_reftree(
+          cluster, dynamic_smem, smem_buffers
+      )
+      # TODO(apaszke): Skip the following if no barriers were initialized.
+      nvvm.fence_mbarrier_init()
+      if math.prod(cluster) != 1:
+        nvvm.cluster_arrive_relaxed(aligned=ir.UnitAttr.get())
+        nvvm.cluster_wait(aligned=ir.UnitAttr.get())
+      gpu.barrier()
+
+    yield ctx, smem_ref_tree
     if prof is not None:
       prof.finalize(grid=grid, block=block)
     gpu.terminator()

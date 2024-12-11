@@ -1159,35 +1159,7 @@ def norm(x: ArrayLike, ord: int | str | None = None,
 
   num_axes = len(axis)
   if num_axes == 1:
-    if ord is None or ord == 2:
-      return ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), axis=axis,
-                                        keepdims=keepdims))
-    elif ord == jnp.inf:
-      return reductions.amax(ufuncs.abs(x), axis=axis, keepdims=keepdims)
-    elif ord == -jnp.inf:
-      return reductions.amin(ufuncs.abs(x), axis=axis, keepdims=keepdims)
-    elif ord == 0:
-      return reductions.sum(x != 0, dtype=jnp.finfo(lax.dtype(x)).dtype,
-                            axis=axis, keepdims=keepdims)
-    elif ord == 1:
-      # Numpy has a special case for ord == 1 as an optimization. We don't
-      # really need the optimization (XLA could do it for us), but the Numpy
-      # code has slightly different type promotion semantics, so we need a
-      # special case too.
-      return reductions.sum(ufuncs.abs(x), axis=axis, keepdims=keepdims)
-    elif isinstance(ord, str):
-      msg = f"Invalid order '{ord}' for vector norm."
-      if ord == "inf":
-        msg += "Use 'jax.numpy.inf' instead."
-      if ord == "-inf":
-        msg += "Use '-jax.numpy.inf' instead."
-      raise ValueError(msg)
-    else:
-      abs_x = ufuncs.abs(x)
-      ord_arr = lax_internal._const(abs_x, ord)
-      ord_inv = lax_internal._const(abs_x, 1. / ord_arr)
-      out = reductions.sum(abs_x ** ord_arr, axis=axis, keepdims=keepdims)
-      return ufuncs.power(out, ord_inv)
+    return vector_norm(x, ord=2 if ord is None else ord, axis=axis, keepdims=keepdims)
 
   elif num_axes == 2:
     row_axis, col_axis = axis  # pytype: disable=bad-unpacking
@@ -1545,7 +1517,7 @@ def outer(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
 
 @export
-def matrix_norm(x: ArrayLike, /, *, keepdims: bool = False, ord: str = 'fro') -> Array:
+def matrix_norm(x: ArrayLike, /, *, keepdims: bool = False, ord: str | int = 'fro') -> Array:
   """Compute the norm of a matrix or stack of matrices.
 
   JAX implementation of :func:`numpy.linalg.matrix_norm`
@@ -1632,7 +1604,7 @@ def matrix_transpose(x: ArrayLike, /) -> Array:
 
 
 @export
-def vector_norm(x: ArrayLike, /, *, axis: int | None = None, keepdims: bool = False,
+def vector_norm(x: ArrayLike, /, *, axis: int | tuple[int, ...] | None = None, keepdims: bool = False,
                 ord: int | str = 2) -> Array:
   """Compute the vector norm of a vector or batch of vectors.
 
@@ -1668,13 +1640,35 @@ def vector_norm(x: ArrayLike, /, *, axis: int | None = None, keepdims: bool = Fa
     Array([3.7416575, 9.486833 ], dtype=float32)
   """
   check_arraylike('jnp.linalg.vector_norm', x)
-  if axis is None:
-    result = norm(jnp.ravel(x), ord=ord)
-    if keepdims:
-      result = lax.expand_dims(result, range(jnp.ndim(x)))
-    return result
-  return norm(x, axis=axis, keepdims=keepdims, ord=ord)
-
+  if ord is None or ord == 2:
+    return ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), axis=axis,
+                                      keepdims=keepdims))
+  elif ord == jnp.inf:
+    return reductions.amax(ufuncs.abs(x), axis=axis, keepdims=keepdims)
+  elif ord == -jnp.inf:
+    return reductions.amin(ufuncs.abs(x), axis=axis, keepdims=keepdims)
+  elif ord == 0:
+    return reductions.sum(x != 0, dtype=jnp.finfo(lax.dtype(x)).dtype,
+                          axis=axis, keepdims=keepdims)
+  elif ord == 1:
+    # Numpy has a special case for ord == 1 as an optimization. We don't
+    # really need the optimization (XLA could do it for us), but the Numpy
+    # code has slightly different type promotion semantics, so we need a
+    # special case too.
+    return reductions.sum(ufuncs.abs(x), axis=axis, keepdims=keepdims)
+  elif isinstance(ord, str):
+    msg = f"Invalid order '{ord}' for vector norm."
+    if ord == "inf":
+      msg += "Use 'jax.numpy.inf' instead."
+    if ord == "-inf":
+      msg += "Use '-jax.numpy.inf' instead."
+    raise ValueError(msg)
+  else:
+    abs_x = ufuncs.abs(x)
+    ord_arr = lax_internal._const(abs_x, ord)
+    ord_inv = lax_internal._const(abs_x, 1. / ord_arr)
+    out = reductions.sum(abs_x ** ord_arr, axis=axis, keepdims=keepdims)
+    return ufuncs.power(out, ord_inv)
 
 @export
 def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,

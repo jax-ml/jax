@@ -61,10 +61,9 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.layout import DeviceLocalLayout, AutoLayout, Layout
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.partition_spec import PartitionSpec
+from jax._src.partition_spec import PartitionSpec, UnconstrainedSingleton
 from jax._src.sharding import Sharding as JSharding
 from jax._src.sharding_impls import (
     ArrayMapping, ArrayMappingOrAutoOrUnspecified, AUTO, UNSPECIFIED,
@@ -108,8 +107,6 @@ ShardingSpec = sharding_specs.ShardingSpec
 
 
 def to_xc_copy_semantics(copy_semantics):
-  if xla_extension_version < 296:
-    return [None] * len(copy_semantics)
   out = []
   for cs in copy_semantics:
     if cs is None or cs == dispatch.CopySemantics.ALIAS:
@@ -2126,11 +2123,13 @@ def _concretize_abstract_shardings(shardings, avals, device_assignment):
   @lru_cache(maxsize=128)
   def _abstract_to_concrete_mesh(abstract_mesh):
     return mesh_lib.Mesh(
-        np_dev.reshape(abstract_mesh.axis_sizes), abstract_mesh.axis_names)
+        np_dev.reshape(abstract_mesh.axis_sizes), abstract_mesh.axis_names,
+        axis_types=abstract_mesh.axis_types)
 
   out = []
   for s, a in zip(shardings, avals):
-    if isinstance(s, UnspecifiedValue) and a.sharding is not None:
+    if (isinstance(s, UnspecifiedValue) and a.sharding is not None and
+        all(not isinstance(s, UnconstrainedSingleton) for s in a.sharding.spec)):
       out.append(NamedSharding(_abstract_to_concrete_mesh(a.sharding.mesh),
                                a.sharding.spec))
     else:

@@ -457,6 +457,55 @@ def all_to_all(x, axis_name, split_axis, concat_axis, *, axis_index_groups=None,
 
   return tree_util.tree_map(bind, x)
 
+def ragged_all_to_all(operand, output, input_offsets, send_sizes, output_offsets, recv_sizes):
+  """Ragged version of :func:`all_to_all`.
+
+  For now, ``split_axis`` and ``concat_axis`` from `all_to_all` are equivalent
+  and the outermost (ragged) dimension. ``axis_index_groups`` is default to all
+  replicas (e.g. there is only one group and covers all axis indices).
+
+  Ragged arrays are defined by a set of three arrays:
+  * ``data``: the ``data`` array is "ragged" along its outermost dimension,
+    along which each indexed element has variable size.
+  * ``offsets``: the ``offsets`` array indexes the outermost dimension of the
+    ``data`` array, and represents the starting offset of each ragged element of
+    the ``data`` array.
+  * ``sizes``: the ``sizes`` array represents the size of each ragged element of
+    the ``data`` array, where the size is specified in units of sub-elements. A
+    sub-element is defined as the suffix of the ``data`` array shape obtained by
+    removing the outermost "ragged" dimension.
+  The ``offsets`` and ``sizes`` arrays must have the same size.
+
+  # Example ragged tensor
+  data: [8,3] = {{a,b,c},{d,e,f},{g,h,i},{j,k,l},{m,n,o},{p,q,r},{s,t,u},{v,w,x}}
+  offsets: [3] = {0, 1, 4}
+  sizes: [3] = {1, 3, 4}
+
+  # Index 'data' at 'offsets'[0], 'sizes'[0]'
+  {a,b,c}
+
+  # Index 'data' at 'offsets'[1], 'sizes'[1]'
+  {d,e,f},{g,h,i},{j,k,l}
+
+  # Index 'data' at 'offsets'[2], 'sizes'[2]'
+  {m,n,o},{p,q,r},{s,t,u},{v,w,x}
+
+  Args:
+    operand: array with ragged dimension along its outermost dimension.
+    output: array of ragged input offsets.
+    input_offsets: array of ragged input send sizes.
+    send_sizes: array of ragged output data.
+    output_offsets: array of ragged output offsets.
+    recv_sizes: array of ragged output receive sizes.
+  Returns:
+    array with shape equal to ``output``.
+  """
+  return ragged_all_to_all_p.bind(operand, output, input_offsets, send_sizes,
+                                  output_offsets, recv_sizes)
+
+ragged_all_to_all_p = core.Primitive('ragged_all_to_all')
+
+
 def axis_index(axis_name):
   """Return the index along the mapped axis ``axis_name``.
 
@@ -1050,6 +1099,64 @@ mlir.register_lowering(all_to_all_p, _all_to_all_lowering)
 ad.deflinear2(all_to_all_p, _all_to_all_transpose_rule)
 batching.fancy_primitive_batchers[all_to_all_p] = _all_to_all_batched_collective
 batching.skippable_batchers[all_to_all_p] = partial(_names_in_param, 'axis_name')
+
+
+def _ragged_all_to_all_lowering(ctx, operand, output, input_offsets, send_sizes, output_offsets, recv_sizes):
+  N = input_offsets.type.shape[0]
+  backend_config = ir.DictAttr.get({
+      'replica_groups': ir.DenseIntElementsAttr.get(
+          np.arange(0, N, 1, dtype=np.int64), shape=[1, N]
+      )
+  })
+  return hlo.CustomCallOp(
+      result=[output.type],
+      inputs=[operand, output, input_offsets, send_sizes, output_offsets,
+              recv_sizes],
+      call_target_name=ir.StringAttr.get('ragged_all_to_all'),
+      backend_config=backend_config,
+      api_version=ir.IntegerAttr.get(ir.IntegerType.get_signless(32), 4),
+  ).results
+
+@ragged_all_to_all_p.def_abstract_eval
+def _ragged_all_to_all_abstract_eval(operand, output, input_offsets, send_sizes, output_offsets, recv_sizes):
+  if operand.shape != output.shape:
+    raise ValueError('ragged_all_to_all input and output shapes must be equal.')
+  if not dtypes.issubdtype(input_offsets.dtype, np.integer):
+    raise ValueError("ragged_all_to_all input_offsets must be integer type.")
+  if not dtypes.issubdtype(send_sizes.dtype, np.integer):
+    raise ValueError("ragged_all_to_all send_sizes must be integer type.")
+  if not dtypes.issubdtype(output_offsets.dtype, np.integer):
+    raise ValueError("ragged_all_to_all output_offsets must be integer type.")
+  if not dtypes.issubdtype(recv_sizes.dtype, np.integer):
+    raise ValueError("ragged_all_to_all recv_sizes must be integer type.")
+  if len(input_offsets.shape) != 1 or input_offsets.shape[0] < 1:
+    raise ValueError(
+        "ragged_all_to_all input_offsets must be rank 1 with positive dimension"
+        " size, but got shape {}".format(input_offsets.shape)
+    )
+  if len(send_sizes.shape) != 1 or send_sizes.shape[0] < 1:
+    raise ValueError(
+        "ragged_all_to_all send_sizes must be rank 1 with positive dimension"
+        " size, but got shape {}".format(send_sizes.shape)
+    )
+  if len(output_offsets.shape) != 1 or output_offsets.shape[0] < 1:
+    raise ValueError(
+        "ragged_all_to_all output_offsets must be rank 1 with positive"
+        " dimension size, but got shape {}".format(output_offsets.shape)
+    )
+  if len(recv_sizes.shape) != 1 or recv_sizes.shape[0] < 1:
+    raise ValueError(
+        "ragged_all_to_all recv_sizes must be rank 1 with positive dimension"
+        " size, but got shape {}".format(recv_sizes.shape)
+    )
+  return output.update(
+      shape=list(output.shape),
+      dtype=output.dtype,
+      weak_type=output.weak_type,
+  )
+
+ragged_all_to_all_p.def_impl(partial(dispatch.apply_primitive, ragged_all_to_all_p))
+mlir.register_lowering(ragged_all_to_all_p, _ragged_all_to_all_lowering)
 
 
 def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):

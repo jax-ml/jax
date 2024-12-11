@@ -29,7 +29,7 @@ import time
 from typing import Any
 
 import jax
-from jax import core
+from jax._src import core
 from jax._src import config
 from jax._src import sharding_impls
 from jax._src.interpreters import mlir
@@ -61,6 +61,11 @@ _MOSAIC_ALLOW_HLO = config.bool_state(
     default=False,
     help="Allow hlo dialects in Mosaic",
 )
+
+
+# This tracks the latest Mosaic IR version with a monthly delay.
+FWD_COMPAT_IR_VERSION = 3
+
 
 tpu_custom_call_p = core.Primitive("tpu_custom_call")
 tpu_custom_call_p.def_impl(
@@ -407,6 +412,7 @@ def _lower_mosaic_module_to_asm(
     backend: str,
     device_type: str | None,
     kernel_name: str | None,
+    ir_version: int | None = None,
 ) -> tuple[ir.Module, tuple[bool, bool, bool, bool]]:
   has_communication, has_custom_barrier = tpu.private_has_communication(
       module.operation
@@ -438,8 +444,17 @@ def _lower_mosaic_module_to_asm(
       module_op = module.operation.clone()
     prev_allow_unregistered_dialects = ctx.allow_unregistered_dialects
     ctx.allow_unregistered_dialects = True
+    # TODO(apaszke): Remove once the minimum jaxlib version is at least 0.4.37.
+    if jax.version._version_as_tuple(jax.lib.__version__) < (0, 4, 37):
+      target_version = ""
+    else:
+      target_version = (
+          f"target-version={ir_version}" if ir_version is not None else ""
+      )
     try:
-      pipeline = PassManager.parse("builtin.module(mosaic-serde{serialize=true})")
+      pipeline = PassManager.parse(
+          "builtin.module(mosaic-serde{serialize=true " + target_version + "})"
+      )
       pipeline.run(module_op)
     finally:
       ctx.allow_unregistered_dialects = prev_allow_unregistered_dialects
@@ -506,6 +521,7 @@ def _lower_to_custom_call_config(
     serialization_format: int | None,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     kernel_name: str | None = None,
+    ir_version: int | None = None,
 ) -> CustomCallBackendConfig:
   lowered_module_asm, (
       has_communication,
@@ -517,6 +533,7 @@ def _lower_to_custom_call_config(
       backend=backend,
       device_type=device_type,
       kernel_name=kernel_name,
+      ir_version=ir_version,
   )
   return _lowered_to_custom_call_config(
       lowered_module_asm,
@@ -617,6 +634,7 @@ def lower_module_to_custom_call(
       serialization_format=serialization_format,
       output_memory_spaces=output_memory_spaces,
       kernel_name=kernel_name,
+      ir_version=FWD_COMPAT_IR_VERSION if ctx.is_forward_compat() else None,
   )
   return _tpu_custom_call_lowering(
       ctx,

@@ -67,6 +67,19 @@ def _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes):
               f"is also found in manual_axes: {_manual_axes}.") from None
 
 
+@util.cache(max_size=128, trace_context_in_key=False)
+def _check_axis_type_consistency(mesh, parsed_pspec):
+  if mesh.axis_types is None:
+    return
+  for p in parsed_pspec:
+    if p is not None:
+      if not all(mesh._name_to_type[p[0]] == mesh._name_to_type[r] for r in p):
+        raise ValueError(
+            'AxisTypes should be the same in a tuple subset of PartitionSpec:'
+            f' {parsed_pspec.get_partition_spec()}. Got subset {p} with axis'
+            f' types: ({", ".join(str(mesh._name_to_type[r]) for r in p)})')
+
+
 def hashed_index(x) -> int:
   # This works for both `pjit` indices and `pmap` indices (which might
   # have an integer instead of a slice).
@@ -1084,6 +1097,7 @@ def preprocess(mesh, spec, parsed_pspec, _manual_axes=frozenset()):
         PartitionSpec() if spec is None else spec,
         "NamedSharding spec", allow_unconstrained_dims=True)
   _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes)
+  _check_axis_type_consistency(mesh, parsed_pspec)
   return parsed_pspec
 
 
@@ -1673,7 +1687,8 @@ def _gspmd_to_named_sharding_via_mesh(
 
 
 def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
-              *, devices: Sequence[xc.Device] | None = None) -> mesh_lib.Mesh:
+              *, devices: Sequence[xc.Device] | None = None,
+              axis_types: mesh_lib.MeshAxisType | None = None) -> mesh_lib.Mesh:
   """Creates an efficient mesh with the shape and axis names specified.
 
   This function attempts to automatically compute a good mapping from a set of
@@ -1735,4 +1750,4 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   mesh_devices = mesh_utils.create_device_mesh(
       new_axis_shapes, devices,
       allow_split_physical_axes=allow_split_physical_axes)
-  return mesh_lib.Mesh(mesh_devices, axis_names)
+  return mesh_lib.Mesh(mesh_devices, axis_names, axis_types=axis_types)

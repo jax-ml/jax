@@ -175,7 +175,11 @@ def linearize(traceable, *primals, **kwargs):
   jvpfun_flat, out_tree = flatten_fun(jvpfun, in_tree)
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr_nounits(jvpfun_flat, in_pvals)
   out_primals_pvals, out_tangents_pvals = tree_unflatten(out_tree(), out_pvals)
-  assert all(out_primal_pval.is_known() for out_primal_pval in out_primals_pvals)
+  if any(not out_primal_pval.is_known() for out_primal_pval in out_primals_pvals):
+    raise ValueError(
+        "Linearization failed to produce known values for all output primals. "
+        "This is typically caused by attempting to differentiate a function "
+        "uses an operation that does not support reverse-mode autodiff.")
   out_primals_consts = [pval.get_known() for pval in out_primals_pvals]
   if not has_aux:
     return out_primals_consts, out_tangents_pvals, jaxpr, consts
@@ -263,6 +267,20 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
   with ctx:
     map(partial(write_cotangent, 'outvars'), jaxpr.outvars, cotangents_in)
     for eqn in jaxpr.eqns[::-1]:
+      if eqn.primitive.ref_primitive:
+        if eqn.primitive is core.mutable_array_p:
+          val_var, = eqn.invars
+          ref_var, = eqn.outvars
+          ref = read_primal(ref_var)
+          ct_out = core.freeze(ref)
+          write_cotangent(eqn.primitive, val_var, ct_out)
+        elif eqn.primitive is core.freeze_p:
+          val_var, = eqn.outvars  # type: ignore
+          ref_var, = eqn.invars   # type: ignore
+          ct_in = instantiate_zeros(read_cotangent(val_var))
+          write_primal(ref_var, core.mutable_array(ct_in))
+        continue
+
       invals = map(read_primal, eqn.invars)
       if eqn.primitive.multiple_results:
         cts_in = map(read_cotangent, eqn.outvars)
@@ -277,9 +295,6 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
           call_jaxpr = params.pop('call_jaxpr')
           cts_out = get_primitive_transpose(eqn.primitive)(
               params, call_jaxpr, invals, cts_in, cts_in_avals)
-        elif eqn.primitive in reducing_transposes:
-          cts_out = reducing_transposes[eqn.primitive](
-              cts_in, *invals, **eqn.params)
         else:
           cts_out = get_primitive_transpose(eqn.primitive)(
               cts_in, *invals, **eqn.params)
@@ -586,8 +601,6 @@ class LinearizeTracer(Tracer):
 
 primitive_jvps : dict[core.Primitive, Callable] = {}
 primitive_transposes: dict[core.Primitive, Callable] = {}
-# transpose rules that internally perform reductions over the given named axes
-reducing_transposes: dict[core.Primitive, Callable] = {}
 primitive_linearizations : dict[core.Primitive, Callable]  = {}
 
 def deflinear(primitive, transpose_rule):
@@ -871,3 +884,6 @@ class CustomVJPException(Exception):
            "closed-over value into the custom_vjp function as an argument, and "
            "adapting the custom_vjp fwd and bwd rules.")
     super().__init__(msg)
+
+# TODO(mattjj): remove this vestigial dict
+reducing_transposes: dict[core.Primitive, Callable] = {}

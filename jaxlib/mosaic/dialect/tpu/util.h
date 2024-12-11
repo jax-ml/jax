@@ -115,6 +115,8 @@ bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
                                    const std::array<int64_t, 2> &target_shape,
                                    bool allow_minormost_padding = false);
 
+// Determines whether the given MemRefType has the given memory space.
+bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space);
 }  // namespace mlir::tpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_

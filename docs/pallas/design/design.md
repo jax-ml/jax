@@ -94,7 +94,7 @@ Pallas kernels via JAX transformations.
 
 <center>
 
-![Pallas lowering path](../_static/pallas/pallas_flow.png)
+![Pallas lowering path](../../_static/pallas/pallas_flow.png)
 Visualization of Pallas lowering paths
 
 </center>
@@ -413,10 +413,10 @@ verify the correctness of the Triton and Mosaic compilers.
 One could also imagine perturbing the `scan` ordering to simulate the
 parallel reads and writes that happen on GPU.
 
-### Examples
+### GPU Examples
 
-Note all the following examples are for GPU only. They will require some small
-changes to work on TPUs.
+Note all the following examples are for GPU only. They will require tweaks to
+the block sizes to work on TPUs.
 
 #### `add`
 

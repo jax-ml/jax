@@ -10,7 +10,28 @@ Remember to align the itemized text with the first line of an item within a list
 When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
-## jax 0.4.36
+## jax 0.4.38
+
+* Deprecations
+  * a number of APIs in the internal `jax.core` namespace have been deprecated, including
+    `ClosedJaxpr`, `full_lower`, `Jaxpr`, `JaxprEqn`, `jaxpr_as_fun`, `lattice_join`,
+    `Literal`, `Primitive`, `raise_to_shaped`, `Token`, `Var`. Most can be replaced by
+    APIs of the same name in {mod}`jax.extend.core`; see the documentation for
+    {mod}`jax.extend` for information on the compatibility guarantees of these
+    semi-public extensions.
+
+## jax 0.4.37 (Dec 9, 2024)
+
+This is a patch release of jax 0.4.36. Only "jax" was released at this version.
+
+* Bug fixes
+  * Fixed a bug where `jit` would error if an argument was named `f` (#25329).
+  * Fix a bug that will throw `index out of range` error in
+    {func}`jax.lax.while_loop` if the user register pytree node class with
+    different aux data for the flatten and flatten_with_path.
+  * Pinned a new libtpu release (0.0.6) that fixes a compiler bug on TPU v6e.
+
+## jax 0.4.36 (Dec 5, 2024)
 
 * Breaking Changes
   * This release lands "stackless", an internal change to JAX's tracing
@@ -53,6 +74,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
          use `uses_global_constants`.
       * the `lowering_platforms` kwarg for {func}`jax.export.export`: use
         `platforms` instead.
+  * The kwargs `symbolic_scope` and `symbolic_constraints` from
+    {func}`jax.export.symbolic_args_specs` have been removed. They were
+    deprecated in June 2024. Use `scope` and `constraints` instead.
   * Hashing of tracers, which has been deprecated since version 0.4.30, now
     results in a `TypeError`.
   * Refactor: JAX build CLI (build/build.py) now uses a subcommand structure and
@@ -67,6 +91,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     return NaN for negative integer inputs, to match the behavior of SciPy from
     https://github.com/scipy/scipy/pull/21827.
   * `jax.clear_backends` was removed after being deprecated in v0.4.26.
+  * We removed the custom call "__gpu$xla.gpu.triton" from the list of custom
+    call that we guarantee export stability. This is because this custom call
+    relies on Triton IR, which is not guaranteed to be stable. If you need
+    to export code that uses this custom call, you can use the `disabled_checks`
+    parameter. See more details in the [documentation](https://jax.readthedocs.io/en/latest/export/export.html#compatibility-guarantees-for-custom-calls).
 
 * New Features
   * {func}`jax.jit` got a new `compiler_options: dict[str, Any]` argument, for
@@ -79,6 +108,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.lax.linalg.eig` and the related `jax.numpy` functions
     ({func}`jax.numpy.linalg.eig` and {func}`jax.numpy.linalg.eigvals`) are now
     supported on GPU. See {jax-issue}`#24663` for more details.
+  * Added two new configuration flags, `jax_exec_time_optimization_effort` and `jax_memory_fitting_effort`, to control the amount of effort the compiler spends minimizing execution time and memory usage, respectively.  Valid values are between -1.0 and 1.0, default is 0.0.
 
 * Bug fixes
   * Fixed a bug where the GPU implementations of LU and QR decomposition would

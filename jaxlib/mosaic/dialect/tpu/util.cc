@@ -141,4 +141,10 @@ bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
   return *(tiled_layout.getTileStrides().end() - 1) == 1 &&
          *(tiled_layout.getTileStrides().end() - 2) == 1;
 }
+
+bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space) {
+  auto memory_space =
+      dyn_cast_or_null<tpu::MemorySpaceAttr>(ty.getMemorySpace());
+  return memory_space && memory_space.getValue() == space;
+}
 }  // namespace mlir::tpu

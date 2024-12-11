@@ -43,6 +43,8 @@ namespace {
 
 constexpr std::string_view kMangledDialect = "stable_mosaic.";
 constexpr StringRef kVersionAttrName = "stable_mosaic.version";
+// When this is bumped, we should file a TODO to update the forward-compatible
+// version in tpu_custom_call.py in a month!
 constexpr int kVersion = 3;
 
 StringRef mangle(StringRef name, std::string* storage) {
@@ -63,7 +65,7 @@ std::optional<StringRef> demangle(StringRef name) {
 
 using rule_type = std::function<LogicalResult(Operation*, int)>;
 
-LogicalResult enqueue_dma_rule(Operation* op, int version) {
+LogicalResult enqueue_dma_upgrade(Operation* op, int version) {
   // Added AttrSizedOperandSegments and core_id in version 2.
   if (version < 2) {
     if (op->getNumOperands() == 3) {  // Local DMA.
@@ -84,7 +86,14 @@ LogicalResult enqueue_dma_rule(Operation* op, int version) {
   return success();
 }
 
-LogicalResult semaphore_signal_rule(Operation* op, int version) {
+LogicalResult enqueue_dma_downgrade(Operation* op, int version) {
+  if (version < 2) {
+    return op->emitError("Downgrade to version ") << version << " unsupported";
+  }
+  return success();
+}
+
+LogicalResult semaphore_signal_upgrade(Operation* op, int version) {
   // Added AttrSizedOperandSegments and core_id in version 2.
   if (version < 2) {
     if (op->getNumOperands() == 2) {  // Local signal.
@@ -92,9 +101,6 @@ LogicalResult semaphore_signal_rule(Operation* op, int version) {
                       EnqueueDMAOp>::getOperandSegmentSizeAttr(),
                   mlir::DenseI32ArrayAttr::get(op->getContext(), {1, 1, 0, 0}));
     } else if (op->getNumOperands() == 3) {  // Remote signal.
-      // Hardcoding that one optional value is device_id, not core_id. This
-      // could misinterpret sem_signals where core_id is specified, but
-      // device_id isn't.
       op->setAttr(OpTrait::AttrSizedOperandSegments<
                       EnqueueDMAOp>::getOperandSegmentSizeAttr(),
                   mlir::DenseI32ArrayAttr::get(op->getContext(), {1, 1, 1, 0}));
@@ -105,7 +111,25 @@ LogicalResult semaphore_signal_rule(Operation* op, int version) {
   return success();
 }
 
-LogicalResult vector_multi_dim_reduce_rule(Operation* op, int version) {
+LogicalResult semaphore_signal_downgrade(Operation* op, int version) {
+  if (version < 2) {
+    auto operands = op->getAttrOfType<mlir::DenseI32ArrayAttr>(
+        OpTrait::AttrSizedOperandSegments<
+            EnqueueDMAOp>::getOperandSegmentSizeAttr());
+    if (!operands || operands.size() != 4) {
+      return op->emitError("Missing or invalid AttrSizedOperandSegments");
+    }
+    if (operands[3]) {
+      return op->emitError("Downgrade to version ")
+             << version << " impossible: core_id is set";
+    }
+    op->removeAttr(OpTrait::AttrSizedOperandSegments<
+                   EnqueueDMAOp>::getOperandSegmentSizeAttr());
+  }
+  return success();
+}
+
+LogicalResult vector_multi_dim_reduce_upgrade(Operation* op, int version) {
   // Changed reductions_dims from ArrayAttr of IntegerAttrs to DenseI64ArrayAttr
   // in version 3.
   if (version < 3) {
@@ -133,13 +157,29 @@ LogicalResult vector_multi_dim_reduce_rule(Operation* op, int version) {
   return success();
 }
 
+LogicalResult vector_multi_dim_reduce_downgrade(Operation* op, int version) {
+  if (version < 3) {
+    return op->emitError("Downgrade to version ") << version << " unsupported";
+  }
+  return success();
+}
+
 const llvm::StringMap<rule_type>& upgrade_rules() {
   static auto rules = new llvm::StringMap<rule_type>{
-      {EnqueueDMAOp::getOperationName(), enqueue_dma_rule},
-      {SemaphoreSignalOp::getOperationName(), semaphore_signal_rule},
+      {EnqueueDMAOp::getOperationName(), enqueue_dma_upgrade},
+      {SemaphoreSignalOp::getOperationName(), semaphore_signal_upgrade},
       {vector::MultiDimReductionOp::getOperationName(),
-       vector_multi_dim_reduce_rule}
+       vector_multi_dim_reduce_upgrade}
   };
+  return *rules;
+}
+
+const llvm::StringMap<rule_type>& downgrade_rules() {
+  static auto rules = new llvm::StringMap<rule_type>{
+      {EnqueueDMAOp::getOperationName(), enqueue_dma_downgrade},
+      {SemaphoreSignalOp::getOperationName(), semaphore_signal_downgrade},
+      {vector::MultiDimReductionOp::getOperationName(),
+       vector_multi_dim_reduce_downgrade}};
   return *rules;
 }
 
@@ -148,6 +188,18 @@ struct MosaicSerdePass : public impl::MosaicSerdePassBase<MosaicSerdePass> {
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
+    if (!serialize.hasValue()) {
+      module.emitError("serialize option must be specified");
+      return signalPassFailure();
+    }
+    int serialize_version =
+        target_version.hasValue() ? target_version : kVersion;
+    if (serialize && serialize_version > kVersion) {
+      module.emitError("The highest supported version is ")
+          << kVersion << " but requested serialization at version "
+          << serialize_version;
+      return signalPassFailure();
+    }
     if (serialize && !module->getContext()->allowsUnregisteredDialects()) {
       module.emitError() << "Cannot serialize within a context that does not "
                             "allow unregistered dialects.";
@@ -159,7 +211,7 @@ struct MosaicSerdePass : public impl::MosaicSerdePassBase<MosaicSerdePass> {
       module->setAttr(
           kVersionAttrName,
           IntegerAttr::get(IntegerType::get(module->getContext(), 64),
-                           kVersion));
+                           serialize_version));
     } else {
       IntegerAttr version_attr =
           module->getAttrOfType<IntegerAttr>(kVersionAttrName);
@@ -178,7 +230,7 @@ struct MosaicSerdePass : public impl::MosaicSerdePassBase<MosaicSerdePass> {
       module->removeAttr(kVersionAttrName);
     }
     std::string name_storage;
-    auto result = module.walk([this, &name_storage, version](Operation* op) {
+    auto result = module.walk([&](Operation* op) {
       if (isa<ModuleOp>(op)) {  // Don't mangle the ModuleOp itself.
         return WalkResult::advance();
       }
@@ -210,6 +262,16 @@ struct MosaicSerdePass : public impl::MosaicSerdePassBase<MosaicSerdePass> {
       auto new_op = Operation::create(
           op->getLoc(), *new_name, op->getResultTypes(), op->getOperands(),
           op->getAttrs(), nullptr, op->getSuccessors(), op->getRegions());
+      // Downgrade the op to the target version, if needed.
+      if (serialize && kVersion != serialize_version) {
+        if (const auto rule =
+                downgrade_rules().find(op->getName().getStringRef());
+            rule != downgrade_rules().end()) {
+          if (rule->second(new_op, serialize_version).failed()) {
+            return WalkResult::interrupt();
+          }
+        }
+      }
       op->getBlock()->getOperations().insertAfter(Block::iterator(op), new_op);
       op->replaceAllUsesWith(new_op->getResults());
       op->erase();

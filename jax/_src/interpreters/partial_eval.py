@@ -177,9 +177,12 @@ class JaxprTrace(Trace['JaxprTracer']):
     if const is None:
       aval = pval.get_aval()
       if type(aval) is DShapedArray:
+        # TODO(dougalm): Fix the type error and remove the pytype pragmas.
+        # pytype: disable=attribute-error
         shape = [self.new_instantiated_const(d)
                  if isinstance(d, Tracer) and d._trace.level < self.level else d
                  for d in aval.shape]
+        # pytype: enable=attribute-error
         aval = aval.update(shape=tuple(shape))
       return JaxprTracer(self, PartialVal.unknown(aval), LambdaBinding())
     else:
@@ -1006,7 +1009,7 @@ def partial_eval_jaxpr_stateful(
     in_inst: bool | Sequence[bool],
     ensure_out_unknowns: bool | Sequence[bool],
     ensure_out_inst: bool | Sequence[bool],
-    saveable: Callable[..., RematCases_],
+    saveable: Callable[..., RematCases_] | None,
   ) -> tuple[Jaxpr, Jaxpr, list[bool], list[bool], int, int]:
   if type(in_inst) is bool:
     in_inst = (in_inst,) * len(jaxpr.invars)
@@ -1014,12 +1017,16 @@ def partial_eval_jaxpr_stateful(
     ensure_out_unknowns = (ensure_out_unknowns,) * len(jaxpr.outvars)
   if type(ensure_out_inst) is bool:
     ensure_out_inst = (ensure_out_inst,) * len(jaxpr.outvars)
+  if saveable is None:
+    saveable = everything_saveable
   jaxpr_known, jaxpr_staged, out_unknowns, out_inst, num_res, num_res_ref = \
       _partial_eval_jaxpr_custom_cached(jaxpr, tuple(in_unknowns),
                                         tuple(in_inst),
                                         tuple(ensure_out_unknowns),
                                         tuple(ensure_out_inst), saveable)
   return jaxpr_known, jaxpr_staged, out_unknowns, out_inst, num_res, num_res_ref
+
+everything_saveable = lambda *_, **__: True
 
 @weakref_lru_cache
 def _partial_eval_jaxpr_custom_cached(
@@ -1776,6 +1783,9 @@ def _inline_literals(
   newvars: dict[Var, Var] = {}
   newvar = lambda aval: newname(_substitute_vars_in_type(lits, newvars, aval))
   var = lambda v: newvars.get(v) or newvars.setdefault(v, newvar(v.aval))
+  lit_or_var = (
+      lambda a: a if isinstance(a, Literal) else (lit(a) or var(a))
+  )
   dropvar = lambda aval: DropVar(_substitute_vars_in_type(lits, newvars, aval))
 
   def vars_in_shape(aval: AbstractValue) -> Sequence[Var]:
@@ -1794,10 +1804,10 @@ def _inline_literals(
   new_invars = [var(v) for v in jaxpr.invars]
   new_eqns = []
   for eqn in jaxpr.eqns:
-    invars = [lit(x) or var(x) for x in eqn.invars]
+    invars = [lit_or_var(x) for x in eqn.invars]
     outvars = [var(v) if v in used else dropvar(v.aval) for v in eqn.outvars]
     new_eqns.append(eqn.replace(invars=invars, outvars=outvars))
-  new_outvars = [lit(v) or var(v) for v in jaxpr.outvars]
+  new_outvars = [lit_or_var(v) for v in jaxpr.outvars]
   jaxpr_effects = make_jaxpr_effects(new_constvars, new_invars, new_outvars,
                                       new_eqns)
   new_jaxpr = Jaxpr(new_constvars, new_invars, new_outvars, new_eqns,

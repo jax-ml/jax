@@ -257,7 +257,7 @@ jax_multiplatform_test(
     srcs = [
         "tpu_all_gather_test.py",
     ],
-    enable_backends = ["tpu"],
+    enable_backends = [],
     enable_configs = [
         "tpu_v5e_4x2",
     ],
@@ -481,7 +481,7 @@ jax_multiplatform_test(
         "gpu_a100_x32",
         "gpu_h100_x32",
     ],
-    shard_count = 2,
+    shard_count = 6,
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",
@@ -494,6 +494,7 @@ jax_multiplatform_test(
     srcs = ["//jax/experimental/pallas/ops/gpu:attention_mgpu.py"],
     enable_backends = [],
     enable_configs = ["gpu_h100_x32"],
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     tags = [
         "manual",
         "notap",
@@ -509,6 +510,7 @@ jax_multiplatform_test(
     srcs = ["mgpu_attention_test.py"],
     enable_backends = [],
     enable_configs = ["gpu_h100_x32"],
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     deps = [
         "//jax:pallas",
         "//jax:pallas_experimental_gpu_ops",

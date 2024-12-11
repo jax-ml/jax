@@ -208,27 +208,46 @@ pybind_extension(
     ],
 )
 
-pybind_extension(
-    name = "cuda_plugin_extension",
-    srcs = ["cuda_plugin_extension.cc"],
-    module_name = "cuda_plugin_extension",
+cc_library(
+    name = "gpu_plugin_extension",
+    srcs = ["gpu_plugin_extension.cc"],
+    hdrs = ["gpu_plugin_extension.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
     deps = [
+        ":kernel_nanobind_helpers",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
         "@nanobind",
-        "//jaxlib:kernel_nanobind_helpers",
-        "@xla//third_party/python_runtime:headers",
-        "@local_config_cuda//cuda:cuda_headers",
+        "@tsl//tsl/platform:statusor",
         "@xla//xla:util",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/pjrt:status_casters",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu_extension_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_helpers",
-        # TODO(jieying): move to jaxlib after py_client_gpu is separated from py_client
         "@xla//xla/python:py_client_gpu",
+        "@xla//xla/tsl/python/lib/core:numpy",
+    ],
+)
+
+pybind_extension(
+    name = "cuda_plugin_extension",
+    srcs = ["cuda_plugin_extension.cc"],
+    module_name = "cuda_plugin_extension",
+    deps = [
+        ":gpu_plugin_extension",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@nanobind",
+        "@xla//xla/pjrt:status_casters",
         "@xla//xla/tsl/cuda:cublas",
         "@xla//xla/tsl/cuda:cudart",
-        "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
 
@@ -237,20 +256,12 @@ pybind_extension(
     srcs = ["rocm_plugin_extension.cc"],
     module_name = "rocm_plugin_extension",
     deps = [
-        "//jaxlib:kernel_nanobind_helpers",
-        "@com_google_absl//absl/status",
+        ":gpu_plugin_extension",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings",
         "@local_config_rocm//rocm:hip",
         "@local_config_rocm//rocm:rocm_headers",
         "@nanobind",
-        "@xla//third_party/python_runtime:headers",
-        "@xla//xla:util",
-        "@xla//xla/ffi/api:c_api",
-        "@xla//xla/pjrt:status_casters",
-        "@xla//xla/pjrt/c:pjrt_c_api_gpu_extension_hdrs",
-        "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
-        "@xla//xla/pjrt/c:pjrt_c_api_helpers",
-        "@xla//xla/python:py_client_gpu",
-        "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
 

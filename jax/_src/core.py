@@ -39,6 +39,7 @@ from jax._src import config
 from jax._src import effects
 from jax._src import compute_on
 from jax._src import mesh as mesh_lib
+from jax._src.partition_spec import PartitionSpec as P, UnconstrainedSingleton
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
     TracerIntegerConversionError, UnexpectedTracerError)
@@ -431,6 +432,8 @@ class Primitive:
   call_primitive: bool = False
   # set for map primitives processed in final style.
   map_primitive: bool = False
+  # set for ref primitives
+  ref_primitive: bool = False
 
   def __init__(self, name: str):
     self.name = name
@@ -1597,19 +1600,34 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 
   return TypeError(msg)
 
+# TODO(yashkatariya): Only works with User/Auto. Generalize it to work with
+# Collective too.
+def _maybe_modify_sharding(sharding):
+  if mesh_lib.AxisTypes.Auto not in sharding.mesh.axis_types:
+    return sharding
+
+  new_spec = []
+  for s in sharding.spec:
+    if s is None or isinstance(s, UnconstrainedSingleton):
+      new_spec.append(s)
+    else:
+      temp_s = s[0] if isinstance(s, tuple) else s
+      new_spec.append(
+          P.UNCONSTRAINED
+          if sharding.mesh._name_to_type[temp_s] == mesh_lib.AxisTypes.Auto else s)
+  return sharding.with_spec(new_spec)
+
 
 def get_sharding(sharding, ndim):
-  from jax._src.sharding_impls import NamedSharding, PartitionSpec as P  # type: ignore
+  from jax._src.sharding_impls import NamedSharding  # type: ignore
 
   if sharding is not None:
     assert len(sharding.spec) == ndim
-    return sharding
+    return _maybe_modify_sharding(sharding)
 
   context_mesh = mesh_lib.get_abstract_mesh()
-  # TODO(yashkatariya): Error out and ask users to set the context mesh in their
-  # code.
   if not context_mesh:
-    return None
+    return RuntimeError("Please set the mesh via `jax.set_mesh` API.")
   assert sharding is None
   return NamedSharding(context_mesh, P(*[None] * ndim))
 
@@ -1672,10 +1690,8 @@ class ShapedArray(UnshapedArray):
               self.dtype.name)
     dt_str = dt_str.replace('void', 'float0')
     if hasattr(self, 'sharding') and self.sharding is not None:
-      shapestr = _get_shape_sharding_str(self.shape, self.sharding.spec)
-      axis_types = self.sharding.mesh.axis_types
-      axt = _get_axis_type_str(axis_types) if axis_types is not None else ''
-      return f'{dt_str}[{shapestr}]{axt}'
+      shapestr = _get_shape_sharding_str(self.shape, self.sharding.spec)  # type: ignore
+      return f'{dt_str}[{shapestr}]'
     else:
       shapestr = ','.join(map(str, self.shape))
       return f'{dt_str}[{shapestr}]'
@@ -1687,25 +1703,12 @@ class ShapedArray(UnshapedArray):
       raise TypeError("len() of unsized object") from err  # same as numpy error
 
 
-def _get_axis_type_str(axis_types):
-  from jax._src.mesh import AxisTypes  # type: ignore
-
-  out = []
-  for t, axes in axis_types.items():
-    a = f"({','.join(a for a in axes)})" if isinstance(axes, tuple) else axes
-    if t == AxisTypes.Collective:
-      out.append(f"C:{a}")
-    elif t == AxisTypes.User:
-      out.append(f"U:{a}")
-    else:
-      assert t == AxisTypes.Auto
-      out.append(f"A:{a}")
-  return f"{{{', '.join(out)}}}"
-
 def _get_shape_sharding_str(shape, spec):
   out = []
   for s1, s2 in zip(shape, spec):
     if s2 is None:
+      out.append(f"{s1}")
+    elif isinstance(s2, UnconstrainedSingleton):
       out.append(f"{s1}")
     elif isinstance(s2, tuple):
       ss = ','.join(s for s in s2)
@@ -1882,6 +1885,7 @@ pytype_aval_mappings[MutableArray] = lambda x: x._aval
 def mutable_array(init_val):
   return mutable_array_p.bind(init_val)
 mutable_array_p = Primitive('mutable_array')
+mutable_array_p.ref_primitive = True
 
 class InternalMutableArrayEffect(effects.Effect):
   pass
@@ -1899,6 +1903,18 @@ def _mutable_array_impl(init_val):
   aval = get_aval(init_val)
   return MutableArray(AbstractRef(aval), init_val)
 
+def freeze(ref):
+  return freeze_p.bind(ref)
+freeze_p = Primitive('freeze')
+freeze_p.ref_primitive = True
+
+@freeze_p.def_effectful_abstract_eval
+def freeze_abstract_eval(ref_aval):
+  return ref_aval.inner_aval, {internal_mutable_array_effect}
+
+@freeze_p.def_impl
+def _freeze_impl(ref):
+  return ref[()]
 
 class AbstractToken(AbstractValue):
   def str_short(self, short_dtypes=False): return 'Tok'
@@ -2516,10 +2532,11 @@ def _check_jaxpr(
 
       # Check the computed effect type matches the eqn's annotation, and is
       # included in the jaxpr's annotation.
-      if prim is mutable_array_p:
-        outvar, = eqn.outvars
-        in_idx[outvar] = None  # type: ignore
-        mut_arrays.add(outvar)
+      if prim.ref_primitive:
+        if prim is mutable_array_p:
+          outvar, = eqn.outvars
+          in_idx[outvar] = None  # type: ignore
+          mut_arrays.add(outvar)
       if eqn.effects != eqn_effects:
         raise JaxprTypeError("Inferred effects do not match equation effects. "
                              f"Equation effects: {eqn.effects}. "
@@ -2639,16 +2656,10 @@ def _check_call(ctx_factory, prim, in_atoms, params):
     return aval
   for v, x in zip(call_jaxpr.invars, in_atoms):
     if not typecompat(substitute(v.aval), x.aval):
-      # TODO(yashkatariya): Remove this once numpy array's aval has a sharding
-      # on it.
-      if (config.sharding_in_types.value and isinstance(x, Literal) and
-          v.aval.sharding is not None and x.val.ndim == 0):
-        pass
-      else:
-        # TODO(mattjj): vars in error message are confusing b/c of Var.__repr__
-        raise JaxprTypeError(f"Call primitive {prim} passes operand {x} of type "
-                            f"{x.aval} to jaxpr expecting type "
-                            f"{substitute(v.aval)}")
+      # TODO(mattjj): vars in error message are confusing b/c of Var.__repr__
+      raise JaxprTypeError(f"Call primitive {prim} passes operand {x} of type "
+                           f"{x.aval} to jaxpr expecting type "
+                           f"{substitute(v.aval)}")
     env[v] = x if type(x) is Var else x.val
 
   _check_jaxpr(ctx_factory, call_jaxpr)

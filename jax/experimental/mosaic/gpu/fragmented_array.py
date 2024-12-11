@@ -662,7 +662,8 @@ class FragmentedArray:
 
       if isinstance(o.layout, WGSplatFragLayout):
         if not o.layout.can_broadcast_to(self.shape):
-          raise ValueError("Can't broadcast shape.")
+          raise ValueError(
+              f"Cannot broadcast shape {self.shape} to layout {o.layout}")
         o = FragmentedArray.splat(
             o.registers.flat[0],
             shape=self.shape,
@@ -1129,7 +1130,7 @@ class FragmentedArray:
     )
 
   # NOTE: scratch can be reused immediately once this function returns.
-  def reduce_sum(self, scratch) -> ir.Value:
+  def reduce_sum(self, scratch):
     if ir.FloatType.isinstance(self.mlir_dtype):
       op = addf
     elif ir.IntegerType.isinstance(self.mlir_dtype):
@@ -1168,7 +1169,7 @@ class FragmentedArray:
     utils.warpgroup_barrier()
     result = memref.load(scratch, [zero_index])
     utils.warpgroup_barrier()  # Make sure everyone is done using scratch.
-    return result
+    return FragmentedArray.splat(result, (), is_signed=self.is_signed)
 
   def reduce(self, op: str | Callable[[ir.Value, ir.Value], ir.Value], axis):
     if isinstance(op, str):

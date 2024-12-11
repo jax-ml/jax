@@ -46,7 +46,8 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.core import Tracer
-from jax._src.mesh import AbstractMesh, Mesh, AxisTypes, set_abstract_mesh
+from jax._src.mesh import (AbstractMesh, Mesh, AxisTypes, set_abstract_mesh,
+                           get_abstract_mesh)
 from jax._src.api import _shared_code_pmap, _prepare_pmap
 from jax._src.lax import (lax, parallel as lax_parallel, slicing,
                           windowed_reductions, convolution, fft, linalg,
@@ -536,7 +537,7 @@ def _shard_shaped_array(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
                     for i, sz in enumerate(aval.shape))
   if config.sharding_in_types.value:
     new_mesh = AbstractMesh(
-        mesh.shape_tuple, {AxisTypes.Collective: mesh.axis_names})
+        mesh.shape_tuple, axis_types={AxisTypes.Collective: mesh.axis_names})
     new_sharding = NamedSharding(new_mesh, P(*[None] * aval.ndim))
   else:
     new_sharding = None
@@ -548,11 +549,9 @@ def _unshard_shaped_array(mesh: Mesh, names: AxisNames,
   assert isinstance(aval, core.ShapedArray)
   new_shape = tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
                     for i, sz in enumerate(aval.shape))
-  # TODO(yashkatariya): Reset the mesh properly based on the input avals if the
-  # mesh of shard_map specifies collective axes.
   if config.sharding_in_types.value:
     spec = _names_to_pspec(names)._normalized_spec(aval.ndim)
-    new_sharding = NamedSharding(AbstractMesh(mesh.shape_tuple), spec)
+    new_sharding = NamedSharding(get_abstract_mesh(), spec)
   else:
     new_sharding = None
   return aval.update(shape=new_shape, sharding=new_sharding)
@@ -1651,7 +1650,7 @@ pe.partial_eval_jaxpr_custom_rules[shard_map_p] = \
 
 def _add_reshapes(which, jaxpr_known, jaxpr_staged):
   # add singleton axes to residuals which are from jaxpr_known and are scalars
-  which_ = [w and not v.aval.shape
+  which_ = [w and not v.aval.shape  # pytype: disable=attribute-error
             for w, v in zip(which, jaxpr_staged.invars[:len(which)])]
   if not any(which_): return jaxpr_known, jaxpr_staged
   assert not jaxpr_known.constvars and not jaxpr_staged.constvars

@@ -203,6 +203,7 @@ class Exported:
   _get_vjp: Callable[[Exported], Exported] | None
 
   def mlir_module(self) -> str:
+    """A string representation of the `mlir_module_serialized`."""
     return xla_client._xla.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
 
   def __str__(self):
@@ -211,8 +212,8 @@ class Exported:
     return f"Exported(fun_name={self.fun_name}, ...)"
 
   def in_shardings_jax(
-      self,
-      mesh: sharding.Mesh) -> Sequence[sharding.Sharding | None]:
+    self,
+    mesh: sharding.Mesh) -> Sequence[sharding.Sharding | None]:
     """Creates Shardings corresponding to self.in_shardings_hlo.
 
     The Exported object stores `in_shardings_hlo` as HloShardings, which are
@@ -221,30 +222,31 @@ class Exported:
     `jax.device_put`.
 
     Example usage:
-    >>> from jax import export
-    >>> exp_mesh = sharding.Mesh(jax.devices(), ("a",))
-    >>> exp = export.export(jax.jit(lambda x: jax.numpy.add(x, x),
-    ...                             in_shardings=sharding.NamedSharding(exp_mesh, sharding.PartitionSpec("a")))
-    ...     )(np.arange(jax.device_count()))
-    >>> exp.in_shardings_hlo
-    ({devices=[8]<=[8]},)
 
-    # Create a mesh for running the exported object
-    >>> run_mesh = sharding.Mesh(jax.devices()[::-1], ("b",))
-    >>>
-    # Put the args and kwargs on the appropriate devices
-    >>> run_arg = jax.device_put(np.arange(jax.device_count()),
-    ...     exp.in_shardings_jax(run_mesh)[0])
-    >>> res = exp.call(run_arg)
-    >>> res.addressable_shards
-    [Shard(device=CpuDevice(id=7), index=(slice(0, 1, None),), replica_id=0, data=[0]),
-     Shard(device=CpuDevice(id=6), index=(slice(1, 2, None),), replica_id=0, data=[2]),
-     Shard(device=CpuDevice(id=5), index=(slice(2, 3, None),), replica_id=0, data=[4]),
-     Shard(device=CpuDevice(id=4), index=(slice(3, 4, None),), replica_id=0, data=[6]),
-     Shard(device=CpuDevice(id=3), index=(slice(4, 5, None),), replica_id=0, data=[8]),
-     Shard(device=CpuDevice(id=2), index=(slice(5, 6, None),), replica_id=0, data=[10]),
-     Shard(device=CpuDevice(id=1), index=(slice(6, 7, None),), replica_id=0, data=[12]),
-     Shard(device=CpuDevice(id=0), index=(slice(7, 8, None),), replica_id=0, data=[14])]
+      >>> from jax import export
+      >>> # Prepare the exported object:
+      >>> exp_mesh = sharding.Mesh(jax.devices(), ("a",))
+      >>> exp = export.export(jax.jit(lambda x: jax.numpy.add(x, x),
+      ...                             in_shardings=sharding.NamedSharding(exp_mesh, sharding.PartitionSpec("a")))
+      ...     )(np.arange(jax.device_count()))
+      >>> exp.in_shardings_hlo
+      ({devices=[8]<=[8]},)
+      >>> # Create a mesh for running the exported object
+      >>> run_mesh = sharding.Mesh(jax.devices()[::-1], ("b",))
+      >>> # Put the args and kwargs on the appropriate devices
+      >>> run_arg = jax.device_put(np.arange(jax.device_count()),
+      ...     exp.in_shardings_jax(run_mesh)[0])
+      >>> res = exp.call(run_arg)
+      >>> res.addressable_shards
+      [Shard(device=CpuDevice(id=7), index=(slice(0, 1, None),), replica_id=0, data=[0]),
+       Shard(device=CpuDevice(id=6), index=(slice(1, 2, None),), replica_id=0, data=[2]),
+       Shard(device=CpuDevice(id=5), index=(slice(2, 3, None),), replica_id=0, data=[4]),
+       Shard(device=CpuDevice(id=4), index=(slice(3, 4, None),), replica_id=0, data=[6]),
+       Shard(device=CpuDevice(id=3), index=(slice(4, 5, None),), replica_id=0, data=[8]),
+       Shard(device=CpuDevice(id=2), index=(slice(5, 6, None),), replica_id=0, data=[10]),
+       Shard(device=CpuDevice(id=1), index=(slice(6, 7, None),), replica_id=0, data=[12]),
+       Shard(device=CpuDevice(id=0), index=(slice(7, 8, None),), replica_id=0, data=[14])]
+
     """
     return tuple(_hlo_sharding_to_xla_compatible_sharding(s, mesh)
                  for s in self.in_shardings_hlo)
@@ -252,7 +254,7 @@ class Exported:
   def out_shardings_jax(
       self,
       mesh: sharding.Mesh) -> Sequence[sharding.Sharding | None]:
-    """Creates Shardings corresponding to self.out_shardings_hlo.
+    """Creates Shardings corresponding to `self.out_shardings_hlo`.
 
     See documentation for in_shardings_jax.
     """
@@ -289,6 +291,21 @@ class Exported:
     return serialize(self, vjp_order=vjp_order)
 
   def call(self, *args, **kwargs):
+    """Call an exported function from a JAX program.
+
+    Args:
+      args: the positional arguments to pass to the exported function. This
+        should be a pytree of arrays with the same pytree structure as the
+        arguments for which the function was exported.
+      kwargs: the keyword arguments to pass to the exported function.
+
+    Returns: a pytree of result array, with the same structure as the
+      results of the exported function.
+
+    The invocation supports reverse-mode AD, and all the features supported
+    by exporting: shape polymorphism, multi-platform, device polymorphism.
+    See the examples in the [JAX export documentation](https://jax.readthedocs.io/en/latest/export/export.html).
+    """
     return call_exported(self)(*args, **kwargs)
 
 
@@ -997,7 +1014,10 @@ _CPU_FFI_KERNELS = [
     "lapack_sgeev_ffi", "lapack_dgeev_ffi", "lapack_cgeev_ffi", "lapack_zgeev_ffi",
     "lapack_sgesdd_ffi", "lapack_dgesdd_ffi", "lapack_cgesdd_ffi", "lapack_zgesdd_ffi",
     "lapack_sgetrf_ffi", "lapack_dgetrf_ffi", "lapack_cgetrf_ffi", "lapack_zgetrf_ffi",
+    "lapack_ssytrd_ffi", "lapack_dsytrd_ffi", "lapack_chetrd_ffi", "lapack_zhetrd_ffi",
     "lapack_sgehrd_ffi", "lapack_dgehrd_ffi", "lapack_cgehrd_ffi", "lapack_zgehrd_ffi",
+    "lapack_sgees_ffi", "lapack_dgees_ffi", "lapack_cgees_ffi", "lapack_zgees_ffi",
+    "lapack_strsm_ffi", "lapack_dtrsm_ffi", "lapack_ctrsm_ffi", "lapack_ztrsm_ffi",
 ]
 # These are the JAX custom call target names that are guaranteed to be stable.
 # Their backwards compatibility is tested by back_compat_test.py.
@@ -1005,7 +1025,8 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     *_CPU_FFI_KERNELS,
     "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape",
     "cu_threefry2x32", "cu_threefry2x32_ffi",
-    "__gpu$xla.gpu.triton",  # Pallas call on GPU
+    # Triton IR does not guarantee stability.
+    # "__gpu$xla.gpu.triton",
     # cholesky on CPU
     "lapack_spotrf", "lapack_dpotrf", "lapack_cpotrf", "lapack_zpotrf",
     # eigh on TPU
@@ -1020,6 +1041,8 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "blas_strsm", "blas_dtrsm", "blas_ctrsm", "blas_ztrsm",
     # schur on CPU
     "lapack_sgees", "lapack_dgees", "lapack_cgees", "lapack_zgees",
+    # tridiagonal on CPU
+    "lapack_ssytrd", "lapack_dsytrd", "lapack_chetrd", "lapack_zhetrd",
     # hessenberg on CPU
     "lapack_sgehrd", "lapack_dgehrd", "lapack_cgehrd", "lapack_zgehrd",
     # lu on GPU

@@ -74,7 +74,7 @@ def attention(q, k, v, config: TuningConfig):
     wg_idx = lax.axis_index("wg")
     qo_smem2, k_smem, v_smem = smem_buffers
     k_barriers, v_barriers, q_barriers = buffer_barriers
-    k_consumed_barrier, v_consumed_barrier = consumed_barriers
+    k_consumed_barriers, v_consumed_barriers = consumed_barriers
     def perform_schedule_barrier():
       plgpu.barrier_arrive(schedule_barrier)
       plgpu.barrier_wait(schedule_barrier)
@@ -116,7 +116,7 @@ def attention(q, k, v, config: TuningConfig):
           perform_schedule_barrier()
           return acc_ref[...]
         qk = pl.run_scoped(compute_qk, plgpu.ACC((block_q, block_kv), jnp.float32))
-        plgpu.barrier_arrive(k_consumed_barrier)
+        plgpu.barrier_arrive(k_consumed_barriers.at[slot])
 
         # Softmax
         # We keep m scaled by log2e to use FMA instructions when computing p.
@@ -153,7 +153,7 @@ def attention(q, k, v, config: TuningConfig):
           def _wait():
             plgpu.barrier_wait(k_barriers.at[wait_slot])
         acc = pl.run_state(compute_pv)(plgpu.ACC.init(acc))
-        plgpu.barrier_arrive(v_consumed_barrier)
+        plgpu.barrier_arrive(v_consumed_barriers.at[slot])
         return acc, m_i, l_i
       if kv_seq_len % block_kv:
         raise ValueError(f"{kv_seq_len=} must be a multiple of {block_kv=}")
@@ -184,16 +184,11 @@ def attention(q, k, v, config: TuningConfig):
         tma_step = kv_step + max_concurrent_steps
         tma_slot = lax.rem(kv_step, max_concurrent_steps)
         s = (batch, pl.ds(tma_step * block_kv, block_kv), kv_head)
-        plgpu.barrier_wait(k_consumed_barrier)
+        plgpu.barrier_wait(k_consumed_barriers.at[tma_slot])
         plgpu.copy_gmem_to_smem(k_ref.at[s], k_smem.at[tma_slot], k_barriers.at[tma_slot])
-        plgpu.barrier_wait(v_consumed_barrier)
+        plgpu.barrier_wait(v_consumed_barriers.at[tma_slot])
         plgpu.copy_gmem_to_smem(v_ref.at[s], v_smem.at[tma_slot], v_barriers.at[tma_slot])
       lax.fori_loop(0, kv_seq_len // block_kv - max_concurrent_steps, kv_loop, None)
-
-      def kv_epilogue(i, _):
-        plgpu.barrier_wait(k_consumed_barrier)
-        plgpu.barrier_wait(v_consumed_barrier)
-      lax.fori_loop(0, max_concurrent_steps, kv_epilogue, None)
 
   def run(refs):
     q_ref, k_ref, v_ref, out_ref = refs
@@ -210,7 +205,6 @@ def attention(q, k, v, config: TuningConfig):
     @pl.core_map(mesh)
     def _kernel_entry():
       compute_wgs = 2
-      barrier_2wg = plgpu.Barrier(num_arrivals=compute_wgs)
       tiling = plgpu.TilingTransform((64, 64))
       swizzle = plgpu.SwizzleTransform(128)
       qo_scratch = plgpu.SMEM(
@@ -233,8 +227,8 @@ def attention(q, k, v, config: TuningConfig):
               plgpu.Barrier(1, num_barriers=max_concurrent_steps),
               plgpu.Barrier(1, num_barriers=compute_wgs),
           ),
-          (barrier_2wg, barrier_2wg),
-          barrier_2wg,
+          (plgpu.Barrier(num_arrivals=compute_wgs, num_barriers=max_concurrent_steps),) * 2,
+          plgpu.Barrier(num_arrivals=compute_wgs),
       )
 
   _, _, _, out = pl.run_state(run)((q, k, v, jnp.full_like(q, jnp.inf)))
@@ -274,7 +268,7 @@ def main(unused_argv):
     for block_kv in (256, 128, 64):
       config = TuningConfig(block_q=block_q, block_kv=block_kv, max_concurrent_steps=2)
       try:
-        out, runtime_ms = profiler.measure(functools.partial(attention, config=config), q, k, v)
+        out, runtime_ms = profiler.measure(functools.partial(attention, config=config))(q, k, v)
         if seq_len < 32768:
           out_ref = attention_reference(q, k, v)
           np.testing.assert_allclose(out, out_ref, atol=2e-3, rtol=1e-3)

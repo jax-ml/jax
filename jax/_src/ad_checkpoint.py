@@ -652,7 +652,7 @@ def remat_transpose(out_cts, *in_primals, jaxpr, **params):
             for x in in_primals]
   assert next(in_cts_nz_, None) is next(in_zeros_, None) is None
   return in_cts
-ad.reducing_transposes[remat_p] = remat_transpose
+ad.primitive_transposes[remat_p] = remat_transpose
 
 # TODO(mattjj): move this to ad.py
 def transpose_jaxpr(jaxpr: core.ClosedJaxpr, in_linear: bool | Sequence[bool],

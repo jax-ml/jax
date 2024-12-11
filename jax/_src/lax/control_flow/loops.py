@@ -376,6 +376,9 @@ def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
                f'of the carry output is a {thing2}, so {explanation}'
                for path, thing1, thing2, explanation
                in equality_errors(in_carry, out_carry)]
+      if len(diffs) == 0:
+        # The trees may have different aux data but structures are the same.
+        return
       if len(diffs) == 1:
         differences = f'{diffs[0]}.\n'.capitalize()
       else:
@@ -393,6 +396,9 @@ def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
              f'{out_aval.str_short()}{_aval_mismatch_extra(in_aval, out_aval)}'
              for path, in_aval, out_aval in zip(paths, in_avals, out_avals)
              if not core.typematch(in_aval, out_aval)]
+    if len(diffs) == 0:
+      # The trees may have different aux data but structures are the same.
+      return
     if len(diffs) == 1:
       differences = f'{diffs[0]}.\n'.capitalize()
     else:
@@ -1228,7 +1234,7 @@ scan_p.multiple_results = True
 scan_p.def_impl(partial(dispatch.apply_primitive, scan_p))
 scan_p.def_effectful_abstract_eval(_scan_abstract_eval)
 ad.primitive_jvps[scan_p] = _scan_jvp
-ad.reducing_transposes[scan_p] = _scan_transpose
+ad.primitive_transposes[scan_p] = _scan_transpose
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
 xla.register_initial_style_primitive(scan_p)
 mlir.register_lowering(scan_p,

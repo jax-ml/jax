@@ -36,7 +36,7 @@ repos:
   - id: mypy
     files: (jax/|tests/typing_test\.py)
     exclude: jax/_src/basearray.py|jax/numpy/__init__.py  # Use pyi instead
-    additional_dependencies: [types-requests==2.31.0, jaxlib]
+    additional_dependencies: [types-requests==2.31.0, jaxlib, numpy~=2.1.0]
     args: [--config=pyproject.toml]
 
 - repo: https://github.com/mwouts/jupytext

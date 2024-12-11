@@ -145,6 +145,15 @@ class PrintCtx:
     self.level -= 1
     self.locals.append(self._indent(end) + "\n")
 
+  @contextlib.contextmanager
+  def comment_if_emitted(self, comment):
+    self.comment(comment)
+    yield
+    self.comment(comment)
+    if self.locals[-1] == self.locals[-2]:
+      self.locals.pop()
+    self.locals.pop()
+
   def get(self, value: ir.Value, default: Any = _UNSPECIFIED):
     if default is _UNSPECIFIED:
       return self.env[value]
@@ -358,6 +367,17 @@ def _print_op(ctx, op):
       return bin_op(ctx, "int", "%", *op.operands)
     case "arith.divsi":
       return bin_op(ctx, "int", "/", *op.operands)
+    case "arith.andi":
+      return bin_op(ctx, _model_type(op.result.type), "&", *op.operands)
+    case "arith.select":
+      cond, if_true, if_false = map(lambda o: ctx.get(o, None), op.operands)
+      if cond is None or if_true is None or if_false is None:
+        return NotImplemented
+      result_ty = _model_type(op.result.type)
+      return ctx.emit(result_ty, f"({cond} -> {if_true} : {if_false})")
+    case "arith.index_cast":
+      model = ctx.get(op.operands[0], None)
+      return ctx.emit("int", model) if model is not None else NotImplemented
     case "arith.cmpi":
       match op.predicate.value:
         case arith.CmpIPredicate.eq:
@@ -386,12 +406,44 @@ def _print_op(ctx, op):
         read_refs.append(model)
       with ctx.block("d_step {", "}"):  # Start reading
         for r in read_refs:
+          for loc in r.written_at(None):
+            ctx.emit(None, f"assert(!{loc})")
           for loc in r.readers_at(None):
             ctx.emit(None, f"{loc}++")
       with ctx.block("d_step {", "}"):  # Stop reading
         for r in read_refs:
           for loc in r.readers_at(None):
             ctx.emit(None, f"{loc}--")
+    case "vector.load":
+      ref = ctx.get(op.operands[0])
+      assert isinstance(ref, GlobalRefModel)
+      if (first_idx := ctx.get(op.operands[1], None)) is not None:
+        leading_load_len = ir.VectorType(op.result.type).shape[0]
+        ref = GlobalRefModel(f"{ref.base} + {first_idx}", leading_load_len)
+      with ctx.block("d_step {", "}"):  # Start reading
+        for loc in ref.written_at(None):
+          ctx.emit(None, f"assert(!{loc})")
+        for loc in ref.readers_at(None):
+          ctx.emit(None, f"{loc}++")
+      with ctx.block("d_step {", "}"):  # Stop reading
+        for loc in ref.readers_at(None):
+          ctx.emit(None, f"{loc}--")
+      return NotImplemented  # We don't model the result of the load.
+    case "vector.store":
+      ref = ctx.get(op.operands[1])  # Stored value goes first
+      assert isinstance(ref, GlobalRefModel)
+      if (first_idx := ctx.get(op.operands[2], None)) is not None:
+        leading_store_len = ir.VectorType(op.operands[0].type).shape[0]
+        ref = GlobalRefModel(f"{ref.base} + {first_idx}", leading_store_len)
+      with ctx.block("d_step {", "}"):  # Start writing
+        for loc in ref.readers_at(None):
+          ctx.emit(None, f"assert(!{loc})")
+        for loc in ref.written_at(None):
+          ctx.emit(None, f"assert(!{loc})")
+          ctx.emit(None, f"{loc} = 1")
+      with ctx.block("d_step {", "}"):  # Stop reading
+        for loc in ref.written_at(None):
+          ctx.emit(None, f"{loc} = 0")
     case "scf.for":
       carrys = [
           ctx.emit("int", ctx.get(arg))
@@ -419,6 +471,7 @@ def _print_op(ctx, op):
               ctx.emit(None, f"{c} = {ctx.get(new)}")
           ctx.emit(None, f"{induction_var} = {induction_var} + {step}")
         ctx.emit(None, ":: else -> break")
+      ctx.emit(None, "skip")  # To avoid "Jump into d_step sequence errors"
       if len(carrys) == 1:
         return carrys[0]
       else:
@@ -450,16 +503,27 @@ def bin_op(ctx, result_ty, op, lhs, rhs):
   return ctx.emit(result_ty, f"{lhs} {op} {rhs}")
 
 
+def _model_type(ty):
+  if ir.IntegerType.isinstance(ty):
+    if ir.IntegerType(ty).width == 1:
+      return "bool"
+    else:
+      return "int"
+  else:
+    raise NotImplementedError(ty)
+
+
 def _print_block(ctx, block):
   for op in block:
     try:
-      results = _print_op(ctx, op)
+      with ctx.comment_if_emitted(op.OPERATION_NAME):
+        results = _print_op(ctx, op)
     except Exception as e:
       raise RuntimeError(f"Failed to print op: {op}") from e
     if results is NotImplemented:
       continue
     if not op.results:
-      assert results is None
+      assert results is None or results == ()
     elif len(op.results) > 1:
       raise NotImplementedError(op)
     else:

@@ -342,8 +342,13 @@ def TPU_RepeatOp : TPU_Op<"repeat", [Pure]> {
 }
 
 def TPU_BroadcastInSublanesOp : TPU_Op<"broadcast_in_sublanes", [Pure]> {
+  let description = [{
+    For each sublane `i`, broadcasts the value in lane `lane + i` along the entire
+    sublane. If `lane + i` is not in [0, lane_count), then the value in sublane `i`
+    is not defined (can be anything).
+  }];
   let arguments = (ins
-    AnyVectorOfNonZeroRank:$source,  // All sublanes should be equal.
+    TPU_Vreg:$source,  // All sublanes should be equal.
     I32Attr:$lane  // Coordinates of the first element to take.
   );
   // Output shape should be the same, except for position dim which contains
@@ -466,6 +471,13 @@ def TPU_BitcastVregOp : TPU_Op<"bitcast_vreg", [Pure]> {
   let arguments = (ins TPU_Vreg:$input);
   let results = (outs TPU_Vreg:$output);
   let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+}
+
+def TPU_WeirdOp : TPU_Op<"weird", [Pure, ElementwiseMappable]> {
+  let arguments = (ins AnyType:$input);  // F32 vector or scalar
+  let results = (outs AnyType:$output);  // I1 vector or scalar
+  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+  let hasVerifier = 1;
 }
 
 def TPU_RollVectorsOp : TPU_Op<"roll_vectors", [Pure]> {
@@ -775,7 +787,10 @@ def DebugAssertInsertionPass : Pass<"debug-assert-insertion", "::mlir::func::Fun
 }
 
 def MosaicSerdePass : Pass<"mosaic-serde", "::mlir::ModuleOp"> {
-  let options = [Option<"serialize", "serialize", "bool", "", "">];
+  let options = [
+    Option<"serialize", "serialize", "bool", "", "">,
+    Option<"target_version", "target-version", "int", "", "">  // Only used when serialize=true.
+  ];
 }
 
 def LogicalToPhysicalDeviceIdPass : Pass<"logical-to-physical-device-id", "::mlir::func::FuncOp"> {
