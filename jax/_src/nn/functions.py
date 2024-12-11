@@ -25,7 +25,6 @@ from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
-from jax import custom_jvp
 from jax import lax
 from jax._src import config
 from jax._src import core
@@ -50,7 +49,6 @@ _UNSPECIFIED = Unspecified()
 
 # activations
 
-@custom_jvp
 @jax.jit
 def relu(x: ArrayLike) -> Array:
   r"""Rectified linear unit activation function.
@@ -66,8 +64,8 @@ def relu(x: ArrayLike) -> Array:
     \nabla \mathrm{relu}(0) = 0
 
   For more information see
-  `Numerical influence of ReLU’(0) on backpropagation
-  <https://openreview.net/forum?id=urrcVI-_jRm>`_.
+  `Numerical influence of ReLU'(0) on backpropagation
+  <https://dl.acm.org/doi/10.5555/3540261.3540297>`_.
 
   Args:
     x : input array
@@ -83,9 +81,7 @@ def relu(x: ArrayLike) -> Array:
     :func:`relu6`
 
   """
-  return jnp.maximum(x, 0)
-# For behavior at 0, see https://openreview.net/forum?id=urrcVI-_jRm
-relu.defjvps(lambda g, ans, x: lax.select(x > 0, g, lax.full_like(g, 0)))
+  return jnp.where(jnp.greater(x, 0), x, 0)
 
 @jax.jit
 def squareplus(x: ArrayLike, b: ArrayLike = 4) -> Array:
