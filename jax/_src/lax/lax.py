@@ -102,27 +102,31 @@ def _validate_shapes(shapes: Sequence[Shape]):
   else:
     map(_check_static_shape, shapes)
 
-def _try_broadcast_shapes(
-    shapes: Sequence[tuple[int, ...]]) -> tuple[int, ...] | None:
-  if len(shapes) == 1: return shapes[0]
+def _try_broadcast_shapes(*shapes: tuple[int, ...], name: str) -> tuple[int, ...]:
+  """
+  Attempt to broadcast shapes, raising a TypeError if broadcasting fails.
+  """
+  if not shapes:
+    raise TypeError(f"{name}: At least one shape is required.")
   ranks = {len(shape) for shape in shapes}
-  if len(ranks) > 1: return None  # must have consistent rank
-  rank = ranks.pop()
-  if not rank: return ()  # scalar case
+  if len(ranks) != 1:
+    raise TypeError(f'{name}: arrays must have the same number of dimensions,'
+                    f' got {ranks}')
   result_shape = []
-  for ds in unsafe_zip(*shapes):
+  for ds in zip(*shapes):
     if all(core.same_referent(d, ds[0]) for d in ds[1:]):
       # if all axes are identical objects, the resulting size is the object
       result_shape.append(ds[0])
     else:
-      # if all dims are equal (or 1), the result is the non-1 size (or 1)
+      # if all dims are equal (or 1), the result is the non-1 size
       non_1s = [d for d in ds if not core.definitely_equal(d, 1)]
       if not non_1s:
         result_shape.append(1)
       elif all(core.definitely_equal(non_1s[0], d) for d in non_1s[1:]):
         result_shape.append(non_1s[0])
       else:
-        return None
+        raise TypeError(f'{name} got incompatible shapes for broadcasting: '
+                        f'{", ".join(map(str, map(tuple, shapes)))}.')
   return tuple(result_shape)
 
 def asarray(x: ArrayLike) -> Array:
@@ -165,11 +169,12 @@ def _broadcast_shapes_uncached(*shapes):
     return result_shape
 
   # Next try singleton-broadcasting, padding out ranks using singletons.
-  shape_list = [(1,) * (ndim - len(shape)) + shape for shape in shapes]
-  result_shape = _try_broadcast_shapes(shape_list)
-  if result_shape is None:
-    raise ValueError(f"Incompatible shapes for broadcasting: shapes={list(shapes)}")
-  return result_shape
+  rank_promoted_shapes = tuple((*((1,) * (ndim - len(shape))), *shape) for shape in shapes)
+  try:
+    return _try_broadcast_shapes(*rank_promoted_shapes, name='broadcast_shapes')
+  except TypeError as err:
+    # Raise ValueError here for backward compatibility.
+    raise ValueError(f"Incompatible shapes for broadcasting: shapes={list(shapes)}") from err
 
 def _identity(x): return x
 
@@ -2133,27 +2138,7 @@ def broadcasting_shape_rule(name, *avals):
   shapes = [aval.shape for aval in avals if aval.shape]
   if not shapes:
     return ()
-  if len({len(shape) for shape in shapes}) != 1:
-    msg = '{}: arrays must have same number of dimensions, got {}.'
-    raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
-  # TODO(mattjj): de-duplicate with _try_broadcast_shapes
-  result_shape = []
-  for ds in zip(*shapes):
-    if all(core.same_referent(d, ds[0]) for d in ds[1:]):
-      # if all axes are identical objects, the resulting size is the object
-      result_shape.append(ds[0])
-    else:
-      # if all dims are equal (or 1), the result is the non-1 size
-      non_1s = [d for d in ds if not core.definitely_equal(d, 1)]
-      if not non_1s:
-        result_shape.append(1)
-      elif all(core.definitely_equal(non_1s[0], d) for d in non_1s[1:]):
-        result_shape.append(non_1s[0])
-      else:
-        raise TypeError(f'{name} got incompatible shapes for broadcasting: '
-                        f'{", ".join(map(str, map(tuple, shapes)))}.')
-
-  return tuple(result_shape)
+  return _try_broadcast_shapes(*shapes, name=name)
 
 
 def broadcasting_sharding_rule(name, *avals):
