@@ -603,9 +603,9 @@ def _apply_mask_and_soft_cap(
     else:
       mask = pl.load(mask_ref, (k_slice, slice(None)))
 
-    snm = jnp.where(should_not_mask, 1, 0)
-    masks.append(jnp.bitwise_or(mask, jnp.broadcast_to(snm, mask.shape)) != 0)
-
+    masks.append(
+        jnp.bitwise_or(mask, jnp.broadcast_to(should_not_mask, mask.shape))
+    )
   if mask_function is not None:
     # Compute the mask using the given q_sequence indices.
     # KV indices are computed on the fly. This works because we only support Q
@@ -899,6 +899,16 @@ def _splash_attention_forward(
     kv_head_dimension = 2
     kv_seq_len_dimension = 1
     num_kv_heads = k.shape[0]
+
+  partial_mask_blocks = fwd_mask_info.partial_mask_blocks
+  if (
+      partial_mask_blocks is not None
+      and jnp.dtype(partial_mask_blocks.dtype) != np.bool_
+  ):
+    raise ValueError(
+        "partial_mask_blocks must be of type np.bool_ but got"
+        f" {partial_mask_blocks.dtype}"
+    )
 
   if len(k.shape) != expected_kv_rank:
     raise ValueError(

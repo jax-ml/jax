@@ -56,7 +56,7 @@ class MaskInfo(NamedTuple):
       indicates that the corresponding block in the full mask contained both
       zeros and ones. An entry of 2 indicates the corresponding block was
       entirely ones.
-    partial_mask_blocks: A i32[num_partial_blocks, block_q, block_kv] NumPy
+    partial_mask_blocks: A bool[num_partial_blocks, block_q, block_kv] NumPy
       array that contains the blocks of the original mask that contained both
       zeros and ones. The entries in `mask_next` point to indices in the first
       axis of this array.
@@ -305,7 +305,7 @@ def _get_mask_info_for_shard(
 
 
 # When used in a transformer network with multiple layers, the SplashAttention
-# kernel is created serveral times with the same mask. Cache MaskInfo to avoid
+# kernel is created several times with the same mask. Cache MaskInfo to avoid
 # blowing up compile times. Ideally the size of the cache should be determined
 # by the client.
 @functools.lru_cache(maxsize=12)
@@ -376,14 +376,6 @@ def _process_mask(
   if mod != 0:
     raise ValueError(f'{head_shards=} should divide {head_count=}.')
 
-  first_mask_size = mask.masks[0].shape
-  for h in range(head_count):
-    if mask.masks[h].shape != first_mask_size:
-      raise ValueError(
-          f'First head mask has shape {first_mask_size}, but head mask {h} has'
-          f' shape {mask.masks[h].shape}. All head masks must have the same'
-          ' shape.'
-      )
 
   # Uniquify the masks.
   # Create a collection of the unique head masks in the input multi-head mask.
@@ -526,13 +518,9 @@ def _process_mask(
 
   partial_mask_blocks = None
   has_mask_next = False
-  if len(unique_partial_mask_blocks) == 1:
+  if len(unique_partial_mask_blocks) >= 1:
     partial_mask_blocks = [x.array for x in unique_partial_mask_blocks]
-    partial_mask_blocks = partial_mask_blocks[0][None].astype(np.int32)
-    has_mask_next = True
-  elif len(unique_partial_mask_blocks) > 1:
-    partial_mask_blocks = [x.array for x in unique_partial_mask_blocks]
-    partial_mask_blocks = np.stack(partial_mask_blocks, axis=0).astype(np.int32)
+    partial_mask_blocks = np.stack(partial_mask_blocks, axis=0).astype(np.bool_)
     has_mask_next = True
   if is_dkv and partial_mask_blocks is not None:
     partial_mask_blocks = np.swapaxes(partial_mask_blocks, -1, -2)
