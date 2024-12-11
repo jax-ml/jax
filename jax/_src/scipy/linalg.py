@@ -1924,7 +1924,7 @@ def _briggs_helper_function(a: Array, k:int) -> Array:
   return r
 
 @partial(jit, static_argnames=("t","itmax"))
-def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> float:
+def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> Array:
   """
     Estimate of the 1-norm of a matrix A.
 
@@ -1939,10 +1939,12 @@ def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> float:
     # we also avoid getting stuck in an infinite loop when generating vectors that are not parallel in algorithm
     return jnp.linalg.norm(A, 1, axis=(-2, -1))
   ind_hist = jnp.ones(t*itmax, dtype=jnp.int32) * -1
-  est_old = 0.0
+  est_old = jnp.zeros(dtype=A.dtype, shape=[]).real
   idx_size = min(n,t*itmax+t)
   ind = jnp.zeros((idx_size, ), dtype=jnp.int32)
   S = jnp.zeros((n,t), dtype=A.dtype)
+  k = jnp.array(1, dtype=jnp.int32)
+  itmax_ = jnp.array(itmax, dtype=jnp.int32)
 
   #  initialize starting matrix X with columns of unit 1-norm
   #  choice of columns is explained in scipy/sparse/linalg/_onenormest.py
@@ -1995,7 +1997,7 @@ def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> float:
     ind_j = jnp.argmax(summed_abs_cols)
     ind_best = ind[ind_j]
 
-    est, k = jax.lax.cond(jnp.logical_and(k >= 2, est <= est_old), (lambda est, est_old, k: (est_old, itmax)), (lambda est, est_old, k: (est, k)), est, est_old, k)
+    est, k = jax.lax.cond(jnp.logical_and(k >= 2, est <= est_old), (lambda: (est_old, itmax_)), (lambda: (est, k)))
 
     est_old = est
     S_old = S
@@ -2003,7 +2005,7 @@ def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> float:
     S = (Y+(Y == 0).astype(Y.dtype))/jnp.abs(Y).astype(Y.dtype)
 
     # if all vectors in S are parallel to vector in S_old finish iterating
-    k = jax.lax.cond((S.T@S_old == n).all(), lambda old_k: itmax, lambda old_k: old_k, k)
+    k = jax.lax.cond((S.T@S_old == n).all(), lambda: itmax_, lambda: k)
 
     if t > 1:
       # Ensure that no column of S is parallel to another column of S
@@ -2013,10 +2015,10 @@ def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> float:
 
     Z = A.T @ S
     h = jnp.abs(Z).max(1)
-    k = jax.lax.cond(jnp.logical_and(k >= 2, (jnp.max(h) == h[ind_best]).all()), lambda old_k: itmax, lambda old_k: old_k, k)
-    ind = jnp.argsort(h, descending=True)[:t+len(ind_hist)]
+    k = jax.lax.cond(jnp.logical_and(k >= 2, (jnp.max(h) == h[ind_best]).all()), lambda old_k: itmax_, lambda old_k: old_k, k)
+    ind = jnp.argsort(h, descending=True)[:t+len(ind_hist)].astype(ind_hist.dtype)
     if t > 1:
-      k = jax.lax.cond(jnp.isin(ind[:t], ind_hist).all(), lambda old_k: itmax, lambda old_k: old_k, k)
+      k = jax.lax.cond(jnp.isin(ind[:t], ind_hist).all(), lambda: itmax_, lambda: k)
       # put not seen indices first
       seen = jnp.isin(ind, ind_hist)
       idx = jnp.argsort(seen, stable=True)
@@ -2033,7 +2035,7 @@ def _onenormest(A: Array, key:ArrayLike, t:int=2, itmax:int=5) -> float:
     A, X, S, ind, ind_hist, est_old, key, k = x
     return k < itmax
 
-  A, X, S, ind, ind_hist, est, key, k = jax.lax.while_loop(main_loop_cond, main_loop_body, (A, X, S, ind, ind_hist, est_old, key, 1))
+  A, X, S, ind, ind_hist, est, key, k = jax.lax.while_loop(main_loop_cond, main_loop_body, (A, X, S, ind, ind_hist, est_old, key, k))
 
   return est
 
@@ -2141,8 +2143,7 @@ def _logm_triu(T: Array, key:ArrayLike) -> Array:
   T_0 = T
   #  Bounds defined in table 2.1 from Awad H. et al.
   #  first entry set to NaN to offset indexes by 1 because they start from 1 in the paper
-  theta_m = jnp.array([float('nan'), 1.59e-5, 2.31e-3, 1.94e-2, 6.21e-2, 1.28e-1, 2.06e-1, 2.88e-1, 3.67e-1, 4.39e-1, 5.03e-1, 5.60e-1, 6.09e-1, 6.52e-1, 6.89e-1, 7.21e-1, 7.49e-1])
-
+  theta_m = jnp.array([float('nan'), 1.59e-5, 2.31e-3, 1.94e-2, 6.21e-2, 1.28e-1, 2.06e-1, 2.88e-1, 3.67e-1, 4.39e-1, 5.03e-1, 5.60e-1, 6.09e-1, 6.52e-1, 6.89e-1, 7.21e-1, 7.49e-1], dtype=T.dtype).real
   R, s, m = _inverse_squaring(T_0, theta_m, key=key)
 
   # line 36 of algorithm 4.1
@@ -2209,15 +2210,23 @@ def logm(A: ArrayLike, key:ArrayLike) -> Array:
            SIAM Journal on Scientific Computing, 34 (4). C152-C169.
            ISSN 1095-7197
   """
+  def perform_real_logm(T, Z):
+    logm_T = _logm_triu(T, key=key)
+    complex_dtype = jnp.complex64 if T.dtype == jnp.float32 else jnp.complex_
+    return logm_T.astype(complex_dtype), Z.astype(complex_dtype)
+
+  def perform_complex_logm(T, Z):
+    T, Z = rsf2csf(T, Z)
+    logm_T = _logm_triu(T, key=key)
+    return logm_T, Z
+
   if jnp.isrealobj(A):
     T, Z = schur(A, output='real')
-    T = T.astype(complex)
-    Z = Z.astype(complex)
-    T, Z = lax.cond(~jnp.array_equal(T, jnp.triu(T)), rsf2csf, lambda T, Z: (T, Z), T, Z)
+    keep_it_real = jnp.logical_and(jnp.array_equal(T, jnp.triu(T)), jnp.min(jnp.diag(T)) >= 0)
+    logm_T, Z = lax.cond(keep_it_real, perform_real_logm, perform_complex_logm, T, Z)
   else:
     T, Z = schur(A, output='complex')
-
-  logm_T = _logm_triu(T, key=key)
+    logm_T = _logm_triu(T, key=key)
   return jnp.matmul(jnp.matmul(Z, logm_T, precision=lax.Precision.HIGHEST),
                     jnp.conj(Z.T), precision=lax.Precision.HIGHEST)
 
