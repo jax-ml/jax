@@ -565,14 +565,21 @@ def _get_vmap(batched_args, batched_dims, *, tree):
 
   idx_is_batched = any(i_dim is not batching.not_mapped
                        for i_dim in flat_idx_dims)
+
+  # TODO(sharadmv): handle vmap of multiple indexers
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")
-  # TODO(sharadmv): handle vmap of multiple indexers
-  indexers = tuple(_batch_indexer(indexer, dims, axis_size,
-                                  ref.shape, ref_dim, idx_is_batched)
-                     for indexer, dims in zip(indexers, indexers_dims))
-  flat_indexers, tree = tree_util.tree_flatten(indexers)
-  return get_p.bind(ref, *flat_indexers, tree=tree), 0
+
+  indexer, = indexers
+  indexer_dims, = indexers_dims
+  new_indexer = _batch_indexer(indexer, indexer_dims, axis_size, ref.shape,
+                               ref_dim, idx_is_batched)
+  new_indexers = (new_indexer,)
+
+  flat_indexers, tree = tree_util.tree_flatten(new_indexers)
+  is_int_indexing, _, _ = indexing.unpack_ndindexer(new_indexer)
+  batched_dim_in_new_indexer = is_int_indexing.index(True)
+  return get_p.bind(ref, *flat_indexers, tree=tree), batched_dim_in_new_indexer
 batching.primitive_batchers[get_p] = _get_vmap
 
 def _swap_vmap(batched_args, batched_dims, *, tree):
