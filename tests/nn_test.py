@@ -317,6 +317,11 @@ class NNFunctionsTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(jax.grad(nn.relu))(0.)
     self.assertGreaterEqual(len(jaxpr.jaxpr.eqns), 2)
 
+  def testReluGradAtZero(self):
+    # https://dl.acm.org/doi/10.5555/3540261.3540297
+    grad = jax.grad(nn.relu)(0.)
+    self.assertEqual(grad, 0.)
+
   def testRelu6Grad(self):
     rtol = 1e-2 if jtu.test_device_matches(["tpu"]) else None
     check_grads(nn.relu6, (1.,), order=3, rtol=rtol)
