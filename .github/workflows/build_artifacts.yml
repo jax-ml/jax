@@ -1,11 +1,28 @@
 name: Build JAX Artifacts
 
 on:
-  # pull_request:
-  #   branches:
-  #     - main
   workflow_dispatch:
     inputs:
+      runner:
+        description: "Which runner should the workflow run on?"
+        type: string
+        required: true
+        default: "linux-x86-n2-16"
+      artifact:
+        description: "Which JAX artifact to build?"
+        type: string
+        required: true
+        default: "jaxlib"
+      python:
+        description: "Which python version should the artifact be built for?"
+        type: string
+        required: true
+        default: "3.12"
+      clone_main_xla:
+        description: "Should latest XLA be used? (1 to enable, 0 to disable)"
+        type: string
+        required: false
+        default: "0"
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: choice
@@ -15,60 +32,88 @@ on:
         - 'yes'
         - 'no'
   workflow_call:
+    inputs:
+      runner:
+        description: "Which runner should the workflow run on?"
+        type: string
+        required: true
+        default: "linux-x86-n2-16"
+      artifact:
+        description: "Which JAX artifact to build?"
+        type: string
+        required: true
+        default: "jaxlib"
+      python:
+        description: "Which python version should the artifact be built for?"
+        type: string
+        required: true
+        default: "3.12"
+      clone_main_xla:
+        description: "Should latest XLA be used? (1 to enable, 0 to disable)"
+        type: string
+        required: false
+        default: "0"
+      upload_artifacts:
+        description: "Should the artifacts be uploaded to a GCS bucket?"
+        required: false
+        default: false
+        type: boolean
+      upload_destination_prefix:
+        description: "GCS location prefix to where the artifacts should be uploaded"
+        required: false
+        default: '${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+        type: string
 
 jobs:
-  build:
-    continue-on-error: true
+  build_artifacts:
     defaults:
       run:
         # Explicitly set the shell to bash to override the default Windows environment, i.e, cmd.
         shell: bash
-    strategy:
-      matrix:
-        runner: ["windows-x86-n2-64", "linux-x86-n2-16", "linux-arm64-t2a-16"]
-        artifact: ["jax", "jaxlib", "jax-cuda-pjrt", "jax-cuda-plugin"]
-        python: ["3.10", "3.11", "3.12"]
-        # jax-cuda-pjrt and jax are pure Python packages so they do not need to be built for each
-        # Python version.
-        exclude:
-          # Pure Python packages do not need to be built for each Python version.
-          - artifact: "jax-cuda-pjrt"
-            python: "3.10"
-          - artifact: "jax-cuda-pjrt"
-            python: "3.11"
-          - artifact: "jax"
-            python: "3.10"
-          - artifact: "jax"
-            python: "3.11"
-          # jax is a pure Python package so it does not need to be built on multiple platforms.
-          - artifact: "jax"
-            runner: "windows-x86-n2-64"
-          - artifact: "jax"
-            runner: "linux-arm64-t2a-16"
-          # jax-cuda-plugin and jax-cuda-pjrt are not supported on Windows.
-          - artifact: "jax-cuda-plugin"
-            runner: "windows-x86-n2-64"
-          - artifact: "jax-cuda-pjrt"
-            runner: "windows-x86-n2-64"
 
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ inputs.runner }}
 
-    container: ${{ (contains(matrix.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest') ||
-                   (contains(matrix.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/linux-arm64-arc-container:latest') ||
-                   (contains(matrix.runner, 'windows-x86') && null) }}
+    container: ${{ (contains(inputs.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest') ||
+                   (contains(inputs.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') ||
+                   (contains(inputs.runner, 'windows-x86') && null) }}
 
     env:
-      # Do not run Docker container for Linux runners. Linux runners already run in a Docker container.
-      JAXCI_RUN_DOCKER_CONTAINER: 0
+      JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
+      JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
+
+    name: Build ${{ inputs.artifact }} (${{ inputs.runner }}, Python ${{ inputs.python }}, Clone main XLA=${{ inputs.clone_main_xla }})
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+      - name: Enable RBE if building on Linux x86 or Windows x86
+        if: contains(inputs.runner, 'linux-x86') || contains(inputs.runner, 'windows-x86')
+        run: echo "JAXCI_BUILD_ARTIFACT_WITH_RBE=1" >> $GITHUB_ENV
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@main
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      - name: Build ${{ matrix.artifact }}
-        env:
-          JAXCI_HERMETIC_PYTHON_VERSION: "${{ matrix.python }}"
-        run: ./ci/build_artifacts.sh "${{ matrix.artifact }}"
+      - name: Build ${{ inputs.artifact }}
+        run: ./ci/build_artifacts.sh "${{ inputs.artifact }}"
+      - name: Set PLATFORM env var for use in upload destination 
+        run: |
+          os=$(uname -s | awk '{print tolower($0)}')
+          arch=$(uname -m)
+
+          # Adjust name for Windows
+          if [[  $os  =~ "msys_nt" ]]; then
+            os="windows"
+          fi
+
+          echo "PLATFORM=${os}_${arch}" >> $GITHUB_ENV
+      - name: Upload artifacts to GCS bucket (non-Windows)
+        if: >-
+          ${{ inputs.upload_artifacts && !contains(inputs.runner, 'windows-x86') }}
+        run:  gsutil -m cp -r $(pwd)/dist/*.whl gs://general-ml-ci-transient/jax-github-actions/"${{ inputs.upload_destination_prefix }}"/$PLATFORM/python${JAXCI_HERMETIC_PYTHON_VERSION}/
+      - name: Upload artifacts to GCS bucket (Windows)
+        if: >-
+          ${{ inputs.upload_artifacts &&  contains(inputs.runner, 'windows-x86') }}
+        shell: cmd
+        run:  gsutil -m cp -r dist/*.whl gs://general-ml-ci-transient/jax-github-actions/"${{ inputs.upload_destination_prefix }}"/$PLATFORM/python${JAXCI_HERMETIC_PYTHON_VERSION}/
+      
+      

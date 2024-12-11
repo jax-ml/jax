@@ -1,9 +1,6 @@
 name: Run Pytest CPU tests
 
 on:
-  # pull_request:
-  #   branches:
-  #     - main
   workflow_dispatch:
     inputs:
       halt-for-connection:
@@ -13,29 +10,53 @@ on:
         default: 'no'
         options:
         - 'yes'
-        - 'no'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-    continue-on-error: true
+  build_jaxlib_artifact:
+    uses: ./.github/workflows/build_artifacts.yml      
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          runner: ["linux-x86-n2-16", "linux-arm64-c4a-64", "windows-x86-n2-16"]
+          artifact: ["jaxlib"]
+          python: ["3.10",] # "3.11", "3.12", "3.13"]
+    with:
+      runner: ${{ matrix.runner }}
+      artifact: ${{ matrix.artifact }}
+      python: ${{ matrix.python }}
+      clone_main_xla: 1
+      upload_artifacts: true
+      upload_destination_prefix: '${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+
+  run_pytest:
+    needs: build_jaxlib_artifact
     defaults:
       run:
         # Explicitly set the shell to bash to override the default Windows environment, i.e, cmd.
         shell: bash
     strategy:
+      fail-fast: false # don't cancel all jobs on failure
       matrix:
-        runner: ["windows-x86-n2-64", "linux-x86-n2-64", "linux-arm64-t2a-48"]
-        python: ["3.10"]
+        runner: ["linux-x86-n2-64", "linux-arm64-c4a-64", "windows-x86-n2-64"]
+        python: ["3.10",] # "3.11", "3.12", "3.13"]
+        enable-x_64: [1, 0]
 
     runs-on: ${{ matrix.runner }}
     container: ${{ (contains(matrix.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest') ||
-                (contains(matrix.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/linux-arm64-arc-container:latest') ||
-                (contains(matrix.runner, 'windows-x86') && null) }}
+                   (contains(matrix.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') ||
+                   (contains(matrix.runner, 'windows-x86') && null) }}
+
+    name: "Pytest CPU (${{ matrix.runner }}, Python ${{ matrix.python }}, x64=${{ matrix.enable-x_64 }})"
 
     env:
-      JAXCI_CLONE_MAIN_XLA: 1
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ matrix.python }}
+      JAXCI_ENABLE_X64: ${{ matrix.enable-x_64 }}
 
+    
     steps:
       - uses: actions/checkout@v3
       # Halt for testing
@@ -43,12 +64,28 @@ jobs:
         uses: google-ml-infra/actions/ci_connection@main
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      - name: Build jaxlib
-        run: ./ci/build_artifacts.sh "jaxlib"
-      - name: Install pytest
-        env:
-          JAXCI_PYTHON: python${{ matrix.python }}
-        run: $JAXCI_PYTHON -m pip install pytest
+      - name: Set Platform
+        run: |
+          os=$(uname -s | awk '{print tolower($0)}')
+          arch=$(uname -m)
+
+          # Adjust name for Windows
+          if [[  $os  =~ "msys_nt" ]]; then
+            os="windows"
+          fi
+
+          echo "PLATFORM=${os}_${arch}" >> $GITHUB_ENV
+      - name: Download artifacts built in the "build_artifacts" job (non-Windows runs)
+        if: ${{ !contains(matrix.runner, 'windows-x86') }}
+        run: >-
+          mkdir -p $(pwd)/dist &&
+          gsutil -m cp -r gs://general-ml-ci-transient/jax-github-actions/"${{ github.workflow }}"/${{ github.run_number }}/${{ github.run_attempt }}/$PLATFORM/python${JAXCI_HERMETIC_PYTHON_VERSION}/*.whl $(pwd)/dist/
+      - name: Download artifacts built in the "build_artifacts" job (Windows runs)
+        if: ${{ contains(matrix.runner, 'windows-x86') }}
+        shell: cmd
+        run: >-
+          mkdir dist &&
+          gsutil -m cp -r gs://general-ml-ci-transient/jax-github-actions/"${{ github.workflow }}"/${{ github.run_number }}/${{ github.run_attempt }}/$PLATFORM/python${JAXCI_HERMETIC_PYTHON_VERSION}/*.whl dist/
       - name: Install dependencies
         env:
           JAXCI_PYTHON: python${{ matrix.python }}
