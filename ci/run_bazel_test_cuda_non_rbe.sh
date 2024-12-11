@@ -23,7 +23,7 @@
 # -x: log all commands
 # -o history: record shell history
 # -o allexport: export all functions and variables to be available to subscripts
-set -exu -o history -o allexport
+set -xu -o history -o allexport
 
 # Source default JAXCI environment variables.
 source ci/envs/default.env
