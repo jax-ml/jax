@@ -31,10 +31,12 @@ from .core import (
 if dialect is not None:
   from .dialect_lowering import (
       gpu_address_space_to_nvptx as gpu_address_space_to_nvptx,
-      infer_layout,
       lower_mgpu_dialect as lower_mgpu_dialect,
-      splat_fragmented_layout,
-      strided_fragmented_layout,
+  )
+  from .layout_inference import (
+      infer_layout as infer_layout,
+      splat_fragmented_layout as splat_fragmented_layout,
+      strided_fragmented_layout as strided_fragmented_layout,
   )
 else:
   gpu_address_space_to_nvptx = None

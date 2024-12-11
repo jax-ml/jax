@@ -30,10 +30,7 @@ from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
 from jax.experimental.mosaic.gpu import dialect as mgpu  # pylint: disable=g-importing-member
 from jax.experimental.mosaic.gpu import gpu_address_space_to_nvptx  # pylint: disable=g-importing-member,g-multiple-import
-from jax.experimental.mosaic.gpu import infer_layout  # pylint: disable=g-importing-member
 from jax.experimental.mosaic.gpu import lower_mgpu_dialect  # pylint: disable=g-importing-member,g-multiple-import
-from jax.experimental.mosaic.gpu import splat_fragmented_layout  # pylint: disable=g-importing-member
-from jax.experimental.mosaic.gpu import strided_fragmented_layout  # pylint: disable=g-importing-member
 
 _cext = mgpu._cext if mgpu is not None else None
 
@@ -646,74 +643,6 @@ class DialectLoweringTest(MosaicGpuTest):
       count = op.count.owner.opview
       self.assertIsInstance(count, arith.ConstantOp)
       self.assertEqual(count.literal_value, arrival_count)
-
-
-class LayoutInferenceTest(MosaicGpuTest):
-
-  @parameterized.parameters(ir.RankedTensorType, ir.VectorType)
-  def test_infer_layout_default(self, type_constructor):
-    shape = (4, 8)
-    elt_type = ir.BF16Type.get()
-
-    with ir.InsertionPoint(self.module.body):
-      ab_type = type_constructor.get(shape, elt_type)
-      const_zero = ir.FloatAttr.get(elt_type, 0)
-      const_one = ir.FloatAttr.get(elt_type, 1)
-      a = arith.ConstantOp(
-          ab_type, ir.DenseElementsAttr.get_splat(ab_type, const_zero)
-      )
-      b = arith.ConstantOp(
-          ab_type, ir.DenseElementsAttr.get_splat(ab_type, const_one)
-      )
-      arith.addf(arith.addf(a, b), b)
-
-    # Not setting any layouts on the module should default in ops having a
-    # strided fragmented layout.
-    infer_layout(self.module)
-
-    layout = strided_fragmented_layout()
-    for op in self.module.body.operations:
-      self.assertIn("in_layouts", op.attributes)
-      self.assertIn("out_layouts", op.attributes)
-
-      self.assertSequenceEqual(
-          op.attributes["in_layouts"], [layout] * len(op.operands)
-      )
-      self.assertSequenceEqual(
-          op.attributes["out_layouts"], [layout] * len(op.results)
-      )
-
-  @parameterized.parameters(ir.RankedTensorType, ir.VectorType)
-  def test_infer_layout_for_pointwise_op(self, type_constructor):
-    shape = (4, 8)
-    elt_type = ir.BF16Type.get()
-
-    with ir.InsertionPoint(self.module.body):
-      ab_type = type_constructor.get(shape, elt_type)
-      const_zero = ir.FloatAttr.get(elt_type, 0)
-      const_one = ir.FloatAttr.get(elt_type, 1)
-      a = arith.ConstantOp(
-          ab_type, ir.DenseElementsAttr.get_splat(ab_type, const_zero)
-      )
-      b = arith.ConstantOp(
-          ab_type, ir.DenseElementsAttr.get_splat(ab_type, const_one)
-      )
-      add = arith.addf(arith.addf(a, b), b)
-
-    layout = splat_fragmented_layout()
-    add.owner.attributes["out_layouts"] = ir.ArrayAttr.get([layout])
-    infer_layout(self.module)
-
-    for op in self.module.body.operations:
-      self.assertIn("in_layouts", op.attributes)
-      self.assertIn("out_layouts", op.attributes)
-
-      self.assertSequenceEqual(
-          op.attributes["in_layouts"], [layout] * len(op.operands)
-      )
-      self.assertSequenceEqual(
-          op.attributes["out_layouts"], [layout] * len(op.results)
-      )
 
 
 if __name__ == "__main__":
