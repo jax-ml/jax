@@ -37,10 +37,10 @@ class AttrsTests(jtu.JaxTestCase):
     jit_array_attr = jax.jit(cpu_examples.array_attr, static_argnums=(0,))
     with jtu.count_jit_and_pmap_lowerings() as count:
       jit_array_attr(5)
-    self.assertEqual(count[0], 1)  # compiles once the first time
+    self.assertEqual(count(), 1)  # compiles once the first time
     with jtu.count_jit_and_pmap_lowerings() as count:
       jit_array_attr(5)
-    self.assertEqual(count[0], 0)  # cache hit
+    self.assertEqual(count(), 0)  # cache hit
 
   def test_array_attr_no_jit(self):
     with jax.disable_jit():

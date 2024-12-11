@@ -825,9 +825,9 @@ class ShardMapTest(jtu.JaxTestCase):
       b = jax.device_put(out_a, NamedSharding(mesh2, P()))
       f(b)  # tracing and lowering cache *hit*
 
-    self.assertEqual(tracing_count[0], 2)  # 1 miss for `f` and 1 miss for `sin`
-    self.assertEqual(lowering_count[0], 1)
-    self.assertEqual(compilation_count[0], 2)  # 2 misses since devices differ.
+    self.assertEqual(tracing_count(), 2)  # 1 miss for `f` and 1 miss for `sin`
+    self.assertEqual(lowering_count(), 1)
+    self.assertEqual(compilation_count(), 2)  # 2 misses since devices differ.
 
   def test_shmap_abstract_mesh_errors(self):
     mesh = jtu.create_mesh((2,), ('x',))

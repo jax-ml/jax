@@ -94,6 +94,7 @@ def apply_primitive(prim, *args, **params):
 
 @util.cache()
 def xla_primitive_callable(prim: core.Primitive, **params):
+  util.test_event("xla_primitive_callable_cache_miss")
   def prim_fun(*args):
     with config.eager_constant_folding(False):
       return prim.bind(*args, **params)

@@ -33,6 +33,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
 from jax._src import profiler
+from jax._src import util
 from jax._src import xla_bridge
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
@@ -1131,6 +1132,7 @@ def _sharding_indices_and_eq(src_sharding, shape, dst_sharding):
 
 
 def _array_shard_arg(xs, shardings, layouts, copy_semantics):
+  util.test_event("_array_shard_arg")
   results = []
   batch_xs, batch_devs, batch_shardings, batch_indices = [], [], [], []
   batch_cs = []
@@ -1168,6 +1170,7 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
         results.append(
             shard_sharded_device_array_slow_path(x, devices, indices, sharding))
 
+  util.test_event("batched_copy_array")
   copy_outs = xc.batched_copy_array_to_devices_with_sharding(
       batch_xs, batch_devs, batch_shardings, batch_cs)
   for i, copy_out in safe_zip(batch_indices, copy_outs):

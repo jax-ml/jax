@@ -1085,6 +1085,7 @@ def lower_jaxpr_to_module(
   Handles the quirks of the argument/return value passing conventions of the
   runtime.
   """
+  util.test_event("lower_jaxpr_to_module")
   platforms = tuple(map(xb.canonicalize_platform, platforms))
 
   in_avals = (jaxpr.in_avals if arg_shardings is None else
@@ -1378,6 +1379,7 @@ def lower_jaxpr_to_fun(
   Returns:
     MLIR func op
   """
+  util.test_event("lower_jaxpr_to_fun", name)
 
   # The first dimension variable may be the platform index
   num_dim_vars = len(ctx.shape_poly_state.dim_vars)

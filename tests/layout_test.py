@@ -87,7 +87,7 @@ class LayoutTest(jtu.JaxTestCase):
     with jtu.count_aot_jit_cpp_cache_miss() as init_count:
       init_out = init_compiled(arr1, arr2)
       init_compiled(arr1, arr2)
-    self.assertEqual(init_count[0], 1)
+    self.assertEqual(init_count(), 1)
 
     self.assertEqual(init_out[0].layout, init_compiled.output_layouts[0])
     self.assertEqual(init_out[1].layout, init_compiled.output_layouts[1])
@@ -95,7 +95,7 @@ class LayoutTest(jtu.JaxTestCase):
     with jtu.count_aot_jit_cpp_cache_miss() as apply_count:
       apply_out = compiled_apply(*init_out)
       compiled_apply(*init_out)
-    self.assertEqual(apply_count[0], 1)
+    self.assertEqual(apply_count(), 1)
 
     self.assertEqual(apply_out[0].layout, compiled_apply.output_layouts[0])
     self.assertEqual(apply_out[1].layout, compiled_apply.output_layouts[1])

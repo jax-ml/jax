@@ -24,6 +24,7 @@ from typing import Any, Callable, Sequence
 import jax
 from jax._src import api
 from jax._src import tree_util
+from jax._src import util
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
 from jax._src.traceback_util import api_boundary
@@ -283,6 +284,7 @@ def _get_specialized_func(
     info: FunctionInfo, specialization: Specialization
 ) -> Callable[..., Any]:
   """Returns a specialized function for the given specialization."""
+  util.test_event("colocated_python_func._get_specialized_func")
   assert specialization.in_specs_treedef is not None
   assert specialization.in_specs_leaves is not None
   assert specialization.devices is not None

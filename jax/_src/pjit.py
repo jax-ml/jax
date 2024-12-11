@@ -549,6 +549,7 @@ def _infer_params_impl(
     kwargs: dict[str, Any],
     in_avals: tuple[core.AbstractValue, ...] | None,
 ) -> tuple[PjitParams, list[Any]]:
+  util.test_event("pjit._infer_params_impl", fun)
   have_kwargs = bool(kwargs)
   if have_kwargs and ji.user_specified_in_shardings:
     raise ValueError(
@@ -1297,6 +1298,7 @@ def _create_pjit_jaxpr(
     ignored_inline: IgnoreKey
 ) -> tuple[core.ClosedJaxpr, list[Any], list[core.AbstractValue],
            list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]]:
+  util.test_event("create_pjit_jaxpr")
   del ignored_inline  # just for explain_cache_miss
   if config.no_tracing.value:
     raise RuntimeError(f"re-tracing function {fun.f} for `jit`, but "
@@ -1784,6 +1786,7 @@ def _pjit_lower(
     lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
     pgle_profiler: profiler.PGLEProfiler | None):
+  util.test_event("pjit_lower")
   if config.sharding_in_types.value:
     mesh, api_name = mesh_lib.get_concrete_mesh(), 'jit'
   else:

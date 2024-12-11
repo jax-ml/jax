@@ -231,16 +231,20 @@ shard_arg_handlers[core.MutableArray] = _shard_mutable_array
 def batched_device_put(aval: core.ShapedArray,
                        sharding: JSharding, xs: Sequence[Any],
                        devices: Sequence[jax.Device], committed: bool = True):
-  from jax._src import array
+  util.test_event("batched_device_put_start")
+  try:
+    from jax._src import array
 
-  bufs = [x for x, d in safe_zip(xs, devices)
-          if (isinstance(x, array.ArrayImpl) and
-              dispatch.is_single_device_sharding(x.sharding) and
-              x.devices() == {d})]
-  if len(bufs) == len(xs):
-    return array.ArrayImpl(
-        aval, sharding, bufs, committed=committed, _skip_checks=True)
-  return xc.batched_device_put(aval, sharding, xs, list(devices), committed)
+    bufs = [x for x, d in safe_zip(xs, devices)
+            if (isinstance(x, array.ArrayImpl) and
+                dispatch.is_single_device_sharding(x.sharding) and
+                x.devices() == {d})]
+    if len(bufs) == len(xs):
+      return array.ArrayImpl(
+          aval, sharding, bufs, committed=committed, _skip_checks=True)
+    return xc.batched_device_put(aval, sharding, xs, list(devices), committed)
+  finally:
+    util.test_event("batched_device_put_end")
 
 def _shard_aval(size, axis: int, aval):
   try:
@@ -2850,6 +2854,7 @@ class UnloadedMeshExecutable:
           mesh = i.mesh
           break
 
+    util.test_event("pxla_cached_compilation")
     xla_executable = _cached_compilation(
         hlo, name, mesh, spmd_lowering,
         tuple_args, auto_spmd_lowering, allow_prop_to_inputs,
