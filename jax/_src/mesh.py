@@ -124,6 +124,7 @@ def axis_names_to_types(axis_types) -> dict[str, AxisTypes]:
 
 _mesh_object_dict = {}  # type: ignore
 
+MeshAxisType = dict[AxisTypes, str | tuple[str, ...]]
 
 class Mesh(contextlib.ContextDecorator):
   """Declare the hardware resources available in the scope of this manager.
@@ -178,11 +179,11 @@ class Mesh(contextlib.ContextDecorator):
 
   devices: np.ndarray
   axis_names: tuple[MeshAxisName, ...]
-  axis_types: dict[AxisTypes, str | tuple[str, ...]] | None
+  axis_types: MeshAxisType | None
 
   def __new__(cls, devices: np.ndarray | Sequence[xc.Device],
-              axis_names: str | Sequence[MeshAxisName],
-              axis_types: dict[AxisTypes, str | tuple[str, ...]] | None = None):
+              axis_names: str | Sequence[MeshAxisName], *,
+              axis_types: MeshAxisType | None = None):
     if not isinstance(devices, np.ndarray):
       devices = np.array(devices)
     if isinstance(axis_names, str):
@@ -216,7 +217,8 @@ class Mesh(contextlib.ContextDecorator):
     return self
 
   def __reduce__(self):
-    return (type(self), (self.devices, self.axis_names, self.axis_types))
+    return (type(self), (self.devices, self.axis_names),
+            {'axis_types': self.axis_types})
 
   def __eq__(self, other):
     if not isinstance(other, Mesh):
@@ -348,7 +350,7 @@ class Mesh(contextlib.ContextDecorator):
 
   @functools.cached_property
   def abstract_mesh(self):
-    return AbstractMesh(self.shape_tuple, self.axis_types)
+    return AbstractMesh(self.shape_tuple, axis_types=self.axis_types)
 
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
@@ -373,8 +375,8 @@ class AbstractMesh:
   details.
   """
 
-  def __init__(self, shape_tuple: tuple[tuple[str, int], ...],
-               axis_types: dict[AxisTypes, str | tuple[str, ...]] | None = None):
+  def __init__(self, shape_tuple: tuple[tuple[str, int], ...], *,
+               axis_types: MeshAxisType | None = None):
     self.shape_tuple = shape_tuple
     self.axis_types = axis_types
     if self.shape_tuple:
@@ -434,6 +436,24 @@ class AbstractMesh:
       return False
     return all(t == AxisTypes.Collective for t in self.axis_types.keys())
 
+  @functools.cached_property
+  def _are_all_axes_auto(self) -> bool:
+    if self.axis_types is None:
+      return False
+    return all(t == AxisTypes.Auto for t in self.axis_types.keys())
+
+  @functools.cached_property
+  def _any_axis_collective(self) -> bool:
+    if self.axis_types is None:
+      return False
+    return any(t == AxisTypes.Collective for t in self.axis_types.keys())
+
+  @functools.cached_property
+  def _any_axis_auto(self) -> bool:
+    if self.axis_types is None:
+      return False
+    return any(t == AxisTypes.Auto for t in self.axis_types.keys())
+
   @property
   def devices(self):
     _raise_value_error("devices")
@@ -474,6 +494,8 @@ def _raise_value_error(name):
 
 @contextlib.contextmanager
 def set_abstract_mesh(mesh: AbstractMesh):
+  if mesh is not None and mesh.axis_types is None:
+    raise RuntimeError('Please set the AxisTypes of Mesh.')
   prev_val = jax_config.abstract_mesh_context_manager.swap_local(mesh)
   try:
     yield

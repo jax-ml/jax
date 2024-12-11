@@ -4837,6 +4837,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_user_mesh((2, 2), ('model', 'data'))
   def test_aval_repr(self, mesh):
+    mesh = mesh.abstract_mesh
     aval = core.ShapedArray((128, 64), np.float32,
                             sharding=NamedSharding(mesh, P('model', 'data')))
     self.assertEqual(aval.str_short(), 'float32[128@model,64@data]')
@@ -4977,21 +4978,21 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     lowered_text = f.lower(arr).as_text()
     self.assertIn('@Sharding', lowered_text)
 
-  def test_broadcasting_nary_error(self):
-    mesh1 = Mesh([jax.devices()[0]], 'x')
-    mesh2 = Mesh([jax.devices()[0]], 'y')
+  @jtu.with_user_mesh((1,), 'x')
+  def test_broadcasting_nary_error(self, mesh):
+    mesh2 = Mesh([jax.devices()[0]], 'y',
+                 axis_types={mesh_lib.AxisTypes.User: 'y'})
 
-    arr1 = jax.device_put(np.arange(8), NamedSharding(mesh1, P()))
+    arr1 = jax.device_put(np.arange(8), NamedSharding(mesh, P()))
     arr2 = jax.device_put(np.arange(8), NamedSharding(mesh2, P()))
 
     @jax.jit
     def f(x, y):
       return x + y
 
-    with config.sharding_in_types(True):
-      with self.assertRaisesRegex(
-          ValueError, "Mesh for all inputs should be equal"):
-        f(arr1, arr2)
+    with self.assertRaisesRegex(
+        ValueError, "Mesh for all inputs should be equal"):
+      f(arr1, arr2)
 
   @jtu.with_user_mesh((2, 2), ('x', 'y'))
   def test_sin_unop(self, mesh):
@@ -5481,6 +5482,53 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out2.sharding, NamedSharding(mesh, P('x')))
 
     self.assertIn('@Sharding', f.lower(arr).as_text())
+
+  def test_auto_user(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'),
+                           axis_types={mesh_lib.AxisTypes.Auto: ('x', 'y')})
+    np_inp = np.arange(16.).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    @jax.jit
+    def f(x, x2):
+      y = x * 2
+      z = jnp.sin(y)
+      a = z @ x2
+      return a
+
+    with mesh_lib.set_mesh(mesh):
+      out = f(arr, arr.T)
+      self.assertEqual(out.sharding, NamedSharding(mesh, P('x',)))
+      lowered_text = f.lower(arr, arr.T).as_text()
+      self.assertNotIn('unspecified_dims', lowered_text)
+
+    mesh2 = jtu.create_mesh((2, 2), ('x', 'y'),
+                            axis_types={mesh_lib.AxisTypes.User: 'x',
+                                        mesh_lib.AxisTypes.Auto: 'y'})
+    with mesh_lib.set_mesh(mesh2):
+      arr = jax.device_put(arr, NamedSharding(mesh2, P('x', 'y')))
+      arr2 = jax.device_put(np_inp.T, NamedSharding(mesh2, P('y', None)))
+      out = f(arr, arr2)
+      self.assertEqual(out.sharding, NamedSharding(mesh2, P('x', None)))
+      lowered_text = f.lower(arr, arr2).as_text()
+      self.assertTrue(lowered_text.count("unspecified_dims") == 3)
+
+    mesh3 = jtu.create_mesh((2, 2), ('x', 'y'),
+                            axis_types={mesh_lib.AxisTypes.User: 'y',
+                                        mesh_lib.AxisTypes.Auto: 'x'})
+    with mesh_lib.set_mesh(mesh3):
+      arr = jax.device_put(arr, NamedSharding(mesh3, P('x', 'y')))
+      arr2 = jax.device_put(np_inp.T, NamedSharding(mesh3, P('y', 'x')))
+      out = f(arr, arr2)
+      self.assertEqual(out.sharding, NamedSharding(mesh3, P('x',)))
+      lowered_text = f.lower(arr, arr2).as_text()
+      self.assertTrue(lowered_text.count("unspecified_dims") == 4)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "AxisTypes should be the same in a tuple subset of PartitionSpec"):
+      NamedSharding(mesh2, P(('x', 'y')))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

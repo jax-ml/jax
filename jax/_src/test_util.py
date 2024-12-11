@@ -1443,26 +1443,28 @@ def with_and_without_mesh(f):
       ('Mesh', (('x', 2),), (('i', 'x'),))
     ))(with_mesh_from_kwargs(f))
 
-def with_user_mesh(sizes, names):
+def with_user_mesh(sizes, names, axis_types=None):
+  axis_types = ({mesh_lib.AxisTypes.User: names}
+                if axis_types is None else axis_types)
   def decorator(fn):
     def mesh_fn(*args, **kwargs):
-      mesh = create_mesh(sizes, names)
+      mesh = create_mesh(sizes, names, axis_types=axis_types)
       with mesh_lib.set_mesh(mesh):
         return fn(*args, **kwargs, mesh=mesh)
     return mesh_fn
   return decorator
 
 
-def create_mesh(mesh_shape, axis_names, iota_order=False):
+def create_mesh(mesh_shape, axis_names, iota_order=False, axis_types=None):
   size = math.prod(mesh_shape)
   if len(jax.devices()) < size:
     raise unittest.SkipTest(f"Test requires {size} global devices.")
   if iota_order:
     devices = sorted(jax.devices(), key=lambda d: d.id)
     mesh_devices = np.array(devices[:size]).reshape(mesh_shape)
-    return jax.sharding.Mesh(mesh_devices, axis_names)
+    return jax.sharding.Mesh(mesh_devices, axis_names, axis_types=axis_types)
   else:
-    return jax.make_mesh(mesh_shape, axis_names)
+    return jax.make_mesh(mesh_shape, axis_names, axis_types=axis_types)
 
 class _cached_property:
   null = object()
