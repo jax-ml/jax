@@ -170,7 +170,7 @@ class PallasCallTest(PallasBaseTest):
       self.skipTest("On TPU the test works only in interpret mode")
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((1,), jnp.float32),
-        grid=1)
+    )
     def add_one(x_ref, o_ref):
       o_ref[0] = x_ref[0] + 1.
 
@@ -224,7 +224,7 @@ class PallasCallTest(PallasBaseTest):
       self.skipTest("On TPU the test works only in interpret mode")
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((), floatx),
-        grid=1)
+    )
     def index(x_ref, i_ref, o_ref):
       o_ref[()] = x_ref[i_ref[()]]
 
@@ -518,7 +518,7 @@ class PallasCallTest(PallasBaseTest):
       self.skipTest("On TPU the test works only in interpret mode")
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), floatx),
-        grid=1)
+    )
     def index(x_ref, idx_ref, o_ref):
       idx = idx_ref[()]
       o_ref[:] = x_ref[idx]
@@ -613,9 +613,8 @@ class PallasCallTest(PallasBaseTest):
     m, n = 16, 32
     @functools.partial(
         self.pallas_call,
-        out_shape=(
-          jax.ShapeDtypeStruct((m, n), jnp.float32)
-          ), grid=1)
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+    )
     def dummy(_, o_ref):
       pl.store(o_ref, (jnp.arange(m)[:, None], jnp.arange(n)[None, :]),
                jnp.ones_like(o_ref))
@@ -658,7 +657,7 @@ class PallasCallTest(PallasBaseTest):
     @functools.partial(
         self.pallas_call,
         out_shape=out_shape,
-        grid=1)
+    )
     def slice_kernel(x_ref, y_ref):
       x = pl.load(x_ref, (pl.dslice(0, 4), pl.dslice(0, 4)))
       pl.store(y_ref, (pl.dslice(4), pl.dslice(4)), x)
@@ -673,7 +672,7 @@ class PallasCallTest(PallasBaseTest):
     trace_count = 0
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32),
-        grid=1)
+    )
     def add_one(x_ref, o_ref):
       nonlocal trace_count
       o_ref[()] = x_ref[()] + 1.
@@ -711,7 +710,6 @@ class PallasCallTest(PallasBaseTest):
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((32, 64), jnp.float32),
-        grid=1,
     )
     def dot_kernel(x_ref, y_ref, o_ref):
       o_ref[()] = pl.dot(x_ref[()], y_ref[()], precision=precision)
@@ -1158,10 +1156,10 @@ class PallasControlFlowTest(PallasBaseTest):
     # control flow edge from Region #0 to Region #0: source type #0
     # 'tensor<4xf64>' should match input type #0 'tensor<4xf32>'
     with config.enable_x64(True):
-      @functools.partial(self.pallas_call,
-                         out_shape=jax.ShapeDtypeStruct((4,), jnp.float64),
-                         grid=1,
-                     )
+      @functools.partial(
+          self.pallas_call,
+          out_shape=jax.ShapeDtypeStruct((4,), jnp.float64),
+      )
       def f(x_ref, y_ref):
         def body(i, acc):
           # TODO(sharadmv): DCE loop index but retain carry breaks scan pattern.
@@ -1196,10 +1194,10 @@ class PallasControlFlowTest(PallasBaseTest):
       self.skipTest("TODO: error on TPU")
 
     arg = jnp.float32(0.)
-    @functools.partial(self.pallas_call,
-                       out_shape=jax.ShapeDtypeStruct(arg.shape, jnp.float32),
-                       grid=1,
-                   )
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(arg.shape, jnp.float32),
+    )
     def f(branch_ref, x_ref, y_ref):
       y_ref[...] = lax.switch(
           branch_ref[...],
@@ -1904,7 +1902,7 @@ class PallasCallAutodifferentiationTest(PallasBaseTest):
 
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((), floatx),
-        grid=1)
+    )
     def pallas_impl(x_ref, o_ref):
       x = x_ref[()]
       o_ref[()] = impl(x)
@@ -1927,7 +1925,7 @@ class PallasCallAutodifferentiationTest(PallasBaseTest):
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((), floatx),
         name=self.id().split(".")[-1],
-        grid=1)
+    )
     def pallas_impl(x_ref, o_ref):
       x = x_ref[()]
       o_ref[()] = jax.grad(impl)(x)
@@ -1945,7 +1943,7 @@ class PallasCallAutodifferentiationTest(PallasBaseTest):
 
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), floatx),
-        grid=1)
+    )
     def pallas_impl(x_ref, o_ref):
       x = x_ref[jnp.arange(2)]
       o_ref[jnp.arange(2)] = jnp.zeros(2)
@@ -1979,7 +1977,7 @@ class PallasCallAutodifferentiationTest(PallasBaseTest):
     m, n = 16, 32
     x = random.normal(random.key(0), (m, n))
 
-    @functools.partial(self.pallas_call, out_shape=x, grid=1)
+    @functools.partial(self.pallas_call, out_shape=x)
     def softmax_kernel(x_ref, y_ref):
       y_ref[:] = softmax(x_ref[:])
 
