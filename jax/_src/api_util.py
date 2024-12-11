@@ -21,6 +21,7 @@ from functools import partial, lru_cache
 from typing import Any
 
 import numpy as np
+from numpy import dtypes as np_dtypes
 
 from jax._src import core
 from jax._src import dtypes
@@ -615,7 +616,9 @@ _shaped_abstractify_handlers[str] = _str_abstractify
 
 def _numpy_array_abstractify(x: np.ndarray) -> ShapedArray:
   dtype = x.dtype
-  dtypes.check_valid_dtype(dtype)
+  if not isinstance(dtype, np_dtypes.StringDType):  # type: ignore
+    dtypes.check_valid_dtype(dtype)
+
   return ShapedArray(x.shape,
       dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True))
 _shaped_abstractify_handlers[np.ndarray] = _numpy_array_abstractify
