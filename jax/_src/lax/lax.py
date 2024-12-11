@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import builtins
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import enum
 import functools
 from functools import partial
@@ -629,6 +629,260 @@ def clamp(min: ArrayLike, x: ArrayLike, max: ArrayLike) -> Array:
   \end{cases}`.
   """
   return clamp_p.bind(min, x, max)
+
+
+def composite(
+    decomposition: Callable,
+    *args,
+    name: str,
+    attributes: dict[str, Any] | None = None,
+):
+  """Composite with semantics defined by the decomposition function.
+
+  A composite is a JAX function that encapsulates an operation made up
+  (composed) of other JAX functions. The semantics of the op are implemented
+  by the `decomposition` function. In other words, the defined composite
+  function can be replaced with its decomposed implementation without changing
+  the semantics of the encapsulated operation.
+
+  The compiler can recognize specific composite operations by their `name`,
+  `attributes`, and dtypes to emit more efficient code, potentially leveraging
+  hardware-specific instructions or optimizations. If the compiler doesn't
+  recognize the composite, it falls back to compiling the `decomposition`
+  function.
+
+  Consider a "tangent" composite operation. Its `decomposition` function could
+  be implemented as `sin(x) / cos(x)`. A hardware-aware compiler could recognize
+  the "tangent" composite and emit a single `tangent` instruction instead of
+  three separate instructions (`sin`, `divide`, and `cos`). On compilers for
+  hardwares without dedicated tangent support, it would fall back to compiling
+  the decomposition.
+
+  This is useful for preserving high level abstraction that would otherwise be
+  lost while lowering which allows for easier pattern-matching in low-level IR.
+
+  Args:
+    decomposition: function that implements the semantics of the composite op.
+    *args: arguments to the composite.
+    name: name of the encapsulated operation.
+    attributes: optional dictionary of attributes to associate with the
+      composite.
+
+  Returns:
+    out: result of the composite.
+
+  Examples:
+    Tangent kernel:
+    >>> @jax.jit
+    ... def tangent_composite(x):
+    ...   return lax.composite(
+    ...     lambda x : lax.sin(x) / lax.cos(x), x, name='my.tangent'
+    ...   )
+    ...
+    >>> pi = jnp.pi
+    >>> x = jnp.array([pi / 4, pi / 2, 3 * pi / 4, pi])
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   print(tangent_composite(x))
+    ...   print(lax.tan(x))
+    [        1. -22877334.        -1.         0.]
+    [        1. -22877334.        -1.         0.]
+  """
+  if attributes is None:
+    attributes = {}
+  static_attributes: tuple[tuple[str, Any], ...] = ()
+  if attributes is not None:
+    for k, v in attributes.items():
+      static_attributes += ((k, v),)
+
+  flat_args, in_tree = tree_util.tree_flatten(args)
+  flat_fun, out_tree = api_util.flatten_fun_nokwargs(lu.wrap_init(decomposition), in_tree)
+  in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in flat_args]
+  debug = pe.debug_info(decomposition, in_tree, out_tree, False, "composite")
+  jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
+  # TODO: support const inputs to composite.
+  assert(not consts)
+  jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
+  out_flat = composite_p.bind(
+      *consts, *flat_args, name=name, attributes=static_attributes, jaxpr=jaxpr
+  )
+  return tree_util.tree_unflatten(out_tree(), out_flat)
+
+
+def _composite_lowering(
+    ctx: mlir.LoweringRuleContext,
+    *args,
+    name,
+    attributes: Sequence[tuple[str, Any]],
+    jaxpr,
+):
+  """Makes composite which calls the implementation function.
+
+  Lowering a composite primitive to a `stablehlo.composite` op.
+
+  Args:
+    ctx: The MLIR context.
+    *args: The arguments to the composite.
+    name: The name of the composite.
+    jaxpr: The jaxpr of the underlying HLFB.
+    attributes: The attributes of the composite.
+
+  Returns:
+    The results of the composite.
+  """
+  func_op, _, _ = mlir.lower_called_computation(
+      name,
+      ctx.name_stack,
+      jaxpr,
+      ctx.module_context,
+      ctx.avals_out,
+      ctx.tokens_in,
+  )
+  composite_attrs = {k : mlir.ir_attribute(v) for k, v in attributes}
+  symbol_name = func_op.name.value
+  composite = hlo.CompositeOp(
+      func_op.type.results,
+      mlir.flatten_ir_values(args),
+      name=ir.StringAttr.get(name),
+      composite_attributes=ir.DictAttr.get(composite_attrs),
+      decomposition=ir.FlatSymbolRefAttr.get(symbol_name),
+  )
+  return composite.results
+
+
+def _composite_impl(*args, jaxpr, **_):
+  return core.jaxpr_as_fun(jaxpr)(*args)
+
+
+def _composite_abstract_eval(*args, jaxpr, **_):
+  del args
+  return jaxpr.out_avals
+
+
+def composite_jvp(*args, **_):
+  del args
+  raise ValueError(
+      "JVP rule for composite not implemented. You can use `jax.custom_jvp` to "
+      "add support. See "
+      "https://jax.readthedocs.io/en/latest/_autosummary/jax.custom_jvp.html"
+  )
+
+
+def composite_transpose(*args, **_):
+  del args
+  raise ValueError(
+      "Transpose rule for composite not implemented. You can use"
+      "`jax.custom_jvp` or `jax.custom_vjp` to add support. See "
+      "https://jax.readthedocs.io/en/latest/_autosummary/jax.custom_jvp.html"
+  )
+
+
+composite_p = core.Primitive("composite")
+composite_p.def_impl(_composite_impl)
+composite_p.def_abstract_eval(_composite_abstract_eval)
+composite_p.multiple_results = True
+ad.primitive_jvps[composite_p] = composite_jvp
+ad.primitive_transposes[composite_p] = composite_transpose
+mlir.register_lowering(composite_p, _composite_lowering)
+
+
+def _composite_decorator_factory(
+    decorator_body_fn,
+    decorator_name: str,
+    name: str,
+    attributes: Mapping[str, Any] | None = None,
+):
+  decorator_body_fn_name = decorator_body_fn.__name__
+  attributes_doc = _generate_attributes_docstring(attributes)
+
+  def _decorator(f):
+    f = _update_docstring(
+        f,
+        f"The {decorator_body_fn_name}-wrapped {f.__name__} with {name=}.",
+        optional_doc=attributes_doc,
+    )
+
+    @functools.wraps(f)  # It preserves the original function signature of f.
+    def _wrapper(*args, **kwargs):
+      return decorator_body_fn(
+          f, *args, name=name, attributes=attributes, **kwargs
+      )
+
+    return _wrapper
+
+  return _update_docstring(
+      _decorator,
+      f"High-level function boundary decorator of {decorator_body_fn_name}"
+      f" with {name=}.",
+      optional_doc=attributes_doc,
+      new_func_name=decorator_name,
+  )
+
+def composite_def(name: str, attributes: Mapping[str, Any] | None = None):
+  """High-level function decorator of `composite`.
+
+  Args:
+    name: name of the high-level composite abstraction.
+    attributes: optional attributes of `composite`.
+
+  Returns:
+    A `composite` decorator.
+  """
+  return _composite_decorator_factory(
+      composite,
+      decorator_name="composite_def",
+      name=name,
+      attributes=attributes,
+  )
+
+
+def _update_docstring(
+    f,
+    new_header: str,
+    optional_doc: str | None = None,
+    new_func_name: str | None = None,
+):
+  """Updates the docstring of a function f.
+
+  This function is useful because docstring should not be f-string.
+
+  Args:
+    f: The target function.
+    new_header: The new docstring header.
+    optional_doc: The optional docstring after header.
+    new_func_name: The optional new function f name.
+
+  Returns:
+    The updated function f.
+  """
+  original_doc = f"\n\n{f.__doc__}" if f.__doc__ else ""
+  optional_doc = f"\n\n{optional_doc}" if optional_doc else ""
+
+  new_f_docstring = f"{new_header}{optional_doc}{original_doc}"
+  f.__doc__ = new_f_docstring
+
+  if new_func_name:
+    f.__name__ = new_func_name
+  return f
+
+
+def _generate_attributes_docstring(
+    attributes: Mapping[str, Any] | None = None,
+) -> str:
+  """Generates the docstring for the given attributes.
+
+  Args:
+    attributes: The dictionary of attributes name and attributes values.
+
+  Returns:
+    A docstring containing attributes names and values.
+  """
+  if not attributes:
+    return ""
+
+  return "Attributes:\n" + "\n".join(
+      f"  {k}: {v}" for k, v in attributes.items()
+  )
+
 
 def concatenate(operands: Array | Sequence[ArrayLike], dimension: int) -> Array:
   """Concatenates a sequence of arrays along `dimension`.

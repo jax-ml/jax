@@ -60,6 +60,7 @@ from jax._src.lax.lax import (
   clamp_p as clamp_p,
   clz_p as clz_p,
   complex_p as complex_p,
+  composite_p as composite_p,
   concatenate_p as concatenate_p,
   conj_p as conj_p,
   convert_element_type_p as convert_element_type_p,
