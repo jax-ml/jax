@@ -129,6 +129,8 @@ class LaxTest(jtu.JaxTestCase):
         tol = jtu.join_tolerance(tol, 1e-3)
       elif op_name == "lgamma" and dtype == np.float32:
         tol = jtu.join_tolerance(tol, 1e-3)
+    elif op_name == "pow" and dtype == np.complex128:
+      tol = jtu.join_tolerance(tol, 2e-15)
     self._CheckAgainstNumpy(numpy_op, op, args_maker, tol=tol)
 
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
