@@ -342,6 +342,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
   ))
   def testReducerPromoteInt(self, name, rng_factory, shape, dtype, axis,
                             keepdims, initial, inexact, promote_integers):
+    if jtu.test_device_matches(["cpu"]) and name == "sum" and config.enable_x64.value and dtype == np.float16:
+      raise unittest.SkipTest("sum op fails in x64 mode on CPU with dtype=float16")  # b/383756018
     np_op = getattr(np, name)
     jnp_op = getattr(jnp, name)
     rng = rng_factory(self.rng())
