@@ -149,7 +149,7 @@ class custom_vmap:
           "using def_vmap.")
     args_flat, in_tree = tree_flatten(args)
     flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(self.fun), in_tree)
-    in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
+    in_avals = [core.get_aval(x) for x in args_flat]
     debug = pe.debug_info(self.fun, in_tree, out_tree, False, "custom_vmap")
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
     closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())

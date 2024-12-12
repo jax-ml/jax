@@ -455,7 +455,7 @@ class custom_partitioning:
       f_, dyn_args = lu.wrap_init(self.fun), args
     args_flat, in_tree = tree_util.tree_flatten(dyn_args)
     flat_fun, out_tree = api_util.flatten_fun_nokwargs(f_, in_tree)
-    in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
+    in_avals = [core.get_aval(x) for x in args_flat]
     debug = pe.debug_info(self.fun, in_tree, out_tree, False,
                           "custom_partitioning")
     mesh = mesh_lib.thread_resources.env.physical_mesh

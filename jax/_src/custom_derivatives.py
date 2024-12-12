@@ -1051,7 +1051,7 @@ def closure_convert(fun: Callable, *example_args) -> tuple[Callable, list[Any]]:
     from the closure.
   """
   flat_args, in_tree = tree_flatten(example_args)
-  in_avals = tuple(map(abstractify, flat_args))
+  in_avals = tuple(map(core.get_aval, flat_args))
   if config.check_tracer_leaks.value:
     return _closure_convert_for_avals.__wrapped__(fun, in_tree, in_avals)
   else:
@@ -1110,9 +1110,6 @@ def partition_list(choice, lst):
     i1, i2 = iter(l1), iter(l2)
     return [next(i2 if snd else i1) for snd in which]
   return out, merge
-
-def abstractify(x):
-  return core.get_aval(x)
 
 
 ### Custom transposition
@@ -1209,8 +1206,8 @@ def linear_call(fun: Callable, fun_transpose: Callable, residual_args,
   f_in_tree = treedef_tuple((res_tree, lin_tree))
   f, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), f_in_tree)
 
-  res_avals = map(abstractify, operands_res)
-  lin_avals = map(abstractify, operands_lin)
+  res_avals = map(core.get_aval, operands_res)
+  lin_avals = map(core.get_aval, operands_lin)
   f_jaxpr, f_consts = _initial_style_jaxpr(f, (*res_avals, *lin_avals))
   f_jaxpr = _close_jaxpr(f_jaxpr)
   out_avals = f_jaxpr.out_avals
