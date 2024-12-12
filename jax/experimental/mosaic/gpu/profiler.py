@@ -114,7 +114,7 @@ def _measure_cupti(f, aggregate):
   return wrapper
 
 
-def measure(f: Callable, *, mode: str = "cupti", aggregate: bool = True
+def measure(f: Callable, *, mode: str = "events", aggregate: bool = True
 ) -> Callable:
   """Sets up a function ``f`` for profiling on GPU.
 
