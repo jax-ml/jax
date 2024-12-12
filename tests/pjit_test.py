@@ -5548,6 +5548,16 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         "AxisTypes should be the same in a tuple subset of PartitionSpec"):
       NamedSharding(mesh2, P(('x', 'y')))
 
+  @jtu.with_user_mesh((2, 2), ('x', 'y'))
+  def test_where_with_scalar(self, mesh):
+    np_inp = np.arange(16.).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    x = jax.device_put(np_inp, s)
+
+    out = jnp.where(x > 0, x, 0)
+    self.assertArraysEqual(out, x)
+    self.assertEqual(out.sharding, s)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

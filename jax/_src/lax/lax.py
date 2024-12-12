@@ -176,6 +176,27 @@ def _broadcast_shapes_uncached(*shapes):
     # Raise ValueError here for backward compatibility.
     raise ValueError(f"Incompatible shapes for broadcasting: shapes={list(shapes)}") from err
 
+def broadcast_shardings(*avals) -> NamedSharding:
+  fst, *rst = avals
+  if not rst:
+    return fst.sharding
+
+  # First check if we need only rank promotion (and not singleton-broadcasting).
+  res_aval = _max(avals, key=lambda a: a.ndim)
+  ndim = res_aval.ndim
+  if ndim == 0 or all(
+      res_aval.sharding.spec[ndim - a.ndim:] == a.sharding.spec for a in avals):
+    return res_aval.sharding
+
+  # Next try singleton-broadcasting, padding out ranks using singletons.
+  aval_list = []
+  for a in avals:
+    new_spec = P(*(None,) * (ndim - a.ndim) + a.sharding.spec)
+    new_shape = (1,) * (ndim - a.ndim) + a.shape
+    aval_list.append(a.update(shape=new_shape,
+                              sharding=a.sharding.with_spec(new_spec)))
+  return broadcasting_sharding_rule('broadcast_shardings', *aval_list)
+
 def _identity(x): return x
 
 def _extract_tracers_dyn_shape(
