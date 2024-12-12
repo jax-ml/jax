@@ -112,7 +112,6 @@ def _pad_values_to_block_dimension(value,
   return value
 
 def _initialize_scratch_vals(scratch_avals) -> tuple[jax.Array, ...]:
-  scratch_avals = (jax_core.raise_to_shaped(x) for x in scratch_avals)
   return tuple(
       primitives.uninitialized_value(a.shape, a.dtype) for a in scratch_avals
   )
@@ -1151,7 +1150,7 @@ def checkify_pallas_kernel_body_jaxpr(
     grid_mapping: GridMapping) -> tuple[
         jax_core.ClosedJaxpr, tree_util.PyTreeDef, set[checkify.ErrorEffect]]:
   err_vals, err_tree = tree_util.tree_flatten(error)
-  err_vals = map(checkify.get_shaped_aval, err_vals)
+  err_vals = map(jax_core.get_aval, err_vals)
   flat_err_and_in_vals = [*err_vals, *body_jaxpr.in_avals]
 
   with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
@@ -1274,13 +1273,13 @@ def pallas_call_checkify_rule(error: checkify.Error,
       closed_jaxpr, enabled_errors, error, grid_mapping)
   error = error._add_placeholder_effects(error_effects)
   err_vals, err_in_tree = jax.tree.flatten(error)
-  shaped_err_avals = map(checkify.get_shaped_aval, err_vals)
+  shaped_err_avals = map(jax_core.get_aval, err_vals)
 
   # Trace the kernel jaxpr to get a checkified jaxpr. This jaxpr will have
   # all enabled errors removed, but have the error as inputs and return values.
   input_avals = [v.aval for v in jaxpr.invars]
   num_err_vals = len(err_vals)
-  shaped_input_avals = tuple(jax_core.raise_to_shaped(x) for x in input_avals)
+  shaped_input_avals = tuple(input_avals)
   checkify_in_avals = [*shaped_err_avals,
                        *shaped_input_avals]
   closed_kernel_jaxpr = pe.close_jaxpr(jaxpr)
@@ -1416,8 +1415,7 @@ def _trace_kernel_to_jaxpr(
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_kernel_fun,
                                                      kernel_avals, debug)
     if consts:
-      consts_avals = [jax_core.raise_to_shaped(jax_core.get_aval(c))
-                      for c in consts]
+      consts_avals = [jax_core.get_aval(c) for c in consts]
       if any(not isinstance(aval, state.AbstractRef) for aval in consts_avals):
         raise ValueError(
             f"The kernel function in the pallas_call {name_and_src_info} "
@@ -1804,8 +1802,7 @@ def pallas_call(
   def wrapped(*args):
     flat_args_with_paths, in_tree = tree_util.tree_flatten_with_path(args)
     in_paths, flat_args = unzip2(flat_args_with_paths)
-    flat_in_avals = tuple(jax_core.raise_to_shaped(jax_core.get_aval(a))
-                          for a in flat_args)
+    flat_in_avals = tuple(jax_core.get_aval(a) for a in flat_args)
 
     flat_out_avals = tuple(_convert_out_shape_to_aval(v)
                            for v in flat_out_shapes)

@@ -49,7 +49,6 @@ from jax._src.lib.mlir.dialects import hlo
 import numpy as np
 
 from jax._src.lax.control_flow.common import (
-    _abstractify,
     _avals_short,
     _check_tree_and_avals,
     _initial_style_jaxprs_with_common_consts,
@@ -135,7 +134,7 @@ def switch(index, branches: Sequence[Callable], *operands,
     return branches[int(index)](*operands)
 
   ops, ops_tree = tree_flatten(operands)
-  ops_avals = tuple(map(_abstractify, ops))
+  ops_avals = tuple(map(core.get_aval, ops))
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
       branches, ops_tree, ops_avals, primitive_name='switch')
@@ -227,7 +226,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
       return false_fun(*operands)
 
   ops, ops_tree = tree_flatten(operands)
-  ops_avals = tuple(map(_abstractify, ops))
+  ops_avals = tuple(map(core.get_aval, ops))
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
       (true_fun, false_fun), ops_tree, ops_avals, 'cond')
