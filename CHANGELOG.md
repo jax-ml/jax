@@ -28,6 +28,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     * from {mod}`jax.lib.xla_client`: `_xla` and `bfloat16`.
     * from {mod}`jax.numpy`: `round_`.
 
+* New Features
+  * {func}`jax.export.export` can be used for device-polymorphic export with
+    shardings constructed with {func}`jax.sharding.AbstractMesh`.
+    See the [jax.export documentation](https://jax.readthedocs.io/en/latest/export/export.html#device-polymorphic-export).
+
 ## jax 0.4.37 (Dec 9, 2024)
 
 This is a patch release of jax 0.4.36. Only "jax" was released at this version.

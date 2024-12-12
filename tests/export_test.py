@@ -1156,7 +1156,35 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertEqual(res.addressable_shards[0].device, run_devices[0])
     self.assertEqual(res.addressable_shards[1].device, run_devices[1])
 
-  def test_call_with_different_no_of_devices(self):
+  def test_export_abstract_mesh(self):
+    if jax.local_device_count() < 2:
+      self.skipTest("Need at least 2 devices")
+
+    abs_mesh = jax.sharding.AbstractMesh((("x", 2),))
+    input_sharding = jax.sharding.NamedSharding(abs_mesh, P("x", None))
+    output_sharding = jax.sharding.NamedSharding(abs_mesh, P(None, "x"))
+    @jax.jit
+    def f(a):
+      b = a @ a.T
+      return jax.lax.with_sharding_constraint(b, output_sharding)
+
+    exp = get_exported(f)(
+        jax.ShapeDtypeStruct((16, 16), dtype=np.float32,
+                             sharding=input_sharding))
+    # Call the Exported with a concrete Mesh
+    devices = jax.local_devices()[:2]
+    run_mesh = Mesh(devices, ("x",))
+    a_sharding = jax.sharding.NamedSharding(run_mesh, P("x", None))
+    a = jnp.arange(16 * 16, dtype=np.float32).reshape((16, 16))
+    a = jax.device_put(a, a_sharding)
+
+    res = exp.call(a)
+    self.assertAllClose(res, f(a))
+    self.assertLen(res.addressable_shards, 2)
+    self.assertEqual(res.addressable_shards[0].index, (slice(None), slice(0, 8)))
+    self.assertEqual(res.addressable_shards[1].index, (slice(None), slice(8, 16)))
+
+  def test_call_single_device_export_with_different_no_of_devices(self):
     if jax.local_device_count() < 2:
       self.skipTest("Need at least 2 devices")
 

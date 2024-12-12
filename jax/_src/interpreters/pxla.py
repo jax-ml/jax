@@ -1999,7 +1999,7 @@ def jaxpr_transfer_mem_kinds(
   return out
 
 
-def are_all_shardings_default_mem_kind(da_object, shardings):
+def are_all_shardings_default_mem_kind(da_object: xc.DeviceList, shardings):
   if da_object is None:
     return True
   try:
@@ -2084,38 +2084,32 @@ def get_out_layouts_via_propagation(closed_jaxpr: core.ClosedJaxpr
 
 
 def _get_num_devices(
-    shardings, device_assignment, lowering_platforms, prim_requires_devices
-    ) -> tuple[int, tuple[xc.Device, ...] | None]:
-  ext_abstract_mesh, concrete_sharding = None, False
+    shardings, device_assignment
+  ) -> tuple[int, tuple[xc.Device, ...] | None]:
+  """Number of lowering devices, and the device_assignment to use.
+
+  If all the specified shardings have an abstract mesh, then we are compiling
+  with abstract devices, and the returned device_assignment is None.
+  """
+  abstract_mesh, any_concrete_sharding = None, False
   for s in shardings:
     if isinstance(s, UnspecifiedValue):
       continue
     elif isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):
-      if ext_abstract_mesh is not None and ext_abstract_mesh != s.mesh:
+      if abstract_mesh is not None and abstract_mesh != s.mesh:
         raise ValueError("AbstractMesh should be the same across all "
-                         f"shardings. Got {ext_abstract_mesh} and {s.mesh}")
-      ext_abstract_mesh = s.mesh
+                         f"shardings. Got {abstract_mesh} and {s.mesh}")
+      abstract_mesh = s.mesh
     else:
-      concrete_sharding = True
-  if (concrete_sharding and ext_abstract_mesh is not None and
-      len(device_assignment) != ext_abstract_mesh.size):
+      any_concrete_sharding = True
+  if (any_concrete_sharding and abstract_mesh is not None and
+      len(device_assignment) != abstract_mesh.size):
     raise ValueError(
-        f"AbstractMesh size: {ext_abstract_mesh.size} does not match the"
+        f"AbstractMesh size: {abstract_mesh.size} does not match the"
         f" device assignment size: {len(device_assignment)}")
-  if concrete_sharding:
+  if any_concrete_sharding or abstract_mesh is None:
     return len(device_assignment), device_assignment
-  if ext_abstract_mesh is None:
-    return len(device_assignment), device_assignment
-  if lowering_platforms is None:
-    raise ValueError(
-        "Passing lowering_platforms via"
-        " jit(f).trace(*args).lower(lowering_platforms=...) is required when"
-        " only AbstractMesh exists in a jitted computation.")
-  if prim_requires_devices:
-    raise ValueError(
-        "AbstractMesh cannot be used when jaxpr contains primitives that"
-        " require devices to be present during lowering.")
-  return ext_abstract_mesh.size, None
+  return abstract_mesh.size, None
 
 
 MaybeLayout = Sequence[Union[DeviceLocalLayout, AutoLayout, None]]
@@ -2269,7 +2263,17 @@ def lower_sharding_computation(
   num_devices, device_assignment = _get_num_devices(  # type: ignore
       it.chain(unique_in_shardings, unique_out_shardings,
                unique_intermediate_shardings),
-      device_assignment, lowering_platforms, prim_requires_devices)
+      device_assignment)
+  if device_assignment is None:
+    if lowering_platforms is None:
+      raise ValueError(
+          "Passing lowering_platforms via jax.export or "
+          " jit(f).trace(*args).lower(lowering_platforms=...) is required when"
+          " only AbstractMesh exists in a jitted computation.")
+    if prim_requires_devices:
+      raise ValueError(
+          "AbstractMesh cannot be used when jaxpr contains primitives that"
+          " require devices to be present during lowering.")
 
   committed = bool(
       devices_from_context
@@ -2349,6 +2353,7 @@ def lower_sharding_computation(
       mut=mut,
       backend=backend,
       device_assignment=da_object,
+      num_devices=num_devices,
       committed=committed,
       in_layouts=in_layouts,
       out_layouts=out_layouts,
@@ -2874,6 +2879,7 @@ class UnloadedMeshExecutable:
                in_layouts: MaybeLayout,
                out_layouts: MaybeLayout,
                compiler_options_kvs: tuple[tuple[str, Any], ...],
+               num_devices: int,
                pmap_nreps: int = 1,
                mut: MutationData | None = None,
                shape_poly_state: mlir.ShapePolyLoweringState | None = None,
@@ -2883,6 +2889,7 @@ class UnloadedMeshExecutable:
                intermediate_shardings: Sequence[JSharding] | None = None,
                context_mesh: Mesh | None = None,
   ) -> MeshExecutable:
+    del num_devices  # For compilation, we have an actual device_assignment
     if (device_assignment is None or
         any(isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh)
             for s in it.chain(in_shardings, out_shardings))):
