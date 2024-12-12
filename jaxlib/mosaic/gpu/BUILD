@@ -47,10 +47,10 @@ cc_library(
     ],
     hdrs = [
         "launch_lowering.h",
-        "pass_boilerplate.h",
         "passes.h",
     ],
     deps = [
+        "//jaxlib:pass_boilerplate",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:DataLayoutInterfaces",
         "@llvm-project//mlir:FuncDialect",

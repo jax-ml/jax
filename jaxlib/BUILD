@@ -171,6 +171,17 @@ cc_library(
 )
 
 cc_library(
+    name = "pass_boilerplate",
+    hdrs = ["pass_boilerplate.h"],
+    # compatible with libtpu
+    deps = [
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+cc_library(
     name = "handle_pool",
     hdrs = ["handle_pool.h"],
     copts = [

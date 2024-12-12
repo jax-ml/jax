@@ -29,7 +29,7 @@ limitations under the License.
 #include "mlir/include/mlir/Pass/PassRegistry.h"
 #include "mlir/include/mlir/Support/LLVM.h"
 #include "mlir/include/mlir/Transforms/DialectConversion.h"
-#include "jaxlib/mosaic/gpu/pass_boilerplate.h"
+#include "jaxlib/pass_boilerplate.h"
 
 namespace mosaic {
 namespace gpu {
@@ -37,9 +37,9 @@ namespace gpu {
 namespace {
 
 class ConvertGpuToLLVMPass
-    : public mosaic::gpu::Pass<ConvertGpuToLLVMPass, mlir::ModuleOp> {
+    : public jaxlib::mlir::Pass<ConvertGpuToLLVMPass, mlir::ModuleOp> {
  public:
-  using mosaic::gpu::Pass<ConvertGpuToLLVMPass, mlir::ModuleOp>::Pass;
+  using jaxlib::mlir::Pass<ConvertGpuToLLVMPass, mlir::ModuleOp>::Pass;
   static constexpr llvm::StringLiteral kArgumentName =
       "mosaic-convert-gpu-to-llvm";
   static constexpr llvm::StringLiteral kPassName = "ConvertGpuToLLVMPass";
@@ -71,9 +71,9 @@ class ConvertGpuToLLVMPass
 // We only use arrays to pass in TMA descriptors, which is why we also
 // require 64-byte alignment.
 class ByvalInsertionPass
-    : public mosaic::gpu::Pass<ByvalInsertionPass, mlir::gpu::GPUModuleOp> {
+    : public jaxlib::mlir::Pass<ByvalInsertionPass, mlir::gpu::GPUModuleOp> {
  public:
-  using mosaic::gpu::Pass<ByvalInsertionPass, mlir::gpu::GPUModuleOp>::Pass;
+  using jaxlib::mlir::Pass<ByvalInsertionPass, mlir::gpu::GPUModuleOp>::Pass;
   static constexpr llvm::StringLiteral kArgumentName = "mosaic-byval-insertion";
   static constexpr llvm::StringLiteral kPassName = "ByvalInsertionPass";
 
