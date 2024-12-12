@@ -1426,6 +1426,55 @@ class TreeAliasTest(jtu.JaxTestCase):
       tree_util.tree_unflatten(treedef, leaves)
     )
 
+  def test_tree_flatten_with_path(self):
+    obj = [1, 2, (3, 4)]
+    self.assertEqual(
+        jax.tree.flatten_with_path(obj),
+        tree_util.tree_flatten_with_path(obj),
+    )
+
+  def test_tree_flatten_with_path_is_leaf(self):
+    obj = [1, 2, (3, 4)]
+    is_leaf = lambda x: isinstance(x, tuple)
+    self.assertEqual(
+        jax.tree.flatten_with_path(obj, is_leaf=is_leaf),
+        tree_util.tree_flatten_with_path(obj, is_leaf=is_leaf),
+    )
+
+  def test_tree_leaves_with_path(self):
+    obj = [1, 2, (3, 4)]
+    self.assertEqual(
+        jax.tree.leaves_with_path(obj),
+        tree_util.tree_leaves_with_path(obj),
+    )
+
+  def test_tree_leaves_with_path_is_leaf(self):
+    obj = [1, 2, (3, 4)]
+    is_leaf = lambda x: isinstance(x, tuple)
+    self.assertEqual(
+        jax.tree.leaves_with_path(obj, is_leaf=is_leaf),
+        tree_util.tree_leaves_with_path(obj, is_leaf=is_leaf),
+    )
+
+  def test_tree_map_with_path(self):
+    func = lambda kp, x, y: (sum(k.idx for k in kp), x + y)
+    obj = [1, 2, (3, 4)]
+    obj2 = [5, 6, (7, 8)]
+    self.assertEqual(
+        jax.tree.map_with_path(func, obj, obj2),
+        tree_util.tree_map_with_path(func, obj, obj2),
+    )
+
+  def test_tree_map_with_path_is_leaf(self):
+    func = lambda kp, x, y: (sum(k.idx for k in kp), x + y)
+    obj = [1, 2, (3, 4)]
+    obj2 = [5, 6, (7, 8)]
+    is_leaf = lambda x: isinstance(x, tuple)
+    self.assertEqual(
+        jax.tree.map_with_path(func, obj, obj2, is_leaf=is_leaf),
+        tree_util.tree_map_with_path(func, obj, obj2, is_leaf=is_leaf),
+    )
+
 
 class RegistrationTest(jtu.JaxTestCase):
 
