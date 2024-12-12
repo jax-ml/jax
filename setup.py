@@ -108,6 +108,12 @@ setup(
           f"jax-cuda12-plugin=={_current_jaxlib_version}",
         ],
 
+        # ROCm support for ROCm 6.0 and above.
+        'rocm': [
+          f"jaxlib=={_current_jaxlib_version}",
+          f"jax-rocm60-plugin>={_current_jaxlib_version},<={_jax_version}",
+        ],
+
         # For automatic bootstrapping distributed jobs in Kubernetes
         'k8s': [
           'kubernetes',
