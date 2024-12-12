@@ -752,13 +752,10 @@ os.environ['XLA_FLAGS'] = (
 
 ### Code generation flags
 
-* **--xla_cpu_use_mkl_dnn** Generate calls to MKL-DNN in the CPU backend.
-  The default value is True.
-
 * **--xla_cpu_use_thunk_runtime** Use Thunk-based runtime for the CPU backend.
   The default value is True.
 
-> NOTE: For JAX Versions after v0.4.33 or later, users will need to set the below environment variables as a \
+> NOTE: For JAX Versions after v0.4.33 or later, users will need to set the above environment variables as a \
 > temporary workaround to use Bfloat16 datatype becasue high performance oneDNN library has not been integrated yet with thunk runtime. \
 > This restriction is expected to be removed in future version
  
