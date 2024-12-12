@@ -54,6 +54,7 @@ if ! docker container inspect jax >/dev/null 2>&1 ; then
 
     #  Set to the basic terminal to avoid generating VT100/ANSI escape codes
     #  internal builds 
+    export TERM=dumb
     JAXCI_DOCKER_ARGS="$JAXCI_DOCKER_ARGS -e TERM=dumb"
   fi
 
