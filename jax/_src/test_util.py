@@ -30,6 +30,7 @@ import re
 import sys
 import tempfile
 import textwrap
+import threading
 from typing import Any, TextIO
 import unittest
 import warnings
@@ -40,22 +41,17 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import api
-from jax._src import array
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes as _dtypes
 from jax._src import lib as _jaxlib
-from jax._src import linear_util as lu
 from jax._src import monitoring
-from jax._src import pjit as pjit_lib
-from jax._src import stages
 from jax._src import xla_bridge
+from jax._src import util
 from jax._src import mesh as mesh_lib
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 from jax._src.interpreters import mlir
-from jax._src.interpreters import pxla
-from jax._src.lib import xla_client as xc
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
@@ -235,32 +231,68 @@ capture_stdout = partial(_capture_output, sys.stdout)
 capture_stderr = partial(_capture_output, sys.stderr)
 
 
-@contextmanager
-def count_device_put():
-  batched_device_put = pxla.batched_device_put
-  count = [0]
+class EventThreadLocalState(threading.local):
+  def __init__(self):
+    self.counts = {}  # Mapping from string name to count.
+    self.nested_device_put_count = 0  # Number of recursive calls to device_put
 
-  def make_fn_and_count(fn):
-    def fn_and_count(*args, **kwargs):
-      count[0] += 1
-      # device_put handlers might call `dispatch.device_put` (e.g. on an
-      # underlying payload or several). We only want to count these
-      # recursive puts once, so we skip counting more than the outermost
-      # one in such a call stack.
-      pxla.batched_device_put = batched_device_put
-      try:
-        return fn(*args, **kwargs)
-      finally:
-        pxla.batched_device_put = batched_device_put_and_count
-    return fn_and_count
+    # Per-function counts
+    self.infer_params_fun_counts = None
+    self.lower_jaxpr_to_fun_counts = None
 
-  batched_device_put_and_count = make_fn_and_count(batched_device_put)
+thread_local_state = EventThreadLocalState()
 
-  pxla.batched_device_put = batched_device_put_and_count
-  try:
-    yield count
-  finally:
-    pxla.batched_device_put = batched_device_put
+
+def event_listener(name, *args):
+  counts = thread_local_state.counts
+  counts[name] = counts.get(name, 0) + 1
+
+  # device_put handlers might call `dispatch.device_put` (e.g. on an
+  # underlying payload or several). We only want to count these
+  # recursive puts once, so we skip counting more than the outermost
+  # one in such a call stack.
+  if name == "batched_device_put_start":
+    if thread_local_state.nested_device_put_count == 0:
+      counts["batched_device_put"] = counts.get("batched_device_put", 0) + 1
+    thread_local_state.nested_device_put_count += 1
+  elif name == "batched_device_put_end":
+    thread_local_state.nested_device_put_count -= 1
+
+  elif name == "pjit._infer_params_impl":
+    # For infer_params, we collect per-function data, but only while a context
+    # manager is active.
+    infer_counts = thread_local_state.infer_params_fun_counts
+    if infer_counts is not None:
+      (fun,) = args
+      infer_counts[fun] += 1
+  elif name == "lower_jaxpr_to_fun":
+    # For infer_params, we collect per-function data, but only while a context
+    # manager is active.
+    lower_counts = thread_local_state.lower_jaxpr_to_fun_counts
+    if lower_counts is not None:
+      (fun,) = args
+      lower_counts[fun] += 1
+
+
+util.test_event_listener = event_listener
+
+
+def count_events(event):
+  "Returns a context-manager that yields a function that counts a test event."
+  @contextmanager
+  def count_event():
+    before = thread_local_state.counts.get(event, 0)
+    yield lambda: thread_local_state.counts.get(event, 0) - before
+  return count_event
+
+count_device_put = count_events("batched_device_put")
+count_device_put_fast_path_hit = count_events("batched_copy_array")
+count_pjit_cpp_cache_miss = count_events("pjit_lower")
+count_jit_tracing_cache_miss = count_events("create_pjit_jaxpr")
+count_aot_jit_cpp_cache_miss = count_events("stages_compiled_call")
+count_jit_and_pmap_lowerings = count_events("lower_jaxpr_to_module")
+count_jit_compilation_cache_miss = count_events("pxla_cached_compilation")
+count_jax_array_shard_arg_calls = count_events("_array_shard_arg")
 
 
 @contextmanager
@@ -269,189 +301,39 @@ def count_primitive_compiles():
 
   count = [-1]
   try:
-    yield count
+    yield lambda: count[0]
   finally:
     count[0] = dispatch.xla_primitive_callable.cache_info().misses
 
-
-@contextmanager
-def count_device_put_fast_path_hit():
-  original_fn = xc.batched_copy_array_to_devices_with_sharding
-  count = [0]
-
-  def batched_copy_array_to_devices_with_sharding_and_count(*args, **kwargs):
-    count[0] += 1
-    return original_fn(*args, **kwargs)
-
-  xc.batched_copy_array_to_devices_with_sharding = batched_copy_array_to_devices_with_sharding_and_count
-  try:
-    yield count
-  finally:
-    xc.batched_copy_array_to_devices_with_sharding = original_fn
-
-
-@contextmanager
-def count_pjit_cpp_cache_miss():
-  original_pjit_lower = pjit_lib._pjit_lower
-  count = [0]
-
-  def pjit_lower_and_count(*args, **kwargs):
-    count[0] += 1
-    return original_pjit_lower(*args, **kwargs)
-
-  pjit_lib._pjit_lower = pjit_lower_and_count
-  try:
-    yield count
-  finally:
-    pjit_lib._pjit_lower = original_pjit_lower
-
-@contextmanager
-def count_cached_compilation_cache_miss():
-  original_cached_compilation = pxla._cached_compilation
-  count = [0]
-
-  def cached_compilation_and_count(*args, **kwargs):
-    count[0] += 1
-    return original_cached_compilation(*args, **kwargs)
-
-  pxla._cached_compilation = cached_compilation_and_count
-  try:
-    yield count
-  finally:
-    pxla._cached_compilation = original_cached_compilation
-
-@contextmanager
-def count_jit_tracing_cache_miss():
-  original_create_pjit_jaxpr = pjit_lib._create_pjit_jaxpr
-  count = [0]
-
-  @lu.cache
-  def create_pjit_jaxpr_and_count(*args):
-    count[0] += 1
-    return original_create_pjit_jaxpr(*args)
-
-  pjit_lib._create_pjit_jaxpr = create_pjit_jaxpr_and_count
-  try:
-    yield count
-  finally:
-    pjit_lib._create_pjit_jaxpr = original_create_pjit_jaxpr
-
 @contextmanager
 def count_jit_infer_params_cache_miss():
-  original_infer_params_impl = pjit_lib._infer_params_impl
-  count = collections.defaultdict(int)
-
-  def infer_params_impl_and_count(fun, *args, **kw):
-    count[fun] += 1
-    return original_infer_params_impl(fun, *args, **kw)
-
-  pjit_lib._infer_params_impl = infer_params_impl_and_count
+  assert thread_local_state.infer_params_fun_counts is None
+  counts = collections.Counter()
+  thread_local_state.infer_params_fun_counts = counts
   try:
-    yield count
+    yield counts
   finally:
-    pjit_lib._infer_params_impl = original_infer_params_impl
-
+    thread_local_state.infer_params_fun_counts = None
 
 @contextmanager
-def count_aot_jit_cpp_cache_miss():
-  original_call = stages.Compiled.call
-  count = [0]
-
-  def compiled_call_count(*args, **kwargs):
-    count[0] += 1
-    return original_call(*args, **kwargs)
-
-  stages.Compiled.call = compiled_call_count
+def count_subjaxpr_to_hlo_conversion(fun_name):
+  assert thread_local_state.lower_jaxpr_to_fun_counts is None
+  counts = collections.Counter()
+  thread_local_state.lower_jaxpr_to_fun_counts = counts
   try:
-    yield count
+    yield lambda: counts[fun_name]
   finally:
-    stages.Compiled.call = original_call
+    thread_local_state.lower_jaxpr_to_fun_counts = None
 
-
-@contextmanager
-def count_jit_and_pmap_lowerings():
-  # No need to clear any caches since we generally jit and pmap fresh callables
-  # in tests.
-
-  mlir_lower = mlir.lower_jaxpr_to_module
-  count = [0]
-
-  def mlir_lower_and_count(*args, **kwargs):
-    count[0] += 1
-    return mlir_lower(*args, **kwargs)
-
-  mlir.lower_jaxpr_to_module = mlir_lower_and_count
-  try:
-    yield count
-  finally:
-    mlir.lower_jaxpr_to_module = mlir_lower
-
-
-@contextmanager
-def count_jax_array_shard_arg_calls():
-  # No need to clear any caches since we generally jit and pmap fresh callables
-  # in tests.
-
-  array_shard_arg = array._array_shard_arg
-  count = [0]
-
-  def array_shard_arg_and_count(*args, **kwargs):
-    count[0] += 1
-    return array_shard_arg(*args, **kwargs)
-
-  pxla.shard_arg_handlers[array.ArrayImpl] = array_shard_arg_and_count
-  try:
-    yield count
-  finally:
-    pxla.shard_arg_handlers[array.ArrayImpl] = array_shard_arg
-
-
-@contextmanager
-def count_jit_compilation_cache_miss():
-  # No need to clear any caches since we generally jit and pmap fresh callables
-  # in tests.
-
-  jit_compilation = pxla._cached_compilation
-  count = [0]
-
-  def compile_and_count(*args, **kwargs):
-    count[0] += 1
-    return jit_compilation(*args, **kwargs)
-
-  pxla._cached_compilation = compile_and_count
-  try:
-    yield count
-  finally:
-    pxla._cached_compilation = jit_compilation
-
-
-@contextmanager
-def count_subjaxpr_to_hlo_conversion(fun_name: str):
-  # No need to clear any caches since we generally jit and pmap fresh callables
-  # in tests.
-
-  mlir_lower = mlir.lower_jaxpr_to_fun
-  count = [0]
-
-  def mlir_lower_and_count(ctx, name, *args, **kwargs):
-    if name == fun_name:
-      count[0] += 1
-    return mlir_lower(ctx, name, *args, **kwargs)
-
-  mlir.lower_jaxpr_to_fun = mlir_lower_and_count
-  try:
-    yield count
-  finally:
-    mlir.lower_jaxpr_to_fun = mlir_lower
 
 
 @contextmanager
 def assert_num_jit_and_pmap_compilations(times):
   with count_jit_and_pmap_lowerings() as count:
     yield
-  if count[0] != times:
+  if count() != times:
     raise AssertionError(f"Expected exactly {times} XLA compilations, "
-                         f"but executed {count[0]}")
+                         f"but executed {count()}")
 
 
 def jaxlib_version() -> tuple[int, ...]:

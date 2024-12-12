@@ -676,3 +676,12 @@ class StrictABCMeta(abc.ABCMeta):
 
 class StrictABC(metaclass=StrictABCMeta):
   __slots__ = ()
+
+
+
+test_event_listener: Callable | None = None
+
+def test_event(name: str, *args) -> None:
+  if not test_event_listener:
+    return
+  test_event_listener(name, *args)

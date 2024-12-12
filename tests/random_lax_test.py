@@ -1041,7 +1041,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = self.make_key(1).block_until_ready()
     with jtu.count_device_put() as count:
       jax.jit(random.split)(key)
-    self.assertLessEqual(count[0], 1)  # 1 for the argument device_put
+    self.assertLessEqual(count(), 1)  # 1 for the argument device_put
 
   @jtu.sample_product(dtype=int_dtypes + uint_dtypes)
   def test_randint_bounds(self, dtype):

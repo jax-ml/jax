@@ -2621,7 +2621,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         lax.cond(x, f, g, x)
     # Should observe a maximum of 4 compiles: convert_element_type, f, g, cond
     # In #14058, this was observed to be 31 compiles.
-    self.assertLess(count[0], 5)
+    self.assertLess(count(), 5)
 
   @parameterized.named_parameters(
       {"testcase_name": f"_dtype={dtype.__name__}", "dtype": dtype}

@@ -141,7 +141,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
       y = lax.add(x, x)
       z = lax.add(y, y)
 
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
     self.assert_committed_to_device(y, devices[1])
     self.assert_committed_to_device(z, devices[1])
 
