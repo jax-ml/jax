@@ -51,6 +51,10 @@ if ! docker container inspect jax >/dev/null 2>&1 ; then
     export IP_ADDR=$(powershell -command "(Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias 'vEthernet (nat)').IPAddress")
     netsh interface portproxy add v4tov4 listenaddress=$IP_ADDR listenport=80 connectaddress=169.254.169.254 connectport=80
     JAXCI_DOCKER_ARGS="$JAXCI_DOCKER_ARGS -e GCE_METADATA_HOST=$IP_ADDR"
+
+    #  Set to the basic terminal to avoid generating VT100/ANSI escape codes
+    #  internal builds 
+    JAXCI_DOCKER_ARGS="$JAXCI_DOCKER_ARGS -e TERM=dumb"
   fi
 
   # Create a temporary file to store all JAXCI variables
