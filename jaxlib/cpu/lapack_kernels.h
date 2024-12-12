@@ -741,10 +741,10 @@ struct TridiagonalReduction {
 };
 
 // Declare all the handler symbols
-XLA_FFI_DECLARE_HANDLER_SYMBOL(blas_strsm_ffi);
-XLA_FFI_DECLARE_HANDLER_SYMBOL(blas_dtrsm_ffi);
-XLA_FFI_DECLARE_HANDLER_SYMBOL(blas_ctrsm_ffi);
-XLA_FFI_DECLARE_HANDLER_SYMBOL(blas_ztrsm_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_strsm_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dtrsm_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_ctrsm_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_ztrsm_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sgetrf_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dgetrf_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cgetrf_ffi);

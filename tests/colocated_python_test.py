@@ -24,7 +24,6 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib import xla_extension_version  # pylint: disable=g-importing-member
 from jax.experimental import colocated_python
-from jax.experimental.colocated_python import func as colocated_python_func
 from jax.experimental.colocated_python import serialization
 from jax.extend.ifrt_programs import ifrt_programs
 import jax.numpy as jnp
@@ -52,23 +51,8 @@ def _colocated_cpu_devices(
     ]
 
 
-@contextlib.contextmanager
-def _count_colocated_python_specialization_cache_miss() -> list[int]:
-  """Counts the number of cache misses for colocated_python specialization."""
-  original_get_specialized_func = colocated_python_func._get_specialized_func
-  count = [0]
-
-  @jax.util.cache(max_size=None)
-  def get_specialized_func(*args, **kwargs):
-    count[0] += 1
-    return original_get_specialized_func(*args, **kwargs)
-
-  colocated_python_func._get_specialized_func = get_specialized_func
-  try:
-    yield count
-  finally:
-    colocated_python_func._get_specialized_func = original_get_specialized_func
-
+_count_colocated_python_specialization_cache_miss = jtu.count_events(
+  "colocated_python_func._get_specialized_func")
 
 _exit_stack = contextlib.ExitStack()
 
@@ -117,12 +101,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
   def testSimpleFunctioWithTree(self):
     @colocated_python.colocated_python
@@ -137,12 +121,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
   def testEmptyInputFailsWithoutSpecialization(self):
     @colocated_python.colocated_python
@@ -168,12 +152,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = make_zero()
       out = jax.device_get(out)
       self.assertEqual(out, np.array(0))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       out = make_zero()
       out = jax.device_get(out)
       self.assertEqual(out, np.array(0))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
   def testInputPolymorphismWithoutOutSpecsFn(self):
     @colocated_python.colocated_python
@@ -188,12 +172,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       # Different input tree structure and dtype/shape.
       x = [np.array(1), (np.array(2), {"v": np.array(3)})]
@@ -202,12 +186,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
-      self.assertEqual(count[0], 2)
+      self.assertEqual(count(), 2)
 
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
-      self.assertEqual(count[0], 2)
+      self.assertEqual(count(), 2)
 
   def testInputPolymorphismAllowedWithOutSpecsFn(self):
     @colocated_python.colocated_python
@@ -223,12 +207,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       # Different input tree structure and dtype/shape.
       x = [np.array(1), (np.array(2), {"v": np.array(3)})]
@@ -237,12 +221,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
-      self.assertEqual(count[0], 2)
+      self.assertEqual(count(), 2)
 
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
-      self.assertEqual(count[0], 2)
+      self.assertEqual(count(), 2)
 
   @parameterized.named_parameters(
       ("on_main_thread", True),

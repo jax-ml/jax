@@ -50,6 +50,7 @@ from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
 from jax._src.sharding import Sharding as JSharding
 from jax._src.sharding_impls import AUTO
+from jax._src.partition_spec import UnconstrainedSingleton
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
 from jax._src.lib.mlir import dialects, ir, passmanager
@@ -1084,6 +1085,7 @@ def lower_jaxpr_to_module(
   Handles the quirks of the argument/return value passing conventions of the
   runtime.
   """
+  util.test_event("lower_jaxpr_to_module")
   platforms = tuple(map(xb.canonicalize_platform, platforms))
 
   in_avals = (jaxpr.in_avals if arg_shardings is None else
@@ -1377,6 +1379,7 @@ def lower_jaxpr_to_fun(
   Returns:
     MLIR func op
   """
+  util.test_event("lower_jaxpr_to_fun", name)
 
   # The first dimension variable may be the platform index
   num_dim_vars = len(ctx.shape_poly_state.dim_vars)
@@ -2524,12 +2527,19 @@ def lower_sharding_under_shit(ctx, op, aval, sharding_proto=None):
   # Don't emit a wsc under full manual mode to avoid increasing HLO size.
   if aval.sharding.mesh._are_all_axes_collective:
     return op
+  if aval.sharding.mesh._are_all_axes_auto:
+    return op
+  # TODO(yashkatariya): If all the axes in pspec are AUTO or collective,
+  # `return op` early and avoid bloating HLO size.
   proto = (aval.sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
            if sharding_proto is None else sharding_proto)
-  # TODO(yashkatariya): Enable this
-  # unspecified_dims = (set(range(aval.ndim))
-  #                     if aval.sharding.mesh._any_axis_collective else None)
-  return wrap_with_sharding_op(ctx, op, aval, proto)
+  unspecified_dims = None
+  if aval.sharding.mesh._any_axis_collective:
+    unspecified_dims = set(range(aval.ndim))
+  elif aval.sharding.mesh._any_axis_auto:
+    unspecified_dims = {i for i, s in enumerate(aval.sharding.spec)
+                        if isinstance(s, UnconstrainedSingleton)}
+  return wrap_with_sharding_op(ctx, op, aval, proto, unspecified_dims)
 
 
 def set_sharding(op, sharding: xc.OpSharding | sharding_impls.SdyArraySharding):
@@ -2793,7 +2803,7 @@ def _emit_tpu_python_callback(
 def _layout_to_mlir_layout(minor_to_major: Sequence[int] | None):
   if minor_to_major is None:
     # Needed for token layouts
-    layout = np.zeros((0,), dtype="int64")
+    layout: np.ndarray = np.zeros((0,), dtype="int64")
   else:
     layout = np.array(minor_to_major, dtype="int64")
   return ir.DenseIntElementsAttr.get(layout, type=ir.IndexType.get())

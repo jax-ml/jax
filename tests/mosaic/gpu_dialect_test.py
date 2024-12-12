@@ -74,11 +74,12 @@ def is_mosaic_gpu_op(op: ir.OpView) -> bool:
 
 def workgroup_ptr_ty() -> ir.Type:
   workgroup_nvptx_address_space = gpu_address_space_to_nvptx(
-      gpu.AddressSpace.Workgroup)
+      gpu.AddressSpace.Workgroup
+  )
   return ir.Type.parse(f"!llvm.ptr<{workgroup_nvptx_address_space}>")
 
 
-class DialectTest(parameterized.TestCase):
+class MosaicGpuTest(parameterized.TestCase):
 
   def setUp(self):
     if mgpu is None:
@@ -88,6 +89,9 @@ class DialectTest(parameterized.TestCase):
     self.enter_context(ir.Location.unknown())
     self.module = ir.Module.create()
 
+
+class DialectTest(MosaicGpuTest):
+
   def test_dialect_module_is_loaded(self):
     self.assertTrue(_cext.globals._check_dialect_module_loaded("mosaic_gpu"))
 
@@ -95,7 +99,9 @@ class DialectTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       mgpu.initialize_barrier(
           ir.MemRefType.get((1, 2), ir.F32Type.get()),
-          llvm.UndefOp(workgroup_ptr_ty()), arrival_count=1)
+          llvm.UndefOp(workgroup_ptr_ty()),
+          arrival_count=1,
+      )
     with self.assertRaisesRegex(
         ir.MLIRError, "must be memref of barrier values"
     ):
@@ -106,7 +112,8 @@ class DialectTest(parameterized.TestCase):
       mgpu.initialize_barrier(
           ir.MemRefType.get((1, 2), ir.Type.parse("!mosaic_gpu.barrier")),
           llvm.UndefOp(workgroup_ptr_ty()),
-          arrival_count=0)
+          arrival_count=0,
+      )
     with self.assertRaisesRegex(ir.MLIRError, "value is positive"):
       self.module.operation.verify()
 
@@ -115,7 +122,8 @@ class DialectTest(parameterized.TestCase):
       mgpu.initialize_barrier(
           ir.MemRefType.get((1, 2), ir.Type.parse("!mosaic_gpu.barrier")),
           llvm.UndefOp(ir.Type.parse(f"!llvm.ptr<{0}>")),
-          arrival_count=1)
+          arrival_count=1,
+      )
     with self.assertRaisesRegex(ir.MLIRError, "pointer in address space 3"):
       self.module.operation.verify()
 
@@ -124,10 +132,12 @@ class DialectTest(parameterized.TestCase):
       mgpu.initialize_barrier(
           ir.MemRefType.get((1, 2), ir.Type.parse("!mosaic_gpu.barrier")),
           llvm.UndefOp(workgroup_ptr_ty()),
-          arrival_count=1)
+          arrival_count=1,
+      )
     self.assertTrue(self.module.operation.verify())
-    self.assertIsInstance(self.module.body.operations[1],
-                          mgpu.InitializeBarrierOp)
+    self.assertIsInstance(
+        self.module.body.operations[1], mgpu.InitializeBarrierOp
+    )
 
   def test_async_load_op_dest_must_be_contiguous(self):
     with ir.InsertionPoint(self.module.body):
@@ -475,15 +485,108 @@ class DialectTest(parameterized.TestCase):
     ):
       self.module.operation.verify()
 
+  def test_wgmma_types_match(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.RankedTensorType.get([128, 160], ir.BF16Type.get()),
+          ir.MemRefType.get([2, 4, 64, 32], ir.F16Type.get()),
+          ir.MemRefType.get([4, 5, 32, 32], ir.BF16Type.get()),
+          name="wgmma",
+      )(
+          lambda accumulator, a, b: mgpu.wgmma(
+              accumulator,
+              a,
+              b,
+              swizzle=ir.Attribute.parse("#mosaic_gpu.swizzle<swizzle_64>"),
+          )
+      )
 
-class DialectLoweringTest(DialectTest):
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The `a` and `b` inputs must have the same element type.",
+    ):
+      self.module.operation.verify()
+
+  def test_wgmma_b_rank_is_4(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.RankedTensorType.get([128, 160], ir.BF16Type.get()),
+          ir.MemRefType.get([2, 4, 64, 32], ir.BF16Type.get()),
+          ir.MemRefType.get([5, 32, 32], ir.BF16Type.get()),
+          name="wgmma",
+      )(
+          lambda accumulator, a, b: mgpu.wgmma(
+              accumulator,
+              a,
+              b,
+              swizzle=ir.Attribute.parse("#mosaic_gpu.swizzle<swizzle_64>"),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The `b` input must have rank 4.",
+    ):
+      self.module.operation.verify()
+
+  def test_wgmma_b_shape_dim_3(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.RankedTensorType.get([128, 160], ir.BF16Type.get()),
+          ir.MemRefType.get([2, 4, 64, 32], ir.BF16Type.get()),
+          ir.MemRefType.get([4, 5, 32, 16], ir.BF16Type.get()),
+          name="wgmma",
+      )(
+          lambda accumulator, a, b: mgpu.wgmma(
+              accumulator,
+              a,
+              b,
+              swizzle=ir.Attribute.parse("#mosaic_gpu.swizzle<swizzle_64>"),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"The n group size \(16\) must be equal to swizzle/element_bytewidth "
+        r"\(32\)",
+    ):
+      self.module.operation.verify()
+
+  def test_wgmma_b_shape_dim_2(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.RankedTensorType.get([128, 160], ir.BF16Type.get()),
+          ir.MemRefType.get([2, 4, 64, 32], ir.BF16Type.get()),
+          ir.MemRefType.get([4, 5, 64, 32], ir.BF16Type.get()),
+          name="wgmma",
+      )(
+          lambda accumulator, a, b: mgpu.wgmma(
+              accumulator,
+              a,
+              b,
+              swizzle=ir.Attribute.parse("#mosaic_gpu.swizzle<swizzle_64>"),
+          )
+      )
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"The k group size \(64\) must be equal to swizzle/element_bytewidth "
+        r"\(32\)",
+    ):
+      self.module.operation.verify()
+
+  # TODO(b/381371456): Add tests for the other WGMMA inputs.
+
+
+class DialectLoweringTest(MosaicGpuTest):
 
   def test_lowering_removes_mosaic_gpu_ops(self):
     with ir.InsertionPoint(self.module.body):
       mgpu.initialize_barrier(
           ir.MemRefType.get((1, 2), ir.Type.parse("!mosaic_gpu.barrier")),
           llvm.UndefOp(workgroup_ptr_ty()),
-          arrival_count=1)
+          arrival_count=1,
+      )
     lower_mgpu_dialect(self.module)
 
     self.assertEmpty(
@@ -499,7 +602,8 @@ class DialectLoweringTest(DialectTest):
         mgpu.initialize_barrier(
             ir.MemRefType.get((1, 2), ir.Type.parse("!mosaic_gpu.barrier")),
             llvm.UndefOp(workgroup_ptr_ty()),
-            arrival_count=1)
+            arrival_count=1,
+        )
         scf.yield_([])
     lower_mgpu_dialect(self.module)
 
@@ -516,7 +620,8 @@ class DialectLoweringTest(DialectTest):
       barriers_ref = mgpu.initialize_barrier(
           ir.MemRefType.get(shape, ir.Type.parse("!mosaic_gpu.barrier")),
           llvm.UndefOp(workgroup_ptr_ty()),
-          arrival_count=arrival_count)
+          arrival_count=arrival_count,
+      )
       # Add a user for barriers_ref to make sure that the lowering keeps types
       # consistent.
       memref.copy(barriers_ref, barriers_ref)

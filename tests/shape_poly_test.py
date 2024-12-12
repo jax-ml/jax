@@ -1114,10 +1114,10 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual(x_reshaped, (a + a % 2) // -2)
     self.assertEqual(2 * x_reshaped, a)
 
-  def test_constraints_a_minus_4d_eq(self):
+  def test_constraints_eq_a_minus_4d(self):
     # simulates d = div(a, 4) and m = mod(a, 4)
-    assumptions = ["4*d == a - m", "m >= 0", "m <= 3"]
-    scope = shape_poly.SymbolicScope(assumptions)
+    constraints = ["4*d == a - m", "m >= 0", "m <= 3"]
+    scope = shape_poly.SymbolicScope(constraints)
     a, d = shape_poly.symbolic_shape("a, d", scope=scope)
     self.assertEqual(_bounds(a - 4*d), (1, 3))  # a - 4d = m >= 1
     # TODO: The incompleteness is due to the way we combine external constraints
@@ -1125,15 +1125,26 @@ class DimExprTest(jtu.JaxTestCase):
                      _expect(best=(3, np.inf), current=(-np.inf, np.inf)))  # a - 2d = m + 2d >= 3
     # TODO: The incompleteness is due to the way we combine external constraints
     self.assertEqual(_bounds(a),
-                     _expect(best=(5, np.inf), current=(1, np.inf)))  # a >= 4d + m >= 5
+                     _expect(best=(5, np.inf), current=(4, np.inf)))  # a >= 4d + m >= 5
 
     # Now with a different order of constraints
-    assumptions1 = ["m1 >= 0", "m1 <= 3", "a1 == 4*d1 + m1"]
-    scope1 = shape_poly.SymbolicScope(assumptions1)
+    constraints1 = ["m1 >= 0", "m1 <= 3", "a1 == 4*d1 + m1"]
+    scope1 = shape_poly.SymbolicScope(constraints1)
     a1, d1, m1 = shape_poly.symbolic_shape("a1, d1, m1", scope=scope1)
     self.assertEqual(_bounds(a1 - 4*d1), (1, 3))  # a - 4d = m >= 1
     self.assertEqual(_bounds(a1 - 2*d1), (3, np.inf))  # a - 2d = m + 2d >= 3
     self.assertEqual(_bounds(a1), (5, np.inf))  # a >= 4d + m >= 5
+
+  def test_constraints_eq_geq(self):
+    # We ensure that an equality constraint it is usable not just for
+    # normalization but also for inequality reasoning.
+    a, b = export.symbolic_shape(
+        "a, b", constraints=["4 * a == b"])
+    self.assertGreaterEqual(b, a)
+    self.assertGreaterEqual(b, 3*a)
+    self.assertGreaterEqual(b, 4 * a)
+    self.assertGreaterEqual(5 * a, b)
+    self.assertGreaterEqual(9 * a, 2*b)
 
   def test_constraints_error_msg(self):
     a, b = shape_poly.symbolic_shape("a, b",
@@ -1713,7 +1724,7 @@ class ShapePolyTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        re.escape("Expected '4 - a' to be greater or equal to 0, but found -1")):
+        re.escape("Expected '- a + 4' to be greater or equal to 0, but found -1")):
       exp.call(np.arange(5, dtype=np.int32))
 
   def test_constraints_eq_0_compile_time_check(self):

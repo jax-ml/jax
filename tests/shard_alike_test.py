@@ -201,7 +201,7 @@ class ShardAlikeTest(jtu.JaxTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:
       f(np_inp)
       out1, out2 = f(np_inp)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
     self.assertTrue(s.is_equivalent_to(out1.sharding, np_inp.ndim))
     self.assertTrue(s.is_equivalent_to(out2.sharding, np_inp.ndim))
 
@@ -213,7 +213,7 @@ class ShardAlikeTest(jtu.JaxTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:
       g(arr)
       out3, out4 = g(arr)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
     self.assertEqual(out3.sharding, s)
     self.assertEqual(out4.sharding, s)
 

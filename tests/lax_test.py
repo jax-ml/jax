@@ -3366,6 +3366,12 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, ".*does not accept dtype complex.*"):
       op(2+3j, 4+5j)
 
+  @parameterized.parameters([lax.add, lax.mul, lax.div, lax.rem, lax.lt, lax.gt,
+                             lax.ge, lax.le, lax.eq, lax.ne])
+  def test_ops_error_on_mismatched_dtypes(self, op):
+    with self.assertRaisesRegex(TypeError, ".*requires arguments to have the same dtypes.*"):
+      op(0, 0.0)
+
   def test_population_count_booleans_not_supported(self):
     # https://github.com/jax-ml/jax/issues/3886
     msg = "population_count does not accept dtype bool"

@@ -54,6 +54,16 @@ jax_py_test(
     ] + py_deps("absl/testing"),
 )
 
+jax_py_test(
+    name = "gpu_layout_inference_test",
+    srcs = ["gpu_layout_inference_test.py"],
+    deps = [
+        "//jax",
+        "//jax:mosaic_gpu",
+        "//jax:test_util",
+    ] + py_deps("absl/testing"),
+)
+
 jax_multiplatform_test(
     name = "matmul_test",
     srcs = ["matmul_test.py"],
@@ -86,5 +96,19 @@ jax_multiplatform_test(
     deps = [
         "//jax:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:flash_attention",
+    ] + py_deps("absl/testing"),
+)
+
+jax_multiplatform_test(
+    name = "profiler_cupti_test",
+    srcs = ["profiler_cupti_test.py"],
+    enable_backends = [],
+    enable_configs = ["gpu_h100"],
+    tags = [
+        "noasan",  # CUPTI leaks memory
+        "nomsan",
+    ],
+    deps = [
+        "//jax:mosaic_gpu",
     ] + py_deps("absl/testing"),
 )

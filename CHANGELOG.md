@@ -19,6 +19,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     APIs of the same name in {mod}`jax.extend.core`; see the documentation for
     {mod}`jax.extend` for information on the compatibility guarantees of these
     semi-public extensions.
+  * Several previously-deprecated APIs have been removed, including:
+    * from {mod}`jax.core`: `check_eqn`, `check_type`,  `check_valid_jaxtype`, and
+      `non_negative_dim`.
+    * from {mod}`jax.lib.xla_bridge`: `xla_client` and `default_backend`.
+    * from {mod}`jax.lib.xla_client`: `_xla` and `bfloat16`.
 
 ## jax 0.4.37 (Dec 9, 2024)
 

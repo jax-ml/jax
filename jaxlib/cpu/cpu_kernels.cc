@@ -117,10 +117,10 @@ XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM(
 
 // FFI Kernels
 
-JAX_CPU_REGISTER_HANDLER(blas_strsm_ffi);
-JAX_CPU_REGISTER_HANDLER(blas_dtrsm_ffi);
-JAX_CPU_REGISTER_HANDLER(blas_ctrsm_ffi);
-JAX_CPU_REGISTER_HANDLER(blas_ztrsm_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_strsm_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_dtrsm_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_ctrsm_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_ztrsm_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_sgetrf_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_dgetrf_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_cgetrf_ffi);

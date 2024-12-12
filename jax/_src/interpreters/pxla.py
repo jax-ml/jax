@@ -63,7 +63,7 @@ from jax._src.layout import DeviceLocalLayout, AutoLayout, Layout
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.partition_spec import PartitionSpec
+from jax._src.partition_spec import PartitionSpec, UnconstrainedSingleton
 from jax._src.sharding import Sharding as JSharding
 from jax._src.sharding_impls import (
     ArrayMapping, ArrayMappingOrAutoOrUnspecified, AUTO, UNSPECIFIED,
@@ -231,16 +231,20 @@ shard_arg_handlers[core.MutableArray] = _shard_mutable_array
 def batched_device_put(aval: core.ShapedArray,
                        sharding: JSharding, xs: Sequence[Any],
                        devices: Sequence[jax.Device], committed: bool = True):
-  from jax._src import array
+  util.test_event("batched_device_put_start")
+  try:
+    from jax._src import array
 
-  bufs = [x for x, d in safe_zip(xs, devices)
-          if (isinstance(x, array.ArrayImpl) and
-              dispatch.is_single_device_sharding(x.sharding) and
-              x.devices() == {d})]
-  if len(bufs) == len(xs):
-    return array.ArrayImpl(
-        aval, sharding, bufs, committed=committed, _skip_checks=True)
-  return xc.batched_device_put(aval, sharding, xs, list(devices), committed)
+    bufs = [x for x, d in safe_zip(xs, devices)
+            if (isinstance(x, array.ArrayImpl) and
+                dispatch.is_single_device_sharding(x.sharding) and
+                x.devices() == {d})]
+    if len(bufs) == len(xs):
+      return array.ArrayImpl(
+          aval, sharding, bufs, committed=committed, _skip_checks=True)
+    return xc.batched_device_put(aval, sharding, xs, list(devices), committed)
+  finally:
+    util.test_event("batched_device_put_end")
 
 def _shard_aval(size, axis: int, aval):
   try:
@@ -2123,11 +2127,13 @@ def _concretize_abstract_shardings(shardings, avals, device_assignment):
   @lru_cache(maxsize=128)
   def _abstract_to_concrete_mesh(abstract_mesh):
     return mesh_lib.Mesh(
-        np_dev.reshape(abstract_mesh.axis_sizes), abstract_mesh.axis_names)
+        np_dev.reshape(abstract_mesh.axis_sizes), abstract_mesh.axis_names,
+        axis_types=abstract_mesh.axis_types)
 
   out = []
   for s, a in zip(shardings, avals):
-    if isinstance(s, UnspecifiedValue) and a.sharding is not None:
+    if (isinstance(s, UnspecifiedValue) and a.sharding is not None and
+        all(not isinstance(s, UnconstrainedSingleton) for s in a.sharding.spec)):
       out.append(NamedSharding(_abstract_to_concrete_mesh(a.sharding.mesh),
                                a.sharding.spec))
     else:
@@ -2848,6 +2854,7 @@ class UnloadedMeshExecutable:
           mesh = i.mesh
           break
 
+    util.test_event("pxla_cached_compilation")
     xla_executable = _cached_compilation(
         hlo, name, mesh, spmd_lowering,
         tuple_args, auto_spmd_lowering, allow_prop_to_inputs,

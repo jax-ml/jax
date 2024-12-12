@@ -533,6 +533,7 @@ class Compiled(Stage):
 
   @staticmethod
   def call(*args, **kwargs):
+    util.test_event("stages_compiled_call")
     # This is because `__call__` passes in `self._params` as the first argument.
     # Instead of making the call signature `call(params, *args, **kwargs)`
     # extract it from args because `params` can be passed as a kwarg by users
