@@ -142,20 +142,6 @@ build:cuda --@local_config_cuda//cuda:include_cuda_libs=true
 # This config is used for building targets with CUDA libraries from stubs.
 build:cuda_libraries_from_stubs --@local_config_cuda//cuda:include_cuda_libs=false
 
-# Force the linker to set RPATH, not RUNPATH. When resolving dynamic libraries,
-# ld.so prefers in order: RPATH, LD_LIBRARY_PATH, RUNPATH. JAX sets RPATH to
-# point to the $ORIGIN-relative location of the pip-installed NVIDIA CUDA
-# packages.
-# This has pros and cons:
-# * pro: we'll ignore other CUDA installations, which has frequently confused
-#   users in the past. By setting RPATH, we'll always use the NVIDIA pip
-#   packages if they are installed.
-# * con: the user cannot override the CUDA installation location
-#   via LD_LIBRARY_PATH, if the nvidia-... pip packages are installed. This is
-#   acceptable, because the workaround is "remove the nvidia-..." pip packages.
-# The list of CUDA pip packages that JAX depends on are present in setup.py.
-build:cuda --linkopt=-Wl,--disable-new-dtags
-
 # Build CUDA and other C++ targets with Clang
 build:build_cuda_with_clang --@local_config_cuda//:cuda_compiler=clang
 
