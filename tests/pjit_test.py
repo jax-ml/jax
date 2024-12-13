@@ -4631,6 +4631,54 @@ class ArrayPjitTest(jtu.JaxTestCase):
     ins, _ = f.lower(np.arange(8)).compile().input_shardings
     self.assertEqual(ins[0], SingleDeviceSharding(jax.devices()[0]))
 
+  def test_abstract_mesh_lower(self):
+    mesh = jtu.create_mesh((2,), 'x')
+    mesh2 = jtu.create_mesh((1,), 'x')
+
+    abstract_sds = jax.ShapeDtypeStruct(
+        (8, 2), jnp.float32, sharding=NamedSharding(mesh.abstract_mesh, P('x')))
+    abstract_sds2 = jax.ShapeDtypeStruct(
+        (8, 2), jnp.float32, sharding=NamedSharding(mesh2.abstract_mesh, P('x')))
+
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    lowered = f.trace(abstract_sds).lower(lowering_platforms=('tpu',))
+    self.assertIn('num_partitions = 2', lowered.as_text())
+
+    with self.assertRaisesRegex(
+        RuntimeError, 'A jitted computation cannot contain AbstractMesh'):
+      lowered.compile()
+
+    @jax.jit
+    def g(x, y):
+      return x, y
+
+    concrete_s = NamedSharding(mesh, P('x'))
+    concrete_sds = jax.ShapeDtypeStruct((8,), jnp.float32, sharding=concrete_s)
+    with self.assertRaisesRegex(
+        ValueError,
+        'AbstractMesh size: 1 does not match the device assignment size: 2'):
+      g.lower(abstract_sds2, concrete_sds)
+
+    with self.assertRaisesRegex(
+        ValueError, "Passing lowering_platforms.*is required"):
+      g.lower(abstract_sds, np.arange(8))
+
+    lowered2 = g.trace(abstract_sds, np.arange(8)).lower(
+        lowering_platforms=('tpu',))
+    self.assertIn('num_partitions = 2', lowered2.as_text())
+    with self.assertRaisesRegex(
+        RuntimeError, 'A jitted computation cannot contain AbstractMesh'):
+      lowered2.compile()
+
+    lowered3 = g.lower(abstract_sds, concrete_sds)
+    self.assertIn('num_partitions = 2', lowered3.as_text())
+    with self.assertRaisesRegex(
+        RuntimeError, 'A jitted computation cannot contain AbstractMesh'):
+      lowered3.compile()
+
 
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")

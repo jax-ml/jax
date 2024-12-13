@@ -498,7 +498,7 @@ def _make_jit_wrapper(fun: Callable, jit_info: PjitInfo):
     donate_argnums = tuple(i for i, d in enumerate(p.donated_invars) if d)
     args_info = stages.make_args_info(p.in_tree, p.in_avals, donate_argnums)
     lower_callable = partial(_resolve_and_lower, args_flat, **p.params,
-                            pgle_profiler=None)
+                             pgle_profiler=None)
     return stages.Traced(
         p.params['jaxpr'], args_info, p.params["name"], p.out_tree,
         lower_callable, p.abstract_mesh, args_flat, p.arg_names, p.num_consts)
