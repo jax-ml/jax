@@ -26,6 +26,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
       `non_negative_dim`.
     * from {mod}`jax.lib.xla_bridge`: `xla_client` and `default_backend`.
     * from {mod}`jax.lib.xla_client`: `_xla` and `bfloat16`.
+    * from {mod}`jax.numpy`: `round_`.
 
 ## jax 0.4.37 (Dec 9, 2024)
 
