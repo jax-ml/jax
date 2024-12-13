@@ -69,6 +69,20 @@ training on Nvidia GPUs](https://github.com/NVIDIA/JAX-Toolbox/blob/main/rosetta
 * **--xla_gpu_enable_latency_hiding_scheduler** This flag enables latency hiding
   schedulers to overlap asynchronous communication with computation efficiently.
   The default value is False.
+* **--xla_gpu_memory_limit_slop_factor** This flag serves as a multiplier applied
+  to the total available memory, creating a threshold that guides the Latency Hiding
+  Scheduler (LHS) in balancing memory reduction and latency hiding optimizations.
+  The default value is 95.
+
+  This factor effectively establishes a memory limit for compiler passes, determining
+  when the scheduler should prioritize:
+    1. Memory reduction: When memory usage approaches or exceeds the calculated threshold.
+    2. Latency hiding: When memory usage is below the threshold, allowing for more
+       aggressive optimizations that may temporarily increase memory usage but improve
+       overall performance.
+
+  By adjusting this factor, users can fine-tune the trade-off between memory efficiency
+  and performance optimizations.
 * **--xla_gpu_enable_pipelined_collectives** When using pipeline parallelism,
   this flag enables overlapping the (i+1)-th layer weight `AllGather` with the
   i-th layer computation. It also enables overlapping (i+1)-th layer
