@@ -26,6 +26,7 @@ from jax._src.layout import Layout, DeviceLocalLayout as DLL
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip
 from jax.experimental.compute_on import compute_on
+from jax._src.lib import xla_extension_version
 
 config.parse_flags_with_absl()
 
@@ -692,6 +693,31 @@ class LayoutTest(jtu.JaxTestCase):
       return sparsecore_compute(x), host_compute(y)
 
     f(sparecore_arr, host_arr)
+
+  def test_cpp_layout_cache_miss(self):
+    if xla_extension_version < 301:
+      self.skipTest('Requires xla_extension_version >= 301')
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    shape = (16, 16)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np_inp, s)
+
+    arr_m2m = arr.layout.device_local_layout.major_to_minor
+    custom_layout = Layout(DLL(major_to_minor=arr_m2m[::-1]), s)
+    arr2 = jax.device_put(np_inp, custom_layout)
+
+    @jax.jit
+    def f(x):
+      return x @ x.T
+
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      out = f(arr)
+      out2 = f(arr2)
+    self.assertEqual(count(), 2)
+
+    self.assertArraysEqual(out, np_inp @ np_inp.T)
+    self.assertArraysEqual(out2, np_inp @ np_inp.T)
 
 
 if __name__ == '__main__':
