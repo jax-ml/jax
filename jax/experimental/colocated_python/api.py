@@ -20,7 +20,6 @@ from typing import Any, Callable, Sequence
 
 import jax
 from jax._src import api_util
-from jax._src.lib import xla_extension_version
 from jax.experimental.colocated_python.func import make_callable
 
 
@@ -28,9 +27,6 @@ def colocated_cpu_devices(
     devices: Sequence[jax.Device],
 ) -> Sequence[jax.Device]:
   """Finds CPU devices colocated with the given devices."""
-  if xla_extension_version < 290:
-    raise NotImplementedError("Requires xla_extension_version >= 290")
-
   cpu_devices_by_colocation_id = collections.defaultdict(list)
   for device in devices[0].client._get_all_devices():  # pylint: disable=protected-access
     if device.device_kind == "cpu":

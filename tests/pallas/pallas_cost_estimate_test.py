@@ -19,6 +19,7 @@ from jax import numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.pallas import cost_estimate
+from jax._src.state import discharge
 
 
 config.parse_flags_with_absl()
@@ -90,6 +91,24 @@ class PallasCostEstimateTest(jtu.JaxTestCase):
     self.assertEqual(cost.flops, 10 * expected_flops_per_element)
     self.assertEqual(cost.transcendentals, 0)
     self.assertEqual(cost.bytes_accessed, 80)
+
+  def test_run_state(self):
+    def add_refs(refs):
+      x_ref, y_ref, z_ref = refs
+      x = x_ref[:]
+      y = y_ref[:]
+      z = x + y
+      z_ref[:] = z
+    input_shape = jax.ShapeDtypeStruct((100,), jnp.float32)
+    cost = cost_estimate.estimate_cost(
+        discharge.run_state(add_refs),
+        (input_shape, input_shape, input_shape))
+    self.assertEqual(cost.flops, 100)
+    self.assertEqual(cost.transcendentals, 0)
+    # TODO(justinfu): This is off by a factor of 2 because run_state
+    # has all inputs/outputs as both arguments and return values.
+    self.assertEqual(cost.bytes_accessed / 2, 3 * 4 * 100)
+
 
 if __name__ == "__main__":
   absltest.main()

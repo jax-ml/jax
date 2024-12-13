@@ -128,11 +128,11 @@ class DimExprTest(jtu.JaxTestCase):
                         ):
     """Checks `assertion(e, fun(*operands))` symbolically and concretely.
 
-    For the concrete check, it will same the space of dimension variable
+    For the concrete check, it will sample the space of dimension variable
     assignments for the dimension variables in `e`.
 
-    This is useful when `fun` can operate both with polynomials and with
-    concrete values, and we want to double-check that the behavior is sound.
+    This is useful when `fun` can operate both with symbolic and with
+    concrete values, and we want to check that the behavior is sound.
     """
     computed_sym = fun(*operands_sym)
     assertion_fun = {
@@ -1099,25 +1099,42 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual(exp.in_avals[0], exp.in_avals[1])
 
   def test_constraints_eq_threefry(self):
-    # Test equalities that arise out of the threefree lowering
+    # Test equalities that arise out of the threefry lowering
     # x : i32[a]  # a may be even or odd
     # x_padded: i32[a + a % 2] = jnp.concat([x, jnp.zeros((a % 2,))])
-    # x_reshaped: i32[2, (a + a % 2) // 2] = x_padded.reshape((-1, 2))
-    # x_1 = x_reshaped.reshape((-1,))
+    # x_reshaped: i32[(a + a % 2) // 2, 2] = x_padded.reshape((-1, 2))
+    # x_1: i32[a + a % 2] = x_reshaped.reshape((-1,))
     a, = shape_poly.symbolic_shape(
         "a",
-        constraints=("mod(a + mod(a, 2), -2) == 0",
-                     "2*floordiv(mod(a, 2) + a, -2) == a"))
+        constraints=("mod(a + mod(a, 2), -2) == 0",))
 
     x_reshaped, r = divmod(a + a % 2, -2)
     self.assertEqual(r, 0)
-    self.assertEqual(x_reshaped, (a + a % 2) // -2)
-    self.assertEqual(2 * x_reshaped, a)
+    self.assertEqual(- x_reshaped, -1 * ((a + a % 2) // -2))
+    self.assertEqual(-2 * x_reshaped, a + a % 2)
 
-  def test_constraints_a_minus_4d_eq(self):
+  def test_constraints_eq_mod_0(self):
+    # mod(b, N) == 0 is a common constraint, we need to ensure we can use it
+    # to infer things like: N * floordiv(b, N) == b, b >= N.
+    b, c, d = shape_poly.symbolic_shape(
+        "b, c, d",
+        constraints=("mod(b, 4) == 0",))
+
+    # Inequalities work, because we use more expensive reasoning
+    self.assertGreaterEqual(b, 4 * (b // 4))
+    self.assertGreaterEqual(4 * (b // 4), b)
+    # Equalities used to fail
+    self.assertEqual(b, 4 * (b // 4))
+    # And an equality that may come up in a reshape
+    self.assertEqual(math.prod([b, c, d]), math.prod([b // 4, c, d, 2, 2]))
+
+    self.assertGreaterEqual(b, b // 4)
+    self.assertGreaterEqual(b, 3 * (b // 4))
+
+  def test_constraints_eq_a_minus_4d(self):
     # simulates d = div(a, 4) and m = mod(a, 4)
-    assumptions = ["4*d == a - m", "m >= 0", "m <= 3"]
-    scope = shape_poly.SymbolicScope(assumptions)
+    constraints = ["4*d == a - m", "m >= 0", "m <= 3"]
+    scope = shape_poly.SymbolicScope(constraints)
     a, d = shape_poly.symbolic_shape("a, d", scope=scope)
     self.assertEqual(_bounds(a - 4*d), (1, 3))  # a - 4d = m >= 1
     # TODO: The incompleteness is due to the way we combine external constraints
@@ -1125,15 +1142,26 @@ class DimExprTest(jtu.JaxTestCase):
                      _expect(best=(3, np.inf), current=(-np.inf, np.inf)))  # a - 2d = m + 2d >= 3
     # TODO: The incompleteness is due to the way we combine external constraints
     self.assertEqual(_bounds(a),
-                     _expect(best=(5, np.inf), current=(1, np.inf)))  # a >= 4d + m >= 5
+                     _expect(best=(5, np.inf), current=(4, np.inf)))  # a >= 4d + m >= 5
 
     # Now with a different order of constraints
-    assumptions1 = ["m1 >= 0", "m1 <= 3", "a1 == 4*d1 + m1"]
-    scope1 = shape_poly.SymbolicScope(assumptions1)
+    constraints1 = ["m1 >= 0", "m1 <= 3", "a1 == 4*d1 + m1"]
+    scope1 = shape_poly.SymbolicScope(constraints1)
     a1, d1, m1 = shape_poly.symbolic_shape("a1, d1, m1", scope=scope1)
     self.assertEqual(_bounds(a1 - 4*d1), (1, 3))  # a - 4d = m >= 1
     self.assertEqual(_bounds(a1 - 2*d1), (3, np.inf))  # a - 2d = m + 2d >= 3
     self.assertEqual(_bounds(a1), (5, np.inf))  # a >= 4d + m >= 5
+
+  def test_constraints_eq_geq(self):
+    # We ensure that an equality constraint it is usable not just for
+    # normalization but also for inequality reasoning.
+    a, b = export.symbolic_shape(
+        "a, b", constraints=["4 * a == b"])
+    self.assertGreaterEqual(b, a)
+    self.assertGreaterEqual(b, 3*a)
+    self.assertGreaterEqual(b, 4 * a)
+    self.assertGreaterEqual(5 * a, b)
+    self.assertGreaterEqual(9 * a, 2*b)
 
   def test_constraints_error_msg(self):
     a, b = shape_poly.symbolic_shape("a, b",
@@ -1429,6 +1457,29 @@ class ShapePolyTest(jtu.JaxTestCase):
       arg_descriptors=[RandArg((3,), np.int64)],
       polymorphic_shapes=["b"])
 
+  @jtu.parameterized_filterable(
+      # The function `f` will be called with x: f32[b]
+      kwargs=[
+          dict(testcase_name="cube", f=lambda x: x.shape[0] ** 3),
+          dict(testcase_name="zero", f=lambda x: x.shape[0] ** 0),
+          dict(testcase_name="rpow", f=lambda x: 2 ** x.shape[0]),
+          dict(testcase_name="negative",
+               f=lambda x: x.shape[0] ** -2,
+               expect_error=(ValueError, "cannot be raised to negative powers")),
+          dict(testcase_name="non_integer",
+               f=lambda x: x.shape[0] ** 1.5,
+               expect_error=(ValueError, "cannot be raised to non-integer powers")),
+          dict(testcase_name="sym_pow",
+               f=lambda x: x.shape[0] ** x.shape[0]),
+      ]
+  )
+  def test_pow(self, f, expect_error: tuple[Exception, str] | None = None):
+    check_shape_poly(self,
+                     f,
+                     arg_descriptors=[RandArg((3,), np.float32)],
+                     polymorphic_shapes=["b"],
+                     expect_error=expect_error)
+
   def test_static_shape_result(self):
     """The result has static shape."""
 
@@ -1648,6 +1699,28 @@ class ShapePolyTest(jtu.JaxTestCase):
                          "mod(a + mod(a, 2), -2) == 0",
                          "-2*floordiv(a + mod(a, 2), -2) == a + mod(a, 2)"])
 
+  def test_constraints_eq_mod_0(self):
+    # mod(b, N) == 0 is a common constraint, we need to ensure we can use it
+    # to infer things like: N * floordiv(b, N) == b, b >= N.
+    def f(x):  # x: f32[b] and b % 4 == 0
+      b = x.shape[0]
+      y1 = jnp.ones((1, 3, 4,  b // 4), dtype=x.dtype)
+      y2 = y1.reshape((1, 3, -1))  # : f32[1, 3, b]
+      y3 = x.reshape((1, 1, b)) + y2  # : f32[1, 3, b]
+
+      slice0 = lax.slice(x, (0,), (b // 4,))  # Requires b >= b // 4
+      slice1 = lax.slice(x, (0,), (2 * (b // 4),))  # Requires b >= 2 * (b // 4)
+      slice2 = lax.slice(x, (0,), (3 * (b // 4),))  # Requires b >= 2 * (b // 4)
+      slice3 = lax.slice(x, (0,), (4 * (b // 4),))  # Requires b >= 2 * (b // 4)
+      return (jnp.sum(y3) +
+              jnp.sum(slice0) + jnp.sum(slice1) +
+              jnp.sum(slice2) + jnp.sum(slice3))
+
+    check_shape_poly(self, f,
+                     arg_descriptors=[RandArg((16,), _i32)],
+                     polymorphic_shapes=["b"],
+                     symbolic_constraints=["mod(b, 4) == 0"])
+
   def test_constraints_for_profile(self):
     # A somewhat more involved tests to stress test the correctness and
     # performance
@@ -1690,7 +1763,7 @@ class ShapePolyTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        re.escape("Expected '4 - a' to be greater or equal to 0, but found -1")):
+        re.escape("Expected '- a + 4' to be greater or equal to 0, but found -1")):
       exp.call(np.arange(5, dtype=np.int32))
 
   def test_constraints_eq_0_compile_time_check(self):

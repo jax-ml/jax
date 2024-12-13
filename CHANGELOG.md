@@ -10,7 +10,35 @@ Remember to align the itemized text with the first line of an item within a list
 When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
-## jax 0.4.36
+## jax 0.4.38
+
+* Changes:
+  * `jax.tree.flatten_with_path` and `jax.tree.map_with_path` are added
+    as shortcuts of the corresponding `tree_util` functions.
+
+* Deprecations
+  * a number of APIs in the internal `jax.core` namespace have been deprecated.
+    Most were no-ops, were little-used, or can be replaced by APIs of the same
+    name in {mod}`jax.extend.core`; see the documentation for {mod}`jax.extend`
+    for information on the compatibility guarantees of these semi-public extensions.
+  * Several previously-deprecated APIs have been removed, including:
+    * from {mod}`jax.core`: `check_eqn`, `check_type`,  `check_valid_jaxtype`, and
+      `non_negative_dim`.
+    * from {mod}`jax.lib.xla_bridge`: `xla_client` and `default_backend`.
+    * from {mod}`jax.lib.xla_client`: `_xla` and `bfloat16`.
+
+## jax 0.4.37 (Dec 9, 2024)
+
+This is a patch release of jax 0.4.36. Only "jax" was released at this version.
+
+* Bug fixes
+  * Fixed a bug where `jit` would error if an argument was named `f` (#25329).
+  * Fix a bug that will throw `index out of range` error in
+    {func}`jax.lax.while_loop` if the user register pytree node class with
+    different aux data for the flatten and flatten_with_path.
+  * Pinned a new libtpu release (0.0.6) that fixes a compiler bug on TPU v6e.
+
+## jax 0.4.36 (Dec 5, 2024)
 
 * Breaking Changes
   * This release lands "stackless", an internal change to JAX's tracing

@@ -1481,11 +1481,7 @@ class FragmentedArrayTest(TestCase):
       src = mgpu.FragmentedArray.load_strided(
           src, is_signed=utils.is_signed(dtype)
       )
-      acc = mgpu.FragmentedArray.splat(
-          src.reduce_sum(scratch),
-          (m,),
-          is_signed=src.is_signed
-      )
+      acc = src.reduce_sum(scratch).broadcast((m,))
       acc.store_untiled(dst)
 
     in_shape = jax.ShapeDtypeStruct((m, n), dtype)
@@ -1691,9 +1687,10 @@ class FragmentedArrayTest(TestCase):
 
 class ProfilerTest(TestCase):
 
-  def test_measure(self):
+  def test_measure_events_explicit(self):
     x = jnp.arange(1024 * 1024)
-    profiler.measure(lambda x, y: x + y, x, x)  # This is just a smoke test
+    _, runtime_ms = profiler.measure(lambda x, y: x + y, mode="events")(x, x)
+    self.assertIsInstance(runtime_ms, float)
 
   def test_profile(self):
     def kernel(ctx, src, dst, _):

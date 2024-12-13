@@ -25,7 +25,6 @@ import jax
 from jax import flatten_util
 from jax import tree_util
 from jax._src import test_util as jtu
-from jax._src.lib import xla_extension_version
 from jax._src.tree_util import flatten_one_level, prefix_errors
 import jax.numpy as jnp
 
@@ -800,8 +799,6 @@ class TreeTest(jtu.JaxTestCase):
     )
 
   def testFlattenWithPathDefaultDict(self):
-    if xla_extension_version < 299:
-      self.skipTest("Skipping for Python-based with path APIs.")
     d = collections.defaultdict(int, {"b": 2, "a": 1, "c": {"b": 2, "a": 1}})
     leaves, treedef = tree_util.tree_flatten_with_path(d)
     self.assertEqual(
@@ -819,8 +816,6 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(treedef, from_flatten)
 
   def testFlattenWithPathOrderedDict(self):
-    if xla_extension_version < 299:
-      self.skipTest("Skipping for Python-based with path APIs.")
     d = collections.OrderedDict({"b": 2, "a": 1, "c": {"b": 2, "a": 1}})
     leaves, treedef = tree_util.tree_flatten_with_path(d)
     self.assertEqual(
@@ -920,9 +915,6 @@ class TreeTest(jtu.JaxTestCase):
 class TreeKeyTest(absltest.TestCase):
 
   def testBasic(self):
-    if xla_extension_version < 299:
-      self.skipTest("Skipping for Python-based with path APIs.")
-
     def assert_equal_and_hash_equal(a, b):
       self.assertEqual(a, b)
       self.assertEqual(hash(a), hash(b))
@@ -1432,6 +1424,55 @@ class TreeAliasTest(jtu.JaxTestCase):
     self.assertEqual(
       jax.tree.unflatten(treedef, leaves),
       tree_util.tree_unflatten(treedef, leaves)
+    )
+
+  def test_tree_flatten_with_path(self):
+    obj = [1, 2, (3, 4)]
+    self.assertEqual(
+        jax.tree.flatten_with_path(obj),
+        tree_util.tree_flatten_with_path(obj),
+    )
+
+  def test_tree_flatten_with_path_is_leaf(self):
+    obj = [1, 2, (3, 4)]
+    is_leaf = lambda x: isinstance(x, tuple)
+    self.assertEqual(
+        jax.tree.flatten_with_path(obj, is_leaf=is_leaf),
+        tree_util.tree_flatten_with_path(obj, is_leaf=is_leaf),
+    )
+
+  def test_tree_leaves_with_path(self):
+    obj = [1, 2, (3, 4)]
+    self.assertEqual(
+        jax.tree.leaves_with_path(obj),
+        tree_util.tree_leaves_with_path(obj),
+    )
+
+  def test_tree_leaves_with_path_is_leaf(self):
+    obj = [1, 2, (3, 4)]
+    is_leaf = lambda x: isinstance(x, tuple)
+    self.assertEqual(
+        jax.tree.leaves_with_path(obj, is_leaf=is_leaf),
+        tree_util.tree_leaves_with_path(obj, is_leaf=is_leaf),
+    )
+
+  def test_tree_map_with_path(self):
+    func = lambda kp, x, y: (sum(k.idx for k in kp), x + y)
+    obj = [1, 2, (3, 4)]
+    obj2 = [5, 6, (7, 8)]
+    self.assertEqual(
+        jax.tree.map_with_path(func, obj, obj2),
+        tree_util.tree_map_with_path(func, obj, obj2),
+    )
+
+  def test_tree_map_with_path_is_leaf(self):
+    func = lambda kp, x, y: (sum(k.idx for k in kp), x + y)
+    obj = [1, 2, (3, 4)]
+    obj2 = [5, 6, (7, 8)]
+    is_leaf = lambda x: isinstance(x, tuple)
+    self.assertEqual(
+        jax.tree.map_with_path(func, obj, obj2, is_leaf=is_leaf),
+        tree_util.tree_map_with_path(func, obj, obj2, is_leaf=is_leaf),
     )
 
 

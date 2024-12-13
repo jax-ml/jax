@@ -19,6 +19,7 @@ from absl.testing import absltest
 import jax
 from jax._src import core
 from jax._src import test_util as jtu
+import jax._src.lib
 from jax._src.lib import xla_client as xc
 from jax.experimental import topologies
 from jax.experimental.pjit import pjit
@@ -62,7 +63,11 @@ class JaxAotTest(jtu.JaxTestCase):
         jax.pmap(lambda x: x * x).lower(
             np.zeros((len(jax.devices()), 4), dtype=np.float32)))
 
-  @jtu.skip_on_devices('gpu')  # Test fails in CI
+  @unittest.skipIf(
+      jax._src.lib.xla_extension_version < 300,
+      'AOT compiler registration was broken in XLA extension version below'
+      ' 300.',
+  )
   def test_topology_pjit_serialize(self):
     try:
       aot_topo = topologies.get_topology_desc(

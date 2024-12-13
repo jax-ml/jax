@@ -31,6 +31,7 @@ limitations under the License.
 #include "mlir/include/mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_enums.h.inc"
+#include "jaxlib/mosaic/dialect/tpu/transforms/serde.h"
 #include "xla/layout.h"
 
 namespace mlir::tpu {

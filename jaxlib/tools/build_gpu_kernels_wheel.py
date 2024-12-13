@@ -145,7 +145,7 @@ def prepare_wheel_rocm(
           f"__main__/jaxlib/rocm/_linalg.{pyext}",
           f"__main__/jaxlib/rocm/_prng.{pyext}",
           f"__main__/jaxlib/rocm/_sparse.{pyext}",
-          f"__main__/jaxlib/cuda/_hybrid.{pyext}",
+          f"__main__/jaxlib/rocm/_hybrid.{pyext}",
           f"__main__/jaxlib/rocm/_triton.{pyext}",
           f"__main__/jaxlib/rocm_plugin_extension.{pyext}",
           "__main__/jaxlib/version.py",

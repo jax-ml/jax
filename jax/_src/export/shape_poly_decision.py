@@ -85,19 +85,11 @@ class _DecisionByElimination:
     # the result (albeit, for now, without a good feedback loop to understand
     # how the order matters for inequalities).
     for constr in self.scope._explicit_constraints:
-      if not core.is_constant_dim(constr.e1):
-        self.add_implicit_constraints_expr(constr.e1)  # type: ignore
-      if not core.is_constant_dim(constr.e2):
-        self.add_implicit_constraints_expr(constr.e2)  # type: ignore
-      # The equality constraints are not needed for inequality decisions,
-      # because the LHS should always be rewritten in terms of the RHS.
-      # In fact, adding them may break the assumption that if we eliminate
-      # the leading term we end up with only smaller terms, because the LHS
-      # may appear in the rest and may be rewritten to something larger.
-      # However, we want to add the implicit constraints within.
-      if constr.cmp == Comparator.GEQ:
-        self.combine_and_add_constraint(constr.cmp, constr.e1 - constr.e2, 0,
-                                        constr.debug_str)
+      if not core.is_constant_dim(constr.diff):
+        self.add_implicit_constraints_expr(constr.diff)  # type: ignore
+
+      self.combine_and_add_constraint(constr.cmp, constr.diff, 0,
+                                      constr.debug_str)
 
 
       # Clear the cache, since we have added constraints.
@@ -197,7 +189,7 @@ class _DecisionByElimination:
     Combine a term with existing constraints.
     For input (t, t_k) the tuple (c_eq, c, c_s, t_s) is among the returned
     tuples if there exists a constraint `c =[c_eq] 0` that can be combined
-    with `t*t_k` to eliminate `t`.
+    with `t*t_k` to eliminate `t`, and:
 
       * `c =[c_eq] 0`
       * The term `comb = t*t_k*t_s + c*c_s` does not contain `t`, and if
@@ -207,7 +199,7 @@ class _DecisionByElimination:
     """
     # TODO: maybe a generator is useful here instead of materializing the list
     acc: list[tuple[Comparator, _DimExpr, int, int]] = []
-    # First combine with the existing term constraints
+    # First combine with the existing term bounds
     t_lb, t_ub = self._term_bounds.get(t, (-np.inf, np.inf))
     if t_lb == t_ub:
       acc.append((Comparator.EQ, _DimExpr(((t, 1),), scope) - int(t_lb),

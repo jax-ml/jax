@@ -60,7 +60,7 @@ from jax._src.ad_checkpoint import saved_residuals
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
-from jax._src.lib import xla_extension, xla_extension_version
+from jax._src.lib import xla_extension
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.custom_batching
@@ -1081,7 +1081,7 @@ class JitTest(jtu.BufferDonationTestCase):
     args = range(num_args)
     with jtu.count_device_put() as count:
       np.testing.assert_allclose(f_pruned(*args), 3)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def testBuffersAreFreedPromptly(self):
     # Regression test for a bug where garbage collection was delayed too long
@@ -1246,7 +1246,7 @@ class JitTest(jtu.BufferDonationTestCase):
     jitted_f = jit(lambda x, y: x, keep_unused=True)
     with jtu.count_pjit_cpp_cache_miss() as count:
       _ = jitted_f(1, 2)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_jit_lower_compile_compiler_ir(self):
     f = jit(lambda x: x + 4).lower(1.).compile()
@@ -1388,9 +1388,6 @@ class JitTest(jtu.BufferDonationTestCase):
         })(1.0)  # doesn't crash.
 
   def test_exec_time_optimization_effort_compiler_option(self):
-    if xla_extension_version < 294:
-      raise unittest.SkipTest("test requires newer xla extension version")
-
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
 
@@ -1431,7 +1428,7 @@ class JitTest(jtu.BufferDonationTestCase):
     with jtu.count_jit_compilation_cache_miss() as count:
       jit(f, compiler_options={"xla_embed_ir_in_executable": True})(1.)
       jit(f, compiler_options={"xla_embed_ir_in_executable": False})(1.)
-    self.assertEqual(count[0], 2)
+    self.assertEqual(count(), 2)
 
     # We should still error on invalid options after some valid compiles
     with self.assertRaisesRegex(
@@ -1514,7 +1511,7 @@ class JitTest(jtu.BufferDonationTestCase):
     expected = f()
     with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       ans = jax.vmap(f, axis_size=2, out_axes=None)()
-    self.assertEqual(count[0], 0)  # no compiles
+    self.assertEqual(count(), 0)  # no compiles
     self.assertArraysAllClose(ans, expected, check_dtypes=True)
 
   def test_cache_key_defaults(self):
@@ -2740,7 +2737,7 @@ class APITest(jtu.JaxTestCase):
       jax.eval_shape(f, inp)
       jax.jit(f)(inp)
 
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_jit_infer_params_cache(self):
     def f(x):
@@ -3387,12 +3384,12 @@ class APITest(jtu.JaxTestCase):
 
     with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       _  = jax.grad(f)(3.)
-    self.assertEqual(count[0], 2)  # one for fwd, one for bwd
+    self.assertEqual(count(), 2)  # one for fwd, one for bwd
 
     with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       _  = jax.grad(f)(3.)
       _  = jax.grad(f)(4.)
-    self.assertEqual(count[0], 0)  # cache hits on both fwd and bwd
+    self.assertEqual(count(), 0)  # cache hits on both fwd and bwd
 
   def test_grad_does_not_unflatten_tree_with_none(self):
     # https://github.com/jax-ml/jax/issues/7546
@@ -3461,7 +3458,7 @@ class APITest(jtu.JaxTestCase):
     with jtu.count_primitive_compiles() as count:
       lax.add(1, 2)
       lax.add(2, 3)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_arange_jit(self):
     # see https://github.com/jax-ml/jax/issues/553
@@ -4024,7 +4021,7 @@ class APITest(jtu.JaxTestCase):
       jax.eval_shape(jax.numpy.array, 1)
       out = jax.eval_shape(jax.numpy.array, 1)
 
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
     self.assertTrue(out.weak_type)
     self.assertEqual(out.weak_type, arr.weak_type)
 
@@ -4299,19 +4296,19 @@ class APITest(jtu.JaxTestCase):
       for _ in range(5):
         jax.hessian(jf)(x).block_until_ready()
 
-      n = count[0]
+      n = count()
       # The exact number of compilations may vary depending on the number of
       # jit decorators in the function above, but it should not grow after an
       # initial warmup phase.
       for _ in range(5):
         jax.hessian(jf)(x).block_until_ready()
 
-    self.assertEqual(count[0], n)
+    self.assertEqual(count(), n)
 
   def test_jnp_array_doesnt_device_put(self):
     with jtu.count_device_put() as count:
       api.make_jaxpr(lambda: jnp.array(3))()
-    self.assertEqual(count[0], 0)
+    self.assertEqual(count(), 0)
 
   def test_rank_promotion_forces_retrace(self):
     num_traces = 0
@@ -5913,7 +5910,7 @@ class RematTest(jtu.JaxTestCase):
     with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       for _ in range(20):
         f_lin(1.).block_until_ready()
-    self.assertEqual(count[0], 1)  # cached after first execution
+    self.assertEqual(count(), 1)  # cached after first execution
 
   def test_vjp_caching(self):
     # https://github.com/jax-ml/jax/issues/9661
@@ -5922,7 +5919,7 @@ class RematTest(jtu.JaxTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:  # noqa: F841
       for _ in range(20):
         f_vjp(1.)[0].block_until_ready()
-    self.assertEqual(count[0], 2)  # fwd execute_trivial, backward_pass on bwd
+    self.assertEqual(count(), 2)  # fwd execute_trivial, backward_pass on bwd
 
   def test_vjp_caching_static_argnums(self):
     identity = jax.remat(lambda x, y: jax.jit(lambda x: 2 * x if y else x)(x),
@@ -5931,7 +5928,7 @@ class RematTest(jtu.JaxTestCase):
     with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       for _ in range(20):
         f_vjp(1.)[0].block_until_ready()
-    self.assertEqual(count[0], 2)  # fwd execute_trivial, backward_pass on bwd
+    self.assertEqual(count(), 2)  # fwd execute_trivial, backward_pass on bwd
 
   def test_fwd_caching(self):
     # see above test also
@@ -5940,7 +5937,7 @@ class RematTest(jtu.JaxTestCase):
       for _ in range(20):
         y, _ = jax.vjp(identity, 1.)
         y.block_until_ready()
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_fwd_caching_static_argnums(self):
     # see above test also
@@ -5949,7 +5946,7 @@ class RematTest(jtu.JaxTestCase):
       for _ in range(20):
         y = identity(1.)
         y.block_until_ready()
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
@@ -10846,6 +10843,67 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertAllClose(y, jnp.sin(x))
     ys = api.vmap(f)(x=xs)
     self.assertAllClose(ys, jnp.cos(xs))
+
+  def test_partial_eval_raises(self):
+    @jax.custom_batching.custom_vmap
+    def f(x):
+      return jnp.sin(x)
+
+    @f.def_vmap
+    def rule(axis_size, in_batched, xs):
+      del axis_size  # unused
+      return jnp.cos(xs), in_batched[0]
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Linearization failed to produce known values for all output primals",
+    ):
+      jax.grad(f)(0.5)
+
+  def test_compose_custom_vjp(self):
+    @jax.custom_vjp
+    @jax.custom_batching.custom_vmap
+    def f(x, y):
+      return jnp.sin(x) * y
+
+    @f.def_vmap
+    def f_vmap_rule(axis_size, in_batched, xs, ys):
+      return jnp.cos(xs) * ys, True
+
+    def f_fwd(x, y):
+      return f(x, y), (jnp.cos(x), jnp.sin(x), y)
+
+    def f_bwd(res, g):
+      cos_x, sin_x, y = res
+      return (cos_x * g * y, sin_x * g)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    xs = jnp.linspace(0, 1, 5)
+    ys = jnp.linspace(-0.1, 0.1, 5)
+    self.assertAllClose(jax.vmap(f)(xs, ys), jnp.cos(xs) * ys)
+    jax.grad(f)(xs[0], ys[0])  # Doesn't crash.
+
+  def test_compose_custom_vjp_bwd_rule(self):
+    # This tests the case where both the forward and backward rules are wrapped
+    # in custom_vmap.
+    @jax.custom_batching.sequential_vmap
+    def fun_fwd(x, y):
+      return jnp.sin(x) * y, (x, y)
+
+    @jax.custom_batching.sequential_vmap
+    def fun_bwd(res, ct):
+      x, y = res
+      return x * ct, y * ct
+
+    fun = jax.custom_vjp(lambda *args: fun_fwd(*args)[0])
+    fun.defvjp(fun_fwd, fun_bwd)
+
+    xs = jnp.linspace(0, 1, 5)
+    y = jnp.array(0.5, dtype=xs.dtype)
+    f = jax.vmap(jax.jit(fun), in_axes=(0, None))
+    out, f_vjp = jax.vjp(f, xs, y)
+    f_vjp(out)  # Doesn't crash.
 
 
 class CustomApiTest(jtu.JaxTestCase):

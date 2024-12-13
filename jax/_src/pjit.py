@@ -498,7 +498,7 @@ def _make_jit_wrapper(fun: Callable, jit_info: PjitInfo):
     donate_argnums = tuple(i for i, d in enumerate(p.donated_invars) if d)
     args_info = stages.make_args_info(p.in_tree, p.in_avals, donate_argnums)
     lower_callable = partial(_resolve_and_lower, args_flat, **p.params,
-                            pgle_profiler=None)
+                             pgle_profiler=None)
     return stages.Traced(
         p.params['jaxpr'], args_info, p.params["name"], p.out_tree,
         lower_callable, p.abstract_mesh, args_flat, p.arg_names, p.num_consts)
@@ -549,6 +549,7 @@ def _infer_params_impl(
     kwargs: dict[str, Any],
     in_avals: tuple[core.AbstractValue, ...] | None,
 ) -> tuple[PjitParams, list[Any]]:
+  util.test_event("pjit._infer_params_impl", fun)
   have_kwargs = bool(kwargs)
   if have_kwargs and ji.user_specified_in_shardings:
     raise ValueError(
@@ -698,9 +699,6 @@ def get_abstract_mesh_from_avals(in_avals):
     return None
   m = None
   for a in in_avals:
-    # TODO(yashkatariya): Remove this when mesh context can be set by the user.
-    if a.sharding is None:  # type: ignore
-      continue
     if m is not None and m != a.sharding.mesh:
       raise ValueError(
           f'Mesh for all inputs should be equal. Got one mesh: {m} and'
@@ -1300,6 +1298,7 @@ def _create_pjit_jaxpr(
     ignored_inline: IgnoreKey
 ) -> tuple[core.ClosedJaxpr, list[Any], list[core.AbstractValue],
            list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]]:
+  util.test_event("create_pjit_jaxpr")
   del ignored_inline  # just for explain_cache_miss
   if config.no_tracing.value:
     raise RuntimeError(f"re-tracing function {fun.f} for `jit`, but "
@@ -1787,10 +1786,9 @@ def _pjit_lower(
     lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
     pgle_profiler: profiler.PGLEProfiler | None):
+  util.test_event("pjit_lower")
   if config.sharding_in_types.value:
-    cur_mesh = mesh_lib.get_concrete_mesh()
-    mesh = cur_mesh if isinstance(cur_mesh, mesh_lib.Mesh) else None
-    api_name = 'jit'
+    mesh, api_name = mesh_lib.get_concrete_mesh(), 'jit'
   else:
     mesh, api_name = ((resource_env.physical_mesh, 'pjit')
                       if resource_env is not None else (None, 'jit'))
@@ -2156,8 +2154,18 @@ def _pjit_partial_eval(trace, *in_tracers,
 
   known_ins = tuple(pv.is_known() for pv in in_pvals)
   unknown_ins = tuple(not k for k in known_ins)
-  known_jaxpr, unknown_jaxpr, unknown_outs, res_avals = \
-      pe.partial_eval_jaxpr_nounits(jaxpr, unknown_ins, instantiate=False)
+  if any(isinstance(e, (RefEffect, core.InternalMutableArrayEffect))
+         for e in jaxpr.effects):
+    known_jaxpr_, unknown_jaxpr_, unknown_outs, _, num_res_val, num_res_ref = \
+        pe.partial_eval_jaxpr_stateful(jaxpr.jaxpr, unknown_ins, unknown_ins,
+                                       False, False, None)
+    if num_res_ref: raise NotImplementedError
+    known_jaxpr = pe.ClosedJaxpr(known_jaxpr_, jaxpr.consts)
+    unknown_jaxpr = pe.ClosedJaxpr(unknown_jaxpr_, jaxpr.consts)
+    res_avals = unknown_jaxpr.in_avals[:num_res_val]
+  else:
+    known_jaxpr, unknown_jaxpr, unknown_outs, res_avals = \
+        pe.partial_eval_jaxpr_nounits(jaxpr, unknown_ins, instantiate=False)
   unknown_outs = tuple(unknown_outs)
   known_outs = tuple(not uk for uk in unknown_outs)
   num_residuals = len(res_avals)
@@ -2343,8 +2351,7 @@ def _pjit_transpose(cts_in, *primals_in,
     *prune_type(ad.UndefinedPrimal, in_layouts, primals_in),
     *prune_type(ad.Zero, out_layouts, cts_in)
   )
-  global_cts_in_avals = tuple(core.raise_to_shaped(core.get_aval(ct))
-                              for ct in primals_and_nz_cts_in)
+  global_cts_in_avals = tuple(core.get_aval(ct) for ct in primals_and_nz_cts_in)
 
   transpose_jaxpr, attrs_tracked = _pjit_transpose_trace(
       body, global_cts_in_avals)

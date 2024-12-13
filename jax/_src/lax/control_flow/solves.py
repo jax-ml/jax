@@ -32,7 +32,6 @@ from jax._src.util import split_list, safe_map
 import numpy as np
 
 from jax._src.lax.control_flow.common import (
-    _abstractify,
     _check_tree,
     _initial_style_jaxpr,
     )
@@ -87,7 +86,7 @@ def custom_root(f, initial_guess, solve, tangent_solve, has_aux=False):
     implicit differentiation assuming ``f(solve(f, initial_guess)) == 0``.
   """
   guess_flat, in_args_tree = tree_flatten((initial_guess,))
-  guess_avals = tuple(_map(_abstractify, guess_flat))
+  guess_avals = tuple(_map(core.get_aval, guess_flat))
   f_jaxpr, f_consts, out_tree = _initial_style_jaxpr(
       f, in_args_tree, guess_avals)
 
@@ -230,7 +229,7 @@ def custom_linear_solve(
     transpose_solve = solve
 
   b_flat, in_args_tree = tree_flatten((b,))
-  b_avals = tuple(_map(_abstractify, b_flat))
+  b_avals = tuple(_map(core.get_aval, b_flat))
 
   tree, = treedef_children(in_args_tree)
 

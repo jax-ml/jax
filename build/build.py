@@ -123,6 +123,15 @@ def add_global_arguments(parser: argparse.ArgumentParser):
       help="Produce verbose output for debugging.",
   )
 
+  parser.add_argument(
+      "--detailed_timestamped_log",
+      action="store_true",
+      help="""
+        Enable detailed logging of the Bazel command with timestamps. The logs
+        will be stored and can be accessed as artifacts.
+        """,
+  )
+
 
 def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
   """Adds all the arguments that applies to the artifact subcommands."""
@@ -399,7 +408,7 @@ async def main():
     else:
       requirements_command.append("//build:requirements.update")
 
-    result = await executor.run(requirements_command.get_command_as_string(), args.dry_run)
+    result = await executor.run(requirements_command.get_command_as_string(), args.dry_run, args.detailed_timestamped_log)
     if result.return_code != 0:
       raise RuntimeError(f"Command failed with return code {result.return_code}")
     else:
@@ -476,7 +485,10 @@ async def main():
 
     if not args.disable_mkl_dnn:
       logging.debug("Enabling MKL DNN")
-      wheel_build_command.append("--config=mkl_open_source_only")
+      if target_cpu == "aarch64":
+          wheel_build_command.append("--config=mkl_aarch64_threadpool")
+      else:
+          wheel_build_command.append("--config=mkl_open_source_only")
 
     if args.target_cpu_features == "release":
       if arch in ["x86_64", "AMD64"]:
@@ -597,7 +609,7 @@ async def main():
 
       wheel_build_command.append(f"--jaxlib_git_hash={git_hash}")
 
-      result = await executor.run(wheel_build_command.get_command_as_string(), args.dry_run)
+      result = await executor.run(wheel_build_command.get_command_as_string(), args.dry_run, args.detailed_timestamped_log)
       # Exit with error if any wheel build fails.
       if result.return_code != 0:
         raise RuntimeError(f"Command failed with return code {result.return_code}")

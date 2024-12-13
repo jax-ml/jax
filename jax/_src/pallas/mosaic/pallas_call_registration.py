@@ -21,10 +21,9 @@ import tempfile
 from typing import Any
 
 import jax
-from jax import core as jax_core
 from jax import dtypes
 from jax._src import config
-from jax._src import core as jax_src_core
+from jax._src import core as jax_core
 from jax._src import sharding_impls
 from jax._src import tpu_custom_call
 from jax._src.interpreters import mlir
@@ -189,7 +188,7 @@ def pallas_call_tpu_lowering_rule(
   # Replace in_avals to physical avals.
   # This step is required for mapping logical types to physical types.
   # (e.g. PRNG key -> uint32[2])
-  physical_avals = [jax_src_core.physical_aval(aval) for aval in ctx.avals_in]
+  physical_avals = [jax_core.physical_aval(aval) for aval in ctx.avals_in]
   ctx = ctx.replace(avals_in=physical_avals)
 
   # Booleans are loaded into the kernel as integers.

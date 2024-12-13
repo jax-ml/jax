@@ -153,6 +153,10 @@ def _eval_jaxpr_discharge_state(
       [invar], [outvar] = eqn.invars, eqn.outvars
       ans = env.read(invar)
       refs_to_discharge.add(id(outvar.aval))
+    elif eqn.primitive is core.freeze_p:
+      [invar], [outvar] = eqn.invars, eqn.outvars
+      ans = env.read(invar)
+      refs_to_discharge.remove(id(invar.aval))
     elif (any(should_discharge)
           or core.internal_mutable_array_effect in eqn.effects
       ):
@@ -364,7 +368,7 @@ def transform_swap_array(x, transforms, val):
       case indexing.NDIndexer():
         indexer = transform
         if _is_trivial_indexer(indexer):
-          _results.append(None)
+          _results.append(_results[-1])
           continue
         # If everything in the indexer is a slice or ()-shaped, we can also
         # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.

@@ -48,6 +48,7 @@ from jax._src.lax.lax import (
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
 from jax._src.lib import lapack
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -1328,7 +1329,6 @@ def _triangular_solve_lowering(
       ir.BoolAttr.get(lower), ir.BoolAttr.get(unit_diagonal),
       hlo.TransposeAttr.get(transpose))]
 
-mlir.register_lowering(triangular_solve_p, _triangular_solve_lowering)
 
 def _triangular_solve_cpu_lower(
     ctx, a, b, *, left_side, lower, transpose_a,
@@ -1341,10 +1341,12 @@ def _triangular_solve_cpu_lower(
   if len(a_aval.shape) == 2 and np.dtype(a_aval.dtype) in _cpu_lapack_types:
     alpha = mlir.ir_constant(np.array(1, dtype=a_aval.dtype))
     b_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, b_aval.shape)
+    # TODO(b/344892332): Remove the conditional after the compatibility period.
+    ctx_args = (ctx,) if jaxlib_version >= (0, 4, 37) else ()
     return lapack.trsm_hlo(
-      a_aval.dtype, alpha,
-      a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal,
-      b_shape_vals=b_shape_vals)
+        *ctx_args, a_aval.dtype, alpha,
+        a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal,
+        b_shape_vals=b_shape_vals)
   else:
     # Fall back to the HLO implementation for unsupported types or batching.
     # TODO: Consider swapping XLA for LAPACK in batched case
@@ -1357,6 +1359,8 @@ def _triangular_solve_cpu_lower(
                                  ir.BoolAttr.get(unit_diagonal),
                                  hlo.TransposeAttr.get(transpose))]
 
+
+mlir.register_lowering(triangular_solve_p, _triangular_solve_lowering)
 mlir.register_lowering(triangular_solve_p, _triangular_solve_cpu_lower,
                        platform='cpu')
 
@@ -2616,37 +2620,54 @@ def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
   batch_dims = operand_aval.shape[:-2]
 
   a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-  gees_result = lapack.gees_hlo(operand_aval.dtype, operand,
+  # TODO(b/344892332): Remove the conditional after the compatibility period.
+  ctx_args = (ctx,) if jaxlib_version >= (0, 4, 37) else ()
+  gees_result = lapack.gees_hlo(*ctx_args, operand_aval.dtype, operand,
                                 jobvs=compute_schur_vectors,
                                 sort=sort_eig_vals,
                                 select=select_callable,
                                 a_shape_vals=a_shape_vals)
-
-  # Number of return values depends on value of sort_eig_vals.
-  T, vs, *_, info = gees_result
+  if jaxlib_version >= (0, 4, 37) and not ctx.is_forward_compat():
+    schur_form, schur_vectors, _eig_vals, _selected_eig_vals, info = gees_result
+  else:
+    # Number of return values depends on value of sort_eig_vals.
+    schur_form, schur_vectors, *_, info = gees_result
 
   ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "EQ", "SIGNED")
 
-  select_T_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-  T = _broadcasting_select_hlo(
+  select_schur_form_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
+  schur_form = _broadcasting_select_hlo(
       ctx,
-      mlir.broadcast_in_dim(ctx, ok, select_T_aval,
-                            broadcast_dimensions=range(len(batch_dims))),
-      select_T_aval,
-      T, ctx.avals_out[0],_nan_like_hlo(ctx, ctx.avals_out[0]), ctx.avals_out[0])
-  output = [T]
+      mlir.broadcast_in_dim(
+          ctx,
+          ok,
+          select_schur_form_aval,
+          broadcast_dimensions=range(len(batch_dims)),
+      ),
+      select_schur_form_aval,
+      schur_form,
+      ctx.avals_out[0],
+      _nan_like_hlo(ctx, ctx.avals_out[0]),
+      ctx.avals_out[0],
+  )
+  output = [schur_form]
   if compute_schur_vectors:
     select_vs_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-    vs = _broadcasting_select_hlo(
+    schur_vectors = _broadcasting_select_hlo(
         ctx,
-        mlir.broadcast_in_dim(ctx, ok, select_vs_aval,
-                              broadcast_dimensions=range(len(batch_dims))),
+        mlir.broadcast_in_dim(
+            ctx, ok, select_vs_aval, broadcast_dimensions=range(len(batch_dims))
+        ),
         select_vs_aval,
-        vs, ctx.avals_out[1], _nan_like_hlo(ctx, ctx.avals_out[1]), ctx.avals_out[1])
+        schur_vectors,
+        ctx.avals_out[1],
+        _nan_like_hlo(ctx, ctx.avals_out[1]),
+        ctx.avals_out[1],
+    )
 
-    output.append(vs)
+    output.append(schur_vectors)
 
   return output
 
@@ -2819,24 +2840,35 @@ def _tridiagonal_batching_rule(batched_args, batch_dims, *, lower):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
-  return tridiagonal(x), 0
+  return tridiagonal(x, lower=lower), 0
 
 batching.primitive_batchers[tridiagonal_p] = _tridiagonal_batching_rule
 
-def _tridiagonal_cpu_gpu_hlo(sytrd_impl, ctx, a, *, lower):
+def _tridiagonal_cpu_gpu_hlo(sytrd_impl, ctx, a, *, lower, platform):
   a_aval, = ctx.avals_in
-  a, d, e, taus, info = sytrd_impl(a_aval.dtype, a, lower=lower)
+  cpu_args = []
+  if platform == "cpu":
+    # TODO(b/344892332): Remove the conditional after the compatibility period.
+    ctx_args = (ctx,) if jaxlib_version >= (0, 4, 37) else ()
+    cpu_args.extend(ctx_args)
+  a, d, e, taus, info = sytrd_impl(*cpu_args, a_aval.dtype, a, lower=lower)
   return a, d, e, taus, info
 
 mlir.register_lowering(
-    tridiagonal_p, partial(_tridiagonal_cpu_gpu_hlo, lapack.sytrd_hlo),
-    platform='cpu')
+    tridiagonal_p,
+    partial(_tridiagonal_cpu_gpu_hlo, lapack.sytrd_hlo, platform="cpu"),
+    platform="cpu",
+)
 mlir.register_lowering(
-    tridiagonal_p, partial(_tridiagonal_cpu_gpu_hlo, gpu_solver.cuda_sytrd),
-    platform='cuda')
+    tridiagonal_p,
+    partial(_tridiagonal_cpu_gpu_hlo, gpu_solver.cuda_sytrd, platform="cuda"),
+    platform="cuda",
+)
 mlir.register_lowering(
-    tridiagonal_p, partial(_tridiagonal_cpu_gpu_hlo, gpu_solver.rocm_sytrd),
-    platform='rocm')
+    tridiagonal_p,
+    partial(_tridiagonal_cpu_gpu_hlo, gpu_solver.rocm_sytrd, platform="rocm"),
+    platform="rocm",
+)
 
 # Utilities
 

@@ -234,10 +234,10 @@ nb::dict Registrations() {
   dict["lapack_zhetrd"] =
       EncapsulateFunction(Sytrd<std::complex<double>>::Kernel);
 
-  dict["blas_strsm_ffi"] = EncapsulateFunction(blas_strsm_ffi);
-  dict["blas_dtrsm_ffi"] = EncapsulateFunction(blas_dtrsm_ffi);
-  dict["blas_ctrsm_ffi"] = EncapsulateFunction(blas_ctrsm_ffi);
-  dict["blas_ztrsm_ffi"] = EncapsulateFunction(blas_ztrsm_ffi);
+  dict["lapack_strsm_ffi"] = EncapsulateFunction(lapack_strsm_ffi);
+  dict["lapack_dtrsm_ffi"] = EncapsulateFunction(lapack_dtrsm_ffi);
+  dict["lapack_ctrsm_ffi"] = EncapsulateFunction(lapack_ctrsm_ffi);
+  dict["lapack_ztrsm_ffi"] = EncapsulateFunction(lapack_ztrsm_ffi);
   dict["lapack_sgetrf_ffi"] = EncapsulateFunction(lapack_sgetrf_ffi);
   dict["lapack_dgetrf_ffi"] = EncapsulateFunction(lapack_dgetrf_ffi);
   dict["lapack_cgetrf_ffi"] = EncapsulateFunction(lapack_cgetrf_ffi);

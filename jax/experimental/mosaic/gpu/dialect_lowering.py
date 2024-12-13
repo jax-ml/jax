@@ -21,11 +21,11 @@ from typing import Sequence, Type
 
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib import mosaic_gpu_dialect as mgpu
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import gpu
+from jax._src.lib.mlir.dialects import llvm
+from jax._src.lib.mlir.dialects import nvvm
 
-from jaxlib.mlir import ir
-from jaxlib.mlir.dialects import gpu
-from jaxlib.mlir.dialects import llvm
-from jaxlib.mlir.dialects import nvvm
 from .utils import c, ptr_as_memref, single_thread_predicate
 
 # mypy: ignore-errors

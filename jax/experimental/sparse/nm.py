@@ -14,7 +14,7 @@
 
 """N:M-sparsity associated primitives."""
 
-from jax import core
+from jax._src import core
 from jax._src import dispatch
 from jax._src.lax.lax import DotDimensionNumbers
 from jax._src.lib import gpu_sparse

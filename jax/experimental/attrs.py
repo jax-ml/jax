@@ -57,7 +57,7 @@ def _ensure_tracked(trace: pe.DynamicJaxprTrace, obj: Any, attr: str):
   frame = trace.frame
 
   def new_tracer(x):
-    aval = core.raise_to_shaped(core.get_aval(x))
+    aval = core.get_aval(x)
     tracer = pe.DynamicJaxprTracer(trace, aval, pe.source_info_util.current())
     var = frame.tracer_to_var[id(tracer)] = frame.newvar(aval)
     frame.attrs_vars.append(var)
@@ -151,7 +151,7 @@ ad.JVPTrace.process_getattr = _getattr_jvp
 
 def linearize(f, *primals, attrs: list[tuple[Any, str]] = []):
   attr_primals = [jax_getattr(o, a) for o, a in attrs]
-  attr_avals = [core.raise_to_shaped(core.get_aval(p)) for p in attr_primals]
+  attr_avals = [core.get_aval(p) for p in attr_primals]
   primals_flat, in_tree = tree_flatten(primals)
   tree = treedef_tuple((tree_structure(attr_primals), *in_tree.children()))
   f_, out_tree = flatten_fun_nokwargs(_set_attrs(lu.wrap_init(f), attrs), tree)
@@ -207,7 +207,7 @@ def vjp(f, *primals, attrs: list[tuple[Any, str]] = []):
   f_, out_tree = flatten_fun_nokwargs(_set_attrs(lu.wrap_init(f), attrs), tree)
   primal_out, out_pvals, jaxpr, consts, attrs_out = _linearize(
       f_, *attr_primals, *primals_flat)
-  attr_avals = [core.raise_to_shaped(core.get_aval(jax_getattr(o, a))).to_tangent_aval()
+  attr_avals = [core.get_aval(jax_getattr(o, a)).to_tangent_aval()
                 for o, a in attrs_out]
   f_vjp = _vjp_wrap(jaxpr, consts, out_pvals, attr_avals, (in_tree, out_tree()),
                     attrs, attrs_out)

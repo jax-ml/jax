@@ -19,8 +19,11 @@ The :mod:`jax.tree` namespace contains aliases of utilities from :mod:`jax.tree_
 
 from jax._src.tree import (
     all as all,
+    flatten_with_path as flatten_with_path,
     flatten as flatten,
+    leaves_with_path as leaves_with_path,
     leaves as leaves,
+    map_with_path as map_with_path,
     map as map,
     reduce as reduce,
     structure as structure,

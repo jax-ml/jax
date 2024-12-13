@@ -1374,7 +1374,7 @@ def _lstsq(a: ArrayLike, b: ArrayLike, rcond: float | None, *,
     x = jnp.empty((n, *b.shape[1:]), dtype=a.dtype)
   else:
     if rcond is None:
-      rcond = jnp.finfo(dtype).eps * max(n, m)
+      rcond = float(jnp.finfo(dtype).eps) * max(n, m)
     else:
       rcond = jnp.where(rcond < 0, jnp.finfo(dtype).eps, rcond)
     u, s, vt = svd(a, full_matrices=False)
@@ -1517,7 +1517,7 @@ def outer(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
 
 @export
-def matrix_norm(x: ArrayLike, /, *, keepdims: bool = False, ord: str = 'fro') -> Array:
+def matrix_norm(x: ArrayLike, /, *, keepdims: bool = False, ord: str | int = 'fro') -> Array:
   """Compute the norm of a matrix or stack of matrices.
 
   JAX implementation of :func:`numpy.linalg.matrix_norm`

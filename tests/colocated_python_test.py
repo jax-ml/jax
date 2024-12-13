@@ -13,15 +13,17 @@
 # limitations under the License.
 
 import contextlib
+import threading
+import time
 from typing import Sequence
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib import xla_extension_version  # pylint: disable=g-importing-member
 from jax.experimental import colocated_python
-from jax.experimental.colocated_python import func as colocated_python_func
 from jax.experimental.colocated_python import serialization
 from jax.extend.ifrt_programs import ifrt_programs
 import jax.numpy as jnp
@@ -49,23 +51,8 @@ def _colocated_cpu_devices(
     ]
 
 
-@contextlib.contextmanager
-def _count_colocated_python_specialization_cache_miss() -> list[int]:
-  """Counts the number of cache misses for colocated_python specialization."""
-  original_get_specialized_func = colocated_python_func._get_specialized_func
-  count = [0]
-
-  @jax.util.cache(max_size=None)
-  def get_specialized_func(*args, **kwargs):
-    count[0] += 1
-    return original_get_specialized_func(*args, **kwargs)
-
-  colocated_python_func._get_specialized_func = get_specialized_func
-  try:
-    yield count
-  finally:
-    colocated_python_func._get_specialized_func = original_get_specialized_func
-
+_count_colocated_python_specialization_cache_miss = jtu.count_events(
+  "colocated_python_func._get_specialized_func")
 
 _exit_stack = contextlib.ExitStack()
 
@@ -114,12 +101,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
   def testSimpleFunctioWithTree(self):
     @colocated_python.colocated_python
@@ -134,12 +121,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
   def testEmptyInputFailsWithoutSpecialization(self):
     @colocated_python.colocated_python
@@ -165,12 +152,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = make_zero()
       out = jax.device_get(out)
       self.assertEqual(out, np.array(0))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       out = make_zero()
       out = jax.device_get(out)
       self.assertEqual(out, np.array(0))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
   def testInputPolymorphismWithoutOutSpecsFn(self):
     @colocated_python.colocated_python
@@ -185,12 +172,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       # Different input tree structure and dtype/shape.
       x = [np.array(1), (np.array(2), {"v": np.array(3)})]
@@ -199,12 +186,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
-      self.assertEqual(count[0], 2)
+      self.assertEqual(count(), 2)
 
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
-      self.assertEqual(count[0], 2)
+      self.assertEqual(count(), 2)
 
   def testInputPolymorphismAllowedWithOutSpecsFn(self):
     @colocated_python.colocated_python
@@ -220,12 +207,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       # Different input tree structure and dtype/shape.
       x = [np.array(1), (np.array(2), {"v": np.array(3)})]
@@ -234,12 +221,90 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
-      self.assertEqual(count[0], 2)
+      self.assertEqual(count(), 2)
 
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
-      self.assertEqual(count[0], 2)
+      self.assertEqual(count(), 2)
+
+  @parameterized.named_parameters(
+      ("on_main_thread", True),
+      ("on_non_main_thread", False),
+  )
+  def testSequentialExecution(self, on_main_thread: bool):
+    cpu_devices = _colocated_cpu_devices(jax.local_devices())
+    x = np.array(1)
+    x = jax.device_put(x, cpu_devices[0])
+    # Make sure that this input array is ready for use by the colocated Python
+    # function and does not disrupt elapsed time measurement.
+    jax.block_until_ready(x)
+
+    @colocated_python.colocated_python
+    def sleep(x: jax.Array) -> jax.Array:
+      time.sleep(5)
+      return x
+
+    # Specify out_specs_fn so that all executions are asynchronously dispatched.
+    sleep = sleep.specialize(out_specs_fn=lambda x: x)
+
+    def sleep_twice_and_wait(x: jax.Array) -> None:
+      _ = sleep(x)
+      jax.block_until_ready(sleep(x))
+
+    start_time = time.time()
+
+    # Two executions of `sleep` within `sleep_twice_and_wait` should run
+    # sequentially.
+    if on_main_thread:
+      sleep_twice_and_wait(x)
+    else:
+      t = threading.Thread(target=sleep_twice_and_wait, args=(x,))
+      t.start()
+      t.join()
+
+    elapsed_time = time.time() - start_time
+
+    # If sequential execution did not happen, elapsed time typically will be
+    # around 5 seconds.
+    self.assertGreaterEqual(elapsed_time, 10)
+
+  def testConcurrentExecution(self):
+    cpu_devices = _colocated_cpu_devices(jax.local_devices())
+    x = np.array(1)
+    x = jax.device_put(x, cpu_devices[0])
+    # Make sure that this input array is ready for use by the colocated Python
+    # function and does not disrupt elapsed time measurement.
+    jax.block_until_ready(x)
+
+    @colocated_python.colocated_python
+    def sleep(x: jax.Array) -> jax.Array:
+      time.sleep(5)
+      return x
+
+    # Specify out_specs_fn so that all executions are asynchronously dispatched.
+    sleep = sleep.specialize(out_specs_fn=lambda x: x)
+
+    def sleep_and_wait(x: jax.Array) -> None:
+      jax.block_until_ready(sleep(x))
+
+    start_time = time.time()
+
+    # All three executions of `sleep_and_wait` should run concurrently.
+    t1 = threading.Thread(target=sleep_and_wait, args=(x,))
+    t2 = threading.Thread(target=sleep_and_wait, args=(x,))
+    t1.start()
+    t2.start()
+    sleep_and_wait(x)
+    t1.join()
+    t2.join()
+
+    elapsed_time = time.time() - start_time
+
+    self.assertGreaterEqual(elapsed_time, 5)
+    # If concurrent execution did not happen, elapsed time typically will be
+    # around 15 seconds.
+    self.assertLess(elapsed_time, 10)
 
 
 if __name__ == "__main__":

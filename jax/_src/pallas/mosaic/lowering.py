@@ -63,7 +63,7 @@ from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.state.types import RefBitcaster, RefReshaper
 from jax._src.state.utils import dtype_bitwidth
-from jax._src.typing import DTypeLike
+from jax._src.typing import Array, DTypeLike
 from jax._src.util import safe_map
 from jax._src.util import safe_zip
 from jax._src.util import split_list
@@ -2295,7 +2295,49 @@ _cmpf_lowering_types = {
 }
 
 
-def _cmp_lowering_rule(prim, ctx: LoweringRuleContext, x, y):
+# The relationship between comparison operations on booleans and boolean
+# algebra is as follows:
+# eq(x, y) = !(x ^ y)
+# ne(x, y) = x ^ y
+# lt(x, y) = !x && y
+# le(x, y) = !x || y
+# gt(x, y) = x && !y
+# ge(x, y) = x || !y
+def _cmp_boolean_lowering_helper(primitive, x: Array, y: Array):
+  """A helper function for lowering comparison operations for boolean inputs.
+
+  Args:
+    primitive: A JAX primitive representing a comparison operation, which is
+      one of the following: `lax.eq_p` (equals), `lax.ne_p` (not equals),
+      `lax.lt_p` (less than), `lax.le_p` (less than or equal to),
+      `lax.gt_p` (greater than), or `lax.ge_p` (greater than or equal to).
+    x: A boolean array representing the first operand in the comparison.
+    y: A boolean array representing the second operand in the comparison.
+
+  Returns:
+    A boolean array that is the result of applying the comparison operation
+    between `x` and `y` based on the given primitive.
+
+  Raises:
+    ValueError: If an unsupported comparison primitive is provided.
+  """
+  if primitive == lax.eq_p:
+    return jnp.logical_not(jnp.logical_xor(x, y))
+  elif primitive == lax.ne_p:
+    return jnp.logical_xor(x, y)
+  elif primitive == lax.lt_p:
+    return jnp.logical_and(jnp.logical_not(x), y)
+  elif primitive == lax.le_p:
+    return jnp.logical_or(jnp.logical_not(x), y)
+  elif primitive == lax.gt_p:
+    return jnp.logical_and(x, jnp.logical_not(y))
+  elif primitive == lax.ge_p:
+    return jnp.logical_or(x, jnp.logical_not(y))
+  else:
+    raise ValueError(f"Unsupported comparison primitive: {primitive}")
+
+
+def _cmp_lowering_rule(primitive, ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   x_aval, y_aval = ctx.avals_in
   if x_aval.dtype != y_aval.dtype:
@@ -2304,60 +2346,22 @@ def _cmp_lowering_rule(prim, ctx: LoweringRuleContext, x, y):
     )
   dtype = x_aval.dtype
 
-  # For boolean comparisons, we handle them in two different ways. For `ne`,
-  # we directly use the xor operation since they are equivalent. For all
-  # other comparisons, we convert the boolean values to `int32` and use select
-  # operations to perform the comparison.
-  #
-  # The relationship between comparison operations on booleans and boolean
-  # algebra is as follows:
-  #
-  # eq(a, b) = !(a ^ b)
-  # ne(a, b) = a ^ b
-  # lt(a, b) = !a && b
-  # le(a, b) = !a || b
-  # gt(a, b) = a && !b
-  # ge(a, b) = a || !b
-  #
-  # However, except for `ne`, all other operations require negation, which is
-  # currently not supported. At present, even if negation were supported,
-  # it would still need to be implemented using `select` operations, making
-  # it equivalent to our current approach. For more details on negation support,
-  # see https://github.com/jax-ml/jax/issues/24243.
   if jnp.issubdtype(dtype, jnp.bool_):
-    if prim == lax.ne_p:
-      return arith.xori(x, y)
-
-    i32 = ir.IntegerType.get_signless(32)
-    vtype = ir.VectorType.get(x_aval.shape, i32)
-
-    # Convert `x` and `y` from `bool` to `int32` for comparison, with 2
-    # for true and 0 for false. For example, comparing `x > y` is equivalent
-    # to `(x ? 2 : 0) > (y ? 2 : 0)`.
-    #
-    # Note that we cannot use 1 for true because the select operation will be
-    # misteriously eliminated.
-    two = arith.constant(i32, 2)
-    zero = arith.constant(i32, 0)
-
-    out_aval, = ctx.avals_out
-    if out_aval.shape != ():
-      # broadcast to vectors if we are comparing vectors
-      two = vector.broadcast(vtype, two)
-      zero = vector.broadcast(vtype, zero)
-
-    x = arith.select(x, two, zero)
-    y = arith.select(y, two, zero)
-    dtype = jnp.int32
+    return lower_fun(
+        functools.partial(_cmp_boolean_lowering_helper, primitive),
+        multiple_results=False,
+    )(ctx, x, y)
 
   if jnp.issubdtype(dtype, jnp.integer):
     is_uint = jnp.issubdtype(dtype, jnp.unsignedinteger)
-    pred = (_cmpui_lowering_types if is_uint else _cmpsi_lowering_types)[prim]
+    pred = (
+        _cmpui_lowering_types if is_uint else _cmpsi_lowering_types
+    )[primitive]
     predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
     return arith.cmpi(predicate, x, y)
 
   if jnp.issubdtype(dtype, jnp.floating):
-    pred = _cmpf_lowering_types[prim]
+    pred = _cmpf_lowering_types[primitive]
     predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
     return arith.cmpf(predicate, x, y)
 
@@ -2379,6 +2383,15 @@ def _and_lowering_rule(ctx: LoweringRuleContext, x, y):
 
 lowering_rules[lax.and_p] = _and_lowering_rule
 skip_mlir_conversions.add(lax.and_p)
+
+
+def _is_finite_lowering_rule(ctx: LoweringRuleContext, x):
+  out_aval, = ctx.avals_out
+  out_type = aval_to_ir_type(out_aval)
+  return _not_lowering_rule(ctx, tpu.weird(out_type, x))
+
+
+lowering_rules[lax.is_finite_p] = _is_finite_lowering_rule
 
 
 def _or_lowering_rule(ctx: LoweringRuleContext, x, y):

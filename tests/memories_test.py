@@ -25,7 +25,6 @@ import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
-from jax._src.lib import xla_extension_version
 from jax._src.layout import DeviceLocalLayout as DLL, Layout
 from jax._src import config
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
@@ -697,8 +696,6 @@ class DevicePutTest(jtu.JaxTestCase):
       self.assertIn('custom_call_target="AllocateBuffer"', compiled_text)
 
   def test_disallow_alias_copies_arrays(self):
-    if xla_extension_version < 296:
-      self.skipTest("Requires xla_extension_version >= 296")
     mesh = jtu.create_mesh((2,), ("x",))
     np_inp = np.arange(16).reshape(8, 2)
     s = NamedSharding(mesh, P("x"), memory_kind="pinned_host")
@@ -712,8 +709,6 @@ class DevicePutTest(jtu.JaxTestCase):
     jax.block_until_ready(inp_host_copy)
 
   def test_disallow_alias_copies_arrays_with_donated_input(self):
-    if xla_extension_version < 296:
-      self.skipTest("Requires xla_extension_version >= 296")
     mesh = jtu.create_mesh((2,), ("x",))
     np_inp = np.arange(16).reshape(8, 2)
     s = NamedSharding(mesh, P("x"), memory_kind="pinned_host")
@@ -1313,7 +1308,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:
       out = f(inp)
       out2 = f(inp2)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
     self.assertArraysEqual(out, np_inp @ np_inp.T)
     self.assertArraysEqual(out2, np_inp @ np_inp.T)
@@ -1334,8 +1329,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
           jtu.count_jit_and_pmap_lowerings() as compile_count):
       f(inp)
       f(inp2)
-    self.assertEqual(cpp_count[0], 2)
-    self.assertEqual(compile_count[0], 1)
+    self.assertEqual(cpp_count(), 2)
+    self.assertEqual(compile_count(), 1)
 
   def test_jit_cpp_cache_output_hit(self):
     _, _, _, inp = _create_inputs((8, 2), P("x"), mem_kind="device")
@@ -1347,7 +1342,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:
       out = mul_two(inp)
       mul_two(out)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_jit_cache_hit_with_default_and_specified_mem_kind(self):
     _, s, np_inp, _ = _create_inputs((8, 2), P("x", "y"))
@@ -1362,7 +1357,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     with jtu.count_jit_and_pmap_lowerings() as count:
       out = f(np_inp)
       out2 = g(np_inp2)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
     self.assertArraysEqual(out, np_inp @ np_inp.T)
     self.assertArraysEqual(out2, np_inp2 @ np_inp2.T)
@@ -1586,10 +1581,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(y_out, y1 + y1)
 
   def test_compute_offload_mesh_with_linear_layout(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest(
-          "Shardy inlines the host compute. Remove when that's fixed."
-      )
     mesh = jtu.create_mesh((2, 2), ("x", "y"))
     sharding = NamedSharding(mesh, P("x", "y"))
     p_sharding = NamedSharding(mesh, P("x", "y"), memory_kind="pinned_host")
@@ -1642,7 +1633,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
         f(inp)
 
     # 2 for `f` and `2` for `mul` (compute type changes for `mul`)
-    self.assertEqual(count[0], 4)
+    self.assertEqual(count(), 4)
 
   def test_offload_take_host(self):
     @compute_on('device_host')

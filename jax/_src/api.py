@@ -2356,7 +2356,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
                      f"len(devices) = {len(devices)}.")
 
   def _device_put_sharded(*xs):
-    avals = [core.raise_to_shaped(core.get_aval(x)) for x in xs]
+    avals = [core.get_aval(x) for x in xs]
     if not all(a1 == a2 for a1, a2 in zip(avals[:-1], avals[1:])):
       a1, a2 = next((a1, a2) for a1, a2 in zip(avals[:-1], avals[1:])
                     if a1 != a2)
@@ -2418,7 +2418,7 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
                      "a non-empty sequence.")
   def _device_put_replicated(x):
     aval = core.unmapped_aval(len(devices), core.no_axis_name, 0,
-                              core.raise_to_shaped(core.get_aval(x)))
+                              core.get_aval(x))
     assert isinstance(aval, ShapedArray)
     sharding_spec = sharding_specs.create_pmap_sharding_spec(aval.shape)
     if config.pmap_no_rank_reduction.value:

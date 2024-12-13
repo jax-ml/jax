@@ -24,7 +24,6 @@ from typing import cast as type_cast
 from jax._src import config
 from jax._src.lib import version_str as jaxlib_version_str
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager as pm
 import numpy as np
@@ -301,10 +300,7 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj,
   debug_options.xla_dump_hlo_as_long_text = False
   debug_options.xla_dump_disable_metadata = False
   debug_options.xla_dump_hlo_pipeline_re = ""
-
-  # "Requires jaxlib 0.4.36+"
-  if xla_extension_version > 296:
-    debug_options.xla_gpu_experimental_autotune_cache_mode = 0
+  debug_options.xla_gpu_experimental_autotune_cache_mode = 0
 
   # Optional way to specify the cuda install path to be used by the compiler.
   # This could possibly affect the cuda version compiled with, but this should

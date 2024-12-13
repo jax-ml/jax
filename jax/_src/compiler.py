@@ -18,8 +18,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import logging
-import os
-import tempfile
 import time
 from typing import Any, Callable
 import warnings
@@ -36,7 +34,6 @@ from jax._src import traceback_util
 from jax._src.interpreters import mlir
 from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 import numpy as np
 
@@ -192,9 +189,8 @@ def get_compile_options(
     assert device_assignment.computation_count() == num_partitions
     compile_options.device_assignment = device_assignment
 
-  if xla_extension_version >= 294:
-    build_options.exec_time_optimization_effort = config.exec_time_optimization_effort.value
-    build_options.memory_fitting_effort = config.memory_fitting_effort.value
+  build_options.exec_time_optimization_effort = config.exec_time_optimization_effort.value
+  build_options.memory_fitting_effort = config.memory_fitting_effort.value
 
   if env_options_overrides is not None:
     # Some overrides are passed directly on build_options.
@@ -350,7 +346,33 @@ def compile_or_get_cached(
 
   use_compilation_cache = compilation_cache.is_cache_used(backend)
 
+  is_multi_process = (
+      len({device.process_index for device in devices.flatten()}) > 1
+  )
+  min_device_process_id = min(
+      devices.flatten(), key=lambda device: device.id
+  ).process_index
+  is_auto_pgle_used = (
+      config.enable_pgle.value and config.pgle_profiling_runs.value > 0
+  )
+
   if not use_compilation_cache:
+    if (
+        is_multi_process
+        and is_auto_pgle_used
+        and distributed.global_state.client is not None
+    ):
+      compile_options.executable_build_options.fdo_profile = (
+          _share_fdo_profiles(
+              computation,
+              devices,
+              compile_options,
+              backend,
+              distributed.global_state.client,
+              min_device_process_id,
+          )
+      )
+
     return backend_compile(backend, computation, compile_options,
                            host_callbacks)
 
@@ -375,61 +397,18 @@ def compile_or_get_cached(
     return backend_compile(backend, computation, compile_options,
                            host_callbacks)
 
-  is_multi_process = (
-      len({device.process_index for device in devices.flatten()}) > 1)
-  min_device_process_id = (
-      min(devices.flatten(), key=lambda device: device.id).process_index)
-
-  # When PGLE is enabled there might be 3 types of situations:
-  # 1. PGLE profiled module (the one which was recompiled with FDO profile) is
-  # in the persistent cache. In this case the module should be returned from
-  # cache and PGLE should be disabled for this module. Is module is stored in
-  # the persistent cache under the "pgle_profiled_module_key" which calculated
-  # with replacing FDO profile with flag which identify that module were PGLE
-  # profiled.
-  # 2. PGLE profiled module is not in the persistent cache and the module is
-  # getting built with an FDO profile. In this case we need to share FDO profile
-  # with other processes and store the result under the
-  # "pgle_profiled_module_key" so later in case 1 we will be able to find the
-  # module.
-  # 3. PGLE profiled module is not in the persistent cache and the module is
-  # getting compiled to be PGLEd (FDO profile is empty). In this case we need to
-  # simply return the non-PGLE profiled module from the persistent cache.
-  if (config.enable_pgle.value
-      and config.pgle_profiling_runs.value > 0):
-    fdo_profile = compile_options.executable_build_options.fdo_profile
-    compile_options.executable_build_options.fdo_profile = b"pgle profiled"
-
-    pgle_profiled_module_key = compilation_cache.get_cache_key(
+  if is_auto_pgle_used:
+    cache_key = _resolve_pgle_module_cache_key(
         computation,
         devices,
         compile_options,
         backend,
-        cache_key_type.IgnoreCallbacks.ALL,
+        pgle_profiler,
+        is_multi_process,
+        cache_key,
+        module_name,
+        min_device_process_id,
     )
-    compile_options.executable_build_options.fdo_profile = fdo_profile
-
-    if _is_executable_in_cache(backend, pgle_profiled_module_key):
-      # Load PGLE profiled module from the persistent cache.
-      cache_key = pgle_profiled_module_key
-      if pgle_profiler is not None:
-        pgle_profiler.disable()
-    elif fdo_profile is not None and len(fdo_profile) > 0:
-      # Store module under PGLE profiled module cache key.
-      cache_key = pgle_profiled_module_key
-      if is_multi_process and distributed.global_state.client is not None:
-        compile_options.executable_build_options.fdo_profile = _share_fdo_profiles(
-          computation, devices, compile_options, backend,
-          distributed.global_state.client,
-          min_device_process_id
-        )
-      else:
-        compile_options.executable_build_options.fdo_profile = fdo_profile
-        logger.debug(
-            "Compiling module %s with FDO profile: %s",
-            module_name,
-            compile_options.executable_build_options.fdo_profile,
-        )
 
   cache_retrieval_start = time.monotonic()
   retrieved_executable, retrieved_compile_time = _cache_read(
@@ -468,22 +447,6 @@ def compile_or_get_cached(
         cache_key,
         min_device_process_id
     )
-  elif (
-      config.share_autotune_config_between_hosts.value
-      and is_multi_process
-      and distributed.global_state.client is not None
-  ):
-    log_persistent_cache_miss(module_name, cache_key)
-    return _compile_and_write_autotune_config(
-        backend,
-        computation,
-        compile_options,
-        host_callbacks,
-        distributed.global_state.client,
-        module_name,
-        cache_key,
-        min_device_process_id
-    )
   else:
     log_persistent_cache_miss(module_name, cache_key)
     return _compile_and_write_cache(
@@ -494,6 +457,75 @@ def compile_or_get_cached(
         module_name,
         cache_key,
     )
+
+
+# When PGLE is enabled there might be 3 types of situations:
+# 1. PGLE profiled module (the one which was recompiled with FDO profile) is
+# in the persistent cache. In this case the module should be returned from
+# cache and PGLE should be disabled for this module. Is module is stored in
+# the persistent cache under the "pgle_profiled_module_key" which calculated
+# with replacing FDO profile with flag which identify that module were PGLE
+# profiled.
+# 2. PGLE profiled module is not in the persistent cache and the module is
+# getting built with an FDO profile. In this case we need to share FDO profile
+# with other processes and store the result under the
+# "pgle_profiled_module_key" so later in case 1 we will be able to find the
+# module.
+# 3. PGLE profiled module is not in the persistent cache and the module is
+# getting compiled to be PGLEd (FDO profile is empty). In this case we need to
+# simply return the non-PGLE profiled module from the persistent cache.
+def _resolve_pgle_module_cache_key(
+    computation: ir.Module,
+    devices: np.ndarray,
+    compile_options: xc.CompileOptions,
+    backend: xc.Client,
+    pgle_profiler: profiler.PGLEProfiler | None,
+    is_multi_process: bool,
+    cache_key: str,
+    module_name: str,
+    min_device_process_id: int,
+) -> str:
+  fdo_profile = compile_options.executable_build_options.fdo_profile
+  compile_options.executable_build_options.fdo_profile = b"pgle profiled"
+
+  pgle_profiled_module_key = compilation_cache.get_cache_key(
+      computation,
+      devices,
+      compile_options,
+      backend,
+      cache_key_type.IgnoreCallbacks.ALL,
+  )
+  compile_options.executable_build_options.fdo_profile = fdo_profile
+
+  result_key = cache_key
+  if _is_executable_in_cache(backend, pgle_profiled_module_key):
+    # Load PGLE profiled module from the persistent cache.
+    result_key = pgle_profiled_module_key
+    if pgle_profiler is not None:
+      pgle_profiler.disable()
+  elif fdo_profile is not None and len(fdo_profile) > 0:
+    # Store module under PGLE profiled module cache key.
+    result_key = pgle_profiled_module_key
+    if is_multi_process and distributed.global_state.client is not None:
+      compile_options.executable_build_options.fdo_profile = (
+          _share_fdo_profiles(
+              computation,
+              devices,
+              compile_options,
+              backend,
+              distributed.global_state.client,
+              min_device_process_id,
+          )
+      )
+    else:
+      compile_options.executable_build_options.fdo_profile = fdo_profile
+      logger.debug(
+          "Compiling module %s with FDO profile of length %d",
+          module_name,
+          len(compile_options.executable_build_options.fdo_profile),
+      )
+  return result_key
+
 
 # The process that has the lowest device ID should share FDO profile before
 # compilation with other processes.
@@ -512,32 +544,39 @@ def _share_fdo_profiles(
     return fdo_profile
 
   compile_options.executable_build_options.fdo_profile = b""
-  profile_key = (
-      compilation_cache.get_cache_key(
-          computation,
-          devices,
-          compile_options,
-          backend,
-          cache_key_type.IgnoreCallbacks.ALL,
-      )
-      + "_fdo_sync"
-  )
+  try:
+    profile_key = (
+        compilation_cache.get_cache_key(
+            computation,
+            devices,
+            compile_options,
+            backend,
+            cache_key_type.IgnoreCallbacks.ALL,
+        )
+        + "_fdo_sync"
+    )
+  except xc._xla.XlaRuntimeError as ex:
+    logger.error(
+        "compile_or_get_cached: unable to generate cache key, "
+        "skipping the fdo profile sharing: %s",
+        ex,
+    )
+    return fdo_profile
+
   if profile_key in _share_fdo_profiles.modules_profiles:
     return _share_fdo_profiles.modules_profiles[profile_key]
 
   share_timeout = config.share_binary_between_hosts_timeout_ms.value
   if distributed.global_state.process_id == min_process_id:
     logger.debug(
-        "Sharing FDO profile: %s. For module %s. Process %d.",
-        fdo_profile,
+        "Module %s. Sharing FDO profile. Process %d.",
         module_name,
         min_process_id,
     )
     global_client.key_value_set_bytes(profile_key, fdo_profile)
   else:
     logger.debug(
-        "Waiting for FDO profile: %s. For module %s. Should be set by process %d.",
-        fdo_profile,
+        "Module %s. Waiting for FDO profile which should be set by process %d.",
         module_name,
         min_process_id,
     )
@@ -550,113 +589,6 @@ def _share_fdo_profiles(
 
 
 _share_fdo_profiles.modules_profiles = {}
-
-
-# The process with the first_process_id should compile the module and write an
-# autotune config to the K-V storage.
-def _compile_and_write_autotune_config(
-    backend: xc.Client,
-    computation: ir.Module,
-    compile_options: xc.CompileOptions,
-    host_callbacks: Sequence[Any],
-    global_client: lib.xla_extension.DistributedRuntimeClient,
-    module_name: str,
-    cache_key: str,
-    first_process_id: int
-) -> xc.LoadedExecutable:
-  share_timeout = config.share_binary_between_hosts_timeout_ms.value
-  debug_options = compile_options.executable_build_options.debug_options
-
-  if _compile_and_write_autotune_config.autotune_configs_dir is None:
-    _compile_and_write_autotune_config.autotune_configs_dir = tempfile.mkdtemp()
-
-  autotune_tmp_file = os.path.join(
-      _compile_and_write_autotune_config.autotune_configs_dir, cache_key
-  )
-
-  if os.path.exists(autotune_tmp_file):
-    logger.debug(
-        "Compiling module: %s. Use existing autotune config file: %s",
-        module_name,
-        autotune_tmp_file,
-    )
-    debug_options.xla_gpu_load_autotune_results_from = autotune_tmp_file
-    return _compile_and_write_cache(
-        backend,
-        computation,
-        compile_options,
-        host_callbacks,
-        module_name,
-        cache_key,
-    )
-
-  if distributed.global_state.process_id == first_process_id:
-    debug_options.xla_gpu_dump_autotune_results_to = autotune_tmp_file
-    logger.debug("Process %d compiling and dumping autotune for module: %s",
-                 first_process_id, module_name)
-    executable = _compile_and_write_cache(
-        backend,
-        computation,
-        compile_options,
-        host_callbacks,
-        module_name,
-        cache_key,
-    )
-
-    logger.debug(
-        "Writing autotune config for module %s to %s",
-        module_name,
-        autotune_tmp_file,
-    )
-    with open(autotune_tmp_file, "rb") as f:
-      autotune_config = f.read()
-
-    autotune_config = compilation_cache.compress_executable(autotune_config)
-    global_client.key_value_set_bytes(cache_key, autotune_config)
-    logger.debug(
-        "Autotune config for module %s with size %d shared by cache_key %s",
-        module_name,
-        len(autotune_config),
-        cache_key,
-    )
-  else:
-    logger.debug(
-        "Compiling module %s, waiting for config to be shared by cache_key %s"
-        "from process %d",
-        module_name,
-        cache_key,
-        first_process_id
-    )
-    autotune_config = global_client.blocking_key_value_get_bytes(
-        cache_key, share_timeout
-    )
-
-    logger.debug(
-        "Received autotune config for module %s of size %d",
-        module_name,
-        len(autotune_config),
-    )
-    autotune_config = compilation_cache.decompress_executable(autotune_config)
-    with open(autotune_tmp_file, "wb") as f:
-      f.write(autotune_config)
-
-    logger.debug(
-        "Compiling module %s, using autotune config from %s",
-        module_name,
-        autotune_tmp_file,
-    )
-    debug_options.xla_gpu_load_autotune_results_from = autotune_tmp_file
-    executable = _compile_and_write_cache(
-        backend,
-        computation,
-        compile_options,
-        host_callbacks,
-        module_name,
-        cache_key,
-    )
-  return executable
-
-_compile_and_write_autotune_config.autotune_configs_dir = None
 
 # The process with the first_process_id should compile the module and write it
 # to the K-V storage.

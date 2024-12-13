@@ -204,6 +204,7 @@ from jax._src.lax.parallel import (
   pmin_p as pmin_p,
   ppermute_p as ppermute_p,
   psum_p as psum_p,
+  ragged_all_to_all_p as ragged_all_to_all_p,
 )
 
 from jax._src.lax.ann import (

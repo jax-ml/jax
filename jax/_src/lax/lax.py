@@ -102,27 +102,31 @@ def _validate_shapes(shapes: Sequence[Shape]):
   else:
     map(_check_static_shape, shapes)
 
-def _try_broadcast_shapes(
-    shapes: Sequence[tuple[int, ...]]) -> tuple[int, ...] | None:
-  if len(shapes) == 1: return shapes[0]
+def _try_broadcast_shapes(*shapes: tuple[int, ...], name: str) -> tuple[int, ...]:
+  """
+  Attempt to broadcast shapes, raising a TypeError if broadcasting fails.
+  """
+  if not shapes:
+    raise TypeError(f"{name}: At least one shape is required.")
   ranks = {len(shape) for shape in shapes}
-  if len(ranks) > 1: return None  # must have consistent rank
-  rank = ranks.pop()
-  if not rank: return ()  # scalar case
+  if len(ranks) != 1:
+    raise TypeError(f'{name}: arrays must have the same number of dimensions,'
+                    f' got {ranks}')
   result_shape = []
-  for ds in unsafe_zip(*shapes):
+  for ds in zip(*shapes):
     if all(core.same_referent(d, ds[0]) for d in ds[1:]):
       # if all axes are identical objects, the resulting size is the object
       result_shape.append(ds[0])
     else:
-      # if all dims are equal (or 1), the result is the non-1 size (or 1)
+      # if all dims are equal (or 1), the result is the non-1 size
       non_1s = [d for d in ds if not core.definitely_equal(d, 1)]
       if not non_1s:
         result_shape.append(1)
       elif all(core.definitely_equal(non_1s[0], d) for d in non_1s[1:]):
         result_shape.append(non_1s[0])
       else:
-        return None
+        raise TypeError(f'{name} got incompatible shapes for broadcasting: '
+                        f'{", ".join(map(str, map(tuple, shapes)))}.')
   return tuple(result_shape)
 
 def asarray(x: ArrayLike) -> Array:
@@ -159,24 +163,39 @@ def _broadcast_shapes_uncached(*shapes):
   if not rst: return fst
 
   # First check if we need only rank promotion (and not singleton-broadcasting).
-  try: return _reduce(_broadcast_ranks, rst, fst)
-  except ValueError: pass
+  result_shape = _max(shapes, key=len)
+  ndim = len(result_shape)
+  if ndim == 0 or all(core.definitely_equal_shape(result_shape[ndim - len(s):], s) for s in shapes):
+    return result_shape
 
   # Next try singleton-broadcasting, padding out ranks using singletons.
-  ndim = _max(len(shape) for shape in shapes)
-  shape_list = [(1,) * (ndim - len(shape)) + shape for shape in shapes]
-  result_shape = _try_broadcast_shapes(shape_list)
-  if result_shape is None:
-    raise ValueError(f"Incompatible shapes for broadcasting: shapes={list(shapes)}")
-  return result_shape
+  rank_promoted_shapes = tuple((*((1,) * (ndim - len(shape))), *shape) for shape in shapes)
+  try:
+    return _try_broadcast_shapes(*rank_promoted_shapes, name='broadcast_shapes')
+  except TypeError as err:
+    # Raise ValueError here for backward compatibility.
+    raise ValueError(f"Incompatible shapes for broadcasting: shapes={list(shapes)}") from err
 
-def _broadcast_ranks(s1, s2):
-  if len(s1) > len(s2):
-    s1, s2 = s2, s1
-  assert len(s1) <= len(s2)
-  s1_ = s2[len(s2) - len(s1):]
-  if core.definitely_equal_shape(s1_, s1): return s2
-  else: raise ValueError
+def broadcast_shardings(*avals) -> NamedSharding:
+  fst, *rst = avals
+  if not rst:
+    return fst.sharding
+
+  # First check if we need only rank promotion (and not singleton-broadcasting).
+  res_aval = _max(avals, key=lambda a: a.ndim)
+  ndim = res_aval.ndim
+  if ndim == 0 or all(
+      res_aval.sharding.spec[ndim - a.ndim:] == a.sharding.spec for a in avals):
+    return res_aval.sharding
+
+  # Next try singleton-broadcasting, padding out ranks using singletons.
+  aval_list = []
+  for a in avals:
+    new_spec = P(*(None,) * (ndim - a.ndim) + a.sharding.spec)
+    new_shape = (1,) * (ndim - a.ndim) + a.shape
+    aval_list.append(a.update(shape=new_shape,
+                              sharding=a.sharding.with_spec(new_spec)))
+  return broadcasting_sharding_rule('broadcast_shardings', *aval_list)
 
 def _identity(x): return x
 
@@ -1471,7 +1490,7 @@ def reduce(operands: Any,
     return _convert_element_type(monoid_reducer(*flat_operands, dimensions),
                                  weak_type=weak_type)
   else:
-    flat_init_avals = safe_map(_abstractify, flat_init_values)
+    flat_init_avals = safe_map(core.get_aval, flat_init_values)
     closed_jaxpr, out_tree = _variadic_reduction_jaxpr(
         computation, tuple(flat_init_avals), init_value_tree)
     out = reduce_p.bind(*flat_operands, *flat_init_values, computation=computation,
@@ -1730,6 +1749,9 @@ def zeros_like_abstract_ref(aval: state.AbstractRef) -> core.MutableArray:
   val = ad_util.zeros_like_aval(aval.inner_aval)
   return core.mutable_array(val)
 
+# TODO(dougalm): this is nonsense but it's here because in places like
+# custom_vjp we assume that all arguments have tangent spaces. We could have
+# a distinct NotATangentType value instead.
 ad_util.aval_zeros_likers[state.AbstractRef] = zeros_like_abstract_ref  # type: ignore
 
 def iota(dtype: DTypeLike, size: int) -> Array:
@@ -2137,27 +2159,7 @@ def broadcasting_shape_rule(name, *avals):
   shapes = [aval.shape for aval in avals if aval.shape]
   if not shapes:
     return ()
-  if len({len(shape) for shape in shapes}) != 1:
-    msg = '{}: arrays must have same number of dimensions, got {}.'
-    raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
-  # TODO(mattjj): de-duplicate with _try_broadcast_shapes
-  result_shape = []
-  for ds in zip(*shapes):
-    if all(core.same_referent(d, ds[0]) for d in ds[1:]):
-      # if all axes are identical objects, the resulting size is the object
-      result_shape.append(ds[0])
-    else:
-      # if all dims are equal (or 1), the result is the non-1 size
-      non_1s = [d for d in ds if not core.definitely_equal(d, 1)]
-      if not non_1s:
-        result_shape.append(1)
-      elif all(core.definitely_equal(non_1s[0], d) for d in non_1s[1:]):
-        result_shape.append(non_1s[0])
-      else:
-        raise TypeError(f'{name} got incompatible shapes for broadcasting: '
-                        f'{", ".join(map(str, map(tuple, shapes)))}.')
-
-  return tuple(result_shape)
+  return _try_broadcast_shapes(*shapes, name=name)
 
 
 def broadcasting_sharding_rule(name, *avals):
@@ -2206,7 +2208,7 @@ def broadcasting_sharding_rule(name, *avals):
 
 
 def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
-           require_same_dtypes=False):
+           require_same_dtypes=True):
   dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name,
                        allow_extended_dtype=allow_extended_dtype,
                        require_same=require_same_dtypes)
@@ -2759,8 +2761,8 @@ def _add_transpose(t, x, y):
   # some places (e.g. in custom_jvp) it may not always hold. For example, see
   # api_test.py's CustomJVPTest.test_jaxpr_zeros.
   # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
-  x_aval = x.aval if ad.is_undefined_primal(x) else _abstractify(x)
-  y_aval = y.aval if ad.is_undefined_primal(y) else _abstractify(y)
+  x_aval = x.aval if ad.is_undefined_primal(x) else core.get_aval(x)
+  y_aval = y.aval if ad.is_undefined_primal(y) else core.get_aval(y)
   if type(t) is ad_util.Zero:
     return [ad_util.Zero(x_aval), ad_util.Zero(y_aval)]
   else:
@@ -2790,8 +2792,8 @@ def _sub_transpose(t, x, y):
   # Morally the following assertion is true, but see the comment in add_p's
   # transpose rule.
   # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
-  x_aval = x.aval if ad.is_undefined_primal(x) else _abstractify(x)
-  y_aval = y.aval if ad.is_undefined_primal(y) else _abstractify(y)
+  x_aval = x.aval if ad.is_undefined_primal(x) else core.get_aval(x)
+  y_aval = y.aval if ad.is_undefined_primal(y) else core.get_aval(y)
   if type(t) is ad_util.Zero:
     return [ad_util.Zero(x_aval), ad_util.Zero(y_aval)]
   else:
@@ -3773,6 +3775,8 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
     if platform == "cpu" and precision not in {
         DotAlgorithmPreset.DEFAULT, DotAlgorithmPreset.F16_F16_F16,
         DotAlgorithmPreset.F32_F32_F32, DotAlgorithmPreset.F64_F64_F64,
+        DotAlgorithmPreset.BF16_BF16_F32, DotAlgorithmPreset.BF16_BF16_F32_X3,
+        DotAlgorithmPreset.BF16_BF16_F32_X6,
     }:
       raise ValueError(
           f"The precision '{precision}' is not supported by dot_general on CPU")
@@ -5502,15 +5506,26 @@ def _operands_to_keys(*operands, num_keys=1):
 
 def _sort_jvp(primals, tangents, *, dimension, is_stable, num_keys):
   shape = primals[0].shape
-  iotas = []
-  for dim, size in enumerate(shape):
-    iotas.append(broadcasted_iota(np.int64, shape, dim))
   sorted_primals_and_idx = sort_p.bind(
-      *primals, iotas[dimension], dimension=dimension,
-      is_stable=is_stable, num_keys=num_keys)
-  idx = tuple(sorted_primals_and_idx[-1] if i == dimension else iotas[i]
-              for i in range(len(shape)))
-  tangents_out = tuple(t if type(t) is ad_util.Zero else t[idx] for t in tangents)
+      *primals, broadcasted_iota(np.uint64, shape, dimension),
+      dimension=dimension, is_stable=is_stable, num_keys=num_keys)
+  batch_dims = tuple(np.delete(np.arange(len(shape), dtype=np.int64),
+                               dimension))
+  dnums = slicing.GatherDimensionNumbers(
+    offset_dims=(),
+    collapsed_slice_dims=(dimension,),
+    start_index_map=(dimension,),
+    operand_batching_dims=batch_dims,
+    start_indices_batching_dims=batch_dims,
+  )
+  idx = expand_dims(sorted_primals_and_idx[-1], (len(shape),))
+  gather_idx = partial(
+    slicing.gather,
+    start_indices=idx, dimension_numbers=dnums, slice_sizes=(1,) * len(shape),
+    mode=slicing.GatherScatterMode.PROMISE_IN_BOUNDS
+  )
+  tangents_out = [t if type(t) is ad_util.Zero else gather_idx(t)
+                  for t in tangents]
   return tuple(sorted_primals_and_idx[:-1]), tangents_out
 
 def _sort_batch_rule(batched_args, batch_dims, *, dimension, is_stable, num_keys):
@@ -6381,10 +6396,6 @@ def _eq_meet(a, b):
   return eq(a, b)
 
 
-def _abstractify(x):
-  return core.get_aval(x)
-
-
 def empty(dtype):
   return empty_p.bind(dtype=dtype)
 empty_p = core.Primitive('empty')
@@ -6494,3 +6505,7 @@ optimization_barrier_p.def_impl(
 optimization_barrier_p.def_abstract_eval(_optimization_barrier_abstract_eval)
 mlir.register_lowering(optimization_barrier_p,
                        _optimization_barrier_lowering_rule)
+
+def _optimization_barrier_batcher(batched_args, batch_dims, **params):
+  return optimization_barrier_p.bind(*batched_args, **params), batch_dims
+batching.primitive_batchers[optimization_barrier_p] = _optimization_barrier_batcher
