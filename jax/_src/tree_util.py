@@ -25,6 +25,7 @@ from typing import Any, NamedTuple, TypeVar, overload
 
 from jax._src import traceback_util
 from jax._src.lib import pytree
+from jax._src.lib import xla_extension_version
 from jax._src.util import safe_zip, set_module
 from jax._src.util import unzip2
 
@@ -607,6 +608,18 @@ def flatten_one_level(tree: Any) -> tuple[Iterable[Any], Hashable]:
     return out
 
 
+# flatten_one_level_with_keys is not exported.
+def flatten_one_level_with_keys(
+    tree: Any,
+) -> tuple[Iterable[KeyLeafPair], Hashable]:
+  """Flatten the given pytree node by one level, with keys."""
+  out = default_registry.flatten_one_level_with_keys(tree)
+  if out is None:
+    raise ValueError(f"can't tree-flatten type: {type(tree)}")
+  else:
+    return out
+
+
 # prefix_errors is not exported
 def prefix_errors(prefix_tree: Any, full_tree: Any,
                   is_leaf: Callable[[Any], bool] | None = None,
@@ -728,7 +741,7 @@ def keystr(keys: KeyPath):
   return ''.join(map(str, keys))
 
 
-# TODO(ivyzheng): remove this after _child_keys() also moved to C++.
+# TODO(ivyzheng): remove this after another jaxlib release.
 class _RegistryWithKeypathsEntry(NamedTuple):
   flatten_with_keys: Callable[..., Any]
   unflatten_func: Callable[..., Any]
@@ -1113,16 +1126,7 @@ def register_static(cls: type[H]) -> type[H]:
 def tree_flatten_with_path(
     tree: Any, is_leaf: Callable[[Any], bool] | None = None
 ) -> tuple[list[tuple[KeyPath, Any]], PyTreeDef]:
-  """Flattens a pytree like ``tree_flatten``, but also returns each leaf's key path.
-
-  Args:
-    tree: a pytree to flatten. If it contains a custom type, it must be
-      registered with ``register_pytree_with_keys``.
-  Returns:
-    A pair which the first element is a list of key-leaf pairs, each of
-    which contains a leaf and its key path. The second element is a treedef
-    representing the structure of the flattened tree.
-  """
+  """Alias of :func:`jax.tree.flatten_with_path`."""
   return default_registry.flatten_with_path(tree, is_leaf)
 
 
@@ -1130,18 +1134,7 @@ def tree_flatten_with_path(
 def tree_leaves_with_path(
     tree: Any, is_leaf: Callable[[Any], bool] | None = None
 ) -> list[tuple[KeyPath, Any]]:
-  """Gets the leaves of a pytree like ``tree_leaves`` and returns each leaf's key path.
-
-  Args:
-    tree: a pytree. If it contains a custom type, it must be registered with
-      ``register_pytree_with_keys``.
-  Returns:
-    A list of key-leaf pairs, each of which contains a leaf and its key path.
-
-  See Also:
-    - :func:`jax.tree_util.tree_leaves`
-    - :func:`jax.tree_util.tree_flatten_with_path`
-  """
+  """Alias of :func:`jax.tree.leaves_with_path`."""
   return tree_flatten_with_path(tree, is_leaf)[0]
 
 
@@ -1157,31 +1150,7 @@ _generate_key_paths = generate_key_paths  # alias for backward compat
 def tree_map_with_path(f: Callable[..., Any],
                        tree: Any, *rest: Any,
                        is_leaf: Callable[[Any], bool] | None = None) -> Any:
-  """Maps a multi-input function over pytree key path and args to produce a new pytree.
-
-  This is a more powerful alternative of ``tree_map`` that can take the key path
-  of each leaf as input argument as well.
-
-  Args:
-    f: function that takes ``2 + len(rest)`` arguments, aka. the key path and
-      each corresponding leaves of the pytrees.
-    tree: a pytree to be mapped over, with each leaf's key path as the first
-      positional argument and the leaf itself as the second argument to ``f``.
-    *rest: a tuple of pytrees, each of which has the same structure as ``tree``
-      or has ``tree`` as a prefix.
-
-  Returns:
-    A new pytree with the same structure as ``tree`` but with the value at each
-    leaf given by ``f(kp, x, *xs)`` where ``kp`` is the key path of the leaf at
-    the corresponding leaf in ``tree``, ``x`` is the leaf value and ``xs`` is
-    the tuple of values at corresponding nodes in ``rest``.
-
-  See Also:
-    - :func:`jax.tree_util.tree_map`
-    - :func:`jax.tree_util.tree_flatten_with_path`
-    - :func:`jax.tree_util.tree_leaves_with_path`
-  """
-
+  """Alias of :func:`jax.tree.map_with_path`."""
   keypath_leaves, treedef = tree_flatten_with_path(tree, is_leaf)
   keypath_leaves = list(zip(*keypath_leaves))
   all_keypath_leaves = keypath_leaves + [treedef.flatten_up_to(r) for r in rest]
@@ -1190,6 +1159,8 @@ def tree_map_with_path(f: Callable[..., Any],
 
 def _child_keys(pytree: Any) -> KeyPath:
   assert not treedef_is_strict_leaf(tree_structure(pytree))
+  if xla_extension_version >= 301:
+    return tuple(k for k, _ in flatten_one_level_with_keys(pytree)[0])
   handler = _registry_with_keypaths.get(type(pytree))
   if handler:
     return tuple(k for k, _ in handler.flatten_with_keys(pytree)[0])

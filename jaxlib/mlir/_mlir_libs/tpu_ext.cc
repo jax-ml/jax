@@ -316,6 +316,7 @@ MlirContext getDefaultContext() {
 
 PYBIND11_MODULE(_tpu_ext, m, py::mod_gil_not_used()) {
   mlirRegisterTPUPasses();  // Register all passes on load.
+  mlirTpuRegisterMosaicSerdePass();
 
   py::class_<MlirTpuApplyVectorLayoutContext>(m, "ApplyVectorLayoutCtx",
                                               py::module_local())

@@ -737,7 +737,7 @@ def _sparsify_jaxpr(spenv, jaxpr, *spvalues):
 
   args = spvalues_to_arrays(spenv, spvalues)
   args_flat, in_tree = tree_flatten(args)
-  avals_flat = [core.raise_to_shaped(core.get_aval(arg)) for arg in args_flat]
+  avals_flat = [core.get_aval(arg) for arg in args_flat]
   sp_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped, avals_flat)
   sp_jaxpr = pe.ClosedJaxpr(sp_jaxpr, consts)
   assert out_tree is not None

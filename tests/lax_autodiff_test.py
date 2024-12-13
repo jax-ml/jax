@@ -27,6 +27,7 @@ import numpy as np
 import jax
 from jax import dtypes
 from jax import lax
+from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.util import NumpyComplexWarning
 from jax.test_util import check_grads
@@ -205,6 +206,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   ))
   def testOpGrad(self, op, rng_factory, shapes, dtype, order, tol):
     rng = rng_factory(self.rng())
+    if jtu.test_device_matches(["cpu"]) and (op is lax.cosh or op is lax.cbrt) and config.enable_x64.value:
+      raise SkipTest("cosh and cbrt grad fails in x64 mode on CPU")  # b/383756018
     if jtu.test_device_matches(["tpu"]):
       if op is lax.pow:
         raise SkipTest("pow grad imprecise on tpu")

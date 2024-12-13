@@ -139,7 +139,7 @@ def roll(
 @roll_p.def_abstract_eval
 def _roll_abstract_eval(x, shift, **_):
   del shift
-  return jax_core.raise_to_shaped(x)
+  return x
 
 
 def _roll_lowering_rule(

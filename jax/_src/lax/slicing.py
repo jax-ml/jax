@@ -483,7 +483,7 @@ def scatter_add(
     An array containing the sum of `operand` and the scattered updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.add,
-                                       lax._abstractify(lax._const(operand, 0)))
+                                       core.get_aval(lax._const(operand, 0)))
   return scatter_add_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -536,7 +536,7 @@ def scatter_sub(
     An array containing the sum of `operand` and the scattered updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(
-      lax.sub, lax._abstractify(lax._const(operand, 0))
+      lax.sub, core.get_aval(lax._const(operand, 0))
   )
   return scatter_sub_p.bind(
       operand,
@@ -591,7 +591,7 @@ def scatter_mul(
     An array containing the sum of `operand` and the scattered updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.mul,
-                                       lax._abstractify(lax._const(operand, 1)))
+                                       core.get_aval(lax._const(operand, 1)))
   return scatter_mul_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -638,7 +638,7 @@ def scatter_min(
     An array containing the sum of `operand` and the scattered updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.min,
-                                       lax._abstractify(lax._const(operand, 0)))
+                                       core.get_aval(lax._const(operand, 0)))
   return scatter_min_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -685,7 +685,7 @@ def scatter_max(
     An array containing the sum of `operand` and the scattered updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.max,
-                                       lax._abstractify(lax._const(operand, 0)))
+                                       core.get_aval(lax._const(operand, 0)))
   return scatter_max_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -748,7 +748,7 @@ def scatter_apply(
     _apply = _scatter_apply_cache.setdefault(func, _apply)
   except TypeError:  # func is not weak referenceable
     pass
-  jaxpr, consts = lax._reduction_jaxpr(_apply, lax._abstractify(lax._zero(operand)))
+  jaxpr, consts = lax._reduction_jaxpr(_apply, core.get_aval(lax._zero(operand)))
   # TODO: implement this via its own primitive so we can define appropriate autodiff rules.
   return scatter_p.bind(
       operand, scatter_indices, unused, update_jaxpr=jaxpr,

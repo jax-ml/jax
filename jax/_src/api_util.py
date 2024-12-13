@@ -587,8 +587,7 @@ def _dtype(x):
 
 def _shaped_abstractify_slow(x):
   try:
-    return core.raise_to_shaped(
-      x if isinstance(x, core.AbstractValue) else core.get_aval(x))
+    return x if isinstance(x, core.AbstractValue) else core.get_aval(x)
   except TypeError:
     pass
 

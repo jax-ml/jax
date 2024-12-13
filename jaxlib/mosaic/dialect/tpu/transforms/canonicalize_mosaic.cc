@@ -44,6 +44,8 @@ namespace mlir::tpu {
 #define GEN_PASS_DEF_CANONICALIZEMOSAICPASS
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
 
+namespace {
+
 LogicalResult tpu_matmul_rule(tpu::MatmulOp op) {
   ImplicitLocOpBuilder builder(op.getLoc(), op.getOperation());
 
@@ -610,6 +612,8 @@ struct CanonicalizeMosaicPass
     }
   };
 };
+
+}  // namespace
 
 std::unique_ptr<OperationPass<func::FuncOp>> createCanonicalizeMosaicPass(
     int hardware_generation) {

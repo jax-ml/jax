@@ -28,7 +28,6 @@ ShapedArray = core.ShapedArray
 AbstractToken = core.AbstractToken
 abstract_token = core.abstract_token
 canonicalize_shape = core.canonicalize_shape
-raise_to_shaped = core.raise_to_shaped
 
 numpy_scalar_types: set[type] = {  # pylint: disable=g-bare-generic
     dtypes.int4, np.int8, np.int16, np.int32, np.int64,

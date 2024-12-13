@@ -12,6 +12,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## jax 0.4.38
 
+* Changes:
+  * `jax.tree.flatten_with_path` and `jax.tree.map_with_path` are added
+    as shortcuts of the corresponding `tree_util` functions.
+
 * Deprecations
   * a number of APIs in the internal `jax.core` namespace have been deprecated, including
     `ClosedJaxpr`, `full_lower`, `Jaxpr`, `JaxprEqn`, `jaxpr_as_fun`, `lattice_join`,

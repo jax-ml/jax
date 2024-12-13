@@ -129,6 +129,7 @@ class _DimFactor:
   MOD = "mod"
   MAX = "max"
   MIN = "min"
+  # TODO(necula): remove non_negative
   NON_NEGATIVE = "non_negative"  # The max of the operand and 0. Replaced with
                                  # max but kept here for backwards compatibility.
 
@@ -1090,6 +1091,24 @@ class SymbolicScope:
         raise NotImplementedError(
             f"Found multiple equality constraints with the same left-hand-side: {before}")
       self._normalization_rules[before] = (after, before_k)
+      # Look for constraints of the form mod(before_e1, before_k2) * 1 == 0
+      if (before_k == 1 and
+          isinstance(constr.e2, int) and constr.e2 == 0 and
+          (before_f := before.to_factor()) and
+          before_f.operation == _DimFactor.MOD and
+          (before_k2 := _DimExpr._to_constant(before_f.operands[1])) is not None):
+        # Add before_k2*floordiv(before_e1, before_k2) == before_e1
+        k_times_floordiv = _DimExpr._from_term(
+            _DimTerm.from_operation(
+                _DimFactor.FLOORDIV, *before_f.operands, scope=constr.e1.scope),
+            before_k2, scope=constr.e1.scope)
+        before_e1 = before_f.operands[0]
+        self._process_explicit_constraint(
+            _SymbolicConstraint(cmp=Comparator.EQ,
+                                e1=k_times_floordiv, e2=before_e1,
+                                diff=k_times_floordiv - before_e1,
+                                debug_str=f"{k_times_floordiv} == {before_e1}")
+        )
 
     self._explicit_constraints.append(constr)
 
@@ -1485,7 +1504,7 @@ def shape_and_dtype_jax_array(a) -> tuple[Sequence[int | None], DType]:
   """Returns the shape and dtype of a jax.Array or a j"""
   if isinstance(a, jax.ShapeDtypeStruct):
     return a.shape, a.dtype
-  aval = core.raise_to_shaped(core.get_aval(a))
+  aval = core.get_aval(a)
   return aval.shape, aval.dtype
 
 

@@ -44,6 +44,7 @@ limitations under the License.
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/transforms/apply_vector_layout.h"
+#include "jaxlib/mosaic/dialect/tpu/transforms/serde.h"
 #include "xla/array.h"
 
 // TODO(tlongeri): null pointer checks?
@@ -406,6 +407,10 @@ MlirValue mlirTpuRelayout(MlirTpuInsertionPoint insertion_point, MlirValue val,
   }
   return wrap(std::move(failure_or_new_val).value());
 }
+}
+
+MLIR_CAPI_EXPORTED void mlirTpuRegisterMosaicSerdePass() {
+  mlir::tpu::registerMosaicSerdePass();
 }
 
 #include "mlir/CAPI/Pass.h"     // IWYU pragma: keep

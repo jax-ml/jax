@@ -1490,7 +1490,7 @@ def reduce(operands: Any,
     return _convert_element_type(monoid_reducer(*flat_operands, dimensions),
                                  weak_type=weak_type)
   else:
-    flat_init_avals = safe_map(_abstractify, flat_init_values)
+    flat_init_avals = safe_map(core.get_aval, flat_init_values)
     closed_jaxpr, out_tree = _variadic_reduction_jaxpr(
         computation, tuple(flat_init_avals), init_value_tree)
     out = reduce_p.bind(*flat_operands, *flat_init_values, computation=computation,
@@ -2761,8 +2761,8 @@ def _add_transpose(t, x, y):
   # some places (e.g. in custom_jvp) it may not always hold. For example, see
   # api_test.py's CustomJVPTest.test_jaxpr_zeros.
   # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
-  x_aval = x.aval if ad.is_undefined_primal(x) else _abstractify(x)
-  y_aval = y.aval if ad.is_undefined_primal(y) else _abstractify(y)
+  x_aval = x.aval if ad.is_undefined_primal(x) else core.get_aval(x)
+  y_aval = y.aval if ad.is_undefined_primal(y) else core.get_aval(y)
   if type(t) is ad_util.Zero:
     return [ad_util.Zero(x_aval), ad_util.Zero(y_aval)]
   else:
@@ -2792,8 +2792,8 @@ def _sub_transpose(t, x, y):
   # Morally the following assertion is true, but see the comment in add_p's
   # transpose rule.
   # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
-  x_aval = x.aval if ad.is_undefined_primal(x) else _abstractify(x)
-  y_aval = y.aval if ad.is_undefined_primal(y) else _abstractify(y)
+  x_aval = x.aval if ad.is_undefined_primal(x) else core.get_aval(x)
+  y_aval = y.aval if ad.is_undefined_primal(y) else core.get_aval(y)
   if type(t) is ad_util.Zero:
     return [ad_util.Zero(x_aval), ad_util.Zero(y_aval)]
   else:
@@ -6383,10 +6383,6 @@ def _eq_meet(a, b):
     else:
       b = convert_element_type(b, a_dtype)
   return eq(a, b)
-
-
-def _abstractify(x):
-  return core.get_aval(x)
 
 
 def empty(dtype):

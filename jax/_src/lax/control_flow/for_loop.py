@@ -44,7 +44,7 @@ from jax._src.typing import Array
 from jax._src.util import (partition_list, merge_lists, safe_map, safe_zip,
                            split_list, split_dict, weakref_lru_cache)
 from jax._src.lax.control_flow import loops
-from jax._src.lax.control_flow.common import _abstractify, _initial_style_jaxpr
+from jax._src.lax.control_flow.common import _initial_style_jaxpr
 import numpy as np
 
 ## JAX utilities
@@ -196,7 +196,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     init_flat = tree_leaves(init)
     _, in_tree = tree_flatten((init, xs))
 
-    carry_avals = tuple(map(_abstractify, init_flat))
+    carry_avals = tuple(map(core.get_aval, init_flat))
     jaxpr, _, out_tree = _initial_style_jaxpr(
         f, in_tree, carry_avals + x_avals, "scan")
     return jaxpr, out_tree

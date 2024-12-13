@@ -786,13 +786,6 @@ def DebugAssertInsertionPass : Pass<"debug-assert-insertion", "::mlir::func::Fun
   let constructor = "::mlir::tpu::createDebugAssertInsertionPass()";
 }
 
-def MosaicSerdePass : Pass<"mosaic-serde", "::mlir::ModuleOp"> {
-  let options = [
-    Option<"serialize", "serialize", "bool", "", "">,
-    Option<"target_version", "target-version", "int", "", "">  // Only used when serialize=true.
-  ];
-}
-
 def LogicalToPhysicalDeviceIdPass : Pass<"logical-to-physical-device-id", "::mlir::func::FuncOp"> {
   let dependentDialects = [
     "::mlir::func::FuncDialect",

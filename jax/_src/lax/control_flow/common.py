@@ -37,9 +37,6 @@ map, unsafe_map = safe_map, map
 effects.control_flow_allowed_effects.add_type(lax.InOutFeedEffect)
 
 
-def _abstractify(x):
-  return core.raise_to_shaped(core.get_aval(x))
-
 def _typecheck_param(prim, param, name, msg_required, pred):
   if not pred:
     msg = (f'invalid {prim} param {name} of type {type(param).__name__}, '
@@ -91,7 +88,7 @@ def _initial_style_jaxprs_with_common_consts(
     return [], [], []
 
   jaxprs, all_consts, all_out_trees, all_attrs_tracked = zip(*jaxpr_data)
-  all_const_avals = [map(_abstractify, consts) for consts in all_consts]
+  all_const_avals = [map(core.get_aval, consts) for consts in all_consts]
   # If we get a `Ref` in the consts, we know it must come from an outer
   # `run_state`. We also know if shouldn't be boxed up in another tracer.
   # We assert that it is in fact a DynamicJaxprTracer
