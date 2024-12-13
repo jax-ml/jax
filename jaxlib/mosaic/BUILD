@@ -39,6 +39,7 @@ cc_library(
     name = "tpu_dialect",
     srcs = [
         "dialect/tpu/layout.cc",
+        "dialect/tpu/layout_util.cc",
         "dialect/tpu/tpu_dialect.cc",
         "dialect/tpu/tpu_ops.cc",
         "dialect/tpu/util.cc",
@@ -48,6 +49,7 @@ cc_library(
     ]),
     hdrs = [
         "dialect/tpu/layout.h",
+        "dialect/tpu/layout_util.h",
         "dialect/tpu/tpu_dialect.h",
         "dialect/tpu/util.h",
     ] + glob([
@@ -69,6 +71,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ControlFlowDialect",
+        "@llvm-project//mlir:DataLayoutInterfaces",
         "@llvm-project//mlir:Dialect",
         "@llvm-project//mlir:DialectUtils",
         "@llvm-project//mlir:FuncDialect",

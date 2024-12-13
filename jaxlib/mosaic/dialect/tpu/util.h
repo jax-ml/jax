@@ -3,9 +3,12 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
+#include <ostream>
 #include <sstream>
 #include <string>
 #include <type_traits>
+#include <utility>
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
@@ -15,8 +18,8 @@
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "absl/types/span.h"
-#include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "mlir/include/mlir/IR/Value.h"
+#include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 
 // TODO: Instead of CHECK_EQs, can we do something like TF_RET_CHECK but with
 // MLIR diagnostics?
@@ -117,6 +120,16 @@ bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
 
 // Determines whether the given MemRefType has the given memory space.
 bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space);
+
+class Print {
+ public:
+  explicit Print(Operation *t) : payload_(t) {}
+  Operation *payload_;
+
+ private:
+  friend std::ostream &operator<<(std::ostream &, Print);
+};
+
 }  // namespace mlir::tpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_

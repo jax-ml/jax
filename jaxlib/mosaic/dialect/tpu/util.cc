@@ -18,10 +18,13 @@ limitations under the License.
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <ostream>
+#include <string>
 #include <utility>
 
 #include "llvm/Support/MathExtras.h"
 #include "absl/types/span.h"
+#include "llvm/include/llvm/Support/raw_ostream.h"
 #include "mlir/include/mlir/IR/BuiltinTypes.h"
 #include "mlir/include/mlir/IR/Value.h"
 #include "mlir/include/mlir/IR/ValueRange.h"
@@ -147,4 +150,13 @@ bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space) {
       dyn_cast_or_null<tpu::MemorySpaceAttr>(ty.getMemorySpace());
   return memory_space && memory_space.getValue() == space;
 }
+
+std::ostream &operator<<(std::ostream &os, Print p) {
+  std::string s;
+  llvm::raw_string_ostream tmp_os(s);
+  p.payload_->print(tmp_os);
+  os << tmp_os.str();
+  return os;
+}
+
 }  // namespace mlir::tpu

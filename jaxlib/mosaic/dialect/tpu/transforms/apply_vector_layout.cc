@@ -58,6 +58,7 @@
 #include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/include/mlir/IR/OperationSupport.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
+#include "jaxlib/mosaic/dialect/tpu/layout_util.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/transforms/apply_vector_layout_extensions.h"
 #include "jaxlib/mosaic/dialect/tpu/transforms/infer_memref_layout.h"
@@ -583,78 +584,6 @@ FailureOr<Value> maskOOB(RewriteContext &ctx, OpBuilder &builder,
       .getResult();
 }
 
-// Returns empty vector on null attribute
-FailureOr<SmallVector<Layout>> getLayoutArrayFromAttr(const Attribute attr) {
-  if (const auto array_attr = dyn_cast_if_present<ArrayAttr>(attr)) {
-    SmallVector<Layout> out_layouts;
-    out_layouts.reserve(array_attr.size());
-    for (const Attribute a : array_attr) {
-      if (auto layout_attr = dyn_cast_if_present<VectorLayoutAttr>(a)) {
-        out_layouts.push_back(layout_attr.getLayout());
-      } else {
-        return failure();
-      }
-    }
-    return out_layouts;
-  }
-  return SmallVector<Layout>{};
-}
-
-bool layoutIsValidForValue(const Layout &l, const Value v,
-                           const std::array<int64_t, 2> target_shape) {
-  // l must be non-null iff v is of vector type
-  if (const auto vty = dyn_cast<VectorType>(v.getType())) {
-    if (!l.has_value()) {
-      return false;
-    }
-
-    // Vector type should have the same bitwidth as the layout, except for the
-    // i1 special case, used for vmasks (see comment for VectorLayout class).
-    if (!vty.getElementType().isIntOrFloat()) {
-      return false;
-    }
-    const int8_t bitwidth = vty.getElementTypeBitWidth();
-    if (bitwidth != l->bitwidth() && bitwidth != 1) {
-      return false;
-    }
-
-    return l->isValid(target_shape) && l->layout_rank() <= vty.getRank();
-  }
-  return !l.has_value();
-}
-
-// TODO(tlongeri): Unify with infer_vector_layout.cc's getOutLayout.
-FailureOr<SmallVector<Layout>> getOutLayouts(
-    Operation &op, const std::array<int64_t, 2> target_shape) {
-  FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> out_layouts,
-                             getLayoutArrayFromAttr(op.getAttr("out_layout")));
-  if (out_layouts.size() != op.getNumResults()) {
-    return op.emitOpError("out_layout size does not match number of results");
-  }
-  for (const auto [l, res] : llvm::zip_equal(out_layouts, op.getResults())) {
-    if (!layoutIsValidForValue(l, res, target_shape)) {
-      return op.emitOpError("Invalid output layout");
-    }
-  }
-  return out_layouts;
-}
-
-FailureOr<SmallVector<Layout>> getInLayouts(
-    Operation &op, const std::array<int64_t, 2> target_shape) {
-  FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> in_layouts,
-                             getLayoutArrayFromAttr(op.getAttr("in_layout")));
-  if (in_layouts.size() != op.getNumOperands()) {
-    return op.emitOpError("in_layout size does not match number of operands");
-  }
-  for (const auto [l, operand] :
-       llvm::zip_equal(in_layouts, op.getOperands())) {
-    if (!layoutIsValidForValue(l, operand, target_shape)) {
-      return op.emitOpError("Invalid input layout");
-    }
-  }
-  return in_layouts;
-}
-
 // Insert a minor dimension to the implicit shape. The original minor dimension
 // becomes the new second minor dimension, laid out across sublanes.
 //
@@ -1128,7 +1057,7 @@ LogicalResult scf_for_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_EQ_OP(layouts_out.size(), for_op->getNumResults());
   FAILUREOR_ASSIGN_OR_RETURN(
       const SmallVector<Layout> yield_in_layouts,
-      getInLayouts(*for_op.getBody()->getTerminator(), ctx.target_shape));
+      getInLayout(for_op.getBody()->getTerminator(), ctx.target_shape));
   int out_idx = 0;
   for (auto [in_layout, yield_layout, out_layout, result] :
        llvm::zip_equal(layouts_in.drop_front(3), yield_in_layouts, layouts_out,
@@ -1280,12 +1209,11 @@ LogicalResult scf_while_rule(RewriteContext &ctx, Operation &op,
   // after region or branch to the exit.
   FAILUREOR_ASSIGN_OR_RETURN(
       const SmallVector<Layout> cond_in_layouts,
-      getInLayouts(*while_op.getBeforeBody()->getTerminator(),
-                   ctx.target_shape));
+      getInLayout(while_op.getBeforeBody()->getTerminator(), ctx.target_shape));
 
   FAILUREOR_ASSIGN_OR_RETURN(
       const SmallVector<Layout> yield_in_layouts,
-      getInLayouts(*while_op.getYieldOp(), ctx.target_shape));
+      getInLayout(while_op.getYieldOp(), ctx.target_shape));
   int out_idx = 0;
   for (auto [in_layout, cond_layout, yield_layout, out_layout, result] :
        llvm::zip_equal(layouts_in,
@@ -1478,13 +1406,12 @@ LogicalResult scf_if_rule(RewriteContext &ctx, Operation &op,
   scf::IfOp if_op = cast<scf::IfOp>(op);
   SmallVector<Layout, 4> then_yield_in_layouts;
   SmallVector<Layout, 4> else_yield_in_layouts;
-  FAILUREOR_ASSIGN_OR_RETURN(
-      then_yield_in_layouts,
-      getInLayouts(*if_op.thenYield(), ctx.target_shape));
+  FAILUREOR_ASSIGN_OR_RETURN(then_yield_in_layouts,
+                             getInLayout(if_op.thenYield(), ctx.target_shape));
   if (!if_op.getElseRegion().empty()) {
     FAILUREOR_ASSIGN_OR_RETURN(
         else_yield_in_layouts,
-        getInLayouts(*if_op.elseYield(), ctx.target_shape));
+        getInLayout(if_op.elseYield(), ctx.target_shape));
   }
   int out_idx = 0;
   for (auto [then_layout, else_layout, result_layout, result] :
@@ -4849,7 +4776,7 @@ FailureOr<xla::Array<Value>> disassemble(
   Operation *const op = op_result.getOwner();
   const unsigned res_idx = op_result.getResultNumber();
   FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> def_layouts,
-                             getOutLayouts(*op, target_shape));
+                             getOutLayout(op, target_shape));
   const Layout def_layout = def_layouts[res_idx];
   TPU_ASSERT_LOC(val.getLoc(), def_layout.has_value());
   TPU_ASSERT_LOC(val.getLoc(),
@@ -6641,9 +6568,9 @@ LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op) {
   // the layout_in tuple will be None. The same applies to the results of the
   // operation and the layout_out tuple.
   FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> layouts_out,
-                             getOutLayouts(op, ctx.target_shape));
+                             getOutLayout(&op, ctx.target_shape));
   FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> layouts_in,
-                             getInLayouts(op, ctx.target_shape));
+                             getInLayout(&op, ctx.target_shape));
   if (!layouts_in.empty() && !isa<tpu::AssumeLayoutOp>(op)) {
     // Relayout the operands, if their requested input layouts don't match the
     // layouts in which they were produced.
@@ -6666,7 +6593,7 @@ LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op) {
       TPU_ASSERT_OP(def_op);
       const unsigned res_idx = op_result.getResultNumber();
       FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> def_layouts,
-                                 getOutLayouts(*def_op, ctx.target_shape));
+                                 getOutLayout(def_op, ctx.target_shape));
       const Layout lo = def_layouts[res_idx];
       TPU_ASSERT_OP(lo.has_value());
       if (*lo == *li) {

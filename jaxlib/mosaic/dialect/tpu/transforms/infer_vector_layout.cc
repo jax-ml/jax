@@ -19,13 +19,10 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <optional>
-#include <ostream>
-#include <string>
 #include <utility>
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
-#include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -49,6 +46,7 @@ limitations under the License.
 #include "mlir/include/mlir/IR/Visitors.h"
 #include "mlir/include/mlir/Pass/Pass.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
+#include "jaxlib/mosaic/dialect/tpu/layout_util.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/transforms/infer_vector_layout_extensions.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
@@ -65,23 +63,6 @@ namespace {
 using ImplicitDim = VectorLayout::ImplicitDim;
 
 static constexpr int kLayoutLog = 10;
-
-class Print {
- public:
-  explicit Print(Operation *t) : payload_(t) {}
-  Operation *payload_;
-
- private:
-  friend std::ostream &operator<<(std::ostream &, Print);
-};
-
-std::ostream &operator<<(std::ostream &os, Print p) {
-  std::string s;
-  llvm::raw_string_ostream tmp_os(s);
-  p.payload_->print(tmp_os);
-  os << tmp_os.str();
-  return os;
-}
 
 bool is_fully_replicated(const Layout &layout) {
   static LayoutOffsets replicated_offsets = {std::nullopt, std::nullopt};
@@ -793,7 +774,8 @@ class VectorLayoutInferer {
     if (tiling_dim.has_value()) {
       int64_t starting_point = 0;
 
-      Layout first_layout = getLayout(op.getSources().front());
+      Layout first_layout =
+          getLayout(op.getSources().front(), force_first_tile_offsets_);
       SmallVector<Layout, 4> op_layouts = getLayoutFromOperands(op);
       SmallVector<Layout> in_layouts;
       in_layouts.reserve(op.getSources().size());
@@ -840,7 +822,8 @@ class VectorLayoutInferer {
       setLayout(op, in_layouts, res_layout);
       return success();
     } else {
-      Layout layout = getLayout(op.getSources().front());
+      Layout layout =
+          getLayout(op.getSources().front(), force_first_tile_offsets_);
       // When concatenating vectors with replicated offsets, we want to reset
       // the replicated offset to zero. Because we are not sure if the
       // replicated value from each vector are same.
@@ -945,7 +928,7 @@ class VectorLayoutInferer {
   }
 
   LogicalResult infer(tpu::GatherOp op) {
-    auto src_layout = getLayout(op.getSource());
+    auto src_layout = getLayout(op.getSource(), force_first_tile_offsets_);
     setLayout(op, src_layout, src_layout);
     return success();
   }
@@ -956,7 +939,7 @@ class VectorLayoutInferer {
     auto out_ty = cast<VectorType>(op.getOutput().getType());
     auto in_bitwidth = in_ty.getElementTypeBitWidth();
     auto out_bitwidth = out_ty.getElementTypeBitWidth();
-    auto src_layout = getLayout(op.getInput());
+    auto src_layout = getLayout(op.getInput(), force_first_tile_offsets_);
     LayoutOffsets src_offsets = src_layout->offsets();
     auto implicit_dim = src_layout->implicit_dim();
     if (src_offsets[0].value_or(0) * in_bitwidth % out_bitwidth != 0) {
@@ -1065,7 +1048,7 @@ class VectorLayoutInferer {
       return success();
     }
     if (auto src_ty = dyn_cast<VectorType>(some_src_ty)) {
-      auto some_layout = getLayout(op.getSource());
+      auto some_layout = getLayout(op.getSource(), force_first_tile_offsets_);
       TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
       auto &layout = *some_layout;
       if (layout.implicit_dim() != ImplicitDim::kNone && src_ty.getRank() > 1) {
@@ -1115,7 +1098,7 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(
         op.getSourceVectorType().getElementTypeBitWidth() == kNativeBitwidth,
         "Only 32-bit types supported");
-    auto layout = getLayout(op.getVector());
+    auto layout = getLayout(op.getVector(), force_first_tile_offsets_);
     TPU_CHECK_OP(layout.has_value(), "missing vector layout");
     if (VectorType res_vty = dyn_cast<VectorType>(op.getResult().getType());
         res_vty != nullptr) {
@@ -1268,7 +1251,7 @@ class VectorLayoutInferer {
   }
 
   LogicalResult infer(vector::ExtractStridedSliceOp op) {
-    auto input_layout = getLayout(op.getVector());
+    auto input_layout = getLayout(op.getVector(), force_first_tile_offsets_);
     TPU_CHECK_OP(input_layout, "missing vector layout");
     auto offsets_attr = op.getOffsets().getValue();
     auto strides_attr = op.getStrides().getValue();
@@ -1304,14 +1287,14 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(dst_ty, "only reductions with vector results supported");
     llvm::ArrayRef<int64_t> dims = op.getReductionDims();
     int64_t src_rank = src_ty.getRank();
-    auto acc_layout = getLayout(op.getAcc());
+    auto acc_layout = getLayout(op.getAcc(), force_first_tile_offsets_);
     TPU_CHECK_OP(is_fully_replicated(acc_layout),
                  "only constant accumulators supported");
     TPU_CHECK_OP(
         src_ty.getElementTypeBitWidth() == 32 ||
             src_ty.getElementTypeBitWidth() == 16,
         "only 32-bit (and 16-bit only on some targets) reductions supported");
-    auto some_src_layout = getLayout(op.getSource());
+    auto some_src_layout = getLayout(op.getSource(), force_first_tile_offsets_);
     TPU_CHECK_OP(some_src_layout, "missing vector layout");
     auto &src_layout = *some_src_layout;
     std::array<bool, 2> reduces;
@@ -1368,7 +1351,7 @@ class VectorLayoutInferer {
     auto src_shape = src_ty.getShape();
     auto res_ty = op.getResultVectorType();
     auto res_shape = res_ty.getShape();
-    auto some_src_layout = getLayout(op.getSource());
+    auto some_src_layout = getLayout(op.getSource(), force_first_tile_offsets_);
     TPU_CHECK_OP(some_src_layout, "missing vector layout");
     auto layout = *some_src_layout;
     const unsigned bitwidth = src_ty.getElementTypeBitWidth();
@@ -1593,7 +1576,8 @@ class VectorLayoutInferer {
         // Since it is untiled, we can store to any arbitrary address which
         // means the sublane offset can be any value and we can fold it to
         // 2nd minor index.
-        auto prev_store_layout = getLayout(op.getValueToStore());
+        auto prev_store_layout =
+            getLayout(op.getValueToStore(), force_first_tile_offsets_);
         TPU_CHECK_OP(prev_store_layout.has_value(), "missing vector layout");
         offsets[0] = prev_store_layout->offsets()[0].value_or(0);
         if (offsets[1].value_or(0) >= tiling[1]) {
@@ -1621,7 +1605,7 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(permutation.size() > 1,
                  "Vector and scalar transpose should be a no-op and removed");
 
-    auto some_layout = getLayout(op.getVector());
+    auto some_layout = getLayout(op.getVector(), force_first_tile_offsets_);
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
     auto &layout = *some_layout;
     auto src_ty = op.getSourceVectorType();
@@ -1657,7 +1641,7 @@ class VectorLayoutInferer {
     auto dst_ty = cast<VectorType>(op->getResult(0).getType());
     unsigned src_bitwidth = src_ty.getElementTypeBitWidth();
     unsigned dst_bitwidth = dst_ty.getElementTypeBitWidth();
-    auto some_layout = getLayout(op->getOperand(0));
+    auto some_layout = getLayout(op->getOperand(0), force_first_tile_offsets_);
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
     if (dyn_cast<arith::ExtFOp>(op)) {
       TPU_CHECK_OP(src_bitwidth == 16 && dst_bitwidth == 32,
@@ -1702,7 +1686,7 @@ class VectorLayoutInferer {
       return success();
     }
     auto dst_ty = cast<VectorType>(op->getResult(0).getType());
-    auto some_layout = getLayout(op->getOperand(0));
+    auto some_layout = getLayout(op->getOperand(0), force_first_tile_offsets_);
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
     if (dyn_cast<arith::TruncFOp>(op)) {
       TPU_CHECK_OP(src_ty.getElementTypeBitWidth() == 32 &&
@@ -1756,7 +1740,8 @@ class VectorLayoutInferer {
     }
     for (int64_t i = 0; i < op->getNumOperands(); ++i) {
       if (auto vty = dyn_cast<VectorType>(op->getOperand(i).getType())) {
-        auto some_layout = getLayout(op->getOperand(i));
+        auto some_layout =
+            getLayout(op->getOperand(i), force_first_tile_offsets_);
         TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
         auto &layout = *some_layout;
         if (bitwidth == -1) {
@@ -1931,103 +1916,6 @@ class VectorLayoutInferer {
       op->removeAttr("out_layout");
       return WalkResult::advance();
     });
-  }
-
-  void setInLayout(Operation *op, ArrayRef<Layout> in) {
-    CHECK_EQ(in.size(), op->getNumOperands()) << Print(op);
-    SmallVector<Attribute, 4> in_attrs;
-    in_attrs.reserve(in.size());
-    for (const Layout &p : in) {
-      in_attrs.push_back(VectorLayoutAttr::get(op->getContext(), p));
-    }
-    op->setAttr("in_layout", ArrayAttr::get(op->getContext(), in_attrs));
-  }
-
-  void setOutLayout(Operation *op, Layout out) {
-    setOutLayout(op, ArrayRef<Layout>(out));
-  }
-
-  void setOutLayout(Operation *op, ArrayRef<Layout> out) {
-    SmallVector<Attribute, 4> out_attrs;
-    out_attrs.reserve(out.size());
-    for (const Layout &p : out) {
-      out_attrs.push_back(VectorLayoutAttr::get(op->getContext(), p));
-    }
-    op->setAttr("out_layout", ArrayAttr::get(op->getContext(), out_attrs));
-  }
-
-  void setLayout(Operation *op, Layout in, Layout out) {
-    setLayout(op, ArrayRef<Layout>(in), ArrayRef<Layout>(out));
-  }
-
-  void setLayout(Operation *op, ArrayRef<Layout> in, Layout out) {
-    setLayout(op, in, ArrayRef<Layout>(out));
-  }
-
-  void setLayout(Operation *op, Layout in, ArrayRef<Layout> out) {
-    setLayout(op, ArrayRef<Layout>(in), out);
-  }
-
-  void setLayout(Operation *op, ArrayRef<Layout> in, ArrayRef<Layout> out) {
-    setInLayout(op, in);
-    setOutLayout(op, out);
-  }
-
-  SmallVector<Layout, 4> getInLayout(Operation *op) {
-    CHECK(op);
-    CHECK(op->getAttr("in_layout"));
-    auto in_attrs = op->getAttrOfType<ArrayAttr>("in_layout").getValue();
-    CHECK_EQ(in_attrs.size(), op->getNumOperands());
-    SmallVector<Layout, 4> in_layouts;
-    in_layouts.reserve(op->getNumOperands());
-    for (int i = 0; i < op->getNumOperands(); ++i) {
-      in_layouts.push_back(cast<VectorLayoutAttr>(in_attrs[i]).getLayout());
-    }
-    return in_layouts;
-  }
-
-  SmallVector<Layout, 4> getOutLayout(Operation *op) {
-    CHECK(op);
-    CHECK(op->getAttr("out_layout"));
-    auto out_attrs = op->getAttrOfType<ArrayAttr>("out_layout").getValue();
-    CHECK_EQ(out_attrs.size(), op->getNumResults());
-    SmallVector<Layout, 4> out_layouts;
-    out_layouts.reserve(op->getNumResults());
-    for (int i = 0; i < op->getNumResults(); ++i) {
-      out_layouts.push_back(cast<VectorLayoutAttr>(out_attrs[i]).getLayout());
-    }
-    return out_layouts;
-  }
-
-  Layout getLayout(Value v) {
-    auto op = v.getDefiningOp();
-    CHECK(op);
-    auto op_result = dyn_cast<OpResult>(v);
-    CHECK(op_result);
-    auto result_index = op_result.getResultNumber();
-    auto out_attrs = op->getAttrOfType<ArrayAttr>("out_layout").getValue();
-    CHECK(out_attrs.size() > result_index);
-    auto layout = cast<VectorLayoutAttr>(out_attrs[result_index]).getLayout();
-    if (force_first_tile_offsets_ &&
-        layout->offsets()[1].value_or(0) >= layout->tiling()[1]) {
-      // Force the out-of-first-tile offset to be zero.
-      layout = VectorLayout(layout->bitwidth(), {layout->offsets()[0], 0},
-                            layout->tiling(), layout->implicit_dim());
-    }
-    return layout;
-  }
-
-  SmallVector<Layout, 4> getLayoutFromOperands(Operation *op) {
-    SmallVector<Layout, 4> layouts;
-    layouts.reserve(op->getNumOperands());
-    for (const auto &operand : op->getOperands()) {
-      if (isa<VectorType>(operand.getType())) {
-        layouts.push_back(getLayout(operand));
-      } else {
-        layouts.push_back(kNoLayout);
-      }
-    }
-    return layouts;
   }
 
  private:
