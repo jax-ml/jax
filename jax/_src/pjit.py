@@ -2112,18 +2112,23 @@ def _pjit_linearization(nzs, *primals_in, jaxpr,
   def tangent_fun(consts_, *tangents):
     tangents_nz = _filter_zeros(nzs, tangents)
     assert len(consts_) == num_residuals
-    return pjit_p.bind(*(*tangents_nz, *consts_),
-                       jaxpr=tangent_jaxpr,
-                       in_shardings=_filter_zeros(nzs, in_shardings) + res_shardings,
-                       out_shardings=_filter_zeros(nzs_out, out_shardings),
-                       in_layouts=_filter_zeros(nzs, in_layouts) + res_layouts,
-                       out_layouts=_filter_zeros(nzs_out, out_layouts),
-                       resource_env=resource_env,
-                       donated_invars=_filter_zeros(nzs, donated_invars) + res_donated,
-                       name=name,
-                       keep_unused=keep_unused,
-                       inline=inline,
-                       compiler_options_kvs=compiler_options_kvs)
+    nz_tangents_out = pjit_p.bind(*(*tangents_nz, *consts_),
+        jaxpr=tangent_jaxpr,
+        in_shardings=_filter_zeros(nzs, in_shardings) + res_shardings,
+        out_shardings=_filter_zeros(nzs_out, out_shardings),
+        in_layouts=_filter_zeros(nzs, in_layouts) + res_layouts,
+        out_layouts=_filter_zeros(nzs_out, out_layouts),
+        resource_env=resource_env,
+        donated_invars=_filter_zeros(nzs, donated_invars) + res_donated,
+        name=name,
+        keep_unused=keep_unused,
+        inline=inline,
+        compiler_options_kvs=compiler_options_kvs)
+    tangent_avals_out = [v.aval.to_tangent_aval() for v in jaxpr.jaxpr.outvars]
+    nz_tangents_out_ = iter(nz_tangents_out)
+    tangents_out = [next(nz_tangents_out_) if nz else ad.Zero(aval)
+                   for (aval, nz) in zip(tangent_avals_out, nzs_out)]
+    return tangents_out
 
   def _filter_zeros(is_nz_l, l):
     return tuple(x for nz, x in zip(is_nz_l, l) if nz)
