@@ -252,6 +252,17 @@ class VectorLayout {
 
   int8_t bitwidth() const { return bitwidth_; }
   const LayoutOffsets &offsets() const { return offsets_; }
+  const LayoutOffsets getCanonicalOffsets(
+      const ArrayRef<int64_t> shape,
+      const std::array<int64_t, 2> target_shape) const {
+    // For (1, n) tiling with a single row, 2nd minor replication does not
+    // change anything about the layout - it is equivalent to an offset of 0.
+    // We choose a replicated offset as "canonical".
+    const std::array<int64_t, 2> tiled_ishape = getImplicitTiledDims(shape, 1);
+    return {
+        (tiling_[0] == 1 && tiled_ishape[0] == 1) ? std::nullopt : offsets_[0],
+        offsets_[1]};
+  }
   const std::array<int64_t, 2> &tiling() const { return tiling_; }
   ImplicitDim implicit_dim() const { return implicit_dim_; }
   int packing() const { return 32 / bitwidth_; }
