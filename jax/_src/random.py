@@ -291,15 +291,18 @@ def split(key: ArrayLike, num: int | tuple[int, ...] = 2) -> Array:
   return _return_prng_keys(wrapped, _split(typed_key, num))
 
 
-def _key_impl(keys: Array) -> str | PRNGSpec:
+def _key_impl(keys: Array) -> PRNGImpl:
   assert jnp.issubdtype(keys.dtype, dtypes.prng_key)
   keys_dtype = typing.cast(prng.KeyTy, keys.dtype)
-  impl = keys_dtype._impl
+  return keys_dtype._impl
+
+def _key_spec(keys: Array) -> str | PRNGSpec:
+  impl = _key_impl(keys)
   return impl.name if impl.name in prng.prngs else PRNGSpec(impl)
 
 def key_impl(keys: ArrayLike) -> str | PRNGSpec:
   typed_keys, _ = _check_prng_key("key_impl", keys, allow_batched=True)
-  return _key_impl(typed_keys)
+  return _key_spec(typed_keys)
 
 
 def _key_data(keys: Array) -> Array:
