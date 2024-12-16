@@ -479,17 +479,15 @@ del register_jax_array_methods
 
 
 _deprecations = {
-  # Deprecated 03 Sept 2024
+  # Finalized 2024-12-13; remove after 2024-3-13
   "round_": (
-    "jnp.round_ is deprecated; use jnp.round instead.",
-    round
+    "jnp.round_ was deprecated in JAX 0.4.38; use jnp.round instead.",
+    None
   ),
 }
 
 import typing
-if typing.TYPE_CHECKING:
-  round_ = round
-else:
+if not typing.TYPE_CHECKING:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr

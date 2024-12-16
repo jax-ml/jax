@@ -41,7 +41,6 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
-from jax._src import mesh as mesh_lib
 from jax._src import op_shardings
 from jax._src import sharding_specs
 from jax._src import profiler
@@ -65,6 +64,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec, UnconstrainedSingleton
 from jax._src.sharding import Sharding as JSharding
+from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.sharding_impls import (
     ArrayMapping, ArrayMappingOrAutoOrUnspecified, AUTO, UNSPECIFIED,
     UnspecifiedValue, get_array_mapping as _get_array_mapping,
@@ -98,7 +98,6 @@ ShardedAxis = sharding_specs.ShardedAxis
 Replicated = sharding_specs.Replicated
 
 AvalDimSharding = Union[Unstacked, Chunked, NoSharding]
-Mesh = mesh_lib.Mesh
 MeshAxisName = sharding_impls.MeshAxisName
 MeshDimAssignment = Union[ShardedAxis, Replicated]
 ShardingSpec = sharding_specs.ShardingSpec
@@ -231,16 +230,20 @@ shard_arg_handlers[core.MutableArray] = _shard_mutable_array
 def batched_device_put(aval: core.ShapedArray,
                        sharding: JSharding, xs: Sequence[Any],
                        devices: Sequence[jax.Device], committed: bool = True):
-  from jax._src import array
+  util.test_event("batched_device_put_start")
+  try:
+    from jax._src import array
 
-  bufs = [x for x, d in safe_zip(xs, devices)
-          if (isinstance(x, array.ArrayImpl) and
-              dispatch.is_single_device_sharding(x.sharding) and
-              x.devices() == {d})]
-  if len(bufs) == len(xs):
-    return array.ArrayImpl(
-        aval, sharding, bufs, committed=committed, _skip_checks=True)
-  return xc.batched_device_put(aval, sharding, xs, list(devices), committed)
+    bufs = [x for x, d in safe_zip(xs, devices)
+            if (isinstance(x, array.ArrayImpl) and
+                dispatch.is_single_device_sharding(x.sharding) and
+                x.devices() == {d})]
+    if len(bufs) == len(xs):
+      return array.ArrayImpl(
+          aval, sharding, bufs, committed=committed, _skip_checks=True)
+    return xc.batched_device_put(aval, sharding, xs, list(devices), committed)
+  finally:
+    util.test_event("batched_device_put_end")
 
 def _shard_aval(size, axis: int, aval):
   try:
@@ -1719,20 +1722,19 @@ def _get_and_check_device_assignment(
     devices: Sequence[xc.Device] | None,
 ) -> tuple[xc.Client, tuple[xc.Device, ...]]:
   first_sharding_info = None
-  if devices is None:
-    devices = ()
-  else:
-    devices = tuple(devices)
+  devices = () if devices is None else tuple(devices)
 
-  for i, s_type, source_info in shardings:
-    if isinstance(i, UnspecifiedValue):
+  for sh, s_type, source_info in shardings:
+    if isinstance(sh, UnspecifiedValue):
       continue
-
+    if isinstance(sh, NamedSharding) and isinstance(sh.mesh, AbstractMesh):
+      continue
     if first_sharding_info is None:
       first_sharding_info = (
-          (i.mesh._flat_devices_tuple, s_type, source_info) if isinstance(i, AUTO)
-          else (i._device_assignment, s_type, source_info))
-    arr_device_assignment = i.mesh._flat_devices_tuple if isinstance(i, AUTO) else i._device_assignment
+          (sh.mesh._flat_devices_tuple, s_type, source_info) if isinstance(sh, AUTO)
+           else (sh._device_assignment, s_type, source_info))
+    arr_device_assignment = (sh.mesh._flat_devices_tuple if isinstance(sh, AUTO)
+                             else sh._device_assignment)
     if not devices:
       if first_sharding_info[0] != arr_device_assignment:
         raise DeviceAssignmentMismatchError([
@@ -1833,7 +1835,8 @@ class SemanticallyEqualShardings:
   def __init__(self, shardings: tuple[GSPMDSharding | UnspecifiedValue, ...],
                avals: tuple[core.AbstractValue]):
     gspmd_shardings = [
-        s if isinstance(s, (UnspecifiedValue, AUTO))
+        s if (isinstance(s, (UnspecifiedValue, AUTO)) or
+              (isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh)))
         else to_gspmd_sharding(s, a.ndim)  # pytype: disable=attribute-error
         for s, a in zip(shardings, avals)]
     self._gspmd_shardings = gspmd_shardings
@@ -1891,7 +1894,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
                             propagated_out_mem_kinds: tuple[None | str, ...],
                             platforms: tuple[str, ...],
                             lowering_parameters: mlir.LoweringParameters,
-                            abstract_mesh: mesh_lib.AbstractMesh | None):
+                            abstract_mesh: AbstractMesh | None):
   jaxpr = closed_jaxpr.jaxpr
   in_shardings = semantic_in_shardings.shardings
   out_shardings = semantic_out_shardings.shardings
@@ -1996,7 +1999,9 @@ def jaxpr_transfer_mem_kinds(
   return out
 
 
-def are_all_shardings_default_mem_kind(da_object, shardings):
+def are_all_shardings_default_mem_kind(da_object: xc.DeviceList, shardings):
+  if da_object is None:
+    return True
   try:
     default_mem_kind = da_object.default_memory_kind
   except:
@@ -2078,6 +2083,35 @@ def get_out_layouts_via_propagation(closed_jaxpr: core.ClosedJaxpr
   return tuple(safe_map(read, jaxpr.outvars))
 
 
+def _get_num_devices(
+    shardings, device_assignment
+  ) -> tuple[int, tuple[xc.Device, ...] | None]:
+  """Number of lowering devices, and the device_assignment to use.
+
+  If all the specified shardings have an abstract mesh, then we are compiling
+  with abstract devices, and the returned device_assignment is None.
+  """
+  abstract_mesh, any_concrete_sharding = None, False
+  for s in shardings:
+    if isinstance(s, UnspecifiedValue):
+      continue
+    elif isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):
+      if abstract_mesh is not None and abstract_mesh != s.mesh:
+        raise ValueError("AbstractMesh should be the same across all "
+                         f"shardings. Got {abstract_mesh} and {s.mesh}")
+      abstract_mesh = s.mesh
+    else:
+      any_concrete_sharding = True
+  if (any_concrete_sharding and abstract_mesh is not None and
+      len(device_assignment) != abstract_mesh.size):
+    raise ValueError(
+        f"AbstractMesh size: {abstract_mesh.size} does not match the"
+        f" device assignment size: {len(device_assignment)}")
+  if any_concrete_sharding or abstract_mesh is None:
+    return len(device_assignment), device_assignment
+  return abstract_mesh.size, None
+
+
 MaybeLayout = Sequence[Union[DeviceLocalLayout, AutoLayout, None]]
 
 
@@ -2122,7 +2156,7 @@ def _concretize_abstract_shardings(shardings, avals, device_assignment):
 
   @lru_cache(maxsize=128)
   def _abstract_to_concrete_mesh(abstract_mesh):
-    return mesh_lib.Mesh(
+    return Mesh(
         np_dev.reshape(abstract_mesh.axis_sizes), abstract_mesh.axis_names,
         axis_types=abstract_mesh.axis_types)
 
@@ -2149,7 +2183,7 @@ def lower_sharding_computation(
     donated_invars: Sequence[bool],
     *,
     keep_unused: bool,
-    context_mesh: mesh_lib.Mesh | None,
+    context_mesh: Mesh | None,
     compiler_options_kvs: tuple[tuple[str, Any], ...],
     lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
@@ -2207,6 +2241,7 @@ def lower_sharding_computation(
           ((js, MismatchType.SHARDING_INSIDE_COMPUTATION, source_info)
            for js, source_info in unique_intermediate_shardings)),
       devices_from_context)
+  unique_intermediate_shardings = [js for js, _ in unique_intermediate_shardings]
 
   if config.sharding_in_types.value:
     out_shardings = _concretize_abstract_shardings(
@@ -2217,21 +2252,43 @@ def lower_sharding_computation(
   platforms = lowering_platforms or (
       getattr(backend, "_raw_platform", backend.platform),)
 
-  committed = bool(
-      devices_from_context or
-      len(device_assignment) > 1 or
-      any(not isinstance(i, UnspecifiedValue) for i in unique_in_shardings) or
-      any(not isinstance(js, UnspecifiedValue) for js, _ in unique_intermediate_shardings) or
-      any(not isinstance(o, UnspecifiedValue) for o in unique_out_shardings))
+  prim_requires_devices = dispatch.jaxpr_has_prim_requiring_devices(jaxpr)
 
-  da_object = _create_da_object(tuple(device_assignment))
+  # TODO(yashkatariya): All device specific logic should go in compilation
+  # but this requires a big refactor. The current `_get_num_devices` logic
+  # is good enough to lower with AbstractMesh but cannot be compiled. Once
+  # I refactor, this will also work well with mesh being provided at
+  # compile time.
+  # Sets device_assignment to None if only abstractMesh and unspecified exists.
+  num_devices, device_assignment = _get_num_devices(  # type: ignore
+      it.chain(unique_in_shardings, unique_out_shardings,
+               unique_intermediate_shardings),
+      device_assignment)
+  if device_assignment is None:
+    if lowering_platforms is None:
+      raise ValueError(
+          "Passing lowering_platforms via jax.export or "
+          " jit(f).trace(*args).lower(lowering_platforms=...) is required when"
+          " only AbstractMesh exists in a jitted computation.")
+    if prim_requires_devices:
+      raise ValueError(
+          "AbstractMesh cannot be used when jaxpr contains primitives that"
+          " require devices to be present during lowering.")
+
+  committed = bool(
+      devices_from_context
+      or num_devices > 1
+      or any(not isinstance(s, UnspecifiedValue) for s in it.chain(
+          unique_in_shardings, unique_out_shardings, unique_intermediate_shardings)))
+
+  da_object = (_create_da_object(tuple(device_assignment))
+               if device_assignment is not None else None)
 
   transfer_mem_kind_in_jaxpr = jaxpr_transfer_mem_kinds(jaxpr)
   all_default_mem_kind = are_all_shardings_default_mem_kind(
       da_object,
       it.chain(unique_in_shardings, unique_out_shardings,
-               [js for js, _ in unique_intermediate_shardings],
-               transfer_mem_kind_in_jaxpr))  # pytype: disable=wrong-arg-types
+               unique_intermediate_shardings, transfer_mem_kind_in_jaxpr))  # pytype: disable=wrong-arg-types
 
   if all_default_mem_kind:
     propagated_out_mem_kinds = (None,) * len(global_out_avals)
@@ -2240,12 +2297,12 @@ def lower_sharding_computation(
         closed_jaxpr, in_shardings)
 
   # 2. Build up the HLO
-  prim_requires_devices = dispatch.jaxpr_has_prim_requiring_devices(jaxpr)
 
   abstract_mesh = None
   if prim_requires_devices:
+    assert da_object is not None
     for sharding in it.chain(unique_in_shardings, unique_out_shardings,
-                             [js for js, _ in unique_intermediate_shardings]):
+                             unique_intermediate_shardings):
       if isinstance(sharding, NamedSharding):
         if (abstract_mesh is not None and
             abstract_mesh != sharding.mesh.abstract_mesh):
@@ -2263,7 +2320,7 @@ def lower_sharding_computation(
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
        closed_jaxpr, api_name, fun_name, backend, semantic_in_shardings,
-       semantic_out_shardings, in_layouts, out_layouts, len(da_object),
+       semantic_out_shardings, in_layouts, out_layouts, num_devices,
        tuple(da_object) if prim_requires_devices else None, donated_invars,
        name_stack, all_default_mem_kind, inout_aliases,
        propagated_out_mem_kinds, platforms,
@@ -2296,6 +2353,7 @@ def lower_sharding_computation(
       mut=mut,
       backend=backend,
       device_assignment=da_object,
+      num_devices=num_devices,
       committed=committed,
       in_layouts=in_layouts,
       out_layouts=out_layouts,
@@ -2306,7 +2364,7 @@ def lower_sharding_computation(
       all_default_mem_kind=all_default_mem_kind,
       all_args_info=all_args_info,
       pgle_profiler=pgle_profiler,
-      intermediate_shardings=[s for s, _ in unique_intermediate_shardings],
+      intermediate_shardings=unique_intermediate_shardings,
       context_mesh=context_mesh)
 
 
@@ -2476,7 +2534,7 @@ def _register_out_sharding_handler(
 
 def _gspmd_to_named_sharding(
     out_s: GSPMDSharding, orig_in_s: NamedSharding) -> NamedSharding:
-  assert isinstance(orig_in_s.mesh, mesh_lib.Mesh)
+  assert isinstance(orig_in_s.mesh, Mesh)
   return sharding_impls._gspmd_to_named_sharding_via_mesh(out_s, orig_in_s.mesh)
 
 _register_out_sharding_handler(NamedSharding, _gspmd_to_named_sharding)
@@ -2528,7 +2586,7 @@ def _get_out_sharding_from_orig_sharding(
 
 def maybe_recover_user_shardings(
     old_shardings, new_shardings, old_avals, new_avals,
-    intermediate_shardings=None, context_mesh: mesh_lib.Mesh | None = None):
+    intermediate_shardings=None, context_mesh: Mesh | None = None):
   if all(not isinstance(o, sharding_impls.GSPMDSharding) for o in new_shardings):
     return new_shardings
 
@@ -2816,11 +2874,12 @@ class UnloadedMeshExecutable:
                keepalive: Any,
                kept_var_idx: set[int],
                backend: xb.XlaBackend,
-               device_assignment: xc.DeviceList | Sequence[xc.Device],
+               device_assignment: xc.DeviceList | Sequence[xc.Device] | None,
                committed: bool,
                in_layouts: MaybeLayout,
                out_layouts: MaybeLayout,
                compiler_options_kvs: tuple[tuple[str, Any], ...],
+               num_devices: int,
                pmap_nreps: int = 1,
                mut: MutationData | None = None,
                shape_poly_state: mlir.ShapePolyLoweringState | None = None,
@@ -2828,8 +2887,16 @@ class UnloadedMeshExecutable:
                all_args_info: AllArgsInfo | None = None,
                pgle_profiler: profiler.PGLEProfiler | None = None,
                intermediate_shardings: Sequence[JSharding] | None = None,
-               context_mesh: mesh_lib.Mesh | None = None
+               context_mesh: Mesh | None = None,
   ) -> MeshExecutable:
+    del num_devices  # For compilation, we have an actual device_assignment
+    if (device_assignment is None or
+        any(isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh)
+            for s in it.chain(in_shardings, out_shardings))):
+      raise RuntimeError(
+          "A jitted computation cannot contain AbstractMesh in in_shardings and"
+          " out_shardings during compilation. You can use `jax.export` to "
+          " lower with an AbstractMesh and later compile with concrete devices.")
     if shape_poly_state is not None and shape_poly_state.uses_dim_vars:
       hlo = mlir.refine_polymorphic_shapes(hlo)
     if isinstance(device_assignment, xc.DeviceList):
@@ -2850,6 +2917,7 @@ class UnloadedMeshExecutable:
           mesh = i.mesh
           break
 
+    util.test_event("pxla_cached_compilation")
     xla_executable = _cached_compilation(
         hlo, name, mesh, spmd_lowering,
         tuple_args, auto_spmd_lowering, allow_prop_to_inputs,

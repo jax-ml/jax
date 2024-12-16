@@ -129,6 +129,8 @@ class LaxTest(jtu.JaxTestCase):
         tol = jtu.join_tolerance(tol, 1e-3)
       elif op_name == "lgamma" and dtype == np.float32:
         tol = jtu.join_tolerance(tol, 1e-3)
+    elif op_name == "pow" and dtype == np.complex128:
+      tol = jtu.join_tolerance(tol, 2e-15)
     self._CheckAgainstNumpy(numpy_op, op, args_maker, tol=tol)
 
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
@@ -3365,6 +3367,12 @@ class LaxTest(jtu.JaxTestCase):
   def test_ops_do_not_accept_complex_dtypes(self, op):
     with self.assertRaisesRegex(TypeError, ".*does not accept dtype complex.*"):
       op(2+3j, 4+5j)
+
+  @parameterized.parameters([lax.add, lax.mul, lax.div, lax.rem, lax.lt, lax.gt,
+                             lax.ge, lax.le, lax.eq, lax.ne])
+  def test_ops_error_on_mismatched_dtypes(self, op):
+    with self.assertRaisesRegex(TypeError, ".*requires arguments to have the same dtypes.*"):
+      op(0, 0.0)
 
   def test_population_count_booleans_not_supported(self):
     # https://github.com/jax-ml/jax/issues/3886

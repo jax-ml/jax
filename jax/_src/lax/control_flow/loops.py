@@ -47,7 +47,7 @@ from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import windowed_reductions
 from jax._src.lax.control_flow.common import (
-    _abstractify, _avals_short, _initial_style_jaxpr,
+    _avals_short, _initial_style_jaxpr,
     _initial_style_jaxpr_attrs, _make_closed_jaxpr_attrs, _prune_zeros,
     _typecheck_param)
 from jax._src.lax.other import logaddexp
@@ -275,7 +275,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     init_flat, init_tree = tree_flatten(init)
     in_flat, in_tree = tree_flatten((init, xs))
 
-    carry_avals = tuple(_map(_abstractify, init_flat))
+    carry_avals = tuple(_map(core.get_aval, init_flat))
     jaxpr, consts, out_tree, attrs_tracked = _initial_style_jaxpr_attrs(
         f, in_tree, (*carry_avals, *x_avals), "scan")
     out_tree_children = out_tree.children()
@@ -347,6 +347,10 @@ def _get_states(attrs_tracked):
     vals.extend(leaves)
   return vals
 
+def _capitalize(s):
+  # s.capitalize() converts s[1:] to lowercase which we don't want.
+  return s[0].capitalize() + s[1:]
+
 def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
   try:
     sig = inspect.signature(body_fun)
@@ -361,7 +365,7 @@ def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
                            if p else 'the input carry')
   leaves_and_paths, in_carry_tree = tree_flatten_with_path(in_carry)
   paths, in_carry_flat = unzip2(leaves_and_paths)
-  in_avals = _map(_abstractify, in_carry_flat)
+  in_avals = _map(core.get_aval, in_carry_flat)
   if in_carry_tree != out_carry_tree:
     try:
       out_carry = tree_unflatten(out_carry_tree, out_avals)
@@ -380,7 +384,7 @@ def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
         # The trees may have different aux data but structures are the same.
         return
       if len(diffs) == 1:
-        differences = f'{diffs[0]}.\n'.capitalize()
+        differences = f'{_capitalize(diffs[0])}.\n'
       else:
         differences = ('\n'.join(f'  * {d};\n' for d in diffs[:-1])
                        + f'  * {diffs[-1]}.\n')
@@ -400,7 +404,7 @@ def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
       # The trees may have different aux data but structures are the same.
       return
     if len(diffs) == 1:
-      differences = f'{diffs[0]}.\n'.capitalize()
+      differences = f'{_capitalize(diffs[0])}.\n'
     else:
       differences = ('\n'.join(f'  * {d};\n' for d in diffs[:-1])
                      + f'  * {diffs[-1]}.\n')
@@ -1321,7 +1325,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
 
   def _create_jaxpr(init_val):
     init_vals, in_tree = tree_flatten((init_val,))
-    init_avals = tuple(_map(_abstractify, init_vals))
+    init_avals = tuple(_map(core.get_aval, init_vals))
     cond_jaxpr, cond_consts, cond_tree = _initial_style_jaxpr(
         cond_fun, in_tree, init_avals, "while_cond")
     body_jaxpr, body_consts, body_tree = _initial_style_jaxpr(

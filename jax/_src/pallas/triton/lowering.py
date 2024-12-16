@@ -102,7 +102,7 @@ class LoweringRuleContext:
 
 @dataclasses.dataclass
 class LoweringResult:
-  """Keeps pybind11 objects alive."""
+  """Keeps python objects alive."""
 
   module: ir.Module
   grid: tuple[int, ...]

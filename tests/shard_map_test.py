@@ -811,7 +811,7 @@ class ShardMapTest(jtu.JaxTestCase):
     def f(x):
       x = shard_map(lambda x: x, mesh=abstract_mesh, in_specs=P('i'),
                     out_specs=P('i'))(x)
-      return jnp.sin(x)
+      return jax.lax.sin(x)
 
     with (
         jtu.count_jit_tracing_cache_miss() as tracing_count,
@@ -825,9 +825,9 @@ class ShardMapTest(jtu.JaxTestCase):
       b = jax.device_put(out_a, NamedSharding(mesh2, P()))
       f(b)  # tracing and lowering cache *hit*
 
-    self.assertEqual(tracing_count[0], 2)  # 1 miss for `f` and 1 miss for `sin`
-    self.assertEqual(lowering_count[0], 1)
-    self.assertEqual(compilation_count[0], 2)  # 2 misses since devices differ.
+    self.assertEqual(tracing_count(), 1)
+    self.assertEqual(lowering_count(), 1)
+    self.assertEqual(compilation_count(), 2)  # 2 misses since devices differ.
 
   def test_shmap_abstract_mesh_errors(self):
     mesh = jtu.create_mesh((2,), ('x',))
@@ -2146,6 +2146,22 @@ class ShardMapTest(jtu.JaxTestCase):
           out_specs=P('i'), check_rep=False, auto=frozenset({'j'}))()
 
     self.assertAllClose(jax.jit(f)(), jnp.zeros((2,)))
+
+  def test_partial_auto_axis_index(self):
+    if config.use_shardy_partitioner.value:
+      self.skipTest('Shardy does not support full-to-shard.')
+
+    mesh = jtu.create_mesh((4, 2), ('i', 'j'))
+    out_sharding = NamedSharding(mesh, P('i', None))
+
+    @partial(jax.jit, out_shardings=out_sharding)
+    def f():
+      return shard_map(lambda: jax.lax.axis_index('i').reshape(1,1),
+                       mesh, in_specs=P('i', None), out_specs=P('i', None),
+                       check_rep=False, auto=frozenset({'j'}))()
+
+    self.assertAllClose(f(), np.array(range(4), dtype=np.int32).reshape(-1, 1))
+
 
   def test_vmap_grad_shmap_spmd_axis_name_residuals(self):
     # https://github.com/jax-ml/jax/pull/21032

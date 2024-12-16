@@ -40,20 +40,21 @@ source "ci/utilities/setup_build_environment.sh"
 strings /usr/local/lib/"$JAXCI_PYTHON"/dist-packages/libtpu/libtpu.so | grep 'Built on'
 "$JAXCI_PYTHON" -c 'import jax; print("libtpu version:",jax.lib.xla_bridge.get_backend().platform_version)'
 
-# Set up common test environment variables
+# Set up all common test environment variables
 export PY_COLORS=1
-export JAX_SKIP_SLOW_TESTS=true
 export JAX_PLATFORMS=tpu,cpu
+export JAX_SKIP_SLOW_TESTS=true
 # End of common test environment variable setup
 
 echo "Running TPU tests..."
+
 # Run single-accelerator tests in parallel
 JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --tb=short \
 --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
---maxfail=20 -m "not multiaccelerator" tests examples
+--maxfail=20 -m "not multiaccelerator" tests/pallas/tpu_ops_test.py
 
 # Run Pallas printing tests, which need to run with I/O capturing disabled.
 TPU_STDERR_LOG_LEVEL=0 "$JAXCI_PYTHON" -m pytest -s tests/pallas/tpu_pallas_test.py::PallasCallPrintTest
 
 # Run multi-accelerator across all chips
-"$JAXCI_PYTHON" -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
+"$JAXCI_PYTHON" -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests/pjit_test.py

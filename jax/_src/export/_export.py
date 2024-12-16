@@ -518,7 +518,7 @@ def shape_and_dtype_jax_array(a) -> tuple[Sequence[int | None], DType]:
   """Returns the shape and dtype of a jax.Array or a j"""
   if isinstance(a, jax.ShapeDtypeStruct):
     return a.shape, a.dtype
-  aval = core.raise_to_shaped(core.get_aval(a))
+  aval = core.get_aval(a)
   return aval.shape, aval.dtype
 
 
@@ -633,7 +633,7 @@ def _export_lowered(
     jaxpr: core.ClosedJaxpr,
     fun_name: str,
     disabled_checks: Sequence[DisabledSafetyCheck] = (),
-    _device_assignment_for_internal_jax2tf_use_only = None,
+    _device_assignment_for_internal_jax2tf_use_only=None,
   ) -> Exported:
   version = config.jax_export_calling_convention_version.value
   if (version < minimum_supported_calling_convention_version or
@@ -698,7 +698,7 @@ def _export_lowered(
   ordered_effects = tuple(lowering.compile_args["ordered_effects"])
   unordered_effects = tuple(lowering.compile_args["unordered_effects"])
 
-  nr_devices = len(lowering.compile_args["device_assignment"])
+  nr_devices = lowering.compile_args["num_devices"]
   def export_sharding(s: LoweringSharding,
                       aval: core.ShapedArray) -> HloSharding | None:
     if isinstance(s, sharding_impls.UnspecifiedValue):
@@ -971,7 +971,8 @@ def _check_lowering(lowering) -> None:
       "keepalive", "host_callbacks", "pmap_nreps", "committed",
       "device_assignment", "jaxpr_debug_info", "shape_poly_state",
       "all_default_mem_kind", "in_layouts", "out_layouts", "all_args_info",
-      "pgle_profiler", "intermediate_shardings", "context_mesh"}
+      "pgle_profiler", "intermediate_shardings", "context_mesh",
+      "num_devices"}
   for compile_arg in lowering.compile_args.keys():
     if compile_arg not in allowed_compile_args:
       raise NotImplementedError(f"Unrecognized lowered.compile_args[{compile_arg}]")

@@ -498,7 +498,7 @@ def _make_jit_wrapper(fun: Callable, jit_info: PjitInfo):
     donate_argnums = tuple(i for i, d in enumerate(p.donated_invars) if d)
     args_info = stages.make_args_info(p.in_tree, p.in_avals, donate_argnums)
     lower_callable = partial(_resolve_and_lower, args_flat, **p.params,
-                            pgle_profiler=None)
+                             pgle_profiler=None)
     return stages.Traced(
         p.params['jaxpr'], args_info, p.params["name"], p.out_tree,
         lower_callable, p.abstract_mesh, args_flat, p.arg_names, p.num_consts)
@@ -549,6 +549,7 @@ def _infer_params_impl(
     kwargs: dict[str, Any],
     in_avals: tuple[core.AbstractValue, ...] | None,
 ) -> tuple[PjitParams, list[Any]]:
+  util.test_event("pjit._infer_params_impl", fun)
   have_kwargs = bool(kwargs)
   if have_kwargs and ji.user_specified_in_shardings:
     raise ValueError(
@@ -1297,6 +1298,7 @@ def _create_pjit_jaxpr(
     ignored_inline: IgnoreKey
 ) -> tuple[core.ClosedJaxpr, list[Any], list[core.AbstractValue],
            list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]]:
+  util.test_event("create_pjit_jaxpr")
   del ignored_inline  # just for explain_cache_miss
   if config.no_tracing.value:
     raise RuntimeError(f"re-tracing function {fun.f} for `jit`, but "
@@ -1784,6 +1786,7 @@ def _pjit_lower(
     lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
     pgle_profiler: profiler.PGLEProfiler | None):
+  util.test_event("pjit_lower")
   if config.sharding_in_types.value:
     mesh, api_name = mesh_lib.get_concrete_mesh(), 'jit'
   else:
@@ -2109,18 +2112,23 @@ def _pjit_linearization(nzs, *primals_in, jaxpr,
   def tangent_fun(consts_, *tangents):
     tangents_nz = _filter_zeros(nzs, tangents)
     assert len(consts_) == num_residuals
-    return pjit_p.bind(*(*tangents_nz, *consts_),
-                       jaxpr=tangent_jaxpr,
-                       in_shardings=_filter_zeros(nzs, in_shardings) + res_shardings,
-                       out_shardings=_filter_zeros(nzs_out, out_shardings),
-                       in_layouts=_filter_zeros(nzs, in_layouts) + res_layouts,
-                       out_layouts=_filter_zeros(nzs_out, out_layouts),
-                       resource_env=resource_env,
-                       donated_invars=_filter_zeros(nzs, donated_invars) + res_donated,
-                       name=name,
-                       keep_unused=keep_unused,
-                       inline=inline,
-                       compiler_options_kvs=compiler_options_kvs)
+    nz_tangents_out = pjit_p.bind(*(*tangents_nz, *consts_),
+        jaxpr=tangent_jaxpr,
+        in_shardings=_filter_zeros(nzs, in_shardings) + res_shardings,
+        out_shardings=_filter_zeros(nzs_out, out_shardings),
+        in_layouts=_filter_zeros(nzs, in_layouts) + res_layouts,
+        out_layouts=_filter_zeros(nzs_out, out_layouts),
+        resource_env=resource_env,
+        donated_invars=_filter_zeros(nzs, donated_invars) + res_donated,
+        name=name,
+        keep_unused=keep_unused,
+        inline=inline,
+        compiler_options_kvs=compiler_options_kvs)
+    tangent_avals_out = [v.aval.to_tangent_aval() for v in jaxpr.jaxpr.outvars]
+    nz_tangents_out_ = iter(nz_tangents_out)
+    tangents_out = [next(nz_tangents_out_) if nz else ad.Zero(aval)
+                   for (aval, nz) in zip(tangent_avals_out, nzs_out)]
+    return tangents_out
 
   def _filter_zeros(is_nz_l, l):
     return tuple(x for nz, x in zip(is_nz_l, l) if nz)
@@ -2348,8 +2356,7 @@ def _pjit_transpose(cts_in, *primals_in,
     *prune_type(ad.UndefinedPrimal, in_layouts, primals_in),
     *prune_type(ad.Zero, out_layouts, cts_in)
   )
-  global_cts_in_avals = tuple(core.raise_to_shaped(core.get_aval(ct))
-                              for ct in primals_and_nz_cts_in)
+  global_cts_in_avals = tuple(core.get_aval(ct) for ct in primals_and_nz_cts_in)
 
   transpose_jaxpr, attrs_tracked = _pjit_transpose_trace(
       body, global_cts_in_avals)

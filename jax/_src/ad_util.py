@@ -19,7 +19,7 @@ from typing import Any, TypeVar
 
 from jax._src import core
 from jax._src import traceback_util
-from jax._src.core import Primitive, valid_jaxtype, raise_to_shaped, get_aval
+from jax._src.core import Primitive, valid_jaxtype, get_aval
 from jax._src.tree_util import register_pytree_node, tree_map
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import safe_map
@@ -51,7 +51,7 @@ def zeros_like_aval(aval: core.AbstractValue) -> Array:
 aval_zeros_likers: dict[type, Callable[[Any], Array]] = {}
 
 def zeros_like_jaxval(val):
-  return zeros_like_aval(core.raise_to_shaped(core.get_aval(val)))
+  return zeros_like_aval(core.get_aval(val))
 
 def instantiate(z: Zero | Array) -> Array:
   if isinstance(z, Zero):
@@ -67,7 +67,7 @@ class Zero:
     return f'Zero({self.aval})'
   @staticmethod
   def from_primal_value(val: Any) -> Zero:
-    return Zero(raise_to_shaped(get_aval(val)).to_tangent_aval())
+    return Zero(get_aval(val).to_tangent_aval())
 
 register_pytree_node(Zero, lambda z: ((), z.aval), lambda aval, _: Zero(aval))
 

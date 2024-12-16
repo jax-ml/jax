@@ -660,7 +660,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     jax.grad(f)(x)  # Warm up the cache.
     with jtu.count_pjit_cpp_cache_miss() as count:
       jax.grad(f)(x)
-    self.assertEqual(count[0], 0)  # no cache miss i.e. cache hit
+    self.assertEqual(count(), 0)  # no cache miss i.e. cache hit
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testEvalJaxpr(self):
@@ -2200,7 +2200,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:
       out = f(a)
       _ = f(out)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_pjit_different_device_recompilation(self):
     if jax.device_count() < 2:
@@ -2217,7 +2217,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jtu.count_jit_compilation_cache_miss() as count:
       out1 = f(a)
       out2 = f(b)
-    self.assertEqual(count[0], 2)
+    self.assertEqual(count(), 2)
 
     self.assertArraysEqual(out1, val1)
     self.assertArraysEqual(out2, val2)
@@ -2645,7 +2645,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
             inp_data, jax.sharding.NamedSharding(mesh, P('x')))
         with mesh:
           f(arr1)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_single_device_add_single_compile(self):
     f1 = pjit(lambda x, y: x + y)
@@ -2657,7 +2657,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(2):
         f1(a, b)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_global_array_to_host_local_array_already_host_local(self):
     inp_shape = (8, 2)
@@ -2791,7 +2791,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       f_names = pjit(f, static_argnames='x')
       f_names(y, x='foo')
       f_names(y, x='foo')
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_new_static_argnum_on_keyword_arguments(self):
     f = pjit(lambda x: x, static_argnums=0)
@@ -2834,7 +2834,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     # The count here is 0 because before `count_pjit_cpp_cache_miss`, `f` was
     # called with `system_default_device` and `test_device` so it was added
     # to the cache. Subsequent calls hit the C++ cache.
-    self.assertEqual(count[0], 0)
+    self.assertEqual(count(), 0)
 
   def test_pjit_with_mismatched_static_argnames(self):
     x_is_tracer, y_is_tracer = False, False
@@ -3287,7 +3287,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(10):
         pjit(f)(inp)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_pjit_no_global_cache_hit_axis_resources(self):
     mesh = jtu.create_mesh((1,), ('x',))
@@ -3297,20 +3297,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(10):
         pjit(lambda x: x * 2, in_shardings=s, out_shardings=s)(inp)
-    self.assertEqual(count[0], 10)
+    self.assertEqual(count(), 10)
 
     with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(10):
         with jtu.ignore_warning(category=DeprecationWarning,
                                 message="backend and device argument"):
           pjit(lambda x: x * 2, device=jax.devices()[0])(inp)
-    self.assertEqual(count[0], 10)
+    self.assertEqual(count(), 10)
 
     pf = pjit(lambda x: x * 2, in_shardings=s, out_shardings=s)
     with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(10):
         pf(inp)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
     with jtu.ignore_warning(category=DeprecationWarning,
                             message="backend and device argument"):
@@ -3318,7 +3318,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(10):
         pf1(inp)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_with_sharding_constraint_spmd_axis_name(self):
     mesh = jtu.create_mesh((2, 2, 2), ('replica', 'data', 'mdl'))
@@ -3484,7 +3484,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
       out = f(arr)
       self.assertIsInstance(out.sharding, NamedSharding)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
     with jtu.count_pjit_cpp_cache_miss() as count:
       out2 = f2(arr)
@@ -3493,7 +3493,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
       out2 = f2(arr)
       self.assertIsInstance(out2.sharding, PositionalSharding)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
     self.assertEqual(cache_info2.misses, cache_info1.misses)
@@ -3530,7 +3530,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertIsInstance(out2.sharding, NamedSharding)
 
     # Drops out of C++ cache i.e. cache miss
-    self.assertEqual(count[0], 2)
+    self.assertEqual(count(), 2)
     # Still gets a hit on pjit_lower cache.
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
     self.assertEqual(cache_info2.misses, cache_info1.misses)
@@ -3600,7 +3600,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
       out3 = vf(out2)
       self.assertIsInstance(out3.sharding, NamedSharding)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_jit_mul_sum_sharding_preserved(self):
     if config.use_shardy_partitioner.value:
@@ -3625,7 +3625,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       # This will hit the cpp cache.
       out3 = f(out2)
       self.assertIsInstance(out3.sharding, PositionalSharding)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
     self.assertEqual(cache_info2.misses, cache_info1.misses)
@@ -3755,7 +3755,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       top(jnp.arange(8))
 
     # The count should be 1 because `nest`'s lowering to MHLO should be cached.
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_wsc_eager(self):
     mesh = jtu.create_mesh((2,), ('x',))
@@ -3792,7 +3792,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:
       out1 = core.jaxpr_as_fun(jaxpr)(inp)
       out2 = core.jaxpr_as_fun(jaxpr)(inp)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
     self.assertArraysEqual(out1[0], inp * 2)
     self.assertArraysEqual(out2[0], inp * 2)
 
@@ -3970,7 +3970,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with jtu.count_jit_and_pmap_lowerings() as count:
       g(np.arange(8))
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_lowering_cache_miss_different_devices_and_sharding(self):
     if jax.device_count() < 4:
@@ -3993,7 +3993,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with jtu.count_jit_and_pmap_lowerings() as count:
       g(np.arange(8))
-    self.assertEqual(count[0], 2)
+    self.assertEqual(count(), 2)
 
   def test_single_device_named_sharding_preserved(self):
     mesh = jax.sharding.Mesh([jax.devices()[0]], 'x')
@@ -4021,7 +4021,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     # that is expected.
     with jtu.count_device_put_fast_path_hit() as count:
       out = jax.device_put(arr1, NamedSharding(mesh2, P('x')))
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
     self.assertTupleEqual(out.sharding._device_assignment,
                           mesh2._flat_devices_tuple)
     self.assertArraysEqual(out, inp)
@@ -4523,7 +4523,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     def f(x):
       x = with_sharding_constraint(
           x, NamedSharding(mesh_lib.AbstractMesh(mesh1.shape_tuple), P('x')))
-      return jnp.sin(x)
+      return jax.lax.sin(x)
 
     with (
         jtu.count_jit_tracing_cache_miss() as tracing_count,
@@ -4536,9 +4536,10 @@ class ArrayPjitTest(jtu.JaxTestCase):
       # same num_devices but different devices.
       b = jax.device_put(out_a, NamedSharding(mesh2, P()))
       f(b)  # tracing and lowering cache *hit*
-    self.assertEqual(tracing_count[0], 2)  # 1 miss for `f` and 1 miss for `sin`
-    self.assertEqual(lowering_count[0], 1)
-    self.assertEqual(compilation_count[0], 2)  # 2 misses since devices differ.
+
+    self.assertEqual(tracing_count(), 1)
+    self.assertEqual(lowering_count(), 1)
+    self.assertEqual(compilation_count(), 2)  # 2 misses since devices differ.
 
   def test_wsc_abstract_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
@@ -4621,7 +4622,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:
       jax.jit(f, out_shardings=s)(np.arange(8))
       jax.jit(f, out_shardings=s)(np.arange(8))
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_input_shardings_single_device(self):
     @jax.jit
@@ -4630,6 +4631,54 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     ins, _ = f.lower(np.arange(8)).compile().input_shardings
     self.assertEqual(ins[0], SingleDeviceSharding(jax.devices()[0]))
+
+  def test_abstract_mesh_lower(self):
+    mesh = jtu.create_mesh((2,), 'x')
+    mesh2 = jtu.create_mesh((1,), 'x')
+
+    abstract_sds = jax.ShapeDtypeStruct(
+        (8, 2), jnp.float32, sharding=NamedSharding(mesh.abstract_mesh, P('x')))
+    abstract_sds2 = jax.ShapeDtypeStruct(
+        (8, 2), jnp.float32, sharding=NamedSharding(mesh2.abstract_mesh, P('x')))
+
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    lowered = f.trace(abstract_sds).lower(lowering_platforms=('tpu',))
+    self.assertIn('num_partitions = 2', lowered.as_text())
+
+    with self.assertRaisesRegex(
+        RuntimeError, 'A jitted computation cannot contain AbstractMesh'):
+      lowered.compile()
+
+    @jax.jit
+    def g(x, y):
+      return x, y
+
+    concrete_s = NamedSharding(mesh, P('x'))
+    concrete_sds = jax.ShapeDtypeStruct((8,), jnp.float32, sharding=concrete_s)
+    with self.assertRaisesRegex(
+        ValueError,
+        'AbstractMesh size: 1 does not match the device assignment size: 2'):
+      g.lower(abstract_sds2, concrete_sds)
+
+    with self.assertRaisesRegex(
+        ValueError, "Passing lowering_platforms.*is required"):
+      g.lower(abstract_sds, np.arange(8))
+
+    lowered2 = g.trace(abstract_sds, np.arange(8)).lower(
+        lowering_platforms=('tpu',))
+    self.assertIn('num_partitions = 2', lowered2.as_text())
+    with self.assertRaisesRegex(
+        RuntimeError, 'A jitted computation cannot contain AbstractMesh'):
+      lowered2.compile()
+
+    lowered3 = g.lower(abstract_sds, concrete_sds)
+    self.assertIn('num_partitions = 2', lowered3.as_text())
+    with self.assertRaisesRegex(
+        RuntimeError, 'A jitted computation cannot contain AbstractMesh'):
+      lowered3.compile()
 
 
 def spec_regex(s):
@@ -5547,6 +5596,16 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         ValueError,
         "AxisTypes should be the same in a tuple subset of PartitionSpec"):
       NamedSharding(mesh2, P(('x', 'y')))
+
+  @jtu.with_user_mesh((2, 2), ('x', 'y'))
+  def test_where_with_scalar(self, mesh):
+    np_inp = np.arange(16.).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    x = jax.device_put(np_inp, s)
+
+    out = jnp.where(x > 0, x, 0)
+    self.assertArraysEqual(out, x)
+    self.assertEqual(out.sharding, s)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

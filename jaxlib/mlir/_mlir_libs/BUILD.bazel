@@ -158,6 +158,7 @@ py_extension(
         "//jaxlib/mosaic/dialect/gpu:gpu_dialect_capi",
         "@llvm-project//mlir:CAPIIRHeaders",
         "@llvm-project//mlir:MLIRBindingsPythonHeadersAndDeps",
+        "@nanobind",
     ],
 )
 
@@ -177,8 +178,10 @@ py_extension(
         "@com_google_absl//absl/log:check",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:CAPIIRHeaders",
-        "@llvm-project//mlir:MLIRBindingsPythonHeadersAndDeps",
-        "@pybind11",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeadersAndDeps",
+        "@nanobind",
+        "@xla//xla/python:nb_numpy",
+        "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
 
@@ -203,8 +206,8 @@ pybind_extension(
         ":jaxlib_mlir_capi_shared_library",
         "//jaxlib/triton:triton_dialect_capi_headers",
         "@llvm-project//mlir:CAPIIRHeaders",
-        "@llvm-project//mlir:MLIRBindingsPythonHeadersAndDeps",
-        "@pybind11",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeadersAndDeps",
+        "@nanobind",
     ],
 )
 
@@ -266,9 +269,9 @@ py_extension(
         "@llvm-project//mlir:CAPISCFHeaders",
         "@llvm-project//mlir:CAPITransformsHeaders",
         "@llvm-project//mlir:CAPIVectorHeaders",
-        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeaders",
         "@local_config_python//:headers",
-        "@pybind11",
+        "@nanobind",
         "@shardy//shardy/integrations/c:sdy_capi_headers",
     ],
 )

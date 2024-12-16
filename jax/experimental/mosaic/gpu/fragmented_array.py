@@ -1130,7 +1130,27 @@ class FragmentedArray:
     )
 
   # NOTE: scratch can be reused immediately once this function returns.
-  def reduce_sum(self, scratch):
+  def reduce_sum(self, scratch: ir.Value | None = None):
+    if isinstance(self.layout, WGSplatFragLayout):
+      [reg] = self.registers.flat
+      if ir.FloatType.isinstance(self.mlir_dtype):
+        op = arith.mulf
+      elif ir.IntegerType.isinstance(self.mlir_dtype):
+        op = arith.muli
+      else:
+        raise NotImplementedError(self.mlir_dtype)
+      return FragmentedArray.splat(
+          op(reg, utils.c(math.prod(self.shape), self.mlir_dtype)),
+          (),
+          is_signed=self.is_signed,
+      )
+
+    if not isinstance(self.layout, WGStridedFragLayout):
+      raise NotImplementedError(f"Unsupported layout {self.layout}")
+
+    if scratch is None:
+      raise ValueError("scratch must be provided")
+
     if ir.FloatType.isinstance(self.mlir_dtype):
       op = addf
     elif ir.IntegerType.isinstance(self.mlir_dtype):
@@ -1138,9 +1158,6 @@ class FragmentedArray:
     else:
       raise NotImplementedError(self.mlir_dtype)
 
-    index = ir.IndexType.get()
-    if not isinstance(self.layout, WGStridedFragLayout):
-      raise NotImplementedError(f"Unsupported layout {self.layout}")
     result = c(0, self.mlir_dtype)
     for reg in self.registers:
       result = op(
@@ -1151,6 +1168,7 @@ class FragmentedArray:
     if scratch_ty.element_type != self.mlir_dtype or scratch_ty.shape != [4]:
       raise ValueError(f"Expected shape={(4,)}, {self.mlir_dtype} (got {scratch_ty})")
 
+    index = ir.IndexType.get()
     warp_result = utils.warp_tree_reduce(result, op, 32)
     warp_id = arith.divui(gpu.thread_id(gpu.Dimension.x), c(32, index))
     memref.store(warp_result, scratch, [warp_id])

@@ -588,7 +588,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
     with jtu.count_primitive_compiles() as count:
       for _ in range(3):
         self.assertAllClose(2 * x, fun(x))
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
 
 class PureCallbackTest(jtu.JaxTestCase):

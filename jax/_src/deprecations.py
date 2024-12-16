@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+import functools
 from types import ModuleType
 import warnings
 
@@ -45,6 +46,7 @@ import warnings
 #   )
 # del typing
 def deprecation_getattr(module, deprecations):
+  @functools.cache
   def getattr(name):
     if name in deprecations:
       message, fn = deprecations[name]

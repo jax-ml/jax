@@ -89,9 +89,12 @@ def _infer_pointwise_op_layouts(
   if layout is None:
     # Still no layout set. We iterate on producers.
     for operand in op.operands:
-      layout = _extract_any_layout_from_op(operand.owner)
-      if layout:
-        break
+      if isinstance(operand.owner, ir.Operation) or isinstance(
+          operand.owner, ir.OpView
+      ):
+        layout = _extract_any_layout_from_op(operand.owner)
+        if layout:
+          break
 
   if layout is None:
     return None
@@ -141,7 +144,7 @@ def traverse_op(
       else:
         ops_to_traverse = reversed(list(block))
       for block_op in ops_to_traverse:
-        callback(block_op)
+        traverse_op(block_op, callback, traversal_order)
   callback(op)
 
 

@@ -90,7 +90,7 @@ def _reduce_window(
     return monoid_reducer(operand, window_dimensions, window_strides, padding,
                           base_dilation, window_dilation)
   else:
-    flat_init_avals = map(lax._abstractify, flat_init_values)
+    flat_init_avals = map(core.get_aval, flat_init_values)
     jaxpr, out_tree = lax._variadic_reduction_jaxpr(
         computation, tuple(flat_init_avals), init_value_tree
     )
@@ -176,7 +176,7 @@ def _reduce_window_prod(operand: Array, window_dimensions: core.Shape,
                         base_dilation: Sequence[int] | None = None,
                         window_dilation: Sequence[int] | None = None) -> Array:
   init_value = lax._const(operand, 1)
-  jaxpr, consts = lax._reduction_jaxpr(lax.mul, lax._abstractify(init_value))
+  jaxpr, consts = lax._reduction_jaxpr(lax.mul, core.get_aval(init_value))
   if base_dilation is None:
     base_dilation = (1,) * len(window_dimensions)
   if window_dilation is None:
@@ -226,7 +226,7 @@ def _reduce_window_logaddexp(
     base_dilation: Sequence[int] | None = None,
     window_dilation: Sequence[int] | None = None) -> Array:
   init_value = lax._const(operand, -np.inf)
-  jaxpr, consts = lax._reduction_jaxpr(logaddexp, lax._abstractify(init_value))
+  jaxpr, consts = lax._reduction_jaxpr(logaddexp, core.get_aval(init_value))
   if base_dilation is None:
     base_dilation = (1,) * len(window_dimensions)
   if window_dilation is None:
@@ -245,9 +245,9 @@ def _select_and_scatter(operand: Array, select: Callable,
                         padding: Sequence[tuple[int, int]], source: Array,
                         init_value: Array, scatter: Callable) -> Array:
   select_jaxpr, select_consts = lax._reduction_jaxpr(
-    select, lax._abstractify(init_value))
+    select, core.get_aval(init_value))
   scatter_jaxpr, scatter_consts = lax._reduction_jaxpr(
-    scatter, lax._abstractify(init_value))
+    scatter, core.get_aval(init_value))
   return select_and_scatter_p.bind(
       operand, source, init_value, select_jaxpr=select_jaxpr,
       select_consts=select_consts, scatter_jaxpr=scatter_jaxpr,

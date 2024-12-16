@@ -20,6 +20,8 @@ from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import func
+from jax._src.lib.mlir.dialects import scf
 from jax.experimental.mosaic.gpu import dialect as mgpu  # pylint: disable=g-importing-member
 from jax.experimental.mosaic.gpu import infer_layout  # pylint: disable=g-importing-member
 from jax.experimental.mosaic.gpu import splat_fragmented_layout  # pylint: disable=g-importing-member
@@ -110,6 +112,29 @@ class LayoutInferenceTest(parameterized.TestCase):
       self.assertSequenceEqual(
           op.attributes["out_layouts"], [layout] * len(op.results)
       )
+
+  def test_infer_layout_traverses_ops_correctly(self):
+    shape = (4, 8)
+    elt_type = ir.BF16Type.get()
+    add_op = None
+
+    def body(a, b):
+      bool_type = ir.IntegerType.get_signless(1)
+      cst_true = arith.constant(bool_type, ir.IntegerAttr.get(bool_type, 1))
+      if_op = scf.IfOp(cst_true)
+      with ir.InsertionPoint(if_op.then_block):
+        nonlocal add_op
+        add_op = arith.addf(a, b)
+        scf.yield_([])
+
+    with ir.InsertionPoint(self.module.body):
+      ab_type = ir.VectorType.get(shape, elt_type)
+      func.FuncOp.from_py_func(ab_type, ab_type)(body)
+
+    infer_layout(self.module)
+
+    self.assertIn("in_layouts", add_op.owner.attributes)
+    self.assertIn("out_layouts", add_op.owner.attributes)
 
 
 if __name__ == "__main__":

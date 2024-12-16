@@ -1081,7 +1081,7 @@ class JitTest(jtu.BufferDonationTestCase):
     args = range(num_args)
     with jtu.count_device_put() as count:
       np.testing.assert_allclose(f_pruned(*args), 3)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def testBuffersAreFreedPromptly(self):
     # Regression test for a bug where garbage collection was delayed too long
@@ -1246,7 +1246,7 @@ class JitTest(jtu.BufferDonationTestCase):
     jitted_f = jit(lambda x, y: x, keep_unused=True)
     with jtu.count_pjit_cpp_cache_miss() as count:
       _ = jitted_f(1, 2)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_jit_lower_compile_compiler_ir(self):
     f = jit(lambda x: x + 4).lower(1.).compile()
@@ -1428,7 +1428,7 @@ class JitTest(jtu.BufferDonationTestCase):
     with jtu.count_jit_compilation_cache_miss() as count:
       jit(f, compiler_options={"xla_embed_ir_in_executable": True})(1.)
       jit(f, compiler_options={"xla_embed_ir_in_executable": False})(1.)
-    self.assertEqual(count[0], 2)
+    self.assertEqual(count(), 2)
 
     # We should still error on invalid options after some valid compiles
     with self.assertRaisesRegex(
@@ -1511,7 +1511,7 @@ class JitTest(jtu.BufferDonationTestCase):
     expected = f()
     with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       ans = jax.vmap(f, axis_size=2, out_axes=None)()
-    self.assertEqual(count[0], 0)  # no compiles
+    self.assertEqual(count(), 0)  # no compiles
     self.assertArraysAllClose(ans, expected, check_dtypes=True)
 
   def test_cache_key_defaults(self):
@@ -2737,7 +2737,7 @@ class APITest(jtu.JaxTestCase):
       jax.eval_shape(f, inp)
       jax.jit(f)(inp)
 
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_jit_infer_params_cache(self):
     def f(x):
@@ -3384,12 +3384,12 @@ class APITest(jtu.JaxTestCase):
 
     with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       _  = jax.grad(f)(3.)
-    self.assertEqual(count[0], 2)  # one for fwd, one for bwd
+    self.assertEqual(count(), 2)  # one for fwd, one for bwd
 
     with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       _  = jax.grad(f)(3.)
       _  = jax.grad(f)(4.)
-    self.assertEqual(count[0], 0)  # cache hits on both fwd and bwd
+    self.assertEqual(count(), 0)  # cache hits on both fwd and bwd
 
   def test_grad_does_not_unflatten_tree_with_none(self):
     # https://github.com/jax-ml/jax/issues/7546
@@ -3458,7 +3458,7 @@ class APITest(jtu.JaxTestCase):
     with jtu.count_primitive_compiles() as count:
       lax.add(1, 2)
       lax.add(2, 3)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_arange_jit(self):
     # see https://github.com/jax-ml/jax/issues/553
@@ -4021,7 +4021,7 @@ class APITest(jtu.JaxTestCase):
       jax.eval_shape(jax.numpy.array, 1)
       out = jax.eval_shape(jax.numpy.array, 1)
 
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
     self.assertTrue(out.weak_type)
     self.assertEqual(out.weak_type, arr.weak_type)
 
@@ -4296,19 +4296,19 @@ class APITest(jtu.JaxTestCase):
       for _ in range(5):
         jax.hessian(jf)(x).block_until_ready()
 
-      n = count[0]
+      n = count()
       # The exact number of compilations may vary depending on the number of
       # jit decorators in the function above, but it should not grow after an
       # initial warmup phase.
       for _ in range(5):
         jax.hessian(jf)(x).block_until_ready()
 
-    self.assertEqual(count[0], n)
+    self.assertEqual(count(), n)
 
   def test_jnp_array_doesnt_device_put(self):
     with jtu.count_device_put() as count:
       api.make_jaxpr(lambda: jnp.array(3))()
-    self.assertEqual(count[0], 0)
+    self.assertEqual(count(), 0)
 
   def test_rank_promotion_forces_retrace(self):
     num_traces = 0
@@ -5910,7 +5910,7 @@ class RematTest(jtu.JaxTestCase):
     with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       for _ in range(20):
         f_lin(1.).block_until_ready()
-    self.assertEqual(count[0], 1)  # cached after first execution
+    self.assertEqual(count(), 1)  # cached after first execution
 
   def test_vjp_caching(self):
     # https://github.com/jax-ml/jax/issues/9661
@@ -5919,7 +5919,7 @@ class RematTest(jtu.JaxTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:  # noqa: F841
       for _ in range(20):
         f_vjp(1.)[0].block_until_ready()
-    self.assertEqual(count[0], 2)  # fwd execute_trivial, backward_pass on bwd
+    self.assertEqual(count(), 2)  # fwd execute_trivial, backward_pass on bwd
 
   def test_vjp_caching_static_argnums(self):
     identity = jax.remat(lambda x, y: jax.jit(lambda x: 2 * x if y else x)(x),
@@ -5928,7 +5928,7 @@ class RematTest(jtu.JaxTestCase):
     with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       for _ in range(20):
         f_vjp(1.)[0].block_until_ready()
-    self.assertEqual(count[0], 2)  # fwd execute_trivial, backward_pass on bwd
+    self.assertEqual(count(), 2)  # fwd execute_trivial, backward_pass on bwd
 
   def test_fwd_caching(self):
     # see above test also
@@ -5937,7 +5937,7 @@ class RematTest(jtu.JaxTestCase):
       for _ in range(20):
         y, _ = jax.vjp(identity, 1.)
         y.block_until_ready()
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_fwd_caching_static_argnums(self):
     # see above test also
@@ -5946,7 +5946,7 @@ class RematTest(jtu.JaxTestCase):
       for _ in range(20):
         y = identity(1.)
         y.block_until_ready()
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}

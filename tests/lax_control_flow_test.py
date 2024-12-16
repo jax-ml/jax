@@ -1897,6 +1897,16 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         re.escape("scan body output must be a pair, got ShapedArray(float32[]).")):
       lax.scan(lambda c, x: np.float32(0.), 0, jnp.arange(5.))
 
+  def testScanMetadataError(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/25507
+    def f(loop_i, x):
+      return {'T': jnp.array([0.5])}
+
+    init_val = {'t': jnp.array([1.0])}
+    msg = r".*with pytree metadata \('t',\).*with pytree metadata \('T',\)"
+    with self.assertRaisesRegex(TypeError, msg):
+      jax.lax.fori_loop(0, 1, f, init_val)
+
   def testScanBodyCarryPytreeMismatchErrors(self):
     with self.assertRaisesRegex(
         TypeError,
@@ -2621,7 +2631,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         lax.cond(x, f, g, x)
     # Should observe a maximum of 4 compiles: convert_element_type, f, g, cond
     # In #14058, this was observed to be 31 compiles.
-    self.assertLess(count[0], 5)
+    self.assertLess(count(), 5)
 
   @parameterized.named_parameters(
       {"testcase_name": f"_dtype={dtype.__name__}", "dtype": dtype}
