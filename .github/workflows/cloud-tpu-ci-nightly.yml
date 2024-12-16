@@ -38,7 +38,7 @@ jobs:
       PYTHON: python${{ matrix.python-version }}
     runs-on: ${{ matrix.tpu.runner }}
     container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest"
-    timeout-minutes: 120
+    timeout-minutes: 180
     defaults:
       run:
         shell: bash -ex {0}
