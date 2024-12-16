@@ -855,7 +855,7 @@ def _maybe_check_special(outs):
   try:
     dispatch.check_special('shard_map', bufs)
   except dispatch.InternalFloatingPointError as e:
-    raise FloatingPointError(f'Invalid value ({e.ty}) encountered in sharded computation.')
+    raise FloatingPointError(f'Invalid value ({e.ty}) encountered in sharded computation.') from None
 
 class ShardMapTrace(core.Trace):
   mesh: Mesh
@@ -1604,10 +1604,21 @@ def _shard_map_transpose(out_cts, *args, jaxpr, mesh, in_names, out_names,
   def new_out_names_thunk():
     return tuple(names for names, nz in zip(in_names, nz_arg_cts()) if nz)
 
-  out_flat = shard_map_p.bind(
-      fun_trans_flat, *all_args, mesh=mesh, in_names=tuple(new_in_names),
-      out_names_thunk=new_out_names_thunk, check_rep=check_rep, rewrite=rewrite,
-      auto=auto)
+  try:
+    out_flat = shard_map_p.bind(
+        fun_trans_flat, *all_args, mesh=mesh, in_names=tuple(new_in_names),
+        out_names_thunk=new_out_names_thunk, check_rep=check_rep, rewrite=rewrite,
+        auto=auto)
+  except (FloatingPointError, ZeroDivisionError) as e:
+    print("Invalid nan value encountered in the backward pass of a shard_map "
+          "function. Calling the de-optimized backward pass.")
+    try:
+      _ = fun_trans.call_wrapped(out_cts, args)
+    except (FloatingPointError, ZeroDivisionError) as e2:
+      raise e2 from None
+    else:
+      dispatch._raise_no_nan_in_deoptimized(e)
+
   return tree_unflatten(out_tree(), out_flat)
 ad.primitive_transposes[shard_map_p] = _shard_map_transpose
 
