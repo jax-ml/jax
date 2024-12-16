@@ -371,6 +371,7 @@ class IndexerOpsTest(PallasBaseTest):
     np.testing.assert_array_equal(left_out_np, left_out)
     np.testing.assert_array_equal(right_out_np, right_out)
 
+  @hp.settings(suppress_health_check=[hp.HealthCheck.function_scoped_fixture])
   @hp.given(hps.data())
   def test_vmap_nd_indexing(self, data):
     self.skipTest("TODO(necula): enable this test; was in jax_triton.")
