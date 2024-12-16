@@ -4523,7 +4523,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     def f(x):
       x = with_sharding_constraint(
           x, NamedSharding(mesh_lib.AbstractMesh(mesh1.shape_tuple), P('x')))
-      return jnp.sin(x)
+      return jax.lax.sin(x)
 
     with (
         jtu.count_jit_tracing_cache_miss() as tracing_count,
@@ -4536,7 +4536,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
       # same num_devices but different devices.
       b = jax.device_put(out_a, NamedSharding(mesh2, P()))
       f(b)  # tracing and lowering cache *hit*
-    self.assertEqual(tracing_count(), 2)  # 1 miss for `f` and 1 miss for `sin`
+
+    self.assertEqual(tracing_count(), 1)
     self.assertEqual(lowering_count(), 1)
     self.assertEqual(compilation_count(), 2)  # 2 misses since devices differ.
 
