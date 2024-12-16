@@ -342,8 +342,6 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
   ))
   def testReducerPromoteInt(self, name, rng_factory, shape, dtype, axis,
                             keepdims, initial, inexact, promote_integers):
-    if jtu.test_device_matches(["cpu"]) and name == "sum" and config.enable_x64.value and dtype == np.float16:
-      raise unittest.SkipTest("sum op fails in x64 mode on CPU with dtype=float16")  # b/383756018
     np_op = getattr(np, name)
     jnp_op = getattr(jnp, name)
     rng = rng_factory(self.rng())
@@ -364,7 +362,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, initial=initial, promote_integers=promote_integers)
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
-    tol = {jnp.bfloat16: 3E-2}
+    tol = {jnp.bfloat16: 3E-2, jnp.float16: 5e-3}
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
