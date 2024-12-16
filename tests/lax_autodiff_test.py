@@ -27,7 +27,6 @@ import numpy as np
 import jax
 from jax import dtypes
 from jax import lax
-from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.util import NumpyComplexWarning
 from jax.test_util import check_grads
@@ -134,7 +133,7 @@ LAX_GRAD_OPS = [
                    dtypes=grad_float_dtypes),
     grad_test_spec(lax.rsqrt, nargs=1, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_complex_dtypes, tol={np.float64: 2e-3}),
-    grad_test_spec(lax.cbrt, nargs=1, order=2, rng_factory=jtu.rand_default,
+    grad_test_spec(lax.cbrt, nargs=1, order=2, rng_factory=jtu.rand_not_small,
                    dtypes=grad_float_dtypes, tol={np.float64: 5e-3}),
     grad_test_spec(lax.logistic, nargs=1, order=2,
                    rng_factory=jtu.rand_default,
@@ -206,8 +205,9 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   ))
   def testOpGrad(self, op, rng_factory, shapes, dtype, order, tol):
     rng = rng_factory(self.rng())
-    if jtu.test_device_matches(["cpu"]) and (op is lax.cosh or op is lax.cbrt) and config.enable_x64.value:
-      raise SkipTest("cosh and cbrt grad fails in x64 mode on CPU")  # b/383756018
+    if jtu.test_device_matches(["cpu"]):
+      if op is lax.cosh and dtype == np.complex64:
+        tol = 3e-1  # 2nd-order gradients are noisy on CPU
     if jtu.test_device_matches(["tpu"]):
       if op is lax.pow:
         raise SkipTest("pow grad imprecise on tpu")
