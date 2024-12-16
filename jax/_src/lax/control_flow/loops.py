@@ -347,6 +347,10 @@ def _get_states(attrs_tracked):
     vals.extend(leaves)
   return vals
 
+def _capitalize(s):
+  # s.capitalize() converts s[1:] to lowercase which we don't want.
+  return s[0].capitalize() + s[1:]
+
 def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
   try:
     sig = inspect.signature(body_fun)
@@ -380,7 +384,7 @@ def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
         # The trees may have different aux data but structures are the same.
         return
       if len(diffs) == 1:
-        differences = f'{diffs[0]}.\n'.capitalize()
+        differences = f'{_capitalize(diffs[0])}.\n'
       else:
         differences = ('\n'.join(f'  * {d};\n' for d in diffs[:-1])
                        + f'  * {diffs[-1]}.\n')
@@ -400,7 +404,7 @@ def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
       # The trees may have different aux data but structures are the same.
       return
     if len(diffs) == 1:
-      differences = f'{diffs[0]}.\n'.capitalize()
+      differences = f'{_capitalize(diffs[0])}.\n'
     else:
       differences = ('\n'.join(f'  * {d};\n' for d in diffs[:-1])
                      + f'  * {diffs[-1]}.\n')
