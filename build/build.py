@@ -454,7 +454,19 @@ async def main():
     wheel_build_command_base.append(f"--action_env=CLANG_COMPILER_PATH=\"{clang_path}\"")
     wheel_build_command_base.append(f"--repo_env=CC=\"{clang_path}\"")
     wheel_build_command_base.append(f"--repo_env=BAZEL_COMPILER=\"{clang_path}\"")
-    wheel_build_command_base.append("--config=clang")
+
+    # Disable clang extention that rejects unknown arguments.
+    wheel_build_command.append("--copt=-Wunused-arguments")
+    # Error on struct/class mismatches, since this causes link failures on
+    # Windows.
+    wheel_build_command.append("--copt=-Werror=mismatched-tags")
+    if clang_major_version >= 16:
+      # Disable clang extention that rejects type definitions within offsetof
+      # on newer clang versions. This was added in clang-16 by
+      # https://reviews.llvm.org/D133574.
+      # Can be removed once upb is updated, since a type definition is used
+      # within the offset of in the current version of ubp.
+      wheel_build_command.append("--copt=-Wno-gnu-offsetof-extensions")
   else:
     logging.debug("Use Clang: False")
 
