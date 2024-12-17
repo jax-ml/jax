@@ -28,9 +28,12 @@ from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
+from jax._src.lib.mlir.dialects import vector
 from jax.experimental.mosaic.gpu import dialect as mgpu  # pylint: disable=g-importing-member
 from jax.experimental.mosaic.gpu import gpu_address_space_to_nvptx  # pylint: disable=g-importing-member,g-multiple-import
+from jax.experimental.mosaic.gpu import infer_layout  # pylint: disable=g-importing-member,g-multiple-import
 from jax.experimental.mosaic.gpu import lower_mgpu_dialect  # pylint: disable=g-importing-member,g-multiple-import
+from jax.experimental.mosaic.gpu import strided_fragmented_layout  # pylint: disable=g-importing-member
 
 _cext = mgpu._cext if mgpu is not None else None
 
@@ -643,6 +646,80 @@ class DialectLoweringTest(MosaicGpuTest):
       count = op.count.owner.opview
       self.assertIsInstance(count, arith.ConstantOp)
       self.assertEqual(count.literal_value, arrival_count)
+
+  def test_lowering_vector_op_without_layout_fails(self):
+    shape = (3, 4)
+    elt_ty = ir.BF16Type.get()
+    with ir.InsertionPoint(self.module.body):
+      ref = llvm.mlir_undef(ir.MemRefType.get(shape, elt_ty))
+      zero_index = arith.constant(ir.IndexType.get(), 0)
+      ty = ir.VectorType.get(shape, elt_ty)
+      vector.load(ty, ref, [zero_index, zero_index])
+    with self.assertRaisesRegex(
+        ValueError, "missing a layout and can not be lowered"
+    ):
+      lower_mgpu_dialect(self.module)
+
+  def test_lowering_eliminates_layouts(self):
+    shape = (4, 128)
+    elt_ty = ir.BF16Type.get()
+    with ir.InsertionPoint(self.module.body):
+      ref = llvm.mlir_undef(ir.MemRefType.get(shape, elt_ty))
+      zero_index = arith.constant(ir.IndexType.get(), 0)
+      ty = ir.VectorType.get(shape, elt_ty)
+      load = vector.load(ty, ref, [zero_index, zero_index])
+      load.owner.attributes["out_layouts"] = ir.ArrayAttr.get(
+          [strided_fragmented_layout()]
+      )
+
+    lower_mgpu_dialect(self.module)
+
+    all_ops_with_layouts = find_if(
+        self.module,
+        lambda op: (
+            "out_layouts" in op.attributes or "in_layouts" in op.attributes
+        ),
+    )
+    self.assertEmpty(all_ops_with_layouts)
+
+  def test_lowering_vector_load_and_store_ops(self):
+    shape = (8, 128)
+    elt_ty = ir.BF16Type.get()
+    with ir.InsertionPoint(self.module.body):
+      ref = llvm.mlir_undef(ir.MemRefType.get(shape, elt_ty))
+      zero_index = arith.constant(ir.IndexType.get(), 0)
+      ty = ir.VectorType.get(shape, elt_ty)
+      array = vector.load(ty, ref, [zero_index, zero_index])
+      vector.store(array, ref, [zero_index, zero_index])
+
+    infer_layout(self.module)
+    lower_mgpu_dialect(self.module)
+
+    all_loads = find_if(
+        self.module,
+        lambda op: isinstance(op, vector.LoadOp),
+    )
+    all_stores = find_if(
+        self.module,
+        lambda op: isinstance(op, vector.StoreOp),
+    )
+
+    # The shape is (8, 128). Assuming a single warpgroup (128 threads), we
+    # expect each thread to load 8 elements---with two vectorized loads of size
+    # 8 bytes.
+    self.assertLen(all_loads, 2)
+    self.assertLen(all_stores, 2)
+
+    def check_type(ty: ir.Type):
+      self.assertTrue(ir.VectorType.get((4,), elt_ty).isinstance(ty))
+
+    load1, load2, *_ = all_loads  # Variadic unpacking to silence linter.
+    check_type(load1.result.type)
+    check_type(load2.result.type)
+
+    store1, store2, *_ = all_stores  # Variadic unpacking to silence linter.
+    check_type(store1.valueToStore.type)
+    check_type(store2.valueToStore.type)
 
 
 if __name__ == "__main__":
