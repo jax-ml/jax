@@ -458,7 +458,7 @@ async def main():
     if clang_major_version >= 16:
         # Enable clang settings that needed for the build to work with newer
         # versions of Clang.
-        wheel_build_command.append("--config=clang")
+        wheel_build_command_base.append("--config=clang")
   else:
     logging.debug("Use Clang: False")
 
