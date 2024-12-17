@@ -42,8 +42,8 @@ class UtilTest(jtu.JaxTestCase):
       assert not kwargs
       return tuple(a * factor for a in args)
 
-    @lu.transformation_with_aux
-    def kw_to_positional(factor, *args, **kwargs):
+    @lu.transformation_with_aux2
+    def kw_to_positional(f, store, factor, *args, **kwargs):
       """A transformation with auxiliary output.
       Turns all keyword parameters into positional ones.
 
@@ -55,12 +55,12 @@ class UtilTest(jtu.JaxTestCase):
       kwargs_keys = kwargs.keys()
       new_args = tuple(kwargs[k] for k in kwargs_keys)
       new_kwargs = dict(factor=factor)
-      results = yield args + new_args, new_kwargs  # Yield transformed (args, kwargs)
+      results = f(*(args + new_args), **new_kwargs)  # Yield transformed (args, kwargs)
       # Assume results correspond 1:1 to the args + new_args
       assert len(results) == len(args) + len(new_args)
       aux_output = len(new_args)
-      yield (results[0:len(args)],
-             dict(zip(kwargs_keys, results[len(args):]))), aux_output
+      store.store(aux_output)
+      return (results[0:len(args)], dict(zip(kwargs_keys, results[len(args):])))
 
     wf = lu.wrap_init(f)  # Wraps `f` as a `WrappedFun`.
     wf, out_thunk = kw_to_positional(wf, 2)

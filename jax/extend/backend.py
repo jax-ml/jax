@@ -24,3 +24,6 @@ from jax._src.xla_bridge import (
   get_backend as get_backend,
   register_backend_factory as register_backend_factory,
 )
+from jax._src.interpreters.pxla import (
+  get_default_device as get_default_device
+)

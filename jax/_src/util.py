@@ -453,6 +453,10 @@ def tuple_update(t, idx, val):
   assert 0 <= idx < len(t), (idx, len(t))
   return t[:idx] + (val,) + t[idx+1:]
 
+def tuple_replace(tupl, index, item):
+  # unlike tuple_update, works with negative indices as well
+  return tupl[:index] + (item,) + tupl[index:][1:]
+
 class HashableFunction:
   """Decouples function equality and hash from its identity.
 
@@ -672,3 +676,12 @@ class StrictABCMeta(abc.ABCMeta):
 
 class StrictABC(metaclass=StrictABCMeta):
   __slots__ = ()
+
+
+
+test_event_listener: Callable | None = None
+
+def test_event(name: str, *args) -> None:
+  if not test_event_listener:
+    return
+  test_event_listener(name, *args)

@@ -73,13 +73,12 @@ Just-in-time compilation (:code:`jit`)
     eval_shape
     ShapeDtypeStruct
     device_put
-    device_put_replicated
-    device_put_sharded
     device_get
     default_backend
     named_call
     named_scope
     block_until_ready
+    make_mesh
 
 .. _jax-grad:
 
@@ -104,6 +103,9 @@ Automatic differentiation
     checkpoint
     remat
 
+Customization
+-------------
+
 ``custom_jvp``
 ~~~~~~~~~~~~~~
 
@@ -122,6 +124,16 @@ Automatic differentiation
 
   custom_vjp
   custom_vjp.defvjp
+
+``custom_batching``
+~~~~~~~~~~~~~~~~~~~
+
+.. autosummary::
+  :toctree: _autosummary
+
+  custom_batching.custom_vmap
+  custom_batching.custom_vmap.def_vmap
+  custom_batching.sequential_vmap
 
 jax.Array (:code:`jax.Array`)
 -----------------------------
@@ -152,6 +164,7 @@ Array properties and methods
     Array.choose
     Array.clip
     Array.compress
+    Array.committed
     Array.conj
     Array.conjugate
     Array.copy

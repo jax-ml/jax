@@ -709,7 +709,7 @@ class KeyArrayTest(jtu.JaxTestCase):
       f(key).block_until_ready()
       f(key).block_until_ready()
 
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   # TODO(jakevdp) remove this decorator when reuse checks move to C++
   @jax.debug_key_reuse(False)
@@ -726,7 +726,7 @@ class KeyArrayTest(jtu.JaxTestCase):
       f(key).block_until_ready()
       f(key).block_until_ready()
 
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_cpp_dispatch_aot_normal(self):
     # Ensure we stay on the C++ dispatch path when calling an
@@ -739,7 +739,7 @@ class KeyArrayTest(jtu.JaxTestCase):
       f(key).block_until_ready()
       f(key).block_until_ready()
 
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_cpp_dispatch_aot_split(self):
     # Ensure we stay on the C++ dispatch path when calling an
@@ -753,7 +753,7 @@ class KeyArrayTest(jtu.JaxTestCase):
       f(key).block_until_ready()
       f(key).block_until_ready()
 
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   # -- prng primitives
 
@@ -935,6 +935,11 @@ class KeyArrayTest(jtu.JaxTestCase):
       return lax.select(x, keys, keys)
     x = jnp.array([True, False, False])
     f(x)  # doesn't crash
+
+  def test_device_get(self):
+    keys = self.make_keys(4)
+    keys_on_host = jax.device_get(keys)
+    self.assertKeysEqual(keys, keys_on_host)
 
   def test_device_put(self):
     device = jax.devices()[0]
@@ -1120,10 +1125,10 @@ class KeyArrayTest(jtu.JaxTestCase):
       jax.random.key(42, impl=A())
 
   @jtu.sample_product(name=[name for name, _ in PRNG_IMPLS])
-  def test_key_spec_repr(self, name):
+  def test_key_impl_builtin_is_string_name(self, name):
     key = jax.random.key(42, impl=name)
     spec = jax.random.key_impl(key)
-    self.assertEqual(repr(spec), f"PRNGSpec({name!r})")
+    self.assertEqual(spec, name)
 
   def test_keyarray_custom_vjp(self):
     # Regression test for https://github.com/jax-ml/jax/issues/18442
@@ -1154,6 +1159,12 @@ class KeyArrayTest(jtu.JaxTestCase):
     state = (8.0, jax.random.key(123))
     result = jax.grad(lambda theta: f(theta, state)[0])(3.0)
     self.assertEqual(result, 1.0)
+
+  def test_keyarray_array_conversion_fails(self):
+    key = jax.random.key(0)
+    msg = "JAX array with PRNGKey dtype cannot be converted to a NumPy array."
+    with self.assertRaisesRegex(TypeError, msg):
+      np.asarray(key)
 
   # TODO(frostig,mattjj): more polymorphic primitives tests
 

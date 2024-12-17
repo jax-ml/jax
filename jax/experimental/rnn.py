@@ -84,7 +84,7 @@ TODO:
 """
 from functools import partial
 import math
-from typing import Any
+from typing import cast, Any
 
 import jax
 import numpy as np
@@ -228,10 +228,10 @@ def _lstm_cudnn_allow_tf32(precision: lax.PrecisionLike) -> bool:
   #
   # but we prefer to still invoke it here for consistency
   precision = lax.canonicalize_precision(precision)
-  if precision is None:
+  if precision is None or not (isinstance(precision, tuple) and len(precision) == 2):
     return True
   # cuDNN allows only one precision specifier per RNN op
-  precision, _ = precision
+  precision, _ = cast(tuple[lax.Precision, lax.Precision], precision)
   if precision == lax.Precision.HIGHEST:
     return False
   elif precision == lax.Precision.HIGH:

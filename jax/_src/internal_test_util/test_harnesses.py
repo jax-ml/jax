@@ -59,7 +59,6 @@ from jax._src import prng
 from jax._src import test_util as jtu
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import windowed_reductions as lax_windowed_reductions
-from jax._src.lib import xla_client
 from jax._src import random as jax_random
 
 # mypy generates a lot of false positive due to re-assigned variables.
@@ -868,13 +867,15 @@ def _make_iota_harness(name, *, shape=(2, 3), dtype=np.float32, dimension=0):
       lax.iota_p,
       f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_{dimension=}",
       lambda dtype, shape, dim:
-      (lax.iota_p.bind(dtype=np.dtype(dtype), shape=shape, dimension=dim)),
+      (lax.iota_p.bind(dtype=np.dtype(dtype), shape=shape, dimension=dim,
+                       sharding=None)),
       [StaticArg(dtype),
        StaticArg(shape),
        StaticArg(dimension)],
       shape=shape,
       dtype=dtype,
-      dimension=dimension)
+      dimension=dimension,
+      sharding=None)
 
 
 for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean):
@@ -1057,7 +1058,8 @@ def _make_broadcast_in_dim_harness(name,
       lax.broadcast_in_dim_p,
       f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_{outshape=}_broadcastdimensions={broadcast_dimensions}",
       lambda operand: lax.broadcast_in_dim_p.bind(
-          operand, shape=outshape, broadcast_dimensions=broadcast_dimensions),
+          operand, shape=outshape, broadcast_dimensions=broadcast_dimensions,
+          sharding=None),
       [RandArg(shape, dtype)],
       shape=shape,
       dtype=dtype,
@@ -1171,6 +1173,18 @@ for shape, idxs, dnums, slice_sizes, needs_xla in [
      lax.GatherDimensionNumbers(
          offset_dims=(1,), collapsed_slice_dims=(0,),
          start_index_map=(0, 1)), (1, 3), True),
+    ((2, 5), np.array([[[0], [2]], [[1], [1]]]),
+     lax.GatherDimensionNumbers(
+         offset_dims=(), collapsed_slice_dims=(1,),
+         start_index_map=(1,), operand_batching_dims=(0,),
+         start_indices_batching_dims=(0,)),
+     (1, 1), True),
+    ((2, 3, 10), np.array([[[0], [1]], [[2], [3]], [[4], [5]]]),
+     lax.GatherDimensionNumbers(
+         offset_dims=(2,), collapsed_slice_dims=(),
+         start_index_map=(2,), operand_batching_dims=(0, 1),
+         start_indices_batching_dims=(1, 0)),
+     (1, 1, 3), True)
 ]:
   dtype = np.float32
   for enable_xla in ([True] if needs_xla else [True, False]):
@@ -1278,15 +1292,16 @@ def _make_scatter_harness(name,
                           update_shape=(2,),
                           mode=lax.GatherScatterMode.FILL_OR_DROP,
                           dtype=np.float32,
-                          dimension_numbers=((), (0,), (0,)),
+                          dimension_numbers=lax.ScatterDimensionNumbers(
+                              update_window_dims=(), inserted_window_dims=(0,),
+                              scatter_dims_to_operand_dims=(0,)),
                           enable_and_disable_xla=False):
-  dimension_numbers = lax.ScatterDimensionNumbers(*dimension_numbers)
   xla_options = [True, False] if enable_and_disable_xla else [True]
 
   for enable_xla in xla_options:
     define(
         f_lax.__name__,
-        f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_scatterindices={scatter_indices.tolist()}_updateshape={update_shape}_updatewindowdims={dimension_numbers.update_window_dims}_insertedwindowdims={dimension_numbers.inserted_window_dims}_scatterdimstooperanddims={dimension_numbers.scatter_dims_to_operand_dims}_indicesaresorted={indices_are_sorted}_uniqueindices={unique_indices}_{mode=!s}_enablexla={enable_xla}"
+        f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_scatterindices={scatter_indices.tolist()}_updateshape={update_shape}_{dimension_numbers=}_indicesaresorted={indices_are_sorted}_uniqueindices={unique_indices}_{mode=!s}_enablexla={enable_xla}"
         .replace(" ", ""),
         partial(
             f_lax,
@@ -1330,8 +1345,19 @@ for dtype in jtu.dtypes.all:
 
 # Validate shapes, dimension numbers and scatter indices. All are in bounds.
 for shape, scatter_indices, update_shape, dimension_numbers in [
-    ((10,), [[0], [0], [0]], (3, 2), ((1,), (), (0,))),
-    ((10, 5), [[0], [2], [1]], (3, 3), ((1,), (0,), (0,)))
+    ((10,), [[0], [0], [0]], (3, 2),
+     lax.ScatterDimensionNumbers(
+        update_window_dims=(1,), inserted_window_dims=(),
+        scatter_dims_to_operand_dims=(0,))),
+    ((10, 5), [[0], [2], [1]], (3, 3),
+     lax.ScatterDimensionNumbers(
+        update_window_dims=(1,), inserted_window_dims=(0,),
+        scatter_dims_to_operand_dims=(0,))),
+    ((2, 3, 10), [[[0], [1]], [[2], [3]], [[4], [5]]], (3, 2, 3),
+     lax.ScatterDimensionNumbers(
+         update_window_dims=(2,), inserted_window_dims=(),
+         scatter_dims_to_operand_dims=(2,), operand_batching_dims=(0, 1),
+         scatter_indices_batching_dims=(1, 0)))
 ]:
   _make_scatter_harness(
       "shapes_and_dimension_numbers",
@@ -1360,13 +1386,16 @@ for mode in (lax.GatherScatterMode.PROMISE_IN_BOUNDS,
     _make_scatter_harness("modes_in_bounds",
                           f_lax=f_lax,
                           mode=mode)
-    _make_scatter_harness("modes_out_of_bounds", mode=mode,
-                          shape=(1, 5),
-                          f_lax=f_lax,
-                          scatter_indices=np.array([10]),
-                          update_shape=(1,),
-                          dimension_numbers=((0,), (1,), (1,)),
-                          enable_and_disable_xla=True)
+    _make_scatter_harness(
+        "modes_out_of_bounds",
+        mode=mode,
+        shape=(1, 5),
+        f_lax=f_lax,
+        scatter_indices=np.array([10]),
+        update_shape=(1,),
+        dimension_numbers=lax.ScatterDimensionNumbers((0,), (1,), (1,)),
+        enable_and_disable_xla=True,
+    )
 
 # Validate no XLA scatters
 for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.complex) - set(jtu.dtypes.boolean):
@@ -1374,22 +1403,34 @@ for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.complex) - set(jtu.dtypes.bool
       lax.scatter_add, lax.scatter_mul, lax.scatter_max, lax.scatter_min, lax.scatter
   ]:
     for shape, scatter_indices, update_shape, dimension_numbers in [
-        ((1,), [0], (), ((), (0,), (0,))),  # zero case
-        ((1, 1), [0], (1,), ((0,), (0,), (0,))),
-        ((1, 1, 1), [0], (1, 1), ((0, 1), (0,), (0,))),
-        ((1, 50, 3), [32], (1, 3), ((0, 1), (1,), (1,))),
-        ((1, 2, 3), [1], (1, 3), ((0, 1), (1,), (1,))),  # slice 2nd dim
-        ((1, 2, 3), [0], (2, 3), ((0, 1), (0,), (0,))),  # slice 1st dim
-        ((1, 2, 3), [1, 2], (1,), ((0,), (1, 2), (1, 2))),  # 2nd and 3rd
-        ((4, 2, 3), [3, 2], (2,), ((0,), (0, 2), (0, 2))),  # 1st and 3rd
-        ((4, 2, 3, 5), [0, 4], (4, 3), ((0, 1), (1, 3), (1, 3))),  # 2nd and 4th
+        ((1,), [0], (),
+         lax.ScatterDimensionNumbers((), (0,), (0,))),  # zero case
+        ((1, 1), [0], (1,),
+         lax.ScatterDimensionNumbers((0,), (0,), (0,))),
+        ((1, 1, 1), [0], (1, 1),
+         lax.ScatterDimensionNumbers((0, 1), (0,), (0,))),
+        ((1, 50, 3), [32], (1, 3),
+         lax.ScatterDimensionNumbers((0, 1), (1,), (1,))),
+        ((1, 2, 3), [1], (1, 3),
+         lax.ScatterDimensionNumbers((0, 1), (1,), (1,))),  # slice 2nd dim
+        ((1, 2, 3), [0], (2, 3),
+         lax.ScatterDimensionNumbers((0, 1), (0,), (0,))),  # slice 1st dim
+        ((1, 2, 3), [1, 2], (1,),
+         lax.ScatterDimensionNumbers((0,), (1, 2), (1, 2))),  # 2nd and 3rd
+        ((4, 2, 3), [3, 2], (2,),
+         lax.ScatterDimensionNumbers((0,), (0, 2), (0, 2))),  # 1st and 3rd
+        ((4, 2, 3, 5), [0, 4], (4, 3),
+         lax.ScatterDimensionNumbers((0, 1), (1, 3), (1, 3))),  # 2nd and 4th
         ((5, 6, 7), [[0, 1], [2, 3]], (2, 7),
-         ((1,), (0, 1), (0, 1))),  # .at[((3,4),(5,5))] shapes
+         lax.ScatterDimensionNumbers((1,), (0, 1), (0, 1))),
+         # .at[((3,4),(5,5))] shapes
         ((5, 6, 7), [[[0], [1]], [[2], [3]]], (5, 2, 2, 7),
-         ((0, 3), (1,), (1,))),  # .at[:, ((3,4),(5,5))] shapes
+         lax.ScatterDimensionNumbers((0, 3), (1,), (1,))),
+         # .at[:, ((3,4),(5,5))] shapes
         ((5, 6, 7), [[[0, 1], [2, 3]], [[4, 0], [1, 2]]], (5, 2, 2),
-         ((0,), (1, 2), (1, 2))),  # .at[:, ((3,4),(5,5)), 3] shapes
-        ((1, 125), [0], (1,), ((0,), (1,), (1,))),
+         lax.ScatterDimensionNumbers((0,), (1, 2), (1, 2))),
+         # .at[:, ((3,4),(5,5)), 3] shapes
+        ((1, 125), [0], (1,), lax.ScatterDimensionNumbers((0,), (1,), (1,))),
     ]:
       for mode in (lax.GatherScatterMode.PROMISE_IN_BOUNDS,
                    lax.GatherScatterMode.FILL_OR_DROP):
@@ -1412,11 +1453,16 @@ for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.complex) - set(jtu.dtypes.bool
       lax.scatter_add, lax.scatter_mul, lax.scatter_max, lax.scatter_min
   ]:
     for shape, scatter_indices, update_shape, dimension_numbers in [
-        ((1,), [[0],[0]], (2,), ((), (0,), (0,))),  # .at[((0,0),)]
-        ((3,), [[1],[0],[1]], (3,), ((), (0,), (0,))),  # .at[((1,0,1),)]
-        ((2, 3), [[[2],[2],[2]]], (2, 1, 3), ((0,), (1,), (1,))),  # 2nd dim, .at[:, ((2,2,2),)]
-        ((3, 5, 40), [[1],[1]], (3, 5, 2), ((0, 1), (2,), (2,))),
-        ((3, 5, 4), [[1],[1]], (3, 2, 4), ((0, 2), (1,), (1,))),
+        ((1,), [[0],[0]], (2,),
+         lax.ScatterDimensionNumbers((), (0,), (0,))),  # .at[((0,0),)]
+        ((3,), [[1],[0],[1]], (3,),
+         lax.ScatterDimensionNumbers((), (0,), (0,))),  # .at[((1,0,1),)]
+        ((2, 3), [[[2],[2],[2]]], (2, 1, 3),
+         lax.ScatterDimensionNumbers((0,), (1,), (1,))),  # 2nd dim, .at[:, ((2,2,2),)]
+        ((3, 5, 40), [[1],[1]], (3, 5, 2),
+         lax.ScatterDimensionNumbers((0, 1), (2,), (2,))),
+        ((3, 5, 4), [[1],[1]], (3, 2, 4),
+         lax.ScatterDimensionNumbers((0, 2), (1,), (1,))),
     ]:
       for mode in (lax.GatherScatterMode.PROMISE_IN_BOUNDS,
                    lax.GatherScatterMode.FILL_OR_DROP):
@@ -1733,7 +1779,7 @@ def _make_fft_harness(name,
                       *,
                       shape=(14, 15, 16, 17),
                       dtype=np.float32,
-                      fft_type=xla_client.FftType.FFT,
+                      fft_type=lax.FftType.FFT,
                       fft_lengths=(17,)):
 
   def _fft_rng_factory(dtype):
@@ -1761,12 +1807,12 @@ def _make_fft_harness(name,
 
 
 # FFT, IFFT, RFFT, IRFFT
-for fft_type in list(map(xla_client.FftType, [0, 1, 2, 3])):
+for fft_type in list(map(lax.FftType, [0, 1, 2, 3])):
   # Validate dtypes per FFT type
   for dtype in (jtu.dtypes.floating
-                if fft_type == xla_client.FftType.RFFT else jtu.dtypes.complex):
+                if fft_type == lax.FftType.RFFT else jtu.dtypes.complex):
     shape = (14, 15, 16, 17)
-    if fft_type != xla_client.FftType.IRFFT:
+    if fft_type != lax.FftType.IRFFT:
       fft_lengths_list = [ (shape[-1],) ]
     else:
       fft_lengths_list = [ ((shape[-1] - 1) * 2,), (shape[-1] * 2 - 1,) ]
@@ -1787,11 +1833,11 @@ for fft_type in list(map(xla_client.FftType, [0, 1, 2, 3])):
 
   # Validate dimensions per FFT type
   for dtype in [
-      np.float32 if fft_type == xla_client.FftType.RFFT else np.complex64
+      np.float32 if fft_type == lax.FftType.RFFT else np.complex64
   ]:
     for dims in [1, 2, 3]:
       for fft_lengths in [
-          shape[-dims:] if fft_type != xla_client.FftType.IRFFT else
+          shape[-dims:] if fft_type != lax.FftType.IRFFT else
           shape[-dims:-1] + ((shape[-1] - 1) * 2,)
       ]:
         _make_fft_harness(

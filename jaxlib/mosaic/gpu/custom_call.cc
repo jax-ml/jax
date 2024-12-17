@@ -31,12 +31,14 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "jaxlib/gpu/vendor.h"
 #include "absl/base/optimization.h"
+#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "llvm/include/llvm/ADT/SmallVector.h"
 #include "llvm/include/llvm/Support/CodeGen.h"
@@ -52,6 +54,7 @@ limitations under the License.
 #include "mlir/include/mlir/Conversion/Passes.h"
 #include "mlir/include/mlir/Conversion/UBToLLVM/UBToLLVM.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/include/mlir/Dialect/Arith/Transforms/Passes.h"
 #include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/include/mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/include/mlir/Dialect/GPU/Transforms/Passes.h"
@@ -79,8 +82,11 @@ limitations under the License.
 #include "mlir/include/mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/include/mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "mlir/include/mlir/Transforms/Passes.h"
+#include "jaxlib/gpu/vendor.h"
+#include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
 #include "jaxlib/mosaic/gpu/launch_lowering.h"
 #include "jaxlib/mosaic/gpu/passes.h"
+#include "jaxlib/mosaic/gpu/target.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
 
@@ -89,8 +95,30 @@ namespace {
 using MosaicInitFunc = void(void****);
 using MosaicHostFunc = void(void**);
 
+absl::StatusOr<std::pair<std::string, std::string>> GetSmAndPtxIsaVersion() {
+  // Assumes driver has been initialized and a context exists. XLA already has
+  // some utilities to query this, but we try to stay runtime-agnostic, so we
+  // build our own here.
+  CUdevice device;
+  if (cuCtxGetDevice(&device) != CUDA_SUCCESS) {
+    return absl::InternalError("Failed to get device for current context");
+  }
+  int major = 0;
+  if (cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR,
+                           device) != CUDA_SUCCESS) {
+    return absl::InternalError("Failed to get major compute capability");
+  }
+  int minor = 0;
+  if (cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR,
+                           device) != CUDA_SUCCESS) {
+    return absl::InternalError("Failed to get minor compute capability");
+  }
+  return mosaic::gpu::GetSmAndPtxIsaVersion(major, minor);
+}
+
 mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
-    mlir::MLIRContext* ctx, mlir::gpu::CompilationTarget target) {
+    mlir::MLIRContext* ctx, mlir::gpu::CompilationTarget target,
+    const std::string& sm, const std::string& ptx_isa) {
   static bool register_once = []() {
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTarget();
@@ -117,12 +145,14 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mosaic::gpu::registerGpuLaunchLoweringPass();
     mosaic::gpu::registerConvertGpuToLLVMPass();
     mosaic::gpu::registerByvalInsertionPass();
+    mlir::arith::registerArithExpandOpsPass();
     return true;
   }();
   (void)register_once;
-  return mlir::parsePassPipeline(
+  return mlir::parsePassPipeline(absl::StrCat(
       R"(
       builtin.module(
+        arith-expand,
         canonicalize,
         gpu-launch-sink-index-computations,
         convert-nvgpu-to-nvvm,
@@ -131,7 +161,9 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         convert-scf-to-cf,
         convert-nvvm-to-llvm,
         expand-strided-metadata,
-        nvvm-attach-target{O=3 chip=sm_90a fast=false features=+ptx80 ftz=false  module= triple=nvptx64-nvidia-cuda},
+        nvvm-attach-target{O=3 chip=)",
+      sm, R"( fast=false features=+)", ptx_isa,
+      R"( ftz=false  module= triple=nvptx64-nvidia-cuda},
         lower-affine,
         convert-arith-to-llvm{index-bitwidth=0},
         convert-index-to-llvm{index-bitwidth=64},
@@ -144,19 +176,19 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         gpu.module(mosaic-byval-insertion),
         gpu.module(reconcile-unrealized-casts),
         mosaic-convert-gpu-to-llvm,
-        gpu-module-to-binary{format=)" +
-      mlir::gpu::stringifyCompilationTarget(target).str() + R"(},
+        gpu-module-to-binary{format=)",
+      mlir::gpu::stringifyCompilationTarget(target).str(), R"(},
         convert-math-to-llvm{approximate-log1p=true},
         canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true},
         cse,
-        )" +
+        )",
       (target != mlir::gpu::CompilationTarget::Assembly ? "gpu-launch-lowering,"
-                                                        : "") +
+                                                        : ""),
       R"(
         convert-to-llvm,
         reconcile-unrealized-casts
       )
-  )");
+  )"));
 }
 
 mlir::LogicalResult RunPasses(mlir::OpPassManager&& passes,
@@ -175,7 +207,8 @@ void InitContext(mlir::MLIRContext* context) {
                   mlir::math::MathDialect, mlir::memref::MemRefDialect,
                   mlir::scf::SCFDialect, mlir::vector::VectorDialect,
                   mlir::gpu::GPUDialect, mlir::nvgpu::NVGPUDialect,
-                  mlir::NVVM::NVVMDialect, mlir::LLVM::LLVMDialect>();
+                  mlir::NVVM::NVVMDialect, mlir::LLVM::LLVMDialect,
+                  mosaic_gpu::MosaicGPUDialect>();
   mlir::registerConvertNVVMToLLVMInterface(registry);
   mlir::registerConvertComplexToLLVMInterface(registry);
   mlir::registerConvertMemRefToLLVMInterface(registry);
@@ -251,7 +284,8 @@ class TemporaryDirectory {
   std::string path;
 };
 
-void DumpCompilationOutput(mlir::ModuleOp module) {
+void DumpCompilationOutput(mlir::ModuleOp module, const std::string& sm,
+                           const std::string& ptx_isa) {
   bool dump_ptx = getenv("MOSAIC_GPU_DUMP_PTX") != nullptr;
   bool dump_ptxas = getenv("MOSAIC_GPU_DUMP_PTXAS") != nullptr;
   bool dump_sass = getenv("MOSAIC_GPU_DUMP_SASS") != nullptr;
@@ -260,8 +294,9 @@ void DumpCompilationOutput(mlir::ModuleOp module) {
   }
 
   module = module.clone();  // Prevent accidental modification.
-  auto passes = GetPassPipeline(module.getContext(),
-                                mlir::gpu::CompilationTarget::Assembly);
+  absl::Cleanup module_destroyer = [module] { module->erase(); };
+  auto passes = GetPassPipeline(
+      module.getContext(), mlir::gpu::CompilationTarget::Assembly, sm, ptx_isa);
   if (mlir::failed(passes) ||
       mlir::failed(RunPasses(std::move(*passes), module))) {
     return;
@@ -297,7 +332,7 @@ void DumpCompilationOutput(mlir::ModuleOp module) {
     // Run ptxas to generate SASS.
     std::vector<const char*> ptxas_args = {
         "ptxas",          "--opt-level",   "3",
-        "--gpu-name",     "sm_90a",        "--output-file",
+        "--gpu-name",     sm.c_str(),      "--output-file",
         elf_path.c_str(), ptx_path.c_str()};
     if (dump_ptxas) {
       ptxas_args.push_back("-v");
@@ -321,9 +356,15 @@ void DumpCompilationOutput(mlir::ModuleOp module) {
 
 absl::StatusOr<std::unique_ptr<mlir::ExecutionEngine>> Compile(
     mlir::ModuleOp module) {
-  DumpCompilationOutput(module);
-  auto passes = GetPassPipeline(module.getContext(),
-                                mlir::gpu::CompilationTarget::Binary);
+  auto sm_and_ptx_isa = GetSmAndPtxIsaVersion();
+  if (!sm_and_ptx_isa.ok()) {
+    return sm_and_ptx_isa.status();
+  }
+  const std::string sm = sm_and_ptx_isa.value().first;
+  const std::string ptx_isa = sm_and_ptx_isa.value().second;
+  DumpCompilationOutput(module, sm, ptx_isa);
+  auto passes = GetPassPipeline(
+      module.getContext(), mlir::gpu::CompilationTarget::Binary, sm, ptx_isa);
   if (mlir::failed(passes)) {
     return absl::InternalError("Failed to construct pass pipeline");
   }
@@ -377,6 +418,40 @@ GetKernelCache() {
   return std::make_pair(&context_cache, &mutex);
 }
 
+absl::StatusOr<std::pair<std::string, std::string>> GetHostAndInitFuncNames(
+    mlir::ModuleOp module_op) {
+  // We look for two top level C-interface functions:
+  // - "host" function with symbol name "_mlir_ciface_<foo>"
+  // - "init" function with symbol name "_mlir_ciface_<foo>_init"
+  constexpr std::string_view prefix = "_mlir_ciface_";
+  std::vector<std::string> names;
+  for (mlir::LLVM::LLVMFuncOp llvm_func :
+       module_op.getOps<mlir::LLVM::LLVMFuncOp>()) {
+    if (llvm_func.getName().starts_with(prefix)) {
+      names.push_back(llvm_func.getName().str());
+    }
+  }
+  if (auto size = names.size(); size != 2) {
+    return absl::InternalError(absl::StrFormat(
+        "Expected to locate 2 symbols with %s prefix in the MLIR module, found "
+        "%d instead.",
+        prefix, size));
+  }
+  // _mlir_ciface_<foo>_init now follows _mlir_ciface_<foo>
+  std::sort(names.begin(), names.end());
+
+  std::string host_func_name = names[0];
+  std::string init_func_name = names[1];
+
+  if (init_func_name != absl::StrCat(host_func_name, "_init")) {
+    return absl::InternalError(absl::StrFormat(
+        "Expected init function name to equal the concatenation of the host "
+        "function name and the \"_init\" suffix, instead got "
+        "init_func_name=%s, host_func_name=%s.",
+        init_func_name, host_func_name));
+  }
+  return std::make_pair(host_func_name, init_func_name);
+}
 
 absl::StatusOr<CompiledKernel> CompileAndInit(const char* module) {
   mlir::MLIRContext context(mlir::MLIRContext::Threading::DISABLED);
@@ -392,9 +467,16 @@ absl::StatusOr<CompiledKernel> CompileAndInit(const char* module) {
     return maybe_engine.status();
   }
   mlir::ExecutionEngine* execution_engine = maybe_engine->get();
-  auto main = execution_engine->lookupPacked("_mlir_ciface_main");
-  auto init = execution_engine->lookupPacked("_mlir_ciface_main_init");
-  if (!init || !main) {
+
+  auto host_and_init_func_names = GetHostAndInitFuncNames(*module_op);
+  if (!host_and_init_func_names.ok()) {
+    return host_and_init_func_names.status();
+  }
+  auto [host_name, init_name] = host_and_init_func_names.value();
+
+  auto host = execution_engine->lookupPacked(host_name);
+  auto init = execution_engine->lookupPacked(init_name);
+  if (!init || !host) {
     return absl::InternalError("Failed to retrieve kernel function");
   }
   void* module_ptr = nullptr;
@@ -404,7 +486,7 @@ absl::StatusOr<CompiledKernel> CompileAndInit(const char* module) {
   void*** init_args[2] = {&module_ptr_ptr, &kernel_ptr_ptr};
   reinterpret_cast<MosaicInitFunc*>(*init)(init_args);
   return CompiledKernel(std::move(*maybe_engine), kernel_ptr,
-                          reinterpret_cast<MosaicHostFunc*>(*main));
+                        reinterpret_cast<MosaicHostFunc*>(*host));
 }
 
 // Each compiled kernel has a unique init func, and each kernel is used from

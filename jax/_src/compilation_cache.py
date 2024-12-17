@@ -84,6 +84,8 @@ def is_cache_used(backend: xla_client.Client) -> bool:
         _cache_used = True
       return _cache_used
 
+  return False
+
 
 def get_file_cache(path: str) -> tuple[CacheInterface, str] | None:
   """Returns the file cache and the path to the cache."""
@@ -265,12 +267,21 @@ def put_executable_and_time(
     cache.put(cache_key, executable_and_time)
 
 
-def get_cache_key(module: ir.Module,
-                  devices: np.ndarray,
-                  compile_options,
-                  backend) -> str:
-  return cache_key.get(module, devices, compile_options, backend,
-                       "zstandard" if zstandard is not None else "zlib")
+def get_cache_key(
+    module: ir.Module,
+    devices: np.ndarray,
+    compile_options,
+    backend,
+    ignore_callbacks: cache_key.IgnoreCallbacks = cache_key.IgnoreCallbacks.NO,
+) -> str:
+  return cache_key.get(
+      module,
+      devices,
+      compile_options,
+      backend,
+      "zstandard" if zstandard is not None else "zlib",
+      ignore_callbacks,
+  )
 
 
 def is_initialized() -> bool:

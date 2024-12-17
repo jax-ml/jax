@@ -32,13 +32,15 @@ from jax._src import deprecations
 from jax._src import dtypes
 from jax._src.numpy.util import (
     _broadcast_to, check_arraylike, _complex_elem_type,
-    promote_dtypes_inexact, promote_dtypes_numeric, _where, implements)
+    promote_dtypes_inexact, promote_dtypes_numeric, _where)
 from jax._src.lax import lax as lax_internal
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike, DeprecatedArg
 from jax._src.util import (
     canonicalize_axis as _canonicalize_axis, maybe_named_axis,
-    NumpyComplexWarning)
+    set_module, NumpyComplexWarning)
 
+
+export = set_module('jax.numpy')
 
 _all = builtins.all
 _lax_const = lax_internal._const
@@ -79,10 +81,24 @@ def _promote_integer_dtype(dtype: DTypeLike) -> DTypeLike:
       return dtypes.int_
   return dtype
 
+def check_where(name: str, where: ArrayLike | None) -> Array | None:
+  if where is None:
+    return where
+  check_arraylike(name, where)
+  where_arr = lax_internal.asarray(where)
+  if where_arr.dtype != bool:
+    # Deprecation added 2024-12-05
+    deprecations.warn(
+      'jax-numpy-reduction-non-boolean-where',
+      f"jnp.{name}: where must be None or a boolean array; got dtype={where_arr.dtype}.",
+      stacklevel=2)
+    return where_arr.astype(bool)
+  return where_arr
+
 
 ReductionOp = Callable[[Any, Any], Any]
 
-def _reduction(a: ArrayLike, name: str, np_fun: Any, op: ReductionOp, init_val: ArrayLike,
+def _reduction(a: ArrayLike, name: str, op: ReductionOp, init_val: ArrayLike,
                *, has_identity: bool = True,
                preproc: Callable[[ArrayLike], ArrayLike] | None = None,
                bool_op: ReductionOp | None = None,
@@ -99,6 +115,7 @@ def _reduction(a: ArrayLike, name: str, np_fun: Any, op: ReductionOp, init_val: 
   if out is not None:
     raise NotImplementedError(f"The 'out' argument to jnp.{name} is not supported.")
   check_arraylike(name, a)
+  where_ = check_where(name, where_)
   dtypes.check_user_dtype_supported(dtype, name)
   axis = core.concrete_or_error(None, axis, f"axis argument to jnp.{name}().")
 
@@ -192,6 +209,11 @@ def _cast_to_bool(operand: ArrayLike) -> Array:
 def _cast_to_numeric(operand: ArrayLike) -> Array:
   return promote_dtypes_numeric(operand)[0]
 
+def _require_integer(operand: ArrayLike) -> Array:
+  arr = lax_internal.asarray(operand)
+  if not dtypes.isdtype(arr, ("bool", "integral")):
+    raise ValueError(f"integer argument required; got dtype={arr.dtype}")
+  return arr
 
 def _ensure_optional_axes(x: Axis) -> Axis:
   def force(x):
@@ -210,13 +232,14 @@ def _reduce_sum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                 out: None = None, keepdims: bool = False,
                 initial: ArrayLike | None = None, where: ArrayLike | None = None,
                 promote_integers: bool = True) -> Array:
-  return _reduction(a, "sum", np.sum, lax.add, 0, preproc=_cast_to_numeric,
+  return _reduction(a, "sum", lax.add, 0, preproc=_cast_to_numeric,
                     bool_op=lax.bitwise_or, upcast_f16_for_computation=True,
                     axis=axis, dtype=dtype, out=out, keepdims=keepdims,
                     initial=initial, where_=where, parallel_reduce=lax.psum,
                     promote_integers=promote_integers)
 
 
+@export
 def sum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
         out: None = None, keepdims: bool = False, initial: ArrayLike | None = None,
         where: ArrayLike | None = None, promote_integers: bool = True) -> Array:
@@ -291,17 +314,19 @@ def sum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                      promote_integers=promote_integers)
 
 
+
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims', 'promote_integers'), inline=True)
 def _reduce_prod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                  out: None = None, keepdims: bool = False,
                  initial: ArrayLike | None = None, where: ArrayLike | None = None,
                  promote_integers: bool = True) -> Array:
-  return _reduction(a, "prod", np.prod, lax.mul, 1, preproc=_cast_to_numeric,
+  return _reduction(a, "prod", lax.mul, 1, preproc=_cast_to_numeric,
                     bool_op=lax.bitwise_and, upcast_f16_for_computation=True,
                     axis=axis, dtype=dtype, out=out, keepdims=keepdims,
                     initial=initial, where_=where, promote_integers=promote_integers)
 
 
+@export
 def prod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
          out: None = None, keepdims: bool = False,
          initial: ArrayLike | None = None, where: ArrayLike | None = None,
@@ -381,11 +406,12 @@ def prod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
 def _reduce_max(a: ArrayLike, axis: Axis = None, out: None = None,
                 keepdims: bool = False, initial: ArrayLike | None = None,
                 where: ArrayLike | None = None) -> Array:
-  return _reduction(a, "max", np.max, lax.max, -np.inf, has_identity=False,
+  return _reduction(a, "max", lax.max, -np.inf, has_identity=False,
                     axis=axis, out=out, keepdims=keepdims,
                     initial=initial, where_=where, parallel_reduce=lax.pmax)
 
 
+@export
 def max(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False, initial: ArrayLike | None = None,
         where: ArrayLike | None = None) -> Array:
@@ -463,11 +489,12 @@ def max(a: ArrayLike, axis: Axis = None, out: None = None,
 def _reduce_min(a: ArrayLike, axis: Axis = None, out: None = None,
                 keepdims: bool = False, initial: ArrayLike | None = None,
                 where: ArrayLike | None = None) -> Array:
-  return _reduction(a, "min", np.min, lax.min, np.inf, has_identity=False,
+  return _reduction(a, "min", lax.min, np.inf, has_identity=False,
                     axis=axis, out=out, keepdims=keepdims,
                     initial=initial, where_=where, parallel_reduce=lax.pmin)
 
 
+@export
 def min(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False, initial: ArrayLike | None = None,
         where: ArrayLike | None = None) -> Array:
@@ -543,10 +570,11 @@ def min(a: ArrayLike, axis: Axis = None, out: None = None,
 @partial(api.jit, static_argnames=('axis', 'keepdims'), inline=True)
 def _reduce_all(a: ArrayLike, axis: Axis = None, out: None = None,
                 keepdims: bool = False, *, where: ArrayLike | None = None) -> Array:
-  return _reduction(a, "all", np.all, lax.bitwise_and, True, preproc=_cast_to_bool,
+  return _reduction(a, "all", lax.bitwise_and, True, preproc=_cast_to_bool,
                     axis=axis, out=out, keepdims=keepdims, where_=where)
 
 
+@export
 def all(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False, *, where: ArrayLike | None = None) -> Array:
   r"""Test whether all array elements along a given axis evaluate to True.
@@ -599,10 +627,11 @@ def all(a: ArrayLike, axis: Axis = None, out: None = None,
 @partial(api.jit, static_argnames=('axis', 'keepdims'), inline=True)
 def _reduce_any(a: ArrayLike, axis: Axis = None, out: None = None,
                 keepdims: bool = False, *, where: ArrayLike | None = None) -> Array:
-  return _reduction(a, "any", np.any, lax.bitwise_or, False, preproc=_cast_to_bool,
+  return _reduction(a, "any", lax.bitwise_or, False, preproc=_cast_to_bool,
                     axis=axis, out=out, keepdims=keepdims, where_=where)
 
 
+@export
 def any(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False, *, where: ArrayLike | None = None) -> Array:
   r"""Test whether any of the array elements along a given axis evaluate to True.
@@ -652,6 +681,100 @@ def any(a: ArrayLike, axis: Axis = None, out: None = None,
   return _reduce_any(a, axis=_ensure_optional_axes(axis), out=out,
                      keepdims=keepdims, where=where)
 
+
+@partial(api.jit, static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+def _reduce_bitwise_and(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
+                        out: None = None, keepdims: bool = False,
+                        initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
+  arr = lax_internal.asarray(a)
+  init_val = np.array(-1, dtype=dtype or arr.dtype)
+  return _reduction(arr, name="reduce_bitwise_and", op=lax.bitwise_and, init_val=init_val, preproc=_require_integer,
+                    axis=_ensure_optional_axes(axis), dtype=dtype, out=out, keepdims=keepdims,
+                    initial=initial, where_=where)
+
+
+@partial(api.jit, static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+def _reduce_bitwise_or(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
+                        out: None = None, keepdims: bool = False,
+                        initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
+  return _reduction(a, name="reduce_bitwise_or", op=lax.bitwise_or, init_val=0, preproc=_require_integer,
+                    axis=_ensure_optional_axes(axis), dtype=dtype, out=out, keepdims=keepdims,
+                    initial=initial, where_=where)
+
+
+@partial(api.jit, static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+def _reduce_bitwise_xor(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
+                        out: None = None, keepdims: bool = False,
+                        initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
+  return _reduction(a, name="reduce_bitwise_xor", op=lax.bitwise_xor, init_val=0, preproc=_require_integer,
+                    axis=_ensure_optional_axes(axis), dtype=dtype, out=out, keepdims=keepdims,
+                    initial=initial, where_=where)
+
+
+@partial(api.jit, static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+def _reduce_logical_and(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
+                        out: None = None, keepdims: bool = False,
+                        initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
+  return _reduction(a, name="reduce_logical_and", op=lax.bitwise_and, init_val=True, preproc=_cast_to_bool,
+                    axis=_ensure_optional_axes(axis), dtype=dtype, out=out, keepdims=keepdims,
+                    initial=initial, where_=where)
+
+
+@partial(api.jit, static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+def _reduce_logical_or(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
+                       out: None = None, keepdims: bool = False,
+                       initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
+  return _reduction(a, name="reduce_logical_or", op=lax.bitwise_or, init_val=False, preproc=_cast_to_bool,
+                    axis=_ensure_optional_axes(axis), dtype=dtype, out=out, keepdims=keepdims,
+                    initial=initial, where_=where)
+
+
+@partial(api.jit, static_argnames=('axis', 'keepdims', 'dtype'), inline=True)
+def _reduce_logical_xor(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
+                        out: None = None, keepdims: bool = False,
+                        initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
+  return _reduction(a, name="reduce_logical_xor", op=lax.bitwise_xor, init_val=False, preproc=_cast_to_bool,
+                    axis=_ensure_optional_axes(axis), dtype=dtype, out=out, keepdims=keepdims,
+                    initial=initial, where_=where)
+
+
+def _logsumexp(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
+               out: None = None, keepdims: bool = False,
+               initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
+  """Compute log(sum(exp(a))) while avoiding precision loss."""
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.logaddexp.reduce is not supported.")
+  dtypes.check_user_dtype_supported(dtype, "jnp.logaddexp.reduce")
+  check_arraylike("logsumexp", a)
+  where = check_where("logsumexp", where)
+  a_arr, = promote_dtypes_inexact(a)
+  pos_dims, dims = _reduction_dims(a_arr, axis)
+  amax = max(a_arr.real, axis=dims, keepdims=keepdims, where=where, initial=-np.inf)
+  amax = lax.stop_gradient(lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0)))
+  amax_with_dims = amax if keepdims else lax.expand_dims(amax, pos_dims)
+  exp_a = lax.exp(lax.sub(a_arr, amax_with_dims.astype(a_arr.dtype)))
+  sumexp = exp_a.sum(axis=dims, keepdims=keepdims, where=where)
+  result = lax.add(lax.log(sumexp), amax.astype(sumexp.dtype))
+  return result if initial is None else lax.logaddexp(initial, result)
+
+
+def _logsumexp2(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
+                out: None = None, keepdims: bool = False,
+                initial: ArrayLike | None = None, where: ArrayLike | None = None) -> Array:
+  """Compute log2(sum(2 ** a)) via logsumexp."""
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.logaddexp2.reduce is not supported.")
+  dtypes.check_user_dtype_supported(dtype, "jnp.logaddexp2.reduce")
+  check_arraylike("logsumexp2", a)
+  where = check_where("logsumexp2", where)
+  ln2 = float(np.log(2))
+  if initial is not None:
+    initial *= ln2
+  return _logsumexp(a * ln2, axis=axis, dtype=dtype, keepdims=keepdims,
+                    where=where, initial=initial) / ln2
+
+
+@export
 def amin(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False, initial: ArrayLike | None = None,
         where: ArrayLike | None = None) -> Array:
@@ -659,6 +782,7 @@ def amin(a: ArrayLike, axis: Axis = None, out: None = None,
   return min(a, axis=axis, out=out, keepdims=keepdims,
              initial=initial, where=where)
 
+@export
 def amax(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False, initial: ArrayLike | None = None,
         where: ArrayLike | None = None) -> Array:
@@ -678,6 +802,7 @@ def _axis_size(a: ArrayLike, axis: int | Sequence[int]):
   return size
 
 
+@export
 def mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
          out: None = None, keepdims: bool = False, *,
          where: ArrayLike | None = None) -> Array:
@@ -700,9 +825,8 @@ def mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
     An array of the mean along the given axis.
 
   See also:
-    - :func:`jax.numpy.sum`: Compute the sum of array elements over a given axis.
-    - :func:`jax.numpy.max`: Compute the maximum of array elements over given axis.
-    - :func:`jax.numpy.min`: Compute the minimum of array elements over given axis.
+    - :func:`jax.numpy.average`: Compute the weighted average of array elements
+    - :func:`jax.numpy.sum`: Compute the sum of array elements.
 
   Examples:
     By default, the mean is computed along all the axes.
@@ -745,6 +869,7 @@ def _mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
           upcast_f16_for_computation: bool = True,
           where: ArrayLike | None = None) -> Array:
   check_arraylike("mean", a)
+  where = check_where("mean", where)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.mean is not supported.")
 
@@ -782,9 +907,60 @@ def average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None, *
 @overload
 def average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
             returned: bool = False, keepdims: bool = False) -> Array | tuple[Array, Array]: ...
-@implements(np.average)
+@export
 def average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
             returned: bool = False, keepdims: bool = False) -> Array | tuple[Array, Array]:
+  """Compute the weighed average.
+
+  JAX Implementation of :func:`numpy.average`.
+
+  Args:
+    a: array to be averaged
+    axis: an optional integer or sequence of integers specifying the axis along which
+      the mean to be computed. If not specified, mean is computed along all the axes.
+    weights: an optional array of weights for a weighted average. Must be
+      broadcast-compatible with ``a``.
+    returned: If False (default) then return only the average. If True then return both
+      the average and the normalization factor (i.e. the sum of weights).
+    keepdims: If True, reduced axes are left in the result with size 1. If False (default)
+      then reduced axes are squeezed out.
+
+  Returns:
+    An array ``average`` or tuple of arrays ``(average, normalization)`` if
+    ``returned`` is True.
+
+  See also:
+    - :func:`jax.numpy.mean`: unweighted mean.
+
+  Examples:
+    Simple average:
+
+    >>> x = jnp.array([1, 2, 3, 2, 4])
+    >>> jnp.average(x)
+    Array(2.4, dtype=float32)
+
+    Weighted average:
+
+    >>> weights = jnp.array([2, 1, 3, 2, 2])
+    >>> jnp.average(x, weights=weights)
+    Array(2.5, dtype=float32)
+
+    Use ``returned=True`` to optionally return the normalization, i.e. the
+    sum of weights:
+
+    >>> jnp.average(x, returned=True)
+    (Array(2.4, dtype=float32), Array(5., dtype=float32))
+    >>> jnp.average(x, weights=weights, returned=True)
+    (Array(2.5, dtype=float32), Array(10., dtype=float32))
+
+    Weighted average along a specified axis:
+
+    >>> x = jnp.array([[8, 2, 7],
+    ...                [3, 6, 4]])
+    >>> weights = jnp.array([1, 2, 3])
+    >>> jnp.average(x, weights=weights, axis=1)
+    Array([5.5, 4.5], dtype=float32)
+  """
   return _average(a, _ensure_optional_axes(axis), weights, returned, keepdims)
 
 @partial(api.jit, static_argnames=('axis', 'returned', 'keepdims'), inline=True)
@@ -842,6 +1018,7 @@ def _average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
   return avg
 
 
+@export
 def var(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
         out: None = None, ddof: int = 0, keepdims: bool = False, *,
         where: ArrayLike | None = None, correction: int | float | None = None) -> Array:
@@ -930,6 +1107,7 @@ def _var(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
          out: None = None, correction: int | float = 0, keepdims: bool = False, *,
          where: ArrayLike | None = None) -> Array:
   check_arraylike("var", a)
+  where = check_where("var", where)
   dtypes.check_user_dtype_supported(dtype, "var")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.var is not supported.")
@@ -982,6 +1160,7 @@ def _var_promote_types(a_dtype: DTypeLike, dtype: DTypeLike | None) -> tuple[DTy
   return _upcast_f16(computation_dtype), np.dtype(dtype)
 
 
+@export
 def std(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
         out: None = None, ddof: int = 0, keepdims: bool = False, *,
         where: ArrayLike | None = None, correction: int | float | None = None) -> Array:
@@ -1066,6 +1245,7 @@ def _std(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
          out: None = None, correction: int | float = 0, keepdims: bool = False, *,
          where: ArrayLike | None = None) -> Array:
   check_arraylike("std", a)
+  where = check_where("std", where)
   dtypes.check_user_dtype_supported(dtype, "std")
   if dtype is not None and not dtypes.issubdtype(dtype, np.inexact):
     raise ValueError(f"dtype argument to jnp.std must be inexact; got {dtype}")
@@ -1074,6 +1254,7 @@ def _std(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   return lax.sqrt(var(a, axis=axis, dtype=dtype, correction=correction, keepdims=keepdims, where=where))
 
 
+@export
 def ptp(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False) -> Array:
   r"""Return the peak-to-peak range along a given axis.
@@ -1125,6 +1306,7 @@ def _ptp(a: ArrayLike, axis: Axis = None, out: None = None,
   return lax.sub(x, y)
 
 
+@export
 @partial(api.jit, static_argnames=('axis', 'keepdims'))
 def count_nonzero(a: ArrayLike, axis: Axis = None,
                   keepdims: bool = False) -> Array:
@@ -1170,13 +1352,15 @@ def count_nonzero(a: ArrayLike, axis: Axis = None,
 
 def _nan_reduction(a: ArrayLike, name: str, jnp_reduction: Callable[..., Array],
                    init_val: ArrayLike, nan_if_all_nan: bool,
-                   axis: Axis = None, keepdims: bool = False, **kwargs) -> Array:
+                   axis: Axis = None, keepdims: bool = False, where: ArrayLike | None = None,
+                   **kwargs) -> Array:
   check_arraylike(name, a)
+  where = check_where(name, where)
   if not dtypes.issubdtype(dtypes.dtype(a), np.inexact):
-    return jnp_reduction(a, axis=axis, keepdims=keepdims, **kwargs)
+    return jnp_reduction(a, axis=axis, keepdims=keepdims, where=where, **kwargs)
 
   out = jnp_reduction(_where(lax_internal._isnan(a), _reduction_init_val(a, init_val), a),
-                      axis=axis, keepdims=keepdims, **kwargs)
+                      axis=axis, keepdims=keepdims, where=where, **kwargs)
   if nan_if_all_nan:
     return _where(all(lax_internal._isnan(a), axis=axis, keepdims=keepdims),
                   _lax_const(a, np.nan), out)
@@ -1184,6 +1368,7 @@ def _nan_reduction(a: ArrayLike, name: str, jnp_reduction: Callable[..., Array],
     return out
 
 
+@export
 @partial(api.jit, static_argnames=('axis', 'keepdims'))
 def nanmin(a: ArrayLike, axis: Axis = None, out: None = None,
            keepdims: bool = False, initial: ArrayLike | None = None,
@@ -1266,6 +1451,7 @@ def nanmin(a: ArrayLike, axis: Axis = None, out: None = None,
                         initial=initial, where=where)
 
 
+@export
 @partial(api.jit, static_argnames=('axis', 'keepdims'))
 def nanmax(a: ArrayLike, axis: Axis = None, out: None = None,
            keepdims: bool = False, initial: ArrayLike | None = None,
@@ -1348,6 +1534,7 @@ def nanmax(a: ArrayLike, axis: Axis = None, out: None = None,
                         initial=initial, where=where)
 
 
+@export
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nansum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
            keepdims: bool = False, initial: ArrayLike | None = None,
@@ -1431,6 +1618,7 @@ def nansum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
                         initial=initial, where=where)
 
 
+@export
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nanprod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
             keepdims: bool = False, initial: ArrayLike | None = None,
@@ -1514,6 +1702,7 @@ def nanprod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out
                         initial=initial, where=where)
 
 
+@export
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nanmean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
             keepdims: bool = False, where: ArrayLike | None = None) -> Array:
@@ -1590,6 +1779,7 @@ def nanmean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out
     Array([[nan, nan, nan, nan]], dtype=float32)
   """
   check_arraylike("nanmean", a)
+  where = check_where("nanmean", where)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanmean is not supported.")
   if dtypes.issubdtype(dtypes.dtype(a), np.bool_) or dtypes.issubdtype(dtypes.dtype(a), np.integer):
@@ -1605,6 +1795,7 @@ def nanmean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out
   return td
 
 
+@export
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nanvar(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
            ddof: int = 0, keepdims: bool = False,
@@ -1682,6 +1873,7 @@ def nanvar(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
            [4.  ]], dtype=float32)
   """
   check_arraylike("nanvar", a)
+  where = check_where("nanvar", where)
   dtypes.check_user_dtype_supported(dtype, "nanvar")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanvar is not supported.")
@@ -1707,6 +1899,7 @@ def nanvar(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
   return lax.convert_element_type(result, dtype)
 
 
+@export
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nanstd(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
            ddof: int = 0, keepdims: bool = False,
@@ -1776,6 +1969,7 @@ def nanstd(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
     Array([[0.5, 0.5, 0. , 0. ]], dtype=float32)
   """
   check_arraylike("nanstd", a)
+  where = check_where("nanstd", where)
   dtypes.check_user_dtype_supported(dtype, "nanstd")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanstd is not supported.")
@@ -1789,7 +1983,7 @@ class CumulativeReduction(Protocol):
 
 def _cumulative_reduction(
     name: str, reduction: Callable[..., Array],
-    a: ArrayLike, axis: int | None, dtype: DTypeLike | None, out: None,
+    a: ArrayLike, axis: int | None, dtype: DTypeLike | None, out: None = None,
     fill_nan: bool = False, fill_value: ArrayLike = 0,
     promote_integers: bool = False) -> Array:
   """Helper function for implementing cumulative reductions."""
@@ -1828,6 +2022,7 @@ def _cumulative_reduction(
   return result
 
 
+@export
 @partial(api.jit, static_argnames=('axis', 'dtype'))
 def cumsum(a: ArrayLike, axis: int | None = None,
            dtype: DTypeLike | None = None, out: None = None) -> Array:
@@ -1864,6 +2059,7 @@ def cumsum(a: ArrayLike, axis: int | None = None,
   return _cumulative_reduction("cumsum", lax.cumsum, a, axis, dtype, out)
 
 
+@export
 @partial(api.jit, static_argnames=('axis', 'dtype'))
 def cumprod(a: ArrayLike, axis: int | None = None,
             dtype: DTypeLike | None = None, out: None = None) -> Array:
@@ -1899,6 +2095,7 @@ def cumprod(a: ArrayLike, axis: int | None = None,
   return _cumulative_reduction("cumprod", lax.cumprod, a, axis, dtype, out)
 
 
+@export
 @partial(api.jit, static_argnames=('axis', 'dtype'))
 def nancumsum(a: ArrayLike, axis: int | None = None,
               dtype: DTypeLike | None = None, out: None = None) -> Array:
@@ -1948,6 +2145,7 @@ def nancumsum(a: ArrayLike, axis: int | None = None,
                                fill_nan=True, fill_value=0)
 
 
+@export
 @partial(api.jit, static_argnames=('axis', 'dtype'))
 def nancumprod(a: ArrayLike, axis: int | None = None,
                dtype: DTypeLike | None = None, out: None = None) -> Array:
@@ -2004,6 +2202,7 @@ def _cumsum_with_promotion(a: ArrayLike, axis: int | None = None,
                                a, axis, dtype, out, promote_integers=True)
 
 
+@export
 def cumulative_sum(
     x: ArrayLike, /, *, axis: int | None = None,
     dtype: DTypeLike | None = None,
@@ -2015,7 +2214,7 @@ def cumulative_sum(
   Args:
     x: N-dimensional array
     axis: integer axis along which to accumulate. If ``x`` is one-dimensional,
-      this argument is optional.
+      this argument is optional and defaults to zero.
     dtype: optional dtype of the output.
     include_initial: if True, then include the initial value in the cumulative
       sum. Default is False.
@@ -2064,9 +2263,72 @@ def cumulative_sum(
       dimension=axis)
   return out
 
+
+@export
+def cumulative_prod(
+    x: ArrayLike, /, *, axis: int | None = None,
+    dtype: DTypeLike | None = None,
+    include_initial: bool = False) -> Array:
+  """Cumulative product along the axis of an array.
+
+  JAX implementation of :func:`numpy.cumulative_prod`.
+
+  Args:
+    x: N-dimensional array
+    axis: integer axis along which to accumulate. If ``x`` is one-dimensional,
+      this argument is optional and defaults to zero.
+    dtype: optional dtype of the output.
+    include_initial: if True, then include the initial value in the cumulative
+      product. Default is False.
+
+  Returns:
+    An array containing the accumulated values.
+
+  See Also:
+    - :func:`jax.numpy.cumprod`: alternative API for cumulative product.
+    - :func:`jax.numpy.nancumprod`: cumulative product while ignoring NaN values.
+    - :func:`jax.numpy.multiply.accumulate`: cumulative product via the ufunc API.
+
+  Examples:
+    >>> x = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6]])
+    >>> jnp.cumulative_prod(x, axis=1)
+    Array([[  1,   2,   6],
+           [  4,  20, 120]], dtype=int32)
+    >>> jnp.cumulative_prod(x, axis=1, include_initial=True)
+    Array([[  1,   1,   2,   6],
+           [  1,   4,  20, 120]], dtype=int32)
+  """
+  check_arraylike("cumulative_prod", x)
+  x = lax_internal.asarray(x)
+  if x.ndim == 0:
+    raise ValueError(
+      "The input must be non-scalar to take a cumulative product, however a "
+      "scalar value or scalar array was given."
+    )
+  if axis is None:
+    axis = 0
+    if x.ndim > 1:
+      raise ValueError(
+        f"The input array has rank {x.ndim}, however axis was not set to an "
+        "explicit value. The axis argument is only optional for one-dimensional "
+        "arrays.")
+
+  axis = _canonicalize_axis(axis, x.ndim)
+  dtypes.check_user_dtype_supported(dtype)
+  out = _cumulative_reduction("cumulative_prod", lax.cumprod, x, axis, dtype)
+  if include_initial:
+    zeros_shape = list(x.shape)
+    zeros_shape[axis] = 1
+    out = lax_internal.concatenate(
+      [lax_internal.full(zeros_shape, 1, dtype=out.dtype), out],
+      dimension=axis)
+  return out
+
 # Quantiles
 
 # TODO(jakevdp): interpolation argument deprecated 2024-05-16
+@export
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation', 'keepdims', 'method'))
 def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = None,
              out: None = None, overwrite_input: bool = False, method: str = "linear",
@@ -2123,6 +2385,7 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
   return _quantile(lax_internal.asarray(a), lax_internal.asarray(q), axis, method, keepdims, False)
 
 # TODO(jakevdp): interpolation argument deprecated 2024-05-16
+@export
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation', 'keepdims', 'method'))
 def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = None,
                 out: None = None, overwrite_input: bool = False, method: str = "linear",
@@ -2250,7 +2513,8 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     index[axis] = high
     high_value = a[tuple(index)]
   else:
-    a = _where(any(lax_internal._isnan(a), axis=axis, keepdims=True), np.nan, a)
+    with jax.debug_nans(False):
+      a = _where(any(lax_internal._isnan(a), axis=axis, keepdims=True), np.nan, a)
     a = lax.sort(a, dimension=axis)
     n = lax.convert_element_type(a_shape[axis], lax_internal._dtype(q))
     q = lax.mul(q, n - 1)
@@ -2302,7 +2566,9 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     result = result.reshape(keepdim)
   return lax.convert_element_type(result, a.dtype)
 
+
 # TODO(jakevdp): interpolation argument deprecated 2024-05-16
+@export
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation', 'keepdims', 'method'))
 def percentile(a: ArrayLike, q: ArrayLike,
                axis: int | tuple[int, ...] | None = None,
@@ -2358,7 +2624,9 @@ def percentile(a: ArrayLike, q: ArrayLike,
   return quantile(a, q / 100, axis=axis, out=out, overwrite_input=overwrite_input,
                   method=method, keepdims=keepdims)
 
+
 # TODO(jakevdp): interpolation argument deprecated 2024-05-16
+@export
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation', 'keepdims', 'method'))
 def nanpercentile(a: ArrayLike, q: ArrayLike,
                   axis: int | tuple[int, ...] | None = None,
@@ -2418,6 +2686,7 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
                      method=method, keepdims=keepdims)
 
 
+@export
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'keepdims'))
 def median(a: ArrayLike, axis: int | tuple[int, ...] | None = None,
            out: None = None, overwrite_input: bool = False,
@@ -2469,6 +2738,7 @@ def median(a: ArrayLike, axis: int | tuple[int, ...] | None = None,
                   keepdims=keepdims, method='midpoint')
 
 
+@export
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'keepdims'))
 def nanmedian(a: ArrayLike, axis: int | tuple[int, ...] | None = None,
               out: None = None, overwrite_input: bool = False,

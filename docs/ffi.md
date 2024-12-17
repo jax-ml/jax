@@ -34,10 +34,7 @@ JAX's FFI support is provided in two parts:
 In this tutorial we demonstrate the use of both of these components using a simple example, and then go on to discuss some lower-level extensions for more complicated use cases.
 We start by presenting the FFI on CPU, and discuss generalizations to GPU or multi-device environments below.
 
-This tutorial comes with two supplementary files:
-
-* [`rms_norm.cc`](ffi/rms_norm.cc), which includes all the backend code, and
-* [`CMakeLists.txt`](ffi/CMakeLists.txt), which tells [CMake](https://cmake.org) how to build the code.
+The end-to-end code for this example and some other more advanced use cases can be found in the JAX FFI examples project on GitHub at [`examples/ffi` in the JAX repository](https://github.com/jax-ml/jax/tree/main/examples/ffi).
 
 ## A simple example
 
@@ -96,7 +93,7 @@ and, for our example, this is the function that we want to expose to JAX via the
 
 To expose our library function to JAX and XLA, we need to write a thin wrapper using the APIs provided by the header-only library in the [`xla/ffi/api`](https://github.com/openxla/xla/tree/main/xla/ffi/api) directory of the [XLA project](https://github.com/openxla/xla).
 For more information about this interface, take a look at [the XLA custom call documentation](https://openxla.org/xla/custom_call).
-The full source listing can be downloaded [here](ffi/rms_norm.cc), but the key implementation details are reproduced here:
+The full source listing can be downloaded [here](https://github.com/jax-ml/jax/blob/main/examples/ffi/src/jax_ffi_example/rms_norm.cc), but the key implementation details are reproduced here:
 
 ```c++
 #include <functional>
@@ -124,12 +121,11 @@ std::pair<int64_t, int64_t> GetDims(const ffi::Buffer<T> &buffer) {
 // A wrapper function providing the interface between the XLA FFI call and our
 // library function `ComputeRmsNorm` above. This function handles the batch
 // dimensions by calling `ComputeRmsNorm` within a loop.
-ffi::Error RmsNormImpl(float eps, ffi::Buffer<ffi::DataType::F32> x,
-                       ffi::Result<ffi::Buffer<ffi::DataType::F32>> y) {
+ffi::Error RmsNormImpl(float eps, ffi::Buffer<ffi::F32> x,
+                       ffi::ResultBuffer<ffi::F32> y) {
   auto [totalSize, lastDim] = GetDims(x);
   if (lastDim == 0) {
-    return ffi::Error(ffi::ErrorCode::kInvalidArgument,
-                      "RmsNorm input must be an array");
+    return ffi::Error::InvalidArgument("RmsNorm input must be an array");
   }
   for (int64_t n = 0; n < totalSize; n += lastDim) {
     ComputeRmsNorm(eps, lastDim, &(x.typed_data()[n]), &(y->typed_data()[n]));
@@ -138,14 +134,14 @@ ffi::Error RmsNormImpl(float eps, ffi::Buffer<ffi::DataType::F32> x,
 }
 
 // Wrap `RmsNormImpl` and specify the interface to XLA. If you need to declare
-// this handler in a header, you can use the `XLA_FFI_DECLASE_HANDLER_SYMBOL`
-// macro: `XLA_FFI_DECLASE_HANDLER_SYMBOL(RmsNorm)`.
+// this handler in a header, you can use the `XLA_FFI_DECLARE_HANDLER_SYMBOL`
+// macro: `XLA_FFI_DECLARE_HANDLER_SYMBOL(RmsNorm)`.
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     RmsNorm, RmsNormImpl,
     ffi::Ffi::Bind()
         .Attr<float>("eps")
-        .Arg<ffi::Buffer<ffi::DataType::F32>>()  // x
-        .Ret<ffi::Buffer<ffi::DataType::F32>>()  // y
+        .Arg<ffi::Buffer<ffi::F32>>()  // x
+        .Ret<ffi::Buffer<ffi::F32>>()  // y
 );
 ```
 
@@ -166,7 +162,6 @@ Now that we have our minimal FFI wrapper implemented, we need to expose this fun
 In this tutorial, we compile `RmsNorm` into a shared library and load it using [ctypes](https://docs.python.org/3/library/ctypes.html), but another common pattern is to use [nanobind](https://nanobind.readthedocs.io/) or [pybind11](https://pybind11.readthedocs.io/) as discussed below.
 
 To compile the shared library, we're using CMake here, but you should be able to use your favorite build system without too much trouble.
-The full `CMakeLists.txt` can be downloaded [here](ffi/CMakeLists.txt).
 
 ```{code-cell} ipython3
 :tags: [hide-output]
@@ -248,26 +243,26 @@ def rms_norm(x, eps=1e-5):
   if x.dtype != jnp.float32:
     raise ValueError("Only the float32 dtype is implemented by rms_norm")
 
-  # In this case, the output of our FFI function is just a single array with the
-  # same shape and dtype as the input. We discuss a case with a more interesting
-  # output type below.
-  out_type = jax.ShapeDtypeStruct(x.shape, x.dtype)
-
-  return jex.ffi.ffi_call(
+  call = jex.ffi.ffi_call(
     # The target name must be the same string as we used to register the target
     # above in `register_custom_call_target`
     "rms_norm",
-    out_type,
-    x,
-    # Note that here we're use `numpy` (not `jax.numpy`) to specify a dtype for
-    # the attribute `eps`. Our FFI function expects this to have the C++ `float`
-    # type (which corresponds to numpy's `float32` type), and it must be a
-    # static parameter (i.e. not a JAX array).
-    eps=np.float32(eps),
-    # The `vectorized` parameter controls this function's behavior under `vmap`
+
+    # In this case, the output of our FFI function is just a single array with
+    # the same shape and dtype as the input. We discuss a case with a more
+    # interesting output type below.
+    jax.ShapeDtypeStruct(x.shape, x.dtype),
+
+    # The `vmap_method` parameter controls this function's behavior under `vmap`
     # as discussed below.
-    vectorized=True,
+    vmap_method="broadcast_all",
   )
+
+  # Note that here we're use `numpy` (not `jax.numpy`) to specify a dtype for
+  # the attribute `eps`. Our FFI function expects this to have the C++ `float`
+  # type (which corresponds to numpy's `float32` type), and it must be a
+  # static parameter (i.e. not a JAX array).
+  return call(x, eps=np.float32(eps))
 
 
 # Test that this gives the same result as our reference implementation
@@ -282,7 +277,7 @@ It's important to note that the first argument to {func}`~jax.extend.ffi.ffi_cal
 Any attributes (defined using `Attr` in the C++ wrapper above) should be passed as keyword arguments to {func}`~jax.extend.ffi.ffi_call`.
 Note that we explicitly cast `eps` to `np.float32` because our FFI library expects a C `float`, and we can't use `jax.numpy` here, because these parameters must be static arguments.
 
-The `vectorized` argument to {func}`~jax.extend.ffi.ffi_call` defines how this FFI call interacts with {func}`~jax.vmap` as described next.
+The `vmap_method` argument to {func}`~jax.extend.ffi.ffi_call` defines how this FFI call interacts with {func}`~jax.vmap` as described next.
 
 ```{tip}
 If you are familiar with the earlier "custom call" interface, you might be surprised that we're not passing the problem dimensions as parameters (batch size, etc.) to {func}`~jax.extend.ffi.ffi_call`.
@@ -293,19 +288,29 @@ One major perk of this change is {func}`~jax.extend.ffi.ffi_call` can support so
 (ffi-call-vmap)=
 ### Batching with `vmap`
 
-All uses of {func}`~jax.extend.ffi.ffi_call` support {func}`~jax.vmap` out of the box, but this implementation won't necessarily be very efficient.
-By default, when `vmap`ped, an `ffi_call` will be rewritten as a {func}`~jax.lax.scan` with the `ffi_call` in the body.
-This default implementation is general purpose, but it doesn't parallelize very well.
-But, many FFI calls provide more efficient batching behavior and, in some simple cases, the `vectorized` parameter to {func}`~jax.extend.ffi.ffi_call` can be used to expose a better implementation.
+{func}`~jax.extend.ffi.ffi_call` supports some simple {func}`~jax.vmap` semantics out of the box using the `vmap_method` parameter.
+The docs for {func}`~jax.pure_callback` provide more details about the `vmap_method` parameter, and the same behavior applies to {func}`~jax.extend.ffi.ffi_call`.
 
-The specific assumption required to use the `vectorized` parameter is that all leading dimensions of the inputs should be treated as batch axes.
+The simplest `vmap_method` is `"sequential"`.
+In this case, when `vmap`ped, an `ffi_call` will be rewritten as a {func}`~jax.lax.scan` with the `ffi_call` in the body.
+This implementation is general purpose, but it doesn't parallelize very well.
+Many FFI calls provide more efficient batching behavior and, in some simple cases, the `"expand_dims"` or `"broadcast_all"` methods can be used to expose a better implementation.
+
+In this case, since we only have one input argument, `"expand_dims"` and `"broadcast_all"` actually have the same behavior.
+The specific assumption required to use these methods is that the foreign function knows how to handle batch dimensions.
 Another way of saying this is that the result of calling `ffi_call` on the batched inputs is assumed to be equal to stacking the repeated application of `ffi_call` to each element in the batched input, roughly:
 
 ```python
 ffi_call(xs) == jnp.stack([ffi_call(x) for x in xs])
 ```
 
-Our implementation of `rms_norm` has the appropriate semantics, and it supports `vmap` with `vectorized=True` out of the box:
+```{tip}
+Note that things get a bit more complicated when we have multiple input arguments.
+For simplicity, we will use the `"broadcast_all"` throughout this tutorial, which guarantees that all inputs will be broadcasted to have the same batch dimensions, but it would also be possible to implement a foreign function to handle the `"expand_dims"` method.
+The documentation for {func}`~jax.pure_callback` includes some examples of this
+```
+
+Our implementation of `rms_norm` has the appropriate semantics, and it supports `vmap` with `vmap_method="broadcast_all"` out of the box:
 
 ```{code-cell} ipython3
 np.testing.assert_allclose(jax.vmap(rms_norm)(x), jax.vmap(rms_norm_ref)(x), rtol=1e-5)
@@ -317,23 +322,21 @@ We can inspect the [jaxpr](jax-internals-jaxpr) of the {func}`~jax.vmap` of `rms
 jax.make_jaxpr(jax.vmap(rms_norm))(x)
 ```
 
-If `vectorized` is `False` or omitted, `vmap`ping a `ffi_call` will fall back on a {func}`jax.lax.scan` with the `ffi_call` in the body:
+Using `vmap_method="sequential"`, `vmap`ping a `ffi_call` will fall back on a {func}`jax.lax.scan` with the `ffi_call` in the body:
 
 ```{code-cell} ipython3
-def rms_norm_not_vectorized(x, eps=1e-5):
+def rms_norm_sequential(x, eps=1e-5):
   return jex.ffi.ffi_call(
     "rms_norm",
     jax.ShapeDtypeStruct(x.shape, x.dtype),
-    x,
-    eps=np.float32(eps),
-    vectorized=False,  # This is the default behavior
-  )
+    vmap_method="sequential",
+  )(x, eps=np.float32(eps))
 
 
-jax.make_jaxpr(jax.vmap(rms_norm_not_vectorized))(x)
+jax.make_jaxpr(jax.vmap(rms_norm_sequential))(x)
 ```
 
-If your foreign function provides an efficient batching rule that isn't supported by this simple `vectorized` parameter, it might also be possible to define more flexible custom `vmap` rules using the experimental `custom_vmap` interface, but it's worth also opening an issue describing your use case on [the JAX issue tracker](https://github.com/jax-ml/jax/issues).
+If your foreign function provides an efficient batching rule that isn't supported by this simple `vmap_method` parameter, it might also be possible to define more flexible custom `vmap` rules using the experimental `custom_vmap` interface, but it's worth also opening an issue describing your use case on [the JAX issue tracker](https://github.com/jax-ml/jax/issues).
 
 +++
 
@@ -349,7 +352,7 @@ In this case, we actually define two new FFI calls:
 1. `rms_norm_fwd` returns two outputs: (a) the "primal" result, and (b) the "residuals" which are used in the backwards pass.
 2. `rms_norm_bwd` takes the residuals and the output co-tangents, and returns the input co-tangents.
 
-We won't get into the details of the RMS normalization backwards pass, but take a look at the [C++ source code](ffi/rms_norm.cc) to see how these functions are implemented on the back end.
+We won't get into the details of the RMS normalization backwards pass, but take a look at the [C++ source code](https://github.com/jax-ml/jax/blob/main/examples/ffi/src/jax_ffi_example/rms_norm.cc) to see how these functions are implemented on the back end.
 The main point to emphasize here is that the "residual" computed has a different shape than the primal output, therefore, in the {func}`~jax.extend.ffi.ffi_call` to `res_norm_fwd`, the output type has two elements with different shapes.
 
 This custom derivative rule can be wired in as follows:
@@ -370,10 +373,8 @@ def rms_norm_fwd(x, eps=1e-5):
       jax.ShapeDtypeStruct(x.shape, x.dtype),
       jax.ShapeDtypeStruct(x.shape[:-1], x.dtype),
     ),
-    x,
-    eps=np.float32(eps),
-    vectorized=True,
-  )
+    vmap_method="broadcast_all",
+  )(x, eps=np.float32(eps))
   return y, (res, x)
 
 
@@ -386,11 +387,8 @@ def rms_norm_bwd(eps, res, ct):
     jex.ffi.ffi_call(
       "rms_norm_bwd",
       jax.ShapeDtypeStruct(ct.shape, ct.dtype),
-      res,
-      x,
-      ct,
-      vectorized=True,
-    ),
+      vmap_method="broadcast_all",
+    )(res, x, ct),
   )
 
 
@@ -419,16 +417,16 @@ Since this documentation page is automatically generated on a machine without ac
 When defining our FFI wrapper for CPU, the function signature that we used was:
 
 ```c++
-ffi::Error RmsNormImpl(float eps, ffi::Buffer<ffi::DataType::F32> x,
-                       ffi::Result<ffi::Buffer<ffi::DataType::F32>> y)
+ffi::Error RmsNormImpl(float eps, ffi::Buffer<ffi::F32> x,
+                       ffi::ResultBuffer<ffi::F32> y)
 ```
 
 To update this to interface with a CUDA kernel, this signature becomes:
 
 ```c++
 ffi::Error RmsNormImpl(cudaStream_t stream, float eps,
-                       ffi::Buffer<ffi::DataType::F32> x,
-                       ffi::Result<ffi::Buffer<ffi::DataType::F32>> y)
+                       ffi::Buffer<ffi::F32> x,
+                       ffi::ResultBuffer<ffi::F32> y)
 ```
 
 And the handler definition is updated to include a `Ctx` in its binding:
@@ -439,8 +437,8 @@ XLA_FFI_DEFINE_HANDLER(
     ffi::Ffi::Bind()
         .Ctx<ffi::PlatformStream<cudaStream_t>>()
         .Attr<float>("eps")
-        .Arg<ffi::Buffer<ffi::DataType::F32>>()  // x
-        .Ret<ffi::Buffer<ffi::DataType::F32>>()  // y
+        .Arg<ffi::Buffer<ffi::F32>>()  // x
+        .Ret<ffi::Buffer<ffi::F32>>()  // y
 );
 ```
 
@@ -467,10 +465,8 @@ def rms_norm_cross_platform(x, eps=1e-5):
     return lambda x: jex.ffi.ffi_call(
       target_name,
       out_type,
-      x,
-      eps=np.float32(eps),
-      vectorized=True,
-    )
+      vmap_method="broadcast_all",
+    )(x, eps=np.float32(eps))
 
   return jax.lax.platform_dependent(x, cpu=impl("rms_norm"), cuda=impl("rms_norm_cuda"))
 

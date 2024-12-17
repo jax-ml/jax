@@ -24,22 +24,20 @@ import functools
 import itertools
 import threading
 from typing import Any, ClassVar, Hashable, Protocol, Union, runtime_checkable
-import warnings
 
 import jax
 from jax._src import api_util
 from jax._src import config
 from jax._src import core as jax_core
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import linear_util as lu
-from jax._src import mesh as mesh_lib
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.state import discharge as state_discharge
+from jax._src.state import types as state_types
 from jax._src.state.types import TransformedRef
 import jax.numpy as jnp
 
@@ -142,13 +140,6 @@ class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
         self.memory_space,
     ))
 
-  def at_least_vspace(self):
-    """Vector space method needed for AD."""
-    raise NotImplementedError
-
-  def join(self, other):
-    raise NotImplementedError
-
   def str_short(self, short_dtypes=False):
     dt_str = \
         dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
@@ -203,7 +194,7 @@ class MemoryRef:
         self.shape, dtype, memory_space=self.memory_space
     )
 
-  def get_ref_aval(self) -> AbstractMemoryRef:
+  def get_ref_aval(self) -> TransformedRef | AbstractMemoryRef:
     # TODO(sharadmv): Clean this up. ShapedArrayWithMemorySpace fails when we
     # try to apply JAX ops to it.
     return AbstractMemoryRef(
@@ -228,10 +219,13 @@ class AbstractMemoryRef(state.AbstractRef):
   def __repr__(self) -> str:
     return f'MemRef<{self.memory_space}>{{{self.inner_aval.str_short()}}}'
 
-  def join(self, other):
-    assert isinstance(other, AbstractMemoryRef)
-    return AbstractMemoryRef(self.inner_aval.join(other.inner_aval),
-                             self.memory_space)
+  @property
+  def sharding(self):
+    return self.inner_aval.sharding
+
+  def update_weak_type(self, weak_type):
+    return AbstractMemoryRef(
+        self.inner_aval.update_weak_type(weak_type), self.memory_space)
 
   def update(self, inner_aval=None, memory_space=None):
     inner_aval = self.inner_aval if inner_aval is None else inner_aval
@@ -241,6 +235,10 @@ class AbstractMemoryRef(state.AbstractRef):
   def to_tangent_aval(self):
     return AbstractMemoryRef(
         self.inner_aval.to_tangent_aval(), self.memory_space)
+
+  # TODO(dougalm, sharadmv): figure out how to avoid needing this
+  def normalize(self):
+    return state.AbstractRef(self.inner_aval).normalize()
 
   def __eq__(self, other):
     return (type(self) is type(other) and self.inner_aval == other.inner_aval
@@ -262,13 +260,6 @@ class MemorySpace(enum.Enum):
 
   def __str__(self) -> str:
     return self.value
-
-
-def _ref_raise_to_shaped(ref_aval: AbstractMemoryRef, weak_type):
-  return AbstractMemoryRef(
-      jax_core.raise_to_shaped(ref_aval.inner_aval, weak_type),
-      ref_aval.memory_space)
-jax_core.raise_to_shaped_mappings[AbstractMemoryRef] = _ref_raise_to_shaped
 
 
 @dataclasses.dataclass(frozen=True)
@@ -378,37 +369,10 @@ class BlockSpec:
   See :ref:`pallas_blockspec` for more details.
   """
   # An internal canonicalized version is in BlockMapping.
-  block_shape: tuple[int | None, ...] | None = None
+  block_shape: Sequence[int | None] | None = None
   index_map: Callable[..., Any] | None = None
   memory_space: Any | None = dataclasses.field(kw_only=True, default=None)
   indexing_mode: IndexingMode = dataclasses.field(kw_only=True, default=blocked)
-
-  def __init__(
-      self,
-      block_shape: Any | None = None,
-      index_map: Any | None = None,
-      *,
-      memory_space: Any | None = None,
-      indexing_mode: IndexingMode = blocked,
-  ) -> None:
-    if callable(block_shape):
-      # TODO(slebedev): Remove this code path and update the signature of
-      # __init__ after October 1, 2024.
-      message = (
-          "BlockSpec now expects ``block_shape`` to be passed before"
-          " ``index_map``. Update your code by swapping the order of these"
-          " arguments. For example, ``pl.BlockSpace(lambda i: i, (42,))``"
-          " should be written as ``pl.BlockSpec((42,), lambda i: i)``."
-      )
-      if deprecations.is_accelerated("pallas-block-spec-order"):
-        raise TypeError(message)
-      warnings.warn(message, DeprecationWarning)
-      index_map, block_shape = block_shape, index_map
-
-    self.block_shape = block_shape
-    self.index_map = index_map
-    self.memory_space = memory_space
-    self.indexing_mode = indexing_mode
 
   def to_block_mapping(
       self,
@@ -913,7 +877,7 @@ def get_grid_mapping(
   )
   # The inputs for the index maps
   index_map_avals = (
-      (index_map_grid_aval,) * len(grid_spec.grid))
+      (index_map_grid_aval.update(sharding=None),) * len(grid_spec.grid))
   index_map_tree = tree_util.tree_structure((index_map_avals, {}))
 
   num_scalar_prefetch: int = getattr(grid_spec, "num_scalar_prefetch", 0)
@@ -1048,14 +1012,6 @@ def pytreedef_mismatch_err_msg(
   return "\n".join(msg)
 
 
-class PallasMesh(mesh_lib.Mesh):
-  """A specialized mesh used for lowering shard_map -> pallas_call."""
-
-  @property
-  def _is_jax_device_mesh(self):
-    return False
-
-
 @dataclasses.dataclass(frozen=True)
 class CostEstimate:
   flops: int
@@ -1067,3 +1023,115 @@ class CostEstimate:
         f'{{"flops": {self.flops}, "transcendentals": {self.transcendentals},'
         f' "bytes_accessed": {self.bytes_accessed}}}'
     ).encode("ascii")
+
+
+core_map_p = jax_core.Primitive("core_map")
+core_map_p.multiple_results = True
+
+def core_map(mesh):
+  """Runs a function on a mesh, mapping it over the devices in the mesh.
+
+  The function should be stateful in that it takes in no inputs and returns
+  no outputs but can mutate closed-over Refs, for example.
+  """
+  def wrapped(f):
+    flat_args, in_tree = tree_util.tree_flatten(((), {}))
+    flat_fun, out_tree_thunk = api_util.flatten_fun(lu.wrap_init(f), in_tree)
+    with jax_core.extend_axis_env_nd(mesh.shape.items()):
+      jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, flat_args)
+    out = core_map_p.bind(*consts, jaxpr=jaxpr, mesh=mesh)
+    if out:
+      raise ValueError("core_map-ped functions must not return any outputs.")
+    return tree_util.tree_unflatten(out_tree_thunk(), out)
+  return wrapped
+
+
+@core_map_p.def_effectful_abstract_eval
+def _core_map_abstract_eval(*args, jaxpr, mesh):
+  del args
+  if jaxpr.outvars:
+    raise ValueError("core_map must not return any outputs.")
+  effs = set()
+  for eff in jaxpr.effects:
+    if mesh.discharges_effect(eff):
+      continue
+    if not isinstance(eff, jax_core.NamedAxisEffect):
+      effs.add(eff)
+      continue
+    if eff.name not in mesh.shape:
+      effs.add(eff)
+  return [], effs
+
+
+_core_map_mesh_rules: dict[type[Any], Callable[..., Any]] = {}
+
+
+def default_mesh_discharge_rule(
+    in_avals,
+    out_avals,
+    *args,
+    grid,
+    compiler_params,
+    backend,
+    jaxpr,
+):
+  """Discharges a ``core_map`` over a mesh to a ``pallas_call``."""
+  del out_avals  # Unused.
+
+  def body(*args):
+    # Due to aliasing, ``args`` contains aliased inputs and outputs so we
+    # remove outputs.
+    in_refs = args[:len(in_avals)]
+    jax_core.eval_jaxpr(jaxpr, in_refs)
+
+  assert len(jaxpr.outvars) == 0
+  modified_idxs = sorted(
+      eff.input_index
+      for eff in jaxpr.effects
+      if isinstance(eff, state_types.WriteEffect)
+  )
+  any_spec = BlockSpec(memory_space=MemorySpace.ANY)
+  from jax._src.pallas import pallas_call  # Avoid circular dependency.
+  outs = pallas_call.pallas_call(
+      body,
+      out_shape=[in_avals[idx] for idx in modified_idxs],
+      in_specs=[any_spec] * len(in_avals),
+      out_specs=[any_spec] * len(modified_idxs),
+      input_output_aliases={
+          in_idx: out_idx for out_idx, in_idx in enumerate(modified_idxs)
+      },
+      grid=grid,
+      compiler_params=compiler_params,
+      backend=backend,
+  )(*args)
+  # ``outs`` lacks the unmodified inputs. Add them back in.
+  all_outs = [None] * len(args)
+  for out_idx, in_idx in enumerate(modified_idxs):
+    all_outs[in_idx] = outs[out_idx]
+  return all_outs, ()
+
+
+@state_discharge.register_discharge_rule(core_map_p)
+def _core_map_discharge_rule(in_avals, out_avals, *args_flat, jaxpr, mesh, **kwargs):
+  if type(mesh) not in _core_map_mesh_rules:
+    raise NotImplementedError(f"Mesh type {type(mesh)} not supported.")
+  return _core_map_mesh_rules[type(mesh)](
+      in_avals, out_avals, *args_flat, jaxpr=jaxpr, mesh=mesh, **kwargs
+  )
+
+
+def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh):
+  del in_atoms
+  with jax_core.extend_axis_env_nd(tuple(mesh.shape.items())):
+    jax_core.check_jaxpr(jaxpr)
+  effs = set()
+  for eff in jaxpr.effects:
+    if mesh.discharges_effect(eff):
+      continue
+    if not isinstance(eff, jax_core.NamedAxisEffect):
+      effs.add(eff)
+      continue
+    if eff.name not in mesh.shape:
+      effs.add(eff)
+  return [], effs
+jax_core.custom_typechecks[core_map_p] = _core_map_typecheck_rule

@@ -14,6 +14,9 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cstdint>
+#include <optional>
+#include <string_view>
+#include <vector>
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -25,9 +28,12 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "absl/log/check.h"
+#include "absl/strings/str_format.h"
+#include "mlir/include/mlir/IR/Builders.h"
 #include "mlir/include/mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/include/mlir/IR/BuiltinTypes.h"
 #include "mlir/include/mlir/IR/IRMapping.h"
+#include "mlir/include/mlir/IR/OperationSupport.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 
@@ -87,6 +93,25 @@ LogicalResult MemRefSliceOp::verify() {
   auto target_type = getType();
   auto target_layout = target_type.getLayout();
   auto target_memory_space = target_type.getMemorySpace();
+  auto indices = getBaseIdx();
+  auto slice_shape = getResult().getType().getShape();
+  if (!source_type.hasStaticShape()) {
+    return emitOpError(
+        "Only slicing of memrefs with static shapes is supported.");
+  }
+  auto source_shape = source_type.getShape();
+  bool is_semaphore =
+      HasMemorySpace(source_type, tpu::MemorySpace::kSemaphoreMem);
+  if (is_semaphore &&
+      !isa<SemaphoreType, DMASemaphoreType>(source_type.getElementType())) {
+    return emitOpError(
+        "References to semaphore memory space must have a semaphore element "
+        "type.");
+  }
+  if (indices.size() != slice_shape.size() ||
+      indices.size() != source_shape.size()) {
+    return emitOpError("Indices and slice shapes must match.");
+  }
   // TODO(apaszke): Check that the result has a smaller shape.
   // TODO(apaszke): Check that strides are equivalent.
   // Source and target attributes may be different before propagation is done by
@@ -437,6 +462,31 @@ LogicalResult StridedStoreOp::verify() {
                                          getValueToStore().getType());
 }
 
+LogicalResult VectorStoreOp::verify() {
+  if (!getStrides().empty()) {
+    return emitError("Not implemented: general vector store with strides.");
+  }
+  VectorType value_ty = getValueToStore().getType();
+  MemRefType ref_ty = getBase().getType();
+
+  if (value_ty.getElementType() != ref_ty.getElementType()) {
+    return emitOpError(
+        "Expected base and valueToStore element type should match");
+  }
+  if (llvm::size(getIndices()) != ref_ty.getRank()) {
+    return emitOpError("Expected ") << ref_ty.getRank() << " indices";
+  }
+  if (getMask()) {
+    if (value_ty.getElementTypeBitWidth() != 32) {
+      return emitError(
+          "Not implemented: masked store with non-32-bit element type");
+    }
+    if (value_ty.getShape() != getMask().getType().getShape())
+      return emitOpError("Expected valueToStore shape to match mask shape");
+  }
+  return success();
+}
+
 LogicalResult ReinterpretCastOp::verify() {
   auto source_type = getMemRefType(getInput());
   auto target_type = getType();
@@ -465,7 +515,7 @@ LogicalResult verifyRotateOp(Op op) {
   }
   if (op.getStride().has_value() != op.getStrideDimension().has_value()) {
     op.emitOpError(
-        "Expected  either none or both stride and stride dimension are "
+        "Expected either none or both stride and stride dimension are "
         "present");
     return failure();
   }
@@ -507,6 +557,289 @@ class CanonicalizeAddOfMatmul : public OpRewritePattern<AddOp> {
   }
 };
 
+LogicalResult MatmulOp::verify() {
+  // Note - this is not yet an exhaustive verification of matmul. Many of the
+  // invariants are spread across infer, apply, llo and below. This is,
+  // however, a good start and the recommended place to add more invariants.
+  const VectorType lhs_ty = getLhs().getType();
+  const VectorType rhs_ty = getRhs().getType();
+  const VectorType acc_ty = getAcc().getType();
+  const VectorType res_ty = getResult().getType();
+  if (acc_ty != res_ty) {
+    return emitOpError(
+        "Not implemented: matmul acc and result have different types");
+  }
+  if (acc_ty.getElementTypeBitWidth() != 32) {
+    return emitOpError("Expected matmul acc to be 32-bit");
+  }
+
+  if (getTransposeLhs()) {
+    emitOpError(
+        "Lhs transpose not supported via this API - please use the "
+        "dimension numbers API.");
+    return failure();
+  }
+
+  if (getDimensionNumbers().has_value()) {
+    auto dimension_numbers = getDimensionNumbers().value();
+    auto lhs_contracting_dims = dimension_numbers.getLhsContractingDims();
+    auto rhs_contracting_dims = dimension_numbers.getRhsContractingDims();
+    if (lhs_contracting_dims.size() != 1) {
+      emitOpError("Not implemented: lhs contracting dims must be of size 1");
+      return failure();
+    }
+    if (rhs_contracting_dims.size() != 1) {
+      emitOpError("Not implemented: rhs contracting dims must be of size 1");
+      return failure();
+    }
+
+    auto lhs_contracting_dim = lhs_contracting_dims[0];
+    auto rhs_contracting_dim = rhs_contracting_dims[0];
+
+    auto lhs_batch_dims = dimension_numbers.getLhsBatchDims();
+    auto rhs_batch_dims = dimension_numbers.getRhsBatchDims();
+
+    auto lhs_non_contracting_dims =
+        dimension_numbers.getLhsNonContractingDims();
+    auto rhs_non_contracting_dims =
+        dimension_numbers.getRhsNonContractingDims();
+
+    if (lhs_contracting_dims.size() + lhs_non_contracting_dims.size() +
+            lhs_batch_dims.size() !=
+        lhs_ty.getShape().size()) {
+      emitOpError(
+          "Not implemented: lhs contracting + non contracting + batch dims "
+          "must be of the same size as the lhs shape");
+      return failure();
+    }
+    if (rhs_contracting_dims.size() + rhs_non_contracting_dims.size() +
+            rhs_batch_dims.size() !=
+        rhs_ty.getShape().size()) {
+      emitOpError(
+          "Not implemented: rhs contracting + non contracting + batch dims "
+          "must be of the same size as the rhs shape");
+      return failure();
+    }
+
+    if (lhs_ty.getShape()[lhs_contracting_dim] !=
+        rhs_ty.getShape()[rhs_contracting_dim]) {
+      emitOpError(
+          "Not implemented: lhs and rhs contracting dims must be of the same "
+          "size");
+      return failure();
+    }
+
+    if (lhs_batch_dims.size() != rhs_batch_dims.size()) {
+      emitOpError(
+          "Not implemented: lhs and rhs should have the same number of batch "
+          "dims");
+      return failure();
+    }
+    if (lhs_batch_dims.size() > 1) {
+      emitOpError("Not implemented: Up to 1 batch dim supported");
+      return failure();
+    }
+
+    int64_t lhs_rank = lhs_ty.getShape().size();
+    int64_t rhs_rank = rhs_ty.getShape().size();
+
+    std::vector<bool> seen_dims_lhs(lhs_rank, false);
+    std::vector<bool> seen_dims_rhs(rhs_rank, false);
+
+    auto check_and_mark_dims = [&](const std::vector<int64_t> &dims,
+                                   std::vector<bool> &seen_dims,
+                                   const std::string_view operand) {
+      for (int64_t dim : dims) {
+        if (seen_dims[dim]) {
+          emitOpError("Illegal: Dim ")
+              << dim << " repeats in dimension numbers of " << operand;
+          return failure();
+        }
+        seen_dims[dim] = true;
+      }
+      return success();
+    };
+
+    if (failed(
+            check_and_mark_dims(lhs_contracting_dims, seen_dims_lhs, "lhs")) ||
+        failed(check_and_mark_dims(lhs_non_contracting_dims, seen_dims_lhs,
+                                   "lhs")) ||
+        failed(check_and_mark_dims(lhs_batch_dims, seen_dims_lhs, "lhs"))) {
+      return failure();
+    }
+
+    if (failed(
+            check_and_mark_dims(rhs_contracting_dims, seen_dims_rhs, "rhs")) ||
+        failed(check_and_mark_dims(rhs_non_contracting_dims, seen_dims_rhs,
+                                   "rhs")) ||
+        failed(check_and_mark_dims(rhs_batch_dims, seen_dims_rhs, "rhs"))) {
+      return failure();
+    }
+
+    for (int64_t dim = 0; dim < lhs_rank; ++dim) {
+      if (!seen_dims_lhs[dim]) {
+        emitOpError("Illegal: Dim ")
+            << dim << " is not seen in lhs dimension numbers";
+        return failure();
+      }
+    }
+    for (int64_t dim = 0; dim < rhs_rank; ++dim) {
+      if (!seen_dims_rhs[dim]) {
+        emitOpError("Illegal: Dim ")
+            << dim << " is not seen in rhs dimension numbers";
+      }
+    }
+
+    const std::optional<int64_t> batch_dim_lhs =
+        lhs_batch_dims.empty() ? std::nullopt
+                               : std::optional<int64_t>(lhs_batch_dims[0]);
+    const std::optional<int64_t> batch_dim_rhs =
+        rhs_batch_dims.empty() ? std::nullopt
+                               : std::optional<int64_t>(rhs_batch_dims[0]);
+    if (batch_dim_lhs != batch_dim_rhs) {
+      emitOpError("Not Implemented: batch dims must be equal");
+      return failure();
+    }
+    if (batch_dim_lhs.has_value() && (batch_dim_lhs.value() != 0)) {
+      emitOpError("Not Implemented: batch dims pos must be 0");
+      return failure();
+    }
+    // Invariant above enforces only 1 batch dim atm, and that both are eq
+    std::optional<int64_t> batch_size = std::nullopt;
+    if (batch_dim_lhs.has_value()) {
+      batch_size = lhs_ty.getShape()[batch_dim_lhs.value()];
+      auto rhs_batch_size = rhs_ty.getShape()[batch_dim_rhs.value()];
+      if (batch_size != rhs_batch_size) {
+        emitOpError("Not Implemented: batch dims must be equal");
+        return failure();
+      }
+      if (batch_size == 0) {
+        emitOpError("Illegal: batch size must be > 0");
+        return failure();
+      }
+    }
+    auto output_dim_order = dimension_numbers.getOutputDimOrder();
+    if (output_dim_order.size() % 2 != 0) {
+      emitOpError(
+          "Illegal: output dim order must have an even number of elements.");
+      return failure();
+    }
+    if (batch_size.has_value()) {
+      if (output_dim_order[0] != 0 || output_dim_order[1] != 0) {
+        emitOpError(
+            "Not implemented: Output with batch size must be the lhs 0 idx for "
+            "now.");
+        return failure();
+      }
+    }
+
+    // Invariants above enforce a single batch idx for now, and that it is in
+    // position 0. Future extensions to this will be to:
+    // 1. Support multiple batch dims
+    // 2. Support batch dims in any position in the output dim order
+    if (lhs_non_contracting_dims.size() != 1) {
+      emitOpError(
+          "Not implemented: lhs non contracting dims must be of size 1");
+      return failure();
+    }
+    if (rhs_non_contracting_dims.size() != 1) {
+      emitOpError(
+          "Not implemented: rhs non contracting dims must be of size 1");
+      return failure();
+    }
+
+    // A bit long winded, but the invariants we enforce below are:
+    // 1. The output order idx is 0 (lhs) or 1 (rhs)
+    // 2. The output dim order is in valid bounds
+    // 3. We saw the rhs and lhs non contracting dims in the output dim order
+    // 4. We never see the contracting dims in the output dim order
+    // 5. We only see each of the non contracting dim once
+    std::vector<bool> lhs_dims_seen_in_output(lhs_rank, false);
+    std::vector<bool> rhs_dims_seen_in_output(rhs_rank, false);
+
+    // Iterate over the output dimension order
+    for (int dim_pos = 0; dim_pos < output_dim_order.size(); dim_pos += 2) {
+      auto idx = output_dim_order[dim_pos];
+      auto dim = output_dim_order[dim_pos + 1];
+
+      if (idx != 0 && idx != 1) {
+        emitOpError("Illegal: output dim order index must be 0 or 1");
+        return failure();
+      }
+      auto is_lhs = (idx == 0);
+
+      if (is_lhs) {
+        if (dim < 0 || dim >= lhs_rank) {
+          emitOpError("Illegal: lhs dimension index out of bounds");
+          return failure();
+        }
+        if (lhs_dims_seen_in_output[dim]) {
+          emitOpError("Illegal: lhs dimension ")
+              << dim << " appears more than once in output dim order";
+          return failure();
+        }
+        if (dim == lhs_contracting_dim) {
+          emitOpError("Illegal: contracting dimension ")
+              << dim << " appears in lhs output dim order";
+          return failure();
+        }
+        // batch_dim_lhs is either 0 or nullopt
+        if (dim == batch_dim_lhs) {
+          // Upstream invariants enforce that batch dim is in position 0
+          // of the output dim order.
+          rhs_dims_seen_in_output[dim] = true;
+        }
+        lhs_dims_seen_in_output[dim] = true;
+      } else {
+        if (dim < 0 || dim >= rhs_rank) {
+          emitOpError("Illegal: rhs dimension index out of bounds");
+          return failure();
+        }
+        if (rhs_dims_seen_in_output[dim]) {
+          emitOpError("Illegal: rhs dimension ")
+              << dim << " appears more than once in output dim order";
+          return failure();
+        }
+        if (dim == rhs_contracting_dim) {
+          emitOpError("Illegal: contracting dimension ")
+              << dim << " appears in rhs output dim order";
+          return failure();
+        }
+        if (dim == batch_dim_rhs) {
+          // Upstream invariants enforce that batch dim is in position 0
+          // of the output dim order.
+          lhs_dims_seen_in_output[dim] = true;
+        }
+        rhs_dims_seen_in_output[dim] = true;
+      }
+    }
+
+    // Check that all dims have been seen (except contracting dims)
+    for (int i = 0; i < lhs_rank; ++i) {
+      if (i == lhs_contracting_dim) {
+        continue;
+      }
+      if (!lhs_dims_seen_in_output[i]) {
+        emitOpError("Illegal: lhs non-contracting dimension ")
+            << i << " is not seen in output dim order";
+        return failure();
+      }
+    }
+
+    for (int i = 0; i < rhs_rank; ++i) {
+      if (i == rhs_contracting_dim) {
+        continue;
+      }
+      if (!rhs_dims_seen_in_output[i]) {
+        emitOpError("Illegal: rhs non-contracting dimension ")
+            << i << " is not seen in output dim order";
+        return failure();
+      }
+    }
+  }
+  return success();
+}
+
 void MatmulOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                            MLIRContext *context) {
   patterns.add<CanonicalizeAddOfMatmul<arith::AddFOp>,
@@ -535,7 +868,46 @@ LogicalResult GetBarrierSemaphoreOp::verify() {
   return success();
 }
 
+void SemaphoreSignalOp::build(OpBuilder &builder, OperationState &state,
+                              Value semaphore, Value amount, Value device_id,
+                              Value core_id) {
+  build(builder, state, semaphore, amount, device_id, core_id,
+        /*core_type=*/nullptr);
+}
+
 LogicalResult SemaphoreSignalOp::verify() {
+  auto sem_type = getMemRefType(getSemaphore());
+  if (sem_type.getRank() != 0) {
+    return emitOpError("Semaphore reference must be rank 0");
+  }
+
+  FailureOr<std::optional<CoreType>> issuing_core_type_maybe =
+      GetCoreTypeOfParentFunc(**this);
+  if (failed(issuing_core_type_maybe)) {
+    return issuing_core_type_maybe;
+  }
+  CoreType issuing_core_type = issuing_core_type_maybe->value_or(CoreType::kTc);
+  CoreType target_core_type = getCoreType().value_or(issuing_core_type);
+
+  if (getCoreId() == nullptr && getDeviceId() == nullptr) {
+    if (target_core_type != issuing_core_type) {
+      return emitOpError(
+          absl::StrFormat("Target core type (%s) must match source core type "
+                          "(%s) when device_id and core_id are not specified",
+                          stringifyCoreType(target_core_type),
+                          stringifyCoreType(issuing_core_type)));
+    }
+  }
+  if ((issuing_core_type == CoreType::kTc &&
+       target_core_type == CoreType::kScScalarSubcore) ||
+      (issuing_core_type == CoreType::kScScalarSubcore &&
+       target_core_type == CoreType::kTc)) {
+    return emitOpError("Signalling between TC and SC is not implemented");
+  }
+  return success();
+}
+
+LogicalResult SemaphoreWaitOp::verify() {
   auto sem_type = getMemRefType(getSemaphore());
   if (sem_type.getRank() != 0) {
     return emitOpError("Semaphore reference must be rank 0");
@@ -659,6 +1031,88 @@ LogicalResult ShuffledStoreOp::canonicalize(ShuffledStoreOp op,
   }
   return success();
 }
+
+LogicalResult ConcatenateOp::verify() {
+  auto dimension = getDimension();
+  if (getOperands().size() < 2) {
+    return emitOpError("Expected at least 2 operands for concatenate op.");
+  }
+  auto first_type = getOperand(0).getType().cast<VectorType>();
+  auto first_shape = first_type.getShape();
+  auto first_dtype = first_type.getElementType();
+  for (auto operand : getOperands()) {
+    auto vty = dyn_cast<VectorType>(operand.getType());
+    if (!vty) {
+      return emitOpError("Operand must be a vector type.");
+    }
+    auto shape = vty.getShape();
+    auto dtype = vty.getElementType();
+    if (dtype != first_dtype) {
+      return emitOpError(
+          "Not implemented:: Expected all operands to have the same element "
+          "type.");
+    }
+    for (int dim = 0; dim < shape.size(); ++dim) {
+      if (dim != dimension && shape[dim] != first_shape[dim]) {
+        return emitOpError(
+            "Not implemented: Expected all operands to have "
+            "the same shape outside of the concat dim");
+      }
+    }
+  }
+  return success();
+}
+
+LogicalResult LogOp::verify() {
+  FailureOr<std::optional<CoreType>> logging_core_type_maybe =
+      GetCoreTypeOfParentFunc(**this);
+  if (failed(logging_core_type_maybe)) {
+    return failure();
+  }
+  CoreType logging_core_type = logging_core_type_maybe->value_or(CoreType::kTc);
+  if ((logging_core_type == CoreType::kScScalarSubcore ||
+       logging_core_type == CoreType::kScVectorSubcore) &&
+      getFormattedAttr() != nullptr && getFormattedAttr().getValue()) {
+    return emitOpError("Formatted logging is not supported on SC");
+  }
+  switch (logging_core_type) {
+    case CoreType::kTc:
+    case CoreType::kScScalarSubcore:
+      return success();
+    case CoreType::kScVectorSubcore:
+      return emitOpError("Log op is not supported on the SC vector subcore");
+  }
+  return emitOpError(
+      absl::StrFormat("Unexpected core type: %s",
+                      stringifyCoreType(logging_core_type_maybe->value())));
+}
+
+LogicalResult WeirdOp::verify() {
+  const mlir::Type in_type = getInput().getType();
+  if (const auto in_vec_type = dyn_cast<VectorType>(in_type)) {  // Vector case.
+    if (!in_vec_type.getElementType().isF32()) {
+      return emitOpError("Input type must be F32");
+    }
+    const mlir::Type out_type = getResult().getType();
+    const auto out_vec_type = dyn_cast<VectorType>(out_type);
+    if (!out_vec_type) {
+      return emitOpError("Output type must be a vector when input is a vector");
+    }
+    if (!out_vec_type.getElementType().isInteger(1)) {
+      return emitOpError("Output type must be I1");
+    }
+  } else {  // Scalar case.
+    if (!in_type.isF32()) {
+      return emitOpError("Input type must be F32");
+    }
+    const mlir::Type out_type = getResult().getType();
+    if (!out_type.isInteger(1)) {
+      return emitOpError("Output type must be I1 scalar");
+    }
+  }
+  return success();
+}
+
 }  // namespace tpu
 }  // namespace mlir
 

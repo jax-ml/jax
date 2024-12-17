@@ -44,6 +44,7 @@ pytype_strict_library(
     deps = [
         ":lowering",
         "//jax",
+        "//jax:core",
         "//jax:mlir",
         "//jax:mosaic_gpu",
         "//jax/_src/pallas",
@@ -61,6 +62,7 @@ pytype_strict_library(
         "//jax:mosaic_gpu",
         "//jax:pallas",
         "//jax:partial_eval",
+        "//jax:source_info_util",
         "//jax:util",
         "//jax/_src/lib",
         "//jax/_src/pallas",
@@ -74,9 +76,11 @@ pytype_strict_library(
         "//jax",
         "//jax:core",
         "//jax:dtypes",
+        "//jax:effects",
         "//jax:mosaic_gpu",
         "//jax:tree_util",
         "//jax/_src/pallas",
+        "//jaxlib/mlir:ir",
     ] + py_deps("numpy"),
 )
 
@@ -88,10 +92,27 @@ pytype_strict_library(
         ":lowering",
         "//jax",
         "//jax:core",
-        "//jax:effects",
         "//jax:mlir",
         "//jax:mosaic_gpu",
+        "//jax:tree_util",
+        "//jax:util",
         "//jax/_src/lib",
+        "//jax/_src/pallas",
+    ],
+)
+
+pytype_strict_library(
+    name = "pipeline",
+    srcs = ["pipeline.py"],
+    deps = [
+        ":core",
+        ":primitives",
+        "//jax",
+        "//jax:core",
+        "//jax:mosaic_gpu",
+        "//jax:pallas",
+        "//jax:partial_eval",
+        "//jax:util",
         "//jax/_src/pallas",
     ],
 )

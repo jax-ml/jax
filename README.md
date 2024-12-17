@@ -4,8 +4,8 @@
 
 # Transformable numerical computing at scale
 
-![Continuous integration](https://github.com/jax-ml/jax/actions/workflows/ci-build.yaml/badge.svg)
-![PyPI version](https://img.shields.io/pypi/v/jax)
+[![Continuous integration](https://github.com/jax-ml/jax/actions/workflows/ci-build.yaml/badge.svg)](https://github.com/jax-ml/jax/actions/workflows/ci-build.yaml)
+[![PyPI version](https://img.shields.io/pypi/v/jax)](https://pypi.org/project/jax/)
 
 [**Quickstart**](#quickstart-colab-in-the-cloud)
 | [**Transformations**](#transformations)
@@ -47,7 +47,7 @@ are instances of such transformations. Others are
 [`pmap`](#spmd-programming-with-pmap) for single-program multiple-data (SPMD)
 parallel programming of multiple accelerators, with more to come.
 
-This is a research project, not an official Google product. Expect bugs and
+This is a research project, not an official Google product. Expect
 [sharp edges](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html).
 Please help by trying it out, [reporting
 bugs](https://github.com/jax-ml/jax/issues), and letting us know what you
@@ -189,8 +189,7 @@ You can mix `jit` and `grad` and any other JAX transformation however you like.
 
 Using `jit` puts constraints on the kind of Python control flow
 the function can use; see
-the [Gotchas
-Notebook](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#python-control-flow-+-JIT)
+the tutorial on [Control Flow and Logical Operators with JIT](https://jax.readthedocs.io/en/latest/control-flow.html)
 for more.
 
 ### Auto-vectorization with `vmap`
@@ -349,7 +348,7 @@ Some standouts:
 1. [In-place mutating updates of
    arrays](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#in-place-updates), like `x[i] += y`, aren't supported, but [there are functional alternatives](https://jax.readthedocs.io/en/latest/jax.ops.html). Under a `jit`, those functional alternatives will reuse buffers in-place automatically.
 1. [Random numbers are
-   different](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#random-numbers), but for [good reasons](https://github.com/jax-ml/jax/blob/main/docs/jep/263-prng.md).
+   different](https://jax.readthedocs.io/en/latest/random-numbers.html), but for [good reasons](https://github.com/jax-ml/jax/blob/main/docs/jep/263-prng.md).
 1. If you're looking for [convolution
    operators](https://jax.readthedocs.io/en/latest/notebooks/convolutions.html),
    they're in the `jax.lax` package.
@@ -369,7 +368,7 @@ Some standouts:
    and NumPy types aren't preserved, namely `np.add(1, np.array([2],
    np.float32)).dtype` is `float64` rather than `float32`.
 1. Some transformations, like `jit`, [constrain how you can use Python control
-   flow](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#control-flow).
+   flow](https://jax.readthedocs.io/en/latest/control-flow.html).
    You'll always get loud errors if something goes wrong. You might have to use
    [`jit`'s `static_argnums`
    parameter](https://jax.readthedocs.io/en/latest/jax.html#just-in-time-compilation-jit),
@@ -383,24 +382,26 @@ Some standouts:
 
 ### Supported platforms
 
-|            | Linux x86_64 | Linux aarch64 | Mac x86_64   | Mac ARM      | Windows x86_64 | Windows WSL2 x86_64 |
+|            | Linux x86_64 | Linux aarch64 | Mac x86_64   | Mac aarch64  | Windows x86_64 | Windows WSL2 x86_64 |
 |------------|--------------|---------------|--------------|--------------|----------------|---------------------|
 | CPU        | yes          | yes           | yes          | yes          | yes            | yes                 |
 | NVIDIA GPU | yes          | yes           | no           | n/a          | no             | experimental        |
 | Google TPU | yes          | n/a           | n/a          | n/a          | n/a            | n/a                 |
-| AMD GPU    | experimental | no            | no           | n/a          | no             | no                  |
-| Apple GPU  | n/a          | no            | experimental | experimental | n/a            | n/a                 |
+| AMD GPU    | yes          | no            | experimental | n/a          | no             | no                  |
+| Apple GPU  | n/a          | no            | n/a          | experimental | n/a            | n/a                 |
+| Intel GPU  | experimental | n/a           | n/a          | n/a          | no             | no                  |
 
 
 ### Instructions
 
-| Hardware   | Instructions                                                                                                    |
-|------------|-----------------------------------------------------------------------------------------------------------------|
-| CPU        | `pip install -U jax`                                                                                            |
-| NVIDIA GPU | `pip install -U "jax[cuda12]"`                                                                                  |
-| Google TPU | `pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html`                 |
-| AMD GPU    | Use [Docker](https://hub.docker.com/r/rocm/jax) or [build from source](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-a-rocm-jaxlib-for-amd-gpus). |
-| Apple GPU  | Follow [Apple's instructions](https://developer.apple.com/metal/jax/).                                          |
+| Platform        | Instructions                                                                                                    |
+|-----------------|-----------------------------------------------------------------------------------------------------------------|
+| CPU             | `pip install -U jax`                                                                                            |
+| NVIDIA GPU      | `pip install -U "jax[cuda12]"`                                                                                  |
+| Google TPU      | `pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html`                 |
+| AMD GPU (Linux) | Use [Docker](https://hub.docker.com/r/rocm/jax-community/tags), [pre-built wheels](https://github.com/ROCm/jax/releases), or [build from source](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-a-rocm-jaxlib-for-amd-gpus). |
+| Mac GPU         | Follow [Apple's instructions](https://developer.apple.com/metal/jax/).                                          |
+| Intel GPU       | Follow [Intel's instructions](https://github.com/intel/intel-extension-for-openxla/blob/main/docs/acc_jax.md).  |
 
 See [the documentation](https://jax.readthedocs.io/en/latest/installation.html)
 for information on alternative installation strategies. These include compiling
@@ -411,23 +412,18 @@ community-supported conda build, and answers to some frequently-asked questions.
 
 ## Neural network libraries
 
-Multiple Google research groups develop and share libraries for training neural
-networks in JAX. If you want a fully featured library for neural network
+Multiple Google research groups at Google DeepMind and Alphabet develop and share libraries
+for training neural networks in JAX. If you want a fully featured library for neural network
 training with examples and how-to guides, try
-[Flax](https://github.com/google/flax). Check out the new [NNX](https://flax.readthedocs.io/en/latest/nnx/index.html) API for a
-simplified development experience.
+[Flax](https://github.com/google/flax) and its [documentation site](https://flax.readthedocs.io/en/latest/nnx/index.html).
 
-Google X maintains the neural network library
-[Equinox](https://github.com/patrick-kidger/equinox). This is used as the
-foundation for several other libraries in the JAX ecosystem.
-
-In addition, DeepMind has open-sourced an [ecosystem of libraries around
-JAX](https://deepmind.com/blog/article/using-jax-to-accelerate-our-research)
-including [Optax](https://github.com/deepmind/optax) for gradient processing and
-optimization, [RLax](https://github.com/deepmind/rlax) for RL algorithms, and
-[chex](https://github.com/deepmind/chex) for reliable code and testing. (Watch
-the NeurIPS 2020 JAX Ecosystem at DeepMind talk
-[here](https://www.youtube.com/watch?v=iDxJxIyzSiM))
+Check out the [JAX Ecosystem section](https://jax.readthedocs.io/en/latest/#ecosystem)
+on the JAX documentation site for a list of JAX-based network libraries, which includes
+[Optax](https://github.com/deepmind/optax) for gradient processing and
+optimization, [chex](https://github.com/deepmind/chex) for reliable code and testing, and
+[Equinox](https://github.com/patrick-kidger/equinox) for neural networks.
+(Watch the NeurIPS 2020 JAX Ecosystem at DeepMind talk
+[here](https://www.youtube.com/watch?v=iDxJxIyzSiM) for additional details.)
 
 ## Citing JAX
 

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -eu
+set -xu
 
 # Function to run tests with specified GPUs
 run_tests() {

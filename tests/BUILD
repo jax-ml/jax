@@ -34,6 +34,7 @@ jax_generate_backend_suites()
 jax_multiplatform_test(
     name = "api_test",
     srcs = ["api_test.py"],
+    enable_configs = ["tpu_v3_2x2"],
     shard_count = 10,
 )
 
@@ -69,6 +70,9 @@ jax_multiplatform_test(
     enable_backends = [
         "cpu",
         "gpu",
+    ],
+    enable_configs = [
+        "gpu_2gpu",
     ],
     tags = ["multiaccelerator"],
     deps = py_deps("tensorflow_core"),
@@ -214,6 +218,16 @@ jax_py_test(
 jax_multiplatform_test(
     name = "memories_test",
     srcs = ["memories_test.py"],
+    enable_configs = [
+        "cpu",
+        "gpu_2gpu",
+        "tpu_v3_2x2",
+        "tpu_v4_2x2",
+        "tpu_v5p_2x2",
+        "tpu_v5e_4x2",
+        "gpu_2gpu_shardy",
+        "tpu_v5e_4x2_shardy",
+    ],
     shard_count = {
         "tpu": 5,
     },
@@ -230,10 +244,10 @@ jax_multiplatform_test(
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
     enable_configs = [
-        "cpu_shardy",
         "gpu_2gpu_shardy",
         "tpu_v3_2x2_shardy",
-        "tpu_v4_2x2_shardy",
+        "tpu_v3_2x2",
+        "gpu_2gpu",
     ],
     shard_count = {
         "cpu": 5,
@@ -252,12 +266,24 @@ jax_multiplatform_test(
     backend_tags = {
         "tpu": ["requires-mem:16g"],  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
     },
+    enable_configs = [
+        "tpu_v3_2x2_shardy",
+    ],
     tags = ["multiaccelerator"],
+    deps = [
+        "//jax:experimental",
+    ],
 )
 
 jax_multiplatform_test(
     name = "shard_alike_test",
     srcs = ["shard_alike_test.py"],
+    enable_configs = [
+        "tpu_v3_2x2",
+        "tpu_v5e_4x2",
+        "tpu_v4_2x2",
+        "tpu_v3_2x2_shardy",
+    ],
     deps = [
         "//jax:experimental",
     ],
@@ -270,7 +296,6 @@ jax_multiplatform_test(
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
     enable_backends = ["gpu"],
-    env = {"XLA_FLAGS": "--xla_dump_to=sponge --xla_gpu_enable_latency_hiding_scheduler=true"},
     tags = [
         "config-cuda-only",
         "multiaccelerator",
@@ -284,6 +309,24 @@ jax_multiplatform_test(
     name = "mock_gpu_test",
     srcs = ["mock_gpu_test.py"],
     enable_backends = ["gpu"],
+    enable_configs = [
+        "gpu_2gpu_shardy",
+    ],
+    tags = [
+        "config-cuda-only",
+    ],
+    deps = [
+        "//jax:experimental",
+    ],
+)
+
+jax_multiplatform_test(
+    name = "mock_gpu_topology_test",
+    srcs = ["mock_gpu_topology_test.py"],
+    enable_backends = ["gpu"],
+    enable_configs = [
+        "gpu_h100",
+    ],
     tags = [
         "config-cuda-only",
     ],
@@ -298,6 +341,9 @@ jax_multiplatform_test(
     backend_tags = {
         "tpu": ["requires-mem:16g"],  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
     },
+    enable_configs = [
+        "tpu_v3_2x2",
+    ],
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
@@ -330,7 +376,6 @@ jax_multiplatform_test(
     name = "infeed_test",
     srcs = ["infeed_test.py"],
     deps = [
-        "//jax:experimental_host_callback",
     ],
 )
 
@@ -386,11 +431,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "custom_root_test",
     srcs = ["custom_root_test.py"],
-    shard_count = {
-        "cpu": 10,
-        "gpu": 10,
-        "tpu": 10,
-    },
 )
 
 jax_multiplatform_test(
@@ -525,6 +565,7 @@ jax_multiplatform_test(
     name = "lax_test",
     srcs = ["lax_test.py"],
     backend_tags = {
+        "cpu": ["not_run:arm"],  # Numerical issues, including https://github.com/jax-ml/jax/issues/24787
         "tpu": ["noasan"],  # Times out.
     },
     shard_count = {
@@ -535,7 +576,7 @@ jax_multiplatform_test(
     deps = [
         "//jax:internal_test_util",
         "//jax:lax_reference",
-    ] + py_deps("numpy"),
+    ] + py_deps("numpy") + py_deps("mpmath"),
 )
 
 jax_multiplatform_test(
@@ -623,6 +664,13 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "magma_linalg_test",
+    srcs = ["magma_linalg_test.py"],
+    enable_backends = ["gpu"],
+    deps = py_deps("magma"),
+)
+
+jax_multiplatform_test(
     name = "cholesky_update_test",
     srcs = ["cholesky_update_test.py"],
 )
@@ -645,6 +693,10 @@ jax_py_test(
 jax_multiplatform_test(
     name = "multibackend_test",
     srcs = ["multibackend_test.py"],
+    enable_configs = [
+        "tpu_v3_2x2",
+        "gpu_2gpu",
+    ],
 )
 
 jax_multiplatform_test(
@@ -694,6 +746,10 @@ jax_multiplatform_test(
             "requires-mem:16g",  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
         ],
     },
+    enable_configs = [
+        "gpu_v100",
+        "tpu_v3_2x2",
+    ],
     shard_count = {
         "cpu": 30,
         "gpu": 30,
@@ -737,13 +793,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "pytorch_interoperability_test",
     srcs = ["pytorch_interoperability_test.py"],
-    # The following cases are disabled because they time out in Google's CI, mostly because the
-    # CUDA kernels in Torch take a very long time to compile.
-    disable_configs = [
-        "gpu_p100",  # Pytorch P100 build times out in Google's CI.
-        "gpu_a100",  # Pytorch A100 build times out in Google's CI.
-        "gpu_h100",  # Pytorch H100 build times out in Google's CI.
-    ],
     enable_backends = [
         "cpu",
         "gpu",
@@ -852,7 +901,7 @@ jax_multiplatform_test(
             "nomsan",
         ],  # Times out on TPU with asan/tsan/msan.
     },
-    shard_count = 4,
+    shard_count = 12,
 )
 
 jax_multiplatform_test(
@@ -969,6 +1018,9 @@ jax_multiplatform_test(
         "gpu": ["--jax_num_generated_cases=40"],
         "tpu": ["--jax_num_generated_cases=40"],
     },
+    disable_configs = [
+        "cpu_shardy",  # TODO(b/376475853): array values mismatch, need to fix and re-enable.
+    ],
     shard_count = {
         "cpu": 50,
         "gpu": 50,
@@ -1031,6 +1083,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "checkify_test",
     srcs = ["checkify_test.py"],
+    enable_configs = ["tpu_v3_2x2"],
     shard_count = {
         "gpu": 2,
         "tpu": 4,
@@ -1143,51 +1196,14 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "host_callback_outfeed_test",
-    srcs = ["host_callback_test.py"],
-    args = ["--jax_host_callback_outfeed=true"],
-    shard_count = {
-        "tpu": 5,
-    },
-    tags = [
-        "noasan",  # Times out.
-    ],
-    deps = [
-        "//jax:experimental",
-        "//jax:experimental_host_callback",
-        "//jax:ode",
-    ],
-)
-
-jax_multiplatform_test(
-    name = "host_callback_test",
-    srcs = ["host_callback_test.py"],
-    args = ["--jax_host_callback_outfeed=false"],
-    main = "host_callback_test.py",
-    shard_count = {
-        "gpu": 5,
-    },
-    tags = ["noasan"],  # Times out
-    deps = [
-        "//jax:experimental",
-        "//jax:experimental_host_callback",
-        "//jax:ode",
-    ],
-)
-
-jax_multiplatform_test(
-    name = "host_callback_to_tf_test",
-    srcs = ["host_callback_to_tf_test.py"],
-    tags = ["noasan"],  # Linking TF causes a linker OOM.
-    deps = [
-        "//jax:experimental_host_callback",
-        "//jax:ode",
-    ] + py_deps("tensorflow_core"),
-)
-
-jax_multiplatform_test(
     name = "key_reuse_test",
     srcs = ["key_reuse_test.py"],
+)
+
+jax_multiplatform_test(
+    name = "roofline_test",
+    srcs = ["roofline_test.py"],
+    enable_backends = ["cpu"],
 )
 
 jax_multiplatform_test(
@@ -1220,6 +1236,11 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "garbage_collection_guard_test",
+    srcs = ["garbage_collection_guard_test.py"],
+)
+
+jax_multiplatform_test(
     name = "name_stack_test",
     srcs = ["name_stack_test.py"],
 )
@@ -1231,8 +1252,11 @@ jax_multiplatform_test(
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
     enable_configs = [
-        "gpu_h100",
         "cpu",
+        "gpu_h100",
+        "tpu_v2_1x1",
+        "tpu_v3_2x2",
+        "tpu_v4_2x2",
     ],
     tags = ["multiaccelerator"],
 )
@@ -1240,9 +1264,15 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "debugging_primitives_test",
     srcs = ["debugging_primitives_test.py"],
+    disable_configs = [
+        "cpu_shardy",  # TODO(b/364547005): enable once pure callbacks are supported.
+    ],
     enable_configs = [
-        "gpu_h100",
         "cpu",
+        "gpu_h100",
+        "tpu_v2_1x1",
+        "tpu_v3_2x2",
+        "tpu_v4_2x2",
     ],
 )
 
@@ -1252,6 +1282,14 @@ jax_multiplatform_test(
     backend_tags = {
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
+    disable_configs = [
+        "cpu_shardy",  # TODO(b/364547005): enable once pure callbacks are supported.
+    ],
+    enable_configs = [
+        "tpu_v2_1x1",
+        "tpu_v3_2x2",
+        "tpu_v4_2x2",
+    ],
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
@@ -1261,9 +1299,15 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "debugger_test",
     srcs = ["debugger_test.py"],
+    disable_configs = [
+        "cpu_shardy",  # TODO(b/364547005): enable once pure callbacks are supported.
+    ],
     enable_configs = [
-        "gpu_h100",
         "cpu",
+        "gpu_h100",
+        "tpu_v2_1x1",
+        "tpu_v3_2x2",
+        "tpu_v4_2x2",
     ],
 )
 
@@ -1308,10 +1352,8 @@ jax_multiplatform_test(
     name = "shard_map_test",
     srcs = ["shard_map_test.py"],
     enable_configs = [
-        "cpu_shardy",
         "gpu_2gpu_shardy",
         "tpu_v3_2x2_shardy",
-        "tpu_v4_2x2_shardy",
     ],
     shard_count = {
         "cpu": 50,
@@ -1340,6 +1382,15 @@ jax_multiplatform_test(
     srcs = ["attrs_test.py"],
     deps = [
         "//jax:experimental",
+    ],
+)
+
+jax_multiplatform_test(
+    name = "colocated_python_test",
+    srcs = ["colocated_python_test.py"],
+    deps = [
+        "//jax:experimental_colocated_python",
+        "//jax/extend:ifrt_programs",
     ],
 )
 
@@ -1392,13 +1443,13 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "export_test",
     srcs = ["export_test.py"],
+    disable_configs = [
+        "cpu_shardy",  # TODO(b/355263220): enable once export is supported.
+    ],
     enable_configs = [
         "tpu_v3_2x2",
     ],
     tags = [],
-    deps = [
-        "//jax/experimental/export",
-    ],
 )
 
 jax_multiplatform_test(
@@ -1432,6 +1483,7 @@ jax_multiplatform_test(
     disable_configs = [
         "gpu_a100",  # TODO(b/269593297): matmul precision issues
         "gpu_h100",  # Scarce resources.
+        "cpu_shardy",  # TODO(b/355263220): enable once export is supported.
     ],
     shard_count = {
         "cpu": 40,
@@ -1439,10 +1491,8 @@ jax_multiplatform_test(
         "tpu": 20,
     },
     tags = [
-        "noasan",  # Times out, TODO(b/314760446): test failures on Sapphire Rapids.
+        "noasan",  # Times out
         "nodebug",  # Times out.
-        "nomsan",  # TODO(b/314760446): test failures on Sapphire Rapids.
-        "notsan",  # TODO(b/314760446): test failures on Sapphire Rapids.
     ],
     deps = [
         "//jax:internal_test_harnesses",
@@ -1498,9 +1548,20 @@ jax_multiplatform_test(
     srcs = ["cudnn_fusion_test.py"],
     enable_backends = [],
     enable_configs = [
+        "gpu_a100",
         "gpu_h100",
     ],
     tags = ["multiaccelerator"],
+)
+
+jax_py_test(
+    name = "custom_partitioning_sharding_rule_test",
+    srcs = ["custom_partitioning_sharding_rule_test.py"],
+    deps = [
+        "//jax",
+        "//jax:experimental",
+        "//jax:test_util",
+    ],
 )
 
 exports_files(
@@ -1508,6 +1569,7 @@ exports_files(
         "api_test.py",
         "array_test.py",
         "cache_key_test.py",
+        "colocated_python_test.py",
         "compilation_cache_test.py",
         "memories_test.py",
         "pmap_test.py",

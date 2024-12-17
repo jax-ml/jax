@@ -1,6 +1,7 @@
 #include "jaxlib/mosaic/dialect/tpu/transforms/infer_memref_layout.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
@@ -33,16 +34,17 @@ namespace mlir::tpu {
 #define GEN_PASS_DEF_INFERMEMREFLAYOUTPASS
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
 
-
-// Returns the number of 128-element groups in a tile.
+// Returns the number of lanes (usually 128) groups in a tile.
 //
 // Arguments:
-//   num_128s: A number of 128-element groups in the full operand.
+//   num_lanes: A number of lanes in the full operand.
 //   hardware_generation: An integer indicating the target TPU generation.
+//   sublane_count: The number of sublanes.
 //   tpu_tiling_flags: A struct of flags indicating which large tiling modes are
 //     enabled by XLA for memrefs.
 //   bitwidth: The bitwidth of the element type of the operand.
-int getTilingFactor(const int num_128s, const int hardware_generation,
+int getTilingFactor(const int num_lanes, const int hardware_generation,
+                    const int64_t sublane_count,
                     const TpuTilingFlags &tpu_tiling_flags,
                     const int8_t bitwidth) {
   CHECK(llvm::isPowerOf2_32(bitwidth));
@@ -50,29 +52,29 @@ int getTilingFactor(const int num_128s, const int hardware_generation,
   CHECK_LE(bitwidth, 32);
   const int packing = 32 / bitwidth;
   const int min_tiling = (1 + (hardware_generation < 4)) * packing;
-  const int max_normal_tiling = 8;
+  const int max_normal_tiling = sublane_count;
 
   const int large_tiling = [&] {
     if (bitwidth == 4 && tpu_tiling_flags.use_x4_large_second_minor) {
-      return 64;
+      return sublane_count * 8;
     }
     if (bitwidth == 8 && tpu_tiling_flags.use_x8_large_second_minor) {
-      return 32;
+      return sublane_count * 4;
     }
     if (bitwidth == 16 && tpu_tiling_flags.use_x16_large_second_minor) {
-      return 16;
+      return sublane_count * 2;
     }
-    return 8;
+    return sublane_count;
   }();
 
   // Use large tiling if our operand is tall enough to fit at least one full
   // tile.
-  if (large_tiling <= num_128s) {
+  if (large_tiling <= num_lanes) {
     return large_tiling;
   }
 
   int tiling = min_tiling;
-  while (tiling < std::min(num_128s, max_normal_tiling)) {
+  while (tiling < std::min(num_lanes, max_normal_tiling)) {
     tiling *= 2;
   }
   return tiling;
@@ -80,10 +82,21 @@ int getTilingFactor(const int num_128s, const int hardware_generation,
 
 FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref_ty,
                                        const int hardware_generation,
+                                       std::array<int64_t, 2> target_shape,
                                        const TpuTilingFlags &tpu_tiling_flags,
                                        int64_t leading_tile_rows = 0) {
   if (auto tiled_layout_attr =
           dyn_cast<TiledLayoutAttr>(memref_ty.getLayout())) {
+    if (leading_tile_rows > 0 && !tiled_layout_attr.getTiles().empty() &&
+        tiled_layout_attr.getTiles().front().dimensions().size() == 2 &&
+        tiled_layout_attr.getTiles().front().dimensions()[0] !=
+            leading_tile_rows) {
+      return emitError(UnknownLoc::get(memref_ty.getContext()),
+                       "Trying to infer memref layout with sublane tiling ")
+             << leading_tile_rows
+             << ", but the memref already has sublane tiling "
+             << tiled_layout_attr.getTiles().front().dimensions()[0];
+    }
     return tiled_layout_attr;
   }
   if (auto affine_map_attr = dyn_cast<AffineMapAttr>(memref_ty.getLayout())) {
@@ -100,12 +113,14 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref_ty,
                        "Invalid element type for memref");
     }
     const int8_t bitwidth = memref_ty.getElementTypeBitWidth();
+    const auto [sublane_count, lane_count] = target_shape;
     // Infer the layout
     if (memref_ty.getRank() == 1) {
       const int64_t leading_tile =
-          getTilingFactor(llvm::divideCeil(memref_ty.getShape().back(), 128),
-                          hardware_generation, tpu_tiling_flags, bitwidth) *
-          128;
+          getTilingFactor(
+              llvm::divideCeil(memref_ty.getShape().back(), lane_count),
+              hardware_generation, sublane_count, tpu_tiling_flags, bitwidth) *
+          lane_count;
       SmallVector<xla::Tile> tiles{xla::Tile({leading_tile})};
       if (bitwidth != 32) {
         if (!llvm::has_single_bit<unsigned>(bitwidth) || bitwidth > 32) {
@@ -113,7 +128,7 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref_ty,
                            "Unsupported bitwidth: ")
                  << bitwidth;
         }
-        tiles.append({xla::Tile({128}), xla::Tile({32 / bitwidth, 1})});
+        tiles.append({xla::Tile({lane_count}), xla::Tile({32 / bitwidth, 1})});
       }
       return TiledLayoutAttr::get(memref_ty.getContext(), tiles, {1});
     }
@@ -122,10 +137,11 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref_ty,
     const ArrayRef<int64_t> shape = memref_ty.getShape();
     const int64_t second_minor = shape[shape.size() - 2];
     if (leading_tile_rows == 0) {
-      leading_tile_rows = getTilingFactor(second_minor, hardware_generation,
-                                          tpu_tiling_flags, bitwidth);
+      leading_tile_rows =
+          getTilingFactor(second_minor, hardware_generation, sublane_count,
+                          tpu_tiling_flags, bitwidth);
     }
-    SmallVector<xla::Tile> tiles{xla::Tile({leading_tile_rows, 128})};
+    SmallVector<xla::Tile> tiles{xla::Tile({leading_tile_rows, lane_count})};
     if (bitwidth != 32) {
       if (!llvm::has_single_bit<unsigned>(bitwidth) || bitwidth > 32) {
         return emitError(UnknownLoc::get(memref_ty.getContext()),
@@ -134,7 +150,8 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref_ty,
       }
       tiles.push_back(xla::Tile({32 / bitwidth, 1}));
     }
-    auto tile_strides = ComputeTileStrides(memref_ty, {leading_tile_rows, 128});
+    auto tile_strides =
+        ComputeTileStrides(memref_ty, {leading_tile_rows, lane_count});
     return TiledLayoutAttr::get(memref_ty.getContext(), tiles, tile_strides);
   }
   return emitError(UnknownLoc::get(memref_ty.getContext()),
@@ -167,6 +184,7 @@ LogicalResult checkTiles(MLIRContext *mlir_ctx,
 
 FailureOr<MemRefType> inferMemref(MemRefType memref,
                                   const int hardware_generation,
+                                  std::array<int64_t, 2> target_shape,
                                   const TpuTilingFlags &tpu_tiling_flags,
                                   int64_t leading_tile_rows) {
   if (isa<SemaphoreType, DMASemaphoreType>(memref.getElementType())) {
@@ -188,9 +206,10 @@ FailureOr<MemRefType> inferMemref(MemRefType memref,
       tpu::MemorySpaceAttr::get(memref.getContext(), MemorySpace::vmem);
   const Attribute memory_space =
       memref.getMemorySpace() == nullptr ? vmem : memref.getMemorySpace();
-  FAILUREOR_ASSIGN_OR_RETURN(const TiledLayoutAttr layout,
-                             inferLayout(memref, hardware_generation,
-                                         tpu_tiling_flags, leading_tile_rows));
+  FAILUREOR_ASSIGN_OR_RETURN(
+      const TiledLayoutAttr layout,
+      inferLayout(memref, hardware_generation, target_shape, tpu_tiling_flags,
+                  leading_tile_rows));
 
   const ArrayRef<xla::Tile> tiles = layout.getTiles();
   if (failed(checkTiles(memref.getContext(), tiles))) {
@@ -212,17 +231,30 @@ FailureOr<MemRefType> inferMemref(MemRefType memref,
 }
 
 LogicalResult inferOp(Operation &op, const int hardware_generation,
+                      std::array<int64_t, 2> target_shape,
                       const TpuTilingFlags &tpu_tiling_flags) {
   if (auto alloca_op = dyn_cast<memref::AllocaOp>(op)) {
     TypedValue<MemRefType> arg = alloca_op.getResult();
     const MemRefType memref_ty = alloca_op.getResult().getType();
+    // If the memref can be reinterpreted to untiled, force to use tiling
+    // {1, target.lane_count} for 32 bit.
+    int64_t leading_tile_rows = 0;
+    // TODO(b/375038685): generalize untiled memref with packed type which
+    // needs to update load/store rules.
+    if (memref_ty.getElementTypeBitWidth() == 32 && memref_ty.getRank() > 1 &&
+        *(memref_ty.getShape().end() - 1) <= target_shape[1]) {
+      leading_tile_rows = 1;
+    }
     FAILUREOR_ASSIGN_OR_RETURN(
         const MemRefType new_memref_ty,
-        inferMemref(memref_ty, hardware_generation, tpu_tiling_flags));
+        inferMemref(memref_ty, hardware_generation, target_shape,
+                    tpu_tiling_flags, leading_tile_rows));
     alloca_op.getResult().setType(new_memref_ty);
     if (memref_ty != new_memref_ty) {
       OpBuilder builder(alloca_op->getContext());
       builder.setInsertionPointAfter(alloca_op);
+      // TODO(b/376130272): add a canonicalizer for EraseLayoutOp so that if we
+      // have erase(erase(x)) then we rewrite it to erase(x).
       auto erase_op = builder.create<tpu::EraseLayoutOp>(
           arg.getLoc(),
           MemRefType::get(new_memref_ty.getShape(), memref_ty.getElementType(),
@@ -233,9 +265,9 @@ LogicalResult inferOp(Operation &op, const int hardware_generation,
   } else if (auto alloca_op = dyn_cast<tpu::AllocaSemaphoreOp>(op)) {
     TypedValue<MemRefType> arg = alloca_op.getResult();
     const MemRefType memref_ty = alloca_op.getResult().getType();
-    FAILUREOR_ASSIGN_OR_RETURN(
-        const MemRefType new_memref_ty,
-        inferMemref(memref_ty, hardware_generation, tpu_tiling_flags));
+    FAILUREOR_ASSIGN_OR_RETURN(const MemRefType new_memref_ty,
+                               inferMemref(memref_ty, hardware_generation,
+                                           target_shape, tpu_tiling_flags));
     alloca_op.getResult().setType(new_memref_ty);
     if (memref_ty != new_memref_ty) {
       OpBuilder builder(alloca_op->getContext());
@@ -251,7 +283,8 @@ LogicalResult inferOp(Operation &op, const int hardware_generation,
   for (Region &region : op.getRegions()) {
     for (Block &block : region) {
       for (Operation& op : block) {
-        if (failed(inferOp(op, hardware_generation, tpu_tiling_flags))) {
+        if (failed(inferOp(op, hardware_generation, target_shape,
+                           tpu_tiling_flags))) {
           return failure();
         }
       }
@@ -261,6 +294,7 @@ LogicalResult inferOp(Operation &op, const int hardware_generation,
 }
 
 LogicalResult inferFunc(func::FuncOp f, const int hardware_generation,
+                        std::array<int64_t, 2> target_shape,
                         const TpuTilingFlags &tpu_tiling_flags) {
   if (!f.getBody().hasOneBlock()) {
     return f.emitOpError("Functions should only have a single block");
@@ -284,51 +318,63 @@ LogicalResult inferFunc(func::FuncOp f, const int hardware_generation,
     }
 
     FAILUREOR_ASSIGN_OR_RETURN(
-        const MemRefType new_memref_ty,
-        inferMemref(memref_ty, hardware_generation, tpu_tiling_flags,
-                    leading_tile_rows));
+        MemRefType new_memref_ty,
+        inferMemref(memref_ty, hardware_generation, target_shape,
+                    tpu_tiling_flags, leading_tile_rows));
     arg.setType(new_memref_ty);
     new_arg_types.push_back(arg.getType());
     if (memref_ty != new_memref_ty) {
+      Value val = arg;
+      Operation * arg_use_op = nullptr;
+      // If the arg memref can be reinterpreted to untiled, we can insert
+      // ReinterpretCastOp to use tiling {packing, target.lane_count} before
+      // EraseLayoutOp for only the arg memrefs and expect the rest memref
+      // layout inference is based on the casted layout automatically. This
+      // would help lift many restrictions in alignment check when consuming
+      // this memref.
+      if (canReinterpretToUntiledMemref(cast<TypedValue<MemRefType>>(val),
+                                        target_shape,
+                                        /*allow_minormost_padding=*/true) &&
+          // TODO(b/375038685): generalize untiled memref with packed type which
+          // needs to update load/store rules.
+          new_memref_ty.getElementTypeBitWidth() == 32) {
+        auto tiled_layout =
+            cast<tpu::TiledLayoutAttr>(new_memref_ty.getLayout());
+        SmallVector<xla::Tile> tiles(tiled_layout.getTiles());
+        SmallVector<int64_t> new_tile_strides(tiled_layout.getTileStrides());
+        for (int i = 0; i < new_tile_strides.size() - 2; ++i) {
+          new_tile_strides[i] *= tiles[0].dimension(0);
+        }
+        tiles[0] = ::xla::Tile({1, target_shape[1]});
+        new_memref_ty = MemRefType::get(
+            new_memref_ty.getShape(), new_memref_ty.getElementType(),
+            TiledLayoutAttr::get(new_memref_ty.getContext(), tiles,
+                                 new_tile_strides),
+            new_memref_ty.getMemorySpace());
+        arg_use_op = builder.create<tpu::ReinterpretCastOp>(val.getLoc(),
+                                                            new_memref_ty, val);
+        val = arg_use_op->getResult(0);
+      }
       // Some standard MLIR ops have static checks that seems unreasonable,
       // and we know they hold in the way they are used in Mosaic. Still,
       // verification with layouts likes to fail, because it can't statically
       // prove the properties.
       auto erase_op = builder.create<tpu::EraseLayoutOp>(
-          arg.getLoc(),
+          val.getLoc(),
           MemRefType::get(new_memref_ty.getShape(), memref_ty.getElementType(),
                           /*layout=*/nullptr, new_memref_ty.getMemorySpace()),
-          arg);
-      arg.replaceAllUsesExcept(erase_op.getResult(), erase_op);
+          val);
+      if (!arg_use_op) {
+        arg_use_op = erase_op;
+      }
+      arg.replaceAllUsesExcept(erase_op.getResult(), arg_use_op);
     }
   }
   f.setFunctionType(
       builder.getAttr<FunctionType>(new_arg_types, f.getResultTypes()));
   for (Operation &op : entry.getOperations()) {
-    if (failed(inferOp(op, hardware_generation, tpu_tiling_flags))) {
-      return failure();
-    }
-  }
-  return success();
-}
-
-// Infers the layout and memory space attributes of function memref arguments.
-//
-// In the future we should require those annotations from Mosaic users, but it's
-// best to keep them internal for as long as they are under development.
-//
-// Arguments:
-//   module: The MLIR module on which to perform the inference.
-//   hardware_generation: The TPU hardware generation to target.
-LogicalResult inferModule(ModuleOp module, const int hardware_generation,
-                          const TpuTilingFlags &tpu_tiling_flags) {
-  // TODO(apaszke): Do layout assignment for scoped allocations too.
-  for (Operation &op : *module.getBody()) {
-    auto f = dyn_cast<func::FuncOp>(op);
-    if (f == nullptr) {
-      return module.emitOpError("Expected only FuncOps but found ") << op;
-    }
-    if (failed(inferFunc(f, hardware_generation, tpu_tiling_flags))) {
+    if (failed(
+            inferOp(op, hardware_generation, target_shape, tpu_tiling_flags))) {
       return failure();
     }
   }
@@ -338,8 +384,11 @@ LogicalResult inferModule(ModuleOp module, const int hardware_generation,
 struct InferMemRefLayoutPass
     : public impl::InferMemRefLayoutPassBase<InferMemRefLayoutPass> {
   InferMemRefLayoutPass(int hardware_generation_,
+                        std::array<int64_t, 2> target_shape_,
                         const TpuTilingFlags &tpu_tiling_flags_) {
     hardware_generation = hardware_generation_;
+    sublane_count = target_shape_[0];
+    lane_count = target_shape_[1];
     tpu_tiling_flags = tpu_tiling_flags_;
   }
   void runOnOperation() override {
@@ -349,7 +398,8 @@ struct InferMemRefLayoutPass
       return;
     }
     func::FuncOp func = getOperation();
-    if (failed(inferFunc(func, hardware_generation, tpu_tiling_flags))) {
+    if (failed(inferFunc(func, hardware_generation, {sublane_count, lane_count},
+                         tpu_tiling_flags))) {
       signalPassFailure();
       return;
     }
@@ -357,9 +407,10 @@ struct InferMemRefLayoutPass
 };
 
 std::unique_ptr<OperationPass<func::FuncOp>> createInferMemRefLayoutPass(
-    int hardware_generation, const TpuTilingFlags &tpu_tiling_flags_) {
-  return std::make_unique<InferMemRefLayoutPass>(hardware_generation,
-                                                 tpu_tiling_flags_);
+    int hardware_generation, std::array<int64_t, 2> target_shape,
+    const TpuTilingFlags &tpu_tiling_flags_) {
+  return std::make_unique<InferMemRefLayoutPass>(
+      hardware_generation, target_shape, tpu_tiling_flags_);
 }
 
 }  // namespace mlir::tpu

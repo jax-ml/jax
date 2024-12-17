@@ -45,7 +45,6 @@ from jax._src import util
 from jax._src.export import shape_poly
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
-from jax._src.lib import xla_client
 import numpy as np
 
 from jax.experimental.jax2tf.tests import tf_test_util
@@ -1032,7 +1031,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(f_jax(x), restored_f(x))
 
   @jtu.ignore_warning(
-      message="jax2tf.convert with native_serialization=False is deprecated"
+      message="jax2tf.convert with native_serialization=False has been deprecated"
   )
   def test_readme_examples(self):
     """Some of the examples from the README."""
@@ -1124,31 +1123,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     x45 = np.ones((4, 5), dtype=np.float32)
     # JAX with static shapes sees that x.shape[0] != x.shape[1]
     self.assertEqual(jnp.sum(x45), f2_jax(x45))
-
-    # In graph serialization eager mode, we catch the broken assumption b >= 1
-    with self.assertRaisesRegex(
-        tf.errors.InvalidArgumentError,
-        re.escape(
-          "Found inconsistency between dimension size args[0].shape[1] (= 5) "
-          "and the specification 'b' (= 4)")):
-      jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
-                     native_serialization=False)(x45)
-
-    # In graph serialization graph mode we also catch it (except on TPU, where
-    # the behavior is as for jit_compile=1)
-
-    f2_tf = tf.function(
-        jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
-                       native_serialization=False),
-        autograph=False,
-    ).get_concrete_function(tf.TensorSpec([None, None], dtype=np.float32))
-    if jtu.test_device_matches(["tpu"]):
-      self.assertEqual(1. + jnp.sum(x45), f2_tf(x45))
-    else:
-      with self.assertRaisesRegex(
-          tf.errors.InvalidArgumentError,
-          r"Found inconsistency"):
-        _ = f2_tf(x45)
 
     # We also catch the error with native serialization
     with self.assertRaisesRegex(
@@ -1824,11 +1798,11 @@ _POLY_SHAPE_TEST_HARNESSES = [
             lambda x, fft_type, nr_fft_lengths: lax.fft_p.bind(
                 x, fft_type=fft_type,
                 fft_lengths=tuple(
-                    x.shape[-nr_fft_lengths:] if fft_type != xla_client.FftType.IRFFT else
+                    x.shape[-nr_fft_lengths:] if fft_type != lax.FftType.IRFFT else
                     [(x.shape[-1] - 1) * 2])),
             arg_descriptors=[
                 RandArg((3, 4, 5, 6),
-                        np.float32 if fft_type == xla_client.FftType.RFFT else np.complex64),
+                        np.float32 if fft_type == lax.FftType.RFFT else np.complex64),
                 StaticArg(fft_type),
                 StaticArg(nr_fft_lengths)],
             # All axes but the last one are dynamic. This means that the test
@@ -1836,8 +1810,8 @@ _POLY_SHAPE_TEST_HARNESSES = [
             polymorphic_shapes=["b0, b1, b2, ..."],
             tol=1e-4)
 
-         for fft_type in (xla_client.FftType.FFT, xla_client.FftType.IFFT,
-                         xla_client.FftType.RFFT, xla_client.FftType.IRFFT)
+         for fft_type in (lax.FftType.FFT, lax.FftType.IFFT,
+                         lax.FftType.RFFT, lax.FftType.IRFFT)
          for nr_fft_lengths in (1, 2)
     ],
     PolyHarness("full", "",
@@ -2115,7 +2089,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                     polymorphic_shapes=[None, "b0, ..."],
                     expect_error=(
                         (core.InconclusiveDimensionOperation,
-                         "the product of the known dimensions must be even") if flags_name == "threefry_non_partitionable" else (None, None)),
+                         "array size .* must be even") if flags_name == "threefry_non_partitionable" else (None, None)),
                     override_jax_config_flags=override_jax_config_flags)  # type: ignore
       ]
         for key_size, flags_name, override_jax_config_flags in [

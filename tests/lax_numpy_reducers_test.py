@@ -362,7 +362,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, initial=initial, promote_integers=promote_integers)
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
-    tol = {jnp.bfloat16: 3E-2}
+    tol = {jnp.bfloat16: 3E-2, jnp.float16: 5e-3}
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -447,6 +447,34 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, atol=tol, rtol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(rec=JAX_REDUCER_INITIAL_RECORDS)
+  def testReducerWhereNonBooleanErrorInitial(self, rec):
+    dtype = rec.dtypes[0]
+    x = jnp.zeros((10,), dtype)
+    where = jnp.ones(10, dtype=int)
+    func = getattr(jnp, rec.name)
+    def assert_warns_or_errors(msg):
+      if deprecations.is_accelerated("jax-numpy-reduction-non-boolean-where"):
+        return self.assertRaisesRegex(ValueError, msg)
+      else:
+        return self.assertWarnsRegex(DeprecationWarning, msg)
+    with assert_warns_or_errors(f"jnp.{rec.name}: where must be None or a boolean array"):
+      func(x, where=where, initial=jnp.array(0, dtype=dtype))
+
+  @jtu.sample_product(rec=JAX_REDUCER_WHERE_NO_INITIAL_RECORDS)
+  def testReducerWhereNonBooleanErrorNoInitial(self, rec):
+    dtype = rec.dtypes[0]
+    x = jnp.zeros((10,), dtype)
+    where = jnp.ones(10, dtype=int)
+    func = getattr(jnp, rec.name)
+    def assert_warns_or_errors(msg):
+      if deprecations.is_accelerated("jax-numpy-reduction-non-boolean-where"):
+        return self.assertRaisesRegex(ValueError, msg)
+      else:
+        return self.assertWarnsRegex(DeprecationWarning, msg)
+    with assert_warns_or_errors(f"jnp.{rec.name}: where must be None or a boolean array"):
+      func(x, where=where)
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
@@ -820,15 +848,6 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
   def testCumulativeSum(self, shape, axis, dtype, out_dtype, include_initial):
     rng = jtu.rand_some_zero(self.rng())
 
-    def np_mock_op(x, axis=None, dtype=None, include_initial=False):
-      axis = axis or 0
-      out = np.cumsum(x, axis=axis, dtype=dtype or x.dtype)
-      if include_initial:
-        zeros_shape = list(x.shape)
-        zeros_shape[axis] = 1
-        out = jnp.concat([jnp.zeros(zeros_shape, dtype=out.dtype), out], axis=axis)
-      return out
-
     # We currently "cheat" to ensure we have JAX arrays, not NumPy arrays as
     # input because we rely on JAX-specific casting behavior
     def args_maker():
@@ -836,13 +855,24 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       if out_dtype in unsigned_dtypes:
         x = 10 * jnp.abs(x)
       return [x]
-
-    np_op = getattr(np, "cumulative_sum", np_mock_op)
     kwargs = dict(axis=axis, dtype=out_dtype, include_initial=include_initial)
+
+    if jtu.numpy_version() >= (2, 1, 0):
+      np_op = np.cumulative_sum
+    else:
+      def np_op(x, axis=None, dtype=None, include_initial=False):
+        axis = axis or 0
+        out = np.cumsum(x, axis=axis, dtype=dtype or x.dtype)
+        if include_initial:
+          zeros_shape = list(x.shape)
+          zeros_shape[axis] = 1
+          out = jnp.concat([jnp.zeros(zeros_shape, dtype=out.dtype), out], axis=axis)
+        return out
 
     np_fun = lambda x: np_op(x, **kwargs)
     jnp_fun = lambda x: jnp.cumulative_sum(x, **kwargs)
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
+                            rtol={jnp.bfloat16: 5e-2})
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
@@ -865,6 +895,54 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     out = jnp.cumulative_sum(jnp.array([[0.1], [0.1], [0.0]]), axis=-1,
                              dtype=jnp.bool_)
     np.testing.assert_array_equal(np.array([[True], [True], [False]]), out)
+
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis)
+      for shape in all_shapes
+      for axis in list(
+        range(-len(shape), len(shape))
+      ) + ([None] if len(shape) == 1 else [])],
+    [dict(dtype=dtype, out_dtype=out_dtype)
+     for dtype in (all_dtypes+[None])
+     for out_dtype in (
+       complex_dtypes if np.issubdtype(dtype, np.complexfloating)
+       else all_dtypes
+      )
+    ],
+    include_initial=[False, True],
+  )
+  @jtu.ignore_warning(category=NumpyComplexWarning)
+  @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises mixed type promotion
+  def testCumulativeProd(self, shape, axis, dtype, out_dtype, include_initial):
+    if jtu.is_device_tpu(6):
+      raise unittest.SkipTest("TODO(b/364258243): Test fails on TPU v6e")
+    rng = jtu.rand_some_zero(self.rng())
+
+    # We currently "cheat" to ensure we have JAX arrays, not NumPy arrays as
+    # input because we rely on JAX-specific casting behavior
+    def args_maker():
+      x = jnp.array(rng(shape, dtype))
+      if out_dtype in unsigned_dtypes:
+        x = 10 * jnp.abs(x)
+      return [x]
+    kwargs = dict(axis=axis, dtype=out_dtype, include_initial=include_initial)
+
+    if jtu.numpy_version() >= (2, 1, 0):
+      np_op = np.cumulative_prod
+    else:
+      def np_op(x, axis=None, dtype=None, include_initial=False):
+        axis = axis or 0
+        out = np.cumprod(x, axis=axis, dtype=dtype or x.dtype)
+        if include_initial:
+          ones_shape = list(x.shape)
+          ones_shape[axis] = 1
+          out = jnp.concat([jnp.ones(ones_shape, dtype=out.dtype), out], axis=axis)
+        return out
+
+    np_fun = lambda x: np_op(x, **kwargs)
+    jnp_fun = lambda x: jnp.cumulative_prod(x, **kwargs)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

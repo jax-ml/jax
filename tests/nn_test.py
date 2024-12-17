@@ -50,6 +50,8 @@ def _check_cudnn_backend(fn, *args, **kwargs):
   hlo = mlir.module_to_string(lowered.compiler_ir('stablehlo'))
   return '__cudnn$fmha' in hlo
 
+_cudnn_dbias_error = 'cuDNN only supports bias gradient'
+
 @jtu.with_config(jax_legacy_prng_key="allow",
                  jax_numpy_dtype_promotion="standard")
 class NNFunctionsTest(jtu.JaxTestCase):
@@ -97,8 +99,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
     self.assertAllClose(out_ref, out_ans, atol=.01, rtol=.01)
     self.assertAllClose(dQ_ref, dQ_ans, rtol=.01, atol=.01)
-    self.assertAllClose(dK_ref, dK_ans, rtol=.02, atol=.02)
-    self.assertAllClose(dV_ref, dV_ans, rtol=.02, atol=.02)
+    self.assertAllClose(dK_ref, dK_ans, rtol=.01, atol=.01)
+    self.assertAllClose(dV_ref, dV_ans, rtol=.01, atol=.01)
 
   @parameterized.product(
       mask_mode=['bias', 'causal', 'padding', 'custom', ('causal', 'padding'),
@@ -162,10 +164,67 @@ class NNFunctionsTest(jtu.JaxTestCase):
     self.assertTrue(_check_cudnn_backend(sdpa_vjp_ans, grad))
 
     self.assertAllClose(out_ref, out_ans, atol=.01, rtol=.01)
-    self.assertAllClose(dQ_ref, dQ_ans, rtol=.01, atol=.01)
+    self.assertAllClose(dQ_ref, dQ_ans, rtol=.02, atol=.02)
     self.assertAllClose(dK_ref, dK_ans, rtol=.02, atol=.02)
-    self.assertAllClose(dV_ref, dV_ans, rtol=.02, atol=.02)
-    self.assertAllClose(dbias_ref, dbias_ans, rtol=.03, atol=.03)
+    self.assertAllClose(dV_ref, dV_ans, rtol=.01, atol=.01)
+    self.assertAllClose(dbias_ref, dbias_ans, rtol=.02, atol=.02)
+
+  @parameterized.product(
+      batch_size=[1, 16],
+      use_vmap=[False, True],
+  )
+  def testDotProductAttentionBiasGradient(self, batch_size, use_vmap):
+    if not _is_required_cudnn_version_satisfied(8904):
+      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
+
+    dtype = jnp.bfloat16
+    B, S, N, H = batch_size, 128, 4, 32
+    keys = random.split(random.PRNGKey(0), 2)
+    x = random.normal(keys[0], (B, S, N, H), dtype)
+    bias = random.normal(keys[1], (B, N, S, S), dtype=dtype)
+    mask = jnp.ones((1, 1, S), dtype=jnp.bool_)
+
+    def attention(x, bias, mask, impl):
+      return jax.nn.dot_product_attention(
+          query=x,
+          key=x,
+          value=x,
+          bias=bias,
+          mask=mask,
+          is_causal=False,
+          implementation=impl,
+      )
+    attn_ref = partial(attention, impl=None)
+    attn_ans = partial(attention, impl='cudnn')
+    if use_vmap:
+      attn_batched_ref = jax.vmap(attn_ref, in_axes=(0, 0, None))
+      attn_batched_ans = jax.vmap(attn_ans, in_axes=(0, 0, None))
+    else:
+      attn_batched_ref = attn_ref
+      attn_batched_ans = attn_ans
+
+    fwd_ref = jax.jit(attn_batched_ref)
+    fwd_ans = jax.jit(attn_batched_ans)
+    y_ref = fwd_ref(x, bias, mask)
+    y_ans = fwd_ans(x, bias, mask)
+    self.assertAllClose(y_ref, y_ans)
+
+    @jax.jit
+    def bwd_ref(x, bias, mask):
+      _, f_vjp = jax.vjp(attn_ref, x, bias, mask)
+      return f_vjp(x)
+    @jax.jit
+    def bwd_ans(x, bias, mask):
+      _, f_vjp = jax.vjp(attn_ans, x, bias, mask)
+      return f_vjp(x)
+
+    if batch_size != 1:
+      with self.assertRaisesRegex(ValueError, _cudnn_dbias_error):
+        _, dbias_ans, _ = bwd_ans(x, bias, mask)
+    else:
+      _, dbias_ref, _ = bwd_ref(x, bias, mask)
+      _, dbias_ans, _ = bwd_ans(x, bias, mask)
+      self.assertAllClose(dbias_ans, dbias_ref, rtol=.02, atol=.02)
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
@@ -257,6 +316,11 @@ class NNFunctionsTest(jtu.JaxTestCase):
     check_grads(nn.relu, (-1.,), order=3, rtol=rtol)
     jaxpr = jax.make_jaxpr(jax.grad(nn.relu))(0.)
     self.assertGreaterEqual(len(jaxpr.jaxpr.eqns), 2)
+
+  def testReluGradAtZero(self):
+    # https://dl.acm.org/doi/10.5555/3540261.3540297
+    grad = jax.grad(nn.relu)(0.)
+    self.assertEqual(grad, 0.)
 
   def testRelu6Grad(self):
     rtol = 1e-2 if jtu.test_device_matches(["tpu"]) else None

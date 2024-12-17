@@ -41,7 +41,6 @@ from jax._src import effects as effects_lib
 from jax._src import linear_util as lu
 from jax._src import path
 from jax._src import pickle_util
-from jax._src import sharding
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import util
@@ -50,12 +49,12 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
 from jax._src.sharding import Sharding as JSharding
+from jax._src.sharding_impls import AUTO
+from jax._src.partition_spec import UnconstrainedSingleton
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
-from jax._src.lib.mlir import dialects
-from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import func as func_dialect
-from jax._src.lib.mlir.dialects import hlo
+from jax._src.lib.mlir import dialects, ir, passmanager
+from jax._src.lib.mlir.dialects import func as func_dialect, hlo
 from jax._src.lib.mlir import register_jax_dialects
 from jax._src.state.types import AbstractRef
 
@@ -186,13 +185,13 @@ _dtype_to_ir_type : dict[np.dtype, Callable[[], ir.Type]] = {
 
 if dtypes.int2 is not None:
   assert dtypes.uint2 is not None
-  _dtype_to_ir_type[np.dtype(dtypes.int2)] = partial(
-      ir.IntegerType.get_signless, 2
-  )
-  _dtype_to_ir_type[np.dtype(dtypes.uint2)] = partial(
-      ir.IntegerType.get_unsigned, 2
-  )
+  _dtype_to_ir_type[np.dtype(dtypes.int2)] = partial(ir.IntegerType.get_signless, 2)
+  _dtype_to_ir_type[np.dtype(dtypes.uint2)] = partial(ir.IntegerType.get_unsigned, 2)
 
+if dtypes.float8_e3m4 is not None:
+  _dtype_to_ir_type[np.dtype(dtypes.float8_e3m4)] = ir.Float8E3M4Type.get
+if dtypes.float8_e4m3 is not None:
+  _dtype_to_ir_type[np.dtype(dtypes.float8_e4m3)] = ir.Float8E4M3Type.get
 
 def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
   if isinstance(dtype, core.bint):
@@ -232,7 +231,6 @@ def aval_to_ir_type(aval: core.AbstractValue) -> IrTypes:
     raise TypeError(f"No ir_type_handler for aval type: {type(aval)}") from err
 
 ir_type_handlers[core.ShapedArray] = _array_ir_types
-ir_type_handlers[core.ConcreteArray] = _array_ir_types
 ir_type_handlers[core.AbstractToken] = lambda _: hlo.TokenType.get()
 ir_type_handlers[core.DShapedArray] = _dynamic_array_ir_types
 
@@ -589,9 +587,18 @@ def module_to_bytecode(module: ir.Module) -> bytes:
   return output.getvalue()
 
 # Translation rules
+
+class JaxIrContext(ir.Context):
+  def __init__(self, *args, **kwargs):
+    # Note: we're very intentionally *not* calling the __init__() of our
+    # immediate superclass ir.Context, whose __init__() has the unfortunate side
+    # effect of loading all the dialects linked into the binary into the
+    # context. We want to ensure that only the dialects we need are loaded.
+    super(ir.Context, self).__init__(*args, **kwargs)
+
 def make_ir_context() -> ir.Context:
   """Creates an MLIR context suitable for JAX IR."""
-  context = ir.Context()
+  context = JaxIrContext()
   context.append_dialect_registry(upstream_dialects)
   context.load_all_available_dialects()
 
@@ -764,7 +771,13 @@ class ModuleContext:
     return self.backend_or_name
 
   def new_channel(self) -> int:
-    return next(self.channel_iterator)
+    channel = next(self.channel_iterator)
+    # `xla::HostCallback` requires a 16-bit channel ID.
+    if channel >= (1 << 16):
+      raise RuntimeError(
+          "Host callback lowering created too many channels. PjRt does not"
+          " support more than 65535 channels")
+    return channel
 
   # Adds an IFRT host callback object to the context. A reference to these
   # callbacks will be provided to IFRT during compilation so it can do things
@@ -836,6 +849,12 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
   if platform is None:
     _lowerings[prim] = rule
   else:
+    if not xb.is_known_platform(platform):
+      known_platforms = sorted(xb.known_platforms())
+      raise NotImplementedError(
+          f"Registering an MLIR lowering rule for primitive {prim}"
+          f" for an unknown platform {platform}. Known platforms are:"
+          f" {', '.join(known_platforms)}.")
     # For backward compatibility reasons, we allow rules to be registered
     # under "gpu" even though the platforms are now called "cuda" and "rocm".
     # TODO(phawkins): fix up users to specify either "cuda" or "rocm" and remove
@@ -900,9 +919,11 @@ def unflatten_ir_values_like_types(xs: Iterable[ir.Value],
 _module_name_regex = re.compile(r"[^\w.-]")
 
 def sharded_aval(aval: core.AbstractValue,
-                 sharding: JSharding | None) -> core.AbstractValue:
+                 sharding: JSharding | AUTO | None) -> core.AbstractValue:
   """Returns the new aval sharded based on sharding proto."""
   if sharding is None:
+    return aval
+  if isinstance(sharding, AUTO):
     return aval
   if isinstance(aval, core.AbstractToken):
     return aval
@@ -991,9 +1012,13 @@ def add_manual_axes(axis_ctx: sharding_impls.SPMDAxisContext, sharding, ndim):
 
 def _to_physical_op_sharding(
     ctx: ModuleContext,
-    aval: core.AbstractValue, sharding: JSharding | None,
-) -> xc.OpSharding | sharding.SdyArraySharding | None:
+    aval: core.AbstractValue, sharding: JSharding | AUTO | None,
+) -> xc.OpSharding | sharding_impls.SdyArraySharding | None:
   if sharding is None:
+    return None
+  if isinstance(sharding, AUTO):
+    if config.use_shardy_partitioner.value:
+      return sharding._to_sdy_sharding(aval.ndim)  # type: ignore
     return None
   assert isinstance(sharding, JSharding)
   if isinstance(aval, AbstractRef):
@@ -1014,16 +1039,18 @@ def _to_physical_op_sharding(
 def _to_xla_layout(layout: DeviceLocalLayout | None | AutoLayout,
                    aval: core.AbstractValue) -> str | None:
   if layout is None:
-    return "default"
+    return None
   if isinstance(layout, AutoLayout):
     return "auto"
   if aval is core.abstract_token:
-    return "default"
+    return None
   return str(layout._to_xla_layout(aval.dtype))  # type: ignore
 
 
-def _get_mem_kind(s: JSharding | None) -> str | None:
+def _get_mem_kind(s: JSharding | AUTO | None) -> str | None:
   if s is None:
+    return None
+  if isinstance(s, AUTO):
     return None
   assert isinstance(s, JSharding)
   return s.memory_kind
@@ -1040,8 +1067,8 @@ def lower_jaxpr_to_module(
     name_stack: source_info_util.NameStack,
     donated_args: Sequence[bool],
     replicated_args: Sequence[bool] | None = None,
-    arg_shardings: Sequence[JSharding | None] | None = None,
-    result_shardings: Sequence[JSharding | None] | None = None,
+    arg_shardings: Sequence[JSharding | AUTO | None] | None = None,
+    result_shardings: Sequence[JSharding | AUTO | None] | None = None,
     in_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
     out_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
     arg_names: Sequence[str | None] | None = None,
@@ -1058,6 +1085,7 @@ def lower_jaxpr_to_module(
   Handles the quirks of the argument/return value passing conventions of the
   runtime.
   """
+  util.test_event("lower_jaxpr_to_module")
   platforms = tuple(map(xb.canonicalize_platform, platforms))
 
   in_avals = (jaxpr.in_avals if arg_shardings is None else
@@ -1084,8 +1112,9 @@ def lower_jaxpr_to_module(
         "In multi-platform lowering either all or no lowering platforms "
         f"should support donation. Lowering for {platforms} of which "
         f"only {platforms_with_donation} support donation")
-    if num_partitions > 1 and (
-        result_shardings is None or all(s is None for s in result_shardings)):
+    if (num_partitions > 1 and
+        (result_shardings is None or
+         all(s is None or isinstance(s, AUTO) for s in result_shardings))):
       xla_donated_args = donated_args
       donated_args = [False] * len(donated_args)
     if xla_donated_args is None:
@@ -1135,16 +1164,6 @@ def lower_jaxpr_to_module(
     # Remove module name characters that XLA would alter. This ensures that
     # XLA computation preserves the module name.
     attrs = ctx.module.operation.attributes
-    if config.use_shardy_partitioner.value:
-      if (isinstance(axis_context, sharding_impls.ShardingContext) and
-          axis_context.mesh_shape is not None):
-        sdy_mesh_attr = dialects.sdy.MeshAttr.get(
-                          [dialects.sdy.MeshAxisAttr.get(name, size)
-                          for name, size in axis_context.mesh_shape])
-      else:
-        sdy_mesh_attr = dialects.sdy.MeshAttr.get([])
-
-      ctx.module.body.append(dialects.sdy.MeshOp("mesh", sdy_mesh_attr))
     module_name = _module_name_regex.sub("_", module_name)
     attrs["sym_name"] = ir.StringAttr.get(module_name)
     attrs["mhlo.num_replicas"] = i32_attr(num_replicas)
@@ -1165,6 +1184,10 @@ def lower_jaxpr_to_module(
         arg_layouts=in_layouts,
         result_layouts=out_layouts,
         propagated_out_mem_kinds=propagated_out_mem_kinds)
+    if config.use_shardy_partitioner.value:
+      pipeline = passmanager.PassManager.parse(
+          'builtin.module(sdy-lift-inlined-meshes)')
+      pipeline.run(ctx.module.operation)
 
   try:
     if not ctx.module.operation.verify():
@@ -1220,6 +1243,7 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
 
   xla_donated_args = None
   out_donated_args = list(donated_args)
+  in_out_layout_not_none = in_layouts is not None and out_layouts is not None
   for i, (aval, rm) in enumerate(zip(avals_out, result_memory_kinds)):
     # Only donate if memory kinds match. Relax this when the compiler can
     # donate across memories.
@@ -1227,14 +1251,26 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
     if donations.get(key, ()):
       input_id = donations[key].popleft()
       out_donated_args[input_id] = False
-      # We can alias if XLA performs layout assignment because XLA will
-      # respect the aliases when assigning layouts. Its only for two
-      # mismatched explicitly assigned layouts that XLA will certainly fail.
-      if (in_layouts is None or
-          out_layouts is None or
-          in_layouts[input_id] == out_layouts[i] or
-          isinstance(in_layouts[input_id], AutoLayout) or
+      if (in_out_layout_not_none and
+          isinstance(in_layouts[input_id], AutoLayout) and
+          not isinstance(out_layouts[i], AutoLayout)):
+        raise ValueError(
+            f"Input layout being donated was {in_layouts[input_id]} while"
+            f" output layout was {out_layouts[i]}. Did you mean to set the"
+            " **output layout** to **DeviceLocalLayout.AUTO**?\nThis will"
+            " allow for the input and output layout to be chosen by XLA and"
+            " not the layout of the output which might not be optimal.")
+      if (in_out_layout_not_none and
+          not isinstance(in_layouts[input_id], AutoLayout) and
           isinstance(out_layouts[i], AutoLayout)):
+        raise ValueError(
+            f"Input layout being donated was {in_layouts[input_id]} while"
+            f" output layout was {out_layouts[i]}. Did you mean to set the"
+            " **input layout** to **DeviceLocalLayout.AUTO**?\nThis will allow"
+            " for the input and output layout to be chosen by XLA and not the"
+            " layout of the input which might not be optimal.")
+      if (in_layouts is None or out_layouts is None or
+          in_layouts[input_id] == out_layouts[i]):
         input_output_aliases[input_id] = i
       else:
         # Fallback to xla donation if layouts don't match.
@@ -1301,8 +1337,8 @@ def lower_jaxpr_to_fun(
     *,
     public: bool = False,
     replicated_args: Sequence[bool] | None = None,
-    arg_shardings: Sequence[JSharding | None] | None = None,
-    result_shardings: Sequence[JSharding | None] | None = None,
+    arg_shardings: Sequence[JSharding | AUTO | None] | None = None,
+    result_shardings: Sequence[JSharding | AUTO | None] | None = None,
     use_sharding_annotations: bool = True,
     input_output_aliases: Sequence[int | None] | None = None,
     xla_donated_args: Sequence[bool] | None = None,
@@ -1343,6 +1379,7 @@ def lower_jaxpr_to_fun(
   Returns:
     MLIR func op
   """
+  util.test_event("lower_jaxpr_to_fun", name)
 
   # The first dimension variable may be the platform index
   num_dim_vars = len(ctx.shape_poly_state.dim_vars)
@@ -1508,7 +1545,6 @@ def lower_jaxpr_to_fun(
           aliases.extend([None] * len_ir_types(itypes))
         else:
           aliases.extend(output_ids[alias])
-
       for attrs, alias in zip(arg_attrs, aliases):
         if alias is not None:
           attrs["tf.aliasing_output"] = i32_attr(alias)
@@ -1666,12 +1702,15 @@ def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
   # For example: if the key.shape is (8, 2) and key_data(key).shape is (8, 2, 2),
   # then the sharding will be P(P.UNCONSTRAINED, P.UNCONSTRAINED, None).
   # The below custom call achieves the sharding like above example.
+  assert isinstance(aval, (core.ShapedArray, core.DShapedArray))
   if config.use_shardy_partitioner.value:
     physical_ndim = core.physical_aval(aval).ndim
-    s = sharding.SdyArraySharding(
-        mesh_name='mesh',
-        dimension_shardings=[sharding.SdyDimSharding(axes=[], is_closed=i >= aval.ndim)
-                             for i in range(physical_ndim)])
+    s = sharding_impls.SdyArraySharding(
+        mesh_shape=None,
+        dimension_shardings=[
+            sharding_impls.SdyDimSharding(axes=[], is_closed=i >= aval.ndim)
+            for i in range(physical_ndim)
+        ])
     return wrap_with_sharding_op(ctx, val, aval, s)
   else:
     return wrap_with_sharding_op(
@@ -1717,6 +1756,44 @@ def _emit_lowering_rule_as_fun(lowering_rule,
   return func_op
 
 
+class HashableLiteral:
+  """Hashable wrapper of core.Literal, used for deduplicating IR constants."""
+
+  __slots__ = ["value", "data"]
+
+  value: core.Literal
+
+  # Copy of the value suitable for an equality comparison. We are careful to
+  # avoid floating point comparisons here, because in particular we don't want
+  # 0.0 and -0.0 to be considered equal, but we are fine with NaNs being equal.
+  data: bytes | int | bool | None
+
+  def __init__(self, value):
+    self.value = value
+    if isinstance(value.val, (np.generic, np.ndarray)):
+      self.data = value.val.tobytes()
+    elif isinstance(value.val, (bool, int)):
+      self.data = value.val
+    elif isinstance(value.val, float):
+      self.data = np.float64(value.val).tobytes()
+    elif isinstance(value.val, complex):
+      self.data = np.complex128(value.val).tobytes()
+    else:
+      self.data = None  # Unhandled case.
+
+  def __hash__(self):
+    return hash(self.data)
+
+  def __eq__(self, other):
+    if type(self.value.val) != type(other.value.val):
+      return False
+    if self.value.aval != other.value.aval:
+      return False
+    if self.data is None:
+      return id(self) == id(other)
+    return self.data == other.data
+
+
 def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
                   name_stack: source_info_util.NameStack,
                   tokens: TokenSet,
@@ -1732,16 +1809,23 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     IR function, in the order of ctx.shape_poly_state.dim_vars.
   """
   assert "gpu" not in ctx.platforms
+  cached_ir_consts: dict[HashableLiteral, IrValues] = {}
+
   def read(v: core.Atom) -> IrValues:
     if type(v) is core.Literal:
-      return ir_constant(xla.canonicalize_dtype(v.val))
+      h = HashableLiteral(v)
+      c = cached_ir_consts.get(h)
+      if c is None:
+        c = ir_constant(xla.canonicalize_dtype(v.val))
+        cached_ir_consts[h] = c
+      return c
     else:
       assert isinstance(v, core.Var)
       return env[v]
 
   def aval(v: core.Atom) -> core.AbstractValue:
     if type(v) is core.Literal:
-      return xla.abstractify(v.val)
+      return core.abstractify(v.val)
     else:
       return v.aval
 
@@ -1798,13 +1882,9 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
         for p in _platforms_for_eqn_ctx(eqn.ctx) or ctx.platforms:
           if eqn.primitive in _platform_specific_lowerings[p]:
             platform_rules[p] = _platform_specific_lowerings[p][eqn.primitive]
-          elif eqn.primitive in xla._backend_specific_translations[p]:
-            platform_rules[p] = xla_fallback_lowering(eqn.primitive)
         # Now the default rule
         if eqn.primitive in _lowerings:
           default_rule = _lowerings[eqn.primitive]
-        elif eqn.primitive in xla._translations:
-          default_rule = xla_fallback_lowering(eqn.primitive)
 
       effects = list(effects_lib.ordered_effects.filter_in(eqn.effects))
       tokens_in = tokens.subset(effects)
@@ -1861,6 +1941,8 @@ def _platforms_for_eqn_ctx(eqn_ctx: core.JaxprEqnContext | None
     return ()
   if eqn_ctx.compute_type == 'device_host':
     return ('cpu',)
+  if eqn_ctx.compute_type == 'tpu_sparsecore':
+    return ('tpu',)
   return ()
 
 
@@ -2143,8 +2225,10 @@ def map_compute_type(c_type):
     return 'host'
   elif c_type == 'device':
     return 'dense'
+  elif c_type == 'tpu_sparsecore':
+    return 'sparse'
   raise ValueError('Invalid compute type received. Current supported values '
-                   'are `device_host` and `device`')
+                   'are `device_host`, `device` and `tpu_sparsecore')
 
 def wrap_compute_type_in_place(ctx, op):
   if ctx.jaxpr_eqn_ctx is not None and ctx.jaxpr_eqn_ctx.compute_type is not None:
@@ -2402,7 +2486,7 @@ def _wrap_with_spmd_op(name: str,
                        ctx: LoweringRuleContext,
                        x: ir.Value,
                        aval_out: core.AbstractValue,
-                       sharding: xc.OpSharding | sharding.SdyArraySharding,
+                       sharding: xc.OpSharding | sharding_impls.SdyArraySharding,
                        unspecified_dims: set[int] | None = None,
                        has_side_effect: bool = False,
                        allow_shardy_lowering: bool = False):
@@ -2439,7 +2523,26 @@ wrap_with_full_to_shard_op = partial(_wrap_with_spmd_op, "SPMDFullToShardShape")
 wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
 
 
-def set_sharding(op, sharding: xc.OpSharding | sharding.SdyArraySharding):
+def lower_sharding_under_shit(ctx, op, aval, sharding_proto=None):
+  # Don't emit a wsc under full manual mode to avoid increasing HLO size.
+  if aval.sharding.mesh._are_all_axes_collective:
+    return op
+  if aval.sharding.mesh._are_all_axes_auto:
+    return op
+  # TODO(yashkatariya): If all the axes in pspec are AUTO or collective,
+  # `return op` early and avoid bloating HLO size.
+  proto = (aval.sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
+           if sharding_proto is None else sharding_proto)
+  unspecified_dims = None
+  if aval.sharding.mesh._any_axis_collective:
+    unspecified_dims = set(range(aval.ndim))
+  elif aval.sharding.mesh._any_axis_auto:
+    unspecified_dims = {i for i, s in enumerate(aval.sharding.spec)
+                        if isinstance(s, UnconstrainedSingleton)}
+  return wrap_with_sharding_op(ctx, op, aval, proto, unspecified_dims)
+
+
+def set_sharding(op, sharding: xc.OpSharding | sharding_impls.SdyArraySharding):
   if config.use_shardy_partitioner.value:
     op.attributes["sdy.sharding"] = get_sharding_attr(sharding)
   else:
@@ -2447,7 +2550,7 @@ def set_sharding(op, sharding: xc.OpSharding | sharding.SdyArraySharding):
 
 
 def get_sharding_attr(
-    sharding: xc.OpSharding | sharding.SdyArraySharding
+    sharding: xc.OpSharding | sharding_impls.SdyArraySharding
 ) -> ir.Attribute:
   if config.use_shardy_partitioner.value:
     return sharding.build()  # type: ignore
@@ -2599,48 +2702,6 @@ def merge_mlir_modules(dst_module: ir.Module,
   return renamings["main"]
 
 
-def xla_fallback_lowering(prim: core.Primitive):
-  @cache_lowering
-  def fallback(ctx: LoweringRuleContext, *args, **params):
-    module_ctx = ctx.module_context
-    axis_ctx = module_ctx.axis_context
-    if isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
-      axis_env = axis_ctx.unsafe_axis_env
-    else:
-      axis_env = module_ctx.axis_env
-
-    if any(hasattr(a, "shape") and
-           not core.is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
-      raise NotImplementedError(
-          f"Shape polymorphism for xla_fallback_lowering is not implemented ({ctx.primitive}); b/261682623")
-
-    if len(module_ctx.platforms) > 1:
-      raise NotImplementedError(
-        "fallback lowering not implemented for multi-platform lowering")
-    xla_computation = xla.primitive_subcomputation(
-        module_ctx.platforms[0], axis_env, prim, ctx.avals_in,
-        ctx.avals_out, **params)
-    xla_module = xla_computation_to_mlir_module(xla_computation)
-    callee_name = merge_mlir_modules(
-        module_ctx.module, f"xla_fallback_{prim.name}", xla_module,
-        dst_symtab=module_ctx.symbol_table)
-    output_types = map(aval_to_ir_type, ctx.avals_out)
-    flat_output_types = flatten_ir_types(output_types)
-    output_type = (ir.TupleType.get_tuple(flat_output_types)
-                   if prim.multiple_results else flat_output_types[0])
-
-    call = func_dialect.CallOp([output_type],
-                               ir.FlatSymbolRefAttr.get(callee_name),
-                               flatten_ir_values(args)).result
-    if not prim.multiple_results:
-      return [call]
-    flat_results = [hlo.get_tuple_element(call, i32_attr(i))
-                    for i in range(len(flat_output_types))]
-
-    return unflatten_ir_values_like_types(flat_results, output_types)
-  return fallback
-
-
 DEVICE_TO_DEVICE_TYPE = 1
 SEND_TO_HOST_TYPE = 2
 RECV_FROM_HOST_TYPE = 3
@@ -2742,7 +2803,7 @@ def _emit_tpu_python_callback(
 def _layout_to_mlir_layout(minor_to_major: Sequence[int] | None):
   if minor_to_major is None:
     # Needed for token layouts
-    layout = np.zeros((0,), dtype="int64")
+    layout: np.ndarray = np.zeros((0,), dtype="int64")
   else:
     layout = np.array(minor_to_major, dtype="int64")
   return ir.DenseIntElementsAttr.get(layout, type=ir.IndexType.get())

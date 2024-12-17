@@ -17,9 +17,8 @@ import contextlib
 import dataclasses
 import enum
 import itertools
-import os
+import warnings
 
-from absl import app
 import jax
 from jax import random
 from jax._src.interpreters import mlir
@@ -30,7 +29,6 @@ import jax.numpy as jnp
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import gpu
-from jaxlib.mlir.dialects import nvgpu
 from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import scf
 import numpy as np
@@ -302,9 +300,7 @@ def build_kernel(
     with ir.InsertionPoint(if_compute.else_block):
       nvvm.setmaxregister(40, nvvm.SetMaxRegisterAction.decrease)
       with single_thread(per_block=False):
-        k_tr = (
-            TileTransform(tiling), TransposeTransform((0, 2, 1, 3, 4)),
-        )
+        k_tr = (TileTransform(tiling), TransposeTransform((1, 0, 2, 3)))
         v_tr = TileTransform(tiling)
         kv_head_idx = arith.divui(q_head_idx, c(q_heads_per_kv_head))
         def start_kv_copy(slot, kv_seq_base, smem, gmem, barrier, transform):
@@ -398,10 +394,7 @@ def build_kernel(
       with single_thread(per_block=False):
         txcount = 2 * blocks.kv * head_dim * bytewidth(f16)
         barriers[slot].arrive_expect_tx(txcount)
-        k_tr = (
-            TileTransform(tiling),
-            TransposeTransform((0, 2, 1, 3, 4)),
-        )
+        k_tr = (TileTransform(tiling), TransposeTransform((1, 0, 2, 3)))
         v_tr = TileTransform(tiling)
         for smem, gmem, t in ((k_smem, k_gmem, k_tr), (v_smem, v_gmem, v_tr)):
           ctx.async_copy(
@@ -583,7 +576,7 @@ def benchmark_and_verify(
         head_dim=head_dim,
         **kwargs,
     )
-    out, runtime = profiler.measure(f, q[0], k[0], v[0])
+    out, runtime = profiler.measure(f)(q[0], k[0], v[0])
     out = out[None]
 
     @jax.jit
@@ -606,6 +599,13 @@ def benchmark_and_verify(
 
 
 if __name__ == "__main__":
+  if (not jtu.test_device_matches(["cuda"]) or
+      not jtu.is_cuda_compute_capability_equal("9.0")):
+    warnings.warn(
+      "Mosaic GPU Flash Attention requires compute capability 9.0a to run, "
+      "skipping.")
+    exit(0)
+
   batch_size = 1
   num_q_heads = 4
   num_kv_heads = 1
@@ -644,7 +644,9 @@ if __name__ == "__main__":
       matmul_flops = (
           4 * q_seq_len * kv_seq_len * head_dim * num_q_heads * batch_size
       )
-      peak_flops = 1e15  # f16 TensorCore peak = 1000TFLOPS
+      # Table 1 in
+      # https://resources.nvidia.com/en-us-tensor-core/gtc22-whitepaper-hopper
+      peak_flops = 989.4 * 1e12  # f16 TensorCore peak
       optimal_time = matmul_flops / peak_flops * 1e6  # us
       achieved_tc_util = optimal_time / runtime_us * 100
       has_tma_warp = impl == Implementation.TWO_COMPUTE_ONE_TMA_WG

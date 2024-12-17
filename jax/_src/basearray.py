@@ -53,6 +53,7 @@ class Array(abc.ABC):
   # associated basearray.pyi file.
 
   __slots__ = ['__weakref__']
+  __hash__ = None
 
   @property
   @abc.abstractmethod
@@ -112,6 +113,33 @@ class Array(abc.ABC):
   @abc.abstractmethod
   def sharding(self) -> Sharding:
     """The sharding for the array."""
+
+  @property
+  @abc.abstractmethod
+  def committed(self) -> bool:
+    """Whether the array is committed or not.
+
+    An array is committed when it is explicitly placed on device(s) via JAX
+    APIs. For example, `jax.device_put(np.arange(8), jax.devices()[0])` is
+    committed to device 0. While `jax.device_put(np.arange(8))` is uncommitted
+    and will be placed on the default device.
+
+    Computations involving some committed inputs will happen on the committed
+    device(s) and the result will be committed on the same device(s).
+    Invoking an operation on arguments that are committed to different device(s)
+    will raise an error.
+
+    For example:
+
+    ```
+    a = jax.device_put(np.arange(8), jax.devices()[0])
+    b = jax.device_put(np.arange(8), jax.devices()[1])
+    a + b  # Raises an error
+    ```
+
+    See https://jax.readthedocs.io/en/latest/faq.html#controlling-data-and-computation-placement-on-devices
+    for more information.
+    """
 
   @property
   @abc.abstractmethod

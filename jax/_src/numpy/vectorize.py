@@ -23,8 +23,10 @@ from jax._src import api
 from jax._src import config
 from jax import lax
 from jax._src.numpy import lax_numpy as jnp
-from jax._src.util import safe_map as map, safe_zip as zip
+from jax._src.util import set_module, safe_map as map, safe_zip as zip
 
+
+export = set_module('jax.numpy')
 
 # See http://docs.scipy.org/doc/numpy/reference/c-api.generalized-ufuncs.html
 _DIMENSION_NAME = r'\w+'
@@ -185,6 +187,7 @@ def _apply_excluded(func: Callable[..., Any],
   return new_func, dynamic_args, dynamic_kwargs
 
 
+@export
 def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
   """Define a vectorized function with broadcasting.
 

@@ -23,13 +23,10 @@ from jax._src import dispatch
 from jax._src import config
 from jax._src import dtypes
 from jax._src.util import safe_zip
-from jax._src.lib import xla_client
 
 zip, unsafe_zip = safe_zip, zip
 
 import numpy as np
-
-xops = xla_client.ops
 
 def _input_dtype(x, *_, **__):
   return dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True)
@@ -55,15 +52,13 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
   assert not prim.multiple_results
   weak_type = weak_type_rule(*avals, **kwargs)
   least_specialized = type(max(avals, key=_get_array_abstraction_level))
-  if least_specialized is core.ConcreteArray:
-    out = prim.impl(*[x.val for x in avals], **kwargs)
-    return core.ConcreteArray(out.dtype, out, weak_type=weak_type)
-  elif least_specialized is core.ShapedArray:
-    out_sharding = (sharding_rule(*avals, **kwargs)
-                    if config.sharding_in_types.value else None)
-    return core.ShapedArray(shape_rule(*avals, **kwargs),
-                            dtype_rule(*avals, **kwargs), weak_type=weak_type,
-                            sharding=out_sharding)
+  if least_specialized is core.ShapedArray:
+    core.check_avals_context_mesh(avals, prim.name)
+    return core.ShapedArray(
+        shape_rule(*avals, **kwargs), dtype_rule(*avals, **kwargs),
+        weak_type=weak_type,
+        sharding=(sharding_rule(*avals, **kwargs)
+                  if config.sharding_in_types.value else None))
   elif least_specialized is core.DShapedArray:
     shape = shape_rule(*avals, **kwargs)
     ty = (core.ShapedArray if all(type(d) is int for d in shape)
@@ -75,20 +70,22 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
     raise TypeError(avals, least_specialized)
 
 def standard_multi_result_abstract_eval(
-    prim, shape_rule, dtype_rule, weak_type_rule, *avals, **kwargs):
+    prim, shape_rule, dtype_rule, weak_type_rule, sharding_rule,
+    *avals, **kwargs):
   assert prim.multiple_results
   assert all(isinstance(aval, core.UnshapedArray) for aval in avals), avals
   least_specialized = max(map(type, avals), key=_get_array_abstraction_level)
   weak_types = weak_type_rule(*avals, **kwargs)
-  if least_specialized is core.ConcreteArray:
-    out_vals = prim.impl(*[x.val for x in avals], **kwargs)
-    return [core.ConcreteArray(val.dtype, val, weak_type=weak_type)
-            for val, weak_type in zip(out_vals, weak_types)]
-  elif least_specialized is core.ShapedArray:
+  if least_specialized is core.ShapedArray:
     out_shapes = shape_rule(*avals, **kwargs)
     out_dtypes = dtype_rule(*avals, **kwargs)
-    return [core.ShapedArray(s, d, weak_type=weak_type)
-            for s, d, weak_type in zip(out_shapes, out_dtypes, weak_types)]
+    core.check_avals_context_mesh(avals, prim.name)
+    out_shardings = (sharding_rule(*avals, **kwargs)
+                     if config.sharding_in_types.value else
+                     [None] * len(out_shapes))
+    return [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh)
+            for s, d, weak_type, sh in zip(out_shapes, out_dtypes, weak_types,
+                                           out_shardings)]
   elif least_specialized is core.UnshapedArray:
     out_dtypes = dtype_rule(*avals, **kwargs)
     return [core.UnshapedArray(dtype, weak_type=weak_type)
@@ -96,13 +93,6 @@ def standard_multi_result_abstract_eval(
   else:
     raise TypeError(avals, least_specialized)
 
-def standard_translate(prim):
-  xla_opname = ''.join(term.capitalize() for term in prim.name.split('_'))
-  op = getattr(xops, xla_opname)
-  def translation_rule(ctx, avals_in, avals_out, *args, **kwargs):
-    del ctx, avals_in, avals_out
-    return [op(*args, **kwargs)]
-  return translation_rule
 
 def _standard_weak_type_rule(*avals, **kwargs):
   return all(aval.weak_type for aval in avals)

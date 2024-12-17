@@ -31,6 +31,11 @@ def TPU_Dialect : Dialect {
   let cppNamespace = "::mlir::tpu";
   let useDefaultAttributePrinterParser = 1;
   let useDefaultTypePrinterParser = 1;
+  let extraClassDeclaration = [{
+    static StringRef GetCoreTypeKey() { return "tpu.core_type"; }
+
+    static std::optional<CoreType> GetCoreTypeAttr(Operation *op);
+  }];
 }
 
 class TPU_Attr<string name, string mnemonic_, list<Trait> traits = []>
@@ -38,22 +43,25 @@ class TPU_Attr<string name, string mnemonic_, list<Trait> traits = []>
   let mnemonic = mnemonic_;
 }
 
-def TPU_Vreg : Type<
-  And<[IsVectorTypePred,
-       Or<[
-        And<[
-          CPred<"llvm::cast<::mlir::VectorType>($_self).getShape() == ArrayRef<int64_t>{8, 128}">,
-          CPred<"llvm::cast<::mlir::VectorType>($_self).getElementType().getIntOrFloatBitWidth() == 32">
-        ]>,
-        CPred<"::llvm::cast<::mlir::VectorType>($_self).getShape() == ArrayRef<int64_t>{"
-          "8, 128, 32 / ::llvm::cast<::mlir::VectorType>($_self).getElementType().getIntOrFloatBitWidth()}">,
-       ]>
-      ]>,
-  "native-sized vreg", "::mlir::VectorType">;
+// TODO(b/369418606): Find out the way to verify vreg size.
+def TPU_Vreg : Type<IsVectorOfNonZeroRankTypePred, "native-sized vreg", "::mlir::VectorType">;
 
 class TPU_Type<string name, string mnemonic_, list<Trait> traits = []>
     : TypeDef<TPU_Dialect, name, traits> {
   let mnemonic = mnemonic_;
+}
+
+def TPU_CoreType : I32EnumAttr<"CoreType", "Core type", [
+  I32EnumAttrCase<"kTc", 0, "tc">,
+  I32EnumAttrCase<"kScScalarSubcore", 1, "sc_scalar_subcore">,
+  I32EnumAttrCase<"kScVectorSubcore", 2, "sc_vector_subcore">
+]> {
+    let genSpecializedAttr = 0;
+    let cppNamespace = "::mlir::tpu";
+}
+
+def TPU_CoreTypeEnum : EnumAttr<TPU_Dialect, TPU_CoreType, "core_type"> {
+    let assemblyFormat = "`<` $value `>`";
 }
 
 def TPU_SemaphoreType : TPU_Type<"Semaphore", "semaphore", [MemRefElementTypeInterface]>;
@@ -171,8 +179,8 @@ def TPU_ReductionKindAttr
 }
 
 def TPU_AllReduceOp : TPU_Op<"all_reduce", [Pure, SameOperandsAndResultType]> {
-  let arguments = (ins AnyVector:$input, I64Attr:$dim, TPU_ReductionKindAttr:$kind);
-  let results = (outs AnyVector:$output);
+  let arguments = (ins AnyVectorOfNonZeroRank:$input, I64Attr:$dim, TPU_ReductionKindAttr:$kind);
+  let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{
     $input attr-dict `:` type($input)
   }];
@@ -206,13 +214,29 @@ def TPU_LoadOp : TPU_Op<"load"> {
   }];
 }
 
+// TODO(jevinjiang): migrate tpu.strided_store to general vector store op.
+def TPU_VectorStoreOp :TPU_Op<"vector_store", [AttrSizedOperandSegments]> {
+  let arguments = (ins
+    AnyVectorOfNonZeroRank:$valueToStore,
+    AnyMemRef:$base,
+    Variadic<Index>:$indices,
+    DenseI32ArrayAttr:$strides,
+    Optional<AnyVectorOfNonZeroRank>:$mask   // Elementwise mask.
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    $base `[` $indices `]` `,` $valueToStore (`masked` $mask^)? attr-dict `:` type($base) `,` type($valueToStore) `,` type($mask)
+  }];
+  let hasVerifier = 1;
+}
+
 def TPU_StridedLoadOp : TPU_Op<"strided_load"> {
   let arguments = (ins
     AnyMemRef:$base,
     Variadic<Index>:$indices,
     DenseI32ArrayAttr:$strides
   );
-  let results = (outs AnyVector:$result);
+  let results = (outs AnyVectorOfNonZeroRank:$result);
   let assemblyFormat = [{
     $base `[` $indices `]` attr-dict `:` type($base) `,` type($result)
   }];
@@ -221,7 +245,7 @@ def TPU_StridedLoadOp : TPU_Op<"strided_load"> {
 
 def TPU_StridedStoreOp : TPU_Op<"strided_store"> {
   let arguments = (ins
-    AnyVector:$valueToStore,
+    AnyVectorOfNonZeroRank:$valueToStore,
     AnyMemRef:$base,
     Variadic<Index>:$indices,
     DenseI32ArrayAttr:$strides
@@ -267,7 +291,7 @@ def TPU_ShuffledStoreOp : TPU_Op<"shuffled_store"> {
 // TODO(jevinjiang): deprecate to use dynamic_rotate.
 def TPU_RotateOp : TPU_Op<"rotate", [Pure, SameOperandsAndResultType]> {
   let arguments = (ins
-    AnyVector:$value,
+    AnyVectorOfNonZeroRank:$value,
     SI32Attr:$amount,
     SI32Attr:$dimension,
     // When the stride is specified, the rotation amount for each index on the
@@ -275,7 +299,7 @@ def TPU_RotateOp : TPU_Op<"rotate", [Pure, SameOperandsAndResultType]> {
     OptionalAttr<SI32Attr>:$stride,
     OptionalAttr<SI32Attr>:$stride_dimension
   );
-  let results = (outs AnyVector:$result);
+  let results = (outs AnyVectorOfNonZeroRank:$result);
   let assemblyFormat = [{
     $value `by` $amount `dim` $dimension (`stride` $stride `stride_dim` $stride_dimension^)? attr-dict `:` type($value)
   }];
@@ -284,7 +308,7 @@ def TPU_RotateOp : TPU_Op<"rotate", [Pure, SameOperandsAndResultType]> {
 
 def TPU_DynamicRotateOp : TPU_Op<"dynamic_rotate", [Pure]> {
   let arguments = (ins
-    AnyVector:$value,
+    AnyVectorOfNonZeroRank:$value,
     I32:$amount,
     SI32Attr:$dimension,
     // When the stride is specified, the rotation amount for each index on the
@@ -292,7 +316,7 @@ def TPU_DynamicRotateOp : TPU_Op<"dynamic_rotate", [Pure]> {
     OptionalAttr<SI32Attr>:$stride,
     OptionalAttr<SI32Attr>:$stride_dimension
   );
-  let results = (outs AnyVector:$result);
+  let results = (outs AnyVectorOfNonZeroRank:$result);
   let assemblyFormat = [{
     $value `by` $amount `dim` $dimension attr-dict `:` type($value) `,` type($amount)  `->` type($result)
   }];
@@ -301,28 +325,35 @@ def TPU_DynamicRotateOp : TPU_Op<"dynamic_rotate", [Pure]> {
 
 def TPU_IotaOp : TPU_Op<"iota", [Pure]> {
   let arguments = (ins OptionalAttr<I32Attr>:$dimension);
-  let results = (outs AnyVector:$output);
+  let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{ attr-dict `:` type($output) }];
 }
 
+// TODO(mvoz): deprecated - use concat. Canonicalization will do so automatically.
+// b/376295711
 def TPU_RepeatOp : TPU_Op<"repeat", [Pure]> {
   let arguments = (ins
-    AnyVector:$source,
+    AnyVectorOfNonZeroRank:$source,
     I32Attr:$dimension,
     I32Attr:$times
   );
-  let results = (outs AnyVector:$output);
+  let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{ $source `,` $dimension `x` $times attr-dict `:` type($source) `->` type($output) }];
 }
 
 def TPU_BroadcastInSublanesOp : TPU_Op<"broadcast_in_sublanes", [Pure]> {
+  let description = [{
+    For each sublane `i`, broadcasts the value in lane `lane + i` along the entire
+    sublane. If `lane + i` is not in [0, lane_count), then the value in sublane `i`
+    is not defined (can be anything).
+  }];
   let arguments = (ins
-    AnyVector:$source,  // All sublanes should be equal.
+    TPU_Vreg:$source,  // All sublanes should be equal.
     I32Attr:$lane  // Coordinates of the first element to take.
   );
   // Output shape should be the same, except for position dim which contains
   // the newly inserted dimension.
-  let results = (outs AnyVector:$output);
+  let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{
     $source `,` $lane attr-dict `:` type($source) `->` type($output)
   }];
@@ -331,30 +362,31 @@ def TPU_BroadcastInSublanesOp : TPU_Op<"broadcast_in_sublanes", [Pure]> {
 // Integer unpacks are always signed at the moment.
 def TPU_UnpackSubelementsOp : TPU_Op<"unpack_subelements", [Pure]> {
   let arguments = (ins
-    AnyVector:$source,
-    I32Attr:$index
+    AnyVectorOfNonZeroRank:$source,
+    I32Attr:$index,
+    TPU_PackFormatEnum:$pack_format
   );
-  let results = (outs AnyVector:$output);
+  let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{ $source `,` $index attr-dict `:` type($source) `->` type($output) }];
 }
 
 // Integer packs are always signed at the moment.
 def TPU_PackSubelementsOp : TPU_Op<"pack_subelements", [Pure]> {
   let arguments = (ins
-    Variadic<AnyVector>:$sources,
+    Variadic<AnyVectorOfNonZeroRank>:$sources,
     TPU_PackFormatEnum:$pack_format
   );
-  let results = (outs AnyVector:$output);
+  let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{ $sources attr-dict `:` type($sources) `->` type($output) }];
 }
 
 def TPU_GatherOp : TPU_Op<"gather", [Pure]> {
   let arguments = (ins
-    AnyVector:$source,
+    AnyVectorOfNonZeroRank:$source,
     DenseI32ArrayAttr:$indices,
     I32Attr:$dimension
   );
-  let results = (outs AnyVector:$output);
+  let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{
     $source `[` $indices `]` `in` $dimension attr-dict
     `:` type($source) `->` type($output)
@@ -363,49 +395,75 @@ def TPU_GatherOp : TPU_Op<"gather", [Pure]> {
 
 def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure]> {
   let arguments = (ins
-    AnyVector:$source,
-    AnyVector:$indices,  // If this is 2D, only the first row matters.
+    AnyVectorOfNonZeroRank:$source,
+    AnyVectorOfNonZeroRank:$indices,  // If this is 2D, only the first row matters.
     I32Attr:$dimension
   );
-  let results = (outs AnyVector:$output);
+  let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{
     $source `[` $indices `]` `in` $dimension attr-dict
     `:` type($source) `,` type($indices) `->` type($output)
   }];
 }
 
-// TODO(apaszke): Add a verifier for this op
+
+def TPU_DotDimensionNumbersAttr : TPU_Attr<"DotDimensionNumbers", "dot_dimension_numbers"> {
+  let parameters = (ins
+    ArrayRefParameter<"int64_t", "">:$lhs_contracting_dims,
+    ArrayRefParameter<"int64_t", "">:$rhs_contracting_dims,
+    ArrayRefParameter<"int64_t", "">:$lhs_non_contracting_dims,
+    ArrayRefParameter<"int64_t", "">:$rhs_non_contracting_dims,
+    // The contract is a flattened structure, wherein, each element is half of a
+    // pair of indices. The first element is always 0 (lhs) or 1 (rhs) and the
+    // second index is the index from the lhs or rhs.
+    ArrayRefParameter<"int64_t", "">:$output_dim_order,
+    OptionalArrayRefParameter<"int64_t", "">:$lhs_batch_dims,
+    OptionalArrayRefParameter<"int64_t", "">:$rhs_batch_dims
+    );
+    let assemblyFormat = "`<` `[` $lhs_contracting_dims `]` `,` `[` $rhs_contracting_dims `]` `,` "
+                     "`[` $lhs_non_contracting_dims `]` `,` `[` $rhs_non_contracting_dims `]` `,` "
+                     "`[` $output_dim_order `]` `,` "
+                     "`[` (`]`):($lhs_batch_dims^ `]`)? `,` "
+                     "`[` (`]`):($rhs_batch_dims^ `]`)? `>`";
+}
+
 // TODO(apaszke): Think hard about precision
 def TPU_MatmulOp : TPU_Op<"matmul", [Pure]> {
   let arguments = (ins
-    AnyVector:$lhs,
-    AnyVector:$rhs,
-    AnyVector:$acc,
+    AnyVectorOfNonZeroRank:$lhs,
+    AnyVectorOfNonZeroRank:$rhs,
+    AnyVectorOfNonZeroRank:$acc,
+    // These flags are deprecated - if dimension_numbers are defined,
+    // these flags are ignored. They will always be false after canonicalize.
     DefaultValuedAttr<BoolAttr, "false">:$transpose_lhs,
     DefaultValuedAttr<BoolAttr, "false">:$transpose_rhs,
-    OptionalAttr<TPU_ContractPrecisionEnum>:$precision
+    OptionalAttr<TPU_ContractPrecisionEnum>:$precision,
+    // NOTE: User-level optional, once canonicalized, always present.
+    OptionalAttr<TPU_DotDimensionNumbersAttr>:$dimension_numbers
   );
-  let results = (outs AnyVector:$result);
+  let results = (outs AnyVectorOfNonZeroRank:$result);
   let assemblyFormat = [{
     $lhs `,` $rhs `,` $acc attr-dict `:` type($lhs) `,` type($rhs) `,` type($acc) `->` type($result)
   }];
   let hasCanonicalizer = 1;
+  let hasVerifier = 1;
 }
 
 def TPU_ConcatenateOp : TPU_Op<"concatenate", [Pure]> {
   let arguments = (ins
-    Variadic<AnyVector>:$sources,
+    Variadic<AnyVectorOfNonZeroRank>:$sources,
     I32Attr:$dimension
   );
-  let results = (outs AnyVector:$output);
+  let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{
     $sources `in` $dimension attr-dict `:` type($sources) `->` type($output)
   }];
+  let hasVerifier = 1;
 }
 
 def TPU_BitcastOp : TPU_Op<"bitcast", [Pure]> {
-  let arguments = (ins AnyVector:$input);
-  let results = (outs AnyVector:$output);
+  let arguments = (ins AnyVectorOfNonZeroRank:$input);
+  let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
   let hasVerifier = 1;
 }
@@ -416,17 +474,24 @@ def TPU_BitcastVregOp : TPU_Op<"bitcast_vreg", [Pure]> {
   let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
 }
 
+def TPU_WeirdOp : TPU_Op<"weird", [Pure, ElementwiseMappable]> {
+  let arguments = (ins AnyType:$input);  // F32 vector or scalar
+  let results = (outs AnyType:$output);  // I1 vector or scalar
+  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+  let hasVerifier = 1;
+}
+
 def TPU_RollVectorsOp : TPU_Op<"roll_vectors", [Pure]> {
-  let arguments = (ins Variadic<AnyVector>:$input);
-  let results = (outs AnyVector:$output);
+  let arguments = (ins Variadic<AnyVectorOfNonZeroRank>:$input);
+  let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($output)
   }];
 }
 
 def TPU_UnrollVectorsOp : TPU_Op<"unroll_vectors", [Pure]> {
-  let arguments = (ins AnyVector:$input);
-  let results = (outs Variadic<AnyVector>:$output);
+  let arguments = (ins AnyVectorOfNonZeroRank:$input);
+  let results = (outs Variadic<AnyVectorOfNonZeroRank>:$output);
   let hasCanonicalizeMethod = 1;
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($output)
@@ -580,6 +645,7 @@ def TPU_SemaphoreWaitOp : TPU_Op<"sem_wait"> {
   );
   let results = (outs);
   let assemblyFormat = [{ $semaphore `,` $amount attr-dict `:` type($semaphore)}];
+  let hasVerifier = 1;
 }
 
 def TPU_AllocaSemaphoreOp : TPU_Op<"sem_alloc"> {
@@ -600,12 +666,18 @@ def TPU_SemaphoreSignalOp : TPU_Op<"sem_signal", [AttrSizedOperandSegments]> {
     MemRefOf<[TPU_SemaphoreType]>:$semaphore,
     I32:$amount,
     Optional<I32>:$device_id, // For remote DMAs
-    Optional<I32>:$core_id // For megacore
+    Optional<I32>:$core_id, // For megacore
+    OptionalAttr<TPU_CoreTypeEnum>:$core_type
   );
-  let assemblyFormat = [{
-    $semaphore `,` $amount (`,` $device_id^)? (`,` $core_id^)? attr-dict `:` type($semaphore)
+let assemblyFormat = [{
+    $semaphore `,` $amount (`device_id` $device_id^)? (`core_id` $core_id^)? (`core_type` $core_type^)? attr-dict `:` type($semaphore)
   }];
   let hasVerifier = 1;
+  let builders = [
+    // A backward-compatible builder that sets `core_type` to nullptr.
+    OpBuilder<(ins "Value":$semaphore, "Value":$amount,
+               "Value":$device_id, "Value":$core_id)>,
+  ];
 }
 
 def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
@@ -663,8 +735,8 @@ def TPU_DelayOp : TPU_Op<"delay"> {
 
 // Expands the granularity of mask to subelements.
 def TPU_MaskCastOp : TPU_Op<"mask_cast", [Pure]> {
-  let arguments = (ins AnyVector:$input);
-  let results = (outs AnyVector:$result);
+  let arguments = (ins AnyVectorOfNonZeroRank:$input);
+  let results = (outs AnyVectorOfNonZeroRank:$result);
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($result)
   }];
@@ -690,7 +762,7 @@ def TPU_PRNGSeed32Op : TPU_Op<"prng_set_seed_32"> {
 
 def TPU_PRNGRandomBitsOp : TPU_Op<"prng_random_bits"> {
   let arguments = (ins);
-  let results = (outs AnyVector:$output);
+  let results = (outs AnyVectorOfNonZeroRank:$output);
 }
 
 def TPU_LogOp : TPU_Op<"log"> {
@@ -701,6 +773,7 @@ def TPU_LogOp : TPU_Op<"log"> {
   );
   let results = (outs);
   let assemblyFormat = [{ $tag attr-dict (`:`  `[` $inputs^ `]` `:` type($inputs))? }];
+  let hasVerifier = 1;
 }
 
 def DebugAssertInsertionPass : Pass<"debug-assert-insertion", "::mlir::func::FuncOp"> {
@@ -712,10 +785,6 @@ def DebugAssertInsertionPass : Pass<"debug-assert-insertion", "::mlir::func::Fun
     "::mlir::tpu::TPUDialect",
   ];
   let constructor = "::mlir::tpu::createDebugAssertInsertionPass()";
-}
-
-def MosaicSerdePass : Pass<"mosaic-serde", "::mlir::ModuleOp"> {
-  let options = [Option<"serialize", "serialize", "bool", "", "">];
 }
 
 def LogicalToPhysicalDeviceIdPass : Pass<"logical-to-physical-device-id", "::mlir::func::FuncOp"> {
@@ -738,6 +807,8 @@ def InferMemRefLayoutPass : Pass<"tpu-infer-memref-layout", "::mlir::func::FuncO
     // If hardware_generation is not set, the default value of -1 will crash on
     // runOnOperation.
     Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
+    Option<"lane_count", "lane-count", "int", /*default=*/"128", "">,
+    Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
     Option<"tpu_tiling_flags", "tpu-tiling-flags", "::mlir::tpu::TpuTilingFlags", /*default=*/"::mlir::tpu::TpuTilingFlags{}", "">,
   ];
 }
@@ -791,6 +862,7 @@ def ApplyVectorLayoutPass : Pass<"tpu-apply-vector-layout", "::mlir::func::FuncO
     Option<"mxu_noncontracting_size", "mxu-noncontracting-size", "int", /*default=*/"128", "">,
     Option<"max_sublanes_in_scratch", "max-sublanes-in-scratch", "int", /*default=*/"0", "">,
     Option<"vmem_banks", "vmem-banks", "int", /*default=*/"-1", "">,
+    Option<"max_shuffle_sublane_offset", "max-shuffle-sublane-offset", "int", /*default=*/"-1", "Max sublane offset per shuffled load/store">,
   ];
 }
 

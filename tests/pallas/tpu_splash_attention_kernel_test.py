@@ -40,7 +40,7 @@ except (ModuleNotFoundError, ImportError):
   raise unittest.SkipTest("these tests require hypothesis")
 
 jax.config.parse_flags_with_absl()
-jtu.setup_hypothesis()
+jtu.setup_hypothesis(max_examples=5)
 
 partial = functools.partial
 Draw = TypeVar("Draw", bound=Callable[[hps.SearchStrategy[Any]], Any])

@@ -34,7 +34,6 @@ from __future__ import annotations
 
 from functools import partial
 import operator
-from typing import Optional, Union
 
 import jax
 from jax import tree_util

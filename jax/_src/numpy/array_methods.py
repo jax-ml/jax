@@ -580,10 +580,9 @@ def _defer_to_unrecognized_arg(opchar, binary_op, swap=False):
   return deferring_binary_op
 
 def _unimplemented_setitem(self, i, x):
-  msg = ("'{}' object does not support item assignment. JAX arrays are "
-         "immutable. Instead of ``x[idx] = y``, use ``x = x.at[idx].set(y)`` "
-         "or another .at[] method: "
-         "https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ndarray.at.html")
+  msg = ("JAX arrays are immutable and do not support in-place item assignment."
+         " Instead of x[idx] = y, use x = x.at[idx].set(y) or another .at[] method:"
+         " https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ndarray.at.html")
   raise TypeError(msg.format(type(self)))
 
 def _operator_round(number: ArrayLike, ndigits: int | None = None) -> Array:
@@ -608,7 +607,6 @@ def __array_module__(self, types):
     return NotImplemented
 
 
-@core.stash_axis_env()
 @partial(jax.jit, static_argnums=(1,2,3))
 def _multi_slice(self: Array,
                  start_indices: tuple[tuple[int, ...]],
@@ -631,7 +629,8 @@ def _multi_slice(self: Array,
 # avoid circular imports.
 @jax.jit
 def _unstack(x: Array) -> list[Array]:
-  return [lax.index_in_dim(x, i, keepdims=False) for i in range(x.shape[0])]
+  dims = (0,)
+  return [lax.squeeze(t, dims) for t in lax.split(x, (1,) * x.shape[0])]
 
 def _chunk_iter(x, size):
   if size > x.shape[0]:
@@ -661,6 +660,7 @@ class _IndexUpdateHelper:
   ==============================  ================================
   ``x = x.at[idx].set(y)``        ``x[idx] = y``
   ``x = x.at[idx].add(y)``        ``x[idx] += y``
+  ``x = x.at[idx].subtract(y)``   ``x[idx] -= y``
   ``x = x.at[idx].multiply(y)``   ``x[idx] *= y``
   ``x = x.at[idx].divide(y)``     ``x[idx] /= y``
   ``x = x.at[idx].power(y)``      ``x[idx] **= y``
@@ -823,6 +823,20 @@ class _IndexUpdateRef:
     """
     return scatter._scatter_update(self.array, self.index, values,
                                    lax.scatter_add,
+                                   indices_are_sorted=indices_are_sorted,
+                                   unique_indices=unique_indices, mode=mode)
+
+  def subtract(self, values, *, indices_are_sorted=False, unique_indices=False,
+               mode=None):
+    """Pure equivalent of ``x[idx] -= y``.
+
+    Returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] -= y``.
+
+    See :mod:`jax.ops` for details.
+    """
+    return scatter._scatter_update(self.array, self.index, values,
+                                   lax.scatter_sub,
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode)
 

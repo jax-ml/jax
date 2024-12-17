@@ -11,21 +11,53 @@ For the overall JAX change log see [here](https://jax.readthedocs.io/en/latest/c
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## Released with jax 0.4.34
+## Released with jax 0.4.37
+
+* New functionality
+
+  * Added support for `DotAlgorithmPreset` precision arguments for `dot`
+    lowering on Triton backend.
+
+## Released with jax 0.4.36 (December 6, 2024)
+
+## Released with jax 0.4.35 (October 22, 2024)
+
+* Removals
+
+  * Removed previously deprecated aliases
+    {class}`jax.experimental.pallas.tpu.CostEstimate` and
+    {func}`jax.experimental.tpu.run_scoped`. Both  are now available in
+    {mod}`jax.experimental.pallas`.
+
+* New functionality
+
+  * Added a cost estimate tool {func}`pl.estimate_cost` for automatically
+  constructing a kernel cost estimate from a JAX reference function.
+
+## Released with jax 0.4.34 (October 4, 2024)
 
 * Changes
 
   * {func}`jax.experimental.pallas.debug_print` no longer requires all arguments
     to be scalars. The restrictions on the arguments are backend-specific:
     Non-scalar arguments are currently only supported on GPU, when using Triton.
+  * {class}`jax.experimental.pallas.BlockSpec` no longer supports the previously
+    deprecated argument order, where `index_map` comes before `block_shape`.
 
 * Deprecations
+
+  * The {mod}`jax.experimental.pallas.gpu` submodule is deprecated to avoid
+    ambiguite with {mod}`jax.experimental.pallas.mosaic_gpu`. To use the
+    Triton backend import {mod}`jax.experimental.pallas.triton`.
 
 * New functionality
 
   * {func}`jax.experimental.pallas.pallas_call` now accepts `scratch_shapes`,
     a PyTree specifying backend-specific temporary objects needed by the
     kernel, for example, buffers, synchronization primitives etc.
+  * {func}`checkify.check` can now be used to insert runtime asserts when
+    pallas_call is called with the `pltpu.enable_runtime_assert(True)` context
+    manager.
 
 ## Released with jax 0.4.33 (September 16, 2024)
 

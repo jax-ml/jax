@@ -44,38 +44,7 @@ For example, for invocation `(1, 2)`, `program_id(axis=0)` returns `1` and
 You can also use {func}`jax.experimental.pallas.num_programs` to get the
 grid size for a given axis.
 
-Here's an example kernel that uses a `grid` and `program_id`.
-
-```python
->>> import jax
->>> from jax.experimental import pallas as pl
-
->>> def iota_kernel(o_ref):
-...   i = pl.program_id(0)
-...   o_ref[i] = i
-
-```
-
-We now execute it using `pallas_call` with an additional `grid` argument.
-
-```python
->>> def iota(size: int):
-...   return pl.pallas_call(iota_kernel,
-...                         out_shape=jax.ShapeDtypeStruct((size,), jnp.int32),
-...                         grid=(size,), interpret=True)()
->>> iota(8)
-Array([0, 1, 2, 3, 4, 5, 6, 7], dtype=int32)
-
-```
-
-On GPUs, each program is executed in parallel on separate thread blocks.
-Thus, we need to think about race conditions on writes to HBM.
-A reasonable approach is to write our kernels in such a way that different
-programs write to disjoint places in HBM to avoid these parallel writes.
-
-On TPUs, programs are executed in a combination of parallel and sequential
-(depending on the architecture) so there are slightly different considerations.
-See [the Pallas TPU documentation](https://jax.readthedocs.io/en/latest/pallas/tpu/details.html#noteworthy-properties-and-restrictions).
+See {ref}`grids_by_example` for a simple kernel that uses this API.
 
 (pallas_blockspec)=
 
@@ -88,8 +57,7 @@ to *which block of our inputs and outputs to be operated on*.
 This is provided via {class}`jax.experimental.pallas.BlockSpec` objects.
 
 Before we get into the details of `BlockSpec`s, you may want
-to revisit the
-[Pallas Quickstart BlockSpecs example](https://jax.readthedocs.io/en/latest/pallas/quickstart.html#block-specs-by-example).
+to revisit {ref}`pallas_block_specs_by_example` in Pallas Quickstart.
 
 `BlockSpec`s are provided to `pallas_call` via the
 `in_specs` and `out_specs`, one for each input and output respectively.
@@ -131,6 +99,8 @@ shape `x_shape` are computed as in the function `slice_for_invocation`
 below:
 
 ```python
+>>> import jax
+>>> from jax.experimental import pallas as pl
 >>> def slices_for_invocation(x_shape: tuple[int, ...],
 ...                           x_spec: pl.BlockSpec,
 ...                           grid: tuple[int, ...],
@@ -239,7 +209,7 @@ The output shown below was generated on CPU using `interpret=True`
 mode, which at the moment executes the invocation sequentially.
 On TPUs, programs are executed in a combination of parallel and sequential,
 and this function generates the output shown.
-See [the Pallas TPU documentation](https://jax.readthedocs.io/en/latest/pallas/tpu/details.html#noteworthy-properties-and-restrictions).
+See {ref}`pallas_tpu_noteworthy_properties`.
 
 ```python
 >>> show_program_ids(x_shape=(8, 6), block_shape=(2, 3), grid=(4, 2, 10),

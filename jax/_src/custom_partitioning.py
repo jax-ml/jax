@@ -455,10 +455,12 @@ class custom_partitioning:
       f_, dyn_args = lu.wrap_init(self.fun), args
     args_flat, in_tree = tree_util.tree_flatten(dyn_args)
     flat_fun, out_tree = api_util.flatten_fun_nokwargs(f_, in_tree)
-    in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
+    in_avals = [core.get_aval(x) for x in args_flat]
     debug = pe.debug_info(self.fun, in_tree, out_tree, False,
                           "custom_partitioning")
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
+    mesh = mesh_lib.thread_resources.env.physical_mesh
+    with core.extend_axis_env_nd(mesh.shape.items()):
+      jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
     assert not len(consts)
     closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
     out_flat = custom_partitioning_p.bind(
@@ -493,9 +495,10 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
     if devices is None:
       raise AssertionError(
           'Please file a bug at https://github.com/jax-ml/jax/issues')
-    if axis_context.mesh_shape is not None:
-      ma, ms = list(zip(*axis_context.mesh_shape))
-      mesh = mesh_lib.Mesh(np.array(devices).reshape(ms), ma)
+    am = axis_context.abstract_mesh
+    if am is not None:
+      mesh = mesh_lib.Mesh(np.array(devices).reshape(am.axis_sizes),
+                           am.axis_names)
   elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
     devices = axis_context.mesh._flat_devices_tuple
   else:

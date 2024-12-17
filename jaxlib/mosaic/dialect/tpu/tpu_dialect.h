@@ -19,6 +19,7 @@ limitations under the License.
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -30,6 +31,7 @@ limitations under the License.
 #include "mlir/include/mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_enums.h.inc"
+#include "jaxlib/mosaic/dialect/tpu/transforms/serde.h"
 #include "xla/layout.h"
 
 namespace mlir::tpu {
@@ -63,18 +65,21 @@ struct ApplyVectorLayoutContext {
   std::array<int64_t, 2> mxu_shape = {128, 128};
   int64_t max_sublanes_in_scratch = 0;
   int64_t vmem_banks = -1;  // -1 means "unspecified".
+  int32_t max_shuffle_sublane_offset = -1;  // -1 means "unspecified".
 };
 
 std::pair<bool, bool> mightCommunicateBetweenChips(Operation* op);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createInferMemRefLayoutPass(
-    int hardware_generation = -1, const TpuTilingFlags &tpu_tiling_flags = {});
+    int hardware_generation = -1,
+    std::array<int64_t, 2> target_shape = {8, 128},
+    const TpuTilingFlags &tpu_tiling_flags = {});
 
 std::unique_ptr<OperationPass<func::FuncOp>> createCanonicalizeMosaicPass(
     int hardware_generation = -1);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createInferVectorLayoutPass(
-    int lane_count = 128, int sublane_count = 8);
+    std::array<int64_t, 2> target_shape = {8, 128});
 
 std::unique_ptr<OperationPass<func::FuncOp>> createApplyVectorLayoutPass(
     const ApplyVectorLayoutContext &ctx = ApplyVectorLayoutContext{});
@@ -91,6 +96,10 @@ std::unique_ptr<OperationPass<func::FuncOp>> createDebugAssertInsertionPass();
 #define GEN_PASS_DECL_MOSAICSERDEPASS
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
 
+// Determine the core type of the given op based on the `tpu.core_type`
+// annotation of its parent function.
+FailureOr<std::optional<CoreType>> GetCoreTypeOfParentFunc(Operation &op);
+
 // Changes the memory space of the value and propagates it through the program.
 LogicalResult specializeMemorySpace(TypedValue<MemRefType> value,
                                     MemorySpace memory_space);
@@ -100,6 +109,10 @@ LogicalResult specializeMemorySpace(TypedValue<MemRefType> value,
 MemRefType getMemRefType(Value value);
 
 bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel = 8);
+
+DotDimensionNumbersAttr defaultDimensionNumbers(Builder &builder,
+                                                bool transpose_lhs,
+                                                bool transpose_rhs);
 
 #define GEN_PASS_REGISTRATION
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"

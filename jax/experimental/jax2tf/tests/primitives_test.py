@@ -67,7 +67,6 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax.experimental import jax2tf
 from jax.interpreters import mlir
-from jax._src.interpreters import xla
 
 import numpy as np
 import tensorflow as tf
@@ -158,11 +157,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     """Fail if there are JAX primitives that are not implemented."""
     # Harvest primitives from XLA translation tables
     all_primitives = (
-        set(xla._translations)
-        | set(xla._backend_specific_translations["cpu"])
-        | set(xla._backend_specific_translations["gpu"])
-        | set(xla._backend_specific_translations["tpu"])
-        | set(mlir._lowerings)
+        set(mlir._lowerings)
         | set(mlir._platform_specific_lowerings["cpu"])
         | set(mlir._platform_specific_lowerings["gpu"])
         | set(mlir._platform_specific_lowerings["tpu"]))
@@ -177,6 +172,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         continue
       if p.name == "sharding_constraint":
         continue
+      if p.name == "sharding_cast":
+        continue
       # TODO: Remove once tensorflow is 2.10.0 everywhere.
       if p.name == "optimization_barrier":
         continue
@@ -187,6 +184,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         # Pallas-specific primitives are not supported.
         continue
       if p.name == "pallas_call":
+        continue
+      if p.name == "ragged_all_to_all":
         continue
       if p.name == "ffi_call":
         continue
@@ -199,6 +198,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
           "dot_product_attention_bwd",
           "dot_product_attention_fwd_wrapper",
           "dot_product_attention_bwd_wrapper",
+          "dot_product_attention_fp8_fwd_wrapper",
+          "dot_product_attention_fp8_bwd_wrapper",
       ):
         continue
       if p.name in tf_not_yet_impl:

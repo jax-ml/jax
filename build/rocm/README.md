@@ -5,34 +5,34 @@ This directory contains files and setup instructions to build and test JAX for R
 
 1.  Install Docker: Follow the [instructions on the docker website](https://docs.docker.com/engine/installation/).
 
-2. Build a runtime JAX-ROCm docker container and keep this image by running the following command. Note: must pass in Python version. The example below builds Python 3.9 container.
+2. Build a runtime JAX-ROCm docker container and keep this image by running the following command. Note: must pass in appropriate
+options. The example below builds Python 3.12 container.
 
-    ./build/rocm/ci_build.sh --keep_image --py_version==3.9.0 --runtime bash -c "./build/rocm/build_rocm.sh"
+```Bash
+./build/rocm/ci_build.sh --py_version 3.12
+```
 
 3. To launch a JAX-ROCm container: If the build was successful, there should be a docker image with name "jax-rocm:latest" in list of docker images (use "docker images" command to list them).
-```
-sudo docker run -it --device=/dev/kfd --device=/dev/dri --security-opt seccomp=unconfined --group-add video --entrypoint /bin/bash jax-rocm:latest
+
+```Bash
+docker run -it -d --network=host --device=/dev/kfd --device=/dev/dri --ipc=host --shm-size 64G --group-add video --cap-add=SYS_PTRACE --security-opt seccomp=unconfined -v ./:/jax --name rocm_jax jax-rocm:latest /bin/bash
 ```
 
 ***
 ### JAX ROCm Releases
-We strive to push all ROCm related changes to the OpenXLA repository. However, at times some JAX/JAXLIB changes for ROCm may not be present in upstream JAX repo.Therefore, we have ROCm Jax/Jaxlib branches that are associated with a Jaxlib release. These
-are available in ROCm fork of JAX https://github.com/ROCmSoftwarePlatform/jax. See branches named as rocm-jaxlib-[jaxlib-version]. For examples, for jaxlib-v0.4.10, the branch is named rocm-jaxlib-v0.4.10. See path https://github.com/ROCmSoftwarePlatform/jax/tree/rocm-jaxlib-v0.4.10
+We aim to push all ROCm-related changes to the OpenXLA repository. However, there may be times when certain JAX/jaxlib updates for
+ROCm are not yet reflected in the upstream JAX repository. To address this, we maintain ROCm-specific JAX/jaxlib branches tied to JAX
+releases. These branches are available in the ROCm fork of JAX at https://github.com/ROCm/jax. Look for branches named in the format
+rocm-jaxlib-[jaxlib-version]. You can also find corresponding branches in https://github.com/ROCm/xla. For example, for JAX version
+0.4.33, the branch is named rocm-jaxlib-v0.4.33, which can be accessed at https://github.com/ROCm/jax/tree/rocm-jaxlib-v0.4.33.
 
-JAX and Jaxlib wheels for ROCm are available here
-```
-https://github.com/ROCmSoftwarePlatform/jax/releases
+JAX source-code and related wheels for ROCm are available here
+
+```Bash
+https://github.com/ROCm/jax/releases
 ```
 
 ***Note:*** Some earlier jaxlib versions on ROCm were released on ***PyPi***. 
 ```
 https://pypi.org/project/jaxlib-rocm/#history
 ```
-However, due to strict naming PyPI requirement we had to name our wheels slightly differently. This would then result in Jax/Jaxlib dependent not recognizing jaxlib-rocm wheels and would end up with multiple jaxlib installations and also runtime issues
-
-
-***
-### XLA for JAX ROCm
-We strive to push all ROCm related changes to the OpenXLA repository. However, at times some XLA changes for ROCm may not be upstreamed to XLA repo.Therefore, we have ROCm XLA branches that are associated with a Jaxlib release. These are available in ROCm fork of XLA here https://github.com/ROCmSoftwarePlatform/xla. See branches named as rocm-jaxlib-[jaxlib version]. For example, for jaxlib-v0.4.10, the branch is named rocm-jaxlib-v0.4.10. See path https://github.com/ROCmSoftwarePlatform/xla/tree/rocm-jaxlib-v0.4.10
-
-

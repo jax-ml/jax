@@ -19,6 +19,7 @@ limitations under the License.
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -33,6 +34,7 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"
 #include "absl/hash/hash.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.cc.inc"
 #include "jaxlib/mosaic/dialect/tpu/tpu_enums.cc.inc"
 #include "xla/layout.h"
@@ -66,6 +68,27 @@ void TPUDialect::initialize() {
 #define GET_OP_LIST
 #include "jaxlib/mosaic/dialect/tpu/tpu_ops.cc.inc"
       >();
+}
+
+/* static */ std::optional<CoreType> TPUDialect::GetCoreTypeAttr(
+    Operation *op) {
+  Attribute attr = op->getAttr(GetCoreTypeKey());
+  if (attr == nullptr) {
+    return std::nullopt;
+  }
+  if (!mlir::isa<CoreTypeAttr>(attr)) {
+    return std::nullopt;
+  }
+  return mlir::cast<CoreTypeAttr>(attr).getValue();
+}
+
+FailureOr<std::optional<CoreType>> GetCoreTypeOfParentFunc(Operation &op) {
+  mlir::Operation *func_op = op.getParentOfType<mlir::func::FuncOp>();
+  if (func_op == nullptr) {
+    return op.emitError() << "Operation " << op.getName()
+                          << " is not inside a func.func";
+  }
+  return TPUDialect::GetCoreTypeAttr(func_op);
 }
 
 void VectorLayoutAttr::print(AsmPrinter &printer) const {
@@ -208,6 +231,20 @@ bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel) {
     return isGuaranteedDivisible(cast_op.getOperand(), divisor, fuel - 1);
   }
   return false;
+}
+
+DotDimensionNumbersAttr defaultDimensionNumbers(Builder &builder,
+                                                bool transpose_lhs,
+                                                bool transpose_rhs) {
+  return tpu::DotDimensionNumbersAttr::get(
+      builder.getContext(),
+      /*lhs_contracting_dims=*/{transpose_lhs ? 0 : 1},
+      /*rhs_contracting_dims=*/{transpose_rhs ? 1 : 0},
+      /*lhs_non_contracting_dims=*/{transpose_lhs ? 1 : 0},
+      /*rhs_non_contracting_dims=*/{transpose_rhs ? 0 : 1},
+      /*output_dim_order=*/{0, transpose_lhs ? 1 : 0, 1, transpose_rhs ? 0 : 1},
+      /*lhs_batch_dims=*/{},
+      /*rhs_batch_dims=*/{});
 }
 
 }  // namespace mlir::tpu

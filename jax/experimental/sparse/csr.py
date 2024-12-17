@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from functools import partial
 import operator
-from typing import Optional
 import warnings
 
 import numpy as np
@@ -35,7 +34,7 @@ from jax._src.interpreters import ad
 from jax._src.lax.lax import _const
 from jax._src.lib import gpu_sparse
 from jax._src.numpy.util import promote_dtypes
-from jax._src.typing import Array, ArrayLike, DTypeLike
+from jax._src.typing import Array, DTypeLike
 import jax.numpy as jnp
 
 

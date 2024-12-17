@@ -201,7 +201,7 @@ class ShardAlikeTest(jtu.JaxTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:
       f(np_inp)
       out1, out2 = f(np_inp)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
     self.assertTrue(s.is_equivalent_to(out1.sharding, np_inp.ndim))
     self.assertTrue(s.is_equivalent_to(out2.sharding, np_inp.ndim))
 
@@ -213,7 +213,7 @@ class ShardAlikeTest(jtu.JaxTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:
       g(arr)
       out3, out4 = g(arr)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
     self.assertEqual(out3.sharding, s)
     self.assertEqual(out4.sharding, s)
 
@@ -221,18 +221,16 @@ class ShardAlikeTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2,), ('x',))
     np_inp = np.arange(8.)
     s = NamedSharding(mesh, P('x'))
-    rep_s = NamedSharding(mesh, P())
     arr = jax.device_put(np_inp, s)
-    arr2 = jax.device_put(np_inp, rep_s)
 
     def f(x, y):
       return shard_alike(x, y)
 
-    eager_out1, eager_out2 = f(arr, arr2)
+    eager_out1, eager_out2 = f(arr, np_inp)
     self.assertEqual(eager_out1.sharding, s)
     self.assertEqual(eager_out2.sharding, s)
 
-    out1, out2 = jax.jit(f)(arr, arr2)
+    out1, out2 = jax.jit(f)(arr, np_inp)
     self.assertEqual(out1.sharding, s)
     self.assertEqual(out2.sharding, s)
 
@@ -281,7 +279,6 @@ class ShardAlikeTest(jtu.JaxTestCase):
     x = jax.device_put(np.arange(8), s)
     _, y = shard_alike(x, jnp.arange(8))
     self.assertEqual(y.sharding, s)
-
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -1,0 +1,47 @@
+name: CI - Bazel CPU tests (RBE)
+
+on:
+  workflow_dispatch:
+    inputs:
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: choice
+        required: true
+        default: 'no'
+        options:
+        - 'yes'
+        - 'no'
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  run_tests:
+    if: github.event.repository.fork == false
+    strategy:
+      matrix:
+        runner: ["linux-x86-n2-16", "linux-arm64-c4a-16"]
+        enable-x_64: [1, 0]
+
+    runs-on: ${{ matrix.runner }}
+    container: ${{ (contains(matrix.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest') ||
+                   (contains(matrix.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') }}
+
+    env:
+      JAXCI_HERMETIC_PYTHON_VERSION: "3.12"
+      JAXCI_ENABLE_X64: ${{ matrix.enable-x_64 }}
+
+    name: "Bazel CPU tests (${{ matrix.runner }}, Python 3.12, x64=${{ matrix.enable-x_64 }})"
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@main
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Run Bazel CPU Tests with RBE
+        run: ./ci/run_bazel_test_cpu_rbe.sh

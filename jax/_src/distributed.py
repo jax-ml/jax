@@ -27,6 +27,13 @@ from jax._src.lib import xla_extension
 logger = logging.getLogger(__name__)
 
 
+_CHECK_PROXY_ENVS = config.bool_flag(
+    name="jax_check_proxy_envs",
+    default=True,
+    help="Checks proxy vars in user envs and emit warnings.",
+)
+
+
 class State:
   process_id: int = 0
   num_processes: int = 1
@@ -42,7 +49,11 @@ class State:
                  local_device_ids: int | Sequence[int] | None = None,
                  cluster_detection_method: str | None = None,
                  initialization_timeout: int = 300,
-                 coordinator_bind_address: str | None = None):
+                 coordinator_bind_address: str | None = None,
+                 service_heartbeat_interval_seconds: int = 10,
+                 service_max_missing_heartbeats: int = 10,
+                 client_heartbeat_interval_seconds: int = 10,
+                 client_max_missing_heartbeats: int = 10):
     coordinator_address = (coordinator_address or
                            os.environ.get('JAX_COORDINATOR_ADDRESS'))
     if isinstance(local_device_ids, int):
@@ -51,16 +62,18 @@ class State:
     if local_device_ids is None and (env_ids := os.environ.get('JAX_LOCAL_DEVICE_IDS')):
       local_device_ids = list(map(int, env_ids.split(",")))
 
-    (coordinator_address, num_processes, process_id, local_device_ids) = (
-        clusters.ClusterEnv.auto_detect_unset_distributed_params(
-            coordinator_address,
-            num_processes,
-            process_id,
-            local_device_ids,
-            cluster_detection_method,
-            initialization_timeout,
-        )
-    )
+    if (cluster_detection_method != 'deactivate' and
+        None in (coordinator_address, num_processes, process_id, local_device_ids)):
+      (coordinator_address, num_processes, process_id, local_device_ids) = (
+          clusters.ClusterEnv.auto_detect_unset_distributed_params(
+              coordinator_address,
+              num_processes,
+              process_id,
+              local_device_ids,
+              cluster_detection_method,
+              initialization_timeout,
+          )
+      )
 
     if coordinator_address is None:
       raise ValueError('coordinator_address should be defined.')
@@ -88,8 +101,10 @@ class State:
 
     self.process_id = process_id
 
-    # Emit a warning about PROXY variables if they are in the user's env:
-    proxy_vars = [ key for key in os.environ.keys() if '_proxy' in key.lower()]
+    proxy_vars = []
+    if _CHECK_PROXY_ENVS.value:
+      proxy_vars = [key for key in os.environ.keys()
+                    if '_proxy' in key.lower()]
 
     if len(proxy_vars) > 0:
       vars = " ".join(proxy_vars) + ". "
@@ -107,7 +122,9 @@ class State:
           'Starting JAX distributed service on %s', coordinator_bind_address
       )
       self.service = xla_extension.get_distributed_runtime_service(
-          coordinator_bind_address, num_processes)
+          coordinator_bind_address, num_processes,
+          heartbeat_interval=service_heartbeat_interval_seconds,
+          max_missing_heartbeats=service_max_missing_heartbeats)
 
     self.num_processes = num_processes
 
@@ -115,7 +132,9 @@ class State:
       raise RuntimeError('distributed.initialize should only be called once.')
 
     self.client = xla_extension.get_distributed_runtime_client(
-        coordinator_address, process_id, init_timeout=initialization_timeout)
+        coordinator_address, process_id, init_timeout=initialization_timeout,
+        heartbeat_interval=client_heartbeat_interval_seconds,
+        max_missing_heartbeats=client_max_missing_heartbeats, use_compression=True)
     logger.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
 
@@ -171,7 +190,9 @@ def initialize(coordinator_address: str | None = None,
   ``cluster_detection_method="mpi4py"`` to bootstrap the required arguments.
 
   Otherwise, you must provide the ``coordinator_address``,
-  ``num_processes``, and ``process_id`` arguments to :func:`~jax.distributed.initialize`.
+  ``num_processes``, ``process_id``, and ``local_device_ids`` arguments
+  to :func:`~jax.distributed.initialize`. When all four arguments are provided, cluster
+  environment auto detection will be skipped.
 
   Please note: on some systems, particularly HPC clusters that only access external networks
   through proxy variables such as HTTP_PROXY, HTTPS_PROXY, etc., the call to
@@ -197,7 +218,8 @@ def initialize(coordinator_address: str | None = None,
     cluster_detection_method: An optional string to attempt to autodetect the configuration of the distributed
       run.  Note that "mpi4py" method requires you to have a working ``mpi4py`` install in your environment,
       and launch the applicatoin with an MPI-compatible job launcher such as ``mpiexec`` or ``mpirun``.
-      Legacy auto-detect options (OMPI, Slurm) remain enabled.
+      Legacy auto-detect options "ompi" (OMPI) and "slurm" (Slurm) remain enabled. "deactivate" bypasses
+      automatic cluster detection.
     initialization_timeout: Time period (in seconds) for which connection will
       be retried. If the initialization takes more than the timeout specified,
       the initialization will error. Defaults to 300 secs i.e. 5 mins.

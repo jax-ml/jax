@@ -20,9 +20,13 @@ from jax import random as jax_random
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic import random as plrandom
 from jax.experimental import pallas as pl
+from jax.experimental import shard_map
 from jax.experimental.pallas import tpu as pltpu
+from jax.experimental.pallas.ops.tpu.random import threefry  # pylint: disable=unused-import  # noqa: F401
 import jax.numpy as jnp
 import numpy as np
+
+P = jax.sharding.PartitionSpec
 
 
 jax.config.parse_flags_with_absl()
@@ -218,6 +222,87 @@ class BlockInvarianceTest(parameterized.TestCase):
         grid=(2, 2),
     )(global_key)
     np.testing.assert_array_equal(result_16x128, result_32x256)
+
+
+class ThreefryTest(parameterized.TestCase):
+
+  def setUp(self):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Need TPU devices")
+    super().setUp()
+
+  @parameterized.parameters(
+      ((8, 128),),
+      ((32, 256),),
+      ((4, 16, 128),),
+  )
+  def test_uniform_matches_jax_threefry(self, shape):
+    def body(key_ref, o_ref):
+      key = jax.random.wrap_key_data(key_ref[0, ...], impl='threefry2x32')
+      o_ref[...] = jax_random.uniform(
+          key, shape=o_ref[...].shape, minval=0.0, maxval=1.0
+      )
+
+    threefry_key = jax_random.key(0, impl="threefry2x32").reshape((1,))
+    o_shape = jax.ShapeDtypeStruct(shape, jnp.float32)
+    with jax.threefry_partitionable(True):
+      # TODO(justinfu): support passing keys into VMEM.
+      result = pl.pallas_call(
+          body,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM)],
+          out_shape=o_shape,
+      )(jax.random.key_data(threefry_key))
+      jax_result = jax_random.uniform(
+          threefry_key[0], shape=o_shape.shape, minval=0.0, maxval=1.0
+      )
+    np.testing.assert_array_equal(result, jax_result)
+
+  @parameterized.parameters(
+      ((512, 512),),
+      ((137, 275),),  # Non block-aligned shape
+      ((4, 512, 512),),  # Greater than 2D shape
+      ((34,),),  # 1D
+      (tuple(),),  # 0D
+  )
+  def test_threefry_kernel_matches_jax_threefry(self, shape):
+    with jax.threefry_partitionable(True):
+      key_jax = jax_random.key(0, impl="threefry2x32")
+      jax_gen = jax_random.bits(key_jax, shape=shape)
+      key_pl = jax_random.key(0, impl="pallas_threefry2x32")
+      pl_gen = jax_random.bits(key_pl, shape=shape)
+
+    np.testing.assert_array_equal(jax_gen, pl_gen)
+
+  @parameterized.parameters(
+      ((256, 256),),
+      ((35, 113),),  # Non block-aligned shape
+      ((331,),),  # 1D
+  )
+  def test_threefry_kernel_matches_jax_threefry_sharded(self, shape):
+    if jax.device_count() < 2:
+      self.skipTest("Need at least 2 devices")
+    num_devices = jax.device_count()
+    partition = P("x")
+    mesh = jax.make_mesh((num_devices,), ("x",))
+    sharding = jax.sharding.NamedSharding(mesh, partition)
+
+    with jax.threefry_partitionable(True):
+      key_jax = jax_random.split(
+          jax_random.key(0, impl="threefry2x32"), num_devices)
+      key_pallas = jax_random.split(
+          jax_random.key(0, impl="pallas_threefry2x32"), num_devices)
+      key_jax = jax.device_put(key_jax, sharding)
+      key_pallas = jax.device_put(key_pallas, sharding)
+      generate = shard_map.shard_map(
+          lambda x: jax_random.bits(x[0], shape=shape),
+          mesh=mesh,
+          in_specs=partition,
+          out_specs=partition,
+      )
+      jax_gen = generate(key_jax)
+      pl_gen = generate(key_pallas)
+
+    np.testing.assert_array_equal(jax_gen, pl_gen)
 
 
 if __name__ == "__main__":

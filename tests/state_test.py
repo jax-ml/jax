@@ -30,6 +30,7 @@ from jax._src import config
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
 from jax._src import test_util as jtu
+from jax._src.state import types as state_types
 from jax._src.util import tuple_insert
 import jax.numpy as jnp
 from jax._src.lax.control_flow import for_loop
@@ -638,6 +639,26 @@ class StateDischargeTest(jtu.JaxTestCase):
     refval, = core.eval_jaxpr(discharged_jaxpr, discharged_consts, inval)
     self.assertTrue((refval == inval.at[jnp.array([0, 1])].set(1.)).all())
 
+  def test_discharge_swap(self):
+    def f(a_ref):
+      a = ref_swap(
+          a_ref.at[0:4, 0:3, 0:2].at[1:3, :, 0],
+          (slice(None), slice(1, 3)),
+          jnp.zeros((2, 2), jnp.float32))
+      return [a + 1]
+    in_avals = [shaped_array_ref((4, 3, 2), jnp.float32)]
+    stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
+        lu.wrap_init(f), in_avals)
+
+    discharged_jaxpr, () = discharge_state(stateful_jaxpr, consts)
+    self.assertLen(discharged_jaxpr.invars, 1)
+    self.assertLen(discharged_jaxpr.outvars, 2)
+
+    inval = jnp.arange(24., dtype=jnp.float32).reshape((4, 3, 2))
+    outval, refval = core.eval_jaxpr(discharged_jaxpr, (), inval)
+    self.assertArraysEqual(outval, inval[1:3, 1:3, 0] + 1)
+    self.assertArraysEqual(refval, inval.at[1:3, 1:3, 0].set(0))
+
   def test_discharge_addupdate(self):
     def f(a_ref, b):
       ref_addupdate(a_ref, (), b + 1)
@@ -745,12 +766,13 @@ class StateDischargeTest(jtu.JaxTestCase):
       b_ref[...] = jnp.array(1., dtype=jnp.float32)
       return a_ref[...], b_ref[...]
 
-    scalar_ref = shaped_array_ref((), jnp.float32)
+    scalar_ref_1 = shaped_array_ref((), jnp.float32)
+    scalar_ref_2 = shaped_array_ref((), jnp.float32)
     jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(f), [scalar_ref, scalar_ref])
+        lu.wrap_init(f), [scalar_ref_1, scalar_ref_2])
 
     discharged_jaxpr, _ = discharge_state(jaxpr, (), should_discharge=[False, True])
-    prim_count = lambda p, jaxpr: sum(eqn.primitive == swap_p for eqn in jaxpr.eqns)
+    prim_count = lambda p, jaxpr: sum(eqn.primitive == p for eqn in jaxpr.eqns)
     self.assertEqual(prim_count(swap_p, jaxpr) // 2, prim_count(swap_p, discharged_jaxpr))
     self.assertEqual(prim_count(get_p, jaxpr) // 2, prim_count(get_p, discharged_jaxpr))
 
@@ -1114,6 +1136,25 @@ class StateControlFlowTest(jtu.JaxTestCase):
     expected_false = 2.
     self.assertAllClose(out_false, expected_false)
 
+  def test_cond_readonly_refs(self):
+    def f(pred):
+      def body(refs):
+        x_ref, y_ref, z_ref = refs
+        def true_fun():
+          y_ref[()] = x_ref[()]
+        def false_fun():
+          y_ref[()] = x_ref[()] + z_ref[()]
+        lax.cond(pred, true_fun, false_fun)
+      return run_state(body)((1., 0., 2.))
+    jaxpr = jax.make_jaxpr(f)(True).jaxpr
+    [run_state_eqn] = jaxpr.eqns
+    *_, cond_eqn = discharge_state(run_state_eqn.params["jaxpr"], ())[0].eqns
+    self.assertIs(cond_eqn.primitive, lax.cond_p)
+    self.assertLen(cond_eqn.invars, 4)  # pred + 3x ref values
+    self.assertLen(cond_eqn.outvars, 1)  # only the updated ref value
+    self.assertAllClose(jax.jit(f)(True), (1., 1., 2.))
+    self.assertAllClose(jax.jit(f)(False), (1., 3., 2.))
+
   def test_simple_cond_using_multiple_refs_with_interleaved_consts(self):
     def f(pred):
       def body(refs):
@@ -1342,17 +1383,6 @@ class StateControlFlowTest(jtu.JaxTestCase):
 
 class GeneralRefTest(jtu.JaxTestCase):
 
-  def test_unshaped_ref(self):
-    def f(x_ref):
-      x = x_ref[...]
-      x_ref[...] = x
-      ref_addupdate(x_ref, (), x)
-      return [x]
-    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(f), [AbstractRef(core.UnshapedArray(jnp.int32))])
-    self.assertIs(type(jaxpr.outvars[0].aval), core.UnshapedArray)
-    self.assertEqual(jaxpr.outvars[0].aval.dtype, jnp.dtype("int32"))
-
   def test_token(self):
     def f(x_ref):
       x = x_ref[...]
@@ -1391,6 +1421,26 @@ class RunStateTest(jtu.JaxTestCase):
     x, y = run_state(f)((2, 3))
     self.assertEqual(x, 2 + 2 * 3 * 2)
     self.assertEqual(y, 2 * 3 * 2)
+
+  def test_run_state_with_uninitialized_input(self):
+    def f(refs):
+      x_ref, y_ref = refs
+      # y_ref is uninitialized so we shouldn't read from it until we write into
+      # it.
+      x = x_ref[...]
+      y_ref[...] = x * 2
+      x_ref[...] = y_ref[...] + x_ref[...]
+      # x + x * 2, x * 2
+    # jax.ShapeDtypeStruct is weirdly special to JAX, so we make our own class.
+    class MyArrayType:
+      pass
+    state_types._ref_type_aval_mappings[MyArrayType] = lambda _: (
+        AbstractRef(core.ShapedArray((), jnp.int32)),
+        state_types.uninitialized,
+    )
+    x, y = run_state(f)((jnp.int32(2), MyArrayType()))
+    self.assertEqual(x, 2 + 2 * 2)
+    self.assertEqual(y, 2 * 2)
 
   def test_nontrivial_run_state_jit(self):
     def f(refs):

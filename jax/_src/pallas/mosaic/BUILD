@@ -57,9 +57,16 @@ py_library(
     name = "primitives",
     srcs = ["primitives.py"],
     deps = [
+        ":core",
         "//jax",
         "//jax:core",
+        "//jax:dtypes",
         "//jax:mlir",
+        "//jax:pretty_printer",
+        "//jax:tree_util",
+        "//jax:typing",
+        "//jax:util",
+        "//jax/_src/pallas",
     ],
 )
 
@@ -67,10 +74,17 @@ py_library(
     name = "pallas_call_registration",
     srcs = ["pallas_call_registration.py"],
     deps = [
+        ":core",
         ":lowering",
+        ":verification",
         "//jax",
+        "//jax:config",
+        "//jax:core",
+        "//jax:mlir",
         "//jax:mosaic",
+        "//jax:sharding_impls",
         "//jax:source_info_util",
+        "//jax:tpu_custom_call",
         "//jax/_src/lib",
         "//jax/_src/pallas",
     ] + py_deps("numpy"),
@@ -110,6 +124,7 @@ py_library(
         "//jax:pallas",
         "//jax:util",
         "//jax/_src/pallas",
+        "//jax/extend:backend",
     ] + py_deps("numpy"),
 )
 

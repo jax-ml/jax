@@ -31,7 +31,6 @@ from jax._src.ad_util import (
     stop_gradient_p, SymbolicZero, Zero, zeros_like_aval)
 from jax._src.api_util import (
     argnums_partial, flatten_fun_nokwargs, resolve_kwargs)
-from jax._src.core import raise_to_shaped
 from jax._src.errors import UnexpectedTracerError
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -76,13 +75,14 @@ _stop_gradient = partial(
 
 
 # like the api_util.py function, but also grabs output avals for error checking
-@lu.transformation_with_aux
-def _flatten_fun_nokwargs(in_tree, *args_flat):
+@lu.transformation_with_aux2
+def _flatten_fun_nokwargs(f, store, in_tree, *args_flat):
   py_args = tree_unflatten(in_tree, args_flat)
-  ans = yield py_args, {}
+  ans = f(*py_args)
   ans_flat, ans_tree = tree_flatten(ans)
-  ans_avals = [core.raise_to_shaped(core.get_aval(x)) for x in ans_flat]
-  yield ans_flat, (ans_tree, ans_avals)
+  ans_avals = [core.get_aval(x) for x in ans_flat]
+  store.store((ans_tree, ans_avals))
+  return ans_flat
 
 
 ### JVPs
@@ -267,18 +267,18 @@ class custom_jvp(Generic[ReturnValue]):
 def _add_args(f, extra_args):
   return _add_args_(f, tuple(Unhashable(arg) for arg in extra_args))
 
-@lu.transformation
-def _add_args_(extra_args, *args, **kwargs):
+@lu.transformation2
+def _add_args_(f, extra_args, *args, **kwargs):
   extra_args = tuple(arg.val for arg in extra_args)
   all_args = (extra_args + args)
-  yield (yield all_args, kwargs)
+  return f(*all_args, **kwargs)
 
-@partial(lu.transformation_with_aux, use_eq_store=True)
-def _flatten_jvp(primal_name, jvp_name, in_tree, maybe_out_type, *args):
+@partial(lu.transformation_with_aux2, use_eq_store=True)
+def _flatten_jvp(f, store, primal_name, jvp_name, in_tree, maybe_out_type, *args):
   primals_in, tangents_in = split_list(args, [len(args) // 2])
   py_primals = tree_unflatten(in_tree, primals_in)
   py_tangents = tree_unflatten(in_tree, tangents_in)
-  pair_out = yield (py_primals, py_tangents), {}
+  pair_out = f(py_primals, py_tangents)
   if not isinstance(pair_out, (list, tuple)) or len(pair_out) != 2:
     msg = (f"Custom JVP rule {jvp_name} for function {primal_name} "
            "must produce a pair (list or tuple of length two) representing "
@@ -287,7 +287,7 @@ def _flatten_jvp(primal_name, jvp_name, in_tree, maybe_out_type, *args):
   py_primals_out, py_tangents_out = pair_out
   primals_out, out_tree = tree_flatten(py_primals_out)
   tangents_out, out_tree2 = tree_flatten(py_tangents_out)
-  primal_avals = [core.raise_to_shaped(core.get_aval(x)) for x in primals_out]
+  primal_avals = [core.get_aval(x) for x in primals_out]
   if out_tree != out_tree2:
     msg = (f"Custom JVP rule {jvp_name} for function {primal_name} must "
            "produce primal and tangent outputs with equal container (pytree) "
@@ -327,11 +327,11 @@ def _flatten_jvp(primal_name, jvp_name, in_tree, maybe_out_type, *args):
            "shapes/dtypes of:\n"
            f"""    {str(ty_tree_).replace("'", "")}""")
       raise TypeError(m)
-  primal_avals_out = [raise_to_shaped(core.get_aval(x), weak_type=False) for x in primals_out]
+  primal_avals_out = [core.get_aval(x).strip_weak_type() for x in primals_out]
   expected_tangent_avals_out = [
-    raise_to_shaped(core.get_aval(x), weak_type=False).to_tangent_aval()
+    core.get_aval(x).strip_weak_type().to_tangent_aval()
     for x in primals_out]
-  tangent_avals_out = [raise_to_shaped(core.get_aval(t), weak_type=False)
+  tangent_avals_out = [core.get_aval(t).strip_weak_type()
                        if type(t) is not SymbolicZero else t.aval.strip_weak_type()
                        for t in tangents_out]
   if expected_tangent_avals_out != tangent_avals_out:
@@ -349,30 +349,18 @@ def _flatten_jvp(primal_name, jvp_name, in_tree, maybe_out_type, *args):
           if av_et != av_t)
 
       raise TypeError(msg.format('\n'.join(disagreements)))
-  yield primals_out + tangents_out, (out_tree, primal_avals)
+  store.store((out_tree, primal_avals))
+  return primals_out + tangents_out
 
 class CustomJVPCallPrimitive(core.Primitive):
   multiple_results = True
 
-  def bind(self, fun, jvp, *args, symbolic_zeros):
-    args = map(core.full_lower, args)
-    top_trace = core.find_top_trace(args)
-    fun, env_trace_todo1 = process_env_traces(
-        fun, self, top_trace and top_trace.level, False)
-    jvp, env_trace_todo2 = process_env_traces(
-        jvp, self, top_trace and top_trace.level, True)
-    tracers = map(top_trace.full_raise, args)
-    outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers,
-                                             symbolic_zeros=symbolic_zeros)
-    _, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
-    return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
+  def bind_with_trace(self, trace, args, params):
+    fun, jvp, tracers = args[0], args[1], args[2:]
+    return trace.process_custom_jvp_call(self, fun, jvp, tracers, **params)
 
   def impl(self, fun, _, *args):
-    with core.new_sublevel():
-      return fun.call_wrapped(*args)
-
-  def post_process(self, trace, out_tracers, jvp_was_run: bool):
-    return trace.post_process_custom_jvp_call(out_tracers, jvp_was_run)
+    raise NotImplementedError
 
   def get_bind_params(self, params):
     new_params = dict(params)
@@ -401,24 +389,6 @@ def lift_jvp(num_consts: int, jvp_jaxpr_thunk: Callable) -> lu.WrappedFun:
     assert next(nz_out_tangents_, None) is None
     return [*out_primals, *out_tangents]
   return jvp
-
-@partial(lu.transformation_with_aux, use_eq_store=True)
-def process_env_traces(primitive, level: int, jvp_was_run: bool, *args):
-  outs = yield args, {}
-  todo = []
-  while True:
-    tracers = [x for x in outs if isinstance(x, core.Tracer)
-               and (level is None or x._trace.level > level)]
-    if tracers:
-      ans = max(tracers, key=lambda x: x._trace.level)
-    else:
-      break
-    trace = ans._trace.main.with_cur_sublevel()
-    outs = map(trace.full_raise, outs)
-    outs, cur_todo = primitive.post_process(trace, outs, jvp_was_run)
-    todo.append(cur_todo)
-  yield outs, tuple(todo)  # Ensure the aux output is immutable
-
 
 effects.custom_derivatives_allowed_effects.add_type(lax.InOutFeedEffect)
 
@@ -637,7 +607,7 @@ class custom_vjp(Generic[ReturnValue]):
         f_, dyn_args = lu.wrap_init(self.fun), args
         fwd_, bwd = lu.wrap_init(fwd), lu.wrap_init(self.bwd)
       args_flat, in_tree = tree_flatten(dyn_args)
-      in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
+      in_avals = [core.get_aval(x) for x in args_flat]
       flat_fun, out_type = _flatten_fun_nokwargs(f_, in_tree)
       flat_fwd, out_trees = _flatten_fwd(fwd_, self.symbolic_zeros, primal_name,
                                          fwd_name, in_tree, out_type)
@@ -684,15 +654,15 @@ def _check_for_tracers(x):
             "arguments should typically not be indicated as nondiff_argnums.")
       raise UnexpectedTracerError(msg)
 
-@partial(lu.transformation_with_aux, use_eq_store=True)
-def _flatten_fwd(symbolic_zeros, primal_name, fwd_name, in_tree, maybe_out_type,
+@partial(lu.transformation_with_aux2, use_eq_store=True)
+def _flatten_fwd(f, store, symbolic_zeros, primal_name, fwd_name, in_tree, maybe_out_type,
                  *args):
   if symbolic_zeros:
     args = [CustomVJPPrimal(x, z) for x, z in zip(args[::2], args[1::2])]
   else:
     args = args[::2]
   py_args = tree_unflatten(in_tree, args)
-  pair_out = yield py_args, {}
+  pair_out = f(*py_args)
   if not isinstance(pair_out, (list, tuple)) or len(pair_out) != 2:
     msg = (f"Custom VJP fwd rule {fwd_name} for function {primal_name} "
            "must produce a pair (list or tuple of length two) where the first "
@@ -705,7 +675,7 @@ def _flatten_fwd(symbolic_zeros, primal_name, fwd_name, in_tree, maybe_out_type,
   py_primals_out, res = pair_out
   primals_out, out_tree = tree_flatten(py_primals_out)
   res, res_tree = tree_flatten(res)
-  primal_avals = [core.raise_to_shaped(core.get_aval(x)) for x in primals_out]
+  primal_avals = [core.get_aval(x) for x in primals_out]
   # If the primal function already ran, check out_tree agreement.
   try: out_type_ = maybe_out_type()
   except lu.StoreException: out_type_ = None
@@ -742,16 +712,17 @@ def _flatten_fwd(symbolic_zeros, primal_name, fwd_name, in_tree, maybe_out_type,
            "shapes/dtypes of:\n"
            f"""    {str(ty_tree_).replace("'", "")}""")
       raise TypeError(m)
-  yield (*res, *primals_out), (out_tree, res_tree)
+  store.store((out_tree, res_tree))
+  return (*res, *primals_out)
 
-@lu.transformation
-def _flatten_bwd(in_tree, in_avals, out_trees, *args):
+@lu.transformation2
+def _flatten_bwd(f, in_tree, in_avals, out_trees, *args):
   out_tree, res_tree = out_trees()
   assert len(args) == res_tree.num_leaves + out_tree.num_leaves
   res, cts_out = split_list(args, [res_tree.num_leaves])
   py_res = tree_unflatten(res_tree, res)
   py_cts_out = tree_unflatten(out_tree, cts_out)
-  py_cts_in = yield (py_res, py_cts_out), {}
+  py_cts_in = f(py_res, py_cts_out)
   if isinstance(py_cts_in, list) and len(py_cts_in) == len(treedef_children(in_tree)):
     py_cts_in = tuple(py_cts_in)
   # For each None in py_cts_in, indicating an argument for which the rule
@@ -803,11 +774,11 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
         msg = ("Custom VJP bwd rule must produce an output with the same "
                "shape/dtypes as the args tuple of the primal function, but at "
                f"output{keystr(kp)} the bwd rule produced an output of "
-               f"shape/dtype {raise_to_shaped(a_).str_short()} corresponding "
+               f"shape/dtype {a_.str_short()} corresponding "
                f"to an input of shape/dtype {a.str_short()}.")
         raise ValueError(msg)
       results.append(ct)
-  yield results
+  return results
 
 # TODO(mattjj): remove both these exceptions to cotangent compatibility check
 def _temporary_dtype_exception(a, a_) -> bool:
@@ -824,60 +795,11 @@ def _temporary_shape_exception(a, a_) -> bool:
 class CustomVJPCallPrimitive(core.CallPrimitive):
   initial_style: core.Primitive
 
-  def bind(self, fun, fwd, bwd, *args, out_trees, symbolic_zeros):
-    args = map(core.full_lower, args)
-    top_trace = core.find_top_trace(args)
-    fun, env_trace_todo1 = process_env_traces(
-        fun, self, top_trace and top_trace.level, False)
-    fwd, env_trace_todo2 = process_env_traces_fwd(
-      fwd, top_trace and top_trace.level, out_trees)
-    tracers = map(top_trace.full_raise, args)
-    bwd_ = lambda *args: bwd(*args)
-    outs = top_trace.process_custom_vjp_call(self, fun, fwd, bwd_, tracers,
-                                             out_trees=out_trees,
-                                             symbolic_zeros=symbolic_zeros)
-    fst, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
-    if fst:
-      return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
-    else:
-      env_trace_todo, bwd_transform = env_trace_todo
-      bwd = _apply_bwd_transform(bwd_transform, bwd)
-      return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
+  def bind_with_trace(self, trace, args, params):
+    fun, fwd, bwd, tracers = args[0], args[1], args[2], args[3:]
+    return trace.process_custom_vjp_call(self, fun, fwd, bwd, tracers, **params)
 
-  def impl(self, fun, fwd, bwd, *args, out_trees):
-    del fwd, bwd, out_trees
-    with core.new_sublevel():
-      return fun.call_wrapped(*args)
-
-  def post_process(self, trace, out_tracers, params):
-    return trace.post_process_custom_vjp_call(out_tracers, params)
 custom_vjp_call_p = CustomVJPCallPrimitive('custom_vjp_call')
-
-@partial(lu.transformation_with_aux, use_eq_store=True)
-def process_env_traces_fwd(level: int, out_trees, *args):
-  outs = yield args, {}
-  todo = []
-  bwd_transforms = []
-  while True:
-    tracers = [x for x in outs if isinstance(x, core.Tracer)
-               and (level is None or x._trace.level > level)]
-    if tracers:
-      ans = max(tracers, key=lambda x: x._trace.level)
-    else:
-      break
-    trace = ans._trace.main.with_cur_sublevel()
-    outs = map(trace.full_raise, outs)
-    outs, cur_todo, bwd_xform = trace.post_process_custom_vjp_call_fwd(outs, out_trees)
-    todo.append(cur_todo)
-    bwd_transforms.append(bwd_xform)
-  yield outs, (tuple(todo), tuple(bwd_transforms))
-
-
-def _apply_bwd_transform(todos, bwd):
-  todos_list = list(todos)
-  while todos_list:
-    bwd = todos_list.pop()(bwd)
-  return bwd
 
 def _custom_vjp_call_jaxpr_impl(*args, fun_jaxpr, **_):
   return core.jaxpr_as_fun(fun_jaxpr)(*args)
@@ -889,7 +811,7 @@ def _custom_vjp_call_jaxpr_abstract_eval(*_, fun_jaxpr, **__):
         f'Effects not supported in `custom_vjp`: {disallowed_effects}')
   return fun_jaxpr.out_avals, fun_jaxpr.effects
 
-custom_vjp_call_jaxpr_p = core.AxisPrimitive('custom_vjp_call_jaxpr')
+custom_vjp_call_jaxpr_p = core.Primitive('custom_vjp_call_jaxpr')
 custom_vjp_call_jaxpr_p.multiple_results = True
 custom_vjp_call_jaxpr_p.def_impl(_custom_vjp_call_jaxpr_impl)
 custom_vjp_call_jaxpr_p.def_effectful_abstract_eval(_custom_vjp_call_jaxpr_abstract_eval)
@@ -911,7 +833,7 @@ def _custom_vjp_call_jaxpr_jvp(
   _, res_tree = out_trees()
   res_and_primals_out = core.eval_jaxpr(fwd_jaxpr, fwd_consts, *args)
   res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
-  avals_out = [raise_to_shaped(core.get_aval(x)).to_tangent_aval() for x in primals_out]
+  avals_out = [core.get_aval(x).to_tangent_aval() for x in primals_out]
   args_dot = map(ad.instantiate_zeros, args_dot)
   tangents_out = ad.custom_lin_p.bind(
       *res, *args_dot, num_res=res_tree.num_leaves, bwd=bwd,
@@ -921,18 +843,16 @@ def _custom_vjp_call_jaxpr_jvp(
 ad.primitive_jvps[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_jvp
 
 def _custom_vjp_call_jaxpr_vmap(
-    spmd_axis_name, axis_size, axis_name, main_type, args, in_dims, *,
+    axis_data, args, in_dims, *,
     fun_jaxpr: core.ClosedJaxpr,
     fwd_jaxpr_thunk: Callable[..., tuple[core.Jaxpr, Sequence[Any]]],
     num_consts: int, bwd: Callable, out_trees: Callable, symbolic_zeros: bool):
   args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
           else x for x, d in zip(args, in_dims)]
-
   in_batched = [d is not not_mapped for d in in_dims]
   _, args_batched = split_list(in_batched, [num_consts])
   batched_fun_jaxpr, out_batched = batching.batch_jaxpr(
-      fun_jaxpr, axis_size, in_batched, False, axis_name, spmd_axis_name,
-      main_type)
+      fun_jaxpr, axis_data, in_batched, False)
   out_dims1 = [0 if b else not_mapped for b in out_batched]
   out_dims2 = []
 
@@ -940,16 +860,15 @@ def _custom_vjp_call_jaxpr_vmap(
   def batched_fwd_jaxpr_thunk(*zeros):
     fwd_jaxpr = core.ClosedJaxpr(*fwd_jaxpr_thunk(*zeros))  # consts can be tracers
     batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(
-        fwd_jaxpr, axis_size, args_batched, False, axis_name, spmd_axis_name,
-        main_type)
+        fwd_jaxpr, axis_data, args_batched, False)
     out_dims2.append([0 if b else not_mapped for b in out_batched])
     return batched_fwd_jaxpr.jaxpr, batched_fwd_jaxpr.consts
 
   fwd_args_batched = [0 if b else not_mapped for b in args_batched]
   fwd_out_dims = lambda: out_dims2[0]
+  tag = core.TraceTag()
   batched_bwd = batching.batch_custom_vjp_bwd(
-      bwd, axis_name, axis_size, fwd_out_dims, fwd_args_batched, main_type,
-      spmd_axis_name)
+    bwd, tag, axis_data, fwd_out_dims, fwd_args_batched)
 
   batched_outs = custom_vjp_call_jaxpr_p.bind(
       *args, fun_jaxpr=batched_fun_jaxpr,
@@ -957,10 +876,7 @@ def _custom_vjp_call_jaxpr_vmap(
       num_consts=num_consts, out_trees=out_trees, symbolic_zeros=symbolic_zeros)
   out_dims = out_dims2[0] if out_dims2 else out_dims1
   return batched_outs, out_dims
-batching.spmd_axis_primitive_batchers[custom_vjp_call_jaxpr_p] = \
-    _custom_vjp_call_jaxpr_vmap
-batching.axis_primitive_batchers[custom_vjp_call_jaxpr_p] = partial(
-    _custom_vjp_call_jaxpr_vmap, None)
+batching.fancy_primitive_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vmap
 
 xla.register_initial_style_primitive(custom_vjp_call_jaxpr_p)
 
@@ -1135,7 +1051,7 @@ def closure_convert(fun: Callable, *example_args) -> tuple[Callable, list[Any]]:
     from the closure.
   """
   flat_args, in_tree = tree_flatten(example_args)
-  in_avals = tuple(map(abstractify, flat_args))
+  in_avals = tuple(map(core.get_aval, flat_args))
   if config.check_tracer_leaks.value:
     return _closure_convert_for_avals.__wrapped__(fun, in_tree, in_avals)
   else:
@@ -1144,11 +1060,12 @@ def closure_convert(fun: Callable, *example_args) -> tuple[Callable, list[Any]]:
 def _maybe_perturbed(x: Any) -> bool:
   # False if x can't represent an AD-perturbed value (i.e. a value
   # with a nontrivial tangent attached), up to heuristics, and True otherwise.
-  # See https://github.com/jax-ml/jax/issues/6415 for motivation.
-  x = core.full_lower(x)
+  # See https://github.com/google/jax/issues/6415 for motivation.
   if not isinstance(x, core.Tracer):
     # If x is not a Tracer, it can't be perturbed.
     return False
+  elif isinstance(x, ad.JVPTracer) and isinstance(x.tangent, ad.Zero):
+    return _maybe_perturbed(x.primal)
   elif isinstance(x, pe.DynamicJaxprTracer):
     # If x is a DynamicJaxprTracer then we're staging out; differentiation could
     # happen later, but some types always have trivial tangents.
@@ -1193,9 +1110,6 @@ def partition_list(choice, lst):
     i1, i2 = iter(l1), iter(l2)
     return [next(i2 if snd else i1) for snd in which]
   return out, merge
-
-def abstractify(x):
-  return core.raise_to_shaped(core.get_aval(x))
 
 
 ### Custom transposition
@@ -1292,11 +1206,11 @@ def linear_call(fun: Callable, fun_transpose: Callable, residual_args,
   f_in_tree = treedef_tuple((res_tree, lin_tree))
   f, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), f_in_tree)
 
-  res_avals = map(abstractify, operands_res)
-  lin_avals = map(abstractify, operands_lin)
+  res_avals = map(core.get_aval, operands_res)
+  lin_avals = map(core.get_aval, operands_lin)
   f_jaxpr, f_consts = _initial_style_jaxpr(f, (*res_avals, *lin_avals))
   f_jaxpr = _close_jaxpr(f_jaxpr)
-  out_avals = map(core.raise_to_shaped, f_jaxpr.out_avals)
+  out_avals = f_jaxpr.out_avals
 
   t_in_tree = treedef_tuple((res_tree, out_tree()))
   t, t_out_tree = flatten_fun_nokwargs(lu.wrap_init(fun_transpose), t_in_tree)
@@ -1350,7 +1264,7 @@ def _linear_call_transpose_rule(cts, *args, callee, transpose,
   return [None] * (num_callee_consts + num_transpose_consts + num_res) + cts_out
 
 def _linear_call_abstract_eval(*args, **kwargs):
-  return map(core.raise_to_shaped, kwargs['callee'].out_avals)
+  return kwargs['callee'].out_avals
 
 linear_call_p = core.Primitive('linear_call')
 linear_call_p.multiple_results = True
@@ -1483,7 +1397,7 @@ def optimize_remat_of_custom_vjp_fwd(
                                        in_tree, out_type)
     flat_fwd = _fix_fwd_args(flat_fwd)
 
-    in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
+    in_avals = [core.get_aval(x) for x in args_flat]
     fwd_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fwd, in_avals)
     fwd_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(fwd_jaxpr))
     prim_tree, res_tree = out_trees()
@@ -1511,11 +1425,11 @@ def optimize_remat_of_custom_vjp_fwd(
 
   return wrapped_fwd
 
-@lu.transformation
-def _fix_fwd_args(*args):
+@lu.transformation2
+def _fix_fwd_args(f, *args):
   args = [(x, True) for x in args]
   args = [x for pair in args for x in pair]
-  yield (yield args, {})
+  return f(*args)
 
 def _remat_opt_impl(
     *args,
@@ -1532,7 +1446,7 @@ def _remat_opt_abstract_eval(*args, fwd_jaxpr: core.ClosedJaxpr, **_):
   return fwd_jaxpr.out_avals, fwd_jaxpr.effects
 
 def _remat_opt_vmap(
-    spmd_axis_name, axis_size, axis_name, main_type, args, in_dims,
+    axis_data, args, in_dims,
     *,
     num_consts: int,
     num_res: int,
@@ -1541,11 +1455,9 @@ def _remat_opt_vmap(
 ):
   args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
           else x for x, d in zip(args, in_dims)]
-
   in_batched = [d is not not_mapped for d in in_dims]
   batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(
-      fwd_jaxpr, axis_size, in_batched, False,
-      axis_name, spmd_axis_name, main_type)
+      fwd_jaxpr, axis_data, in_batched, False)
   extra_consts = batched_fwd_jaxpr.consts
   batched_fwd_jaxpr = pe.close_jaxpr(
       pe.convert_constvars_jaxpr(batched_fwd_jaxpr.jaxpr))
@@ -1557,8 +1469,7 @@ def _remat_opt_vmap(
   def batched_fun_jaxpr_thunk():
     fun_jaxpr = core.ClosedJaxpr(*fun_jaxpr_thunk())
     batched_fun_jaxpr, out_batched = batching.batch_jaxpr(
-        fun_jaxpr, axis_size, prim_batched, False, axis_name, spmd_axis_name,
-        main_type)
+        fun_jaxpr, axis_data, prim_batched, False)
     return batched_fun_jaxpr.jaxpr, batched_fun_jaxpr.consts
 
   batched_outs = remat_opt_p.bind(*extra_consts, *args,
@@ -1592,7 +1503,7 @@ def _remat_opt_jvp(
       [len(consts_dot), len(tangents)], [num_res, num_out], [num_res, num_out])
   fwd_jaxpr_jvp = pe.close_jaxpr(pe.convert_constvars_jaxpr(fwd_jaxpr_jvp_.jaxpr))
 
-  @pe._memoize
+  # @pe._memoize
   def fun_jvp_jaxpr_thunk():
     fun_jaxpr = core.ClosedJaxpr(*fun_jaxpr_thunk())
     in_nz = [True] * len(primals)
@@ -1620,6 +1531,8 @@ def _remat_opt_transpose(
       "remat optimization for custom_vjp does not support higher-order AD")
 
 def _remat_opt_dce(used_outs: list[bool], eqn: core.JaxprEqn):
+  if not any(used_outs) and not pe.has_effects(eqn):
+    return [False] * len(eqn.invars), None
   used_res, used_prims = split_list(used_outs, [eqn.params["num_res"]])
   outvars = [v for used, v in zip(used_outs, eqn.outvars) if used]
   if any(used_res):
@@ -1666,8 +1579,9 @@ remat_opt_p.def_effectful_abstract_eval(_remat_opt_abstract_eval)
 xla.register_initial_style_primitive(remat_opt_p)
 mlir.register_lowering(remat_opt_p, mlir.lower_fun(
     _remat_opt_impl, multiple_results=True))
-batching.spmd_axis_primitive_batchers[remat_opt_p] = _remat_opt_vmap
-batching.axis_primitive_batchers[remat_opt_p] = partial(_remat_opt_vmap, None)
+
+
+batching.fancy_primitive_batchers[remat_opt_p] = _remat_opt_vmap
 ad.primitive_jvps[remat_opt_p] = _remat_opt_jvp
 ad.primitive_transposes[remat_opt_p] = _remat_opt_transpose
 pe.dce_rules[remat_opt_p] = _remat_opt_dce

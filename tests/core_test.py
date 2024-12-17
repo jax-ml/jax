@@ -33,14 +33,13 @@ from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import util
 from jax._src import test_util as jtu
-from jax._src.core import UnshapedArray, ShapedArray, DBIdx
+from jax._src.core import ShapedArray, DBIdx
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
 
 config.parse_flags_with_absl()
 
-_ = pe.PartialVal.unknown(UnshapedArray(np.float32))
 __ = pe.PartialVal.unknown(ShapedArray((), np.float32))
 
 def call(f, *args):
@@ -348,13 +347,6 @@ class CoreTest(jtu.JaxTestCase):
           'This BatchTracer with object id'):
       g_vmap(jnp.ones((1, )))
 
-  def test_concrete_array_string_representation(self):
-    # https://github.com/jax-ml/jax/issues/5364
-    self.assertEqual(
-        str(core.ConcreteArray(np.dtype(np.int32),
-                               np.array([1], dtype=np.int32))),
-        'ConcreteArray([1], dtype=int32)')
-
   def test_dropvar_avals(self):
     def f(x):
       def body(c, _):
@@ -540,15 +532,6 @@ class JaxprTypeChecks(jtu.JaxTestCase):
         core.JaxprTypeError,
         r"Variable '.+_test' not defined\n\nin equation:",
         lambda: core.check_jaxpr(jaxpr))
-
-  @parameterized.parameters(
-    {'value': 0, 'weak_type': True},
-    {'value': np.int32(0), 'weak_type': False},
-    {'value': np.array([0]), 'weak_type': False}
-  )
-  def test_raise_to_shaped_weak_type(self, value, weak_type):
-    aval = core.raise_to_shaped(core.get_aval(value))
-    self.assertEqual(aval.weak_type, weak_type)
 
 
 @jtu.with_config(jax_dynamic_shapes=True)

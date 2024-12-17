@@ -23,6 +23,7 @@ from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import vector
+from jaxlib.mlir.dialects import nvvm
 import numpy as np
 
 import jax.experimental.mosaic.gpu as mgpu
@@ -445,58 +446,13 @@ def wgmma(
 def wgmma_fence(array: mgpu.FragmentedArray):
   """Fences the array construction from WGMMA instructions.
 
-  This is a little workaround to force LLVM to initialize the PTX registers
-  before the wgmma.fence.sync.aligned instruction. Otherwise, LLVM treats
-  in-register computation as pure and can move it after the fence, which is
-  explicitly disallowed by the PTX programming model.
+  LLVM treats in-register computation as pure and can move it after the fence,
+  which is explicitly disallowed by the PTX programming model. For that reason,
+  we insert an LLVM optimization barrier before the fence.
   """
-  i32 = ir.IntegerType.get_signless(32)
-  index = ir.IndexType.get()
-  dtype = array.mlir_dtype
-  src_vec_ty = ir.VectorType(array.registers.flat[0].type)
-  assert src_vec_ty.shape == [2]
-
-  if dtype == ir.F32Type.get():
-    regs = [  # pylint: disable=g-complex-comprehension
-        vector.extractelement(reg, position=c(pos, index))
-        for reg in array.registers.flat
-        for pos in range(2)
-    ]
-    reg_dtype = dtype
-    reg_constraints_list = ["=f"] * len(regs) + ["f"] * len(regs)
-    ptx_lines = [f"mov.f32 ${i}, ${len(regs)+i}" for i in range(len(regs))]
-  elif dtype == ir.F16Type.get() or dtype == ir.BF16Type.get():
-    regs = [_as_i32_reg(reg) for reg in array.registers.flat]
-    reg_dtype = i32
-    reg_constraints_list = ["=r"] * len(regs) + ["r"] * len(regs)
-    ptx_lines = [f"mov.b32 ${i}, ${len(regs)+i}" for i in range(len(regs))]
-  else:
-    raise NotImplementedError(dtype)
-  reg_constraints = ",".join(reg_constraints_list)
-  # Copy over the registers. ptxas should be able to remove the moves.
-  ptx_lines.append("wgmma.fence.sync.aligned")
-  ptx = ";\n".join(ptx_lines) + ";\n"
-  dtype_str = str(reg_dtype)
-  struct_ty = ir.Type.parse(
-      f"!llvm.struct<({','.join(dtype_str for _ in regs)})>"
-  )
-  acc_struct = llvm.inline_asm(
-      struct_ty, regs, ptx, reg_constraints,
-      asm_dialect=0, has_side_effects=True,
-  )
-  regs = [
-      llvm.extractvalue(reg_dtype, acc_struct, [i]) for i in range(len(regs))
-  ]
-  if dtype == ir.F32Type.get():
-    registers = _as_fragmented_reg_ndarray(
-          regs, array.mlir_dtype, array.registers.shape
-    )
-  elif dtype == ir.F16Type.get() or dtype == ir.BF16Type.get():
-    regs = [_unpack_i32(src_vec_ty, r) for r in regs]
-    registers = np.asarray(regs, dtype=object).reshape(array.registers.shape)
-  else:
-    raise NotImplementedError(dtype)
-  return mgpu.FragmentedArray(_registers=registers, _layout=array.layout, _is_signed=array.is_signed)
+  array = mgpu.optimization_barrier(array)
+  nvvm.wgmma_fence_aligned()
+  return array
 
 
 def _as_fragmented_reg_ndarray(flat_regs, dtype: ir.Type, shape: tuple[int, ...]):

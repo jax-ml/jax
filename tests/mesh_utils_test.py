@@ -194,33 +194,16 @@ def mock_8x8x16_devices(one_device_per_chip):
   """Hard-coded reproduction of jax.devices() output on 8x8x16."""
   return mock_tpu_devices(8, 8, 16, 'TPU v4', one_device_per_chip)
 
+def mock_4x2_v5e_devices(one_device_per_chip=True):
+  """Hard-coded reproduction of jax.devices() output on 4x2 v5e."""
+  return mock_tpu_devices(4, 2, 1, 'TPU v5 lite', one_device_per_chip)
+
+def mock_2x2x2_v5e_devices(one_device_per_chip=True):
+  """Hard-coded reproduction of jax.devices() output on 2x2x2 v5e."""
+  return mock_tpu_devices(2, 2, 2, 'TPU v5 lite', one_device_per_chip)
+
 
 class MeshUtilsTest(test_util.JaxTestCase):
-
-  @parameterized.named_parameters(
-      ('1x1', mock_1x1_devices, (1, 1, 1, 2)),
-      ('2x2', mock_2x2_devices, (2, 2, 1, 2)),
-      ('4x4', mock_4x4_devices, (4, 4, 1, 2)),
-      ('8x8', mock_8x8_devices, (8, 8, 1, 2)),
-  )
-  def test_bounds_from_last_device_2d(self, devices, expected_bounds):
-    self.assertEqual(
-        mesh_utils._bounds_from_last_device(devices()[-1]),
-        expected_bounds)
-
-  @parameterized.named_parameters(
-      ('1x2x1_t', mock_1x2x1_devices, True, (1, 2, 1, 1)),
-      ('1x2x1_f', mock_1x2x1_devices, False, (1, 2, 1, 2)),
-      ('2x2x1_t', mock_2x2x1_devices, True, (2, 2, 1, 1)),
-      ('2x2x1_f', mock_2x2x1_devices, False, (2, 2, 1, 2)),
-      ('8x8x16_t', mock_8x8x16_devices, True, (8, 8, 16, 1)),
-      ('8x8x16_f', mock_8x8x16_devices, False, (8, 8, 16, 2)),
-  )
-  def test_bounds_from_last_device_3d(self, devices, one_device_per_chip,
-                                      expected_bounds):
-    self.assertEqual(
-        mesh_utils._bounds_from_last_device(devices(one_device_per_chip)[-1]),
-        expected_bounds)
 
   @parameterized.named_parameters(
       ('1x2x1_t', (1, 2, 1), True),
@@ -369,6 +352,12 @@ class MeshUtilsTest(test_util.JaxTestCase):
             physical_mesh.shape[physical_axis]
         )
     self.assertArraysEqual(assignment, expected_assignment_matrix)
+
+  def test_create_device_mesh_non_int_error(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        "`mesh_shape` passed to `create_device_mesh` should be a sequence of ints"):
+      mesh_utils.create_device_mesh(((4,), 4))
 
   @parameterized.named_parameters(
       ('2x2x1', mock_2x2x1_devices,),
@@ -580,6 +569,20 @@ class MeshUtilsTest(test_util.JaxTestCase):
                                             [20, 21, 22, 23, 30, 31, 28, 29]]),
   )
   def test_v3_create_device_mesh(self, devices, mesh_shape,
+                                 expected_device_id_mesh):
+    global_devices = devices()
+    mesh = mesh_utils.create_device_mesh(
+        mesh_shape, devices=global_devices, contiguous_submeshes=False)
+    device_id_mesh = np.vectorize(lambda d: d.id)(mesh)
+    self.assertAllClose(np.array(expected_device_id_mesh), device_id_mesh)
+
+  @parameterized.named_parameters(
+      # Ring order over tray
+      ('4x2_1d', mock_4x2_v5e_devices, [8], [0, 1, 2, 3, 7, 6, 5, 4]),
+      # Iota order
+      ('2x2x2_1d', mock_2x2x2_v5e_devices, [8], [0, 4, 2, 6, 1, 5, 3, 7]),
+  )
+  def test_v5e_create_device_mesh(self, devices, mesh_shape,
                                  expected_device_id_mesh):
     global_devices = devices()
     mesh = mesh_utils.create_device_mesh(

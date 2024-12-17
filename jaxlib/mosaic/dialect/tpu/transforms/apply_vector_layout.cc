@@ -13,16 +13,15 @@
 #include <utility>
 #include <vector>
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/Compiler.h"
-#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Traits.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
@@ -60,6 +59,7 @@
 #include "mlir/include/mlir/IR/OperationSupport.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "jaxlib/mosaic/dialect/tpu/transforms/apply_vector_layout_extensions.h"
 #include "jaxlib/mosaic/dialect/tpu/transforms/infer_memref_layout.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 #include "xla/array.h"
@@ -164,28 +164,9 @@ FailureOr<TypedValue<MemRefType>> getInternalScratch(
   FAILUREOR_ASSIGN_OR_RETURN(
       MemRefType scratch_ref_ty,
       inferMemref(MemRefType::get(shape, elem_ty), ctx.hardware_generation,
-                  /*tpu_tiling_flags=*/{}, sublane_tiling));
+                  ctx.target_shape, /*tpu_tiling_flags=*/{}, sublane_tiling));
   return builder.create<tpu::GetInternalScratchOp>(loc, scratch_ref_ty)
       .getResult();
-}
-
-// Models Numpy's np.repeat, repeating each element `repeats` times along the
-// specified axis. For example, if `src` is [1, 2], `axis` is 0 and `repeats` is
-// 3, this will return [1, 1, 1, 2, 2, 2].
-xla::Array<Value> repeat(const xla::Array<Value> &src, const int repeats,
-                         const int64_t axis) {
-  SmallVector<int64_t> dims(toArrayRef(src.dimensions()));
-  dims[axis] *= repeats;
-  xla::Array<Value> res(dims);
-  src.Each([&](absl::Span<const int64_t> idx, const Value v) {
-    SmallVector<int64_t> res_idx(toArrayRef(idx));
-    res_idx[axis] *= repeats;
-    for (int i = 0; i < repeats; ++i) {
-      res(res_idx) = v;
-      ++res_idx[axis];
-    }
-  });
-  return res;
 }
 
 // Models Numpy's np.concatenate
@@ -490,7 +471,7 @@ FailureOr<BlockArgument> appendConstant(RewriteContext &ctx, func::FuncOp func,
       MemRefType arg_type,
       inferMemref(
           MemRefType::get(value_ty.getShape(), value_ty.getElementType()),
-          ctx.hardware_generation, /*tpu_tiling_flags=*/{}));
+          ctx.hardware_generation, ctx.target_shape, /*tpu_tiling_flags=*/{}));
   const BlockArgument argument = entry_block.insertArgument(
       entry_block.getNumArguments() - 1, arg_type, UnknownLoc::get(mlir_ctx));
   const FunctionType func_ty = func.getFunctionType();
@@ -674,6 +655,105 @@ FailureOr<SmallVector<Layout>> getInLayouts(
   return in_layouts;
 }
 
+// Insert a minor dimension to the implicit shape. The original minor dimension
+// becomes the new second minor dimension, laid out across sublanes.
+//
+// The returned vreg array uses the original tiling and the offsets specified in
+// new_offsets to hold the value with the new implicit shape.
+//
+// Args:
+// vregs:       The vreg array with *implicit* array shape.
+// ishape:      The implicit shape of the represented value.
+// layout:      The layout used for the represented value. The implicit
+//              dimension is ignored, since this function operates directly at
+//              the level of the implicit shape.
+// new_offsets: The offsets to use for the layout of the returned vreg array.
+FailureOr<xla::Array<Value>> insertImplicitMinorDimension(
+    RewriteContext &ctx, OpBuilder &builder, const Location loc,
+    const xla::Array<Value> &vregs, const ArrayRef<int64_t> ishape,
+    const VectorLayout &layout, const LayoutOffsets new_offsets) {
+  if (layout.bitwidth() != 32 || !layout.hasNativeTiling(ctx.target_shape)) {
+    return emitError(loc, "Not implemented: Unsupported bitwidth or tiling");
+  }
+  if (layout.offsets()[1].has_value()) {
+    if (!new_offsets[0]) {
+      // TODO(tlongeri): This can only be valid if the dim size is 1.
+      return emitError(loc, "Not implemented: Replication mismatch");
+    }
+    if (*new_offsets[0] != *layout.offsets()[1] % ctx.target_shape[0] &&
+        *layout.offsets()[1] + *(ishape.end() - 1) > ctx.target_shape[1]) {
+      // This requires blending data from different vregs.
+      return emitError(loc,
+                       "Not implemented: Misaligned offsets and shape does not "
+                       "fit in one vreg");
+    }
+  }
+  // new_layout is only to get the new vreg array shape, the implicit dim is
+  // irrelevant (since we already have the implicit shape):
+  const VectorLayout new_layout(layout.bitwidth(), new_offsets, layout.tiling(),
+                                VectorLayout::ImplicitDim::kNone);
+  SmallVector<int64_t> new_ishape(ishape);
+  new_ishape.push_back(1);
+  xla::Array<Value> new_vregs(new_layout.tileArrayShape(
+      /*src_is_implicit=*/true, /*res_is_implicit=*/true, std::move(new_ishape),
+      ctx.target_shape));
+  // Preallocate an indices vector to avoid repeated allocations:
+  SmallVector<int64_t> idxs;
+  new_vregs.Each([&](const absl::Span<const int64_t> dst_idx,
+                     Value *const dst_vreg) {
+    // Indices of the new vreg in the new vreg array:
+    const int64_t new_2nd_minor_idx = *(dst_idx.end() - 2);
+    const int64_t new_3rd_minor_idx = *(dst_idx.end() - 3);
+    idxs.assign(dst_idx.begin(), dst_idx.end());
+    if (!layout.offsets()[0].has_value() && new_3rd_minor_idx != 0) {
+      // All vregs along that dimension are the same
+      *(idxs.end() - 3) = 0;
+      *dst_vreg = new_vregs(idxs);
+    } else if (!layout.offsets()[1].has_value() && new_2nd_minor_idx != 0) {
+      // All vregs along that dimension are the same
+      *(idxs.end() - 2) = 0;
+      *dst_vreg = new_vregs(idxs);
+    } else {
+      // dst_vreg will hold slice [row_idx, col_idx:(col_idx + target_shape[0])]
+      // of the after-offsets source shape
+      const int64_t row_idx =
+          layout.offsets()[0] ? new_3rd_minor_idx + *layout.offsets()[0] : 0;
+      const int64_t col_idx = layout.offsets()[1]
+                                  ? new_2nd_minor_idx * ctx.target_shape[0] +
+                                        *layout.offsets()[1] - *new_offsets[0]
+                                  : 0;
+
+      idxs.pop_back();
+      *(idxs.end() - 2) = row_idx / ctx.target_shape[0];
+      *(idxs.end() - 1) = col_idx / ctx.target_shape[1];
+      Value src_vreg = vregs(idxs);
+      // TODO(tlongeri): We can sometimes skip operations when dst_vreg will
+      // hold a single non-padding element (first or last) and we don't need
+      // replication in the output.
+      if (layout.offsets()[0].has_value()) {
+        // [ . . . . . . . . ]    [ . . . . a b c d ]
+        // [ . . . . a b c d ] => [ . . . . a b c d ]
+        // [ . . . . . . . . ]    [ . . . . a b c d ]
+        // [ . . . . . . . . ]    [ . . . . a b c d ]
+        src_vreg = broadcastSublane(
+            builder, src_vreg,
+            /*sublane_idx=*/row_idx % ctx.target_shape[0], ctx.target_shape);
+      }
+      if (layout.offsets()[1].has_value()) {
+        // [ . . . . a b c d ]    [ a a a a a a a a ]
+        // [ . . . . a b c d ] => [ b b b b b b b b ]
+        // [ . . . . a b c d ]    [ c c c c c c c c ]
+        // [ . . . . a b c d ]    [ d d d d d d d d ]
+        src_vreg = builder.create<BroadcastInSublanesOp>(
+            loc, src_vreg.getType(), src_vreg,
+            /*lane=*/col_idx % ctx.target_shape[1]);
+      }
+      *dst_vreg = src_vreg;
+    }
+  });
+  return new_vregs;
+}
+
 LogicalResult elementwise_op_rule(RewriteContext &ctx, Operation &op,
                                   const ArrayRef<Layout> layouts_in,
                                   const ArrayRef<Layout> layouts_out) {
@@ -770,20 +850,13 @@ FailureOr<xla::Array<Value>> ext_op_rule_impl(RewriteContext &ctx,
                                               const VectorLayout &layout_out) {
   const auto result_ty = cast<VectorType>(op.getResult().getType());
   auto source = cast<TypedValue<VectorType>>(op.getIn());
-  const auto source_ty = source.getType();
   auto output_vregs_shape =
-      layout_out.tileArrayShape(result_ty.getShape(), ctx.target_shape);
+      layout_out.tileArrayImplicitShape(result_ty.getShape(), ctx.target_shape);
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> input_vregs,
-      disassemble(builder, layout_in, source, ctx.target_shape));
+      disassemble(builder, layout_in, source, ctx.target_shape,
+                  /*use_implicit_shape=*/true));
   xla::Array<Value> output_vregs(output_vregs_shape);
-  // TODO(jevinjiang): maybe just use tileArrayImplicitShape in disassemble?
-  if (layout_in.implicit_dim() != VectorLayout::ImplicitDim::kNone) {
-    input_vregs.Reshape(layout_in.tileArrayImplicitShape(source_ty.getShape(),
-                                                         ctx.target_shape));
-    output_vregs.Reshape(layout_out.tileArrayImplicitShape(result_ty.getShape(),
-                                                           ctx.target_shape));
-  }
   const VectorType res_vreg_ty =
       getNativeVregType(result_ty.getElementType(), ctx.target_shape);
   if (layout_in.implicit_dim() != layout_out.implicit_dim()) {
@@ -801,7 +874,8 @@ FailureOr<xla::Array<Value>> ext_op_rule_impl(RewriteContext &ctx,
       int64_t vreg_part = *(input_vreg_idxs.end() - 2) % packing;
       *(input_vreg_idxs.end() - 2) /= packing;
       *v = builder.create<UnpackSubelementsOp>(
-          op.getLoc(), res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part);
+          op.getLoc(), res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part,
+          tpu::PackFormat::kCompressed);
     });
   } else {
     if (layout_in.tiling() != layout_out.tiling()) {
@@ -817,11 +891,9 @@ FailureOr<xla::Array<Value>> ext_op_rule_impl(RewriteContext &ctx,
       input_vreg_idxs.back() /= packing;
       const int64_t vreg_part = idxs.back() % packing;
       *v = builder.create<UnpackSubelementsOp>(
-          op.getLoc(), res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part);
+          op.getLoc(), res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part,
+          tpu::PackFormat::kCompressed);
     });
-  }
-  if (layout_out.implicit_dim() != VectorLayout::ImplicitDim::kNone) {
-    output_vregs.Reshape(output_vregs_shape);
   }
   return output_vregs;
 }
@@ -845,8 +917,9 @@ LogicalResult arith_extf_rule(RewriteContext &ctx, Operation &op,
                        *layouts_out.front()));
   const auto result_ty = cast<VectorType>(extf_op.getResult().getType());
   extf_op.replaceAllUsesWith(assemble(builder, result_ty, *layouts_out.front(),
-                                 std::move(output_vregs), ctx.target_shape)
-                            .getResult());
+                                      std::move(output_vregs), ctx.target_shape,
+                                      /*use_implicit_shape=*/true)
+                                 .getResult());
   extf_op.erase();
   return success();
 }
@@ -866,8 +939,10 @@ LogicalResult arith_extsi_rule(RewriteContext &ctx, Operation &op,
                        *layouts_out.front()));
   const auto result_ty = cast<VectorType>(extsi_op.getResult().getType());
   extsi_op.replaceAllUsesWith(assemble(builder, result_ty, *layouts_out.front(),
-                                 std::move(output_vregs), ctx.target_shape)
-                            .getResult());
+                                       std::move(output_vregs),
+                                       ctx.target_shape,
+                                       /*use_implicit_shape=*/true)
+                                  .getResult());
   extsi_op.erase();
   return success();
 }
@@ -918,8 +993,10 @@ LogicalResult arith_extui_rule(RewriteContext &ctx, Operation &op,
     *v = builder.create<BitcastVregOp>(op.getLoc(), res_vreg_ty, unpacked);
   });
   extui_op.replaceAllUsesWith(assemble(builder, result_ty, *layouts_out.front(),
-                                 std::move(output_vregs), ctx.target_shape)
-                            .getResult());
+                                       std::move(output_vregs),
+                                       ctx.target_shape,
+                                       /*use_implicit_shape=*/true)
+                                  .getResult());
   extui_op.erase();
   return success();
 }
@@ -930,13 +1007,13 @@ LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
                                  const VectorLayout &layout_out) {
   ImplicitLocOpBuilder builder(op.getLoc(), op.getOperation());
   auto source = cast<TypedValue<VectorType>>(op.getIn());
-  const auto source_ty = source.getType();
   auto result_ty = cast<VectorType>(op.getResult().getType());
   auto output_vregs_shape =
-      layout_out.tileArrayShape(result_ty.getShape(), ctx.target_shape);
+      layout_out.tileArrayImplicitShape(result_ty.getShape(), ctx.target_shape);
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> input_vregs,
-      disassemble(builder, layout_in, source, ctx.target_shape));
+      disassemble(builder, layout_in, source, ctx.target_shape,
+                  /*use_implicit_shape=*/true));
   xla::Array<Value> output_vregs(output_vregs_shape);
   if (layout_in.bitwidth() != 32) {
     return op.emitOpError("Not implemented: Only 32-bit truncation supported");
@@ -950,12 +1027,6 @@ LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
   }
   if (layout_in.tiling() != ctx.target_shape) {
     return op.emitOpError("Not implemented: Only (8,128) tiling supported");
-  }
-  if (layout_in.implicit_dim() != VectorLayout::ImplicitDim::kNone) {
-    input_vregs.Reshape(layout_in.tileArrayImplicitShape(source_ty.getShape(),
-                                                         ctx.target_shape));
-    output_vregs.Reshape(layout_out.tileArrayImplicitShape(result_ty.getShape(),
-                                                           ctx.target_shape));
   }
   VectorType res_vreg_ty =
       getNativeVregType(result_ty.getElementType(), ctx.target_shape);
@@ -1001,11 +1072,9 @@ LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
   } else {
     return op.emitOpError("Not implemented: unsupported output tiling");
   }
-  if (layout_out.implicit_dim() != VectorLayout::ImplicitDim::kNone) {
-    output_vregs.Reshape(output_vregs_shape);
-  }
   op.replaceAllUsesWith(assemble(builder, result_ty, layout_out,
-                                 std::move(output_vregs), ctx.target_shape)
+                                 std::move(output_vregs), ctx.target_shape,
+                                 /*use_implicit_shape=*/true)
                             .getResult());
   op.erase();
   return success();
@@ -1714,15 +1783,36 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
       llvm::all_of(layouts_in, [&](const Layout &l) { return l.has_value(); }));
   TPU_ASSERT_OP(layouts_out.front().has_value());
   auto matmul_op = cast<tpu::MatmulOp>(op);
-  auto transpose_lhs = matmul_op.getTransposeLhs();
-  auto transpose_rhs = matmul_op.getTransposeRhs();
+  if (matmul_op.getTransposeRhs()) {
+    return op.emitOpError(
+        "Transposition must have been erased into dimension numbers during "
+        "canonicalization");
+  }
+
+  auto dimension_numbers = matmul_op.getDimensionNumbers();
+  if (!dimension_numbers.has_value()) {
+    return op.emitOpError(
+        "Dimension numbers must be provided, ensure canonicalization has been "
+        "run.");
+  }
+  auto transposed_mkn = isTransposedMatmul(dimension_numbers.value());
+  if (!transposed_mkn.has_value()) {
+    return op.emitOpError(
+        "Dimension numbers must be MKN, ensure canonicalization has been "
+        "run.");
+  }
+  auto [transpose_lhs, transpose_rhs] = transposed_mkn.value();
+  if (transpose_lhs) {
+    return op.emitOpError(
+        "Transposition of LHS is not supported in apply_vector_layout, ensure "
+        "canonicalization has been run.");
+  }
+
   auto &layout_lhs = *layouts_in[0];
   auto &layout_rhs = *layouts_in[1];
   auto &layout_acc = *layouts_in[2];
-  auto layout_out = *layouts_out[0];
-  if (transpose_lhs) {
-    return op.emitOpError("Not implemented: Transposed LHS");
-  }
+  auto &layout_out = *layouts_out[0];
+
   const std::array<std::reference_wrapper<const VectorLayout>, 4> all_layouts =
       {layout_lhs, layout_rhs, layout_acc, layout_out};
   for (const VectorLayout &layout : all_layouts) {
@@ -1740,7 +1830,7 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
     acc = tpu_matmul_op.getAcc();
     res = tpu_matmul_op.getResult();
   } else {
-    LOG(FATAL) << "Unexpected op type";
+    return op.emitOpError("Expected a tpu::MatmulOp");
   }
 
   for (const std::optional<VectorLayout> &layout_opt : layouts_in) {
@@ -1755,26 +1845,13 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
     }
   }
   if (acc.getType().getElementType().getIntOrFloatBitWidth() != 32) {
-    return op.emitOpError("Not implemented: Non-32-bit matmul result");
+    return op.emitOpError("Not implemented: Non-32-bit matmul acc");
   }
   const ArrayRef<int64_t> lhs_shape = lhs.getType().getShape();
   const ArrayRef<int64_t> rhs_shape = rhs.getType().getShape();
   // TODO(tlongeri): This should be part of the tpu::MatmulOp verifier
   TPU_ASSERT_EQ_OP(lhs_shape.size(), 2);
   TPU_ASSERT_EQ_OP(rhs_shape.size(), 2);
-  // The code below puts no constraints on the second dimension of both lhs and
-  // rhs. However, leading axis of lhs and rhs needs to be a multiple of native
-  // tiling for packed types.
-  if (layout_lhs.packing() != 1 && lhs_shape[0] % layout_lhs.tiling()[0] != 0) {
-    return op.emitOpError(
-        "Not implemented: Unsupported LHS shape with padded tiling and "
-        "narrower data type");
-  }
-  if (layout_rhs.packing() != 1 && rhs_shape[0] % layout_rhs.tiling()[0] != 0) {
-    return op.emitOpError(
-        "Not implemented: Unsupported RHS shape with padded tiling and "
-        "narrower data type");
-  }
 
   const int64_t padded_lhs_rows =
       llvm::alignTo(lhs_shape[0], layout_lhs.tiling()[0]);
@@ -1785,10 +1862,6 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
   const int64_t padded_rhs_cols =
       llvm::alignTo(rhs_shape[1], layout_rhs.tiling()[1]);
 
-  if (llvm::alignTo(lhs_shape[0], layout_acc.tiling()[0]) != padded_lhs_rows) {
-    return op.emitOpError(
-        "Not implemented: Matmul acc requires less padding than lhs");
-  }
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> lhs_vregs,
       disassemble(builder, layout_lhs, lhs, ctx.target_shape));
@@ -1799,51 +1872,97 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
       xla::Array<Value> rhs_vregs,
       disassemble(builder, layout_rhs, rhs, ctx.target_shape));
   TPU_ASSERT_EQ_OP(padded_lhs_rows, lhs_vregs.dim(0) * layout_lhs.tiling()[0]);
-  TPU_ASSERT_EQ_OP(padded_lhs_rows, acc_vregs.dim(0) * layout_acc.tiling()[0]);
   TPU_ASSERT_EQ_OP(padded_rhs_rows, rhs_vregs.dim(0) * layout_rhs.tiling()[0]);
 
-  const VectorType i32_vreg =
+  const VectorType i32_vreg_ty =
       getNativeVregType(builder.getI32Type(), ctx.target_shape);
-  auto getVmaskByPaddingEnd = [&](int64_t dim, int64_t padding,
-                                  VectorType vreg_ty) {
+  auto getX32VmaskByPaddingEnd = [&](int64_t dim, int64_t padding) {
     CHECK(dim == 0 || dim == 1);
     CHECK(padding >= 0 && padding <= ctx.target_shape[dim]);
-    auto mask = cast<TypedValue<VectorType>>(
+    return cast<TypedValue<VectorType>>(
         builder
             .create<arith::CmpIOp>(
                 arith::CmpIPredicate::slt,
-                builder.create<tpu::IotaOp>(i32_vreg,
+                builder.create<tpu::IotaOp>(i32_vreg_ty,
                                             builder.getI32IntegerAttr(dim)),
                 builder.create<arith::ConstantOp>(DenseElementsAttr::get(
-                    i32_vreg, builder.getI32IntegerAttr(ctx.target_shape[dim] -
-                                                        padding))))
+                    i32_vreg_ty, builder.getI32IntegerAttr(
+                                     ctx.target_shape[dim] - padding))))
             .getResult());
-    if (vreg_ty.getShape() != mask.getType().getShape()) {
-      mask = builder.create<tpu::MaskCastOp>(
-          VectorType::get(vreg_ty.getShape(), builder.getI1Type()), mask);
-    }
-    return mask;
   };
 
   // We can also extend this helper function with padding_top and padding_left
   // based on the offsets in vregs.
-  auto maskVregs = [&](xla::Array<Value> &vregs, Value zeros,
-                       int64_t padding_bottom, int64_t padding_right) {
+  const Value i32_zeros_vreg = builder.create<arith::ConstantOp>(
+      op.getLoc(),
+      DenseElementsAttr::get(i32_vreg_ty, builder.getI32IntegerAttr(0)));
+  const Value i32_max_vreg = builder.create<arith::ConstantOp>(
+      op.getLoc(), DenseElementsAttr::get(
+                       i32_vreg_ty, builder.getI32IntegerAttr(0xffffffff)));
+  auto maskVregs = [&](xla::Array<Value> &vregs, int64_t padding_bottom,
+                       int64_t padding_right) {
     auto vreg_ty = cast<VectorType>(vregs.begin()->getType());
+    int packing = vreg_ty.getRank() > 2 ? vreg_ty.getShape()[2] : 1;
     // Mask out the bottom.
     if (padding_bottom > 0) {
-      auto mask_bottom = getVmaskByPaddingEnd(0, padding_bottom, vreg_ty);
+      // We have limited the row size of LHS and RHS need to be a multiple of
+      // native tiling at the beginning of this rule. Therefore, it is safe to
+      // bitcast to x32 vreg for masking.
+      int sub_padding = padding_bottom % packing;
+      int x32_padding_bottom = padding_bottom / packing;
+      auto mask_bottom = getX32VmaskByPaddingEnd(0, x32_padding_bottom);
+      // Create an int32 vreg which contains subelement masking and then
+      // logical_and with target vreg to mask out the unaligned paddings.
+      // Eg. if padding_bottom = 5, packing = 2, and assume the vreg shape is
+      // [8, 128], then the mask will be:
+      //
+      // sublane 0: [0xffffffff, 0xffffffff, ..., 0xffffffff]
+      // sublane 1: [0xffffffff, 0xffffffff, ..., 0xffffffff]
+      // sublane 2: [0xffffffff, 0xffffffff, ..., 0xffffffff]
+      // sublane 3: [0xffffffff, 0xffffffff, ..., 0xffffffff]
+      // sublane 4: [0xffffffff, 0xffffffff, ..., 0xffffffff]
+      // sublane 5: [0x0000ffff, 0x0000ffff, ..., 0x0000ffff]
+      // sublane 6: [0         , 0         , ..., 0         ]
+      // sublane 7: [0         , 0         , ..., 0         ]
+      //
+      // Through this way, in order to mask sub-elements, each target vreg only
+      // needs to apply 1 op (logical_and) instead of 3 ops (unpacking + select
+      // + packing).
+      Value partial_sublane_mask = builder.create<arith::ConstantOp>(
+          op.getLoc(),
+          DenseElementsAttr::get(
+              i32_vreg_ty,
+              builder.getI32IntegerAttr(
+                  0xffffffff >>
+                  (sub_padding * vreg_ty.getElementTypeBitWidth()))));
+      // Insert 0xffffffff above the blended sublane.
+      Value sublane_mask = builder.create<arith::SelectOp>(
+          getX32VmaskByPaddingEnd(0, x32_padding_bottom + 1), i32_max_vreg,
+          partial_sublane_mask);
+      // Insert 0 below the blended sublane.
+      sublane_mask = builder.create<arith::SelectOp>(mask_bottom, sublane_mask,
+                                                     i32_zeros_vreg);
       for (int64_t i = 0; i < vregs.dim(1); ++i) {
         Value &vreg = vregs({vregs.dim(0) - 1, i});
-        vreg = builder.create<arith::SelectOp>(mask_bottom, vreg, zeros);
+        Value i32_vreg = builder.create<tpu::BitcastVregOp>(i32_vreg_ty, vreg);
+        if (sub_padding > 0) {
+          i32_vreg = builder.create<arith::AndIOp>(i32_vreg, sublane_mask);
+        } else {
+          i32_vreg = builder.create<arith::SelectOp>(mask_bottom, i32_vreg,
+                                                     i32_zeros_vreg);
+        }
+        vreg = builder.create<tpu::BitcastVregOp>(vreg_ty, i32_vreg);
       }
     }
     // Mask out the right.
     if (padding_right > 0) {
-      auto mask_right = getVmaskByPaddingEnd(1, padding_right, vreg_ty);
+      auto mask_right = getX32VmaskByPaddingEnd(1, padding_right);
       for (int64_t i = 0; i < vregs.dim(0); ++i) {
         Value &vreg = vregs({i, vregs.dim(1) - 1});
-        vreg = builder.create<arith::SelectOp>(mask_right, vreg, zeros);
+        Value i32_vreg = builder.create<tpu::BitcastVregOp>(i32_vreg_ty, vreg);
+        i32_vreg = builder.create<arith::SelectOp>(mask_right, i32_vreg,
+                                                   i32_zeros_vreg);
+        vreg = builder.create<tpu::BitcastVregOp>(vreg_ty, i32_vreg);
       }
     }
   };
@@ -1870,11 +1989,11 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
                              getZerosVergLike(*acc_vregs.begin()));
 
   // Only mask out the paddings on contracting dim of LHS and RHS.
-  maskVregs(lhs_vregs, lhs_zeros_vreg, 0, padded_lhs_cols - lhs_shape[1]);
+  maskVregs(lhs_vregs, 0, padded_lhs_cols - lhs_shape[1]);
   if (transpose_rhs) {
-    maskVregs(rhs_vregs, rhs_zeros_vreg, 0, padded_rhs_cols - rhs_shape[1]);
+    maskVregs(rhs_vregs, 0, padded_rhs_cols - rhs_shape[1]);
   } else {
-    maskVregs(rhs_vregs, rhs_zeros_vreg, padded_rhs_rows - rhs_shape[0], 0);
+    maskVregs(rhs_vregs, padded_rhs_rows - rhs_shape[0], 0);
   }
 
   // TODO(b/328094640): use latch 3 for short dimensions.
@@ -1882,36 +2001,54 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
   // At this point, all paddings on vregs are masked out. For now, we
   // append zero vregs to make LHS's second dim, both RHS's dims and ACC's
   // second dim to be a multiple of mxu_size.
-  if (ctx.mxu_shape[0] != ctx.mxu_shape[1]) {
-    return op.emitOpError(
-        "Not implemented: MXU contracting size and noncontracting size are "
-        "different");
+  auto mxu_contracting_size = ctx.mxu_shape[0];
+  auto mxu_noncontracting_size = ctx.mxu_shape[1];
+  if (lhs.getType().getElementType().isSignlessInteger(4) &&
+      rhs.getType().getElementType().isSignlessInteger(4)) {
+    mxu_contracting_size *= 2;
   }
-  int64_t mxu_size = ctx.mxu_shape[0];
-  CHECK_EQ(mxu_size % ctx.target_shape[0], 0);
-  CHECK_EQ(mxu_size % ctx.target_shape[1], 0);
-  auto mxu_row_vregs = mxu_size / (ctx.target_shape[0] * layout_rhs.packing());
-  auto mxu_col_vregs = mxu_size / ctx.target_shape[1];
-  int64_t target_lhs_col_vregs = llvm::alignTo(lhs_vregs.dim(1), mxu_col_vregs);
-  int64_t target_rhs_row_vregs = llvm::alignTo(rhs_vregs.dim(0), mxu_row_vregs);
-  int64_t target_rhs_col_vregs = llvm::alignTo(rhs_vregs.dim(1), mxu_col_vregs);
-  int64_t target_acc_col_vregs = llvm::alignTo(acc_vregs.dim(1), mxu_col_vregs);
+  auto rhs_row_size = mxu_contracting_size;
+  auto rhs_col_size = mxu_noncontracting_size;
+  if (transpose_rhs) {
+    rhs_row_size = mxu_noncontracting_size;
+    rhs_col_size = mxu_contracting_size;
+  }
+  CHECK_EQ(rhs_row_size % ctx.target_shape[1], 0);
+  CHECK_EQ(rhs_col_size % ctx.target_shape[1], 0);
+
+  // Here, a single group corresponds to a single matmul invocation in unrolled
+  // code. The RHS group matches the MXU shape.
+  auto lhs_col_vregs_per_group = mxu_contracting_size / ctx.target_shape[1];
+  auto rhs_row_vregs_per_group =
+      rhs_row_size / (ctx.target_shape[0] * layout_rhs.packing());
+  auto rhs_col_vregs_per_group = rhs_col_size / ctx.target_shape[1];
+  auto acc_col_vregs_per_group = mxu_noncontracting_size / ctx.target_shape[1];
+  int64_t target_lhs_col_vregs =
+      llvm::alignTo(lhs_vregs.dim(1), lhs_col_vregs_per_group);
+  int64_t target_rhs_row_vregs =
+      llvm::alignTo(rhs_vregs.dim(0), rhs_row_vregs_per_group);
+  int64_t target_rhs_col_vregs =
+      llvm::alignTo(rhs_vregs.dim(1), rhs_col_vregs_per_group);
+  int64_t target_acc_col_vregs =
+      llvm::alignTo(acc_vregs.dim(1), acc_col_vregs_per_group);
 
   xla::Array<Value> target_lhs_vregs({lhs_vregs.dim(0), target_lhs_col_vregs},
                                      lhs_zeros_vreg);
   xla::Array<Value> target_rhs_vregs(
       {target_rhs_row_vregs, target_rhs_col_vregs}, rhs_zeros_vreg);
-  xla::Array<Value> target_acc_vregs({acc_vregs.dim(0), target_acc_col_vregs},
-                                     acc_zeros_vreg);
+  xla::Array<Value> target_acc_vregs(
+      {lhs_vregs.dim(0) * layout_lhs.packing(), target_acc_col_vregs},
+      acc_zeros_vreg);
   target_lhs_vregs.UpdateSlice(lhs_vregs, {0, 0});
   target_rhs_vregs.UpdateSlice(rhs_vregs, {0, 0});
   target_acc_vregs.UpdateSlice(acc_vregs, {0, 0});
 
   // Now we can regroup vregs from target vregs.
-  const auto lhs_col_ty = VectorType::get({padded_lhs_rows, mxu_size},
-                                          lhs.getType().getElementType());
-  const auto acc_col_ty = VectorType::get({padded_lhs_rows, mxu_size},
-                                          acc.getType().getElementType());
+  const auto lhs_col_ty = VectorType::get(
+      {padded_lhs_rows, mxu_contracting_size}, lhs.getType().getElementType());
+  const auto acc_col_ty =
+      VectorType::get({padded_lhs_rows, mxu_noncontracting_size},
+                      acc.getType().getElementType());
   const ArrayAttr lhs_layout_attr =
       builder.getArrayAttr({builder.getAttr<VectorLayoutAttr>(layout_lhs)});
   const ArrayAttr rhs_layout_attr =
@@ -1919,69 +2056,72 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
   const ArrayAttr acc_layout_attr =
       builder.getArrayAttr({builder.getAttr<VectorLayoutAttr>(layout_acc)});
 
-  int64_t nk = llvm::divideCeil(lhs_shape[1], mxu_size);
-  CHECK_EQ(nk, target_lhs_vregs.dim(1) / mxu_col_vregs);
+  int64_t nk = llvm::divideCeil(lhs_shape[1], mxu_contracting_size);
+  CHECK_EQ(nk, target_lhs_vregs.dim(1) / lhs_col_vregs_per_group);
   SmallVector<tpu::RollVectorsOp> lhs_cols(nk);
   for (int64_t i = 0; i < nk; ++i) {
     const xla::Array<Value> col_vregs = target_lhs_vregs.Slice(
-        {0, i * mxu_col_vregs},
-        {target_lhs_vregs.dim(0), (i + 1) * mxu_col_vregs});
+        {0, i * lhs_col_vregs_per_group},
+        {target_lhs_vregs.dim(0), (i + 1) * lhs_col_vregs_per_group});
     lhs_cols[i] = builder.create<tpu::RollVectorsOp>(
         op.getLoc(), lhs_col_ty, XlaArrayToFlatArrayRef(col_vregs));
     lhs_cols[i]->setAttr("out_layout", lhs_layout_attr);
   }
-  // Here, "tile" is used as in the context of the MXU shape (NOT as in the
-  // context of tiled layouts).
-  const auto rhs_tile_ty =
-      VectorType::get({mxu_size, mxu_size}, rhs.getType().getElementType());
-  const int64_t rhs_vregs_per_tile = mxu_row_vregs * mxu_col_vregs;
+  const auto rhs_group_ty = VectorType::get({rhs_row_size, rhs_col_size},
+                                            rhs.getType().getElementType());
+  const int64_t rhs_vregs_per_group =
+      rhs_row_vregs_per_group * rhs_col_vregs_per_group;
 
   int64_t nj;
   if (transpose_rhs) {
-    nj = llvm::divideCeil(rhs_shape[0], mxu_size);
-    CHECK_EQ(nk, llvm::divideCeil(rhs_shape[1], mxu_size));
-    CHECK_EQ(nk, target_rhs_vregs.dim(1) / mxu_col_vregs);
-    target_rhs_vregs.Reshape(
-        {nj, rhs_vregs_per_tile / mxu_col_vregs, nk, mxu_col_vregs});
+    nj = llvm::divideCeil(rhs_shape[0], rhs_row_size);
+    CHECK_EQ(nk, llvm::divideCeil(rhs_shape[1], rhs_col_size));
+    CHECK_EQ(nk, target_rhs_vregs.dim(1) / rhs_col_vregs_per_group);
+    target_rhs_vregs.Reshape({nj, rhs_vregs_per_group / rhs_col_vregs_per_group,
+                              nk, rhs_col_vregs_per_group});
     target_rhs_vregs.TransposeDimensions({2, 0, 1, 3});
-    target_rhs_vregs.Reshape({nk, nj, rhs_vregs_per_tile});
+    target_rhs_vregs.Reshape({nk, nj, rhs_vregs_per_group});
   } else {
-    nj = llvm::divideCeil(rhs_shape[1], mxu_size);
-    CHECK_EQ(nk, llvm::divideCeil(rhs_shape[0], mxu_size));
-    CHECK_EQ(nk, target_rhs_vregs.dim(0) / mxu_row_vregs);
-    target_rhs_vregs.Reshape(
-        {nk, rhs_vregs_per_tile / mxu_col_vregs, nj, mxu_col_vregs});
+    nj = llvm::divideCeil(rhs_shape[1], rhs_col_size);
+    CHECK_EQ(nk, llvm::divideCeil(rhs_shape[0], rhs_row_size));
+    CHECK_EQ(nk, target_rhs_vregs.dim(0) / rhs_row_vregs_per_group);
+    target_rhs_vregs.Reshape({nk, rhs_vregs_per_group / rhs_col_vregs_per_group,
+                              nj, rhs_col_vregs_per_group});
     target_rhs_vregs.TransposeDimensions({0, 2, 1, 3});
-    target_rhs_vregs.Reshape({nk, nj, rhs_vregs_per_tile});
+    target_rhs_vregs.Reshape({nk, nj, rhs_vregs_per_group});
   }
 
   const tpu::ContractPrecisionAttr precision_attr =  // May be null
       op.getAttrOfType<tpu::ContractPrecisionAttr>("precision");
+  const tpu::DotDimensionNumbersAttr dot_dimension_numbers_attr =
+      defaultDimensionNumbers(builder, false, transpose_rhs);
   for (int64_t j = 0; j < nj; ++j) {
     for (int64_t k = 0; k < nk; ++k) {
       // TODO(tlongeri): there should be a way to slice without copying
-      xla::Array<Value> rhs_tile =
-          target_rhs_vregs.Slice({k, j, 0}, {k + 1, j + 1, rhs_vregs_per_tile});
-      auto rhs_rolled_tile = builder.create<tpu::RollVectorsOp>(
-          op.getLoc(), rhs_tile_ty, XlaArrayToFlatArrayRef(rhs_tile));
-      rhs_rolled_tile->setAttr("out_layout", rhs_layout_attr);
+      xla::Array<Value> rhs_group = target_rhs_vregs.Slice(
+          {k, j, 0}, {k + 1, j + 1, rhs_vregs_per_group});
+      auto rhs_rolled_group = builder.create<tpu::RollVectorsOp>(
+          op.getLoc(), rhs_group_ty, XlaArrayToFlatArrayRef(rhs_group));
+      rhs_rolled_group->setAttr("out_layout", rhs_layout_attr);
       const xla::Array<Value> acc_col_vregs = target_acc_vregs.Slice(
-          {0, j * mxu_col_vregs},
-          {target_acc_vregs.dim(0), (j + 1) * mxu_col_vregs});
+          {0, j * acc_col_vregs_per_group},
+          {target_acc_vregs.dim(0), (j + 1) * acc_col_vregs_per_group});
       auto acc_col = builder.create<tpu::RollVectorsOp>(
           op.getLoc(), acc_col_ty, XlaArrayToFlatArrayRef(acc_col_vregs));
       acc_col->setAttr("out_layout", acc_layout_attr);
       auto new_acc_col = builder.create<tpu::MatmulOp>(
-          op.getLoc(), acc_col_ty, lhs_cols[k], rhs_rolled_tile, acc_col,
-          transpose_lhs, transpose_rhs, precision_attr);
+          op.getLoc(), acc_col_ty, lhs_cols[k], rhs_rolled_group, acc_col,
+          /*transpose_lhs=*/false, /*transpose_rhs=*/false, precision_attr,
+          dot_dimension_numbers_attr);
       auto new_acc_vregs = builder.create<tpu::UnrollVectorsOp>(
           op.getLoc(),
           TypeRange(ValueRange(XlaArrayToFlatArrayRef(acc_col_vregs))),
           new_acc_col);
       new_acc_vregs->setAttr("in_layout", acc_layout_attr);
-      updateSliceFromRange(target_acc_vregs, new_acc_vregs->getResults(),
-                           {0, j * mxu_col_vregs},
-                           {target_acc_vregs.dim(0), (j + 1) * mxu_col_vregs});
+      updateSliceFromRange(
+          target_acc_vregs, new_acc_vregs->getResults(),
+          {0, j * acc_col_vregs_per_group},
+          {target_acc_vregs.dim(0), (j + 1) * acc_col_vregs_per_group});
     }
   }
   op.replaceAllUsesWith(
@@ -2509,54 +2649,202 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_OP(
       llvm::all_of(layouts_in, [](const Layout &l) { return l.has_value(); }));
   TPU_ASSERT_OP(layouts_out.front().has_value());
-  const VectorLayout &layout = *layouts_out.front();
-  for (const Layout &l : layouts_in) {
-    if (l != layout) {
-      return op.emitOpError("Not implemented: Inconsistent layouts");
-    }
-  }
   OpBuilder builder(&op);
   auto concatenate_op = cast<tpu::ConcatenateOp>(op);
   const VectorType res_ty = concatenate_op.getResult().getType();
-  const uint32_t dimension = concatenate_op.getDimension();
-  if (dimension - res_ty.getRank() >= -2) {
-    if (!layout.hasNativeTiling(ctx.target_shape) ||
-        layout.offsets() != LayoutOffsets{0, 0}) {
-      return op.emitOpError(
-          "Not implemented: Only native tiling with offset (0, 0) is supported "
-          "when concatenation along tiling dims.");
-    }
-    // Check if the concat dim size of src and res is aligned to native tiling.
-    auto check_aligned = [&](const VectorType &vty) {
-      auto i = dimension - res_ty.getRank();
-      return vty.getRank() >= 2 &&
-             *(vty.getShape().end() + i) % *(layout.tiling().end() + i) == 0;
-    };
-    bool is_aligned = check_aligned(res_ty);
-    int op_idx = 0;
-    while (is_aligned && op_idx < op.getNumOperands()) {
-      auto vty = dyn_cast<VectorType>(op.getOperand(op_idx++).getType());
-      is_aligned = check_aligned(vty);
-    }
-    if (!is_aligned) {
-      return op.emitOpError(
-          "Not implemented: Only aligned shapes are supported when "
-          "concatenation along tiling dims");
-    }
+  uint32_t dimension = concatenate_op.getDimension();
+  SmallVector<xla::Array<Value>> operand_vregs;
+  operand_vregs.reserve(op.getNumOperands());
+
+  std::optional<int64_t> tiling_dim;
+  auto res_layout = layouts_out.front();
+
+  TPU_ASSERT_OP(res_layout.has_value());
+  auto num_untiled_dims = res_ty.getRank() - res_layout->layout_rank();
+
+  if (res_ty.getRank() == 1 &&
+      res_layout->implicit_dim() == VectorLayout::ImplicitDim::kSecondMinor) {
+    tiling_dim = 1;
+  } else if (dimension >= num_untiled_dims) {
+    tiling_dim = dimension - num_untiled_dims;
   }
 
-  SmallVector<xla::Array<Value>> tiles;
-  tiles.reserve(concatenate_op->getNumOperands());
-  for (Value operand : concatenate_op.getOperands()) {
+  // Op level invariants on layouts, other op level invariants are checked in
+  // the verifier.
+  auto res_tiling = res_layout->tiling();
+  for (int i = 0; i < op.getNumOperands(); ++i) {
+    auto operand = op.getOperand(i);
+    if (!layouts_in[i].has_value()) {
+      return op.emitOpError("Not implemented: Expected input layout");
+    }
+    auto const &layout = *layouts_in[i];
+
+    if (layout.tiling() != res_tiling) {
+      return op.emitOpError("Not implemented: result/input Tiling mismatch");
+    }
+
+    if (layout.implicit_dim() != res_layout->implicit_dim()) {
+      return op.emitOpError("Not implemented: result/input offsets mismatch.");
+    }
+
+    if (layout.implicit_dim() != res_layout->implicit_dim()) {
+      return op.emitOpError(
+          "Not implemented: result/input implicit dim mismatch.");
+    }
+
+    if (i > 1) {
+      auto curr_offsets = layout.offsets();
+      auto last_operand_offsets = layouts_in[i - 1]->offsets();
+      if (tiling_dim.has_value()) {
+        // Zero out the offset in the tiling dimension for verification.
+        curr_offsets[tiling_dim.value()] = 0;
+        last_operand_offsets[tiling_dim.value()] = 0;
+      }
+      if (curr_offsets != last_operand_offsets) {
+        op.emitOpError("Not implemented: non-concat dim offset mismatch.");
+      }
+    }
+
     FAILUREOR_ASSIGN_OR_RETURN(
-        xla::Array<Value> t,
+        xla::Array<Value> vreg_array,
         disassemble(builder, layout, cast<TypedValue<VectorType>>(operand),
                     ctx.target_shape));
-    tiles.emplace_back(std::move(t));
+    operand_vregs.push_back(std::move(vreg_array));
   }
-  const xla::Array<Value> res_tiles = concatenate(tiles, dimension);
-  op.replaceAllUsesWith(
-      assemble(builder, res_ty, layout, res_tiles, ctx.target_shape));
+
+  CHECK_EQ(operand_vregs.size(), op.getNumOperands());
+  SmallVector<int64_t> vreg_array_shape =
+      res_layout->tileArrayShape(res_ty.getShape(), ctx.target_shape);
+
+  // Fill out out_vregs with nulls, to avoid a problem with where we have to
+  // blend with a vreg that has not been written to yet.
+  xla::Array<Value> out_vregs(vreg_array_shape, nullptr);
+
+  auto boundIdxConst =
+      std::bind(IdxConst, std::placeholders::_1, builder, op.getLoc());
+
+  // Handle the untiled concatenation case.
+  if (!tiling_dim.has_value()) {
+    out_vregs = concatenate(operand_vregs, dimension);
+  } else {
+    bool is_rank1_with_no_implicit_dim = res_ty.getRank() == 1 &&
+                                    res_layout->implicit_dim() ==
+                                        VectorLayout::ImplicitDim::kNone;
+    if (res_layout->implicit_dim() == VectorLayout::ImplicitDim::kMinor ||
+        is_rank1_with_no_implicit_dim) {
+      return op.emitOpError("Not implemented: implicit dim");
+    }
+    if (res_layout->implicit_dim() == VectorLayout::ImplicitDim::kSecondMinor &&
+        res_layout->bitwidth() != 32) {
+      return op.emitOpError(
+          "Not implemented: only 32-bit bitwidth supported for SecondMinor "
+          "implicit dim");
+    }
+    if (res_layout->offsets()[tiling_dim.value()] != 0) {
+      return op.emitOpError("Not implemented: result non-zero offset.");
+    }
+    if (!res_layout->hasNativeTiling(ctx.target_shape) &&
+        res_ty.getRank() != 1) {
+      return op.emitOpError("Not implemented: Non native tiling in concat.");
+    }
+
+    int64_t offset_at_dim = 0;
+    {
+      for (int i = 0; i < op.getNumOperands(); ++i) {
+        Value operand = op.getOperand(i);
+        const Layout &layout = *layouts_in[i];
+        xla::Array<Value> vreg_array = operand_vregs[i];
+        std::array<int64_t, 2> vreg_slice = layout->vregSlice(ctx.target_shape);
+        std::array<int64_t, 2> tiling = layout->tiling();
+
+        VectorType vty = cast<VectorType>(operand.getType());
+        ArrayRef<int64_t> shape = vty.getShape();
+
+        int64_t starting_point = offset_at_dim;
+        int64_t offset_amount =
+            starting_point % vreg_slice[tiling_dim.value()];
+        if (offset_amount >= tiling[tiling_dim.value()]) {
+          return op.emitError(
+              "Not implemented: Input offsets outside of the first tile");
+        }
+        if (offset_amount != layout->offsets()[tiling_dim.value()]) {
+          return op.emitOpError(
+              "Not implemented: Relayout not called, unaligned dims "
+              "concatenated without proper offsets. Ensure that "
+              "infer_vector_layout pass was called.");
+        }
+        offset_at_dim += shape[dimension];
+      }
+    }
+
+    // Tiled concatenation logic.
+    int64_t offset = 0;
+    for (size_t i = 0; i < operand_vregs.size(); ++i) {
+      auto &vreg = operand_vregs[i];
+      const auto &layout = layouts_in[i];
+      const int packing = res_layout->packing();
+
+      if (layout->tiling()[0] % packing != 0) {
+        return op.emitOpError(
+            "Illegal tiling: Non-native tiling in concat - this should "
+            "have been caught earlier!");
+      }
+
+      const int64_t operand_offset = *layout->offsets()[tiling_dim.value()];
+      if (operand_offset != 0) {
+        // We are offset, so we must blend with the previous vreg.
+        // Or, to frame it in an another way, the prior vreg
+        // stored its entire dim size in the offset, but only wrote the
+        // last dime partially.
+        offset -= 1;
+      }
+
+      const auto bitwidth = res_ty.getElementTypeBitWidth();
+      SmallVector<int64_t> out_idx;
+      vreg.Each([&](absl::Span<const int64_t> idx, Value *v) {
+        out_idx.assign(idx.begin(), idx.end());
+        out_idx[dimension] += offset;
+        if (idx[dimension] == 0 && operand_offset != 0) {
+          Value mask;
+          const VectorType vmask_ty = getNativeVregOrVmaskType(
+              builder.getI1Type(), bitwidth, ctx.target_shape);
+          if (tiling_dim.value() == 0) {  // sublane
+            if (operand_offset % packing != 0) {
+              // Packed case, degenerate where we have a half or quarter
+              // sublane.
+              // TODO(mvoz): We can probably always use the
+              // CreateSubelementMaskOp if (1) optimize it on TPUv4 and (2) Add
+              // support for unpacked types in some of the invariants in
+              // lower_to_llo.
+              mask = builder.create<tpu::CreateSubelementMaskOp>(
+                  op.getLoc(), vmask_ty, 0, operand_offset, packing);
+            } else {
+              auto sublane_offset = operand_offset / packing;
+              mask = builder.create<tpu::CreateMaskOp>(
+                  op.getLoc(), vmask_ty,
+                  ArrayRef<Value>{boundIdxConst(0), boundIdxConst(0)},
+                  ArrayRef<Value>{boundIdxConst(sublane_offset),
+                                  boundIdxConst(layout->tiling()[1])});
+            }
+          } else {  // lane
+            mask = builder.create<tpu::CreateMaskOp>(
+                op.getLoc(), vmask_ty,
+                ArrayRef<Value>{boundIdxConst(0), boundIdxConst(0)},
+                ArrayRef<Value>{boundIdxConst(layout->tiling()[0] / packing),
+                                boundIdxConst(operand_offset)});
+          }
+          // Blend the current value with the existing value in the output.
+          *v = builder.create<arith::SelectOp>(op.getLoc(), mask,
+                                               out_vregs(out_idx), *v);
+        }
+        out_vregs(out_idx) = *v;
+      });
+      offset += vreg.dim(dimension);
+    }
+  }
+  auto assembled =
+      assemble(builder, res_ty, *res_layout, out_vregs, ctx.target_shape);
+  op.replaceAllUsesWith(assembled);
   op.erase();
   return success();
 }
@@ -2812,48 +3100,6 @@ LogicalResult tpu_region_rule(RewriteContext &ctx, Operation &op,
   return success();
 }
 
-LogicalResult tpu_repeat_rule(RewriteContext &ctx, Operation &op,
-                              const ArrayRef<Layout> layouts_in,
-                              const ArrayRef<Layout> layouts_out) {
-  TPU_ASSERT_EQ_OP(layouts_in.size(), 1);
-  TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
-  TPU_ASSERT_OP(layouts_in.front().has_value());
-  TPU_ASSERT_OP(layouts_out.front().has_value());
-  const VectorLayout &layout_in = *layouts_in.front();
-  const VectorLayout &layout_out = *layouts_out.front();
-  if (layout_in.implicit_dim() != VectorLayout::ImplicitDim::kNone) {
-    return op.emitOpError("Not implemented: Only 2D layouts supported");
-  }
-  if (layout_in != layout_out) {
-    return op.emitOpError("Not implemented: Changing layout mid-repeat");
-  }
-  if (!layout_in.hasNaturalTopology(ctx.target_shape) ||
-      layout_in.offsets() != LayoutOffsets{0, 0}) {
-    return op.emitOpError("Not implemented: Non-trivial layouts unsupported");
-  }
-  OpBuilder builder(&op);
-  tpu::RepeatOp repeat_op = cast<tpu::RepeatOp>(op);
-  VectorType src_ty = repeat_op.getSource().getType();
-  const uint32_t dim = repeat_op.getDimension();
-  if (dim != src_ty.getRank() - 1) {
-    return op.emitOpError(
-        "Not implemented: Only repeats along the last dim supported");
-  }
-  if (src_ty.getShape().back() % ctx.target_shape.back() != 0) {
-    return op.emitOpError("Not implemented: Only free repeats are suppported");
-  }
-  FAILUREOR_ASSIGN_OR_RETURN(
-      const xla::Array<Value> &in_vregs,
-      disassemble(builder, layout_in, repeat_op.getSource(), ctx.target_shape));
-  xla::Array<Value> out_vregs = repeat(in_vregs, repeat_op.getTimes(), dim);
-  repeat_op->replaceAllUsesWith(
-      assemble(builder, repeat_op.getResult().getType(), layout_out, out_vregs,
-               ctx.target_shape)
-          .getOperation());
-  repeat_op->erase();
-  return success();
-}
-
 LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
                                const ArrayRef<Layout> layouts_in,
                                const ArrayRef<Layout> layouts_out) {
@@ -2883,14 +3129,29 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
   FAILUREOR_ASSIGN_OR_RETURN(
       Tiling memref_tiling,
       getMemRefTiling(load_op.getBase(), ctx.target_shape));
-  if (memref_tiling != layout_out.tiling() &&
-      !(memref_tiling[0] == 1 && layout_out.tiling()[0] == 1 &&
-        memref_tiling[1] % layout_out.tiling()[1] == 0)) {
-    // Now we can handle the case when tiling is (1, TARGET_SHAPE.lanes).
-    // TODO(b/295393167): need to support strided load for bitwidth < 32.
-    if (layout_out.bitwidth() != 32 ||
-        layout_out.tiling() != std::array<int64_t, 2>{1, ctx.target_shape[1]}) {
-      return op.emitOpError("Not implemented");
+  if (memref_tiling != layout_out.tiling()) {
+    if (memref_tiling[0] == 1 && layout_out.tiling()[0] == 1 &&
+        memref_tiling[1] % layout_out.tiling()[1] == 0) {
+      // In this case, it is valid to use output tiling (1, 128 * packing) when
+      // loading from a 1D memref.
+    } else if (layout_out.bitwidth() == 32 &&
+               layout_out.tiling() ==
+                   std::array<int64_t, 2>{1, ctx.target_shape[1]}) {
+      // In this case, it is valid to use output tiling (1, TARGET_SHAPE.lanes)
+      // because we strided-load one row from each tile of the memref. This can
+      // save us a bunch of loads!
+      // TODO(b/295393167): need to support strided load for bitwidth < 32.
+    } else if (layout_out.bitwidth() == 32 &&
+               canReinterpretToUntiledMemref(
+                   load_op.getBase(), ctx.target_shape,
+                   /*allow_minormost_padding=*/true)) {
+      // In this case, if the memref can be reinterpreted to untiled, it is
+      // valid to use any tiling for output. But using native tiling can save us
+      // a bunch of loads!
+    } else {
+      return op.emitOpError(
+          "Not implemented: dismatch in memref tiling and vector tiling in "
+          "load");
     }
   }
   // TODO(apaszke): Check that loads are from vmem!
@@ -3076,8 +3337,8 @@ LogicalResult arith_constant_rule(RewriteContext &ctx, Operation &op,
     }
     const VectorLayout &layout_out = *layouts_out.front();
     DenseElementsAttr value = cast<DenseElementsAttr>(constant_op.getValue());
-    const VectorType target_vty =
-        getNativeVregType(vty.getElementType(), ctx.target_shape);
+    const VectorType target_vty = getNativeVregOrVmaskType(
+        vty.getElementType(), layout_out.bitwidth(), ctx.target_shape);
     if (value.isSplat()) {
       if (layout_out.offsets() != LayoutOffsets{std::nullopt, std::nullopt}) {
         return op.emitOpError(
@@ -3841,6 +4102,10 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
                   src_layout.tileDataBounds(builder.getContext(), src_shape,
                                             src_idx, ctx.target_shape,
                                             allow_replicated);
+              if (data_bounds == nullptr) {
+                // Op error has already been emitted inside tileDataBounds().
+                return absl::UnknownError("Unable to obtain data bounds");
+              }
               // TODO(tlongeri): Maybe assemble/disassemble should take
               // TypedValue<VectorType> and we could save casts here and
               // elsewhere
@@ -3956,6 +4221,13 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
              dst_tiled_dims[1] % dst_vreg_slice[1] == 0) {
     // Shapecast (..., 128) -> (..., m * 128 * packing).
     no_op = true;
+  } else if (layout_in.offsets() == LayoutOffsets{0, 0} &&
+             layout_out.offsets() == LayoutOffsets{0, 0} &&
+             layout_in.tiling()[0] == 1 && layout_out.tiling()[0] == 1 &&
+             src_vreg_slice[1] == dst_vreg_slice[1] &&
+             src_tiled_dims[1] % src_vreg_slice[1] == 0 &&
+             dst_tiled_dims[1] % dst_vreg_slice[1] == 0) {
+    no_op = true;
   }
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> src_vregs,
@@ -3971,54 +4243,16 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
                layout_in.bitwidth() == 32 &&
                layout_in.hasNativeTiling(ctx.target_shape) &&
                layout_in.tiling() == layout_out.tiling() &&
-               layout_in.offsets()[0].value_or(0) == 0 &&
-               layout_in.offsets()[1] == 0 && layout_out.offsets()[0] == 0
-               // layout_out.offsets[1] can be anything, as we produce a
-               // replicated result
-    ) {
-      // First, insert the new singleton lane dimension.
-      SmallVector<int64_t> s = layout_in.implicitShape(src_shape);
-      s.push_back(1);
-      xla::Array<Value> dst_vregs_local(layout_out.tileArrayShape(
-          /*src_is_implicit=*/true, /*res_is_implicit=*/true, std::move(s),
-          ctx.target_shape));
-      TPU_ASSERT_EQ_OP(dst_vregs_local.dimensions().back(),
-                       1);  // We're inserting a singleton dimension
-      dst_vregs_local.Each(
-          [&](const absl::Span<const int64_t> dst_idx, Value *const dst_vreg) {
-            const int64_t col_idx = *(dst_idx.end() - 2);
-            const int64_t row_idx = *(dst_idx.end() - 3);
-            auto [sublanes_in_lane, rem] =
-                std::div(ctx.target_shape[1], ctx.target_shape[0]);
-            CHECK_EQ(rem, 0);
-            if (!layout_in.offsets()[0].has_value() && row_idx != 0) {
-              return;  // All vregs along that dimension are the same.
-            }
-            SmallVector<int64_t> src_idx(toArrayRef(dst_idx));
-            src_idx.pop_back();
-            *(src_idx.end() - 2) /= ctx.target_shape[0];
-            *(src_idx.end() - 1) /= sublanes_in_lane;
-            Value col_vreg = src_vregs(src_idx);
-            // BroadcastInSublanesOp requires the sublanes to be replicated.
-            if (layout_in.offsets()[0].has_value()) {
-              const int32_t sublane = row_idx % ctx.target_shape[0];
-              col_vreg = broadcastSublane(builder, col_vreg, sublane,
-                                          ctx.target_shape);
-            }
-            *dst_vreg = builder.create<BroadcastInSublanesOp>(
-                col_vreg.getType(), col_vreg,
-                /*lane=*/(col_idx % sublanes_in_lane) * ctx.target_shape[0]);
-          });
-      if (!layout_in.offsets()[0].has_value()) {
-        // Broadcast the sublane vregs.
-        // TODO(tlongeri): This could be done more efficiently
-        dst_vregs_local.Each([&](const absl::Span<const int64_t> dst_idx,
-                                 Value *const dst_vreg) {
-          SmallVector<int64_t> first_row_idx(toArrayRef(dst_idx));
-          *(first_row_idx.end() - 3) = 0;
-          *dst_vreg = dst_vregs_local(first_row_idx);
-        });
-      }
+               (!layout_in.offsets()[1].has_value() ||
+                *layout_in.offsets()[1] % ctx.target_shape[0] ==
+                    layout_out.offsets()[0] ||
+                *layout_in.offsets()[1] + src_tiled_dims[1] <=
+                    ctx.target_shape[1])) {
+      FAILUREOR_ASSIGN_OR_RETURN(
+          xla::Array<Value> dst_vregs_local,
+          insertImplicitMinorDimension(ctx, builder, op.getLoc(), src_vregs,
+                                       layout_in.implicitShape(src_shape),
+                                       layout_in, layout_out.offsets()));
       // Now, reshape the major axes of the vreg array.
       dst_vregs_local.Reshape(
           layout_out.tileArrayImplicitShape(dst_shape, ctx.target_shape));
@@ -4036,18 +4270,15 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
   shape_cast_op->erase();
   return success();
 }
-LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
-                                const ArrayRef<Layout> layouts_in,
-                                const ArrayRef<Layout> layouts_out) {
-  TPU_ASSERT_EQ_OP(layouts_out.size(), 0);
-  MLIRContext *const mlir_ctx = op.getContext();
-  TPU_ASSERT_OP(layouts_in.front().has_value());
-  TPU_ASSERT_OP(llvm::none_of(layouts_in.drop_front(),
-                              [&](const Layout &l) { return l.has_value(); }));
+
+template <typename Op>
+LogicalResult vector_store_impl(RewriteContext &ctx, Op store_op,
+                                const VectorLayout &to_store_layout,
+                                TypedValue<VectorType> store_mask = nullptr) {
+  Operation &op = *(store_op.getOperation());
+  MLIRContext *const mlir_ctx = store_op.getContext();
   ImplicitLocOpBuilder builder(op.getLoc(), &op);
-  vector::StoreOp store_op = cast<vector::StoreOp>(op);
   const VectorType ty = store_op.getValueToStore().getType();
-  const VectorLayout &to_store_layout = *layouts_in.front();
   const auto memref_ty = getMemRefType(store_op.getBase());
   if (!ty.getRank()) {
     return op.emitOpError("Not implemented: scalar stores to vmem");
@@ -4063,14 +4294,31 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
   FAILUREOR_ASSIGN_OR_RETURN(
       const Tiling memref_tiling,
       getMemRefTiling(store_op.getBase(), ctx.target_shape));
-  if (memref_tiling != to_store_layout.tiling() &&
-      !(memref_tiling[0] == 1 && to_store_layout.tiling()[0] == 1 &&
-        memref_tiling[1] % to_store_layout.tiling()[1] == 0)) {
-    // Now we can handle the case when tiling is (1, TARGET_SHAPE.lanes).
-    // TODO(b/295393167): need to support strided store for bitwidth < 32.
-    if (to_store_layout.bitwidth() != 32 ||
-        to_store_layout.tiling() != Tiling{1, ctx.target_shape[1]}) {
-      return op.emitOpError("Not implemented");
+  if (memref_tiling != to_store_layout.tiling()) {
+    if (memref_tiling[0] == 1 && to_store_layout.tiling()[0] == 1 &&
+        memref_tiling[1] % to_store_layout.tiling()[1] == 0) {
+      // In this case, it is valid to have to_store tiling (1, 128 * packing)
+      // when storing to a 1D memref.
+    } else if (to_store_layout.bitwidth() == 32 &&
+               to_store_layout.tiling() ==
+                   std::array<int64_t, 2>{1, ctx.target_shape[1]}) {
+      // In this case, it is valid to have to_store tiling (1,
+      // TARGET_SHAPE.lanes) because we strided-store one row to each tile of
+      // the memref. This can save us a bunch of stores!
+      // TODO(b/295393167): need to support strided store for bitwidth < 32.
+    } else if (to_store_layout.bitwidth() == 32 &&
+               // We accept padding in the minormost dim, because
+               // apply_vector_layout will properly mask stores。
+               canReinterpretToUntiledMemref(
+                   store_op.getBase(), ctx.target_shape,
+                   /*allow_minormost_padding=*/true)) {
+      // In this case, if the memref can be reinterpreted to untiled, it is
+      // valid to use any tiling for to_store. But using native tiling can save
+      // us a bunch of stores!
+    } else {
+      return op.emitOpError(
+          "Not implemented: dismatch in memref tiling and vector tiling in "
+          "store");
     }
   }
 
@@ -4127,10 +4375,9 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
   } else {
     // Convert dynamic store to dynamic slice + static store. This saves us a
     // bunch of scalar core work.
-    auto slice_result =
-        sliceRef(builder, store_op.getBase(),
-                 store_op.getVectorType().getShape(), store_op.getIndices(),
-                 ArrayRef<int64_t>(memref_tiling).take_back(tiled_dims));
+    auto slice_result = sliceRef(
+        builder, store_op.getBase(), ty.getShape(), store_op.getIndices(),
+        ArrayRef<int64_t>(memref_tiling).take_back(tiled_dims));
     if (failed(slice_result)) {
       return failure();
     }
@@ -4151,14 +4398,16 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
       xla::Array<Value> tiles,
       disassemble(builder, to_store_layout, store_op.getValueToStore(),
                   ctx.target_shape));
-  const int64_t ndims = ty.getRank();
-  const auto base_s =
-      is_1d ? IdxConst(0, builder, op.getLoc()) : tile_base_idxs.front();
-  const auto base_l = tile_base_idxs.back();
-  if (is_1d) {
-    tiles.Reshape(
-        to_store_layout.implicitShape(toArrayRef(tiles.dimensions())));
+  std::optional<xla::Array<Value>> tile_masks;
+  if (store_mask) {
+    FAILUREOR_ASSIGN_OR_RETURN(
+        tile_masks, disassemble(builder, to_store_layout, store_mask,
+                                ctx.target_shape, /*use_implicit_shape=*/true));
+    TPU_ASSERT_EQ_OP(tile_masks->dimensions(), tiles.dimensions());
   }
+  const int64_t ndims = ty.getRank();
+  const auto base_s = is_1d ? nullptr : tile_base_idxs.front();
+  const auto base_l = tile_base_idxs.back();
   const LayoutOffset sublane_offset = to_store_layout.offsets()[0];
   const LayoutOffset lane_offset = to_store_layout.offsets()[1];
   if (!sublane_offset.has_value() || !lane_offset.has_value()) {
@@ -4172,6 +4421,7 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
   const absl::Status status =
       tiles.EachStatus([&](const absl::Span<const int64_t> idx,
                            const Value tile) -> absl::Status {
+        const auto tile_mask = store_mask ? (*tile_masks)(idx) : nullptr;
         const std::unique_ptr<VRegDataBounds> bounds =
             to_store_layout.tileDataBounds(mlir_ctx, stored_shape,
                                            toArrayRef(idx), ctx.target_shape);
@@ -4231,19 +4481,19 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
               updated = builder.create<arith::SelectOp>(mask, tile, data);
             }
             builder.create<tpu::StoreOp>(
-                updated, base_addr, indices, sublane_mask,
-                /*mask=*/nullptr,
+                updated, base_addr, indices, sublane_mask, tile_mask,
                 /*sublane_stride=*/builder.getI32IntegerAttr(sublane_stride));
           } else {
             builder.create<tpu::StoreOp>(
                 tile, base_addr, indices, sublane_mask,
-                /*mask=*/mask,
+                tile_mask
+                    ? builder.create<arith::AndIOp>(mask, tile_mask).getResult()
+                    : mask,
                 /*sublane_stride=*/builder.getI32IntegerAttr(sublane_stride));
           }
         } else {
           builder.create<tpu::StoreOp>(
-              tile, base_addr, indices, sublane_mask,
-              /*mask=*/nullptr,
+              tile, base_addr, indices, sublane_mask, tile_mask,
               /*sublane_stride=*/builder.getI32IntegerAttr(sublane_stride));
         }
         return absl::OkStatus();
@@ -4253,7 +4503,35 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
   }
   store_op->erase();
   return success();
+}
+
+LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
+                                const ArrayRef<Layout> layouts_in,
+                                const ArrayRef<Layout> layouts_out) {
+  auto store_op = cast<vector::StoreOp>(op);
+  TPU_ASSERT_EQ_OP(layouts_out.size(), 0);
+  TPU_ASSERT_OP(layouts_in.front().has_value());
+  TPU_ASSERT_OP(llvm::none_of(layouts_in.drop_front(),
+                              [&](const Layout &l) { return l.has_value(); }));
+  return vector_store_impl(ctx, store_op, *layouts_in.front());
+}
+
+LogicalResult tpu_vector_store_rule(RewriteContext &ctx, Operation &op,
+                                    const ArrayRef<Layout> layouts_in,
+                                    const ArrayRef<Layout> layouts_out) {
+  auto store_op = cast<tpu::VectorStoreOp>(op);
+  TPU_ASSERT_EQ_OP(layouts_out.size(), 0);
+  TPU_ASSERT_OP(layouts_in.front().has_value());
+  auto other_layouts_in = layouts_in.drop_front();
+  if (store_op.getMask()) {
+    TPU_ASSERT_EQ_OP(layouts_in.front(), layouts_in.back());
+    other_layouts_in = other_layouts_in.drop_back();
   }
+  TPU_ASSERT_OP(llvm::none_of(other_layouts_in,
+                              [&](const Layout &l) { return l.has_value(); }));
+  return vector_store_impl(ctx, store_op, *layouts_in.front(),
+                           store_op.getMask());
+}
 
 LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
                                     const ArrayRef<Layout> layouts_in,
@@ -4342,7 +4620,9 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
                           incremented_batch_idx.end());
     src_slice_ends.append({(src_row + 1) * vregs_per_tile, src_col_end});
     xla::Array<Value> src_tile_vregs = src_vregs.Slice(
-        src_slice_starts, src_slice_ends, /*out_of_bounds_ok=*/true);
+        src_slice_starts, src_slice_ends,
+        builder.create<arith::ConstantOp>(
+            op.getLoc(), builder.getZeroAttr(src_vregs.begin()->getType())));
     // Drop leading singleton (batch) dimensions to have a shape that conforms
     // with the vreg array shape specified by layout_in, as expected by assemble
     src_tile_vregs.Reshape(
@@ -4443,48 +4723,84 @@ LogicalResult prng_random_bits_rule(RewriteContext &ctx, Operation &op,
 }
 
 const llvm::StringMap<rule_type> &rules() {
-  static auto rules = new llvm::StringMap<rule_type>{
-      {arith::ConstantOp::getOperationName(), arith_constant_rule},
-      {arith::ExtFOp::getOperationName(), arith_extf_rule},
-      {arith::ExtSIOp::getOperationName(), arith_extsi_rule},
-      {arith::ExtUIOp::getOperationName(), arith_extui_rule},
-      {arith::TruncFOp::getOperationName(), arith_truncf_rule},
-      {arith::TruncIOp::getOperationName(), arith_trunci_rule},
-      {func::ReturnOp::getOperationName(), func_return_rule},
-      {scf::ForOp::getOperationName(), scf_for_rule},
-      {scf::WhileOp::getOperationName(), scf_while_rule},
-      {scf::ConditionOp::getOperationName(), scf_condition_rule},
-      {scf::IfOp::getOperationName(), scf_if_rule},
-      {scf::YieldOp::getOperationName(), yield_rule},
-      {tpu::YieldOp::getOperationName(), yield_rule},
-      {tpu::RotateOp::getOperationName(), tpu_rotate_rule},
-      {tpu::DynamicRotateOp::getOperationName(), tpu_dynamic_rotate_rule},
-      {tpu::ConcatenateOp::getOperationName(), tpu_concatenate_rule},
-      {tpu::IotaOp::getOperationName(), tpu_iota_rule},
-      {tpu::GatherOp::getOperationName(), tpu_gather_rule},
-      {tpu::LoadOp::getOperationName(), tpu_load_rule},
-      {tpu::StoreOp::getOperationName(), tpu_store_rule},
-      {tpu::StridedLoadOp::getOperationName(), tpu_strided_load_rule},
-      {tpu::StridedStoreOp::getOperationName(), tpu_strided_store_rule},
-      {tpu::MatmulOp::getOperationName(), tpu_matmul_rule},
-      {tpu::RegionOp::getOperationName(), tpu_region_rule},
-      {tpu::RepeatOp::getOperationName(), tpu_repeat_rule},
-      {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},
-      {tpu::TraceOp::getOperationName(), tpu_trace_rule},
-      {tpu::AssumeLayoutOp::getOperationName(), tpu_assume_layout_rule},
-      {tpu::PRNGRandomBitsOp::getOperationName(), prng_random_bits_rule},
-      {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
-      {vector::ExtractOp::getOperationName(), vector_extract_rule},
-      {vector::LoadOp::getOperationName(), vector_load_rule},
-      {vector::MultiDimReductionOp::getOperationName(),
-       vector_multi_reduction_rule},
-      {vector::ExtractStridedSliceOp::getOperationName(),
-       vector_extract_strided_slice_rule},
-      {vector::ShapeCastOp::getOperationName(), vector_shape_cast_rule},
-      {vector::StoreOp::getOperationName(), vector_store_rule},
-      {vector::TransposeOp::getOperationName(), vector_transpose_rule}};
+  static const llvm::StringMap<rule_type> *rules = [] {
+    static auto rules = new llvm::StringMap<rule_type>{
+        {arith::ConstantOp::getOperationName(), arith_constant_rule},
+        {arith::ExtFOp::getOperationName(), arith_extf_rule},
+        {arith::ExtSIOp::getOperationName(), arith_extsi_rule},
+        {arith::ExtUIOp::getOperationName(), arith_extui_rule},
+        {arith::TruncFOp::getOperationName(), arith_truncf_rule},
+        {arith::TruncIOp::getOperationName(), arith_trunci_rule},
+        {func::ReturnOp::getOperationName(), func_return_rule},
+        {scf::ForOp::getOperationName(), scf_for_rule},
+        {scf::WhileOp::getOperationName(), scf_while_rule},
+        {scf::ConditionOp::getOperationName(), scf_condition_rule},
+        {scf::IfOp::getOperationName(), scf_if_rule},
+        {scf::YieldOp::getOperationName(), yield_rule},
+        {tpu::YieldOp::getOperationName(), yield_rule},
+        {tpu::RotateOp::getOperationName(), tpu_rotate_rule},
+        {tpu::DynamicRotateOp::getOperationName(), tpu_dynamic_rotate_rule},
+        {tpu::ConcatenateOp::getOperationName(), tpu_concatenate_rule},
+        {tpu::IotaOp::getOperationName(), tpu_iota_rule},
+        {tpu::GatherOp::getOperationName(), tpu_gather_rule},
+        {tpu::LoadOp::getOperationName(), tpu_load_rule},
+        {tpu::StoreOp::getOperationName(), tpu_store_rule},
+        {tpu::StridedLoadOp::getOperationName(), tpu_strided_load_rule},
+        {tpu::StridedStoreOp::getOperationName(), tpu_strided_store_rule},
+        {tpu::VectorStoreOp::getOperationName(), tpu_vector_store_rule},
+        {tpu::MatmulOp::getOperationName(), tpu_matmul_rule},
+        {tpu::RegionOp::getOperationName(), tpu_region_rule},
+        {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},
+        {tpu::TraceOp::getOperationName(), tpu_trace_rule},
+        {tpu::AssumeLayoutOp::getOperationName(), tpu_assume_layout_rule},
+        {tpu::PRNGRandomBitsOp::getOperationName(), prng_random_bits_rule},
+        {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
+        {vector::ExtractOp::getOperationName(), vector_extract_rule},
+        {vector::LoadOp::getOperationName(), vector_load_rule},
+        {vector::MultiDimReductionOp::getOperationName(),
+         vector_multi_reduction_rule},
+        {vector::ExtractStridedSliceOp::getOperationName(),
+         vector_extract_strided_slice_rule},
+        {vector::ShapeCastOp::getOperationName(), vector_shape_cast_rule},
+        {vector::StoreOp::getOperationName(), vector_store_rule},
+        {vector::TransposeOp::getOperationName(), vector_transpose_rule}};
+
+    llvm::StringMap<rule_type> extended_rules = mlir::tpu::extensions::rules();
+    for (auto &entry : extended_rules) {
+      rules->insert(&entry);
+    }
+    return rules;
+  }();
   return *rules;
 }
+
+// Determines whether we should handle bank conflict for the given stride and
+// max_sublane_offset.
+//
+// See `handleBankConflict` for how this is done.
+bool shouldHandleBankConflict(const ApplyVectorLayoutContext &ctx,
+                              int32_t stride, int max_sublane_offset) {
+  return ctx.hardware_generation >= 4 && ctx.vmem_banks > 0 &&
+         ctx.vmem_banks < stride * ctx.target_shape[0] &&
+         ctx.max_shuffle_sublane_offset > 0 &&
+         ctx.max_shuffle_sublane_offset >= max_sublane_offset;
+}
+
+// Handles load/store bank conflict by adding one extra sublane to stride and
+// adjusting sublane offsets accordingly.
+//
+// For example, when store stride is 4 and load sublane offsets are
+// [0, 1, 2, 3, 4, 5, 6, 7], the store bank conflict can be avoided by changing
+// stride to 5 and sublane offsets to [0, 1, 2, 3, 5, 6, 7, 8].
+void handleBankConflict(int32_t &stride, absl::Span<int> sublane_offsets) {
+  // Add one extra sublane to stride to avoid bank conflict.
+  for (int i = 0; i < sublane_offsets.size(); ++i) {
+    // Adjust sublane offsets to match the stride.
+    sublane_offsets[i] += i / stride;
+  }
+  ++stride;
+}
+
 }  // namespace
 
 RollVectorsOp assemble(OpBuilder &builder, VectorType vty,
@@ -4535,6 +4851,11 @@ FailureOr<xla::Array<Value>> disassemble(
   TPU_ASSERT_LOC(val.getLoc(), def_layout.has_value());
   TPU_ASSERT_LOC(val.getLoc(),
                  def_layout->generalizes(layout, vty.getShape(), target_shape));
+  auto layout_product =
+      xla::Product(layout.tileArrayShape(vty.getShape(), target_shape));
+  auto def_layout_product =
+      xla::Product(def_layout->tileArrayShape(vty.getShape(), target_shape));
+  TPU_ASSERT_LOC(val.getLoc(), layout_product == def_layout_product);
   // TODO(tlongeri): Maybe just add a parameter to tileArrayShape instead of
   // having `tileArrayShape` and `tileArrayImplicitShape`.
   SmallVector<int64_t> layout_shape =
@@ -5002,8 +5323,10 @@ FailureOr<xla::Array<Value>> tpu_rotate_with_overflow(
   // Compute the mask for the blend.
   // Positive blends blend "forward" and negative blends blend "backward".
   auto mask_val = amount;
+  auto vreg_rot_amount = amount;
   if (amount < 0) {
     mask_val = layout_in.tiling()[tiling_dim] - std::abs(amount);
+    vreg_rot_amount += target_shape[tiling_dim];
   }
   auto boundIdxConst = std::bind(IdxConst, std::placeholders::_1, builder, loc);
   auto mask = builder.create<tpu::CreateMaskOp>(
@@ -5015,7 +5338,8 @@ FailureOr<xla::Array<Value>> tpu_rotate_with_overflow(
   in_tiles.Each([&](absl::Span<const int64_t> idxs, Value *v) {
     if (dim >= in_tiles.num_dimensions() - 2) {
       *v = builder.create<tpu::RotateOp>(loc, res_vreg_ty, in_tiles(idxs),
-                                         amount, tiling_dim, nullptr, nullptr);
+                                         vreg_rot_amount, tiling_dim, nullptr,
+                                         nullptr);
     }
   });
 
@@ -5465,16 +5789,37 @@ LogicalResult retileToLargeTileWithScratch(
   // The older hardware has limited support for shuffles so even if we have bank
   // conflicts, we just accept them and will have the lowering unroll the
   // loads/stores.
+  int64_t num_offsets = sublane_offsets.num_elements();
+  // The max sublane offset before handling bank conflicts is always
+  // (num_offsets - 1). To avoid bank conflicts, we need to add one extra
+  // sublane to stride so (num_offsets - 1) / stride is the extra offset needed
+  // to pad sublanes.
+  //
+  // For example, if store stride = 4, sublane_count = 8, and
+  // load offsets = [0, 1, 2, 3, 4, 5, 6, 7], then the sublane offsets after
+  // handling bank conflicts will be [0, 1, 2, 3, 5, 6, 7, 8] and the max
+  // sublane offset will be 7 + (8 - 1) / 4 = 8.
+  //
+  // Before
+  //        <-------- sublanes --------->
+  //        0    1  ...                 32
+  // store: x---x---x---x---x---x---x---x
+  // load:  xxxxxxxxx--------------------
+  //
+  // After
+  //        <-------- sublanes --------->
+  //        0    5  ...                        40
+  // store: x----x----x----x----x----x----x----x
+  // load:  xxxx-xxxx---------------------------
+  //
+  // where "x" indicates a sublane that needs to be accessed and "-"" indicates
+  // a sublane that does not need to be accessed.
+  int max_sublane_offset = (num_offsets - 1) + (num_offsets - 1) / stride;
   bool should_handle_bank_confict =
-      ctx.hardware_generation >= 4 && ctx.vmem_banks > 0 &&
-      ctx.vmem_banks < stride * ctx.target_shape[0];
-  // Add one extra sublane to stride to avoid bank conflict.
+      shouldHandleBankConflict(ctx, stride, max_sublane_offset);
   if (should_handle_bank_confict) {
-    // Adjust sublane offsets to match the stride.
-    for (int i = 0; i < sublane_offsets.num_elements(); i += 1) {
-      *(sublane_offsets.begin() + i) += i / stride;
-    }
-    stride += 1;
+    handleBankConflict(stride, absl::MakeSpan(sublane_offsets.data(),
+                                              sublane_offsets.num_elements()));
   }
   sublane_offsets.TransposeDimensions({0, 2, 1});
 
@@ -5597,9 +5942,34 @@ LogicalResult retileToSmallTileWithScratch(
   // The older hardware has limited support for shuffles so even if we have
   // bank conflicts, we just accept them and will have the lowering unroll the
   // loads/stores.
+  int64_t num_offsets = sublane_offsets.num_elements();
+  // The max sublane offset before handling bank conflicts is always
+  // (num_offsets - 1). To avoid bank conflicts, we need to add one extra
+  // sublane to stride so (num_offsets - 1) / stride is the extra offset needed
+  // to pad sublanes.
+  //
+  // For example, if store stride = 4, sublane_count = 8, and
+  // load offsets = [0, 1, 2, 3, 4, 5, 6, 7], then the sublane offsets after
+  // handling bank conflicts will be [0, 1, 2, 3, 5, 6, 7, 8] and the max
+  // sublane offset will be 7 + (8 - 1) / 4 = 8.
+  //
+  // Before
+  //        <-------- sublanes --------->
+  //        0   4   ...
+  // store: x---x---x---x---x---x---x---x
+  // load:  xxxxxxxxx-------------------
+  //
+  // After
+  //        <-------- sublanes --------->
+  //        0    5  ...
+  // store: x----x----x----x----x----x----x----x
+  // load:  xxxx-xxxx---------------------------
+  //
+  // where "x" indicates a sublane that needs to be accessed and "-"" indicates
+  // a sublane that does not need to be accessed.
+  int max_sublane_offset = (num_offsets - 1) + (num_offsets - 1) / stride;
   bool should_handle_bank_confict =
-      ctx.hardware_generation >= 4 && ctx.vmem_banks > 0 &&
-      ctx.vmem_banks < stride * ctx.target_shape[0];
+      shouldHandleBankConflict(ctx, stride, max_sublane_offset);
   bool use_shuffled_load = false;
   if (ctx.hardware_generation <= 4) {
     if (src_tile[0] == 8) {
@@ -5618,11 +5988,8 @@ LogicalResult retileToSmallTileWithScratch(
 
   // Add one extra sublane to stride to avoid bank conflict.
   if (should_handle_bank_confict) {
-    // Adjust sublane offsets to match the stride.
-    for (int i = 0; i < sublane_offsets.num_elements(); i += 1) {
-      *(sublane_offsets.begin() + i) += i / stride;
-    }
-    stride += 1;
+    handleBankConflict(stride, absl::MakeSpan(sublane_offsets.data(),
+                                              sublane_offsets.num_elements()));
   }
   sublane_offsets.TransposeDimensions({0, 2, 1});
   auto mlirIndexConst = [&](int d) {
@@ -5794,8 +6161,85 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
   if (src_tiling == dst_tiling) {
     return std::pair(src, std::move(vregs));
   }
+  const LayoutOffsets src_offsets =
+      src.getCanonicalOffsets(vty.getShape(), ctx.target_shape);
+  const std::array<int64_t, 2> tiled_ishape =
+      src.getImplicitTiledDims(vty.getShape(), 1);
   const int packing = src.packing();
   const int8_t bitwidth = src.bitwidth();
+  const std::array<int64_t, 2> dst_vreg_slice =
+      VectorLayout::vregSlice(ctx.target_shape, bitwidth, dst_tiling);
+
+  // Fully replicated offsets are handled efficiently elsewhere (in relayout)
+  CHECK(src.offsets()[0].has_value() || src.offsets()[1].has_value());
+
+  // Handle replicating small-to-large retiling for (a) replicated 2nd minor or
+  // (b) 32-bit single-row.
+  // This retiling is one-to-many vregs.
+  // TODO(tlongeri): Large-to-small retiling with replicated minor is analogous
+  // to this.
+  if (src_tiling[1] == ctx.target_shape[1] &&
+      dst_tiling[1] == ctx.target_shape[1] &&
+      dst_tiling[0] % src_tiling[0] == 0 &&
+      (!src_offsets[0].has_value() || (packing == 1 && tiled_ishape[0] == 1)) &&
+      // This relayout relies on gathers, which are cheap on newer generations,
+      // so we always use it for them.
+      // TODO(tlongeri): Once we have it, probably also prefer the
+      // small-to-large rotate+blend relayout if we don't need replication. It's
+      // slightly cheaper for some dst vregs you rotate by 0.
+      // TODO(tlongeri): Using store + multiple replicated loads is good on
+      // older gens. I wonder if we can integrate this logic to scratch retiling
+      (try_replicate_rows || ctx.hardware_generation >= 5)) {
+    const LayoutOffset dst_minor_offset =
+        src.offsets()[1].has_value() ? *src.offsets()[1] % dst_vreg_slice[1]
+                                     : LayoutOffset();
+    const VectorLayout dst(bitwidth, {std::nullopt, dst_minor_offset},
+                           dst_tiling, src.implicit_dim());
+    const SmallVector<int64_t> dst_vreg_array_shape =
+        dst.tileArrayImplicitShape(vty.getShape(), target_shape);
+    const int64_t src_tiles_per_vreg = src.tilesPerVreg(ctx.target_shape);
+    const int64_t dst_tiles_per_vreg = dst.tilesPerVreg(ctx.target_shape);
+    const int64_t src_sublanes_per_tile = src.sublanesPerTile(ctx.target_shape);
+    const int64_t dst_sublanes_per_tile = dst.sublanesPerTile(ctx.target_shape);
+    xla::Array<Value> retiled(dst_vreg_array_shape);
+    SmallVector<int64_t> idxs;
+    retiled.Each([&](absl::Span<const int64_t> dst_idx, Value *vreg) {
+      const int64_t dst_col_idx = *(dst_idx.end() - 1);
+      const int64_t base_dst_tile_idx = dst_col_idx * dst_tiles_per_vreg;
+      const int64_t base_src_tile_idx =
+          src_offsets[1].has_value()
+              ? base_dst_tile_idx +
+                    (*src_offsets[1] - *dst_minor_offset) / src_tiling[1]
+              : 0;
+      // The following should be true from our choice of minor offset:
+      DCHECK_EQ(base_src_tile_idx % dst_tiles_per_vreg, 0);
+      const int64_t src_col_idx = base_src_tile_idx / src_tiles_per_vreg;
+      SmallVector<int32_t, 8> gather_pattern;
+      // Iterate over the sublanes in the dst vreg:
+      for (int32_t sublane = 0; sublane < ctx.target_shape[0]; ++sublane) {
+        const int64_t dst_tile_idx_in_vreg = sublane / dst_sublanes_per_tile;
+        const int64_t src_tile_idx_in_vreg =
+            base_src_tile_idx % src_tiles_per_vreg + dst_tile_idx_in_vreg;
+        // Although replication may give us several sublanes to choose from,
+        // we always gather from the first sublane in the source tile. This
+        // degenerates to a broadcast when dst_tiling is native, which can
+        // be cheaper than an arbitrary gather (for some hardware gens).
+        const int64_t src_sublane_in_tile =
+            src_offsets[0].value_or(0) / packing;
+        const int64_t src_sublane =
+            src_tile_idx_in_vreg * src_sublanes_per_tile + src_sublane_in_tile;
+        gather_pattern.push_back(src_sublane);
+      }
+      idxs.assign(dst_idx.begin(), dst_idx.end());
+      *(idxs.end() - 2) = 0;
+      *(idxs.end() - 1) = src_col_idx;
+      Value src_vreg = vregs(idxs);
+      *vreg = builder.create<tpu::GatherOp>(loc, src_vreg.getType(), src_vreg,
+                                            gather_pattern,
+                                            /*dimension=*/0);
+    });
+    return std::pair(dst, std::move(retiled));
+  }
   VectorLayout dst(src.bitwidth(), src.offsets(), dst_tiling,
                    src.implicit_dim());
   if (!dst.isValid(target_shape)) {
@@ -5803,50 +6247,28 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
   }
   auto dst_tiles_shape =
       dst.tileArrayImplicitShape(vty.getShape(), target_shape);
-  // Handle retiling from (1, 128) to (8, 128) for 32-bit data with replicating
-  // sublanes.
-  if (try_replicate_rows && packing == 1 &&
-      *(vregs.dimensions().end() - 2) == 1 &&
-      src.offsets() == LayoutOffsets{0, 0} &&
-      src.tiling() == std::array<int64_t, 2>{1, 128} &&
-      dst_tiling == std::array<int64_t, 2>{8, 128}) {
-    xla::Array<Value> retiled(dst_tiles_shape);
-    retiled.Each([&](absl::Span<const int64_t> idx, Value *tile) {
-      SmallVector<int64_t> src_idx(idx.begin(), idx.end());
-      *(src_idx.end() - 2) *= target_shape[0];
-      *(src_idx.end() - 1) /= target_shape[0];
-      const int64_t src_sl_idx = *(idx.end() - 1) % target_shape[0];
-      CHECK_EQ(src.getImplicitTiledDims(vty.getShape(), 1)[0], 1);
-      *tile =
-          broadcastSublane(builder, vregs(src_idx), src_sl_idx, target_shape);
-    });
-    // We have successfully replicated sublanes.
-    dst = VectorLayout(bitwidth, {std::nullopt, dst.offsets()[1]}, dst_tiling,
-                       dst.implicit_dim());
-    return std::pair(dst, std::move(retiled));
-  }
   // (8,128) -> (8 * packing,128) tiling change for packed type.
-  if (bitwidth < 32 && 32 % bitwidth == 0 &&
-      src_tiling == std::array<int64_t, 2>{8, 128} &&
-      dst_tiling == std::array<int64_t, 2>{8 * dst.packing(), 128}) {
+  if (bitwidth < 32 && 32 % bitwidth == 0 && src_tiling == ctx.target_shape &&
+      dst_tiling == std::array<int64_t, 2>{ctx.target_shape[0] * packing,
+                                           ctx.target_shape[1]}) {
     // Note: for int4, retiling with scratch is always faster.
     if (bitwidth != 4 || !has_enough_scratch) {
       xla::Array<Value> retiled(dst_tiles_shape);
-      int vty_packing = dst.packing();
       VectorType vreg_x32 =
           vty.getElementType().isSignlessInteger()
               ? VectorType::get(target_shape, builder.getI32Type())
               : VectorType::get(target_shape, builder.getF32Type());
       retiled.Each([&](absl::Span<const int64_t> idx, Value *tile) {
-        const int vreg_part = idx.back() % vty_packing;
+        const int vreg_part = idx.back() % packing;
         SmallVector<Value, 8> parts;
-        parts.reserve(vty_packing);
+        parts.reserve(packing);
         SmallVector<int64_t> src_idx(idx.begin(), idx.end());
-        src_idx[src_idx.size() - 2] *= vty_packing;
-        src_idx[src_idx.size() - 1] /= vty_packing;
-        for (int i = 0; i < vty_packing; ++i) {
+        src_idx[src_idx.size() - 2] *= packing;
+        src_idx[src_idx.size() - 1] /= packing;
+        for (int i = 0; i < packing; ++i) {
           parts.push_back(builder.create<tpu::UnpackSubelementsOp>(
-              loc, vreg_x32, vregs(src_idx), vreg_part));
+              loc, vreg_x32, vregs(src_idx), vreg_part,
+              tpu::PackFormat::kCompressed));
           if (src_idx[src_idx.size() - 2] <
               vregs.dim(vregs.num_dimensions() - 2) - 1) {
             ++src_idx[src_idx.size() - 2];
@@ -5870,8 +6292,8 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
   // match corresponding elements without shifting. It's just that
   // the tiles are not adjacent (no contiguous vreg slice).
   if (bitwidth < 32 && 32 % bitwidth == 0 &&
-      src_tiling == std::array<int64_t, 2>{1, 128 * packing} &&
-      dst_tiling == std::array<int64_t, 2>{packing, 128}) {
+      src_tiling == std::array<int64_t, 2>{1, ctx.target_shape[1] * packing} &&
+      dst_tiling == std::array<int64_t, 2>{packing, ctx.target_shape[1]}) {
     // To illustrate, consider a 2 x 16 16-bit shape laid out in vregs of
     // 4 sublanes and 2 lanes (this is convenient for to keep the example small
     // yet non-trivial) with (1, 4) tiling. We will relayout to (2, 2) tiling.
@@ -5926,7 +6348,8 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
       *(src_idx.end() - 1) /= packing;
       for (int i = 0; i < packing; ++i) {
         parts.push_back(builder.create<tpu::UnpackSubelementsOp>(
-            loc, vreg_x32, vregs(src_idx), vreg_part));
+            loc, vreg_x32, vregs(src_idx), vreg_part,
+            tpu::PackFormat::kCompressed));
         if (*(src_idx.end() - 2) < *(vregs.dimensions().end() - 2) - 1) {
           ++*(src_idx.end() - 2);
         }  // The rest is padding, so just pick any of the input parts (but not
@@ -6036,6 +6459,26 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
     });
     return std::make_pair(dst, new_vregs);
   }
+  if (src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+      dst_implicit_dim == VectorLayout::ImplicitDim::kMinor &&
+      src.bitwidth() == 32 && src.hasNativeTiling(ctx.target_shape)) {
+    // TODO(tlongeri): Make insertImplicitMinorDimension more flexible about
+    //                 offsets, then we can pass dst_offset_hints directly.
+    const LayoutOffset dst_2nd_minor_offset =
+        !src.offsets()[1] || *src.offsets()[1] + *(vty.getShape().end() - 1) <=
+                                 ctx.target_shape[1]
+            ? dst_offset_hints[0]
+            : LayoutOffset(*src.offsets()[1] % ctx.target_shape[0]);
+    VectorLayout dst(src.bitwidth(),
+                     {dst_2nd_minor_offset, dst_offset_hints[1]}, src.tiling(),
+                     VectorLayout::ImplicitDim::kMinor);
+    FAILUREOR_ASSIGN_OR_RETURN(
+        xla::Array<Value> dst_vregs,
+        insertImplicitMinorDimension(ctx, builder, loc, vregs,
+                                     src.implicitShape(vty.getShape()), src,
+                                     dst.offsets()));
+    return std::make_pair(dst, std::move(dst_vregs));
+  }
   return emitError(loc,
                    "Not implemented: Unsupported implicit dim change: from ")
          << src << " to " << dst_implicit_dim;
@@ -6053,6 +6496,14 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
     return emitError(v.getLoc(), "Can't change bitwidth during a relayout");
   }
   VectorType vty = v.getType();
+  const bool is_mask = vty.getElementTypeBitWidth() == 1;
+  if (is_mask) {
+    if (src.bitwidth() != 32 || dst.bitwidth() != 32) {
+      return emitError(v.getLoc(),
+                       "Not implemented: mask relayout with non-32 bitwidth in "
+                       "vector layout");
+    }
+  }
   {
     // Replication imposes a replication constraint on the *logical* value of
     // the vector: When moving along a replicated axis, all elements must be
@@ -6086,32 +6537,102 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> src_tiles,
       disassemble(builder, src, v, target_shape, /*use_implicit_shape=*/true));
+  if (is_mask) {
+    auto new_tile_ty =
+        getNativeVregOrVmaskType(builder.getI32Type(), 32, target_shape);
+    src_tiles.Each([&](const absl::Span<const int64_t> idx, Value *tile) {
+      *tile =
+          builder.create<arith::ExtUIOp>(tile->getLoc(), new_tile_ty, *tile);
+    });
+    vty = VectorType::get(vty.getShape(), builder.getI32Type());
+  }
+  auto assemble_with_mask_check = [&](xla::Array<Value> &tiles,
+                                      bool use_implicit_shape = false) {
+    if (is_mask) {
+      auto zeros_tile = builder.create<arith::ConstantOp>(
+          tiles.begin()->getLoc(),
+          DenseElementsAttr::get(cast<VectorType>(tiles.begin()->getType()),
+                                 builder.getI32IntegerAttr(0)));
+      tiles.Each([&](const absl::Span<const int64_t> idx, Value *tile) {
+        *tile = builder.create<arith::CmpIOp>(
+            tile->getLoc(), arith::CmpIPredicate::ne, *tile, zeros_tile);
+      });
+      vty = VectorType::get(vty.getShape(), builder.getI1Type());
+    }
+    return assemble(builder, vty, dst, tiles, target_shape, use_implicit_shape)
+        .getResult();
+  };
   // Two easy cases: source is more general, or is replicated.
   if (src.generalizes(dst, vty.getShape(), target_shape)) {
     // A value with a replicated offset might use fewer vregs than a value with
     // a non-zero offset.
-    if (xla::Product(src.tileArrayShape(vty.getShape(), target_shape)) !=
-        xla::Product(dst.tileArrayShape(vty.getShape(), target_shape))) {
-      return emitError(v.getLoc(),
-                       "Not implemented: source layout is more general, but "
-                       "vreg count changes");
+    auto src_product =
+        xla::Product(src.tileArrayShape(vty.getShape(), target_shape));
+    auto dst_product =
+        xla::Product(dst.tileArrayShape(vty.getShape(), target_shape));
+    if (src_product != dst_product) {
+      TPU_ASSERT_LOC(v.getLoc(), dst_product > src_product);
+      auto src_offsets = src.offsets();
+
+      TPU_ASSERT_LOC(v.getLoc(), src_offsets != dst.offsets());
+      TPU_ASSERT_LOC(v.getLoc(), src.bitwidth() == dst.bitwidth());
+
+      if (src.implicit_dim() != dst.implicit_dim()) {
+        return emitError(v.getLoc(),
+                         "Not implemented: Source layout is more general, but "
+                         "vreg count changes and implicit dims are mismatched");
+      }
+
+      if (src.tiling() != dst.tiling()) {
+        return emitError(v.getLoc(),
+                         "Not implemented: Source layout is more general, but "
+                         "vreg count changes and tiling are mismatched");
+      }
+
+      // This case is moving from a replicated to a non replicated layout.
+      // As such, we need to make a new destination shape that is the
+      // materialization of the src shape with replication.
+      FAILUREOR_ASSIGN_OR_RETURN(auto src_vregs,
+                                 disassemble(builder, src, v, target_shape,
+                                             /*use_implicit_shape=*/true));
+      auto dst_vregs_shape = dst.tileArrayShape(vty.getShape(), target_shape);
+      xla::Array<Value> dst_vregs(dst_vregs_shape);
+      dst_vregs.Each([&](const absl::Span<const int64_t> idx, Value *vreg) {
+        SmallVector<int64_t> local_idx(idx.begin(), idx.end());
+        if (!src_offsets[0].has_value()) {
+          local_idx[local_idx.size() - 2] = 0;
+        }
+        if (!src_offsets[1].has_value()) {
+          local_idx[local_idx.size() - 1] = 0;
+        }
+        *vreg = src_vregs(local_idx);
+      });
+      return assemble(builder, vty, dst, std::move(dst_vregs), target_shape,
+                      /*use_implicit_shape=*/true)
+          .getResult();
     }
     src_tiles.Reshape(dst.tileArrayImplicitShape(vty.getShape(), target_shape));
-    return assemble(builder, vty, dst, std::move(src_tiles), target_shape,
-                    /*use_implicit_shape=*/true)
-        .getResult();
+    return assemble_with_mask_check(src_tiles,
+                                    /*use_implicit_shape=*/true);
   }
-  if (src.layout_rank() >= dst.layout_rank() && !src.offsets()[0].has_value() &&
-      !src.offsets()[1].has_value() && src.tilesPerVreg(target_shape) == 1) {
+
+  if (const LayoutOffsets src_offsets =
+          src.getCanonicalOffsets(vty.getShape(), ctx.target_shape);
+      src.layout_rank() >= dst.layout_rank() && !src_offsets[0].has_value() &&
+      !src_offsets[1].has_value()) {
     // A fully replicated value is always easy to relayout
-    // It would be nice to be able to assert this here, but given replicated
-    // values our rules can introduce equivalent expressions.
-    // assert all(t is src_tiles_list[0] for t in src_tiles_list)
     xla::Array<Value> dst_tiles(
-        /*sizes=*/dst.tileArrayShape(vty.getShape(), target_shape),
-        /*value=*/src_tiles.data()[0]);
-    return assemble(builder, vty, dst, std::move(dst_tiles), target_shape)
-        .getResult();
+        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
+    SmallVector<int64_t> idxs;
+    dst_tiles.Each([&](const absl::Span<const int64_t> src_idx, Value *vreg) {
+      idxs.assign(src_idx.begin(), src_idx.end());
+      dst.eraseImplicit(idxs);
+      src.insertImplicit<int64_t>(idxs, 0);
+      *(idxs.end() - 2) = 0;
+      *(idxs.end() - 1) = 0;
+      *vreg = src_tiles(idxs);
+    });
+    return assemble_with_mask_check(dst_tiles, /*use_implicit_shape=*/true);
   }
 
   // Consider (1,128),-2 -> (8,128). In this case we can change the implicit
@@ -6149,9 +6670,8 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
                     dst.offsets()));
 
   CHECK_EQ(src, dst);  // At this point we've should be done.
-  return assemble(builder, vty, dst, std::move(src_tiles), target_shape,
-                  /*use_implicit_shape=*/true)
-      .getResult();
+  return assemble_with_mask_check(src_tiles,
+                                  /*use_implicit_shape=*/true);
 }
 
 // TODO(apaszke): Implement a debug mode that inserts additional assertions.
@@ -6177,8 +6697,6 @@ LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op) {
       if (vector_operand == nullptr) {
         continue;
       }
-      auto vty = vector_operand.getType();
-
       // The operand should always be an Operation (and not a BlockArgument)
       // since we expect the FuncOp to have only memrefs and semaphores as
       // arguments.
@@ -6193,7 +6711,7 @@ LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op) {
                                  getOutLayouts(*def_op, ctx.target_shape));
       const Layout lo = def_layouts[res_idx];
       TPU_ASSERT_OP(lo.has_value());
-      if (lo->generalizes(*li, vty.getShape(), ctx.target_shape)) {
+      if (*lo == *li) {
         continue;
       }
       OpBuilder builder(&op);
@@ -6279,6 +6797,7 @@ struct ApplyVectorLayoutPass
     mxu_noncontracting_size = ctx.mxu_shape[1];
     max_sublanes_in_scratch = ctx.max_sublanes_in_scratch;
     vmem_banks = ctx.vmem_banks;
+    max_shuffle_sublane_offset = ctx.max_shuffle_sublane_offset;
   }
   void runOnOperation() override {
     // Fail if hardware_generation has not been set from the default value.
@@ -6291,7 +6810,9 @@ struct ApplyVectorLayoutPass
         .target_shape = {sublane_count, lane_count},
         .mxu_shape = {mxu_contracting_size, mxu_noncontracting_size},
         .max_sublanes_in_scratch = max_sublanes_in_scratch,
-        .vmem_banks = vmem_banks};
+        .vmem_banks = vmem_banks,
+        .max_shuffle_sublane_offset = max_shuffle_sublane_offset,
+    };
     if (failed(applyLayoutFunc(ctx, getOperation()))) {
       signalPassFailure();
       return;

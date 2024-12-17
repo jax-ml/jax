@@ -41,6 +41,21 @@ intx = dtypes.canonicalize_dtype(jnp.int64)
 floatx = dtypes.canonicalize_dtype(jnp.float64)
 
 
+def _assert_ragged_equal_with_elementwise_mask(
+    row_count, col_grid_size, ragged_shape, res, ref
+):
+  total_columns = col_grid_size * 128
+  mask = jnp.zeros((len(ragged_shape), row_count, total_columns), dtype=bool)
+
+  for i, r in enumerate(ragged_shape):
+    mask = mask.at[i, :, : r * 128].set(True)
+
+  res_valid = jnp.where(mask, res, -1)
+  ref_valid = jnp.where(mask, ref, -1)
+
+  np.testing.assert_allclose(res_valid, ref_valid)
+
+
 @jtu.with_config(jax_traceback_filtering="off")
 class PallasBaseTest(jtu.JaxTestCase):
   INTERPRET = False
@@ -104,15 +119,78 @@ class PallasCallRaggedVmapTest(PallasBaseTest):
         axis_size=3,
     )(x)
 
-    res = res.data
-    total = len(ragged_shape) * row_count * col_grid_size * 128
-    res_total = np.prod(res.shape)
-    self.assertEqual(res_total, total)
-    ragged_total = 0
-    for dim in ragged_shape:
-      ragged_total += row_count * dim * 128
-    # See note - on zero filling counterfactuals
-    self.assertEqual(np.count_nonzero(res == jnp.sin(1.0)), ragged_total)
+    ref = jax.vmap(
+        jnp.sin,
+        out_axes=batching.jumble_axis,
+        in_axes=batching.jumble_axis,
+        axis_size=3,
+    )(x)
+
+    _assert_ragged_equal_with_elementwise_mask(
+        row_count, col_grid_size, ragged_shape, res.data, ref.data
+    )
+
+  def test_vmap_jumble_over_add_kernel(self):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Only tested on TPU")
+
+    row_count = 8
+    col_grid_size = 5
+    ragged_shape = [3, 1, 4]
+    sizes = lax.convert_element_type(
+        jnp.array([128 * x for x in ragged_shape]),
+        core.bint(col_grid_size * 128),
+    )
+    x = jax.vmap(
+        lambda n: jnp.ones((row_count, n)), out_axes=batching.jumble_axis
+    )(sizes)
+    y = jax.vmap(
+        lambda n: jnp.ones((row_count, n)), out_axes=batching.jumble_axis
+    )(sizes)
+
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = x_ref[...] + y_ref[...]
+
+    def invoke_kernel(x, y):
+      return pl.pallas_call(
+          kernel,
+          in_specs=[
+              pl.BlockSpec((8, 128), lambda j, k: (j, k)),
+              pl.BlockSpec((8, 128), lambda j, k: (j, k)),
+          ],
+          out_specs=pl.BlockSpec((8, 128), lambda j, k: (j, k)),
+          out_shape=jax.ShapeDtypeStruct(
+              (8, col_grid_size * 128), dtype=jnp.float32
+          ),
+          grid=(1, col_grid_size),
+          interpret=self.INTERPRET,
+      )(x, y)
+
+    # We've had this test fail with data corruption due to multiple
+    # invocations, so we run it k times to make sure it's not setting up
+    # memory incorrectly for subsequent invocations.
+    for _ in range(4):
+      res = jax.vmap(
+          invoke_kernel,
+          out_axes=batching.jumble_axis,
+          in_axes=batching.jumble_axis,
+          axis_size=3,
+      )(x, y)
+
+      res = res.data
+      total = len(ragged_shape) * row_count * col_grid_size * 128
+      res_total = np.prod(res.shape)
+      self.assertEqual(res_total, total)
+
+      ref = jax.vmap(
+          lambda x, y: x + y,
+          out_axes=batching.jumble_axis,
+          in_axes=batching.jumble_axis,
+          axis_size=3,
+      )(x, y)
+      _assert_ragged_equal_with_elementwise_mask(
+          row_count, col_grid_size, ragged_shape, res, ref.data
+      )
 
   def test_vmap_jumble_over_sin_kernel_grid_remapping(self):
     if not jtu.test_device_matches(["tpu"]):
@@ -139,7 +217,7 @@ class PallasCallRaggedVmapTest(PallasBaseTest):
           out_specs=pl.BlockSpec((8, 128), lambda j, k: (j, k)),
           out_shape=jax.ShapeDtypeStruct((8, 640), dtype=jnp.float32),
           grid=(1, 5),
-          interpret=False,
+          interpret=self.INTERPRET,
       )(x)
 
     with self.assertRaisesRegex(ValueError, "Axis 2 is out of bounds for grid"):
@@ -149,6 +227,100 @@ class PallasCallRaggedVmapTest(PallasBaseTest):
           in_axes=batching.jumble_axis,
           axis_size=3,
       )(x)
+
+  def test_vmap_jumble_over_matmul_kernel(self):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Only tested on TPU")
+
+    if jtu.is_device_tpu(version=4):
+      self.skipTest("Flaky 15% of the time on tpuv4?")
+
+    m = 128
+    k = 640
+    n = 640
+
+    def matmul_kernel(x_ref, y_ref, x_sentinel, z_ref):
+      # weird little once-only reset
+      @pl.when(x_sentinel[...][0][0] == 1.0)
+      def _():
+        z_ref[...] = jnp.zeros_like(z_ref)
+        x_sentinel[...] = jnp.zeros_like(x_sentinel)
+
+      z_ref[...] += x_ref[...] @ y_ref[...]
+
+    def matmul(
+        x: jax.Array,
+        y: jax.Array,
+        x_sentinel: jax.Array,
+        *,
+        bm: int = 128,
+        bk: int = 128,
+        bn: int = 640,
+    ):
+      # m, k = x.shape
+      # _, n = y.shape
+      # a (1, 5) grid
+      # TODO(mvoz): parameterize this grid?
+      grid = (n // bn, k // bk)
+      return pl.pallas_call(
+          matmul_kernel,
+          out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+          in_specs=[
+              pl.BlockSpec(
+                  (bm, bk),
+                  lambda j, k: (0, k),
+              ),
+              pl.BlockSpec(
+                  (bk, bn),
+                  lambda j, k: (k, j),
+              ),
+              pl.BlockSpec(
+                  (bm, bn),
+                  lambda j, k: (0, j),
+              ),
+          ],
+          out_specs=pl.BlockSpec(
+              (bm, bn),
+              lambda j, k: (0, j),
+          ),
+          grid=grid,
+          input_output_aliases={2: 0},
+          interpret=self.INTERPRET,
+      )(x, y, x_sentinel)
+
+    # TODO(mvoz): parameterize this shape?
+    ragged_shape = [3, 1, 4]
+    sizes = lax.convert_element_type(
+        jnp.array([128 * x for x in ragged_shape]),
+        core.bint(k),
+    )
+    x = jax.vmap(lambda k_: jnp.ones((m, k_)), out_axes=batching.jumble_axis)(
+        sizes
+    )
+    x_sentinel = jax.vmap(
+        lambda k_: jnp.ones((m, k_)), out_axes=batching.jumble_axis
+    )(sizes)
+    y = jax.vmap(lambda k_: jnp.ones((k_, n)), out_axes=batching.jumble_axis)(
+        sizes
+    )
+
+    res = jax.vmap(
+        matmul,
+        out_axes=batching.jumble_axis,
+        in_axes=batching.jumble_axis,
+        axis_size=3,
+    )(x, y, x_sentinel)
+
+    ref = jax.vmap(
+        jnp.dot,
+        out_axes=batching.jumble_axis,
+        in_axes=batching.jumble_axis,
+        axis_size=3,
+    )(x, y)
+
+    ref = ref.data
+    res = res.data
+    np.testing.assert_allclose(ref, res)
 
   def test_vmap_jumble_ragged_boundary_unaligned_with_grid(self):
     if not jtu.test_device_matches(["tpu"]):

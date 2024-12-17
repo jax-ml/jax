@@ -55,8 +55,6 @@ DTypeLikeFloat = DTypeLike
 Shape = Sequence[int]
 
 PRNGImpl = prng.PRNGImpl
-KeyArray = Array
-KeyArrayLike = ArrayLike
 
 UINT_DTYPES = prng.UINT_DTYPES
 
@@ -69,8 +67,8 @@ def _isnan(x: ArrayLike) -> Array:
   return lax.ne(x, x)
 
 
-def _check_prng_key(name: str, key: KeyArrayLike, *,
-                    allow_batched: bool = False) -> tuple[KeyArray, bool]:
+def _check_prng_key(name: str, key: ArrayLike, *,
+                    allow_batched: bool = False) -> tuple[Array, bool]:
   if isinstance(key, Array) and dtypes.issubdtype(key.dtype, dtypes.prng_key):
     wrapped_key = key
     wrapped = False
@@ -113,7 +111,7 @@ def _return_prng_keys(was_wrapped, key):
     return prng.random_unwrap(key) if was_wrapped else key
 
 
-def _random_bits(key: KeyArray, bit_width: int, shape: Shape) -> Array:
+def _random_bits(key: Array, bit_width: int, shape: Shape) -> Array:
   assert jnp.issubdtype(key.dtype, dtypes.prng_key)
   return prng.random_bits(key, bit_width=bit_width, shape=shape)
 
@@ -188,7 +186,7 @@ def resolve_prng_impl(impl_spec: PRNGSpecDesc | None) -> PRNGImpl:
 
 
 def _key(ctor_name: str, seed: int | ArrayLike,
-         impl_spec: PRNGSpecDesc | None) -> KeyArray:
+         impl_spec: PRNGSpecDesc | None) -> Array:
   impl = resolve_prng_impl(impl_spec)
   if hasattr(seed, 'dtype') and jnp.issubdtype(seed.dtype, dtypes.prng_key):
     raise TypeError(
@@ -200,7 +198,7 @@ def _key(ctor_name: str, seed: int | ArrayLike,
   return prng.random_seed(seed, impl=impl)
 
 def key(seed: int | ArrayLike, *,
-        impl: PRNGSpecDesc | None = None) -> KeyArray:
+        impl: PRNGSpecDesc | None = None) -> Array:
   """Create a pseudo-random number generator (PRNG) key given an integer seed.
 
   The result is a scalar array containing a key, whose dtype indicates
@@ -220,7 +218,7 @@ def key(seed: int | ArrayLike, *,
   return _key('key', seed, impl)
 
 def PRNGKey(seed: int | ArrayLike, *,
-            impl: PRNGSpecDesc | None = None) -> KeyArray:
+            impl: PRNGSpecDesc | None = None) -> Array:
   """Create a legacy PRNG key given an integer seed.
 
   This function produces old-style legacy PRNG keys, which are arrays
@@ -248,7 +246,7 @@ def PRNGKey(seed: int | ArrayLike, *,
   return _return_prng_keys(True, _key('PRNGKey', seed, impl))
 
 
-def fold_in(key: KeyArrayLike, data: IntegerArray) -> KeyArray:
+def fold_in(key: ArrayLike, data: IntegerArray) -> Array:
   """Folds in data to a PRNG key to form a new PRNG key.
 
   Args:
@@ -267,7 +265,7 @@ def fold_in(key: KeyArrayLike, data: IntegerArray) -> KeyArray:
   return _return_prng_keys(wrapped, key_out)
 
 
-def _split(key: KeyArray, num: int | tuple[int, ...] = 2) -> KeyArray:
+def _split(key: Array, num: int | tuple[int, ...] = 2) -> Array:
   # Alternative to split() to use within random samplers.
   # TODO(frostig): remove and use split(); we no longer need to wait
   # to always enable_custom_prng
@@ -278,7 +276,7 @@ def _split(key: KeyArray, num: int | tuple[int, ...] = 2) -> KeyArray:
   shape = tuple(num) if isinstance(num, Sequence) else (num,)
   return prng.random_split(key, shape=shape)
 
-def split(key: KeyArrayLike, num: int | tuple[int, ...] = 2) -> KeyArray:
+def split(key: ArrayLike, num: int | tuple[int, ...] = 2) -> Array:
   """Splits a PRNG key into `num` new keys by adding a leading axis.
 
   Args:
@@ -293,21 +291,25 @@ def split(key: KeyArrayLike, num: int | tuple[int, ...] = 2) -> KeyArray:
   return _return_prng_keys(wrapped, _split(typed_key, num))
 
 
-def _key_impl(keys: KeyArray) -> PRNGImpl:
+def _key_impl(keys: Array) -> PRNGImpl:
   assert jnp.issubdtype(keys.dtype, dtypes.prng_key)
   keys_dtype = typing.cast(prng.KeyTy, keys.dtype)
   return keys_dtype._impl
 
-def key_impl(keys: KeyArrayLike) -> PRNGSpec:
+def _key_spec(keys: Array) -> str | PRNGSpec:
+  impl = _key_impl(keys)
+  return impl.name if impl.name in prng.prngs else PRNGSpec(impl)
+
+def key_impl(keys: ArrayLike) -> str | PRNGSpec:
   typed_keys, _ = _check_prng_key("key_impl", keys, allow_batched=True)
-  return PRNGSpec(_key_impl(typed_keys))
+  return _key_spec(typed_keys)
 
 
-def _key_data(keys: KeyArray) -> Array:
+def _key_data(keys: Array) -> Array:
   assert jnp.issubdtype(keys.dtype, dtypes.prng_key)
   return prng.random_unwrap(keys)
 
-def key_data(keys: KeyArrayLike) -> Array:
+def key_data(keys: ArrayLike) -> Array:
   """Recover the bits of key data underlying a PRNG key array."""
   keys, _ = _check_prng_key("key_data", keys, allow_batched=True)
   return _key_data(keys)
@@ -344,7 +346,7 @@ def _check_shape(name: str, shape: Shape, *param_shapes) -> None:
       raise ValueError(msg.format(name, shape_, shape))
 
 
-def bits(key: KeyArrayLike,
+def bits(key: ArrayLike,
          shape: Shape = (),
          dtype: DTypeLikeUInt | None = None) -> Array:
   """Sample uniform bits in the form of unsigned integers.
@@ -373,7 +375,7 @@ def bits(key: KeyArrayLike,
   return _random_bits(key, bit_width, shape)
 
 
-def uniform(key: KeyArrayLike,
+def uniform(key: ArrayLike,
             shape: Shape = (),
             dtype: DTypeLikeFloat = float,
             minval: RealArray = 0.,
@@ -443,7 +445,7 @@ def _uniform(key, shape, dtype, minval, maxval) -> Array:
       lax.reshape(floats * (maxval - minval) + minval, shape))
 
 
-def randint(key: KeyArrayLike,
+def randint(key: ArrayLike,
             shape: Shape,
             minval: IntegerArray,
             maxval: IntegerArray,
@@ -532,7 +534,7 @@ def _randint(key, shape, minval, maxval, dtype) -> Array:
   return lax.add(minval, lax.convert_element_type(random_offset, dtype))
 
 
-def permutation(key: KeyArrayLike,
+def permutation(key: ArrayLike,
                 x: int | ArrayLike,
                 axis: int = 0,
                 independent: bool = False) -> Array:
@@ -581,6 +583,10 @@ def _shuffle(key, x, axis) -> Array:
   # another analysis (where the keys are generated one bit at a time).
   exponent = 3  # see tjablin@'s analysis for explanation of this parameter
   uint32max = jnp.iinfo(np.uint32).max
+  if not core.is_constant_dim(x.size):
+    raise NotImplementedError(
+        "shape polymorphism for `permutation` or `shuffle`"
+        f" for arrays of non-constant size: {x.size}")
   num_rounds = int(np.ceil(exponent * np.log(max(1, x.size)) / np.log(uint32max)))
 
   for _ in range(num_rounds):
@@ -591,7 +597,7 @@ def _shuffle(key, x, axis) -> Array:
   return x
 
 
-def choice(key: KeyArrayLike,
+def choice(key: ArrayLike,
            a: int | ArrayLike,
            shape: Shape = (),
            replace: bool = True,
@@ -640,7 +646,9 @@ def choice(key: KeyArrayLike,
   if n_inputs <= 0:
     raise ValueError("a must be greater than 0 unless no samples are taken")
   if not replace and n_draws > n_inputs:
-    raise ValueError("Cannot take a larger sample than population when 'replace=False'")
+    raise ValueError(
+        f"Cannot take a larger sample (size {n_draws}) than "
+        f"population (size {n_inputs}) when 'replace=False'")
 
   if p is None:
     if replace:
@@ -653,7 +661,9 @@ def choice(key: KeyArrayLike,
     check_arraylike("choice", p)
     p_arr, = promote_dtypes_inexact(p)
     if p_arr.shape != (n_inputs,):
-      raise ValueError("p must be None or match the shape of a")
+      raise ValueError(
+          "p must be None or a 1D vector with the same size as a.shape[axis]. "
+          f"p has shape {p_arr.shape} and a.shape[axis] is {n_inputs}.")
     if replace:
       p_cuml = jnp.cumsum(p_arr)
       r = p_cuml[-1] * (1 - uniform(key, shape, dtype=p_cuml.dtype))
@@ -665,10 +675,10 @@ def choice(key: KeyArrayLike,
     result = ind if arr.ndim == 0 else jnp.take(arr, ind, axis)
 
   return result.reshape(shape if arr.ndim == 0 else
-                        np.insert(np.delete(arr.shape, axis), axis, shape))
+                        arr.shape[0:axis] + tuple(shape) + arr.shape[axis+1:])
 
 
-def normal(key: KeyArrayLike,
+def normal(key: ArrayLike,
            shape: Shape = (),
            dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample standard normal random values with given shape and float dtype.
@@ -721,7 +731,7 @@ def _normal_real(key, shape, dtype) -> Array:
   return lax.mul(np.array(np.sqrt(2), dtype), lax.erf_inv(u))
 
 
-def multivariate_normal(key: KeyArrayLike,
+def multivariate_normal(key: ArrayLike,
                         mean: RealArray,
                         cov: RealArray,
                         shape: Shape | None = None,
@@ -804,7 +814,7 @@ def _multivariate_normal(key, mean, cov, shape, dtype, method) -> Array:
   return result
 
 
-def truncated_normal(key: KeyArrayLike,
+def truncated_normal(key: ArrayLike,
                      lower: RealArray,
                      upper: RealArray,
                      shape: Shape | None = None,
@@ -870,7 +880,7 @@ def _truncated_normal(key, lower, upper, shape, dtype) -> Array:
       lax.nextafter(lax.stop_gradient(upper), np.array(-np.inf, dtype=dtype)))
 
 
-def bernoulli(key: KeyArrayLike,
+def bernoulli(key: ArrayLike,
               p: RealArray = np.float32(0.5),
               shape: Shape | None = None) -> Array:
   r"""Sample Bernoulli random values with given shape and mean.
@@ -915,7 +925,7 @@ def _bernoulli(key, p, shape) -> Array:
   return uniform(key, shape, lax.dtype(p)) < p
 
 
-def beta(key: KeyArrayLike,
+def beta(key: ArrayLike,
          a: RealArray,
          b: RealArray,
          shape: Shape | None = None,
@@ -976,7 +986,7 @@ def _beta(key, a, b, shape, dtype) -> Array:
   return gamma_a_scaled / (gamma_a_scaled + gamma_b_scaled)
 
 
-def cauchy(key: KeyArrayLike,
+def cauchy(key: ArrayLike,
            shape: Shape = (),
            dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample Cauchy random values with given shape and float dtype.
@@ -1015,7 +1025,7 @@ def _cauchy(key, shape, dtype) -> Array:
   return lax.tan(lax.mul(pi, lax.sub(u, _lax_const(u, 0.5))))
 
 
-def dirichlet(key: KeyArrayLike,
+def dirichlet(key: ArrayLike,
               alpha: RealArray,
               shape: Shape | None = None,
               dtype: DTypeLikeFloat = float) -> Array:
@@ -1087,7 +1097,7 @@ def _softmax(x, axis) -> Array:
   return unnormalized / unnormalized.sum(axis, keepdims=True)
 
 
-def exponential(key: KeyArrayLike,
+def exponential(key: ArrayLike,
                 shape: Shape = (),
                 dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample Exponential random values with given shape and float dtype.
@@ -1126,7 +1136,7 @@ def _exponential(key, shape, dtype) -> Array:
   return lax.neg(lax.log1p(lax.neg(u)))
 
 
-def _gamma_one(key: KeyArray, alpha, log_space) -> Array:
+def _gamma_one(key: Array, alpha, log_space) -> Array:
   # Ref: A simple method for generating gamma variables, George Marsaglia and Wai Wan Tsang
   # The algorithm can also be founded in:
   # https://en.wikipedia.org/wiki/Gamma_distribution#Generating_gamma-distributed_random_variables
@@ -1242,7 +1252,7 @@ def _gamma_batching_rule(batched_args, batch_dims, *, log_space):
 
 random_gamma_p = core.Primitive('random_gamma')
 random_gamma_p.def_impl(_gamma_impl)
-random_gamma_p.def_abstract_eval(lambda key, a, **_: core.raise_to_shaped(a))
+random_gamma_p.def_abstract_eval(lambda key, a, **_: a)
 ad.defjvp2(
     random_gamma_p, None,
     lambda tangent, ans, key, a, **kwds: tangent * _gamma_grad(ans, a, **kwds))
@@ -1254,7 +1264,7 @@ mlir.register_lowering(random_gamma_p, mlir.lower_fun(
     multiple_results=False), platform='cpu')
 batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 
-def gamma(key: KeyArrayLike,
+def gamma(key: ArrayLike,
           a: RealArray,
           shape: Shape | None = None,
           dtype: DTypeLikeFloat = float) -> Array:
@@ -1301,7 +1311,7 @@ def gamma(key: KeyArrayLike,
   return _gamma(key, a, shape=shape, dtype=dtype)
 
 
-def loggamma(key: KeyArrayLike,
+def loggamma(key: ArrayLike,
              a: RealArray,
              shape: Shape | None = None,
              dtype: DTypeLikeFloat = float) -> Array:
@@ -1443,7 +1453,7 @@ def _poisson(key, lam, shape, dtype) -> Array:
   return lax.select(lam == 0, jnp.zeros_like(result), result)
 
 
-def poisson(key: KeyArrayLike,
+def poisson(key: ArrayLike,
             lam: RealArray,
             shape: Shape | None = None,
             dtype: DTypeLikeInt = int) -> Array:
@@ -1488,7 +1498,7 @@ def poisson(key: KeyArrayLike,
   return _poisson(key, lam, shape, dtype)
 
 
-def gumbel(key: KeyArrayLike,
+def gumbel(key: ArrayLike,
            shape: Shape = (),
            dtype: DTypeLikeFloat = float) -> Array:
   """Sample Gumbel random values with given shape and float dtype.
@@ -1524,7 +1534,7 @@ def _gumbel(key, shape, dtype) -> Array:
       uniform(key, shape, dtype, minval=jnp.finfo(dtype).tiny, maxval=1.)))
 
 
-def categorical(key: KeyArrayLike,
+def categorical(key: ArrayLike,
                 logits: RealArray,
                 axis: int = -1,
                 shape: Shape | None = None) -> Array:
@@ -1566,7 +1576,7 @@ def categorical(key: KeyArrayLike,
       axis=axis)
 
 
-def laplace(key: KeyArrayLike,
+def laplace(key: ArrayLike,
             shape: Shape = (),
             dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample Laplace random values with given shape and float dtype.
@@ -1603,7 +1613,7 @@ def _laplace(key, shape, dtype) -> Array:
   return lax.mul(lax.sign(u), lax.log1p(lax.neg(lax.abs(u))))
 
 
-def logistic(key: KeyArrayLike,
+def logistic(key: ArrayLike,
              shape: Shape = (),
              dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample logistic random values with given shape and float dtype.
@@ -1639,7 +1649,7 @@ def _logistic(key, shape, dtype):
   return lax.log(lax.div(x, lax.sub(_lax_const(x, 1), x)))
 
 
-def pareto(key: KeyArrayLike,
+def pareto(key: ArrayLike,
            b: RealArray,
            shape: Shape | None = None,
            dtype: DTypeLikeFloat = float) -> Array:
@@ -1688,7 +1698,7 @@ def _pareto(key, b, shape, dtype) -> Array:
   return lax.exp(e / b)
 
 
-def t(key: KeyArrayLike,
+def t(key: ArrayLike,
       df: RealArray,
       shape: Shape = (),
       dtype: DTypeLikeFloat = float) -> Array:
@@ -1740,7 +1750,7 @@ def _t(key, df, shape, dtype) -> Array:
   return n * jnp.sqrt(half_df / g)
 
 
-def chisquare(key: KeyArrayLike,
+def chisquare(key: ArrayLike,
               df: RealArray,
               shape: Shape | None = None,
               dtype: DTypeLikeFloat = float) -> Array:
@@ -1792,7 +1802,7 @@ def _chisquare(key, df, shape, dtype) -> Array:
   return chi2
 
 
-def f(key: KeyArrayLike,
+def f(key: ArrayLike,
       dfnum: RealArray,
       dfden: RealArray,
       shape: Shape | None = None,
@@ -1856,7 +1866,7 @@ def _f(key, dfnum, dfden, shape, dtype) -> Array:
   return f
 
 
-def rademacher(key: KeyArrayLike,
+def rademacher(key: ArrayLike,
                shape: Shape = (),
                dtype: DTypeLikeInt = int) -> Array:
   r"""Sample from a Rademacher distribution.
@@ -1891,7 +1901,7 @@ def _rademacher(key, shape, dtype) -> Array:
   return (2 * bernoulli_samples - 1).astype(dtype)
 
 
-def maxwell(key: KeyArrayLike,
+def maxwell(key: ArrayLike,
             shape: Shape = (),
             dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample from a one sided Maxwell distribution.
@@ -1931,7 +1941,7 @@ def _maxwell(key, shape, dtype) -> Array:
   return jnp.linalg.norm(norm_rvs, axis=-1)
 
 
-def double_sided_maxwell(key: KeyArrayLike,
+def double_sided_maxwell(key: ArrayLike,
                          loc: RealArray,
                          scale: RealArray,
                          shape: Shape = (),
@@ -1983,7 +1993,7 @@ def _double_sided_maxwell(key, loc, scale, shape, dtype) -> Array:
   return random_sign * maxwell_rvs * scale + loc
 
 
-def weibull_min(key: KeyArrayLike,
+def weibull_min(key: ArrayLike,
                 scale: RealArray,
                 concentration: RealArray,
                 shape: Shape = (),
@@ -2029,7 +2039,7 @@ def _weibull_min(key, scale, concentration, shape, dtype) -> Array:
 
 
 def orthogonal(
-  key: KeyArrayLike,
+  key: ArrayLike,
   n: int,
   shape: Shape = (),
   dtype: DTypeLikeFloat = float
@@ -2064,7 +2074,7 @@ def orthogonal(
   return lax.mul(q, lax.expand_dims(lax.div(d, abs(d).astype(d.dtype)), [-2]))
 
 def generalized_normal(
-  key: KeyArrayLike,
+  key: ArrayLike,
   p: float,
   shape: Shape = (),
   dtype: DTypeLikeFloat = float
@@ -2099,7 +2109,7 @@ def generalized_normal(
   return r * g ** (1 / p)
 
 def ball(
-  key: KeyArrayLike,
+  key: ArrayLike,
   d: int,
   p: float = 2,
   shape: Shape = (),
@@ -2131,7 +2141,7 @@ def ball(
   return g / (((jnp.abs(g) ** p).sum(-1) + e) ** (1 / p))[..., None]
 
 
-def rayleigh(key: KeyArrayLike,
+def rayleigh(key: ArrayLike,
              scale: RealArray,
              shape: Shape | None = None,
              dtype: DTypeLikeFloat = float) -> Array:
@@ -2184,7 +2194,7 @@ def _rayleigh(key, scale, shape, dtype) -> Array:
   ray = lax.mul(scale, sqrt_u)
   return ray
 
-def wald(key: KeyArrayLike,
+def wald(key: ArrayLike,
          mean: RealArray,
          shape: Shape | None = None,
          dtype: DTypeLikeFloat = float) -> Array:
@@ -2242,7 +2252,7 @@ def _wald(key, mean, shape, dtype) -> Array:
   w = lax.select(lax.le(z,  mean / (mean + x)), x, mean_sq / x)
   return w
 
-def geometric(key: KeyArrayLike,
+def geometric(key: ArrayLike,
               p: RealArray,
               shape: Shape | None = None,
               dtype: DTypeLikeInt = int) -> Array:
@@ -2295,7 +2305,7 @@ def _geometric(key, p, shape, dtype) -> Array:
   return g.astype(dtype)
 
 
-def triangular(key: KeyArrayLike,
+def triangular(key: ArrayLike,
                left: RealArray,
                mode: RealArray,
                right: RealArray,
@@ -2359,7 +2369,7 @@ def _triangular(key, left, mode, right, shape, dtype) -> Array:
   return tri
 
 
-def lognormal(key: KeyArrayLike,
+def lognormal(key: ArrayLike,
               sigma: RealArray = np.float32(1),
               shape: Shape | None = None,
               dtype: DTypeLikeFloat = float) -> Array:
@@ -2564,7 +2574,7 @@ def _binomial(key, count, prob, shape, dtype) -> Array:
 
 
 def binomial(
-    key: KeyArray,
+    key: Array,
     n: RealArray,
     p: RealArray,
     shape: Shape | None = None,

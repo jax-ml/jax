@@ -117,10 +117,10 @@ XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM(
 
 // FFI Kernels
 
-JAX_CPU_REGISTER_HANDLER(blas_strsm_ffi);
-JAX_CPU_REGISTER_HANDLER(blas_dtrsm_ffi);
-JAX_CPU_REGISTER_HANDLER(blas_ctrsm_ffi);
-JAX_CPU_REGISTER_HANDLER(blas_ztrsm_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_strsm_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_dtrsm_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_ctrsm_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_ztrsm_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_sgetrf_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_dgetrf_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_cgetrf_ffi);
@@ -149,6 +149,14 @@ JAX_CPU_REGISTER_HANDLER(lapack_sgeev_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_dgeev_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_cgeev_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_zgeev_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_ssytrd_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_dsytrd_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_chetrd_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_zhetrd_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_sgees_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_dgees_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_cgees_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_zgees_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_sgehrd_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_dgehrd_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_cgehrd_ffi);

@@ -56,17 +56,58 @@ def update_rocm_targets(rocm_path, targets):
     open(version_fp, "a").close()
 
 
-def build_jaxlib_wheel(jax_path, rocm_path, python_version, xla_path=None, compiler="gcc"):
+def find_clang_path():
+    llvm_base_path = "/usr/lib/"
+    # Search for llvm directories and pick the highest version.
+    llvm_dirs = [d for d in os.listdir(llvm_base_path) if d.startswith("llvm-")]
+    if llvm_dirs:
+        # Sort to get the highest llvm version.
+        llvm_dirs.sort(reverse=True)
+        clang_bin_dir = os.path.join(llvm_base_path, llvm_dirs[0], "bin")
+
+        # Prefer versioned clang binaries (e.g., clang-18).
+        versioned_clang = None
+        generic_clang = None
+
+        for f in os.listdir(clang_bin_dir):
+            # Checks for versioned clang binaries.
+            if f.startswith("clang-") and f[6:].isdigit():
+                versioned_clang = os.path.join(clang_bin_dir, f)
+            # Fallback to non-versioned clang.
+            elif f == "clang":
+                generic_clang = os.path.join(clang_bin_dir, f)
+
+        # Return versioned clang if available, otherwise return generic clang.
+        if versioned_clang:
+            return versioned_clang
+        elif generic_clang:
+            return generic_clang
+
+    return None
+
+
+def build_jaxlib_wheel(
+    jax_path, rocm_path, python_version, xla_path=None, compiler="gcc"
+):
     use_clang = "true" if compiler == "clang" else "false"
     cmd = [
         "python",
         "build/build.py",
-        "--enable_rocm",
-        "--build_gpu_plugin",
-        "--gpu_plugin_rocm_version=60",
+        "build"
+        "--wheels=jaxlib,jax-rocm-plugin,jax-rocm-pjrt"
         "--rocm_path=%s" % rocm_path,
+        "--rocm_version=60",
         "--use_clang=%s" % use_clang,
+        "--verbose"
     ]
+
+    # Add clang path if clang is used.
+    if compiler == "clang":
+        clang_path = find_clang_path()
+        if clang_path:
+            cmd.append("--clang_path=%s" % clang_path)
+        else:
+            raise RuntimeError("Clang binary not found in /usr/lib/llvm-*")
 
     if xla_path:
         cmd.append("--bazel_options=--override_repository=xla=%s" % xla_path)
@@ -166,18 +207,26 @@ def to_cpy_ver(python_version):
 
 
 def fix_wheel(path, jax_path):
-    # NOTE(mrodden): fixwheel needs auditwheel 6.0.0, which has a min python of 3.8
-    # so use one of the CPythons in /opt to run
-    env = dict(os.environ)
-    py_bin = "/opt/python/cp310-cp310/bin"
-    env["PATH"] = "%s:%s" % (py_bin, env["PATH"])
+    try:
+        # NOTE(mrodden): fixwheel needs auditwheel 6.0.0, which has a min python of 3.8
+        # so use one of the CPythons in /opt to run
+        env = dict(os.environ)
+        py_bin = "/opt/python/cp310-cp310/bin"
+        env["PATH"] = "%s:%s" % (py_bin, env["PATH"])
 
-    cmd = ["pip", "install", "auditwheel>=6"]
-    subprocess.run(cmd, check=True, env=env)
+        cmd = ["pip", "install", "auditwheel>=6"]
+        subprocess.run(cmd, check=True, env=env)
 
-    fixwheel_path = os.path.join(jax_path, "build/rocm/tools/fixwheel.py")
-    cmd = ["python", fixwheel_path, path]
-    subprocess.run(cmd, check=True, env=env)
+        fixwheel_path = os.path.join(jax_path, "build/rocm/tools/fixwheel.py")
+        cmd = ["python", fixwheel_path, path]
+        subprocess.run(cmd, check=True, env=env)
+        LOG.info("Wheel fix completed successfully.")
+    except subprocess.CalledProcessError as cpe:
+        LOG.error(f"Subprocess failed with error: {cpe}")
+        raise
+    except Exception as e:
+        LOG.error(f"An unexpected error occurred: {e}")
+        raise
 
 
 def parse_args():

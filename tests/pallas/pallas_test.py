@@ -170,7 +170,7 @@ class PallasCallTest(PallasBaseTest):
       self.skipTest("On TPU the test works only in interpret mode")
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((1,), jnp.float32),
-        grid=1)
+    )
     def add_one(x_ref, o_ref):
       o_ref[0] = x_ref[0] + 1.
 
@@ -224,7 +224,7 @@ class PallasCallTest(PallasBaseTest):
       self.skipTest("On TPU the test works only in interpret mode")
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((), floatx),
-        grid=1)
+    )
     def index(x_ref, i_ref, o_ref):
       o_ref[()] = x_ref[i_ref[()]]
 
@@ -386,9 +386,18 @@ class PallasCallTest(PallasBaseTest):
             (bs0 == as0 or bs0 % 128 == 0) and
             (bs1 == as1 or bs1 % 8 == 0))
         if not evenly_divisible:
-          test_context = self.assertRaisesRegex(
-              ValueError,
-              "last two dimensions of your block shape are divisible by 8 and 128")
+          if rank == 1:
+            test_context = self.assertRaisesRegex(
+                ValueError,
+                r"the first \(and only\) dimension of the block shape is a"
+                " multiple of the tiling size",
+            )
+          else:
+            test_context = self.assertRaisesRegex(
+                ValueError,
+                "last two dimensions of your block shape are divisible by 8"
+                " and 128",
+            )
 
     elif jtu.test_device_matches(["gpu"]) and not self.INTERPRET:
       block_size = math.prod(block_shape)
@@ -509,7 +518,7 @@ class PallasCallTest(PallasBaseTest):
       self.skipTest("On TPU the test works only in interpret mode")
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), floatx),
-        grid=1)
+    )
     def index(x_ref, idx_ref, o_ref):
       idx = idx_ref[()]
       o_ref[:] = x_ref[idx]
@@ -604,9 +613,8 @@ class PallasCallTest(PallasBaseTest):
     m, n = 16, 32
     @functools.partial(
         self.pallas_call,
-        out_shape=(
-          jax.ShapeDtypeStruct((m, n), jnp.float32)
-          ), grid=1)
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+    )
     def dummy(_, o_ref):
       pl.store(o_ref, (jnp.arange(m)[:, None], jnp.arange(n)[None, :]),
                jnp.ones_like(o_ref))
@@ -649,7 +657,7 @@ class PallasCallTest(PallasBaseTest):
     @functools.partial(
         self.pallas_call,
         out_shape=out_shape,
-        grid=1)
+    )
     def slice_kernel(x_ref, y_ref):
       x = pl.load(x_ref, (pl.dslice(0, 4), pl.dslice(0, 4)))
       pl.store(y_ref, (pl.dslice(4), pl.dslice(4)), x)
@@ -664,7 +672,7 @@ class PallasCallTest(PallasBaseTest):
     trace_count = 0
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32),
-        grid=1)
+    )
     def add_one(x_ref, o_ref):
       nonlocal trace_count
       o_ref[()] = x_ref[()] + 1.
@@ -677,6 +685,45 @@ class PallasCallTest(PallasBaseTest):
     x = jnp.array(0., dtype=jnp.float32)
     self.assertEqual(f(x), 2.)
     self.assertEqual(trace_count, 1)
+
+  @parameterized.parameters(
+      ("float32", None),
+      ("float32", jax.lax.Precision.DEFAULT),
+      ("float32", jax.lax.Precision.HIGH),
+      ("float32", jax.lax.Precision.HIGHEST),
+      ("float32", jax.lax.DotAlgorithmPreset.DEFAULT),
+      ("float32", jax.lax.DotAlgorithmPreset.F16_F16_F32),
+      ("float32", jax.lax.DotAlgorithmPreset.BF16_BF16_F32),
+      ("float32", jax.lax.DotAlgorithmPreset.TF32_TF32_F32),
+      ("float32", jax.lax.DotAlgorithmPreset.TF32_TF32_F32_X3),
+      ("float32", jax.lax.DotAlgorithmPreset.F32_F32_F32),
+      ("bfloat16", None),
+      ("bfloat16", jax.lax.Precision.DEFAULT),
+      ("bfloat16", jax.lax.Precision.HIGHEST),
+      ("bfloat16", jax.lax.DotAlgorithmPreset.DEFAULT),
+      ("bfloat16", jax.lax.DotAlgorithmPreset.BF16_BF16_F32),
+  )
+  def test_dot_precision(self, dtype, precision):
+    if not jtu.test_device_matches(["gpu"]):
+      self.skipTest("`DotAlgorithmPreset` only supported on GPU.")
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((32, 64), jnp.float32),
+    )
+    def dot_kernel(x_ref, y_ref, o_ref):
+      o_ref[()] = pl.dot(x_ref[()], y_ref[()], precision=precision)
+
+    key0, key1 = random.split(random.key(0))
+    x = random.normal(key0, (32, 16), dtype=dtype)
+    y = random.normal(key1, (16, 64), dtype=dtype)
+    expected = jnp.dot(
+        x,
+        y,
+        precision=jax.lax.Precision.HIGHEST,
+        preferred_element_type=jnp.float32,
+    )
+    self.assertAllClose(dot_kernel(x, y), expected, atol=5e-2, rtol=5e-3)
 
 
 class PallasCallInterpretTest(PallasCallTest):
@@ -1109,10 +1156,10 @@ class PallasControlFlowTest(PallasBaseTest):
     # control flow edge from Region #0 to Region #0: source type #0
     # 'tensor<4xf64>' should match input type #0 'tensor<4xf32>'
     with config.enable_x64(True):
-      @functools.partial(self.pallas_call,
-                         out_shape=jax.ShapeDtypeStruct((4,), jnp.float64),
-                         grid=1,
-                     )
+      @functools.partial(
+          self.pallas_call,
+          out_shape=jax.ShapeDtypeStruct((4,), jnp.float64),
+      )
       def f(x_ref, y_ref):
         def body(i, acc):
           # TODO(sharadmv): DCE loop index but retain carry breaks scan pattern.
@@ -1147,10 +1194,10 @@ class PallasControlFlowTest(PallasBaseTest):
       self.skipTest("TODO: error on TPU")
 
     arg = jnp.float32(0.)
-    @functools.partial(self.pallas_call,
-                       out_shape=jax.ShapeDtypeStruct(arg.shape, jnp.float32),
-                       grid=1,
-                   )
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(arg.shape, jnp.float32),
+    )
     def f(branch_ref, x_ref, y_ref):
       y_ref[...] = lax.switch(
           branch_ref[...],
@@ -1291,11 +1338,7 @@ class PallasControlFlowTest(PallasBaseTest):
     np.testing.assert_allclose(f(jnp.bool_(False), arg),
                                -arg)
 
-    # We actually expect the assertion failure in linearize, but this also
-    # covers another case where an effect was causing an earlier assertion
-    # failure.
-    with self.assertRaises(AssertionError):
-      # Notably, we should not have a ValueError for mismatched Read<N> effect.
+    with self.assertRaisesRegex(ValueError, "Linearization failed"):
       _ = jax.grad(lambda x: jnp.sum(f(jnp.bool_(True), x)**2))(arg)
       # np.testing.assert_allclose(
       #     dx, jnp.float32([0., 2, 4, 6, 0, 10, 12 + 12, 14]))
@@ -1348,7 +1391,7 @@ class PallasControlFlowTest(PallasBaseTest):
                 16 * x * params[4, 2])
     np.testing.assert_allclose(f(program, params, x), expected)
 
-    with self.assertRaises(AssertionError):
+    with self.assertRaisesRegex(ValueError, "Linearization failed"):
       jax.value_and_grad(lambda params, x: f(program, params, x).sum())(
           params, x)
 
@@ -1402,7 +1445,7 @@ class PallasControlFlowTest(PallasBaseTest):
                 16 * x * params[4, 2])
     np.testing.assert_allclose(f(program, params, x), expected)
 
-    with self.assertRaises(AssertionError):
+    with self.assertRaisesRegex(ValueError, "Linearization failed"):
       jax.value_and_grad(lambda params, x: f(program, params, x).sum())(
           params, x)
 
@@ -1859,7 +1902,7 @@ class PallasCallAutodifferentiationTest(PallasBaseTest):
 
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((), floatx),
-        grid=1)
+    )
     def pallas_impl(x_ref, o_ref):
       x = x_ref[()]
       o_ref[()] = impl(x)
@@ -1882,7 +1925,7 @@ class PallasCallAutodifferentiationTest(PallasBaseTest):
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((), floatx),
         name=self.id().split(".")[-1],
-        grid=1)
+    )
     def pallas_impl(x_ref, o_ref):
       x = x_ref[()]
       o_ref[()] = jax.grad(impl)(x)
@@ -1900,7 +1943,7 @@ class PallasCallAutodifferentiationTest(PallasBaseTest):
 
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), floatx),
-        grid=1)
+    )
     def pallas_impl(x_ref, o_ref):
       x = x_ref[jnp.arange(2)]
       o_ref[jnp.arange(2)] = jnp.zeros(2)
@@ -1934,7 +1977,7 @@ class PallasCallAutodifferentiationTest(PallasBaseTest):
     m, n = 16, 32
     x = random.normal(random.key(0), (m, n))
 
-    @functools.partial(self.pallas_call, out_shape=x, grid=1)
+    @functools.partial(self.pallas_call, out_shape=x)
     def softmax_kernel(x_ref, y_ref):
       y_ref[:] = softmax(x_ref[:])
 
@@ -2033,11 +2076,43 @@ class PallasOutOfBoundsInterpretTest(PallasBaseTest):
       np.testing.assert_allclose(out, expected, atol=atol)
 
 
-class PallasCheckifyInterpretTest(PallasBaseTest):
-  # TODO(b/346651778): Support non-interpret mode checkify.
-  INTERPRET = True
+class PallasCheckifyTest(PallasBaseTest):
+  INTERPRET = False
+
+  def test_basic_runtime_assert(self):
+    # TODO(justinfu): Move to non-interpret checkify class.
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Runtime check only implemented on TPU.")
+    # Run this test manually, since we cannot recover from a halt.
+    self.skipTest("Cannot recover from halt.")
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+      checkify.check(True, "first check passed")
+      checkify.check(False, "second check failed")
+    input_ = jnp.arange(4, dtype=jnp.int32)
+    out_shape = jax.ShapeDtypeStruct(input_.shape, input_.dtype)
+    with pltpu.enable_runtime_assert(True):
+      pallas_call = pl.pallas_call(kernel, out_shape=out_shape)
+      pallas_call(input_)  # This should log "second check failed"
+
+  def test_runtime_assert_is_noop_when_not_enabled(self):
+    # TODO(justinfu): Move to non-interpret checkify class.
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Runtime check only implemented on TPU.")
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+      checkify.check(False, "failed check",
+                     debug=True)  # This check always fails.
+    input_ = jnp.arange(4, dtype=jnp.int32)
+    out_shape = jax.ShapeDtypeStruct(input_.shape, input_.dtype)
+    with pltpu.enable_runtime_assert(False):
+      pallas_call = pl.pallas_call(kernel, out_shape=out_shape)
+      result = pallas_call(input_)
+    np.testing.assert_allclose(result, input_)
 
   def test_no_checkify(self,):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("Not supported on GPU.")
     def kernel(y_ref):
       y_ref[...] = jnp.zeros_like(y_ref[...])
     out_shape = jax.ShapeDtypeStruct((2, 2), jnp.float32)
@@ -2049,6 +2124,8 @@ class PallasCheckifyInterpretTest(PallasBaseTest):
     np.testing.assert_allclose(result, jnp.zeros_like(result))
 
   def test_does_not_clobber_previous_error(self,):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("Not supported on GPU.")
     def kernel(y_ref):
       y_ref[...] = jnp.zeros_like(y_ref[...])
       checkify.check(False, "error in kernel")
@@ -2067,6 +2144,8 @@ class PallasCheckifyInterpretTest(PallasBaseTest):
 
   @parameterized.parameters((False,), (True,))
   def test_trivial_check(self, assert_cond):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("Not supported on GPU.")
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...]
       checkify.check(assert_cond, "pallas check failed")
@@ -2083,6 +2162,8 @@ class PallasCheckifyInterpretTest(PallasBaseTest):
     np.testing.assert_allclose(result, input)
 
   def test_nan_error(self):
+    if not self.INTERPRET:
+      self.skipTest("Not supported in non-interpret mode.")
     def kernel(x_ref, y_ref):
       y_ref[...] = jnp.log(x_ref[...])
     input = jnp.arange(4, dtype=jnp.float32) - 2
@@ -2090,7 +2171,7 @@ class PallasCheckifyInterpretTest(PallasBaseTest):
     pallas_call = self.pallas_call(kernel,
                                    out_shape=out_shape)
     checked_call = checkify.checkify(pallas_call,
-                                       errors=checkify.all_checks)
+                                     errors=checkify.nan_checks)
     err, result = checked_call(input)
     with self.assertRaisesRegex(
           checkify.JaxRuntimeError, "nan generated by primitive: log"):
@@ -2119,6 +2200,8 @@ class PallasCheckifyInterpretTest(PallasBaseTest):
   @parameterized.parameters((5, 0), (8, 3), (4, 3))
   def test_checkify_returns_first_error_in_grid(
       self, num_loops, fail_iteration):
+    if not self.INTERPRET:
+      self.skipTest("Not supported in non-interpret mode.")
     # Check that checkify returns the first error that occurs
     # TODO(justinfu): This test doesn't make sense on GPU, where threads run
     # in parallel. Update checkify to return a grid of errors.
@@ -2137,11 +2220,41 @@ class PallasCheckifyInterpretTest(PallasBaseTest):
                                  out_shape=out_shape)
 
     checked_call = checkify.checkify(pallas_call,
-                                     errors=checkify.all_checks)
+                                     errors=checkify.user_checks)
     err, _ = checked_call(input_arr)
     with self.assertRaisesRegex(
         checkify.JaxRuntimeError, f"failed on loop {fail_iteration}"):
       err.throw()
+
+  def test_checkify_on_oob_grid_access(self):
+    if not self.INTERPRET:
+      self.skipTest("Not supported in non-interpret mode.")
+    if config.enable_x64.value:
+      self.skipTest("Not supported in x64 mode.")
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+    input_arr = jnp.arange(18, dtype=jnp.float32)
+    in_specs = [pl.BlockSpec((8,), lambda x: (x,))]
+    out_specs = pl.BlockSpec((8,), lambda x: (x,))
+    out_shape = jax.ShapeDtypeStruct((18,), dtype=jnp.float32)
+    pallas_call = self.pallas_call(kernel,
+                                 grid=(3,),
+                                 in_specs=in_specs,
+                                 out_specs=out_specs,
+                                 out_shape=out_shape)
+
+    checked_call = checkify.checkify(pallas_call,
+                                     errors=checkify.index_checks)
+    err, result = checked_call(input_arr)
+    with self.assertRaisesRegex(checkify.JaxRuntimeError,
+      (r"out-of-bounds indexing for array of shape \(18,\): index 16 "
+       r"is out of bounds for axis 0 with size 18")):
+      err.throw()
+    np.testing.assert_array_equal(result, input_arr)
+
+
+class PallasCheckifyInterpretTest(PallasCheckifyTest):
+  INTERPRET = True
 
 
 class PallasCallNamedGridTest(PallasBaseTest):

@@ -15,13 +15,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-import dataclasses
 import functools
 
 from jax._src.util import safe_zip, use_cpp_class, cache
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src.lib.mlir.dialects import sdy
 from jax._src.op_shardings import (
     are_op_shardings_equal, get_num_ways_dim_sharded, is_op_sharding_replicated,
     op_sharding_to_indices)
@@ -45,7 +43,8 @@ def _addressable_devices_indices_map(
           if d.process_index == d.client.process_index()}
 
 @cache(max_size=4096, trace_context_in_key=False)
-def common_devices_indices_map(s, global_shape: Shape) -> Mapping[Device, Index]:
+def common_devices_indices_map(
+    s: Sharding, global_shape: Shape) -> Mapping[Device, Index]:
   s.shard_shape(global_shape)  # raises a good error message
   hlo_sharding = s._to_xla_hlo_sharding(len(global_shape))
   indices = op_sharding_to_indices(hlo_sharding, global_shape,
@@ -76,38 +75,6 @@ def _common_shard_shape(self, global_shape: Shape) -> Shape:
           "the shape)")
     out.append(quotient)
   return tuple(out)
-
-
-@dataclasses.dataclass
-class SdyDimSharding:
-  axes: Sequence[str]
-  is_closed: bool
-  priority: int | None = None
-
-  def build(self) -> sdy.DimensionShardingAttr:
-    """Builds the attribute.
-
-    NOTE: An MLIR context is required as a context manager.
-    """
-    return sdy.DimensionShardingAttr.get(
-        [sdy.AxisRefAttr.get(axis) for axis in self.axes],
-        is_closed=self.is_closed,
-        priority=self.priority)
-
-
-@dataclasses.dataclass
-class SdyArraySharding:
-  mesh_name: str
-  dimension_shardings: Sequence[SdyDimSharding]
-
-  def build(self) -> sdy.TensorShardingAttr:
-    """Builds the attribute.
-
-    NOTE: An MLIR context is required as a context manager.
-    """
-    return sdy.TensorShardingAttr.get(
-        self.mesh_name,
-        [dim_sharding.build() for dim_sharding in self.dimension_shardings])
 
 
 @use_cpp_class(xc.Sharding)
@@ -165,7 +132,7 @@ class Sharding:
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     raise NotImplementedError('Subclasses should implement this method.')
 
-  def _to_sdy_sharding(self, num_dimensions: int) -> SdyArraySharding:
+  def _to_sdy_sharding(self, num_dimensions: int):
     raise NotImplementedError('Subclasses should implement this method.')
 
   #############################################################################

@@ -39,6 +39,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
+from jax._src.state import types as state_types
 from jax._src.state import primitives as sp
 from jax.interpreters import mlir
 import jax.numpy as jnp
@@ -51,6 +52,7 @@ map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 program_id_p = jax_core.Primitive("program_id")
+batching.ragged_prop_rules[program_id_p] = batching.ragged_mask_no_op_rule
 
 def program_id(axis: int) -> jax.Array:
   """Returns the kernel execution position along the given axis of the grid.
@@ -66,8 +68,8 @@ def program_id(axis: int) -> jax.Array:
   """
   return program_id_p.bind(axis=axis)
 
-@program_id_p.def_custom_bind
-def program_id_bind(*, axis: int):
+def program_id_bind_with_trace(trace, _, params):
+  axis = params.pop("axis")
   grid_env = pallas_core.current_grid_env()
   if grid_env:
     return grid_env[axis].index
@@ -75,7 +77,9 @@ def program_id_bind(*, axis: int):
   # Query the size of the axis to make sure it's a valid axis (and error
   # otherwise).
   _ = frame.size(axis)
-  return jax_core.Primitive.bind(program_id_p, axis=axis)
+  return jax_core.Primitive.bind_with_trace(program_id_p, trace, (), dict(axis=axis))
+# TODO(dougalm): figure out how put the grid_env contest on the relevant trace
+program_id_p.def_bind_with_trace(program_id_bind_with_trace)
 
 @program_id_p.def_abstract_eval
 def _program_id_abstract_eval(**_):
@@ -87,8 +91,8 @@ def num_programs(axis: int) -> int | jax.Array:
   """Returns the size of the grid along the given axis."""
   return num_programs_p.bind(axis=axis)
 
-@num_programs_p.def_custom_bind
-def _num_programs_bind(*, axis: int):
+def _num_programs_bind_with_trace(trace, _, params):
+  axis = params.pop("axis")
   # We might be using a local grid env
   grid_env = pallas_core.current_grid_env()
   if grid_env:
@@ -97,8 +101,9 @@ def _num_programs_bind(*, axis: int):
   frame = pallas_core.axis_frame()
   size = frame.size(axis)
   if size is pallas_core.dynamic_grid_dim:
-    return jax_core.Primitive.bind(num_programs_p, axis=axis)
+    return jax_core.Primitive.bind_with_trace(num_programs_p, trace, (), dict(axis=axis))
   return size
+num_programs_p.def_bind_with_trace(_num_programs_bind_with_trace)
 
 @num_programs_p.def_abstract_eval
 def _num_programs_abstract_eval(**_):
@@ -815,22 +820,43 @@ def debug_print_lowering_rule(ctx, *args, **params):
   return result
 
 
+# All of those shenanigans are because we can't make TransformedRef a PyTree,
+# because they should appear as atomic JAX values to the users.
+# TODO(apaszke): This can be deleted once we make transforms in Mosaic GPU
+# inferred by the compiler.
+@lu.transformation2
+def wrap_with_transforms(f, transforms, *args):
+  new_args = tuple(
+      state_types.TransformedRef(a, t) if t else a
+      for a, t in zip(args, transforms)
+  )
+  return f(*new_args)
+
+
 run_scoped_p = jax_core.Primitive("run_scoped")
 run_scoped_p.multiple_results = True
 
 
-def run_scoped(f: Callable[..., Any], *types, **kw_types) -> Any:
-  """Call the function with allocated references.
+def run_scoped(f: Callable[..., Any], *types: Any, **kw_types: Any) -> Any:
+  """Calls the function with allocated references and returns the result.
 
-  Args:
-    f: The function that generates the jaxpr.
-    *types: The types of the function's positional arguments.
-    **kw_types: The types of the function's keyword arguments.
+  The positional and keyword arguments describe which reference types
+  to allocate for each argument. Each backend has its own set of reference
+  types in addition to :class:`jax.experimental.pallas.MemoryRef`.
   """
-
   flat_types, in_tree = tree_util.tree_flatten((types, kw_types))
   flat_fun, out_tree_thunk = api_util.flatten_fun(lu.wrap_init(f), in_tree)
-  avals = [t.get_ref_aval() for t in flat_types]
+  # We allow ref avals to be transformed references.
+  ref_avals = [t.get_ref_aval() for t in flat_types]
+  avals = [
+      t.ref if isinstance(t, state_types.TransformedRef) else t
+      for t in ref_avals
+  ]
+  ref_transforms = tuple(
+      t.transforms if isinstance(t, state_types.TransformedRef) else ()
+      for t in ref_avals
+  )
+  flat_fun = wrap_with_transforms(flat_fun, ref_transforms)
   # Turn the function into a jaxpr. The body of run_scoped may have
   # effects (IO) on constvars (i.e. variables inherited from the
   # parent scope). Jax can't reason about effects to references that
@@ -858,17 +884,22 @@ def _run_scoped_abstract_eval(*args, jaxpr):
   return [v.aval for v in jaxpr.outvars], nonlocal_effects
 
 
-def _run_scoped_discharge_rule(in_avals,
-                               out_avals,
-                               *args_flat,
-                               jaxpr,
-                               **_):
+def _run_scoped_discharge_rule(
+    should_discharge,
+    in_avals,
+    out_avals,
+    *args_flat,
+    jaxpr,
+    **_):
   del out_avals
   num_consts = len(args_flat)
   jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
   num_return_values = len(jaxpr_noconst.outvars)
+  should_discharge = should_discharge + [
+      isinstance(var.aval, state.AbstractRef) for var in jaxpr.invars
+  ]
   discharged_body, new_consts = state_discharge.discharge_state(
-      jaxpr_noconst, [])
+      jaxpr_noconst, [], should_discharge=should_discharge)
   if new_consts:
     raise NotImplementedError(
         "Cannot handle new consts created by state discharge.")
@@ -887,13 +918,11 @@ def _run_scoped_discharge_rule(in_avals,
   updates = [
       ref_outputs.pop(0) if isinstance(aval, pallas_core.AbstractMemoryRef)
       else None for aval in in_avals]
-  assert len(ref_outputs) == len(
-      body_avals), f'{len(body_avals)}, != {len(ref_outputs)}'
   assert len(updates) == len(in_avals), f'{len(updates)} != {len(in_avals)}'
   return updates, return_values
 
 
-state_discharge.register_discharge_rule(run_scoped_p)(
+state_discharge.register_partial_discharge_rule(run_scoped_p)(
     _run_scoped_discharge_rule)
 
 
@@ -901,9 +930,15 @@ state_discharge.register_discharge_rule(run_scoped_p)(
 def _run_scoped_lowering_rule(ctx, *args, jaxpr):
   # This lowering rule gets triggered when run_scoped is not discharged.
   # In this case there are no stateful effects to handle.
+  should_discharge = [
+      isinstance(aval, state.AbstractRef) for aval in ctx.avals_in
+  ]
+
   def _lower_fun(*lower_fun_args):
-    updates, out = _run_scoped_discharge_rule([], [], *lower_fun_args,
-                               jaxpr=jaxpr)
+    updates, out = _run_scoped_discharge_rule(
+        should_discharge,
+        [], [], *lower_fun_args,
+        jaxpr=jaxpr)
     assert len(updates) == 0, 'Cannot lower run_scoped with effects.'
     return out
   return mlir.lower_fun(_lower_fun, multiple_results=True)(ctx, *args)

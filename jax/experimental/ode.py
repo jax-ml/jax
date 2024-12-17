@@ -47,12 +47,12 @@ zip = safe_zip
 def ravel_first_arg(f, unravel):
   return ravel_first_arg_(lu.wrap_init(f), unravel).call_wrapped
 
-@lu.transformation
-def ravel_first_arg_(unravel, y_flat, *args):
+@lu.transformation2
+def ravel_first_arg_(f, unravel, y_flat, *args):
   y = unravel(y_flat)
-  ans = yield (y,) + args, {}
+  ans = f(y, *args)
   ans_flat, _ = ravel_pytree(ans)
-  yield ans_flat
+  return ans_flat
 
 def interp_fit_dopri(y0, y1, k, dt):
   # Fit a polynomial to the results of a Runge-Kutta step.

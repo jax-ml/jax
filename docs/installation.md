@@ -28,13 +28,14 @@ different builds for different operating systems and accelerators.
 
 The table below shows all supported platforms and installation options. Check if your setup is supported; and if it says _"yes"_ or _"experimental"_, then click on the corresponding link to learn how to install JAX in greater detail.
 
-|                  | Linux, x86_64                        | Linux, aarch64      | macOS, Intel x86_64, AMD GPU   | macOS, Apple Silicon, ARM-based       | Windows, x86_64         | Windows WSL2, x86_64           |
-|------------------|---------------------------------------|--------------------------------|----------------------------------------|----------------------------------------|-------------------------|-----------------------------------------|
-| CPU              | {ref}`yes <install-cpu>`              | {ref}`yes <install-cpu>`        | {ref}`yes <install-cpu>`| {ref}`yes <install-cpu>`| {ref}`yes <install-cpu>` | {ref}`yes <install-cpu>`|
-| NVIDIA GPU       | {ref}`yes <install-nvidia-gpu>`       | {ref}`yes <install-nvidia-gpu>` | no | n/a | no | {ref}`experimental <install-nvidia-gpu>` |
-| Google Cloud TPU | {ref}`yes <install-google-tpu>`       | n/a | n/a | n/a | n/a | n/a |
-| AMD GPU          | {ref}`experimental <install-amd-gpu>` | no | no | n/a | no | no |
-| Apple GPU    | n/a                                   | no | {ref}`experimental <install-apple-gpu>` | {ref}`experimental <install-apple-gpu>` | n/a |  n/a |
+|                  | Linux, x86_64                         | Linux, aarch64                  | Mac, x86_64                           | Mac, aarch64                          | Windows, x86_64          | Windows WSL2, x86_64                     |
+|------------------|---------------------------------------|---------------------------------|---------------------------------------|---------------------------------------|--------------------------|------------------------------------------|
+| CPU              | {ref}`yes <install-cpu>`              | {ref}`yes <install-cpu>`        | {ref}`yes <install-cpu>`              | {ref}`yes <install-cpu>`              | {ref}`yes <install-cpu>` | {ref}`yes <install-cpu>`                 |
+| NVIDIA GPU       | {ref}`yes <install-nvidia-gpu>`       | {ref}`yes <install-nvidia-gpu>` | no                                    | n/a                                   | no                       | {ref}`experimental <install-nvidia-gpu>` |
+| Google Cloud TPU | {ref}`yes <install-google-tpu>`       | n/a                             | n/a                                   | n/a                                   | n/a                      | n/a                                      |
+| AMD GPU          | {ref}`experimental <install-amd-gpu>` | no                              | {ref}`experimental <install-mac-gpu>` | n/a                                   | no                       | no                                       |
+| Apple GPU        | n/a                                   | no                              | n/a                                   | {ref}`experimental <install-mac-gpu>` | n/a                      | n/a                                      |
+| Intel GPU        | {ref}`experimental <install-intel-gpu>`| n/a                            | n/a                                   | n/a                                     | no                       | no                                       |
 
 
 (install-cpu)=
@@ -204,12 +205,12 @@ pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/libtpu_relea
 For users of Colab (https://colab.research.google.com/), be sure you are
 using *TPU v2* and not the older, deprecated TPU runtime.
 
-(install-apple-gpu)=
-## Apple Silicon GPU (ARM-based)
+(install-mac-gpu)=
+## Mac GPU
 
-### pip installation: Apple ARM-based Silicon GPUs
+### pip installation
 
-Apple provides an experimental Metal plugin for Apple ARM-based GPU hardware. For details,
+Apple provides an experimental Metal plugin. For details,
 refer to
 [Apple's JAX on Metal documentation](https://developer.apple.com/metal/jax/).
 
@@ -223,12 +224,23 @@ refer to
   matures.
 
 (install-amd-gpu)=
-## AMD GPU
+## AMD GPU (Linux)
 
 JAX has experimental ROCm support. There are two ways to install JAX:
 
 * Use [AMD's Docker container](https://hub.docker.com/r/rocm/jax); or
 * Build from source (refer to {ref}`building-from-source` — a section called _Additional notes for building a ROCM `jaxlib` for AMD GPUs_).
+
+(install-intel-gpu)=
+## Intel GPU
+
+Intel provides an experimental OneAPI plugin: intel-extension-for-openxla for Intel GPU hardware. For more details and installation instructions, refer to one of the following two methods:
+1. Pip installation: [JAX acceleration on Intel GPU](https://github.com/intel/intel-extension-for-openxla/blob/main/docs/acc_jax.md).
+2. Using [Intel's XLA Docker container](https://hub.docker.com/r/intel/intel-optimized-xla).
+
+Please report any issues related to:
+* JAX: [JAX issue tracker](https://github.com/jax-ml/jax/issues).
+* Intel's OpenXLA plugin: [Intel-extension-for-openxla issue tracker](https://github.com/intel/intel-extension-for-openxla/issues).
 
 ## Conda (community-supported)
 
@@ -241,17 +253,13 @@ simply run:
 conda install jax -c conda-forge
 ```
 
-To install it on a machine with an NVIDIA GPU, run:
+If you run this command on machine with an NVIDIA GPU, this should install a CUDA-enabled package of `jaxlib`.
+
+To ensure that the jax version you are installing is indeed CUDA-enabled, run:
 
 ```bash
-conda install jaxlib=*=*cuda* jax cuda-nvcc -c conda-forge -c nvidia
+conda install "jaxlib=*=*cuda*" jax -c conda-forge
 ```
-
-Note the `cudatoolkit` distributed by `conda-forge` is missing `ptxas`, which
-JAX requires. You must therefore either install the `cuda-nvcc` package from
-the `nvidia` channel, or install CUDA on your machine separately so that `ptxas`
-is in your path. The channel order above is important (`conda-forge` before
-`nvidia`).
 
 If you would like to override which release of CUDA is used by JAX, or to
 install the CUDA build on a machine without GPUs, follow the instructions in the
@@ -282,7 +290,7 @@ pip install -U --pre jax jaxlib -f https://storage.googleapis.com/jax-releases/j
 - Google Cloud TPU:
 
 ```bash
-pip install -U --pre jax jaxlib libtpu-nightly requests -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+pip install -U --pre jax jaxlib libtpu requests -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 ```
 
 - NVIDIA GPU (CUDA 12):

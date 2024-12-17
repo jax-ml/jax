@@ -23,7 +23,6 @@ from jax._src import api
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import linear_util as lu
-from jax._src.core import raise_to_shaped
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -33,7 +32,6 @@ from jax._src.util import split_list, safe_map
 import numpy as np
 
 from jax._src.lax.control_flow.common import (
-    _abstractify,
     _check_tree,
     _initial_style_jaxpr,
     )
@@ -88,7 +86,7 @@ def custom_root(f, initial_guess, solve, tangent_solve, has_aux=False):
     implicit differentiation assuming ``f(solve(f, initial_guess)) == 0``.
   """
   guess_flat, in_args_tree = tree_flatten((initial_guess,))
-  guess_avals = tuple(_map(_abstractify, guess_flat))
+  guess_avals = tuple(_map(core.get_aval, guess_flat))
   f_jaxpr, f_consts, out_tree = _initial_style_jaxpr(
       f, in_args_tree, guess_avals)
 
@@ -231,7 +229,7 @@ def custom_linear_solve(
     transpose_solve = solve
 
   b_flat, in_args_tree = tree_flatten((b,))
-  b_avals = tuple(_map(_abstractify, b_flat))
+  b_avals = tuple(_map(core.get_aval, b_flat))
 
   tree, = treedef_children(in_args_tree)
 
@@ -300,7 +298,7 @@ def _linear_solve_abstract_eval(*args, const_lengths, jaxprs):
   num_aux = len(jaxprs.solve.out_avals) - len(jaxprs.matvec.out_avals)
   if num_aux > 0:
     args_to_raise += tuple(jaxprs.solve.out_avals[-num_aux:])
-  return _map(raise_to_shaped, args_to_raise)
+  return args_to_raise
 
 
 def _custom_linear_solve_impl(*args, const_lengths, jaxprs):
@@ -376,8 +374,7 @@ def _linear_solve_transpose_rule(cotangent, *primals, const_lengths, jaxprs):
   return [None] * sum(const_lengths) + cotangent_b
 
 
-def _linear_solve_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
-                                args, dims, const_lengths, jaxprs):
+def _linear_solve_batching_rule(axis_data, args, dims, const_lengths, jaxprs):
   orig_bat = [d is not batching.not_mapped for d in dims]
 
   params, b = _split_linear_solve_args(args, const_lengths)
@@ -397,15 +394,13 @@ def _linear_solve_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
   for i in range(1 + len(orig_b_bat) + len(solve.out_avals)):
     # Apply vecmat and solve -> new batched parts of x
     solve_jaxpr_batched, solve_x_bat = batching.batch_jaxpr(
-        solve, axis_size, solve_bat + b_bat, instantiate=x_bat,
-        axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+        solve, axis_data, solve_bat + b_bat, instantiate=x_bat)
     if vecmat is None:
       vecmat_jaxpr_batched = None
       x_bat_out = solve_x_bat
     else:
       vecmat_jaxpr_batched, vecmat_x_bat = batching.batch_jaxpr(
-          vecmat, axis_size, vecmat_bat + b_bat, instantiate=b_bat,
-          axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+          vecmat, axis_data, vecmat_bat + b_bat, instantiate=b_bat)
       # batch all aux data by default
       x_bat_out = _map(operator.or_, vecmat_x_bat + [True] * num_aux, solve_x_bat)
     # keep a slice of only the linear operator part of solve's avals
@@ -413,15 +408,13 @@ def _linear_solve_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
 
     # Apply matvec and solve_t -> new batched parts of b
     matvec_jaxpr_batched, matvec_b_bat = batching.batch_jaxpr(
-        matvec, axis_size, matvec_bat + x_bat_noaux, instantiate=b_bat,
-        axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+        matvec, axis_data, matvec_bat + x_bat_noaux, instantiate=b_bat)
     if solve_t is None:
       solve_t_jaxpr_batched = None
       b_bat_out = _map(operator.or_, matvec_b_bat, orig_b_bat)
     else:
       solve_t_jaxpr_batched, solve_t_b_aux_bat = batching.batch_jaxpr(
-          solve_t, axis_size, solve_t_bat + x_bat_noaux, instantiate=x_bat_out,
-          axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+          solve_t, axis_data, solve_t_bat + x_bat_noaux, instantiate=x_bat_out)
       assert len(solve_t_b_aux_bat) == len(orig_b_bat) + num_aux
       solve_t_b_bat, _ = split_list(solve_t_b_aux_bat, [len(orig_b_bat)])
       b_bat_out = _map(lambda m, s, o: m or s or o, matvec_b_bat, solve_t_b_bat,
@@ -445,7 +438,7 @@ def _linear_solve_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
   ]
   # Broadcast out b if necessary
   new_b = [
-      batching.broadcast(x, axis_size, 0) if now_bat and not was_bat else
+      batching.broadcast(x, axis_data.size, 0) if now_bat and not was_bat else
       batching.moveaxis(x, d, 0) if now_bat and d != 0 else x
       for x, d, was_bat, now_bat in zip(b, b_dims, orig_b_bat, b_bat)
   ]
@@ -458,7 +451,7 @@ def _linear_solve_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
   return outs, out_dims
 
 
-linear_solve_p = core.AxisPrimitive('custom_linear_solve')
+linear_solve_p = core.Primitive('custom_linear_solve')
 linear_solve_p.multiple_results = True
 linear_solve_p.def_impl(_custom_linear_solve_impl)
 linear_solve_p.def_abstract_eval(_linear_solve_abstract_eval)
@@ -468,5 +461,4 @@ mlir.register_lowering(
     linear_solve_p, mlir.lower_fun(_custom_linear_solve_impl,
                                    multiple_results=True))
 ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose_rule
-batching.axis_primitive_batchers[linear_solve_p] = partial(_linear_solve_batching_rule, None)
-batching.spmd_axis_primitive_batchers[linear_solve_p] = _linear_solve_batching_rule
+batching.fancy_primitive_batchers[linear_solve_p] = _linear_solve_batching_rule

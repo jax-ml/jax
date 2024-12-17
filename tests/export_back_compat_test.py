@@ -44,9 +44,11 @@ from jax._src.internal_test_util.export_back_compat_test_data import cpu_schur_l
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_svd_lapack_gesdd
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_triangular_solve_blas_trsm
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_hessenberg_lapack_gehrd
+from jax._src.internal_test_util.export_back_compat_test_data import cpu_tridiagonal_lapack_sytrd_hetrd
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_threefry2x32
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_pivots_to_permutation
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_cusolver_getrf
+from jax._src.internal_test_util.export_back_compat_test_data import cuda_svd_cusolver_gesvd
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Eigh
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Lu
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_ApproxTopK
@@ -119,8 +121,11 @@ class CompatTest(bctu.CompatTestBase):
         cpu_eig_lapack_geev.data_2024_08_19,
         cpu_eigh_lapack_syev.data_2024_08_19,
         cpu_lu_lapack_getrf.data_2024_05_31,
+        cpu_schur_lapack_gees.data_2024_11_29,
+        cpu_triangular_solve_blas_trsm.data_2024_12_02,
         cpu_svd_lapack_gesdd.data_2024_08_13,
         cpu_hessenberg_lapack_gehrd.data_2024_08_31,
+        cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_12_01,
     ]
     # Add here all the testdatas that should cover the targets guaranteed
     # stable
@@ -134,14 +139,16 @@ class CompatTest(bctu.CompatTestBase):
         cpu_lu_lapack_getrf.data_2023_06_14,
         cuda_lu_pivots_to_permutation.data_2024_08_08,
         cuda_lu_cusolver_getrf.data_2024_08_19,
-        cuda_qr_cusolver_geqrf.data_2023_03_18,
-        cuda_eigh_cusolver_syev.data_2023_03_17,
+        cuda_qr_cusolver_geqrf.data_2024_09_26,
+        cuda_eigh_cusolver_syev.data_2024_09_30,
+        cuda_svd_cusolver_gesvd.data_2024_10_08,
         rocm_qr_hipsolver_geqrf.data_2024_08_05,
         rocm_eigh_hipsolver_syev.data_2024_08_05,
         cpu_schur_lapack_gees.data_2023_07_16,
         cpu_svd_lapack_gesdd.data_2023_06_19,
         cpu_triangular_solve_blas_trsm.data_2023_07_16,
         cpu_hessenberg_lapack_gehrd.data_2024_08_30,
+        cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_09_03,
         tpu_Eigh.data, tpu_Lu.data_2023_03_21, tpu_Qr.data_2023_03_17,
         tpu_Sharding.data_2023_03_16, tpu_ApproxTopK.data_2023_04_17,
         tpu_ApproxTopK.data_2023_05_16,
@@ -164,6 +171,10 @@ class CompatTest(bctu.CompatTestBase):
       "tf.call_tf_function",  # tested in jax2tf/tests/back_compat_tf_test.py
       "tpu_custom_call",  # tested separately
       "__gpu$xla.gpu.triton",  # tested in pallas/export_back_compat_pallas_test.py
+      # The following require ROCm to test
+      "hip_lu_pivots_to_permutation", "hipsolver_getrf_ffi",
+      "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi", "hipsolver_syevd_ffi",
+      "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi",
     })
     not_covered = targets_to_cover.difference(covered_targets)
     self.assertEmpty(not_covered,
@@ -308,16 +319,19 @@ class CompatTest(bctu.CompatTestBase):
     size = 8
     operand = CompatTest.eigh_input((size, size), dtype)
     func = lambda: CompatTest.eigh_harness((8, 8), dtype)
-    data = self.load_testdata(cpu_eigh_lapack_syev.data_2023_03_17[dtype_name])
     rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+
+    info = cpu_eigh_lapack_syev.data_2024_08_19[dtype_name]
+    data = self.load_testdata(cpu_eigh_lapack_syev.data_2024_08_19[dtype_name])
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_eigh_results, operand))
-    # FFI Kernel test
-    with config.export_ignore_forward_compatibility(True):
-      data = self.load_testdata(cpu_eigh_lapack_syev.data_2024_08_19[dtype_name])
-      self.run_one_test(func, data, rtol=rtol, atol=atol,
-                        check_results=partial(self.check_eigh_results, operand))
+
+    # Legacy custom call test
+    data = self.load_testdata(cpu_eigh_lapack_syev.data_2023_03_17[dtype_name])
+    self.run_one_test(func, data, rtol=rtol, atol=atol,
+                      check_results=partial(self.check_eigh_results, operand),
+                      expect_current_custom_calls=info["custom_call_targets"])
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}_{variant}",
@@ -325,17 +339,19 @@ class CompatTest(bctu.CompatTestBase):
       for dtype_name in ("f32", "f64")
       # We use different custom calls for sizes <= 32
       for variant in ["syevj", "syevd"])
-  def test_gpu_eigh_solver_syev(self, dtype_name="f32", variant="syevj"):
+  def test_gpu_eigh_solver_syev_legacy(self, dtype_name="f32", variant="syevj"):
     if not config.enable_x64.value and dtype_name == "f64":
       self.skipTest("Test disabled for x32 mode")
-    if jtu.test_device_matches(["cuda"]):
+    if jtu.test_device_matches(["rocm"]):
+      data = self.load_testdata(rocm_eigh_hipsolver_syev.data_2024_08_05[f"{dtype_name}_{variant}"])
+      prefix = "hip"
+    elif jtu.test_device_matches(["cuda"]):
       if _is_required_cusolver_version_satisfied(11600):
         # The underlying problem is that this test assumes the workspace size can be
         # queried from an older version of cuSOLVER and then be used in a newer one.
         self.skipTest("Newer cuSOLVER expects a larger workspace than was serialized")
       data = self.load_testdata(cuda_eigh_cusolver_syev.data_2023_03_17[f"{dtype_name}_{variant}"])
-    elif jtu.test_device_matches(["rocm"]):
-      data = self.load_testdata(rocm_eigh_hipsolver_syev.data_2024_08_05[f"{dtype_name}_{variant}"])
+      prefix = "cu"
     else:
       self.skipTest("Unsupported platform")
     # For lax.linalg.eigh
@@ -344,6 +360,26 @@ class CompatTest(bctu.CompatTestBase):
     rtol = dict(f32=1e-3, f64=1e-5)[dtype_name]
     atol = dict(f32=1e-2, f64=1e-10)[dtype_name]
     operand = CompatTest.eigh_input((size, size), dtype)
+    func = lambda: CompatTest.eigh_harness((size, size), dtype)
+    self.run_one_test(func, data, rtol=rtol, atol=atol,
+                      check_results=partial(self.check_eigh_results, operand),
+                      expect_current_custom_calls=[f"{prefix}solver_syevd_ffi"])
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64", "c64", "c128"))
+  def test_gpu_eigh_solver_syev(self, dtype_name="f32"):
+    if not jtu.test_device_matches(["cuda"]):
+      self.skipTest("Unsupported platform")
+    if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
+      self.skipTest("Test disabled for x32 mode")
+    dtype = dict(f32=np.float32, f64=np.float64,
+                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    size = 4
+    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
+    atol = dict(f32=1e-2, f64=1e-10, c64=1e-2, c128=1e-10)[dtype_name]
+    operand = CompatTest.eigh_input((size, size), dtype)
+    data = self.load_testdata(cuda_eigh_cusolver_syev.data_2024_09_30[dtype_name])
     func = lambda: CompatTest.eigh_harness((size, size), dtype)
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_eigh_results, operand))
@@ -396,41 +432,59 @@ class CompatTest(bctu.CompatTestBase):
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_cpu_qr_lapack_geqrf(self, dtype_name="f32"):
-    # For lax.linalg.qr
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
-
+    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     dtype = dict(f32=np.float32, f64=np.float64,
                  c64=np.complex64, c128=np.complex128)[dtype_name]
     func = lambda: CompatTest.qr_harness((3, 3), dtype)
-    data = self.load_testdata(cpu_qr_lapack_geqrf.data_2023_03_17[dtype_name])
-    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
-    self.run_one_test(func, data, rtol=rtol)
-    with config.export_ignore_forward_compatibility(True):
-      # FFI Kernel test
-      data = self.load_testdata(
-          cpu_qr_lapack_geqrf.data_2024_08_22[dtype_name]
-      )
-      self.run_one_test(func, data, rtol=rtol)
 
+    info = cpu_qr_lapack_geqrf.data_2024_08_22[dtype_name]
+    data = self.load_testdata(info)
+    self.run_one_test(func, data, rtol=rtol)
+
+    # TODO(b/369826500): Remove legacy custom call test after mid March 2025.
+    data = self.load_testdata(cpu_qr_lapack_geqrf.data_2023_03_17[dtype_name])
+    self.run_one_test(func, data, rtol=rtol,
+                      expect_current_custom_calls=info["custom_call_targets"])
+
+  # TODO(b/369826500): Remove legacy custom call test after mid March 2025.
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}_{batched}",
            dtype_name=dtype_name, batched=batched)
       for dtype_name in ("f32",)
       # For batched qr we use cublas_geqrf_batched/hipblas_geqrf_batched.
       for batched in ("batched", "unbatched"))
-  def test_gpu_qr_solver_geqrf(self, dtype_name="f32", batched="unbatched"):
-    if jtu.test_device_matches(["cuda"]):
-      data = self.load_testdata(cuda_qr_cusolver_geqrf.data_2023_03_18[batched])
-    elif jtu.test_device_matches(["rocm"]):
+  def test_gpu_qr_solver_geqrf_legacy(self, dtype_name, batched):
+    if jtu.test_device_matches(["rocm"]):
       data = self.load_testdata(rocm_qr_hipsolver_geqrf.data_2024_08_05[batched])
+      prefix = "hip"
+    elif jtu.test_device_matches(["cuda"]):
+      data = self.load_testdata(cuda_qr_cusolver_geqrf.data_2023_03_18[batched])
+      prefix = "cu"
     else:
       self.skipTest("Unsupported platform")
-    # For lax.linalg.qr
-    dtype = dict(f32=np.float32, f64=np.float64)[dtype_name]
-    rtol = dict(f32=1e-3, f64=1e-5)[dtype_name]
+    dtype = dict(f32=np.float32)[dtype_name]
+    rtol = dict(f32=1e-3)[dtype_name]
     shape = dict(batched=(2, 3, 3), unbatched=(3, 3))[batched]
     func = lambda: CompatTest.qr_harness(shape, dtype)
+    self.run_one_test(func, data, rtol=rtol, expect_current_custom_calls=[
+        f"{prefix}solver_geqrf_ffi", f"{prefix}solver_orgqr_ffi"])
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64", "c64", "c128"))
+  def test_gpu_qr_solver_geqrf(self, dtype_name="f32"):
+    if not jtu.test_device_matches(["cuda"]):
+      self.skipTest("Unsupported platform")
+    if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
+      self.skipTest("Test disabled for x32 mode")
+    dtype = dict(f32=np.float32, f64=np.float64,
+                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
+    shape = (2, 3, 3)
+    func = lambda: CompatTest.qr_harness(shape, dtype)
+    data = self.load_testdata(cuda_qr_cusolver_geqrf.data_2024_09_26[dtype_name])
     self.run_one_test(func, data, rtol=rtol)
 
   def test_tpu_Qr(self):
@@ -563,10 +617,10 @@ class CompatTest(bctu.CompatTestBase):
       self.assertTrue(np.allclose(np.linalg.svd(a, compute_uv=False),
                                   np.asarray(out), atol=1e-4, rtol=1e-4))
 
-  @jtu.parameterized_filterable(
-    kwargs=[
-      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
-      for dtype_name in ("f32", "f64", "c64", "c128")])
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}",
+           dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64", "c64", "c128"))
   @jax.default_matmul_precision("float32")
   def test_cpu_schur_lapack_gees(self, dtype_name="f32"):
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
@@ -592,6 +646,14 @@ class CompatTest(bctu.CompatTestBase):
 
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=check_schur_results)
+    # TODO(b/344892332): Remove the check after the compatibility period.
+    has_xla_ffi_support = jaxlib_version >= (0, 4, 37)
+    if has_xla_ffi_support:
+      with config.export_ignore_forward_compatibility(True):
+        # FFI Kernel test
+        data = self.load_testdata(cpu_schur_lapack_gees.data_2024_11_29[dtype_name])
+        self.run_one_test(func, data, rtol=rtol, atol=atol,
+                          check_results=check_schur_results)
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -601,28 +663,48 @@ class CompatTest(bctu.CompatTestBase):
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 
-    dtype = dict(f32=np.float32, f64=np.float64,
-                 c64=np.complex64, c128=np.complex128)[dtype_name]
-    shape = (2, 4, 4)
-    input = jtu.rand_default(self.rng())(shape, dtype)
-    # del input  # Input is in the testdata, here for readability
-    def func(input):
-      return lax.linalg.svd(input, full_matrices=True, compute_uv=True)
+    def func(operand):
+      return lax.linalg.svd(operand, full_matrices=True, compute_uv=True)
 
     rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
 
+    info = cpu_svd_lapack_gesdd.data_2024_08_13[dtype_name]
+    data = self.load_testdata(info)
+    self.run_one_test(func, data, rtol=rtol, atol=atol,
+                      check_results=partial(self.check_svd_results,
+                                            *data.inputs))
+
     data = self.load_testdata(cpu_svd_lapack_gesdd.data_2023_06_19[dtype_name])
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_svd_results,
-                                            input))
-    with config.export_ignore_forward_compatibility(True):
-      # FFI Kernel test
-      data = self.load_testdata(
-          cpu_svd_lapack_gesdd.data_2024_08_13[dtype_name]
-      )
-      self.run_one_test(func, data, rtol=rtol, atol=atol,
-                        check_results=partial(self.check_svd_results, input))
+                                            *data.inputs),
+                      expect_current_custom_calls=info["custom_call_targets"])
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}_algorithm={algorithm_name}",
+           dtype_name=dtype_name, algorithm_name=algorithm_name)
+      for dtype_name in ("f32", "f64", "c64", "c128")
+      for algorithm_name in ("qr", "jacobi"))
+  @jax.default_matmul_precision("float32")
+  def test_gpu_svd_solver_gesvd(self, dtype_name, algorithm_name):
+    if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
+      self.skipTest("Test disabled for x32 mode")
+
+    def func(operand):
+      return lax.linalg.svd(operand, full_matrices=True, compute_uv=True,
+                            algorithm=algorithm)
+
+    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
+    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+    algorithm = dict(qr=lax.linalg.SvdAlgorithm.QR,
+                     jacobi=lax.linalg.SvdAlgorithm.JACOBI)[algorithm_name]
+
+    info = cuda_svd_cusolver_gesvd.data_2024_10_08[algorithm_name][dtype_name]
+    data = self.load_testdata(info)
+    self.run_one_test(func, data, rtol=rtol, atol=atol,
+                      check_results=partial(self.check_svd_results,
+                                            *data.inputs))
 
   @jtu.parameterized_filterable(
     kwargs=[
@@ -660,6 +742,14 @@ class CompatTest(bctu.CompatTestBase):
 
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=check_triangular_solve_results)
+    # TODO(b/344892332): Remove the check after the compatibility period.
+    has_xla_ffi_support = jaxlib_version >= (0, 4, 37)
+    if has_xla_ffi_support:
+      with config.export_ignore_forward_compatibility(True):
+        # FFI Kernel test
+        data = self.load_testdata(cpu_triangular_solve_blas_trsm.data_2024_12_02[dtype_name])
+        self.run_one_test(func, data, rtol=rtol, atol=atol,
+                          check_results=check_triangular_solve_results)
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -684,13 +774,44 @@ class CompatTest(bctu.CompatTestBase):
         cpu_hessenberg_lapack_gehrd.data_2024_08_30[dtype_name]
     )
     self.run_one_test(func, data, rtol=rtol, atol=atol)
+    with config.export_ignore_forward_compatibility(True):
+      # FFI Kernel test
+      data = self.load_testdata(
+          cpu_hessenberg_lapack_gehrd.data_2024_08_31[dtype_name]
+      )
+      self.run_one_test(func, data, rtol=rtol, atol=atol)
+
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64", "c64", "c128"))
+  @jax.default_matmul_precision("float32")
+  def test_cpu_tridiagonal_lapack_sytrd_hetrd(self, dtype_name="f32"):
+    if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
+      self.skipTest("Test disabled for x32 mode")
+
+    dtype = dict(f32=np.float32, f64=np.float64,
+                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    shape = (2, 4, 4)
+    input_data = jtu.rand_default(self.rng())(shape, dtype)
+    # del input_data  # Input is in the testdata, here for readability
+    def func():
+      return lax.linalg.tridiagonal(input_data, lower=True)
+
+    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
+    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+
+    data = self.load_testdata(
+        cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_09_03[dtype_name]
+    )
+    self.run_one_test(func, data, rtol=rtol, atol=atol)
     # TODO(b/344892332): Remove the check after the compatibility period.
-    has_xla_ffi_support = jaxlib_version >= (0, 4, 34)
+    has_xla_ffi_support = jaxlib_version >= (0, 4, 37)
     if has_xla_ffi_support:
       with config.export_ignore_forward_compatibility(True):
         # FFI Kernel test
         data = self.load_testdata(
-            cpu_hessenberg_lapack_gehrd.data_2024_08_31[dtype_name]
+            cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_12_01[dtype_name]
         )
         self.run_one_test(func, data, rtol=rtol, atol=atol)
 

@@ -322,6 +322,19 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       lax.while_loop(lambda c: True, lambda c: (True, True),
                      (np.bool_(True), np.float32(0.)))
 
+  def testWhileLoopCustomPytreeDiffAuxData(self):
+    class Node:
+      def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    tree_util.register_pytree_with_keys(
+        Node,
+        lambda o: ((("x", o.x), ("y", o.y)), 'with_keys'),  # flatten_with_keys
+        lambda _, xy: Node(xy[0], xy[1]),   # unflatten (no key involved)
+        lambda o: ((o.x, o.y), 'without_keys'),    # flatten
+    )
+    lax.while_loop(lambda o: o.x > 0., lambda c: Node(0., 0.), Node(1., 1.))
+
   def testNestedWhileWithDynamicUpdateSlice(self):
     num = 5
 
@@ -1884,6 +1897,16 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         re.escape("scan body output must be a pair, got ShapedArray(float32[]).")):
       lax.scan(lambda c, x: np.float32(0.), 0, jnp.arange(5.))
 
+  def testScanMetadataError(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/25507
+    def f(loop_i, x):
+      return {'T': jnp.array([0.5])}
+
+    init_val = {'t': jnp.array([1.0])}
+    msg = r".*with pytree metadata \('t',\).*with pytree metadata \('T',\)"
+    with self.assertRaisesRegex(TypeError, msg):
+      jax.lax.fori_loop(0, 1, f, init_val)
+
   def testScanBodyCarryPytreeMismatchErrors(self):
     with self.assertRaisesRegex(
         TypeError,
@@ -2095,6 +2118,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jax.jit(jax.jacfwd(loop, argnums=(0,)))(arg)  # doesn't crash
 
   def testIssue804(self):
+    # https://github.com/google/jax/issues/804
     num_devices = jax.device_count()
     f = partial(lax.scan, lambda c, x: (c + lax.psum(x, "i") , c), 0.)
     jax.pmap(f, axis_name="i")(jnp.ones((num_devices, 4)))  # doesn't crash
@@ -2423,6 +2447,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     scan = lambda c, xs: lax.scan(f, c, xs)
     scan_unrolled = lambda c, xs: lax.scan(f, c, xs, unroll=2)
+    scan_fully_unrolled = lambda c, xs: lax.scan(f, c, xs, unroll=True)
 
     # jaxprs should be the same size
     self.assertEqual(
@@ -2430,9 +2455,19 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         len(str(jax.make_jaxpr(scan_unrolled)(c, xs))))
 
     # but HLO should grow due to unrolling
-    self.assertLess(
-        len(str(jax.jit(scan).lower(c, xs).as_text('hlo'))),
-        len(str(jax.jit(scan_unrolled).lower(c, xs).as_text('hlo'))))
+    scan_hlo = str(jax.jit(scan).lower(c, xs).as_text("hlo"))
+    scan_unrolled_hlo = str(jax.jit(scan_unrolled).lower(c, xs).as_text("hlo"))
+    scan_fully_unrolled_hlo = str(
+        jax.jit(scan_fully_unrolled).lower(c, xs).as_text("hlo"))
+
+    self.assertLess(len(scan_hlo), len(scan_unrolled_hlo))
+    self.assertLess(len(scan_unrolled_hlo), len(scan_fully_unrolled_hlo))
+
+    # and the lowering should contain a while loop, unless the scan is fully
+    # unrolled
+    self.assertIn("while(", scan_hlo)
+    self.assertIn("while(", scan_unrolled_hlo)
+    self.assertNotIn("while(", scan_fully_unrolled_hlo)
 
   def test_scan_xs_none(self):
     def f(h, _):
@@ -2596,7 +2631,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         lax.cond(x, f, g, x)
     # Should observe a maximum of 4 compiles: convert_element_type, f, g, cond
     # In #14058, this was observed to be 31 compiles.
-    self.assertLess(count[0], 5)
+    self.assertLess(count(), 5)
 
   @parameterized.named_parameters(
       {"testcase_name": f"_dtype={dtype.__name__}", "dtype": dtype}

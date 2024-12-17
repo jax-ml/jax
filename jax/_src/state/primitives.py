@@ -35,6 +35,7 @@ from jax._src.state.types import (
     AccumEffect,
     ReadEffect,
     RefBitcaster,
+    RefReshaper,
     Transform,
     TransformedRef,
     WriteEffect,
@@ -63,6 +64,7 @@ traceback_util.register_exclusion(__file__)
 #   a:f32[3] <- x[]
 get_p = core.Primitive("get")
 get_p.def_impl(partial(dispatch.apply_primitive, get_p))
+batching.ragged_prop_rules[get_p] = batching.ragged_mask_transfer_identity
 
 Indexer = Union[int, slice, Array, types.EllipsisType]
 
@@ -71,6 +73,7 @@ def get_ref_and_transforms(
     ref_or_view: Any,
     idx: Indexer | tuple[Indexer, ...] | None,
     function_name: str,
+    force_trailing_indexer: bool = True,  # TODO(apaszke): Clean this up.
 ) -> tuple[Any, tuple[Transform, ...]]:
   if isinstance(ref_or_view, TransformedRef):
     ref, transforms = ref_or_view.ref, ref_or_view.transforms
@@ -87,6 +90,8 @@ def get_ref_and_transforms(
   elif not isinstance(idx, tuple):
     idx = (idx,)
 
+  if not idx and not force_trailing_indexer:
+    return ref, transforms
   if not idx and transforms and isinstance(transforms[-1], indexing.NDIndexer):
     return ref, transforms
   nd_indexer = indexing.NDIndexer.from_indices_shape(idx, ref_or_view.shape)
@@ -121,6 +126,16 @@ def ref_get(
 swap_p = core.Primitive("swap")
 swap_p.def_impl(partial(dispatch.apply_primitive, swap_p))
 
+
+def swap_ragged_prop_rule(eqn_params, invar_raggedness, outvars):
+  assert len(invar_raggedness) == 2
+  invar_raggedness_lhs = invar_raggedness[0]
+  invar_raggedness_rhs = invar_raggedness[1]
+
+  return [invar_raggedness_rhs, invar_raggedness_lhs], [None]
+
+
+batching.ragged_prop_rules[swap_p] = swap_ragged_prop_rule
 
 def ref_swap(
     ref_or_view: AbstractRef | TransformedRef,
@@ -177,25 +192,17 @@ def _shape_after_transforming(
     shape: tuple[int | Array, ...], transforms: tuple[Transform, ...]
 ) -> tuple[int | Array, ...]:
   for transform in transforms:
-    match transform:
-      case indexing.NDIndexer():
-        # Run some simple checks that all the indexers have consistent shapes
-        if not transform.is_dynamic_size:
-          assert transform.shape == shape, (transform.shape, shape)
-        shape = transform.get_indexer_shape()
-      case RefBitcaster():
-        shape = transform.shape
-      case _:
-        raise ValueError(f"Unsupported transform: {transform}")
+    shape = transform.transform_shape(shape)  # type: ignore
+  assert shape is not None
   return shape
 
 
 def _dtype_after_transforming(
     dtype: Any, transforms: tuple[Transform, ...]
 ) -> Any:
-  for transform in reversed(transforms):
-    if isinstance(transform, RefBitcaster):
-      return transform.dtype
+  for transform in transforms:
+    dtype = transform.transform_dtype(dtype)
+  assert dtype is not None
   return dtype
 
 
@@ -207,7 +214,10 @@ def _get_abstract_eval(ref_aval: AbstractRef, *args,
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
     out_shape = _shape_after_transforming(ref_aval.shape, transforms)
     out_dtype = _dtype_after_transforming(ref_aval.dtype, transforms)
-    out_aval = ref_aval.inner_aval.update(shape=out_shape, dtype=out_dtype)
+    # TODO(yashkatariya): Transform the sharding too instead of setting it to
+    # None.
+    out_aval = ref_aval.inner_aval.update(shape=out_shape, dtype=out_dtype,
+                                          sharding=None)
   else:
     if transforms:
       raise ValueError("Cannot index non-shaped array with nontrivial indices.")
@@ -223,7 +233,6 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`swap` must be called on `Ref` types: {ref_aval}.")
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
-    val_aval = core.raise_to_shaped(val_aval)
     assert isinstance(val_aval, core.ShapedArray)
     expected_out_shape = _shape_after_transforming(ref_aval.shape, transforms)
     expected_out_dtype = _dtype_after_transforming(ref_aval.dtype, transforms)
@@ -255,7 +264,6 @@ def _addupdate_abstract_eval(ref_aval: AbstractRef,
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`addupdate` must be called on `Ref` types: {ref_aval}.")
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
-    val_aval = core.raise_to_shaped(val_aval)
     out_shape = _shape_after_transforming(ref_aval.shape, transforms)
     out_dtype = _dtype_after_transforming(ref_aval.dtype, transforms)
     assert isinstance(val_aval, core.ShapedArray)
@@ -329,14 +337,23 @@ def pp_bitcaster(
   )
 
 
+def pp_reshaper(context: core.JaxprPpContext, reshaper: RefReshaper) -> pp.Doc:
+  del context
+  return pp.text(
+      f"[reshape({reshaper.dtype}[{','.join(str(d) for d in reshaper.shape)}])]"
+  )
+
+
 def pp_transform(context: core.JaxprPpContext, transform: Transform) -> pp.Doc:
   match transform:
     case indexing.NDIndexer():
       return pp_indexer(context, transform)
     case RefBitcaster():
       return pp_bitcaster(context, transform)
+    case RefReshaper():
+      return pp_reshaper(context, transform)
     case _:
-      raise ValueError(f"Unsupported transform: {transform}")
+      return pp.text(f"[{transform}]")
 
 
 def _pp_transforms(
@@ -637,3 +654,8 @@ def _broadcast_to_abstract_eval(aval, *, shape):
 mlir.register_lowering(
     broadcast_to_p, mlir.lower_fun(_broadcast_to_impl, False)
 )
+
+# === AD rules for mutable arrays ===
+
+ad.defjvp(core.mutable_array_p, lambda g, _: core.mutable_array(g))
+ad.defjvp(core.freeze_p, lambda g, _: core.freeze(g))

@@ -29,7 +29,7 @@ import time
 from typing import Any
 
 import jax
-from jax import core
+from jax._src import core
 from jax._src import config
 from jax._src import sharding_impls
 from jax._src.interpreters import mlir
@@ -62,10 +62,21 @@ _MOSAIC_ALLOW_HLO = config.bool_state(
     help="Allow hlo dialects in Mosaic",
 )
 
+
+# This tracks the latest Mosaic IR version with a monthly delay.
+FWD_COMPAT_IR_VERSION = 3
+
+
 tpu_custom_call_p = core.Primitive("tpu_custom_call")
 tpu_custom_call_p.def_impl(
     functools.partial(xla.apply_primitive, tpu_custom_call_p))
 tpu_custom_call_p.multiple_results = True
+
+
+def get_target_shape(hardware_generation: int) -> tuple[int, int]:
+  """Returns the target shape for the given hardware generation."""
+  del hardware_generation
+  return (8, 128)
 
 
 class MemorySpace(enum.Enum):
@@ -198,9 +209,6 @@ class CustomCallBackendConfig:
         if i + 1 != len(self.flags):
           config.write(b",")
       config.write(b"]")
-    # Prevent the compiler from sharding the custom call beyond what Mosaic does
-    # based on user annotations
-    config.write(b', "implicit_sharding": {"type": "MANUAL"}')
     config.write(b"}")
     return config.getvalue()
 
@@ -274,6 +282,8 @@ mlir.register_lowering(tpu_custom_call_p, _tpu_custom_call_lowering,
 def _lower_tpu_kernel(
     module: ir.Module,
     hardware_generation: int,
+    target_shape: tuple[int, int],
+    kernel_name: str | None = None,
 ) -> ir.Module:
   """Runs MLIR passes lowering the given module to an MLIR module.
 
@@ -283,6 +293,7 @@ def _lower_tpu_kernel(
   Args:
     module: The MLIR module to lower.
     hardware_generation: The TPU hardware generation to target.
+    target_shape: The target shape of (sublane_count, lane_count).
 
   Returns:
     An MLIR module implementing the kernel.
@@ -298,8 +309,7 @@ def _lower_tpu_kernel(
     tpu.register_dialect(ctx)
     mhlo.register_mhlo_dialect(ctx)
     mhlo.register_mhlo_passes()
-
-    dump_mlir(module, "original")
+    dump_mlir(module, "original", kernel_name)
 
     if _MOSAIC_ALLOW_HLO.value:
       # Run hlo dialect conversion: hlo -> linalg -> vector.
@@ -312,11 +322,16 @@ def _lower_tpu_kernel(
       pipeline.run(module.operation)
       dump_mlir(module, "post-hlo-conversion")
 
+    sl_cnt, l_cnt = target_shape
     # Note: we don't pass the TpuTilingFlags here, since we don't know the
     # tiling decisions made by the compiler / what flags are enabled at this
     # point, so we assume everything can be tiled up to default tiling.
     pipeline = [
-        f"func.func(tpu-infer-memref-layout{{hardware-generation={hardware_generation}}})"
+        "func.func(tpu-infer-memref-layout{"
+        f" hardware-generation={hardware_generation}"
+        f" sublane-count={sl_cnt}"
+        f" lane-count={l_cnt}"
+        "})"
     ]
     pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
     pipeline.run(module.operation)
@@ -357,14 +372,16 @@ def _lower_tpu_kernel(
     dump_mlir(module, "post-canonicalize-mosaic")
 
     pipeline = [
-        "func.func(tpu-infer-vector-layout{sublane-count=8 lane-count=128})",
+        (
+            "func.func(tpu-infer-vector-layout{"
+            f" sublane-count={sl_cnt} lane-count={l_cnt}"
+            "})"
+        ),
     ]
     pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
     pipeline.run(module.operation)
     dump_mlir(module, "post-infer-vector-layout")
 
-    sl_cnt = 8
-    l_cnt = 128
     mxu_size = 128 if hardware_generation < 6 else 256
     pipeline = [
         "func.func(tpu-apply-vector-layout{"
@@ -394,6 +411,8 @@ def _lower_mosaic_module_to_asm(
     *,
     backend: str,
     device_type: str | None,
+    kernel_name: str | None,
+    ir_version: int | None = None,
 ) -> tuple[ir.Module, tuple[bool, bool, bool, bool]]:
   has_communication, has_custom_barrier = tpu.private_has_communication(
       module.operation
@@ -402,10 +421,11 @@ def _lower_mosaic_module_to_asm(
   needs_layout_passes = not device_type
   # We'll mutate the module, so clone it
   with module.context as ctx, module.operation.location as _:
-    module = ir.Module.parse(
-        module.operation.get_asm(binary=True, enable_debug_info=True)
-    )
     if needs_layout_passes and _MOSAIC_USE_PYTHON_PIPELINE.value:
+      module = ir.Module.parse(
+          module.operation.get_asm(binary=True, enable_debug_info=True)
+      )
+      module_op = module.operation
       some_tpu = jax.devices(backend)[0]
       device_kind = some_tpu.device_kind
       if not device_kind.startswith("TPU v"):
@@ -414,18 +434,32 @@ def _lower_mosaic_module_to_asm(
             "tpu_custom_call cannot be lowered on a machine without TPUs "
             "when mosaic_use_python_pipeline=True.")
       hardware_generation = int(device_kind[len("TPU v")])
-      module = _lower_tpu_kernel(module, hardware_generation)
+      target_shape = get_target_shape(hardware_generation)
+      module = _lower_tpu_kernel(
+          module, hardware_generation, target_shape=target_shape, kernel_name=kernel_name,
+      )
       needs_hlo_passes = False
       needs_layout_passes = False
+    else:
+      module_op = module.operation.clone()
     prev_allow_unregistered_dialects = ctx.allow_unregistered_dialects
     ctx.allow_unregistered_dialects = True
+    # TODO(apaszke): Remove once the minimum jaxlib version is at least 0.4.37.
+    if jax.version._version_as_tuple(jax.lib.__version__) < (0, 4, 37):
+      target_version = ""
+    else:
+      target_version = (
+          f"target-version={ir_version}" if ir_version is not None else ""
+      )
     try:
-      pipeline = PassManager.parse("builtin.module(mosaic-serde{serialize=true})")
-      pipeline.run(module.operation)
+      pipeline = PassManager.parse(
+          "builtin.module(mosaic-serde{serialize=true " + target_version + "})"
+      )
+      pipeline.run(module_op)
     finally:
       ctx.allow_unregistered_dialects = prev_allow_unregistered_dialects
     bytecode_buffer = io.BytesIO()
-    module.operation.write_bytecode(bytecode_buffer, desired_version=0)
+    module_op.write_bytecode(bytecode_buffer, desired_version=0)
     asm = bytecode_buffer.getvalue()
     return asm, (
         has_communication,
@@ -433,6 +467,44 @@ def _lower_mosaic_module_to_asm(
         needs_hlo_passes,
         needs_layout_passes,
     )
+
+
+def _get_device_type(module: ir.Module) -> str | None:
+  """Determines the device type based on the core_type annotations."""
+  sparsecore_func_found = False
+  tensorcore_func_found = False
+
+  def assign_device_type_based_on_core_type(op: ir.Operation) -> ir.WalkResult:
+    nonlocal sparsecore_func_found
+    nonlocal tensorcore_func_found
+    if op.name == "func.func":
+      if "tpu.core_type" in op.attributes:
+        core_type = op.attributes["tpu.core_type"]
+        if str(core_type) in [
+            f"#tpu.core_type<{c}>"
+            for c in ["sc_scalar_subcore", "sc_vector_subcore"]
+        ]:
+          sparsecore_func_found = True
+          if tensorcore_func_found:
+            return ir.WalkResult.INTERRUPT
+          return ir.WalkResult.SKIP
+        if str(core_type) == "#tpu.core_type<tc>":
+          tensorcore_func_found = True
+          return ir.WalkResult.SKIP
+        raise ValueError(f"Unknown core type: {core_type}")
+    return ir.WalkResult.ADVANCE
+
+  module.operation.walk(
+      assign_device_type_based_on_core_type, walk_order=ir.WalkOrder.PRE_ORDER
+  )
+  if tensorcore_func_found and sparsecore_func_found:
+    raise ValueError(
+        "A single Mosaic kernel cannot contain both "
+        "TensorCore and SparseCore functions."
+    )
+  if sparsecore_func_found:
+    return "sparsecore"
+  return None
 
 
 def _lower_to_custom_call_config(
@@ -448,6 +520,8 @@ def _lower_to_custom_call_config(
     collective_id: int | None,
     serialization_format: int | None,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
+    kernel_name: str | None = None,
+    ir_version: int | None = None,
 ) -> CustomCallBackendConfig:
   lowered_module_asm, (
       has_communication,
@@ -458,6 +532,8 @@ def _lower_to_custom_call_config(
       module,
       backend=backend,
       device_type=device_type,
+      kernel_name=kernel_name,
+      ir_version=ir_version,
   )
   return _lowered_to_custom_call_config(
       lowered_module_asm,
@@ -557,6 +633,8 @@ def lower_module_to_custom_call(
       device_type=device_type,
       serialization_format=serialization_format,
       output_memory_spaces=output_memory_spaces,
+      kernel_name=kernel_name,
+      ir_version=FWD_COMPAT_IR_VERSION if ctx.is_forward_compat() else None,
   )
   return _tpu_custom_call_lowering(
       ctx,
@@ -574,7 +652,6 @@ def as_tpu_kernel(
     *,
     cost_estimate: CostEstimate | None = None,
     backend: str | xla_client.Client = "tpu",
-    device_type: str | None = None,
     kernel_name: str | None = None,
     vmem_limit_bytes: int | None = None,
     flags: dict[str, bool | int | float] | None = None,
@@ -586,6 +663,7 @@ def as_tpu_kernel(
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
+  device_type = _get_device_type(module)
   config = _lower_to_custom_call_config(
       module,
       backend=backend,
@@ -598,6 +676,7 @@ def as_tpu_kernel(
       collective_id=collective_id,
       serialization_format=serialization_format,
       output_memory_spaces=output_memory_spaces,
+      kernel_name=kernel_name,
   )
   return _as_jax_callable(
       config,
@@ -679,7 +758,7 @@ def _as_jax_callable(
   return jax.jit(apply_kernel)
 
 
-def dump_mlir(module: ir.Module, name: str):
+def dump_mlir(module: ir.Module, name: str, kernel_name: str | None = None):
   """A helper function to dump mosaic mlir module"""
   try:
     should_dump = FLAGS["xla_mosaic_dump_to"].value
@@ -688,6 +767,8 @@ def dump_mlir(module: ir.Module, name: str):
   if should_dump == "sponge":
     outdir = os.environ.get("TEST_UNDECLARED_OUTPUTS_DIR", None)
     if outdir:
+      if kernel_name:
+        name = f"{kernel_name}-{name}"
       path = os.path.join(outdir, f"{time.time_ns()}-mosaic-dump-{name}-py.txt")
       with open(path, "w") as f:
         f.write(str(module))

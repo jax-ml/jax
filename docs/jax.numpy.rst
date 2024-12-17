@@ -138,6 +138,7 @@ namespace; they are listed below.
     csingle
     cumprod
     cumsum
+    cumulative_prod
     cumulative_sum
     deg2rad
     degrees
@@ -273,6 +274,7 @@ namespace; they are listed below.
     mask_indices
     matmul
     matrix_transpose
+    matvec
     max
     maximum
     mean
@@ -336,6 +338,7 @@ namespace; they are listed below.
     promote_types
     ptp
     put
+    put_along_axis
     quantile
     r_
     rad2deg
@@ -356,7 +359,6 @@ namespace; they are listed below.
     roots
     rot90
     round
-    round_
     s_
     save
     savez
@@ -376,6 +378,7 @@ namespace; they are listed below.
     size
     sort
     sort_complex
+    spacing
     split
     sqrt
     square
@@ -425,6 +428,7 @@ namespace; they are listed below.
     var
     vdot
     vecdot
+    vecmat
     vectorize
     vsplit
     vstack

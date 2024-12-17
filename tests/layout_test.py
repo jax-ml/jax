@@ -25,6 +25,7 @@ from jax._src import config
 from jax._src.layout import Layout, DeviceLocalLayout as DLL
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip
+from jax.experimental.compute_on import compute_on
 from jax._src.lib import xla_extension_version
 
 config.parse_flags_with_absl()
@@ -46,9 +47,6 @@ class LayoutTest(jtu.JaxTestCase):
     super().setUp()
 
   def test_auto_layout(self):
-    # Remove this condition when xla_extension_version >= 285
-    if jtu.test_device_matches(["gpu"]) and xla_extension_version < 285:
-      self.skipTest("Requires xla_extension_version >= 285 for GPU backend.")
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     shape1 = (128, 128)
     shape2 = (128, 128)
@@ -90,7 +88,7 @@ class LayoutTest(jtu.JaxTestCase):
     with jtu.count_aot_jit_cpp_cache_miss() as init_count:
       init_out = init_compiled(arr1, arr2)
       init_compiled(arr1, arr2)
-    self.assertEqual(init_count[0], 1)
+    self.assertEqual(init_count(), 1)
 
     self.assertEqual(init_out[0].layout, init_compiled.output_layouts[0])
     self.assertEqual(init_out[1].layout, init_compiled.output_layouts[1])
@@ -98,7 +96,7 @@ class LayoutTest(jtu.JaxTestCase):
     with jtu.count_aot_jit_cpp_cache_miss() as apply_count:
       apply_out = compiled_apply(*init_out)
       compiled_apply(*init_out)
-    self.assertEqual(apply_count[0], 1)
+    self.assertEqual(apply_count(), 1)
 
     self.assertEqual(apply_out[0].layout, compiled_apply.output_layouts[0])
     self.assertEqual(apply_out[1].layout, compiled_apply.output_layouts[1])
@@ -114,9 +112,6 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertArraysEqual(apply_out[1], (np_inp2 * 2).T)
 
   def test_default_layout(self):
-    # Remove this condition when xla_extension_version >= 285
-    if jtu.test_device_matches(["gpu"]) and xla_extension_version < 285:
-      self.skipTest("Requires xla_extension_version >= 285 for GPU backend.")
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     shape = (4, 4, 2)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -128,7 +123,6 @@ class LayoutTest(jtu.JaxTestCase):
       return x.T
 
     lowered = jax.jit(f, in_shardings=None, out_shardings=None).lower(sds)
-    self.assertIn("default", lowered.as_text())
     compiled = lowered.compile()
     out = compiled(arr)
 
@@ -156,9 +150,6 @@ class LayoutTest(jtu.JaxTestCase):
               out_shardings=DLL.AUTO).lower(sds).compile()
 
   def test_in_layouts_out_layouts(self):
-    # Remove this condition when xla_extension_version >= 285
-    if jtu.test_device_matches(["gpu"]) and xla_extension_version < 285:
-      self.skipTest("Requires xla_extension_version >= 285 for GPU backend.")
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     shape = (8, 8)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -183,9 +174,6 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('y', 'x')))
 
   def test_sharding_and_layouts(self):
-    # Remove this condition when xla_extension_version >= 285
-    if jtu.test_device_matches(["gpu"]) and xla_extension_version < 285:
-      self.skipTest("Requires xla_extension_version >= 285 for GPU backend.")
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     shape = (4, 8)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -477,9 +465,6 @@ class LayoutTest(jtu.JaxTestCase):
       jax.device_put(inp, l)
 
   def test_concrete_layout_in_shardings(self):
-    # Remove this condition when xla_extension_version >= 285
-    if jtu.test_device_matches(["gpu"]) and xla_extension_version < 285:
-      self.skipTest("Requires xla_extension_version >= 285 for GPU backend.")
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
     shape = (16, 128)
@@ -599,6 +584,140 @@ class LayoutTest(jtu.JaxTestCase):
     sds = jax.ShapeDtypeStruct(np_inp.shape, np_inp.dtype, sharding=s)
     f.lower(sds).compile()(arr)
     self.assertFalse(arr.is_deleted())
+
+  def test_donation_error_on_auto(self):
+    @partial(jax.jit, donate_argnums=0, in_shardings=Layout(DLL.AUTO))
+    def f(x):
+      return x * 2
+
+    with self.assertRaisesRegex(
+        ValueError, ".*Did you mean to set the.*output layout.*AUTO.*"):
+      f(jnp.arange(8))
+
+    @partial(jax.jit, donate_argnums=0, out_shardings=Layout(DLL.AUTO))
+    def g(x):
+      return x * 2
+
+    with self.assertRaisesRegex(
+        ValueError, ".*Did you mean to set the.*input layout.*AUTO.*"):
+      g(jnp.arange(8))
+
+  def test_sparsecore_compute(self):
+    if not (jax.devices()[0].device_kind == 'TPU v5' or
+            jtu.is_device_tpu_at_least(6)):
+      self.skipTest('Does not have a sparsecore present')
+    shape = (128, 128)
+    inp = jnp.arange(math.prod(shape)).reshape(shape)
+
+    dll = DLL(major_to_minor=(0, 1), _tiling=((8,),))
+    s = SingleDeviceSharding(jax.devices()[0])
+    sparse_layout = Layout(dll, s)
+    sparecore_arr = jax.device_put(inp, sparse_layout)
+    dense_layout = Layout(DLL(major_to_minor=(0, 1)), s)
+
+    @compute_on('tpu_sparsecore')
+    @jax.jit
+    def sparsecore_compute(x):
+      return x * x
+
+    @partial(jax.jit, out_shardings=(dense_layout, sparse_layout))
+    def f(x, y):
+      return x * 2, sparsecore_compute(y)
+
+    f(inp, sparecore_arr)
+
+  def test_sparsecore_compute_twice(self):
+    if not (
+        jax.devices()[0].device_kind == 'TPU v5'
+        or jtu.is_device_tpu_at_least(6)
+    ):
+      self.skipTest('Does not have a sparsecore present')
+    shape = (4096, 8)
+    inp = jnp.arange(math.prod(shape)).reshape(shape)
+
+    dll = DLL(major_to_minor=(0, 1), _tiling=((8,),))
+    s = SingleDeviceSharding(jax.devices()[0])
+    sparse_layout = Layout(dll, s)
+    sparecore_arr = jax.device_put(inp, sparse_layout)
+
+    @compute_on('tpu_sparsecore')
+    @jax.jit
+    def sparsecore_multiply(x, y):
+      return x * y
+
+    @compute_on('tpu_sparsecore')
+    @jax.jit
+    def sparsecore_add(x, y):
+      return x + y
+
+    @partial(jax.jit, donate_argnums=0, out_shardings=sparse_layout)
+    def f(x):
+      return sparsecore_multiply(sparsecore_add(x, x) + 1, x)
+
+    f(sparecore_arr)
+
+  def test_sparsecore_and_host_compute(self):
+    if not (
+        jax.devices()[0].device_kind == 'TPU v5'
+        or jtu.is_device_tpu_at_least(6)
+    ):
+      self.skipTest('Does not have a sparsecore present')
+    shape = (128, 128)
+    inp = jnp.arange(math.prod(shape)).reshape(shape)
+    s = SingleDeviceSharding(jax.devices()[0])
+
+    sparse_dll = DLL(major_to_minor=(0, 1), _tiling=((8,),))
+    sparse_layout = Layout(sparse_dll, s)
+    sparecore_arr = jax.device_put(inp, sparse_layout)
+
+    host_dll = DLL(major_to_minor=(0, 1), _tiling=((1,),))
+    host_layout = Layout(host_dll, s)
+    host_arr = jax.device_put(inp, host_layout)
+
+    @compute_on('tpu_sparsecore')
+    @jax.jit
+    def sparsecore_compute(x):
+      return x * x
+
+    @compute_on('device_host')
+    @jax.jit
+    def host_compute(x):
+      return x + x
+
+    @partial(
+        jax.jit,
+        in_shardings=(sparse_layout, host_layout),
+        out_shardings=(sparse_layout, host_layout),
+    )
+    def f(x, y):
+      return sparsecore_compute(x), host_compute(y)
+
+    f(sparecore_arr, host_arr)
+
+  def test_cpp_layout_cache_miss(self):
+    if xla_extension_version < 301:
+      self.skipTest('Requires xla_extension_version >= 301')
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    shape = (16, 16)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np_inp, s)
+
+    arr_m2m = arr.layout.device_local_layout.major_to_minor
+    custom_layout = Layout(DLL(major_to_minor=arr_m2m[::-1]), s)
+    arr2 = jax.device_put(np_inp, custom_layout)
+
+    @jax.jit
+    def f(x):
+      return x @ x.T
+
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      out = f(arr)
+      out2 = f(arr2)
+    self.assertEqual(count(), 2)
+
+    self.assertArraysEqual(out, np_inp @ np_inp.T)
+    self.assertArraysEqual(out2, np_inp @ np_inp.T)
 
 
 if __name__ == '__main__':

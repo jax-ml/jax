@@ -13,11 +13,13 @@
 # limitations under the License.
 from __future__ import annotations
 
+import collections
 from collections.abc import Callable, Sequence
 import contextlib
 import dataclasses
 import functools
 import logging
+import json
 import math
 import re
 import unittest
@@ -32,6 +34,7 @@ from jax.experimental.shard_map import shard_map
 from jax.sharding import NamedSharding
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
+from jax import tree_util
 
 from jax._src import config
 from jax._src import core
@@ -193,7 +196,7 @@ class JaxExportTest(jtu.JaxTestCase):
     def f(a_b_pair, *, a, b):
       return (dict(res=a_b_pair, a=a, b=b), jnp.sin(a), jnp.cos(b))
 
-    exp = get_exported(jax.jit(f), lowering_platforms=("cpu",))((a, b), a=a, b=b)
+    exp = get_exported(jax.jit(f), platforms=("cpu",))((a, b), a=a, b=b)
     a_aval = core.ShapedArray(a.shape, a.dtype)
     b_aval = core.ShapedArray(b.shape, b.dtype)
     self.assertEqual(exp.platforms, ("cpu",))
@@ -240,22 +243,6 @@ class JaxExportTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError,
                                 "Function to be exported must be the result of `jit`"):
       _ = export.export(lambda x: jnp.sin(x))
-
-  @jtu.ignore_warning(category=DeprecationWarning,
-                      message="The jax.experimental.export module is deprecated")
-  def test_export_experimental_back_compat(self):
-    if not CAN_SERIALIZE:
-      self.skipTest("serialization disabled")
-    from jax.experimental import export
-    # Can export a lambda, without jit
-    exp = export.export(lambda x: jnp.sin(x))(.1)
-    self.assertAllClose(exp.call(1.), np.sin(1.))
-
-    blob = export.serialize(exp, vjp_order=1)
-    rehydrated = export.deserialize(blob)
-
-    self.assertAllClose(export.call(exp)(1.), np.sin(1.))
-    self.assertAllClose(export.call_exported(exp)(1.), np.sin(1.))
 
   def test_call_exported_lambda(self):
     # When we export a lambda, the exported.fun_name is not a valid MLIR function name
@@ -311,6 +298,123 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertAllClose(f((a, b), a=a, b=b),
                         exp_f.call((a, b), a=a, b=b))
 
+  def test_pytree_namedtuple(self):
+    T = collections.namedtuple("SomeType", ("a", "b", "c"))
+    export.register_namedtuple_serialization(
+        T,
+        serialized_name="test_pytree_namedtuple.SomeType",
+    )
+    x = T(a=1, b=2, c=3)
+
+    def f(x):
+      return (x, x)  # return 2 copies, to check that types are shared
+
+    exp = export.export(jax.jit(f))(x)
+    res = exp.call(x)
+    self.assertEqual(tree_util.tree_structure(res),
+                     tree_util.tree_structure((x, x)))
+    self.assertEqual(type(res[0]), type(x))
+    self.assertEqual(type(res[1]), type(x))
+    ser = exp.serialize()
+    exp2 = export.deserialize(ser)
+    self.assertEqual(exp2.in_tree, exp.in_tree)
+    self.assertEqual(exp2.out_tree, exp.out_tree)
+    res2 = exp2.call(x)
+    self.assertEqual(tree_util.tree_structure(res2),
+                     tree_util.tree_structure(res))
+
+  def test_pytree_namedtuple_error(self):
+    T = collections.namedtuple("SomeType", ("a", "b"))
+    x = T(a=1, b=2)
+    with self.assertRaisesRegex(
+        ValueError,
+        "Cannot serialize .* unregistered type .*SomeType"):
+      export.export(jax.jit(lambda x: x))(x).serialize()
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "If `from_children` is not present.* must call.*register_pytree_node"
+    ):
+      export.register_pytree_node_serialization(
+          T,
+          serialized_name="test_pytree_namedtuple.SomeType_V2",
+          serialize_auxdata=lambda x: b"",
+          deserialize_auxdata=lambda b: None
+      )
+
+    with self.assertRaisesRegex(ValueError,
+                                "Use .*register_pytree_node_serialization"):
+      export.register_namedtuple_serialization(str, serialized_name="n/a")
+
+    export.register_namedtuple_serialization(
+        T,
+        serialized_name="test_pytree_namedtuple_error.SomeType",
+    )
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Duplicate serialization registration .*test_pytree_namedtuple_error.SomeType"
+    ):
+      export.register_namedtuple_serialization(
+          T,
+          serialized_name="test_pytree_namedtuple_error.OtherType",
+      )
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Duplicate serialization registration for serialized_name.*test_pytree_namedtuple_error.SomeType"
+    ):
+      export.register_namedtuple_serialization(
+          collections.namedtuple("SomeOtherType", ("a", "b")),
+          serialized_name="test_pytree_namedtuple_error.SomeType",
+      )
+
+  def test_pytree_custom_types(self):
+    x1 = collections.OrderedDict([("foo", 34), ("baz", 101), ("something", -42)])
+
+    @tree_util.register_pytree_node_class
+    class CustomType:
+      def __init__(self, a: int, b: CustomType | None, string: str):
+        self.a = a
+        self.b = b
+        self.string = string
+
+      def tree_flatten(self):
+        return ((self.a, self.b), self.string)
+
+      @classmethod
+      def tree_unflatten(cls, aux_data, children):
+        string = aux_data
+        return cls(*children, string)
+
+    export.register_pytree_node_serialization(
+        CustomType,
+        serialized_name="test_pytree_custom_types.CustomType",
+        serialize_auxdata=lambda aux: aux.encode("utf-8"),
+        deserialize_auxdata=lambda b: b.decode("utf-8")
+    )
+    x2 = CustomType(4, 5, "foo")
+
+    def f(x1, x2):
+      return (x1, x2, x1, x2)  # return 2 copies, to check that types are shared
+
+    exp = export.export(jax.jit(f))(x1, x2)
+    res = exp.call(x1, x2)
+    self.assertEqual(tree_util.tree_structure(res),
+                     tree_util.tree_structure(((x1, x2, x1, x2))))
+    self.assertEqual(type(res[0]), type(x1))
+    self.assertEqual(type(res[1]), type(x2))
+    self.assertEqual(type(res[2]), type(x1))
+    self.assertEqual(type(res[3]), type(x2))
+    ser = exp.serialize()
+    exp2 = export.deserialize(ser)
+    self.assertEqual(exp2.in_tree, exp.in_tree)
+    self.assertEqual(exp2.out_tree, exp.out_tree)
+    res2 = exp2.call(x1, x2)
+    self.assertEqual(tree_util.tree_structure(res2),
+                     tree_util.tree_structure(res))
+
+
   def test_error_wrong_intree(self):
     def f(a_b_pair, *, c):
       return jnp.sin(a_b_pair[0]) + jnp.cos(a_b_pair[1]) + c
@@ -359,7 +463,7 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_error_wrong_platform(self, platform):
     a = np.arange(4, dtype=np.float32)
 
-    exp_f = get_exported(jnp.sin, lowering_platforms=(platform,))(a)
+    exp_f = get_exported(jnp.sin, platforms=(platform,))(a)
     if xb.canonicalize_platform(jtu.device_under_test()) == platform:
       raise unittest.SkipTest("Uninteresting scenario")
 
@@ -369,7 +473,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
     # Now try with the platform check disabled
     exp_f_no_platform_check = get_exported(
-      jnp.sin, lowering_platforms=(platform,),
+      jnp.sin, platforms=(platform,),
       disabled_checks=[export.DisabledSafetyCheck.platform()])(a)
     res = exp_f_no_platform_check.call(a)
     self.assertAllClose(res, jnp.sin(a))
@@ -1052,7 +1156,35 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertEqual(res.addressable_shards[0].device, run_devices[0])
     self.assertEqual(res.addressable_shards[1].device, run_devices[1])
 
-  def test_call_with_different_no_of_devices(self):
+  def test_export_abstract_mesh(self):
+    if jax.local_device_count() < 2:
+      self.skipTest("Need at least 2 devices")
+
+    abs_mesh = jax.sharding.AbstractMesh((("x", 2),))
+    input_sharding = jax.sharding.NamedSharding(abs_mesh, P("x", None))
+    output_sharding = jax.sharding.NamedSharding(abs_mesh, P(None, "x"))
+    @jax.jit
+    def f(a):
+      b = a @ a.T
+      return jax.lax.with_sharding_constraint(b, output_sharding)
+
+    exp = get_exported(f)(
+        jax.ShapeDtypeStruct((16, 16), dtype=np.float32,
+                             sharding=input_sharding))
+    # Call the Exported with a concrete Mesh
+    devices = jax.local_devices()[:2]
+    run_mesh = Mesh(devices, ("x",))
+    a_sharding = jax.sharding.NamedSharding(run_mesh, P("x", None))
+    a = jnp.arange(16 * 16, dtype=np.float32).reshape((16, 16))
+    a = jax.device_put(a, a_sharding)
+
+    res = exp.call(a)
+    self.assertAllClose(res, f(a))
+    self.assertLen(res.addressable_shards, 2)
+    self.assertEqual(res.addressable_shards[0].index, (slice(None), slice(0, 8)))
+    self.assertEqual(res.addressable_shards[1].index, (slice(None), slice(8, 16)))
+
+  def test_call_single_device_export_with_different_no_of_devices(self):
     if jax.local_device_count() < 2:
       self.skipTest("Need at least 2 devices")
 
@@ -1360,7 +1492,7 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform(self):
     x = np.arange(8, dtype=np.float32)
     exp = get_exported(jax.jit(_testing_multi_platform_func),
-                       lowering_platforms=("tpu", "cpu", "cuda", "rocm"))(x)
+                       platforms=("tpu", "cpu", "cuda", "rocm"))(x)
     self.assertEqual(exp.platforms, ("tpu", "cpu", "cuda", "rocm"))
     module_str = str(exp.mlir_module())
     expected_main_re = (
@@ -1383,14 +1515,14 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform_nested(self):
     x = np.arange(5, dtype=np.float32)
     exp = get_exported(jax.jit(lambda x: _testing_multi_platform_func(jnp.sin(x))),
-                       lowering_platforms=("cpu", "tpu", "cuda", "rocm"))(x)
+                       platforms=("cpu", "tpu", "cuda", "rocm"))(x)
     self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda", "rocm"))
 
     # Now serialize the call to the exported using a different sequence of
     # lowering platforms, but included in the lowering platforms for the
     # nested exported.
     exp2 = get_exported(jax.jit(exp.call),
-                        lowering_platforms=("cpu", "cuda", "rocm"))(x)
+                        platforms=("cpu", "cuda", "rocm"))(x)
 
     # Ensure that we do not have multiple lowerings of the exported function
     exp2_module_str = str(exp2.mlir_module())
@@ -1409,7 +1541,7 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform_nested_inside_single_platform_export(self):
     x = np.arange(5, dtype=np.float32)
     exp = get_exported(jax.jit(_testing_multi_platform_func),
-                       lowering_platforms=("cpu", "tpu", "cuda", "rocm"))(x)
+                       platforms=("cpu", "tpu", "cuda", "rocm"))(x)
     self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda", "rocm"))
 
     # Now serialize the call for the current platform.
@@ -1482,14 +1614,14 @@ class JaxExportTest(jtu.JaxTestCase):
     def f(x):
       return times_2_or_3_or_4.bind(x)
     x = np.float32(42.)
-    exp = export.export(f, lowering_platforms=["cpu", "cuda", "rocm", "tpu"])(x)
+    exp = export.export(f, platforms=["cpu", "cuda", "rocm", "tpu"])(x)
     expected = x * np.float32(dict(cpu=2, gpu=3, tpu=4)[jtu.device_under_test()])
     self.assertAllClose(exp.call(x), expected)
 
   def test_multi_platform_unknown_platform(self):
     x = np.arange(8, dtype=np.float32)
     exp = get_exported(jax.jit(jnp.sin),
-                       lowering_platforms=("tpu", "cpu", "cuda", "other"))(x)
+                       platforms=("tpu", "cpu", "cuda", "other"))(x)
     self.assertEqual(exp.platforms, ("tpu", "cpu", "cuda", "other"))
 
 
@@ -1516,7 +1648,7 @@ class JaxExportTest(jtu.JaxTestCase):
       # The export is not applicable to GPU
       raise unittest.SkipTest("Not intended for running on GPU")
     exp = get_exported(jax.jit(lambda x: jnp.reshape(_testing_multi_platform_func(x), (-1,))),
-                       lowering_platforms=("cpu", "tpu"))(
+                       platforms=("cpu", "tpu"))(
         jax.ShapeDtypeStruct(export.symbolic_shape("b1, b2"), np.float32)
     )
     x = np.arange(12, dtype=np.float32).reshape((3, 4))
@@ -1539,8 +1671,7 @@ class JaxExportTest(jtu.JaxTestCase):
       return b * 2.
 
     res_native = f_jax(a)
-    exp = get_exported(f_jax,
-                        lowering_platforms=("cpu", "tpu", "cuda", "rocm"))(a)
+    exp = get_exported(f_jax, platforms=("cpu", "tpu", "cuda", "rocm"))(a)
 
     # Call with argument placed on different plaforms
     for platform in self.__class__.platforms:
@@ -1686,7 +1817,7 @@ class JaxExportTest(jtu.JaxTestCase):
                                                   effect_class_name="ForTestingOrderedEffect1")
       exp = get_exported(
           jax.jit(f_jax),
-          lowering_platforms=("cpu", "tpu")
+          platforms=("cpu", "tpu")
           )(jax.ShapeDtypeStruct(export.symbolic_shape("b1, b2"), x.dtype))
       mlir_module_str = str(exp.mlir_module())
       wrapped_main_expected_re = (

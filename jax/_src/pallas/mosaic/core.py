@@ -15,6 +15,7 @@
 """Contains TPU-specific Pallas abstractions."""
 from __future__ import annotations
 
+import collections
 from collections.abc import Sequence
 import dataclasses
 import enum
@@ -22,12 +23,14 @@ import functools
 from typing import Any, ClassVar, Literal
 
 import jax
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import util
 from jax._src.pallas import core as pallas_core
 import jax.numpy as jnp
 import numpy as np
+
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -44,6 +47,17 @@ AbstractMemoryRef = pallas_core.AbstractMemoryRef
 no_block_spec = pallas_core.no_block_spec
 _convert_block_spec_to_block_mapping = pallas_core._convert_block_spec_to_block_mapping
 split_list = util.split_list
+
+_ENABLE_RUNTIME_ASSERT = config.bool_state(
+    "jax_pallas_enable_runtime_assert",
+    default=False,
+    help=(
+        "If set, enables runtime assertions in the kernel via checkify.check."
+        " Otherwise, runtime asserts will be ignored unless functionalized"
+        " using checkify.checkify."
+    ),
+)
+
 
 @dataclasses.dataclass(frozen=True)
 class TPUCompilerParams(pallas_core.CompilerParams):
@@ -160,15 +174,6 @@ class SemaphoreType(enum.Enum):
 class AbstractSemaphore(jax_core.AbstractValue):
   sem_type: SemaphoreType
 
-  def join(self, other):
-    if not isinstance(other, AbstractSemaphore):
-      raise ValueError
-    if other.sem_type != self.sem_type:
-      raise ValueError
-    return self
-
-jax_core.raise_to_shaped_mappings[AbstractSemaphore] = lambda aval, _: aval
-
 
 @dataclasses.dataclass(init=False, kw_only=True, unsafe_hash=True)
 class PrefetchScalarGridSpec(pallas_core.GridSpec):
@@ -196,10 +201,60 @@ class TensorCore:
   id: int
 
 
-def create_tensorcore_mesh(axis_name: str) -> pallas_core.PallasMesh:
+@dataclasses.dataclass(frozen=True)
+class TensorCoreMesh:
+  """A mesh of TensorCores."""
+  devices: np.ndarray
+  axis_names: Sequence[str]
+
+  @property
+  def shape(self):
+    return collections.OrderedDict(zip(self.axis_names, self.devices.shape))
+
+  def discharges_effect(self, effect: jax_core.Effect):
+    del effect
+    return False
+
+
+def create_tensorcore_mesh(
+    axis_name: str, devices: Sequence[jax.Device] | None = None
+) -> TensorCoreMesh:
   # TODO(b/355036384): emit a better error if we don't have tensorcores.
-  num_cores = jax.devices()[0].num_cores
-  return pallas_core.PallasMesh(
+  if devices is None:
+    devices = jax.devices()
+  num_cores = devices[0].num_cores
+  return TensorCoreMesh(
       np.array([TensorCore(i) for i in range(num_cores)]),
       [axis_name],
   )
+
+
+def runtime_assert_enabled() -> bool:
+  """Returns whether runtime asserts are enabled."""
+  return _ENABLE_RUNTIME_ASSERT.value
+
+
+def _tensorcore_mesh_discharge_rule(
+    in_avals,
+    out_avals,
+    *args,
+    mesh,
+    jaxpr,
+):
+  assert isinstance(mesh, TensorCoreMesh)
+  if len(mesh.shape) > 1:
+    raise NotImplementedError("Mesh must be 1D")
+  core_axis_name, num_cores = list(mesh.shape.items())[0]
+  return pallas_core.default_mesh_discharge_rule(
+      in_avals,
+      out_avals,
+      *args,
+      jaxpr=jaxpr,
+      grid=((core_axis_name, num_cores),),
+      compiler_params=TPUCompilerParams(dimension_semantics=("parallel",)),
+      backend="mosaic_tpu",
+  )
+
+pallas_core._core_map_mesh_rules[TensorCoreMesh] = (
+    _tensorcore_mesh_discharge_rule
+)

@@ -31,8 +31,7 @@ from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse import bcoo
 from jax.experimental.sparse.util import (
     nfold_vmap, _count_stored_elements,
-    _csr_to_coo, _dot_general_validated_shape,
-    CuSparseEfficiencyWarning, SparseInfo, Shape)
+    _csr_to_coo, CuSparseEfficiencyWarning, SparseInfo, Shape)
 from jax.util import split_list, safe_zip
 
 from jax._src import api_util
@@ -464,8 +463,7 @@ def bcsr_dot_general(lhs: BCSR | Array, rhs: Array, *,
                      dimension_numbers: DotDimensionNumbers,
                      precision: None = None,
                      preferred_element_type: None = None,
-                     algorithm: None = None,
-                     transpose_algorithm: None = None) -> Array:
+                     out_type=None) -> Array:
   """A general contraction operation.
 
   Args:
@@ -476,15 +474,13 @@ def bcsr_dot_general(lhs: BCSR | Array, rhs: Array, *,
       (lhs_batch_dims, rhs_batch_dims))`.
     precision: unused
     preferred_element_type: unused
-    algorithm: unused
-    transpose_algorithm: unused
 
   Returns:
     An ndarray or BCSR-format sparse array containing the result. If both inputs
     are sparse, the result will be sparse, of type BCSR. If either input is
     dense, the result will be dense, of type ndarray.
   """
-  del precision, algorithm, transpose_algorithm  # unused
+  del precision, out_type  # unused
   if isinstance(rhs, (np.ndarray, jax.Array)):
     if isinstance(lhs, (np.ndarray, jax.Array)):
       return lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers,
@@ -718,7 +714,8 @@ if gpu_sparse.rocm_is_supported:
 #----------------------------------------------------------------------
 # BCOO functions that maybe should be primitives?
 
-def bcsr_broadcast_in_dim(mat: BCSR, *, shape: Shape, broadcast_dimensions: Sequence[int]) -> BCSR:
+def bcsr_broadcast_in_dim(mat: BCSR, *, shape: Shape, broadcast_dimensions: Sequence[int],
+                          sharding=None) -> BCSR:
   result_bcoo = bcoo.bcoo_broadcast_in_dim(
     mat.to_bcoo(), shape=shape, broadcast_dimensions=broadcast_dimensions)
   return BCSR.from_bcoo(result_bcoo)

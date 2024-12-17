@@ -160,7 +160,7 @@ def jax_to_ir(fn, input_shapes, *, constants=None, format):
       raise ValueError(
           'Conversion to TF graph requires TensorFlow to be installed.')
 
-    f = jax2tf.convert(ordered_wrapper, native_serialization=False)
+    f = jax2tf.convert(ordered_wrapper)
     f = tf_wrap_with_input_names(f, input_shapes)
     f = tf.function(f, autograph=False)
     g = f.get_concrete_function(*args).graph.as_graph_def()

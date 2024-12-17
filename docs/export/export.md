@@ -44,7 +44,7 @@ Here is an example:
 (ShapedArray(float32[]),)
 
 >>> print(re.search(r".*@main.*", exported.mlir_module()).group(0))
-  func.func public @main(%arg0: tensor<f32> {mhlo.layout_mode = "default"} loc("x")) -> (tensor<f32> {jax.result_info = "", mhlo.layout_mode = "default"}) {
+  func.func public @main(%arg0: tensor<f32> loc("x")) -> (tensor<f32> {jax.result_info = ""}) {
 
 >>> # And you can serialize the Exported to a bytearray.
 >>> serialized: bytearray = exported.serialize()
@@ -181,7 +181,7 @@ target. To use the latest lowering rules, you can pass the
 or the `JAX_EXPORT_IGNORE_FORWARD_COMPATIBILITY=1` environment variable.
 
 Only a subset of custom calls are guaranteed stable and have
-compatibility guarantees ([see list](https://github.com/search?q=repo%3Agoogle%2Fjax%20_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE&type=code)).
+compatibility guarantees ([see list](https://github.com/search?q=repo%3Ajax-ml%2Fjax++%22_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE+%3D%22+path%3A_export.py&amp%3Btype=code&type=code)).
 We continuously
 add more custom call targets to the allowed list along with backwards
 compatibility tests. If you try to serialize
@@ -206,7 +206,7 @@ as in the following example:
 >>> _ = mlir.register_lowering(new_prim, lambda ctx, o: mlir.custom_call("my_new_prim", operands=[o], result_types=[o.type]).results)
 >>> print(jax.jit(new_prim.bind).lower(1.).compiler_ir())
 module @jit_bind attributes {mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 1 : i32} {
-  func.func public @main(%arg0: tensor<f32> {mhlo.layout_mode = "default"}) -> (tensor<f32> {jax.result_info = "", mhlo.layout_mode = "default"}) {
+  func.func public @main(%arg0: tensor<f32>) -> (tensor<f32> {jax.result_info = ""}) {
     %0 = stablehlo.custom_call @my_new_prim(%arg0) {api_version = 2 : i32, backend_config = ""} : (tensor<f32>) -> tensor<f32>
     return %0 : tensor<f32>
   }
@@ -240,14 +240,14 @@ present on the exporting machine:
 
 ```
 
-There is a safety check that will be raise an error when trying to compile
+There is a safety check that will raise an error when trying to compile
 an `Exported` object on a machine that does not have the accelerator
 for which the code was exported.
 
 You can specify explicitly for what platforms the code should be exported.
 This allows you to specify a different accelerator than you have
 available at export time,
-and it even allows you to specify multi-platform lexport to
+and it even allows you to specify multi-platform export to
 obtain an `Exported` object that can be compiled and executed
 on multiple platforms.
 
@@ -273,7 +273,7 @@ ValueError: Function 'cos' was lowered for platforms '('tpu',)' but it is used o
 >>> # compilation platform (which is the case for `cos` in this
 >>> # example):
 >>> exp_unsafe = export.export(jax.jit(lax.cos),
-...    lowering_platforms=['tpu'],
+...    platforms=['tpu'],
 ...    disabled_checks=[export.DisabledSafetyCheck.platform()])(1.)
 
 >>> exp_unsafe.call(1.)
@@ -281,7 +281,7 @@ Array(0.5403023, dtype=float32, weak_type=True)
 
 # and similarly with multi-platform lowering
 >>> exp_multi = export.export(jax.jit(lax.cos),
-...    lowering_platforms=['tpu', 'cpu', 'cuda'])(1.)
+...    platforms=['tpu', 'cpu', 'cuda'])(1.)
 >>> exp_multi.call(1.)
 Array(0.5403023, dtype=float32, weak_type=True)
 
@@ -293,7 +293,7 @@ resulting module size should be only marginally larger than the
 size of a module with default export.
 As an extreme case, when serializing a module without any
 primitives with platform-specific lowering, you will get
-the same StableHLO as for the single-plaform export.
+the same StableHLO as for the single-platform export.
 
 ```python
 >>> import jax
@@ -310,7 +310,7 @@ the same StableHLO as for the single-plaform export.
 9220
 
 >>> exp_multi = export.export(jax.jit(f),
-...                           lowering_platforms=["cpu", "tpu", "cuda"])(1.)
+...                           platforms=["cpu", "tpu", "cuda"])(1.)
 >>> len(exp_multi.mlir_module_serialized)  # doctest: +SKIP
 9282
 
@@ -326,7 +326,7 @@ combinations of input shapes.
 
 See the {ref}`shape_poly` documentation.
 
-## Device polymorphic export
+## Device-polymorphic export
 
 An exported artifact may contain sharding annotations for inputs,
 outputs and for some intermediates, but these annotations do not refer
@@ -335,20 +335,28 @@ Instead, the sharding annotations refer to logical devices. This
 means that you can compile and run the exported artifacts on different
 physical devices that were used for exporting.
 
+The cleanest way to achieve a device-polymorphic export is to
+use shardings constructed with a `jax.sharding.AbstractMesh`,
+which contains only the mesh shape and axis names. But,
+you can achieve the same results if you use shardings
+constructed for a mesh with concrete devices, since the actual
+devices in the mesh are ignored for tracing and lowering:
+
 ```python
 >>> import jax
 >>> from jax import export
->>> from jax.sharding import Mesh, NamedSharding
+>>> from jax.sharding import AbstractMesh, Mesh, NamedSharding
 >>> from jax.sharding import PartitionSpec as P
+>>>
+>>> # Use an AbstractMesh for exporting
+>>> export_mesh = AbstractMesh((("a", 4),))
 
->>> # Use the first 4 devices for exporting.
->>> export_devices = jax.local_devices()[:4]
->>> export_mesh = Mesh(export_devices, ("a",))
 >>> def f(x):
 ...   return x.T
 
->>> arg = jnp.arange(8 * len(export_devices))
->>> exp = export.export(jax.jit(f, in_shardings=(NamedSharding(export_mesh, P("a")),)))(arg)
+>>> exp = export.export(jax.jit(f))(
+...    jax.ShapeDtypeStruct((32,), dtype=np.int32,
+...                         sharding=NamedSharding(export_mesh, P("a"))))
 
 >>> # `exp` knows for how many devices it was exported.
 >>> exp.nr_devices
@@ -359,8 +367,20 @@ physical devices that were used for exporting.
 >>> exp.in_shardings_hlo
 ({devices=[4]<=[4]},)
 
+>>> # You can also use a concrete set of devices for exporting
+>>> concrete_devices = jax.local_devices()[:4]
+>>> concrete_mesh = Mesh(concrete_devices, ("a",))
+>>> exp2 = export.export(jax.jit(f))(
+...    jax.ShapeDtypeStruct((32,), dtype=np.int32,
+...                         sharding=NamedSharding(concrete_mesh, P("a"))))
+
+>>> # You can expect the same results
+>>> assert exp.in_shardings_hlo == exp2.in_shardings_hlo
+
+>>> # When you call an Exported, you must use a concrete set of devices
+>>> arg = jnp.arange(8 * 4)
 >>> res1 = exp.call(jax.device_put(arg,
-...                                NamedSharding(export_mesh, P("a"))))
+...                                NamedSharding(concrete_mesh, P("a"))))
 
 >>> # Check out the first 2 shards of the result
 >>> [f"device={s.device} index={s.index}" for s in res1.addressable_shards[:2]]
@@ -397,9 +417,11 @@ of devices than it was exported for:
 >>> def f(x):
 ...   return x.T
 
->>> arg = jnp.arange(4 * len(export_devices))
->>> exp = export.export(jax.jit(f, in_shardings=(NamedSharding(export_mesh, P("a")),)))(arg)
+>>> exp = export.export(jax.jit(f))(
+...    jax.ShapeDtypeStruct((4 * len(export_devices),), dtype=np.int32,
+...                         sharding=NamedSharding(export_mesh, P("a"))))
 
+>>> arg = jnp.arange(4 * len(export_devices))
 >>> exp.call(arg)  # doctest: +IGNORE_EXCEPTION_DETAIL
 Traceback (most recent call last):
 ValueError: Exported module f was lowered for 8 devices and is called in a context with 1 devices. This is disallowed because: the module was lowered for more than 1 device.
@@ -420,13 +442,16 @@ artifacts using a new mesh constructed at the call site:
 >>> def f(x):
 ...   return x.T
 
->>> arg = jnp.arange(4 * len(export_devices))
->>> exp = export.export(jax.jit(f, in_shardings=(NamedSharding(export_mesh, P("a")),)))(arg)
+
+>>> exp = export.export(jax.jit(f))(
+...    jax.ShapeDtypeStruct((4 * len(export_devices),), dtype=np.int32,
+...                         sharding=NamedSharding(export_mesh, P("a"))))
 
 >>> # Prepare the mesh for calling `exp`.
 >>> calling_mesh = Mesh(np.array(export_devices[::-1]), ("b",))
 
 >>> # Shard the arg according to what `exp` expects.
+>>> arg = jnp.arange(4 * len(export_devices))
 >>> sharded_arg = jax.device_put(arg, exp.in_shardings_jax(calling_mesh)[0])
 >>> res = exp.call(sharded_arg)
 
@@ -747,7 +772,7 @@ that live in jaxlib):
        * Note that the forward compatibility mode is always false in JIT mode
          or if the user passes `--jax_export_ignore_forward_compatibility=true`
        * We add `T_NEW` to the list of
-         [`_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE`](https://github.com/search?q=repo%3Agoogle%2Fjax++%22_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE+%3D%22+path%3A_export.py&amp%3Btype=code&type=code)
+         [`_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE`](https://github.com/search?q=repo%3Ajax-ml%2Fjax++%22_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE+%3D%22+path%3A_export.py&amp%3Btype=code&type=code)
          in `_export.py`.
   3. Day “D + 21” (end of forward compatibility window; can be even later than 21 days):
     We remove the `forward_compat_mode` in the lowering code, so now exporting
@@ -757,7 +782,7 @@ that live in jaxlib):
     we start the clock for the 6 months backwards compatibility.
     Note that this is relevant only if `T` is among the custom call targets for which
     we already guarantee stability, i.e., are listed in
-    [`_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE`](https://github.com/search?q=repo%3Agoogle%2Fjax++%22_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE+%3D%22+path%3A_export.py&amp%3Btype=code&type=code).
+    [`_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE`](https://github.com/search?q=repo%3Ajax-ml%2Fjax++%22_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE+%3D%22+path%3A_export.py&amp%3Btype=code&type=code).
       * If `RELEASE` is in the forward compatibility window `[D, D + 21]` and if
         we make `RELEASE` the minimum allowed jaxlib version then we can
         remove the `jaxlib_version < (0, 4, 31)` conditional in the

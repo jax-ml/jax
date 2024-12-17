@@ -18,9 +18,9 @@
 from __future__ import annotations
 
 import gc
+import os
 import pathlib
 import re
-from typing import Any
 
 try:
   import jaxlib as jaxlib
@@ -83,9 +83,9 @@ version = check_jaxlib_version(
 import jaxlib.cpu_feature_guard as cpu_feature_guard
 cpu_feature_guard.check_cpu_features()
 
-import jaxlib.utils as utils
+import jaxlib.utils as utils  # noqa: F401
 import jaxlib.xla_client as xla_client
-import jaxlib.lapack as lapack
+import jaxlib.lapack as lapack  # noqa: F401
 
 xla_extension = xla_client._xla
 pytree = xla_client._xla.pytree
@@ -98,18 +98,18 @@ def _xla_gc_callback(*args):
 gc.callbacks.append(_xla_gc_callback)
 
 try:
-  import jaxlib.cuda._versions as cuda_versions  # pytype: disable=import-error
+  import jaxlib.cuda._versions as cuda_versions  # pytype: disable=import-error  # noqa: F401
 except ImportError:
   try:
-    import jax_cuda12_plugin._versions as cuda_versions  # pytype: disable=import-error
+    import jax_cuda12_plugin._versions as cuda_versions  # pytype: disable=import-error  # noqa: F401
   except ImportError:
     cuda_versions = None
 
-import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error
-import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error
-import jaxlib.gpu_prng as gpu_prng  # pytype: disable=import-error
-import jaxlib.gpu_linalg as gpu_linalg  # pytype: disable=import-error
-import jaxlib.hlo_helpers as hlo_helpers  # pytype: disable=import-error
+import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error  # noqa: F401
+import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error  # noqa: F401
+import jaxlib.gpu_prng as gpu_prng  # pytype: disable=import-error  # noqa: F401
+import jaxlib.gpu_linalg as gpu_linalg  # pytype: disable=import-error  # noqa: F401
+import jaxlib.hlo_helpers as hlo_helpers  # pytype: disable=import-error  # noqa: F401
 
 # Jaxlib code is split between the Jax and the Tensorflow repositories.
 # Only for the internal usage of the JAX developers, we expose a version
@@ -117,10 +117,17 @@ import jaxlib.hlo_helpers as hlo_helpers  # pytype: disable=import-error
 # branch on the Jax github.
 xla_extension_version: int = getattr(xla_client, '_version', 0)
 
-import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error
-import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error
+import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error  # noqa: F401
+import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error  # noqa: F401
 
-import jaxlib.mosaic.python.tpu as tpu # pytype: disable=import-error
+try:
+  import jaxlib.mosaic.python.mosaic_gpu as mosaic_gpu_dialect  # pytype: disable=import-error
+except ImportError:
+  # TODO(bchetioui): Remove this when minimum jaxlib version >= 0.4.36.
+  # Jaxlib doesn't contain Mosaic GPU dialect bindings.
+  mosaic_gpu_dialect = None  # type: ignore
+
+import jaxlib.mosaic.python.tpu as tpu  # pytype: disable=import-error  # noqa: F401
 
 # Version number for MLIR:Python APIs, provided by jaxlib.
 mlir_api_version = xla_client.mlir_api_version
@@ -128,17 +135,45 @@ mlir_api_version = xla_client.mlir_api_version
 # TODO(rocm): check if we need the same for rocm.
 
 def _cuda_path() -> str | None:
-  _jaxlib_path = pathlib.Path(jaxlib.__file__).parent
-  # If the pip package nvidia-cuda-nvcc-cu11 is installed, it should have
-  # both of the things XLA looks for in the cuda path, namely bin/ptxas and
-  # nvvm/libdevice/libdevice.10.bc
-  path = _jaxlib_path.parent / "nvidia" / "cuda_nvcc"
-  if path.is_dir():
-    return str(path)
+  def _try_cuda_root_environment_variable() -> str | None:
+    """Use `CUDA_ROOT` environment variable if set."""
+    return os.environ.get('CUDA_ROOT', None)
+
+  def _try_cuda_nvcc_import() -> str | None:
+    """Try to import `cuda_nvcc` and get its path directly.
+
+    If the pip package `nvidia-cuda-nvcc-cu11` is installed, it should have
+    both of the things XLA looks for in the cuda path, namely `bin/ptxas` and
+    `nvvm/libdevice/libdevice.10.bc`.
+    """
+    try:
+      from nvidia import cuda_nvcc  # pytype: disable=import-error
+    except ImportError:
+      return None
+
+    if hasattr(cuda_nvcc, '__file__') and cuda_nvcc.__file__ is not None:
+      # `cuda_nvcc` is a regular package.
+      cuda_nvcc_path = pathlib.Path(cuda_nvcc.__file__).parent
+    elif hasattr(cuda_nvcc, '__path__') and cuda_nvcc.__path__ is not None:
+      # `cuda_nvcc` is a namespace package, which might have multiple paths.
+      cuda_nvcc_path = None
+      for path in cuda_nvcc.__path__:
+        if (pathlib.Path(path) / 'bin' / 'ptxas').exists():
+          cuda_nvcc_path = pathlib.Path(path)
+          break
+    else:
+      return None
+
+    return str(cuda_nvcc_path)
+
+  if (path := _try_cuda_root_environment_variable()) is not None:
+    return path
+  elif (path := _try_cuda_nvcc_import()) is not None:
+    return path
+
   return None
 
 cuda_path = _cuda_path()
 
-transfer_guard_lib = xla_client._xla.transfer_guard_lib
-
+guard_lib = xla_client._xla.guard_lib
 Device = xla_client._xla.Device

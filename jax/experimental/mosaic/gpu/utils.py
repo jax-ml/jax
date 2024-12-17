@@ -40,32 +40,35 @@ import numpy as np
 
 WARPGROUP_SIZE: int = 128
 DYNAMIC = -9223372036854775808
+DYNAMIC32 = -2147483648
 
 # pylint: disable=line-too-long, wildcard-import, missing-function-docstring, bad-continuation, g-bad-todo, protected-access, g-explicit-length-test, missing-class-docstring, g-doc-return-or-yield, g-inconsistent-quotes
 
 
 def ptr_as_memref(ptr, memref_ty: ir.MemRefType):
-  if len(memref_ty.shape) == 0:
-    raise NotImplementedError
   i64 = ir.IntegerType.get_signless(64)
   rank = len(memref_ty.shape)
-  desc_ty = ir.Type.parse(
-      f"!llvm.struct<(ptr, ptr, i64, array<{rank} x i64>, array<{rank} x i64>)>"
-  )
+  if rank > 0:
+    desc_ty = ir.Type.parse(
+        f"!llvm.struct<(ptr, ptr, i64, array<{rank} x i64>, array<{rank} x i64>)>"
+    )
+  else:
+    desc_ty = ir.Type.parse("!llvm.struct<(ptr, ptr, i64)>")
   desc = llvm.UndefOp(desc_ty)
   desc = llvm.InsertValueOp(desc, ptr, [0])  # Allocation
   desc = llvm.InsertValueOp(desc, ptr, [1])  # Aligned Base
   desc = llvm.InsertValueOp(
       desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, 0)), [2]
   )
-  for i, s in enumerate(memref_ty.shape):
-    desc = llvm.InsertValueOp(
-        desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)), [3, i]
-    )
-  for i, s in enumerate(get_contiguous_strides(memref_ty.shape)):
-    desc = llvm.InsertValueOp(
-        desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)), [4, i]
-    )
+  if rank > 0:
+    for i, s in enumerate(memref_ty.shape):
+      desc = llvm.InsertValueOp(
+          desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)), [3, i]
+      )
+    for i, s in enumerate(get_contiguous_strides(memref_ty.shape)):
+      desc = llvm.InsertValueOp(
+          desc, llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, s)), [4, i]
+      )
   return builtin.unrealized_conversion_cast([memref_ty], [desc])
 
 
@@ -104,28 +107,43 @@ def c(val: int | float, ty):
     raise NotImplementedError(ty)
   return arith.constant(ty, attr)
 
+def _debug_scalar_ty_format(arg):
+  if ir.IndexType.isinstance(arg.type):
+    return "%llu", arg
+  if ir.IntegerType.isinstance(arg.type):
+    if ir.IntegerType(arg.type).width < 64:
+      arg = arith.extui(ir.IntegerType.get_signless(64), arg)
+    return "%llu", arg
+  if ir.F32Type.isinstance(arg.type):
+    return "%f", arg
+  if ir.F16Type.isinstance(arg.type):
+    arg = arith.extf(ir.F32Type.get(), arg)
+    return "%f", arg
+  raise NotImplementedError(f"Can't print the type {arg.type}")
 
 def debug_print(fmt, *args, uniform=True):
   type_formats = []
   new_args = []
   for arg in args:
-    ty_format = None
-    if ir.IndexType.isinstance(arg.type):
-      ty_format = "%llu"
-    if ir.IntegerType.isinstance(arg.type):
-      width = ir.IntegerType(arg.type).width
-      ty_format = "%llu"
-      if width < 64:
-        arg = arith.extui(ir.IntegerType.get_signless(64), arg)
-    if ir.F32Type.isinstance(arg.type):
-      ty_format = "%f"
-    if ir.F16Type.isinstance(arg.type):
-      ty_format = "%f"
-      arg = arith.extf(ir.F32Type.get(), arg)
+    if ir.VectorType.isinstance(arg.type):
+      index = ir.IndexType.get()
+      vec_ty = ir.VectorType(arg.type)
+      if len(vec_ty.shape) > 1:
+        raise NotImplementedError(vec_ty)
+      vec_args = [
+          vector.extractelement(arg, position=c(i, index))
+          for i in range(vec_ty.shape[0])
+      ]
+      ty_formats, args = zip(*map(_debug_scalar_ty_format,vec_args))
+      ty_format = f"[{','.join(ty_formats)}]"
+      new_args += args
+    else:
+      ty_format, arg = _debug_scalar_ty_format(arg)
+      new_args.append(arg)
+
     if ty_format is None:
       raise NotImplementedError(arg.type)
     type_formats.append(ty_format)
-    new_args.append(arg)
   ctx = (
       functools.partial(single_thread, per_block=False)
       if uniform
@@ -293,6 +311,12 @@ def globaltimer(kind: Literal["low", "high"] | None = None):
 
 
 def bytewidth(ty: ir.Type):
+  # The actual width of TF32 is 19 bits. However, sinc we need to treat it as
+  # 32 bits for compatibility reasons. TF32 used to be 32 bits wide in upstream
+  # MLIR, but it changed in
+  # https://github.com/llvm/llvm-project/commit/67a1fdb014790a38a205d28e1748634de34471dd.
+  if ir.FloatTF32Type.isinstance(ty):
+    return 4
   if ir.IntegerType.isinstance(ty):
     return ir.IntegerType(ty).width // 8
   if ir.FloatType.isinstance(ty):
@@ -316,13 +340,15 @@ def memref_slice(ref: ir.Value, index) -> ir.Value:
   # dynamic, but we can at least catch some OOB slices).
 
   memref_strides, offset = ref_ty.get_strides_and_offset()
+  dynamic_offset = ir.ShapedType.get_dynamic_stride_or_offset()
   new_offset = offset
-  for idx, stride in zip(base_indices, memref_strides):
-    if isinstance(idx, int):
-      new_offset += idx * stride
-    else:
-      new_offset = ir.ShapedType.get_dynamic_stride_or_offset()
-      break
+  if new_offset != dynamic_offset:
+    for idx, stride in zip(base_indices, memref_strides):
+      if isinstance(idx, int):
+        new_offset += idx * stride
+      else:
+        new_offset = dynamic_offset
+        break
   new_strides = [
       s for s, squeeze in zip(memref_strides, is_squeezed) if not squeeze
   ]
@@ -355,6 +381,80 @@ def _is_contiguous_shape_slice(
       return False
 
   return True
+
+
+def _reshape(ref: ir.Value, sh0: list[int], sh1: list[int]):
+  """Reshapes using only "parallel" folds/unfolds.
+
+  This function uses folds/unfolds that are "parallel" in that they
+  only act on original dimensions, i.e. they won't fold into an
+  intermediate dimension that they will then unfold.
+  """
+
+  i0, i1 = 0, 0
+  def fold_until(shape, off , target)  -> tuple[int, int]:
+    assert shape[off] < target
+    dim = 1
+    for to in range(off, len(shape)):
+      dim *= shape[to]
+      if dim == target:
+        return to + 1, dim
+      if dim > target:
+        # TODO(cperivol): Implement dependent fold-unfolds for subsections
+        # of the shape eg (..., 4,5,5, ...) -> (..., 10,10, ...) could be
+        # supported without touching any other dimensions.
+        raise NotImplementedError(f"Can't reshape {sh0} to {sh1} bu composing independent folds/unfolds.")
+
+    raise AssertionError(f"Unreachable: number of elements don't match in each shape ({sh0} ans {sh1})")
+
+  while i0 < len(sh0) and i1 < len(sh1):
+    if sh0[i0] > sh1[i1]:
+      # How many dimensions following i1 should we unfold i0 into.
+      idx, _ = fold_until(sh1, i1, sh0[i0])
+      ref = memref_unfold(ref, i0, sh1[i1:idx])
+      sh0[i0:i0+1] = sh1[i1:idx]
+      i0 += idx - i1
+      i1 = idx
+    elif sh0[i0] < sh1[i1]:
+      # How many dimensions after i0 should we fold to make dim at i1.
+      idx, dim = fold_until(sh0, i0, sh1[i1])
+      sh0[i0:idx] = [dim]
+      ref = memref_fold(ref, i0, idx - i0)
+      i0 += 1
+      i1 += 1
+    else:
+      i0 += 1
+      i1 += 1
+
+  # Fold the trailing ones
+  if i0 < len(sh0):
+    assert i1 == len(sh1)
+    ref = memref_fold(ref, i0 - 1, len(sh0) - i0 + 1)
+
+  if i1 < len(sh1):
+    assert i0 == len(sh0)
+    ref = memref_unfold(ref, i0 - 1, [sh0[i0 - 1]] + [1] * (len(sh1) - i1))
+
+  return ref
+
+
+def memref_reshape(ref: ir.Value, shape: tuple[int, ...]) -> ir.Value:
+  """Reshape by means of folding and unfolding.
+
+  The use of memref fold/unfold may avoid some possible issues with
+  strided memrefs.
+  """
+
+  ref_ty = ir.MemRefType(ref.type)
+  if math.prod(ref_ty.shape) != math.prod(shape):
+    raise ValueError("Cannot reshape to a different size")
+  if not all(dim > 0 for dim in shape):
+    raise ValueError(
+        "Shapes must havbe only positive dimensions (no -1 or 0 dimensions"
+        f" allowed) {shape}"
+    )
+
+  return _reshape(ref, list(ref_ty.shape), list(shape))
 
 
 def memref_fold(ref: ir.Value, dim, fold_rank) -> ir.Value:
@@ -486,7 +586,7 @@ def parse_indices(
       slice_shape.append(1)
       is_squeezed.append(True)
     elif isinstance(idx, slice):
-      if idx.step is not None:
+      if idx.step is not None and idx.step != 1:
         raise NotImplementedError("Strided slices not implemented")
       base_indices.append(idx.start or 0)
       slice_shape.append((idx.stop or bound) - (idx.start or 0))
@@ -573,33 +673,17 @@ class BarrierRef:
         1,
     )
 
-  def wait_parity(self, parity, expect_wait=False):
-    i1 = ir.IntegerType.get_signless(1)
+  def wait_parity(self, parity):
     i32 = ir.IntegerType.get_signless(32)
-    ticks = c(10000000, i32)
-    address = self.get_ptr()
+    ticks = arith.constant(i32, 10000000)
     parity = arith.extui(i32, parity)
-    if expect_wait:
-      nvvm.mbarrier_try_wait_parity_shared(address, parity, ticks)
-      return
-    barrier_ready = llvm.inline_asm(
-        i1,
-        [address, parity],
-        "mbarrier.test_wait.parity.shared.b64 $0, [$1], $2;",
-        "=b,l,r",
-        has_side_effects=True,
-    )
-    should_wait = arith.xori(barrier_ready, c(1, i1))
-    should_wait = llvm.intr_expect(should_wait, c(0, i1))
-    with ir.InsertionPoint(scf.IfOp(should_wait).then_block):
-      nvvm.mbarrier_try_wait_parity_shared(address, parity, ticks)
-      scf.yield_([])
+    nvvm.mbarrier_try_wait_parity_shared(self.get_ptr(), parity, ticks)
 
-  def wait(self, expect_wait=False):
+  def wait(self):
     parities = memref.load(self.phases, [])
     parity, new_parities = self.update_parities(parities)
     memref.store(new_parities, self.phases, [])
-    self.wait_parity(parity, expect_wait=expect_wait)
+    self.wait_parity(parity)
 
   def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
     i32 = ir.IntegerType.get_signless(32)
@@ -960,3 +1044,15 @@ def is_signed(dtype: jax.typing.DTypeLike) -> bool | None:
   elif jnp.issubdtype(dtype, jnp.integer):
     return jnp.issubdtype(dtype, jnp.signedinteger)
   return None
+
+
+def getelementptr(
+    ptr: ir.Value, indices: Sequence[ir.Value | int], dtype: ir.Type
+) -> ir.Value:
+  static_indices = [i if isinstance(i, int) else DYNAMIC32 for i in indices]
+  dyn_indices = [i for i in indices if not isinstance(i, int)]
+  return llvm.getelementptr(ptr.type, ptr, dyn_indices, static_indices, dtype)
+
+
+def dyn_dot(x, y):
+  return functools.reduce(arith.addi, (arith.muli(a, b) for a, b in zip(x, y)))

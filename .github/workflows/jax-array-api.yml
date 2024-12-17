@@ -22,27 +22,27 @@ jobs:
 
     steps:
     - name: Checkout jax
-      uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938  # v4.2.0
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
     - name: Checkout array-api-tests
-      uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938  # v4.2.0
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       with:
         repository: data-apis/array-api-tests
         # TODO(jakevdp) update this to a stable release/tag when available.
-        ref: 'b4c0823469c02d6ce6e512ad4c2bd8ba42b1b4b2'  # Latest commit as of 2024-09-09
+        ref: '1572b129c6682211abfe139e112592226c361a6c'  # Latest commit as of 2024-12-04
         submodules: 'true'
         path: 'array-api-tests'
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@f677139bbe7f9c59b41e40162b753c062f5d49a3  # v5.2.0
+      uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
         python -m pip install .[ci]
-        python -m pip install -r array-api-tests/requirements.txt
+        python -m pip install pytest-xdist -r array-api-tests/requirements.txt
     - name: Run the test suite
       env:
         ARRAY_API_TESTS_MODULE: jax.numpy
         JAX_ENABLE_X64: 'true'
       run: |
         cd ${GITHUB_WORKSPACE}/array-api-tests
-        pytest array_api_tests --max-examples=5 --derandomize --disable-deadline --skips-file ${GITHUB_WORKSPACE}/tests/array_api_skips.txt
+        pytest -n auto array_api_tests --derandomize --disable-deadline --skips-file ${GITHUB_WORKSPACE}/tests/array_api_skips.txt

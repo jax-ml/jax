@@ -205,11 +205,13 @@ def conv_general_dilated_local(
   lhs_array = lax.asarray(lhs)
 
   c_precision = lax.canonicalize_precision(precision)
-  lhs_precision = (
-      c_precision[0]
-      if (isinstance(c_precision, tuple) and len(c_precision) == 2)
-      else c_precision
-  )
+  if c_precision is None:
+    lhs_precision = None
+  elif isinstance(c_precision, tuple) and len(c_precision) == 2:
+    lhs_precision = c_precision[0]
+  else:
+    raise ValueError(
+        f"Unsupported precision for conv_general_dilated_local: {precision}")
 
   patches = conv_general_dilated_patches(
       lhs=lhs_array,

@@ -14,19 +14,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import ctypes
 import functools
 import os
-from typing import Any
+from typing import Any, overload
 
 import numpy as np
 
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import effects
 from jax._src import util
-from jax._src.callback import _check_shape_dtype, callback_batching_rule
+from jax._src.callback import callback_batching_rule
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -34,7 +35,13 @@ from jax._src.layout import DeviceLocalLayout
 from jax._src.lib import jaxlib
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
-from jax._src.typing import Array, ArrayLike, DuckTypedArray, Shape
+from jax._src.typing import (Array, ArrayLike, DeprecatedArg, DuckTypedArray,
+                             Shape)
+
+# TODO(dfm): Remove after 6 months or less because there aren't any offical
+# compatibility guarantees for jax.extend (see JEP 15856)
+# Added Oct 13, 2024
+deprecations.register("jax-ffi-call-args")
 
 map, unsafe_map = util.safe_map, map
 FfiLayoutOptions = Sequence[int] | DeviceLocalLayout | None
@@ -109,17 +116,17 @@ def _aval_shape(aval: core.AbstractValue) -> Shape:
   return () if aval is core.abstract_token else aval.shape  # pytype: disable=attribute-error
 
 
-def _convert_layout(aval: core.AbstractValue,
-                    layout: FfiLayoutOptions = None) -> Sequence[int]:
+def _convert_layout_for_lowering(
+    aval: core.AbstractValue, layout: FfiLayoutOptions = None) -> Sequence[int]:
   """Convert a layout to the minor-to-major order used by the custom call API."""
   if layout is None:
-    return list(reversed(range(len(_aval_shape(aval)))))
+    return tuple(reversed(range(len(_aval_shape(aval)))))
   elif isinstance(layout, DeviceLocalLayout):
     if layout._tiling is not None:
       raise ValueError("The FFI does not support layouts with tiling")
     return layout.major_to_minor[::-1]
   else:
-    return layout
+    return tuple(layout)
 
 
 def ffi_lowering(
@@ -127,7 +134,7 @@ def ffi_lowering(
     *,
     operand_layouts: Sequence[FfiLayoutOptions] | None = None,
     result_layouts: Sequence[FfiLayoutOptions] | None = None,
-    backend_config: Mapping[str, ir.Attribute] | None = None,
+    backend_config: Mapping[str, ir.Attribute] | str | None = None,
     **lowering_args: Any
 ) -> mlir.LoweringRule:
   """Build a lowering rule for an foreign function interface (FFI) target.
@@ -135,6 +142,10 @@ def ffi_lowering(
   By default, this lowering rule can use the input and output abstract values to
   compute the input and output types and shapes for the custom call, assuming
   row-major layouts.
+
+  Note that layouts passed to this function as tuples should be in
+  minor-to-major order (as expected by XLA) rather than major-to-minor as used
+  by :func:`~jax.extend.ffi.ffi_call` and ``DeviceLocalLayout``.
 
   If keyword arguments are passed to the lowering rule, these are treated as
   attributes, and added to `backend_config`.
@@ -156,20 +167,32 @@ def ffi_lowering(
   ) -> Sequence[ir.Value | Sequence[ir.Value]]:
     kwargs = dict(lowering_args)
     kwargs.setdefault("api_version", 4)
-    kwargs["backend_config"] = dict(
-      backend_config or {}, **{k: mlir.ir_attribute(v) for k, v in params.items()})
+    if kwargs["api_version"] >= 4:
+      if backend_config is not None and not isinstance(backend_config, dict):
+        raise ValueError(
+            "When api_version > 4, backend_config must be a dictionary.")
+      kwargs["backend_config"] = dict(
+        backend_config or {}, **{k: mlir.ir_attribute(v) for k, v in params.items()})
+    else:
+      if params:
+        raise ValueError(
+            "The use of ffi_call attributes requires a custom call API version "
+            f"of at least 4; got api_version={kwargs['api_version']}.")
+      kwargs["backend_config"] = backend_config
     if "result_types" not in kwargs:
       kwargs["result_types"] = [mlir.aval_to_ir_type(aval) for aval in ctx.avals_out]
     if operand_layouts is None:
-      kwargs["operand_layouts"] = map(_convert_layout, ctx.avals_in)
+      kwargs["operand_layouts"] = map(_convert_layout_for_lowering, ctx.avals_in)
     else:
       kwargs["operand_layouts"] = [
-          _convert_layout(*args) for args in zip(ctx.avals_in, operand_layouts)]
+          _convert_layout_for_lowering(*args)
+          for args in zip(ctx.avals_in, operand_layouts)]
     if result_layouts is None:
-      kwargs["result_layouts"] = map(_convert_layout, ctx.avals_out)
+      kwargs["result_layouts"] = map(_convert_layout_for_lowering, ctx.avals_out)
     else:
       kwargs["result_layouts"] = [
-          _convert_layout(*args) for args in zip(ctx.avals_out, result_layouts)]
+          _convert_layout_for_lowering(*args)
+          for args in zip(ctx.avals_out, result_layouts)]
     if "result_shapes" not in kwargs and not all(
         core.is_constant_shape(_aval_shape(aval)) for aval in ctx.avals_out):
       kwargs["result_shapes"] = [
@@ -186,76 +209,268 @@ ResultMetadata = DuckTypedArray | core.AbstractToken
 
 def _result_avals(results: Sequence[ResultMetadata]) -> tuple[core.AbstractValue, ...]:
   avals: list[core.AbstractValue] = []
-  for result in results:
+  for idx, result in enumerate(results):
     if isinstance(result, core.AbstractToken):
       avals.append(result)
     else:
-      _check_shape_dtype(result)
+      if not hasattr(result, "shape") or not hasattr(result, "dtype"):
+        raise ValueError(
+            "All elements of result_shape_dtypes must have 'shape' and 'dtype' "
+            f"attributes. Got {result} at position {idx}.")
       avals.append(core.ShapedArray(result.shape, result.dtype))
   return tuple(avals)
+
+
+def _check_compatible_avals(a: core.AbstractValue, b: core.AbstractValue) -> bool:
+  if isinstance(a, core.AbstractToken) and isinstance(b, core.AbstractToken):
+    return True
+  if getattr(a, "shape", ()) != getattr(b, "shape", ()):
+    return False
+  if getattr(a, "dtype", ()) != getattr(b, "dtype", ()):
+    return False
+  return True
+
+
+def _convert_layouts_for_ffi_call(
+    avals: Sequence[core.AbstractValue],
+    layouts: Sequence[FfiLayoutOptions]) -> tuple[Sequence[int], ...]:
+  return tuple(
+      _convert_layout_for_lowering(
+          aval,
+          layout if layout is None or isinstance(layout, DeviceLocalLayout)
+          else layout[::-1]
+      )
+      for aval, layout in zip(avals, layouts))
+
+
+# ffi_call() returns as many results as result_shape_dtypes.
+@overload
+def ffi_call(
+    target_name: str,
+    result_shape_dtypes: ResultMetadata,
+    *deprecated_args: ArrayLike,
+    has_side_effect: bool = ...,
+    vmap_method: str | None = ...,
+    input_layouts: Sequence[FfiLayoutOptions] | None = ...,
+    output_layouts: FfiLayoutOptions | Sequence[FfiLayoutOptions] | None = ...,
+    input_output_aliases: dict[int, int] | None = ...,
+    custom_call_api_version: int = ...,
+    legacy_backend_config: str | None = ...,
+    vectorized: bool | DeprecatedArg = ...,
+    **deprecated_kwargs: Any,
+) -> Callable[..., Array] | Array:
+  ...
+
+
+@overload
+def ffi_call(
+    target_name: str,
+    result_shape_dtypes: Sequence[ResultMetadata],
+    *deprecated_args: ArrayLike,
+    has_side_effect: bool = ...,
+    vmap_method: str | None = ...,
+    input_layouts: Sequence[FfiLayoutOptions] | None = ...,
+    output_layouts: FfiLayoutOptions | Sequence[FfiLayoutOptions] | None = ...,
+    input_output_aliases: dict[int, int] | None = ...,
+    custom_call_api_version: int = ...,
+    legacy_backend_config: str | None = ...,
+    vectorized: bool | DeprecatedArg = ...,
+    **deprecated_kwargs: Any,
+) -> Callable[..., Sequence[Array]] | Sequence[Array]:
+  ...
 
 
 def ffi_call(
     target_name: str,
     result_shape_dtypes: ResultMetadata | Sequence[ResultMetadata],
-    *args: ArrayLike,
-    vectorized: bool = False,
+    *deprecated_args: ArrayLike,
     has_side_effect: bool = False,
-    **kwargs: Any,
-) -> Array | list[Array]:
+    vmap_method: str | None = None,
+    input_layouts: Sequence[FfiLayoutOptions] | None = None,
+    output_layouts: FfiLayoutOptions | Sequence[FfiLayoutOptions] | None = None,
+    input_output_aliases: dict[int, int] | None = None,
+    custom_call_api_version: int = 4,
+    legacy_backend_config: str | None = None,
+    vectorized: bool | DeprecatedArg = DeprecatedArg(),
+    **deprecated_kwargs: Any,
+) -> Callable[..., Array | Sequence[Array]] | Array | Sequence[Array]:
   """Call a foreign function interface (FFI) target.
 
+  See the :ref:`ffi-tutorial` tutorial for more information.
+
   Like :func:`~jax.pure_callback`, the behavior of ``ffi_call`` under
-  :func:`~jax.vmap` depends on the value of ``vectorized``. When ``vectorized``
-  is ``True``, the FFI target is assumed to satisfy: ``ffi_call(xs) ==
-  jnp.stack([ffi_call(x) for x in xs])``. In other words, calling the FFI target
-  with an extra leading dimension should return the same result as calling it
-  within a loop and stacking along the zeroth axis. Therefore, the FFI target
-  will be called directly on batched inputs (where the batch axes are the
-  leading dimensions). Additionally, the callbacks should return outputs that
-  have corresponding leading batch axes. If ``vectorized`` is ``False`` (the
-  default behavior), transforming this ``ffi_call`` under :func:`~jax.vmap` will
-  result in a :func:`~jax.lax.scan` with the ``ffi_call`` in the body.
+  :func:`~jax.vmap` depends on the value of ``vmap_method``. See the
+  :func:`~jax.pure_callback` documenation for more details about the allowed
+  values and examples of their behavior.
+
+  The current default behavior is to use ``vmap_method="sequential"`` when
+  not specified, but this behavior is deprecated, and in the future, the
+  default will be to raise a ``NotImplementedError`` unless ``vmap_method`` is
+  explicitly specified.
 
   Args:
     target_name: the name of the XLA FFI custom call target that was registered
-      using :func:`~jaxlib.xla_client.register_custom_call_target`.
+      using :func:`~jax.extend.ffi.register_ffi_target`.
     result_shape_dtypes: an object, or sequence of objects, with ``shape`` and
       ``dtype`` attributes which are expected to match the shape and dtype of
       the custom call output or outputs. :class:`~jax.ShapeDtypeStruct` is often
       used to define the elements of ``result_shape_dtypes``.
       ``jax.core.abstract_token`` may be used to represent a token-typed output.
-    *args: the arguments passed to the custom call.
-    vectorized: boolean specifying whether the FFI call can operate in a
-      vectorized manner, as described above.
     has_side_effect: boolean specifying whether the custom call has side
       effects. When ``True``, the FFI call will be executed even when the
       outputs are not used.
-    **kwargs: keyword arguments that are passed as named attributes to the
-      custom call using XLA's FFI interface.
+    vmap_method: string specifying how the FFI call transforms under
+      :func:`~jax.vmap` as described above.
+    input_layouts: a sequence of layouts for each input argument. In each case,
+      the layout can be (a) ``None`` indicating that this input is in default
+      row-major order, (b) a ``DeviceLocalLayout`` specifying the axis order,
+      or (c) a sequence of integers specifying the major-to-minor axis
+      ordering. Users who are familiar with XLA layouts should note that this
+      function expects layouts in major-to-minor order instead of the
+      minor-to-major order that XLA uses. For example, a batch of row-major
+      matrices could be specified using the layout ``[0, 1, 2]``, whereas a
+      batch of column-major matrices would have layout ``[0, 2, 1]``. In both
+      of these examples, the leading/batch dimension is the "slowest" axis. The
+      ``input_layouts`` parameter should be used to request the memory layout
+      expected by the FFI call target, and XLA will ensure that the buffers
+      have the correct layouts before the handler is executed.
+    output_layouts: like ``input_layouts``, but specifying the required layouts
+      for the output arrays.
+    input_output_aliases: a dictionary where the keys are input indices and the
+      values are output indices. This mapping indicates which output arrays
+      alias specific input arrays.
+    custom_call_api_version: the version number of the custom call API
+      implemented by the FFI target ``target_name``. The only formally
+      supported version is the typed FFI API with ``custom_call_api_version=4``,
+      but earlier unsupported custom calls can be executed using this argument.
+    legacy_backend_config: for legacy targets implemented using
+      ``custom_call_api_version<4``, attributes are passed using the opaque
+      string representation provided by this argument. This parameter cannot be
+      used with ``custom_call_api_version>=4``.
 
   Returns:
-    One or more :class:`~jax.Array` objects whose shapes and dtypes match
-    ``result_shape_dtypes``.
+    A function that can be called with the input arrays as positional arguments
+    to execute the FFI handler. Any keyword arguments are passed as named
+    attributes to the FFI handler using XLA's FFI interface.
   """
+  if not isinstance(vectorized, DeprecatedArg) and not vectorized is None:
+    deprecations.warn(
+        "jax-callback-vectorized",
+        "The vectorized argument of ffi_call is deprecated and setting "
+        "it will soon raise an error. To avoid an error in the future, and to "
+        "suppress this warning, please use the vmap_method argument instead.",
+        stacklevel=2)
+    if vmap_method is not None:
+      raise ValueError(
+          "the vectorized and vmap_method arguments of ffi_call cannot "
+          "be used together. Please use the vmap_method argument.")
+    vmap_method = "legacy_vectorized" if vectorized else "sequential"
+  allowed_vmap_methods = ["sequential", "expand_dims", "broadcast_all",
+                          "legacy_vectorized", None]
+  if vmap_method not in allowed_vmap_methods:
+    raise ValueError(
+        f"vmap_method must be on of the allowed methods {allowed_vmap_methods}, "
+        f"but got: {vmap_method}")
+
+  output_layouts_: Sequence[FfiLayoutOptions] | None
   if isinstance(result_shape_dtypes, Sequence):
+    output_layouts_ = output_layouts  # type: ignore
     multiple_results = True
     result_avals = _result_avals(result_shape_dtypes)
   else:
     multiple_results = False
     result_avals = _result_avals((result_shape_dtypes,))
-  results = ffi_call_p.bind(
-      *args,
-      result_avals=result_avals,
-      vectorized=vectorized,
-      target_name=target_name,
-      has_side_effect=has_side_effect,
-      **_wrap_kwargs_hashable(kwargs),
-  )
-  if multiple_results:
-    return results
+    output_layouts_ = (output_layouts,)  # type: ignore
+
+  if custom_call_api_version >= 4 and legacy_backend_config is not None:
+    raise ValueError(
+        "The use of the legacy_backend_config parameter requires "
+        f"custom_call_api_version < 4; got {custom_call_api_version}.")
+
+  def wrapped(*args: ArrayLike, **kwargs: Any):
+    in_avals = [core.get_aval(x) for x in args]
+
+    if input_layouts is None:
+      static_input_layouts = tuple(map(_convert_layout_for_lowering, in_avals))
+    else:
+      if len(input_layouts) != len(in_avals):
+        raise ValueError(
+            f"The number of input arguments ({len(in_avals)}) must equal the "
+            f"number of input layouts ({len(input_layouts)}).")
+      static_input_layouts = _convert_layouts_for_ffi_call(in_avals,
+                                                           input_layouts)
+    if output_layouts_ is None:
+      static_output_layouts = tuple(map(_convert_layout_for_lowering,
+                                        result_avals))
+    else:
+      if len(output_layouts_) != len(result_avals):
+        raise ValueError(
+            f"The number of outputs ({len(result_avals)}) must equal the "
+            f"number of output layouts ({len(output_layouts_)}).")
+      static_output_layouts = _convert_layouts_for_ffi_call(result_avals,
+                                                            output_layouts_)
+
+    static_input_output_aliases: tuple[tuple[int, int], ...] = ()
+    if input_output_aliases is not None:
+      for i_idx, o_idx in sorted(input_output_aliases.items()):
+        i_idx, o_idx = int(i_idx), int(o_idx)
+        if i_idx >= len(args):
+          raise ValueError(
+              f"input_output_aliases contains the mapping '{i_idx}:{o_idx}' "
+              f"with input index {i_idx} outside the range [0, "
+              f"{len(args)}).")
+        if o_idx >= len(result_avals):
+          raise ValueError(
+              f"input_output_aliases contains the mapping '{i_idx}:{o_idx}' "
+              f"with output index {o_idx} outside the range [0, "
+              f"{len(result_avals)}).")
+        in_aval = in_avals[i_idx]
+        out_aval = result_avals[o_idx]
+        if not _check_compatible_avals(in_aval, out_aval):
+          raise ValueError(
+              f"input_output_aliases contains the mapping '{i_idx}:{o_idx}' "
+              f"referring to an input with abstract value {in_aval} and an "
+              f"output with a different abstract value {out_aval}.")
+        if static_input_layouts[i_idx] != static_output_layouts[o_idx]:
+          raise ValueError(
+              f"input_output_aliases contains the mapping '{i_idx}:{o_idx}' "
+              f"referring to an input with layout {static_input_layouts[i_idx]} "
+              "and an output with a different layout "
+              f"{static_output_layouts[o_idx]}.")
+        static_input_output_aliases += ((i_idx, o_idx),)
+
+    results = ffi_call_p.bind(
+        *args,
+        result_avals=result_avals,
+        vectorized=vectorized,
+        vmap_method=vmap_method,
+        target_name=target_name,
+        has_side_effect=has_side_effect,
+        input_layouts=static_input_layouts,
+        output_layouts=static_output_layouts,
+        input_output_aliases=static_input_output_aliases,
+        custom_call_api_version=custom_call_api_version,
+        legacy_backend_config=legacy_backend_config,
+        attributes=_wrap_kwargs_hashable(kwargs),
+    )
+    if multiple_results:
+      return results
+    else:
+      return results[0]
+
+  if deprecated_args or deprecated_kwargs:
+    deprecations.warn(
+        "jax-ffi-call-args",
+        "Calling ffi_call directly with input arguments is deprecated. "
+        "Instead, ffi_call should be used to construct a callable, which can "
+        "then be called with the appropriate inputs. For example,\n"
+        "  ffi_call('target_name', output_type, x, argument=5)\n"
+        "should be replaced with\n"
+        "  ffi_call('target_name', output_type)(x, argument=5)",
+        stacklevel=2)
+    return wrapped(*deprecated_args, **deprecated_kwargs)
   else:
-    return results[0]
+    return wrapped
 
 
 # ffi_call must support some small non-hashable input arguments, like np.arrays
@@ -263,13 +478,13 @@ def ffi_call(
 # structs. Since these arguments will eventually be embedded in the HLO as
 # dense attributes, we assume that they are small and hash by making an
 # immutable copy and hashing by value.
-def _wrap_kwargs_hashable(kwargs: dict[str, Any]) -> dict[str, Any]:
-  hashable_kwargs: dict[str, Any] = {}
-  for k, v in kwargs.items():
+def _wrap_kwargs_hashable(kwargs: dict[str, Any]) -> Sequence[tuple[str, Any]]:
+  hashable_kwargs: list[tuple[str, Any]] = []
+  for k, v in sorted(kwargs.items()):
     if isinstance(v, np.ndarray):
-      hashable_kwargs[k] = HashableArray(v)
+      hashable_kwargs.append((k, HashableArray(v)))
     elif isinstance(v, dict):
-      hashable_kwargs[k] = HashableDict(v)
+      hashable_kwargs.append((k, HashableDict(v)))
     else:
       try:
         hash(v)
@@ -277,13 +492,13 @@ def _wrap_kwargs_hashable(kwargs: dict[str, Any]) -> dict[str, Any]:
         raise TypeError(
             f"Non-hashable keyword argument to ffi_call {k}: {v}") from e
       else:
-        hashable_kwargs[k] = v
-  return hashable_kwargs
+        hashable_kwargs.append((k, v))
+  return tuple(hashable_kwargs)
 
 
-def _unwrap_kwargs_hashable(kwargs: dict[str, Any]) -> dict[str, Any]:
+def _unwrap_kwargs_hashable(kwargs: Sequence[tuple[str, Any]]) -> dict[str, Any]:
   unwrapped_kwargs: dict[str, Any] = {}
-  for k, v in kwargs.items():
+  for k, v in kwargs:
     if isinstance(v, HashableArray):
       unwrapped_kwargs[k] = v.val
     elif isinstance(v, HashableDict):
@@ -341,25 +556,23 @@ effects.control_flow_allowed_effects.add_type(FfiEffect)
 def ffi_call_abstract_eval(
     *avals_in,
     result_avals: tuple[core.AbstractValue, ...],
-    target_name: str,
-    vectorized: bool,
     has_side_effect: bool,
-    **kwargs: Any,
+    **_,
 ):
-  del avals_in, target_name, vectorized, kwargs
+  del avals_in  # unused
   effects = {_FfiEffect} if has_side_effect else core.no_effects
   return result_avals, effects
 
 
-def ffi_call_jvp(*args, target_name, **kwargs):
-  del args, kwargs
+def ffi_call_jvp(*args, target_name, **_):
+  del args
   raise ValueError(
       f"The FFI call to `{target_name}` cannot be differentiated. "
       "You can use `jax.custom_jvp` or `jax.custom_jvp` to add support.")
 
 
-def ffi_call_transpose(*args, target_name, **kwargs):
-  del args, kwargs
+def ffi_call_transpose(*args, target_name, **_):
+  del args
   raise ValueError(
       f"The FFI call to `{target_name}` cannot be differentiated. "
       "You can use `jax.custom_jvp` or `jax.custom_jvp` to add support.")
@@ -368,15 +581,23 @@ def ffi_call_transpose(*args, target_name, **kwargs):
 def ffi_call_lowering(
     ctx: mlir.LoweringRuleContext,
     *operands: ir.Value,
-    result_avals: tuple[core.AbstractValue, ...],
     target_name: str,
-    vectorized: bool,
     has_side_effect: bool,
-    **kwargs: Any,
+    input_layouts: Sequence[Sequence[int]],
+    output_layouts: Sequence[Sequence[int]],
+    input_output_aliases: Sequence[tuple[int, int]],
+    custom_call_api_version: int,
+    legacy_backend_config: str | None,
+    attributes: Sequence[tuple[str, Any]],
+    **_,
 ) -> Sequence[ir.Value]:
-  del result_avals, vectorized
-  rule = ffi_lowering(target_name, has_side_effect=has_side_effect)
-  return rule(ctx, *operands, **_unwrap_kwargs_hashable(kwargs))
+  rule = ffi_lowering(target_name, has_side_effect=has_side_effect,
+                      operand_layouts=input_layouts,
+                      result_layouts=output_layouts,
+                      operand_output_aliases=dict(input_output_aliases),
+                      api_version=custom_call_api_version,
+                      backend_config=legacy_backend_config)
+  return rule(ctx, *operands, **_unwrap_kwargs_hashable(attributes))
 
 
 ffi_call_p = core.Primitive("ffi_call")

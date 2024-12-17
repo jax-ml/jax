@@ -32,6 +32,8 @@ _TPU_V2 = 'TPU v2'
 _TPU_V3 = 'TPU v3'
 _TPU_V4 = 'TPU v4'
 _TPU_V5_LITE = "TPU v5 lite"
+_TPU_V5E = "TPU v5e"
+_TPU_V5P = "TPU v5p"
 
 # Maps physical topology -> mesh shape -> transpose to use for jekbradbury's
 # famous contiguous mesh trick.
@@ -68,6 +70,8 @@ _TRAY_RING_ORDER = (0, 1, 2, 3, 6, 7, 4, 5)
 _TRAY_2x2_RING_ORDER = (0, 1, 3, 2)
 _TRAY_4x4_RING_ORDER = (0, 1, 2, 3, 7, 6, 5, 9, 10, 11, 15, 14, 13, 12, 8, 4)
 _V5E_TRAY_RING_ORDER = (0, 1, 2, 3, 7, 6, 5, 4)
+_V5E_TRAY_IOTA_ORDER = (0, 4, 2, 6, 1, 5, 3, 7)
+_V5P_2x2x2_ORDER = (0, 1, 3, 2, 6, 7, 5, 4)
 
 def _tpu_v2_v3_create_device_mesh(
     mesh_shape: Sequence[int],
@@ -127,7 +131,11 @@ def _v5e_create_device_mesh(
 
   if len(devices) == 8:
     device_mesh = np.asarray(sequential_devices)
-    device_mesh = device_mesh[np.array(_V5E_TRAY_RING_ORDER)]
+    if bound_x == bound_y == bound_z == 2:  # v5e 2x2x2
+      order = _V5E_TRAY_IOTA_ORDER
+    else:
+      order = _V5E_TRAY_RING_ORDER
+    device_mesh = device_mesh[np.array(order)]
     device_mesh = device_mesh.reshape(mesh_shape)
     return device_mesh
 
@@ -142,6 +150,35 @@ def _v5e_create_device_mesh(
   return None
 
 
+def _v5p_create_device_mesh(
+    mesh_shape: Sequence[int], devices: Sequence[Any], **unused_kwargs
+) -> np.ndarray | None:
+  """Creates device assignment for selected topologies.
+
+  Args:
+    mesh_shape: Logical mesh shape used by the model.
+    devices: TPU devices.
+    **unused_kwargs: ...
+
+  Returns:
+    None or reordered devices reshaped as `mesh_shape`.
+  """
+  max_x, max_y, max_z = max(getattr(d, "coords", (0, 0, 0)) for d in devices)
+  bound_x, bound_y, bound_z = max_x + 1, max_y + 1, max_z + 1
+  # Our ring re-ordering makes sense only if the passed-in devices are
+  # sequential, which may not always be the case. reversed() changes z-minor to
+  # x-minor.
+  sequential_devices = sorted(
+      devices,
+      key=lambda d: tuple(reversed(getattr(d, "coords", (0, 0, 0)))))
+
+  if bound_x == bound_y == 2 and bound_z == 2:
+    device_mesh = np.asarray(sequential_devices)
+    device_mesh = device_mesh[np.array(_V5P_2x2x2_ORDER)]
+    device_mesh = device_mesh.reshape(mesh_shape)
+    return device_mesh
+  return None
+
 # Registers functions to create device mesh for specific device kinds. Takes
 # precedence over the more general logic in create_device_mesh(). Handler may
 # return None; in that case, it will fall back to using the default logic.
@@ -152,6 +189,7 @@ device_kind_handler_dict: dict[
     _TPU_V2: _tpu_v2_v3_create_device_mesh,
     _TPU_V3: _tpu_v2_v3_create_device_mesh,
     _TPU_V5_LITE: _v5e_create_device_mesh,
+    _TPU_V5P: _v5p_create_device_mesh,
 }
 
 
@@ -348,7 +386,7 @@ def _create_device_mesh_for_nd_torus_splitting_axes(
           )
       ):
         best_logical_axis_assignment = logical_axis_assignment
-    assignment[:, logical_axis] = best_logical_axis_assignment
+    assignment[:, logical_axis] = best_logical_axis_assignment  # type: ignore  # numpy 2.2
 
   # Read out the assignment.
   logical_mesh = _generate_logical_mesh(
@@ -559,22 +597,12 @@ def _generate_logical_mesh(
           zip(logical_indices, physical_indices, range(len(logical_indices)))
       )
   )
-  logical_mesh = np.transpose(logical_mesh, transpose_axes)
+  logical_mesh = np.transpose(logical_mesh, transpose_axes)  # type: ignore  # numpy 2.2
 
   # Reshape to add the trivial dimensions back.
-  logical_mesh = np.reshape(logical_mesh, logical_mesh_shape)
+  logical_mesh = np.reshape(logical_mesh, logical_mesh_shape)  # type: ignore  # numpy 2.2
 
   return logical_mesh
-
-
-def _bounds_from_last_device(last_device) -> Sequence[int]:
-  """Gets the bound from the given last device."""
-  # Must be passed the device at the highest-coordinate corner of the
-  # relevant mesh, which is a requirement we know is satisfied by the last
-  # device in jax.devices().
-  assert hasattr(last_device, 'coords'), 'Only TPU supported'
-  x, y, z = last_device.coords
-  return x + 1, y + 1, z + 1, last_device.core_on_chip + 1
 
 
 def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
@@ -677,6 +705,15 @@ def _transpose_trick(
       *_TRANSPOSE_TRICKS[topology][mesh_shape_no_trivial_dims]
   )
 
+def _canonicalize_axis_sizes(axis_sizes: Sequence[int]
+                             ) -> tuple[int, ...] | None:
+  new_sizes = []
+  for s in axis_sizes:
+    try:
+      new_sizes.append(int(s))
+    except:
+      return None
+  return tuple(new_sizes)
 
 def create_device_mesh(
     mesh_shape: Sequence[int],
@@ -712,17 +749,25 @@ def create_device_mesh(
   """
   if devices is None:
     devices = xb.devices()
-  if np.prod(mesh_shape) != len(devices):
+
+  new_mesh_shape = _canonicalize_axis_sizes(mesh_shape)
+  if new_mesh_shape is None:
+    raise ValueError(
+        f'`mesh_shape` passed to `create_device_mesh` should be a sequence of'
+        f' ints. Got {mesh_shape}')
+  del mesh_shape
+
+  if math.prod(new_mesh_shape) != len(devices):
     raise ValueError(
         f'Number of devices {len(devices)} must equal the product '
-        f'of mesh_shape {mesh_shape}'
+        f'of mesh_shape {new_mesh_shape}'
     )
   last_device = devices[-1]
 
   handler = device_kind_handler_dict.get(last_device.device_kind, None)
   if handler is not None:
     result = handler(
-        mesh_shape, devices, contiguous_submeshes=contiguous_submeshes
+        new_mesh_shape, devices, contiguous_submeshes=contiguous_submeshes
     )
     if result is not None:
       return result
@@ -730,15 +775,15 @@ def create_device_mesh(
   if last_device.platform == 'tpu':
     physical_mesh = _get_physical_tpu_mesh(devices)
     if contiguous_submeshes:
-      physical_mesh = _transpose_trick(physical_mesh, mesh_shape)
+      physical_mesh = _transpose_trick(physical_mesh, new_mesh_shape)
     device_mesh, _ = _create_device_mesh_for_nd_torus(
         physical_mesh,
-        mesh_shape,
+        new_mesh_shape,
         allow_split_physical_axes=allow_split_physical_axes,
     )
     return device_mesh
   else:
-    device_mesh = np.asarray(devices).reshape(mesh_shape)
+    device_mesh = np.asarray(devices).reshape(new_mesh_shape)
     return device_mesh
 
 

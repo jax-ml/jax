@@ -17,7 +17,6 @@ import importlib
 import logging
 import os
 import pathlib
-import platform
 
 from jax._src.lib import xla_client
 import jax._src.xla_bridge as xb

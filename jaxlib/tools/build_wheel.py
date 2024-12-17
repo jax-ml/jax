@@ -100,11 +100,11 @@ def patch_copy_mlir_import(src_file, dst_dir):
 
 _XLA_EXTENSION_STUBS = [
     "__init__.pyi",
+    "guard_lib.pyi",
     "ifrt_programs.pyi",
     "ifrt_proxy.pyi",
     "jax_jit.pyi",
     "ops.pyi",
-    "outfeed_receiver.pyi",
     "pmap_lib.pyi",
     "profiler.pyi",
     "pytree.pyi",
@@ -231,6 +231,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
             f"__main__/jaxlib/cuda/_rnn.{pyext}",
             f"__main__/jaxlib/cuda/_sparse.{pyext}",
             f"__main__/jaxlib/cuda/_triton.{pyext}",
+            f"__main__/jaxlib/cuda/_hybrid.{pyext}",
             f"__main__/jaxlib/cuda/_versions.{pyext}",
         ],
     )
@@ -244,6 +245,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
             f"__main__/jaxlib/rocm/_prng.{pyext}",
             f"__main__/jaxlib/rocm/_sparse.{pyext}",
             f"__main__/jaxlib/rocm/_triton.{pyext}",
+            f"__main__/jaxlib/rocm/_hybrid.{pyext}",
         ],
     )
 
@@ -410,7 +412,8 @@ try:
   if args.editable:
     build_utils.build_editable(sources_path, args.output_path, package_name)
   else:
-    build_utils.build_wheel(sources_path, args.output_path, package_name, git_hash=args.jaxlib_git_hash)
+    git_hash = build_utils.get_githash(args.jaxlib_git_hash)
+    build_utils.build_wheel(sources_path, args.output_path, package_name, git_hash=git_hash)
 finally:
   if tmpdir:
     tmpdir.cleanup()

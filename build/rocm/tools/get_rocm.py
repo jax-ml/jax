@@ -229,7 +229,7 @@ def _build_installer_url(rocm_version, metadata):
 
     rv = parse_version(rocm_version)
 
-    base_url = "http://artifactory-cdn.amd.com/artifactory/list"
+    base_url = "https://artifactory-cdn.amd.com/artifactory/list"
 
     if md["ID"] == "ubuntu":
         fmt = "amdgpu-install-internal_%(rocm_major)s.%(rocm_minor)s-%(os_version)s-1_all.deb"
@@ -270,6 +270,8 @@ def setup_repos_ubuntu(rocm_version_str):
     if rv.rev == 0:
         rocm_version_str = "%d.%d" % (rv.major, rv.minor)
 
+    # Update indexes.
+    subprocess.check_call(["apt-get", "update"])
     s = get_system()
     s.install_packages(["wget", "sudo", "gnupg"])
 
@@ -320,11 +322,12 @@ gpgkey=https://repo.radeon.com/rocm/rocm.gpg.key
             """
 [amdgpu]
 name=amdgpu
-baseurl=https://repo.radeon.com/amdgpu/latest/rhel/8.8/main/x86_64/
+baseurl=https://repo.radeon.com/amdgpu/%s/rhel/8.8/main/x86_64/
 enabled=1
 gpgcheck=1
 gpgkey=https://repo.radeon.com/rocm/rocm.gpg.key
 """
+            % rocm_version_str
         )
 
 

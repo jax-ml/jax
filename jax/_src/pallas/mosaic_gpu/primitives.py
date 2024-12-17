@@ -16,128 +16,406 @@
 
 from __future__ import annotations
 
+import enum
+import math
+from typing import Any, Literal
+
+import jax
 from jax._src import core as jax_core
-from jax._src import effects
 from jax._src import state
-from jax._src.state import discharge
+from jax._src import tree_util
+from jax._src import util
+from jax._src.interpreters import mlir
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import arith as arith_dialect
+from jax._src.lib.mlir.dialects import llvm as llvm_dialect
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering
+from jax._src.state import discharge
+from jax._src.state import indexing
+from jax._src.state import primitives as state_primitives
 import jax.experimental.mosaic.gpu as mgpu
-
-async_copy_p = jax_core.Primitive("async_copy")
-async_copy_p.multiple_results = True
+import jax.numpy as jnp
 
 
-@async_copy_p.def_effectful_abstract_eval
-def _async_copy_abstract_eval(*avals):
-  del avals  # Unused.
+WARPGROUP_SIZE = 128
+
+
+copy_smem_to_gmem_p = jax_core.Primitive("copy_smem_to_gmem")
+copy_smem_to_gmem_p.multiple_results = True
+
+
+@copy_smem_to_gmem_p.def_effectful_abstract_eval
+def _copy_smem_to_gmem_abstract_eval(*avals, **params):
+  del avals, params  # Unused.
   return (), {state.ReadEffect(0), state.WriteEffect(1)}
 
 
-@lowering.register_lowering_rule(async_copy_p)
-def _async_copy_lowering_rule(
-    ctx: lowering.LoweringRuleContext, src, dst, barrier=None
+@lowering.register_lowering_rule(copy_smem_to_gmem_p)
+def _copy_smem_to_gmem_lowering(
+    ctx: lowering.LoweringRuleContext,
+    src,
+    dst,
+    *flat_args,
+    src_transforms_treedef,
+    dst_transforms_treedef,
+    has_user_predicate,
 ):
-  ctx.launch_ctx.async_copy(src_ref=src, dst_ref=dst, barrier=barrier)
+  predicate = ctx.predicate
+  if has_user_predicate:
+    flat_args, user_predicate = flat_args[:-1], flat_args[-1]
+    predicate = arith_dialect.andi(
+        predicate, lowering._ensure_ir_value(user_predicate, jnp.bool)
+    )
+  flat_src_transforms, flat_dst_transforms = util.split_list(
+      flat_args,
+      [src_transforms_treedef.num_leaves],
+  )
+  src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
+  dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
+  src, src_transforms = lowering._handle_indexing(src, src_transforms)
+  copy_params = _extract_gmem_copy_params(dst_transforms) | _extract_smem_copy_params(src_transforms)
+  ctx.launch_ctx.async_copy(
+      src_ref=src,
+      dst_ref=dst,
+      predicate=predicate,
+      **copy_params,
+  )
   return ()
 
 
-def async_copy_smem_to_gmem(
-    src: pallas_core.AbstractMemoryRef, dst: pallas_core.AbstractMemoryRef
+def _extract_gmem_copy_params(transforms):
+  if not transforms:
+    return {}
+  if len(transforms) > 1:
+    raise NotImplementedError("Only one level of indexing on GMEM refs supported")
+  if not isinstance(indexer := transforms[0], indexing.NDIndexer):
+    raise NotImplementedError("Only indexing on GMEM refs supported")
+  return dict(
+      gmem_slice=lowering._ndindexer_indices(indexer),
+  )
+
+def _extract_smem_copy_params(transforms):
+  if not transforms:
+    return {}
+  # Split off swizzling, if present
+  match transforms:
+    case [gpu_core.UnswizzleRef(swizzle), *transforms]:
+      pass
+    case _:
+      swizzle = None
+  gpu_transforms = tuple(t.undo_to_gpu_transform() for t in transforms[::-1])
+  return dict(
+      gmem_transform=gpu_transforms,
+      swizzle=swizzle,
+  )
+
+
+def copy_smem_to_gmem(
+    src: pallas_core.AbstractMemoryRef,
+    dst: pallas_core.AbstractMemoryRef,
+    predicate: jax.Array | None = None,
 ) -> None:
+  """Asynchronously copies a SMEM reference to a GMEM reference.
+
+  Args:
+    src: The SMEM reference to copy from.
+    dst: The GMEM reference to copy to.
+    predicate: A boolean indicating whether the copy should be performed. If
+      ``None``, the copy is always performed.
+
+  See also:
+    :func:`jax.experimental.mosaic.gpu.wait_smem_to_gmem`
+    :func:`jax.experimental.mosaic.gpu.commit_smem`
+  """
   if src.memory_space is not gpu_core.SMEM:
     raise TypeError(f"src must be a SMEM reference, got {src.memory_space}")
-  if dst.memory_space is not gpu_core.GMEM:
+  if getattr(dst, "memory_space", gpu_core.GMEM) is not gpu_core.GMEM:
     raise ValueError(f"dst must be a GMEM reference, got {dst.memory_space}")
-  async_copy_p.bind(src, dst)
+  src, src_transforms = state_primitives.get_ref_and_transforms(
+      src, None, "copy_smem_to_gmem", force_trailing_indexer=False,
+  )
+  dst, dst_transforms = state_primitives.get_ref_and_transforms(
+      dst, None, "copy_smem_to_gmem", force_trailing_indexer=False,
+  )
+  flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
+      src_transforms
+  )
+  flat_dst_transforms, dst_transforms_treedef = tree_util.tree_flatten(
+      dst_transforms
+  )
+  copy_smem_to_gmem_p.bind(
+      src,
+      dst,
+      *flat_src_transforms,
+      *flat_dst_transforms,
+      *[] if predicate is None else [predicate],
+      src_transforms_treedef=src_transforms_treedef,
+      dst_transforms_treedef=dst_transforms_treedef,
+      has_user_predicate=predicate is not None,
+  )
   return None
 
 
-def async_copy_gmem_to_smem(
+copy_gmem_to_smem_p = jax_core.Primitive("copy_gmem_to_smem")
+copy_gmem_to_smem_p.multiple_results = True
+
+
+@copy_gmem_to_smem_p.def_effectful_abstract_eval
+def _copy_gmem_to_smem_abstract_eval(*avals, **params):
+  del avals, params  # Unused.
+  return (), {state.ReadEffect(0), state.WriteEffect(1)}
+
+
+@lowering.register_lowering_rule(copy_gmem_to_smem_p)
+def _copy_gmem_to_smem_lowering(
+    ctx: lowering.LoweringRuleContext,
+    src,
+    dst,
+    barrier,
+    *flat_transforms,
+    src_transforms_treedef,
+    dst_transforms_treedef,
+    barrier_transforms_treedef,
+):
+  flat_src_transforms, flat_dst_transforms, flat_barrier_transforms = (
+      util.split_list(
+          flat_transforms,
+          [
+              src_transforms_treedef.num_leaves,
+              dst_transforms_treedef.num_leaves,
+          ],
+      )
+  )
+  src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
+  dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
+  dst, dst_transforms = lowering._handle_indexing(dst, dst_transforms)
+  copy_params = _extract_smem_copy_params(dst_transforms) | _extract_gmem_copy_params(src_transforms)
+  barrier_indexer = _extract_barrier_indexer(
+      barrier_transforms_treedef.unflatten(flat_barrier_transforms)
+  )
+  if barrier_indexer is not None:
+    barrier = barrier.__getitem__(
+        *map(lowering._as_index, barrier_indexer.indices)
+    )
+  dst_ty = ir.MemRefType(dst.type)
+  bytes = math.prod(dst_ty.shape) * mgpu.bytewidth(dst_ty.element_type)
+  if bytes % WARPGROUP_SIZE:
+    raise NotImplementedError("Only aligned copies are supported")
+  # We arrive uniformly from each thread in the WG, so we need to divide the
+  # number of bytes by the number of threads in the WG.
+  # TODO: apaszke - Relax this. We can just select the WG leader and have it
+  # arrive with the whole transfer size, while everyone else arrives with 0.
+  # But we should continue using this scheme as it's likely to be faster.
+  bytes //= WARPGROUP_SIZE
+  barrier.arrive_expect_tx(bytes)
+  ctx.launch_ctx.async_copy(
+      src_ref=src, dst_ref=dst, barrier=barrier, arrive=False, **copy_params
+  )
+  return ()
+
+
+def copy_gmem_to_smem(
     src: pallas_core.AbstractMemoryRef,
     dst: pallas_core.AbstractMemoryRef,
-    *,
     barrier: pallas_core.AbstractMemoryRef,
 ) -> None:
-  if src.memory_space is not gpu_core.GMEM:
+  """Asynchronously copies a GMEM reference to a SMEM reference.
+
+  See also:
+    :func:`jax.experimental.mosaic.gpu.barrier_arrive`
+    :func:`jax.experimental.mosaic.gpu.barrier_wait`
+  """
+  if getattr(src, "memory_space", gpu_core.GMEM) is not gpu_core.GMEM:
     raise TypeError(f"src must be a GMEM reference, got {src.memory_space}")
   if dst.memory_space is not gpu_core.SMEM:
     raise ValueError(f"dst must be a SMEM reference, got {dst.memory_space}")
-  async_copy_p.bind(src, dst, barrier)
+  src, src_transforms = state_primitives.get_ref_and_transforms(
+      src, None, "copy_gmem_to_smem", force_trailing_indexer=False,
+  )
+  dst, dst_transforms = state_primitives.get_ref_and_transforms(
+      dst, None, "copy_gmem_to_smem", force_trailing_indexer=False,
+  )
+  flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
+      src_transforms
+  )
+  flat_dst_transforms, dst_transforms_treedef = tree_util.tree_flatten(
+      dst_transforms
+  )
+  barrier, barrier_transforms = state_primitives.get_ref_and_transforms(
+      barrier, None, "copy_gmem_to_smem", force_trailing_indexer=False,
+  )
+  flat_barrier_transforms, barrier_transforms_treedef = tree_util.tree_flatten(
+      barrier_transforms
+  )
+  copy_gmem_to_smem_p.bind(
+      src,
+      dst,
+      barrier,
+      *flat_src_transforms,
+      *flat_dst_transforms,
+      *flat_barrier_transforms,
+      src_transforms_treedef=src_transforms_treedef,
+      dst_transforms_treedef=dst_transforms_treedef,
+      barrier_transforms_treedef=barrier_transforms_treedef,
+  )
   return None
 
 
-class WaitEffect(jax_core.Effect):
-  ...
+def _extract_barrier_indexer(transforms) -> indexing.NDIndexer | None:
+  if not transforms:
+    return None
+  match transforms:
+    case [indexing.NDIndexer(indices=[idx]) as indexer]:
+      if not isinstance(idx, indexing.Slice):
+        return indexer
+      if indexing.Slice.from_slice(slice(None), *indexer.shape) == idx:
+        # Special-case: the whole slice.
+        return None
+      else:
+        raise ValueError(
+            f"Barrier can only be indexed with an integer, got {idx}"
+        )
+    case [indexing.NDIndexer()]:
+      raise NotImplementedError("Barrier does not support multiple indices")
+    case []:
+      return None
+    case _:
+      raise ValueError("Barrier does not support arbirary transforms")
 
 
-wait_effect = WaitEffect()
+barrier_arrive_p = jax_core.Primitive("barrier_arrive")
+barrier_arrive_p.multiple_results = True
 
 
-wait_p = jax_core.Primitive("wait")
-wait_p.multiple_results = True
-
-
-@wait_p.def_effectful_abstract_eval
-def _wait_abstract_eval(*avals, **params):
+@barrier_arrive_p.def_effectful_abstract_eval
+def _barrier_arrive_abstract_eval(*avals, **params):
   del avals, params  # Unused.
-  return (), {wait_effect}
+  return (), {gpu_core._memory_effect}
 
 
-@lowering.register_lowering_rule(wait_p)
-def _wait_lowering_rule(
-    ctx: lowering.LoweringRuleContext, barrier=None, allow_groups=None,
+@lowering.register_lowering_rule(barrier_arrive_p)
+def _barrier_arrive_lowering(
+    ctx: lowering.LoweringRuleContext,
+    barrier,
+    *flat_transforms,
+    transforms_treedef,
 ):
-  if barrier is not None:
-    barrier.wait()
-  else:
-    assert allow_groups is not None
-    ctx.launch_ctx.await_async_copy(allow_groups=allow_groups)
+  del ctx  # Unused.
+  transforms = transforms_treedef.unflatten(flat_transforms)
+  indexer = _extract_barrier_indexer(transforms)
+  if indexer is not None:
+    barrier = barrier.__getitem__(*map(lowering._as_index, indexer.indices))
+  barrier.arrive()
   return ()
 
 
-def wait_smem_to_gmem(allow_groups: int) -> None:
-  """Waits until there are no more than the given number of SMEM->GMEM copies in flight."""
-  wait_p.bind(allow_groups=allow_groups)
+def barrier_arrive(barrier: pallas_core.AbstractMemoryRef) -> None:
+  """Arrives at the given barrier."""
+  barrier, transforms = state_primitives.get_ref_and_transforms(
+      barrier, None, "barrier_arrive", force_trailing_indexer=False,
+  )
+  flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
+  barrier_arrive_p.bind(
+      barrier, *flat_transforms, transforms_treedef=transforms_treedef
+  )
 
 
-def wait_barrier(barrier: pallas_core.AbstractMemoryRef) -> None:
+barrier_wait_p = jax_core.Primitive("barrier_wait")
+barrier_wait_p.multiple_results = True
+
+
+@barrier_wait_p.def_effectful_abstract_eval
+def _barrier_wait_abstract_eval(*avals, **params):
+  del avals, params  # Unused.
+  return (), {gpu_core._memory_effect}
+
+
+@lowering.register_lowering_rule(barrier_wait_p)
+def _barrier_wait_lowering(
+    ctx: lowering.LoweringRuleContext,
+    barrier,
+    *flat_transforms,
+    transforms_treedef,
+):
+  del ctx  # Unused.
+  transforms = transforms_treedef.unflatten(flat_transforms)
+  indexer = _extract_barrier_indexer(transforms)
+  if indexer is not None:
+    barrier = barrier.__getitem__(*map(lowering._as_index, indexer.indices))
+  barrier.wait()
+  return ()
+
+
+def barrier_wait(barrier: pallas_core.AbstractMemoryRef) -> None:
   """Waits on the given barrier."""
-  wait_p.bind(barrier)
+  barrier, transforms = state_primitives.get_ref_and_transforms(
+      barrier, None, "barrier_wait", force_trailing_indexer=False,
+  )
+  flat_transforms, transforms_treedef = tree_util.tree_flatten(transforms)
+  barrier_wait_p.bind(
+      barrier, *flat_transforms, transforms_treedef=transforms_treedef
+  )
 
 
-class _WGMMAPipelineEffect(effects.Effect):
-  pass
+wait_smem_to_gmem_p = jax_core.Primitive("wait_smem_to_gmem")
+wait_smem_to_gmem_p.multiple_results = True
 
 
-_wgmma_pipeline_effect = _WGMMAPipelineEffect()
-effects.control_flow_allowed_effects.add_type(_WGMMAPipelineEffect)
+@wait_smem_to_gmem_p.def_effectful_abstract_eval
+def _wait_smem_to_gmem_abstract_eval(n, *, wait_read_only):
+  del n, wait_read_only  # Unused.
+  return (), {gpu_core._memory_effect}
+
+
+@lowering.register_lowering_rule(wait_smem_to_gmem_p)
+def _wait_smem_to_gmem_lowering(
+    ctx: lowering.LoweringRuleContext, n, *, wait_read_only
+):
+  ctx.launch_ctx.await_async_copy(
+      allow_groups=n, await_read_only=wait_read_only
+  )
+  return ()
+
+
+def wait_smem_to_gmem(n: int, wait_read_only: bool = False) -> None:
+  """Waits until there are no more than ``n`` SMEM->GMEM copies in flight.
+
+  Args:
+    n: The maximum number of copies in flight to wait for.
+    wait_read_only: If ``True``, wait for the in flight copies to finish
+      reading from SMEM. The writes to GMEM are not waited for.
+  """
+  wait_smem_to_gmem_p.bind(n, wait_read_only=wait_read_only)
+
 
 # WGMMA on an accumulator reference
 wgmma_ref_p = jax_core.Primitive("wgmma_ref")
 wgmma_ref_p.multiple_results = True
 
-def wgmma(acc, a, b):
-  """Asynchronous warp group matmul.
 
-  The sm90 wgmma instruction, essentially acc[...] += a @ b. Requires
-  that accumulator is an accumualtion register reference.
+def wgmma(
+    acc: gpu_core.WGMMAAbstractAccumulatorRef,
+    a,
+    b: pallas_core.TransformedRef,
+) -> None:
+  """Performs an asynchronous warp group matmul-accumulate on the given references.
+
+  Conceptually, this is equivalent to doing ``acc[...] += a[...] @ b[...]``,
+  except that the computation is performed asynchronously.
 
   Args:
-    acc: The accumulator register.
-    a: The left hand side operand.
-    b: The right hand side operand.
-    swizzle: The swizzle pattern.
+    acc: The accumulator reference. Needs to be allocated via
+      :func:`jax.experimental.pallas.run_scoped` called with a
+      :func:`jax.experimental.pallas.mosaic_gpu.WGMMAAccumulatorRef`.
+    a: The left hand side operand reference.
+    b: The right hand side operand reference.
+
+  See also:
+    :func:`jax.experimental.pallas.mosaic_gpu.wgmma_wait`
   """
-  if not isinstance(acc.aval, gpu_core.WGMMAAbstractAccumulatorRef):
-    raise TypeError(f"Expected WGMMAAbstractAccumulatorRef got {acc}")
-
-  # TODO(apaszke): Make swizzling another transform and read it from the refs.
-  if not isinstance(a, pallas_core.TransformedRef):
-    raise ValueError("WGMMA inputs must be tiled references.")
-
   m, n = acc.shape
   m2, k = a.shape
   k2, n2 = b.shape
@@ -148,92 +426,131 @@ def wgmma(acc, a, b):
         f" rhs={b.shape=}, acc={acc.shape}"
     )
 
-  if (dtype := a.dtype) != b.dtype:
+  if a.dtype != b.dtype:
     raise ValueError(f"Mixed input dtypes for matrix multiplication unsupported: lhs={a.dtype}, rhs={b.dtype}")
-  if not isinstance(a, pallas_core.TransformedRef):
-    raise ValueError("WGMMA lhs must be a tiled reference.")
-  if not isinstance(b, pallas_core.TransformedRef):
-    raise ValueError("WGMMA rhs must be a tiled reference.")
 
-  # Infer swizzle from a.
-  if not a.transforms or not isinstance(
-      (swizzle_transform := a.transforms[0]), gpu_core.UnswizzleRef
-  ):
-    raise ValueError("WGMMA lhs must be a tiled and swizzled reference.")
-
-  swizzle = swizzle_transform.swizzle
-  swizzle_elems = swizzle // dtype.itemsize
-  if a.transforms[1:] != (gpu_core.UntileRef((64, swizzle_elems)),):
-    raise ValueError(
-        f"WGMMA lhs must be tiled with 64x{swizzle_elems} tiles for element type"
-        f" {dtype}."
-    )
-
-  rhs_transpose_transform = gpu_core.TransposeRef((1, 0, 2, 3))
-  rhs_tiling = gpu_core.UntileRef((swizzle_elems, swizzle_elems))
-  if b.transforms == (swizzle_transform, rhs_tiling):
-    rhs_transpose = False
-  elif b.transforms == (swizzle_transform, rhs_transpose_transform, rhs_tiling):
-    rhs_transpose = True
+  if isinstance(a, pallas_core.TransformedRef):
+    a_transforms_leaves, a_transforms_tree = jax.tree.flatten(a.transforms)
+    a = a.ref
   else:
-    raise ValueError(
-        f"WGMMA rhs must have {swizzle=} and be tiled with"
-        f" {swizzle_elems}x{swizzle_elems} tiles for element type {dtype} (and"
-        " optionally transposed)."
-    )
+    a_transforms_leaves, a_transforms_tree = [], None
+  b_transforms_leaves, b_transforms_tree = jax.tree.flatten(b.transforms)
 
-  return wgmma_ref_p.bind(acc, a.ref, b.ref, swizzle=swizzle, rhs_transpose=rhs_transpose)
+  wgmma_ref_p.bind(
+      acc,
+      a,
+      b.ref,
+      *a_transforms_leaves,
+      *b_transforms_leaves,
+      a_transforms_tree=a_transforms_tree,
+      b_transforms_tree=b_transforms_tree,
+  )
 
 
 @wgmma_ref_p.def_effectful_abstract_eval
-def _wgmma_ref_effectful_abstract_eval(acc, *args, **kwargs):
-  del acc, args, kwargs
-  return [], {
-      _wgmma_pipeline_effect,
+def _wgmma_ref_effectful_abstract_eval(acc_aval, a_aval, b_aval, *_, **params):
+  del b_aval, params
+  if not isinstance(acc_aval, gpu_core.WGMMAAbstractAccumulatorRef):
+    raise TypeError(f"Expected WGMMAAbstractAccumulatorRef got {acc_aval}")
+  return (), {
+      gpu_core._wgmma_pipeline_effect,
       state.WriteEffect(0),
       state.ReadEffect(0),
-      state.ReadEffect(1),
       state.ReadEffect(2),
+      *([state.ReadEffect(1)] if isinstance(a_aval, state.AbstractRef) else [])
   }
 
 
 @discharge.register_discharge_rule(wgmma_ref_p)
-def _wgmma_ref_discharge_rule(
-    in_avals, out_avals,
-    acc,
-    a,
-    b,
-    swizzle,
-    rhs_transpose,
-):
+def _wgmma_ref_discharge(in_avals, out_avals, *args, **kwargs):
   del in_avals, out_avals
-  return (
-      wgmma_p.bind(
-          acc, a, b, swizzle=swizzle, rhs_transpose=rhs_transpose
-      ),
-      None,
-      None,
-  ), []
+  return (wgmma_p.bind(*args, **kwargs), *([None] * (len(args) - 1))), []
 
 
 # Functional WGMMA, returns a shaped array. Internal.
 wgmma_p = jax_core.Primitive("wgmma")
 
+
 @lowering.register_lowering_rule(wgmma_p)
-def _wgmma_lowering_rule(
+def _wgmma_lowering(
     ctx: lowering.LoweringRuleContext,
     acc,
     a,
     b,
-    swizzle,
-    rhs_transpose,
+    *transforms_leaves,
+    a_transforms_tree,
+    b_transforms_tree,
 ):
-  del ctx
+  _, a_aval, *_ = ctx.avals_in
+  lhs_swizzle = None
+  if a_transforms_tree is not None:
+    a_transforms_leaves, b_transforms_leaves = util.split_list(
+        transforms_leaves, [a_transforms_tree.num_leaves]
+    )
+    a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
+    a, a_transforms = lowering._handle_indexing(a, a_transforms)
+    match a_transforms:
+      case (gpu_core.UnswizzleRef(lhs_swizzle), gpu_core.UntileRef(tiling)):
+        swizzle_elems = lhs_swizzle // a_aval.dtype.itemsize
+        if tiling != (64, swizzle_elems):
+          raise NotImplementedError("WGMMA lhs tiling does not fit swizzle")
+      case _:
+        raise ValueError(f"WGMMA lhs has unsupported transforms: {a_transforms}.")
+  else:
+    b_transforms_leaves = transforms_leaves  # type: ignore
+    if not isinstance(a, mgpu.FragmentedArray):
+      raise ValueError(
+          "When WGMMA lhs is passed in as a ref, it must be transformed by"
+          " swizzling and tiling appropriately."
+      )
+
+  b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
+  b, b_transforms = lowering._handle_indexing(b, b_transforms)
+
+  match b_transforms:
+    case (gpu_core.UnswizzleRef(rhs_swizzle), gpu_core.UntileRef(rhs_tiling)):
+      rhs_transpose = False
+    case (
+        gpu_core.UnswizzleRef(rhs_swizzle),
+        gpu_core.TransposeRef((1, 0, 2, 3)),  # Only transpose between tiles
+        gpu_core.UntileRef(rhs_tiling),
+        gpu_core.TransposeRef((1, 0)),  # Transpose the two logical dims
+    ):
+      rhs_transpose = True
+    case (
+        gpu_core.UnswizzleRef(rhs_swizzle),
+        gpu_core.TransposeRef((1, 0, 2, 3, 4)),
+        gpu_core.UntileRef(rhs_tiling),
+        gpu_core.TransposeRef(permutation=(1, 0, 2)),
+        state.types.RefReshaper(shape=new_shape),
+    ):
+      if len(rhs_tiling) != 2 or len(new_shape) != 2:
+        raise ValueError("WGMMA expects shapes 2D tiled into 2D tiles.")
+
+      if any(d % t != 0 for d, t in util.safe_zip(new_shape, rhs_tiling)):
+        raise ValueError(
+            f"The last reshape {new_shape} is not divisible by the tiling"
+            f" {rhs_tiling}."
+        )
+
+      high_dims = [d // t for d, t in util.safe_zip(new_shape, rhs_tiling)]
+      b = mgpu.memref_reshape(b, (*high_dims, *rhs_tiling))
+      rhs_transpose = False
+    case _:
+      raise ValueError(f"WGMMA rhs has unsupported transforms: {b_transforms}.")
+
+  if lhs_swizzle is not None:
+    swizzle_elems = rhs_swizzle // a_aval.dtype.itemsize
+    if rhs_swizzle != lhs_swizzle:
+      raise NotImplementedError("WGMMA rhs swizzle must match lhs swizzle")
+    if rhs_tiling != (swizzle_elems, swizzle_elems):
+      raise NotImplementedError("WGMMA rhs tiling does not fit swizzle")
+
   new_acc = mgpu.wgmma(
       acc,
       a,
       b,
-      swizzle=swizzle,
+      swizzle=rhs_swizzle,
       b_order=mgpu.WGMMALayout.COL_MAJOR
       if rhs_transpose
       else mgpu.WGMMALayout.ROW_MAJOR,
@@ -241,34 +558,39 @@ def _wgmma_lowering_rule(
   nvvm_dialect.wgmma_commit_group_sync_aligned()
   return new_acc
 
+
 @wgmma_p.def_effectful_abstract_eval
-def _wgmma_effectful_abstract_eval(acc, *args, **kwargs):
+def _wgmma_effectful_abstract_eval(acc, lhs_ref, *args, **kwargs):
   del args, kwargs
   return acc, {
-      _wgmma_pipeline_effect,
-      state.ReadEffect(1),
+      gpu_core._wgmma_pipeline_effect,
       state.ReadEffect(2),
+      *([state.ReadEffect(1)] if isinstance(lhs_ref, state.AbstractRef) else [])
   }
 
 wgmma_wait_p = jax_core.Primitive("wgmma_wait")
 wgmma_wait_p.multiple_results = True
 
-def wgmma_wait(i: int):
-  """Wait until all but the last `i` WGMMA operations are done."""
-  return wgmma_wait_p.bind(i)
+
+def wgmma_wait(n: int):
+  """Waits until there is no more than ``n`` WGMMA operations in flight."""
+  return wgmma_wait_p.bind(n)
 
 
 @wgmma_wait_p.def_effectful_abstract_eval
 def wgmma_wait_effectful_abstract_eval(_):
-  return [], {_wgmma_pipeline_effect}
+  return [], {gpu_core._wgmma_pipeline_effect}
+
 
 @lowering.register_lowering_rule(wgmma_wait_p)
-def _wgmma_wait_lowering_rule(ctx: lowering.LoweringRuleContext, allow_groups):
+def _wgmma_wait_lowering(ctx: lowering.LoweringRuleContext, allow_groups):
   del ctx
   nvvm_dialect.wgmma_wait_group_sync_aligned(allow_groups)
   return ()
 
+
 wgmma_accumulator_deref_p = jax_core.Primitive("wgmma_accumulator_deref_p")
+
 def wgmma_accumulator_deref(acc):
   """Dereferences an accumulator register."""
 
@@ -280,17 +602,139 @@ def wgmma_accumulator_deref(acc):
 @wgmma_accumulator_deref_p.def_effectful_abstract_eval
 def _wgmma_accumulator_deref_abstract_eval(acc):
   # Dereferencing implies flushing so we have a wgmma pipeline effect.
-  ret = acc.inner_aval if isinstance(acc, gpu_core.WGMMAAbstractAccumulatorRef) else acc
+  ret = acc.inner_aval if isinstance(acc, state.AbstractRef) else acc
   assert isinstance(ret, jax_core.ShapedArray), acc
-  return ret, {_wgmma_pipeline_effect}
+  return ret, {gpu_core._wgmma_pipeline_effect}
+
 
 @discharge.register_discharge_rule(wgmma_accumulator_deref_p)
-def _wgmma_accumulator_deref_discharge_rule(in_avals, out_avals, acc):
+def _wgmma_accumulator_deref_discharge(in_avals, out_avals, acc):
   del in_avals, out_avals
   return (None,), wgmma_accumulator_deref_p.bind(acc)
 
+
 @lowering.register_lowering_rule(wgmma_accumulator_deref_p)
-def _wgmma_accumulator_deref_lowering_rule(ctx: lowering.LoweringRuleContext, acc):
+def _wgmma_accumulator_deref_lowering(ctx: lowering.LoweringRuleContext, acc):
   del ctx
   nvvm_dialect.wgmma_wait_group_sync_aligned(0)
   return acc.value
+
+
+class Layout(enum.Enum):
+  #: [m, n] matrix, where m % 64 == 0 == n % 8.
+  WGMMA = mgpu.WGMMA_LAYOUT
+  #: [m] matrix, where m % 64 == 0.
+  WGMMA_ROW = mgpu.WGMMA_ROW_LAYOUT
+
+
+layout_cast_p = jax_core.Primitive("layout_cast")
+
+
+@layout_cast_p.def_abstract_eval
+def _layout_cast_abstract_eval(x, new_layout):
+  del new_layout  # Unused.
+  return x
+
+
+@lowering.register_lowering_rule(layout_cast_p)
+def _layout_cast_lowering(ctx: lowering.LoweringRuleContext, x, *, new_layout):
+  del ctx  # Unused.
+  return x.to_layout(new_layout.value)
+
+
+def layout_cast(x: Any, new_layout: Layout):
+  """Casts the layout of the given array."""
+  return layout_cast_p.bind(x, new_layout=new_layout)
+
+
+set_max_registers_p = jax_core.Primitive("set_max_registers_p")
+set_max_registers_p.multiple_results = True
+
+
+@set_max_registers_p.def_effectful_abstract_eval
+def _set_max_registers_abstract_eval(n, *, action):
+  del n, action  # Unused.
+  return (), {gpu_core._memory_effect}
+
+
+@lowering.register_lowering_rule(set_max_registers_p)
+def _set_max_registers_lowering(
+    ctx: lowering.LoweringRuleContext, n, *, action
+):
+  del ctx
+  nvvm_dialect.setmaxregister(
+      n,
+      nvvm_dialect.SetMaxRegisterAction.increase
+      if action == "increase"
+      else nvvm_dialect.SetMaxRegisterAction.decrease,
+  )
+  return ()
+
+
+def set_max_registers(n: int, *, action: Literal["increase", "decrease"]):
+  """Sets the maximum number of registers owned by a warp."""
+  set_max_registers_p.bind(n, action=action)
+
+
+commit_smem_p = jax_core.Primitive("commit_smem")
+commit_smem_p.multiple_results = True
+
+
+@commit_smem_p.def_effectful_abstract_eval
+def _commit_smem_abstract_eval():
+  return (), {gpu_core._memory_effect}
+
+
+@lowering.register_lowering_rule(commit_smem_p)
+def _commit_smem_lowering(ctx: lowering.LoweringRuleContext):
+  mgpu.commit_shared()
+  return ()
+
+
+def commit_smem():
+  """Commits all writes to SMEM, making them visible to loads, TMA and WGMMA."""
+  commit_smem_p.bind()
+
+
+broadcasted_iota_p = jax_core.Primitive("broadcasted_iota")
+
+@broadcasted_iota_p.def_abstract_eval
+def _broadcasted_iota_abstract_eval(dtype, shape, dimension, layout):
+  del layout, dimension
+  return jax_core.ShapedArray(shape, dtype)
+
+@lowering.register_lowering_rule(broadcasted_iota_p)
+def _broadcasted_iota_lowering(ctx: lowering.LoweringRuleContext, dtype, shape, dimension, layout):
+  del ctx
+  # Unsigned integers (as opposed to signless) cause MLIR verification
+  # errors so we only use signless like Mosaic GPU does.
+  #
+  # TODO(cperivol): use mgpu.utils.dtype_to_ir_type() instead.
+  mlir_dtype = (
+      ir.IntegerType.get_signless(dtype.itemsize * 8)
+      if jnp.issubdtype(dtype, jnp.integer)
+      else mlir.dtype_to_ir_type(dtype)
+  )
+  undef = llvm_dialect.mlir_undef(mlir_dtype)
+  is_signed = (
+      jnp.issubdtype(dtype, jnp.signedinteger)
+      if jnp.issubdtype(dtype, jnp.integer)
+      else None
+  )
+
+  i32 = ir.IntegerType.get_signless(32)
+  def _cast(x):
+    if ir.FloatType.isinstance(mlir_dtype):
+      x = arith_dialect.index_cast(i32, x)
+      return arith_dialect.uitofp(mlir_dtype, x)
+    else:
+      return arith_dialect.index_cast(mlir_dtype, x)
+  return mgpu.FragmentedArray.splat(
+      undef, shape, layout.value, is_signed=is_signed
+  ).foreach(
+      lambda _, idx: _cast(idx[dimension]), create_array=True, is_signed=is_signed
+  )
+
+
+def broadcasted_iota(dtype, shape, dimension, *, layout: Layout | None = None):
+  return broadcasted_iota_p.bind(dtype=jnp.dtype(dtype), shape=shape, dimension=dimension, layout=layout)

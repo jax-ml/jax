@@ -33,6 +33,7 @@ from jax._src.pallas import primitives as primitives
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax.experimental import pallas as pl
+from jax.extend.backend import get_default_device
 import jax.numpy as jnp
 import numpy as np
 
@@ -75,7 +76,7 @@ def _broadcast_pytree_to(from_pytree, to_pytree):
 
 @jax_util.cache(trace_context_in_key=False)
 def _get_tpu_generation() -> int:
-  kind = jax.devices()[0].device_kind
+  kind = get_default_device().device_kind
   if kind.endswith(' lite'):
     kind = kind[:-len(' lite')]
   assert kind[:5] == "TPU v", kind
@@ -97,11 +98,6 @@ def _make_tiling(shape: tuple[int, ...], dtype: np.dtype) -> tuple[int, ...]:
   while second_minor_tiling < min(second_minor, max_tiling):
     second_minor_tiling *= 2
   return (*(1,) * len(leading_dims), second_minor_tiling, _TILING[1])
-
-
-def _mod(a, n):
-  """"Calculates a mod n for positive and negative a with |a| <= n."""
-  return lax.rem(a + n, n)
 
 
 def _round_up_to_nearest_multiple(s: int, multiple: int) -> int:
@@ -536,12 +532,46 @@ map_brefs = functools.partial(
     is_leaf=lambda x: isinstance(x, BufferedRef))
 
 
+def _filter_indices(
+    indices: tuple[int | jax.Array, ...], grid: tuple[int | jax.Array, ...]
+) -> tuple[int | jax.Array, ...]:
+  return tuple(
+      0 if isinstance(g, int) and g == 1 else i
+      for i, g in zip(indices, grid, strict=True)
+  )
+
+
+def _next_index(
+    indices: tuple[int | jax.Array, ...], grid: tuple[int | jax.Array, ...]
+) -> tuple[int | jax.Array, ...]:
+  out = []
+  carry: bool | jax.Array = True
+  for i, g in reversed(list(zip(indices, grid, strict=True))):
+    inc = jax.lax.select(carry, i + 1, i)
+    carry = inc == g
+    out.append(jax.lax.select(carry, 0, inc))
+  return _filter_indices(tuple(reversed(out)), grid)
+
+
+def _prev_index(
+    indices: tuple[int | jax.Array, ...], grid: tuple[int | jax.Array, ...]
+) -> tuple[int | jax.Array, ...]:
+  out = []
+  borrow: bool | jax.Array = True
+  for i, g in reversed(list(zip(indices, grid, strict=True))):
+    dec = jax.lax.select(borrow, i - 1, i)
+    borrow = dec == -1
+    out.append(jax.lax.select(borrow, g - 1, dec))
+  return _filter_indices(tuple(reversed(out)), grid)
+
+
 class Scheduler:
   """Sequences input and output copies and waits for a pipeline."""
 
   def __init__(
       self,
       step: jax.Array,
+      indices: tuple[int | jax.Array, ...],
       grid: tuple[int | jax.Array, ...],
       grid_offsets: tuple[int | jax.Array, ...],
       first_cycle=None,
@@ -553,6 +583,7 @@ class Scheduler:
 
     Args:
       step: inner step number.
+      indices: current grid indices.
       grid: pallas grid for BufferedRefs.
       grid_offsets: offsets for grid indices (used for megacore).
       first_cycle: whether this is the first invocation of the pipeline.
@@ -579,17 +610,18 @@ class Scheduler:
     self.first_step_ever = first_cycle & self.first_step
     self.last_step_ever = last_cycle & self.last_step
 
-    # Cyclic steps
-    self.prev_step = _mod(step - 1, self.num_steps)
-    self.next_step = _mod(step + 1, self.num_steps)
-
     # Derived grid indices for present, previous, and next steps.
-    self.indices = _get_indices(step, grid, grid_offsets)
-    self.prev_indices = _get_indices(
-        self.prev_step, grid, grid_offsets
+    self.indices = tuple(
+        i + j for i, j in zip(indices, grid_offsets, strict=True)
     )
-    self.next_indices = _get_indices(
-        self.next_step, grid, grid_offsets
+
+    self.prev_indices = tuple(
+        i + j
+        for i, j in zip(_prev_index(indices, grid), grid_offsets, strict=True)
+    )
+    self.next_indices = tuple(
+        i + j
+        for i, j in zip(_next_index(indices, grid), grid_offsets, strict=True)
     )
 
   @contextmanager
@@ -1100,10 +1132,11 @@ def emit_pipeline(
     schedule = map_brefs(
         lambda _, x: get_pipeline_schedule(x), allocations, schedule)
 
-    def loop_body(step, _):
+    def loop_body(step, indices):
       nonlocal allocations
       scheduler = Scheduler(
           step,
+          indices,
           grid,
           grid_offsets=grid_offsets,
           first_cycle=first_cycle,
@@ -1147,10 +1180,10 @@ def emit_pipeline(
                   lambda: None)
       map_brefs(scheduler.finalize, brefs, refs, schedule)
 
-      return ()
+      return _next_index(indices, grid)
 
     # run pipeline
-    lax.fori_loop(0, num_steps, loop_body, ())
+    lax.fori_loop(0, num_steps, loop_body, (0,) * len(grid))
 
   return pipeline
 

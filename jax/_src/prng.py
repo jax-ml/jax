@@ -233,6 +233,10 @@ class PRNGKeyArray(jax.Array):
   def sharding(self):
     return logical_sharding(self.aval, self._base_array.sharding)
 
+  @property
+  def committed(self):
+    return self._base_array.committed
+
   def _is_scalar(self):
     base_ndim = len(self._impl.key_shape)
     return self._base_array.ndim == base_ndim
@@ -274,6 +278,11 @@ class PRNGKeyArray(jax.Array):
 
   __hash__ = None  # type: ignore[assignment]
   __array_priority__ = 100
+
+  def __array__(self, dtype: np.dtype | None = None, copy: bool | None = None) -> np.ndarray:
+    raise TypeError("JAX array with PRNGKey dtype cannot be converted to a NumPy array."
+                    " Use jax.random.key_data(arr) if you wish to extract the underlying"
+                    " integer array.")
 
   # Overwritten immediately below
   @property
@@ -454,17 +463,18 @@ class KeyTy(dtypes.ExtendedDType):
 
 
 core.pytype_aval_mappings[PRNGKeyArray] = lambda x: x.aval
-xla.pytype_aval_mappings[PRNGKeyArray] = lambda x: x.aval
+core.xla_pytype_aval_mappings[PRNGKeyArray] = lambda x: x.aval
 
 xla.canonicalize_dtype_handlers[PRNGKeyArray] = lambda x: x
 
 
-def key_array_shard_arg_handler(xs: Sequence[PRNGKeyArray], shardings, layouts):
+def key_array_shard_arg_handler(xs: Sequence[PRNGKeyArray], shardings, layouts,
+                                copy_semantics):
   arrs = [x._base_array for x in xs]
   phys_shardings = [physical_sharding(x.aval, sharding)
                     for x, sharding in zip(xs, shardings)]
   # TODO(yashkatariya): `layouts` should be converted to physical layouts.
-  return pxla.shard_args(phys_shardings, layouts, arrs)
+  return pxla.shard_args(phys_shardings, layouts, copy_semantics, arrs)
 
 
 pxla.shard_arg_handlers[PRNGKeyArray] = key_array_shard_arg_handler
@@ -803,7 +813,7 @@ def _threefry2x32_abstract_eval(*args):
     shape = lax_internal.broadcasting_shape_rule(*args)
     aval = core.ShapedArray(shape, jnp.dtype(jnp.uint32))
   else:
-    aval = core.UnshapedArray(jnp.dtype(jnp.uint32))
+    raise TypeError(f"Arguments to threefry2x32 must all be arrays, got {args}")
   return (aval,) * 2
 
 
@@ -881,9 +891,10 @@ def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
   return tuple(x)
 
 
-_threefry2x32_lowering_rule = mlir.lower_fun(
+# Since the unrolled lowering is large, emit it as an out-of-line function.
+_threefry2x32_lowering_rule = mlir.cache_lowering(mlir.lower_fun(
     partial(_threefry2x32_lowering, use_rolled_loops=False),
-    multiple_results=True)
+    multiple_results=True))
 
 _threefry2x32_cpu_lowering_rule = mlir.lower_fun(
     partial(_threefry2x32_lowering, use_rolled_loops=True),
@@ -1063,8 +1074,9 @@ def threefry_2x32(keypair, count):
 
   odd_size = count.size % 2
   if not isinstance(odd_size, int):
-    msg = ("jax.random functions have limited support for shape polymorphism. "
-           "In particular, the product of the known dimensions must be even.")
+    msg = ("jax.random functions have limited support for shape polymorphism "
+           "when using threefry. "
+           f"In particular, the array size ({count.size}) must be even.")
     raise core.InconclusiveDimensionOperation(msg)
 
   if odd_size:

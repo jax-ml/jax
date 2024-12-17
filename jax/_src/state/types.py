@@ -18,9 +18,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 import dataclasses
 import math
-from typing import Any, Union, Protocol
+from typing import Any, Callable, Protocol, Union
 
-from jax._src.typing import DTypeLike
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
@@ -29,7 +28,9 @@ from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src.state import indexing
 from jax._src.typing import Array
+from jax._src.typing import DTypeLike
 from jax._src.util import safe_map, safe_zip
+import numpy as np
 
 ## JAX utilities
 
@@ -95,6 +96,53 @@ class RefBitcaster:
     from jax._src.state.utils import eval_bitcast_shape  # pytype: disable=import-error
     dtype = dtypes.dtype(dtype)
     return cls(dtype, eval_bitcast_shape(ref_or_view, dtype))
+
+  @property
+  def is_dynamic_size(self):
+    return False
+
+  def tree_flatten(self):
+    return (), (self.dtype, self.shape)
+
+  @classmethod
+  def tree_unflatten(cls, metadata, arrays):
+    assert not arrays
+    return cls(*metadata)
+
+  def transform_shape(
+      self, shape: tuple[int | Array, ...] | None
+  ) -> tuple[int | Array, ...] | None:
+    del shape  # Unused
+    return self.shape
+
+  def transform_dtype(self, dtype):
+    del dtype  # Unused
+    return self.dtype
+
+
+@tree_util.register_pytree_node_class
+@dataclasses.dataclass(frozen=True)
+class RefReshaper:
+  dtype: dtypes.DType
+  shape: tuple[int, ...]
+
+  @classmethod
+  def from_ref_new_shape(cls, ref_or_view: Any, *shape: Any) -> RefReshaper:
+    if len(shape) == 1 and isinstance(shape[0], tuple):
+      shape = shape[0]
+    if not shape:
+      raise ValueError("Cannot reshape ref to empty shape")
+    if np.prod(shape) != np.prod(ref_or_view.shape):
+      raise TypeError(
+          f"cannot reshape ref of shape {ref_or_view.shape} into shape {shape}"
+      )
+    if isinstance(ref_or_view, TransformedRef):
+      if ref_or_view.is_dynamic_size:
+        raise NotImplementedError(
+            "Reshape ref with dynamic size is not supported."
+        )
+    dtype = dtypes.dtype(ref_or_view.dtype)
+    return cls(dtype, shape)
 
   @property
   def is_dynamic_size(self):
@@ -212,6 +260,12 @@ class TransformedRef:
         (*self.transforms, RefBitcaster.from_ref_new_dtype(self, dtype)),
     )
 
+  def reshape(self, *shape):
+    return TransformedRef(
+        self.ref,
+        (*self.transforms, RefReshaper.from_ref_new_shape(self, *shape)),
+    )
+
   def __getattr__(self, name):
     return getattr(self.ref, name)
 
@@ -237,14 +291,13 @@ class AbstractRef(core.AbstractValue):
       raise AttributeError
     return self.inner_aval.weak_type
 
+  def update_weak_type(self, weak_type):
+    return AbstractRef(self.inner_aval.update_weak_type(weak_type))
+
   def update(self, inner_aval=None):
     if inner_aval is None:
       return AbstractRef(self.inner_aval)
     return AbstractRef(inner_aval)
-
-  def join(self, other):
-    assert isinstance(other, AbstractRef)
-    return AbstractRef(self.inner_aval.join(other.inner_aval))
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: math.prod(self.shape))
@@ -274,6 +327,10 @@ class AbstractRef(core.AbstractValue):
   @core.aval_method
   def bitcast(self, dtype):
     return TransformedRef(self, (RefBitcaster.from_ref_new_dtype(self, dtype),))
+
+  @core.aval_method
+  def reshape(self, *shape):
+    return TransformedRef(self, (RefReshaper.from_ref_new_shape(self, *shape),))
 
   @core.aval_method
   @staticmethod
@@ -306,10 +363,6 @@ class AbstractRef(core.AbstractValue):
 
   def __hash__(self):
     return hash((self.__class__, self.inner_aval))
-
-def _ref_raise_to_shaped(ref_aval: AbstractRef, weak_type):
-  return AbstractRef(core.raise_to_shaped(ref_aval.inner_aval, weak_type))
-core.raise_to_shaped_mappings[AbstractRef] = _ref_raise_to_shaped
 
 def _map_ref(size, axis, ref_aval):
   return AbstractRef(core.mapped_aval(size, axis, ref_aval.inner_aval))
@@ -346,3 +399,26 @@ def _unshard_ref(mesh, names, ref_aval: AbstractRef):
     raise NotImplementedError("Can't unshard a Ref")
   return ref_aval
 core.unshard_aval_handlers[AbstractRef] = _unshard_ref
+
+
+# Sentinel type for indicating an uninitialized value.
+class Uninitialized:
+  pass
+uninitialized = Uninitialized()
+
+
+_ref_type_aval_mappings: dict[
+    type[Any], Callable[[Any], tuple[AbstractRef, Array | Uninitialized]],
+] = {}
+
+
+def _default_value_to_ref_aval(x: Any) -> tuple[AbstractRef, Array]:
+  # Default type mapping just creates an AbstractRef from the array's aval.
+  aval = core.get_aval(x)
+  return AbstractRef(aval), x
+
+
+def get_ref_aval_from_value(x: Any):
+  if type(x) in _ref_type_aval_mappings:
+    return _ref_type_aval_mappings[type(x)](x)
+  return _default_value_to_ref_aval(x)

@@ -46,13 +46,11 @@ import jax
 import jax.numpy as jnp
 
 from jax.sharding import Mesh, PartitionSpec as P
-from jax.experimental import mesh_utils
 from jax.experimental.shard_map import shard_map
 ```
 
 ```{code-cell}
-devices = mesh_utils.create_device_mesh((4, 2))
-mesh = Mesh(devices, axis_names=('x', 'y'))
+mesh = jax.make_mesh((4, 2), ('x', 'y'))
 
 a = jnp.arange( 8 * 16.).reshape(8, 16)
 b = jnp.arange(16 *  4.).reshape(16, 4)
@@ -196,8 +194,7 @@ input array axis size.) If an input's pspec does not mention a mesh axis name,
 then there's no splitting over that mesh axis. For example:
 
 ```{code-cell}
-devices = mesh_utils.create_device_mesh((4, 2))
-mesh = Mesh(devices, ('i', 'j'))
+mesh = jax.make_mesh((4, 2), ('i', 'j'))
 
 @partial(shard_map, mesh=mesh, in_specs=P('i', None), out_specs=P('i', 'j'))
 def f1(x_block):
@@ -356,6 +353,8 @@ passed to `shard_map`-of-`f`, and the shape of an argument to `f` is computed
 from the shape `shape` of the corresponding argument to `shard_map`-of-`f` and
 the corresponding `PartitionSpec` `spec` as roughly
 `tuple(sz // (1 if n is None else mesh.shape[n]) for sz, n in zip(shape, spec))`.
+
+(shard_map_collectives_tutorial)=
 
 ## Collectives tutorial
 
@@ -628,7 +627,7 @@ def psum(x, axis_name):
 Indeed, this implementation is often used on both TPU and GPU!
 
 The reason `psum_scatter` can require about half the communication as a full
-`psum` is illustrated the `ppermute` section.
+`psum` is illustrated in the `ppermute` section.
 
 Another intuition is that we can use `psum_scatter` to implement a distributed
 matrix multiplication with inputs and outputs sharded over the same axis. In
@@ -1081,12 +1080,10 @@ from functools import partial
 
 from jax.sharding import NamedSharding, Mesh, PartitionSpec as P
 from jax.experimental.shard_map import shard_map
-from jax.experimental import mesh_utils
 
-devices = mesh_utils.create_device_mesh((8,))
+mesh = jax.make_mesh((8,), ('batch',))
 
 # replicate initial params on all devices, shard data batch over devices
-mesh = Mesh(devices, ('batch',))
 batch = jax.device_put(batch, NamedSharding(mesh, P('batch')))
 params = jax.device_put(params, NamedSharding(mesh, P()))
 
@@ -1201,8 +1198,7 @@ multiplications followed by a `psum_scatter` to sum the local results and
 efficiently scatter the result's shards.
 
 ```{code-cell}
-devices = mesh_utils.create_device_mesh((8,))
-mesh = Mesh(devices, ('feats',))
+mesh = jax.make_mesh((8,), ('feats',))
 
 batch = jax.device_put(batch, NamedSharding(mesh, P(None, 'feats')))
 params = jax.device_put(params, NamedSharding(mesh, P('feats')))
@@ -1232,8 +1228,7 @@ def loss_tp(params, batch):
 We can compose these strategies together, using multiple axes of parallelism.
 
 ```{code-cell}
-devices = mesh_utils.create_device_mesh((4, 2))
-mesh = Mesh(devices, ('batch', 'feats'))
+mesh = jax.make_mesh((4, 2), ('batch', 'feats'))
 
 batch_ = jax.device_put(batch, NamedSharding(mesh, P('batch', 'feats')))
 params_ = jax.device_put(params, NamedSharding(mesh, P(('batch', 'feats'))))

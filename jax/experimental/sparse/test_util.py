@@ -26,7 +26,6 @@ from jax import lax
 from jax import tree_util
 from jax._src import test_util as jtu
 from jax._src.lax.lax import DotDimensionNumbers
-from jax._src.lib import gpu_sparse
 from jax._src.typing import DTypeLike
 from jax.experimental import sparse
 import jax.numpy as jnp

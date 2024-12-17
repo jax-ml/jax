@@ -44,7 +44,7 @@ def get_metadata(key):
   while retry_count < 6:
     api_resp = requests.get(
         f'{gce_metadata_endpoint}/computeMetadata/v1/instance/attributes/{key}',
-        headers={'Metadata-Flavor': 'Google'})
+        headers={'Metadata-Flavor': 'Google'}, timeout=60)
     if api_resp.status_code == 200:
       break
     retry_count += 1
@@ -179,6 +179,9 @@ class GceTpuCluster(BaseTpuCluster):
   def is_env_present(cls) -> bool:
     if not running_in_cloud_tpu_vm:
       logger.debug("Did not detect cloud TPU VM")
+      return False
+    if os.environ.get("TPU_SKIP_MDS_QUERY") is not None:
+      logger.debug("TPU_SKIP_MDS_QUERY is set to True, so it's probably not a GCE TPU cluster.")
       return False
     metadata_response, metadata_code = get_metadata('agent-worker-number')
     if metadata_code == metadata_response_code_success:

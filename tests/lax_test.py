@@ -41,12 +41,10 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src import lax_reference
 from jax._src import test_util as jtu
-from jax._src import xla_bridge
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import version as jaxlib_version
 from jax._src.util import NumpyComplexWarning, safe_zip
 from jax._src.tree_util import tree_map
 
@@ -131,6 +129,8 @@ class LaxTest(jtu.JaxTestCase):
         tol = jtu.join_tolerance(tol, 1e-3)
       elif op_name == "lgamma" and dtype == np.float32:
         tol = jtu.join_tolerance(tol, 1e-3)
+    elif op_name == "pow" and dtype == np.complex128:
+      tol = jtu.join_tolerance(tol, 2e-15)
     self._CheckAgainstNumpy(numpy_op, op, args_maker, tol=tol)
 
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
@@ -284,6 +284,33 @@ class LaxTest(jtu.JaxTestCase):
     op = lambda *args: lax.concatenate(args, dim)
     numpy_op = lambda *args: lax_reference.concatenate(args, dim)
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
+
+  @jtu.sample_product(
+    [dict(base_shape=shape, axis=axis) for shape in [(4,), (3, 4), (2, 3, 4)]
+     for axis in range(len(shape))],
+    num_pieces=range(3),
+    dtype=lax_test_util.default_dtypes,
+  )
+  def testSplit(self, axis, base_shape, dtype, num_pieces):
+    sizes = jtu.rand_int(self.rng(), 5)((num_pieces + 1,), np.int64)
+    shape = list(base_shape)
+    shape[axis] = np.sum(sizes)
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    op = lambda x: lax.split(x, sizes, axis=axis)
+    def numpy_op(x):
+      return np.split(x, np.cumsum(sizes[:-1]), axis=axis)
+    self._CompileAndCheck(op, args_maker)
+    self._CheckAgainstNumpy(numpy_op, op, args_maker)
+
+  def testSplitErrors(self):
+    with self.assertRaisesRegex(ValueError,
+                                "Sizes passed to split must be nonnegative"):
+      lax.split(np.arange(5), [-1])
+    with self.assertRaisesRegex(ValueError, "Sum of sizes 6 must be equal"):
+      lax.split(np.arange(5), [6])
+    with self.assertRaisesRegex(ValueError, "axis 1 is out of bounds"):
+      lax.split(np.arange(5), sizes=(), axis=1)
 
   @jtu.sample_product(
       [
@@ -1061,159 +1088,120 @@ class LaxTest(jtu.JaxTestCase):
               accumulation_type=np.float32,
           ), [np.float16]),
           ("F16_F16_F32", [np.float16]),
-          (lax.DotAlgorithm.Preset.DEFAULT, lax_test_util.float_dtypes),
-          (lax.DotAlgorithm.Preset.ANY_F8_ANY_F8_F32, dtypes._float8_dtypes),
-          (lax.DotAlgorithm.Preset.ANY_F8_ANY_F8_F32_FAST_ACCUM, dtypes._float8_dtypes),
-          (lax.DotAlgorithm.Preset.F16_F16_F16, [np.float16]),
-          (lax.DotAlgorithm.Preset.F16_F16_F32, [np.float16]),
-          (lax.DotAlgorithm.Preset.BF16_BF16_BF16, [dtypes.bfloat16]),
-          (lax.DotAlgorithm.Preset.BF16_BF16_F32, [dtypes.bfloat16]),
-          (lax.DotAlgorithm.Preset.BF16_BF16_F32_X3, [np.float32]),
-          (lax.DotAlgorithm.Preset.BF16_BF16_F32_X6, [np.float32]),
-          (lax.DotAlgorithm.Preset.TF32_TF32_F32, [np.float32]),
-          (lax.DotAlgorithm.Preset.TF32_TF32_F32_X3, [np.float32]),
-          (lax.DotAlgorithm.Preset.F32_F32_F32, [np.float32]),
-          (lax.DotAlgorithm.Preset.F64_F64_F64, [np.float64]),
+          (lax.DotAlgorithmPreset.DEFAULT, lax_test_util.float_dtypes),
+          (lax.DotAlgorithmPreset.ANY_F8_ANY_F8_F32, dtypes._float8_dtypes),
+          (lax.DotAlgorithmPreset.ANY_F8_ANY_F8_F32_FAST_ACCUM, dtypes._float8_dtypes),
+          (lax.DotAlgorithmPreset.F16_F16_F16, [np.float16]),
+          (lax.DotAlgorithmPreset.F16_F16_F32, [np.float16]),
+          (lax.DotAlgorithmPreset.BF16_BF16_BF16, [dtypes.bfloat16]),
+          (lax.DotAlgorithmPreset.BF16_BF16_F32, [dtypes.bfloat16]),
+          (lax.DotAlgorithmPreset.BF16_BF16_F32_X3, [np.float32]),
+          (lax.DotAlgorithmPreset.BF16_BF16_F32_X6, [np.float32]),
+          (lax.DotAlgorithmPreset.TF32_TF32_F32, [np.float32]),
+          (lax.DotAlgorithmPreset.TF32_TF32_F32_X3, [np.float32]),
+          (lax.DotAlgorithmPreset.F32_F32_F32, [np.float32]),
+          (lax.DotAlgorithmPreset.F64_F64_F64, [np.float64]),
       ] for dtype in test_dtypes
       if jtu.dtypes.supported([dtype])
   ])
   def testDotAlgorithm(self, algorithm, dtype):
-    if xla_bridge.using_pjrt_c_api():
-      raise SkipTest(
-          "The dot algorithm attribute is not supported by PJRT C API.")
-    if jaxlib_version <= (0, 4, 33):
-      raise SkipTest(
-          "The dot algorithm attribute is only supported for jaxlib >0.4.33.")
+    if jtu.test_device_matches(["cpu"]):
+      if algorithm not in {
+          lax.DotAlgorithmPreset.DEFAULT,
+          lax.DotAlgorithmPreset.F16_F16_F16,
+          lax.DotAlgorithmPreset.F32_F32_F32,
+          lax.DotAlgorithmPreset.F64_F64_F64,
+          lax.DotAlgorithmPreset.BF16_BF16_F32,
+          lax.DotAlgorithmPreset.BF16_BF16_F32_X3,
+          lax.DotAlgorithmPreset.BF16_BF16_F32_X6,
+      }:
+        raise SkipTest(
+            f"The dot algorithm '{algorithm}' is not supported on CPU.")
     if jtu.test_device_matches(["gpu"]):
       # GPU algorithm support is a little spotty. It is checked in
       # xla/service/algorithm_util.cc and the logic is copied here.
       if algorithm in {
-          lax.DotAlgorithm.Preset.F16_F16_F32,
-          lax.DotAlgorithm.Preset.TF32_TF32_F32,
-          lax.DotAlgorithm.Preset.BF16_BF16_F32,
-          lax.DotAlgorithm.Preset.BF16_BF16_F32_X3,  # Must have f32 input
-          lax.DotAlgorithm.Preset.BF16_BF16_F32_X6,  # Must have f32 input
+          lax.DotAlgorithmPreset.F16_F16_F32,
+          lax.DotAlgorithmPreset.TF32_TF32_F32,
+          lax.DotAlgorithmPreset.BF16_BF16_F32,
+          lax.DotAlgorithmPreset.BF16_BF16_F32_X3,
+          lax.DotAlgorithmPreset.BF16_BF16_F32_X6,
       }:
         if not jtu.is_cuda_compute_capability_at_least("8.0"):
           raise SkipTest(
               f"The dot algorithm '{algorithm}' requires CUDA compute "
               "capability >= 8.0.")
       elif algorithm not in {
-          lax.DotAlgorithm.Preset.DEFAULT,
-          lax.DotAlgorithm.Preset.ANY_F8_ANY_F8_F32,
-          lax.DotAlgorithm.Preset.ANY_F8_ANY_F8_F32_FAST_ACCUM,
-          lax.DotAlgorithm.Preset.F32_F32_F32,
-          lax.DotAlgorithm.Preset.F64_F64_F64,
+          lax.DotAlgorithmPreset.DEFAULT,
+          lax.DotAlgorithmPreset.ANY_F8_ANY_F8_F32,
+          lax.DotAlgorithmPreset.ANY_F8_ANY_F8_F32_FAST_ACCUM,
+          lax.DotAlgorithmPreset.F32_F32_F32,
+          lax.DotAlgorithmPreset.F64_F64_F64,
       }:
         raise SkipTest(
             f"The dot algorithm '{algorithm}' is not supported on GPU.")
+    if jtu.test_device_matches(["tpu"]):
+      if algorithm not in {
+          lax.DotAlgorithmPreset.DEFAULT,
+          lax.DotAlgorithmPreset.BF16_BF16_F32,
+          lax.DotAlgorithmPreset.BF16_BF16_F32_X3,
+          lax.DotAlgorithmPreset.BF16_BF16_F32_X6,
+      }:
+        raise SkipTest(
+            f"The dot algorithm '{algorithm}' is not supported on TPU."
+        )
     lhs_shape = (3, 4)
     rhs_shape = (4, 3)
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
-    self._CompileAndCheck(partial(lax.dot, algorithm=algorithm), args_maker)
-    # Check that accumulation type sets the output type
-    output = lax.dot(*args_maker(), algorithm=algorithm)
-    algorithm = lax_internal.canonicalize_dot_algorithm(algorithm)
-    expected_dtype = dtype if algorithm is None else algorithm.accumulation_type
-    self.assertEqual(output.dtype, expected_dtype)
+    self._CompileAndCheck(partial(lax.dot, precision=algorithm), args_maker)
+    self.assertEqual(lax.dot(*args_maker(), precision=algorithm).dtype, dtype)
 
   def testDotAlgorithmInvalidFloat8Type(self):
-    if xla_bridge.using_pjrt_c_api():
-      raise SkipTest(
-          "The dot algorithm attribute is not supported by PJRT C API.")
-    if jaxlib_version <= (0, 4, 33):
-      raise SkipTest(
-          "The dot algorithm attribute is only supported for jaxlib >0.4.33.")
+    if jtu.test_device_matches(["cpu"]):
+      raise SkipTest("Not supported on CPU.")
     lhs_shape = (3, 4)
     rhs_shape = (4, 3)
     rng = jtu.rand_default(self.rng())
     lhs, rhs = rng(lhs_shape, np.float32), rng(rhs_shape, dtypes.float8_e4m3fn)
     with self.assertRaisesRegex(ValueError, "The dot algorithm"):
-      lax.dot(lhs, rhs, algorithm="ANY_F8_ANY_F8_F32")
+      lax.dot(lhs, rhs, precision="ANY_F8_ANY_F8_F32")
 
-  @parameterized.parameters([
-      ({"precision": lax.Precision.HIGHEST}, "The dot_general precision must be None or DEFAULT"),
-      ({"preferred_element_type": np.float32}, "The preferred_element_type and algorithm arguments"),
-  ])
-  def testDotAlgorithmInvalidParameters(self, kwargs, pattern):
-    if xla_bridge.using_pjrt_c_api():
-      raise SkipTest(
-          "The dot algorithm attribute is not supported by PJRT C API.")
-    if jaxlib_version <= (0, 4, 33):
-      raise SkipTest(
-          "The dot algorithm attribute is only supported for jaxlib >0.4.33.")
+  def testDotAlgorithmCasting(self):
+    if jtu.test_device_matches(["tpu"]):
+      raise SkipTest("F32_F32_F32 is not supported on TPU.")
+    def fun(lhs, rhs):
+      return lax.dot(lhs, rhs, precision="F32_F32_F32")
+    lhs_shape = (3, 4)
+    rhs_shape = (4, 3)
+    rng = jtu.rand_default(self.rng())
+    lhs, rhs = rng(lhs_shape, np.float16), rng(rhs_shape, np.float16)
+    self.assertEqual(fun(lhs, rhs).dtype, np.float16)
+
+  def testDotAlgorithmAllowedOutputStorage(self):
+    # see https://github.com/jax-ml/jax/issues/24794
+    if not jtu.test_device_matches(["gpu"]):
+      self.skipTest("Only supported on GPU.")
+    def fun(lhs, rhs):
+      return lax.dot(lhs, rhs, precision="F16_F16_F32",
+                     preferred_element_type=np.float16)
+    lhs_shape = (3, 4)
+    rhs_shape = (4, 3)
+    rng = jtu.rand_default(self.rng())
+    lhs, rhs = rng(lhs_shape, np.float16), rng(rhs_shape, np.float16)
+    self.assertNotIn("convert", jax.jit(fun).lower(lhs, rhs).as_text())
+
+  def testDotAlgorithmConfig(self):
     lhs_shape = (3, 4)
     rhs_shape = (4, 3)
     rng = jtu.rand_default(self.rng())
     lhs, rhs = rng(lhs_shape, np.float32), rng(rhs_shape, np.float32)
-    with self.assertRaisesRegex(ValueError, pattern):
-      lax.dot(lhs, rhs, algorithm="F32_F32_F32", **kwargs)
 
-  def testDotAlgorithmTransposeRequired(self):
-    if xla_bridge.using_pjrt_c_api():
-      raise SkipTest(
-          "The dot algorithm attribute is not supported by PJRT C API.")
-    if jaxlib_version <= (0, 4, 33):
-      raise SkipTest(
-          "The dot algorithm attribute is only supported for jaxlib >0.4.33.")
-    lhs_shape = (3, 4)
-    rhs_shape = (4, 3)
-    rng = jtu.rand_default(self.rng())
-    lhs, rhs = rng(lhs_shape, np.float32), rng(rhs_shape, np.float32)
-    fun = partial(lax.dot, algorithm="F32_F32_F32")
-    out = fun(lhs, rhs)
-    _, vjp_fun = jax.vjp(fun, lhs, rhs)
-    with self.assertRaisesRegex(
-        ValueError, "When a dot_general algorithm is specified"):
-      vjp_fun(out)
-
-  @parameterized.parameters([
-      ("F32_F32_F32", "F16_F16_F32"),
-      ("F32_F32_F32", ("F16_F16_F32", "F64_F64_F64")),
-  ])
-  def testDotAlgorithmTranspose(self, algorithm, transpose_algorithm):
-    if xla_bridge.using_pjrt_c_api():
-      raise SkipTest(
-          "The dot algorithm attribute is not supported by PJRT C API.")
-    if jaxlib_version <= (0, 4, 33):
-      raise SkipTest(
-          "The dot algorithm attribute is only supported for jaxlib >0.4.33.")
-    def fun(x, y):
-      return lax.dot(x, y, algorithm=algorithm,
-                     transpose_algorithm=transpose_algorithm)
-
-    algorithm_ = lax_internal.canonicalize_dot_algorithm(algorithm)
-    lhs_alg, rhs_alg = lax_internal.canonicalize_dot_transpose_algorithm(
-        transpose_algorithm)
-
-    lhs_shape = (3, 4)
-    rhs_shape = (4, 3)
-    rng = jtu.rand_default(self.rng())
-    lhs, rhs = rng(lhs_shape, np.float32), rng(rhs_shape, np.float32)
-    out = fun(lhs, rhs)
-
-    def check_transpose_algorithm(f, arg, alg, trans_alg, trans_trans_alg):
-      fun_trans = jax.linear_transpose(f, arg)
-      jaxpr = jax.make_jaxpr(fun_trans)(out)
-      eqn = next(filter(lambda eqn: eqn.primitive == lax.dot_general_p, jaxpr.eqns))
-      self.assertEqual(eqn.params["algorithm"], alg)
-      self.assertEqual(eqn.params["transpose_algorithm"], trans_alg)
-
-      fun_ = jax.linear_transpose(lambda x: fun_trans(x)[0], out)
-      jaxpr_ = jax.make_jaxpr(fun_)(arg)
-      eqn = next(filter(lambda eqn: eqn.primitive == lax.dot_general_p, jaxpr_.eqns))
-      self.assertEqual(eqn.params["algorithm"], algorithm_)
-
-      # Note that transposing the RHS of a dot_general introduce extra
-      # transposes on the input and output, so we don't actually end up with
-      # the same `transpose_algorithm` parameter after 2 transposes.
-      self.assertEqual(eqn.params["transpose_algorithm"], trans_trans_alg)
-
-    check_transpose_algorithm(partial(fun, y=rhs), lhs, lhs_alg,
-                              (algorithm_, rhs_alg), (lhs_alg, rhs_alg))
-    check_transpose_algorithm(partial(fun, lhs), rhs, rhs_alg,
-                              (algorithm_, lhs_alg), (rhs_alg, lhs_alg))
+    expected = ("algorithm = <lhs_precision_type = f32, rhs_precision_type = "
+                "f32, accumulation_type = f32")
+    with jax.default_matmul_precision("F32_F32_F32"):
+      hlo = jax.jit(lax.dot).lower(lhs, rhs).as_text()
+      self.assertRegex(hlo, expected)
 
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
@@ -1259,12 +1247,14 @@ class LaxTest(jtu.JaxTestCase):
   )
   def test_mixed_fp8_dot_general(self, lhs_shape, rhs_shape, dtype_lhs, dtype_rhs):
     if jtu.test_device_matches(["tpu"]):
-        raise SkipTest("Mixed fp8 precision matmul is not yet supported on TPU")
+      raise SkipTest("Mixed fp8 precision matmul is not yet supported on TPU")
     if not jtu.is_device_rocm() and (
         dtype_lhs in [dtypes.float8_e4m3fnuz, dtypes.float8_e5m2fnuz] or
         dtype_rhs in [dtypes.float8_e4m3fnuz, dtypes.float8_e5m2fnuz]
     ):
-        raise SkipTest("float8_e4m3fnuz and float8_e5m2fnuz types are only supported on ROCm")
+      raise SkipTest(
+          "float8_e4m3fnuz and float8_e5m2fnuz types are only supported on ROCm"
+      )
     rng = jtu.rand_default(self.rng())
     lhs = rng(lhs_shape, dtype=dtype_lhs)
     rhs = rng(rhs_shape, dtype=dtype_rhs)
@@ -1384,6 +1374,56 @@ class LaxTest(jtu.JaxTestCase):
     op = lambda x, y: lax.dot_general(x, y, dimension_numbers)
     numpy_op = lambda x, y: lax_reference.dot_general(x, y, dimension_numbers)
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
+
+  def testRaggedAllToAllErrors(self):
+    operand = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=jnp.float32)
+    output = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
+    input_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
+    send_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
+    output_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
+    recv_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
+
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all input and output shapes must be equal, except for the outermost dimension."):
+      jax.jit(lax.ragged_all_to_all).lower(operand, jnp.array([[0.0], [0.0], [0.0], [0.0], [0.0]], dtype=jnp.float32), input_offsets, send_sizes, output_offsets, recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all input_offsets must be integer type."):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, jnp.array([0.0, 1.0, 3.0], dtype=jnp.float32), send_sizes, output_offsets, recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all send_sizes must be integer type."):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32), output_offsets, recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all output_offsets must be integer type."):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, jnp.array([0.0, 1.0, 3.0], dtype=jnp.float32), recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all recv_sizes must be integer type."):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, output_offsets, jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32))
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all input_offsets must be rank 1 with positive dimension size, but got shape (1, 3)"):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, jnp.array([[0, 1, 3]], dtype=jnp.int32), send_sizes, output_offsets, recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all input_offsets must be rank 1 with positive dimension size, but got shape (0,)"):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, jnp.array([], dtype=jnp.int32), send_sizes, output_offsets, recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all send_sizes must be rank 1 with positive dimension size, but got shape (1, 3)"):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, jnp.array([[1, 2, 3]], dtype=jnp.int32), output_offsets, recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all send_sizes must be rank 1 with positive dimension size, but got shape (0,)"):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, jnp.array([], dtype=jnp.int32), output_offsets, recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all output_offsets must be rank 1 with positive dimension size, but got shape (1, 3)"):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, jnp.array([[0, 1, 3]], dtype=jnp.int32), recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all output_offsets must be rank 1 with positive dimension size, but got shape (0,)"):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, jnp.array([], dtype=jnp.int32), recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all recv_sizes must be rank 1 with positive dimension size, but got shape (1, 3)"):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, output_offsets, jnp.array([[1, 2, 3]], dtype=jnp.int32))
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all recv_sizes must be rank 1 with positive dimension size, but got shape (0,)"):
+      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, output_offsets, jnp.array([], dtype=jnp.int32))
+
+  def testRaggedAllToAll(self):
+    operand = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=jnp.float32)
+    output = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
+    input_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
+    send_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
+    output_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
+    recv_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
+    mlir_module = jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, output_offsets, recv_sizes).as_text()
+    self.assertIn("stablehlo.custom_call @ragged_all_to_all", mlir_module)
+    self.assertIn(
+        "backend_config = {replica_groups = dense<[[0, 1, 2]]> :"
+        " tensor<1x3xi64>}}",
+        mlir_module,
+    )
 
   @jtu.sample_product(
       [
@@ -1639,6 +1679,8 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
 
   def testPadErrors(self):
+    with self.assertRaisesRegex(ValueError, "padding_value must be a scalar"):
+      lax.pad(np.zeros(2), np.zeros(2), [(0, 0, 0)])
     with self.assertRaisesRegex(ValueError, "padding_config"):
       lax.pad(np.zeros(2), 0., [(0, 1, 0), (0, 1, 0)])
     with self.assertRaisesRegex(ValueError, "interior padding in padding_config must be nonnegative"):
@@ -2686,6 +2728,18 @@ class LaxTest(jtu.JaxTestCase):
           ((10, 5), np.array([[0, 2], [1, 0]]), lax.GatherDimensionNumbers(
             offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)),
             (1, 3)),
+          ((2, 5), np.array([[[0], [2]], [[1], [1]]]),
+           lax.GatherDimensionNumbers(
+               offset_dims=(), collapsed_slice_dims=(1,),
+               start_index_map=(1,), operand_batching_dims=(0,),
+               start_indices_batching_dims=(0,)),
+           (1, 1)),
+          ((2, 3, 10), np.array([[[0], [1]], [[2], [3]], [[4], [5]]]),
+           lax.GatherDimensionNumbers(
+               offset_dims=(2,), collapsed_slice_dims=(),
+               start_index_map=(2,), operand_batching_dims=(0, 1),
+               start_indices_batching_dims=(1, 0)),
+           (1, 1, 3))
     ]],
     dtype=lax_test_util.all_dtypes,
   )
@@ -2703,63 +2757,196 @@ class LaxTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"_{testcase_name}", "operand_shape": operand_shape,
        "indices_shape": indices_shape,
-       "dimension_numbers": lax.GatherDimensionNumbers(
-          offset_dims=offset_dims,
-          collapsed_slice_dims=collapsed_slice_dims,
-          start_index_map=start_index_map),
+       "dimension_numbers": dimension_numbers,
        "slice_sizes": slice_sizes, "msg": msg}
-      for (testcase_name, operand_shape, indices_shape, offset_dims,
-           collapsed_slice_dims, start_index_map, slice_sizes, msg) in [
+      for (testcase_name, operand_shape, indices_shape, dimension_numbers,
+           slice_sizes, msg) in [
         ("NonAscendingWindowIndices", (10, 9, 8, 7, 6), (5, 4, 3, 2, 1),
-         (4, 5, 6, 8, 7), (), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
-         "offset_dims in gather op must be sorted"),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6, 8, 7), collapsed_slice_dims=(),
+             start_index_map=(0, 1, 2, 3, 4)),
+         (10, 9, 8, 7, 6), "offset_dims in gather op must be sorted"),
         ("RepeatedWindowIndices", (10, 9, 8, 7, 6), (5, 4, 3, 2, 1),
-         (4, 5, 6, 7, 7), (), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
-         "offset_dims in gather op must not repeat"),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6, 7, 7), collapsed_slice_dims=(),
+             start_index_map=(0, 1, 2, 3, 4)),
+         (10, 9, 8, 7, 6), "offset_dims in gather op must not repeat"),
         ("WindowIndexOutOfBounds", (10, 9, 8, 7, 6), (5, 4, 3, 2, 1),
-         (4, 5, 100, 101, 102), (), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
-         "Offset dimension 2 in gather op is out of bounds"),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 100, 101, 102), collapsed_slice_dims=(),
+             start_index_map=(0, 1, 2, 3, 4)),
+         (10, 9, 8, 7, 6), "Offset dimension 2 in gather op is out of bounds"),
         ("WindowIndexBarelyOutOfBounds", (10, 9, 8, 7, 6), (5, 4, 3, 2, 1),
-         (4, 5, 6, 7, 9), (), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
-         "Offset dimension 4 in gather op is out of bounds"),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6, 7, 9), collapsed_slice_dims=(),
+             start_index_map=(0, 1, 2, 3, 4)),
+         (10, 9, 8, 7, 6), "Offset dimension 4 in gather op is out of bounds"),
         ("MismatchingElidedWindowDims", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
-         (4, 5, 6, 7, 8), (4,), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6, 7, 8), collapsed_slice_dims=(4,),
+             start_index_map=(0, 1, 2, 3, 4)),
+         (10, 9, 8, 7, 6),
          ("All components of the offset index in a gather op must either be a "
-          "offset dimension or explicitly collapsed")),
+          "offset dimension or explicitly collapsed/batching")),
+        ("MismatchingElidedWindowDimsV2", (10, 9, 8, 7, 6, 5), (10, 4, 3, 2, 4),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6, 7, 8), collapsed_slice_dims=(4,),
+             start_index_map=(1, 2, 3, 4), operand_batching_dims=(0,),
+             start_indices_batching_dims=(0,)),
+         (10, 9, 8, 7, 6, 5),
+         ("All components of the offset index in a gather op must either be a "
+          "offset dimension or explicitly collapsed/batching")),
         ("OutOfBoundsWindowToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
-         (4, 5, 6, 7, 8), (0, 1, 2, 3, 19), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6, 7, 8), collapsed_slice_dims=(0, 1, 2, 3, 19),
+             start_index_map=(0, 1, 2, 3, 4)),
+         (10, 9, 8, 7, 6),
          "Invalid collapsed_slice_dims set in gather op; valid range is"),
         ("RepeatedWindowToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
-         (4, 5, 6, 7, 8), (0, 1, 2, 3, 3), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
-         "collapsed_slice_dims in gather op must not repeat"),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6, 7, 8), collapsed_slice_dims=(0, 1, 2, 3, 3),
+             start_index_map=(0, 1, 2, 3, 4)),
+         (10, 9, 8, 7, 6), "collapsed_slice_dims in gather op must not repeat"),
         ("MismatchingGatherToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
-         (4, 5, 6, 7, 8), (), (0, 1, 2, 3), (10, 9, 8, 7, 6),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6, 7, 8), collapsed_slice_dims=(),
+             start_index_map=(0, 1, 2, 3)),
+         (10, 9, 8, 7, 6),
          ("Gather op has 4 elements in start_index_map and the bound of "
           "dimension index_vector_dim=4 of indices is 5. These two "
           "numbers must be equal.")),
         ("OutOfBoundsGatherToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
-         (4, 5, 6, 7, 8), (), (0, 1, 2, 3, 7), (10, 9, 8, 7, 6),
-         "Invalid start_index_map"),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6, 7, 8), collapsed_slice_dims=(),
+             start_index_map=(0, 1, 2, 3, 7)),
+         (10, 9, 8, 7, 6), "Invalid start_index_map"),
         ("RepeatedGatherToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
-         (4, 5, 6, 7, 8), (), (0, 1, 2, 3, 3), (10, 9, 8, 7, 6),
-         "start_index_map in gather op must not repeat"),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6, 7, 8), collapsed_slice_dims=(),
+             start_index_map=(0, 1, 2, 3, 3)),
+         (10, 9, 8, 7, 6), "start_index_map in gather op must not repeat"),
         ("NonAscendingElidedWindowDims", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
-         (4, 5, 6, 7, 8), (2, 1), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6, 7, 8), collapsed_slice_dims=(2, 1),
+             start_index_map=(0, 1, 2, 3, 4)),
+         (10, 9, 8, 7, 6),
          "collapsed_slice_dims in gather op must be sorted"),
         ("WindowBoundsTooLarge", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
-         (4, 5, 6, 7), (2,), (0, 1, 2, 3, 4), (10, 9, 8, 100, 6),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6, 7), collapsed_slice_dims=(2,),
+             start_index_map=(0, 1, 2, 3, 4)),
+         (10, 9, 8, 100, 6),
          "Slice size at index 3 in gather op is out of range"),
         ("MismatchingNumberOfWindowBounds", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
-         (4, 5, 6, 7), (), (0, 1, 2, 3, 4), (10, 9, 8, 7),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6, 7), collapsed_slice_dims=(),
+             start_index_map=(0, 1, 2, 3, 4)),
+         (10, 9, 8, 7),
          "Gather op must have one slice size for every input dimension"),
         ("WindowBoundsNot1ForElidedDim", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
-         (4, 5, 6, 7), (1,), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6, 7), collapsed_slice_dims=(1,),
+             start_index_map=(0, 1, 2, 3, 4)),
+         (10, 9, 8, 7, 6),
          ("Gather op can only collapse slice dims with bound 1, but bound "
-          "is 9 for index 1 at position 0."))
+          "is 9 for index 1 at position 0.")),
+        ("RepeatedOperandBatchingDims", (10, 9, 8, 7, 6), (5, 4, 3, 2, 3),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6), collapsed_slice_dims=(0, 1),
+             start_index_map=(0, 1, 4), operand_batching_dims=(2, 3, 3)),
+         (10, 9, 8, 7, 6),
+         "operand_batching_dims in gather op must not repeat"),
+        ("NonAscendingOperandBatchingDims", (10, 9, 8, 7, 6), (5, 4, 3, 2, 3),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6), collapsed_slice_dims=(0, 1),
+             start_index_map=(0, 1, 4), operand_batching_dims=(3, 2)),
+         (10, 9, 8, 7, 6),
+         "operand_batching_dims in gather op must be sorted"),
+        ("OutOfBoundsOperandBatchingDims", (10, 9, 8, 7, 6),
+         (5, 4, 3, 2, 5),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6), collapsed_slice_dims=(0, 1),
+             start_index_map=(0, 1, 2, 3, 4),
+             operand_batching_dims=(0, 10)),
+         (10, 9, 8, 7, 6),
+         "Invalid operand_batching_dims set in gather op; valid range is"),
+        ("NonDisjointCollapsedAndBatchingDims", (10, 9, 8, 7, 6),
+         (5, 4, 3, 2, 3),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6), collapsed_slice_dims=(0, 1, 2),
+             start_index_map=(0, 1, 4), operand_batching_dims=(2, 3)),
+         (10, 9, 8, 7, 6),
+         ("collapsed_slice_dims and operand_batching_dims in gather op must be "
+          "disjoint")),
+        ("NonDisjointStartIndexMapAndBatchingDims", (10, 9, 8, 7, 6),
+         (5, 4, 3, 2, 4),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6), collapsed_slice_dims=(0, 1),
+             start_index_map=(0, 1, 2, 4), operand_batching_dims=(2, 3)),
+         (10, 9, 8, 7, 6),
+         ("start_index_map and operand_batching_dims in gather op must be "
+          "disjoint")),
+        ("WindowBoundsNot1ForBatchingDim", (10, 9, 8, 7, 6), (9, 4, 3, 2, 4),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6, 7), collapsed_slice_dims=(),
+             start_index_map=(0, 2, 3, 4), operand_batching_dims=(1,),
+             start_indices_batching_dims=(0,)),
+         (10, 9, 8, 7, 6),
+         ("Gather op can only have operand batching dims with bound 0/1, but "
+          "bound is 9 for index 1 at position 0.")),
+        ("RepeatedStartIndicesBatchingDims", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6), collapsed_slice_dims=(0, 1),
+             start_index_map=(0, 1, 2, 3, 4),
+             start_indices_batching_dims=(0, 1, 0)),
+         (10, 9, 8, 7, 6),
+         "start_indices_batching_dims in gather op must not repeat"),
+        ("OutOfBoundsStartIndicesBatchingDims", (10, 9, 8, 7, 6),
+         (5, 4, 3, 2, 5),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6), collapsed_slice_dims=(0, 1),
+             start_index_map=(0, 1, 2, 3, 4),
+             start_indices_batching_dims=(0, 5)),
+         (10, 9, 8, 7, 6),
+         "Invalid start_indices_batching_dims set in gather op; valid range"),
+        ("IndexVectorDimInStartIndicesBatchingDims", (10, 9, 8, 7, 6),
+         (5, 4, 3, 2, 5),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6), collapsed_slice_dims=(0, 1),
+             start_index_map=(0, 1, 2, 3, 4),
+             start_indices_batching_dims=(0, 4)),
+         (10, 9, 8, 7, 6),
+         ("Gather op cannot have the index vector dimension as a batching "
+          "dimension")),
+        ("MismatchingNumberOfBatchingDims", (10, 9, 8, 7, 6), (5, 4, 3, 2, 4),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6), collapsed_slice_dims=(1, 2),
+             start_index_map=(1, 2, 3, 4), operand_batching_dims=(0,),
+             start_indices_batching_dims=(0, 1)),
+         (10, 9, 8, 7, 6),
+         ("Gather op requires equal numbers of operand_batching_dims and "
+          "start_indices_batching_dims")),
+        ("MismatchingBatchingDimSizes", (10, 9, 8, 7, 6), (10, 9, 3, 2, 3),
+         lax.GatherDimensionNumbers(
+             offset_dims=(4, 5, 6, 7, 8), collapsed_slice_dims=(2, 3, 4),
+             start_index_map=(2, 3, 4), operand_batching_dims=(0, 1),
+             start_indices_batching_dims=(1, 0)),
+         (10, 9, 8, 7, 6),
+         ("Gather op requires operand batching dimensions and indices batching "
+          "dimensions to have the same shape"))
       ]
   )
   def testGatherShapeCheckingRule(self, operand_shape, indices_shape,
                                   dimension_numbers, slice_sizes, msg):
+    """
+
+    Args:
+      operand_shape:
+      indices_shape:
+      dimension_numbers:
+      slice_sizes:
+      msg:
+    """
     operand = np.ones(operand_shape, dtype=np.int32)
     indices = np.ones(indices_shape, dtype=np.int32)
 
@@ -2776,20 +2963,31 @@ class LaxTest(jtu.JaxTestCase):
           ((10,), np.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(),
             scatter_dims_to_operand_dims=(0,))),
-          ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
+          ((10, 5), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,))),
+          ((2, 5), np.array([[[0], [2]], [[1], [1]]]), (2, 2),
+           lax.ScatterDimensionNumbers(
+               update_window_dims=(), inserted_window_dims=(1,),
+               scatter_dims_to_operand_dims=(1,), operand_batching_dims=(0,),
+               scatter_indices_batching_dims=(0,))),
+          ((2, 3, 10), np.array([[[0], [1]], [[2], [3]], [[4], [5]]]),
+           (3, 2, 3), lax.ScatterDimensionNumbers(
+               update_window_dims=(2,), inserted_window_dims=(),
+               scatter_dims_to_operand_dims=(2,), operand_batching_dims=(0, 1),
+               scatter_indices_batching_dims=(1, 0)))
     ]],
     dtype=lax_test_util.inexact_dtypes,
     mode=["clip", "fill", None],
+    op=[lax.scatter_add, lax.scatter_sub],
   )
-  def testScatterAdd(self, arg_shape, dtype, idxs, update_shape, dnums, mode):
+  def testScatterAddSub(self, arg_shape, dtype, idxs, update_shape, dnums, mode, op):
     rng = jtu.rand_default(self.rng())
     rng_idx = jtu.rand_int(self.rng(), high=max(arg_shape))
     rand_idxs = lambda: rng_idx(idxs.shape, idxs.dtype)
     args_maker = lambda: [rng(arg_shape, dtype), rand_idxs(),
                           rng(update_shape, dtype)]
-    fun = partial(lax.scatter_add, dimension_numbers=dnums, mode=mode)
+    fun = partial(op, dimension_numbers=dnums, mode=mode)
     self._CompileAndCheck(fun, args_maker)
 
   @jtu.sample_product(
@@ -2802,9 +3000,19 @@ class LaxTest(jtu.JaxTestCase):
           ((10,), np.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(),
             scatter_dims_to_operand_dims=(0,))),
-          ((10, 5,), np.array([[0], [2], [1]], dtype=np.uint64), (3, 3), lax.ScatterDimensionNumbers(
+          ((10, 5), np.array([[0], [2], [1]], dtype=np.uint64), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,))),
+          ((2, 5), np.array([[[0], [2]], [[1], [1]]]), (2, 2),
+           lax.ScatterDimensionNumbers(
+               update_window_dims=(), inserted_window_dims=(1,),
+               scatter_dims_to_operand_dims=(1,), operand_batching_dims=(0,),
+               scatter_indices_batching_dims=(0,))),
+          ((2, 3, 10), np.array([[[0], [1]], [[2], [3]], [[4], [5]]]),
+           (3, 2, 3), lax.ScatterDimensionNumbers(
+               update_window_dims=(2,), inserted_window_dims=(),
+               scatter_dims_to_operand_dims=(2,), operand_batching_dims=(0, 1),
+               scatter_indices_batching_dims=(1, 0)))
     ]],
     dtype=lax_test_util.float_dtypes,
   )
@@ -2827,9 +3035,19 @@ class LaxTest(jtu.JaxTestCase):
           ((10,), np.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(),
             scatter_dims_to_operand_dims=(0,))),
-          ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
+          ((10, 5), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,))),
+          ((2, 5), np.array([[[0], [2]], [[1], [1]]]), (2, 2),
+           lax.ScatterDimensionNumbers(
+               update_window_dims=(), inserted_window_dims=(1,),
+               scatter_dims_to_operand_dims=(1,), operand_batching_dims=(0,),
+               scatter_indices_batching_dims=(0,))),
+          ((2, 3, 10), np.array([[[0], [1]], [[2], [3]], [[4], [5]]]),
+           (3, 2, 3), lax.ScatterDimensionNumbers(
+               update_window_dims=(2,), inserted_window_dims=(),
+               scatter_dims_to_operand_dims=(2,), operand_batching_dims=(0, 1),
+               scatter_indices_batching_dims=(1, 0)))
     ]],
     dtype=lax_test_util.float_dtypes,
   )
@@ -2851,9 +3069,19 @@ class LaxTest(jtu.JaxTestCase):
           ((10,), np.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(),
             scatter_dims_to_operand_dims=(0,))),
-          ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
+          ((10, 5), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,))),
+          ((2, 5), np.array([[[0], [2]], [[1], [1]]]), (2, 2),
+           lax.ScatterDimensionNumbers(
+               update_window_dims=(), inserted_window_dims=(1,),
+               scatter_dims_to_operand_dims=(1,), operand_batching_dims=(0,),
+               scatter_indices_batching_dims=(0,))),
+          ((2, 3, 10), np.array([[[0], [1]], [[2], [3]], [[4], [5]]]),
+           (3, 2, 3), lax.ScatterDimensionNumbers(
+               update_window_dims=(2,), inserted_window_dims=(),
+               scatter_dims_to_operand_dims=(2,), operand_batching_dims=(0, 1),
+               scatter_indices_batching_dims=(1, 0)))
     ]],
     dtype=lax_test_util.float_dtypes,
   )
@@ -2875,9 +3103,19 @@ class LaxTest(jtu.JaxTestCase):
           ((10,), np.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(),
             scatter_dims_to_operand_dims=(0,))),
-          ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
+          ((10, 5), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,))),
+          ((2, 5), np.array([[[0], [2]], [[1], [1]]]), (2, 2),
+           lax.ScatterDimensionNumbers(
+               update_window_dims=(), inserted_window_dims=(1,),
+               scatter_dims_to_operand_dims=(1,), operand_batching_dims=(0,),
+               scatter_indices_batching_dims=(0,))),
+          ((2, 3, 10), np.array([[[0], [1]], [[2], [3]], [[4], [5]]]),
+           (3, 2, 3), lax.ScatterDimensionNumbers(
+               update_window_dims=(2,), inserted_window_dims=(),
+               scatter_dims_to_operand_dims=(2,), operand_batching_dims=(0, 1),
+               scatter_indices_batching_dims=(1, 0)))
     ]],
     dtype=lax_test_util.float_dtypes,
   )
@@ -2895,84 +3133,207 @@ class LaxTest(jtu.JaxTestCase):
   # variations to account for the implicit setting of index_vector_dim in JAX.
   @parameterized.named_parameters(
       {"testcase_name": f"_{testcase_name}", "operand_shape": operand_shape,
-       "indices": indices, "update_shape": update_shape,
-       "dimension_numbers": lax.ScatterDimensionNumbers(
-          update_window_dims=update_window_dims,
-          inserted_window_dims=inserted_window_dims,
-          scatter_dims_to_operand_dims=scatter_dims_to_operand_dims),
+       "indices_shape": indices_shape, "update_shape": update_shape,
+       "dimension_numbers": dimension_numbers,
        "msg": msg}
-      for (testcase_name, operand_shape, indices, update_shape,
-           update_window_dims, inserted_window_dims,
-           scatter_dims_to_operand_dims, msg) in [
-              ("ScatterWithUpdatesBiggerThanInput", (64, 48), np.zeros((32, 1)),
-               (65, 32), (0,), (1,), (1,), "Bounds of the window dimensions"),
-              ("ScatterWithUpdatesBiggerThanInputV2", (64, 48),
-               np.zeros((32, 1)), (32, 49), (1,), (0,), (1,),
+      for (testcase_name, operand_shape, indices_shape, update_shape,
+           dimension_numbers, msg) in [
+              ("ScatterWithUpdatesBiggerThanInput", (64, 48), (32, 1), (65, 32),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(0,), inserted_window_dims=(1,),
+                   scatter_dims_to_operand_dims=(1,)),
                "Bounds of the window dimensions"),
-              ("ScatterWithUpdatesNotMatchingIndices", (64, 48),
-               np.zeros((32, 1)), (64, 31), (0,), (1,), (1,),
+              ("ScatterWithUpdatesBiggerThanInputV2", (64, 48), (32, 1),
+               (32, 49), lax.ScatterDimensionNumbers(
+                   update_window_dims=(1,), inserted_window_dims=(0,),
+                   scatter_dims_to_operand_dims=(1,)),
+               "Bounds of the window dimensions"),
+              ("ScatterWithUpdatesNotMatchingIndices", (64, 48), (32, 1),
+               (64, 31), lax.ScatterDimensionNumbers(
+                   update_window_dims=(1,), inserted_window_dims=(0,),
+                   scatter_dims_to_operand_dims=(1,)),
                "Bounds of the scatter dimensions"),
-              ("ScatterWithUpdatesNotMatchingIndicesV2", (64, 48),
-               np.zeros((32, 1)), (31, 48), (1,), (0,), (1,),
+              ("ScatterWithUpdatesNotMatchingIndicesV2", (64, 48), (32, 1),
+               (31, 48), lax.ScatterDimensionNumbers(
+                   update_window_dims=(1,), inserted_window_dims=(0,),
+                   scatter_dims_to_operand_dims=(1,)),
                "Bounds of the scatter dimensions"),
               ("ScatterNdWithUpdatesBiggerThanInput", (64, 48),
-               np.zeros((10, 9, 8, 7, 1)), (10, 9, 8, 7, 65), (4,), (1,),
-               (0,), "Bounds of the window dimensions"),
+               (10, 9, 8, 7, 1), (10, 9, 8, 7, 65),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4,), inserted_window_dims=(1,),
+                   scatter_dims_to_operand_dims=(1,)),
+               "Bounds of the window dimensions"),
               ("ScatterNdWithUpdatesNotMatchingIndices", (64, 48),
-               np.zeros((10, 9, 8, 7, 1)), (9, 9, 8, 7, 64), (4,), (1,), (0,),
+               (10, 9, 8, 7, 1), (9, 9, 8, 7, 64),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4,), inserted_window_dims=(1,),
+                   scatter_dims_to_operand_dims=(0,)),
                "Bounds of the scatter dimensions"),
-              ("InvalidUpdates", (50, 49, 48, 47, 46),
-               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4, 1),
-               (4, 5, 6), (1, 2), (0, 1, 2, 3, 4),
+              ("InvalidUpdates", (50, 49, 48, 47, 46), (10, 9, 8, 7, 5),
+               (10, 9, 8, 7, 3, 2, 4, 1),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6), inserted_window_dims=(1, 2),
+                   scatter_dims_to_operand_dims=(0, 1, 2, 3, 4)),
                "Updates tensor must be of rank 7; got 8."),
-              ("NonAscendingUpdateWindowDims", (6, 5, 4, 3, 2),
-               np.zeros((5, 4, 3, 2, 1)), (10, 9, 8, 7, 6, 5, 4, 3, 2),
-               (4, 5, 6, 8, 7), (), (0, 1, 2, 3, 4),
+              ("NonAscendingUpdateWindowDims", (6, 5, 4, 3, 2), (5, 4, 3, 2, 1),
+               (10, 9, 8, 7, 6, 5, 4, 3, 2),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6, 8, 7), inserted_window_dims=(),
+                   scatter_dims_to_operand_dims=(0, 1, 2, 3, 4)),
                "update_window_dims in scatter op must be sorted"),
-              ("RepeatedUpdateWindowDims", (6, 5, 4, 3, 2),
-               np.zeros((5, 4, 3, 2, 1)), (10, 9, 8, 7, 6, 5, 4, 3, 2),
-               (4, 5, 6, 7, 7), (), (0, 1, 2, 3, 4),
+              ("RepeatedUpdateWindowDims", (6, 5, 4, 3, 2), (5, 4, 3, 2, 1),
+               (10, 9, 8, 7, 6, 5, 4, 3, 2),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6, 7, 7), inserted_window_dims=(),
+                   scatter_dims_to_operand_dims=(0, 1, 2, 3, 4)),
                "update_window_dims in scatter op must not repeat"),
-              ("OutOfBoundsUpdateWindowDims", (6, 5, 4, 3, 2),
-               np.zeros((5, 4, 3, 2, 1)), (10, 9, 8, 7, 6, 5, 4, 3, 2),
-               (4, 5, 6, 7, 9), (), (0, 1, 2, 3, 4),
+              ("OutOfBoundsUpdateWindowDims", (6, 5, 4, 3, 2), (5, 4, 3, 2, 1),
+               (10, 9, 8, 7, 6, 5, 4, 3, 2),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6, 7, 9), inserted_window_dims=(),
+                   scatter_dims_to_operand_dims=(0, 1, 2, 3, 4)),
                "Invalid update_window_dims set in scatter op"),
               ("NonAscendingInsertedWindowDims", (50, 49, 48, 47, 46),
-               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
-               (4, 5, 6), (2, 1), (0, 1, 2, 3, 4),
+               (10, 9, 8, 7, 5), (10, 9, 8, 7, 3, 2, 4),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6), inserted_window_dims=(2, 1),
+                   scatter_dims_to_operand_dims=(0, 1, 2, 3, 4)),
                "inserted_window_dims in scatter op must be sorted"),
               ("RepeatedInsertedWindowDims", (50, 49, 48, 47, 46),
-               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
-               (4, 5, 6), (1, 1), (0, 1, 2, 3, 4),
+               (10, 9, 8, 7, 5), (10, 9, 8, 7, 3, 2, 4),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6), inserted_window_dims=(1, 1),
+                   scatter_dims_to_operand_dims=(0, 1, 2, 3, 4)),
                "inserted_window_dims in scatter op must not repeat"),
               ("OutOfBoundsInsertedWindowDims", (50, 49, 48, 47, 46),
-               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
-               (4, 5, 6), (1, 5), (0, 1, 2, 3, 4),
+               (10, 9, 8, 7, 5), (10, 9, 8, 7, 3, 2, 4),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6), inserted_window_dims=(1, 5),
+                   scatter_dims_to_operand_dims=(0, 1, 2, 3, 4)),
                "Invalid inserted_window_dims set in scatter op"),
               ("MismatchingScatterDimsToOperandDims", (50, 49, 48, 47, 46),
-               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
-               (4, 5, 6), (1, 2), (0, 1, 2, 3),
+               (10, 9, 8, 7, 5), (10, 9, 8, 7, 3, 2, 4),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6), inserted_window_dims=(1, 2),
+                   scatter_dims_to_operand_dims=(0, 1, 2, 3)),
                ("Scatter op has 4 elements in scatter_dims_to_operand_dims and "
                 "the bound of dimension index_vector_dim=4 of indices "
                 "is 5. These two numbers must be equal")),
               ("OutOfBoundsScatterDimsToOperandDims", (50, 49, 48, 47, 46),
-               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
-               (4, 5, 6), (1, 2), (0, 1, 2, 3, 10),
+               (10, 9, 8, 7, 5), (10, 9, 8, 7, 3, 2, 4),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6), inserted_window_dims=(1, 2),
+                   scatter_dims_to_operand_dims=(0, 1, 2, 3, 10)),
                "Invalid scatter_dims_to_operand_dims mapping"),
               ("RepeatedValuesInScatterDimsToOperandDims", (50, 49, 48, 47, 46),
-               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
-               (4, 5, 6), (1, 2), (0, 1, 2, 2, 3),
+               (10, 9, 8, 7, 5), (10, 9, 8, 7, 3, 2, 4),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6), inserted_window_dims=(1, 2),
+                   scatter_dims_to_operand_dims=(0, 1, 2, 2, 3)),
                "scatter_dims_to_operand_dims in scatter op must not repeat"),
               ("InsufficientWindowDims", (50, 49, 48, 47, 46),
-               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
-               (4, 5, 6), (1,), (0, 1, 2, 3),
+               (10, 9, 8, 7, 4), (10, 9, 8, 7, 3, 2, 4),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6), inserted_window_dims=(1,),
+                   scatter_dims_to_operand_dims=(0, 1, 2, 3)),
                ("Scatter op has window of size 4; doesn't match operand of "
-                "rank 5."))
+                "rank 5.")),
+              ("InsufficientWindowDimsV2", (10, 49, 48, 47, 46, 45),
+               (10, 9, 8, 7, 3), (10, 9, 8, 7, 3, 2, 4),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6), inserted_window_dims=(1,),
+                   scatter_dims_to_operand_dims=(1, 2, 3),
+                   operand_batching_dims=(0,),
+                   scatter_indices_batching_dims=(0,)),
+               ("Scatter op has window of size 5; doesn't match operand of "
+                "rank 6.")),
+              ("RepeatedOperandBatchingDims", (50, 49, 48, 47, 46),
+               (10, 9, 8, 7, 5), (10, 9, 8, 7, 3, 2, 4),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6), inserted_window_dims=(0, 1),
+                   scatter_dims_to_operand_dims=(0, 1, 4),
+                   operand_batching_dims=(2, 3, 3)),
+               "operand_batching_dims in scatter op must not repeat"),
+              ("NonAscendingOperandBatchingDims", (50, 49, 48, 47, 46),
+               (10, 9, 8, 7, 5), (10, 9, 8, 7, 3, 2, 4),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6), inserted_window_dims=(0, 1),
+                   scatter_dims_to_operand_dims=(0, 1, 4),
+                   operand_batching_dims=(3, 2)),
+               "operand_batching_dims in scatter op must be sorted"),
+               ("OutOfBoundsOperandBatchingDims", (50, 49, 48, 47, 46),
+               (10, 9, 8, 7, 5), (10, 9, 8, 7, 3, 2, 4),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6), inserted_window_dims=(),
+                   scatter_dims_to_operand_dims=(0, 1, 2, 3, 4),
+                   operand_batching_dims=(0, 10)),
+               ("Invalid operand_batching_dims set in scatter op; valid range "
+                "is")),
+              ("NonDisjointCollapsedAndBatchingDims", (50, 49, 48, 47, 46, 45),
+               (10, 9, 8, 7, 5), (10, 9, 8, 7, 3, 2, 4),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6), inserted_window_dims=(0, 1),
+                   scatter_dims_to_operand_dims=(0, 1, 4),
+                   operand_batching_dims=(1, 2)),
+               ("inserted_window_dims and operand_batching_dims in scatter op "
+                "must be disjoint")),
+              ("NonDisjointScatterDimsToOperandDimsAndBatchingDims",
+               (50, 49, 48, 47, 46), (10, 9, 8, 7, 5),
+               (10, 9, 8, 7, 3, 2, 4),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6), inserted_window_dims=(0, 1),
+                   scatter_dims_to_operand_dims=(0, 1, 2, 4),
+                   operand_batching_dims=(2, 3)),
+               ("scatter_dims_to_operand_dims and operand_batching_dims in "
+                "scatter op must be disjoint")),
+              ("RepeatedScatterIndicesBatchingDims", (50, 49, 48, 47, 46),
+               (10, 9, 8, 7, 5), (10, 9, 8, 7, 3, 2, 4),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6), inserted_window_dims=(0, 1),
+                   scatter_dims_to_operand_dims=(0, 1, 2, 3, 4),
+                   scatter_indices_batching_dims=(0, 1, 0)),
+               "scatter_indices_batching_dims in scatter op must not repeat"),
+              ("OutOfBoundsScatterIndicesBatchingDims", (50, 49, 48, 47, 46),
+               (10, 9, 8, 7, 5), (10, 9, 8, 7, 3, 2, 4),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6), inserted_window_dims=(0, 1),
+                   scatter_dims_to_operand_dims=(0, 1, 2, 3, 4),
+                   scatter_indices_batching_dims=(0, 5)),
+               ("Invalid scatter_indices_batching_dims set in scatter op; "
+                "valid range")),
+              ("IndexVectorDimInScatterIndicesBatchingDims",
+               (50, 49, 48, 47, 46), (10, 9, 8, 7, 5),
+               (10, 9, 8, 7, 3, 2, 4),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6), inserted_window_dims=(0, 1),
+                   scatter_dims_to_operand_dims=(0, 1, 2, 3, 4),
+                   scatter_indices_batching_dims=(0, 4)),
+               ("Scatter op cannot have the index vector dimension as a "
+                "batching dimension")),
+              ("MismatchingNumberOfBatchingDims", (50, 49, 48, 47, 46, 45),
+               (10, 9, 8, 7, 4), (10, 9, 8, 7, 3, 2, 4),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6), inserted_window_dims=(1, 2),
+                   scatter_dims_to_operand_dims=(1, 2, 3, 4),
+                   operand_batching_dims=(0,),
+                   scatter_indices_batching_dims=(0, 1)),
+               ("Scatter op requires equal numbers of operand_batching_dims "
+                "and scatter_indices_batching_dims")),
+              ("MismatchingBatchingDimSizes", (10, 9, 48, 47, 46, 45),
+               (10, 9, 8, 7, 2), (10, 9, 8, 7, 3, 2, 4),
+               lax.ScatterDimensionNumbers(
+                   update_window_dims=(4, 5, 6), inserted_window_dims=(2,),
+                   scatter_dims_to_operand_dims=(2, 3),
+                   operand_batching_dims=(0, 1),
+                   scatter_indices_batching_dims=(1, 0)),
+               ("Scatter op requires operand batching dimensions and indices "
+                "batching dimensions to have the same shape"))
            ]
       )
-  def testScatterShapeCheckingRule(self, operand_shape, indices,
+  def testScatterShapeCheckingRule(self, operand_shape, indices_shape,
                                    update_shape, dimension_numbers, msg):
-
+    indices = np.zeros(indices_shape, dtype=np.int32)
     def f(x, y):
       operand = lax.broadcast(x, operand_shape)
       updates = lax.broadcast(y, update_shape)
@@ -3033,6 +3394,12 @@ class LaxTest(jtu.JaxTestCase):
   def test_ops_do_not_accept_complex_dtypes(self, op):
     with self.assertRaisesRegex(TypeError, ".*does not accept dtype complex.*"):
       op(2+3j, 4+5j)
+
+  @parameterized.parameters([lax.add, lax.mul, lax.div, lax.rem, lax.lt, lax.gt,
+                             lax.ge, lax.le, lax.eq, lax.ne])
+  def test_ops_error_on_mismatched_dtypes(self, op):
+    with self.assertRaisesRegex(TypeError, ".*requires arguments to have the same dtypes.*"):
+      op(0, 0.0)
 
   def test_population_count_booleans_not_supported(self):
     # https://github.com/jax-ml/jax/issues/3886
@@ -3269,7 +3636,7 @@ class LaxTest(jtu.JaxTestCase):
     with jax.transfer_guard('disallow'):
       jax.jit(asarray_closure)()
 
-  def testOptimizationBarrier(self):
+  def test_optimization_barrier(self):
     x = lax.optimization_barrier((2, 3))
     self.assertEqual((2, 3), x)
 
@@ -3553,11 +3920,11 @@ class FooArray:
   size = property(lambda self: self.data.size // 2)
   ndim = property(lambda self: self.data.ndim - 1)
 
-def shard_foo_array_handler(xs, shardings, layouts):
+def shard_foo_array_handler(xs, shardings, layouts, copy_semantics):
   results = []
   for x, sharding in safe_zip(xs, shardings):
     device, = sharding._addressable_device_assignment
-    aval = core.raise_to_shaped(core.get_aval(x.data))
+    aval = core.get_aval(x.data)
     results.append(pxla.batched_device_put(
         aval, jax.sharding.SingleDeviceSharding(device), [x.data], [device]))
   return results
@@ -3592,7 +3959,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     core.pytype_aval_mappings[FooArray] = \
         lambda x: core.ShapedArray(x.shape, FooTy())
     xla.canonicalize_dtype_handlers[FooArray] = lambda x: x
-    xla.pytype_aval_mappings[FooArray] = \
+    core.xla_pytype_aval_mappings[FooArray] = \
         lambda x: core.ShapedArray(x.shape, FooTy())
     pxla.shard_arg_handlers[FooArray] = shard_foo_array_handler
     mlir._constant_handlers[FooArray] = foo_array_constant_handler
@@ -3606,7 +3973,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
   def tearDown(self):
     del core.pytype_aval_mappings[FooArray]
     del xla.canonicalize_dtype_handlers[FooArray]
-    del xla.pytype_aval_mappings[FooArray]
+    del core.xla_pytype_aval_mappings[FooArray]
     del mlir._constant_handlers[FooArray]
     del mlir._lowerings[make_p]
     del mlir._lowerings[bake_p]
@@ -3974,8 +4341,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     size_im = 11
     atol = None
 
-    if (name in {"arccos", "arcsin", "arcsinh", "arccosh"}
-        or name in {"arctan", "arctanh"} and jax._src.lib.version > (0, 4, 31)):
+    if name in {"arccos", "arcsin", "arcsinh", "arccosh", "arctan", "arctanh"}:
       # TODO(pearu): eliminate this if-block when a fix to mpmath#787
       # becomes available
       extra_prec_multiplier = 20
@@ -4086,12 +4452,6 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     elif name == 'sign':
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4')
 
-    elif name == 'square':
-      if is_cuda:
-        regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'ninf.real', 'pinf.real', 'ninfj.real', 'pinfj.real')
-      if is_cpu:
-        regions_with_inaccuracies_keep('ninf.real', 'pinf.real', 'q1.real', 'q2.real', 'q3.real', 'q4.real')
-
     elif name == 'log':
       regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'ninf.imag', 'pinf.imag', 'ninfj.imag', 'pinfj.imag')
 
@@ -4131,21 +4491,11 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     elif name == 'arccos':
       regions_with_inaccuracies_keep('q4.imag', 'ninf', 'pinf', 'ninfj', 'pinfj.real')
 
-    elif name == 'arctan' and jax._src.lib.version <= (0, 4, 31):
-      if dtype == np.complex64:
-        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj',
-                                       'mq1.imag', 'mq2.imag', 'mq3.imag', 'mq4.imag', 'mnegj.real', 'mnegj.imag', 'mposj.imag')
-      if dtype == np.complex128:
-        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mnegj.real')
-
-    elif name == 'arctanh' and jax._src.lib.version <= (0, 4, 31):
-      regions_with_inaccuracies_keep('pos.imag', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos.imag')
-
     elif name in {'cos', 'sin'}:
       regions_with_inaccuracies_keep('ninf.imag', 'pinf.imag')
 
-    elif name in {'positive', 'negative', 'conjugate', 'sin', 'cos', 'sqrt', 'expm1', 'log1p', 'tan',
-                  'arcsinh', 'arcsin', 'arccosh', 'arctan', 'arctanh'}:
+    elif name in {'positive', 'negative', 'conjugate', 'sin', 'cos', 'sqrt', 'expm1', 'tan', 'log1p',
+                  'arcsin', 'arcsinh', 'arccosh', 'arctan', 'arctanh', 'square'}:
       regions_with_inaccuracies.clear()
     else:
       assert 0  # unreachable

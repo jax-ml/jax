@@ -19,24 +19,22 @@ from __future__ import annotations
 import os
 import tempfile
 from typing import Any
-import warnings
 
 import jax
-from jax import core as jax_core
 from jax import dtypes
 from jax._src import config
-from jax._src import core as jax_src_core
+from jax._src import core as jax_core
 from jax._src import sharding_impls
+from jax._src import tpu_custom_call
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.pallas import core
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import lowering
 from jax._src.pallas.mosaic import verification
-from jax._src import tpu_custom_call
 from jax.experimental import mosaic
 from jax.experimental.mosaic.dialects import tpu
-from jax.experimental.pallas import tpu as pltpu
+
 
 def _maybe_cast_to_int(x: jax.Array | jax_core.AbstractValue):
   """Casts boolean values to integers.
@@ -126,32 +124,17 @@ def pallas_call_tpu_lowering_rule(
   else:
     mosaic_params = {}
 
-  if "cost_estimate" in mosaic_params:
-    # TODO(amagni): Remove this branch after October 22th 2024.
-    if cost_estimate is not None:
-      raise ValueError(
-          "Passing cost estimate via both compiler_params=dict(mosaic=...) and"
-          " pallas_call(..., cost_estimate=...) is not supported."
-      )
-
-    warnings.warn(
-        "Passing cost estimate via compiler_params=dict(cost_estimate=...) is"
-        " deprecated. Use pallas_call(..., cost_estimate=...) instead.",
-        DeprecationWarning,
-    )
-    cost_estimate = mosaic_params["cost_estimate"]
-
   mesh = None
   axis_context = ctx.module_context.axis_context
   if axis_context is not None:
     if isinstance(axis_context, sharding_impls.SPMDAxisContext):
       mesh = axis_context.mesh
-  mlir_ctx = ir.Context()
+  mlir_ctx = mlir.JaxIrContext()
   mlir_ctx.append_dialect_registry(mlir.upstream_dialects)
   mlir_ctx.load_all_available_dialects()
   tpu.register_dialect(mlir_ctx)
   def lower_module(for_verification: bool):
-    if for_verification:
+    if for_verification or tpu_core.runtime_assert_enabled():
       mlir_ctx.allow_unregistered_dialects = True
     with mlir_ctx, ir.Location.unknown(mlir_ctx):
       dimension_semantics = mosaic_params.get("dimension_semantics", None)
@@ -205,7 +188,7 @@ def pallas_call_tpu_lowering_rule(
   # Replace in_avals to physical avals.
   # This step is required for mapping logical types to physical types.
   # (e.g. PRNG key -> uint32[2])
-  physical_avals = [jax_src_core.physical_aval(aval) for aval in ctx.avals_in]
+  physical_avals = [jax_core.physical_aval(aval) for aval in ctx.avals_in]
   ctx = ctx.replace(avals_in=physical_avals)
 
   # Booleans are loaded into the kernel as integers.
@@ -222,7 +205,7 @@ def pallas_call_tpu_lowering_rule(
   kernel_ctx = ctx.replace(avals_in=kernel_in_avals, avals_out=kernel_out_avals)
   output_memory_spaces = _get_memory_spaces_from_avals(out_avals)
   if cost_estimate is not None:
-    mosaic_cost_estimate = pltpu.CostEstimate(
+    mosaic_cost_estimate = tpu_custom_call.CostEstimate(
         flops=cost_estimate.flops,
         bytes_accessed=cost_estimate.bytes_accessed,
         transcendentals=cost_estimate.transcendentals,

@@ -46,6 +46,12 @@ def to_pallas_key(key: jax_prng.PRNGKeyArray) -> jax_prng.PRNGKeyArray:
     pallas_key_data = (jax.vmap(generate_key))(key)
   return jax_api_random.wrap_key_data(pallas_key_data, impl="pallas_tpu")
 
+
+def is_pallas_impl(impl: jax_prng.PRNGImpl) -> bool:
+  """Returns True if the PRNGImpl is a Pallas-specific implementation."""
+  return impl == tpu_key_impl or impl == tpu_internal_stateful_impl
+
+
 def _seed_func(seed: jnp.int32):
   seed_data = jnp.zeros(tpu_key_impl.key_shape, dtype=jnp.int32)
   return (seed_data + seed).astype(jnp.uint32)

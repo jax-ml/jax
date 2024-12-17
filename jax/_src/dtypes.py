@@ -90,12 +90,17 @@ class ExtendedDType(StrictABC):
 
 
 # fp8 support
+# TODO: remove Optional when minimum ml_dtypes version >= 0.5.0
+float8_e3m4: type[np.generic] | None = None
+float8_e4m3: type[np.generic] | None = None
 float8_e4m3b11fnuz: type[np.generic] = ml_dtypes.float8_e4m3b11fnuz
 float8_e4m3fn: type[np.generic] = ml_dtypes.float8_e4m3fn
 float8_e4m3fnuz: type[np.generic] = ml_dtypes.float8_e4m3fnuz
 float8_e5m2: type[np.generic] = ml_dtypes.float8_e5m2
 float8_e5m2fnuz: type[np.generic] = ml_dtypes.float8_e5m2fnuz
 
+_float8_e3m4_dtype: np.dtype | None = None
+_float8_e4m3_dtype: np.dtype | None = None
 _float8_e4m3b11fnuz_dtype: np.dtype = np.dtype(float8_e4m3b11fnuz)
 _float8_e4m3fn_dtype: np.dtype = np.dtype(float8_e4m3fn)
 _float8_e4m3fnuz_dtype: np.dtype = np.dtype(float8_e4m3fnuz)
@@ -136,6 +141,20 @@ _float8_dtypes = [
     _float8_e5m2_dtype,
     _float8_e5m2fnuz_dtype,
 ]
+
+# TODO: remove the if statements below when minimum ml_dtypes version >= 0.5.0
+if hasattr(ml_dtypes, "float8_e4m3"):
+  float8_e4m3 = ml_dtypes.float8_e4m3
+  _float8_e4m3_dtype = np.dtype(float8_e4m3)
+  _custom_float_scalar_types.insert(0, float8_e4m3)  # type: ignore[arg-type]
+  _custom_float_dtypes.insert(0, _float8_e4m3_dtype)
+  _float8_dtypes.insert(0, _float8_e4m3_dtype)
+if hasattr(ml_dtypes, "float8_e3m4"):
+  float8_e3m4 = ml_dtypes.float8_e3m4
+  _float8_e3m4_dtype = np.dtype(float8_e3m4)
+  _custom_float_scalar_types.insert(0, float8_e3m4)  # type: ignore[arg-type]
+  _custom_float_dtypes.insert(0, _float8_e3m4_dtype)
+  _float8_dtypes.insert(0, _float8_e3m4_dtype)
 
 # 2-bit integer support
 int2: type[np.generic] | None = None
@@ -339,8 +358,11 @@ def _issubclass(a: Any, b: Any) -> bool:
     return False
 
 
+_types_for_issubdtype = (type, np.dtype, ExtendedDType)
+
 # TODO(jakevdp): consider whether to disallow None here. We allow it
 # because np.issubdtype allows it (and treats it as equivalent to float64).
+@set_module('jax.numpy')
 def issubdtype(a: DTypeLike | ExtendedDType | None,
                b: DTypeLike | ExtendedDType | None) -> bool:
   """Returns True if first argument is a typecode lower/equal in type hierarchy.
@@ -360,8 +382,8 @@ def issubdtype(a: DTypeLike | ExtendedDType | None,
   # unhashable (e.g. custom objects with a dtype attribute). The following check is
   # fast and covers the majority of calls to this function within JAX library code.
   return _issubdtype_cached(
-    a if isinstance(a, (type, np.dtype, ExtendedDType)) else np.dtype(a),  # type: ignore[arg-type]
-    b if isinstance(b, (type, np.dtype, ExtendedDType)) else np.dtype(b),  # type: ignore[arg-type]
+    a if isinstance(a, _types_for_issubdtype) else np.dtype(a),  # type: ignore[arg-type]
+    b if isinstance(b, _types_for_issubdtype) else np.dtype(b),  # type: ignore[arg-type]
   )
 
 
@@ -397,7 +419,7 @@ def _issubdtype_cached(a: type | np.dtype | ExtendedDType,
     return b_sctype in {a_sctype, np.unsignedinteger, np.integer, np.number, np.generic}
 
   # Otherwise, fall back to numpy.issubdtype
-  return np.issubdtype(a_sctype, b_sctype)
+  return bool(np.issubdtype(a_sctype, b_sctype))
 
 can_cast = np.can_cast
 
@@ -456,6 +478,7 @@ _dtype_kinds: dict[str, set] = {
 }
 
 
+@set_module('jax.numpy')
 def isdtype(dtype: DTypeLike, kind: str | DTypeLike | tuple[str | DTypeLike, ...]) -> bool:
   """Returns a boolean indicating whether a provided dtype is of a specified kind.
 
@@ -648,10 +671,12 @@ def _least_upper_bound(jax_numpy_dtype_promotion: str, *nodes: JAXType) -> JAXTy
       "JAX's internal logic; please report it to the JAX maintainers."
     )
 
+@set_module('jax.numpy')
 def promote_types(a: DTypeLike, b: DTypeLike) -> DType:
   """Returns the type to which a binary operation should cast its arguments.
 
-  For details of JAX's type promotion semantics, see :ref:`type-promotion`.
+  JAX implementation of :func:`numpy.promote_types`. For details of JAX's
+  type promotion semantics, see :ref:`type-promotion`.
 
   Args:
     a: a :class:`numpy.dtype` or a dtype specifier.
@@ -659,6 +684,35 @@ def promote_types(a: DTypeLike, b: DTypeLike) -> DType:
 
   Returns:
     A :class:`numpy.dtype` object.
+
+  Examples:
+    Type specifiers may be strings, dtypes, or scalar types, and the return
+    value is always a dtype:
+
+    >>> jnp.promote_types('int32', 'float32')  # strings
+    dtype('float32')
+    >>> jnp.promote_types(jnp.dtype('int32'), jnp.dtype('float32'))  # dtypes
+    dtype('float32')
+    >>> jnp.promote_types(jnp.int32, jnp.float32)  # scalar types
+    dtype('float32')
+
+    Built-in scalar types (:type:`int`, :type:`float`, or :type:`complex`) are
+    treated as weakly-typed and will not change the bit width of a strongly-typed
+    counterpart (see discussion in :ref:`type-promotion`):
+
+    >>> jnp.promote_types('uint8', int)
+    dtype('uint8')
+    >>> jnp.promote_types('float16', float)
+    dtype('float16')
+
+    This differs from the NumPy version of this function, which treats built-in scalar
+    types as equivalent to 64-bit types:
+
+    >>> import numpy
+    >>> numpy.promote_types('uint8', int)
+    dtype('int64')
+    >>> numpy.promote_types('float16', float)
+    dtype('float64')
   """
   # Note: we deliberately avoid `if a in _weak_types` here because we want to check
   # object identity, not object equality, due to the behavior of np.dtype.__eq__
@@ -784,7 +838,7 @@ def check_user_dtype_supported(dtype, fun_name=None):
       int2,
       int4,
       uint2,
-      uint4,
+      uint4
   ]
   if np_dtype.kind not in "biufc" and not is_custom_dtype and not dtype == float0:
     msg = f"JAX only supports number and bool dtypes, got dtype {dtype}"

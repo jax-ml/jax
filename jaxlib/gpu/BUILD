@@ -20,6 +20,7 @@ load(
     "jax_visibility",
     "xla_py_proto_library",
 )
+# Placeholder: load proto_library
 
 licenses(["notice"])
 
@@ -37,6 +38,9 @@ exports_files(srcs = [
     "gpu_kernel_helpers.cc",
     "gpu_kernel_helpers.h",
     "gpu_kernels.cc",
+    "hybrid.cc",
+    "hybrid_kernels.cc",
+    "hybrid_kernels.h",
     "linalg.cc",
     "linalg_kernels.cc",
     "linalg_kernels.cu.cc",
@@ -82,7 +86,6 @@ cc_proto_library(
 
 xla_py_proto_library(
     name = "triton_py_pb2",
-    api_version = 2,
     visibility = jax_visibility("triton_proto_py_users"),
     deps = [":triton_proto"],
 )

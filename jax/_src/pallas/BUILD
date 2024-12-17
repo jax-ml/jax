@@ -30,6 +30,7 @@ py_library(
     srcs = [
         "__init__.py",
         "core.py",
+        "cost_estimate.py",
         "pallas_call.py",
         "primitives.py",
         "utils.py",

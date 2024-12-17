@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+import functools
 from types import ModuleType
 import warnings
 
@@ -45,6 +46,7 @@ import warnings
 #   )
 # del typing
 def deprecation_getattr(module, deprecations):
+  @functools.cache
   def getattr(name):
     if name in deprecations:
       message, fn = deprecations[name]
@@ -125,11 +127,10 @@ register('jax-aval-named-shape')
 register('jax-dlpack-import-legacy')
 register("jax-numpy-astype-complex-to-real")
 register("jax-numpy-array-none")
-register('jax-scipy-beta-args')
-register('tracer-hash')
-register('jax-numpy-reshape-newshape')
 register('jax-numpy-clip-args')
 register('jax-numpy-linalg-matrix_rank-tol')
 register('jax-numpy-linalg-pinv-rcond')
 register('jax-numpy-quantile-interpolation')
+register('jax-numpy-reduction-non-boolean-where')
 register('jax-numpy-trimzeros-not-1d-array')
+register('pallas-gpu-triton')

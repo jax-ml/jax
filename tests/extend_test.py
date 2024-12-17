@@ -14,6 +14,7 @@
 
 import os
 import unittest
+from functools import partial
 
 import numpy as np
 from absl.testing import absltest
@@ -23,9 +24,11 @@ import jax
 from jax import lax
 import jax.extend as jex
 import jax.numpy as jnp
+import jax.sharding as shd
 
 from jax._src import abstract_arrays
 from jax._src import api
+from jax._src import config
 from jax._src import core
 from jax._src import linear_util
 from jax._src import prng
@@ -33,7 +36,10 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.interpreters import mlir
 from jax._src.layout import DeviceLocalLayout
+from jax._src.lib import lapack
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.lax import linalg as lax_linalg_internal
+from jax.experimental.shard_map import shard_map
 
 jax.config.parse_flags_with_absl()
 
@@ -67,34 +73,40 @@ class ExtendTest(jtu.JaxTestCase):
 
 class RandomTest(jtu.JaxTestCase):
 
-  def test_key_make_with_custom_impl(self):
-    shape = (4, 2, 7)
-
+  def make_custom_impl(self, shape, seed=False, split=False, fold_in=False,
+                       random_bits=False):
+    assert not split and not fold_in and not random_bits  # not yet implemented
     def seed_rule(_):
       return jnp.ones(shape, dtype=jnp.dtype('uint32'))
 
     def no_rule(*args, **kwargs):
       assert False, 'unreachable'
 
-    impl = jex.random.define_prng_impl(
-        key_shape=shape, seed=seed_rule, split=no_rule, fold_in=no_rule,
-        random_bits=no_rule)
+    return jex.random.define_prng_impl(
+        key_shape=shape, seed=seed_rule if seed else no_rule, split=no_rule,
+        fold_in=no_rule, random_bits=no_rule)
+
+  def test_key_make_with_custom_impl(self):
+    impl = self.make_custom_impl(shape=(4, 2, 7), seed=True)
     k = jax.random.key(42, impl=impl)
     self.assertEqual(k.shape, ())
     self.assertEqual(impl, jax.random.key_impl(k))
 
   def test_key_wrap_with_custom_impl(self):
-    def no_rule(*args, **kwargs):
-      assert False, 'unreachable'
-
     shape = (4, 2, 7)
-    impl = jex.random.define_prng_impl(
-        key_shape=shape, seed=no_rule, split=no_rule, fold_in=no_rule,
-        random_bits=no_rule)
+    impl = self.make_custom_impl(shape=shape)
     data = jnp.ones((3, *shape), dtype=jnp.dtype('uint32'))
     k = jax.random.wrap_key_data(data, impl=impl)
     self.assertEqual(k.shape, (3,))
     self.assertEqual(impl, jax.random.key_impl(k))
+
+  def test_key_impl_is_spec(self):
+    # this is counterpart to random_test.py:
+    # KeyArrayTest.test_key_impl_builtin_is_string_name
+    spec_ref = self.make_custom_impl(shape=(4, 2, 7), seed=True)
+    key = jax.random.key(42, impl=spec_ref)
+    spec = jax.random.key_impl(key)
+    self.assertEqual(repr(spec), f"PRNGSpec({spec_ref._impl.name!r})")
 
 
 class FfiTest(jtu.JaxTestCase):
@@ -122,7 +134,6 @@ class FfiTest(jtu.JaxTestCase):
     # layouts.
     def lowering_rule(ctx, x):
       aval, = ctx.avals_in
-      ndim = len(aval.shape)
       return jex.ffi.ffi_lowering("test_ffi", operand_layouts=[layout_spec],
                                   result_layouts=[layout_spec])(ctx, x)
     prim = core.Primitive("test_ffi")
@@ -154,7 +165,7 @@ class FfiTest(jtu.JaxTestCase):
   ])
   def testParams(self, param, expected_builder):
     def fun(x):
-      return jex.ffi.ffi_call("test_ffi", x, x, param=param)
+      return jex.ffi.ffi_call("test_ffi", x)(x, param=param)
 
     # Here we inspect the lowered IR to test that the parameter has been
     # serialized with the appropriate type.
@@ -171,7 +182,7 @@ class FfiTest(jtu.JaxTestCase):
   def testToken(self):
     def fun():
       token = lax.create_token()
-      return jex.ffi.ffi_call("test_ffi", core.abstract_token, token)
+      return jex.ffi.ffi_call("test_ffi", core.abstract_token)(token)
 
     # Ensure that token inputs and outputs are translated to the correct type
     module = jax.jit(fun).lower().compiler_ir("stablehlo")
@@ -192,7 +203,7 @@ class FfiTest(jtu.JaxTestCase):
     else:
       raise unittest.SkipTest("Unsupported device")
     def fun():
-      jex.ffi.ffi_call(target_name, (), has_side_effect=True)
+      jex.ffi.ffi_call(target_name, (), has_side_effect=True)()
     hlo = jax.jit(fun).lower()
     self.assertIn(target_name, hlo.as_text())
     self.assertIn("has_side_effect = true", hlo.as_text())
@@ -200,14 +211,14 @@ class FfiTest(jtu.JaxTestCase):
 
   def testJvpError(self):
     def fun(x):
-      return jex.ffi.ffi_call("test_ffi", x, x, non_hashable_arg={"a": 1})
+      return jex.ffi.ffi_call("test_ffi", x)(x, non_hashable_arg={"a": 1})
     with self.assertRaisesRegex(
         ValueError, "The FFI call to `.+` cannot be differentiated."):
       jax.jvp(fun, (0.5,), (0.5,))
 
   def testNonHashableAttributes(self):
     def fun(x):
-      return jex.ffi.ffi_call("test_ffi", x, x, non_hashable_arg={"a": 1})
+      return jex.ffi.ffi_call("test_ffi", x)(x, non_hashable_arg={"a": 1})
 
     self.assertIn("HashableDict", str(jax.make_jaxpr(fun)(jnp.ones(5))))
     hlo = jax.jit(fun).lower(jnp.ones(5)).as_text()
@@ -220,7 +231,7 @@ class FfiTest(jtu.JaxTestCase):
     self.assertNotIsInstance(manager.exception, TypeError)
 
     def fun(x):
-      return jex.ffi.ffi_call("test_ffi", x, x, non_hashable_arg=np.arange(3))
+      return jex.ffi.ffi_call("test_ffi", x)(x, non_hashable_arg=np.arange(3))
     self.assertIn("HashableArray", str(jax.make_jaxpr(fun)(jnp.ones(5))))
     hlo = jax.jit(fun).lower(jnp.ones(5)).as_text()
     self.assertIn("non_hashable_arg = array<i64: 0, 1, 2>", hlo)
@@ -228,52 +239,167 @@ class FfiTest(jtu.JaxTestCase):
       fun(jnp.ones(5))
     self.assertNotIsInstance(manager.exception, TypeError)
 
-  @jtu.sample_product(
-    shape=[(1,), (4,), (5,)],
-    dtype=(np.int32,),
-  )
-  @jtu.run_on_devices("gpu")
-  def testFfiCall(self, shape, dtype):
-    pivots_size = shape[-1]
-    permutation_size = 2 * pivots_size
-    pivots = jnp.arange(permutation_size - 1, pivots_size - 1, -1, dtype=dtype)
-    pivots = jnp.broadcast_to(pivots, shape)
-    expected = lax.linalg.lu_pivots_to_permutation(pivots, permutation_size)
-    actual = ffi_call_lu_pivots_to_permutation(pivots, permutation_size)
-    self.assertArraysEqual(actual, expected)
+  @jtu.sample_product(shape=[(6, 5), (4, 5, 6)])
+  @jtu.run_on_devices("gpu", "cpu")
+  def testFfiCall(self, shape):
+    x = self.rng().randn(*shape).astype(np.float32)
+    expected = lax_linalg_internal.geqrf(x)
+    actual = ffi_call_geqrf(x)
+    for a, b in zip(actual, expected):
+      self.assertArraysEqual(a, b)
 
   @jtu.sample_product(
-      shape=[(1,), (4,), (5,)],
-      dtype=(np.int32,),
-      vectorized=(False, True),
+      shape=[(6, 5), (4, 5, 6)],
+      vmap_method=["expand_dims", "broadcast_all", "sequential"],
   )
-  @jtu.run_on_devices("gpu")
-  def testFfiCallBatching(self, shape, dtype, vectorized):
+  @jtu.run_on_devices("gpu", "cpu")
+  def testFfiCallBatching(self, shape, vmap_method):
     shape = (10,) + shape
-    pivots_size = shape[-1]
-    permutation_size = 2 * pivots_size
-    pivots = jnp.arange(permutation_size - 1, pivots_size - 1, -1, dtype=dtype)
-    pivots = jnp.broadcast_to(pivots, shape)
-    expected = lax.linalg.lu_pivots_to_permutation(pivots, permutation_size)
-    actual = jax.vmap(lambda x: ffi_call_lu_pivots_to_permutation(
-        x, permutation_size, vectorized=vectorized))(pivots)
-    self.assertArraysEqual(actual, expected)
+    x = self.rng().randn(*shape).astype(np.float32)
+    expected = lax_linalg_internal.geqrf(x)
+    actual = jax.vmap(partial(ffi_call_geqrf, vmap_method=vmap_method))(x)
+    for a, b in zip(actual, expected):
+      if vmap_method == "sequential" and len(shape) == 3:
+        # On GPU, the batched FFI call to geqrf uses an algorithm with
+        # different numerics than the unbatched version (which is used when
+        # vmap_method="sequential"). Therefore, we need to include floating
+        # point tolerance for this check.
+        self.assertArraysAllClose(a, b)
+      else:
+        self.assertArraysEqual(a, b)
+
+  @jtu.run_on_devices("gpu", "cpu")
+  def testVectorizedDeprecation(self):
+    x = self.rng().randn(3, 5, 4).astype(np.float32)
+    with self.assertWarns(DeprecationWarning):
+      ffi_call_geqrf(x, vectorized=True)
+    with self.assertWarns(DeprecationWarning):
+      jax.vmap(ffi_call_geqrf)(x)
+
+  def testBackwardCompatSyntax(self):
+    def fun(x):
+      return jex.ffi.ffi_call("test_ffi", x, x, param=0.5)
+    with self.assertWarns(DeprecationWarning):
+      jax.jit(fun).lower(jnp.ones(5))
+
+  def testInputOutputAliases(self):
+    def fun(x):
+      return jex.ffi.ffi_call("test", x, input_output_aliases={0: 0})(x)
+    hlo = jax.jit(fun).lower(jnp.ones(5)).as_text()
+    self.assertRegex(hlo, r"output_operand_aliases = \[.*operand_index = 0.*\]")
+
+  def testInvalidInputOutputAliases(self):
+    def fun(x):
+      return jex.ffi.ffi_call("test", x, input_output_aliases={1: 0})(x)
+    with self.assertRaisesRegex(ValueError, "with input index"):
+      jax.jit(fun).lower(jnp.ones(5)).as_text()
+
+    def fun(x):
+      return jex.ffi.ffi_call("test", x, input_output_aliases={0: 1})(x)
+    with self.assertRaisesRegex(ValueError, "with output index"):
+      jax.jit(fun).lower(jnp.ones(5)).as_text()
+
+    def fun(x):
+      return jex.ffi.ffi_call("test", jax.ShapeDtypeStruct(x.shape, np.int32),
+                              input_output_aliases={0: 0})(x)
+    with self.assertRaisesRegex(ValueError,
+                                "referring to an input with abstract value"):
+      jax.jit(fun).lower(jnp.ones(5)).as_text()
+
+    def fun(x):
+      return jex.ffi.ffi_call("test", jax.ShapeDtypeStruct(x.shape + x.shape,
+                                                           x.dtype),
+                              input_output_aliases={0: 0})(x)
+    with self.assertRaisesRegex(ValueError,
+                                "referring to an input with abstract value"):
+      jax.jit(fun).lower(jnp.ones(5)).as_text()
+
+  def testLegacyBackendConfig(self):
+    def fun(x):
+      return jex.ffi.ffi_call("test", x, custom_call_api_version=2,
+                              legacy_backend_config="12345")(x)
+    hlo = jax.jit(fun).lower(jnp.ones(5)).as_text()
+    self.assertRegex(hlo, 'backend_config = "12345"')
+
+  def testInvalidBackendConfig(self):
+    def fun(x):
+      return jex.ffi.ffi_call("test", x, legacy_backend_config="12345")(x)
+    with self.assertRaisesRegex(ValueError,
+                                "The use of the legacy_backend_config"):
+      jax.jit(fun).lower(jnp.ones(5)).as_text()
+
+    def fun(x):
+      return jex.ffi.ffi_call("test", x,
+                              custom_call_api_version=2)(x, attribute=1)
+    with self.assertRaisesRegex(ValueError,
+                                "The use of ffi_call attributes requires"):
+      jax.jit(fun).lower(jnp.ones(5)).as_text()
+
+  def testAllow64(self):
+    if config.enable_x64.value:
+      self.skipTest("Requires enable_x64=False")
+    def fun():
+      return jex.ffi.ffi_call("test", jax.ShapeDtypeStruct((), np.int64))()
+    self.assertIn("tensor<i64>", jax.jit(fun).lower().as_text())
+
+  def testInvalidResultType(self):
+    with self.assertRaisesRegex(
+        ValueError, "All elements of result_shape_dtypes.*position 0"):
+      jex.ffi.ffi_call("test", None)()
+    with self.assertRaisesRegex(
+        ValueError, "All elements of result_shape_dtypes.*position 1"):
+      jex.ffi.ffi_call("test", (jax.ShapeDtypeStruct((), np.float32), ()))()
+
+  @jtu.run_on_devices("gpu", "cpu")
+  def testShardMap(self):
+    mesh = jtu.create_mesh((1,), ("i",))
+    x = self.rng().randn(8, 4, 5).astype(np.float32)
+
+    @partial(shard_map, mesh=mesh, in_specs=shd.PartitionSpec('i'),
+             out_specs=shd.PartitionSpec('i'))
+    def f(x):
+      return ffi_call_geqrf(x)
+
+    f(x)  # eager mode doesn't crash
+    jax.jit(f)(x)  # neither does JIT
+    self.assertNotIn("all-gather", jax.jit(f).lower(x).compile().as_text())
 
 
-# TODO(dfm): For now this test uses the `cu_lu_pivots_to_permutation`
-# custom call target because that's the only one in jaxlib that uses the
-# new FFI interface. Once more are available, consider using something that
-# can be run on multiple platforms.
-def ffi_call_lu_pivots_to_permutation(pivots, permutation_size, vectorized=True):
-  return jex.ffi.ffi_call(
-      "cu_lu_pivots_to_permutation",
-      jax.ShapeDtypeStruct(
-          shape=pivots.shape[:-1] + (permutation_size,),
-          dtype=pivots.dtype,
-      ),
-      pivots,
-      vectorized=vectorized,
-  )
+def ffi_call_geqrf(x, **kwargs):
+  if jtu.test_device_matches(["cpu"]):
+    lapack._lapack.initialize()
+
+  assert x.dtype == np.float32
+  ndim = x.ndim
+  x_major_to_minor = tuple(range(ndim - 2)) + (ndim - 1, ndim - 2)
+  output_types = [
+      x, jax.ShapeDtypeStruct(x.shape[:-2] + (min(*x.shape[-2:]),), x.dtype)]
+
+  def call(platform, x):
+    target_name = dict(
+        cpu="lapack_sgeqrf_ffi",
+        rocm="hipsolver_geqrf_ffi",
+        cuda="cusolver_geqrf_ffi",
+    )[platform]
+    return jex.ffi.ffi_call(
+        target_name, output_types, input_output_aliases={0: 0},
+        input_layouts=[x_major_to_minor],
+        output_layouts=[x_major_to_minor, None],
+        **kwargs)(x)
+
+  return lax.platform_dependent(
+      x, cpu=partial(call, "cpu"), rocm=partial(call, "rocm"),
+      cuda=partial(call, "cuda"))
+
+
+class MlirRegisterLoweringTest(jtu.JaxTestCase):
+
+  def test_unknown_platform_error(self):
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Registering an MLIR lowering rule for primitive .+ for an unknown "
+        "platform foo. Known platforms are: .+."):
+      mlir.register_lowering(prim=None, rule=None, platform="foo")
 
 
 if __name__ == "__main__":

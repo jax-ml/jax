@@ -14,16 +14,15 @@
 # ==============================================================================
 
 import contextlib
-import ctypes
-import functools
 import itertools
 import json
 import math
+from typing import Callable, ParamSpec, TypeVar
 import warnings
 
 import jax
-from jax._src.interpreters import mlir
 from jax._src.lib import xla_client
+from jax.extend import ffi
 import jax.numpy as jnp
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
@@ -34,72 +33,154 @@ import numpy as np
 
 from .utils import *  # noqa: F403
 
-
 try:
   from jax._src.lib import mosaic_gpu as mosaic_gpu_lib
-
-  xla_client.register_custom_call_target(
-      "mosaic_gpu_record_event",
-      mosaic_gpu_lib._mosaic_gpu_ext._record_event_capsule(),
-      platform="CUDA",
-  )
 except ImportError:
-  pass
+  has_registrations = False
+else:
+  # TODO(slebedev): Remove the if once the minimum jaxlib is 0.4.36.
+  has_registrations = hasattr(mosaic_gpu_lib._mosaic_gpu_ext, "registrations")
+  if has_registrations:
+    for name, handler in mosaic_gpu_lib._mosaic_gpu_ext.registrations():
+      xla_client.register_custom_call_target(
+          name, handler, platform="CUDA", api_version=1
+      )
 
 # ruff: noqa: F405
 # mypy: ignore-errors
 
+T = TypeVar("T")
+P = ParamSpec("P")
 
-record_event_p = jax.core.Primitive("record_event")
-record_event_p.multiple_results = True
-
-@record_event_p.def_abstract_eval
-def _record_event_abstract_eval(*args, event):
-  del event  # Unused.
-  return args
-
-@functools.partial(mlir.register_lowering, record_event_p, platform="cuda")
-def _record_event_lowering_rule(ctx, *args, event):
-  ptr_bytes = ctypes.cast(event, ctypes.c_void_p).value.to_bytes(
-      8, byteorder="little"
-  )  # pytype: disable=attribute-error
-  op = mlir.custom_call(
-      "mosaic_gpu_record_event",
-      result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
-      operands=args,
-      backend_config=ptr_bytes,
-      operand_output_aliases={i: i for i in range(len(args))},
-  )
-  return op.results
-
-def _record_event(args, event):
+def _event_record(args, *, copy_before):
   flat_args, treedef = jax.tree.flatten(args)
-  return jax.tree.unflatten(
-      treedef, record_event_p.bind(*flat_args, event=event)
-  )
+  event, *flat_outs = ffi.ffi_call(
+      "mgpu_event_record",
+      result_shape_dtypes=(jax.core.ShapedArray((), jnp.uint64), *flat_args),
+      input_output_aliases={i: i + 1 for i in range(len(flat_args))},
+  )(*flat_args, copy_before=copy_before)
+  return event, treedef.unflatten(flat_outs)
 
-def measure(f, *args, **kwargs):
-  # TODO(apaszke): Raise if this is called under jit.
-  start_event = mosaic_gpu_lib._mosaic_gpu_ext._gpu_event_create()
-  end_event = mosaic_gpu_lib._mosaic_gpu_ext._gpu_event_create()
-  try:
 
-    @jax.jit
-    def run(*args, **kwargs):
-      flat_args, treedef = jax.tree.flatten((args, kwargs))
-      flat_args = _record_event(flat_args, start_event)
-      args, kwargs = jax.tree.unflatten(treedef, flat_args)
-      return _record_event(f(*args, **kwargs), end_event)
+def _event_elapsed(start_event, end_event):
+  return ffi.ffi_call(
+      "mgpu_event_elapsed",
+      result_shape_dtypes=jax.core.ShapedArray((), jnp.float32),
+  )(start_event, end_event)
 
-    jax.block_until_ready(run(*args, **kwargs))  # Warmup.
-    results = jax.block_until_ready(run(*args, **kwargs))
-    elapsed = mosaic_gpu_lib._mosaic_gpu_ext._gpu_event_elapsed(
-        start_event, end_event
+
+def _measure_events(
+    f: Callable[P, T], *args: P.args, **kwargs: P.kwargs
+) -> tuple[T, float]:
+  if not has_registrations:
+    raise RuntimeError(
+        "This function requires jaxlib >=0.4.36 with CUDA support."
     )
-  finally:
-    mosaic_gpu_lib._mosaic_gpu_ext._gpu_event_destroy(start_event)
-    mosaic_gpu_lib._mosaic_gpu_ext._gpu_event_destroy(end_event)
-  return results, elapsed
+
+  if not (args or kwargs):
+    # We require at least one argument and at least one output to ensure
+    # that there is a data dependency between `_event_record` calls in
+    # the resulting HLO program.
+    raise ValueError("Can only measure functions with arguments")
+
+  @jax.jit
+  def run(*args, **kwargs):
+    start_event, (args, kwargs) = _event_record(
+        (args, kwargs), copy_before=True
+    )
+    end_event, outs = _event_record(f(*args, **kwargs), copy_before=False)
+    if jax.tree.structure(outs).num_leaves == 0:
+      raise ValueError("Can only measure functions with at least one output")
+    return outs, _event_elapsed(start_event, end_event)
+
+  jax.block_until_ready(run(*args, **kwargs))  # Warmup.
+  outs, elapsed = run(*args, **kwargs)
+  return outs, float(elapsed)
+
+
+def _measure_cupti(f, aggregate):
+  def wrapper(*args, **kwargs):
+    mosaic_gpu_lib._mosaic_gpu_ext._cupti_init()
+    try:
+      results = jax.block_until_ready(jax.jit(f)(*args, **kwargs))
+    finally:
+      timings = mosaic_gpu_lib._mosaic_gpu_ext._cupti_get_timings()
+    if not timings:
+      return results, None
+    elif aggregate:
+      return results, sum(item[1] for item in timings)
+    else:
+      return results, timings
+  return wrapper
+
+
+def measure(f: Callable, *, mode: str = "events", aggregate: bool = True
+) -> Callable:
+  """Sets up a function ``f`` for profiling on GPU.
+
+  ``measure`` is a higher-order function that augments the argument ``f`` to
+  return GPU runtime in milliseconds, in addition to its proper outputs.
+
+  Args:
+    f: The function to measure. It must accept at least one argument and return
+      at least one output to be measurable.
+    mode: The mode of operation. Possible values are:
+
+      - "cupti", for CUPTI-based profiling.
+      - "events", for CUDA events-based profiling.
+
+      The two modes use different measurement methodologies and should not be
+      treated as interchangeable backends. See the Notes section for important
+      discussion.
+    aggregate: Whether to report an aggregate runtime. When ``False`` (only
+      supported by ``mode="cupti"``), the per-kernel timings are returned as a
+      list of tuples ``(<kernel name>, <runtime in ms>)``.
+
+  Returns:
+    A new function ``g`` that returns the measured GPU runtime as its last
+    additional output. Otherwise ``g`` accepts the same inputs and returns the
+    same outputs as ``f``.
+
+  Notes:
+    `CUPTI (CUDA Profiling Tools Interface)
+    <https://docs.nvidia.com/cupti/index.html>`_ is a high-accuracy,
+    high-precision profiling and tracing API, used in particular by Nsight
+    Systems and Nsight Compute. When using ``measure`` with ``mode="cupti"``,
+    device (GPU) execution runtimes are recorded for each kernel launched
+    during the execution of the function. In that mode, setting
+    ``aggregate=True`` will sum the individual kernel runtimes to arrive at an
+    aggregate measurement. The "gaps" between the kernels when the device is
+    idle are not included in the aggregate.
+
+    The CUPTI API only allows a single "subscriber". This means that the
+    CUPTI-based profiler will fail when the program is run using tools that
+    make use of CUPTI, such as CUDA-GDB, Compute Sanitizer, Nsight Systems, or
+    Nsight Compute.
+
+    ``mode="events"`` uses a different approach: a CUDA event is recorded
+    before and after the function ``f`` is executed. The reported runtime is
+    the time elapsed between the two events. In particular, included in the
+    measurement are:
+
+    - any potential "gaps" between the kernels when the device is idle
+    - any potential "gaps" between the "before" event and the start of the
+      first kernel, or between the end of the last kernel and the "after" event
+
+    In an attempt to minimize the second effect, internally the events-based
+    implementation may execute ``f`` more than once to "warm up" and exclude
+    compilation time from the measurement.
+  """
+  match mode:
+    case "cupti":
+      return _measure_cupti(f, aggregate)
+    case "events":
+      if not aggregate:
+        raise ValueError(f"{aggregate=} is not supported with {mode=}")
+      def measure_events_wrapper(*args, **kwargs):
+        return _measure_events(f, *args, **kwargs)
+      return measure_events_wrapper
+    case _:
+      raise ValueError(f"Unrecognized profiler mode {mode}")
 
 
 class ProfilerSpec:
@@ -203,7 +284,8 @@ class ProfilerSpec:
             "tid": 1 + wg_idx + warpgroups_per_block * block_idx,
         })
       else:  # If we didn't break
-        events.append(block_events)
+        if block_events:
+          events.append(block_events)
     events = sorted(events, key=lambda x: x[0]["ts"])
     flat_events = list(itertools.chain.from_iterable(events))
     return json.dump({"displayTimeUnit": "ns", "traceEvents": flat_events}, f)
