@@ -38,7 +38,6 @@ from jax import tree_util
 from jax import sharding
 from jax import export
 from jax.experimental.jax2tf import impl_no_xla
-from jax.interpreters import xla
 
 from jax._src import ad_checkpoint
 from jax._src import ad_util
@@ -1153,7 +1152,7 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
     else:
       return val, jax_dtype
   else:  # A constant
-    jax_dtype = jax_dtype or xla.abstractify(val).dtype
+    jax_dtype = jax_dtype or core.abstractify(val).dtype
     # TODO(document): We assume that the value of a constant does not
     # change through the scope of the function. But it may be an ndarray, ...
     # JAX has the same problem when generating HLO.

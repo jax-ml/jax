@@ -146,44 +146,12 @@ canonicalize_dtype_handlers[core.Token] = identity
 canonicalize_dtype_handlers[core.DArray] = identity
 canonicalize_dtype_handlers[core.MutableArray] = identity
 
+# TODO(jakevdp): deprecate and remove this.
 def abstractify(x) -> Any:
-  typ = type(x)
-  aval_fn = pytype_aval_mappings.get(typ)
-  if aval_fn: return aval_fn(x)
-  for typ in typ.__mro__:
-    aval_fn = pytype_aval_mappings.get(typ)
-    if aval_fn: return aval_fn(x)
-  if hasattr(x, '__jax_array__'):
-    return abstractify(x.__jax_array__())
-  raise TypeError(f"Argument '{x}' of type '{type(x)}' is not a valid JAX type")
+  return core.abstractify(x)
 
-def _make_abstract_python_scalar(typ, val):
-  # Note: all python scalar types are weak except bool, because bool only
-  # comes in a single width.
-  return ShapedArray((), dtypes._scalar_type_to_dtype(typ, val),
-                     weak_type=typ is not bool)
-
-def _make_shaped_array_for_numpy_scalar(x: np.generic) -> ShapedArray:
-  dtype = np.dtype(x)
-  dtypes.check_valid_dtype(dtype)
-  return ShapedArray(np.shape(x), dtypes.canonicalize_dtype(dtype))
-
-def _make_shaped_array_for_numpy_array(x: np.ndarray) -> ShapedArray:
-  dtype = x.dtype
-  dtypes.check_valid_dtype(dtype)
-  return ShapedArray(x.shape, dtypes.canonicalize_dtype(dtype))
-
-
-pytype_aval_mappings: dict[Any, Callable[[Any], core.AbstractValue]] = {}
-pytype_aval_mappings[core.DArray] = lambda x: x._aval
-pytype_aval_mappings[core.MutableArray] = lambda x: x._aval
-pytype_aval_mappings[core.Token] = lambda _: core.abstract_token
-pytype_aval_mappings.update((t, _make_shaped_array_for_numpy_scalar)
-                            for t in numpy_scalar_types)
-pytype_aval_mappings[np.ndarray] = _make_shaped_array_for_numpy_array
-pytype_aval_mappings.update(
-    (t, partial(_make_abstract_python_scalar, t)) for t in _scalar_types)
-
+# TODO(jakevdp): deprecate and remove this.
+pytype_aval_mappings: dict[Any, Callable[[Any], core.AbstractValue]] = core.xla_pytype_aval_mappings
 
 initial_style_primitives: set[core.Primitive] = set()
 

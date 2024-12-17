@@ -463,7 +463,7 @@ class KeyTy(dtypes.ExtendedDType):
 
 
 core.pytype_aval_mappings[PRNGKeyArray] = lambda x: x.aval
-xla.pytype_aval_mappings[PRNGKeyArray] = lambda x: x.aval
+core.xla_pytype_aval_mappings[PRNGKeyArray] = lambda x: x.aval
 
 xla.canonicalize_dtype_handlers[PRNGKeyArray] = lambda x: x
 

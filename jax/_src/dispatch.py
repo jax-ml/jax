@@ -457,7 +457,7 @@ def _device_put_impl(
         " please provide a concrete Sharding with memory_kind.")
 
   try:
-    aval = xla.abstractify(x)
+    aval = core.abstractify(x)
   except TypeError as err:
     raise TypeError(
         f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err

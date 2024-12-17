@@ -600,7 +600,7 @@ def _shaped_abstractify_slow(x):
         "does not have a dtype attribute")
   return core.ShapedArray(np.shape(x), dtype, weak_type=weak_type)
 
-# TODO(mattjj,yashkatariya): replace xla.abstractify with this, same behavior
+# TODO(mattjj,yashkatariya): replace core.abstractify with this, same behavior
 def shaped_abstractify(x):
   handler = _shaped_abstractify_handlers.get(type(x), None)
   return handler(x) if handler is not None else _shaped_abstractify_slow(x)

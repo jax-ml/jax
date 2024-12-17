@@ -1386,7 +1386,16 @@ def check_valid_jaxtype(x):
       f"Value {x!r} of type {type(x)} is not a valid JAX type")
 
 
+# TODO(jakevdp): merge concrete_aval and abstractify to the extent possible.
+# This is tricky because concrete_aval includes sharding information, and
+# abstractify does not; further, because abstractify is in the dispatch path,
+# performance is important and simply adding sharding there is not an option.
 def concrete_aval(x):
+  # This differs from abstractify below in that the abstract values
+  # include sharding where applicable. Historically (before stackless)
+  # the returned avals were concrete, but after the stackless change
+  # this returns ShapedArray like abstractify.
+  # Rules are registered in pytype_aval_mappings.
   for typ in type(x).__mro__:
     handler = pytype_aval_mappings.get(typ)
     if handler: return handler(x)
@@ -1394,6 +1403,22 @@ def concrete_aval(x):
     return concrete_aval(x.__jax_array__())
   raise TypeError(f"Value {x!r} with type {type(x)} is not a valid JAX "
                    "type")
+
+
+def abstractify(x):
+  # Historically, this was called xla.abstractify. It differs from
+  # concrete_aval in that it excludes sharding information, and
+  # uses a more performant path for accessing avals. Rules are
+  # registered in xla_pytype_aval_mappings.
+  typ = type(x)
+  aval_fn = xla_pytype_aval_mappings.get(typ)
+  if aval_fn: return aval_fn(x)
+  for typ in typ.__mro__:
+    aval_fn = xla_pytype_aval_mappings.get(typ)
+    if aval_fn: return aval_fn(x)
+  if hasattr(x, '__jax_array__'):
+    return abstractify(x.__jax_array__())
+  raise TypeError(f"Argument '{x}' of type '{type(x)}' is not a valid JAX type")
 
 
 def get_aval(x):
@@ -1793,6 +1818,7 @@ class DShapedArray(UnshapedArray):
                         self.weak_type)
 
 pytype_aval_mappings: dict[type, Callable[[Any], AbstractValue]] = {}
+xla_pytype_aval_mappings: dict[type, Callable[[Any], AbstractValue]] = {}
 
 
 class DArray:
@@ -1849,6 +1875,7 @@ class DArray:
 
 pytype_aval_mappings[DArray] = \
     lambda x: DShapedArray(x._aval.shape, x._aval.dtype, x._aval.weak_type)
+xla_pytype_aval_mappings[DArray] = lambda x: x._aval
 
 @dataclass(frozen=True)
 class bint(dtypes.ExtendedDType):
@@ -1881,6 +1908,7 @@ class MutableArray:
   def __setitem__(self, idx, x): return get_aval(self)._setitem(self, idx, x)
   def __repr__(self) -> str: return 'Mutable' + repr(self[...])
 pytype_aval_mappings[MutableArray] = lambda x: x._aval
+xla_pytype_aval_mappings[MutableArray] = lambda x: x._aval
 
 def mutable_array(init_val):
   return mutable_array_p.bind(init_val)
@@ -1934,6 +1962,7 @@ class Token:
   def block_until_ready(self):
     self._buf.block_until_ready()
 pytype_aval_mappings[Token] = lambda _: abstract_token
+xla_pytype_aval_mappings[Token] = lambda _: abstract_token
 
 
 # TODO(dougalm): Deprecate these. They're just here for backwards compat.
