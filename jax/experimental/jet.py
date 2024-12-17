@@ -73,7 +73,7 @@ from jax._src import sharding_impls
 from jax._src.api_util import shaped_abstractify
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
-from jax._src.util import unzip2, weakref_lru_cache
+from jax._src.util import unzip2, weakref_lru_cache, safe_zip
 
 
 def jet(fun, primals, series):
@@ -310,6 +310,8 @@ def deflinear(prim):
 def linear_prop(prim, primals_in, series_in, **params):
   primal_out = prim.bind(*primals_in, **params)
   series_out = [prim.bind(*terms_in, **params) for terms_in in zip(*series_in)]
+  if prim.multiple_results:
+    series_out = safe_zip(*series_out)
   return primal_out, series_out
 
 deflinear(lax.neg_p)
@@ -323,6 +325,7 @@ deflinear(lax.sub_p)
 deflinear(lax.convert_element_type_p)
 deflinear(lax.broadcast_in_dim_p)
 deflinear(lax.concatenate_p)
+deflinear(lax.split_p)
 deflinear(lax.pad_p)
 deflinear(lax.reshape_p)
 deflinear(lax.squeeze_p)

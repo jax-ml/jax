@@ -32,6 +32,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.export.export` can be used for device-polymorphic export with
     shardings constructed with {func}`jax.sharding.AbstractMesh`.
     See the [jax.export documentation](https://jax.readthedocs.io/en/latest/export/export.html#device-polymorphic-export).
+  * Added {func}`jax.lax.split`. This is a primitive version of
+    {func}`jax.numpy.split`, added because it yields a more compact
+    transpose during automatic differentiation.
 
 ## jax 0.4.37 (Dec 9, 2024)
 

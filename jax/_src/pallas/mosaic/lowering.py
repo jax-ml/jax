@@ -1901,6 +1901,27 @@ def _concatenate_lowering_rule(ctx: LoweringRuleContext, *xs, dimension):
 lowering_rules[lax.concatenate_p] = _concatenate_lowering_rule
 
 
+def _split_lowering_rule(
+    ctx: LoweringRuleContext, x, *, sizes, axis
+):
+  (x_aval,) = ctx.avals_in
+  slice_size = np.array(x_aval.shape, dtype=np.int64)
+  starts = np.zeros_like(slice_size)
+  strides = np.ones_like(slice_size)
+  outs = []
+  for size, aval_out in zip(sizes, ctx.avals_out):
+    slice_size[axis] = size
+    outs.append(
+        vector.extract_strided_slice(
+            aval_to_ir_type(aval_out), x, starts, slice_size, strides
+        )
+    )
+    starts[axis] += size
+  return outs
+
+lowering_rules[lax.split_p] = _split_lowering_rule
+
+
 def _iota_lowering_rule(ctx: LoweringRuleContext, dtype, shape, dimension,
                         sharding):
   out_type = aval_to_ir_type(ctx.avals_out[0])

@@ -5732,6 +5732,35 @@ class ShardingInTypesTest(jtu.JaxTestCase):
           ValueError, "Mesh shape of the input.*does not match"):
         jax.jit(f)(arr)
 
+  @jtu.with_user_mesh((2, 2), ('x', 'y'))
+  def test_split(self, mesh):
+    np_inp = np.arange(16.).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    @partial(jax.jit, static_argnums=(1, 2))
+    def f(x, sizes=(4, 4), axis=0):
+      ys = lax.split(x, sizes, axis=axis)
+      self.assertEqual(ys[0].sharding.spec, P('x', 'y'))
+      self.assertEqual(ys[1].sharding.spec, P('x', 'y'))
+      return ys
+
+    f(arr)
+    self.assertIn('@Sharding', f.lower(arr).as_text())
+
+    with self.assertRaisesRegex(NotImplementedError, "split on sharded dims"):
+      f(arr, sizes=(1, 1), axis=1)
+
+    def g(x):
+      out = f(x)
+      return jnp.square(jnp.sum(jnp.stack(out)))
+
+    out = jax.grad(g)(arr)
+    self.assertEqual(out.sharding, s)
+
+    out = jax.jit(jax.grad(g))(arr)
+    self.assertEqual(out.sharding, s)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
