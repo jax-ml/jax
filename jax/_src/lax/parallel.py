@@ -1119,8 +1119,11 @@ def _ragged_all_to_all_lowering(ctx, operand, output, input_offsets, send_sizes,
 
 @ragged_all_to_all_p.def_abstract_eval
 def _ragged_all_to_all_abstract_eval(operand, output, input_offsets, send_sizes, output_offsets, recv_sizes):
-  if operand.shape != output.shape:
-    raise ValueError('ragged_all_to_all input and output shapes must be equal.')
+  if operand.shape[1:] != output.shape[1:]:
+    raise ValueError(
+        "ragged_all_to_all input and output shapes must be equal, except for"
+        " the outermost dimension."
+    )
   if not dtypes.issubdtype(input_offsets.dtype, np.integer):
     raise ValueError("ragged_all_to_all input_offsets must be integer type.")
   if not dtypes.issubdtype(send_sizes.dtype, np.integer):

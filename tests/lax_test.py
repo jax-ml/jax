@@ -1350,14 +1350,14 @@ class LaxTest(jtu.JaxTestCase):
 
   def testRaggedAllToAllErrors(self):
     operand = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=jnp.float32)
-    output = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
+    output = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
     input_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
     send_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
     output_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
     recv_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
 
-    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all input and output shapes must be equal."):
-      jax.jit(lax.ragged_all_to_all).lower(operand, jnp.array([0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32), input_offsets, send_sizes, output_offsets, recv_sizes)
+    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all input and output shapes must be equal, except for the outermost dimension."):
+      jax.jit(lax.ragged_all_to_all).lower(operand, jnp.array([[0.0], [0.0], [0.0], [0.0], [0.0]], dtype=jnp.float32), input_offsets, send_sizes, output_offsets, recv_sizes)
     with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all input_offsets must be integer type."):
       jax.jit(lax.ragged_all_to_all).lower(operand, output, jnp.array([0.0, 1.0, 3.0], dtype=jnp.float32), send_sizes, output_offsets, recv_sizes)
     with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all send_sizes must be integer type."):
