@@ -18,6 +18,11 @@ from functools import partial
 
 import numpy as np
 
+try:
+  import numpy.dtypes as np_dtypes  # pylint: disable=g-import-not-at-top
+except ImportError:
+  np_dtypes = None  # type: ignore
+
 from jax._src import core
 from jax._src import dtypes
 
@@ -54,7 +59,8 @@ core.xla_pytype_aval_mappings[np.ma.MaskedArray] = masked_array_error
 
 def _make_shaped_array_for_numpy_array(x: np.ndarray) -> ShapedArray:
   dtype = x.dtype
-  dtypes.check_valid_dtype(dtype)
+  if not (hasattr(np_dtypes, "StringDType") and isinstance(dtype, np_dtypes.StringDType)):  # type: ignore
+    dtypes.check_valid_dtype(dtype)
   return ShapedArray(x.shape, dtypes.canonicalize_dtype(dtype))
 
 core.pytype_aval_mappings[np.ndarray] = _make_shaped_array_for_numpy_array
