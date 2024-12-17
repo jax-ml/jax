@@ -222,7 +222,7 @@ def get_githash():
         capture_output=True,
         check=True,
     ).stdout.strip()
-  except OSError:
+  except (subprocess.CalledProcessError, OSError):
     return ""
 
 def _parse_string_as_bool(s):
