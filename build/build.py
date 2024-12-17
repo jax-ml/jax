@@ -381,10 +381,14 @@ async def main():
   bazel_command_base.append("run")
 
   if args.python_version:
-    logging.debug("Hermetic Python version: %s", args.python_version)
-    bazel_command_base.append(
-        f"--repo_env=HERMETIC_PYTHON_VERSION={args.python_version}"
-    )
+    # Do not add --repo_env=HERMETIC_PYTHON_VERSION with default args.python_version
+    # if bazel_options override it
+    python_version_opt = "--repo_env=HERMETIC_PYTHON_VERSION="
+    if all([python_version_opt not in opt for opt in args.bazel_options]):
+      logging.debug("Hermetic Python version: %s", args.python_version)
+      bazel_command_base.append(
+          f"--repo_env=HERMETIC_PYTHON_VERSION={args.python_version}"
+      )
 
   # Enable verbose failures.
   bazel_command_base.append("--verbose_failures=true")
