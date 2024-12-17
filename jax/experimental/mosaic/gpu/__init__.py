@@ -22,6 +22,7 @@ from .core import (
     LaunchContext as LaunchContext,
     MemRefTransform as MemRefTransform,
     TMABarrier as TMABarrier,
+    ThreadSemantics as ThreadSemantics,
     TileTransform as TileTransform,
     TransposeTransform as TransposeTransform,
     Union as Union,

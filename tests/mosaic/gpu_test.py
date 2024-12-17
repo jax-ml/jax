@@ -31,6 +31,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
+from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
 from jax.experimental.mosaic.gpu import fragmented_array as fa
 import jax.numpy as jnp
 import numpy as np
@@ -165,8 +166,11 @@ class TestCase(parameterized.TestCase):
       self.skipTest("Only works on GPU with capability >= sm90")
     super().setUp()
     self.prng = np.random.default_rng(1234)
+    self.context = mlir.make_ir_context()
+    if mgpu_dialect is not None:
+      mgpu_dialect.register_dialect(self.context)
     self.enter_context(jtu.global_config_context(jax_traceback_filtering="off"))
-    self.enter_context(mlir.make_ir_context())
+    self.enter_context(self.context)
     self.enter_context(ir.Location.unknown())
 
 
@@ -1852,6 +1856,52 @@ class LayoutTest(TestCase):
           return addr
         used_regs = {get_reg(addr) for addr in addrs}
         self.assertLessEqual(len(used_regs), expected_regs)
+
+
+class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
+  """Device tests with lowering from the MLIR dialect and layout inference."""
+
+  def setUp(self):
+    if mgpu_dialect is None:
+      raise self.skipTest("Test requires Mosaic GPU dialect")
+    super().setUp()
+
+  def test_pointwise_kernel(self):
+    def add(ctx, a, b, result, smem):
+      del ctx, smem
+      shape = ir.MemRefType(a.type).shape
+      elt_type = ir.MemRefType(a.type).element_type
+
+      zero_index = arith.constant(ir.IndexType.get(), 0)
+
+      # GMEM -> registers
+      ab_type = ir.VectorType.get(shape, elt_type)
+      a = vector.load(ab_type, a, [zero_index, zero_index])
+      b = vector.load(ab_type, b, [zero_index, zero_index])
+
+      # Computation
+      add = arith.addf(a, b)
+
+      # Registers -> GMEM
+      vector.store(add, result, [zero_index, zero_index])
+
+    dtype = jnp.bfloat16
+    shape = (128, 128)
+    jax_shape = jax.ShapeDtypeStruct(shape, dtype)
+    kernel = mgpu.as_gpu_kernel(
+        add,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(jax_shape, jax_shape),
+        out_shape=jax_shape,
+        smem_scratch_shape=[],
+        thread_semantics=mgpu.ThreadSemantics.Warpgroup,
+    )
+
+    x = self.prng.uniform(-1, 1, shape).astype(dtype)
+    y = self.prng.uniform(-1, 1, shape).astype(dtype)
+
+    self.assertArraysEqual(jax.jit(kernel)(x, y), x + y)
 
 
 if __name__ == "__main__":

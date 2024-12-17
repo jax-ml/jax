@@ -237,6 +237,19 @@ def _vector_store_op_lowering_rule(
   return []
 
 
+@_register_lowering(arith.AddFOp)
+def _arith_addf_op_lowering_rule(add: arith.AddFOp) -> Sequence[ir.Value]:
+
+  fragmented_array_lhs = _fragmented_array_from_ir(add.lhs)
+  fragmented_array_rhs = _fragmented_array_from_ir(add.rhs)
+
+  return [
+      _fragmented_array_to_ir(
+          fragmented_array_lhs + fragmented_array_rhs, add.result.type
+      )
+  ]
+
+
 def lower_mgpu_dialect(module: ir.Module):
   module.context.append_dialect_registry(mlir_interpreter.upstream_dialects)
   module.context.load_all_available_dialects()

@@ -17,6 +17,7 @@ from collections.abc import Callable, Sequence
 import contextlib
 import ctypes
 import dataclasses
+import enum
 import functools
 import hashlib
 import math
@@ -37,6 +38,15 @@ from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import memref
 from jaxlib.mlir.dialects import nvvm
 import numpy as np
+
+from jax._src.lib import mosaic_gpu_dialect as dialect  # noqa: F401
+
+if dialect is not None:
+  from . import dialect_lowering
+  from . import layout_inference
+else:
+  dialect_lowering = None
+  layout_inference = None
 
 from . import profiler
 from . import utils
@@ -942,6 +952,13 @@ def _declare_runtime_functions():
   )
 
 
+class ThreadSemantics(enum.Enum):
+  """Semantics for the kernel's instruction stream."""
+
+  Lane = enum.auto()
+  Warpgroup = enum.auto()
+
+
 def as_gpu_kernel(
     body,
     grid: tuple[int, int, int],
@@ -953,6 +970,7 @@ def as_gpu_kernel(
     cluster: tuple[int, int, int] = (1, 1, 1),
     module_name: str = "unknown",
     kernel_name: str | None = None,
+    thread_semantics: ThreadSemantics = ThreadSemantics.Lane,
 ):
   if isinstance(in_shape, list):
     in_shape = tuple(in_shape)
@@ -965,6 +983,12 @@ def as_gpu_kernel(
           module_name, kernel_name, prof_spec
       )
   )
+
+  if thread_semantics == ThreadSemantics.Warpgroup and dialect is not None:
+    # Run Python lowering passes. The remaining passes will be run in C++ in
+    # jax/jaxlib/mosaic/gpu/custom_call.cc
+    layout_inference.infer_layout(module)  # pytype: disable=attribute-error
+    dialect_lowering.lower_mgpu_dialect(module)  # pytype: disable=attribute-error
 
   expected_arg_treedef = jax.tree.structure(in_shape)
   def _check_args(*args):
