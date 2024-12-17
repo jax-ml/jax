@@ -43,7 +43,7 @@ jobs:
         with:
           repository: python/cpython
           path: cpython
-          ref: v3.13.0
+          ref: v3.13.1
       - name: Build CPython with TSAN enabled
         run: |
           cd cpython
@@ -54,40 +54,40 @@ jobs:
           # Check whether free-threading mode is enabled
           PYTHON_GIL=0 ${GITHUB_WORKSPACE}/cpython-tsan/bin/python3 -c "import sys; assert not sys._is_gil_enabled()"
           ${GITHUB_WORKSPACE}/cpython-tsan/bin/python3 -m venv ${GITHUB_WORKSPACE}/venv
-      - name: Install JAX test requirements
-        run: |
-          source ${GITHUB_WORKSPACE}/venv/bin/activate
-          cd jax
-          python -m pip install -r build/test-requirements.txt
+
+          # Create archive to be used with bazel as hermetic python:
+          cd ${GITHUB_WORKSPACE} && tar -czpf python-tsan.tgz cpython-tsan
       - name: Build and install JAX
         run: |
           source ${GITHUB_WORKSPACE}/venv/bin/activate
           cd jax
+
+          export PYTHON_SHA256=($(sha256sum ${GITHUB_WORKSPACE}/python-tsan.tgz))
+          echo "Python sha256: ${PYTHON_SHA256}"
+
           python build/build.py build --wheels=jaxlib \
+            --bazel_options=--repo_env=HERMETIC_PYTHON_VERSION=3.13-ft \
+            --bazel_options=--repo_env=HERMETIC_PYTHON_URL="file://${GITHUB_WORKSPACE}/python-tsan.tgz" \
+            --bazel_options=--repo_env=HERMETIC_PYTHON_SHA256=${PYTHON_SHA256} \
+            --bazel_options=--repo_env=HERMETIC_PYTHON_PREFIX="cpython-tsan/" \
             --bazel_options=--color=yes \
             --bazel_options=--copt=-fsanitize=thread \
             --bazel_options=--linkopt="-fsanitize=thread" \
             --bazel_options=--@rules_python//python/config_settings:py_freethreaded="yes" \
-            --bazel_options=--@nanobind//:enabled_free_threading=True \
             --clang_path=/usr/bin/clang-18
-          # We have to manually install nightly scipy, otherwise default scipy installation
-          # is failing to build it here: ../meson.build:84:0: ERROR: Unknown compiler(s)
-          python -m pip install -i https://pypi.anaconda.org/scientific-python-nightly-wheels/simple scipy
-          python -m pip install dist/jaxlib-*.whl
-          python -m pip install -e .
       - name: Run tests
-        timeout-minutes: 30
+        timeout-minutes: 120
         env:
           JAX_NUM_GENERATED_CASES: 1
           JAX_ENABLE_X64: true
           JAX_SKIP_SLOW_TESTS: true
           PY_COLORS: 1
         run: |
-          source ${GITHUB_WORKSPACE}/venv/bin/activate
           cd jax
           echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
           echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
           echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
+
           # As we do not have yet free-threading support
           # there will be the following warning:
           # RuntimeWarning: The global interpreter lock (GIL) has been enabled to load module 'jaxlib.utils',
@@ -95,16 +95,18 @@ jobs:
           # To avoid that we temporarily define PYTHON_GIL
           export PYTHON_GIL=0
 
-          # Continue running all commands even if they failing
-          set +e
+          # Set symlink to the bazel executable
+          bazel_exec=($(ls bazel-*))
+          ln -s ${bazel_exec} bazel
 
-          python -m pytest -s -vvv tests/jaxpr_effects_test.py::EffectOrderingTest::test_different_threads_get_different_tokens
-          exit_code=$?
-          python -m pytest -s -vvv tests/api_test.py::CustomJVPTest::test_concurrent_initial_style
-          exit_code=$(( $exit_code | $? ))
-          python -m pytest -s -vvv tests/api_test.py::APITest::test_concurrent_device_get_and_put
-          exit_code=$(( $exit_code | $? ))
-          python -m pytest -s -vvv tests/api_test.py::JitTest::test_concurrent_jit
-          exit_code=$(( $exit_code | $? ))
-
-          exit $exit_code
+          ./bazel test \
+              --repo_env=HERMETIC_PYTHON_VERSION=3.13-ft \
+              --repo_env=JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES \
+              --repo_env=JAX_ENABLE_X64=$JAX_ENABLE_X64 \
+              --repo_env=JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS \
+              --repo_env=PYTHON_GIL=$PYTHON_GIL \
+              --repo_env=TSAN_OPTIONS="halt_on_error=1" \
+              --//jax:build_jaxlib=false \
+              --nocache_test_results \
+              --test_output=all \
+              //tests:cpu_tests
