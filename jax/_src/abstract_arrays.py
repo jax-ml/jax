@@ -43,13 +43,6 @@ if dtypes.int2 is not None:
 
 array_types: set[type] = {np.ndarray} | numpy_scalar_types  # pylint: disable=g-bare-generic
 
-def canonical_concrete_aval(val, weak_type=None):
-  weak_type = dtypes.is_weakly_typed(val) if weak_type is None else weak_type
-  dtype = dtypes.canonicalize_dtype(np.result_type(val))
-  dtypes.check_valid_dtype(dtype)
-  sharding = core._get_abstract_sharding(val)
-  return ShapedArray(np.shape(val), dtype, weak_type=weak_type, sharding=sharding)
-
 
 def masked_array_error(*args, **kwargs):
   raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
