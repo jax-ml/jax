@@ -275,19 +275,27 @@ class ProfilerTest(unittest.TestCase):
     logdir = absltest.get_default_test_tmpdir()
     # Remove any existing log files.
     shutil.rmtree(logdir, ignore_errors=True)
+    import sys
+    done_event = threading.Event()
     def on_profile():
+      print("STARTING", file=sys.stderr)
       os.system(
           f"{sys.executable} -m jax.collect_profile {port} 500 "
           f"--log_dir {logdir} --no_perfetto_link")
+      done_event.set()
+      print("DONE", file=sys.stderr)
 
     thread_profiler = threading.Thread(
         target=on_profile, args=())
     thread_profiler.start()
     start_time = time.time()
     y = jnp.zeros((5, 5))
-    while time.time() - start_time < 10:
+    print("LOOPING", file=sys.stderr)
+    while not done_event.is_set() and time.time() - start_time < 30:
       y = jnp.dot(y, y)
+    print("DONE LOOPING", file=sys.stderr)
     jax.profiler.stop_server()
+    print("STOPPED", file=sys.stderr)
     thread_profiler.join()
     self._check_xspace_pb_exist(logdir)
 

@@ -37,7 +37,7 @@ jobs:
       PYTHON: python${{ matrix.python-version }}
     runs-on: ${{ matrix.tpu.runner }}
     container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest"
-    timeout-minutes: 180
+    timeout-minutes: 10
     defaults:
       run:
         shell: bash -ex {0}
@@ -112,14 +112,18 @@ jobs:
           PY_COLORS: 1
         run: |
           # Run single-accelerator tests in parallel
-          JAX_ENABLE_TPU_XDIST=true $PYTHON -m pytest -n=${{ matrix.tpu.cores }} --tb=short \
+          TPU_STDERR_LOG_LEVEL=0 JAX_ENABLE_TPU_XDIST=true $PYTHON -m pytest --tb=short \
             --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
-            --maxfail=20 -m "not multiaccelerator" tests examples
-          # Run Pallas printing tests, which need to run with I/O capturing disabled.
-          TPU_STDERR_LOG_LEVEL=0 $PYTHON -m pytest -s \
-            tests/pallas/tpu_pallas_test.py::PallasCallPrintTest
-          # Run multi-accelerator across all chips
-          $PYTHON -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
+            --maxfail=20 -m "not multiaccelerator" tests/profiler_test.py -v
+          TPU_STDERR_LOG_LEVEL=0 JAX_ENABLE_TPU_XDIST=true $PYTHON -m pytest --tb=short \
+            --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
+            --maxfail=20 -m "not multiaccelerator" tests/profiler_test.py -v
+          TPU_STDERR_LOG_LEVEL=0 JAX_ENABLE_TPU_XDIST=true $PYTHON -m pytest --tb=short \
+            --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
+            --maxfail=20 -m "not multiaccelerator" tests/profiler_test.py -v
+          TPU_STDERR_LOG_LEVEL=0 JAX_ENABLE_TPU_XDIST=true $PYTHON -m pytest --tb=short \
+            --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
+            --maxfail=20 -m "not multiaccelerator" tests/profiler_test.py -v
       - name: Send chat on failure
         # Don't notify when testing the workflow from a branch.
         if: ${{ (failure() || cancelled()) && github.ref_name == 'main' && matrix.jaxlib-version != 'nightly+oldest_supported_libtpu' }}
