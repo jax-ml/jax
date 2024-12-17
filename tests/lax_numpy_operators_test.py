@@ -217,7 +217,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("fix", 1, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_default, [], check_dtypes=False),
     op_record("floor_divide", 2, default_dtypes + unsigned_dtypes,
-              all_shapes, jtu.rand_nonzero, ["rev"]),
+              all_shapes, jtu.rand_default, ["rev"]),
     op_record("fmin", 2, number_dtypes, all_shapes, jtu.rand_some_nan, []),
     op_record("fmax", 2, number_dtypes, all_shapes, jtu.rand_some_nan, []),
     op_record("fmod", 2, default_dtypes, all_shapes, jtu.rand_some_nan, []),
@@ -730,6 +730,23 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     args_maker = lambda: [x]
     self._CheckAgainstNumpy(np.spacing, jnp.spacing, args_maker, check_dtypes=True, tol=0)
     self._CompileAndCheck(jnp.spacing, args_maker, tol=0)
+
+  @jtu.ignore_warning(category=RuntimeWarning, message="divide by zero.*")
+  @jtu.ignore_warning(category=RuntimeWarning, message="invalid value.*")
+  def testFloorDivideByZeroInt(self):
+    x1 = jnp.eye(3, dtype=int)
+    x2 = jnp.zeros((3, 3), dtype=int)
+    jnp_result = jnp.floor_divide(x1, x2)
+    np_result = np.floor_divide(x1, x2)
+    self.assertAllClose(jnp_result, np_result, check_dtypes=True)
+
+  @jtu.ignore_warning(category=RuntimeWarning, message="divide by zero.*")
+  @jtu.ignore_warning(category=RuntimeWarning, message="invalid value.*")
+  def testFloorDivideFloatSpecialCases(self):
+    x = jnp.array([-np.nan, -np.inf, -2., -1., -0., 0., 1., 2., np.inf, np.nan])
+    jnp_result = jnp.floor_divide(x[:, None], x[None, :])
+    np_result = np.floor_divide(x[:, None], x[None, :])
+    self.assertAllClose(jnp_result, np_result, check_dtypes=True)
 
 
 if __name__ == "__main__":
