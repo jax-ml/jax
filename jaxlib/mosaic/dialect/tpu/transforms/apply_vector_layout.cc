@@ -4399,18 +4399,13 @@ LogicalResult vector_store_impl(RewriteContext &ctx, Op store_op,
   std::optional<xla::Array<Value>> tile_masks;
   if (store_mask) {
     FAILUREOR_ASSIGN_OR_RETURN(
-        tile_masks,
-        disassemble(builder, to_store_layout, store_mask, ctx.target_shape));
+        tile_masks, disassemble(builder, to_store_layout, store_mask,
+                                ctx.target_shape, /*use_implicit_shape=*/true));
     TPU_ASSERT_EQ_OP(tile_masks->dimensions(), tiles.dimensions());
   }
   const int64_t ndims = ty.getRank();
-  const auto base_s =
-      is_1d ? IdxConst(0, builder, op.getLoc()) : tile_base_idxs.front();
+  const auto base_s = is_1d ? nullptr : tile_base_idxs.front();
   const auto base_l = tile_base_idxs.back();
-  if (is_1d) {
-    tiles.Reshape(
-        to_store_layout.implicitShape(toArrayRef(tiles.dimensions())));
-  }
   const LayoutOffset sublane_offset = to_store_layout.offsets()[0];
   const LayoutOffset lane_offset = to_store_layout.offsets()[1];
   if (!sublane_offset.has_value() || !lane_offset.has_value()) {
