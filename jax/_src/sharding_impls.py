@@ -69,8 +69,6 @@ def _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes):
 
 @util.cache(max_size=128, trace_context_in_key=False)
 def _check_axis_type_consistency(mesh, parsed_pspec):
-  if mesh.axis_types is None:
-    return
   for p in parsed_pspec:
     if p is not None:
       if not all(mesh._name_to_type[p[0]] == mesh._name_to_type[r] for r in p):
@@ -78,6 +76,11 @@ def _check_axis_type_consistency(mesh, parsed_pspec):
             'AxisTypes should be the same in a tuple subset of PartitionSpec:'
             f' {parsed_pspec.get_partition_spec()}. Got subset {p} with axis'
             f' types: ({", ".join(str(mesh._name_to_type[r]) for r in p)})')
+  if mesh_lib.AxisTypes.Auto not in mesh.axis_types and None in parsed_pspec:
+    raise ValueError(
+        f'PartitionSpec {parsed_pspec.get_partition_spec()} cannot contain'
+        ' `P.UNCONSTRAINED` when no mesh axis_types are `Auto`. Got mesh'
+        f' axis_types: {mesh.axis_types}')
 
 
 def hashed_index(x) -> int:
@@ -271,11 +274,15 @@ class NamedSharding(sharding.Sharding):
     self._parsed_pspec = preprocess(self.mesh, self.spec, _parsed_pspec)
 
   def __repr__(self):
-    mesh_repr = ", ".join(f"'{k}': {v}" for k, v in self.mesh.shape.items())
     mem = '' if self.memory_kind is None else f', memory_kind={self.memory_kind}'
     ldi = ('' if self._logical_device_ids is None else
            f', logical_device_ids={self._logical_device_ids}')
-    return f'NamedSharding(mesh=Mesh({mesh_repr}), spec={self.spec}{mem}{ldi})'
+    if isinstance(self.mesh, mesh_lib.AbstractMesh):
+      mesh_repr = f"{self.mesh}"
+    else:
+      nv_str = ", ".join(f"'{n}': {v}" for n, v in self.mesh.shape.items())
+      mesh_repr = f"Mesh({nv_str})"
+    return f'NamedSharding(mesh={mesh_repr}, spec={self.spec}{mem}{ldi})'
 
   def __reduce__(self):
     return (type(self), (self.mesh, self.spec),
@@ -380,6 +387,9 @@ class NamedSharding(sharding.Sharding):
     if not isinstance(spec, PartitionSpec):
       spec = PartitionSpec(*spec)
     return NamedSharding(self.mesh, spec, memory_kind=self.memory_kind)
+
+  def with_mesh(self, new_mesh: mesh_lib.Mesh) -> NamedSharding:
+    return NamedSharding(new_mesh, self.spec, memory_kind=self.memory_kind)
 
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return named_sharding_to_xla_hlo_sharding(self, num_dimensions)

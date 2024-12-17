@@ -2187,8 +2187,6 @@ def _infer_src_sharding(src, x) -> Sharding | None:
     return src  # pytype: disable=bad-return-type
   if isinstance(x, array.ArrayImpl):
     return x.sharding
-  if config.sharding_in_types.value and hasattr(x, 'sharding'):
-    return x.sharding
   if isinstance(x, core.Tracer):
     val = x.to_concrete_value()
     if val is not None and isinstance(val, array.ArrayImpl):

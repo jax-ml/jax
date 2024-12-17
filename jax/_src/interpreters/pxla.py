@@ -2162,6 +2162,8 @@ def _concretize_abstract_shardings(shardings, avals, device_assignment):
 
   out = []
   for s, a in zip(shardings, avals):
+    # Remove the `UnconstrainedSingleton` logic after UNCONSTRAINED is supported
+    # in out_shardings at top level jit.
     if (isinstance(s, UnspecifiedValue) and a.sharding is not None and
         all(not isinstance(s, UnconstrainedSingleton) for s in a.sharding.spec)):
       out.append(NamedSharding(_abstract_to_concrete_mesh(a.sharding.mesh),

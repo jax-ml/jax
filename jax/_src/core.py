@@ -273,10 +273,12 @@ class JaxprEqnContext:
                xla_metadata=None):
     self.compute_type = compute_type
     self.threefry_partitionable = threefry_partitionable
+    self.cur_abstract_mesh = mesh_lib.get_abstract_mesh()
     self.xla_metadata = xla_metadata
     self._managers = [
         (compute_on.extend_compute_type, self.compute_type),
         (config.threefry_partitionable.__call__, self.threefry_partitionable),
+        (mesh_lib.set_abstract_mesh, self.cur_abstract_mesh),
         (xla_metadata_lib.set_xla_metadata, self.xla_metadata),
     ]
 
@@ -292,6 +294,7 @@ class JaxprEqnContext:
     return (
         f"JaxprEqnContext(compute_type={self.compute_type}, "
         f"threefry_partitionable={self.threefry_partitionable}, "
+        f"cur_abstract_mesh={self.cur_abstract_mesh}, "
         f"xla_metadata={self.xla_metadata})"
     )
 
@@ -534,6 +537,17 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
       write(eqn.outvars[0], ans)
     clean_up_dead_vars(eqn, env, lu)
   return map(read, jaxpr.outvars)
+
+def check_avals_context_mesh(avals, prim_name):
+  if config.sharding_in_types.value:
+    for a in avals:
+      cur_mesh = mesh_lib.get_abstract_mesh()
+      if a.sharding.mesh != cur_mesh:
+        raise ValueError(
+            f"For primitive {prim_name}, context mesh {cur_mesh} should match"
+            f" the aval mesh {a.sharding.mesh} for shape {a.str_short()}. This"
+            " error occurs at source: "
+            f" {source_info_util.summarize(source_info_util.current())}")
 
 
 # -------------------- tracing --------------------
@@ -1622,7 +1636,10 @@ def get_sharding(sharding, ndim):
   from jax._src.sharding_impls import NamedSharding  # type: ignore
 
   if sharding is not None:
-    assert len(sharding.spec) == ndim
+    if len(sharding.spec) != ndim:
+      raise ValueError(
+          "Length of sharding.spec must be equal to aval's ndim. Got"
+          f" sharding.spec {sharding.spec} and aval.ndim {ndim}")
     return _maybe_modify_sharding(sharding)
 
   context_mesh = mesh_lib.get_abstract_mesh()
@@ -2518,17 +2535,18 @@ def _check_jaxpr(
       in_avals = [x.aval for x in in_atoms]  # use in_atoms for dyn shapes
 
       # Compute the type of the primitive application.
-      if prim in custom_typechecks:
-        out_type, eqn_effects = custom_typechecks[prim](
-          ctx_factory, *in_atoms, **eqn.params)
-      elif prim.call_primitive:
-        out_type, eqn_effects = _check_call(ctx_factory, prim, in_atoms,
+      with eqn.ctx.manager:
+        if prim in custom_typechecks:
+          out_type, eqn_effects = custom_typechecks[prim](
+            ctx_factory, *in_atoms, **eqn.params)
+        elif prim.call_primitive:
+          out_type, eqn_effects = _check_call(ctx_factory, prim, in_atoms,
+                                              eqn.params)
+        elif prim.map_primitive:
+          out_type, eqn_effects = _check_map(ctx_factory, prim, in_avals,
                                             eqn.params)
-      elif prim.map_primitive:
-        out_type, eqn_effects = _check_map(ctx_factory, prim, in_avals,
-                                           eqn.params)
-      else:
-        out_type, eqn_effects = check_eqn(prim, in_avals, eqn.params)
+        else:
+          out_type, eqn_effects = check_eqn(prim, in_avals, eqn.params)
 
       # Check the computed effect type matches the eqn's annotation, and is
       # included in the jaxpr's annotation.

@@ -52,7 +52,7 @@ from jax._src import sharding_impls
 from jax._src.sharding_impls import (
     AUTO, UNSPECIFIED, NamedSharding, GSPMDSharding, PositionalSharding,
     SingleDeviceSharding, parse_flatten_op_sharding)
-from jax._src.pjit import pjit
+from jax._src.pjit import pjit, sharding_cast
 from jax._src import mesh as mesh_lib
 from jax._src.interpreters import pxla
 from jax._src.lib.mlir import dialects
@@ -5040,7 +5040,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return x + y
 
     with self.assertRaisesRegex(
-        ValueError, "Mesh for all inputs should be equal"):
+        ValueError, "For primitive add, context mesh.*aval mesh"):
       f(arr1, arr2)
 
   @jtu.with_user_mesh((2, 2), ('x', 'y'))
@@ -5264,14 +5264,14 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       f(arr1 == arr2, arr1, arr3)
 
   @jtu.with_user_mesh((2, 2), ('x', 'y'))
-  def test_device_put_reshard(self, mesh):
+  def test_sharding_cast_reshard(self, mesh):
     np_inp = np.arange(16).reshape(8, 2)
     s = NamedSharding(mesh, P('x', 'y'))
     arr = jax.device_put(np_inp, s)
 
     @jax.jit
     def f(x):
-      y = jax.device_put(x, NamedSharding(x.sharding.mesh, P('x', None)))
+      y = sharding_cast(x, NamedSharding(x.sharding.mesh, P('x', None)))
       self.assertEqual(y.sharding.spec, P('x', None))
       return y
 
@@ -5606,6 +5606,131 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jnp.where(x > 0, x, 0)
     self.assertArraysEqual(out, x)
     self.assertEqual(out.sharding, s)
+
+  @jtu.with_user_mesh((2, 2), ('x', 'y'))
+  def test_full_user_to_full_auto(self, mesh):
+    np_inp = np.arange(16.).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    @jax.jit
+    def f(x):
+      y = x * 2
+      auto_mesh = mesh_lib.get_abstract_mesh().with_axis_types(
+          {mesh_lib.AxisTypes.Auto: ('x', 'y')})
+      y = sharding_cast(y, y.sharding.with_mesh(auto_mesh))
+      with mesh_lib.set_abstract_mesh(auto_mesh):
+        self.assertEqual(y.sharding.spec, P(P.UNCONSTRAINED, P.UNCONSTRAINED))
+        z = jnp.sin(y)
+        self.assertEqual(z.sharding.spec, P(P.UNCONSTRAINED, P.UNCONSTRAINED))
+        a = z @ z.T
+        self.assertEqual(a.sharding.spec, P(P.UNCONSTRAINED, P.UNCONSTRAINED))
+      a = sharding_cast(
+          a, NamedSharding(mesh_lib.get_abstract_mesh(), P('x', None)))
+      self.assertEqual(a.sharding.spec, P('x', None))
+      return a
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
+    jaxpr = f.trace(arr).jaxpr
+    out2 = core.jaxpr_as_fun(jaxpr)(arr)
+    self.assertEqual(out2[0].sharding, NamedSharding(mesh, P('x', None)))
+
+  @jtu.with_user_mesh((2, 2), ('x', 'y'),
+                      axis_types={mesh_lib.AxisTypes.Auto: ('x', 'y')})
+  def test_full_auto_to_full_user(self, mesh):
+    np_inp = np.arange(16.).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    @jax.jit
+    def f(x):
+      y = x * 2
+      user_mesh = mesh_lib.get_abstract_mesh().with_axis_types(
+          {mesh_lib.AxisTypes.User: ('x', 'y')})
+      y = sharding_cast(y, NamedSharding(user_mesh, P(None, 'y')))
+      with mesh_lib.set_abstract_mesh(user_mesh):
+        self.assertEqual(y.sharding.spec, P(None, 'y'))
+        z = jnp.sin(y)
+        self.assertEqual(z.sharding.spec, P(None, 'y'))
+        a = z @ z.T
+        self.assertEqual(a.sharding.spec, P(None, None))
+      a = sharding_cast(
+          a, NamedSharding(mesh_lib.get_abstract_mesh(), P('x', None)))
+      self.assertEqual(a.sharding.spec, P(P.UNCONSTRAINED, None))
+      return a
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
+
+    jaxpr = f.trace(arr).jaxpr
+    core.jaxpr_as_fun(jaxpr)(arr)  # doesn't crash
+
+  @jtu.with_user_mesh((2, 2), ('x', 'y'))
+  def test_full_user_to_auto_user_mix(self, mesh):
+    np_inp = np.arange(16.).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    @jax.jit
+    def f(x):
+      y = x * 2
+      mix_mesh = mesh_lib.get_abstract_mesh().with_axis_types(
+          {mesh_lib.AxisTypes.Auto: 'x', mesh_lib.AxisTypes.User: 'y'})
+      y = sharding_cast(y, y.sharding.with_mesh(mix_mesh))
+      with mesh_lib.set_abstract_mesh(mix_mesh):
+        self.assertEqual(y.sharding.spec, P(P.UNCONSTRAINED, 'y'))
+        z = jnp.sin(y)
+        self.assertEqual(z.sharding.spec, P(P.UNCONSTRAINED, 'y'))
+        a = z @ z.T
+        self.assertEqual(a.sharding.spec, P(P.UNCONSTRAINED, P.UNCONSTRAINED))
+      a = sharding_cast(
+          a, NamedSharding(mesh_lib.get_abstract_mesh(), P('x', None)))
+      self.assertEqual(a.sharding.spec, P('x', None))
+      return a
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
+    jaxpr = f.trace(arr).jaxpr
+    out2 = core.jaxpr_as_fun(jaxpr)(arr)
+    self.assertEqual(out2[0].sharding, NamedSharding(mesh, P('x', None)))
+
+  @jtu.with_user_mesh((2, 1), ('x', 'y'))
+  def test_user_auto_mix_error(self, mesh):
+    np_inp = np.arange(16.).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    @jax.jit
+    def f(x, y):
+      x = x * 2
+      mix_mesh = mesh_lib.get_abstract_mesh().with_axis_types(
+          {mesh_lib.AxisTypes.Auto: 'x', mesh_lib.AxisTypes.User: 'y'})
+      with mesh_lib.set_abstract_mesh(mix_mesh):
+        z = x @ y
+      return z
+
+    with self.assertRaisesRegex(
+        ValueError, "For primitive dot_general, context mesh.*aval mesh"):
+      f(arr, arr.T)
+
+  def test_sharding_cast_src_dst_mesh_mismatch(self):
+    np_inp = np.arange(16.).reshape(8, 2)
+    mesh = jtu.create_mesh((2, 1), ('x', 'y'))
+    mesh2 = jtu.create_mesh((2, 1), ('a', 'b'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, s)
+    f = lambda x: sharding_cast(x, NamedSharding(mesh2, P('a', 'b')))
+    with self.assertRaisesRegex(
+        ValueError, "Mesh shape of the input.*does not match"):
+      f(arr)
+
+    with mesh_lib.set_mesh(mesh):
+      with self.assertRaisesRegex(
+          ValueError, "Mesh shape of the input.*does not match"):
+        jax.jit(f)(arr)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
