@@ -10,7 +10,9 @@ Remember to align the itemized text with the first line of an item within a list
 When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
-## jax 0.4.38
+## Unreleased
+
+## jax 0.4.38 (Dec 17, 2024)
 
 * Changes:
   * `jax.tree.flatten_with_path` and `jax.tree.map_with_path` are added
