@@ -156,7 +156,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         FloatingPointError,
-        r"Invalid value \(nan\) encountered in sharded computation.\nWhen differentiating"):
+        r"invalid value \(nan\) encountered in mul\nWhen differentiating"):
       ans, = f_vjp(jnp.ones([1]))
       ans.block_until_ready()
 
