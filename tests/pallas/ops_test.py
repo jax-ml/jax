@@ -803,7 +803,15 @@ class OpsTest(PallasBaseTest):
   ELEMENTWISE_OPS = [
       (
           [jnp.abs, jnp.negative],
-          ["int16", "int32", "int64", "float16", "float32", "float64"],
+          [
+              "int16",
+              "int32",
+              "int64",
+              "bfloat16",
+              "float16",
+              "float32",
+              "float64",
+          ],
       ),
       ([jnp.ceil, jnp.floor], ["bfloat16", "float32", "float64", "int32"]),
       (
@@ -819,7 +827,7 @@ class OpsTest(PallasBaseTest):
           ["float32", "float64"],
       ),
       ([lax.population_count, lax.clz, jnp.invert], ["int32", "int64"]),
-      ([jnp.logical_not], ["bool"])
+      ([jnp.logical_not], ["bool"]),
   ]
 
   @parameterized.named_parameters(
@@ -831,8 +839,21 @@ class OpsTest(PallasBaseTest):
     if not jax.config.x64_enabled and jnp.dtype(dtype).itemsize == 8:
       self.skipTest("64-bit types require x64_enabled")
 
-    if jtu.test_device_matches(["tpu"]) and dtype in ("int16", "float16"):
-      self.skipTest("int16 and float16 are not supported on TPU")
+    if jtu.test_device_matches(["tpu"]):
+      if dtype in ("int16", "float16"):
+        self.skipTest("int16 and float16 are not supported on TPU")
+      if (
+          fn in (jnp.ceil, jnp.floor, jnp.negative)
+          and dtype == "bfloat16"
+          and not jtu.is_device_tpu_at_least(6)
+      ):
+        self.skipTest(f"bfloat16 {fn.__name__} is only supported on TPU v6+")
+      # TODO(b/370578663): implement these lowerings on TPU
+      if fn in (
+          jnp.acos, jnp.acosh, jnp.asin, jnp.asinh, jnp.atan, jnp.atanh,
+          jnp.cbrt, jnp.cosh, jnp.expm1, jnp.sinh,
+      ):
+        self.skipTest(f"{fn.__name__} not implemented on TPU")
 
     if (
         jtu.test_device_matches(["gpu"])
@@ -840,21 +861,6 @@ class OpsTest(PallasBaseTest):
         and dtype == "bfloat16"
     ):
       self.skipTest(f"bfloat16 {fn.__name__} is not supported on GPU")
-
-    if (
-        jtu.test_device_matches(["tpu"])
-        and not jtu.is_device_tpu_at_least(6)
-        and fn in (jnp.ceil, jnp.floor)
-        and dtype == "bfloat16"
-    ):
-      self.skipTest(f"bfloat16 {fn.__name__} is only supported on TPU v6+")
-
-    # TODO(b/370578663): implement these lowerings on TPU
-    if jtu.test_device_matches(["tpu"]) and fn in (
-        jnp.acos, jnp.acosh, jnp.asin, jnp.asinh, jnp.atan, jnp.atanh,
-        jnp.cbrt, jnp.cosh, jnp.expm1, jnp.sinh,
-    ):
-      self.skipTest(f"{fn.__name__} not implemented on TPU")
 
     @functools.partial(
         self.pallas_call,
