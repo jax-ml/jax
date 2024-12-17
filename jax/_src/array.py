@@ -1029,7 +1029,7 @@ def make_array_from_single_device_arrays(
 
 
 core.pytype_aval_mappings[ArrayImpl] = abstract_arrays.canonical_concrete_aval
-xla.pytype_aval_mappings[ArrayImpl] = op.attrgetter('aval')
+core.xla_pytype_aval_mappings[ArrayImpl] = op.attrgetter('aval')
 xla.canonicalize_dtype_handlers[ArrayImpl] = pxla.identity
 def _get_aval_array(self):
   if config.sharding_in_types.value and isinstance(self.sharding, NamedSharding):

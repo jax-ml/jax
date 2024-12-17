@@ -1825,7 +1825,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
 
   def aval(v: core.Atom) -> core.AbstractValue:
     if type(v) is core.Literal:
-      return xla.abstractify(v.val)
+      return core.abstractify(v.val)
     else:
       return v.aval
 
