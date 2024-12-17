@@ -874,7 +874,8 @@ FailureOr<xla::Array<Value>> ext_op_rule_impl(RewriteContext &ctx,
       int64_t vreg_part = *(input_vreg_idxs.end() - 2) % packing;
       *(input_vreg_idxs.end() - 2) /= packing;
       *v = builder.create<UnpackSubelementsOp>(
-          op.getLoc(), res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part);
+          op.getLoc(), res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part,
+          tpu::PackFormat::kCompressed);
     });
   } else {
     if (layout_in.tiling() != layout_out.tiling()) {
@@ -890,7 +891,8 @@ FailureOr<xla::Array<Value>> ext_op_rule_impl(RewriteContext &ctx,
       input_vreg_idxs.back() /= packing;
       const int64_t vreg_part = idxs.back() % packing;
       *v = builder.create<UnpackSubelementsOp>(
-          op.getLoc(), res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part);
+          op.getLoc(), res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part,
+          tpu::PackFormat::kCompressed);
     });
   }
   return output_vregs;
@@ -6265,7 +6267,8 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
         src_idx[src_idx.size() - 1] /= packing;
         for (int i = 0; i < packing; ++i) {
           parts.push_back(builder.create<tpu::UnpackSubelementsOp>(
-              loc, vreg_x32, vregs(src_idx), vreg_part));
+              loc, vreg_x32, vregs(src_idx), vreg_part,
+              tpu::PackFormat::kCompressed));
           if (src_idx[src_idx.size() - 2] <
               vregs.dim(vregs.num_dimensions() - 2) - 1) {
             ++src_idx[src_idx.size() - 2];
@@ -6345,7 +6348,8 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
       *(src_idx.end() - 1) /= packing;
       for (int i = 0; i < packing; ++i) {
         parts.push_back(builder.create<tpu::UnpackSubelementsOp>(
-            loc, vreg_x32, vregs(src_idx), vreg_part));
+            loc, vreg_x32, vregs(src_idx), vreg_part,
+            tpu::PackFormat::kCompressed));
         if (*(src_idx.end() - 2) < *(vregs.dimensions().end() - 2) - 1) {
           ++*(src_idx.end() - 2);
         }  // The rest is padding, so just pick any of the input parts (but not
