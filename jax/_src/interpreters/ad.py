@@ -921,7 +921,7 @@ def map_transpose(primitive, params, call_jaxpr, args, ct, _):
   try:
     out_flat = primitive.bind(fun, *all_args, **new_params)
   except dispatch.InternalFloatingPointError as e:
-    print("Invalid nan value encountered in the backward pass of a C++-jit/pmap "
+    print("Invalid nan value encountered in the backward pass of a jax.jit "
           "function. Calling the de-optimized backward pass.")
     try:
       _ = backward_pass(call_jaxpr, None, {}, args, ct)

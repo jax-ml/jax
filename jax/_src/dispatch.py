@@ -100,7 +100,7 @@ def xla_primitive_callable(prim: core.Primitive, **params):
       return prim.bind(*args, **params)
   prim_fun.__name__ = prim.name
   prim_fun.__qualname__ = prim.name
-  prim_fun.__is_primitive__ = True
+  prim_fun._apply_primitive = True
   return api.jit(prim_fun)
 
 
@@ -339,7 +339,7 @@ class InternalFloatingPointError(Exception):
 
 def maybe_recursive_nan_check(e: Exception, fun: Callable, args, kwargs,
 ) -> None:  # always raises an exception
-  print("Invalid nan value encountered in the output of a C++-jit/pmap "
+  print("Invalid nan value encountered in the output of a jax.jit "
         "function. Calling the de-optimized version.")
   try:
     _ = fun(*args, **kwargs)

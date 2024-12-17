@@ -220,7 +220,7 @@ def _python_pjit_helper(fun, jit_info, *args, **kwargs):
               f' {type(arg)} is not a valid JAX type.') from e
       raise AssertionError("Unreachable") from e
   except dispatch.InternalFloatingPointError as e:
-    if getattr(fun, '__is_primitive__', False):
+    if getattr(fun, '_apply_primitive', False):
       raise FloatingPointError(f"invalid value ({e.ty}) encountered in {fun.__qualname__}") from None
     dispatch.maybe_recursive_nan_check(e, fun, args, kwargs)
 
@@ -2371,7 +2371,7 @@ def _pjit_transpose(cts_in, *primals_in,
         inline=inline,
         compiler_options_kvs=compiler_options_kvs)
   except dispatch.InternalFloatingPointError as e:
-    print("Invalid nan value encountered in the backward pass of a C++-jit/pmap "
+    print("Invalid nan value encountered in the backward pass of a jax.jit "
           "function. Calling the de-optimized backward pass.")
     try:
       _ = ad.closed_backward_pass(jaxpr, None, primals_in, cts_in)
