@@ -6252,24 +6252,23 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
       dst.tileArrayImplicitShape(vty.getShape(), target_shape);
   // (8,128) -> (8 * packing,128) tiling change for packed type.
   if (bitwidth < 32 && 32 % bitwidth == 0 && src_tiling == ctx.target_shape &&
-      dst_tiling == std::array<int64_t, 2>{ctx.target_shape[0] * dst.packing(),
+      dst_tiling == std::array<int64_t, 2>{ctx.target_shape[0] * packing,
                                            ctx.target_shape[1]}) {
     // Note: for int4, retiling with scratch is always faster.
     if (bitwidth != 4 || !has_enough_scratch) {
       xla::Array<Value> retiled(dst_tiles_shape);
-      int vty_packing = dst.packing();
       VectorType vreg_x32 =
           vty.getElementType().isSignlessInteger()
               ? VectorType::get(target_shape, builder.getI32Type())
               : VectorType::get(target_shape, builder.getF32Type());
       retiled.Each([&](absl::Span<const int64_t> idx, Value *tile) {
-        const int vreg_part = idx.back() % vty_packing;
+        const int vreg_part = idx.back() % packing;
         SmallVector<Value, 8> parts;
-        parts.reserve(vty_packing);
+        parts.reserve(packing);
         SmallVector<int64_t> src_idx(idx.begin(), idx.end());
-        src_idx[src_idx.size() - 2] *= vty_packing;
-        src_idx[src_idx.size() - 1] /= vty_packing;
-        for (int i = 0; i < vty_packing; ++i) {
+        src_idx[src_idx.size() - 2] *= packing;
+        src_idx[src_idx.size() - 1] /= packing;
+        for (int i = 0; i < packing; ++i) {
           parts.push_back(builder.create<tpu::UnpackSubelementsOp>(
               loc, vreg_x32, vregs(src_idx), vreg_part));
           if (src_idx[src_idx.size() - 2] <
