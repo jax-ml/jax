@@ -49,7 +49,8 @@ from jax._src.api_util import (
     argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
     donation_vector, shaped_abstractify, check_callable, resolve_argnums,
     argnames_partial_except, debug_info, result_paths, jaxpr_debug_info,
-    hoist_obj_attrs)
+    hoist_obj_attrs, _check_no_aliased_ref_args,
+    _check_no_aliased_closed_over_refs)
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec
 from jax._src.interpreters import xla
@@ -627,7 +628,8 @@ def _infer_params_impl(
         flat_fun, in_type, attr_token, dbg,
         HashableFunction(res_paths, closure=()),
         IgnoreKey(ji.inline))
-    _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), explicit_args)
+    if config.mutable_array_checks.value:
+      _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), explicit_args)
   _attr_update(flat_fun, in_type, attr_token, attrs_tracked)
 
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
@@ -764,32 +766,8 @@ def _infer_input_type(fun, dbg, explicit_args) -> tuple[core.AbstractValue, ...]
       " static_argnums or static_argnames parameters of jax.jit."
     ) from None
   if config.mutable_array_checks.value:
-    # TODO(mattjj): make this faster
-    refs: dict[int, int] = {}
-    for i, (a, x) in enumerate(zip(avals, explicit_args)):
-      if (isinstance(a, AbstractRef) and
-          (dup_idx := refs.setdefault(id(core.get_referent(x)), i)) != i):
-        raise ValueError(
-          "only one reference to a mutable array may be passed as an argument "
-          f"to a function, but when tracing {dbg.func_src_info} for {dbg.traced_for} "
-          f"the mutable array reference of type {a.str_short()} appeared at both "
-          f"{dbg.arg_names[dup_idx]} and {dbg.arg_names[i]}."
-          if dbg else
-          f"at both flat index {dup_idx} and flat index {i}") from None
+    _check_no_aliased_ref_args(dbg, avals, explicit_args)
   return tuple(avals)
-
-def _check_no_aliased_closed_over_refs(dbg, consts, args) -> None:
-  if not config.mutable_array_checks.value: return
-  refs: set[int] = {id(core.get_referent(c)) for c in consts
-                    if isinstance(core.get_aval(c), AbstractRef)}
-  for i, x in enumerate(args):
-    if id(core.get_referent(x)) in refs:
-      a = shaped_abstractify(x)
-      raise ValueError(
-          f"when tracing {dbg.func_src_info} for {dbg.traced_for}, a mutable "
-          f"array reference of type {a.str_short()} was both closed over and "
-          f"passed as the argument "
-          f"{dbg.arg_names[i]}" if dbg else "at flat index {i}")
 
 def _extract_implicit_args(
   in_type: Sequence[tuple[core.AbstractValue, bool]],

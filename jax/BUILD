@@ -344,6 +344,7 @@ pytype_strict_library(
         ":traceback_util",
         ":tree_util",
         ":util",
+        ":state_types",
     ] + py_deps("numpy"),
 )
 
