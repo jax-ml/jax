@@ -783,6 +783,49 @@ class PallasCallTest(PallasTest):
     y = x + 1
     np.testing.assert_array_equal(kernel(x, y), x + y)
 
+  def test_while_loop(self):
+    @functools.partial(
+        pl.pallas_call, out_shape=jax.ShapeDtypeStruct([128], jnp.int32)
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.zeros(o_ref.shape, dtype=jnp.int32)
+
+      def cond(acc):
+        _, last_o = acc
+        return last_o.sum() < 128*10
+
+      def body(acc):
+        i, _ = acc
+        o_ref[...] += x_ref[i]
+        return i+1, o_ref[...]
+
+      _ = jax.lax.while_loop(cond, body, (0, o_ref[...]))
+
+    np.testing.assert_array_equal(
+        kernel(jnp.ones([128, 128], jnp.int32)), jnp.full([128], 10)
+    )
+
+  def test_while_loop_layout_mismatch(self):
+    @functools.partial(
+        pl.pallas_call, out_shape=jax.ShapeDtypeStruct([128], jnp.int32)
+    )
+    def kernel(o_ref):
+      def cond(acc):
+        return acc.sum() < 128
+
+      def body(acc):
+        del acc  # Unused.
+
+        # We deliberately do a cast here to trigger a layout mismatch.
+        return plgpu.layout_cast(
+            jnp.broadcast_to(0, o_ref.shape), plgpu.Layout.WGMMA_ROW
+        )
+
+      _ = jax.lax.while_loop(cond, body, o_ref[...])
+
+    with self.assertRaisesRegex(ValueError, "has layout .*, when it should be"):
+      kernel()
+
   def test_cond(self):
     @functools.partial(
         pl.pallas_call,
