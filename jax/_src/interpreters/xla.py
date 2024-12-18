@@ -146,13 +146,6 @@ canonicalize_dtype_handlers[core.Token] = identity
 canonicalize_dtype_handlers[core.DArray] = identity
 canonicalize_dtype_handlers[core.MutableArray] = identity
 
-# TODO(jakevdp): deprecate and remove this.
-def abstractify(x) -> Any:
-  return core.abstractify(x)
-
-# TODO(jakevdp): deprecate and remove this.
-pytype_aval_mappings: dict[Any, Callable[[Any], core.AbstractValue]] = core.xla_pytype_aval_mappings
-
 initial_style_primitives: set[core.Primitive] = set()
 
 def register_initial_style_primitive(prim: core.Primitive):
