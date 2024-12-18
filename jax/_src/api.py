@@ -100,6 +100,7 @@ map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
 
+@api_boundary
 def _nan_check_posthook(fun, args, kwargs, output):
   """Hook function called by the C++ jit/pmap to perform NaN checking."""
   buffers = []
@@ -109,12 +110,11 @@ def _nan_check_posthook(fun, args, kwargs, output):
 
   try:
     dispatch.check_special(pjit.pjit_p.name, buffers)
-  except FloatingPointError:
+  except dispatch.InternalFloatingPointError as e:
     # compiled_fun can only raise in this case
     assert config.debug_nans.value or config.debug_infs.value
-    print("Invalid nan value encountered in the output of a C++-jit/pmap "
-          "function. Calling the de-optimized version.")
-    fun._cache_miss(*args, **kwargs)[0]  # probably won't return
+    dispatch.maybe_recursive_nan_check(e, fun._fun, args, kwargs)
+    raise AssertionError("Unreachable") from e
 
 def _update_debug_special_global(_):
   if config._read("jax_debug_nans") or config._read("jax_debug_infs"):
@@ -1549,11 +1549,14 @@ def _cpp_pmap(
 
     execute: Callable | None = None
     with core.take_current_trace() as trace:
-      if isinstance(trace, core.EvalTrace):
-        execute = pxla.xla_pmap_impl_lazy(p.flat_fun, *p.flat_args, **params)
-        out = execute(*p.flat_args)
-      else:
-        out = pxla.xla_pmap_p.bind_with_trace(trace, (p.flat_fun, *p.flat_args), params)
+      try:
+        if isinstance(trace, core.EvalTrace):
+          execute = pxla.xla_pmap_impl_lazy(p.flat_fun, *p.flat_args, **params)
+          out = execute(*p.flat_args)
+        else:
+          out = pxla.xla_pmap_p.bind_with_trace(trace, (p.flat_fun, *p.flat_args), params)
+      except dispatch.InternalFloatingPointError as e:
+        raise FloatingPointError(f'Invalid value ({e.ty}) encountered in parallel computation.')
 
     out_tree, out_flat = p.out_tree, out
     out_pytree_def = out_tree()
@@ -1604,6 +1607,7 @@ def _cpp_pmap(
   _pmap_cache_clears.add(cpp_mapped_f)
 
   pmap_f = wraps(fun)(cpp_mapped_f)
+  pmap_f._fun = fun
 
   @api_boundary
   def lower(*args, **kwargs):
@@ -1649,6 +1653,7 @@ def _cpp_pmap(
 _pmap_cache_clears = weakref.WeakSet()  # type: ignore
 
 
+@api_boundary
 def jvp(
     fun: Callable, primals, tangents, has_aux: bool = False
   ) -> tuple[Any, ...]:
@@ -1851,6 +1856,7 @@ def _lift_linearized(jaxpr, primal_avals, io_tree, out_pvals, consts, *py_args):
 
   return apply_flat_fun_nokwargs(fun, io_tree, py_args)
 
+@api_boundary
 def _vjp_pullback_wrapper(name, out_primal_avals, io_tree, fun, *py_args_):
   if len(py_args_) != 1:
     msg = (f"The function returned by `jax.vjp` applied to {name} was called "
