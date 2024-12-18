@@ -26,6 +26,12 @@ from absl.testing import parameterized
 
 import numpy as np
 
+try:
+  import numpy.dtypes as np_dtypes
+except ImportError:
+  np_dtypes = None  # type: ignore
+
+
 import jax
 from jax import numpy as jnp
 from jax._src import earray
@@ -770,16 +776,25 @@ class EArrayTest(jtu.JaxTestCase):
 
 
 class TestPromotionTables(jtu.JaxTestCase):
+  # Not all types are promotable. For example, currently StringDType is not
+  # promotable.
+  if hasattr(np_dtypes, 'StringDType'):
+    promotable_types = [
+        x for x in dtypes._jax_types if not isinstance(x, np_dtypes.StringDType)
+    ]
+  else:
+    promotable_types = dtypes._jax_types
+
 
   @parameterized.named_parameters(
       {"testcase_name": f"_{jaxtype=}", "jaxtype": jaxtype}
-      for jaxtype in dtypes._jax_types + dtypes._weak_types)
+      for jaxtype in promotable_types + dtypes._weak_types)
   def testJaxTypeFromType(self, jaxtype):
     self.assertIs(dtypes._jax_type(*dtypes._dtype_and_weaktype(jaxtype)), jaxtype)
 
   @parameterized.named_parameters(
       {"testcase_name": f"_{jaxtype=}", "jaxtype": jaxtype}
-      for jaxtype in dtypes._jax_types + dtypes._weak_types)
+      for jaxtype in promotable_types + dtypes._weak_types)
   def testJaxTypeFromVal(self, jaxtype):
     try:
       val = jaxtype(0)
@@ -789,7 +804,7 @@ class TestPromotionTables(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       {"testcase_name": f"_{dtype=}", "dtype": dtype}
-      for dtype in dtypes._jax_types)
+      for dtype in promotable_types)
   def testJaxTypeWeak(self, dtype):
     jax_type = dtypes._jax_type(dtype, weak_type=True)
     if dtypes.issubdtype(jax_type, np.complexfloating):
