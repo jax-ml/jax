@@ -44,4 +44,7 @@ NB_MODULE(register_jax_dialects, m) {
     // Transforms used by JAX.
     mlirRegisterTransformsStripDebugInfo();
   });
+
+  // Disable eagerly loading all dialects.
+  m.attr("disable_load_all_available_dialects") = true;
 }
