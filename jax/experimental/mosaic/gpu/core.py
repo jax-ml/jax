@@ -470,8 +470,9 @@ class LaunchContext:
           " multiple of 16 bytes"
       )
 
+    # TMA supports OOB indices, so we skip the check.
     base_indices, slice_shape, is_squeezed = utils.parse_indices(
-        gmem_slice, ir.MemRefType(gmem_ref.type).shape
+        gmem_slice, ir.MemRefType(gmem_ref.type).shape, check_oob=False
     )
     dyn_base_indices = tuple(
         c(i, index) if not isinstance(i, ir.Value) else i for i in base_indices

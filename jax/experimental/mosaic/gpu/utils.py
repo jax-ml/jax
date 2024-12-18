@@ -329,6 +329,12 @@ class DynamicSlice:
   base: ir.Value | int
   length: int
 
+  def __post_init__(self):
+    if isinstance(self.base, int) and self.base < 0:
+      raise ValueError(f"base must be non-negative, got {self.base}")
+    if self.length < 0:
+      raise ValueError(f"length must be non-negative, got {self.length}")
+
 
 ds = DynamicSlice
 
@@ -569,7 +575,7 @@ def memref_transpose(ref: ir.Value, permutation: Sequence[int]) -> ir.Value:
 
 
 def parse_indices(
-    index, shape: tuple[int, ...]
+    index, shape: tuple[int, ...], *, check_oob: bool = True
 ) -> tuple[list[ir.Value | int], list[int], list[bool]]:
   if not isinstance(index, tuple):
     index = (index,)
@@ -578,20 +584,42 @@ def parse_indices(
   base_indices = []
   slice_shape = []
   is_squeezed = []
-  for idx, bound in zip(index, shape):
+  for axis, (idx, bound) in enumerate(zip(index, shape)):
     if isinstance(idx, (ir.Operation, ir.OpView)):
       idx = idx.result
     if isinstance(idx, int):
-      base_indices.append(idx)
+      if check_oob and (idx >= bound or (idx < 0 and -idx > bound)):
+        raise IndexError(
+            f"Index {idx} along axis {axis} is out of bounds for shape {shape}"
+        )
+      base_indices.append(idx if idx >= 0 else bound + idx)
       slice_shape.append(1)
       is_squeezed.append(True)
     elif isinstance(idx, slice):
       if idx.step is not None and idx.step != 1:
         raise NotImplementedError("Strided slices not implemented")
-      base_indices.append(idx.start or 0)
-      slice_shape.append((idx.stop or bound) - (idx.start or 0))
+      start = idx.start or 0
+      if start < 0:
+        start = bound + start
+      stop = idx.stop or bound
+      if stop < 0:
+        stop = bound + stop
+      if check_oob and (
+          start < 0 or start >= bound or stop < 0 or stop > bound
+      ):
+        raise IndexError(
+            f"Slice {idx} along axis {axis} is out of bounds for shape {shape}"
+        )
+      base_indices.append(start)
+      slice_shape.append(stop - start)
       is_squeezed.append(False)
     elif isinstance(idx, DynamicSlice):
+      if check_oob and (
+          isinstance(idx.base, int) and idx.base + idx.length > bound
+      ):
+        raise IndexError(
+            f"Slice {idx} along axis {axis} is out of bounds for shape {shape}"
+        )
       base_indices.append(idx.base)
       slice_shape.append(idx.length)
       is_squeezed.append(False)
