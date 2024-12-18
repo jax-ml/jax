@@ -1731,3 +1731,8 @@ memory_fitting_effort = float_state(
     default=0.0,
     help='Effort for minimizing memory usage (higher means more effort), valid range [-1.0, 1.0].'
 )
+
+rbg_remat_unsafe = define_bool_state(
+    name='jax_rbg_remat_unsafe',
+    default=False,
+    help=('Allows unsafe combination of jax.remat and rbg / unsafe_rbg PRNGs.'))
