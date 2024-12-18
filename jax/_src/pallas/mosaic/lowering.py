@@ -1458,7 +1458,14 @@ def reduce_lowering_rule(reduce_fn, type_to_kind, type_to_identity):
     if jnp.issubdtype(x_aval.dtype, jnp.floating):
       kind = type_to_kind[jnp.floating]
       val = type_to_identity[jnp.floating]
-      val = ir.FloatAttr.get(ir.F32Type.get(), val)
+      if x_aval.dtype == jnp.float32:
+        val = ir.FloatAttr.get(ir.F32Type.get(), val)
+      elif x_aval.dtype == jnp.bfloat16:
+        val = ir.FloatAttr.get(ir.BF16Type.get(), val)
+      else:
+        raise NotImplementedError(
+            f"Reductions over {x_aval.dtype} not implemented."
+        )
     elif jnp.issubdtype(x_aval.dtype, jnp.signedinteger):
       raise NotImplementedError("Reductions over integers not implemented.")
     elif jnp.issubdtype(x_aval.dtype, jnp.unsignedinteger):
