@@ -30,8 +30,10 @@ from jax._src import traceback_util
 from jax._src.ad_util import (
     stop_gradient_p, SymbolicZero, Zero, zeros_like_aval)
 from jax._src.api_util import (
-    argnums_partial, flatten_fun_nokwargs, resolve_kwargs)
+    argnums_partial, flatten_fun_nokwargs, resolve_kwargs, fun_signature,
+    _arg_names)
 from jax._src.errors import UnexpectedTracerError
+from jax._src.state.types import AbstractRef
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -41,8 +43,8 @@ from jax._src.interpreters.batching import not_mapped
 from jax._src.lax import lax
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_map, treedef_is_leaf, treedef_tuple,
-    register_pytree_node_class, tree_leaves, tree_flatten_with_path, keystr,
-    treedef_children)
+    register_pytree_node_class, tree_leaves, tree_flatten_with_path,
+    tree_leaves_with_path, keystr, treedef_children)
 from jax._src.util import (cache, safe_zip, safe_map, split_list, Unhashable,
                            unzip2)
 
@@ -608,15 +610,49 @@ class custom_vjp(Generic[ReturnValue]):
         fwd_, bwd = lu.wrap_init(fwd), lu.wrap_init(self.bwd)
       args_flat, in_tree = tree_flatten(dyn_args)
       in_avals = [core.get_aval(x) for x in args_flat]
+      if config.mutable_array_checks.value:
+        f_ = _check_primal_refs(f_, self.nondiff_argnums)
       flat_fun, out_type = _flatten_fun_nokwargs(f_, in_tree)
-      flat_fwd, out_trees = _flatten_fwd(fwd_, self.symbolic_zeros, primal_name,
-                                         fwd_name, in_tree, out_type)
+      flat_fwd, out_trees = _flatten_fwd(
+          fwd_, self.nondiff_argnums, self.symbolic_zeros, primal_name,
+          fwd_name, in_tree, out_type)
       flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees).call_wrapped
       out_flat = custom_vjp_call_p.bind(flat_fun, flat_fwd, flat_bwd,
                                         *args_flat, out_trees=out_trees,
                                         symbolic_zeros=self.symbolic_zeros)
       _, (out_tree, _) = lu.merge_linear_aux(out_type, out_trees)
       return tree_unflatten(out_tree, out_flat)
+
+@lu.transformation2
+def _check_primal_refs(f, nondiff_argnums, *args):
+  _check_for_aliased_refs(f, nondiff_argnums, args)
+  out = f(*args)
+  _check_for_returned_refs(f, out, 'primal')
+  return out
+
+def _check_for_aliased_refs(f, nondiff_argnums, args):
+  leaves = tree_leaves(args)
+  refs: dict[int, int] = {}
+  for i, x in enumerate(leaves):
+    if (isinstance((a := core.get_aval(x)), AbstractRef) and
+        (dup_idx := refs.setdefault(id(core.get_referent(x)), i)) != i):
+      arg_names = _arg_names(fun_signature(f), args, {}, nondiff_argnums, ())
+      if arg_names is None:
+        arg_names = [f'flat index {j}' for j in range(len(leaves))]
+      raise ValueError(
+          "only one reference to a mutable array may be passed as an argument "
+          f"to a function, but custom_vjp function {f} got the same mutable "
+          f"array reference of type {a.str_short()} at {arg_names[dup_idx]} and"
+          f" {arg_names[i]}.")
+
+def _check_for_returned_refs(f, out, kind):
+  leaves = tree_leaves_with_path(out)
+  for path, leaf in leaves:
+    if isinstance((a := core.get_aval(leaf)), AbstractRef):
+      loc = f' at output tree path {keystr(path)}' if path else ''
+      raise ValueError(f"custom_vjp {kind} function {f} returned a mutable "
+                       f"a array reference of type {a.str_short()}{loc}, "
+                       "but mutable array references cannot be returned.")
 
 @dataclasses.dataclass
 class CustomVJPPrimal:
@@ -655,14 +691,18 @@ def _check_for_tracers(x):
       raise UnexpectedTracerError(msg)
 
 @partial(lu.transformation_with_aux2, use_eq_store=True)
-def _flatten_fwd(f, store, symbolic_zeros, primal_name, fwd_name, in_tree, maybe_out_type,
-                 *args):
+def _flatten_fwd(f, store, nondiff_argnums, symbolic_zeros, primal_name,
+                 fwd_name, in_tree, maybe_out_type, *args):
   if symbolic_zeros:
     args = [CustomVJPPrimal(x, z) for x, z in zip(args[::2], args[1::2])]
   else:
     args = args[::2]
   py_args = tree_unflatten(in_tree, args)
+  if config.mutable_array_checks.value:
+    _check_for_aliased_refs(f, nondiff_argnums, py_args)
   pair_out = f(*py_args)
+  if config.mutable_array_checks.value:
+    _check_for_returned_refs(f, pair_out, 'fwd')
   if not isinstance(pair_out, (list, tuple)) or len(pair_out) != 2:
     msg = (f"Custom VJP fwd rule {fwd_name} for function {primal_name} "
            "must produce a pair (list or tuple of length two) where the first "
@@ -1393,8 +1433,8 @@ def optimize_remat_of_custom_vjp_fwd(
       fwd_ = lu.wrap_init(fwd)
     args_flat, in_tree = tree_flatten(dyn_args)
     flat_fun, out_type = _flatten_fun_nokwargs(f_, in_tree)
-    flat_fwd, out_trees = _flatten_fwd(fwd_, False, primal_name, fwd_name,
-                                       in_tree, out_type)
+    flat_fwd, out_trees = _flatten_fwd(fwd_, nondiff_argnums, False,
+                                       primal_name, fwd_name, in_tree, out_type)
     flat_fwd = _fix_fwd_args(flat_fwd)
 
     in_avals = [core.get_aval(x) for x in args_flat]
