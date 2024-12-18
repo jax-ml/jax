@@ -12,6 +12,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Changes:
+  * The minimum NumPy version is now 1.25. NumPy 1.25 will remain the minimum
+    supported version until June 2025.
+
 ## jax 0.4.38 (Dec 17, 2024)
 
 * Changes:
