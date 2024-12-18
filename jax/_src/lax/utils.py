@@ -54,11 +54,13 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
   least_specialized = type(max(avals, key=_get_array_abstraction_level))
   if least_specialized is core.ShapedArray:
     core.check_avals_context_mesh(avals, prim.name)
-    return core.ShapedArray(
+    out_aval = core.ShapedArray(
         shape_rule(*avals, **kwargs), dtype_rule(*avals, **kwargs),
         weak_type=weak_type,
         sharding=(sharding_rule(*avals, **kwargs)
                   if config.sharding_in_types.value else None))
+    core.check_avals_context_mesh([out_aval], prim.name)
+    return out_aval
   elif least_specialized is core.DShapedArray:
     shape = shape_rule(*avals, **kwargs)
     ty = (core.ShapedArray if all(type(d) is int for d in shape)
@@ -83,9 +85,11 @@ def standard_multi_result_abstract_eval(
     out_shardings = (sharding_rule(*avals, **kwargs)
                      if config.sharding_in_types.value else
                      [None] * len(out_shapes))
-    return [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh)
-            for s, d, weak_type, sh in zip(out_shapes, out_dtypes, weak_types,
-                                           out_shardings)]
+    out_avals = [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh)
+                 for s, d, weak_type, sh in zip(out_shapes, out_dtypes,
+                                                weak_types, out_shardings)]
+    core.check_avals_context_mesh(out_avals, prim.name)
+    return out_avals
   elif least_specialized is core.UnshapedArray:
     out_dtypes = dtype_rule(*avals, **kwargs)
     return [core.UnshapedArray(dtype, weak_type=weak_type)

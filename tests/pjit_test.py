@@ -5827,6 +5827,24 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertDictEqual(out1.sharding.mesh.axis_types, {AxisTypes.User: 'x'})
     self.assertDictEqual(out2.sharding.mesh.axis_types, {AxisTypes.Auto: 'x'})
 
+  @jtu.with_user_mesh((2,), 'x')
+  def test_output_different_context_error(self, mesh):
+    np_inp1 = np.arange(16).reshape(8, 2)
+    arr1 = jax.device_put(np_inp1, NamedSharding(mesh, P('x', None)))
+    arr2 = jax.device_put(np_inp1.T, NamedSharding(mesh, P(None, 'x')))
+    auto_mesh = jax.make_mesh((2,), 'x',
+                              axis_types={AxisTypes.Auto: 'x'}).abstract_mesh
+
+    @jax.jit
+    def f(x, y):
+      out = jnp.einsum('xy,yz->xz', x, y,
+                       out_type=NamedSharding(auto_mesh, P('x', None)))
+      return out
+
+    with self.assertRaisesRegex(
+        ValueError, "context mesh.* should match the aval mesh"):
+      f(arr1, arr2)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
