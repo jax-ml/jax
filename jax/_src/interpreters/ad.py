@@ -30,7 +30,7 @@ from jax._src import core
 from jax._src import source_info_util
 from jax._src.ad_util import (
     add_jaxvals, replace_internal_symbolic_zeros,
-    replace_rule_output_symbolic_zeros, Zero, zeros_like_aval)
+    replace_rule_output_symbolic_zeros, Zero, zeros_like_aval, SymbolicZero)
 from jax._src.ad_util import zeros_like_p, add_jaxvals_p  # noqa: F401
 from jax._src.api_util import flatten_fun, flatten_fun_nokwargs
 from jax._src.core import (Trace, Tracer, get_aval, call_p, Primitive, Literal)
@@ -157,6 +157,7 @@ def linearize_jaxpr(jaxpr, nonzeros):
   if attrs_tracked:
     raise NotImplementedError("TODO: attrs")
   residuals_and_primals = (*tangent_consts, *out_primals)
+  residuals_and_primals = map(primal_trace.to_jaxpr_tracer, residuals_and_primals)
   primal_jaxpr, primal_consts, attrs_tracked = primal_trace.to_jaxpr(residuals_and_primals)
   num_residuals = len(tangent_consts)
   tangent_jaxpr = pe.close_jaxpr(convert_constvars_jaxpr_constvars_at_end(tangent_jaxpr))
@@ -168,8 +169,10 @@ def direct_linearize(traceable, primals, kwargs, *, has_aux=False, tag=None):
   with core.take_current_trace() as parent_trace:
     tangent_trace = pe.DynamicJaxprTrace()
     tangents = [tangent_trace.new_arg(get_aval(p).to_tangent_aval()) for p in primals]
+    tangents = [Zero.from_primal_value(t) if dtype(t) == float0 else t for t in tangents]
     linearize_trace = LinearizeTrace(parent_trace, tangent_trace, tag=tag)
     tracers = [LinearizeTracer(linearize_trace, p, t) for p, t in zip(primals, tangents)]
+    tracers = [t.full_lower() for t in tracers]
     with core.set_current_trace(linearize_trace):
       if has_aux:
         ans, aux = traceable.call_wrapped(*tracers)
@@ -586,20 +589,18 @@ class LinearizeTrace(Trace):
     if all(type(t) is Zero for t in tangents_in):
       return prim.bind_with_trace(self.parent_trace, (fun, f_jvp, *primals_in),
                                   dict(symbolic_zeros=symbolic_zeros))
-    with core.set_current_trace(self.parent_trace):
-      if not symbolic_zeros:
-        tangents_in = map(instantiate_zeros, tangents_in)
-      else:
-        tangents_in = map(replace_internal_symbolic_zeros, tangents_in)
-    nonzeros_in = [type(t) is not Zero for t in tangents_in]
 
     def _f_jvp(primals, tangents):
       outs = f_jvp.call_wrapped(*primals, *tangents)
       primals_out, tangents_out = split_list(outs, [len(outs) // 2])
       return primals_out, tangents_out
 
-    primals_out, tangent_nzs_out, residuals, linearized = linearize_from_jvp(
-        _f_jvp, True, nonzeros_in, primals_in, {})
+    with core.set_current_trace(self.parent_trace):
+      instantiate_zeros = not symbolic_zeros
+      nonzeros_in = [type(t) is not Zero for t in tangents_in]
+      primals_out, tangent_nzs_out, residuals, linearized = linearize_from_jvp(
+          _f_jvp, True, nonzeros_in, symbolic_zeros, instantiate_zeros, primals_in, {})
+
     with core.set_current_trace(self.tangent_trace):
       tangents_out = linearized(residuals, *tangents_in)
     tangents_out = map(replace_rule_output_symbolic_zeros, tangents_out)
@@ -622,8 +623,8 @@ class LinearizeTrace(Trace):
     res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
     avals_out = [core.get_aval(x).to_tangent_aval() for x in primals_out]
 
+    tangents_in = map(instantiate_zeros, tangents_in)
     with core.set_current_trace(self.tangent_trace):
-      tangents_in = map(instantiate_zeros, tangents_in)
       tangents_out = custom_lin_p.bind(
         *res, *tangents_in, num_res=res_tree.num_leaves, bwd=bwd,
         out_avals=avals_out, symbolic_zeros=symbolic_zeros)
@@ -666,14 +667,29 @@ def fallback_linearize_rule(_prim, _nonzeros, *primals, **params):
   if not jvp:
     msg = f"Differentiation rule for '{_prim}' not implemented"
     raise NotImplementedError(msg)
-  return linearize_from_jvp(jvp, _prim.multiple_results, _nonzeros, primals, params)
+  return linearize_from_jvp(jvp, _prim.multiple_results, _nonzeros, False, False, primals, params)
 
-def linearize_from_jvp(jvp, multiple_results, nonzeros, primals, params):
+def linearize_from_jvp(jvp, multiple_results, nonzeros,
+                       user_facing_symbolic_zeros, instantiate_input_zeros, primals, params):
   current_name_stack = source_info_util.current_name_stack()
   with core.take_current_trace() as parent_trace:
     trace = pe.JaxprTrace(parent_trace, current_name_stack, core.TraceTag())
     tangent_avals = [get_aval(p).to_tangent_aval() for p in primals]
-    tangent_args = [trace.new_arg(pe.PartialVal.unknown(aval)) if nz else Zero(aval)
+
+    def make_zero(aval):
+      if instantiate_input_zeros:
+        return zeros_like_aval(aval)
+      elif user_facing_symbolic_zeros:
+        return SymbolicZero(aval)
+      else:
+        return Zero(aval)
+
+    if user_facing_symbolic_zeros:
+      zero_type = SymbolicZero
+    else:
+      zero_type = Zero
+
+    tangent_args = [trace.new_arg(pe.PartialVal.unknown(aval)) if nz else make_zero(aval)
                     for aval, nz in zip(tangent_avals, nonzeros)]
     with core.set_current_trace(trace):
       out_primals, out_tangents = jvp(primals, tangent_args, **params)
@@ -683,10 +699,11 @@ def linearize_from_jvp(jvp, multiple_results, nonzeros, primals, params):
       out_tangents = [out_tangents]
 
     out_primals = [trace.to_jaxpr_tracer(p).pval.get_known() for p in out_primals]
-    out_nzs = [type(r) is not Zero for r in out_tangents]
+    out_nzs = [type(r) is not zero_type for r in out_tangents]
     out_tangent_avals = [get_aval(p).to_tangent_aval() for p in out_primals]
-    out_nz_tracers = [trace.to_jaxpr_tracer(r) for (r, nz) in zip(out_tangents, out_nzs) if nz]
-    in_tracers = [t for t in tangent_args if type(t) is not Zero]
+    out_nz_tracers = [trace.instantiate_const(trace.to_jaxpr_tracer(r))
+                      for (r, nz) in zip(out_tangents, out_nzs) if nz]
+    in_tracers = [t for t, nz in zip(tangent_args, nonzeros) if nz]
     jaxpr, out_consts, _ = pe.tracers_to_jaxpr(in_tracers, out_nz_tracers)
 
     def linearized(residuals, *tangents):
