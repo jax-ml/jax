@@ -26,7 +26,6 @@ from jax._src.layout import Layout, DeviceLocalLayout as DLL
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip
 from jax.experimental.compute_on import compute_on
-from jax._src.lib import xla_extension_version
 
 config.parse_flags_with_absl()
 
@@ -695,8 +694,6 @@ class LayoutTest(jtu.JaxTestCase):
     f(sparecore_arr, host_arr)
 
   def test_cpp_layout_cache_miss(self):
-    if xla_extension_version < 301:
-      self.skipTest('Requires xla_extension_version >= 301')
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
     shape = (16, 16)
