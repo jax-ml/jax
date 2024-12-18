@@ -334,6 +334,7 @@ from jax._src.lax.control_flow import (
   map as map,
   scan as scan,
   scan_p as scan_p,
+  platform_index_p as platform_index_p,
   switch as switch,
   while_loop as while_loop,
   while_p as while_p,
