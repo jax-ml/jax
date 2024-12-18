@@ -35,6 +35,10 @@ def _get_version_string() -> str:
   # In this case we return it directly.
   if _release_version is not None:
     return _release_version
+  if os.environ.get("WHEEL_BUILD_TAG"):
+    return _version
+  if os.environ.get("WHEEL_VERSION_SUFFIX"):
+    return _version + os.environ.get("WHEEL_VERSION_SUFFIX")
   return _version_from_git_tree(_version) or _version_from_todays_date(_version)
 
 
@@ -77,10 +81,16 @@ def _get_version_for_build() -> str:
   """
   if _release_version is not None:
     return _release_version
-  if os.environ.get('JAX_NIGHTLY') or os.environ.get('JAXLIB_NIGHTLY'):
-    return _version_from_todays_date(_version)
-  if os.environ.get('JAX_RELEASE') or os.environ.get('JAXLIB_RELEASE'):
+  if (
+      os.environ.get("JAX_RELEASE")
+      or os.environ.get("JAXLIB_RELEASE")
+      or os.environ.get("WHEEL_BUILD_TAG")
+  ):
     return _version
+  if os.environ.get("WHEEL_VERSION_SUFFIX"):
+    return _version + os.environ.get("WHEEL_VERSION_SUFFIX")
+  if os.environ.get("JAX_NIGHTLY") or os.environ.get("JAXLIB_NIGHTLY"):
+    return _version_from_todays_date(_version)
   return _version_from_git_tree(_version) or _version_from_todays_date(_version)
 
 

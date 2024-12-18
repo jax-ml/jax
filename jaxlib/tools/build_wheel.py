@@ -157,16 +157,15 @@ def verify_mac_libraries_dont_reference_chkstack():
 
 
 def write_setup_cfg(sources_path, cpu):
-  tag = build_utils.platform_tag(cpu)
+  plat_tag = build_utils.platform_tag(cpu)
+  build_tag = build_utils.build_tag()
   with open(sources_path / "setup.cfg", "w") as f:
-    f.write(
-        f"""[metadata]
+    f.write(f"""[metadata]
 license_files = LICENSE.txt
 
 [bdist_wheel]
-plat_name={tag}
-"""
-    )
+plat_name={plat_tag}
+""" + (f"build_number={build_tag}\n" if build_tag else ""))
 
 
 def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
