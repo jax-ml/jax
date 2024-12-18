@@ -850,8 +850,24 @@ def _apply_masks(logits, mask, is_causal, q_seqlen, kv_seqlen,
 def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
                                 scale, q_seqlen, kv_seqlen, local_window_size):
   logits_dtype = jnp.promote_types(query.dtype, jnp.float32)
-  logits = jnp.einsum('BTNH,BSNH->BNTS', query, key,
-                      preferred_element_type=logits_dtype)
+
+  match query.dtype:
+    case jnp.bfloat16:
+      precision = jax.lax.DotAlgorithmPreset.BF16_BF16_F32
+    case jnp.float16:
+      precision = jax.lax.DotAlgorithmPreset.F16_F16_F32
+      if jax.default_backend() == 'tpu':
+        precision = None
+    case _:
+      precision = None
+
+  logits = jnp.einsum(
+      "BTNH,BSNH->BNTS",
+      query,
+      key,
+      precision=precision,
+      preferred_element_type=logits_dtype,
+  )
 
   logits *= jnp.array(scale, dtype=logits.dtype)
 
