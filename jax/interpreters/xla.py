@@ -13,10 +13,8 @@
 # limitations under the License.
 
 from jax._src.interpreters.xla import (
-  abstractify as abstractify,
   canonicalize_dtype as canonicalize_dtype,
   canonicalize_dtype_handlers as canonicalize_dtype_handlers,
-  pytype_aval_mappings as pytype_aval_mappings,
 )
 
 from jax._src.dispatch import (
@@ -27,8 +25,19 @@ from jax._src.lib import xla_client as _xc
 Backend = _xc._xla.Client
 del _xc
 
+from jax._src import core as _src_core
+
 # Deprecations
 _deprecations = {
+    # Added 2024-12-17
+    "abstractify": (
+        "jax.interpreters.xla.abstractify is deprecated.",
+        _src_core.abstractify
+    ),
+    "pytype_aval_mappings": (
+        "jax.interpreters.xla.pytype_aval_mappings is deprecated.",
+        _src_core.pytype_aval_mappings
+    ),
     # Finalized 2024-10-24; remove after 2025-01-24
     "xb": (
         ("jax.interpreters.xla.xb was removed in JAX v0.4.36. "
@@ -44,6 +53,13 @@ _deprecations = {
     ),
 }
 
+import typing as _typing
 from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-__getattr__ = _deprecation_getattr(__name__, _deprecations)
+if _typing.TYPE_CHECKING:
+  abstractify = _src_core.abstractify
+  pytype_aval_mappings = _src_core.pytype_aval_mappings
+else:
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
 del _deprecation_getattr
+del _typing
+del _src_core
