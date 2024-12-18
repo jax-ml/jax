@@ -1084,3 +1084,39 @@ def getelementptr(
 
 def dyn_dot(x, y):
   return functools.reduce(arith.addi, (arith.muli(a, b) for a, b in zip(x, y)))
+
+
+def vector_slice(v: ir.Value, s: slice):
+  i32 = ir.IntegerType.get_signless(32)
+  v_ty = ir.VectorType(v.type)
+  if len(v_ty.shape) != 1:
+    raise NotImplementedError
+  [v_len] = v_ty.shape
+  it = range(v_len)[s]
+  result = llvm.mlir_undef(ir.VectorType.get((len(it),), v_ty.element_type))
+  for tgt, src in enumerate(it):
+    elem = llvm.extractelement(v, c(src, i32))
+    result = llvm.insertelement(result, elem, c(tgt, i32))
+  return result
+
+
+def bitcast(x: ir.Value, ty: ir.Type):
+  i32 = ir.IntegerType.get_signless(32)
+  if ir.VectorType.isinstance(x.type):
+    x_ty = ir.VectorType(x.type)
+    if ir.IntegerType.isinstance(ty):
+      ty = ir.IntegerType(ty)
+      if len(x_ty.shape) != 1 or x_ty.shape[0] * bytewidth(x_ty.element_type) * 8 != ty.width:
+        raise ValueError(f"Cannot bitcast {x_ty} to {ty}")
+      int_vec_ty = ir.VectorType.get((1,), ty)
+      return llvm.extractelement(vector.bitcast(int_vec_ty, x), c(0, i32))
+  elif ir.IntegerType.isinstance(x.type):
+    x_ty = ir.IntegerType(x.type)
+    if ir.VectorType.isinstance(ty):
+      ty = ir.VectorType(ty)
+      if len(ty.shape) != 1 or ty.shape[0] * bytewidth(ty.element_type) * 8 != x_ty.width:
+        raise ValueError(f"Cannot bitcast {x_ty} to {ty}")
+      int_vec_ty = ir.VectorType.get((1,), x_ty)
+      int_vec = llvm.insertelement(llvm.mlir_undef(int_vec_ty), x, c(0, i32))
+      return vector.bitcast(ty, int_vec)
+  raise NotImplementedError(f"Cannot bitcast {x.type} to {ty}")

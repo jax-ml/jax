@@ -65,15 +65,17 @@ class Tiling:
   tiles: tuple[tuple[int, ...], ...]
 
   def __post_init__(self):
-    max_rank = math.inf
+    if not self.tiles:
+      return
+    tiled_rank = len(self.tiles[0])
     for tile in self.tiles:
+      if len(tile) > tiled_rank:
+        raise ValueError("Only the first tile can refer to value dimensions")
       if not tile:
         raise ValueError("Tiles must not be empty")
-      if len(tile) > max_rank:
-        raise ValueError("Tile ranks must be non-increasing")
-      max_rank = len(tile)
       if any(d <= 0 for d in tile):
         raise ValueError(f"Tile shape must only have positive sizes, got: {self.tiles}")
+      tiled_rank += len(tile)
 
   def __str__(self):
     return f"Tiling({''.join(map(str, self.tiles))})"
@@ -184,7 +186,7 @@ class TiledLayout:
   """
   tiling: Tiling
   warp_dim: int
-  lane_dims: frozenset[int]
+  lane_dims: tuple[int, ...]  # major-to-minor
   vector_dim: int
 
   def __post_init__(self):
@@ -253,19 +255,19 @@ class TiledLayout:
 
   def lane_indices(self) -> tuple[ir.Value, ...]:
     i32 = ir.IntegerType.get_signless(32)
-    tiled_shape = tuple(
-        d if i in self.lane_dims else 1
-        for i, d in enumerate_negative(self.tiled_tiling_shape)
-    )
-    assert math.prod(tiled_shape) == WARP_SIZE
-    lane_strides = utils.get_contiguous_strides(tiled_shape)
+    tiled_shape = self.tiled_tiling_shape
+    lanes_shape = tuple(tiled_shape[d] for d in self.lane_dims)
+    assert math.prod(lanes_shape) == WARP_SIZE
+    lane_strides = utils.get_contiguous_strides(lanes_shape)
     lane_idx = arith.remui(utils.thread_idx(), c(WARP_SIZE, i32))
-    # TODO(apaszke): Rewrite so that we can be sure that this never actually
-    # does arithmetic for any dimensions that are not in lane_dims.
-    return tuple(
+    lane_indices = tuple(
         arith.remui(arith.divui(lane_idx, c(stride, i32)), c(size, i32))
-        for stride, size in zip(lane_strides, tiled_shape)
+        for stride, size in zip(lane_strides, lanes_shape)
     )
+    full_indices = [arith.constant(i32, 0)] * len(tiled_shape)
+    for d, i in zip(self.lane_dims, lane_indices):
+      full_indices[d] = i
+    return tuple(full_indices)
 
   def warp_indices(self) -> tuple[ir.Value, ...]:
     i32 = ir.IntegerType.get_signless(32)
@@ -300,6 +302,19 @@ def _tiled_wgmma_layout(shape: tuple[int, ...]):
       warp_dim=-8,
       lane_dims=frozenset((-4, -3)),
       vector_dim=-1,
+  )
+def _tiled_wgmma_layout_for_upcast(shape: tuple[int, ...]):
+  """Returns a tiled layout that is easy to relayout to WGMMA layout after doubling the bitwidth."""
+  if len(shape) != 2:
+    raise ValueError(f"Shape {shape} is not 2D")
+  if shape[0] % 64 != 0 or shape[1] % 16 != 0:
+    raise ValueError(f"Shape {shape} is not a multiple of 64x16")
+  t = Tiling(((64, 16), (16, 16), (8, 16), (4,), (2, 1)))
+  return TiledLayout(
+      t,
+      warp_dim=-9,
+      lane_dims=(-5, -2, -4),
+      vector_dim=-3,
   )
 
 
@@ -614,6 +629,33 @@ class FragmentedArray:
             _registers=self.registers.reshape(new_layout.registers_shape(shape)),
             _layout=new_layout,
             _is_signed=self.is_signed,
+        )
+      if (
+          self.layout == _tiled_wgmma_layout_for_upcast(shape)
+          and new_layout == _tiled_wgmma_layout(shape)
+          and utils.bytewidth(self.mlir_dtype) == 2
+      ):
+        assert shape[1] % 16 == 0  # Should be implied by the layout
+        new_registers = np.empty(new_layout.registers_shape(shape), dtype=object)
+        i32 = ir.IntegerType.get_signless(32)
+        c = lambda x: arith.constant(i32, x)
+        is_even = arith.cmpi(arith.CmpIPredicate.eq, arith.remui(utils.thread_idx(), c(2)), c(0))
+        for idx, reg in np.ndenumerate(self.registers):
+          low = utils.vector_slice(reg, slice(0, 2))
+          high = utils.vector_slice(reg, slice(2, 4))
+          to_exchange = utils.bitcast(arith.select(is_even, high, low), i32)
+          # Exchange values between even and odd threads.
+          exchanged = nvvm.shfl_sync(
+              i32, c(0xFFFFFFFF), to_exchange, c(1), c(0x1F), nvvm.ShflKind.bfly,
+          )
+          exchanged = utils.bitcast(exchanged, low.type)
+          low = arith.select(is_even, low, exchanged)
+          high = arith.select(is_even, exchanged, high)
+          new_registers[idx[0], idx[1] * 2, *idx[2:-1]] = low
+          new_registers[idx[0], idx[1] * 2 + 1, *idx[2:-1]] = high
+        assert all(r is not None for r in new_registers)
+        return FragmentedArray(
+            _registers=new_registers, _layout=new_layout, _is_signed=self.is_signed,
         )
     if not isinstance(self.layout, WGSplatFragLayout):
       raise NotImplementedError(
