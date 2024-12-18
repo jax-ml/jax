@@ -318,6 +318,9 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
   ``jax.ensure_compile_time_eval``), it may be easier to compute some values
   outside the :func:`jax.checkpoint`-decorated function and then close over them.
   """
+  if isinstance(static_argnums, int):
+    static_argnums = static_argnums,
+
   @wraps(fun)
   @api_boundary
   def fun_remat(*args, **kwargs):
