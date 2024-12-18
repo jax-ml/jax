@@ -1396,6 +1396,12 @@ def xla_call_jvp_update_params(params, nz_tangents):
   new_donated_invars = (*donated_invars, *donated_tangents)
   return dict(params, donated_invars=new_donated_invars)
 
+def _xla_call_linearize_update_params(params, residual_avals, nz_tangents):
+  donated_invars_prev = params['donated_invars']
+  donated_invars = (*(False for _ in residual_avals),
+                    *(d for d, nz in zip(donated_invars_prev, nz_tangents) if nz))
+  return dict(params, donated_invars=donated_invars)
+
 def _xla_call_transpose_update_params(params, undef_primals, nonzero_cts):
   donated_invars = params['donated_invars']
   donated_primals = [d for d, u in zip(donated_invars, undef_primals) if not u]
@@ -1411,6 +1417,7 @@ pe.partial_eval_jaxpr_custom_rules[xla_pmap_p] = \
             res_aval=_pmap_partial_eval_custom_res_maker)
 pe.dce_rules[xla_pmap_p] = _pmap_dce_rule
 ad.call_param_updaters[xla_pmap_p] = xla_call_jvp_update_params
+ad.call_linearize_param_updaters[xla_pmap_p] = _xla_call_linearize_update_params
 ad.call_transpose_param_updaters[xla_pmap_p] = _xla_call_transpose_update_params
 
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)

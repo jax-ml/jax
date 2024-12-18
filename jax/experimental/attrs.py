@@ -148,6 +148,8 @@ def _getattr_jvp(trace, obj, attr):
   return getattr(obj, attr)
 ad.JVPTrace.process_getattr = _getattr_jvp
 
+ad.LinearizeTrace.process_setattr = _setattr_jvp
+ad.LinearizeTrace.process_getattr = _getattr_jvp
 
 def linearize(f, *primals, attrs: list[tuple[Any, str]] = []):
   attr_primals = [jax_getattr(o, a) for o, a in attrs]
