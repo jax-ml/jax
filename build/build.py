@@ -456,9 +456,9 @@ async def main():
     wheel_build_command_base.append(f"--repo_env=BAZEL_COMPILER=\"{clang_path}\"")
 
     if clang_major_version >= 16:
-        # Enable clang settings that needed for the build to work with newer
-        # versions of Clang.
-        wheel_build_command_base.append("--config=clang")
+      # Enable clang settings that are needed for the build to work with newer
+      # versions of Clang.
+      wheel_build_command_base.append("--config=clang")
   else:
     logging.debug("Use Clang: False")
 
@@ -486,26 +486,12 @@ async def main():
           "--target_cpu_features=native is not supported on Windows;"
           " ignoring."
       )
-<<<<<<< HEAD
-=======
-
-      # Use double quotes around clang path to avoid path issues on Windows.
-      wheel_build_command.append(f"--action_env=CLANG_COMPILER_PATH=\"{clang_path}\"")
-      wheel_build_command.append(f"--repo_env=CC=\"{clang_path}\"")
-      wheel_build_command.append(f"--repo_env=BAZEL_COMPILER=\"{clang_path}\"")
-
-      if clang_major_version >= 16:
-        # Enable clang settings that are needed for the build to work with newer
-        # versions of Clang.
-        wheel_build_command.append("--config=clang")
->>>>>>> 74eca1346d0f0a4750bbd8b1b881a72680e69970
     else:
       logging.debug("Using native cpu features: --config=native_arch_posix")
       wheel_build_command_base.append("--config=native_arch_posix")
   else:
     logging.debug("Using default cpu features")
 
-<<<<<<< HEAD
   if "cuda" in args.wheels and "rocm" in args.wheels:
     logging.error("CUDA and ROCm cannot be enabled at the same time.")
     sys.exit(1)
@@ -514,41 +500,6 @@ async def main():
     wheel_build_command_base.append("--config=cuda")
     if args.use_clang:
       wheel_build_command_base.append(
-=======
-    if not args.disable_mkl_dnn:
-      logging.debug("Enabling MKL DNN")
-      if target_cpu == "aarch64":
-        wheel_build_command.append("--config=mkl_aarch64_threadpool")
-      else:
-        wheel_build_command.append("--config=mkl_open_source_only")
-
-    if args.target_cpu_features == "release":
-      if arch in ["x86_64", "AMD64"]:
-        logging.debug(
-            "Using release cpu features: --config=avx_%s",
-            "windows" if os_name == "windows" else "posix",
-        )
-        wheel_build_command.append(
-            "--config=avx_windows"
-            if os_name == "windows"
-            else "--config=avx_posix"
-        )
-    elif args.target_cpu_features == "native":
-      if os_name == "windows":
-        logger.warning(
-            "--target_cpu_features=native is not supported on Windows;"
-            " ignoring."
-        )
-      else:
-        logging.debug("Using native cpu features: --config=native_arch_posix")
-        wheel_build_command.append("--config=native_arch_posix")
-    else:
-      logging.debug("Using default cpu features")
-
-    if "cuda" in wheel:
-      wheel_build_command.append("--config=cuda")
-      wheel_build_command.append(
->>>>>>> 74eca1346d0f0a4750bbd8b1b881a72680e69970
             f"--action_env=CLANG_CUDA_COMPILER_PATH=\"{clang_path}\""
         )
     if args.build_cuda_with_clang:
