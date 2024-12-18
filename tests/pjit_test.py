@@ -54,6 +54,7 @@ from jax._src.sharding_impls import (
     SingleDeviceSharding, parse_flatten_op_sharding)
 from jax._src.pjit import pjit, sharding_cast
 from jax._src import mesh as mesh_lib
+from jax._src.mesh import set_abstract_mesh, get_abstract_mesh, AxisTypes
 from jax._src.interpreters import pxla
 from jax._src.lib.mlir import dialects
 from jax._src import xla_bridge
@@ -5788,6 +5789,43 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = jax.jit(jax.grad(g))(arr)
     self.assertEqual(out.sharding, s)
+
+  @jtu.with_user_mesh((2,), 'x')
+  def test_return_output_different_context(self, mesh):
+    np_inp = np.arange(16).reshape(8, 2)
+    s = NamedSharding(mesh, P('x'))
+    arr = jax.device_put(np_inp, s)
+
+    @jax.jit
+    def f(x):
+      auto_mesh = get_abstract_mesh().with_axis_types({AxisTypes.Auto: 'x'})
+      with set_abstract_mesh(auto_mesh):
+        x = sharding_cast(x, x.sharding.with_mesh(auto_mesh))
+        return x
+
+    self.assertDictEqual(arr.sharding.mesh.axis_types, {AxisTypes.User: 'x'})
+    out = f(arr)
+    self.assertArraysEqual(out, np_inp)
+    self.assertDictEqual(out.sharding.mesh.axis_types, {AxisTypes.Auto: 'x'})
+
+  @jtu.with_user_mesh((2,), 'x')
+  def test_inputs_different_context(self, mesh):
+    np_inp = np.arange(16).reshape(8, 2)
+    s = NamedSharding(mesh, P('x'))
+    arr = jax.device_put(np_inp, s)
+
+    auto_mesh = jax.make_mesh((2,), 'x', axis_types={AxisTypes.Auto: 'x'})
+    with mesh_lib.set_mesh(auto_mesh):
+      arr2 = jnp.ones(8)
+    self.assertDictEqual(arr2.sharding.mesh.axis_types, {AxisTypes.Auto: 'x'})
+
+    @jax.jit
+    def f(x, y):
+      return x, y
+
+    out1, out2 = f(arr, arr2)
+    self.assertDictEqual(out1.sharding.mesh.axis_types, {AxisTypes.User: 'x'})
+    self.assertDictEqual(out2.sharding.mesh.axis_types, {AxisTypes.Auto: 'x'})
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
