@@ -4488,15 +4488,13 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     elif name == 'tanh':
       regions_with_inaccuracies_keep('ninf', 'pinf', 'ninfj', 'pinfj')
 
-    elif name == 'arccos':
-      regions_with_inaccuracies_keep('q4.imag', 'ninf', 'pinf', 'ninfj', 'pinfj.real')
-
     elif name in {'cos', 'sin'}:
       regions_with_inaccuracies_keep('ninf.imag', 'pinf.imag')
 
-    elif name in {'positive', 'negative', 'conjugate', 'sin', 'cos', 'sqrt', 'expm1', 'tan', 'log1p',
-                  'arcsin', 'arcsinh', 'arccosh', 'arctan', 'arctanh', 'square'}:
+    elif name in {'positive', 'negative', 'conjugate', 'sin', 'cos', 'sqrt', 'expm1', 'log1p', 'tan',
+                  'arcsinh', 'arcsin', 'arccosh', 'arccos', 'arctan', 'arctanh', 'square'}:
       regions_with_inaccuracies.clear()
+
     else:
       assert 0  # unreachable
 

@@ -2478,13 +2478,6 @@ tan_p = standard_unop(_float | _complex, 'tan')
 ad.defjvp2(tan_p, lambda g, ans, x: mul(g, _const(x, 1) + square(ans)))
 mlir.register_lowering(tan_p, partial(_nary_lower_hlo, hlo.tan))
 
-def asin_impl(x):
-  if dtypes.issubdtype(_dtype(x), np.complexfloating):
-    return mul(_const(x, -1j), asinh(mul(_const(x, 1j), x)))
-  else:
-    return mul(_const(x, 2),
-               atan2(x, add(_const(x, 1), sqrt(sub(_const(x, 1), square(x))))))
-
 asin_p = standard_unop(_float | _complex, 'asin')
 ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(_const(x, 1) - square(x))))
 mlir.register_lowering(asin_p, partial(_nary_lower_hlo, chlo.asin))
