@@ -935,6 +935,13 @@ LogicalResult EnqueueDMAOp::verify() {
           "device_id or core_id is specified");
     }
   }
+  if (getSourceSemaphore()) {
+    if (!getDeviceId() && !getCoreId()) {
+      return emitOpError(
+          "DMA destination device_id or core_id must be specified when source "
+          "semaphore is specified");
+    }
+  }
   return success();
 }
 
