@@ -81,6 +81,9 @@ std::unique_ptr<OperationPass<func::FuncOp>> createCanonicalizeMosaicPass(
 std::unique_ptr<OperationPass<func::FuncOp>> createInferVectorLayoutPass(
     std::array<int64_t, 2> target_shape = {8, 128});
 
+std::unique_ptr<OperationPass<func::FuncOp>> createRelayoutInsertionPass(
+    std::array<int64_t, 2> target_shape = {8, 128});
+
 std::unique_ptr<OperationPass<func::FuncOp>> createApplyVectorLayoutPass(
     const ApplyVectorLayoutContext &ctx = ApplyVectorLayoutContext{});
 

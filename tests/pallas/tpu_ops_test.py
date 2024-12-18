@@ -13,6 +13,7 @@
 # limitations under the License.
 """Tests for TPU specific operations within pallas_call."""
 
+import functools
 import sys
 import unittest
 
@@ -250,6 +251,42 @@ class OpsTest(PallasBaseTest):
     expected = jnp.ones(x.shape, dtype=jnp.float32)
     expected = expected.at[...].set(jnp.where(get_mask(x), 0.0, -1.0))
     np.testing.assert_array_equal(result, expected)
+
+  def test_cast_i8_vector_to_mask(self):
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Do not support cast int8 vector to mask")
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((128, 128), jnp.int8),
+    )
+    def kernel(x_ref, mask_ref, o_ref):
+      zeros = jnp.zeros_like(x_ref)
+      o_ref[...] = jnp.where(mask_ref[...], x_ref[...], zeros)
+
+    mask = lax.broadcasted_iota(jnp.int8, (128, 128), 0)
+    x = jnp.arange(128 * 128, dtype=jnp.int8).reshape((128, 128)) + 1
+
+    out = kernel(x, mask)
+    expected = jnp.where(mask, x, jnp.zeros_like(x))
+    self.assertArraysEqual(out, expected)
+
+  def test_i1_relayout_with_bitwidth_change(self):
+    if not jtu.is_device_tpu_at_least(version=5):
+      self.skipTest("Do not support cast int8 vector to mask")
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    def kernel(x_ref, mask_ref, o_ref):
+      zeros = jnp.zeros(x_ref.shape)
+      o_ref[...] = jnp.where(mask_ref[...], x_ref[...], zeros)
+
+    mask = lax.broadcasted_iota(jnp.int8, (8, 128), 0)
+    x = jnp.arange(8 * 128, dtype=jnp.float32).reshape((8, 128))
+
+    out = kernel(x, mask)
+    expected = jnp.where(mask, x, jnp.zeros_like(x))
+    self.assertArraysEqual(out, expected)
 
 
 class OpsInterpretTest(OpsTest):

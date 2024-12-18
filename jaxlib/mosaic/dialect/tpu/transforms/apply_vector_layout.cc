@@ -77,41 +77,6 @@ namespace mlir::tpu {
 #define GEN_PASS_DEF_APPLYVECTORLAYOUTPASS
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
 
-// TPU_ASSERT_* macros should be understood as an assert, i.e. use it to check
-// things that should never happen. We prefer returning failure over a CHECK
-// because it's easier to debug from Python (particularly from OSS where symbols
-// are removed)
-#define TPU_ASSERT_IMPL(stream, cond)                    \
-  if (LLVM_UNLIKELY(!(cond))) {                          \
-    (stream) << "Internal error: assert failed: " #cond; \
-  }
-#define TPU_ASSERT_CMP_IMPL(stream, lhs, rhs, cmp)                            \
-  if (LLVM_UNLIKELY(!((lhs)cmp(rhs)))) {                                      \
-    (stream) << "Internal error: assert failed: " #lhs " " #cmp " " #rhs " (" \
-             << (lhs) << " vs. " << (rhs) << ")";                             \
-    return failure();                                                         \
-  }
-#define TPU_ASSERT_OP(cond) TPU_ASSERT_IMPL(op.emitOpError(), cond)
-#define TPU_ASSERT_CMP_OP_IMPL(lhs, rhs, cmp) \
-  TPU_ASSERT_CMP_IMPL(op.emitOpError(), lhs, rhs, cmp)
-#define TPU_ASSERT_EQ_OP(lhs, rhs) TPU_ASSERT_CMP_OP_IMPL(lhs, rhs, ==)
-#define TPU_ASSERT_GE_OP(lhs, rhs) TPU_ASSERT_CMP_OP_IMPL(lhs, rhs, >=)
-#define TPU_ASSERT_GT_OP(lhs, rhs) TPU_ASSERT_CMP_OP_IMPL(lhs, rhs, >)
-#define TPU_ASSERT_LE_OP(lhs, rhs) TPU_ASSERT_CMP_OP_IMPL(lhs, rhs, <=)
-#define TPU_ASSERT_LT_OP(lhs, rhs) TPU_ASSERT_CMP_OP_IMPL(lhs, rhs, <)
-#define TPU_ASSERT_LOC(loc, cond) TPU_ASSERT_IMPL(mlir::emitError(loc), cond)
-#define TPU_ASSERT_CMP_LOC_IMPL(loc, lhs, rhs, cmp) \
-  TPU_ASSERT_CMP_IMPL(loc, lhs, rhs, cmp)
-#define TPU_ASSERT_EQ_LOC(loc, lhs, rhs) \
-  TPU_ASSERT_CMP_LOC_IMPL(mlir::emitError(loc), lhs, rhs, ==)
-#define TPU_ASSERT_GE_LOC(loc, lhs, rhs) \
-  TPU_ASSERT_CMP_LOC_IMPL(mlir::emitError(loc), lhs, rhs, >=)
-#define TPU_ASSERT_GT_LOC(loc, lhs, rhs) \
-  TPU_ASSERT_CMP_LOC_IMPL(mlir::emitError(loc), lhs, rhs, >)
-#define TPU_ASSERT_LT_LOC(loc, lhs, rhs) \
-  TPU_ASSERT_CMP_LOC_IMPL(mlir::emitError(loc), lhs, rhs, <)
-#define TPU_ASSERT_LE_LOC(loc, lhs, rhs) \
-  TPU_ASSERT_CMP_LOC_IMPL(mlir::emitError(loc), lhs, rhs, <=)
 
 // The minimum bound required to rotate with scratch space. The bound refers to
 // the number of VREGs on rotation dim. This number was concluded from some cost
@@ -581,78 +546,6 @@ FailureOr<Value> maskOOB(RewriteContext &ctx, OpBuilder &builder,
   return builder
       .create<arith::SelectOp>(value.getLoc(), mask, value, neutral_vec)
       .getResult();
-}
-
-// Returns empty vector on null attribute
-FailureOr<SmallVector<Layout>> getLayoutArrayFromAttr(const Attribute attr) {
-  if (const auto array_attr = dyn_cast_if_present<ArrayAttr>(attr)) {
-    SmallVector<Layout> out_layouts;
-    out_layouts.reserve(array_attr.size());
-    for (const Attribute a : array_attr) {
-      if (auto layout_attr = dyn_cast_if_present<VectorLayoutAttr>(a)) {
-        out_layouts.push_back(layout_attr.getLayout());
-      } else {
-        return failure();
-      }
-    }
-    return out_layouts;
-  }
-  return SmallVector<Layout>{};
-}
-
-bool layoutIsValidForValue(const Layout &l, const Value v,
-                           const std::array<int64_t, 2> target_shape) {
-  // l must be non-null iff v is of vector type
-  if (const auto vty = dyn_cast<VectorType>(v.getType())) {
-    if (!l.has_value()) {
-      return false;
-    }
-
-    // Vector type should have the same bitwidth as the layout, except for the
-    // i1 special case, used for vmasks (see comment for VectorLayout class).
-    if (!vty.getElementType().isIntOrFloat()) {
-      return false;
-    }
-    const int8_t bitwidth = vty.getElementTypeBitWidth();
-    if (bitwidth != l->bitwidth() && bitwidth != 1) {
-      return false;
-    }
-
-    return l->isValid(target_shape) && l->layout_rank() <= vty.getRank();
-  }
-  return !l.has_value();
-}
-
-// TODO(tlongeri): Unify with infer_vector_layout.cc's getOutLayout.
-FailureOr<SmallVector<Layout>> getOutLayouts(
-    Operation &op, const std::array<int64_t, 2> target_shape) {
-  FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> out_layouts,
-                             getLayoutArrayFromAttr(op.getAttr("out_layout")));
-  if (out_layouts.size() != op.getNumResults()) {
-    return op.emitOpError("out_layout size does not match number of results");
-  }
-  for (const auto [l, res] : llvm::zip_equal(out_layouts, op.getResults())) {
-    if (!layoutIsValidForValue(l, res, target_shape)) {
-      return op.emitOpError("Invalid output layout");
-    }
-  }
-  return out_layouts;
-}
-
-FailureOr<SmallVector<Layout>> getInLayouts(
-    Operation &op, const std::array<int64_t, 2> target_shape) {
-  FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> in_layouts,
-                             getLayoutArrayFromAttr(op.getAttr("in_layout")));
-  if (in_layouts.size() != op.getNumOperands()) {
-    return op.emitOpError("in_layout size does not match number of operands");
-  }
-  for (const auto [l, operand] :
-       llvm::zip_equal(in_layouts, op.getOperands())) {
-    if (!layoutIsValidForValue(l, operand, target_shape)) {
-      return op.emitOpError("Invalid input layout");
-    }
-  }
-  return in_layouts;
 }
 
 // Insert a minor dimension to the implicit shape. The original minor dimension
