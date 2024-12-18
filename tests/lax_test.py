@@ -3959,6 +3959,8 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     core.pytype_aval_mappings[FooArray] = \
         lambda x: core.ShapedArray(x.shape, FooTy())
     xla.canonicalize_dtype_handlers[FooArray] = lambda x: x
+    core.xla_pytype_aval_mappings[FooArray] = \
+        lambda x: core.ShapedArray(x.shape, FooTy())
     pxla.shard_arg_handlers[FooArray] = shard_foo_array_handler
     mlir._constant_handlers[FooArray] = foo_array_constant_handler
     mlir.register_lowering(make_p, mlir.lower_fun(make_lowering, False))
@@ -3971,6 +3973,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
   def tearDown(self):
     del core.pytype_aval_mappings[FooArray]
     del xla.canonicalize_dtype_handlers[FooArray]
+    del core.xla_pytype_aval_mappings[FooArray]
     del mlir._constant_handlers[FooArray]
     del mlir._lowerings[make_p]
     del mlir._lowerings[bake_p]
