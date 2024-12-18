@@ -371,6 +371,13 @@ class MemRefTest(TestCase):
 
   @parameterized.parameters(jnp.uint64, jnp.uint32, jnp.uint16, jnp.uint8)
   def test_scalar_argument(self, dtype):
+    if dtype == jnp.uint64 and not config.enable_x64.value:
+      self.skipTest(
+        "64-bit types are disabled: this leads to the input scalar being"
+        " traced as a uint32 value, which causes the top 32 bits of the 64-bit"
+        " values read from the 32-bit input buffer to sometimes"
+        " (nondeterministically) contain garbage.")
+
     scalar = 42
     expected = np.full((128, 128), scalar, dtype=dtype)
 
