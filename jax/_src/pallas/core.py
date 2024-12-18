@@ -411,13 +411,6 @@ class BlockSpec:
       )
     block_aval = AbstractMemoryRef(block_array_aval, self.memory_space)
 
-    if not jax_core.is_constant_shape(block_aval.shape):
-      raise ValueError(
-          "shape polymorphism for Pallas does not support "
-          "dynamically-shaped blocks. "
-          f"Block spec for {origin} has block_shape: {block_aval.shape}"
-      )
-
     flat_index_map_fun, index_map_out_tree_thunk = api_util.flatten_fun(
         lu.wrap_init(index_map_func), index_map_tree
     )
