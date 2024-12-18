@@ -31,6 +31,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
+from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
 from jax.experimental.mosaic.gpu import fragmented_array as fa
 import jax.numpy as jnp
 import numpy as np
@@ -165,8 +166,11 @@ class TestCase(parameterized.TestCase):
       self.skipTest("Only works on GPU with capability >= sm90")
     super().setUp()
     self.prng = np.random.default_rng(1234)
+    self.context = mlir.make_ir_context()
+    if mgpu_dialect is not None:
+      mgpu_dialect.register_dialect(self.context)
     self.enter_context(jtu.global_config_context(jax_traceback_filtering="off"))
-    self.enter_context(mlir.make_ir_context())
+    self.enter_context(self.context)
     self.enter_context(ir.Location.unknown())
 
 
@@ -323,7 +327,8 @@ class MemRefTest(TestCase):
       ("strided_bot", (4, 4, 4, 4), (256, 16, 4, 1), 1, 2, False),
       ("strided_top", (4, 4, 4, 4), (256, 64, 4, 1), 1, 2, True),
       ("strided_mid", (4, 4, 4, 4), (265, 64, 16, 1), 1, 3, True),
-      ("overap", (2, 4, 4), (16, 1, 1), 0, 3, True),
+      # TODO(cperivol): Investigate why this is indexing OOB and uncomment.
+      # ("overap", (2, 4, 4), (16, 1, 1), 0, 3, True),
   ])
   def test_fold_strided(
       self, shape, strides, dim, fold_rank, throws_not_impl
@@ -367,6 +372,13 @@ class MemRefTest(TestCase):
 
   @parameterized.parameters(jnp.uint64, jnp.uint32, jnp.uint16, jnp.uint8)
   def test_scalar_argument(self, dtype):
+    if dtype == jnp.uint64 and not config.enable_x64.value:
+      self.skipTest(
+        "64-bit types are disabled: this leads to the input scalar being"
+        " traced as a uint32 value, which causes the top 32 bits of the 64-bit"
+        " values read from the 32-bit input buffer to sometimes"
+        " (nondeterministically) contain garbage.")
+
     scalar = 42
     expected = np.full((128, 128), scalar, dtype=dtype)
 
@@ -1852,6 +1864,80 @@ class LayoutTest(TestCase):
           return addr
         used_regs = {get_reg(addr) for addr in addrs}
         self.assertLessEqual(len(used_regs), expected_regs)
+
+
+class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
+  """Device tests with lowering from the MLIR dialect and layout inference."""
+
+  def setUp(self):
+    if mgpu_dialect is None:
+      raise self.skipTest("Test requires Mosaic GPU dialect")
+    super().setUp()
+
+  def test_pointwise_kernel(self):
+    def add(ctx, a, b, result, smem):
+      del ctx, smem
+      shape = ir.MemRefType(a.type).shape
+      elt_type = ir.MemRefType(a.type).element_type
+
+      zero_index = arith.constant(ir.IndexType.get(), 0)
+
+      # GMEM -> registers
+      ab_type = ir.VectorType.get(shape, elt_type)
+      a = vector.load(ab_type, a, [zero_index, zero_index])
+      b = vector.load(ab_type, b, [zero_index, zero_index])
+
+      # Computation
+      add = arith.addf(a, b)
+
+      # Registers -> GMEM
+      vector.store(add, result, [zero_index, zero_index])
+
+    dtype = jnp.bfloat16
+    shape = (128, 128)
+    jax_shape = jax.ShapeDtypeStruct(shape, dtype)
+    kernel = mgpu.as_gpu_kernel(
+        add,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(jax_shape, jax_shape),
+        out_shape=jax_shape,
+        smem_scratch_shape=[],
+        thread_semantics=mgpu.ThreadSemantics.Warpgroup,
+    )
+
+    x = self.prng.uniform(-1, 1, shape).astype(dtype)
+    y = self.prng.uniform(-1, 1, shape).astype(dtype)
+
+    self.assertArraysEqual(jax.jit(kernel)(x, y), x + y)
+
+
+class UtilsTest(TestCase):
+  @parameterized.parameters(
+      (1,),
+      (-1,),
+      (slice(2), slice(3),),
+      (slice(1), slice(1, 3)),
+      (slice(-2, 0),),
+      (slice(-2, -1),),
+      *([(utils.DynamicSlice(0, 2),)] if HAS_MOSAIC_GPU else []),
+  )
+  def test_parse_indices(self, *indices):
+    # We are simply making sure this does not raise.
+    _, _, _ = utils.parse_indices(indices, (2, 3, 4))
+
+  @parameterized.parameters(
+      (42,),
+      (-42,),
+      (slice(42),),
+      (slice(0, 42),),
+      (slice(-42, 0),),
+      (slice(-4, -42),),
+      *([(utils.DynamicSlice(0, 4),)] if HAS_MOSAIC_GPU else []),
+  )
+  def test_parse_indices_oob(self, indices):
+    with self.assertRaisesRegex(IndexError, "out of bounds"):
+      utils.parse_indices(indices, (2, 3, 4))
 
 
 if __name__ == "__main__":

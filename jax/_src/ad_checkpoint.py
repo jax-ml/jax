@@ -32,7 +32,8 @@ from jax._src import linear_util as lu
 from jax._src import effects
 from jax._src import source_info_util
 from jax._src import traceback_util
-from jax._src.api_util import flatten_fun, shaped_abstractify
+from jax._src.api_util import (
+    flatten_fun, shaped_abstractify, debug_info, fun_sourceinfo, fun_signature)
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -41,7 +42,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax import convolution as lax_convolution
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.traceback_util import api_boundary
-from jax._src.tree_util import tree_flatten, tree_unflatten, tree_structure, keystr
+from jax._src.tree_util import tree_flatten, tree_unflatten, tree_structure
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, merge_lists, weakref_lru_cache)
 
@@ -142,8 +143,14 @@ def save_and_offload_only_these_names(
 def save_from_both_policies(policy_1, policy_2):
 
   def policy(prim, *args, **params):
-    return policy_1(prim, *args, **params) or policy_2(prim, *args, **params)
-
+    out1 = policy_1(prim, *args, **params)
+    out2 = policy_2(prim, *args, **params)
+    if not (isinstance(out1, bool) and isinstance(out2, bool)):
+      raise ValueError(
+          "The return value of the policies should be a boolean. Got:"
+          f" {out1} and {out2}. Please write a custom policy function directly,"
+          " rather than using this helper function.")
+    return out1 or out2
   return policy
 
 
@@ -311,13 +318,18 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
   ``jax.ensure_compile_time_eval``), it may be easier to compute some values
   outside the :func:`jax.checkpoint`-decorated function and then close over them.
   """
+  if isinstance(static_argnums, int):
+    static_argnums = static_argnums,
+
   @wraps(fun)
   @api_boundary
   def fun_remat(*args, **kwargs):
+    debug = debug_info("checkpoint / remat", fun_sourceinfo(fun),
+                       fun_signature(fun), args, kwargs, static_argnums, ())
     fun_, args = _remat_static_argnums(fun, static_argnums, args)
     args_flat, in_tree = tree_flatten((args, kwargs))
     in_avals = [shaped_abstractify(x) for x in args_flat]
-    jaxpr, consts, out_tree = _trace_to_jaxpr(fun_, in_tree, tuple(in_avals))
+    jaxpr, consts, out_tree = _trace_to_jaxpr(fun_, in_tree, tuple(in_avals), debug)
     out_flat = remat_p.bind(
         *consts, *args_flat, jaxpr=jaxpr, prevent_cse=prevent_cse,
         differentiated=False, policy=policy)
@@ -403,9 +415,8 @@ _dyn_args_fun_cached = weakref_lru_cache(_dyn_args_fun_uncached)
 # This helper is similar to those in control_flow/common.py, but with
 # remat-specific errors.
 @weakref_lru_cache
-def _trace_to_jaxpr(fun, in_tree, in_avals):
+def _trace_to_jaxpr(fun, in_tree, in_avals, debug):
   flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
-  debug = pe.debug_info(fun, in_tree, out_tree, True, "checkpoint")
   try:
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
   except core.ConcretizationTypeError as e:
@@ -439,10 +450,9 @@ def saved_residuals(f, *args, **kwargs) -> list[tuple[core.AbstractValue, str]]:
   out_tree = lambda: tree_structure(out_shape)
   assert len(jaxpr.invars) == len(in_leaves)
   dbg = pe.debug_info(f, in_tree, out_tree, True, "saved_residuals")
-  arg_info = pe.arg_info_all(dbg)
-  return _saved_residuals(jaxpr, arg_info)
+  return _saved_residuals(jaxpr, dbg.arg_names)  # type: ignore
 
-def _saved_residuals(jaxpr, arg_info) -> list[tuple[core.AbstractValue, str]]:
+def _saved_residuals(jaxpr, arg_names) -> list[tuple[core.AbstractValue, str]]:
   res_lits = [x for x in jaxpr.outvars if     isinstance(x, core.Literal)]
   res_vars = {x for x in jaxpr.outvars if not isinstance(x, core.Literal)}
 
@@ -457,9 +467,8 @@ def _saved_residuals(jaxpr, arg_info) -> list[tuple[core.AbstractValue, str]]:
 
   for i, v in enumerate(jaxpr.invars):
     if v in res_vars:
-      if arg_info is not None:
-        arg_name, arg_path = arg_info[i]
-        src = f'from the argument {arg_name}{keystr(arg_path)}'
+      if arg_names is not None:
+        src = f'from the argument {arg_names[i]}'
       else:
         src = 'from the argument at flattened index {i}'
       results.append((v.aval, src))

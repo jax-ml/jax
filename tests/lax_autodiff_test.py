@@ -277,6 +277,24 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(concatenate, operands, 2, ["fwd", "rev"], eps=1.)
 
   @jtu.sample_product(
+    [dict(base_shape=base_shape, axis=axis)
+      for base_shape in [(4,), (3, 4), (2, 3, 4)]
+      for axis in range(len(base_shape))
+    ],
+    num_pieces=range(3),
+    dtype=float_dtypes,
+  )
+  def testSplitGrad(self, axis, base_shape, dtype, num_pieces):
+    sizes = jtu.rand_int(self.rng(), 5)((num_pieces + 1,), np.int64)
+    shape = list(base_shape)
+    shape[axis] = np.sum(sizes)
+    rng = jtu.rand_default(self.rng())
+    operands = (rng(shape, dtype),)
+    split = lambda x: lax.split(x, sizes, axis)
+    check_grads(split, operands, 2, ["fwd", "rev"], eps=1.)
+
+
+  @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape, strides=strides)
        for lhs_shape, rhs_shape, all_strides in itertools.chain(
            [((b, i, 3, 4), (j, i, 1, 2), [(1, 1), (1, 2), (2, 1)])

@@ -19,13 +19,17 @@ from jax._src.lib import mosaic_gpu_dialect as dialect  # noqa: F401
 from .core import (
     Barrier as Barrier,
     ClusterBarrier as ClusterBarrier,
-    LaunchContext as LaunchContext,
-    MemRefTransform as MemRefTransform,
     TMABarrier as TMABarrier,
-    TileTransform as TileTransform,
-    TransposeTransform as TransposeTransform,
+    ThreadSemantics as ThreadSemantics,
     Union as Union,
     as_gpu_kernel as as_gpu_kernel,
+)
+
+from .launch_context import (
+    LaunchContext as LaunchContext,
+    MemRefTransform as MemRefTransform,
+    TileTransform as TileTransform,
+    TransposeTransform as TransposeTransform,
 )
 
 if dialect is not None:

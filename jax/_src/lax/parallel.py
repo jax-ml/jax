@@ -687,6 +687,7 @@ def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
       raise ValueError(f"axis_index_groups can only be used with reductions over "
                        f"named axes, but got: {axes}")
   if config.sharding_in_types.value:
+    core.check_avals_context_mesh(args, 'all_reduce')
     out_avals = [
         ShapedArray(lax._reduce_op_shape_rule(arg, axes=pos_axes), arg.dtype,
                     sharding=lax._reduce_op_sharding_rule(arg, axes=pos_axes))
@@ -1119,8 +1120,11 @@ def _ragged_all_to_all_lowering(ctx, operand, output, input_offsets, send_sizes,
 
 @ragged_all_to_all_p.def_abstract_eval
 def _ragged_all_to_all_abstract_eval(operand, output, input_offsets, send_sizes, output_offsets, recv_sizes):
-  if operand.shape != output.shape:
-    raise ValueError('ragged_all_to_all input and output shapes must be equal.')
+  if operand.shape[1:] != output.shape[1:]:
+    raise ValueError(
+        "ragged_all_to_all input and output shapes must be equal, except for"
+        " the outermost dimension."
+    )
   if not dtypes.issubdtype(input_offsets.dtype, np.integer):
     raise ValueError("ragged_all_to_all input_offsets must be integer type.")
   if not dtypes.issubdtype(send_sizes.dtype, np.integer):

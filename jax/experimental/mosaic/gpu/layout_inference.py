@@ -22,6 +22,7 @@ from typing import List, Tuple, Type, cast
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import vector
 
 # mypy: ignore-errors
 
@@ -106,12 +107,14 @@ for op in (
     arith.AddFOp,
     arith.ConstantOp,
     arith.MulFOp,
+    vector.LoadOp,
+    vector.StoreOp,
 ):
   _add_layout_inference_rule(op, _infer_pointwise_op_layouts)
 
 
-def _layout_inference_should_process_op(op: ir.OpView) -> bool:
-  """Returns 'true' if the layout inference pass can skip the operation."""
+def should_have_layout(op: ir.OpView) -> bool:
+  """Returns 'true' if the layout inference pass should process the operation."""
 
   def is_array(v: ir.Value):
     ty = v.type
@@ -120,7 +123,7 @@ def _layout_inference_should_process_op(op: ir.OpView) -> bool:
   return any(map(is_array, itertools.chain(op.operands, op.results)))
 
 
-def _has_any_layout_set(op: ir.OpView) -> bool:
+def has_any_layout_set(op: ir.OpView) -> bool:
   return "in_layouts" in op.attributes or "out_layouts" in op.attributes
 
 
@@ -150,7 +153,7 @@ def traverse_op(
 
 def infer_layout(module: ir.Module):
   def inference_step(op: ir.Operation):
-    if not _layout_inference_should_process_op(op):
+    if not should_have_layout(op):
       return
     elif inference_rule := _layout_inference_rules.get(op.OPERATION_NAME, None):  # pytype: disable=attribute-error
       pass
@@ -184,7 +187,7 @@ def infer_layout(module: ir.Module):
   # that should be annotated with a strided fragmented layout.
   def set_default_layout(op: ir.OpView):
     layout = strided_fragmented_layout()
-    if _layout_inference_should_process_op(op) and not _has_any_layout_set(op):
+    if should_have_layout(op) and not has_any_layout_set(op):
       _set_layout_attributes(
           op, [layout] * len(op.operands), [layout] * len(op.results))
 

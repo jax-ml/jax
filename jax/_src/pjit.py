@@ -61,8 +61,8 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
-from jax._src import sharding
 from jax._src.mesh import AbstractMesh
+from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     NamedSharding, GSPMDSharding,
     SingleDeviceSharding, PmapSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
@@ -73,7 +73,7 @@ from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, treedef_is_leaf, tree_structure, tree_leaves,
     treedef_children, broadcast_prefix, all_leaves, prefix_errors, keystr,
-    PyTreeDef, none_leaf_registry as none_lr)
+    PyTreeDef, none_leaf_registry as none_lr, tree_map)
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps,
     distributed_debug_log, split_list, weakref_lru_cache,
@@ -556,17 +556,14 @@ def _infer_params_impl(
         "pjit does not support kwargs when in_shardings is specified.")
 
   if pjit_mesh is not None:
-    jit_name = 'pjit'
     if (ji.backend or ji.device) and not pjit_mesh.empty:
       raise ValueError(
           "Mesh context manager should not be used with jit when backend or "
           "device is also specified as an argument to jit.")
-  else:
-    jit_name = 'jit'
 
   axes_specs = _flat_axes_specs(ji.abstracted_axes, *args, **kwargs)
 
-  dbg = debug_info(jit_name, ji.fun_sourceinfo, ji.fun_signature, args, kwargs,
+  dbg = debug_info('jit', ji.fun_sourceinfo, ji.fun_signature, args, kwargs,
                    ji.static_argnums, ji.static_argnames)
   f = lu.wrap_init(fun)
   f, res_paths = result_paths(f)
@@ -593,6 +590,7 @@ def _infer_params_impl(
     in_shardings_leaves = out_shardings_leaves = tuple(leaves)
     in_shardings_treedef = out_shardings_treedef = treedef
   else:
+    jit_name = 'pjit' if pjit_mesh is not None else 'jit'
     in_shardings_leaves = tuple(
         _create_sharding_for_array(pjit_mesh, x, 'in_shardings', jit_name)
         for x in ji.in_shardings_leaves)
@@ -607,35 +605,12 @@ def _infer_params_impl(
 
   in_type: core.InputType | tuple[core.AbstractValue, ...]
   if config.dynamic_shapes.value:
+    assert in_avals is None
     in_type = pe.infer_lambda_input_type(axes_specs, explicit_args)
     in_avals = tuple(a for a, e in in_type if e)
-  elif in_avals is None:
-    avals = []
-    for i, a in enumerate(explicit_args):
-      try:
-        avals.append(shaped_abstractify(a))
-      except OverflowError as e:
-        arg_path = (f"argument path is {dbg.arg_names[i]}" if dbg
-                    else f"flattened argument number is {i}")
-        raise OverflowError(
-          "An overflow was encountered while parsing an argument to a jitted "
-          f"computation, whose {arg_path}."
-        ) from e
-      except TypeError as e:
-        arg_description = (f"path {dbg.arg_names[i]}" if dbg
-                           else f"flattened argument number {i}")
-        raise TypeError(
-          f"Error interpreting argument to {fun} as an abstract array."
-          f" The problematic value is of type {type(a)} and was passed to"
-          f" the function at {arg_description}.\n"
-          "This typically means that a jit-wrapped function was called with a non-array"
-          " argument, and this argument was not marked as static using the"
-          " static_argnums or static_argnames parameters of jax.jit."
-        ) from e
-
-    in_type = in_avals = tuple(avals)
   else:
-    in_type = in_avals
+    in_type = in_avals  # type: ignore
+  assert in_avals is not None
 
   in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
       in_shardings_treedef, in_shardings_leaves,
@@ -652,6 +627,7 @@ def _infer_params_impl(
         flat_fun, in_type, attr_token, dbg,
         HashableFunction(res_paths, closure=()),
         IgnoreKey(ji.inline))
+    _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), explicit_args)
   _attr_update(flat_fun, in_type, attr_token, attrs_tracked)
 
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
@@ -693,7 +669,6 @@ def _infer_params_impl(
                     donated_invars, dbg.arg_names if dbg else None, len(consts),
                     attrs_tracked, abstract_mesh), args_flat
 
-
 def get_abstract_mesh_from_avals(in_avals):
   if not config.sharding_in_types.value:
     return None
@@ -711,9 +686,7 @@ def get_abstract_mesh_from_avals(in_avals):
 class InferParamsCacheEntry:
   """Mutable value object for _infer_params_cached."""
   __slots__ = ['pjit_params']
-
   pjit_params: PjitParams | None
-
   def __init__(self):
     self.pjit_params = None
 
@@ -747,34 +720,76 @@ def _infer_params(
     resource_env = None
     pjit_mesh = None
 
-  skip_cache = config.dynamic_shapes.value
-  if not skip_cache:
-    signature, dynargs = jax_jit.parse_arguments(
-        args, tuple(kwargs.values()), tuple(kwargs.keys()), ji.static_argnums,
-        ji.static_argnames, tree_util.default_registry)
-    try:
-      avals = tuple(shaped_abstractify(a) for a in dynargs)
-    except (OverflowError, TypeError):
-      # If we see something we don't understand, use the slow path.
-      skip_cache = True
-
-  if skip_cache:
+  if config.dynamic_shapes.value:  # if dynamic shapes, don't use the cache
     p, args_flat = _infer_params_impl(fun, ji, pjit_mesh, resource_env, args,
                                       kwargs, in_avals=None)
     return p, p.consts + args_flat
 
-  entry = _infer_params_cached(
-      fun, ji, signature, avals, pjit_mesh, resource_env)
+  signature, dynargs = jax_jit.parse_arguments(
+      args, tuple(kwargs.values()), tuple(kwargs.keys()), ji.static_argnums,
+      ji.static_argnames, tree_util.default_registry)
+  dbg = debug_info('jit', ji.fun_sourceinfo, ji.fun_signature, args, kwargs,
+                   ji.static_argnums, ji.static_argnames)
+  avals = _infer_input_type(fun, dbg, dynargs)
+  entry = _infer_params_cached(fun, ji, signature, avals, pjit_mesh, resource_env)
   if entry.pjit_params is None:
     p, args_flat = _infer_params_impl(
         fun, ji, pjit_mesh, resource_env, args, kwargs, in_avals=avals)
-    if p.attrs_tracked:
-      # If there are attrs_tracked, don't use the cache.
+    if p.attrs_tracked:  # if attrs, don't popoulate the cache
       return p, p.consts + args_flat
-    else:
-      entry.pjit_params = p
+    entry.pjit_params = p
   return entry.pjit_params, entry.pjit_params.consts + dynargs
 
+def _infer_input_type(fun, dbg, explicit_args) -> tuple[core.AbstractValue, ...]:
+  avals = []
+  try:
+    for i, x in enumerate(explicit_args):
+      avals.append(shaped_abstractify(x))
+  except OverflowError:
+    arg_path = (f"argument path is {dbg.arg_names[i]}" if dbg  # type: ignore
+                else f"flattened argument number is {i}")  # type: ignore
+    raise OverflowError(
+      "An overflow was encountered while parsing an argument to a jitted "
+      f"computation, whose {arg_path}."
+    ) from None
+  except TypeError:
+    arg_description = (f"path {dbg.arg_names[i]}" if dbg  # type: ignore
+                       else f"flattened argument number {i}")  # type: ignore
+    raise TypeError(
+      f"Error interpreting argument to {fun} as an abstract array."
+      f" The problematic value is of type {type(x)} and was passed to"  # type: ignore
+      f" the function at {arg_description}.\n"
+      "This typically means that a jit-wrapped function was called with a non-array"
+      " argument, and this argument was not marked as static using the"
+      " static_argnums or static_argnames parameters of jax.jit."
+    ) from None
+  if config.mutable_array_checks.value:
+    # TODO(mattjj): make this faster
+    refs: dict[int, int] = {}
+    for i, (a, x) in enumerate(zip(avals, explicit_args)):
+      if (isinstance(a, AbstractRef) and
+          (dup_idx := refs.setdefault(id(core.get_referent(x)), i)) != i):
+        raise ValueError(
+          "only one reference to a mutable array may be passed as an argument "
+          f"to a function, but when tracing {dbg.func_src_info} for {dbg.traced_for} "
+          f"the mutable array reference of type {a.str_short()} appeared at both "
+          f"{dbg.arg_names[dup_idx]} and {dbg.arg_names[i]}."
+          if dbg else
+          f"at both flat index {dup_idx} and flat index {i}") from None
+  return tuple(avals)
+
+def _check_no_aliased_closed_over_refs(dbg, consts, args) -> None:
+  if not config.mutable_array_checks.value: return
+  refs: set[int] = {id(core.get_referent(c)) for c in consts
+                    if isinstance(core.get_aval(c), AbstractRef)}
+  for i, x in enumerate(args):
+    if id(core.get_referent(x)) in refs:
+      a = shaped_abstractify(x)
+      raise ValueError(
+          f"when tracing {dbg.func_src_info} for {dbg.traced_for}, a mutable "
+          f"array reference of type {a.str_short()} was both closed over and "
+          f"passed as the argument "
+          f"{dbg.arg_names[i]}" if dbg else "at flat index {i}")
 
 def _extract_implicit_args(
   in_type: Sequence[tuple[core.AbstractValue, bool]],
@@ -1027,7 +1042,7 @@ def hashable_pytree(pytree):
 def _create_sharding_for_array(mesh, x, name, api_name):
   if x is None and (mesh is None or mesh.empty):
     return UNSPECIFIED
-  if isinstance(x, (AUTO, UnspecifiedValue, sharding.Sharding)):
+  if isinstance(x, (AUTO, UnspecifiedValue, Sharding)):
     return x
   if mesh is None:
     msg = ('jax.jit only supports `Sharding`s being passed to'
@@ -1339,7 +1354,7 @@ def _check_and_canonicalize_out_shardings(
     out_shardings_treedef, out_shardings_leaves, out_layouts_treedef,
     out_layouts_leaves, out_tree, out_avals, debug_info, device_or_backend_set):
   orig_out_shardings = tree_unflatten(out_shardings_treedef, out_shardings_leaves)
-  if isinstance(orig_out_shardings, (UnspecifiedValue, sharding.Sharding)):
+  if isinstance(orig_out_shardings, (UnspecifiedValue, Sharding)):
     out_shardings_flat = (orig_out_shardings,) * len(out_avals)
   else:
     out_shardings_flat = flatten_axis_resources(
@@ -1571,7 +1586,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
           else:
             resolved_in_shardings.append(arg_s)
         else:
-          assert isinstance(arg_s, sharding.Sharding)
+          assert isinstance(arg_s, Sharding)
           if dispatch.is_single_device_sharding(arg_s):
             resolved_in_shardings.append(UNSPECIFIED)
           else:
@@ -1689,7 +1704,7 @@ def _pjit_call_impl_python(
                           ("out_shardings", out_shardings),
                           ("in_layouts", in_layouts),
                           ("out_layouts", out_layouts),
-                          ("abstract args", map(xla.abstractify, args)),
+                          ("abstract args", map(core.abstractify, args)),
                           ("fingerprint", fingerprint))
   try:
     return compiled.unsafe_call(*args), compiled, pgle_profiler
@@ -1903,7 +1918,7 @@ def _pjit_typecheck(ctx_factory, *in_atoms, jaxpr, **params):
 core.custom_typechecks[pjit_p] = _pjit_typecheck
 
 
-def _pjit_abstract_eval(*args, jaxpr, **_):
+def _pjit_abstract_eval(*args, jaxpr, out_shardings, **_):
   return jaxpr.out_avals, jaxpr.effects
 pjit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
@@ -2016,7 +2031,7 @@ batching.fancy_primitive_batchers[pjit_p] = _pjit_batcher
 batching.ragged_prop_rules[pjit_p] = batching.ragged_mask_no_op_rule
 
 def _pjit_batcher_for_sharding(
-    s: sharding.Sharding | UnspecifiedValue,
+    s: Sharding | UnspecifiedValue,
     dim: int, spmd_axis_name: tuple[str, ...] | None, mesh, ndim: int):
   if isinstance(s, UnspecifiedValue):
     return s
@@ -2673,6 +2688,67 @@ def _sharding_constraint_batcher(
 batching.fancy_primitive_batchers[sharding_constraint_p] = _sharding_constraint_batcher
 batching.skippable_batchers[sharding_constraint_p] = lambda _: ()
 
+# -------------------- sharding_cast ---------------------------
+
+def sharding_cast(xs, shardings):
+  if isinstance(shardings, NamedSharding):
+    return tree_map(lambda x: sharding_cast_p.bind(
+        x, src_sharding=x.sharding, dst_sharding=shardings), xs)
+
+  x_flat, treedef = tree_flatten(xs)
+  shardings_flat = flatten_axes("sharding_cast shardings", treedef, shardings)
+  out_flat = [sharding_cast_p.bind(x, src_sharding=x.sharding, dst_sharding=s)
+              for x, s in safe_zip(x_flat, shardings_flat)]
+  return tree_unflatten(treedef, out_flat)
+
+sharding_cast_p = core.Primitive('sharding_cast')
+def _sharding_cast_abstract_eval(aval, src_sharding, dst_sharding):
+  if src_sharding.mesh.shape_tuple != dst_sharding.mesh.shape_tuple:
+    raise ValueError(
+        f'Mesh shape of the input {src_sharding.mesh.shape_tuple} does not'
+        ' match the mesh shape of the target sharding'
+        f' {dst_sharding.mesh.shape_tuple} for shape {aval.str_short()}')
+  return aval.update(sharding=dst_sharding)
+sharding_cast_p.def_abstract_eval(_sharding_cast_abstract_eval)
+
+def _sharding_cast_impl(x, src_sharding, dst_sharding):
+  return dispatch.apply_primitive(sharding_cast_p, x, src_sharding=src_sharding,
+                                  dst_sharding=dst_sharding)
+sharding_cast_p.def_impl(_sharding_cast_impl)
+
+def _sharding_cast_transpose_rule(ct, _, src_sharding, dst_sharding):
+  return [sharding_cast_p.bind(ct, src_sharding=dst_sharding,
+                               dst_sharding=src_sharding)]
+ad.deflinear2(sharding_cast_p, _sharding_cast_transpose_rule)
+
+def _sharding_cast_hlo_lowering(ctx, x_node, *, src_sharding, dst_sharding):
+  aval, = ctx.avals_in
+  aval_out, = ctx.avals_out
+  proto = dst_sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
+  return [mlir.lower_sharding_under_shit(ctx, x_node, aval_out, proto)]
+mlir.register_lowering(sharding_cast_p, _sharding_cast_hlo_lowering)
+
+# TODO(yashkatariya): Comment this in after vmap ShiT tests are added.
+# def _sharding_cast_batcher(axis_data, vals_in, dims_in, src_sharding,
+#                            dst_sharding):
+#   if axis_data.spmd_name is not None:
+#     used = {n for ns in dst_sharding.spec
+#             for n in (ns if isinstance(ns, tuple) else (ns,))}
+#     if set(axis_data.spmd_name) & used:
+#       raise ValueError(
+#           f'vmap spmd_axis_name {axis_data.spmd_name} cannot '
+#           f'appear in sharding_cast spec, but got spec {dst_sharding.spec}')
+#   x, = vals_in
+#   d, = dims_in
+
+#   val = None if axis_data.spmd_name is None else axis_data.spmd_name
+#   new_spec = PartitionSpec(*util.tuple_insert(dst_sharding.spec, d, val))
+#   vmapped_dst_sharding = NamedSharding(dst_sharding.mesh, new_spec)
+#   y = sharding_cast_p.bind(x, src_sharding=src_sharding,
+#                            dst_sharding=vmapped_dst_sharding)
+#   return y, d
+# batching.fancy_primitive_batchers[sharding_cast_p] = _sharding_cast_batcher
+# batching.skippable_batchers[sharding_cast_p] = lambda _: ()
 
 # -------------------- helpers --------------------
 

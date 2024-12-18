@@ -10,7 +10,22 @@ Remember to align the itemized text with the first line of an item within a list
 When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
-## jax 0.4.38
+## Unreleased
+
+* Deprecations
+  * From {mod}`jax.interpreters.xla`, `abstractify` and `pytype_aval_mappings`
+    are now deprecated, having been replaced by symbols of the same name
+    in {mod}`jax.core`.
+
+* Deletions
+  * `jax_enable_memories` flag has been deleted and the behavior of that flag
+    is on by default.
+
+* Changes:
+  * The minimum NumPy version is now 1.25. NumPy 1.25 will remain the minimum
+    supported version until June 2025.
+
+## jax 0.4.38 (Dec 17, 2024)
 
 * Changes:
   * `jax.tree.flatten_with_path` and `jax.tree.map_with_path` are added
@@ -32,6 +47,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.export.export` can be used for device-polymorphic export with
     shardings constructed with {func}`jax.sharding.AbstractMesh`.
     See the [jax.export documentation](https://jax.readthedocs.io/en/latest/export/export.html#device-polymorphic-export).
+  * Added {func}`jax.lax.split`. This is a primitive version of
+    {func}`jax.numpy.split`, added because it yields a more compact
+    transpose during automatic differentiation.
 
 ## jax 0.4.37 (Dec 9, 2024)
 

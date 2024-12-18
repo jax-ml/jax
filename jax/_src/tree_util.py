@@ -25,7 +25,6 @@ from typing import Any, NamedTuple, TypeVar, overload
 
 from jax._src import traceback_util
 from jax._src.lib import pytree
-from jax._src.lib import xla_extension_version
 from jax._src.util import safe_zip, set_module
 from jax._src.util import unzip2
 
@@ -613,7 +612,7 @@ def flatten_one_level_with_keys(
     tree: Any,
 ) -> tuple[Iterable[KeyLeafPair], Hashable]:
   """Flatten the given pytree node by one level, with keys."""
-  out = default_registry.flatten_one_level_with_keys(tree)
+  out = default_registry.flatten_one_level_with_keys(tree)  # type: ignore
   if out is None:
     raise ValueError(f"can't tree-flatten type: {type(tree)}")
   else:
@@ -1159,17 +1158,7 @@ def tree_map_with_path(f: Callable[..., Any],
 
 def _child_keys(pytree: Any) -> KeyPath:
   assert not treedef_is_strict_leaf(tree_structure(pytree))
-  if xla_extension_version >= 301:
-    return tuple(k for k, _ in flatten_one_level_with_keys(pytree)[0])
-  handler = _registry_with_keypaths.get(type(pytree))
-  if handler:
-    return tuple(k for k, _ in handler.flatten_with_keys(pytree)[0])
-  elif isinstance(pytree, tuple) and hasattr(pytree, '_fields'):
-    # handle namedtuple as a special case, based on heuristic
-    return tuple(GetAttrKey(s) for s in pytree._fields)
-  else:
-    num_children = len(treedef_children(tree_structure(pytree)))
-    return tuple(FlattenedIndexKey(i) for i in range(num_children))
+  return tuple(k for k, _ in flatten_one_level_with_keys(pytree)[0])
 
 
 def _prefix_error(

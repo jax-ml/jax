@@ -272,6 +272,7 @@ class ProfilerTest(unittest.TestCase):
     port = portpicker.pick_unused_port()
     jax.profiler.start_server(port)
 
+    profile_done = threading.Event()
     logdir = absltest.get_default_test_tmpdir()
     # Remove any existing log files.
     shutil.rmtree(logdir, ignore_errors=True)
@@ -279,13 +280,18 @@ class ProfilerTest(unittest.TestCase):
       os.system(
           f"{sys.executable} -m jax.collect_profile {port} 500 "
           f"--log_dir {logdir} --no_perfetto_link")
+      profile_done.set()
 
     thread_profiler = threading.Thread(
         target=on_profile, args=())
     thread_profiler.start()
     start_time = time.time()
     y = jnp.zeros((5, 5))
-    while time.time() - start_time < 10:
+    while not profile_done.is_set():
+      # The timeout here must be relatively high. The profiler takes a while to
+      # start up on Cloud TPUs.
+      if time.time() - start_time > 30:
+        raise RuntimeError("Profile did not complete in 30s")
       y = jnp.dot(y, y)
     jax.profiler.stop_server()
     thread_profiler.join()

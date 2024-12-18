@@ -353,7 +353,7 @@ LogicalResult canonicalize_multi_dim_reduction(int hardware_generation,
         reduces_sublanes = true;
       }
     }
-    if (hardware_generation <= 5 || reduces_sublanes) {
+    if (hardware_generation <= 5) {
       auto new_source = builder.create<arith::ExtFOp>(
           VectorType::get(source_ty.getShape(), builder.getF32Type()),
           op.getSource());

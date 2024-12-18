@@ -874,7 +874,8 @@ FailureOr<xla::Array<Value>> ext_op_rule_impl(RewriteContext &ctx,
       int64_t vreg_part = *(input_vreg_idxs.end() - 2) % packing;
       *(input_vreg_idxs.end() - 2) /= packing;
       *v = builder.create<UnpackSubelementsOp>(
-          op.getLoc(), res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part);
+          op.getLoc(), res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part,
+          tpu::PackFormat::kCompressed);
     });
   } else {
     if (layout_in.tiling() != layout_out.tiling()) {
@@ -890,7 +891,8 @@ FailureOr<xla::Array<Value>> ext_op_rule_impl(RewriteContext &ctx,
       input_vreg_idxs.back() /= packing;
       const int64_t vreg_part = idxs.back() % packing;
       *v = builder.create<UnpackSubelementsOp>(
-          op.getLoc(), res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part);
+          op.getLoc(), res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part,
+          tpu::PackFormat::kCompressed);
     });
   }
   return output_vregs;
@@ -1033,12 +1035,19 @@ LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
     output_vregs.Each([&](absl::Span<const int64_t> idxs, Value *v) {
       SmallVector<Value> parts;
       SmallVector<int64_t> idxs_local(toArrayRef(idxs));
-      idxs_local.back() *= packing;
-      for (int64_t i = 0; i < packing; ++i) {
-        parts.push_back(input_vregs(idxs_local));
-        // Pack any data lying around if OOB
-        if (idxs_local.back() < input_vregs.dimensions().back() - 1) {
-          ++idxs_local.back();
+      if (!layout_out.offsets()[1].has_value()) {
+        idxs_local.back() = 0;
+        // Make sure we set all parts of the output vreg to make it replicated
+        parts.append(packing, input_vregs(idxs_local));
+      } else {
+        idxs_local.back() *= packing;
+        for (int64_t i = 0; i < packing; ++i) {
+          if (idxs_local.back() < input_vregs.dimensions().back()) {
+            parts.push_back(input_vregs(idxs_local));
+            ++idxs_local.back();
+          } else {
+            parts.push_back(nullptr);
+          }
         }
       }
       *v = builder.create<PackSubelementsOp>(res_vreg_ty, parts,
@@ -1051,16 +1060,19 @@ LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
     output_vregs.Each([&](absl::Span<const int64_t> idxs, Value *v) {
       CHECK_GE(idxs.size(), 2);
       SmallVector<int64_t> idxs_local(toArrayRef(idxs));
-      idxs_local[idxs.size() - 2] *= packing;
-      parts.push_back(input_vregs(idxs_local));
-      idxs_local[idxs.size() - 2]++;
-      while (parts.size() < packing) {
-        if (*(idxs_local.end() - 2) < *(input_vregs.dimensions().end() - 2)) {
-          parts.push_back(input_vregs(idxs_local));
-          idxs_local[idxs.size() - 2]++;
-        } else {
-          // Once we run out of tiles, we can pick any one we like.
-          parts.push_back(parts.back());
+      if (!layout_out.offsets()[0].has_value()) {
+        *(idxs_local.end() - 2) = 0;
+        // Make sure we set all parts of the output vreg to make it replicated
+        parts.append(packing, input_vregs(idxs_local));
+      } else {
+        *(idxs_local.end() - 2) *= packing;
+        for (int64_t i = 0; i < packing; ++i) {
+          if (*(idxs_local.end() - 2) < *(input_vregs.dimensions().end() - 2)) {
+            parts.push_back(input_vregs(idxs_local));
+            ++*(idxs_local.end() - 2);
+          } else {
+            parts.push_back(nullptr);
+          }
         }
       }
       *v = builder.create<PackSubelementsOp>(res_vreg_ty, parts,
@@ -3907,6 +3919,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
   TPU_ASSERT_OP(
       llvm::all_of(layouts_in, [&](const Layout &l) { return l.has_value(); }));
+  const Location loc = op.getLoc();
   const VectorLayout &src_layout = *layouts_in[0];
   const VectorLayout &acc_layout = *layouts_in[1];
   const VectorLayout &dst_layout = *layouts_out[0];
@@ -4089,6 +4102,16 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
         xla::Array<Value> reduced_vregs =
             src_vregs.Slice(src_slice_start, src_slice_end);
         std::optional<Value> acc_vreg;
+        auto reduce_elementwise = [&](Value lhs, Value rhs) -> Value {
+          switch (tpu_kind) {
+            case tpu::ReductionKind::SUM:
+              return builder.create<arith::AddFOp>(loc, lhs, rhs);
+            case tpu::ReductionKind::MAX:
+              return builder.create<arith::MaximumFOp>(loc, lhs, rhs);
+            case tpu::ReductionKind::MIN:
+              return builder.create<arith::MinimumFOp>(loc, lhs, rhs);
+          }
+        };
         auto reduction_status = reduced_vregs.EachStatus(
             [&](const absl::Span<const int64_t> red_idx,
                 Value *const src_vreg) {
@@ -4118,20 +4141,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
               if (!acc_vreg.has_value()) {
                 acc_vreg = vreg;
               } else {
-                switch (tpu_kind) {
-                  case tpu::ReductionKind::SUM:
-                    acc_vreg = builder.create<arith::AddFOp>(vreg.getLoc(),
-                                                             *acc_vreg, vreg);
-                    break;
-                  case tpu::ReductionKind::MAX:
-                    acc_vreg = builder.create<arith::MaximumFOp>(
-                        vreg.getLoc(), *acc_vreg, vreg);
-                    break;
-                  case tpu::ReductionKind::MIN:
-                    acc_vreg = builder.create<arith::MinimumFOp>(
-                        vreg.getLoc(), *acc_vreg, vreg);
-                    break;
-                }
+                acc_vreg = reduce_elementwise(*acc_vreg, vreg);
               }
               return absl::OkStatus();
             });
@@ -4144,8 +4154,43 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
               multi_reduction_op->getLoc(), *acc_vreg, 1, tpu_kind);
         }
         if (reduces[0]) {
+          // Packed types are compressed along rows, so we need to reduce them
+          // within each 32-bit word. There's no performance penalty for doing
+          // this in 32-bit precision, so we take advantage of it.
+          Type acc_vreg_ty = acc_vreg->getType();
+          if (acc_layout.packing() > 1) {
+            Type vreg_ty_32 = nullptr;
+            if (acc.getType().getElementType().isBF16()) {
+              vreg_ty_32 =
+                  getNativeVregType(builder.getF32Type(), ctx.target_shape);
+            } else {
+              multi_reduction_op.emitOpError(
+                  "Not implemented: Unsupported reduction dtype");
+              return absl::UnknownError("");
+            }
+            Value acc_vreg_32 = builder.create<tpu::UnpackSubelementsOp>(
+                loc, vreg_ty_32, *acc_vreg, 0, tpu::PackFormat::kInterleaved);
+            for (int i = 1; i < acc_layout.packing(); ++i) {
+              Value acc_vreg_part_32 = builder.create<tpu::UnpackSubelementsOp>(
+                  loc, vreg_ty_32, *acc_vreg, i, tpu::PackFormat::kInterleaved);
+              acc_vreg_32 = reduce_elementwise(acc_vreg_32, acc_vreg_part_32);
+            }
+            acc_vreg = acc_vreg_32;
+          }
+          // At this point acc_vreg is always 32-bit.
           acc_vreg = builder.create<tpu::AllReduceOp>(
               multi_reduction_op->getLoc(), *acc_vreg, 0, tpu_kind);
+          // We pack the final result back into the original type.
+          if (acc_layout.packing() > 1) {
+            SmallVector<int32_t> positions(acc_layout.packing());
+            std::iota(positions.begin(), positions.end(),
+                      static_cast<int32_t>(0));
+            SmallVector<Value> parts(acc_layout.packing(), *acc_vreg);
+            acc_vreg = builder.create<tpu::PackSubelementsOp>(
+                loc, acc_vreg_ty, parts,
+                builder.getDenseI32ArrayAttr(positions),
+                tpu::PackFormat::kInterleaved);
+          }
         }
         *dst_vreg = *acc_vreg;
         return absl::OkStatus();
@@ -4395,22 +4440,17 @@ LogicalResult vector_store_impl(RewriteContext &ctx, Op store_op,
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> tiles,
       disassemble(builder, to_store_layout, store_op.getValueToStore(),
-                  ctx.target_shape));
+                  ctx.target_shape, /*use_implicit_shape=*/true));
   std::optional<xla::Array<Value>> tile_masks;
   if (store_mask) {
     FAILUREOR_ASSIGN_OR_RETURN(
-        tile_masks,
-        disassemble(builder, to_store_layout, store_mask, ctx.target_shape));
+        tile_masks, disassemble(builder, to_store_layout, store_mask,
+                                ctx.target_shape, /*use_implicit_shape=*/true));
     TPU_ASSERT_EQ_OP(tile_masks->dimensions(), tiles.dimensions());
   }
   const int64_t ndims = ty.getRank();
-  const auto base_s =
-      is_1d ? IdxConst(0, builder, op.getLoc()) : tile_base_idxs.front();
+  const auto base_s = is_1d ? nullptr : tile_base_idxs.front();
   const auto base_l = tile_base_idxs.back();
-  if (is_1d) {
-    tiles.Reshape(
-        to_store_layout.implicitShape(toArrayRef(tiles.dimensions())));
-  }
   const LayoutOffset sublane_offset = to_store_layout.offsets()[0];
   const LayoutOffset lane_offset = to_store_layout.offsets()[1];
   if (!sublane_offset.has_value() || !lane_offset.has_value()) {
@@ -6252,33 +6292,48 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
       dst.tileArrayImplicitShape(vty.getShape(), target_shape);
   // (8,128) -> (8 * packing,128) tiling change for packed type.
   if (bitwidth < 32 && 32 % bitwidth == 0 && src_tiling == ctx.target_shape &&
-      dst_tiling == std::array<int64_t, 2>{ctx.target_shape[0] * dst.packing(),
+      dst_tiling == std::array<int64_t, 2>{ctx.target_shape[0] * packing,
                                            ctx.target_shape[1]}) {
     // Note: for int4, retiling with scratch is always faster.
     if (bitwidth != 4 || !has_enough_scratch) {
+      // Note: The code below does not work when src is replicated and dst is
+      // not, since it relies on the src vreg array shape to know how many tiles
+      // to pack in dst, and vreg array shapes with materialized offsets are
+      // unfortunately not equal to vreg array shapes with replicated offsets.
+      CHECK(dst.offsets() == src_offsets);
       xla::Array<Value> retiled(dst_tiles_shape);
-      int vty_packing = dst.packing();
       VectorType vreg_x32 =
           vty.getElementType().isSignlessInteger()
               ? VectorType::get(target_shape, builder.getI32Type())
               : VectorType::get(target_shape, builder.getF32Type());
       retiled.Each([&](absl::Span<const int64_t> idx, Value *tile) {
-        const int vreg_part = idx.back() % vty_packing;
+        const int vreg_part = idx.back() % packing;
         SmallVector<Value, 8> parts;
-        parts.reserve(vty_packing);
+        parts.reserve(packing);
         SmallVector<int64_t> src_idx(idx.begin(), idx.end());
-        src_idx[src_idx.size() - 2] *= vty_packing;
-        src_idx[src_idx.size() - 1] /= vty_packing;
-        for (int i = 0; i < vty_packing; ++i) {
-          parts.push_back(builder.create<tpu::UnpackSubelementsOp>(
-              loc, vreg_x32, vregs(src_idx), vreg_part));
-          if (src_idx[src_idx.size() - 2] <
-              vregs.dim(vregs.num_dimensions() - 2) - 1) {
-            ++src_idx[src_idx.size() - 2];
+        *(src_idx.end() - 1) /= packing;
+        if (!dst.offsets()[0].has_value()) {
+          *(src_idx.end() - 2) = 0;
+          // Make sure we set all parts of the output vreg to make it replicated
+          parts.append(packing, builder.create<tpu::UnpackSubelementsOp>(
+                                    loc, vreg_x32, vregs(src_idx), vreg_part,
+                                    tpu::PackFormat::kCompressed));
+        } else {
+          *(src_idx.end() - 2) *= packing;
+          for (int i = 0; i < packing; ++i) {
+            if (*(src_idx.end() - 2) < *(vregs.dimensions().end() - 2)) {
+              parts.push_back(builder.create<tpu::UnpackSubelementsOp>(
+                  loc, vreg_x32, vregs(src_idx), vreg_part,
+                  tpu::PackFormat::kCompressed));
+              ++*(src_idx.end() - 2);
+            } else {
+              parts.push_back(nullptr);
+            }
           }
         }
         *tile = builder.create<tpu::PackSubelementsOp>(
-            loc, vregs.begin()->getType(), parts, tpu::PackFormat::kCompressed);
+            loc, cast<VectorType>(vregs.begin()->getType()), parts,
+            tpu::PackFormat::kCompressed);
       });
       return std::pair(dst, std::move(retiled));
     }
@@ -6337,6 +6392,12 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
     // [(a b) (A B) (c d) (C D) ...]. That is, traverse down each column before
     // moving to the next one. This is exactly an interleaving of the sublanes
     // of the vreg parts.
+
+    // Note: The code below does not work when src is replicated and dst is
+    // not, since it relies on the src vreg array shape to know how many tiles
+    // to pack in dst, and vreg array shapes with materialized offsets are
+    // unfortunately not equal to vreg array shapes with replicated offsets.
+    CHECK(dst.offsets() == src.offsets());
     xla::Array<Value> retiled(dst_tiles_shape);
     const VectorType vreg_x32 =
         vty.getElementType().isSignlessInteger()
@@ -6346,19 +6407,30 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
       SmallVector<Value> parts;
       parts.reserve(packing);
       SmallVector<int64_t> src_idx(toArrayRef(idx));
-      *(src_idx.end() - 2) *= packing;
       const int64_t vreg_part = *(src_idx.end() - 1) % packing;
       *(src_idx.end() - 1) /= packing;
-      for (int i = 0; i < packing; ++i) {
-        parts.push_back(builder.create<tpu::UnpackSubelementsOp>(
-            loc, vreg_x32, vregs(src_idx), vreg_part));
-        if (*(src_idx.end() - 2) < *(vregs.dimensions().end() - 2) - 1) {
-          ++*(src_idx.end() - 2);
-        }  // The rest is padding, so just pick any of the input parts (but not
-           // an arbitrary vreg so we don't add an extra dependency).
+      if (!dst.offsets()[0].has_value()) {
+        *(src_idx.end() - 2) = 0;
+        // Make sure we set all parts of the output vreg to make it replicated
+        parts.append(packing, builder.create<tpu::UnpackSubelementsOp>(
+                                  loc, vreg_x32, vregs(src_idx), vreg_part,
+                                  tpu::PackFormat::kCompressed));
+      } else {
+        *(src_idx.end() - 2) *= packing;
+        for (int i = 0; i < packing; ++i) {
+          if (*(src_idx.end() - 2) < *(vregs.dimensions().end() - 2)) {
+            parts.push_back(builder.create<tpu::UnpackSubelementsOp>(
+                loc, vreg_x32, vregs(src_idx), vreg_part,
+                tpu::PackFormat::kCompressed));
+            ++*(src_idx.end() - 2);
+          } else {
+            parts.push_back(nullptr);
+          }
+        }
       }
       *tile = builder.create<tpu::PackSubelementsOp>(
-          loc, vregs.begin()->getType(), parts, tpu::PackFormat::kInterleaved);
+          loc, cast<VectorType>(vregs.begin()->getType()), parts,
+          tpu::PackFormat::kInterleaved);
     });
     return std::pair(dst, std::move(retiled));
   }

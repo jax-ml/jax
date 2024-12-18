@@ -49,7 +49,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
 from jax._src.sharding import Sharding as JSharding
-from jax._src.sharding_impls import AUTO
+from jax._src.sharding_impls import AUTO, NamedSharding
 from jax._src.partition_spec import UnconstrainedSingleton
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
@@ -1055,6 +1055,21 @@ def _get_mem_kind(s: JSharding | AUTO | None) -> str | None:
   assert isinstance(s, JSharding)
   return s.memory_kind
 
+def contains_unconstrained(s):
+  return isinstance(s, NamedSharding) and None in s._parsed_pspec
+
+def all_unconstrained(s, aval):
+  if isinstance(s, NamedSharding):
+    if aval.ndim != len(s._parsed_pspec):
+      return False
+    return all(p is None for p in s._parsed_pspec)
+  return False
+
+def _get_unconstrained_dimensions(s, aval):
+  us = contains_unconstrained(s)
+  return (us, all_unconstrained(s, aval),
+          ({i for i, p in enumerate(s._parsed_pspec) if p is None} if us else None))
+
 
 def lower_jaxpr_to_module(
     module_name: str,
@@ -1114,7 +1129,8 @@ def lower_jaxpr_to_module(
         f"only {platforms_with_donation} support donation")
     if (num_partitions > 1 and
         (result_shardings is None or
-         all(s is None or isinstance(s, AUTO) for s in result_shardings))):
+         all(s is None or isinstance(s, AUTO) or contains_unconstrained(s)
+             for s in result_shardings))):
       xla_donated_args = donated_args
       donated_args = [False] * len(donated_args)
     if xla_donated_args is None:
@@ -1448,7 +1464,8 @@ def lower_jaxpr_to_fun(
   ir_arg_memory_kinds = None
   if arg_memory_kinds is not None:
     ir_arg_memory_kinds = util.flatten(
-        [[mk] * len_ir_types(types) for mk, types in zip(arg_memory_kinds, input_types)])
+        [[mk] * len_ir_types(types)
+         for mk, types in zip(arg_memory_kinds, input_types)])
 
   ir_arg_layouts = None
   if arg_layouts is not None:
@@ -1459,12 +1476,17 @@ def lower_jaxpr_to_fun(
   ir_donated_args = None
   if xla_donated_args is not None:
     ir_donated_args = util.flatten(
-        [[is_donated] * len_ir_types(types) for is_donated, types in zip(xla_donated_args, input_types)])
+        [[is_donated] * len_ir_types(types)
+         for is_donated, types in zip(xla_donated_args, input_types)])
 
   ir_result_shardings = None
+  unconstrained_shardings = None
   if result_shardings is not None:
     ir_result_shardings = util.flatten(
         [[_to_physical_op_sharding(ctx, a, s)] * len_ir_types(types)
+         for a, s, types in zip(output_avals, result_shardings, output_types)])
+    unconstrained_shardings = util.flatten(
+        [[_get_unconstrained_dimensions(s, a)] * len_ir_types(types)
          for a, s, types in zip(output_avals, result_shardings, output_types)])
 
   ir_result_memory_kinds = None
@@ -1580,8 +1602,9 @@ def lower_jaxpr_to_fun(
         attrs['jax.result_info'] = ir.StringAttr.get(name_)
 
   if use_sharding_annotations and ir_result_shardings is not None:
-    for attrs, sharding in zip(result_attrs, ir_result_shardings):
-      if sharding is not None:
+    for attrs, sharding, us in zip(result_attrs, ir_result_shardings,
+                                   unconstrained_shardings):  # type: ignore
+      if sharding is not None and not us[0]:
         if config.use_shardy_partitioner.value:
           attrs["sdy.sharding"] = get_sharding_attr(sharding)
         else:
@@ -1657,6 +1680,15 @@ def lower_jaxpr_to_fun(
       flat_outputs = [
           o if s is None else wrap_with_sharding_op(entry_lowering_ctx, o, o_aval, s)
           for o, s, o_aval in zip(flat_outputs, ir_result_shardings, output_avals)]
+
+    if ir_result_shardings is not None:
+      flat_outputs = [
+          wrap_with_sharding_op(entry_lowering_ctx, o, o_aval, s,
+                                unspecified_dims=us[2])
+          if us[0] and not us[1] else o
+          for o, s, o_aval, us in zip(flat_outputs, ir_result_shardings,
+                                      output_avals, unconstrained_shardings)  # type: ignore
+      ]
 
     # Insert a custom call if output is on host because XLA needs that to do the
     # transfer.
@@ -1825,7 +1857,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
 
   def aval(v: core.Atom) -> core.AbstractValue:
     if type(v) is core.Literal:
-      return xla.abstractify(v.val)
+      return core.abstractify(v.val)
     else:
       return v.aval
 

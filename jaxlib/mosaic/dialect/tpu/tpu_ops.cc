@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -1109,6 +1110,54 @@ LogicalResult WeirdOp::verify() {
     if (!out_type.isInteger(1)) {
       return emitOpError("Output type must be I1 scalar");
     }
+  }
+  return success();
+}
+
+void PackSubelementsOp::build(OpBuilder &builder, OperationState &state,
+                              const VectorType output_type,
+                              const ArrayRef<Value> padded_sources,
+                              const PackFormat pack_format) {
+  SmallVector<Value> sources;
+  SmallVector<int32_t> positions;
+  for (size_t i = 0; i < padded_sources.size(); ++i) {
+    if (padded_sources[i] != nullptr) {
+      sources.push_back(padded_sources[i]);
+      positions.push_back(i);
+    }
+  }
+  build(builder, state, output_type, sources, positions, pack_format);
+}
+
+SmallVector<Value> PackSubelementsOp::getPaddedSources(
+    ValueRange sources, const ArrayRef<int32_t> positions,
+    const int packing_factor) {
+  SmallVector<Value> padded_sources(packing_factor);
+  for (const auto [source, position] : llvm::zip(sources, positions)) {
+    padded_sources[position] = source;
+  }
+  return padded_sources;
+}
+
+LogicalResult PackSubelementsOp::verify() {
+  if (getSources().empty()) {
+    return emitOpError("At least one source is required");
+  }
+  if (getPositions().size() != getSources().size()) {
+    return emitOpError("Size of sources and positions must match");
+  }
+  const int packing_factor = cast<VectorType>(getSources().front().getType())
+                                 .getElementTypeBitWidth() /
+                             getType().getElementTypeBitWidth();
+  SmallVector<bool> seen_positions(packing_factor, false);
+  for (const int32_t position : getPositions()) {
+    if (position < 0 || packing_factor <= position) {
+      return emitOpError("Positions must be between 0 and the packing factor");
+    }
+    if (seen_positions[position]) {
+      return emitOpError("Positions must be unique");
+    }
+    seen_positions[position] = true;
   }
   return success();
 }

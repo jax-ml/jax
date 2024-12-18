@@ -51,6 +51,10 @@ Slice = indexing.Slice
 NDIndexer = indexing.NDIndexer
 ds = indexing.ds
 
+HP_DIFFERING_EXECUTORS = []
+if hasattr(hp.HealthCheck, "differing_executors"):
+  HP_DIFFERING_EXECUTORS = [hp.HealthCheck.differing_executors]
+
 
 _INDEXING_TEST_CASES = [
     ((4, 8, 128), (...,), (4, 8, 128)),
@@ -371,7 +375,7 @@ class IndexerOpsTest(PallasBaseTest):
     np.testing.assert_array_equal(left_out_np, left_out)
     np.testing.assert_array_equal(right_out_np, right_out)
 
-  @hp.settings(suppress_health_check=[hp.HealthCheck.function_scoped_fixture])
+  @hp.settings(suppress_health_check=HP_DIFFERING_EXECUTORS)
   @hp.given(hps.data())
   def test_vmap_nd_indexing(self, data):
     self.skipTest("TODO(necula): enable this test; was in jax_triton.")

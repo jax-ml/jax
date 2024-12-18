@@ -13,6 +13,7 @@
 # limitations under the License.
 """Tests for TPU specific operations within pallas_call."""
 
+import functools
 import sys
 import unittest
 
@@ -250,6 +251,36 @@ class OpsTest(PallasBaseTest):
     expected = jnp.ones(x.shape, dtype=jnp.float32)
     expected = expected.at[...].set(jnp.where(get_mask(x), 0.0, -1.0))
     np.testing.assert_array_equal(result, expected)
+
+  @parameterized.product(dtype=[jnp.float32, jnp.bfloat16, jnp.int8])
+  def test_cast_vector_to_mask(self, dtype):
+    if jtu.jaxlib_version() <= (0, 4, 39):
+      self.skipTest("Test requires non-32-bit selection support")
+    shape = (128, 128)
+    bitwidth = pallas_utils.dtype_bitwidth(dtype)
+    if (
+        (jtu.get_tpu_version() > 5 and bitwidth < 8)
+        or (jtu.get_tpu_version() == 5 and bitwidth not in (8, 32))
+        or (jtu.get_tpu_version() < 5 and bitwidth < 32)
+    ):
+      self.skipTest(
+          f"Not implemented: cast vector to mask with bitwidth == {bitwidth}"
+      )
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+    )
+    def kernel(x_ref, mask_ref, o_ref):
+      zeros = jnp.zeros_like(x_ref)
+      o_ref[...] = jnp.where(mask_ref[...], x_ref[...], zeros)
+
+    mask = jax.random.bernoulli(jax.random.key(1234), 0.5, shape).astype(dtype)
+    x = jnp.arange(np.prod(shape), dtype=dtype).reshape(shape) + 1
+
+    out = kernel(x, mask)
+    expected = jnp.where(mask, x, jnp.zeros_like(x))
+    self.assertArraysEqual(out, expected)
 
 
 class OpsInterpretTest(OpsTest):

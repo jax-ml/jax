@@ -62,7 +62,7 @@ from jax._src.layout import DeviceLocalLayout, AutoLayout, Layout
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.partition_spec import PartitionSpec, UnconstrainedSingleton
+from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding as JSharding
 from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.sharding_impls import (
@@ -349,7 +349,7 @@ def xla_pmap_impl_lazy(
                         donated_invars=donated_invars,
                         is_explicit_global_axis_size=is_explicit_global_axis_size)
     return _emap_apply_fn
-  abstract_args = unsafe_map(xla.abstractify, args)
+  abstract_args = unsafe_map(core.abstractify, args)
   compiled_fun, fingerprint = parallel_callable(
       fun, backend, axis_name, axis_size, global_axis_size, devices, name,
       in_axes, out_axes_thunk, donated_invars,
@@ -360,7 +360,7 @@ def xla_pmap_impl_lazy(
     distributed_debug_log(("Running pmapped function", name),
                           ("python function", fun.f),
                           ("devices", devices),
-                          ("abstract args", map(xla.abstractify, args)),
+                          ("abstract args", map(core.abstractify, args)),
                           ("fingerprint", fingerprint))
   return compiled_fun
 
@@ -598,7 +598,7 @@ class MapTracer(core.Tracer):
 
   @property
   def aval(self):
-    aval = xla.abstractify(self.val)
+    aval = core.abstractify(self.val)
     shard_axes = dict(self.shard_axes)
     for axis_idx in sorted(shard_axes.values())[::-1]:
       aval = core.mapped_aval(aval.shape[axis_idx], axis_idx, aval)
@@ -1145,7 +1145,7 @@ class PmapExecutable(stages.XlaExecutable):
   @profiler.annotate_function
   def call(self, *args):
     # TODO(frostig): do we need to check sharding and sharded avals?
-    arg_avals = map(xla.abstractify, args)
+    arg_avals = map(core.abstractify, args)
     check_arg_avals_for_call(self.in_avals, arg_avals, self._jaxpr_debug_info)
     return self.unsafe_call(*args)  # pylint: disable=not-callable
 
@@ -2162,8 +2162,7 @@ def _concretize_abstract_shardings(shardings, avals, device_assignment):
 
   out = []
   for s, a in zip(shardings, avals):
-    if (isinstance(s, UnspecifiedValue) and a.sharding is not None and
-        all(not isinstance(s, UnconstrainedSingleton) for s in a.sharding.spec)):
+    if isinstance(s, UnspecifiedValue) and a.sharding is not None:
       out.append(NamedSharding(_abstract_to_concrete_mesh(a.sharding.mesh),
                                a.sharding.spec))
     else:
@@ -2792,6 +2791,11 @@ def _maybe_get_and_check_out_shardings(
           dtypes.issubdtype(aval.dtype, dtypes.extended)):
         xla_s = sharding_impls.logical_sharding(aval, xla_s)
       new_out_shardings.append(xla_s)
+    elif mlir.contains_unconstrained(orig):
+      if (aval is not core.abstract_token and
+          dtypes.issubdtype(aval.dtype, dtypes.extended)):
+        xla_s = sharding_impls.logical_sharding(aval, xla_s)
+      new_out_shardings.append(_gspmd_to_named_sharding(xla_s, orig))  # type: ignore
     else:
       xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)
       orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)  # pytype: disable=attribute-error
@@ -2907,8 +2911,9 @@ class UnloadedMeshExecutable:
 
     allow_prop_to_inputs = tuple(isinstance(i, (UnspecifiedValue, AUTO))
                                  for i in in_shardings)
-    allow_prop_to_outputs = tuple(isinstance(o, (UnspecifiedValue, AUTO))
-                                  for o in out_shardings)
+    allow_prop_to_outputs = tuple(
+        isinstance(o, (UnspecifiedValue, AUTO)) or mlir.contains_unconstrained(o)
+        for o in out_shardings)
 
     mesh = None
     if auto_spmd_lowering:
@@ -3090,7 +3095,7 @@ class MeshExecutable(stages.XlaExecutable):
       ref_avals = self._all_args_info.in_avals
       debug_info = self._all_args_info.debug_info
 
-    all_arg_avals = map(xla.abstractify, kept_args)
+    all_arg_avals = map(core.abstractify, kept_args)
     check_arg_avals_for_call(ref_avals, all_arg_avals, debug_info)
     check_array_xla_sharding_layout_match(
         args_after_dce, self._in_shardings, self._xla_in_layouts, debug_info,

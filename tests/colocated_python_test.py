@@ -22,7 +22,6 @@ from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import xla_extension_version  # pylint: disable=g-importing-member
 from jax.experimental import colocated_python
 from jax.experimental.colocated_python import serialization
 from jax.extend.ifrt_programs import ifrt_programs
@@ -68,11 +67,6 @@ def tearDownModule():
 
 
 class ColocatedPythonTest(jtu.JaxTestCase):
-
-  def setUp(self):
-    super().setUp()
-    if xla_extension_version < 300:
-      self.skipTest("Requires xla_extension_version >= 300")
 
   def testMakeColocatedPythonProgram(self):
     def add_one(x):

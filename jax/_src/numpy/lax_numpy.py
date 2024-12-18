@@ -68,7 +68,7 @@ from jax._src.typing import (
 )
 from jax._src.util import (
     NumpyComplexWarning, canonicalize_axis as _canonicalize_axis,
-    ceil_of_ratio, partition_list, safe_zip, set_module, subvals,unzip2,
+    ceil_of_ratio, partition_list, safe_zip, set_module, unzip2,
     tuple_replace)
 from jax.sharding import (Sharding, SingleDeviceSharding, NamedSharding,
                           PartitionSpec as P)
@@ -3273,10 +3273,10 @@ def _split(op: str, ary: ArrayLike,
   if (isinstance(indices_or_sections, (tuple, list)) or
       isinstance(indices_or_sections, (np.ndarray, Array)) and
       indices_or_sections.ndim > 0):
-    indices_or_sections = [
+    split_indices = np.asarray([0] + [
         core.concrete_dim_or_error(i_s, f"in jax.numpy.{op} argument 1")
-        for i_s in indices_or_sections]
-    split_indices = [0] + list(indices_or_sections) + [size]
+        for i_s in indices_or_sections] + [size])
+    sizes = list(np.diff(split_indices))
   else:
     if core.is_symbolic_dim(indices_or_sections):
       raise ValueError(f"jax.numpy.{op} with a symbolic number of sections is "
@@ -3285,21 +3285,14 @@ def _split(op: str, ary: ArrayLike,
                                                f"in jax.numpy.{op} argument 1")
     part_size, r = divmod(size, num_sections)
     if r == 0:
-      split_indices = [i * part_size
-                       for i in range(num_sections + 1)]
+      sizes = [part_size] * num_sections
     elif op == "array_split":
-      split_indices = (
-        [i * (part_size + 1) for i in range(r + 1)] +
-        [i * part_size + ((r + 1) * (part_size + 1) - 1)
-         for i in range(num_sections - r)])
+      sizes = [(part_size + 1)] * r + [part_size] * (num_sections - r)
     else:
       raise ValueError(f"array split does not result in an equal division: rest is {r}")
-  split_indices = [i if core.is_symbolic_dim(i) else np.int64(i)  # type: ignore[misc]
-                   for i in split_indices]
-  starts, ends = [0] * ndim(ary), shape(ary)
-  _subval = lambda x, i, v: subvals(x, [(i, v)])
-  return [lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))
-          for start, end in zip(split_indices[:-1], split_indices[1:])]
+  sizes = [i if core.is_symbolic_dim(i) else np.int64(i)  # type: ignore[misc]
+           for i in sizes]
+  return list(lax.split(ary, sizes, axis=axis))
 
 
 @export
@@ -4662,7 +4655,11 @@ def unstack(x: ArrayLike, /, *, axis: int = 0) -> tuple[Array, ...]:
       "Unstack requires arrays with rank > 0, however a scalar array was "
       "passed."
     )
-  return tuple(moveaxis(x, axis, 0))
+  dimensions = (axis,)
+  return tuple(
+    lax.squeeze(t, dimensions)
+    for t in lax.split(x, (1,) * x.shape[axis], axis=axis)
+  )
 
 
 @export

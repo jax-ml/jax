@@ -673,6 +673,26 @@ def concatenate(operands: Array | Sequence[ArrayLike], dimension: int) -> Array:
   return concatenate_p.bind(*operands, dimension=dimension)
 
 
+def split(operand: ArrayLike, sizes: Sequence[int],
+          axis: int = 0) -> Sequence[Array]:
+  """Splits an array along ``axis``.
+
+  Args:
+    operand: an array to split
+    sizes: the sizes of the split arrays. The sum of the sizes must be equal
+      to the size of the ``axis`` dimension of ``operand``.
+    axis: the axis along which to split the array.
+
+  Returns:
+    A sequence of ``len(sizes)`` arrays. If ``sizes`` is
+    ``[s1, s2, ...]``, this function returns chunks of sizes ``s1``, ``s2``,
+    taken along ``axis``.
+  """
+  operand = asarray(operand)
+  return split_p.bind(operand, sizes=tuple(sizes),
+                      axis=canonicalize_axis(axis, operand.ndim))
+
+
 _precision_strings: dict[Any, Precision] = {}
 
 class Precision(enum.Enum):
@@ -2457,13 +2477,6 @@ mlir.register_lowering(cos_p, _cos_lowering)
 tan_p = standard_unop(_float | _complex, 'tan')
 ad.defjvp2(tan_p, lambda g, ans, x: mul(g, _const(x, 1) + square(ans)))
 mlir.register_lowering(tan_p, partial(_nary_lower_hlo, hlo.tan))
-
-def asin_impl(x):
-  if dtypes.issubdtype(_dtype(x), np.complexfloating):
-    return mul(_const(x, -1j), asinh(mul(_const(x, 1j), x)))
-  else:
-    return mul(_const(x, 2),
-               atan2(x, add(_const(x, 1), sqrt(sub(_const(x, 1), square(x))))))
 
 asin_p = standard_unop(_float | _complex, 'asin')
 ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(_const(x, 1) - square(x))))
@@ -4454,18 +4467,8 @@ def _concatenate_transpose_rule(t, *operands, dimension):
     return [ad_util.Zero(o.aval) if ad.is_undefined_primal(o) else None
             for o in operands]
   else:
-    limit_points = np.cumsum(
-        [shape[dimension] for shape in operand_shapes]).tolist()
-    starts = np.zeros((len(operands), t.ndim), dtype=int).tolist()
-    limits = np.tile(t.shape, (len(operands), 1)).tolist()
-
-    for i, s in enumerate(starts[1:]):
-      s[dimension] = limit_points[:-1][i]
-    for i, l in enumerate(limits):
-      l[dimension] = limit_points[i]
-
-    return [slicing.slice(t, start, limit) if ad.is_undefined_primal(o)
-            else None for o, start, limit in zip(operands, starts, limits)]
+    return split(t, tuple(shape[dimension] for shape in operand_shapes),
+                 axis=dimension)
 
 def _concatenate_batch_rule(batched_args, batch_dims, *, dimension):
   size = next(op.shape[bdim] for op, bdim in zip(batched_args, batch_dims)
@@ -4498,6 +4501,76 @@ def _concatenate_lower(ctx, *xs, dimension):
   return [out]
 mlir.register_lowering(concatenate_p, _concatenate_lower)
 
+
+def _split_shape_rule(operand, *, sizes, axis):
+  shapes = []
+  shape = list(operand.shape)
+  if any(s < 0 for s in sizes):
+    raise ValueError(
+      f"Sizes passed to split must be nonnegative, got {list(sizes)}")
+  if operand.shape[axis] != np.sum(sizes):
+    raise ValueError(
+      f"Sum of sizes {np.sum(sizes)} must be equal to dimension {axis} of the "
+      f"operand shape {list(operand.shape)}")
+  for size in sizes:
+    shape[axis] = size
+    shapes.append(tuple(shape))
+  return shapes
+
+def _split_dtype_rule(operand, *, sizes, axis):
+  return (operand.dtype,) * len(sizes)
+
+def _split_weak_type_rule(operand, *, sizes, axis):
+  return (operand.weak_type,) * len(sizes)
+
+def _split_transpose_rule(cotangents, operand, *, sizes, axis):
+  assert ad.is_undefined_primal(operand)
+  if all(type(t) is ad_util.Zero for t in cotangents):
+    return ad_util.Zero(operand.aval),
+  cotangents = [
+    _zeros(t.aval) if type(t) is ad_util.Zero else t
+    for t in cotangents
+  ]
+  return concatenate(cotangents, dimension=axis),
+
+def _split_batch_rule(batched_args, batch_dims, *, sizes, axis):
+  operand, = batched_args
+  bdim, = batch_dims
+  new_bdims = (bdim,) * len(sizes)
+  out = split(operand, sizes=sizes, axis=axis + 1 if axis >= bdim else axis)
+  return out, new_bdims
+
+def _split_lower(ctx, x, *, sizes, axis):
+  x_aval, = ctx.avals_in
+  start_indices = [0] * x_aval.ndim
+  limit_indices = list(x_aval.shape)
+  strides = (1,) * x_aval.ndim
+  outs = []
+  for aval_out in ctx.avals_out:
+    limit_indices[axis] = start_indices[axis] + aval_out.shape[axis]
+    out = mlir.slice_op(ctx, x, aval_out, start_indices=start_indices,
+                        limit_indices=limit_indices, strides=strides)
+    outs.append(mlir.lower_sharding_under_shit(ctx, out, aval_out)
+                if config.sharding_in_types.value else out)
+    start_indices[axis] = limit_indices[axis]
+  return outs
+
+def _split_sharding_rule(operand, *, sizes, axis):
+  # TODO(yashkatariya): Once JAX supports uneven sharding at the top level,
+  # change this logic to `return operand.sharding` directly.
+  out_shapes = _split_shape_rule(operand, sizes=sizes, axis=axis)
+  return [slicing._get_sharding_for_varying_out_shape(out_sh, operand, 'split')
+          for out_sh in out_shapes]
+
+split_p = core.Primitive('split')
+split_p.multiple_results = True
+split_p.def_abstract_eval(
+    partial(standard_multi_result_abstract_eval, split_p, _split_shape_rule,
+            _split_dtype_rule, _split_weak_type_rule, _split_sharding_rule))
+split_p.def_impl(partial(dispatch.apply_primitive, split_p))
+ad.deflinear2(split_p, _split_transpose_rule)
+batching.primitive_batchers[split_p] = _split_batch_rule
+mlir.register_lowering(split_p, _split_lower)
 
 def _pad_dtype_rule(operand, padding_value, *, padding_config):
   if operand.dtype != padding_value.dtype:
