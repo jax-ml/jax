@@ -6507,6 +6507,21 @@ class RematTest(jtu.JaxTestCase):
     else:
       assert False
 
+  def test_concreteness_error_includes_user_code_with_static_argnums(self):
+    @partial(jax.remat, static_argnums=(1,))
+    def f(x, _):
+      if x > 0:
+        return x
+      else:
+        return jnp.sin(x)
+
+    try:
+      f(3., 1.)
+    except TracerBoolConversionError:
+      self.assertIn('x > 0', traceback.format_exc())
+    else:
+      assert False
+
 
 @jtu.with_config(jax_pprint_use_color=False)
 class JaxprTest(jtu.JaxTestCase):
