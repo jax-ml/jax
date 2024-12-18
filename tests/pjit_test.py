@@ -4680,6 +4680,34 @@ class ArrayPjitTest(jtu.JaxTestCase):
         RuntimeError, 'A jitted computation cannot contain AbstractMesh'):
       lowered3.compile()
 
+  def test_jit_out_shardings_unconstrained(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, s)
+
+    out_s = NamedSharding(mesh, P(P.UNCONSTRAINED, P.UNCONSTRAINED))
+    @partial(jax.jit, out_shardings=out_s)
+    def f(x):
+      return x * 2
+
+    out = f(arr)
+    self.assertEqual(out.sharding, s)
+    self.assertArraysEqual(out, np_inp * 2)
+
+    @partial(jax.jit, out_shardings=NamedSharding(mesh, P(P.UNCONSTRAINED, 'y')))
+    def g(x):
+      return x * 3
+
+    out = g(arr)
+    self.assertArraysEqual(out, np_inp * 3)
+    self.assertEqual(out.sharding, s)
+    lowered_text = g.lower(arr).as_text()
+    if config.use_shardy_partitioner.value:
+      self.assertIn('<@mesh, [{?}, {"y"}]>', lowered_text)
+    else:
+      self.assertIn("unspecified_dims=[0]", lowered_text)
+
 
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
@@ -5548,7 +5576,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return a
 
     out = f(arr, arr.T)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x',)))
 
   def test_auto_user(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'),

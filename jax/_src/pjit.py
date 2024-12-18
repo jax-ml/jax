@@ -2675,13 +2675,6 @@ batching.skippable_batchers[sharding_constraint_p] = lambda _: ()
 
 # -------------------- sharding_cast ---------------------------
 
-def _check_mesh_shape_same(src_sharding, dst_sharding, aval):
-  if src_sharding.mesh.shape_tuple != dst_sharding.mesh.shape_tuple:
-    raise ValueError(
-        f'Mesh shape of the input {src_sharding.mesh.shape_tuple} does not'
-        ' match the mesh shape of the target sharding'
-        f' {dst_sharding.mesh.shape_tuple} for shape {aval.str_short()}')
-
 def sharding_cast(xs, shardings):
   if isinstance(shardings, NamedSharding):
     return tree_map(lambda x: sharding_cast_p.bind(
@@ -2695,17 +2688,17 @@ def sharding_cast(xs, shardings):
 
 sharding_cast_p = core.Primitive('sharding_cast')
 def _sharding_cast_abstract_eval(aval, src_sharding, dst_sharding):
-  _check_mesh_shape_same(src_sharding, dst_sharding, aval)
+  if src_sharding.mesh.shape_tuple != dst_sharding.mesh.shape_tuple:
+    raise ValueError(
+        f'Mesh shape of the input {src_sharding.mesh.shape_tuple} does not'
+        ' match the mesh shape of the target sharding'
+        f' {dst_sharding.mesh.shape_tuple} for shape {aval.str_short()}')
   return aval.update(sharding=dst_sharding)
 sharding_cast_p.def_abstract_eval(_sharding_cast_abstract_eval)
 
 def _sharding_cast_impl(x, src_sharding, dst_sharding):
-  aval = shaped_abstractify(x)
-  _check_mesh_shape_same(x.sharding, dst_sharding, aval)
-  new_mesh = x.sharding.mesh.with_axis_types(dst_sharding.mesh.axis_types)
-  concrete_dst_sharding = NamedSharding(new_mesh, dst_sharding.spec)
-  # TODO(yashkatariya): Replace this with `dispatch.apply_primitive(...)`
-  return api.jit(_identity_fn, out_shardings=concrete_dst_sharding)(x)
+  return dispatch.apply_primitive(sharding_cast_p, x, src_sharding=src_sharding,
+                                  dst_sharding=dst_sharding)
 sharding_cast_p.def_impl(_sharding_cast_impl)
 
 def _sharding_cast_transpose_rule(ct, _, src_sharding, dst_sharding):

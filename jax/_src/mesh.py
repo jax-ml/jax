@@ -353,6 +353,22 @@ class Mesh(contextlib.ContextDecorator):
   def with_axis_types(self, new_axis_types) -> Mesh:
     return Mesh(self.devices, self.axis_names, axis_types=new_axis_types)
 
+  @functools.cached_property
+  def _are_all_axes_collective(self) -> bool:
+    return all(t == AxisTypes.Collective for t in self.axis_types.keys())
+
+  @functools.cached_property
+  def _are_all_axes_auto(self) -> bool:
+    return all(t == AxisTypes.Auto for t in self.axis_types.keys())
+
+  @functools.cached_property
+  def _any_axis_collective(self) -> bool:
+    return any(t == AxisTypes.Collective for t in self.axis_types.keys())
+
+  @functools.cached_property
+  def _any_axis_auto(self) -> bool:
+    return any(t == AxisTypes.Auto for t in self.axis_types.keys())
+
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
 
