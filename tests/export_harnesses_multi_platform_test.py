@@ -39,13 +39,6 @@ from jax._src.internal_test_util import test_harnesses
 from jax import random
 
 
-def make_disjunction_regexp(*parts: str) -> re.Pattern[str]:
-  if not parts:
-    return re.compile("matches_no_test")
-  else:
-    return re.compile("(" + "|".join(parts) + ")")
-
-
 class PrimitiveTest(jtu.JaxTestCase):
 
   @classmethod
@@ -86,9 +79,9 @@ class PrimitiveTest(jtu.JaxTestCase):
       self.skipTest("Eigenvalues are sorted and it is not correct to compare "
                     "decompositions for equality.")
 
-    if (jtu.device_under_test() == "gpu"
-        and "tridiagonal_solve_" in harness.fullname):
-      self.skipTest("tridiagonal_solve_ is not yet guaranteed stable.")
+    # if (jtu.device_under_test() == "gpu"
+    #     and "tridiagonal_solve_" in harness.fullname):
+    #   self.skipTest("tridiagonal_solve_ is not yet guaranteed stable.")
 
     if harness.params.get("enable_xla", False):
       self.skipTest("enable_xla=False is not relevant")
