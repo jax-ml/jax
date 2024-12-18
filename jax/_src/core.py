@@ -1436,10 +1436,17 @@ def abstractify(x):
 
 
 def get_aval(x):
+  # get_aval() is like abstractify(), but more flexible: for example, it will
+  # return an aval for inputs of type Tracer or for duck-typed arrays.
   if isinstance(x, Tracer):
     return x.aval
-  else:
+  try:
     return concrete_aval(x)
+  except TypeError:
+    if hasattr(x, "shape") and hasattr(x, "dtype"):
+      return ShapedArray(x.shape, x.dtype,
+                         weak_type=getattr(x, "weak_type", False))
+    raise
 
 get_type = get_aval
 
