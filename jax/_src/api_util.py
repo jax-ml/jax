@@ -20,14 +20,10 @@ import operator
 from functools import partial, lru_cache
 from typing import Any
 
-import numpy as np
-
 from jax._src import core
 from jax._src import config
 from jax._src import dtypes
 from jax._src.state.types import AbstractRef
-from jax._src.abstract_arrays import numpy_scalar_types
-from jax._src.core import ShapedArray
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_map,
     treedef_children, generate_key_paths, keystr, broadcast_prefix,
@@ -587,54 +583,13 @@ def _dtype(x):
   except ValueError:
     return dtypes.result_type(getattr(x, 'dtype'))
 
-def _shaped_abstractify_slow(x):
-  try:
-    return x if isinstance(x, core.AbstractValue) else core.get_aval(x)
-  except TypeError:
-    pass
-
-  weak_type = getattr(x, 'weak_type', False)
-  if hasattr(x, 'dtype'):
-    dtype = dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True)
-  else:
-    raise TypeError(
-        f"Cannot interpret value of type {type(x)} as an abstract array; it "
-        "does not have a dtype attribute")
-  return core.ShapedArray(np.shape(x), dtype, weak_type=weak_type)
-
 # TODO(mattjj,yashkatariya): replace core.abstractify with this, same behavior
+# TODO(jakevdp): fix downstream consumers and remove this.
 def shaped_abstractify(x):
-  handler = _shaped_abstractify_handlers.get(type(x), None)
-  return handler(x) if handler is not None else _shaped_abstractify_slow(x)
+  return core.shaped_abstractify(x)
 
-_shaped_abstractify_handlers: dict[Any, Callable[[Any], core.ShapedArray]] = {}
-
-
-def _str_abstractify(x):
-  raise TypeError(f"Argument '{x}' of type {type(x)} is not a valid JAX type")
-_shaped_abstractify_handlers[str] = _str_abstractify
-
-def _numpy_array_abstractify(x: np.ndarray) -> ShapedArray:
-  dtype = x.dtype
-  dtypes.check_valid_dtype(dtype)
-  return ShapedArray(x.shape,
-      dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True))
-_shaped_abstractify_handlers[np.ndarray] = _numpy_array_abstractify
-
-def _np_scalar_abstractify(x: np.generic) -> ShapedArray:
-  dtype = np.dtype(x)
-  dtypes.check_valid_dtype(dtype)
-  return ShapedArray(np.shape(x),
-      dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True))
-_shaped_abstractify_handlers.update((t, _np_scalar_abstractify)
-                                    for t in numpy_scalar_types)
-
-def _python_scalar_abstractify(x: int | float | complex | bool) -> ShapedArray:
-  typ = type(x)
-  dtype = dtypes._scalar_type_to_dtype(typ, x)
-  return ShapedArray((), dtype, weak_type=typ in dtypes._weak_types)
-_shaped_abstractify_handlers.update((t, _python_scalar_abstractify)
-                                    for t in dtypes.python_scalar_dtypes)
+# TODO(jakevdp): fix downstream consumers and remove this.
+_shaped_abstractify_handlers = core.shaped_abstractify_handlers
 
 # This decorator exists to make it easier to monkey-patch APIs in JAX.
 # By default it does nothing, but it can be monkey-patched to do other things.

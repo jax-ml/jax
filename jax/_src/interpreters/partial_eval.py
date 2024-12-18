@@ -1572,7 +1572,7 @@ class DynamicJaxprTracer(core.Tracer):
 
 def _dynamic_jaxpr_tracer_shaped_abstractify(x):
   return x.aval
-api_util._shaped_abstractify_handlers[DynamicJaxprTracer] = _dynamic_jaxpr_tracer_shaped_abstractify
+core.shaped_abstractify_handlers[DynamicJaxprTracer] = _dynamic_jaxpr_tracer_shaped_abstractify
 
 def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
   sentinel = object()

@@ -1036,7 +1036,7 @@ def _get_aval_array(self):
   else:
     return self.aval
 
-api_util._shaped_abstractify_handlers[ArrayImpl] = _get_aval_array
+core.shaped_abstractify_handlers[ArrayImpl] = _get_aval_array
 core.pytype_aval_mappings[ArrayImpl] = _get_aval_array
 
 # TODO(jakevdp) replace this with true inheritance at the C++ level.

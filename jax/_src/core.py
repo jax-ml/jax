@@ -1400,6 +1400,29 @@ def check_valid_jaxtype(x):
       f"Value {x!r} of type {type(x)} is not a valid JAX type")
 
 
+def _shaped_abstractify_slow(x):
+  try:
+    return x if isinstance(x, AbstractValue) else get_aval(x)
+  except TypeError:
+    pass
+
+  weak_type = getattr(x, 'weak_type', False)
+  if hasattr(x, 'dtype'):
+    dtype = dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True)
+  else:
+    raise TypeError(
+        f"Cannot interpret value of type {type(x)} as an abstract array; it "
+        "does not have a dtype attribute")
+  return ShapedArray(np.shape(x), dtype, weak_type=weak_type)
+
+# TODO(jakevdp): deduplicate this with abstractify
+def shaped_abstractify(x):
+  # This was originally api_util.shaped_abstractify; temporarily moved
+  # here in order to facilitate combining it with abstractify.
+  handler = shaped_abstractify_handlers.get(type(x), None)
+  return handler(x) if handler is not None else _shaped_abstractify_slow(x)
+
+
 def abstractify(x):
   for typ in type(x).__mro__:
     aval_fn = pytype_aval_mappings.get(typ)
@@ -1809,7 +1832,11 @@ class DShapedArray(UnshapedArray):
                         self.weak_type)
 
 pytype_aval_mappings: dict[type, Callable[[Any], AbstractValue]] = {}
+shaped_abstractify_handlers: dict[Any, Callable[[Any], ShapedArray]] = {}
 
+def _str_abstractify(x):
+  raise TypeError(f"Argument '{x}' of type {type(x)} is not a valid JAX type")
+shaped_abstractify_handlers[str] = _str_abstractify
 
 class DArray:
   _aval: DShapedArray
