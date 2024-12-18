@@ -1161,7 +1161,7 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts,
       f'called with sequence whose items have type\n{_avals_short(x_avals_mapped)}')
   return [*init_avals, *y_avals], jaxpr.effects
 
-def _scan_state_discharge_rule(in_avals, out_avals, *args, jaxpr, num_consts,
+def _scan_state_partial_discharge_rule(should_discharge, in_avals, out_avals, *args, jaxpr, num_consts,
                                num_carry, linear, unroll, reverse, length,
                                _split_transpose):
   # We're shuffling parameters between three signatures for the scan body:
@@ -1182,39 +1182,59 @@ def _scan_state_discharge_rule(in_avals, out_avals, *args, jaxpr, num_consts,
   n_ys = len(out_avals) - n_carry
   consts_avals, carry_avals, xs_avals = split_list_checked(in_avals,
     [n_consts, n_carry, n_xs])
-  is_ref_const = [isinstance(a, state.AbstractRef) for a in consts_avals]
-  assert not  any(isinstance(a, state.AbstractRef) for a in carry_avals)
-  is_ref_xs    = [isinstance(a, state.AbstractRef) for a in xs_avals]
+  consts_discharge, carry_discharge, xs_discharge = split_list_checked(should_discharge,
+    [n_consts, n_carry, n_xs])
+
+  is_ref_const = [s and isinstance(a, state.AbstractRef) for s, a in zip(consts_discharge, consts_avals)]
+  assert not any(isinstance(a, state.AbstractRef) for a in carry_avals)
+  assert not any(carry_discharge)
+  is_ref_xs = [s and isinstance(a, state.AbstractRef) for s, a in zip(xs_discharge, xs_avals)]
   n_ref_consts = sum(is_ref_const)
   n_val_consts = n_consts - n_ref_consts
   n_ref_xs = sum(is_ref_xs)
   n_val_xs = n_xs - n_ref_xs
-  discharged_jaxpr, discharged_consts = state_discharge.discharge_state(jaxpr, ())
+  discharged_jaxpr, discharged_consts = state_discharge.discharge_state(jaxpr, (), should_discharge=should_discharge)
   if discharged_consts:
     raise NotImplementedError("Discharged jaxpr has consts. If you see this, "
                               "please open an issue at "
                               "https://github.com/jax-ml/jax/issues")
   def wrapped(*wrapped_args):
-    val_consts, ref_consts_in, carry_in, val_xs, ref_xs_in = split_list_checked(wrapped_args,
-      [n_val_consts, n_ref_consts, n_carry, n_val_xs, n_ref_xs])
+    val_consts, carry_in, ref_consts_in, val_xs, ref_xs_in = split_list_checked(wrapped_args,
+      [n_val_consts, n_carry, n_ref_consts, n_val_xs, n_ref_xs])
     consts = merge_lists(is_ref_const, val_consts, ref_consts_in)
     xs = merge_lists(is_ref_xs, val_xs, ref_xs_in)
     outs = core.eval_jaxpr(discharged_jaxpr, (), *consts, *carry_in, *xs)
     carry_out, ys, ref_consts_out, ref_xs_out = split_list_checked(outs,
       [n_carry, n_ys, n_ref_consts, n_ref_xs])
-    return [*ref_consts_out, *carry_out, *ys, *ref_xs_out]
+    return [*carry_out, *ref_consts_out, *ys, *ref_xs_out]
 
   def arrange_jaxpr_args_for_wrapped(args):
     consts, carry_in, xs = split_list_checked(args, [n_consts, n_carry, n_xs])
     val_consts, ref_consts_in = partition_list(is_ref_const, consts)
     val_xs, ref_xs_in = partition_list(is_ref_xs, xs)
-    return *val_consts, *ref_consts_in, *carry_in, *val_xs, *ref_xs_in
+    return *val_consts, *carry_in, *ref_consts_in, *val_xs, *ref_xs_in
 
+  # Rearrange the arguments such that they are:
+  #   val_consts, carry, ref_consts, val_xs, ref_xs
+  #
+  # It is important that carry is immediately after the val_consts
+  # because pallas pattern matches the leading argument type to figure
+  # out if a scan_p eqn is equivalent to a fori loop (see
+  # `pallas.utils.pattern_match_scan_to_fori_loop()`).
   args_for_wrapped = arrange_jaxpr_args_for_wrapped(args)
   linear_for_wrapped = arrange_jaxpr_args_for_wrapped(linear)
   avals_for_wrapped = arrange_jaxpr_args_for_wrapped(in_avals)
-  avals_for_wrapped_no_refs = [aval.inner_aval if isinstance(aval, state.AbstractRef) else aval
-                               for aval in avals_for_wrapped]
+  # Get the const avals that we need to discharge and leave the rest as-is.
+  deref_const_avals = tuple(c.inner_aval for c in avals_for_wrapped[n_val_consts + n_carry:n_consts + n_carry])
+  deref_xs_avals = tuple(x.inner_aval for x in avals_for_wrapped[n_consts + n_carry + n_val_xs:])
+  avals_for_wrapped_no_refs = (
+      avals_for_wrapped[: n_val_consts + n_carry]
+      + deref_const_avals
+      + avals_for_wrapped[n_consts + n_carry :n_consts + n_carry + n_val_xs]
+      + deref_xs_avals
+  )
+  # TODO(cperivol): avoid tracing the jaxpr twice. When doing so don't
+  # forget to manage the effects.
   new_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(wrapped), avals_for_wrapped_no_refs)
   all_out = scan_p.bind(*args_for_wrapped,
                         jaxpr=core.ClosedJaxpr(new_jaxpr, ()),
@@ -1224,8 +1244,8 @@ def _scan_state_discharge_rule(in_avals, out_avals, *args, jaxpr, num_consts,
                         unroll=unroll,
                         reverse=reverse,
                         linear=linear_for_wrapped, _split_transpose=_split_transpose)
-  ref_consts_out, carry_out, ys, ref_xs_out = split_list_checked(all_out,
-    [n_ref_consts, n_carry, n_ys, n_ref_xs])
+  carry_out, ref_consts_out, ys, ref_xs_out = split_list_checked(all_out,
+    [n_carry, n_ref_consts, n_ys, n_ref_xs])
   refs_out_matching_in_avals = [
     *merge_lists(is_ref_const, [None] * n_val_consts, ref_consts_out),
     *[None] * n_carry,
@@ -1248,7 +1268,7 @@ core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = _scan_partial_eval_custom
 pe.padding_rules[scan_p] = _scan_padding_rule
 pe.dce_rules[scan_p] = _scan_dce_rule
-state_discharge.register_discharge_rule(scan_p)(_scan_state_discharge_rule)
+state_discharge.register_partial_discharge_rule(scan_p)(_scan_state_partial_discharge_rule)
 
 def _propagate_mem_kind_scan(*xm, reverse, length, num_consts, num_carry, jaxpr,
                              linear, unroll, _split_transpose):
