@@ -15,8 +15,9 @@
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "absl/types/span.h"
-#include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "mlir/include/mlir/IR/Value.h"
+#include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "tsl/platform/statusor.h"
 
 // TODO: Instead of CHECK_EQs, can we do something like TF_RET_CHECK but with
 // MLIR diagnostics?
@@ -40,6 +41,16 @@
 #define FAILUREOR_ASSIGN_OR_RETURN(lhs, rhs) \
   FAILUREOR_ASSIGN_OR_RETURN_IMPL(           \
       TF_STATUS_MACROS_CONCAT_NAME(failureor, __COUNTER__), lhs, rhs)
+
+#define STATUSOR_ASSIGN_OR_RETURN_AT_OP_IMPL(statusor, lhs, rhs, op) \
+  auto statusor = rhs;                                               \
+  if (!statusor.ok()) {                                              \
+    return op.emitError(statusor.status().ToString());               \
+  }                                                                  \
+  lhs = std::move(statusor).value();
+#define STATUSOR_ASSIGN_OR_RETURN_AT_OP(lhs, rhs, op) \
+  STATUSOR_ASSIGN_OR_RETURN_AT_OP_IMPL(               \
+      TF_STATUS_MACROS_CONCAT_NAME(statusor, __COUNTER__), lhs, rhs, op)
 
 namespace mlir::tpu {
 
