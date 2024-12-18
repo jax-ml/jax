@@ -182,11 +182,6 @@ class VectorLayoutInferer {
         auto false_ty = dyn_cast<VectorType>(op.getFalseValue().getType());
         TPU_CHECK_OP(static_cast<bool>(true_ty) == static_cast<bool>(false_ty),
                      "Only one side of arith is a vector?");
-        if (true_ty) {
-          TPU_CHECK_OP(true_ty.getElementTypeBitWidth() == kNativeBitwidth &&
-                           false_ty.getElementTypeBitWidth() == kNativeBitwidth,
-                       "Only 32-bit select supported");
-        }
         if (inferElementwise(&any_op).failed()) {
           return failure();
         }
