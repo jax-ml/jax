@@ -1479,6 +1479,12 @@ custom_vjp_disable_shape_check = bool_state(
     upgrade=True,
     help='Disable the check from #19009 to enable some custom_vjp hacks.')
 
+mutable_array_checks = bool_state(
+    name='jax_mutable_array_checks',
+    default=False,
+    upgrade=True,
+    help='Enable error checks for mutable arrays that rule out aliasing.')
+
 xla_runtime_errors = bool_state(
     name='jax_experimental_unsafe_xla_runtime_errors',
     default=False,

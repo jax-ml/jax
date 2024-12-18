@@ -1917,6 +1917,8 @@ def mutable_array_abstract_eval(init_aval):
 def _mutable_array_impl(init_val):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   aval = get_aval(init_val)
+  # TODO(mattjj): improve spelling of 'defensive copy' here, avoid circular dep
+  init_val = init_val.copy() if hasattr(init_val, 'copy') else init_val
   return MutableArray(AbstractRef(aval), init_val)
 
 def freeze(ref):
