@@ -241,7 +241,7 @@ def ir_constant(x, mlir_type=None):
       x = np.array(x, np.float32)
   if not mlir_type:
     mlir_type = _dtype_to_ir_type(x.dtype)
-  if isinstance(x, int) or x.dtype in (np.int32, np.uint32, np.int8):
+  if isinstance(x, int) or np.issubdtype(x.dtype, np.integer):
     return arith.constant(mlir_type, ir.IntegerAttr.get(mlir_type, int(x)))
   elif isinstance(x, float) or x.dtype == np.float32:
     return arith.constant(mlir_type, ir.FloatAttr.get(mlir_type, float(x)))
@@ -1458,7 +1458,7 @@ def reduce_lowering_rule(reduce_fn, type_to_kind, type_to_identity):
     if jnp.issubdtype(x_aval.dtype, jnp.floating):
       kind = type_to_kind[jnp.floating]
       val = type_to_identity[jnp.floating]
-      val = ir.FloatAttr.get(ir.F32Type.get(), val)
+      val = ir.FloatAttr.get(aval_to_ir_type(x_aval, shape=()), val)
     elif jnp.issubdtype(x_aval.dtype, jnp.signedinteger):
       raise NotImplementedError("Reductions over integers not implemented.")
     elif jnp.issubdtype(x_aval.dtype, jnp.unsignedinteger):

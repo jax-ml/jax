@@ -3919,6 +3919,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
   TPU_ASSERT_OP(
       llvm::all_of(layouts_in, [&](const Layout &l) { return l.has_value(); }));
+  const Location loc = op.getLoc();
   const VectorLayout &src_layout = *layouts_in[0];
   const VectorLayout &acc_layout = *layouts_in[1];
   const VectorLayout &dst_layout = *layouts_out[0];
@@ -4101,6 +4102,16 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
         xla::Array<Value> reduced_vregs =
             src_vregs.Slice(src_slice_start, src_slice_end);
         std::optional<Value> acc_vreg;
+        auto reduce_elementwise = [&](Value lhs, Value rhs) -> Value {
+          switch (tpu_kind) {
+            case tpu::ReductionKind::SUM:
+              return builder.create<arith::AddFOp>(loc, lhs, rhs);
+            case tpu::ReductionKind::MAX:
+              return builder.create<arith::MaximumFOp>(loc, lhs, rhs);
+            case tpu::ReductionKind::MIN:
+              return builder.create<arith::MinimumFOp>(loc, lhs, rhs);
+          }
+        };
         auto reduction_status = reduced_vregs.EachStatus(
             [&](const absl::Span<const int64_t> red_idx,
                 Value *const src_vreg) {
@@ -4130,20 +4141,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
               if (!acc_vreg.has_value()) {
                 acc_vreg = vreg;
               } else {
-                switch (tpu_kind) {
-                  case tpu::ReductionKind::SUM:
-                    acc_vreg = builder.create<arith::AddFOp>(vreg.getLoc(),
-                                                             *acc_vreg, vreg);
-                    break;
-                  case tpu::ReductionKind::MAX:
-                    acc_vreg = builder.create<arith::MaximumFOp>(
-                        vreg.getLoc(), *acc_vreg, vreg);
-                    break;
-                  case tpu::ReductionKind::MIN:
-                    acc_vreg = builder.create<arith::MinimumFOp>(
-                        vreg.getLoc(), *acc_vreg, vreg);
-                    break;
-                }
+                acc_vreg = reduce_elementwise(*acc_vreg, vreg);
               }
               return absl::OkStatus();
             });
@@ -4156,8 +4154,43 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
               multi_reduction_op->getLoc(), *acc_vreg, 1, tpu_kind);
         }
         if (reduces[0]) {
+          // Packed types are compressed along rows, so we need to reduce them
+          // within each 32-bit word. There's no performance penalty for doing
+          // this in 32-bit precision, so we take advantage of it.
+          Type acc_vreg_ty = acc_vreg->getType();
+          if (acc_layout.packing() > 1) {
+            Type vreg_ty_32 = nullptr;
+            if (acc.getType().getElementType().isBF16()) {
+              vreg_ty_32 =
+                  getNativeVregType(builder.getF32Type(), ctx.target_shape);
+            } else {
+              multi_reduction_op.emitOpError(
+                  "Not implemented: Unsupported reduction dtype");
+              return absl::UnknownError("");
+            }
+            Value acc_vreg_32 = builder.create<tpu::UnpackSubelementsOp>(
+                loc, vreg_ty_32, *acc_vreg, 0, tpu::PackFormat::kInterleaved);
+            for (int i = 1; i < acc_layout.packing(); ++i) {
+              Value acc_vreg_part_32 = builder.create<tpu::UnpackSubelementsOp>(
+                  loc, vreg_ty_32, *acc_vreg, i, tpu::PackFormat::kInterleaved);
+              acc_vreg_32 = reduce_elementwise(acc_vreg_32, acc_vreg_part_32);
+            }
+            acc_vreg = acc_vreg_32;
+          }
+          // At this point acc_vreg is always 32-bit.
           acc_vreg = builder.create<tpu::AllReduceOp>(
               multi_reduction_op->getLoc(), *acc_vreg, 0, tpu_kind);
+          // We pack the final result back into the original type.
+          if (acc_layout.packing() > 1) {
+            SmallVector<int32_t> positions(acc_layout.packing());
+            std::iota(positions.begin(), positions.end(),
+                      static_cast<int32_t>(0));
+            SmallVector<Value> parts(acc_layout.packing(), *acc_vreg);
+            acc_vreg = builder.create<tpu::PackSubelementsOp>(
+                loc, acc_vreg_ty, parts,
+                builder.getDenseI32ArrayAttr(positions),
+                tpu::PackFormat::kInterleaved);
+          }
         }
         *dst_vreg = *acc_vreg;
         return absl::OkStatus();
