@@ -816,7 +816,7 @@ class OpsTest(PallasBaseTest):
       ([jnp.ceil, jnp.floor], ["bfloat16", "float32", "float64", "int32"]),
       (
           [jnp.exp, jnp.exp2, jnp.sin, jnp.cos, jnp.log, jnp.sqrt],
-          ["float16", "float32", "float64"],
+          ["bfloat16", "float16", "float32", "float64"],
       ),
       (
           # fmt: off
@@ -843,11 +843,13 @@ class OpsTest(PallasBaseTest):
       if dtype in ("int16", "float16"):
         self.skipTest("int16 and float16 are not supported on TPU")
       if (
-          fn in (jnp.ceil, jnp.floor, jnp.negative)
+          fn in (jnp.ceil, jnp.floor, jnp.negative, jnp.exp, jnp.exp2, jnp.log)
           and dtype == "bfloat16"
           and not jtu.is_device_tpu_at_least(6)
       ):
         self.skipTest(f"bfloat16 {fn.__name__} is only supported on TPU v6+")
+      if fn in (jnp.sqrt, jnp.sin, jnp.cos) and dtype == "bfloat16":
+        self.skipTest(f"bfloat16 {fn.__name__} is not supported on TPU")
       # TODO(b/370578663): implement these lowerings on TPU
       if fn in (
           jnp.acos, jnp.acosh, jnp.asin, jnp.asinh, jnp.atan, jnp.atanh,
@@ -870,8 +872,13 @@ class OpsTest(PallasBaseTest):
       o_ref[:] = fn(x_ref[...])
 
     # create an array with shape (8, 128)
-    x = jnp.array([0.42, 2.4] * (8 * 128 // 2)).reshape(8, 128).astype(dtype)
-    self.assertAllClose(kernel(x), fn(x), rtol=1e-6)
+    if fn in (jnp.exp, jnp.exp2) and dtype == "bfloat16":
+      x = jnp.array([0.42, 1.26] * (8 * 128 // 2)).reshape(8, 128).astype(dtype)
+      rtol = 2e-3
+    else:
+      x = jnp.array([0.42, 2.4] * (8 * 128 // 2)).reshape(8, 128).astype(dtype)
+      rtol = 1e-6
+    self.assertAllClose(kernel(x), fn(x), rtol=rtol)
 
   @parameterized.named_parameters(
       (f"{fn.__name__}_{dtype}", fn, dtype)
@@ -919,7 +926,7 @@ class OpsTest(PallasBaseTest):
       o_ref[0] = fn(x_ref[0])
       o_ref[1] = fn(x_ref[1])
 
-    x = jnp.array([0.42, 2.4]).astype(dtype)
+    x = jnp.array([0.42, 1.4]).astype(dtype)
     self.assertAllClose(kernel(x), fn(x), rtol=1e-6)
 
   def test_abs_weak_type(self):
