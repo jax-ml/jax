@@ -24,10 +24,11 @@ from absl.testing import parameterized
 
 import scipy.stats
 
+from jax._src import ad_checkpoint
 from jax._src import config
 from jax._src import core
+from jax._src import deprecations
 from jax._src import test_util as jtu
-from jax._src import ad_checkpoint
 from jax._src.interpreters import mlir
 from jax._src.lib import cuda_versions
 from jax.test_util import check_grads
@@ -529,6 +530,15 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
     actual = nn.one_hot(jnp.array([1, 2, 0]), 3, axis=-2)
     self.assertAllClose(actual, expected, check_dtypes=False)
+
+  def testOneHotNonInteger(self):
+    def assert_warns_or_errors(msg):
+      if deprecations.is_accelerated("jax-nn-one-hot-float-input"):
+        return self.assertRaisesRegex(ValueError, msg)
+      else:
+        return self.assertWarnsRegex(DeprecationWarning, msg)
+    with assert_warns_or_errors("jax.nn.one_hot input should be integer-typed"):
+      nn.one_hot(jnp.array([1.0]), 3)
 
   def testTanhExists(self):
     nn.tanh  # doesn't crash
