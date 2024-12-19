@@ -74,6 +74,7 @@ enum DType: byte {
   f8_e4m3fnuz = 19,
   f8_e5m2 = 20,
   f8_e5m2fnuz = 21,
+  f8_e8m0fnu = 25,
 }
 
 table AbstractValue {
