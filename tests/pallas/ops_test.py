@@ -1299,8 +1299,6 @@ class OpsTest(PallasBaseTest):
   def test_debug_print(self):
     if config.use_shardy_partitioner.value:
       self.skipTest("TODO(b/364547005): pure callbacks not supported by Shardy yet")
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not supported on TPU")
 
     # TODO: this test flakes on gpu
     if jtu.test_device_matches(["gpu"]):
@@ -1327,7 +1325,7 @@ class OpsTest(PallasBaseTest):
   )
   def test_debug_print_with_values(self):
     if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not supported on TPU")
+      self.skipTest("Test for TPU is covered in tpu_pallas_test.py")
 
     # TODO: this test flakes on gpu
     if jtu.test_device_matches(["gpu"]):
