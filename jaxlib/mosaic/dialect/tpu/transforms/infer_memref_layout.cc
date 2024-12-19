@@ -61,7 +61,10 @@ int getTilingFactor(const int num_lanes, const int hardware_generation,
     if (bitwidth == 8 && tpu_tiling_flags.use_x8_large_second_minor) {
       return sublane_count * 4;
     }
-    if (bitwidth == 16 && tpu_tiling_flags.use_x16_large_second_minor) {
+    // 16-bit values are generally always possible to relayout on the fly in v6,
+    // so we allow large 2nd minor tiling whenever possible.
+    if (bitwidth == 16 && (tpu_tiling_flags.use_x16_large_second_minor ||
+                           hardware_generation >= 6)) {
       return sublane_count * 2;
     }
     return sublane_count;
