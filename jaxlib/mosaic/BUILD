@@ -69,6 +69,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ControlFlowDialect",
+        "@llvm-project//mlir:DataLayoutInterfaces",
         "@llvm-project//mlir:Dialect",
         "@llvm-project//mlir:DialectUtils",
         "@llvm-project//mlir:FuncDialect",
