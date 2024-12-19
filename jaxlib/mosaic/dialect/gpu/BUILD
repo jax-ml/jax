@@ -131,30 +131,6 @@ cc_library(
     ],
 )
 
-cc_test(
-    name = "mosaic_gpu_test",
-    srcs = ["mosaic_gpu_test.cc"],
-    deps = [
-        ":mosaic_gpu",
-        "//testing/base/public:gunit_main",
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:string_view",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:BufferizationInterfaces",
-        "@llvm-project//mlir:DataLayoutInterfaces",
-        "@llvm-project//mlir:FuncDialect",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:LLVMCommonConversion",
-        "@llvm-project//mlir:LLVMDialect",
-        "@llvm-project//mlir:MemRefDialect",
-        "@llvm-project//mlir:SCFUtils",
-        "@llvm-project//mlir:Support",
-        "@tsl//tsl/platform:errors",
-    ],
-)
-
 gentbl_filegroup(
     name = "mosaic_gpu_python_gen_raw",
     tbl_outs = [
