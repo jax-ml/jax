@@ -95,8 +95,8 @@ class PgleTest(jtu.JaxTestCase):
         out_shardings=NamedSharding(mesh, PartitionSpec('x')),
         compiler_options={
             'xla_gpu_enable_latency_hiding_scheduler': 'True',
-            # TODO(patrios): Remove this flag once b/376647494 is fixed.
-            'xla_gpu_graph_min_graph_size': '100000',
+            # TODO(b/37664749): Remove this flag once the bug is fixed.
+            'xla_gpu_enable_command_buffer': '',
         },
     )
     def f(x):
@@ -133,8 +133,6 @@ class PgleTest(jtu.JaxTestCase):
           out_shardings=NamedSharding(mesh, PartitionSpec('x')),
           compiler_options={
               'xla_gpu_enable_latency_hiding_scheduler': 'True',
-              # TODO(patrios): Remove this flag once b/376647494 is fixed.
-              'xla_gpu_graph_min_graph_size': '100000',
               'xla_dump_to': dump_dir,
               'xla_gpu_experimental_dump_fdo_profiles': 'True'
           },
@@ -217,8 +215,6 @@ class PgleTest(jtu.JaxTestCase):
           out_shardings=NamedSharding(mesh, PartitionSpec('x')),
           compiler_options={
               'xla_gpu_enable_latency_hiding_scheduler': 'True',
-              # TODO(patrios): Remove this flag once b/376647494 is fixed.
-              'xla_gpu_graph_min_graph_size': '100000',
               'xla_dump_to': dump_dir,
               'xla_gpu_experimental_dump_fdo_profiles': 'True'
           },
