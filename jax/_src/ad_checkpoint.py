@@ -33,7 +33,7 @@ from jax._src import effects
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src.api_util import (
-    flatten_fun, shaped_abstractify, debug_info, fun_sourceinfo, fun_signature)
+    flatten_fun, debug_info, fun_sourceinfo, fun_signature)
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -328,7 +328,7 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
                        fun_signature(fun), args, kwargs, static_argnums, ())
     fun_, args = _remat_static_argnums(fun, static_argnums, args)
     args_flat, in_tree = tree_flatten((args, kwargs))
-    in_avals = [shaped_abstractify(x) for x in args_flat]
+    in_avals = [core.shaped_abstractify(x) for x in args_flat]
     jaxpr, consts, out_tree = _trace_to_jaxpr(fun_, in_tree, tuple(in_avals), debug)
     out_flat = remat_p.bind(
         *consts, *args_flat, jaxpr=jaxpr, prevent_cse=prevent_cse,

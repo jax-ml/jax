@@ -583,12 +583,8 @@ def _dtype(x):
   except ValueError:
     return dtypes.result_type(getattr(x, 'dtype'))
 
-# TODO(mattjj,yashkatariya): replace core.abstractify with this, same behavior
-# TODO(jakevdp): fix downstream consumers and remove this.
-def shaped_abstractify(x):
-  return core.shaped_abstractify(x)
-
-# TODO(jakevdp): fix downstream consumers and remove this.
+# TODO(jakevdp): fix downstream consumers and remove these aliases.
+shaped_abstractify = core.shaped_abstractify
 _shaped_abstractify_handlers = core.shaped_abstractify_handlers
 
 # This decorator exists to make it easier to monkey-patch APIs in JAX.
@@ -716,7 +712,7 @@ def _check_no_aliased_closed_over_refs(dbg, consts, args) -> None:
                     if isinstance(core.get_aval(c), AbstractRef)}
   for i, x in enumerate(args):
     if id(core.get_referent(x)) in refs:
-      a = shaped_abstractify(x)
+      a = core.shaped_abstractify(x)
       raise ValueError(
           f"when tracing {dbg.func_src_info} for {dbg.traced_for}, a mutable "
           f"array reference of type {a.str_short()} was both closed over and "

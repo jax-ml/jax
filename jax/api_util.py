@@ -13,6 +13,10 @@
 # limitations under the License.
 
 
+from jax._src.core import (
+  shaped_abstractify as shaped_abstractify
+)
+
 from jax._src.api_util import (
   argnums_partial as argnums_partial,
   donation_vector as donation_vector,
@@ -21,5 +25,4 @@ from jax._src.api_util import (
   flatten_fun_nokwargs as flatten_fun_nokwargs,
   rebase_donate_argnums as rebase_donate_argnums,
   safe_map as safe_map,
-  shaped_abstractify as shaped_abstractify,
 )

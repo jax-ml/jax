@@ -46,7 +46,6 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import NamedSharding, parse_flatten_op_sharding
-from jax._src.api_util import shaped_abstractify
 from jax._src.state import discharge as state_discharge
 
 logger = logging.getLogger(__name__)
@@ -260,7 +259,7 @@ def debug_callback(callback: Callable[..., None], *args: Any,
   static_args, dyn_args = {}, []
   for i, a in enumerate(flat_args):
     try:
-      shaped_abstractify(a)
+      core.shaped_abstractify(a)
       dyn_args.append(a)
     except (AssertionError, TypeError):
       static_args[i] = a

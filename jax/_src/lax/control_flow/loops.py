@@ -35,8 +35,7 @@ from jax._src import source_info_util
 from jax._src import state
 from jax._src import util
 from jax._src.api_util import (
-    shaped_abstractify, _check_no_aliased_ref_args,
-    _check_no_aliased_closed_over_refs)
+    _check_no_aliased_ref_args, _check_no_aliased_closed_over_refs)
 from jax._src.core import ShapedArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -731,7 +730,7 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
 
 def _maybe_put(x):
   if isinstance(x, np.ndarray):
-    aval = shaped_abstractify(x)
+    aval = core.shaped_abstractify(x)
     s = sharding.SingleDeviceSharding(xb.local_devices(backend='cpu')[0])
     result_handler = pxla.global_aval_to_result_handler(aval, s, False)
     return result_handler(pxla.shard_args([s], [None], [None], [x]))

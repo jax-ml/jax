@@ -58,7 +58,7 @@ from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import (HashableFunction, HashablePartial, unzip2,
                            as_hashable_function, memoize, partition_list,
                            split_list, subs_list2)
-from jax.api_util import flatten_fun_nokwargs, shaped_abstractify, argnums_partial
+from jax.api_util import flatten_fun_nokwargs, argnums_partial
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -273,7 +273,7 @@ def _check_specs_vs_args(
     f: Callable, mesh: Mesh, in_tree: PyTreeDef, in_specs: Specs,
     dyn_argnums: Sequence[int], in_specs_flat: Sequence[P],
     xs: Sequence) -> None:
-  in_avals = map(shaped_abstractify, xs)
+  in_avals = map(core.shaped_abstractify, xs)
   fail = [a if not len(p) <= a.ndim else no_fail
           for p, a in zip(in_specs_flat, in_avals)]
   if any(f is not no_fail for f in fail):
@@ -763,7 +763,7 @@ def get_mesh_from_args(args_flat, mesh):
   for a in args_flat:
     if hasattr(a, 'sharding') and isinstance(a.sharding, NamedSharding):
       if a.sharding.mesh.shape_tuple != mesh.shape_tuple:
-        aval = shaped_abstractify(a)
+        aval = core.shaped_abstractify(a)
         raise ValueError(
             f"Mesh shape of the input {a.sharding.mesh.shape_tuple} does not"
             " match the mesh shape passed to shard_map "
