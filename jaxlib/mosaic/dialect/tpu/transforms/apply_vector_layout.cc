@@ -957,11 +957,9 @@ LogicalResult arith_extui_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
   TPU_ASSERT_OP(layouts_out.front().has_value());
   auto extui_op = cast<arith::ExtUIOp>(op);
-  auto in_ty = dyn_cast<VectorType>(extui_op.getIn().getType());
-  auto out_ty = dyn_cast<VectorType>(extui_op.getType());
-  CHECK(in_ty && out_ty);
-  auto in_bitwidth = in_ty ? in_ty.getElementTypeBitWidth()
-                           : extui_op.getIn().getType().getIntOrFloatBitWidth();
+  const auto in_ty = cast<VectorType>(extui_op.getIn().getType());
+  const auto out_ty = cast<VectorType>(extui_op.getType());
+  const unsigned in_bitwidth = in_ty.getElementTypeBitWidth();
   if (in_bitwidth == 1) {
     return elementwise_op_rule(ctx, op, layouts_in, layouts_out);
   }
@@ -970,31 +968,28 @@ LogicalResult arith_extui_rule(RewriteContext &ctx, Operation &op,
       xla::Array<Value> output_vregs,
       ext_op_rule_impl(ctx, builder, extui_op, *layouts_in.front(),
                        *layouts_out.front()));
-  const auto source_ty = cast<VectorType>(extui_op.getIn().getType());
-  const auto result_ty = cast<VectorType>(extui_op.getResult().getType());
-  auto src_bitwidth = source_ty.getElementTypeBitWidth();
-  auto dst_bitwidth = result_ty.getElementTypeBitWidth();
+  unsigned out_bitwidth = out_ty.getElementTypeBitWidth();
   // Generate a mask to mask out the sign extension. e.g., for u8 -> u16,
   // the mask is 0x00ff00ff.
-  unsigned mask = (1 << src_bitwidth) - 1;
-  while (dst_bitwidth < 32) {
-    mask = (mask << dst_bitwidth) | mask;
-    dst_bitwidth *= 2;
+  unsigned mask = (1 << in_bitwidth) - 1;
+  while (out_bitwidth < 32) {
+    mask = (mask << out_bitwidth) | mask;
+    out_bitwidth *= 2;
   }
   const VectorType i32_vreg_ty =
       getNativeVregType(builder.getI32Type(), ctx.target_shape);
   auto mask_const = builder.create<arith::ConstantOp>(
       op.getLoc(), i32_vreg_ty, DenseIntElementsAttr::get(i32_vreg_ty, {mask}));
-  const VectorType res_vreg_ty =
-      getNativeVregType(result_ty.getElementType(), ctx.target_shape);
+  const VectorType out_vreg_ty =
+      getNativeVregType(out_ty.getElementType(), ctx.target_shape);
   output_vregs.Each([&](absl::Span<const int64_t> _, Value *v) {
     Value unpacked =
         builder.create<BitcastVregOp>(op.getLoc(), i32_vreg_ty, *v);
     unpacked = builder.create<arith::AndIOp>(op.getLoc(), i32_vreg_ty, unpacked,
                                              mask_const);
-    *v = builder.create<BitcastVregOp>(op.getLoc(), res_vreg_ty, unpacked);
+    *v = builder.create<BitcastVregOp>(op.getLoc(), out_vreg_ty, unpacked);
   });
-  extui_op.replaceAllUsesWith(assemble(builder, result_ty, *layouts_out.front(),
+  extui_op.replaceAllUsesWith(assemble(builder, out_ty, *layouts_out.front(),
                                        std::move(output_vregs),
                                        ctx.target_shape,
                                        /*use_implicit_shape=*/true)
