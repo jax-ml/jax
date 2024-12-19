@@ -16,20 +16,10 @@ limitations under the License.
 #ifndef THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_H_
 #define THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_H_
 
-#include <cstdint>
-#include <string>
-
 #include "llvm/ADT/StringRef.h"
-#include "llvm/Support/raw_ostream.h"
-#include "mlir/Dialect/LLVMIR/LLVMTypes.h"
-#include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/Value.h"
-#include "mlir/Interfaces/InferTypeOpInterface.h"
+#include "mlir/Dialect/LLVMIR/LLVMTypes.h"  // IWYU pragma: keep
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Support/LLVM.h"
-#include "absl/status/status.h"
-#include "absl/strings/string_view.h"
 
 // Generated definitions.
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_dialect.h.inc"  // IWYU pragma: keep
@@ -43,38 +33,9 @@ limitations under the License.
 
 namespace mosaic_gpu {
 
-using Memref = ::mlir::TypedValue<::mlir::MemRefType>;
-using Pointer = ::mlir::TypedValue<::mlir::LLVM::LLVMPointerType>;
-
 struct GlobalMemory : public mlir::SideEffects::Resource::Base<GlobalMemory> {
   llvm::StringRef getName() final { return "<GlobalMemory>"; }
 };
-
-constexpr absl::string_view kRuntimeTmaDescriptorInitializerName =
-    "mosaic_gpu_init_tma_desc";
-constexpr absl::string_view kRuntimeMemcpyAsyncH2DName =
-    "mosaic_gpu_memcpy_async_h2d";
-
-template <typename T>
-std::string MlirToString(T&& value) {
-  std::string result;
-  llvm::raw_string_ostream os(result);
-  value.print(os);
-  return result;
-}
-
-// Declares the runtime functions that can be called from the generated code.
-void DeclareRuntimeFunctions(mlir::OpBuilder& builder);
-
-// Given a target host pointer, a memref corresponding to the tensor we intend
-// to describe, and the shape of the slice we intend to load using the resulting
-// TMA descriptor, `InitTmaDescriptor` generates the TMA descriptor
-// initialization logic on the host.  The resulting TMA descriptor will be
-// stored at `host_pointer_to_descriptor`.
-absl::Status InitTmaDescriptor(mlir::OpBuilder& builder,
-                               Pointer host_pointer_to_descriptor,
-                               Memref gmem_ref,
-                               mlir::ArrayRef<int64_t> slice_shape);
 
 }  // namespace mosaic_gpu
 
