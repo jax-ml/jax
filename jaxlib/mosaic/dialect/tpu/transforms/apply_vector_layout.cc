@@ -3493,22 +3493,27 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
       if (tiling[1] != ctx.target_shape[1]) {
         return op.emitOpError("Not implemented: unsupported tiling");
       }
-      int64_t num_tiles = layout_in.tilesPerVreg(ctx.target_shape);
+      const int64_t num_tiles = layout_in.tilesPerVreg(ctx.target_shape);
+      const int64_t sublanes_per_tile =
+          layout_in.sublanesPerTile(ctx.target_shape);
       if (needs_physical_broadcast ==
           std::array{true, false}) {  // Sublane broadcast
         if (layout_in.bitwidth() != 32) {
           return op.emitOpError(
               "Not implemented: Only 32-bit supported for sublane broadcast");
         }
-        if (num_tiles != 1) {
-          return op.emitOpError(
-              "Not implemented: Only native tiling supported");
-        }
         TPU_ASSERT_EQ_OP(*(src_tiles.dimensions().end() - 2), 1);
         TPU_ASSERT_OP(offsets_in[0].has_value());
         const int64_t offset = *offsets_in[0];
-        const DenseI32ArrayAttr indices = builder.getDenseI32ArrayAttr(
-            SmallVector<int32_t>(ctx.target_shape[0], offset));
+        SmallVector<int32_t> pattern;
+        pattern.reserve(ctx.target_shape[0]);
+        for (int32_t t = 0; t < num_tiles; ++t) {
+          for (int32_t i = 0; i < sublanes_per_tile; ++i) {
+            pattern.push_back(sublanes_per_tile * t + offset);
+          }
+        }
+        const DenseI32ArrayAttr sublane_pattern =
+            builder.getDenseI32ArrayAttr(pattern);
         src_tiles.Each([&](const absl::Span<const int64_t> src_idx,
                            Value *const src_tile) {
           SmallVector<int64_t> dst_starts(dst_tiles_implicit_shape.size());
@@ -3522,17 +3527,16 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
               dst_limits[i] = dst_starts[i] + 1;
             }
           }
-          updateSlice<Value>(dst_tiles,
-                             builder.create<tpu::GatherOp>(
-                                 src_tile->getType(), *src_tile, indices, 0),
-                             dst_starts, dst_limits);
+          updateSlice<Value>(
+              dst_tiles,
+              builder.create<tpu::GatherOp>(src_tile->getType(), *src_tile,
+                                            sublane_pattern, 0),
+              dst_starts, dst_limits);
         });
       } else if (needs_physical_broadcast ==
                  std::array{false, true}) {  // Lane broadcast
         TPU_ASSERT_EQ_OP(*(src_tiles.dimensions().end() - 1), 1);
         TPU_ASSERT_OP(offsets_in[1].has_value());
-        const int64_t sublanes_per_tile =
-            layout_in.sublanesPerTile(ctx.target_shape);
         const int64_t offset = *offsets_in[1];
         const int64_t lane_offset = offset % ctx.target_shape[1];
         const int64_t tile_offset = offset / ctx.target_shape[1];
