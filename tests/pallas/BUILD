@@ -454,6 +454,19 @@ jax_py_test(
 )
 
 jax_multiplatform_test(
+    name = "tpu_ragged_all_to_all_test",
+    srcs = ["tpu_ragged_all_to_all_test.py"],
+    enable_backends = [],
+    enable_configs = [
+        "tpu_v5e_4x2",
+        "tpu_v4_2x2",
+    ],
+    deps = [
+        "//jax:pallas_tpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
     name = "gpu_attention_test",
     srcs = [
         "gpu_attention_test.py",
