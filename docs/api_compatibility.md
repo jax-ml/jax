@@ -47,16 +47,44 @@ prefixed with underscores, although we do not entirely comply with this yet.
 
 ## What is not covered?
 
-*  anything prefixed with an underscore.
-* `jax._src`
-* `jax.core`
-* `jax.lib`
-* `jax.interpreters`
+### Explicitly private APIs
+Any API or import path prefixed with an underscore is explicitly private,
+and may change without warning between JAX releases. We are working to move
+all private APIs into `jax._src` to make these expectations more clear.
+
+### Legacy internal APIs
+In addition, there are several legacy modules that currently expose some
+private APIs without an underscore, including:
+
+- `jax.core`
+- `jax.interpreters`
+- `jax.lib`
+- `jax.util`
+
+We are actively working on deprecating these modules and the APIs they contain.
+In most cases, such deprecations will follow the 3 month deprecation period,
+but this may not always be possible. If you use any such APIs, please expect
+them to be deprecated soon, and seek alternatives.
+
+### Experimental and example libraries
+The following modules include code for experimental or demonstration purposes,
+and API may change between releases without warning:
+
 * `jax.experimental`
 * `jax.example_libraries`
-* `jax.extend` (see [details](https://jax.readthedocs.io/en/latest/jax.extend.html))
 
-This list is not exhaustive.
+We understand that some users depend on `jax.experimental`, and so in most cases
+we follow the 3 month deprecation period for changes, but this may not always be
+possible.
+
+### JAX extend
+The {mod}`jax.extend` module includes semi-public JAX internal APIs that are
+meant for use by downstream projects, but do not have the same stability
+guarantees of the main JAX package. If you have code that uses `jax.extend`,
+we would strongly recommend CI tests against JAX's nightly releases, so as to
+catch potential changes before they are released.
+
+For details on `jax.extend`, see the [`jax.extend` module docuementation](https://jax.readthedocs.io/en/latest/jax.extend.html), or the design document, {ref}`jax-extend-jep`.
 
 ## Numerics and randomness
 
