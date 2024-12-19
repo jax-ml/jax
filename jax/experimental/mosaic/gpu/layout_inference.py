@@ -164,8 +164,6 @@ def infer_layout(module: ir.Module):
   def to_default_layout(ty: ir.Type) -> ir.Attribute | None:
     if ir.VectorType.isinstance(ty):
       layout = WGStridedFragLayout.from_shaped_type(ty)
-    elif ir.RankedTensorType.isinstance(ty):
-      layout = WGStridedFragLayout.from_shaped_type(ty)
     else:
       return None
     return to_strided_fragmented_layout_attr(layout)
@@ -173,7 +171,7 @@ def infer_layout(module: ir.Module):
   def set_default_layout(op: ir.OpView):
     if should_have_layout(op) and not has_any_layout_set(op):
       # TODO(bchetioui): consistently set layouts only for supported argument
-      # types (i.e. skip non-vector/tensor typed arguments.)
+      # types (i.e. skip non-vector typed arguments.)
       in_layouts = []
       for operand in op.operands:
         if (layout := to_default_layout(operand.type)) is not None:

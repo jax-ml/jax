@@ -327,7 +327,7 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", []> {
     memrefs. `a` and `b` must have the same element type and when `a` is in
     registers only F16 or BF16 are supported.
 
-    The `accumulator` must be a tensor with a FragmentedLayout. The WGMMA
+    The `accumulator` must be a vector with a FragmentedLayout. The WGMMA
     operation will be executed in the async proxy and any inputs in
     registers need to be synchronized with a memory fence.
 
@@ -338,10 +338,10 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", []> {
   }];
 
   let arguments = (ins
-    TensorOf<[MosaicGPU_WGMMASupportedType]>:$accumulator,
+    VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>:$accumulator,
     AnyTypeOf<[
       MemRefOf<[MosaicGPU_WGMMASupportedType]>,
-      TensorOf<[MosaicGPU_WGMMASupportedType]>]>:$a,
+      VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>]>:$a,
     MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b,
 
     // Attributes
