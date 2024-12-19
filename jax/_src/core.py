@@ -1832,10 +1832,11 @@ class DShapedArray(UnshapedArray):
                         self.weak_type)
 
 pytype_aval_mappings: dict[type, Callable[[Any], AbstractValue]] = {}
-shaped_abstractify_handlers: dict[Any, Callable[[Any], ShapedArray]] = {}
+shaped_abstractify_handlers: dict[Any, Callable[[Any], AbstractValue]] = {}
 
 def _str_abstractify(x):
   raise TypeError(f"Argument '{x}' of type {type(x)} is not a valid JAX type")
+pytype_aval_mappings[str] = _str_abstractify
 shaped_abstractify_handlers[str] = _str_abstractify
 
 class DArray:
@@ -1889,9 +1890,12 @@ class DArray:
     data = self._data[slices]
     return data
 
+def _darray_aval(x):
+  return DShapedArray(x._aval.shape, x._aval.dtype, x._aval.weak_type)
 
-pytype_aval_mappings[DArray] = \
-    lambda x: DShapedArray(x._aval.shape, x._aval.dtype, x._aval.weak_type)
+pytype_aval_mappings[DArray] = _darray_aval
+shaped_abstractify_handlers[DArray] = _darray_aval
+
 
 @dataclass(frozen=True)
 class bint(dtypes.ExtendedDType):
@@ -1924,6 +1928,7 @@ class MutableArray:
   def __setitem__(self, idx, x): return get_aval(self)._setitem(self, idx, x)
   def __repr__(self) -> str: return 'Mutable' + repr(self[...])
 pytype_aval_mappings[MutableArray] = lambda x: x._aval
+shaped_abstractify_handlers[MutableArray] = lambda x: x._aval
 
 def mutable_array(init_val):
   return mutable_array_p.bind(init_val)
@@ -1979,6 +1984,7 @@ class Token:
   def block_until_ready(self):
     self._buf.block_until_ready()
 pytype_aval_mappings[Token] = lambda _: abstract_token
+shaped_abstractify_handlers[Token] = lambda _: abstract_token
 
 
 # TODO(dougalm): Deprecate these. They're just here for backwards compat.
