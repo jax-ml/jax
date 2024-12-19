@@ -43,7 +43,6 @@ import jax
 from jax import errors
 from jax import jit
 from jax import lax
-from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import deprecations
@@ -192,7 +191,7 @@ class _ScalarMeta(type):
 
 def _abstractify_scalar_meta(x):
   raise TypeError(f"JAX scalar type {x} cannot be interpreted as a JAX array.")
-api_util._shaped_abstractify_handlers[_ScalarMeta] = _abstractify_scalar_meta
+core.shaped_abstractify_handlers[_ScalarMeta] = _abstractify_scalar_meta
 
 def _make_scalar_type(np_scalar_type: type) -> _ScalarMeta:
   meta = _ScalarMeta(np_scalar_type.__name__, (object,),
