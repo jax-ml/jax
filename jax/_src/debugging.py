@@ -30,6 +30,7 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 
+from jax._src import config
 from jax._src import core
 from jax._src import effects
 from jax._src import mesh as mesh_lib
@@ -136,22 +137,35 @@ def debug_callback_lowering(ctx, *args, effect, callback, **params):
   axis_context = ctx.module_context.axis_context
   if (isinstance(axis_context, sharding_impls.SPMDAxisContext) and
         set(axis_context.manual_axes) == set(axis_context.mesh.axis_names)):
-    # If we have fully manual sharding during lowering, that means the JAX
-    # program has per-device semantics, so we run the callback on each device.
-    sharding = xc.OpSharding()
-    sharding.type = xc.OpSharding.Type.MANUAL
+    if config.use_shardy_partitioner.value:
+      sharding = sharding_impls.SdyArrayShardingPerValue([
+          sharding_impls.SdyArraySharding(
+              mesh_shape=(),
+              dimension_shardings=[
+                  sharding_impls.SdyDimSharding(axes=[], is_closed=False)] * aval.ndim,
+              logical_device_ids=())
+          for aval in ctx.avals_out])
+    else:
+      # If we have fully manual sharding during lowering, that means the JAX
+      # program has per-device semantics, so we run the callback on each device.
+      sharding = xc.OpSharding()
+      sharding.type = xc.OpSharding.Type.MANUAL
   elif isinstance(
       axis_context,
-      (sharding_impls.ShardingContext, sharding_impls.SPMDAxisContext),
-  ):
-    # If we have fully automatic sharding during lowering, that means the JAX
-    # program has bulk array semantics, so we run the callback with a MAXIMAL
-    # sharding and hence execute it only once on the full logical value).
-    # If we have partially automatic sharding, we do this too... not sure why!
-    sharding = xc.OpSharding()
-    sharding.type = xc.OpSharding.Type.MAXIMAL
-    sharding.tile_assignment_dimensions = [1]
-    sharding.tile_assignment_devices = [0]
+      (sharding_impls.ShardingContext, sharding_impls.SPMDAxisContext)):
+    if config.use_shardy_partitioner.value:
+      sharding = sharding_impls.SdyArrayShardingPerValue([
+          sharding_impls.SdyArraySharding(
+              mesh_shape=(), dimension_shardings=[], logical_device_ids=(0,))])
+    else:
+      # If we have fully automatic sharding during lowering, that means the JAX
+      # program has bulk array semantics, so we run the callback with a MAXIMAL
+      # sharding and hence execute it only once on the full logical value).
+      # If we have partially automatic sharding, we do this too... not sure why!
+      sharding = xc.OpSharding()
+      sharding.type = xc.OpSharding.Type.MAXIMAL
+      sharding.tile_assignment_dimensions = [1]
+      sharding.tile_assignment_devices = [0]
   else:
     # When there's no SPMD partitioning going on, don't annotate a sharding.
     sharding = None

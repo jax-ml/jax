@@ -23,6 +23,7 @@ import functools
 from functools import partial
 import io
 import itertools
+import logging
 import operator
 import os
 import re
@@ -1959,7 +1960,6 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     except TypeError as e:
       raise ValueError("Output of translation rule must be iterable: "
                        f"{eqn}, got output {ans}") from e
-
     assert len(ans) == len(eqn.outvars), (ans, eqn)
     map(write, eqn.outvars, out_nodes)
     core.clean_up_dead_vars(eqn, env, last_used)
@@ -2742,9 +2742,13 @@ RECV_FROM_HOST_TYPE = 3
 def is_empty_shape(s: core.Shape) -> bool:
   return any(d == 0 for d in s)
 
-def send_to_host(channel: int, token: hlo.TokenType, operand: Any,
-                 aval: core.ShapedArray, name: str, *,
-                 sharding: xc.OpSharding | None = None) -> ir.Value:
+def send_to_host(
+    channel: int,
+    token: hlo.TokenType,
+    operand: Any,
+    name: str, *,
+    sharding: sharding_impls.SdyArraySharding | xc.OpSharding | None = None
+) -> ir.Value:
   channel_handle = hlo.ChannelHandle.get(channel, SEND_TO_HOST_TYPE)
   send_op = hlo.SendOp([operand], token, channel_handle,
                         is_host_transfer=ir.BoolAttr.get(True))
@@ -2753,13 +2757,21 @@ def send_to_host(channel: int, token: hlo.TokenType, operand: Any,
           _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
           _xla_host_transfer_rendezvous=ir.StringAttr.get(str(name))))
   if sharding is not None:
+    if config.use_shardy_partitioner.value:
+      assert(isinstance(sharding, sharding_impls.SdyArrayShardingPerValue))
+      assert(len(sharding.shardings) == 1)
+      sharding = sharding_impls.SdyArrayShardingPerValue([
+          sharding_impls.SdyArraySharding(
+              mesh_shape=(),
+              dimension_shardings=[],
+              logical_device_ids=sharding.shardings[0].logical_device_ids)])
     set_sharding(send_op, sharding)
   return send_op.result
 
 
 def receive_from_host(channel: int, token: hlo.TokenType,
                       out_aval: core.ShapedArray, name: str, *,
-                      sharding: xc.OpSharding | None = None,
+                      sharding: xc.OpSharding | sharding_impls.SdyArraySharding | None = None,
 ) -> tuple[ir.Value, ir.Value]:
   channel_handle = hlo.ChannelHandle.get(channel, RECV_FROM_HOST_TYPE)
   recv_op = hlo.RecvOp([aval_to_ir_type(out_aval),
@@ -2770,6 +2782,16 @@ def receive_from_host(channel: int, token: hlo.TokenType,
           _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
           _xla_host_transfer_rendezvous=ir.StringAttr.get(str(name))))
   if sharding is not None:
+    if config.use_shardy_partitioner.value:
+      assert(isinstance(sharding, sharding_impls.SdyArrayShardingPerValue))
+      assert(len(sharding.shardings) == 1)
+      # `RecvOp`'s last argument is a `TokenType`. Since Shardy requires the
+      # number of shardings to match the number of results, but JAX only sees
+      # the array result, we need to add an equivalent sharding for the token.
+      sharding = sharding_impls.SdyArrayShardingPerValue([
+          sharding.shardings[0], sharding_impls.SdyArraySharding(
+          mesh_shape=(), dimension_shardings=[],
+          logical_device_ids=sharding.shardings[0].logical_device_ids)])
     set_sharding(recv_op, sharding)
   # Token should be at the end of the results
   result, token = recv_op.results
@@ -2787,7 +2809,7 @@ def _emit_tpu_python_callback(
     result_avals: Sequence[core.ShapedArray],
     result_shapes: Sequence[xc.Shape],
     *,
-    sharding: xc.OpSharding | None = None
+    sharding: sharding_impls.SdyArraySharding | xc.OpSharding | None = None,
 ) -> tuple[Sequence[ir.Value], Any]:
   token = token or hlo.create_token()
   _wrapped_callback = callback
@@ -2807,13 +2829,13 @@ def _emit_tpu_python_callback(
     dummy_send_val = ir_constant(np.zeros(1, np.float32))
     operand_shapes = [*operand_shapes,
                       xla.aval_to_xla_shapes(dummy_send_aval)[0]]
-    token = send_to_host(send_channel, token, dummy_send_val, dummy_send_aval,
+    token = send_to_host(send_channel, token, dummy_send_val,
                          callback.__name__, sharding=sharding)
     send_channels.append(send_channel)
   else:
-    for operand, operand_aval in zip(operands, operand_avals):
+    for operand in operands:
       channel = ctx.module_context.new_channel()
-      token = send_to_host(channel, token, operand, operand_aval,
+      token = send_to_host(channel, token, operand,
                            callback.__name__, sharding=sharding)
       send_channels.append(channel)
 
@@ -2855,7 +2877,7 @@ def emit_python_callback(
     result_avals: Sequence[core.ShapedArray],
     *,
     has_side_effect: bool,
-    sharding: xc.OpSharding | None = None,
+    sharding: sharding_impls.SdyArraySharding | xc.OpSharding | None = None,
     operand_layouts: Sequence[Sequence[int] | None] | None = None,
     result_layouts: Sequence[Sequence[int] | None] | None = None,
 ) -> tuple[Sequence[IrValues], Any, Any]:
