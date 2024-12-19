@@ -125,6 +125,7 @@ class CustomCallBackendConfig:
   serialization_format: int | None
   internal_scratch_in_bytes: int | None
   output_memory_spaces: tuple[MemorySpace | None, ...] | None
+  compatibility_mode: bool
 
   # We omit the body while printing, because primitive params get embedded
   # in HLO metadata, and the body blows up its size.
@@ -175,6 +176,9 @@ class CustomCallBackendConfig:
         color = memory_space.color if memory_space is not None else -1
         config.write(str(color).encode("ascii"))
       config.write(b"]")
+    if self.compatibility_mode is not None:
+      config.write(b', "compatibility_mode": ')
+      config.write(str(self.compatibility_mode).lower().encode("ascii"))
     config.write(b"}")  # End of custom_call_config.
     if self.device_type is not None:
       config.write(b', "device_type": ')
@@ -522,6 +526,7 @@ def _lower_to_custom_call_config(
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     kernel_name: str | None = None,
     ir_version: int | None = None,
+    compatibility_mode: bool = True,
 ) -> CustomCallBackendConfig:
   lowered_module_asm, (
       has_communication,
@@ -550,6 +555,7 @@ def _lower_to_custom_call_config(
       needs_hlo_passes=needs_hlo_passes,
       needs_layout_passes=needs_layout_passes,
       output_memory_spaces=output_memory_spaces,
+      compatibility_mode=compatibility_mode,
   )
 
 
@@ -569,6 +575,7 @@ def _lowered_to_custom_call_config(
     needs_layout_passes: bool,
     device_type: str | None,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
+    compatibility_mode: bool = True,
 ):
   if has_custom_barrier:
     if collective_id is None:
@@ -599,6 +606,7 @@ def _lowered_to_custom_call_config(
       serialization_format,
       internal_scratch_in_bytes,
       output_memory_spaces,
+      compatibility_mode,
   )
   return config
 
@@ -620,6 +628,7 @@ def lower_module_to_custom_call(
     serialization_format: int | None,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None,
     device_type: str | None,
+    compatibility_mode: bool = True,
 ) -> Sequence[ir.Value]:
   config = _lower_to_custom_call_config(
       module,
@@ -635,6 +644,7 @@ def lower_module_to_custom_call(
       output_memory_spaces=output_memory_spaces,
       kernel_name=kernel_name,
       ir_version=FWD_COMPAT_IR_VERSION if ctx.is_forward_compat() else None,
+      compatibility_mode=compatibility_mode,
   )
   return _tpu_custom_call_lowering(
       ctx,
@@ -661,6 +671,7 @@ def as_tpu_kernel(
     collective_id: int | None = None,
     serialization_format: int | None = 1,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
+    compatibility_mode: bool = True,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
   device_type = _get_device_type(module)
@@ -677,6 +688,7 @@ def as_tpu_kernel(
       serialization_format=serialization_format,
       output_memory_spaces=output_memory_spaces,
       kernel_name=kernel_name,
+      compatibility_mode=compatibility_mode,
   )
   return _as_jax_callable(
       config,
