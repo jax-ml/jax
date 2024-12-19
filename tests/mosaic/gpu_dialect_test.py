@@ -487,7 +487,7 @@ class DialectTest(MosaicGpuTest):
   def test_wgmma_types_match(self):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(
-          ir.RankedTensorType.get([128, 160], ir.BF16Type.get()),
+          ir.VectorType.get([128, 160], ir.BF16Type.get()),
           ir.MemRefType.get([2, 4, 64, 32], ir.F16Type.get()),
           ir.MemRefType.get([4, 5, 32, 32], ir.BF16Type.get()),
           name="wgmma",
@@ -509,7 +509,7 @@ class DialectTest(MosaicGpuTest):
   def test_wgmma_b_rank_is_4(self):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(
-          ir.RankedTensorType.get([128, 160], ir.BF16Type.get()),
+          ir.VectorType.get([128, 160], ir.BF16Type.get()),
           ir.MemRefType.get([2, 4, 64, 32], ir.BF16Type.get()),
           ir.MemRefType.get([5, 32, 32], ir.BF16Type.get()),
           name="wgmma",
@@ -531,7 +531,7 @@ class DialectTest(MosaicGpuTest):
   def test_wgmma_b_shape_dim_3(self):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(
-          ir.RankedTensorType.get([128, 160], ir.BF16Type.get()),
+          ir.VectorType.get([128, 160], ir.BF16Type.get()),
           ir.MemRefType.get([2, 4, 64, 32], ir.BF16Type.get()),
           ir.MemRefType.get([4, 5, 32, 16], ir.BF16Type.get()),
           name="wgmma",
@@ -554,7 +554,7 @@ class DialectTest(MosaicGpuTest):
   def test_wgmma_b_shape_dim_2(self):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(
-          ir.RankedTensorType.get([128, 160], ir.BF16Type.get()),
+          ir.VectorType.get([128, 160], ir.BF16Type.get()),
           ir.MemRefType.get([2, 4, 64, 32], ir.BF16Type.get()),
           ir.MemRefType.get([4, 5, 64, 32], ir.BF16Type.get()),
           name="wgmma",

@@ -45,13 +45,12 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.enter_context(ir.Location.unknown())
     self.module = ir.Module.create()
 
-  @parameterized.parameters(ir.RankedTensorType, ir.VectorType)
-  def test_infer_layout_default(self, type_constructor):
+  def test_infer_layout_default(self):
     shape = (16, 8)
     elt_type = ir.BF16Type.get()
 
     with ir.InsertionPoint(self.module.body):
-      ab_type = type_constructor.get(shape, elt_type)
+      ab_type = ir.VectorType.get(shape, elt_type)
       const_zero = ir.FloatAttr.get(elt_type, 0)
       const_one = ir.FloatAttr.get(elt_type, 1)
       a = arith.ConstantOp(
@@ -80,13 +79,12 @@ class LayoutInferenceTest(parameterized.TestCase):
           op.attributes["out_layouts"], [layout] * len(op.results)
       )
 
-  @parameterized.parameters(ir.RankedTensorType, ir.VectorType)
-  def test_infer_layout_for_pointwise_op(self, type_constructor):
+  def test_infer_layout_for_pointwise_op(self):
     shape = (4, 8)
     elt_type = ir.BF16Type.get()
 
     with ir.InsertionPoint(self.module.body):
-      ab_type = type_constructor.get(shape, elt_type)
+      ab_type = ir.VectorType.get(shape, elt_type)
       const_zero = ir.FloatAttr.get(elt_type, 0)
       const_one = ir.FloatAttr.get(elt_type, 1)
       a = arith.ConstantOp(

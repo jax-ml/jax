@@ -72,10 +72,7 @@ def to_splat_fragmented_layout_attr(layout: WGSplatFragLayout) -> ir.Attribute:
 def should_have_layout(op: ir.OpView) -> bool:
   """Returns 'true' if the operation should be assigned a layout."""
 
-  def is_array(v: ir.Value):
-    ty = v.type
-    return ir.RankedTensorType.isinstance(ty) or ir.VectorType.isinstance(ty)
-
+  is_array = lambda v: ir.VectorType.isinstance(v.type)
   return any(map(is_array, itertools.chain(op.operands, op.results)))  # type: ignore
 
 
