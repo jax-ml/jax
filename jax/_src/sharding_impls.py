@@ -145,6 +145,16 @@ class SdyArraySharding:
         [dim_sharding.build() for dim_sharding in self.dimension_shardings])
 
 
+@dataclasses.dataclass
+class SdyArrayShardingPerValue:
+  shardings: Sequence[SdyArraySharding]
+
+  # NOTE: An MLIR context is required as a context manager.
+  def build(self) -> sdy.TensorShardingPerValueAttr:
+    return sdy.TensorShardingPerValueAttr.get(
+        [sharding.build() for sharding in self.shardings])
+
+
 @util.cache(max_size=4096, trace_context_in_key=False)
 def named_sharding_to_xla_hlo_sharding(
     self, num_dimensions: int) -> xc.HloSharding:
