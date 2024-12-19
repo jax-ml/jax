@@ -350,6 +350,25 @@ class Mesh(contextlib.ContextDecorator):
   def abstract_mesh(self):
     return AbstractMesh(self.shape_tuple, axis_types=self.axis_types)
 
+  def with_axis_types(self, new_axis_types) -> Mesh:
+    return Mesh(self.devices, self.axis_names, axis_types=new_axis_types)
+
+  @functools.cached_property
+  def _are_all_axes_collective(self) -> bool:
+    return all(t == AxisTypes.Collective for t in self.axis_types.keys())
+
+  @functools.cached_property
+  def _are_all_axes_auto(self) -> bool:
+    return all(t == AxisTypes.Auto for t in self.axis_types.keys())
+
+  @functools.cached_property
+  def _any_axis_collective(self) -> bool:
+    return any(t == AxisTypes.Collective for t in self.axis_types.keys())
+
+  @functools.cached_property
+  def _any_axis_auto(self) -> bool:
+    return any(t == AxisTypes.Auto for t in self.axis_types.keys())
+
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
 
@@ -368,7 +387,7 @@ class AbstractMesh:
   It does not contain concrete devices compared to `jax.sharding.Mesh`. You
   should use this as an input to the sharding passed to with_sharding_constraint
   and mesh passed to shard_map to avoid tracing and lowering cache misses when
-  your mesh shape and names stay the same but the devices change.
+  your mesh shape and axis names stay the same but the devices change.
   See the description of https://github.com/jax-ml/jax/pull/23022 for more
   details.
   """
@@ -396,8 +415,9 @@ class AbstractMesh:
             self._axis_types_tuple == other._axis_types_tuple)
 
   def __repr__(self):
+    mesh_repr = ", ".join(f"'{n}': {v}" for n, v in self.shape_tuple)
     atr = f", axis_types={self.axis_types}"
-    return f"AbstractMesh({self.shape_tuple}{atr})"
+    return f"AbstractMesh({mesh_repr}{atr})"
 
   @property
   def axis_names(self):
@@ -426,6 +446,9 @@ class AbstractMesh:
   @property
   def empty(self):
     return self.size == 0
+
+  def with_axis_types(self, new_axis_types) -> AbstractMesh:
+    return AbstractMesh(self.shape_tuple, axis_types=new_axis_types)
 
   @functools.cached_property
   def _are_all_axes_collective(self) -> bool:

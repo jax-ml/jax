@@ -81,6 +81,28 @@ from jax._src.core import (
 
 from jax._src import core as _src_core
 _deprecations = {
+    # Added 2024-12-16
+    "ClosedJaxpr": ("jax.core.ClosedJaxpr is deprecated. Use jax.extend.core.ClosedJaxpr instead, "
+                    "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
+                    _src_core.ClosedJaxpr),
+    "Jaxpr": ("jax.core.Jaxpr is deprecated. Use jax.extend.core.Jaxpr instead, "
+              "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
+              _src_core.Jaxpr),
+    "JaxprEqn": ("jax.core.JaxprEqn is deprecated. Use jax.extend.core.JaxprEqn instead, "
+                 "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
+                 _src_core.JaxprEqn),
+    "Literal": ("jax.core.Literal is deprecated. Use jax.extend.core.Literal instead, "
+                "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
+                _src_core.Literal),
+    "Primitive": ("jax.core.Primitive is deprecated. Use jax.extend.core.Primitive instead, "
+                  "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
+                  _src_core.Primitive),
+    "Token": ("jax.core.Token is deprecated. Use jax.extend.core.Token instead, "
+              "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
+              _src_core.Token),
+    "Var": ("jax.core.Var is deprecated. Use jax.extend.core.Var instead, "
+            "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
+            _src_core.Var),
     # Added 2024-12-11
     "axis_frame": ("jax.core.axis_frame is deprecated.", _src_core.axis_frame),
     "AxisName": ("jax.core.AxisName is deprecated.", _src_core.AxisName),
@@ -100,7 +122,7 @@ _deprecations = {
                _src_core.call_p),
     "closed_call_p": ("jax.core.closed_call_p is deprecated. Use jax.extend.core.primitives.closed_call_p",
                       _src_core.closed_call_p),
-    "concrete_aval": ("jax.core.concrete_aval is deprecated.", _src_core.concrete_aval),
+    "concrete_aval": ("jax.core.concrete_aval is deprecated.", _src_core.abstractify),
     "dedup_referents": ("jax.core.dedup_referents is deprecated.", _src_core.dedup_referents),
     "escaped_tracer_error": ("jax.core.escaped_tracer_error is deprecated.",
                              _src_core.escaped_tracer_error),
@@ -129,36 +151,15 @@ _deprecations = {
     "used_axis_names_jaxpr": ("jax.core.used_axis_names_jaxpr is deprecated.",
                               _src_core.used_axis_names_jaxpr),
     # Added 2024-12-10
-    "ClosedJaxpr": ("jax.core.ClosedJaxpr is deprecated. Use jax.extend.core.ClosedJaxpr instead, "
-                    "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
-                    _src_core.ClosedJaxpr),
     "full_lower": ("jax.core.full_lower is deprecated. It is a no-op as of JAX v0.4.36.",
                    _src_core.full_lower),
-    "Jaxpr": ("jax.core.Jaxpr is deprecated. Use jax.extend.core.Jaxpr instead, "
-              "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
-              _src_core.Jaxpr),
-    "JaxprEqn": ("jax.core.JaxprEqn is deprecated. Use jax.extend.core.JaxprEqn instead, "
-                 "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
-                 _src_core.JaxprEqn),
     "jaxpr_as_fun": ("jax.core.jaxpr_as_fun is deprecated. Use jax.extend.core.jaxpr_as_fun instead, "
                      "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
                      _src_core.jaxpr_as_fun),
     "lattice_join": ("jax.core.lattice_join is deprecated. It is a no-op as of JAX v0.4.36.",
                      _src_core.lattice_join),
-    "Literal": ("jax.core.Literal is deprecated. Use jax.extend.core.Literal instead, "
-                "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
-                _src_core.Literal),
-    "Primitive": ("jax.core.Primitive is deprecated. Use jax.extend.core.Primitive instead, "
-                  "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
-                  _src_core.Primitive),
     "raise_to_shaped": ("jax.core.raise_to_shaped is deprecated. It is a no-op as of JAX v0.4.36.",
                         _src_core.raise_to_shaped),
-    "Token": ("jax.core.Token is deprecated. Use jax.extend.core.Token instead, "
-              "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
-              _src_core.Token),
-    "Var": ("jax.core.Var is deprecated. Use jax.extend.core.Var instead, "
-            "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
-            _src_core.Var),
     # Finalized 2024-12-11; remove after 2025-3-11
     "check_eqn": ("jax.core.check_eqn was removed in JAX v0.4.38.", None),
     "check_type": ("jax.core.check_type was removed in JAX v0.4.38.", None),
@@ -206,7 +207,7 @@ if typing.TYPE_CHECKING:
   axis_frame = _src_core.axis_frame
   call_p = _src_core.call_p
   closed_call_p = _src_core.closed_call_p
-  concrete_aval = _src_core.concrete_aval
+  concrete_aval = _src_core.abstractify
   dedup_referents = _src_core.dedup_referents
   escaped_tracer_error = _src_core.escaped_tracer_error
   extend_axis_env_nd = _src_core.extend_axis_env_nd

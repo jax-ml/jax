@@ -170,7 +170,11 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     for p in all_primitives:
       if p.name == "axis_index":
         continue
+      if p.name == "composite":
+        continue
       if p.name == "sharding_constraint":
+        continue
+      if p.name == "sharding_cast":
         continue
       # TODO: Remove once tensorflow is 2.10.0 everywhere.
       if p.name == "optimization_barrier":
@@ -196,6 +200,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
           "dot_product_attention_bwd",
           "dot_product_attention_fwd_wrapper",
           "dot_product_attention_bwd_wrapper",
+          "dot_product_attention_fp8_fwd_wrapper",
+          "dot_product_attention_fp8_bwd_wrapper",
       ):
         continue
       if p.name in tf_not_yet_impl:

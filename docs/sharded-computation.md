@@ -143,7 +143,6 @@ For example, suppose that within `f_contract` above, you'd prefer the output not
 @jax.jit
 def f_contract_2(x):
   out = x.sum(axis=0)
-  mesh = jax.make_mesh((8,), ('x',))
   sharding = jax.sharding.NamedSharding(mesh, P('x'))
   return jax.lax.with_sharding_constraint(out, sharding)
 

@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -118,12 +119,25 @@ LogicalResult MemRefSliceOp::verify() {
   // the canonicalizer, so we allow this when attributes are "unset" in the
   // target type. Note that MemRefType does not allow a null layout so we treat
   // the default identity affine map as an "unset" value instead.
-  return success(
-      (target_memory_space == nullptr ||
-       target_memory_space == source_type.getMemorySpace()) &&
-      ((isa<AffineMapAttr>(target_layout) && target_layout.isIdentity()) ||
-       target_type.getLayout() == source_type.getLayout()) &&
-      getDynamicSizes().size() == target_type.getNumDynamicDims());
+  bool is_target_memory_space_provided = target_memory_space != nullptr;
+  if (is_target_memory_space_provided &&
+      target_memory_space != source_type.getMemorySpace()) {
+    return emitOpError(
+        "Memory spaces must match if the target memory space is provided.");
+  }
+  bool is_target_layout_identity_map =
+      isa<AffineMapAttr>(target_layout) && target_layout.isIdentity();
+  if (!is_target_layout_identity_map &&
+      target_type.getLayout() != source_type.getLayout()) {
+    return emitOpError(
+        "Layouts must match if the target layout is not an identity map.");
+  }
+  if (getDynamicSizes().size() != target_type.getNumDynamicDims()) {
+    return emitOpError(
+        "Number of provided dynamic dimensions sizes must match the number of "
+        "dynamic dimensions in the target type.");
+  }
+  return success();
 }
 
 LogicalResult MemRefSliceOp::canonicalize(MemRefSliceOp op,
@@ -934,6 +948,13 @@ LogicalResult EnqueueDMAOp::verify() {
           "device_id or core_id is specified");
     }
   }
+  if (getSourceSemaphore()) {
+    if (!getDeviceId() && !getCoreId()) {
+      return emitOpError(
+          "DMA destination device_id or core_id must be specified when source "
+          "semaphore is specified");
+    }
+  }
   return success();
 }
 
@@ -1109,6 +1130,54 @@ LogicalResult WeirdOp::verify() {
     if (!out_type.isInteger(1)) {
       return emitOpError("Output type must be I1 scalar");
     }
+  }
+  return success();
+}
+
+void PackSubelementsOp::build(OpBuilder &builder, OperationState &state,
+                              const VectorType output_type,
+                              const ArrayRef<Value> padded_sources,
+                              const PackFormat pack_format) {
+  SmallVector<Value> sources;
+  SmallVector<int32_t> positions;
+  for (size_t i = 0; i < padded_sources.size(); ++i) {
+    if (padded_sources[i] != nullptr) {
+      sources.push_back(padded_sources[i]);
+      positions.push_back(i);
+    }
+  }
+  build(builder, state, output_type, sources, positions, pack_format);
+}
+
+SmallVector<Value> PackSubelementsOp::getPaddedSources(
+    ValueRange sources, const ArrayRef<int32_t> positions,
+    const int packing_factor) {
+  SmallVector<Value> padded_sources(packing_factor);
+  for (const auto [source, position] : llvm::zip(sources, positions)) {
+    padded_sources[position] = source;
+  }
+  return padded_sources;
+}
+
+LogicalResult PackSubelementsOp::verify() {
+  if (getSources().empty()) {
+    return emitOpError("At least one source is required");
+  }
+  if (getPositions().size() != getSources().size()) {
+    return emitOpError("Size of sources and positions must match");
+  }
+  const int packing_factor = cast<VectorType>(getSources().front().getType())
+                                 .getElementTypeBitWidth() /
+                             getType().getElementTypeBitWidth();
+  SmallVector<bool> seen_positions(packing_factor, false);
+  for (const int32_t position : getPositions()) {
+    if (position < 0 || packing_factor <= position) {
+      return emitOpError("Positions must be between 0 and the packing factor");
+    }
+    if (seen_positions[position]) {
+      return emitOpError("Positions must be unique");
+    }
+    seen_positions[position] = true;
   }
   return success();
 }

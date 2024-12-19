@@ -49,7 +49,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
 from jax._src.sharding import Sharding as JSharding
-from jax._src.sharding_impls import AUTO
+from jax._src.sharding_impls import AUTO, NamedSharding
 from jax._src.partition_spec import UnconstrainedSingleton
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
@@ -377,7 +377,9 @@ def _numpy_array_attribute(x: np.ndarray | np.generic) -> ir.Attribute:
     x = np.packbits(x, bitorder='little')  # type: ignore
   x = np.ascontiguousarray(x)
   builder = _dtype_to_array_attr.get(x.dtype, None)
-  if builder:
+  # Array attributes only support 1D arrays. Fall back to creating dense
+  # elements attribute for higher dimensions.
+  if builder and len(shape) == 1:
     return builder(x)
   else:
     element_type = dtype_to_ir_type(x.dtype)
@@ -1055,6 +1057,21 @@ def _get_mem_kind(s: JSharding | AUTO | None) -> str | None:
   assert isinstance(s, JSharding)
   return s.memory_kind
 
+def contains_unconstrained(s):
+  return isinstance(s, NamedSharding) and None in s._parsed_pspec
+
+def all_unconstrained(s, aval):
+  if isinstance(s, NamedSharding):
+    if aval.ndim != len(s._parsed_pspec):
+      return False
+    return all(p is None for p in s._parsed_pspec)
+  return False
+
+def _get_unconstrained_dimensions(s, aval):
+  us = contains_unconstrained(s)
+  return (us, all_unconstrained(s, aval),
+          ({i for i, p in enumerate(s._parsed_pspec) if p is None} if us else None))
+
 
 def lower_jaxpr_to_module(
     module_name: str,
@@ -1114,7 +1131,8 @@ def lower_jaxpr_to_module(
         f"only {platforms_with_donation} support donation")
     if (num_partitions > 1 and
         (result_shardings is None or
-         all(s is None or isinstance(s, AUTO) for s in result_shardings))):
+         all(s is None or isinstance(s, AUTO) or contains_unconstrained(s)
+             for s in result_shardings))):
       xla_donated_args = donated_args
       donated_args = [False] * len(donated_args)
     if xla_donated_args is None:
@@ -1448,7 +1466,8 @@ def lower_jaxpr_to_fun(
   ir_arg_memory_kinds = None
   if arg_memory_kinds is not None:
     ir_arg_memory_kinds = util.flatten(
-        [[mk] * len_ir_types(types) for mk, types in zip(arg_memory_kinds, input_types)])
+        [[mk] * len_ir_types(types)
+         for mk, types in zip(arg_memory_kinds, input_types)])
 
   ir_arg_layouts = None
   if arg_layouts is not None:
@@ -1459,12 +1478,17 @@ def lower_jaxpr_to_fun(
   ir_donated_args = None
   if xla_donated_args is not None:
     ir_donated_args = util.flatten(
-        [[is_donated] * len_ir_types(types) for is_donated, types in zip(xla_donated_args, input_types)])
+        [[is_donated] * len_ir_types(types)
+         for is_donated, types in zip(xla_donated_args, input_types)])
 
   ir_result_shardings = None
+  unconstrained_shardings = None
   if result_shardings is not None:
     ir_result_shardings = util.flatten(
         [[_to_physical_op_sharding(ctx, a, s)] * len_ir_types(types)
+         for a, s, types in zip(output_avals, result_shardings, output_types)])
+    unconstrained_shardings = util.flatten(
+        [[_get_unconstrained_dimensions(s, a)] * len_ir_types(types)
          for a, s, types in zip(output_avals, result_shardings, output_types)])
 
   ir_result_memory_kinds = None
@@ -1580,8 +1604,9 @@ def lower_jaxpr_to_fun(
         attrs['jax.result_info'] = ir.StringAttr.get(name_)
 
   if use_sharding_annotations and ir_result_shardings is not None:
-    for attrs, sharding in zip(result_attrs, ir_result_shardings):
-      if sharding is not None:
+    for attrs, sharding, us in zip(result_attrs, ir_result_shardings,
+                                   unconstrained_shardings):  # type: ignore
+      if sharding is not None and not us[0]:
         if config.use_shardy_partitioner.value:
           attrs["sdy.sharding"] = get_sharding_attr(sharding)
         else:
@@ -1657,6 +1682,15 @@ def lower_jaxpr_to_fun(
       flat_outputs = [
           o if s is None else wrap_with_sharding_op(entry_lowering_ctx, o, o_aval, s)
           for o, s, o_aval in zip(flat_outputs, ir_result_shardings, output_avals)]
+
+    if ir_result_shardings is not None:
+      flat_outputs = [
+          wrap_with_sharding_op(entry_lowering_ctx, o, o_aval, s,
+                                unspecified_dims=us[2])
+          if us[0] and not us[1] else o
+          for o, s, o_aval, us in zip(flat_outputs, ir_result_shardings,
+                                      output_avals, unconstrained_shardings)  # type: ignore
+      ]
 
     # Insert a custom call if output is on host because XLA needs that to do the
     # transfer.
@@ -1825,7 +1859,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
 
   def aval(v: core.Atom) -> core.AbstractValue:
     if type(v) is core.Literal:
-      return xla.abstractify(v.val)
+      return core.abstractify(v.val)
     else:
       return v.aval
 
@@ -2181,22 +2215,46 @@ def check_backend_matches(inner_backend: str | None,
         f"inner-jit backend specification {inner_backend}.")
 
 
-def call_lowering(fn_name, name_stack, call_jaxpr, backend,
-                  ctx: ModuleContext, avals_in,
-                  avals_out, tokens_in, *args,
-                  dim_var_values: Sequence[ir.Value],
-                  arg_names=None, result_names=None):
-  del avals_in
+def lower_called_computation(
+    fn_name,
+    name_stack,
+    call_jaxpr,
+    ctx: ModuleContext,
+    avals_out,
+    tokens_in,
+    backend=None,
+    arg_names=None,
+    result_names=None,
+):
   if isinstance(call_jaxpr, core.Jaxpr):
     call_jaxpr = pe.close_jaxpr(call_jaxpr)
   check_backend_matches(backend, ctx.platforms)
   effects = list(tokens_in.effects())
   output_types = map(aval_to_ir_type, avals_out)
   output_types = [token_type()] * len(effects) + output_types
+  func_op = _lower_jaxpr_to_fun_cached(
+      ctx,
+      fn_name,
+      call_jaxpr,
+      effects,
+      name_stack,
+      arg_names=arg_names,
+      result_names=result_names,
+  )
+  return func_op, output_types, effects
+
+
+def call_lowering(fn_name, name_stack, call_jaxpr, backend,
+                  ctx: ModuleContext, avals_in,
+                  avals_out, tokens_in, *args,
+                  dim_var_values: Sequence[ir.Value],
+                  arg_names=None, result_names=None):
+  del avals_in
+  func_op, output_types, effects = lower_called_computation(
+      fn_name, name_stack, call_jaxpr, ctx, avals_out, tokens_in,
+      backend=backend, arg_names=arg_names, result_names=result_names)
+  symbol_name = func_op.name.value
   flat_output_types = flatten_ir_types(output_types)
-  symbol_name = _lower_jaxpr_to_fun_cached(
-      ctx, fn_name, call_jaxpr, effects, name_stack, arg_names=arg_names,
-      result_names=result_names).name.value
   tokens = [tokens_in.get(eff) for eff in effects]
   args = (*dim_var_values, *tokens, *args)
   call = func_dialect.CallOp(flat_output_types,

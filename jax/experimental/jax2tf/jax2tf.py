@@ -38,7 +38,6 @@ from jax import tree_util
 from jax import sharding
 from jax import export
 from jax.experimental.jax2tf import impl_no_xla
-from jax.interpreters import xla
 
 from jax._src import ad_checkpoint
 from jax._src import ad_util
@@ -1153,7 +1152,7 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
     else:
       return val, jax_dtype
   else:  # A constant
-    jax_dtype = jax_dtype or xla.abstractify(val).dtype
+    jax_dtype = jax_dtype or core.abstractify(val).dtype
     # TODO(document): We assume that the value of a constant does not
     # change through the scope of the function. But it may be an ndarray, ...
     # JAX has the same problem when generating HLO.
@@ -1666,39 +1665,6 @@ tf_impl[lax.sin_p] = tf.math.sin
 tf_impl[lax.sinh_p] = tf.math.sinh
 tf_impl[lax.cos_p] = tf.math.cos
 tf_impl[lax.cosh_p] = tf.math.cosh
-
-
-def _acos_impl(x):
-  if x.dtype.is_complex:
-    result = tf.multiply(tf.constant(1j, dtype=x.dtype), tf.math.acosh(x))
-    # By convention, numpy chooses the branch with positive real part.
-    rpart = tf.math.real(result)
-    return tf.where(
-        tf.math.greater(rpart, tf.constant(0, dtype=rpart.dtype)),
-        result,
-        tf.math.negative(result),
-    )
-  else:
-    return tf.where(
-        tf.math.not_equal(x, tf.constant(-1.0, dtype=x.dtype)),
-        tf.multiply(
-            tf.constant(2, dtype=x.dtype),
-            tf.math.atan2(
-                tf.math.sqrt(
-                    tf.math.subtract(
-                        tf.constant(1, dtype=x.dtype), tf.math.square(x)
-                    )
-                ),
-                tf.math.add(tf.constant(1, dtype=x.dtype), x),
-            ),
-        ),
-        tf.broadcast_to(tf.constant(np.pi, dtype=x.dtype), tf.shape(x)),
-    )
-
-
-tf_impl_with_avals[lax.acos_p] = _acos_impl
-tf_impl_with_avals[lax.asin_p] = _convert_jax_impl(
-    lax_internal.asin_impl, multiple_results=False)
 tf_impl_with_avals[lax.atan_p] = _convert_jax_impl(
     lax_internal.atan_impl, multiple_results=False)
 
@@ -1724,6 +1690,8 @@ tf_impl[lax.atan2_p] = _atan2
 tf_impl[lax.acosh_p] = tf.math.acosh
 tf_impl[lax.atanh_p] = tf.math.atanh
 tf_impl[lax.asinh_p] = tf.math.asinh
+tf_impl[lax.asin_p] = tf.math.asin
+tf_impl[lax.acos_p] = tf.math.acos
 
 tf_impl[lax.sqrt_p] = tf.math.sqrt
 tf_impl[lax.square_p] = tf.math.square
@@ -2085,6 +2053,12 @@ def _concatenate(*operands, dimension):
 
 
 tf_impl[lax.concatenate_p] = _concatenate
+
+
+def _split(operand, *, sizes, axis):
+  return tf.split(operand, _eval_shape(sizes), axis=axis)
+
+tf_impl[lax.split_p] = _split
 
 
 def _conv_general_dimension_numbers_proto(dimension_numbers):

@@ -63,11 +63,6 @@ class JaxAotTest(jtu.JaxTestCase):
         jax.pmap(lambda x: x * x).lower(
             np.zeros((len(jax.devices()), 4), dtype=np.float32)))
 
-  @unittest.skipIf(
-      jax._src.lib.xla_extension_version < 300,
-      'AOT compiler registration was broken in XLA extension version below'
-      ' 300.',
-  )
   def test_topology_pjit_serialize(self):
     try:
       aot_topo = topologies.get_topology_desc(

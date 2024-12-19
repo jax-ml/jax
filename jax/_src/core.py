@@ -273,10 +273,12 @@ class JaxprEqnContext:
                xla_metadata=None):
     self.compute_type = compute_type
     self.threefry_partitionable = threefry_partitionable
+    self.cur_abstract_mesh = mesh_lib.get_abstract_mesh()
     self.xla_metadata = xla_metadata
     self._managers = [
         (compute_on.extend_compute_type, self.compute_type),
         (config.threefry_partitionable.__call__, self.threefry_partitionable),
+        (mesh_lib.set_abstract_mesh, self.cur_abstract_mesh),
         (xla_metadata_lib.set_xla_metadata, self.xla_metadata),
     ]
 
@@ -292,6 +294,7 @@ class JaxprEqnContext:
     return (
         f"JaxprEqnContext(compute_type={self.compute_type}, "
         f"threefry_partitionable={self.threefry_partitionable}, "
+        f"cur_abstract_mesh={self.cur_abstract_mesh}, "
         f"xla_metadata={self.xla_metadata})"
     )
 
@@ -534,6 +537,17 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
       write(eqn.outvars[0], ans)
     clean_up_dead_vars(eqn, env, lu)
   return map(read, jaxpr.outvars)
+
+def check_avals_context_mesh(avals, prim_name):
+  if config.sharding_in_types.value:
+    for a in avals:
+      cur_mesh = mesh_lib.get_abstract_mesh()
+      if a.sharding.mesh != cur_mesh:
+        raise ValueError(
+            f"For primitive {prim_name}, context mesh {cur_mesh} should match"
+            f" the aval mesh {a.sharding.mesh} for shape {a.str_short()}. This"
+            " error occurs at source: "
+            f" {source_info_util.summarize(source_info_util.current())}")
 
 
 # -------------------- tracing --------------------
@@ -1374,7 +1388,7 @@ Value = Any
 
 def valid_jaxtype(x) -> bool:
   try:
-    concrete_aval(x)
+    abstractify(x)
   except TypeError:
     return False
   else:
@@ -1386,21 +1400,43 @@ def check_valid_jaxtype(x):
       f"Value {x!r} of type {type(x)} is not a valid JAX type")
 
 
-def concrete_aval(x):
+def _shaped_abstractify_slow(x):
+  try:
+    return x if isinstance(x, AbstractValue) else get_aval(x)
+  except TypeError:
+    pass
+
+  weak_type = getattr(x, 'weak_type', False)
+  if hasattr(x, 'dtype'):
+    dtype = dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True)
+  else:
+    raise TypeError(
+        f"Cannot interpret value of type {type(x)} as an abstract array; it "
+        "does not have a dtype attribute")
+  return ShapedArray(np.shape(x), dtype, weak_type=weak_type)
+
+# TODO(jakevdp): deduplicate this with abstractify
+def shaped_abstractify(x):
+  # This was originally api_util.shaped_abstractify; temporarily moved
+  # here in order to facilitate combining it with abstractify.
+  handler = shaped_abstractify_handlers.get(type(x), None)
+  return handler(x) if handler is not None else _shaped_abstractify_slow(x)
+
+
+def abstractify(x):
   for typ in type(x).__mro__:
-    handler = pytype_aval_mappings.get(typ)
-    if handler: return handler(x)
+    aval_fn = pytype_aval_mappings.get(typ)
+    if aval_fn: return aval_fn(x)
   if hasattr(x, '__jax_array__'):
-    return concrete_aval(x.__jax_array__())
-  raise TypeError(f"Value {x!r} with type {type(x)} is not a valid JAX "
-                   "type")
+    return abstractify(x.__jax_array__())
+  raise TypeError(f"Argument '{x}' of type '{type(x)}' is not a valid JAX type")
 
 
 def get_aval(x):
   if isinstance(x, Tracer):
     return x.aval
   else:
-    return concrete_aval(x)
+    return abstractify(x)
 
 get_type = get_aval
 
@@ -1622,12 +1658,15 @@ def get_sharding(sharding, ndim):
   from jax._src.sharding_impls import NamedSharding  # type: ignore
 
   if sharding is not None:
-    assert len(sharding.spec) == ndim
+    if len(sharding.spec) != ndim:
+      raise ValueError(
+          "Length of sharding.spec must be equal to aval's ndim. Got"
+          f" sharding.spec {sharding.spec} and aval.ndim {ndim}")
     return _maybe_modify_sharding(sharding)
 
   context_mesh = mesh_lib.get_abstract_mesh()
   if not context_mesh:
-    return RuntimeError("Please set the mesh via `jax.set_mesh` API.")
+    raise RuntimeError("Please set the mesh via `jax.set_mesh` API.")
   assert sharding is None
   return NamedSharding(context_mesh, P(*[None] * ndim))
 
@@ -1793,7 +1832,11 @@ class DShapedArray(UnshapedArray):
                         self.weak_type)
 
 pytype_aval_mappings: dict[type, Callable[[Any], AbstractValue]] = {}
+shaped_abstractify_handlers: dict[Any, Callable[[Any], ShapedArray]] = {}
 
+def _str_abstractify(x):
+  raise TypeError(f"Argument '{x}' of type {type(x)} is not a valid JAX type")
+shaped_abstractify_handlers[str] = _str_abstractify
 
 class DArray:
   _aval: DShapedArray
@@ -1901,6 +1944,8 @@ def mutable_array_abstract_eval(init_aval):
 def _mutable_array_impl(init_val):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   aval = get_aval(init_val)
+  # TODO(mattjj): improve spelling of 'defensive copy' here, avoid circular dep
+  init_val = init_val.copy() if hasattr(init_val, 'copy') else init_val
   return MutableArray(AbstractRef(aval), init_val)
 
 def freeze(ref):
@@ -2518,17 +2563,18 @@ def _check_jaxpr(
       in_avals = [x.aval for x in in_atoms]  # use in_atoms for dyn shapes
 
       # Compute the type of the primitive application.
-      if prim in custom_typechecks:
-        out_type, eqn_effects = custom_typechecks[prim](
-          ctx_factory, *in_atoms, **eqn.params)
-      elif prim.call_primitive:
-        out_type, eqn_effects = _check_call(ctx_factory, prim, in_atoms,
+      with eqn.ctx.manager:
+        if prim in custom_typechecks:
+          out_type, eqn_effects = custom_typechecks[prim](
+            ctx_factory, *in_atoms, **eqn.params)
+        elif prim.call_primitive:
+          out_type, eqn_effects = _check_call(ctx_factory, prim, in_atoms,
+                                              eqn.params)
+        elif prim.map_primitive:
+          out_type, eqn_effects = _check_map(ctx_factory, prim, in_avals,
                                             eqn.params)
-      elif prim.map_primitive:
-        out_type, eqn_effects = _check_map(ctx_factory, prim, in_avals,
-                                           eqn.params)
-      else:
-        out_type, eqn_effects = check_eqn(prim, in_avals, eqn.params)
+        else:
+          out_type, eqn_effects = check_eqn(prim, in_avals, eqn.params)
 
       # Check the computed effect type matches the eqn's annotation, and is
       # included in the jaxpr's annotation.

@@ -67,6 +67,9 @@ class CompatTest(bctu.CompatTestBase):
 
   @jax.default_matmul_precision("bfloat16")
   def test_mosaic_matmul(self):
+    # TODO(apaszke): Remove after 12 weeks have passed.
+    if not jtu.if_cloud_tpu_at_least(2024, 9, 30):
+      self.skipTest("Requires libtpu built after 2024-09-30")
     dtype = jnp.float32
     def func():
       # Build the inputs here, to reduce the size of the golden inputs.

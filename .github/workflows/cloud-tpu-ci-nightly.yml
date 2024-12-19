@@ -13,7 +13,7 @@
 name: CI - Cloud TPU (nightly)
 on:
   schedule:
-    - cron: "0 */2 * * *" # Run every 2 hours
+    - cron: "0 2,14 * * *" # Run at 7am and 7pm PST
   workflow_dispatch: # allows triggering the workflow run manually
 # This should also be set to read-only in the project settings, but it's nice to
 # document and enforce the permissions here.
@@ -33,12 +33,11 @@ jobs:
         python-version: ["3.10"]
     name: "TPU test (jaxlib=${{ matrix.jaxlib-version }}, ${{ matrix.tpu.type }})"
     env:
-      LIBTPU_OLDEST_VERSION_DATE: 20240722
-      ENABLE_PJRT_COMPATIBILITY: ${{ matrix.jaxlib-version == 'nightly+oldest_supported_libtpu' }}
+      LIBTPU_OLDEST_VERSION_DATE: 20240922
       PYTHON: python${{ matrix.python-version }}
     runs-on: ${{ matrix.tpu.runner }}
     container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest"
-    timeout-minutes: 120
+    timeout-minutes: 180
     defaults:
       run:
         shell: bash -ex {0}
@@ -112,10 +111,17 @@ jobs:
           JAX_PLATFORMS: tpu,cpu
           PY_COLORS: 1
         run: |
+          # We're deselecting all Pallas TPU tests in the oldest libtpu build. Mosaic TPU does not
+          # guarantee anything about forward compatibility (unless jax.export is used) and the 12
+          # week compatibility window accumulates way too many failures.
+          IGNORE_FLAGS=
+          if [ "${{ matrix.jaxlib-version }}" == "nightly+oldest_supported_libtpu" ]; then
+            IGNORE_FLAGS="--ignore=tests/pallas"
+          fi
           # Run single-accelerator tests in parallel
           JAX_ENABLE_TPU_XDIST=true $PYTHON -m pytest -n=${{ matrix.tpu.cores }} --tb=short \
             --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
-            --maxfail=20 -m "not multiaccelerator" tests examples
+            --maxfail=20 -m "not multiaccelerator" $IGNORE_FLAGS tests examples
           # Run Pallas printing tests, which need to run with I/O capturing disabled.
           TPU_STDERR_LOG_LEVEL=0 $PYTHON -m pytest -s \
             tests/pallas/tpu_pallas_test.py::PallasCallPrintTest

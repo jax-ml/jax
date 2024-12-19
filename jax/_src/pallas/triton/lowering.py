@@ -102,7 +102,7 @@ class LoweringRuleContext:
 
 @dataclasses.dataclass
 class LoweringResult:
-  """Keeps pybind11 objects alive."""
+  """Keeps python objects alive."""
 
   module: ir.Module
   grid: tuple[int, ...]
@@ -273,7 +273,7 @@ def _check_tensor_size(shape: tuple[int | pallas_core.Mapped, ...]):
 def lower_jaxpr_to_triton_module(
     jaxpr: jax_core.Jaxpr,
     grid_mapping: GridMapping,
-    name_and_src_info: pallas_core.NameAndStrInfo,
+    name_and_src_info: pallas_core.NameAndSrcInfo,
     platform: str
 ) -> LoweringResult:
   if grid_mapping.num_dynamic_grid_bounds:
@@ -1622,7 +1622,7 @@ def _broadcast_in_dim_lowering_rule(
 @register_lowering(lax.squeeze_p)
 def _squeeze_lowering_rule(ctx: LoweringRuleContext, a, *, dimensions):
   del dimensions
-  return _reshape_lowering_rule(ctx, a, new_sizes=None, dimensions=None)
+  return _reshape_lowering_rule(ctx, a, new_sizes=None, dimensions=None, sharding=None)
 
 
 @register_lowering(lax.reshape_p)
@@ -2452,6 +2452,7 @@ def _while_lowering_rule(
   args = map(_ensure_ir_value, args, ctx.avals_in)
 
   # First, try to pattern match to fori_loop and lower to scf.for if possible
+  # TODO(slebedev): Use `pallas_utils.pattern_match_while_to_fori_loop`.
   result = _maybe_pattern_match_fori_loop(ctx, *args, cond_nconsts=cond_nconsts,
                                           body_nconsts=body_nconsts, cond_jaxpr=cond_jaxpr,
                                           body_jaxpr=body_jaxpr)

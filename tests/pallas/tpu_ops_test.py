@@ -13,6 +13,7 @@
 # limitations under the License.
 """Tests for TPU specific operations within pallas_call."""
 
+import functools
 import sys
 import unittest
 
@@ -213,7 +214,7 @@ class OpsTest(PallasBaseTest):
       out[:] = jax.lax.select(cond[0] != 0, lhs[:], rhs[:])
 
     def run(cond, lhs, rhs):
-      return pl.pallas_call(
+      return self.pallas_call(
           kernel,
           out_shape=lhs,
           grid_spec=pltpu.PrefetchScalarGridSpec(
@@ -249,6 +250,66 @@ class OpsTest(PallasBaseTest):
     result = self.pallas_call(body, out_shape=out)(x)
     expected = jnp.ones(x.shape, dtype=jnp.float32)
     expected = expected.at[...].set(jnp.where(get_mask(x), 0.0, -1.0))
+    np.testing.assert_array_equal(result, expected)
+
+  @parameterized.product(dtype=[jnp.float32, jnp.bfloat16, jnp.int8])
+  def test_cast_vector_to_mask(self, dtype):
+    if jtu.jaxlib_version() <= (0, 4, 39):
+      self.skipTest("Test requires non-32-bit selection support")
+    shape = (128, 128)
+    bitwidth = pallas_utils.dtype_bitwidth(dtype)
+    if (
+        (jtu.get_tpu_version() > 5 and bitwidth < 8)
+        or (jtu.get_tpu_version() == 5 and bitwidth not in (8, 32))
+        or (jtu.get_tpu_version() < 5 and bitwidth < 32)
+    ):
+      self.skipTest(
+          f"Not implemented: cast vector to mask with bitwidth == {bitwidth}"
+      )
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+    )
+    def kernel(x_ref, mask_ref, o_ref):
+      zeros = jnp.zeros_like(x_ref)
+      o_ref[...] = jnp.where(mask_ref[...], x_ref[...], zeros)
+
+    mask = jax.random.bernoulli(jax.random.key(1234), 0.5, shape).astype(dtype)
+    x = jnp.arange(np.prod(shape), dtype=dtype).reshape(shape) + 1
+
+    out = kernel(x, mask)
+    expected = jnp.where(mask, x, jnp.zeros_like(x))
+    self.assertArraysEqual(out, expected)
+
+  @parameterized.product(
+      dtype = [jnp.float32, jnp.bfloat16, jnp.int32],
+      axis = [0, 1, 2],
+      reduce_func = [jnp.sum, jnp.max, jnp.min]
+  )
+  def test_reduction(self, dtype, axis, reduce_func):
+    if dtype == jnp.int32:
+      # TODO(apaszke): Remove after 12 weeks have passed.
+      if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
+        self.skipTest("Requires libtpu built after 2024-12-19")
+      if axis == 2:
+        self.skipTest("Int32 reduction on minor is not supported.")
+    # TODO(b/384127570): fix bfloat16 reduction.
+    if dtype == jnp.bfloat16 and reduce_func != jnp.sum:
+      self.skipTest("b/384127570")
+    in_shape = (2, 16, 128)
+    out_shape = list(in_shape)
+    out_shape[axis] = 1
+
+    def kernel(x, out):
+      out[:] = reduce_func(x[:], axis, keepdims=True)
+
+    x = jnp.arange(np.prod(in_shape), dtype=dtype).reshape(in_shape)
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(out_shape, x.dtype),
+    )(x)
+    expected = reduce_func(x, axis, keepdims=True)
     np.testing.assert_array_equal(result, expected)
 
 

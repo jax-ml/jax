@@ -359,7 +359,6 @@ namespace; they are listed below.
     roots
     rot90
     round
-    round_
     s_
     save
     savez

@@ -475,20 +475,20 @@ async def main():
       wheel_build_command.append(f"--action_env=CLANG_COMPILER_PATH=\"{clang_path}\"")
       wheel_build_command.append(f"--repo_env=CC=\"{clang_path}\"")
       wheel_build_command.append(f"--repo_env=BAZEL_COMPILER=\"{clang_path}\"")
+
+      if clang_major_version >= 16:
+        # Enable clang settings that are needed for the build to work with newer
+        # versions of Clang.
+        wheel_build_command.append("--config=clang")
     else:
       logging.debug("Use Clang: False")
-
-    # Do not apply --config=clang on Mac as these settings do not apply to
-    # Apple Clang.
-    if os_name != "darwin":
-      wheel_build_command.append("--config=clang")
 
     if not args.disable_mkl_dnn:
       logging.debug("Enabling MKL DNN")
       if target_cpu == "aarch64":
-          wheel_build_command.append("--config=mkl_aarch64_threadpool")
+        wheel_build_command.append("--config=mkl_aarch64_threadpool")
       else:
-          wheel_build_command.append("--config=mkl_open_source_only")
+        wheel_build_command.append("--config=mkl_open_source_only")
 
     if args.target_cpu_features == "release":
       if arch in ["x86_64", "AMD64"]:
@@ -501,7 +501,7 @@ async def main():
             if os_name == "windows"
             else "--config=avx_posix"
         )
-    elif wheel_build_command == "native":
+    elif args.target_cpu_features == "native":
       if os_name == "windows":
         logger.warning(
             "--target_cpu_features=native is not supported on Windows;"

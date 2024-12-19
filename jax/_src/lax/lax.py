@@ -66,8 +66,8 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import (PmapSharding, NamedSharding,
                                      PartitionSpec as P)
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
-from jax._src.util import (cache, safe_zip, safe_map, canonicalize_axis,
-                           split_list, NumpyComplexWarning)
+from jax._src.util import (NumpyComplexWarning, cache, canonicalize_axis,
+                           safe_map, safe_zip, split_list, weakref_lru_cache)
 
 _max = builtins.max
 _min = builtins.min
@@ -649,6 +649,169 @@ def clamp(min: ArrayLike, x: ArrayLike, max: ArrayLike) -> Array:
   """
   return clamp_p.bind(min, x, max)
 
+
+@weakref_lru_cache
+def _trace_composite_to_jaxpr(fun, in_tree, in_avals):
+  flat_fun, out_tree = api_util.flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+  debug_info = pe.debug_info(fun, in_tree, out_tree, False, "composite")
+  jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug_info)
+  # TODO(danfm): support const inputs to composite.
+  assert not consts
+  closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
+  return closed_jaxpr, out_tree
+
+
+def composite(
+    decomposition: Callable,
+    name: str,
+    version: int = 0,
+):
+  """Composite with semantics defined by the decomposition function.
+
+  A composite is a higher-order JAX function that encapsulates an operation mad
+  up (composed) of other JAX functions. The semantics of the op are implemented
+  by the ``decomposition`` function. In other words, the defined composite
+  function can be replaced with its decomposed implementation without changing
+  the semantics of the encapsulated operation.
+
+  The compiler can recognize specific composite operations by their ``name``,
+  ``version``, ``kawargs``, and dtypes to emit more efficient code, potentially
+  leveraging hardware-specific instructions or optimizations. If the compiler
+  doesn't recognize the composite, it falls back to compiling the
+  ``decomposition`` function.
+
+  Consider a "tangent" composite operation. Its ``decomposition`` function could
+  be implemented as ``sin(x) / cos(x)``. A hardware-aware compiler could
+  recognize the "tangent" composite and emit a single ``tangent`` instruction
+  instead of three separate instructions (``sin``, ``divide``, and ``cos``).
+  With compilers for hardwares without dedicated tangent support, it would fall
+  back to compiling the decomposition.
+
+  This is useful for preserving high level abstraction that would otherwise be
+  lost while lowering which allows for easier pattern-matching in low-level IR.
+
+  Args:
+    decomposition: function that implements the semantics of the composite op.
+    name: name of the encapsulated operation.
+    version: optional int to indicate semantic changes to the composite.
+
+  Returns:
+    out: callable composite function.
+
+  Examples:
+    Tangent kernel:
+    >>> def my_tangent_composite(x):
+    ...   return lax.composite(
+    ...     lambda x: lax.sin(x) / lax.cos(x), name='my.tangent'
+    ...   )(x)
+    ...
+    >>> pi = jnp.pi
+    >>> x = jnp.array([0.0, pi / 4, 3 * pi / 4, pi])
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   print(my_tangent_composite(x))
+    ...   print(lax.tan(x))
+    [ 0.  1. -1.  0.]
+    [ 0.  1. -1.  0.]
+  """
+  @functools.wraps(decomposition)
+  def _decorator(*args, **kwargs):
+    flat_args, in_tree = tree_util.tree_flatten(args)
+    in_avals = tuple(core.get_aval(x) for x in flat_args)
+    closed_jaxpr, out_tree = _trace_composite_to_jaxpr(
+        partial(decomposition, **kwargs), in_tree, in_avals
+    )
+    out_flat = composite_p.bind(
+        *flat_args,
+        name=name,
+        attributes=tuple((k, v) for k, v in kwargs.items()),
+        version=version,
+        jaxpr=closed_jaxpr,
+    )
+    return tree_util.tree_unflatten(out_tree(), out_flat)
+
+  return _decorator
+
+
+def _composite_lowering(
+    ctx: mlir.LoweringRuleContext,
+    *args: Any,
+    name: str,
+    attributes: Sequence[tuple[str, Any]],
+    version: int,
+    jaxpr: core.ClosedJaxpr,
+):
+  """Makes composite which calls the implementation function.
+
+  Lowering a composite primitive to a ``stablehlo.composite`` op.
+
+  Args:
+    ctx: The MLIR context.
+    *args: The arguments to the composite.
+    name: The name of the composite.
+    attributes: The attributes of the composite.
+    version: The version of the composite.
+    jaxpr: The jaxpr of the underlying composite.
+
+  Returns:
+    The results of the composite.
+  """
+  func_op, _, _ = mlir.lower_called_computation(
+      name,
+      ctx.name_stack,
+      jaxpr,
+      ctx.module_context,
+      ctx.avals_out,
+      ctx.tokens_in,
+  )
+  composite_attrs = {k : mlir.ir_attribute(v) for k, v in attributes}
+  symbol_name = func_op.name.value
+  composite = hlo.CompositeOp(
+      func_op.type.results,
+      mlir.flatten_ir_values(args),
+      name=ir.StringAttr.get(name),
+      decomposition=ir.FlatSymbolRefAttr.get(symbol_name),
+      composite_attributes=ir.DictAttr.get(composite_attrs),
+      version=mlir.i32_attr(version),
+  )
+  return composite.results
+
+
+def _composite_impl(*args, jaxpr, **_):
+  return core.jaxpr_as_fun(jaxpr)(*args)
+
+
+def _composite_abstract_eval(*args, jaxpr, **_):
+  del args
+  return jaxpr.out_avals
+
+
+def composite_jvp(*args, **_):
+  del args
+  raise ValueError(
+      "JVP rule for composite not implemented. You can use `jax.custom_jvp` to "
+      "add support. See "
+      "https://jax.readthedocs.io/en/latest/_autosummary/jax.custom_jvp.html"
+  )
+
+
+def composite_transpose(*args, **_):
+  del args
+  raise ValueError(
+      "Transpose rule for composite not implemented. You can use"
+      "`jax.custom_jvp` or `jax.custom_vjp` to add support. See "
+      "https://jax.readthedocs.io/en/latest/_autosummary/jax.custom_jvp.html"
+  )
+
+
+composite_p = core.Primitive("composite")
+composite_p.def_impl(_composite_impl)
+composite_p.def_abstract_eval(_composite_abstract_eval)
+composite_p.multiple_results = True
+ad.primitive_jvps[composite_p] = composite_jvp
+ad.primitive_transposes[composite_p] = composite_transpose
+mlir.register_lowering(composite_p, _composite_lowering)
+
+
 def concatenate(operands: Array | Sequence[ArrayLike], dimension: int) -> Array:
   """Concatenates a sequence of arrays along `dimension`.
 
@@ -671,6 +834,26 @@ def concatenate(operands: Array | Sequence[ArrayLike], dimension: int) -> Array:
     if isinstance(op, Array):
       return op
   return concatenate_p.bind(*operands, dimension=dimension)
+
+
+def split(operand: ArrayLike, sizes: Sequence[int],
+          axis: int = 0) -> Sequence[Array]:
+  """Splits an array along ``axis``.
+
+  Args:
+    operand: an array to split
+    sizes: the sizes of the split arrays. The sum of the sizes must be equal
+      to the size of the ``axis`` dimension of ``operand``.
+    axis: the axis along which to split the array.
+
+  Returns:
+    A sequence of ``len(sizes)`` arrays. If ``sizes`` is
+    ``[s1, s2, ...]``, this function returns chunks of sizes ``s1``, ``s2``,
+    taken along ``axis``.
+  """
+  operand = asarray(operand)
+  return split_p.bind(operand, sizes=tuple(sizes),
+                      axis=canonicalize_axis(axis, operand.ndim))
 
 
 _precision_strings: dict[Any, Precision] = {}
@@ -2457,13 +2640,6 @@ mlir.register_lowering(cos_p, _cos_lowering)
 tan_p = standard_unop(_float | _complex, 'tan')
 ad.defjvp2(tan_p, lambda g, ans, x: mul(g, _const(x, 1) + square(ans)))
 mlir.register_lowering(tan_p, partial(_nary_lower_hlo, hlo.tan))
-
-def asin_impl(x):
-  if dtypes.issubdtype(_dtype(x), np.complexfloating):
-    return mul(_const(x, -1j), asinh(mul(_const(x, 1j), x)))
-  else:
-    return mul(_const(x, 2),
-               atan2(x, add(_const(x, 1), sqrt(sub(_const(x, 1), square(x))))))
 
 asin_p = standard_unop(_float | _complex, 'asin')
 ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(_const(x, 1) - square(x))))
@@ -4454,18 +4630,8 @@ def _concatenate_transpose_rule(t, *operands, dimension):
     return [ad_util.Zero(o.aval) if ad.is_undefined_primal(o) else None
             for o in operands]
   else:
-    limit_points = np.cumsum(
-        [shape[dimension] for shape in operand_shapes]).tolist()
-    starts = np.zeros((len(operands), t.ndim), dtype=int).tolist()
-    limits = np.tile(t.shape, (len(operands), 1)).tolist()
-
-    for i, s in enumerate(starts[1:]):
-      s[dimension] = limit_points[:-1][i]
-    for i, l in enumerate(limits):
-      l[dimension] = limit_points[i]
-
-    return [slicing.slice(t, start, limit) if ad.is_undefined_primal(o)
-            else None for o, start, limit in zip(operands, starts, limits)]
+    return split(t, tuple(shape[dimension] for shape in operand_shapes),
+                 axis=dimension)
 
 def _concatenate_batch_rule(batched_args, batch_dims, *, dimension):
   size = next(op.shape[bdim] for op, bdim in zip(batched_args, batch_dims)
@@ -4498,6 +4664,76 @@ def _concatenate_lower(ctx, *xs, dimension):
   return [out]
 mlir.register_lowering(concatenate_p, _concatenate_lower)
 
+
+def _split_shape_rule(operand, *, sizes, axis):
+  shapes = []
+  shape = list(operand.shape)
+  if any(s < 0 for s in sizes):
+    raise ValueError(
+      f"Sizes passed to split must be nonnegative, got {list(sizes)}")
+  if operand.shape[axis] != np.sum(sizes):
+    raise ValueError(
+      f"Sum of sizes {np.sum(sizes)} must be equal to dimension {axis} of the "
+      f"operand shape {list(operand.shape)}")
+  for size in sizes:
+    shape[axis] = size
+    shapes.append(tuple(shape))
+  return shapes
+
+def _split_dtype_rule(operand, *, sizes, axis):
+  return (operand.dtype,) * len(sizes)
+
+def _split_weak_type_rule(operand, *, sizes, axis):
+  return (operand.weak_type,) * len(sizes)
+
+def _split_transpose_rule(cotangents, operand, *, sizes, axis):
+  assert ad.is_undefined_primal(operand)
+  if all(type(t) is ad_util.Zero for t in cotangents):
+    return ad_util.Zero(operand.aval),
+  cotangents = [
+    _zeros(t.aval) if type(t) is ad_util.Zero else t
+    for t in cotangents
+  ]
+  return concatenate(cotangents, dimension=axis),
+
+def _split_batch_rule(batched_args, batch_dims, *, sizes, axis):
+  operand, = batched_args
+  bdim, = batch_dims
+  new_bdims = (bdim,) * len(sizes)
+  out = split(operand, sizes=sizes, axis=axis + 1 if axis >= bdim else axis)
+  return out, new_bdims
+
+def _split_lower(ctx, x, *, sizes, axis):
+  x_aval, = ctx.avals_in
+  start_indices = [0] * x_aval.ndim
+  limit_indices = list(x_aval.shape)
+  strides = (1,) * x_aval.ndim
+  outs = []
+  for aval_out in ctx.avals_out:
+    limit_indices[axis] = start_indices[axis] + aval_out.shape[axis]
+    out = mlir.slice_op(ctx, x, aval_out, start_indices=start_indices,
+                        limit_indices=limit_indices, strides=strides)
+    outs.append(mlir.lower_sharding_under_shit(ctx, out, aval_out)
+                if config.sharding_in_types.value else out)
+    start_indices[axis] = limit_indices[axis]
+  return outs
+
+def _split_sharding_rule(operand, *, sizes, axis):
+  # TODO(yashkatariya): Once JAX supports uneven sharding at the top level,
+  # change this logic to `return operand.sharding` directly.
+  out_shapes = _split_shape_rule(operand, sizes=sizes, axis=axis)
+  return [slicing._get_sharding_for_varying_out_shape(out_sh, operand, 'split')
+          for out_sh in out_shapes]
+
+split_p = core.Primitive('split')
+split_p.multiple_results = True
+split_p.def_abstract_eval(
+    partial(standard_multi_result_abstract_eval, split_p, _split_shape_rule,
+            _split_dtype_rule, _split_weak_type_rule, _split_sharding_rule))
+split_p.def_impl(partial(dispatch.apply_primitive, split_p))
+ad.deflinear2(split_p, _split_transpose_rule)
+batching.primitive_batchers[split_p] = _split_batch_rule
+mlir.register_lowering(split_p, _split_lower)
 
 def _pad_dtype_rule(operand, padding_value, *, padding_config):
   if operand.dtype != padding_value.dtype:
@@ -5506,15 +5742,26 @@ def _operands_to_keys(*operands, num_keys=1):
 
 def _sort_jvp(primals, tangents, *, dimension, is_stable, num_keys):
   shape = primals[0].shape
-  iotas = []
-  for dim, size in enumerate(shape):
-    iotas.append(broadcasted_iota(np.int64, shape, dim))
   sorted_primals_and_idx = sort_p.bind(
-      *primals, iotas[dimension], dimension=dimension,
-      is_stable=is_stable, num_keys=num_keys)
-  idx = tuple(sorted_primals_and_idx[-1] if i == dimension else iotas[i]
-              for i in range(len(shape)))
-  tangents_out = tuple(t if type(t) is ad_util.Zero else t[idx] for t in tangents)
+      *primals, broadcasted_iota(np.uint64, shape, dimension),
+      dimension=dimension, is_stable=is_stable, num_keys=num_keys)
+  batch_dims = tuple(np.delete(np.arange(len(shape), dtype=np.int64),
+                               dimension))
+  dnums = slicing.GatherDimensionNumbers(
+    offset_dims=(),
+    collapsed_slice_dims=(dimension,),
+    start_index_map=(dimension,),
+    operand_batching_dims=batch_dims,
+    start_indices_batching_dims=batch_dims,
+  )
+  idx = expand_dims(sorted_primals_and_idx[-1], (len(shape),))
+  gather_idx = partial(
+    slicing.gather,
+    start_indices=idx, dimension_numbers=dnums, slice_sizes=(1,) * len(shape),
+    mode=slicing.GatherScatterMode.PROMISE_IN_BOUNDS
+  )
+  tangents_out = [t if type(t) is ad_util.Zero else gather_idx(t)
+                  for t in tangents]
   return tuple(sorted_primals_and_idx[:-1]), tangents_out
 
 def _sort_batch_rule(batched_args, batch_dims, *, dimension, is_stable, num_keys):

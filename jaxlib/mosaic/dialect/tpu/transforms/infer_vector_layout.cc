@@ -182,11 +182,6 @@ class VectorLayoutInferer {
         auto false_ty = dyn_cast<VectorType>(op.getFalseValue().getType());
         TPU_CHECK_OP(static_cast<bool>(true_ty) == static_cast<bool>(false_ty),
                      "Only one side of arith is a vector?");
-        if (true_ty) {
-          TPU_CHECK_OP(true_ty.getElementTypeBitWidth() == kNativeBitwidth &&
-                           false_ty.getElementTypeBitWidth() == kNativeBitwidth,
-                       "Only 32-bit select supported");
-        }
         if (inferElementwise(&any_op).failed()) {
           return failure();
         }
@@ -1971,32 +1966,6 @@ class VectorLayoutInferer {
   void setLayout(Operation *op, ArrayRef<Layout> in, ArrayRef<Layout> out) {
     setInLayout(op, in);
     setOutLayout(op, out);
-  }
-
-  SmallVector<Layout, 4> getInLayout(Operation *op) {
-    CHECK(op);
-    CHECK(op->getAttr("in_layout"));
-    auto in_attrs = op->getAttrOfType<ArrayAttr>("in_layout").getValue();
-    CHECK_EQ(in_attrs.size(), op->getNumOperands());
-    SmallVector<Layout, 4> in_layouts;
-    in_layouts.reserve(op->getNumOperands());
-    for (int i = 0; i < op->getNumOperands(); ++i) {
-      in_layouts.push_back(cast<VectorLayoutAttr>(in_attrs[i]).getLayout());
-    }
-    return in_layouts;
-  }
-
-  SmallVector<Layout, 4> getOutLayout(Operation *op) {
-    CHECK(op);
-    CHECK(op->getAttr("out_layout"));
-    auto out_attrs = op->getAttrOfType<ArrayAttr>("out_layout").getValue();
-    CHECK_EQ(out_attrs.size(), op->getNumResults());
-    SmallVector<Layout, 4> out_layouts;
-    out_layouts.reserve(op->getNumResults());
-    for (int i = 0; i < op->getNumResults(); ++i) {
-      out_layouts.push_back(cast<VectorLayoutAttr>(out_attrs[i]).getLayout());
-    }
-    return out_layouts;
   }
 
   Layout getLayout(Value v) {

@@ -16,25 +16,16 @@
 
 from collections.abc import Callable
 import enum
-import itertools
 from typing import List, Tuple, Type, cast
 
-from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import vector
+
+from .fragmented_array import WGStridedFragLayout
+from .layouts import has_any_layout_set, should_have_layout, to_strided_fragmented_layout_attr
 
 # mypy: ignore-errors
-
-
-def strided_fragmented_layout():
-  layout = mgpu.FragmentedLayout.WGStridedFragLayout
-  return ir.Attribute.parse(f"#mosaic_gpu.fragmented_layout<{layout}>")
-
-
-def splat_fragmented_layout():
-  layout = mgpu.FragmentedLayout.WGSplatFragLayout
-  return ir.Attribute.parse(f"#mosaic_gpu.fragmented_layout<{layout}>")
-
 
 _layout_inference_rules: dict[
     str,
@@ -89,9 +80,12 @@ def _infer_pointwise_op_layouts(
   if layout is None:
     # Still no layout set. We iterate on producers.
     for operand in op.operands:
-      layout = _extract_any_layout_from_op(operand.owner)
-      if layout:
-        break
+      if isinstance(operand.owner, ir.Operation) or isinstance(
+          operand.owner, ir.OpView
+      ):
+        layout = _extract_any_layout_from_op(operand.owner)
+        if layout:
+          break
 
   if layout is None:
     return None
@@ -103,22 +97,10 @@ for op in (
     arith.AddFOp,
     arith.ConstantOp,
     arith.MulFOp,
+    vector.LoadOp,
+    vector.StoreOp,
 ):
   _add_layout_inference_rule(op, _infer_pointwise_op_layouts)
-
-
-def _layout_inference_should_process_op(op: ir.OpView) -> bool:
-  """Returns 'true' if the layout inference pass can skip the operation."""
-
-  def is_array(v: ir.Value):
-    ty = v.type
-    return ir.RankedTensorType.isinstance(ty) or ir.VectorType.isinstance(ty)
-
-  return any(map(is_array, itertools.chain(op.operands, op.results)))
-
-
-def _has_any_layout_set(op: ir.OpView) -> bool:
-  return "in_layouts" in op.attributes or "out_layouts" in op.attributes
 
 
 class TraversalOrder(enum.Enum):
@@ -141,13 +123,13 @@ def traverse_op(
       else:
         ops_to_traverse = reversed(list(block))
       for block_op in ops_to_traverse:
-        callback(block_op)
+        traverse_op(block_op, callback, traversal_order)
   callback(op)
 
 
 def infer_layout(module: ir.Module):
   def inference_step(op: ir.Operation):
-    if not _layout_inference_should_process_op(op):
+    if not should_have_layout(op):
       return
     elif inference_rule := _layout_inference_rules.get(op.OPERATION_NAME, None):  # pytype: disable=attribute-error
       pass
@@ -179,11 +161,28 @@ def infer_layout(module: ir.Module):
   # unannotated---for example, if there were no annotations on any operation in
   # the module at the start of this function. We annotate all the remaining ops
   # that should be annotated with a strided fragmented layout.
+  def to_default_layout(ty: ir.Type) -> ir.Attribute | None:
+    if ir.VectorType.isinstance(ty):
+      layout = WGStridedFragLayout.from_shaped_type(ty)
+    else:
+      return None
+    return to_strided_fragmented_layout_attr(layout)
+
   def set_default_layout(op: ir.OpView):
-    layout = strided_fragmented_layout()
-    if _layout_inference_should_process_op(op) and not _has_any_layout_set(op):
-      _set_layout_attributes(
-          op, [layout] * len(op.operands), [layout] * len(op.results))
+    if should_have_layout(op) and not has_any_layout_set(op):
+      # TODO(bchetioui): consistently set layouts only for supported argument
+      # types (i.e. skip non-vector typed arguments.)
+      in_layouts = []
+      for operand in op.operands:
+        if (layout := to_default_layout(operand.type)) is not None:
+          in_layouts.append(layout)
+
+      out_layouts = []
+      for result in op.results:
+        if (layout := to_default_layout(result.type)) is not None:
+          out_layouts.append(layout)
+
+      _set_layout_attributes(op, in_layouts, out_layouts)
 
   for op in module.body:
     traverse_op(op, set_default_layout)

@@ -353,7 +353,7 @@ LogicalResult canonicalize_multi_dim_reduction(int hardware_generation,
         reduces_sublanes = true;
       }
     }
-    if (hardware_generation <= 5 || reduces_sublanes) {
+    if (hardware_generation <= 5) {
       auto new_source = builder.create<arith::ExtFOp>(
           VectorType::get(source_ty.getShape(), builder.getF32Type()),
           op.getSource());
@@ -382,7 +382,14 @@ LogicalResult canonicalize_multi_dim_reduction(int hardware_generation,
       op.erase();
     }
     return success();
+  } else if (element_type.isSignlessInteger(32) &&
+             // TODO(b/384774084): Add support for u32 reductions.
+             (op.getKind() == vector::CombiningKind::ADD ||
+              op.getKind() == vector::CombiningKind::MAXSI ||
+              op.getKind() == vector::CombiningKind::MINSI)) {
+    return success();
   }
+  op.emitOpError("Unsupported element type for the selected reduction");
   return failure();
 }
 

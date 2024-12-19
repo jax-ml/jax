@@ -14,53 +14,16 @@
 """Implementation of the Threefry PRNG as a Pallas kernel."""
 from typing import Sequence
 import jax
-from jax import lax
 from jax._src import prng
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
 import numpy as np
+from jax.experimental.pallas.ops.tpu.random import prng_utils
 
 Shape = Sequence[int]
 
 BLOCK_SIZE = (256, 256)
-
-_round_up = lambda x, y: (x + y - 1) // y * y
-
-
-def blocked_iota(block_shape: Shape,
-                 total_shape: Shape):
-  """Computes a sub-block of a larger shaped iota.
-
-  Args:
-    block_shape: The output block shape of the iota.
-    total_shape: The total shape of the input tensor.
-  Returns:
-    Result of the blocked iota.
-  """
-  iota_data = jnp.zeros(block_shape, dtype=jnp.uint32)
-  multiplier = 1
-  for dim in range(len(block_shape)-1, -1, -1):
-    block_mult = 1
-    counts_lo = lax.broadcasted_iota(
-        dtype=jnp.uint32, shape=block_shape, dimension=dim
-    )
-    iota_data += counts_lo * multiplier * block_mult
-    multiplier *= total_shape[dim]
-  return iota_data
-
-
-def _compute_scalar_offset(iteration_index,
-                           total_size: Shape,
-                           block_size: Shape):
-  ndims = len(iteration_index)
-  dim_size = 1
-  total_idx = 0
-  for i in range(ndims-1, -1, -1):
-    dim_idx = iteration_index[i] * block_size[i]
-    total_idx += dim_idx * dim_size
-    dim_size *= total_size[i]
-  return total_idx
 
 
 def threefry_2x32_count(key,
@@ -97,8 +60,9 @@ def threefry_2x32_count(key,
 
   def kernel(key_ref, out_ref):
     counts_idx = tuple(pl.program_id(i) for i in range(len(grid_dims)))
-    offset = _compute_scalar_offset(counts_idx, unpadded_shape, block_shape)
-    counts_lo = blocked_iota(block_size, unpadded_shape)
+    offset = prng_utils.compute_scalar_offset(
+        counts_idx, unpadded_shape, block_shape)
+    counts_lo = prng_utils.blocked_iota(block_size, unpadded_shape)
     counts_lo = counts_lo + offset
     counts_lo = counts_lo.astype(jnp.uint32)
     # TODO(justinfu): Support hi bits on count.
@@ -134,8 +98,8 @@ def plthreefry_random_bits(key, bit_width: int, shape: Shape):
       shape[-2] % BLOCK_SIZE[-2] != 0) or (shape[-1] % BLOCK_SIZE[-1] != 0)
   if requires_pad:
     padded_shape = tuple(shape[:-2]) + (
-        _round_up(shape[-2], BLOCK_SIZE[-2]),
-        _round_up(shape[-1], BLOCK_SIZE[-1]),
+        prng_utils.round_up(shape[-2], BLOCK_SIZE[-2]),
+        prng_utils.round_up(shape[-1], BLOCK_SIZE[-1]),
     )
     padded_result = threefry_2x32_count(
         key, padded_shape, shape, block_size=BLOCK_SIZE)

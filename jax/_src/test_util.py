@@ -379,7 +379,8 @@ def is_cloud_tpu():
 # built at least `date``.
 # TODO(b/327203806): after libtpu adds a XLA version and the oldest support
 # libtpu contains the XLA version, remove using built time to skip tests.
-def if_cloud_tpu_at_least(date: datetime.date):
+def if_cloud_tpu_at_least(year: int, month: int, day: int):
+  date = datetime.date(year, month, day)
   if not is_cloud_tpu():
     return True
   # The format of Cloud TPU platform_version is like:
@@ -2146,6 +2147,22 @@ def setup_hypothesis(max_examples=30) -> None:
   except (ModuleNotFoundError, ImportError):
     return
 
+  # In our tests we often use subclasses with slightly different class variables
+  # to generate whole suites of parameterized tests, but this approach does not
+  # work well with Hypothesis databases, which use some function of the method
+  # identity to generate keys. But, if the method is defined in a superclass,
+  # all subclasses share the same key. This key collision can lead to confusing
+  # false positives in other health checks.
+  #
+  # Still, as far as I understand, for as long as we don't use the example
+  # database, it should be perfectly safe to suppress this health check. This
+  # seems simpler than rewriting our tests that trigger this behavior. See
+  # the end of https://github.com/HypothesisWorks/hypothesis/issues/3446 for
+  # more context.
+  suppressed_checks = []
+  if hasattr(hp.HealthCheck, "differing_executors"):
+    suppressed_checks.append(hp.HealthCheck.differing_executors)
+
   hp.settings.register_profile(
       "deterministic",
       database=None,
@@ -2153,6 +2170,7 @@ def setup_hypothesis(max_examples=30) -> None:
       deadline=None,
       max_examples=max_examples,
       print_blob=True,
+      suppress_health_check=suppressed_checks,
   )
   hp.settings.register_profile(
       "interactive",

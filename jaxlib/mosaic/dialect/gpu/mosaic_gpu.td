@@ -72,32 +72,38 @@ def MosaicGPU_InitializeBarrierOp : Op<MosaicGPU_Dialect, "initialize_barrier",
   }];
 }
 
-def MosaicGPU_FragmentedLayout :
-  I32EnumAttr<"FragmentedLayout", "The layout of a FragmentedArray", [
 
-    // FragmentedArrays in this layout are always the result of a splat. Each
-    // thread in the warpgroup has a single copy of the value, regardless of
-    // the shape of the FragmentedArray. This makes it trivial to broadcast,
-    // reshape and do elementwise operations with all other layouts.
-    I32EnumAttrCase<"WGSplatFragLayout", 0>,
+def MosaicGPU_WGStridedFragLayout : AttrDef<MosaicGPU_Dialect, "WGStridedFragLayout", []> {
+  let summary = "Annotates an array that can be collapsed to 1D and sharded across threads.";
+  let description = [{
+    This layout is typically used when working with pointwise operations, or
+    other operations with trivial data dependency patterns.
 
-    // Convert the array to 1D and then shard across threads.
-    I32EnumAttrCase<"WGStridedFragLayout", 1>,
+    The layout holds the shape of the nD array it is meant to annotate, and a
+    vector size representing the number of contiguous elements sharded to each
+    thread.
+  }];
 
-    // [m, n] matrix, where m % 64 == 0 == n % 8.
-    I32EnumAttrCase<"WGMMAFragLayout", 2>,
-
-    // [m] vector, where m % 64 == 0.
-    I32EnumAttrCase<"WGMMARowFragLayout", 3>
-  ]> {
-  let cppNamespace = "::mosaic_gpu";
-  let genSpecializedAttr = 0;
+  let parameters = (ins "::mlir::ArrayAttr":$shape, "int":$vector_size);
+  let mnemonic = "WGStridedFragLayout";
+  let assemblyFormat = "`<` $shape`,` $vector_size `>`";
 }
 
-def MosaicGPU_FragmentedLayoutAttr : EnumAttr<
-  MosaicGPU_Dialect, MosaicGPU_FragmentedLayout, "fragmented_layout"> {
-  let assemblyFormat = "`<` $value `>`";
+
+def MosaicGPU_WGSplatFragLayout : AttrDef<MosaicGPU_Dialect, "WGSplatFragLayout", []> {
+  let summary = "Annotates an array that is the result of a splat.";
+  let description = [{
+    This layout is used to handle splat values. In this case, each thread in
+    the warpgroup gets a single copy of the value.
+
+    The layout holds the shape that the initial scalar is splatted to.
+  }];
+
+  let parameters = (ins "::mlir::ArrayAttr":$shape);
+  let mnemonic = "WGSplatFragLayout";
+  let assemblyFormat = "`<` $shape `>`";
 }
+
 
 // Note: This duplicates the Dimension enum in mlir/Dialect/GPU/IR/GPUOps.td
 // but it was not possible to reuse that definition. Including that file
@@ -321,7 +327,7 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", []> {
     memrefs. `a` and `b` must have the same element type and when `a` is in
     registers only F16 or BF16 are supported.
 
-    The `accumulator` must be a tensor with a FragmentedLayout. The WGMMA
+    The `accumulator` must be a vector with a FragmentedLayout. The WGMMA
     operation will be executed in the async proxy and any inputs in
     registers need to be synchronized with a memory fence.
 
@@ -332,10 +338,10 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", []> {
   }];
 
   let arguments = (ins
-    TensorOf<[MosaicGPU_WGMMASupportedType]>:$accumulator,
+    VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>:$accumulator,
     AnyTypeOf<[
       MemRefOf<[MosaicGPU_WGMMASupportedType]>,
-      TensorOf<[MosaicGPU_WGMMASupportedType]>]>:$a,
+      VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>]>:$a,
     MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b,
 
     // Attributes

@@ -811,7 +811,7 @@ class ShardMapTest(jtu.JaxTestCase):
     def f(x):
       x = shard_map(lambda x: x, mesh=abstract_mesh, in_specs=P('i'),
                     out_specs=P('i'))(x)
-      return jnp.sin(x)
+      return jax.lax.sin(x)
 
     with (
         jtu.count_jit_tracing_cache_miss() as tracing_count,
@@ -825,7 +825,7 @@ class ShardMapTest(jtu.JaxTestCase):
       b = jax.device_put(out_a, NamedSharding(mesh2, P()))
       f(b)  # tracing and lowering cache *hit*
 
-    self.assertEqual(tracing_count(), 2)  # 1 miss for `f` and 1 miss for `sin`
+    self.assertEqual(tracing_count(), 1)
     self.assertEqual(lowering_count(), 1)
     self.assertEqual(compilation_count(), 2)  # 2 misses since devices differ.
 

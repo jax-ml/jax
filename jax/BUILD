@@ -341,6 +341,7 @@ pytype_strict_library(
         ":config",
         ":core",
         ":dtypes",
+        ":state_types",
         ":traceback_util",
         ":tree_util",
         ":util",

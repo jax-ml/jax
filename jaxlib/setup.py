@@ -63,7 +63,7 @@ setup(
     install_requires=[
         'scipy>=1.10',
         "scipy>=1.11.1; python_version>='3.12'",
-        'numpy>=1.24',
+        'numpy>=1.25',
         'ml_dtypes>=0.2.0',
     ],
     url='https://github.com/jax-ml/jax',

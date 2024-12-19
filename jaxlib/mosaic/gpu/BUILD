@@ -119,6 +119,7 @@ cc_library(
         ":passes",
         ":target",
         "//jaxlib/cuda:cuda_vendor",
+        "//jaxlib/mosaic/dialect/gpu:mosaic_gpu",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
