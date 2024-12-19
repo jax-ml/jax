@@ -39,11 +39,6 @@ py_binary(
         "@xla//xla/python:xla_extension",
     ] + if_windows([
         "//jaxlib/mlir/_mlir_libs:jaxlib_mlir_capi.dll",
-    ]) + if_cuda([
-        "//jaxlib/cuda:cuda_gpu_support",
-        "@local_config_cuda//cuda:cuda-nvvm",
-    ]) + if_rocm([
-        "//jaxlib/rocm:rocm_gpu_support",
     ]),
     deps = [
         "//jax/tools:build_utils",
