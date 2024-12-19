@@ -3,9 +3,11 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <type_traits>
+#include <utility>
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
@@ -15,8 +17,9 @@
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "absl/types/span.h"
-#include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "mlir/include/mlir/IR/Value.h"
+#include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "tsl/platform/statusor.h"
 
 // TODO: Instead of CHECK_EQs, can we do something like TF_RET_CHECK but with
 // MLIR diagnostics?
@@ -31,15 +34,36 @@
 //     } \
 //   } while (false)
 
-#define FAILUREOR_ASSIGN_OR_RETURN_IMPL(failureor, lhs, rhs) \
-  auto failureor = rhs;                                      \
-  if (failed(failureor)) {                                   \
-    return failure();                                        \
-  }                                                          \
-  lhs = std::move(failureor).value();
+// All the macros below here are to handle the case in
+// FAILUREOR_ASSIGN_OR_RETURN where the LHS is wrapped in parentheses. See a
+// more detailed discussion at https://stackoverflow.com/a/62984543
+#define FAILUREOR_ASSIGN_OR_RETURN_UNPARENTHESIZE_IF_PARENTHESIZED(X) \
+  FAILUREOR_ASSIGN_OR_RETURN_ESCAPE(FAILUREOR_ASSIGN_OR_RETURN_EMPTY X)
+#define FAILUREOR_ASSIGN_OR_RETURN_EMPTY(...) \
+  FAILUREOR_ASSIGN_OR_RETURN_EMPTY __VA_ARGS__
+#define FAILUREOR_ASSIGN_OR_RETURN_ESCAPE(...) \
+  FAILUREOR_ASSIGN_OR_RETURN_ESCAPE_(__VA_ARGS__)
+#define FAILUREOR_ASSIGN_OR_RETURN_ESCAPE_(...) \
+  FAILUREOR_ASSIGN_OR_RETURN_##__VA_ARGS__
+#define FAILUREOR_ASSIGN_OR_RETURN_FAILUREOR_ASSIGN_OR_RETURN_EMPTY
+
+#define FAILUREOR_ASSIGN_OR_RETURN_IMPL(failureor, lhs, rhs)        \
+  auto failureor = rhs;                                             \
+  if (failed(failureor)) {                                          \
+    return failure();                                               \
+  }                                                                 \
+  FAILUREOR_ASSIGN_OR_RETURN_UNPARENTHESIZE_IF_PARENTHESIZED(lhs) = \
+      (std::move(failureor).value());
 #define FAILUREOR_ASSIGN_OR_RETURN(lhs, rhs) \
   FAILUREOR_ASSIGN_OR_RETURN_IMPL(           \
       TF_STATUS_MACROS_CONCAT_NAME(failureor, __COUNTER__), lhs, rhs)
+
+#define RETURN_IF_FAILED(...)  \
+  do {                         \
+    if (failed(__VA_ARGS__)) { \
+      return failure();        \
+    }                          \
+  } while (false)
 
 namespace mlir::tpu {
 
