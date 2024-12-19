@@ -29,6 +29,7 @@ import numpy as np
 
 import jax
 from jax._src import core
+from jax import jvp, grad
 from jax import lax
 import jax.numpy as jnp
 from jax.test_util import check_grads
@@ -4573,6 +4574,179 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
         raise unittest.SkipTest(
           f"detected success in regions {', '.join(unexpected_success_regions)}, please update regions_with_inaccuracies!"
         )
+
+
+class CompositeTest(jtu.JaxTestCase):
+
+  def test_composite(self):
+    def my_square_impl(x):
+      return x ** 2
+    my_square = lax.composite(my_square_impl, name="my.square")
+
+    x = jnp.array(2.0, dtype=jnp.float32)
+    output = my_square(x)
+    self.assertEqual(output, jnp.array(4.0, dtype=jnp.float32))
+
+    mlir_module = jax.jit(my_square).lower(x).as_text()
+    self.assertIn(
+        'stablehlo.composite "my.square" %arg0 {decomposition = @my.square} : '
+        '(tensor<f32>) -> tensor<f32>', mlir_module)
+    self.assertIn('@my.square(%arg0: tensor<f32>) -> tensor<f32> {', mlir_module)
+    self.assertIn('stablehlo.multiply %arg0, %arg0 : tensor<f32>', mlir_module)
+
+  def test_composite_decorator(self):
+    @partial(lax.composite, name="my.square")
+    def my_square(x):
+      return x ** 2
+
+    x = jnp.array(2.0, dtype=jnp.float32)
+    output = my_square(x)
+    self.assertEqual(output, jnp.array(4.0, dtype=jnp.float32))
+
+    mlir_module = jax.jit(my_square).lower(x).as_text()
+    self.assertIn(
+        'stablehlo.composite "my.square" %arg0 {decomposition = @my.square} : '
+        '(tensor<f32>) -> tensor<f32>', mlir_module)
+    self.assertIn('@my.square(%arg0: tensor<f32>) -> tensor<f32> {', mlir_module)
+    self.assertIn('stablehlo.multiply %arg0, %arg0 : tensor<f32>', mlir_module)
+
+  def test_composite_with_jit_function(self):
+    def my_square_impl(x):
+      return x ** 2
+    my_square = jax.jit(lax.composite(my_square_impl, name="my.square"))
+
+    x = jnp.array(2.0, dtype=jnp.float32)
+    output = my_square(x)
+    self.assertEqual(output, jnp.array(4.0, dtype=jnp.float32))
+
+    mlir_module = my_square.lower(x).as_text()
+    self.assertIn(
+        'stablehlo.composite "my.square" %arg0 {decomposition = @my.square} : '
+        '(tensor<f32>) -> tensor<f32>', mlir_module)
+    self.assertIn('@my.square(%arg0: tensor<f32>) -> tensor<f32> {', mlir_module)
+    self.assertIn('stablehlo.multiply %arg0, %arg0 : tensor<f32>', mlir_module)
+
+  def test_composite_with_attributes(self):
+    # The static_argnames is required here since k is a constant that should
+    # come out of a larger context, but we unit test one op (composite) here.
+    @partial(jax.jit, static_argnames=['k'])
+    @partial(lax.composite, name="my.top_k")
+    def my_top_k(x, *, k):
+      return lax.top_k(x, k)
+
+    x = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=jnp.float32)
+    output, indices = my_top_k(x, k=3)
+    self.assertArraysEqual(output, jnp.array([5.0, 4.0, 3.0], dtype=jnp.float32))
+    self.assertArraysEqual(indices, jnp.array([4, 3, 2], dtype=jnp.int32))
+
+    mlir_module = my_top_k.lower(x, k=3).as_text()
+    self.assertIn(
+        'stablehlo.composite "my.top_k" %arg0 '
+        '{composite_attributes = {k = 3 : i64}, decomposition = @my.top_k} : '
+        '(tensor<5xf32>) -> (tensor<3xf32>, tensor<3xi32>)', mlir_module)
+    self.assertIn('@my.top_k(%arg0: tensor<5xf32>) -> (tensor<3xf32>, tensor<3xi32>) {', mlir_module)
+    self.assertIn('chlo.top_k(%arg0, k = 3) : tensor<5xf32> -> (tensor<3xf32>, tensor<3xi32>)', mlir_module)
+
+  def test_composite_attribute_dtypes(self):
+    @jax.jit
+    def my_tangent_composite_with_attributes(x):
+      def decomposition(x, **_):
+        return lax.sin(x) / lax.cos(x)
+      return lax.composite(decomposition, "my.tangent")(x, foo="bar", baz=1,
+                          tensor=np.zeros((1, 2), dtype=np.float32))
+
+    pi = jnp.pi
+    x = jnp.array([0.0, pi / 4, 3 * pi / 4, pi], dtype=jnp.float32)
+    output = my_tangent_composite_with_attributes(x)
+    self.assertArraysAllClose(
+        output, jnp.array([0.0, 1.0, -1.0, 0.0], dtype=jnp.float32)
+    )
+
+    mlir_module = my_tangent_composite_with_attributes.lower(x).as_text()
+    self.assertIn(
+        'stablehlo.composite "my.tangent" %arg0 {composite_attributes = {'
+        'baz = 1 : i64, foo = "bar", '
+        'tensor = dense<0.000000e+00> : tensor<1x2xf32>}, '
+        'decomposition = @my.tangent} : (tensor<4xf32>) -> tensor<4xf32>',
+        mlir_module)
+    self.assertIn("func.func private @my.tangent", mlir_module)
+
+  def test_composite_with_non_default_version(self):
+    @partial(lax.composite, name="my.square", version=1)
+    def my_square_with_version(x):
+      return x ** 2
+
+    x = jnp.array(2.0, dtype=jnp.float32)
+    out = my_square_with_version(x)
+    self.assertEqual(out, 4.0)
+
+    mlir_module = jax.jit(my_square_with_version).lower(x).as_text()
+    self.assertIn(
+        'stablehlo.composite "my.square" %arg0 {decomposition = @my.square, '
+        'version = 1 : i32} : (tensor<f32>) -> tensor<f32>', mlir_module)
+
+  def test_composite_with_no_args(self):
+    @partial(lax.composite, name="my.one")
+    def one():
+      return jnp.array(1.0, dtype=jnp.float32)
+
+    out = one()
+    self.assertEqual(out, jnp.array(1.0, dtype=jnp.float32))
+
+    mlir_module = jax.jit(one).lower().as_text()
+    self.assertIn('stablehlo.composite "my.one"', mlir_module)
+    self.assertIn('{decomposition = @my.one} : () -> tensor<f32>', mlir_module)
+    self.assertIn('@my.one() -> tensor<f32>', mlir_module)
+    self.assertIn('stablehlo.constant dense<1.000000e+00> : tensor<f32>', mlir_module)
+
+  def test_composite_with_variadic_input_output(self):
+    @partial(lax.composite, name="my.ident")
+    def ident(*args):
+      return args
+
+    x = jnp.array(1.0, dtype=jnp.float32)
+    y = jnp.array(2.0, dtype=jnp.float32)
+    z = jnp.array(3.0, dtype=jnp.float32)
+    a, b, c = ident(x, y, z)
+    self.assertEqual(a, x)
+    self.assertEqual(b, y)
+    self.assertEqual(c, z)
+
+    mlir_module = jax.jit(ident).lower(x, y, z).as_text()
+    self.assertIn(
+        'stablehlo.composite "my.ident" %arg0, %arg1, %arg2 '
+        '{decomposition = @my.ident} : (tensor<f32>, tensor<f32>, tensor<f32>) '
+        '-> (tensor<f32>, tensor<f32>, tensor<f32>)', mlir_module)
+    self.assertIn(
+        '@my.ident(%arg0: tensor<f32>, %arg1: tensor<f32>, %arg2: tensor<f32>) '
+        '-> (tensor<f32>, tensor<f32>, tensor<f32>)', mlir_module)
+    self.assertIn('return %arg0, %arg1, %arg2 : tensor<f32>, tensor<f32>, tensor<f32>', mlir_module)
+
+  def test_composite_jvp(self):
+    @partial(lax.composite, name="my.square")
+    def my_square(x):
+      return x ** 2
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "JVP rule for composite not implemented. You can use `jax.custom_jvp` "
+        "to add support. See "
+        "https://jax.readthedocs.io/en/latest/_autosummary/jax.custom_jvp.html"
+    ):
+      jvp(my_square, (1.0,), (2.0,))
+
+  def test_composite_grad(self):
+    @partial(lax.composite, name="my.square")
+    def my_square(x):
+      return x ** 2
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "JVP rule for composite not implemented. You can use `jax.custom_jvp` "
+        "to add support. See "
+        "https://jax.readthedocs.io/en/latest/_autosummary/jax.custom_jvp.html"
+    ):
+      grad(my_square)(1.0)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

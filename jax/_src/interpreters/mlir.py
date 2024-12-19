@@ -377,7 +377,9 @@ def _numpy_array_attribute(x: np.ndarray | np.generic) -> ir.Attribute:
     x = np.packbits(x, bitorder='little')  # type: ignore
   x = np.ascontiguousarray(x)
   builder = _dtype_to_array_attr.get(x.dtype, None)
-  if builder:
+  # Array attributes only support 1D arrays. Fall back to creating dense
+  # elements attribute for higher dimensions.
+  if builder and len(shape) == 1:
     return builder(x)
   else:
     element_type = dtype_to_ir_type(x.dtype)
@@ -2213,22 +2215,46 @@ def check_backend_matches(inner_backend: str | None,
         f"inner-jit backend specification {inner_backend}.")
 
 
-def call_lowering(fn_name, name_stack, call_jaxpr, backend,
-                  ctx: ModuleContext, avals_in,
-                  avals_out, tokens_in, *args,
-                  dim_var_values: Sequence[ir.Value],
-                  arg_names=None, result_names=None):
-  del avals_in
+def lower_called_computation(
+    fn_name,
+    name_stack,
+    call_jaxpr,
+    ctx: ModuleContext,
+    avals_out,
+    tokens_in,
+    backend=None,
+    arg_names=None,
+    result_names=None,
+):
   if isinstance(call_jaxpr, core.Jaxpr):
     call_jaxpr = pe.close_jaxpr(call_jaxpr)
   check_backend_matches(backend, ctx.platforms)
   effects = list(tokens_in.effects())
   output_types = map(aval_to_ir_type, avals_out)
   output_types = [token_type()] * len(effects) + output_types
+  func_op = _lower_jaxpr_to_fun_cached(
+      ctx,
+      fn_name,
+      call_jaxpr,
+      effects,
+      name_stack,
+      arg_names=arg_names,
+      result_names=result_names,
+  )
+  return func_op, output_types, effects
+
+
+def call_lowering(fn_name, name_stack, call_jaxpr, backend,
+                  ctx: ModuleContext, avals_in,
+                  avals_out, tokens_in, *args,
+                  dim_var_values: Sequence[ir.Value],
+                  arg_names=None, result_names=None):
+  del avals_in
+  func_op, output_types, effects = lower_called_computation(
+      fn_name, name_stack, call_jaxpr, ctx, avals_out, tokens_in,
+      backend=backend, arg_names=arg_names, result_names=result_names)
+  symbol_name = func_op.name.value
   flat_output_types = flatten_ir_types(output_types)
-  symbol_name = _lower_jaxpr_to_fun_cached(
-      ctx, fn_name, call_jaxpr, effects, name_stack, arg_names=arg_names,
-      result_names=result_names).name.value
   tokens = [tokens_in.get(eff) for eff in effects]
   args = (*dim_var_values, *tokens, *args)
   call = func_dialect.CallOp(flat_output_types,
