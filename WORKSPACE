@@ -3,8 +3,17 @@ load("//third_party/xla:workspace.bzl", jax_xla_workspace = "repo")
 jax_xla_workspace()
 
 # Initialize hermetic Python
-load("@xla//third_party/py:python_init_rules.bzl", "python_init_rules")
-python_init_rules()
+# load("@xla//third_party/py:python_init_rules.bzl", "python_init_rules")
+# python_init_rules()
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+http_archive(
+    name = "rules_python",
+    sha256 = "62ddebb766b4d6ddf1712f753dac5740bea072646f630eb9982caa09ad8a7687",
+    strip_prefix = "rules_python-0.39.0",
+    url = "https://github.com/bazelbuild/rules_python/releases/download/0.39.0/rules_python-0.39.0.tar.gz",
+    patch_args = ["-p1"],
+    patches = ["//third_party/rules_python:rules_python.patch"],
+)
 
 load("@xla//third_party/py:python_init_repositories.bzl", "python_init_repositories")
 python_init_repositories(
@@ -13,6 +22,7 @@ python_init_repositories(
         "3.11": "//build:requirements_lock_3_11.txt",
         "3.12": "//build:requirements_lock_3_12.txt",
         "3.13": "//build:requirements_lock_3_13.txt",
+        "3.13-ft": "//build:requirements_lock_3_13_ft.txt",
     },
     local_wheel_inclusion_list = [
         "jaxlib*",
