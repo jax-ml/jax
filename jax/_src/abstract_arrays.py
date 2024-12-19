@@ -49,6 +49,7 @@ def masked_array_error(*args, **kwargs):
                    "Use arr.filled() to convert the value to a standard numpy array.")
 
 core.pytype_aval_mappings[np.ma.MaskedArray] = masked_array_error
+core.shaped_abstractify_handlers[np.ma.MaskedArray] = masked_array_error
 
 
 def _make_shaped_array_for_numpy_array(x: np.ndarray) -> ShapedArray:
@@ -56,14 +57,8 @@ def _make_shaped_array_for_numpy_array(x: np.ndarray) -> ShapedArray:
   dtypes.check_valid_dtype(dtype)
   return ShapedArray(x.shape, dtypes.canonicalize_dtype(dtype))
 
-def _numpy_array_abstractify(x: np.ndarray) -> ShapedArray:
-  dtype = x.dtype
-  dtypes.check_valid_dtype(dtype)
-  return ShapedArray(x.shape,
-      dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True))
-
 core.pytype_aval_mappings[np.ndarray] = _make_shaped_array_for_numpy_array
-core.shaped_abstractify_handlers[np.ndarray] = _numpy_array_abstractify
+core.shaped_abstractify_handlers[np.ndarray] = _make_shaped_array_for_numpy_array
 
 
 def _make_shaped_array_for_numpy_scalar(x: np.generic) -> ShapedArray:
@@ -71,15 +66,9 @@ def _make_shaped_array_for_numpy_scalar(x: np.generic) -> ShapedArray:
   dtypes.check_valid_dtype(dtype)
   return ShapedArray(np.shape(x), dtypes.canonicalize_dtype(dtype))
 
-def _np_scalar_abstractify(x: np.generic) -> ShapedArray:
-  dtype = np.dtype(x)
-  dtypes.check_valid_dtype(dtype)
-  return ShapedArray(np.shape(x),
-      dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True))
-
 for t in numpy_scalar_types:
   core.pytype_aval_mappings[t] = _make_shaped_array_for_numpy_scalar
-  core.shaped_abstractify_handlers[t] = _np_scalar_abstractify
+  core.shaped_abstractify_handlers[t] = _make_shaped_array_for_numpy_scalar
 
 core.literalable_types.update(array_types)
 
@@ -90,13 +79,8 @@ def _make_abstract_python_scalar(typ, val):
   return ShapedArray((), dtypes._scalar_type_to_dtype(typ, val),
                      weak_type=typ is not bool)
 
-def _python_scalar_abstractify(x: int | float | complex | bool) -> ShapedArray:
-  typ = type(x)
-  dtype = dtypes._scalar_type_to_dtype(typ, x)
-  return ShapedArray((), dtype, weak_type=typ in dtypes._weak_types)
-
 for t in dtypes.python_scalar_dtypes:
   core.pytype_aval_mappings[t] = partial(_make_abstract_python_scalar, t)
-  core.shaped_abstractify_handlers[t] = _python_scalar_abstractify
+  core.shaped_abstractify_handlers[t] = partial(_make_abstract_python_scalar, t)
 
 core.literalable_types.update(dtypes.python_scalar_dtypes.keys())

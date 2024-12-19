@@ -191,6 +191,7 @@ class _ScalarMeta(type):
 
 def _abstractify_scalar_meta(x):
   raise TypeError(f"JAX scalar type {x} cannot be interpreted as a JAX array.")
+core.pytype_aval_mappings[_ScalarMeta] = _abstractify_scalar_meta
 core.shaped_abstractify_handlers[_ScalarMeta] = _abstractify_scalar_meta
 
 def _make_scalar_type(np_scalar_type: type) -> _ScalarMeta:
