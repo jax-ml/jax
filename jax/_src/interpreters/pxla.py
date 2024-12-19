@@ -2909,9 +2909,9 @@ class UnloadedMeshExecutable:
       da = _create_da_object(tuple(device_assignment))
     del device_assignment
 
-    allow_prop_to_inputs = tuple(isinstance(i, (UnspecifiedValue, AUTO))
-                                 for i in in_shardings)
-    allow_prop_to_outputs = tuple(
+    allow_prop_to_inputs = (False,) * len(ordered_effects) + tuple(
+        isinstance(i, (UnspecifiedValue, AUTO)) for i in in_shardings)
+    allow_prop_to_outputs = (False,) * len(ordered_effects) + tuple(
         isinstance(o, (UnspecifiedValue, AUTO)) or mlir.contains_unconstrained(o)
         for o in out_shardings)
 
