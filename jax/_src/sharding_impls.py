@@ -1320,8 +1320,11 @@ def explode_superdims(sizes, dims):
     final_dims += reversed(new_dims)
   return final_dims
 
-def parse_flatten_op_sharding(hlo_sharding: xc.OpSharding | xc.HloSharding,
-                              mesh: mesh_lib.Mesh) -> Sequence[ParsedPartitionSpec]:
+
+def parse_flatten_op_sharding(
+    hlo_sharding: xc.OpSharding | xc.HloSharding,
+    mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh,
+) -> Sequence[ParsedPartitionSpec]:
   if isinstance(hlo_sharding, xc.OpSharding):
     hlo_sharding = xc.HloSharding.from_proto(hlo_sharding)
   if hlo_sharding.tuple_elements():

@@ -31,6 +31,7 @@ except ImportError as e:
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import mesh as mesh_lib
 from jax._src import tree_util
 from jax._src.export import serialization_generated as ser_flatbuf
 from jax._src.export import _export
@@ -87,6 +88,12 @@ def _serialize_exported(
   out_shardings = _serialize_array(
       builder, _serialize_sharding, exp.out_shardings_hlo
   )
+  if exp.mesh is not None:
+    mesh = _serialize_array(
+        builder, _serialize_axis, list(exp.mesh.shape.items())
+    )
+  else:
+    mesh = _serialize_array(builder, _serialize_axis, [])
   ordered_effects = _serialize_array(
       builder, _serialize_effect, exp.ordered_effects
   )
@@ -138,6 +145,8 @@ def _serialize_exported(
   )
   if vjp is not None:
     ser_flatbuf.ExportedAddVjp(builder, vjp)
+
+  ser_flatbuf.ExportedAddMesh(builder, mesh)
   return ser_flatbuf.ExportedEnd(builder)
 
 
@@ -208,12 +217,19 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   if vjp := exp.Vjp():
     _get_vjp = lambda _: _deserialize_exported(vjp)
 
+  mesh = mesh_lib.AbstractMesh(tuple())
+  if exp.MeshLength():
+    mesh = mesh_lib.AbstractMesh(
+        _deserialize_tuple(exp.MeshLength, exp.Mesh, _deserialize_axis)
+    )
+
   return _export.Exported(
       fun_name=fun_name,
       in_tree=in_tree,
       in_avals=in_avals,
       out_tree=out_tree,
       out_avals=out_avals,
+      mesh=mesh,
       nr_devices=nr_devices,
       in_shardings_hlo=in_shardings,
       out_shardings_hlo=out_shardings,
@@ -433,6 +449,19 @@ def _deserialize_sharding(s: ser_flatbuf.Sharding) -> _export.HloSharding | None
     return xla_client.HloSharding.from_proto(proto)
 
   assert False, kind
+
+
+def _serialize_axis(builder: flatbuffers.Builder, axis: tuple[str, int]) -> int:
+  name, size = axis
+  name = builder.CreateString(name)
+  ser_flatbuf.AxisStart(builder)
+  ser_flatbuf.AxisAddName(builder, name)
+  ser_flatbuf.AxisAddSize(builder, size)
+  return ser_flatbuf.AxisEnd(builder)
+
+
+def _deserialize_axis(axis: ser_flatbuf.Axis) -> tuple[str, int]:
+  return (axis.Name().decode("utf-8"), axis.Size())
 
 
 def _serialize_effect(builder: flatbuffers.Builder, eff: core.Effect) -> int:

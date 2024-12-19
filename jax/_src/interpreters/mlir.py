@@ -3182,8 +3182,10 @@ def refine_polymorphic_shapes(module: ir.Module) -> ir.Module:
   """
   try:
     refined_module_str = xla_extension.mlir.refine_polymorphic_shapes(
-      module_to_bytecode(module), enable_shape_assertions=True,
-      validate_static_shapes=True)
+        module_to_bytecode(module),
+        enable_shape_assertions=True,
+        validate_static_shapes=True,
+        shardy_enabled=config.use_shardy_partitioner.value)
   except Exception as e:
     raise ValueError(
         "Error refining shapes. " +
