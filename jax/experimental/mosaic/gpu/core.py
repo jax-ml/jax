@@ -159,6 +159,13 @@ def _count_buffer_bytes(shape_dtype: jax.ShapeDtypeStruct) -> int:
   return np.prod(shape_dtype.shape) * np.dtype(shape_dtype.dtype).itemsize
 
 
+class ThreadSemantics(enum.Enum):
+  """Semantics for the kernel's instruction stream."""
+
+  Lane = enum.auto()
+  Warpgroup = enum.auto()
+
+
 def _construct_smem_reftree(
     cluster_shape: tuple[int, int, int],
     dynamic_smem: ir.Value,
@@ -435,13 +442,6 @@ def _declare_runtime_functions():
   func.FuncOp(
       "mosaic_gpu_memcpy_async_h2d", memcpy_async_type, visibility="private"
   )
-
-
-class ThreadSemantics(enum.Enum):
-  """Semantics for the kernel's instruction stream."""
-
-  Lane = enum.auto()
-  Warpgroup = enum.auto()
 
 
 def as_gpu_kernel(
