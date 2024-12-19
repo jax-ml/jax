@@ -206,7 +206,6 @@ class MutableArrayTest(jtu.JaxTestCase):
     def body_fun(_, index_x):
       (index, x) = index_x
       x[...] += index
-      # breakpoint()
       return ((), x[...])
 
     x_mut = core.mutable_array(np.arange(5))
@@ -289,8 +288,18 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
         ValueError, "traced for scan returned a mutable array reference of type"):
       jax.lax.scan(lambda c, x: (core.mutable_array(c), x), 0, jnp.arange(3))
 
-  # TODO test_argument_aliases_scan
-  # TODO test_closure_and_argument_aliases_scan
+  def test_argument_aliases_scan(self):
+    x_ref = core.mutable_array(0.)
+    with self.assertRaisesRegex(
+        ValueError, r"appeared at both c\[0\] and c\[1\]"):
+      jax.lax.scan(lambda c, _: (None, None), (x_ref, x_ref), None, length=1)
+
+  def test_closure_and_argument_aliases_scan(self):
+    x_ref = core.mutable_array(0.)
+    with self.assertRaisesRegex(
+        ValueError, r"closed over and passed as the argument y_ref"):
+      jax.lax.scan(lambda y_ref, _: (x_ref[...] + y_ref[...], None), x_ref,
+                   None, length=1)
 
   def test_return_from_cond(self):
     with self.assertRaisesRegex(

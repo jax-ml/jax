@@ -23,7 +23,9 @@ from typing import Any
 import numpy as np
 
 from jax._src import core
+from jax._src import config
 from jax._src import dtypes
+from jax._src.state.types import AbstractRef
 from jax._src.abstract_arrays import numpy_scalar_types
 from jax._src.core import ShapedArray
 from jax._src.tree_util import (
@@ -737,3 +739,31 @@ class _HashableByObjectId:
 def register_class_with_attrs(t: type) -> None:
   _class_with_attrs.add(t)
 _class_with_attrs: set[type] = set()
+
+# TODO(mattjj): make this function faster
+def _check_no_aliased_ref_args(dbg, avals, args):
+  assert config.mutable_array_checks.value
+  refs: dict[int, int] = {}
+  for i, (a, x) in enumerate(zip(avals, args)):
+    if (isinstance(a, AbstractRef) and
+        (dup_idx := refs.setdefault(id(core.get_referent(x)), i)) != i):
+      raise ValueError(
+        "only one reference to a mutable array may be passed as an argument "
+        f"to a function, but when tracing {dbg.func_src_info} for {dbg.traced_for} "
+        f"the mutable array reference of type {a.str_short()} appeared at both "
+        f"{dbg.arg_names[dup_idx]} and {dbg.arg_names[i]}."
+        if dbg else
+        f"at both flat index {dup_idx} and flat index {i}") from None
+
+def _check_no_aliased_closed_over_refs(dbg, consts, args) -> None:
+  assert config.mutable_array_checks.value
+  refs: set[int] = {id(core.get_referent(c)) for c in consts
+                    if isinstance(core.get_aval(c), AbstractRef)}
+  for i, x in enumerate(args):
+    if id(core.get_referent(x)) in refs:
+      a = shaped_abstractify(x)
+      raise ValueError(
+          f"when tracing {dbg.func_src_info} for {dbg.traced_for}, a mutable "
+          f"array reference of type {a.str_short()} was both closed over and "
+          f"passed as the argument "
+          f"{dbg.arg_names[i]}" if dbg else "at flat index {i}")
