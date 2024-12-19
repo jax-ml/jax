@@ -278,6 +278,15 @@ def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
   )
 
   compile_group.add_argument(
+      "--gcc_path",
+      type=str,
+      default="",
+      help="""
+        Path to the GCC binary to use.
+        """,
+  )
+
+  compile_group.add_argument(
       "--disable_mkl_dnn",
       action="store_true",
       help="""
@@ -481,7 +490,13 @@ async def main():
         # versions of Clang.
         wheel_build_command.append("--config=clang")
     else:
-      logging.debug("Use Clang: False")
+      gcc_path = args.gcc_path or utils.get_gcc_path_or_exit()
+      logging.debug(
+          "Using GCC as the compiler, gcc path: %s",
+          gcc_path,
+      )
+      wheel_build_command.append(f"--repo_env=CC=\"{gcc_path}\"")
+      wheel_build_command.append(f"--repo_env=BAZEL_COMPILER=\"{gcc_path}\"")
 
     if not args.disable_mkl_dnn:
       logging.debug("Enabling MKL DNN")
@@ -515,12 +530,16 @@ async def main():
 
     if "cuda" in wheel:
       wheel_build_command.append("--config=cuda")
-      wheel_build_command.append(
+      if args.use_clang:
+        wheel_build_command.append(
             f"--action_env=CLANG_CUDA_COMPILER_PATH=\"{clang_path}\""
         )
-      if args.build_cuda_with_clang:
-        logging.debug("Building CUDA with Clang")
-        wheel_build_command.append("--config=build_cuda_with_clang")
+        if args.build_cuda_with_clang:
+          logging.debug("Building CUDA with Clang")
+          wheel_build_command.append("--config=build_cuda_with_clang")
+        else:
+          logging.debug("Building CUDA with NVCC")
+          wheel_build_command.append("--config=build_cuda_with_nvcc")
       else:
         logging.debug("Building CUDA with NVCC")
         wheel_build_command.append("--config=build_cuda_with_nvcc")
