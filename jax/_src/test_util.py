@@ -379,7 +379,8 @@ def is_cloud_tpu():
 # built at least `date``.
 # TODO(b/327203806): after libtpu adds a XLA version and the oldest support
 # libtpu contains the XLA version, remove using built time to skip tests.
-def if_cloud_tpu_at_least(date: datetime.date):
+def if_cloud_tpu_at_least(year: int, month: int, day: int):
+  date = datetime.date(year, month, day)
   if not is_cloud_tpu():
     return True
   # The format of Cloud TPU platform_version is like:

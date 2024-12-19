@@ -900,6 +900,9 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(out2.sharding.memory_kind, 'pinned_host')
 
   def test_compute_host_loop(self):
+    # TODO(apaszke): Remove after 12 weeks have passed.
+    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
+      self.skipTest("Requires libtpu built after 2024-12-19")
     @compute_on('device_host')
     @jax.jit
     def fn():
@@ -1541,6 +1544,9 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(y_out, y1 + y1)
 
   def test_compute_offload_with_linear_layout(self):
+    # TODO(apaszke): Remove after 12 weeks have passed.
+    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
+      self.skipTest("Requires libtpu built after 2024-12-19")
     sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     p_sharding = jax.sharding.SingleDeviceSharding(
         jax.devices()[0], memory_kind="pinned_host"
@@ -1636,6 +1642,9 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(count(), 4)
 
   def test_offload_take_host(self):
+    # TODO(apaszke): Remove after 12 weeks have passed.
+    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
+      self.skipTest("Requires libtpu built after 2024-12-19")
     @compute_on('device_host')
     @jax.jit
     def peer_forward(x, experts, indices, scores):

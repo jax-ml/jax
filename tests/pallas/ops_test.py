@@ -856,6 +856,9 @@ class OpsTest(PallasBaseTest):
           jnp.cbrt, jnp.cosh, jnp.expm1, jnp.sinh,
       ):
         self.skipTest(f"{fn.__name__} not implemented on TPU")
+      # TODO(apaszke): Remove after 12 weeks have passed.
+      if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
+        self.skipTest("Requires libtpu built at least on 2024-12-19")
 
     if (
         jtu.test_device_matches(["gpu"])
@@ -1488,6 +1491,9 @@ class OpsTest(PallasBaseTest):
       trans_y=[False, True],
   )
   def test_dot(self, lhs_and_rhs_shape, dtype, trans_x, trans_y):
+    # TODO(apaszke): Remove after 12 weeks have passed.
+    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
+      self.skipTest("Requires libtpu built after 2024-12-19")
     lhs_shape, rhs_shape = lhs_and_rhs_shape
 
     final_lhs_shape = lhs_shape[::-1] if trans_x else lhs_shape
@@ -2076,6 +2082,9 @@ class OpsTest(PallasBaseTest):
   ):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("Not implemented on GPU")
+    # TODO(apaszke): Remove after 12 weeks have passed.
+    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
+      self.skipTest("Requires libtpu built after 2024-12-19")
 
     x = jnp.arange(np.prod(array_shapes), dtype=dtype).reshape(array_shapes)
 
