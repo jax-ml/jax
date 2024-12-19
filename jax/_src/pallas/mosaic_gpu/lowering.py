@@ -1574,6 +1574,7 @@ def _lower_while_via_fori(
   assert not fori_jaxpr.constvars
 
   # Reflect the changes of the pattern matcher to the context.
+  lb_aval, ub_aval, *_ = ctx.avals_in[cond_nconsts + body_nconsts:]
   ctx = ctx.replace(
       avals_in=(
           *ctx.avals_in[cond_nconsts:body_nconsts],
@@ -1585,7 +1586,6 @@ def _lower_while_via_fori(
   _, consts, (lb, ub, *args) = util.split_list(
       args, [cond_nconsts, body_nconsts]
   )
-  lb_aval, ub_aval, *_ = ctx.avals_in[body_nconsts:]
   lb = _ensure_ir_value(lb, lb_aval.dtype)
   ub = _ensure_ir_value(ub, ub_aval.dtype)
   for_out = _lower_jaxpr_to_for_loop(
