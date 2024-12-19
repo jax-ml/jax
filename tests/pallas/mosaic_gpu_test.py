@@ -25,6 +25,7 @@ from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
@@ -1432,6 +1433,111 @@ class PipelineTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
     )
     np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
+
+
+class WarpSpecializedPipelineTest(PallasTest):
+
+  def test_pipelined_copy(self, m=512, n=512):
+    x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float16)
+    o = jnp.zeros((m, n), dtype=jnp.float16)
+    blk_m = blk_n = 64
+    o_last_block = jnp.zeros((blk_m, blk_n), dtype=jnp.float16)
+
+    def copy_kernel(x_smem, o_smem, o_last_block_smem):
+      # TODO(justinfu): Have each wg compute a separate slice
+      # after multiple-indexers are supported.
+      # This is currently a race, but the values written are the same.
+      o_smem[...] = x_smem[...]
+      o_last_block_smem[...] = x_smem[...]
+    block_spec = plgpu.GPUBlockSpec(
+                block_shape=(blk_m, blk_n),
+                index_map=lambda i, j: (i, j),
+                transforms=[],
+            )
+    pipeline = mgpu_pipeline.emit_pipeline_warp_specialized(
+        copy_kernel,
+        grid=(m // blk_m, n // blk_n),
+        memory_registers=40,
+        max_concurrent_steps=2,
+        num_compute_wgs=2,
+        wg_axis="wg",
+        in_specs=[block_spec],
+        out_specs=[block_spec,
+                   # Create an index-invariant output.
+                   plgpu.GPUBlockSpec(block_shape=(blk_m, blk_n),
+                                      index_map=lambda i, j: (0, 0))
+                   ],
+    )
+    mesh = plgpu.GPUMesh(
+        grid=(1,),
+        num_threads=3,
+        axis_names=("_", "wg",),
+        approx_math=True,
+    )
+    def run(refs):
+      @pl.core_map(mesh)
+      def _kernel_entry():
+        pipeline(*refs)
+    @jax.jit
+    def run_function(x, o, o_last_block):
+      _, out, out_last = pl.run_state(run)((x, o, o_last_block))
+      return (out, out_last)
+    out, out_last_block = run_function(x, o, o_last_block)
+    np.testing.assert_array_equal(out, x)
+    np.testing.assert_array_equal(out_last_block, x[-blk_m:, -blk_n:])
+
+  def test_elementwise_add(self, m=256, n=256, num_compute_wgs=2):
+    blk_m = blk_n = 64
+    x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float32)
+    y = jax.random.uniform(jax.random.key(1), (m, n), dtype=jnp.float32)
+    o = jnp.zeros((m, n), dtype=jnp.float32)
+
+    def tiled_add_kernel(x_smem, y_smem, o_smem):
+      # TODO(justinfu): Have each wg compute a separate slice
+      # after multiple-indexers are supported.
+      # This is currently a race, but the values written are the same.
+      o_smem[...] = x_smem[...] + y_smem[...]
+
+    pipeline = mgpu_pipeline.emit_pipeline_warp_specialized(
+        tiled_add_kernel,
+        grid=(m // blk_m, n // blk_n),
+        max_concurrent_steps=2,
+        num_compute_wgs=num_compute_wgs,
+        memory_registers=40,
+        wg_axis="wg",
+        in_specs=[
+            plgpu.GPUBlockSpec(
+                block_shape=(blk_m, blk_n),
+                index_map=lambda i, j: (i, j),
+                transforms=[]),
+            plgpu.GPUBlockSpec(
+                block_shape=(blk_m, blk_n),
+                index_map=lambda i, j: (i, j),
+                transforms=[]),
+        ],
+        out_specs=[
+            plgpu.GPUBlockSpec(
+                block_shape=(blk_m, blk_n),
+                index_map=lambda i, j: (i, j),
+                transforms=[])],
+    )
+    mesh = plgpu.GPUMesh(
+        grid=(1,),
+        num_threads=num_compute_wgs + 1,
+        axis_names=("_", "wg",),
+        approx_math=True,
+    )
+    def run(refs):
+      @pl.core_map(mesh)
+      def _kernel_entry():
+        pipeline(*refs)
+    @jax.jit
+    def run_function(x, y, o):
+      _, _, out = pl.run_state(run)((x, y, o))
+      return out
+    out = run_function(x, y, o)
+    reference = x + y
+    np.testing.assert_allclose(out, reference, atol=1e-4)
 
 
 class CoreMapTest(PallasTest):
