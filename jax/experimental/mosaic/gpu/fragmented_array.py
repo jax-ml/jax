@@ -386,21 +386,21 @@ class WGStridedFragLayout:
       raise ValueError((self, WARPGROUP_SIZE))
 
   @classmethod
-  def from_memref_type(cls, memref_ty: ir.Type):
-    if not ir.MemRefType.isinstance(memref_ty):
-      raise TypeError(memref_ty)
+  def from_shaped_type(cls, shaped_ty: ir.Type):
+    if not ir.ShapedType.isinstance(shaped_ty):
+      raise TypeError(shaped_ty)
 
-    memref_type = ir.MemRefType(memref_ty)
-    bw = mgpu.bytewidth(memref_type.element_type)
+    shaped_ty = ir.ShapedType(shaped_ty)
+    bw = mgpu.bytewidth(shaped_ty.element_type)
     assert 8 % bw == 0 and 8 // bw != 0, bw
-    if math.prod(memref_type.shape) % WARPGROUP_SIZE != 0:
+    if math.prod(shaped_ty.shape) % WARPGROUP_SIZE != 0:
       raise ValueError(
-          "Ref must have a number of elements that is a multiple of"
-          f" {WARPGROUP_SIZE} (got {math.prod(memref_type.shape)})"
+          f"{shaped_ty} must have a number of elements that is a multiple of"
+          f" {WARPGROUP_SIZE} (got {math.prod(shaped_ty.shape)})"
       )
-    max_vec_size = np.prod(memref_type.shape) // WARPGROUP_SIZE
+    max_vec_size = np.prod(shaped_ty.shape) // WARPGROUP_SIZE
     return cls(
-        shape=tuple(memref_type.shape), vec_size=min(8 // bw, max_vec_size)
+        shape=tuple(shaped_ty.shape), vec_size=min(8 // bw, max_vec_size)
     )
 
   def thread_idxs(self, shape):
@@ -517,7 +517,7 @@ class FragmentedArray:
 
     ref_ty = ir.MemRefType(ref.type)
     shape = tuple(ref_ty.shape)
-    layout = WGStridedFragLayout.from_memref_type(ref_ty)
+    layout = WGStridedFragLayout.from_shaped_type(ref_ty)
     vec_ty = ir.VectorType.get((layout.vec_size,), ref_ty.element_type)
     try:
       # Flattening the reference potentially produces simpler PTX but

@@ -79,6 +79,7 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:stablehlo_dialect",
         "//jaxlib/mlir:vector_dialect",
         "//jaxlib/mosaic",
+        "//jaxlib/mosaic:mosaic_gpu",
         "//jaxlib/triton",
         "@xla//xla/python:xla_extension",
     ],
