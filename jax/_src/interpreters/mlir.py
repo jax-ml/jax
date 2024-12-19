@@ -740,7 +740,7 @@ class ModuleContext:
       traceback_caches: None | TracebackCaches = None,
       shape_poly_state = None,
       all_default_mem_kind: bool = True):
-
+    assert backend_or_name is None
     self.context = context or make_ir_context()
     self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
     self.ip = ip or ir.InsertionPoint(self.module.body)
@@ -768,8 +768,9 @@ class ModuleContext:
         "accessing .backend in multi-lowering setting. This can occur when "
         "lowering a primitive that has not been adapted to multi-platform "
         "lowering")
+    assert self.backend_or_name is None
     if self.backend_or_name is None or isinstance(self.backend_or_name, str):
-      return xb.get_backend(self.backend_or_name)
+      return xb.get_backend(self.platforms[0])
     return self.backend_or_name
 
   def new_channel(self) -> int:
@@ -1102,6 +1103,7 @@ def lower_jaxpr_to_module(
   Handles the quirks of the argument/return value passing conventions of the
   runtime.
   """
+  assert backend_or_name is None
   util.test_event("lower_jaxpr_to_module")
   platforms = tuple(map(xb.canonicalize_platform, platforms))
 
@@ -3014,6 +3016,7 @@ def build_mlir_module_helper(
     platforms: Sequence[str],
     backend_or_name: str, axis_context: AxisContext) -> ir.Module:
   """Helper to generate pmap-style XLA computations for custom partitioners."""
+  assert backend_or_name is None
   unlowerable_effects = lowerable_effects.filter_not_in(closed_jaxpr.effects)
   if unlowerable_effects:
     raise ValueError(f'Cannot lower jaxpr with effects: {closed_jaxpr.effects}')
