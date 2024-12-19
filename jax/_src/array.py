@@ -23,7 +23,6 @@ import operator as op
 from typing import Any, TYPE_CHECKING, cast
 
 from jax._src import api
-from jax._src import api_util
 from jax._src import basearray
 from jax._src import config
 from jax._src import core
@@ -1095,7 +1094,7 @@ def shard_device_array(x, devices, indices, sharding):
     shards = [x] * len(devices)
   else:
     shards = x._multi_slice(start_indices, limit_indices, removed_dims)
-  aval = api_util.shaped_abstractify(x)
+  aval = core.shaped_abstractify(x)
   return pxla.batched_device_put(aval, sharding, shards, devices)
 
 
