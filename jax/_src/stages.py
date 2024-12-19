@@ -249,8 +249,8 @@ class XlaExecutable(Executable):
       else:
         raise
 
-    # TODO(skyewm): this should return a single dict (I think returning a list
-    # was to support MPMD executables, which never fully landed)
+    # TODO(b/384741132): this should return a single dict (I think returning a list
+    # was to support MPMD executables, which never fully landed).
   def cost_analysis(self) -> list[dict[str, float]]:
     xla_ext_exe = self.xla_extension_executable()
 
@@ -266,10 +266,11 @@ class XlaExecutable(Executable):
     # Try client method if executable cost_analysis method is unimplemented
     if hasattr(xla_ext_exe, "client"):
       try:
-        return [
-            xla_extension.hlo_module_cost_analysis(xla_ext_exe.client, m)
-            for m in xla_ext_exe.hlo_modules()
-        ]
+        # We assume that the executable has only one HloModule (b/384741132).
+        hlo_module = xla_ext_exe.hlo_modules()[0]
+        return [xla_extension.hlo_module_cost_analysis(
+            xla_ext_exe.client, hlo_module
+        )]
       except xla_extension.XlaRuntimeError as e:
         msg, *_ = e.args
         supported = not (type(msg) is str and
