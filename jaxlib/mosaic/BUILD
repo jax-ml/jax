@@ -32,6 +32,13 @@ py_library(
     ],
 )
 
+py_library(
+    name = "mosaic_gpu",
+    deps = [
+        "//jaxlib/mosaic/python:gpu_dialect",
+    ],
+)
+
 ################################################################################
 # TPU dialect
 
