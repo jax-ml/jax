@@ -1865,6 +1865,32 @@ class LayoutTest(TestCase):
         used_regs = {get_reg(addr) for addr in addrs}
         self.assertLessEqual(len(used_regs), expected_regs)
 
+  def test_copy_for_upcast(self):
+    dtype = jnp.int8
+    swizzle = 128
+    col_tiling = swizzle // bytewidth(utils.dtype_to_ir_type(dtype))
+    m, n = 128, col_tiling * 2
+    tiling = (64, col_tiling)
+    tiled_layout = fa._tiled_wgmma_layout_for_upcast((m, n))
+    def kernel(ctx, in_, out, smems):
+      smem_in, smem_out, barrier = smems
+      ctx.async_copy(src_ref=in_, dst_ref=smem_in, swizzle=swizzle, barrier=barrier)
+      barrier.wait()
+      t = mgpu.FragmentedArray.load_tiled(
+          smem_in, swizzle=swizzle, is_signed=True, layout=tiled_layout
+      )
+      t.store_tiled(smem_out, swizzle=swizzle)
+      mgpu.commit_shared()
+      ctx.async_copy(src_ref=smem_out, dst_ref=out, swizzle=swizzle)
+      ctx.await_async_copy(0)
+    x = jax.random.randint(
+        jax.random.key(42), tile_shape((m, n), tiling), -128, 127, dtype=dtype
+    )
+    f = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), x, x, [x, x, mgpu.TMABarrier()],
+    )
+    np.testing.assert_array_equal(f(x), x)
+
 
 class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
   """Device tests with lowering from the MLIR dialect and layout inference."""
