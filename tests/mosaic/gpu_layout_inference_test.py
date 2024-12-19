@@ -22,10 +22,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import scf
-from jax.experimental.mosaic.gpu import dialect as mgpu  # pylint: disable=g-importing-member
-from jax.experimental.mosaic.gpu import infer_layout  # pylint: disable=g-importing-member
-from jax.experimental.mosaic.gpu import splat_fragmented_layout  # pylint: disable=g-importing-member
-from jax.experimental.mosaic.gpu import strided_fragmented_layout  # pylint: disable=g-importing-member
+import jax.experimental.mosaic.gpu as mgpu
 
 config.parse_flags_with_absl()
 
@@ -34,14 +31,14 @@ def _make_ir_context():
   context = ir.Context()
   context.append_dialect_registry(mlir_interpreter.upstream_dialects)
   context.load_all_available_dialects()
-  mgpu.register_dialect(context)
+  mgpu.dialect.register_dialect(context)
   return context
 
 
 class LayoutInferenceTest(parameterized.TestCase):
 
   def setUp(self):
-    if mgpu is None:
+    if mgpu.dialect is None:
       raise self.skipTest("Test requires Mosaic GPU dialect")
     super().setUp()
     self.enter_context(_make_ir_context())
@@ -50,7 +47,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
   @parameterized.parameters(ir.RankedTensorType, ir.VectorType)
   def test_infer_layout_default(self, type_constructor):
-    shape = (4, 8)
+    shape = (16, 8)
     elt_type = ir.BF16Type.get()
 
     with ir.InsertionPoint(self.module.body):
@@ -67,9 +64,11 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     # Not setting any layouts on the module should default in ops having a
     # strided fragmented layout.
-    infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
-    layout = strided_fragmented_layout()
+    layout = mgpu.to_strided_fragmented_layout_attr(
+        mgpu.WGStridedFragLayout.from_shaped_type(ab_type)
+    )
     for op in self.module.body.operations:
       self.assertIn("in_layouts", op.attributes)
       self.assertIn("out_layouts", op.attributes)
@@ -98,9 +97,9 @@ class LayoutInferenceTest(parameterized.TestCase):
       )
       add = arith.addf(arith.addf(a, b), b)
 
-    layout = splat_fragmented_layout()
+    layout = mgpu.to_splat_fragmented_layout_attr(mgpu.WGSplatFragLayout(shape))
     add.owner.attributes["out_layouts"] = ir.ArrayAttr.get([layout])
-    infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
     for op in self.module.body.operations:
       self.assertIn("in_layouts", op.attributes)
@@ -114,7 +113,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       )
 
   def test_infer_layout_traverses_ops_correctly(self):
-    shape = (4, 8)
+    shape = (16, 8)
     elt_type = ir.BF16Type.get()
     add_op = None
 
@@ -131,7 +130,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       ab_type = ir.VectorType.get(shape, elt_type)
       func.FuncOp.from_py_func(ab_type, ab_type)(body)
 
-    infer_layout(self.module)
+    mgpu.infer_layout(self.module)
 
     self.assertIn("in_layouts", add_op.owner.attributes)
     self.assertIn("out_layouts", add_op.owner.attributes)

@@ -39,15 +39,11 @@ if dialect is not None:
   )
   from .layout_inference import (
       infer_layout as infer_layout,
-      splat_fragmented_layout as splat_fragmented_layout,
-      strided_fragmented_layout as strided_fragmented_layout,
   )
 else:
   gpu_address_space_to_nvptx = None
-  infer_layout = None
   lower_mgpu_dialect = None
-  splat_fragmented_layout = None
-  strided_fragmented_layout = None
+  infer_layout = None
 
 
 from .fragmented_array import (
@@ -58,6 +54,12 @@ from .fragmented_array import (
     WGSplatFragLayout as WGSplatFragLayout,
     WGStridedFragLayout as WGStridedFragLayout,
     optimization_barrier as optimization_barrier,
+)
+from .layouts import (
+    from_strided_fragmented_layout_attr as from_strided_fragmented_layout_attr,
+    is_strided_fragmented_layout as is_strided_fragmented_layout,
+    to_splat_fragmented_layout_attr as to_splat_fragmented_layout_attr,
+    to_strided_fragmented_layout_attr as to_strided_fragmented_layout_attr,
 )
 from .utils import (
     BarrierRef as BarrierRef,

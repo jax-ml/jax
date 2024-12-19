@@ -664,9 +664,11 @@ class DialectLoweringTest(MosaicGpuTest):
       zero_index = arith.constant(ir.IndexType.get(), 0)
       ty = ir.VectorType.get(shape, elt_ty)
       load = vector.load(ty, ref, [zero_index, zero_index])
-      load.owner.attributes["out_layouts"] = ir.ArrayAttr.get(
-          [mgpu.strided_fragmented_layout()]
-      )
+      load.owner.attributes["out_layouts"] = ir.ArrayAttr.get([
+          mgpu.to_strided_fragmented_layout_attr(
+              mgpu.WGStridedFragLayout.from_shaped_type(ty)
+          )
+      ])
 
     mgpu.lower_mgpu_dialect(self.module)
 

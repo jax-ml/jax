@@ -31,9 +31,7 @@ from jax._src.lib.mlir.dialects import vector
 import numpy as np
 
 from .fragmented_array import FragmentedArray, WGStridedFragLayout
-from .layout_inference import has_any_layout_set
-from .layout_inference import should_have_layout
-from .layout_inference import strided_fragmented_layout
+from .layouts import from_strided_fragmented_layout_attr, has_any_layout_set, is_strided_fragmented_layout, should_have_layout, to_strided_fragmented_layout_attr
 from .utils import c, ptr_as_memref, single_thread_predicate
 
 # mypy: ignore-errors
@@ -55,15 +53,8 @@ def _fragmented_array_to_ir(
       [ty], fragmented_array.registers.tolist()
   )
 
-  conversion_cast.attributes["layout"] = strided_fragmented_layout()
-
-  # TODO(bchetioui): make sub-attributes part of the layout attribute.
-  i32 = ir.IntegerType.get_signless(32)
-  conversion_cast.attributes["layout_shape"] = ir.ArrayAttr.get(
-      [ir.IntegerAttr.get(i32, s) for s in fragmented_array.shape]
-  )
-  conversion_cast.attributes["vec_size"] = ir.IntegerAttr.get(
-      i32, fragmented_array.layout.vec_size
+  conversion_cast.attributes["layout"] = to_strided_fragmented_layout_attr(
+      fragmented_array.layout
   )
 
   if fragmented_array.is_signed is not None:
@@ -85,12 +76,12 @@ def _fragmented_array_from_ir(
   if not isinstance(conversion_cast, builtin.UnrealizedConversionCastOp):
     raise ValueError(f"{conversion_cast} is not a conversion_cast")
 
-  conversion_cast_layout = conversion_cast.attributes["layout"]
+  layout_attr = conversion_cast.attributes["layout"]
 
-  if conversion_cast_layout != strided_fragmented_layout():
+  if not is_strided_fragmented_layout(layout_attr):
     raise NotImplementedError(
-        f"Converting conversion_casts with layout {conversion_cast_layout} "
-        "back to FragmentedArrays is not supported."
+        f"Converting conversion_casts with layout {layout_attr} back to "
+        "FragmentedArrays is not supported."
     )
 
   converted_outputs = builtin.unrealized_conversion_cast(
@@ -104,15 +95,12 @@ def _fragmented_array_from_ir(
     reverse_conversion_cast.attributes[attribute.name] = attribute.attr
 
   registers = np.array(list(converted_outputs))
+  layout = from_strided_fragmented_layout_attr(layout_attr)
 
-  shape = tuple(int(s) for s in conversion_cast.attributes["layout_shape"])
-  vec_size = int(conversion_cast.attributes["vec_size"])
   if ir.IntegerType.isinstance(conversion_cast.outputs[0].type):
     is_signed = bool(conversion_cast.attributes["is_signed"])
   else:
     is_signed = None
-
-  layout = WGStridedFragLayout(shape, vec_size)
 
   return FragmentedArray(
       _registers=registers, _layout=layout, _is_signed=is_signed
@@ -184,11 +172,13 @@ def _initialize_barrier_op_lowering_rule(
 def _vector_load_op_lowering_rule(
     vector_load_op: vector.LoadOp,
 ) -> Sequence[ir.Value]:
-  (out_layout,) = cast(ir.ArrayAttr, vector_load_op.attributes["out_layouts"])
+  (out_layout_attr,) = cast(
+      ir.ArrayAttr, vector_load_op.attributes["out_layouts"]
+  )
 
-  if out_layout != strided_fragmented_layout():
+  if not is_strided_fragmented_layout(out_layout_attr):
     raise ValueError(
-        f"{vector_load_op} has an unsupported layout: {out_layout}"
+        f"{vector_load_op} has an unsupported layout: {out_layout_attr}"
     )
 
   for i in vector_load_op.indices:
@@ -212,11 +202,13 @@ def _vector_store_op_lowering_rule(
     vector_store_op: vector.StoreOp,
 ) -> Sequence[ir.Value]:
 
-  in_layout, *_ = cast(ir.ArrayAttr, vector_store_op.attributes["in_layouts"])
+  in_layout_attr, *_ = cast(
+      ir.ArrayAttr, vector_store_op.attributes["in_layouts"]
+  )
 
-  if in_layout != strided_fragmented_layout():
+  if not is_strided_fragmented_layout(in_layout_attr):
     raise ValueError(
-        f"{vector_store_op} has an unsupported layout: {in_layout}"
+        f"{vector_store_op} has an unsupported layout: {in_layout_attr}"
     )
 
   for i in vector_store_op.indices:
