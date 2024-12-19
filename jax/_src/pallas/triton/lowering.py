@@ -273,7 +273,7 @@ def _check_tensor_size(shape: tuple[int | pallas_core.Mapped, ...]):
 def lower_jaxpr_to_triton_module(
     jaxpr: jax_core.Jaxpr,
     grid_mapping: GridMapping,
-    name_and_src_info: pallas_core.NameAndStrInfo,
+    name_and_src_info: pallas_core.NameAndSrcInfo,
     platform: str
 ) -> LoweringResult:
   if grid_mapping.num_dynamic_grid_bounds:
