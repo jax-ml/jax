@@ -214,7 +214,7 @@ class OpsTest(PallasBaseTest):
       out[:] = jax.lax.select(cond[0] != 0, lhs[:], rhs[:])
 
     def run(cond, lhs, rhs):
-      return pl.pallas_call(
+      return self.pallas_call(
           kernel,
           out_shape=lhs,
           grid_spec=pltpu.PrefetchScalarGridSpec(
@@ -268,7 +268,7 @@ class OpsTest(PallasBaseTest):
       )
 
     @functools.partial(
-        pl.pallas_call,
+        self.pallas_call,
         out_shape=jax.ShapeDtypeStruct(shape, dtype),
     )
     def kernel(x_ref, mask_ref, o_ref):
@@ -301,7 +301,7 @@ class OpsTest(PallasBaseTest):
       out[:] = reduce_func(x[:], axis, keepdims=True)
 
     x = jnp.arange(np.prod(in_shape), dtype=dtype).reshape(in_shape)
-    result = pl.pallas_call(
+    result = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct(out_shape, x.dtype),
     )(x)
