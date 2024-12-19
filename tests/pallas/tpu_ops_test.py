@@ -282,6 +282,32 @@ class OpsTest(PallasBaseTest):
     expected = jnp.where(mask, x, jnp.zeros_like(x))
     self.assertArraysEqual(out, expected)
 
+  @parameterized.product(
+      dtype = [jnp.float32, jnp.bfloat16, jnp.int32],
+      axis = [0, 1, 2],
+      reduce_func = [jnp.sum, jnp.max, jnp.min]
+  )
+  def test_reduction(self, dtype, axis, reduce_func):
+    if dtype == jnp.int32 and axis == 2:
+      self.skipTest("Int32 reduction on minor is not supported.")
+    # TODO(b/384127570): fix bfloat16 reduction.
+    if dtype == jnp.bfloat16 and reduce_func != jnp.sum:
+      self.skipTest("b/384127570")
+    in_shape = (2, 16, 128)
+    out_shape = list(in_shape)
+    out_shape[axis] = 1
+
+    def kernel(x, out):
+      out[:] = reduce_func(x[:], axis, keepdims=True)
+
+    x = jnp.arange(np.prod(in_shape), dtype=dtype).reshape(in_shape)
+    result = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(out_shape, x.dtype),
+    )(x)
+    expected = reduce_func(x, axis, keepdims=True)
+    np.testing.assert_array_equal(result, expected)
+
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True

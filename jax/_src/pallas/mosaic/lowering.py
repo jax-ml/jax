@@ -1459,10 +1459,14 @@ def reduce_lowering_rule(reduce_fn, type_to_kind, type_to_identity):
       kind = type_to_kind[jnp.floating]
       val = type_to_identity[jnp.floating]
       val = ir.FloatAttr.get(aval_to_ir_type(x_aval, shape=()), val)
-    elif jnp.issubdtype(x_aval.dtype, jnp.signedinteger):
-      raise NotImplementedError("Reductions over integers not implemented.")
+    elif x_aval.dtype == jnp.int32:
+      kind = type_to_kind[jnp.signedinteger]
+      val = type_to_identity[jnp.signedinteger]
+      val = ir.IntegerAttr.get(ir.IntegerType.get_signless(32), val)
     elif jnp.issubdtype(x_aval.dtype, jnp.unsignedinteger):
-      raise NotImplementedError("Reductions over integers not implemented.")
+      raise NotImplementedError(
+          "Reductions over unsigned integers not implemented."
+      )
     else:
       raise NotImplementedError(
           f"Reductions over {x_aval.dtype} not implemented.")

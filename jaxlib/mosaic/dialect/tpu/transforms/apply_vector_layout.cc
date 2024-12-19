@@ -51,9 +51,11 @@
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
+#include "llvm/include/llvm/ADT/APInt.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/include/mlir/IR/Attributes.h"
 #include "mlir/include/mlir/IR/Builders.h"
 #include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/include/mlir/IR/OperationSupport.h"
@@ -554,7 +556,7 @@ VectorType getNativeVregType(Type elem_ty,
 FailureOr<Value> maskOOB(RewriteContext &ctx, OpBuilder &builder,
                          TypedValue<VectorType> value,
                          const VRegDataBounds &bounds,
-                         const TypedAttr neutral) {
+                         const Attribute neutral) {
   auto native_vreg_ty =
       getNativeVregType(value.getType().getElementType(), ctx.target_shape);
   TPU_ASSERT_LOC(value.getLoc(), llvm::equal(value.getType().getShape(),
@@ -3926,6 +3928,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
   ImplicitLocOpBuilder builder(op.getLoc(), &op);
   auto multi_reduction_op = cast<vector::MultiDimReductionOp>(op);
   const VectorType src_ty = multi_reduction_op.getSourceVectorType();
+  auto element_type = src_ty.getElementType();
   int64_t src_rank = src_ty.getRank();
   const auto res_ty = dyn_cast<VectorType>(multi_reduction_op.getDestType());
   if (res_ty == nullptr) {
@@ -3953,44 +3956,56 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
     return multi_reduction_op.emitOpError(
         "Not implemented: Only constant accumulator supported");
   }
-  if (!src_ty.getElementType().isF32() && !src_ty.getElementType().isBF16()) {
+  if (!element_type.isF32() && !element_type.isBF16() &&
+      !element_type.isSignlessInteger((32))) {
     return multi_reduction_op.emitOpError(
-               "Not implemented: Only FP32 and BF16 reductions supported, but "
-               "got ")
-           << src_ty;
+        "Not implemented: unsupported element type");
   }
-  auto element_type = cast<FloatType>(src_ty.getElementType());
-  const auto acc_def_value = dyn_cast<DenseFPElementsAttr>(acc_def.getValue());
+  bool is_int = element_type.isSignlessInteger(32);
+  const auto acc_def_value = dyn_cast<DenseElementsAttr>(acc_def.getValue());
   if (acc_def_value == nullptr || !acc_def_value.isSplat()) {
     return multi_reduction_op.emitOpError("Expected a splat constant");
   }
   TPU_ASSERT_OP(acc_def_value.getElementType() == element_type);
-  const auto val = acc_def_value.getSplatValue<FloatAttr>();
-  FloatAttr neutral;
+  Attribute neutral;
   switch (multi_reduction_op.getKind()) {
     case vector::CombiningKind::ADD:
-      neutral = builder.getFloatAttr(element_type, 0);
+      neutral = builder.getZeroAttr(element_type);
       break;
     case vector::CombiningKind::MAXIMUMF: {
       // TODO(b/322836633): The semantics of maximumf don't match the lowering
       // for older TPU versions because older TPU versions don't respect the
       // -0.0 vs +0.0 ordering.
       neutral = builder.getFloatAttr(
-          element_type, APFloat::getInf(element_type.getFloatSemantics(),
-                                        /*Negative=*/true));
+          element_type,
+          APFloat::getInf(cast<FloatType>(element_type).getFloatSemantics(),
+                          /*Negative=*/true));
     } break;
     case vector::CombiningKind::MINIMUMF: {
       neutral = builder.getFloatAttr(
-          element_type, APFloat::getInf(element_type.getFloatSemantics(),
-                                        /*Negative=*/false));
+          element_type,
+          APFloat::getInf(cast<FloatType>(element_type).getFloatSemantics(),
+                          /*Negative=*/false));
+    } break;
+    case vector::CombiningKind::MAXSI: {
+      neutral = builder.getIntegerAttr(
+          element_type,
+          APInt::getSignedMinValue(element_type.getIntOrFloatBitWidth()));
+    } break;
+    case vector::CombiningKind::MINSI: {
+      neutral = builder.getIntegerAttr(
+          element_type,
+          APInt::getSignedMaxValue(element_type.getIntOrFloatBitWidth()));
     } break;
     default:
       return multi_reduction_op.emitOpError(
           "Not implemented: unsupported kind");
   }
-  if (val != neutral) {
+  if (auto val = acc_def_value.getSplatValue<Attribute>(); val != neutral) {
     return multi_reduction_op.emitOpError(
-        "Not implemented: Only neutral accumulator supported");
+               "Not implemented: Only neutral accumulator supported for "
+               "float reduction. Expected ")
+           << neutral << ", but got " << val;
   }
 
   std::array<bool, 2> reduces;
@@ -4074,9 +4089,11 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
       tpu_kind = tpu::ReductionKind::SUM;
       break;
     case vector::CombiningKind::MAXIMUMF:
+    case vector::CombiningKind::MAXSI:
       tpu_kind = tpu::ReductionKind::MAX;
       break;
     case vector::CombiningKind::MINIMUMF:
+    case vector::CombiningKind::MINSI:
       tpu_kind = tpu::ReductionKind::MIN;
       break;
     default:
@@ -4103,14 +4120,29 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
             src_vregs.Slice(src_slice_start, src_slice_end);
         std::optional<Value> acc_vreg;
         auto reduce_elementwise = [&](Value lhs, Value rhs) -> Value {
+          Value result;
           switch (tpu_kind) {
             case tpu::ReductionKind::SUM:
-              return builder.create<arith::AddFOp>(loc, lhs, rhs);
+              result =
+                  is_int
+                      ? builder.create<arith::AddIOp>(loc, lhs, rhs).getResult()
+                      : builder.create<arith::AddFOp>(loc, lhs, rhs)
+                            .getResult();
+              break;
             case tpu::ReductionKind::MAX:
-              return builder.create<arith::MaximumFOp>(loc, lhs, rhs);
+              result = is_int ? builder.create<arith::MaxSIOp>(loc, lhs, rhs)
+                                    .getResult()
+                              : builder.create<arith::MaximumFOp>(loc, lhs, rhs)
+                                    .getResult();
+              break;
             case tpu::ReductionKind::MIN:
-              return builder.create<arith::MinimumFOp>(loc, lhs, rhs);
+              result = is_int ? builder.create<arith::MinSIOp>(loc, lhs, rhs)
+                                    .getResult()
+                              : builder.create<arith::MinimumFOp>(loc, lhs, rhs)
+                                    .getResult();
+              break;
           }
+          return result;
         };
         auto reduction_status = reduced_vregs.EachStatus(
             [&](const absl::Span<const int64_t> red_idx,
