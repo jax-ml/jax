@@ -2092,8 +2092,6 @@ LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
     maskVregs(rhs_vregs, padded_rhs_rows - rhs_shape[0], 0);
   }
 
-  // TODO(b/328094640): use latch 3 for short dimensions.
-  // TODO(b/328093587): Skip zeros vreg matmul
   // At this point, all paddings on vregs are masked out. For now, we
   // append zero vregs to make LHS's second dim, both RHS's dims and ACC's
   // second dim to be a multiple of mxu_size.
