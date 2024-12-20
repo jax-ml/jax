@@ -1,7 +1,7 @@
-``jax.extend.ffi`` module
-=========================
+``jax.ffi`` module
+==================
 
-.. automodule:: jax.extend.ffi
+.. automodule:: jax.ffi
 
 .. autosummary::
   :toctree: _autosummary

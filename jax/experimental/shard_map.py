@@ -52,7 +52,7 @@ from jax._src.api import _shared_code_pmap, _prepare_pmap
 from jax._src.lax import (lax, parallel as lax_parallel, slicing,
                           windowed_reductions, convolution, fft, linalg,
                           special, control_flow, ann)
-from jax._src.extend import ffi
+from jax._src import ffi
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import (HashableFunction, HashablePartial, unzip2,

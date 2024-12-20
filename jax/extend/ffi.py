@@ -12,13 +12,42 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/jax-ml/jax/issues/7570
+from jax._src import ffi as _ffi
 
-from jax._src.extend.ffi import (
-    ffi_call as ffi_call,
-    ffi_lowering as ffi_lowering,
-    include_dir as include_dir,
-    pycapsule as pycapsule,
-    register_ffi_target as register_ffi_target,
-)
+_deprecations = {
+    # Added 2024-12-20
+    "ffi_call": (
+        "jax.extend.ffi.ffi_call is deprecated, use jax.ffi.ffi_call instead.",
+        _ffi.ffi_call,
+    ),
+    "ffi_lowering": (
+        "jax.extend.ffi.ffi_lowering is deprecated, use jax.ffi.ffi_lowering instead.",
+        _ffi.ffi_lowering,
+    ),
+    "include_dir": (
+        "jax.extend.ffi.include_dir is deprecated, use jax.ffi.include_dir instead.",
+        _ffi.include_dir,
+    ),
+    "pycapsule": (
+        "jax.extend.ffi.pycapsule is deprecated, use jax.ffi.pycapsule instead.",
+        _ffi.pycapsule,
+    ),
+    "register_ffi_target": (
+        "jax.extend.ffi.register_ffi_target is deprecated, use jax.ffi.register_ffi_target instead.",
+        _ffi.register_ffi_target,
+    ),
+}
+
+import typing
+if typing.TYPE_CHECKING:
+  ffi_call = _ffi.ffi_call
+  ffi_lowering = _ffi.ffi_lowering
+  include_dir = _ffi.include_dir
+  pycapsule = _ffi.pycapsule
+  register_ffi_target = _ffi.register_ffi_target
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del typing
+del _ffi
