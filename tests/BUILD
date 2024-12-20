@@ -143,6 +143,13 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "ffi_test",
+    srcs = ["ffi_test.py"],
+    # TODO(dfm): Remove after removal of jex.ffi imports.
+    deps = ["//jax:extend"],
+)
+
+jax_multiplatform_test(
     name = "fft_test",
     srcs = ["fft_test.py"],
     backend_tags = {

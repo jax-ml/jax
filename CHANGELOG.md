@@ -30,6 +30,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * From {mod}`jax.interpreters.xla`, `abstractify` and `pytype_aval_mappings`
     are now deprecated, having been replaced by symbols of the same name
     in {mod}`jax.core`.
+  * The {mod}`jax.extend.ffi` submodule was moved to {mod}`jax.ffi`, and the
+    previous import path is deprecated.
 
 * Deletions
   * `jax_enable_memories` flag has been deleted and the behavior of that flag
