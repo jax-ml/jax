@@ -12,18 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import warnings
-
 from absl.testing import absltest
 from jax._src import deprecations
 from jax._src import test_util as jtu
+from jax._src import test_warning_util
 from jax._src.internal_test_util import deprecation_module as m
 
 class DeprecationTest(absltest.TestCase):
 
   def testModuleDeprecation(self):
-    with warnings.catch_warnings():
-      warnings.simplefilter("error")
+    with test_warning_util.raise_on_warnings():
       self.assertEqual(m.x, 42)
 
     with self.assertWarnsRegex(DeprecationWarning, "Please use x"):

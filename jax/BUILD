@@ -120,6 +120,7 @@ py_library(
     testonly = 1,
     srcs = [
         "_src/test_util.py",
+        "_src/test_warning_util.py",
     ],
     visibility = [
         ":internal",
