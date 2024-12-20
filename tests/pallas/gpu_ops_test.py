@@ -224,8 +224,8 @@ class FusedAttentionTest(PallasBaseTest):
   @jtu.sample_product(
       batch_size=(1, 2),
       seq_len=(128, 384),
-      num_heads=(1, 2, 4),
-      head_dim=(32,),
+      num_heads=(1, 2),
+      head_dim=(32, 64, 128,),
       causal=(True, False),
       use_segment_ids=(True, False),
   )
@@ -266,9 +266,9 @@ class FusedAttentionTest(PallasBaseTest):
     dq, dk, dv = jax.grad(f, argnums=(0, 1, 2))(q, k, v)
     dq_ref, dk_ref, dv_ref = jax.grad(f_ref, argnums=(0, 1, 2))(q, k, v)
     # TODO(sharadmv): Fix test.
-    np.testing.assert_allclose(dq, dq_ref, atol=0.14)
-    np.testing.assert_allclose(dk, dk_ref, atol=0.14)
-    np.testing.assert_allclose(dv, dv_ref, atol=0.05)
+    self.assertAllClose(dq, dq_ref, atol=5e-2)
+    self.assertAllClose(dk, dk_ref, atol=5e-2)
+    self.assertAllClose(dv, dv_ref, atol=1e-3)
 
 
 class FusedAttentionInterpretTest(FusedAttentionTest):

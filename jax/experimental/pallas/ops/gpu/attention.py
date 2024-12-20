@@ -482,7 +482,7 @@ def mha_backward_kernel(
     if sm_scale != 1.0:
       ds = ds * sm_scale
 
-    dq = dq + pl.dot(ds.astype(k.dtype), k).astype(dq.dtype)
+    dq = dq + pl.dot(ds.astype(k.dtype), k)
 
     return dq
 
@@ -598,7 +598,9 @@ def mha_reference(
 ):
   q_seq_len = q.shape[1]
   kv_seq_len = k.shape[1]
-  logits = jnp.einsum('bqhc,bkhc->bhqk', q, k).astype(jnp.float32)
+  logits = jnp.einsum(
+      "bqhc,bkhc->bhqk", q.astype(jnp.float32), k.astype(jnp.float32)
+  )
   mask = None
   if segment_ids is not None:
     mask = jnp.expand_dims(segment_mask(segment_ids, segment_ids), 1)
@@ -608,5 +610,5 @@ def mha_reference(
     causal_mask = jnp.broadcast_to(causal_mask, logits.shape)
     mask = causal_mask if mask is None else jnp.logical_and(mask, causal_mask)
   logits = logits if mask is None else jnp.where(mask, logits, float("-inf"))
-  weights = jax.nn.softmax(logits * sm_scale).astype(q.dtype)
-  return jnp.einsum('bhqk,bkhc->bqhc', weights, v)
+  weights = jax.nn.softmax(logits * sm_scale)
+  return jnp.einsum("bhqk,bkhc->bqhc", weights, v.astype(jnp.float32))
