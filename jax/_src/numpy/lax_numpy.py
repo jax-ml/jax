@@ -225,6 +225,8 @@ if dtypes.float8_e3m4 is not None:
   float8_e3m4 = _make_scalar_type(dtypes.float8_e3m4)
 if dtypes.float8_e4m3 is not None:
   float8_e4m3 = _make_scalar_type(dtypes.float8_e4m3)
+if dtypes.float8_e8m0fnu is not None:
+  float8_e8m0fnu = _make_scalar_type(dtypes.float8_e8m0fnu)
 float8_e4m3fn = _make_scalar_type(dtypes.float8_e4m3fn)
 float8_e4m3fnuz = _make_scalar_type(dtypes.float8_e4m3fnuz)
 float8_e5m2 = _make_scalar_type(dtypes.float8_e5m2)
