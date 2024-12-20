@@ -52,23 +52,14 @@ markers = [
     "multiaccelerator: indicates that a test can make use of and possibly requires multiple accelerators",
     "SlurmMultiNodeGpuTest: mark a test for Slurm multinode GPU nightly CI"
 ]
-filterwarnings = [
-    "error",
-
-    # TODO(jakevdp): remove when array_api_tests stabilize
-    "default:.*not machine-readable.*:UserWarning",
-    "default:Special cases found for .* but none were parsed.*:UserWarning",
-
-    # NOTE: this is probably not where you want to add code to suppress a
-    # warning. Only pytest tests look at this list, whereas Bazel tests also
-    # check for warnings and do not check this list. Most likely, you should
-    # add a @jtu.ignore_warning decorator to your test instead.
-]
 doctest_optionflags = [
     "NUMBER",
     "NORMALIZE_WHITESPACE"
 ]
-addopts = "--doctest-glob='*.rst' --ignore='examples/ffi'"
+# We disable pytest's warning capture system, because neither it not the
+# warnings module is thread-safe. Instead, we use our own utilities to catch
+# and test for warnings in tests, see test_warning_util.py.
+addopts = "-p no:warnings --doctest-glob='*.rst' --ignore='examples/ffi'"
 
 [tool.ruff]
 preview = true
