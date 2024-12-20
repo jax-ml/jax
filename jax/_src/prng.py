@@ -461,8 +461,6 @@ class KeyTy(dtypes.ExtendedDType):
 
 
 core.pytype_aval_mappings[PRNGKeyArray] = lambda x: x.aval
-core.shaped_abstractify_handlers[PRNGKeyArray] = op.attrgetter('aval')
-
 xla.canonicalize_dtype_handlers[PRNGKeyArray] = lambda x: x
 
 
