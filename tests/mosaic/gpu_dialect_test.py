@@ -586,7 +586,7 @@ class DialectLoweringTest(MosaicGpuTest):
           llvm.UndefOp(workgroup_ptr_ty()),
           arrival_count=1,
       )
-    mgpu.lower_mgpu_dialect(self.module)
+    mgpu.lower_mgpu_dialect(self.module, None)
 
     self.assertEmpty(
         list(filter(is_mosaic_gpu_op, self.module.body.operations))
@@ -604,7 +604,7 @@ class DialectLoweringTest(MosaicGpuTest):
             arrival_count=1,
         )
         scf.yield_([])
-    mgpu.lower_mgpu_dialect(self.module)
+    mgpu.lower_mgpu_dialect(self.module, None)
 
     self.assertEmpty(
         list(filter(is_mosaic_gpu_op, if_op.then_block.operations))
@@ -626,7 +626,7 @@ class DialectLoweringTest(MosaicGpuTest):
       memref.copy(barriers_ref, barriers_ref)
 
     self.assertTrue(self.module.operation.verify())
-    mgpu.lower_mgpu_dialect(self.module)
+    mgpu.lower_mgpu_dialect(self.module, None)
     self.assertTrue(self.module.operation.verify())
 
     all_mbarrier_init_shared_ops = find_if(
@@ -654,7 +654,7 @@ class DialectLoweringTest(MosaicGpuTest):
     with self.assertRaisesRegex(
         ValueError, "missing a layout and can not be lowered"
     ):
-      mgpu.lower_mgpu_dialect(self.module)
+      mgpu.lower_mgpu_dialect(self.module, None)
 
   def test_lowering_eliminates_layouts(self):
     shape = (4, 128)
@@ -670,7 +670,7 @@ class DialectLoweringTest(MosaicGpuTest):
           )
       ])
 
-    mgpu.lower_mgpu_dialect(self.module)
+    mgpu.lower_mgpu_dialect(self.module, None)
 
     all_ops_with_layouts = find_if(
         self.module,
@@ -691,7 +691,7 @@ class DialectLoweringTest(MosaicGpuTest):
       vector.store(array, ref, [zero_index, zero_index])
 
     mgpu.infer_layout(self.module)
-    mgpu.lower_mgpu_dialect(self.module)
+    mgpu.lower_mgpu_dialect(self.module, None)
 
     all_loads = find_if(
         self.module,
