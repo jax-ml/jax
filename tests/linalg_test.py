@@ -849,9 +849,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       b=[(), (3,), (2, 3)],
       dtype=float_types + complex_types,
       compute_uv=[False, True],
+      lapack_driver=["gesdd", "gesvd"],
   )
   @jax.default_matmul_precision("float32")
-  def testSVD(self, b, m, n, dtype, full_matrices, compute_uv, hermitian):
+  def testSVD(self, b, m, n, dtype, full_matrices, compute_uv, hermitian, lapack_driver):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(b + (m, n), dtype)]
 
@@ -867,11 +868,17 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     reconstruction_tol = 2 * tol
     unitariness_tol = 3 * tol
 
+    if lapack_driver == "gesvd":
+      def svd_func(*args, hermitian=False, **kwargs):
+        return jsp.linalg.svd(*args, lapack_driver="gesvd", **kwargs)
+    else:
+      svd_func = jnp.linalg.svd
+
     a, = args_maker()
     if hermitian:
       a = a + np.conj(T(a))
-    out = jnp.linalg.svd(a, full_matrices=full_matrices, compute_uv=compute_uv,
-                         hermitian=hermitian)
+    out = svd_func(a, full_matrices=full_matrices, compute_uv=compute_uv,
+                   hermitian=hermitian)
     if compute_uv:
       # Check the reconstructed matrices
       out = list(out)
@@ -911,15 +918,15 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             unitary_mat, rtol=unitariness_tol,
                             atol=unitariness_tol)
     else:
-      self.assertTrue(np.allclose(np.linalg.svd(a, compute_uv=False),
+      self.assertTrue(np.allclose(svd_func(a, compute_uv=False),
                                   np.asarray(out), atol=1e-4, rtol=1e-4))
 
-    self._CompileAndCheck(partial(jnp.linalg.svd, full_matrices=full_matrices,
+    self._CompileAndCheck(partial(svd_func, full_matrices=full_matrices,
                                   compute_uv=compute_uv),
                           args_maker)
 
     if not compute_uv and a.size < 100000:
-      svd = partial(jnp.linalg.svd, full_matrices=full_matrices,
+      svd = partial(svd_func, full_matrices=full_matrices,
                     compute_uv=compute_uv)
       # TODO(phawkins): these tolerances seem very loose.
       if dtype == np.complex128:
@@ -931,7 +938,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     if compute_uv and (not full_matrices):
       b, = args_maker()
       def f(x):
-        u, s, v = jnp.linalg.svd(
+        u, s, v = svd_func(
           a + x * b,
           full_matrices=full_matrices,
           compute_uv=compute_uv)
