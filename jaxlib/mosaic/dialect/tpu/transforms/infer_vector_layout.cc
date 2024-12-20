@@ -1693,17 +1693,38 @@ class VectorLayoutInferer {
           "Only 32-bit to 16-bit or 8-bit float truncation supported");
     }
     auto &layout = *some_layout;
+    const int64_t sublanes_per_tile = layout.sublanesPerTile(target_shape_);
     bool select_native = allUsersRequireNativeTiling(op->getResult(0));
     std::array<int64_t, 2> src_tiling;
     std::array<int64_t, 2> dst_tiling;
     if (select_native) {
+      // This forces retiling when the source is not in native tiling, because,
+      // compared not retiling and using our other alternatives, retiling to
+      // native is cheaper or the same in the source bitwidth, where tiles have
+      // greater or equal sublanes.
       src_tiling = nativeTiling(src_bitwidth);
       dst_tiling = nativeTiling(dst_bitwidth);
-    } else {
+    } else if (sublanes_per_tile > 1) {
+      // Stack the tiles horizontally, which preserves the tiling.
+      // Note: In the case of source native tiling (or others that have 1 tile
+      // per vreg), we can also do a mix of horizontal and vertical stacking,
+      // effectively letting us choose {n * src_tiling[0], src_tiling[1]} for
+      // any n that is a power of 2 and <= packing_factor.
       src_tiling = layout.tiling();
       dst_tiling = layout.tiling();
-      if (layout.tiling()[0] == 1) {
-        dst_tiling[1] *= packing_factor;
+    } else {
+      DCHECK_EQ(sublanes_per_tile, 1);
+      // Cannot assign the same tiling, since tiles would become smaller than
+      // one sublane in dest, which is illegal for VectorLayout.
+      // Stack the tiles vertically:
+      src_tiling = layout.tiling();
+      dst_tiling = {src_tiling[0] * packing_factor, src_tiling[1]};
+      if (src_tiling[0] == 1) {
+        // In this case we also have the option to stack tiles horizontally
+        // instead.
+        // TODO(tlongeri): Unclear whether this is better than stacking
+        //                 vertically
+        dst_tiling = {1, src_tiling[1] * packing_factor};
       }
     }
     auto src_layout = VectorLayout(src_bitwidth, layout.offsets(), src_tiling,
