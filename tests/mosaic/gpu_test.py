@@ -173,6 +173,10 @@ class TestCase(parameterized.TestCase):
     self.enter_context(self.context)
     self.enter_context(ir.Location.unknown())
 
+  def skip_unless_sm90a(self):
+    if not jtu.is_cuda_compute_capability_equal("9.0"):
+      self.skipTest("Only works on GPU with capability sm90a")
+
 
 class TestUtilTest(TestCase):
 
@@ -594,6 +598,7 @@ class WGMMATest(TestCase):
       swizzle,
       jax_out_dtype,
   ):
+    self.skip_unless_sm90a()
     if jax_out_dtype == jnp.float16 and in_mlir_dtype_cls is not ir.F16Type:
       raise self.skipTest("Only f16 input is supported for f16 output.")
     if swizzle != 128 and lhs_transpose:
@@ -725,6 +730,7 @@ class WGMMATest(TestCase):
       dtype=[jnp.float16, jnp.bfloat16],
   )
   def test_wgmma_reg_lhs(self, m, n, k_steps, rhs_transpose, swizzle, dtype):
+    self.skip_unless_sm90a()
     index = ir.IndexType.get()
 
     row_major = mgpu.WGMMALayout.ROW_MAJOR
@@ -777,6 +783,7 @@ class WGMMATest(TestCase):
       swizzle=(32, 64, 128),
   )
   def test_narrow_n(self, rhs_transpose, swizzle):
+    self.skip_unless_sm90a()
     m, n, k_steps = 64, 8, 2
 
     row_major = mgpu.WGMMALayout.ROW_MAJOR
