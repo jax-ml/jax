@@ -39,10 +39,12 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import mesh as mesh_lib
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client
-from jax._src.lib.mlir import ir
+from jax._src.lib import xla_extension
+from jax._src.lib.mlir import ir, passmanager
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src import pjit
@@ -187,6 +189,7 @@ class Exported:
   out_tree: tree_util.PyTreeDef
   out_avals: tuple[core.ShapedArray, ...]
 
+  mesh: mesh_lib.AbstractMesh | None
   in_shardings_hlo: tuple[HloSharding | None, ...]
   out_shardings_hlo: tuple[HloSharding | None, ...]
   nr_devices: int
@@ -248,7 +251,7 @@ class Exported:
        Shard(device=CpuDevice(id=0), index=(slice(7, 8, None),), replica_id=0, data=[14])]
 
     """
-    return tuple(_hlo_sharding_to_xla_compatible_sharding(s, mesh)
+    return tuple(_hlo_sharding_to_named_sharding(s, mesh)
                  for s in self.in_shardings_hlo)
 
   def out_shardings_jax(
@@ -258,7 +261,7 @@ class Exported:
 
     See documentation for in_shardings_jax.
     """
-    return tuple(_hlo_sharding_to_xla_compatible_sharding(s, mesh)
+    return tuple(_hlo_sharding_to_named_sharding(s, mesh)
                  for s in self.out_shardings_hlo)
 
   def has_vjp(self) -> bool:
@@ -724,18 +727,27 @@ def _export_lowered(
     assert(jaxpr is not None)  # None only when the lowered was created outside JAX
     fun_jax = core.jaxpr_as_fun(jaxpr)
 
-    fun_vjp_jax, vjp_in_avals = _get_vjp_fun(fun_jax,
-                                             in_tree=exp_primal.in_tree,
-                                             in_avals=exp_primal.in_avals,
-                                             in_shardings_hlo=exp_primal.in_shardings_hlo,
-                                             out_avals=exp_primal.out_avals,
-                                             out_shardings_hlo=exp_primal.out_shardings_hlo,
-                                             device_assignment=device_assignment,
-                                             apply_jit=True,
-                                             flat_primal_fun=True)
+    fun_vjp_jax, vjp_in_avals = _get_vjp_fun(
+        fun_jax,
+        in_tree=exp_primal.in_tree,
+        in_avals=exp_primal.in_avals,
+        in_shardings_hlo=exp_primal.in_shardings_hlo,
+        out_avals=exp_primal.out_avals,
+        out_shardings_hlo=exp_primal.out_shardings_hlo,
+        device_assignment=device_assignment,
+        apply_jit=True,
+        flat_primal_fun=True,
+        mesh=exp_primal.mesh)
     return export(fun_vjp_jax,  # type: ignore[arg-type]
                   platforms=exp_primal.platforms,
                   disabled_checks=exp_primal.disabled_safety_checks)(*vjp_in_avals)
+
+  mesh = None
+  for sharding in itertools.chain.from_iterable(
+      [all_in_shardings, lowering.compile_args["out_shardings"]]):
+    if isinstance(sharding, sharding_impls.NamedSharding):
+      mesh = sharding.mesh
+      break
 
   return Exported(
       fun_name=fun_name,
@@ -754,10 +766,15 @@ def _export_lowered(
       module_kept_var_idx=module_kept_var_idx,
       uses_global_constants=shape_poly_state.uses_dim_vars,
       calling_convention_version=version,
-      _get_vjp=_get_exported_vjp)
+      _get_vjp=_get_exported_vjp,
+      mesh=mesh)
 
 def _module_to_bytecode(module: ir.Module) -> bytes:
-  mlir_str = mlir.module_to_bytecode(module)
+  if config.use_shardy_partitioner.value:
+    mlir_str = xla_extension.sdy.sdy_round_trip_export_pipeline(
+        mlir.module_to_bytecode(module))
+  else:
+    mlir_str = mlir.module_to_bytecode(module)
   # `target_version` is used to manage situations when a StableHLO producer
   # and a StableHLO consumer were built using different versions of StableHLO.
   #
@@ -1071,6 +1088,12 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "stablehlo.dynamic_rng_bit_generator",
     "stablehlo.dynamic_top_k",
     "shape_assertion",  # Used by shape_poly to evaluate assertions
+    # Shardy custom calls for MLIR->HLO->MLIR round-tripping through the XLA
+    # compiler. POC(bartchr@, tomnatan@)
+    "xla.sdy.FuncResultSharding",
+    "xla.sdy.ShardingGroup",
+    "xla.sdy.GlobalToLocalShape",
+    "xla.sdy.LocalToGlobalShape",
 }
 
 check_sharding_pattern = re.compile(r"^({replicated}|{unknown shard_as.*}|"")$")
@@ -1158,32 +1181,29 @@ def expand_in_shardings(in_shardings: Sequence[LoweringSharding],
     all_in_shardings[idx] = in_s
   return tuple(all_in_shardings)
 
-def _hlo_sharding_to_xla_compatible_sharding(
-    hlo_sharding: HloSharding | None,
-    mesh: sharding.Mesh) -> sharding.Sharding | None:
+
+def _hlo_sharding_to_named_sharding(
+    hlo_sharding: HloSharding | None, mesh: mesh_lib.AbstractMesh):
   if hlo_sharding is None:
     return None
-  return sharding_impls._gspmd_to_named_sharding_via_mesh(
-      _hlo_sharding_to_gspmd_sharding(hlo_sharding, tuple(mesh.devices.flat)),  # type: ignore[arg-type]
-      mesh)
+  parsed_pspec = sharding_impls.parse_flatten_op_sharding(hlo_sharding, mesh)[0]
+  return sharding_impls.create_mesh_pspec_sharding(
+      mesh, parsed_pspec.get_partition_spec(), parsed_pspec)
 
-def _hlo_sharding_to_gspmd_sharding(
-    hlo_sharding: HloSharding | None,
-    device_assignment: Sequence[jax.Device]) -> sharding.GSPMDSharding | None:
-  if hlo_sharding is None:
-    return None
-  return sharding.GSPMDSharding(device_assignment, hlo_sharding)
 
-def _get_vjp_fun(primal_fun: Callable, *,
-                 in_tree: tree_util.PyTreeDef,
-                 in_avals: Sequence[core.AbstractValue],
-                 out_avals: Sequence[core.AbstractValue],
-                 in_shardings_hlo: tuple[HloSharding | None, ...],
-                 out_shardings_hlo: tuple[HloSharding | None, ...],
-                 device_assignment: Sequence[sharding_impls.Device] | None,
-                 apply_jit: bool,
-                 flat_primal_fun: bool = False,
-                 ) -> tuple[Callable, Sequence[core.AbstractValue]]:
+def _get_vjp_fun(
+    primal_fun: Callable,
+    *,
+    in_tree: tree_util.PyTreeDef,
+    in_avals: Sequence[core.AbstractValue],
+    out_avals: Sequence[core.AbstractValue],
+    in_shardings_hlo: tuple[HloSharding | None, ...],
+    out_shardings_hlo: tuple[HloSharding | None, ...],
+    device_assignment: Sequence[sharding_impls.Device] | None,
+    apply_jit: bool,
+    flat_primal_fun: bool = False,
+    mesh: mesh_lib.AbstractMesh | None = None,
+) -> tuple[Callable, Sequence[core.AbstractValue]]:
   # Since jax.vjp does not handle kwargs, it is easier to do all the work
   # here with flattened functions.
   # apply_jit=False is only used for backwards compatibility with the graph
@@ -1211,16 +1231,16 @@ def _get_vjp_fun(primal_fun: Callable, *,
   if apply_jit:
     assert device_assignment is not None
     vjp_in_shardings = tuple(
-        _hlo_sharding_to_gspmd_sharding(s, device_assignment)
+        _hlo_sharding_to_named_sharding(s, mesh)
         for s in itertools.chain(in_shardings_hlo, out_shardings_hlo))
-    vjp_out_shardings = tuple(
-        _hlo_sharding_to_gspmd_sharding(s, device_assignment)
-        for s in in_shardings_hlo)
+    vjp_out_shardings = tuple(_hlo_sharding_to_named_sharding(s, mesh)
+                              for s in in_shardings_hlo)
     return pjit.pjit(fun_vjp_jax,
                      in_shardings=vjp_in_shardings,
                      out_shardings=vjp_out_shardings), vjp_in_avals
   else:
     return fun_vjp_jax, vjp_in_avals
+
 
 ### Calling the exported function
 
@@ -1285,11 +1305,12 @@ call_exported = call
 call_exported_p = core.Primitive("call_exported")
 call_exported_p.multiple_results = True
 
+
 @util.cache()
 def _call_exported_abstract_eval(
     *in_avals: core.AbstractValue,
-    exported: Exported
-    ) -> tuple[tuple[core.AbstractValue, ...], set[effects.Effect]]:
+    exported: Exported,
+) -> tuple[tuple[core.AbstractValue, ...], set[effects.Effect]]:
   exported_dim_vars = shape_poly.all_dim_vars(exported.in_avals)
   assert len(in_avals) == len(exported.in_avals)  # since the pytrees have the same structure
   # Check that the expected shapes match the actual ones
@@ -1388,8 +1409,10 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
 
   # Apply in_shardings
   args = tuple(
-    wrap_with_sharding(ctx, x, x_aval, x_sharding)
-    for x, x_aval, x_sharding in zip(args, ctx.avals_in, exported.in_shardings_hlo))
+      wrap_with_sharding(
+          ctx, x, x_aval,
+          _hlo_sharding_to_named_sharding(x_sharding, exported.mesh))
+      for x, x_aval, x_sharding in zip(args, ctx.avals_in, exported.in_shardings_hlo))
   symtab = ir.SymbolTable(submodule.operation)
   # The called function may have been exported with polymorphic shapes and called
   # now with more refined shapes. We insert hlo.ConvertOp to ensure the module
@@ -1477,18 +1500,25 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                                                  exported.out_avals, ctx.avals_out))
   # Apply out_shardings
   results = tuple(
-    wrap_with_sharding(ctx, x, x_aval, x_sharding)
-    for x, x_aval, x_sharding in zip(results, ctx.avals_out, exported.out_shardings_hlo)
-  )
+      wrap_with_sharding(
+          ctx, x, x_aval,
+          _hlo_sharding_to_named_sharding(x_sharding, exported.mesh))
+      for x, x_aval, x_sharding in zip(results, ctx.avals_out, exported.out_shardings_hlo))
   return results
 
 mlir.register_lowering(call_exported_p, _call_exported_lowering)
 
-def wrap_with_sharding(ctx: mlir.LoweringRuleContext,
-                       x: ir.Value,
-                       x_aval: core.AbstractValue,
-                       x_sharding: HloSharding | None) -> ir.Value:
+
+def wrap_with_sharding(
+    ctx: mlir.LoweringRuleContext,
+    x: ir.Value,
+    x_aval: core.AbstractValue,
+    x_sharding: sharding_impls.NamedSharding,
+) -> ir.Value:
   if x_sharding is None:
     return x
-  return mlir.wrap_with_sharding_op(
-    ctx, x, x_aval, x_sharding.to_proto())
+  if config.use_shardy_partitioner.value:
+    x_sharding = x_sharding._to_sdy_sharding(x_aval.ndim)  # type: ignore
+  else:
+    x_sharding = x_sharding._to_xla_hlo_sharding(x_aval.ndim).to_proto()  # type: ignore
+  return mlir.wrap_with_sharding_op(ctx, x, x_aval, x_sharding)
