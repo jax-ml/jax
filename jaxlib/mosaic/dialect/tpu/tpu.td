@@ -784,6 +784,17 @@ def TPU_LogOp : TPU_Op<"log"> {
   let hasVerifier = 1;
 }
 
+def TPU_LogBufferOp : TPU_Op<"log_buffer"> {
+  let arguments = (ins
+    AnyMemRef:$input,
+    DenseI64ArrayAttr:$shape,
+    StrAttr:$tag
+  );
+  let results = (outs);
+  let assemblyFormat = [{ $tag attr-dict `:` $input `:` type($input) }];
+  let hasVerifier = 1;
+}
+
 def DebugAssertInsertionPass : Pass<"debug-assert-insertion", "::mlir::func::FuncOp"> {
   let dependentDialects = [
     "::mlir::func::FuncDialect",
