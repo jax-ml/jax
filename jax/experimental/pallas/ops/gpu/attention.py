@@ -24,9 +24,55 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import triton as plgpu
 import jax.numpy as jnp
 import numpy as np
+import dataclasses
 
 DEFAULT_MASK_VALUE = -0.7 * float(np.finfo(np.dtype("float32")).max)
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class BlockSizes:
+  """Tile sizes parameterizing the attention kernel. These block sizes
+     should be tuned for the model and hardware for optimal performance.
+  """
+  block_q: int
+  block_k: int
+
+  block_q_dkv: int | None = None
+  block_kv_dkv: int | None = None
+  block_q_dq: int | None = None
+  block_kv_dq: int | None = None
+
+  @classmethod
+  def get_default(cls):
+    return BlockSizes(
+        block_q=128,
+        block_k=128,
+        block_q_dkv=128,
+        block_kv_dkv=128,
+        block_q_dq=128,
+        block_kv_dq=128,
+    )
+
+def validate_block_sizes(
+    block_sizes: BlockSizes, q_seq_len: int, kv_seq_len: int
+):
+  if (
+      block_sizes.block_q_dkv is None
+      or block_sizes.block_kv_dkv is None
+      or block_sizes.block_q_dq is None
+      or block_sizes.block_kv_dq is None
+  ):
+    raise ValueError(
+        "block_q_dkv, block_kv_dkv, block_q_dq, block_kv_dq must all be set."
+    )
+
+  if (
+      q_seq_len // block_sizes.block_q_dq
+      != kv_seq_len // block_sizes.block_kv_dkv
+  ):
+    raise ValueError(
+        "q_seq_len and kv_seq_len must be divided into the same "
+        "number of blocks."
+    )
 
 def mha_forward_kernel(
     q_ref,
@@ -143,15 +189,14 @@ def segment_mask(
 
 
 @functools.partial(
-    jax.custom_vjp, nondiff_argnums=[4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+    jax.custom_vjp, nondiff_argnums=[4, 5, 6, 7, 8, 9, 10, 11, 12]
 )
 @functools.partial(
     jax.jit,
     static_argnames=[
         "sm_scale",
         "causal",
-        "block_q",
-        "block_k",
+        "block_sizes",
         "backward_pass_impl",
         "num_warps",
         "num_stages",
@@ -167,8 +212,7 @@ def mha(
     segment_ids: jnp.ndarray | None,
     sm_scale: float = 1.0,
     causal: bool = False,
-    block_q: int = 128,
-    block_k: int = 128,
+    block_sizes: BlockSizes = BlockSizes.get_default(),
     backward_pass_impl: str = "triton",
     num_warps: int | None = None,
     num_stages: int = 2,
@@ -179,8 +223,8 @@ def mha(
   del backward_pass_impl
   batch_size, q_seq_len, num_heads, head_dim = q.shape
   kv_seq_len = k.shape[1]
-  block_q = min(block_q, q_seq_len)
-  block_k = min(block_k, kv_seq_len)
+  block_q = min(block_sizes.block_q, q_seq_len)
+  block_k = min(block_sizes.block_k, kv_seq_len)
   # Heuristics.
   grid_ = grid
   if grid_ is None:
@@ -234,8 +278,7 @@ def _mha_forward(
     segment_ids: jax.Array | None,
     sm_scale: float,
     causal: bool,
-    block_q: int,
-    block_k: int,
+    block_sizes: BlockSizes,
     backward_pass_impl: str,
     num_warps: int | None,
     num_stages: int,
@@ -246,8 +289,8 @@ def _mha_forward(
   del backward_pass_impl
   batch_size, q_seq_len, num_heads, head_dim = q.shape
   kv_seq_len = k.shape[1]
-  block_q = min(block_q, q_seq_len)
-  block_k = min(block_k, kv_seq_len)
+  block_q = min(block_sizes.block_q, q_seq_len)
+  block_k = min(block_sizes.block_k, kv_seq_len)
   # Heuristics.
   grid_ = grid
   if grid_ is None:
@@ -357,10 +400,10 @@ def mha_backward_kernel(
     *,
     sm_scale: float,
     causal: bool,
-    block_q1: int,
-    block_k1: int,
-    block_q2: int,
-    block_k2: int,
+    block_q_dkv: int,
+    block_kv_dkv: int,
+    block_q_dq: int,
+    block_kv_dq: int,
     block_d: int,
 ):
   del out_ref  # Not needed
@@ -368,18 +411,18 @@ def mha_backward_kernel(
   kv_seq_len = k_ref.shape[0]
 
   # Scan #1: dK and dV
-  #   1. Load a block of K and V of size (block_k1, head_dim) in SMEM.
-  #   2. Iterate through Q in chunks of (block_q1, head_dim) to accumulate
+  #   1. Load a block of K and V of size (block_kv_dkv, head_dim) in SMEM.
+  #   2. Iterate through Q in chunks of (block_q_dkv, head_dim) to accumulate
   #      dK and dV.
   start_k = pl.program_id(2)
-  curr_k_slice = pl.dslice(start_k * block_k1, block_k1)
+  curr_k_slice = pl.dslice(start_k * block_kv_dkv, block_kv_dkv)
 
-  dv = jnp.zeros([block_k1, block_d], dtype=jnp.float32)
-  dk = jnp.zeros([block_k1, block_d], dtype=jnp.float32)
+  dv = jnp.zeros([block_kv_dkv, block_d], dtype=jnp.float32)
+  dk = jnp.zeros([block_kv_dkv, block_d], dtype=jnp.float32)
 
   v = pl.load(v_ref, (curr_k_slice, slice(None)))
   k = pl.load(k_ref, (curr_k_slice, slice(None)))
-  span_k = start_k * block_k1 + jnp.arange(block_k1)
+  span_k = start_k * block_kv_dkv + jnp.arange(block_kv_dkv)
   kv_segment_ids = (
       None
       if segment_ids_ref is None
@@ -388,7 +431,7 @@ def mha_backward_kernel(
 
   def inner_loop_dkdv(start_q, carry):
     dv, dk = carry
-    curr_q_slice = pl.dslice(start_q * block_q1, block_q1)
+    curr_q_slice = pl.dslice(start_q * block_q_dkv, block_q_dkv)
 
     q = pl.load(q_ref, (curr_q_slice, slice(None)))
     qk = pl.dot(q, k.T)
@@ -402,7 +445,7 @@ def mha_backward_kernel(
         mask = segment_mask(q_segment_ids, kv_segment_ids)
 
       if causal:
-        span_q = start_q * block_q1 + jnp.arange(block_q1)
+        span_q = start_q * block_q_dkv + jnp.arange(block_q_dkv)
         causal_mask = span_q[:, None] >= span_k[None, :]
         mask = (
             causal_mask if mask is None else jnp.logical_and(mask, causal_mask)
@@ -415,7 +458,7 @@ def mha_backward_kernel(
 
     p = jnp.exp(qk - lse[:, None])
     dv = dv + pl.dot(p.astype(do.dtype).T, do)
-    dp = jnp.zeros((block_q1, block_k1), dtype=jnp.float32) - di[:, None]
+    dp = jnp.zeros((block_q_dkv, block_kv_dkv), dtype=jnp.float32) - di[:, None]
     dp = dp + pl.dot(do, v.T)
     ds = p * dp
     if sm_scale != 1.0:
@@ -424,9 +467,9 @@ def mha_backward_kernel(
 
     return dv, dk
 
-  lower_bound = lax.div(start_k * block_k1, block_q1) if causal else 0
+  lower_bound = lax.div(start_k * block_kv_dkv, block_q_dkv) if causal else 0
   dv, dk = lax.fori_loop(
-      lower_bound, pl.cdiv(q_seq_len, block_q1), inner_loop_dkdv, (dv, dk)
+      lower_bound, pl.cdiv(q_seq_len, block_q_dkv), inner_loop_dkdv, (dv, dk)
   )
   dv_ref[...] = dv.astype(dv_ref.dtype)
   dk_ref[...] = dk.astype(dk_ref.dtype)
@@ -434,13 +477,13 @@ def mha_backward_kernel(
   del dv, dk
 
   # Scan #2: dQ
-  #   1. Load a block of Q of size (block_q2, head_dim) in SMEM.
-  #   2. Iterate through K and V in chunks of (block_k2, head_dim) to
+  #   1. Load a block of Q of size (block_q_dq, head_dim) in SMEM.
+  #   2. Iterate through K and V in chunks of (block_kv_dq, head_dim) to
   #     accumulate dQ.
   start_q = pl.program_id(2)
-  curr_q_slice = pl.ds(start_q * block_q2, block_q2)
-  span_q = start_q * block_q2 + jnp.arange(block_q2)
-  dq = jnp.zeros([block_q2, block_d], dtype=jnp.float32)
+  curr_q_slice = pl.ds(start_q * block_q_dq, block_q_dq)
+  span_q = start_q * block_q_dq + jnp.arange(block_q_dq)
+  dq = jnp.zeros([block_q_dq, block_d], dtype=jnp.float32)
 
   q = pl.load(q_ref, (curr_q_slice, slice(None)))
   q_segment_ids = (
@@ -453,7 +496,7 @@ def mha_backward_kernel(
   di = pl.load(delta_ref, (curr_q_slice,))
 
   def inner_loop_dq(start_k, dq):
-    curr_k_slice = pl.dslice(start_k * block_k2, block_k2)
+    curr_k_slice = pl.dslice(start_k * block_kv_dq, block_kv_dq)
     k = pl.load(k_ref, (curr_k_slice, slice(None)))
     v = pl.load(v_ref, (curr_k_slice, slice(None)))
 
@@ -468,7 +511,7 @@ def mha_backward_kernel(
         mask = segment_mask(q_segment_ids, kv_segment_ids)
 
       if causal:
-        span_k = start_k * block_k2 + jnp.arange(block_k2)
+        span_k = start_k * block_kv_dq + jnp.arange(block_kv_dq)
         causal_mask = span_q[:, None] >= span_k[None, :]
         mask = (
             causal_mask if mask is None else jnp.logical_and(mask, causal_mask)
@@ -476,7 +519,7 @@ def mha_backward_kernel(
       qk = jnp.where(mask, qk, DEFAULT_MASK_VALUE)
 
     p = jnp.exp(qk - lse[:, None])
-    dp = jnp.zeros((block_q2, block_k2), dtype=jnp.float32) - di[:, None]
+    dp = jnp.zeros((block_q_dq, block_kv_dq), dtype=jnp.float32) - di[:, None]
     dp = dp + pl.dot(do, v.T)
     ds = p * dp
     if sm_scale != 1.0:
@@ -487,15 +530,15 @@ def mha_backward_kernel(
     return dq
 
   if causal:
-    upper_bound = lax.div((start_q + 1) * block_q2, block_k2)
+    upper_bound = pl.cdiv((start_q + 1) * block_q_dq, block_kv_dq)
   else:
-    upper_bound = pl.cdiv(kv_seq_len, block_k2)
+    upper_bound = pl.cdiv(kv_seq_len, block_kv_dq)
 
   dq = lax.fori_loop(0, upper_bound, inner_loop_dq, (dq))
   dq_ref[...] = dq.astype(dq_ref.dtype)
 
 
-def _mha_backward(sm_scale: float, causal: bool, block_q: int, block_k: int,
+def _mha_backward(sm_scale: float, causal: bool, block_sizes: BlockSizes,
                   backward_pass_impl: str, num_warps: int | None,
                   num_stages: int, grid: Any, interpret: bool,
                   debug: bool, res, do):
@@ -513,8 +556,14 @@ def _mha_backward(sm_scale: float, causal: bool, block_q: int, block_k: int,
   elif backward_pass_impl == "triton":
     batch_size, q_seq_len, num_heads, head_dim = q.shape
     kv_seq_len = k.shape[1]
-    block_q = min(block_q, q_seq_len)
-    block_k = min(block_k, kv_seq_len)
+    validate_block_sizes(block_sizes, q_seq_len, kv_seq_len)
+
+    block_q = min(block_sizes.block_q, q_seq_len)
+    block_q_dkv = block_sizes.block_q_dkv
+    block_kv_dkv = block_sizes.block_kv_dkv
+    block_q_dq = block_sizes.block_q_dq
+    block_kv_dq = block_sizes.block_kv_dq
+
     delta = _preprocess_backward(out, do, lse, block_q, debug, interpret)
     out_shapes = [
         jax.ShapeDtypeStruct(q.shape, q.dtype),
@@ -546,17 +595,17 @@ def _mha_backward(sm_scale: float, causal: bool, block_q: int, block_k: int,
     else:
       in_specs.insert(3, pl.BlockSpec((None, kv_seq_len), lambda i, j, _: (i, 0)))
 
-    grid = (batch_size, num_heads, pl.cdiv(kv_seq_len, block_k))
+    grid = (batch_size, num_heads, pl.cdiv(kv_seq_len, block_kv_dkv)) # type: ignore[arg-type]
     num_warps = 8
     dq, dk, dv = pl.pallas_call(
         functools.partial(
             mha_backward_kernel,
             sm_scale=sm_scale,
             causal=causal,
-            block_q1=block_q,
-            block_k1=block_k,
-            block_q2=block_q,
-            block_k2=block_k,
+            block_q_dkv=block_q_dkv, # type: ignore[arg-type]
+            block_kv_dkv=block_kv_dkv, # type: ignore[arg-type]
+            block_q_dq=block_q_dq, # type: ignore[arg-type]
+            block_kv_dq=block_kv_dq, # type: ignore[arg-type]
             block_d=head_dim,
         ),
         out_shape=out_shapes,
@@ -564,15 +613,15 @@ def _mha_backward(sm_scale: float, causal: bool, block_q: int, block_k: int,
         grid=grid,
         out_specs=[
             pl.BlockSpec(
-                (None, block_q, None, head_dim),
+                (None, block_q_dq, None, head_dim),
                 lambda i, j, k: (i, k, j, 0),  # dq
             ),
             pl.BlockSpec(
-                (None, block_k, None, head_dim),
+                (None, block_kv_dkv, None, head_dim),
                 lambda i, j, k: (i, k, j, 0),  # dk
             ),
             pl.BlockSpec(
-                (None, block_k, None, head_dim),
+                (None, block_kv_dkv, None, head_dim),
                 lambda i, j, k: (i, k, j, 0),  # dv
             ),
         ],
