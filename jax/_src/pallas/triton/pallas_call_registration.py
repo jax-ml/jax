@@ -103,12 +103,6 @@ def pallas_call_lowering(
       grid_z=mlir.i32_attr(grid_z),
       debug=ir.BoolAttr.get(debug),
   )
-  if "serialized_metadata" in (triton_params or {}):
-    # This field is unstable and may be removed in the future.
-    if triton_params["serialized_metadata"] is not None:
-      backend_config["serialized_metadata"] = ir.StringAttr.get(
-          triton_params["serialized_metadata"]
-      )
   return mlir.custom_call(
       call_target_name="__gpu$xla.gpu.triton",
       result_types=out_types,
