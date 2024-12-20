@@ -39,6 +39,15 @@ except ImportError:
 jax.config.parse_flags_with_absl()
 
 
+def _fori_loop(force_while: bool, lb, ub, body, init):
+  if force_while:
+    # using jnp.asarray make the matcher for while or scan to think
+    # that the bounds are dynamic and forces the use of the while
+    # primitive.
+    lb, ub = jnp.asarray(lb), jnp.asarray(ub)
+  return jax.lax.fori_loop(lb, ub, body, init)
+
+
 class PallasTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -705,19 +714,21 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128 * 128).astype(jnp.float16).reshape(128, 128)
     np.testing.assert_array_equal(kernel(x), x)
 
-  def test_fori_loop_array(self):
+  @parameterized.parameters(False, True)
+  def test_fori_loop_array(self, force_while):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
     )
     def kernel(x_ref, o_ref):
       # Equivalent to x_ref[...] + 2 + 3.
-      o_ref[...] = jax.lax.fori_loop(2, 4, lambda i, x: x + i, x_ref[...])
+      o_ref[...] = _fori_loop(force_while, 2, 4, lambda i, x: x + i, x_ref[...])
 
     x = jnp.arange(256).astype(jnp.int32)
     np.testing.assert_array_equal(kernel(x), x + 2 + 3)
 
-  def test_fori_loop_scalar(self):
+  @parameterized.parameters(False, True)
+  def test_fori_loop_scalar(self, force_while):
 
     @functools.partial(
         pl.pallas_call,
@@ -726,7 +737,7 @@ class PallasCallTest(PallasTest):
     def kernel(o_ref):
       # Equivalent to 2 + 3.
       o_ref[...] = jax.lax.broadcast(
-          jax.lax.fori_loop(2, 4, lambda i, x: x + i, 0), o_ref.shape
+          _fori_loop(force_while, 2, 4, lambda i, x: x + i, 0), o_ref.shape
       )
 
     np.testing.assert_array_equal(kernel(), jnp.full([256], 5, dtype=jnp.int32))
@@ -747,7 +758,8 @@ class PallasCallTest(PallasTest):
 
     np.testing.assert_array_equal(kernel(), jnp.full([256], 5, dtype=jnp.int32))
 
-  def test_fori_loop_tuple(self):
+  @parameterized.parameters(False, True)
+  def test_fori_loop_tuple(self, force_while):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
@@ -761,14 +773,15 @@ class PallasCallTest(PallasTest):
 
       # Equivalent to 3 * (0 + 1).
       o_ref[...] = jax.lax.broadcast(
-          sum(jax.lax.fori_loop(2, 4, body, (0, 0, 0))), o_ref.shape
+          sum(_fori_loop(force_while, 2, 4, body, (0, 0, 0))), o_ref.shape
       )
 
     np.testing.assert_array_equal(
         kernel(), jnp.full([256], 3 * (0 + 1), dtype=jnp.int32)
     )
 
-  def test_fori_loop_indexed_store(self):
+  @parameterized.parameters(False, True)
+  def test_fori_loop_indexed_store(self, force_while):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([4, 128], jnp.float32),
@@ -778,7 +791,7 @@ class PallasCallTest(PallasTest):
         o_ref[idx] = x_ref[idx] + y_ref[idx]
         return ()
 
-      jax.lax.fori_loop(0, 4, body, ())
+      _fori_loop(force_while, 0, 4, body, ())
 
     x = jnp.arange(4 * 128).reshape(4, 128).astype(jnp.float32)
     y = x + 1
