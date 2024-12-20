@@ -1421,15 +1421,6 @@ def _run_scoped_lowering_rule(
         ctx.module_ctx, ctx.launch_ctx, jaxpr, input_refs, consts
     )
 
-  for o in outs:
-    # This is definitely one of the accumulators we produced. Each
-    # run_scoped call is responsible for dereferencing its own
-    # accumulators.
-    if isinstance(o, mgpu.WGMMAAccumulator) or (
-        isinstance(o, ir.Value) and ir.MemRefType.isinstance(o.type)
-    ):
-      raise ValueError(f"No references are allowed to escape a scope. (got {o})")
-
   assert len(outs) == len(jaxpr.outvars), (jaxpr, outs)
   return outs
 
@@ -1499,7 +1490,8 @@ def _lower_jaxpr_to_for_loop(
   if arg_avals:
     out_avals = ctx.avals_out[-len(arg_avals):]
 
-  @mgpu.fori(length, [*map(_ensure_fa, args, arg_avals)])
+  as_fas = lambda vals, avals: [v if isinstance(v, mgpu.WGMMAAccumulator) else _ensure_fa(v, av) for v, av in zip(vals, avals)]
+  @mgpu.fori(length, as_fas(args, arg_avals))
   def loop(loop_index, body_args):
     if has_loop_index:
       loop_index = arith_dialect.addi(loop_index, start)
@@ -1509,7 +1501,7 @@ def _lower_jaxpr_to_for_loop(
     outs = lower_jaxpr_to_mosaic_gpu(
         ctx.module_ctx, ctx.launch_ctx, jaxpr, jaxpr_args
     )
-    return map(_ensure_fa, outs, out_avals)
+    return as_fas(outs, out_avals)
 
   return loop.results
 
