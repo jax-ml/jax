@@ -945,6 +945,7 @@ def platform_dependent(*args: Any,
   platform_index = platform_index_p.bind(
     platforms=tuple(tuple(ps) for ps in platforms_lists),
     has_default=(default is not None))
+
   if default is not None:
     branches = branches + (default,)
   # Use a switch, to get the proper transformation rules for free. Since
@@ -957,6 +958,8 @@ def platform_dependent(*args: Any,
   # recognized on the compilation platform. Detect eager mode and keep only the
   # needed branch.
   try:
+    # Note/TODO(mvoz): This actually rarely seems to concretize - we could look into
+    # core.ensure_compile_time_eval to get better single-branch selection.
     platform_index_concrete = core.concrete_or_error(operator.index, platform_index)
   except core.ConcretizationTypeError:
     return switch(platform_index, branches, *args)
