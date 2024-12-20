@@ -21,4 +21,5 @@ from jax._src.extend.ffi import (
     include_dir as include_dir,
     pycapsule as pycapsule,
     register_ffi_target as register_ffi_target,
+    register_ffi_type_id as register_ffi_type_id,
 )
