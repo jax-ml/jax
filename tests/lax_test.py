@@ -170,43 +170,49 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
 
   @jtu.sample_product(
-    from_dtype=jtu.dtypes.all_floating + jtu.dtypes.all_integer + jtu.dtypes.all_unsigned,
-    to_dtype=jtu.dtypes.all_floating + jtu.dtypes.all_integer + jtu.dtypes.all_unsigned,
+    from_dtype=['int4', 'uint4'] + jtu.dtypes.all_floating + jtu.dtypes.all_integer + jtu.dtypes.all_unsigned,
+    to_dtype=['int4', 'uint4'] + jtu.dtypes.all_floating + jtu.dtypes.all_integer + jtu.dtypes.all_unsigned,
     shape = [(), (2,), (2, 3)]
   )
   def testBitcastConvertType(self, from_dtype, to_dtype, shape):
     rng = jtu.rand_default(self.rng())
-    itemsize_in = np.dtype(from_dtype).itemsize
-    itemsize_out = np.dtype(to_dtype).itemsize
-    if itemsize_in < itemsize_out:
-      shape = (*shape, itemsize_out // itemsize_in)
+    nbits_in = dtypes.bit_width(from_dtype)
+    nbits_out = dtypes.bit_width(to_dtype)
+    if nbits_in < nbits_out:
+      shape = (*shape, nbits_out // nbits_in)
     args_maker = lambda: [rng(shape, from_dtype)]
-    op = lambda x: lax.bitcast_convert_type(x, to_dtype)
-    self._CompileAndCheck(op, args_maker)
+    jnp_op = lambda x: lax.bitcast_convert_type(x, to_dtype)
+    self._CompileAndCheck(jnp_op, args_maker)
 
     # Test the shape and dtype of the output. We avoid testing the values here
     # because the bitwise representation may vary from platform to platform.
-    out = op(*args_maker())
-    if itemsize_in == itemsize_out:
+    out = jnp_op(*args_maker())
+    if nbits_in == nbits_out:
       expected_shape = shape
-    elif itemsize_in < itemsize_out:
+    elif nbits_in < nbits_out:
       expected_shape = shape[:-1]
     else:
-      expected_shape = (*shape, itemsize_in // itemsize_out)
+      expected_shape = (*shape, nbits_in // nbits_out)
     self.assertEqual(out.dtype, to_dtype)
     self.assertEqual(out.shape, expected_shape)
 
   @jtu.sample_product(
     [dict(from_dtype=from_dtype, to_dtype=to_dtype)
      for from_dtype, to_dtype in itertools.product(
-       [np.float32, np.int32, "float32", "int32"], repeat=2)],
+       ['int4', 'uint4', np.int8, np.uint8, np.int32, np.float16, np.float32],
+       repeat=2)],
+    shape=[(4,), (2, 4), (2, 3, 4)]
   )
-  def testBitcastConvertTypeAgainstNumpy(self, from_dtype, to_dtype):
+  def testBitcastConvertTypeAgainstNumpy(self, from_dtype, to_dtype, shape):
+    nbits_in = dtypes.bit_width(from_dtype)
+    nbits_out = dtypes.bit_width(to_dtype)
+    if nbits_in < nbits_out:
+      shape = (*shape, nbits_out // nbits_in)
     rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng((2, 3), from_dtype)]
-    op = lambda x: lax.bitcast_convert_type(x, to_dtype)
-    numpy_op = lambda x: lax_reference.bitcast_convert_type(x, to_dtype)
-    self._CheckAgainstNumpy(numpy_op, op, args_maker)
+    args_maker = lambda: [rng(shape, from_dtype)]
+    jnp_op = lambda x: lax.bitcast_convert_type(x, to_dtype)
+    np_op = lambda x: lax_reference.bitcast_convert_type(x, to_dtype)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
 
   @jtu.sample_product(
     [dict(from_dtype=from_dtype, to_dtype=to_dtype)

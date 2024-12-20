@@ -205,6 +205,19 @@ _default_types: dict[str, type[Any]] = {
     'c': complex_,
 }
 
+def bit_width(dtype: DTypeLike) -> int:
+  """Number of bits per element for the dtype."""
+  # Note: we cannot use dtype.itemsize here because this is
+  # incorrect for sub-byte integer types.
+  if dtype == bool:
+    return 8  # physical bit layout for boolean dtype
+  elif issubdtype(dtype, np.integer):
+    return iinfo(dtype).bits
+  elif issubdtype(dtype, np.inexact):
+    return finfo(dtype).bits
+  else:
+    raise ValueError("unexpected input: {dtype=}")
+
 # Trivial vectorspace datatype needed for tangent values of int/bool primals
 float0: np.dtype = np.dtype([('float0', np.void, 0)])
 

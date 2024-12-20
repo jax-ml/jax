@@ -173,8 +173,40 @@ lt = np.less
 def convert_element_type(operand, dtype):
   return np.asarray(operand, dtype=dtype)
 
+def _bitcast_uint4_to_uint8(operand):
+  # Note: assumes little-endian byte order.
+  assert operand.dtype == 'uint4'
+  operand = operand.astype('uint8')
+  return operand[..., ::2] + (operand[..., 1::2] << 4)
+
+def _bitcast_uint8_to_uint4(operand):
+  # Note: assumes little-endian byte order.
+  assert operand.dtype == 'uint8'
+  result = np.zeros((*operand.shape[:-1], operand.shape[-1] * 2), dtype='uint4')
+  result[..., ::2] = (operand & 0b00001111).astype('uint4')
+  result[..., 1::2] = ((operand & 0b11110000) >> 4).astype('uint4')
+  return result
+
 def bitcast_convert_type(operand, dtype):
-  return np.asarray(operand).view(dtype)
+  operand = np.asarray(operand)
+  nbits_in = dtypes.bit_width(operand.dtype)
+  nbits_out = dtypes.bit_width(dtype)
+
+  if nbits_out > nbits_in:
+    assert operand.shape[-1] == nbits_out // nbits_in
+    out_shape = operand.shape[:-1]
+  elif nbits_out == nbits_in:
+    out_shape = operand.shape
+  else:
+    out_shape = (*operand.shape, nbits_in // nbits_out)
+
+  # Special handling for 4-bit integers.
+  if nbits_in == 4:
+    operand = _bitcast_uint4_to_uint8(operand.view('uint4'))
+  if nbits_out == 4:
+    operand = _bitcast_uint8_to_uint4(operand.view('uint8'))
+
+  return operand.view(dtype).reshape(out_shape)
 
 def clamp(min, operand, max):
   return np.clip(operand, np.clip(min, None, max), max).astype(operand.dtype)
