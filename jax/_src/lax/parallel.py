@@ -490,13 +490,45 @@ def ragged_all_to_all(operand, output, input_offsets, send_sizes, output_offsets
   # Index 'data' at 'offsets'[2], 'sizes'[2]'
   {m,n,o},{p,q,r},{s,t,u},{v,w,x}
 
+
+  ``output_offsets`` must be sharded in a way that each replica has offsets in
+  the target replica output perspective.
+
+  For i-th output offset, the current replica will send
+  `operand[input_offsets[i]:input_offsets[i]+input_sizes[i]]` update to `i`-th
+  replica that will be written to
+  `output_i[output_offsets[i]:output_offsets[i]+send_sizes[i]]` in `i`-th
+  replica ``output``.
+
+  For example, if we have 2 replicas:
+
+  replica 0:
+    operand: [1, 2, 2]
+    output: [0, 0, 0, 0]
+    input_offsets: [0, 1]
+    send_sizes: [1, 2]
+    output_offsets: [0, 0]
+    recv_sizes: [1, 1]
+
+  replica 1:
+    operand: [3, 4, 0]
+    output: [0, 0, 0, 0]
+    input_offsets: [0, 1]
+    send_sizes: [1, 1]
+    output_offsets: [1, 2]
+    recv_sizes: [2, 1]
+
+  replica 0's result will be: [1, 3, 0, 0]
+  replica 1's result will be: [2, 2, 4, 0]
+
   Args:
     operand: array with ragged dimension along its outermost dimension.
     output: array of ragged input offsets.
     input_offsets: array of ragged input send sizes.
     send_sizes: array of ragged output data.
-    output_offsets: array of ragged output offsets.
+    output_offsets: array of ragged offsets in the target replica output.
     recv_sizes: array of ragged output receive sizes.
+
   Returns:
     array with shape equal to ``output``.
   """
