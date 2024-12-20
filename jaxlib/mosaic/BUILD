@@ -42,6 +42,7 @@ cc_library(
         "dialect/tpu/tpu_dialect.cc",
         "dialect/tpu/tpu_ops.cc",
         "dialect/tpu/util.cc",
+        "dialect/tpu/vreg_util.cc",
         ":extension_srcs",
     ] + glob([
         "dialect/tpu/transforms/*.cc",
@@ -50,6 +51,7 @@ cc_library(
         "dialect/tpu/layout.h",
         "dialect/tpu/tpu_dialect.h",
         "dialect/tpu/util.h",
+        "dialect/tpu/vreg_util.h",
     ] + glob([
         "dialect/tpu/transforms/*.h",
     ]),
