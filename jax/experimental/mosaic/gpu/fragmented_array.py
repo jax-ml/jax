@@ -65,15 +65,17 @@ class Tiling:
   tiles: tuple[tuple[int, ...], ...]
 
   def __post_init__(self):
-    max_rank = math.inf
+    if not self.tiles:
+      return
+    tiled_rank = len(self.tiles[0])
     for tile in self.tiles:
+      if len(tile) > tiled_rank:
+        raise ValueError("Only the first tile can refer to value dimensions")
       if not tile:
         raise ValueError("Tiles must not be empty")
-      if len(tile) > max_rank:
-        raise ValueError("Tile ranks must be non-increasing")
-      max_rank = len(tile)
       if any(d <= 0 for d in tile):
         raise ValueError(f"Tile shape must only have positive sizes, got: {self.tiles}")
+      tiled_rank += len(tile)
 
   def __str__(self):
     return f"Tiling({''.join(map(str, self.tiles))})"
@@ -156,7 +158,7 @@ class TiledLayout:
 
       (64, 8)(16, 8)(8, 8)(1, 2)
 
-  and warp_dim=-8, lane_dims={-4, -3}, vector_dim=-1.
+  and warp_dim=-8, lane_dims=(-4, -3), vector_dim=-1.
 
   We begin by applying the tiling (note that it always applies to a suffix):
 
@@ -171,7 +173,7 @@ class TiledLayout:
   The last expression is our final shape. At this stage, we're ready to
   interpret the dimensions: warp_dim=-8 means that the 8-th dimension from the
   end is partitioned over 4 warps in a warpgroup (and so it must be of size 4).
-  lane_dims={-4, -3} indicate that those two dimensions are partitioned over
+  lane_dims=(-4, -3) indicate that those two dimensions are partitioned over
   the lanes within a warp (their product must be equal to 32, i.e. warp size).
   Finally, vector_dim=-1 indicates that each (logical) register is a vector
   containing 2 elements (there are no shape restrictions here).
@@ -184,7 +186,7 @@ class TiledLayout:
   """
   tiling: Tiling
   warp_dim: int
-  lane_dims: frozenset[int]
+  lane_dims: tuple[int, ...]  # major-to-minor
   vector_dim: int
 
   def __post_init__(self):
@@ -253,19 +255,19 @@ class TiledLayout:
 
   def lane_indices(self) -> tuple[ir.Value, ...]:
     i32 = ir.IntegerType.get_signless(32)
-    tiled_shape = tuple(
-        d if i in self.lane_dims else 1
-        for i, d in enumerate_negative(self.tiled_tiling_shape)
-    )
-    assert math.prod(tiled_shape) == WARP_SIZE
-    lane_strides = utils.get_contiguous_strides(tiled_shape)
+    tiled_shape = self.tiled_tiling_shape
+    lanes_shape = tuple(tiled_shape[d] for d in self.lane_dims)
+    assert math.prod(lanes_shape) == WARP_SIZE
+    lane_strides = utils.get_contiguous_strides(lanes_shape)
     lane_idx = arith.remui(utils.thread_idx(), c(WARP_SIZE, i32))
-    # TODO(apaszke): Rewrite so that we can be sure that this never actually
-    # does arithmetic for any dimensions that are not in lane_dims.
-    return tuple(
+    lane_indices = tuple(
         arith.remui(arith.divui(lane_idx, c(stride, i32)), c(size, i32))
-        for stride, size in zip(lane_strides, tiled_shape)
+        for stride, size in zip(lane_strides, lanes_shape)
     )
+    full_indices = [arith.constant(i32, 0)] * len(tiled_shape)
+    for d, i in zip(self.lane_dims, lane_indices):
+      full_indices[d] = i
+    return tuple(full_indices)
 
   def warp_indices(self) -> tuple[ir.Value, ...]:
     i32 = ir.IntegerType.get_signless(32)
@@ -298,8 +300,21 @@ def _tiled_wgmma_layout(shape: tuple[int, ...]):
   return TiledLayout(
       Tiling(((64, 8), (16, 8), (8, 8), (1, 2))),
       warp_dim=-8,
-      lane_dims=frozenset((-4, -3)),
+      lane_dims=(-4, -3),
       vector_dim=-1,
+  )
+def _tiled_wgmma_layout_for_upcast(shape: tuple[int, ...]):
+  """Returns a tiled layout that is easy to relayout to WGMMA layout after doubling the bitwidth."""
+  if len(shape) != 2:
+    raise ValueError(f"Shape {shape} is not 2D")
+  if shape[0] % 64 != 0 or shape[1] % 8 != 0:
+    raise ValueError(f"Shape {shape} is not a multiple of 64x8")
+  t = Tiling(((64, 16), (16, 16), (8, 16), (4,), (2, 1)))
+  return TiledLayout(
+      t,
+      warp_dim=-9,
+      lane_dims=(-5, -2, -4),
+      vector_dim=-3,
   )
 
 
@@ -386,21 +401,21 @@ class WGStridedFragLayout:
       raise ValueError((self, WARPGROUP_SIZE))
 
   @classmethod
-  def from_memref_type(cls, memref_ty: ir.Type):
-    if not ir.MemRefType.isinstance(memref_ty):
-      raise TypeError(memref_ty)
+  def from_shaped_type(cls, shaped_ty: ir.Type):
+    if not ir.ShapedType.isinstance(shaped_ty):
+      raise TypeError(shaped_ty)
 
-    memref_type = ir.MemRefType(memref_ty)
-    bw = mgpu.bytewidth(memref_type.element_type)
+    shaped_ty = ir.ShapedType(shaped_ty)
+    bw = mgpu.bytewidth(shaped_ty.element_type)
     assert 8 % bw == 0 and 8 // bw != 0, bw
-    if math.prod(memref_type.shape) % WARPGROUP_SIZE != 0:
+    if math.prod(shaped_ty.shape) % WARPGROUP_SIZE != 0:
       raise ValueError(
-          "Ref must have a number of elements that is a multiple of"
-          f" {WARPGROUP_SIZE} (got {math.prod(memref_type.shape)})"
+          f"{shaped_ty} must have a number of elements that is a multiple of"
+          f" {WARPGROUP_SIZE} (got {math.prod(shaped_ty.shape)})"
       )
-    max_vec_size = np.prod(memref_type.shape) // WARPGROUP_SIZE
+    max_vec_size = np.prod(shaped_ty.shape) // WARPGROUP_SIZE
     return cls(
-        shape=tuple(memref_type.shape), vec_size=min(8 // bw, max_vec_size)
+        shape=tuple(shaped_ty.shape), vec_size=min(8 // bw, max_vec_size)
     )
 
   def thread_idxs(self, shape):
@@ -517,7 +532,7 @@ class FragmentedArray:
 
     ref_ty = ir.MemRefType(ref.type)
     shape = tuple(ref_ty.shape)
-    layout = WGStridedFragLayout.from_memref_type(ref_ty)
+    layout = WGStridedFragLayout.from_shaped_type(ref_ty)
     vec_ty = ir.VectorType.get((layout.vec_size,), ref_ty.element_type)
     try:
       # Flattening the reference potentially produces simpler PTX but

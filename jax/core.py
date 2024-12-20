@@ -122,7 +122,7 @@ _deprecations = {
                _src_core.call_p),
     "closed_call_p": ("jax.core.closed_call_p is deprecated. Use jax.extend.core.primitives.closed_call_p",
                       _src_core.closed_call_p),
-    "concrete_aval": ("jax.core.concrete_aval is deprecated.", _src_core.concrete_aval),
+    "concrete_aval": ("jax.core.concrete_aval is deprecated.", _src_core.abstractify),
     "dedup_referents": ("jax.core.dedup_referents is deprecated.", _src_core.dedup_referents),
     "escaped_tracer_error": ("jax.core.escaped_tracer_error is deprecated.",
                              _src_core.escaped_tracer_error),
@@ -207,7 +207,7 @@ if typing.TYPE_CHECKING:
   axis_frame = _src_core.axis_frame
   call_p = _src_core.call_p
   closed_call_p = _src_core.closed_call_p
-  concrete_aval = _src_core.concrete_aval
+  concrete_aval = _src_core.abstractify
   dedup_referents = _src_core.dedup_referents
   escaped_tracer_error = _src_core.escaped_tracer_error
   extend_axis_env_nd = _src_core.extend_axis_env_nd

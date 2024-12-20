@@ -66,8 +66,8 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import (PmapSharding, NamedSharding,
                                      PartitionSpec as P)
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
-from jax._src.util import (cache, safe_zip, safe_map, canonicalize_axis,
-                           split_list, NumpyComplexWarning)
+from jax._src.util import (NumpyComplexWarning, cache, canonicalize_axis,
+                           safe_map, safe_zip, split_list, weakref_lru_cache)
 
 _max = builtins.max
 _min = builtins.min
@@ -546,7 +546,8 @@ def _convert_element_type(
     operand: ArrayLike,
     new_dtype: DTypeLike | dtypes.ExtendedDType | None = None,
     weak_type: bool = False,
-    sharding: Sharding | None = None):
+    sharding: Sharding | None = None,
+    warn_on_complex_to_real_cast: bool = True):
   if hasattr(operand, '__jax_array__'):
     operand = operand.__jax_array__()
 
@@ -585,7 +586,8 @@ def _convert_element_type(
       isinstance(operand, Array)):
     sharding = operand.sharding
 
-  if (dtypes.issubdtype(old_dtype, np.complexfloating) and
+  if (warn_on_complex_to_real_cast and
+      dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
     msg = "Casting complex values to real discards the imaginary part"
     warnings.warn(msg, NumpyComplexWarning, stacklevel=2)
@@ -648,6 +650,169 @@ def clamp(min: ArrayLike, x: ArrayLike, max: ArrayLike) -> Array:
   \end{cases}`.
   """
   return clamp_p.bind(min, x, max)
+
+
+@weakref_lru_cache
+def _trace_composite_to_jaxpr(fun, in_tree, in_avals):
+  flat_fun, out_tree = api_util.flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+  debug_info = pe.debug_info(fun, in_tree, out_tree, False, "composite")
+  jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug_info)
+  # TODO(danfm): support const inputs to composite.
+  assert not consts
+  closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
+  return closed_jaxpr, out_tree
+
+
+def composite(
+    decomposition: Callable,
+    name: str,
+    version: int = 0,
+):
+  """Composite with semantics defined by the decomposition function.
+
+  A composite is a higher-order JAX function that encapsulates an operation mad
+  up (composed) of other JAX functions. The semantics of the op are implemented
+  by the ``decomposition`` function. In other words, the defined composite
+  function can be replaced with its decomposed implementation without changing
+  the semantics of the encapsulated operation.
+
+  The compiler can recognize specific composite operations by their ``name``,
+  ``version``, ``kawargs``, and dtypes to emit more efficient code, potentially
+  leveraging hardware-specific instructions or optimizations. If the compiler
+  doesn't recognize the composite, it falls back to compiling the
+  ``decomposition`` function.
+
+  Consider a "tangent" composite operation. Its ``decomposition`` function could
+  be implemented as ``sin(x) / cos(x)``. A hardware-aware compiler could
+  recognize the "tangent" composite and emit a single ``tangent`` instruction
+  instead of three separate instructions (``sin``, ``divide``, and ``cos``).
+  With compilers for hardwares without dedicated tangent support, it would fall
+  back to compiling the decomposition.
+
+  This is useful for preserving high level abstraction that would otherwise be
+  lost while lowering which allows for easier pattern-matching in low-level IR.
+
+  Args:
+    decomposition: function that implements the semantics of the composite op.
+    name: name of the encapsulated operation.
+    version: optional int to indicate semantic changes to the composite.
+
+  Returns:
+    out: callable composite function.
+
+  Examples:
+    Tangent kernel:
+    >>> def my_tangent_composite(x):
+    ...   return lax.composite(
+    ...     lambda x: lax.sin(x) / lax.cos(x), name='my.tangent'
+    ...   )(x)
+    ...
+    >>> pi = jnp.pi
+    >>> x = jnp.array([0.0, pi / 4, 3 * pi / 4, pi])
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   print(my_tangent_composite(x))
+    ...   print(lax.tan(x))
+    [ 0.  1. -1.  0.]
+    [ 0.  1. -1.  0.]
+  """
+  @functools.wraps(decomposition)
+  def _decorator(*args, **kwargs):
+    flat_args, in_tree = tree_util.tree_flatten(args)
+    in_avals = tuple(core.get_aval(x) for x in flat_args)
+    closed_jaxpr, out_tree = _trace_composite_to_jaxpr(
+        partial(decomposition, **kwargs), in_tree, in_avals
+    )
+    out_flat = composite_p.bind(
+        *flat_args,
+        name=name,
+        attributes=tuple((k, v) for k, v in kwargs.items()),
+        version=version,
+        jaxpr=closed_jaxpr,
+    )
+    return tree_util.tree_unflatten(out_tree(), out_flat)
+
+  return _decorator
+
+
+def _composite_lowering(
+    ctx: mlir.LoweringRuleContext,
+    *args: Any,
+    name: str,
+    attributes: Sequence[tuple[str, Any]],
+    version: int,
+    jaxpr: core.ClosedJaxpr,
+):
+  """Makes composite which calls the implementation function.
+
+  Lowering a composite primitive to a ``stablehlo.composite`` op.
+
+  Args:
+    ctx: The MLIR context.
+    *args: The arguments to the composite.
+    name: The name of the composite.
+    attributes: The attributes of the composite.
+    version: The version of the composite.
+    jaxpr: The jaxpr of the underlying composite.
+
+  Returns:
+    The results of the composite.
+  """
+  func_op, _, _ = mlir.lower_called_computation(
+      name,
+      ctx.name_stack,
+      jaxpr,
+      ctx.module_context,
+      ctx.avals_out,
+      ctx.tokens_in,
+  )
+  composite_attrs = {k : mlir.ir_attribute(v) for k, v in attributes}
+  symbol_name = func_op.name.value
+  composite = hlo.CompositeOp(
+      func_op.type.results,
+      mlir.flatten_ir_values(args),
+      name=ir.StringAttr.get(name),
+      decomposition=ir.FlatSymbolRefAttr.get(symbol_name),
+      composite_attributes=ir.DictAttr.get(composite_attrs),
+      version=mlir.i32_attr(version),
+  )
+  return composite.results
+
+
+def _composite_impl(*args, jaxpr, **_):
+  return core.jaxpr_as_fun(jaxpr)(*args)
+
+
+def _composite_abstract_eval(*args, jaxpr, **_):
+  del args
+  return jaxpr.out_avals
+
+
+def composite_jvp(*args, **_):
+  del args
+  raise ValueError(
+      "JVP rule for composite not implemented. You can use `jax.custom_jvp` to "
+      "add support. See "
+      "https://jax.readthedocs.io/en/latest/_autosummary/jax.custom_jvp.html"
+  )
+
+
+def composite_transpose(*args, **_):
+  del args
+  raise ValueError(
+      "Transpose rule for composite not implemented. You can use"
+      "`jax.custom_jvp` or `jax.custom_vjp` to add support. See "
+      "https://jax.readthedocs.io/en/latest/_autosummary/jax.custom_jvp.html"
+  )
+
+
+composite_p = core.Primitive("composite")
+composite_p.def_impl(_composite_impl)
+composite_p.def_abstract_eval(_composite_abstract_eval)
+composite_p.multiple_results = True
+ad.primitive_jvps[composite_p] = composite_jvp
+ad.primitive_transposes[composite_p] = composite_transpose
+mlir.register_lowering(composite_p, _composite_lowering)
+
 
 def concatenate(operands: Array | Sequence[ArrayLike], dimension: int) -> Array:
   """Concatenates a sequence of arrays along `dimension`.
@@ -3034,12 +3199,15 @@ def _convert_elt_type_folding_rule(consts, eqn):
   # TODO(mattjj): allow constant-folding CPU-backed JAX arrays
   c, = consts
   o, = eqn.outvars
+  new_dtype = eqn.params['new_dtype']
   if (type(c) in {np.ndarray, *dtypes.python_scalar_dtypes} and
       isinstance(o.aval, core.UnshapedArray) and not np.shape(c) and
-      not dtypes.issubdtype(eqn.params['new_dtype'], dtypes.extended)):
-    with warnings.catch_warnings():
-      warnings.simplefilter('ignore', util.NumpyComplexWarning)
-      out = np.array(c).astype(eqn.params['new_dtype'])
+      not dtypes.issubdtype(new_dtype, dtypes.extended)):
+    out = np.array(c)
+    if (dtypes.issubdtype(out.dtype, np.complexfloating) and
+        not dtypes.issubdtype(new_dtype, np.complexfloating)):
+      out = out.real
+    out = out.astype(new_dtype)
     if not o.aval.weak_type:
       return [out], None
     out = out.item()
@@ -3204,18 +3372,21 @@ def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
   old_dtype = dtypes.canonicalize_dtype(operand.dtype)
   new_dtype = dtypes.canonicalize_dtype(new_dtype)
 
-  if old_dtype.itemsize == new_dtype.itemsize:
+  old_nbits = dtypes.bit_width(old_dtype)
+  new_nbits = dtypes.bit_width(new_dtype)
+
+  if old_nbits == new_nbits:
     return operand.shape
-  elif old_dtype.itemsize > new_dtype.itemsize:
-    return (*operand.shape, old_dtype.itemsize // new_dtype.itemsize)
+  elif old_nbits > new_nbits:
+    return (*operand.shape, old_nbits // new_nbits)
   else:
     dim_size = operand.shape[-1] if operand.shape else 1
-    if dim_size * old_dtype.itemsize != new_dtype.itemsize:
+    if dim_size * old_nbits != new_nbits:
       raise ValueError(
         f"Attempting to convert array of shape {operand.shape} "
-        f"from {old_dtype} of size {old_dtype.itemsize} "
-        f"to {new_dtype} of size {new_dtype.itemsize}, "
-        f"but {dim_size} * {old_dtype.itemsize} != {new_dtype.itemsize}")
+        f"from {old_dtype} of size {old_nbits} bits "
+        f"to {new_dtype} of size {new_nbits}, bits "
+        f"but {dim_size} * {old_nbits} != {new_nbits}")
     return operand.shape[:-1]
 
 def _bitcast_convert_type_dtype_rule(operand, *, new_dtype):

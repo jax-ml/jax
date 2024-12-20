@@ -51,10 +51,6 @@ Slice = indexing.Slice
 NDIndexer = indexing.NDIndexer
 ds = indexing.ds
 
-HP_DIFFERING_EXECUTORS = []
-if hasattr(hp.HealthCheck, "differing_executors"):
-  HP_DIFFERING_EXECUTORS = [hp.HealthCheck.differing_executors]
-
 
 _INDEXING_TEST_CASES = [
     ((4, 8, 128), (...,), (4, 8, 128)),
@@ -375,7 +371,6 @@ class IndexerOpsTest(PallasBaseTest):
     np.testing.assert_array_equal(left_out_np, left_out)
     np.testing.assert_array_equal(right_out_np, right_out)
 
-  @hp.settings(suppress_health_check=HP_DIFFERING_EXECUTORS)
   @hp.given(hps.data())
   def test_vmap_nd_indexing(self, data):
     self.skipTest("TODO(necula): enable this test; was in jax_triton.")
@@ -416,6 +411,9 @@ class IndexerOpsTest(PallasBaseTest):
       case=_INDEXING_TEST_CASES,
   )
   def test_can_load_with_ref_at(self, indexer_type, case):
+    # TODO(apaszke): Remove after 12 weeks have passed.
+    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
+      self.skipTest("Requires libtpu built after 2024-12-19")
     if self.INTERPRET:
       self.skipTest("TODO: fails in interpret mode.")
     in_shape, indexers, out_shape = case

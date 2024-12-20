@@ -824,7 +824,7 @@ class OpsTest(PallasBaseTest):
            jnp.acos, jnp.atan, jnp.sinh, jnp.cosh, jnp.tanh, jnp.asinh,
            jnp.acosh, jnp.atanh],
           # fmt: on
-          ["float32", "float64"],
+          ["bfloat16", "float32", "float64"],
       ),
       ([lax.population_count, lax.clz, jnp.invert], ["int32", "int64"]),
       ([jnp.logical_not], ["bool"]),
@@ -843,12 +843,16 @@ class OpsTest(PallasBaseTest):
       if dtype in ("int16", "float16"):
         self.skipTest("int16 and float16 are not supported on TPU")
       if (
-          fn in (jnp.ceil, jnp.floor, jnp.negative, jnp.exp, jnp.exp2, jnp.log)
+          fn in (jnp.ceil, jnp.floor, jnp.negative, jnp.exp, jnp.exp2, jnp.log,
+                 jnp.sqrt, lax.rsqrt)
           and dtype == "bfloat16"
           and not jtu.is_device_tpu_at_least(6)
       ):
         self.skipTest(f"bfloat16 {fn.__name__} is only supported on TPU v6+")
-      if fn in (jnp.sqrt, jnp.sin, jnp.cos) and dtype == "bfloat16":
+      if (
+          fn in (jnp.sin, jnp.cos, jnp.tan, jnp.tanh, jnp.log1p)
+          and dtype == "bfloat16"
+      ):
         self.skipTest(f"bfloat16 {fn.__name__} is not supported on TPU")
       # TODO(b/370578663): implement these lowerings on TPU
       if fn in (
@@ -856,10 +860,16 @@ class OpsTest(PallasBaseTest):
           jnp.cbrt, jnp.cosh, jnp.expm1, jnp.sinh,
       ):
         self.skipTest(f"{fn.__name__} not implemented on TPU")
+      # TODO(apaszke): Remove after 12 weeks have passed.
+      if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
+        self.skipTest("Requires libtpu built at least on 2024-12-19")
 
     if (
         jtu.test_device_matches(["gpu"])
-        and fn in (jnp.ceil, jnp.floor)
+        and fn
+        in (jnp.ceil, jnp.floor, jnp.expm1, jnp.log1p, jnp.cbrt, lax.rsqrt,
+            jnp.tan, jnp.asin, jnp.acos, jnp.atan, jnp.sinh, jnp.cosh, jnp.tanh,
+            jnp.asinh, jnp.acosh, jnp.atanh)
         and dtype == "bfloat16"
     ):
       self.skipTest(f"bfloat16 {fn.__name__} is not supported on GPU")
@@ -894,7 +904,10 @@ class OpsTest(PallasBaseTest):
 
     if (
         jtu.test_device_matches(["gpu"])
-        and fn in (jnp.ceil, jnp.floor)
+        and fn
+        in (jnp.ceil, jnp.floor, jnp.expm1, jnp.log1p, jnp.cbrt, lax.rsqrt,
+            jnp.tan, jnp.asin, jnp.acos, jnp.atan, jnp.sinh, jnp.cosh, jnp.tanh,
+            jnp.asinh, jnp.acosh, jnp.atanh)
         and dtype == "bfloat16"
     ):
       self.skipTest(f"bfloat16 {fn.__name__} is not supported on GPU")
@@ -1488,6 +1501,9 @@ class OpsTest(PallasBaseTest):
       trans_y=[False, True],
   )
   def test_dot(self, lhs_and_rhs_shape, dtype, trans_x, trans_y):
+    # TODO(apaszke): Remove after 12 weeks have passed.
+    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
+      self.skipTest("Requires libtpu built after 2024-12-19")
     lhs_shape, rhs_shape = lhs_and_rhs_shape
 
     final_lhs_shape = lhs_shape[::-1] if trans_x else lhs_shape
@@ -1895,6 +1911,7 @@ class OpsTest(PallasBaseTest):
       for axis in [0, 1, (1,), (0, 1)]
       for dtype in [
           "float16",
+          "bfloat16",
           "float32",
           "float64",
           "int32",
@@ -1902,27 +1919,26 @@ class OpsTest(PallasBaseTest):
           "uint32",
           "uint64",
       ]
-      if isinstance(axis, int) or "arg" not in op_name
   ])
   def test_array_reduce(self, op, dtype, axis):
-    if jtu.test_device_matches(["tpu"]) and jnp.dtype(dtype).itemsize == 2:
-      self.skipTest("16-bit types are not supported on TPU")
+    if not isinstance(axis, int):
+      self.skipTest("TODO: tuple axes are not yet supported")
 
     if not jax.config.x64_enabled and jnp.dtype(dtype).itemsize == 8:
       self.skipTest("64-bit types require x64_enabled")
+
+    # The Pallas TPU lowering currently supports only blocks of rank >= 1
+    if jtu.test_device_matches(["tpu"]):
+      self.skipTest("Not implemented on TPU")
 
     # Skip argmin/argmax on GPU in 64-bit mode because Pallas expects
     # `index_type` to be i32
     if (
         jax.config.x64_enabled
         and jtu.test_device_matches(["gpu"])
-        and op in {jnp.argmin, jnp.argmax}
+        and op in (jnp.argmin, jnp.argmax)
     ):
       self.skipTest("Not supported on GPU in 64-bit mode")
-
-    # The Pallas TPU lowering currently supports only blocks of rank >= 1
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not supported on TPU")
 
     m, n = 32, 8
 
@@ -1955,7 +1971,7 @@ class OpsTest(PallasBaseTest):
       x = make_x(key)
       y = reduce(x)
       y_ref = op(x, axis=axis)
-      np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2, err_msg=i)
+      self.assertAllClose(y, y_ref, atol=1e-2, rtol=1e-2, err_msg=i)
 
   @parameterized.product(
       axis=[0, 1],
@@ -2076,6 +2092,9 @@ class OpsTest(PallasBaseTest):
   ):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("Not implemented on GPU")
+    # TODO(apaszke): Remove after 12 weeks have passed.
+    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
+      self.skipTest("Requires libtpu built after 2024-12-19")
 
     x = jnp.arange(np.prod(array_shapes), dtype=dtype).reshape(array_shapes)
 

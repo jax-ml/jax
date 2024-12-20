@@ -36,6 +36,9 @@ class ExportTest(jtu.JaxTestCase):
     super().setUp()
 
   def test_cross_platform(self):
+    # TODO(apaszke): Remove after 12 weeks have passed.
+    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
+      self.skipTest("Requires libtpu built after 2024-12-19")
     def add_vectors_kernel(x_ref, y_ref, o_ref):
       x, y = x_ref[...], y_ref[...]
       o_ref[...] = x + y

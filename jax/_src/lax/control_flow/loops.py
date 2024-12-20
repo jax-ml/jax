@@ -34,7 +34,8 @@ from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import state
 from jax._src import util
-from jax._src.api_util import shaped_abstractify
+from jax._src.api_util import (
+    _check_no_aliased_ref_args, _check_no_aliased_closed_over_refs)
 from jax._src.core import ShapedArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -271,13 +272,20 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   xs_avals = [core.get_aval(x) for x in xs_flat]
   x_avals = [core.mapped_aval(length, 0, aval) for aval in xs_avals]
 
+  if config.mutable_array_checks.value:
+    in_flat, in_tree = tree_flatten((init, xs))
+    dbg = pe.debug_info(f, in_tree, None, False, 'scan')
+    in_avals = tuple(_map(core.get_aval, in_flat))
+    _check_no_aliased_ref_args(dbg, in_avals, in_flat)
+
   def _create_jaxpr(init):
     init_flat, init_tree = tree_flatten(init)
     in_flat, in_tree = tree_flatten((init, xs))
-
     carry_avals = tuple(_map(core.get_aval, init_flat))
     jaxpr, consts, out_tree, attrs_tracked = _initial_style_jaxpr_attrs(
         f, in_tree, (*carry_avals, *x_avals), "scan")
+    if config.mutable_array_checks.value:
+      _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), in_flat)
     out_tree_children = out_tree.children()
     if len(out_tree_children) != 2:
       msg = "scan body output must be a pair, got {}."
@@ -722,7 +730,7 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
 
 def _maybe_put(x):
   if isinstance(x, np.ndarray):
-    aval = shaped_abstractify(x)
+    aval = core.shaped_abstractify(x)
     s = sharding.SingleDeviceSharding(xb.local_devices(backend='cpu')[0])
     result_handler = pxla.global_aval_to_result_handler(aval, s, False)
     return result_handler(pxla.shard_args([s], [None], [None], [x]))

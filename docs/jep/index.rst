@@ -51,6 +51,7 @@ Then create a pull request that adds a file named
   15856: `jax.extend`, an extensions module <15856-jex>
   17111: Efficient transposition of `shard_map` (and other maps) <17111-shmap-transpose>
   18137: Scope of JAX NumPy & SciPy Wrappers <18137-numpy-scipy-scope>
+  25516: Effort-based versioning <25516-effver>
 
 
 Several early JEPs were converted in hindsight from other documentation,

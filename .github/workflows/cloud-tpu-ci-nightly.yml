@@ -111,10 +111,17 @@ jobs:
           JAX_PLATFORMS: tpu,cpu
           PY_COLORS: 1
         run: |
+          # We're deselecting all Pallas TPU tests in the oldest libtpu build. Mosaic TPU does not
+          # guarantee anything about forward compatibility (unless jax.export is used) and the 12
+          # week compatibility window accumulates way too many failures.
+          IGNORE_FLAGS=
+          if [ "${{ matrix.jaxlib-version }}" == "nightly+oldest_supported_libtpu" ]; then
+            IGNORE_FLAGS="--ignore=tests/pallas"
+          fi
           # Run single-accelerator tests in parallel
           JAX_ENABLE_TPU_XDIST=true $PYTHON -m pytest -n=${{ matrix.tpu.cores }} --tb=short \
             --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
-            --maxfail=20 -m "not multiaccelerator" tests examples
+            --maxfail=20 -m "not multiaccelerator" $IGNORE_FLAGS tests examples
           # Run Pallas printing tests, which need to run with I/O capturing disabled.
           TPU_STDERR_LOG_LEVEL=0 $PYTHON -m pytest -s \
             tests/pallas/tpu_pallas_test.py::PallasCallPrintTest

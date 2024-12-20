@@ -487,7 +487,7 @@ class DialectTest(MosaicGpuTest):
   def test_wgmma_types_match(self):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(
-          ir.RankedTensorType.get([128, 160], ir.BF16Type.get()),
+          ir.VectorType.get([128, 160], ir.BF16Type.get()),
           ir.MemRefType.get([2, 4, 64, 32], ir.F16Type.get()),
           ir.MemRefType.get([4, 5, 32, 32], ir.BF16Type.get()),
           name="wgmma",
@@ -509,7 +509,7 @@ class DialectTest(MosaicGpuTest):
   def test_wgmma_b_rank_is_4(self):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(
-          ir.RankedTensorType.get([128, 160], ir.BF16Type.get()),
+          ir.VectorType.get([128, 160], ir.BF16Type.get()),
           ir.MemRefType.get([2, 4, 64, 32], ir.BF16Type.get()),
           ir.MemRefType.get([5, 32, 32], ir.BF16Type.get()),
           name="wgmma",
@@ -531,7 +531,7 @@ class DialectTest(MosaicGpuTest):
   def test_wgmma_b_shape_dim_3(self):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(
-          ir.RankedTensorType.get([128, 160], ir.BF16Type.get()),
+          ir.VectorType.get([128, 160], ir.BF16Type.get()),
           ir.MemRefType.get([2, 4, 64, 32], ir.BF16Type.get()),
           ir.MemRefType.get([4, 5, 32, 16], ir.BF16Type.get()),
           name="wgmma",
@@ -554,7 +554,7 @@ class DialectTest(MosaicGpuTest):
   def test_wgmma_b_shape_dim_2(self):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(
-          ir.RankedTensorType.get([128, 160], ir.BF16Type.get()),
+          ir.VectorType.get([128, 160], ir.BF16Type.get()),
           ir.MemRefType.get([2, 4, 64, 32], ir.BF16Type.get()),
           ir.MemRefType.get([4, 5, 64, 32], ir.BF16Type.get()),
           name="wgmma",
@@ -586,7 +586,7 @@ class DialectLoweringTest(MosaicGpuTest):
           llvm.UndefOp(workgroup_ptr_ty()),
           arrival_count=1,
       )
-    mgpu.lower_mgpu_dialect(self.module)
+    mgpu.lower_mgpu_dialect(self.module, None)
 
     self.assertEmpty(
         list(filter(is_mosaic_gpu_op, self.module.body.operations))
@@ -604,7 +604,7 @@ class DialectLoweringTest(MosaicGpuTest):
             arrival_count=1,
         )
         scf.yield_([])
-    mgpu.lower_mgpu_dialect(self.module)
+    mgpu.lower_mgpu_dialect(self.module, None)
 
     self.assertEmpty(
         list(filter(is_mosaic_gpu_op, if_op.then_block.operations))
@@ -626,7 +626,7 @@ class DialectLoweringTest(MosaicGpuTest):
       memref.copy(barriers_ref, barriers_ref)
 
     self.assertTrue(self.module.operation.verify())
-    mgpu.lower_mgpu_dialect(self.module)
+    mgpu.lower_mgpu_dialect(self.module, None)
     self.assertTrue(self.module.operation.verify())
 
     all_mbarrier_init_shared_ops = find_if(
@@ -654,7 +654,7 @@ class DialectLoweringTest(MosaicGpuTest):
     with self.assertRaisesRegex(
         ValueError, "missing a layout and can not be lowered"
     ):
-      mgpu.lower_mgpu_dialect(self.module)
+      mgpu.lower_mgpu_dialect(self.module, None)
 
   def test_lowering_eliminates_layouts(self):
     shape = (4, 128)
@@ -664,11 +664,13 @@ class DialectLoweringTest(MosaicGpuTest):
       zero_index = arith.constant(ir.IndexType.get(), 0)
       ty = ir.VectorType.get(shape, elt_ty)
       load = vector.load(ty, ref, [zero_index, zero_index])
-      load.owner.attributes["out_layouts"] = ir.ArrayAttr.get(
-          [mgpu.strided_fragmented_layout()]
-      )
+      load.owner.attributes["out_layouts"] = ir.ArrayAttr.get([
+          mgpu.to_strided_fragmented_layout_attr(
+              mgpu.WGStridedFragLayout.from_shaped_type(ty)
+          )
+      ])
 
-    mgpu.lower_mgpu_dialect(self.module)
+    mgpu.lower_mgpu_dialect(self.module, None)
 
     all_ops_with_layouts = find_if(
         self.module,
@@ -689,7 +691,7 @@ class DialectLoweringTest(MosaicGpuTest):
       vector.store(array, ref, [zero_index, zero_index])
 
     mgpu.infer_layout(self.module)
-    mgpu.lower_mgpu_dialect(self.module)
+    mgpu.lower_mgpu_dialect(self.module, None)
 
     all_loads = find_if(
         self.module,

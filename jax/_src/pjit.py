@@ -47,9 +47,10 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.api_util import (
     argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
-    donation_vector, shaped_abstractify, check_callable, resolve_argnums,
+    donation_vector, check_callable, resolve_argnums,
     argnames_partial_except, debug_info, result_paths, jaxpr_debug_info,
-    hoist_obj_attrs)
+    hoist_obj_attrs, _check_no_aliased_ref_args,
+    _check_no_aliased_closed_over_refs)
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec
 from jax._src.interpreters import xla
@@ -115,7 +116,7 @@ def _device_assignment_mismatch_error(fun_name, fails, args_flat, api_name,
   for a, n in zip(args_flat, arg_names):
     da = (a.sharding._device_assignment
           if getattr(a, 'sharding', None) is not None else None)
-    arg_list.append((n, da, shaped_abstractify(a)))
+    arg_list.append((n, da, core.shaped_abstractify(a)))
 
   mismatched_args_msg = _find_arg_mismatch(arg_list, fails, fun_name)
 
@@ -627,7 +628,8 @@ def _infer_params_impl(
         flat_fun, in_type, attr_token, dbg,
         HashableFunction(res_paths, closure=()),
         IgnoreKey(ji.inline))
-    _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), explicit_args)
+    if config.mutable_array_checks.value:
+      _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), explicit_args)
   _attr_update(flat_fun, in_type, attr_token, attrs_tracked)
 
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
@@ -744,7 +746,7 @@ def _infer_input_type(fun, dbg, explicit_args) -> tuple[core.AbstractValue, ...]
   avals = []
   try:
     for i, x in enumerate(explicit_args):
-      avals.append(shaped_abstractify(x))
+      avals.append(core.shaped_abstractify(x))
   except OverflowError:
     arg_path = (f"argument path is {dbg.arg_names[i]}" if dbg  # type: ignore
                 else f"flattened argument number is {i}")  # type: ignore
@@ -764,32 +766,8 @@ def _infer_input_type(fun, dbg, explicit_args) -> tuple[core.AbstractValue, ...]
       " static_argnums or static_argnames parameters of jax.jit."
     ) from None
   if config.mutable_array_checks.value:
-    # TODO(mattjj): make this faster
-    refs: dict[int, int] = {}
-    for i, (a, x) in enumerate(zip(avals, explicit_args)):
-      if (isinstance(a, AbstractRef) and
-          (dup_idx := refs.setdefault(id(core.get_referent(x)), i)) != i):
-        raise ValueError(
-          "only one reference to a mutable array may be passed as an argument "
-          f"to a function, but when tracing {dbg.func_src_info} for {dbg.traced_for} "
-          f"the mutable array reference of type {a.str_short()} appeared at both "
-          f"{dbg.arg_names[dup_idx]} and {dbg.arg_names[i]}."
-          if dbg else
-          f"at both flat index {dup_idx} and flat index {i}") from None
+    _check_no_aliased_ref_args(dbg, avals, explicit_args)
   return tuple(avals)
-
-def _check_no_aliased_closed_over_refs(dbg, consts, args) -> None:
-  if not config.mutable_array_checks.value: return
-  refs: set[int] = {id(core.get_referent(c)) for c in consts
-                    if isinstance(core.get_aval(c), AbstractRef)}
-  for i, x in enumerate(args):
-    if id(core.get_referent(x)) in refs:
-      a = shaped_abstractify(x)
-      raise ValueError(
-          f"when tracing {dbg.func_src_info} for {dbg.traced_for}, a mutable "
-          f"array reference of type {a.str_short()} was both closed over and "
-          f"passed as the argument "
-          f"{dbg.arg_names[i]}" if dbg else "at flat index {i}")
 
 def _extract_implicit_args(
   in_type: Sequence[tuple[core.AbstractValue, bool]],
@@ -1400,7 +1378,7 @@ def _attr_token(
     for obj, attr, treedef, avals in records:
       val = jax_getattr(obj, attr)
       vals, treedef_ = tree_flatten(val)
-      avals_ = map(shaped_abstractify, vals)
+      avals_ = map(core.shaped_abstractify, vals)
       if treedef != treedef_ or avals != avals_: break
     else:
       return i
@@ -1409,7 +1387,7 @@ def _attr_token(
 def _attr_update(fun, in_type, i, attrs_tracked):
   from jax.experimental.attrs import jax_getattr
   leaves = lambda obj, attr: tree_leaves(jax_getattr(obj, attr))
-  records = [(obj, attr, init_tree, map(shaped_abstractify, leaves(obj, attr)))
+  records = [(obj, attr, init_tree, map(core.shaped_abstractify, leaves(obj, attr)))
              for init_tree, _, (obj, attr) in attrs_tracked]
   cases = seen_attrs_get(fun, in_type)
   if i == len(cases):
@@ -1538,7 +1516,7 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
                           'on the respective arg. '
                           f'Got pjit layout: {jit_in_l},\n'
                           f'arg layout: {arg_layout} for '
-                          f'arg shape: {shaped_abstractify(arg).str_short()}.'
+                          f'arg shape: {core.shaped_abstractify(arg).str_short()}.'
                           f'{extra_msg}')
       resolved_in_layouts.append(jit_in_l)
   return tuple(resolved_in_layouts)
@@ -1618,7 +1596,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
               'Memory kinds passed to jax.jit does not match memory kind on the'
               f' respective arg. Got pjit memory kind: {pjit_in_s.memory_kind}, '  # type: ignore[union-attr]
               f'arg memory kind: {arg_s.memory_kind} for '
-              f'arg shape: {shaped_abstractify(arg).str_short()}')
+              f'arg shape: {core.shaped_abstractify(arg).str_short()}')
         if (committed and
             not isinstance(arg_s, PmapSharding) and
             not op_shardings.are_op_shardings_equal(
@@ -1628,7 +1606,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
                            'on the respective arg. '
                            f'Got pjit sharding: {pjit_in_s},\n'
                            f'arg sharding: {arg_s} for '
-                           f'arg shape: {shaped_abstractify(arg).str_short()}')
+                           f'arg shape: {core.shaped_abstractify(arg).str_short()}')
       resolved_in_shardings.append(pjit_in_s)
 
   return tuple(resolved_in_shardings)
@@ -2589,7 +2567,7 @@ def _sharding_constraint_impl(x, sharding, layout, resource_env,
                               unconstrained_dims):
   if (isinstance(sharding, NamedSharding) and
       isinstance(sharding.mesh, AbstractMesh)):
-    aval = shaped_abstractify(x)
+    aval = core.shaped_abstractify(x)
     if not hasattr(x, 'sharding'):
       raise ValueError(
           'Target sharding contains a `jax.sharding.AbstractMesh` which'

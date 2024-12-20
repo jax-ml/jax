@@ -56,12 +56,12 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import pjit
 from jax._src import xla_bridge as xb
-from jax._src.core import eval_jaxpr, ShapedArray
+from jax._src.core import eval_jaxpr, shaped_abstractify, ShapedArray
 from jax._src.api_util import (
     flatten_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2, argnums_partial,
     flatten_axes, donation_vector,
     rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
-    shaped_abstractify, apply_flat_fun_nokwargs, check_callable, debug_info,
+    apply_flat_fun_nokwargs, check_callable, debug_info,
     result_paths, flat_out_axes, debug_info_final, fun_sourceinfo)
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
@@ -2564,6 +2564,7 @@ def _sds_aval_mapping(x):
       x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
       weak_type=x.weak_type)
 core.pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
+core.shaped_abstractify_handlers[ShapeDtypeStruct] = _sds_aval_mapping
 
 
 @api_boundary

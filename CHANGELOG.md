@@ -25,6 +25,17 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The minimum NumPy version is now 1.25. NumPy 1.25 will remain the minimum
     supported version until June 2025.
 
+* Deprecations
+  * From {mod}`jax.interpreters.xla`, `abstractify` and `pytype_aval_mappings`
+    are now deprecated, having been replaced by symbols of the same name
+    in {mod}`jax.core`.
+
+* New Features
+  * {func}`jax.numpy.fft.fftn`, {func}`jax.numpy.fft.rfftn`,
+    {func}`jax.numpy.fft.ifftn`, and {func}`jax.numpy.fft.irfftn` now support
+    transforms in more than 3 dimensions, which was previously the limit. See
+    {jax-issue}`#25606` for more details.
+
 ## jax 0.4.38 (Dec 17, 2024)
 
 * Changes:

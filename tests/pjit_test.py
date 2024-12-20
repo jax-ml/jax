@@ -1347,8 +1347,10 @@ class CustomPartitionerTest(jtu.JaxTestCase):
       def lower_fn(x, y):
         axis_name = arg_shardings[1].spec[0][0]
         i = jax.lax.axis_index(axis_name)
+        # Use offset i * 0 instead of 0 to ensure that the two offsets have the
+        # same dtype regardless the value of config.enable_x64.
         z = jax.lax.psum(
-            jax.lax.dynamic_slice(x, (0, i * 8), (8, 8)) @ y, (axis_name)
+            jax.lax.dynamic_slice(x, (i * 0, i * 8), (8, 8)) @ y, (axis_name)
         )
         return z, z * z
 
@@ -4305,6 +4307,24 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertLen(traced.in_avals[0], 1)
     self.assertLen(traced.in_avals[1], 0)  # empty kwarg
 
+  def test_empty_io_callback_under_shard_map(self):
+    if config.use_shardy_partitioner.value:
+      self.skipTest("Shardy errors out on empty callbacks.")
+    mesh = jtu.create_mesh((4,), 'i')
+
+    def empty_callback(x):
+      return
+
+    def _f(x, y):
+      jax.experimental.io_callback(
+          empty_callback, (), x, ordered=True)
+      return x + y[..., jnp.newaxis]
+
+    f = jax.jit(shard_map(
+        _f, mesh, in_specs=(P(None, 'i'), P(None)),
+        out_specs=P(None, 'i')))
+    f(jnp.zeros((2, 16)), jnp.ones(2))
+
   def test_jit_trace_lower_and_compile(self):
     def f(x):
       return x * 2
@@ -5826,6 +5846,24 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out1, out2 = f(arr, arr2)
     self.assertDictEqual(out1.sharding.mesh.axis_types, {AxisTypes.User: 'x'})
     self.assertDictEqual(out2.sharding.mesh.axis_types, {AxisTypes.Auto: 'x'})
+
+  @jtu.with_user_mesh((2,), 'x')
+  def test_output_different_context_error(self, mesh):
+    np_inp1 = np.arange(16).reshape(8, 2)
+    arr1 = jax.device_put(np_inp1, NamedSharding(mesh, P('x', None)))
+    arr2 = jax.device_put(np_inp1.T, NamedSharding(mesh, P(None, 'x')))
+    auto_mesh = jax.make_mesh((2,), 'x',
+                              axis_types={AxisTypes.Auto: 'x'}).abstract_mesh
+
+    @jax.jit
+    def f(x, y):
+      out = jnp.einsum('xy,yz->xz', x, y,
+                       out_type=NamedSharding(auto_mesh, P('x', None)))
+      return out
+
+    with self.assertRaisesRegex(
+        ValueError, "context mesh.* should match the aval mesh"):
+      f(arr1, arr2)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

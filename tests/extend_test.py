@@ -30,6 +30,7 @@ from jax._src import abstract_arrays
 from jax._src import api
 from jax._src import config
 from jax._src import core
+from jax._src import deprecations
 from jax._src import linear_util
 from jax._src import prng
 from jax._src import test_util as jtu
@@ -279,8 +280,13 @@ class FfiTest(jtu.JaxTestCase):
   def testBackwardCompatSyntax(self):
     def fun(x):
       return jex.ffi.ffi_call("test_ffi", x, x, param=0.5)
-    with self.assertWarns(DeprecationWarning):
-      jax.jit(fun).lower(jnp.ones(5))
+    msg = "Calling ffi_call directly with input arguments is deprecated"
+    if deprecations.is_accelerated("jax-ffi-call-args"):
+      with self.assertRaisesRegex(ValueError, msg):
+        jax.jit(fun).lower(jnp.ones(5))
+    else:
+      with self.assertWarnsRegex(DeprecationWarning, msg):
+        jax.jit(fun).lower(jnp.ones(5))
 
   def testInputOutputAliases(self):
     def fun(x):

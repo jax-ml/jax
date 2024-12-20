@@ -89,13 +89,6 @@ def _initial_style_jaxprs_with_common_consts(
 
   jaxprs, all_consts, all_out_trees, all_attrs_tracked = zip(*jaxpr_data)
   all_const_avals = [map(core.get_aval, consts) for consts in all_consts]
-  # If we get a `Ref` in the consts, we know it must come from an outer
-  # `run_state`. We also know if shouldn't be boxed up in another tracer.
-  # We assert that it is in fact a DynamicJaxprTracer
-  for consts, consts_avals in zip(all_consts, all_const_avals):
-    for c, aval in zip(consts, consts_avals):
-      if isinstance(aval, state.AbstractRef):
-        assert isinstance(c, pe.DynamicJaxprTracer)
 
   # TODO(sharadmv,mattjj): we could dedup *all consts* instead of just the Refs.
 

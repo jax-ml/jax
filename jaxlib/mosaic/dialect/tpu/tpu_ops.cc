@@ -119,12 +119,25 @@ LogicalResult MemRefSliceOp::verify() {
   // the canonicalizer, so we allow this when attributes are "unset" in the
   // target type. Note that MemRefType does not allow a null layout so we treat
   // the default identity affine map as an "unset" value instead.
-  return success(
-      (target_memory_space == nullptr ||
-       target_memory_space == source_type.getMemorySpace()) &&
-      ((isa<AffineMapAttr>(target_layout) && target_layout.isIdentity()) ||
-       target_type.getLayout() == source_type.getLayout()) &&
-      getDynamicSizes().size() == target_type.getNumDynamicDims());
+  bool is_target_memory_space_provided = target_memory_space != nullptr;
+  if (is_target_memory_space_provided &&
+      target_memory_space != source_type.getMemorySpace()) {
+    return emitOpError(
+        "Memory spaces must match if the target memory space is provided.");
+  }
+  bool is_target_layout_identity_map =
+      isa<AffineMapAttr>(target_layout) && target_layout.isIdentity();
+  if (!is_target_layout_identity_map &&
+      target_type.getLayout() != source_type.getLayout()) {
+    return emitOpError(
+        "Layouts must match if the target layout is not an identity map.");
+  }
+  if (getDynamicSizes().size() != target_type.getNumDynamicDims()) {
+    return emitOpError(
+        "Number of provided dynamic dimensions sizes must match the number of "
+        "dynamic dimensions in the target type.");
+  }
+  return success();
 }
 
 LogicalResult MemRefSliceOp::canonicalize(MemRefSliceOp op,
@@ -933,6 +946,13 @@ LogicalResult EnqueueDMAOp::verify() {
       return emitOpError(
           "DMA source semaphore must be specified when "
           "device_id or core_id is specified");
+    }
+  }
+  if (getSourceSemaphore()) {
+    if (!getDeviceId() && !getCoreId()) {
+      return emitOpError(
+          "DMA destination device_id or core_id must be specified when source "
+          "semaphore is specified");
     }
   }
   return success();

@@ -170,6 +170,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     for p in all_primitives:
       if p.name == "axis_index":
         continue
+      if p.name == "composite":
+        continue
       if p.name == "sharding_constraint":
         continue
       if p.name == "sharding_cast":

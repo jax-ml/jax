@@ -26,7 +26,6 @@ from jax import lax
 from jax import numpy as jnp
 from jax import tree_util
 
-from jax._src import api_util
 from jax._src import api
 from jax._src import config as config
 from jax._src import core
@@ -303,7 +302,6 @@ _set_array_base_attributes(PRNGKeyArray, include=[
     'at', 'flatten', 'ravel', 'reshape',
     'squeeze', 'swapaxes', 'take', 'transpose', 'T'])
 
-api_util._shaped_abstractify_handlers[PRNGKeyArray] = op.attrgetter('aval')
 
 def prngkeyarray_flatten(x):
   return (x._base_array,), x._impl
@@ -463,7 +461,7 @@ class KeyTy(dtypes.ExtendedDType):
 
 
 core.pytype_aval_mappings[PRNGKeyArray] = lambda x: x.aval
-core.xla_pytype_aval_mappings[PRNGKeyArray] = lambda x: x.aval
+core.shaped_abstractify_handlers[PRNGKeyArray] = op.attrgetter('aval')
 
 xla.canonicalize_dtype_handlers[PRNGKeyArray] = lambda x: x
 

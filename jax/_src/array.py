@@ -23,7 +23,6 @@ import operator as op
 from typing import Any, TYPE_CHECKING, cast
 
 from jax._src import api
-from jax._src import api_util
 from jax._src import basearray
 from jax._src import config
 from jax._src import core
@@ -1036,9 +1035,8 @@ def _get_aval_array(self):
   else:
     return self.aval
 
-api_util._shaped_abstractify_handlers[ArrayImpl] = _get_aval_array
+core.shaped_abstractify_handlers[ArrayImpl] = _get_aval_array
 core.pytype_aval_mappings[ArrayImpl] = _get_aval_array
-core.xla_pytype_aval_mappings[ArrayImpl] = _get_aval_array
 
 # TODO(jakevdp) replace this with true inheritance at the C++ level.
 basearray.Array.register(ArrayImpl)
@@ -1096,7 +1094,7 @@ def shard_device_array(x, devices, indices, sharding):
     shards = [x] * len(devices)
   else:
     shards = x._multi_slice(start_indices, limit_indices, removed_dims)
-  aval = api_util.shaped_abstractify(x)
+  aval = core.shaped_abstractify(x)
   return pxla.batched_device_put(aval, sharding, shards, devices)
 
 

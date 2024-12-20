@@ -43,7 +43,6 @@ import jax
 from jax import errors
 from jax import jit
 from jax import lax
-from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import deprecations
@@ -192,7 +191,8 @@ class _ScalarMeta(type):
 
 def _abstractify_scalar_meta(x):
   raise TypeError(f"JAX scalar type {x} cannot be interpreted as a JAX array.")
-api_util._shaped_abstractify_handlers[_ScalarMeta] = _abstractify_scalar_meta
+core.pytype_aval_mappings[_ScalarMeta] = _abstractify_scalar_meta
+core.shaped_abstractify_handlers[_ScalarMeta] = _abstractify_scalar_meta
 
 def _make_scalar_type(np_scalar_type: type) -> _ScalarMeta:
   meta = _ScalarMeta(np_scalar_type.__name__, (object,),
@@ -5732,10 +5732,9 @@ def astype(x: ArrayLike, dtype: DTypeLike | None,
 
   # We offer a more specific warning than the usual ComplexWarning so we prefer
   # to issue our warning.
-  with warnings.catch_warnings():
-    warnings.simplefilter("ignore", ComplexWarning)
-    result = lax_internal._convert_element_type(
-      x_arr, dtype, sharding=_normalize_to_sharding(device))
+  result = lax_internal._convert_element_type(
+    x_arr, dtype, sharding=_normalize_to_sharding(device),
+    warn_on_complex_to_real_cast=False)
   return _array_copy(result) if copy else result
 
 

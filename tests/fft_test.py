@@ -41,12 +41,9 @@ all_dtypes = real_dtypes + jtu.dtypes.complex
 
 
 def _get_fftn_test_axes(shape):
-  axes = [[]]
+  axes = [[], None]
   ndims = len(shape)
-  # XLA's FFT op only supports up to 3 innermost dimensions.
-  if ndims <= 3:
-    axes.append(None)
-  for naxes in range(1, min(ndims, 3) + 1):
+  for naxes in range(1, ndims + 1):
     axes.extend(itertools.combinations(range(ndims), naxes))
   for index in range(1, ndims + 1):
     axes.append((-index,))
@@ -145,7 +142,7 @@ class FftTest(jtu.JaxTestCase):
      for dtype in (real_dtypes if real and not inverse else all_dtypes)
     ],
     [dict(shape=shape, axes=axes, s=s)
-     for shape in [(10,), (10, 10), (9,), (2, 3, 4), (2, 3, 4, 5)]
+     for shape in [(10,), (10, 10), (9,), (2, 3, 4), (2, 3, 4, 5), (2, 3, 4, 5, 6)]
      for axes in _get_fftn_test_axes(shape)
      for s in _get_fftn_test_s(shape, axes)
     ],
@@ -161,12 +158,13 @@ class FftTest(jtu.JaxTestCase):
     # Numpy promotes to complex128 aggressively.
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
-    self._CompileAndCheck(jnp_fn, args_maker, atol={np.complex64: 2e-6})
+    self._CompileAndCheck(jnp_fn, args_maker, atol={np.complex64: 2e-6},
+                          rtol={np.float32: 2e-6})
     # Test gradient for differentiable types.
     if (config.enable_x64.value and
         dtype in (float_dtypes if real and not inverse else inexact_dtypes)):
       # TODO(skye): can we be more precise?
-      tol = 0.15
+      tol = 0.16
       jtu.check_grads(jnp_fn, args_maker(), order=2, atol=tol, rtol=tol)
 
     # check dtypes
@@ -203,11 +201,6 @@ class FftTest(jtu.JaxTestCase):
     if inverse:
       name = 'i' + name
     func = _get_fftn_func(jnp.fft, inverse, real)
-    self.assertRaisesRegex(
-        ValueError,
-        "jax.numpy.fft.{} only supports 1D, 2D, and 3D FFTs. "
-        "Got axes None with input rank 4.".format(name),
-        lambda: func(rng([2, 3, 4, 5], dtype=np.float64), axes=None))
     self.assertRaisesRegex(
         ValueError,
         f"jax.numpy.fft.{name} does not support repeated axes. Got axes \\[1, 1\\].",

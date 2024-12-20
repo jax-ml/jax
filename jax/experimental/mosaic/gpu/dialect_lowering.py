@@ -31,15 +31,14 @@ from jax._src.lib.mlir.dialects import vector
 import numpy as np
 
 from .fragmented_array import FragmentedArray, WGStridedFragLayout
-from .layout_inference import has_any_layout_set
-from .layout_inference import should_have_layout
-from .layout_inference import strided_fragmented_layout
-from .utils import c, ptr_as_memref, single_thread_predicate
+from .launch_context import LaunchContext
+from .layouts import from_strided_fragmented_layout_attr, has_any_layout_set, is_strided_fragmented_layout, should_have_layout, to_strided_fragmented_layout_attr
+from .utils import BarrierRef, c, memref_ptr, ptr_as_memref, single_thread_predicate
 
 # mypy: ignore-errors
 
 
-MlirLoweringRule = Callable[[ir.Operation | ir.OpView], Sequence[ir.Value]]
+MlirLoweringRule = Callable[[LaunchContext, ir.Operation | ir.OpView], Sequence[ir.Value]]
 
 
 _lowerings: dict[str, MlirLoweringRule] = {}
@@ -55,15 +54,8 @@ def _fragmented_array_to_ir(
       [ty], fragmented_array.registers.tolist()
   )
 
-  conversion_cast.attributes["layout"] = strided_fragmented_layout()
-
-  # TODO(bchetioui): make sub-attributes part of the layout attribute.
-  i32 = ir.IntegerType.get_signless(32)
-  conversion_cast.attributes["layout_shape"] = ir.ArrayAttr.get(
-      [ir.IntegerAttr.get(i32, s) for s in fragmented_array.shape]
-  )
-  conversion_cast.attributes["vec_size"] = ir.IntegerAttr.get(
-      i32, fragmented_array.layout.vec_size
+  conversion_cast.attributes["layout"] = to_strided_fragmented_layout_attr(
+      fragmented_array.layout
   )
 
   if fragmented_array.is_signed is not None:
@@ -85,18 +77,21 @@ def _fragmented_array_from_ir(
   if not isinstance(conversion_cast, builtin.UnrealizedConversionCastOp):
     raise ValueError(f"{conversion_cast} is not a conversion_cast")
 
-  conversion_cast_layout = conversion_cast.attributes["layout"]
+  layout_attr = conversion_cast.attributes["layout"]
 
-  if conversion_cast_layout != strided_fragmented_layout():
+  if not is_strided_fragmented_layout(layout_attr):
     raise NotImplementedError(
-        f"Converting conversion_casts with layout {conversion_cast_layout} "
-        "back to FragmentedArrays is not supported."
+        f"Converting conversion_casts with layout {layout_attr} back to "
+        "FragmentedArrays is not supported."
     )
 
   converted_outputs = builtin.unrealized_conversion_cast(
       [operand.type for operand in conversion_cast.operands],
       conversion_cast.results,
   )
+  if not isinstance(converted_outputs, list):
+    converted_outputs = [converted_outputs]
+
 
   reverse_conversion_cast = converted_outputs[0].owner.opview
   for attribute in conversion_cast.attributes:
@@ -104,15 +99,12 @@ def _fragmented_array_from_ir(
     reverse_conversion_cast.attributes[attribute.name] = attribute.attr
 
   registers = np.array(list(converted_outputs))
+  layout = from_strided_fragmented_layout_attr(layout_attr)
 
-  shape = tuple(int(s) for s in conversion_cast.attributes["layout_shape"])
-  vec_size = int(conversion_cast.attributes["vec_size"])
   if ir.IntegerType.isinstance(conversion_cast.outputs[0].type):
     is_signed = bool(conversion_cast.attributes["is_signed"])
   else:
     is_signed = None
-
-  layout = WGStridedFragLayout(shape, vec_size)
 
   return FragmentedArray(
       _registers=registers, _layout=layout, _is_signed=is_signed
@@ -150,6 +142,7 @@ def gpu_address_space_to_nvptx(address_space: gpu.AddressSpace) -> int:
 
 @_register_lowering(InitializeBarrierOp)
 def _initialize_barrier_op_lowering_rule(
+    _: LaunchContext,
     initialize_barrier_op: InitializeBarrierOp,
 ) -> Sequence[ir.Value]:
 
@@ -182,13 +175,15 @@ def _initialize_barrier_op_lowering_rule(
 
 @_register_lowering(vector.LoadOp)
 def _vector_load_op_lowering_rule(
-    vector_load_op: vector.LoadOp,
+    _: LaunchContext, vector_load_op: vector.LoadOp
 ) -> Sequence[ir.Value]:
-  (out_layout,) = cast(ir.ArrayAttr, vector_load_op.attributes["out_layouts"])
+  (out_layout_attr,) = cast(
+      ir.ArrayAttr, vector_load_op.attributes["out_layouts"]
+  )
 
-  if out_layout != strided_fragmented_layout():
+  if not is_strided_fragmented_layout(out_layout_attr):
     raise ValueError(
-        f"{vector_load_op} has an unsupported layout: {out_layout}"
+        f"{vector_load_op} has an unsupported layout: {out_layout_attr}"
     )
 
   for i in vector_load_op.indices:
@@ -209,14 +204,16 @@ def _vector_load_op_lowering_rule(
 
 @_register_lowering(vector.StoreOp)
 def _vector_store_op_lowering_rule(
-    vector_store_op: vector.StoreOp,
+     _: LaunchContext, vector_store_op: vector.StoreOp
 ) -> Sequence[ir.Value]:
 
-  in_layout, *_ = cast(ir.ArrayAttr, vector_store_op.attributes["in_layouts"])
+  in_layout_attr, *_ = cast(
+      ir.ArrayAttr, vector_store_op.attributes["in_layouts"]
+  )
 
-  if in_layout != strided_fragmented_layout():
+  if not is_strided_fragmented_layout(in_layout_attr):
     raise ValueError(
-        f"{vector_store_op} has an unsupported layout: {in_layout}"
+        f"{vector_store_op} has an unsupported layout: {in_layout_attr}"
     )
 
   for i in vector_store_op.indices:
@@ -237,8 +234,44 @@ def _vector_store_op_lowering_rule(
   return []
 
 
+@_register_lowering(mgpu.AsyncLoadOp)
+def _mgpu_async_load_op_lowering_rule(
+    launch_context: LaunchContext, load_op: mgpu.AsyncLoadOp
+) -> Sequence[ir.Value]:
+  mem_space = gpu_address_space_to_nvptx(gpu.AddressSpace.Workgroup)
+
+  # TODO(dasenov): Add support for the remaining op properties.
+  launch_context.async_copy(
+      src_ref=load_op.source,
+      dst_ref=load_op.destination,
+      barrier=BarrierRef(
+          base_address=memref_ptr(load_op.barrier, memory_space=mem_space),
+          offset=c(0, ir.IntegerType.get_signless(64)),
+          phases=None,
+          num_barriers=1,
+      ),
+      arrive=load_op.arrive,
+      uniform=False,
+  )
+  return []
+
+
+@_register_lowering(mgpu.AsyncStoreOp)
+def _mgpu_async_store_op_lowering_rule(
+    launch_context: LaunchContext, store_op: mgpu.AsyncStoreOp
+) -> Sequence[ir.Value]:
+  # TODO(dasenov): Add support for the remaining op properties.
+  launch_context.async_copy(
+      src_ref=store_op.source,
+      dst_ref=store_op.destination,
+  )
+  return []
+
+
 @_register_lowering(arith.AddFOp)
-def _arith_addf_op_lowering_rule(add: arith.AddFOp) -> Sequence[ir.Value]:
+def _arith_addf_op_lowering_rule(
+    _: LaunchContext, add: arith.AddFOp
+) -> Sequence[ir.Value]:
 
   fragmented_array_lhs = _fragmented_array_from_ir(add.lhs)
   fragmented_array_rhs = _fragmented_array_from_ir(add.rhs)
@@ -250,7 +283,7 @@ def _arith_addf_op_lowering_rule(add: arith.AddFOp) -> Sequence[ir.Value]:
   ]
 
 
-def lower_mgpu_dialect(module: ir.Module):
+def lower_mgpu_dialect(module: ir.Module, launch_context: LaunchContext):
   module.context.append_dialect_registry(mlir_interpreter.upstream_dialects)
   module.context.load_all_available_dialects()
 
@@ -265,7 +298,7 @@ def lower_mgpu_dialect(module: ir.Module):
     if should_have_layout(op) and not has_any_layout_set(op):
       raise ValueError(f"{op} is missing a layout and can not be lowered.")
 
-    new_results = lowering_rule(op)
+    new_results = lowering_rule(launch_context, op)
 
     for old, new in zip(op.results, new_results):
       old.replace_all_uses_with(new)

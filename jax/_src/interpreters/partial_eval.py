@@ -1572,7 +1572,7 @@ class DynamicJaxprTracer(core.Tracer):
 
 def _dynamic_jaxpr_tracer_shaped_abstractify(x):
   return x.aval
-api_util._shaped_abstractify_handlers[DynamicJaxprTracer] = _dynamic_jaxpr_tracer_shaped_abstractify
+core.shaped_abstractify_handlers[DynamicJaxprTracer] = _dynamic_jaxpr_tracer_shaped_abstractify
 
 def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
   sentinel = object()
@@ -2010,8 +2010,8 @@ class DynamicJaxprTrace(core.Trace):
     def fwd_jaxpr_from_zeros(*zeros):
       for store in fwd.stores: store and store.reset()
       fwd_ = _interleave_fun(fwd, zeros)
-      jaxpr, _, consts, atr = trace_to_jaxpr_dynamic(fwd_, in_avals)
-      if atr: raise NotImplementedError
+      jaxpr, _, consts, attrs = trace_to_jaxpr_dynamic(fwd_, in_avals)
+      if attrs: raise NotImplementedError
       return jaxpr, consts
 
     out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
@@ -2154,14 +2154,14 @@ def trace_to_jaxpr_dynamic(
       ans = fun.call_wrapped(*in_tracers)
 
     out_tracers = map(trace.to_jaxpr_tracer, ans)
-    _check_no_refs(debug_info, out_tracers)
+    _check_no_returned_refs(debug_info, out_tracers)
     jaxpr, consts, attrs_tracked = trace.to_jaxpr(out_tracers)
     del trace, fun, in_tracers, out_tracers, ans
 
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr, [v.aval for v in jaxpr.outvars], consts, attrs_tracked
 
-def _check_no_refs(
+def _check_no_returned_refs(
     dbg: lu.TracingDebugInfo | None,
     out_tracers: Sequence[DynamicJaxprTracer]
 ) -> None:
