@@ -237,8 +237,8 @@ class FusedAttentionTest(PallasBaseTest):
             block_q_dq=64,
             block_kv_dq=64,
         ),),
-    causal=(False,),
-    use_segment_ids=(False,),
+    causal=(True, False),
+    use_segment_ids=(True, False)
   )
   def test_fused_attention_bwd(
       self,
