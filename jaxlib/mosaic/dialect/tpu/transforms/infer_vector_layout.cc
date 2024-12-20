@@ -1702,6 +1702,7 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
     const unsigned src_bitwidth = src_ty.getElementTypeBitWidth();
     const unsigned dst_bitwidth = dst_ty.getElementTypeBitWidth();
+    const int packing_factor = src_bitwidth / dst_bitwidth;
     if (isa<arith::TruncFOp>(op)) {
       TPU_CHECK_OP(
           src_bitwidth == 32 && (dst_bitwidth == 16 || dst_bitwidth == 8),
@@ -1709,14 +1710,22 @@ class VectorLayoutInferer {
     }
     auto &layout = *some_layout;
     bool select_native = allUsersRequireNativeTiling(op->getResult(0));
-    auto src_layout = VectorLayout(
-        src_bitwidth, layout.offsets(),
-        select_native ? nativeTiling(src_bitwidth) : layout.tiling(),
-        layout.implicit_dim());
-    auto dst_layout = VectorLayout(
-        dst_bitwidth, layout.offsets(),
-        select_native ? nativeTiling(dst_bitwidth) : layout.tiling(),
-        layout.implicit_dim());
+    std::array<int64_t, 2> src_tiling;
+    std::array<int64_t, 2> dst_tiling;
+    if (select_native) {
+      src_tiling = nativeTiling(src_bitwidth);
+      dst_tiling = nativeTiling(dst_bitwidth);
+    } else {
+      src_tiling = layout.tiling();
+      dst_tiling = layout.tiling();
+      if (layout.tiling()[0] == 1) {
+        dst_tiling[1] *= packing_factor;
+      }
+    }
+    auto src_layout = VectorLayout(src_bitwidth, layout.offsets(), src_tiling,
+                                   layout.implicit_dim());
+    auto dst_layout = VectorLayout(dst_bitwidth, layout.offsets(), dst_tiling,
+                                   layout.implicit_dim());
     setLayout(op, src_layout, dst_layout);
     return success();
   }
