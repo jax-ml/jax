@@ -126,8 +126,7 @@ class VectorLayoutInferer {
       // TODO: b/342235360 - This check is temporary while we increase and test
       // support for offsets outside of the first tile. When support is more
       // broad, any op without support should check it within their own rule.
-      if (!isa<arith::TruncIOp, arith::TruncFOp, vector::BroadcastOp,
-               vector::ExtractStridedSliceOp>(any_op)) {
+      if (!isa<vector::BroadcastOp, vector::ExtractStridedSliceOp>(any_op)) {
         const SmallVector<Layout> layouts_in = getLayoutFromOperands(&any_op);
         for (const Layout &layout : layouts_in) {
           if (layout &&
@@ -1684,32 +1683,24 @@ class VectorLayoutInferer {
     auto dst_ty = cast<VectorType>(op->getResult(0).getType());
     auto some_layout = getLayout(op->getOperand(0));
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
-    const unsigned src_bitwidth = src_ty.getElementTypeBitWidth();
-    const unsigned dst_bitwidth = dst_ty.getElementTypeBitWidth();
-    const int packing_factor = src_bitwidth / dst_bitwidth;
-    if (isa<arith::TruncFOp>(op)) {
-      TPU_CHECK_OP(
-          src_bitwidth == 32 && (dst_bitwidth == 16 || dst_bitwidth == 8),
-          "Only 32-bit to 16-bit or 8-bit float truncation supported");
+    if (dyn_cast<arith::TruncFOp>(op)) {
+      TPU_CHECK_OP(src_ty.getElementTypeBitWidth() == 32 &&
+                       (dst_ty.getElementTypeBitWidth() == 16 ||
+                        dst_ty.getElementTypeBitWidth() == 8),
+                   "Only 32-bit to 8-bit or 16-bit truncation supported");
+    } else {
+      TPU_CHECK_OP(src_ty.getElementTypeBitWidth() == 32,
+                   "Only 32-bit truncation supported");
     }
     auto &layout = *some_layout;
     bool select_native = allUsersRequireNativeTiling(op->getResult(0));
-    std::array<int64_t, 2> src_tiling;
-    std::array<int64_t, 2> dst_tiling;
-    if (select_native) {
-      src_tiling = nativeTiling(src_bitwidth);
-      dst_tiling = nativeTiling(dst_bitwidth);
-    } else {
-      src_tiling = layout.tiling();
-      dst_tiling = layout.tiling();
-      if (layout.tiling()[0] == 1) {
-        dst_tiling[1] *= packing_factor;
-      }
-    }
-    auto src_layout = VectorLayout(src_bitwidth, layout.offsets(), src_tiling,
+    auto src_layout = VectorLayout(32, layout.offsets(), default_tiling_,
                                    layout.implicit_dim());
-    auto dst_layout = VectorLayout(dst_bitwidth, layout.offsets(), dst_tiling,
-                                   layout.implicit_dim());
+    auto dst_layout = VectorLayout(
+        dst_ty.getElementTypeBitWidth(), layout.offsets(),
+        select_native ? nativeTiling(dst_ty.getElementTypeBitWidth())
+                      : default_tiling_,
+        layout.implicit_dim());
     setLayout(op, src_layout, dst_layout);
     return success();
   }
