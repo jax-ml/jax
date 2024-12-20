@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import warnings
-
 import numpy as np
 
 from jax import lax
 import jax.numpy as jnp
 
+from jax._src.lax import lax as lax_internal
 from jax._src import dtypes
 from jax._src.tree_util import tree_flatten, tree_unflatten
 from jax._src.util import safe_zip, unzip2, HashablePartial
@@ -83,7 +82,8 @@ def _unravel_list(indices, shapes, from_dtypes, to_dtype, arr):
     raise TypeError(f"unravel function given array of dtype {arr_dtype}, "
                     f"but expected dtype {to_dtype}")
   chunks = jnp.split(arr, indices[:-1])
-  with warnings.catch_warnings():
-    warnings.simplefilter("ignore")  # ignore complex-to-real cast warning
-    return [lax.convert_element_type(chunk.reshape(shape), dtype)
-            for chunk, shape, dtype in zip(chunks, shapes, from_dtypes)]
+  return [
+    lax_internal._convert_element_type(chunk.reshape(shape), dtype,
+                                       warn_on_complex_to_real_cast=False)
+    for chunk, shape, dtype in zip(chunks, shapes, from_dtypes)
+  ]

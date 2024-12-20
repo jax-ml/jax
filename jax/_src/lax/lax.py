@@ -546,7 +546,8 @@ def _convert_element_type(
     operand: ArrayLike,
     new_dtype: DTypeLike | dtypes.ExtendedDType | None = None,
     weak_type: bool = False,
-    sharding: Sharding | None = None):
+    sharding: Sharding | None = None,
+    warn_on_complex_to_real_cast: bool = True):
   if hasattr(operand, '__jax_array__'):
     operand = operand.__jax_array__()
 
@@ -585,7 +586,8 @@ def _convert_element_type(
       isinstance(operand, Array)):
     sharding = operand.sharding
 
-  if (dtypes.issubdtype(old_dtype, np.complexfloating) and
+  if (warn_on_complex_to_real_cast and
+      dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
     msg = "Casting complex values to real discards the imaginary part"
     warnings.warn(msg, NumpyComplexWarning, stacklevel=2)
@@ -3197,12 +3199,15 @@ def _convert_elt_type_folding_rule(consts, eqn):
   # TODO(mattjj): allow constant-folding CPU-backed JAX arrays
   c, = consts
   o, = eqn.outvars
+  new_dtype = eqn.params['new_dtype']
   if (type(c) in {np.ndarray, *dtypes.python_scalar_dtypes} and
       isinstance(o.aval, core.UnshapedArray) and not np.shape(c) and
-      not dtypes.issubdtype(eqn.params['new_dtype'], dtypes.extended)):
-    with warnings.catch_warnings():
-      warnings.simplefilter('ignore', util.NumpyComplexWarning)
-      out = np.array(c).astype(eqn.params['new_dtype'])
+      not dtypes.issubdtype(new_dtype, dtypes.extended)):
+    out = np.array(c)
+    if (dtypes.issubdtype(out.dtype, np.complexfloating) and
+        not dtypes.issubdtype(new_dtype, np.complexfloating)):
+      out = out.real
+    out = out.astype(new_dtype)
     if not o.aval.weak_type:
       return [out], None
     out = out.item()

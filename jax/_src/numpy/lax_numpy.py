@@ -5732,10 +5732,9 @@ def astype(x: ArrayLike, dtype: DTypeLike | None,
 
   # We offer a more specific warning than the usual ComplexWarning so we prefer
   # to issue our warning.
-  with warnings.catch_warnings():
-    warnings.simplefilter("ignore", ComplexWarning)
-    result = lax_internal._convert_element_type(
-      x_arr, dtype, sharding=_normalize_to_sharding(device))
+  result = lax_internal._convert_element_type(
+    x_arr, dtype, sharding=_normalize_to_sharding(device),
+    warn_on_complex_to_real_cast=False)
   return _array_copy(result) if copy else result
 
 
