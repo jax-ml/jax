@@ -2564,7 +2564,6 @@ def _sds_aval_mapping(x):
       x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
       weak_type=x.weak_type)
 core.pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
-core.shaped_abstractify_handlers[ShapeDtypeStruct] = _sds_aval_mapping
 
 
 @api_boundary
