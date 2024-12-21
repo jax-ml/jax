@@ -111,9 +111,12 @@ def _nan_check_posthook(fun, args, kwargs, output):
   try:
     dispatch.check_special(pjit.pjit_p.name, buffers)
   except dispatch.InternalFloatingPointError as e:
+    f = fun._fun
+    if getattr(f, '_apply_primitive', False):
+      raise FloatingPointError(f"invalid value ({e.ty}) encountered in {f.__qualname__}") from None
     # compiled_fun can only raise in this case
     assert config.debug_nans.value or config.debug_infs.value
-    dispatch.maybe_recursive_nan_check(e, fun._fun, args, kwargs)
+    dispatch.maybe_recursive_nan_check(e, f, args, kwargs)
     raise AssertionError("Unreachable") from e
 
 def _update_debug_special_global(_):
@@ -1916,6 +1919,7 @@ def vjp(fun: Callable[..., tuple[T, U]], *primals: Any,
         has_aux: Literal[True],
         reduce_axes: Sequence[AxisName] = ()) -> tuple[T, Callable, U]:
   ...
+@api_boundary
 def vjp(
     fun: Callable, *primals, has_aux: bool = False, reduce_axes=()
   ) -> tuple[Any, Callable] | tuple[Any, Callable, Any]:
