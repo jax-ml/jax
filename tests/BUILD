@@ -1148,6 +1148,14 @@ jax_py_test(
 )
 
 jax_py_test(
+    name = "warnings_util_test",
+    srcs = ["warnings_util_test.py"],
+    deps = [
+        "//jax:test_util",
+    ] + py_deps("absl/testing"),
+)
+
+jax_py_test(
     name = "xla_bridge_test",
     srcs = ["xla_bridge_test.py"],
     data = ["testdata/example_pjrt_plugin_config.json"],

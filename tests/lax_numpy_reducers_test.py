@@ -212,7 +212,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     @jtu.ignore_warning(category=NumpyComplexWarning)
     @jtu.ignore_warning(category=RuntimeWarning,
-                        message="mean of empty slice.*")
+                        message="Mean of empty slice.*")
     @jtu.ignore_warning(category=RuntimeWarning,
                         message="overflow encountered.*")
     def np_fun(x):
