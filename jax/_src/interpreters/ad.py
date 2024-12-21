@@ -350,15 +350,8 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
           cts_out = get_primitive_transpose(eqn.primitive)(
               params, call_jaxpr, invals, cts_in, cts_in_avals)
         else:
-          try:
-            cts_out = get_primitive_transpose(eqn.primitive)(
-                cts_in, *invals, **eqn.params)
-          except (FloatingPointError, ZeroDivisionError) as e:
-            msg = "When differentiating the code at the top of the callstack:"
-            if msg not in e.args[0]:
-              e.args = e.args[0] + f'\n{msg}',
-            e.args = e.args[0] + f'\n{source_info_util.summarize(eqn.source_info)}',
-            raise e from None
+          cts_out = get_primitive_transpose(eqn.primitive)(
+              cts_in, *invals, **eqn.params)
         cts_out = [Zero(v.aval) for v in eqn.invars] if cts_out is Zero else cts_out
         # FIXME: Some invars correspond to primals!
         map(partial(write_cotangent, eqn.primitive), eqn.invars, cts_out)
