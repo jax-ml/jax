@@ -797,25 +797,30 @@ def lower_jaxpr_to_module(
     # Each range is 2 events, each event is 4 bytes.
     prof_spec = mgpu_profiler.ProfilerSpec(prof_space * 2 * 4)
     prof_ctx = ProfilerContext(params["profile_dir"], prof_spec)
-  module, out_structs_gmem, _ = mgpu_core._lower_as_gpu_kernel(
-      body,
-      grid=parallel_grid,
-      cluster=(),
-      block=block,
-      in_shapes=in_structs_gmem,
-      out_shape=out_structs_gmem,
-      smem_scratch_shape=(
-          (*in_structs_smem, *out_structs_smem),
-          *extra_smem_scratch,
-          (
-              mgpu.Barrier(arrival_count=1, num_barriers=max_concurrent_steps),
-              rs.barriers,
-              extra_barriers,
+  module, out_structs_gmem, _, launch_ctx, scratch_arr = (
+      mgpu_core._lower_as_gpu_kernel(
+          body,
+          grid=parallel_grid,
+          cluster=(),
+          block=block,
+          in_shapes=in_structs_gmem,
+          out_shape=out_structs_gmem,
+          smem_scratch_shape=(
+              (*in_structs_smem, *out_structs_smem),
+              *extra_smem_scratch,
+              (
+                  mgpu.Barrier(
+                      arrival_count=1, num_barriers=max_concurrent_steps
+                  ),
+                  rs.barriers,
+                  extra_barriers,
+              ),
           ),
-      ),
-      module_name=name_and_src_info.name,
-      prof_spec=prof_spec,
+          module_name=name_and_src_info.name,
+          prof_spec=prof_spec,
+      )
   )
+  mgpu_core._initialize_scratch(launch_ctx, scratch_arr)
 
   return LoweringResult(
       module, parallel_grid, block, out_structs_gmem, prof_ctx
