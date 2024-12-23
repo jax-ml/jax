@@ -656,6 +656,13 @@ def check_bool_conversion(arr: Array):
                      " is ambiguous. Use a.any() or a.all()")
 
 
+pytype_aval_mappings: dict[type, Callable[[Any], AbstractValue]] = {}
+
+def _str_abstractify(x):
+  raise TypeError(f"Argument '{x}' of type {type(x)} is not a valid JAX type")
+pytype_aval_mappings[str] = _str_abstractify
+
+
 def _aval_property(name):
   return property(lambda self: getattr(self.aval, name))
 
@@ -917,6 +924,8 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
 # Tracer instances to the underlying avals
 aval_property = namedtuple("aval_property", ["fget"])
 aval_method = namedtuple("aval_method", ["fun"])
+
+pytype_aval_mappings[Tracer] = lambda x: x.aval
 
 def check_eval_args(args):
   for arg in args:
@@ -1400,45 +1409,51 @@ def check_valid_jaxtype(x):
       f"Value {x!r} of type {type(x)} is not a valid JAX type")
 
 
-def _shaped_abstractify_slow(x):
-  try:
-    return x if isinstance(x, AbstractValue) else get_aval(x)
-  except TypeError:
-    pass
+# We have three flavors of abstractification APIs here which each used to have
+# their own separate implementation. Now they're effectively the same, with the
+# following differences:
+#
+# - abstractify returns avals for non-traced array-like objects.
+# - get_aval is like abstractify, but also accepts tracers.
+# - shaped_abstractify is like get_aval, but also accepts duck-typed arrays.
+#
+# TODO(jakevdp): can these be unified further?
 
-  weak_type = getattr(x, 'weak_type', False)
-  if hasattr(x, 'dtype'):
-    dtype = dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True)
-  else:
-    raise TypeError(
-        f"Cannot interpret value of type {type(x)} as an abstract array; it "
-        "does not have a dtype attribute")
-  return ShapedArray(np.shape(x), dtype, weak_type=weak_type)
-
-# TODO(jakevdp): deduplicate this with abstractify
 def shaped_abstractify(x):
-  # This was originally api_util.shaped_abstractify; temporarily moved
-  # here in order to facilitate combining it with abstractify.
-  handler = shaped_abstractify_handlers.get(type(x), None)
-  return handler(x) if handler is not None else _shaped_abstractify_slow(x)
+  typ = type(x)
+  if (aval_fn := pytype_aval_mappings.get(typ)):  # fast path
+    return aval_fn(x)
+  for t in typ.__mro__[1:]:
+    if (aval_fn := pytype_aval_mappings.get(t)):
+      return aval_fn(x)
+  if isinstance(x, AbstractValue):
+    return x
+  if hasattr(x, '__jax_array__'):
+    return shaped_abstractify(x.__jax_array__())
+  if hasattr(x, 'dtype'):
+    return ShapedArray(np.shape(x), x.dtype, weak_type=getattr(x, 'weak_type', False))
+  raise TypeError(
+      f"Cannot interpret value of type {typ} as an abstract array; it "
+      "does not have a dtype attribute")
 
 
 def abstractify(x):
-  for typ in type(x).__mro__:
-    aval_fn = pytype_aval_mappings.get(typ)
-    if aval_fn: return aval_fn(x)
-  if hasattr(x, '__jax_array__'):
-    return abstractify(x.__jax_array__())
-  raise TypeError(f"Argument '{x}' of type '{type(x)}' is not a valid JAX type")
+  if isinstance(x, Tracer):
+    raise TypeError(f"Argument '{x}' of type '{type(x)}' is not a valid JAX type")
+  return get_aval(x)
 
 
 def get_aval(x):
-  if isinstance(x, Tracer):
-    return x.aval
-  else:
-    return abstractify(x)
+  typ = type(x)
+  if (aval_fn := pytype_aval_mappings.get(typ)):  # fast path
+    return aval_fn(x)
+  for t in typ.__mro__[1:]:
+    if (aval_fn := pytype_aval_mappings.get(t)):
+      return aval_fn(x)
+  if hasattr(x, '__jax_array__'):
+    return get_aval(x.__jax_array__())
+  raise TypeError(f"Argument '{x}' of type '{typ}' is not a valid JAX type")
 
-get_type = get_aval
 
 def is_concrete(x):
   return to_concrete_value(x) is not None
@@ -1831,13 +1846,6 @@ class DShapedArray(UnshapedArray):
     return DShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
                         self.weak_type)
 
-pytype_aval_mappings: dict[type, Callable[[Any], AbstractValue]] = {}
-shaped_abstractify_handlers: dict[Any, Callable[[Any], AbstractValue]] = {}
-
-def _str_abstractify(x):
-  raise TypeError(f"Argument '{x}' of type {type(x)} is not a valid JAX type")
-pytype_aval_mappings[str] = _str_abstractify
-shaped_abstractify_handlers[str] = _str_abstractify
 
 class DArray:
   _aval: DShapedArray
@@ -1894,7 +1902,6 @@ def _darray_aval(x):
   return DShapedArray(x._aval.shape, x._aval.dtype, x._aval.weak_type)
 
 pytype_aval_mappings[DArray] = _darray_aval
-shaped_abstractify_handlers[DArray] = _darray_aval
 
 
 @dataclass(frozen=True)
@@ -1924,11 +1931,10 @@ class MutableArray:
   aval = property(lambda self: self._aval)
   shape = property(lambda self: self._aval.shape)
   dtype = property(lambda self: self._aval.dtype)
-  def __getitem__(self, idx): return get_aval(self)._getitem(self, idx)
-  def __setitem__(self, idx, x): return get_aval(self)._setitem(self, idx, x)
+  def __getitem__(self, idx): return self._aval._getitem(self, idx)
+  def __setitem__(self, idx, x): return self._aval._setitem(self, idx, x)
   def __repr__(self) -> str: return 'Mutable' + repr(self[...])
 pytype_aval_mappings[MutableArray] = lambda x: x._aval
-shaped_abstractify_handlers[MutableArray] = lambda x: x._aval
 
 def mutable_array(init_val):
   return mutable_array_p.bind(init_val)
@@ -1984,7 +1990,6 @@ class Token:
   def block_until_ready(self):
     self._buf.block_until_ready()
 pytype_aval_mappings[Token] = lambda _: abstract_token
-shaped_abstractify_handlers[Token] = lambda _: abstract_token
 
 
 # TODO(dougalm): Deprecate these. They're just here for backwards compat.
