@@ -1569,10 +1569,7 @@ class DynamicJaxprTracer(core.Tracer):
     val = frame.constvar_to_val.get(frame.tracer_to_var.get(id(self)))
     return self if val is None else get_referent(val)
 
-
-def _dynamic_jaxpr_tracer_shaped_abstractify(x):
-  return x.aval
-core.shaped_abstractify_handlers[DynamicJaxprTracer] = _dynamic_jaxpr_tracer_shaped_abstractify
+core.pytype_aval_mappings[DynamicJaxprTracer] = lambda x: x.aval
 
 def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
   sentinel = object()

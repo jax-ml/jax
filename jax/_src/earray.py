@@ -115,7 +115,6 @@ def _earray_shard_arg_handler(xs, shardings, layouts, copy_semantics):
   return pxla.shard_args(phys_shardings, layouts, copy_semantics, arrs)
 pxla.shard_arg_handlers[EArray] = _earray_shard_arg_handler
 
-core.shaped_abstractify_handlers[EArray] = lambda self: self.aval
 core.pytype_aval_mappings[EArray] = lambda x: x.aval
 xla.canonicalize_dtype_handlers[EArray] = lambda x: x
 tree_util.dispatch_registry.register_node(
