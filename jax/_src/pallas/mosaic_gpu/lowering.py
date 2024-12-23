@@ -1787,29 +1787,21 @@ def _ensure_fa(x: object, dtype: jnp.dtype) -> mgpu.FragmentedArray:
   if isinstance(x, mgpu.FragmentedArray):
     assert x.mlir_dtype == mgpu_utils.dtype_to_ir_type(dtype)
     return x
-  elif isinstance(x, (np.number, np.ndarray, int, float)):
-    return mgpu.FragmentedArray.splat(
-        _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype)),
-        (),
-        is_signed=mgpu_utils.is_signed(dtype),
-    )
-  elif isinstance(x, ir.Value):
-    if isinstance(x.type, (ir.IntegerType, ir.FloatType, ir.IndexType)):
-      assert x.type == mgpu_utils.dtype_to_ir_type(dtype)
-      return mgpu.FragmentedArray.splat(x, (), is_signed=mgpu_utils.is_signed(dtype))
-  raise NotImplementedError(f"Unsupported type: {type(x)}")
+  return mgpu.FragmentedArray.splat(
+      _ensure_ir_value(x, dtype), (), is_signed=mgpu_utils.is_signed(dtype)
+  )
 
 
 def _ensure_ir_value(x: object, dtype: jnp.dtype) -> ir.Value:
   if isinstance(x, ir.Value):
     assert x.type == mgpu_utils.dtype_to_ir_type(dtype)
     return x
-  elif isinstance(x, (np.number, np.ndarray, int, float)):
-    return _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype))
   elif isinstance(x, mgpu.FragmentedArray):
+    assert x.mlir_dtype == mgpu_utils.dtype_to_ir_type(dtype)
     if isinstance(x.layout, mgpu.WGSplatFragLayout):
       return x.registers.item()
-  raise NotImplementedError(f"Unsupported type: {type(x)}")
+    raise NotImplementedError(f"Unsupported layout: {x.layout}")
+  return _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype))
 
 
 def _ir_constant(v: object, t: ir.Type) -> ir.Value:
