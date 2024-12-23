@@ -4325,6 +4325,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
         out_specs=P(None, 'i')))
     f(jnp.zeros((2, 16)), jnp.ones(2))
 
+    jax.jit(_f)(jnp.zeros((2, 16)), jnp.ones(2))
+
   def test_jit_trace_lower_and_compile(self):
     def f(x):
       return x * 2
