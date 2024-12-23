@@ -34,6 +34,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Deletions
   * `jax_enable_memories` flag has been deleted and the behavior of that flag
     is on by default.
+  * From `jax.lib.xla_client`, the previously-deprecated `Device` and
+    `XlaRuntimeError` symbols have been removed; instead use `jax.Device`
+    and `jax.errors.JaxRuntimeError` respectively.
 
 ## jax 0.4.38 (Dec 17, 2024)
 
