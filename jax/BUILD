@@ -237,6 +237,7 @@ py_library_providing_imports_info(
             "_src/state/**/*.py",
             "_src/third_party/**/*.py",
             "experimental/key_reuse/**/*.py",
+            "experimental/numerics_check/**/*.py",
             "experimental/roofline/**/*.py",
             "image/**/*.py",
             "interpreters/**/*.py",
