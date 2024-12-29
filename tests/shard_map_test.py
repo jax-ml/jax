@@ -2207,6 +2207,23 @@ class ShardMapTest(jtu.JaxTestCase):
   #
   #   f(x)  # don't crash
 
+  def test_partial_auto_of_random_keys(self):
+    if config.use_shardy_partitioner.value:
+      self.skipTest('Shardy does not support full-to-shard.')
+
+    mesh = jtu.create_mesh((4, 2), ('i', 'j'))
+    keys = jax.random.split(jax.random.key(0), 8)
+
+    @jax.jit
+    def f(x):
+      return shard_map(lambda k: k,
+                       mesh, in_specs=P('i'), out_specs=P('i'),
+                       check_rep=False, auto=frozenset({'j'}))(keys)
+
+    y = f(keys) # don't crash
+    self.assertAllClose(jax.random.key_data(y), jax.random.key_data(keys),
+                        check_dtypes=False)
+
   def test_vmap_grad_shmap_spmd_axis_name_residuals(self):
     # https://github.com/jax-ml/jax/pull/21032
     mesh = jtu.create_mesh((4, 2), ('i', 'j'))
