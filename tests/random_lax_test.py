@@ -1243,6 +1243,47 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertArraysAllClose(samples2, jnp.array([jnp.nan, 0., jnp.nan, jnp.nan]), check_dtypes=False)
     self.assertArraysAllClose(samples3, jnp.array([jnp.nan, jnp.nan, jnp.nan]), check_dtypes=False)
 
+  def testMultinomial(self):
+    key = random.key(0)
+    probs = jnp.array([
+      [0.5, 0.2, 0.3],
+      [0.1, 0.2, 0.7],
+      [1.0, 0.0, 0.0],
+      [0.0, 1.0, 0.0],
+      [0.0, 0.0, 1.0],
+      [0.5, 0.0, 0.5],
+    ])
+    trials = 1e8
+    counts = random.multinomial(key, trials, probs)
+    freqs = counts / trials
+    self.assertAllClose(freqs, probs, atol=1e-3)
+
+    with self.subTest("test with axis=0"):
+      counts = random.multinomial(key, trials, probs.T, axis=0)
+      freqs = counts / trials
+      self.assertAllClose(freqs, probs.T, atol=1e-3)
+
+  @jtu.sample_product(
+      [
+        dict(shape=shape, axis=axis)
+        for shape in [(2, 3), (2, 3, 5)]
+        for ndim in [len(shape)]
+        for axis in range(-ndim, ndim)
+      ]
+  )
+  def testMultinomialAxisShape(self, axis, shape):
+    key = random.key(0)
+
+    key, subkey = random.split(key)
+    exps = random.exponential(key, shape)
+    probs = exps / exps.sum(axis=axis, keepdims=True)
+
+    trials = 1e8
+    counts = random.multinomial(key, trials, probs, axis, shape)
+    freqs = counts / trials
+
+    self.assertAllClose(freqs, probs, atol=1e-3)
+
   def test_batched_key_errors(self):
     keys = lambda: jax.random.split(self.make_key(0))
     msg = "{} accepts a single key, but was given a key array of shape.*"
