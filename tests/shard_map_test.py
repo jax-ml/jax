@@ -2231,6 +2231,7 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((4, 2), ('i', 'j'))
 
     def g(x):
+      x = jax.lax.with_sharding_constraint(x, NamedSharding(mesh, P('j')))
       jax.debug.print("input value {x}", x=x)
       return x
 
@@ -2244,9 +2245,8 @@ class ShardMapTest(jtu.JaxTestCase):
       _ = f(jnp.arange(8)) # don't crash
       jax.effects_barrier()
 
-    output_shards = np.arange(8).reshape(4, 2)
     for i in range(8):
-      self.assertIn(f'input value {output_shards[i % 4]}', output())
+      self.assertIn(f'input value [{i}', output())
 
   def test_vmap_grad_shmap_spmd_axis_name_residuals(self):
     # https://github.com/jax-ml/jax/pull/21032
