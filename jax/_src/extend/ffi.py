@@ -72,6 +72,21 @@ def register_ffi_target(
                                                 **kwargs)
 
 
+def register_ffi_type_id(
+    name: str,
+    obj: Any,
+    platform: str = "cpu",
+) -> None:
+  """Registers a custom type ID for a foreign function interface (FFI) target.
+
+  Args:
+    name: the name of the type ID. This name must be unique within the process.
+    obj: a ``PyCapsule`` object encapsulating a pointer to the type ID.
+    platform: the target platform.
+  """
+  return xla_client.register_custom_type_id(name, obj, platform=platform)
+
+
 def pycapsule(funcptr):
   """Wrap a ctypes function pointer in a PyCapsule.
 

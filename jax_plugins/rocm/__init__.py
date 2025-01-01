@@ -94,5 +94,11 @@ def initialize():
     )
     for _name, _value in rocm_plugin_extension.registrations().items():
       xla_client.register_custom_call_target(_name, _value, platform="ROCM")
+    xla_client.register_custom_type_id_handler(
+        "ROCM",
+        functools.partial(
+            rocm_plugin_extension.register_custom_type_id, c_api
+        ),
+    )
   else:
     logger.warning('rocm_plugin_extension is not found.')
