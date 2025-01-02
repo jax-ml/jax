@@ -179,6 +179,7 @@ py_extension(
     deps = [
         ":jaxlib_mlir_capi_shared_library",
         "//jaxlib/mosaic:tpu_dialect_capi_headers",
+        "//jaxlib/mosaic:tpu_ext_dialect_capi_headers",
         "@com_google_absl//absl/log:check",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:CAPIIRHeaders",
@@ -381,6 +382,7 @@ cc_library(
     name = "jaxlib_mlir_capi_objects",
     deps = [
         "//jaxlib/mosaic:tpu_dialect_capi_objects",
+        "//jaxlib/mosaic:tpu_ext_dialect_capi_objects",
         "//jaxlib/mosaic/dialect/gpu:gpu_dialect_capi_objects",
         "@llvm-project//mlir:CAPIArithObjects",
         "@llvm-project//mlir:CAPIGPUObjects",
