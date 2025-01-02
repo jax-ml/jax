@@ -468,6 +468,9 @@ async def main():
       # Enable clang settings that are needed for the build to work with newer
       # versions of Clang.
       wheel_build_command_base.append("--config=clang")
+    if clang_major_version < 19:
+      wheel_build_command_base.append("--define=xnn_enable_avxvnniint8=false")
+
   else:
     gcc_path = args.gcc_path or utils.get_gcc_path_or_exit()
     logging.debug(
@@ -476,6 +479,10 @@ async def main():
     )
     wheel_build_command_base.append(f"--repo_env=CC=\"{gcc_path}\"")
     wheel_build_command_base.append(f"--repo_env=BAZEL_COMPILER=\"{gcc_path}\"")
+
+    gcc_major_version = utils.get_gcc_major_version(gcc_path)
+    if gcc_major_version < 13:
+      wheel_build_command_base.append("--define=xnn_enable_avxvnniint8=false")
 
   if not args.disable_mkl_dnn:
     logging.debug("Enabling MKL DNN")
