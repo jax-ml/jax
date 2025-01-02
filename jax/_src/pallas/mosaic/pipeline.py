@@ -1195,6 +1195,9 @@ def emit_pipeline_with_allocations(
     in_specs=None,
     out_specs=None,
     should_accumulate_out=False,
+    core_axis: int | None = None,
+    dimension_semantics: tuple[GridDimensionSemantics, ...] | None = None,
+    trace_scopes: bool = True,
 ):
   """Creates pallas pipeline and top-level allocation preparation functions.
 
@@ -1205,6 +1208,12 @@ def emit_pipeline_with_allocations(
     out_specs: output pallas block specs
     should_accumulate_out: booleans to indicate which outputs should be treated
       as accumulators.
+    core_axis: optional int, indicates whether or not to partition the grid
+      along the core axis.
+    dimension_semantics: optional tuple of GridDimensionSemantics (e.g. PARALLEL
+      or ARBITRARY).
+    trace_scopes: optional bool, indicates whether to annotate each region in
+      the pipeline using named_scope.
 
   Returns:
     (emit_pipeline, make_allocations) function pair, where:
@@ -1212,7 +1221,6 @@ def emit_pipeline_with_allocations(
     make_allocations is a function to create buffered refs for the inner
       pipeline that can be created at the top-level of a pallas call to be
       reused across multiple invocations of the inner pipeline.
-
   """
   make_allocations = functools.partial(make_pipeline_allocations,
                     in_specs=in_specs,
@@ -1223,6 +1231,10 @@ def emit_pipeline_with_allocations(
       grid=grid,
       in_specs=in_specs,
       out_specs=out_specs,
-      should_accumulate_out=should_accumulate_out)
+      should_accumulate_out=should_accumulate_out,
+      core_axis=core_axis,
+      dimension_semantics=dimension_semantics,
+      trace_scopes=trace_scopes,
+  )
 
   return pipeline, make_allocations
