@@ -170,43 +170,49 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
 
   @jtu.sample_product(
-    from_dtype=jtu.dtypes.all_floating + jtu.dtypes.all_integer + jtu.dtypes.all_unsigned,
-    to_dtype=jtu.dtypes.all_floating + jtu.dtypes.all_integer + jtu.dtypes.all_unsigned,
+    from_dtype=['int4', 'uint4'] + jtu.dtypes.all_floating + jtu.dtypes.all_integer + jtu.dtypes.all_unsigned,
+    to_dtype=['int4', 'uint4'] + jtu.dtypes.all_floating + jtu.dtypes.all_integer + jtu.dtypes.all_unsigned,
     shape = [(), (2,), (2, 3)]
   )
   def testBitcastConvertType(self, from_dtype, to_dtype, shape):
     rng = jtu.rand_default(self.rng())
-    itemsize_in = np.dtype(from_dtype).itemsize
-    itemsize_out = np.dtype(to_dtype).itemsize
-    if itemsize_in < itemsize_out:
-      shape = (*shape, itemsize_out // itemsize_in)
+    nbits_in = dtypes.bit_width(from_dtype)
+    nbits_out = dtypes.bit_width(to_dtype)
+    if nbits_in < nbits_out:
+      shape = (*shape, nbits_out // nbits_in)
     args_maker = lambda: [rng(shape, from_dtype)]
-    op = lambda x: lax.bitcast_convert_type(x, to_dtype)
-    self._CompileAndCheck(op, args_maker)
+    jnp_op = lambda x: lax.bitcast_convert_type(x, to_dtype)
+    self._CompileAndCheck(jnp_op, args_maker)
 
     # Test the shape and dtype of the output. We avoid testing the values here
     # because the bitwise representation may vary from platform to platform.
-    out = op(*args_maker())
-    if itemsize_in == itemsize_out:
+    out = jnp_op(*args_maker())
+    if nbits_in == nbits_out:
       expected_shape = shape
-    elif itemsize_in < itemsize_out:
+    elif nbits_in < nbits_out:
       expected_shape = shape[:-1]
     else:
-      expected_shape = (*shape, itemsize_in // itemsize_out)
+      expected_shape = (*shape, nbits_in // nbits_out)
     self.assertEqual(out.dtype, to_dtype)
     self.assertEqual(out.shape, expected_shape)
 
   @jtu.sample_product(
     [dict(from_dtype=from_dtype, to_dtype=to_dtype)
      for from_dtype, to_dtype in itertools.product(
-       [np.float32, np.int32, "float32", "int32"], repeat=2)],
+       ['int4', 'uint4', np.int8, np.uint8, np.int32, np.float16, np.float32],
+       repeat=2)],
+    shape=[(4,), (2, 4), (2, 3, 4)]
   )
-  def testBitcastConvertTypeAgainstNumpy(self, from_dtype, to_dtype):
+  def testBitcastConvertTypeAgainstNumpy(self, from_dtype, to_dtype, shape):
+    nbits_in = dtypes.bit_width(from_dtype)
+    nbits_out = dtypes.bit_width(to_dtype)
+    if nbits_in < nbits_out:
+      shape = (*shape, nbits_out // nbits_in)
     rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng((2, 3), from_dtype)]
-    op = lambda x: lax.bitcast_convert_type(x, to_dtype)
-    numpy_op = lambda x: lax_reference.bitcast_convert_type(x, to_dtype)
-    self._CheckAgainstNumpy(numpy_op, op, args_maker)
+    args_maker = lambda: [rng(shape, from_dtype)]
+    jnp_op = lambda x: lax.bitcast_convert_type(x, to_dtype)
+    np_op = lambda x: lax_reference.bitcast_convert_type(x, to_dtype)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
 
   @jtu.sample_product(
     [dict(from_dtype=from_dtype, to_dtype=to_dtype)
@@ -1378,83 +1384,6 @@ class LaxTest(jtu.JaxTestCase):
     op = lambda x, y: lax.dot_general(x, y, dimension_numbers)
     numpy_op = lambda x, y: lax_reference.dot_general(x, y, dimension_numbers)
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
-
-  def testRaggedAllToAllErrors(self):
-    operand = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=jnp.float32)
-    output = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
-    input_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
-    send_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
-    output_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
-    recv_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
-
-    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all input and output shapes must be equal, except for the outermost dimension."):
-      jax.jit(lax.ragged_all_to_all).lower(operand, jnp.array([[0.0], [0.0], [0.0], [0.0], [0.0]], dtype=jnp.float32), input_offsets, send_sizes, output_offsets, recv_sizes)
-    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all input_offsets must be integer type."):
-      jax.jit(lax.ragged_all_to_all).lower(operand, output, jnp.array([0.0, 1.0, 3.0], dtype=jnp.float32), send_sizes, output_offsets, recv_sizes)
-    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all send_sizes must be integer type."):
-      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32), output_offsets, recv_sizes)
-    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all output_offsets must be integer type."):
-      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, jnp.array([0.0, 1.0, 3.0], dtype=jnp.float32), recv_sizes)
-    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all recv_sizes must be integer type."):
-      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, output_offsets, jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32))
-    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all input_offsets must be rank 1 with positive dimension size, but got shape (1, 3)"):
-      jax.jit(lax.ragged_all_to_all).lower(operand, output, jnp.array([[0, 1, 3]], dtype=jnp.int32), send_sizes, output_offsets, recv_sizes)
-    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all input_offsets must be rank 1 with positive dimension size, but got shape (0,)"):
-      jax.jit(lax.ragged_all_to_all).lower(operand, output, jnp.array([], dtype=jnp.int32), send_sizes, output_offsets, recv_sizes)
-    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all send_sizes must be rank 1 with positive dimension size, but got shape (1, 3)"):
-      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, jnp.array([[1, 2, 3]], dtype=jnp.int32), output_offsets, recv_sizes)
-    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all send_sizes must be rank 1 with positive dimension size, but got shape (0,)"):
-      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, jnp.array([], dtype=jnp.int32), output_offsets, recv_sizes)
-    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all output_offsets must be rank 1 with positive dimension size, but got shape (1, 3)"):
-      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, jnp.array([[0, 1, 3]], dtype=jnp.int32), recv_sizes)
-    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all output_offsets must be rank 1 with positive dimension size, but got shape (0,)"):
-      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, jnp.array([], dtype=jnp.int32), recv_sizes)
-    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all recv_sizes must be rank 1 with positive dimension size, but got shape (1, 3)"):
-      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, output_offsets, jnp.array([[1, 2, 3]], dtype=jnp.int32))
-    with self.assertRaisesWithLiteralMatch(ValueError, "ragged_all_to_all recv_sizes must be rank 1 with positive dimension size, but got shape (0,)"):
-      jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, output_offsets, jnp.array([], dtype=jnp.int32))
-
-  def testRaggedAllToAll(self):
-    operand = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=jnp.float32)
-    output = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
-    input_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
-    send_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
-    output_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
-    recv_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
-    mlir_module = jax.jit(lax.ragged_all_to_all).lower(operand, output, input_offsets, send_sizes, output_offsets, recv_sizes).as_text()
-    self.assertIn("stablehlo.custom_call @ragged_all_to_all", mlir_module)
-    self.assertIn(
-        "backend_config = {replica_groups = dense<[[0, 1, 2]]> :"
-        " tensor<1x3xi64>}}",
-        mlir_module,
-    )
-
-  @jtu.sample_product(
-      [
-          {'m': 5, 'k': 4, 'n': 3, 'num_groups': 1},
-          {'m': 10, 'k': 9, 'n': 8, 'num_groups': 2},
-      ],
-      dtype=jtu.dtypes.numeric,
-  )
-  def testRaggedDot(self, m, k, n, num_groups, dtype):
-    """Tests ragged_dot.
-
-    The ragged_dot is tested against numpy reference implementation, and by running JAX compilation.
-
-    Raises:
-      SkipTest: in the case dtype is not supported.
-    """
-    lhs_shape = (m, k)
-    rhs_shape = (num_groups, k, n)
-    def group_sizes(m, num_groups):
-      ends_no_final = jnp.sort(self.rng().choice(m, size=num_groups - 1))
-      ends = jnp.concatenate([ends_no_final, jnp.array([m], dtype=ends_no_final.dtype)])
-      starts = jnp.concatenate([jnp.zeros(1, dtype=ends_no_final.dtype), ends_no_final])
-      return ends - starts
-    rng = jtu.rand_small(self.rng())
-    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype), group_sizes(m, num_groups)]
-    self._CompileAndCheck(lax.ragged_dot, args_maker)
-    self._CheckAgainstNumpy(lax_reference.ragged_dot, lax.ragged_dot, args_maker)
 
   @jtu.sample_product(
       shape=[(), (2, 3)],
@@ -4750,6 +4679,182 @@ class CompositeTest(jtu.JaxTestCase):
         "https://jax.readthedocs.io/en/latest/_autosummary/jax.custom_jvp.html"
     ):
       grad(my_square)(1.0)
+
+
+class RaggedTest(jtu.JaxTestCase):
+
+  def testRaggedAllToAll(self):
+    operand = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=jnp.float32)
+    output = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
+    input_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
+    send_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
+    output_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
+    recv_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
+    mlir_module = jax.jit(lax.ragged_all_to_all).lower(
+        operand, output, input_offsets, send_sizes, output_offsets,
+        recv_sizes).as_text()
+    self.assertIn("stablehlo.custom_call @ragged_all_to_all", mlir_module)
+    self.assertIn(
+        "backend_config = {replica_groups = dense<[[0, 1, 2]]> :"
+        " tensor<1x3xi64>}}",
+        mlir_module,
+    )
+
+  def testRaggedAllToAllErrors(self):
+    operand = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=jnp.float32)
+    output = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
+    input_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
+    send_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
+    output_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
+    recv_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
+
+    with self.assertRaisesWithLiteralMatch(
+        ValueError,
+        "ragged_all_to_all input and output shapes must be equal, except for"
+        " the outermost dimension.",
+    ):
+      jax.jit(lax.ragged_all_to_all).lower(
+          operand,
+          jnp.array([[0.0], [0.0], [0.0], [0.0], [0.0]], dtype=jnp.float32),
+          input_offsets, send_sizes, output_offsets, recv_sizes)
+
+    with self.assertRaisesWithLiteralMatch(
+        ValueError, "ragged_all_to_all input_offsets must be integer type."
+    ):
+      jax.jit(lax.ragged_all_to_all).lower(
+          operand, output, jnp.array([0.0, 1.0, 3.0], dtype=jnp.float32),
+          send_sizes, output_offsets, recv_sizes)
+
+    with self.assertRaisesWithLiteralMatch(
+        ValueError, "ragged_all_to_all send_sizes must be integer type."
+    ):
+      jax.jit(lax.ragged_all_to_all).lower(
+          operand, output, input_offsets,
+          jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32), output_offsets,
+          recv_sizes)
+
+    with self.assertRaisesWithLiteralMatch(
+        ValueError, "ragged_all_to_all output_offsets must be integer type."
+    ):
+      jax.jit(lax.ragged_all_to_all).lower(
+          operand, output, input_offsets, send_sizes,
+          jnp.array([0.0, 1.0, 3.0], dtype=jnp.float32), recv_sizes)
+
+    with self.assertRaisesWithLiteralMatch(
+        ValueError, "ragged_all_to_all recv_sizes must be integer type."
+    ):
+      jax.jit(lax.ragged_all_to_all).lower(
+          operand, output, input_offsets, send_sizes, output_offsets,
+          jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32))
+
+    with self.assertRaisesWithLiteralMatch(
+        ValueError,
+        "ragged_all_to_all input_offsets must be rank 1 with positive dimension"
+        " size, but got shape (1, 3)",
+    ):
+      jax.jit(lax.ragged_all_to_all).lower(
+          operand, output, jnp.array([[0, 1, 3]], dtype=jnp.int32), send_sizes,
+          output_offsets, recv_sizes)
+
+    with self.assertRaisesWithLiteralMatch(
+        ValueError,
+        "ragged_all_to_all input_offsets must be rank 1 with positive dimension"
+        " size, but got shape (0,)",
+    ):
+      jax.jit(lax.ragged_all_to_all).lower(
+          operand, output, jnp.array([], dtype=jnp.int32), send_sizes,
+          output_offsets, recv_sizes)
+
+    with self.assertRaisesWithLiteralMatch(
+        ValueError,
+        "ragged_all_to_all send_sizes must be rank 1 with positive dimension"
+        " size, but got shape (1, 3)",
+    ):
+      jax.jit(lax.ragged_all_to_all).lower(
+          operand, output, input_offsets,
+          jnp.array([[1, 2, 3]], dtype=jnp.int32), output_offsets, recv_sizes)
+
+    with self.assertRaisesWithLiteralMatch(
+        ValueError,
+        "ragged_all_to_all send_sizes must be rank 1 with positive dimension"
+        " size, but got shape (0,)",
+    ):
+      jax.jit(lax.ragged_all_to_all).lower(
+          operand, output, input_offsets, jnp.array([], dtype=jnp.int32),
+          output_offsets, recv_sizes)
+
+    with self.assertRaisesWithLiteralMatch(
+        ValueError,
+        "ragged_all_to_all output_offsets must be rank 1 with positive"
+        " dimension size, but got shape (1, 3)",
+    ):
+      jax.jit(lax.ragged_all_to_all).lower(
+          operand, output, input_offsets, send_sizes,
+          jnp.array([[0, 1, 3]], dtype=jnp.int32), recv_sizes)
+
+    with self.assertRaisesWithLiteralMatch(
+        ValueError,
+        "ragged_all_to_all output_offsets must be rank 1 with positive"
+        " dimension size, but got shape (0,)",
+    ):
+      jax.jit(lax.ragged_all_to_all).lower(
+          operand, output, input_offsets, send_sizes,
+          jnp.array([], dtype=jnp.int32), recv_sizes)
+
+    with self.assertRaisesWithLiteralMatch(
+        ValueError,
+        "ragged_all_to_all recv_sizes must be rank 1 with positive dimension"
+        " size, but got shape (1, 3)",
+    ):
+      jax.jit(lax.ragged_all_to_all).lower(
+          operand, output, input_offsets, send_sizes, output_offsets,
+          jnp.array([[1, 2, 3]], dtype=jnp.int32))
+
+    with self.assertRaisesWithLiteralMatch(
+        ValueError,
+        "ragged_all_to_all recv_sizes must be rank 1 with positive dimension"
+        " size, but got shape (0,)",
+    ):
+      jax.jit(lax.ragged_all_to_all).lower(
+          operand, output, input_offsets, send_sizes, output_offsets,
+          jnp.array([], dtype=jnp.int32))
+
+  @jtu.sample_product(
+      [
+          {'m': 5, 'k': 4, 'n': 3, 'num_groups': 1},
+          {'m': 10, 'k': 9, 'n': 8, 'num_groups': 2},
+      ],
+      dtype=jtu.dtypes.numeric,
+  )
+  def testRaggedDot(self, m, k, n, num_groups, dtype):
+    """Tests ragged_dot.
+
+    The ragged_dot is tested against numpy reference implementation, and by
+    running JAX compilation.
+
+    Raises:
+      SkipTest: in the case dtype is not supported.
+    """
+    lhs_shape = (m, k)
+    rhs_shape = (num_groups, k, n)
+
+    def group_sizes(m, num_groups):
+      ends_no_final = jnp.sort(self.rng().choice(m, size=num_groups - 1))
+      ends = jnp.concatenate(
+          [ends_no_final, jnp.array([m], dtype=ends_no_final.dtype)])
+      starts = jnp.concatenate(
+          [jnp.zeros(1, dtype=ends_no_final.dtype), ends_no_final])
+      return ends - starts
+
+    rng = jtu.rand_small(self.rng())
+    args_maker = lambda: [
+        rng(lhs_shape, dtype),
+        rng(rhs_shape, dtype),
+        group_sizes(m, num_groups),
+    ]
+    self._CompileAndCheck(lax.ragged_dot, args_maker)
+    self._CheckAgainstNumpy(
+        lax_reference.ragged_dot, lax.ragged_dot, args_maker)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

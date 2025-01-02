@@ -25,6 +25,7 @@ from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
@@ -36,6 +37,15 @@ except ImportError:
 
 
 jax.config.parse_flags_with_absl()
+
+
+def _fori_loop(force_while: bool, lb, ub, body, init):
+  if force_while:
+    # using jnp.asarray make the matcher for while or scan to think
+    # that the bounds are dynamic and forces the use of the while
+    # primitive.
+    lb, ub = jnp.asarray(lb), jnp.asarray(ub)
+  return jax.lax.fori_loop(lb, ub, body, init)
 
 
 class PallasTest(jtu.JaxTestCase):
@@ -704,19 +714,21 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128 * 128).astype(jnp.float16).reshape(128, 128)
     np.testing.assert_array_equal(kernel(x), x)
 
-  def test_fori_loop_array(self):
+  @parameterized.parameters(False, True)
+  def test_fori_loop_array(self, force_while):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
     )
     def kernel(x_ref, o_ref):
       # Equivalent to x_ref[...] + 2 + 3.
-      o_ref[...] = jax.lax.fori_loop(2, 4, lambda i, x: x + i, x_ref[...])
+      o_ref[...] = _fori_loop(force_while, 2, 4, lambda i, x: x + i, x_ref[...])
 
     x = jnp.arange(256).astype(jnp.int32)
     np.testing.assert_array_equal(kernel(x), x + 2 + 3)
 
-  def test_fori_loop_scalar(self):
+  @parameterized.parameters(False, True)
+  def test_fori_loop_scalar(self, force_while):
 
     @functools.partial(
         pl.pallas_call,
@@ -725,7 +737,7 @@ class PallasCallTest(PallasTest):
     def kernel(o_ref):
       # Equivalent to 2 + 3.
       o_ref[...] = jax.lax.broadcast(
-          jax.lax.fori_loop(2, 4, lambda i, x: x + i, 0), o_ref.shape
+          _fori_loop(force_while, 2, 4, lambda i, x: x + i, 0), o_ref.shape
       )
 
     np.testing.assert_array_equal(kernel(), jnp.full([256], 5, dtype=jnp.int32))
@@ -746,7 +758,8 @@ class PallasCallTest(PallasTest):
 
     np.testing.assert_array_equal(kernel(), jnp.full([256], 5, dtype=jnp.int32))
 
-  def test_fori_loop_tuple(self):
+  @parameterized.parameters(False, True)
+  def test_fori_loop_tuple(self, force_while):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
@@ -760,14 +773,15 @@ class PallasCallTest(PallasTest):
 
       # Equivalent to 3 * (0 + 1).
       o_ref[...] = jax.lax.broadcast(
-          sum(jax.lax.fori_loop(2, 4, body, (0, 0, 0))), o_ref.shape
+          sum(_fori_loop(force_while, 2, 4, body, (0, 0, 0))), o_ref.shape
       )
 
     np.testing.assert_array_equal(
         kernel(), jnp.full([256], 3 * (0 + 1), dtype=jnp.int32)
     )
 
-  def test_fori_loop_indexed_store(self):
+  @parameterized.parameters(False, True)
+  def test_fori_loop_indexed_store(self, force_while):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([4, 128], jnp.float32),
@@ -777,7 +791,7 @@ class PallasCallTest(PallasTest):
         o_ref[idx] = x_ref[idx] + y_ref[idx]
         return ()
 
-      jax.lax.fori_loop(0, 4, body, ())
+      _fori_loop(force_while, 0, 4, body, ())
 
     x = jnp.arange(4 * 128).reshape(4, 128).astype(jnp.float32)
     y = x + 1
@@ -1432,6 +1446,111 @@ class PipelineTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
     )
     np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
+
+
+class WarpSpecializedPipelineTest(PallasTest):
+
+  def test_pipelined_copy(self, m=512, n=512):
+    x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float16)
+    o = jnp.zeros((m, n), dtype=jnp.float16)
+    blk_m = blk_n = 64
+    o_last_block = jnp.zeros((blk_m, blk_n), dtype=jnp.float16)
+
+    def copy_kernel(x_smem, o_smem, o_last_block_smem):
+      # TODO(justinfu): Have each wg compute a separate slice
+      # after multiple-indexers are supported.
+      # This is currently a race, but the values written are the same.
+      o_smem[...] = x_smem[...]
+      o_last_block_smem[...] = x_smem[...]
+    block_spec = plgpu.GPUBlockSpec(
+                block_shape=(blk_m, blk_n),
+                index_map=lambda i, j: (i, j),
+                transforms=[],
+            )
+    pipeline = mgpu_pipeline.emit_pipeline_warp_specialized(
+        copy_kernel,
+        grid=(m // blk_m, n // blk_n),
+        memory_registers=40,
+        max_concurrent_steps=2,
+        num_compute_wgs=2,
+        wg_axis="wg",
+        in_specs=[block_spec],
+        out_specs=[block_spec,
+                   # Create an index-invariant output.
+                   plgpu.GPUBlockSpec(block_shape=(blk_m, blk_n),
+                                      index_map=lambda i, j: (0, 0))
+                   ],
+    )
+    mesh = plgpu.GPUMesh(
+        grid=(1,),
+        num_threads=3,
+        axis_names=("_", "wg",),
+        approx_math=True,
+    )
+    def run(refs):
+      @pl.core_map(mesh)
+      def _kernel_entry():
+        pipeline(*refs)
+    @jax.jit
+    def run_function(x, o, o_last_block):
+      _, out, out_last = pl.run_state(run)((x, o, o_last_block))
+      return (out, out_last)
+    out, out_last_block = run_function(x, o, o_last_block)
+    np.testing.assert_array_equal(out, x)
+    np.testing.assert_array_equal(out_last_block, x[-blk_m:, -blk_n:])
+
+  def test_elementwise_add(self, m=256, n=256, num_compute_wgs=2):
+    blk_m = blk_n = 64
+    x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float32)
+    y = jax.random.uniform(jax.random.key(1), (m, n), dtype=jnp.float32)
+    o = jnp.zeros((m, n), dtype=jnp.float32)
+
+    def tiled_add_kernel(x_smem, y_smem, o_smem):
+      # TODO(justinfu): Have each wg compute a separate slice
+      # after multiple-indexers are supported.
+      # This is currently a race, but the values written are the same.
+      o_smem[...] = x_smem[...] + y_smem[...]
+
+    pipeline = mgpu_pipeline.emit_pipeline_warp_specialized(
+        tiled_add_kernel,
+        grid=(m // blk_m, n // blk_n),
+        max_concurrent_steps=2,
+        num_compute_wgs=num_compute_wgs,
+        memory_registers=40,
+        wg_axis="wg",
+        in_specs=[
+            plgpu.GPUBlockSpec(
+                block_shape=(blk_m, blk_n),
+                index_map=lambda i, j: (i, j),
+                transforms=[]),
+            plgpu.GPUBlockSpec(
+                block_shape=(blk_m, blk_n),
+                index_map=lambda i, j: (i, j),
+                transforms=[]),
+        ],
+        out_specs=[
+            plgpu.GPUBlockSpec(
+                block_shape=(blk_m, blk_n),
+                index_map=lambda i, j: (i, j),
+                transforms=[])],
+    )
+    mesh = plgpu.GPUMesh(
+        grid=(1,),
+        num_threads=num_compute_wgs + 1,
+        axis_names=("_", "wg",),
+        approx_math=True,
+    )
+    def run(refs):
+      @pl.core_map(mesh)
+      def _kernel_entry():
+        pipeline(*refs)
+    @jax.jit
+    def run_function(x, y, o):
+      _, _, out = pl.run_state(run)((x, y, o))
+      return out
+    out = run_function(x, y, o)
+    reference = x + y
+    np.testing.assert_allclose(out, reference, atol=1e-4)
 
 
 class CoreMapTest(PallasTest):

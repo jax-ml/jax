@@ -1658,7 +1658,7 @@ array_garbage_collection_guard = optional_enum_state(
         ' do not log garbage collection of "jax.Array" objects.\n * "log":'
         ' log an error when a "jax.Array" is garbage collected.\n * "fatal":'
         ' fatal error if a "jax.Array" is garbage collected.\nDefault is'
-        ' "allow".'
+        ' "allow". Note that not all cycles may be detected.'
     ),
     update_global_hook=lambda val: _update_garbage_collection_guard(
         guard_lib.global_state(), 'garbage_collect_array', val

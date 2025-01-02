@@ -547,9 +547,13 @@ def lower_jaxpr_to_module(
   module_name = name_and_src_info.name
   attrs["sym_name"] = ir.StringAttr.get(module_name)
   sym_tab = ir.SymbolTable(m.operation)
+
   func_op = lower_jaxpr_to_func(
-      ctx, jaxpr, mosaic_grid_mapping=mosaic_grid_mapping,
-      name="main", for_verification=for_verification,
+      ctx,
+      jaxpr,
+      mosaic_grid_mapping=mosaic_grid_mapping,
+      name="main",
+      for_verification=for_verification,
   )
   m.body.append(func_op)
   sym_tab.insert(func_op)
@@ -568,6 +572,7 @@ def lower_jaxpr_to_module(
         # We checked above that the block does not require windowing.
         window_params.append(ir.DictAttr.get())
         continue
+
       mlir_func = lower_jaxpr_to_transform_func(
           ctx,
           bm.index_map_jaxpr.jaxpr,
@@ -1990,6 +1995,36 @@ lowering_rules[ad_util.add_any_p] = _add_lowering_rule
 skip_mlir_conversions.add(ad_util.add_any_p)
 
 
+class FoldingError(Exception):
+  pass
+
+
+def _fold_and_get_constant_value(x):
+  def _fold(x, fuel):
+    if fuel <= 0:
+      raise FoldingError("Folding depth exceeded")
+    op_name = getattr(x.owner, "name", None)
+    binop_folds = {
+        "arith.maxsi": max,
+        "arith.minsi": min,
+    }
+    if op_name == "arith.constant":
+      if ir.IntegerType.isinstance(x.type):
+        return ir.IntegerAttr(x.owner.attributes["value"]).value
+      elif ir.FloatType.isinstance(x.type):
+        return ir.FloatAttr(x.owner.attributes["value"]).value
+      else:
+        raise ValueError(f"Unsupported constant type: {x.type}")
+    if op_name in binop_folds:
+      return binop_folds[op_name](_fold(v, fuel - 1) for v in x.owner.operands)
+    raise FoldingError(f"Folding not supported for {x.owner}")
+
+  try:
+    return _fold(x, 10)
+  except FoldingError:
+    return None
+
+
 def _max_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   (aval_out,) = ctx.avals_out
@@ -2708,6 +2743,12 @@ lowering_rules[lax.while_p] = _while_lowering_rule
 
 def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches):
   index, *args = args
+  constant_index = _fold_and_get_constant_value(index)
+
+  if constant_index is not None:
+    return jaxpr_subcomp(
+        ctx.lowering_context.replace(block_shapes=ctx.block_shapes[1:]), branches[constant_index].jaxpr, *args
+    )
   out_types = map(aval_to_ir_type, ctx.avals_out)
   pred = arith.cmpi(
       arith.CmpIPredicate.ne, index, ir_constant(0, index.type)
@@ -3375,3 +3416,25 @@ def _pad_lowering_rule(ctx: LoweringRuleContext, *args, **kwargs):
 
 
 lowering_rules[lax.pad_p] = _pad_lowering_rule
+
+
+def _platform_index_lowering(
+    ctx: mlir.LoweringRuleContext,
+    *,
+    platforms: Sequence[Sequence[str]],
+    has_default: bool,
+):
+  for i, ps in enumerate(platforms):
+    # note - slightly odd structure here, as platforms is a seq[seq[str]]
+    if "mosaic" in ps:
+      return ir_constant(i)
+
+  if has_default:
+    return ir_constant(len(platforms))
+
+  raise NotImplementedError(
+      "No mosaic or default platform indexing rule found."
+  )
+
+
+lowering_rules[jax._src.lax.control_flow.platform_index_p] = _platform_index_lowering

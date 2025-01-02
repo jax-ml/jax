@@ -54,7 +54,8 @@ py_extension(
     deps = [
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:MLIRBindingsPythonCoreNoCAPI",
-        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeaders",
+        "@nanobind",
     ],
 )
 
@@ -312,9 +313,9 @@ py_extension(
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:CAPIIRHeaders",
         "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeaders",
         "@local_config_python//:headers",
-        "@pybind11",
+        "@nanobind",
         "@shardy//shardy/integrations/c:sdy_capi_headers",
     ],
 )

@@ -31,13 +31,14 @@ from jax._src.lib.mlir.dialects import vector
 import numpy as np
 
 from .fragmented_array import FragmentedArray, WGStridedFragLayout
+from .launch_context import LaunchContext
 from .layouts import from_strided_fragmented_layout_attr, has_any_layout_set, is_strided_fragmented_layout, should_have_layout, to_strided_fragmented_layout_attr
-from .utils import c, ptr_as_memref, single_thread_predicate
+from .utils import BarrierRef, c, memref_ptr, ptr_as_memref, single_thread_predicate
 
 # mypy: ignore-errors
 
 
-MlirLoweringRule = Callable[[ir.Operation | ir.OpView], Sequence[ir.Value]]
+MlirLoweringRule = Callable[[LaunchContext, ir.Operation | ir.OpView], Sequence[ir.Value]]
 
 
 _lowerings: dict[str, MlirLoweringRule] = {}
@@ -88,6 +89,9 @@ def _fragmented_array_from_ir(
       [operand.type for operand in conversion_cast.operands],
       conversion_cast.results,
   )
+  if not isinstance(converted_outputs, list):
+    converted_outputs = [converted_outputs]
+
 
   reverse_conversion_cast = converted_outputs[0].owner.opview
   for attribute in conversion_cast.attributes:
@@ -138,6 +142,7 @@ def gpu_address_space_to_nvptx(address_space: gpu.AddressSpace) -> int:
 
 @_register_lowering(InitializeBarrierOp)
 def _initialize_barrier_op_lowering_rule(
+    _: LaunchContext,
     initialize_barrier_op: InitializeBarrierOp,
 ) -> Sequence[ir.Value]:
 
@@ -170,7 +175,7 @@ def _initialize_barrier_op_lowering_rule(
 
 @_register_lowering(vector.LoadOp)
 def _vector_load_op_lowering_rule(
-    vector_load_op: vector.LoadOp,
+    _: LaunchContext, vector_load_op: vector.LoadOp
 ) -> Sequence[ir.Value]:
   (out_layout_attr,) = cast(
       ir.ArrayAttr, vector_load_op.attributes["out_layouts"]
@@ -199,7 +204,7 @@ def _vector_load_op_lowering_rule(
 
 @_register_lowering(vector.StoreOp)
 def _vector_store_op_lowering_rule(
-    vector_store_op: vector.StoreOp,
+     _: LaunchContext, vector_store_op: vector.StoreOp
 ) -> Sequence[ir.Value]:
 
   in_layout_attr, *_ = cast(
@@ -229,8 +234,44 @@ def _vector_store_op_lowering_rule(
   return []
 
 
+@_register_lowering(mgpu.AsyncLoadOp)
+def _mgpu_async_load_op_lowering_rule(
+    launch_context: LaunchContext, load_op: mgpu.AsyncLoadOp
+) -> Sequence[ir.Value]:
+  mem_space = gpu_address_space_to_nvptx(gpu.AddressSpace.Workgroup)
+
+  # TODO(dasenov): Add support for the remaining op properties.
+  launch_context.async_copy(
+      src_ref=load_op.source,
+      dst_ref=load_op.destination,
+      barrier=BarrierRef(
+          base_address=memref_ptr(load_op.barrier, memory_space=mem_space),
+          offset=c(0, ir.IntegerType.get_signless(64)),
+          phases=None,
+          num_barriers=1,
+      ),
+      arrive=load_op.arrive,
+      uniform=False,
+  )
+  return []
+
+
+@_register_lowering(mgpu.AsyncStoreOp)
+def _mgpu_async_store_op_lowering_rule(
+    launch_context: LaunchContext, store_op: mgpu.AsyncStoreOp
+) -> Sequence[ir.Value]:
+  # TODO(dasenov): Add support for the remaining op properties.
+  launch_context.async_copy(
+      src_ref=store_op.source,
+      dst_ref=store_op.destination,
+  )
+  return []
+
+
 @_register_lowering(arith.AddFOp)
-def _arith_addf_op_lowering_rule(add: arith.AddFOp) -> Sequence[ir.Value]:
+def _arith_addf_op_lowering_rule(
+    _: LaunchContext, add: arith.AddFOp
+) -> Sequence[ir.Value]:
 
   fragmented_array_lhs = _fragmented_array_from_ir(add.lhs)
   fragmented_array_rhs = _fragmented_array_from_ir(add.rhs)
@@ -242,7 +283,7 @@ def _arith_addf_op_lowering_rule(add: arith.AddFOp) -> Sequence[ir.Value]:
   ]
 
 
-def lower_mgpu_dialect(module: ir.Module):
+def lower_mgpu_dialect(module: ir.Module, launch_context: LaunchContext):
   module.context.append_dialect_registry(mlir_interpreter.upstream_dialects)
   module.context.load_all_available_dialects()
 
@@ -257,7 +298,7 @@ def lower_mgpu_dialect(module: ir.Module):
     if should_have_layout(op) and not has_any_layout_set(op):
       raise ValueError(f"{op} is missing a layout and can not be lowered.")
 
-    new_results = lowering_rule(op)
+    new_results = lowering_rule(launch_context, op)
 
     for old, new in zip(op.results, new_results):
       old.replace_all_uses_with(new)

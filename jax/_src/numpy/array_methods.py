@@ -509,12 +509,15 @@ def _view(self: Array, dtype: DTypeLike | None = None, type: None = None) -> Arr
   dtypes.check_user_dtype_supported(dtype, "view")
   dtype = dtypes.canonicalize_dtype(dtype)
 
+  nbits_in = dtypes.bit_width(self.dtype)
+  nbits_out = dtypes.bit_width(dtype)
+
   if self.ndim == 0:
-    if self.dtype.itemsize != dtype.itemsize:
+    if nbits_in != nbits_out:
       raise ValueError("view() of a 0d array is only supported if the itemsize is unchanged.")
     return _view(lax.expand_dims(self, (0,)), dtype).squeeze()
 
-  if (self.shape[-1] * self.dtype.itemsize) % dtype.itemsize != 0:
+  if (self.shape[-1] * nbits_in) % nbits_out != 0:
     raise ValueError("When changing to a larger dtype, its size must be a divisor "
                      "of the total size in bytes of the last axis of the array.")
 
@@ -543,16 +546,15 @@ def _view(self: Array, dtype: DTypeLike | None = None, type: None = None) -> Arr
 
   # lax.bitcast_convert_type adds or subtracts dimensions depending on the
   # relative bitwidths of the dtypes; we account for that with reshapes.
-  if self.dtype.itemsize < dtype.itemsize:
-    factor = dtype.itemsize // self.dtype.itemsize
+  if nbits_in < nbits_out:
+    factor = nbits_out // nbits_in
     out = self.reshape(*self.shape[:-1], self.shape[-1] // factor, factor)
     return lax.bitcast_convert_type(out, dtype)
-
-  if self.dtype.itemsize > dtype.itemsize:
+  elif nbits_in > nbits_out:
     out = lax.bitcast_convert_type(self, dtype)
     return out.reshape(*out.shape[:-2], out.shape[-2] * out.shape[-1])
-
-  return lax.bitcast_convert_type(self, dtype)
+  else:
+    return lax.bitcast_convert_type(self, dtype)
 
 
 def _notimplemented_flat(self):

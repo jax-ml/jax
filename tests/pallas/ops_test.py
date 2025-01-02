@@ -824,7 +824,7 @@ class OpsTest(PallasBaseTest):
            jnp.acos, jnp.atan, jnp.sinh, jnp.cosh, jnp.tanh, jnp.asinh,
            jnp.acosh, jnp.atanh],
           # fmt: on
-          ["float32", "float64"],
+          ["bfloat16", "float32", "float64"],
       ),
       ([lax.population_count, lax.clz, jnp.invert], ["int32", "int64"]),
       ([jnp.logical_not], ["bool"]),
@@ -843,12 +843,16 @@ class OpsTest(PallasBaseTest):
       if dtype in ("int16", "float16"):
         self.skipTest("int16 and float16 are not supported on TPU")
       if (
-          fn in (jnp.ceil, jnp.floor, jnp.negative, jnp.exp, jnp.exp2, jnp.log)
+          fn in (jnp.ceil, jnp.floor, jnp.negative, jnp.exp, jnp.exp2, jnp.log,
+                 jnp.sqrt, lax.rsqrt)
           and dtype == "bfloat16"
           and not jtu.is_device_tpu_at_least(6)
       ):
         self.skipTest(f"bfloat16 {fn.__name__} is only supported on TPU v6+")
-      if fn in (jnp.sqrt, jnp.sin, jnp.cos) and dtype == "bfloat16":
+      if (
+          fn in (jnp.sin, jnp.cos, jnp.tan, jnp.tanh, jnp.log1p)
+          and dtype == "bfloat16"
+      ):
         self.skipTest(f"bfloat16 {fn.__name__} is not supported on TPU")
       # TODO(b/370578663): implement these lowerings on TPU
       if fn in (
@@ -862,7 +866,10 @@ class OpsTest(PallasBaseTest):
 
     if (
         jtu.test_device_matches(["gpu"])
-        and fn in (jnp.ceil, jnp.floor)
+        and fn
+        in (jnp.ceil, jnp.floor, jnp.expm1, jnp.log1p, jnp.cbrt, lax.rsqrt,
+            jnp.tan, jnp.asin, jnp.acos, jnp.atan, jnp.sinh, jnp.cosh, jnp.tanh,
+            jnp.asinh, jnp.acosh, jnp.atanh)
         and dtype == "bfloat16"
     ):
       self.skipTest(f"bfloat16 {fn.__name__} is not supported on GPU")
@@ -897,7 +904,10 @@ class OpsTest(PallasBaseTest):
 
     if (
         jtu.test_device_matches(["gpu"])
-        and fn in (jnp.ceil, jnp.floor)
+        and fn
+        in (jnp.ceil, jnp.floor, jnp.expm1, jnp.log1p, jnp.cbrt, lax.rsqrt,
+            jnp.tan, jnp.asin, jnp.acos, jnp.atan, jnp.sinh, jnp.cosh, jnp.tanh,
+            jnp.asinh, jnp.acosh, jnp.atanh)
         and dtype == "bfloat16"
     ):
       self.skipTest(f"bfloat16 {fn.__name__} is not supported on GPU")
@@ -2116,6 +2126,21 @@ class OpsTest(PallasBaseTest):
           or "Expected mask vector type" in str(e)
       )
       self.assertTrue(acceptable_errors, "Failed with error: " + str(e))
+
+  @parameterized.parameters((128, 128), (256, 256))
+  def test_jnp_diagonal_pallas(self, n, m):
+    if jtu.test_device_matches(["gpu"]):
+      # TODO(mvoz): platform_index_p on GPU
+      self.skipTest("Not implemented on GPU")
+    x = jnp.arange(n * m, dtype=jnp.float32).reshape((n, m))
+
+    def kernel(x_ref, out_ref):
+      out_ref[...] = jnp.diagonal(x_ref[...])
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((n,), jnp.float32)
+    )(x)
+    np.testing.assert_array_equal(out, np.diagonal(x))
 
 
 class OpsInterpretTest(OpsTest):

@@ -3,9 +3,12 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
+#include <ostream>
 #include <sstream>
 #include <string>
 #include <type_traits>
+#include <utility>
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
@@ -15,8 +18,11 @@
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "absl/types/span.h"
-#include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "mlir/include/mlir/IR/Attributes.h"
 #include "mlir/include/mlir/IR/Value.h"
+#include "jaxlib/mosaic/dialect/tpu/layout.h"
+#include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "tsl/platform/statusor.h"
 
 // TODO: Instead of CHECK_EQs, can we do something like TF_RET_CHECK but with
 // MLIR diagnostics?
@@ -31,17 +37,85 @@
 //     } \
 //   } while (false)
 
-#define FAILUREOR_ASSIGN_OR_RETURN_IMPL(failureor, lhs, rhs) \
-  auto failureor = rhs;                                      \
-  if (failed(failureor)) {                                   \
-    return failure();                                        \
-  }                                                          \
-  lhs = std::move(failureor).value();
+// All the macros below here are to handle the case in
+// FAILUREOR_ASSIGN_OR_RETURN where the LHS is wrapped in parentheses. See a
+// more detailed discussion at https://stackoverflow.com/a/62984543
+#define FAILUREOR_ASSIGN_OR_RETURN_UNPARENTHESIZE_IF_PARENTHESIZED(X) \
+  FAILUREOR_ASSIGN_OR_RETURN_ESCAPE(FAILUREOR_ASSIGN_OR_RETURN_EMPTY X)
+#define FAILUREOR_ASSIGN_OR_RETURN_EMPTY(...) \
+  FAILUREOR_ASSIGN_OR_RETURN_EMPTY __VA_ARGS__
+#define FAILUREOR_ASSIGN_OR_RETURN_ESCAPE(...) \
+  FAILUREOR_ASSIGN_OR_RETURN_ESCAPE_(__VA_ARGS__)
+#define FAILUREOR_ASSIGN_OR_RETURN_ESCAPE_(...) \
+  FAILUREOR_ASSIGN_OR_RETURN_##__VA_ARGS__
+#define FAILUREOR_ASSIGN_OR_RETURN_FAILUREOR_ASSIGN_OR_RETURN_EMPTY
+
+#define FAILUREOR_ASSIGN_OR_RETURN_IMPL(failureor, lhs, rhs)        \
+  auto failureor = rhs;                                             \
+  if (failed(failureor)) {                                          \
+    return failure();                                               \
+  }                                                                 \
+  FAILUREOR_ASSIGN_OR_RETURN_UNPARENTHESIZE_IF_PARENTHESIZED(lhs) = \
+      (std::move(failureor).value());
 #define FAILUREOR_ASSIGN_OR_RETURN(lhs, rhs) \
   FAILUREOR_ASSIGN_OR_RETURN_IMPL(           \
       TF_STATUS_MACROS_CONCAT_NAME(failureor, __COUNTER__), lhs, rhs)
 
+#define RETURN_IF_FAILED(...)  \
+  do {                         \
+    if (failed(__VA_ARGS__)) { \
+      return failure();        \
+    }                          \
+  } while (false)
+
 namespace mlir::tpu {
+
+// TPU_ASSERT_* macros should be understood as an assert, i.e. use it to check
+// things that should never happen. We prefer returning failure over a CHECK
+// because it's easier to debug from Python (particularly from OSS where symbols
+// are removed)
+#define TPU_ASSERT_IMPL(stream, cond)                    \
+  if (LLVM_UNLIKELY(!(cond))) {                          \
+    (stream) << "Internal error: assert failed: " #cond; \
+  }
+#define TPU_ASSERT_CMP_IMPL(stream, lhs, rhs, cmp)                            \
+  if (LLVM_UNLIKELY(!((lhs)cmp(rhs)))) {                                      \
+    (stream) << "Internal error: assert failed: " #lhs " " #cmp " " #rhs " (" \
+             << (lhs) << " vs. " << (rhs) << ")";                             \
+    return failure();                                                         \
+  }
+#define TPU_ASSERT_OP(cond) TPU_ASSERT_IMPL(op.emitOpError(), cond)
+#define TPU_ASSERT_CMP_OP_IMPL(lhs, rhs, cmp) \
+  TPU_ASSERT_CMP_IMPL(op.emitOpError(), lhs, rhs, cmp)
+#define TPU_ASSERT_EQ_OP(lhs, rhs) TPU_ASSERT_CMP_OP_IMPL(lhs, rhs, ==)
+#define TPU_ASSERT_GE_OP(lhs, rhs) TPU_ASSERT_CMP_OP_IMPL(lhs, rhs, >=)
+#define TPU_ASSERT_GT_OP(lhs, rhs) TPU_ASSERT_CMP_OP_IMPL(lhs, rhs, >)
+#define TPU_ASSERT_LE_OP(lhs, rhs) TPU_ASSERT_CMP_OP_IMPL(lhs, rhs, <=)
+#define TPU_ASSERT_LT_OP(lhs, rhs) TPU_ASSERT_CMP_OP_IMPL(lhs, rhs, <)
+#define TPU_ASSERT_LOC(loc, cond) TPU_ASSERT_IMPL(mlir::emitError(loc), cond)
+#define TPU_ASSERT_CMP_LOC_IMPL(loc, lhs, rhs, cmp) \
+  TPU_ASSERT_CMP_IMPL(loc, lhs, rhs, cmp)
+#define TPU_ASSERT_EQ_LOC(loc, lhs, rhs) \
+  TPU_ASSERT_CMP_LOC_IMPL(mlir::emitError(loc), lhs, rhs, ==)
+#define TPU_ASSERT_GE_LOC(loc, lhs, rhs) \
+  TPU_ASSERT_CMP_LOC_IMPL(mlir::emitError(loc), lhs, rhs, >=)
+#define TPU_ASSERT_GT_LOC(loc, lhs, rhs) \
+  TPU_ASSERT_CMP_LOC_IMPL(mlir::emitError(loc), lhs, rhs, >)
+#define TPU_ASSERT_LT_LOC(loc, lhs, rhs) \
+  TPU_ASSERT_CMP_LOC_IMPL(mlir::emitError(loc), lhs, rhs, <)
+#define TPU_ASSERT_LE_LOC(loc, lhs, rhs) \
+  TPU_ASSERT_CMP_LOC_IMPL(mlir::emitError(loc), lhs, rhs, <=)
+
+class Print {
+ public:
+  explicit Print(Operation *t) : payload_(t) {}
+  Operation *payload_;
+
+ private:
+  friend std::ostream &operator<<(std::ostream &, Print);
+};
+
+std::ostream &operator<<(std::ostream &os, Print p);
 
 template <bool adjust_bool = false>
 FailureOr<int8_t> getTypeBitwidth(Type ty) {
@@ -117,6 +191,26 @@ bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
 
 // Determines whether the given MemRefType has the given memory space.
 bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space);
+
+bool layoutIsValidForValue(const Layout &l, const Value v,
+                           const std::array<int64_t, 2> target_shape);
+
+// Returns empty vector on null attribute
+FailureOr<SmallVector<Layout>> getLayoutArrayFromAttr(const Attribute attr);
+
+FailureOr<SmallVector<Layout>> getOutLayouts(
+    Operation &op, const std::array<int64_t, 2> target_shape);
+
+FailureOr<SmallVector<Layout>> getInLayouts(
+    Operation &op, const std::array<int64_t, 2> target_shape);
+
+void setInLayout(Operation *op, ArrayRef<Layout> in);
+void setOutLayout(Operation *op, Layout out);
+void setOutLayout(Operation *op, ArrayRef<Layout> out);
+void setLayout(Operation *op, Layout in, Layout out);
+void setLayout(Operation *op, ArrayRef<Layout> in, Layout out);
+void setLayout(Operation *op, Layout in, ArrayRef<Layout> out);
+void setLayout(Operation *op, ArrayRef<Layout> in, ArrayRef<Layout> out);
 }  // namespace mlir::tpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_

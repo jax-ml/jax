@@ -36,24 +36,28 @@ from jaxlib.mlir.dialects import scf
 from jaxlib.mlir.dialects import vector
 import numpy as np
 
+from jax._src.lib import mosaic_gpu_dialect as dialect  # noqa: F401
+
 # mypy: ignore-errors
 
 WARPGROUP_SIZE: int = 128
 DYNAMIC = -9223372036854775808
 DYNAMIC32 = -2147483648
+MBARRIER_BYTES = 8
 
 # pylint: disable=line-too-long, wildcard-import, missing-function-docstring, bad-continuation, g-bad-todo, protected-access, g-explicit-length-test, missing-class-docstring, g-doc-return-or-yield, g-inconsistent-quotes
 
 
-def ptr_as_memref(ptr, memref_ty: ir.MemRefType):
+def ptr_as_memref(ptr, memref_ty: ir.MemRefType, ptr_memory_space: int | None = None):
   i64 = ir.IntegerType.get_signless(64)
   rank = len(memref_ty.shape)
+  ptr_ty = "ptr" if ptr_memory_space is None else f"ptr<{ptr_memory_space}>"
   if rank > 0:
     desc_ty = ir.Type.parse(
-        f"!llvm.struct<(ptr, ptr, i64, array<{rank} x i64>, array<{rank} x i64>)>"
+        f"!llvm.struct<({ptr_ty}, {ptr_ty}, i64, array<{rank} x i64>, array<{rank} x i64>)>"
     )
   else:
-    desc_ty = ir.Type.parse("!llvm.struct<(ptr, ptr, i64)>")
+    desc_ty = ir.Type.parse(f"!llvm.struct<({ptr_ty}, {ptr_ty}, i64)>")
   desc = llvm.UndefOp(desc_ty)
   desc = llvm.InsertValueOp(desc, ptr, [0])  # Allocation
   desc = llvm.InsertValueOp(desc, ptr, [1])  # Aligned Base
@@ -321,6 +325,8 @@ def bytewidth(ty: ir.Type):
     return ir.IntegerType(ty).width // 8
   if ir.FloatType.isinstance(ty):
     return ir.FloatType(ty).width // 8
+  if dialect is not None and ir.Type.parse("!mosaic_gpu.barrier"):
+    return MBARRIER_BYTES
   raise NotImplementedError(ty)
 
 
@@ -743,6 +749,18 @@ class BarrierRef:
         ptr, self.base_address, [self.offset], [DYNAMIC32], i64
     )
 
+  def as_dialect_barrier(self) -> ir.Value:
+    if self.num_barriers > 1:
+      raise NotImplementedError(
+          f"Only BarrierRef with num_barriers=1 is suppored in the MLIR "
+          f"Mosaic GPU dialect, but got num_barriers={self.num_barriers}"
+      )
+    return ptr_as_memref(
+        self.base_address,
+        ir.MemRefType.get((), ir.Type.parse("!mosaic_gpu.barrier")),
+        ptr_memory_space=3,
+    )
+
 
 @dataclasses.dataclass(frozen=True)
 class CollectiveBarrierRef:
@@ -997,19 +1015,21 @@ def warp_tree_reduce(value, op, group_size):
 def memref_ptr(memref_arg, memory_space=None):
   i64 = ir.IntegerType.get_signless(64)
   memref_ty = ir.MemRefType(memref_arg.type)
-  if len(memref_ty.shape) == 0:
-    raise NotImplementedError
-  elem_bytewidth = bytewidth(memref_ty.element_type)
   rank = len(memref_ty.shape)
   # TODO: Read out memory space from memref
   space = "" if memory_space is None else "<" + str(memory_space) + ">"
   ptr_ty = ir.Type.parse("!llvm.ptr" + space)
-  desc_ty = ir.Type.parse(
-      f"!llvm.struct<({ptr_ty}, {ptr_ty}, i64, array<{rank} x i64>,"
-      f" array<{rank} x i64>)>"
-  )
+  if rank == 0:
+    desc_ty = ir.Type.parse(f"!llvm.struct<({ptr_ty}, {ptr_ty}, i64)>")
+  else:
+    desc_ty = ir.Type.parse(
+        f"!llvm.struct<({ptr_ty}, {ptr_ty}, i64, array<{rank} x i64>,"
+        f" array<{rank} x i64>)>"
+    )
   desc = builtin.UnrealizedConversionCastOp([desc_ty], [memref_arg])
   aligned_ptr = llvm.extractvalue(ptr_ty, desc, [1])
+
+  elem_bytewidth = bytewidth(memref_ty.element_type)
   offset_elems = llvm.extractvalue(i64, desc, [2])
   offset_bytes = llvm.mul(
       offset_elems,

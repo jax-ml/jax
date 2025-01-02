@@ -228,8 +228,8 @@ refer to
 
 JAX has experimental ROCm support. There are two ways to install JAX:
 
-* Use [AMD's Docker container](https://hub.docker.com/r/rocm/jax); or
-* Build from source (refer to {ref}`building-from-source` — a section called _Additional notes for building a ROCM `jaxlib` for AMD GPUs_).
+* Use [AMD's Docker container](https://hub.docker.com/r/rocm/jax-community/tags); or
+* Build from source. Refer to the section [Additional notes for building a ROCm jaxlib for AMD GPUs](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-a-rocm-jaxlib-for-amd-gpus).
 
 (install-intel-gpu)=
 ## Intel GPU

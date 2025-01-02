@@ -1,3 +1,4 @@
+(jep-effver)=
 # JEP 25516: Effort-based versioning for JAX
 
 This document proposes that the JAX core library should explicitly adopt
