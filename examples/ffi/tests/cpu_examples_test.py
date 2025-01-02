@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 import jax
 import jax.numpy as jnp
@@ -89,6 +89,17 @@ class CounterTests(jtu.JaxTestCase):
     # Persists after the cache is cleared
     counter_fun.clear_cache()
     self.assertEqual(counter_fun(0)[1], 3)
+
+
+class AliasingTests(jtu.JaxTestCase):
+  def setUp(self):
+    super().setUp()
+    if not jtu.test_device_matches(["cpu"]):
+      self.skipTest("Unsupported platform")
+
+  @parameterized.parameters((jnp.linspace(0, 0.5, 10),), (jnp.int32(6),))
+  def test_basic(self, x):
+    self.assertAllClose(cpu_examples.aliasing(x), x)
 
 
 if __name__ == "__main__":

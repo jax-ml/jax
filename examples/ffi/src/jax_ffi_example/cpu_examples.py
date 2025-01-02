@@ -40,3 +40,9 @@ def dictionary_attr(**kwargs):
 def counter(index):
   return jex.ffi.ffi_call(
     "counter", jax.ShapeDtypeStruct((), jax.numpy.int32))(index=int(index))
+
+
+def aliasing(x):
+  return jex.ffi.ffi_call(
+      "aliasing", jax.ShapeDtypeStruct(x.shape, x.dtype),
+      input_output_aliases={0: 0})(x)
