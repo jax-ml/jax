@@ -5479,8 +5479,6 @@ FailureOr<xla::Array<Value>> doColumnShiftRelayout(
   const std::array<int64_t, 2> vreg_slice = src.vregSlice(target_shape);
   const int bitwidth = src.bitwidth();
   const int packing = src.packing();
-  const VectorLayout dst(bitwidth, {src.offsets()[0], dst_col_offset}, tiling,
-                         src.implicit_dim());
   const int64_t col_diff = dst_col_offset - *src.offsets()[1];
   if (tiling[0] % packing != 0 || tiling[1] != target_shape[1]) {
     return emitError(loc,
