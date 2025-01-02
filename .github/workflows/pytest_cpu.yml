@@ -1,4 +1,4 @@
-name: Run Pytest CPU tests
+name: CI - Pytest CPU
 
 on:
   workflow_dispatch:
@@ -11,85 +11,86 @@ on:
         options:
         - 'yes'
         - 'no'
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  workflow_call:
+    inputs:
+      runner:
+        description: "Which runner should the workflow run on?"
+        type: string
+        required: true
+        default: "linux-x86-n2-16"
+      python:
+        description: "Which python version should the artifact be built for?"
+        type: string
+        required: true
+        default: "3.12"
+      enable-x64:
+        description: "Should x64 mode be enabled?"
+        type: string
+        required: true
+        default: "0"
+      gcs_download_uri:
+        description: "GCS location URI from where the artifacts should be downloaded"
+        required: false
+        default: 'gs://general-ml-ci-transient/jax-github-actions/jax-fork/${{ github.workflow }}/${{ github.run_number }}'
+        type: string
 
 jobs:
-  build_jaxlib_artifact:
-    uses: ./.github/workflows/build_artifacts.yml      
-    strategy:
-        fail-fast: false # don't cancel all jobs on failure
-        matrix:
-          runner: ["linux-x86-n2-16", "linux-arm64-c4a-64", "windows-x86-n2-16"]
-          artifact: ["jaxlib"]
-          python: ["3.10",] # "3.11", "3.12", "3.13"]
-    with:
-      runner: ${{ matrix.runner }}
-      artifact: ${{ matrix.artifact }}
-      python: ${{ matrix.python }}
-      clone_main_xla: 1
-      upload_artifacts: true
-      upload_destination_prefix: '${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
-
-  run_pytest:
-    needs: build_jaxlib_artifact
+  run-tests:
     defaults:
       run:
         # Explicitly set the shell to bash to override the default Windows environment, i.e, cmd.
         shell: bash
-    strategy:
-      fail-fast: false # don't cancel all jobs on failure
-      matrix:
-        runner: ["linux-x86-n2-64", "linux-arm64-c4a-64", "windows-x86-n2-64"]
-        python: ["3.10",] # "3.11", "3.12", "3.13"]
-        enable-x_64: [1, 0]
 
-    runs-on: ${{ matrix.runner }}
-    container: ${{ (contains(matrix.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest') ||
-                   (contains(matrix.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') ||
-                   (contains(matrix.runner, 'windows-x86') && null) }}
+    runs-on: ${{ inputs.runner }}
+    container: ${{ (contains(inputs.runner, 'linux-x86-n2') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest') ||
+                   (contains(inputs.runner, 'linux-x86-t2a') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') ||
+                   (contains(inputs.runner, 'windows-x86') && null) }}
 
-    name: "Pytest CPU (${{ matrix.runner }}, Python ${{ matrix.python }}, x64=${{ matrix.enable-x_64 }})"
+    name: "Pytest CPU (${{ inputs.runner }}, Python ${{ inputs.python }}, x64=${{ inputs.enable-x64 }})"
 
     env:
-      JAXCI_HERMETIC_PYTHON_VERSION: ${{ matrix.python }}
-      JAXCI_ENABLE_X64: ${{ matrix.enable-x_64 }}
+      JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
+      JAXCI_PYTHON: "python${{ inputs.python }}"
+      JAXCI_ENABLE_X64: ${{ inputs.enable-x64 }}
 
     
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@main
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      - name: Set Platform
+      - name: Set env vars for use in artifact download URL
         run: |
           os=$(uname -s | awk '{print tolower($0)}')
           arch=$(uname -m)
 
-          # Adjust name for Windows
-          if [[  $os  =~ "msys_nt" ]]; then
-            os="windows"
+          # Adjust os and arch for Windows x86
+          if [[  $os  =~ "msys_nt" ]] && [[  $arch  =~ "x86_64" ]]; then
+            os="win"
+            arch="amd64"
           fi
+          
+          # Get the major and minor version of Python.
+          # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.10, then python_major_minor=310
+          python_major_minor=$(echo "$JAXCI_HERMETIC_PYTHON_VERSION" | tr -d '.')
 
-          echo "PLATFORM=${os}_${arch}" >> $GITHUB_ENV
-      - name: Download artifacts built in the "build_artifacts" job (non-Windows runs)
-        if: ${{ !contains(matrix.runner, 'windows-x86') }}
+          echo "OS=${os}" >> $GITHUB_ENV
+          echo "ARCH=${arch}" >> $GITHUB_ENV
+          echo "PYTHON_MAJOR_MINOR=${python_major_minor}" >> $GITHUB_ENV
+      - name: Download the jaxlib wheel from GCS (non-Windows runs)
+        if: ${{ !contains(inputs.runner, 'windows-x86') }}
         run: >-
           mkdir -p $(pwd)/dist &&
-          gsutil -m cp -r gs://general-ml-ci-transient/jax-github-actions/"${{ github.workflow }}"/${{ github.run_number }}/${{ github.run_attempt }}/$PLATFORM/python${JAXCI_HERMETIC_PYTHON_VERSION}/*.whl $(pwd)/dist/
-      - name: Download artifacts built in the "build_artifacts" job (Windows runs)
-        if: ${{ contains(matrix.runner, 'windows-x86') }}
+          gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl $(pwd)/dist/
+      - name: Download the jaxlib wheel from GCS (Windows runs)
+        if: ${{ contains(inputs.runner, 'windows-x86') }}
         shell: cmd
         run: >-
           mkdir dist &&
-          gsutil -m cp -r gs://general-ml-ci-transient/jax-github-actions/"${{ github.workflow }}"/${{ github.run_number }}/${{ github.run_attempt }}/$PLATFORM/python${JAXCI_HERMETIC_PYTHON_VERSION}/*.whl dist/
+          gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl dist/
       - name: Install dependencies
-        env:
-          JAXCI_PYTHON: python${{ matrix.python }}
         run: $JAXCI_PYTHON -m pip install -r build/requirements.in
       - name: Run Pytest CPU tests
         run: ./ci/run_pytest_cpu.sh
