@@ -219,6 +219,29 @@ class DebugPrintTest(jtu.JaxTestCase):
          [ 1  2  3  4  5  6  7  8  9 10 12 13 14]]
     """))
 
+  def test_debug_print_respects_numpy_printoptions(self):
+    def f(x):
+      with np.printoptions(precision=2, suppress=True):
+        jax.debug.print("{}", x)
+    x = np.array([1.2345, 2.3456, 1E-7])
+
+    # Default numpy print options:
+    with jtu.capture_stdout() as output:
+      jax.debug.print("{}", x)
+    self.assertEqual(output(), "[1.2345e+00 2.3456e+00 1.0000e-07]\n")
+
+    # Modified print options without JIT:
+    with jtu.capture_stdout() as output:
+      f(x)
+      jax.effects_barrier()
+    self.assertEqual(output(), "[1.23 2.35 0.  ]\n")
+
+    # Modified print options with JIT:
+    with jtu.capture_stdout() as output:
+      jax.jit(f)(x)
+      jax.effects_barrier()
+    self.assertEqual(output(), "[1.23 2.35 0.  ]\n")
+
 
 class DebugPrintTransformationTest(jtu.JaxTestCase):
 
