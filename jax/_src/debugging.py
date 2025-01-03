@@ -300,8 +300,9 @@ class _DebugPrintFormatChecker(string.Formatter):
 
 formatter = _DebugPrintFormatChecker()
 
-def _format_print_callback(fmt: str, *args, **kwargs):
-  sys.stdout.write(fmt.format(*args, **kwargs) + "\n")
+def _format_print_callback(fmt: str, np_printoptions, *args, **kwargs):
+  with np.printoptions(**np_printoptions):
+    sys.stdout.write(fmt.format(*args, **kwargs) + "\n")
 
 def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
   """Prints values and works in staged out JAX functions.
@@ -338,8 +339,8 @@ def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
   # Check that we provide the correct arguments to be formatted.
   formatter.format(fmt, *args, **kwargs)
 
-  debug_callback(functools.partial(_format_print_callback, fmt), *args,
-                 **kwargs, ordered=ordered)
+  debug_callback(functools.partial(_format_print_callback, fmt, np.get_printoptions()),
+                 *args, **kwargs, ordered=ordered)
 
 
 # Sharding visualization
