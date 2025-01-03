@@ -29,7 +29,7 @@ We will discuss some possible approaches below, but it is important to call this
 JAX's FFI support is provided in two parts:
 
 1. A header-only C++ library from XLA which is packaged as part of JAX as of v0.4.29 or available from the [openxla/xla](https://github.com/openxla/xla) project, and
-2. A Python front end, available in the `jax.extend.ffi` submodule.
+2. A Python front end, available in the `jax.ffi` submodule.
 
 In this tutorial we demonstrate the use of both of these components using a simple example, and then go on to discuss some lower-level extensions for more complicated use cases.
 We start by presenting the FFI on CPU, and discuss generalizations to GPU or multi-device environments below.
@@ -171,23 +171,22 @@ To compile the shared library, we're using CMake here, but you should be able to
 !cmake --install ffi/_build
 ```
 
-With this compiled library in hand, we now need to register this handler with XLA via the {func}`~jax.extend.ffi.register_ffi_target` function.
+With this compiled library in hand, we now need to register this handler with XLA via the {func}`~jax.ffi.register_ffi_target` function.
 This function expects our handler (a function pointer to the C++ function `RmsNorm`) to be wrapped in a [`PyCapsule`](https://docs.python.org/3/c-api/capsule.html).
-JAX provides a helper function {func}`~jax.extend.ffi.pycapsule` to help with this:
+JAX provides a helper function {func}`~jax.ffi.pycapsule` to help with this:
 
 ```{code-cell} ipython3
 import ctypes
 from pathlib import Path
-import jax.extend as jex
 
 path = next(Path("ffi").glob("librms_norm*"))
 rms_norm_lib = ctypes.cdll.LoadLibrary(path)
-jex.ffi.register_ffi_target(
-    "rms_norm", jex.ffi.pycapsule(rms_norm_lib.RmsNorm), platform="cpu")
+jax.ffi.register_ffi_target(
+    "rms_norm", jax.ffi.pycapsule(rms_norm_lib.RmsNorm), platform="cpu")
 ```
 
 ```{tip}
-If you're familiar with the legacy "custom call" API, it's worth noting that you can also use {func}`~jax.extend.ffi.register_ffi_target` to register a custom call target by manually specifying the keyword argument `api_version=0`. The default `api_version` for {func}`~jax.extend.ffi.register_ffi_target` is `1`, the new "typed" FFI API that we're using here.
+If you're familiar with the legacy "custom call" API, it's worth noting that you can also use {func}`~jax.ffi.register_ffi_target` to register a custom call target by manually specifying the keyword argument `api_version=0`. The default `api_version` for {func}`~jax.ffi.register_ffi_target` is `1`, the new "typed" FFI API that we're using here.
 ```
 
 **An alternative approach**:
@@ -221,14 +220,14 @@ Then, in Python we can register this handler using:
 # Assuming that we compiled a nanobind extension called `rms_norm`:
 import rms_norm as rms_norm_lib
 
-jex.ffi.register_ffi_target("rms_norm", rms_norm_lib.rms_norm(), platform="cpu")
+jax.ffi.register_ffi_target("rms_norm", rms_norm_lib.rms_norm(), platform="cpu")
 ```
 
 +++
 
 ## Frontend code
 
-Now that we have registered our FFI handler, it is straightforward to call our C++ library from JAX using the {func}`~jax.extend.ffi.ffi_call` function:
+Now that we have registered our FFI handler, it is straightforward to call our C++ library from JAX using the {func}`~jax.ffi.ffi_call` function:
 
 ```{code-cell} ipython3
 import numpy as np
@@ -243,7 +242,7 @@ def rms_norm(x, eps=1e-5):
   if x.dtype != jnp.float32:
     raise ValueError("Only the float32 dtype is implemented by rms_norm")
 
-  call = jex.ffi.ffi_call(
+  call = jax.ffi.ffi_call(
     # The target name must be the same string as we used to register the target
     # above in `register_custom_call_target`
     "rms_norm",
@@ -271,25 +270,25 @@ np.testing.assert_allclose(rms_norm(x), rms_norm_ref(x), rtol=1e-5)
 ```
 
 This code cell includes a lot of inline comments which should explain most of what is happening here, but there are a few points that are worth explicitly highlighting.
-Most of the heavy lifting here is done by the {func}`~jax.extend.ffi.ffi_call` function, which tells JAX how to call the foreign function for a particular set of inputs.
-It's important to note that the first argument to {func}`~jax.extend.ffi.ffi_call` must be a string that matches the target name that we used when calling `register_custom_call_target` above.
+Most of the heavy lifting here is done by the {func}`~jax.ffi.ffi_call` function, which tells JAX how to call the foreign function for a particular set of inputs.
+It's important to note that the first argument to {func}`~jax.ffi.ffi_call` must be a string that matches the target name that we used when calling `register_custom_call_target` above.
 
-Any attributes (defined using `Attr` in the C++ wrapper above) should be passed as keyword arguments to {func}`~jax.extend.ffi.ffi_call`.
+Any attributes (defined using `Attr` in the C++ wrapper above) should be passed as keyword arguments to {func}`~jax.ffi.ffi_call`.
 Note that we explicitly cast `eps` to `np.float32` because our FFI library expects a C `float`, and we can't use `jax.numpy` here, because these parameters must be static arguments.
 
-The `vmap_method` argument to {func}`~jax.extend.ffi.ffi_call` defines how this FFI call interacts with {func}`~jax.vmap` as described next.
+The `vmap_method` argument to {func}`~jax.ffi.ffi_call` defines how this FFI call interacts with {func}`~jax.vmap` as described next.
 
 ```{tip}
-If you are familiar with the earlier "custom call" interface, you might be surprised that we're not passing the problem dimensions as parameters (batch size, etc.) to {func}`~jax.extend.ffi.ffi_call`.
+If you are familiar with the earlier "custom call" interface, you might be surprised that we're not passing the problem dimensions as parameters (batch size, etc.) to {func}`~jax.ffi.ffi_call`.
 In this earlier API, the backend had no mechanism for receiving metadata about the input arrays, but since the FFI includes dimension information with the `Buffer` objects, we no longer need to compute this using Python when lowering.
-One major perk of this change is {func}`~jax.extend.ffi.ffi_call` can support some simple {func}`~jax.vmap` semantics out of the box, as discussed below.
+One major perk of this change is {func}`~jax.ffi.ffi_call` can support some simple {func}`~jax.vmap` semantics out of the box, as discussed below.
 ```
 
 (ffi-call-vmap)=
 ### Batching with `vmap`
 
-{func}`~jax.extend.ffi.ffi_call` supports some simple {func}`~jax.vmap` semantics out of the box using the `vmap_method` parameter.
-The docs for {func}`~jax.pure_callback` provide more details about the `vmap_method` parameter, and the same behavior applies to {func}`~jax.extend.ffi.ffi_call`.
+{func}`~jax.ffi.ffi_call` supports some simple {func}`~jax.vmap` semantics out of the box using the `vmap_method` parameter.
+The docs for {func}`~jax.pure_callback` provide more details about the `vmap_method` parameter, and the same behavior applies to {func}`~jax.ffi.ffi_call`.
 
 The simplest `vmap_method` is `"sequential"`.
 In this case, when `vmap`ped, an `ffi_call` will be rewritten as a {func}`~jax.lax.scan` with the `ffi_call` in the body.
@@ -326,7 +325,7 @@ Using `vmap_method="sequential"`, `vmap`ping a `ffi_call` will fall back on a {f
 
 ```{code-cell} ipython3
 def rms_norm_sequential(x, eps=1e-5):
-  return jex.ffi.ffi_call(
+  return jax.ffi.ffi_call(
     "rms_norm",
     jax.ShapeDtypeStruct(x.shape, x.dtype),
     vmap_method="sequential",
@@ -342,9 +341,9 @@ If your foreign function provides an efficient batching rule that isn't supporte
 
 ### Differentiation
 
-Unlike with batching, {func}`~jax.extend.ffi.ffi_call` doesn't provide any default support for automatic differentiation (AD) of foreign functions.
+Unlike with batching, {func}`~jax.ffi.ffi_call` doesn't provide any default support for automatic differentiation (AD) of foreign functions.
 As far as JAX is concerned, the foreign function is a black box that can't be inspected to determine the appropriate behavior when differentiated.
-Therefore, it is the {func}`~jax.extend.ffi.ffi_call` user's responsibility to define a custom derivative rule.
+Therefore, it is the {func}`~jax.ffi.ffi_call` user's responsibility to define a custom derivative rule.
 
 More details about custom derivative rules can be found in the [custom derivatives tutorial](https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html), but the most common pattern used for implementing differentiation for foreign functions is to define a {func}`~jax.custom_vjp` which itself calls a foreign function.
 In this case, we actually define two new FFI calls:
@@ -353,21 +352,21 @@ In this case, we actually define two new FFI calls:
 2. `rms_norm_bwd` takes the residuals and the output co-tangents, and returns the input co-tangents.
 
 We won't get into the details of the RMS normalization backwards pass, but take a look at the [C++ source code](https://github.com/jax-ml/jax/blob/main/examples/ffi/src/jax_ffi_example/rms_norm.cc) to see how these functions are implemented on the back end.
-The main point to emphasize here is that the "residual" computed has a different shape than the primal output, therefore, in the {func}`~jax.extend.ffi.ffi_call` to `res_norm_fwd`, the output type has two elements with different shapes.
+The main point to emphasize here is that the "residual" computed has a different shape than the primal output, therefore, in the {func}`~jax.ffi.ffi_call` to `res_norm_fwd`, the output type has two elements with different shapes.
 
 This custom derivative rule can be wired in as follows:
 
 ```{code-cell} ipython3
-jex.ffi.register_ffi_target(
-  "rms_norm_fwd", jex.ffi.pycapsule(rms_norm_lib.RmsNormFwd), platform="cpu"
+jax.ffi.register_ffi_target(
+  "rms_norm_fwd", jax.ffi.pycapsule(rms_norm_lib.RmsNormFwd), platform="cpu"
 )
-jex.ffi.register_ffi_target(
-  "rms_norm_bwd", jex.ffi.pycapsule(rms_norm_lib.RmsNormBwd), platform="cpu"
+jax.ffi.register_ffi_target(
+  "rms_norm_bwd", jax.ffi.pycapsule(rms_norm_lib.RmsNormBwd), platform="cpu"
 )
 
 
 def rms_norm_fwd(x, eps=1e-5):
-  y, res = jex.ffi.ffi_call(
+  y, res = jax.ffi.ffi_call(
     "rms_norm_fwd",
     (
       jax.ShapeDtypeStruct(x.shape, x.dtype),
@@ -384,7 +383,7 @@ def rms_norm_bwd(eps, res, ct):
   assert res.shape == ct.shape[:-1]
   assert x.shape == ct.shape
   return (
-    jex.ffi.ffi_call(
+    jax.ffi.ffi_call(
       "rms_norm_bwd",
       jax.ShapeDtypeStruct(ct.shape, ct.dtype),
       vmap_method="broadcast_all",
@@ -447,7 +446,7 @@ Then, the `RmsNormImpl` can use the CUDA stream to launch CUDA kernels.
 On the front end, the registration code would be updated to specify the appropriate platform:
 
 ```python
-jex.ffi.register_ffi_target(
+jax.ffi.register_ffi_target(
   "rms_norm_cuda", rms_norm_lib_cuda.rms_norm(), platform="CUDA"
 )
 ```
@@ -462,7 +461,7 @@ def rms_norm_cross_platform(x, eps=1e-5):
   out_type = jax.ShapeDtypeStruct(x.shape, x.dtype)
 
   def impl(target_name):
-    return lambda x: jex.ffi.ffi_call(
+    return lambda x: jax.ffi.ffi_call(
       target_name,
       out_type,
       vmap_method="broadcast_all",
@@ -499,8 +498,8 @@ and there will be no runtime overhead to using {func}`jax.lax.platform_dependent
 This tutorial covers most of the basic steps that are required to get up and running with JAX's FFI, but advanced use cases may require more features.
 We will leave these topics to future tutorials, but here are some possibly useful references:
 
-* **Supporting multiple dtypes**: In this tutorial's example, we restricted to only support `float32` inputs and outputs, but many use cases require supporting multiple different input types. One option to handle this is to register different FFI targets for all supported input types and then use Python to select the appropriate target for {func}`jax.extend.ffi.ffi_call` depending on the input types. But, this approach could get quickly unwieldy depending on the combinatorics of the supported cases. So it is also possible to define the C++ handler to accept `ffi::AnyBuffer` instead of `ffi::Buffer<Dtype>`. Then, the input buffer will include a `element_type()` method which can be used to define the appropriate dtype dispatching logic in the backend.
+* **Supporting multiple dtypes**: In this tutorial's example, we restricted to only support `float32` inputs and outputs, but many use cases require supporting multiple different input types. One option to handle this is to register different FFI targets for all supported input types and then use Python to select the appropriate target for {func}`jax.ffi.ffi_call` depending on the input types. But, this approach could get quickly unwieldy depending on the combinatorics of the supported cases. So it is also possible to define the C++ handler to accept `ffi::AnyBuffer` instead of `ffi::Buffer<Dtype>`. Then, the input buffer will include a `element_type()` method which can be used to define the appropriate dtype dispatching logic in the backend.
 
-* **Sharding**: When using JAX's automatic data-dependent parallelism within {func}`~jax.jit`, FFI calls implemented using {func}`~jax.extend.ffi.ffi_call` don't have sufficient information to shard appropriately, so they result in a copy of the inputs to all devices and the FFI call gets executed on the full array on each device. To get around this limitation, you can use {func}`~jax.experimental.shard_map.shard_map` or {func}`~jax.experimental.custom_partitioning.custom_partitioning`.
+* **Sharding**: When using JAX's automatic data-dependent parallelism within {func}`~jax.jit`, FFI calls implemented using {func}`~jax.ffi.ffi_call` don't have sufficient information to shard appropriately, so they result in a copy of the inputs to all devices and the FFI call gets executed on the full array on each device. To get around this limitation, you can use {func}`~jax.experimental.shard_map.shard_map` or {func}`~jax.experimental.custom_partitioning.custom_partitioning`.
 
 * **Stateful foreign functions**: It is also possible to use the FFI to wrap functions with associated state. There is a [low-level example included in the XLA test suite](https://github.com/openxla/xla/blob/737a7da3c5405583dc95773ac0bb11b1349fc9ea/xla/service/gpu/custom_call_test.cc#L794-L845), and a future tutorial will include more details.

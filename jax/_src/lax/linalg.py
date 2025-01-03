@@ -34,7 +34,7 @@ from jax._src import dtypes
 from jax._src import util
 from jax._src.core import (
     Primitive, ShapedArray, is_constant_dim, is_constant_shape)
-from jax._src.extend import ffi
+from jax._src import ffi
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
