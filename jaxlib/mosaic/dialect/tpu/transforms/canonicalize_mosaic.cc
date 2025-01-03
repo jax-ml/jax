@@ -552,7 +552,10 @@ const llvm::StringSet<> &elementwise_convertible_ops() {
                                           arith::SubFOp::getOperationName(),
                                           arith::MaximumFOp::getOperationName(),
                                           arith::MinimumFOp::getOperationName(),
-                                          math::PowFOp::getOperationName()};
+                                          math::PowFOp::getOperationName(),
+                                          math::TanhOp::getOperationName(),
+                                          math::ExpOp::getOperationName(),
+                                          math::LogOp::getOperationName()};
   return *ops;
 }
 
