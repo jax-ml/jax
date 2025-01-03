@@ -62,6 +62,11 @@ exports_files([
     "version.py",
 ])
 
+exports_files(
+    ["_src/export/serialization.fbs"],
+    visibility = ["//learning/infra/mira/experimental/orbax_model:__subpackages__"],  # @johnqiangzhang
+)
+
 # Packages that have access to JAX-internal implementation details.
 package_group(
     name = "internal",
