@@ -942,3 +942,4 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr):
     assert len(updates) == 0, 'Cannot lower run_scoped with effects.'
     return out
   return mlir.lower_fun(_lower_fun, multiple_results=True)(ctx, *args)
+

@@ -31,6 +31,8 @@ from jax._src.pallas.core import no_block_spec as no_block_spec
 from jax._src.pallas.core import Unblocked as Unblocked
 from jax._src.pallas.core import unblocked as unblocked
 from jax._src.pallas.cost_estimate import estimate_cost as estimate_cost
+from jax._src.pallas.helpers import empty as empty
+from jax._src.pallas.helpers import empty_like as empty_like
 from jax._src.pallas.pallas_call import pallas_call as pallas_call
 from jax._src.pallas.pallas_call import pallas_call_p as pallas_call_p
 from jax._src.pallas.primitives import atomic_add as atomic_add

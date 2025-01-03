@@ -31,6 +31,7 @@ py_library(
         "__init__.py",
         "core.py",
         "cost_estimate.py",
+        "helpers.py",
         "pallas_call.py",
         "primitives.py",
         "utils.py",
