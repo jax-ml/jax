@@ -2627,6 +2627,65 @@ random_clone_p.def_abstract_eval(lambda x: x)
 batching.defvectorized(random_clone_p)
 mlir.register_lowering(random_clone_p, lambda _, k: [k])
 
+
+def multinomial(
+    key: Array,
+    n: RealArray,
+    p: RealArray,
+    axis: int = -1,
+    shape: Shape | None = None,
+):
+  r"""Sample from a multinomial distribution.
+
+  The probability mass function is
+
+  .. math::
+      f(x;n,p) = \frac{n!}{x_1! \ldots x_k!} p_1^{x_1} \ldots p_k^{x_k}
+
+  Args:
+    key: a PRNG key used as the random key.
+    n: a float array-like representing the number of trials.
+    p: a float array-like representing the probabilities of each outcome.
+    axis: axis along which probabilities are defined for each outcome.
+    shape: optional, a tuple of nonnegative integers specifying the result
+      shape. Must be broadcast-compatible with ``n`` and ``p``.
+
+  Returns:
+    An array of counts for each outcome.
+  """
+
+  key, _ = _check_prng_key("multinomial", key)
+  check_arraylike("multinomial", n, p)
+
+  if shape is not None:
+    p = jnp.broadcast_to(p, shape)
+
+  def f(remainder, ratio_key):
+    ratio, key = ratio_key
+    count = binomial(key, remainder, ratio)
+    return remainder - count, count
+
+  p = jnp.moveaxis(p, axis, 0)
+
+  p_shape = jnp.shape(p)
+
+  shape = jnp.broadcast_shapes(jnp.shape(n), p_shape[1:])
+  n = jnp.broadcast_to(n, shape)
+  p = jnp.broadcast_to(p, (p_shape[0],) + shape)
+
+  remaining_probs = lax.cumsum(p, 0, reverse=True)
+  ratios = p / jnp.where(remaining_probs == 0, 1, remaining_probs)
+
+  keys = split(key, ratios.shape[0])
+
+  remainder, counts = lax.scan(f, n, (ratios, keys), unroll=True)
+  # final remainder should be zero
+
+  counts = jnp.moveaxis(counts, 0, axis)
+
+  return counts
+
+
 def clone(key):
   """Clone a key for reuse
 
