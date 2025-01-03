@@ -30,6 +30,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * From {mod}`jax.interpreters.xla`, `abstractify` and `pytype_aval_mappings`
     are now deprecated, having been replaced by symbols of the same name
     in {mod}`jax.core`.
+  * {func}`jax.scipy.special.lpmn` and {func}`jax.scipy.special.lpmn_values`
+    are deprecated, following their deprecation in SciPy v1.15.0. There are
+    no plans to replace these deprecated functions with new APIs.
 
 * Deletions
   * `jax_enable_memories` flag has been deleted and the behavior of that flag
