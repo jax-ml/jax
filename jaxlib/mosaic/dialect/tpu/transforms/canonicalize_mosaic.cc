@@ -292,10 +292,8 @@ LogicalResult canonicalize_elementwise(int hardware_generation_,
         return failure();
       }
       auto element_type = ty.getElementType();
-      // PowFOp and DivFOp do not seem to be supported in bf16 on later
-      // hardware.
-      bool needs_cast = hardware_generation_ <= 5 || isa<math::PowFOp>(op) ||
-                        isa<arith::DivFOp>(op);
+      // PowFOp does not seem to be supported in bf16 on later hardware.
+      bool needs_cast = hardware_generation_ <= 5 || isa<math::PowFOp>(op);
       if (needs_cast && element_type.isBF16()) {
         auto target_f32 =
             builder.create<arith::ExtFOp>(op.getLoc(), target_f32_ty, operand)
