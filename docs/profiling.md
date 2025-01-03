@@ -93,6 +93,12 @@ plugins" error described {ref}`below <multiple_installs>`. See
 <https://www.tensorflow.org/guide/profiler> for more information on installing
 TensorBoard.
 
+Nightly version of TensorBoard profiler requires nightly tensorflow and
+tensorboard
+```shell
+pip install tf-nightly tb-nightly tbp-nightly
+```
+
 ### Programmatic capture
 
 You can instrument your code to capture a profiler trace via the

@@ -39,8 +39,8 @@ jax_multiplatform_test(
         "tpu",
     ],
     enable_configs = [
-        "gpu_a100_x32",
-        "gpu_h100_x32",
+        "gpu_a100",
+        "gpu_h100",
     ],
     shard_count = {
         "cpu": 8,

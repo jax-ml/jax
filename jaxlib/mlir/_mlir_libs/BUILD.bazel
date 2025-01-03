@@ -70,8 +70,8 @@ py_extension(
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:CAPIGPUHeaders",
         "@llvm-project//mlir:CAPIIRHeaders",
-        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
-        "@pybind11",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeaders",
+        "@nanobind",
     ],
 )
 
@@ -85,7 +85,8 @@ py_extension(
     deps = [
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:CAPIGPUHeaders",
-        "@pybind11",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeaders",
+        "@nanobind",
     ],
 )
 
@@ -100,8 +101,8 @@ py_extension(
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:CAPIIRHeaders",
         "@llvm-project//mlir:CAPINVGPUHeaders",
-        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
-        "@pybind11",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeaders",
+        "@nanobind",
     ],
 )
 
@@ -116,8 +117,8 @@ py_extension(
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:CAPIIRHeaders",
         "@llvm-project//mlir:CAPILLVMHeaders",
-        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
-        "@pybind11",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeaders",
+        "@nanobind",
     ],
 )
 
@@ -131,8 +132,8 @@ py_extension(
     deps = [
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:CAPISparseTensorHeaders",
-        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
-        "@pybind11",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeaders",
+        "@nanobind",
     ],
 )
 
@@ -146,7 +147,8 @@ py_extension(
     deps = [
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:CAPISparseTensorHeaders",
-        "@pybind11",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeaders",
+        "@nanobind",
     ],
 )
 
@@ -156,9 +158,10 @@ py_extension(
     copts = COPTS,
     linkopts = LINKOPTS,
     deps = [
-        "//jaxlib/mosaic/dialect/gpu:gpu_dialect_capi",
+        ":jaxlib_mlir_capi_shared_library",
+        "//jaxlib/mosaic/dialect/gpu:gpu_dialect_capi_headers",
         "@llvm-project//mlir:CAPIIRHeaders",
-        "@llvm-project//mlir:MLIRBindingsPythonHeadersAndDeps",
+        "@llvm-project//mlir:MLIRBindingsPythonNanobindHeadersAndDeps",
         "@nanobind",
     ],
 )
@@ -378,6 +381,7 @@ cc_library(
     name = "jaxlib_mlir_capi_objects",
     deps = [
         "//jaxlib/mosaic:tpu_dialect_capi_objects",
+        "//jaxlib/mosaic/dialect/gpu:gpu_dialect_capi_objects",
         "@llvm-project//mlir:CAPIArithObjects",
         "@llvm-project//mlir:CAPIGPUObjects",
         "@llvm-project//mlir:CAPIIRObjects",

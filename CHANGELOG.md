@@ -4,6 +4,10 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 For the changes specific to the experimental Pallas APIs,
 see {ref}`pallas-changelog`.
 
+JAX follows Effort-based versioning; for a discussion of this and JAX's API
+compatibility policy, refer to {ref}`api-compatibility`. For the Python and
+NumPy version support policy, refer to {ref}`version-support-policy`.
+
 <!--
 Remember to align the itemized text with the first line of an item within a list.
 
@@ -11,6 +15,16 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 -->
 
 ## Unreleased
+
+* Changes:
+  * The minimum NumPy version is now 1.25. NumPy 1.25 will remain the minimum
+    supported version until June 2025.
+
+* New Features
+  * {func}`jax.numpy.fft.fftn`, {func}`jax.numpy.fft.rfftn`,
+    {func}`jax.numpy.fft.ifftn`, and {func}`jax.numpy.fft.irfftn` now support
+    transforms in more than 3 dimensions, which was previously the limit. See
+    {jax-issue}`#25606` for more details.
 
 * Deprecations
   * From {mod}`jax.interpreters.xla`, `abstractify` and `pytype_aval_mappings`
@@ -20,21 +34,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Deletions
   * `jax_enable_memories` flag has been deleted and the behavior of that flag
     is on by default.
-
-* Changes:
-  * The minimum NumPy version is now 1.25. NumPy 1.25 will remain the minimum
-    supported version until June 2025.
-
-* Deprecations
-  * From {mod}`jax.interpreters.xla`, `abstractify` and `pytype_aval_mappings`
-    are now deprecated, having been replaced by symbols of the same name
-    in {mod}`jax.core`.
-
-* New Features
-  * {func}`jax.numpy.fft.fftn`, {func}`jax.numpy.fft.rfftn`,
-    {func}`jax.numpy.fft.ifftn`, and {func}`jax.numpy.fft.irfftn` now support
-    transforms in more than 3 dimensions, which was previously the limit. See
-    {jax-issue}`#25606` for more details.
+  * From `jax.lib.xla_client`, the previously-deprecated `Device` and
+    `XlaRuntimeError` symbols have been removed; instead use `jax.Device`
+    and `jax.errors.JaxRuntimeError` respectively.
 
 ## jax 0.4.38 (Dec 17, 2024)
 

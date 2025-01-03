@@ -33,4 +33,5 @@ except ImportError:
   from mlir.dialects._ods_common import _cext  # type: ignore[import-not-found]
 
 
-_cext.globals.append_dialect_search_prefix("jax.jaxlib.mosaic.python")
+# Add the parent module to the search prefix
+_cext.globals.append_dialect_search_prefix(__name__[:__name__.rfind(".")])

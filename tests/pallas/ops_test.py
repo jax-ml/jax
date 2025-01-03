@@ -2127,6 +2127,21 @@ class OpsTest(PallasBaseTest):
       )
       self.assertTrue(acceptable_errors, "Failed with error: " + str(e))
 
+  @parameterized.parameters((128, 128), (256, 256))
+  def test_jnp_diagonal_pallas(self, n, m):
+    if jtu.test_device_matches(["gpu"]):
+      # TODO(mvoz): platform_index_p on GPU
+      self.skipTest("Not implemented on GPU")
+    x = jnp.arange(n * m, dtype=jnp.float32).reshape((n, m))
+
+    def kernel(x_ref, out_ref):
+      out_ref[...] = jnp.diagonal(x_ref[...])
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((n,), jnp.float32)
+    )(x)
+    np.testing.assert_array_equal(out, np.diagonal(x))
+
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True

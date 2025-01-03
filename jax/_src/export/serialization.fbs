@@ -20,7 +20,7 @@
 //  3.  Add back the licence comment at the start
 //
 
-namespace jax.export.serialization;
+namespace jax_export.serialization;
 
 enum PyTreeDefKind: byte {
   leaf = 0,

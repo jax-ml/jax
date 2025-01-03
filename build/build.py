@@ -580,11 +580,11 @@ async def main():
   if args.configure_only:
     logging.info("--configure_only is set so not running any Bazel commands.")
   else:
-    output_path = args.output_path
-    logger.debug("Artifacts output directory: %s", output_path)
-
     # Wheel build command execution
     for wheel in args.wheels.split(","):
+      output_path = args.output_path
+      logger.debug("Artifacts output directory: %s", output_path)
+
       # Allow CUDA/ROCm wheels without the "jax-" prefix.
       if ("plugin" in wheel or "pjrt" in wheel) and "jax" not in wheel:
         wheel = "jax-" + wheel

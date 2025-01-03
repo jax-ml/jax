@@ -254,8 +254,6 @@ def sdpa_train_fp8(
 class DotProductAttentionTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
-    if jax.device_count() < 4:
-      self.skipTest("Requires more than 4 devices.")
     try:
       cudnn_version = check_cudnn_version()
     except RuntimeError as e:
@@ -366,6 +364,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_inference(self):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
     k1, k2, k3 = jax.random.split(jax.random.key(0), 3)
     query = jax.random.normal(
         k1, (4, 1024, 4, 64), dtype=jnp.bfloat16)
@@ -407,6 +407,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_var_seq(self):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
     self.skipTest("Skip before fixed.")
     k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
     query = jax.random.normal(
@@ -438,6 +440,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_broadcast_bias_and_dbias(self):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
     try:
       cudnn_version = check_cudnn_version()
     except RuntimeError as e:
@@ -504,6 +508,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("cuda")
   def test_sdpa_dbias(self, batch_size: int):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
     # cuDNN only supports dbias when batch size is 1. If the batch size is
     # greater, dbias is silently set to all zeros. This test verifies this
     # behavior for both vmap and regular use cases.
@@ -540,6 +546,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_sliding_window_length(self):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
     k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
     query = jax.random.normal(
         k1, (4, 1024, 4, 64), dtype=jnp.bfloat16)
@@ -572,7 +580,42 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-5, atol=1e-5)
 
   @jtu.run_on_devices("cuda")
+  def test_sdpa_large_head_size(self):
+    try:
+      cudnn_version = check_cudnn_version()
+    except RuntimeError as e:
+      self.skipTest(str(e))
+      return
+    if cudnn_version < 90500:
+      self.skipTest("Requires >= cuDNN 9.5.0")
+    if not jtu.is_cuda_compute_capability_at_least("9.0"):
+      self.skipTest("Requires at least Hopper arch")
+
+    B, T, N, H = 2, 64, 2, 256
+    bf16 = jnp.bfloat16
+    keys = jax.random.split(jax.random.key(0), 4)
+    query = jax.random.normal(keys[0], (B, T, N, H), dtype=bf16)
+    key = jax.random.normal(keys[1], (B, T, N, H), dtype=bf16)
+    value = jax.random.normal(keys[2], (B, T, N, H), dtype=bf16)
+    grad = jax.random.normal(keys[3], (B, T, N, H), dtype=bf16)
+    sdpa_train_ans = jax.jit(partial(
+        sdpa_train, scale=1.0, mask_type=MaskType.CAUSAL, dropout_rate=0)
+    )
+    sdpa_train_rfc = jax.jit(partial(
+        sdpa_train_ref, scale=1.0, mask_type=MaskType.CAUSAL, dropout_rate=0)
+    )
+
+    out_ans, grads_ans = sdpa_train_ans(query, key, value, grad, None, None)
+    out_ref, grads_ref = sdpa_train_rfc(query, key, value, grad, None, None)
+    self.assertArraysAllClose(out_ref, out_ans)
+    self.assertArraysAllClose(grads_ref[0], grads_ans[0])
+    self.assertArraysAllClose(grads_ref[1], grads_ans[1])
+    self.assertArraysAllClose(grads_ref[2], grads_ans[2])
+
+  @jtu.run_on_devices("cuda")
   def test_layouts(self):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
     dtype = "bfloat16"
     B, T, N, H = 4, 1024, 8, 128
     S = T
@@ -600,6 +643,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     self.assertArraysAllClose(dv_ref, _cvt_back(dv))
 
   def test_sdpa_utils(self):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
     test_cases = [
       (1, 257, 64, 8905, False, True, True),
       (1, 1024, 64, 8905, False, False, True),
