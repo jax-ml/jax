@@ -43,6 +43,7 @@ export PY_COLORS=1
 export JAX_SKIP_SLOW_TESTS=true
 export NCCL_DEBUG=WARN
 export TF_CPP_MIN_LOG_LEVEL=0
+export JAX_ENABLE_X64="$JAXCI_ENABLE_X64"
 
 # Set the number of processes to run to be 4x the number of GPUs.
 export gpu_count=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
