@@ -58,6 +58,7 @@ cc_library(
     ]),
     # compatible with libtpu
     deps = [
+        ":tpu_ext_dialect",
         ":tpu_inc_gen",
         "//jaxlib:pass_boilerplate",
         "@com_google_absl//absl/algorithm:container",
@@ -72,6 +73,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ControlFlowDialect",
+        "@llvm-project//mlir:DataLayoutInterfaces",
         "@llvm-project//mlir:Dialect",
         "@llvm-project//mlir:DialectUtils",
         "@llvm-project//mlir:FuncDialect",
@@ -232,6 +234,133 @@ cc_library(
         "@llvm-project//mlir:IR",
     ],
     alwayslink = True,
+)
+
+################################################################################
+# TPUExt dialect
+
+cc_library(
+    name = "tpu_ext_dialect",
+    srcs = [
+        "dialect/tpu_ext/tpu_ext_dialect.cc",
+    ],
+    hdrs = [
+        "dialect/tpu_ext/tpu_ext_dialect.h",
+    ],
+    # compatible with libtpu
+    deps = [
+        ":tpu_ext_inc_gen",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+    ],
+)
+
+gentbl_cc_library(
+    name = "tpu_ext_inc_gen",
+    # compatible with libtpu
+    tbl_outs = [
+        (
+            [
+                "-gen-op-decls",
+                "-dialect=tpu_ext",
+            ],
+            "dialect/tpu_ext/tpu_ext_ops.h.inc",
+        ),
+        (
+            [
+                "-gen-op-defs",
+                "-dialect=tpu_ext",
+            ],
+            "dialect/tpu_ext/tpu_ext_ops.cc.inc",
+        ),
+        (
+            [
+                "-gen-typedef-decls",
+                "-dialect=tpu_ext",
+                "--typedefs-dialect=tpu_ext",
+            ],
+            "dialect/tpu_ext/tpu_ext_type_defs.h.inc",
+        ),
+        (
+            [
+                "-gen-typedef-defs",
+                "-dialect=tpu_ext",
+                "--typedefs-dialect=tpu_ext",
+            ],
+            "dialect/tpu_ext/tpu_ext_type_defs.cc.inc",
+        ),
+        (
+            [
+                "-gen-dialect-decls",
+                "-dialect=tpu_ext",
+            ],
+            "dialect/tpu_ext/tpu_ext_dialect.h.inc",
+        ),
+        (
+            [
+                "-gen-dialect-defs",
+                "-dialect=tpu_ext",
+            ],
+            "dialect/tpu_ext/tpu_ext_dialect.cc.inc",
+        ),
+        (
+            [
+                "-gen-enum-decls",
+                "-dialect=tpu_ext",
+            ],
+            "dialect/tpu_ext/tpu_ext_enums.h.inc",
+        ),
+        (
+            [
+                "-gen-enum-defs",
+                "-dialect=tpu_ext",
+            ],
+            "dialect/tpu_ext/tpu_ext_enums.cc.inc",
+        ),
+        (
+            [
+                "-gen-attrdef-decls",
+                "-dialect=tpu_ext",
+                "--attrdefs-dialect=tpu_ext",
+            ],
+            "dialect/tpu_ext/tpu_ext_attr_defs.h.inc",
+        ),
+        (
+            [
+                "-gen-attrdef-defs",
+                "-dialect=tpu_ext",
+                "--attrdefs-dialect=tpu_ext",
+            ],
+            "dialect/tpu_ext/tpu_ext_attr_defs.cc.inc",
+        ),
+        (
+            [
+                "-gen-pass-decls",
+                "-name=TPUExt",
+            ],
+            "dialect/tpu_ext/tpu_ext_pass_defs.h.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "dialect/tpu_ext/tpu_ext.td",
+    deps = [":tpu_ext_td_files"],
+)
+
+td_library(
+    name = "tpu_ext_td_files",
+    srcs = [
+        "dialect/tpu_ext/tpu_ext.td",
+    ],
+    # compatible with libtpu
+    deps = [
+        "@llvm-project//mlir:AttrTdFiles",
+        "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
+        "@llvm-project//mlir:InferTypeOpInterfaceTdFiles",
+        "@llvm-project//mlir:OpBaseTdFiles",
+        "@llvm-project//mlir:PassBaseTdFiles",
+        "@llvm-project//mlir:SideEffectInterfacesTdFiles",
+    ],
 )
 
 cc_test(

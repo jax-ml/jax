@@ -3,7 +3,7 @@
 #include "llvm/include/llvm/ADT/StringMap.h"
 #include "mlir/include/mlir/IR/Operation.h"
 
-namespace mlir::tpu::extensions {
+namespace mlir::tpu::ext {
 
 using RewriteContext = ApplyVectorLayoutContext;
 
@@ -16,4 +16,4 @@ const llvm::StringMap<rule_type> &rules() {
   return *rules;
 }
 
-}  // namespace mlir::tpu::extensions
+}  // namespace mlir::tpu::ext

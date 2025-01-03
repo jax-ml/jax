@@ -844,6 +844,7 @@ def InferVectorLayoutPass : Pass<"tpu-infer-vector-layout", "::mlir::func::FuncO
     "::mlir::scf::SCFDialect",
     "::mlir::vector::VectorDialect",
     "::mlir::tpu::TPUDialect",
+    "::mlir::tpu::ext::TPUExtDialect",
   ];
   let constructor = "::mlir::tpu::createInferVectorLayoutPass()";
   let options = [
@@ -871,6 +872,7 @@ def ApplyVectorLayoutPass : Pass<"tpu-apply-vector-layout", "::mlir::func::FuncO
     "::mlir::func::FuncDialect",
     "::mlir::vector::VectorDialect",
     "::mlir::tpu::TPUDialect",
+    "::mlir::tpu::ext::TPUExtDialect",
   ];
   let constructor = "::mlir::tpu::createApplyVectorLayoutPass()";
   let options = [

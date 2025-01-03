@@ -4,10 +4,10 @@
 #include "mlir/include/mlir/Support/LLVM.h"
 #include "mlir/include/mlir/Support/LogicalResult.h"
 
-namespace mlir::tpu::extensions {
+namespace mlir::tpu::ext {
 
 bool canInferVectorLayout(const Operation &op) { return false; }
 
 LogicalResult inferVectorLayout(const Operation &op) { return failure(); }
 
-}  // namespace mlir::tpu::extensions
+}  // namespace mlir::tpu::ext

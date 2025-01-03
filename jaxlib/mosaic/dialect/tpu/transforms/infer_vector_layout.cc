@@ -37,6 +37,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
+#include "third_party/py/jax/jaxlib/mosaic/dialect/tpu_ext/tpu_ext_dialect.h"  // IWYU pragma: keep
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/types/span.h"
@@ -323,8 +324,8 @@ class VectorLayoutInferer {
         if (inferElementwise(&any_op).failed()) {
           return failure();
         }
-      } else if (mlir::tpu::extensions::canInferVectorLayout(any_op)) {
-        if (mlir::tpu::extensions::inferVectorLayout(any_op).failed()) {
+      } else if (mlir::tpu::ext::canInferVectorLayout(any_op)) {
+        if (mlir::tpu::ext::inferVectorLayout(any_op).failed()) {
           return failure();
         }
       } else {

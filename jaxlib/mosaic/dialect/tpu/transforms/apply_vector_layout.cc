@@ -45,6 +45,7 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
+#include "third_party/py/jax/jaxlib/mosaic/dialect/tpu_ext/tpu_ext_dialect.h"  // IWYU pragma: keep
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -4667,7 +4668,7 @@ const llvm::StringMap<rule_type> &rules() {
         {vector::StoreOp::getOperationName(), vector_store_rule},
         {vector::TransposeOp::getOperationName(), vector_transpose_rule}};
 
-    llvm::StringMap<rule_type> extended_rules = mlir::tpu::extensions::rules();
+    llvm::StringMap<rule_type> extended_rules = mlir::tpu::ext::rules();
     for (auto &entry : extended_rules) {
       rules->insert(&entry);
     }
