@@ -1,9 +1,9 @@
-name: CI - Bazel GPU tests (RBE)
+name: CI - Bazel CUDA tests (RBE)
 
 on:
-  # pull_request:
-  #   branches:
-  #     - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       halt-for-connection:
@@ -14,9 +14,6 @@ on:
         options:
         - 'yes'
         - 'no'
-  pull_request:
-    branches:
-      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -24,7 +21,6 @@ concurrency:
 
 jobs:
   run_tests:
-    if: github.event.repository.fork == false
     strategy:
       matrix:
         runner: ["linux-x86-n2-16"]

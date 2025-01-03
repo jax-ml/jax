@@ -1,0 +1,107 @@
+name: CI - Wheel Tests (Continuous)
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: choice
+        required: true
+        default: 'no'
+        options:
+        - 'yes'
+        - 'no'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_jaxlib_artifact:
+    uses: ./.github/workflows/build_artifacts.yml      
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+            # Runner and Python values need to match the matrix stategy in the CPU tests job
+            # Enable Windows after we have fixed the runner issue
+            runner: ["linux-x86-n2-16", "linux-arm64-c4a-64",] # "windows-x86-n2-16"]
+            artifact: ["jaxlib"]
+            python: ["3.10"]
+    with:
+        runner: ${{ matrix.runner }}
+        artifact: ${{ matrix.artifact }}
+        python: ${{ matrix.python }}
+        clone_main_xla: 1
+        upload_artifacts: true
+        gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax-fork/${{ github.workflow }}/${{ github.run_number }}'
+
+  build_cuda_artifacts:
+    uses: ./.github/workflows/build_artifacts.yml      
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          # Python values need to match the matrix stategy in the GPU tests job below
+          runner: ["linux-x86-n2-16"]
+          artifact: ["jax-cuda-plugin", "jax-cuda-pjrt"]
+          python: ["3.10",]
+    with:
+      runner: ${{ matrix.runner }}
+      artifact: ${{ matrix.artifact }}
+      python: ${{ matrix.python }}
+      clone_main_xla: 1
+      upload_artifacts: true
+      gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax-fork/${{ github.workflow }}/${{ github.run_number }}'
+ 
+  run_pytest_cpu:
+    needs: build_jaxlib_artifact
+    uses: ./.github/workflows/pytest_cpu.yml      
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          # Runner OS and Python values need to match the matrix stategy in the build_jaxlib_artifact job above
+          runner: ["linux-x86-n2-64", "linux-x86-t2a-48-dev",]
+          python: ["3.10",]
+          enable-x64: [1, 0]
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      enable-x64:  ${{ matrix.enable-x64 }}
+      gcs_download_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax-fork/${{ github.workflow }}/${{ github.run_number }}'
+
+
+  run_pytest_gpu:
+    needs: [build_jaxlib_artifact, build_cuda_artifacts]
+    uses: ./.github/workflows/pytest_cuda.yml      
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          # Python values need to match the matrix stategy in the build artifacts job above
+          runner: ["linux-x86-g2-48-l4-4gpu",]
+          python: ["3.10",]
+          cuda: ["12.3", "12.1"]
+          enable-x64: [1, 0]
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      cuda:  ${{ matrix.cuda }}
+      enable-x64:  ${{ matrix.enable-x64 }}
+      gcs_download_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax-fork/${{ github.workflow }}/${{ github.run_number }}'
+
+  run_bazel_test_gpu:
+    needs: [build_jaxlib_artifact, build_cuda_artifacts]
+    uses: ./.github/workflows/bazel_cuda_non_rbe.yml      
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          # Python values need to match the matrix stategy in the build artifacts job above
+          runner: ["linux-x86-g2-48-l4-4gpu",]
+          python: ["3.10",]
+          enable-x64: [1, 0]
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      enable-x64:  ${{ matrix.enable-x64 }}
+      gcs_download_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax-fork/${{ github.workflow }}/${{ github.run_number }}'
