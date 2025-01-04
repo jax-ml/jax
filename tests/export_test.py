@@ -414,7 +414,6 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertEqual(tree_util.tree_structure(res2),
                      tree_util.tree_structure(res))
 
-
   def test_error_wrong_intree(self):
     def f(a_b_pair, *, c):
       return jnp.sin(a_b_pair[0]) + jnp.cos(a_b_pair[1]) + c
@@ -1100,16 +1099,30 @@ class JaxExportTest(jtu.JaxTestCase):
     run_devices = export_devices[::-1]  # We can use other devices
     run_mesh = Mesh(run_devices, "y")
     a_device = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P()))
-
-    expected_re = re.compile(
-      # The top-level input it replicated
-      r"func.func .* @main\(%arg0: tensor<16x4xf32>.*mhlo.sharding = \"{replicated}\"}\).*"
-      # We apply the in_shardings for f_jax
-      r".*custom_call @Sharding\(%arg0\).*mhlo.sharding = \"{devices=\[2,1\]<=\[2\]}\"}.*"
-      r"%1 = .*call @call_exported_f_jax.*"
-      # We apply the out_shardings for f_jax
-      r".*custom_call @Sharding\(%1\).*mhlo.sharding = \"{devices=\[1,2\]<=\[2\]}\"}.*",
-      re.DOTALL)
+    if config.use_shardy_partitioner.value:
+      expected_re = re.compile(
+          # The top-level input is replicated
+          r"func.func .* @main\(%arg0: tensor<16x4xf32>.*sdy.sharding ="
+          r" #sdy.sharding<@mesh, \[\{\}\, \{\}\]>}\).*"
+          # We apply the in_shardings for f_jax
+          r".*sdy.sharding_constraint %arg0 <@mesh_0, \[\{\"x\"\}\, \{\}\]>.*"
+          r"%1 = .*call @call_exported_f_jax.*"
+          # We apply the out_shardings for f_jax
+          r".*sdy.sharding_constraint %1 <@mesh_0, \[\{\}, \{\"x\"\}\]>.*",
+          re.DOTALL)
+    else:
+      expected_re = re.compile(
+          # The top-level input it replicated
+          r"func.func .* @main\(%arg0: tensor<16x4xf32>.*mhlo.sharding ="
+          r" \"{replicated}\"}\).*"
+          # We apply the in_shardings for f_jax
+          r".*custom_call @Sharding\(%arg0\).*mhlo.sharding ="
+          r" \"{devices=\[2,1\]<=\[2\]}\"}.*"
+          r"%1 = .*call @call_exported_f_jax.*"
+          # We apply the out_shardings for f_jax
+          r".*custom_call @Sharding\(%1\).*mhlo.sharding ="
+          r" \"{devices=\[1,2\]<=\[2\]}\"}.*",
+          re.DOTALL)
     hlo = jax.jit(exp.call).lower(a_device).as_text()
     self.assertRegex(hlo, expected_re)
 
@@ -1623,7 +1636,6 @@ class JaxExportTest(jtu.JaxTestCase):
     exp = get_exported(jax.jit(jnp.sin),
                        platforms=("tpu", "cpu", "cuda", "other"))(x)
     self.assertEqual(exp.platforms, ("tpu", "cpu", "cuda", "other"))
-
 
   def test_multi_platform_with_donation(self):
     f = jax.jit(jnp.sin, donate_argnums=(0,))

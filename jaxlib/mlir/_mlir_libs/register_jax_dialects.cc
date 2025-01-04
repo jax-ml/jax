@@ -16,7 +16,6 @@
 #include "mlir/Bindings/Python/NanobindAdaptors.h"
 #include "shardy/integrations/c/passes.h"
 
-
 namespace nb = nanobind;
 
 #define REGISTER_DIALECT(name) \

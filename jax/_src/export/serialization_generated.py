@@ -208,7 +208,6 @@ def PyTreeDefEnd(builder):
     return builder.EndObject()
 
 
-
 class AbstractValue(object):
     __slots__ = ['_tab']
 
@@ -280,7 +279,6 @@ def AbstractValueEnd(builder):
     return builder.EndObject()
 
 
-
 class Sharding(object):
     __slots__ = ['_tab']
 
@@ -349,7 +347,6 @@ def ShardingEnd(builder):
     return builder.EndObject()
 
 
-
 class Effect(object):
     __slots__ = ['_tab']
 
@@ -383,7 +380,6 @@ def EffectAddTypeName(builder, typeName):
 
 def EffectEnd(builder):
     return builder.EndObject()
-
 
 
 class DisabledSafetyCheck(object):
@@ -428,342 +424,437 @@ def DisabledSafetyCheckAddCustomCallTarget(builder, customCallTarget):
     builder.PrependUOffsetTRelativeSlot(1, flatbuffers.number_types.UOffsetTFlags.py_type(customCallTarget), 0)
 
 def DisabledSafetyCheckEnd(builder):
-    return builder.EndObject()
+  return builder.EndObject()
 
+
+class Axis(object):
+  __slots__ = ['_tab']
+
+  @classmethod
+  def GetRootAs(cls, buf, offset=0):
+    n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, offset)
+    x = Axis()
+    x.Init(buf, n + offset)
+    return x
+
+  @classmethod
+  def GetRootAsAxis(cls, buf, offset=0):
+    """This method is deprecated. Please switch to GetRootAs."""
+    return cls.GetRootAs(buf, offset)
+
+  # Axis
+  def Init(self, buf, pos):
+    self._tab = flatbuffers.table.Table(buf, pos)
+
+  # Axis
+  def Name(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
+    if o != 0:
+      return self._tab.String(o + self._tab.Pos)
+    return None
+
+  # Axis
+  def Size(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+    if o != 0:
+      return self._tab.Get(
+          flatbuffers.number_types.Uint16Flags, o + self._tab.Pos
+      )
+    return 0
+
+
+def AxisStart(builder):
+  builder.StartObject(2)
+
+
+def AxisAddName(builder, name):
+  builder.PrependUOffsetTRelativeSlot(
+      0, flatbuffers.number_types.UOffsetTFlags.py_type(name), 0
+  )
+
+
+def AxisAddSize(builder, size):
+  builder.PrependUint16Slot(1, size, 0)
+
+
+def AxisEnd(builder):
+  return builder.EndObject()
 
 
 class Exported(object):
-    __slots__ = ['_tab']
+  __slots__ = ['_tab']
 
-    @classmethod
-    def GetRootAs(cls, buf, offset=0):
-        n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, offset)
-        x = Exported()
-        x.Init(buf, n + offset)
-        return x
+  @classmethod
+  def GetRootAs(cls, buf, offset=0):
+    n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, offset)
+    x = Exported()
+    x.Init(buf, n + offset)
+    return x
 
-    @classmethod
-    def GetRootAsExported(cls, buf, offset=0):
-        """This method is deprecated. Please switch to GetRootAs."""
-        return cls.GetRootAs(buf, offset)
-    # Exported
-    def Init(self, buf, pos):
-        self._tab = flatbuffers.table.Table(buf, pos)
+  @classmethod
+  def GetRootAsExported(cls, buf, offset=0):
+    """This method is deprecated. Please switch to GetRootAs."""
+    return cls.GetRootAs(buf, offset)
 
-    # We increment the serialization version every time we change the
-    # schema, even if the change is backwards compatible.
-    # Note that this field has different semantics and purpose from
-    # `mlir_module_serialization_version`, which encodes
-    # the calling convention of the `mlir_module_serialized`.
-    # Exported
-    def SerializationVersion(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint16Flags, o + self._tab.Pos)
-        return 0
+  # Exported
+  def Init(self, buf, pos):
+    self._tab = flatbuffers.table.Table(buf, pos)
 
-    # Exported
-    def FunctionName(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
-        if o != 0:
-            return self._tab.String(o + self._tab.Pos)
-        return None
+  # We increment the serialization version every time we change the
+  # schema, even if the change is backwards compatible.
+  # Note that this field has different semantics and purpose from
+  # `mlir_module_serialization_version`, which encodes
+  # the calling convention of the `mlir_module_serialized`.
+  # Exported
+  def SerializationVersion(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
+    if o != 0:
+      return self._tab.Get(
+          flatbuffers.number_types.Uint16Flags, o + self._tab.Pos
+      )
+    return 0
 
-    # Exported
-    def InTree(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
-        if o != 0:
-            x = self._tab.Indirect(o + self._tab.Pos)
-            obj = PyTreeDef()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
+  # Exported
+  def FunctionName(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
+    if o != 0:
+      return self._tab.String(o + self._tab.Pos)
+    return None
 
-    # Exported
-    def InAvals(self, j):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = AbstractValue()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
+  # Exported
+  def InTree(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+    if o != 0:
+      x = self._tab.Indirect(o + self._tab.Pos)
+      obj = PyTreeDef()
+      obj.Init(self._tab.Bytes, x)
+      return obj
+    return None
 
-    # Exported
-    def InAvalsLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
+  # Exported
+  def InAvals(self, j):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+    if o != 0:
+      x = self._tab.Vector(o)
+      x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+      x = self._tab.Indirect(x)
+      obj = AbstractValue()
+      obj.Init(self._tab.Bytes, x)
+      return obj
+    return None
 
-    # Exported
-    def InAvalsIsNone(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
-        return o == 0
+  # Exported
+  def InAvalsLength(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+    if o != 0:
+      return self._tab.VectorLen(o)
+    return 0
 
-    # Exported
-    def OutTree(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
-        if o != 0:
-            x = self._tab.Indirect(o + self._tab.Pos)
-            obj = PyTreeDef()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
+  # Exported
+  def InAvalsIsNone(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
+    return o == 0
 
-    # Exported
-    def OutAvals(self, j):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = AbstractValue()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
+  # Exported
+  def OutTree(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
+    if o != 0:
+      x = self._tab.Indirect(o + self._tab.Pos)
+      obj = PyTreeDef()
+      obj.Init(self._tab.Bytes, x)
+      return obj
+    return None
 
-    # Exported
-    def OutAvalsLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
+  # Exported
+  def OutAvals(self, j):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
+    if o != 0:
+      x = self._tab.Vector(o)
+      x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+      x = self._tab.Indirect(x)
+      obj = AbstractValue()
+      obj.Init(self._tab.Bytes, x)
+      return obj
+    return None
 
-    # Exported
-    def OutAvalsIsNone(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
-        return o == 0
+  # Exported
+  def OutAvalsLength(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
+    if o != 0:
+      return self._tab.VectorLen(o)
+    return 0
 
-    # Exported
-    def NrDevices(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(16))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Int16Flags, o + self._tab.Pos)
-        return 0
+  # Exported
+  def OutAvalsIsNone(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
+    return o == 0
 
-    # Exported
-    def InShardings(self, j):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = Sharding()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
+  # Exported
+  def NrDevices(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(16))
+    if o != 0:
+      return self._tab.Get(
+          flatbuffers.number_types.Int16Flags, o + self._tab.Pos
+      )
+    return 0
 
-    # Exported
-    def InShardingsLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
+  # Exported
+  def InShardings(self, j):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
+    if o != 0:
+      x = self._tab.Vector(o)
+      x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+      x = self._tab.Indirect(x)
+      obj = Sharding()
+      obj.Init(self._tab.Bytes, x)
+      return obj
+    return None
 
-    # Exported
-    def InShardingsIsNone(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
-        return o == 0
+  # Exported
+  def InShardingsLength(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
+    if o != 0:
+      return self._tab.VectorLen(o)
+    return 0
 
-    # Exported
-    def OutShardings(self, j):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = Sharding()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
+  # Exported
+  def InShardingsIsNone(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
+    return o == 0
 
-    # Exported
-    def OutShardingsLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
+  # Exported
+  def OutShardings(self, j):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))
+    if o != 0:
+      x = self._tab.Vector(o)
+      x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+      x = self._tab.Indirect(x)
+      obj = Sharding()
+      obj.Init(self._tab.Bytes, x)
+      return obj
+    return None
 
-    # Exported
-    def OutShardingsIsNone(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))
-        return o == 0
+  # Exported
+  def OutShardingsLength(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))
+    if o != 0:
+      return self._tab.VectorLen(o)
+    return 0
 
-    # Exported
-    def Platforms(self, j):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(22))
-        if o != 0:
-            a = self._tab.Vector(o)
-            return self._tab.String(a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 4))
-        return ""
+  # Exported
+  def OutShardingsIsNone(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))
+    return o == 0
 
-    # Exported
-    def PlatformsLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(22))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
+  # Exported
+  def Platforms(self, j):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(22))
+    if o != 0:
+      a = self._tab.Vector(o)
+      return self._tab.String(
+          a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 4)
+      )
+    return ''
 
-    # Exported
-    def PlatformsIsNone(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(22))
-        return o == 0
+  # Exported
+  def PlatformsLength(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(22))
+    if o != 0:
+      return self._tab.VectorLen(o)
+    return 0
 
-    # Exported
-    def OrderedEffects(self, j):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(24))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = Effect()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
+  # Exported
+  def PlatformsIsNone(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(22))
+    return o == 0
 
-    # Exported
-    def OrderedEffectsLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(24))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
+  # Exported
+  def OrderedEffects(self, j):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(24))
+    if o != 0:
+      x = self._tab.Vector(o)
+      x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+      x = self._tab.Indirect(x)
+      obj = Effect()
+      obj.Init(self._tab.Bytes, x)
+      return obj
+    return None
 
-    # Exported
-    def OrderedEffectsIsNone(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(24))
-        return o == 0
+  # Exported
+  def OrderedEffectsLength(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(24))
+    if o != 0:
+      return self._tab.VectorLen(o)
+    return 0
 
-    # Exported
-    def UnorderedEffects(self, j):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(26))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = Effect()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
+  # Exported
+  def OrderedEffectsIsNone(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(24))
+    return o == 0
 
-    # Exported
-    def UnorderedEffectsLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(26))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
+  # Exported
+  def UnorderedEffects(self, j):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(26))
+    if o != 0:
+      x = self._tab.Vector(o)
+      x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+      x = self._tab.Indirect(x)
+      obj = Effect()
+      obj.Init(self._tab.Bytes, x)
+      return obj
+    return None
 
-    # Exported
-    def UnorderedEffectsIsNone(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(26))
-        return o == 0
+  # Exported
+  def UnorderedEffectsLength(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(26))
+    if o != 0:
+      return self._tab.VectorLen(o)
+    return 0
 
-    # Exported
-    def DisabledChecks(self, j):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(28))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = DisabledSafetyCheck()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
+  # Exported
+  def UnorderedEffectsIsNone(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(26))
+    return o == 0
 
-    # Exported
-    def DisabledChecksLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(28))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
+  # Exported
+  def DisabledChecks(self, j):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(28))
+    if o != 0:
+      x = self._tab.Vector(o)
+      x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+      x = self._tab.Indirect(x)
+      obj = DisabledSafetyCheck()
+      obj.Init(self._tab.Bytes, x)
+      return obj
+    return None
 
-    # Exported
-    def DisabledChecksIsNone(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(28))
-        return o == 0
+  # Exported
+  def DisabledChecksLength(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(28))
+    if o != 0:
+      return self._tab.VectorLen(o)
+    return 0
 
-    # Exported
-    def MlirModuleSerialized(self, j):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(30))
-        if o != 0:
-            a = self._tab.Vector(o)
-            return self._tab.Get(flatbuffers.number_types.Int8Flags, a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 1))
-        return 0
+  # Exported
+  def DisabledChecksIsNone(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(28))
+    return o == 0
 
-    # Exported
-    def MlirModuleSerializedAsNumpy(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(30))
-        if o != 0:
-            return self._tab.GetVectorAsNumpy(flatbuffers.number_types.Int8Flags, o)
-        return 0
+  # Exported
+  def MlirModuleSerialized(self, j):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(30))
+    if o != 0:
+      a = self._tab.Vector(o)
+      return self._tab.Get(
+          flatbuffers.number_types.Int8Flags,
+          a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 1),
+      )
+    return 0
 
-    # Exported
-    def MlirModuleSerializedLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(30))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
+  # Exported
+  def MlirModuleSerializedAsNumpy(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(30))
+    if o != 0:
+      return self._tab.GetVectorAsNumpy(flatbuffers.number_types.Int8Flags, o)
+    return 0
 
-    # Exported
-    def MlirModuleSerializedIsNone(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(30))
-        return o == 0
+  # Exported
+  def MlirModuleSerializedLength(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(30))
+    if o != 0:
+      return self._tab.VectorLen(o)
+    return 0
 
-    # Exported
-    def CallingConventionVersion(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(32))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint16Flags, o + self._tab.Pos)
-        return 0
+  # Exported
+  def MlirModuleSerializedIsNone(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(30))
+    return o == 0
 
-    # Exported
-    def ModuleKeptVarIdx(self, j):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(34))
-        if o != 0:
-            a = self._tab.Vector(o)
-            return self._tab.Get(flatbuffers.number_types.Uint16Flags, a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 2))
-        return 0
+  # Exported
+  def CallingConventionVersion(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(32))
+    if o != 0:
+      return self._tab.Get(
+          flatbuffers.number_types.Uint16Flags, o + self._tab.Pos
+      )
+    return 0
 
-    # Exported
-    def ModuleKeptVarIdxAsNumpy(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(34))
-        if o != 0:
-            return self._tab.GetVectorAsNumpy(flatbuffers.number_types.Uint16Flags, o)
-        return 0
+  # Exported
+  def ModuleKeptVarIdx(self, j):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(34))
+    if o != 0:
+      a = self._tab.Vector(o)
+      return self._tab.Get(
+          flatbuffers.number_types.Uint16Flags,
+          a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 2),
+      )
+    return 0
 
-    # Exported
-    def ModuleKeptVarIdxLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(34))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
+  # Exported
+  def ModuleKeptVarIdxAsNumpy(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(34))
+    if o != 0:
+      return self._tab.GetVectorAsNumpy(flatbuffers.number_types.Uint16Flags, o)
+    return 0
 
-    # Exported
-    def ModuleKeptVarIdxIsNone(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(34))
-        return o == 0
+  # Exported
+  def ModuleKeptVarIdxLength(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(34))
+    if o != 0:
+      return self._tab.VectorLen(o)
+    return 0
 
-    # Exported
-    def UsesGlobalConstants(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(36))
-        if o != 0:
-            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
-        return False
+  # Exported
+  def ModuleKeptVarIdxIsNone(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(34))
+    return o == 0
 
-    # Exported
-    def Vjp(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(38))
-        if o != 0:
-            x = self._tab.Indirect(o + self._tab.Pos)
-            obj = Exported()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
+  # Exported
+  def UsesGlobalConstants(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(36))
+    if o != 0:
+      return bool(
+          self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos)
+      )
+    return False
+
+  # Exported
+  def Vjp(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(38))
+    if o != 0:
+      x = self._tab.Indirect(o + self._tab.Pos)
+      obj = Exported()
+      obj.Init(self._tab.Bytes, x)
+      return obj
+    return None
+
+  # Exported
+  def Mesh(self, j):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(40))
+    if o != 0:
+      x = self._tab.Vector(o)
+      x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
+      x = self._tab.Indirect(x)
+      obj = Axis()
+      obj.Init(self._tab.Bytes, x)
+      return obj
+    return None
+
+  # Exported
+  def MeshLength(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(40))
+    if o != 0:
+      return self._tab.VectorLen(o)
+    return 0
+
+  # Exported
+  def MeshIsNone(self):
+    o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(40))
+    return o == 0
+
 
 def ExportedStart(builder):
-    builder.StartObject(18)
+  builder.StartObject(19)
 
 def ExportedAddSerializationVersion(builder, serializationVersion):
     builder.PrependUint16Slot(0, serializationVersion, 0)
@@ -847,7 +938,20 @@ def ExportedAddUsesGlobalConstants(builder, usesGlobalConstants):
     builder.PrependBoolSlot(16, usesGlobalConstants, 0)
 
 def ExportedAddVjp(builder, vjp):
-    builder.PrependUOffsetTRelativeSlot(17, flatbuffers.number_types.UOffsetTFlags.py_type(vjp), 0)
+  builder.PrependUOffsetTRelativeSlot(
+      17, flatbuffers.number_types.UOffsetTFlags.py_type(vjp), 0
+  )
+
+
+def ExportedAddMesh(builder, mesh):
+  builder.PrependUOffsetTRelativeSlot(
+      18, flatbuffers.number_types.UOffsetTFlags.py_type(mesh), 0
+  )
+
+
+def ExportedStartMeshVector(builder, numElems):
+  return builder.StartVector(4, numElems, 4)
+
 
 def ExportedEnd(builder):
     return builder.EndObject()
