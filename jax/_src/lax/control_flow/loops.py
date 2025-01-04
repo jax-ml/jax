@@ -1848,10 +1848,15 @@ def _while_typecheck(_, *in_atoms, cond_jaxpr, body_jaxpr, cond_nconsts,
         f'Effects not supported in `while`: {disallowed_effects}')
   return body_jaxpr.out_avals, joined_effects
 
-def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
+def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
                           cond_nconsts, body_nconsts):
   # TODO(sharadmv): enable supporting state effects in the cond
   if any(isinstance(eff, state.RefEffect) for eff in cond_jaxpr.effects):
+    raise NotImplementedError
+  cond_consts_discharge, body_consts_discharge, carry_discharge = split_list(
+      should_discharge, [cond_nconsts, body_nconsts])
+
+  if any(cond_consts_discharge):
     raise NotImplementedError
   cond_consts, body_consts, carry = split_list(args, [cond_nconsts, body_nconsts])
   cond_consts_avals, body_consts_avals, carry_avals = split_list(in_avals,
@@ -1859,7 +1864,10 @@ def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
                                                                   body_nconsts])
   # There shouldn't be any `Ref`s in the `cond` (because of our check above).
   assert not any(isinstance(aval, state.AbstractRef) for aval in cond_consts_avals)
-  is_ref = [isinstance(aval, state.AbstractRef) for aval in body_consts_avals]
+  is_ref = [
+      isinstance(aval, state.AbstractRef) and should
+      for aval, should in zip(body_consts_avals, body_consts_discharge)
+  ]
   remaining_body_consts, refs = partition_list(is_ref, body_consts)
   remaining_body_const_avals, ref_avals = partition_list(is_ref,
                                                          body_consts_avals)
@@ -1879,7 +1887,7 @@ def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
   # Therefore we need to rewrite the jaxpr to shuffle around the `Ref`s so that
   # they are part of the carry.
   discharged_body_jaxpr, discharged_consts = state_discharge.discharge_state(
-      body_jaxpr, ())
+      body_jaxpr, (), should_discharge=[*body_consts_discharge, *carry_discharge])
   if discharged_consts: raise NotImplementedError
 
   def new_body(*consts_refs_carry):
@@ -1936,7 +1944,7 @@ batching.fancy_primitive_batchers[while_p] = _while_loop_batching_rule
 pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
 mlir.register_lowering(while_p, _while_lowering)
 core.custom_typechecks[while_p] = _while_typecheck
-state_discharge.register_discharge_rule(while_p)(_while_discharge_rule)
+state_discharge.register_partial_discharge_rule(while_p)(_while_partial_discharge_rule)
 
 
 def _pred_bcast_select_hlo(ctx,
