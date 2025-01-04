@@ -84,6 +84,8 @@ def _get_memory_space_from_aval(
       return None
     case tpu_core.TPUMemorySpace.VMEM:
       return tpu_custom_call.MemorySpace.VMEM
+    case tpu_core.TPUMemorySpace.SMEM:
+      return tpu_custom_call.MemorySpace.SMEM
     case tpu_core.TPUMemorySpace.SEMAPHORE:
       return tpu_custom_call.MemorySpace.SEMAPHORE_MEM
   return None
