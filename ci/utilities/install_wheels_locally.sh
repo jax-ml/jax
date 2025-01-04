@@ -26,7 +26,13 @@ fi
 
 echo "Installing the following wheels:"
 echo "${WHEELS[@]}"
-"$JAXCI_PYTHON" -m pip install "${WHEELS[@]}"
+
+# On Windows, convert MSYS Linux-like paths to Windows paths.
+if [[ $(uname -s) =~ "MSYS_NT" ]]; then
+  "$JAXCI_PYTHON" -m pip install $(cygpath -w "${WHEELS[@]}")
+else
+  "$JAXCI_PYTHON" -m pip install "${WHEELS[@]}"
+fi
 
 echo "Installing the JAX package in editable mode at the current commit..."
 # Install JAX package at the current commit.
