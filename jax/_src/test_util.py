@@ -33,7 +33,6 @@ import textwrap
 import threading
 from typing import Any, TextIO
 import unittest
-import warnings
 import zlib
 
 from absl.testing import absltest
@@ -47,6 +46,7 @@ from jax._src import dispatch
 from jax._src import dtypes as _dtypes
 from jax._src import lib as _jaxlib
 from jax._src import monitoring
+from jax._src import test_warning_util
 from jax._src import xla_bridge
 from jax._src import util
 from jax._src import mesh as mesh_lib
@@ -1211,11 +1211,28 @@ class JaxTestCase(parameterized.TestCase):
     self.assertMultiLineEqual(expected_clean, what_clean,
                               msg=f"Found\n{what}\nExpecting\n{expected}")
 
+
   @contextmanager
   def assertNoWarnings(self):
-    with warnings.catch_warnings():
-      warnings.simplefilter("error")
+    with test_warning_util.raise_on_warnings():
       yield
+
+  @contextmanager
+  def assertWarnsRegex(self, expected_warning, expected_regex):
+    if expected_regex is not None:
+        expected_regex = re.compile(expected_regex)
+
+    with test_warning_util.record_warnings() as ws:
+      yield
+    for w in ws:
+      if not isinstance(w.message, expected_warning):
+        continue
+      if expected_regex is not None and not expected_regex.search(str(w.message)):
+        continue
+      return
+    self.fail(f"Expected warning not found {expected_warning}:'{expected_regex}', got "
+              f"{ws}")
+
 
   def _CompileAndCheck(self, fun, args_maker, *, check_dtypes=True, tol=None,
                        rtol=None, atol=None, check_cache_misses=True):
@@ -1292,11 +1309,7 @@ class BufferDonationTestCase(JaxTestCase):
     self.assertFalse(x.is_deleted())
 
 
-@contextmanager
-def ignore_warning(*, message='', category=Warning, **kw):
-  with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", message=message, category=category, **kw)
-    yield
+ignore_warning = test_warning_util.ignore_warning
 
 # -------------------- Mesh parametrization helpers --------------------
 
@@ -1611,9 +1624,8 @@ def complex_plane_sample(dtype, size_re=10, size_im=None):
     logtiny = finfo.minexp / prec_dps_ratio
     axis_points = np.zeros(3 + 2 * size, dtype=finfo.dtype)
 
-    with warnings.catch_warnings():
+    with ignore_warning(category=RuntimeWarning):
       # Silence RuntimeWarning: overflow encountered in cast
-      warnings.simplefilter("ignore")
       half_neg_line = -np.logspace(logmin, logtiny, size, dtype=finfo.dtype)
       half_line = -half_neg_line[::-1]
       axis_points[-size - 1:-1] = half_line
