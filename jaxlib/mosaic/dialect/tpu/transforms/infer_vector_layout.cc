@@ -1062,16 +1062,14 @@ class VectorLayoutInferer {
       // should always use that when sublane broadcasting is required.
       if (src_tiled_ishape[0] != dst_tiled_ishape[0] &&
           layout.offsets()[0] != std::nullopt) {
-        if (layout.bitwidth() != kNativeBitwidth) {
-          NYI("Only 32-bit broadcasts supported");
-        }
         LayoutOffsets offsets = layout.offsets();
         // At the moment relayout can only produce replicated sublanes when
         // converting to (8, 128) if the input was in (1, 128) tiling
-        if (layout.tiling()[0] == 1) {
+        if (layout.tiling()[0] == 1 && layout.bitwidth() == kNativeBitwidth) {
           offsets[0] = std::nullopt;
         }
-        layout = VectorLayout(layout.bitwidth(), offsets, default_tiling_,
+        layout = VectorLayout(layout.bitwidth(), offsets,
+                              nativeTiling(layout.bitwidth()),
                               layout.implicit_dim());
       }
       LayoutOffsets offsets = layout.offsets();
