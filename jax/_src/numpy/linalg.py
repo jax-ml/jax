@@ -924,7 +924,7 @@ def pinv(a: ArrayLike, rtol: ArrayLike | None = None,
     - :func:`jax.numpy.linalg.inv`: multiplicative inverse of a square matrix.
 
   Notes:
-    :func:`jax.numpy.linalg.prng` differs from :func:`numpy.linalg.prng` in the
+    :func:`jax.numpy.linalg.pinv` differs from :func:`numpy.linalg.pinv` in the
     default value of `rcond``: in NumPy, the default  is `1e-15`. In JAX, the
     default is ``10. * max(num_rows, num_cols) * jnp.finfo(dtype).eps``.
 

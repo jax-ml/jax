@@ -36,17 +36,17 @@ _deprecations = {
         "jax.lib.xla_client.bfloat16 was removed in JAX v0.4.38; use ml_dtypes.bfloat16.",
         None,
     ),
-    # Added Sep 26 2024
+    # Finalized 2024-12-23; remove after 2024-03-23
     "Device": (
         "jax.lib.xla_client.Device is deprecated; use jax.Device instead.",
-        _xc.Device,
+        None,
     ),
     "XlaRuntimeError": (
         (
             "jax.lib.xla_client.XlaRuntimeError is deprecated; use"
             " jax.errors.JaxRuntimeError."
         ),
-        _xc.XlaRuntimeError,
+        None,
     ),
     # Added Oct 10 2024
     "FftType": (

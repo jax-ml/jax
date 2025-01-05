@@ -25,18 +25,10 @@ import jax.numpy as jnp
 jax.config.parse_flags_with_absl()
 
 
-# Helper class used to create a reference cycle.
-class GarbageCollectionGuardTestNodeHelper:
-
-  def __init__(self, data):
-    self.data = data
-    self.next = None
-
-
 def _create_array_cycle():
   """Creates a reference cycle of two jax.Arrays."""
-  n1 = GarbageCollectionGuardTestNodeHelper(jax.jit(lambda: jnp.ones( (2, 2)))())
-  n2 = GarbageCollectionGuardTestNodeHelper(jax.jit(lambda: jnp.zeros((2, 2)))())
+  n1 = jnp.ones((2, 2))
+  n2 = jnp.zeros((2, 2))
   n1.next = n2
   n2.next = n1
   return weakref.ref(n1)

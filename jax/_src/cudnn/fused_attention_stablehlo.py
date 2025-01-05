@@ -348,11 +348,20 @@ def check_is_flash_attention(
             )
     else:
         # Regular attention conditions
-        if not ((H <= 128 and H % 8 == 0) and
-                (not is_training or not has_bias or T % 2 == 0 and S % 2 == 0)):
-            raise NotImplementedError(
-                f"Unsupported sequence length Q {T}, KV {S} and head dim {H}."
-            )
+        # Check the head dim.
+        is_on_hopper = check_compute_capability("9.0")
+        H_max = 256 if cudnn_version >= 90500 and is_on_hopper else 128
+        if not (H <= H_max and H % 8 == 0):
+          raise NotImplementedError(
+              f"The head dim must be <= {H_max} and a mutiple of 8, "
+              f"but got {H}."
+          )
+
+        # Check patterns with bias, seqlen should be divisible by 2
+        if (is_training and has_bias and (T % 2 != 0 or S % 2 != 0)):
+          raise NotImplementedError(
+              f"Unsupported sequence length Q {T}, KV {S}."
+          )
 
 def check_cudnn_version():
   # check if cuDNN is installed

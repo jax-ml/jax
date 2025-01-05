@@ -583,9 +583,6 @@ def _dtype(x):
   except ValueError:
     return dtypes.result_type(getattr(x, 'dtype'))
 
-# TODO(jakevdp): fix downstream consumers and remove these aliases.
-shaped_abstractify = core.shaped_abstractify
-_shaped_abstractify_handlers = core.shaped_abstractify_handlers
 
 # This decorator exists to make it easier to monkey-patch APIs in JAX.
 # By default it does nothing, but it can be monkey-patched to do other things.

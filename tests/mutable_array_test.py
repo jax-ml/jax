@@ -306,30 +306,88 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
         ValueError, "traced for cond returned a mutable array reference of type"):
       jax.lax.cond(True, lambda: core.mutable_array(1.0), lambda: core.mutable_array(2.0))
 
-  # TODO test_argument_aliases_cond
-  # TODO test_closure_and_argument_aliases_cond
+  def test_argument_aliases_cond(self):
+    x_ref = core.mutable_array(0.)
+    with self.assertRaisesRegex( ValueError, r"for cond.*at both x1 and x2"):
+      jax.lax.cond(True, lambda x1, x2: ..., lambda x1, x2: ..., x_ref, x_ref)
 
-  # TODO test_return_from_custom_jvp/vjp
-  # TODO test_argument_aliases_custom_jvp/vjp
-  # TODO test_closure_and_argument_aliases_custom_jvp/vjp
+  def test_closure_and_argument_aliases_cond(self):
+    x_ref = core.mutable_array(0.)
+    with self.assertRaisesRegex(
+        ValueError, r"closed over and passed as the argument y_ref"):
+      jax.lax.cond(True,
+                   lambda y_ref: x_ref[...] + y_ref[...],
+                   lambda y_ref: x_ref[...] + y_ref[...],
+                   x_ref)
 
-  # TODO(mattjj): enable when cond works with mutable arrays
-  # @parameterized.parameters([False, True])
-  # def test_cond_both_branches_close_over_same_mutable_array(self, jit):
-  #   # see also test_cond_with_ref_reuse in state_test.py
-  #   x_ref = core.mutable_array(0.)
-  #   def f(pred):
-  #     def true_fun():
-  #       x_ref[()] = 1.
-  #     def false_fun():
-  #       x_ref[()] = 2.
-  #     jax.lax.cond(pred, true_fun, false_fun)
-  #   if jit:
-  #     f = jax.jit(f)
-  #   out_true = f(True)
-  #   self.assertAllClose(x_ref[...], 1.)
-  #   out_false = f(False)
-  #   self.assertAllClose(x_ref[...], 2.)
+  @parameterized.parameters([False, True])
+  def test_return_from_custom_vjp_primal(self, jit):
+    @jax.custom_vjp
+    def f(ref):
+      return ref
+    f.defvjp(lambda ref: ..., lambda *_: ...)
+    if jit:
+      f = jax.jit(f)
+    x_ref = core.mutable_array(0.)
+    with self.assertRaisesRegex(
+        ValueError, "custom_vjp primal function"):
+      f(x_ref)
+
+  @parameterized.parameters([False, True])
+  def test_return_from_custom_vjp_fwd(self, jit):
+    @jax.custom_vjp
+    def f(x, ref):
+      return x
+    f.defvjp(lambda x, ref: (x, ref), lambda ref, g: g)
+    if jit:
+      f = jax.jit(f)
+    x_ref = core.mutable_array(0.)
+    with self.assertRaisesRegex(
+        ValueError, "custom_vjp fwd function"):
+      jax.vjp(f, 3., x_ref)
+
+  @parameterized.parameters([False, True])
+  def test_argument_aliases_custom_vjp_primal(self, jit):
+    @jax.custom_vjp
+    def f(x_ref, y_ref):
+      ...
+    f.defvjp(lambda x_ref, y_ref: (None, None), lambda _, g: (None, None))
+    if jit:
+      f = jax.jit(f)
+    x_ref = core.mutable_array(0.)
+    with self.assertRaisesRegex(ValueError, "x_ref and y_ref"):
+      f(x_ref, x_ref)
+
+  @parameterized.parameters([False, True])
+  def test_argument_aliases_custom_vjp_fwd(self, jit):
+    @jax.custom_vjp
+    def f(x_ref, y_ref):
+      ...
+    f.defvjp(lambda x_ref, y_ref: (None, None), lambda _, g: (None, None))
+    if jit:
+      f = jax.jit(f)
+    x_ref = core.mutable_array(0.)
+    with self.assertRaisesRegex(ValueError, "x_ref and y_ref"):
+      jax.vjp(f, x_ref, x_ref)
+
+  # TODO(mattjj): add test test_closure_and_argument_aliases_custom_vjp
+
+  @parameterized.parameters([False, True])
+  def test_cond_both_branches_close_over_same_mutable_array(self, jit):
+    # see also test_cond_with_ref_reuse in state_test.py
+    x_ref = core.mutable_array(0.)
+    def f(pred):
+      def true_fun():
+        x_ref[()] = 1.
+      def false_fun():
+        x_ref[()] = 2.
+      jax.lax.cond(pred, true_fun, false_fun)
+    if jit:
+      f = jax.jit(f)
+    out_true = f(True)
+    self.assertAllClose(x_ref[...], 1.)
+    out_false = f(False)
+    self.assertAllClose(x_ref[...], 2.)
 
 
 if __name__ == '__main__':

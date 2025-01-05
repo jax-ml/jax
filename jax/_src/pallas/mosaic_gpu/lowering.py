@@ -797,25 +797,30 @@ def lower_jaxpr_to_module(
     # Each range is 2 events, each event is 4 bytes.
     prof_spec = mgpu_profiler.ProfilerSpec(prof_space * 2 * 4)
     prof_ctx = ProfilerContext(params["profile_dir"], prof_spec)
-  module, out_structs_gmem, _ = mgpu_core._lower_as_gpu_kernel(
-      body,
-      grid=parallel_grid,
-      cluster=(),
-      block=block,
-      in_shapes=in_structs_gmem,
-      out_shape=out_structs_gmem,
-      smem_scratch_shape=(
-          (*in_structs_smem, *out_structs_smem),
-          *extra_smem_scratch,
-          (
-              mgpu.Barrier(arrival_count=1, num_barriers=max_concurrent_steps),
-              rs.barriers,
-              extra_barriers,
+  module, out_structs_gmem, _, launch_ctx, scratch_arr = (
+      mgpu_core._lower_as_gpu_kernel(
+          body,
+          grid=parallel_grid,
+          cluster=(),
+          block=block,
+          in_shapes=in_structs_gmem,
+          out_shape=out_structs_gmem,
+          smem_scratch_shape=(
+              (*in_structs_smem, *out_structs_smem),
+              *extra_smem_scratch,
+              (
+                  mgpu.Barrier(
+                      arrival_count=1, num_barriers=max_concurrent_steps
+                  ),
+                  rs.barriers,
+                  extra_barriers,
+              ),
           ),
-      ),
-      module_name=name_and_src_info.name,
-      prof_spec=prof_spec,
+          module_name=name_and_src_info.name,
+          prof_spec=prof_spec,
+      )
   )
+  mgpu_core._initialize_scratch(launch_ctx, scratch_arr)
 
   return LoweringResult(
       module, parallel_grid, block, out_structs_gmem, prof_ctx
@@ -1572,8 +1577,11 @@ def _lower_while_via_fori(
     body_nconsts,
 ):
   assert not fori_jaxpr.constvars
+  # The pattern matcher looks for conditions with no constants.
+  assert cond_nconsts == 0
 
   # Reflect the changes of the pattern matcher to the context.
+  lb_aval, ub_aval, *_ = ctx.avals_in[cond_nconsts + body_nconsts:]
   ctx = ctx.replace(
       avals_in=(
           *ctx.avals_in[cond_nconsts:body_nconsts],
@@ -1585,7 +1593,6 @@ def _lower_while_via_fori(
   _, consts, (lb, ub, *args) = util.split_list(
       args, [cond_nconsts, body_nconsts]
   )
-  lb_aval, ub_aval, *_ = ctx.avals_in[body_nconsts:]
   lb = _ensure_ir_value(lb, lb_aval.dtype)
   ub = _ensure_ir_value(ub, ub_aval.dtype)
   for_out = _lower_jaxpr_to_for_loop(
@@ -1780,29 +1787,21 @@ def _ensure_fa(x: object, dtype: jnp.dtype) -> mgpu.FragmentedArray:
   if isinstance(x, mgpu.FragmentedArray):
     assert x.mlir_dtype == mgpu_utils.dtype_to_ir_type(dtype)
     return x
-  elif isinstance(x, (np.number, np.ndarray, int, float)):
-    return mgpu.FragmentedArray.splat(
-        _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype)),
-        (),
-        is_signed=mgpu_utils.is_signed(dtype),
-    )
-  elif isinstance(x, ir.Value):
-    if isinstance(x.type, (ir.IntegerType, ir.FloatType, ir.IndexType)):
-      assert x.type == mgpu_utils.dtype_to_ir_type(dtype)
-      return mgpu.FragmentedArray.splat(x, (), is_signed=mgpu_utils.is_signed(dtype))
-  raise NotImplementedError(f"Unsupported type: {type(x)}")
+  return mgpu.FragmentedArray.splat(
+      _ensure_ir_value(x, dtype), (), is_signed=mgpu_utils.is_signed(dtype)
+  )
 
 
 def _ensure_ir_value(x: object, dtype: jnp.dtype) -> ir.Value:
   if isinstance(x, ir.Value):
     assert x.type == mgpu_utils.dtype_to_ir_type(dtype)
     return x
-  elif isinstance(x, (np.number, np.ndarray, int, float)):
-    return _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype))
   elif isinstance(x, mgpu.FragmentedArray):
+    assert x.mlir_dtype == mgpu_utils.dtype_to_ir_type(dtype)
     if isinstance(x.layout, mgpu.WGSplatFragLayout):
       return x.registers.item()
-  raise NotImplementedError(f"Unsupported type: {type(x)}")
+    raise NotImplementedError(f"Unsupported layout: {x.layout}")
+  return _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype))
 
 
 def _ir_constant(v: object, t: ir.Type) -> ir.Value:

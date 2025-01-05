@@ -191,7 +191,7 @@ class _ScalarMeta(type):
 
 def _abstractify_scalar_meta(x):
   raise TypeError(f"JAX scalar type {x} cannot be interpreted as a JAX array.")
-core.shaped_abstractify_handlers[_ScalarMeta] = _abstractify_scalar_meta
+core.pytype_aval_mappings[_ScalarMeta] = _abstractify_scalar_meta
 
 def _make_scalar_type(np_scalar_type: type) -> _ScalarMeta:
   meta = _ScalarMeta(np_scalar_type.__name__, (object,),
@@ -5731,10 +5731,9 @@ def astype(x: ArrayLike, dtype: DTypeLike | None,
 
   # We offer a more specific warning than the usual ComplexWarning so we prefer
   # to issue our warning.
-  with warnings.catch_warnings():
-    warnings.simplefilter("ignore", ComplexWarning)
-    result = lax_internal._convert_element_type(
-      x_arr, dtype, sharding=_normalize_to_sharding(device))
+  result = lax_internal._convert_element_type(
+    x_arr, dtype, sharding=_normalize_to_sharding(device),
+    warn_on_complex_to_real_cast=False)
   return _array_copy(result) if copy else result
 
 
@@ -8341,18 +8340,41 @@ def diagonal(a: ArrayLike, offset: int = 0, axis1: int = 0,
     Array([4, 8], dtype=int32)
   """
   util.check_arraylike("diagonal", a)
-  a_shape = shape(a)
+
   if ndim(a) < 2:
     raise ValueError("diagonal requires an array of at least two dimensions.")
   offset = core.concrete_or_error(operator.index, offset, "'offset' argument of jnp.diagonal()")
 
-  a = moveaxis(a, (axis1, axis2), (-2, -1))
+  def _default_diag(a):
+    a_shape = shape(a)
 
-  diag_size = max(0, min(a_shape[axis1] + min(offset, 0),
-                         a_shape[axis2] - max(offset, 0)))
-  i = arange(diag_size)
-  j = arange(abs(offset), abs(offset) + diag_size)
-  return a[..., i, j] if offset >= 0 else a[..., j, i]
+    a = moveaxis(a, (axis1, axis2), (-2, -1))
+
+    diag_size = max(
+        0, min(a_shape[axis1] + min(offset, 0), a_shape[axis2] - max(offset, 0))
+    )
+    i = arange(diag_size)
+    j = arange(abs(offset), abs(offset) + diag_size)
+    return a[..., i, j] if offset >= 0 else a[..., j, i]
+
+
+  # The mosaic lowering rule for diag is only defined for square arrays.
+  # TODO(mvoz): Add support for offsets.
+  if shape(a)[0] != shape(a)[1] or ndim(a) != 2 or offset != 0 or _dtype(a) == bool_:
+    return _default_diag(a)
+  else:
+    a_shape_eye = eye(shape(a)[0], dtype=_dtype(a))
+
+    def _mosaic_diag(a):
+      def _sum(x, axis):
+        return lax.reduce(
+            x,
+            np.array(0, _dtype(x)),
+            lax.add if _dtype(x) != bool_ else lax.bitwise_or,
+            (axis,),
+        )
+      return _sum(lax.mul(a_shape_eye, a), axis=0)
+    return lax.platform_dependent(a, default=_default_diag, mosaic=_mosaic_diag)
 
 
 @export

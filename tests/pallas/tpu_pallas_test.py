@@ -2555,9 +2555,7 @@ class MiscellaneousTest(PallasBaseTest):
 
     np.testing.assert_array_equal(out, np.reshape(x, (8, 128)))
 
-  @only_passes_in_interpret()
   def test_retiling2(self):
-    """b/348040767"""
     x = np.arange(1 * 8 * 1024, dtype=jnp.bfloat16).reshape(1, 8, 1024)
 
     def kernel(x_ref, out_ref):

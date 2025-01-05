@@ -128,7 +128,7 @@ _deprecations = {
                              _src_core.escaped_tracer_error),
     "extend_axis_env_nd": ("jax.core.extend_axis_env_nd is deprecated.",
                            _src_core.extend_axis_env_nd),
-    "get_type": ("jax.core.get_type is deprecated.", _src_core.get_type),
+    "get_type": ("jax.core.get_type is deprecated.", _src_core.get_aval),
     "get_referent": ("jax.core.get_referent is deprecated.", _src_core.get_referent),
     "join_effects": ("jax.core.join_effects is deprecated.", _src_core.join_effects),
     "leaked_tracer_error": ("jax.core.leaked_tracer_error is deprecated.",
@@ -212,7 +212,7 @@ if typing.TYPE_CHECKING:
   escaped_tracer_error = _src_core.escaped_tracer_error
   extend_axis_env_nd = _src_core.extend_axis_env_nd
   full_lower = _src_core.full_lower
-  get_type = _src_core.get_type
+  get_type = _src_core.get_aval
   get_referent = _src_core.get_referent
   jaxpr_as_fun = _src_core.jaxpr_as_fun
   join_effects = _src_core.join_effects

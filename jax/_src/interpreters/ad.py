@@ -539,6 +539,9 @@ class JVPTracer(Tracer):
   def to_concrete_value(self):
     return core.to_concrete_value(self.primal)
 
+  def get_referent(self):
+    return core.get_referent(self.primal)
+
 def _primal_tangent_shapes_match(primal, tangent):
   if type(tangent) is not Zero:
     primal_aval = get_aval(primal).strip_weak_type()

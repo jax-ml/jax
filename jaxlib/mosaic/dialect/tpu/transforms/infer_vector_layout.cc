@@ -66,22 +66,6 @@ using ImplicitDim = VectorLayout::ImplicitDim;
 
 static constexpr int kLayoutLog = 10;
 
-class Print {
- public:
-  explicit Print(Operation *t) : payload_(t) {}
-  Operation *payload_;
-
- private:
-  friend std::ostream &operator<<(std::ostream &, Print);
-};
-
-std::ostream &operator<<(std::ostream &os, Print p) {
-  std::string s;
-  llvm::raw_string_ostream tmp_os(s);
-  p.payload_->print(tmp_os);
-  os << tmp_os.str();
-  return os;
-}
 
 bool is_fully_replicated(const Layout &layout) {
   static LayoutOffsets replicated_offsets = {std::nullopt, std::nullopt};
@@ -142,8 +126,7 @@ class VectorLayoutInferer {
       // TODO: b/342235360 - This check is temporary while we increase and test
       // support for offsets outside of the first tile. When support is more
       // broad, any op without support should check it within their own rule.
-      if (!isa<arith::TruncIOp, arith::TruncFOp, vector::BroadcastOp,
-               vector::ExtractStridedSliceOp>(any_op)) {
+      if (!isa<vector::BroadcastOp, vector::ExtractStridedSliceOp>(any_op)) {
         const SmallVector<Layout> layouts_in = getLayoutFromOperands(&any_op);
         for (const Layout &layout : layouts_in) {
           if (layout &&
@@ -1664,10 +1647,17 @@ class VectorLayoutInferer {
     Layout dst_layout;
     if (layout.tiling() == nativeTiling(src_bitwidth)) {
       // If the source is already in native tiling, we can unpack it directly.
-      src_layout = layout;
+      std::array<int64_t, 2> dst_native_tiling = nativeTiling(dst_bitwidth);
+      LayoutOffsets offsets = {layout.offsets()[0]
+                                   ? *layout.offsets()[0] % dst_native_tiling[0]
+                                   : LayoutOffset(),
+                               layout.offsets()[1]};
+      DCHECK_LT(offsets[1].value_or(0), dst_native_tiling[1]);
+      src_layout = VectorLayout(src_bitwidth, offsets, layout.tiling(),
+                                layout.implicit_dim());
       dst_layout =
-          VectorLayout(dst_bitwidth, layout.offsets(),
-                       nativeTiling(dst_bitwidth), layout.implicit_dim());
+          VectorLayout(dst_bitwidth, offsets, dst_native_tiling,
+                       layout.implicit_dim());
     } else if (dst_bitwidth == 32 &&
                default_tiling_[0] % layout.tiling()[0] == 0 &&
                default_tiling_[1] == layout.tiling()[1]) {
@@ -1676,13 +1666,17 @@ class VectorLayoutInferer {
       // tiling through the op.
       // TODO(jevinjiang): we can relax this for non-32bit as well.
       src_layout = layout;
-      dst_layout = VectorLayout(32, layout.offsets(), src_layout->tiling(),
-                                layout.implicit_dim());
+      dst_layout = VectorLayout(dst_bitwidth, layout.offsets(),
+                                src_layout->tiling(), layout.implicit_dim());
     } else {
-      // TODO(b/335863273): we should also reduce offsets.
-      src_layout = VectorLayout(src_bitwidth, layout.offsets(), default_tiling_,
+      LayoutOffsets offsets = {
+          layout.offsets()[0] ? *layout.offsets()[0] % default_tiling_[0]
+                              : LayoutOffset(),
+          layout.offsets()[1] ? *layout.offsets()[1] % default_tiling_[1]
+                              : LayoutOffset()};
+      src_layout = VectorLayout(src_bitwidth, offsets, default_tiling_,
                                 layout.implicit_dim());
-      dst_layout = VectorLayout(dst_bitwidth, layout.offsets(), default_tiling_,
+      dst_layout = VectorLayout(dst_bitwidth, offsets, default_tiling_,
                                 layout.implicit_dim());
     }
     setLayout(op, src_layout, dst_layout);
@@ -1700,22 +1694,23 @@ class VectorLayoutInferer {
     auto dst_ty = cast<VectorType>(op->getResult(0).getType());
     auto some_layout = getLayout(op->getOperand(0));
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
-    const unsigned src_bitwidth = src_ty.getElementTypeBitWidth();
-    const unsigned dst_bitwidth = dst_ty.getElementTypeBitWidth();
-    if (isa<arith::TruncFOp>(op)) {
-      TPU_CHECK_OP(
-          src_bitwidth == 32 && (dst_bitwidth == 16 || dst_bitwidth == 8),
-          "Only 32-bit to 16-bit or 8-bit float truncation supported");
+    if (dyn_cast<arith::TruncFOp>(op)) {
+      TPU_CHECK_OP(src_ty.getElementTypeBitWidth() == 32 &&
+                       (dst_ty.getElementTypeBitWidth() == 16 ||
+                        dst_ty.getElementTypeBitWidth() == 8),
+                   "Only 32-bit to 8-bit or 16-bit truncation supported");
+    } else {
+      TPU_CHECK_OP(src_ty.getElementTypeBitWidth() == 32,
+                   "Only 32-bit truncation supported");
     }
     auto &layout = *some_layout;
     bool select_native = allUsersRequireNativeTiling(op->getResult(0));
-    auto src_layout = VectorLayout(
-        src_bitwidth, layout.offsets(),
-        select_native ? nativeTiling(src_bitwidth) : layout.tiling(),
-        layout.implicit_dim());
+    auto src_layout = VectorLayout(32, layout.offsets(), default_tiling_,
+                                   layout.implicit_dim());
     auto dst_layout = VectorLayout(
-        dst_bitwidth, layout.offsets(),
-        select_native ? nativeTiling(dst_bitwidth) : layout.tiling(),
+        dst_ty.getElementTypeBitWidth(), layout.offsets(),
+        select_native ? nativeTiling(dst_ty.getElementTypeBitWidth())
+                      : default_tiling_,
         layout.implicit_dim());
     setLayout(op, src_layout, dst_layout);
     return success();
@@ -1926,46 +1921,6 @@ class VectorLayoutInferer {
       op->removeAttr("out_layout");
       return WalkResult::advance();
     });
-  }
-
-  void setInLayout(Operation *op, ArrayRef<Layout> in) {
-    CHECK_EQ(in.size(), op->getNumOperands()) << Print(op);
-    SmallVector<Attribute, 4> in_attrs;
-    in_attrs.reserve(in.size());
-    for (const Layout &p : in) {
-      in_attrs.push_back(VectorLayoutAttr::get(op->getContext(), p));
-    }
-    op->setAttr("in_layout", ArrayAttr::get(op->getContext(), in_attrs));
-  }
-
-  void setOutLayout(Operation *op, Layout out) {
-    setOutLayout(op, ArrayRef<Layout>(out));
-  }
-
-  void setOutLayout(Operation *op, ArrayRef<Layout> out) {
-    SmallVector<Attribute, 4> out_attrs;
-    out_attrs.reserve(out.size());
-    for (const Layout &p : out) {
-      out_attrs.push_back(VectorLayoutAttr::get(op->getContext(), p));
-    }
-    op->setAttr("out_layout", ArrayAttr::get(op->getContext(), out_attrs));
-  }
-
-  void setLayout(Operation *op, Layout in, Layout out) {
-    setLayout(op, ArrayRef<Layout>(in), ArrayRef<Layout>(out));
-  }
-
-  void setLayout(Operation *op, ArrayRef<Layout> in, Layout out) {
-    setLayout(op, in, ArrayRef<Layout>(out));
-  }
-
-  void setLayout(Operation *op, Layout in, ArrayRef<Layout> out) {
-    setLayout(op, ArrayRef<Layout>(in), out);
-  }
-
-  void setLayout(Operation *op, ArrayRef<Layout> in, ArrayRef<Layout> out) {
-    setInLayout(op, in);
-    setOutLayout(op, out);
   }
 
   Layout getLayout(Value v) {

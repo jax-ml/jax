@@ -218,12 +218,23 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu):
       dst_dir=mosaic_python_dir,
       src_files=[
           "__main__/jaxlib/mosaic/python/layout_defs.py",
+          "__main__/jaxlib/mosaic/python/mosaic_gpu.py",
           "__main__/jaxlib/mosaic/python/tpu.py",
       ],
   )
   # TODO (sharadmv,skyewm): can we avoid patching this file?
   patch_copy_mlir_import(
       "__main__/jaxlib/mosaic/python/_tpu_gen.py", dst_dir=mosaic_python_dir
+  )
+  mosaic_gpu_dir = jaxlib_dir / "mosaic" / "dialect" / "gpu"
+  os.makedirs(mosaic_gpu_dir)
+  patch_copy_mlir_import(
+      "__main__/jaxlib/mosaic/dialect/gpu/_mosaic_gpu_gen_ops.py",
+      dst_dir=mosaic_gpu_dir,
+  )
+  patch_copy_mlir_import(
+      "__main__/jaxlib/mosaic/dialect/gpu/_mosaic_gpu_gen_enums.py",
+      dst_dir=mosaic_gpu_dir,
   )
 
   copy_runfiles(
@@ -316,6 +327,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu):
           f"__main__/jaxlib/mlir/_mlir_libs/_mlirHlo.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsSparseTensor.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_mlirSparseTensorPasses.{pyext}",
+          f"__main__/jaxlib/mlir/_mlir_libs/_mosaic_gpu_ext.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_tpu_ext.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_sdy.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_stablehlo.{pyext}",
