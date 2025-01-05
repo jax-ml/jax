@@ -490,6 +490,24 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "gpu_paged_attention_test",
+    srcs = [
+        "gpu_paged_attention_test.py",
+    ],
+    enable_backends = ["cpu"],
+    enable_configs = [
+        "gpu_a100_x32",
+        "gpu_h100_x32",
+    ],
+    shard_count = 6,
+    deps = [
+        "//third_party/py/jax:pallas",
+        "//third_party/py/jax:pallas_gpu",
+        "//third_party/py/jax:pallas_gpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
     name = "mgpu_attention_run",
     srcs = ["//jax/experimental/pallas/ops/gpu:attention_mgpu.py"],
     enable_backends = [],
