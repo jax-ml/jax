@@ -201,6 +201,18 @@ def get_clang_major_version(clang_path):
 
   return major_version
 
+def get_gcc_major_version(gcc_path: str):
+  gcc_version_proc = subprocess.run(
+    [gcc_path, "-dumpversion"],
+    check=True,
+    capture_output=True,
+    text=True,
+  )
+  major_version = int(gcc_version_proc.stdout)
+
+  return major_version
+
+
 def get_jax_configure_bazel_options(bazel_command: list[str]):
   """Returns the bazel options to be written to .jax_configure.bazelrc."""
   # Get the index of the "run" parameter. Build options will come after "run" so
