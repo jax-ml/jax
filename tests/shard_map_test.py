@@ -2162,7 +2162,22 @@ class ShardMapTest(jtu.JaxTestCase):
                        mesh, in_specs=P('i', None), out_specs=P('i', None),
                        check_rep=False, auto=frozenset({'j'}))()
 
-    self.assertAllClose(f(), np.array(range(4), dtype=np.int32).reshape(-1, 1))
+    self.assertAllClose(f(), np.arange(4, dtype=np.int32).reshape(-1, 1))
+
+  def test_partial_auto_axis_index_degenerated_axis(self):
+    if config.use_shardy_partitioner.value:
+      self.skipTest('Shardy does not support full-to-shard.')
+
+    mesh = jtu.create_mesh((1, 2), ('i', 'j'))
+    out_sharding = NamedSharding(mesh, P('i', None))
+
+    @partial(jax.jit, out_shardings=out_sharding)
+    def f():
+      return shard_map(lambda: jax.lax.axis_index('i').reshape(1, 1),
+                       mesh, in_specs=P('i', None), out_specs=P('i', None),
+                       check_rep=False, auto=frozenset({'j'}))()
+
+    self.assertAllClose(f(), np.arange(1, dtype=np.int32).reshape(-1, 1))
 
   def test_partial_auto_ppermute(self):
     if xla_extension_version < 302:
