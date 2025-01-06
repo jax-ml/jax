@@ -399,6 +399,8 @@ def jax_wheel(name, wheel_binary, enable_cuda = False, platform_version = ""):
 
 jax_test_file_visibility = []
 
+jax_export_file_visibility = []
+
 def xla_py_proto_library(*args, **kw):  # buildifier: disable=unused-variable
     pass
 

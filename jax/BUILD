@@ -19,6 +19,7 @@ load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "if_building_jaxlib",
+    "jax_export_file_visibility",
     "jax_extend_internal_users",
     "jax_extra_deps",
     "jax_internal_export_back_compat_test_util_visibility",
@@ -61,6 +62,11 @@ exports_files([
     "LICENSE",
     "version.py",
 ])
+
+exports_files(
+    ["_src/export/serialization.fbs"],
+    visibility = jax_export_file_visibility,
+)
 
 # Packages that have access to JAX-internal implementation details.
 package_group(
