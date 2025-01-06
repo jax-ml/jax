@@ -2765,6 +2765,12 @@ def log2(x: ArrayLike, /) -> Array:
     Array([-2., -1.,  0.,  1.,  2.,  3.], dtype=float32)
   """
   x, = promote_args_inexact("log2", x)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    r = lax.log(x)
+    re = lax.real(r)
+    im = lax.imag(r)
+    ln2 = lax.log(_constant_like(re, 2))
+    return lax.complex(lax.div(re, ln2), lax.div(im, ln2))
   return lax.div(lax.log(x), lax.log(_constant_like(x, 2)))
 
 
@@ -2789,6 +2795,12 @@ def log10(x: ArrayLike, /) -> Array:
     [-2. -1.  0.  1.  2.  3.]
   """
   x, = promote_args_inexact("log10", x)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    r = lax.log(x)
+    re = lax.real(r)
+    im = lax.imag(r)
+    ln10 = lax.log(_constant_like(re, 10))
+    return lax.complex(lax.div(re, ln10), lax.div(im, ln10))
   return lax.div(lax.log(x), lax.log(_constant_like(x, 10)))
 
 

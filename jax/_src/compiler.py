@@ -192,6 +192,14 @@ def get_compile_options(
   build_options.exec_time_optimization_effort = config.exec_time_optimization_effort.value
   build_options.memory_fitting_effort = config.memory_fitting_effort.value
 
+  # This is a temporary workaround to simplify the AutoPGLE usage.
+  # TODO(b/376647494): Remove once the bug is fixed.
+  if config.enable_pgle.value and config.pgle_profiling_runs.value > 0:
+    logger.debug("Explicitly disabling command buffer scheduling for AutoPGLE.")
+    if env_options_overrides is None:
+      env_options_overrides = {}
+    env_options_overrides['xla_gpu_enable_command_buffer'] = ''
+
   if env_options_overrides is not None:
     # Some overrides are passed directly on build_options.
     overrides_on_build_options = [

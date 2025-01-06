@@ -1688,8 +1688,8 @@ class PallasControlFlowTest(PallasBaseTest):
 
       def body(state):
         i, s = state
-        sl = jax.lax.div(i, 128)
-        l = jax.lax.rem(i, 128)
+        sl = jax.lax.div(i, jnp.astype(128, i.dtype))
+        l = jax.lax.rem(i, jnp.astype(128, i.dtype))
         v = pl.load(x_ref, (0, sl, l))
         return i + 1, s + v
 

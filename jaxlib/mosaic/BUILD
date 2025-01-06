@@ -28,6 +28,7 @@ package(
 py_library(
     name = "mosaic",
     deps = [
+        "//jaxlib/mosaic/python:gpu_dialect",
         "//jaxlib/mosaic/python:tpu_dialect",
     ],
 )
@@ -42,6 +43,7 @@ cc_library(
         "dialect/tpu/tpu_dialect.cc",
         "dialect/tpu/tpu_ops.cc",
         "dialect/tpu/util.cc",
+        "dialect/tpu/vreg_util.cc",
         ":extension_srcs",
     ] + glob([
         "dialect/tpu/transforms/*.cc",
@@ -50,6 +52,7 @@ cc_library(
         "dialect/tpu/layout.h",
         "dialect/tpu/tpu_dialect.h",
         "dialect/tpu/util.h",
+        "dialect/tpu/vreg_util.h",
     ] + glob([
         "dialect/tpu/transforms/*.h",
     ]),
@@ -229,6 +232,19 @@ cc_library(
         "@llvm-project//mlir:IR",
     ],
     alwayslink = True,
+)
+
+cc_test(
+    name = "vreg_util_test",
+    srcs = ["dialect/tpu/vreg_util_test.cc"],
+    deps = [
+        ":tpu_dialect",
+        "//testing/base/public:gunit_main",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:VectorDialect",
+    ],
 )
 
 filegroup(

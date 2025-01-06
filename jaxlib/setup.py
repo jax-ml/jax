@@ -83,6 +83,7 @@ setup(
             'cuda/*',
             'cuda/nvvm/libdevice/libdevice*',
             'mosaic/*.py',
+            'mosaic/dialect/gpu/*.py',
             'mosaic/gpu/*.so',
             'mosaic/python/*.py',
             'mosaic/python/*.so',

@@ -797,25 +797,30 @@ def lower_jaxpr_to_module(
     # Each range is 2 events, each event is 4 bytes.
     prof_spec = mgpu_profiler.ProfilerSpec(prof_space * 2 * 4)
     prof_ctx = ProfilerContext(params["profile_dir"], prof_spec)
-  module, out_structs_gmem, _ = mgpu_core._lower_as_gpu_kernel(
-      body,
-      grid=parallel_grid,
-      cluster=(),
-      block=block,
-      in_shapes=in_structs_gmem,
-      out_shape=out_structs_gmem,
-      smem_scratch_shape=(
-          (*in_structs_smem, *out_structs_smem),
-          *extra_smem_scratch,
-          (
-              mgpu.Barrier(arrival_count=1, num_barriers=max_concurrent_steps),
-              rs.barriers,
-              extra_barriers,
+  module, out_structs_gmem, _, launch_ctx, scratch_arr = (
+      mgpu_core._lower_as_gpu_kernel(
+          body,
+          grid=parallel_grid,
+          cluster=(),
+          block=block,
+          in_shapes=in_structs_gmem,
+          out_shape=out_structs_gmem,
+          smem_scratch_shape=(
+              (*in_structs_smem, *out_structs_smem),
+              *extra_smem_scratch,
+              (
+                  mgpu.Barrier(
+                      arrival_count=1, num_barriers=max_concurrent_steps
+                  ),
+                  rs.barriers,
+                  extra_barriers,
+              ),
           ),
-      ),
-      module_name=name_and_src_info.name,
-      prof_spec=prof_spec,
+          module_name=name_and_src_info.name,
+          prof_spec=prof_spec,
+      )
   )
+  mgpu_core._initialize_scratch(launch_ctx, scratch_arr)
 
   return LoweringResult(
       module, parallel_grid, block, out_structs_gmem, prof_ctx
@@ -1782,29 +1787,21 @@ def _ensure_fa(x: object, dtype: jnp.dtype) -> mgpu.FragmentedArray:
   if isinstance(x, mgpu.FragmentedArray):
     assert x.mlir_dtype == mgpu_utils.dtype_to_ir_type(dtype)
     return x
-  elif isinstance(x, (np.number, np.ndarray, int, float)):
-    return mgpu.FragmentedArray.splat(
-        _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype)),
-        (),
-        is_signed=mgpu_utils.is_signed(dtype),
-    )
-  elif isinstance(x, ir.Value):
-    if isinstance(x.type, (ir.IntegerType, ir.FloatType, ir.IndexType)):
-      assert x.type == mgpu_utils.dtype_to_ir_type(dtype)
-      return mgpu.FragmentedArray.splat(x, (), is_signed=mgpu_utils.is_signed(dtype))
-  raise NotImplementedError(f"Unsupported type: {type(x)}")
+  return mgpu.FragmentedArray.splat(
+      _ensure_ir_value(x, dtype), (), is_signed=mgpu_utils.is_signed(dtype)
+  )
 
 
 def _ensure_ir_value(x: object, dtype: jnp.dtype) -> ir.Value:
   if isinstance(x, ir.Value):
     assert x.type == mgpu_utils.dtype_to_ir_type(dtype)
     return x
-  elif isinstance(x, (np.number, np.ndarray, int, float)):
-    return _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype))
   elif isinstance(x, mgpu.FragmentedArray):
+    assert x.mlir_dtype == mgpu_utils.dtype_to_ir_type(dtype)
     if isinstance(x.layout, mgpu.WGSplatFragLayout):
       return x.registers.item()
-  raise NotImplementedError(f"Unsupported type: {type(x)}")
+    raise NotImplementedError(f"Unsupported layout: {x.layout}")
+  return _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype))
 
 
 def _ir_constant(v: object, t: ir.Type) -> ir.Value:

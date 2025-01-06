@@ -710,7 +710,6 @@ def one_hot(x: Any, num_classes: int, *,
       'jax-nn-one-hot-float-input',
       f"jax.nn.one_hot input should be integer-typed; got dtype={x_arr.dtype}",
       stacklevel=1)
-    x_arr = x_arr.astype('int32')
   return _one_hot(x_arr, num_classes, dtype=dtype, axis=axis)
 
 
