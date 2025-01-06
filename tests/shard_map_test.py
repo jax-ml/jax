@@ -1904,7 +1904,6 @@ class ShardMapTest(jtu.JaxTestCase):
       x = shard_map(g, mesh,
                     in_specs=P('i', None),
                     out_specs=P('i', None),
-                    check_rep=False,
                     auto=frozenset({'j'}))(x)
       return jax.lax.with_sharding_constraint(
           x, jax.sharding.NamedSharding(mesh, P('i', 'j')))

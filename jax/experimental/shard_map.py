@@ -70,6 +70,7 @@ from jax._src.tree_util import (broadcast_prefix, prefix_errors, PyTreeDef,
                                 generate_key_paths, KeyPath)
 from jax.experimental.multihost_utils import (host_local_array_to_global_array,
                                               global_array_to_host_local_array)
+from jax._src.pjit import sharding_constraint_p
 
 P = PartitionSpec
 
@@ -1130,7 +1131,7 @@ for o in it.chain(lax.__dict__.values(), slicing.__dict__.values(),
 
 for p in [control_flow.loops.cumsum_p, control_flow.loops.cumlogsumexp_p,
           control_flow.loops.cumprod_p, control_flow.loops.cummax_p,
-          control_flow.loops.cummin_p]:
+          control_flow.loops.cummin_p, sharding_constraint_p]:
   register_standard_check(p)
   register_standard_rewrite(p)
 
