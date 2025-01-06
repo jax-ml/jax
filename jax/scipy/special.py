@@ -57,6 +57,7 @@ from jax._src.scipy.special import (
   softmax as softmax,
   spence as spence,
   sph_harm as sph_harm,
+  sph_harm_y as sph_harm_y,
   xlog1py as xlog1py,
   xlogy as xlogy,
   zeta as zeta,
