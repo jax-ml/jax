@@ -332,8 +332,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     shape=[(5,), (10,)],
     dtype=float_dtypes,
   )
-  @jtu.ignore_warning(category=DeprecationWarning,
-                      message="`scipy.special.lpmn` is deprecated")
+  @jtu.ignore_warning(category=DeprecationWarning, message=".*scipy.special.lpmn.*")
   def testLpmn(self, l_max, shape, dtype):
     if jtu.is_device_tpu(6, "e"):
       self.skipTest("TODO(b/364258243): fails on TPU v6e")
@@ -356,8 +355,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     shape=[(2,), (3,), (4,), (64,)],
     dtype=float_dtypes,
   )
-  @jtu.ignore_warning(category=DeprecationWarning,
-                      message="`scipy.special.lpmn` is deprecated")
+  @jtu.ignore_warning(category=DeprecationWarning, message=".*scipy.special.lpmn.*")
   def testNormalizedLpmnValues(self, l_max, shape, dtype):
     rng = jtu.rand_uniform(self.rng(), low=-0.2, high=0.9)
     args_maker = lambda: [rng(shape, dtype)]
