@@ -200,16 +200,11 @@ class DimExprTest(jtu.JaxTestCase):
                "3*a*mod(a + 2, b + 2)"),
               ("3 * floordiv(a + 2, b + 2) * 2", 3 * ((a + 2) // (b + 2)) * 2,
                "6*floordiv(a + 2, b + 2)"),
-              # Keep for backwards compatibility. We ought to be able to parse
-              # non_negative
-              ("non_negative(a - 2)", "build_inside", "max(a - 2, 0)"),
               ("max(a, b)", "build_inside", "max(a, b)"),
               ("min(a, b)", "build_inside", "min(a, b)"),
   ]])
   def test_parse_dim(self, dim_spec, dim_poly, expected_str):
-    if dim_spec == "non_negative(a - 2)":
-      dim_poly = core.non_negative_dim(DimExprTest.a - 2)
-    elif dim_spec == "max(a, b)":
+    if dim_spec == "max(a, b)":
       dim_poly = core.max_dim(DimExprTest.a, DimExprTest.b)
     elif dim_spec == "min(a, b)":
       dim_poly = core.min_dim(DimExprTest.a, DimExprTest.b)
@@ -382,13 +377,6 @@ class DimExprTest(jtu.JaxTestCase):
                              [b * (a % 4), b * (a // 4), a * (a // 4), a // 4,
                               a * a, b, 15])
 
-    # This failed with a previous implementation of factor equality
-    self.assertNotEqual(shape_poly._DimTerm.from_operation(shape_poly._DimFactor.NON_NEGATIVE,
-                                                           a - b - 1,
-                                                           scope=a.scope),
-                        shape_poly._DimTerm.from_operation(shape_poly._DimFactor.NON_NEGATIVE,
-                                                           a - 2 * b - 1,
-                                                           scope=a.scope))
   def test_bounds_arithmetic(self):
     a, b, c = shape_poly.symbolic_shape("a, b, c")
     bounded_le4 = 5 - a
@@ -495,15 +483,6 @@ class DimExprTest(jtu.JaxTestCase):
         self.assertGreaterEqual(fact_val, lb)
         self.assertLessEqual(fact_val, ub)
 
-  def test_bounds_non_negative(self):
-    a, b = shape_poly.symbolic_shape("a, b")
-
-    self.assertEqual(_bounds(core.non_negative_dim(a)), (1, np.inf))
-    self.assertEqual(_bounds(core.non_negative_dim(a - 5)), (0, np.inf))
-    self.assertEqual(_bounds(core.non_negative_dim(15 - a)), (0, 14))
-    self.assertEqual(_bounds(core.non_negative_dim(15 - a) // 3), (0, 4))
-    self.assertEqual(_bounds(a - core.non_negative_dim(a - 3)), (1, 3))
-
   def test_max_dim(self):
     a, b, c, d = shape_poly.symbolic_shape("a, b, c, d")
 
@@ -599,7 +578,7 @@ class DimExprTest(jtu.JaxTestCase):
 
   def test_bounds_complex(self):
     a, b = shape_poly.symbolic_shape("a, b")
-    min_a_b = b - core.non_negative_dim(b - a)
+    min_a_b = b - core.max_dim(0, b - a)
     # This comes up in slicing with stride
     self.assertGreaterEqual(min_a_b // 2, 0)
 
@@ -805,16 +784,6 @@ class DimExprTest(jtu.JaxTestCase):
         set(decision.combine_term_with_existing(_m(d), 2, scope=scope,
                                                 only_smaller_than_t=True)))
 
-  def test_non_negative_dim(self):
-    a, = shape_poly.symbolic_shape("a,")
-
-    self.sampled_assertion(2, core.non_negative_dim, 2)
-    self.sampled_assertion(0, core.non_negative_dim, 0)
-    self.sampled_assertion(0, core.non_negative_dim, -1)
-    self.sampled_assertion(a, core.non_negative_dim, a)
-    self.sampled_assertion(2 * a - 1, core.non_negative_dim, 2 * a - 1)
-    self.sampled_assertion(core.non_negative_dim(a - 2),
-                           core.non_negative_dim, a - 2)
 
   def test_dilate_dim(self):
     """0 if d == 0 else 1 + dilation * (d - 1))"""
