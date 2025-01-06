@@ -1,7 +1,7 @@
 name: CI - Wheel Tests (Nightly/Release)
 
 on:
-  workflow_call:
+  workflow_dispatch:
     inputs:
       gcs_download_uri:
         description: "GCS location URI from where the artifacts should be downloaded"
