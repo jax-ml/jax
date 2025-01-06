@@ -75,13 +75,13 @@ For example, here is a simple approach to de-noising an image based on convoluti
 :id: Jk5qdnbv6QgT
 :outputId: 292205eb-aa09-446f-eec2-af8c23cfc718
 
-from scipy import misc
+from scipy import datasets
 import jax.scipy as jsp
 
 fig, ax = plt.subplots(1, 3, figsize=(12, 5))
 
 # Load a sample image; compute mean() to convert from RGB to grayscale.
-image = jnp.array(misc.face().mean(-1))
+image = jnp.array(datasets.face().mean(-1))
 ax[0].imshow(image, cmap='binary_r')
 ax[0].set_title('original')
 
