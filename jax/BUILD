@@ -1054,19 +1054,6 @@ pytype_library(
 )
 
 pytype_library(
-    name = "experimental_array_api",
-    srcs = glob(
-        [
-            "experimental/array_api/*.py",
-        ],
-    ),
-    visibility = [":internal"],
-    deps = [
-        ":jax",
-    ],
-)
-
-pytype_library(
     name = "experimental_sparse",
     srcs = glob(
         [
