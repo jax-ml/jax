@@ -22,7 +22,6 @@ import warnings
 
 import jax
 from jax._src.lib import xla_client
-from jax.extend import ffi
 import jax.numpy as jnp
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
@@ -54,7 +53,7 @@ P = ParamSpec("P")
 
 def _event_record(args, *, copy_before):
   flat_args, treedef = jax.tree.flatten(args)
-  event, *flat_outs = ffi.ffi_call(
+  event, *flat_outs = jax.ffi.ffi_call(
       "mgpu_event_record",
       result_shape_dtypes=(jax.core.ShapedArray((), jnp.uint64), *flat_args),
       input_output_aliases={i: i + 1 for i in range(len(flat_args))},
@@ -63,7 +62,7 @@ def _event_record(args, *, copy_before):
 
 
 def _event_elapsed(start_event, end_event):
-  return ffi.ffi_call(
+  return jax.ffi.ffi_call(
       "mgpu_event_elapsed",
       result_shape_dtypes=jax.core.ShapedArray((), jnp.float32),
   )(start_event, end_event)

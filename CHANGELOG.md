@@ -36,6 +36,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.scipy.special.lpmn` and {func}`jax.scipy.special.lpmn_values`
     are deprecated, following their deprecation in SciPy v1.15.0. There are
     no plans to replace these deprecated functions with new APIs.
+  * The {mod}`jax.extend.ffi` submodule was moved to {mod}`jax.ffi`, and the
+    previous import path is deprecated.
 
 * Deletions
   * `jax_enable_memories` flag has been deleted and the behavior of that flag
