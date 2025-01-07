@@ -232,6 +232,7 @@ from jax._src.random import (
   loggamma as loggamma,
   lognormal as lognormal,
   maxwell as maxwell,
+  multinomial as multinomial,
   multivariate_normal as multivariate_normal,
   normal as normal,
   orthogonal as orthogonal,
