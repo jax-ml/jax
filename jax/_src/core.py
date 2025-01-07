@@ -1756,6 +1756,11 @@ class ShapedArray(UnshapedArray):
     except IndexError as err:
       raise TypeError("len() of unsized object") from err  # same as numpy error
 
+def get_mesh():
+  if trace_ctx.trace is eval_trace:
+    return mesh_lib.get_concrete_mesh()
+  else:
+    return mesh_lib.get_abstract_mesh()
 
 def _get_shape_sharding_str(shape, spec):
   out = []

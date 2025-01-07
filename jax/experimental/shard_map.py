@@ -85,6 +85,15 @@ AxisName = Hashable
 
 
 @traceback_util.api_boundary
+def shard_map2(f: Callable, *, in_specs: Specs, out_specs: Specs,
+               check_rep: bool = True):
+  # TODO(mattjj): Check that the axis names in in_specs and out_specs are not
+  # of axis_type Collective already.
+  mesh = core.get_mesh()
+  return shard_map(f, mesh, in_specs, out_specs, check_rep)
+
+
+@traceback_util.api_boundary
 def shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
               out_specs: Specs, check_rep: bool = True,
               auto: frozenset[AxisName] = frozenset()):

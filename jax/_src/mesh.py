@@ -369,6 +369,10 @@ class Mesh(contextlib.ContextDecorator):
   def _any_axis_auto(self) -> bool:
     return any(t == AxisTypes.Auto for t in self.axis_types.keys())
 
+  @functools.cached_property
+  def _any_axis_user(self) -> bool:
+    return any(t == AxisTypes.User for t in self.axis_types.keys())
+
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
 
@@ -466,6 +470,10 @@ class AbstractMesh:
   def _any_axis_auto(self) -> bool:
     return any(t == AxisTypes.Auto for t in self.axis_types.keys())
 
+  @functools.cached_property
+  def _any_axis_user(self) -> bool:
+    return any(t == AxisTypes.User for t in self.axis_types.keys())
+
   @property
   def devices(self):
     _raise_value_error("devices")
@@ -531,5 +539,6 @@ def get_concrete_mesh():
 @contextlib.contextmanager
 def set_mesh(mesh: Mesh):
   with (set_abstract_mesh(mesh.abstract_mesh),
-        jax_config.sharding_in_types(True), set_concrete_mesh(mesh)):
+        jax_config.sharding_in_types(mesh._any_axis_user),
+        set_concrete_mesh(mesh)):
     yield
