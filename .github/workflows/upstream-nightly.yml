@@ -22,7 +22,7 @@ on:
 
 jobs:
   upstream-dev:
-    runs-on: ubuntu-20.04-16core
+    runs-on: ROCM-Ubuntu
     permissions:
       contents: read
       checks: write  # for upload-artifact

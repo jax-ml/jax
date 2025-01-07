@@ -1,0 +1,52 @@
+# Pulls the latest changes from upstream into main and opens a PR to merge
+# them into rocm-main branch.
+
+name: ROCm Nightly Upstream Sync
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 1-5'
+permissions:
+  contents: write
+  pull-requests: write
+env:
+  SYNC_BRANCH_NAME: ci-upstream-sync-${{ github.run_number }}_${{ github.run_attempt }}
+jobs:
+  sync-main:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          gh auth status
+          gh repo sync rocm/jax -b main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  create-sync-branch:
+    needs: sync-main
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Create branch
+        run: |
+          git fetch
+          git checkout origin/main 
+          git checkout -b $SYNC_BRANCH_NAME
+          # Try and merge rocm-main into this new branch so that we don't run upstream's CI code
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          git merge origin/rocm-main || true
+          # If the merge creates conflicts, we want to abort and push to origin anyways so that a dev can resolve the conflicts
+          git merge --abort || true
+          git push origin HEAD
+  open-sync-pr:
+    needs: create-sync-branch
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          gh pr create --repo $GITHUB_REPOSITORY --head $SYNC_BRANCH_NAME --base rocm-main --title "CI: $(date +%x) upstream sync" --body "Daily sync with upstream"
+          gh pr merge --repo $GITHUB_REPOSITORY --merge --auto $SYNC_BRANCH_NAME
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

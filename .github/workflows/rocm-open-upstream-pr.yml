@@ -1,0 +1,41 @@
+name: ROCm Open Upstream PR
+on:
+  pull_request:
+    types: [ labeled ]
+    branches: [ rocm-main ]
+jobs:
+  open-upstream:
+    if: ${{ github.event.label.name == 'open-upstream' }}
+    permissions:
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    env:
+      NEW_BRANCH_NAME: "${{ github.head_ref }}-upstream"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Rebase code to main
+        run: |
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "Github Actions"
+          git fetch
+          git checkout -b $NEW_BRANCH_NAME origin/${{ github.head_ref }}
+          git rebase --onto origin/main origin/rocm-main
+          # Force push here so that we don't run into conflicts with the origin branch
+          git push origin HEAD --force
+      - name: Leave link to create PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Bash is not friendly with newline characters, so make our own
+          NL=$'\n'
+          # Encode the PR title and body for passing as URL get parameters
+          TITLE_ENC=$(jq -rn --arg x "[ROCm] ${{ github.event.pull_request.title }}" '$x|@uri')
+          BODY_ENC=$(jq -rn --arg x $"${{ github.event.pull_request.body }}${NL}${NL}Created from: rocm/jax#${{ github.event.pull_request.number }}" '$x|@uri')
+          # Create a link to the that will open up a new PR form to upstream and autofill the fields
+          CREATE_PR_LINK="https://github.com/jax-ml/jax/compare/main...ROCm:jax:$NEW_BRANCH_NAME?expand=1&title=$TITLE_ENC&body=$BODY_ENC"
+          # Add a comment with the link to the PR
+          COMMENT_BODY="Feature branch from main is ready. [Create a new PR][1] destined for upstream?${NL}${NL}[1]: $CREATE_PR_LINK"
+          gh pr comment ${{ github.event.pull_request.number }} --repo rocm/jax --body "$COMMENT_BODY"
+

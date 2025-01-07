@@ -1,4 +1,4 @@
-name: CI
+name: ROCm CPU CI
 
 # We test all supported Python versions as follows:
 # - 3.10 : Documentation build
@@ -11,10 +11,10 @@ on:
   # but only for the main branch
   push:
     branches:
-      - main
+      - rocm-main
   pull_request:
     branches:
-      - main
+      - rocm-main
 
 permissions:
   contents: read  # to fetch code
@@ -42,12 +42,8 @@ jobs:
       - run: pre-commit run --show-diff-on-failure --color=always --all-files
 
   build:
-    # Don't execute in fork due to runner type
-    if: github.repository == 'jax-ml/jax'
     name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ubuntu-20.04, x64=${{ matrix.enable-x64}})"
-    runs-on: linux-x86-n2-32
-    container:
-      image: index.docker.io/library/ubuntu@sha256:6d8d9799fe6ab3221965efac00b4c34a2bcc102c086a58dff9e19a08b913c7ef # ratchet:ubuntu:20.04
+    runs-on: ROCM-Ubuntu
     timeout-minutes: 60
     strategy:
       matrix:
@@ -65,10 +61,6 @@ jobs:
             num_generated_cases: 1
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-    - name: Image Setup
-      run: |
-        apt update
-        apt install -y libssl-dev
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
       with:
@@ -109,7 +101,7 @@ jobs:
 
   documentation:
     name: Documentation - test code snippets
-    runs-on: ubuntu-latest
+    runs-on: ROCM-Ubuntu
     timeout-minutes: 10
     strategy:
       matrix:
@@ -146,19 +138,13 @@ jobs:
 
   documentation_render:
     name: Documentation - render documentation
-    runs-on: linux-x86-n2-16
-    container:
-      image: index.docker.io/library/ubuntu@sha256:6d8d9799fe6ab3221965efac00b4c34a2bcc102c086a58dff9e19a08b913c7ef # ratchet:ubuntu:20.04
-    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ['3.10']
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-    - name: Image Setup
-      run: |
-        apt update
-        apt install -y libssl-dev libsqlite3-dev
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
       with:
@@ -229,9 +215,7 @@ jobs:
 
   ffi:
     name: FFI example
-    runs-on: linux-x86-g2-16-l4-1gpu
-    container:
-      image: index.docker.io/tensorflow/build:latest-python3.12@sha256:48e99608fe9434ada5b14e19fdfd8e64f4cfc83aacd328b9c2101b210e984295 # ratchet:index.docker.io/tensorflow/build:latest-python3.12
+    runs-on: ROCM-Ubuntu
     timeout-minutes: 30
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -250,7 +234,7 @@ jobs:
         path: ${{ steps.pip-cache.outputs.dir }}
         key: ${{ runner.os }}-pip-ffi-examples-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt', 'examples/**/pyproject.toml') }}
     - name: Install JAX
-      run: pip install .[cuda12]
+      run: pip install .
     - name: Build and install example project
       run: python -m pip install -v ./examples/ffi[test]
       env:
@@ -259,7 +243,7 @@ jobs:
         # a different toolchain. GCC is the default compiler on the
         # 'ubuntu-latest' runner, but we still set this explicitly just to be
         # clear.
-        CMAKE_ARGS: -DCMAKE_CXX_COMPILER=g++ -DJAX_FFI_EXAMPLE_ENABLE_CUDA=ON
+        CMAKE_ARGS: -DCMAKE_CXX_COMPILER=g++ #-DJAX_FFI_EXAMPLE_ENABLE_CUDA=ON
     - name: Run CPU tests
       run: python -m pytest examples/ffi/tests
       env:
