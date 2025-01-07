@@ -28,6 +28,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.numpy.fft.ifftn`, and {func}`jax.numpy.fft.irfftn` now support
     transforms in more than 3 dimensions, which was previously the limit. See
     {jax-issue}`#25606` for more details.
+  * Support added for user defined state in the FFI via the new
+    {func}`jax.ffi.register_ffi_type_id` function.
 
 * Deprecations
   * From {mod}`jax.interpreters.xla`, `abstractify` and `pytype_aval_mappings`

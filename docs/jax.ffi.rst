@@ -10,6 +10,7 @@
   ffi_lowering
   pycapsule
   register_ffi_target
+  register_ffi_type_id
 
 
 ``jax.extend.ffi`` module (deprecated)
@@ -28,4 +29,3 @@ the legacy import is being deprecated.
   ffi_lowering
   pycapsule
   register_ffi_target
-

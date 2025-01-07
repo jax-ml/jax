@@ -238,6 +238,7 @@ cc_library(
         "@xla//xla:util",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/pjrt:status_casters",
+        "@xla//xla/pjrt/c:pjrt_c_api_ffi_extension_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu_extension_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_helpers",
