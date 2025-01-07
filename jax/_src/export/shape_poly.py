@@ -29,7 +29,6 @@ import copy
 import operator as op
 import tokenize
 from typing import Any, Union, overload
-import warnings
 
 import numpy as np
 import opt_einsum
@@ -1351,31 +1350,6 @@ def _dim_as_value_lowering(ctx: mlir.LoweringRuleContext, *,
 mlir.register_lowering(dim_as_value_p, _dim_as_value_lowering)
 
 
-class PolyShape(tuple):
-  """Tuple of polymorphic dimension specifications.
-
-  See docstring of :func:`jax2tf.convert`.
-  """
-
-  def __init__(self, *dim_specs):
-    warnings.warn("PolyShape is deprecated, use string specifications for symbolic shapes",
-                  DeprecationWarning, stacklevel=2)
-    tuple.__init__(dim_specs)
-
-  def __new__(cls, *dim_specs):
-    warnings.warn("PolyShape is deprecated, use string specifications for symbolic shapes",
-                  DeprecationWarning, stacklevel=2)
-    for ds in dim_specs:
-      if not isinstance(ds, (int, str)) and ds != ...:
-        msg = (f"Invalid polymorphic shape element: {ds!r}; must be a string "
-               "representing a dimension variable, or an integer, or ...")
-        raise ValueError(msg)
-    return tuple.__new__(PolyShape, dim_specs)
-
-  def __str__(self):
-    return "(" + ", ".join(["..." if d is ... else str(d) for d in self]) + ")"
-
-
 def symbolic_shape(shape_spec: str | None,
                    *,
                    constraints: Sequence[str] = (),
@@ -1416,8 +1390,6 @@ def symbolic_shape(shape_spec: str | None,
   shape_spec_repr = repr(shape_spec)
   if shape_spec is None:
     shape_spec = "..."
-  elif isinstance(shape_spec, PolyShape):  # TODO: deprecate
-    shape_spec = str(shape_spec)
   elif not isinstance(shape_spec, str):
     raise ValueError("polymorphic shape spec should be None or a string. "
                      f"Found {shape_spec_repr}.")
