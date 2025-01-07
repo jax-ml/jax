@@ -43,6 +43,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * From `jax.lib.xla_client`, the previously-deprecated `Device` and
     `XlaRuntimeError` symbols have been removed; instead use `jax.Device`
     and `jax.errors.JaxRuntimeError` respectively.
+  * The `jax.experimental.array_api` module has been removed after being
+    deprecated in JAX v0.4.32. Since that release, {mod}`jax.numpy` supports
+    the array API directly.
 
 ## jax 0.4.38 (Dec 17, 2024)
 
