@@ -190,7 +190,7 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
         closed_jaxpr,
         name="tmp_xla_computation",
         platforms=module_context.platforms,
-        backend_or_name=module_context.backend_or_name,
+        backend=module_context.backend,
         axis_context=axis_context.extend_manual(frozenset(mesh.axis_names)),
     )
   result_sharding = _pack_result_sharding(result_shape, result_shardings)
