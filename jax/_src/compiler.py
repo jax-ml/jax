@@ -33,6 +33,7 @@ from jax._src import profiler
 from jax._src import traceback_util
 from jax._src.interpreters import mlir
 from jax._src.lib import version as jaxlib_version
+from jax._src.lib import xla_extension_version  # pylint: disable=g-importing-member
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 import numpy as np
@@ -198,7 +199,10 @@ def get_compile_options(
     logger.debug("Explicitly disabling command buffer scheduling for AutoPGLE.")
     if env_options_overrides is None:
       env_options_overrides = {}
-    env_options_overrides['xla_gpu_enable_command_buffer'] = ''
+    if xla_extension_version > 302:
+      env_options_overrides['xla_gpu_enable_command_buffer'] = ''
+    else:
+      env_options_overrides['xla_gpu_graph_min_graph_size'] = '100000'
 
   if env_options_overrides is not None:
     # Some overrides are passed directly on build_options.
