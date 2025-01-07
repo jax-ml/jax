@@ -1925,7 +1925,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(v*v, f(v), check_dtypes=False)
 
   def test_partial_auto_propagate_through(self):
-    mesh = jtu.create_mesh((2, 2), ('i', 'j'))
+    mesh = jtu.create_mesh((2, 2, 2), ('i', 'j', 'k'))
     sharding = jax.sharding.NamedSharding(mesh, P('i'))
 
     def g(x):
@@ -1943,16 +1943,17 @@ class ShardMapTest(jtu.JaxTestCase):
       )(x)
 
     v = jnp.arange(32.0).reshape(4, 8)
-    v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i')))
+    v = jax.device_put(v, sharding)
     if config.use_shardy_partitioner.value:
       self.assertIn(
           'in_shardings=[<@mesh, [{?}, {?}]>]'
-          ' out_shardings=[<@mesh, [{?}, {?}]>] manual_axes={"j"}',
+          ' out_shardings=[<@mesh, [{?}, {?}]>] manual_axes={"j", "k"}',
           f.lower(v).as_text(),
       )
     else:
       self.assertIn(
-          'sharding={devices=[1,1,2,2]<=[2,2]T(1,0) last_tile_dims={manual, replicated}}',
+          'sharding={devices=[1,1,4,2]<=[2,4]T(1,0) last_tile_dims={manual,'
+          ' replicated}}',
           f.lower(v).as_text('hlo'),
       )
     actual = f(v)
