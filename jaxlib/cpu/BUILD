@@ -16,7 +16,7 @@
 
 load(
     "//jaxlib:jax.bzl",
-    "pybind_extension",
+    "nanobind_extension",
 )
 
 licenses(["notice"])
@@ -53,7 +53,7 @@ cc_library(
     alwayslink = 1,
 )
 
-pybind_extension(
+nanobind_extension(
     name = "_lapack",
     srcs = ["lapack.cc"],
     copts = [

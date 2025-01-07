@@ -1133,9 +1133,9 @@ class InspectShardingTest(jtu.JaxTestCase):
     f(np.arange(8, dtype=jnp.float32))
     self.assertTrue(is_called)
 
-  def test_inspect_sharding_3d_input_pos_sharding(self):
+  def test_inspect_sharding_3d_jit(self):
     def _cb(sd):
-      self.assertIsInstance(sd, jax.sharding.PositionalSharding)
+      self.assertIsInstance(sd, jax.sharding.NamedSharding)
       self.assertLen(sd.device_set, 2)
 
     def f_(x):
@@ -1149,7 +1149,7 @@ class InspectShardingTest(jtu.JaxTestCase):
 
     f(arr)
 
-  def test_inspect_sharding_3d_input_named_sharding(self):
+  def test_inspect_sharding_3d_pjit(self):
     def _cb(sd):
       self.assertIsInstance(sd, jax.sharding.NamedSharding)
       self.assertLen(sd.device_set, 2)

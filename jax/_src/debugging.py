@@ -390,6 +390,10 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
     if devices is None:
       raise AssertionError(
           'Please file a bug at https://github.com/jax-ml/jax/issues')
+    am = axis_context.abstract_mesh
+    if am is not None:
+      mesh = mesh_lib.Mesh(np.array(devices).reshape(am.axis_sizes),
+                           am.axis_names)
   elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
     devices = axis_context.mesh._flat_devices_tuple
   else:

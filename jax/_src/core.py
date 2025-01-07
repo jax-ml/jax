@@ -2095,11 +2095,6 @@ def stride_dim(d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimS
   # If d < window_size then (d - window_size) // window_stride < 0
   return max_dim((d - window_size) // window_stride + 1, 0)
 
-# TODO(necula): Deprecated Jan 2024, to be removed.
-def non_negative_dim(d: DimSize) -> DimSize:
-  """max(d, 0)."""
-  return max_dim(d, 0)
-
 def min_dim(d1: DimSize, d2: DimSize) -> DimSize:
   """Like min(d1, d2) but for both constant and symbolic dimensions."""
   d1_is_constant = is_constant_dim(d1)

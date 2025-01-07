@@ -29,7 +29,7 @@ cc_proto_library = _cc_proto_library
 cuda_library = _cuda_library
 rocm_library = _rocm_library
 pytype_test = native.py_test
-pybind_extension = _pybind_extension
+nanobind_extension = _pybind_extension
 if_cuda_is_configured = _if_cuda_is_configured
 if_rocm_is_configured = _if_rocm_is_configured
 if_windows = _if_windows
@@ -120,7 +120,7 @@ def py_library_providing_imports_info(*, name, lib_rule = native.py_library, pyt
     lib_rule(name = name, **kwargs)
 
 def py_extension(name, srcs, copts, deps, linkopts = []):
-    pybind_extension(name, srcs = srcs, copts = copts, linkopts = linkopts, deps = deps, module_name = name)
+    nanobind_extension(name, srcs = srcs, copts = copts, linkopts = linkopts, deps = deps, module_name = name)
 
 def windows_cc_shared_mlir_library(name, out, deps = [], srcs = [], exported_symbol_prefixes = []):
     """Workaround DLL building issue.
@@ -398,6 +398,8 @@ def jax_wheel(name, wheel_binary, enable_cuda = False, platform_version = ""):
     )
 
 jax_test_file_visibility = []
+
+jax_export_file_visibility = []
 
 def xla_py_proto_library(*args, **kw):  # buildifier: disable=unused-variable
     pass

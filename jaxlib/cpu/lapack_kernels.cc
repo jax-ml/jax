@@ -758,6 +758,35 @@ static ffi::Error SvdKernel(
                               work_data.get(), &workspace_dim_v,
                               iwork_data.get(), info_data);
     }
+
+    // Suppress MSAN warnings when using a copy of LAPACK uninstrumented by
+    // MSAN.
+    using T [[maybe_unused]] = typename svd::SVDType<dtype>::ValueType;
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(info_data, sizeof(*info_data));
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_out_data,
+                                        x_cols_v * x_leading_dim_v * sizeof(T));
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+        singular_values_data, std::min(x_rows_v, x_cols_v) * sizeof(RealType));
+    if (mode_v == 'A') {
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+          u_data, u_leading_dim_v * x_rows_v * sizeof(T));
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+          vt_data, vt_leading_dim_v * x_cols_v * sizeof(T));
+    } else if (mode_v == 'O') {
+      if (x_rows_v < x_cols_v) {
+        ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+            u_data, u_leading_dim_v * x_rows_v * sizeof(T));
+      } else {
+        ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+            vt_data, vt_leading_dim_v * x_cols_v * sizeof(T));
+      }
+    } else if (mode_v == 'S') {
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+          u_data, u_leading_dim_v * std::min(x_rows_v, x_cols_v) * sizeof(T));
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+          vt_data, vt_leading_dim_v * x_cols_v * sizeof(T));
+    }
+
     x_out_data += x_out_step;
     singular_values_data += singular_values_step;
     u_data += u_step;
