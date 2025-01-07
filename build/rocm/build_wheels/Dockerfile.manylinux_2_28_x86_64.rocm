@@ -5,7 +5,11 @@ ARG ROCM_BUILD_JOB
 ARG ROCM_BUILD_NUM
 
 # Install system GCC and C++ libraries.
-RUN yum install -y gcc-c++.x86_64
+# (charleshofer) This is not ideal, as we should already have GCC and C++ libraries in the
+#  manylinux base image. However, adding this does fix an issue where Bazel isn't able
+#  to find them.
+RUN --mount=type=cache,target=/var/cache/dnf \
+    dnf install -y gcc-c++-8.5.0-22.el8_10.x86_64
 
 RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,source=build/rocm/tools/get_rocm.py,target=get_rocm.py \
@@ -20,3 +24,6 @@ RUN --mount=type=cache,target=/var/cache/dnf \
 RUN mkdir /tmp/llvm-project && wget -qO - https://github.com/llvm/llvm-project/archive/refs/tags/llvmorg-18.1.8.tar.gz | tar -xz -C /tmp/llvm-project --strip-components 1 && \
     mkdir /tmp/llvm-project/build && cd /tmp/llvm-project/build && cmake -DLLVM_ENABLE_PROJECTS='clang;lld' -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/lib/llvm-18/ ../llvm && \
     make -j$(nproc) && make -j$(nproc) install && rm -rf /tmp/llvm-project
+
+# Stop git from erroring out when we don't own the repo
+RUN git config --global --add safe.directory '*'
