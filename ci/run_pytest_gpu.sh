@@ -56,6 +56,5 @@ echo "Running GPU tests..."
 "$JAXCI_PYTHON" -m pytest -n $num_processes --tb=short --maxfail=20 \
 tests examples \
 --deselect=tests/multi_device_test.py::MultiDeviceTest::test_computation_follows_data \
---deselect=tests/xmap_test.py::XMapTest::testCollectivePermute2D \
 --deselect=tests/multiprocess_gpu_test.py::MultiProcessGpuTest::test_distributed_jax_visible_devices \
 --deselect=tests/compilation_cache_test.py::CompilationCacheTest::test_task_using_cache_metric

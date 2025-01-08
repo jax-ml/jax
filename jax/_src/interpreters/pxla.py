@@ -1179,7 +1179,7 @@ class InputsHandler:
 
 
 class ResultsHandler:
-  # `out_avals` is the `Array` global avals when using pjit or xmap. It is the
+  # `out_avals` is the `Array` global avals when using pjit. It is the
   # local one when using `pmap`.
   __slots__ = ("handlers", "out_shardings", "out_avals")
 
