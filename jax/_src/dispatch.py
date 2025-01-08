@@ -22,39 +22,38 @@ import dataclasses
 import enum
 from functools import partial
 import itertools
-import time
-from typing import Any, NamedTuple
 import logging
 import threading
-
-import numpy as np
+import time
+from typing import Any, NamedTuple
 
 import jax
+from jax._src import api
+from jax._src import array
 from jax._src import basearray
 from jax._src import config
 from jax._src import core
-from jax._src import api
-from jax._src import array
 from jax._src import dtypes
+from jax._src import lib
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
+from jax._src.abstract_arrays import array_types
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
-from jax._src.abstract_arrays import array_types
 from jax._src.interpreters import mlir
-from jax._src.interpreters import xla
 from jax._src.interpreters import pxla
-from jax._src import lib
-from jax._src.mesh import AbstractMesh, Mesh
+from jax._src.interpreters import xla
+from jax._src.layout import DeviceLocalLayout, Layout
 from jax._src.lib import xla_client as xc
-from jax._src.monitoring import record_event_duration_secs
+from jax._src.mesh import AbstractMesh, Mesh
+from jax._src.monitoring import record_event_duration_secs, record_event_time_span
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
-from jax._src.sharding_impls import (
-    SingleDeviceSharding, NamedSharding, TransferToMemoryKind,
+from jax._src.sharding_impls import ( NamedSharding,
+    SingleDeviceSharding, TransferToMemoryKind,
     is_single_device_sharding)
-from jax._src.layout import Layout, DeviceLocalLayout
+import numpy as np
 
 
 JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"
@@ -177,12 +176,14 @@ def log_elapsed_time(fmt: str, fun_name: str, event: str | None = None):
     log_priority = logging.WARNING if config.log_compiles.value else logging.DEBUG
     start_time = time.time()
     yield
-    elapsed_time = time.time() - start_time
+    end_time = time.time()
+    elapsed_time = end_time - start_time
     if logger.isEnabledFor(log_priority):
       logger.log(log_priority, fmt.format(
           fun_name=fun_name, elapsed_time=elapsed_time))
     if event is not None:
       record_event_duration_secs(event, elapsed_time)
+      record_event_time_span(event, start_time, end_time)
 
 
 def should_tuple_args(num_args: int, platform: str) -> bool:
