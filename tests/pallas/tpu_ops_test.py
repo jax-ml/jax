@@ -176,6 +176,23 @@ class OpsTest(PallasBaseTest):
     )(x, y)
     np.testing.assert_array_equal(out, inp.reshape(m * 2, n))
 
+  @parameterized.parameters([jnp.int32, jnp.int16, jnp.int8])
+  def test_row_broadcast(self, dtype):
+    if not jtu.if_cloud_tpu_at_least(2024, 1, 9):
+      self.skipTest("Requires libtpu built after 2024-01-09")
+    if not self.INTERPRET and jtu.get_tpu_version() < 5:
+      self.skipTest("Requires TPUv5+")
+    def kernel(x_ref, y_ref):
+      y_ref[...] = jnp.broadcast_to(x_ref[pl.ds(3, 1)], y_ref.shape)
+    m, n = 4, 1024
+    x = jax.random.randint(
+        jax.random.key(12), (m, n), minval=-1000, maxval=1000, dtype=jnp.int32
+    ).astype(dtype)
+    y = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((m, n), dtype)
+    )(x)
+    np.testing.assert_array_equal(y, jnp.broadcast_to(x[3:4], y.shape))
+
   def test_tpu_unsigned_int(self):
     def body(x_ref, o_ref):
       # Test cast from uint16 -> uint32
