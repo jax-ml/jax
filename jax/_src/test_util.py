@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import collections
 from collections.abc import Callable, Generator, Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
 import datetime
 import functools
@@ -31,6 +32,7 @@ import sys
 import tempfile
 import textwrap
 import threading
+import time
 from typing import Any, TextIO
 import unittest
 import warnings
@@ -113,6 +115,12 @@ HYPOTHESIS_PROFILE = config.string_flag(
     os.getenv('JAX_HYPOTHESIS_PROFILE', 'deterministic'),
     help=('Select the hypothesis profile to use for testing. Available values: '
           'deterministic, interactive'),
+)
+
+TEST_NUM_THREADS = config.int_flag(
+    'jax_test_num_threads', 0,
+    help='Number of threads to use for running tests. 0 means run everything '
+    'in the main thread. Using > 1 thread is experimental.'
 )
 
 # We sanitize test names to ensure they work with "unitttest -k" and
@@ -998,8 +1006,140 @@ def sample_product(*args, **kw):
   """
   return parameterized.parameters(*sample_product_testcases(*args, **kw))
 
+# We use a reader-writer lock to protect test execution. Tests that may run in
+# parallel acquire a read lock; tests that are not thread-safe acquire a write
+# lock.
+if hasattr(util, 'Mutex'):
+  _test_rwlock = util.Mutex()
+
+  def _run_one_test(test: unittest.TestCase, result: ThreadSafeTestResult):
+    _test_rwlock.reader_lock()
+    try:
+      test(result)  # type: ignore
+    finally:
+      _test_rwlock.reader_unlock()
+
+
+  @contextmanager
+  def thread_hostile_test():
+    "Decorator for tests that are not thread-safe."
+    _test_rwlock.assert_reader_held()
+    _test_rwlock.reader_unlock()
+    _test_rwlock.writer_lock()
+    try:
+      yield
+    finally:
+      _test_rwlock.writer_unlock()
+      _test_rwlock.reader_lock()
+else:
+  # TODO(phawkins): remove this branch when jaxlib 0.5.0 is the minimum.
+  _test_rwlock = threading.Lock()
+
+  def _run_one_test(test: unittest.TestCase, result: ThreadSafeTestResult):
+    _test_rwlock.acquire()
+    try:
+      test(result)  # type: ignore
+    finally:
+      _test_rwlock.release()
+
+
+  @contextmanager
+  def thread_hostile_test():
+    yield  # No reader-writer lock, so we get no parallelism.
+
+class ThreadSafeTestResult:
+  """
+  Wraps a TestResult to make it thread safe.
+
+  We do this by accumulating API calls and applying them in a batch under a
+  lock at the conclusion of each test case.
+
+  We duck type instead of inheriting from TestResult because we aren't actually
+  a perfect implementation of TestResult, and would rather get a loud error
+  for things we haven't implemented.
+  """
+  def __init__(self, lock: threading.Lock, result: unittest.TestResult):
+    self.lock = lock
+    self.test_result = result
+    self.actions: list[Callable] = []
+
+  def startTest(self, test: unittest.TestCase):
+    del test
+    self.start_time = time.time()
+
+  def stopTest(self, test: unittest.TestCase):
+    stop_time = time.time()
+    with self.lock:
+      # We assume test_result is an ABSL _TextAndXMLTestResult, so we can
+      # override how it gets the time.
+      time_getter = self.test_result.time_getter
+      try:
+        self.test_result.time_getter = lambda: self.start_time
+        self.test_result.startTest(test)
+        for callback in self.actions:
+          callback()
+        self.test_result.time_getter = lambda: stop_time
+        self.test_result.stopTest(test)
+      finally:
+        self.test_result.time_getter = time_getter
+
+  def addSuccess(self, test: unittest.TestCase):
+    self.actions.append(lambda: self.test_result.addSuccess(test))
+
+  def addSkip(self, test: unittest.TestCase, reason: str):
+    self.actions.append(lambda: self.test_result.addSkip(test, reason))
+
+  def addError(self, test: unittest.TestCase, err):
+    self.actions.append(lambda: self.test_result.addError(test, err))
+
+  def addFailure(self, test: unittest.TestCase, err):
+    self.actions.append(lambda: self.test_result.addFailure(test, err))
+
+  def addExpectedFailure(self, test: unittest.TestCase, err):
+    self.actions.append(lambda: self.test_result.addExpectedFailure(test, err))
+
+  def addDuration(self, test: unittest.TestCase, elapsed):
+    self.actions.append(lambda: self.test_result.addDuration(test, elapsed))
+
+
+class JaxTestSuite(unittest.TestSuite):
+  """Runs tests in parallel using threads if TEST_NUM_THREADS is > 1.
+
+  Caution: this test suite does not run setUpClass or setUpModule methods if
+  thread parallelism is enabled.
+  """
+
+  def __init__(self, suite: unittest.TestSuite):
+    super().__init__(list(suite))
+
+  def run(self, result: unittest.TestResult, debug: bool = False) -> unittest.TestResult:
+    if TEST_NUM_THREADS.value <= 0:
+      return super().run(result)
+
+    executor = ThreadPoolExecutor(TEST_NUM_THREADS.value)
+    lock = threading.Lock()
+    futures = []
+
+    def run_test(test):
+      "Recursively runs tests in a test suite or test case."
+      if isinstance(test, unittest.TestSuite):
+        for subtest in test:
+          run_test(subtest)
+      else:
+        test_result = ThreadSafeTestResult(lock, result)
+        futures.append(executor.submit(_run_one_test, test, test_result))
+
+    with executor:
+      run_test(self)
+      for future in futures:
+        future.result()
+
+    return result
+
 
 class JaxTestLoader(absltest.TestLoader):
+  suiteClass = JaxTestSuite
+
   def getTestCaseNames(self, testCaseClass):
     names = super().getTestCaseNames(testCaseClass)
     if _TEST_TARGETS.value:
@@ -1102,11 +1242,11 @@ class JaxTestCase(parameterized.TestCase):
     stack.enter_context(global_config_context(**self._default_config))
 
     if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
+      assert TEST_NUM_THREADS.value <= 1, "Persistent compilation cache is not thread-safe."
       stack.enter_context(config.enable_compilation_cache(True))
       stack.enter_context(config.raise_persistent_cache_errors(True))
       stack.enter_context(config.persistent_cache_min_compile_time_secs(0))
       stack.enter_context(config.persistent_cache_min_entry_size_bytes(0))
-
       tmp_dir = stack.enter_context(tempfile.TemporaryDirectory())
       stack.enter_context(config.compilation_cache_dir(tmp_dir))
       stack.callback(compilation_cache.reset_cache)
