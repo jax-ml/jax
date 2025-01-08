@@ -1481,14 +1481,11 @@ class WarpSpecializedPipelineTest(PallasTest):
                                       index_map=lambda i, j: (0, 0))
                    ],
     )
-    mesh = plgpu.GPUMesh(
-        grid=(1,),
-        num_threads=3,
-        axis_names=("_", "wg",),
-        approx_math=True,
-    )
+    mesh = plgpu.GPUMesh(grid=(1,), num_threads=3, axis_names=("_", "wg"))
     def run(refs):
-      @pl.core_map(mesh)
+      @pl.core_map(
+          mesh, compiler_params=plgpu.GPUCompilerParams(approx_math=True)
+      )
       def _kernel_entry():
         pipeline(*refs)
     @jax.jit
@@ -1535,13 +1532,12 @@ class WarpSpecializedPipelineTest(PallasTest):
                 transforms=[])],
     )
     mesh = plgpu.GPUMesh(
-        grid=(1,),
-        num_threads=num_compute_wgs + 1,
-        axis_names=("_", "wg",),
-        approx_math=True,
+        grid=(1,), num_threads=num_compute_wgs + 1, axis_names=("_", "wg")
     )
     def run(refs):
-      @pl.core_map(mesh)
+      @pl.core_map(
+          mesh, compiler_params=plgpu.GPUCompilerParams(approx_math=True)
+      )
       def _kernel_entry():
         pipeline(*refs)
     @jax.jit

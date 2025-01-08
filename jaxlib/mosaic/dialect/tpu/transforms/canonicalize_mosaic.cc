@@ -302,8 +302,8 @@ LogicalResult canonicalize_elementwise(int hardware_generation_,
       // TODO(mvoz): Look into (1) what it would take to support these ops
       // natively on later hardware, and (2) how to better organize this list.
       bool needs_cast = hardware_generation_ <= 5 || isa<math::PowFOp>(op) ||
-                        isa<arith::DivFOp>(op) || isa<math::TanhOp>(op) ||
-                        isa<math::ExpOp>(op) || isa<math::LogOp>(op);
+                        isa<math::TanhOp>(op) || isa<math::ExpOp>(op) ||
+                        isa<math::LogOp>(op);
       if (needs_cast && element_type.isBF16()) {
         auto target_f32 =
             builder.create<arith::ExtFOp>(op.getLoc(), target_f32_ty, operand)

@@ -73,14 +73,8 @@ see the {ref}`export` APIs.
 See the {mod}`jax.stages` documentation for more details on what functionality
 the lowering and compiled functions provide.
 
-In place of `jax.jit` above, you can also `lower(...)` the result of
-{func}`jax.pmap`, as well as `pjit` and `xmap` (from
-{mod}`jax.experimental.pjit` and {mod}`jax.experimental.maps` respectively). In
-each case, you can `compile()` the result similarly.
-
 All optional arguments to `jit`---such as `static_argnums`---are respected in
-the corresponding lowering, compilation, and execution. Again the same goes for
-`pmap`, `pjit`, and `xmap`.
+the corresponding lowering, compilation, and execution.
 
 In the example above, we can replace the arguments to `lower` with any objects
 that have `shape` and `dtype` attributes:

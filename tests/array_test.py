@@ -43,19 +43,11 @@ from jax._src import array
 from jax._src import prng
 
 jax.config.parse_flags_with_absl()
+jtu.request_cpu_devices(8)
 
 with contextlib.suppress(ImportError):
   import pytest
   pytestmark = pytest.mark.multiaccelerator
-
-# Run all tests with 8 CPU devices.
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
-
-def tearDownModule():
-  _exit_stack.close()
 
 
 def create_array(shape, sharding, global_data=None):

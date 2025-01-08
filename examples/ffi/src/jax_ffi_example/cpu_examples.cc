@@ -103,6 +103,33 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
     Counter, CounterImpl,
     ffi::Ffi::Bind().Attr<int64_t>("index").Ret<ffi::BufferR0<ffi::S32>>());
 
+// --------
+// Aliasing
+// --------
+//
+// This example demonstrates how input-output aliasing works. The handler
+// doesn't do anything except to check that the input and output pointers
+// address the same data.
+
+ffi::Error AliasingImpl(ffi::AnyBuffer input,
+                        ffi::Result<ffi::AnyBuffer> output) {
+  if (input.element_type() != output->element_type() ||
+      input.element_count() != output->element_count()) {
+    return ffi::Error::InvalidArgument(
+        "The input and output data types and sizes must match.");
+  }
+  if (input.untyped_data() != output->untyped_data()) {
+    return ffi::Error::InvalidArgument(
+        "When aliased, the input and output buffers should point to the same "
+        "data.");
+  }
+  return ffi::Error::Success();
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    Aliasing, AliasingImpl,
+    ffi::Ffi::Bind().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
 // Boilerplate for exposing handlers to Python
 NB_MODULE(_cpu_examples, m) {
   m.def("registrations", []() {
@@ -111,9 +138,8 @@ NB_MODULE(_cpu_examples, m) {
         nb::capsule(reinterpret_cast<void *>(ArrayAttr));
     registrations["dictionary_attr"] =
         nb::capsule(reinterpret_cast<void *>(DictionaryAttr));
-
     registrations["counter"] = nb::capsule(reinterpret_cast<void *>(Counter));
-
+    registrations["aliasing"] = nb::capsule(reinterpret_cast<void *>(Aliasing));
     return registrations;
   });
 }

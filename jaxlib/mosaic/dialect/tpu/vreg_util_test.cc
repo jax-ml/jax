@@ -21,9 +21,12 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "llvm/include/llvm/ADT/TypeSwitch.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/include/mlir/IR/Attributes.h"
 #include "mlir/include/mlir/IR/Builders.h"
+#include "mlir/include/mlir/IR/BuiltinAttributes.h"
 #include "mlir/include/mlir/IR/BuiltinOps.h"
 #include "mlir/include/mlir/IR/BuiltinTypes.h"
 #include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
@@ -38,39 +41,56 @@ namespace mlir::tpu {
 
 namespace {
 
+using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::Optional;
 
-MATCHER_P2(IsConstantOpWithSplatValue, type, splat_value, "") {
+MATCHER_P2(IsConstantOpWithSplatOrScalarValue, type, value, "") {
   auto constant_op = dyn_cast<arith::ConstantOp>(arg.getDefiningOp());
   if (constant_op == nullptr) {
     *result_listener << "Expected a constant op, got " << debugString(arg);
     return false;
   }
-  auto dense_attr = dyn_cast<DenseElementsAttr>(constant_op.getValue());
-  if (dense_attr == nullptr) {
-    *result_listener << "Expected a dense elements attr, got "
-                     << debugString(arg);
-    return false;
-  }
-  if (dense_attr.getType() != type) {
-    *result_listener << "Expected a dense elements attr with type "
-                     << debugString(type) << ", got "
-                     << debugString(dense_attr.getType());
-    return false;
-  }
-  if (!dense_attr.isSplat()) {
-    *result_listener << "Expected a splat dense elements attr, got "
-                     << debugString(dense_attr);
-    return false;
-  }
-  if (auto s = dense_attr.template getSplatValue<decltype(splat_value)>();
-      s != splat_value) {
-    *result_listener << "Expected a splat dense elements attr with value "
-                     << splat_value << ", got " << s;
-    return false;
-  }
-  return true;
+
+  return llvm::TypeSwitch<Attribute, bool>(constant_op.getValue())
+      .template Case<DenseElementsAttr>([&](auto attr) {
+        // If it's dense, it must be splat.
+        if (attr.getType() != type) {
+          *result_listener << "Expected a dense elements attr with type "
+                           << debugString(type) << ", got "
+                           << debugString(attr.getType());
+          return false;
+        }
+        if (!attr.isSplat()) {
+          *result_listener << "Expected a splat dense elements attr, got "
+                           << debugString(attr);
+          return false;
+        }
+        if (auto s = attr.template getSplatValue<decltype(value)>();
+            s != value) {
+          *result_listener << "Expected a splat dense elements attr with value "
+                           << value << ", got " << s;
+          return false;
+        }
+        return true;
+      })
+      .template Case<IntegerAttr>([&](auto attr) {
+        if (attr.getType() != type) {
+          *result_listener << "Expected a attr with type " << debugString(type)
+                           << ", got " << debugString(attr.getType());
+          return false;
+        }
+        if (auto s = attr.getInt(); s != value) {
+          *result_listener << "Expected a attr with value " << value << ", got "
+                           << s;
+          return false;
+        }
+        return true;
+      })
+      .template Default([&](auto attr) {
+        *result_listener << "Unsupported attribute type: " << debugString(attr);
+        return false;
+      });
 }
 
 MATCHER_P2(IsVectorTypeWithShape, shape, elem_ty, "") {
@@ -150,7 +170,7 @@ TEST_F(VregUtilTest, GetFullVector) {
   TypedValue<VectorType> vec =
       getFullVector(Builder(), vty, Builder().getI32IntegerAttr(0x1));
 
-  EXPECT_THAT(vec, IsConstantOpWithSplatValue(vty, int32_t{0x1}));
+  EXPECT_THAT(vec, IsConstantOpWithSplatOrScalarValue(vty, int32_t{0x1}));
 }
 
 TEST_F(VregUtilTest, GetFullLikeVector) {
@@ -161,14 +181,14 @@ TEST_F(VregUtilTest, GetFullLikeVector) {
   TypedValue<VectorType> vec =
       getFullLikeVector(Builder(), in_vec, Builder().getF32FloatAttr(2.0f));
 
-  EXPECT_THAT(vec, IsConstantOpWithSplatValue(vty, float{2.0f}));
+  EXPECT_THAT(vec, IsConstantOpWithSplatOrScalarValue(vty, float{2.0f}));
 }
 
 TEST_F(VregUtilTest, GetZerosVector) {
   VectorType vty = VectorType::get({2, 4}, Builder().getI32Type());
   TypedValue<VectorType> vec = getZerosVector(Builder(), vty);
 
-  EXPECT_THAT(vec, IsConstantOpWithSplatValue(vty, int32_t{0}));
+  EXPECT_THAT(vec, IsConstantOpWithSplatOrScalarValue(vty, int32_t{0}));
 }
 
 TEST_F(VregUtilTest, GetZerosLikeVector) {
@@ -178,7 +198,7 @@ TEST_F(VregUtilTest, GetZerosLikeVector) {
                vty.getElementType(), Builder().getF32FloatAttr(1.0f)));
   TypedValue<VectorType> vec = getZerosLikeVector(Builder(), in_vec);
 
-  EXPECT_THAT(vec, IsConstantOpWithSplatValue(vty, float{0.0f}));
+  EXPECT_THAT(vec, IsConstantOpWithSplatOrScalarValue(vty, float{0.0f}));
 }
 
 TEST_F(VregUtilTest, GetX32VmaskByPaddingEndDim0) {
@@ -188,18 +208,18 @@ TEST_F(VregUtilTest, GetX32VmaskByPaddingEndDim0) {
       /*dim=*/0);
   ASSERT_TRUE(succeeded(vec));
 
-  auto cmp_op = dyn_cast<arith::CmpIOp>(vec.value().getDefiningOp());
-  ASSERT_TRUE(cmp_op != nullptr);
-  EXPECT_EQ(cmp_op.getPredicate(), arith::CmpIPredicate::slt);
-
-  auto iota_op = dyn_cast<tpu::IotaOp>(cmp_op.getLhs().getDefiningOp());
-  ASSERT_TRUE(iota_op != nullptr);
-  EXPECT_THAT(iota_op.getDimension(), Optional(Eq(0)));
-
-  EXPECT_THAT(
-      cmp_op.getRhs(),
-      IsConstantOpWithSplatValue(
-          VectorType::get(kTargetShape, Builder().getI32Type()), int32_t{3}));
+  auto mask_op = dyn_cast<tpu::CreateMaskOp>(vec.value().getDefiningOp());
+  ASSERT_TRUE(mask_op != nullptr);
+  EXPECT_THAT(ArrayRef<Value>({mask_op.getLow()[0], mask_op.getLow()[1]}),
+              ElementsAre(IsConstantOpWithSplatOrScalarValue(
+                              Builder().getIndexType(), int64_t{0}),
+                          IsConstantOpWithSplatOrScalarValue(
+                              Builder().getIndexType(), int64_t{0})));
+  EXPECT_THAT(ArrayRef<Value>({mask_op.getHigh()[0], mask_op.getHigh()[1]}),
+              ElementsAre(IsConstantOpWithSplatOrScalarValue(
+                              Builder().getIndexType(), int64_t{3}),
+                          IsConstantOpWithSplatOrScalarValue(
+                              Builder().getIndexType(), int64_t{8})));
 }
 
 TEST_F(VregUtilTest, GetX32VmaskByPaddingEndDim1) {
@@ -209,18 +229,18 @@ TEST_F(VregUtilTest, GetX32VmaskByPaddingEndDim1) {
       /*dim=*/1);
   ASSERT_TRUE(succeeded(vec));
 
-  auto cmp_op = dyn_cast<arith::CmpIOp>(vec.value().getDefiningOp());
-  ASSERT_TRUE(cmp_op != nullptr);
-  EXPECT_EQ(cmp_op.getPredicate(), arith::CmpIPredicate::slt);
-
-  auto iota_op = dyn_cast<tpu::IotaOp>(cmp_op.getLhs().getDefiningOp());
-  ASSERT_TRUE(iota_op != nullptr);
-  EXPECT_THAT(iota_op.getDimension(), Optional(Eq(1)));
-
-  EXPECT_THAT(
-      cmp_op.getRhs(),
-      IsConstantOpWithSplatValue(
-          VectorType::get(kTargetShape, Builder().getI32Type()), int32_t{5}));
+  auto mask_op = dyn_cast<tpu::CreateMaskOp>(vec.value().getDefiningOp());
+  ASSERT_TRUE(mask_op != nullptr);
+  EXPECT_THAT(ArrayRef<Value>({mask_op.getLow()[0], mask_op.getLow()[1]}),
+              ElementsAre(IsConstantOpWithSplatOrScalarValue(
+                              Builder().getIndexType(), int64_t{0}),
+                          IsConstantOpWithSplatOrScalarValue(
+                              Builder().getIndexType(), int64_t{0})));
+  EXPECT_THAT(ArrayRef<Value>({mask_op.getHigh()[0], mask_op.getHigh()[1]}),
+              ElementsAre(IsConstantOpWithSplatOrScalarValue(
+                              Builder().getIndexType(), int64_t{4}),
+                          IsConstantOpWithSplatOrScalarValue(
+                              Builder().getIndexType(), int64_t{5})));
 }
 
 }  // namespace

@@ -50,22 +50,17 @@ config.parse_flags_with_absl()
 
 class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
-  @classmethod
-  def setUpClass(cls):
+  def setUp(self):
+    super().setUp()
     # One TF device of each device_type
-    cls.tf_devices = []
+    self.tf_devices = []
     for tf_device in (tf.config.list_logical_devices("TPU") +
                       tf.config.list_logical_devices("GPU") +
                       tf.config.list_logical_devices()):
       if tf_device.device_type == "TPU_SYSTEM":
         continue  # A virtual device
-      if all(tf_device.device_type != d.device_type for d in cls.tf_devices):
-        cls.tf_devices.append(tf_device)
-
-    super().setUpClass()
-
-  def setUp(self):
-    super().setUp()
+      if all(tf_device.device_type != d.device_type for d in self.tf_devices):
+        self.tf_devices.append(tf_device)
     self.warning_ctx = jtu.ignore_warning(
         message="jax2tf.convert with native_serialization=False has been deprecated"
     )
@@ -1666,7 +1661,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       f_jax,
       native_serialization=True,
       native_serialization_platforms=("cpu", "cuda", "tpu"))
-    for tf_device in self.__class__.tf_devices:
+    for tf_device in self.tf_devices:
       logging.info(
         f"Running on tf_device = {tf_device} of device_type = {tf_device.device_type}")
       with tf.device(tf_device):

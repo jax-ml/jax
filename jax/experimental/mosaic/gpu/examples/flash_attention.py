@@ -607,7 +607,7 @@ if __name__ == "__main__":
     exit(0)
 
   batch_size = 1
-  num_q_heads = 4
+  num_q_heads = 2
   num_kv_heads = 1
   prof_spec = None
   seq_lens = (4096, 32768)

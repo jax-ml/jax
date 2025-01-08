@@ -19,6 +19,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Changes:
   * The minimum NumPy version is now 1.25. NumPy 1.25 will remain the minimum
     supported version until June 2025.
+  * The minimum SciPy version is now 1.11. SciPy 1.11 will remain the minimum
+    supported version until June 2025.
   * {func}`jax.numpy.einsum` now defaults to `optimize='auto'` rather than
     `optimize='optimal'`. This avoids exponentially-scaling trace-time in
     the case of many arguments ({jax-issue}`#25214`).

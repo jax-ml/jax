@@ -52,17 +52,11 @@ config.parse_flags_with_absl()
 FAKE_COMPILE_TIME = 10
 _counts = Counter()  # Map event name to count
 
-
-def setUpModule():
-  monitoring.register_event_listener(increment_event_count)
-
-
-def tearDownModule():
-  monitoring._unregister_event_listener_by_callback(increment_event_count)
-
-
 def increment_event_count(event):
   _counts[event] += 1
+
+monitoring.register_event_listener(increment_event_count)
+
 
 def msg_exists_in_logs(msg: str, records: list[logging.LogRecord],
                        level: int | None = None) -> bool:

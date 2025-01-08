@@ -76,7 +76,7 @@ class ResourceEnv(NamedTuple):
 @util.cache(max_size=128, trace_context_in_key=False)
 def _get_local_mesh(global_mesh: Mesh, process_index: int) -> Mesh:
   if global_mesh.empty:
-      return global_mesh
+    return global_mesh
   is_local_device = np.vectorize(
       lambda d: d.process_index == process_index, otypes=[bool])(global_mesh.devices)
   subcube_indices = []
@@ -96,9 +96,9 @@ def _get_local_mesh(global_mesh: Mesh, process_index: int) -> Mesh:
   # subcube that hull will contain non-local devices.
   if not is_local_device[subcube_indices_tuple].all():
     raise ValueError(
-        "When passing host local inputs to pjit or xmap, devices "
-        "connected to a single host must form a contiguous subcube of the "
-        "global device mesh")
+        "When passing host local inputs to pjit, devices connected to a single"
+        " host must form a contiguous subcube of the global device mesh"
+    )
   return Mesh(global_mesh.devices[subcube_indices_tuple], global_mesh.axis_names)
 
 

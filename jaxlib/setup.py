@@ -61,8 +61,7 @@ setup(
     packages=['jaxlib', 'jaxlib.xla_extension'],
     python_requires='>=3.10',
     install_requires=[
-        'scipy>=1.10',
-        "scipy>=1.11.1; python_version>='3.12'",
+        'scipy>=1.11.1',
         'numpy>=1.25',
         'ml_dtypes>=0.2.0',
     ],

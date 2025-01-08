@@ -871,7 +871,7 @@ def lower_parallel_callable(
           module_name,
           closed_jaxpr,
           ordered_effects=ordered_effects,
-          backend_or_name=backend,
+          backend=backend,
           platforms=platforms,
           axis_context=sharding_impls.ReplicaAxisContext(axis_env),
           name_stack=name_stack,
@@ -1179,7 +1179,7 @@ class InputsHandler:
 
 
 class ResultsHandler:
-  # `out_avals` is the `Array` global avals when using pjit or xmap. It is the
+  # `out_avals` is the `Array` global avals when using pjit. It is the
   # local one when using `pmap`.
   __slots__ = ("handlers", "out_shardings", "out_avals")
 
@@ -1954,7 +1954,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
         module_name,
         closed_jaxpr,
         ordered_effects=ordered_effects,
-        backend_or_name=backend,
+        backend=backend,
         platforms=platforms,
         axis_context=axis_ctx,
         name_stack=name_stack,
@@ -2150,7 +2150,7 @@ def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
   return (closed_jaxpr, inout_aliases, mut, in_shardings, in_layouts,
           donated_invars, out_shardings, out_layouts)
 
-def _concretize_abstract_shardings(shardings, avals, device_assignment):
+def _concretize_abstract_out_shardings(shardings, avals, device_assignment):
   np_dev = np.vectorize(lambda i: device_assignment[i],
                         otypes=[object])(np.arange(len(device_assignment)))
 
@@ -2163,8 +2163,14 @@ def _concretize_abstract_shardings(shardings, avals, device_assignment):
   out = []
   for s, a in zip(shardings, avals):
     if isinstance(s, UnspecifiedValue) and a.sharding is not None:
-      out.append(NamedSharding(_abstract_to_concrete_mesh(a.sharding.mesh),
-                               a.sharding.spec))
+      if config.use_shardy_partitioner.value:
+        spec = a.sharding.spec
+      else:
+        spec = (PartitionSpec(*[PartitionSpec.UNCONSTRAINED if sp is None else sp
+                               for sp in a.sharding.spec])
+                if a.sharding.mesh._any_axis_auto else a.sharding.spec)
+      out.append(NamedSharding(
+          _abstract_to_concrete_mesh(a.sharding.mesh), spec))
     else:
       out.append(s)
   return tuple(out)
@@ -2243,7 +2249,7 @@ def lower_sharding_computation(
   unique_intermediate_shardings = [js for js, _ in unique_intermediate_shardings]
 
   if config.sharding_in_types.value:
-    out_shardings = _concretize_abstract_shardings(
+    out_shardings = _concretize_abstract_out_shardings(
         out_shardings, global_out_avals, device_assignment)
 
   # TODO(parkers): One _raw_platform has been unified with platform,

@@ -14,6 +14,7 @@ namespace mlir::tpu {
 FailureOr<MemRefType> inferMemref(MemRefType memref, int hardware_generation,
                                   std::array<int64_t, 2> target_shape,
                                   const TpuTilingFlags& tpu_tiling_flags,
+                                  bool is_kernel_argument,
                                   int64_t leading_tile_rows = 0);
 
 const std::string_view kLeadingTileRows = "leading_tile_rows";

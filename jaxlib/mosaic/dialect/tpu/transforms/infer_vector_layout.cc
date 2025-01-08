@@ -92,9 +92,13 @@ LogicalResult verifyDivisibleIndex(Value tiled_index, int64_t tiling, int dim,
 // have corresponding native instructions.
 class VectorLayoutInferer {
  public:
-  explicit VectorLayoutInferer(std::array<int64_t, 2> target_shape)
-      : target_shape_({target_shape[0], target_shape[1]}),
-        default_tiling_(target_shape) {}
+  explicit VectorLayoutInferer(int hardware_generation,
+                               std::array<int64_t, 2> target_shape,
+                               const TpuTilingFlags &tpu_tiling_flags)
+      : hardware_generation_(hardware_generation),
+        target_shape_({target_shape[0], target_shape[1]}),
+        default_tiling_(target_shape),
+        tpu_tiling_flags_(tpu_tiling_flags) {}
 
 #define TPU_CHECK_OP(cond, msg) \
   if (!(cond)) {                \
@@ -1062,16 +1066,14 @@ class VectorLayoutInferer {
       // should always use that when sublane broadcasting is required.
       if (src_tiled_ishape[0] != dst_tiled_ishape[0] &&
           layout.offsets()[0] != std::nullopt) {
-        if (layout.bitwidth() != kNativeBitwidth) {
-          NYI("Only 32-bit broadcasts supported");
-        }
         LayoutOffsets offsets = layout.offsets();
         // At the moment relayout can only produce replicated sublanes when
         // converting to (8, 128) if the input was in (1, 128) tiling
-        if (layout.tiling()[0] == 1) {
+        if (layout.tiling()[0] == 1 && layout.bitwidth() == kNativeBitwidth) {
           offsets[0] = std::nullopt;
         }
-        layout = VectorLayout(layout.bitwidth(), offsets, default_tiling_,
+        layout = VectorLayout(layout.bitwidth(), offsets,
+                              nativeTiling(layout.bitwidth()),
                               layout.implicit_dim());
       }
       LayoutOffsets offsets = layout.offsets();
@@ -1705,6 +1707,21 @@ class VectorLayoutInferer {
     }
     auto &layout = *some_layout;
     bool select_native = allUsersRequireNativeTiling(op->getResult(0));
+    // We might want to reconsider enabling native this aggressively in cases
+    // when it would introduce a lot of padding (e.g. when the value only has
+    // a small second minor size, but large minor size).
+    if (dst_ty.getElementTypeBitWidth() == 16) {
+      // TPUv6 has good support for compute in 16-bit and cheap retiling between
+      // large 2nd minor and the default tiling, so we bias towards large tiles.
+      select_native |= hardware_generation_ >= 6 ||
+                       tpu_tiling_flags_.use_x16_large_second_minor;
+    } else if (dst_ty.getElementTypeBitWidth() == 8) {
+      select_native |= tpu_tiling_flags_.use_x8_large_second_minor;
+    } else if (dst_ty.getElementTypeBitWidth() == 4) {
+      select_native |= tpu_tiling_flags_.use_x4_large_second_minor;
+    } else {
+      return op->emitOpError("Unsupported target bitwidth for truncation");
+    }
     auto src_layout = VectorLayout(32, layout.offsets(), default_tiling_,
                                    layout.implicit_dim());
     auto dst_layout = VectorLayout(
@@ -2019,15 +2036,15 @@ class VectorLayoutInferer {
             default_tiling_[1]};
   }
 
+  int hardware_generation_;
   std::array<int64_t, 2> target_shape_;
   std::array<int64_t, 2> default_tiling_;
+  TpuTilingFlags tpu_tiling_flags_;
 
   // TODO(b/342235360): Deprecate force_first_tile_offsets_ once we fully
   // remove the restriction that offsets must fall within the first tile.
   bool force_first_tile_offsets_ = false;
 
-  // Address alignment requirement, counted in 32-bit increments.
-  static constexpr int64_t kVmemAlignment32 = 128;
   // TODO(apaszke): This is not really native on newer generations of TPUs.
   // Get rid of this temporary stopgap.
   static constexpr int8_t kNativeBitwidth = 32;
@@ -2035,24 +2052,39 @@ class VectorLayoutInferer {
 
 struct InferVectorLayoutPass
     : public impl::InferVectorLayoutPassBase<InferVectorLayoutPass> {
-  InferVectorLayoutPass(std::array<int64_t, 2> target_shape) {
+  InferVectorLayoutPass(int hardware_generation,
+                        std::array<int64_t, 2> target_shape,
+                        TpuTilingFlags tpu_tiling_flags) {
+    this->hardware_generation = hardware_generation;
     this->sublane_count = target_shape[0];
     this->lane_count = target_shape[1];
+    this->tpu_tiling_flags = tpu_tiling_flags;
   }
   void runOnOperation() override {
+    // Fail if hardware_generation has not been set from the default value.
+    if (hardware_generation < 0) {
+      getOperation().emitError("hardware_generation must be set") << hardware_generation;
+      signalPassFailure();
+      return;
+    }
     func::FuncOp func = getOperation();
-    VectorLayoutInferer run({sublane_count, lane_count});
+    VectorLayoutInferer run(hardware_generation, {sublane_count, lane_count},
+                            tpu_tiling_flags);
     if (run.infer(func).failed()) {
       signalPassFailure();
     }
   }
+
+  TpuTilingFlags tpu_tiling_flags;
 };
 
 }  // namespace
 
 std::unique_ptr<OperationPass<func::FuncOp>> createInferVectorLayoutPass(
-    std::array<int64_t, 2> target_shape) {
-  return std::make_unique<InferVectorLayoutPass>(target_shape);
+    int hardware_generation, std::array<int64_t, 2> target_shape,
+    const TpuTilingFlags &tpu_tiling_flags) {
+  return std::make_unique<InferVectorLayoutPass>(
+      hardware_generation, target_shape, tpu_tiling_flags);
 }
 
 }  // namespace mlir::tpu

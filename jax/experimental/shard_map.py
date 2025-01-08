@@ -652,10 +652,11 @@ def _shard_map_lowering_shardy(
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
   args = (*ctx.dim_var_values, *in_nodes)
 
-  manual_axes = sub_ctx.axis_context.manual_axes
-  mesh_shape = mesh.shape
-  manual_axes_size = np.prod([mesh_shape[a] for a in manual_axes])
-  if manual_axes_size == 1:
+  # The order of manual axes should match the order of mesh.axis_names to avoid
+  # non-determinism issues.
+  manual_axes = [a for a in mesh.axis_names
+                 if a in sub_ctx.axis_context.manual_axes]
+  if np.prod([mesh.shape[a] for a in manual_axes]) == 1:
     # No need for a `ManualComputationOp` if all manual axes are size 1.
     with core.extend_axis_env_nd(tuple(mesh.shape.items())):
       out_nodes, _ = mlir.jaxpr_subcomp(

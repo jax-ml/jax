@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from collections import OrderedDict, namedtuple
-import contextlib
 import re
 from functools import partial
 import logging
@@ -64,14 +63,7 @@ from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
 
-# Run all tests with 8 CPU devices.
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
-
-def tearDownModule():
-  _exit_stack.close()
+jtu.request_cpu_devices(8)
 
 def create_array(global_shape, global_mesh, mesh_axes, global_data=None,
                  dtype=np.float32):
@@ -5589,11 +5581,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     @jax.jit
     def f(x, x2):
       y = x * 2
-      self.assertEqual(y.sharding.spec, P(P.UNCONSTRAINED, None))
+      self.assertEqual(y.sharding.spec, P(None, None))
       z = jnp.sin(y)
-      self.assertEqual(z.sharding.spec, P(P.UNCONSTRAINED, None))
+      self.assertEqual(z.sharding.spec, P(None, None))
       a = z @ x2
-      self.assertEqual(a.sharding.spec, P(P.UNCONSTRAINED, P.UNCONSTRAINED))
+      self.assertEqual(a.sharding.spec, P(None, None))
       return a
 
     out = f(arr, arr.T)
@@ -5626,9 +5618,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       arr = jax.device_put(arr, NamedSharding(mesh2, P('x', 'y')))
       arr2 = jax.device_put(np_inp.T, NamedSharding(mesh2, P('y', None)))
       out = f(arr, arr2)
-      self.assertEqual(out.sharding, NamedSharding(mesh2, P('x', None)))
+      self.assertEqual(out.sharding, NamedSharding(mesh2, P('x',)))
       lowered_text = f.lower(arr, arr2).as_text()
-      self.assertTrue(lowered_text.count("unspecified_dims") == 3)
+      self.assertTrue(lowered_text.count("unspecified_dims") == 5)
 
     mesh3 = jtu.create_mesh((2, 2), ('x', 'y'),
                             axis_types={mesh_lib.AxisTypes.User: 'y',
@@ -5669,11 +5661,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
           {mesh_lib.AxisTypes.Auto: ('x', 'y')})
       y = sharding_cast(y, y.sharding.with_mesh(auto_mesh))
       with mesh_lib.set_abstract_mesh(auto_mesh):
-        self.assertEqual(y.sharding.spec, P(P.UNCONSTRAINED, P.UNCONSTRAINED))
+        self.assertEqual(y.sharding.spec, P(None, None))
         z = jnp.sin(y)
-        self.assertEqual(z.sharding.spec, P(P.UNCONSTRAINED, P.UNCONSTRAINED))
+        self.assertEqual(z.sharding.spec, P(None, None))
         a = z @ z.T
-        self.assertEqual(a.sharding.spec, P(P.UNCONSTRAINED, P.UNCONSTRAINED))
+        self.assertEqual(a.sharding.spec, P(None, None))
       a = sharding_cast(
           a, NamedSharding(mesh_lib.get_abstract_mesh(), P('x', None)))
       self.assertEqual(a.sharding.spec, P('x', None))
@@ -5707,7 +5699,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         self.assertEqual(a.sharding.spec, P(None, None))
       a = sharding_cast(
           a, NamedSharding(mesh_lib.get_abstract_mesh(), P('x', None)))
-      self.assertEqual(a.sharding.spec, P(P.UNCONSTRAINED, None))
+      self.assertEqual(a.sharding.spec, P(None, None))
       return a
 
     out = f(arr)
@@ -5729,11 +5721,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
           {mesh_lib.AxisTypes.Auto: 'x', mesh_lib.AxisTypes.User: 'y'})
       y = sharding_cast(y, y.sharding.with_mesh(mix_mesh))
       with mesh_lib.set_abstract_mesh(mix_mesh):
-        self.assertEqual(y.sharding.spec, P(P.UNCONSTRAINED, 'y'))
+        self.assertEqual(y.sharding.spec, P(None, 'y'))
         z = jnp.sin(y)
-        self.assertEqual(z.sharding.spec, P(P.UNCONSTRAINED, 'y'))
+        self.assertEqual(z.sharding.spec, P(None, 'y'))
         a = z @ z.T
-        self.assertEqual(a.sharding.spec, P(P.UNCONSTRAINED, P.UNCONSTRAINED))
+        self.assertEqual(a.sharding.spec, P(None, None))
       a = sharding_cast(
           a, NamedSharding(mesh_lib.get_abstract_mesh(), P('x', None)))
       self.assertEqual(a.sharding.spec, P('x', None))

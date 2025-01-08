@@ -37,6 +37,7 @@ from jax.experimental.serialize_executable import (
 import jax.numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec
 import numpy as np
+from jax._src.lib import xla_extension_version  # pylint: disable=g-importing-member
 
 jax.config.parse_flags_with_absl()
 
@@ -89,15 +90,19 @@ class PgleTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2,), ('x',))
     its = 500
 
+    compiler_options = {
+        'xla_gpu_enable_latency_hiding_scheduler': 'True',
+    }
+    # TODO(b/37664749): Remove this flag once the bug is fixed.
+    if xla_extension_version > 302:
+      compiler_options['xla_gpu_enable_command_buffer'] = ''
+    else:
+      compiler_options['xla_gpu_graph_min_graph_size'] = '100000'
     @partial(
         jax.jit,
         in_shardings=NamedSharding(mesh, PartitionSpec('x')),
         out_shardings=NamedSharding(mesh, PartitionSpec('x')),
-        compiler_options={
-            'xla_gpu_enable_latency_hiding_scheduler': 'True',
-            # TODO(b/37664749): Remove this flag once the bug is fixed.
-            'xla_gpu_enable_command_buffer': '',
-        },
+        compiler_options=compiler_options,
     )
     def f(x):
       agg = x
@@ -127,15 +132,19 @@ class PgleTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2,), ('x',))
 
     with tempfile.TemporaryDirectory() as dump_dir:
+      compile_options = {
+          'xla_gpu_enable_latency_hiding_scheduler': 'True',
+          'xla_dump_to': dump_dir,
+          'xla_gpu_experimental_dump_fdo_profiles': 'True',
+      }
+      # TODO(b/376647494): Remove this flag once the bug is fixed.
+      if xla_extension_version <= 302:
+        compile_options['xla_gpu_graph_min_graph_size'] = '100000'
       @partial(
           jax.jit,
           in_shardings=NamedSharding(mesh, PartitionSpec('x')),
           out_shardings=NamedSharding(mesh, PartitionSpec('x')),
-          compiler_options={
-              'xla_gpu_enable_latency_hiding_scheduler': 'True',
-              'xla_dump_to': dump_dir,
-              'xla_gpu_experimental_dump_fdo_profiles': 'True'
-          },
+          compiler_options=compile_options,
       )
       def f(x):
         return x * 2
@@ -209,15 +218,19 @@ class PgleTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2,), ('x',))
 
     with tempfile.TemporaryDirectory() as dump_dir:
+      compiler_options = {
+          'xla_gpu_enable_latency_hiding_scheduler': 'True',
+          'xla_dump_to': dump_dir,
+          'xla_gpu_experimental_dump_fdo_profiles': 'True',
+      }
+      # TODO(b/376647494): Remove this flag once the bug is fixed.
+      if xla_extension_version <= 302:
+        compiler_options['xla_gpu_graph_min_graph_size'] = '100000'
       @partial(
           jax.jit,
           in_shardings=NamedSharding(mesh, PartitionSpec('x')),
           out_shardings=NamedSharding(mesh, PartitionSpec('x')),
-          compiler_options={
-              'xla_gpu_enable_latency_hiding_scheduler': 'True',
-              'xla_dump_to': dump_dir,
-              'xla_gpu_experimental_dump_fdo_profiles': 'True'
-          },
+          compiler_options=compiler_options,
       )
       def f(x):
         agg = x

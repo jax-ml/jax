@@ -685,3 +685,6 @@ def test_event(name: str, *args) -> None:
   if not test_event_listener:
     return
   test_event_listener(name, *args)
+
+if hasattr(jaxlib_utils, "Mutex"):
+  Mutex = jaxlib_utils.Mutex

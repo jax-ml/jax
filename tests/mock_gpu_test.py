@@ -32,9 +32,9 @@ NUM_SHARDS = 4
 class MockGPUTest(jtu.JaxTestCase):
 
   def setUp(self):
+    super().setUp()
     if not jtu.test_device_matches(["gpu"]):
       self.skipTest("Mocking devices only works on the GPU backend.")
-    super().setUp()
 
   @jtu.skip_under_pytest("Test must run in an isolated process")
   def testMockDeviceCount(self):

@@ -429,7 +429,8 @@ FailureOr<BlockArgument> appendConstant(RewriteContext &ctx, func::FuncOp func,
       MemRefType arg_type,
       inferMemref(
           MemRefType::get(value_ty.getShape(), value_ty.getElementType()),
-          ctx.hardware_generation, ctx.target_shape, /*tpu_tiling_flags=*/{}));
+          ctx.hardware_generation, ctx.target_shape, /*tpu_tiling_flags=*/{},
+          /*is_kernel_argument=*/true));
   const BlockArgument argument = entry_block.insertArgument(
       entry_block.getNumArguments() - 1, arg_type, UnknownLoc::get(mlir_ctx));
   const FunctionType func_ty = func.getFunctionType();
@@ -3334,21 +3335,38 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
       int64_t num_tiles = layout_in.tilesPerVreg(ctx.target_shape);
       if (needs_physical_broadcast ==
           std::array{true, false}) {  // Sublane broadcast
-        if (layout_in.bitwidth() != 32) {
-          return op.emitOpError(
-              "Not implemented: Only 32-bit supported for sublane broadcast");
-        }
+        const int bitwidth = layout_in.bitwidth();
+        const int packing = layout_in.packing();
         if (num_tiles != 1) {
           return op.emitOpError(
               "Not implemented: Only native tiling supported");
         }
         TPU_ASSERT_EQ_OP(*(src_tiles.dimensions().end() - 2), 1);
         TPU_ASSERT_OP(offsets_in[0].has_value());
-        const int64_t offset = *offsets_in[0];
+        const int64_t sublane_offset = *offsets_in[0] / packing;
+        const int64_t subelement_offset = *offsets_in[0] % packing;
         const DenseI32ArrayAttr indices = builder.getDenseI32ArrayAttr(
-            SmallVector<int32_t>(ctx.target_shape[0], offset));
+            SmallVector<int32_t>(ctx.target_shape[0], sublane_offset));
         src_tiles.Each([&](const absl::Span<const int64_t> src_idx,
-                           Value *const src_tile) {
+                           Value *const src_vreg) {
+          Value dst_vreg = *src_vreg;
+          // Replicate the value within each sublane.
+          if (packing != 1) {
+            auto vreg_int_ty = getNativeVregType(
+                builder.getIntegerType(bitwidth), ctx.target_shape);
+            auto src_vreg_int =
+                builder.create<tpu::BitcastVregOp>(vreg_int_ty, dst_vreg);
+            auto unpack_elem = builder.create<tpu::UnpackSubelementsOp>(
+                getNativeVregType(builder.getI32Type(), ctx.target_shape),
+                src_vreg_int, subelement_offset, tpu::PackFormat::kInterleaved);
+            SmallVector<Value> packed_vregs(packing, unpack_elem);
+            auto vreg_int = builder.create<tpu::PackSubelementsOp>(
+                vreg_int_ty, packed_vregs, tpu::PackFormat::kInterleaved);
+            dst_vreg = builder.create<tpu::BitcastVregOp>(dst_vreg.getType(),
+                                                          vreg_int);
+          }
+          dst_vreg = builder.create<tpu::GatherOp>(dst_vreg.getType(), dst_vreg,
+                                                   indices, 0);
           SmallVector<int64_t> dst_starts(dst_tiles_implicit_shape.size());
           SmallVector<int64_t> dst_limits(dst_tiles_implicit_shape.size());
           for (int64_t i = 0; i < dst_tiles.num_dimensions(); ++i) {
@@ -3360,10 +3378,7 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
               dst_limits[i] = dst_starts[i] + 1;
             }
           }
-          updateSlice<Value>(dst_tiles,
-                             builder.create<tpu::GatherOp>(
-                                 src_tile->getType(), *src_tile, indices, 0),
-                             dst_starts, dst_limits);
+          updateSlice<Value>(dst_tiles, dst_vreg, dst_starts, dst_limits);
         });
       } else if (needs_physical_broadcast ==
                  std::array{false, true}) {  // Lane broadcast

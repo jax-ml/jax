@@ -1686,7 +1686,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     n=[1, 4, 5, 20, 50, 100],
-    batch_size=[(), (2,), (3, 4)] if scipy_version >= (1, 9, 0) else [()],
+    batch_size=[(), (2,), (3, 4)],
     dtype=int_types + float_types + complex_types
   )
   def testExpm(self, n, batch_size, dtype):

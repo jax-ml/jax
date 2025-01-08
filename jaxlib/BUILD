@@ -214,6 +214,7 @@ nanobind_extension(
     deps = [
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/synchronization",
         "@nanobind",
         "@xla//third_party/python_runtime:headers",
     ],
