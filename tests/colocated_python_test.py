@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
 import threading
 import time
 from typing import Sequence
@@ -29,6 +28,7 @@ import jax.numpy as jnp
 import numpy as np
 
 config.parse_flags_with_absl()
+jtu.request_cpu_devices(8)
 
 
 def _colocated_cpu_devices(
@@ -52,18 +52,6 @@ def _colocated_cpu_devices(
 
 _count_colocated_python_specialization_cache_miss = jtu.count_events(
   "colocated_python_func._get_specialized_func")
-
-_exit_stack = contextlib.ExitStack()
-
-
-def setUpModule():
-  # TODO(hyeontaek): Remove provisioning "cpu" backend devices once PjRt-IFRT
-  # prepares CPU devices by its own.
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
-
-
-def tearDownModule():
-  _exit_stack.close()
 
 
 class ColocatedPythonTest(jtu.JaxTestCase):

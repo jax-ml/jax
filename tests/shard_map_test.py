@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
-import contextlib
 from functools import partial
 import itertools as it
 import math
@@ -53,6 +52,7 @@ from jax.experimental.shard_map import shard_map
 from jax._src.lib import xla_extension_version  # pylint: disable=g-importing-member
 
 config.parse_flags_with_absl()
+jtu.request_cpu_devices(8)
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -68,16 +68,6 @@ def create_inputs(a_sharding, b_sharding):
       jnp.arange(e * f).reshape((e, f)),
       jax.sharding.NamedSharding(mesh, b_sharding))
   return mesh, m1, m2
-
-
-# Run all tests with 8 CPU devices.
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
-
-def tearDownModule():
-  _exit_stack.close()
 
 
 class ShardMapTest(jtu.JaxTestCase):

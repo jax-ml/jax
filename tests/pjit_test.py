@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from collections import OrderedDict, namedtuple
-import contextlib
 import re
 from functools import partial
 import logging
@@ -64,14 +63,7 @@ from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
 
-# Run all tests with 8 CPU devices.
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
-
-def tearDownModule():
-  _exit_stack.close()
+jtu.request_cpu_devices(8)
 
 def create_array(global_shape, global_mesh, mesh_axes, global_data=None,
                  dtype=np.float32):

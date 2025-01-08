@@ -14,7 +14,6 @@
 """Tests for serialization and deserialization of GDA."""
 
 import asyncio
-import contextlib
 import math
 from functools import partial
 import os
@@ -36,13 +35,7 @@ import numpy as np
 import tensorstore as ts
 
 jax.config.parse_flags_with_absl()
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
-
-def tearDownModule():
-  _exit_stack.close()
+jtu.request_cpu_devices(8)
 
 
 class CheckpointTest(jtu.JaxTestCase):

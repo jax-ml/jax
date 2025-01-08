@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -24,15 +22,7 @@ from jax.experimental.shard_alike import shard_alike
 from jax.experimental.shard_map import shard_map
 
 jax.config.parse_flags_with_absl()
-
-# Run all tests with 8 CPU devices.
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
-
-def tearDownModule():
-  _exit_stack.close()
+jtu.request_cpu_devices(8)
 
 
 class ShardAlikeDownstreamTest(jtu.JaxTestCase):

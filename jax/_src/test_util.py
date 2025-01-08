@@ -498,29 +498,20 @@ def device_supports_buffer_donation():
   )
 
 
-@contextmanager
-def set_host_platform_device_count(nr_devices: int):
-  """Context manager to set host platform device count if not specified by user.
+def request_cpu_devices(nr_devices: int):
+  """Requests at least `nr_devices` CPU devices.
 
-  This should only be used by tests at the top level in setUpModule(); it will
-  not work correctly if applied to individual test cases.
+  request_cpu_devices should be called at the top-level of a test module before
+  main() runs.
+
+  It is not guaranteed that the number of CPU devices will be exactly
+  `nr_devices`: it may be more or less, depending on how exactly the test is
+  invoked. Test cases that require a specific number of devices should skip
+  themselves if that number is not met.
   """
-  prev_xla_flags = os.getenv("XLA_FLAGS")
-  flags_str = prev_xla_flags or ""
-  # Don't override user-specified device count, or other XLA flags.
-  if "xla_force_host_platform_device_count" not in flags_str:
-    os.environ["XLA_FLAGS"] = (flags_str +
-                               f" --xla_force_host_platform_device_count={nr_devices}")
-  # Clear any cached backends so new CPU backend will pick up the env var.
-  xla_bridge.get_backend.cache_clear()
-  try:
-    yield
-  finally:
-    if prev_xla_flags is None:
-      del os.environ["XLA_FLAGS"]
-    else:
-      os.environ["XLA_FLAGS"] = prev_xla_flags
+  if xla_bridge.NUM_CPU_DEVICES.value < nr_devices:
     xla_bridge.get_backend.cache_clear()
+    config.update("jax_num_cpu_devices", nr_devices)
 
 
 def skip_on_flag(flag_name, skip_value):

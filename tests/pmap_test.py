@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-import contextlib
 from functools import partial
 import itertools as it
 import gc
@@ -54,15 +53,8 @@ from jax._src.lib import xla_extension
 from jax._src.util import safe_map, safe_zip
 
 config.parse_flags_with_absl()
+jtu.request_cpu_devices(8)
 
-# Run all tests with 8 CPU devices.
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
-
-def tearDownModule():
-  _exit_stack.close()
 
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 

@@ -56,14 +56,8 @@ except (ModuleNotFoundError, ImportError):
   CAN_SERIALIZE = False
 
 config.parse_flags_with_absl()
+jtu.request_cpu_devices(8)
 
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(2))
-
-def tearDownModule():
-  _exit_stack.close()
 
 ### Setup for testing lowering with effects
 @dataclasses.dataclass(frozen=True)

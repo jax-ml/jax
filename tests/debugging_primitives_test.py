@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import collections
-import contextlib
 import functools
 import textwrap
 import unittest
@@ -35,19 +34,13 @@ except ModuleNotFoundError:
   rich = None
 
 jax.config.parse_flags_with_absl()
+jtu.request_cpu_devices(2)
 
 debug_print = debugging.debug_print
 
 def _format_multiline(text):
   return textwrap.dedent(text).lstrip()
 
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(2))
-
-def tearDownModule():
-  _exit_stack.close()
 
 class DummyDevice:
   def __init__(self, platform, id):

@@ -36,14 +36,7 @@ from jax.sharding import Mesh
 import numpy as np
 
 config.parse_flags_with_absl()
-
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(2))
-
-def tearDownModule():
-  _exit_stack.close()
+jtu.request_cpu_devices(2)
 
 map, unsafe_map = util.safe_map, map
 
