@@ -1205,10 +1205,6 @@ def lower_jaxpr_to_module(
         arg_layouts=in_layouts,
         result_layouts=out_layouts,
         propagated_out_mem_kinds=propagated_out_mem_kinds)
-    if config.use_shardy_partitioner.value:
-      pipeline = passmanager.PassManager.parse(
-          'builtin.module(sdy-lift-inlined-meshes)')
-      pipeline.run(ctx.module.operation)
 
   try:
     if not ctx.module.operation.verify():
@@ -1226,6 +1222,12 @@ def lower_jaxpr_to_module(
       emit_diagnostic_info(d)
     raise ValueError("\n".join(msg_lines) + "\n" +
                      dump_module_message(ctx.module, "verification")) from e
+
+  if config.use_shardy_partitioner.value:
+    with ctx.context:
+      pipeline = passmanager.PassManager.parse(
+          'builtin.module(sdy-lift-inlined-meshes)')
+      pipeline.run(ctx.module.operation)
 
   return LoweringResult(ctx.module, ctx.keepalives, ctx.host_callbacks,
                         ctx.shape_poly_state)
