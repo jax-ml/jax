@@ -54,7 +54,7 @@ from jax._src.array import ArrayImpl
 from jax._src.core import ShapedArray
 from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax as lax_internal
-from jax._src.lax.lax import ( PrecisionLike,_array_copy,
+from jax._src.lax.lax import (PrecisionLike,_array_copy,
                               _sort_le_comparator, _sort_lt_comparator)
 from jax._src.lib import xla_client as xc
 from jax._src.numpy import reductions
@@ -69,8 +69,9 @@ from jax._src.util import (
     NumpyComplexWarning, canonicalize_axis as _canonicalize_axis,
     ceil_of_ratio, partition_list, safe_zip, set_module, unzip2,
     tuple_replace)
-from jax.sharding import (Sharding, SingleDeviceSharding, NamedSharding,
-                          PartitionSpec as P)
+from jax.sharding import Sharding
+from jax._src.sharding_impls import (SingleDeviceSharding, NamedSharding,
+                                     PartitionSpec as P, canonicalize_sharding)
 from jax.tree_util import tree_flatten, tree_leaves, tree_map
 import numpy as np
 import opt_einsum
@@ -9873,6 +9874,7 @@ def _einsum(
   if out_type is not None and not config.sharding_in_types.value:
     raise NotImplementedError("out_type only works when sharding_in_types "
                               "config is True.")
+  out_type = canonicalize_sharding(out_type)
   if out_type is not None and not isinstance(out_type, NamedSharding):
     raise NotImplementedError(
         "`out_type` argument of `einsum` only supports NamedSharding instances."

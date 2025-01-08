@@ -67,7 +67,8 @@ from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     NamedSharding, GSPMDSharding,
     SingleDeviceSharding, PmapSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
-    ParsedPartitionSpec, get_single_pspec, prepare_axis_resources, parse_flatten_op_sharding)
+    ParsedPartitionSpec, get_single_pspec, prepare_axis_resources,
+    parse_flatten_op_sharding, canonicalize_sharding)
 from jax._src.layout import Layout, DeviceLocalLayout, AutoLayout
 from jax._src.state import discharge as state_discharge, RefEffect, AbstractRef
 from jax._src.traceback_util import api_boundary
@@ -2670,13 +2671,20 @@ batching.skippable_batchers[sharding_constraint_p] = lambda _: ()
 
 def sharding_cast(xs, shardings):
   if isinstance(shardings, NamedSharding):
-    return tree_map(lambda x: sharding_cast_p.bind(
-        x, src_sharding=x.sharding, dst_sharding=shardings), xs)
+    return tree_map(
+        lambda x: sharding_cast_p.bind(
+            x, src_sharding=x.sharding, dst_sharding=canonicalize_sharding(
+                shardings, check_mesh_consistency=False)),
+        xs)
 
   x_flat, treedef = tree_flatten(xs)
   shardings_flat = flatten_axes("sharding_cast shardings", treedef, shardings)
-  out_flat = [sharding_cast_p.bind(x, src_sharding=x.sharding, dst_sharding=s)
-              for x, s in safe_zip(x_flat, shardings_flat)]
+  out_flat = [
+      sharding_cast_p.bind(
+          x, src_sharding=x.sharding,
+          dst_sharding=canonicalize_sharding(s, check_mesh_consistency=False))
+      for x, s in safe_zip(x_flat, shardings_flat)
+  ]
   return tree_unflatten(treedef, out_flat)
 
 sharding_cast_p = core.Primitive('sharding_cast')

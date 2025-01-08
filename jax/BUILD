@@ -866,6 +866,7 @@ pytype_strict_library(
         ":partition_spec",
         ":sharding",
         ":sharding_specs",
+        ":source_info_util",
         ":tree_util",
         ":util",
         ":xla_bridge",
