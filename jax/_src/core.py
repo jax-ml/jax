@@ -2269,6 +2269,11 @@ def dim_constant(ct: int):
 def dim_value_aval() -> AbstractValue:
   return ShapedArray((), dim_value_dtype(), weak_type=True)
 
+# ------------------- FFI -------------------
+
+ffi_call_p = Primitive("ffi_call")
+ffi_call_p.multiple_results = True
+
 # ------------------- Call -------------------
 
 class CallPrimitive(Primitive):
