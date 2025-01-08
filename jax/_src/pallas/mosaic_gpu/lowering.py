@@ -1012,19 +1012,23 @@ def _handle_indexing(
   ]
   if not indexer_idxs:
     return ref, transforms
-  if len(indexer_idxs) > 1:
-    raise NotImplementedError("Only one level of indexing supported.")
-  [indexer_idx] = indexer_idxs
-  indexer = cast(indexing.NDIndexer, transforms[indexer_idx])
-  if indexer.int_indexer_shape:
-    raise NotImplementedError("int_indexer_shape non-empty")
-  indices = _ndindexer_indices(indexer)
-  new_transforms_rev = []
-  for t in reversed(transforms[:indexer_idx]):
-    indices, new_t = t.untransform_index(indices)
-    new_transforms_rev.append(new_t)
-  new_transforms = [*reversed(new_transforms_rev), *transforms[indexer_idx + 1:]]
-  return mgpu.memref_slice(ref, indices), new_transforms
+  sliced_ref = ref
+  new_transforms = []
+  for t in transforms:
+    if not isinstance(t, indexing.NDIndexer):
+      new_transforms.append(t)
+      continue
+    indexer = cast(indexing.NDIndexer, t)
+    if indexer.int_indexer_shape:
+      raise NotImplementedError("int_indexer_shape non-empty")
+    indices = _ndindexer_indices(indexer)
+    new_transforms_rev = []
+    for t in reversed(new_transforms):
+      indices, new_t = t.untransform_index(indices)
+      new_transforms_rev.append(new_t)
+    sliced_ref = mgpu.memref_slice(sliced_ref, indices)
+    new_transforms = list(reversed(new_transforms_rev))
+  return sliced_ref, new_transforms
 
 
 def _ndindexer_indices(indexer: indexing.NDIndexer) -> tuple[gpu_core.Index, ...]:
