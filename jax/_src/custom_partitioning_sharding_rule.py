@@ -27,6 +27,9 @@ BATCHING: str = "…"
 # leading ... into factors.
 _BATCHING_DIM_FACTOR_PREFIX = "?"
 
+# A Jax value in general corresponds to an ir.Type or a tuple of ir.Types.
+IrTypes = ir.Type | tuple[ir.Type, ...]
+
 def _check_factor(factor:str):
   """Validates a factor.
 
@@ -278,8 +281,8 @@ def str_to_sdy_sharding_rule(rule: str, **factor_sizes) -> SdyShardingRule:
 
 def sdy_sharding_rule_to_mlir(
   rule: SdyShardingRule,
-  operand_types: list[ir.Type],
-  result_types: list[ir.Type],) -> ir.Attribute:
+  operand_types: list[IrTypes],
+  result_types: list[IrTypes],) -> ir.Attribute:
   """Builds the MLIR representation for the sharding rule.
 
   This is done by verifying that the rule is consistent with the types of
@@ -294,6 +297,10 @@ def sdy_sharding_rule_to_mlir(
     raise ValueError(
       f"Sharding rule has {len(rule.result_mappings)} results, but the operation"
       f" has {len(result_types)} results")
+  if not all(isinstance(t, ir.Type) for t in operand_types + result_types):
+    raise TypeError(
+        f"operand_types and result_types must be a list of ir.Type, but got"
+        f" {operand_types} and {result_types}")
 
   factors_to_indices_sizes: OrderedDict[str, list[int]] = OrderedDict()
   types = operand_types + result_types
