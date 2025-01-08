@@ -1082,10 +1082,8 @@ class JaxTestCase(parameterized.TestCase):
     'jax_legacy_prng_key': 'error',
   }
 
-  _compilation_cache_exit_stack: ExitStack | None = None
+  _context_stack: ExitStack | None = None
 
-  def tearDown(self) -> None:
-    assert core.reset_trace_state()
 
   def setUp(self):
     super().setUp()
@@ -1096,11 +1094,12 @@ class JaxTestCase(parameterized.TestCase):
     # b) it returns values in int32 range, which RandomState requires.
     self._rng = npr.RandomState(zlib.adler32(self._testMethodName.encode()))
 
-  @classmethod
-  def setUpClass(cls):
-    cls._compilation_cache_exit_stack = ExitStack()
-    stack = cls._compilation_cache_exit_stack
-    stack.enter_context(global_config_context(**cls._default_config))
+    # TODO(phawkins): use TestCase.enterContext once Python 3.11 is the minimum
+    # version.
+    self._context_stack = ExitStack()
+    self.addCleanup(self._context_stack.close)
+    stack = self._context_stack
+    stack.enter_context(global_config_context(**self._default_config))
 
     if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
       stack.enter_context(config.enable_compilation_cache(True))
@@ -1109,12 +1108,12 @@ class JaxTestCase(parameterized.TestCase):
       stack.enter_context(config.persistent_cache_min_entry_size_bytes(0))
 
       tmp_dir = stack.enter_context(tempfile.TemporaryDirectory())
-      compilation_cache.set_cache_dir(tmp_dir)
-      stack.callback(lambda: compilation_cache.reset_cache())
+      stack.enter_context(config.compilation_cache_dir(tmp_dir))
+      stack.callback(compilation_cache.reset_cache)
 
-  @classmethod
-  def tearDownClass(cls):
-    cls._compilation_cache_exit_stack.close()
+  def tearDown(self) -> None:
+    assert core.reset_trace_state()
+    super().tearDown()
 
   def rng(self):
     return self._rng

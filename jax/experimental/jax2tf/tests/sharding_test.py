@@ -25,6 +25,7 @@ import re
 from typing import Any
 import unittest
 
+from absl import app
 from absl.testing import absltest
 
 import jax
@@ -53,7 +54,8 @@ from jax.experimental.jax2tf.tests import tf_test_util
 
 topology = None
 
-def setUpModule():
+
+def initialize_tf_tpu():
   global topology
   if jtu.test_device_matches(["tpu"]):
     with jtu.ignore_warning(message="the imp module is deprecated"):
@@ -64,6 +66,7 @@ def setUpModule():
   else:
     topology = None
 
+app.call_after_init(initialize_tf_tpu)
 
 
 class ShardingTest(tf_test_util.JaxToTfTestCase):

@@ -48,11 +48,11 @@ def make_disjunction_regexp(*parts: str) -> re.Pattern[str]:
 
 class PrimitiveTest(jtu.JaxTestCase):
 
-  @classmethod
-  def setUpClass(cls):
+  def setUp(self):
+    super().setUp()
     # Pick one device from each available platform
-    cls.devices = []
-    cls.platforms = []
+    self.devices = []
+    self.platforms = []
     for backend in ["cpu", "gpu", "tpu"]:
       try:
         devices = jax.devices(backend)
@@ -60,10 +60,9 @@ class PrimitiveTest(jtu.JaxTestCase):
         devices = []
 
       for d in devices:
-        if d.platform not in cls.platforms:
-          cls.platforms.append(d.platform)
-          cls.devices.append(d)
-    super().setUpClass()
+        if d.platform not in self.platforms:
+          self.platforms.append(d.platform)
+          self.devices.append(d)
 
   # For each primitive we export for all platforms that are available and
   # compare the results of running the exported code and running the native
@@ -128,7 +127,7 @@ class PrimitiveTest(jtu.JaxTestCase):
       tol: float | None = None):
     devices = [
         d
-        for d in self.__class__.devices
+        for d in self.devices
         if d.platform not in unimplemented_platforms
     ]
     logging.info("Using devices %s", [str(d) for d in devices])
