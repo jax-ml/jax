@@ -55,10 +55,6 @@ markers = [
 filterwarnings = [
     "error",
 
-    # TODO(jakevdp): remove when array_api_tests stabilize
-    "default:.*not machine-readable.*:UserWarning",
-    "default:Special cases found for .* but none were parsed.*:UserWarning",
-
     # NOTE: this is probably not where you want to add code to suppress a
     # warning. Only pytest tests look at this list, whereas Bazel tests also
     # check for warnings and do not check this list. Most likely, you should
