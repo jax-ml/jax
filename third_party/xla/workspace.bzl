@@ -21,15 +21,15 @@ load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 #    curl -L https://github.com/openxla/xla/archive/<git hash>.tar.gz | sha256sum
 #    and update XLA_SHA256 with the result.
 
-XLA_COMMIT = "1b9969348628c9a435fc1d6973acab2e5d55849a"
-XLA_SHA256 = "3d1389a31665b102952d4aa41c88c3493f5355392b1172ad9f6492a02c72493c"
+XLA_COMMIT = "373f359cbd8d02ee850d98fed92a7bbca4a09c1b"
+XLA_SHA256 = "bccda939edabf6723fcb9e59b833288d66ff93b6f34902c28c521a0b39b52d83"
 
 def repo():
     tf_http_archive(
         name = "xla",
         sha256 = XLA_SHA256,
         strip_prefix = "xla-{commit}".format(commit = XLA_COMMIT),
-        urls = tf_mirror_urls("https://github.com/openxla/xla/archive/{commit}.tar.gz".format(commit = XLA_COMMIT)),
+        urls = tf_mirror_urls("https://github.com/rocm/xla/archive/{commit}.tar.gz".format(commit = XLA_COMMIT)),
     )
 
     # For development, one often wants to make changes to the TF repository as well

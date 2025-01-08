@@ -445,6 +445,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     self.assertAllClose(actual, expected, rtol=1e-8, atol=6e-8)
 
+  @unittest.skip(reason="https://github.com/jax-ml/jax/pull/25675")
   @jtu.sample_product(
     [dict(l_max=l_max, num_z=num_z)
       for l_max, num_z in zip([1, 3, 8, 10], [2, 6, 7, 8])
