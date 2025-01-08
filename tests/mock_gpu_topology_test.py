@@ -25,7 +25,7 @@ NUM_SLICES = 2
 NUM_HOSTS_PER_SLICE = 4
 
 
-@jtu.with_config(
+@jtu.with_global_config(
   jax_mock_gpu_topology=f"{NUM_SLICES}x{NUM_HOSTS_PER_SLICE}x1",
   jax_cuda_visible_devices="0")
 class MockGPUTopologyTest(jtu.JaxTestCase):
