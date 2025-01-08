@@ -1116,18 +1116,35 @@ class OpsTest(PallasBaseTest):
   @parameterized.parameters(
       ("int32", "float32"),
       ("float32", "float32"),
+      ("bfloat16", "bfloat16"),
   )
   def test_true_divide(self, dtype, out_dtype):
+    if jtu.test_device_matches(["tpu"]):
+      if out_dtype == "bfloat16" and not jtu.is_device_tpu_at_least(6):
+        self.skipTest("bfloat16 is not supported on older TPU generations")
+      if not jtu.if_cloud_tpu_at_least(2025, 1, 9):
+        self.skipTest("Requires libtpu built after 2025-01-09")
+    elif jtu.test_device_matches(["gpu"]):
+      if dtype == "bfloat16":
+        self.skipTest("bfloat16 not supported")
+
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((8,), out_dtype),
+        out_shape=jax.ShapeDtypeStruct((8, 8), out_dtype),
     )
     def kernel(x_ref, y_ref, o_ref):
       o_ref[...] = jnp.true_divide(x_ref[...], y_ref[...])
 
     x = jnp.array([1, 3, -4, -6, 2, 5, 4, -7]).astype(dtype)
     y = jnp.array([3, 1, -4, -5, 2, -2, 2, 4]).astype(dtype)
-    np.testing.assert_allclose(jnp.true_divide(x, y), kernel(x, y))
+    x = jnp.repeat(x, 8, axis=0).reshape(8, 8)
+    y = jnp.tile(y, 8).reshape(8, 8)
+    rtol = 8e-3 if dtype == "bfloat16" else 1e-6
+    np.testing.assert_allclose(
+        jnp.true_divide(x, y).astype(jnp.float32),
+        kernel(x, y).astype(jnp.float32),
+        rtol=rtol,
+    )
 
   @parameterized.parameters("float16", "bfloat16")
   def test_true_divide_unsupported(self, dtype):
