@@ -182,11 +182,21 @@ LogicalResult checkTiles(MLIRContext *mlir_ctx,
   return success();
 }
 
+bool canPadSafely(Value arg) {
+  for (auto &use : arg.getUses()) {
+    if (auto slice_op = llvm::dyn_cast<tpu::MemRefSliceOp>(use.getOwner())) {
+      return false;
+    }
+  }
+  return true;
+}
+
 FailureOr<MemRefType> inferMemref(MemRefType memref,
                                   const int hardware_generation,
                                   std::array<int64_t, 2> target_shape,
                                   const TpuTilingFlags &tpu_tiling_flags,
-                                  int64_t leading_tile_rows) {
+                                  int64_t leading_tile_rows,
+                                  bool pad_if_unaligned) {
   if (isa<SemaphoreType, DMASemaphoreType>(memref.getElementType())) {
     const Attribute semaphore_mem = tpu::MemorySpaceAttr::get(
         memref.getContext(), MemorySpace::kSemaphoreMem);
@@ -223,8 +233,18 @@ FailureOr<MemRefType> inferMemref(MemRefType memref,
   }
   SmallVector<int64_t> new_shape(memref.getShape());
   for (int i = 0; i < first_tile.dimensions().size(); ++i) {
-    new_shape[untiled_dims + i] =
-        llvm::alignTo(new_shape[untiled_dims + i], first_tile.dimension(i));
+    auto shape = new_shape[untiled_dims + i];
+    auto alignment = first_tile.dimension(i);
+    if (pad_if_unaligned) {
+      // TODO(mvoz): Extend compat mode to potentially disable this..
+      new_shape[untiled_dims + i] =
+          llvm::alignTo(new_shape[untiled_dims + i], first_tile.dimension(i));
+    } else {
+      if (shape % alignment != 0) {
+        return emitError(UnknownLoc::get(memref.getContext()),
+                         "Shape not aligned to tiling");
+      }
+    }
   }
   return MemRefType::get(new_shape, memref.getElementType(), layout,
                          memory_space);
@@ -245,10 +265,11 @@ LogicalResult inferOp(Operation &op, const int hardware_generation,
         *(memref_ty.getShape().end() - 1) <= target_shape[1]) {
       leading_tile_rows = 1;
     }
+    bool can_pad_safely = canPadSafely(arg);
     FAILUREOR_ASSIGN_OR_RETURN(
         const MemRefType new_memref_ty,
         inferMemref(memref_ty, hardware_generation, target_shape,
-                    tpu_tiling_flags, leading_tile_rows));
+                    tpu_tiling_flags, leading_tile_rows, can_pad_safely));
     alloca_op.getResult().setType(new_memref_ty);
     if (memref_ty != new_memref_ty) {
       OpBuilder builder(alloca_op->getContext());
@@ -265,9 +286,11 @@ LogicalResult inferOp(Operation &op, const int hardware_generation,
   } else if (auto alloca_op = dyn_cast<tpu::AllocaSemaphoreOp>(op)) {
     TypedValue<MemRefType> arg = alloca_op.getResult();
     const MemRefType memref_ty = alloca_op.getResult().getType();
-    FAILUREOR_ASSIGN_OR_RETURN(const MemRefType new_memref_ty,
-                               inferMemref(memref_ty, hardware_generation,
-                                           target_shape, tpu_tiling_flags));
+    bool can_pad_safely = canPadSafely(arg);
+    FAILUREOR_ASSIGN_OR_RETURN(
+        const MemRefType new_memref_ty,
+        inferMemref(memref_ty, hardware_generation, target_shape,
+                    tpu_tiling_flags, can_pad_safely));
     alloca_op.getResult().setType(new_memref_ty);
     if (memref_ty != new_memref_ty) {
       OpBuilder builder(alloca_op->getContext());
@@ -317,10 +340,11 @@ LogicalResult inferFunc(func::FuncOp f, const int hardware_generation,
       f.removeArgAttr(i, kLeadingTileRows);
     }
 
+    bool can_pad_safely = canPadSafely(arg);
     FAILUREOR_ASSIGN_OR_RETURN(
         MemRefType new_memref_ty,
         inferMemref(memref_ty, hardware_generation, target_shape,
-                    tpu_tiling_flags, leading_tile_rows));
+                    tpu_tiling_flags, leading_tile_rows, can_pad_safely));
     arg.setType(new_memref_ty);
     new_arg_types.push_back(arg.getType());
     if (memref_ty != new_memref_ty) {
