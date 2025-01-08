@@ -312,13 +312,14 @@ FailureOr<std::pair<Value, SmallVector<int64_t>>> sliceRef(
   IntegerType i32 = builder.getI32Type();
   MemRefType ref_ty = base_ref.getType();
 
-  // MemRefSliceOp only allows tile-aligned slices. We pad the shape up
-  // accordingly with the padding. We don't include the static tiled indices
-  // in the slice when they can be arbitrary. But we do include dynamic tiled
-  // indices under the condition that they are divisible by the tile size.
+  // MemRefSliceOp only allows tile-aligned slices (except for the last
+  // dimension). We pad the shape up accordingly with the padding. We don't
+  // include the static tiled indices in the slice when they can be arbitrary.
+  // But we do include dynamic tiled indices under the condition that they are
+  // divisible by the tile size.
   SmallVector<int64_t> pad_slice_shape(slice_shape);
   TPU_ASSERT_LE_LOC(builder.getLoc(), tiling.size(), slice_shape.size());
-  for (int i = 1; i <= tiling.size(); ++i) {
+  for (int i = 2; i <= tiling.size(); ++i) {
     auto &dim = *(pad_slice_shape.end() - i);
     dim = xla::RoundUpTo(dim, *(tiling.end() - i));
   }
@@ -3032,7 +3033,7 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
       return op.emitOpError("Expected a tiled memref");
     }
     auto tile_strides = mem_layout.getTileStrides();
-    if (memref_ty.getShape().back() == ctx.target_shape[1] &&
+    if (memref_ty.getShape().back() <= ctx.target_shape[1] &&
         tile_strides.take_back(2) == ArrayRef<int64_t>{1, 1}) {
       can_support_unaligned_dynamic_index = true;
     }
@@ -3105,6 +3106,8 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
       layout_out.vregSlice(ctx.target_shape);
   const int64_t num_dims = vty.getRank();
   const int64_t num_batch_dims = num_dims - (is_1d ? 1 : 2);
+  const int64_t padded_ref_minormost_size =
+      llvm::alignTo(memref_ty.getShape()[num_dims - 1], ctx.target_shape[1]);
   const absl::Status status =
       tiles.EachStatus([&](absl::Span<const int64_t> tile_idxs, Value * /*v*/) {
         CHECK_EQ(num_dims, tile_idxs.size());
@@ -3124,7 +3127,7 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
               add_idx(base_s, sidx * vreg_slice[0] - offsets[0].value_or(0));
         }
         TPU_ASSERT_OP(tile_idxs[num_dims - 1] + ctx.target_shape[1] <=
-                      memref_ty.getShape()[num_dims - 1]);
+                      padded_ref_minormost_size);
         std::unique_ptr<VRegDataBounds> bounds = layout_out.tileDataBounds(
             mlir_ctx, vty.getShape(), toArrayRef(tile_idxs), ctx.target_shape,
             /*allow_replicated =*/{true, false});
@@ -4267,7 +4270,7 @@ LogicalResult vector_store_impl(RewriteContext &ctx, Op store_op,
       return op.emitOpError("Expected a tiled memref");
     }
     auto tile_strides = mem_layout.getTileStrides();
-    if (memref_ty.getShape().back() == ctx.target_shape[1] &&
+    if (memref_ty.getShape().back() <= ctx.target_shape[1] &&
         tile_strides.take_back(2) == ArrayRef<int64_t>{1, 1}) {
       can_support_unaligned_dynamic_index = true;
     }

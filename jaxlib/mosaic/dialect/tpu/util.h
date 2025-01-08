@@ -172,6 +172,7 @@ std::string shapeToString(const T &shape) {
 
 SmallVector<int64_t> ComputeTileStrides(MemRefType memref_ty,
                                         absl::Span<const int64_t> tiling);
+
 // Assuming MKN matmul - This function must only be called after
 // canonicalization passes.
 //
@@ -188,6 +189,9 @@ std::optional<std::pair<bool, bool>> isTransposedMatmul(
 bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
                                    const std::array<int64_t, 2> &target_shape,
                                    bool allow_minormost_padding = false);
+
+// Returns the type of the base memref before any transformations.
+MemRefType getBaseMemrefType(TypedValue<MemRefType> ref);
 
 // Determines whether the given MemRefType has the given memory space.
 bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space);

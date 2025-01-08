@@ -113,7 +113,20 @@ LogicalResult MemRefSliceOp::verify() {
       indices.size() != source_shape.size()) {
     return emitOpError("Indices and slice shapes must match.");
   }
-  // TODO(apaszke): Check that the result has a smaller shape.
+  for (auto [idx, slc_size, src_size] :
+       llvm::zip(indices, slice_shape, source_shape)) {
+    auto const_idx = idx.getDefiningOp<arith::ConstantOp>();
+    if (!const_idx || mlir::ShapedType::isDynamic(slc_size) ||
+        mlir::ShapedType::isDynamic(src_size)) {
+      continue;
+    }
+    int i = cast<IntegerAttr>(const_idx.getValue()).getInt();
+    if (i + slc_size > src_size) {
+      return emitOpError("index + slice size (")
+             << i << " + " << slc_size << ")"
+             << " must be no larger than the source size " << src_size;
+    }
+  }
   // TODO(apaszke): Check that strides are equivalent.
   // Source and target attributes may be different before propagation is done by
   // the canonicalizer, so we allow this when attributes are "unset" in the
@@ -954,6 +967,34 @@ LogicalResult EnqueueDMAOp::verify() {
           "DMA destination device_id or core_id must be specified when source "
           "semaphore is specified");
     }
+  }
+  auto tgt_ty = getMemRefType(getTarget());
+  // Source and target attributes may be different before propagation is done by
+  // the canonicalizer, so we allow this when attributes are "unset" in the
+  // target type.
+  auto tgt_layout = dyn_cast<tpu::TiledLayoutAttr>(tgt_ty.getLayout());
+  if (!tgt_layout) {
+    return success();
+  }
+  if (!tgt_layout || tgt_layout.getTiles().empty()) {
+    return emitOpError("Expected a tiled layout for the input memref.");
+  }
+  auto tile = tgt_layout.getTiles().front().dimensions();
+  if (tile.size() != 2) {
+    return emitOpError("Not implemented: memref reshape with 1D tiling.");
+  }
+  auto base_tgt_ty = getBaseMemrefType(getTarget());
+  auto tgt_minor_size = tgt_ty.getShape().back();
+  auto base_tgt_minor_size = base_tgt_ty.getShape().back();
+  if (!mlir::ShapedType::isDynamic(tgt_minor_size) &&
+      !mlir::ShapedType::isDynamic(base_tgt_minor_size) &&
+      // TODO(jevinjiang): here we just assume the target memref is starting
+      // from tile-aligned position. But once we support unaligned slice index
+      // on the minormost dimension, we need to update this check.
+      tgt_minor_size % tile.back() != base_tgt_minor_size % tile.back()) {
+    return emitOpError(
+        "Not implemented: minormost paddings of DMA overwrite meaningful data "
+        "in the target memref");
   }
   return success();
 }

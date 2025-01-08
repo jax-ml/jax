@@ -1472,7 +1472,7 @@ class PallasCallDMATest(PallasBaseTest):
       np.testing.assert_array_equal(y, i)
       del y
 
-  def test_dynamic_dma_on_2nd_minor(self):
+  def test_dynamic_dma_on_2nd_minor_of_untiled_memref(self):
     def kernel(array, data, index, size, _, sem):
       pltpu.async_copy(
             data.at[pl.ds(0, size[0])], array.at[pl.ds(index[0], size[0])], sem
@@ -1495,16 +1495,94 @@ class PallasCallDMATest(PallasBaseTest):
             input_output_aliases={0: 0},
         )(array, data, index, size)
 
-    array = jnp.zeros((1024, 128), jnp.int32)
-    data = jnp.ones((8, 128), jnp.int32)
-    index = jnp.array([3], jnp.int32)
-    size = jnp.array([5], jnp.int32)
+    array = jnp.zeros((1024, 69), jnp.int32)
+    data = jnp.ones((4, 69), jnp.int32)
+    index = jnp.array([1], jnp.int32)
+    size = jnp.array([2], jnp.int32)
 
     expected = array.at[index[0] : index[0] + size[0]].set(
         data[index[0] : index[0] + size[0]]
     )
     result = run(array, data, index, size)
     np.testing.assert_array_equal(result, expected)
+
+  def test_dynamic_dma_with_narrow_ref(self):
+    shape = (100, 69)
+    # Narrow ref (minormost size < 128) will be reinterpreted to untiled memref
+    # for 32bit dtypes. So it supports arbitrary indexing and shape on the
+    # second minor.
+    slice_shape = (5, shape[1])
+    dtype = jnp.float32
+    src_start = 1
+    dst_start = 2
+
+    def kernel(x, index, out, sem):
+      out[:] = jnp.zeros_like(out)
+      pltpu.async_copy(
+          x.at[pl.ds(index[0], slice_shape[0])],
+          out.at[pl.ds(index[1], slice_shape[0])],
+          sem,
+      ).wait()
+
+    def run(x, index):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=0,
+              in_specs=[
+                  pl.BlockSpec(memory_space=pltpu.ANY),
+                  pl.BlockSpec(memory_space=pltpu.SMEM),
+              ],
+              out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+              scratch_shapes=[pltpu.SemaphoreType.DMA],
+          ),
+      )(x, index)
+
+    x = jax.lax.broadcasted_iota(dtype, shape, 0) + 1
+    out = run(x, jnp.array([src_start, dst_start], jnp.int32))
+    expected = jnp.zeros_like(x)
+    expected = expected.at[dst_start : dst_start + slice_shape[0]].set(
+        x[src_start : src_start + slice_shape[0]]
+    )
+    np.testing.assert_array_equal(out, expected)
+
+  @parameterized.product(dtype=[jnp.float32, jnp.bfloat16, jnp.int8])
+  def test_dma_with_unaligned_minormost_size(self, dtype):
+    packing = 32 // state_utils.dtype_bitwidth(dtype)
+    multiple = 8 * packing
+    shape = (1000, 139)
+    # The 2nd minor index needs to be aligned.
+    src_start = 1 * multiple
+    dst_start = 2 * multiple
+
+    def kernel(x, out, sem):
+      out[:] = jnp.zeros_like(out)
+      pltpu.async_copy(
+          x.at[pl.ds(src_start, multiple)],
+          out.at[pl.ds(dst_start, multiple)],
+          sem,
+      ).wait()
+
+    def run(x):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=0,
+              in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+              out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+              scratch_shapes=[pltpu.SemaphoreType.DMA],
+          ),
+      )(x)
+
+    x = jax.lax.broadcasted_iota(dtype, shape, 0) + 1
+    out = run(x)
+    expected = jnp.zeros_like(x)
+    expected = expected.at[dst_start : dst_start + multiple].set(
+        x[src_start : src_start + multiple]
+    )
+    np.testing.assert_array_equal(out, expected)
 
 
 class PallasCallDMAInterpretTest(PallasCallDMATest):
