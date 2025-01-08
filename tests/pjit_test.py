@@ -6632,6 +6632,28 @@ class ShardyTest(jtu.JaxTestCase):
     lowered_str = jax.jit(f, in_shardings=[AUTO(mesh), AUTO(mesh)]).lower(x, x).as_text()
     self.assertIn('sdy.mesh @mesh = <["x"=8]>', lowered_str)
 
+  def test_array_sharding_repr_with_priority(self):
+    sharding = sharding_impls.SdyArraySharding(
+        mesh_shape=(('data', 4), ('model', 8), ('expert', 2)),
+        dimension_shardings=[
+            sharding_impls.SdyDimSharding(axes=['data', 'expert'], is_closed=True),
+            sharding_impls.SdyDimSharding(axes=['model'], is_closed=False, priority=2)])
+    self.assertEqual(repr(sharding), "SdyArraySharding([{'data', 'expert'}, {'model', ?}p2])")
+
+  def test_array_sharding_repr_with_logical_ids(self):
+    abstract_mesh = jax.sharding.AbstractMesh((('x', 4), ('y', 8), ('z', 2)))
+    ns = NamedSharding(abstract_mesh, P(('x', 'y'), 'z', P.UNCONSTRAINED, None),
+                       _logical_device_ids=[4, 5, 6, 7, 0, 1, 2, 3])
+    self.assertEqual(repr(ns._to_sdy_sharding(4)),
+                     "SdyArraySharding([{'x', 'y'}, {'z'}, {?}, {}], "
+                     "device_ids=[4, 5, 6, 7, 0, 1, 2, 3])")
+
+  def test_dimension_sharding_repr(self):
+    dim_sharding = sharding_impls.SdyDimSharding(
+        axes=['data', 'model'], is_closed=False, priority=2)
+    self.assertEqual(repr(dim_sharding),
+                     "SdyDimSharding({'data', 'model', ?}p2)")
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

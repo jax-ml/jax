@@ -125,6 +125,17 @@ class SdyDimSharding:
         is_closed=self.is_closed,
         priority=self.priority)
 
+  def __repr__(self):
+    return f'SdyDimSharding({self._custom_repr()})'
+
+  def _custom_repr(self):
+    axes_repr = ', '.join(f"'{a}'" for a in self.axes)
+    open_repr = ''
+    if not self.is_closed:
+      open_repr = ', ?' if self.axes else '?'
+    priority_repr = '' if self.priority is None else f'p{self.priority}'
+    return f'{{{axes_repr}{open_repr}}}{priority_repr}'
+
 
 @dataclasses.dataclass
 class SdyArraySharding:
@@ -145,6 +156,13 @@ class SdyArraySharding:
     return sdy.TensorShardingAttr.get(
         mesh_attr,
         [dim_sharding.build() for dim_sharding in self.dimension_shardings])
+
+  def __repr__(self):
+    dim_sharding_repr = ', '.join(
+        d._custom_repr() for d in self.dimension_shardings)
+    device_id_repr = (f', device_ids={self.logical_device_ids}'
+                      if self.logical_device_ids is not None else '')
+    return f"SdyArraySharding([{dim_sharding_repr}]{device_id_repr})"
 
 
 @util.cache(max_size=4096, trace_context_in_key=False)
