@@ -200,9 +200,11 @@ def attention(q, k, v, config: TuningConfig):
         grid=(batch_size, num_q_tiles, num_q_heads),
         num_threads=3,
         axis_names=("batch", "q_seq", "heads", "wg"),
-        approx_math=True,
     )
-    @pl.core_map(mesh)
+
+    @pl.core_map(
+        mesh, compiler_params=plgpu.GPUCompilerParams(approx_math=True)
+    )
     def _kernel_entry():
       compute_wgs = 2
       tiling = plgpu.TilingTransform((64, 64))

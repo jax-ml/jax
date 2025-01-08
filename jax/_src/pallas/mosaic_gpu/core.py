@@ -483,7 +483,6 @@ class GPUMesh:
   # Those are NOT CUDA threads. On Hopper they correspond to warpgroups.
   num_threads: int | None = None
   axis_names: tuple[str, ...] = ()
-  approx_math: bool = False
 
   def __post_init__(self):
     if len(self.axis_names) != len(self.grid) + (self.num_threads is not None):
@@ -521,12 +520,24 @@ def _gpu_mesh_discharge_rule(
     *args,
     mesh,
     jaxpr,
+    compiler_params,
+    interpret,
+    debug,
+    cost_estimate,
 ):
-  assert isinstance(mesh, GPUMesh)
+  if not isinstance(mesh, GPUMesh):
+    raise TypeError(f"Mesh must be a GPUMesh, got {type(mesh)}")
   if mesh.cluster:
     raise NotImplementedError
   if mesh.num_threads is None:
     raise NotImplementedError
+  if compiler_params and not isinstance(compiler_params, GPUCompilerParams):
+    raise TypeError(
+        "Compiler params must be a GPUCompilerParams, got"
+        f" {type(compiler_params)}"
+    )
+  if not compiler_params:
+    compiler_params = GPUCompilerParams()
   return pallas_core.default_mesh_discharge_rule(
       in_avals,
       out_avals,
@@ -534,8 +545,13 @@ def _gpu_mesh_discharge_rule(
       jaxpr=jaxpr,
       grid=tuple(mesh.shape.items()),
       backend="mosaic_gpu",
-      compiler_params=GPUCompilerParams(approx_math=mesh.approx_math),
+      compiler_params=compiler_params,
+      debug=debug,
+      interpret=interpret,
+      cost_estimate=cost_estimate,
   )
+
+
 pallas_core._core_map_mesh_rules[GPUMesh] = _gpu_mesh_discharge_rule
 
 
