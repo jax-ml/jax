@@ -59,7 +59,6 @@ jax_py_test(
     srcs = ["array_api_test.py"],
     deps = [
         "//jax",
-        "//jax:experimental_array_api",
         "//jax:test_util",
     ] + py_deps("absl/testing"),
 )
@@ -139,6 +138,13 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "extend_test",
     srcs = ["extend_test.py"],
+    deps = ["//jax:extend"],
+)
+
+jax_multiplatform_test(
+    name = "ffi_test",
+    srcs = ["ffi_test.py"],
+    # TODO(dfm): Remove after removal of jex.ffi imports.
     deps = ["//jax:extend"],
 )
 

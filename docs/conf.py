@@ -362,4 +362,5 @@ rediraffe_redirects = {
     'jax-101/index.rst': 'tutorials.rst',
     'notebooks/external_callbacks.md': 'external-callbacks.md',
     'notebooks/How_JAX_primitives_work.md': 'jax-primitives.md',
+    'jax.extend.ffi.rst': 'jax.ffi.rst',
 }

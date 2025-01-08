@@ -27,7 +27,7 @@ limitations under the License.
 #include "xla/service/custom_call_status.h"
 
 // Underlying function pointers (i.e., KERNEL_CLASS::Fn) are initialized either
-// by the pybind wrapper that links them to an existing SciPy lapack instance,
+// by the nanobind wrapper that links them to an existing SciPy lapack instance,
 // or using the lapack_kernels_strong.cc static initialization to link them
 // directly to lapack for use in a pure C++ context.
 

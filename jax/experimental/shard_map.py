@@ -52,7 +52,7 @@ from jax._src.api import _shared_code_pmap, _prepare_pmap
 from jax._src.lax import (lax, parallel as lax_parallel, slicing,
                           windowed_reductions, convolution, fft, linalg,
                           special, control_flow, ann)
-from jax._src.extend import ffi
+from jax._src import ffi
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import (HashableFunction, HashablePartial, unzip2,
@@ -70,6 +70,7 @@ from jax._src.tree_util import (broadcast_prefix, prefix_errors, PyTreeDef,
                                 generate_key_paths, KeyPath)
 from jax.experimental.multihost_utils import (host_local_array_to_global_array,
                                               global_array_to_host_local_array)
+from jax._src.pjit import sharding_constraint_p
 
 P = PartitionSpec
 
@@ -651,10 +652,11 @@ def _shard_map_lowering_shardy(
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
   args = (*ctx.dim_var_values, *in_nodes)
 
-  manual_axes = sub_ctx.axis_context.manual_axes
-  mesh_shape = mesh.shape
-  manual_axes_size = np.prod([mesh_shape[a] for a in manual_axes])
-  if manual_axes_size == 1:
+  # The order of manual axes should match the order of mesh.axis_names to avoid
+  # non-determinism issues.
+  manual_axes = [a for a in mesh.axis_names
+                 if a in sub_ctx.axis_context.manual_axes]
+  if np.prod([mesh.shape[a] for a in manual_axes]) == 1:
     # No need for a `ManualComputationOp` if all manual axes are size 1.
     with core.extend_axis_env_nd(tuple(mesh.shape.items())):
       out_nodes, _ = mlir.jaxpr_subcomp(
@@ -1130,7 +1132,7 @@ for o in it.chain(lax.__dict__.values(), slicing.__dict__.values(),
 
 for p in [control_flow.loops.cumsum_p, control_flow.loops.cumlogsumexp_p,
           control_flow.loops.cumprod_p, control_flow.loops.cummax_p,
-          control_flow.loops.cummin_p]:
+          control_flow.loops.cummin_p, sharding_constraint_p]:
   register_standard_check(p)
   register_standard_rewrite(p)
 

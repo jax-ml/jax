@@ -57,6 +57,9 @@ FailureOr<TypedValue<VectorType>> relayout(
     auto src_int_vty = make_vty(src.bitwidth());
     auto dst_int_vty = make_vty(dst.bitwidth());
     auto vreg_slice = src.vregSlice(target_shape, dst.bitwidth(), src.tiling());
+    // TODO(jevinjiang): Since dst_bitwidth_layout will be firstly used in the
+    // extSI or truncI below, we can reuse the inferExt and inferTrunc from
+    // infer-vector-layout pass.
     auto dst_bitwidth_layout = VectorLayout(
         dst.bitwidth(),
         {
@@ -66,6 +69,12 @@ FailureOr<TypedValue<VectorType>> relayout(
                                          : LayoutOffset(),
         },
         src.tiling(), src.implicit_dim());
+    if (!dst_bitwidth_layout.isValid(target_shape)) {
+      return emitError(v.getLoc(),
+                       "Not implemented: failed to infer valid layout during "
+                       "relayout, got ")
+             << dst_bitwidth_layout;
+    }
     auto ext_op = builder.create<arith::ExtUIOp>(v.getLoc(), src_int_vty, v);
     setLayout(ext_op, src, src);
 

@@ -74,9 +74,8 @@ class System(object):
         env = dict(os.environ)
         if self.pkgbin == "apt":
             env["DEBIAN_FRONTEND"] = "noninteractive"
-
-        # Update indexes.
-        subprocess.check_call(["apt-get", "update"])
+            # Update indexes.
+            subprocess.check_call(["apt-get", "update"])
 
         LOG.info("Running %r" % cmd)
         subprocess.check_call(cmd, env=env)
