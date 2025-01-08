@@ -50,7 +50,6 @@ from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
 from jax._src.sharding import Sharding as JSharding
 from jax._src.sharding_impls import AUTO, NamedSharding
-from jax._src.partition_spec import UnconstrainedSingleton
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
 from jax._src.lib.mlir import dialects, ir, passmanager
@@ -2599,8 +2598,7 @@ def lower_sharding_under_shit(ctx, op, aval, sharding_proto=None):
   if aval.sharding.mesh._any_axis_collective:
     unspecified_dims = set(range(aval.ndim))
   elif aval.sharding.mesh._any_axis_auto:
-    unspecified_dims = {i for i, s in enumerate(aval.sharding.spec)
-                        if isinstance(s, UnconstrainedSingleton)}
+    unspecified_dims = {i for i, s in enumerate(aval.sharding.spec) if s is None}
   return wrap_with_sharding_op(ctx, op, aval, proto, unspecified_dims)
 
 
