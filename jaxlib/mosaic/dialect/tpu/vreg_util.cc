@@ -27,6 +27,7 @@ limitations under the License.
 #include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/include/mlir/IR/Types.h"
 #include "mlir/include/mlir/IR/Value.h"
+#include "mlir/include/mlir/IR/ValueRange.h"
 #include "mlir/include/mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
@@ -91,8 +92,6 @@ TypedValue<VectorType> getZerosLikeVector(ImplicitLocOpBuilder &builder,
 FailureOr<TypedValue<VectorType>> getX32VmaskByPaddingEnd(
     ImplicitLocOpBuilder &builder, int64_t padding,
     const std::array<int64_t, 2> target_shape, int64_t dim) {
-  VectorType i32_vreg_ty =
-      getNativeVregType(builder.getI32Type(), target_shape);
   if (dim != 0 && dim != 1) {
     return builder.emitError()
            << "Expected a 2D vector for getX32VmaskByPaddingEnd";
@@ -100,22 +99,29 @@ FailureOr<TypedValue<VectorType>> getX32VmaskByPaddingEnd(
 
   if (padding < 0 || padding > target_shape[dim]) {
     return builder.emitError()
-           << "Padding must be in [0, target_shape[dim]). Padding: " << padding
+           << "Padding must be in [0, target_shape[dim]]. Padding: " << padding
            << ", target_shape[dim]: " << target_shape[dim];
   }
 
-  Value padding_vreg =
-      getFullVector(builder, i32_vreg_ty,
-                    builder.getI32IntegerAttr(target_shape[dim] - padding));
+  auto idx_const = [&builder](int64_t idx) {
+    return IdxConst(idx, builder, builder.getLoc());
+  };
 
-  return cast<TypedValue<VectorType>>(
-      builder
-          .create<arith::CmpIOp>(
-              arith::CmpIPredicate::slt,
-              builder.create<tpu::IotaOp>(i32_vreg_ty,
-                                          builder.getI32IntegerAttr(dim)),
-              padding_vreg)
-          .getResult());
+  tpu::CreateMaskOp mask_op;
+  const VectorType vmask_ty = getNativeVregOrVmaskType(
+      builder.getI1Type(), /*layout_bitwidth=*/32, target_shape);
+  if (dim == 0) {
+    mask_op = builder.create<tpu::CreateMaskOp>(
+        vmask_ty, ValueRange{idx_const(0), idx_const(0)},
+        ValueRange{idx_const(target_shape[0] - padding),
+                   idx_const(target_shape[1])});
+  } else {
+    mask_op = builder.create<tpu::CreateMaskOp>(
+        vmask_ty, ValueRange{idx_const(0), idx_const(0)},
+        ValueRange{idx_const(target_shape[0]),
+                   idx_const(target_shape[1] - padding)});
+  }
+  return cast<TypedValue<VectorType>>(mask_op.getResult());
 }
 
 LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder &builder,
