@@ -79,7 +79,9 @@ std::unique_ptr<OperationPass<func::FuncOp>> createCanonicalizeMosaicPass(
     int hardware_generation = -1);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createInferVectorLayoutPass(
-    std::array<int64_t, 2> target_shape = {8, 128});
+    int hardware_generation = -1,
+    std::array<int64_t, 2> target_shape = {8, 128},
+    const TpuTilingFlags &tpu_tiling_flags = {});
 
 std::unique_ptr<OperationPass<func::FuncOp>> createRelayoutInsertionPass(
     std::array<int64_t, 2> target_shape = {8, 128});

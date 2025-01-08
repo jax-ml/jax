@@ -377,6 +377,7 @@ def _lower_tpu_kernel(
     pipeline = [
         (
             "func.func(tpu-infer-vector-layout{"
+            f" hardware-generation={hardware_generation}"
             f" sublane-count={sl_cnt} lane-count={l_cnt}"
             "})"
         ),
