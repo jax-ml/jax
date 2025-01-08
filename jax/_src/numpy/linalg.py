@@ -18,7 +18,6 @@ from collections.abc import Sequence
 from functools import partial
 import itertools
 import math
-import warnings
 
 import numpy as np
 import operator
@@ -1336,17 +1335,19 @@ def solve(a: ArrayLike, b: ArrayLike) -> Array:
   check_arraylike("jnp.linalg.solve", a, b)
   a, b = promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
 
-  if b.ndim == 1:
-    signature = "(m,m),(m)->(m)"
-  elif a.ndim == b.ndim + 1:
-    # Deprecation warning added 2024-02-06
-    warnings.warn("jnp.linalg.solve: batched 1D solves with b.ndim > 1 are deprecated, "
-                  "and in the future will be treated as a batched 2D solve. "
-                  "Use solve(a, b[..., None])[..., 0] to avoid this warning.",
-                  category=FutureWarning)
-    signature = "(m,m),(m)->(m)"
-  else:
-    signature = "(m,m),(m,n)->(m,n)"
+  if a.ndim < 2:
+    raise ValueError(
+      f"left hand array must be at least two dimensional; got {a.shape=}")
+
+  # Check for invalid inputs that previously would have led to a batched 1D solve:
+  if (b.ndim > 1 and a.ndim == b.ndim + 1 and
+      a.shape[-1] == b.shape[-1] and a.shape[-1] != b.shape[-2]):
+    raise ValueError(
+      f"Invalid shapes for solve: {a.shape}, {b.shape}. Prior to JAX v0.5.0,"
+      " this would have been treated as a batched 1-dimensional solve."
+      " To recover this behavior, use solve(a, b[..., None]).squeeze(-1).")
+
+  signature = "(m,m),(m)->(m)" if b.ndim == 1 else "(m,m),(m,n)->(m,n)"
   return jnp.vectorize(lax_linalg._solve, signature=signature)(a, b)
 
 

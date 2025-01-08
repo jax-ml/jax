@@ -1107,7 +1107,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     ],
     dtype=float_types + complex_types,
   )
-  @jtu.ignore_warning(category=FutureWarning, message="jnp.linalg.solve: batched")
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testSolve(self, lhs_shape, rhs_shape, dtype):
     rng = jtu.rand_default(self.rng())
@@ -1121,22 +1120,14 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       lhs_shape=[(2, 2), (2, 2, 2), (2, 2, 2, 2), (2, 2, 2, 2, 2)],
       rhs_shape=[(2,), (2, 2), (2, 2, 2), (2, 2, 2, 2)]
   )
-  @jtu.ignore_warning(category=FutureWarning, message="jnp.linalg.solve: batched")
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testSolveBroadcasting(self, lhs_shape, rhs_shape):
     # Batched solve can involve some ambiguities; this test checks
     # that we match NumPy's convention in all cases.
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, 'float32'), rng(rhs_shape, 'float32')]
-
-    if jtu.numpy_version() >= (2, 0, 0):
-      # TODO(jakevdp) remove this condition after solve broadcast deprecation is finalized.
-      if len(rhs_shape) == 1 or (len(lhs_shape) != len(rhs_shape) + 1):
-        self._CheckAgainstNumpy(np.linalg.solve, jnp.linalg.solve, args_maker, tol=1E-3)
-    else:  # numpy 1.X
-      # As of numpy 1.26.3, np.linalg.solve fails when this condition is not met.
-      if len(lhs_shape) == 2 or len(rhs_shape) > 1:
-        self._CheckAgainstNumpy(np.linalg.solve, jnp.linalg.solve, args_maker, tol=1E-3)
+    if jtu.numpy_version() >= (2, 0, 0):  # NumPy 2.0 semantics
+      self._CheckAgainstNumpy(np.linalg.solve, jnp.linalg.solve, args_maker, tol=1E-3)
     self._CompileAndCheck(jnp.linalg.solve, args_maker)
 
   @jtu.sample_product(
@@ -1312,11 +1303,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(xc, grad_test_jc(xc))
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
-  @jtu.ignore_warning(category=FutureWarning, message="jnp.linalg.solve: batched")
   def testIssue1151(self):
     rng = self.rng()
     A = jnp.array(rng.randn(100, 3, 3), dtype=jnp.float32)
-    b = jnp.array(rng.randn(100, 3), dtype=jnp.float32)
+    b = jnp.array(rng.randn(100, 3, 1), dtype=jnp.float32)
     x = jnp.linalg.solve(A, b)
     self.assertAllClose(vmap(jnp.dot)(A, x), b, atol=2e-3, rtol=1e-2)
 
