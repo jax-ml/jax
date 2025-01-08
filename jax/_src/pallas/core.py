@@ -473,6 +473,8 @@ class BlockSpec:
     mapping.check_invariants()
     return mapping
 
+  replace = dataclasses.replace
+
 
 class NoBlockSpec:
   def __repr__(self):
@@ -1028,18 +1030,37 @@ class CostEstimate:
 core_map_p = jax_core.Primitive("core_map")
 core_map_p.multiple_results = True
 
-def core_map(mesh):
+
+def core_map(
+    mesh,
+    *,
+    compiler_params: Any | None = None,
+    interpret: bool = False,
+    debug: bool = False,
+    cost_estimate: CostEstimate | None = None,
+):
   """Runs a function on a mesh, mapping it over the devices in the mesh.
 
   The function should be stateful in that it takes in no inputs and returns
   no outputs but can mutate closed-over Refs, for example.
+
+  Args:
+    mesh: The mesh to run the function on.
+    compiler_params: The compiler parameters to pass to the backend.
+    interpret: Whether to run the function in interpret mode.
+    debug: Whether or not to out helpful debugging information.
+    cost_estimate: The cost estimate of the function.
   """
   def wrapped(f):
     flat_args, in_tree = tree_util.tree_flatten(((), {}))
     flat_fun, out_tree_thunk = api_util.flatten_fun(lu.wrap_init(f), in_tree)
     with jax_core.extend_axis_env_nd(mesh.shape.items()):
       jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, flat_args)
-    out = core_map_p.bind(*consts, jaxpr=jaxpr, mesh=mesh)
+    out = core_map_p.bind(*consts, jaxpr=jaxpr, mesh=mesh,
+                          compiler_params=compiler_params,
+                          interpret=interpret,
+                          debug=debug,
+                          cost_estimate=cost_estimate)
     if out:
       raise ValueError("core_map-ped functions must not return any outputs.")
     return tree_util.tree_unflatten(out_tree_thunk(), out)
@@ -1047,7 +1068,7 @@ def core_map(mesh):
 
 
 @core_map_p.def_effectful_abstract_eval
-def _core_map_abstract_eval(*args, jaxpr, mesh):
+def _core_map_abstract_eval(*args, jaxpr, mesh, **_):
   del args
   if jaxpr.outvars:
     raise ValueError("core_map must not return any outputs.")
@@ -1074,6 +1095,9 @@ def default_mesh_discharge_rule(
     compiler_params,
     backend,
     jaxpr,
+    debug,
+    interpret,
+    cost_estimate,
 ):
   """Discharges a ``core_map`` over a mesh to a ``pallas_call``."""
   del out_avals  # Unused.
@@ -1103,6 +1127,9 @@ def default_mesh_discharge_rule(
       grid=grid,
       compiler_params=compiler_params,
       backend=backend,
+      interpret=interpret,
+      debug=debug,
+      cost_estimate=cost_estimate,
   )(*args)
   # ``outs`` lacks the unmodified inputs. Add them back in.
   all_outs = [None] * len(args)
@@ -1120,8 +1147,8 @@ def _core_map_discharge_rule(in_avals, out_avals, *args_flat, jaxpr, mesh, **kwa
   )
 
 
-def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh):
-  del in_atoms
+def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh, **kwargs):
+  del in_atoms, kwargs
   with jax_core.extend_axis_env_nd(tuple(mesh.shape.items())):
     jax_core.check_jaxpr(jaxpr)
   effs = set()
