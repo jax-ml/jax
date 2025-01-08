@@ -672,6 +672,9 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
   __slots__ = ['_trace', '_line_info']
   __hash__ = None  # type: ignore
 
+  _trace: Trace
+  _line_info: source_info_util.SourceInfo | None
+
   dtype = _aval_property('dtype')
   ndim = _aval_property('ndim')
   size = _aval_property('size')

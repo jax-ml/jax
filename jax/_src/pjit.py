@@ -1332,7 +1332,9 @@ def _create_pjit_jaxpr(
 @util.cache(max_size=4096, trace_context_in_key=False)
 def _check_and_canonicalize_out_shardings(
     out_shardings_treedef, out_shardings_leaves, out_layouts_treedef,
-    out_layouts_leaves, out_tree, out_avals, debug_info, device_or_backend_set):
+    out_layouts_leaves, out_tree, out_avals,
+    debug_info: core.JaxprDebugInfo | None,
+    device_or_backend_set):
   orig_out_shardings = tree_unflatten(out_shardings_treedef, out_shardings_leaves)
   if isinstance(orig_out_shardings, (UnspecifiedValue, Sharding)):
     out_shardings_flat = (orig_out_shardings,) * len(out_avals)

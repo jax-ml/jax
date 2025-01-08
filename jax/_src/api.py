@@ -453,8 +453,12 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
       raise TypeError(f"differentiating with respect to {argnums=} requires at least "
                       f"{max_argnum + 1} positional arguments to be passed by the caller, "
                       f"but got only {len(args)} positional arguments.")
+    fun_src_info = fun_sourceinfo(fun)
+    fun_signature = api_util.fun_signature(fun)
+    dbg = debug_info('value_and_grad', fun_src_info, fun_signature,
+                     args, kwargs, (), ())
 
-    f = lu.wrap_init(fun, kwargs)
+    f = lu.wrap_init(fun, params=kwargs, debug_info=dbg)
     f_partial, dyn_args = argnums_partial(f, argnums, args,
                                           require_static_args_hashable=False)
     for leaf in tree_leaves(dyn_args):

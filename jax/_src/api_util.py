@@ -118,7 +118,7 @@ def flattened_fun_in_tree(
   except ValueError:
     return None
   else:
-    return in_tree, lambda: out_tree_store.val, has_kwargs
+    return in_tree, lambda: out_tree_store.val, has_kwargs  # type: ignore[union-attr]
 
 @lu.transformation_with_aux2
 def flatten_fun_nokwargs2(f, store, in_tree, *args_flat):
@@ -591,16 +591,18 @@ def api_hook(fun, tag: str):
 
 
 def debug_info(
-  traced_for: str, src: str | None, fun_signature: inspect.Signature | None,
-  args: tuple[Any, ...], kwargs: dict[str, Any], static_argnums: tuple[int, ...],
-  static_argnames: tuple[str, ...]
+    traced_for: str, fun_src_info: str | None,
+    fun_signature: inspect.Signature | None,
+    args: tuple[Any, ...], kwargs: dict[str, Any],
+    static_argnums: tuple[int, ...],
+    static_argnames: tuple[str, ...]
 ) -> TracingDebugInfo | None:
   """Try to build trace-time debug info for fun when applied to args/kwargs."""
   arg_names = _arg_names(fun_signature, args, kwargs, static_argnums,
                          static_argnames)
   if arg_names is None:
     return None
-  return TracingDebugInfo(traced_for, src, arg_names, None)
+  return TracingDebugInfo(traced_for, fun_src_info, arg_names, None)
 
 def fun_signature(fun: Callable) -> inspect.Signature | None:
   try:
@@ -657,21 +659,22 @@ def jaxpr_debug_info(jaxpr: core.Jaxpr, trace_debug: TracingDebugInfo | None,
   """Add debug info to jaxpr, given trace-time debug info and result paths."""
   if trace_debug is None:
     return jaxpr
-  assert (result_paths is not None) ^ (trace_debug.result_paths is not None)
+  assert (result_paths is not None) ^ (trace_debug.result_paths_thunk is not None)
   if result_paths is None:
-    result_paths = trace_debug.result_paths()  # type: ignore
+    result_paths = trace_debug.result_paths_thunk()  # type: ignore
   debug_info = core.JaxprDebugInfo(
       trace_debug.traced_for, trace_debug.func_src_info,
       trace_debug.arg_names, tuple(result_paths))
   return jaxpr.replace(debug_info=debug_info)
 
 def debug_info_final(f: lu.WrappedFun, dbg: TracingDebugInfo | None,
-                     res_paths: Callable[[], tuple[str, ...]]) -> lu.WrappedFun:
+                     res_paths_thunk: Callable[[], tuple[str, ...]]
+                     ) -> lu.WrappedFun:
   "Attach trace-time debug info and result paths lazy thunk to an lu.WrappedFun"
   if dbg is None: return f
-  assert dbg.result_paths is None
-  res_paths_ = HashableFunction(res_paths, closure=())
-  return lu.add_debug_info(f, dbg._replace(result_paths=res_paths_))
+  assert dbg.result_paths_thunk is None
+  res_paths_thunk_ = HashableFunction(res_paths_thunk, closure=())
+  return lu.add_debug_info(f, dbg._replace(result_paths_thunk=res_paths_thunk_))
 
 
 def hoist_obj_attrs(f, flat_args):
