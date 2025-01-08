@@ -700,9 +700,13 @@ class JaxArrayTest(jtu.JaxTestCase):
 
   def test_process_allgather_single_host(self):
     x = jnp.arange(8.)
-    out = multihost_utils.process_allgather(x)
+    out = multihost_utils.process_allgather(x, tiled=True)
     self.assertEqual(out.shape, x.shape)
     self.assertArraysEqual(out, x)
+
+    out = multihost_utils.process_allgather(x)
+    self.assertEqual(out.shape, (1, x.shape[0]))
+    self.assertArraysEqual(out, np.expand_dims(x, axis=0))
 
   @jtu.sample_product(
     dtype=jtu.dtypes.all,
