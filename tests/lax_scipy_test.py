@@ -202,6 +202,11 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     y_actual = lsp_special.logsumexp(x, where=mask)
     self.assertAllClose(y_expected, y_actual, check_dtypes=False)
 
+  def testLogSumExpWhereGrad(self):
+    x = jnp.array([0., 0., 0., 0., 100.])
+    g = jax.grad(lambda x: lsp_special.logsumexp(x, where=jnp.arange(5) < 4))(x)
+    self.assertAllClose(g, jnp.array([0.25, 0.25, 0.25, 0.25, 0.]))
+
   @jtu.sample_product(
     shape=all_shapes,
     dtype=float_dtypes,
