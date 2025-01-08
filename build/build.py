@@ -69,7 +69,6 @@ def add_global_arguments(parser: argparse.ArgumentParser):
   parser.add_argument(
       "--python_version",
       type=str,
-      choices=["3.10", "3.11", "3.12", "3.13"],
       default=f"{sys.version_info.major}.{sys.version_info.minor}",
       help=
         """
@@ -390,6 +389,14 @@ async def main():
   bazel_command_base.append("run")
 
   if args.python_version:
+    # Do not add --repo_env=HERMETIC_PYTHON_VERSION with default args.python_version
+    # if bazel_options override it
+    python_version_opt = "--repo_env=HERMETIC_PYTHON_VERSION="
+    if any([python_version_opt in opt for opt in args.bazel_options]):
+      raise RuntimeError(
+        "Please use python_version to set hermetic python version instead of "
+        "setting --repo_env=HERMETIC_PYTHON_VERSION=<python version> bazel option"
+      )
     logging.debug("Hermetic Python version: %s", args.python_version)
     bazel_command_base.append(
         f"--repo_env=HERMETIC_PYTHON_VERSION={args.python_version}"
