@@ -35,7 +35,6 @@ import threading
 import time
 from typing import Any, TextIO
 import unittest
-import warnings
 import zlib
 
 from absl.testing import absltest
@@ -49,6 +48,7 @@ from jax._src import dispatch
 from jax._src import dtypes as _dtypes
 from jax._src import lib as _jaxlib
 from jax._src import monitoring
+from jax._src import test_warning_util
 from jax._src import xla_bridge
 from jax._src import util
 from jax._src import mesh as mesh_lib
@@ -118,7 +118,7 @@ HYPOTHESIS_PROFILE = config.string_flag(
 )
 
 TEST_NUM_THREADS = config.int_flag(
-    'jax_test_num_threads', 0,
+    'jax_test_num_threads', int(os.getenv('JAX_TEST_NUM_THREADS', '0')),
     help='Number of threads to use for running tests. 0 means run everything '
     'in the main thread. Using > 1 thread is experimental.'
 )
@@ -1076,7 +1076,7 @@ class ThreadSafeTestResult:
     with self.lock:
       # We assume test_result is an ABSL _TextAndXMLTestResult, so we can
       # override how it gets the time.
-      time_getter = self.test_result.time_getter
+      time_getter = getattr(self.test_result, "time_getter", None)
       try:
         self.test_result.time_getter = lambda: self.start_time
         self.test_result.startTest(test)
@@ -1085,7 +1085,8 @@ class ThreadSafeTestResult:
         self.test_result.time_getter = lambda: stop_time
         self.test_result.stopTest(test)
       finally:
-        self.test_result.time_getter = time_getter
+        if time_getter is not None:
+          self.test_result.time_getter = time_getter
 
   def addSuccess(self, test: unittest.TestCase):
     self.actions.append(lambda: self.test_result.addSuccess(test))
@@ -1119,6 +1120,8 @@ class JaxTestSuite(unittest.TestSuite):
   def run(self, result: unittest.TestResult, debug: bool = False) -> unittest.TestResult:
     if TEST_NUM_THREADS.value <= 0:
       return super().run(result)
+
+    test_warning_util.install_threadsafe_warning_handlers()
 
     executor = ThreadPoolExecutor(TEST_NUM_THREADS.value)
     lock = threading.Lock()
@@ -1368,11 +1371,44 @@ class JaxTestCase(parameterized.TestCase):
     self.assertMultiLineEqual(expected_clean, what_clean,
                               msg=f"Found\n{what}\nExpecting\n{expected}")
 
+
   @contextmanager
   def assertNoWarnings(self):
-    with warnings.catch_warnings():
-      warnings.simplefilter("error")
+    with test_warning_util.raise_on_warnings():
       yield
+
+  # We replace assertWarns and assertWarnsRegex with functions that use the
+  # thread-safe warning utilities. Unlike the unittest versions these only
+  # function as context managers.
+  @contextmanager
+  def assertWarns(self, warning, *, msg=None):
+    with test_warning_util.record_warnings() as ws:
+      yield
+    for w in ws:
+      if not isinstance(w.message, warning):
+        continue
+      if msg is not None and msg not in str(w.message):
+        continue
+      return
+    self.fail(f"Expected warning not found {warning}:'{msg}', got "
+              f"{ws}")
+
+  @contextmanager
+  def assertWarnsRegex(self, warning, regex):
+    if regex is not None:
+        regex = re.compile(regex)
+
+    with test_warning_util.record_warnings() as ws:
+      yield
+    for w in ws:
+      if not isinstance(w.message, warning):
+        continue
+      if regex is not None and not regex.search(str(w.message)):
+        continue
+      return
+    self.fail(f"Expected warning not found {warning}:'{regex}', got "
+              f"{ws}")
+
 
   def _CompileAndCheck(self, fun, args_maker, *, check_dtypes=True, tol=None,
                        rtol=None, atol=None, check_cache_misses=True):
@@ -1449,11 +1485,7 @@ class BufferDonationTestCase(JaxTestCase):
     self.assertFalse(x.is_deleted())
 
 
-@contextmanager
-def ignore_warning(*, message='', category=Warning, **kw):
-  with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", message=message, category=category, **kw)
-    yield
+ignore_warning = test_warning_util.ignore_warning
 
 # -------------------- Mesh parametrization helpers --------------------
 
@@ -1768,9 +1800,8 @@ def complex_plane_sample(dtype, size_re=10, size_im=None):
     logtiny = finfo.minexp / prec_dps_ratio
     axis_points = np.zeros(3 + 2 * size, dtype=finfo.dtype)
 
-    with warnings.catch_warnings():
+    with ignore_warning(category=RuntimeWarning):
       # Silence RuntimeWarning: overflow encountered in cast
-      warnings.simplefilter("ignore")
       half_neg_line = -np.logspace(logmin, logtiny, size, dtype=finfo.dtype)
       half_line = -half_neg_line[::-1]
       axis_points[-size - 1:-1] = half_line
