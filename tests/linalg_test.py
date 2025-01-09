@@ -32,7 +32,6 @@ from jax import lax
 from jax import numpy as jnp
 from jax import scipy as jsp
 from jax._src import config
-from jax._src import deprecations
 from jax._src.lax import linalg as lax_linalg
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
@@ -1177,14 +1176,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     jtu.check_grads(jnp_fn, args_maker(), 1, rtol=6e-2, atol=1e-3)
 
   def testPinvDeprecatedArgs(self):
-    msg = "The rcond argument for linalg.pinv is deprecated."
-    def assert_warns_or_errors(msg=msg):
-      if deprecations.is_accelerated("jax-numpy-linalg-pinv-rcond"):
-        return self.assertRaisesRegex(ValueError, msg)
-      else:
-        return self.assertWarnsRegex(DeprecationWarning, msg)
     x = jnp.ones((3, 3))
-    with assert_warns_or_errors(msg):
+    with self.assertDeprecationWarnsOrRaises("jax-numpy-linalg-pinv-rcond",
+                                             "The rcond argument for linalg.pinv is deprecated."):
       jnp.linalg.pinv(x, rcond=1E-2)
 
   def testPinvGradIssue2792(self):
@@ -1230,14 +1224,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                           check_dtypes=False, rtol=1e-3)
 
   def testMatrixRankDeprecatedArgs(self):
-    msg = "The tol argument for linalg.matrix_rank is deprecated."
-    def assert_warns_or_errors(msg=msg):
-      if deprecations.is_accelerated("jax-numpy-linalg-matrix_rank-tol"):
-        return self.assertRaisesRegex(ValueError, msg)
-      else:
-        return self.assertWarnsRegex(DeprecationWarning, msg)
     x = jnp.ones((3, 3))
-    with assert_warns_or_errors(msg):
+    with self.assertDeprecationWarnsOrRaises("jax-numpy-linalg-matrix_rank-tol",
+                                             "The tol argument for linalg.matrix_rank is deprecated."):
       jnp.linalg.matrix_rank(x, tol=1E-2)
 
   @jtu.sample_product(
