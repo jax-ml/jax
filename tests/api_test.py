@@ -1295,7 +1295,7 @@ class JitTest(jtu.BufferDonationTestCase):
       return y['hi'] + args[1] + sum(kwargs.values())
 
     lowered = jax.jit(f).lower({'hi': 1.}, {'hi': 2.}, 3., 4., z=5., w=6.)
-    hlo_str = mlir.module_to_string(lowered.compiler_ir('stablehlo'))
+    hlo_str = lowered.as_text("stablehlo", debug_info=True)
     self.assertNotIn("\"x\"", hlo_str)
     self.assertIn("y['hi']", hlo_str)
     self.assertNotIn("args[0]", hlo_str)
@@ -1303,10 +1303,7 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertIn("kwargs['z']", hlo_str)
     self.assertIn("kwargs['w']", hlo_str)
 
-    hlo_str = mlir.module_to_string(
-      lowered.compiler_ir('stablehlo'),
-      enable_debug_info=False,
-    )
+    hlo_str = lowered.as_text("stablehlo", debug_info=False)
     for s in ("\"x\"", "y['hi']", "args[0]", "args[1]", "kwargs['z']", "kwargs['w']"):
       self.assertNotIn(s, hlo_str)
 
@@ -1315,9 +1312,10 @@ class JitTest(jtu.BufferDonationTestCase):
     def f(x, y, *args, **kwargs):
       return y['hi'] + args[1] + sum(kwargs.values())
 
-    ir = jax.jit(f, static_argnums=static_argnums).lower(
-        (1.,), {'hi': 2.}, 3., 4., z=5., w=6.).compiler_ir('stablehlo')
-    hlo_str = mlir.module_to_string(ir)
+    lowered = jax.jit(f, static_argnums=static_argnums).lower(
+        (1.,), {'hi': 2.}, 3., 4., z=5., w=6.)
+
+    hlo_str = lowered.as_text("stablehlo", debug_info=True)
     self.assertNotIn("\"x\"", hlo_str)
     self.assertIn("y['hi']", hlo_str)
     self.assertNotIn("args[0]", hlo_str)
@@ -1325,7 +1323,7 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertIn("kwargs['z']", hlo_str)
     self.assertIn("kwargs['w']", hlo_str)
 
-    hlo_str = mlir.module_to_string(ir, enable_debug_info=False)
+    hlo_str = lowered.as_text("stablehlo", debug_info=False)
     for s in ("\"x\"", "y['hi']", "args[0]", "args[1]", "kwargs['z']", "kwargs['w']"):
       self.assertNotIn(s, hlo_str)
 
@@ -1334,9 +1332,9 @@ class JitTest(jtu.BufferDonationTestCase):
     def f(x, y, *args, **kwargs):
       return y['hi'] + args[1] + kwargs['z'] + kwargs['w']
 
-    ir = jax.jit(f, static_argnames=static_argnames).lower(
-        (1.,), {'hi': 2.}, 3., 4., z=5., w=6., a=7., b=8.).compiler_ir('stablehlo')
-    hlo_str = mlir.module_to_string(ir)
+    lowered = jax.jit(f, static_argnames=static_argnames).lower(
+        (1.,), {'hi': 2.}, 3., 4., z=5., w=6., a=7., b=8.)
+    hlo_str = lowered.as_text("stablehlo", debug_info=True)
     self.assertNotIn("\"x\"", hlo_str)
     self.assertIn("y['hi']", hlo_str)
     self.assertNotIn("args[0]", hlo_str)
@@ -1346,7 +1344,7 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertNotIn("kwargs['a']", hlo_str)
     self.assertNotIn("kwargs['b']", hlo_str)
 
-    hlo_str = mlir.module_to_string(ir, enable_debug_info=False)
+    hlo_str = lowered.as_text("stablehlo", debug_info=False)
     for s in (
       "\"x\"", "y['hi']", "args[0]", "args[1]", "kwargs['z']",
       "kwargs['w']", "kwargs['a']", "kwargs['b']"
@@ -1357,8 +1355,7 @@ class JitTest(jtu.BufferDonationTestCase):
     def f(x, y, z):
       return {'a': x, 'b': [y]}
 
-    ir = jax.jit(f).lower(1., (2,), [3]).compiler_ir('stablehlo')
-    hlo_str = mlir.module_to_string(ir)
+    hlo_str = jax.jit(f).lower(1., (2,), [3]).as_text("stablehlo", debug_info=True)
     self.assertIn("jax.result_info = \"['a']\"", hlo_str)
     self.assertIn("jax.result_info = \"['b'][0][0]\"", hlo_str)
 

@@ -218,6 +218,8 @@ a text representation. Compiled functions do the same, and also offer cost and
 memory analyses from the compiler. All of these are provided via methods on the
 {class}`jax.stages.Lowered` and {class}`jax.stages.Compiled` objects (e.g.,
 `lowered.as_text()` and `compiled.cost_analysis()` above).
+You can obtain more debbugging information, e.g., source location,
+by using the `debug_info` parameter to `lowered.as_text()`.
 
 These methods are meant as an aid for manual inspection and debugging, not as a
 reliably programmable API. Their availability and output vary by compiler,

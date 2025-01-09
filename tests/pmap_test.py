@@ -46,7 +46,6 @@ from jax._src import sharding_impls
 from jax._src import sharding_specs
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import lax_test_util
-from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lax import parallel
 from jax._src.lib import xla_extension
@@ -2109,7 +2108,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     lowered = jax.pmap(f).lower(
       {'hi': jnp.array([1.])}, {'hi': jnp.array([2.])}, jnp.array([3.]),
       jnp.array([4.]), z=jnp.array([5.]), w=jnp.array([6.]))
-    hlo_str = mlir.module_to_string(lowered.compiler_ir('stablehlo'))
+    hlo_str = lowered.as_text("stablehlo", debug_info=True)
     self.assertNotIn("\"x\"", hlo_str)
     self.assertIn("y['hi']", hlo_str)
     self.assertIn("args[0]", hlo_str)
@@ -2123,7 +2122,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     lowered = jax.pmap(f).lower(jnp.array([1.]), (jnp.array([2]),),
                                 [jnp.array([3])])
-    hlo_str = mlir.module_to_string(lowered.compiler_ir('stablehlo'))
+    hlo_str = lowered.as_text("stablehlo", debug_info=True)
     self.assertIn("jax.result_info = \"['a']\"", hlo_str)
     self.assertIn("jax.result_info = \"['b'][0][0]\"", hlo_str)
 

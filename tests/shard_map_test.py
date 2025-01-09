@@ -40,7 +40,6 @@ from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.ad_checkpoint import saved_residuals
 from jax._src.mesh import AbstractMesh
-from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src import linear_util as lu
 from jax._src import tree_util
@@ -1312,7 +1311,7 @@ class ShardMapTest(jtu.JaxTestCase):
                     in_specs=P('i'), out_specs=P('i'))(x)
       return x
 
-    hlo_str = mlir.module_to_string(jax.jit(foo).lower(x).compiler_ir('stablehlo'))
+    hlo_str = jax.jit(foo).lower(x).as_text("stablehlo", debug_info=True)
     if config.use_shardy_partitioner.value:
       if len(jax.devices()) > 1:
         self.assertEqual(2, hlo_str.count('sdy.manual_computation'))
