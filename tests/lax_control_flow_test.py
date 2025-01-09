@@ -589,6 +589,21 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     init = jnp.float32(10)
     self.assertEqual(fori_loop_with_static_upper_and_lower(init), init)
 
+  def test_fori_error_points_to_user_code(self):
+    # See https://github.com/jax-ml/jax/issues/23637
+    def my_body(_, c):
+      return bool(c)
+
+    with self.assertRaisesRegex(
+        jax.errors.TracerBoolConversionError,
+        "occurred while tracing the function my_body at .*control_flow_test.py.* for scan"):
+      jax.lax.fori_loop(0, 5, my_body, 3.)
+
+    with self.assertRaisesRegex(
+        jax.errors.TracerBoolConversionError,
+        "occurred while tracing the function my_body at .*control_flow_test.py.* for while_loop"):
+      jax.jit(lambda ubound: jax.lax.fori_loop(0, ubound, my_body, 3.))(5)
+
   def testForiLoopBatched(self):
     def body_fun(i, loop_carry):
       x, y = loop_carry
