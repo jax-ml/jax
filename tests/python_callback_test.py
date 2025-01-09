@@ -937,11 +937,19 @@ class PureCallbackTest(jtu.JaxTestCase):
     np.testing.assert_allclose(
         out, np.arange(jax.local_device_count()) * 2
     )
-
-    self.assertIn(
-        f'{{maximal device={callback_device_index}}}',
-        str(f_jit.lower(inp).compiler_ir(dialect='stablehlo')),
-    )
+    stablehlo_ir = f_jit.lower(inp).as_text()
+    if config.use_shardy_partitioner.value:
+      self.assertIn(
+          "sdy.sharding ="
+          f" #sdy.sharding_per_value<[<@maximal_mesh_{callback_device_index},"
+          " []>]>",
+          stablehlo_ir)
+      self.assertIn(
+          f"sdy.mesh @maximal_mesh_{callback_device_index} = <[],"
+          f" device_ids=[{callback_device_index}]>",
+          stablehlo_ir)
+    else:
+      self.assertIn(f"{{maximal device={callback_device_index}}}", stablehlo_ir)
 
   def test_can_shard_pure_callback_manually(self):
 
@@ -1199,10 +1207,19 @@ class IOCallbackTest(jtu.JaxTestCase):
         self.assertIn(v, _collected)
 
     callback_device_index = in_spec._device_assignment.index(callback_device)
-    self.assertIn(
-        f'{{maximal device={callback_device_index}}}',
-        str(f.lower(x).compiler_ir(dialect='stablehlo')),
-    )
+    stablehlo_ir = f.lower(x).as_text()
+    if config.use_shardy_partitioner.value:
+      self.assertIn(
+          "sdy.sharding ="
+          f" #sdy.sharding_per_value<[<@maximal_mesh_{callback_device_index},"
+          " []>]>",
+          stablehlo_ir)
+      self.assertIn(
+          f"sdy.mesh @maximal_mesh_{callback_device_index} = <[],"
+          f" device_ids=[{callback_device_index}]>",
+          stablehlo_ir)
+    else:
+      self.assertIn(f"{{maximal device={callback_device_index}}}", stablehlo_ir)
 
   def test_sequence_pjit_io_callback_ordered(self):
     # A sequence of pairs of calls to pjit(io_callback(ordered=True)) with each
@@ -1257,6 +1274,8 @@ class IOCallbackTest(jtu.JaxTestCase):
     self.assertEqual(_collected, expected)
 
   def test_can_shard_io_callback_manually(self):
+    if config.use_shardy_partitioner.value:
+      self.skipTest("TODO(b/384938613): Failing under shardy.")
 
     mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
 

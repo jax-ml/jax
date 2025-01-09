@@ -118,7 +118,6 @@ class SdyDimSharding:
   is_closed: bool
   priority: int | None = None
 
-  # NOTE: An MLIR context is required as a context manager.
   def build(self) -> sdy.DimensionShardingAttr:
     return sdy.DimensionShardingAttr.get(
         [sdy.AxisRefAttr.get(axis) for axis in self.axes],
@@ -144,7 +143,6 @@ class SdyArraySharding:
   logical_device_ids: tuple[int, ...] | None = None
   replicated_axes: tuple[str, ...] = ()
 
-  # NOTE: An MLIR context is required as a context manager.
   def build(self) -> sdy.TensorShardingAttr:
     if self.mesh_shape is None:
       mesh_attr = sdy.MeshAttr.get([])
@@ -167,6 +165,15 @@ class SdyArraySharding:
     rar = (f', replicated_axes={self.replicated_axes}'
            if self.replicated_axes else '')
     return f"SdyArraySharding([{dim_sharding_repr}]{device_id_repr}{rar})"
+
+
+@dataclasses.dataclass
+class SdyArrayShardingList:
+  shardings: Sequence[SdyArraySharding]
+
+  def build(self) -> sdy.TensorShardingPerValueAttr:
+    return sdy.TensorShardingPerValueAttr.get(
+        [sharding.build() for sharding in self.shardings])
 
 
 @util.cache(max_size=4096, trace_context_in_key=False)

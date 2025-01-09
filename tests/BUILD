@@ -1278,15 +1278,14 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "debugging_primitives_test",
     srcs = ["debugging_primitives_test.py"],
-    disable_configs = [
-        "cpu_shardy",  # TODO(b/364547005): enable once pure callbacks are supported.
-    ],
     enable_configs = [
         "cpu",
         "gpu_h100",
         "tpu_v2_1x1",
         "tpu_v3_2x2",
         "tpu_v4_2x2",
+        "gpu_a100_shardy",
+        "tpu_v3_2x2_shardy",
     ],
 )
 
@@ -1296,13 +1295,12 @@ jax_multiplatform_test(
     backend_tags = {
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
-    disable_configs = [
-        "cpu_shardy",  # TODO(b/364547005): enable once pure callbacks are supported.
-    ],
     enable_configs = [
         "tpu_v2_1x1",
         "tpu_v3_2x2",
         "tpu_v4_2x2",
+        "tpu_v3_2x2_shardy",
+        "gpu_2gpu_shardy",
     ],
     tags = ["multiaccelerator"],
     deps = [
