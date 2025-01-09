@@ -2188,6 +2188,7 @@ class ShardMapTest(jtu.JaxTestCase):
                        mesh, in_specs=P('i'), out_specs=P('i'),
                        check_rep=False, auto=frozenset({'j'}))(x)
 
+    print("Optimized IR: ", f.lower(x).compile().as_text())
     y = f(x)  # don't crash
     self.assertAllClose(y, jnp.array([6., 7., 0., 1., 2., 3., 4., 5.]),
                         check_dtypes=False)
