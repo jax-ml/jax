@@ -1,22 +1,18 @@
 name: ROCm GPU CI
 
 on:
-  # Trigger the workflow on push or pull request,
-  # but only for the rocm-main branch
+  # Trigger the workflow after a push into the main branch
   push:
     branches:
-      - rocm-main
-  pull_request:
-    branches:
-      - rocm-main
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-jax-in-docker: # strategy and matrix come here 
-    runs-on:  mi-250
+  build-jax-in-docker:
+    runs-on:  rocm-mi-250
     env:
       BASE_IMAGE: "ubuntu:22.04"
       TEST_IMAGE: ubuntu-jax-${{ github.run_id }}_${{ github.run_number }}_${{ github.run_attempt }}
