@@ -74,6 +74,11 @@ from jax._src.sharding_impls import (SingleDeviceSharding, NamedSharding,
                                      PartitionSpec as P, canonicalize_sharding)
 from jax.tree_util import tree_flatten, tree_leaves, tree_map
 import numpy as np
+
+try:
+  from numpy import dtypes as np_dtypes
+except ImportError:
+  np_dtypes = None  # type: ignore
 import opt_einsum
 
 export = set_module('jax.numpy')
@@ -5571,6 +5576,14 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
       device is None):
     # Keep the output uncommitted.
     return jax.device_put(object)
+
+  # 2DO: Comment.
+  if isinstance(object, np.ndarray) and hasattr(np_dtypes, "StringDType") and isinstance(object.dtype, np_dtypes.StringDType):  # type: ignore
+    if (ndmin > 0) and (ndmin != object.ndim):
+      raise TypeError(
+          f"ndmin {ndmin} does not match ndims {object.ndim} of input array"
+      )
+    return jax.device_put(x=object, device=device)
 
   # For Python scalar literals, call coerce_to_array to catch any overflow
   # errors. We don't use dtypes.is_python_scalar because we don't want this
