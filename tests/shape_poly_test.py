@@ -3683,7 +3683,7 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
     if "cholesky" in harness.group_name and jtu.test_device_matches(["tpu"]):
       harness.tol = 5e-5
 
-    with jtu.global_config_context(**config_flags):
+    with jtu.thread_local_config_context(**config_flags):
       harness.run_test(self)
 
 

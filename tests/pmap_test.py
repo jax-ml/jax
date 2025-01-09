@@ -2185,20 +2185,21 @@ class CppPmapTest(PythonPmapTest):
     f = lambda x: x+1
     inputs = np.zeros([jax.device_count()], dtype=np.float32)
     pmaped_f = self.pmap(f)
-    pmaped_f(inputs)
-    self.assertEqual(pmaped_f._cache_size, 1)
+    self.assertEqual(pmaped_f._cache_size, 0)
 
-    # Note: We do not call jax.pmap in the other thread but we reuse the same
-    # object.
+    # We only call pmaped_f in the thread pool to make sure that any
+    # thread-local config settings are identical.
     futures = []
-    with ThreadPoolExecutor(max_workers=1) as executor:
-      futures.append(executor.submit(lambda: pmaped_f(inputs)))
+    with ThreadPoolExecutor(max_workers=2) as executor:
+      for _ in range(8):
+        futures.append(executor.submit(lambda: pmaped_f(inputs)))
       outputs = [f.result() for f in futures]
 
-    np.testing.assert_array_equal(pmaped_f(inputs), outputs[0])
     if pmaped_f._cache_size != 1:
       print(pmaped_f._debug_cache_keys())
     self.assertEqual(pmaped_f._cache_size, 1)
+
+    np.testing.assert_array_equal(pmaped_f(inputs), outputs[0])
 
   def test_cache_uses_jax_key(self):
     f = lambda x: x+1

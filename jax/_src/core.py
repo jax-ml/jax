@@ -1696,6 +1696,9 @@ class ShapedArray(UnshapedArray):
     self.weak_type = weak_type
     if config.sharding_in_types.value:
       self.sharding = get_sharding(sharding, len(self.shape))
+      if not isinstance(self.sharding.mesh, mesh_lib.AbstractMesh):
+        raise ValueError(
+            f"Mesh of an aval must be an AbstractMesh. Got {self.sharding.mesh}")
 
   def update(self, shape=None, dtype=None, weak_type=None, **kwargs):
     if shape is None:

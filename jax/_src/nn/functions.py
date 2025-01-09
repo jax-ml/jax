@@ -671,7 +671,7 @@ def _one_hot(x: Array, num_classes: int, *,
   else:
     rhs_sharding = None
   rhs = lax.broadcasted_iota(x.dtype, rhs_shape, output_pos_axis,
-                             _sharding=rhs_sharding)
+                             sharding=rhs_sharding)
   return (lhs == rhs).astype(dtype)
 
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.

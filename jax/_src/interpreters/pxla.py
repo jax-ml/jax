@@ -2163,12 +2163,9 @@ def _concretize_abstract_out_shardings(shardings, avals, device_assignment):
   out = []
   for s, a in zip(shardings, avals):
     if isinstance(s, UnspecifiedValue) and a.sharding is not None:
-      if config.use_shardy_partitioner.value:
-        spec = a.sharding.spec
-      else:
-        spec = (PartitionSpec(*[PartitionSpec.UNCONSTRAINED if sp is None else sp
-                               for sp in a.sharding.spec])
-                if a.sharding.mesh._any_axis_auto else a.sharding.spec)
+      spec = (PartitionSpec(*[PartitionSpec.UNCONSTRAINED if sp is None else sp
+                              for sp in a.sharding.spec])
+              if a.sharding.mesh._any_axis_auto else a.sharding.spec)
       out.append(NamedSharding(
           _abstract_to_concrete_mesh(a.sharding.mesh), spec))
     else:

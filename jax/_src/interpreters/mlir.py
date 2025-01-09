@@ -49,7 +49,8 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
 from jax._src.sharding import Sharding as JSharding
-from jax._src.sharding_impls import AUTO, NamedSharding
+from jax._src.sharding_impls import (AUTO, NamedSharding,
+                                     modify_sdy_sharding_wrt_axis_types)
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
 from jax._src.lib.mlir import dialects, ir, passmanager
@@ -1689,13 +1690,17 @@ def lower_jaxpr_to_fun(
           for o, s, o_aval in zip(flat_outputs, ir_result_shardings, output_avals)]
 
     if ir_result_shardings is not None:
-      flat_outputs = [
-          wrap_with_sharding_op(entry_lowering_ctx, o, o_aval, s,
-                                unspecified_dims=us[2])
-          if us[0] and not us[1] else o
-          for o, s, o_aval, us in zip(flat_outputs, ir_result_shardings,
-                                      output_avals, unconstrained_shardings)  # type: ignore
-      ]
+      temp_flat_outputs = []
+      for o, s, o_aval, us in zip(flat_outputs, ir_result_shardings,
+                                  output_avals, unconstrained_shardings):  # type: ignore
+        if us[0] and not us[1]:
+          if config.use_shardy_partitioner.value and config.sharding_in_types.value:
+            s = modify_sdy_sharding_wrt_axis_types(s, o_aval.sharding.mesh)
+          temp_flat_outputs.append(wrap_with_sharding_op(
+              entry_lowering_ctx, o, o_aval, s, unspecified_dims=us[2]))
+        else:
+          temp_flat_outputs.append(o)
+      flat_outputs = temp_flat_outputs
 
     # Insert a custom call if output is on host because XLA needs that to do the
     # transfer.
@@ -2594,14 +2599,20 @@ def lower_sharding_under_shit(ctx, op, aval, sharding_proto=None):
     return op
   # TODO(yashkatariya): If all the axes in pspec are AUTO or collective,
   # `return op` early and avoid bloating HLO size.
-  proto = (aval.sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
-           if sharding_proto is None else sharding_proto)
-  unspecified_dims = None
-  if aval.sharding.mesh._any_axis_collective:
-    unspecified_dims = set(range(aval.ndim))
-  elif aval.sharding.mesh._any_axis_auto:
-    unspecified_dims = {i for i, s in enumerate(aval.sharding.spec) if s is None}
-  return wrap_with_sharding_op(ctx, op, aval, proto, unspecified_dims)
+  if config.use_shardy_partitioner.value:
+    proto = (aval.sharding._to_sdy_sharding(aval.ndim)
+             if sharding_proto is None else sharding_proto)
+    proto = modify_sdy_sharding_wrt_axis_types(proto, aval.sharding.mesh)
+    return wrap_with_sharding_op(ctx, op, aval, proto)
+  else:
+    proto = (aval.sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
+            if sharding_proto is None else sharding_proto)
+    unspecified_dims = None
+    if aval.sharding.mesh._any_axis_auto:
+      # TODO(yashkatariya): Maybe if any mesh axis is auto, mark all axes
+      # as unspecified?
+      unspecified_dims = {i for i, s in enumerate(aval.sharding.spec) if s is None}
+    return wrap_with_sharding_op(ctx, op, aval, proto, unspecified_dims)
 
 
 def set_sharding(op, sharding: xc.OpSharding | sharding_impls.SdyArraySharding):

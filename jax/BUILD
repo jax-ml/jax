@@ -170,6 +170,7 @@ py_library(
     ] + jax_internal_export_back_compat_test_util_visibility,
     deps = [
         ":jax",
+        ":test_util",
     ] + py_deps("numpy"),
 )
 
@@ -866,6 +867,7 @@ pytype_strict_library(
         ":partition_spec",
         ":sharding",
         ":sharding_specs",
+        ":source_info_util",
         ":tree_util",
         ":util",
         ":xla_bridge",

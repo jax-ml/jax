@@ -2670,7 +2670,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     if harness.group_name == "eig" and not jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("JAX implements eig only on CPU.")
 
-    with jtu.global_config_context(**harness.override_jax_config_flags):
+    with jtu.thread_local_config_context(**harness.override_jax_config_flags):
       harness.run_test(self)
 
 

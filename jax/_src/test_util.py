@@ -1023,6 +1023,10 @@ if hasattr(util, 'Mutex'):
   @contextmanager
   def thread_hostile_test():
     "Decorator for tests that are not thread-safe."
+    if TEST_NUM_THREADS.value <= 0:
+      yield
+      return
+
     _test_rwlock.assert_reader_held()
     _test_rwlock.reader_unlock()
     _test_rwlock.writer_lock()
@@ -1157,10 +1161,21 @@ def with_config(**kwds):
   """Test case decorator for subclasses of JaxTestCase"""
   def decorator(cls):
     assert inspect.isclass(cls) and issubclass(cls, JaxTestCase), "@with_config can only wrap JaxTestCase class definitions."
-    cls._default_config = {}
+    cls._default_thread_local_config = {}
     for b in cls.__bases__:
-      cls._default_config.update(b._default_config)
-    cls._default_config.update(kwds)
+      cls._default_thread_local_config.update(b._default_thread_local_config)
+    cls._default_thread_local_config.update(kwds)
+    return cls
+  return decorator
+
+def with_global_config(**kwds):
+  """Test case decorator for subclasses of JaxTestCase"""
+  def decorator(cls):
+    assert inspect.isclass(cls) and issubclass(cls, JaxTestCase), "@with_config can only wrap JaxTestCase class definitions."
+    cls._default_global_config = {}
+    for b in cls.__bases__:
+      cls._default_global_config.update(b._default_global_config)
+    cls._default_global_config.update(kwds)
     return cls
   return decorator
 
@@ -1191,6 +1206,15 @@ def global_config_context(**kwds):
     for key, value in original_config.items():
       config.update(key, value)
 
+@contextmanager
+def thread_local_config_context(**kwds):
+  stack = ExitStack()
+  for config_name, value in kwds.items():
+    stack.enter_context(config.config_states[config_name](value))
+  try:
+    yield
+  finally:
+    stack.close()
 
 class NotPresent:
   def __repr__(self):
@@ -1214,7 +1238,8 @@ def assert_global_configs_unchanged():
 
 class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
-  _default_config = {
+  _default_global_config: dict[str, Any] = {}
+  _default_thread_local_config = {
     'jax_enable_checks': True,
     'jax_numpy_dtype_promotion': 'strict',
     'jax_numpy_rank_promotion': 'raise',
@@ -1239,7 +1264,9 @@ class JaxTestCase(parameterized.TestCase):
     self._context_stack = ExitStack()
     self.addCleanup(self._context_stack.close)
     stack = self._context_stack
-    stack.enter_context(global_config_context(**self._default_config))
+    stack.enter_context(global_config_context(**self._default_global_config))
+    for config_name, value in self._default_thread_local_config.items():
+      stack.enter_context(jax._src.config.config_states[config_name](value))
 
     if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
       assert TEST_NUM_THREADS.value <= 1, "Persistent compilation cache is not thread-safe."
@@ -1365,7 +1392,7 @@ class JaxTestCase(parameterized.TestCase):
 
     cache_misses = dispatch.xla_primitive_callable.cache_info().misses
     python_ans = fun(*args)
-    if check_cache_misses:
+    if check_cache_misses and TEST_NUM_THREADS.value <= 1:
       self.assertEqual(
           cache_misses, dispatch.xla_primitive_callable.cache_info().misses,
           "Compilation detected during second call of {} in op-by-op "

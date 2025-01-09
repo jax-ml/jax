@@ -233,6 +233,8 @@ parse_flags_with_absl = config.parse_flags_with_absl
 class NoDefault: pass
 no_default = NoDefault()
 
+config_states = {}
+
 class State(config_ext.Config[_T]):
 
   __slots__ = (
@@ -265,6 +267,7 @@ class State(config_ext.Config[_T]):
       self._validator(default)
     if self._update_global_hook:
       self._update_global_hook(default)
+    config_states[name] = self
 
   def __bool__(self) -> NoReturn:
     raise TypeError(
