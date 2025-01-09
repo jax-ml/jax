@@ -2184,9 +2184,12 @@ class ShardMapTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      return shard_map(g,
+      x = jax.lax.with_sharding_constraint(x, NamedSharding(mesh, P(('i', 'j'))))  # Working
+      re = shard_map(g,
                        mesh, in_specs=P('i'), out_specs=P('i'),
                        check_rep=False, auto=frozenset({'j'}))(x)
+      re = jax.lax.with_sharding_constraint(re, NamedSharding(mesh, P(('i', 'j'))))  # All gathering + DS
+      return re
 
     print("Optimized IR: ", f.lower(x).compile().as_text())
     y = f(x)  # don't crash
