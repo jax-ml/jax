@@ -3335,7 +3335,6 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
       int64_t num_tiles = layout_in.tilesPerVreg(ctx.target_shape);
       if (needs_physical_broadcast ==
           std::array{true, false}) {  // Sublane broadcast
-        const int bitwidth = layout_in.bitwidth();
         const int packing = layout_in.packing();
         if (num_tiles != 1) {
           return op.emitOpError(
@@ -3347,39 +3346,41 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
         const int64_t subelement_offset = *offsets_in[0] % packing;
         const DenseI32ArrayAttr indices = builder.getDenseI32ArrayAttr(
             SmallVector<int32_t>(ctx.target_shape[0], sublane_offset));
-        src_tiles.Each([&](const absl::Span<const int64_t> src_idx,
-                           Value *const src_vreg) {
-          Value dst_vreg = *src_vreg;
-          // Replicate the value within each sublane.
-          if (packing != 1) {
-            auto vreg_int_ty = getNativeVregType(
-                builder.getIntegerType(bitwidth), ctx.target_shape);
-            auto src_vreg_int =
-                builder.create<tpu::BitcastVregOp>(vreg_int_ty, dst_vreg);
-            auto unpack_elem = builder.create<tpu::UnpackSubelementsOp>(
-                getNativeVregType(builder.getI32Type(), ctx.target_shape),
-                src_vreg_int, subelement_offset, tpu::PackFormat::kInterleaved);
-            SmallVector<Value> packed_vregs(packing, unpack_elem);
-            auto vreg_int = builder.create<tpu::PackSubelementsOp>(
-                vreg_int_ty, packed_vregs, tpu::PackFormat::kInterleaved);
-            dst_vreg = builder.create<tpu::BitcastVregOp>(dst_vreg.getType(),
-                                                          vreg_int);
-          }
-          dst_vreg = builder.create<tpu::GatherOp>(dst_vreg.getType(), dst_vreg,
-                                                   indices, 0);
-          SmallVector<int64_t> dst_starts(dst_tiles_implicit_shape.size());
-          SmallVector<int64_t> dst_limits(dst_tiles_implicit_shape.size());
-          for (int64_t i = 0; i < dst_tiles.num_dimensions(); ++i) {
-            if (i < expand_rank || is_logical_broadcast[i]) {
-              dst_starts[i] = 0;
-              dst_limits[i] = dst_tiles_implicit_shape[i];
-            } else {
-              dst_starts[i] = src_idx[i - expand_rank];
-              dst_limits[i] = dst_starts[i] + 1;
-            }
-          }
-          updateSlice<Value>(dst_tiles, dst_vreg, dst_starts, dst_limits);
-        });
+        const absl::Status status =
+            src_tiles.EachStatus([&](const absl::Span<const int64_t> src_idx,
+                                     Value *const src_vreg) {
+              Value dst_vreg = *src_vreg;
+              // Replicate the value within each sublane.
+              if (packing != 1) {
+                if (auto new_dst_vreg = broadcastSubelements(
+                        builder, cast<TypedValue<VectorType>>(dst_vreg),
+                        subelement_offset, ctx.target_shape,
+                        ctx.hardware_generation);
+                    succeeded(new_dst_vreg)) {
+                  dst_vreg = *new_dst_vreg;
+                } else {
+                  return absl::InternalError("");
+                }
+              }
+              dst_vreg = builder.create<tpu::GatherOp>(dst_vreg.getType(),
+                                                       dst_vreg, indices, 0);
+              SmallVector<int64_t> dst_starts(dst_tiles_implicit_shape.size());
+              SmallVector<int64_t> dst_limits(dst_tiles_implicit_shape.size());
+              for (int64_t i = 0; i < dst_tiles.num_dimensions(); ++i) {
+                if (i < expand_rank || is_logical_broadcast[i]) {
+                  dst_starts[i] = 0;
+                  dst_limits[i] = dst_tiles_implicit_shape[i];
+                } else {
+                  dst_starts[i] = src_idx[i - expand_rank];
+                  dst_limits[i] = dst_starts[i] + 1;
+                }
+              }
+              updateSlice<Value>(dst_tiles, dst_vreg, dst_starts, dst_limits);
+              return absl::OkStatus();
+            });
+        if (!status.ok()) {
+          return failure();
+        }
       } else if (needs_physical_broadcast ==
                  std::array{false, true}) {  // Lane broadcast
         TPU_ASSERT_EQ_OP(*(src_tiles.dimensions().end() - 1), 1);
