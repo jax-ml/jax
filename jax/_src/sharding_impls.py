@@ -772,15 +772,18 @@ class PositionalSharding(jsharding.Sharding):
     return f'{cls_name}({body}{mem}, shape={self.shape})'
 
   def reshape(self, *shape) -> PositionalSharding:
-    return self._remake(self._devices, self._ids.reshape(*shape))
+    return self._remake(self._devices, self._ids.reshape(*shape),
+                        memory_kind=self.memory_kind)
 
   def transpose(self, *axes) -> PositionalSharding:
-    return self._remake(self._devices, self._ids.transpose(*axes))
+    return self._remake(self._devices, self._ids.transpose(*axes),
+                        memory_kind=self.memory_kind)
   T = property(transpose)
 
   def replicate(self, axis=None, keepdims=True) -> PositionalSharding:
     new_ids = self._ids.sum(axis=axis, keepdims=keepdims)  # union
-    return self._remake(self._devices, new_ids)
+    return self._remake(self._devices, new_ids,
+                        memory_kind=self.memory_kind)
 
   def check_compatible_aval(self, aval_shape: Shape) -> None:
     if len(aval_shape) != len(self.shape) and not self.is_fully_replicated:
