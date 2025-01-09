@@ -142,6 +142,7 @@ class SdyArraySharding:
   mesh_shape: tuple[tuple[str, int], ...] | None
   dimension_shardings: Sequence[SdyDimSharding]
   logical_device_ids: tuple[int, ...] | None = None
+  replicated_axes: tuple[str, ...] = ()
 
   # NOTE: An MLIR context is required as a context manager.
   def build(self) -> sdy.TensorShardingAttr:
@@ -155,14 +156,17 @@ class SdyArraySharding:
           ldi)
     return sdy.TensorShardingAttr.get(
         mesh_attr,
-        [dim_sharding.build() for dim_sharding in self.dimension_shardings])
+        [dim_sharding.build() for dim_sharding in self.dimension_shardings],
+        replicated_axes=[sdy.AxisRefAttr.get(axis) for axis in self.replicated_axes])
 
   def __repr__(self):
     dim_sharding_repr = ', '.join(
         d._custom_repr() for d in self.dimension_shardings)
     device_id_repr = (f', device_ids={self.logical_device_ids}'
                       if self.logical_device_ids is not None else '')
-    return f"SdyArraySharding([{dim_sharding_repr}]{device_id_repr})"
+    rar = (f', replicated_axes={self.replicated_axes}'
+           if self.replicated_axes else '')
+    return f"SdyArraySharding([{dim_sharding_repr}]{device_id_repr}{rar})"
 
 
 @util.cache(max_size=4096, trace_context_in_key=False)
@@ -424,6 +428,23 @@ class NamedSharding(jsharding.Sharding):
         dim_shardings[i].axes = dim_spec
     return SdyArraySharding(self.mesh.shape_tuple, dim_shardings,
                             self._logical_device_ids)
+
+# TODO(yashkatariya): Upstream this into `_to_sdy_sharding` maybe with an extra
+# parameter to it `_to_sdy_sharding(self, ndim, modify_wrt_axis_types=False)`
+def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArraySharding, mesh):
+  if mesh._any_axis_auto:
+    dim_shardings, used_axes = [], []  # type: ignore
+    for d in sdy_sharding.dimension_shardings:
+      # TODO(yashkatariya): Maybe if any mesh axis is auto, mark all axes as open?
+      dim_shardings.append(SdyDimSharding(axes=[], is_closed=False)
+                           if not d.axes and d.is_closed else d)
+      used_axes.extend(d.axes)
+    remaining_axes = set(mesh.axis_names) - set(used_axes)
+    replicated_axes = tuple(r for r in remaining_axes
+                            if mesh._name_to_type[r] == mesh_lib.AxisTypes.User)
+    return SdyArraySharding(sdy_sharding.mesh_shape, dim_shardings,
+                            sdy_sharding.logical_device_ids, replicated_axes)
+  return sdy_sharding
 
 
 @util.cache(max_size=128, trace_context_in_key=False)

@@ -2467,8 +2467,7 @@ def multi_sharding_in_dim(ctx, ops, in_avals, out_aval):
     if in_aval.sharding == out_aval.sharding or in_aval.sharding is None:
       out.append(op)
     else:
-      proto = in_aval.sharding._to_xla_hlo_sharding(in_aval.ndim).to_proto()
-      out.append(mlir.lower_sharding_under_shit(ctx, op, out_aval, proto))
+      out.append(mlir.lower_sharding_under_shit(ctx, op, out_aval))
   return out
 
 

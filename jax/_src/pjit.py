@@ -2710,7 +2710,9 @@ ad.deflinear2(sharding_cast_p, _sharding_cast_transpose_rule)
 def _sharding_cast_hlo_lowering(ctx, x_node, *, src_sharding, dst_sharding):
   aval, = ctx.avals_in
   aval_out, = ctx.avals_out
-  proto = dst_sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
+  proto = (dst_sharding._to_sdy_sharding(aval.ndim)
+           if config.use_shardy_partitioner.value else
+           dst_sharding._to_xla_hlo_sharding(aval.ndim).to_proto())
   return [mlir.lower_sharding_under_shit(ctx, x_node, aval_out, proto)]
 mlir.register_lowering(sharding_cast_p, _sharding_cast_hlo_lowering)
 

@@ -4729,8 +4729,13 @@ def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
 
 
-@jtu.with_config(jax_use_shardy_partitioner=False)
 class ShardingInTypesTest(jtu.JaxTestCase):
+
+  def check_wsc_in_lowered(self, text):
+    if config.use_shardy_partitioner.value:
+      self.assertIn('sdy.sharding_constraint', text)
+    else:
+      self.assertIn('@Sharding', text)
 
   @jtu.with_user_mesh((2, 2), ('x', 'y'))
   def test_basic_mul(self, mesh):
@@ -4753,7 +4758,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     lowered_text = f.lower(arr).as_text()
     if config.use_shardy_partitioner.value:
-      self.assertIn('sdy.sharding_constraint', lowered_text)
+      self.assertEqual(lowered_text.count('sdy.sharding_constraint'), 3)
     else:
       self.assertEqual(lowered_text.count('@Sharding'), 3)
 
@@ -4834,7 +4839,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
 
     lowered = f.lower(arr1, arr2)
-    self.assertIn('@Sharding', lowered.as_text())
+    self.check_wsc_in_lowered(lowered.as_text())
 
     compiled_text = lowered.compile().as_text()
     if collective_name is not None and compiled_text is not None:
@@ -4971,7 +4976,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
 
     lowered = f.lower(arr)
-    self.assertIn('@Sharding', lowered.as_text())
+    self.check_wsc_in_lowered(lowered.as_text())
 
     compiled_text = lowered.compile().as_text()
     if reduce and compiled_text is not None:
@@ -5002,7 +5007,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
 
     lowered = f.lower(arr)
-    self.assertIn('@Sharding', lowered.as_text())
+    self.check_wsc_in_lowered(lowered.as_text())
 
     compiled_text = lowered.compile().as_text()
     if reduce and compiled_text is not None:
@@ -5044,7 +5049,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
 
     lowered_text = f.lower(arr).as_text()
-    self.assertIn('@Sharding', lowered_text)
+    self.check_wsc_in_lowered(lowered_text)
 
   @parameterized.named_parameters(
       ('2', 2),
@@ -5068,7 +5073,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_inp ** pow)
 
     lowered_text = f.lower(arr).as_text()
-    self.assertIn('@Sharding', lowered_text)
+    self.check_wsc_in_lowered(lowered_text)
 
   @jtu.with_user_mesh((1,), 'x')
   def test_broadcasting_nary_error(self, mesh):
@@ -5102,7 +5107,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, s)
 
     lowered_text = f.lower(arr).as_text()
-    self.assertIn('@Sharding', lowered_text)
+    self.check_wsc_in_lowered(lowered_text)
 
   @jtu.with_user_mesh((2, 2), ('x', 'y'))
   def test_jnp_array(self, mesh):
@@ -5137,7 +5142,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('y', 'z', 'x')))
 
     lowered_text = f.lower(arr).as_text()
-    self.assertIn('@Sharding', lowered_text)
+    self.check_wsc_in_lowered(lowered_text)
 
   @jtu.with_user_mesh((2, 2), ('x', 'y'))
   def test_broadcasted_iota_with_sharding(self, mesh):
@@ -5182,7 +5187,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
 
     lowered_text = f.lower(arr1, arr2).as_text()
-    self.assertIn('@Sharding', lowered_text)
+    self.check_wsc_in_lowered(lowered_text)
 
     @jax.jit
     def g(x, y):
@@ -5228,7 +5233,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None, 'y', None)))
 
     lowered_text = h.lower(arr1, arr2).as_text()
-    self.assertIn('@Sharding', lowered_text)
+    self.check_wsc_in_lowered(lowered_text)
 
     @jax.jit
     def h2(x, y):
@@ -5268,7 +5273,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_inp.reshape(dst_shape) * 2)
 
     lowered_text = f.lower(arr, new_s).as_text()
-    self.assertIn('@Sharding', lowered_text)
+    self.check_wsc_in_lowered(lowered_text)
 
     def g(x):
       out = f(x, new_s)
@@ -5295,7 +5300,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, arr1)
 
     lowered_text = f.lower(arr1 == arr2, arr1, arr2).as_text()
-    self.assertIn('@Sharding', lowered_text)
+    self.check_wsc_in_lowered(lowered_text)
 
     arr3 = jax.device_put(np_inp, NamedSharding(mesh, P('y', 'x')))
     with self.assertRaisesRegex(
@@ -5383,7 +5388,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = f(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
-    self.assertIn('@Sharding', f.lower(arr).as_text())
+    self.check_wsc_in_lowered(f.lower(arr).as_text())
 
     def g(x):
       out = f(x)
@@ -5414,7 +5419,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = f(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
-    self.assertIn('@Sharding', f.lower(arr).as_text())
+    self.check_wsc_in_lowered(f.lower(arr).as_text())
     self.assertArraysEqual(out, np.squeeze(np_inp, axis=2))
 
     def g(x):
@@ -5441,7 +5446,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = f(arr, ((2, 2, 0),), P('x'))
     self.assertArraysEqual(out, np.pad(np_inp, 2))
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
-    self.assertIn('@Sharding', f.lower(arr, ((2, 2, 0),), P('x')).as_text())
+    self.check_wsc_in_lowered(f.lower(arr, ((2, 2, 0),), P('x')).as_text())
 
     out = f(arr, ((0, 0, 0),), P('x'))
     self.assertArraysEqual(out, np_inp)
@@ -5489,7 +5494,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = f(arr1, arr2)
     self.assertEqual(out.sharding, s)
     self.assertArraysEqual(out, np.concatenate([arr1, arr2], axis=1))
-    self.assertIn('@Sharding', f.lower(arr1, arr2).as_text())
+    self.check_wsc_in_lowered(f.lower(arr1, arr2).as_text())
 
     out = f(arr1, arr2, method='lax')
     self.assertEqual(out.sharding, s)
@@ -5568,8 +5573,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out1.sharding, NamedSharding(mesh, P('y')))
     self.assertArraysEqual(out2, np.argmin(np_inp, axis=1))
     self.assertEqual(out2.sharding, NamedSharding(mesh, P('x')))
-
-    self.assertIn('@Sharding', f.lower(arr).as_text())
+    self.check_wsc_in_lowered(f.lower(arr).as_text())
 
   @jtu.with_user_mesh((2, 2), ('x', 'y'), {mesh_lib.AxisTypes.Auto: ('x', 'y')})
   def test_only_auto(self, mesh):
@@ -5618,7 +5622,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out = f(arr, arr2)
       self.assertEqual(out.sharding, NamedSharding(mesh2, P('x',)))
       lowered_text = f.lower(arr, arr2).as_text()
-      self.assertTrue(lowered_text.count("unspecified_dims") == 5)
+      if config.use_shardy_partitioner.value:
+        self.assertTrue(lowered_text.count("{?}") == 5)
+      else:
+        self.assertTrue(lowered_text.count("unspecified_dims") == 5)
 
     mesh3 = jtu.create_mesh((2, 2), ('x', 'y'),
                             axis_types={mesh_lib.AxisTypes.User: 'y',
@@ -5629,7 +5636,12 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out = f(arr, arr2)
       self.assertEqual(out.sharding, NamedSharding(mesh3, P('x',)))
       lowered_text = f.lower(arr, arr2).as_text()
-      self.assertTrue(lowered_text.count("unspecified_dims") == 4)
+      print(lowered_text)
+      if config.use_shardy_partitioner.value:
+        self.assertTrue(lowered_text.count("{?}") == 5)
+        self.assertIn('replicated={"y"}', lowered_text)
+      else:
+        self.assertTrue(lowered_text.count("unspecified_dims") == 4)
 
     with self.assertRaisesRegex(
         ValueError,
@@ -5784,7 +5796,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return ys
 
     f(arr)
-    self.assertIn('@Sharding', f.lower(arr).as_text())
+    self.check_wsc_in_lowered(f.lower(arr).as_text())
 
     with self.assertRaisesRegex(NotImplementedError, "split on sharded dims"):
       f(arr, sizes=(1, 1), axis=1)
@@ -5863,6 +5875,31 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, "PartitionSpec cannot contain axis names.*Auto"):
       g(arr1, arr2)
+
+  @jtu.with_user_mesh((2, 2, 2), ('x', 'y', 'z'),
+                      axis_types={AxisTypes.User: ('x', 'y'),
+                                  AxisTypes.Auto: 'z'})
+  def test_out_sharding_mix_axis_types(self, mesh):
+    np_inp = np.arange(16).reshape(4, 2, 2)
+    s = NamedSharding(mesh, P('x', None, None))
+    arr = jax.device_put(np_inp, s)
+
+    @jax.jit
+    def f(x):
+      y = x * 2
+      self.assertEqual(y.sharding.spec, P('x', None, None))
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x',)))
+    self.assertArraysEqual(out, np_inp * 2)
+
+    lowered_text = f.lower(arr).as_text()
+    if config.use_shardy_partitioner.value:
+      self.assertTrue(lowered_text.count(
+          '[{"x"}, {?}, {?}], replicated={"y"}') == 3)
+    else:
+      self.assertTrue(lowered_text.count("unspecified_dims=[1,2]") == 3)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
