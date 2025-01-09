@@ -109,7 +109,7 @@ def build_jaxlib_wheel(
         "--rocm_path=%s" % rocm_path,
         "--rocm_version=60",
         "--use_clang=%s" % use_clang,
-        "--verbose"
+        "--verbose",
     ]
 
     # Add clang path if clang is used.
@@ -317,7 +317,7 @@ def main():
             shutil.copy(whl, wheelhouse_dir)
 
     # Delete the 'dist' directory since it causes permissions issues
-    logging.info('Deleting dist, egg-info and cache directory')
+    logging.info("Deleting dist, egg-info and cache directory")
     shutil.rmtree(os.path.join(args.jax_path, "dist"))
     shutil.rmtree(os.path.join(args.jax_path, "jax.egg-info"))
     shutil.rmtree(os.path.join(args.jax_path, "jax", "__pycache__"))
