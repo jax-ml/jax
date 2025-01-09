@@ -527,8 +527,16 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
   if isinstance(axis_context, sharding_impls.ShardingContext):
     devices = axis_context.device_assignment
     if devices is None:
-      raise AssertionError(
-          'Please file a bug at https://github.com/jax-ml/jax/issues')
+        raise AssertionError(
+            "You may be using a primitive in the context of a custom partitioning specialization "
+            "that requires devices during lowering. However, no device assignment was found. "
+            "To fix this issue, ensure that the primitive is added to:\n"
+            "    dispatch.prim_requires_devices_during_lowering\n"
+            "For example:\n"
+            "    dispatch.prim_requires_devices_during_lowering.add(primitive_p)\n"
+            "If you believe this is a bug, please report it at: https://github.com/google/jax/issues"
+        )
+
     am = axis_context.abstract_mesh
     if am is not None:
       mesh = mesh_lib.Mesh(np.array(devices).reshape(am.axis_sizes),
