@@ -1,4 +1,4 @@
-name: ROCm GPU CI
+name: ROCm GPU Post-Merge Check
 
 on:
   # Trigger the workflow after a push into the main branch
