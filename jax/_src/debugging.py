@@ -134,11 +134,13 @@ def debug_callback_lowering(ctx, *args, effect, callback, **params):
 
   axis_context = ctx.module_context.axis_context
   if (isinstance(axis_context, sharding_impls.SPMDAxisContext) and
-        set(axis_context.manual_axes) == set(axis_context.mesh.axis_names)):
-    # If we have fully manual sharding during lowering, that means the JAX
-    # program has per-device semantics, so we run the callback on each device.
-    sharding = xc.OpSharding()
-    sharding.type = xc.OpSharding.Type.MANUAL
+        axis_context.manual_axes):
+      # If we have fully manual sharding during lowering, that means the JAX
+      # program has per-device semantics, so we run the callback on each device.
+      # If we have partial auto sharding, we should also allow running debug
+      # callback with the data shard each device holds.
+      sharding = xc.OpSharding()
+      sharding.type = xc.OpSharding.Type.MANUAL
   elif isinstance(
       axis_context,
       (sharding_impls.ShardingContext, sharding_impls.SPMDAxisContext),
