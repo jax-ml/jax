@@ -729,6 +729,20 @@ class PallasCallTest(PallasBaseTest):
     )
     self.assertAllClose(dot_kernel(x, y), expected, atol=5e-2, rtol=5e-3)
 
+  @parameterized.parameters(jnp.int4, jnp.uint4)
+  def test_subbyte_load(self, dtype):
+    if not jtu.test_device_matches(["gpu"]):
+      self.skipTest("`[u]int4` loads only supported on GPU.")
+
+    x = jnp.arange(-128, 128, dtype=jnp.int8)
+
+    @functools.partial(self.pallas_call, out_shape=x)
+    def copy_kernel(x_ref, o_ref):
+      o_ref[()] = x_ref[()].astype(jnp.int8)
+
+    expected = x.astype(dtype).astype(jnp.int8)
+    self.assertAllClose(copy_kernel(x.astype(dtype)), expected)
+
 
 class PallasCallInterpretTest(PallasCallTest):
   INTERPRET = True
