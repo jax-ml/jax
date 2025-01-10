@@ -555,19 +555,13 @@ class OpsTest(PallasBaseTest):
             "Not supported: TPU generation doesn't support this cast."
         )
     if jtu.test_device_matches(["tpu"]) and jtu.get_tpu_version() < 4:
-      if (from_dtype in {"int32", "uint32", "float32", "bfloat16", "int8"} and
+      if (from_dtype in {"int32", "uint32", "float32", "bfloat16", "int16", "int8"} and
           to_dtype in {"int16", "int8", "uint16", "uint8"}):
         self.skipTest(
             "Not supported: TPU generation doesn't support this cast."
         )
 
     # TODO(sharadmv,apaszke): add support for the following casts
-    if from_dtype == "int16" and to_dtype == "uint8":
-      self.skipTest("Not supported: only 32-bit trunc supported")
-    if from_dtype == "int16" and to_dtype == "int8":
-      self.skipTest("Not supported: bad canonicalization")
-    if from_dtype == "int8" and to_dtype == "int16":
-      self.skipTest("Not supported: bad canonicalization")
     if from_dtype == "bool" and to_dtype in {"int16", "int8", "uint16", "uint8"}:
       self.skipTest("Not supported: cannot extend to sub-32 bit types")
 
