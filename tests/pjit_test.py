@@ -1198,7 +1198,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     x = jnp.array([4.2], dtype=jnp.float32)
     jaxpr = jax.make_jaxpr(g)(x)
     self.assertEqual(
-        jaxpr.pretty_print(),
+        jaxpr.pretty_print(use_color=False),
         textwrap.dedent("""
             let lambda = { lambda ; a:f32[1]. let b:f32[1] = integer_pow[y=2] a in (b,) } in
             { lambda ; c:f32[1]. let
@@ -1225,7 +1225,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     x = jnp.array([4.2], dtype=jnp.float32)
     jaxpr = jax.make_jaxpr(g)(x, x)
     self.assertEqual(
-        jaxpr.pretty_print(),
+        jaxpr.pretty_print(use_color=False),
         textwrap.dedent("""
             let f = { lambda ; a:f32[1] b:f32[1]. let c:f32[1] = mul b a in (c,) } in
             { lambda ; d:f32[1] e:f32[1]. let
@@ -3462,6 +3462,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     # Test second order autodiff with src argument specified in device_put.
     jtu.check_grads(g, (arr,), order=2)
 
+  @jtu.thread_unsafe_test()  # cache_info isn't thread-safe
   def test_pjit_out_sharding_preserved(self):
     if config.use_shardy_partitioner.value:
       raise unittest.SkipTest("Shardy doesn't support PositionalSharding")

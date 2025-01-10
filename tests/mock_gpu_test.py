@@ -29,6 +29,7 @@ NUM_SHARDS = 4
 
 
 @jtu.with_global_config(mock_num_gpu_processes=NUM_SHARDS)
+@jtu.thread_unsafe_test_class()
 class MockGPUTest(jtu.JaxTestCase):
 
   def setUp(self):

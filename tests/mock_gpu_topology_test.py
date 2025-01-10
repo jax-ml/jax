@@ -28,6 +28,7 @@ NUM_HOSTS_PER_SLICE = 4
 @jtu.with_global_config(
   jax_mock_gpu_topology=f"{NUM_SLICES}x{NUM_HOSTS_PER_SLICE}x1",
   jax_cuda_visible_devices="0")
+@jtu.thread_unsafe_test_class()
 class MockGPUTopologyTest(jtu.JaxTestCase):
 
   def setUp(self):

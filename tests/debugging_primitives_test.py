@@ -899,6 +899,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       f(jnp.arange(2))
       jax.effects_barrier()
 
+@jtu.thread_unsafe_test_class()  # logging isn't thread-safe
 class VisualizeShardingTest(jtu.JaxTestCase):
 
   def _create_devices(self, shape):

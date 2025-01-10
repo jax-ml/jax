@@ -11104,6 +11104,7 @@ class CleanupTest(jtu.JaxTestCase):
 
 class EnvironmentInfoTest(jtu.JaxTestCase):
   @parameterized.parameters([True, False])
+  @jtu.thread_unsafe_test()
   def test_print_environment_info(self, return_string):
     # Flush stdout buffer before checking.
     sys.stdout.flush()

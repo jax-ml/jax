@@ -271,6 +271,7 @@ class CacheKeyTest(jtu.JaxTestCase):
       self.assertNotEqual(hash_1, hash_2)
 
   @parameterized.parameters([False, True])
+  @jtu.thread_unsafe_test()  # env vars are not thread-safe
   def test_identical_computations_different_metadata(self, include_metadata):
     f = lambda x, y: lax.mul(lax.add(x, y), 2)
     g = lambda x, y: lax.mul(lax.add(x, y), 2)
@@ -287,6 +288,7 @@ class CacheKeyTest(jtu.JaxTestCase):
       key2 = cache_key.get(computation2, devices, compile_options, backend)
     self.assertEqual(include_metadata, key1 != key2)
 
+  @jtu.thread_unsafe_test()  # env vars are not thread-safe
   def test_xla_flags(self):
     if jtu.is_device_tpu(version=4):
       raise unittest.SkipTest("TODO(b/240151176)")
@@ -333,6 +335,7 @@ class CacheKeyTest(jtu.JaxTestCase):
         del os.environ["XLA_FLAGS"]
       sys.argv = orig_argv
 
+  @jtu.thread_unsafe_test()  # env vars are not thread-safe
   def test_libtpu_init_args(self):
     if jtu.is_device_tpu(version=4):
       raise unittest.SkipTest("TODO(b/240151176)")

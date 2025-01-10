@@ -859,6 +859,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @parameterized.parameters([True, False])
   @jtu.run_on_devices('cpu', 'gpu', 'tpu')
+  @jtu.thread_unsafe_test()
   def test_debug_print_jit(self, jit):
     if config.use_shardy_partitioner.value:
       self.skipTest(

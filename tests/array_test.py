@@ -838,6 +838,7 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertListEqual(hlo_sharding.tile_assignment_devices(),
                          [0, 2, 4, 6, 1, 3, 5, 7])
 
+  @jtu.thread_unsafe_test()  # cache_info isn't thread-safe
   def test_util_clear_cache(self):
     mesh = jtu.create_mesh((1,), ('x',))
     s = NamedSharding(mesh, P())
