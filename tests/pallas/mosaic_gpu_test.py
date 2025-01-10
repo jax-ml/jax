@@ -1598,6 +1598,74 @@ class WarpSpecializedPipelineTest(PallasTest):
     reference = x + y
     np.testing.assert_allclose(out, reference, atol=1e-4)
 
+  def test_carry_accumulate(self, m=256, n=256, num_compute_wgs=2):
+    blk_m = blk_n = 64
+    x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float32)
+    acc_init = jnp.zeros((blk_m, blk_n), dtype=jnp.float32)
+
+    def _scoped(acc_smem, x_gmem, acc_gmem):
+      def _compute_thread():
+        # Cast the init value to the same layout as x_smem, so the pipeline loop
+        # carry has a constant signature.
+        o_acc = plgpu.layout_cast(
+          jnp.full((blk_m, blk_n,), 0, dtype=jnp.float32),
+          plgpu.Layout.WG_STRIDED((blk_m, blk_n), vec_size=2))
+        carry_init = (o_acc,)
+        # Pass control to the pipeline emitter and return the final carry.
+        final_carry = (yield carry_init)
+        o_final, = final_carry
+        # Note that both compute WGs are doing identical work so the potential
+        # race condition on the store here won't affect the result.
+        acc_smem[...] = o_final
+        plgpu.commit_smem()
+        plgpu.copy_smem_to_gmem(acc_smem, acc_gmem)
+        plgpu.wait_smem_to_gmem(0)
+
+      def tiled_acc_kernel(x_smem, carry):
+        o_carry, = carry
+        new_carry = x_smem[...] + o_carry
+        return (new_carry,)
+
+      pipeline = mgpu_pipeline.emit_pipeline_warp_specialized(
+          tiled_acc_kernel,
+          grid=(m // blk_m, n // blk_n),
+          max_concurrent_steps=2,
+          num_compute_wgs=num_compute_wgs,
+          memory_registers=40,
+          wg_axis="wg",
+          carry_coroutine=_compute_thread,
+          in_specs=[
+              plgpu.GPUBlockSpec(
+                  block_shape=(blk_m, blk_n),
+                  index_map=lambda i, j: (i, j),
+                  transforms=[]),
+          ],
+          out_specs=[],
+      )
+      pipeline(x_gmem)
+
+    mesh = plgpu.GPUMesh(
+        grid=(1,),
+        num_threads=num_compute_wgs + 1,
+        axis_names=("_", "wg",),
+    )
+    def run(refs):
+      x_ref, acc_ref = refs
+      @pl.core_map(mesh)
+      def _kernel_entry():
+        pl.run_scoped(
+            functools.partial(_scoped, x_gmem=x_ref, acc_gmem=acc_ref),
+            plgpu.SMEM((blk_m, blk_n), jnp.float32)
+        )
+    @jax.jit
+    def run_function(x, acc):
+      _, out_acc = pl.run_state(run)((x, acc))
+      return out_acc
+    out_acc = run_function(x, acc_init)
+    ref = jnp.sum(jnp.stack(np.split(x, m // blk_m, axis=0)), axis=0)
+    ref = jnp.sum(jnp.stack(np.split(ref, n // blk_n, axis=1)), axis=0)
+    np.testing.assert_allclose(out_acc, ref, atol=1e-4)
+
 
 class CoreMapTest(PallasTest):
 

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import dataclasses
 import enum
 import math
 from typing import Any, Literal
@@ -632,9 +633,22 @@ def _wgmma_accumulator_deref_lowering(ctx: lowering.LoweringRuleContext, acc):
 
 class Layout(enum.Enum):
   #: [m, n] matrix, where m % 64 == 0 == n % 8.
-  WGMMA = mgpu.WGMMA_LAYOUT
+  WGMMA = mgpu.WGMMAFragLayout
   #: [m] matrix, where m % 64 == 0.
-  WGMMA_ROW = mgpu.WGMMA_ROW_LAYOUT
+  WGMMA_ROW = mgpu.WGMMARowFragLayout
+
+  WG_SPLAT = mgpu.WGSplatFragLayout
+  WG_STRIDED = mgpu.WGStridedFragLayout
+
+  def __call__(self, *args, **kwargs) -> ParameterizedLayout:
+    return ParameterizedLayout(self, args, kwargs)
+
+
+@dataclasses.dataclass(frozen=True)
+class ParameterizedLayout:
+  layout_cls: Layout
+  args: Sequence[Any]
+  kwargs: Any
 
 
 layout_cast_p = jax_core.Primitive("layout_cast")
@@ -649,10 +663,17 @@ def _layout_cast_abstract_eval(x, new_layout):
 @lowering.register_lowering_rule(layout_cast_p)
 def _layout_cast_lowering(ctx: lowering.LoweringRuleContext, x, *, new_layout):
   del ctx  # Unused.
-  return x.to_layout(new_layout.value)
+  if isinstance(new_layout, Layout):
+    return x.to_layout(new_layout.value())
+  elif isinstance(new_layout, ParameterizedLayout):
+    layout = new_layout.layout_cls(*new_layout.args,
+                                   **new_layout.kwargs)
+    return x.to_layout(layout)
+  else:
+    raise TypeError(f"Unsupported layout: {new_layout}")
 
 
-def layout_cast(x: Any, new_layout: Layout):
+def layout_cast(x: Any, new_layout: Layout | ParameterizedLayout):
   """Casts the layout of the given array."""
   return layout_cast_p.bind(x, new_layout=new_layout)
 

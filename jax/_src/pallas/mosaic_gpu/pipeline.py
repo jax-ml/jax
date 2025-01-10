@@ -336,6 +336,7 @@ def emit_pipeline_warp_specialized(
     max_concurrent_steps: int = 2,
     wg_axis: str,
     num_compute_wgs: int,
+    carry_coroutine: Any | None = None,
     memory_thread_idx: int | None = None,
 ):
   """Creates a function to emit a warp-specialized pipeline.
@@ -351,12 +352,16 @@ def emit_pipeline_warp_specialized(
       active concurrently. Defaults to 2.
     wg_axis: The axis name for the warp group axis.
     num_compute_wgs: The number of compute warpgroups
+    carry_coroutine: If specified, enables carries in the pipeline.
+      The signature of the body function will be modified such that the last
+      argument will be the current carry and it must return the next carry.
+      The coroutine itself should yield the initial carry, and the
+      yield statement will return the final value of the carry.
     memory_thread_idx: The index of the memory thread. If not specified,
       defaults to the last thread.
   """
   # TODO(justinfu): Factor out common code between warp-specialized and
   # normal pipelines.
-  # TODO(justinfu): Allow body to return carries.
   # TODO(justinfu): Allow passing consumed_barrier into body.
 
   if memory_thread_idx is None:
@@ -365,6 +370,8 @@ def emit_pipeline_warp_specialized(
     # TODO(justinfu): Indexing calculations for buffers assume the memory
     # thread is the last thread.
     raise NotImplementedError("Memory thread must be the last thread.")
+
+  has_carry = carry_coroutine is not None
 
   # Trace the index maps to determine if they depend on the grid.
   # Grid-independent values will not be multiple-buffered.
@@ -417,7 +424,6 @@ def emit_pipeline_warp_specialized(
           gpu_core.Barrier(
           num_arrivals=1,
           num_barriers=num_barriers))
-
     return pl.run_scoped(
         functools.partial(
             scoped_pipeline,
@@ -461,7 +467,7 @@ def emit_pipeline_warp_specialized(
           action="increase")
 
       def compute_loop_body(step, carry):
-        indices, last_store_slices = carry
+        indices, last_store_slices, prev_body_carry = carry
         slot = step % max_concurrent_steps
         # Wait for the current GMEM->SMEM copies to complete.
         for in_barrier, has_seq_dim in zip(
@@ -479,7 +485,12 @@ def emit_pipeline_warp_specialized(
           for bref in it.chain(in_brefs, out_brefs):
             buf_slot = _get_slot(slot, ~bref.is_index_invariant)
             body_refs.append(bref.get_ref_for_slot(buf_slot))
-          body(*body_refs)
+
+          if has_carry:
+            next_body_carry = body(*body_refs, prev_body_carry)
+          else:
+            body(*body_refs)
+            next_body_carry = None
         gpu_primitives.barrier_arrive(consumed_barrier_ref.at[slot])
         # Copy the output from SMEM to GMEM.
         if not all(bref.is_index_invariant for bref in out_brefs):
@@ -504,7 +515,7 @@ def emit_pipeline_warp_specialized(
                         indices,
                         predicate=slices_changed)
         next_indices = _inc_grid_by_1(indices, grid)
-        return (next_indices, new_store_slices)
+        return (next_indices, new_store_slices, next_body_carry)
       init_indices = (jnp.asarray(0, dtype=lax.dtype(0)),) * len(grid)
       # TODO(justinfu): Only store base pointer instead of all indices.
       last_store_slices = [
@@ -513,10 +524,27 @@ def emit_pipeline_warp_specialized(
           else (_Slice(-1, -1),) * len(bref.spec.block_shape)
           for bref in out_brefs
       ]
-      last_indices, _ = lax.fori_loop(0,
+
+      if has_carry:
+        _carry = carry_coroutine()
+        try:
+          carry_init = next(_carry)
+        except StopIteration:
+          raise ValueError("carry_coroutine must yield the initial carry.")  # pylint: disable=raise-missing-from
+      else:
+        _carry = None
+        carry_init = None
+      init_loop_carry = (init_indices, last_store_slices, carry_init)
+      last_indices, _, final_body_carry = lax.fori_loop(0,
                     num_pipeline_steps,
                     compute_loop_body,
-                    (init_indices, last_store_slices))
+                    init_loop_carry)
+      if has_carry:
+        try:
+          _carry.send(final_body_carry)  # pytype: disable=attribute-error
+          raise ValueError("carry_coroutine must only yield once.")
+        except StopIteration:
+          pass
 
       # Handle index_invariant outputs after the loop. They are not
       # written in the main pipeline loop.
@@ -529,7 +557,6 @@ def emit_pipeline_warp_specialized(
 
       # Finalize the pipeline.
       gpu_primitives.wait_smem_to_gmem(0)
-      return
 
     # The memory thread executes this block which issues all pipelined DMAs.
     def memory_block():

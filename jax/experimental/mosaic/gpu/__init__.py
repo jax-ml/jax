@@ -51,6 +51,8 @@ from .fragmented_array import (
     FragmentedLayout as FragmentedLayout,
     WGMMA_LAYOUT as WGMMA_LAYOUT,
     WGMMA_ROW_LAYOUT as WGMMA_ROW_LAYOUT,
+    WGMMAFragLayout as WGMMAFragLayout,
+    WGMMARowFragLayout as WGMMARowFragLayout,
     WGSplatFragLayout as WGSplatFragLayout,
     WGStridedFragLayout as WGStridedFragLayout,
     optimization_barrier as optimization_barrier,
