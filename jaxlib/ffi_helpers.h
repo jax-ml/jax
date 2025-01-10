@@ -184,6 +184,19 @@ auto AllocateScratchMemory(std::size_t size)
   return std::unique_ptr<ValueType[]>(new ValueType[size]);
 }
 
+template <typename T>
+inline absl::StatusOr<T*> AllocateWorkspace(
+    ::xla::ffi::ScratchAllocator& scratch, int64_t size,
+    std::string_view name) {
+  auto maybe_workspace = scratch.Allocate(sizeof(T) * size);
+  if (!maybe_workspace.has_value()) {
+    return absl::Status(
+        absl::StatusCode::kResourceExhausted,
+        absl::StrFormat("Unable to allocate workspace for %s", name));
+  }
+  return static_cast<T*>(maybe_workspace.value());
+}
+
 }  // namespace jax
 
 #endif  // JAXLIB_FFI_HELPERS_H_

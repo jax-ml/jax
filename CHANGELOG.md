@@ -16,6 +16,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* New Features
+  * {func}`jax.lax.linalg.qr`, and {func}`jax.scipy.linalg.qr`, now support
+    column-pivoting on CPU and GPU. See {jax-issue}`#20282` and
+    {jax-issue}`#25955` for more details.
+
 ## jax 0.5.0 (Jan 17, 2025)
 
 As of this release, JAX now uses
