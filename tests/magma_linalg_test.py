@@ -114,5 +114,34 @@ class MagmaLinalgTest(jtu.JaxTestCase):
       hlo = jax.jit(partial(lax_linalg.eig, use_magma=True)).lower(a).as_text()
       self.assertIn('magma = "on"', hlo)
 
+  @jtu.sample_product(
+    shape=[(3, 4), (3, 3), (4, 3), (4, 3)],
+    dtype=float_types + complex_types,
+  )
+  @jtu.run_on_devices("gpu")
+  def testPivotedQrFactorization(self, shape, dtype):
+    if jtu.jaxlib_version() <= (0, 5, 0):
+      self.skipTest("qr with `pivoting=True` on GPU requires jaxlib version > 0.5.0")
+    if not gpu_solver.has_magma():
+      self.skipTest("MAGMA is not installed or can't be loaded.")
+    rng = jtu.rand_default(self.rng())
+
+    lax_func = partial(lax_linalg.qr, full_matrices=True, pivoting=True, use_magma=True)
+    sp_func = partial(jax.scipy.linalg.qr, mode="full", pivoting=True)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(sp_func, lax_func, args_maker, rtol=1E-5, atol=1E-5)
+    self._CompileAndCheck(lax_func, args_maker)
+
+  def testPivotedQrFactorizationMagmaConfig(self):
+    if jtu.jaxlib_version() <= (0, 5, 0):
+      self.skipTest("qr with `pivoting=True` on GPU requires jaxlib version > 0.5.0")
+    if not gpu_solver.has_magma():
+      self.skipTest("MAGMA is not installed or can't be loaded.")
+    rng = jtu.rand_default(self.rng())
+    a = rng((5, 5), np.float32)
+    with config.gpu_use_magma("on"):
+      hlo = jax.jit(partial(lax_linalg.qr, pivoting=True, use_magma=True)).lower(a).as_text()
+      self.assertIn('magma = "on"', hlo)
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
