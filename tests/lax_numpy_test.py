@@ -4038,6 +4038,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     mode=['wrap', 'clip', 'raise'],
   )
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  #lint TODO(ajbrock): eyyy I'm workin 'ere
   def testRavelMultiIndex(self, shape, order, mode):
     # generate indices in each dimension with a few out of bounds.
     rngs = [jtu.rand_int(self.rng(), low=-1, high=dim + 1)
