@@ -1812,8 +1812,21 @@ class APITest(jtu.JaxTestCase):
       self.assertIsInstance(x, jax.Array)
       self.assertNotIsInstance(x, np.ndarray)
       return x + 2
-    jit(f)(3)
-    jax.vmap(f)(np.arange(3))
+    result = jit(f)(3)
+    self.assertIsInstance(result, jax.Array)
+
+    result = jax.vmap(f)(np.arange(3))
+    self.assertIsInstance(result, jax.Array)
+
+  def test_numpy_input_with_trivial_function(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/25745
+    def f(x):
+      return x
+    jit_result = jit(f)(3)
+    self.assertIsInstance(jit_result, jax.Array)
+
+    vmap_result = jax.vmap(f)(np.arange(3))
+    self.assertIsInstance(vmap_result, jax.Array)
 
   def test_device_put_and_get(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")

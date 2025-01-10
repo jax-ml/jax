@@ -987,6 +987,10 @@ def vmap(fun: F,
     f = lu.wrap_init(fun)
     flat_fun, out_tree = batching.flatten_fun_for_vmap(f, in_tree)
     in_axes_flat = flatten_axes("vmap in_axes", in_tree, (in_axes, 0), kws=True)
+    args_flat = [lax_internal.asarray(arg)
+                 if isinstance(arg, np.ndarray) and ax is not None
+                 else arg
+                 for arg, ax in zip(args_flat, in_axes_flat)]
     axis_size_ = (axis_size if axis_size is not None else
                   _mapped_axis_size(fun, in_tree, args_flat, in_axes_flat, "vmap"))
     try:
