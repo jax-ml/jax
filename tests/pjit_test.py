@@ -5636,7 +5636,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out = f(arr, arr2)
       self.assertEqual(out.sharding, NamedSharding(mesh3, P('x',)))
       lowered_text = f.lower(arr, arr2).as_text()
-      print(lowered_text)
       if config.use_shardy_partitioner.value:
         self.assertTrue(lowered_text.count("{?}") == 5)
         self.assertIn('replicated={"y"}', lowered_text)
