@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import enum
-import functools
 from functools import partial
 import math
 from typing import Any, Literal, TypeVar, overload
@@ -2507,16 +2506,69 @@ mlir.register_lowering(
 mlir.register_lowering(svd_p, _svd_tpu_lowering_rule)
 
 
-def _tridiagonal_solve_gpu_lowering(lowering, ctx, dl, d, du, b, *, m, n, ldb, t):
+_tridiagonal_solve_dtype_rule = partial(
+    naryop_dtype_rule, _input_dtype, (_float | _complex, _float | _complex,
+                                      _float | _complex, _float | _complex),
+    'tridiagonal_solve')
+
+
+def _tridiagonal_solve_shape_rule(dl, d, du, b):
+  if b.ndim < 2:
+    raise TypeError(
+        f"tridiagonal_solve requires b.ndim to be at least 2, got {b.ndim}.")
+  if dl.shape != d.shape or dl.shape != du.shape:
+    raise TypeError(
+        "tridiagonal_solve requires that all diagonal arguments have the same "
+        "shape.")
+  if dl.shape != b.shape[:-1]:
+    raise TypeError(
+        "tridiagonal_solve requires that the leading ndim-1 dimensions of b "
+        "equal the dimensions of the diagonal arguments.")
+  return b.shape
+
+
+def _tridiagonal_solve_gpu_lowering(lowering, ctx, dl, d, du, b):
   _, _, _, b_aval = ctx.avals_in
+  if b_aval.dtype != np.float32 and b_aval.dtype != np.float64:
+    raise NotImplementedError(
+        "tridiagonal_solve is only implemented for float32 and float64 on GPU.")
+  m, n = b_aval.shape[-2:]
   b_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, b_aval.shape)
   return [lowering(
-      dl, d, du, b, m=m, n=n, ldb=ldb, t=dtypes.canonicalize_dtype(t),
+      dl, d, du, b, m=m, n=n, ldb=m, t=b_aval.dtype,
       b_shape_vals=b_shape_vals)]
 
 
-def _tridiagonal_solve_transpose_rule(cotangent, dl, d, du, b, *, m, n, ldb, t):
-  del m, n, ldb, t
+def _tridiagonal_solve_cpu_lowering(ctx, dl, d, du, b, **kwargs):
+  if jaxlib_version <= (0, 4, 38):
+    rule = mlir.lower_fun(_tridiagonal_solve_jax, multiple_results=False)
+    return rule(ctx, dl, d, du, b, **kwargs)
+  b_aval = ctx.avals_in[-1]
+  batch_dims = b_aval.shape[:-2]
+  target_name = lapack.prepare_lapack_call("gtsv_ffi", b_aval.dtype)
+  nb = len(batch_dims)
+  b_layout = (nb, nb + 1) + tuple(range(nb - 1, -1, -1))
+  d_layout = tuple(range(nb, -1, -1))
+  layouts = [d_layout, d_layout, d_layout, b_layout]
+  info_layout = tuple(range(nb - 1, -1, -1))
+  rule = ffi.ffi_lowering(target_name, operand_layouts=layouts,
+                          result_layouts=layouts + [info_layout],
+                          operand_output_aliases={0: 0, 1: 1, 2: 2, 3: 3})
+  info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
+  sub_ctx = ctx.replace(avals_out=list(ctx.avals_in) + [info_aval])
+  *_, b_out, info = rule(sub_ctx, dl, d, du, b)
+  zeros = mlir.full_like_aval(ctx, 0, info_aval)
+  ok = mlir.compare_hlo(info, zeros, "EQ", "SIGNED")
+  select_b_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
+  return [_broadcasting_select_hlo(
+      ctx,
+      mlir.broadcast_in_dim(ctx, ok, select_b_aval,
+                            broadcast_dimensions=range(len(batch_dims))),
+      select_b_aval,
+      b_out, b_aval, _nan_like_hlo(ctx, b_aval), b_aval)]
+
+
+def _tridiagonal_solve_transpose_rule(cotangent, dl, d, du, b):
   # Tridiagonal solve is nonlinear in the tridiagonal arguments and linear
   # otherwise.
   assert not (ad.is_undefined_primal(dl) or ad.is_undefined_primal(d) or
@@ -2528,9 +2580,7 @@ def _tridiagonal_solve_transpose_rule(cotangent, dl, d, du, b, *, m, n, ldb, t):
   return [None, None, None, cotangent_b]
 
 
-def _tridiagonal_solve_batching_rule(
-    batched_args, batch_dims, *, m, n, ldb, t):
-  del m, n, ldb, t
+def _tridiagonal_solve_batching_rule(batched_args, batch_dims):
   dl, d, du, b = batched_args
   bdl, bd, bdu, bb = batch_dims
   if (bdl is batching.not_mapped and
@@ -2552,16 +2602,17 @@ def _tridiagonal_solve_batching_rule(
     return tridiagonal_solve(dl, d, du, b), 0
 
 
-tridiagonal_solve_p = Primitive('tridiagonal_solve')
-tridiagonal_solve_p.multiple_results = False
-tridiagonal_solve_p.def_impl(
-    functools.partial(dispatch.apply_primitive, tridiagonal_solve_p))
-tridiagonal_solve_p.def_abstract_eval(lambda dl, d, du, b, *, m, n, ldb, t: b)
+tridiagonal_solve_p = standard_primitive(
+    _tridiagonal_solve_shape_rule, _tridiagonal_solve_dtype_rule,
+    'tridiagonal_solve')
 ad.primitive_transposes[tridiagonal_solve_p] = _tridiagonal_solve_transpose_rule
 batching.primitive_batchers[tridiagonal_solve_p] = _tridiagonal_solve_batching_rule
 # TODO(tomhennigan): Consider AD rules using lax.custom_linear_solve?
 
-
+mlir.register_lowering(
+    tridiagonal_solve_p,
+    _tridiagonal_solve_cpu_lowering,
+    platform='cpu')
 mlir.register_lowering(
     tridiagonal_solve_p,
     partial(_tridiagonal_solve_gpu_lowering, gpu_sparse.cuda_gtsv2),
@@ -2645,28 +2696,7 @@ def tridiagonal_solve(dl: Array, d: Array, du: Array, b: Array) -> Array:
   Returns:
     Solution ``X`` of tridiagonal system.
   """
-  if dl.shape != d.shape or d.shape != du.shape:
-    raise ValueError(
-        f'dl={dl.shape}, d={d.shape} and du={du.shape} must all be `[m]`')
-
-  m = dl.shape[-1]
-  if m < 3:
-    raise ValueError(f'm ({m}) must be >= 3')
-
-  ldb = b.shape[-2]
-  n = b.shape[-1]
-  if ldb < max(1, m):
-    raise ValueError(f'Leading dimension of b={ldb} must be ≥ max(1, {m})')
-
-  if dl.dtype != d.dtype or d.dtype != du.dtype or du.dtype != b.dtype:
-    raise ValueError(f'dl={dl.dtype}, d={d.dtype}, du={du.dtype} and '
-                     f'b={b.dtype} must be the same dtype,')
-
-  t = dl.dtype
-  if t not in (np.float32, np.float64):
-    raise ValueError(f'Only f32/f64 are supported, got {t}')
-
-  return tridiagonal_solve_p.bind(dl, d, du, b, m=m, n=n, ldb=ldb, t=t)
+  return tridiagonal_solve_p.bind(dl, d, du, b)
 
 
 # Schur Decomposition

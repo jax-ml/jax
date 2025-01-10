@@ -166,6 +166,11 @@ void GetLapackKernelsFromScipy() {
   AssignKernelFn<TridiagonalReduction<DataType::C64>>(lapack_ptr("chetrd"));
   AssignKernelFn<TridiagonalReduction<DataType::C128>>(lapack_ptr("zhetrd"));
 
+  AssignKernelFn<TridiagonalSolver<DataType::F32>>(lapack_ptr("sgtsv"));
+  AssignKernelFn<TridiagonalSolver<DataType::F64>>(lapack_ptr("dgtsv"));
+  AssignKernelFn<TridiagonalSolver<DataType::C64>>(lapack_ptr("cgtsv"));
+  AssignKernelFn<TridiagonalSolver<DataType::C128>>(lapack_ptr("zgtsv"));
+
   initialized = true;
 }
 
@@ -287,6 +292,10 @@ nb::dict Registrations() {
   dict["lapack_dgehrd_ffi"] = EncapsulateFunction(lapack_dgehrd_ffi);
   dict["lapack_cgehrd_ffi"] = EncapsulateFunction(lapack_cgehrd_ffi);
   dict["lapack_zgehrd_ffi"] = EncapsulateFunction(lapack_zgehrd_ffi);
+  dict["lapack_sgtsv_ffi"] = EncapsulateFunction(lapack_sgtsv_ffi);
+  dict["lapack_dgtsv_ffi"] = EncapsulateFunction(lapack_dgtsv_ffi);
+  dict["lapack_cgtsv_ffi"] = EncapsulateFunction(lapack_cgtsv_ffi);
+  dict["lapack_zgtsv_ffi"] = EncapsulateFunction(lapack_zgtsv_ffi);
 
   return dict;
 }

@@ -2050,6 +2050,52 @@ template struct TridiagonalReduction<ffi::DataType::F64>;
 template struct TridiagonalReduction<ffi::DataType::C64>;
 template struct TridiagonalReduction<ffi::DataType::C128>;
 
+//== General Tridiagonal System Solver ==//
+
+// lapack gtsv
+
+template <ffi::DataType dtype>
+ffi::Error TridiagonalSolver<dtype>::Kernel(
+    ffi::Buffer<dtype> dl, ffi::Buffer<dtype> d, ffi::Buffer<dtype> du,
+    ffi::Buffer<dtype> b, ffi::ResultBuffer<dtype> dl_out,
+    ffi::ResultBuffer<dtype> d_out, ffi::ResultBuffer<dtype> du_out,
+    ffi::ResultBuffer<dtype> b_out, ffi::ResultBuffer<LapackIntDtype> info) {
+  FFI_ASSIGN_OR_RETURN((auto [batch_count, b_rows, b_cols]),
+                       SplitBatch2D(b.dimensions()));
+
+  CopyIfDiffBuffer(dl, dl_out);
+  CopyIfDiffBuffer(d, d_out);
+  CopyIfDiffBuffer(du, du_out);
+  CopyIfDiffBuffer(b, b_out);
+
+  auto* dl_out_data = dl_out->typed_data();
+  auto* d_out_data = d_out->typed_data();
+  auto* du_out_data = du_out->typed_data();
+  auto* b_out_data = b_out->typed_data();
+  auto* info_data = info->typed_data();
+
+  FFI_ASSIGN_OR_RETURN(auto b_rows_v, MaybeCastNoOverflow<lapack_int>(b_rows));
+  FFI_ASSIGN_OR_RETURN(auto b_cols_v, MaybeCastNoOverflow<lapack_int>(b_cols));
+
+  const int64_t b_out_step{b_rows * b_cols};
+  const int64_t d_step{b_rows};
+  for (int64_t i = 0; i < batch_count; ++i) {
+    fn(&b_rows_v, &b_cols_v, dl_out_data + 1, d_out_data, du_out_data,
+       b_out_data, &b_rows_v, info_data);
+    b_out_data += b_out_step;
+    dl_out_data += d_step;
+    d_out_data += d_step;
+    du_out_data += d_step;
+    ++info_data;
+  }
+  return ffi::Error::Success();
+}
+
+template struct TridiagonalSolver<ffi::DataType::F32>;
+template struct TridiagonalSolver<ffi::DataType::F64>;
+template struct TridiagonalSolver<ffi::DataType::C64>;
+template struct TridiagonalSolver<ffi::DataType::C128>;
+
 // FFI Definition Macros (by DataType)
 
 #define JAX_CPU_DEFINE_TRSM(name, data_type)               \
@@ -2235,6 +2281,20 @@ template struct TridiagonalReduction<ffi::DataType::C128>;
           .Ret<::xla::ffi::Buffer<data_type>>(/*tau*/)   \
           .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*info*/))
 
+#define JAX_CPU_DEFINE_GTSV(name, data_type)              \
+  XLA_FFI_DEFINE_HANDLER_SYMBOL(                          \
+      name, TridiagonalSolver<data_type>::Kernel,         \
+      ::xla::ffi::Ffi::Bind()                             \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*dl*/)     \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*d*/)      \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*du*/)     \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*b*/)      \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*dl_out*/) \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*d_out*/)  \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*du_out*/) \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*b_out*/)  \
+          .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*info*/))
+
 // FFI Handlers
 
 JAX_CPU_DEFINE_TRSM(lapack_strsm_ffi, ::xla::ffi::DataType::F32);
@@ -2297,6 +2357,11 @@ JAX_CPU_DEFINE_GEHRD(lapack_dgehrd_ffi, ::xla::ffi::DataType::F64);
 JAX_CPU_DEFINE_GEHRD(lapack_cgehrd_ffi, ::xla::ffi::DataType::C64);
 JAX_CPU_DEFINE_GEHRD(lapack_zgehrd_ffi, ::xla::ffi::DataType::C128);
 
+JAX_CPU_DEFINE_GTSV(lapack_sgtsv_ffi, ::xla::ffi::DataType::F32);
+JAX_CPU_DEFINE_GTSV(lapack_dgtsv_ffi, ::xla::ffi::DataType::F64);
+JAX_CPU_DEFINE_GTSV(lapack_cgtsv_ffi, ::xla::ffi::DataType::C64);
+JAX_CPU_DEFINE_GTSV(lapack_zgtsv_ffi, ::xla::ffi::DataType::C128);
+
 #undef JAX_CPU_DEFINE_TRSM
 #undef JAX_CPU_DEFINE_GETRF
 #undef JAX_CPU_DEFINE_GEQRF
@@ -2313,5 +2378,6 @@ JAX_CPU_DEFINE_GEHRD(lapack_zgehrd_ffi, ::xla::ffi::DataType::C128);
 #undef JAX_CPU_DEFINE_GEES
 #undef JAX_CPU_DEFINE_GEES_COMPLEX
 #undef JAX_CPU_DEFINE_GEHRD
+#undef JAX_CPU_DEFINE_GTSV
 
 }  // namespace jax

@@ -2184,8 +2184,10 @@ class LaxLinalgTest(jtu.JaxTestCase):
         self.assertAllClose(
             eigvals_all[first:(last + 1)], eigvals_index, atol=atol)
 
-  @jtu.sample_product(dtype=[np.float32, np.float64])
+  @jtu.sample_product(dtype=float_types + complex_types)
   def test_tridiagonal_solve(self, dtype):
+    if dtype not in float_types and jtu.test_device_matches(["gpu"]):
+      self.skipTest("Data type not supported on GPU")
     dl = np.array([0.0, 2.0, 3.0], dtype=dtype)
     d = np.ones(3, dtype=dtype)
     du = np.array([1.0, 2.0, 0.0], dtype=dtype)

@@ -768,6 +768,26 @@ struct TridiagonalReduction {
   static int64_t GetWorkspaceSize(lapack_int x_rows, lapack_int x_cols);
 };
 
+//== General Tridiagonal System Solver ==//
+
+template <::xla::ffi::DataType dtype>
+struct TridiagonalSolver {
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using FnType = void(lapack_int* n, lapack_int* nrhs, ValueType* dl,
+                      ValueType* d, ValueType* du, ValueType* b,
+                      lapack_int* ldb, lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+  static ::xla::ffi::Error Kernel(
+      ::xla::ffi::Buffer<dtype> dl, ::xla::ffi::Buffer<dtype> d,
+      ::xla::ffi::Buffer<dtype> du, ::xla::ffi::Buffer<dtype> b,
+      ::xla::ffi::ResultBuffer<dtype> dl_out,
+      ::xla::ffi::ResultBuffer<dtype> d_out,
+      ::xla::ffi::ResultBuffer<dtype> du_out,
+      ::xla::ffi::ResultBuffer<dtype> b_out,
+      ::xla::ffi::ResultBuffer<LapackIntDtype> info);
+};
+
 // Declare all the handler symbols
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_strsm_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dtrsm_ffi);
@@ -817,6 +837,10 @@ XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sgehrd_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dgehrd_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cgehrd_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_zgehrd_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sgtsv_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dgtsv_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cgtsv_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_zgtsv_ffi);
 
 }  // namespace jax
 

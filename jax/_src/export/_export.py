@@ -1019,6 +1019,7 @@ _CPU_FFI_KERNELS = [
     "lapack_sgehrd_ffi", "lapack_dgehrd_ffi", "lapack_cgehrd_ffi", "lapack_zgehrd_ffi",
     "lapack_sgees_ffi", "lapack_dgees_ffi", "lapack_cgees_ffi", "lapack_zgees_ffi",
     "lapack_strsm_ffi", "lapack_dtrsm_ffi", "lapack_ctrsm_ffi", "lapack_ztrsm_ffi",
+    "lapack_sgtsv_ffi", "lapack_dgtsv_ffi", "lapack_cgtsv_ffi", "lapack_zgtsv_ffi",
 ]
 # These are the JAX custom call target names that are guaranteed to be stable.
 # Their backwards compatibility is tested by back_compat_test.py.
