@@ -44,6 +44,7 @@ from jax import lax
 from jax._src import api
 from jax._src import config
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes as _dtypes
 from jax._src import lib as _jaxlib
@@ -1309,6 +1310,16 @@ class JaxTestCase(parameterized.TestCase):
 
   def rng(self):
     return self._rng
+
+  def assertDeprecationWarnsOrRaises(self, deprecation_id: str, message: str):
+    """Assert warning or error, depending on deprecation state.
+
+    For use with functions that call :func:`jax._src.deprecations.warn`.
+    """
+    if deprecations.is_accelerated(deprecation_id):
+      return self.assertRaisesRegex(ValueError, message)
+    else:
+      return self.assertWarnsRegex(DeprecationWarning, message)
 
   def assertArraysEqual(self, x, y, *, check_dtypes=True, err_msg='',
                         allow_object_dtype=False, verbose=True):

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
+
 from absl.testing import absltest
 from jax._src import deprecations
 from jax._src import test_util as jtu
@@ -19,6 +21,14 @@ from jax._src import test_warning_util
 from jax._src.internal_test_util import deprecation_module as m
 
 class DeprecationTest(absltest.TestCase):
+
+  @contextlib.contextmanager
+  def deprecation_context(self, deprecation_id):
+    deprecations.register(deprecation_id)
+    try:
+      yield
+    finally:
+      deprecations.unregister(deprecation_id)
 
   def testModuleDeprecation(self):
     with test_warning_util.raise_on_warnings():
@@ -36,13 +46,10 @@ class DeprecationTest(absltest.TestCase):
 
   def testNamedDeprecation(self):
     some_unique_id = "some-unique-id"
-    try:
-      deprecations.register(some_unique_id)
+    with self.deprecation_context(some_unique_id):
       self.assertFalse(deprecations.is_accelerated(some_unique_id))
       deprecations.accelerate(some_unique_id)
       self.assertTrue(deprecations.is_accelerated(some_unique_id))
-    finally:
-      deprecations.unregister(some_unique_id)
 
     msg = f"deprecation_id={some_unique_id!r} not registered"
     with self.assertRaisesRegex(ValueError, msg):
@@ -51,6 +58,19 @@ class DeprecationTest(absltest.TestCase):
       deprecations.is_accelerated(some_unique_id)
     with self.assertRaisesRegex(ValueError, msg):
       deprecations.unregister(some_unique_id)
+
+  def testNamedDeprecationWarns(self):
+    deprecation_id = "some-unique-id"
+    deprecation_message = "This API is deprecated."
+    with self.deprecation_context(deprecation_id):
+      self.assertFalse(deprecations.is_accelerated(deprecation_id))
+      with self.assertWarnsRegex(DeprecationWarning, deprecation_message):
+        deprecations.warn(deprecation_id, deprecation_message, stacklevel=1)
+
+      deprecations.accelerate(deprecation_id)
+      self.assertTrue(deprecations.is_accelerated(deprecation_id))
+      with self.assertRaisesRegex(ValueError, deprecation_message):
+        deprecations.warn(deprecation_id, deprecation_message, stacklevel=1)
 
 
 if __name__ == "__main__":

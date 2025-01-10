@@ -47,7 +47,6 @@ from jax.test_util import check_grads
 from jax._src import array
 from jax._src import config
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
@@ -1061,13 +1060,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         jnp.clip(x, max=jnp.array([-1+5j]))
 
   def testClipDeprecatedArgs(self):
-    msg = "Passing arguments 'a', 'a_min' or 'a_max' to jax.numpy.clip is deprecated"
-    def assert_warns_or_errors(msg=msg):
-      if deprecations.is_accelerated("jax-numpy-clip-args"):
-        return self.assertRaisesRegex(ValueError, msg)
-      else:
-        return self.assertWarnsRegex(DeprecationWarning, msg)
-    with assert_warns_or_errors(msg):
+    with self.assertDeprecationWarnsOrRaises("jax-numpy-clip-args",
+                                             "Passing arguments 'a', 'a_min' or 'a_max' to jax.numpy.clip is deprecated"):
       jnp.clip(jnp.arange(4), a_min=2, a_max=3)
 
   def testHypotComplexInputError(self):
@@ -4186,13 +4180,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testAstypeComplexDowncast(self):
     x = jnp.array(2.0+1.5j, dtype='complex64')
-    msg = "Casting from complex to real dtypes.*"
-    def assert_warns_or_errors(msg=msg):
-      if deprecations.is_accelerated("jax-numpy-astype-complex-to-real"):
-        return self.assertRaisesRegex(ValueError, msg)
-      else:
-        return self.assertWarnsRegex(DeprecationWarning, msg)
-    with assert_warns_or_errors():
+    with self.assertDeprecationWarnsOrRaises("jax-numpy-astype-complex-to-real",
+                                             "Casting from complex to real dtypes.*"):
       x.astype('float32')
 
   @parameterized.parameters('int2', 'int4')
