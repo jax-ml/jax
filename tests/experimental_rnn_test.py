@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from functools import partial
+import unittest
 from absl.testing import absltest
 import numpy as np
 import jax
@@ -178,6 +179,7 @@ class RnnTest(jtu.JaxTestCase):
       y_padded = y_ref[i, seq_lengths[i]:]
       np.testing.assert_allclose(y_padded, jnp.zeros_like(y_padded))
 
+  @unittest.skip('https://github.com/jax-ml/jax/issues/25825')
   @jtu.run_on_devices("cuda")
   def test_struct_encoding_determinism(self):
     def f(k1, k2, k3, k4):
