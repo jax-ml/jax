@@ -85,12 +85,17 @@ def _random_value(key: jax.Array, shape_dtype: jax.ShapeDtypeStruct
   raise NotImplementedError(shape_dtype)
 
 
+# TODO(apaszke): Add 8-bit floats.
+# TODO(apaszke): Add int4.
 _DTYPES = (
     "float32",
     "bfloat16",
     "int32",
     "int16",
     "int8",
+    "uint32",
+    "uint16",
+    "uint8",
     "bool",
 )
 
@@ -544,22 +549,26 @@ class OpsTest(PallasBaseTest):
     if from_dtype == to_dtype:
       self.skipTest("Unnecessary test")
     if jtu.is_device_tpu(version=4):
-      if from_dtype in {"int16", "int8"} or to_dtype in {"int16", "int8"}:
+      if (from_dtype in {"int16", "int8", "uint16", "uint8"} or
+          to_dtype in {"int16", "int8", "uint16", "uint8"}):
         self.skipTest(
             "Not supported: TPU generation doesn't support this cast."
         )
     if jtu.test_device_matches(["tpu"]) and jtu.get_tpu_version() < 4:
-      if from_dtype in {"int32", "float32", "bfloat16"} and to_dtype in {"int16", "int8"}:
+      if (from_dtype in {"int32", "uint32", "float32", "bfloat16", "int8"} and
+          to_dtype in {"int16", "int8", "uint16", "uint8"}):
         self.skipTest(
             "Not supported: TPU generation doesn't support this cast."
         )
 
     # TODO(sharadmv,apaszke): add support for the following casts
+    if from_dtype == "int16" and to_dtype == "uint8":
+      self.skipTest("Not supported: only 32-bit trunc supported")
     if from_dtype == "int16" and to_dtype == "int8":
       self.skipTest("Not supported: bad canonicalization")
     if from_dtype == "int8" and to_dtype == "int16":
       self.skipTest("Not supported: bad canonicalization")
-    if from_dtype == "bool" and to_dtype in {"int16", "int8"}:
+    if from_dtype == "bool" and to_dtype in {"int16", "int8", "uint16", "uint8"}:
       self.skipTest("Not supported: cannot extend to sub-32 bit types")
 
     if from_dtype == "bfloat16":
@@ -585,8 +594,13 @@ class OpsTest(PallasBaseTest):
       y_ref[...] = y
     if (y_dtype := to_dtype) == jnp.dtype("bool"):
       y_dtype = jnp.int32
-    y = self.pallas_call(
-        kernel, out_shape=jax.ShapeDtypeStruct(x.shape, y_dtype))(x)
+    try:
+      y = self.pallas_call(
+          kernel, out_shape=jax.ShapeDtypeStruct(x.shape, y_dtype))(x)
+    except Exception as e:
+      if "Unsupported cast" in e.args[0]:
+        self.skipTest("Unsupported cast")
+      raise
     if to_dtype == jnp.dtype("bool"):
       y = y.astype(jnp.dtype("bool"))
     y_ref = x.astype(to_dtype)

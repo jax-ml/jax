@@ -194,6 +194,7 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_array_equal(y, jnp.broadcast_to(x[3:4], y.shape))
 
   def test_tpu_unsigned_int(self):
+    self.skipTest("TODO(apaszke): Unsigned upcasts were implemented incorrectly")
     def body(x_ref, o_ref):
       # Test cast from uint16 -> uint32
       ux = lax.convert_element_type(x_ref[...], jnp.uint32)

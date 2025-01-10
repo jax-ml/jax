@@ -1779,19 +1779,19 @@ def _convert_helper(x, *, to_dtype):
   if jnp.issubdtype(from_dtype, jnp.unsignedinteger):
     if from_dtype.itemsize < 4:
       x = x.astype(jnp.uint32)
-    if jnp.issubdtype(to_dtype, jnp.floating) and to_dtype.itemsize < 4:
+    # unsigned -> float is unsupported. We fall through and raise at the bottom.
+    if not jnp.issubdtype(to_dtype, jnp.floating):
+      return x.astype(to_dtype)
+  if jnp.issubdtype(from_dtype, jnp.floating) and jnp.issubdtype(
+      to_dtype, jnp.signedinteger
+  ):
+    if from_dtype.itemsize < 4:
       x = x.astype(jnp.float32)
-    return x.astype(to_dtype)
-  if jnp.issubdtype(from_dtype, jnp.floating):
-    if jnp.issubdtype(to_dtype, jnp.signedinteger):
-      if from_dtype.itemsize < 4:
-        x = x.astype(jnp.float32)
-      if to_dtype.itemsize < 4:
-        # Need to clip values to match XLA
-        minval, maxval = jnp.iinfo(to_dtype).min, jnp.iinfo(to_dtype).max
-        x = jnp.clip(x, minval, maxval)
-        return x.astype(jnp.int32).astype(to_dtype)
-    return x.astype(to_dtype)
+    if to_dtype.itemsize < 4:
+      # Need to clip values to match XLA
+      minval, maxval = jnp.iinfo(to_dtype).min, jnp.iinfo(to_dtype).max
+      x = jnp.clip(x, minval, maxval)
+      return x.astype(jnp.int32).astype(to_dtype)
   raise NotImplementedError(f"Unsupported cast: {from_dtype} -> {to_dtype}")
 
 def _convert_element_type_lowering_rule(
@@ -1823,6 +1823,8 @@ def _convert_element_type_lowering_rule(
       return arith.truncf(out_type, x)
   elif _from(integer) and _to(integer):
     if old_dtype.itemsize < new_dtype.itemsize and new_dtype.itemsize == 4:
+      if not (_from(signed) and _to(signed)):
+        raise NotImplementedError(f"Unsupported cast: {old_dtype} -> {new_dtype}")
       return arith.extsi(out_type, x)
     elif old_dtype.itemsize > new_dtype.itemsize and old_dtype.itemsize == 4:
       return arith.trunci(out_type, x)
@@ -1832,7 +1834,7 @@ def _convert_element_type_lowering_rule(
   # TODO(apaszke): Remove both_32bit constraints using the Mosaic canonicalizer.
   elif _from(floating) and _to(signed) and both_32bit:
     return arith.fptosi(out_type, x)
-  elif _from(integer) and _to(floating) and both_32bit:
+  elif _from(signed) and _to(floating) and both_32bit:
     return arith.sitofp(out_type, x)
   elif old_dtype == jnp.bool_ and _to(integer) and new_dtype.itemsize == 4:
     return arith.extui(out_type, x)

@@ -108,9 +108,9 @@ jax_multiplatform_test(
         "gpu_h100_x32",
     ],
     shard_count = {
-        "cpu": 8,
-        "gpu": 8,
-        "tpu": 8,
+        "cpu": 16,
+        "gpu": 16,
+        "tpu": 16,
     },
     tags = [
         "noasan",  # Times out.
