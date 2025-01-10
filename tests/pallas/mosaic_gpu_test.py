@@ -283,6 +283,38 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x)[indexer], x[indexer] + 1.0)
 
+  @parameterized.named_parameters(
+      {"testcase_name": "1d_none",
+       "shape": (256,), "indexers": (slice(0, 128), slice(None, 32))},
+      {"testcase_name": "1d_offset",
+       "shape": (256,), "indexers": (slice(32, 96), slice(0, 32))},
+      {"testcase_name": "2d_extract",
+       "shape": (64, 64), "indexers": (4, slice(0, 64))},
+      )
+  def test_copy_smem_to_gmem_with_multiple_gmem_indexers(self, shape, indexers):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        scratch_shapes=[plgpu.SMEM(shape, jnp.float32)],
+    )
+    def kernel(x_ref, o_ref_gmem, scratch_ref):
+      scratch_ref[...] = x_ref[...] + 1
+      plgpu.commit_smem()
+      for indexer in indexers:
+        scratch_ref = scratch_ref.at[indexer]
+        o_ref_gmem = o_ref_gmem.at[indexer]
+      plgpu.copy_smem_to_gmem(scratch_ref, o_ref_gmem)
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jnp.arange(np.prod(shape)).astype(jnp.float32).reshape(*shape)
+    result = kernel(x)
+    ref = x + 1.0
+    for indexer in indexers:
+      result = result[indexer]
+      ref = ref[indexer]
+    np.testing.assert_array_equal(result, ref)
+
   @parameterized.product(indexer=[..., slice(128), slice(None, 128)])
   def test_copy_gmem_to_smem(self, indexer):
     @functools.partial(
@@ -304,7 +336,43 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x)[indexer], x[indexer] + 1.0)
 
-  def test_ref_with_multiple_indexers(self):
+  @parameterized.named_parameters(
+      {"testcase_name": "1d_none",
+       "shape": (256,), "indexers": (slice(0, 128), slice(None, 32))},
+      {"testcase_name": "1d_offset",
+       "shape": (256,), "indexers": (slice(32, 96), slice(0, 32))},
+      {"testcase_name": "2d_extract",
+       "shape": (64, 64), "indexers": (4, slice(0, 64))},
+      )
+  def test_copy_gmem_to_smem_with_multiple_gmem_indexers(self, shape, indexers):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+        in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
+        scratch_shapes=[plgpu.SMEM(shape, jnp.float32),
+                        plgpu.Barrier(num_arrivals=1),
+                        ],
+    )
+    def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
+      scratch_ref_sliced = scratch_ref
+      for indexer in indexers:
+        scratch_ref_sliced = scratch_ref_sliced.at[indexer]
+        x_ref_gmem = x_ref_gmem.at[indexer]
+      plgpu.copy_gmem_to_smem(
+          x_ref_gmem, scratch_ref_sliced, barrier_ref
+      )
+      plgpu.barrier_wait(barrier_ref)
+      o_ref[...] = scratch_ref[...] + 1
+
+    x = jnp.arange(np.prod(shape)).astype(jnp.float32).reshape(*shape)
+    result = kernel(x)
+    ref = x + 1.0
+    for indexer in indexers:
+      result = result[indexer]
+      ref = ref[indexer]
+    np.testing.assert_array_equal(result, ref)
+
+  def test_gmem_to_smem_with_multiple_smem_indexers(self):
     x = jax.random.uniform(jax.random.key(0), (2, 64, 64))
     @functools.partial(
         pl.pallas_call,
@@ -323,7 +391,7 @@ class PallasCallTest(PallasTest):
       o_ref[pl.ds(32, 32), :] = x_sliced[pl.ds(32, 32), :]
     np.testing.assert_array_equal(extract_x0(x), x[0])
 
-  def test_smem_multiple_indexers_with_transforms(self):
+  def test_gmem_to_smem_with_multiple_smem_indexers_and_transforms(self):
     x = jnp.arange(512 * 512).reshape(512, 512)
     @functools.partial(
         pl.pallas_call,

@@ -109,10 +109,11 @@ def _copy_smem_to_gmem_lowering(
 def _extract_gmem_copy_params(transforms):
   if not transforms:
     return {}
-  if len(transforms) > 1:
-    raise NotImplementedError("Only one level of indexing on GMEM refs supported")
-  if not isinstance(indexer := transforms[0], indexing.NDIndexer):
-    raise NotImplementedError("Only indexing on GMEM refs supported")
+  for transform in transforms:
+    if not isinstance(transform, indexing.NDIndexer):
+      raise NotImplementedError(
+          "Non-indexing transforms on GMEM refs are not implemented.")
+  indexer = lowering.merge_indexers(transforms)
   return dict(
       gmem_slice=lowering._ndindexer_indices(indexer),
   )
