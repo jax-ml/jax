@@ -2704,3 +2704,74 @@ def log_softmax(x: ArrayLike,
     :func:`softmax`
   """
   return nn_log_softmax(x, axis=axis)
+
+@partial(jit, static_argnums=(1,))
+def roots_legendre(n: int, max_n: int=10) -> tuple[Array, Array]:
+  """
+  Compute roots and weights for Gauss-Legendre quadrature.
+
+  JAX implementation of :func:`scipy.linalg.logm`.
+
+  Args:
+    n: quadrature order
+    max_n: Maximum number of roots to compute
+
+  Notes:
+    Because of static array size requirements function in JAX takes `max_n` argument to determine size of output arrays.
+    If `n < max_n` then entries for `n..max_n` will be zero and only positions below `n` will have valid nodes and weights.
+    If `n >= max_n` then only first `max_n` roots and weights will be in the result.
+    For inputs of 10000 and more, results may include NaNs because of precision errors.
+
+  Examples:
+    >>> nodes, weights = jax.scipy.special.roots_legendre(4, max_n=5)
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print('nodes:', nodes)
+    ...   print('weights:', weights)
+    nodes: [-0.86 -0.34  0.34  0.86  0.  ]
+    weights: [0.35 0.65 0.65 0.35 0.  ]
+
+    To get all roots and weights use `max_n > n` and use only first `n` values
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print('valid nodes:', nodes[:4])
+    ...   print('valid weights:', weights[:4])
+    valid nodes: [-0.86 -0.34  0.34  0.86]
+    valid weights: [0.35 0.65 0.65 0.35]
+
+
+  References:
+    .. [1] W. H. Press, S. A. Teukolsky, W. T. Vetterling, and B. P. Flannery, Numerical Recipes
+         in FORTRAN: The Art of Scientific Computing, 2nd ed., Cambridge University Press,
+         London, 1992 (section 4.5 page 152)
+  """
+  eps = 3.0e-7
+  m = (n+1) // 2
+  x = jnp.zeros(max_n, jnp.float32)
+  w = jnp.zeros(max_n, jnp.float32)
+
+  def perform_newton_method_refinement(data):
+    z, z_old, pp = data
+    p1 = 1.0
+    p2 = 0.0
+    p1, p2 = lax.fori_loop(0, n, lambda i, p: (((2.0*i+ 1.0)*z*p[0]-i*p[1])/(i+1.0), p[0]), (p1, p2))
+    pp = n * (z * p1 - p2) / (z * z - 1.0)
+    z_old = z
+    z = z_old - p1 / pp
+
+    return z, z_old, pp
+
+  def calculate_nth_root_and_weight(i, data):
+    x, w = data
+    z = jnp.cos(jnp.pi * (i+1.0-0.25) / (n+0.5))
+    z1 = z + 1.0
+    z, _, pp = lax.while_loop(lambda data: jnp.abs(data[0]-data[1]) > eps, perform_newton_method_refinement, (z, z1, 0.0))
+    x = lax.cond(i < max_n, lambda: x.at[i].set(-z), lambda: x)
+    w = lax.cond(i < max_n, lambda: w.at[i].set(2.0 / ((1.0-z*z)*pp*pp)), lambda: w)
+
+    x = lax.cond(n-i-1 < max_n, lambda: x.at[n-i-1].set(z), lambda: x)
+    w = lax.cond(n-i-1 < max_n, lambda: w.at[n-i-1].set(w[i]), lambda: w)
+    return x, w
+
+  x, w = lax.fori_loop(0, m, calculate_nth_root_and_weight, (x, w))
+
+  return x, w

@@ -25,6 +25,7 @@ import scipy.linalg
 import scipy as osp
 
 from absl.testing import absltest, parameterized
+import scipy.linalg._matfuncs_inv_ssq
 
 import jax
 from jax import jit, grad, jvp, vmap
@@ -33,6 +34,7 @@ from jax import numpy as jnp
 from jax import scipy as jsp
 from jax._src import config
 from jax._src import deprecations
+import jax._src
 from jax._src.lax import linalg as lax_linalg
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
@@ -2020,6 +2022,113 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     root = jsp.linalg.sqrtm(mat)
 
     self.assertAllClose(root, expected, check_dtypes=False)
+
+  @jtu.sample_product(
+    shape=[(15, 15), (50, 50), (100, 100)],
+    dtype=float_types + complex_types,
+  )
+  @jtu.run_on_devices("cpu")
+  def testLogmPSDMatrix(self, shape, dtype):
+    # Checks against scipy.linalg.logm when the principal logm
+    # is guaranteed to be unique (i.e no negative real eigenvalue)
+    rng = jtu.rand_default(self.rng())
+    arg = rng(shape, dtype)
+    mat = arg @ arg.T
+    args_maker = lambda : [mat]
+    if dtype == np.float32 or dtype == np.complex64:
+      tol = 1e-4
+    else:
+      tol = 1e-6
+
+    def jax_logm(mat):
+      result = jsp.linalg.logm(mat, key=jax.random.key(0))
+      if (result.imag == 0).all():
+        return result.real
+      return result
+
+    self._CheckAgainstNumpy(osp.linalg.logm,
+                            jax_logm,
+                            args_maker,
+                            tol=tol,
+                            check_dtypes=False)
+    self._CompileAndCheck(partial(jsp.linalg.logm, key=jax.random.key(0)), args_maker)
+
+  @jtu.sample_product(
+    shape=[(1, 1), (4, 4), (100, 100)],
+    dtype=float_types + complex_types,
+  )
+  @jtu.run_on_devices("cpu")
+  def testLogmGenMatrix(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    arg = rng(shape, dtype)
+    if dtype == np.float32 or dtype == np.complex64:
+      tol = 5e-3
+    else:
+      tol = 1e-5
+    mat = arg
+    mat = jsp.linalg.logm(mat, key=jax.random.key(0))
+    mat = jsp.linalg.expm(mat)
+    self.assertAllClose(mat, arg, atol=tol, check_dtypes=False)
+
+  @jtu.sample_product(
+    shape=[(4, 4), (15, 15), (50, 50), (100, 100)],
+    dtype=float_types+complex_types,
+  )
+  def testOneNormEstimator(self, shape, dtype):
+    from jax._src.scipy.linalg import _onenormest
+    rng = jtu.rand_default(self.rng())
+    #  scipy algorithm is not deterministic so set seed for reproducibility
+    np.random.seed(111)
+    key = jax.random.key(111)
+
+    arg = rng(shape, dtype)
+    mat = arg @ arg.T
+    args_maker = lambda: [mat]
+    if dtype == np.float32 or dtype == np.complex64:
+      tol = 1e-4
+    else:
+      tol = 1e-8
+
+    normest = partial(_onenormest, key=key, t=50, itmax=50)
+    scipy_normest = partial(osp.sparse.linalg._onenormest.onenormest, t=50, itmax=50)
+    self._CheckAgainstNumpy(scipy_normest,
+                        normest,
+                        args_maker,
+                        tol=tol,
+                        check_dtypes=False)
+    self._CompileAndCheck(normest, args_maker)
+
+  @jtu.sample_product(
+    shape=[(4, 4), (15, 15), (50, 50), (100, 100)],
+    dtype=float_types+complex_types,
+  )
+  def testInverseSquaring(self, shape, dtype):
+    from jax._src.scipy.linalg import _inverse_squaring
+    rng = jtu.rand_default(self.rng())
+    #  scipy algorithm is not deterministic so set seed for reproducibility
+    np.random.seed(111)
+    key = jax.random.key(111)
+
+    theta_m = np.array([float('nan'), 1.59e-5, 2.31e-3, 1.94e-2, 6.21e-2, 1.28e-1, 2.06e-1, 2.88e-1, 3.67e-1, 4.39e-1, 5.03e-1, 5.60e-1, 6.09e-1, 6.52e-1, 6.89e-1, 7.21e-1, 7.49e-1])
+
+    arg = rng(shape, dtype)
+    mat = arg @ arg.T
+
+    args_maker = lambda: [mat, theta_m]
+    if dtype == np.float32 or dtype == np.complex64:
+      tol = 1e-4
+    else:
+      tol = 1e-8
+
+    fn = partial(_inverse_squaring, key=key)
+    scipy_fn = partial(scipy.linalg._matfuncs_inv_ssq._inverse_squaring_helper)
+
+    self._CheckAgainstNumpy(scipy_fn,
+                        fn,
+                        args_maker,
+                        tol=tol,
+                        check_dtypes=False)
+    self._CompileAndCheck(fn, args_maker)
 
   @jtu.sample_product(
     cshape=[(), (4,), (8,), (4, 7), (2, 1, 5)],

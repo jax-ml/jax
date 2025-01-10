@@ -54,6 +54,7 @@ from jax._src.scipy.special import (
   poch as poch,
   polygamma as polygamma,
   rel_entr as rel_entr,
+  roots_legendre as roots_legendre,
   softmax as softmax,
   spence as spence,
   sph_harm as sph_harm,
