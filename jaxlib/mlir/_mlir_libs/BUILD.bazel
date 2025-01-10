@@ -15,8 +15,8 @@
 load(
     "//jaxlib:jax.bzl",
     "if_windows",
+    "nanobind_extension",
     "py_extension",
-    "pybind_extension",
     "windows_cc_shared_mlir_library",
 )
 load("//jaxlib:symlink_files.bzl", "symlink_inputs")
@@ -190,7 +190,7 @@ py_extension(
 )
 
 # This target contains the extension and it's Python dependencies, which are not
-# supported by the `py_extension`/`pybind_extension` macros.
+# supported by the `py_extension`/`nanobind_extension` macros.
 py_library(
     name = "_tpu_ext_lib",
     deps = [
@@ -200,7 +200,7 @@ py_library(
     ],
 )
 
-pybind_extension(
+nanobind_extension(
     name = "_triton_ext",
     srcs = ["triton_ext.cc"],
     copts = COPTS,

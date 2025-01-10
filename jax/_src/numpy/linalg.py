@@ -1288,7 +1288,7 @@ def qr(a: ArrayLike, mode: str = "reduced") -> Array | QRResult:
     full_matrices = True
   else:
     raise ValueError(f"Unsupported QR decomposition mode '{mode}'")
-  q, r = lax_linalg.qr(a, full_matrices=full_matrices)
+  q, r = lax_linalg.qr(a, pivoting=False, full_matrices=full_matrices)
   if mode == "r":
     return r
   return QRResult(q, r)

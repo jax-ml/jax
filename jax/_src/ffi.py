@@ -72,12 +72,27 @@ def register_ffi_target(
                                                 **kwargs)
 
 
+def register_ffi_type_id(
+    name: str,
+    obj: Any,
+    platform: str = "cpu",
+) -> None:
+  """Registers a custom type ID for a FFI target.
+
+  Args:
+    name: the name of the type ID. This name must be unique within the process.
+    obj: a ``PyCapsule`` object encapsulating a pointer to the type ID.
+    platform: the target platform.
+  """
+  return xla_client.register_custom_type_id(name, obj, platform=platform)
+
+
 def pycapsule(funcptr):
   """Wrap a ctypes function pointer in a PyCapsule.
 
   The primary use of this function, and the reason why it lives with in the
-  ``jax.extend.ffi`` submodule, is to wrap function calls from external
-  compiled libraries to be registered as XLA custom calls.
+  ``jax.ffi`` submodule, is to wrap function calls from external compiled
+  libraries to be registered as XLA custom calls.
 
   Example usage::
 
@@ -88,7 +103,7 @@ def pycapsule(funcptr):
     libfoo = ctypes.cdll.LoadLibrary('./foo.so')
     xla_client.register_custom_call_target(
         name="bar",
-        fn=jax.extend.ffi.pycapsule(libfoo.bar),
+        fn=jax.ffi.pycapsule(libfoo.bar),
         platform=PLATFORM,
         api_version=API_VERSION
     )
@@ -145,7 +160,7 @@ def ffi_lowering(
 
   Note that layouts passed to this function as tuples should be in
   minor-to-major order (as expected by XLA) rather than major-to-minor as used
-  by :func:`~jax.extend.ffi.ffi_call` and ``DeviceLocalLayout``.
+  by :func:`~jax.ffi.ffi_call` and ``DeviceLocalLayout``.
 
   If keyword arguments are passed to the lowering rule, these are treated as
   attributes, and added to `backend_config`.
@@ -310,7 +325,7 @@ def ffi_call(
 
   Args:
     target_name: the name of the XLA FFI custom call target that was registered
-      using :func:`~jax.extend.ffi.register_ffi_target`.
+      using :func:`~jax.ffi.register_ffi_target`.
     result_shape_dtypes: an object, or sequence of objects, with ``shape`` and
       ``dtype`` attributes which are expected to match the shape and dtype of
       the custom call output or outputs. :class:`~jax.ShapeDtypeStruct` is often

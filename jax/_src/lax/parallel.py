@@ -1634,6 +1634,8 @@ def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
   if (isinstance(axis_context, SPMDAxisContext) and
       axis_context.manual_axes and
       axis_context.manual_axes != frozenset(axis_context.mesh.axis_names)):
+    if axis_env.sizes[axis_pos] == 1:
+      return hlo.constant(ir.DenseElementsAttr.get(np.asarray(0, dtype=np.int32)))
     x = hlo.iota(ir.RankedTensorType.get(
         [axis_env.sizes[axis_pos]], ir.IntegerType.get_signless(32)), mlir.i64_attr(0))
     sharding_proto = (

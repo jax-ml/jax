@@ -293,6 +293,7 @@ class CoreTest(jtu.JaxTestCase):
     assert d2_sin(0.0) == 0.0
     assert d3_sin(0.0) == -1.0
 
+  @jtu.thread_unsafe_test()  # gc isn't predictable when threaded
   def test_reference_cycles(self):
     gc.collect()
 
@@ -310,6 +311,7 @@ class CoreTest(jtu.JaxTestCase):
     finally:
       gc.set_debug(debug)
 
+  @jtu.thread_unsafe_test()  # gc isn't predictable when threaded
   def test_reference_cycles_jit(self):
     gc.collect()
 

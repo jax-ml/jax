@@ -64,7 +64,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import (PmapSharding, NamedSharding,
-                                     PartitionSpec as P)
+                                     PartitionSpec as P, canonicalize_sharding)
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
 from jax._src.util import (NumpyComplexWarning, cache, canonicalize_axis,
                            safe_map, safe_zip, split_list, weakref_lru_cache)
@@ -586,6 +586,8 @@ def _convert_element_type(
       isinstance(operand, Array)):
     sharding = operand.sharding
 
+  sharding = canonicalize_sharding(sharding, check_mesh_consistency=False)  # type: ignore
+
   if (warn_on_complex_to_real_cast and
       dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
@@ -698,7 +700,9 @@ def composite(
     version: optional int to indicate semantic changes to the composite.
 
   Returns:
-    out: callable composite function.
+    out: callable composite function. Note that positional arguments to this
+      function should be interpreted as inputs and keyword arguments should be
+      interpreted as attributes of the op.
 
   Examples:
     Tangent kernel:
@@ -714,6 +718,13 @@ def composite(
     ...   print(lax.tan(x))
     [ 0.  1. -1.  0.]
     [ 0.  1. -1.  0.]
+
+    The recommended way to create composites is via a decorator. Use `/` and `*`
+    in the function signature to be explicit about positional and keyword
+    arguments respectively:
+    >>> @partial(lax.composite, name="my.softmax")
+    ... def my_softmax_composite(x, /, *, axis):
+    ...   return jax.nn.softmax(x, axis)
   """
   @functools.wraps(decomposition)
   def _decorator(*args, **kwargs):
@@ -1431,6 +1442,7 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
   if not config.sharding_in_types.value and sharding is not None:
     raise NotImplementedError("sharding argument to broadcast_in_dim is only "
                               "allowed when sharding_in_types config is on.")
+  sharding = canonicalize_sharding(sharding)
   if (np.ndim(operand) == len(shape) and not len(broadcast_dimensions) and
       isinstance(operand, Array) and sharding is None):
     return operand
@@ -1505,7 +1517,7 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
     return operand
   else:
     dyn_shape, static_new_sizes = _extract_tracers_dyn_shape(new_sizes)
-
+    sharding = canonicalize_sharding(sharding)
     return reshape_p.bind(
       operand, *dyn_shape, new_sizes=tuple(static_new_sizes),
       dimensions=None if dims is None or same_dims else dims,
@@ -1947,7 +1959,7 @@ def iota(dtype: DTypeLike, size: int) -> Array:
   return broadcasted_iota(dtype, (size,), 0)
 
 def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int,
-                     _sharding=None) -> Array:
+                     sharding=None) -> Array:
   """Convenience wrapper around ``iota``."""
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = canonicalize_shape(shape)
@@ -1955,11 +1967,12 @@ def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int,
   static_shape = [None if isinstance(d, core.Tracer) else d for d in shape]
   dimension = core.concrete_or_error(
       int, dimension, "dimension argument of lax.broadcasted_iota")
-  if not config.sharding_in_types.value and _sharding is not None:
+  if not config.sharding_in_types.value and sharding is not None:
     raise NotImplementedError('sharding support for broadcasted_iota is not '
                               'implemented outside of sharding_in_types mode.')
+  sharding = canonicalize_sharding(sharding)
   return iota_p.bind(*dynamic_shape, dtype=dtype, shape=tuple(static_shape),
-                     dimension=dimension, sharding=_sharding)
+                     dimension=dimension, sharding=sharding)
 
 def _eye(dtype: DTypeLike, shape: Shape, offset: DimSize = 0) -> Array:
   """Like numpy.eye, create a 2D array with ones on a diagonal."""
@@ -2463,8 +2476,7 @@ def multi_sharding_in_dim(ctx, ops, in_avals, out_aval):
     if in_aval.sharding == out_aval.sharding or in_aval.sharding is None:
       out.append(op)
     else:
-      proto = in_aval.sharding._to_xla_hlo_sharding(in_aval.ndim).to_proto()
-      out.append(mlir.lower_sharding_under_shit(ctx, op, out_aval, proto))
+      out.append(mlir.lower_sharding_under_shit(ctx, op, out_aval))
   return out
 
 
@@ -5560,7 +5572,7 @@ def _compute_argminmax(value_comparator, get_identity,
   axis, = axes
   indices = broadcasted_iota(
       index_dtype, np.shape(operand), axis,
-      _sharding=operand.sharding if config.sharding_in_types.value else None)
+      sharding=operand.sharding if config.sharding_in_types.value else None)
   res = reduce([operand, indices],
                [get_identity(operand.dtype), np.array(0, index_dtype)],
                _ArgMinMaxReducer(value_comparator),

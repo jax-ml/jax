@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import contextlib
+
 import threading
 import unittest
 
@@ -34,6 +34,7 @@ from jax._src.interpreters import partial_eval as pe
 import numpy as np
 
 config.parse_flags_with_absl()
+jtu.request_cpu_devices(2)
 
 effect_p = core.Primitive('effect')
 effect_p.multiple_results = True
@@ -130,15 +131,6 @@ def callback_effect_lowering(ctx: mlir.LoweringRuleContext, *args, callback, out
   return out_op
 
 mlir.register_lowering(callback_p, callback_effect_lowering)
-
-
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(2))
-
-def tearDownModule():
-  _exit_stack.close()
 
 
 class JaxprEffectsTest(jtu.JaxTestCase):
@@ -277,6 +269,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
     self.assertSetEqual(jaxpr.effects, {foo_effect, bar_effect})
 
 
+@jtu.thread_unsafe_test_class()  # because of mlir.register_lowering calls
 class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
   def setUp(self):

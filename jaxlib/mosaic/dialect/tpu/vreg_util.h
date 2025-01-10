@@ -77,6 +77,13 @@ LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder &builder,
                                     int64_t padding_bottom,
                                     int64_t padding_right);
 
+// Broadcasts the subelement at `subelement_idx` within each packed word.
+// subelement_idx must be between 0 and packing.
+FailureOr<TypedValue<VectorType>> broadcastSubelements(
+    ImplicitLocOpBuilder &builder, TypedValue<VectorType> vec,
+    int subelement_idx, std::array<int64_t, 2> target_shape,
+    int hardware_generation);
+
 }  // namespace mlir::tpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_VREG_UTIL_H_

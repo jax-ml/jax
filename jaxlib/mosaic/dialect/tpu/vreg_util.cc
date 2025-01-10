@@ -27,6 +27,7 @@ limitations under the License.
 #include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/include/mlir/IR/Types.h"
 #include "mlir/include/mlir/IR/Value.h"
+#include "mlir/include/mlir/IR/ValueRange.h"
 #include "mlir/include/mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
@@ -91,8 +92,6 @@ TypedValue<VectorType> getZerosLikeVector(ImplicitLocOpBuilder &builder,
 FailureOr<TypedValue<VectorType>> getX32VmaskByPaddingEnd(
     ImplicitLocOpBuilder &builder, int64_t padding,
     const std::array<int64_t, 2> target_shape, int64_t dim) {
-  VectorType i32_vreg_ty =
-      getNativeVregType(builder.getI32Type(), target_shape);
   if (dim != 0 && dim != 1) {
     return builder.emitError()
            << "Expected a 2D vector for getX32VmaskByPaddingEnd";
@@ -100,22 +99,29 @@ FailureOr<TypedValue<VectorType>> getX32VmaskByPaddingEnd(
 
   if (padding < 0 || padding > target_shape[dim]) {
     return builder.emitError()
-           << "Padding must be in [0, target_shape[dim]). Padding: " << padding
+           << "Padding must be in [0, target_shape[dim]]. Padding: " << padding
            << ", target_shape[dim]: " << target_shape[dim];
   }
 
-  Value padding_vreg =
-      getFullVector(builder, i32_vreg_ty,
-                    builder.getI32IntegerAttr(target_shape[dim] - padding));
+  auto idx_const = [&builder](int64_t idx) {
+    return IdxConst(idx, builder, builder.getLoc());
+  };
 
-  return cast<TypedValue<VectorType>>(
-      builder
-          .create<arith::CmpIOp>(
-              arith::CmpIPredicate::slt,
-              builder.create<tpu::IotaOp>(i32_vreg_ty,
-                                          builder.getI32IntegerAttr(dim)),
-              padding_vreg)
-          .getResult());
+  tpu::CreateMaskOp mask_op;
+  const VectorType vmask_ty = getNativeVregOrVmaskType(
+      builder.getI1Type(), /*layout_bitwidth=*/32, target_shape);
+  if (dim == 0) {
+    mask_op = builder.create<tpu::CreateMaskOp>(
+        vmask_ty, ValueRange{idx_const(0), idx_const(0)},
+        ValueRange{idx_const(target_shape[0] - padding),
+                   idx_const(target_shape[1])});
+  } else {
+    mask_op = builder.create<tpu::CreateMaskOp>(
+        vmask_ty, ValueRange{idx_const(0), idx_const(0)},
+        ValueRange{idx_const(target_shape[0]),
+                   idx_const(target_shape[1] - padding)});
+  }
+  return cast<TypedValue<VectorType>>(mask_op.getResult());
 }
 
 LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder &builder,
@@ -201,6 +207,47 @@ LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder &builder,
     }
   }
   return success();
+}
+
+FailureOr<TypedValue<VectorType>> broadcastSubelements(
+    ImplicitLocOpBuilder &builder, TypedValue<VectorType> vec,
+    int subelement_idx, std::array<int64_t, 2> target_shape,
+    int hardware_generation) {
+  int bitwidth = vec.getType().getElementTypeBitWidth();
+  int packing = 32 / bitwidth;
+  if (subelement_idx < 0 || subelement_idx >= packing) {
+    return builder.emitError()
+           << "subelement_idx must be in [0, packing). subelement_idx: "
+           << subelement_idx << ", packing: " << packing;
+  }
+  if (packing == 1) {
+    return vec;
+  }
+  VectorType vreg_native_int_ty =
+      getNativeVregType(builder.getIntegerType(32), target_shape);
+  VectorType vreg_packed_int_ty =
+      getNativeVregType(builder.getIntegerType(bitwidth), target_shape);
+  // The chosen subelements must be in the low bits. High bits are unspecified.
+  Value src_vreg_int =
+      builder.create<tpu::BitcastVregOp>(vreg_native_int_ty, vec);
+  Value vreg_subelement_low = builder.create<arith::ShRUIOp>(
+      src_vreg_int,
+      getFullVector(builder, vreg_native_int_ty,
+                    builder.getI32IntegerAttr(subelement_idx * bitwidth)));
+  Value vreg_result_int;
+  if (hardware_generation >= 5) {
+    SmallVector<Value> packed_vregs(packing, vreg_subelement_low);
+    vreg_result_int = builder.create<tpu::PackSubelementsOp>(
+        vreg_packed_int_ty, packed_vregs, tpu::PackFormat::kInterleaved);
+  } else {
+    // This can be virtualized as a tree of shifts and ORs.
+    return builder.emitError()
+           << "broadcastSubelements not implemented for hardware generation "
+           << hardware_generation;
+  }
+  return cast<TypedValue<VectorType>>(
+      builder.create<tpu::BitcastVregOp>(vec.getType(), vreg_result_int)
+          .getResult());
 }
 
 }  // namespace mlir::tpu

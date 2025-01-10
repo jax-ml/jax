@@ -21,17 +21,14 @@ from jax import lax
 from jax._src.pjit import pjit
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
-from jax._src.lib import xla_client
 from jax._src import ad_checkpoint
 
 jax.config.parse_flags_with_absl()
 
 def _get_hlo(f):
   def wrapped(*args, **kwargs):
-    c = jax.jit(f).lower(*args, **kwargs).compiler_ir('hlo')
-    print_opts = xla_client._xla.HloPrintOptions.short_parsable()
-    print_opts.print_metadata = True
-    return c.as_hlo_module().to_string(print_opts)
+    return jax.jit(f).lower(*args, **kwargs).as_text('hlo', debug_info=True)
+
   return wrapped
 
 

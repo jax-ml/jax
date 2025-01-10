@@ -19,6 +19,7 @@ load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "if_building_jaxlib",
+    "jax_export_file_visibility",
     "jax_extend_internal_users",
     "jax_extra_deps",
     "jax_internal_export_back_compat_test_util_visibility",
@@ -61,6 +62,11 @@ exports_files([
     "LICENSE",
     "version.py",
 ])
+
+exports_files(
+    ["_src/export/serialization.fbs"],
+    visibility = jax_export_file_visibility,
+)
 
 # Packages that have access to JAX-internal implementation details.
 package_group(
@@ -114,6 +120,7 @@ py_library(
     testonly = 1,
     srcs = [
         "_src/test_util.py",
+        "_src/test_warning_util.py",
     ],
     visibility = [
         ":internal",
@@ -164,6 +171,7 @@ py_library(
     ] + jax_internal_export_back_compat_test_util_visibility,
     deps = [
         ":jax",
+        ":test_util",
     ] + py_deps("numpy"),
 )
 
@@ -199,6 +207,7 @@ py_library_providing_imports_info(
         "_src/dispatch.py",
         "_src/dlpack.py",
         "_src/earray.py",
+        "_src/ffi.py",
         "_src/flatten_util.py",
         "_src/interpreters/__init__.py",
         "_src/interpreters/ad.py",
@@ -730,7 +739,6 @@ py_library(
         ":jax",
         ":mlir",
         "//jax/_src/lib",
-        "//jax/extend:ffi",
         "//jaxlib/mlir:arithmetic_dialect",
         "//jaxlib/mlir:builtin_dialect",
         "//jaxlib/mlir:func_dialect",
@@ -860,6 +868,7 @@ pytype_strict_library(
         ":partition_spec",
         ":sharding",
         ":sharding_specs",
+        ":source_info_util",
         ":tree_util",
         ":util",
         ":xla_bridge",
@@ -1045,19 +1054,6 @@ pytype_library(
     ],
     visibility = ["//visibility:public"],
     deps = [":jax"],
-)
-
-pytype_library(
-    name = "experimental_array_api",
-    srcs = glob(
-        [
-            "experimental/array_api/*.py",
-        ],
-    ),
-    visibility = [":internal"],
-    deps = [
-        ":jax",
-    ],
 )
 
 pytype_library(

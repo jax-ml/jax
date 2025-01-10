@@ -23,7 +23,6 @@ import platform
 import unittest
 from unittest import mock
 from unittest import SkipTest
-import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -39,6 +38,7 @@ from jax._src import distributed
 from jax._src import monitoring
 from jax._src import path as pathlib
 from jax._src import test_util as jtu
+from jax._src import test_warning_util
 from jax._src import xla_bridge
 from jax._src.compilation_cache_interface import CacheInterface
 from jax._src.lib import xla_client as xc
@@ -52,17 +52,11 @@ config.parse_flags_with_absl()
 FAKE_COMPILE_TIME = 10
 _counts = Counter()  # Map event name to count
 
-
-def setUpModule():
-  monitoring.register_event_listener(increment_event_count)
-
-
-def tearDownModule():
-  monitoring._unregister_event_listener_by_callback(increment_event_count)
-
-
 def increment_event_count(event):
   _counts[event] += 1
+
+monitoring.register_event_listener(increment_event_count)
+
 
 def msg_exists_in_logs(msg: str, records: list[logging.LogRecord],
                        level: int | None = None) -> bool:
@@ -101,6 +95,7 @@ def clear_cache() -> None:
     cc._cache.clear()
 
 
+@jtu.thread_unsafe_test_class()  # mocking isn't thread-safe
 class CompilationCacheTestCase(jtu.JaxTestCase):
 
   def setUp(self):
@@ -238,21 +233,20 @@ class CompilationCacheTest(CompilationCacheTestCase):
     with (
       config.raise_persistent_cache_errors(False),
       mock.patch.object(cc._get_cache(backend).__class__, "put") as mock_put,
-      warnings.catch_warnings(record=True) as w,
+      test_warning_util.record_warnings() as w,
     ):
-      warnings.simplefilter("always")
       mock_put.side_effect = RuntimeError("test error")
       self.assertEqual(f(2).item(), 4)
-      if len(w) != 1:
-        print("Warnings:", [str(w_) for w_ in w], flush=True)
-      self.assertLen(w, 1)
-      self.assertIn(
-          (
-              "Error writing persistent compilation cache entry "
-              "for 'jit__lambda_': RuntimeError: test error"
-          ),
-          str(w[0].message),
-      )
+    if len(w) != 1:
+      print("Warnings:", [str(w_) for w_ in w], flush=True)
+    self.assertLen(w, 1)
+    self.assertIn(
+        (
+            "Error writing persistent compilation cache entry "
+            "for 'jit__lambda_': RuntimeError: test error"
+        ),
+        str(w[0].message),
+    )
 
   def test_cache_read_warning(self):
     f = jit(lambda x: x * x)
@@ -261,23 +255,22 @@ class CompilationCacheTest(CompilationCacheTestCase):
     with (
       config.raise_persistent_cache_errors(False),
       mock.patch.object(cc._get_cache(backend).__class__, "get") as mock_get,
-      warnings.catch_warnings(record=True) as w,
+      test_warning_util.record_warnings() as w,
     ):
-      warnings.simplefilter("always")
       mock_get.side_effect = RuntimeError("test error")
       # Calling assertEqual with the jitted f will generate two PJIT
       # executables: Equal and the lambda function itself.
       self.assertEqual(f(2).item(), 4)
-      if len(w) != 1:
-        print("Warnings:", [str(w_) for w_ in w], flush=True)
-      self.assertLen(w, 1)
-      self.assertIn(
-          (
-              "Error reading persistent compilation cache entry "
-              "for 'jit__lambda_': RuntimeError: test error"
-          ),
-          str(w[0].message),
-      )
+    if len(w) != 1:
+      print("Warnings:", [str(w_) for w_ in w], flush=True)
+    self.assertLen(w, 1)
+    self.assertIn(
+        (
+            "Error reading persistent compilation cache entry "
+            "for 'jit__lambda_': RuntimeError: test error"
+        ),
+        str(w[0].message),
+    )
 
   def test_min_entry_size(self):
     with (

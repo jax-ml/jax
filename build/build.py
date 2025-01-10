@@ -69,7 +69,6 @@ def add_global_arguments(parser: argparse.ArgumentParser):
   parser.add_argument(
       "--python_version",
       type=str,
-      choices=["3.10", "3.11", "3.12", "3.13"],
       default=f"{sys.version_info.major}.{sys.version_info.minor}",
       help=
         """
@@ -390,10 +389,23 @@ async def main():
   bazel_command_base.append("run")
 
   if args.python_version:
+    # Do not add --repo_env=HERMETIC_PYTHON_VERSION with default args.python_version
+    # if bazel_options override it
+    python_version_opt = "--repo_env=HERMETIC_PYTHON_VERSION="
+    if any([python_version_opt in opt for opt in args.bazel_options]):
+      raise RuntimeError(
+        "Please use python_version to set hermetic python version instead of "
+        "setting --repo_env=HERMETIC_PYTHON_VERSION=<python version> bazel option"
+      )
     logging.debug("Hermetic Python version: %s", args.python_version)
     bazel_command_base.append(
         f"--repo_env=HERMETIC_PYTHON_VERSION={args.python_version}"
     )
+    # Let's interpret X.YY-ft version as free-threading python and set rules_python config flag:
+    if args.python_version.endswith("-ft"):
+      bazel_command_base.append(
+        "--@rules_python//python/config_settings:py_freethreaded='yes'"
+      )
 
   # Enable verbose failures.
   bazel_command_base.append("--verbose_failures=true")
@@ -468,6 +480,9 @@ async def main():
       # Enable clang settings that are needed for the build to work with newer
       # versions of Clang.
       wheel_build_command_base.append("--config=clang")
+    if clang_major_version < 19:
+      wheel_build_command_base.append("--define=xnn_enable_avxvnniint8=false")
+
   else:
     gcc_path = args.gcc_path or utils.get_gcc_path_or_exit()
     logging.debug(
@@ -476,6 +491,10 @@ async def main():
     )
     wheel_build_command_base.append(f"--repo_env=CC=\"{gcc_path}\"")
     wheel_build_command_base.append(f"--repo_env=BAZEL_COMPILER=\"{gcc_path}\"")
+
+    gcc_major_version = utils.get_gcc_major_version(gcc_path)
+    if gcc_major_version < 13:
+      wheel_build_command_base.append("--define=xnn_enable_avxvnniint8=false")
 
   if not args.disable_mkl_dnn:
     logging.debug("Enabling MKL DNN")

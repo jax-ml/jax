@@ -31,25 +31,26 @@ struct RnnDescriptor {
   int batch_size;
   int max_seq_length;
   float dropout;
-  bool bidirectional;
-  bool cudnn_allow_tf32;
+  int bidirectional;
+  int cudnn_allow_tf32;
   int workspace_size;
   int reserve_space_size;
 };
 
 // Return (workspace size, reserve space size).
-absl::StatusOr<std::pair<int, int>> RnnComputeWorkspaceReserveSpaceSizes(
-    int input_size, int hidden_size, int num_layers, int batch_size,
-    int max_seq_length, float dropout, bool bidirectional,
-    bool cudnn_allow_tf32);
+absl::StatusOr<std::pair<int, int>>
+RnnComputeWorkspaceReserveSpaceSizes(int input_size, int hidden_size,
+                                     int num_layers, int batch_size,
+                                     int max_seq_length, float dropout,
+                                     bool bidirectional, bool cudnn_allow_tf32);
 
-void RNNForward(gpuStream_t stream, void** buffers, const char* opaque,
-                size_t opaque_len, XlaCustomCallStatus* status);
+void RNNForward(gpuStream_t stream, void **buffers, const char *opaque,
+                size_t opaque_len, XlaCustomCallStatus *status);
 
-void RNNBackward(gpuStream_t stream, void** buffers, const char* opaque,
-                 size_t opaque_len, XlaCustomCallStatus* status);
+void RNNBackward(gpuStream_t stream, void **buffers, const char *opaque,
+                 size_t opaque_len, XlaCustomCallStatus *status);
 
-}  // namespace JAX_GPU_NAMESPACE
-}  // namespace jax
+} // namespace JAX_GPU_NAMESPACE
+} // namespace jax
 
-#endif  // JAXLIB_GPU_RNN_KERNELS_H_
+#endif // JAXLIB_GPU_RNN_KERNELS_H_

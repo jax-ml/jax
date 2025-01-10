@@ -1068,22 +1068,35 @@ def threefry_2x32(keypair, count):
     msg = "threefry_2x32 requires uint32 arguments, got {}"
     raise TypeError(msg.format([lax.dtype(x) for x in [key1, key2, count]]))
 
-  odd_size = count.size % 2
-  if not isinstance(odd_size, int):
-    msg = ("jax.random functions have limited support for shape polymorphism "
-           "when using threefry. "
-           f"In particular, the array size ({count.size}) must be even.")
-    raise core.InconclusiveDimensionOperation(msg)
-
-  if odd_size:
-    x = list(jnp.split(jnp.concatenate([count.ravel(), np.uint32([0])]), 2))
+  flat_count = count.ravel()
+  odd_size = flat_count.shape[0] % 2
+  if core.is_constant_dim(odd_size):
+    if odd_size:
+      x = list(jnp.split(jnp.concatenate([flat_count, np.uint32([0])]), 2))
+    else:
+      x = list(jnp.split(flat_count, 2))
   else:
-    x = list(jnp.split(count.ravel(), 2))
+    # With symbolic shapes we cannot always tell statically if odd_size is true
+    # or false, so we rewrite this without a conditional.
+    flat_count_padded = jnp.concatenate([flat_count, np.uint32([0])])
+    flat_count_padded_half_size = flat_count_padded.shape[0] // 2
+    x = [
+      lax.dynamic_slice(flat_count_padded, (0,),
+                        (flat_count_padded_half_size,)),
+      lax.dynamic_slice(flat_count_padded,
+                        (flat_count_padded_half_size,),
+                        (flat_count_padded_half_size,))
+    ]
+  assert x[0].shape == x[1].shape, (x[0].shape, x[1].shape)
 
   x = threefry2x32_p.bind(key1, key2, x[0], x[1])
   out = jnp.concatenate(x)
   assert out.dtype == np.uint32
-  return lax.reshape(out[:-1] if odd_size else out, count.shape)
+  if core.is_constant_dim(odd_size):
+    return lax.reshape(out[:-1] if odd_size else out, count.shape)
+  else:
+    out_no_padding = lax.dynamic_slice(out, (0,), (flat_count.shape[0],))
+  return lax.reshape(out_no_padding, count.shape)
 
 
 def threefry_split(key: typing.Array, shape: Shape) -> typing.Array:

@@ -1686,7 +1686,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     n=[1, 4, 5, 20, 50, 100],
-    batch_size=[(), (2,), (3, 4)] if scipy_version >= (1, 9, 0) else [()],
+    batch_size=[(), (2,), (3, 4)],
     dtype=int_types + float_types + complex_types
   )
   def testExpm(self, n, batch_size, dtype):
@@ -1712,16 +1712,35 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @jtu.sample_product(
     # Skip empty shapes because scipy fails: https://github.com/scipy/scipy/issues/1532
     shape=[(3, 4), (3, 3), (4, 3)],
-    dtype=[np.float32],
+    dtype=float_types + complex_types,
     mode=["full", "r", "economic"],
+    pivoting=[False, True]
   )
-  def testScipyQrModes(self, shape, dtype, mode):
+  def testScipyQrModes(self, shape, dtype, mode, pivoting):
+    is_not_cpu_test_device = not jtu.test_device_matches(["cpu"])
+    is_not_valid_jaxlib_version = jtu.jaxlib_version() <= (0, 4, 38)
+    if pivoting and (is_not_cpu_test_device or is_not_valid_jaxlib_version):
+      self.skipTest("Pivoting is only supported on CPU with jaxlib > 0.4.38")
     rng = jtu.rand_default(self.rng())
-    jsp_func = partial(jax.scipy.linalg.qr, mode=mode)
-    sp_func = partial(scipy.linalg.qr, mode=mode)
+    jsp_func = partial(jax.scipy.linalg.qr, mode=mode, pivoting=pivoting)
+    sp_func = partial(scipy.linalg.qr, mode=mode, pivoting=pivoting)
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(sp_func, jsp_func, args_maker, rtol=1E-5, atol=1E-5)
     self._CompileAndCheck(jsp_func, args_maker)
+
+    # Pivoting is unsupported by the numpy api - repeat the jvp checks performed
+    # in NumpyLinalgTest::testQR for the `pivoting=True` modes here. Like in the
+    # numpy test, `qr_and_mul` expresses the identity function.
+    def qr_and_mul(a):
+      q, r, *p = jsp_func(a)
+      # To express the identity function we must "undo" the pivoting of `q @ r`.
+      inverted_pivots = p[0][p[0]]
+      return (q @ r)[:, inverted_pivots]
+
+    m, n = shape
+    if pivoting and mode != "r" and (m == n or (m > n and mode != "full")):
+      for a in args_maker():
+        jtu.check_jvp(qr_and_mul, partial(jvp, qr_and_mul), (a,), atol=3e-3)
 
   @jtu.sample_product(
       [dict(shape=shape, k=k)

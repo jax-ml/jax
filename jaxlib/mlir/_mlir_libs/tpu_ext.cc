@@ -67,12 +67,12 @@ constexpr const char IR_MODULE[] = "jaxlib.mlir.ir";
 // TODO(tlongeri): Get rid of this somehow
 constexpr MlirTpuI64TargetTuple TARGET_SHAPE{8, 128};
 
-// TODO(tlongeri): Add type annotations from pybind11/typing.h once there is
+// TODO(tlongeri): Add type annotations via nanobind once there is
 // a release for it (and maybe add a custom Sequence<T> one as well).
 
 // TODO(tlongeri): For our use-case, we don't really need C++ exceptions - just
 // setting the exception object and returning NULL to Python should suffice, but
-// not sure if this is possible with pybind.
+// not sure if this is possible with nanobind.
 class NotImplementedException : public std::runtime_error {
   using runtime_error::runtime_error;
 };

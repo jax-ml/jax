@@ -112,6 +112,21 @@ class JaxAotTest(jtu.JaxTestCase):
         topo.platform_version, aot_topo.devices[0].client.platform_version
     )
 
+  def test_lower_as_text_with_and_without_debug_info(self):
+    def my_function(x):
+      return jnp.sin(x)
+
+    lowered = jax.jit(my_function).lower(42.)
+    stablehlo = lowered.as_text("stablehlo", debug_info=True)
+    self.assertRegex(stablehlo, r"sine.* loc")
+    stablehlo = lowered.as_text("stablehlo")
+    self.assertNotRegex(stablehlo, r"sine.* loc")
+
+    hlo = lowered.as_text("hlo", debug_info=True)
+    self.assertRegex(hlo, r"sine.*metadata=.*source_file=.*")
+    hlo = lowered.as_text("hlo")
+    self.assertNotRegex(hlo, r"sine.*metadata=.*source_file=.*")
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

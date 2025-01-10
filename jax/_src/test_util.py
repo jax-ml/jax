@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import collections
 from collections.abc import Callable, Generator, Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
 import datetime
 import functools
@@ -31,9 +32,9 @@ import sys
 import tempfile
 import textwrap
 import threading
+import time
 from typing import Any, TextIO
 import unittest
-import warnings
 import zlib
 
 from absl.testing import absltest
@@ -47,6 +48,7 @@ from jax._src import dispatch
 from jax._src import dtypes as _dtypes
 from jax._src import lib as _jaxlib
 from jax._src import monitoring
+from jax._src import test_warning_util
 from jax._src import xla_bridge
 from jax._src import util
 from jax._src import mesh as mesh_lib
@@ -113,6 +115,12 @@ HYPOTHESIS_PROFILE = config.string_flag(
     os.getenv('JAX_HYPOTHESIS_PROFILE', 'deterministic'),
     help=('Select the hypothesis profile to use for testing. Available values: '
           'deterministic, interactive'),
+)
+
+TEST_NUM_THREADS = config.int_flag(
+    'jax_test_num_threads', int(os.getenv('JAX_TEST_NUM_THREADS', '0')),
+    help='Number of threads to use for running tests. 0 means run everything '
+    'in the main thread. Using > 1 thread is experimental.'
 )
 
 # We sanitize test names to ensure they work with "unitttest -k" and
@@ -498,29 +506,20 @@ def device_supports_buffer_donation():
   )
 
 
-@contextmanager
-def set_host_platform_device_count(nr_devices: int):
-  """Context manager to set host platform device count if not specified by user.
+def request_cpu_devices(nr_devices: int):
+  """Requests at least `nr_devices` CPU devices.
 
-  This should only be used by tests at the top level in setUpModule(); it will
-  not work correctly if applied to individual test cases.
+  request_cpu_devices should be called at the top-level of a test module before
+  main() runs.
+
+  It is not guaranteed that the number of CPU devices will be exactly
+  `nr_devices`: it may be more or less, depending on how exactly the test is
+  invoked. Test cases that require a specific number of devices should skip
+  themselves if that number is not met.
   """
-  prev_xla_flags = os.getenv("XLA_FLAGS")
-  flags_str = prev_xla_flags or ""
-  # Don't override user-specified device count, or other XLA flags.
-  if "xla_force_host_platform_device_count" not in flags_str:
-    os.environ["XLA_FLAGS"] = (flags_str +
-                               f" --xla_force_host_platform_device_count={nr_devices}")
-  # Clear any cached backends so new CPU backend will pick up the env var.
-  xla_bridge.get_backend.cache_clear()
-  try:
-    yield
-  finally:
-    if prev_xla_flags is None:
-      del os.environ["XLA_FLAGS"]
-    else:
-      os.environ["XLA_FLAGS"] = prev_xla_flags
+  if xla_bridge.NUM_CPU_DEVICES.value < nr_devices:
     xla_bridge.get_backend.cache_clear()
+    config.update("jax_num_cpu_devices", nr_devices)
 
 
 def skip_on_flag(flag_name, skip_value):
@@ -1007,8 +1006,169 @@ def sample_product(*args, **kw):
   """
   return parameterized.parameters(*sample_product_testcases(*args, **kw))
 
+# We use a reader-writer lock to protect test execution. Tests that may run in
+# parallel acquire a read lock; tests that are not thread-safe acquire a write
+# lock.
+if hasattr(util, 'Mutex'):
+  _test_rwlock = util.Mutex()
+
+  def _run_one_test(test: unittest.TestCase, result: ThreadSafeTestResult):
+    if getattr(test.__class__, "thread_hostile", False):
+      _test_rwlock.writer_lock()
+      try:
+        test(result)  # type: ignore
+      finally:
+        _test_rwlock.writer_unlock()
+    else:
+      _test_rwlock.reader_lock()
+      try:
+        test(result)  # type: ignore
+      finally:
+        _test_rwlock.reader_unlock()
+
+
+  @contextmanager
+  def thread_unsafe_test():
+    """Decorator for tests that are not thread-safe.
+
+    Note: this decorator (naturally) only applies to what it wraps, not to, say,
+    code in separate setUp() or tearDown() methods.
+    """
+    if TEST_NUM_THREADS.value <= 0:
+      yield
+      return
+
+    _test_rwlock.assert_reader_held()
+    _test_rwlock.reader_unlock()
+    _test_rwlock.writer_lock()
+    try:
+      yield
+    finally:
+      _test_rwlock.writer_unlock()
+      _test_rwlock.reader_lock()
+else:
+  # TODO(phawkins): remove this branch when jaxlib 0.5.0 is the minimum.
+  _test_rwlock = threading.Lock()
+
+  def _run_one_test(test: unittest.TestCase, result: ThreadSafeTestResult):
+    _test_rwlock.acquire()
+    try:
+      test(result)  # type: ignore
+    finally:
+      _test_rwlock.release()
+
+
+  @contextmanager
+  def thread_unsafe_test():
+    yield  # No reader-writer lock, so we get no parallelism.
+
+
+def thread_unsafe_test_class():
+  "Decorator that marks a TestCase class as thread-hostile."
+  def f(klass):
+    assert issubclass(klass, unittest.TestCase), type(klass)
+    klass.thread_hostile = True
+    return klass
+  return f
+
+
+class ThreadSafeTestResult:
+  """
+  Wraps a TestResult to make it thread safe.
+
+  We do this by accumulating API calls and applying them in a batch under a
+  lock at the conclusion of each test case.
+
+  We duck type instead of inheriting from TestResult because we aren't actually
+  a perfect implementation of TestResult, and would rather get a loud error
+  for things we haven't implemented.
+  """
+  def __init__(self, lock: threading.Lock, result: unittest.TestResult):
+    self.lock = lock
+    self.test_result = result
+    self.actions: list[Callable] = []
+
+  def startTest(self, test: unittest.TestCase):
+    del test
+    self.start_time = time.time()
+
+  def stopTest(self, test: unittest.TestCase):
+    stop_time = time.time()
+    with self.lock:
+      # If test_result is an ABSL _TextAndXMLTestResult we override how it gets
+      # the time. This affects the timing that shows up in the XML output
+      # consumed by CI.
+      time_getter = getattr(self.test_result, "time_getter", None)
+      try:
+        self.test_result.time_getter = lambda: self.start_time
+        self.test_result.startTest(test)
+        for callback in self.actions:
+          callback()
+        self.test_result.time_getter = lambda: stop_time
+        self.test_result.stopTest(test)
+      finally:
+        if time_getter is not None:
+          self.test_result.time_getter = time_getter
+
+  def addSuccess(self, test: unittest.TestCase):
+    self.actions.append(lambda: self.test_result.addSuccess(test))
+
+  def addSkip(self, test: unittest.TestCase, reason: str):
+    self.actions.append(lambda: self.test_result.addSkip(test, reason))
+
+  def addError(self, test: unittest.TestCase, err):
+    self.actions.append(lambda: self.test_result.addError(test, err))
+
+  def addFailure(self, test: unittest.TestCase, err):
+    self.actions.append(lambda: self.test_result.addFailure(test, err))
+
+  def addExpectedFailure(self, test: unittest.TestCase, err):
+    self.actions.append(lambda: self.test_result.addExpectedFailure(test, err))
+
+  def addDuration(self, test: unittest.TestCase, elapsed):
+    self.actions.append(lambda: self.test_result.addDuration(test, elapsed))
+
+
+class JaxTestSuite(unittest.TestSuite):
+  """Runs tests in parallel using threads if TEST_NUM_THREADS is > 1.
+
+  Caution: this test suite does not run setUpClass or setUpModule methods if
+  thread parallelism is enabled.
+  """
+
+  def __init__(self, suite: unittest.TestSuite):
+    super().__init__(list(suite))
+
+  def run(self, result: unittest.TestResult, debug: bool = False) -> unittest.TestResult:
+    if TEST_NUM_THREADS.value <= 0:
+      return super().run(result)
+
+    test_warning_util.install_threadsafe_warning_handlers()
+
+    executor = ThreadPoolExecutor(TEST_NUM_THREADS.value)
+    lock = threading.Lock()
+    futures = []
+
+    def run_test(test):
+      "Recursively runs tests in a test suite or test case."
+      if isinstance(test, unittest.TestSuite):
+        for subtest in test:
+          run_test(subtest)
+      else:
+        test_result = ThreadSafeTestResult(lock, result)
+        futures.append(executor.submit(_run_one_test, test, test_result))
+
+    with executor:
+      run_test(self)
+      for future in futures:
+        future.result()
+
+    return result
+
 
 class JaxTestLoader(absltest.TestLoader):
+  suiteClass = JaxTestSuite
+
   def getTestCaseNames(self, testCaseClass):
     names = super().getTestCaseNames(testCaseClass)
     if _TEST_TARGETS.value:
@@ -1026,10 +1186,21 @@ def with_config(**kwds):
   """Test case decorator for subclasses of JaxTestCase"""
   def decorator(cls):
     assert inspect.isclass(cls) and issubclass(cls, JaxTestCase), "@with_config can only wrap JaxTestCase class definitions."
-    cls._default_config = {}
+    cls._default_thread_local_config = {}
     for b in cls.__bases__:
-      cls._default_config.update(b._default_config)
-    cls._default_config.update(kwds)
+      cls._default_thread_local_config.update(b._default_thread_local_config)
+    cls._default_thread_local_config.update(kwds)
+    return cls
+  return decorator
+
+def with_global_config(**kwds):
+  """Test case decorator for subclasses of JaxTestCase"""
+  def decorator(cls):
+    assert inspect.isclass(cls) and issubclass(cls, JaxTestCase), "@with_config can only wrap JaxTestCase class definitions."
+    cls._default_global_config = {}
+    for b in cls.__bases__:
+      cls._default_global_config.update(b._default_global_config)
+    cls._default_global_config.update(kwds)
     return cls
   return decorator
 
@@ -1060,6 +1231,15 @@ def global_config_context(**kwds):
     for key, value in original_config.items():
       config.update(key, value)
 
+@contextmanager
+def thread_local_config_context(**kwds):
+  stack = ExitStack()
+  for config_name, value in kwds.items():
+    stack.enter_context(config.config_states[config_name](value))
+  try:
+    yield
+  finally:
+    stack.close()
 
 class NotPresent:
   def __repr__(self):
@@ -1083,7 +1263,8 @@ def assert_global_configs_unchanged():
 
 class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
-  _default_config = {
+  _default_global_config: dict[str, Any] = {}
+  _default_thread_local_config = {
     'jax_enable_checks': True,
     'jax_numpy_dtype_promotion': 'strict',
     'jax_numpy_rank_promotion': 'raise',
@@ -1091,10 +1272,8 @@ class JaxTestCase(parameterized.TestCase):
     'jax_legacy_prng_key': 'error',
   }
 
-  _compilation_cache_exit_stack: ExitStack | None = None
+  _context_stack: ExitStack | None = None
 
-  def tearDown(self) -> None:
-    assert core.reset_trace_state()
 
   def setUp(self):
     super().setUp()
@@ -1105,25 +1284,28 @@ class JaxTestCase(parameterized.TestCase):
     # b) it returns values in int32 range, which RandomState requires.
     self._rng = npr.RandomState(zlib.adler32(self._testMethodName.encode()))
 
-  @classmethod
-  def setUpClass(cls):
-    cls._compilation_cache_exit_stack = ExitStack()
-    stack = cls._compilation_cache_exit_stack
-    stack.enter_context(global_config_context(**cls._default_config))
+    # TODO(phawkins): use TestCase.enterContext once Python 3.11 is the minimum
+    # version.
+    self._context_stack = ExitStack()
+    self.addCleanup(self._context_stack.close)
+    stack = self._context_stack
+    stack.enter_context(global_config_context(**self._default_global_config))
+    for config_name, value in self._default_thread_local_config.items():
+      stack.enter_context(jax._src.config.config_states[config_name](value))
 
     if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
+      assert TEST_NUM_THREADS.value <= 1, "Persistent compilation cache is not thread-safe."
       stack.enter_context(config.enable_compilation_cache(True))
       stack.enter_context(config.raise_persistent_cache_errors(True))
       stack.enter_context(config.persistent_cache_min_compile_time_secs(0))
       stack.enter_context(config.persistent_cache_min_entry_size_bytes(0))
-
       tmp_dir = stack.enter_context(tempfile.TemporaryDirectory())
-      compilation_cache.set_cache_dir(tmp_dir)
-      stack.callback(lambda: compilation_cache.reset_cache())
+      stack.enter_context(config.compilation_cache_dir(tmp_dir))
+      stack.callback(compilation_cache.reset_cache)
 
-  @classmethod
-  def tearDownClass(cls):
-    cls._compilation_cache_exit_stack.close()
+  def tearDown(self) -> None:
+    assert core.reset_trace_state()
+    super().tearDown()
 
   def rng(self):
     return self._rng
@@ -1211,11 +1393,44 @@ class JaxTestCase(parameterized.TestCase):
     self.assertMultiLineEqual(expected_clean, what_clean,
                               msg=f"Found\n{what}\nExpecting\n{expected}")
 
+
   @contextmanager
   def assertNoWarnings(self):
-    with warnings.catch_warnings():
-      warnings.simplefilter("error")
+    with test_warning_util.raise_on_warnings():
       yield
+
+  # We replace assertWarns and assertWarnsRegex with functions that use the
+  # thread-safe warning utilities. Unlike the unittest versions these only
+  # function as context managers.
+  @contextmanager
+  def assertWarns(self, warning, *, msg=None):
+    with test_warning_util.record_warnings() as ws:
+      yield
+    for w in ws:
+      if not isinstance(w.message, warning):
+        continue
+      if msg is not None and msg not in str(w.message):
+        continue
+      return
+    self.fail(f"Expected warning not found {warning}:'{msg}', got "
+              f"{ws}")
+
+  @contextmanager
+  def assertWarnsRegex(self, warning, regex):
+    if regex is not None:
+        regex = re.compile(regex)
+
+    with test_warning_util.record_warnings() as ws:
+      yield
+    for w in ws:
+      if not isinstance(w.message, warning):
+        continue
+      if regex is not None and not regex.search(str(w.message)):
+        continue
+      return
+    self.fail(f"Expected warning not found {warning}:'{regex}', got "
+              f"{ws}")
+
 
   def _CompileAndCheck(self, fun, args_maker, *, check_dtypes=True, tol=None,
                        rtol=None, atol=None, check_cache_misses=True):
@@ -1235,7 +1450,7 @@ class JaxTestCase(parameterized.TestCase):
 
     cache_misses = dispatch.xla_primitive_callable.cache_info().misses
     python_ans = fun(*args)
-    if check_cache_misses:
+    if check_cache_misses and TEST_NUM_THREADS.value <= 1:
       self.assertEqual(
           cache_misses, dispatch.xla_primitive_callable.cache_info().misses,
           "Compilation detected during second call of {} in op-by-op "
@@ -1292,11 +1507,7 @@ class BufferDonationTestCase(JaxTestCase):
     self.assertFalse(x.is_deleted())
 
 
-@contextmanager
-def ignore_warning(*, message='', category=Warning, **kw):
-  with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", message=message, category=category, **kw)
-    yield
+ignore_warning = test_warning_util.ignore_warning
 
 # -------------------- Mesh parametrization helpers --------------------
 
@@ -1611,9 +1822,8 @@ def complex_plane_sample(dtype, size_re=10, size_im=None):
     logtiny = finfo.minexp / prec_dps_ratio
     axis_points = np.zeros(3 + 2 * size, dtype=finfo.dtype)
 
-    with warnings.catch_warnings():
+    with ignore_warning(category=RuntimeWarning):
       # Silence RuntimeWarning: overflow encountered in cast
-      warnings.simplefilter("ignore")
       half_neg_line = -np.logspace(logmin, logtiny, size, dtype=finfo.dtype)
       half_line = -half_neg_line[::-1]
       axis_points[-size - 1:-1] = half_line

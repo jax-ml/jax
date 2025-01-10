@@ -1757,9 +1757,19 @@ lowering_rules[lax.dot_general_p] = _dot_general_lowering_rule
 def _convert_helper(x, *, to_dtype):
   # Helper function for dtype conversion
   from_dtype = x.dtype
-  if jnp.issubdtype(from_dtype, jnp.dtype("bool")):
+  if from_dtype == jnp.bool_:
     x = x.astype(jnp.int32)
     return _convert_helper(x, to_dtype=to_dtype)
+  if to_dtype == jnp.bool_:
+    # Lower float32 or (u)int32 -> bool to cmp neq %in, 0
+    # TODO(apaszke,mvoz): Move the upcasts for cmpi to the Mosaic canonicalizer.
+    if jnp.issubdtype(from_dtype, jnp.floating):
+      if from_dtype.itemsize < 4:
+        x = x.astype(jnp.float32)
+    elif jnp.issubdtype(from_dtype, jnp.integer):
+      if from_dtype.itemsize < 4:
+        x = x.astype(jnp.int32)
+    return x != jnp.asarray(0, dtype=x.dtype)
   if jnp.issubdtype(from_dtype, jnp.signedinteger):
     if from_dtype.itemsize < 4:
       x = x.astype(jnp.int32)
@@ -1769,24 +1779,19 @@ def _convert_helper(x, *, to_dtype):
   if jnp.issubdtype(from_dtype, jnp.unsignedinteger):
     if from_dtype.itemsize < 4:
       x = x.astype(jnp.uint32)
-    if jnp.issubdtype(to_dtype, jnp.floating) and to_dtype.itemsize < 4:
+    # unsigned -> float is unsupported. We fall through and raise at the bottom.
+    if not jnp.issubdtype(to_dtype, jnp.floating):
+      return x.astype(to_dtype)
+  if jnp.issubdtype(from_dtype, jnp.floating) and jnp.issubdtype(
+      to_dtype, jnp.signedinteger
+  ):
+    if from_dtype.itemsize < 4:
       x = x.astype(jnp.float32)
-    return x.astype(to_dtype)
-  if jnp.issubdtype(from_dtype, jnp.floating):
-    if jnp.issubdtype(to_dtype, np.dtype("bool")):
-      # Cast to float32 rather than int32 because 0 < |x| < 1 rounds to 0,
-      # leading to false in bool. However, convert_element_type(x, bool)
-      # returns true. It's handled correctly when x is float32.
-      x = x.astype(jnp.float32)
-    elif jnp.issubdtype(to_dtype, jnp.signedinteger):
-      if from_dtype.itemsize < 4:
-        x = x.astype(jnp.float32)
-      if to_dtype.itemsize < 4:
-        # Need to clip values to match XLA
-        minval, maxval = jnp.iinfo(to_dtype).min, jnp.iinfo(to_dtype).max
-        x = jnp.clip(x, minval, maxval)
-        return x.astype(jnp.int32).astype(to_dtype)
-    return x.astype(to_dtype)
+    if to_dtype.itemsize < 4:
+      # Need to clip values to match XLA
+      minval, maxval = jnp.iinfo(to_dtype).min, jnp.iinfo(to_dtype).max
+      x = jnp.clip(x, minval, maxval)
+      return x.astype(jnp.int32).astype(to_dtype)
   raise NotImplementedError(f"Unsupported cast: {from_dtype} -> {to_dtype}")
 
 def _convert_element_type_lowering_rule(
@@ -1805,64 +1810,34 @@ def _convert_element_type_lowering_rule(
   if new_dtype.itemsize == 8:
     raise NotImplementedError("64-bit types are not supported")
 
-  if jnp.issubdtype(old_dtype, jnp.floating) and jnp.issubdtype(
-      new_dtype, jnp.floating
-  ):
+  _from = lambda dtype: jnp.issubdtype(old_dtype, dtype)
+  _to = lambda dtype: jnp.issubdtype(new_dtype, dtype)
+  floating = jnp.floating
+  integer = jnp.integer
+  signed = jnp.signedinteger
+  both_32bit = old_dtype.itemsize == 4 and new_dtype.itemsize == 4
+  if _from(floating) and _to(floating):
     if old_dtype.itemsize < new_dtype.itemsize and new_dtype.itemsize == 4:
       return arith.extf(out_type, x)
     elif old_dtype.itemsize > new_dtype.itemsize and old_dtype.itemsize == 4:
       return arith.truncf(out_type, x)
-  elif jnp.issubdtype(old_dtype, jnp.integer) and jnp.issubdtype(
-      new_dtype, jnp.integer
-  ):
+  elif _from(integer) and _to(integer):
     if old_dtype.itemsize < new_dtype.itemsize and new_dtype.itemsize == 4:
+      if not (_from(signed) and _to(signed)):
+        raise NotImplementedError(f"Unsupported cast: {old_dtype} -> {new_dtype}")
       return arith.extsi(out_type, x)
     elif old_dtype.itemsize > new_dtype.itemsize and old_dtype.itemsize == 4:
       return arith.trunci(out_type, x)
     elif jnp.iinfo(old_dtype).bits == jnp.iinfo(new_dtype).bits:
       # This case triggers when casting signed to unsigned or vice versa.
       return x
-  elif jnp.issubdtype(old_dtype, jnp.floating) and jnp.issubdtype(
-      new_dtype, jnp.signedinteger
-  ) and old_dtype.itemsize == new_dtype.itemsize == 4:
+  # TODO(apaszke): Remove both_32bit constraints using the Mosaic canonicalizer.
+  elif _from(floating) and _to(signed) and both_32bit:
     return arith.fptosi(out_type, x)
-  elif jnp.issubdtype(old_dtype, jnp.integer) and jnp.issubdtype(
-      new_dtype, jnp.floating
-  ) and old_dtype.itemsize == new_dtype.itemsize == 4:
+  elif _from(signed) and _to(floating) and both_32bit:
     return arith.sitofp(out_type, x)
-  elif (
-      old_dtype == jnp.bool_
-      and jnp.issubdtype(new_dtype, jnp.integer)
-      and new_dtype.itemsize == 4
-  ):
+  elif old_dtype == jnp.bool_ and _to(integer) and new_dtype.itemsize == 4:
     return arith.extui(out_type, x)
-  elif (
-      (
-          (is_float := jnp.issubdtype(old_dtype, jnp.floating))
-          or jnp.issubdtype(old_dtype, jnp.integer)
-      )
-      and new_dtype == jnp.bool_
-      and old_dtype.itemsize == 4
-  ):
-    # Lower float32 or (u)int32 -> bool to cmp neq %in, 0
-    const_type = _dtype_to_ir_type(old_dtype)
-    if is_float:
-      pred = _cmpf_lowering_types[lax.ne_p]
-      const_zero = ir.FloatAttr.get(const_type, 0)
-      op = arith.CmpFOp
-    else:
-      pred = _cmpsi_lowering_types[lax.ne_p]
-      const_zero = ir.IntegerAttr.get(const_type, 0)
-      op = arith.CmpIOp
-    predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
-    if in_aval.shape:
-      in_type = aval_to_ir_type(in_aval, is_kernel_boundary=False)
-      vector_zeros = arith.ConstantOp(
-          in_type,
-          ir.DenseElementsAttr.get_splat(in_type, const_zero),
-      )
-      return op(predicate, x, vector_zeros).result
-    return op(predicate, x, arith.ConstantOp(const_type, const_zero)).result
   return lower_fun(functools.partial(_convert_helper, to_dtype=new_dtype),
                    multiple_results=False)(ctx, x)
 

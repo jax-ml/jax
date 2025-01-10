@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
 import math
 from functools import partial
 from absl.testing import absltest
@@ -28,14 +27,7 @@ from jax._src.util import safe_zip
 from jax.experimental.compute_on import compute_on
 
 config.parse_flags_with_absl()
-
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
-
-def tearDownModule():
-  _exit_stack.close()
+jtu.request_cpu_devices(8)
 
 
 class LayoutTest(jtu.JaxTestCase):

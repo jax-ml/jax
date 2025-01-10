@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
 from unittest import SkipTest
 import tracemalloc as tm
 
@@ -25,15 +24,7 @@ from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 from jax._src import test_util as jtu
 
 jax.config.parse_flags_with_absl()
-
-# Run all tests with 8 CPU devices.
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
-
-def tearDownModule():
-  _exit_stack.close()
+jtu.request_cpu_devices(8)
 
 
 class MultiDeviceTest(jtu.JaxTestCase):
@@ -132,6 +123,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
     val = jax.random.normal(rng, ())
     self.assert_committed_to_device(val, device)
 
+  @jtu.thread_unsafe_test()  # count_primitive_compiles isn't thread-safe
   def test_primitive_compilation_cache(self):
     devices = self.get_devices()
 

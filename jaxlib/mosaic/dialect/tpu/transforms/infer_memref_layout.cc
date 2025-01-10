@@ -43,10 +43,12 @@ namespace mlir::tpu {
 //   tpu_tiling_flags: A struct of flags indicating which large tiling modes are
 //     enabled by XLA for memrefs.
 //   bitwidth: The bitwidth of the element type of the operand.
+//   is_kernel_argument: Whether the operand is a kernel argument.
 int getTilingFactor(const int num_lanes, const int hardware_generation,
                     const int64_t sublane_count,
                     const TpuTilingFlags &tpu_tiling_flags,
-                    const int8_t bitwidth) {
+                    const int8_t bitwidth,
+                    const bool is_kernel_argument) {
   CHECK(llvm::isPowerOf2_32(bitwidth));
   CHECK_LE(4, bitwidth);
   CHECK_LE(bitwidth, 32);
@@ -61,7 +63,11 @@ int getTilingFactor(const int num_lanes, const int hardware_generation,
     if (bitwidth == 8 && tpu_tiling_flags.use_x8_large_second_minor) {
       return sublane_count * 4;
     }
-    if (bitwidth == 16 && tpu_tiling_flags.use_x16_large_second_minor) {
+    // 16-bit values are generally always possible to relayout on the fly in v6,
+    // so we allow large 2nd minor tiling whenever possible. We can't do this
+    // for kernel arguments, because the layout of those is controlled by XLA.
+    if (bitwidth == 16 && (tpu_tiling_flags.use_x16_large_second_minor ||
+                           (!is_kernel_argument && hardware_generation >= 6))) {
       return sublane_count * 2;
     }
     return sublane_count;
@@ -84,6 +90,7 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref_ty,
                                        const int hardware_generation,
                                        std::array<int64_t, 2> target_shape,
                                        const TpuTilingFlags &tpu_tiling_flags,
+                                       bool is_kernel_argument,
                                        int64_t leading_tile_rows = 0) {
   if (auto tiled_layout_attr =
           dyn_cast<TiledLayoutAttr>(memref_ty.getLayout())) {
@@ -119,7 +126,8 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref_ty,
       const int64_t leading_tile =
           getTilingFactor(
               llvm::divideCeil(memref_ty.getShape().back(), lane_count),
-              hardware_generation, sublane_count, tpu_tiling_flags, bitwidth) *
+              hardware_generation, sublane_count, tpu_tiling_flags, bitwidth,
+              is_kernel_argument) *
           lane_count;
       SmallVector<xla::Tile> tiles{xla::Tile({leading_tile})};
       if (bitwidth != 32) {
@@ -139,7 +147,7 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref_ty,
     if (leading_tile_rows == 0) {
       leading_tile_rows =
           getTilingFactor(second_minor, hardware_generation, sublane_count,
-                          tpu_tiling_flags, bitwidth);
+                          tpu_tiling_flags, bitwidth, is_kernel_argument);
     }
     SmallVector<xla::Tile> tiles{xla::Tile({leading_tile_rows, lane_count})};
     if (bitwidth != 32) {
@@ -186,6 +194,7 @@ FailureOr<MemRefType> inferMemref(MemRefType memref,
                                   const int hardware_generation,
                                   std::array<int64_t, 2> target_shape,
                                   const TpuTilingFlags &tpu_tiling_flags,
+                                  bool is_kernel_argument,
                                   int64_t leading_tile_rows) {
   if (isa<SemaphoreType, DMASemaphoreType>(memref.getElementType())) {
     const Attribute semaphore_mem = tpu::MemorySpaceAttr::get(
@@ -209,7 +218,7 @@ FailureOr<MemRefType> inferMemref(MemRefType memref,
   FAILUREOR_ASSIGN_OR_RETURN(
       const TiledLayoutAttr layout,
       inferLayout(memref, hardware_generation, target_shape, tpu_tiling_flags,
-                  leading_tile_rows));
+                  is_kernel_argument, leading_tile_rows));
 
   const ArrayRef<xla::Tile> tiles = layout.getTiles();
   if (failed(checkTiles(memref.getContext(), tiles))) {
@@ -248,7 +257,8 @@ LogicalResult inferOp(Operation &op, const int hardware_generation,
     FAILUREOR_ASSIGN_OR_RETURN(
         const MemRefType new_memref_ty,
         inferMemref(memref_ty, hardware_generation, target_shape,
-                    tpu_tiling_flags, leading_tile_rows));
+                    tpu_tiling_flags, /*is_kernel_argument=*/false,
+                    leading_tile_rows));
     alloca_op.getResult().setType(new_memref_ty);
     if (memref_ty != new_memref_ty) {
       OpBuilder builder(alloca_op->getContext());
@@ -265,9 +275,10 @@ LogicalResult inferOp(Operation &op, const int hardware_generation,
   } else if (auto alloca_op = dyn_cast<tpu::AllocaSemaphoreOp>(op)) {
     TypedValue<MemRefType> arg = alloca_op.getResult();
     const MemRefType memref_ty = alloca_op.getResult().getType();
-    FAILUREOR_ASSIGN_OR_RETURN(const MemRefType new_memref_ty,
-                               inferMemref(memref_ty, hardware_generation,
-                                           target_shape, tpu_tiling_flags));
+    FAILUREOR_ASSIGN_OR_RETURN(
+        const MemRefType new_memref_ty,
+        inferMemref(memref_ty, hardware_generation, target_shape,
+                    tpu_tiling_flags, /*is_kernel_argument=*/false));
     alloca_op.getResult().setType(new_memref_ty);
     if (memref_ty != new_memref_ty) {
       OpBuilder builder(alloca_op->getContext());
@@ -320,7 +331,8 @@ LogicalResult inferFunc(func::FuncOp f, const int hardware_generation,
     FAILUREOR_ASSIGN_OR_RETURN(
         MemRefType new_memref_ty,
         inferMemref(memref_ty, hardware_generation, target_shape,
-                    tpu_tiling_flags, leading_tile_rows));
+                    tpu_tiling_flags, /*is_kernel_argument=*/true,
+                    leading_tile_rows));
     arg.setType(new_memref_ty);
     new_arg_types.push_back(arg.getType());
     if (memref_ty != new_memref_ty) {

@@ -34,7 +34,7 @@ from jax._src import dtypes
 from jax._src import util
 from jax._src.core import (
     Primitive, ShapedArray, is_constant_dim, is_constant_shape)
-from jax._src.extend import ffi
+from jax._src import ffi
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -310,7 +310,23 @@ def lu(x: ArrayLike) -> tuple[Array, Array, Array]:
   return lu, pivots, permutation
 
 
-def qr(x: ArrayLike, *, full_matrices: bool = True) -> tuple[Array, Array]:
+@overload
+def qr(x: ArrayLike, *, pivoting: Literal[False], full_matrices: bool = True,
+      ) -> tuple[Array, Array]:
+  ...
+
+@overload
+def qr(x: ArrayLike, *, pivoting: Literal[True], full_matrices: bool = True,
+      ) -> tuple[Array, Array, Array]:
+  ...
+
+@overload
+def qr(x: ArrayLike, *, pivoting: bool = False, full_matrices: bool = True,
+      ) -> tuple[Array, Array] | tuple[Array, Array, Array]:
+  ...
+
+def qr(x: ArrayLike, *, pivoting: bool = False, full_matrices: bool = True,
+      ) -> tuple[Array, Array] | tuple[Array, Array, Array]:
   """QR decomposition.
 
   Computes the QR decomposition
@@ -323,11 +339,15 @@ def qr(x: ArrayLike, *, full_matrices: bool = True) -> tuple[Array, Array]:
 
   Args:
     x: A batch of matrices with shape ``[..., m, n]``.
+    pivoting: Allows the QR decomposition to be rank-revealing. If ``True``,
+      compute the column pivoted decomposition ``A[:, P] = Q @ R``, where ``P``
+      is chosen such that the diagonal of ``R`` is non-increasing. Currently
+      supported on CPU backends only.
     full_matrices: Determines if full or reduced matrices are returned; see
       below.
 
   Returns:
-    A pair of arrays ``(q, r)``.
+    A pair of arrays ``(q, r)``, if ``pivoting=False``, otherwise ``(q, r, p)``.
 
     Array ``q`` is a unitary (orthogonal) matrix,
     with shape ``[..., m, m]`` if ``full_matrices=True``, or
@@ -336,8 +356,12 @@ def qr(x: ArrayLike, *, full_matrices: bool = True) -> tuple[Array, Array]:
     Array ``r`` is an upper-triangular matrix with shape ``[..., m, n]`` if
     ``full_matrices=True``, or ``[..., min(m, n), n]`` if
     ``full_matrices=False``.
+
+    Array ``p`` is an index vector with shape [..., n]
   """
-  q, r = qr_p.bind(x, full_matrices=full_matrices)
+  q, r, *p = qr_p.bind(x, pivoting=pivoting, full_matrices=full_matrices)
+  if pivoting:
+    return q, r, p[0]
   return q, r
 
 
@@ -1846,6 +1870,61 @@ mlir.register_lowering(
     platform='rocm')
 
 
+def geqp3(a: ArrayLike, jpvt: ArrayLike) -> tuple[Array, Array, Array]:
+  """Computes the column-pivoted QR decomposition of a matrix.
+
+  Args:
+    a: a ``[..., m, n]`` batch of matrices, with floating-point or complex type.
+    jpvt: a ``[..., n]`` batch of column-pivot index vectors with integer type,
+  Returns:
+    A ``(a, jpvt, taus)`` triple, where ``r`` is in the upper triangle of ``a``,
+    ``q`` is represented in the lower triangle of ``a`` and in ``taus`` as
+    elementary Householder reflectors, and ``jpvt`` is the column-pivot indices
+    such that ``a[:, jpvt] = q @ r``.
+  """
+  a_out, jpvt_out, taus = geqp3_p.bind(a, jpvt)
+  return a_out, jpvt_out, taus
+
+def _geqp3_abstract_eval(a, jpvt):
+  if not isinstance(a, ShapedArray) or not isinstance(jpvt, ShapedArray):
+    raise NotImplementedError("Unsupported aval in geqp3_abstract_eval: "
+                              f"{a.aval}, {jpvt.aval}")
+  if a.ndim < 2:
+    raise ValueError("Argument to column-pivoted QR decomposition must have ndims >= 2")
+  *batch_dims, m, n = a.shape
+  *jpvt_batch_dims, jpvt_n = jpvt.shape
+  if batch_dims != jpvt_batch_dims or jpvt_n != n:
+    raise ValueError(f"Type mismatch for pivoted QR decomposition: {a=} {jpvt=}")
+  taus = a.update(shape=(*batch_dims, core.min_dim(m, n)))
+  return a, jpvt, taus
+
+def _geqp3_batching_rule(batched_args, batch_dims):
+  a, jpvt = batched_args
+  b_a, b_jpvt = batch_dims
+  a = batching.moveaxis(a, b_a, 0)
+  jpvt = batching.moveaxis(jpvt, b_jpvt, 0)
+  return geqp3(a, jpvt), (0, 0, 0)
+
+def _geqp3_cpu_lowering(ctx, a, jpvt):
+  a_aval, jpvt_aval = ctx.avals_in
+  batch_dims = a_aval.shape[:-2]
+  nb = len(batch_dims)
+  layout = [(nb, nb + 1) + tuple(range(nb - 1, -1, -1)), tuple(range(nb, -1, -1))]
+  result_layouts = layout + [tuple(range(nb, -1, -1))]
+  target_name = lapack.prepare_lapack_call("geqp3_ffi", a_aval.dtype)
+  rule = ffi.ffi_lowering(target_name, operand_layouts=layout,
+                          result_layouts=result_layouts,
+                          operand_output_aliases={0: 0, 1: 1})
+  return rule(ctx, a, jpvt)
+
+
+geqp3_p = Primitive('geqp3')
+geqp3_p.multiple_results = True
+geqp3_p.def_impl(partial(dispatch.apply_primitive, geqp3_p))
+geqp3_p.def_abstract_eval(_geqp3_abstract_eval)
+batching.primitive_batchers[geqp3_p] = _geqp3_batching_rule
+mlir.register_lowering(geqp3_p, _geqp3_cpu_lowering, platform="cpu")
+
 # householder_product: product of elementary Householder reflectors
 
 def householder_product(a: ArrayLike, taus: ArrayLike) -> Array:
@@ -1938,11 +2017,12 @@ mlir.register_lowering(
     platform='rocm')
 
 
-def _qr_impl(operand, *, full_matrices):
-  q, r = dispatch.apply_primitive(qr_p, operand, full_matrices=full_matrices)
-  return q, r
+def _qr_impl(operand, *, pivoting, full_matrices):
+  q, r, *p = dispatch.apply_primitive(qr_p, operand, pivoting=pivoting,
+                                      full_matrices=full_matrices)
+  return (q, r, p[0]) if pivoting else (q, r)
 
-def _qr_abstract_eval(operand, *, full_matrices):
+def _qr_abstract_eval(operand, *, pivoting, full_matrices):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2:
       raise ValueError("Argument to QR decomposition must have ndims >= 2")
@@ -1950,20 +2030,24 @@ def _qr_abstract_eval(operand, *, full_matrices):
     k = m if full_matrices else core.min_dim(m, n)
     q = operand.update(shape=(*batch_dims, m, k))
     r = operand.update(shape=(*batch_dims, k, n))
+    p = operand.update(shape=(*batch_dims, n), dtype=np.dtype(np.int32))
   else:
     q = operand
     r = operand
-  return q, r
+    p = operand
+  return (q, r, p) if pivoting else (q, r)
 
-def qr_jvp_rule(primals, tangents, *, full_matrices):
+def qr_jvp_rule(primals, tangents, *, pivoting, full_matrices):
   # See j-towns.github.io/papers/qr-derivative.pdf for a terse derivation.
   x, = primals
   dx, = tangents
-  q, r = qr_p.bind(x, full_matrices=False)
+  q, r, *p = qr_p.bind(x, pivoting=pivoting, full_matrices=False)
   *_, m, n = x.shape
   if m < n or (full_matrices and m != n):
     raise NotImplementedError(
       "Unimplemented case of QR decomposition derivative")
+  if pivoting:
+    dx = dx[..., p[0]]
   dx_rinv = triangular_solve(r, dx)  # Right side solve by default
   qt_dx_rinv = _H(q) @ dx_rinv
   qt_dx_rinv_lower = _tril(qt_dx_rinv, -1)
@@ -1973,15 +2057,19 @@ def qr_jvp_rule(primals, tangents, *, full_matrices):
   do = do + I * (qt_dx_rinv - qt_dx_rinv.real.astype(qt_dx_rinv.dtype))
   dq = q @ (do - qt_dx_rinv) + dx_rinv
   dr = (qt_dx_rinv - do) @ r
+  if pivoting:
+    dp = ad_util.Zero.from_primal_value(p[0])
+    return (q, r, p[0]), (dq, dr, dp)
   return (q, r), (dq, dr)
 
-def _qr_batching_rule(batched_args, batch_dims, *, full_matrices):
+def _qr_batching_rule(batched_args, batch_dims, *, pivoting, full_matrices):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
-  return qr_p.bind(x, full_matrices=full_matrices), (0, 0)
+  out_axes = (0, 0, 0) if pivoting else (0, 0)
+  return qr_p.bind(x, pivoting=pivoting, full_matrices=full_matrices), out_axes
 
-def _qr_lowering(a, *, full_matrices):
+def _qr_lowering(a, *, pivoting, full_matrices):
   *batch_dims, m, n = a.shape
   if m == 0 or n == 0:
     k = m if full_matrices else core.min_dim(m, n)
@@ -1989,9 +2077,18 @@ def _qr_lowering(a, *, full_matrices):
                              (*batch_dims, m, k),
                              (len(batch_dims), len(batch_dims) + 1))
     r = lax.full((*batch_dims, k, n), 0, dtype=a.dtype)
+    if pivoting:
+      p = lax.full((*batch_dims, n), 0, dtype=np.dtype(np.int32))
+      return q, r, p
     return q, r
 
-  r, taus = geqrf(a)
+  if pivoting:
+    jpvt = lax.full((*batch_dims, n), 0, dtype=np.dtype(np.int32))
+    r, p, taus = geqp3(a, jpvt)
+    p -= 1  # Convert geqp3's 1-based indices to 0-based indices by subtracting 1.
+  else:
+    r, taus = geqrf(a)
+
   if m < n:
     q = householder_product(r[..., :m, :m], taus)
   elif full_matrices:
@@ -2002,6 +2099,8 @@ def _qr_lowering(a, *, full_matrices):
     q = householder_product(r, taus)
     r = r[..., :n, :n]
   r = _triu(r)
+  if pivoting:
+    return q, r, p
   return q, r
 
 
@@ -2014,7 +2113,6 @@ ad.primitive_jvps[qr_p] = qr_jvp_rule
 batching.primitive_batchers[qr_p] = _qr_batching_rule
 
 mlir.register_lowering(qr_p, mlir.lower_fun(_qr_lowering))
-
 
 # Singular value decomposition
 def _svd_impl(operand, *, full_matrices, compute_uv, subset_by_index=None,

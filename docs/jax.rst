@@ -18,6 +18,7 @@ Subpackages
    jax.dlpack
    jax.distributed
    jax.dtypes
+   jax.ffi
    jax.flatten_util
    jax.image
    jax.nn

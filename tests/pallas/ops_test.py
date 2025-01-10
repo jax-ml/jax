@@ -85,12 +85,17 @@ def _random_value(key: jax.Array, shape_dtype: jax.ShapeDtypeStruct
   raise NotImplementedError(shape_dtype)
 
 
+# TODO(apaszke): Add 8-bit floats.
+# TODO(apaszke): Add int4.
 _DTYPES = (
     "float32",
     "bfloat16",
     "int32",
     "int16",
     "int8",
+    "uint32",
+    "uint16",
+    "uint8",
     "bool",
 )
 
@@ -544,22 +549,20 @@ class OpsTest(PallasBaseTest):
     if from_dtype == to_dtype:
       self.skipTest("Unnecessary test")
     if jtu.is_device_tpu(version=4):
-      if from_dtype in {"int16", "int8"} or to_dtype in {"int16", "int8"}:
+      if (from_dtype in {"int16", "int8", "uint16", "uint8"} or
+          to_dtype in {"int16", "int8", "uint16", "uint8"}):
         self.skipTest(
             "Not supported: TPU generation doesn't support this cast."
         )
     if jtu.test_device_matches(["tpu"]) and jtu.get_tpu_version() < 4:
-      if from_dtype in {"int32", "float32", "bfloat16"} and to_dtype in {"int16", "int8"}:
+      if (from_dtype in {"int32", "uint32", "float32", "bfloat16", "int16", "int8"} and
+          to_dtype in {"int16", "int8", "uint16", "uint8"}):
         self.skipTest(
             "Not supported: TPU generation doesn't support this cast."
         )
 
     # TODO(sharadmv,apaszke): add support for the following casts
-    if from_dtype == "int16" and to_dtype == "int8":
-      self.skipTest("Not supported: bad canonicalization")
-    if from_dtype == "int8" and to_dtype == "int16":
-      self.skipTest("Not supported: bad canonicalization")
-    if from_dtype == "bool" and to_dtype in {"int16", "int8"}:
+    if from_dtype == "bool" and to_dtype in {"int16", "int8", "uint16", "uint8"}:
       self.skipTest("Not supported: cannot extend to sub-32 bit types")
 
     if from_dtype == "bfloat16":
@@ -585,8 +588,13 @@ class OpsTest(PallasBaseTest):
       y_ref[...] = y
     if (y_dtype := to_dtype) == jnp.dtype("bool"):
       y_dtype = jnp.int32
-    y = self.pallas_call(
-        kernel, out_shape=jax.ShapeDtypeStruct(x.shape, y_dtype))(x)
+    try:
+      y = self.pallas_call(
+          kernel, out_shape=jax.ShapeDtypeStruct(x.shape, y_dtype))(x)
+    except Exception as e:
+      if "Unsupported cast" in e.args[0]:
+        self.skipTest("Unsupported cast")
+      raise
     if to_dtype == jnp.dtype("bool"):
       y = y.astype(jnp.dtype("bool"))
     y_ref = x.astype(to_dtype)
@@ -1116,18 +1124,35 @@ class OpsTest(PallasBaseTest):
   @parameterized.parameters(
       ("int32", "float32"),
       ("float32", "float32"),
+      ("bfloat16", "bfloat16"),
   )
   def test_true_divide(self, dtype, out_dtype):
+    if jtu.test_device_matches(["tpu"]):
+      if out_dtype == "bfloat16" and not jtu.is_device_tpu_at_least(6):
+        self.skipTest("bfloat16 is not supported on older TPU generations")
+      if not jtu.if_cloud_tpu_at_least(2025, 1, 9):
+        self.skipTest("Requires libtpu built after 2025-01-09")
+    elif jtu.test_device_matches(["gpu"]):
+      if dtype == "bfloat16":
+        self.skipTest("bfloat16 not supported")
+
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((8,), out_dtype),
+        out_shape=jax.ShapeDtypeStruct((8, 8), out_dtype),
     )
     def kernel(x_ref, y_ref, o_ref):
       o_ref[...] = jnp.true_divide(x_ref[...], y_ref[...])
 
     x = jnp.array([1, 3, -4, -6, 2, 5, 4, -7]).astype(dtype)
     y = jnp.array([3, 1, -4, -5, 2, -2, 2, 4]).astype(dtype)
-    np.testing.assert_allclose(jnp.true_divide(x, y), kernel(x, y))
+    x = jnp.repeat(x, 8, axis=0).reshape(8, 8)
+    y = jnp.tile(y, 8).reshape(8, 8)
+    rtol = 8e-3 if dtype == "bfloat16" else 1e-6
+    np.testing.assert_allclose(
+        jnp.true_divide(x, y).astype(jnp.float32),
+        kernel(x, y).astype(jnp.float32),
+        rtol=rtol,
+    )
 
   @parameterized.parameters("float16", "bfloat16")
   def test_true_divide_unsupported(self, dtype):

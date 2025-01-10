@@ -13,7 +13,7 @@
 # limitations under the License.
 
 load("@rules_python//python:defs.bzl", "py_library")
-load("//jaxlib:jax.bzl", "pybind_extension")
+load("//jaxlib:jax.bzl", "nanobind_extension")
 
 package(
     default_applicable_licenses = [],
@@ -171,7 +171,7 @@ cc_library(
     alwayslink = True,
 )
 
-pybind_extension(
+nanobind_extension(
     name = "_mosaic_gpu_ext",
     srcs = ["mosaic_gpu_ext.cc"],
     copts = [

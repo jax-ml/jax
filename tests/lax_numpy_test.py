@@ -5581,8 +5581,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp.ones(2) + 3  # don't want to raise for scalars
 
     with jax.numpy_rank_promotion('warn'):
-      self.assertWarnsRegex(UserWarning, "Following NumPy automatic rank promotion for add on "
-                            r"shapes \(2,\) \(1, 2\).*", lambda: jnp.ones(2) + jnp.ones((1, 2)))
+      with self.assertWarnsRegex(
+        UserWarning,
+        "Following NumPy automatic rank promotion for add on shapes "
+        r"\(2,\) \(1, 2\).*"
+      ):
+        jnp.ones(2) + jnp.ones((1, 2))
       jnp.ones(2) + 3  # don't want to warn for scalars
 
   @unittest.skip("Test fails on CI, perhaps due to JIT caching")

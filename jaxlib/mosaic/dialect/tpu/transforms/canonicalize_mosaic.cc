@@ -13,6 +13,8 @@
 // NOLINTNEXTLINE(misc-include-cleaner)
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 // NOLINTNEXTLINE(misc-include-cleaner)
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -23,6 +25,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/include/mlir/Dialect/Math/IR/Math.h"
 #include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/include/mlir/Dialect/Vector/Transforms/VectorTransforms.h"
 #include "mlir/include/mlir/IR/AffineExpr.h"
@@ -294,8 +297,13 @@ LogicalResult canonicalize_elementwise(int hardware_generation_,
       auto element_type = ty.getElementType();
       // PowFOp and DivFOp do not seem to be supported in bf16 on later
       // hardware.
+      // There's an annoying hodgepodge of elementwise ops that need to be
+      // rewritten to f32 on later hardware.
+      // TODO(mvoz): Look into (1) what it would take to support these ops
+      // natively on later hardware, and (2) how to better organize this list.
       bool needs_cast = hardware_generation_ <= 5 || isa<math::PowFOp>(op) ||
-                        isa<arith::DivFOp>(op);
+                        isa<math::TanhOp>(op) || isa<math::ExpOp>(op) ||
+                        isa<math::LogOp>(op);
       if (needs_cast && element_type.isBF16()) {
         auto target_f32 =
             builder.create<arith::ExtFOp>(op.getLoc(), target_f32_ty, operand)
@@ -552,7 +560,10 @@ const llvm::StringSet<> &elementwise_convertible_ops() {
                                           arith::SubFOp::getOperationName(),
                                           arith::MaximumFOp::getOperationName(),
                                           arith::MinimumFOp::getOperationName(),
-                                          math::PowFOp::getOperationName()};
+                                          math::PowFOp::getOperationName(),
+                                          math::TanhOp::getOperationName(),
+                                          math::ExpOp::getOperationName(),
+                                          math::LogOp::getOperationName()};
   return *ops;
 }
 

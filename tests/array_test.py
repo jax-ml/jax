@@ -43,19 +43,11 @@ from jax._src import array
 from jax._src import prng
 
 jax.config.parse_flags_with_absl()
+jtu.request_cpu_devices(8)
 
 with contextlib.suppress(ImportError):
   import pytest
   pytestmark = pytest.mark.multiaccelerator
-
-# Run all tests with 8 CPU devices.
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
-
-def tearDownModule():
-  _exit_stack.close()
 
 
 def create_array(shape, sharding, global_data=None):
@@ -708,9 +700,13 @@ class JaxArrayTest(jtu.JaxTestCase):
 
   def test_process_allgather_single_host(self):
     x = jnp.arange(8.)
-    out = multihost_utils.process_allgather(x)
+    out = multihost_utils.process_allgather(x, tiled=True)
     self.assertEqual(out.shape, x.shape)
     self.assertArraysEqual(out, x)
+
+    out = multihost_utils.process_allgather(x)
+    self.assertEqual(out.shape, (1, x.shape[0]))
+    self.assertArraysEqual(out, np.expand_dims(x, axis=0))
 
   @jtu.sample_product(
     dtype=jtu.dtypes.all,
@@ -894,6 +890,7 @@ class ShardingTest(jtu.JaxTestCase):
         r"factors: \[4, 2\] should evenly divide the shape\)"):
       mps.shard_shape((8, 3))
 
+  @jtu.thread_unsafe_test()  # cache_info isn't thread-safe
   def test_pmap_sharding_hash_eq(self):
     if jax.device_count() < 2:
       self.skipTest('Test needs >= 2 devices.')

@@ -3886,6 +3886,9 @@ def bake_vmap(batched_args, batch_dims):
   return ys, bdim_out
 
 
+# All tests in this test class are thread-hostile because they add and remove
+# primitives from global maps.
+@jtu.thread_unsafe_test_class()  # registration isn't thread-safe
 class CustomElementTypesTest(jtu.JaxTestCase):
 
   def setUp(self):

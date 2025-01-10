@@ -2086,10 +2086,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
         PolyHarness("random_uniform", f"error_not_even_{flags_name}",
                     lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32),
                     arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 5), _f32)],
-                    polymorphic_shapes=[None, "b0, ..."],
-                    expect_error=(
-                        (core.InconclusiveDimensionOperation,
-                         "array size .* must be even") if flags_name == "threefry_non_partitionable" else (None, None)),
+                    polymorphic_shapes=[None, "b0, b1"],
                     override_jax_config_flags=override_jax_config_flags)  # type: ignore
       ]
         for key_size, flags_name, override_jax_config_flags in [
@@ -2673,7 +2670,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     if harness.group_name == "eig" and not jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("JAX implements eig only on CPU.")
 
-    with jtu.global_config_context(**harness.override_jax_config_flags):
+    with jtu.thread_local_config_context(**harness.override_jax_config_flags):
       harness.run_test(self)
 
 

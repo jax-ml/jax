@@ -354,6 +354,76 @@ template struct QrFactorization<ffi::DataType::F64>;
 template struct QrFactorization<ffi::DataType::C64>;
 template struct QrFactorization<ffi::DataType::C128>;
 
+//== Column Pivoting QR Factorization ==//
+
+// lapack geqp3
+template <ffi::DataType dtype>
+ffi::Error PivotingQrFactorization<dtype>::Kernel(
+    ffi::Buffer<dtype> x, ffi::Buffer<LapackIntDtype> jpvt,
+    ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<LapackIntDtype> jpvt_out,
+    ffi::ResultBuffer<dtype> tau) {
+  FFI_ASSIGN_OR_RETURN((auto [batch_count, x_rows, x_cols]),
+                       SplitBatch2D(x.dimensions()));
+  auto* x_out_data = x_out->typed_data();
+  auto* jpvt_out_data = jpvt_out->typed_data();
+  auto* tau_data = tau->typed_data();
+  lapack_int info;
+  const int64_t work_size = GetWorkspaceSize(x_rows, x_cols);
+  auto work_data = AllocateScratchMemory<dtype>(work_size);
+  constexpr bool is_complex_dtype = ffi::IsComplexType<dtype>();
+  std::unique_ptr<RealType[]> rwork_data;
+  if constexpr (is_complex_dtype) {
+    rwork_data = AllocateScratchMemory<ffi::ToReal(dtype)>(2 * x_cols);
+  }
+
+  CopyIfDiffBuffer(x, x_out);
+  CopyIfDiffBuffer(jpvt, jpvt_out);
+  FFI_ASSIGN_OR_RETURN(auto workspace_dim_v,
+                       MaybeCastNoOverflow<lapack_int>(work_size));
+  FFI_ASSIGN_OR_RETURN(auto x_rows_v, MaybeCastNoOverflow<lapack_int>(x_rows));
+  FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<lapack_int>(x_cols));
+  auto x_leading_dim_v = x_rows_v;
+
+  const int64_t x_out_step{x_rows * x_cols};
+  const int64_t jpvt_step{x_cols};
+  const int64_t tau_step{std::min(x_rows, x_cols)};
+  for (int64_t i = 0; i < batch_count; ++i) {
+    if constexpr (is_complex_dtype) {
+      fn(&x_rows_v, &x_cols_v, x_out_data, &x_leading_dim_v, jpvt_out_data,
+         tau_data, work_data.get(), &workspace_dim_v, rwork_data.get(), &info);
+    } else {
+      fn(&x_rows_v, &x_cols_v, x_out_data, &x_leading_dim_v, jpvt_out_data,
+         tau_data, work_data.get(), &workspace_dim_v, &info);
+    }
+    x_out_data += x_out_step;
+    jpvt_out_data += jpvt_step;
+    tau_data += tau_step;
+  }
+  return ffi::Error::Success();
+}
+
+template <ffi::DataType dtype>
+int64_t PivotingQrFactorization<dtype>::GetWorkspaceSize(lapack_int x_rows,
+                                                         lapack_int x_cols) {
+  ValueType optimal_size{};
+  lapack_int x_leading_dim_v = x_rows;
+  lapack_int info = 0;
+  lapack_int workspace_query = -1;
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    fn(&x_rows, &x_cols, nullptr, &x_leading_dim_v, nullptr, nullptr,
+       &optimal_size, &workspace_query, nullptr, &info);
+  } else {
+    fn(&x_rows, &x_cols, nullptr, &x_leading_dim_v, nullptr, nullptr,
+       &optimal_size, &workspace_query, &info);
+  }
+  return info == 0 ? static_cast<int64_t>(std::real(optimal_size)) : -1;
+}
+
+template struct PivotingQrFactorization<ffi::DataType::F32>;
+template struct PivotingQrFactorization<ffi::DataType::F64>;
+template struct PivotingQrFactorization<ffi::DataType::C64>;
+template struct PivotingQrFactorization<ffi::DataType::C128>;
+
 //== Orthogonal QR                                      ==//
 //== Computes orthogonal matrix Q from QR Decomposition ==//
 
@@ -758,6 +828,35 @@ static ffi::Error SvdKernel(
                               work_data.get(), &workspace_dim_v,
                               iwork_data.get(), info_data);
     }
+
+    // Suppress MSAN warnings when using a copy of LAPACK uninstrumented by
+    // MSAN.
+    using T [[maybe_unused]] = typename svd::SVDType<dtype>::ValueType;
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(info_data, sizeof(*info_data));
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_out_data,
+                                        x_cols_v * x_leading_dim_v * sizeof(T));
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+        singular_values_data, std::min(x_rows_v, x_cols_v) * sizeof(RealType));
+    if (mode_v == 'A') {
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+          u_data, u_leading_dim_v * x_rows_v * sizeof(T));
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+          vt_data, vt_leading_dim_v * x_cols_v * sizeof(T));
+    } else if (mode_v == 'O') {
+      if (x_rows_v < x_cols_v) {
+        ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+            u_data, u_leading_dim_v * x_rows_v * sizeof(T));
+      } else {
+        ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+            vt_data, vt_leading_dim_v * x_cols_v * sizeof(T));
+      }
+    } else if (mode_v == 'S') {
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+          u_data, u_leading_dim_v * std::min(x_rows_v, x_cols_v) * sizeof(T));
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(
+          vt_data, vt_leading_dim_v * x_cols_v * sizeof(T));
+    }
+
     x_out_data += x_out_step;
     singular_values_data += singular_values_step;
     u_data += u_step;
@@ -1983,6 +2082,16 @@ template struct TridiagonalReduction<ffi::DataType::C128>;
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/) \
           .Ret<::xla::ffi::Buffer<data_type>>(/*tau*/))
 
+#define JAX_CPU_DEFINE_GEQP3(name, data_type)                    \
+  XLA_FFI_DEFINE_HANDLER_SYMBOL(                                 \
+      name, PivotingQrFactorization<data_type>::Kernel,          \
+      ::xla::ffi::Ffi::Bind()                                    \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)             \
+          .Arg<::xla::ffi::Buffer<LapackIntDtype>>(/*jpvt*/)     \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)         \
+          .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*jpvt_out*/) \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*tau*/))
+
 #define JAX_CPU_DEFINE_ORGQR(name, data_type)          \
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                       \
       name, OrthogonalQr<data_type>::Kernel,           \
@@ -2143,6 +2252,11 @@ JAX_CPU_DEFINE_GEQRF(lapack_dgeqrf_ffi, ::xla::ffi::DataType::F64);
 JAX_CPU_DEFINE_GEQRF(lapack_cgeqrf_ffi, ::xla::ffi::DataType::C64);
 JAX_CPU_DEFINE_GEQRF(lapack_zgeqrf_ffi, ::xla::ffi::DataType::C128);
 
+JAX_CPU_DEFINE_GEQP3(lapack_sgeqp3_ffi, ::xla::ffi::DataType::F32);
+JAX_CPU_DEFINE_GEQP3(lapack_dgeqp3_ffi, ::xla::ffi::DataType::F64);
+JAX_CPU_DEFINE_GEQP3(lapack_cgeqp3_ffi, ::xla::ffi::DataType::C64);
+JAX_CPU_DEFINE_GEQP3(lapack_zgeqp3_ffi, ::xla::ffi::DataType::C128);
+
 JAX_CPU_DEFINE_ORGQR(lapack_sorgqr_ffi, ::xla::ffi::DataType::F32);
 JAX_CPU_DEFINE_ORGQR(lapack_dorgqr_ffi, ::xla::ffi::DataType::F64);
 JAX_CPU_DEFINE_ORGQR(lapack_cungqr_ffi, ::xla::ffi::DataType::C64);
@@ -2186,6 +2300,7 @@ JAX_CPU_DEFINE_GEHRD(lapack_zgehrd_ffi, ::xla::ffi::DataType::C128);
 #undef JAX_CPU_DEFINE_TRSM
 #undef JAX_CPU_DEFINE_GETRF
 #undef JAX_CPU_DEFINE_GEQRF
+#undef JAX_CPU_DEFINE_GEQP3
 #undef JAX_CPU_DEFINE_ORGQR
 #undef JAX_CPU_DEFINE_POTRF
 #undef JAX_CPU_DEFINE_GESDD

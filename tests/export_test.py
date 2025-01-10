@@ -56,14 +56,8 @@ except (ModuleNotFoundError, ImportError):
   CAN_SERIALIZE = False
 
 config.parse_flags_with_absl()
+jtu.request_cpu_devices(8)
 
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(2))
-
-def tearDownModule():
-  _exit_stack.close()
 
 ### Setup for testing lowering with effects
 @dataclasses.dataclass(frozen=True)
@@ -165,17 +159,16 @@ def get_exported(fun: Callable, vjp_order=0,
 @jtu.with_config(jax_export_calling_convention_version=export.maximum_supported_calling_convention_version)
 class JaxExportTest(jtu.JaxTestCase):
 
-  @classmethod
-  def setUpClass(cls):
+  def setUp(self):
+    super().setUp()
     # Find the available platforms
-    cls.platforms = []
+    self.platforms = []
     for backend in ["cpu", "gpu", "tpu"]:
       try:
         jax.devices(backend)
       except RuntimeError:
         continue
-      cls.platforms.append(backend)
-    super().setUpClass()
+      self.platforms.append(backend)
 
   def test_basic_export_only(self):
     @jax.jit
@@ -1505,7 +1498,7 @@ class JaxExportTest(jtu.JaxTestCase):
                   module_str)
 
     # Call with argument placed on different plaforms
-    for platform in self.__class__.platforms:
+    for platform in self.platforms:
       x_device = jax.device_put(x, jax.devices(platform)[0])
       res_exp = exp.call(x_device)
       self.assertAllClose(
@@ -1530,7 +1523,7 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertEqual(1, count_sine)
 
     # Call with argument placed on different plaforms
-    for platform in self.__class__.platforms:
+    for platform in self.platforms:
       if platform == "tpu": continue
       x_device = jax.device_put(x, jax.devices(platform)[0])
       res_exp = exp2.call(x_device)
@@ -1674,7 +1667,7 @@ class JaxExportTest(jtu.JaxTestCase):
     exp = get_exported(f_jax, platforms=("cpu", "tpu", "cuda", "rocm"))(a)
 
     # Call with argument placed on different plaforms
-    for platform in self.__class__.platforms:
+    for platform in self.platforms:
       run_devices = jax.devices(platform)[0:len(export_devices)]
       if len(run_devices) != len(export_devices):
         continue

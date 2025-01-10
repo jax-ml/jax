@@ -306,18 +306,21 @@ class _DecisionByElimination:
                                                                scope=scope):
       # `c =[eq] 0` AND `t*t_k*t_s + c*c_s` contains only terms smaller than t
       # AND c_s > 0.
-      # rest = e[i:]*t_s + c*c_s` AND `rest_ub >= rest >= rest_lb`
+      # `rest = e[i:]*t_s + c*c_s` AND `rest_ub >= rest >= rest_lb`
+      # `rest` contains only terms smaller than `t`.
       rest = _DimExpr._linear_combination_sorted_pairs(e, i, t_s,
                                                        c._sorted_terms, 0, c_s)
       rest_lb, rest_ub = self._bounds_for_sorted_terms(scope, rest, 0,
                                                        BoundsPrecision.BEST)
       if rest_ub < np.inf:
+        # We have: e[i:]*t_s = rest - c*c_s <= rest_ub
         if t_s > 0:
           ub = min(ub, int(np.floor(rest_ub / t_s)))
         else:
           lb = max(lb, int(np.ceil(rest_ub / t_s)))
 
       if rest_lb > - np.inf and c_eq == Comparator.EQ:
+        # We have: e[i:]*t_s = rest - c*c_s = rest >= rest_lb
         if t_s > 0:
           lb = max(lb, int(np.ceil(rest_lb / t_s)))
         else:

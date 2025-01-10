@@ -128,9 +128,6 @@ class _DimFactor:
   MOD = "mod"
   MAX = "max"
   MIN = "min"
-  # TODO(necula): remove non_negative
-  NON_NEGATIVE = "non_negative"  # The max of the operand and 0. Replaced with
-                                 # max but kept here for backwards compatibility.
 
   __slots__ = ["var", "operation", "operands", "_hash", "_size"]
 
@@ -446,11 +443,6 @@ class _DimExpr:
   @staticmethod
   def _from_operation(operation: str, *operands: DimSize,
                       scope: SymbolicScope) -> DimSize:
-    if operation == _DimFactor.NON_NEGATIVE:  # For parsing, for backwards compatibility
-      return _DimExpr._from_term(
-          _DimTerm.from_operation(_DimFactor.MAX, *operands, 0,
-                                  scope=scope), 1,
-          scope=scope)
     return _DimExpr._from_term(
         _DimTerm.from_operation(operation, *operands, scope=scope), 1,
         scope=scope)
@@ -1665,8 +1657,6 @@ class _Parser:
     if tok.exact_type == tokenize.NAME:
       if tok.string in (_DimFactor.MOD, _DimFactor.FLOORDIV, _DimFactor.MAX, _DimFactor.MIN):
         return self.factor_binary_op(tok.string, self.next_tok())
-      if tok.string == _DimFactor.NON_NEGATIVE:  # We still parse this for backwards compatibility
-        return self.factor_unary_op(_DimFactor.NON_NEGATIVE, self.next_tok())
       return _DimExpr._from_var(tok.string, self.scope), self.next_tok()
     number_sign = 1
     if tok.exact_type == tokenize.MINUS:  # -k are negative constants

@@ -16,8 +16,8 @@
 
 load(
     "//jaxlib:jax.bzl",
+    "nanobind_extension",
     "py_library_providing_imports_info",
-    "pybind_extension",
     "pytype_library",
 )
 load("//jaxlib:symlink_files.bzl", "symlink_files")
@@ -198,7 +198,7 @@ cc_library(
 
 # This isn't a CPU kernel. This exists to catch cases where jaxlib is built for the wrong
 # target architecture.
-pybind_extension(
+nanobind_extension(
     name = "cpu_feature_guard",
     srcs = ["cpu_feature_guard.c"],
     module_name = "cpu_feature_guard",
@@ -207,13 +207,14 @@ pybind_extension(
     ],
 )
 
-pybind_extension(
+nanobind_extension(
     name = "utils",
     srcs = ["utils.cc"],
     module_name = "utils",
     deps = [
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/synchronization",
         "@nanobind",
         "@xla//third_party/python_runtime:headers",
     ],
@@ -238,6 +239,7 @@ cc_library(
         "@xla//xla:util",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/pjrt:status_casters",
+        "@xla//xla/pjrt/c:pjrt_c_api_ffi_extension_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu_extension_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_helpers",
@@ -246,7 +248,7 @@ cc_library(
     ],
 )
 
-pybind_extension(
+nanobind_extension(
     name = "cuda_plugin_extension",
     srcs = ["cuda_plugin_extension.cc"],
     module_name = "cuda_plugin_extension",
@@ -262,7 +264,7 @@ pybind_extension(
     ],
 )
 
-pybind_extension(
+nanobind_extension(
     name = "rocm_plugin_extension",
     srcs = ["rocm_plugin_extension.cc"],
     module_name = "rocm_plugin_extension",

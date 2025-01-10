@@ -15,9 +15,9 @@
 
 from __future__ import annotations
 
-import importlib.util
 from collections.abc import Callable, Sequence
 import functools
+import importlib.util
 import logging
 import string
 import sys
@@ -29,12 +29,12 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import lax
-
+from jax._src import config
 from jax._src import core
+from jax._src import dispatch
 from jax._src import effects
 from jax._src import mesh as mesh_lib
 from jax._src import sharding_impls
-from jax._src import dispatch
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import ad
@@ -135,22 +135,37 @@ def debug_callback_lowering(ctx, *args, effect, callback, **params):
   axis_context = ctx.module_context.axis_context
   if (isinstance(axis_context, sharding_impls.SPMDAxisContext) and
         set(axis_context.manual_axes) == set(axis_context.mesh.axis_names)):
-    # If we have fully manual sharding during lowering, that means the JAX
-    # program has per-device semantics, so we run the callback on each device.
-    sharding = xc.OpSharding()
-    sharding.type = xc.OpSharding.Type.MANUAL
+    if config.use_shardy_partitioner.value:
+      assert len(ctx.avals_out) == 1
+      sharding = sharding_impls.SdyArrayShardingList([
+          sharding_impls.SdyArraySharding(
+              mesh_shape=(),
+              dimension_shardings=[
+                  sharding_impls.SdyDimSharding(axes=[], is_closed=True)
+              ] * ctx.avals_out[0].ndim,
+              logical_device_ids=())])
+    else:
+      # If we have fully manual sharding during lowering, that means the JAX
+      # program has per-device semantics, so we run the callback on each device.
+      sharding = xc.OpSharding()
+      sharding.type = xc.OpSharding.Type.MANUAL
   elif isinstance(
       axis_context,
       (sharding_impls.ShardingContext, sharding_impls.SPMDAxisContext),
   ):
-    # If we have fully automatic sharding during lowering, that means the JAX
-    # program has bulk array semantics, so we run the callback with a MAXIMAL
-    # sharding and hence execute it only once on the full logical value).
-    # If we have partially automatic sharding, we do this too... not sure why!
-    sharding = xc.OpSharding()
-    sharding.type = xc.OpSharding.Type.MAXIMAL
-    sharding.tile_assignment_dimensions = [1]
-    sharding.tile_assignment_devices = [0]
+    if config.use_shardy_partitioner.value:
+      sharding = sharding_impls.SdyArrayShardingList([
+          sharding_impls.SdyArraySharding(
+              mesh_shape=(), dimension_shardings=[], logical_device_ids=(0,))])
+    else:
+      # If we have fully automatic sharding during lowering, that means the JAX
+      # program has bulk array semantics, so we run the callback with a MAXIMAL
+      # sharding and hence execute it only once on the full logical value).
+      # If we have partially automatic sharding, we do this too... not sure why!
+      sharding = xc.OpSharding()
+      sharding.type = xc.OpSharding.Type.MAXIMAL
+      sharding.tile_assignment_dimensions = [1]
+      sharding.tile_assignment_devices = [0]
   else:
     # When there's no SPMD partitioning going on, don't annotate a sharding.
     sharding = None
@@ -300,8 +315,9 @@ class _DebugPrintFormatChecker(string.Formatter):
 
 formatter = _DebugPrintFormatChecker()
 
-def _format_print_callback(fmt: str, *args, **kwargs):
-  sys.stdout.write(fmt.format(*args, **kwargs) + "\n")
+def _format_print_callback(fmt: str, np_printoptions, *args, **kwargs):
+  with np.printoptions(**np_printoptions):
+    sys.stdout.write(fmt.format(*args, **kwargs) + "\n")
 
 def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
   """Prints values and works in staged out JAX functions.
@@ -338,8 +354,8 @@ def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
   # Check that we provide the correct arguments to be formatted.
   formatter.format(fmt, *args, **kwargs)
 
-  debug_callback(functools.partial(_format_print_callback, fmt), *args,
-                 **kwargs, ordered=ordered)
+  debug_callback(functools.partial(_format_print_callback, fmt, np.get_printoptions()),
+                 *args, **kwargs, ordered=ordered)
 
 
 # Sharding visualization
@@ -389,6 +405,10 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
     if devices is None:
       raise AssertionError(
           'Please file a bug at https://github.com/jax-ml/jax/issues')
+    am = axis_context.abstract_mesh
+    if am is not None:
+      mesh = mesh_lib.Mesh(np.array(devices).reshape(am.axis_sizes),
+                           am.axis_names)
   elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
     devices = axis_context.mesh._flat_devices_tuple
   else:

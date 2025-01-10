@@ -955,6 +955,7 @@ if CAN_USE_HYPOTHESIS:
     assert next(idx_, None) is None
     return idx
 
+  @jtu.thread_unsafe_test_class()  # hypothesis isn't thread-safe
   class StateHypothesisTest(jtu.JaxTestCase):
 
     @hp.given(get_vmap_params())
@@ -1711,6 +1712,7 @@ if CAN_USE_HYPOTHESIS:
                     min_dim=max(f1.min_dim, f2.min_dim),
                     max_dim=min(f1.max_dim, f2.max_dim))
 
+  @jtu.thread_unsafe_test_class()  # because of hypothesis
   class RunStateHypothesisTest(jtu.JaxTestCase):
 
     @jax.legacy_prng_key('allow')

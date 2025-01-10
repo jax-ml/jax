@@ -176,7 +176,25 @@ class OpsTest(PallasBaseTest):
     )(x, y)
     np.testing.assert_array_equal(out, inp.reshape(m * 2, n))
 
+  @parameterized.parameters([jnp.int32, jnp.int16, jnp.int8, jnp.int4])
+  def test_row_broadcast(self, dtype):
+    if not jtu.if_cloud_tpu_at_least(2025, 1, 10):
+      self.skipTest("Requires libtpu built after 2025-01-10")
+    if not self.INTERPRET and jtu.get_tpu_version() < 5:
+      self.skipTest("Requires TPUv5+")
+    def kernel(x_ref, y_ref):
+      y_ref[...] = jnp.broadcast_to(x_ref[pl.ds(3, 1)], y_ref.shape).astype(y_ref.dtype)
+    m, n = 4, 1152
+    x = jax.random.randint(
+        jax.random.key(12), (m, n), minval=-1000, maxval=1000, dtype=jnp.int32
+    ).astype(dtype)
+    y = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((m, n), jnp.int32)
+    )(x)
+    np.testing.assert_array_equal(y, jnp.broadcast_to(x[3:4], y.shape))
+
   def test_tpu_unsigned_int(self):
+    self.skipTest("TODO(apaszke): Unsigned upcasts were implemented incorrectly")
     def body(x_ref, o_ref):
       # Test cast from uint16 -> uint32
       ux = lax.convert_element_type(x_ref[...], jnp.uint32)

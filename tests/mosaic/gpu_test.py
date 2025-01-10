@@ -171,7 +171,7 @@ class TestCase(parameterized.TestCase):
     self.context = mlir.make_ir_context()
     if mgpu_dialect is not None:
       mgpu_dialect.register_dialect(self.context)
-    self.enter_context(jtu.global_config_context(jax_traceback_filtering="off"))
+    self.enter_context(config.traceback_filtering("off"))
     self.enter_context(self.context)
     self.enter_context(ir.Location.unknown())
 
@@ -1756,13 +1756,13 @@ class ProfilerTest(TestCase):
 
 class TorchTest(TestCase):
 
-  @classmethod
-  def setUpClass(cls):
+  def setUp(self):
+    super().setUp()
     try:
       import torch
     except ImportError:
       raise unittest.SkipTest("Test requires PyTorch")
-    cls.torch = torch
+    self.torch = torch
 
   def test_basic(self):
     def kernel(ctx, i_gmem, o_gmem, _):

@@ -19,17 +19,30 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Changes:
   * The minimum NumPy version is now 1.25. NumPy 1.25 will remain the minimum
     supported version until June 2025.
+  * The minimum SciPy version is now 1.11. SciPy 1.11 will remain the minimum
+    supported version until June 2025.
+  * {func}`jax.numpy.einsum` now defaults to `optimize='auto'` rather than
+    `optimize='optimal'`. This avoids exponentially-scaling trace-time in
+    the case of many arguments ({jax-issue}`#25214`).
 
 * New Features
   * {func}`jax.numpy.fft.fftn`, {func}`jax.numpy.fft.rfftn`,
     {func}`jax.numpy.fft.ifftn`, and {func}`jax.numpy.fft.irfftn` now support
     transforms in more than 3 dimensions, which was previously the limit. See
     {jax-issue}`#25606` for more details.
-
+  * Support added for user defined state in the FFI via the new
+    {func}`jax.ffi.register_ffi_type_id` function.
+  * The AOT lowering `.as_text()` method now supports the `debug_info` option
+    to include debugging information, e.g., source location, in the output.
 * Deprecations
   * From {mod}`jax.interpreters.xla`, `abstractify` and `pytype_aval_mappings`
     are now deprecated, having been replaced by symbols of the same name
     in {mod}`jax.core`.
+  * {func}`jax.scipy.special.lpmn` and {func}`jax.scipy.special.lpmn_values`
+    are deprecated, following their deprecation in SciPy v1.15.0. There are
+    no plans to replace these deprecated functions with new APIs.
+  * The {mod}`jax.extend.ffi` submodule was moved to {mod}`jax.ffi`, and the
+    previous import path is deprecated.
 
 * Deletions
   * `jax_enable_memories` flag has been deleted and the behavior of that flag
@@ -37,6 +50,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * From `jax.lib.xla_client`, the previously-deprecated `Device` and
     `XlaRuntimeError` symbols have been removed; instead use `jax.Device`
     and `jax.errors.JaxRuntimeError` respectively.
+  * The `jax.experimental.array_api` module has been removed after being
+    deprecated in JAX v0.4.32. Since that release, {mod}`jax.numpy` supports
+    the array API directly.
 
 ## jax 0.4.38 (Dec 17, 2024)
 

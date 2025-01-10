@@ -52,7 +52,7 @@ from jax._src.api import _shared_code_pmap, _prepare_pmap
 from jax._src.lax import (lax, parallel as lax_parallel, slicing,
                           windowed_reductions, convolution, fft, linalg,
                           special, control_flow, ann)
-from jax._src.extend import ffi
+from jax._src import ffi
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import (HashableFunction, HashablePartial, unzip2,
@@ -70,6 +70,7 @@ from jax._src.tree_util import (broadcast_prefix, prefix_errors, PyTreeDef,
                                 generate_key_paths, KeyPath)
 from jax.experimental.multihost_utils import (host_local_array_to_global_array,
                                               global_array_to_host_local_array)
+from jax._src.pjit import sharding_constraint_p
 
 P = PartitionSpec
 
@@ -621,9 +622,10 @@ def _rule_missing(prim: core.Primitive, *_, **__):
 
 # Lowering
 
+
 def _shardy_shard_map_sharding(
     ctx: mlir.LoweringRuleContext, mesh, auto, names, aval_in
-  ) -> ir.Attribute:
+) -> sharding_impls.SdyArraySharding:
   axes = {name: i for i, ns in names.items() for name in ns}
   ns = _make_scoped_manual_sharding(ctx, mesh, axes)
   if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
@@ -633,7 +635,7 @@ def _shardy_shard_map_sharding(
   if auto:
     for dim_sharding in sdy_sharding.dimension_shardings:
       dim_sharding.is_closed = False
-  return sdy_sharding.build()
+  return sdy_sharding
 
 
 def _shard_map_lowering_shardy(
@@ -651,10 +653,11 @@ def _shard_map_lowering_shardy(
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
   args = (*ctx.dim_var_values, *in_nodes)
 
-  manual_axes = sub_ctx.axis_context.manual_axes
-  mesh_shape = mesh.shape
-  manual_axes_size = np.prod([mesh_shape[a] for a in manual_axes])
-  if manual_axes_size == 1:
+  # The order of manual axes should match the order of mesh.axis_names to avoid
+  # non-determinism issues.
+  manual_axes = [a for a in mesh.axis_names
+                 if a in sub_ctx.axis_context.manual_axes]
+  if np.prod([mesh.shape[a] for a in manual_axes]) == 1:
     # No need for a `ManualComputationOp` if all manual axes are size 1.
     with core.extend_axis_env_nd(tuple(mesh.shape.items())):
       out_nodes, _ = mlir.jaxpr_subcomp(
@@ -662,12 +665,12 @@ def _shard_map_lowering_shardy(
           dim_var_values=ctx.dim_var_values)
     return out_nodes
 
-  in_shardings = sdy.TensorShardingPerValueAttr.get(map(
+  in_shardings = sharding_impls.SdyArrayShardingList(map(
       partial(_shardy_shard_map_sharding, ctx, mesh, auto),
-      in_names, ctx.avals_in))
-  out_shardings = sdy.TensorShardingPerValueAttr.get(map(
+      in_names, ctx.avals_in)).build()
+  out_shardings = sharding_impls.SdyArrayShardingList(map(
       partial(_shardy_shard_map_sharding, ctx, mesh, auto),
-      out_names, ctx.avals_out))
+      out_names, ctx.avals_out)).build()
   output_types = map(mlir.aval_to_ir_type, ctx.avals_out)
   manual_computation_op = sdy.ManualComputationOp(
       output_types, args, in_shardings, out_shardings,
@@ -1130,7 +1133,7 @@ for o in it.chain(lax.__dict__.values(), slicing.__dict__.values(),
 
 for p in [control_flow.loops.cumsum_p, control_flow.loops.cumlogsumexp_p,
           control_flow.loops.cumprod_p, control_flow.loops.cummax_p,
-          control_flow.loops.cummin_p]:
+          control_flow.loops.cummin_p, sharding_constraint_p]:
   register_standard_check(p)
   register_standard_rewrite(p)
 

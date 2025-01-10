@@ -14,7 +14,6 @@ Experimental Modules
 .. toctree::
     :maxdepth: 1
 
-    jax.experimental.array_api
     jax.experimental.checkify
     jax.experimental.compilation_cache
     jax.experimental.custom_partitioning

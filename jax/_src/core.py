@@ -39,7 +39,7 @@ from jax._src import config
 from jax._src import effects
 from jax._src import compute_on
 from jax._src import mesh as mesh_lib
-from jax._src.partition_spec import PartitionSpec as P, UnconstrainedSingleton
+from jax._src.partition_spec import PartitionSpec as P
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
     TracerIntegerConversionError, UnexpectedTracerError)
@@ -1659,12 +1659,12 @@ def _maybe_modify_sharding(sharding):
 
   new_spec = []
   for s in sharding.spec:
-    if s is None or isinstance(s, UnconstrainedSingleton):
+    if s is None:
       new_spec.append(s)
     else:
       temp_s = s[0] if isinstance(s, tuple) else s
       new_spec.append(
-          P.UNCONSTRAINED
+          None
           if sharding.mesh._name_to_type[temp_s] == mesh_lib.AxisTypes.Auto else s)
   return sharding.with_spec(new_spec)
 
@@ -1696,6 +1696,9 @@ class ShapedArray(UnshapedArray):
     self.weak_type = weak_type
     if config.sharding_in_types.value:
       self.sharding = get_sharding(sharding, len(self.shape))
+      if not isinstance(self.sharding.mesh, mesh_lib.AbstractMesh):
+        raise ValueError(
+            f"Mesh of an aval must be an AbstractMesh. Got {self.sharding.mesh}")
 
   def update(self, shape=None, dtype=None, weak_type=None, **kwargs):
     if shape is None:
@@ -1761,8 +1764,6 @@ def _get_shape_sharding_str(shape, spec):
   out = []
   for s1, s2 in zip(shape, spec):
     if s2 is None:
-      out.append(f"{s1}")
-    elif isinstance(s2, UnconstrainedSingleton):
       out.append(f"{s1}")
     elif isinstance(s2, tuple):
       ss = ','.join(s for s in s2)
@@ -2094,11 +2095,6 @@ def stride_dim(d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimS
   """
   # If d < window_size then (d - window_size) // window_stride < 0
   return max_dim((d - window_size) // window_stride + 1, 0)
-
-# TODO(necula): Deprecated Jan 2024, to be removed.
-def non_negative_dim(d: DimSize) -> DimSize:
-  """max(d, 0)."""
-  return max_dim(d, 0)
 
 def min_dim(d1: DimSize, d2: DimSize) -> DimSize:
   """Like min(d1, d2) but for both constant and symbolic dimensions."""

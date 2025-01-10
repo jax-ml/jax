@@ -18,7 +18,7 @@ load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "if_rocm_is_configured",
-    "pybind_extension",
+    "nanobind_extension",
     "rocm_library",
 )
 
@@ -113,7 +113,7 @@ cc_library(
     ],
 )
 
-pybind_extension(
+nanobind_extension(
     name = "_blas",
     srcs = ["//jaxlib/gpu:blas.cc"],
     copts = [
@@ -206,7 +206,7 @@ cc_library(
     ],
 )
 
-pybind_extension(
+nanobind_extension(
     name = "_solver",
     srcs = ["//jaxlib/gpu:solver.cc"],
     copts = [
@@ -252,7 +252,7 @@ cc_library(
     ],
 )
 
-pybind_extension(
+nanobind_extension(
     name = "_sparse",
     srcs = ["//jaxlib/gpu:sparse.cc"],
     copts = [
@@ -317,7 +317,7 @@ rocm_library(
     ],
 )
 
-pybind_extension(
+nanobind_extension(
     name = "_linalg",
     srcs = ["//jaxlib/gpu:linalg.cc"],
     copts = [
@@ -370,7 +370,7 @@ rocm_library(
     ],
 )
 
-pybind_extension(
+nanobind_extension(
     name = "_prng",
     srcs = ["//jaxlib/gpu:prng.cc"],
     copts = [
@@ -410,7 +410,7 @@ cc_library(
     ],
 )
 
-pybind_extension(
+nanobind_extension(
     name = "_hybrid",
     srcs = ["//jaxlib/gpu:hybrid.cc"],
     copts = [
@@ -472,7 +472,7 @@ cc_library(
     ],
 )
 
-pybind_extension(
+nanobind_extension(
     name = "_triton",
     srcs = ["//jaxlib/gpu:triton.cc"],
     copts = [

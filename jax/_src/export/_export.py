@@ -896,7 +896,7 @@ def _wrap_main_func(
     with ir.InsertionPoint(entry_block):
       # Make a context just for lowering the dimension value computations
       module_context = mlir.ModuleContext(
-          backend_or_name="cpu", platforms=["cpu"],
+          backend=None, platforms=["cpu"],
           axis_context=sharding_impls.ShardingContext(0),
           keepalives=[], channel_iterator=itertools.count(1),
           host_callbacks=[], module=wrapped_module, context=context,
