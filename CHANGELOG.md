@@ -24,6 +24,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.numpy.einsum` now defaults to `optimize='auto'` rather than
     `optimize='optimal'`. This avoids exponentially-scaling trace-time in
     the case of many arguments ({jax-issue}`#25214`).
+  * {func}`jax.numpy.linalg.solve` no longer supports batched 1D arguments
+    on the right hand side. To recover the previous behavior in these cases,
+    use `solve(a, b[..., None]).squeeze(-1)`.
 
 * New Features
   * {func}`jax.numpy.fft.fftn`, {func}`jax.numpy.fft.rfftn`,
