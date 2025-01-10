@@ -1555,6 +1555,15 @@ jax_py_test(
     ],
 )
 
+jax_py_test(
+    name = "string_array_test",
+    srcs = ["string_array_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ],
+)
+
 jax_multiplatform_test(
     name = "cudnn_fusion_test",
     srcs = ["cudnn_fusion_test.py"],
@@ -1590,6 +1599,7 @@ exports_files(
         "shard_map_test.py",
         "transfer_guard_test.py",
         "layout_test.py",
+        "string_array_test.py",
     ],
     visibility = jax_test_file_visibility,
 )
