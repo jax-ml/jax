@@ -2184,20 +2184,55 @@ class LaxLinalgTest(jtu.JaxTestCase):
         self.assertAllClose(
             eigvals_all[first:(last + 1)], eigvals_index, atol=atol)
 
-  @jtu.sample_product(dtype=float_types + complex_types)
-  def test_tridiagonal_solve(self, dtype):
+  @jtu.sample_product(shape=[(3,), (3, 4), (3, 4, 5)],
+                      dtype=float_types + complex_types)
+  def test_tridiagonal_solve(self, shape, dtype):
     if dtype not in float_types and jtu.test_device_matches(["gpu"]):
       self.skipTest("Data type not supported on GPU")
-    dl = np.array([0.0, 2.0, 3.0], dtype=dtype)
-    d = np.ones(3, dtype=dtype)
-    du = np.array([1.0, 2.0, 0.0], dtype=dtype)
-    m = 3
-    B = np.ones([m, 1], dtype=dtype)
-    X = lax.linalg.tridiagonal_solve(dl, d, du, B)
-    A = np.eye(3, dtype=dtype)
-    A[[1, 2], [0, 1]] = dl[1:]
-    A[[0, 1], [1, 2]] = du[:-1]
-    np.testing.assert_allclose(A @ X, B, rtol=1e-6, atol=1e-6)
+    rng = self.rng()
+    d = 1.0 + jtu.rand_positive(rng)(shape, dtype)
+    dl = jtu.rand_default(rng)(shape, dtype)
+    du = jtu.rand_default(rng)(shape, dtype)
+    b = jtu.rand_default(rng)(shape + (1,), dtype)
+    x = lax.linalg.tridiagonal_solve(dl, d, du, b)
+
+    def build_tri(dl, d, du):
+      return jnp.diag(d) + jnp.diag(dl[1:], -1) + jnp.diag(du[:-1], 1)
+    for _ in shape[:-1]:
+      build_tri = jax.vmap(build_tri)
+
+    a = build_tri(dl, d, du)
+    self.assertAllClose(a @ x, b, atol=5e-5, rtol=1e-4)
+
+  def test_tridiagonal_solve_endpoints(self):
+    # tridagonal_solve shouldn't depend on the endpoints being explicitly zero.
+    dtype = np.float32
+    size = 10
+    dl = np.linspace(-1.0, 1.0, size, dtype=dtype)
+    dlz = np.copy(dl)
+    dlz[0] = 0.0
+    d = np.linspace(1.0, 2.0, size, dtype=dtype)
+    du = np.linspace(1.0, -1.0, size, dtype=dtype)
+    duz = np.copy(du)
+    duz[-1] = 0.0
+    b = np.linspace(0.1, -0.1, size, dtype=dtype)[:, None]
+    self.assertAllClose(
+        lax.linalg.tridiagonal_solve(dl, d, du, b),
+        lax.linalg.tridiagonal_solve(dlz, d, duz, b),
+    )
+
+  @jtu.sample_product(shape=[(3,), (3, 4)], dtype=float_types + complex_types)
+  def test_tridiagonal_solve_grad(self, shape, dtype):
+    if dtype not in float_types and jtu.test_device_matches(["gpu"]):
+      self.skipTest("Data type not supported on GPU")
+    rng = self.rng()
+    d = 1.0 + jtu.rand_positive(rng)(shape, dtype)
+    dl = jtu.rand_default(rng)(shape, dtype)
+    du = jtu.rand_default(rng)(shape, dtype)
+    b = jtu.rand_default(rng)(shape + (1,), dtype)
+    args = (dl, d, du, b)
+    jtu.check_grads(lax.linalg.tridiagonal_solve, args, order=2, atol=1e-1,
+                    rtol=1e-1)
 
   @jtu.sample_product(
     shape=[(4, 4), (15, 15), (50, 50), (100, 100)],

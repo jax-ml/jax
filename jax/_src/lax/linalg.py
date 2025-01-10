@@ -2568,6 +2568,26 @@ def _tridiagonal_solve_cpu_lowering(ctx, dl, d, du, b, **kwargs):
       b_out, b_aval, _nan_like_hlo(ctx, b_aval), b_aval)]
 
 
+def _tridiagonal_product(dl, d, du, b):
+  y = lax.reshape(d, d.shape + (1,)) * b
+  y = y.at[..., 1:, :].add(dl[..., 1:, None] * b[..., :-1, :])
+  y = y.at[..., :-1, :].add(du[..., :-1, None] * b[..., 1:, :])
+  return y
+
+
+def _tridiagonal_solve_jvp_rule(primals, tangents):
+  *diags, _ = primals
+  *diags_dot, b_dot = tangents
+  ans = tridiagonal_solve_p.bind(*primals)
+  if all(type(p) is ad_util.Zero for p in diags_dot):
+    rhs = b_dot
+  else:
+    matvec_dot = _tridiagonal_product(*map(ad.instantiate_zeros, diags_dot), ans)
+    rhs = ad.add_tangents(b_dot, -matvec_dot)
+  ans_dot = tridiagonal_solve_p.bind(*diags, rhs)
+  return ans, ans_dot
+
+
 def _tridiagonal_solve_transpose_rule(cotangent, dl, d, du, b):
   # Tridiagonal solve is nonlinear in the tridiagonal arguments and linear
   # otherwise.
@@ -2576,7 +2596,11 @@ def _tridiagonal_solve_transpose_rule(cotangent, dl, d, du, b):
   if type(cotangent) is ad_util.Zero:
     cotangent_b = ad_util.Zero(b.aval)
   else:
-    cotangent_b = tridiagonal_solve(dl, d, du, cotangent)
+    dl_trans = lax.concatenate((lax.zeros_like_array(du[..., -1:]), du[..., :-1]),
+                               du.ndim-1)
+    du_trans = lax.concatenate((dl[..., 1:], lax.zeros_like_array(dl[..., :1])),
+                               dl.ndim-1)
+    cotangent_b = tridiagonal_solve(dl_trans, d, du_trans, cotangent)
   return [None, None, None, cotangent_b]
 
 
@@ -2605,9 +2629,9 @@ def _tridiagonal_solve_batching_rule(batched_args, batch_dims):
 tridiagonal_solve_p = standard_primitive(
     _tridiagonal_solve_shape_rule, _tridiagonal_solve_dtype_rule,
     'tridiagonal_solve')
+ad.primitive_jvps[tridiagonal_solve_p] = _tridiagonal_solve_jvp_rule
 ad.primitive_transposes[tridiagonal_solve_p] = _tridiagonal_solve_transpose_rule
 batching.primitive_batchers[tridiagonal_solve_p] = _tridiagonal_solve_batching_rule
-# TODO(tomhennigan): Consider AD rules using lax.custom_linear_solve?
 
 mlir.register_lowering(
     tridiagonal_solve_p,
@@ -2623,50 +2647,32 @@ mlir.register_lowering(
     platform='rocm')
 
 
-def _tridiagonal_solve_jax(dl, d, du, b, **kw):
-  """Pure JAX implementation of `tridiagonal_solve`."""
-  def prepend_zero(x):
-    return lax.concatenate(
-      [lax.full((1,) + x.shape[1:], 0, dtype=x.dtype), x[:-1]], dimension=0)
-  fwd1 = lambda tu_, x: x[1] / (x[0] - x[2] * tu_)
+def _tridiagonal_solve_jax_impl(dl, d, du, b):
+  def fwd(carry, args):
+    cp, dp = carry
+    a, b, c, d = args
+    cp_next = c / (b - a * cp)
+    dp_next = (d - a * dp) / (b - a * cp)
+    return (cp_next, dp_next), (cp, dp)
 
-  def fwd2(b_, x):
-    return (x[0] - x[3][np.newaxis, ...] * b_) / (
-        x[1] - x[3] * x[2])[np.newaxis, ...]
+  (_, final), (cp, dp) = lax.scan(
+      fwd, (du[0] / d[0], b[0] / d[0]), (dl[1:], d[1:], du[1:], b[1:, :]),
+      unroll=32)
 
-  bwd1 = lambda x_, x: x[0] - x[1][np.newaxis, ...] * x_
-  double = lambda f, args: (f(*args), f(*args))
+  def bwd(xn, args):
+    cp, dp = args
+    x = dp - cp * xn
+    return x, xn
 
-  # Move relevant dimensions to the front for the scan.
-  moveaxis_fwd = lambda x: lax.transpose(x, (x.ndim - 1, *range(x.ndim - 1)))
-  moveaxis_bwd = lambda x: lax.transpose(x, (*range(1, x.ndim), 0))
-  dl = moveaxis_fwd(dl)
-  d = moveaxis_fwd(d)
-  du = moveaxis_fwd(du)
-  b = moveaxis_fwd(b)
-  b = moveaxis_fwd(b)
+  end, ans = lax.scan(bwd, final, (cp, dp), unroll=32, reverse=True)
+  return lax.concatenate((end[None], ans), 0)
 
-  # Forward pass.
-  _, tu_ = lax.scan(lambda tu_, x: double(fwd1, (tu_, x)),
-                    du[0] / d[0],
-                    (d, du, dl),
-                    unroll=32)
 
-  _, b_ = lax.scan(lambda b_, x: double(fwd2, (b_, x)),
-                   b[0] / d[0:1],
-                   (b, d, prepend_zero(tu_), dl),
-                   unroll=32)
-
-  # Backsubstitution.
-  _, x_ = lax.scan(lambda x_, x: double(bwd1, (x_, x)),
-                   b_[-1],
-                   (b_[::-1], tu_[::-1]),
-                   unroll=32)
-
-  result = x_[::-1]
-  result = moveaxis_bwd(result)
-  result = moveaxis_bwd(result)
-  return result
+def _tridiagonal_solve_jax(dl, d, du, b, **_):
+  impl = _tridiagonal_solve_jax_impl
+  for _ in range(dl.ndim - 1):
+    impl = api.vmap(impl)
+  return impl(dl, d, du, b)
 
 
 mlir.register_lowering(tridiagonal_solve_p, mlir.lower_fun(
