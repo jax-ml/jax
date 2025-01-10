@@ -21,7 +21,7 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           # Runner OS and Python values need to match the matrix stategy in the build_jaxlib_artifact job above
-          runner: ["linux-x86-n2-64", "linux-x86-t2a-48-dev", "windows-x86-n2-64"]
+          runner: ["linux-x86-n2-64", "linux-arm64-t2a-48", "windows-x86-n2-64"]
           python: ["3.10","3.11", "3.12", "3.13"]
           enable-x64: [0]
     with:

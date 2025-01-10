@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
-        runner: ["windows-x86-n2-16", "linux-x86-n2-16", "linux-arm64-c4a-16"]
+        runner: ["windows-x86-n2-16", "linux-x86-n2-16", "linux-arm64-t2a-16"]
         enable-x_64: [1, 0]
 
     runs-on: ${{ matrix.runner }}

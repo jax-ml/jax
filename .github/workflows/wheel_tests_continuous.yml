@@ -27,7 +27,7 @@ jobs:
         matrix:
             # Runner and Python values need to match the matrix stategy in the CPU tests job
             # Enable Windows after we have fixed the runner issue
-            runner: ["linux-x86-n2-16", "linux-arm64-c4a-64",] # "windows-x86-n2-16"]
+            runner: ["linux-x86-n2-16", "linux-arm64-t2a-48", "windows-x86-n2-16"]
             artifact: ["jaxlib"]
             python: ["3.10"]
     with:
@@ -62,7 +62,7 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           # Runner OS and Python values need to match the matrix stategy in the build_jaxlib_artifact job above
-          runner: ["linux-x86-n2-64", "linux-x86-t2a-48-dev",]
+          runner: ["linux-x86-n2-64", "linux-arm64-t2a-48", "windows-x86-n2-64"]
           python: ["3.10",]
           enable-x64: [1, 0]
     with:
