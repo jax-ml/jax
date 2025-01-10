@@ -2,6 +2,7 @@
 #
 # This job currently runs as a non-blocking presubmit. It is experimental and is currently being
 # tested to get to a stable state before we enable it as a blocking presubmit.
+# Test workflow is recognizied correctly by internal sync
 name: CI - Cloud TPU (presubmit)
 on:
   workflow_dispatch:
@@ -74,6 +75,7 @@ jobs:
           $JAXCI_PYTHON -m pip install -U -r build/collect-profile-requirements.txt
       - name: Build jaxlib at head with latest XLA
         run: |
+          exit 1
           # Build and install jaxlib at head
           $JAXCI_PYTHON build/build.py build --wheels=jaxlib \
                   --python_version=${{ matrix.python-version }} \
