@@ -29,7 +29,6 @@ from jax._src import config
 from jax._src import core
 from jax._src import deprecations
 from jax._src import test_util as jtu
-from jax._src.interpreters import mlir
 from jax._src.lib import cuda_versions
 from jax.test_util import check_grads
 from jax import nn
@@ -48,7 +47,7 @@ def _is_required_cudnn_version_satisfied(min_cudnn_version):
 
 def _check_cudnn_backend(fn, *args, **kwargs):
   lowered = jax.jit(fn).lower(*args, **kwargs)
-  hlo = mlir.module_to_string(lowered.compiler_ir('stablehlo'))
+  hlo = lowered.as_text('stablehlo', debug_info=True)
   return '__cudnn$fmha' in hlo
 
 _cudnn_dbias_error = 'cuDNN only supports bias gradient'

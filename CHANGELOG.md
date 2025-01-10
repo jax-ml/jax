@@ -32,7 +32,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {jax-issue}`#25606` for more details.
   * Support added for user defined state in the FFI via the new
     {func}`jax.ffi.register_ffi_type_id` function.
-
+  * The AOT lowering `.as_text()` method now supports the `debug_info` option
+    to include debugging information, e.g., source location, in the output.
 * Deprecations
   * From {mod}`jax.interpreters.xla`, `abstractify` and `pytype_aval_mappings`
     are now deprecated, having been replaced by symbols of the same name
