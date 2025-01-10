@@ -833,6 +833,7 @@ def CanonicalizeMosaicPass : Pass<"tpu-canonicalize-mosaic", "::mlir::func::Func
   let constructor = "::mlir::tpu::createCanonicalizeMosaicPass()";
   let options = [
     Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
+    Option<"compatibility_mode", "compatibility-mode", "bool", /*default=*/"1", "">,
   ];
 }
 

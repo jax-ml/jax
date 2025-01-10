@@ -367,8 +367,12 @@ def _lower_tpu_kernel(
             f"Unrecognized on-device check categories: {', '.join(checks)}"
         )
 
+    # Legacy pipeline always runs in compatibility mode.
+    compatibility_mode = True
     pipeline = [
-        f"func.func(tpu-canonicalize-mosaic{{hardware-generation={hardware_generation}}})",
+        (
+            f"func.func(tpu-canonicalize-mosaic{{hardware-generation={hardware_generation} compatibility-mode={compatibility_mode}}})"
+        ),
     ]
     pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
     pipeline.run(module.operation)
