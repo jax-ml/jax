@@ -1653,19 +1653,21 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 
 # TODO(yashkatariya): Only works with User/Auto. Generalize it to work with
 # Collective too.
-def _maybe_modify_sharding(sharding):
-  if mesh_lib.AxisTypes.Auto not in sharding.mesh.axis_types:
-    return sharding
-
-  new_spec = []
-  for s in sharding.spec:
+def modify_spec_for_auto(spec, mesh) -> P:
+  new_spec = []  # type: ignore
+  for s in spec:
     if s is None:
       new_spec.append(s)
     else:
       temp_s = s[0] if isinstance(s, tuple) else s
       new_spec.append(
-          None
-          if sharding.mesh._name_to_type[temp_s] == mesh_lib.AxisTypes.Auto else s)
+          None if mesh._name_to_type[temp_s] == mesh_lib.AxisTypes.Auto else s)
+  return P(*new_spec)
+
+def _maybe_modify_sharding(sharding):
+  if mesh_lib.AxisTypes.Auto not in sharding.mesh.axis_types:
+    return sharding
+  new_spec = modify_spec_for_auto(sharding.spec, sharding.mesh)
   return sharding.with_spec(new_spec)
 
 

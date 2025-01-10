@@ -111,14 +111,15 @@ class AxisTypes(enum.Enum):
     return self.name
 
 def axis_names_to_types(axis_types) -> dict[str, AxisTypes]:
-  d = {}
-  for t, names in axis_types.items():
-    if isinstance(names, tuple):
-      for n in names:
-        d[n] = t
-    else:
-      d[names] = t
-  return d
+  return {n: t for t, names in axis_types.items()
+          for n in ((names,) if not isinstance(names, tuple) else names)}
+
+def axis_types_to_names(name_to_type: dict[str, AxisTypes]):
+  d = collections.defaultdict(list)
+  for n, t in name_to_type.items():
+    d[t].append(n)
+  return {t: ns[0] if len(ns) == 1 else tuple(ns) for t, ns in d.items()}
+
 
 _mesh_object_dict = {}  # type: ignore
 
@@ -350,9 +351,6 @@ class Mesh(contextlib.ContextDecorator):
   def abstract_mesh(self):
     return AbstractMesh(self.shape_tuple, axis_types=self.axis_types)
 
-  def with_axis_types(self, new_axis_types) -> Mesh:
-    return Mesh(self.devices, self.axis_names, axis_types=new_axis_types)
-
   @functools.cached_property
   def _are_all_axes_collective(self) -> bool:
     return all(t == AxisTypes.Collective for t in self.axis_types.keys())
@@ -447,7 +445,11 @@ class AbstractMesh:
   def empty(self):
     return self.size == 0
 
-  def with_axis_types(self, new_axis_types) -> AbstractMesh:
+  def update_axis_types(self, new_axis_types) -> AbstractMesh:
+    # dict(self._name_to_type) will copy it.
+    updated_name_to_type = dict(self._name_to_type)
+    updated_name_to_type.update(axis_names_to_types(new_axis_types))
+    new_axis_types = axis_types_to_names(updated_name_to_type)
     return AbstractMesh(self.shape_tuple, axis_types=new_axis_types)
 
   @functools.cached_property

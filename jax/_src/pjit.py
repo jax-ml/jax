@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Sequence, Iterable
+import contextlib
 import dataclasses
 from functools import partial
 import inspect
@@ -2737,6 +2738,55 @@ mlir.register_lowering(sharding_cast_p, _sharding_cast_hlo_lowering)
 #   return y, d
 # batching.fancy_primitive_batchers[sharding_cast_p] = _sharding_cast_batcher
 # batching.skippable_batchers[sharding_cast_p] = lambda _: ()
+
+# -------------------- auto and user mode -------------------------
+
+def _get_new_mesh(axes: str | tuple[str, ...], axis_type: mesh_lib.AxisTypes):
+  if not isinstance(axes, tuple):
+    axes = (axes,)
+  cur_mesh = mesh_lib.get_abstract_mesh()
+  for a in axes:
+    if cur_mesh._name_to_type[a] == axis_type:  # type: ignore
+      raise ValueError(f'Axes {a} cannot be casted to type {axis_type} since '
+                       f'it already is of type {axis_type}.')
+  new_mesh = cur_mesh.update_axis_types({axis_type: axes})  # type: ignore
+  return new_mesh
+
+def auto_mode(fun, *, axes: str | tuple[str, ...], out_specs):
+  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Auto)
+  def decorator(*args, **kwargs):
+    with mesh_lib.set_abstract_mesh(new_mesh):
+      in_specs = tree_map(lambda a: core.modify_spec_for_auto(
+          a.sharding.spec, new_mesh), args)
+      args = sharding_cast(args, in_specs)
+      out = fun(*args, **kwargs)
+    return sharding_cast(out, out_specs)
+  return decorator
+
+
+@contextlib.contextmanager
+def auto_mode_ctx(axes: str | tuple[str, ...]):
+  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Auto)
+  with mesh_lib.set_abstract_mesh(new_mesh):
+    yield
+
+
+def user_mode(fun, *, axes: str | tuple[str, ...], in_specs):
+  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.User)
+  def decorator(*args, **kwargs):
+    with mesh_lib.set_abstract_mesh(new_mesh):
+      args = sharding_cast(args, in_specs)
+      out = fun(*args, **kwargs)
+    out_specs = tree_map(lambda o: core.modify_spec_for_auto(
+        o.sharding.spec, mesh_lib.get_abstract_mesh()), out)
+    return sharding_cast(out, out_specs)
+  return decorator
+
+@contextlib.contextmanager
+def user_mode_ctx(axes: str | tuple[str, ...]):
+  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.User)
+  with mesh_lib.set_abstract_mesh(new_mesh):
+    yield
 
 # -------------------- helpers --------------------
 
