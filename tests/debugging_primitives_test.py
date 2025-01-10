@@ -59,6 +59,7 @@ class DebugCallbackTest(jtu.JaxTestCase):
       jax.debug.callback("this is not debug.print!")
 
 
+@jtu.thread_unsafe_test_class()  # printing isn't thread-safe
 class DebugPrintTest(jtu.JaxTestCase):
 
   def tearDown(self):
@@ -236,6 +237,7 @@ class DebugPrintTest(jtu.JaxTestCase):
     self.assertEqual(output(), "[1.23 2.35 0.  ]\n")
 
 
+@jtu.thread_unsafe_test_class()  # printing isn't thread-safe
 class DebugPrintTransformationTest(jtu.JaxTestCase):
 
   def test_debug_print_batching(self):
@@ -507,6 +509,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "hello bwd: 2.0 3.0\n")
 
+@jtu.thread_unsafe_test_class()  # printing isn't thread-safe
 class DebugPrintControlFlowTest(jtu.JaxTestCase):
 
   def _assertLinesEqual(self, text1, text2):
@@ -722,6 +725,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       b3: 2
       """))
 
+@jtu.thread_unsafe_test_class()  # printing isn't thread-safe
 class DebugPrintParallelTest(jtu.JaxTestCase):
 
   def _assertLinesEqual(self, text1, text2):

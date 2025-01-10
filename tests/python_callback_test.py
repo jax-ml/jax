@@ -548,6 +548,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
         np.arange(2 * jax.local_device_count()).reshape([-1, 2]) + 1.)
 
   @with_pure_and_io_callbacks
+  @jtu.thread_unsafe_test()  # logging isn't thread-safe
   def test_exception_in_callback(self, *, callback):
     def fail(x):
       raise RuntimeError("Ooops")
@@ -570,6 +571,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
       self.assertIn("Traceback (most recent call last)", output)
 
   @with_pure_and_io_callbacks
+  @jtu.thread_unsafe_test()  # count_primitive_compiles isn't thread-safe
   def test_compilation_caching(self, *, callback):
     def f_outside(x):
       return 2 * x

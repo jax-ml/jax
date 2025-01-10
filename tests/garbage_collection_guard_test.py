@@ -34,6 +34,7 @@ def _create_array_cycle():
   return weakref.ref(n1)
 
 
+@jtu.thread_unsafe_test_class()  # GC isn't predictable when threaded.
 class GarbageCollectionGuardTest(jtu.JaxTestCase):
 
   def test_gced_array_is_not_logged_by_default(self):

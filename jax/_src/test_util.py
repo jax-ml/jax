@@ -1013,16 +1013,27 @@ if hasattr(util, 'Mutex'):
   _test_rwlock = util.Mutex()
 
   def _run_one_test(test: unittest.TestCase, result: ThreadSafeTestResult):
-    _test_rwlock.reader_lock()
-    try:
-      test(result)  # type: ignore
-    finally:
-      _test_rwlock.reader_unlock()
+    if getattr(test.__class__, "thread_hostile", False):
+      _test_rwlock.writer_lock()
+      try:
+        test(result)  # type: ignore
+      finally:
+        _test_rwlock.writer_unlock()
+    else:
+      _test_rwlock.reader_lock()
+      try:
+        test(result)  # type: ignore
+      finally:
+        _test_rwlock.reader_unlock()
 
 
   @contextmanager
-  def thread_hostile_test():
-    "Decorator for tests that are not thread-safe."
+  def thread_unsafe_test():
+    """Decorator for tests that are not thread-safe.
+
+    Note: this decorator (naturally) only applies to what it wraps, not to, say,
+    code in separate setUp() or tearDown() methods.
+    """
     if TEST_NUM_THREADS.value <= 0:
       yield
       return
@@ -1048,8 +1059,18 @@ else:
 
 
   @contextmanager
-  def thread_hostile_test():
+  def thread_unsafe_test():
     yield  # No reader-writer lock, so we get no parallelism.
+
+
+def thread_unsafe_test_class():
+  "Decorator that marks a TestCase class as thread-hostile."
+  def f(klass):
+    assert issubclass(klass, unittest.TestCase), type(klass)
+    klass.thread_hostile = True
+    return klass
+  return f
+
 
 class ThreadSafeTestResult:
   """
@@ -1074,8 +1095,9 @@ class ThreadSafeTestResult:
   def stopTest(self, test: unittest.TestCase):
     stop_time = time.time()
     with self.lock:
-      # We assume test_result is an ABSL _TextAndXMLTestResult, so we can
-      # override how it gets the time.
+      # If test_result is an ABSL _TextAndXMLTestResult we override how it gets
+      # the time. This affects the timing that shows up in the XML output
+      # consumed by CI.
       time_getter = getattr(self.test_result, "time_getter", None)
       try:
         self.test_result.time_getter = lambda: self.start_time

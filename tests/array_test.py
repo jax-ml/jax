@@ -890,6 +890,7 @@ class ShardingTest(jtu.JaxTestCase):
         r"factors: \[4, 2\] should evenly divide the shape\)"):
       mps.shard_shape((8, 3))
 
+  @jtu.thread_unsafe_test()  # cache_info isn't thread-safe
   def test_pmap_sharding_hash_eq(self):
     if jax.device_count() < 2:
       self.skipTest('Test needs >= 2 devices.')

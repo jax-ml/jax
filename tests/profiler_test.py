@@ -53,6 +53,7 @@ except ImportError:
 jax.config.parse_flags_with_absl()
 
 
+@jtu.thread_unsafe_test_class()  # profiler isn't thread-safe
 class ProfilerTest(unittest.TestCase):
   # These tests simply test that the profiler API does not crash; they do not
   # check functional correctness.

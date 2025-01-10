@@ -632,7 +632,7 @@ class JitTest(jtu.BufferDonationTestCase):
     python_should_be_executing = False
     jit(f)(3)
 
-  @jtu.thread_hostile_test()
+  @jtu.thread_unsafe_test()  # GC effects aren't predictable with threads
   def test_jit_cache_clear(self):
     @jit
     def f(x, y):
@@ -1605,6 +1605,7 @@ class APITest(jtu.JaxTestCase):
     assert api.value_and_grad(f, argnums=1)(1.0, 1.0, 1.0, flag=True) == (y, 2.0)
     assert api.value_and_grad(f, argnums=(2, 0))(1.0, 1.0, 1.0, flag=True) == (y, (3.0, 1.0))
 
+  @jtu.thread_unsafe_test()  # Concurrent cache eviction means we may retrace.
   def test_grad_of_jit(self):
     side = []
 
@@ -1618,6 +1619,7 @@ class APITest(jtu.JaxTestCase):
     assert grad(f)(2.0) == 4.0
     assert len(side) == 1
 
+  @jtu.thread_unsafe_test()  # Concurrent ache eviction means we may retrace.
   def test_jit_of_grad(self):
     side = []
 
@@ -2589,7 +2591,7 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(pytree[2], np.ones(3), check_dtypes=False)
     self.assertEqual(pytree[3], 4)
 
-  @jtu.thread_hostile_test()
+  @jtu.thread_unsafe_test()  # Weakref destruction seems unpredictable with threads
   def test_devicearray_weakref_friendly(self):
     x = device_put(1.)
     y = weakref.ref(x)
@@ -2738,7 +2740,7 @@ class APITest(jtu.JaxTestCase):
 
     self.assertEqual(count(), 1)
 
-  @jtu.thread_hostile_test()
+  @jtu.thread_unsafe_test()  # jit cache misses aren't thread safe
   def test_jit_infer_params_cache(self):
     def f(x):
       return x
@@ -3329,7 +3331,7 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, ".*is not a valid JAX type"):
       jax.grad(lambda x: x)(x)
 
-  @jtu.thread_hostile_test()
+  @jtu.thread_unsafe_test()  # logging isn't thread-safe
   def test_jit_compilation_time_logging(self):
     @api.jit
     def f(x):
@@ -3418,7 +3420,7 @@ class APITest(jtu.JaxTestCase):
     self.assertNotEqual(z3.unsafe_buffer_pointer(), x1.unsafe_buffer_pointer())
     self.assertEqual(z2, 1)
 
-  @jtu.thread_hostile_test()
+  @jtu.thread_unsafe_test()  # monkey-patching mlir.jaxpr_subcomp isn't thread-safe
   def test_nested_jit_hoisting(self):
     @api.jit
     def f(x, y):
@@ -3456,7 +3458,7 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(inner_jaxpr.eqns[-2].primitive.name, 'mul')
     self.assertEqual(inner_jaxpr.eqns[-1].primitive.name, 'add')
 
-  @jtu.thread_hostile_test()
+  @jtu.thread_unsafe_test()  # count_primitive_compiles isn't thread-safe
   def test_primitive_compilation_cache(self):
     with jtu.count_primitive_compiles() as count:
       lax.add(1, 2)
@@ -4016,7 +4018,7 @@ class APITest(jtu.JaxTestCase):
     a2 = jnp.array(((x, x), [x, x]))
     self.assertAllClose(np.array(((1, 1), (1, 1))), a2)
 
-  @jtu.thread_hostile_test()
+  @jtu.thread_unsafe_test()  # count_jit_tracing_cache_miss() isn't thread-safe
   def test_eval_shape_weak_type(self):
     # https://github.com/jax-ml/jax/issues/23302
     arr = jax.numpy.array(1)
@@ -4145,7 +4147,7 @@ class APITest(jtu.JaxTestCase):
       jaxpr = jax.make_jaxpr(jnp.dot)(x, x)
     self.assertIn('Precision.HIGH', str(jaxpr))
 
-  @jtu.thread_hostile_test()
+  @jtu.thread_unsafe_test()  # Updating global configs is not thread-safe.
   def test_dot_precision_forces_retrace(self):
     num_traces = 0
 
@@ -4318,7 +4320,7 @@ class APITest(jtu.JaxTestCase):
       api.make_jaxpr(lambda: jnp.array(3))()
     self.assertEqual(count(), 0)
 
-  @jtu.thread_hostile_test()
+  @jtu.thread_unsafe_test()  # Updating global configs is not thread-safe.
   def test_rank_promotion_forces_retrace(self):
     num_traces = 0
 
@@ -4459,7 +4461,7 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(jfoo.__qualname__, f"make_jaxpr({foo.__qualname__})")
     self.assertEqual(jfoo.__module__, "jax")
 
-  @jtu.thread_hostile_test()
+  @jtu.thread_unsafe_test()  # Concurrent cache eviction means we may retrace
   def test_inner_jit_function_retracing(self):
     # https://github.com/jax-ml/jax/issues/7155
     inner_count = outer_count = 0
@@ -4507,6 +4509,7 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, r".*Received invalid value.*"):
       jax.device_put(jnp.arange(8), 'cpu')
 
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_clear_cache(self):
     @jax.jit
     def add(x):
@@ -4525,6 +4528,7 @@ class APITest(jtu.JaxTestCase):
           tracing_add_count += 1
       self.assertEqual(tracing_add_count, 2)
 
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations(self):
     @jax.jit
     def f(x, y):
@@ -4584,6 +4588,7 @@ class APITest(jtu.JaxTestCase):
     msg = cm.output[0]
     self.assertIn("tracing context doesn't match", msg)
 
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_new_function_in_loop(self):
     @jax.jit
     def f(x, y):
@@ -4605,6 +4610,7 @@ class APITest(jtu.JaxTestCase):
       _, msg = cm.output
       self.assertIn('another function defined on the same line', msg)
 
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_unpacks_transforms(self):
     # Tests that the explain_tracing_cache_miss() function does not throw an
     # error when unpacking `transforms` with a length greater than 3.
@@ -4701,7 +4707,7 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "ndim of its first argument"):
       jax.sharding.Mesh(jax.devices(), ("x", "y"))
 
-  @jtu.thread_hostile_test()
+  @jtu.thread_unsafe_test()  # weakref gc doesn't seem predictable
   def test_jit_boundmethod_reference_cycle(self):
     class A:
       def __init__(self):
@@ -4840,7 +4846,7 @@ class RematTest(jtu.JaxTestCase):
           ('_policy', partial(jax.remat, policy=lambda *_, **__: False)),
           ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
       ])
-  @jtu.thread_hostile_test()
+  @jtu.thread_unsafe_test()  # monkey patches sin_p and cos_p
   def test_remat_basic(self, remat):
     @remat
     def g(x):
@@ -5178,7 +5184,7 @@ class RematTest(jtu.JaxTestCase):
           ('_policy', partial(jax.remat, policy=lambda *_, **__: False)),
           ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
       ])
-  @jtu.thread_hostile_test()
+  @jtu.thread_unsafe_test()  # monkey patches sin_p
   def test_remat_no_redundant_flops(self, remat):
     # see https://github.com/jax-ml/jax/pull/1749#issuecomment-558267584
 
@@ -6422,7 +6428,7 @@ class RematTest(jtu.JaxTestCase):
     self.assertIn(' sin ', str(jaxpr))
     self.assertIn(' cos ', str(jaxpr))
 
-  @jtu.thread_hostile_test()
+  @jtu.thread_unsafe_test()  # logging isn't thread-safe
   def test_remat_residual_logging(self):
     def f(x):
       x = jnp.sin(x)
@@ -11126,7 +11132,7 @@ class AutodidaxTest(jtu.JaxTestCase):
 
 class GarbageCollectionTest(jtu.JaxTestCase):
 
-  @jtu.thread_hostile_test()
+  @jtu.thread_unsafe_test()  # GC isn't predictable
   def test_xla_gc_callback(self):
     # https://github.com/jax-ml/jax/issues/14882
     x_np = np.arange(10, dtype='int32')

@@ -2144,6 +2144,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       compiled = f.lower(core.ShapedArray(input_shape, jnp.float32)).compile()
       compiled(a1)  # no error
 
+  @jtu.thread_unsafe_test()  # cache_info isn't thread-safe
   def test_pjit_single_device_sharding_add(self):
     a = np.array([1, 2, 3], dtype=jnp.float32)
     b = np.array([4, 5, 6], dtype=jnp.float32)
@@ -2399,6 +2400,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out1_sharding_id, out3_sharding_id)
     self.assertEqual(out2_sharding_id, out3_sharding_id)
 
+  @jtu.thread_unsafe_test()  # cache_info isn't thread-safe
   def test_out_sharding_indices_id_cache_hit(self):
     shape = (8, 2)
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
@@ -2863,6 +2865,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     x_is_tracer, y_is_tracer = False, True
     assert f_mixed(x=2, y=3) == 1
 
+  @jtu.thread_unsafe_test()  # cache_info isn't thread-safe
   def test_pjit_kwargs(self):
     a = jnp.arange(8.)
     b = jnp.arange(4.)
@@ -3507,6 +3510,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(cache_info4.hits, cache_info3.hits + 1)
     self.assertEqual(cache_info4.misses, cache_info3.misses)
 
+  @jtu.thread_unsafe_test()  # cache_info isn't thread-safe
   def test_cache_hit_pjit_lower_with_cpp_cache_miss(self):
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
     ns = NamedSharding(mesh, P('x'))
@@ -3600,6 +3604,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertIsInstance(out3.sharding, NamedSharding)
     self.assertEqual(count(), 1)
 
+  @jtu.thread_unsafe_test()  # cache_info isn't thread-safe
   def test_jit_mul_sum_sharding_preserved(self):
     if config.use_shardy_partitioner.value:
       raise unittest.SkipTest("Shardy doesn't support PositionalSharding")

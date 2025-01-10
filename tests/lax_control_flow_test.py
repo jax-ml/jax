@@ -2138,6 +2138,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = jnp.array([])
     self.assertAllClose(ans, expected)
 
+  @jtu.thread_unsafe_test()  # Cache eviction means we might retrace
   def testCaching(self):
     def cond(x):
       assert python_should_be_executing
@@ -3033,6 +3034,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(y, x)
     self.assertIsInstance(y, jax.Array)
 
+  @jtu.thread_unsafe_test()  # live_arrays count isn't thread-safe
   def test_cond_memory_leak(self):
     # https://github.com/jax-ml/jax/issues/12719
 

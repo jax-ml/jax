@@ -269,6 +269,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
     self.assertSetEqual(jaxpr.effects, {foo_effect, bar_effect})
 
 
+@jtu.thread_unsafe_test_class()  # because of mlir.register_lowering calls
 class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
   def setUp(self):

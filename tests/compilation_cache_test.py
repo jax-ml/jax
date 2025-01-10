@@ -95,6 +95,7 @@ def clear_cache() -> None:
     cc._cache.clear()
 
 
+@jtu.thread_unsafe_test_class()  # mocking isn't thread-safe
 class CompilationCacheTestCase(jtu.JaxTestCase):
 
   def setUp(self):

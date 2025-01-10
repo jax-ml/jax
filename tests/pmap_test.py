@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import contextlib
 from functools import partial
 import itertools as it
 import gc
@@ -3195,19 +3196,11 @@ class EagerPmapMixin:
 
   def setUp(self):
     super().setUp()
-    self.eager_pmap_enabled = config.eager_pmap.value
-    self.jit_disabled = config.disable_jit.value
-    config.update('jax_disable_jit', True)
-    config.update('jax_eager_pmap', True)
-    self.warning_ctx = jtu.ignore_warning(
-        message="Some donated buffers were not usable", category=UserWarning)
-    self.warning_ctx.__enter__()
-
-  def tearDown(self):
-    self.warning_ctx.__exit__(None, None, None)
-    config.update('jax_eager_pmap', self.eager_pmap_enabled)
-    config.update('jax_disable_jit', self.jit_disabled)
-    super().tearDown()
+    stack = contextlib.ExitStack()
+    stack.enter_context(jtu.thread_local_config_context(jax_disable_jit=True, jax_eager_pmap=True))
+    stack.enter_context(jtu.ignore_warning(
+        message="Some donated buffers were not usable", category=UserWarning))
+    self.addCleanup(stack.close)
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PythonPmapEagerTest(EagerPmapMixin, PythonPmapTest):
