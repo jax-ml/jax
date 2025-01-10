@@ -82,6 +82,11 @@ void GetLapackKernelsFromScipy() {
   AssignKernelFn<QrFactorization<DataType::C64>>(lapack_ptr("cgeqrf"));
   AssignKernelFn<QrFactorization<DataType::C128>>(lapack_ptr("zgeqrf"));
 
+  AssignKernelFn<PivotingQrFactorization<DataType::F32>>(lapack_ptr("sgeqp3"));
+  AssignKernelFn<PivotingQrFactorization<DataType::F64>>(lapack_ptr("dgeqp3"));
+  AssignKernelFn<PivotingQrFactorization<DataType::C64>>(lapack_ptr("cgeqp3"));
+  AssignKernelFn<PivotingQrFactorization<DataType::C128>>(lapack_ptr("zgeqp3"));
+
   AssignKernelFn<Orgqr<float>>(lapack_ptr("sorgqr"));
   AssignKernelFn<Orgqr<double>>(lapack_ptr("dorgqr"));
   AssignKernelFn<Orgqr<std::complex<float>>>(lapack_ptr("cungqr"));
@@ -246,6 +251,10 @@ nb::dict Registrations() {
   dict["lapack_dgeqrf_ffi"] = EncapsulateFunction(lapack_dgeqrf_ffi);
   dict["lapack_cgeqrf_ffi"] = EncapsulateFunction(lapack_cgeqrf_ffi);
   dict["lapack_zgeqrf_ffi"] = EncapsulateFunction(lapack_zgeqrf_ffi);
+  dict["lapack_sgeqp3_ffi"] = EncapsulateFunction(lapack_sgeqp3_ffi);
+  dict["lapack_dgeqp3_ffi"] = EncapsulateFunction(lapack_dgeqp3_ffi);
+  dict["lapack_cgeqp3_ffi"] = EncapsulateFunction(lapack_cgeqp3_ffi);
+  dict["lapack_zgeqp3_ffi"] = EncapsulateFunction(lapack_zgeqp3_ffi);
   dict["lapack_sorgqr_ffi"] = EncapsulateFunction(lapack_sorgqr_ffi);
   dict["lapack_dorgqr_ffi"] = EncapsulateFunction(lapack_dorgqr_ffi);
   dict["lapack_cungqr_ffi"] = EncapsulateFunction(lapack_cungqr_ffi);
