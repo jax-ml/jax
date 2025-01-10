@@ -2972,29 +2972,35 @@ def _tridiagonal_batching_rule(batched_args, batch_dims, *, lower):
 
 batching.primitive_batchers[tridiagonal_p] = _tridiagonal_batching_rule
 
-def _tridiagonal_cpu_gpu_hlo(sytrd_impl, ctx, a, *, lower, platform):
+def _tridiagonal_cpu_hlo(ctx, a, *, lower):
   a_aval, = ctx.avals_in
-  cpu_args = []
-  if platform == "cpu":
-    # TODO(b/344892332): Remove the conditional after the compatibility period.
-    ctx_args = (ctx,) if jaxlib_version >= (0, 4, 37) else ()
-    cpu_args.extend(ctx_args)
-  a, d, e, taus, info = sytrd_impl(*cpu_args, a_aval.dtype, a, lower=lower)
-  return a, d, e, taus, info
+  return lapack.sytrd_hlo(ctx, a_aval.dtype, a, lower=lower)
+
+def _tridiagonal_gpu_hlo(ctx, a, *, lower, target_name_prefix):
+  operand_aval, = ctx.avals_in
+  dims = operand_aval.shape
+  batch_dims = dims[:-2]
+  nb = len(batch_dims)
+  layout = (nb, nb + 1) + tuple(range(nb - 1, -1, -1))
+  result_layouts = [layout, tuple(range(nb, -1, -1)), tuple(range(nb, -1, -1)),
+                    tuple(range(nb, -1, -1)), tuple(range(nb - 1, -1, -1))]
+  rule = ffi.ffi_lowering(f"{target_name_prefix}solver_sytrd_ffi",
+                          operand_layouts=[layout],
+                          result_layouts=result_layouts,
+                          operand_output_aliases={0: 0})
+  return rule(ctx, a, lower=lower)
+
 
 mlir.register_lowering(
-    tridiagonal_p,
-    partial(_tridiagonal_cpu_gpu_hlo, lapack.sytrd_hlo, platform="cpu"),
-    platform="cpu",
-)
+    tridiagonal_p, _tridiagonal_cpu_hlo, platform="cpu")
 mlir.register_lowering(
     tridiagonal_p,
-    partial(_tridiagonal_cpu_gpu_hlo, gpu_solver.cuda_sytrd, platform="cuda"),
+    partial(_tridiagonal_gpu_hlo, target_name_prefix="cu"),
     platform="cuda",
 )
 mlir.register_lowering(
     tridiagonal_p,
-    partial(_tridiagonal_cpu_gpu_hlo, gpu_solver.rocm_sytrd, platform="rocm"),
+    partial(_tridiagonal_gpu_hlo, target_name_prefix="hip"),
     platform="rocm",
 )
 
