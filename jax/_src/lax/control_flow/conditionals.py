@@ -147,8 +147,9 @@ def switch(index, branches: Sequence[Callable], *operands,
   if config.mutable_array_checks.value:
     _check_no_aliased_closed_over_refs(dbg, (*jaxprs[0].consts, *consts), ops)
   for i, (out_tree, jaxpr) in enumerate(zip(out_trees[1:], jaxprs[1:])):
-    _check_tree_and_avals(f"branch 0 and {i + 1} outputs",
+    _check_tree_and_avals("branch 0 output",
                           out_trees[0], jaxprs[0].out_avals,
+                          f"branch {i + 1} output",
                           out_tree, jaxpr.out_avals)
   joined_effects = core.join_effects(*(jaxpr.effects for jaxpr in jaxprs))
   disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
@@ -250,8 +251,9 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
          true_jaxpr.out_avals + false_jaxpr.out_avals):
     raise ValueError("Cannot return `Ref`s from `cond`.")
 
-  _check_tree_and_avals("true_fun and false_fun output",
+  _check_tree_and_avals("true_fun output",
                         out_tree, true_jaxpr.out_avals,
+                        "false_fun output",
                         false_out_tree, false_jaxpr.out_avals)
   # prune passhtrough outputs
   true_fwds = pe._jaxpr_forwarding(true_jaxpr.jaxpr)
