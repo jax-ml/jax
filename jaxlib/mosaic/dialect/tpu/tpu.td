@@ -371,6 +371,7 @@ def TPU_UnpackSubelementsOp : TPU_Op<"unpack_subelements", [Pure]> {
 }
 
 // Integer packs are always signed at the moment.
+// Float to integer packing rounds to nearest even.
 def TPU_PackSubelementsOp : TPU_Op<"pack_subelements", [Pure, SameTypeOperands]> {
   let arguments = (ins
     Variadic<TPU_Vreg>:$sources,
@@ -414,6 +415,26 @@ def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure]> {
   }];
 }
 
+def TPU_RoundingMode : I32EnumAttr<"RoundingMode", "Rounding mode", [
+  I32EnumAttrCase<"kTowardsZero", 0, "towards_zero">,
+  I32EnumAttrCase<"kToNearestEven", 1, "to_nearest_even">,
+]> {
+    let genSpecializedAttr = 0;
+    let cppNamespace = "::mlir::tpu";
+}
+
+def TPU_RoundingModeEnum : EnumAttr<TPU_Dialect, TPU_RoundingMode, "rounding_mode"> {
+    let assemblyFormat = "`<` $value `>`";
+}
+
+// Internal operation. All arith.fptosi operations that change the bitwidth
+// must be canonicalized to this operation.
+def TPU_FPToSIOp : TPU_Op<"fptosi", [Pure, ElementwiseMappable]> {
+  let arguments = (ins AnyVectorOfAnyRank:$input, TPU_RoundingModeEnum:$rounding_mode);
+  let results = (outs AnyVectorOfAnyRank:$output);
+  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+  let hasCanonicalizeMethod = 1;
+}
 
 def TPU_DotDimensionNumbersAttr : TPU_Attr<"DotDimensionNumbers", "dot_dimension_numbers"> {
   let parameters = (ins
