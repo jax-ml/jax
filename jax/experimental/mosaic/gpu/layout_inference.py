@@ -16,27 +16,34 @@
 
 from collections.abc import Callable
 import enum
-from typing import List, Tuple, Type, cast
+from typing import cast
 
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import vector
 
-from .fragmented_array import WGStridedFragLayout
-from .layouts import has_any_layout_set, should_have_layout, to_strided_fragmented_layout_attr
+from .fragmented_array import WGSplatFragLayout, WGStridedFragLayout
+from .layouts import from_splat_fragmented_layout_attr
+from .layouts import from_strided_fragmented_layout_attr
+from .layouts import has_any_layout_set, has_in_layouts_set, has_out_layouts_set
+from .layouts import in_layouts, out_layouts, should_have_layout
+from .layouts import is_splat_fragmented_layout
+from .layouts import is_strided_fragmented_layout
+from .layouts import to_splat_fragmented_layout_attr
+from .layouts import to_strided_fragmented_layout_attr
 
 # mypy: ignore-errors
 
 _layout_inference_rules: dict[
     str,
-    Callable[[ir.OpView], Tuple[List[ir.Attribute], List[ir.Attribute]] | None],
+    Callable[[ir.OpView], tuple[list[ir.Attribute], list[ir.Attribute]] | None],
 ] = {}
 
 
 def _add_layout_inference_rule(
-    op: Type[ir.OpView],
+    op: type[ir.OpView],
     rule: Callable[
-        [ir.OpView], Tuple[List[ir.Attribute], List[ir.Attribute]] | None
+        [ir.OpView], tuple[list[ir.Attribute], list[ir.Attribute]] | None
     ],
 ):
   _layout_inference_rules[op.OPERATION_NAME] = rule  # pytype: disable=attribute-error
@@ -44,53 +51,177 @@ def _add_layout_inference_rule(
 
 def _set_layout_attributes(
     op: ir.OpView,
-    in_layouts: List[ir.Attribute],
-    out_layouts: List[ir.Attribute],
+    in_layouts: list[ir.Attribute],
+    out_layouts: list[ir.Attribute],
 ):
   op.attributes["in_layouts"] = ir.ArrayAttr.get(in_layouts)
   op.attributes["out_layouts"] = ir.ArrayAttr.get(out_layouts)
 
 
-def _extract_any_layout_from_op(op: ir.OpView) -> ir.Attribute | None:
-  if "in_layouts" in op.attributes and len(op.operands) > 0:
-    return cast(ir.ArrayAttr, op.attributes["in_layouts"])[0]
-  elif "out_layouts" in op.attributes and len(op.results) > 0:
-    return cast(ir.ArrayAttr, op.attributes["out_layouts"])[0]
+def _choose_representative_layout(
+    layouts: set[ir.Attribute],
+) -> ir.Attribute | None:
+  """Chooses an appropriate layout from a given set of possible layouts.
 
-  return None
+  Given the input set of possible layouts, this function extracts a single
+  representative layout. Currently, this function only works with strided and
+  splat fragmented layouts.
+
+  Returns:
+    A single layout that can be used to annotate the operation, or None if the
+    input set is empty.
+  """
+
+  if not layouts:
+    return None
+
+  strided_layouts: list[WGStridedFragLayout] = [
+      from_strided_fragmented_layout_attr(layout)
+      for layout in layouts
+      if is_strided_fragmented_layout(layout)
+  ]
+
+  splat_layouts: list[WGSplatFragLayout] = list(
+      map(
+          from_splat_fragmented_layout_attr,
+          filter(is_splat_fragmented_layout, layouts),
+      )
+  )
+
+  if len(splat_layouts) + len(strided_layouts) != len(layouts):
+    raise ValueError(f"Expected only strided and splat layouts, got {layouts}")
+
+  if len(splat_layouts) > 1:
+    raise NotImplementedError(
+        "Finding a representative layout for several distinct splat layouts "
+        "is not supported."
+    )
+
+  if len(strided_layouts) > 1:
+    raise NotImplementedError(
+        "Finding a representative layout for several distinct strided layouts "
+        "is not supported."
+    )
+
+  if not splat_layouts:
+    return to_strided_fragmented_layout_attr(strided_layouts[0])
+
+  if not strided_layouts:
+    return to_splat_fragmented_layout_attr(splat_layouts[0])
+
+  [strided_layout] = strided_layouts
+  return to_strided_fragmented_layout_attr(strided_layout)
+
+
+def _in_layout_for_operand(
+    op: ir.OpView,
+    operand: ir.Value,
+) -> ir.Attribute | None:
+  """Returns the layout of the operand in the given operation if it is set.
+
+  Raises:
+    ValueError: If `operand` is not an operand of `op`, or if `operand` is not a
+      Vector.
+  """
+  if not ir.VectorType.isinstance(operand.type):
+    raise ValueError(f"{operand} is not a vector.")
+
+  operand_number = [
+      o for o in op.operands if ir.VectorType.isinstance(o.type)
+  ].index(operand)
+
+  if not has_in_layouts_set(op):
+    return None
+
+  return in_layouts(op)[operand_number]
+
+
+def _out_layout_for_result(
+    op: ir.OpView,
+    result: ir.Value,
+) -> ir.Attribute | None:
+  """Returns the layout for a specific result of the given operation if it is set.
+
+  Raises:
+    ValueError: If `result` is not a result of `op`, or if `result` is not a
+      Vector.
+  """
+  if not ir.VectorType.isinstance(result.type):
+    raise ValueError(f"{result} is not a vector.")
+
+  result_number = [
+      r for r in op.results if ir.VectorType.isinstance(r.type)
+  ].index(result)
+
+  if not has_out_layouts_set(op):
+    return None
+
+  return out_layouts(op)[result_number]
 
 
 def _infer_pointwise_op_layouts(
     op: ir.OpView,
-) -> Tuple[List[ir.Attribute], List[ir.Attribute]] | None:
-  layout = _extract_any_layout_from_op(op)
-  # The op had no layout set. Since we're annotating ops, we may need to
-  # derive layout information from user or producer ops.
-  if layout is None:
-    # First, we iterate on users.
+) -> tuple[list[ir.Attribute], list[ir.Attribute]] | None:
+
+  def is_array(v: ir.Value) -> bool:
+    return ir.VectorType.isinstance(v.type)
+
+  num_vector_operands = len([o for o in op.operands if is_array(o)])
+  num_vector_results = len([r for r in op.results if is_array(r)])
+
+  if has_in_layouts_set(op):
+    op_in_layouts = in_layouts(op)
+    if op_in_layouts:
+      layout = op_in_layouts[0]
+      return (num_vector_operands * [layout], num_vector_results * [layout])
+
+  if has_out_layouts_set(op):
+    op_out_layouts = out_layouts(op)
+    if op_out_layouts:
+      layout = op_out_layouts[0]
+      return (num_vector_operands * [layout], num_vector_results * [layout])
+
+  layouts = set()
+
+  # We can also try to infer layouts from the layout of producer and
+  # consumer operations.
+  #
+  # We first look at producers; this enables e.g. propagating splat layouts as
+  # far down as possible, until since we may be able to propagate splat layouts
+  # further down before requiring a relayout in that way.
+  for operand in op.operands:
+    if not isinstance(
+        operand.owner, ir.Operation
+    ) or not ir.VectorType.isinstance(operand.type):
+      continue
+    if (layout := _out_layout_for_result(operand.owner, operand)) is not None:
+      layouts.add(layout)
+
+  # We only look at consumers if we haven't found a possible layout yet. This is
+  # to avoid propagating more complicated layouts up, to e.g. preserve splat
+  # layouts as far down as possible.
+  if not layouts:
     for op_result in op.results:
-      for op_user in cast(ir.OpResult, op_result).uses:
-        layout = _extract_any_layout_from_op(op_user.owner)
-        if layout:
-          break
-      else:
+      if not ir.VectorType.isinstance(op_result.type):
         continue
-      break
+      for op_operand_use in cast(ir.OpResult, op_result).uses:
+        consumer = op_operand_use.owner
+        op_user = consumer.operands[op_operand_use.operand_number]
+        layout = _in_layout_for_operand(consumer, op_user)
+        if layout is not None:
+          layouts.add(layout)
 
-  if layout is None:
-    # Still no layout set. We iterate on producers.
-    for operand in op.operands:
-      if isinstance(operand.owner, ir.Operation) or isinstance(
-          operand.owner, ir.OpView
-      ):
-        layout = _extract_any_layout_from_op(operand.owner)
-        if layout:
-          break
-
+  # TODO(bchetioui): when propagating up, the representative layout should be
+  # chosen in the opposite way as when propagating down. E.g., when propagating
+  # down, we should pick a strided layout over a splat layout; when propagating
+  # up, we should pick a splat layout over a strided layout.
+  # This is left for a future change, and currently we only do "down
+  # propagation".
+  layout = _choose_representative_layout(layouts)
   if layout is None:
     return None
 
-  return ([layout for _ in op.operands], [layout for _ in op.results])
+  return (num_vector_operands * [layout], num_vector_results * [layout])
 
 
 for op in (
@@ -142,6 +273,10 @@ def infer_layout(module: ir.Module):
 
     _set_layout_attributes(op, *maybe_layouts)
 
+  # TODO(bchetioui): consider switching the order of the passes. This would
+  # allow propagating "simpler" layouts further down in the computation, which
+  # is more efficient when possible.
+  #
   # We run two passes over the module, in order to make sure that layouts
   # defined in the middle of the computation are propagated wherever they need
   # to be propagated. We start with a backwards (root-to-parameters) pass to
@@ -162,16 +297,13 @@ def infer_layout(module: ir.Module):
   # the module at the start of this function. We annotate all the remaining ops
   # that should be annotated with a strided fragmented layout.
   def to_default_layout(ty: ir.Type) -> ir.Attribute | None:
-    if ir.VectorType.isinstance(ty):
-      layout = WGStridedFragLayout.from_shaped_type(ty)
-    else:
+    if not ir.VectorType.isinstance(ty):
       return None
+    layout = WGStridedFragLayout.from_shaped_type(ty)
     return to_strided_fragmented_layout_attr(layout)
 
   def set_default_layout(op: ir.OpView):
     if should_have_layout(op) and not has_any_layout_set(op):
-      # TODO(bchetioui): consistently set layouts only for supported argument
-      # types (i.e. skip non-vector typed arguments.)
       in_layouts = []
       for operand in op.operands:
         if (layout := to_default_layout(operand.type)) is not None:
