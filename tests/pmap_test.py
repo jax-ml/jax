@@ -1670,6 +1670,23 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     multi_step_pmap(jnp.zeros((device_count,)), count=1)
 
+  def test_typed_prng_key_sharded(self):
+    devices = jax.local_devices()
+
+    @partial(jax.pmap, in_axes=0, out_axes=0, axis_size=len(devices),
+             axis_name='i', devices=devices)
+    def fn(key):
+      return jax.random.fold_in(key, 0)
+
+    sharded_key = jax.random.split(jax.random.key(0), len(devices))
+    replicated_key = jax.random.key(1)
+
+    sharded_key = jax.device_put_sharded(jnp.unstack(sharded_key), devices)
+    replicated_key = jax.device_put_replicated(replicated_key, devices)
+
+    fn(sharded_key)
+    fn(replicated_key)
+
   def testArrayGetItem(self):
     f = lambda x: 2 * x
     f = self.pmap(f, axis_name='i')
