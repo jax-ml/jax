@@ -4346,6 +4346,19 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out2 = compiled2(jnp.arange(8))
     self.assertArraysEqual(out2, np.arange(8) * 2)
 
+  def test_nullary_out_sharding_partial(self):
+    mesh = jtu.create_mesh((jax.device_count(),), 'x')
+
+    @partial(jax.jit, out_shardings=(None, NamedSharding(mesh, P())))
+    def init():
+      tensor = jnp.zeros(shape=(1,))
+      other_tensor = jnp.zeros(shape=(1,))
+      return tensor, other_tensor
+
+    out = init()
+    self.assertIsInstance(out[0].sharding, NamedSharding)
+    self.assertIsInstance(out[1].sharding, NamedSharding)
+
   def test_device_put_efficient_reshard_single_host(self):
     if jax.device_count() < 4:
       self.skipTest('Requires >= 4 devices')
