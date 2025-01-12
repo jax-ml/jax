@@ -251,28 +251,18 @@ class TiledRectangularVregBounds : public VRegDataBounds {
       OpBuilder& builder, const Location loc, const int generation,
       const std::array<int64_t, 2> target_shape) const override {
     const IntegerType i1 = builder.getI1Type();
-    FAILUREOR_ASSIGN_OR_RETURN(
-        const VectorType mask_vreg_ty, [&]() -> FailureOr<VectorType> {
-          // I'm pretty sure this works for all bitwidths, but it's untested.
-          if (maskVariesAlong(Direction::kSubelements, target_shape)) {
-            if (layout_.packing() != 2) {
-              // TODO(b/300082350): Generalize this
-              return emitError(loc, "Not implemented");
-            }
-            // For older TPUs, we virtualize masking, but only for simple cases.
-            if (generation < 4) {
-              if (num_tiles_ > 1) {
-                return emitError(loc, "Not implemented");
-              }
-              return VectorType::get(target_shape, i1);
-            } else {
-              return VectorType::get(
-                  {target_shape[0], target_shape[1], layout_.packing()}, i1);
-            }
-            return VectorType::get({target_shape[0], target_shape[1], 2}, i1);
-          }
+    const VectorType mask_vreg_ty = [&]() {
+      if (maskVariesAlong(Direction::kSubelements, target_shape)) {
+        // For older TPUs, we virtualize masking
+        if (generation < 4) {
           return VectorType::get(target_shape, i1);
-        }());
+        } else {
+          return VectorType::get(
+              {target_shape[0], target_shape[1], layout_.packing()}, i1);
+        }
+      }
+      return VectorType::get(target_shape, i1);
+    }();
     if (isComplete(target_shape)) {
       return cast<TypedValue<VectorType>>(
           builder
@@ -284,6 +274,7 @@ class TiledRectangularVregBounds : public VRegDataBounds {
     }
     Value mask = nullptr;
     CHECK_GE(num_tiles_, 0);
+    const int8_t bitwidth = layout_.bitwidth();
     const int packing = layout_.packing();
     const int64_t start_sub = start_offsets_[0] / packing;
     const int64_t end_sub = llvm::divideCeil(end_offsets_[0], packing);
@@ -327,11 +318,6 @@ class TiledRectangularVregBounds : public VRegDataBounds {
               loc, mask_vreg_ty, start_row, end_row, layout_.packing());
           tile_mask = builder.create<arith::AndIOp>(loc, tile_mask, submask);
         } else {  // generation < 4
-          if (num_tiles_ > 1) {
-            return emitError(loc,
-                             "Not implemented: TPU generations before 4 cannot "
-                             "handle all bf16 masking");
-          }
           const auto getMaskCst = [&](const uint64_t v) {
             const auto int_mask_ty =
                 VectorType::get(target_shape, builder.getI32Type());
@@ -341,31 +327,37 @@ class TiledRectangularVregBounds : public VRegDataBounds {
                     int_mask_ty, builder.getIntegerAttr(builder.getI32Type(),
                                                         APInt(32, v))));
           };
-          Value tile_bitmask = builder.create<arith::SelectOp>(
+          tile_mask = builder.create<arith::SelectOp>(
               loc, tile_mask, getMaskCst(0xFFFFFFFF), getMaskCst(0));
-          if (start_row % 2 != 0) {
+          if (const int64_t row_in_sublane = start_row % packing;
+              row_in_sublane != 0) {
             auto row_mask = builder.create<tpu::CreateMaskOp>(
                 loc, mask_vreg_ty,
-                ValueRange{boundIdxConst(start_row / 2), boundIdxConst(0)},
-                ValueRange{boundIdxConst(start_row / 2 + 1),
+                ValueRange{boundIdxConst(start_row / packing),
+                           boundIdxConst(0)},
+                ValueRange{boundIdxConst(start_row / packing + 1),
                            boundIdxConst(target_shape[1])});
             auto row_bitmask = builder.create<arith::SelectOp>(
-                loc, row_mask, getMaskCst(0xFFFF0000), getMaskCst(0xFFFFFFFF));
-            tile_bitmask =
-                builder.create<arith::AndIOp>(loc, tile_bitmask, row_bitmask);
+                loc, row_mask,
+                getMaskCst(0xFFFFFFFF << row_in_sublane * bitwidth),
+                getMaskCst(0xFFFFFFFF));
+            tile_mask =
+                builder.create<arith::AndIOp>(loc, tile_mask, row_bitmask);
           }
-          if (end_row % 2 != 0) {
+          if (const int64_t row_in_sublane = end_row % packing;
+              row_in_sublane != 0) {
             auto row_mask = builder.create<tpu::CreateMaskOp>(
                 loc, mask_vreg_ty,
-                ValueRange{boundIdxConst(end_row / 2), boundIdxConst(0)},
-                ValueRange{boundIdxConst(end_row / 2 + 1),
+                ValueRange{boundIdxConst(end_row / packing), boundIdxConst(0)},
+                ValueRange{boundIdxConst(end_row / packing + 1),
                            boundIdxConst(target_shape[1])});
             auto row_bitmask = builder.create<arith::SelectOp>(
-                loc, row_mask, getMaskCst(0xFFFF), getMaskCst(0xFFFFFFFF));
-            tile_bitmask =
-                builder.create<arith::AndIOp>(loc, tile_bitmask, row_bitmask);
+                loc, row_mask,
+                getMaskCst(0xFFFFFFFFu >> row_in_sublane * bitwidth),
+                getMaskCst(0xFFFFFFFF));
+            tile_mask =
+                builder.create<arith::AndIOp>(loc, tile_mask, row_bitmask);
           }
-          return cast<TypedValue<VectorType>>(tile_bitmask);
         }
       }
       mask = mask == nullptr
