@@ -1134,6 +1134,15 @@ LogicalResult WeirdOp::verify() {
   return success();
 }
 
+LogicalResult LogBufferOp::verify() {
+  const MemRefType input_type = getInput().getType();
+  if (input_type.getRank() != getShape().size()) {
+    return emitOpError(
+        "Shape must have the same length as the rank of the input");
+  }
+  return success();
+}
+
 void PackSubelementsOp::build(OpBuilder &builder, OperationState &state,
                               const VectorType output_type,
                               const ArrayRef<Value> padded_sources,

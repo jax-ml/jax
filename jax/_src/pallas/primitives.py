@@ -732,9 +732,12 @@ def debug_print(fmt: str, *args: jax.typing.ArrayLike):
       * On GPU, when using the experimental Mosaic GPU backend, ``fmt`` must
         contain a placeholder for each value to be printed. Format specs and
         conversions are not supported. All values must be scalars.
-      * In TPU, if ``fmt`` contains placeholders, all values must be 32-bit
-        integers. If there are no placeholders, the values are printed after
-        the format string. All values must be scalars.
+      * On TPU, if all inputs are scalars: If ``fmt`` contains placeholders,
+        all values must be 32-bit integers. If there are no placeholders, the
+        values are printed after the format string.
+      * On TPU, if the input is a single vector, the vector is printed after
+        the format string. The format string must end with a single placeholder
+        ``{}``.
     *args: The values to print.
   """  # fmt: skip
   has_placeholders = False
