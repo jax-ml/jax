@@ -91,17 +91,18 @@ def linearize_subtrace(_f: Callable, _store, _tag, nzs_in, *primals, **params):
                                tangent_trace.new_arg(get_aval(p).to_tangent_aval()))
                if nz else p
                for p, nz in zip(primals, nzs_in)]
-    with core.set_current_trace(linearize_trace):
+    with core.set_current_trace(linearize_trace, check_leaks=True):
       ans = _f(*tracers)
-  out_primals, out_tangents = unzip2(map(linearize_trace.to_primal_tangent_pair, ans))
+      out_primals, out_tangents = unzip2(map(linearize_trace.to_primal_tangent_pair, ans))
+      del linearize_trace, ans, tracers
   nzs_out = tuple(type(t) is not Zero for t in out_tangents)
   out_tangents = tuple(t for t, nz in zip(out_tangents, nzs_out) if nz)
   out_tangents = map(tangent_trace.to_jaxpr_tracer, out_tangents)  # type: ignore[assignment]
   jaxpr, consts, attrs_tracked = tangent_trace.to_jaxpr(out_tangents)
-  num_residuals = len(consts)
+  residual_avals = map(get_aval, consts)
   if attrs_tracked:
     raise NotImplementedError("TODO: attrs")
-  _store.store((num_residuals, nzs_out, jaxpr))
+  _store.store((residual_avals, nzs_out, jaxpr))
   return tuple(consts) + tuple(out_primals)
 
 @lu.transformation2
@@ -151,17 +152,20 @@ def _linearize_jaxpr(
   tangent_trace = pe.DynamicJaxprTrace(dbg)
   lin_trace = LinearizeTrace(primal_trace, tangent_trace)
 
-  def new_arg(primal_aval, nz):
+  def new_arg(trace, primal_aval, nz):
     primal = primal_trace.new_arg(primal_aval)
     tangent_aval = primal_aval.to_tangent_aval()
     tangent = tangent_trace.new_arg(tangent_aval) if nz else Zero(tangent_aval)
-    return LinearizeTracer(lin_trace, primal, tangent)
+    return LinearizeTracer(trace, primal, tangent)
 
-  tracers = [new_arg(v.aval, nz) for (v, nz) in zip(jaxpr.jaxpr.invars, nonzeros)]
-  with core.set_current_trace(lin_trace):
+  tracers = [new_arg(lin_trace, v.aval, nz)
+             for (v, nz) in zip(jaxpr.jaxpr.invars, nonzeros)]
+
+  with core.set_current_trace(lin_trace, check_leaks=True):
     ans = core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *tracers)
+    out_primals, out_tangents = unzip2(map(lin_trace.to_primal_tangent_pair, ans))
+    del lin_trace, ans, tracers, new_arg
 
-  out_primals, out_tangents = unzip2(map(lin_trace.to_primal_tangent_pair, ans))
   nzs_out = [type(t) is not Zero for t in out_tangents]
   out_tangents = tuple(tangent_trace.to_jaxpr_tracer(t)
                        for (nz, t) in zip(nzs_out, out_tangents) if nz)
@@ -188,7 +192,7 @@ def direct_linearize(traceable: lu.WrappedFun,
     linearize_trace = LinearizeTrace(parent_trace, tangent_trace, tag=tag)
     tracers = [LinearizeTracer(linearize_trace, p, t) for p, t in zip(primals, tangents)]
     tracers = [t.full_lower() for t in tracers]
-    with core.set_current_trace(linearize_trace):
+    with core.set_current_trace(linearize_trace, check_leaks=True):
       if has_aux:
         ans, aux = traceable.call_wrapped(*tracers)
         aux_primals = [x.primal
@@ -198,12 +202,16 @@ def direct_linearize(traceable: lu.WrappedFun,
       else:
         ans = traceable.call_wrapped(*tracers)
         aux = None
-  out_primals, out_tangents = unzip2(map(linearize_trace.to_primal_tangent_pair, ans))
-  out_tangents = map(instantiate_zeros, out_tangents)  # type: ignore
-  out_tangents = map(tangent_trace.to_jaxpr_tracer, out_tangents)  # type: ignore
-  jaxpr, consts, attrs_tracked = tangent_trace.to_jaxpr(out_tangents)
+      out_primals, out_tangents = unzip2(map(linearize_trace.to_primal_tangent_pair, ans))
+      del linearize_trace, ans, tracers
+  out_nzs = [type(t) is not Zero for t in out_tangents]
+  out_nz_tangents = [t for t, nz in zip(out_tangents, out_nzs) if nz]
+  out_nz_tangents = map(tangent_trace.to_jaxpr_tracer, out_nz_tangents)  # type: ignore
+  jaxpr, consts, attrs_tracked = tangent_trace.to_jaxpr(out_nz_tangents)
   tangent_trace.invalidate()
-  out_tangents_pvals = [pe.PartialVal.unknown(core.get_aval(t)) for t in out_tangents]
+  out_tangents_pvals = [pe.PartialVal.unknown(core.get_aval(t)) if nz else
+                        pe.PartialVal.known(zeros_like_aval(t.aval))
+                        for t, nz in zip(out_tangents, out_nzs)]
   if attrs_tracked:
     raise NotImplementedError("TODO: attrs")
   if has_aux:
@@ -660,15 +668,16 @@ class LinearizeTrace(Trace):
     if isinstance(call_primitive, core.MapPrimitive):
       @as_hashable_function(closure=(linearize_outs_thunk))
       def new_out_axes_thunk():
-        num_residuals, _, _ = linearize_outs_thunk()
+        residual_avals, _, _ = linearize_outs_thunk()
         out_axes = params['out_axes_thunk']()
-        return (*(0 for _ in range(num_residuals)), *out_axes)
+        return (*(0 for _ in residual_avals), *out_axes)
       primal_params = dict(params, out_axes_thunk=new_out_axes_thunk)
     else:
       primal_params = params
 
     all_primal_results = call_primitive.bind_with_trace(self.parent_trace, (f_primal, *primals), primal_params)
-    num_residuals, nzs_out, lin_jaxpr = linearize_outs_thunk()
+    residual_avals, nzs_out, lin_jaxpr = linearize_outs_thunk()
+    num_residuals = len(residual_avals)
     residuals = all_primal_results[:num_residuals]
     primals_out = all_primal_results[num_residuals:]
 
@@ -754,9 +763,11 @@ def linearize_from_jvp(jvp, multiple_results, nonzeros,
       out_tangents = [out_tangents]
 
     out_primals = [trace.to_jaxpr_tracer(p).pval.get_known() for p in out_primals]
-    out_nzs = [type(r) is not zero_type for r in out_tangents]
+
+    out_nzs = [type(t) is not zero_type and not trace.to_jaxpr_tracer(t).is_known()
+               for t in out_tangents]
     out_tangent_avals = [get_aval(p).to_tangent_aval() for p in out_primals]
-    out_nz_tracers = [trace.instantiate_const(trace.to_jaxpr_tracer(r))
+    out_nz_tracers = [trace.to_jaxpr_tracer(r)
                       for (r, nz) in zip(out_tangents, out_nzs) if nz]
     in_tracers = [t for t, nz in zip(tangent_args, nonzeros) if nz]
     jaxpr, out_consts, _ = pe.tracers_to_jaxpr(in_tracers, out_nz_tracers)
