@@ -112,6 +112,7 @@ class LoweringContext:
   replace = dataclasses.replace
   traceback_caches: mlir.TracebackCaches
   for_verification: bool
+  forward_compatible: bool
 
   @property
   def grid_rank(self):
@@ -140,6 +141,10 @@ class LoweringRuleContext:
   block_shapes: Sequence[tuple[int | pallas_core.Mapped, ...] | None]
 
   replace = dataclasses.replace
+
+  @property
+  def forward_compatible(self):
+    return self.lowering_context.forward_compatible
 
 
 def _memory_space_to_tpu_memory_space(memory_space: MemorySpace | None
@@ -554,6 +559,7 @@ def lower_jaxpr_to_module(
       mosaic_grid_mapping=mosaic_grid_mapping,
       name="main",
       for_verification=for_verification,
+      forward_compatible=lowering_context.is_forward_compat(),
   )
   m.body.append(func_op)
   sym_tab.insert(func_op)
@@ -580,6 +586,7 @@ def lower_jaxpr_to_module(
           name=func_name,
           mosaic_grid_mapping=mosaic_grid_mapping,
           for_verification=for_verification,
+          forward_compatible=lowering_context.is_forward_compat(),
       )
       assert mlir_func.verify(), mlir_func
       block_shape = [
@@ -628,6 +635,7 @@ def lower_jaxpr_to_transform_func(
     name: str,
     mosaic_grid_mapping: MosaicGridMapping,
     for_verification: bool,
+    forward_compatible: bool,
 ) -> func.FuncOp:
   num_grid = len(mosaic_grid_mapping.grid_types)
   arg_types = [
@@ -662,6 +670,7 @@ def lower_jaxpr_to_transform_func(
         mesh_context=mesh_context,
         traceback_caches=mlir.TracebackCaches(),
         for_verification=for_verification,
+        forward_compatible=forward_compatible,
     )
     out = jaxpr_subcomp(lowering_context, jaxpr, *jaxpr_indices,
                         *scalar_prefetch)
@@ -689,6 +698,7 @@ def lower_jaxpr_to_func(
     mosaic_grid_mapping: MosaicGridMapping,
     name: str,
     for_verification: bool,
+    forward_compatible: bool,
 ) -> func.FuncOp:
   num_grid = len(mosaic_grid_mapping.grid_types)
   num_scalar_prefetch = len(mosaic_grid_mapping.scalar_prefetch_types)
@@ -727,6 +737,7 @@ def lower_jaxpr_to_func(
         mesh_context=mesh_context,
         traceback_caches=mlir.TracebackCaches(),
         for_verification=for_verification,
+        forward_compatible=forward_compatible,
     )
     return jaxpr_subcomp(
         lowering_context, jaxpr, *scalar_prefetch, *operands_and_scratch
@@ -1832,8 +1843,11 @@ def _convert_element_type_lowering_rule(
       # This case triggers when casting signed to unsigned or vice versa.
       return x
   # TODO(apaszke): Remove both_32bit constraints using the Mosaic canonicalizer.
-  elif _from(floating) and _to(signed) and both_32bit:
-    return arith.fptosi(out_type, x)
+  elif _from(floating) and _to(signed):
+    # TODO(apaszke): Remove once a month has passed, along with the
+    # _convert_helper float -> signed conversion above.
+    if not ctx.forward_compatible or both_32bit:
+      return arith.fptosi(out_type, x)
   elif _from(signed) and _to(floating) and both_32bit:
     return arith.sitofp(out_type, x)
   elif old_dtype == jnp.bool_ and _to(integer) and new_dtype.itemsize == 4:
