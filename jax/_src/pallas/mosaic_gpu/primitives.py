@@ -667,8 +667,7 @@ def _layout_cast_lowering(ctx: lowering.LoweringRuleContext, x, *, new_layout):
   if isinstance(new_layout, Layout):
     return x.to_layout(new_layout.value())
   elif isinstance(new_layout, ParameterizedLayout):
-    layout = new_layout.layout_cls(*new_layout.args,
-                                   **new_layout.kwargs)
+    layout = new_layout.layout_cls.value(*new_layout.args, **new_layout.kwargs)
     return x.to_layout(layout)
   else:
     raise TypeError(f"Unsupported layout: {new_layout}")
@@ -738,7 +737,7 @@ def _broadcasted_iota_abstract_eval(dtype, shape, dimension, layout):
 
 @lowering.register_lowering_rule(broadcasted_iota_p)
 def _broadcasted_iota_lowering(
-    ctx: lowering.LoweringRuleContext, dtype, shape, dimension, layout
+    ctx: lowering.LoweringRuleContext, dtype, shape, dimension, layout: mgpu.FragmentedLayout
 ):
   del ctx  # Unused.
   mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
@@ -753,7 +752,7 @@ def _broadcasted_iota_lowering(
   return mgpu.FragmentedArray.splat(
       llvm_dialect.mlir_undef(mlir_dtype),
       shape,
-      layout.value,
+      layout,
       is_signed=is_signed,
   ).foreach(
       lambda _, idx: cast(idx[dimension]),
@@ -767,8 +766,15 @@ def broadcasted_iota(
     shape: Sequence[int],
     dimension: int,
     *,
-    layout: Layout | None = None,
+    layout: Layout | ParameterizedLayout | None = None,
 ) -> jax.Array:
+  if isinstance(layout, Layout):
+    layout = layout()
+
+  if isinstance(layout, ParameterizedLayout):
+    layout = layout.layout_cls.value(*layout.args, **layout.kwargs)
+
+  assert layout is None or isinstance(layout, mgpu.FragmentedLayout), layout
   return broadcasted_iota_p.bind(
       dtype=jnp.dtype(dtype), shape=shape, dimension=dimension, layout=layout
   )
