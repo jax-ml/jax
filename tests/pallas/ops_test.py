@@ -560,6 +560,13 @@ class OpsTest(PallasBaseTest):
         self.skipTest(
             "Not supported: TPU generation doesn't support this cast."
         )
+    from_int = np.issubdtype(np.dtype(from_dtype), np.integer)
+    to_int = np.issubdtype(np.dtype(to_dtype), np.integer)
+    if (
+        from_int and to_int and np.dtype(from_dtype).itemsize != 4
+        and not jtu.if_cloud_tpu_at_least(2025, 1, 12)
+    ):
+      self.skipTest("trunc from non-32 bit only implemented recently")
 
     # TODO(sharadmv,apaszke): add support for the following casts
     if from_dtype == "bool" and to_dtype in {"int16", "int8", "uint16", "uint8"}:
