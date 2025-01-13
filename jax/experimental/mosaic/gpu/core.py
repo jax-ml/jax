@@ -28,6 +28,7 @@ from typing import Any, Callable, Generic, TypeVar
 import weakref
 
 import jax
+from jax.experimental.mosaic.gpu import fragmented_array as fa
 from jax._src.interpreters import mlir
 from jax._src.lib import mosaic_gpu_dialect as dialect
 from jaxlib.mlir import ir
@@ -87,6 +88,14 @@ if RUNTIME_PATH and RUNTIME_PATH.exists():
   # Set this so that the custom call can find it
   os.environ["MOSAIC_GPU_RUNTIME_LIB_PATH"] = str(RUNTIME_PATH)
 
+if os.environ.get("MOSAIC_GPU_NVSHMEM_LLVM_LIB_PATH") is None:
+  try:
+    from nvidia import nvshmem
+    os.environ["MOSAIC_GPU_NVSHMEM_LLVM_LIB_PATH"] = (
+      os.path.join(nvshmem.__path__[0], 'lib/libnvshmem_device.bc')
+    )
+  except ImportError:
+    pass
 
 mosaic_gpu_p = jax._src.core.Primitive("mosaic_gpu_p")
 mosaic_gpu_p.multiple_results = True
@@ -107,6 +116,7 @@ def _mosaic_gpu_lowering_rule(
     module,
     out_types,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
+    use_custom_barrier: bool = False,
 ):
   assert len(out_types) == len(ctx.avals_out)
   module = _run_serde_pass(
@@ -130,8 +140,13 @@ def _mosaic_gpu_lowering_rule(
       operands=args,
       operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
       result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
-      backend_config=kernel_id + module_asm,
+      backend_config=dict(
+          kernel_hash=ir.StringAttr.get(kernel_id),
+          module=ir.StringAttr.get(module_asm),
+          use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
+      ),
       operand_output_aliases=dict(input_output_aliases),
+      api_version=4,
   )
   return op.results
 
@@ -538,13 +553,26 @@ def _initialize_scratch(
 def _declare_runtime_functions():
   """Declares the runtime functions that can be used by the generated code."""
   ptr_ty = ir.Type.parse("!llvm.ptr")
+  i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
   arg_tys = [ptr_ty, ptr_ty, i64, i64, ptr_ty, ptr_ty, i64, ptr_ty]
   init_tma_desc_type = ir.FunctionType.get(arg_tys, [])
   func.FuncOp(
       "mosaic_gpu_init_tma_desc", init_tma_desc_type, visibility="private"
   )
-
+  rtype = ir.IntegerType.get_signless(32)
+  ftype = ir.Type.parse(f'!llvm.func<{rtype} ()>')
+  ftype_attr = ir.TypeAttr.get(ftype)
+  llvm.LLVMFuncOp("nvshmem_my_pe", ftype_attr)
+  ftype = ir.Type.parse(f'!llvm.func<void ({ptr_ty},{ptr_ty},{i64},{i32})>')
+  ftype_attr = ir.TypeAttr.get(ftype)
+  llvm.LLVMFuncOp("nvshmem_putmem", ftype_attr)
+  ftype = ir.Type.parse(f'!llvm.func<void ({ptr_ty},{i32},{i32})>')
+  ftype_attr = ir.TypeAttr.get(ftype)
+  llvm.LLVMFuncOp("nvshmem_int32_atomic_add", ftype_attr)
+  ftype = ir.Type.parse(f'!llvm.func<void ({ptr_ty},{i32},{i32})>')
+  ftype_attr = ir.TypeAttr.get(ftype)
+  llvm.LLVMFuncOp("nvshmem_int32_wait_until", ftype_attr)
 
 def as_gpu_kernel(
     body,
@@ -725,3 +753,15 @@ def as_torch_gpu_kernel(
   apply.destructor = weakref.ref(apply, unload)
 
   return apply
+
+
+def device_id_to_llvm(device_id):
+  i32_ty = ir.IntegerType.get_signless(32)
+  if isinstance(device_id, (int, np.integer)):
+    return c(device_id, i32_ty)
+  elif (isinstance(device_id, fa.FragmentedArray) and
+        isinstance(device_id.layout, fa.WGSplatFragLayout) and
+        device_id.shape == ()):
+    return device_id.registers.item()
+  else:
+    raise NotImplementedError(type(device_id))

@@ -87,6 +87,7 @@ class GPUCompilerParams(pallas_core.CompilerParams):
   profile_space: int = 0
   profile_dir: str = ""
   thread_semantics: mgpu.core.ThreadSemantics = mgpu.core.ThreadSemantics.Lane
+  use_custom_barrier: bool = False
 
   def __post_init__(self):
     if bool(self.profile_space) ^ bool(self.profile_dir):

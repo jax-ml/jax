@@ -688,6 +688,15 @@ def warpgroup_barrier():
       has_side_effects=True,
   )
 
+def system_membar():
+  llvm.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [],
+      "membar.sys;",
+      "",
+      has_side_effects=True,
+  )
+
 
 @dataclasses.dataclass(frozen=True)
 class BarrierRef:
@@ -1113,6 +1122,80 @@ def memref_ptr(memref_arg, memory_space=None):
           overflow_flags=llvm.IntegerOverflowFlags.none,
       ),
   )
+
+
+def extern_elementwise_func_apply(func, return_type, arg_list,
+                                  static_arg_idxs=(), pack_elts=False,
+                                  elt_byte_count_idx=None):
+  tidx = thread_idx()
+  wgidx = warpgroup_idx()
+  index = ir.IndexType.get()
+  i64 = ir.IntegerType.get_signless(64)
+  i32 = ir.IntegerType.get_signless(32)
+  ptr_ty = ir.Type.parse("!llvm.ptr")
+  num_elts = None
+  elem_bytewidth = None
+  num_args = len(arg_list)
+  tensor_arg_idxs = set(range(num_args)) - set(static_arg_idxs)
+  wg_thread_offset = arith.muli(wgidx, c(WARPGROUP_SIZE, i32))
+  wg_tidx = arith.subi(tidx, wg_thread_offset)
+  num_cuda_threads = WARPGROUP_SIZE
+
+  arg_list_ptr_int = arg_list.copy()
+  for idx in tensor_arg_idxs:
+    arg = arg_list_ptr_int[idx]
+    if num_elts is None:
+      ref_ty = ir.MemRefType(arg.type)
+      _, slice_shape, _ = parse_indices((), ref_ty.shape)
+      num_elts = np.prod(slice_shape)
+      elem_bytewidth = bytewidth(ref_ty.element_type)
+
+    arg_list_ptr_int[idx] = llvm.ptrtoint(i64, memref_ptr(arg))
+
+  def run_func(wave_idx, num_elt_bytes):
+    args = arg_list_ptr_int.copy()
+    # Update element arg ptrs
+    for idx in tensor_arg_idxs:
+      offset_elems = arith.addi(arith.index_cast(index, wg_tidx),
+                                arith.muli(wave_idx, c(num_cuda_threads, index)))
+      offset_bytes = llvm.mul(
+        arith.index_cast(i64, offset_elems),
+        c(num_elt_bytes, i64),
+        overflow_flags=llvm.IntegerOverflowFlags.none,
+      )
+      args[idx] = llvm.inttoptr(
+        ptr_ty,
+        llvm.add(
+            args[idx],
+            offset_bytes,
+            overflow_flags=llvm.IntegerOverflowFlags.none,
+        ),
+      )
+    llvm.CallOp(return_type, args,
+                op_bundle_operands=[], op_bundle_sizes=[], op_bundle_tags=[],
+                callee=func)
+    return ()
+
+  MAX_BYTES_PER_INST = 16
+  total_bytes = num_elts * elem_bytewidth
+  if pack_elts and total_bytes % MAX_BYTES_PER_INST == 0:
+    if elt_byte_count_idx is None:
+      raise ValueError("pack_elts=True requires setting elt_byte_count_idx")
+    elem_bytewidth = MAX_BYTES_PER_INST
+    num_elts = total_bytes // elem_bytewidth
+    arg_list_ptr_int[elt_byte_count_idx] = c(elem_bytewidth, i64)
+
+
+  num_waves = c(num_elts // num_cuda_threads, index)
+  remainder = num_elts % num_cuda_threads
+  fori(num_waves, ())(lambda x, _: run_func(x, elem_bytewidth))
+  if remainder != 0:
+    has_remainder = arith.cmpi(arith.CmpIPredicate.slt,
+                               wg_tidx,
+                               c(remainder, i32))
+    with ir.InsertionPoint(scf.IfOp(has_remainder).then_block):
+      run_func(num_waves, elem_bytewidth)
+      scf.yield_([])
 
 
 def cluster_collective_mask(

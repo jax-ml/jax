@@ -27,7 +27,7 @@ from typing import Any, Protocol, cast
 
 import jax
 from jax import lax
-from jax._src import core as jax_core
+from jax._src import core as jax_core, tree_util
 from jax._src import pjit
 from jax._src import util
 from jax._src import source_info_util
@@ -40,10 +40,12 @@ from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.lib.mlir.dialects import scf as scf_dialect
 from jax._src.lib.mlir.dialects import vector as vector_dialect
+from jax._src.lib.mlir.dialects import llvm
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
+from jax._src.pallas.common_lowering import _device_id_to_logical
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.state import discharge
 from jax._src.state import indexing
@@ -1004,6 +1006,11 @@ def _num_programs_lowering_rule(ctx: LoweringRuleContext, axis):
       gpu_dialect.block_dim(gpu_dialect.Dimension(axis)),
   )
 
+@register_lowering_rule(primitives.device_id_p)
+def device_id_lowering_rule(ctx: LoweringRuleContext):
+  return llvm.CallOp(ir.IntegerType.get_signless(32), [],
+                     op_bundle_operands=[], op_bundle_sizes=[], op_bundle_tags=[],
+                     callee="nvshmem_my_pe").result
 
 def _handle_reshaping(
     ref: ir.Value, transforms: Sequence[gpu_core.Transform]
@@ -2051,3 +2058,144 @@ def merge_indexers(
       shape=root_shape,
       int_indexer_shape=(),
   )
+
+
+@register_lowering_rule(primitives.semaphore_read_p)
+def _semaphore_read_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    args_tree,
+):
+  sem_aval, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem, transforms = tree_util.tree_unflatten(args_tree, args)
+  sem, _ = _handle_indexing(sem, transforms)
+  return memref_dialect.load(sem, [])
+
+
+@register_lowering_rule(primitives.semaphore_signal_p)
+def _semaphore_signal_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    args_tree,
+    device_id_type: primitives.DeviceIdType,
+):
+  sem_aval, _, _, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem, transforms, value, device_id, core_index = tree_util.tree_unflatten(
+      args_tree, args
+  )
+  sem, _ = _handle_indexing(sem, transforms)
+  if device_id is None:
+    raise ValueError(
+      "'semaphore_signal' requires 'device_id' argument to be set on GPUs."
+    )
+  device_id = _device_id_to_logical(ctx, device_id, device_id_type)
+
+  i64_ty = ir.IntegerType.get_signless(64)
+  i32_ty = ir.IntegerType.get_signless(32)
+  sem_ptr = mgpu.utils.memref_ptr(sem)
+  val = _ir_constant(value, i32_ty)
+  mgpu_utils.warpgroup_barrier()
+  with mgpu.single_thread(per_block=False):
+    mgpu_utils.system_membar()
+    llvm.CallOp(None, [sem_ptr, val, mgpu_core.device_id_to_llvm(device_id)], op_bundle_operands=[], op_bundle_sizes=[], op_bundle_tags=[], callee="nvshmem_int32_atomic_add")
+  return ()
+
+
+@register_lowering_rule(primitives.semaphore_wait_p)
+def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
+  sem_aval, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem, transforms, value = tree_util.tree_unflatten(args_tree, args)
+  sem, _ = _handle_indexing(sem, transforms)
+
+  sem_ptr = mgpu.utils.memref_ptr(sem)
+  i64_ty = ir.IntegerType.get_signless(64)
+  i32_ty = ir.IntegerType.get_signless(32)
+  NVSHMEM_CMP_EQ = mgpu.utils.c(0, i32_ty)
+  val = _ir_constant(value, i32_ty)
+  with mgpu.single_thread(per_block=False):
+    # Wait semaphone
+    llvm.CallOp(None, [sem_ptr, NVSHMEM_CMP_EQ, val], op_bundle_operands=[], op_bundle_sizes=[], op_bundle_tags=[], callee="nvshmem_int32_wait_until")
+    # Reset semaphone
+    minus_val = arith_dialect.muli(_ir_constant(-1, i32_ty), val)
+    addi_enum_val = 1
+    memref_dialect.atomic_rmw(addi_enum_val, minus_val, sem, [])
+  mgpu_utils.warpgroup_barrier()
+  return ()
+
+
+@register_lowering_rule(primitives.dma_start_p)
+def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree,
+                             device_id_type: primitives.DeviceIdType):
+  (
+      src_ref,
+      src_transforms,
+      dst_ref,
+      dst_transforms,
+      sem,
+      sem_transforms,
+      src_sem,
+      src_sem_transforms,
+      device_id,
+  ) = tree_util.tree_unflatten(tree, args)
+  (src_ref_aval, _, dst_ref_aval, _, sem_aval, _, src_sem_aval, _, _) = (
+      tree_util.tree_unflatten(tree, ctx.avals_in)
+  )
+  if src_ref_aval.dtype == jnp.bool_:
+    raise NotImplementedError("DMAs with bool dtypes are not supported.")
+
+  src_ref, _ = _handle_indexing(src_ref, src_transforms)
+
+  if src_sem is not None:
+    src_sem, _ = _handle_indexing(src_sem, src_sem_transforms)
+  dst_ref, _ = _handle_indexing(dst_ref, dst_transforms)
+  sem, _ = _handle_indexing(sem, sem_transforms)
+
+
+  if device_id is None:
+    raise ValueError(
+      "'async_remote_copy' requires 'device_id' argument to be set on GPUs."
+    )
+  device_id = _device_id_to_logical(ctx, device_id, device_id_type)
+
+  ref_ty = ir.MemRefType(src_ref.type)
+  i64_ty = ir.IntegerType.get_signless(64)
+  i32_ty = ir.IntegerType.get_signless(32)
+  element_bytes = mgpu.utils.c(
+   mgpu.utils.bytewidth(ref_ty.element_type), i64_ty
+  )
+  mgpu.utils.extern_elementwise_func_apply("nvshmem_putmem", None,
+                                           [dst_ref, src_ref, element_bytes,
+                                            mgpu_core.device_id_to_llvm(device_id)],
+                                            static_arg_idxs=(2, 3),
+                                            pack_elts=True,
+                                            elt_byte_count_idx=2)
+
+  sem_ptr = mgpu.utils.memref_ptr(sem)
+  one_constant = mgpu.utils.c(1, i32_ty)
+  mgpu_utils.warpgroup_barrier()
+  with mgpu.single_thread(per_block=False):
+    mgpu_utils.system_membar()
+    llvm.CallOp(None, [sem_ptr, one_constant, mgpu_core.device_id_to_llvm(device_id)], op_bundle_operands=[], op_bundle_sizes=[], op_bundle_tags=[], callee="nvshmem_int32_atomic_add")
+  return ()
+
+
+@register_lowering_rule(primitives.dma_wait_p)
+def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
+                            device_id_type: primitives.DeviceIdType):
+  (_, _, ref, transforms, sem, sem_transforms, _, _, _) = tree_util.tree_unflatten(
+      tree, args)
+  sem, _ = _handle_indexing(sem, sem_transforms)
+  sem_ptr = mgpu.utils.memref_ptr(sem)
+  i64_ty = ir.IntegerType.get_signless(64)
+  i32_ty = ir.IntegerType.get_signless(32)
+  NVSHMEM_CMP_EQ = mgpu.utils.c(0, i32_ty)
+  one_constant = mgpu.utils.c(1, i32_ty)
+  with mgpu.single_thread(per_block=False):
+    # Wait semaphone
+    llvm.CallOp(None, [sem_ptr, NVSHMEM_CMP_EQ, one_constant], op_bundle_operands=[], op_bundle_sizes=[], op_bundle_tags=[], callee="nvshmem_int32_wait_until")
+    # Reset semaphone
+    minus_val = mgpu.utils.c(-1, i32_ty)
+    addi_enum_val = 1
+    memref_dialect.atomic_rmw(addi_enum_val, minus_val, sem, [])
+  mgpu_utils.warpgroup_barrier()
+  return ()

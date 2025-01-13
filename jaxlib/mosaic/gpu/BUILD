@@ -116,6 +116,15 @@ cc_library(
 )
 
 cc_library(
+    name = "mosaic_gpu_comm",
+    hdrs = ["mosaic_gpu_comm.h"],
+    deps = [
+        "@local_config_cuda//cuda:cuda_headers",
+        "@xla//xla/tsl/cuda:cudart",
+    ],
+)
+
+cc_library(
     name = "custom_call",
     srcs = ["custom_call.cc"],
     deps = [
@@ -123,9 +132,11 @@ cc_library(
         ":target",
         "//jaxlib/cuda:cuda_vendor",
         "//jaxlib/mosaic/dialect/gpu:mosaic_gpu",
+        "//jaxlib/mosaic/gpu:mosaic_gpu_comm",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -170,6 +181,8 @@ cc_library(
         "@llvm-project//mlir:VectorDialect",
         "@xla//xla/service:custom_call_status",
         "@xla//xla/service:custom_call_target_registry",
+        "@xla//xla/ffi",
+        "@xla//xla/ffi:ffi_api",
     ],
     alwayslink = True,
 )
@@ -181,6 +194,13 @@ nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    linkopts = select({
+        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
+            "-Wl,-rpath,$$ORIGIN/../../../nvidia/cuda_runtime/lib",
+            "-Wl,-rpath,$$ORIGIN/../../../nvidia/nvshmem/lib",
+        ],
+        "//conditions:default": [],
+    }),
     deps = [
         "//jaxlib:kernel_nanobind_helpers",
         "//jaxlib/cuda:cuda_vendor",
@@ -197,6 +217,13 @@ cc_binary(
     name = "libmosaic_gpu_runtime.so",
     srcs = ["runtime.cc"],
     copts = ["-fvisibility=default"],
+    linkopts = select({
+        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
+            "-Wl,-rpath,$$ORIGIN/../../../nvidia/cuda_runtime/lib",
+            "-Wl,-rpath,$$ORIGIN/../../../nvidia/nvshmem/lib",
+        ],
+        "//conditions:default": [],
+    }),
     linkshared = 1,
     tags = [
         "manual",
@@ -205,5 +232,6 @@ cc_binary(
     deps = [
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/tsl/cuda:cudart",
+        "//jaxlib/mosaic/gpu:mosaic_gpu_comm",
     ],
 )
