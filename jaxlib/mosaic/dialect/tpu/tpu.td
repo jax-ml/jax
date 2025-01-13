@@ -517,12 +517,10 @@ def TPU_CreateMaskOp : TPU_Op<"create_mask", [Pure, SameVariadicOperandSize]> {
 
 def TPU_CreateSubelementMaskOp : TPU_Op<"create_subelement_mask", [Pure]> {
   let summary = "Create a mask masking contiguous rows of subelements.";
-  // TODO(tlongeri): Why don't we just get `num_subelems` from the result type?
-  //                 Taking a parameter and allowing a mismatch is confusing.
   let description = [{
     The "half-sublanes", "quarter-sublanes", etc. (unit is determined by
-    `num_subelems`) of the mask are masked in the range specified by `from` and
-    `to`.
+    the type of `output`) of the mask are masked in the range specified by
+    `from` and `to`.
 
     - If `from <= to`, the range `[from, to)` is set and the rest is unset.
     - If `to <= from`, the range `[to, from)` is unset and the rest is set.
@@ -532,7 +530,7 @@ def TPU_CreateSubelementMaskOp : TPU_Op<"create_subelement_mask", [Pure]> {
     Example:
 
     ```mlir
-    %msk = tpu.create_subelement_mask 3, 9, 2 : vector<8x128x2xi1>
+    %msk = tpu.create_subelement_mask 3, 9 : vector<8x128x2xi1>
     ```
 
     This creates a mask `%msk` where, for all `lane`s, `%msk[*][lane][*]` is:
@@ -547,12 +545,11 @@ def TPU_CreateSubelementMaskOp : TPU_Op<"create_subelement_mask", [Pure]> {
   }];
   let arguments = (ins
     I32Attr:$from,  // inclusive
-    I32Attr:$to,  // exclusive
-    I32Attr:$num_subelems
+    I32Attr:$to  // exclusive
   );
   let results = (outs AnyType:$output);  // Verify this is a vmsk with num_subelems
   let assemblyFormat = [{
-    $from `,` $to `,` $num_subelems attr-dict `:` type($output)
+    $from `,` $to attr-dict `:` type($output)
   }];
 }
 

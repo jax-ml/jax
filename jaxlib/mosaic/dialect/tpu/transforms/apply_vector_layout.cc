@@ -2669,7 +2669,7 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
               // support for unpacked types in some of the invariants in
               // lower_to_llo.
               mask = builder.create<tpu::CreateSubelementMaskOp>(
-                  op.getLoc(), vmask_ty, 0, operand_offset, packing);
+                  op.getLoc(), vmask_ty, 0, operand_offset);
             } else {
               auto sublane_offset = operand_offset / packing;
               mask = builder.create<tpu::CreateMaskOp>(

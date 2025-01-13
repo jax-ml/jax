@@ -324,7 +324,7 @@ class TiledRectangularVregBounds : public VRegDataBounds {
             end_row = target_shape[0] * layout_.packing();
           }
           auto submask = builder.create<tpu::CreateSubelementMaskOp>(
-              loc, mask_vreg_ty, start_row, end_row, layout_.packing());
+              loc, mask_vreg_ty, start_row, end_row);
           tile_mask = builder.create<arith::AndIOp>(loc, tile_mask, submask);
         } else {  // generation < 4
           if (num_tiles_ > 1) {
