@@ -4776,7 +4776,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, s)
     self.assertArraysEqual(out, (np_inp * 2) * (np_inp * 2))
 
-    lowered_text = f.lower(arr).as_text()
+    sds = jax.ShapeDtypeStruct(arr.shape, arr.dtype, sharding=s)
+    lowered_text = f.lower(sds).as_text()
     if config.use_shardy_partitioner.value:
       self.assertEqual(lowered_text.count('sdy.sharding_constraint'), 3)
     else:
@@ -4792,6 +4793,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = jax.jit(jax.grad(g))(arr)
     self.assertEqual(out.sharding, arr.sharding)
+
+    jax.jit(jax.grad(g)).lower(sds)  # doesn't crash
 
   @jtu.with_user_mesh((2, 2), ('x', 'y'))
   def test_fully_replicated_array_mul(self, mesh):

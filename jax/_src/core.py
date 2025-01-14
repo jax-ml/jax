@@ -1420,6 +1420,8 @@ def check_valid_jaxtype(x):
 # TODO(jakevdp): can these be unified further?
 
 def shaped_abstractify(x):
+  from jax._src.sharding_impls import NamedSharding  # type: ignore
+
   typ = type(x)
   if (aval_fn := pytype_aval_mappings.get(typ)):  # fast path
     return aval_fn(x)
@@ -1431,7 +1433,14 @@ def shaped_abstractify(x):
   if hasattr(x, '__jax_array__'):
     return shaped_abstractify(x.__jax_array__())
   if hasattr(x, 'dtype'):
-    return ShapedArray(np.shape(x), x.dtype, weak_type=getattr(x, 'weak_type', False))
+    aval = ShapedArray(np.shape(x), x.dtype,
+                       weak_type=getattr(x, 'weak_type', False))
+    if (config.sharding_in_types.value and hasattr(x, 'sharding') and
+        isinstance(x.sharding, NamedSharding)):
+      return aval.update(sharding=NamedSharding(
+          x.sharding.mesh.abstract_mesh,
+          x.sharding.spec._normalized_spec(aval.ndim)))
+    return aval
   raise TypeError(
       f"Cannot interpret value of type {typ} as an abstract array; it "
       "does not have a dtype attribute")

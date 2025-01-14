@@ -6552,7 +6552,13 @@ def _const(example, val):
   return np.array(val, dtype)
 
 _zeros: Callable = partial(full_like, fill_value=0)
-_zero: Callable = partial(full_like, shape=(), fill_value=0)
+
+def _zero(x):
+  if config.sharding_in_types.value:
+    return full_like(x, shape=(), fill_value=0,
+                     sharding=x.sharding.with_spec(P()))  # type: ignore
+  return full_like(x, shape=(), fill_value=0)
+
 _ones: Callable = partial(full_like, fill_value=1)
 
 def _one(x):

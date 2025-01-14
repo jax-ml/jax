@@ -452,6 +452,10 @@ class AbstractMesh:
     new_axis_types = axis_types_to_names(updated_name_to_type)
     return AbstractMesh(self.shape_tuple, axis_types=new_axis_types)
 
+  @property
+  def abstract_mesh(self):
+    return self
+
   @functools.cached_property
   def _are_all_axes_collective(self) -> bool:
     return all(t == AxisTypes.Collective for t in self.axis_types.keys())
