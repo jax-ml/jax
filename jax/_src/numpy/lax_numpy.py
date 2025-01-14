@@ -702,13 +702,13 @@ def trunc(x: ArrayLike) -> Array:
     >>> x = jax.random.uniform(key, (3, 3), minval=-10, maxval=10)
     >>> with jnp.printoptions(precision=2, suppress=True):
     ...     print(x)
-    [[ 2.88 -3.55 -6.13]
-     [ 7.73  4.49 -6.16]
-     [-3.1  -4.95  2.64]]
+    [[-0.23  3.6   2.33]
+     [ 1.22 -0.99  1.72]
+     [-8.5   5.5   3.98]]
     >>> jnp.trunc(x)
-    Array([[ 2., -3., -6.],
-           [ 7.,  4., -6.],
-           [-3., -4.,  2.]], dtype=float32)
+    Array([[-0.,  3.,  2.],
+           [ 1., -0.,  1.],
+           [-8.,  5.,  3.]], dtype=float32)
   """
   util.check_arraylike('trunc', x)
   if dtypes.isdtype(dtypes.dtype(x), ('integral', 'bool')):
@@ -3678,13 +3678,13 @@ def fix(x: ArrayLike, out: None = None) -> Array:
     >>> x = jax.random.uniform(key, (3, 3), minval=-5, maxval=5)
     >>> with jnp.printoptions(precision=2, suppress=True):
     ...     print(x)
-    [[-1.45  1.04 -0.72]
-     [-2.69  1.74 -0.6 ]
-     [-2.49 -2.23  2.68]]
+    [[ 4.48  4.79 -1.68]
+     [-0.31  0.7  -3.34]
+     [-1.9   1.89  2.47]]
     >>> jnp.fix(x)
-    Array([[-1.,  1., -0.],
-           [-2.,  1., -0.],
-           [-2., -2.,  2.]], dtype=float32)
+    Array([[ 4.,  4., -1.],
+           [-0.,  0., -3.],
+           [-1.,  1.,  2.]], dtype=float32)
   """
   util.check_arraylike("fix", x)
   if out is not None:
@@ -9848,8 +9848,8 @@ def einsum_path(
     Use the computed path in :func:`~jax.numpy.einsum`:
 
     >>> jnp.einsum("ij,jk,kl", x, y, z, optimize=path)
-    Array([[-539,  216,   95,  592,  209],
-           [ 527,   76,  285, -436, -529]], dtype=int32)
+    Array([[-754,  324, -142,   82,   50],
+           [ 408,  -50,   87,  -29,    7]], dtype=int32)
 
   .. _opt_einsum: https://github.com/dgasmith/opt_einsum
   """
@@ -12935,9 +12935,9 @@ def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
     >>> x = jax.random.normal(key, shape=(3, 100))
     >>> with jnp.printoptions(precision=2):
     ...   print(jnp.cov(x))
-    [[ 1.22 -0.    0.11]
-     [-0.    0.84 -0.1 ]
-     [ 0.11 -0.1   0.88]]
+    [[0.9  0.03 0.1 ]
+     [0.03 1.   0.01]
+     [0.1  0.01 0.85]]
   """
   if y is not None:
     m, y = util.promote_args_inexact("cov", m, y)
@@ -13073,9 +13073,9 @@ def corrcoef(x: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True) -> A
     >>> x = jax.random.normal(key, shape=(3, 100))
     >>> with jnp.printoptions(precision=2):
     ...   print(jnp.corrcoef(x))
-    [[ 1.   -0.    0.1 ]
-     [-0.    1.   -0.12]
-     [ 0.1  -0.12  1.  ]]
+    [[1.   0.03 0.12]
+     [0.03 1.   0.01]
+     [0.12 0.01 1.  ]]
   """
   util.check_arraylike("corrcoef", x)
   c = cov(x, y, rowvar)

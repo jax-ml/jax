@@ -1042,7 +1042,7 @@ default_prng_impl = enum_state(
 
 threefry_partitionable = bool_state(
     name='jax_threefry_partitionable',
-    default=False,
+    default=True,
     upgrade=True,
     help=('Enables internal threefry PRNG implementation changes that '
           'render it automatically partitionable in some cases. Without this '

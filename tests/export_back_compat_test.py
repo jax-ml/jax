@@ -864,16 +864,17 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data)
 
   def test_cuda_threefry2x32(self):
-    def func(x):
-      return jax.random.uniform(x, (2, 4), dtype=np.float32)
+    with config.threefry_partitionable(False):
+      def func(x):
+        return jax.random.uniform(x, (2, 4), dtype=np.float32)
 
-    # TODO(b/338022728): remove after 6 months
-    data = self.load_testdata(cuda_threefry2x32.data_2023_03_15)
-    self.run_one_test(func, data,
-                      expect_current_custom_calls=["cu_threefry2x32_ffi"])
+      # TODO(b/338022728): remove after 6 months
+      data = self.load_testdata(cuda_threefry2x32.data_2023_03_15)
+      self.run_one_test(func, data,
+                        expect_current_custom_calls=["cu_threefry2x32_ffi"])
 
-    data = self.load_testdata(cuda_threefry2x32.data_2024_07_30)
-    self.run_one_test(func, data)
+      data = self.load_testdata(cuda_threefry2x32.data_2024_07_30)
+      self.run_one_test(func, data)
 
   def test_sharding(self):
     # Tests "Sharding", "SPMDShardToFullShape", "SPMDFullToShardShape" on TPU
