@@ -1,0 +1,89 @@
+# CI - Pytest CUDA
+#
+# This workflow runs the CUDA tests with Pytest. It can only be triggered by other workflows via
+# `workflow_call`. It is used by the `CI - Wheel Tests` workflows to run the Pytest CUDA tests.
+#
+# It consists of the following job:
+# run-tests:
+#    - Downloads the jaxlib and CUDA artifacts from a GCS bucket.
+#    - Executes the `run_pytest_cuda.sh` script, which performs the following actions:
+#      - Installs the downloaded jaxlib wheel.
+#      - Runs the CUDA tests with Pytest.
+name: CI - Pytest CUDA
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: "Which runner should the workflow run on?"
+        type: string
+        required: true
+        default: "linux-x86-n2-16"
+      python:
+        description: "Which python version to test?"
+        type: string
+        required: true
+        default: "3.12"
+      cuda:
+        description: "Which CUDA version to test?"
+        type: string
+        required: true
+        default: "12.3"
+      enable-x64:
+        description: "Should x64 mode be enabled?"
+        type: string
+        required: true
+        default: "0"
+      gcs_download_uri:
+        description: "GCS location prefix from where the artifacts should be downloaded"
+        required: true
+        default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+        type: string
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  run-tests:
+    runs-on: ${{ inputs.runner }}
+    # TODO: Update to the generic ML ecosystem test containers when they are ready.
+    container:  ${{ (contains(inputs.cuda, '12.3') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/nosla-cuda12.3-cudnn9.1-ubuntu20.04-manylinux2014-multipython:latest') ||
+                (contains(inputs.cuda, '12.1') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/nosla-cuda12.1-cudnn9.1-ubuntu20.04-manylinux2014-multipython:latest') }}
+    name: "Pytest CUDA (${{ inputs.runner }}, CUDA ${{ inputs.cuda }}, Python ${{ inputs.python }}, x64=${{ inputs.enable-x64 }})"
+
+    env:
+      JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
+      JAXCI_PYTHON: "python${{ inputs.python }}"
+      JAXCI_ENABLE_X64: "${{ inputs.enable-x64 }}"
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # Halt for testing
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@main
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Set env vars for use in artifact download URL
+        run: |
+          os=$(uname -s | awk '{print tolower($0)}')
+          arch=$(uname -m)
+
+          # Get the major and minor version of Python.
+          # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.10, then python_major_minor=310
+          python_major_minor=$(echo "$JAXCI_HERMETIC_PYTHON_VERSION" | tr -d '.')
+
+          echo "OS=${os}" >> $GITHUB_ENV
+          echo "ARCH=${arch}" >> $GITHUB_ENV
+          echo "PYTHON_MAJOR_MINOR=${python_major_minor}" >> $GITHUB_ENV
+      - name: Download the wheel artifacts from GCS
+        run: >-
+          mkdir -p $(pwd)/dist &&
+          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
+          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
+          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
+      - name: Install Python dependencies
+        run: $JAXCI_PYTHON -m pip install -r build/requirements.in
+      - name: Run Pytest CUDA tests
+        run: ./ci/run_pytest_cuda.sh
