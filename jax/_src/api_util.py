@@ -608,8 +608,17 @@ def fun_signature(fun: Callable) -> inspect.Signature | None:
   except (ValueError, TypeError):
     return None
 
+def save_wrapped_fun_sourceinfo(wrapper: Callable, wrapped: Callable):
+  # Prefer this to functools.wraps because it does not create a reference to
+  # the wrapped function.
+  sourceinfo = fun_sourceinfo(wrapped)
+  if sourceinfo is not None:
+    setattr(wrapper, "__fun_sourceinfo__", fun_sourceinfo(wrapped))
+
 # TODO(mattjj): make this function internal to this module
 def fun_sourceinfo(fun: Callable) -> str | None:
+  res = getattr(fun, "__fun_sourceinfo__", None)
+  if res is not None: return res
   while isinstance(fun, partial):
     fun = fun.func
   fun = inspect.unwrap(fun)

@@ -25,6 +25,7 @@ import weakref
 from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -1965,18 +1966,19 @@ def _fori_cond_fun(loop_carry):
 
 @weakref_lru_cache
 def _fori_body_fun(body_fun):
-  body_fun = weakref.ref(body_fun)
+  body_fun_ref = weakref.ref(body_fun)
+
   def while_body_fun(loop_carry):
     i, upper, x = loop_carry
-    return lax.add(i, lax._const(i, 1)), upper, body_fun()(i, x)
+    return lax.add(i, lax._const(i, 1)), upper, body_fun_ref()(i, x)
   return while_body_fun
 
 @weakref_lru_cache
 def _fori_scan_body_fun(body_fun):
-  body_fun = weakref.ref(body_fun)
+  body_fun_ref = weakref.ref(body_fun)
   def scanned_fun(loop_carry, _):
     i, x = loop_carry
-    return (i + 1, body_fun()(i, x)), None
+    return (i + 1, body_fun_ref()(i, x)), None
   return scanned_fun
 
 @api_boundary
@@ -2085,8 +2087,10 @@ def fori_loop(lower, upper, body_fun, init_val,
       # non-jit implementation of scan does not support length=0
       return init_val
 
+    scan_body = _fori_scan_body_fun(body_fun)
+    api_util.save_wrapped_fun_sourceinfo(scan_body, body_fun)
     (_, result), _ = scan(
-        _fori_scan_body_fun(body_fun),
+        scan_body,
         (lower_, init_val),
         None,
         length=length,
@@ -2101,7 +2105,9 @@ def fori_loop(lower, upper, body_fun, init_val,
     lower = lax.convert_element_type(lower, dtype)  # type: ignore
   if upper_dtype != dtype:
     upper = lax.convert_element_type(upper, dtype)  # type: ignore
-  _, _, result = while_loop(_fori_cond_fun, _fori_body_fun(body_fun),
+  while_body_fun = _fori_body_fun(body_fun)
+  api_util.save_wrapped_fun_sourceinfo(while_body_fun, body_fun)
+  _, _, result = while_loop(_fori_cond_fun, while_body_fun,
                             (lower, upper, init_val))
   return result
 
