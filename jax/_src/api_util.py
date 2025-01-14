@@ -653,9 +653,10 @@ def result_paths(_fun, _store, *args, **kwargs):
   _store.store([keystr(path) for path, _ in generate_key_paths(ans)])
   return ans
 
-def jaxpr_debug_info(jaxpr: core.Jaxpr, trace_debug: TracingDebugInfo | None,
-                     result_paths: tuple[str, ...] | None = None,
-                     ) -> core.Jaxpr:
+def add_jaxpr_debug_info(jaxpr: core.Jaxpr,
+                         trace_debug: TracingDebugInfo | None,
+                         result_paths: tuple[str, ...] | None = None,
+                         ) -> core.Jaxpr:
   """Add debug info to jaxpr, given trace-time debug info and result paths."""
   if trace_debug is None:
     return jaxpr

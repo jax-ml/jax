@@ -1907,7 +1907,7 @@ class DynamicJaxprTrace(core.Trace):
     implicit_tracers = _extract_implicit_args(self, f.in_type, explicit_tracers)
     in_tracers = map(self.to_jaxpr_tracer, [*implicit_tracers, *explicit_tracers])
     # TODO(mattjj): check in_tracers are consistent with f.in_type annotation
-    dbg = debug_info_final(f, call_primitive.name)
+    dbg = tracing_debug_info_final(f, call_primitive.name)
     jaxpr, out_type, consts = trace_to_jaxpr_dynamic2(f, debug_info=dbg)
     if params.get('inline', False):
       return core.eval_jaxpr(jaxpr, consts, *in_tracers,
@@ -1944,7 +1944,7 @@ class DynamicJaxprTrace(core.Trace):
     with core.extend_axis_env_nd([(axis_name, params["global_axis_size"])]):
       jaxpr, reduced_out_avals, consts, () = trace_to_jaxpr_dynamic(
           f, reduced_in_avals,
-          debug_info=debug_info_final(f, map_primitive.name))
+          debug_info=tracing_debug_info_final(f, map_primitive.name))
       ordered_effects = effects.ordered_effects.filter_in(jaxpr.effects)
       if ordered_effects:
         raise ValueError("Ordered effects not supported for "
@@ -2106,14 +2106,15 @@ def _jvp_jaxpr_zeros(f, store, in_zeros, zero_avals, *primal_tangent_avals):
   return [*out_primals, *out_nz_tangents]
 
 # Callers should be using linear_util.debug_info instead!
-def debug_info(
+def tracing_debug_info(
     fn: Callable,
     in_tree: PyTreeDef | None,
     out_tree_thunk: Callable[[], PyTreeDef] | None,
     has_kwargs: bool,
     traced_for: str
-) -> lu.TracingDebugInfo | None:
+) -> lu.TracingDebugInfo:
   src_info = fun_sourceinfo(fn)
+  arg_names: tuple[str | None, ...] | None
   try:
     dummy_args = tree_unflatten(in_tree, [False] * in_tree.num_leaves)  # type: ignore
     args, kwargs = dummy_args if has_kwargs else (dummy_args, {})
@@ -2121,19 +2122,20 @@ def debug_info(
     arg_names = tuple(f'{name}{keystr(path)}' for name, dummy in ba.arguments.items()
                       for path, _ in generate_key_paths(dummy))
   except:
-    arg_names = None
+    arg_names = None  # TODO(necula): we should not need this
   def result_paths():
     try:
       out_tree = out_tree_thunk()
       dummy_result = tree_unflatten(out_tree, [False] * out_tree.num_leaves)
     except:
-      return None
+      return None  # TODO(necula): this does not seem to be needed
     return tuple(path for path, _ in generate_key_paths(dummy_result))
-  return lu.TracingDebugInfo(traced_for, src_info, arg_names, result_paths)  # type: ignore
+  # TODO(necula): clean up the type: ignore below
+  return lu.TracingDebugInfo(traced_for, src_info, arg_names, result_paths)  # type: ignore[arg-type]
 
-def debug_info_final(fn: lu.WrappedFun, traced_for: str) -> lu.TracingDebugInfo | None:
+def tracing_debug_info_final(fn: lu.WrappedFun, traced_for: str) -> lu.TracingDebugInfo:
   in_tree, out_tree, has_kws = flattened_fun_in_tree(fn) or (None, None, False)
-  return debug_info(fn.f, in_tree, out_tree, has_kws, traced_for)
+  return tracing_debug_info(fn.f, in_tree, out_tree, has_kws, traced_for)
 
 
 @profiler.annotate_function

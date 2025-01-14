@@ -449,7 +449,7 @@ def saved_residuals(f, *args, **kwargs) -> list[tuple[core.AbstractValue, str]]:
   jaxpr = jaxpr_.jaxpr
   out_tree = lambda: tree_structure(out_shape)
   assert len(jaxpr.invars) == len(in_leaves)
-  dbg = pe.debug_info(f, in_tree, out_tree, True, "saved_residuals")
+  dbg = pe.tracing_debug_info(f, in_tree, out_tree, True, "saved_residuals")
   return _saved_residuals(jaxpr, dbg.arg_names)  # type: ignore
 
 def _saved_residuals(jaxpr, arg_names) -> list[tuple[core.AbstractValue, str]]:

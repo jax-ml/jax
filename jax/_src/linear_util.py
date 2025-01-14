@@ -258,7 +258,7 @@ class TracingDebugInfo(NamedTuple):
   # formed just before staging to a jaxpr and read in trace-time error messages.
   traced_for: str             # e.g. 'jit', 'scan', etc
   func_src_info: str | None   # e.g. f'{fun.__name__} at {filename}:{lineno}'
-  arg_names: tuple[str, ...]  # e.g. ('args[0]', ... )
+  arg_names: tuple[str | None, ...]  # e.g. ('args[0]', ... )
   # e.g. ('[0]', '[1]', ...)
   result_paths_thunk: Callable[[], tuple[str, ...]] | None
 

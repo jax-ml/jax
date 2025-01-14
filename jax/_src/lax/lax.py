@@ -657,7 +657,7 @@ def clamp(min: ArrayLike, x: ArrayLike, max: ArrayLike) -> Array:
 @weakref_lru_cache
 def _trace_composite_to_jaxpr(fun, in_tree, in_avals):
   flat_fun, out_tree = api_util.flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  debug_info = pe.debug_info(fun, in_tree, out_tree, False, "composite")
+  debug_info = pe.tracing_debug_info(fun, in_tree, out_tree, False, "composite")
   jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug_info)
   # TODO(danfm): support const inputs to composite.
   assert not consts
