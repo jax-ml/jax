@@ -77,7 +77,7 @@ jax_multiplatform_test(
     ],
     disable_configs = [
         "gpu_v100",
-        "gpu_x32",
+        "gpu_v100_x32",
         "gpu_a100",
         "gpu_p100",
         "gpu_p100_x32",
@@ -97,7 +97,7 @@ jax_multiplatform_test(
     ],
     disable_configs = [
         "gpu_v100",
-        "gpu_x32",
+        "gpu_v100_x32",
         "gpu_p100",
         "gpu_p100_x32",
     ],
@@ -222,11 +222,11 @@ jax_multiplatform_test(
     name = "pallas_shape_poly_test",
     srcs = ["pallas_shape_poly_test.py"],
     disable_configs = [
-        "gpu_x32",
         "gpu_h100",
         "gpu_p100",
         "gpu_p100_x32",
-        "gpu_pjrt_c_api",
+        "gpu_v100_x32",
+        "gpu_p100_pjrt_c_api",
     ],
     enable_configs = [
         "gpu_a100_x32",
