@@ -187,6 +187,10 @@ def _dtype_to_ir_type(dtype: jnp.dtype,
   else:
     return type
 
+def ir_shape(shape: jax_core.Shape):
+  dyn_size = ir.ShapedType.get_dynamic_size()
+  return [d if type(d) is int else dyn_size for d in shape]
+
 def aval_to_ir_type(aval,
                     shape=None,
                     memory_space: MemorySpace | None = None,
@@ -218,7 +222,7 @@ def aval_to_ir_type(aval,
     if shape is None:
       shape = aval.shape
     memspace = _memory_space_to_mosaic_attribute(memory_space)
-    return ir.MemRefType.get(shape,
+    return ir.MemRefType.get(ir_shape(shape),
       _dtype_to_ir_type(aval.dtype, is_kernel_boundary=True),
       memory_space=memspace)
   if isinstance(aval, jax_core.ShapedArray):
@@ -228,7 +232,7 @@ def aval_to_ir_type(aval,
       return _dtype_to_ir_type(
           aval.dtype, is_kernel_boundary=is_kernel_boundary)
     return ir.VectorType.get(
-        shape,
+        ir_shape(shape),
         _dtype_to_ir_type(aval.dtype, is_kernel_boundary=is_kernel_boundary))
   raise NotImplementedError(aval)
 
