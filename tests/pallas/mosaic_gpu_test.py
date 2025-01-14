@@ -373,7 +373,7 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(result, ref)
 
   def test_gmem_to_smem_with_multiple_smem_indexers(self):
-    x = jax.random.uniform(jax.random.key(0), (2, 64, 64))
+    x = jax.random.uniform(jax.random.key(0), (2, 64, 64), dtype=jnp.float32)
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([64, 64], jnp.float32),
@@ -392,7 +392,7 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(extract_x0(x), x[0])
 
   def test_gmem_to_smem_with_multiple_smem_indexers_and_transforms(self):
-    x = jnp.arange(512 * 512).reshape(512, 512)
+    x = jnp.arange(512 * 512, dtype=jnp.int32).reshape(512, 512)
     @functools.partial(
         pl.pallas_call,
         grid=(4, 4),

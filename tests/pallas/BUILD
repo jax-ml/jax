@@ -173,6 +173,7 @@ jax_multiplatform_test(
     enable_backends = [],
     enable_configs = [
         "gpu_h100_x32",
+        "gpu_h100",
     ],
     env = {
         "JAX_PALLAS_USE_MOSAIC_GPU": "1",
