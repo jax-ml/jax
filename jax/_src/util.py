@@ -376,7 +376,7 @@ def wrap_name(name, transform_name):
   return transform_name + '(' + name + ')'
 
 def fun_name(fun: Callable):
-  fun_name = getattr(fun, "__name__")
+  fun_name = getattr(fun, "__name__", None)
   if fun_name is not None:
     return fun_name
   if isinstance(fun, partial):
@@ -384,7 +384,7 @@ def fun_name(fun: Callable):
   return "<unnamed function>"
 
 def fun_qual_name(fun: Callable):
-  fun_qual_name = getattr(fun, "__qualname__")
+  fun_qual_name = getattr(fun, "__qualname__", None)
   if fun_qual_name is not None:
     return fun_qual_name
   if isinstance(fun, partial):
