@@ -686,6 +686,10 @@ def lower_jaxpr_to_module(
         block_params["window_kind"] = ir.Attribute.parse(
             f"#tpu.element_window<{pad_low},{pad_high}>"
         )
+      if bm.pipeline_mode is not None:
+        block_params["pipeline_mode"] = ir.Attribute.parse(
+            f"#tpu.pipeline_mode<{bm.pipeline_mode.value}>"
+        )
       window_params.append(ir.DictAttr.get(block_params))
       m.body.append(mlir_func)
       sym_tab.insert(mlir_func)

@@ -14,16 +14,19 @@
 
 """Mosaic-specific Pallas APIs."""
 
+import types
+
 from jax._src.pallas.mosaic import core as core
+from jax._src.pallas.mosaic.core import _ENABLE_RUNTIME_ASSERT as enable_runtime_assert  # noqa: F401
 from jax._src.pallas.mosaic.core import create_tensorcore_mesh as create_tensorcore_mesh
 from jax._src.pallas.mosaic.core import dma_semaphore as dma_semaphore
+from jax._src.pallas.mosaic.core import PipelineMode as PipelineMode
 from jax._src.pallas.mosaic.core import PrefetchScalarGridSpec as PrefetchScalarGridSpec
+from jax._src.pallas.mosaic.core import runtime_assert_enabled as runtime_assert_enabled
 from jax._src.pallas.mosaic.core import semaphore as semaphore
 from jax._src.pallas.mosaic.core import SemaphoreType as SemaphoreType
-from jax._src.pallas.mosaic.core import TPUMemorySpace as TPUMemorySpace
 from jax._src.pallas.mosaic.core import TPUCompilerParams as TPUCompilerParams
-from jax._src.pallas.mosaic.core import runtime_assert_enabled as runtime_assert_enabled
-from jax._src.pallas.mosaic.core import _ENABLE_RUNTIME_ASSERT as enable_runtime_assert  # noqa: F401
+from jax._src.pallas.mosaic.core import TPUMemorySpace as TPUMemorySpace
 from jax._src.pallas.mosaic.lowering import LoweringException as LoweringException
 from jax._src.pallas.mosaic.pipeline import ARBITRARY as ARBITRARY
 from jax._src.pallas.mosaic.pipeline import BufferedRef as BufferedRef
@@ -49,12 +52,11 @@ from jax._src.pallas.mosaic.primitives import semaphore_read as semaphore_read
 from jax._src.pallas.mosaic.primitives import semaphore_signal as semaphore_signal
 from jax._src.pallas.mosaic.primitives import semaphore_wait as semaphore_wait
 from jax._src.pallas.mosaic.random import to_pallas_key as to_pallas_key
-
-import types
 from jax._src.pallas.mosaic.verification import assume
+from jax._src.pallas.mosaic.verification import define_model
 from jax._src.pallas.mosaic.verification import pretend
 from jax._src.pallas.mosaic.verification import skip
-from jax._src.pallas.mosaic.verification import define_model
+
 verification = types.SimpleNamespace(
     assume=assume, pretend=pretend, skip=skip, define_model=define_model
 )

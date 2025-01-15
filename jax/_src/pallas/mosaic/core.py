@@ -91,8 +91,15 @@ class TPUCompilerParams(pallas_core.CompilerParams):
   internal_scratch_in_bytes: int | None = None
   serialization_format: int = 1
   device_type: str | None = None
-
   replace = dataclasses.replace
+
+
+class PipelineMode(enum.Enum):
+  SYNCHRONOUS = "synchronous"
+  DOUBLE_BUFFERED = "double_buffered"
+
+  def __str__(self) -> str:
+    return self.value
 
 class TPUMemorySpace(enum.Enum):
   ANY = "any"  # TODO(b/368401328): Remove this and just use pl.ANY.

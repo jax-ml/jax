@@ -375,6 +375,7 @@ class BlockSpec:
   index_map: Callable[..., Any] | None = None
   memory_space: Any | None = dataclasses.field(kw_only=True, default=None)
   indexing_mode: IndexingMode = dataclasses.field(kw_only=True, default=blocked)
+  pipeline_mode: Any | None = None
 
   def to_block_mapping(
       self,
@@ -474,6 +475,7 @@ class BlockSpec:
             array_aval_shape, array_aval.dtype
         ),
         origin=origin,
+        pipeline_mode=self.pipeline_mode,
     )
     mapping.check_invariants()
     return mapping
@@ -515,6 +517,7 @@ class BlockMapping:
   array_shape_dtype: jax.ShapeDtypeStruct  # The whole array
   origin: OriginStr
   transforms: Sequence[MemoryRefTransform] = ()
+  pipeline_mode: Any | None = None
 
   def check_invariants(self) -> None:
     if not config.enable_checks.value: return
