@@ -1496,7 +1496,22 @@ class RunStateTest(jtu.JaxTestCase):
   def test_can_stage_run_state(self):
     def f(x):
       return run_state(lambda _: None)(x)
+    jaxpr = jax.make_jaxpr(f)(2)
+    self.assertIsNotNone(jaxpr.jaxpr.debug_info)
+    self.assertIsNotNone(jaxpr.jaxpr.debug_info.func_src_info)
+
+  def test_can_stage_run_state_leaked_tracer_error(self):
+    leaks = []
+    def f(x):
+      def my_fun(x):
+        leaks.append(x)
+        return None
+      return run_state(my_fun)(x)
     _ = jax.make_jaxpr(f)(2)
+
+    with self.assertRaisesRegex(jax.errors.UnexpectedTracerError,
+                                "The function being traced when the value leaked was .*my_fun"):
+      jax.jit(lambda _: leaks[0])(1)
 
   def test_nested_run_state_captures_effects(self):
     def f(x):

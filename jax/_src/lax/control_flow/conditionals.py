@@ -139,7 +139,7 @@ def switch(index, branches: Sequence[Callable], *operands,
   ops_avals = tuple(map(core.get_aval, ops))
 
   if config.mutable_array_checks.value:
-    dbg = pe.tracing_debug_info(branches[0], ops_tree, None, False, 'switch')
+    dbg = pe.tracing_debug_info(branches[0], ops_tree, None, False, 'switch')  # type: ignore
     _check_no_aliased_ref_args(dbg, ops_avals, ops)
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
@@ -238,7 +238,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   ops_avals = tuple(map(core.get_aval, ops))
 
   if config.mutable_array_checks.value:
-    dbg = pe.tracing_debug_info(true_fun, ops_tree, None, False, 'cond')
+    dbg = pe.tracing_debug_info(true_fun, ops_tree, None, False, 'cond')  # type: ignore
     _check_no_aliased_ref_args(dbg, ops_avals, ops)
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
       (true_fun, false_fun), ops_tree, ops_avals, 'cond')

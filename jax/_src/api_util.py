@@ -116,6 +116,7 @@ def flattened_fun_in_tree(
         (args, store, f is flatten_fun.args[0])
         for (f, args), store in zip(fn.transforms, fn.stores) if f in flattens)
   except ValueError:
+    # When `fn` is not the result of flatten_fun or flatten_fun_nokwargs
     return None
   else:
     return in_tree, lambda: out_tree_store.val, has_kwargs  # type: ignore[union-attr]
@@ -589,7 +590,7 @@ def _dtype(x):
 def api_hook(fun, tag: str):
   return fun
 
-
+# TODO(necula): replace usage with tracing_debug_info
 def debug_info(
     traced_for: str, fun_src_info: str | None,
     fun_signature: inspect.Signature | None,
@@ -598,11 +599,35 @@ def debug_info(
     static_argnames: tuple[str, ...]
 ) -> TracingDebugInfo | None:
   """Try to build trace-time debug info for fun when applied to args/kwargs."""
-  arg_names = _arg_names(fun_signature, args, kwargs, static_argnums,
+  arg_names = _non_static_arg_names(fun_signature, args, kwargs, static_argnums,
                          static_argnames)
   if arg_names is None:
     return None
   return TracingDebugInfo(traced_for, fun_src_info, arg_names, None)
+
+
+def tracing_debug_info(
+    traced_for: str,
+    fun: Callable,
+    args: Sequence[Any],
+    kwargs: dict[str, Any],
+    *,
+    static_argnums: tuple[int, ...] = (),
+    static_argnames: tuple[str, ...] = (),
+    result_paths_thunk: Callable[[], tuple[str, ...]] | None = None,
+    # TODO(necula): check if we really need this, e.g., to speed up tracing.
+    sourceinfo: str | None = None,
+    signature: inspect.Signature | None = None,
+) -> TracingDebugInfo:
+  if sourceinfo is None:
+    sourceinfo = fun_sourceinfo(fun)
+  if signature is None:
+    signature = fun_signature(fun)
+  arg_names = _non_static_arg_names(signature, args, kwargs, static_argnums,
+                                    static_argnames)
+  # TODO(necula): remove type: ignore once we fix arg_names to never be None
+  return TracingDebugInfo(traced_for, sourceinfo, arg_names, result_paths_thunk)  # type: ignore
+
 
 def fun_signature(fun: Callable) -> inspect.Signature | None:
   try:
@@ -631,8 +656,11 @@ def fun_sourceinfo(fun: Callable) -> str | None:
   except AttributeError:
     return None
 
-def _arg_names(fn_signature, args, kwargs, static_argnums, static_argnames,
-               ) -> tuple[str, ...] | None:
+def _non_static_arg_names(fn_signature: inspect.Signature | None,
+                          args: Sequence[Any], kwargs: dict[str, Any],
+                          static_argnums: Sequence[int],
+                          static_argnames: Sequence[str],
+                          ) -> tuple[str | None, ...] | None:
   if fn_signature is None: return None
   static = object()
   static_argnums_ = _ensure_inbounds(True, len(args), static_argnums)
@@ -665,7 +693,7 @@ def add_jaxpr_debug_info(jaxpr: core.Jaxpr,
     result_paths = trace_debug.result_paths_thunk()  # type: ignore
   debug_info = core.JaxprDebugInfo(
       trace_debug.traced_for, trace_debug.func_src_info,
-      trace_debug.arg_names, tuple(result_paths))
+      trace_debug.arg_names, tuple(result_paths))  # type: ignore
   return jaxpr.replace(debug_info=debug_info)
 
 def debug_info_final(f: lu.WrappedFun, dbg: TracingDebugInfo | None,
