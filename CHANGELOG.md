@@ -16,6 +16,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+As of this release, JAX now uses
+[effort-based versioning](https://jax.readthedocs.io/en/latest/jep/25516-effver.html).
+Since this release makes a small but breaking change to PRNG key semantics that
+may require users to update their code, we are bumping the "meso" version of JAX
+to signify this.
+
 * Breaking changes
   * Enable `jax_threefry_partitionable` by default (see
     [the update note](https://github.com/jax-ml/jax/discussions/18480)).
