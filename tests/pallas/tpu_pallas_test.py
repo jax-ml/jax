@@ -1617,7 +1617,7 @@ class PallasCallTest(PallasBaseTest):
             flops=1234, transcendentals=21, bytes_accessed=12345
         ),
     )
-    (analysis_result,) = jax.jit(f).lower(x).compile().cost_analysis()
+    analysis_result = jax.jit(f).lower(x).compile().cost_analysis()
     self.assertEqual(analysis_result['flops'], 1234)
     self.assertEqual(analysis_result['transcendentals'], 21)
     self.assertEqual(analysis_result['bytes accessed'], 12345)
@@ -1635,7 +1635,7 @@ class PallasCallTest(PallasBaseTest):
         ),
     )
     f = jax.vmap(f)
-    (analysis_result,) = jax.jit(f).lower(x).compile().cost_analysis()
+    analysis_result = jax.jit(f).lower(x).compile().cost_analysis()
     self.assertEqual(analysis_result['flops'], batch_size * 1234)
     self.assertEqual(analysis_result['transcendentals'], batch_size * 21)
     self.assertEqual(analysis_result['bytes accessed'], batch_size * 12345)

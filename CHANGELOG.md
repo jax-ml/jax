@@ -63,6 +63,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## jax 0.4.38 (Dec 17, 2024)
 
+* Breaking Changes
+  * `XlaExecutable.cost_analysis` now returns a `dict[str, float]` (instead of a
+    single-element `list[dict[str, float]]`).
+
 * Changes:
   * `jax.tree.flatten_with_path` and `jax.tree.map_with_path` are added
     as shortcuts of the corresponding `tree_util` functions.
