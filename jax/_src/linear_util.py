@@ -254,11 +254,19 @@ def fun_name(f):
     return str(f)
 
 class TracingDebugInfo(NamedTuple):
-  # Packages up trace/staging-time debug info about a func and its parameters,
-  # formed just before staging to a jaxpr and read in trace-time error messages.
+  """Tracing-time debugging info about a func and its arguments.
+
+  Formed just before staging to a jaxpr and read in trace-time error messages.
+  """
   traced_for: str             # e.g. 'jit', 'scan', etc
   func_src_info: str | None   # e.g. f'{fun.__name__} at {filename}:{lineno}'
-  arg_names: tuple[str | None, ...]  # e.g. ('args[0]', ... )
+
+  # The paths of the flattened non-static argnames,
+  # e.g. ('x', 'dict_arg["a"]', ... ).
+  # Uses `None` for the args that do not correspond to user-named arguments,
+  # e.g., tangent args in jax.jvp.
+  arg_names: tuple[str | None, ...]
+
   # e.g. ('[0]', '[1]', ...)
   result_paths_thunk: Callable[[], tuple[str, ...]] | None
 
