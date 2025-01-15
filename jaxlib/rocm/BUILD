@@ -136,6 +136,44 @@ nanobind_extension(
 )
 
 cc_library(
+    name = "miopen_rnn_kernels",
+    srcs = ["//jaxlib/gpu:rnn_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:rnn_kernels.h"],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        "//jaxlib:handle_pool",
+        "//jaxlib:kernel_helpers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@local_config_rocm//rocm:miopen",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/service:custom_call_status",
+    ],
+)
+
+nanobind_extension(
+    name = "_rnn",
+    srcs = ["//jaxlib/gpu:rnn.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "_rnn",
+    deps = [
+        ":hip_vendor",
+        ":miopen_rnn_kernels",
+        "//jaxlib:absl_status_casters",
+        "//jaxlib:kernel_nanobind_helpers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings:str_format",
+        "@nanobind",
+    ],
+)
+
+cc_library(
     name = "hip_solver_handle_pool",
     srcs = ["//jaxlib/gpu:solver_handle_pool.cc"],
     hdrs = ["//jaxlib/gpu:solver_handle_pool.h"],
@@ -502,6 +540,7 @@ py_library(
         ":_hybrid",
         ":_linalg",
         ":_prng",
+        ":_rnn",
         ":_solver",
         ":_sparse",
         ":_triton",
