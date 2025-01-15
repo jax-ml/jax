@@ -158,7 +158,7 @@ build:win_clang --compiler=clang-cl
 build:rocm_base --crosstool_top=@local_config_rocm//crosstool:toolchain
 build:rocm_base --define=using_rocm=true --define=using_rocm_hipcc=true
 build:rocm_base --repo_env TF_NEED_ROCM=1
-build:rocm_base --action_env TF_ROCM_AMDGPU_TARGETS="gfx900,gfx906,gfx908,gfx90a,gfx940,gfx941,gfx942,gfx1030,gfx1100"
+build:rocm_base --action_env TF_ROCM_AMDGPU_TARGETS="gfx900,gfx906,gfx908,gfx90a,gfx940,gfx941,gfx942,gfx1030,gfx1100,gfx1200,gfx1201"
 
 # Build with hipcc for ROCm and clang for the host.
 build:rocm --config=rocm_base
