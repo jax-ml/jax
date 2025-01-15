@@ -3370,13 +3370,47 @@ def _debug_print_rule(
         )
 
     # TPU expects $0, $1 etc as placeholders.
-    tpu_fmt = "".join(
-        f"{text}${idx}"
-        for idx, (text, _, _, _) in enumerate(string.Formatter().parse(fmt))
+      fmt = "".join(
+          f"{text}${idx}"
+          for idx, (text, _, _, _) in enumerate(string.Formatter().parse(fmt))
+      )
+
+    tpu.log(args, fmt, formatted=has_placeholders)
+    return ()
+
+  # Vector case.
+  # Copy the array to vmem for logging.
+  # Note that the shape of the array must be explicitly provided here. This is
+  # because the underlying implementation aligns shapes to tile boundaries,
+  # potentially altering the original shape and making it unrecoverable.
+  if len(ctx.avals_in) != 1:
+    raise ValueError(
+        "Only one vector input to debug_print is supported."
     )
-  else:
-    tpu_fmt = fmt
-  tpu.log(args, tpu_fmt, formatted=has_placeholders)
+  (aval,) = ctx.avals_in
+  (arg,) = args
+
+  if not has_placeholders or not fmt.endswith("{}"):
+    raise ValueError("For vector input, the format string must end with {}.")
+
+  fmt = fmt[:-2]
+
+  region = tpu.RegionOp(())
+  with ir.InsertionPoint(region.body):
+    element_type = _dtype_to_ir_type(aval.dtype)
+    ref_type = ir.MemRefType.get(
+        aval.shape,
+        element_type,
+        memory_space=ir.Attribute.parse("#tpu.memory_space<vmem>"),
+    )
+    ref = memref.alloca(ref_type, [], [])
+
+    index_type = ir.IndexType.get()
+    zero = arith.constant(index_type, 0)
+    indices = [zero] * len(aval.shape)
+    vector.store(arg, ref, indices)
+    tpu.log_buffer(ref, aval.shape, fmt)
+    tpu.yield_([])
   return ()
 
 
