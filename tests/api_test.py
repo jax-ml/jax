@@ -96,6 +96,38 @@ class JitTest(jtu.BufferDonationTestCase):
     jitted = jit(my_function)
     self.assertEqual(repr(jitted), f"<PjitFunction of {repr(my_function)}>")
 
+  def test_fun_name(self):
+    def my_function():
+      return
+
+    with self.subTest("function"):
+      jitted = jit(my_function)
+      self.assertEqual(
+          jitted.__getstate__()["function_name"], my_function.__name__
+      )
+    with self.subTest("default_partial"):
+      my_partial = partial(my_function)
+      jitted = jit(my_partial)
+      self.assertEqual(
+          jitted.__getstate__()["function_name"], my_function.__name__
+      )
+    with self.subTest("nested_default_partial"):
+      my_partial = partial(partial(my_function))
+      jitted = jit(my_partial)
+      self.assertEqual(
+          jitted.__getstate__()["function_name"], my_function.__name__
+      )
+    with self.subTest("named_partial"):
+      my_partial = partial(my_function)
+      my_partial.__name__ = "my_partial"
+      jitted = jit(my_partial)
+      self.assertEqual(
+          jitted.__getstate__()["function_name"], my_partial.__name__
+      )
+    with self.subTest("lambda"):
+      jitted = jit(lambda: my_function())
+      self.assertEqual(jitted.__getstate__()["function_name"], "<lambda>")
+
   def test_jit_repr_errors(self):
     class Callable:
       def __call__(self): pass
@@ -288,14 +320,14 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertEqual(f(1).devices(), system_default_devices)
 
   def test_jit_default_platform(self):
-      with jax.default_device("cpu"):
-        result = jax.jit(lambda x: x + 1)(1)
-      self.assertEqual(result.device.platform, "cpu")
-      self.assertEqual(result.device, jax.local_devices(backend="cpu")[0])
-
+    with jax.default_device("cpu"):
       result = jax.jit(lambda x: x + 1)(1)
-      self.assertEqual(result.device.platform, jax.default_backend())
-      self.assertEqual(result.device, jax.local_devices()[0])
+    self.assertEqual(result.device.platform, "cpu")
+    self.assertEqual(result.device, jax.local_devices(backend="cpu")[0])
+
+    result = jax.jit(lambda x: x + 1)(1)
+    self.assertEqual(result.device.platform, jax.default_backend())
+    self.assertEqual(result.device, jax.local_devices()[0])
 
   def test_complex_support(self):
     self.assertEqual(jit(lambda x: x + 1)(1 + 1j), 2 + 1j)
