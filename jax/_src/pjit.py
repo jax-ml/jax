@@ -47,11 +47,11 @@ from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.api_util import (
-    argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
-    donation_vector, check_callable, resolve_argnums,
-    argnames_partial_except, debug_info, result_paths, jaxpr_debug_info,
-    hoist_obj_attrs, _check_no_aliased_ref_args,
-    _check_no_aliased_closed_over_refs)
+  argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
+  donation_vector, check_callable, resolve_argnums,
+  argnames_partial_except, debug_info, result_paths, add_jaxpr_debug_info,
+  hoist_obj_attrs, _check_no_aliased_ref_args,
+  _check_no_aliased_closed_over_refs)
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec
 from jax._src.interpreters import xla
@@ -537,7 +537,7 @@ class PjitParams(NamedTuple):
   in_tree: PyTreeDef
   out_tree: PyTreeDef
   donated_invars: tuple[bool, ...]
-  arg_names: tuple[str, ...] | None
+  arg_names: tuple[str | None, ...] | None
   num_consts: int
   attrs_tracked: list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]
   abstract_mesh: AbstractMesh
@@ -637,7 +637,7 @@ def _infer_params_impl(
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
       out_shardings_treedef, out_shardings_leaves, ji.out_layouts_treedef,
       ji.out_layouts_leaves, HashableFunction(out_tree, closure=()),
-      tuple(out_avals), jaxpr.jaxpr.debug_info, device_or_backend_set)
+      tuple(out_avals), jaxpr.jaxpr._debug_info, device_or_backend_set)
 
   assert len(explicit_args) == len(in_shardings_flat) == len(in_layouts_flat)
 
@@ -1301,7 +1301,7 @@ def _create_pjit_jaxpr(
   with dispatch.log_elapsed_time(
       "Finished tracing + transforming {fun_name} for pjit in {elapsed_time:.9f} sec",
       fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
-    pe_debug = debug_info and pe.debug_info_final(fun, debug_info.traced_for)
+    pe_debug = debug_info and pe.tracing_debug_info_final(fun, debug_info.traced_for)
     if config.dynamic_shapes.value:
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic2(
           lu.annotate(fun, cast(core.InputType, in_type)), debug_info=pe_debug)
@@ -1313,7 +1313,7 @@ def _create_pjit_jaxpr(
 
   # TODO(dougalm,mattjj): enable debug info with attrs_tracked
   if not config.dynamic_shapes.value and not attrs_tracked:
-    jaxpr = jaxpr_debug_info(jaxpr, debug_info, out_paths())
+    jaxpr = add_jaxpr_debug_info(jaxpr, debug_info, out_paths())
 
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports
@@ -1672,7 +1672,7 @@ def _pjit_call_impl_python(
   if compiled._auto_spmd_lowering and config.enable_checks.value:
     pxla.check_array_xla_sharding_layout_match(
         args, compiled._in_shardings, compiled._in_layouts,
-        jaxpr.jaxpr.debug_info, compiled._kept_var_idx)
+        jaxpr.jaxpr.tracing_debug_info, compiled._kept_var_idx)
   if config.distributed_debug.value:
     # Defensively only perform fingerprint logic if debug logging is enabled
     # NOTE(skyewm): I didn't benchmark this

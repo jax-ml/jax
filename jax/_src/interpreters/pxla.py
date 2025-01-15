@@ -721,8 +721,8 @@ def stage_parallel_callable(
         "Finished tracing + transforming {fun_name} for pmap in {elapsed_time} sec",
         fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
       jaxpr, out_sharded_avals, consts, _ = pe.trace_to_jaxpr_dynamic(
-          fun, sharded_avals, pe.debug_info_final(fun, "pmap"))
-  jaxpr = api_util.jaxpr_debug_info(jaxpr, orig_fun.debug_info)
+          fun, sharded_avals, pe.tracing_debug_info_final(fun, "pmap"))
+  jaxpr = api_util.add_jaxpr_debug_info(jaxpr, orig_fun.debug_info)
 
   assert len(out_sharded_avals) == len(pci.out_axes), (
       len(out_sharded_avals), len(pci.out_axes))
@@ -879,8 +879,8 @@ def lower_parallel_callable(
           replicated_args=replicated_args,
           arg_shardings=None,
           result_shardings=None,
-          arg_names=jaxpr.debug_info and jaxpr.debug_info.arg_names,
-          result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths,
+          arg_names=jaxpr._debug_info and jaxpr._debug_info.arg_names,
+          result_names=jaxpr._debug_info and jaxpr._debug_info.result_paths,
           num_replicas=replicas.num_global_replicas,
           lowering_parameters=lowering_parameters)
   return PmapComputation(lowering_result.module,
@@ -891,7 +891,7 @@ def lower_parallel_callable(
                          ordered_effects=ordered_effects,
                          keepalive=lowering_result.keepalive,
                          host_callbacks=lowering_result.host_callbacks,
-                         jaxpr_debug_info=closed_jaxpr.jaxpr.debug_info,
+                         jaxpr_debug_info=closed_jaxpr.jaxpr._debug_info,
                          shape_poly_state=lowering_result.shape_poly_state)
 
 
@@ -1833,7 +1833,7 @@ def _move_mutable_consts(
 def _discharge_internal_refs(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
   from jax._src.state.discharge import discharge_state
   jaxpr_, consts = discharge_state(jaxpr.jaxpr, jaxpr.consts)
-  jaxpr_._debug_info = jaxpr.jaxpr.debug_info
+  jaxpr_._debug_info = jaxpr.jaxpr._debug_info
   return core.ClosedJaxpr(jaxpr_, consts)
 
 
@@ -1971,8 +1971,8 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
         result_shardings=out_mlir_shardings,
         in_layouts=in_layouts,
         out_layouts=out_layouts,
-        arg_names=jaxpr.debug_info and jaxpr.debug_info.arg_names,
-        result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths,
+        arg_names=jaxpr._debug_info and jaxpr._debug_info.arg_names,
+        result_names=jaxpr._debug_info and jaxpr._debug_info.result_paths,
         num_replicas=nreps,
         num_partitions=num_partitions,
         all_default_mem_kind=all_default_mem_kind,
@@ -2208,7 +2208,7 @@ def lower_sharding_computation(
   auto_spmd_lowering = check_if_any_auto(
       it.chain.from_iterable([in_shardings, out_shardings]))
 
-  all_args_info = AllArgsInfo(closed_jaxpr.in_avals, closed_jaxpr.jaxpr.debug_info)
+  all_args_info = AllArgsInfo(closed_jaxpr.in_avals, closed_jaxpr.jaxpr._debug_info)
 
   closed_jaxpr, donated_invars, kept_var_idx, name_stack = _dce_jaxpr(
       closed_jaxpr, api_name, fun_name, keep_unused, donated_invars,

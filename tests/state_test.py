@@ -545,7 +545,7 @@ class StateDischargeTest(jtu.JaxTestCase):
       return [a + 1]
     in_avals = [shaped_array_ref((), jnp.dtype('float32'))]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     # Discharging should just turn this into a jaxpr that just adds 1.
     discharged_jaxpr, _ = discharge_state(stateful_jaxpr, consts)
     self.assertLen(discharged_jaxpr.invars, 1)
@@ -561,7 +561,7 @@ class StateDischargeTest(jtu.JaxTestCase):
       return [a + 1]
     in_avals = [shaped_array_ref((4, 3, 2), jnp.dtype('float32'))]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     # Discharging should just turn this into a jaxpr that just adds 1.
     discharged_jaxpr, () = discharge_state(stateful_jaxpr, consts)
     self.assertLen(discharged_jaxpr.invars, 1)
@@ -595,7 +595,7 @@ class StateDischargeTest(jtu.JaxTestCase):
     in_avals = [shaped_array_ref((), jnp.dtype('float32')),
                 core.ShapedArray((), jnp.dtype('float32'))]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     # Discharging should just turn this into a jaxpr that ignores the first
     # value and returns second value plus 1.
     discharged_jaxpr, _ = discharge_state(stateful_jaxpr, consts)
@@ -612,7 +612,7 @@ class StateDischargeTest(jtu.JaxTestCase):
       return []
     in_avals = [shaped_array_ref((4, 3, 2), jnp.dtype('float32'))]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     # Discharging should just turn this into a jaxpr that just adds 1.
     discharged_jaxpr, () = discharge_state(stateful_jaxpr, consts)
     self.assertLen(discharged_jaxpr.invars, 1)
@@ -632,7 +632,7 @@ class StateDischargeTest(jtu.JaxTestCase):
       return []
     in_avals = [shaped_array_ref((4, 3), jnp.dtype('float32'))]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     discharged_jaxpr, discharged_consts = discharge_state(
         stateful_jaxpr, consts)
     inval = jnp.arange(4 * 3, dtype=jnp.float32).reshape((4, 3))
@@ -666,7 +666,7 @@ class StateDischargeTest(jtu.JaxTestCase):
     in_avals = [shaped_array_ref((), jnp.dtype('float32')),
                 core.ShapedArray((), jnp.dtype('float32'))]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     # Discharging should just turn this into a jaxpr that adds the first value,
     # second value, and 1.
     discharged_jaxpr, _ = discharge_state(stateful_jaxpr, consts)
@@ -684,7 +684,7 @@ class StateDischargeTest(jtu.JaxTestCase):
       return []
     in_avals = [shaped_array_ref((4, 3, 2), jnp.dtype('float32'))]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     discharged_jaxpr, _ = discharge_state(stateful_jaxpr, consts)
     self.assertLen(discharged_jaxpr.invars, 1)
     self.assertLen(discharged_jaxpr.outvars, 1)
@@ -705,7 +705,7 @@ class StateDischargeTest(jtu.JaxTestCase):
       return []
     in_avals = [shaped_array_ref((4, 3), jnp.dtype('float32'))]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     discharged_jaxpr, discharged_consts = discharge_state(
         stateful_jaxpr, consts)
     inval = jnp.arange(4 * 3, dtype=jnp.float32).reshape((4, 3))
@@ -719,7 +719,7 @@ class StateDischargeTest(jtu.JaxTestCase):
       return [a, b]
     in_avals = [shaped_array_ref((4,), jnp.dtype('float32'))]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     discharged_jaxpr, _ = discharge_state(stateful_jaxpr, consts)
     self.assertLen(discharged_jaxpr.invars, 1)
     self.assertLen(discharged_jaxpr.outvars, 3)
@@ -739,7 +739,7 @@ class StateDischargeTest(jtu.JaxTestCase):
         shaped_array_ref((4,), jnp.dtype('float32'))
         ]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     discharged_jaxpr, _ = discharge_state(
         stateful_jaxpr, consts, should_discharge=[False, True])
     self.assertLen(discharged_jaxpr.invars, 2)

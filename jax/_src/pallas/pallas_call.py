@@ -1340,7 +1340,7 @@ def pallas_call_checkify_rule(error: checkify.Error,
   jaxpr_flat_avals, jaxpr_in_tree = tree_util.tree_flatten(retrace_in_avals)
   wrapped_kernel_with_err, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(checked_kernel_fn), jaxpr_in_tree)
-  debug = pe.debug_info(
+  debug = pe.tracing_debug_info(
     checked_kernel_fn, jaxpr_in_tree, out_tree_thunk, False, "checkify_pallas")
   with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
     final_jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
@@ -1410,7 +1410,7 @@ def _trace_kernel_to_jaxpr(
   wrapped_kernel_fun = primitives.wrap_with_transforms(
       wrapped_kernel_fun, kernel_in_transforms
   )
-  debug = pe.debug_info(fun, kernel_in_tree, out_tree_thunk, False, "pallas_call")
+  debug = pe.tracing_debug_info(fun, kernel_in_tree, out_tree_thunk, False, "pallas_call")
   with grid_mapping.trace_env():
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_kernel_fun,
                                                      kernel_avals, debug)

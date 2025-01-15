@@ -426,7 +426,7 @@ class BlockSpec:
     flat_index_map_fun, index_map_out_tree_thunk = api_util.flatten_fun(
         lu.wrap_init(index_map_func), index_map_tree
     )
-    debug = pe.debug_info(
+    debug = pe.tracing_debug_info(
         index_map_func,
         index_map_tree,
         index_map_out_tree_thunk,
