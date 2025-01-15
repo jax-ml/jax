@@ -1075,13 +1075,22 @@ def take_current_trace():
     trace_ctx.set_trace(prev)
 
 @contextmanager
-def set_current_trace(new):
+def set_current_trace(trace, check_leaks=False):
   prev = trace_ctx.trace
   try:
-    trace_ctx.set_trace(new)
+    trace_ctx.set_trace(trace)
     yield
   finally:
     trace_ctx.set_trace(prev)
+    if check_leaks and config.check_tracer_leaks.value:
+      trace.invalidate()
+      trace_ref = ref(trace)
+      del trace
+      live_trace = trace_ref()
+      if live_trace is not None:
+        leaked_tracers = maybe_find_leaked_tracers(live_trace)
+        if leaked_tracers:
+          raise leaked_tracer_error("trace", live_trace, leaked_tracers)
 
 @contextmanager
 def extend_axis_env_nd(name_size_pairs : Iterable[tuple[AxisName, int]]):

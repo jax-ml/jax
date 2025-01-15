@@ -1536,24 +1536,28 @@ def _shard_map_linearize(trace, shard_map_p, f, tracers, mesh, in_names,
   primals, tangents = unzip2(map(trace.to_primal_tangent_pair, tracers))
   nzs_in = tuple(type(t) is not ad.Zero for t in tangents)
   f_primal, linearize_outs_thunk = ad.linearize_subtrace(f, trace.tag, nzs_in)
+  f_primal = _promote_scalar_residuals_lin(f_primal, linearize_outs_thunk)
   tangent_in_names = [ax for ax, nz in zip(in_names, nzs_in) if nz]
   all_names = _all_mesh_names_except_spmd(mesh, trace)
 
   @as_hashable_function(closure=(linearize_outs_thunk))
   def primal_out_names_thunk():
-    num_residuals, _, _ = linearize_outs_thunk()
+    residual_avals, _, _ = linearize_outs_thunk()
     out_names = out_names_thunk()
-    return (*({0: all_names} for _ in range(num_residuals)), *out_names)
+    # This is incorrect so we set `check_rep=False` as we do in the JVP rule.
+    return (*({0: all_names} for _ in residual_avals), *out_names)
   primal_params = dict(
       mesh=mesh, in_names=in_names,
       out_names_thunk=primal_out_names_thunk, check_rep=check_rep,
       rewrite=rewrite, auto=auto)
   all_primal_results = shard_map_p.bind_with_trace(
       trace.parent_trace, (f_primal,) + tuple(primals), primal_params)
-  num_residuals, nzs_out, lin_jaxpr = linearize_outs_thunk()
+  residual_avals, nzs_out, lin_jaxpr = linearize_outs_thunk()
+  num_residuals = len(residual_avals)
   residuals = all_primal_results[:num_residuals]
   primals_out = all_primal_results[num_residuals:]
-  residual_avals = map(core.get_aval, residuals)
+  args_to_promote = [getattr(aval, 'shape', ()) == () for aval in residual_avals]
+  lin_jaxpr = _promote_scalar_residuals_jaxpr(lin_jaxpr, args_to_promote)
   out_names = out_names_thunk()
   new_in_names = (*({0: all_names} for _ in residual_avals),
                   *(ax for ax, nz in zip(in_names, nzs_in) if nz))
@@ -1563,13 +1567,13 @@ def _shard_map_linearize(trace, shard_map_p, f, tracers, mesh, in_names,
     return new_out_names
   tangent_params = dict(
       mesh=mesh, in_names=new_in_names,
-      out_names_thunk=tangent_out_names_thunk, check_rep=check_rep,
+      out_names_thunk=tangent_out_names_thunk, check_rep=False,
       rewrite=rewrite, auto=auto)
 
   def f_tangent(*args):
     residuals = args[:num_residuals]
     nz_tangents = args[num_residuals:]
-    return core.eval_jaxpr(lin_jaxpr, residuals, *nz_tangents)
+    return core.eval_jaxpr(lin_jaxpr, (), *residuals, *nz_tangents)
 
   nz_tangents_in = [t for (t, nz) in zip(tangents, nzs_in) if nz]
   nz_tangents_out = shard_map_p.bind_with_trace(trace.tangent_trace,
@@ -1579,6 +1583,17 @@ def _shard_map_linearize(trace, shard_map_p, f, tracers, mesh, in_names,
                   for nz, primal in zip(nzs_out, primals_out)]
   return map(partial(ad.maybe_linearize_tracer, trace), primals_out, nzs_out, tangents_out)
 ad.LinearizeTrace.process_shard_map = _shard_map_linearize
+
+@lu.transformation2
+def _promote_scalar_residuals_lin(f, linearize_outs_thunk, *args, **kwargs):
+  ans = f(*args, **kwargs)
+  residual_avals, _, _ = linearize_outs_thunk()
+  num_residuals = len(residual_avals)
+  residuals = ans[:num_residuals]
+  primals = ans[num_residuals:]
+  residuals = tuple(jax.lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
+               for x in residuals)
+  return residuals + primals
 
 @lu.transformation2
 def _promote_scalar_residuals(f, *args, **kwargs):
