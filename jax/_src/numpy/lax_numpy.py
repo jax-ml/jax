@@ -11961,8 +11961,11 @@ def _rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
         return lax.dynamic_index_in_dim(arr, idx, keepdims=False)
 
   treedef, static_idx, dynamic_idx = _split_index_for_jit(idx, arr.shape)
-  return _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
-                 unique_indices, mode, fill_value)
+  try:
+    return _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
+                  unique_indices, mode, fill_value)
+  except TypeError:  # TODO sharding exception
+    raise Exception('use .at[...].get(out_spec=...) bro')
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
