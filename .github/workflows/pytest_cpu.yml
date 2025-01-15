@@ -60,11 +60,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      # Halt for testing
-      - name: Wait For Connection
-        uses: google-ml-infra/actions/ci_connection@main
-        with:
-          halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Set env vars for use in artifact download URL
         run: |
           os=$(uname -s | awk '{print tolower($0)}')
@@ -96,5 +91,10 @@ jobs:
           gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
       - name: Install Python dependencies
         run: $JAXCI_PYTHON -m pip install -r build/requirements.in
+      # Halt for testing
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@main
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Run Pytest CPU tests
         run: ./ci/run_pytest_cpu.sh

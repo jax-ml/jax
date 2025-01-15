@@ -60,11 +60,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      # Halt for testing
-      - name: Wait For Connection
-        uses: google-ml-infra/actions/ci_connection@main
-        with:
-          halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Set env vars for use in artifact download URL
         run: |
           os=$(uname -s | awk '{print tolower($0)}')
@@ -85,5 +80,10 @@ jobs:
           gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
       - name: Install Python dependencies
         run: $JAXCI_PYTHON -m pip install -r build/requirements.in
+      # Halt for testing
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@main
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Run Pytest CUDA tests
         run: ./ci/run_pytest_cuda.sh
