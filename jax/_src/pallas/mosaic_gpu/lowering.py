@@ -1699,6 +1699,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
         ctx.module_ctx, ctx.launch_ctx, branches[0].jaxpr, args
     )
     yielded_types = [v.type for v in jax.tree.leaves(_yielded_values(outs, ctx.avals_out))]
+    del outs
 
   switch_op = scf_dialect.IndexSwitchOp(
       yielded_types,
