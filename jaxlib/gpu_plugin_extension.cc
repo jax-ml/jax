@@ -32,7 +32,6 @@ limitations under the License.
 #include "xla/python/py_client_gpu.h"
 #include "xla/tsl/python/lib/core/numpy.h"
 #include "xla/util.h"
-#include "tsl/platform/statusor.h"
 
 namespace nb = nanobind;
 
@@ -163,6 +162,8 @@ nb::dict Registrations() {
   nb::dict dict;
   dict["xla_python_gpu_callback"] =
       jax::EncapsulateFunction(xla::XlaPythonGpuCallback);
+  dict["__gpu$jax.gpu.log"] =
+      jax::EncapsulateFfiHandler(xla::kJaxLog);
   return dict;
 }
 
