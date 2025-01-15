@@ -23,10 +23,11 @@ from jax._src.pallas.core import BlockSpec as BlockSpec
 from jax._src.pallas.core import CompilerParams as CompilerParams
 from jax._src.pallas.core import core_map as core_map
 from jax._src.pallas.core import CostEstimate as CostEstimate
+from jax._src.pallas.core import lower_as_mlir as lower_as_mlir
 from jax._src.pallas.core import GridSpec as GridSpec
 from jax._src.pallas.core import IndexingMode as IndexingMode
-from jax._src.pallas.core import MemorySpace as MemorySpace
 from jax._src.pallas.core import MemoryRef as MemoryRef
+from jax._src.pallas.core import MemorySpace as MemorySpace
 from jax._src.pallas.core import no_block_spec as no_block_spec
 from jax._src.pallas.core import Unblocked as Unblocked
 from jax._src.pallas.core import unblocked as unblocked

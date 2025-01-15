@@ -41,7 +41,6 @@ from jax._src.state import types as state_types
 from jax._src.state.types import TransformedRef
 import jax.numpy as jnp
 
-
 class DynamicGridDim:
   def __repr__(self):
     return "DynamicGridDim"
@@ -283,6 +282,9 @@ class PallasTracingEnv(threading.local):
   grid_context: PallasGridContext | None = None
   grid_env_stack: list[GridEnv] = dataclasses.field(default_factory=list)
   is_interpret_mode: bool = False
+  dynamic_shapes: bool = False
+  module_export_fn: Callable[[mlir.ir.Module], None] | None = None
+
 _pallas_tracing_env = PallasTracingEnv()
 
 
@@ -411,7 +413,10 @@ class BlockSpec:
       )
     block_aval = AbstractMemoryRef(block_array_aval, self.memory_space)
 
-    if not jax_core.is_constant_shape(block_aval.shape):
+    if (
+        not jax_core.is_constant_shape(block_aval.shape)
+        and not dynamic_shapes_export_enabled()
+    ):
       raise ValueError(
           "shape polymorphism for Pallas does not support "
           "dynamically-shaped blocks. "
@@ -584,13 +589,30 @@ class BlockMapping:
 
 @contextlib.contextmanager
 def tracing_grid_env(grid: GridMappingGrid, mapped_dims: tuple[int, ...]):
-  assert all(i is dynamic_grid_dim or isinstance(i, int) for i in grid)
+  if dynamic_shapes_export_enabled():
+    assert all(i is dynamic_grid_dim or jax_core.is_dim(i) for i in grid)
+  else:
+    assert all(i is dynamic_grid_dim or isinstance(i, int) for i in grid)
   old_grid_context = _pallas_tracing_env.grid_context
   try:
     _pallas_tracing_env.grid_context = PallasGridContext(grid, mapped_dims)
     yield
   finally:
     _pallas_tracing_env.grid_context = old_grid_context
+
+
+@contextlib.contextmanager
+def pallas_export_experimental(dynamic_shapes: bool):
+  old_dynamic_shapes = _pallas_tracing_env.dynamic_shapes
+  try:
+    _pallas_tracing_env.dynamic_shapes = dynamic_shapes
+    yield
+  finally:
+    _pallas_tracing_env.dynamic_shapes = old_dynamic_shapes
+
+
+def dynamic_shapes_export_enabled() -> bool:
+  return _pallas_tracing_env.dynamic_shapes
 
 
 @dataclasses.dataclass(frozen=True)
@@ -873,7 +895,11 @@ def get_grid_mapping(
     out_origins: Sequence[OriginStr],
 ) -> tuple[tuple[jax_core.AbstractValue, ...],
            GridMapping]:
-  assert all(i is None or isinstance(i, int) for i in grid_spec.grid)
+  if dynamic_shapes_export_enabled():
+    dim_check : Any = jax_core.is_dim  # type: ignore[no-redef]
+  else:
+    dim_check : Any = jax_core.is_constant_dim  # type: ignore[no-redef]
+  assert all(i is None or dim_check(i) for i in grid_spec.grid)
   grid_mapping_grid = tuple(
       dynamic_grid_dim if d is None else d for d in grid_spec.grid
   )
@@ -987,14 +1013,15 @@ def get_grid_mapping(
 
 def unzip_dynamic_grid_bounds(
     grid_spec: GridSpec) -> tuple[GridSpec, tuple[Any, ...]]:
-  static_grid = tuple(
-      d if isinstance(d, int) else None for d in grid_spec.grid
-  )
+  if dynamic_shapes_export_enabled():
+    new_grid : Any = grid_spec.grid  # type: ignore[no-redef]
+  else:
+    new_grid : Any = tuple(d if isinstance(d, int) else None for d in grid_spec.grid)  # type: ignore[no-redef]
   dynamic_bounds = tuple(d for d in grid_spec.grid if not isinstance(d, int))
   # We can't use dataclasses.replace, because our fields are incompatible
   # with __init__'s signature.
   static_self = copy.copy(grid_spec)
-  static_self.grid = static_grid  # type: ignore
+  static_self.grid = new_grid  # type: ignore
   return static_self, dynamic_bounds
 
 
@@ -1162,3 +1189,11 @@ def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh, **kwargs):
       effs.add(eff)
   return [], effs
 jax_core.custom_typechecks[core_map_p] = _core_map_typecheck_rule
+
+
+def lower_as_mlir(f, *args, dynamic_shapes=False, **kwargs) -> mlir.ir.Module:
+  with pallas_export_experimental(dynamic_shapes):
+    lowered = jax.jit(f).lower(*args, **kwargs)
+    stablehlo = lowered.compiler_ir(dialect="stablehlo")  # type: ignore[return-value]
+
+  return stablehlo  # type: ignore[return-value]

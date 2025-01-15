@@ -29,6 +29,7 @@ from jax._src import tpu_custom_call
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.pallas import core
+from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import lowering
 from jax._src.pallas.mosaic import verification
@@ -135,16 +136,24 @@ def pallas_call_tpu_lowering_rule(
   mlir_ctx.append_dialect_registry(mlir.upstream_dialects)
   mlir_ctx.load_all_available_dialects()
   tpu.register_dialect(mlir_ctx)
+
   def lower_module(for_verification: bool):
     if for_verification or tpu_core.runtime_assert_enabled():
       mlir_ctx.allow_unregistered_dialects = True
     with mlir_ctx, ir.Location.unknown(mlir_ctx):
       dimension_semantics = mosaic_params.get("dimension_semantics", None)
       return lowering.lower_jaxpr_to_module(
-          ctx, mlir_ctx, grid_mapping, jaxpr,
-          dimension_semantics=dimension_semantics, mesh=mesh,
+          ctx,
+          mlir_ctx,
+          grid_mapping,
+          jaxpr,
+          dimension_semantics=dimension_semantics,
+          mesh=mesh,
           for_verification=for_verification,
-          name_and_src_info=name_and_src_info)
+          name_and_src_info=name_and_src_info,
+          dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
+      )
+
   mosaic_module, extra_args = lower_module(for_verification=False)
   if debug:
     print(f"\nThe Mosaic module for pallas_call {name_and_src_info}:")
