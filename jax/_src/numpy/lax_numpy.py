@@ -11846,8 +11846,8 @@ def _is_valid_integer_index_for_slice(idx, size, mode):
   except:
     return False
   if shape == () and np.issubdtype(dtype, np.integer):
-    # For dynamic integer indices, dynamic_slice semantics require index clipping:
-    return mode in [None, 'promise_inbounds', 'clip']
+    # For dynamic integer indices, semantics require promise_inbounds.
+    return mode in [None, 'promise_inbounds']
   return False
 
 def _is_contiguous_slice(idx):
