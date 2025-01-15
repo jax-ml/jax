@@ -23,6 +23,7 @@ import traceback
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
 from jax.experimental import pallas as pl
@@ -47,15 +48,11 @@ def _fori_loop(force_while: bool, lb, ub, body, init):
   return jax.lax.fori_loop(lb, ub, body, init)
 
 
-def _sum_same_dtype(x):
-  # TODO(slebedev): Remove this once ``FragmentedArray`` supports
-  # ``reduce_sum`` for non-32-bit types.
-  return jnp.sum(x, dtype=x.dtype)
-
-
 class PallasTest(jtu.JaxTestCase):
 
   def setUp(self):
+    if config.enable_x64.value:
+      self.skipTest("Only works on x32 at the moment")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Only works on a GPU with capability >= sm90")
 
@@ -149,7 +146,7 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
     )
     def kernel(x_ref, y_ref, o_ref):
-      idx = _sum_same_dtype(y_ref[...])
+      idx = jnp.sum(y_ref[...])
       o_ref[...] = x_ref[idx]
 
     x = jnp.arange(4 * 128).reshape(4, 128).astype(jnp.float32)
@@ -659,9 +656,9 @@ class PallasCallTest(PallasTest):
     )
     def kernel(x_ref, o_ref):
       del o_ref
-      pl.debug_print("x.sum() = {}", _sum_same_dtype(x_ref[...]))
+      pl.debug_print("x.sum() = {}", x_ref[...].sum())
 
-    x = jnp.arange(256, dtype=jnp.int32)
+    x = jnp.arange(256)
     with self.capture_stdout() as output:
       jax.block_until_ready(kernel(x))
 
@@ -674,9 +671,9 @@ class PallasCallTest(PallasTest):
     )
     def kernel(x_ref, o_ref):
       del o_ref
-      pl.debug_print("x.sum() = {}", _sum_same_dtype(x_ref[...]) + 1)
+      pl.debug_print("x.sum() = {}", x_ref[...].sum() + 1)
 
-    x = jnp.arange(256, dtype=jnp.int32)
+    x = jnp.arange(256)
     with self.capture_stdout() as output:
       jax.block_until_ready(kernel(x))
 
@@ -693,7 +690,7 @@ class PallasCallTest(PallasTest):
       del o_ref
       pl.debug_print("x: {}", x_ref[...])
 
-    x = jnp.arange(math.prod(in_shape), dtype=jnp.int32).reshape(in_shape)
+    x = jnp.arange(math.prod(in_shape)).reshape(in_shape)
     with self.capture_stdout() as output:
       jax.block_until_ready(kernel(x))
 
@@ -722,7 +719,7 @@ class PallasCallTest(PallasTest):
       self.assertEqual(tmp.shape, (8, 128))
       o_ref[...] = tmp
 
-    inp = np.ones((8, 128), jnp.float32)
+    inp = np.ones((8, 128))
     f = pl.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -798,7 +795,7 @@ class PallasCallTest(PallasTest):
         grid=2,
     )
     def kernel(o_ref):
-      o_ref[...] = jnp.full(o_ref.shape, pl.num_programs(0), o_ref.dtype)
+      o_ref[...] = jnp.full(o_ref.shape, pl.num_programs(0))
 
     np.testing.assert_array_equal(
         kernel(),
@@ -831,7 +828,6 @@ class PallasCallTest(PallasTest):
 
   @parameterized.parameters(False, True)
   def test_fori_loop_array(self, force_while):
-
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
@@ -840,7 +836,7 @@ class PallasCallTest(PallasTest):
       # Equivalent to x_ref[...] + 2 + 3.
       o_ref[...] = _fori_loop(force_while, 2, 4, lambda i, x: x + i, x_ref[...])
 
-    x = jnp.arange(256, dtype=jnp.int32)
+    x = jnp.arange(256).astype(jnp.int32)
     np.testing.assert_array_equal(kernel(x), x + 2 + 3)
 
   @parameterized.parameters(False, True)
@@ -853,11 +849,10 @@ class PallasCallTest(PallasTest):
     def kernel(o_ref):
       # Equivalent to 2 + 3.
       o_ref[...] = jax.lax.broadcast(
-          _fori_loop(force_while, 2, 4, lambda i, x: x + i, jnp.int32(0)),
-          o_ref.shape,
+          _fori_loop(force_while, 2, 4, lambda i, x: x + i, 0), o_ref.shape
       )
 
-    np.testing.assert_array_equal(kernel(), jnp.full([256], 5, jnp.int32))
+    np.testing.assert_array_equal(kernel(), jnp.full([256], 5, dtype=jnp.int32))
 
   def test_fori_loop_dynamic_bounds(self):
 
@@ -890,12 +885,11 @@ class PallasCallTest(PallasTest):
 
       # Equivalent to 3 * (0 + 1).
       o_ref[...] = jax.lax.broadcast(
-          sum(_fori_loop(force_while, 2, 4, body, (jnp.int32(0),) * 3)),
-          o_ref.shape,
+          sum(_fori_loop(force_while, 2, 4, body, (0, 0, 0))), o_ref.shape
       )
 
     np.testing.assert_array_equal(
-        kernel(), jnp.full([256], 3 * (0 + 1), jnp.int32)
+        kernel(), jnp.full([256], 3 * (0 + 1), dtype=jnp.int32)
     )
 
   @parameterized.parameters(False, True)
@@ -924,7 +918,7 @@ class PallasCallTest(PallasTest):
 
       def cond(acc):
         _, last_o = acc
-        return _sum_same_dtype(last_o) < 128*10
+        return last_o.sum() < 128*10
 
       def body(acc):
         i, _ = acc
@@ -934,7 +928,7 @@ class PallasCallTest(PallasTest):
       _ = jax.lax.while_loop(cond, body, (0, o_ref[...]))
 
     np.testing.assert_array_equal(
-        kernel(jnp.ones([128, 128], jnp.int32)), jnp.full([128], 10, jnp.int32)
+        kernel(jnp.ones([128, 128], jnp.int32)), jnp.full([128], 10)
     )
 
   def test_while_loop_layout_mismatch(self):
@@ -943,14 +937,14 @@ class PallasCallTest(PallasTest):
     )
     def kernel(o_ref):
       def cond(acc):
-        return _sum_same_dtype(acc) < 128
+        return acc.sum() < 128
 
       def body(acc):
         del acc  # Unused.
 
         # We deliberately do a cast here to trigger a layout mismatch.
         return plgpu.layout_cast(
-            jnp.zeros(o_ref.shape, o_ref.dtype), plgpu.Layout.WGMMA_ROW
+            jnp.broadcast_to(0, o_ref.shape), plgpu.Layout.WGMMA_ROW
         )
 
       _ = jax.lax.while_loop(cond, body, o_ref[...])
@@ -964,7 +958,7 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
     )
     def kernel(x_ref, o_ref):
-      acc = _sum_same_dtype(x_ref[...])
+      acc = x_ref[...].sum()
       jax.lax.cond(
           acc % 2 == 0,
           lambda: pl.debug_print("acc * 2: {}", acc * 2),
@@ -972,7 +966,7 @@ class PallasCallTest(PallasTest):
       )
       o_ref[...] = jnp.broadcast_to(acc, o_ref.shape)
 
-    x = jnp.arange(256, dtype=jnp.int32)
+    x = jnp.arange(256)
     with self.capture_stdout() as output:
       jax.block_until_ready(kernel(x))
 
@@ -984,7 +978,7 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
     )
     def kernel(x_ref, o_ref):
-      acc = _sum_same_dtype(x_ref[...])
+      acc = x_ref[...].sum()
       acc2, acc = jax.lax.cond(
           acc % 2 == 0,
           lambda: (acc * 2, acc),
@@ -992,7 +986,7 @@ class PallasCallTest(PallasTest):
       )
       o_ref[...] = jnp.broadcast_to(acc + acc2, o_ref.shape)
 
-    x = jnp.arange(256, dtype=jnp.int32)
+    x = jnp.arange(256)
     np.testing.assert_array_equal(kernel(x), jnp.broadcast_to(jnp.sum(x) * 3, [256]))
 
   @parameterized.parameters(jnp.float16, jnp.float32)
@@ -1282,9 +1276,9 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
     )
     def kernel(o_ref):
-      o_ref[...] = plgpu.layout_cast(jnp.full(shape, 42.0, jnp.float32), plgpu.Layout.WGMMA)
+      o_ref[...] = plgpu.layout_cast(jnp.full(shape, 42.0), plgpu.Layout.WGMMA)
 
-    x = jnp.full(shape, 42.0, jnp.float32)
+    x = jnp.full(shape, 42.0)
     np.testing.assert_array_equal(kernel(), x)
 
   def test_profiler(self):

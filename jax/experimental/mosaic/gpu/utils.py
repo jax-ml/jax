@@ -991,7 +991,6 @@ def tile_shape(shape, tiling):
 
 def warp_tree_reduce(value, op, group_size):
   """Reduce a value across the warpgroup."""
-  assert bytewidth(value.type) == 4
   assert 32 % group_size == 0 and group_size <= 32
   i32 = ir.IntegerType.get_signless(32)
   result = value
