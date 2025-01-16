@@ -24,8 +24,8 @@ from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import vector
 
+from . import fragmented_array as fa
 from . import layouts as layouts_lib
-from .fragmented_array import WGSplatFragLayout, WGStridedFragLayout
 
 # mypy: ignore-errors
 
@@ -64,13 +64,13 @@ def _choose_representative_layout(
   if not layouts:
     return None
 
-  strided_layouts: list[WGStridedFragLayout] = [
+  strided_layouts: list[fa.WGStridedFragLayout] = [
       layouts_lib.from_strided_fragmented_layout_attr(layout)
       for layout in layouts
       if layouts_lib.is_strided_fragmented_layout(layout)
   ]
 
-  splat_layouts: list[WGSplatFragLayout] = list(
+  splat_layouts: list[fa.WGSplatFragLayout] = list(
       map(
           layouts_lib.from_splat_fragmented_layout_attr,
           filter(layouts_lib.is_splat_fragmented_layout, layouts),
@@ -242,7 +242,7 @@ def _infer_constant_op_layout(constant_op: arith.ConstantOp) -> OptionalLayouts:
       and ir.DenseElementsAttr(value).is_splat
   ):
     layout = layouts_lib.to_splat_fragmented_layout_attr(
-        WGSplatFragLayout(shape=shaped_ty.shape)
+        fa.WGSplatFragLayout(shape=shaped_ty.shape)
     )
   # If the constant is not a splat, there is no obvious good choice of layout.
   # We need to look at the consumers of the constant to find a layout that works
@@ -265,7 +265,7 @@ def _infer_constant_op_layout(constant_op: arith.ConstantOp) -> OptionalLayouts:
   # completeness.
   if layout is None:
     layout = layouts_lib.to_strided_fragmented_layout_attr(
-        WGStridedFragLayout.from_shaped_type(shaped_ty)
+        fa.WGStridedFragLayout.from_shaped_type(shaped_ty)
     )
 
   return [], [layout]
@@ -274,7 +274,9 @@ def _infer_constant_op_layout(constant_op: arith.ConstantOp) -> OptionalLayouts:
 @partial(_add_layout_inference_rule, vector.SplatOp)
 def _infer_splat_op_layout(splat_op: vector.SplatOp) -> OptionalLayouts:
   layout = layouts_lib.to_splat_fragmented_layout_attr(
-      WGSplatFragLayout(shape=cast(ir.ShapedType, splat_op.result.type).shape)
+      fa.WGSplatFragLayout(
+          shape=cast(ir.ShapedType, splat_op.result.type).shape
+      )
   )
 
   return [], [layout]
@@ -345,7 +347,7 @@ def infer_layout(module: ir.Module):
   def to_default_layout(ty: ir.Type) -> ir.Attribute | None:
     if not ir.VectorType.isinstance(ty):
       return None
-    layout = WGStridedFragLayout.from_shaped_type(ty)
+    layout = fa.WGStridedFragLayout.from_shaped_type(ty)
     return layouts_lib.to_strided_fragmented_layout_attr(layout)
 
   def set_default_layout(op: ir.OpView):
