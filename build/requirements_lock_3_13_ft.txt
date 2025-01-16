@@ -658,7 +658,7 @@ zipp==3.21.0 \
     --hash=sha256:2c9958f6430a2040341a52eb608ed6dd93ef4392e02ffe219417c1b28b5dd1f4 \
     --hash=sha256:ac1bbe05fd2991f160ebce24ffbac5f6d11d83dc90891255885223d42b3cd931
     # via etils
-# python 3.13t can compile 0.23.0
+# python 3.13t can't compile 0.23.0
 # due to https://github.com/indygreg/python-zstandard/issues/231
 # zstandard==0.23.0 \
 #     --hash=sha256:034b88913ecc1b097f528e42b539453fa82c3557e414b3de9d5632c80439a473 \

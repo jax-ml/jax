@@ -496,6 +496,7 @@ async def main():
   if args.use_clang:
     clang_path = args.clang_path or utils.get_clang_path_or_exit()
     clang_major_version = utils.get_clang_major_version(clang_path)
+    clangpp_path = utils.get_clangpp_path(clang_path)
     logging.debug(
         "Using Clang as the compiler, clang path: %s, clang version: %s",
         clang_path,
@@ -505,6 +506,7 @@ async def main():
     # Use double quotes around clang path to avoid path issues on Windows.
     wheel_build_command_base.append(f"--action_env=CLANG_COMPILER_PATH=\"{clang_path}\"")
     wheel_build_command_base.append(f"--repo_env=CC=\"{clang_path}\"")
+    wheel_build_command_base.append(f"--repo_env=CXX=\"{clangpp_path}\"")
     wheel_build_command_base.append(f"--repo_env=BAZEL_COMPILER=\"{clang_path}\"")
 
     if clang_major_version >= 16:
