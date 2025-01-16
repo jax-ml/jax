@@ -549,9 +549,15 @@ class OpsTest(PallasBaseTest):
     if from_dtype == to_dtype:
       self.skipTest("Unnecessary test")
     if jtu.is_device_tpu(version=4):
-      if (from_dtype in {"int16", "int8", "uint16", "uint8"} or
-          to_dtype in {"int8", "uint8"}):
+      allowed_v4_cats = {("int16", "int32"): (2025, 1, 18)}
+      if (
+          from_dtype in {"int16", "int8", "uint16", "uint8"}
+          or to_dtype in {"int8", "uint8"}
+      ) and (from_dtype, to_dtype) not in allowed_v4_cats:
         self.skipTest("Not supported on this TPU generation")
+      if minimum_libtpu_date := allowed_v4_cats.get((from_dtype, to_dtype), None):
+        if not jtu.if_cloud_tpu_at_least(*minimum_libtpu_date):
+          self.skipTest("Test requires a newer libtpu")
       if to_dtype in {"int16", "uint16"} and not jtu.if_cloud_tpu_at_least(2025, 1, 18):
         self.skipTest("Test requires libtpu from 2025/1/18 or later")
     if jtu.test_device_matches(["tpu"]) and jtu.get_tpu_version() < 4:
