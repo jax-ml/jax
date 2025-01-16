@@ -183,9 +183,7 @@ def _construct_smem_reftree(
     def get_barrier_ptr(num_barriers: int) -> ir.Value:
       nonlocal dynamic_smem_offset
       workgroup_nvptx_address_space = (
-          dialect_lowering.gpu_address_space_to_nvptx(
-              gpu.AddressSpace.Workgroup
-          )
+          utils.gpu_address_space_to_nvptx(gpu.AddressSpace.Workgroup)
       )
       smem_base_ptr = utils.memref_ptr(
           dynamic_smem, memory_space=workgroup_nvptx_address_space

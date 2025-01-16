@@ -33,7 +33,7 @@ import numpy as np
 from .fragmented_array import FragmentedArray, WGStridedFragLayout
 from .launch_context import LaunchContext
 from .layouts import from_strided_fragmented_layout_attr, has_any_layout_set, is_strided_fragmented_layout, should_have_layout, to_strided_fragmented_layout_attr
-from .utils import BarrierRef, c, ptr_as_memref, single_thread_predicate
+from .utils import BarrierRef, c, gpu_address_space_to_nvptx, ptr_as_memref, single_thread_predicate
 
 # mypy: ignore-errors
 
@@ -128,16 +128,6 @@ def _register_lowering(
 
 def _lowered_barrier_type() -> ir.Type:
   return ir.IntegerType.get_signless(64)
-
-
-def gpu_address_space_to_nvptx(address_space: gpu.AddressSpace) -> int:
-  match address_space:
-    case gpu.AddressSpace.Global:
-      return 1
-    case gpu.AddressSpace.Workgroup:
-      return 3
-    case _:
-      raise NotImplementedError(f"address_space not supported: {address_space}")
 
 
 @_register_lowering(InitializeBarrierOp)

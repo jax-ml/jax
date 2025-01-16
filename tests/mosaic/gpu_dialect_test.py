@@ -30,6 +30,7 @@ from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 import jax.experimental.mosaic.gpu as mgpu
+import jax.experimental.mosaic.gpu.utils as mgpu_utils
 
 _cext = mgpu.dialect._cext if mgpu.dialect is not None else None
 
@@ -72,7 +73,7 @@ def is_mosaic_gpu_op(op: ir.OpView) -> bool:
 
 
 def workgroup_ptr_ty() -> ir.Type:
-  workgroup_nvptx_address_space = mgpu.gpu_address_space_to_nvptx(
+  workgroup_nvptx_address_space = mgpu_utils.gpu_address_space_to_nvptx(
       gpu.AddressSpace.Workgroup
   )
   return ir.Type.parse(f"!llvm.ptr<{workgroup_nvptx_address_space}>")

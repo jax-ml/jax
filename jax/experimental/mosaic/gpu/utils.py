@@ -48,6 +48,21 @@ MBARRIER_BYTES = 8
 # pylint: disable=line-too-long, wildcard-import, missing-function-docstring, bad-continuation, g-bad-todo, protected-access, g-explicit-length-test, missing-class-docstring, g-doc-return-or-yield, g-inconsistent-quotes
 
 
+def gpu_address_space_to_nvptx(address_space: gpu.AddressSpace) -> int:
+  match address_space:
+    case gpu.AddressSpace.Global:
+      return 1
+    case gpu.AddressSpace.Workgroup:
+      return 3
+    case _:
+      raise NotImplementedError(f"address_space not supported: {address_space}")
+
+
+WORKGROUP_NVPTX_ADDRESS_SPACE = gpu_address_space_to_nvptx(
+    gpu.AddressSpace.Workgroup
+)
+
+
 def ptr_as_memref(ptr, memref_ty: ir.MemRefType, ptr_memory_space: int | None = None):
   i64 = ir.IntegerType.get_signless(64)
   rank = len(memref_ty.shape)
@@ -674,7 +689,7 @@ class BarrierRef:
       raise NotImplementedError("Only up to 32 barriers per group supported")
     i32 = ir.IntegerType.get_signless(32)
     i64 = ir.IntegerType.get_signless(64)
-    ptr = ir.Type.parse("!llvm.ptr<3>")
+    ptr = ir.Type.parse(f"!llvm.ptr<{WORKGROUP_NVPTX_ADDRESS_SPACE}>")
     phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
     memref.store(c(0, i32), phases, [])
     with single_thread(per_block=True):
@@ -742,7 +757,7 @@ class BarrierRef:
     nvvm.mbarrier_arrive_expect_tx_shared(self.get_ptr(), bytes, predicate=predicate)
 
   def get_ptr(self):
-    ptr = ir.Type.parse("!llvm.ptr<3>")
+    ptr = ir.Type.parse(f"!llvm.ptr<{WORKGROUP_NVPTX_ADDRESS_SPACE}>")
     i64 = ir.IntegerType.get_signless(64)
     DYNAMIC32 = -2147483648
     return llvm.getelementptr(
@@ -754,7 +769,7 @@ class BarrierRef:
     return ptr_as_memref(
         self.base_address,
         ir.MemRefType.get(shape, ir.Type.parse("!mosaic_gpu.barrier")),
-        ptr_memory_space=3,
+        ptr_memory_space=WORKGROUP_NVPTX_ADDRESS_SPACE,
     )
 
   @classmethod
@@ -770,7 +785,9 @@ class BarrierRef:
       )
 
     return cls(
-        base_address=memref_ptr(barrier, memory_space=3),
+        base_address=memref_ptr(
+            barrier, memory_space=WORKGROUP_NVPTX_ADDRESS_SPACE
+        ),
         offset=c(0, ir.IntegerType.get_signless(64)),
         phases=None,
         num_barriers=(1 if memref_type.rank == 0 else memref_type.shape[0]),
