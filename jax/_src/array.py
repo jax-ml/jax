@@ -1205,8 +1205,12 @@ pxla.local_result_handlers[core.ShapedArray] = _array_local_result_handler
 # Token handlers
 
 def _token_shard_arg(xs, shardings, layouts, copy_semantics):
-  return _array_shard_arg([x._buf for x in xs], shardings, layouts,
-                          copy_semantics)
+  results = []
+  for x, sharding, layout in safe_zip(xs, shardings, layouts):
+    x.block_until_ready()
+    x = np.array([], dtype=bool)
+    results.append(api.device_put(x, Layout(layout, sharding)))
+  return results
 pxla.shard_arg_handlers[core.Token] = _token_shard_arg
 
 

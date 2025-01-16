@@ -4327,6 +4327,30 @@ class ArrayPjitTest(jtu.JaxTestCase):
         out_specs=P(None, 'i')))
     f(jnp.zeros((2, 16)), jnp.ones(2))
 
+  def test_empty_io_callback_under_shard_map_reshard_to_singledev(self):
+    if config.use_shardy_partitioner.value:
+      self.skipTest("Shardy errors out on empty callbacks.")
+    mesh = jtu.create_mesh((4,), 'i')
+
+    def empty_callback(x):
+      return
+
+    def _f(x, y):
+      jax.experimental.io_callback(
+          empty_callback, (), x, ordered=True)
+      return x + y[..., jnp.newaxis]
+
+    f = jax.jit(shard_map(
+        _f, mesh, in_specs=(P(None, 'i'), P(None)),
+        out_specs=P(None, 'i')))
+    f(jnp.zeros((2, 16)), jnp.ones(2))
+
+    _f(jnp.zeros((2, 16)), jnp.ones(2))
+
+    jax.jit(_f)(jnp.zeros((2, 16)), jnp.ones(2))
+
+    jax.effects_barrier()
+
   def test_jit_trace_lower_and_compile(self):
     def f(x):
       return x * 2
