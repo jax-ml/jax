@@ -550,16 +550,16 @@ class OpsTest(PallasBaseTest):
       self.skipTest("Unnecessary test")
     if jtu.is_device_tpu(version=4):
       if (from_dtype in {"int16", "int8", "uint16", "uint8"} or
-          to_dtype in {"int16", "int8", "uint16", "uint8"}):
-        self.skipTest(
-            "Not supported: TPU generation doesn't support this cast."
-        )
+          to_dtype in {"int8", "uint8"}):
+        self.skipTest("Not supported on this TPU generation")
+      if to_dtype in {"int16", "uint16"} and not jtu.if_cloud_tpu_at_least(2025, 1, 18):
+        self.skipTest("Test requires libtpu from 2025/1/18 or later")
     if jtu.test_device_matches(["tpu"]) and jtu.get_tpu_version() < 4:
-      if (from_dtype in {"int32", "uint32", "float32", "bfloat16", "int16", "int8"} and
-          to_dtype in {"int16", "int8", "uint16", "uint8"}):
-        self.skipTest(
-            "Not supported: TPU generation doesn't support this cast."
-        )
+      # Currently only casts between 32-bit types and to bf16 are supported.
+      if (from_dtype not in {"int32", "uint32", "float32"} or
+          to_dtype not in {"int32", "uint32", "float32", "bfloat16"}):
+        self.skipTest("Not supported on this TPU generation")
+
     from_int = np.issubdtype(np.dtype(from_dtype), np.integer)
     to_int = np.issubdtype(np.dtype(to_dtype), np.integer)
     if (
@@ -577,11 +577,15 @@ class OpsTest(PallasBaseTest):
     if to_dtype == "bfloat16":
       to_dtype = jnp.bfloat16
 
+    # XLA does not specify the float->int conversion result for NaNs.
+    elements = dict(allow_nan=not jnp.issubdtype(to_dtype, jnp.integer))
     if from_dtype == jnp.bfloat16:
-      x = jnp.asarray(data.draw(hnp.arrays(jnp.float32, (8, 128))))
+      x = jnp.asarray(
+          data.draw(hnp.arrays(jnp.float32, (8, 128), elements=elements))
+      )
       x = x.astype(jnp.bfloat16)
     else:
-      x = data.draw(hnp.arrays(from_dtype, (8, 128)))
+      x = data.draw(hnp.arrays(from_dtype, (8, 128), elements=elements))
     x = jnp.asarray(x)
     if from_dtype == jnp.dtype("bool"):
       x = x.astype(jnp.int32)
