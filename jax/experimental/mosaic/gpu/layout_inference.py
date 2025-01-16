@@ -16,6 +16,7 @@
 
 from collections.abc import Callable
 import enum
+from functools import partial
 from typing import cast
 
 from jax._src.lib.mlir import ir
@@ -23,14 +24,14 @@ from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import vector
 
-from .fragmented_array import WGSplatFragLayout, WGStridedFragLayout
 from . import layouts as layouts_lib
+from .fragmented_array import WGSplatFragLayout, WGStridedFragLayout
 
 # mypy: ignore-errors
 
 OptionalLayouts = tuple[list[ir.Attribute], list[ir.Attribute]] | None
 LayoutInferenceRule = Callable[[ir.OpView], OptionalLayouts]
-_layout_inference_rules: dict[str, LayoutInferenceRule,] = {}
+_layout_inference_rules: dict[str, LayoutInferenceRule] = {}
 
 
 def _add_layout_inference_rule(op: type[ir.OpView], rule: LayoutInferenceRule):
@@ -221,12 +222,62 @@ def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
 
 for op in (
     arith.AddFOp,
-    arith.ConstantOp,
     arith.MulFOp,
     vector.LoadOp,
     vector.StoreOp,
 ):
   _add_layout_inference_rule(op, _infer_pointwise_op_layouts)
+
+
+@partial(_add_layout_inference_rule, arith.ConstantOp)
+def _infer_constant_op_layout(constant_op: arith.ConstantOp) -> OptionalLayouts:
+  if not ir.VectorType.isinstance(constant_op.result.type):
+    return None
+
+  shaped_ty = cast(ir.ShapedType, constant_op.result.type)
+  value = constant_op.value
+  layout = None
+  if (
+      ir.DenseElementsAttr.isinstance(value)
+      and ir.DenseElementsAttr(value).is_splat
+  ):
+    layout = layouts_lib.to_splat_fragmented_layout_attr(
+        WGSplatFragLayout(shape=shaped_ty.shape)
+    )
+  # If the constant is not a splat, there is no obvious good choice of layout.
+  # We need to look at the consumers of the constant to find a layout that works
+  # for them. If there are several users with N different layouts, we can
+  # arbitrarily choose any one of them for the constant, since we expect
+  # whichever choice we make to lead to N-1 relayouts, which all have the same
+  # cost.
+  #
+  # We assign a strided layout if the constant has no user, for completeness.
+  elif constant_op.result.uses:
+    for use in cast(ir.OpResult, constant_op.result).uses:
+      consumer = use.owner
+      operand = consumer.operands[use.operand_number]
+      layout = _in_layout_for_operand(consumer, operand)
+      if layout is not None:
+        break
+
+  # If the constant is not a splat, has no user, or a layout could not be
+  # determined from looking at the users, we assign a strided layout for
+  # completeness.
+  if layout is None:
+    layout = layouts_lib.to_strided_fragmented_layout_attr(
+        WGStridedFragLayout.from_shaped_type(shaped_ty)
+    )
+
+  return [], [layout]
+
+
+@partial(_add_layout_inference_rule, vector.SplatOp)
+def _infer_splat_op_layout(splat_op: vector.SplatOp) -> OptionalLayouts:
+  layout = layouts_lib.to_splat_fragmented_layout_attr(
+      WGSplatFragLayout(shape=cast(ir.ShapedType, splat_op.result.type).shape)
+  )
+
+  return [], [layout]
 
 
 class TraversalOrder(enum.Enum):

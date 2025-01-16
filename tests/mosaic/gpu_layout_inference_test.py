@@ -79,6 +79,85 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertSequenceEqual(add.attributes["in_layouts"], [layout, layout])
     self.assertSequenceEqual(add.attributes["out_layouts"], [layout])
 
+  def test_infer_splat_layout_for_splat_constants(self):
+    shape = (16, 8)
+    elt_type = ir.BF16Type.get()
+
+    with ir.InsertionPoint(self.module.body):
+      ty = ir.VectorType.get(shape, elt_type)
+      c0 = ir.FloatAttr.get(elt_type, 0)
+      c1 = ir.FloatAttr.get(elt_type, 1)
+      splat0 = arith.ConstantOp(ty, ir.DenseElementsAttr.get_splat(ty, c0))
+      splat1 = arith.ConstantOp(ty, ir.DenseElementsAttr.get_splat(ty, c1))
+      add = arith.AddFOp(splat0, splat1)
+
+    # Not setting any layouts on the module should default in all ops having a
+    # splat fragmented layout.
+    mgpu.infer_layout(self.module)
+
+    layout = mgpu.to_splat_fragmented_layout_attr(
+        mgpu.WGSplatFragLayout(shape=shape)
+    )
+
+    self.assertEmpty(splat0.attributes["in_layouts"])
+    self.assertSequenceEqual(splat0.attributes["out_layouts"], [layout])
+
+    self.assertEmpty(splat1.attributes["in_layouts"])
+    self.assertSequenceEqual(splat1.attributes["out_layouts"], [layout])
+
+    self.assertSequenceEqual(add.attributes["in_layouts"], [layout, layout])
+    self.assertSequenceEqual(add.attributes["out_layouts"], [layout])
+
+  def test_infer_layout_from_consumer_for_non_splat_constant(self):
+    shape = (16, 8)
+    elt_type = ir.BF16Type.get()
+
+    with ir.InsertionPoint(self.module.body):
+      ty = ir.VectorType.get(shape, elt_type)
+      attr_list = [
+          ir.FloatAttr.get(elt_type, i) for i in range(shape[0] * shape[1])
+      ]
+      c = arith.ConstantOp(ty, ir.DenseElementsAttr.get(attr_list, ty))
+      add = arith.AddFOp(c, c)
+
+    layout = mgpu.to_strided_fragmented_layout_attr(
+        mgpu.WGStridedFragLayout(shape=shape, vec_size=1)
+    )
+    add.attributes["in_layouts"] = ir.ArrayAttr.get([layout, layout])
+
+    mgpu.infer_layout(self.module)
+
+    self.assertEmpty(c.attributes["in_layouts"])
+    self.assertSequenceEqual(c.attributes["out_layouts"], [layout])
+
+  def test_infer_splat_layout_for_vector_splat(self):
+    add = splat = None
+
+    def body(lhs, rhs):
+      nonlocal add, splat
+      splat = vector.SplatOp(rhs.type, lhs)
+      add = arith.AddFOp(splat, rhs)
+
+    with ir.InsertionPoint(self.module.body):
+      shape = (16, 8)
+      elt_type = ir.BF16Type.get()
+      ty = ir.VectorType.get(shape, elt_type)
+      func.FuncOp.from_py_func(elt_type, ty)(body)
+
+    # Not setting any layouts on the module should default in all ops having a
+    # splat fragmented layout.
+    mgpu.infer_layout(self.module)
+
+    layout = mgpu.to_splat_fragmented_layout_attr(
+        mgpu.WGSplatFragLayout(shape=shape)
+    )
+
+    self.assertEmpty(splat.attributes["in_layouts"])
+    self.assertSequenceEqual(splat.attributes["out_layouts"], [layout])
+
+    self.assertSequenceEqual(add.attributes["in_layouts"], [layout, layout])
+    self.assertSequenceEqual(add.attributes["out_layouts"], [layout])
+
   @parameterized.parameters(
       mgpu.WGSplatFragLayout(shape=(32, 4)),
       mgpu.WGStridedFragLayout(shape=(32, 4), vec_size=1),
