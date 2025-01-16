@@ -1956,36 +1956,32 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
       zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
 
-      with utils.single_thread():
-        memref_bytes = utils.bytewidth(elt_type)  # Also correct if rank == 0
-        for size in shape:
-          memref_bytes *= size
-        nvvm.mbarrier_arrive_expect_tx_shared(
-            tma_barrier.get_ptr(),
-            arith.constant(ir.IntegerType.get_signless(32), 2*memref_bytes),
-        )
+      memref_bytes = utils.bytewidth(elt_type)  # Also correct if rank == 0
+      for size in shape:
+        memref_bytes *= size
+      tma_barrier.arrive_expect_tx(2 * memref_bytes, single_thread_predicate())
 
-        # GMEM -> SMEM
-        mgpu_dialect.async_load(
-            source=a_gmem_ref,
-            destination=a_smem_ref,
-            barrier=tma_barrier.as_dialect_barrier_memref(),
-            indices=[zero_i32, zero_i32],
-            slice_lengths=shape,
-            transforms=ir.ArrayAttr.get([]),
-            collective=ir.ArrayAttr.get([]),
-            arrive=False,
-        )
-        mgpu_dialect.async_load(
-            source=b_gmem_ref,
-            destination=b_smem_ref,
-            barrier=tma_barrier.as_dialect_barrier_memref(),
-            indices=[zero_i32, zero_i32],
-            slice_lengths=shape,
-            transforms=ir.ArrayAttr.get([]),
-            collective=ir.ArrayAttr.get([]),
-            arrive=False,
-        )
+      # GMEM -> SMEM
+      mgpu_dialect.async_load(
+          source=a_gmem_ref,
+          destination=a_smem_ref,
+          barrier=tma_barrier.as_dialect_barrier_memref(),
+          indices=[zero_i32, zero_i32],
+          slice_lengths=shape,
+          transforms=ir.ArrayAttr.get([]),
+          collective=ir.ArrayAttr.get([]),
+          arrive=False,
+      )
+      mgpu_dialect.async_load(
+          source=b_gmem_ref,
+          destination=b_smem_ref,
+          barrier=tma_barrier.as_dialect_barrier_memref(),
+          indices=[zero_i32, zero_i32],
+          slice_lengths=shape,
+          transforms=ir.ArrayAttr.get([]),
+          collective=ir.ArrayAttr.get([]),
+          arrive=False,
+      )
 
       tma_barrier.wait()
 
