@@ -74,7 +74,7 @@ setup(
         'ci': [f'jaxlib=={_latest_jaxlib_version_on_pypi}'],
 
         # Cloud TPU VM jaxlib can be installed via:
-        # $ pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+        # $ pip install "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
         'tpu': [
           f'jaxlib>={_current_jaxlib_version},<={_jax_version}',
           # TODO(phawkins): remove the libtpu-nightly dependency in Q1 2025.
