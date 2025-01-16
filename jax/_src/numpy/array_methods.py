@@ -35,6 +35,7 @@ from jax.sharding import Sharding
 from jax._src import api
 from jax._src import core
 from jax._src import dtypes
+from jax._src import mesh as mesh_lib
 from jax._src.api_util import _ensure_index_tuple
 from jax._src.array import ArrayImpl
 from jax._src.lax import lax as lax_internal
@@ -763,7 +764,7 @@ class _IndexUpdateRef:
     return f"_IndexUpdateRef({self.array!r}, {self.index!r})"
 
   def get(self, *, indices_are_sorted=False, unique_indices=False,
-          mode=None, fill_value=None):
+          mode=None, fill_value=None, out_specs=None):
     """Equivalent to ``x[idx]``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -773,10 +774,15 @@ class _IndexUpdateRef:
 
     See :mod:`jax.ops` for details.
     """
-    return lax_numpy._rewriting_take(self.array, self.index,
-                                     indices_are_sorted=indices_are_sorted,
-                                     unique_indices=unique_indices, mode=mode,
-                                     fill_value=fill_value)
+    from jax._src.pjit import auto_mode
+    take = partial(lax_numpy._rewriting_take,
+                   indices_are_sorted=indices_are_sorted,
+                   unique_indices=unique_indices, mode=mode,
+                   fill_value=fill_value)
+    if out_specs is not None:
+      take = auto_mode(take, axes=mesh_lib.get_abstract_mesh().axis_names,
+                       out_specs=out_specs)
+    return take(self.array, self.index)
 
   def set(self, values, *, indices_are_sorted=False, unique_indices=False,
           mode=None):
