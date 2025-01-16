@@ -1466,7 +1466,7 @@ def broadcast_to_rank(x: ArrayLike, rank: int) -> Array:
 
 def reshape(operand: ArrayLike, new_sizes: Shape,
             dimensions: Sequence[int] | None = None,
-            sharding: NamedSharding | None = None) -> Array:
+            sharding: NamedSharding | P | None = None) -> Array:
   """Wraps XLA's `Reshape
   <https://www.tensorflow.org/xla/operation_semantics#reshape>`_
   operator.
@@ -4947,26 +4947,106 @@ def _reshape_shape_rule(operand, *, new_sizes, dimensions, sharding):
       raise TypeError(msg.format(dimensions, np.shape(operand)))
   return tuple(new_sizes)
 
+def _split_on_one_axis(op_shape, new_sizes, name):
+  if len(new_sizes) <= len(op_shape):
+    return False, []
+  i, j, count, out = 0, 0, 0, []
+  while j < len(new_sizes):
+    if op_shape[i] == new_sizes[j]:
+      out.append(op_shape[i])
+    else:
+      count += 1
+      if count > 1:
+        raise ValueError(
+            f'{name} on more than 1 axis is not supported. Please specify'
+            ' the sharding of the output via the `sharding` argument of'
+            f' jax.lax.reshape. Got operand.shape={op_shape} and {new_sizes=}')
+      temp = [new_sizes[j]]
+      while math.prod(temp) != op_shape[i]:
+        j += 1
+        temp.append(new_sizes[j])
+      out.append(temp)
+    i += 1
+    j += 1
+  assert len(op_shape) == len(out)
+  return True, out
+
+
+def _merge_on_one_axis(operand, new_sizes):
+  if len(new_sizes) >= len(operand.shape):
+    return False, []
+  return _split_on_one_axis(new_sizes, operand.shape, 'Merging')
+
+
 def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
   if sharding is not None:
     return sharding
-  filtered_spec = [
-      (sh, sp) for sh, sp in zip(operand.shape, operand.sharding.spec)
-      if sh != 1
-  ]
+  non_1s_op_shape = [s for s in operand.shape if s != 1]
+  non_1s_new_shape = [s for s in new_sizes if s != 1]
+  if non_1s_op_shape == non_1s_new_shape:
+    return _split_merge_singleton_dim_sharding_rule(operand, new_sizes)
+
+  is_split, out_split = _split_on_one_axis(operand.shape, new_sizes, 'Splitting')
+  if is_split:
+    return _split_an_axis_sharding_rule(operand, out_split, new_sizes)
+
+  is_merge, operand_merge = _merge_on_one_axis(operand, new_sizes)
+  if is_merge:
+    return _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes)
+
+  raise ValueError(
+      'This reshape is not supported. Only 4 out of the box reshapes are'
+      ' supported.Adding/removing singleton dims and splitting/merging without'
+      ' sharded split/merged axes are supported. Please specify the sharding of'
+      ' the output via the `sharding` argument of jax.lax.reshape.')
+
+def _split_merge_singleton_dim_sharding_rule(operand, new_sizes):
+  filtered_spec = [sp for sh, sp in zip(operand.shape, operand.sharding.spec)
+                   if sh != 1]
   fs = iter(filtered_spec)
   new_spec = []
   for n in new_sizes:
     if n == 1:
       new_spec.append(None)
     else:
-      sh, sp = next(fs)
-      if n != sh:
-        raise ValueError(
-            'This reshape is not supported. Please specify the sharding of the'
-            ' output via the `sharding` argument of reshape.')
+      sp = next(fs)
       new_spec.append(sp)
   return operand.sharding.with_spec(new_spec)
+
+def _split_an_axis_sharding_rule(operand, out_split, new_sizes):
+  new_spec = []
+  for sh, out, sp in safe_zip(operand.shape, out_split, operand.sharding.spec):
+    if isinstance(out, list):
+      if sp is not None:
+        raise ValueError(
+            f'Split axis cannot be sharded. Got operand dim {sh} with spec'
+            f' {sp}. Please specify the sharding of the output via the'
+            ' `sharding` argument of jax.lax.reshape.')
+      new_spec.extend([None] * len(out))
+    else:
+      new_spec.append(sp)
+  assert len(new_spec) == len(new_sizes)
+  return operand.sharding.with_spec(new_spec)
+
+
+def _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes):
+  new_spec = []
+  op_spec = iter(operand.sharding.spec)
+  for op_merge in operand_merge:
+    if isinstance(op_merge, list):
+      sp = [next(op_spec) for _ in op_merge]
+      if not all(s is None for s in sp):
+        raise ValueError(
+            f'Merged axis cannot be sharded. Got {sp}. Please specify the'
+            ' sharding of the output via the `sharding` argument of'
+            ' jax.lax.reshape.')
+      new_spec.append(None)
+    else:
+      new_spec.append(next(op_spec))
+  assert next(op_spec, None) is None
+  assert len(new_spec) == len(new_sizes)
+  return operand.sharding.with_spec(new_spec)
+
 
 def _reshape_typecheck_rule(_, operand, *dyn_shape, new_sizes, dimensions,
                             sharding):

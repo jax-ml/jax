@@ -5274,7 +5274,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       ('1', (16, 1), (1, 16, 1), P('x', None), P(None, 'x', None), False),
       ('2', (8, 2, 1), (1, 16, 1), P('x', None, None), P(None, 'x', None), True),
-      ('3', (8, 1), (1, 4, 2), P('x', None), P(None, None, 'x'), True)
+      ('3', (8, 1), (1, 4, 2), P('x', None), P(None, None, 'x'), True),
+      ('4', (1, 4, 1, 6, 1), (1, 4, 6),
+       P(None, 'x', None, None, None), P(None, 'x', None), False),
+      ('5', (4, 6), (4, 6), P(None, 'x'), P(None, 'x'), False),
   )
   @jtu.with_user_mesh((2,), ('x',))
   def test_reshape(self, src_shape, dst_shape, src_spec, dst_spec,
@@ -5304,6 +5307,69 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = jax.jit(jax.grad(g))(arr)
     self.assertEqual(out.sharding, arr.sharding)
+
+  @parameterized.named_parameters(
+      ('split_1', (4, 6, 8), (4, 2, 3, 8),
+       P('x', None, 'y'), P('x', None, None, 'y'), ''
+      ),
+      ('split_2', (4, 6, 8), (4, 6, 2, 2, 2),
+       P('x', None, None), P('x', None, None, None, None), ''
+      ),
+      ('split_3_error', (4, 6, 8), (4, 2, 3, 4, 2),
+       P('x', None, None), P('x', None, None, None, None),
+       'Splitting on more than 1 axis is not supported'
+      ),
+      ('split_4_error', (4, 6, 8), (4, 2, 3, 8),
+       P('x', 'y', None), None, 'Split axis cannot be sharded'
+      ),
+      ('merge_1', (4, 2, 3, 8), (4, 6, 8),
+       P('x', None, None, 'y'), P('x', None, 'y'), ''
+      ),
+      ('merge_2', (2, 2, 6, 8), (4, 6, 8),
+       P(None, None, 'y', 'x'), P(None, 'y', 'x'), ''
+      ),
+      ('merge_3', (4, 6, 2, 2, 2), (4, 6, 8),
+       P('x', None, None, None, None), P('x', None, None), ''
+      ),
+      ('merge_4_error', (4, 2, 3, 2, 4), (4, 6, 8),
+       P('x', None, None, None, None), P('x', None, None),
+       'Merging on more than 1 axis is not supported'
+      ),
+      ('merge_5_error', (4, 2, 3, 8), (4, 6, 8),
+       P(None, 'y', None, 'x'), None, 'Merged axis cannot be sharded'
+      ),
+  )
+  @jtu.with_user_mesh((2, 2), ('x', 'y'))
+  def test_reshape_split_merge_one_axis(self, src_shape, dst_shape, src_spec,
+                                        dst_spec, error_msg, mesh):
+    np_inp = np.arange(math.prod(src_shape),
+                       dtype=np.float32).reshape(src_shape)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, src_spec))
+
+    @jax.jit
+    def f(x):
+      y = lax.reshape(x, dst_shape)
+      y = y * 2
+      self.assertEqual(y.sharding.spec, dst_spec)
+      return y
+
+    if error_msg:
+      with self.assertRaisesRegex(ValueError, error_msg):
+        f(arr)
+    else:
+      out = f(arr)
+      self.assertEqual(out.sharding, NamedSharding(mesh, dst_spec))
+      self.assertArraysEqual(out, np_inp.reshape(dst_shape) * 2)
+
+      lowered_text = f.lower(arr).as_text()
+      self.check_wsc_in_lowered(lowered_text)
+
+      def g(x):
+        out = f(x)
+        return jnp.square(jnp.sum(out))
+
+      out = jax.jit(jax.grad(g))(arr)
+      self.assertEqual(out.sharding, arr.sharding)
 
   @jtu.with_user_mesh((2, 2), ('x', 'y'))
   def test_select(self, mesh):
