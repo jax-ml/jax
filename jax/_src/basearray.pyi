@@ -18,6 +18,7 @@ from typing import Any, Protocol, Union, runtime_checkable
 import numpy as np
 
 from jax._src.sharding import Sharding
+from jax._src.partition_spec import PartitionSpec
 
 # TODO(jakevdp) de-duplicate this with the DTypeLike definition in typing.py.
 # We redefine these here to prevent circular imports.
@@ -278,7 +279,8 @@ class _IndexUpdateHelper:
 
 class _IndexUpdateRef:
   def get(self, indices_are_sorted: bool = False, unique_indices: bool = False,
-          mode: str | None = None, fill_value: StaticScalar | None = None) -> Array: ...
+          mode: str | None = None, fill_value: StaticScalar | None = None,
+          out_spec: PartitionSpec | None = None) -> Array: ...
   def set(self, values: Any,
           indices_are_sorted: bool = False, unique_indices: bool = False,
           mode: str | None = None, fill_value: StaticScalar | None = None) -> Array: ...

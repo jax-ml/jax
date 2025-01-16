@@ -6424,7 +6424,6 @@ def _iota_lower(ctx, *dyn_shape, dtype, shape, dimension, sharding):
     aval_out = aval_out.update(shape=_merge_dyn_shape(shape, dyn_shape))
   out = mlir.iota(ctx, aval_out, dimension=dimension)
   if config.sharding_in_types.value:
-    assert aval_out.sharding == sharding
     return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
   return [out]
 mlir.register_lowering(iota_p, _iota_lower)

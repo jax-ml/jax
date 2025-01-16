@@ -41,6 +41,8 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lib import xla_client as xc
 from jax._src.numpy import array_api_metadata
 from jax._src.numpy import lax_numpy
+from jax._src import mesh as mesh_lib
+from jax._src.pjit import auto_mode, PartitionSpec
 from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
 from jax._src.ops import scatter
@@ -763,7 +765,7 @@ class _IndexUpdateRef:
     return f"_IndexUpdateRef({self.array!r}, {self.index!r})"
 
   def get(self, *, indices_are_sorted=False, unique_indices=False,
-          mode=None, fill_value=None):
+          mode=None, fill_value=None, out_spec=None):
     """Equivalent to ``x[idx]``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -773,10 +775,15 @@ class _IndexUpdateRef:
 
     See :mod:`jax.ops` for details.
     """
-    return lax_numpy._rewriting_take(self.array, self.index,
-                                     indices_are_sorted=indices_are_sorted,
-                                     unique_indices=unique_indices, mode=mode,
-                                     fill_value=fill_value)
+    take = partial(lax_numpy._rewriting_take,
+                   indices_are_sorted=indices_are_sorted,
+                   unique_indices=unique_indices, mode=mode,
+                   fill_value=fill_value)
+    if out_spec is not None:
+      assert isinstance(out_spec, PartitionSpec)
+      take = auto_mode(take, axes=mesh_lib.get_abstract_mesh().axis_names,  # type: ignore
+                       out_specs=out_spec)
+    return take(self.array, self.index)
 
   def set(self, values, *, indices_are_sorted=False, unique_indices=False,
           mode=None):

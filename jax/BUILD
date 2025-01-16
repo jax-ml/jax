@@ -362,6 +362,7 @@ pytype_strict_library(
     srcs = ["_src/basearray.py"],
     pytype_srcs = ["_src/basearray.pyi"],
     deps = [
+        ":partition_spec",
         ":sharding",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
