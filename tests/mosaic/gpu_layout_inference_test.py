@@ -290,6 +290,44 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertSequenceEqual(add0.attributes["out_layouts"], [splat_layout])
     self.assertSequenceEqual(add1.attributes["out_layouts"], [strided_layout])
 
+  def test_infer_layout_propagates_func_layouts_to_ops(self):
+    add = None
+
+    def body(lhs, rhs):
+      nonlocal add
+      add = arith.AddFOp(lhs, rhs)
+
+    with ir.InsertionPoint(self.module.body):
+      shape = (32, 4)
+      ty = ir.VectorType.get(shape, ir.BF16Type.get())
+      func.FuncOp.from_py_func(ty, ty)(body)
+
+    [f] = self.module.body.operations
+    splat_layout = mgpu.to_splat_fragmented_layout_attr(
+        mgpu.WGSplatFragLayout(shape)
+    )
+    f.attributes["in_layouts"] = ir.ArrayAttr.get([splat_layout, splat_layout])
+    mgpu.infer_layout(self.module)
+
+    self.assertSequenceEqual(
+        add.attributes["in_layouts"], [splat_layout, splat_layout])
+    self.assertSequenceEqual(add.attributes["out_layouts"], [splat_layout])
+
+  def test_infer_layout_does_not_assign_default_layouts_to_func(self):
+
+    def body(lhs, rhs):
+      arith.AddFOp(lhs, rhs)
+
+    with ir.InsertionPoint(self.module.body):
+      shape = (32, 4)
+      ty = ir.VectorType.get(shape, ir.BF16Type.get())
+      func.FuncOp.from_py_func(ty, ty)(body)
+
+    [f] = self.module.body.operations
+    mgpu.infer_layout(self.module)
+    self.assertNotIn("in_layouts", f.attributes)
+    self.assertNotIn("out_layouts", f.attributes)
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

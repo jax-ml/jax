@@ -20,6 +20,7 @@ from typing import cast
 
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import vector
 
 from .fragmented_array import WGSplatFragLayout, WGStridedFragLayout
@@ -123,27 +124,38 @@ def _in_layout_for_operand(
   return layouts_lib.in_layouts(op)[operand_number]
 
 
-def _out_layout_for_result(
-    op: ir.OpView,
-    result: ir.Value,
-) -> ir.Attribute | None:
-  """Returns the layout for a specific result of the given operation if it is set.
+def _value_layout(value: ir.Value) -> ir.Attribute | None:
+  """Returns the layout for a given value as defined by its owner.
 
   Raises:
-    ValueError: If `result` is not a result of `op`, or if `result` is not a
-      Vector.
+    ValueError: If `result` is not a Vector.
   """
-  if not ir.VectorType.isinstance(result.type):
-    raise ValueError(f"{result} is not a vector.")
+  if not ir.VectorType.isinstance(value.type):
+    raise ValueError(f"{value} is not a vector.")
 
-  result_number = [
-      r for r in op.results if ir.VectorType.isinstance(r.type)
-  ].index(result)
+  owner = value.owner
+  if isinstance(owner, ir.Operation):
+    if not layouts_lib.has_out_layouts_set(owner):
+      return None
+    value_result_number = [
+        r for r in owner.results if ir.VectorType.isinstance(r.type)
+    ].index(value)
+    return layouts_lib.out_layouts(owner)[value_result_number]
 
-  if not layouts_lib.has_out_layouts_set(op):
-    return None
+  # Function block case, useful when attempting to derive layouts for ops
+  # depending on function parameters.
+  if isinstance(owner, ir.Block) and isinstance(owner.owner, func.FuncOp):
+    func_op = owner.owner
+    block = cast(ir.Block, owner)
+    if not layouts_lib.has_in_layouts_set(func_op):
+      return None
+    value_arg_number = [
+        r for r in block.arguments if ir.VectorType.isinstance(r.type)
+    ].index(value)
+    return layouts_lib.in_layouts(func_op)[value_arg_number]
 
-  return layouts_lib.out_layouts(op)[result_number]
+  raise NotImplementedError(
+      f"{owner} is not a function block nor an operation.")
 
 
 def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
@@ -175,11 +187,9 @@ def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
   # far down as possible, until since we may be able to propagate splat layouts
   # further down before requiring a relayout in that way.
   for operand in op.operands:
-    if not isinstance(
-        operand.owner, ir.Operation
-    ) or not ir.VectorType.isinstance(operand.type):
+    if not ir.VectorType.isinstance(operand.type):
       continue
-    if (layout := _out_layout_for_result(operand.owner, operand)) is not None:
+    if (layout := _value_layout(operand)) is not None:
       layouts.add(layout)
 
   # We only look at consumers if we haven't found a possible layout yet. This is
