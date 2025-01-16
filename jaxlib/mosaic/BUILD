@@ -60,6 +60,7 @@ cc_library(
     deps = [
         ":tpu_inc_gen",
         "//jaxlib:pass_boilerplate",
+        "//jaxlib/mosaic:serde",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/hash",
@@ -72,6 +73,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ControlFlowDialect",
+        "@llvm-project//mlir:DataLayoutInterfaces",
         "@llvm-project//mlir:Dialect",
         "@llvm-project//mlir:DialectUtils",
         "@llvm-project//mlir:FuncDialect",
@@ -253,5 +255,18 @@ filegroup(
     srcs = [
         "dialect/tpu/transforms/extensions/apply_vector_layout_extensions.cc",
         "dialect/tpu/transforms/extensions/infer_vector_layout_extensions.cc",
+    ],
+)
+
+cc_library(
+    name = "serde",
+    srcs = ["serde.cc"],
+    hdrs = ["serde.h"],
+    # compatible with libtpu
+    deps = [
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:DataLayoutInterfaces",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
     ],
 )
