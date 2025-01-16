@@ -122,6 +122,9 @@ jobs:
       - name: Enable RBE if building on Linux x86 or Windows x86
         if: contains(inputs.runner, 'linux-x86') || contains(inputs.runner, 'windows-x86')
         run: echo "JAXCI_BUILD_ARTIFACT_WITH_RBE=1" >> $GITHUB_ENV
+      - name: Enable Bazel remote cache (with writes enabled) if building on Linux Aarch64
+        if: contains(inputs.runner, 'linux-arm64')
+        run: echo "JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE=1" >> $GITHUB_ENV
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@main
