@@ -89,7 +89,7 @@ on:
     outputs:
       gcs_upload_uri:
         description: "GCS location prefix to where the artifacts were uploaded"
-        value: ${{ inputs.gcs_upload_uri }}
+        value: ${{ jobs.build-artifacts.outputs.gcs_upload_uri }}
 
 permissions:
   contents: read
@@ -113,6 +113,10 @@ jobs:
 
     name: Build ${{ inputs.artifact }} (${{ inputs.runner }}, Python ${{ inputs.python }}, clone main XLA=${{ inputs.clone_main_xla }})
 
+    # Map the job outputs to step outputs
+    outputs:
+      gcs_upload_uri: ${{ steps.store-gcs-upload-uri.outputs.gcs_upload_uri }}
+
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Enable RBE if building on Linux x86 or Windows x86
@@ -135,3 +139,7 @@ jobs:
           ${{ inputs.upload_artifacts_to_gcs &&  contains(inputs.runner, 'windows-x86') }}
         shell: cmd
         run:  gsutil -m cp -r "dist/*.whl" "${{ inputs.gcs_upload_uri }}"/
+      - name: Store the GCS upload URI as an output
+        id: store-gcs-upload-uri
+        if: ${{ inputs.upload_artifacts_to_gcs }}
+        run:  echo "gcs_upload_uri=${{ inputs.gcs_upload_uri }}" >> "$GITHUB_OUTPUT"
