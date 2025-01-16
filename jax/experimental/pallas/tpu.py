@@ -24,6 +24,7 @@ from jax._src.pallas.mosaic.core import TPUMemorySpace as TPUMemorySpace
 from jax._src.pallas.mosaic.core import TPUCompilerParams as TPUCompilerParams
 from jax._src.pallas.mosaic.core import runtime_assert_enabled as runtime_assert_enabled
 from jax._src.pallas.mosaic.core import _ENABLE_RUNTIME_ASSERT as enable_runtime_assert  # noqa: F401
+from jax._src.pallas.mosaic.helpers import sync_copy as sync_copy
 from jax._src.pallas.mosaic.lowering import LoweringException as LoweringException
 from jax._src.pallas.mosaic.pipeline import ARBITRARY as ARBITRARY
 from jax._src.pallas.mosaic.pipeline import BufferedRef as BufferedRef
