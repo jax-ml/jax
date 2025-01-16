@@ -27,7 +27,6 @@ from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import effects
 from jax._src import util
-from jax._src.callback import callback_batching_rule
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -35,8 +34,7 @@ from jax._src.layout import DeviceLocalLayout
 from jax._src.lib import jaxlib
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
-from jax._src.typing import (Array, ArrayLike, DeprecatedArg, DuckTypedArray,
-                             Shape)
+from jax._src.typing import Array, ArrayLike, DeprecatedArg, DuckTypedArray
 
 # TODO(dfm): Remove after 6 months or less because there aren't any offical
 # compatibility guarantees for jax.extend (see JEP 15856)
@@ -44,7 +42,6 @@ from jax._src.typing import (Array, ArrayLike, DeprecatedArg, DuckTypedArray,
 deprecations.register("jax-ffi-call-args")
 
 map, unsafe_map = util.safe_map, map
-FfiLayoutOptions = Sequence[int] | DeviceLocalLayout | None
 
 
 def register_ffi_target(
@@ -127,30 +124,13 @@ def include_dir() -> str:
   return os.path.join(jaxlib_dir, "include")
 
 
-def _aval_shape(aval: core.AbstractValue) -> Shape:
-  return () if aval is core.abstract_token else aval.shape  # pytype: disable=attribute-error
-
-
-def _convert_layout_for_lowering(
-    aval: core.AbstractValue, layout: FfiLayoutOptions = None) -> Sequence[int]:
-  """Convert a layout to the minor-to-major order used by the custom call API."""
-  if layout is None:
-    return tuple(reversed(range(len(_aval_shape(aval)))))
-  elif isinstance(layout, DeviceLocalLayout):
-    if layout._tiling is not None:
-      raise ValueError("The FFI does not support layouts with tiling")
-    return layout.major_to_minor[::-1]
-  else:
-    return tuple(layout)
-
-
 def ffi_lowering(
     call_target_name: str,
     *,
-    operand_layouts: Sequence[FfiLayoutOptions] | None = None,
-    result_layouts: Sequence[FfiLayoutOptions] | None = None,
+    operand_layouts: Sequence[mlir.FfiLayoutOptions] | None = None,
+    result_layouts: Sequence[mlir.FfiLayoutOptions] | None = None,
     backend_config: Mapping[str, ir.Attribute] | str | None = None,
-    **lowering_args: Any
+    **lowering_args: Any,
 ) -> mlir.LoweringRule:
   """Build a lowering rule for an foreign function interface (FFI) target.
 
@@ -180,41 +160,15 @@ def ffi_lowering(
   def _lowering(
     ctx: mlir.LoweringRuleContext, *operands: ir.Value, **params: Any
   ) -> Sequence[ir.Value | Sequence[ir.Value]]:
-    kwargs = dict(lowering_args)
-    kwargs.setdefault("api_version", 4)
-    if kwargs["api_version"] >= 4:
-      if backend_config is not None and not isinstance(backend_config, dict):
-        raise ValueError(
-            "When api_version > 4, backend_config must be a dictionary.")
-      kwargs["backend_config"] = dict(
-        backend_config or {}, **{k: mlir.ir_attribute(v) for k, v in params.items()})
-    else:
-      if params:
-        raise ValueError(
-            "The use of ffi_call attributes requires a custom call API version "
-            f"of at least 4; got api_version={kwargs['api_version']}.")
-      kwargs["backend_config"] = backend_config
-    if "result_types" not in kwargs:
-      kwargs["result_types"] = [mlir.aval_to_ir_type(aval) for aval in ctx.avals_out]
-    if operand_layouts is None:
-      kwargs["operand_layouts"] = map(_convert_layout_for_lowering, ctx.avals_in)
-    else:
-      kwargs["operand_layouts"] = [
-          _convert_layout_for_lowering(*args)
-          for args in zip(ctx.avals_in, operand_layouts)]
-    if result_layouts is None:
-      kwargs["result_layouts"] = map(_convert_layout_for_lowering, ctx.avals_out)
-    else:
-      kwargs["result_layouts"] = [
-          _convert_layout_for_lowering(*args)
-          for args in zip(ctx.avals_out, result_layouts)]
-    if "result_shapes" not in kwargs and not all(
-        core.is_constant_shape(_aval_shape(aval)) for aval in ctx.avals_out):
-      kwargs["result_shapes"] = [
-          mlir.shape_tensor(mlir.eval_dynamic_shape_as_ivals(ctx, _aval_shape(aval)))
-          for aval in ctx.avals_out]
+    result = mlir.build_ffi_lowering_function(
+        call_target_name,
+        operand_layouts=operand_layouts,
+        result_layouts=result_layouts,
+        backend_config=backend_config,
+        **lowering_args,
+    )(ctx, *operands, **params)
 
-    return mlir.custom_call(call_target_name, operands=operands, **kwargs).results  # type: ignore
+    return result.results  # type: ignore
 
   return _lowering
 
@@ -248,9 +202,9 @@ def _check_compatible_avals(a: core.AbstractValue, b: core.AbstractValue) -> boo
 
 def _convert_layouts_for_ffi_call(
     avals: Sequence[core.AbstractValue],
-    layouts: Sequence[FfiLayoutOptions]) -> tuple[Sequence[int], ...]:
+    layouts: Sequence[mlir.FfiLayoutOptions]) -> tuple[Sequence[int], ...]:
   return tuple(
-      _convert_layout_for_lowering(
+      mlir.convert_layout_for_lowering(
           aval,
           layout if layout is None or isinstance(layout, DeviceLocalLayout)
           else layout[::-1]
@@ -266,8 +220,10 @@ def ffi_call(
     *deprecated_args: ArrayLike,
     has_side_effect: bool = ...,
     vmap_method: str | None = ...,
-    input_layouts: Sequence[FfiLayoutOptions] | None = ...,
-    output_layouts: FfiLayoutOptions | Sequence[FfiLayoutOptions] | None = ...,
+    input_layouts: Sequence[mlir.FfiLayoutOptions] | None = ...,
+    output_layouts: (
+        mlir.FfiLayoutOptions | Sequence[mlir.FfiLayoutOptions] | None
+    ) = ...,
     input_output_aliases: dict[int, int] | None = ...,
     custom_call_api_version: int = ...,
     legacy_backend_config: str | None = ...,
@@ -284,8 +240,10 @@ def ffi_call(
     *deprecated_args: ArrayLike,
     has_side_effect: bool = ...,
     vmap_method: str | None = ...,
-    input_layouts: Sequence[FfiLayoutOptions] | None = ...,
-    output_layouts: FfiLayoutOptions | Sequence[FfiLayoutOptions] | None = ...,
+    input_layouts: Sequence[mlir.FfiLayoutOptions] | None = ...,
+    output_layouts: (
+        mlir.FfiLayoutOptions | Sequence[mlir.FfiLayoutOptions] | None
+    ) = ...,
     input_output_aliases: dict[int, int] | None = ...,
     custom_call_api_version: int = ...,
     legacy_backend_config: str | None = ...,
@@ -301,8 +259,10 @@ def ffi_call(
     *deprecated_args: ArrayLike,
     has_side_effect: bool = False,
     vmap_method: str | None = None,
-    input_layouts: Sequence[FfiLayoutOptions] | None = None,
-    output_layouts: FfiLayoutOptions | Sequence[FfiLayoutOptions] | None = None,
+    input_layouts: Sequence[mlir.FfiLayoutOptions] | None = None,
+    output_layouts: (
+        mlir.FfiLayoutOptions | Sequence[mlir.FfiLayoutOptions] | None
+    ) = None,
     input_output_aliases: dict[int, int] | None = None,
     custom_call_api_version: int = 4,
     legacy_backend_config: str | None = None,
@@ -368,7 +328,7 @@ def ffi_call(
     to execute the FFI handler. Any keyword arguments are passed as named
     attributes to the FFI handler using XLA's FFI interface.
   """
-  if not isinstance(vectorized, DeprecatedArg) and not vectorized is None:
+  if not isinstance(vectorized, DeprecatedArg) and vectorized is not None:
     deprecations.warn(
         "jax-callback-vectorized",
         "The vectorized argument of ffi_call is deprecated and setting "
@@ -387,7 +347,7 @@ def ffi_call(
         f"vmap_method must be on of the allowed methods {allowed_vmap_methods}, "
         f"but got: {vmap_method}")
 
-  output_layouts_: Sequence[FfiLayoutOptions] | None
+  output_layouts_: Sequence[mlir.FfiLayoutOptions] | None
   if isinstance(result_shape_dtypes, Sequence):
     output_layouts_ = output_layouts  # type: ignore
     multiple_results = True
@@ -406,7 +366,7 @@ def ffi_call(
     in_avals = [core.get_aval(x) for x in args]
 
     if input_layouts is None:
-      static_input_layouts = tuple(map(_convert_layout_for_lowering, in_avals))
+      static_input_layouts = tuple(map(mlir.convert_layout_for_lowering, in_avals))
     else:
       if len(input_layouts) != len(in_avals):
         raise ValueError(
@@ -415,7 +375,7 @@ def ffi_call(
       static_input_layouts = _convert_layouts_for_ffi_call(in_avals,
                                                            input_layouts)
     if output_layouts_ is None:
-      static_output_layouts = tuple(map(_convert_layout_for_lowering,
+      static_output_layouts = tuple(map(mlir.convert_layout_for_lowering,
                                         result_avals))
     else:
       if len(output_layouts_) != len(result_avals):
@@ -622,5 +582,5 @@ ffi_call_p.def_effectful_abstract_eval(ffi_call_abstract_eval)
 ad.primitive_jvps[ffi_call_p] = ffi_call_jvp
 ad.primitive_transposes[ffi_call_p] = ffi_call_transpose
 batching.primitive_batchers[ffi_call_p] = functools.partial(
-    callback_batching_rule, ffi_call_p)
+    batching.callback_batching_rule, ffi_call_p)
 mlir.register_lowering(ffi_call_p, ffi_call_lowering)

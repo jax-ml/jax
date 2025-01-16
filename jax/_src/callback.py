@@ -134,99 +134,13 @@ def pure_callback_transpose_rule(*args, **kwargs):
 ad.primitive_transposes[pure_callback_p] = pure_callback_transpose_rule
 
 
-def callback_batching_rule(
-    prim,
-    args,
-    dims,
-    *,
-    vectorized: bool | None | DeprecatedArg,
-    vmap_method: str | None,
-    result_avals: Sequence[core.ShapedArray],
-    **kwargs: Any,
-):
-  if isinstance(vectorized, DeprecatedArg) and vmap_method is None:
-    deprecations.warn(
-        "jax-callback-vectorized",
-        f"The default behavior of {prim.name} under vmap will soon "
-        "change. Currently, the default behavior is to generate a sequential "
-        "vmap (i.e. a loop), but in the future the default will be to raise "
-        "an error. To keep the current default, set vmap_method='sequential'.",
-        stacklevel=6)
-    vmap_method = "sequential"
-
-  axis_size, = {a.shape[d] for a, d in zip(args, dims)
-                if d is not batching.not_mapped}
-  new_args = [arg if dim is batching.not_mapped else
-              batching.moveaxis(arg, dim, 0) for arg, dim in zip(args, dims)]
-  batched_result_avals = tuple(
-      core.unmapped_aval(axis_size, 0, aval) for aval in result_avals)
-
-  # For FFI calls we must update the layouts. We handle the output layouts
-  # here, but the input layout updates depend on the vmap_method parameter.
-  if vmap_method != "sequential" and kwargs.get("output_layouts") is not None:
-    kwargs["output_layouts"] = tuple(
-        None if layout is None else tuple(n + 1 for n in layout) + (0,)
-        for layout in kwargs["output_layouts"])
-
-  if vmap_method == "legacy_vectorized":
-    # This method is kept to support the behavior that was previously exposed
-    # when using `vectorized=True`.
-    if kwargs.get("input_layouts") is not None:
-      kwargs["input_layouts"] = tuple(
-          layout if d is batching.not_mapped else
-          (None if layout is None else tuple(n + 1 for n in layout) + (0,))
-          for layout, d in zip(kwargs["input_layouts"], dims))
-    outvals = prim.bind(
-        *new_args,
-        vectorized=vectorized,
-        vmap_method=vmap_method,
-        result_avals=batched_result_avals,
-        **kwargs,
-    )
-  elif vmap_method == "expand_dims" or vmap_method == "broadcast_all":
-    size = axis_size if vmap_method == "broadcast_all" else 1
-    bcast_args = [
-        lax.broadcast(x, (size,)) if d is batching.not_mapped else x
-        for x, d in zip(new_args, dims)]
-    if kwargs.get("input_layouts") is not None:
-      kwargs["input_layouts"] = tuple(
-          None if layout is None else tuple(n + 1 for n in layout) + (0,)
-          for layout in kwargs["input_layouts"])
-    outvals = prim.bind(
-      *bcast_args,
-      vectorized=vectorized,
-      vmap_method=vmap_method,
-      result_avals=batched_result_avals,
-      **kwargs,
-    )
-  elif vmap_method == "sequential":
-    is_batched = [d is not batching.not_mapped for d in dims]
-    unbatched_args, batched_args = util.partition_list(is_batched, new_args)
-    def _batch_fun(batched_args):
-      merged_args = util.merge_lists(is_batched, unbatched_args, batched_args)
-      return prim.bind(
-          *merged_args,
-          result_avals=result_avals,
-          vectorized=vectorized,
-          vmap_method=vmap_method,
-          **kwargs,
-      )
-    outvals = lax_map(_batch_fun, batched_args)
-  else:
-    raise NotImplementedError(
-        f"vmap is only supported for the {prim.name} primitive when vmap_method "
-        "is one of 'sequential', 'expand_dims', 'broadcast_all', or "
-        "'legacy_vectorized'.")
-  return tuple(outvals), (0,) * len(outvals)
-
-
 batching.primitive_batchers[pure_callback_p] = functools.partial(
-    callback_batching_rule, pure_callback_p
+    batching.callback_batching_rule, pure_callback_p
 )
 
 
 def _callback_op_sharding(
-    axis_context, sharding: SingleDeviceSharding | None, avals_out
+    axis_context, sharding: SingleDeviceSharding | None, avals_out, platform
 ):
   if isinstance(axis_context, sharding_impls.SPMDAxisContext):
     # If we have fully manual sharding during lowering, that means the JAX
@@ -281,7 +195,13 @@ def _callback_op_sharding(
     # program has bulk array semantics, so we run the callback with a MAXIMAL
     # sharding and hence execute it only once on the full logical value).
     if config.use_shardy_partitioner.value:
-      op_sharding = sharding_impls.SdyArrayShardingList([
+      multiplier = 1
+      if len(avals_out) > 1 and platform != "tpu":
+        # For CPU and GPU, we need to have the same number of shardy annotations
+        # as the number of result ops. If there are no result ops, we need 1
+        # shardy annotation.
+        multiplier = max(multiplier, len(avals_out))
+      op_sharding = sharding_impls.SdyArrayShardingList(multiplier * [
           sharding_impls.SdyArraySharding(
               mesh_shape=(),
               dimension_shardings=[],
@@ -311,7 +231,11 @@ def pure_callback_lowering(
     )
 
   op_sharding = _callback_op_sharding(
-      ctx.module_context.axis_context, sharding, ctx.avals_out)
+      ctx.module_context.axis_context,
+      sharding,
+      ctx.avals_out,
+      ctx.module_context.platforms[0],
+  )
   result, _, _ = mlir.emit_python_callback(
       ctx,
       _callback,
@@ -591,7 +515,11 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
     )
 
   op_sharding = _callback_op_sharding(
-      ctx.module_context.axis_context, sharding, ctx.avals_out)
+      ctx.module_context.axis_context,
+      sharding,
+      ctx.avals_out,
+      ctx.module_context.platforms[0],
+  )
   if ordered:
     token = ctx.tokens_in.get(_OrderedIOEffect)
     result, token, _ = mlir.emit_python_callback(
