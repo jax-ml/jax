@@ -55,6 +55,10 @@ from jax._src.sharding_impls import ( NamedSharding,
     is_single_device_sharding)
 import numpy as np
 
+try:
+  import numpy.dtypes as np_dtypes  # pylint: disable=g-import-not-at-top
+except ImportError:
+  np_dtypes = None  # type: ignore
 
 JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"
 JAXPR_TO_MLIR_MODULE_EVENT = "/jax/core/compile/jaxpr_to_mlir_module_duration"
@@ -279,12 +283,16 @@ def _is_bint_axis_size(d: core.AxisSize) -> bool:
             type(d.aval.dtype) is core.bint)
   return False
 
-
 def check_arg(arg: Any):
-  if not (isinstance(arg, core.Tracer) or core.valid_jaxtype(arg)):
-    raise TypeError(f"Argument '{arg}' of type {type(arg)} is not a valid "
-                    "JAX type.")
-
+  if isinstance(arg, core.Tracer):
+    return
+  aval = core.abstractify(arg)
+  if (
+      hasattr(np_dtypes, "StringDType")
+      and hasattr(aval, "dtype")
+      and isinstance(aval.dtype, np_dtypes.StringDType)
+  ):
+    raise TypeError("StringDType arrays are not supported by jit")
 
 def jaxpr_replicas(jaxpr: core.Jaxpr) -> int:
   """The number of replicas needed for a jaxpr.
