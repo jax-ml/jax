@@ -36,6 +36,15 @@ def _make_ir_context():
   return context
 
 
+def _layout_to_attr(
+    layout: mgpu.WGSplatFragLayout | mgpu.WGStridedFragLayout,
+) -> ir.Attribute:
+  if isinstance(layout, mgpu.WGSplatFragLayout):
+    return mgpu.to_splat_fragmented_layout_attr(layout)
+  else:
+    return mgpu.to_strided_fragmented_layout_attr(layout)
+
+
 class LayoutInferenceTest(parameterized.TestCase):
 
   def setUp(self):
@@ -46,126 +55,68 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.enter_context(ir.Location.unknown())
     self.module = ir.Module.create()
 
-  def test_infer_layout_default(self):
+  def test_infer_strided_layout_default(self):
     shape = (16, 8)
     elt_type = ir.BF16Type.get()
+    add = None
+
+    def body(a, b):
+      nonlocal add
+      add = arith.AddFOp(a, b)
 
     with ir.InsertionPoint(self.module.body):
-      ab_type = ir.VectorType.get(shape, elt_type)
-      const_zero = ir.FloatAttr.get(elt_type, 0)
-      const_one = ir.FloatAttr.get(elt_type, 1)
-      a = arith.ConstantOp(
-          ab_type, ir.DenseElementsAttr.get_splat(ab_type, const_zero)
-      )
-      b = arith.ConstantOp(
-          ab_type, ir.DenseElementsAttr.get_splat(ab_type, const_one)
-      )
-      arith.addf(arith.addf(a, b), b)
+      ty = ir.VectorType.get(shape, elt_type)
+      func.FuncOp.from_py_func(ty, ty)(body)
 
     # Not setting any layouts on the module should default in ops having a
     # strided fragmented layout.
     mgpu.infer_layout(self.module)
 
     layout = mgpu.to_strided_fragmented_layout_attr(
-        mgpu.WGStridedFragLayout.from_shaped_type(ab_type)
+        mgpu.WGStridedFragLayout.from_shaped_type(ty)
     )
-    for op in self.module.body.operations:
-      self.assertIn("in_layouts", op.attributes)
-      self.assertIn("out_layouts", op.attributes)
 
-      self.assertSequenceEqual(
-          op.attributes["in_layouts"], [layout] * len(op.operands)
-      )
-      self.assertSequenceEqual(
-          op.attributes["out_layouts"], [layout] * len(op.results)
-      )
+    self.assertSequenceEqual(add.attributes["in_layouts"], [layout, layout])
+    self.assertSequenceEqual(add.attributes["out_layouts"], [layout])
 
-  def test_infer_splat_layout_for_pointwise_op(self):
-    shape = (32, 4)
-    elt_type = ir.BF16Type.get()
-    add0 = add1 = cst0 = cst1 = None
+  @parameterized.parameters(
+      mgpu.WGSplatFragLayout(shape=(32, 4)),
+      mgpu.WGStridedFragLayout(shape=(32, 4), vec_size=1),
+  )
+  def test_pointwise_op_propagates_argument_layouts(self, layout):
+    add = None
 
-    def body():
-      nonlocal add0, add1, cst0, cst1
-      ty = ir.VectorType.get(shape, elt_type)
-      zero = ir.FloatAttr.get(elt_type, 0)
-      one = ir.FloatAttr.get(elt_type, 1)
-      cst0 = arith.ConstantOp(ty, ir.DenseElementsAttr.get_splat(ty, zero))
-      cst1 = arith.ConstantOp(ty, ir.DenseElementsAttr.get_splat(ty, one))
-      add0 = arith.AddFOp(cst0, cst1)
-      add1 = arith.AddFOp(add0, cst1)
+    def body(lhs, rhs):
+      nonlocal add
+      add = arith.AddFOp(lhs, rhs)
 
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func()(body)
+      ty = ir.VectorType.get(layout.shape, ir.BF16Type.get())
+      func.FuncOp.from_py_func(ty, ty)(body)
 
-    layout = mgpu.to_splat_fragmented_layout_attr(mgpu.WGSplatFragLayout(shape))
-    add0.attributes["out_layouts"] = ir.ArrayAttr.get([layout])
+    [f] = self.module.body.operations
+    layout_attr = _layout_to_attr(layout)
+    f.attributes["in_layouts"] = ir.ArrayAttr.get([layout_attr, layout_attr])
+
     mgpu.infer_layout(self.module)
 
-    for op in [cst0, cst1, add0, add1]:
-      self.assertIn("in_layouts", op.attributes)
-      self.assertIn("out_layouts", op.attributes)
-
-    self.assertEmpty(cst0.attributes["in_layouts"])
-    self.assertEmpty(cst1.attributes["in_layouts"])
-    self.assertSequenceEqual(add0.attributes["in_layouts"], [layout, layout])
-    self.assertSequenceEqual(add1.attributes["in_layouts"], [layout, layout])
-
-    self.assertSequenceEqual(cst0.attributes["out_layouts"], [layout])
-    self.assertSequenceEqual(cst1.attributes["out_layouts"], [layout])
-    self.assertSequenceEqual(add0.attributes["out_layouts"], [layout])
-    self.assertSequenceEqual(add1.attributes["out_layouts"], [layout])
-
-  def test_infer_strided_layout_for_pointwise_op(self):
-    shape = (32, 4)
-    elt_type = ir.BF16Type.get()
-    add0 = add1 = cst0 = cst1 = None
-
-    def body():
-      nonlocal add0, add1, cst0, cst1
-      ty = ir.VectorType.get(shape, elt_type)
-      zero = ir.FloatAttr.get(elt_type, 0)
-      one = ir.FloatAttr.get(elt_type, 1)
-      cst0 = arith.ConstantOp(ty, ir.DenseElementsAttr.get_splat(ty, zero))
-      cst1 = arith.ConstantOp(ty, ir.DenseElementsAttr.get_splat(ty, one))
-      add0 = arith.AddFOp(cst0, cst1)
-      add1 = arith.AddFOp(add0, cst1)
-
-    with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func()(body)
-
-    layout = mgpu.to_strided_fragmented_layout_attr(
-        mgpu.WGStridedFragLayout(shape, vec_size=1)
+    self.assertSequenceEqual(
+        add.attributes["in_layouts"], [layout_attr, layout_attr]
     )
-    add0.attributes["out_layouts"] = ir.ArrayAttr.get([layout])
-    mgpu.infer_layout(self.module)
-
-    for op in [cst0, cst1, add0, add1]:
-      self.assertIn("in_layouts", op.attributes)
-      self.assertIn("out_layouts", op.attributes)
-
-    self.assertEmpty(cst0.attributes["in_layouts"])
-    self.assertEmpty(cst1.attributes["in_layouts"])
-    self.assertSequenceEqual(add0.attributes["in_layouts"], [layout, layout])
-    self.assertSequenceEqual(add1.attributes["in_layouts"], [layout, layout])
-
-    self.assertSequenceEqual(cst0.attributes["out_layouts"], [layout])
-    self.assertSequenceEqual(cst1.attributes["out_layouts"], [layout])
-    self.assertSequenceEqual(add0.attributes["out_layouts"], [layout])
-    self.assertSequenceEqual(add1.attributes["out_layouts"], [layout])
+    self.assertSequenceEqual(add.attributes["out_layouts"], [layout_attr])
 
   def test_infer_layout_traverses_ops_correctly(self):
     shape = (16, 8)
     elt_type = ir.BF16Type.get()
-    add_op = None
+    add = None
 
     def body(a, b):
       bool_type = ir.IntegerType.get_signless(1)
       cst_true = arith.constant(bool_type, ir.IntegerAttr.get(bool_type, 1))
       if_op = scf.IfOp(cst_true)
       with ir.InsertionPoint(if_op.then_block):
-        nonlocal add_op
-        add_op = arith.addf(a, b)
+        nonlocal add
+        add = arith.AddFOp(a, b)
         scf.yield_([])
 
     with ir.InsertionPoint(self.module.body):
@@ -174,8 +125,8 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     mgpu.infer_layout(self.module)
 
-    self.assertIn("in_layouts", add_op.owner.attributes)
-    self.assertIn("out_layouts", add_op.owner.attributes)
+    self.assertIn("in_layouts", add.attributes)
+    self.assertIn("out_layouts", add.attributes)
 
   def test_infer_layout_has_no_layout_for_non_vector_types(self):
     shape = (32, 4)
@@ -204,21 +155,18 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertEmpty(vector_store.attributes["out_layouts"])
 
   def test_infer_layout_picks_strided_layout_over_splat_layout(self):
-    shape = (32, 4)
-    elt_type = ir.BF16Type.get()
-    add0 = cst0 = cst1 = None
+    add = None
 
-    def body():
-      nonlocal add0, cst0, cst1
-      ty = ir.VectorType.get(shape, elt_type)
-      zero = ir.FloatAttr.get(elt_type, 0)
-      one = ir.FloatAttr.get(elt_type, 1)
-      cst0 = arith.ConstantOp(ty, ir.DenseElementsAttr.get_splat(ty, zero))
-      cst1 = arith.ConstantOp(ty, ir.DenseElementsAttr.get_splat(ty, one))
-      add0 = arith.AddFOp(cst0, cst1)
+    def body(lhs, rhs):
+      nonlocal add
+      add = arith.AddFOp(lhs, rhs)
 
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func()(body)
+      shape = (32, 4)
+      elt_type = ir.BF16Type.get()
+      ty = ir.VectorType.get(shape, elt_type)
+
+      f = func.FuncOp.from_py_func(ty, ty)(body).func_op
 
     splat_layout = mgpu.to_splat_fragmented_layout_attr(
         mgpu.WGSplatFragLayout(shape)
@@ -226,41 +174,31 @@ class LayoutInferenceTest(parameterized.TestCase):
     strided_layout = mgpu.to_strided_fragmented_layout_attr(
         mgpu.WGStridedFragLayout(shape, vec_size=1)
     )
-    cst0.attributes["out_layouts"] = ir.ArrayAttr.get([strided_layout])
-    cst1.attributes["out_layouts"] = ir.ArrayAttr.get([splat_layout])
-    mgpu.infer_layout(self.module)
 
-    for op in [cst0, cst1, add0]:
-      self.assertIn("in_layouts", op.attributes)
-      self.assertIn("out_layouts", op.attributes)
-
-    self.assertEmpty(cst0.attributes["in_layouts"])
-    self.assertEmpty(cst1.attributes["in_layouts"])
-    self.assertSequenceEqual(
-        add0.attributes["in_layouts"], [strided_layout, strided_layout]
+    f.attributes["in_layouts"] = ir.ArrayAttr.get(
+        [strided_layout, splat_layout]
     )
 
-    self.assertSequenceEqual(cst0.attributes["out_layouts"], [strided_layout])
-    self.assertSequenceEqual(cst1.attributes["out_layouts"], [splat_layout])
-    self.assertSequenceEqual(add0.attributes["out_layouts"], [strided_layout])
+    mgpu.infer_layout(self.module)
+
+    self.assertSequenceEqual(
+        add.attributes["in_layouts"], [strided_layout, strided_layout]
+    )
+    self.assertSequenceEqual(add.attributes["out_layouts"], [strided_layout])
 
   def test_infer_layout_preserves_splat_layouts_in_producers(self):
-    shape = (32, 4)
-    elt_type = ir.BF16Type.get()
-    add0 = add1 = cst0 = cst1 = None
+    add0 = add1 = None
 
-    def body():
-      nonlocal add0, add1, cst0, cst1
-      ty = ir.VectorType.get(shape, elt_type)
-      zero = ir.FloatAttr.get(elt_type, 0)
-      one = ir.FloatAttr.get(elt_type, 1)
-      cst0 = arith.ConstantOp(ty, ir.DenseElementsAttr.get_splat(ty, zero))
-      cst1 = arith.ConstantOp(ty, ir.DenseElementsAttr.get_splat(ty, one))
-      add0 = arith.AddFOp(cst0, cst1)
+    def body(lhs, rhs):
+      nonlocal add0, add1
+      add0 = arith.AddFOp(lhs, rhs)
       add1 = arith.AddFOp(add0, add0)
 
     with ir.InsertionPoint(self.module.body):
-      func.FuncOp.from_py_func()(body)
+      shape = (32, 4)
+      elt_type = ir.BF16Type.get()
+      ty = ir.VectorType.get(shape, elt_type)
+      f = func.FuncOp.from_py_func(ty, ty)(body).func_op
 
     splat_layout = mgpu.to_splat_fragmented_layout_attr(
         mgpu.WGSplatFragLayout(shape)
@@ -268,16 +206,10 @@ class LayoutInferenceTest(parameterized.TestCase):
     strided_layout = mgpu.to_strided_fragmented_layout_attr(
         mgpu.WGStridedFragLayout(shape, vec_size=1)
     )
-    add0.attributes["out_layouts"] = ir.ArrayAttr.get([splat_layout])
+    f.attributes["in_layouts"] = ir.ArrayAttr.get([splat_layout, splat_layout])
     add1.attributes["out_layouts"] = ir.ArrayAttr.get([strided_layout])
     mgpu.infer_layout(self.module)
 
-    for op in [cst0, cst1, add0, add1]:
-      self.assertIn("in_layouts", op.attributes)
-      self.assertIn("out_layouts", op.attributes)
-
-    self.assertEmpty(cst0.attributes["in_layouts"])
-    self.assertEmpty(cst1.attributes["in_layouts"])
     self.assertSequenceEqual(
         add0.attributes["in_layouts"], [splat_layout, splat_layout]
     )
@@ -285,8 +217,6 @@ class LayoutInferenceTest(parameterized.TestCase):
         add1.attributes["in_layouts"], [strided_layout, strided_layout]
     )
 
-    self.assertSequenceEqual(cst0.attributes["out_layouts"], [splat_layout])
-    self.assertSequenceEqual(cst1.attributes["out_layouts"], [splat_layout])
     self.assertSequenceEqual(add0.attributes["out_layouts"], [splat_layout])
     self.assertSequenceEqual(add1.attributes["out_layouts"], [strided_layout])
 
@@ -300,9 +230,8 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       shape = (32, 4)
       ty = ir.VectorType.get(shape, ir.BF16Type.get())
-      func.FuncOp.from_py_func(ty, ty)(body)
+      f = func.FuncOp.from_py_func(ty, ty)(body).func_op
 
-    [f] = self.module.body.operations
     splat_layout = mgpu.to_splat_fragmented_layout_attr(
         mgpu.WGSplatFragLayout(shape)
     )
@@ -321,9 +250,8 @@ class LayoutInferenceTest(parameterized.TestCase):
     with ir.InsertionPoint(self.module.body):
       shape = (32, 4)
       ty = ir.VectorType.get(shape, ir.BF16Type.get())
-      func.FuncOp.from_py_func(ty, ty)(body)
+      f = func.FuncOp.from_py_func(ty, ty)(body).func_op
 
-    [f] = self.module.body.operations
     mgpu.infer_layout(self.module)
     self.assertNotIn("in_layouts", f.attributes)
     self.assertNotIn("out_layouts", f.attributes)
