@@ -328,7 +328,8 @@ class VectorLayoutInferer {
           return failure();
         }
       } else if (mlir::tpu::extensions::canInferVectorLayout(any_op)) {
-        if (mlir::tpu::extensions::inferVectorLayout(any_op).failed()) {
+        if (mlir::tpu::extensions::inferVectorLayout(any_op, target_shape_)
+                .failed()) {
           return failure();
         }
       } else {

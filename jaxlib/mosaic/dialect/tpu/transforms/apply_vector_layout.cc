@@ -4683,9 +4683,8 @@ const llvm::StringMap<rule_type> &rules() {
         {vector::StoreOp::getOperationName(), vector_store_rule},
         {vector::TransposeOp::getOperationName(), vector_transpose_rule}};
 
-    llvm::StringMap<rule_type> extended_rules = mlir::tpu::extensions::rules();
-    for (auto &entry : extended_rules) {
-      rules->insert(&entry);
+    for (const auto &[name, rule] : mlir::tpu::extensions::rules()) {
+      rules->insert({name, rule});
     }
     return rules;
   }();
