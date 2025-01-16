@@ -693,10 +693,9 @@ NB_MODULE(_tpu_ext, m) {
   });
 
   m.def("apply_layout_op",
-        [](int hardware_generation, const MlirOperation c_op) {
+        [](MlirTpuApplyVectorLayoutContext ctx, const MlirOperation c_op) {
           DiagnosticCapture diag_capture(getDefaultContext());
-          MlirLogicalResult res =
-              mlirTpuApplyLayoutOp(hardware_generation, c_op, TARGET_SHAPE);
+          MlirLogicalResult res = mlirTpuApplyLayoutOp(ctx, c_op);
           if (mlirLogicalResultIsFailure(res)) {
             diag_capture.throwIfError();
             throw std::runtime_error("applyLayoutOp failed");
