@@ -1969,7 +1969,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         mgpu_dialect.async_load(
             source=a_gmem_ref,
             destination=a_smem_ref,
-            barrier=tma_barrier.as_dialect_barrier(),
+            barrier=tma_barrier.as_dialect_barrier_memref(),
             indices=[zero_i32, zero_i32],
             slice_lengths=shape,
             transforms=ir.ArrayAttr.get([]),
@@ -1979,7 +1979,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         mgpu_dialect.async_load(
             source=b_gmem_ref,
             destination=b_smem_ref,
-            barrier=tma_barrier.as_dialect_barrier(),
+            barrier=tma_barrier.as_dialect_barrier_memref(),
             indices=[zero_i32, zero_i32],
             slice_lengths=shape,
             transforms=ir.ArrayAttr.get([]),

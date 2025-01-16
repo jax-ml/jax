@@ -33,7 +33,7 @@ import numpy as np
 from .fragmented_array import FragmentedArray, WGStridedFragLayout
 from .launch_context import LaunchContext
 from .layouts import from_strided_fragmented_layout_attr, has_any_layout_set, is_strided_fragmented_layout, should_have_layout, to_strided_fragmented_layout_attr
-from .utils import BarrierRef, c, memref_ptr, ptr_as_memref, single_thread_predicate
+from .utils import BarrierRef, c, ptr_as_memref, single_thread_predicate
 
 # mypy: ignore-errors
 
@@ -238,18 +238,12 @@ def _vector_store_op_lowering_rule(
 def _mgpu_async_load_op_lowering_rule(
     launch_context: LaunchContext, load_op: mgpu.AsyncLoadOp
 ) -> Sequence[ir.Value]:
-  mem_space = gpu_address_space_to_nvptx(gpu.AddressSpace.Workgroup)
-
+  barrier = BarrierRef.from_dialect_barrier_memref(load_op.barrier)
   # TODO(dasenov): Add support for the remaining op properties.
   launch_context.async_copy(
       src_ref=load_op.source,
       dst_ref=load_op.destination,
-      barrier=BarrierRef(
-          base_address=memref_ptr(load_op.barrier, memory_space=mem_space),
-          offset=c(0, ir.IntegerType.get_signless(64)),
-          phases=None,
-          num_barriers=1,
-      ),
+      barrier=barrier,
       arrive=load_op.arrive,
       uniform=False,
   )

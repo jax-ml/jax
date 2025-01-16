@@ -749,16 +749,31 @@ class BarrierRef:
         ptr, self.base_address, [self.offset], [DYNAMIC32], i64
     )
 
-  def as_dialect_barrier(self) -> ir.Value:
-    if self.num_barriers > 1:
-      raise NotImplementedError(
-          f"Only BarrierRef with num_barriers=1 is suppored in the MLIR "
-          f"Mosaic GPU dialect, but got num_barriers={self.num_barriers}"
-      )
+  def as_dialect_barrier_memref(self) -> ir.Value:
+    shape = () if self.num_barriers == 1 else (self.num_barriers,)
     return ptr_as_memref(
         self.base_address,
-        ir.MemRefType.get((), ir.Type.parse("!mosaic_gpu.barrier")),
+        ir.MemRefType.get(shape, ir.Type.parse("!mosaic_gpu.barrier")),
         ptr_memory_space=3,
+    )
+
+  @classmethod
+  def from_dialect_barrier_memref(cls, barrier: ir.Value):
+    """Creates a BarrierRef from a memref of a dialect barrier."""
+    memref_type = ir.MemRefType(barrier.type)
+    if memref_type.rank > 1 or memref_type.element_type != ir.Type.parse(
+        "!mosaic_gpu.barrier"
+    ):
+      raise ValueError(
+          "Expected a memref with rank 0 or 1 and element type "
+          f"!mosaic_gpu.barrier, but got {barrier.type}"
+      )
+
+    return cls(
+        base_address=memref_ptr(barrier, memory_space=3),
+        offset=c(0, ir.IntegerType.get_signless(64)),
+        phases=None,
+        num_barriers=(1 if memref_type.rank == 0 else memref_type.shape[0]),
     )
 
 
