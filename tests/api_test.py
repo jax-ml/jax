@@ -8004,6 +8004,51 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     g(1.)  # doesn't crash
 
+  def test_dce(self):
+    @jax.custom_jvp
+    def f(x, y):
+      return jnp.sin(x), x + jnp.cos(y)
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, y = primals
+      dx, dy = tangents
+      return f(x, y), (2.0 * jnp.cos(x) * dx, 1.5 * dx - 0.5 * jnp.sin(y) * dy)
+
+    def check_jaxpr(jaxpr, used_outs, includes, excludes):
+      dce_jaxpr, _ = pe.dce_jaxpr(jaxpr, used_outs)
+      if not dce_jaxpr.eqns:
+        assert not includes
+        return
+      call_jaxpr = dce_jaxpr.eqns[0].params["call_jaxpr"]
+      for prim in includes:
+        assert any(eqn.primitive == prim for eqn in call_jaxpr.eqns)
+      for prim in excludes:
+        assert all(eqn.primitive != prim for eqn in call_jaxpr.eqns)
+
+    x, y = 0.1, -1.3
+    jaxpr = jax.make_jaxpr(f)(x, y).jaxpr
+    check_jaxpr(jaxpr, [True, True], [lax.sin_p, lax.cos_p], [])
+    check_jaxpr(jaxpr, [True, False], [lax.sin_p], [lax.cos_p])
+    check_jaxpr(jaxpr, [False, True], [lax.cos_p], [lax.sin_p])
+    check_jaxpr(jaxpr, [False, False], [], [lax.sin_p, lax.cos_p])
+
+    def dce_jaxpr_as_fun(jaxpr, used_outs):
+      jaxpr_, _ = pe.dce_jaxpr(jaxpr, used_outs)
+      fun = core.jaxpr_as_fun(pe.close_jaxpr(jaxpr_))
+      return lambda *args: fun(*args)[0]
+
+    f0 = dce_jaxpr_as_fun(jaxpr, [True, False])
+    f1 = dce_jaxpr_as_fun(jaxpr, [False, True])
+    self.assertAllClose(
+        api.jvp(f0, (x, y), (1.0, 0.0)), (f0(x, y), 2.0 * jnp.cos(x)))
+    self.assertAllClose(
+        api.jvp(f0, (x, y), (0.0, 1.0)), (f0(x, y), 0.0))
+    self.assertAllClose(
+        api.jvp(f1, (x, y), (1.0, 0.0)), (f1(x, y), 1.5))
+    self.assertAllClose(
+        api.jvp(f1, (x, y), (0.0, 1.0)), (f1(x, y), -0.5 * jnp.sin(y)))
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 
@@ -9604,6 +9649,51 @@ class CustomVJPTest(jtu.JaxTestCase):
     f.defvjp(f_fwd, f_bwd, optimize_remat=True)
     x, y = jnp.linspace(0.0, 1.0, 5), jnp.linspace(2.0, 5.0, 5)
     jax.jit(jax.vmap(jax.grad(f)))(x, y)  # Doesn't error
+
+  def test_dce(self):
+    @jax.custom_vjp
+    def f(x, y):
+      return jnp.sin(x), x + jnp.cos(y)
+
+    def f_fwd(x, y):
+      return f(x, y), (jnp.cos(x), jnp.sin(y))
+
+    def f_bwd(res, cts):
+      cos_x, sin_y = res
+      ct_a, ct_b = cts
+      return 2.0 * cos_x * ct_a + 1.5 * ct_b, -0.5 * sin_y * ct_b
+
+    f.defvjp(f_fwd, f_bwd)
+
+    def check_jaxpr(jaxpr, used_outs, includes, excludes):
+      dce_jaxpr, _ = pe.dce_jaxpr(jaxpr, used_outs)
+      if not dce_jaxpr.eqns:
+        assert not includes
+        return
+      call_jaxpr = dce_jaxpr.eqns[0].params["fun_jaxpr"]
+      for prim in includes:
+        assert any(eqn.primitive == prim for eqn in call_jaxpr.eqns)
+      for prim in excludes:
+        assert all(eqn.primitive != prim for eqn in call_jaxpr.eqns)
+
+    x, y = 0.1, -1.3
+    jaxpr = jax.make_jaxpr(f)(x, y).jaxpr
+    check_jaxpr(jaxpr, [True, True], [lax.sin_p, lax.cos_p], [])
+    check_jaxpr(jaxpr, [True, False], [lax.sin_p], [lax.cos_p])
+    check_jaxpr(jaxpr, [False, True], [lax.cos_p], [lax.sin_p])
+    check_jaxpr(jaxpr, [False, False], [], [lax.sin_p, lax.cos_p])
+
+    def dce_jaxpr_as_fun(jaxpr, used_outs):
+      jaxpr_, _ = pe.dce_jaxpr(jaxpr, used_outs)
+      fun = core.jaxpr_as_fun(pe.close_jaxpr(jaxpr_))
+      return lambda *args: fun(*args)[0]
+
+    f0 = dce_jaxpr_as_fun(jaxpr, [True, False])
+    f1 = dce_jaxpr_as_fun(jaxpr, [False, True])
+    self.assertAllClose(
+        api.grad(f0, argnums=(0, 1))(x, y), (2.0 * jnp.cos(x), 0.0))
+    self.assertAllClose(
+        api.grad(f1, argnums=(0, 1))(x, y), (1.5, -0.5 * jnp.sin(y)))
 
 
 def transpose_unary(f, x_example):
