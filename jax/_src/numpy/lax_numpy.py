@@ -12894,7 +12894,7 @@ def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
       observation.
 
   Returns:
-    A covariance matrix of shape ``(M, M)``.
+    A covariance matrix of shape ``(M, M)``, or a scalar with shape ``()`` if ``M = 1``.
 
   See also:
     - :func:`jax.numpy.corrcoef`: compute the correlation coefficient, a normalized
