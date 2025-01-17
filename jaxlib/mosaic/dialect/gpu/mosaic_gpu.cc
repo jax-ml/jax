@@ -231,12 +231,6 @@ void DeclareRuntimeFunctions(mlir::OpBuilder& builder) {
           builder.getFunctionType(
               TypeRange{ptr, ptr, i64, i64, ptr, ptr, i64, ptr}, TypeRange{}))
       .setVisibility(mlir::func::FuncOp::Visibility::Private);
-
-  builder
-      .create<mlir::func::FuncOp>(
-          builder.getUnknownLoc(), kRuntimeMemcpyAsyncH2DName,
-          builder.getFunctionType(TypeRange{ptr, ptr, i64, ptr}, TypeRange{}))
-      .setVisibility(mlir::func::FuncOp::Visibility::Private);
 }
 
 bool IsContiguous(mlir::MemRefType type) {

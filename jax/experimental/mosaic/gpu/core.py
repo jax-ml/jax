@@ -488,10 +488,6 @@ def _declare_runtime_functions():
   func.FuncOp(
       "mosaic_gpu_init_tma_desc", init_tma_desc_type, visibility="private"
   )
-  memcpy_async_type = ir.FunctionType.get([ptr_ty, ptr_ty, i64, ptr_ty], [])
-  func.FuncOp(
-      "mosaic_gpu_memcpy_async_h2d", memcpy_async_type, visibility="private"
-  )
 
 
 def as_gpu_kernel(
