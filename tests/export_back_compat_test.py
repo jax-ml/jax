@@ -71,7 +71,6 @@ from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib import cuda_versions
-from jax._src.lib import version as jaxlib_version
 
 config.parse_flags_with_absl()
 
@@ -650,14 +649,11 @@ class CompatTest(bctu.CompatTestBase):
 
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=check_schur_results)
-    # TODO(b/344892332): Remove the check after the compatibility period.
-    has_xla_ffi_support = jaxlib_version >= (0, 4, 37)
-    if has_xla_ffi_support:
-      with config.export_ignore_forward_compatibility(True):
-        # FFI Kernel test
-        data = self.load_testdata(cpu_schur_lapack_gees.data_2024_11_29[dtype_name])
-        self.run_one_test(func, data, rtol=rtol, atol=atol,
-                          check_results=check_schur_results)
+    with config.export_ignore_forward_compatibility(True):
+      # FFI Kernel test
+      data = self.load_testdata(cpu_schur_lapack_gees.data_2024_11_29[dtype_name])
+      self.run_one_test(func, data, rtol=rtol, atol=atol,
+                        check_results=check_schur_results)
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -746,14 +742,11 @@ class CompatTest(bctu.CompatTestBase):
 
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=check_triangular_solve_results)
-    # TODO(b/344892332): Remove the check after the compatibility period.
-    has_xla_ffi_support = jaxlib_version >= (0, 4, 37)
-    if has_xla_ffi_support:
-      with config.export_ignore_forward_compatibility(True):
-        # FFI Kernel test
-        data = self.load_testdata(cpu_triangular_solve_blas_trsm.data_2024_12_02[dtype_name])
-        self.run_one_test(func, data, rtol=rtol, atol=atol,
-                          check_results=check_triangular_solve_results)
+    with config.export_ignore_forward_compatibility(True):
+      # FFI Kernel test
+      data = self.load_testdata(cpu_triangular_solve_blas_trsm.data_2024_12_02[dtype_name])
+      self.run_one_test(func, data, rtol=rtol, atol=atol,
+                        check_results=check_triangular_solve_results)
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -808,23 +801,18 @@ class CompatTest(bctu.CompatTestBase):
         cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_09_03[dtype_name]
     )
     self.run_one_test(func, data, rtol=rtol, atol=atol)
-    # TODO(b/344892332): Remove the check after the compatibility period.
-    has_xla_ffi_support = jaxlib_version >= (0, 4, 37)
-    if has_xla_ffi_support:
-      with config.export_ignore_forward_compatibility(True):
-        # FFI Kernel test
-        data = self.load_testdata(
-            cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_12_01[dtype_name]
-        )
-        self.run_one_test(func, data, rtol=rtol, atol=atol)
+    with config.export_ignore_forward_compatibility(True):
+      # FFI Kernel test
+      data = self.load_testdata(
+          cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_12_01[dtype_name]
+      )
+      self.run_one_test(func, data, rtol=rtol, atol=atol)
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
   @jax.default_matmul_precision("float32")
   def test_cpu_tridiagonal_solve_lapack_gtsv(self, dtype_name):
-    if jtu.jaxlib_version() <= (0, 4, 38):
-      self.skipTest("Test requires a newer jaxlib version")
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 

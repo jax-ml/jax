@@ -268,8 +268,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   @jtu.run_on_devices("cpu", "gpu")
   def testEig(self, shape, dtype, compute_left_eigenvectors,
               compute_right_eigenvectors):
-    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     rng = jtu.rand_default(self.rng())
     n = shape[-1]
     args_maker = lambda: [rng(shape, dtype)]
@@ -312,8 +310,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testEigHandlesNanInputs(self, shape, dtype, compute_left_eigenvectors,
                               compute_right_eigenvectors):
     """Verifies that `eig` fails gracefully if given non-finite inputs."""
-    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     a = jnp.full(shape, jnp.nan, dtype)
     results = lax.linalg.eig(
         a, compute_left_eigenvectors=compute_left_eigenvectors,
@@ -331,8 +327,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # haven't checked, that might be because of perturbations causing the
     # ordering of eigenvalues to change, which will trip up check_grads. So we
     # just test on small-ish matrices.
-    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     a, = args_maker()
@@ -346,8 +340,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("cpu", "gpu")
   def testEigvals(self, shape, dtype):
-    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     a, = args_maker()
@@ -358,8 +350,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   @jtu.run_on_devices("cpu", "gpu")
   def testEigvalsInf(self):
     # https://github.com/jax-ml/jax/issues/2661
-    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     x = jnp.array([[jnp.inf]])
     self.assertTrue(jnp.all(jnp.isnan(jnp.linalg.eigvals(x))))
 
@@ -369,8 +359,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("cpu", "gpu")
   def testEigBatching(self, shape, dtype):
-    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     rng = jtu.rand_default(self.rng())
     shape = (10,) + shape
     args = rng(shape, dtype)
@@ -1697,8 +1685,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   )
   def testScipyQrModes(self, shape, dtype, mode, pivoting):
     is_not_cpu_test_device = not jtu.test_device_matches(["cpu"])
-    is_not_valid_jaxlib_version = jtu.jaxlib_version() <= (0, 4, 38)
-    if pivoting and (is_not_cpu_test_device or is_not_valid_jaxlib_version):
+    if pivoting and is_not_cpu_test_device:
       self.skipTest("Pivoting is only supported on CPU with jaxlib > 0.4.38")
     rng = jtu.rand_default(self.rng())
     jsp_func = partial(jax.scipy.linalg.qr, mode=mode, pivoting=pivoting)

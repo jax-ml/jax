@@ -272,8 +272,6 @@ class OpsTest(PallasBaseTest):
 
   @parameterized.product(dtype=[jnp.float32, jnp.bfloat16, jnp.int8])
   def test_cast_vector_to_mask(self, dtype):
-    if jtu.jaxlib_version() <= (0, 4, 39):
-      self.skipTest("Test requires non-32-bit selection support")
     shape = (128, 128)
     bitwidth = pallas_utils.dtype_bitwidth(dtype)
     if (

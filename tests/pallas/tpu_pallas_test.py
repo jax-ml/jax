@@ -1724,8 +1724,6 @@ class PallasCallTest(PallasBaseTest):
     np.testing.assert_array_equal(y, jnp.concatenate([x, x], axis=1))
 
   def test_masked_store(self):
-    if jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("Test requires masked store support")
     shape = (16, 256)
     mask_shape = (10, 130)
     mask_start = (4, 5)

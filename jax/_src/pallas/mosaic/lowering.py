@@ -42,7 +42,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import for_loop
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import func
@@ -1550,10 +1549,6 @@ def _masked_swap_lowering_rule(
     if mask is not None:
       raise NotImplementedError("masked swap with strided store")
     tpu.StridedStoreOp(val, ref, starts, strides)
-  elif jaxlib_version <= (0, 4, 35):
-    if mask is not None:
-      raise NotImplementedError("masked swap with vector store")
-    vector.StoreOp(val, ref, starts)
   else:
     tpu.VectorStoreOp(val, ref, starts, [], mask=mask)
   return result
