@@ -304,7 +304,11 @@ class Mesh(contextlib.ContextDecorator):
 
   @functools.cached_property
   def is_multi_process(self):
-    return self.devices.size != len(self.local_devices)
+    return len(self.process_ids) > 1
+
+  @functools.cached_property
+  def process_ids(self):
+    return {d.process_index for d in self.devices.flat}
 
   @property
   def local_mesh(self):

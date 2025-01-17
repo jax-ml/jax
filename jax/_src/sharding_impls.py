@@ -389,7 +389,8 @@ class NamedSharding(jsharding.Sharding):
                        '`jax.sharding.AbstractMesh`.')
     # Speed up `is_fully_addressable` since there is a high chance that the
     # mesh across multiple NamedSharding objects will be the same.
-    return not self.mesh.is_multi_process
+    return (not self.mesh.is_multi_process and 
+            next(iter(self.mesh.process_ids)) == xla_bridge.process_index())
 
   @property
   def addressable_devices(self) -> set[Device]:
