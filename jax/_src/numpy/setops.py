@@ -29,12 +29,11 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy.lax_numpy import (
-    append, arange, array, asarray, concatenate, diff,
-    empty, full_like, lexsort, moveaxis, nonzero, ones, ravel,
-    sort, where, zeros)
+    append, arange, concatenate, diff, empty, full, full_like, lexsort,
+    moveaxis, nonzero, ones, ravel, sort, where, zeros)
 from jax._src.numpy.reductions import any, cumsum
 from jax._src.numpy.ufuncs import isnan
-from jax._src.numpy.util import check_arraylike, promote_dtypes
+from jax._src.numpy.util import ensure_arraylike, promote_dtypes
 from jax._src.util import canonicalize_axis, set_module
 from jax._src.typing import Array, ArrayLike
 
@@ -47,7 +46,7 @@ _lax_const = lax_internal._const
 @partial(jit, static_argnames=('assume_unique', 'invert', 'method'))
 def _in1d(ar1: ArrayLike, ar2: ArrayLike, invert: bool,
           method='auto', assume_unique=False) -> Array:
-  check_arraylike("in1d", ar1, ar2)
+  ar1, ar2 = ensure_arraylike("in1d", ar1, ar2)
   arr1, arr2 = promote_dtypes(ar1, ar2)
   arr1, arr2 = arr1.ravel(), arr2.ravel()
   if arr1.size == 0 or arr2.size == 0:
@@ -156,18 +155,18 @@ def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
     >>> jit_setdiff1d(ar1, ar2, size=4, fill_value=0)
     Array([1, 2, 0, 0], dtype=int32)
   """
-  check_arraylike("setdiff1d", ar1, ar2)
+  arr1, arr2 = ensure_arraylike("setdiff1d", ar1, ar2)
   if size is None:
-    ar1 = core.concrete_or_error(None, ar1, "The error arose in setdiff1d()")
+    core.concrete_or_error(None, ar1, "The error arose in setdiff1d()")
   else:
     size = core.concrete_or_error(operator.index, size, "The error arose in setdiff1d()")
-  arr1 = asarray(ar1)
-  fill_value = asarray(0 if fill_value is None else fill_value, dtype=arr1.dtype)
+  fill_value = full_like(arr1, fill_value=(0 if fill_value is None else fill_value),
+                         shape=())
   if arr1.size == 0:
     return full_like(arr1, fill_value, shape=size or 0)
   if not assume_unique:
     arr1 = cast(Array, unique(arr1, size=size and arr1.size))
-  mask = _in1d(arr1, ar2, invert=True, assume_unique=assume_unique)
+  mask = _in1d(arr1, arr2, invert=True, assume_unique=assume_unique)
   if size is None:
     return arr1[mask]
   else:
@@ -240,7 +239,7 @@ def union1d(ar1: ArrayLike, ar2: ArrayLike,
     >>> jit_union1d(ar1, ar2, size=8, fill_value=0)
     Array([1, 2, 3, 4, 5, 6, 0, 0], dtype=int32)
   """
-  check_arraylike("union1d", ar1, ar2)
+  ar1, ar2 = ensure_arraylike("union1d", ar1, ar2)
   if size is None:
     ar1 = core.concrete_or_error(None, ar1, "The error arose in union1d()")
     ar2 = core.concrete_or_error(None, ar2, "The error arose in union1d()")
@@ -319,7 +318,7 @@ def setxor1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False, *,
     >>> jnp.setxor1d(ar1, ar2)
     Array([1, 2, 5, 6], dtype=int32)
   """
-  check_arraylike("setxor1d", ar1, ar2)
+  ar1, ar2 = ensure_arraylike("setxor1d", ar1, ar2)
   arr1, arr2 = promote_dtypes(ravel(ar1), ravel(ar2))
   del ar1, ar2
 
@@ -372,8 +371,8 @@ def _intersect1d_size(arr1: Array, arr2: Array, fill_value: ArrayLike | None, as
   #     values in arr1/arr2
   #   mask: boolean mask of relevant values in aux & aux_sorted_indices
   if assume_unique:
-    ind1, num_unique1 = arange(arr1.size), asarray(arr1.size)
-    ind2, num_unique2 = arange(arr2.size), asarray(arr2.size)
+    ind1, num_unique1 = arange(arr1.size), full((), arr1.size)
+    ind2, num_unique2 = arange(arr2.size), full((), arr2.size)
     arr = concatenate([arr1, arr2])
     aux, aux_sort_indices = lax.sort([arr, arange(arr.size)], is_stable=True, num_keys=1)
     mask = ones(arr.size, dtype=bool)
@@ -496,7 +495,7 @@ def intersect1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
      >>> jnp.all(intersection == ar2[ar2_indices])
      Array(True, dtype=bool)
   """
-  check_arraylike("intersect1d", ar1, ar2)
+  ar1, ar2 = ensure_arraylike("intersect1d", ar1, ar2)
   arr1, arr2 = promote_dtypes(ar1, ar2)
   del ar1, ar2
   arr1 = ravel(arr1)
@@ -559,7 +558,7 @@ def isin(element: ArrayLike, test_elements: ArrayLike,
     >>> jnp.isin(elements, test_elements)
     Array([ True, False,  True, False], dtype=bool)
   """
-  check_arraylike("isin", element, test_elements)
+  element, test_elements = ensure_arraylike("isin", element, test_elements)
   result = _in1d(element, test_elements, invert=invert,
                  method=method, assume_unique=assume_unique)
   return result.reshape(np.shape(element))
@@ -619,7 +618,7 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
     ind = nonzero(mask, size=size)[0]
   result = aux[ind] if aux.size else aux
   if size is not None and fill_value is not None:
-    fill_value = asarray(fill_value, dtype=result.dtype)
+    fill_value = lax_internal.asarray(fill_value).astype(result.dtype)
     if result.shape[0]:
       valid = lax.expand_dims(arange(size) < mask.sum(), tuple(range(1, result.ndim)))
       result = where(valid, result, fill_value)
@@ -650,7 +649,7 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
         idx = idx.at[1:].set(where(idx[1:], idx[1:], mask.size))
       ret += (diff(idx),)
     elif ar.shape[axis]:
-      ret += (array([ar.shape[axis]], dtype=dtypes.canonicalize_dtype(dtypes.int_)),)
+      ret += (full((1,), ar.shape[axis], dtype=dtypes.canonicalize_dtype(dtypes.int_)),)
     else:
       ret += (empty(0, dtype=int),)
   if return_true_size:
@@ -829,14 +828,13 @@ def unique(ar: ArrayLike, return_index: bool = False, return_inverse: bool = Fal
     >>> print(counts)
     [2 1]
   """
-  check_arraylike("unique", ar)
+  arr = ensure_arraylike("unique", ar)
   if size is None:
-    ar = core.concrete_or_error(None, ar,
+    arr = core.concrete_or_error(None, arr,
         "The error arose for the first argument of jnp.unique(). " + UNIQUE_SIZE_HINT)
   else:
     size = core.concrete_or_error(operator.index, size,
          "The error arose for the size argument of jnp.unique(). " + UNIQUE_SIZE_HINT)
-  arr = asarray(ar)
   arr_shape = arr.shape
   if axis is None:
     axis_int: int = 0
@@ -947,7 +945,7 @@ def unique_all(x: ArrayLike, /, *, size: int | None = None,
 
     For examples of the ``size`` and ``fill_value`` arguments, see :func:`jax.numpy.unique`.
   """
-  check_arraylike("unique_all", x)
+  x = ensure_arraylike("unique_all", x)
   values, indices, inverse_indices, counts = unique(
     x, return_index=True, return_inverse=True, return_counts=True, equal_nan=False,
     size=size, fill_value=fill_value)
@@ -1009,7 +1007,7 @@ def unique_counts(x: ArrayLike, /, *, size: int | None = None,
 
     For examples of the ``size`` and ``fill_value`` arguments, see :func:`jax.numpy.unique`.
   """
-  check_arraylike("unique_counts", x)
+  x = ensure_arraylike("unique_counts", x)
   values, counts = unique(x, return_counts=True, equal_nan=False,
                           size=size, fill_value=fill_value)
   return _UniqueCountsResult(values=values, counts=counts)
@@ -1075,7 +1073,7 @@ def unique_inverse(x: ArrayLike, /, *, size: int | None = None,
 
     For examples of the ``size`` and ``fill_value`` arguments, see :func:`jax.numpy.unique`.
   """
-  check_arraylike("unique_inverse", x)
+  x = ensure_arraylike("unique_inverse", x)
   values, inverse_indices = unique(x, return_inverse=True, equal_nan=False,
                                    size=size, fill_value=fill_value)
   return _UniqueInverseResult(values=values, inverse_indices=inverse_indices)
@@ -1119,5 +1117,5 @@ def unique_values(x: ArrayLike, /, *, size: int | None = None,
 
     For examples of the ``size`` and ``fill_value`` arguments, see :func:`jax.numpy.unique`.
   """
-  check_arraylike("unique_values", x)
+  x = ensure_arraylike("unique_values", x)
   return cast(Array, unique(x, equal_nan=False, size=size, fill_value=fill_value))
