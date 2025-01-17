@@ -32,8 +32,6 @@ from jax._src import path as pathlib
 from jax._src import profiler
 from jax._src import traceback_util
 from jax._src.interpreters import mlir
-from jax._src.lib import version as jaxlib_version
-from jax._src.lib import xla_extension_version  # pylint: disable=g-importing-member
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 import numpy as np
@@ -199,10 +197,7 @@ def get_compile_options(
     logger.debug("Explicitly disabling command buffer scheduling for AutoPGLE.")
     if env_options_overrides is None:
       env_options_overrides = {}
-    if xla_extension_version > 302:
-      env_options_overrides['xla_gpu_enable_command_buffer'] = ''
-    else:
-      env_options_overrides['xla_gpu_graph_min_graph_size'] = '100000'
+    env_options_overrides['xla_gpu_enable_command_buffer'] = ''
 
   if env_options_overrides is not None:
     # Some overrides are passed directly on build_options.
@@ -258,7 +253,7 @@ def get_compile_options(
   debug_options.xla_detailed_logging = detailed_logging
 
   # If persistent cache is enabled, also enable additional XLA caching features.
-  if compilation_cache.is_persistent_cache_enabled() and jaxlib_version > (0, 4, 35):
+  if compilation_cache.is_persistent_cache_enabled():
     # compilation_cache_dir can't be None here, but the type checker is a bit
     # strict.
     path = pathlib.Path(config.compilation_cache_dir.value or "")

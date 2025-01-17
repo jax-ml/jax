@@ -48,7 +48,6 @@ import jax.numpy as jnp
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax.experimental.shard_map import shard_map
 
-from jax._src.lib import xla_extension_version  # pylint: disable=g-importing-member
 
 config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
@@ -2170,8 +2169,6 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(f(), np.arange(1, dtype=np.int32).reshape(-1, 1))
 
   def test_partial_auto_ppermute(self):
-    if xla_extension_version < 302:
-      self.skipTest('minimum xla extension version 302')
     if config.use_shardy_partitioner.value:
       self.skipTest('Shardy does not support full-to-shard.')
 

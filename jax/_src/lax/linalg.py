@@ -47,7 +47,6 @@ from jax._src.lax.lax import (
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
 from jax._src.lib import lapack
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -1364,10 +1363,8 @@ def _triangular_solve_cpu_lower(
   if len(a_aval.shape) == 2 and np.dtype(a_aval.dtype) in _cpu_lapack_types:
     alpha = mlir.ir_constant(np.array(1, dtype=a_aval.dtype))
     b_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, b_aval.shape)
-    # TODO(b/344892332): Remove the conditional after the compatibility period.
-    ctx_args = (ctx,) if jaxlib_version >= (0, 4, 37) else ()
     return lapack.trsm_hlo(
-        *ctx_args, a_aval.dtype, alpha,
+        ctx, a_aval.dtype, alpha,
         a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal,
         b_shape_vals=b_shape_vals)
   else:
@@ -2540,9 +2537,6 @@ def _tridiagonal_solve_gpu_lowering(lowering, ctx, dl, d, du, b):
 
 
 def _tridiagonal_solve_cpu_lowering(ctx, dl, d, du, b, **kwargs):
-  if jaxlib_version <= (0, 4, 38):
-    rule = mlir.lower_fun(_tridiagonal_solve_jax, multiple_results=False)
-    return rule(ctx, dl, d, du, b, **kwargs)
   b_aval = ctx.avals_in[-1]
   batch_dims = b_aval.shape[:-2]
   target_name = lapack.prepare_lapack_call("gtsv_ffi", b_aval.dtype)
@@ -2755,13 +2749,12 @@ def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
 
   a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
   # TODO(b/344892332): Remove the conditional after the compatibility period.
-  ctx_args = (ctx,) if jaxlib_version >= (0, 4, 37) else ()
-  gees_result = lapack.gees_hlo(*ctx_args, operand_aval.dtype, operand,
+  gees_result = lapack.gees_hlo(ctx, operand_aval.dtype, operand,
                                 jobvs=compute_schur_vectors,
                                 sort=sort_eig_vals,
                                 select=select_callable,
                                 a_shape_vals=a_shape_vals)
-  if jaxlib_version >= (0, 4, 37) and not ctx.is_forward_compat():
+  if not ctx.is_forward_compat():
     schur_form, schur_vectors, _eig_vals, _selected_eig_vals, info = gees_result
   else:
     # Number of return values depends on value of sort_eig_vals.

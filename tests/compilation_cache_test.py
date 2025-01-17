@@ -531,8 +531,6 @@ class CompilationCacheTest(CompilationCacheTestCase):
         executable.fingerprint, deserialized_executable.fingerprint)
 
   def test_persistent_cache_enable_xla_caches(self):
-    if jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("Test requires AutotuneCacheMode bindings")
     s = os.sep
     with config.compilation_cache_dir("jax-cache"):
       with config.persistent_cache_enable_xla_caches("none"):
@@ -603,8 +601,6 @@ class CompilationCacheDisabledTest(CompilationCacheTestCase):
       self.assertEqual(count_after_second_use, count_after_first_use)
 
   def test_persistent_cache_enable_xla_caches_disabled(self):
-    if jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("Test requires AutotuneCacheMode bindings")
     with config.enable_compilation_cache(False):
       compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1

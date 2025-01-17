@@ -31,7 +31,6 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.mesh import Mesh
 from jax._src.partition_spec import PartitionSpec as P
@@ -69,8 +68,7 @@ class CacheKeyTest(jtu.JaxTestCase):
     debug_options.xla_dump_hlo_as_long_text = True
     debug_options.xla_dump_disable_metadata = True
     debug_options.xla_dump_hlo_pipeline_re = "xyzzy"
-    if jaxlib_version > (0, 4, 35):
-      debug_options.xla_gpu_experimental_autotune_cache_mode = 2
+    debug_options.xla_gpu_experimental_autotune_cache_mode = 2
     hash2 = self.get_hashed_value(
         cache_key._hash_serialized_compile_options, compile_options
     )

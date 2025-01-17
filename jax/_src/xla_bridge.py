@@ -277,21 +277,13 @@ def make_cpu_client(
                         f"{CPU_COLLECTIVES_IMPLEMENTATIONS}.")
 
   num_devices = NUM_CPU_DEVICES.value if NUM_CPU_DEVICES.value >= 0 else None
-  if xla_client._version < 303 and num_devices is not None:
-    xla_flags = os.getenv("XLA_FLAGS") or ""
-    os.environ["XLA_FLAGS"] = (
-        f"{xla_flags} --xla_force_host_platform_device_count={num_devices}"
-    )
-    num_devices = None
-  # TODO(phawkins): pass num_devices directly when version 303 is the minimum.
-  kwargs = {} if num_devices is None else {"num_devices": num_devices}
   return xla_client.make_cpu_client(
     asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
     distributed_client=distributed.global_state.client,
     node_id=distributed.global_state.process_id,
     num_nodes=distributed.global_state.num_processes,
     collectives=collectives,
-    **kwargs,
+    num_devices=num_devices,
   )
 
 
