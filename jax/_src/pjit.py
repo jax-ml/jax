@@ -2670,57 +2670,85 @@ def _sharding_constraint_batcher(
 batching.fancy_primitive_batchers[sharding_constraint_p] = _sharding_constraint_batcher
 batching.skippable_batchers[sharding_constraint_p] = lambda _: ()
 
-# -------------------- sharding_cast ---------------------------
+# -------------------- mesh_cast ---------------------------
 
-def sharding_cast(xs, shardings):
-  if isinstance(shardings, NamedSharding):
+# TODO(yashkatariya): Make shardings optional.
+def mesh_cast(xs, out_shardings):
+  if isinstance(out_shardings, (NamedSharding, PartitionSpec)):
     return tree_map(
-        lambda x: sharding_cast_p.bind(
+        lambda x: mesh_cast_p.bind(
             x, src_sharding=x.sharding, dst_sharding=canonicalize_sharding(
-                shardings, check_mesh_consistency=False)),
-        xs)
+                out_shardings, check_mesh_consistency=False)), xs)
 
   x_flat, treedef = tree_flatten(xs)
-  shardings_flat = flatten_axes("sharding_cast shardings", treedef, shardings)
+  shardings_flat = flatten_axes("mesh_cast shardings", treedef, out_shardings)
   out_flat = [
-      sharding_cast_p.bind(
+      mesh_cast_p.bind(
           x, src_sharding=x.sharding,
           dst_sharding=canonicalize_sharding(s, check_mesh_consistency=False))
       for x, s in safe_zip(x_flat, shardings_flat)
   ]
   return tree_unflatten(treedef, out_flat)
 
-sharding_cast_p = core.Primitive('sharding_cast')
-def _sharding_cast_abstract_eval(aval, src_sharding, dst_sharding):
+mesh_cast_p = core.Primitive('mesh_cast')
+def _mesh_cast_abstract_eval(aval, src_sharding, dst_sharding):
   if src_sharding.mesh.shape_tuple != dst_sharding.mesh.shape_tuple:
     raise ValueError(
         f'Mesh shape of the input {src_sharding.mesh.shape_tuple} does not'
         ' match the mesh shape of the target sharding'
         f' {dst_sharding.mesh.shape_tuple} for shape {aval.str_short()}')
+  if src_sharding.mesh.axis_types == dst_sharding.mesh.axis_types:
+    raise ValueError(
+        'mesh_cast should only be used when AxisTypes changes between the'
+        ' input mesh and the target mesh. Got src'
+        f' axis_types={src_sharding.mesh.axis_types} and dst'
+        f' axis_types={dst_sharding.mesh.axis_types}. To reshard between the'
+        ' same mesh, use `jax.sharding.reshard` instead?')
+  if len(src_sharding.spec) != len(dst_sharding.spec):
+    raise ValueError(
+        'Length of source sharding spec should be equal to destination'
+        f' sharding spec. Got source spec={src_sharding.spec} and destination'
+        f' spec={dst_sharding.spec}')
+  if src_sharding.mesh._any_axis_visible and dst_sharding.mesh._any_axis_visible:
+    for s, d in safe_zip(src_sharding.spec, dst_sharding.spec):
+      if s is None and d is None:
+        continue
+      if s is None and d is not None:
+        assert (src_sharding.mesh._name_to_type[d] == mesh_lib.AxisTypes.Hidden
+                and dst_sharding.mesh._name_to_type[d] == mesh_lib.AxisTypes.Visible)
+        continue
+      if s is not None and d is None:
+        assert (src_sharding.mesh._name_to_type[s] == mesh_lib.AxisTypes.Visible
+                and dst_sharding.mesh._name_to_type[s] == mesh_lib.AxisTypes.Hidden)
+        continue
+      if d != s:
+        raise ValueError(
+            'Explicit data movement in mesh_cast is not allowed. Got src spec:'
+            f' {s} and dst spec: {d}')
   return aval.update(sharding=dst_sharding)
-sharding_cast_p.def_abstract_eval(_sharding_cast_abstract_eval)
+mesh_cast_p.def_abstract_eval(_mesh_cast_abstract_eval)
 
-def _sharding_cast_impl(x, src_sharding, dst_sharding):
-  return dispatch.apply_primitive(sharding_cast_p, x, src_sharding=src_sharding,
+def _mesh_cast_impl(x, src_sharding, dst_sharding):
+  return dispatch.apply_primitive(mesh_cast_p, x, src_sharding=src_sharding,
                                   dst_sharding=dst_sharding)
-sharding_cast_p.def_impl(_sharding_cast_impl)
+mesh_cast_p.def_impl(_mesh_cast_impl)
 
-def _sharding_cast_transpose_rule(ct, _, src_sharding, dst_sharding):
-  return [sharding_cast_p.bind(ct, src_sharding=dst_sharding,
+def _mesh_cast_transpose_rule(ct, _, src_sharding, dst_sharding):
+  return [mesh_cast_p.bind(ct, src_sharding=dst_sharding,
                                dst_sharding=src_sharding)]
-ad.deflinear2(sharding_cast_p, _sharding_cast_transpose_rule)
+ad.deflinear2(mesh_cast_p, _mesh_cast_transpose_rule)
 
-def _sharding_cast_hlo_lowering(ctx, x_node, *, src_sharding, dst_sharding):
+def _mesh_cast_hlo_lowering(ctx, x_node, *, src_sharding, dst_sharding):
   aval, = ctx.avals_in
   aval_out, = ctx.avals_out
   proto = (dst_sharding._to_sdy_sharding(aval.ndim)
            if config.use_shardy_partitioner.value else
            dst_sharding._to_xla_hlo_sharding(aval.ndim).to_proto())
   return [mlir.lower_sharding_under_shit(ctx, x_node, aval_out, proto)]
-mlir.register_lowering(sharding_cast_p, _sharding_cast_hlo_lowering)
+mlir.register_lowering(mesh_cast_p, _mesh_cast_hlo_lowering)
 
 # TODO(yashkatariya): Comment this in after vmap ShiT tests are added.
-# def _sharding_cast_batcher(axis_data, vals_in, dims_in, src_sharding,
+# def _mesh_cast_batcher(axis_data, vals_in, dims_in, src_sharding,
 #                            dst_sharding):
 #   if axis_data.spmd_name is not None:
 #     used = {n for ns in dst_sharding.spec
@@ -2728,18 +2756,18 @@ mlir.register_lowering(sharding_cast_p, _sharding_cast_hlo_lowering)
 #     if set(axis_data.spmd_name) & used:
 #       raise ValueError(
 #           f'vmap spmd_axis_name {axis_data.spmd_name} cannot '
-#           f'appear in sharding_cast spec, but got spec {dst_sharding.spec}')
+#           f'appear in mesh_cast spec, but got spec {dst_sharding.spec}')
 #   x, = vals_in
 #   d, = dims_in
 
 #   val = None if axis_data.spmd_name is None else axis_data.spmd_name
 #   new_spec = PartitionSpec(*util.tuple_insert(dst_sharding.spec, d, val))
 #   vmapped_dst_sharding = NamedSharding(dst_sharding.mesh, new_spec)
-#   y = sharding_cast_p.bind(x, src_sharding=src_sharding,
+#   y = mesh_cast_p.bind(x, src_sharding=src_sharding,
 #                            dst_sharding=vmapped_dst_sharding)
 #   return y, d
-# batching.fancy_primitive_batchers[sharding_cast_p] = _sharding_cast_batcher
-# batching.skippable_batchers[sharding_cast_p] = lambda _: ()
+# batching.fancy_primitive_batchers[mesh_cast_p] = _mesh_cast_batcher
+# batching.skippable_batchers[mesh_cast_p] = lambda _: ()
 
 # -------------------- auto and user mode -------------------------
 
@@ -2760,9 +2788,9 @@ def hidden_mode(fun, *, axes: str | tuple[str, ...], out_specs):
     with mesh_lib.set_abstract_mesh(new_mesh):
       in_specs = tree_map(lambda a: core.modify_spec_for_hidden(
           a.sharding.spec, new_mesh), args)
-      args = sharding_cast(args, in_specs)
+      args = mesh_cast(args, in_specs)
       out = fun(*args, **kwargs)
-    return sharding_cast(out, out_specs)
+    return mesh_cast(out, out_specs)
   return decorator
 
 
@@ -2777,11 +2805,11 @@ def visible_mode(fun, *, axes: str | tuple[str, ...], in_specs):
   new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Visible)
   def decorator(*args, **kwargs):
     with mesh_lib.set_abstract_mesh(new_mesh):
-      args = sharding_cast(args, in_specs)
+      args = mesh_cast(args, in_specs)
       out = fun(*args, **kwargs)
     out_specs = tree_map(lambda o: core.modify_spec_for_hidden(
         o.sharding.spec, mesh_lib.get_abstract_mesh()), out)
-    return sharding_cast(out, out_specs)
+    return mesh_cast(out, out_specs)
   return decorator
 
 @contextlib.contextmanager

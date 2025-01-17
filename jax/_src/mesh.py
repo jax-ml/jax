@@ -483,6 +483,10 @@ class AbstractMesh:
   def _any_axis_hidden(self) -> bool:
     return any(t == AxisTypes.Hidden for t in self.axis_types.keys())
 
+  @functools.cached_property
+  def _any_axis_visible(self) -> bool:
+    return any(t == AxisTypes.Visible for t in self.axis_types.keys())
+
   @property
   def devices(self):
     _raise_value_error("devices")
