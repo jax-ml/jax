@@ -2771,10 +2771,13 @@ mlir.register_lowering(mesh_cast_p, _mesh_cast_hlo_lowering)
 
 # -------------------- auto and user mode -------------------------
 
-def _get_new_mesh(axes: str | tuple[str, ...], axis_type: mesh_lib.AxisTypes):
+def _get_new_mesh(axes: str | tuple[str, ...] | None,
+                  axis_type: mesh_lib.AxisTypes):
+  cur_mesh = mesh_lib.get_abstract_mesh()
+  if axes is None:
+    axes = cur_mesh.axis_names  # type: ignore
   if not isinstance(axes, tuple):
     axes = (axes,)
-  cur_mesh = mesh_lib.get_abstract_mesh()
   for a in axes:
     if cur_mesh._name_to_type[a] == axis_type:  # type: ignore
       raise ValueError(f'Axes {a} cannot be casted to type {axis_type} since '
@@ -2782,7 +2785,8 @@ def _get_new_mesh(axes: str | tuple[str, ...], axis_type: mesh_lib.AxisTypes):
   new_mesh = cur_mesh.update_axis_types({axis_type: axes})  # type: ignore
   return new_mesh
 
-def hidden_mode(fun, *, axes: str | tuple[str, ...], out_specs):
+def hidden_axes(fun, *, axes: str | tuple[str, ...] | None = None,
+                out_shardings):
   new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Hidden)
   def decorator(*args, **kwargs):
     with mesh_lib.set_abstract_mesh(new_mesh):
@@ -2790,22 +2794,22 @@ def hidden_mode(fun, *, axes: str | tuple[str, ...], out_specs):
           a.sharding.spec, new_mesh), args)
       args = mesh_cast(args, in_specs)
       out = fun(*args, **kwargs)
-    return mesh_cast(out, out_specs)
+    return mesh_cast(out, out_shardings)
   return decorator
 
-
 @contextlib.contextmanager
-def hidden_axes(axes: str | tuple[str, ...]):
+def use_hidden_axes(*axes):
   new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Hidden)
   with mesh_lib.set_abstract_mesh(new_mesh):
     yield
 
 
-def visible_mode(fun, *, axes: str | tuple[str, ...], in_specs):
+def visible_axes(fun, *, axes: str | tuple[str, ...] | None = None,
+                 in_shardings):
   new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Visible)
   def decorator(*args, **kwargs):
     with mesh_lib.set_abstract_mesh(new_mesh):
-      args = mesh_cast(args, in_specs)
+      args = mesh_cast(args, in_shardings)
       out = fun(*args, **kwargs)
     out_specs = tree_map(lambda o: core.modify_spec_for_hidden(
         o.sharding.spec, mesh_lib.get_abstract_mesh()), out)
@@ -2813,7 +2817,7 @@ def visible_mode(fun, *, axes: str | tuple[str, ...], in_specs):
   return decorator
 
 @contextlib.contextmanager
-def visible_axes(axes: str | tuple[str, ...]):
+def use_visible_axes(*axes):
   new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Visible)
   with mesh_lib.set_abstract_mesh(new_mesh):
     yield

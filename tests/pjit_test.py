@@ -51,8 +51,8 @@ from jax._src import sharding_impls
 from jax._src.sharding_impls import (
     AUTO, UNSPECIFIED, NamedSharding, GSPMDSharding, PositionalSharding,
     SingleDeviceSharding, parse_flatten_op_sharding)
-from jax._src.pjit import (pjit, mesh_cast, hidden_mode, visible_mode,
-                           hidden_axes, visible_axes)
+from jax._src.pjit import (pjit, mesh_cast, hidden_axes, visible_axes,
+                           use_hidden_axes, use_visible_axes)
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import set_abstract_mesh, get_abstract_mesh, AxisTypes
 from jax._src.interpreters import pxla
@@ -5816,7 +5816,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       y = x * 2
-      with hidden_axes(axes=('x', 'y')):
+      with use_hidden_axes('x', 'y'):
         y = mesh_cast(y, P(None, None))
         self.assertEqual(y.sharding.spec, P(None, None))
         z = jnp.sin(y)
@@ -5844,7 +5844,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       y = x * 2
-      with visible_axes(axes=('x', 'y')):
+      with use_visible_axes('x', 'y'):
         y = mesh_cast(y, P(None, 'y'))
         self.assertEqual(y.sharding.spec, P(None, 'y'))
         z = jnp.sin(y)
@@ -5870,7 +5870,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       y = x * 2
-      with hidden_axes('x'):
+      with use_hidden_axes('x'):
         y = mesh_cast(y, P(None, 'y'))
         self.assertEqual(y.sharding.spec, P(None, 'y'))
         z = jnp.sin(y)
@@ -5897,7 +5897,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     @jax.jit
     def f(x, y):
       x = x * 2
-      with hidden_axes('x'):
+      with use_hidden_axes('x'):
         z = x @ y
       return z
 
@@ -6009,7 +6009,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     @jax.jit
     def g(x, y):
-      with hidden_axes('x'):
+      with use_hidden_axes('x'):
         out = jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', None))
       return out
 
@@ -6048,7 +6048,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     s = NamedSharding(mesh, P('x', 'y'))
     arr = jax.device_put(np_inp, s)
 
-    @partial(hidden_mode, axes='x', out_specs=P('x', None))
+    @partial(hidden_axes, axes='x', out_shardings=P('x', None))
     def h(y):
       self.assertEqual(y.sharding.spec, P(None, 'y'))
       z = jnp.sin(y)
@@ -6078,7 +6078,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     s = NamedSharding(mesh, P('x', 'y'))
     arr = jax.device_put(np_inp, s)
 
-    @partial(visible_mode, axes=('x', 'y'), in_specs=P('x', 'y'))
+    # No axes specified means full visible mode.
+    @partial(visible_axes, in_shardings=P('x', 'y'))
     def h(y):
       self.assertEqual(y.sharding.spec, P('x', 'y'))
       z = jnp.sin(y)
@@ -6108,7 +6109,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     s = NamedSharding(mesh, P('x', 'y'))
     arr = jax.device_put(np_inp, s)
 
-    @partial(visible_mode, axes='y', in_specs=P('x', 'y'))
+    @partial(visible_axes, axes='y', in_shardings=P('x', 'y'))
     def h(y):
       self.assertEqual(y.sharding.spec, P('x', 'y'))
       z = jnp.sin(y)
@@ -6134,7 +6135,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     s = NamedSharding(mesh, P('x', 'y'))
     arr = jax.device_put(np_inp, s)
 
-    @partial(visible_mode, axes='y', in_specs=P(None, 'y'))
+    @partial(visible_axes, axes='y', in_shardings=P(None, 'y'))
     def h(y):
       self.assertEqual(y.sharding.spec, P(None, 'y'))
       z = jnp.sin(y)
