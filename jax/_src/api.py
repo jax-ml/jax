@@ -2572,11 +2572,7 @@ def _sds_aval_mapping(x):
   aval = ShapedArray(
       x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
       weak_type=x.weak_type)
-  if config.sharding_in_types.value and isinstance(x.sharding, NamedSharding):
-    return aval.update(sharding=NamedSharding(
-        x.sharding.mesh.abstract_mesh,
-        x.sharding.spec._normalized_spec(x.ndim)))
-  return aval
+  return core.update_aval_with_sharding(aval, x.sharding)
 core.pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
 
 
