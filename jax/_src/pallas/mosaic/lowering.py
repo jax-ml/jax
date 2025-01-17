@@ -155,6 +155,10 @@ class LoweringRuleContext:
 
   replace = dataclasses.replace
 
+  @property
+  def forward_compatible(self):
+    return self.lowering_context.forward_compatible
+
 
 def _memory_space_to_tpu_memory_space(memory_space: MemorySpace | None
                                      ) -> TPUMemorySpace:
@@ -1976,8 +1980,11 @@ def _convert_element_type_lowering_rule(
       # This case triggers when casting signed to unsigned or vice versa.
       return x
   # TODO(apaszke): Remove both_32bit constraints using the Mosaic canonicalizer.
-  elif _from(floating) and _to(signed) and both_32bit:
-    return arith.fptosi(out_type, x)
+  elif _from(floating) and _to(signed):
+    # TODO(apaszke): Remove once a month has passed, along with the
+    # _convert_helper float -> signed conversion above.
+    if not ctx.forward_compatible or both_32bit:
+      return arith.fptosi(out_type, x)
   elif _from(signed) and _to(floating) and both_32bit:
     return arith.sitofp(out_type, x)
   elif old_dtype == jnp.bool_ and _to(integer) and new_dtype.itemsize == 4:
