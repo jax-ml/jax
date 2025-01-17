@@ -17,7 +17,7 @@
 # Install wheels stored in `JAXCI_OUTPUT_DIR` on the system using the Python
 # binary set in JAXCI_PYTHON. Use the absolute path to the `find` utility to
 # avoid using the Windows version of `find` on Msys.
-WHEELS=( $(/usr/bin/find "$JAXCI_OUTPUT_DIR/" -type f \( -name "*jaxlib*" -o -name "*jax*cuda*pjrt*" -o -name "*jax*cuda*plugin*" \)) )
+WHEELS=( $(/usr/bin/find "$JAXCI_OUTPUT_DIR/" -type f \(  -name "*jax*py3*" -o -name "*jaxlib*" -o -name "*jax*cuda*pjrt*" -o -name "*jax*cuda*plugin*" \)) )
 
 if [[ -z "$WHEELS" ]]; then
   echo "ERROR: No wheels found under $JAXCI_OUTPUT_DIR"
@@ -34,6 +34,8 @@ else
   "$JAXCI_PYTHON" -m pip install "${WHEELS[@]}"
 fi
 
-echo "Installing the JAX package in editable mode at the current commit..."
-# Install JAX package at the current commit.
-"$JAXCI_PYTHON" -m pip install -U -e .
+if [[ "$JAXCI_INSTALL_JAX_CURRENT_COMMIT" == "1" ]]; then
+  echo "Installing the JAX package in editable mode at the current commit..."
+  # Install JAX package at the current commit.
+  "$JAXCI_PYTHON" -m pip install -U -e .
+fi
