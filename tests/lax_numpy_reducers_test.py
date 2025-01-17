@@ -930,5 +930,12 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  def test_oob_axis_error_message(self):
+    with self.assertRaisesRegex(ValueError, r"'axis' argument of 0 is out-of-bounds"):
+      jnp.mean(0, axis=0)
+    with self.assertRaisesRegex(ValueError, r"'axis' argument of \(0, 1\) is out-of-bounds"):
+      jnp.sum(jnp.arange(3), axis=(0, 1))
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -1557,7 +1557,7 @@ def flip(m: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
             [6, 5]]], dtype=int32)
   """
   util.check_arraylike("flip", m)
-  return _flip(asarray(m), reductions._ensure_optional_axes(axis))
+  return _flip(asarray(m), reductions._ensure_optional_axes(axis, core.get_aval(m)))
 
 @partial(jit, static_argnames=('axis',))
 def _flip(m: Array, axis: int | tuple[int, ...] | None = None) -> Array:
