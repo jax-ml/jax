@@ -388,6 +388,22 @@ def TPU_PackSubelementsOp : TPU_Op<"pack_subelements", [Pure, SameTypeOperands]>
   let hasVerifier = 1;
 }
 
+// Note: this op can be used to override the vector layout.
+def TPU_IdentityOp : TPU_Op<"identity", [Pure, SameOperandsAndResultType]> {
+  let arguments = (ins AnyType:$input);
+  let results = (outs AnyType:$output);
+  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+}
+
+def TPU_PackMaskOp : TPU_Op<"pack_vmsk", [Pure, SameTypeOperands]> {
+  let arguments = (ins
+    VectorOfNonZeroRankOf<[I1]>: $low,
+    VectorOfNonZeroRankOf<[I1]>: $high
+  );
+  let results = (outs VectorOfNonZeroRankOf<[I1]>:$output);
+  let assemblyFormat = [{ $low `,` $high `,` attr-dict `:` type($low) `,` type($high) `->` type($output) }];
+}
+
 def TPU_GatherOp : TPU_Op<"gather", [Pure]> {
   let arguments = (ins
     AnyVectorOfNonZeroRank:$source,
@@ -870,6 +886,9 @@ def RelayoutInsertionPass : Pass<"tpu-relayout-insertion", "::mlir::func::FuncOp
   ];
   let constructor = "::mlir::tpu::createRelayoutInsertionPass()";
   let options = [
+    // If hardware_generation is not set, the default value of -1 will crash on
+    // runOnOperation.
+    Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
     Option<"lane_count", "lane-count", "int", /*default=*/"128", "">,
     Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
   ];
