@@ -49,7 +49,6 @@ primitives_with_static_signatures = {
   jax.lax.broadcast_in_dim_p: (lambda key: key[None], key),
   jax.lax.copy_p: (jnp.array, key),
   jax.lax.convert_element_type_p: (lambda key: jnp.array(key, dtype=key.dtype), key),
-  jax.lax.device_put_p: (jax.device_put, key),
   jax.lax.reshape_p: (lambda key: key.reshape((1,)), key),
   jax.lax.squeeze_p: (jnp.squeeze, key1D),
   jax.lax.dynamic_slice_p: (partial(jax.lax.dynamic_slice, slice_sizes=(1,)), key1D, (0,)),
@@ -178,13 +177,26 @@ class KeyReuseUnitTestWithForwarding(jtu.JaxTestCase):
   def test_device_put(self):
     def f(key):
       assert_unconsumed(key)
-      key2 = jax.device_put(key)
-      assert_unconsumed(key)
-      assert_unconsumed(key2)
+      key_d = jax.device_put(key)
+      assert_unconsumed(key_d)
       consume(key)
-      assert_consumed(key)
-      assert_consumed(key2)
+      assert_consumed(key_d)
     self.check_key_reuse(f, jax.random.key(0))
+
+  def test_device_put_multiple(self):
+    def f(key1, key2):
+      assert_unconsumed(key1)
+      assert_unconsumed(key2)
+      key1_d, key2_d = jax.device_put((key1, key2))
+
+      assert_unconsumed(key1_d)
+      consume(key1)
+      assert_consumed(key1_d)
+
+      assert_unconsumed(key2_d)
+      consume(key2)
+      assert_consumed(key2_d)
+    self.check_key_reuse(f, jax.random.key(0), jax.random.key(1))
 
   def test_squeeze(self):
     def f(key):
