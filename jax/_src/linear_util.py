@@ -163,7 +163,7 @@ class WrappedFun:
     self.stores = stores
     self.params = params
     self.in_type = in_type
-    self.debug_info = debug_info
+    self.debug_info = None  # DO_NOT_SUBMIT debug_info
 
   @property
   def __name__(self):
@@ -274,6 +274,7 @@ class TracingDebugInfo(NamedTuple):
 def wrap_init(f: Callable, params=None, *,
               debug_info: TracingDebugInfo | None = None) -> WrappedFun:
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
+  debug_info = None  # DO_NOT_SUBMIT
   params_dict = {} if params is None else params
   params = () if params is None else tuple(sorted(params.items()))
   return WrappedFun(f, partial(f, **params_dict), (), (), params, None, debug_info)
@@ -318,6 +319,7 @@ def _check_input_type(in_type: core.InputType) -> None:
 def add_debug_info(f: WrappedFun, debug_info: TracingDebugInfo | None
                    ) -> WrappedFun:
   """Produce a new WrappedFun with debug_info attached."""
+  return f  # DO_NOT_SUBMIT
   assert f.debug_info is None
   if debug_info is None:
     return f

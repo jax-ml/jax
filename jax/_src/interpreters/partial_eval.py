@@ -1524,7 +1524,8 @@ class DynamicJaxprTracer(core.Tracer):
                line_info: source_info_util.SourceInfo | None = None):
     self._trace = trace
     self._line_info = line_info
-    self._debug_info = self._trace.frame.debug_info  # for UnexpectedTracerError
+    # self._debug_info = self._trace.frame.debug_info  # for UnexpectedTracerError
+    self._debug_info = None  # DO_NOT_SUBMIT
     self.aval = aval  # type: ignore[misc]
 
   def full_lower(self):
@@ -1637,7 +1638,7 @@ class JaxprStackFrame:
     self.attrs_tracked = []
     self.attrs_inits = []
     self.attrs_vars = []
-    self.debug_info = debug_info
+    self.debug_info = None  # DO_NOT_SUBMIT debug_info
 
   def add_eqn(self, eqn: core.JaxprEqn):
     self.eqns.append(eqn)
@@ -2135,7 +2136,8 @@ def tracing_debug_info(
   # TODO(necula): clean up the type: ignore below
   return lu.TracingDebugInfo(traced_for, src_info, arg_names, result_paths)  # type: ignore[arg-type]
 
-def tracing_debug_info_final(fn: lu.WrappedFun, traced_for: str) -> lu.TracingDebugInfo:
+def tracing_debug_info_final(fn: lu.WrappedFun, traced_for: str) -> lu.TracingDebugInfo | None:
+  return None  # DO_NOT_SUBMIT
   in_tree, out_tree, has_kws = flattened_fun_in_tree(fn) or (None, None, False)
   return tracing_debug_info(fn.f, in_tree, out_tree, has_kws, traced_for)
 
