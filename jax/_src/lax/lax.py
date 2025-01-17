@@ -4963,6 +4963,8 @@ def _split_on_one_axis(op_shape, new_sizes, name):
             f' jax.lax.reshape. Got operand.shape={op_shape} and {new_sizes=}')
       temp = [new_sizes[j]]
       while math.prod(temp) != op_shape[i]:
+        if math.prod(temp) > op_shape[i]:
+          return False, []
         j += 1
         temp.append(new_sizes[j])
       out.append(temp)
