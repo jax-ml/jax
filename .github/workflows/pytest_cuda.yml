@@ -86,4 +86,5 @@ jobs:
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Run Pytest CUDA tests
+        timeout-minutes: 60
         run: ./ci/run_pytest_cuda.sh

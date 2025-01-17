@@ -97,4 +97,5 @@ jobs:
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Run Pytest CPU tests
+        timeout-minutes: 60
         run: ./ci/run_pytest_cpu.sh

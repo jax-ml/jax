@@ -128,6 +128,7 @@ jobs:
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Build ${{ inputs.artifact }}
+        timeout-minutes: 30
         run: ./ci/build_artifacts.sh "${{ inputs.artifact }}"
       - name: Upload artifacts to a GCS bucket (non-Windows runs)
         if: >-
