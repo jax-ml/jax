@@ -167,6 +167,11 @@ class Sharding:
     return common_devices_indices_map(self, global_shape)
 
   @functools.cached_property
+  def client(self) -> xc.Client:
+    platform = next(iter(self.device_set)).platform
+    return xb.get_backend(platform)
+
+  @functools.cached_property
   def _addressable_device_assignment(self) -> XLADeviceAssignment:
     if self.is_fully_addressable:
       return self._device_assignment
