@@ -6117,7 +6117,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
 
   @jtu.with_user_mesh((2, 2), ('x', 'y'))
-  def test_auto_gather_out_spec(self, mesh):
+  def test_auto_gather_out_sharding(self, mesh):
     embed = jax.device_put(jnp.arange(128 * 8.).reshape(64, 16),
                            jax.NamedSharding(mesh, P(None, 'x')))
     tok = jax.device_put(jnp.arange(8 * 4).reshape(8, 4),
@@ -6125,7 +6125,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(embed_vd, token_bt):
-      out = embed_vd.at[token_bt].get(out_spec=P('x', None, None))
+      out = embed_vd.at[token_bt].get(out_sharding=P('x', None, None))
       self.assertEqual(out.shape, (8, 4, 16))
       self.assertEqual(out.sharding.spec, P('x', None, None))
       return out

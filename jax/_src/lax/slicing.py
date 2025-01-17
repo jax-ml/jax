@@ -1886,8 +1886,8 @@ def _gather_sharding_rule(operand, indices, *, dimension_numbers,
   if mesh_lib.get_abstract_mesh()._are_all_axes_hidden:  # type: ignore
     return None
   raise GatherShardingError(
-      "Use `.at[...].get(out_specs=)` to provide output PartitionSpec for the"
-      " gather indexing.")
+      "Use `.at[...].get(out_sharding=)` to provide output PartitionSpec for"
+      " the gather indexing.")
 
 def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,
                  unique_indices, indices_are_sorted, fill_value,
