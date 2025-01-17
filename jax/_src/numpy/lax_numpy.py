@@ -9508,7 +9508,7 @@ def einsum(
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
-    out_type=None,
+    out_sharding=None,
 ) -> Array: ...
 
 @overload
@@ -9521,7 +9521,7 @@ def einsum(
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
-    out_type=None,
+    out_sharding=None,
 ) -> Array: ...
 
 @export
@@ -9533,7 +9533,7 @@ def einsum(
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
-    out_type=None,
+    out_sharding=None,
 ) -> Array:
   """Einstein summation
 
@@ -9769,7 +9769,7 @@ def einsum(
   if spec is not None:
     einsum = jax.named_call(einsum, name=spec)
   return einsum(operands, contractions, precision,
-                preferred_element_type, _dot_general, out_type)
+                preferred_element_type, _dot_general, out_sharding)
 
 
 # Enable other modules to override einsum_contact_path.
@@ -9869,16 +9869,16 @@ def _einsum(
     precision,
     preferred_element_type,
     _dot_general=lax.dot_general,
-    out_type=None,
+    out_sharding=None,
 ):
-  if out_type is not None and not config.sharding_in_types.value:
-    raise NotImplementedError("out_type only works when sharding_in_types "
+  if out_sharding is not None and not config.sharding_in_types.value:
+    raise NotImplementedError("out_sharding only works when sharding_in_types "
                               "config is True.")
-  out_type = canonicalize_sharding(out_type)
-  if out_type is not None and not isinstance(out_type, NamedSharding):
+  out_sharding = canonicalize_sharding(out_sharding)
+  if out_sharding is not None and not isinstance(out_sharding, NamedSharding):
     raise NotImplementedError(
-        "`out_type` argument of `einsum` only supports NamedSharding instances."
-        " Please file a bug if this is not enough for your use case.")
+        "`out_sharding` argument of `einsum` only supports NamedSharding"
+        " instances. Please file a bug if this is not enough for your use case.")
   dtypes.check_user_dtype_supported(preferred_element_type, "einsum")
   operands = list(map(asarray, operands))
   if preferred_element_type is None:
@@ -10000,25 +10000,27 @@ def _einsum(
       names = batch_names_str + remaining_rhs_names + remaining_lhs_names
       if names == result_names:
         dimension_numbers = ((rhs_cont, lhs_cont), (rhs_batch, lhs_batch))
-        k_out_type = {} if out_type is None else {'out_type': out_type}
+        k_out_sharding = ({} if out_sharding is None else
+                          {'out_sharding': out_sharding})
         operand = _dot_general(rhs, lhs, dimension_numbers, precision,
                                preferred_element_type=preferred_element_type,
-                               **k_out_type)
+                               **k_out_sharding)
       else:
         names = batch_names_str + remaining_lhs_names + remaining_rhs_names
-        if (config.sharding_in_types.value and out_type is not None and
+        if (config.sharding_in_types.value and out_sharding is not None and
             names != result_names):
-          spec = out_type.spec
+          spec = out_sharding.spec
           inverse_spec = tuple(spec[result_names.index(name)] for name in names)
-          dot_general_out_type = NamedSharding(out_type.mesh, P(*inverse_spec))
+          dot_general_out_sharding = NamedSharding(out_sharding.mesh,
+                                                   P(*inverse_spec))
         else:
-          dot_general_out_type = out_type  # type: ignore
+          dot_general_out_sharding = out_sharding  # type: ignore
         dimension_numbers = ((lhs_cont, rhs_cont), (lhs_batch, rhs_batch))
-        dot_general_out_type = ({} if dot_general_out_type is None else  # type: ignore
-                                {'out_type': dot_general_out_type})
+        dot_general_out_sharding = ({} if dot_general_out_sharding is None else  # type: ignore
+                                    {'out_sharding': dot_general_out_sharding})
         operand = _dot_general(lhs, rhs, dimension_numbers, precision,
                                preferred_element_type=preferred_element_type,
-                               **dot_general_out_type)
+                               **dot_general_out_sharding)
     else:
       raise NotImplementedError  # if this is actually reachable, open an issue!
 

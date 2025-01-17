@@ -372,7 +372,7 @@ def einsum(
     preferred_element_type: DTypeLike | None = ...,
     _use_xeinsum: builtins.bool = False,
     _dot_general: Callable[..., Array] = ...,
-    out_type: NamedSharding | P | None = ...,
+    out_sharding: NamedSharding | P | None = ...,
 ) -> Array: ...
 
 @overload
@@ -386,7 +386,7 @@ def einsum(
     preferred_element_type: DTypeLike | None = ...,
     _use_xeinsum: builtins.bool = False,
     _dot_general: Callable[..., Array] = ...,
-    out_type: NamedSharding | P | None = ...,
+    out_sharding: NamedSharding | P | None = ...,
 ) -> Array: ...
 @overload
 def einsum(
@@ -398,7 +398,7 @@ def einsum(
     preferred_element_type: DTypeLike | None = ...,
     _use_xeinsum: builtins.bool = ...,
     _dot_general: Callable[..., Array] = ...,
-    out_type: NamedSharding | P | None = ...,
+    out_sharding: NamedSharding | P | None = ...,
 ) -> Array: ...
 
 @overload
