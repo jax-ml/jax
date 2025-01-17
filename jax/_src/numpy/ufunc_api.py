@@ -27,7 +27,7 @@ from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.lax import lax as lax_internal
 import jax._src.numpy.lax_numpy as jnp
 from jax._src.numpy.reductions import _moveaxis
-from jax._src.numpy.util import check_arraylike, _broadcast_to, _where
+from jax._src.numpy.util import ensure_arraylike, ensure_arraylike_tuple, _broadcast_to, _where
 from jax._src.numpy.vectorize import vectorize
 from jax._src.util import canonicalize_axis, set_module
 import numpy as np
@@ -170,7 +170,7 @@ class ufunc:
     return f"<jnp.ufunc '{self.__name__}'>"
 
   def __call__(self, *args: ArrayLike, out: None = None, where: None = None) -> Any:
-    check_arraylike(self.__name__, *args)
+    args = ensure_arraylike_tuple(self.__name__, args)
     if out is not None:
       raise NotImplementedError(f"out argument of {self}")
     if where is not None:
@@ -234,7 +234,7 @@ class ufunc:
       >>> jnp.bitwise_or.reduce(x, axis=1)
       Array([3, 7], dtype=int32)
     """
-    check_arraylike(f"{self.__name__}.reduce", a)
+    a = ensure_arraylike(f"{self.__name__}.reduce", a)
     if self.nin != 2:
       raise ValueError("reduce only supported for binary ufuncs")
     if self.nout != 1:
@@ -242,9 +242,9 @@ class ufunc:
     if out is not None:
       raise NotImplementedError(f"out argument of {self.__name__}.reduce()")
     if initial is not None:
-      check_arraylike(f"{self.__name__}.reduce", initial)
+      initial = ensure_arraylike(f"{self.__name__}.reduce", initial)
     if where is not None:
-      check_arraylike(f"{self.__name__}.reduce", where)
+      where = ensure_arraylike(f"{self.__name__}.reduce", where)
       if self.identity is None and initial is None:
         raise ValueError(f"reduction operation {self.__name__!r} does not have an identity, "
                          "so to use a where mask one has to specify 'initial'.")
@@ -374,8 +374,7 @@ class ufunc:
   def _accumulate_via_scan(self, arr: ArrayLike, axis: int = 0,
                            dtype: DTypeLike | None = None) -> Array:
     assert self.nin == 2 and self.nout == 1
-    check_arraylike(f"{self.__name__}.accumulate", arr)
-    arr = lax_internal.asarray(arr)
+    arr = ensure_arraylike(f"{self.__name__}.accumulate", arr)
 
     if dtype is None:
       dtype = jax.eval_shape(self._func, lax_internal._one(arr), lax_internal._one(arr)).dtype
@@ -436,10 +435,10 @@ class ufunc:
     at = self.__static_props['at'] or self._at_via_scan
     return at(a, indices) if b is None else at(a, indices, b)
 
-  def _at_via_scan(self, a: ArrayLike, indices: Any, *args: Any) -> Array:
+  def _at_via_scan(self, a: ArrayLike, indices: Any, *args: ArrayLike) -> Array:
     assert len(args) in {0, 1}
-    check_arraylike(f"{self.__name__}.at", a, *args)
-    dtype = jax.eval_shape(self._func, lax_internal._one(a), *(lax_internal._one(arg) for arg in args)).dtype
+    a, *args_list = ensure_arraylike_tuple(f"{self.__name__}.at", (a, *args))
+    dtype = jax.eval_shape(self._func, lax_internal._one(a), *(lax_internal._one(arg) for arg in args_list)).dtype
     a = lax_internal.asarray(a).astype(dtype)
     args = tuple(lax_internal.asarray(arg).astype(dtype) for arg in args)
     indices = jnp._eliminate_deprecated_list_indexing(indices)
@@ -515,8 +514,7 @@ class ufunc:
 
   def _reduceat_via_scan(self, a: ArrayLike, indices: Any, axis: int = 0,
                          dtype: DTypeLike | None = None) -> Array:
-    check_arraylike(f"{self.__name__}.reduceat", a, indices)
-    a = lax_internal.asarray(a)
+    a, indices = ensure_arraylike(f"{self.__name__}.reduceat", a, indices)
     idx_tuple = jnp._eliminate_deprecated_list_indexing(indices)
     assert len(idx_tuple) == 1
     indices = idx_tuple[0]
@@ -582,7 +580,7 @@ class ufunc:
       raise ValueError("outer only supported for binary ufuncs")
     if self.nout != 1:
       raise ValueError("outer only supported for functions returning a single value")
-    check_arraylike(f"{self.__name__}.outer", A, B)
+    A, B = ensure_arraylike(f"{self.__name__}.outer", A, B)
     _ravel = lambda A: jax.lax.reshape(A, (np.size(A),))
     result = jax.vmap(jax.vmap(self, (None, 0)), (0, None))(_ravel(A), _ravel(B))
     return result.reshape(*np.shape(A), *np.shape(B))
