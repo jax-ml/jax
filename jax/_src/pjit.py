@@ -2754,11 +2754,11 @@ def _get_new_mesh(axes: str | tuple[str, ...], axis_type: mesh_lib.AxisTypes):
   new_mesh = cur_mesh.update_axis_types({axis_type: axes})  # type: ignore
   return new_mesh
 
-def auto_mode(fun, *, axes: str | tuple[str, ...], out_specs):
-  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Auto)
+def hidden_mode(fun, *, axes: str | tuple[str, ...], out_specs):
+  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Hidden)
   def decorator(*args, **kwargs):
     with mesh_lib.set_abstract_mesh(new_mesh):
-      in_specs = tree_map(lambda a: core.modify_spec_for_auto(
+      in_specs = tree_map(lambda a: core.modify_spec_for_hidden(
           a.sharding.spec, new_mesh), args)
       args = sharding_cast(args, in_specs)
       out = fun(*args, **kwargs)
@@ -2767,26 +2767,26 @@ def auto_mode(fun, *, axes: str | tuple[str, ...], out_specs):
 
 
 @contextlib.contextmanager
-def auto_mode_ctx(axes: str | tuple[str, ...]):
-  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Auto)
+def hidden_axes(axes: str | tuple[str, ...]):
+  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Hidden)
   with mesh_lib.set_abstract_mesh(new_mesh):
     yield
 
 
-def user_mode(fun, *, axes: str | tuple[str, ...], in_specs):
-  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.User)
+def visible_mode(fun, *, axes: str | tuple[str, ...], in_specs):
+  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Visible)
   def decorator(*args, **kwargs):
     with mesh_lib.set_abstract_mesh(new_mesh):
       args = sharding_cast(args, in_specs)
       out = fun(*args, **kwargs)
-    out_specs = tree_map(lambda o: core.modify_spec_for_auto(
+    out_specs = tree_map(lambda o: core.modify_spec_for_hidden(
         o.sharding.spec, mesh_lib.get_abstract_mesh()), out)
     return sharding_cast(out, out_specs)
   return decorator
 
 @contextlib.contextmanager
-def user_mode_ctx(axes: str | tuple[str, ...]):
-  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.User)
+def visible_axes(axes: str | tuple[str, ...]):
+  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Visible)
   with mesh_lib.set_abstract_mesh(new_mesh):
     yield
 

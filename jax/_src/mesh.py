@@ -103,8 +103,8 @@ def _get_local_mesh(global_mesh: Mesh, process_index: int) -> Mesh:
 
 
 class AxisTypes(enum.Enum):
-  Auto = enum.auto()
-  User = enum.auto()
+  Hidden = enum.auto()
+  Visible = enum.auto()
   Collective = enum.auto()
 
   def __repr__(self):
@@ -198,9 +198,15 @@ class Mesh(contextlib.ContextDecorator):
           f"devices.ndim == {devices.ndim} and "
           f"len(axis_names) == {len(axis_names)}.")
 
-    axis_types = ({AxisTypes.Auto: axis_names} if axis_types is None else
+    axis_types = ({AxisTypes.Hidden: axis_names} if axis_types is None else
                   axis_types)
     axis_types_tuple = tuple(axis_types.items())
+    if len(axis_names_to_types(axis_types).keys()) != len(axis_names):
+      raise ValueError(
+          "Number of axis names in axis_types should match the number of"
+          f" axis_names. Got axis_names={axis_names} and"
+          f" axis_types={axis_types}")
+
     key = (axis_names, devices.shape, tuple(devices.flat), axis_types_tuple)
     val = _mesh_object_dict.get(key, None)
     if val is not None:
@@ -356,16 +362,16 @@ class Mesh(contextlib.ContextDecorator):
     return all(t == AxisTypes.Collective for t in self.axis_types.keys())
 
   @functools.cached_property
-  def _are_all_axes_auto(self) -> bool:
-    return all(t == AxisTypes.Auto for t in self.axis_types.keys())
+  def _are_all_axes_hidden(self) -> bool:
+    return all(t == AxisTypes.Hidden for t in self.axis_types.keys())
 
   @functools.cached_property
   def _any_axis_collective(self) -> bool:
     return any(t == AxisTypes.Collective for t in self.axis_types.keys())
 
   @functools.cached_property
-  def _any_axis_auto(self) -> bool:
-    return any(t == AxisTypes.Auto for t in self.axis_types.keys())
+  def _any_axis_hidden(self) -> bool:
+    return any(t == AxisTypes.Hidden for t in self.axis_types.keys())
 
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
@@ -397,9 +403,14 @@ class AbstractMesh:
       self._axis_names, self._axis_sizes = list(zip(*self.shape_tuple))
     else:
       self._axis_names, self._axis_sizes = (), ()
-    self.axis_types = ({AxisTypes.Auto: self._axis_names} if axis_types is None
-                       else axis_types)
+    self.axis_types = ({AxisTypes.Hidden: self._axis_names}
+                       if axis_types is None else axis_types)
     self._axis_types_tuple = tuple(self.axis_types.items())
+    if len(self._name_to_type.keys()) != len(self._axis_names):
+      raise ValueError(
+          "Number of axis names in axis_types should match the number of"
+          f" axis_names in shape_tuple. Got axis_names={self._axis_names} and"
+          f" axis_types={self.axis_types}")
 
   def __hash__(self):
     return hash((self.shape_tuple, self._axis_types_tuple))
@@ -461,16 +472,16 @@ class AbstractMesh:
     return all(t == AxisTypes.Collective for t in self.axis_types.keys())
 
   @functools.cached_property
-  def _are_all_axes_auto(self) -> bool:
-    return all(t == AxisTypes.Auto for t in self.axis_types.keys())
+  def _are_all_axes_hidden(self) -> bool:
+    return all(t == AxisTypes.Hidden for t in self.axis_types.keys())
 
   @functools.cached_property
   def _any_axis_collective(self) -> bool:
     return any(t == AxisTypes.Collective for t in self.axis_types.keys())
 
   @functools.cached_property
-  def _any_axis_auto(self) -> bool:
-    return any(t == AxisTypes.Auto for t in self.axis_types.keys())
+  def _any_axis_hidden(self) -> bool:
+    return any(t == AxisTypes.Hidden for t in self.axis_types.keys())
 
   @property
   def devices(self):
@@ -535,7 +546,7 @@ def get_concrete_mesh():
 
 
 @contextlib.contextmanager
-def set_mesh(mesh: Mesh):
+def use_mesh(mesh: Mesh):
   with (set_abstract_mesh(mesh.abstract_mesh),
         jax_config.sharding_in_types(True), set_concrete_mesh(mesh)):
     yield

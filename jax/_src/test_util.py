@@ -1549,12 +1549,12 @@ def with_and_without_mesh(f):
     ))(with_mesh_from_kwargs(f))
 
 def with_user_mesh(sizes, names, axis_types=None):
-  axis_types = ({mesh_lib.AxisTypes.User: names}
+  axis_types = ({mesh_lib.AxisTypes.Visible: names}
                 if axis_types is None else axis_types)
   def decorator(fn):
     def mesh_fn(*args, **kwargs):
       mesh = create_mesh(sizes, names, axis_types=axis_types)
-      with mesh_lib.set_mesh(mesh):
+      with mesh_lib.use_mesh(mesh):
         return fn(*args, **kwargs, mesh=mesh)
     return mesh_fn
   return decorator

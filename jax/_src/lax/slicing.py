@@ -1883,7 +1883,7 @@ def _gather_sharding_rule(operand, indices, *, dimension_numbers,
                           slice_sizes, unique_indices, indices_are_sorted,
                           mode, fill_value):
   # TODO(yashkatariya): Write a proper gather sharding rule.
-  if mesh_lib.get_abstract_mesh()._are_all_axes_auto:  # type: ignore
+  if mesh_lib.get_abstract_mesh()._are_all_axes_hidden:  # type: ignore
     return None
   raise GatherShardingError(
       "Use `.at[...].get(out_specs=)` to provide output PartitionSpec for the"

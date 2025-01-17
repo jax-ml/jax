@@ -1260,7 +1260,6 @@ class ShardingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, msg):
       jax.make_array_from_single_device_arrays(x.shape, s, [x, x])
 
-
   def test_gspmd_sharding_hash_eq(self):
     mesh = jtu.create_mesh((1, 1, 1), ('x', 'y', 'z'))
     ns = NamedSharding(mesh, P('x', 'y', 'z'))
@@ -1298,6 +1297,21 @@ class ShardingTest(jtu.JaxTestCase):
   def test_mesh_with_axis_name_none(self):
     with self.assertRaisesRegex(ValueError, 'Mesh axis names cannot be None.'):
       jax.sharding.Mesh(jax.devices(), (None, 'x'))
+
+  def test_mesh_axis_types_mismatch(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        'Number of axis names in axis_types should match the number of'
+        ' axis_names'):
+      jtu.create_mesh((2, 1), ('x', 'y'),
+                      axis_types={jax.sharding.AxisTypes.Hidden: 'x'})
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'Number of axis names in axis_types should match the number of'
+        ' axis_names in shape_tuple'):
+      jax.sharding.AbstractMesh((('x', 2), ('y', 1)),
+                                axis_types={jax.sharding.AxisTypes.Hidden: 'x'})
 
 
 @jtu.with_config(jax_use_shardy_partitioner=True)

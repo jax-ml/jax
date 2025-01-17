@@ -49,7 +49,7 @@ def _get_array_abstraction_level(a): return a.array_abstraction_level
 
 def call_sharding_rule(rule, num_out, *avals, **kwargs):
   if config.sharding_in_types.value:
-    if rule is None and mesh_lib.get_abstract_mesh()._are_all_axes_auto:  # type: ignore
+    if rule is None and mesh_lib.get_abstract_mesh()._are_all_axes_hidden:  # type: ignore
       return None if num_out is None else [None] * num_out
     return rule(*avals, **kwargs)
   return None if num_out is None else [None] * num_out

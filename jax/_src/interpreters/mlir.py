@@ -2596,7 +2596,7 @@ def lower_sharding_under_shit(ctx, op, aval, sharding_proto=None):
   # Don't emit a wsc under full manual mode to avoid increasing HLO size.
   if aval.sharding.mesh._are_all_axes_collective:
     return op
-  if aval.sharding.mesh._are_all_axes_auto:
+  if aval.sharding.mesh._are_all_axes_hidden:
     return op
   # TODO(yashkatariya): If all the axes in pspec are AUTO or collective,
   # `return op` early and avoid bloating HLO size.
@@ -2609,7 +2609,7 @@ def lower_sharding_under_shit(ctx, op, aval, sharding_proto=None):
     proto = (aval.sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
             if sharding_proto is None else sharding_proto)
     unspecified_dims = None
-    if aval.sharding.mesh._any_axis_auto:
+    if aval.sharding.mesh._any_axis_hidden:
       # TODO(yashkatariya): Maybe if any mesh axis is auto, mark all axes
       # as unspecified?
       unspecified_dims = {i for i, s in enumerate(aval.sharding.spec) if s is None}

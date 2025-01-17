@@ -78,10 +78,10 @@ def _check_axis_type_consistency(mesh, parsed_pspec):
             'AxisTypes should be the same in a tuple subset of PartitionSpec:'
             f' {parsed_pspec.get_partition_spec()}. Got subset {p} with axis'
             f' types: ({", ".join(str(mesh._name_to_type[r]) for r in p)})')
-  if mesh_lib.AxisTypes.Auto not in mesh.axis_types and None in parsed_pspec:
+  if mesh_lib.AxisTypes.Hidden not in mesh.axis_types and None in parsed_pspec:
     raise ValueError(
         f'PartitionSpec {parsed_pspec.get_partition_spec()} cannot contain'
-        ' `P.UNCONSTRAINED` when no mesh axis_types are `Auto`. Got mesh'
+        ' `P.UNCONSTRAINED` when no mesh axis_types are `Hidden`. Got mesh'
         f' axis_types: {mesh.axis_types}')
 
 
@@ -439,7 +439,7 @@ class NamedSharding(jsharding.Sharding):
 # TODO(yashkatariya): Upstream this into `_to_sdy_sharding` maybe with an extra
 # parameter to it `_to_sdy_sharding(self, ndim, modify_wrt_axis_types=False)`
 def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArraySharding, mesh):
-  if mesh._any_axis_auto:
+  if mesh._any_axis_hidden:
     dim_shardings, used_axes = [], []  # type: ignore
     for d in sdy_sharding.dimension_shardings:
       # TODO(yashkatariya): Maybe if any mesh axis is auto, mark all axes as open?
@@ -448,7 +448,7 @@ def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArraySharding, mesh):
       used_axes.extend(d.axes)
     remaining_axes = set(mesh.axis_names) - set(used_axes)
     replicated_axes = tuple(r for r in remaining_axes
-                            if mesh._name_to_type[r] == mesh_lib.AxisTypes.User)
+                            if mesh._name_to_type[r] == mesh_lib.AxisTypes.Visible)
     return SdyArraySharding(sdy_sharding.mesh_shape, dim_shardings,
                             sdy_sharding.logical_device_ids, replicated_axes)
   return sdy_sharding
@@ -1774,9 +1774,9 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
 
   for s in flatten_spec(sharding.spec):
     if sharding.mesh._name_to_type[s] in {
-        mesh_lib.AxisTypes.Auto, mesh_lib.AxisTypes.Collective}:
+        mesh_lib.AxisTypes.Hidden, mesh_lib.AxisTypes.Collective}:
       raise ValueError(
-          'PartitionSpec cannot contain axis names that are of type Auto or'
+          'PartitionSpec cannot contain axis names that are of type Hidden or'
           f' Collective. Got PartitionSpec: {sharding.spec} with axis name:'
           f' {s} or type: {sharding.mesh._name_to_type[s]}')
   return sharding

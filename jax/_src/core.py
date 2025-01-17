@@ -729,9 +729,10 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
     # This attribute is part of the jax.Array API, but only defined on concrete arrays.
     # Raising a ConcretizationTypeError would make sense, but for backward compatibility
     # we raise an AttributeError so that hasattr() and getattr() work as expected.
-    raise AttributeError(self,
-      f"The 'sharding' attribute is not available on {self._error_repr()}."
-      f"{self._origin_msg()}")
+    raise AttributeError(
+        self,
+        f"The 'sharding' attribute is not available on {self._error_repr()}."
+        f"{self._origin_msg()}")
 
   @property
   def committed(self):
@@ -1674,7 +1675,7 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 
 # TODO(yashkatariya): Only works with User/Auto. Generalize it to work with
 # Collective too.
-def modify_spec_for_auto(spec, mesh) -> P:
+def modify_spec_for_hidden(spec, mesh) -> P:
   new_spec = []  # type: ignore
   for s in spec:
     if s is None:
@@ -1682,13 +1683,13 @@ def modify_spec_for_auto(spec, mesh) -> P:
     else:
       temp_s = s[0] if isinstance(s, tuple) else s
       new_spec.append(
-          None if mesh._name_to_type[temp_s] == mesh_lib.AxisTypes.Auto else s)
+          None if mesh._name_to_type[temp_s] == mesh_lib.AxisTypes.Hidden else s)
   return P(*new_spec)
 
 def _maybe_modify_sharding(sharding):
-  if mesh_lib.AxisTypes.Auto not in sharding.mesh.axis_types:
+  if mesh_lib.AxisTypes.Hidden not in sharding.mesh.axis_types:
     return sharding
-  new_spec = modify_spec_for_auto(sharding.spec, sharding.mesh)
+  new_spec = modify_spec_for_hidden(sharding.spec, sharding.mesh)
   return sharding.with_spec(new_spec)
 
 
