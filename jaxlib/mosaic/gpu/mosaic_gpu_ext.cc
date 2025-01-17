@@ -15,6 +15,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <new>
 #include <stdexcept>
 #include <string>
@@ -28,6 +29,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
+#include "jaxlib/mosaic/gpu/integrations/c/passes.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
 
@@ -194,6 +196,9 @@ void callback_complete(CUcontext context, uint32_t streamId,
 }
 
 NB_MODULE(_mosaic_gpu_ext, m) {
+  m.def("register_passes", []() {
+    mlirMosaicGpuRegisterPasses();
+  });
   m.def("registrations", []() {
     return nb::make_tuple(
         nb::make_tuple("mgpu_event_record", EncapsulateFunction(EventRecord)),

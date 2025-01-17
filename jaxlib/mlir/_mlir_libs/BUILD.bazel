@@ -382,6 +382,7 @@ cc_library(
     deps = [
         "//jaxlib/mosaic:tpu_dialect_capi_objects",
         "//jaxlib/mosaic/dialect/gpu:gpu_dialect_capi_objects",
+        "//jaxlib/mosaic/gpu:mlir_capi_objects",
         "@llvm-project//mlir:CAPIArithObjects",
         "@llvm-project//mlir:CAPIGPUObjects",
         "@llvm-project//mlir:CAPIIRObjects",

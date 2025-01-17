@@ -44,13 +44,16 @@ cc_library(
     srcs = [
         "launch_lowering.cc",
         "passes.cc",
+        "serde.cc",
     ],
     hdrs = [
         "launch_lowering.h",
         "passes.h",
+        "serde.h",
     ],
     deps = [
         "//jaxlib:pass_boilerplate",
+        "//jaxlib/mosaic:serde",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:DataLayoutInterfaces",
         "@llvm-project//mlir:FuncDialect",
@@ -185,6 +188,7 @@ nanobind_extension(
         "//conditions:default": [],
     }),
     deps = [
+        ":mlir_capi",
         "//jaxlib:kernel_nanobind_helpers",
         "//jaxlib/cuda:cuda_vendor",
         "@com_google_absl//absl/cleanup",
