@@ -47,10 +47,17 @@ def standard_primitive(shape_rule, dtype_rule, name,
 
 def _get_array_abstraction_level(a): return a.array_abstraction_level
 
-def call_sharding_rule(rule, num_out, *avals, **kwargs):
+def call_sharding_rule(prim, rule, num_out, *avals, **kwargs):
   if config.sharding_in_types.value:
-    if rule is None and mesh_lib.get_abstract_mesh()._are_all_axes_hidden:  # type: ignore
-      return None if num_out is None else [None] * num_out
+    if rule is None:
+      if mesh_lib.get_abstract_mesh()._are_all_axes_hidden:  # type: ignore
+        return None if num_out is None else [None] * num_out
+      else:
+        raise ValueError(
+            f'sharding rule for {prim.name} is not implemented. Please file a'
+            ' bug at https://github.com/jax-ml/jax/issues. You can work around'
+            ' this error by dropping that operation into full hidden sharding'
+            ' mode via: `jax.hidden_axes(fun, out_shardings=...)`')
     return rule(*avals, **kwargs)
   return None if num_out is None else [None] * num_out
 
@@ -65,7 +72,7 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
     out_aval = core.ShapedArray(
         shape_rule(*avals, **kwargs), dtype_rule(*avals, **kwargs),
         weak_type=weak_type,
-        sharding=call_sharding_rule(sharding_rule, None, *avals, **kwargs))
+        sharding=call_sharding_rule(prim, sharding_rule, None, *avals, **kwargs))
     core.check_avals_context_mesh([out_aval], prim.name)
     return out_aval
   elif least_specialized is core.DShapedArray:
@@ -90,7 +97,7 @@ def standard_multi_result_abstract_eval(
     out_dtypes = dtype_rule(*avals, **kwargs)
     core.check_avals_context_mesh(avals, prim.name)
     out_shardings = call_sharding_rule(
-        sharding_rule, len(out_shapes), *avals, **kwargs)
+        prim, sharding_rule, len(out_shapes), *avals, **kwargs)
     out_avals = [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh)
                  for s, d, weak_type, sh in zip(out_shapes, out_dtypes,
                                                 weak_types, out_shardings)]

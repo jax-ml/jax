@@ -51,7 +51,7 @@ from jax._src import sharding_impls
 from jax._src.sharding_impls import (
     AUTO, UNSPECIFIED, NamedSharding, GSPMDSharding, PositionalSharding,
     SingleDeviceSharding, parse_flatten_op_sharding)
-from jax._src.pjit import (pjit, mesh_cast, hidden_axes, visible_axes,
+from jax._src.pjit import (pjit, mesh_cast, visible_axes,
                            use_hidden_axes, use_visible_axes)
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import set_abstract_mesh, get_abstract_mesh, AxisTypes
@@ -6048,7 +6048,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     s = NamedSharding(mesh, P('x', 'y'))
     arr = jax.device_put(np_inp, s)
 
-    @partial(hidden_axes, axes='x', out_shardings=P('x', None))
+    @partial(jax.hidden_axes, axes='x', out_shardings=P('x', None))
     def h(y):
       self.assertEqual(y.sharding.spec, P(None, 'y'))
       z = jnp.sin(y)
