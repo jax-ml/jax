@@ -1008,7 +1008,7 @@ def _scan_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn
   new_eqn = pe.new_jaxpr_eqn(
       new_invars,
       new_outvars,
-      eqn.primitive, new_params, new_effects, eqn.source_info)
+      eqn.primitive, new_params, new_effects, eqn.source_info, eqn.ctx)
   assert len(new_eqn.invars ) == len(new_params['jaxpr'].in_avals )
   assert len(new_eqn.outvars) == len(new_params['jaxpr'].out_avals)
   return used_inputs, new_eqn
@@ -1104,7 +1104,7 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   eqn_known = pe.new_jaxpr_eqn(
       ins_known, [*intensive_res, *out_binders_known, *extensive_res],
       core.closed_call_p, dict(call_jaxpr=call_jaxpr), call_jaxpr.effects,
-      eqn.source_info)
+      eqn.source_info, eqn.ctx)
 
   # Create the staged eqn.
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
@@ -1116,7 +1116,7 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   eqn_staged = pe.new_jaxpr_eqn([*intensive_res, *eqn.invars, *extensive_res],
                                 out_binders_staged, eqn.primitive,
                                 params_staged, jaxpr_staged.effects,
-                                eqn.source_info)
+                                eqn.source_info, eqn.ctx)
 
   new_vars = [*new_inst, *intensive_res, *extensive_res]
   return eqn_known, eqn_staged, unks_out, inst_out, new_vars
@@ -1678,7 +1678,8 @@ def _while_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   effects_known = core.join_effects(cond_jaxpr_known.effects,
                                     body_jaxpr_known.effects)
   eqn_known = pe.new_jaxpr_eqn(ins_known, out_binders_known, while_p,
-                               params_known, effects_known, eqn.source_info)
+                               params_known, effects_known, eqn.source_info,
+                               eqn.ctx)
 
   # Staged eqn is same as input eqn.
   eqn_staged = eqn

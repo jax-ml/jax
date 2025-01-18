@@ -5745,18 +5745,23 @@ def _reduce_precision_shape_rule(operand, *, exponent_bits, mantissa_bits):
     raise ValueError(f"reduce_precision: mantissa_bits must be non-negative; got {mantissa_bits}")
   return operand.shape
 
+def _reduce_precision_sharding_rule(operand, *, exponent_bits, mantissa_bits):
+  return operand.sharding
 
 reduce_precision_p = standard_primitive(
     _reduce_precision_shape_rule,
     partial(unop_dtype_rule, _identity, _float, 'reduce_precision'),
-    name='reduce_precision')
+    name='reduce_precision', sharding_rule=_reduce_precision_sharding_rule)
 ad.deflinear(reduce_precision_p, lambda t, **kwargs: [reduce_precision_p.bind(t, **kwargs)])
 batching.defvectorized(reduce_precision_p)
 
 def _reduce_precision_lower(ctx, operand, *, exponent_bits, mantissa_bits):
   aval_out, = ctx.avals_out
-  return [hlo.reduce_precision(operand, mlir.i32_attr(exponent_bits),
-                               mlir.i32_attr(mantissa_bits))]
+  out = hlo.reduce_precision(operand, mlir.i32_attr(exponent_bits),
+                             mlir.i32_attr(mantissa_bits))
+  if config.sharding_in_types.value:
+    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
+  return [out]
 
 mlir.register_lowering(reduce_precision_p, _reduce_precision_lower)
 
