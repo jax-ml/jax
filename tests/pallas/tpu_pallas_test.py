@@ -2125,10 +2125,6 @@ class PallasCallPrintTest(PallasBaseTest):
       for dtype in (jnp.int32, jnp.uint32, jnp.float32)
   )
   def test_debug_print_vector(self, shape, dtype):
-    # TODO(ayx): Remove after this date.
-    if not jtu.if_cloud_tpu_at_least(2025, 1, 16):
-      self.skipTest("Requires libtpu built after 2025-01-16")
-
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct(shape, dtype),
