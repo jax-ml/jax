@@ -181,12 +181,6 @@ nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
-    linkopts = select({
-        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
-            "-Wl,-rpath,$$ORIGIN/../../../nvidia/cuda_runtime/lib",
-        ],
-        "//conditions:default": [],
-    }),
     deps = [
         ":mlir_capi",
         "//jaxlib:kernel_nanobind_helpers",
@@ -204,12 +198,6 @@ cc_binary(
     name = "libmosaic_gpu_runtime.so",
     srcs = ["runtime.cc"],
     copts = ["-fvisibility=default"],
-    linkopts = select({
-        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
-            "-Wl,-rpath,$$ORIGIN/../../../nvidia/cuda_runtime/lib",
-        ],
-        "//conditions:default": [],
-    }),
     linkshared = 1,
     tags = [
         "manual",

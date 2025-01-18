@@ -133,13 +133,6 @@ nanobind_extension(
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    linkopts = select({
-        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
-            "-Wl,-rpath,$$ORIGIN/../../nvidia/cuda_runtime/lib",
-            "-Wl,-rpath,$$ORIGIN/../../nvidia/cublas/lib",
-        ],
-        "//conditions:default": [],
-    }),
     module_name = "_blas",
     deps = [
         ":cublas_kernels",
@@ -273,14 +266,6 @@ nanobind_extension(
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    linkopts = select({
-        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
-            "-Wl,-rpath,$$ORIGIN/../../nvidia/cuda_runtime/lib",
-            "-Wl,-rpath,$$ORIGIN/../../nvidia/cusolver/lib",
-            "-Wl,-rpath,$$ORIGIN/../../nvidia/cublas/lib",
-        ],
-        "//conditions:default": [],
-    }),
     module_name = "_solver",
     deps = [
         ":cuda_gpu_kernel_helpers",
@@ -329,13 +314,6 @@ nanobind_extension(
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    linkopts = select({
-        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
-            "-Wl,-rpath,$$ORIGIN/../../nvidia/cuda_runtime/lib",
-            "-Wl,-rpath,$$ORIGIN/../../nvidia/cusparse/lib",
-        ],
-        "//conditions:default": [],
-    }),
     module_name = "_sparse",
     deps = [
         ":cuda_gpu_kernel_helpers",
@@ -505,12 +483,6 @@ nanobind_extension(
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    linkopts = select({
-        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
-            "-Wl,-rpath,$$ORIGIN/../../nvidia/cuda_runtime/lib",
-        ],
-        "//conditions:default": [],
-    }),
     module_name = "_hybrid",
     deps = [
         ":cuda_gpu_kernel_helpers",
@@ -597,12 +569,6 @@ nanobind_extension(
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    linkopts = select({
-        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
-            "-Wl,-rpath,$$ORIGIN/../../nvidia/cuda_runtime/lib",
-        ],
-        "//conditions:default": [],
-    }),
     module_name = "_triton",
     deps = [
         ":cuda_gpu_kernel_helpers",
@@ -648,18 +614,6 @@ nanobind_extension(
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    linkopts = select({
-        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
-            "-Wl,-rpath,$$ORIGIN/../../nvidia/cuda_cupti/lib",
-            "-Wl,-rpath,$$ORIGIN/../../nvidia/cuda_runtime/lib",
-            "-Wl,-rpath,$$ORIGIN/../../nvidia/cublas/lib",
-            "-Wl,-rpath,$$ORIGIN/../../nvidia/cufft/lib",
-            "-Wl,-rpath,$$ORIGIN/../../nvidia/cudnn/lib",
-            "-Wl,-rpath,$$ORIGIN/../../nvidia/cusolver/lib",
-            "-Wl,-rpath,$$ORIGIN/../../nvidia/cusparse/lib",
-        ],
-        "//conditions:default": [],
-    }),
     module_name = "_versions",
     deps = [
         ":cuda_gpu_kernel_helpers",
