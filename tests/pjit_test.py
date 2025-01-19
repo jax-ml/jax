@@ -43,7 +43,8 @@ from jax._src import prng
 from jax.sharding import PartitionSpec as P, Mesh
 from jax.experimental import multihost_utils
 from jax.experimental.shard_map import shard_map
-from jax.experimental.custom_partitioning import custom_partitioning, SdyShardingRule, BATCHING
+from jax.experimental.custom_partitioning import (
+    custom_partitioning, SdyShardingRule, BATCHING)
 from jax._src import array
 from jax._src.sharding import Sharding, common_devices_indices_map
 from jax._src import op_shardings
@@ -51,8 +52,8 @@ from jax._src import sharding_impls
 from jax._src.sharding_impls import (
     AUTO, UNSPECIFIED, NamedSharding, GSPMDSharding, PositionalSharding,
     SingleDeviceSharding, parse_flatten_op_sharding)
-from jax._src.pjit import (pjit, mesh_cast, visible_axes,
-                           use_hidden_axes, use_visible_axes)
+from jax._src.pjit import (pjit, mesh_cast, visible_axes, use_hidden_axes,
+                           use_visible_axes, reshard)
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import set_abstract_mesh, get_abstract_mesh, AxisTypes
 from jax._src.interpreters import pxla
@@ -6180,6 +6181,47 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = jax.jit(jax.grad(g))(embed, tok)
     self.assertEqual(out.sharding, embed.sharding)
+
+  @jtu.with_user_mesh((2, 2), ('x', 'y'))
+  def test_reshard_error(self, mesh):
+    np_inp = np.arange(16.).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    def f(x):
+      y = reshard(x, P('x', None))
+      self.assertEqual(y.aval.sharding.spec, P('x', None))
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
+    f = jax.jit(f)
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
+    lowered_text = f.lower(arr).as_text()
+    self.check_wsc_in_lowered(lowered_text)
+
+    def g(x):
+      y = f(x)
+      return jnp.sum(y)
+
+    out = jax.grad(g)(arr)
+    self.assertEqual(out.sharding, arr.sharding)
+
+    out = jax.jit(jax.grad(g))(arr)
+    self.assertEqual(out.sharding, arr.sharding)
+
+    @jax.jit
+    def h(x):
+      with use_hidden_axes('x'):
+        return reshard(x, P('y', None))
+
+    with self.assertRaisesRegex(
+        ValueError, 'Mesh of the input.*does not equal.*target sharding'):
+      h(arr)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
