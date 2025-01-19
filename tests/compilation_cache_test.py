@@ -198,6 +198,30 @@ class CompilationCacheTest(CompilationCacheTestCase):
     f(1.0)
     self.assertEqual(count_cache_items(), 2)
 
+
+  def test_change_compilation_cache_dir_reset_cache(self):
+    original_value = config.compilation_cache_dir.value
+    try:
+      cc.reset_cache()
+      self.assertFalse(cc._cache_initialized)
+      self.assertFalse(cc.is_persistent_cache_enabled())
+
+      a = jnp.zeros((2,3))
+      self.assertFalse(cc._cache_initialized)
+      self.assertFalse(cc.is_persistent_cache_enabled())
+
+      jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
+      @jax.jit
+      def f(x):
+        return x * 10
+      f(a)
+      self.assertTrue(cc._cache_initialized)
+      self.assertTrue(cc.is_persistent_cache_enabled())
+
+    finally:
+      config.update("jax_compilation_cache_dir", original_value)
+
+
   def test_xla_autofdo_profile_version(self):
     original_profile_version = config.jax_xla_profile_version.value
     with config.jax_xla_profile_version(original_profile_version + 1):
