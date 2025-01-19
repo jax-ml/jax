@@ -27,7 +27,7 @@ from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import effects
 from jax._src import util
-from jax._src.callback import callback_batching_rule
+from jax._src.callback_utils import callback_batching_rule
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -35,6 +35,7 @@ from jax._src.layout import DeviceLocalLayout
 from jax._src.lib import jaxlib
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
+from jax._src.sharding_impls import SdyArrayShardingList
 from jax._src.typing import (Array, ArrayLike, DeprecatedArg, DuckTypedArray,
                              Shape)
 
@@ -150,6 +151,7 @@ def ffi_lowering(
     operand_layouts: Sequence[FfiLayoutOptions] | None = None,
     result_layouts: Sequence[FfiLayoutOptions] | None = None,
     backend_config: Mapping[str, ir.Attribute] | str | None = None,
+    sharding: SdyArrayShardingList | xla_client.OpSharding | None = None,
     **lowering_args: Any
 ) -> mlir.LoweringRule:
   """Build a lowering rule for an foreign function interface (FFI) target.
@@ -173,6 +175,8 @@ def ffi_lowering(
       By default, the results are assumed to be row-major.
     backend_config: Configuration data for the custom call. Any keyword
       arguments passed to the lowering rule will added to this dictionary.
+    sharding: optional sharding that specifies the device from which the callback should
+      be invoked.
     lowering_args: Any other arguments to :func:`mlir.custom_call` will also be
       passed through if provided as extra arguments to this function.
   """
@@ -214,7 +218,12 @@ def ffi_lowering(
           mlir.shape_tensor(mlir.eval_dynamic_shape_as_ivals(ctx, _aval_shape(aval)))
           for aval in ctx.avals_out]
 
-    return mlir.custom_call(call_target_name, operands=operands, **kwargs).results  # type: ignore
+    result = mlir.custom_call(call_target_name, operands=operands, **kwargs)
+
+    if sharding is not None:
+      mlir.set_sharding(result, sharding)
+
+    return result.results  # type: ignore
 
   return _lowering
 

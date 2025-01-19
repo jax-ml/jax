@@ -197,6 +197,7 @@ py_library_providing_imports_info(
         "_src/array.py",
         "_src/blocked_sampler.py",
         "_src/callback.py",
+        "_src/callback_utils.py",
         "_src/checkify.py",
         "_src/custom_batching.py",
         "_src/custom_derivatives.py",

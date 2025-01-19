@@ -22,6 +22,7 @@ from jax import lax
 from jax.experimental import pjit
 from jax._src import ad_checkpoint
 from jax._src import dispatch
+from jax._src import callback as jax_callback
 from jax._src import config
 from jax._src import core
 from jax._src import effects
@@ -122,7 +123,7 @@ def callback_effect_lowering(ctx: mlir.LoweringRuleContext, *args, callback, out
   if effects.ordered_effects.contains(effect):
     token_in = ctx.tokens_in.get(effect)
 
-  out_op, token_out, _ = mlir.emit_python_callback(
+  out_op, token_out, _ = jax_callback.emit_python_callback(
       ctx, callback, token_in, list(args), list(ctx.avals_in),
       list(ctx.avals_out), has_side_effect=True)
   if token_out:

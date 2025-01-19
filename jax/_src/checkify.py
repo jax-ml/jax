@@ -29,6 +29,7 @@ from jax.experimental import shard_map
 from jax._src import api
 from jax._src import ad_checkpoint
 from jax._src import linear_util as lu
+from jax._src import callback
 from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
@@ -516,7 +517,7 @@ def check_lowering_rule(ctx, *args, err_tree, debug):
   if not config.xla_runtime_errors.value:
     raise functionalization_error
 
-  out_op, _, _ = mlir.emit_python_callback(
+  out_op, _, _ = callback.emit_python_callback(
       ctx, callback=functools.partial(python_err, err_tree),
       token=None,
       operands=args,

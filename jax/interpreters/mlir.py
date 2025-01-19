@@ -39,7 +39,6 @@ from jax._src.interpreters.mlir import (
   dense_int_array as dense_int_array,
   dense_int_elements as dense_int_elements,
   dtype_to_ir_type as dtype_to_ir_type,
-  emit_python_callback as emit_python_callback,
   flatten_ir_types as flatten_ir_types,
   flatten_ir_values as flatten_lowering_ir_args,  # TODO(phawkins): remove me  # noqa: F401
   flatten_ir_values as flatten_ir_values,
