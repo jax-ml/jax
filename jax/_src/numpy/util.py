@@ -137,8 +137,6 @@ def _arraylike_asarray(x: Any) -> Array:
   """Convert an array-like object to an array."""
   if hasattr(x, '__jax_array__'):
     x = x.__jax_array__()
-  elif isinstance(x, (bool, int, float, complex)):
-    x = dtypes.coerce_to_array(x)
   return lax.asarray(x)
 
 
