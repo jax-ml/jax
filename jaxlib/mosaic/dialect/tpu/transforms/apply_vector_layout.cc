@@ -54,6 +54,7 @@
 #include "llvm/include/llvm/Support/LogicalResult.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/include/mlir/Dialect/Math/IR/Math.h"
 #include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/include/mlir/IR/Attributes.h"
 #include "mlir/include/mlir/IR/Builders.h"
@@ -859,7 +860,7 @@ LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
                                  const VectorLayout &layout_in,
                                  const VectorLayout &layout_out) {
   ImplicitLocOpBuilder builder(op.getLoc(), op.getOperation());
-  auto source = cast<TypedValue<VectorType>>(op.getIn());
+  auto source = cast<TypedValue<VectorType>>(op.getOperand());
   auto result_ty = cast<VectorType>(op.getResult().getType());
   auto output_vregs_shape =
       layout_out.tileArrayImplicitShape(result_ty.getShape(), ctx.target_shape);
@@ -1060,6 +1061,45 @@ LogicalResult arith_trunci_rule(RewriteContext &ctx, Operation &op,
   auto trunci_op = cast<arith::TruncIOp>(op);
   return trunc_op_rule_impl(ctx, trunci_op, *layouts_in.front(),
                             *layouts_out.front());
+}
+
+LogicalResult tpu_fptosi_rule(RewriteContext &ctx, Operation &op,
+                              const ArrayRef<Layout> layouts_in,
+                              const ArrayRef<Layout> layouts_out) {
+  TPU_ASSERT_EQ_OP(layouts_in.size(), 1);
+  TPU_ASSERT_OP(layouts_in.front().has_value());
+  TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
+  TPU_ASSERT_OP(layouts_out.front().has_value());
+  auto& layout_in = *layouts_in.front();
+  auto& layout_out = *layouts_out.front();
+  if (layout_in.bitwidth() == layout_out.bitwidth()) {
+    return elementwise_op_rule(ctx, op, layouts_in, layouts_out);
+  } else if (layout_in.bitwidth() > layout_out.bitwidth()) {
+    // FPToSI semantics require rounding towards zero, but packing instructions
+    // use rounding towards nearest even. We need to insert explicit rounding,
+    // unless the input is already rounded to nearest even.
+    auto fptosi_op = cast<tpu::FPToSIOp>(op);
+    switch (fptosi_op.getRoundingMode()) {
+      case tpu::RoundingMode::kToNearestEven:
+        break;  // That is the mode used by tpu.pack_subelements.
+      case tpu::RoundingMode::kTowardsZero: {
+        auto input = cast<TypedValue<VectorType>>(fptosi_op.getInput());
+        ImplicitLocOpBuilder builder(op.getLoc(), fptosi_op);
+        FAILUREOR_ASSIGN_OR_RETURN(
+            xla::Array<Value> vregs,
+            disassemble(builder, layout_in, input, ctx.target_shape));
+        vregs.Each([&](absl::Span<const int64_t> idxs, Value *v) {
+          *v = builder.create<mlir::math::TruncOp>(op.getLoc(), v->getType(),
+                                                   *v);
+        });
+        fptosi_op->replaceUsesOfWith(
+            input, assemble(builder, input.getType(), layout_in, vregs,
+                            ctx.target_shape));
+      } break;
+    }
+    return trunc_op_rule_impl(ctx, fptosi_op, layout_in, layout_out);
+  }
+  return op.emitOpError("Unsupported FPToSI conversion");
 }
 
 LogicalResult func_return_rule(RewriteContext &ctx, Operation &op,
@@ -4672,6 +4712,7 @@ const llvm::StringMap<rule_type> &rules() {
         {tpu::TraceOp::getOperationName(), tpu_trace_rule},
         {tpu::AssumeLayoutOp::getOperationName(), tpu_assume_layout_rule},
         {tpu::PRNGRandomBitsOp::getOperationName(), prng_random_bits_rule},
+        {tpu::FPToSIOp::getOperationName(), tpu_fptosi_rule},
         {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
         {vector::ExtractOp::getOperationName(), vector_extract_rule},
         {vector::LoadOp::getOperationName(), vector_load_rule},
