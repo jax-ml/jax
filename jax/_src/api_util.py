@@ -619,6 +619,7 @@ def save_wrapped_fun_sourceinfo(wrapper: Callable, wrapped: Callable):
 
 # TODO(mattjj): make this function internal to this module
 def fun_sourceinfo(fun: Callable) -> str | None:
+  return None  # DO_NOT_SUBMIT
   res = getattr(fun, "__fun_sourceinfo__", None)
   if res is not None: return res
   while isinstance(fun, partial):
@@ -658,6 +659,7 @@ def add_jaxpr_debug_info(jaxpr: core.Jaxpr,
                          result_paths: tuple[str, ...] | None = None,
                          ) -> core.Jaxpr:
   """Add debug info to jaxpr, given trace-time debug info and result paths."""
+  return jaxpr  # DO_NOT_SUBMIT
   if trace_debug is None:
     return jaxpr
   assert (result_paths is not None) ^ (trace_debug.result_paths_thunk is not None)
@@ -672,6 +674,7 @@ def debug_info_final(f: lu.WrappedFun, dbg: TracingDebugInfo | None,
                      res_paths_thunk: Callable[[], tuple[str, ...]]
                      ) -> lu.WrappedFun:
   "Attach trace-time debug info and result paths lazy thunk to an lu.WrappedFun"
+  return f  # DO_NOT_SUBMIT
   if dbg is None: return f
   assert dbg.result_paths_thunk is None
   res_paths_thunk_ = HashableFunction(res_paths_thunk, closure=())
