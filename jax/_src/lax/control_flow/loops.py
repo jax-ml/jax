@@ -230,9 +230,9 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
                            if not hasattr(x, 'shape')))) from err
 
   if (config.sharding_in_types.value and
-      not all(x.sharding.spec[0] is None for x in xs_flat)):
+      not all(x.aval.sharding.spec[0] is None for x in xs_flat)):
     raise ValueError('0th dimension of all xs should be replicated. Got '
-                     f'{", ".join(str(x.sharding.spec) for x in xs_flat)}')
+                     f'{", ".join(str(x.aval.sharding.spec) for x in xs_flat)}')
 
   if length is not None:
     try:
