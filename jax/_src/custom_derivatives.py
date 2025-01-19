@@ -46,7 +46,7 @@ from jax._src.tree_util import (
     register_pytree_node_class, tree_leaves, tree_flatten_with_path,
     tree_leaves_with_path, keystr, treedef_children)
 from jax._src.util import (cache, safe_zip, safe_map, split_list, Unhashable,
-                           unzip2)
+                           unzip2, weakref_lru_cache)
 
 
 traceback_util.register_exclusion(__file__)
@@ -426,6 +426,45 @@ def _custom_jvp_call_transpose(params, jaxpr, args, ct, _):
   return ad.backward_pass(jaxpr.jaxpr, None, jaxpr.consts, args, ct)
 ad.primitive_transposes[custom_jvp_call_p] = _custom_jvp_call_transpose
 
+@weakref_lru_cache
+def _cached_closed_call_dce_instantiate(
+    jaxpr_: core.ClosedJaxpr, used_outputs: tuple[bool, ...]
+) -> tuple[core.ClosedJaxpr, list[bool]]:
+  # TODO(danfm): de-duplicate with pe._cached_closed_call_dce
+  jaxpr, consts = jaxpr_.jaxpr, jaxpr_.consts
+  new_jaxpr, used_inputs = pe.dce_jaxpr(jaxpr, used_outputs, True)
+  return core.ClosedJaxpr(new_jaxpr, consts), used_inputs
+
+def _custom_jvp_call_dce(used_outs: Sequence[bool], eqn: core.JaxprEqn):
+  if not any(used_outs) and not pe.has_effects(eqn):
+    return [False] * len(eqn.invars), None
+
+  call_jaxpr = eqn.params["call_jaxpr"]
+  jvp_jaxpr_thunk = eqn.params["jvp_jaxpr_thunk"]
+  # We must set instantiate=True because some inputs that are unused by the
+  # DCE'ed primal might be used in the JVP rule.
+  dce_call_jaxpr, used_ins = _cached_closed_call_dce_instantiate(
+      call_jaxpr, tuple(used_outs))
+  assert all(used_ins)
+
+  @pe._memoize
+  def dce_jvp_jaxpr_thunk(*in_zeros):
+    jvp_jaxpr, consts, out_zeros = jvp_jaxpr_thunk(*in_zeros)
+    dce_jvp_jaxpr, _ = pe.dce_jaxpr(jvp_jaxpr, [*used_outs, *used_outs], True)
+    dce_out_zeros = [v for used, v in zip(used_outs, out_zeros) if used]
+    return dce_jvp_jaxpr, consts, dce_out_zeros
+
+  outvars = [v for used, v in zip(used_outs, eqn.outvars) if used]
+  new_params = dict(
+      eqn.params,
+      call_jaxpr=dce_call_jaxpr,
+      jvp_jaxpr_thunk=dce_jvp_jaxpr_thunk,
+  )
+  new_eqn = pe.new_jaxpr_eqn(
+      eqn.invars, outvars, eqn.primitive, new_params, dce_call_jaxpr.effects,
+      eqn.source_info, eqn.ctx)
+  return used_ins, new_eqn
+pe.dce_rules[custom_jvp_call_p] = _custom_jvp_call_dce
 
 ### VJPs
 
