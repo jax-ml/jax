@@ -1376,6 +1376,65 @@ class CustomPartitionerTest(jtu.JaxTestCase):
     self.assertArraysEqual(result0, result1)
     self.assertArraysEqual(result1, result2)
 
+  # This test is similar to test_custom_partitioner, but uses a sharding rule
+  # rule callback to produce the sharding rule. It demonstrates that the
+  # partitioning API supports the lowering of a kernel with different sharding
+  # rules.
+  @jtu.skip_on_devices('cpu')
+  @jtu.with_mesh([('x', 4), ('y', 2)])
+  def test_custom_partitioner_sharding_rule_callback(self):
+    self.skip_if_custom_partitioning_not_supported()
+
+    def partition(precision, mesh, arg_shapes, result_shape):
+      arg_shardings = jax.tree.map(lambda s: s.sharding, arg_shapes)
+      result_sharding = result_shape[0].sharding
+      rank=len(arg_shapes[0].shape)
+
+      def lower_fn(x, y):
+        axis_name = arg_shardings[1].spec[rank-2][0]
+        i = jax.lax.axis_index(axis_name)
+        z = jax.lax.psum(jax.lax.dynamic_slice_in_dim(jax.lax.dynamic_slice_in_dim(x, i * 0, 8, axis=rank-2), i * 8, 8, axis=rank-1) @ y, (axis_name))
+        return z, z * z
+
+      return mesh, lower_fn, (result_sharding, result_sharding), arg_shardings
+
+    def infer_sharding_from_operands(precision, mesh, arg_shapes, result_shape):
+      arg_shardings = jax.tree.map(lambda s: s.sharding, arg_shapes)
+      x_shard, y_shard = arg_shardings
+      x_shape, y_shape = arg_shapes
+      x_names = tuple(x_shard.spec) + tuple(
+          None for _ in range(len(x_shape.shape) - len(x_shard.spec)))
+      y_names = tuple(y_shard.spec) + tuple(
+          None for _ in range(len(y_shape.shape) - len(y_shard.spec)))
+      z_shard = NamedSharding(y_shard.mesh, P(*(x_names[:-1] + y_names[-2:-1])))
+      return z_shard, z_shard
+
+    def produce_sharding_rule(mesh, arg_shapes, result_shape):
+      rank = len(arg_shapes[0].shape)
+      leading_axes = ""
+      for i in range(rank - 2):
+        leading_axes += f" b{i}"
+      return f"{leading_axes} i j, {leading_axes} j k -> {leading_axes} i k, {leading_axes} i k"
+
+    @partial(custom_partitioning, static_argnums=(2,))
+    def f(x, y, precision=None):
+      z = jnp.matmul(x, y, precision=precision)
+      return z, z * z
+
+    f.def_partition(
+        infer_sharding_from_operands=infer_sharding_from_operands,
+        partition=partition,
+        sharding_rule=produce_sharding_rule)
+
+    pjit_f = pjit(f, in_shardings=(P(None, None, 'x'), P(None, None, 'y')), out_shardings=P(None, None, 'x'))
+    x = np.asarray(np.random.randint(0, 20, (2, 3, 32, 16)), dtype=np.float32)
+    y = np.asarray(np.random.randint(0, 20, (2, 3, 16, 32)), dtype=np.float32)
+    result1 = jax.jit(f)(x, y)
+    result2 = f(x, y)
+    result0 = pjit_f(x, y)
+    self.assertArraysEqual(result0, result1)
+    self.assertArraysEqual(result1, result2)
+
   @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_custom_partitioner_propagate_user_sharding(self):
     self.skip_if_custom_partitioning_not_supported()
