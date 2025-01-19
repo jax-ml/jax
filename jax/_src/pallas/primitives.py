@@ -896,22 +896,25 @@ def _run_scoped_discharge_rule(
     **_):
   del out_avals
   num_consts = len(args_flat)
+  # discharge_state only discharges invars, not consts, so in order to
+  # discharge the requested refs we need to move them to the invar set.
   jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
   num_return_values = len(jaxpr_noconst.outvars)
-  should_discharge = should_discharge + [
-      isinstance(var.aval, state.AbstractRef) for var in jaxpr.invars
-  ]
   discharged_body, new_consts = state_discharge.discharge_state(
-      jaxpr_noconst, [], should_discharge=should_discharge)
+      jaxpr_noconst,
+      [],
+      should_discharge=should_discharge + [False] * len(jaxpr.invars),
+  )
   if new_consts:
     raise NotImplementedError(
         "Cannot handle new consts created by state discharge.")
-  # Create inputs filled with uninitialized values to the body.
-  body_avals = [v.aval for v in discharged_body.invars[num_consts:]]
-  init_vals = [uninitialized_value(
-      aval.shape, aval.dtype) for aval in body_avals]
-  init_vals_with_consts = args_flat + tuple(init_vals)
-  out = jax_core.eval_jaxpr(discharged_body, [], *init_vals_with_consts)
+
+  # Lowering expects that the jaxpr.consts to be the eqn.invals.
+  discharged_body = pe.convert_invars_to_constvars(discharged_body, num_consts)
+
+  # Run_scoped discharged the external variables but the scoped ones
+  # are not discharged.
+  out = run_scoped_p.bind(*args_flat, jaxpr=discharged_body)
   # Order of outputs:
   # (1) return values, (2) closed refs, (3) scoped refs.
   return_values = out[:num_return_values]
@@ -919,8 +922,8 @@ def _run_scoped_discharge_rule(
   # We update all ref values with their updated values from the discharged
   # body. For other values we leave them in place.
   updates = [
-      ref_outputs.pop(0) if isinstance(aval, pallas_core.AbstractMemoryRef)
-      else None for aval in in_avals]
+      ref_outputs.pop(0) if should and isinstance(aval, pallas_core.AbstractMemoryRef)
+      else None for should, aval in zip(should_discharge, in_avals)]
   assert len(updates) == len(in_avals), f'{len(updates)} != {len(in_avals)}'
   return updates, return_values
 
@@ -931,17 +934,29 @@ state_discharge.register_partial_discharge_rule(run_scoped_p)(
 
 @functools.partial(mlir.register_lowering, run_scoped_p)
 def _run_scoped_lowering_rule(ctx, *args, jaxpr):
-  # This lowering rule gets triggered when run_scoped is not discharged.
-  # In this case there are no stateful effects to handle.
   should_discharge = [
       isinstance(aval, state.AbstractRef) for aval in ctx.avals_in
   ]
 
+  jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
+  num_return_values = len(jaxpr_noconst.outvars)
+  should_discharge = should_discharge + [
+      isinstance(var.aval, state.AbstractRef) for var in jaxpr.invars
+  ]
+  discharged_body, new_consts = state_discharge.discharge_state(
+      jaxpr_noconst, [], should_discharge=should_discharge)
+  if new_consts:
+    raise NotImplementedError(
+        "Cannot handle new consts created by state discharge.")
+
   def _lower_fun(*lower_fun_args):
-    updates, out = _run_scoped_discharge_rule(
-        should_discharge,
-        [], [], *lower_fun_args,
-        jaxpr=jaxpr)
-    assert len(updates) == 0, 'Cannot lower run_scoped with effects.'
-    return out
+    # Create inputs filled with uninitialized values to the body.
+    num_consts = len(lower_fun_args)
+    body_avals = [v.aval for v in discharged_body.invars[num_consts:]]
+    init_vals = [uninitialized_value(
+        aval.shape, aval.dtype) for aval in body_avals]
+    init_vals_with_consts = lower_fun_args + tuple(init_vals)
+    out = jax_core.eval_jaxpr(discharged_body, [], *init_vals_with_consts)
+    return out[:num_return_values]
+
   return mlir.lower_fun(_lower_fun, multiple_results=True)(ctx, *args)
