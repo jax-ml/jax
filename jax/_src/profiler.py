@@ -26,6 +26,7 @@ import pathlib
 import socketserver
 import threading
 from typing import Any
+import warnings
 
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
@@ -437,3 +438,12 @@ class PGLEProfiler:
         runner.current_session = None
 
         runner.called_times += 1
+        if runner.fdo_profiles[-1] == b'':
+          warnings.warn(
+              "PGLE collected an empty trace, may be due to contention with "
+              "another tool that subscribes to CUPTI, such as Nsight Systems - check "
+              "for CUPTI_ERROR_MULTIPLE_SUBSCRIBERS_NOT_SUPPORTED from XLA. "
+              "Consider populating a persistent compilation cache with PGLE enabled, "
+              "and then profiling a second run that has the "
+              "JAX_COMPILATION_CACHE_EXPECT_PGLE option enabled.",
+              RuntimeWarning)
