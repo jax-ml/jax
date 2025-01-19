@@ -42,6 +42,7 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src import lax_reference
 from jax._src import test_util as jtu
+from jax._src.errors import UnexpectedTracerError
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
@@ -4682,6 +4683,39 @@ class CompositeTest(jtu.JaxTestCase):
         "https://jax.readthedocs.io/en/latest/_autosummary/jax.custom_jvp.html"
     ):
       grad(my_square)(1.0)
+
+  def test_composite_with_array_consts(self):
+    @partial(lax.composite, name="my.consts")
+    def my_consts(x, /, *, scale):
+      return jnp.round(x / scale)
+
+    scale = np.array([0.5, 0.4, 0.3], dtype=np.float32)
+    x = jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32)
+    self.assertAllClose(my_consts(x, scale=scale), jnp.round(x / scale))
+
+    # The constant must not appear as an extra input argument to the composite.
+    mlir_module = jax.jit(partial(my_consts, scale=scale)).lower(x).as_text()
+    self.assertIn(
+        "@my.consts(%arg0: tensor<3xf32>) -> tensor<3xf32>", mlir_module
+    )
+
+  def test_composite_with_tracer_consts(self):
+    def fun(x, scale):
+      @partial(lax.composite, name="my.consts")
+      def my_consts(y):
+        return jnp.round(y / scale)
+      return my_consts(x)
+
+    scale = jnp.array([0.5, 0.4, 0.3], dtype=jnp.float32)
+    x = jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32)
+    self.assertAllClose(fun(x, scale), jnp.round(x / scale))
+    self.assertAllClose(
+        jax.jit(partial(fun, scale=scale))(x), jnp.round(x / scale))
+    with self.assertRaisesRegex(
+        UnexpectedTracerError,
+        "Found a JAX Tracer as a constant in the decomposition for the "
+        "composite op 'my.consts'."):
+      jax.jit(fun)(x, scale)
 
 
 class RaggedTest(jtu.JaxTestCase):

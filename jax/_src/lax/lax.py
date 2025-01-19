@@ -49,6 +49,7 @@ from jax._src import util
 from jax._src.abstract_arrays import array_types
 from jax._src.core import (Primitive, UnshapedArray, ShapedArray,
                            abstract_token, canonicalize_shape)
+from jax._src.errors import UnexpectedTracerError
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -657,13 +658,18 @@ def clamp(min: ArrayLike, x: ArrayLike, max: ArrayLike) -> Array:
 
 
 @weakref_lru_cache
-def _trace_composite_to_jaxpr(fun, in_tree, in_avals):
+def _trace_composite_to_jaxpr(fun, in_tree, in_avals, name: str):
   flat_fun, out_tree = api_util.flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   debug_info = pe.tracing_debug_info(fun, in_tree, out_tree, False, "composite")
   jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug_info)
-  # TODO(danfm): support const inputs to composite.
-  assert not consts
-  closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
+  if any(isinstance(c, core.Tracer) for c in consts):
+    raise UnexpectedTracerError(
+        "Found a JAX Tracer as a constant in the decomposition for the "
+        f"composite op '{name}'. This means that the decomposition function "
+        "closes over a value that is involved in a JAX transformation. "
+        "Any values that aren't explicitly known at compile time must be "
+        "explicitly passed as arguments to the composite.")
+  closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   return closed_jaxpr, out_tree
 
 
@@ -733,7 +739,7 @@ def composite(
     flat_args, in_tree = tree_util.tree_flatten(args)
     in_avals = tuple(core.get_aval(x) for x in flat_args)
     closed_jaxpr, out_tree = _trace_composite_to_jaxpr(
-        partial(decomposition, **kwargs), in_tree, in_avals
+        partial(decomposition, **kwargs), in_tree, in_avals, name
     )
     out_flat = composite_p.bind(
         *flat_args,
