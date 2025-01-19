@@ -864,8 +864,6 @@ def get_barrier_semaphore():
   to share a collective_id. However, if in doubt, prefer not sharing
   collective_ids, as doing so incorrectly can lead to silent data corruption or
   crashes.
-  Note that re-using the same collective_id doesn't guarantee that the same
-  semaphore is provided by XLA.
   """
   return get_barrier_semaphore_p.bind()
 
