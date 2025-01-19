@@ -33,6 +33,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import effects
+from jax._src import ffi
 from jax._src import mesh as mesh_lib
 from jax._src import sharding_impls
 from jax._src import tree_util
@@ -662,3 +663,27 @@ def visualize_array_sharding(arr, **kwargs):
   def _visualize(sharding):
     return visualize_sharding(arr.shape, sharding, **kwargs)
   inspect_array_sharding(arr, callback=_visualize)
+
+
+ffi_log_p = core.Primitive("ffi_log")
+ffi_log_p.multiple_results = True
+dispatch.simple_impl(ffi_log_p)
+
+@ffi_log_p.def_effectful_abstract_eval
+def ffi_log_abstract_eval(*_, effect: DebugEffect, prefix: str):
+  del prefix
+  return [], {effect}
+
+def ffi_log_lowering(ctx, *args, effect: DebugEffect, prefix: str):
+  del effect
+  rule = ffi.ffi_lowering("__gpu$jax.gpu.log", has_side_effect=True)
+  return rule(ctx, *args, prefix=prefix)
+
+mlir.register_lowering(ffi_log_p, ffi_log_lowering, platform="cuda")
+
+@functools.partial(jax.jit, static_argnames=("prefix",))
+def ffi_log(*args, prefix: str | None = None):
+  if prefix is None:
+    prefix = ""
+  flat_args, _ = tree_util.tree_flatten(args)
+  return ffi_log_p.bind(*flat_args, effect=debug_effect, prefix=prefix)

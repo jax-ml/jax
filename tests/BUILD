@@ -1281,6 +1281,7 @@ jax_multiplatform_test(
     enable_configs = [
         "cpu",
         "gpu_h100",
+        "gpu_p100x2",
         "tpu_v2_1x1",
         "tpu_v3_2x2",
         "tpu_v4_2x2",
