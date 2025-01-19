@@ -1684,9 +1684,11 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     pivoting=[False, True]
   )
   def testScipyQrModes(self, shape, dtype, mode, pivoting):
-    is_not_cpu_test_device = not jtu.test_device_matches(["cpu"])
-    if pivoting and is_not_cpu_test_device:
-      self.skipTest("Pivoting is only supported on CPU with jaxlib > 0.4.38")
+    if pivoting:
+      if not jtu.test_device_matches(["cpu", "gpu"]):
+        self.skipTest("Pivoting is only supported on CPU and GPU.")
+      if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 5, 0):
+        self.skipTest("Pivoting is only supported on GPU for jaxlib > 0.5.0")
     rng = jtu.rand_default(self.rng())
     jsp_func = partial(jax.scipy.linalg.qr, mode=mode, pivoting=pivoting)
     sp_func = partial(scipy.linalg.qr, mode=mode, pivoting=pivoting)
