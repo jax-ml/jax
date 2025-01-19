@@ -62,11 +62,6 @@ def platform_tag(cpu: str) -> str:
   }[(platform.system(), cpu)]
   return f"{platform_name}_{cpu_name}"
 
-def get_githash(jaxlib_git_hash):
-  if jaxlib_git_hash != "" and os.path.isfile(jaxlib_git_hash):
-    with open(jaxlib_git_hash, "r") as f:
-      return f.readline().strip()
-  return jaxlib_git_hash
 
 def build_wheel(
     sources_path: str, output_path: str, package_name: str, git_hash: str = ""
