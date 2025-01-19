@@ -350,7 +350,8 @@ def pure_callback(
 
   ``pure_callback`` enables calling a Python function in JIT-ed JAX functions.
   The input ``callback`` will be passed JAX arrays placed on a local CPU, and
-  it should also return JAX arrays on CPU.
+  it should also return JAX arrays on CPU. The ``callback`` function must not
+  include any calls back into JAX.
 
   The callback is treated as functionally pure, meaning it has no side-effects
   and its output value depends only on its argument values. As a consequence, it
@@ -382,8 +383,9 @@ def pure_callback(
   Args:
     callback: function to execute on the host. The callback is assumed to be a pure
       function (i.e. one without side-effects): if an impure function is passed, it
-      may behave in unexpected ways, particularly under transformation. The callable
-      will be passed PyTrees of arrays as arguments, and should return a PyTree of
+      may behave in unexpected ways, particularly under transformation.
+      Furthermore, the callback must not call into JAX. The callable will
+      be passed PyTrees of arrays as arguments, and should return a PyTree of
       arrays that matches ``result_shape_dtypes``.
     result_shape_dtypes: pytree whose leaves have ``shape`` and ``dtype`` attributes,
       whose structure matches the expected output of the callback function at runtime.
@@ -622,14 +624,15 @@ def io_callback(
     ordered: bool = False,
     **kwargs: Any,
 ):
-  """Calls an impure Python callback.
+  """Calls an impure Python callback. The callback function must not include any
+  calls back into JAX.
 
   For more explanation, see `External Callbacks`_.
 
   Args:
     callback: function to execute on the host. It is assumed to be an impure function.
       If ``callback`` is pure, using :func:`jax.pure_callback` instead may lead to
-      more efficient execution.
+      more efficient execution. The ``callback`` must not call into JAX.
     result_shape_dtypes: pytree whose leaves have ``shape`` and ``dtype`` attributes,
       whose structure matches the expected output of the callback function at runtime.
       :class:`jax.ShapeDtypeStruct` is often used to define leaf values.
