@@ -175,7 +175,7 @@ def _memory_space_to_tpu_memory_space(memory_space: MemorySpace | None
       # Leave the memory space unchanged
       return memory_space
     case _:
-      raise ValueError("Invalid memory space: {memory_space}")
+      raise ValueError(f"Invalid memory space: {memory_space}")
 
 
 def _memory_space_to_mosaic_attribute(memory_space: MemorySpace | None
