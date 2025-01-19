@@ -30,8 +30,8 @@ from jax._src import traceback_util
 from jax._src.ad_util import (
     stop_gradient_p, SymbolicZero, Zero, zeros_like_aval)
 from jax._src.api_util import (
-    argnums_partial, flatten_fun_nokwargs, resolve_kwargs, fun_signature,
-    _arg_names)
+  argnums_partial, flatten_fun_nokwargs, resolve_kwargs, fun_signature,
+  _non_static_arg_names)
 from jax._src.errors import UnexpectedTracerError
 from jax._src.state.types import AbstractRef
 from jax._src.interpreters import ad
@@ -636,7 +636,7 @@ def _check_for_aliased_refs(f, nondiff_argnums, args):
   for i, x in enumerate(leaves):
     if (isinstance((a := core.get_aval(x)), AbstractRef) and
         (dup_idx := refs.setdefault(id(core.get_referent(x)), i)) != i):
-      arg_names = _arg_names(fun_signature(f), args, {}, nondiff_argnums, ())
+      arg_names = _non_static_arg_names(fun_signature(f), args, {}, nondiff_argnums, ())
       if arg_names is None:
         arg_names = [f'flat index {j}' for j in range(len(leaves))]
       raise ValueError(

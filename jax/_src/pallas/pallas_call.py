@@ -1810,13 +1810,11 @@ def pallas_call(
     kernel_fun_sig = api_util.fun_signature(kernel)
     arg_names = None
     if kernel_fun_sig:
-      kernel_debug_info = api_util.debug_info(
+      kernel_debug_info = api_util.tracing_debug_info(
           "pallas_call kernel",
-           kernel_src_info,
-           kernel_fun_sig,
-           [1] * len(kernel_fun_sig.parameters), {}, (), ())
-      if kernel_debug_info:
-        arg_names = kernel_debug_info.arg_names
+           kernel,
+           [1] * len(kernel_fun_sig.parameters), {})
+      arg_names = kernel_debug_info.arg_names
       del kernel_debug_info
     in_origins = tuple(in_path_to_input_origin(p, arg_names)
                        for p in in_paths)
@@ -1909,6 +1907,10 @@ def in_path_to_input_origin(
   if isinstance(arg_idx, tree_util.SequenceKey) and arg_idx.idx < len(
       arg_names
   ):
+    if arg_names[arg_idx.idx] is None:
+      # TODO(necula): when is this needed?
+      # Repro: pallas_test:test_with_input_output_aliasing
+      return f"args{tree_util.keystr(in_path)}"
     return arg_names[arg_idx.idx] + tree_util.keystr(tuple(rest_path))
   else:
     return f"args{tree_util.keystr(tuple(in_path))}"

@@ -116,6 +116,7 @@ def flattened_fun_in_tree(
         (args, store, f is flatten_fun.args[0])
         for (f, args), store in zip(fn.transforms, fn.stores) if f in flattens)
   except ValueError:
+    # When `fn` is not the result of flatten_fun or flatten_fun_nokwargs
     return None
   else:
     return in_tree, lambda: out_tree_store.val, has_kwargs  # type: ignore[union-attr]
@@ -590,19 +591,22 @@ def api_hook(fun, tag: str):
   return fun
 
 
-def debug_info(
-    traced_for: str, fun_src_info: str | None,
-    fun_signature: inspect.Signature | None,
-    args: tuple[Any, ...], kwargs: dict[str, Any],
-    static_argnums: tuple[int, ...],
-    static_argnames: tuple[str, ...]
-) -> TracingDebugInfo | None:
-  """Try to build trace-time debug info for fun when applied to args/kwargs."""
-  arg_names = _arg_names(fun_signature, args, kwargs, static_argnums,
-                         static_argnames)
-  if arg_names is None:
-    return None
-  return TracingDebugInfo(traced_for, fun_src_info, arg_names, None)
+def tracing_debug_info(
+    traced_for: str,
+    fun: Callable,
+    args: Sequence[Any],
+    kwargs: dict[str, Any],
+    *,
+    static_argnums: tuple[int, ...] = (),
+    static_argnames: tuple[str, ...] = (),
+    result_paths_thunk: Callable[[], tuple[str, ...]] | None = None,
+) -> TracingDebugInfo:
+  sourceinfo = fun_sourceinfo(fun)
+  signature = fun_signature(fun)
+  arg_names = _non_static_arg_names(signature, args, kwargs, static_argnums,
+                                    static_argnames)
+  return TracingDebugInfo(traced_for, sourceinfo, arg_names, result_paths_thunk)
+
 
 def fun_signature(fun: Callable) -> inspect.Signature | None:
   try:
@@ -631,18 +635,24 @@ def fun_sourceinfo(fun: Callable) -> str | None:
   except AttributeError:
     return None
 
-def _arg_names(fn_signature, args, kwargs, static_argnums, static_argnames,
-               ) -> tuple[str, ...] | None:
-  if fn_signature is None: return None
+def _non_static_arg_names(fn_signature: inspect.Signature | None,
+                          args: Sequence[Any], kwargs: dict[str, Any],
+                          static_argnums: Sequence[int],
+                          static_argnames: Sequence[str],
+                          ) -> tuple[str | None, ...]:
   static = object()
   static_argnums_ = _ensure_inbounds(True, len(args), static_argnums)
   static_argnames_ = set(static_argnames)
   args_ = [static if i in static_argnums_ else x for i, x in enumerate(args)]
-  kwargs = {k:static if k in static_argnames_ else x for k, x in kwargs.items()}
+  kwargs = {k: static if k in static_argnames_ else x for k, x in kwargs.items()}
+  nr_non_static_args = (len(args) - len(static_argnums_) +
+                        len(kwargs) - len(static_argnames_))
+  if fn_signature is None:
+    return (None,) * nr_non_static_args
   try:
     ba = fn_signature.bind(*args_, **kwargs)
   except (ValueError, TypeError):
-    return None
+    return (None,) * nr_non_static_args
   return tuple(f'{name}{keystr(path)}' for name, x in ba.arguments.items()
                for path, l in generate_key_paths(x) if l is not static)
 
