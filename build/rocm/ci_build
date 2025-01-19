@@ -21,9 +21,13 @@
 
 
 import argparse
+import logging
 import os
 import subprocess
 import sys
+
+
+LOG = logging.getLogger("ci_build")
 
 
 def image_by_name(name):
@@ -31,6 +35,27 @@ def image_by_name(name):
     out = subprocess.check_output(cmd)
     image_id = out.decode("utf8").strip().split("\n")[0] or None
     return image_id
+
+
+def create_manylinux_build_image(rocm_version, rocm_build_job, rocm_build_num):
+    image_name = "jax-build-manylinux_2_28_x86_64_rocm%s" % rocm_version.replace(
+        ".", ""
+    )
+    cmd = [
+        "docker",
+        "build",
+        "-f",
+        "build/rocm/build_wheels/Dockerfile.manylinux_2_28_x86_64.rocm",
+        "--build-arg=ROCM_VERSION=%s" % rocm_version,
+        "--build-arg=ROCM_BUILD_JOB=%s" % rocm_build_job,
+        "--build-arg=ROCM_BUILD_NUM=%s" % rocm_build_num,
+        "--tag=%s" % image_name,
+        ".",
+    ]
+
+    LOG.info("Creating manylinux build image. Running: %s", cmd)
+    _ = subprocess.run(cmd, check=True)
+    return image_name
 
 
 def dist_wheels(
@@ -41,33 +66,14 @@ def dist_wheels(
     rocm_build_num="",
     compiler="gcc",
 ):
+    # We want to make sure the wheels we build are manylinux compliant. We'll
+    # do the build in a container. Build the image for this.
+    image_name = create_manylinux_build_image(
+        rocm_version, rocm_build_job, rocm_build_num
+    )
+
     if xla_path:
         xla_path = os.path.abspath(xla_path)
-
-    # create manylinux image with requested ROCm installed
-    image = "jax-manylinux_2_28_x86_64_rocm%s" % rocm_version.replace(".", "")
-
-    # Try removing the Docker image.
-    try:
-        subprocess.run(["docker", "rmi", image], check=True)
-        print(f"Image {image} removed successfully.")
-    except subprocess.CalledProcessError as e:
-        print(f"Failed to remove Docker image {image}: {e}")
-
-    cmd = [
-        "docker",
-        "build",
-        "-f",
-        "build/rocm/build_wheels/Dockerfile.manylinux_2_28_x86_64.rocm",
-        "--build-arg=ROCM_VERSION=%s" % rocm_version,
-        "--build-arg=ROCM_BUILD_JOB=%s" % rocm_build_job,
-        "--build-arg=ROCM_BUILD_NUM=%s" % rocm_build_num,
-        "--tag=%s" % image,
-        ".",
-    ]
-
-    if not image_by_name(image):
-        _ = subprocess.run(cmd, check=True)
 
     # use image to build JAX/jaxlib wheels
     os.makedirs("wheelhouse", exist_ok=True)
@@ -114,13 +120,14 @@ def dist_wheels(
         [
             "--init",
             "--rm",
-            image,
+            image_name,
             "bash",
             "-c",
             " ".join(bw_cmd),
         ]
     )
 
+    LOG.info("Running: %s", cmd)
     _ = subprocess.run(cmd, check=True)
 
 
@@ -141,10 +148,16 @@ def _fetch_jax_metadata(xla_path):
 
     jax_version = subprocess.check_output(cmd, env=env)
 
+    def safe_decode(x):
+        if isinstance(x, str):
+            return x
+        else:
+            return x.decode("utf8")
+
     return {
-        "jax_version": jax_version.decode("utf8").strip(),
-        "jax_commit": jax_commit.decode("utf8").strip(),
-        "xla_commit": xla_commit.decode("utf8").strip(),
+        "jax_version": safe_decode(jax_version).strip(),
+        "jax_commit": safe_decode(jax_commit).strip(),
+        "xla_commit": safe_decode(xla_commit).strip(),
     }
 
 
@@ -193,7 +206,7 @@ def dist_docker(
     subprocess.check_call(cmd)
 
 
-def test(image_name):
+def test(image_name, test_cmd):
     """Run unit tests like CI would inside a JAX image."""
 
     gpu_args = [
@@ -211,9 +224,11 @@ def test(image_name):
     cmd = [
         "docker",
         "run",
-        "-it",
         "--rm",
     ]
+
+    if os.isatty(sys.stdout.fileno()):
+        cmd.append("-it")
 
     # NOTE(mrodden): we need jax source dir for the unit test code only,
     # JAX and jaxlib are already installed from wheels
@@ -225,7 +240,7 @@ def test(image_name):
     cmd.extend(mounts)
     cmd.extend(gpu_args)
 
-    container_cmd = "cd /jax && ./build/rocm/build_rocm.sh && ./build/rocm/run_single_gpu.py -c && ./build/rocm/run_multi_gpu.sh"
+    container_cmd = "cd /jax && " + test_cmd
     cmd.append(image_name)
     cmd.extend(
         [
@@ -242,7 +257,7 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument(
         "--base-docker",
-         default="",
+        default="",
         help="Argument to override base docker in dockerfile",
     )
 
@@ -288,6 +303,10 @@ def parse_args():
 
     testp = subp.add_parser("test")
     testp.add_argument("image_name")
+    testp.add_argument(
+        "--test-cmd",
+        default="./build/rocm/build_rocm.sh && ./build/rocm/run_single_gpu.py -c && ./build/rocm/run_multi_gpu.sh",
+    )
 
     ddp = subp.add_parser("dist_docker")
     ddp.add_argument("--dockerfile", default="build/rocm/Dockerfile.ms")
@@ -298,6 +317,7 @@ def parse_args():
 
 
 def main():
+    logging.basicConfig(level=logging.INFO)
     args = parse_args()
 
     if args.action == "dist_wheels":
@@ -310,7 +330,7 @@ def main():
         )
 
     elif args.action == "test":
-        test(args.image_name)
+        test(args.image_name, args.test_cmd)
 
     elif args.action == "dist_docker":
         dist_wheels(
