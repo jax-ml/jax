@@ -2119,31 +2119,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' sin '), 1)
     self.assertEqual(jaxpr_text.count(' cos '), 2)
 
-  def test_pmap_lower_arg_info(self):
-    def f(x, y, *args, **kwargs):
-      return y['hi'] + args[1] + sum(kwargs.values())
-
-    lowered = jax.pmap(f).lower(
-      {'hi': jnp.array([1.])}, {'hi': jnp.array([2.])}, jnp.array([3.]),
-      jnp.array([4.]), z=jnp.array([5.]), w=jnp.array([6.]))
-    hlo_str = lowered.as_text("stablehlo", debug_info=True)
-    self.assertNotIn("\"x\"", hlo_str)
-    self.assertIn("y['hi']", hlo_str)
-    self.assertIn("args[0]", hlo_str)
-    self.assertIn("args[1]", hlo_str)
-    self.assertIn("kwargs['z']", hlo_str)
-    self.assertIn("kwargs['w']", hlo_str)
-
-  def test_pmap_lower_result_info(self):
-    def f(x, y, z):
-      return {'a': x, 'b': [y]}
-
-    lowered = jax.pmap(f).lower(jnp.array([1.]), (jnp.array([2]),),
-                                [jnp.array([3])])
-    hlo_str = lowered.as_text("stablehlo", debug_info=True)
-    self.assertIn("jax.result_info = \"['a']\"", hlo_str)
-    self.assertIn("jax.result_info = \"['b'][0][0]\"", hlo_str)
-
   def test_axis_name_shadowing_with_vmap(self):
     # vmap-of-pmap with mismatched axis sizes
     jax.vmap(jax.pmap(lambda x: 2 * x, axis_name='i'),

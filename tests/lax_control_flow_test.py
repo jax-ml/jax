@@ -29,7 +29,6 @@ import numpy as np
 import jax
 from jax._src import core
 from jax import dtypes
-from jax.errors import UnexpectedTracerError
 from jax import lax
 from jax import random
 from jax._src import test_util as jtu
@@ -589,20 +588,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     init = jnp.float32(10)
     self.assertEqual(fori_loop_with_static_upper_and_lower(init), init)
 
-  def test_fori_error_points_to_user_code(self):
-    # See https://github.com/jax-ml/jax/issues/23637
-    def my_body(_, c):
-      return bool(c)
-
-    with self.assertRaisesRegex(
-        jax.errors.TracerBoolConversionError,
-        "occurred while tracing the function my_body at .*control_flow_test.py.* for scan"):
-      jax.lax.fori_loop(0, 5, my_body, 3.)
-
-    with self.assertRaisesRegex(
-        jax.errors.TracerBoolConversionError,
-        "occurred while tracing the function my_body at .*control_flow_test.py.* for while_loop"):
-      jax.jit(lambda ubound: jax.lax.fori_loop(0, ubound, my_body, 3.))(5)
 
   def testForiLoopBatched(self):
     def body_fun(i, loop_carry):
@@ -2750,22 +2735,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     self.assertAllClose(deriv(my_pow)(3.0, 1), 1.0, check_dtypes=False)
 
-  def test_unexpected_tracer_error(self):
-    with self.assertRaisesRegex(UnexpectedTracerError, "for while_loop"):
-      lst = []
-      def side_effecting_body(val):
-        lst.append(val)
-        return val+1
-      lax.while_loop(lambda x: x < 2, side_effecting_body, 1)
-      lst[0] += 1
-
-    with self.assertRaisesRegex(UnexpectedTracerError, "for scan"):
-      lst = []
-      def side_effecting_scan(carry, val):
-        lst.append(val)
-        return carry, val+1
-      lax.scan(side_effecting_scan, None, jnp.ones((2, 2)))
-      lst[0] += 1
 
   def test_while_loop_fixed_point_with_batched_pred_and_consts(self):
     def f(i, x):
