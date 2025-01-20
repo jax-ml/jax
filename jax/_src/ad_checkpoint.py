@@ -454,9 +454,10 @@ def saved_residuals(f, *args, **kwargs) -> list[tuple[core.AbstractValue, str]]:
   out_tree = lambda: tree_structure(out_shape)
   assert len(jaxpr.invars) == len(in_leaves)
   dbg = pe.tracing_debug_info(f, in_tree, out_tree, True, "saved_residuals")
-  return _saved_residuals(jaxpr, dbg.arg_names)  # type: ignore
+  return _saved_residuals(jaxpr, dbg.arg_names)
 
-def _saved_residuals(jaxpr, arg_names) -> list[tuple[core.AbstractValue, str]]:
+def _saved_residuals(jaxpr: core.Jaxpr,
+                     arg_names: tuple[str | None, ...]) -> list[tuple[core.AbstractValue, str]]:
   res_lits = [x for x in jaxpr.outvars if     isinstance(x, core.Literal)]
   res_vars = {x for x in jaxpr.outvars if not isinstance(x, core.Literal)}
 
@@ -471,7 +472,7 @@ def _saved_residuals(jaxpr, arg_names) -> list[tuple[core.AbstractValue, str]]:
 
   for i, v in enumerate(jaxpr.invars):
     if v in res_vars:
-      if arg_names is not None:
+      if arg_names[i] is not None:
         src = f'from the argument {arg_names[i]}'
       else:
         src = 'from the argument at flattened index {i}'
@@ -587,7 +588,8 @@ def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
       _, staged_unk = partition_list(in_used_staged, in_unknowns)
       res_invars, _ = partition_list(staged_unk, jaxpr_unknown.invars[num_res:])
       res_outvars = jaxpr_known.outvars[len(jaxpr_known.outvars) - num_res:]
-      body_res = _saved_residuals(jaxpr_known.replace(outvars=res_outvars), None)
+      body_res = _saved_residuals(jaxpr_known.replace(outvars=res_outvars),
+                                  ("",) * len(jaxpr_known.invars))
       logger.log(log_level,
                 'remat-decorated function ' +
                 'saving inputs with shapes:\n' * bool(res_invars) +

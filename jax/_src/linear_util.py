@@ -259,7 +259,10 @@ class TracingDebugInfo(NamedTuple):
   Formed just before staging to a jaxpr and read in trace-time error messages.
   """
   traced_for: str             # e.g. 'jit', 'scan', etc
-  func_src_info: str | None   # e.g. f'{fun.__name__} at {filename}:{lineno}'
+  # e.g. f'{fun.__name__} at {filename}:{lineno}' or {fun.__name__} if we have
+  # no source location information. The first word is always the function name,
+  # which may be '<unknown>'.
+  func_src_info: str
 
   # The paths of the flattened non-static argnames,
   # e.g. ('x', 'dict_arg["a"]', ... ).
