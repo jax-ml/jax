@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import functools
+import math
 from typing import Any
 
 import jax
@@ -72,8 +73,13 @@ def mha_forward_kernel(
 
     k = pl.load(k_ref, (curr_k_slice, slice(None)))
     qk = pl.dot(q, k.T)   # [block_q, block_k]
+
+    # Scale logits to convert from base-2 to the natural log domain.
+    # This is based on the identity: e^x = 2^(x * log2(e)).
+    qk_scale = math.log2(math.e)
     if sm_scale != 1.:
-      qk *= sm_scale  # [block_q, block_k]
+      qk_scale *= sm_scale
+    qk *= qk_scale
 
     # Avoids Triton crash.
     # if num_heads > 2:
@@ -97,9 +103,9 @@ def mha_forward_kernel(
 
     m_curr = qk.max(axis=-1)
     m_next = jnp.maximum(m_prev, m_curr)
-    correction = jnp.exp(m_prev - m_next)
+    correction = jnp.exp2(m_prev - m_next)
     l_prev_corr = correction * l_prev
-    s_curr = jnp.exp(
+    s_curr = jnp.exp2(
         qk - m_next[:, None]
     )  # Use m_next instead of m_curr to avoid a correction on l_curr
     l_curr = s_curr.sum(axis=-1)
@@ -124,7 +130,7 @@ def mha_forward_kernel(
 
   if residual_refs:
     lse_ref = residual_refs[0]
-    lse_ref[...] = m_i + jnp.log(l_i)
+    lse_ref[...] = m_i + jnp.log2(l_i)
   # Write output to dram.
   o_ref[...] = o.astype(o_ref.dtype)
 
@@ -291,8 +297,8 @@ def _mha_forward(
           ),
           pl.BlockSpec((None, None, block_q), lambda i, j, k: (j, k, i)),
       ],
-      compiler_params=dict(
-          triton=dict(num_warps=num_warps_, num_stages=num_stages)
+      compiler_params=plgpu.TritonCompilerParams(
+          num_warps=num_warps_, num_stages=num_stages
       ),
       out_shape=out_shape,
       debug=debug,
@@ -328,7 +334,7 @@ def _preprocess_backward(out, do, lse, block_q: int,
           ),
       ],
       out_specs=pl.BlockSpec((None, None, block_q), lambda i, j, k: (j, k, i)),
-      compiler_params=dict(triton=dict(num_warps=4, num_stages=3)),
+      compiler_params=plgpu.TritonCompilerParams(num_warps=4, num_stages=3),
       out_shape=out_shape,
       debug=debug,
       interpret=interpret,
@@ -392,8 +398,10 @@ def mha_backward_kernel(
 
     q = pl.load(q_ref, (curr_q_slice, slice(None)))
     qk = pl.dot(q, k.T)
-    if sm_scale != 1.0:
-      qk *= sm_scale
+    qk_scale = math.log2(math.e)
+    if sm_scale != 1.:
+      qk_scale *= sm_scale
+    qk *= qk_scale
 
     if causal or segment_ids_ref is not None:
       mask = None
@@ -413,7 +421,7 @@ def mha_backward_kernel(
     di = pl.load(delta_ref, (curr_q_slice,))
     do = pl.load(do_scaled_ref, (curr_q_slice, slice(None)))
 
-    p = jnp.exp(qk - lse[:, None])
+    p = jnp.exp2(qk - lse[:, None])
     dv = dv + pl.dot(p.astype(do.dtype).T, do)
     dp = jnp.zeros((block_q1, block_k1), dtype=jnp.float32) - di[:, None]
     dp = dp + pl.dot(do, v.T)
@@ -458,8 +466,10 @@ def mha_backward_kernel(
     v = pl.load(v_ref, (curr_k_slice, slice(None)))
 
     qk = pl.dot(q, k.T)
-    if sm_scale != 1.0:
-      qk *= sm_scale
+    qk_scale = math.log2(math.e)
+    if sm_scale != 1.:
+      qk_scale *= sm_scale
+    qk *= qk_scale
 
     if causal or segment_ids_ref is not None:
       mask = None
@@ -475,7 +485,7 @@ def mha_backward_kernel(
         )
       qk = jnp.where(mask, qk, DEFAULT_MASK_VALUE)
 
-    p = jnp.exp(qk - lse[:, None])
+    p = jnp.exp2(qk - lse[:, None])
     dp = jnp.zeros((block_q2, block_k2), dtype=jnp.float32) - di[:, None]
     dp = dp + pl.dot(do, v.T)
     ds = p * dp
@@ -579,7 +589,9 @@ def _mha_backward(sm_scale: float, causal: bool, block_q: int, block_k: int,
         name="mha_backward",
         debug=debug,
         interpret=interpret,
-        compiler_params=dict(triton=dict(num_warps=num_warps, num_stages=2)),
+        compiler_params=plgpu.TritonCompilerParams(
+            num_warps=num_warps, num_stages=2
+        ),
     )(q, k, v, segment_ids, out, do, lse, delta)
   else:
     raise ValueError(f"Invalid backward pass implementation: {backward_pass_impl}")
