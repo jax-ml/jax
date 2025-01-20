@@ -49,7 +49,7 @@ from jax._src import xla_bridge as xb
 from jax._src.api_util import (
   argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
   donation_vector, check_callable, resolve_argnums,
-  argnames_partial_except, debug_info, tracing_debug_info, result_paths, add_jaxpr_debug_info,
+  argnames_partial_except, tracing_debug_info, result_paths, add_jaxpr_debug_info,
   hoist_obj_attrs, _check_no_aliased_ref_args,
   _check_no_aliased_closed_over_refs)
 from jax._src.interpreters import partial_eval as pe
@@ -565,17 +565,13 @@ def _infer_params_impl(
           "device is also specified as an argument to jit.")
 
   axes_specs = _flat_axes_specs(ji.abstracted_axes, *args, **kwargs)
+  dbg = tracing_debug_info('jit', fun, args, kwargs,
+                           static_argnums=ji.static_argnums,
+                           static_argnames=ji.static_argnames,
+                           # TODO(necula): do we really need this, e.g., for tracing speed
+                           sourceinfo=ji.fun_sourceinfo,
+                           signature=ji.fun_signature)
 
-  dbg = debug_info('jit', ji.fun_sourceinfo, ji.fun_signature, args, kwargs,
-                   ji.static_argnums, ji.static_argnames)
-  # TODO(necula): replace the above with below.
-  # haiku/_src/integration:hk_transforms_test fails
-  # dbg = tracing_debug_info('jit', fun, args, kwargs,
-  #                          static_argnums=ji.static_argnums,
-  #                          static_argnames=ji.static_argnames,
-  #                          TODO(necula): do we really need this, e.g., for tracing speed
-  #                          sourceinfo = ji.fun_sourceinfo,
-  #                          signature = ji.fun_signature)
   f = lu.wrap_init(fun)
   f, res_paths = result_paths(f)
   f, dyn_args = argnums_partial_except(f, ji.static_argnums, args, allow_invalid=True)

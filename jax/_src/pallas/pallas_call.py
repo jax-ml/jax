@@ -1814,7 +1814,7 @@ def pallas_call(
           "pallas_call kernel",
            kernel,
            [1] * len(kernel_fun_sig.parameters), {})
-      arg_names = kernel_debug_info.arg_names
+      arg_names = kernel_debug_info and kernel_debug_info.arg_names
       del kernel_debug_info
     in_origins = tuple(in_path_to_input_origin(p, arg_names)
                        for p in in_paths)

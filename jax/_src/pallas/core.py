@@ -434,7 +434,7 @@ class BlockSpec:
         "pallas_call index_map",
     )
     index_map_src_info = NameAndSrcInfo.from_pallas_call(
-        None, debug.func_src_info  # type: ignore
+        None, debug and debug.func_src_info  # type: ignore
     )
     with tracing_grid_env(grid, mapped_dims):
       jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(
