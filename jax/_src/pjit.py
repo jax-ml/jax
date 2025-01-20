@@ -49,7 +49,7 @@ from jax._src import xla_bridge as xb
 from jax._src.api_util import (
   argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
   donation_vector, check_callable, resolve_argnums,
-  argnames_partial_except, debug_info, result_paths, add_jaxpr_debug_info,
+  argnames_partial_except, debug_info, tracing_debug_info, result_paths, add_jaxpr_debug_info,
   hoist_obj_attrs, _check_no_aliased_ref_args,
   _check_no_aliased_closed_over_refs)
 from jax._src.interpreters import partial_eval as pe
@@ -176,7 +176,7 @@ class PjitInfo(NamedTuple):
     return self is other
 
 
-def _python_pjit_helper(fun, jit_info, *args, **kwargs):
+def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
   p, args_flat = _infer_params(fun, jit_info, args, kwargs)
 
   for arg in args_flat:
@@ -568,6 +568,14 @@ def _infer_params_impl(
 
   dbg = debug_info('jit', ji.fun_sourceinfo, ji.fun_signature, args, kwargs,
                    ji.static_argnums, ji.static_argnames)
+  # TODO(necula): replace the above with below.
+  # haiku/_src/integration:hk_transforms_test fails
+  # dbg = tracing_debug_info('jit', fun, args, kwargs,
+  #                          static_argnums=ji.static_argnums,
+  #                          static_argnames=ji.static_argnames,
+  #                          TODO(necula): do we really need this, e.g., for tracing speed
+  #                          sourceinfo = ji.fun_sourceinfo,
+  #                          signature = ji.fun_signature)
   f = lu.wrap_init(fun)
   f, res_paths = result_paths(f)
   f, dyn_args = argnums_partial_except(f, ji.static_argnums, args, allow_invalid=True)
@@ -732,8 +740,12 @@ def _infer_params(
   signature, dynargs = jax_jit.parse_arguments(
       args, tuple(kwargs.values()), tuple(kwargs.keys()), ji.static_argnums,
       ji.static_argnames, tree_util.default_registry)
-  dbg = debug_info('jit', ji.fun_sourceinfo, ji.fun_signature, args, kwargs,
-                   ji.static_argnums, ji.static_argnames)
+  dbg = tracing_debug_info('jit', fun, args, kwargs,
+                            static_argnums=ji.static_argnums,
+                            static_argnames=ji.static_argnames,
+                            # TODO(necula): do we really need this, e.g., for tracing speed
+                            sourceinfo=ji.fun_sourceinfo,
+                            signature=ji.fun_signature)
   avals = _infer_input_type(fun, dbg, dynargs)
   entry = _infer_params_cached(fun, ji, signature, avals, pjit_mesh, resource_env)
   if entry.pjit_params is None:
@@ -744,7 +756,9 @@ def _infer_params(
     entry.pjit_params = p
   return entry.pjit_params, entry.pjit_params.consts + dynargs
 
-def _infer_input_type(fun, dbg, explicit_args) -> tuple[core.AbstractValue, ...]:
+def _infer_input_type(fun: Callable,
+                      dbg: lu.TracingDebugInfo | None,
+                      explicit_args) -> tuple[core.AbstractValue, ...]:
   avals = []
   try:
     for i, x in enumerate(explicit_args):
@@ -1672,7 +1686,7 @@ def _pjit_call_impl_python(
   if compiled._auto_spmd_lowering and config.enable_checks.value:
     pxla.check_array_xla_sharding_layout_match(
         args, compiled._in_shardings, compiled._in_layouts,
-        jaxpr.jaxpr.tracing_debug_info, compiled._kept_var_idx)
+        jaxpr.jaxpr._debug_info, compiled._kept_var_idx)
   if config.distributed_debug.value:
     # Defensively only perform fingerprint logic if debug logging is enabled
     # NOTE(skyewm): I didn't benchmark this

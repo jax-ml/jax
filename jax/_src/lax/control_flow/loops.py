@@ -275,7 +275,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   if config.mutable_array_checks.value:
     in_flat, in_tree = tree_flatten((init, xs))
-    dbg = pe.tracing_debug_info(f, in_tree, None, False, 'scan')
+    dbg = pe.tracing_debug_info(f, in_tree, None, False, 'scan')  # type: ignore
     in_avals = tuple(_map(core.get_aval, in_flat))
     _check_no_aliased_ref_args(dbg, in_avals, in_flat)
 

@@ -140,8 +140,8 @@ class Jaxpr:
     self._eqns = list(eqns)
     self._effects = effects
     self._debug_info = debug_info
-    assert (not debug_info or len(debug_info.arg_names) == len(invars) and
-            len(debug_info.result_paths) == len(outvars))
+    assert (not debug_info or debug_info.arg_names is None or len(debug_info.arg_names) == len(invars)), (debug_info, invars)
+    assert (not debug_info or len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
 
   def __str__(self):
     return str(self.pretty_print())
