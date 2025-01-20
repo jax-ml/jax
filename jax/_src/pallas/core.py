@@ -75,6 +75,7 @@ class CompilerParams(Protocol):
   __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]
 
 
+# TODO(necula): clean up the splitting of the fun_sourceinfo
 @dataclasses.dataclass(frozen=True)
 class NameAndSrcInfo:
   #: The name of the pallas_call or the name of the kernel function.
@@ -108,9 +109,12 @@ class NameAndSrcInfo:
     if pallas_call_name is not None:
       return NameAndSrcInfo(pallas_call_name,
                             f"for kernel function {src_info}")
-    src_info_parts = src_info.split(" ")
-    return NameAndSrcInfo(src_info_parts[0],
-                          " ".join(src_info_parts[1:]))
+    src_info_parts = src_info.split(" at ")
+    if len(src_info_parts) > 1:
+      return NameAndSrcInfo(src_info_parts[0],
+                            "at " + " ".join(src_info_parts[1:]))
+    else:
+      return NameAndSrcInfo(src_info_parts[0], "")
 
 
 split_list = util.split_list
