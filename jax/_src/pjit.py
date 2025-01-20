@@ -2684,17 +2684,11 @@ batching.skippable_batchers[sharding_constraint_p] = lambda _: ()
 
 # TODO(yashkatariya): Make shardings optional.
 def mesh_cast(xs, out_shardings):
-  if isinstance(out_shardings, (NamedSharding, PartitionSpec)):
-    return tree_map(
-        lambda x: mesh_cast_p.bind(
-            x, src_sharding=x.sharding, dst_sharding=canonicalize_sharding(
-                out_shardings, check_mesh_consistency=False)), xs)
-
   x_flat, treedef = tree_flatten(xs)
   shardings_flat = flatten_axes("mesh_cast shardings", treedef, out_shardings)
   out_flat = [
       mesh_cast_p.bind(
-          x, src_sharding=x.sharding,
+          x, src_sharding=x.aval.sharding,
           dst_sharding=canonicalize_sharding(s, check_mesh_consistency=False))
       for x, s in safe_zip(x_flat, shardings_flat)
   ]
@@ -2778,6 +2772,49 @@ mlir.register_lowering(mesh_cast_p, _mesh_cast_hlo_lowering)
 #   return y, d
 # batching.fancy_primitive_batchers[mesh_cast_p] = _mesh_cast_batcher
 # batching.skippable_batchers[mesh_cast_p] = lambda _: ()
+
+# -------------------- reshard ------------------------------------
+
+def reshard(xs, out_shardings):
+  x_flat, treedef = tree_flatten(xs)
+  shardings_flat = flatten_axes("reshard shardings", treedef, out_shardings)
+  out_flat = []
+  for x, s in safe_zip(x_flat, shardings_flat):
+    ds = canonicalize_sharding(s)
+    ds = ds.with_spec(ds.spec._normalized_spec(x.ndim))  # type: ignore
+    out_flat.append(reshard_p.bind(x, src_sharding=x.aval.sharding,
+                                   dst_sharding=ds))
+  return tree_unflatten(treedef, out_flat)
+
+reshard_p = core.Primitive('reshard')
+
+def _reshard_abstract_eval(aval, src_sharding, dst_sharding):
+  if src_sharding.mesh.abstract_mesh != dst_sharding.mesh.abstract_mesh:
+    raise ValueError(
+        f'Mesh of the input {src_sharding.mesh.abstract_mesh} does not'
+        ' equal the mesh of the target sharding'
+        f' {dst_sharding.mesh.abstract_mesh} for shape {aval.str_short()}')
+  return aval.update(sharding=dst_sharding)
+reshard_p.def_abstract_eval(_reshard_abstract_eval)
+
+def _reshard_impl(x, src_sharding, dst_sharding):
+  return dispatch.apply_primitive(reshard_p, x, src_sharding=src_sharding,
+                                  dst_sharding=dst_sharding)
+reshard_p.def_impl(_reshard_impl)
+
+def _reshard_transpose_rule(ct, _, src_sharding, dst_sharding):
+  return [reshard_p.bind(ct, src_sharding=dst_sharding,
+                         dst_sharding=src_sharding)]
+ad.deflinear2(reshard_p, _reshard_transpose_rule)
+
+def _reshard_hlo_lowering(ctx, x_node, *, src_sharding, dst_sharding):
+  aval, = ctx.avals_in
+  aval_out, = ctx.avals_out
+  proto = (dst_sharding._to_sdy_sharding(aval.ndim)
+           if config.use_shardy_partitioner.value else
+           dst_sharding._to_xla_hlo_sharding(aval.ndim).to_proto())
+  return [mlir.lower_sharding_under_shit(ctx, x_node, aval_out, proto)]
+mlir.register_lowering(reshard_p, _reshard_hlo_lowering)
 
 # -------------------- auto and user mode -------------------------
 

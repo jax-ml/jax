@@ -57,7 +57,7 @@ def call_sharding_rule(prim, rule, num_out, *avals, **kwargs):
             f'sharding rule for {prim.name} is not implemented. Please file a'
             ' bug at https://github.com/jax-ml/jax/issues. You can work around'
             ' this error by dropping that operation into full hidden sharding'
-            ' mode via: `jax.hidden_axes(fun, out_shardings=...)`')
+            ' mode via: `jax.experimental.shard.hidden_axes(fun, out_shardings=...)`')
     return rule(*avals, **kwargs)
   return None if num_out is None else [None] * num_out
 

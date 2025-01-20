@@ -1766,11 +1766,13 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
     sharding = NamedSharding(mesh_lib.get_abstract_mesh(), sharding)  # type: ignore
   else:
     if (check_mesh_consistency and
-        sharding.mesh != mesh_lib.get_abstract_mesh()):
+        sharding.mesh.abstract_mesh != mesh_lib.get_abstract_mesh()):
       raise ValueError(
           f'Context mesh {mesh_lib.get_abstract_mesh()} should match the mesh'
-          f' of sharding {sharding.mesh}. This error occurs at source: '
-          f' {source_info_util.summarize(source_info_util.current())}')
+          f' of sharding {sharding.mesh.abstract_mesh}. This error occurs at'
+          f' source:  {source_info_util.summarize(source_info_util.current())}')
+    if isinstance(sharding.mesh, mesh_lib.Mesh):
+      sharding = NamedSharding(sharding.mesh.abstract_mesh, sharding.spec)
 
   for s in flatten_spec(sharding.spec):
     if sharding.mesh._name_to_type[s] in {
