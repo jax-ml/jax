@@ -249,6 +249,8 @@ class EventThreadLocalState(threading.local):
     self.infer_params_fun_counts = None
     self.lower_jaxpr_to_fun_counts = None
 
+    self.collect_lowered_jaxprs = None
+
 thread_local_state = EventThreadLocalState()
 
 
@@ -281,6 +283,10 @@ def event_listener(name, *args):
     if lower_counts is not None:
       (fun,) = args
       lower_counts[fun] += 1
+  elif name == "mlir.collect_lowered_jaxprs":
+    collection = thread_local_state.collect_lowered_jaxprs
+    if collection is not None:
+      collection.append(args)
 
 
 util.test_event_listener = event_listener
@@ -335,6 +341,19 @@ def count_subjaxpr_to_hlo_conversion(fun_name):
     thread_local_state.lower_jaxpr_to_fun_counts = None
 
 
+@contextmanager
+def collect_lowered_jaxprs() -> Generator[Sequence[tuple[core.ClosedJaxpr,
+                                                         mlir.ir.Module]]]:
+  """
+  Collects all the pairs of (jaxpr, mlir_module) that are lowered.
+  """
+  assert thread_local_state.collect_lowered_jaxprs is None
+  collection: list[tuple[core.ClosedJaxpr, mlir.ir.Module]] = []
+  thread_local_state.collect_lowered_jaxprs = collection
+  try:
+    yield collection
+  finally:
+    thread_local_state.collect_lowered_jaxprs = None
 
 @contextmanager
 def assert_num_jit_and_pmap_compilations(times):

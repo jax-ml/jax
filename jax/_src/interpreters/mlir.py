@@ -1233,6 +1233,7 @@ def lower_jaxpr_to_module(
           'builtin.module(sdy-lift-inlined-meshes)')
       pipeline.run(ctx.module.operation)
 
+  util.test_event("mlir.collect_lowered_jaxprs", jaxpr, ctx.module)
   return LoweringResult(ctx.module, ctx.keepalives, ctx.host_callbacks,
                         ctx.shape_poly_state)
 
