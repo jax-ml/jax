@@ -2116,7 +2116,7 @@ def tracing_debug_info(
     out_tree_thunk: Callable[[], PyTreeDef],
     has_kwargs: bool,
     traced_for: str
-) -> lu.TracingDebugInfo:
+) -> lu.TracingDebugInfo | None:
   # TODO(necula): we should not need this function, and can use api_util.tracing_debug_info instead
   # We just have to make sure we grad the debugging information when we have
   # the unflattened args
