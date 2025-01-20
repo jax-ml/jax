@@ -165,6 +165,14 @@ class VectorLayoutInferer {
         if (inferTrunc(&any_op).failed()) {
           return failure();
         }
+      } else if (auto op = dyn_cast<tpu::FPToSIOp>(any_op);
+                 op &&
+                 cast<VectorType>(op.getOperand().getType())
+                         .getElementTypeBitWidth() >
+                     cast<VectorType>(op.getType()).getElementTypeBitWidth()) {
+        if (inferTrunc(&any_op).failed()) {
+          return failure();
+        }
       } else if (auto op = dyn_cast<arith::SelectOp>(any_op)) {
         auto true_ty = dyn_cast<VectorType>(op.getTrueValue().getType());
         auto false_ty = dyn_cast<VectorType>(op.getFalseValue().getType());

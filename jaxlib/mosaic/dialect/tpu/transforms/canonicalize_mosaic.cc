@@ -22,8 +22,6 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LogicalResult.h"
 #include "absl/log/check.h"
-#include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/SmallVector.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/include/mlir/Dialect/Math/IR/Math.h"
 #include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
@@ -36,6 +34,7 @@
 #include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/include/mlir/IR/OpDefinition.h"
 #include "mlir/include/mlir/IR/Operation.h"
+#include "mlir/include/mlir/IR/PatternMatch.h"
 #include "mlir/include/mlir/IR/Region.h"
 #include "mlir/include/mlir/IR/Value.h"
 #include "mlir/include/mlir/Support/LLVM.h"
@@ -540,6 +539,7 @@ LogicalResult canonicalize_select(const CanonicalizeContext &ctx,
   return success();
 }
 
+// All conversions that change bitwidth must be canonicalized to tpu.fptosi.
 LogicalResult canonicalize_fptosi(const CanonicalizeContext &ctx,
                                   Operation &raw_op) {
   auto op = cast<arith::FPToSIOp>(raw_op);
@@ -560,6 +560,24 @@ LogicalResult canonicalize_fptosi(const CanonicalizeContext &ctx,
   }
   if (dst_bitwidth > 32) {
     return op.emitOpError("Target bitwidth too large");
+  }
+  if (ctx.hardware_generation >= 6 && is_vector &&
+      src_vty.getElementType().isBF16() &&
+      dst_vty.getElementType().isSignlessInteger(8)) {
+    auto new_op = builder.create<tpu::FPToSIOp>(
+        op.getType(), op.getIn(), tpu::RoundingMode::kTowardsZero);
+    op.replaceAllUsesWith(new_op.getResult());
+    op.erase();
+    // We briefly trigger canonicalization here to potentially fuse the rounding
+    // ops into the newly created tpu.fptosi.
+    {
+      PatternRewriter rewriter(new_op.getContext());
+      rewriter.setInsertionPoint(new_op);
+      // We don't care if the canonicalization pattern matched or not.
+      (void)tpu::FPToSIOp::canonicalize(new_op, rewriter);
+      new_op = nullptr;  // Canonicalization may have erased the op!
+    }
+    return success();
   }
   Value x = op.getIn();
   // Upcast the input to f32.
