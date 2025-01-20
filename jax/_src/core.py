@@ -816,6 +816,12 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
     # if the aval property raises an AttributeError, gets caught here
     assert not config.enable_checks.value or name != "aval"
 
+    if name == 'sharding':
+      raise AttributeError(
+        self,
+        f"The 'sharding' attribute is not available on {self._error_repr()}."
+        f"{self._origin_msg()}")
+
     try:
       attr = getattr(self.aval, name)
     except AttributeError as err:
@@ -1421,6 +1427,13 @@ def check_valid_jaxtype(x):
     raise TypeError(
       f"Value {x!r} of type {type(x)} is not a valid JAX type")
 
+def update_aval_with_sharding(aval, sharding):
+  from jax._src.sharding_impls import NamedSharding  # type: ignore
+  if config.sharding_in_types.value and isinstance(sharding, NamedSharding):
+    aval = aval.update(sharding=NamedSharding(
+        sharding.mesh.abstract_mesh, sharding.spec._normalized_spec(aval.ndim)))
+  return aval
+
 
 # We have three flavors of abstractification APIs here which each used to have
 # their own separate implementation. Now they're effectively the same, with the
@@ -1433,8 +1446,6 @@ def check_valid_jaxtype(x):
 # TODO(jakevdp): can these be unified further?
 
 def shaped_abstractify(x):
-  from jax._src.sharding_impls import NamedSharding  # type: ignore
-
   typ = type(x)
   if (aval_fn := pytype_aval_mappings.get(typ)):  # fast path
     return aval_fn(x)
@@ -1448,12 +1459,7 @@ def shaped_abstractify(x):
   if hasattr(x, 'dtype'):
     aval = ShapedArray(np.shape(x), x.dtype,
                        weak_type=getattr(x, 'weak_type', False))
-    if (config.sharding_in_types.value and hasattr(x, 'sharding') and
-        isinstance(x.sharding, NamedSharding)):
-      return aval.update(sharding=NamedSharding(
-          x.sharding.mesh.abstract_mesh,
-          x.sharding.spec._normalized_spec(aval.ndim)))
-    return aval
+    return update_aval_with_sharding(aval, getattr(x, 'sharding', None))
   raise TypeError(
       f"Cannot interpret value of type {typ} as an abstract array; it "
       "does not have a dtype attribute")
@@ -1701,13 +1707,17 @@ def get_sharding(sharding, ndim):
       raise ValueError(
           "Length of sharding.spec must be equal to aval's ndim. Got"
           f" sharding.spec {sharding.spec} and aval.ndim {ndim}")
-    return _maybe_modify_sharding(sharding)
-
-  context_mesh = mesh_lib.get_abstract_mesh()
-  if not context_mesh:
-    raise RuntimeError("Please set the mesh via `jax.set_mesh` API.")
-  assert sharding is None
-  return NamedSharding(context_mesh, P(*[None] * ndim))
+    out_s = _maybe_modify_sharding(sharding)
+  else:
+    context_mesh = mesh_lib.get_abstract_mesh()
+    if not context_mesh:
+      raise RuntimeError("Please set the mesh via `jax.set_mesh` API.")
+    assert sharding is None
+    out_s = NamedSharding(context_mesh, P(*[None] * ndim))
+  if not isinstance(out_s.mesh, mesh_lib.AbstractMesh):
+    raise ValueError("Mesh of an aval must be an AbstractMesh. "
+                     f"Got {out_s.mesh} of type {type(out_s.mesh)}")
+  return out_s
 
 
 class ShapedArray(UnshapedArray):
@@ -1720,9 +1730,6 @@ class ShapedArray(UnshapedArray):
     self.weak_type = weak_type
     if config.sharding_in_types.value:
       self.sharding = get_sharding(sharding, len(self.shape))
-      if not isinstance(self.sharding.mesh, mesh_lib.AbstractMesh):
-        raise ValueError(
-            f"Mesh of an aval must be an AbstractMesh. Got {self.sharding.mesh}")
 
   def update(self, shape=None, dtype=None, weak_type=None, **kwargs):
     if shape is None:
@@ -1796,14 +1803,6 @@ def _get_shape_sharding_str(shape, spec):
       out.append(f"{s1}@{s2}")
   return ','.join(out)
 
-def _get_abstract_sharding(val):
-  from jax._src.sharding_impls import NamedSharding  # pytype: disable=import-error
-
-  if (config.sharding_in_types.value and hasattr(val, 'sharding') and
-      isinstance(val.sharding, NamedSharding)):
-    return NamedSharding(val.sharding.mesh.abstract_mesh,
-                         val.sharding.spec._normalized_spec(val.ndim))
-  return None
 
 def primal_dtype_to_tangent_dtype(primal_dtype):
   if isinstance(primal_dtype, dtypes.ExtendedDType):

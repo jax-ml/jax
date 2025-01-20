@@ -586,7 +586,7 @@ def _convert_element_type(
 
   if (config.sharding_in_types.value and sharding is None and
       isinstance(operand, Array)):
-    sharding = operand.sharding
+    sharding = operand.aval.sharding
 
   sharding = canonicalize_sharding(sharding, check_mesh_consistency=False)  # type: ignore
 
@@ -1920,7 +1920,8 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
   dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
   fill_value = _convert_element_type(fill_value, dtype, weak_type)
   if (sharding is not None and not isinstance(sharding, PmapSharding) and
-      isinstance(fill_value, array.ArrayImpl)):
+      isinstance(fill_value, array.ArrayImpl) and
+      not config.sharding_in_types.value):
     broadcast_shape = sharding.shard_shape(shape)
     shard = broadcast(fill_value, broadcast_shape)
     return array.make_array_from_callback(shape, sharding, lambda _: shard)
@@ -2137,7 +2138,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
 
   if (config.sharding_in_types.value and sharding is None and
       isinstance(x, Array)):
-    sharding = x.sharding
+    sharding = x.aval.sharding
   else:
     # If `x` has a sharding but no `_committed` attribute
     # (in case of ShapeDtypeStruct), default it to True.
@@ -4496,7 +4497,7 @@ def _broadcast_in_dim_lower(ctx, x, *dyn_shape, shape, broadcast_dimensions,
                               broadcast_dimensions=broadcast_dimensions)
   if config.sharding_in_types.value:
     if sharding is not None:
-      assert sharding == aval_out.sharding
+      assert sharding == aval_out.sharding, (sharding, aval_out.sharding)
     return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
   return [out]
 
@@ -5656,7 +5657,7 @@ def _compute_argminmax(value_comparator, get_identity,
   axis, = axes
   indices = broadcasted_iota(
       index_dtype, np.shape(operand), axis,
-      sharding=operand.sharding if config.sharding_in_types.value else None)
+      sharding=operand.aval.sharding if config.sharding_in_types.value else None)
   res = reduce([operand, indices],
                [get_identity(operand.dtype), np.array(0, index_dtype)],
                _ArgMinMaxReducer(value_comparator),
@@ -6644,7 +6645,7 @@ _zeros: Callable = partial(full_like, fill_value=0)
 def _zero(x):
   if config.sharding_in_types.value:
     return full_like(x, shape=(), fill_value=0,
-                     sharding=x.sharding.with_spec(P()))  # type: ignore
+                     sharding=x.aval.sharding.with_spec(P()))  # type: ignore
   return full_like(x, shape=(), fill_value=0)
 
 _ones: Callable = partial(full_like, fill_value=1)
@@ -6652,7 +6653,7 @@ _ones: Callable = partial(full_like, fill_value=1)
 def _one(x):
   if config.sharding_in_types.value:
     return full_like(x, shape=(), fill_value=1,
-                     sharding=x.sharding.with_spec(P()))
+                     sharding=x.aval.sharding.with_spec(P()))
   return full_like(x, shape=(), fill_value=1)
 
 _twos: Callable = partial(full_like, fill_value=2)

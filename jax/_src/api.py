@@ -67,8 +67,7 @@ from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
-from jax._src.sharding_impls import (PmapSharding, TransferToMemoryKind,
-                                     NamedSharding)
+from jax._src.sharding_impls import PmapSharding, TransferToMemoryKind
 from jax._src.layout import Layout, AutoLayout
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
@@ -2564,11 +2563,7 @@ def _sds_aval_mapping(x):
   aval = ShapedArray(
       x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
       weak_type=x.weak_type)
-  if config.sharding_in_types.value and isinstance(x.sharding, NamedSharding):
-    return aval.update(sharding=NamedSharding(
-        x.sharding.mesh.abstract_mesh,
-        x.sharding.spec._normalized_spec(x.ndim)))
-  return aval
+  return core.update_aval_with_sharding(aval, x.sharding)
 core.pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
 
 

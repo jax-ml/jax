@@ -5553,7 +5553,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   weak_type = dtype is None and dtypes.is_weakly_typed(object)
   if (config.sharding_in_types.value and device is None and
       isinstance(object, Array)):
-    sharding = object.sharding
+    sharding = object.aval.sharding
   else:
     sharding = canonicalize_device_to_sharding(device)  # type: ignore
 
