@@ -257,8 +257,12 @@ class FusedAttentionTest(PallasBaseTest):
       segment_ids = None
 
     def f(q, k, v):
-      return attention.mha(q, k, v, segment_ids, causal=causal,
-                           interpret=self.INTERPRET).sum()
+      if jtu.is_device_rocm():
+        return attention.mha(q, k, v, segment_ids, 1.0, causal, 64, 64,
+                             interpret=self.INTERPRET).sum()
+      else:
+        return attention.mha(q, k, v, segment_ids, causal=causal,
+                             interpret=self.INTERPRET).sum()
 
     def f_ref(q, k, v):
       return attention.mha_reference(q, k, v, segment_ids, causal=causal).sum()
