@@ -264,13 +264,17 @@ class TracingDebugInfo(NamedTuple):
   # which may be '<unknown>'.
   func_src_info: str
 
-  # The paths of the flattened non-static argnames,
-  # e.g. ('x', 'dict_arg["a"]', ... ).
+  # The paths of the flattened non-static argnames, e.g.,
+  # ('x', 'dict_arg["a"]', ... ). When we cannot get the function signature,
+  # or when the signature does not match the invocation, we use generic names
+  # that reflect the pytree structure, e.g., ('args[0].field',
+  # 'args[0].other_field', ...).
   # Uses `None` for the args that do not correspond to user-named arguments,
   # e.g., tangent args in jax.jvp.
   arg_names: tuple[str | None, ...]
 
-  # e.g. ('[0]', '[1]', ...)
+  # e.g. ('[0]', '[1]', ...). During tracing we keep a thunk that can be
+  # resolved once tracing is done.
   result_paths_thunk: Callable[[], tuple[str, ...]] | None
 
   @classmethod
@@ -281,6 +285,7 @@ class TracingDebugInfo(NamedTuple):
                             jaxpr_dbg.func_src_info,
                             jaxpr_dbg.arg_names,
                             lambda: jaxpr_dbg.result_paths)
+
 
 def wrap_init(f: Callable, params=None, *,
               debug_info: TracingDebugInfo | None = None) -> WrappedFun:

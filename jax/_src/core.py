@@ -78,20 +78,30 @@ EffectTypeSet = effects.EffectTypeSet
 no_effects: Effects = effects.no_effects
 
 
-# TODO(necula): make this an extension of TracingDebugInfo
 class JaxprDebugInfo(NamedTuple):
-  traced_for: str     # e.g. 'jit', 'scan', etc
-  # e.g. f'{fun.__name__} at {filename}:{lineno}' or {fun.__name__} if we have
-  # no source location information. The first word is always the function name,
-  # which may be '<unknown>'.
-  func_src_info: str
-
-  # The paths of the flattened non-static argnames,
-  # e.g. ('x', 'dict_arg["a"]', ... ).
-  # Uses `None` for the args that do not correspond to user-named arguments,
-  # e.g., tangent args in jax.jvp.
-  arg_names: tuple[str | None, ...]
+  # After tracing, we have actual result_paths along with all the other
+  # information from the TracingDebugInfo.
+  tracing: lu.TracingDebugInfo
   result_paths: tuple[str, ...]  # e.g. ('[0]', '[1]', ...)
+
+  @property
+  def traced_for(self) -> str:
+    return self.tracing.traced_for
+
+  @property
+  def func_src_info(self) -> str:
+    return self.tracing.func_src_info
+
+  @property
+  def arg_names(self) -> tuple[str | None, ...]:
+    return self.tracing.arg_names
+
+  def replace_arg_names_results(self,
+                                arg_names: tuple[str | None, ...],
+                                result_paths: tuple[str, ...]) -> JaxprDebugInfo:
+    return self._replace(tracing=self.tracing._replace(arg_names=arg_names),
+                         result_paths=result_paths)
+
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',

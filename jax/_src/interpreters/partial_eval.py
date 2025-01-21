@@ -830,8 +830,9 @@ def tracers_to_jaxpr(
 def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
   """Moves the constvars to the start of invars."""
   config.enable_checks.value and core.check_jaxpr(jaxpr)
-  dbg = jaxpr.debug_info and jaxpr.debug_info._replace(
-      arg_names=(None,) * len(jaxpr.constvars) + jaxpr.debug_info.arg_names)
+  dbg = jaxpr.debug_info and jaxpr.debug_info.replace_arg_names_results(
+      arg_names=(None,) * len(jaxpr.constvars) + jaxpr.debug_info.arg_names,
+      result_paths=jaxpr.debug_info.result_paths)
   lifted_jaxpr = Jaxpr(constvars=(),
                        invars=jaxpr.constvars + jaxpr.invars,
                        outvars=jaxpr.outvars, eqns=jaxpr.eqns,
@@ -846,8 +847,9 @@ def convert_invars_to_constvars(jaxpr: Jaxpr, n: int) -> Jaxpr:
     return jaxpr.replace()  # 'return jaxpr' would create cache reference cycle
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   constvars, invars = split_list(jaxpr.invars, [n])
-  dbg = jaxpr.debug_info and jaxpr.debug_info._replace(
-      arg_names=jaxpr.debug_info.arg_names[n:])
+  dbg = jaxpr.debug_info and jaxpr.debug_info.replace_arg_names_results(
+      arg_names=jaxpr.debug_info.arg_names[n:],
+      result_paths=jaxpr.debug_info.result_paths)
   lifted_jaxpr = jaxpr.replace(constvars=tuple(constvars), invars=invars,
                                debug_info=dbg)
   config.enable_checks.value and core.check_jaxpr(lifted_jaxpr)
@@ -1335,10 +1337,9 @@ def prune_jaxpr_outputs(jaxpr: Jaxpr, used_outputs: Sequence[bool]) -> Jaxpr:
 
 def _prune_jaxpr_outputs(jaxpr: Jaxpr, used_outputs: tuple[bool, ...]) -> Jaxpr:
   outvars = [v for v, b in zip(jaxpr.outvars, used_outputs) if b]
-  dbg = jaxpr.debug_info and core.JaxprDebugInfo(
-      jaxpr.debug_info.traced_for, jaxpr.debug_info.func_src_info,
-      jaxpr.debug_info.arg_names,
-      tuple(v for v, b in zip(jaxpr.debug_info.result_paths, used_outputs) if b))
+  dbg = jaxpr.debug_info and jaxpr.debug_info.replace_arg_names_results(
+      arg_names=jaxpr.debug_info.arg_names,
+      result_paths=tuple(v for v, b in zip(jaxpr.debug_info.result_paths, used_outputs) if b))
   new_jaxpr = jaxpr.replace(outvars=outvars, debug_info=dbg)
   config.enable_checks.value and core.check_jaxpr(new_jaxpr)
   return new_jaxpr
@@ -1423,10 +1424,9 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
   eqns = new_eqns[::-1]
   jaxpr_effects = make_jaxpr_effects(jaxpr.constvars, invars, outvars, eqns)
 
-  dbg = jaxpr.debug_info and core.JaxprDebugInfo(
-      jaxpr.debug_info.traced_for, jaxpr.debug_info.func_src_info,
-      tuple(v for v, b in zip(jaxpr.debug_info.arg_names, used_inputs) if b),
-      tuple(v for v, b in zip(jaxpr.debug_info.result_paths, used_outputs) if b))
+  dbg = jaxpr.debug_info and jaxpr.debug_info.replace_arg_names_results(
+      arg_names=tuple(v for v, b in zip(jaxpr.debug_info.arg_names, used_inputs) if b),
+      result_paths=tuple(v for v, b in zip(jaxpr.debug_info.result_paths, used_outputs) if b))
   new_jaxpr = Jaxpr(jaxpr.constvars, invars, outvars, eqns, jaxpr_effects, dbg)
   config.enable_checks.value and core.check_jaxpr(new_jaxpr)
 

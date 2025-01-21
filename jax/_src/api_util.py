@@ -702,9 +702,8 @@ def add_jaxpr_debug_info(jaxpr: core.Jaxpr,
   assert (result_paths is not None) ^ (trace_debug.result_paths_thunk is not None)
   if result_paths is None:
     result_paths = trace_debug.result_paths_thunk()  # type: ignore
-  debug_info = core.JaxprDebugInfo(
-      trace_debug.traced_for, trace_debug.func_src_info,
-      trace_debug.arg_names, tuple(result_paths))  # type: ignore
+  debug_info = core.JaxprDebugInfo(tracing=trace_debug,
+                                   result_paths=tuple(result_paths))
   return jaxpr.replace(debug_info=debug_info)
 
 def debug_info_final(f: lu.WrappedFun, dbg: TracingDebugInfo | None,
