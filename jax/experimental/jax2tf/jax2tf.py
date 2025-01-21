@@ -3051,7 +3051,7 @@ def _cond(
     index: TfVal, *operands: TfVal, branches: Sequence[core.ClosedJaxpr]
 ) -> Sequence[TfVal]:
   # tf.cond needs lambdas with no arguments.
-  branches_tf = [
+  branches_tf: list[Callable[[], Any]] = [
       partial(_interpret_jaxpr, jaxpr, *operands,
               # Same name stack as the XLA translation of cond_p
               extra_name_stack=f"branch_{i}_fun")
