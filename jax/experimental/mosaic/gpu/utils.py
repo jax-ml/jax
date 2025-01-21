@@ -330,18 +330,23 @@ def globaltimer(kind: Literal["low", "high"] | None = None):
 
 
 def bytewidth(ty: ir.Type):
+  bw = bitwidth(ty)
+  assert bw % 8 == 0, ty
+  return bw // 8
+
+def bitwidth(ty: ir.Type):
   # The actual width of TF32 is 19 bits. However, sinc we need to treat it as
   # 32 bits for compatibility reasons. TF32 used to be 32 bits wide in upstream
   # MLIR, but it changed in
   # https://github.com/llvm/llvm-project/commit/67a1fdb014790a38a205d28e1748634de34471dd.
   if ir.FloatTF32Type.isinstance(ty):
-    return 4
+    return 32
   if ir.IntegerType.isinstance(ty):
-    return ir.IntegerType(ty).width // 8
+    return ir.IntegerType(ty).width
   if ir.FloatType.isinstance(ty):
-    return ir.FloatType(ty).width // 8
+    return ir.FloatType(ty).width
   if dialect is not None and ir.Type.parse("!mosaic_gpu.barrier"):
-    return MBARRIER_BYTES
+    return MBARRIER_BYTES * 8
   raise NotImplementedError(ty)
 
 
@@ -1115,7 +1120,7 @@ def dtype_to_ir_type(dtype: jax.typing.DTypeLike) -> ir.Type:
   dtype = jnp.dtype(dtype)
   if jnp.issubdtype(dtype, jnp.integer):
     # All integer types in Mosaic GPU are signless.
-    return ir.IntegerType.get_signless(dtype.itemsize * 8)
+    return ir.IntegerType.get_signless(jnp.iinfo(dtype).bits)
   return mlir.dtype_to_ir_type(dtype)
 
 
