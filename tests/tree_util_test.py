@@ -911,6 +911,11 @@ class TreeTest(jtu.JaxTestCase):
     ):
       tree_util.tree_flatten(t)
 
+  def testTreeMapPreservesKeyOrder(self):
+    dct = {'b': 1, 'a': 2}
+    dct2 = tree_util.tree_map(lambda x: x + 1, dct)
+    self.assertEqual(list(dct.keys()), list(dct2.keys()))
+
 
 class TreeKeyTest(absltest.TestCase):
 

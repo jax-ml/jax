@@ -353,9 +353,26 @@ def tree_map(f: Callable[..., Any],
              *rest: Any,
              is_leaf: Callable[[Any], bool] | None = None) -> Any:
   """Alias of :func:`jax.tree.map`."""
-  leaves, treedef = tree_flatten(tree, is_leaf)
-  all_leaves = [leaves] + [treedef.flatten_up_to(r) for r in rest]
-  return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
+  # Base case: handle leaves
+  if is_leaf is not None and is_leaf(tree):
+    return f(tree, *rest)
+  try:
+    flatten_one_level(tree)
+  except ValueError:
+    return f(tree, *rest)
+
+  # Special handling for standard dict to preserve key order.
+  if type(tree) is dict:
+    for r in rest:
+      if not(type(r) is dict and r.keys() == tree.keys()):
+        raise ValueError("Subsequent arguments do not match dict structure.")
+    return {key: tree_map(f, val, *(r[key] for r in rest), is_leaf=is_leaf)
+            for key, val in tree.items()}
+
+  # Othewise flatten one layer and recurse.
+  leaves, treedef = tree_flatten(tree, is_leaf=lambda x: x is not tree)
+  all_leaves = [leaves, *(treedef.flatten_up_to(r) for r in rest)]
+  return treedef.unflatten([tree_map(f, *xs, is_leaf=is_leaf) for xs in zip(*all_leaves)])
 
 
 @export
