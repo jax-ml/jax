@@ -1293,11 +1293,11 @@ class TensorFlowTracer(core.Tracer):
 def _make_op_metadata(primitive: core.Primitive,
                       params: dict, *,
                       source_info: source_info_util.SourceInfo,
-                      ) -> xla_client.OpMetadata:
+                      ) -> xla_data_pb2.OpMetadata:
   eqn_str = (str(source_info.name_stack) + '/'
              + core.str_eqn_compact(primitive, params))
   frame = source_info_util.user_frame(source_info)
-  return xla_client.OpMetadata(
+  return xla_data_pb2.OpMetadata(
         op_type=primitive.name,
         op_name=eqn_str,
         source_file=mlir.get_canonical_source_file(
@@ -1380,14 +1380,8 @@ class TensorFlowTrace(core.Trace):
 
     with tf.name_scope(_sanitize_scope_name(scope)):
       if _thread_local_state.include_xla_op_metadata:
-        op_metadata = _make_op_metadata(primitive, params,
-                                        source_info=source_info_util.current())
-        op_metadata_proto = xla_data_pb2.OpMetadata(
-            op_type=op_metadata.op_type,
-            op_name=op_metadata.op_name,
-            source_file=op_metadata.source_file,
-            source_line=op_metadata.source_line
-        )
+        op_metadata_proto = _make_op_metadata(
+            primitive, params, source_info=source_info_util.current())
         with tf_ops.get_default_graph()._attr_scope(
             {"_XlaOpMetadata": attr_value_pb2.AttrValue(
                 s=op_metadata_proto.SerializeToString())}):
