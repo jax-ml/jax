@@ -933,7 +933,7 @@ def _partial_eval_jaxpr_nounits(jaxpr: ClosedJaxpr,
                                 in_unknowns: Sequence[bool],
                                 instantiate: bool | Sequence[bool]):
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr),
-                   debug_info=lu.TracingDebugInfo.from_jaxpr(jaxpr))
+                   debug_info=lu.TracingDebugInfo.from_jaxpr(jaxpr.jaxpr))
 
   cell = []
   def fun(*known_vals_in):

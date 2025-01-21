@@ -88,6 +88,10 @@ class JaxprDebugInfo(NamedTuple):
   # This is formed after tracing, when we have concrete `result_paths`
   result_paths: tuple[str, ...]  # e.g. ('[0]', '[1]', ...)
 
+  @property
+  def func_name(self):
+    return self.func_src_info.split(" ")[0]
+
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
@@ -146,8 +150,8 @@ class Jaxpr:
     self._eqns = list(eqns)
     self._effects = effects
     self._debug_info = debug_info
-    assert (not debug_info or len(debug_info.arg_names) == len(invars)), (debug_info, invars)
-    assert (not debug_info or len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
+    assert (not self._debug_info or len(self._debug_info.arg_names) == len(self._invars)), (self._debug_info, self._invars)
+    assert (not self._debug_info or len(self._debug_info.result_paths) == len(self._outvars)), (self._debug_info, self._outvars)
 
   def __str__(self):
     return str(self.pretty_print())

@@ -34,6 +34,7 @@ import warnings
 import numpy as np
 
 from jax._src import ad_util
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
@@ -925,6 +926,10 @@ def unflatten_ir_values_like_types(xs: Iterable[ir.Value],
 
 _module_name_regex = re.compile(r"[^\w.-]")
 
+def sanitize_name(name: str) -> str:
+  return _module_name_regex.sub("_", name)
+
+
 def sharded_aval(aval: core.AbstractValue,
                  sharding: JSharding | AUTO | None) -> core.AbstractValue:
   """Returns the new aval sharded based on sharding proto."""
@@ -1187,7 +1192,7 @@ def lower_jaxpr_to_module(
     # Remove module name characters that XLA would alter. This ensures that
     # XLA computation preserves the module name.
     attrs = ctx.module.operation.attributes
-    module_name = _module_name_regex.sub("_", module_name)
+    module_name = sanitize_name(module_name)
     attrs["sym_name"] = ir.StringAttr.get(module_name)
     attrs["mhlo.num_replicas"] = i32_attr(num_replicas)
     attrs["mhlo.num_partitions"] = i32_attr(num_partitions)
@@ -2173,7 +2178,13 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
         wrapped_fun = lu.annotate(wrapped_fun, (*implicit_args, *explicit_args))
         jaxpr, _, consts = pe.trace_to_jaxpr_dynamic2(wrapped_fun)
       else:
-        jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
+        wrapped_fun, result_paths_thunk = api_util.result_paths(wrapped_fun)
+        debug_info = api_util.tracing_debug_info("lower_fun", fun,
+                                                 args, {},
+                                                 result_paths_thunk=result_paths_thunk)
+        jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in,
+                                                         debug_info=debug_info)
+        jaxpr = api_util.add_jaxpr_debug_info(jaxpr, debug_info)
         # TODO(frostig,mattjj): check ctx.avals_out against jaxpr avals out?
 
       if ctx.platforms is not None:

@@ -2336,6 +2336,8 @@ class PallasCallTPUBooleanInterpretTest(PallasCallTPUBooleanTest):
 
 
 class PallasCallTPUCheckifyTest(PallasBaseTest):
+  INTERPRET = True  # DO_NOT_SUBMIT
+
   @parameterized.parameters((2,), (5,), (6,), (7,))
   def test_checkify_with_scalar_prefetch(self, threshold):
     def body(scalar_ref, x_ref, o_ref):

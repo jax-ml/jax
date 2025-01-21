@@ -27,6 +27,7 @@ from jax import lax
 
 from jax.experimental import shard_map
 from jax._src import api
+from jax._src import api_util
 from jax._src import ad_checkpoint
 from jax._src import linear_util as lu
 from jax._src import config
@@ -749,6 +750,7 @@ def jaxpr_to_checkify_jaxpr(
   fun, metadata = _flatten_and_get_error_metadata_thunk(fun)
 
   new_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun, flat_err_and_in_vals)
+  new_jaxpr._debug_info = jaxpr.jaxpr.debug_info
   checked_jaxpr = core.ClosedJaxpr(new_jaxpr, consts)
   out_tree, error_effects = metadata()
   return checked_jaxpr, out_tree, error_effects

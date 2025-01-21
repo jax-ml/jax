@@ -686,7 +686,8 @@ def _non_static_arg_names(fn_signature: inspect.Signature | None,
   return arg_names
 
 @lu.transformation_with_aux2
-def result_paths(_fun, _store, *args, **kwargs):
+def result_paths(_fun: Callable,
+                 _store: lu.Store, *args, **kwargs):
   "linear_util transform to get output pytree paths of pre-flattened function."
   ans = _fun(*args, **kwargs)
   _store.store([keystr(path) for path, _ in generate_key_paths(ans)])
