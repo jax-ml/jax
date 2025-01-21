@@ -29,8 +29,8 @@ from functools import partial, lru_cache
 import inspect
 import math
 import typing
-from typing import (Any, Literal, NamedTuple, TypeVar, overload,
-                    cast)
+from typing import (Any, Literal, NamedTuple, ParamSpec, TypeAlias, TypeVar,
+                    overload, cast)
 import weakref
 
 import numpy as np
@@ -89,9 +89,12 @@ AxisName = Hashable
 
 Device = xc.Device
 
-# These TypeVars are used below to express the fact that function types
-# (i.e. call signatures) are invariant under the vmap transformation.
-F = TypeVar("F", bound=Callable)
+# These TypeVars are used below to express the fact that function call
+# signatures are invariant under the vmap transformation, but the
+# exact returned *type* still changes due to the wrapping functions.
+P = ParamSpec("P")
+R = TypeVar("R")
+F: TypeAlias = Callable[P, R]
 T = TypeVar("T")
 U = TypeVar("U")
 
