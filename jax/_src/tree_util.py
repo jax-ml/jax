@@ -24,7 +24,7 @@ import textwrap
 from typing import Any, NamedTuple, TypeVar, overload
 
 from jax._src import traceback_util
-from jax._src.lib import pytree
+from jax._src.lib import pytree, xla_extension_version
 from jax._src.util import safe_zip, set_module
 from jax._src.util import unzip2
 
@@ -353,7 +353,11 @@ def tree_map(f: Callable[..., Any],
              *rest: Any,
              is_leaf: Callable[[Any], bool] | None = None) -> Any:
   """Alias of :func:`jax.tree.map`."""
-  leaves, treedef = tree_flatten(tree, is_leaf)
+  # Pass sort_dict_keys=False to preserve dictionary key order.
+  # We only do this if rest is empty, because otherwise it would require the
+  # key order to be the same in all trees.
+  kwds = {} if rest or xla_extension_version < 304 else {"sort_dict_keys": False}
+  leaves, treedef = default_registry.flatten(tree, is_leaf, **kwds)
   all_leaves = [leaves] + [treedef.flatten_up_to(r) for r in rest]
   return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
 
