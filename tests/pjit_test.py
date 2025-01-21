@@ -6232,6 +6232,51 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         ValueError, 'Mesh of the input.*does not equal.*target sharding'):
       h(arr)
 
+  def test_hidden_axes_top_level(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'),
+                           axis_types={AxisTypes.Visible: ('x', 'y')})
+    np_inp = np.arange(16.).reshape(8, 2)
+    arr1 = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
+    arr2 = jax.device_put(np_inp.T, NamedSharding(mesh, P('y', 'x')))
+
+    @partial(hidden_axes, out_shardings=P('x', None))
+    def auto_matmul(arr1, arr2):
+      return arr1 @ arr2
+
+    @jax.jit
+    def f(arr1, arr2):
+      y = jnp.sin(arr1)
+      z = auto_matmul(y, arr2)
+      self.assertEqual(z.aval.sharding.spec, P('x', None))
+      return z + 1
+
+    with jax.sharding.use_mesh(mesh):
+      out = f(arr1, arr2)
+      self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
+  def test_visible_axes_top_level(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'),
+                           axis_types={AxisTypes.Hidden: ('x', 'y')})
+    np_inp = np.arange(16.).reshape(8, 2)
+    arr1 = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
+    arr2 = jax.device_put(np_inp.T, NamedSharding(mesh, P('y', 'x')))
+
+    @partial(visible_axes, in_shardings=(P('x', 'y'), P('y', None)))
+    def jax_matmul(arr1, arr2):
+      out = arr1 @ arr2
+      self.assertEqual(out.aval.sharding.spec, P('x', None))
+      return out
+
+    @jax.jit
+    def f(arr1, arr2):
+      y = jnp.sin(arr1)
+      z = jax_matmul(y, arr2)
+      return z + 1
+
+    with jax.sharding.use_mesh(mesh):
+      out = f(arr1, arr2)
+      self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
   @jtu.with_user_mesh((2, 2), ('x', 'y'))
   def test_full_auto_outside_jit(self, mesh):
     np_inp = np.arange(16.).reshape(8, 2)

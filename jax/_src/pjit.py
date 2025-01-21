@@ -2834,8 +2834,8 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
 
 def hidden_axes(fun, *, axes: str | tuple[str, ...] | None = None,
                 out_shardings):
-  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Hidden)
   def decorator(*args, **kwargs):
+    new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Hidden)
     with mesh_lib.set_abstract_mesh(new_mesh):
       in_specs = tree_map(lambda a: core.modify_spec_for_hidden(
           a.aval.sharding.spec, new_mesh), args)
@@ -2853,8 +2853,8 @@ def use_hidden_axes(*axes):
 
 def visible_axes(fun, *, axes: str | tuple[str, ...] | None = None,
                  in_shardings):
-  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Visible)
   def decorator(*args, **kwargs):
+    new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Visible)
     with mesh_lib.set_abstract_mesh(new_mesh):
       args = mesh_cast(args, in_shardings)
       out = fun(*args, **kwargs)
