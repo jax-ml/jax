@@ -3569,6 +3569,15 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
         f"sharding, got {lhs_contracting_spec} and {rhs_contracting_spec}.")
   _check_specs_match(lhs_contracting_spec, rhs_contracting_spec, msg)
 
+  for l, r in zip(lhs_contracting_spec, rhs_contracting_spec):
+    if l is not None and r is not None:
+      raise ValueError(
+          'Contracting dimensions are sharded and it is ambiguous how the'
+          ' output should be sharded. Please specify the output sharding via'
+          ' the `out_sharding` parameter of einsum. Or reshard your input via'
+          ' `jax.experimental.shard.reshard` so that the dot is conflict free.'
+          f' Got {lhs_contracting_spec=} and {rhs_contracting_spec=}')
+
   return _dot_general_sharding_computation(
       lhs.sharding.spec, rhs.sharding.spec, dimension_numbers, lhs.sharding.mesh)
 
