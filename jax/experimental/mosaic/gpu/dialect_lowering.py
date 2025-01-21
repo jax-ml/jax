@@ -49,15 +49,17 @@ _lowerings: dict[str, MlirLoweringRule] = {}
 def _fragmented_array_to_ir(
     fragmented_array: fa.FragmentedArray, ty: ir.Type
 ) -> ir.Value:
-  if not isinstance(fragmented_array.layout, fa.WGStridedFragLayout):
-    raise NotImplementedError(fragmented_array.layout)
-
   conversion_cast = builtin.UnrealizedConversionCastOp(
-      [ty], fragmented_array.registers.tolist()
+      [ty], fragmented_array.registers.flatten().tolist()
   )
 
-  conversion_cast.attributes["layout"] = (
-      layouts.to_strided_fragmented_layout_attr(fragmented_array.layout)
+  conversion_cast.attributes["registers_shape"] = ir.ArrayAttr.get([
+      ir.IntegerAttr.get(ir.IntegerType.get_signless(64), s)
+      for s in fragmented_array.registers.shape
+  ])
+
+  conversion_cast.attributes["layout"] = layouts.to_layout_attr(
+      fragmented_array.layout
   )
 
   if fragmented_array.is_signed is not None:
@@ -79,14 +81,6 @@ def _fragmented_array_from_ir(
   if not isinstance(conversion_cast, builtin.UnrealizedConversionCastOp):
     raise ValueError(f"{conversion_cast} is not a conversion_cast")
 
-  layout_attr = conversion_cast.attributes["layout"]
-
-  if not layouts.is_strided_fragmented_layout(layout_attr):
-    raise NotImplementedError(
-        f"Converting conversion_casts with layout {layout_attr} back to "
-        "fa.FragmentedArrays is not supported."
-    )
-
   converted_outputs = builtin.unrealized_conversion_cast(
       [operand.type for operand in conversion_cast.operands],
       conversion_cast.results,
@@ -100,8 +94,10 @@ def _fragmented_array_from_ir(
     attribute = cast(ir.NamedAttribute, attribute)
     reverse_conversion_cast.attributes[attribute.name] = attribute.attr
 
-  registers = np.array(list(converted_outputs))
-  layout = layouts.from_strided_fragmented_layout_attr(layout_attr)
+  registers = np.array(list(converted_outputs)).reshape(
+    [attr.value for attr in conversion_cast.attributes["registers_shape"]]
+  )
+  layout = layouts.from_layout_attr(conversion_cast.attributes["layout"])
 
   if ir.IntegerType.isinstance(conversion_cast.outputs[0].type):
     is_signed = bool(conversion_cast.attributes["is_signed"])

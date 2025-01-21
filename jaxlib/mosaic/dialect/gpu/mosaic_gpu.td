@@ -104,6 +104,31 @@ def MosaicGPU_WGSplatFragLayout : AttrDef<MosaicGPU_Dialect, "WGSplatFragLayout"
   let assemblyFormat = "`<` $shape `>`";
 }
 
+def MosaicGPU_WGMMAFragLayout : AttrDef<MosaicGPU_Dialect, "WGMMAFragLayout", []> {
+  let summary = "2D array that can be tiled by supported WGMMA shapes.";
+  let description = [{
+    This layout annotates arrays that are fragmented across all threads in a
+    warpgroup that is executing a WGMMA operation. The shape of the array is
+    (m, n) where:
+      - m % 64 == 0
+      - n %  8 == 0
+  }];
+
+  let mnemonic = "WGMMAFragLayout";
+  let assemblyFormat = "";
+}
+
+def MosaicGPU_WGMMARowFragLayout : AttrDef<MosaicGPU_Dialect, "WGMMARowFragLayout", []> {
+  let summary = "1D array that is a row that can be tiled by supported WGMMA shapes.";
+  let description = [{
+    This layout is used to handle rows that are fragmented across all threads
+    in a warpgroup that is executing a WGMMA operation. The length of the array
+    must be divisible by 64.
+  }];
+
+  let mnemonic = "WGMMARowFragLayout";
+  let assemblyFormat = "";
+}
 
 // Note: This duplicates the Dimension enum in mlir/Dialect/GPU/IR/GPUOps.td
 // but it was not possible to reuse that definition. Including that file
