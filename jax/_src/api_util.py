@@ -18,7 +18,7 @@ from collections.abc import Callable, Iterable, Sequence
 import inspect
 import operator
 from functools import partial, lru_cache
-from typing import Any
+from typing import Any, get_type_hints
 
 from jax._src import core
 from jax._src import config
@@ -34,6 +34,7 @@ from jax._src.linear_util import TracingDebugInfo
 from jax._src.util import (safe_map, WrapKwArgs, Hashable, HashableFunction,
                            Unhashable, safe_zip)
 from jax._src import traceback_util
+from jax._src.typing import StaticTag
 traceback_util.register_exclusion(__file__)
 
 map = safe_map
@@ -497,6 +498,34 @@ def infer_argnums_and_argnames(
   return argnums, argnames
 
 
+def _is_static(annotation: Any) -> bool:
+  return getattr(annotation, "__metadata__", None) == (StaticTag,)
+
+
+def static_argnames_from_annotations(fun: Callable[..., Any]) -> tuple[str, ...]:
+  try:
+    hints = get_type_hints(fun, include_extras=True)
+  except TypeError:
+    # This can happen when `fun` is not of the expected type. This includes class instances
+    # with a __call__ method, so we handle these explicitly.
+    return static_argnames_from_annotations(fun.__call__) if hasattr(fun, "__call__") else ()
+  except ValueError:
+    # This may occur when get_type_hints results in a TypeError, but repr(fun)
+    # raises a ValueError (as in test_jit_repr_errors).
+    # Assuming this is the case, we'll handle this the same way as TypeError.
+    return static_argnames_from_annotations(fun.__call__) if hasattr(fun, "__call__") else ()
+  except NameError:
+    # This can happen with lazily-evaluated annotations. If we ignore this, then we
+    # may inadvertently ignore Static annotations of lazy types. As an imperfect hack,
+    # we look for the string 'Static[' within the annotations and raise if it's present.
+    if any('Static[' in s for s in getattr(fun, '__annotations__', {}).values()):
+      raise
+    else:
+      return ()
+  else:
+    return tuple(name for name, hint in hints.items() if _is_static(hint))
+
+
 def resolve_argnums(
     fun: Callable,
     signature: inspect.Signature | None,
@@ -514,6 +543,10 @@ def resolve_argnums(
     (after static arguments have been removed), in the order that parameters
     are passed into the compiled function.
   """
+  if static_annotations := static_argnames_from_annotations(fun):
+    static_argnames = static_annotations if static_argnames is None else (
+      *static_annotations, *_ensure_str_tuple(static_argnames))
+
   if signature is None:
     # Some built-in functions don't support signature.
     # See: https://github.com/python/cpython/issues/73485
