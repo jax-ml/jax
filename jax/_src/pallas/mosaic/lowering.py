@@ -499,7 +499,7 @@ class MeshInfo:
 def _check_block_mappings(
     block_mappings: tuple[pallas_core.BlockMapping, ...],
     lowering_context: mlir.LoweringRuleContext,
-    name_and_src_info: pallas_core.NameAndSrcInfo,
+    debug_info: jax_core.JaxprDebugInfo,
 ) -> None:
   del lowering_context  # originally needed for forward compat
   for bm in block_mappings:
@@ -513,7 +513,7 @@ def _check_block_mappings(
       continue
 
     def err_details():
-      return (f"Block spec for {bm.origin} in pallas_call {name_and_src_info} "
+      return (f"Block spec for {bm.origin} in pallas_call {debug_info.func_src_info} "
               "has block shape "
               f"{bm.block_shape}, array shape {bm.array_shape_dtype.shape}, "
               # TODO(necula): add index_map source location info
@@ -592,11 +592,12 @@ def lower_jaxpr_to_module(
     jaxpr: jax_core.Jaxpr,
     *,
     dimension_semantics: tuple[str | None, ...] | None,
-    name_and_src_info: pallas_core.NameAndSrcInfo,
     mesh: mesh_lib.Mesh | None = None,
     for_verification: bool = False,
     dynamic_shape_replacement_enabled: bool = False,
 ) -> tuple[Module, tuple[Any, ...]]:
+  debug_info = jaxpr._debug_info
+  assert debug_info is not None  # TODO(necula)
   if dynamic_shape_replacement_enabled:
     _mosaic_lowering_dynamic_shape_env = LoweringDynamicShapeEnv()
 
@@ -614,8 +615,7 @@ def lower_jaxpr_to_module(
     dynamic_shape_replacement_fn = lambda x: x
 
   # Verify that we have legal block mappings to catch errors early.
-  _check_block_mappings(grid_mapping.block_mappings, lowering_context,
-                        name_and_src_info)
+  _check_block_mappings(grid_mapping.block_mappings, lowering_context, debug_info)
 
   mosaic_grid_mapping = MosaicGridMapping(
       jaxpr,
@@ -627,7 +627,7 @@ def lower_jaxpr_to_module(
   mosaic_grid_mapping.maybe_compress_grid()
   m = ir.Module.create()
   attrs = m.operation.attributes
-  module_name = name_and_src_info.name
+  module_name = mlir.sanitize_name(debug_info.func_name)
   attrs["sym_name"] = ir.StringAttr.get(module_name)
   sym_tab = ir.SymbolTable(m.operation)
 
