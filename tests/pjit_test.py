@@ -6277,6 +6277,23 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out = f(arr1, arr2)
       self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
+  def test_reshard_eager_mode(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'),
+                           axis_types={AxisTypes.Visible: ('x', 'y')})
+    np_inp = np.arange(16.).reshape(8, 2)
+    arr1 = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
+    arr2 = jax.device_put(np_inp.T, NamedSharding(mesh, P('y', 'x')))
+
+    def matmul_reshard(arr1, arr2):
+      arr2 = reshard(arr2, P('y', None))
+      self.assertEqual(arr2.aval.sharding.spec, P('y', None))
+      out = jnp.einsum('xy,yz->xz', arr1, arr2)
+      self.assertEqual(out.aval.sharding.spec, P('x', None))
+      return out
+
+    with jax.sharding.use_mesh(mesh):
+      matmul_reshard(arr1, arr2)
+
   @jtu.with_user_mesh((2, 2), ('x', 'y'))
   def test_full_auto_outside_jit(self, mesh):
     np_inp = np.arange(16.).reshape(8, 2)

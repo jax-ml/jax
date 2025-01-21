@@ -2685,12 +2685,13 @@ batching.skippable_batchers[sharding_constraint_p] = lambda _: ()
 # TODO(yashkatariya): Make shardings optional.
 def mesh_cast(xs, out_shardings):
   x_flat, treedef = tree_flatten(xs)
+  x_avals_flat = [core.shaped_abstractify(x) for x in x_flat]
   shardings_flat = flatten_axes("mesh_cast shardings", treedef, out_shardings)
   out_flat = [
       mesh_cast_p.bind(
-          x, src_sharding=x.aval.sharding,
+          x, src_sharding=x_aval.sharding,
           dst_sharding=canonicalize_sharding(s, check_mesh_consistency=False))
-      for x, s in safe_zip(x_flat, shardings_flat)
+      for x, x_aval, s in safe_zip(x_flat, x_avals_flat, shardings_flat)
   ]
   return tree_unflatten(treedef, out_flat)
 
@@ -2778,11 +2779,12 @@ mlir.register_lowering(mesh_cast_p, _mesh_cast_hlo_lowering)
 def reshard(xs, out_shardings):
   x_flat, treedef = tree_flatten(xs)
   shardings_flat = flatten_axes("reshard shardings", treedef, out_shardings)
+  x_avals_flat = [core.shaped_abstractify(x) for x in x_flat]
   out_flat = []
-  for x, s in safe_zip(x_flat, shardings_flat):
+  for x, x_aval, s in safe_zip(x_flat, x_avals_flat, shardings_flat):
     ds = canonicalize_sharding(s)
-    ds = ds.with_spec(ds.spec._normalized_spec(x.ndim))  # type: ignore
-    out_flat.append(reshard_p.bind(x, src_sharding=x.aval.sharding,
+    ds = ds.with_spec(ds.spec._normalized_spec(x_aval.ndim))  # type: ignore
+    out_flat.append(reshard_p.bind(x, src_sharding=x_aval.sharding,
                                    dst_sharding=ds))
   return tree_unflatten(treedef, out_flat)
 
