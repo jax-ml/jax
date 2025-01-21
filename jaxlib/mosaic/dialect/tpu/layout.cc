@@ -478,7 +478,8 @@ std::unique_ptr<VRegDataBounds> VectorLayout::tileDataBounds(
 
   if (!hasNaturalTopology(target_shape)) {
     if (!offsets_[0].has_value() || !offsets_[1].has_value()) {
-      emitError(UnknownLoc::get(mlir_ctx), "Not implemented");
+      emitError(UnknownLoc::get(mlir_ctx),
+                "Not implemented: non-natural topology with replication");
       return nullptr;
     }
     const int64_t so = *offsets_[0];
