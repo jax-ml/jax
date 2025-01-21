@@ -250,3 +250,4 @@ jobs:
         JAX_PLATFORM_NAME: cpu
     - name: Run GPU tests
       run: python -m pytest examples/ffi/tests
+
