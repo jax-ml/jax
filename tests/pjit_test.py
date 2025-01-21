@@ -5975,7 +5975,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         x = mesh_cast(x, P(None, None))
         return x
 
-    self.assertDictEqual(arr.sharding.mesh.axis_types, {AxisTypes.Visible: 'x'})
+    self.assertDictEqual(arr.sharding.mesh.axis_types,
+                         {AxisTypes.Visible: ('x',)})
     out = f(arr)
     self.assertArraysEqual(out, np_inp)
     self.assertDictEqual(out.sharding.mesh.axis_types, {AxisTypes.Hidden: 'x'})
@@ -5986,26 +5987,28 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     s = NamedSharding(mesh, P('x'))
     arr = jax.device_put(np_inp, s)
 
-    auto_mesh = jax.make_mesh((2,), 'x', axis_types={AxisTypes.Hidden: 'x'})
+    auto_mesh = jax.make_mesh((2,), 'x', hidden_axes='x')
     with mesh_lib.use_mesh(auto_mesh):
       arr2 = jnp.ones(8)
-    self.assertDictEqual(arr2.sharding.mesh.axis_types, {AxisTypes.Hidden: 'x'})
+    self.assertDictEqual(arr2.sharding.mesh.axis_types,
+                         {AxisTypes.Hidden: ('x',)})
 
     @jax.jit
     def f(x, y):
       return x, y
 
     out1, out2 = f(arr, arr2)
-    self.assertDictEqual(out1.sharding.mesh.axis_types, {AxisTypes.Visible: 'x'})
-    self.assertDictEqual(out2.sharding.mesh.axis_types, {AxisTypes.Hidden: 'x'})
+    self.assertDictEqual(out1.sharding.mesh.axis_types,
+                         {AxisTypes.Visible: ('x',)})
+    self.assertDictEqual(out2.sharding.mesh.axis_types,
+                         {AxisTypes.Hidden: ('x',)})
 
   @jtu.with_user_mesh((2,), 'x')
   def test_output_different_context_error(self, mesh):
     np_inp1 = np.arange(16).reshape(8, 2)
     arr1 = jax.device_put(np_inp1, NamedSharding(mesh, P('x', None)))
     arr2 = jax.device_put(np_inp1.T, NamedSharding(mesh, P(None, 'x')))
-    auto_mesh = jax.make_mesh((2,), 'x',
-                              axis_types={AxisTypes.Hidden: 'x'}).abstract_mesh
+    auto_mesh = jax.make_mesh((2,), 'x', hidden_axes='x').abstract_mesh
 
     @jax.jit
     def f(x, y):

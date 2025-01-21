@@ -1783,10 +1783,44 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
           f' {s} or type: {sharding.mesh._name_to_type[s]}')
   return sharding
 
+TypeOfAxis = str | tuple[str, ...] | None
+
+def _normalize(axes: TypeOfAxis = None) -> tuple[str, ...]:
+  if axes is None:
+    return ()
+  return (axes,) if isinstance(axes, str) else axes
+
+def _get_axis_types(
+    hidden_axes: TypeOfAxis = None, visible_axes: TypeOfAxis = None,
+    collective_axes: TypeOfAxis = None):
+  if hidden_axes is None and visible_axes is None and collective_axes is None:
+    return None
+
+  hidden_axes = _normalize(hidden_axes)
+  visible_axes = _normalize(visible_axes)
+  collective_axes = _normalize(collective_axes)
+
+  ha, va, ca = set(hidden_axes), set(visible_axes), set(collective_axes)
+  disjoint = ha.isdisjoint(va) and ha.isdisjoint(ca) and va.isdisjoint(ca)
+  if not disjoint:
+    raise ValueError(
+        f'{hidden_axes=}, {visible_axes=} and {collective_axes=} should be'
+        ' non-overlapping.')
+
+  out = {}
+  if hidden_axes:
+    out.update({mesh_lib.AxisTypes.Hidden: hidden_axes})
+  if visible_axes:
+    out.update({mesh_lib.AxisTypes.Visible: visible_axes})
+  if collective_axes:
+    out.update({mesh_lib.AxisTypes.Collective: collective_axes})
+  return out
+
 
 def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
               *, devices: Sequence[xc.Device] | None = None,
-              axis_types: mesh_lib.MeshAxisType | None = None) -> mesh_lib.Mesh:
+              hidden_axes: TypeOfAxis = None, visible_axes: TypeOfAxis = None,
+              collective_axes: TypeOfAxis = None) -> mesh_lib.Mesh:
   """Creates an efficient mesh with the shape and axis names specified.
 
   This function attempts to automatically compute a good mapping from a set of
@@ -1848,4 +1882,5 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   mesh_devices = mesh_utils.create_device_mesh(
       new_axis_shapes, devices,
       allow_split_physical_axes=allow_split_physical_axes)
+  axis_types = _get_axis_types(hidden_axes, visible_axes, collective_axes)
   return mesh_lib.Mesh(mesh_devices, axis_names, axis_types=axis_types)

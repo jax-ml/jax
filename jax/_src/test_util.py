@@ -1569,7 +1569,15 @@ def create_mesh(mesh_shape, axis_names, iota_order=False, axis_types=None):
     mesh_devices = np.array(devices[:size]).reshape(mesh_shape)
     return jax.sharding.Mesh(mesh_devices, axis_names, axis_types=axis_types)
   else:
-    return jax.make_mesh(mesh_shape, axis_names, axis_types=axis_types)
+    if axis_types is None:
+      visible_axes = hidden_axes = collective_axes = None
+    else:
+      visible_axes = axis_types.get(mesh_lib.AxisTypes.Visible, None)
+      hidden_axes = axis_types.get(mesh_lib.AxisTypes.Hidden, None)
+      collective_axes = axis_types.get(mesh_lib.AxisTypes.Collective, None)
+    return jax.make_mesh(mesh_shape, axis_names, visible_axes=visible_axes,
+                         hidden_axes=hidden_axes,
+                         collective_axes=collective_axes)
 
 class _cached_property:
   null = object()
