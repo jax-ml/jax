@@ -109,6 +109,7 @@ class DebugInfoTest(jtu.JaxTestCase):
 
     dbg = api_util.tracing_debug_info("jit", my_f, (1, 2), dict(z=3, w=4))
     self.assertRegex(dbg.func_src_info, r"^my_f at .*debug_info_test.py:\d+")
+    self.assertEqual(dbg.func_name, "my_f")
     self.assertEqual(dbg.arg_names, ("x", "y", "z", "w"))
     self.assertIsNone(dbg.result_paths_thunk)
 
@@ -597,6 +598,22 @@ class DebugInfoTest(jtu.JaxTestCase):
             "traced_for=jit, fun=my_g, arg_names=('u', 'v')"
         ])
 
+  def test_nested_jit_with_const_and_unused_args(self):
+    def my_f(x, y):  # y is unused
+      def my_g(u, v):  # v is unused
+        return v + np.ones(v.shape, v.dtype)
+
+      return x + jax.jit(my_g)(x, y)
+
+    x = y = np.ones((8,), dtype=np.float32)
+    self._check_tracers_and_jaxprs(
+        jax.jit(my_f),
+        x, y,
+        expected_jaxpr_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=('x', 'y'), result_paths=('',)",
+            "traced_for=jit, fun=my_g, arg_names=('u', 'v'), result_paths=('',)"
+        ])
+
   def test_vjp_of_nested_jit(self):
     leaked_tracers: list[core.Tracer] = []
 
@@ -878,16 +895,16 @@ class DebugInfoTest(jtu.JaxTestCase):
         leaked_tracers=leaked_tracers,
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=my_f, arg_names=('x',), result_paths=('',)",
-            # TODO(necula): missing Jaxpr debug info
-            "None", "None", "None", "None"],
+            "traced_for=pallas_call index_map, fun=my_index_map, arg_names=('i', 'j'), result_paths=('[0]', '[1]')",
+            "traced_for=pallas_call index_map, fun=my_index_map, arg_names=('i', 'j'), result_paths=('[0]', '[1]')",
+            "traced_for=pallas_call index_map, fun=my_index_map, arg_names=('i', 'j'), result_paths=('[0]', '[1]')",
+            "traced_for=pallas_call kernel, fun=my_kernel, arg_names=('x_ref', 'y_ref', 'o_ref'), result_paths=()"],
         expected_tracer_debug_infos=[
-            # TODO(necula): arg_names seem to be wrong
-            # One tracer from every index map
-            "traced_for=pallas_call index_map, fun=my_index_map, arg_names=('i[0]', 'i[1]')",
-            "traced_for=pallas_call index_map, fun=my_index_map, arg_names=('i[0]', 'i[1]')",
-            "traced_for=pallas_call index_map, fun=my_index_map, arg_names=('i[0]', 'i[1]')",
-            "traced_for=pallas_call, fun=my_kernel, arg_names=('x_ref', 'y_ref', 'o_ref')",
-        ])
+            "traced_for=pallas_call index_map, fun=my_index_map, arg_names=('i', 'j')",
+            "traced_for=pallas_call index_map, fun=my_index_map, arg_names=('i', 'j')",
+            "traced_for=pallas_call index_map, fun=my_index_map, arg_names=('i', 'j')",
+            "traced_for=pallas_call kernel, fun=my_kernel, arg_names=('x_ref', 'y_ref', "
+            "'o_ref')"])
 
 
 class EagerPmapMixin:

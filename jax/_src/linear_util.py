@@ -274,13 +274,21 @@ class TracingDebugInfo(NamedTuple):
   result_paths_thunk: Callable[[], tuple[str, ...]] | None
 
   @classmethod
-  def from_jaxpr(cls, jaxpr: core.ClosedJaxpr) -> TracingDebugInfo | None:
-    jaxpr_dbg = jaxpr.jaxpr._debug_info
+  def from_jaxpr(cls, jaxpr: core.Jaxpr) -> TracingDebugInfo | None:
+    jaxpr_dbg = jaxpr._debug_info
     if jaxpr_dbg is None: return None
     return TracingDebugInfo(jaxpr_dbg.traced_for,
                             jaxpr_dbg.func_src_info,
                             jaxpr_dbg.arg_names,
                             lambda: jaxpr_dbg.result_paths)
+  @property
+  def func_name(self) -> str:
+    return self.func_src_info.split(" ")[0]
+
+  def replace_func_name(self, name: str) -> TracingDebugInfo:
+    func_src_comps = self.func_src_info.split(" ")
+    func_src_comps[0] = name
+    return self._replace(func_src_info=" ".join(func_src_comps))
 
 def wrap_init(f: Callable, params=None, *,
               debug_info: TracingDebugInfo | None = None) -> WrappedFun:
