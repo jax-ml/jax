@@ -321,6 +321,11 @@ class DebugInfo(NamedTuple):
   def func_name(self) -> str:
     return self.func_src_info.split(" ")[0]
 
+  def replace_func_name(self, name: str) -> DebugInfo:
+    func_src_comps = self.func_src_info.split(" ")
+    func_src_comps[0] = name
+    return self._replace(func_src_info=" ".join(func_src_comps))
+
   def safe_arg_names(self, expected: int) -> tuple[str, ...]:
     """Get the arg_names with a safety check."""
     if len(self.arg_names) == expected:

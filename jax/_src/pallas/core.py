@@ -78,48 +78,6 @@ class CompilerParams(Protocol):
 class Buffered:
   buffer_count: int
 
-# TODO(necula): clean up the splitting of the fun_sourceinfo
-@dataclasses.dataclass(frozen=True)
-class NameAndSrcInfo:
-  #: The name of the pallas_call or the name of the kernel function.
-  name: str
-  #: the source info, and the name of kernel function if not in `name`.`
-  src_info: str
-
-  def __str__(self):
-    return f"{self.name}{' ' if self.src_info else ''}{self.src_info}"
-  __repr__ = __str__
-
-  replace = dataclasses.replace
-
-
-  @staticmethod
-  def from_pallas_call(pallas_call_name: str | None,
-                       src_info : str | None) -> NameAndSrcInfo:
-    """Formats the name and the source info.
-
-    Args:
-      pallas_call_name: The `name` argument to pallas_call.
-      src_info: The result of `api_util.fun_source_info(kernel)`, in the form
-        "{function_name} at {file_name}:{line_number}".
-    """
-    if pallas_call_name is not None:
-      pallas_call_name = mlir._module_name_regex.sub("_", pallas_call_name)
-    if src_info is None:
-      return NameAndSrcInfo(
-          "unknown" if pallas_call_name is None else pallas_call_name,
-          "")
-    if pallas_call_name is not None:
-      return NameAndSrcInfo(pallas_call_name,
-                            f"for kernel function {src_info}")
-    src_info_parts = src_info.split(" at ")
-    if len(src_info_parts) > 1:
-      return NameAndSrcInfo(src_info_parts[0],
-                            "at " + " ".join(src_info_parts[1:]))
-    else:
-      return NameAndSrcInfo(src_info_parts[0], "")
-
-
 split_list = util.split_list
 
 map, unsafe_map = util.safe_map, map
@@ -350,6 +308,8 @@ blocked = Blocked()
 
 IndexingMode = Union[Blocked, Unblocked]
 
+def default_index_map(ndim: int) -> Callable:
+  return lambda *args: (0,) * ndim
 
 @dataclasses.dataclass
 class BlockSpec:
@@ -376,7 +336,8 @@ class BlockSpec:
       mapped_dims: tuple[int, ...],
   ) -> BlockMapping:
     if self.index_map is None:
-      index_map_func = lambda *args: (0,) * len(array_aval.shape)
+      index_map_func = default_index_map(len(array_aval.shape))
+      api_util.save_wrapped_fun_sourceinfo(index_map_func, default_index_map)
     else:
       index_map_func = self.index_map
     if self.block_shape is None:
@@ -417,18 +378,16 @@ class BlockSpec:
                                 index_map_func, fake_index_map_args,
                                 fake_index_map_kwargs)
     flat_index_map_fun, index_map_out_tree_thunk = api_util.flatten_fun(
-      lu.wrap_init(index_map_func, debug_info=debug), index_map_tree)
-    index_map_src_info = NameAndSrcInfo.from_pallas_call(
-        None, debug and debug.func_src_info
-    )
+        lu.wrap_init(index_map_func, debug_info=debug), index_map_tree)
     with tracing_grid_env(grid, mapped_dims):
       jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(
           flat_index_map_fun, index_map_avals
       )
+
     mapped_block_shape = tuple(mapped if s is None else s for s in block_shape)
     if len(out_avals) != len(block_shape):
       raise ValueError(
-          f"Index map function {index_map_src_info} for "
+          f"Index map function {debug.func_src_info} for "
           f"{origin} must return "
           f"{len(block_shape)} values to match {block_shape=}. "
           f"Currently returning {len(out_avals)} values."
@@ -436,14 +395,14 @@ class BlockSpec:
     for i, ov in enumerate(out_avals):
       if ov.shape or ov.dtype not in [jnp.int32, jnp.int64]:
         raise ValueError(
-            f"Index map function {index_map_src_info} for "
+            f"Index map function {debug.func_src_info} for "
             f"{origin} must return integer scalars. Output[{i}] has type "
             f"{ov}."
         )
 
     if consts:
       raise ValueError(
-          f"Index map function {index_map_src_info} for "
+          f"Index map function {debug.func_src_info} for "
           f"{origin} must not capture constants: {consts}"
       )
 
@@ -453,7 +412,6 @@ class BlockSpec:
         block_shape=mapped_block_shape,
         transformed_block_aval=block_aval,  # There are no transforms by default
         index_map_jaxpr=jax_core.ClosedJaxpr(jaxpr, consts),
-        index_map_src_info=index_map_src_info,
         indexing_mode=self.indexing_mode,
         array_shape_dtype=jax.ShapeDtypeStruct(
             array_aval_shape, array_aval.dtype
@@ -496,7 +454,6 @@ class BlockMapping:
   block_shape: tuple[Mapped | int, ...]
   transformed_block_aval: AbstractMemoryRef
   index_map_jaxpr: jax_core.ClosedJaxpr
-  index_map_src_info: NameAndSrcInfo
   indexing_mode: IndexingMode
   array_shape_dtype: jax.ShapeDtypeStruct  # The whole array
   origin: OriginStr
