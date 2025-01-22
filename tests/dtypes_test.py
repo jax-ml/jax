@@ -68,6 +68,8 @@ if dtypes.float8_e3m4 is not None:
   fp8_dtypes += [np.dtype(dtypes.float8_e3m4)]
 if dtypes.float8_e4m3 is not None:
   fp8_dtypes += [np.dtype(dtypes.float8_e4m3)]
+if dtypes.float8_e8m0fnu is not None:
+  fp8_dtypes += [np.dtype(dtypes.float8_e8m0fnu)]
 float_dtypes += fp8_dtypes
 custom_float_dtypes += fp8_dtypes
 
