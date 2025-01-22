@@ -18,6 +18,8 @@ import contextlib
 import functools
 import math
 import operator
+import re
+from typing import Any
 
 from absl.testing import absltest, parameterized
 import jax
@@ -30,16 +32,76 @@ from jax._src.compilation_cache import is_persistent_cache_enabled
 import jax.custom_batching
 import jax.custom_derivatives
 import jax.custom_transpose
-from jax.errors import UnexpectedTracerError
+from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
-
 
 config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
 
 
+def _collect_jaxprs(jaxpr: core.Jaxpr,
+                    acc: list[core.Jaxpr] | None = None) -> list[core.Jaxpr]:
+  """Collect all Jaxprs in a depth-first order."""
+  if acc is None: acc = []
+  acc.append(jaxpr)
+  for e in jaxpr.eqns:
+    # Take first the block mapping Jaxprs
+    if e.primitive.name == "pallas_call":
+      # For pallas_call, extract also jaxprs inside the grid_mapping
+      mapping = e.params["grid_mapping"]
+      for bm in mapping.block_mappings:
+        _collect_jaxprs(bm.index_map_jaxpr.jaxpr, acc)
+    for sj in core.jaxprs_in_params(e.params):
+      _collect_jaxprs(sj, acc)
+  return acc
+
+
+def _debug_info_to_string(dbg: api_util.TracingDebugInfo | core.JaxprDebugInfo | None) -> list[str]:
+  if dbg is None: return "None"
+  # Strip the absolute path and the line number but check that it references
+  # this file (to catch errors when the source info points in JAX internals)
+  fun_src_info = re.sub(r"^(\S+)( at .*/debug_info_test.py:.*)?", "\\1", dbg.func_src_info)
+  res = f"traced_for={dbg.traced_for}, fun={fun_src_info}, arg_names={dbg.arg_names}"
+  if isinstance(dbg, core.JaxprDebugInfo):
+    res += f", result_paths={dbg.result_paths}"
+  return res
+
+
 class DebugInfoTest(jtu.JaxTestCase):
+
+  def _check_tracers_and_jaxprs(self, traceable: Any,
+                                *args,
+                                expected_jaxpr_debug_infos: list[str],
+                                leaked_tracers: list[core.Tracer] = [],
+                                expected_tracer_debug_infos: list[str] = [],
+                                **kwargs):
+    """Checks for expected debug info in all jaxprs, and in leaked tracers.
+
+    The `traceable.trace(*args, **kwargs)` is traced to a Jaxpr, and the
+    debug infos in the nested Jaxprs are first converted to strings using
+    `_debug_info_to_string` and then compared against `expected_jaxpr_debug_infos`.
+
+    One way in which the debug info is used in JAX is for leaked tracer
+    description, or for ConcretizationErrors. Optionally,
+    the tracing of `fun` can append tracers to `leaked_tracers`, and those
+    tracers must have debugging info matching `expected_tracer_debug_infos`.
+    """
+    self.assertTrue(hasattr(traceable, "trace"))
+    traced = traceable.trace(*args, **kwargs)
+    all_jaxprs = _collect_jaxprs(traced.jaxpr.jaxpr)
+
+    jaxprs_debug_infos = [_debug_info_to_string(j.debug_info)
+                          for j in all_jaxprs]
+    self.assertEqual(expected_jaxpr_debug_infos, jaxprs_debug_infos)
+    self._check_tracers(leaked_tracers, expected_tracer_debug_infos)
+
+  def _check_tracers(self,
+                     leaked_tracers: list[core.Tracer],
+                     expected_tracer_debug_infos: list[str]):
+    leaked_tracer_debug_infos = [_debug_info_to_string(t._debug_info) if hasattr(t, "_debug_info") else "None"
+                                 for t in leaked_tracers]
+    self.assertEqual(expected_tracer_debug_infos, leaked_tracer_debug_infos)
 
   def test_debug_info_basic(self):
     def my_f(x, y, z, w):
@@ -113,6 +175,7 @@ class DebugInfoTest(jtu.JaxTestCase):
   def test_debug_info_no_source_info_callable(self):
     class Foo:
       x: int
+
       def __call__(self, y):
         return self.x + y
 
@@ -123,6 +186,7 @@ class DebugInfoTest(jtu.JaxTestCase):
   def test_debug_info_no_source_info_callable_with_repr_errors(self):
     class Foo:
       x: int
+
       def __call__(self, y):
         return self.x + y
 
@@ -193,8 +257,8 @@ class DebugInfoTest(jtu.JaxTestCase):
 
     hlo_str = lowered.as_text("stablehlo", debug_info=False)
     for s in (
-      "\"x\"", "y['hi']", "args[0]", "args[1]", "kwargs['z']",
-      "kwargs['w']", "kwargs['a']", "kwargs['b']"
+        "\"x\"", "y['hi']", "args[0]", "args[1]", "kwargs['z']",
+        "kwargs['w']", "kwargs['a']", "kwargs['b']"
     ):
       self.assertNotIn(s, hlo_str)
 
@@ -343,7 +407,6 @@ class DebugInfoTest(jtu.JaxTestCase):
     with config.explain_cache_misses(True):
       jax.jit(operator.add)(42, 24)
 
-
   def test_concrete_error_because_arg_unary(self):
     @jax.jit
     def f(x):
@@ -458,22 +521,6 @@ class DebugInfoTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       g(1)
 
-  def test_escaped_tracer_transform_name(self):
-    with self.assertRaisesRegex(UnexpectedTracerError,
-                                "for jit"):
-      jax.jit(self.helper_save_tracer)(1)
-      _ = self._saved_tracer+1
-
-    with self.assertRaisesRegex(UnexpectedTracerError,
-                                "for pmap"):
-      jax.pmap(self.helper_save_tracer)(jnp.ones((1, 2)))
-      _ = self._saved_tracer+1
-
-    with self.assertRaisesRegex(UnexpectedTracerError,
-                                "for jit"):
-      jax.eval_shape(self.helper_save_tracer, 1)
-      _ = self._saved_tracer+1
-
   def test_remat_concrete_error(self):
     @jax.remat  # no static_argnums or concrete
     def g(x):
@@ -507,6 +554,341 @@ class DebugInfoTest(jtu.JaxTestCase):
       msg = str(e)
     self.assertNotIn('static_argnums', msg)
 
+  def test_simple_jit(self):
+    leaked_tracers: list[core.Tracer] = []
+
+    def my_f(x_dict, y):
+      leaked_tracers.append(x_dict["a"])
+      return dict(c=x_dict["a"] + x_dict["b"], d=y)
+
+    self._check_tracers_and_jaxprs(
+        jax.jit(my_f),
+        dict(a=1, b=2), 3,
+        leaked_tracers=leaked_tracers,
+        expected_jaxpr_debug_infos=[
+            'traced_for=jit, fun=my_f, arg_names=(\"x_dict[\'a\']", "x_dict[\'b\']", \'y\'), result_paths=("[\'c\']", "[\'d\']")'
+        ],
+        expected_tracer_debug_infos=[
+            'traced_for=jit, fun=my_f, arg_names=("x_dict[\'a\']", "x_dict[\'b\']", \'y\')',
+        ])
+
+  def test_nested_jit(self):
+    leaked_tracers: list[core.Tracer] = []
+
+    def my_f(x, y):
+      leaked_tracers.append(x)
+
+      def my_g(u, v):
+        leaked_tracers.append(u)
+        return dict(c=u * v, d=v)
+
+      return jax.jit(my_g)(y, x)["c"]
+
+    self._check_tracers_and_jaxprs(
+        jax.jit(my_f),
+        2, 3,
+        leaked_tracers=leaked_tracers,
+        expected_jaxpr_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=('x', 'y'), result_paths=('',)",
+            "traced_for=jit, fun=my_g, arg_names=('u', 'v'), result_paths=(\"[\'c\']\",)"
+        ],
+        expected_tracer_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=('x', 'y')",
+            "traced_for=jit, fun=my_g, arg_names=('u', 'v')"
+        ])
+
+  def test_vjp_of_nested_jit(self):
+    leaked_tracers: list[core.Tracer] = []
+
+    def my_f(x, y):
+      leaked_tracers.append(x)
+
+      def my_g(u, v):
+        leaked_tracers.append(u)
+        return dict(c=u * v, d=v)
+
+      return jax.jit(my_g)(y, x)["c"]
+
+    self._check_tracers_and_jaxprs(
+        jax.jit(lambda x, y, res_ct: jax.vjp(my_f, x, y)[1](res_ct)),
+        2., 3., 0.3,
+        leaked_tracers=leaked_tracers,
+        expected_jaxpr_debug_infos=[
+            "traced_for=jit, fun=<lambda>, arg_names=('x', 'y', 'res_ct'), result_paths=('[0]', '[1]')",
+            # TODO(necula): missing debug info
+            'None',
+            'None'
+        ],
+        expected_tracer_debug_infos=[
+            # TODO(necula): missing debug info
+            "None",
+            "traced_for=jit, fun=my_g, arg_names=('u', 'v')"
+        ])
+
+  def test_vmap_of_nested_jit(self):
+    leaked_tracers: list[core.Tracer] = []
+
+    def my_f(x, y):
+      leaked_tracers.append(x)
+
+      def my_g(u, v):
+        leaked_tracers.append(u)
+        return dict(c=u * v, d=v)
+
+      return jax.jit(my_g)(y, x)["c"]
+
+    self._check_tracers_and_jaxprs(
+        jax.jit(jax.vmap(my_f)),
+        np.ones((8,), dtype=np.float32), np.zeros((8,), dtype=np.float32),
+        leaked_tracers=leaked_tracers,
+        expected_jaxpr_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=('x', 'y'), result_paths=('',)",
+            # TODO(necula): missing debug info
+            'None',
+        ],
+        expected_tracer_debug_infos=[
+            # TODO(necula): missing debug info
+            "None",
+            "traced_for=jit, fun=my_g, arg_names=('u', 'v')"
+        ])
+
+  def test_cond(self):
+    leaked_tracers: list[core.Tracer] = []
+
+    def my_f(x):
+      def my_true_branch(a, b):
+        leaked_tracers.append(a)
+        return a + b
+
+      def my_false_branch(c, d):
+        leaked_tracers.append(c)
+        return c - d
+
+      return lax.cond(x >= 0, my_true_branch, my_false_branch, x, x)
+
+    self._check_tracers_and_jaxprs(
+        jax.jit(my_f),
+        0,
+        leaked_tracers=leaked_tracers,
+        expected_jaxpr_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=('x',), result_paths=('',)",
+            # TODO(necula): some Jaxprs without debug info
+            'None',
+            'None'],
+        expected_tracer_debug_infos=[
+            "traced_for=cond, fun=my_true_branch, arg_names=('a', 'b')",
+            "traced_for=cond, fun=my_false_branch, arg_names=('c', 'd')"
+        ])
+
+  def test_grad_cond_with_remat(self):
+    leaked_tracers: list[core.Tracer] = []
+
+    def my_f(x, y):
+      # The cond branches return two things, and only the first is needed
+      # in the residuals.
+      def my_true_branch(a, b):
+        leaked_tracers.append(a)
+        return (a + 1, a + b)
+
+      def my_false_branch(c, d):
+        leaked_tracers.append(c)
+        return (c - 1, c - d)
+
+      def my_g(x, y):
+        # x1 does not depend on y
+        x1, y1 = lax.cond(x >= 0, my_true_branch, my_false_branch, x, y)
+        leaked_tracers.append(x1)
+        return x1, y1
+
+      x2, y2 = jax.remat(my_g)(x, y)
+      return y2 + lax.sin(x2)
+
+    self._check_tracers_and_jaxprs(
+        jax.jit(jax.grad(my_f)),
+        1., 2.,
+        leaked_tracers=leaked_tracers,
+        expected_jaxpr_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=('x', 'y'), result_paths=('',)",
+            # TODO(necula): some Jaxprs without debug info
+            'None',
+            'None',
+            'None',
+            'None',
+            'None',
+            'None',
+            'None'
+        ],
+        expected_tracer_debug_infos=[
+            "traced_for=cond, fun=my_true_branch, arg_names=('a', 'b')",
+            "traced_for=cond, fun=my_false_branch, arg_names=('c', 'd')",
+            "traced_for=checkpoint / remat, fun=my_g, arg_names=('x', 'y')"
+        ])
+
+  def test_while_loop(self):
+    leaked_tracers: list[core.Tracer] = []
+
+    def my_f(x):
+      def my_cond(a):
+        leaked_tracers.append(a)
+        return a <= 8
+
+      def my_body(b):
+        leaked_tracers.append(b)
+        return b + 1
+
+      return lax.while_loop(my_cond, my_body, x)
+
+    self._check_tracers_and_jaxprs(
+        jax.jit(my_f),
+        0,
+        leaked_tracers=leaked_tracers,
+        expected_jaxpr_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=('x',), result_paths=('',)",
+            # TODO(necula): some Jaxprs without debug info
+            'None',
+            'None'],
+        expected_tracer_debug_infos=[
+            "traced_for=while_cond, fun=my_cond, arg_names=('a',)",
+            "traced_for=while_loop, fun=my_body, arg_names=('b',)"
+        ])
+
+  def test_eval_shape(self):
+    leaked_tracers: list[core.Tracer] = []
+
+    def my_f(x):
+      leaked_tracers.append(x)
+      return x
+
+    _ = jax.eval_shape(my_f, 0)
+    self._check_tracers(leaked_tracers, [
+        "traced_for=jit, fun=my_f, arg_names=('x',)"
+    ])
+
+  def test_pmap(self):
+    leaked_tracers: list[core.Tracer] = []
+
+    def my_f(x):
+      leaked_tracers.append(x)
+      return jnp.sin(x)
+
+    self._check_tracers_and_jaxprs(
+        jax.pmap(my_f),
+        np.ones((jax.device_count(),), dtype=np.float32),
+        expected_jaxpr_debug_infos=[
+            "traced_for=pmap, fun=my_f, arg_names=('x',), result_paths=('',)"
+        ],
+        leaked_tracers=leaked_tracers,
+        expected_tracer_debug_infos=[
+            "traced_for=pmap, fun=my_f, arg_names=('x',)"
+        ],
+    )
+
+  def test_pmap_of_grad(self):
+    leaked_tracers: list[core.Tracer] = []
+
+    def my_f(x):
+      leaked_tracers.append(x)
+      return jnp.sin(x)
+
+    self._check_tracers_and_jaxprs(
+        jax.jit(jax.pmap(jax.grad(my_f))),
+        np.ones((jax.device_count(),), dtype=np.float32),
+        expected_jaxpr_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=('x',), result_paths=('',)",
+            # TODO(necula): missing debug_info
+            'None'
+        ],
+        leaked_tracers=leaked_tracers,
+        expected_tracer_debug_infos=[
+            # TODO(necula): missing debug_info
+            'None'
+        ],
+    )
+
+  def test_remat(self):
+    leaked_tracers: list[core.Tracer] = []
+
+    def my_f(x):
+      @jax.remat
+      def my_g(y):
+        leaked_tracers.append(y)
+        return lax.sin(y)
+
+      return my_g(x)
+
+    self._check_tracers_and_jaxprs(
+        jax.jit(my_f),
+        0.,
+        leaked_tracers=leaked_tracers,
+        expected_jaxpr_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=('x',), result_paths=('',)",
+            # TODO(necula): some Jaxprs without debug info
+            'None'],
+        expected_tracer_debug_infos=[
+            "traced_for=checkpoint / remat, fun=my_g, arg_names=('y',)"
+        ])
+
+  def test_grad_remat(self):
+    leaked_tracers: list[core.Tracer] = []
+
+    def my_f(x):
+      @jax.remat
+      def my_g(y):
+        leaked_tracers.append(y)
+        return lax.sin(lax.sin(y))
+
+      return my_g(my_g(x))
+
+    self._check_tracers_and_jaxprs(
+        jax.jit(jax.grad(my_f)),
+        0.,
+        leaked_tracers=leaked_tracers,
+        expected_jaxpr_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=('x',), result_paths=('',)",
+            # TODO(necula): some Jaxprs without debug info
+            'None',
+            'None'],
+        expected_tracer_debug_infos=[
+            "traced_for=checkpoint / remat, fun=my_g, arg_names=('y',)"
+        ])
+
+  def test_pallas_call(self):
+    leaked_tracers: list[core.Tracer] = []
+
+    def my_kernel(x_ref, y_ref, o_ref):
+      leaked_tracers.append(x_ref)
+      o_ref[...] = x_ref[...] + y_ref[...]
+
+    x = np.arange(256 * 16, dtype=np.float32).reshape((256, 16))
+
+    def my_f(x):
+      def my_index_map(i, j):
+        leaked_tracers.append(i)
+        return (i, j)
+
+      return pl.pallas_call(my_kernel,
+                            out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+                            in_specs=(pl.BlockSpec((128, 8), my_index_map),
+                                      pl.BlockSpec((128, 8), my_index_map)),
+                            out_specs=pl.BlockSpec((128, 8), my_index_map),
+                            grid=(pl.cdiv(x.shape[0], 128), pl.cdiv(x.shape[1], 8)))(x, x)
+
+    self._check_tracers_and_jaxprs(
+        jax.jit(my_f), x,
+        leaked_tracers=leaked_tracers,
+        expected_jaxpr_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=('x',), result_paths=('',)",
+            # TODO(necula): missing Jaxpr debug info
+            "None", "None", "None", "None"],
+        expected_tracer_debug_infos=[
+            # TODO(necula): arg_names seem to be wrong
+            # One tracer from every index map
+            "traced_for=pallas_call index_map, fun=my_index_map, arg_names=('i[0]', 'i[1]')",
+            "traced_for=pallas_call index_map, fun=my_index_map, arg_names=('i[0]', 'i[1]')",
+            "traced_for=pallas_call index_map, fun=my_index_map, arg_names=('i[0]', 'i[1]')",
+            "traced_for=pallas_call, fun=my_kernel, arg_names=('x_ref', 'y_ref', 'o_ref')",
+        ])
+
 
 class EagerPmapMixin:
 
@@ -526,8 +908,8 @@ class PythonPmapEagerTest(EagerPmapMixin, jtu.JaxTestCase):
       return y['hi'] + args[1] + sum(kwargs.values())
 
     lowered = jax.pmap(f).lower(
-      {'hi': jnp.array([1.])}, {'hi': jnp.array([2.])}, jnp.array([3.]),
-      jnp.array([4.]), z=jnp.array([5.]), w=jnp.array([6.]))
+        {'hi': jnp.array([1.])}, {'hi': jnp.array([2.])}, jnp.array([3.]),
+        jnp.array([4.]), z=jnp.array([5.]), w=jnp.array([6.]))
     hlo_str = lowered.as_text("stablehlo", debug_info=True)
     self.assertNotIn("\"x\"", hlo_str)
     self.assertIn("y['hi']", hlo_str)
