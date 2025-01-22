@@ -1545,7 +1545,7 @@ class DynamicJaxprTracer(core.Tracer):
       return ""
 
     origin = ("The error occurred while tracing the function "
-              f"{dbg.func_src_info or '<unknown>'} for {dbg.traced_for}. ")
+              f"{dbg.func_src_info} for {dbg.traced_for}. ")
     if invar_pos and dbg.arg_names:
       try:
         arg_names = [dbg.arg_names[i] for i in invar_pos]
@@ -2116,7 +2116,7 @@ def tracing_debug_info(
     out_tree_thunk: Callable[[], PyTreeDef],
     has_kwargs: bool,
     traced_for: str
-) -> lu.TracingDebugInfo | None:
+) -> lu.TracingDebugInfo:
   # TODO(necula): we should not need this function, and can use api_util.tracing_debug_info instead
   # We just have to make sure we grad the debugging information when we have
   # the unflattened args

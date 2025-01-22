@@ -77,11 +77,16 @@ Effects = effects.Effects
 EffectTypeSet = effects.EffectTypeSet
 no_effects: Effects = effects.no_effects
 
+
+# TODO(necula): make this an extension of TracingDebugInfo
 class JaxprDebugInfo(NamedTuple):
-  traced_for: str     # e.g. 'jit', 'scan', etc
-  func_src_info: str | None  # e.g. f'{fun.__name__} at {filename}:{lineno}'
-  arg_names: tuple[str | None, ...]     # e.g. ('args[0]', ... )
+  # An extension of lu.TracingDebugInfo; see comments there
+  traced_for: str
+  func_src_info: str
+  arg_names: tuple[str | None, ...]
+  # This is formed after tracing, when we have concrete `result_paths`
   result_paths: tuple[str, ...]  # e.g. ('[0]', '[1]', ...)
+
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
@@ -140,7 +145,7 @@ class Jaxpr:
     self._eqns = list(eqns)
     self._effects = effects
     self._debug_info = debug_info
-    assert (not debug_info or debug_info.arg_names is None or len(debug_info.arg_names) == len(invars)), (debug_info, invars)
+    assert (not debug_info or len(debug_info.arg_names) == len(invars)), (debug_info, invars)
     assert (not debug_info or len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
 
   def __str__(self):

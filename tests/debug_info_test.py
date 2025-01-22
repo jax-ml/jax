@@ -22,6 +22,7 @@ import operator
 from absl.testing import absltest, parameterized
 import jax
 from jax import lax
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
@@ -39,6 +40,98 @@ jtu.request_cpu_devices(8)
 
 
 class DebugInfoTest(jtu.JaxTestCase):
+
+  def test_debug_info_basic(self):
+    def my_f(x, y, z, w):
+      pass
+
+    dbg = api_util.tracing_debug_info("jit", my_f, (1, 2), dict(z=3, w=4))
+    self.assertRegex(dbg.func_src_info, r"^my_f at .*debug_info_test.py:\d+")
+    self.assertEqual(dbg.arg_names, ("x", "y", "z", "w"))
+    self.assertIsNone(dbg.result_paths_thunk)
+
+  def test_debug_info_arg_passed_as_kwarg(self):
+    def my_f(x, y, z):
+      pass
+
+    dbg = api_util.tracing_debug_info("jit", my_f, (1, 2), dict(z=3))
+    self.assertEqual(dbg.arg_names, ("x", "y", "z"))
+
+  def test_debug_info_pytrees(self):
+    def my_f(x_tree, *, y_tree):
+      pass
+
+    dbg = api_util.tracing_debug_info("jit", my_f, ((1, 2),),
+                                      dict(y_tree=dict(z=3, w=4)))
+    self.assertEqual(dbg.arg_names, ("x_tree[0]", "x_tree[1]",
+                                     "y_tree['w']", "y_tree['z']"))
+
+  def test_debug_info_with_statics(self):
+    def my_f(x, y, *, z, w):
+      pass
+
+    dbg = api_util.tracing_debug_info("jit", my_f, (1, 2), dict(z=3, w=4),
+                                      static_argnums=(1,),
+                                      static_argnames=("w",))
+    self.assertEqual(dbg.arg_names, ("x", "z"))
+
+  def test_debug_info_with_pytrees_and_statics(self):
+    def my_f(x, y, *, z, w):
+      pass
+
+    dbg = api_util.tracing_debug_info("jit", my_f, ((1, 2), (2, 3)),
+                                      dict(z=(3, 4), w=(5, 6)),
+                                      static_argnums=(1,),
+                                      static_argnames=("w",))
+    self.assertEqual(dbg.arg_names, ("x[0]", "x[1]", "z[0]", "z[1]"))
+
+  def test_debug_info_too_many_args(self):
+    def my_f(x):
+      pass
+
+    dbg = api_util.tracing_debug_info("jit", my_f, (1, 2, 3), dict(z=3))
+    self.assertEqual(dbg.arg_names, ('args[0]', 'args[1]', 'args[2]', "kwargs['z']"))
+
+  def test_debug_info_no_source_info_built_in(self):
+    # built-in function "int" does not have an inspect.Signature
+    dbg = api_util.tracing_debug_info("jit", max, (1,), {})
+    self.assertEqual(dbg.func_src_info, "max")
+    self.assertEqual(dbg.arg_names, ("args[0]",))
+
+  def test_debug_info_lambda(self):
+    # built-in function "int" does not have an inspect.Signature
+    dbg = api_util.tracing_debug_info("jit", lambda my_arg: False, (1,), {})
+    self.assertRegex(dbg.func_src_info, r"^<lambda> at .*debug_info_test.py:\d+")
+    self.assertEqual(dbg.arg_names, ("my_arg",))
+
+  def test_debug_info_no_source_info_not_callable(self):
+    # built-in function "int" does not have an inspect.Signature
+    dbg = api_util.tracing_debug_info("jit", False, (1,), {})
+    self.assertEqual(dbg.func_src_info, "<unknown>")
+    self.assertEqual(dbg.arg_names, ("args[0]",))
+
+  def test_debug_info_no_source_info_callable(self):
+    class Foo:
+      x: int
+      def __call__(self, y):
+        return self.x + y
+
+    dbg = api_util.tracing_debug_info("jit", Foo(), (1,), {})
+    self.assertRegex(dbg.func_src_info, "<unknown>")
+    self.assertEqual(dbg.arg_names, ("y",))
+
+  def test_debug_info_no_source_info_callable_with_repr_errors(self):
+    class Foo:
+      x: int
+      def __call__(self, y):
+        return self.x + y
+
+      def __repr__(self):
+        raise NotImplementedError
+
+    dbg = api_util.tracing_debug_info("jit", Foo(), (1,), {})
+    self.assertRegex(dbg.func_src_info, "<unknown>")
+    self.assertEqual(dbg.arg_names, ("y",))
 
   def helper_save_tracer(self, x):
     self._saved_tracer = x
