@@ -560,6 +560,7 @@ def check_avals_context_mesh(avals, prim_name):
 TracerType = TypeVar('TracerType', bound='Tracer')
 
 class Trace(Generic[TracerType]):
+  __slots__ = ("__weakref__", "_invalidated")
 
   def process_primitive(self, primitive, tracers, params):
     raise NotImplementedError("must override")

@@ -854,6 +854,8 @@ def _rem_singleton(x): return x.reshape(x.shape[1:])
 def _add_singleton(x): return x.reshape(1, *x.shape)
 
 class ShardMapTrace(core.Trace):
+  __slots__ = ("mesh", "check")
+
   mesh: Mesh
   check: bool
 
@@ -1897,6 +1899,8 @@ class RewriteTracer(core.Tracer):
   __repr__ = __str__  # for debuggers, like `p x`
 
 class RewriteTrace(core.Trace):
+  __slots__ = ("parent_trace", "tag", "mesh")
+
   parent_trace : core.Trace
   tag : core.TraceTag
   mesh: Mesh
