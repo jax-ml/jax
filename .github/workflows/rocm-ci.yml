@@ -53,7 +53,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rocm_jax_r${{ env.ROCM_VERSION }}_py${{ env.PYTHON_VERSION  }}_id${{ github.run_id }}
-          path: ./dist/*.whl
+          path: ${{ env.WORKSPACE_DIR }}/dist/*.whl
+          retention-days: 2
       - name: Run tests
         run: |
           cd $WORKSPACE_DIR
