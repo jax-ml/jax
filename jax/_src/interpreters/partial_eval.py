@@ -1808,6 +1808,8 @@ def _inline_literals(
 
 
 class DynamicJaxprTrace(core.Trace):
+  __slots__ = ("frame",)
+
   def __init__(self, debug_info: lu.TracingDebugInfo | None):
     self.frame = JaxprStackFrame(debug_info)
 

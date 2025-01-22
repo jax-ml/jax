@@ -461,6 +461,7 @@ def _multi_pmap(f: Callable, info: EmapInfo, names: list[core.AxisName],
 FakePrimitive = namedtuple("FakePrimitive", ["multiple_results", "bind"])
 
 class MapTrace(core.Trace):
+  __slots__ = ("axis_name", "emap_info")
 
   def __init__(self, axis_name, emap_info):
     self.emap_info = emap_info
