@@ -70,6 +70,12 @@ class Ty:
   def tangent_ty(self):
     raise NotImplementedError(f"{type(self).__name__}.tangent_ty")
 
+  def strip_leading_axis(self):
+    raise NotImplementedError(f"{type(self).__name__}.strip_leading_axis")
+
+  def broadcast_leading_axis(self, val, size):
+    raise NotImplementedError(f"{type(self).__name__}.broadcast_leading_axis")
+
 class Val:
   ty : Ty
 
@@ -79,10 +85,10 @@ class Val:
   def __rmul__(self, other): return self.ty._mul(other, self)
 
 class Primitive:
-  is_linear : bool = False
-  linear_args : tuple[int] = ()
   arg_tys : tuple[Ty]
   result_ty : Ty
+  is_linear : bool = False
+  linear_args : tuple[int] = ()
 
   # type checking goes here
   def __init__(self, *arg_tys, **params):
@@ -270,6 +276,15 @@ class ArrayTy(Ty):
     # TODO: ints
     return ArrayTy(self.shape, self.dtype)
 
+  def strip_leading_axis(self):
+     if len(self.shape) == 0:
+       raise TypeError("Can't batch a rank-0 array")
+     else:
+       return self.shape[0], ArrayTy(self.shape[1:], self.dtype)
+
+  def broadcast_leading_axis(self, val, size):
+    raise NotImplementedError("need to implement broadcast")
+
   def from_runtime_buf(self, buf):
     val = ArrayVal(np.asarray(buf))
     assert val.ty == self
@@ -394,6 +409,67 @@ def backward_pass(jaxpr, initial_cotangent):
   binder, = jaxpr.binders
   return read_cotangent(binder)
 
+# === vmap ===
+
+class BatchTrace:
+  def __init__(self, parent_trace, size, tag=None):
+    self.parent_trace = parent_trace
+    self.size = size
+    self.tag = TraceTag() if tag is None else tag
+
+  def process_primitive(self, prim: Primitive, args: tuple[TraceVal]):
+    args = map(self.lift, args)
+    with set_current_trace(self.parent_trace):
+      if all(not arg.batched for arg in args):
+        args = [arg.val for arg in args]
+        return emit(prim, args)
+      else:
+        args = [arg.force_batched().val for arg in args]
+        result = prim.batch(*args)
+        return BatchTracer(self, result, True)
+
+  def lift(self, val):
+    if isinstance(val, BatchTracer) and val.trace.tag is self.tag:
+      return BatchTracer(self, val.val, val.batched)
+    else:
+      return BatchTracer(self, val, False)
+
+class BatchTracer(Tracer):
+  def __init__(self, trace:Trace, val:TraceVal, batched:bool):
+    self.trace = trace
+    self.val = val
+    self.batched = bool
+
+  @property
+  def ty(self):
+    if self.batched:
+      _, ty = self.val.ty.strip_leading_axis()
+      return ty
+    else:
+      return self.val.ty
+
+  def force_batched(self):
+    if self.batched:
+      return self
+    else:
+      return self.ty.broadcast_leading_axis(self.val, self.trace.size)
+
+def vmap(f, *args):
+  args = map(canonicalize_arg, args)
+  sizes = [arg.ty.strip_leading_axis()[0] for arg in args]
+  size = sizes[0]
+  for other_size in sizes:
+    assert size == other_size
+
+  parent_trace = trace_ctx.trace
+  trace = BatchTrace(parent_trace, size)
+  args = [BatchTracer(trace, arg, True) for arg in args]
+  with set_current_trace(trace):
+    ans = f(*args)
+
+  ans = trace.lift(ans)
+  return ans.force_batched().val
+
 # === XLA stuff ===
 
 @dataclass
@@ -450,6 +526,9 @@ class Sin(Primitive):
     cos_x = cos(x)
     return sin(x), lambda t: mul_lin(t, cos_x)
 
+  def batch(self, x):
+    return sin(x)
+
 def sin(x):
   x = canonicalize_arg(x)
   return emit(Sin(x.ty), (x,))
@@ -466,6 +545,9 @@ class Cos(Primitive):
   def linearize(self, x):
     sin_x = sin(x)
     return cos(x), lambda t: neg_lin(mul_lin(t, sin_x))
+
+  def batch(self, x):
+    return cos(x, y)
 
 def cos(x):
   x = canonicalize_arg(x)
@@ -491,6 +573,9 @@ class Mul(Primitive):
 
   def transpose(self, ct, x):
     return (mul_lin(ct, x),)
+
+  def batch(self, x, y):
+    return mul(x, y)
 
 def mul(x, y):
   x = canonicalize_arg(x)
@@ -521,6 +606,9 @@ class Add(Primitive):
 
   def linearize(self, x, y):
     return add(x, y), lambda xt, yt: add_lin(xt, yt)
+
+  def batch(self, x, y):
+    return add(x, y)
 
 def add(x, y):
   x = canonicalize_arg(x)
@@ -554,6 +642,9 @@ class Neg(Primitive):
   def linearize(self, x):
     return neg(x), lambda xt: neg_lin(xt)
 
+  def batch(self, x):
+    return neg(x)
+
 def neg(x):
   x = canonicalize_arg(x)
   return emit(Neg(x.ty), (x,))
@@ -564,7 +655,6 @@ def neg_lin(x):
   else:
     x = canonicalize_arg(x)
     return emit(Neg(x.ty, is_linear=True), (x,))
-
 
 class Call(Primitive):
   def __init__(self, jaxpr):
@@ -631,3 +721,5 @@ print(ans)
 print(jaxpr)
 
 print(backward_pass(jaxpr, 1.0))
+
+print(vmap(bar, np.arange(4.0), np.arange(4.0)))
