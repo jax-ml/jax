@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src import ffi as _ffi
+from jax import ffi as _ffi
 
 _deprecations = {
     # Added 2024-12-20

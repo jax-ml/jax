@@ -619,7 +619,7 @@ def _cholesky_update_abstract_eval(r_matrix, w_vector):
   return ShapedArray(r_matrix.shape, r_matrix.dtype)
 
 def _cholesky_update_gpu_lowering_rule(target_name_prefix, ctx, r_matrix, w_vector):
-  rule = ffi.ffi_lowering(f"{target_name_prefix}_cholesky_update_ffi",
+  rule = mlir.ffi_lowering(f"{target_name_prefix}_cholesky_update_ffi",
                           operand_output_aliases={0: 0, 1: 1})
   sub_ctx = ctx.replace(avals_out=ctx.avals_in)
   return rule(sub_ctx, r_matrix, w_vector)[:1]
@@ -711,7 +711,7 @@ def _symmetric_product_gpu_lowering(
   alpha_array = mlir.full_like_aval(ctx, alpha, alpha_aval)
   beta_array = mlir.full_like_aval(ctx, beta, beta_aval)
 
-  rule = ffi.ffi_lowering(f"{platform}solver_syrk_ffi",
+  rule = mlir.ffi_lowering(f"{platform}solver_syrk_ffi",
                           operand_output_aliases={1: 0})
   ctx = ctx.replace(avals_in=[a_aval, c_aval, alpha_aval, beta_aval])
   return rule(ctx, a_tensor, c_tensor, alpha_array, beta_array, transpose=False)
@@ -1072,7 +1072,7 @@ def _eigh_cpu_gpu_lowering(
     target_name = f"{target_name_prefix}solver_syevd_ffi"
     kwargs = {"lower": lower, "algorithm": np.uint8(0)}
 
-  rule = ffi.ffi_lowering(target_name, operand_layouts=[layout],
+  rule = mlir.ffi_lowering(target_name, operand_layouts=[layout],
                           result_layouts=result_layouts,
                           operand_output_aliases={0: 0})
   info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
@@ -1454,7 +1454,7 @@ def _lu_pivots_to_permutation_batching_rule(batched_args, batch_dims, *,
 def _lu_pivots_to_permutation_gpu_lowering(platform, ctx, pivots, *,
                                            permutation_size):
   del permutation_size  # unused
-  rule = ffi.ffi_lowering(f"{platform}_lu_pivots_to_permutation")
+  rule = mlir.ffi_lowering(f"{platform}_lu_pivots_to_permutation")
   return rule(ctx, pivots)
 
 
@@ -1647,7 +1647,7 @@ def _lu_cpu_gpu_lowering(ctx, operand, *, target_name_prefix: str):
   layout = (nb, nb + 1) + tuple(range(nb - 1, -1, -1))
   result_layouts = [layout, tuple(range(nb, -1, -1)),
                     tuple(range(nb - 1, -1, -1))]
-  rule = ffi.ffi_lowering(target_name, operand_layouts=[layout],
+  rule = mlir.ffi_lowering(target_name, operand_layouts=[layout],
                           result_layouts=result_layouts,
                           operand_output_aliases={0: 0})
   sub_ctx = ctx.replace(avals_out=[out_aval, pivot_aval, info_aval])
@@ -1841,7 +1841,7 @@ def _geqrf_cpu_gpu_lowering(ctx, a, *, target_name_prefix: str):
     target_name = lapack.prepare_lapack_call("geqrf_ffi", operand_aval.dtype)
   else:
     target_name = f"{target_name_prefix}solver_geqrf_ffi"
-  rule = ffi.ffi_lowering(target_name, operand_layouts=[layout],
+  rule = mlir.ffi_lowering(target_name, operand_layouts=[layout],
                           result_layouts=result_layouts,
                           operand_output_aliases={0: 0})
   return rule(ctx, a)
@@ -1908,7 +1908,7 @@ def _geqp3_cpu_lowering(ctx, a, jpvt):
   layout = [(nb, nb + 1) + tuple(range(nb - 1, -1, -1)), tuple(range(nb, -1, -1))]
   result_layouts = layout + [tuple(range(nb, -1, -1))]
   target_name = lapack.prepare_lapack_call("geqp3_ffi", a_aval.dtype)
-  rule = ffi.ffi_lowering(target_name, operand_layouts=layout,
+  rule = mlir.ffi_lowering(target_name, operand_layouts=layout,
                           result_layouts=result_layouts,
                           operand_output_aliases={0: 0, 1: 1})
   return rule(ctx, a, jpvt)
@@ -1988,7 +1988,7 @@ def _householder_product_cpu_gpu_lowering(ctx, a, taus, *,
     target_name = lapack.prepare_lapack_call(f"{prefix}gqr_ffi", dtype)
   else:
     target_name = f"{target_name_prefix}solver_orgqr_ffi"
-  rule = ffi.ffi_lowering(target_name, operand_layouts=[layout, tau_layout],
+  rule = mlir.ffi_lowering(target_name, operand_layouts=[layout, tau_layout],
                           result_layouts=[layout],
                           operand_output_aliases={0: 0})
   return rule(ctx, a, taus)
@@ -2255,7 +2255,7 @@ def _svd_cpu_gpu_lowering(
                       tuple(range(nb - 1, -1, -1))]
     mode = lapack._svd_computation_attr(compute_uv=compute_uv,
                                         full_matrices=full_matrices)
-    rule = ffi.ffi_lowering(target_name, operand_layouts=[layout],
+    rule = mlir.ffi_lowering(target_name, operand_layouts=[layout],
                             result_layouts=result_layouts,
                             operand_output_aliases={0: 0})
     info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
@@ -2376,7 +2376,7 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
                     layout if use_jacobi or compute_uv else (),
                     layout if use_jacobi or compute_uv else (),
                     tuple(range(nb - 1, -1, -1))]
-  rule = ffi.ffi_lowering(target_name, operand_layouts=[layout],
+  rule = mlir.ffi_lowering(target_name, operand_layouts=[layout],
                           result_layouts=result_layouts,
                           operand_output_aliases={0: 0})
   if use_jacobi:
@@ -2545,7 +2545,7 @@ def _tridiagonal_solve_cpu_lowering(ctx, dl, d, du, b, **kwargs):
   d_layout = tuple(range(nb, -1, -1))
   layouts = [d_layout, d_layout, d_layout, b_layout]
   info_layout = tuple(range(nb - 1, -1, -1))
-  rule = ffi.ffi_lowering(target_name, operand_layouts=layouts,
+  rule = mlir.ffi_lowering(target_name, operand_layouts=layouts,
                           result_layouts=layouts + [info_layout],
                           operand_output_aliases={0: 0, 1: 1, 2: 2, 3: 3})
   info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
@@ -2983,7 +2983,7 @@ def _tridiagonal_gpu_hlo(ctx, a, *, lower, target_name_prefix):
   layout = (nb, nb + 1) + tuple(range(nb - 1, -1, -1))
   result_layouts = [layout, tuple(range(nb, -1, -1)), tuple(range(nb, -1, -1)),
                     tuple(range(nb, -1, -1)), tuple(range(nb - 1, -1, -1))]
-  rule = ffi.ffi_lowering(f"{target_name_prefix}solver_sytrd_ffi",
+  rule = mlir.ffi_lowering(f"{target_name_prefix}solver_sytrd_ffi",
                           operand_layouts=[layout],
                           result_layouts=result_layouts,
                           operand_output_aliases={0: 0})

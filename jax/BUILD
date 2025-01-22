@@ -289,6 +289,7 @@ py_library_providing_imports_info(
         ":dtypes",
         ":effects",
         ":environment_info",
+        ":ffi_utils",
         ":internal_mesh_utils",
         ":jaxpr_util",
         ":layout",
@@ -567,6 +568,7 @@ pytype_strict_library(
         ":core",
         ":dtypes",
         ":effects",
+        ":ffi_utils",
         ":layout",
         ":op_shardings",
         ":partial_eval",
@@ -845,6 +847,16 @@ pytype_strict_library(
     deps = [
         ":config",
     ],
+)
+
+pytype_strict_library(
+    name = "ffi_utils",
+    srcs = ["_src/ffi_utils.py"],
+    deps = [
+        ":core",
+        ":layout",
+        ":typing",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(

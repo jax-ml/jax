@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 import dataclasses
 import functools
 from functools import partial
@@ -38,6 +38,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects as effects_lib
+from jax._src import ffi_utils
 from jax._src import linear_util as lu
 from jax._src import path
 from jax._src import pickle_util
@@ -52,6 +53,7 @@ from jax._src.sharding import Sharding as JSharding
 from jax._src.sharding_impls import (AUTO, NamedSharding,
                                      modify_sdy_sharding_wrt_axis_types,
                                      SdyArraySharding, SdyArrayShardingList)
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
 from jax._src.lib.mlir import dialects, ir, passmanager
@@ -3004,55 +3006,98 @@ def emit_python_callback(
         for result_aval in result_avals]
     return outputs, token, None
 
-  result_types = flatten_ir_types([aval_to_ir_type(aval) for aval in result_avals])
-  if token:
+  if jaxlib_version <= (0, 4, 38):
+    result_types = flatten_ir_types(
+        [aval_to_ir_type(aval) for aval in result_avals]
+    )
+    if token:
 
-    callback_without_token = _wrapped_callback
-    def _wrapped_callback(token, *args):  # type: ignore  # pylint: disable=function-redefined
-      return (token, *callback_without_token(*args))
+      callback_without_token = _wrapped_callback
+      def _wrapped_callback(token, *args):  # type: ignore  # pylint: disable=function-redefined
+        return (token, *callback_without_token(*args))
 
-    operand_shapes = [
-        xla.aval_to_xla_shapes(core.abstract_token)[0], *operand_shapes
+      operand_shapes = [
+          xla.aval_to_xla_shapes(core.abstract_token)[0], *operand_shapes
+      ]
+      result_shapes = [
+          xla.aval_to_xla_shapes(core.abstract_token)[0], *result_shapes
+      ]
+      operands = [token, *operands]
+      result_types = [token_type(), *result_types]
+      operand_mlir_layouts = [_layout_to_mlir_layout(None), *operand_mlir_layouts]
+      result_mlir_layouts = [_layout_to_mlir_layout(None), *result_mlir_layouts]
+    callback_descriptor, ifrt_callback = (
+        backend.get_emit_python_callback_descriptor(_wrapped_callback,
+                                                    operand_shapes,
+                                                    result_shapes))
+    ctx.module_context.add_host_callback(ifrt_callback)
+    descriptor_operand = ir_constant(callback_descriptor)
+    callback_operands = [descriptor_operand, *operands]
+    if operand_mlir_layouts is not None:
+      operand_mlir_layouts = [_layout_to_mlir_layout([]), *operand_mlir_layouts]
+    result_type = ir.TupleType.get_tuple(result_types)
+    call_target_name = (
+        "xla_python_gpu_callback"
+        if platform in {"cuda", "rocm"}
+        else "xla_python_cpu_callback"
+    )
+    result = hlo.CustomCallOp(
+        [result_type],
+        callback_operands,
+        call_target_name=ir.StringAttr.get(call_target_name),
+        has_side_effect=ir.BoolAttr.get(has_side_effect),
+        api_version=i32_attr(2),
+        called_computations=ir.ArrayAttr.get([]),
+        backend_config=ir.StringAttr.get(str(callback_descriptor)),
+        operand_layouts=(
+            None
+            if operand_mlir_layouts is None
+            else ir.ArrayAttr.get(operand_mlir_layouts)
+        ),
+        result_layouts=(
+            None
+            if result_mlir_layouts is None
+            else ir.ArrayAttr.get(result_mlir_layouts)
+        ),
+    )
+    if sharding is not None:
+      set_sharding(result, sharding)
+    results = [
+        hlo.get_tuple_element(result, i32_attr(i))
+        for i in range(len(result_types))
     ]
-    result_shapes = [
-        xla.aval_to_xla_shapes(core.abstract_token)[0], *result_shapes
-    ]
-    operands = [token, *operands]
-    result_types = [token_type(), *result_types]
-    operand_mlir_layouts = [_layout_to_mlir_layout(None), *operand_mlir_layouts]
-    result_mlir_layouts = [_layout_to_mlir_layout(None), *result_mlir_layouts]
-  callback_descriptor, ifrt_callback = (
-      backend.get_emit_python_callback_descriptor(_wrapped_callback,
-                                                  operand_shapes,
-                                                  result_shapes))
-  ctx.module_context.add_host_callback(ifrt_callback)
-  descriptor_operand = ir_constant(callback_descriptor)
-  callback_operands = [descriptor_operand, *operands]
-  if operand_mlir_layouts is not None:
-    operand_mlir_layouts = [_layout_to_mlir_layout([]), *operand_mlir_layouts]
-  result_type = ir.TupleType.get_tuple(result_types)
-  call_target_name = ("xla_python_gpu_callback"
-                     if platform in {"cuda", "rocm"} else "xla_python_cpu_callback")
-  result = hlo.CustomCallOp(
-      [result_type],
-      callback_operands,
-      call_target_name=ir.StringAttr.get(call_target_name),
-      has_side_effect=ir.BoolAttr.get(has_side_effect),
-      api_version=i32_attr(2),
-      called_computations=ir.ArrayAttr.get([]),
-      backend_config=ir.StringAttr.get(str(callback_descriptor)),
-      operand_layouts=(
-        None if operand_mlir_layouts is None
-        else ir.ArrayAttr.get(operand_mlir_layouts)),
-      result_layouts=(
-        None if result_mlir_layouts is None
-        else ir.ArrayAttr.get(result_mlir_layouts)))
-  if sharding is not None:
-    set_sharding(result, sharding)
-  results = [
-      hlo.get_tuple_element(result, i32_attr(i))
-      for i in range(len(result_types))
-  ]
+  else:
+    call_target_name = (
+        "xla_ffi_python_gpu_callback"
+        if platform in {"cuda", "rocm"}
+        else "xla_ffi_python_cpu_callback"
+    )
+    if token:
+      callback_without_token = _wrapped_callback
+      def _wrapped_callback(token, *args):  # type: ignore  # pylint: disable=function-redefined
+        return (token, *callback_without_token(*args))
+      operands = [token, *operands]
+      ctx = dataclasses.replace(
+          ctx,
+          avals_in=[core.abstract_token, *ctx.avals_in],
+          avals_out=[core.abstract_token, *ctx.avals_out],
+      )
+
+    # TODO(dsuo): Eventually, we don't need descriptor anymore.
+    descriptor, ifrt_callback = backend.get_emit_python_callback(
+        _wrapped_callback
+    )
+    ctx.module_context.add_host_callback(ifrt_callback)
+    result = ffi_lowering_op(
+        call_target_name,
+        has_side_effect=has_side_effect,
+    )(ctx, *operands, descriptor=np.uint64(descriptor))
+
+    if sharding is not None:
+      set_sharding(result, sharding)
+
+    results = result.results  # type: ignore
+
   if token:
     token, *results = results
   return results, token, ifrt_callback
@@ -3268,3 +3313,166 @@ def refine_polymorphic_shapes(module: ir.Module) -> ir.Module:
   context = make_ir_context()
   with context:
     return ir.Module.parse(refined_module_str)
+
+
+def ffi_lowering_op(
+    call_target_name: str,
+    *,
+    operand_layouts: Sequence[ffi_utils.FfiLayoutOptions] | None = None,
+    result_layouts: Sequence[ffi_utils.FfiLayoutOptions] | None = None,
+    backend_config: Mapping[str, ir.Attribute] | str | None = None,
+    **lowering_args: Any,
+) -> Callable[..., ir.Operation]:
+  """Build a lowering op for an foreign function interface (FFI) target.
+
+  By default, this lowering rule can use the input and output abstract values to
+  compute the input and output types and shapes for the custom call, assuming
+  row-major layouts.
+
+  Note that layouts passed to this function as tuples should be in
+  minor-to-major order (as expected by XLA) rather than major-to-minor as used
+  by :func:`~jax.ffi.ffi_call` and ``DeviceLocalLayout``.
+
+  If keyword arguments are passed to the lowering rule, these are treated as
+  attributes, and added to `backend_config`.
+
+  Args:
+    call_target_name: The name of the custom call target.
+    operand_layouts: A sequence of layouts (dimension orders) for each operand.
+      By default, the operands are assumed to be row-major.
+    result_layouts: A sequence of layouts (dimension orders) for each result.
+      By default, the results are assumed to be row-major.
+    backend_config: Configuration data for the custom call. Any keyword
+      arguments passed to the lowering rule will added to this dictionary.
+    lowering_args: Any other arguments to :func:`mlir.custom_call` will also be
+      passed through if provided as extra arguments to this function.
+  """
+
+  def _lowering_op(
+      ctx: LoweringRuleContext, *operands: ir.Value, **params: Any
+  ) -> ir.Operation:
+    kwargs = dict(lowering_args)
+    kwargs.setdefault("api_version", 4)
+    if kwargs["api_version"] >= 4:
+      if backend_config is not None and not isinstance(backend_config, dict):
+        raise ValueError(
+            "When api_version > 4, backend_config must be a dictionary."
+        )
+      kwargs["backend_config"] = dict(
+          backend_config or {},
+          **{k: ir_attribute(v) for k, v in params.items()},
+      )
+    else:
+      if params:
+        raise ValueError(
+            "The use of ffi_call attributes requires a custom call API version "
+            f"of at least 4; got api_version={kwargs['api_version']}."
+        )
+      kwargs["backend_config"] = backend_config
+    if "result_types" not in kwargs:
+      kwargs["result_types"] = [aval_to_ir_type(aval) for aval in ctx.avals_out]
+    if operand_layouts is None:
+      kwargs["operand_layouts"] = map(
+          ffi_utils.convert_layout_for_lowering, ctx.avals_in
+      )
+    else:
+      kwargs["operand_layouts"] = [
+          ffi_utils.convert_layout_for_lowering(*args)
+          for args in zip(ctx.avals_in, operand_layouts)
+      ]
+    if result_layouts is None:
+      kwargs["result_layouts"] = map(
+          ffi_utils.convert_layout_for_lowering, ctx.avals_out
+      )
+    else:
+      kwargs["result_layouts"] = [
+          ffi_utils.convert_layout_for_lowering(*args)
+          for args in zip(ctx.avals_out, result_layouts)
+      ]
+    if "result_shapes" not in kwargs and not all(
+        core.is_constant_shape(ffi_utils.aval_shape(aval))
+        for aval in ctx.avals_out
+    ):
+      kwargs["result_shapes"] = [
+          shape_tensor(
+              eval_dynamic_shape_as_ivals(ctx, ffi_utils.aval_shape(aval))
+          )
+          for aval in ctx.avals_out
+      ]
+
+    return custom_call(call_target_name, operands=operands, **kwargs)
+
+  return _lowering_op
+
+
+def ffi_lowering(
+    call_target_name: str,
+    *,
+    operand_layouts: Sequence[ffi_utils.FfiLayoutOptions] | None = None,
+    result_layouts: Sequence[ffi_utils.FfiLayoutOptions] | None = None,
+    backend_config: Mapping[str, ir.Attribute] | str | None = None,
+    **lowering_args: Any,
+) -> LoweringRule:
+  """Build a lowering rule for an foreign function interface (FFI) target.
+
+  By default, this lowering rule can use the input and output abstract values to
+  compute the input and output types and shapes for the custom call, assuming
+  row-major layouts.
+
+  Note that layouts passed to this function as tuples should be in
+  minor-to-major order (as expected by XLA) rather than major-to-minor as used
+  by :func:`~jax.ffi.ffi_call` and ``DeviceLocalLayout``.
+
+  If keyword arguments are passed to the lowering rule, these are treated as
+  attributes, and added to `backend_config`.
+
+  Args:
+    call_target_name: The name of the custom call target.
+    operand_layouts: A sequence of layouts (dimension orders) for each operand.
+      By default, the operands are assumed to be row-major.
+    result_layouts: A sequence of layouts (dimension orders) for each result.
+      By default, the results are assumed to be row-major.
+    backend_config: Configuration data for the custom call. Any keyword
+      arguments passed to the lowering rule will added to this dictionary.
+    lowering_args: Any other arguments to :func:`mlir.custom_call` will also be
+      passed through if provided as extra arguments to this function.
+  """
+
+  def _lowering(
+    ctx: LoweringRuleContext, *operands: ir.Value, **params: Any
+  ) -> Sequence[ir.Value | Sequence[ir.Value]]:
+    result = ffi_lowering_op(
+        call_target_name,
+        operand_layouts=operand_layouts,
+        result_layouts=result_layouts,
+        backend_config=backend_config,
+        **lowering_args,
+    )(ctx, *operands, **params)
+
+    return result.results  # type: ignore
+
+  return _lowering
+
+
+def ffi_call_lowering(
+    ctx: LoweringRuleContext,
+    *operands: ir.Value,
+    target_name: str,
+    has_side_effect: bool,
+    input_layouts: Sequence[Sequence[int]],
+    output_layouts: Sequence[Sequence[int]],
+    input_output_aliases: Sequence[tuple[int, int]],
+    custom_call_api_version: int,
+    legacy_backend_config: str | None,
+    attributes: Sequence[tuple[str, Any]],
+    **_,
+) -> Sequence[ir.Value]:
+  rule = ffi_lowering(target_name, has_side_effect=has_side_effect,
+                      operand_layouts=input_layouts,
+                      result_layouts=output_layouts,
+                      operand_output_aliases=dict(input_output_aliases),
+                      api_version=custom_call_api_version,
+                      backend_config=legacy_backend_config)
+  return rule(ctx, *operands, **ffi_utils.unwrap_kwargs_hashable(attributes))
+
+register_lowering(core.ffi_call_p, ffi_call_lowering)

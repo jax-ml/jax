@@ -17,9 +17,10 @@
 
 from jax._src.ffi import (
     ffi_call as ffi_call,
-    ffi_lowering as ffi_lowering,
     include_dir as include_dir,
     pycapsule as pycapsule,
     register_ffi_target as register_ffi_target,
     register_ffi_type_id as register_ffi_type_id,
 )
+
+from jax._src.interpreters.mlir import ffi_lowering
