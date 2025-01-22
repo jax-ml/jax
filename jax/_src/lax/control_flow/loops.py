@@ -520,7 +520,7 @@ def _stage_jaxpr_abstract_eval(*_, jaxpr):
   return jaxpr.out_avals, jaxpr.effects
 
 def _prepend_dim_to_aval(sz, aval):
-  return core.unmapped_aval(sz, None, 0, aval)
+  return core.unmapped_aval(sz, 0, aval)
 
 def _scan_abstract_eval(*args, reverse, length, num_consts, num_carry, jaxpr,
                         linear, unroll, _split_transpose):
@@ -704,7 +704,7 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
   extensive_res = _map(trace.new_instantiated_const, extensive_res)
   # Create output tracers for jaxpr_unknown bind, adapting extensive shapes.
   carry_avals, y_avals = split_list(jaxpr_unknown.out_avals, [sum(carry_uk)])
-  ys_avals = [core.unmapped_aval(length, None, 0, y_aval)
+  ys_avals = [core.unmapped_aval(length, 0, y_aval)
               for y_aval in y_avals]
   out_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(a), None)
                  for a in itertools.chain(carry_avals, ys_avals)]
@@ -1071,7 +1071,7 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
 
   # Create residual variables.
   intensive_avals, ext_avals_mapped = partition_list(loop_dep_res, res_avals)
-  ext_avals = [core.unmapped_aval(eqn.params['length'], None, 0, a)
+  ext_avals = [core.unmapped_aval(eqn.params['length'], 0, a)
                for a in ext_avals_mapped]
   newvar = core.gensym()
   intensive_res = _map(newvar, intensive_avals)
@@ -1149,7 +1149,7 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts,
       jaxpr.in_avals, [num_consts, num_carry])
   carry_avals_jaxpr, y_avals_mapped = split_list(jaxpr.out_avals, [num_carry])
   x_avals_mapped = _map(partial(core.mapped_aval, length, 0), x_avals)
-  y_avals = [core.unmapped_aval(length, None, 0, a)
+  y_avals = [core.unmapped_aval(length, 0, a)
              for a in y_avals_mapped]
 
   if not all(_map(core.typematch, init_avals_jaxpr, carry_avals_jaxpr)):

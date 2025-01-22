@@ -1613,7 +1613,7 @@ def _promote_scalar_residuals_jaxpr(jaxpr, which):
     res, args = split_list(res_and_args, [len(jaxpr.constvars)])
     res = [_rem_singleton(x) if w else x for x, w in zip(res, which)]
     return core.eval_jaxpr(jaxpr, res, *args)
-  res_avals = [core.unmapped_aval(1, None, 0, v.aval) if w else v.aval
+  res_avals = [core.unmapped_aval(1, 0, v.aval) if w else v.aval
                for v, w in zip(jaxpr.constvars, which)]
   in_avals = [*res_avals, *[v.aval for v in jaxpr.invars]]
   jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(fun, in_avals)
@@ -1740,7 +1740,7 @@ def _add_reshapes(which, jaxpr_known, jaxpr_staged):
     res_, ins = split_list(args, [len(which)])
     res = [_rem_singleton(x) if w else x for x, w in zip(res_, which_)]
     return core.eval_jaxpr(jaxpr_staged, (), *res, *ins)
-  res_avals = [core.unmapped_aval(1, None, 0, v.aval) if w else v.aval
+  res_avals = [core.unmapped_aval(1, 0, v.aval) if w else v.aval
                for w, v in zip(which_, jaxpr_staged.invars[:len(which)])]
   avals_in = [*res_avals, *[v.aval for v in jaxpr_staged.invars[len(which):]]]
   jaxpr_staged, _, (), () = pe.trace_to_jaxpr_dynamic(staged, avals_in)

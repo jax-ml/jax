@@ -372,7 +372,7 @@ class JaxprTrace(Trace['JaxprTracer']):
                          out_axes=tuple(staged_out_axes), call_jaxpr=call_jaxpr)
     del staged_params['out_axes_thunk']
     # The outputs of the staged-out call are Tracers with the new eqn as recipe.
-    out_avals = [unmapped_aval(params['axis_size'], params['axis_name'], ax, a)
+    out_avals = [unmapped_aval(params['axis_size'], ax, a)
                  for ax, a in zip(staged_out_axes, out_avals_mapped)]
     out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
                    for a in out_avals]
@@ -1956,7 +1956,7 @@ class DynamicJaxprTrace(core.Trace):
         raise ValueError("Ordered effects not supported for "
                          f"map primitives: {ordered_effects}")
       out_axes = params['out_axes_thunk']()
-      out_avals = [core.unmapped_aval(axis_size, axis_name, out_axis, a)
+      out_avals = [core.unmapped_aval(axis_size, out_axis, a)
                   if out_axis is not None else a
                   for a, out_axis in zip(reduced_out_avals, out_axes)]
       source_info = source_info_util.current()

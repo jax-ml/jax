@@ -159,8 +159,7 @@ def callback_batching_rule(
   new_args = [arg if dim is batching.not_mapped else
               batching.moveaxis(arg, dim, 0) for arg, dim in zip(args, dims)]
   batched_result_avals = tuple(
-      core.unmapped_aval(axis_size, core.no_axis_name, 0, aval)
-      for aval in result_avals)
+      core.unmapped_aval(axis_size, 0, aval) for aval in result_avals)
 
   # For FFI calls we must update the layouts. We handle the output layouts
   # here, but the input layout updates depend on the vmap_method parameter.

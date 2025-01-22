@@ -2415,8 +2415,7 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
     raise ValueError("`devices` argument to `device_put_replicated must be "
                      "a non-empty sequence.")
   def _device_put_replicated(x):
-    aval = core.unmapped_aval(len(devices), core.no_axis_name, 0,
-                              core.get_aval(x))
+    aval = core.unmapped_aval(len(devices), 0, core.get_aval(x))
     assert isinstance(aval, ShapedArray)
     sharding_spec = sharding_specs.create_pmap_sharding_spec(aval.shape)
     if config.pmap_no_rank_reduction.value:

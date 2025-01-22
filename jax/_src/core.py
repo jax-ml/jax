@@ -2346,11 +2346,11 @@ def mapped_aval(size: AxisSize, axis: int | None,
   else:
     raise TypeError(f"no mapping handler for {aval} of type {type(aval)}")
 
-def unmapped_aval(size: AxisSize, axis_name, axis: int | None,
+def unmapped_aval(size: AxisSize, axis: int | None,
                   aval: AbstractValue) -> AbstractValue:
   _, handler = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
-    return handler(size, axis_name, axis, aval)
+    return handler(size, axis, aval)
   else:
     raise TypeError(f"no unmapping handler for {aval} of type {type(aval)}")
 
@@ -2366,11 +2366,10 @@ def _map_shaped_array(
                      weak_type=aval.weak_type, sharding=sharding)
 
 def _unmap_shaped_array(
-    size: int, axis_name: AxisName, axis: int | None, aval: ShapedArray
-  ) -> ShapedArray:
+    size: int, axis: int | None, aval: ShapedArray) -> ShapedArray:
   if axis is None: return aval
   elif type(axis) is int:
-    sharding = (aval.sharding.with_spec(tuple_insert(aval.sharding.spec, axis, axis_name))
+    sharding = (aval.sharding.with_spec(tuple_insert(aval.sharding.spec, axis, None))
                 if config.sharding_in_types.value else None)
     return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
                        weak_type=aval.weak_type, sharding=sharding)
@@ -2383,7 +2382,7 @@ def _map_dshaped_array(
                       aval.weak_type)
 
 def _unmap_dshaped_array(
-    size: AxisSize, axis_name: AxisName, axis: int | None, aval: DShapedArray
+    size: AxisSize, axis: int | None, aval: DShapedArray
   ) -> DShapedArray:
   if axis is None: return aval
   elif type(axis) is int:
@@ -2396,7 +2395,7 @@ AvalMapHandlerPair = tuple[Callable, Callable]
 aval_mapping_handlers: dict[type, AvalMapHandlerPair] = {
     DShapedArray:   (_map_dshaped_array, _unmap_dshaped_array),
     ShapedArray:   (_map_shaped_array, _unmap_shaped_array),
-    AbstractToken: (lambda _, __, a: a, lambda _, __, ___, a: a)
+    AbstractToken: (lambda _, __, a: a, lambda _, __, a: a)
 }
 
 # When a mapped function is given no axis name, we generate a name object based
@@ -2777,7 +2776,7 @@ def _check_map(ctx_factory, prim, in_avals, params):
     raise JaxprTypeError(f"Map primitive {prim} missing 'out_axes' parameter")
   out_axes = params["out_axes"]
 
-  binder_avals = [unmapped_aval(axis_size, axis_name, in_axis, v.aval)
+  binder_avals = [unmapped_aval(axis_size, in_axis, v.aval)
                   if in_axis is not None else v.aval
                   for v, in_axis in zip(call_jaxpr.invars, in_axes)]
   for binder_aval, in_aval in zip(binder_avals, in_avals):
@@ -2789,7 +2788,7 @@ def _check_map(ctx_factory, prim, in_avals, params):
     _check_jaxpr(ctx_factory, call_jaxpr)
 
   mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
-  out_avals = [unmapped_aval(axis_size, axis_name, out_axis, aval)
+  out_avals = [unmapped_aval(axis_size, out_axis, aval)
                if out_axis is not None else aval
                for aval, out_axis in zip(mapped_out_avals, out_axes)]
   return out_avals, filter_named_axis_effects(call_jaxpr.effects, {axis_name})
