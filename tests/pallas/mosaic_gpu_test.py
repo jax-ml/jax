@@ -1568,18 +1568,23 @@ class PipelineTest(PallasTest):
 
 class WarpSpecializedPipelineTest(PallasTest):
 
-  def test_pipelined_copy(self, m=512, n=512):
+  @parameterized.product(m=[512], n=[512],
+                         manual_consumed_barriers=[False, True])
+  def test_pipelined_copy(self, m, n, manual_consumed_barriers):
     x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float16)
     o = jnp.zeros((m, n), dtype=jnp.float16)
     blk_m = blk_n = 64
     o_last_block = jnp.zeros((blk_m, blk_n), dtype=jnp.float16)
 
-    def copy_kernel(x_smem, o_smem, o_last_block_smem):
+    def copy_kernel(x_smem, o_smem, o_last_block_smem, *consumed_barriers):
       # TODO(justinfu): Have each wg compute a separate slice
       # after multiple-indexers are supported.
       # This is currently a race, but the values written are the same.
       o_smem[...] = x_smem[...]
       o_last_block_smem[...] = x_smem[...]
+      if manual_consumed_barriers:
+        [x_barrier] = consumed_barriers
+        plgpu.barrier_arrive(x_barrier)
     block_spec = plgpu.GPUBlockSpec(
                 block_shape=(blk_m, blk_n),
                 index_map=lambda i, j: (i, j),
@@ -1592,6 +1597,7 @@ class WarpSpecializedPipelineTest(PallasTest):
         max_concurrent_steps=2,
         num_compute_wgs=2,
         wg_axis="wg",
+        manual_consumed_barriers=manual_consumed_barriers,
         in_specs=[block_spec],
         out_specs=[block_spec,
                    # Create an index-invariant output.
