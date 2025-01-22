@@ -347,8 +347,7 @@ def cache(call: Callable, *, explain: Callable | None = None):
 
   def memoized_fun(fun: WrappedFun, *args):
     cache = fun_caches.setdefault(fun.f, new_cache := {})  # type: ignore
-    key = (fun.transforms, fun.params, fun.in_type, args, config.enable_x64.value,
-           config.default_device.value, config.trace_context())
+    key = (fun.transforms, fun.params, fun.in_type, args, config.trace_context())
     result = cache.get(key, None)
     if result is not None:
       ans, stores = result

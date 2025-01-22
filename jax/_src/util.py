@@ -328,8 +328,7 @@ def weakref_lru_cache(call: Callable, maxsize=2048,
   """
   global _weakref_lru_caches
   cached_call = xc.weakref_lru_cache(
-      config.trace_context if trace_context_in_key else _ignore,
-      call, maxsize)
+      config.trace_context if trace_context_in_key else _ignore, call, maxsize)
   _weakref_lru_caches.add(cached_call)
   return cached_call
 

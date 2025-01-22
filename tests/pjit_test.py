@@ -6336,6 +6336,40 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = hf(arr)  # doesn't crash
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
 
+  def test_compilation_cache_miss_when_devices_change(self):
+    mesh1 = jtu.create_mesh((2, 2), ('x', 'y'))
+    devs = jax.devices()[:4]
+    mesh2 = Mesh(np.asarray(devs[::-1]).reshape(2, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+
+    with jax.sharding.use_mesh(mesh1):
+      arr1 = jax.device_put(np_inp, NamedSharding(mesh1, P('x', 'y')))
+    with jax.sharding.use_mesh(mesh2):
+      arr2 = jax.device_put(np_inp, NamedSharding(mesh2, P('x', 'y')))
+
+    @jax.jit
+    def f(x):
+      return x
+
+    with (jtu.count_jit_tracing_cache_miss() as tracing_count,
+          jtu.count_jit_and_pmap_lowerings() as lowering_count,
+          jtu.count_jit_compilation_cache_miss() as compilation_count,
+          jtu.count_pjit_cpp_cache_miss() as cpp_cache_miss_count):
+      with jax.sharding.use_mesh(mesh1):
+        out1 = f(arr1)
+      with jax.sharding.use_mesh(mesh2):
+        out2 = f(arr2)
+
+    self.assertEqual(tracing_count(), 1)
+    self.assertEqual(lowering_count(), 1)
+    self.assertEqual(compilation_count(), 2)
+    self.assertEqual(cpp_cache_miss_count(), 2)
+
+    self.assertTupleEqual(out1.sharding._device_assignment,
+                          tuple(mesh1.devices.flat))
+    self.assertTupleEqual(out2.sharding._device_assignment,
+                          tuple(mesh2.devices.flat))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
