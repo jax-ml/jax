@@ -18,7 +18,7 @@ import builtins
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
-from typing import NamedTuple, Any, Callable
+from typing import NamedTuple, Any, Callable, Union
 
 from jax.extend.mlir import ir
 from jax.extend.mlir.dialects import func
@@ -28,7 +28,7 @@ from jax._src import xla_bridge as xb
 # === utils ===
 
 def map(f, *xs):
-  return list(builtins.map(f, *xs))
+  return tuple(builtins.map(f, *xs))
 
 # === printing utils ===
 
@@ -67,10 +67,20 @@ class Ty:
   def to_ir_type(self):
     raise NotImplementedError(f"{type(self).__name__}.to_ir_type")
 
+  def tangent_ty(self):
+    raise NotImplementedError(f"{type(self).__name__}.tangent_ty")
+
 class Val:
   ty : Ty
 
+  def __add__(self, other): return self.ty._add(self, other)
+  def __mul__(self, other): return self.ty._mul(self, other)
+  def __radd__(self, other): return self.ty._add(other, self)
+  def __rmul__(self, other): return self.ty._mul(other, self)
+
 class Primitive:
+  is_linear : bool = False
+  linear_args : tuple[int] = ()
   arg_tys : tuple[Ty]
   result_ty : Ty
 
@@ -85,36 +95,53 @@ class Primitive:
   def to_hlo(self, c, *hlo_args):
     raise NotImplementedError(f"{type(self).__name__}.to_hlo")
 
+  def linearize(self, *args):
+    raise NotImplementedError(f"{type(self).__name__}.linearize")
+
+  def transpose(self, *args):
+    raise NotImplementedError(f"{type(self).__name__}.transpose")
+
   def __str__(self):
-    return type(self).__name__
+    s = type(self).__name__
+    if self.is_linear:
+      s = "lin_" + s
+    return s
 
 class Var:
-  ty : Ty
-  def __init__(self, ty):
+  ty   : Ty
+  name : str
+  def __init__(self, ty, name):
     self.ty = ty
+    self.name = name
 
   def __str__(self):
-    return f"%{id(self) % 1000}: {self.ty}"
+    return f"%{self.name}: {self.ty}"
+
+Atom = Union[Var, Val]
 
 class Eqn:
   binder : Var
   prim   : Primitive
-  args   : tuple[Val|Var]
+  args   : tuple[Atom]
   def __init__(self, binder, prim, args):
     self.binder = binder
     self.prim = prim
     self.args = args
 
   def print_lines(self, p):
-    # TODO: handle multiline primitives by checking if they implement multiline print
-    p.emit_line(f"{self.binder} = {self.prim}{print_args(map(str, self.args))}")
+    if hasattr(self.prim, "print_prim_app"):
+      p.emit_line(f"{self.binder} =")
+      with p.indent():
+        self.prim.print_prim_app(p, self.args)
+    else:
+      p.emit_line(f"{self.binder} = {self.prim}{print_args(map(str, self.args))}")
 
   __str__ = str_from_print_lines
 
 class Jaxpr:
   binders : tuple[Var]
   eqns : tuple[Eqn]
-  result : Val|Var
+  result : Atom
   def __init__(self, binders, eqns, result):
     self.binders = binders
     self.eqns = eqns
@@ -134,6 +161,13 @@ class Jaxpr:
 class Tracer:
   ty : Ty
 
+  def __add__(self, other): return self.ty._add(self, other)
+  def __mul__(self, other): return self.ty._mul(self, other)
+  def __radd__(self, other): return self.ty._add(other, self)
+  def __rmul__(self, other): return self.ty._mul(other, self)
+
+TraceVal = Union[Tracer, Val]
+
 class Trace:
   def process_primitive(self, prim:Primitive, args):
     raise NotImplementedError(f"{type(self).__name__}.process_primitive")
@@ -141,6 +175,8 @@ class Trace:
 class EvalTrace(Trace):
   def process_primitive(self, prim, args):
     return compile_prim(prim).execute(*args)
+
+class TraceTag: pass
 
 @dataclass
 class TraceCtx:
@@ -150,7 +186,7 @@ def emit(prim:Primitive, args):
   trace = trace_ctx.trace
   return trace.process_primitive(prim, args)
 
-def canonicalize_arg(arg: Any) -> Val | Tracer:
+def canonicalize_arg(arg: Any) -> TraceVal:
   if isinstance(arg, (Val, Tracer)):
     return arg
   elif isinstance(arg, np.ndarray):
@@ -158,7 +194,7 @@ def canonicalize_arg(arg: Any) -> Val | Tracer:
   elif isinstance(arg, (float, np.float64, np.float32)):
     return ArrayVal(np.array(arg))
   else:
-    raise TypeError("Unrecognized type: {arg}")
+    raise TypeError(f"Unrecognized type: {arg}")
 
 eval_trace = EvalTrace()
 trace_ctx = TraceCtx(eval_trace)
@@ -174,6 +210,15 @@ def set_current_trace(trace, check_leaks=False):
 
 # === jaxpr tracing ===
 
+class GenSym:
+  def __init__(self):
+    self.cur = 0
+
+  def new(self):
+    self.cur += 1
+    return self.cur
+gensym = GenSym()
+
 class JaxprTrace(Trace):
   binders : list[Var]
   eqns : list[Eqn]
@@ -183,17 +228,17 @@ class JaxprTrace(Trace):
 
   def process_primitive(self, prim, args):
     # TODO: handle literals and other traces' tracers too
-    arg_atoms = [arg.var for arg in args]
-    binder = Var(prim.result_ty)
+    arg_atoms = [arg.var if isinstance(arg, Tracer) else arg for arg in args]
+    binder = Var(prim.result_ty, gensym.new())
     self.eqns.append(Eqn(binder, prim, arg_atoms))
     return JaxprTracer(binder)
 
   def new_arg(self, ty:Ty) -> Tracer:
-    v = Var(ty)
+    v = Var(ty, gensym.new())
     self.binders.append(v)
     return JaxprTracer(v)
 
-  def finalize_jaxpr(self, result:Val|Tracer):
+  def finalize_jaxpr(self, result:TraceVal):
     return Jaxpr(tuple(self.binders), tuple(self.eqns), result.var)
 
 class JaxprTracer(Tracer):
@@ -221,6 +266,10 @@ class ArrayTy(Ty):
   def to_ir_type(self):
     return ir.RankedTensorType.get(self.shape, _mlir_dtype(self.dtype))
 
+  def tangent_ty(self):
+    # TODO: ints
+    return ArrayTy(self.shape, self.dtype)
+
   def from_runtime_buf(self, buf):
     val = ArrayVal(np.asarray(buf))
     assert val.ty == self
@@ -231,6 +280,9 @@ class ArrayTy(Ty):
 
   def __str__(self):
     return f"{self.dtype}{list(self.shape)}"
+
+  def _mul(self, x, y): return mul(x, y)
+  def _add(self, x, y): return add(x, y)
 
 class ArrayVal(Val):
   def __init__(self, x):
@@ -243,6 +295,104 @@ class ArrayVal(Val):
 
   def __str__(self):
     return str(self.val)
+
+# === linearize ===
+
+class LinearizeTrace(Trace):
+
+  def __init__(self, parent_trace, tangent_trace, tag=None):
+    self.tag = TraceTag() if tag is None else tag
+    self.parent_trace = parent_trace
+    self.tangent_trace = tangent_trace
+
+  def process_primitive(self, prim: Primitive, args):
+    args = map(self.lift, args)
+    primals = tuple(arg.primal for arg in args)
+    tangents = tuple(arg.tangent for arg in args)
+    if all(t is None for t in tangents):
+      return self.parent_trace.process_primitive(prim, primals)
+    assert all(t is not None for t in tangents)  # TODO: instantiate zeros
+    with set_current_trace(self.parent_trace):
+      primal_out, linearized = prim.linearize(*primals)
+    with set_current_trace(self.tangent_trace):
+      tangent_out = linearized(*tangents)
+    return LinearizeTracer(self, primal_out, tangent_out)
+
+  def lift(self, val):
+    if isinstance(val, LinearizeTracer) and val.trace.tag is self.tag:
+      return LinearizeTracer(self, val.primal, val.tangent)
+    else:
+      tangent_zero = Zero.from_primal_value(val)
+      return LinearizeTracer(self, val, tangent_zero)
+
+class Zero:
+  ty : Ty
+  def __init__(self, ty):
+    self.ty = ty
+
+class LinearizeTracer(Tracer):
+  trace   : Trace
+  primal  : TraceVal
+  tangent : TraceVal | Zero
+  def __init__(self, trace, primal, tangent):
+    self.trace = trace
+    self.primal = primal
+    self.tangent = tangent
+
+  @property
+  def ty(self):
+    return self.primal.ty
+
+def linearize(f, primals):
+  primals = map(canonicalize_arg, primals)
+  parent_trace = trace_ctx.trace
+  tangent_trace = JaxprTrace()
+  tangent_ty = primals[0].ty.tangent_ty()
+  tangent = tangent_trace.new_arg(tangent_ty)
+  lin_trace = LinearizeTrace(parent_trace, tangent_trace)
+  arg0_tracer = LinearizeTracer(lin_trace, primals[0], tangent)
+  rest_tracers = [LinearizeTracer(lin_trace, p, Zero(p.ty.tangent_ty())) for p in primals[1:]]
+  with set_current_trace(lin_trace):
+    ans = f(arg0_tracer, *rest_tracers)
+
+  ans = lin_trace.lift(ans)
+  tangent_jaxpr = tangent_trace.finalize_jaxpr(ans.tangent)
+  return ans.primal, tangent_jaxpr
+
+# === transpose ===
+
+def backward_pass(jaxpr, initial_cotangent):
+  initial_cotangent = canonicalize_arg(initial_cotangent)
+  # forward pass on non-linear eqns
+  primal_env: dict[Var, TraceVal] = {}
+  def eval_arg(x) -> TraceVal:
+    return primal_env[x] if isinstance(x, Var) else x
+
+  for eqn in jaxpr.eqns:
+    if eqn.prim.is_linear: continue
+    primal_env[eqn.binder] = emit(eqn.prim, map(eval_arg, eqn.args))
+
+  # actual backward pass
+  ct_env: dict[Var, TraceVal] = {}
+  def read_cotangent(v: Var) -> Any:
+    return ct_env.pop(v, Zero(v.ty))
+
+  def write_cotangent(x: Atom, val: TraceVal):
+    assert isinstance(x, Var)
+    assert x.ty == val.ty
+    ct_env[x] = add_lin(ct_env[x], val) if x in ct_env else val
+
+  write_cotangent(jaxpr.result, initial_cotangent)
+  for eqn in jaxpr.eqns[::-1]:
+    if not eqn.prim.is_linear: continue
+    primals = [eval_arg(arg) for i, arg in enumerate(eqn.args) if i not in eqn.prim.linear_args]
+    ct_in = read_cotangent(eqn.binder)
+    cts_out = eqn.prim.transpose(ct_in, *primals)
+    for ct_out, arg_index in zip(cts_out, eqn.prim.linear_args):
+      write_cotangent(eqn.args[arg_index], ct_out)
+
+  binder, = jaxpr.binders
+  return read_cotangent(binder)
 
 # === XLA stuff ===
 
@@ -293,18 +443,191 @@ class Sin(Primitive):
     self.arg_tys = (ty,)
     self.result_ty = ty
 
-  @classmethod
-  def call(cls, x):
-    x = canonicalize_arg(x)
-    return emit(cls(x.ty), (x,))
-
   def to_hlo(self, _, x):
     return hlo.sine(x)
 
-sin = Sin.call
+  def linearize(self, x):
+    cos_x = cos(x)
+    return sin(x), lambda t: mul_lin(t, cos_x)
+
+def sin(x):
+  x = canonicalize_arg(x)
+  return emit(Sin(x.ty), (x,))
+
+class Cos(Primitive):
+  def __init__(self, ty):
+    assert isinstance(ty, ArrayTy)
+    self.arg_tys = (ty,)
+    self.result_ty = ty
+
+  def to_hlo(self, _, x):
+    return hlo.cosine(x)
+
+  def linearize(self, x):
+    sin_x = sin(x)
+    return cos(x), lambda t: neg_lin(mul_lin(t, sin_x))
+
+def cos(x):
+  x = canonicalize_arg(x)
+  return emit(Cos(x.ty), (x,))
+
+class Mul(Primitive):
+  linear_args = (0,)
+
+  def __init__(self, ty, is_linear=False):
+    self.arg_tys = (ty, ty)
+    self.result_ty = ty
+    # Mul is linear in its first argument only
+    self.is_linear = is_linear
+
+  def to_hlo(self, _, x, y):
+    return hlo.multiply(x, y)
+
+  def linearize(self, x):
+    def lin(xt, yt):
+      return add_lin(mul_lin(xt, y),
+                     mul_lin(yt, x))
+    return mul(x, y),
+
+  def transpose(self, ct, x):
+    return (mul_lin(ct, x),)
+
+def mul(x, y):
+  x = canonicalize_arg(x)
+  y = canonicalize_arg(y)
+  assert x.ty == y.ty
+  return emit(Mul(x.ty), (x, y))
+
+# linear in first argument
+def mul_lin(x, y):
+  if isinstance(x, Zero):
+    return x
+  else:
+    x = canonicalize_arg(x)
+    y = canonicalize_arg(y)
+    assert x.ty == y.ty
+    return emit(Mul(x.ty, is_linear=[0]), (x, y))
+
+class Add(Primitive):
+  linear_args = (0, 1)
+
+  def __init__(self, ty, is_linear=False):
+    self.arg_tys = (ty, ty)
+    self.result_ty = ty
+    self.is_linear = is_linear
+
+  def to_hlo(self, _, x, y):
+    return hlo.add(x, y)
+
+  def linearize(self, x, y):
+    return add(x, y), lambda xt, yt: add_lin(xt, yt)
+
+def add(x, y):
+  x = canonicalize_arg(x)
+  y = canonicalize_arg(y)
+  assert x.ty == y.ty
+  return emit(Add(x.ty), (x, y))
+
+def add_lin(x, y):
+  if isinstance(x, Zero):
+    return y
+  elif isinstance(y, Zero):
+    return x
+  else:
+    x = canonicalize_arg(x)
+    y = canonicalize_arg(y)
+    assert x.ty == y.ty
+    return emit(Add(x.ty, is_linear=True), (x, y))
+
+
+class Neg(Primitive):
+  linear_args = (0,)
+
+  def __init__(self, ty, is_linear=False):
+    self.arg_tys = (ty,)
+    self.result_ty = ty
+    self.is_linear = is_linear
+
+  def to_hlo(self, _, x):
+    return hlo.negate(x)
+
+  def linearize(self, x):
+    return neg(x), lambda xt: neg_lin(xt)
+
+def neg(x):
+  x = canonicalize_arg(x)
+  return emit(Neg(x.ty), (x,))
+
+def neg_lin(x):
+  if isinstance(x, Zero):
+    return x
+  else:
+    x = canonicalize_arg(x)
+    return emit(Neg(x.ty, is_linear=True), (x,))
+
+
+class Call(Primitive):
+  def __init__(self, jaxpr):
+    self.jaxpr = jaxpr
+    self.arg_tys = tuple(b.ty for b in jaxpr.binders)
+    self.result_ty = jaxpr.result.ty
+
+  def to_hlo(self, c, *args):
+    with ir.InsertionPoint(c.module.body):
+      @func.func(*(ty.to_ir_type() for ty in self.arg_tys))
+      def inner_xla_call(*params):
+        return jaxpr_subcomp(c, self.jaxpr, params)
+      name = c.symbol_table.insert(inner_xla_call.func_op)
+    result, = func.CallOp(inner_xla_call.func_op, list(args)).results
+    return result
+
+  def print_prim_app(self, p, args):
+    p.emit_line(f"Call{print_args(map(str, args))}")
+    with p.indent():
+      self.jaxpr.print_lines(p)
+
+def jaxpr_subcomp(c: MlirContext, jaxpr: Jaxpr, args: list[ir.Value]) -> list[ir.Value]:
+  env: dict[Var, ir.Value] = {}
+
+  def read(x) -> ir.Value:
+    return env[x] if type(x) is Var else _hlo_const(np.asarray(x.val))
+
+  def write(v: Var, val: ir.Value) -> None:
+    env[v] = val
+
+  map(write, jaxpr.binders, args)
+  for eqn in jaxpr.eqns:
+    in_tys = [x.ty for x in eqn.args]
+    in_vals = map(read, eqn.args)
+    assert all(isinstance(v, ir.Value) for v in in_vals), in_vals
+    out_val = eqn.prim.to_hlo(c, *in_vals)
+    assert isinstance(out_val, ir.Value)
+    write(eqn.binder, out_val)
+  return read(jaxpr.result)
+
+def jit(f):
+  def wrapped(*args):
+    args = map(canonicalize_arg, args)
+    jaxpr = trace_to_jaxpr(f, tuple(arg.ty for arg in args))
+    return emit(Call(jaxpr), args)
+  return wrapped
 
 # === tests ===
 
+@jit
+def foo(x):
+  return sin(sin(x))
+
 print(sin(1.0))
 float_ty = canonicalize_arg(1.0).ty
-print(trace_to_jaxpr(lambda x: sin(sin(x)), (float_ty,)))
+print(trace_to_jaxpr(lambda x: sin(foo(x)), (float_ty,)))
+print(foo(1.0))
+
+def bar(x, y):
+  return sin(x + y)
+
+ans, jaxpr = linearize(bar, (1.0, 2.0))
+print(ans)
+print(jaxpr)
+
+print(backward_pass(jaxpr, 1.0))
