@@ -316,7 +316,7 @@ llvm::FailureOr<WGMMALayout> GetWgmmaLayout(mlir::Location loc,
     return emitError(loc, llvm::formatv(params...));
   };
 
-  auto [strides, offset] = mlir::getStridesAndOffset(type);
+  auto [strides, offset] = type.getStridesAndOffset();
 
   WGMMALayout layout = WGMMALayout::RowMajor;
   if (strides[3] == 1) {
