@@ -2336,7 +2336,6 @@ pe.partial_eval_jaxpr_custom_rules[pjit_p] = \
             _pjit_partial_eval_custom_params_updater)
 
 
-@lu.cache
 def _pjit_transpose_trace(fun, in_avals):
   transpose_jaxpr, _, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(
       fun, in_avals)
