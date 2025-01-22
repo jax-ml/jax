@@ -143,7 +143,7 @@ class PjitInfo(NamedTuple):
   In other words, this structure contains arguments to jit()/pjit(),
   preprocessed and validated.
   """
-  fun_sourceinfo: str | None
+  fun_sourceinfo: str
   fun_signature: inspect.Signature | None
   # Shardings, as specified by the user. These can either be UNSPECIFIED or they
   # can be a tree (prefix) of shardings or None.
@@ -537,7 +537,7 @@ class PjitParams(NamedTuple):
   in_tree: PyTreeDef
   out_tree: PyTreeDef
   donated_invars: tuple[bool, ...]
-  arg_names: tuple[str | None, ...] | None
+  arg_names: tuple[str | None, ...]
   num_consts: int
   attrs_tracked: list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]
   abstract_mesh: AbstractMesh
@@ -1189,7 +1189,8 @@ def explain_tracing_cache_miss(
   # have we seen this function before at all?
   fun_name = getattr(f, '__qualname__', f)
   if debug_info is not None and debug_info.func_src_info:
-    _, _, *rest = debug_info.func_src_info.split(' ')
+    # TODO(necula): clean up the extraction of the source info
+    _, *rest = debug_info.func_src_info.split(' at ')
     src_info = " defined at "  + ' '.join(rest)
   else:
     src_info = ''

@@ -77,11 +77,31 @@ Effects = effects.Effects
 EffectTypeSet = effects.EffectTypeSet
 no_effects: Effects = effects.no_effects
 
+
 class JaxprDebugInfo(NamedTuple):
-  traced_for: str     # e.g. 'jit', 'scan', etc
-  func_src_info: str | None  # e.g. f'{fun.__name__} at {filename}:{lineno}'
-  arg_names: tuple[str | None, ...]     # e.g. ('args[0]', ... )
+  # After tracing, we have actual result_paths along with all the other
+  # information from the TracingDebugInfo.
+  tracing: lu.TracingDebugInfo
   result_paths: tuple[str, ...]  # e.g. ('[0]', '[1]', ...)
+
+  @property
+  def traced_for(self) -> str:
+    return self.tracing.traced_for
+
+  @property
+  def func_src_info(self) -> str:
+    return self.tracing.func_src_info
+
+  @property
+  def arg_names(self) -> tuple[str | None, ...]:
+    return self.tracing.arg_names
+
+  def replace_arg_names_results(self,
+                                arg_names: tuple[str | None, ...],
+                                result_paths: tuple[str, ...]) -> JaxprDebugInfo:
+    return self._replace(tracing=self.tracing._replace(arg_names=arg_names),
+                         result_paths=result_paths)
+
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
@@ -140,7 +160,7 @@ class Jaxpr:
     self._eqns = list(eqns)
     self._effects = effects
     self._debug_info = debug_info
-    assert (not debug_info or debug_info.arg_names is None or len(debug_info.arg_names) == len(invars)), (debug_info, invars)
+    assert (not debug_info or len(debug_info.arg_names) == len(invars)), (debug_info, invars)
     assert (not debug_info or len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
 
   def __str__(self):

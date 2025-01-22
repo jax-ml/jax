@@ -129,8 +129,9 @@ def jvp_subtrace_aux(f, store, tag, primals, tangents):
   return out_primals, out_tangents
 
 def convert_constvars_jaxpr_constvars_at_end(jaxpr: core.Jaxpr) -> core.Jaxpr:
-  dbg = jaxpr.debug_info and jaxpr.debug_info._replace(
-      arg_names=jaxpr.debug_info.arg_names + (None,) * len(jaxpr.constvars))
+  dbg = jaxpr.debug_info and jaxpr.debug_info.replace_arg_names_results(
+      arg_names=jaxpr.debug_info.arg_names + (None,) * len(jaxpr.constvars),
+      result_paths=jaxpr.debug_info.result_paths)
   return core.Jaxpr(constvars=(),
                     invars=jaxpr.invars + jaxpr.constvars,
                     outvars=jaxpr.outvars, eqns=jaxpr.eqns,
