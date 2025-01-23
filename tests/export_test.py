@@ -1010,6 +1010,8 @@ class JaxExportTest(jtu.JaxTestCase):
                       "uint2",
                       "uint4"}:
       self.skipTest(f"TODO: serialization not supported for {str(dtype)}")
+    if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
+      self.skipTest("TPU does not support float8_e8m0fnu.")
     @jax.jit
     def f_jax(x):
       return x + x

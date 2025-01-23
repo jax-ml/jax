@@ -1205,6 +1205,8 @@ class DotAlgorithmPreset(enum.Enum):
           fp8_dtypes += [np.dtype(dtypes.float8_e3m4)]
         if dtypes.float8_e4m3 is not None:
           fp8_dtypes += [np.dtype(dtypes.float8_e4m3)]
+        if dtypes.float8_e8m0fnu is not None:
+          fp8_dtypes += [np.dtype(dtypes.float8_e8m0fnu)]
         if lhs_dtype not in fp8_dtypes or rhs_dtype not in fp8_dtypes:
           raise ValueError(
               f"The dot algorithm '{self}' requires both inputs to have float8 "
@@ -3965,6 +3967,8 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
       fp8_dtypes += (dtypes.float8_e3m4,)
     if dtypes.float8_e4m3 is not None:
       fp8_dtypes += (dtypes.float8_e4m3,)
+    if dtypes.float8_e8m0fnu is not None:
+      fp8_dtypes += (dtypes.float8_e8m0fnu,)
     return _lhs_dtypes in fp8_dtypes and _rhs_dtypes in fp8_dtypes
   del preferred_element_type  # Implied by the output aval
   lhs_aval, rhs_aval = ctx.avals_in
