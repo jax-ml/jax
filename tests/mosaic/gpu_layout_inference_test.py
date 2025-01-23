@@ -24,6 +24,7 @@ from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 import jax.experimental.mosaic.gpu as mgpu
+from jax.experimental.mosaic.gpu import layouts
 
 config.parse_flags_with_absl()
 
@@ -34,15 +35,6 @@ def _make_ir_context():
   context.load_all_available_dialects()
   mgpu.dialect.register_dialect(context)
   return context
-
-
-def _layout_to_attr(
-    layout: mgpu.WGSplatFragLayout | mgpu.WGStridedFragLayout,
-) -> ir.Attribute:
-  if isinstance(layout, mgpu.WGSplatFragLayout):
-    return mgpu.to_splat_fragmented_layout_attr(layout)
-  else:
-    return mgpu.to_strided_fragmented_layout_attr(layout)
 
 
 class LayoutInferenceTest(parameterized.TestCase):
@@ -72,7 +64,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     # strided fragmented layout.
     mgpu.infer_layout(self.module)
 
-    layout = mgpu.to_strided_fragmented_layout_attr(
+    layout = layouts.to_layout_attr(
         mgpu.WGStridedFragLayout.from_shaped_type(ty)
     )
 
@@ -95,9 +87,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     # splat fragmented layout.
     mgpu.infer_layout(self.module)
 
-    layout = mgpu.to_splat_fragmented_layout_attr(
-        mgpu.WGSplatFragLayout(shape=shape)
-    )
+    layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape=shape))
 
     self.assertEmpty(splat0.attributes["in_layouts"])
     self.assertSequenceEqual(splat0.attributes["out_layouts"], [layout])
@@ -120,7 +110,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       c = arith.ConstantOp(ty, ir.DenseElementsAttr.get(attr_list, ty))
       add = arith.AddFOp(c, c)
 
-    layout = mgpu.to_strided_fragmented_layout_attr(
+    layout = layouts.to_layout_attr(
         mgpu.WGStridedFragLayout(shape=shape, vec_size=1)
     )
     add.attributes["in_layouts"] = ir.ArrayAttr.get([layout, layout])
@@ -148,9 +138,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     # splat fragmented layout.
     mgpu.infer_layout(self.module)
 
-    layout = mgpu.to_splat_fragmented_layout_attr(
-        mgpu.WGSplatFragLayout(shape=shape)
-    )
+    layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape=shape))
 
     self.assertEmpty(splat.attributes["in_layouts"])
     self.assertSequenceEqual(splat.attributes["out_layouts"], [layout])
@@ -174,7 +162,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       func.FuncOp.from_py_func(ty, ty)(body)
 
     [f] = self.module.body.operations
-    layout_attr = _layout_to_attr(layout)
+    layout_attr = layouts.to_layout_attr(layout)
     f.attributes["in_layouts"] = ir.ArrayAttr.get([layout_attr, layout_attr])
 
     mgpu.infer_layout(self.module)
@@ -233,7 +221,13 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertLen(vector_store.attributes["in_layouts"], 1)
     self.assertEmpty(vector_store.attributes["out_layouts"])
 
-  def test_infer_layout_picks_strided_layout_over_splat_layout(self):
+  @parameterized.parameters(
+      mgpu.WGStridedFragLayout((32, 4), vec_size=1),
+      mgpu.WGMMAFragLayout(),
+  )
+  def test_infer_layout_picks_non_splat_layout_over_splat_layout(
+      self, layout
+  ):
     add = None
 
     def body(lhs, rhs):
@@ -247,23 +241,20 @@ class LayoutInferenceTest(parameterized.TestCase):
 
       f = func.FuncOp.from_py_func(ty, ty)(body).func_op
 
-    splat_layout = mgpu.to_splat_fragmented_layout_attr(
-        mgpu.WGSplatFragLayout(shape)
-    )
-    strided_layout = mgpu.to_strided_fragmented_layout_attr(
-        mgpu.WGStridedFragLayout(shape, vec_size=1)
-    )
+    splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape))
+    non_splat_layout = layouts.to_layout_attr(layout)
 
     f.attributes["in_layouts"] = ir.ArrayAttr.get(
-        [strided_layout, splat_layout]
+        [non_splat_layout, splat_layout]
     )
 
     mgpu.infer_layout(self.module)
 
     self.assertSequenceEqual(
-        add.attributes["in_layouts"], [strided_layout, strided_layout]
+        add.attributes["in_layouts"],
+        [non_splat_layout, non_splat_layout],
     )
-    self.assertSequenceEqual(add.attributes["out_layouts"], [strided_layout])
+    self.assertSequenceEqual(add.attributes["out_layouts"], [non_splat_layout])
 
   def test_infer_layout_preserves_splat_layouts_in_producers(self):
     add0 = add1 = None
@@ -279,10 +270,8 @@ class LayoutInferenceTest(parameterized.TestCase):
       ty = ir.VectorType.get(shape, elt_type)
       f = func.FuncOp.from_py_func(ty, ty)(body).func_op
 
-    splat_layout = mgpu.to_splat_fragmented_layout_attr(
-        mgpu.WGSplatFragLayout(shape)
-    )
-    strided_layout = mgpu.to_strided_fragmented_layout_attr(
+    splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape))
+    strided_layout = layouts.to_layout_attr(
         mgpu.WGStridedFragLayout(shape, vec_size=1)
     )
     f.attributes["in_layouts"] = ir.ArrayAttr.get([splat_layout, splat_layout])
@@ -311,9 +300,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       ty = ir.VectorType.get(shape, ir.BF16Type.get())
       f = func.FuncOp.from_py_func(ty, ty)(body).func_op
 
-    splat_layout = mgpu.to_splat_fragmented_layout_attr(
-        mgpu.WGSplatFragLayout(shape)
-    )
+    splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape))
     f.attributes["in_layouts"] = ir.ArrayAttr.get([splat_layout, splat_layout])
     mgpu.infer_layout(self.module)
 
