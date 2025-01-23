@@ -276,12 +276,15 @@ def single_thread_predicate(per_block=True):
 
 
 @contextlib.contextmanager
-def single_thread(per_block=True):
+def single_thread(per_block=True, predicate=None):
   """Runs the context only from a single thread.
 
   Args:
+    predicate: If provided, the predicate to use instead of the default.
+
     per_block: If True, only one thread per block will run the context.
-      Otherwise, only one thread per warp group will run the context.
+      Otherwise, only one thread per warp group will run the context. This is
+      only used if `predicate` is not provided.
   """
   global _ONCE_PER
   scope = ThreadSubset.BLOCK if per_block else ThreadSubset.WARPGROUP
@@ -293,7 +296,9 @@ def single_thread(per_block=True):
   prev_scope = _ONCE_PER
   _ONCE_PER = scope
   try:
-    if_op = scf.IfOp(single_thread_predicate(per_block))
+    if predicate is None:
+      predicate = single_thread_predicate(per_block)
+    if_op = scf.IfOp(predicate)
     with ir.InsertionPoint(if_op.then_block):
       yield
       scf.YieldOp([])

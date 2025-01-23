@@ -141,27 +141,17 @@ def MosaicGPU_Dimension : I32EnumAttr<"Dimension",
       I32EnumAttrCase<"z", 2>
     ]>{
   let cppNamespace = "::mosaic_gpu";
-  let genSpecializedAttr = 0;
-}
-
-def MosaicGPU_DimensionAttr : EnumAttr<MosaicGPU_Dialect, MosaicGPU_Dimension, "dim"> {
-  let assemblyFormat = "`<` $value `>`";
 }
 
 def MosaicGPU_SwizzlingMode : I32EnumAttr<"SwizzlingMode",
     "What swizzling to use for a memory access.",
     [
-      I32EnumAttrCase<"kNoSwizzle", 16, "swizzle_none">,
-      I32EnumAttrCase<"k32ByteSwizzle", 32, "swizzle_32">,
-      I32EnumAttrCase<"k64ByteSwizzle", 64, "swizzle_64">,
-      I32EnumAttrCase<"k128ByteSwizzle", 128, "swizzle_128">
+      I32EnumAttrCase<"kNoSwizzle", 16>,
+      I32EnumAttrCase<"k32ByteSwizzle", 32>,
+      I32EnumAttrCase<"k64ByteSwizzle", 64>,
+      I32EnumAttrCase<"k128ByteSwizzle", 128>
     ]>{
   let cppNamespace = "::mosaic_gpu";
-  let genSpecializedAttr = 0;
-}
-
-def MosaicGPU_SwizzlingModeAttr : EnumAttr<MosaicGPU_Dialect, MosaicGPU_SwizzlingMode, "swizzle"> {
-  let assemblyFormat = "`<` $value `>`";
 }
 
 def TileTransformAttr : MosaicGPU_Attr<"TileTransform", "tile"> {
@@ -241,9 +231,9 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     // Attributes
     DenseI64ArrayAttr:$slice_lengths,
     TypedArrayAttrBase<AnyAttrOf<[TileTransformAttr, TransposeTransformAttr]>, "transforms">:$transforms,
-    DefaultValuedAttr<MosaicGPU_SwizzlingModeAttr, "SwizzlingMode::kNoSwizzle">:$swizzle,
+    DefaultValuedAttr<MosaicGPU_SwizzlingMode, "SwizzlingMode::kNoSwizzle">:$swizzle,
     DefaultValuedAttr<BoolAttr, "true" >:$arrive,
-    TypedArrayAttrBase<MosaicGPU_DimensionAttr, "dimensions">:$collective
+    TypedArrayAttrBase<MosaicGPU_Dimension, "dimensions">:$collective
   );
 
   let assemblyFormat = [{
@@ -295,7 +285,7 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
     // Attributes
     DenseI64ArrayAttr:$slice_lengths,
     TypedArrayAttrBase<AnyAttrOf<[TileTransformAttr, TransposeTransformAttr]>, "transforms">:$transforms,
-    DefaultValuedAttr<MosaicGPU_SwizzlingModeAttr, "SwizzlingMode::kNoSwizzle">:$swizzle
+    DefaultValuedAttr<MosaicGPU_SwizzlingMode, "SwizzlingMode::kNoSwizzle">:$swizzle
   );
 
   let assemblyFormat = [{
@@ -318,13 +308,12 @@ def MosaicGPU_WGMMALayout :
     I32EnumAttrCase<"ColumnMajor", 1>
   ]> {
   let cppNamespace = "::mosaic_gpu";
-  let genSpecializedAttr = 0;
 }
 
-def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", []> {
+def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
   let summary = "Multiply two matrices asyncronously using warpgroup level matrix multiply operations.";
   let description = [{
-    Schedules WGMMA operations that perform the following matrix multiple and
+    Schedules WGMMA operations that perform the following matrix multiply and
     accumulate:
 
       accumulator = a * b + accumulator
@@ -345,6 +334,8 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", []> {
       - accumulator: [groups_m * 64, groups_n * k]
     Where:
       - `k == swizzle/element_bytediwth` (for `kNoSwizzle`, `swizzle` is 16.)
+
+    The output has an identical shape and type as the input accumulator.
 
     The `accumulator` is always in registers and `b` is always in shared memory.
     The last two dimensions of any input in shared memory may be physically
@@ -370,14 +361,30 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", []> {
     MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b,
 
     // Attributes
-    DefaultValuedAttr<MosaicGPU_SwizzlingModeAttr, "SwizzlingMode::k128ByteSwizzle">:$swizzle
+    DefaultValuedAttr<MosaicGPU_SwizzlingMode, "SwizzlingMode::k128ByteSwizzle">:$swizzle
   );
+  let results = (outs VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>);
 
   let assemblyFormat = [{
     `accumulator` `(` $accumulator `:` type($accumulator) `)`
     `a` `(` $a `:` type($a) `)`
     `b` `(` $b `:` type($b) `)`
     attr-dict
+    `->` type(results)
+  }];
+
+  let extraClassDeclaration = [{
+    static llvm::LogicalResult inferReturnTypes(
+        mlir::MLIRContext *,
+        std::optional<mlir::Location> location,
+        mlir::ValueRange operands,
+        mlir::DictionaryAttr attributes,
+        mlir::OpaqueProperties properties,
+        mlir::RegionRange regions,
+        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
+      inferredReturnTypes.assign({operands[0].getType()});
+      return ::mlir::success();
+    }
   }];
 
   let hasVerifier = 1;

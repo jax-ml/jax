@@ -53,7 +53,7 @@ def from_splat_fragmented_layout_attr(attr: ir.Attribute) -> fa.WGSplatFragLayou
 
 
 def is_splat_fragmented_layout(attr: ir.Attribute) -> bool:
-  return bool(re.search(_splat_fragmented_layout_attr_pattern, str(attr)))
+  return bool(_splat_fragmented_layout_attr_pattern.search(str(attr)))
 
 
 _strided_fragmented_layout_attr_pattern = re.compile(
@@ -92,6 +92,10 @@ def from_strided_fragmented_layout_attr(
   )
 
 
+def is_strided_fragmented_layout(attr: ir.Attribute) -> bool:
+  return bool(_strided_fragmented_layout_attr_pattern.search(str(attr)))
+
+
 def to_layout_attr(
     layout: (
         fa.WGSplatFragLayout
@@ -121,9 +125,17 @@ _wgmma_fragmented_layout_attr_pattern = re.compile(
 )
 
 
+def is_wgmma_fragmented_layout(attr: ir.Attribute) -> bool:
+  return bool(_wgmma_fragmented_layout_attr_pattern.search(str(attr)))
+
+
 _wgmma_row_fragmented_layout_attr_pattern = re.compile(
     r"^#mosaic_gpu.WGMMARowFragLayout$"
 )
+
+
+def is_wgmma_row_fragmented_layout(attr: ir.Attribute) -> bool:
+  return bool(_wgmma_row_fragmented_layout_attr_pattern.search(str(attr)))
 
 
 def from_layout_attr(
@@ -135,22 +147,18 @@ def from_layout_attr(
     | fa.WGMMARowFragLayout
 ):
   """Constructs a layout from an MLIR attribute."""
-  if _splat_fragmented_layout_attr_pattern.fullmatch(str(attr)):
+  if is_splat_fragmented_layout(attr):
     return from_splat_fragmented_layout_attr(attr)
-  elif _strided_fragmented_layout_attr_pattern.fullmatch(str(attr)):
+  elif is_strided_fragmented_layout(attr):
     return from_strided_fragmented_layout_attr(attr)
-  elif _wgmma_fragmented_layout_attr_pattern.fullmatch(str(attr)):
+  elif is_wgmma_fragmented_layout(attr):
     return fa.WGMMAFragLayout()
-  elif _wgmma_row_fragmented_layout_attr_pattern.fullmatch(str(attr)):
+  elif is_wgmma_row_fragmented_layout(attr):
     return fa.WGMMARowFragLayout()
   else:
     raise NotImplementedError(
         f"Unsupported layout for conversion from MLIR attribute: {attr}"
     )
-
-
-def is_strided_fragmented_layout(attr: ir.Attribute) -> bool:
-  return bool(re.search(_strided_fragmented_layout_attr_pattern, str(attr)))
 
 
 def in_layouts(op: ir.OpView) -> Sequence[ir.Attribute]:
