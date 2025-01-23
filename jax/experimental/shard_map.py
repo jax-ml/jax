@@ -643,12 +643,12 @@ def _shard_map_lowering_shardy(
   in_avals_ = [v.aval for v in jaxpr.invars]
   if isinstance(ctx.module_context.axis_context, sharding_impls.SPMDAxisContext):
     # Nested `ManualComputationOp`s cannot refer to axes that are already
-    # manual. So figure out what axes are free thus far and get the new axis
-    # context.
+    # manual. So figure out what axes are free thus far.
     free_axes = frozenset(mesh.axis_names) - ctx.module_context.axis_context.manual_axes
-    new_axis_context = sharding_impls.SPMDAxisContext(mesh, free_axes - auto)
+    shardy_manual_axes = free_axes - auto
   else:
-    new_axis_context = sharding_impls.SPMDAxisContext(
+    shardy_manual_axes = frozenset(mesh.axis_names) - auto
+  new_axis_context = sharding_impls.SPMDAxisContext(
         mesh, frozenset(mesh.axis_names) - auto)
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
   args = (*ctx.dim_var_values, *in_nodes)
@@ -656,7 +656,7 @@ def _shard_map_lowering_shardy(
   # The order of manual axes should match the order of mesh.axis_names to avoid
   # non-determinism issues.
   manual_axes = [a for a in mesh.axis_names
-                 if a in sub_ctx.axis_context.manual_axes]
+                 if a in shardy_manual_axes]
   if np.prod([mesh.shape[a] for a in manual_axes]) == 1:
     # No need for a `ManualComputationOp` if all manual axes are size 1.
     with core.extend_axis_env_nd(tuple(mesh.shape.items())):
