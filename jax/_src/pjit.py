@@ -548,6 +548,7 @@ def _infer_params_impl(
     ji: PjitInfo,
     pjit_mesh: mesh_lib.Mesh | None,
     resource_env: mesh_lib.ResourceEnv | None,
+    dbg: lu.TracingDebugInfo,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
     in_avals: tuple[core.AbstractValue, ...] | None,
@@ -565,12 +566,6 @@ def _infer_params_impl(
           "device is also specified as an argument to jit.")
 
   axes_specs = _flat_axes_specs(ji.abstracted_axes, *args, **kwargs)
-  dbg = tracing_debug_info('jit', fun, args, kwargs,
-                           static_argnums=ji.static_argnums,
-                           static_argnames=ji.static_argnames,
-                           # TODO(necula): do we really need this, e.g., for tracing speed
-                           sourceinfo=ji.fun_sourceinfo,
-                           signature=ji.fun_signature)
 
   f = lu.wrap_init(fun)
   f, res_paths = result_paths(f)
@@ -728,32 +723,30 @@ def _infer_params(
     resource_env = None
     pjit_mesh = None
 
+  dbg = tracing_debug_info(
+      'jit', fun, args, kwargs, static_argnums=ji.static_argnums,
+      static_argnames=ji.static_argnames, sourceinfo=ji.fun_sourceinfo,
+      signature=ji.fun_signature)
+
   if config.dynamic_shapes.value:  # if dynamic shapes, don't use the cache
-    p, args_flat = _infer_params_impl(fun, ji, pjit_mesh, resource_env, args,
-                                      kwargs, in_avals=None)
+    p, args_flat = _infer_params_impl(fun, ji, pjit_mesh, resource_env, dbg,
+                                      args, kwargs, in_avals=None)
     return p, p.consts + args_flat
 
   signature, dynargs = jax_jit.parse_arguments(
       args, tuple(kwargs.values()), tuple(kwargs.keys()), ji.static_argnums,
       ji.static_argnames, tree_util.default_registry)
-  dbg = tracing_debug_info('jit', fun, args, kwargs,
-                            static_argnums=ji.static_argnums,
-                            static_argnames=ji.static_argnames,
-                            # TODO(necula): do we really need this, e.g., for tracing speed
-                            sourceinfo=ji.fun_sourceinfo,
-                            signature=ji.fun_signature)
   avals = _infer_input_type(fun, dbg, dynargs)
   entry = _infer_params_cached(fun, ji, signature, avals, pjit_mesh, resource_env)
   if entry.pjit_params is None:
     p, args_flat = _infer_params_impl(
-        fun, ji, pjit_mesh, resource_env, args, kwargs, in_avals=avals)
+        fun, ji, pjit_mesh, resource_env, dbg, args, kwargs, in_avals=avals)
     if p.attrs_tracked:  # if attrs, don't popoulate the cache
       return p, p.consts + args_flat
     entry.pjit_params = p
   return entry.pjit_params, entry.pjit_params.consts + dynargs
 
-def _infer_input_type(fun: Callable,
-                      dbg: lu.TracingDebugInfo | None,
+def _infer_input_type(fun: Callable, dbg: lu.TracingDebugInfo | None,
                       explicit_args) -> tuple[core.AbstractValue, ...]:
   avals = []
   try:
