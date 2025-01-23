@@ -1430,15 +1430,6 @@ def _run_scoped_lowering_rule(
         ctx.module_ctx, ctx.launch_ctx, jaxpr, input_refs, consts
     )
 
-  for o in outs:
-    # This is definitely one of the accumulators we produced. Each
-    # run_scoped call is responsible for dereferencing its own
-    # accumulators.
-    if isinstance(o, mgpu.WGMMAAccumulator) or (
-        isinstance(o, ir.Value) and ir.MemRefType.isinstance(o.type)
-    ):
-      raise ValueError(f"No references are allowed to escape a scope. (got {o})")
-
   assert len(outs) == len(jaxpr.outvars), (jaxpr, outs)
   return outs
 
