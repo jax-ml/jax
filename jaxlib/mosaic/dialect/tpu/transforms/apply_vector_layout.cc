@@ -2172,6 +2172,73 @@ LogicalResult tpu_assume_layout_rule(RewriteContext &ctx, Operation &op,
   return success();
 }
 
+LogicalResult tpu_realyout_rule(RewriteContext &ctx, Operation &op,
+                                const ArrayRef<Layout> layouts_in,
+                                const ArrayRef<Layout> layouts_out) {
+  TPU_ASSERT_EQ_OP(op.getNumOperands(), 1);
+  TPU_ASSERT_EQ_OP(op.getNumResults(), 1);
+  TPU_ASSERT_EQ_OP(layouts_in.size(), 1);
+  TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
+  TPU_ASSERT_OP(layouts_in[0].has_value());
+  TPU_ASSERT_OP(layouts_out[0].has_value());
+  auto in_layout = *layouts_in[0];
+  auto out_layout = *layouts_out[0];
+  auto realyout_op = cast<tpu::RelayoutOp>(op);
+  auto in_bitwidth = in_layout.bitwidth();
+  auto out_bitwidth = out_layout.bitwidth();
+  auto vty = cast<VectorType>(realyout_op.getType());
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
+  if (in_layout == out_layout) {
+    realyout_op.replaceAllUsesWith(realyout_op.getInput());
+    realyout_op.erase();
+    return success();
+  }
+  FAILUREOR_ASSIGN_OR_RETURN(
+      xla::Array<Value> vals,
+      disassemble(builder, in_layout,
+                  cast<TypedValue<VectorType>>(realyout_op.getInput()),
+                  ctx.target_shape,
+                  /*use_implicit_shape=*/true));
+  // Packing vector masks from 32-bit to 16-bit.
+  if (vty.getElementType() == builder.getI1Type() && in_bitwidth == 32 &&
+      out_bitwidth == 16 &&
+      in_layout.tiling()[0] == in_layout.packing() * ctx.target_shape[0] &&
+      in_layout.tiling() == out_layout.tiling() &&
+      in_layout.offsets() == out_layout.offsets() &&
+      in_layout.implicit_dim() == out_layout.implicit_dim()) {
+    std::vector<int64_t> vmsks_shape(vals.dimensions().begin(),
+                                     vals.dimensions().end());
+    *(vmsks_shape.end() - 1) = (*(vmsks_shape.end() - 1) + 1) / 2;
+    xla::Array<Value> out_vmsks(vmsks_shape, nullptr);
+    SmallVector<int64_t> val_idx;
+    Value default_val =
+        getFullLikeVector(builder, cast<TypedValue<VectorType>>(*vals.begin()),
+                          IntegerAttr::get(builder.getI1Type(), 0));
+    out_vmsks.Each([&](absl::Span<const int64_t> idx, Value *v) {
+      val_idx.assign(idx.begin(), idx.end());
+      // TODO(jevinjiang): can be simplified when offset is replicated.
+      *(val_idx.end() - 1) *= 2;
+      Value low_part = *(val_idx.end() - 1) < *(vals.dimensions().end() - 1)
+                           ? vals(val_idx)
+                           : default_val;
+      *(val_idx.end() - 1) += 1;
+      Value high_part = *(val_idx.end() - 1) < *(vals.dimensions().end() - 1)
+                            ? vals(val_idx)
+                            : default_val;
+      const VectorType mask_ty = getNativeVregOrVmaskType(
+          builder.getI1Type(), in_bitwidth / 2, ctx.target_shape);
+      *v = builder.create<PackMaskOp>(mask_ty, low_part, high_part);
+    });
+    const RollVectorsOp rolled_op =
+        assemble(builder, vty, out_layout, out_vmsks, ctx.target_shape,
+                 /*use_implicit_shape=*/true);
+    op.replaceAllUsesWith(rolled_op);
+    op.erase();
+    return success();
+  }
+  return op.emitOpError("Not implemented: unsupported layout change");
+}
+
 // TODO(b/347016737): Deprecate tpu.rotate and only use tpu.dynamic_rotate. So
 // we do not need template for the op type and to explicitly force amount
 // argument to dynamic.
@@ -4644,9 +4711,9 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
   return success();
 }
 
-LogicalResult prng_random_bits_rule(RewriteContext &ctx, Operation &op,
-                                    const ArrayRef<Layout> layouts_in,
-                                    const ArrayRef<Layout> layouts_out) {
+LogicalResult tpu_prng_random_bits_rule(RewriteContext &ctx, Operation &op,
+                                        const ArrayRef<Layout> layouts_in,
+                                        const ArrayRef<Layout> layouts_out) {
   TPU_ASSERT_EQ_OP(layouts_in.size(), 0);
   TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
   TPU_ASSERT_OP(layouts_out.front().has_value());
@@ -4711,7 +4778,8 @@ const llvm::StringMap<rule_type> &rules() {
         {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},
         {tpu::TraceOp::getOperationName(), tpu_trace_rule},
         {tpu::AssumeLayoutOp::getOperationName(), tpu_assume_layout_rule},
-        {tpu::PRNGRandomBitsOp::getOperationName(), prng_random_bits_rule},
+        {tpu::PRNGRandomBitsOp::getOperationName(), tpu_prng_random_bits_rule},
+        {tpu::RelayoutOp::getOperationName(), tpu_realyout_rule},
         {tpu::FPToSIOp::getOperationName(), tpu_fptosi_rule},
         {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
         {vector::ExtractOp::getOperationName(), vector_extract_rule},
@@ -6597,13 +6665,6 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
   }
   VectorType vty = v.getType();
   const bool is_mask = vty.getElementTypeBitWidth() == 1;
-  if (is_mask) {
-    if (src.bitwidth() != 32 || dst.bitwidth() != 32) {
-      return emitError(v.getLoc(),
-                       "Not implemented: mask relayout with non-32 bitwidth in "
-                       "vector layout");
-    }
-  }
   {
     // Replication imposes a replication constraint on the *logical* value of
     // the vector: When moving along a replicated axis, all elements must be
@@ -6638,21 +6699,22 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
       xla::Array<Value> src_tiles,
       disassemble(builder, src, v, target_shape, /*use_implicit_shape=*/true));
   if (is_mask) {
-    auto new_tile_ty =
-        getNativeVregOrVmaskType(builder.getI32Type(), 32, target_shape);
+    auto new_tile_ty = getNativeVregOrVmaskType(
+        builder.getIntegerType(bitwidth), bitwidth, target_shape);
     src_tiles.Each([&](const absl::Span<const int64_t> idx, Value *tile) {
       *tile =
           builder.create<arith::ExtUIOp>(tile->getLoc(), new_tile_ty, *tile);
     });
-    vty = VectorType::get(vty.getShape(), builder.getI32Type());
+    vty = VectorType::get(vty.getShape(), builder.getIntegerType(bitwidth));
   }
   auto assemble_with_mask_check = [&](xla::Array<Value> &tiles,
                                       bool use_implicit_shape = false) {
     if (is_mask) {
       auto zeros_tile = builder.create<arith::ConstantOp>(
           tiles.begin()->getLoc(),
-          DenseElementsAttr::get(cast<VectorType>(tiles.begin()->getType()),
-                                 builder.getI32IntegerAttr(0)));
+          DenseElementsAttr::get(
+              cast<VectorType>(tiles.begin()->getType()),
+              builder.getIntegerAttr(builder.getIntegerType(bitwidth), 0)));
       tiles.Each([&](const absl::Span<const int64_t> idx, Value *tile) {
         *tile = builder.create<arith::CmpIOp>(
             tile->getLoc(), arith::CmpIPredicate::ne, *tile, zeros_tile);
@@ -6707,9 +6769,7 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
         }
         *vreg = src_vregs(local_idx);
       });
-      return assemble(builder, vty, dst, std::move(dst_vregs), target_shape,
-                      /*use_implicit_shape=*/true)
-          .getResult();
+      return assemble_with_mask_check(dst_vregs, /*use_implicit_shape=*/true);
     }
     src_tiles.Reshape(dst.tileArrayImplicitShape(vty.getShape(), target_shape));
     return assemble_with_mask_check(src_tiles,

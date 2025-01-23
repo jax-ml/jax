@@ -332,22 +332,17 @@ class OpsTest(PallasBaseTest):
       dtype=[jnp.float32, jnp.bfloat16],
   )
   def test_i1_relayout_with_bitwidth_change(self, msk_dtype, dtype):
-    # TODO(jevinjiang): Remove after 12 weeks have passed.
-    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
-      self.skipTest("Requires libtpu built after 2024-12-19")
+    if not jtu.if_cloud_tpu_at_least(2025, 1, 22):
+      self.skipTest("Requires libtpu built after 2025-01-22")
     shape = (129, 129)
     msk_bitwidth = pallas_utils.dtype_bitwidth(msk_dtype)
     bitwidth = pallas_utils.dtype_bitwidth(dtype)
-    if (
-        (jtu.get_tpu_version() > 5 and msk_bitwidth < 8)
-        or (jtu.get_tpu_version() == 5 and msk_bitwidth not in (8, 32))
-        or (jtu.get_tpu_version() < 5 and msk_bitwidth < 32)
-    ):
+    if jtu.get_tpu_version() < 5 and msk_bitwidth < 32:
       self.skipTest(
           "Not implemented: cast vector to mask with bitwidth =="
           f" {msk_bitwidth}"
       )
-    if jtu.get_tpu_version() <= 5 and bitwidth < 32:
+    if jtu.get_tpu_version() < 5 and bitwidth < 32:
       self.skipTest(f"Not implemented: comparison with bitwidth == {bitwidth}")
 
     @functools.partial(

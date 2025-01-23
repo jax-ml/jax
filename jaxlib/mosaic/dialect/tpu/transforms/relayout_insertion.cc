@@ -31,12 +31,38 @@ namespace {
 
 FailureOr<TypedValue<VectorType>> relayout(
     OpBuilder &builder, TypedValue<VectorType> v, VectorLayout src,
-    VectorLayout dst, const std::array<int64_t, 2> target_shape) {
+    VectorLayout dst, int hardware_generation,
+    const std::array<int64_t, 2> target_shape) {
   // change bitwidth
   if (v.getType().getElementType() == builder.getI1Type() &&
       // TODO(jevinjiang): for other relayout changes (tiling, offsets, implicit
       // dim), we currently rely on apply-vector-layout pass to do the relayout.
       src.bitwidth() != dst.bitwidth()) {
+    auto vreg_slice = src.vregSlice(target_shape, dst.bitwidth(), src.tiling());
+    auto dst_bitwidth_layout = VectorLayout(
+        dst.bitwidth(),
+        {
+            src.offsets()[0].has_value() ? *src.offsets()[0] % vreg_slice[0]
+                                         : LayoutOffset(),
+            src.offsets()[1].has_value() ? *src.offsets()[1] % vreg_slice[1]
+                                         : LayoutOffset(),
+        },
+        src.tiling(), src.implicit_dim());
+    if (!dst_bitwidth_layout.isValid(target_shape)) {
+      return emitError(v.getLoc(),
+                       "Not implemented: failed to infer valid layout during "
+                       "relayout, got ")
+             << dst_bitwidth_layout;
+    }
+    // We might be able to pack mask directly.
+    if (src.bitwidth() == 32 && dst.bitwidth() == 16 &&
+        // TODO(jevinjiang): support mask packing for non-native source tiling.
+        src.tiling()[0] == src.packing() * target_shape[0]) {
+      auto relayout_op =
+          builder.create<tpu::RelayoutOp>(v.getLoc(), v.getType(), v);
+      setLayout(relayout_op, src, dst_bitwidth_layout);
+      return cast<TypedValue<VectorType>>(relayout_op.getResult());
+    }
     CHECK(llvm::isPowerOf2_32(src.bitwidth()));
     CHECK(llvm::isPowerOf2_32(dst.bitwidth()));
     auto make_vty = [&](int bitwidth) {
@@ -56,25 +82,9 @@ FailureOr<TypedValue<VectorType>> relayout(
     };
     auto src_int_vty = make_vty(src.bitwidth());
     auto dst_int_vty = make_vty(dst.bitwidth());
-    auto vreg_slice = src.vregSlice(target_shape, dst.bitwidth(), src.tiling());
     // TODO(jevinjiang): Since dst_bitwidth_layout will be firstly used in the
     // extSI or truncI below, we can reuse the inferExt and inferTrunc from
     // infer-vector-layout pass.
-    auto dst_bitwidth_layout = VectorLayout(
-        dst.bitwidth(),
-        {
-            src.offsets()[0].has_value() ? *src.offsets()[0] % vreg_slice[0]
-                                         : LayoutOffset(),
-            src.offsets()[1].has_value() ? *src.offsets()[1] % vreg_slice[1]
-                                         : LayoutOffset(),
-        },
-        src.tiling(), src.implicit_dim());
-    if (!dst_bitwidth_layout.isValid(target_shape)) {
-      return emitError(v.getLoc(),
-                       "Not implemented: failed to infer valid layout during "
-                       "relayout, got ")
-             << dst_bitwidth_layout;
-    }
     auto ext_op = builder.create<arith::ExtUIOp>(v.getLoc(), src_int_vty, v);
     setLayout(ext_op, src, src);
 
@@ -98,7 +108,7 @@ FailureOr<TypedValue<VectorType>> relayout(
 
 // TODO(jevinjiang): make relayout to an op so we don't need decide when to
 // relayout in apply-vector-layout pass.
-LogicalResult insertRelayout(Operation &op,
+LogicalResult insertRelayout(Operation &op, int hardware_generation,
                              const std::array<int64_t, 2> target_shape) {
   FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> in_layouts,
                              getInLayouts(op, target_shape));
@@ -136,9 +146,9 @@ LogicalResult insertRelayout(Operation &op,
       continue;
     }
     OpBuilder builder(&op);
-    FAILUREOR_ASSIGN_OR_RETURN(Value new_v,
-                               relayout(builder, vector_operand, /*src=*/*lo,
-                                        /*dst=*/*li, target_shape));
+    FAILUREOR_ASSIGN_OR_RETURN(
+        Value new_v, relayout(builder, vector_operand, /*src=*/*lo,
+                              /*dst=*/*li, hardware_generation, target_shape));
     op.setOperand(idx, new_v);
   }
   return success();
@@ -146,14 +156,23 @@ LogicalResult insertRelayout(Operation &op,
 
 struct RelayoutInsertionPass
     : public impl::RelayoutInsertionPassBase<RelayoutInsertionPass> {
-  RelayoutInsertionPass(std::array<int64_t, 2> target_shape) {
+  RelayoutInsertionPass(int generation, std::array<int64_t, 2> target_shape) {
+    this->hardware_generation = generation;
     this->sublane_count = target_shape[0];
     this->lane_count = target_shape[1];
   }
   void runOnOperation() override {
+    // Fail if hardware_generation has not been set from the default value.
+    if (hardware_generation < 0) {
+      getOperation().emitError("hardware_generation must be set")
+          << hardware_generation;
+      signalPassFailure();
+      return;
+    }
     func::FuncOp func = getOperation();
     auto result = func.walk([&](Operation *op) {
-      if (insertRelayout(*op, {sublane_count, lane_count}).failed()) {
+      if (insertRelayout(*op, hardware_generation, {sublane_count, lane_count})
+              .failed()) {
         return WalkResult::interrupt();
       }
       return WalkResult::advance();
@@ -168,8 +187,9 @@ struct RelayoutInsertionPass
 }  // namespace
 
 std::unique_ptr<OperationPass<func::FuncOp>> createRelayoutInsertionPass(
-    std::array<int64_t, 2> target_shape) {
-  return std::make_unique<RelayoutInsertionPass>(target_shape);
+    int hardware_generation, std::array<int64_t, 2> target_shape) {
+  return std::make_unique<RelayoutInsertionPass>(hardware_generation,
+                                                 target_shape);
 }
 
 }  // namespace mlir::tpu
