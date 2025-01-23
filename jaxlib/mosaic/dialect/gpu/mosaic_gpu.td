@@ -141,27 +141,17 @@ def MosaicGPU_Dimension : I32EnumAttr<"Dimension",
       I32EnumAttrCase<"z", 2>
     ]>{
   let cppNamespace = "::mosaic_gpu";
-  let genSpecializedAttr = 0;
-}
-
-def MosaicGPU_DimensionAttr : EnumAttr<MosaicGPU_Dialect, MosaicGPU_Dimension, "dim"> {
-  let assemblyFormat = "`<` $value `>`";
 }
 
 def MosaicGPU_SwizzlingMode : I32EnumAttr<"SwizzlingMode",
     "What swizzling to use for a memory access.",
     [
-      I32EnumAttrCase<"kNoSwizzle", 16, "swizzle_none">,
-      I32EnumAttrCase<"k32ByteSwizzle", 32, "swizzle_32">,
-      I32EnumAttrCase<"k64ByteSwizzle", 64, "swizzle_64">,
-      I32EnumAttrCase<"k128ByteSwizzle", 128, "swizzle_128">
+      I32EnumAttrCase<"kNoSwizzle", 16>,
+      I32EnumAttrCase<"k32ByteSwizzle", 32>,
+      I32EnumAttrCase<"k64ByteSwizzle", 64>,
+      I32EnumAttrCase<"k128ByteSwizzle", 128>
     ]>{
   let cppNamespace = "::mosaic_gpu";
-  let genSpecializedAttr = 0;
-}
-
-def MosaicGPU_SwizzlingModeAttr : EnumAttr<MosaicGPU_Dialect, MosaicGPU_SwizzlingMode, "swizzle"> {
-  let assemblyFormat = "`<` $value `>`";
 }
 
 def TileTransformAttr : MosaicGPU_Attr<"TileTransform", "tile"> {
@@ -241,9 +231,9 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     // Attributes
     DenseI64ArrayAttr:$slice_lengths,
     TypedArrayAttrBase<AnyAttrOf<[TileTransformAttr, TransposeTransformAttr]>, "transforms">:$transforms,
-    DefaultValuedAttr<MosaicGPU_SwizzlingModeAttr, "SwizzlingMode::kNoSwizzle">:$swizzle,
+    DefaultValuedAttr<MosaicGPU_SwizzlingMode, "SwizzlingMode::kNoSwizzle">:$swizzle,
     DefaultValuedAttr<BoolAttr, "true" >:$arrive,
-    TypedArrayAttrBase<MosaicGPU_DimensionAttr, "dimensions">:$collective
+    TypedArrayAttrBase<MosaicGPU_Dimension, "dimensions">:$collective
   );
 
   let assemblyFormat = [{
@@ -295,7 +285,7 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
     // Attributes
     DenseI64ArrayAttr:$slice_lengths,
     TypedArrayAttrBase<AnyAttrOf<[TileTransformAttr, TransposeTransformAttr]>, "transforms">:$transforms,
-    DefaultValuedAttr<MosaicGPU_SwizzlingModeAttr, "SwizzlingMode::kNoSwizzle">:$swizzle
+    DefaultValuedAttr<MosaicGPU_SwizzlingMode, "SwizzlingMode::kNoSwizzle">:$swizzle
   );
 
   let assemblyFormat = [{
@@ -318,7 +308,6 @@ def MosaicGPU_WGMMALayout :
     I32EnumAttrCase<"ColumnMajor", 1>
   ]> {
   let cppNamespace = "::mosaic_gpu";
-  let genSpecializedAttr = 0;
 }
 
 def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
@@ -372,7 +361,7 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
     MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b,
 
     // Attributes
-    DefaultValuedAttr<MosaicGPU_SwizzlingModeAttr, "SwizzlingMode::k128ByteSwizzle">:$swizzle
+    DefaultValuedAttr<MosaicGPU_SwizzlingMode, "SwizzlingMode::k128ByteSwizzle">:$swizzle
   );
   let results = (outs VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>);
 

@@ -310,11 +310,12 @@ class DialectTest(MosaicGpuTest):
 
   def test_async_load_op_slice_collective_must_be_unique(self):
     with ir.InsertionPoint(self.module.body):
+      i32 = ir.IntegerType.get_signless(32)
       func.FuncOp.from_py_func(
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
-          ir.IntegerType.get_signless(32),
+          i32,
           name="async_load",
       )(
           lambda source, destination, barrier, *indices: mgpu.dialect.async_load(
@@ -325,12 +326,8 @@ class DialectTest(MosaicGpuTest):
               slice_lengths=[4],
               transforms=ir.ArrayAttr.get([]),
               collective=ir.ArrayAttr.get([
-                  ir.Attribute.parse(
-                      f"#mosaic_gpu.dim<{mgpu.dialect.Dimension.x.name}>"
-                  ),
-                  ir.Attribute.parse(
-                      f"#mosaic_gpu.dim<{mgpu.dialect.Dimension.x.name}>"
-                  ),
+                  ir.IntegerAttr.get(i32, mgpu.dialect.Dimension.x),
+                  ir.IntegerAttr.get(i32, mgpu.dialect.Dimension.x),
               ]),
           )
       )
@@ -501,7 +498,7 @@ class DialectTest(MosaicGpuTest):
               accumulator,
               a,
               b,
-              swizzle=ir.Attribute.parse("#mosaic_gpu.swizzle<swizzle_64>"),
+              swizzle=mgpu.dialect.SwizzlingMode.k64ByteSwizzle,
           )
       )
 
@@ -523,7 +520,7 @@ class DialectTest(MosaicGpuTest):
               accumulator,
               a,
               b,
-              swizzle=ir.Attribute.parse("#mosaic_gpu.swizzle<swizzle_64>"),
+              swizzle=mgpu.dialect.SwizzlingMode.k64ByteSwizzle,
           )
       )
 
@@ -545,7 +542,7 @@ class DialectTest(MosaicGpuTest):
               accumulator,
               a,
               b,
-              swizzle=ir.Attribute.parse("#mosaic_gpu.swizzle<swizzle_64>"),
+              swizzle=mgpu.dialect.SwizzlingMode.k64ByteSwizzle,
           )
       )
 
@@ -568,7 +565,7 @@ class DialectTest(MosaicGpuTest):
               accumulator,
               a,
               b,
-              swizzle=ir.Attribute.parse("#mosaic_gpu.swizzle<swizzle_64>"),
+              swizzle=mgpu.dialect.SwizzlingMode.k64ByteSwizzle,
           )
       )
 
