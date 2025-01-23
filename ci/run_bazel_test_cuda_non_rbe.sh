@@ -47,6 +47,10 @@ if [[ $num_test_jobs -gt $num_cpu_cores ]]; then
 fi
 # End of test environment variables setup.
 
+# Don't abort the script if one command fails to ensure we run both test
+# commands below.
+set +e
+
 # Runs single accelerator tests with one GPU apiece.
 # It appears --run_under needs an absolute path.
 # The product of the `JAX_ACCELERATOR_COUNT`` and `JAX_TESTS_PER_ACCELERATOR`
@@ -70,6 +74,9 @@ bazel test --config=ci_linux_x86_64_cuda \
       //tests:gpu_tests //tests:backend_independent_tests \
       //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests
 
+# Store the return value of the first bazel command.
+first_bazel_cmd_retval=$?
+
 echo "Running multi-accelerator tests (without RBE)..."
 # Runs multiaccelerator tests with all GPUs directly on the VM without RBE..
 bazel test --config=ci_linux_x86_64_cuda \
@@ -85,3 +92,15 @@ bazel test --config=ci_linux_x86_64_cuda \
       --action_env=NCCL_DEBUG=WARN \
       --color=yes \
       //tests:gpu_tests //tests/pallas:gpu_tests
+
+# Store the return value of the second bazel command.
+second_bazel_cmd_retval=$?
+
+# Exit with failure if either command fails.
+if [[ $first_bazel_cmd_retval -ne 0 ]]; then
+  exit $first_bazel_cmd_retval
+elif [[ $second_bazel_cmd_retval -ne 0 ]]; then
+  exit $second_bazel_cmd_retval
+else
+  exit 0
+fi

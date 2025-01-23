@@ -11,6 +11,10 @@
 #                          uploads them to a GCS bucket.
 # 4. run-pytest-cuda: Calls the `pytest_cuda.yml` workflow to download the jaxlib and CUDA artifacts
 #                     that were built in the previous steps and runs the CUDA tests.
+# 5. run-bazel-test-cuda: Calls the `bazel_cuda_non_rbe.yml` workflow to download the jaxlib and
+#                         CUDA artifacts that were built in the previous steps and runs the CUDA
+#                         tests using Bazel.
+
 name: CI - Wheel Tests (Continuous)
 
 on:
@@ -44,7 +48,7 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          # Python values need to match the matrix stategy in the GPU tests job below
+          # Python values need to match the matrix stategy in the CUDA tests job below
           runner: ["linux-x86-n2-16"]
           artifact: ["jax-cuda-plugin", "jax-cuda-pjrt"]
           python: ["3.10",]
@@ -96,6 +100,23 @@ jobs:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       cuda:  ${{ matrix.cuda }}
+      enable-x64:  ${{ matrix.enable-x64 }}
+      # GCS upload URI is the same for both artifact build jobs
+      gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
+
+  run-bazel-test-cuda:
+    needs: [build-jaxlib-artifact, build-cuda-artifacts]
+    uses: ./.github/workflows/bazel_cuda_non_rbe.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          # Python values need to match the matrix stategy in the build artifacts job above
+          runner: ["linux-x86-g2-48-l4-4gpu",]
+          python: ["3.10",]
+          enable-x64: [1, 0]
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
       enable-x64:  ${{ matrix.enable-x64 }}
       # GCS upload URI is the same for both artifact build jobs
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
