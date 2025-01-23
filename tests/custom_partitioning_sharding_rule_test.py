@@ -50,8 +50,8 @@ class SdyShardingRuleTest(jtu.JaxTestCase):
       ArrayMapping("i_j", BATCHING)
 
   def test_value_mapping_str(self):
-    v = ArrayMapping(BATCHING, "m", CompoundFactor("i", "j"), "k")
-    self.assertEqual(str(v), f"('{BATCHING}', 'm', ('i', 'j'), 'k')")
+    v = ArrayMapping(f"{BATCHING}2", "m", CompoundFactor("i", "j"), "k")
+    self.assertEqual(str(v), f"('{BATCHING}2', 'm', ('i', 'j'), 'k')")
 
   def test_sdy_sharding_rule_factor_size_not_used(self):
     with self.assertRaisesRegex(ValueError, "Factor k is not used"):
@@ -158,17 +158,18 @@ class StrToSdyShardingRuleTest(jtu.JaxTestCase):
         str(rule), "SdyShardingRule((('i', 'j'), (), ('k',)), (('j',),), {})")
 
   def test_sharding_rule_factor_elementwise_add(self):
-    rule = str_to_sdy_sharding_rule("... i j, ...i j -> ...i j")
+    # An ellipsis without a number ... is treated as the same as ...0.
+    rule = str_to_sdy_sharding_rule("...0 i j, ...1 i j -> ...i j")
     self.assertEqual(
         str(rule),
-        "SdyShardingRule((('…', 'i', 'j'), ('…', 'i', 'j')), (('…', 'i',"
+        "SdyShardingRule((('…0', 'i', 'j'), ('…1', 'i', 'j')), (('…0', 'i',"
         " 'j'),), {})")
 
   def test_sharding_rule_factor_vector_scalar_add(self):
-    rule = str_to_sdy_sharding_rule("...i,  -> ...i")
+    rule = str_to_sdy_sharding_rule("...87 i,  -> ...87 i")
     self.assertEqual(
         str(rule),
-        "SdyShardingRule((('…', 'i'), ()), (('…', 'i'),), {})")
+        "SdyShardingRule((('…87', 'i'), ()), (('…87', 'i'),), {})")
 
   def test_sharding_rule_factor_reshape_combining(self):
     rule = str_to_sdy_sharding_rule("i j -> (i j)")
@@ -316,7 +317,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
     rule = str_to_sdy_sharding_rule("..., ... -> ...")
     with self.assertRaisesRegex(
         ValueError,
-        "Batching dimension 1 corresponds to two sizes: 32 and 64"):
+        "Batching dimension 0_1 corresponds to two sizes: 32 and 64"):
       sdy_sharding_rule_to_mlir(rule,
           [result.operands[0].type, result.operands[1].type],
           [result.result.type,],)
@@ -462,6 +463,23 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
     self.assertEqual(
         str(mlir_rule),
         "#sdy.op_sharding_rule<([i, j], [j, k])->([i, k]) {i=16, j=32, k=8}>")
+
+
+  def test_conversion_multiple_batching_groups(self):
+    opnd0 = self.create_tensor_value((4, 5, 16, 32))
+    opnd1 = self.create_tensor_value((6, 7, 8, 32, 16))
+    result = ir.Operation.create(
+        "stablehlo.custom_call",
+        results=[self.get_tensor_type((4, 5, 32, 16))],
+        operands=[opnd0, opnd1,],
+        attributes=dict(call_target_name=ir.StringAttr.get("foo")))
+    rule = str_to_sdy_sharding_rule("... j i, ...1 i j -> ...i j")
+    mlir_rule = sdy_sharding_rule_to_mlir(rule,
+        [result.operands[0].type, result.operands[1].type],
+        [result.result.type,])
+    self.assertEqual(
+        str(mlir_rule),
+        "#sdy.op_sharding_rule<([i, j, k, l], [m, n, o, l, k])->([i, j, l, k]) {i=4, j=5, k=16, l=32, m=6, n=7, o=8}>")
 
 
 if __name__ == "__main__":
