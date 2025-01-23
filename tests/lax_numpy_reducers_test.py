@@ -930,5 +930,20 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @jtu.skip_on_devices("gpu", "cuda", "tpu")
+  @jtu.sample_product(dtype=[dtypes.int4, dtypes.uint4, dtypes.int2, dtypes.uint2])
+  def testLowBitSum(self, dtype) -> None:
+    if dtype is None:
+      self.skipTest(f"Current version of ml_dtypes does not support {dtype}")
+    rng = jtu.rand_default(self.rng())
+    shape = (10, 10)
+    tol = 0
+    args_maker = lambda: [rng(shape, dtype)]
+    sum_jit = jax.jit(jnp.sum)
+    np_dtype = np.uint32 if dtypes.issubdtype(dtype, np.unsignedinteger) else np.int32
+    np_sum = lambda x: np.sum(x.astype(np_dtype))
+    self._CheckAgainstNumpy(sum_jit, np_sum, args_maker, tol=tol)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
