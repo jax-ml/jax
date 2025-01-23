@@ -27,7 +27,6 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax import random
-from jax._src import config
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import state
@@ -1416,9 +1415,6 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["tpu"]):
       self.skipTest("Test for TPU is covered in tpu_pallas_test.py")
 
-    if config.use_shardy_partitioner.value:
-      self.skipTest("TODO(b/364547005): pure callbacks not supported by Shardy yet")
-
     # TODO: this test flakes on gpu
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("This test flakes on gpu")
@@ -2254,8 +2250,6 @@ class OpsInterpretTest(OpsTest):
   INTERPRET = True
 
   def test_debug_print(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest("TODO(b/364547005): pure callbacks not supported by Shardy yet")
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),

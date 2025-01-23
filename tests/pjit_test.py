@@ -398,8 +398,6 @@ class PJitTest(jtu.BufferDonationTestCase):
 
   @jtu.run_on_devices('tpu')
   def testBufferDonationWithOutputShardingInferenceAndTokens(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest('b/355263220: Shardy does not support callbacks yet.')
     mesh = jtu.create_mesh((2,), 'x')
     s = NamedSharding(mesh, P('x'))
 
@@ -4312,7 +4310,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   def test_empty_io_callback_under_shard_map(self):
     if config.use_shardy_partitioner.value:
-      self.skipTest("Shardy errors out on empty callbacks.")
+      self.skipTest("TODO(b/384938613): Failing under shardy.")
     mesh = jtu.create_mesh((4,), 'i')
 
     def empty_callback(x):
@@ -4330,7 +4328,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   def test_empty_io_callback_under_shard_map_reshard_to_singledev(self):
     if config.use_shardy_partitioner.value:
-      self.skipTest("Shardy errors out on empty callbacks.")
+      self.skipTest("TODO(b/384938613): Failing under shardy.")
     mesh = jtu.create_mesh((4,), 'i')
 
     def empty_callback(x):

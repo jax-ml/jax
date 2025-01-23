@@ -456,8 +456,6 @@ class CompilationCacheTest(CompilationCacheTestCase):
       self.assertFalse(msg_exists_in_logs(msg, log.records, logging.WARNING))
 
   def test_persistent_cache_miss_logging_with_explain(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest("TODO(b/364547005): pure callbacks not supported by Shardy yet")
     with (config.explain_cache_misses(True),
           config.compilation_cache_dir("jax-cache")):
 
@@ -502,8 +500,6 @@ class CompilationCacheTest(CompilationCacheTestCase):
 
   def test_persistent_cache_miss_logging_with_no_explain(self):
     # test that cache failure messages do not get logged in WARNING
-    if config.use_shardy_partitioner.value:
-      self.skipTest("TODO(b/364547005): pure callbacks not supported by Shardy yet")
     with (config.explain_cache_misses(False),
           config.compilation_cache_dir("jax-cache")):
       # omitting writing to cache because compilation is too fast
