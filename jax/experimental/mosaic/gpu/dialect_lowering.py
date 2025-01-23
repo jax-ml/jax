@@ -194,16 +194,6 @@ def _vector_load_op_lowering_rule(
 def _vector_store_op_lowering_rule(
      _: launch_context.LaunchContext, vector_store_op: vector.StoreOp
 ) -> Sequence[ir.Value]:
-
-  in_layout_attr, *_ = cast(
-      ir.ArrayAttr, vector_store_op.attributes["in_layouts"]
-  )
-
-  if not layouts.is_strided_fragmented_layout(in_layout_attr):
-    raise ValueError(
-        f"{vector_store_op} has an unsupported layout: {in_layout_attr}"
-    )
-
   for i in vector_store_op.indices:
     index_defining_op = i.owner.opview
     if (
@@ -217,6 +207,8 @@ def _vector_store_op_lowering_rule(
       )
 
   fragmented_array = _fragmented_array_from_ir(vector_store_op.valueToStore)
+
+  # TODO(dasenov): This is not efficient for WGMMA layouts
   fragmented_array.store_untiled(vector_store_op.base)
 
   return []
