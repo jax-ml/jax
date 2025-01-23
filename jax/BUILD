@@ -199,6 +199,7 @@ py_library_providing_imports_info(
         "_src/callback.py",
         "_src/checkify.py",
         "_src/custom_batching.py",
+        "_src/custom_dce.py",
         "_src/custom_derivatives.py",
         "_src/custom_partitioning.py",
         "_src/custom_partitioning_sharding_rule.py",

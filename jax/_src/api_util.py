@@ -242,6 +242,18 @@ def argnums_partial(f, dyn_argnums, args, require_static_args_hashable=True):
   dyn_args = tuple(args[i] for i in dyn_argnums)
   return _argnums_partial(f, dyn_argnums, tuple(fixed_args)), dyn_args
 
+
+def prepend_static_args(f, static_args):
+  return _prepend_static_args(f, tuple(Unhashable(arg) for arg in static_args))
+
+
+@lu.transformation2
+def _prepend_static_args(f, static_args, *args, **kwargs):
+  static_args = tuple(arg.val for arg in static_args)
+  all_args = static_args + args
+  return f(*all_args, **kwargs)
+
+
 def _ensure_inbounds(allow_invalid: bool, num_args: int, argnums: Sequence[int]
                      ) -> tuple[int, ...]:
   """Ensure argnum is within bounds. Also resolves negative argnums."""

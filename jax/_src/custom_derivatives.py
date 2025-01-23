@@ -31,7 +31,7 @@ from jax._src.ad_util import (
     stop_gradient_p, SymbolicZero, Zero, zeros_like_aval)
 from jax._src.api_util import (
   argnums_partial, flatten_fun_nokwargs, resolve_kwargs, fun_signature,
-  _non_static_arg_names)
+  _non_static_arg_names, prepend_static_args)
 from jax._src.errors import UnexpectedTracerError
 from jax._src.state.types import AbstractRef
 from jax._src.interpreters import ad
@@ -45,8 +45,7 @@ from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_map, treedef_is_leaf, treedef_tuple,
     register_pytree_node_class, tree_leaves, tree_flatten_with_path,
     tree_leaves_with_path, keystr, treedef_children)
-from jax._src.util import (cache, safe_zip, safe_map, split_list, Unhashable,
-                           unzip2)
+from jax._src.util import (cache, safe_zip, safe_map, split_list, unzip2)
 
 
 traceback_util.register_exclusion(__file__)
@@ -253,7 +252,7 @@ class custom_jvp(Generic[ReturnValue]):
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), diff_argnums, args,
                                      require_static_args_hashable=False)
       static_args = [args[i] for i in self.nondiff_argnums]
-      jvp = _add_args(lu.wrap_init(self.jvp), static_args)
+      jvp = prepend_static_args(lu.wrap_init(self.jvp), static_args)
     else:
       f_, dyn_args = lu.wrap_init(self.fun), args
       jvp = lu.wrap_init(self.jvp)
@@ -265,15 +264,6 @@ class custom_jvp(Generic[ReturnValue]):
                                       symbolic_zeros=self.symbolic_zeros)
     _, (out_tree, _) = lu.merge_linear_aux(out_type1, out_type2)
     return tree_unflatten(out_tree, out_flat)
-
-def _add_args(f, extra_args):
-  return _add_args_(f, tuple(Unhashable(arg) for arg in extra_args))
-
-@lu.transformation2
-def _add_args_(f, extra_args, *args, **kwargs):
-  extra_args = tuple(arg.val for arg in extra_args)
-  all_args = (extra_args + args)
-  return f(*all_args, **kwargs)
 
 @partial(lu.transformation_with_aux2, use_eq_store=True)
 def _flatten_jvp(f, store, primal_name, jvp_name, in_tree, maybe_out_type, *args):
@@ -604,7 +594,7 @@ class custom_vjp(Generic[ReturnValue]):
         static_args = [args[i] for i in self.nondiff_argnums]
         fwd_, _ = argnums_partial(lu.wrap_init(fwd), dyn_argnums, args,
                                  require_static_args_hashable=False)
-        bwd = _add_args(lu.wrap_init(self.bwd), static_args)
+        bwd = prepend_static_args(lu.wrap_init(self.bwd), static_args)
       else:
         f_, dyn_args = lu.wrap_init(self.fun), args
         fwd_, bwd = lu.wrap_init(fwd), lu.wrap_init(self.bwd)

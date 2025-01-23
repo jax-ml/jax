@@ -66,6 +66,7 @@ from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.custom_batching
 import jax.custom_derivatives
 import jax.custom_transpose
+import jax.experimental.custom_dce
 from jax.errors import (UnexpectedTracerError, TracerIntegerConversionError,
                         ConcretizationTypeError, TracerBoolConversionError)
 from jax.experimental import pjit
@@ -10112,6 +10113,225 @@ class CustomTransposeTest(jtu.JaxTestCase):
 
     self.assertAllClose(f_(x), g_(x))
     self.assertAllClose(f_t(x), g_t(x))
+
+
+class CustomDceTest(jtu.JaxTestCase):
+
+  def test_basic(self):
+    @jax.experimental.custom_dce.custom_dce
+    def f(x):
+      return jnp.sin(x), jnp.cos(x)
+
+    @f.def_dce
+    def rule(used_outs, x):
+      return (
+          jnp.exp(x) if used_outs[0] else None,
+          jnp.sqrt(x) if used_outs[1] else None,
+      )
+
+    x = jnp.array(1.1234)
+    self.assertAllClose(jax.jit(lambda x: f(x)[0])(x), jnp.exp(x))
+    self.assertAllClose(jax.jit(lambda x: f(x)[1])(x), jnp.sqrt(x))
+
+  def test_recursive(self):
+    @jax.experimental.custom_dce.custom_dce
+    def f(x):
+      return jnp.exp(x), 10 * jnp.sqrt(x)
+
+    @f.def_dce
+    def f_dce(used_outs, x):
+      return [2 * v if used else None for used, v in zip(used_outs, f(x))]
+
+    x = 1.1234
+    expected = f(x)
+    self.assertAllClose(jax.jit(lambda x: f(x)[0])(x), 2 * expected[0])
+    self.assertAllClose(jax.jit(lambda x: f(x)[1])(x), 2 * expected[1])
+
+  def test_multiple_rounds(self):
+    @jax.experimental.custom_dce.custom_dce
+    def f(x, y, z):
+      return jnp.sin(x), jnp.sin(y), jnp.sin(z)
+
+    @f.def_dce
+    def rule(used_outs, x, y, z):
+      patterns.append(used_outs)
+      outs = [
+          jnp.cos(v) if used else None for used, v in zip(used_outs, (x, y, z))
+      ]
+      return outs
+
+    patterns = []
+    x, y, z = jnp.array(1.), jnp.array(2.), jnp.array(3.)
+    jaxpr = jax.make_jaxpr(f)(x, y, z).jaxpr
+    new_jaxpr, used_ins = pe.dce_jaxpr(jaxpr, [True, False, True])
+    assert used_ins == [True, False, True]
+    new_jaxpr, used_ins = pe.dce_jaxpr(new_jaxpr, [True, False])
+    assert used_ins == [True, False]
+    assert patterns == [(True, False, True), (True, False, False)], patterns
+
+  def test_batching(self):
+    @jax.experimental.custom_dce.custom_dce
+    def f(x, y):
+      return jnp.sin(x), jnp.sin(y)
+
+    @f.def_dce
+    def rule(used_outs, x, y):
+      return (
+          jnp.cos(x) if used_outs[0] else None,
+          jnp.cos(y) if used_outs[1] else None,
+      )
+
+    x = jnp.linspace(-0.1, 0.2, 5)
+    y = jnp.linspace(3.0, 4.0, 5)
+    self.assertAllClose(jax.vmap(f)(x, y), f(x, y))
+    self.assertAllClose(
+        jax.jit(lambda *args: jax.vmap(f)(*args)[0])(x, y), jnp.cos(x)
+    )
+    self.assertAllClose(
+        jax.vmap(jax.jit(lambda *args: f(*args)[0]))(x, y), jnp.cos(x)
+    )
+    self.assertAllClose(
+        jax.jit(lambda *args: jax.vmap(f)(*args)[1])(x, y), jnp.cos(y)
+    )
+    self.assertAllClose(
+        jax.vmap(jax.jit(lambda *args: f(*args)[1]))(x, y), jnp.cos(y)
+    )
+
+  def test_composes_with_custom_vjp(self):
+    # custom_dce must be the "outer" decorator (for now!) because custom_vjp
+    # doesn't pass through DCE.
+    @jax.experimental.custom_dce.custom_dce
+    @jax.custom_vjp
+    def f(x, y):
+      return jnp.sin(x) * y, x * jnp.sin(y)
+
+    @f.def_dce
+    def f_dce_rule(used_outs, x, y):
+      return (
+          jnp.cos(x) * y if used_outs[0] else None,
+          x * jnp.cos(y) if used_outs[1] else None,
+      )
+
+    def f_fwd(x, y):
+      return f(x, y), (x, jnp.cos(x), jnp.sin(x), y, jnp.cos(y), jnp.sin(y))
+
+    def f_bwd(res, g):
+      ga, gb = g
+      x, cos_x, sin_x, y, cos_y, sin_y = res
+      return (cos_x * ga * y + sin_y * gb, sin_x * ga + x * cos_y * gb)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    x, y = jnp.array(1.), jnp.array(2.)
+    self.assertAllClose(jax.jit(lambda *args: f(*args)[0])(x, y),
+                        jnp.cos(x) * y)
+    jax.grad(lambda *args: f(*args)[0])(x, y)  # Doesn't crash.
+
+  def test_can_optimize_remat(self):
+    @jax.custom_vjp
+    def f(x):
+      return jnp.tan(x)
+
+    @jax.experimental.custom_dce.custom_dce
+    def f_fwd(x):
+      return jnp.sin(x), (x,)
+
+    @f_fwd.def_dce
+    def f_dce_rule(used_outs, x):
+      used_prim, used_res = used_outs
+      used_res, = used_res
+      if not used_res:
+        return f(x), None
+      prim, res = f_fwd(x)
+      return prim if used_prim else None, res
+
+    def f_bwd(res, g):
+      x, = res
+      cos_x = jnp.cos(x)
+      return (cos_x * g,)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    def temp(x):
+      out = jax.remat(f)(x)
+      out = out ** 2
+      return out
+
+    v, g = jax.value_and_grad(temp)(3.2)
+    self.assertAllClose(v, jnp.tan(3.2)**2)
+
+  def test_static_argnums(self):
+    @partial(jax.experimental.custom_dce.custom_dce, static_argnums=(0,))
+    def g(f, x):
+      return f(x), 10 * f(x)
+
+    @g.def_dce
+    def g_dce(f, used_outs, x):  # note: static_argnums are always passes first
+      self.assertTrue(callable(f))
+      return [2 * v if used else None for used, v in zip(used_outs, g(f, x))]
+
+    x = 1.1234
+    f = lambda x: jnp.exp(x)
+    expected = g(f, x)
+    self.assertAllClose(jax.jit(lambda x: g(f, x)[0])(x), 2 * expected[0])
+    self.assertAllClose(jax.jit(lambda x: g(f, x)[1])(x), 2 * expected[1])
+
+  def test_shape_mismatch_error(self):
+    @jax.experimental.custom_dce.custom_dce
+    def f(x):
+      return jnp.stack((x, x)), jnp.cos(x)
+
+    @f.def_dce
+    def rule(used_outs, x):
+      return (
+          jnp.exp(x) if used_outs[0] else None,
+          x.astype(jnp.int32) if used_outs[1] else None,
+      )
+
+    x = jnp.array(1.1234)
+    with self.assertRaisesRegex(
+        ValueError,
+        r'Custom DCE rule .* same shapes/dtypes .* output\[0\]',
+    ):
+      jax.jit(lambda x: f(x)[0])(x)
+    with self.assertRaisesRegex(
+        ValueError,
+        r'Custom DCE rule .* same shapes/dtypes .* output\[1\]',
+    ):
+      jax.jit(lambda x: f(x)[1])(x)
+
+  def test_missing_output_error(self):
+    @jax.experimental.custom_dce.custom_dce
+    def f(x):
+      return jnp.sin(x), jnp.cos(x)
+
+    @f.def_dce
+    def rule(used_outs, x):
+      return None, None
+
+    x = jnp.array(1.1234)
+    with self.assertRaisesRegex(
+        ValueError,
+        r'Custom DCE rule .* produce values for all .* output\[0\]',
+    ):
+      jax.jit(lambda x: f(x)[0])(x)
+
+  def test_consts(self):
+    @jax.experimental.custom_dce.custom_dce
+    def f(x):
+      return np.eye(1) * jnp.sin(x), jnp.cos(x)
+
+    @f.def_dce
+    def rule(used_outs, x):
+      return (
+          np.full((1, 1), 2.0) * jnp.exp(x) if used_outs[0] else None,
+          jnp.sqrt(x) if used_outs[1] else None,
+      )
+
+    x = jnp.array(1.1234)
+    expected = rule([True, True], x)
+    self.assertAllClose(jax.jit(lambda x: f(x)[0])(x), expected[0])
+    self.assertAllClose(jax.jit(lambda x: f(x)[1])(x), expected[1])
 
 
 class CustomVmapTest(jtu.JaxTestCase):
