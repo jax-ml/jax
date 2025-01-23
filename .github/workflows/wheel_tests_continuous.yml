@@ -5,15 +5,15 @@
 # It orchestrates the following:
 # 1. build-jaxlib-artifact: Calls the `build_artifacts.yml` workflow to build jaxlib and
 #                           uploads it to a GCS bucket.
-# 2. run-pytest-cpu: Calls the `pytest_cpu.yml` workflow to download the jaxlib wheel that was built
-#                    in the previous step and runs CPU tests.
-# 3. build-cuda-artifacts: Calls the `build_artifacts.yml` workflow to build CUDA artifacts and
-#                          uploads them to a GCS bucket.
-# 4. run-pytest-cuda: Calls the `pytest_cuda.yml` workflow to download the jaxlib and CUDA artifacts
-#                     that were built in the previous steps and runs the CUDA tests.
-# 5. run-bazel-test-cuda: Calls the `bazel_cuda_non_rbe.yml` workflow to download the jaxlib and
-#                         CUDA artifacts that were built in the previous steps and runs the CUDA
-#                         tests using Bazel.
+# 2. run-pytest-cpu:        Calls the `pytest_cpu.yml` workflow which downloads the jaxlib wheel
+#                           that was built in the previous step and runs CPU tests.
+# 3. build-cuda-artifacts:  Calls the `build_artifacts.yml` workflow to build CUDA artifacts and
+#                           uploads them to a GCS bucket.
+# 4. run-pytest-cuda:       Calls the `pytest_cuda.yml` workflow which downloads the jaxlib and CUDA
+#                           artifacts that were built in the previous steps and runs the CUDA tests.
+# 5. run-bazel-test-cuda:   Calls the `bazel_cuda_non_rbe.yml` workflow which downloads the jaxlib
+#                           and CUDA artifacts that were built in the previous steps and runs the
+#                           CUDA tests using Bazel.
 
 name: CI - Wheel Tests (Continuous)
 
