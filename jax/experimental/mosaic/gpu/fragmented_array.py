@@ -1048,6 +1048,7 @@ class FragmentedArray:
 
   # TODO(apaszke): Support JAX dtypes here as well?
   def astype(self, new_dtype: ir.Type, *, is_signed: bool | None = None):
+    i4 = ir.IntegerType.get_signless(4)
     i8 = ir.IntegerType.get_signless(8)
     i16 = ir.IntegerType.get_signless(16)
     i32 = ir.IntegerType.get_signless(32)
@@ -1064,6 +1065,47 @@ class FragmentedArray:
     is_vector_reg = ir.VectorType.isinstance(reg_type)
     reg_shape = tuple(ir.VectorType(reg_type).shape) if is_vector_reg else (1,)
     [vector_len] = reg_shape  # This is meant to be a 1D assertion.
+    if cur_dtype == i4 and self.is_signed and new_dtype == bf16 and vector_len == 2:
+      new_registers = np.empty_like(self.registers)
+      empty_vec_32 = llvm.mlir_undef(ir.VectorType.get((1,), i32))
+      for idx, reg in np.ndenumerate(self.registers):
+        reg_8 = vector.bitcast(ir.VectorType.get((1,), i8), reg)
+        # The algorithm here is largely the same as CUTLASS's
+        # NumericArrayConverter specialization for int4 -> bf16 casts.
+        # We modify it slightly, because we only extract 2 values, and we also
+        # flip them to account for XLA using big-endian packing into bytes.
+        # We first shift the value by 4 bits, to put the high int4 in low bits.
+        # The prmt then blends the two values together, by putting them into the
+        # low bits of each 16-bit subword of our register. Then, we use the lop3
+        # to zero any bits that don't belong to our int4s, and finally use the
+        # XOR to: (1) set the exponent bits to 0x43 (at which point the mantissa
+        # represents integer increments) and (2) flip the sign bit. If we
+        # interpret the 4 bits as uint4 after the flip, then we'll see that
+        # positive int4s will end up larger than negative int4s, with a bias of
+        # 8. Use use the sub to subtract the base (our initial exponent) and the
+        # bias coming from flipping the sign bit which is 136 (0x4308 as bits).
+        new_reg_32 = llvm.inline_asm(
+            i32,
+            [reg_8],
+            """
+            {
+            .reg .b32 s<4>;
+            shr.s32 s0, $1, 4;
+            prmt.b32 s1, $1, s0, 0xF0F4;
+            lop3.b32 s2, s1, 0x000F000F, 0x43084308, (0xf0 & 0xcc) ^ 0xaa;
+            mov.b32 s3, 0x43084308;
+            sub.bf16x2 $0, s2, s3;
+            }
+            """,
+            "=r,r",
+        )
+        new_vec_32 = llvm.insertelement(empty_vec_32, new_reg_32, c(0, i32))
+        new_registers[idx] = vector.bitcast(
+            ir.VectorType.get((vector_len,), new_dtype), new_vec_32
+        )
+      return FragmentedArray(
+          _registers=new_registers, _layout=self.layout, _is_signed=None
+      )
     if cur_dtype == i8 and self.is_signed and new_dtype == bf16 and vector_len in {2, 4}:
       new_registers = np.empty_like(self.registers)
       def upcast_to_bf16(reg, high):
@@ -1109,6 +1151,11 @@ class FragmentedArray:
           _registers=new_registers, _layout=self.layout, _is_signed=is_signed
       )
     # Generic path.
+    # XLA packs elements into bytes in big-endian order, while LLVM assumes the
+    # same endianness as the target machine (which is little for NVIDIA GPUs).
+    # We'll need to add specialized casting routines that flip the endianness.
+    if utils.bitwidth(cur_dtype) < 8 or utils.bitwidth(new_dtype) < 8:
+      raise NotImplementedError("Conversion involving sub-byte types unsupported")
     from_float = ir.FloatType.isinstance(cur_dtype)
     to_float = ir.FloatType.isinstance(new_dtype)
     from_integer = ir.IntegerType.isinstance(cur_dtype)
@@ -1641,30 +1688,55 @@ class FragmentedArray:
     if any(t % wt for t, wt in zip(ref_tiling_suffix, layout.base_tile_shape)):
       raise ValueError("Memory tiling must be a multiple of the register tiling")
 
-    if swizzle not in {32, 64, 128}:
-      raise ValueError("Only swizzled transfers supported")
-    bw = mgpu.bitwidth(dtype)
-    swizzle_tile_elems = (16 * 8) // bw
-    swizzle_group_elems = (128 * 8) // bw
-    swizzle_groups_per_block = swizzle // 16
-    swizzle_block_elems = swizzle_groups_per_block * swizzle_group_elems
-
-    tiled_strides = list(tiling.tile_strides(tuple(ref_strides)))
+    elem_tiled_strides = list(tiling.tile_strides(tuple(ref_strides)))
     tiled_shape = list(tiling.tile_shape(tuple(ref_ty.shape)))
-    lane_strides = [tiled_strides[d] for d in layout.lane_dims]
+    elem_lane_strides = [elem_tiled_strides[d] for d in layout.lane_dims]
     lane_shape = [tiled_shape[d] for d in layout.lane_dims]
-    if tiled_strides[layout.vector_dim] != 1:
+    if elem_tiled_strides[layout.vector_dim] != 1:
       raise ValueError("Stride of the vectorized dimension should be 1")
     for d in (layout.warp_dim, *layout.lane_dims, layout.vector_dim):
       tiled_shape[d] = 1
     full_tiling = Tiling((ref_tiling_shape, *tiling.tiles))
     full_layout = dataclasses.replace(layout, tiling=full_tiling)
 
+    element_bits = mgpu.bitwidth(dtype)
+    if (layout.vector_length * element_bits) % 8 != 0:
+      raise ValueError(
+          f"Vector length ({layout.vector_length}) must be a multiple of bytes,"
+          f" but has {layout.vector_length * element_bits} bits"
+      )
+    transfer_bytes = (layout.vector_length * element_bits) // 8
+    # Not sure if this is strictly required for all data types, but it certainly
+    # is for sub-byte types (else we might not increment the pointer by whole bytes).
+    if any(
+        s % layout.vector_length and i != layout.vector_dim
+        for i, s in enumerate_negative(elem_tiled_strides)
+    ):
+      raise ValueError(
+          "Tiled strides must be a multiple of the vector length, except for the"
+          " vector dimension"
+      )
+
+    if swizzle not in {32, 64, 128}:
+      raise ValueError("Only swizzled transfers supported")
+    # We will be computing the offsets in units of vectors, not elements,
+    # to better support sub-byte types.
+    swizzle_tile_transfers = 16 // transfer_bytes
+    swizzle_group_transfers = 128 // transfer_bytes
+    swizzle_groups_per_block = swizzle // 16
+    swizzle_block_transfers = swizzle_groups_per_block * swizzle_group_transfers
+    # Technically we should keep the vector_dim set to 1, but its shape is 1
+    # so it does not matter.
+    transfer_tiled_strides = [s // layout.vector_length for s in elem_tiled_strides]
+    transfer_dtype = ir.VectorType.get((layout.vector_length,), dtype)
+
     plan = plan_tiled_transfer(
-        tiled_shape, tiled_strides, lane_shape, lane_strides, layout, bw, swizzle
+        tiled_shape, elem_tiled_strides, lane_shape, elem_lane_strides, layout,
+        element_bits, swizzle
     )
 
-    dyn_tiled_strides = [c(s) for s in tiled_strides]
+    # All offsets are in units of transfer_dtype.
+    dyn_tiled_strides = [c(s) for s in transfer_tiled_strides]
     lane_offset = utils.dyn_dot(full_layout.lane_indices(), dyn_tiled_strides)
     warp_offset = utils.dyn_dot(full_layout.warp_indices(), dyn_tiled_strides)
     dyn_offset = arith.addi(lane_offset, warp_offset)
@@ -1673,10 +1745,10 @@ class FragmentedArray:
     ptr = utils.memref_ptr(ref, memory_space=3)
     _as_consts = lambda consts: [c(const) for const in consts.tolist()]
     # This has bits set only for the offset bits that influence swizzling.
-    swizzle_mask = swizzle_block_elems - swizzle_tile_elems
+    swizzle_mask = swizzle_block_transfers - swizzle_tile_transfers
     for tile_idx in np.ndindex(*tiled_shape):
       indices = np.asarray([f(tile_idx) for f in plan.tile_index_transforms])
-      const_offset = np.dot(indices, tiled_strides)
+      const_offset = np.dot(indices, transfer_tiled_strides)
       # We split the offset into a part that interacts with swizzling and a
       # part that doesn't. This lets us generate better code because constant
       # offsets can be fused into load and store instructions.
@@ -1686,14 +1758,14 @@ class FragmentedArray:
           dyn_offset, plan.select(_as_consts(const_offset_swizzle))
       )
       swizzle_group = arith.remui(
-          arith.divui(offset_pre_swizzle, c(swizzle_group_elems)),
+          arith.divui(offset_pre_swizzle, c(swizzle_group_transfers)),
           c(swizzle_groups_per_block),
       )
-      swizzle_bits = arith.muli(swizzle_group, c(swizzle_tile_elems))
+      swizzle_bits = arith.muli(swizzle_group, c(swizzle_tile_transfers))
       offset = arith.xori(offset_pre_swizzle, swizzle_bits)
-      reg_ptr = utils.getelementptr(ptr, [offset], dtype)
+      reg_ptr = utils.getelementptr(ptr, [offset], transfer_dtype)
       offset_no_swizzle = plan.select(_as_consts(const_offset_no_swizzle))
-      reg_ptr = utils.getelementptr(reg_ptr, [offset_no_swizzle], dtype)
+      reg_ptr = utils.getelementptr(reg_ptr, [offset_no_swizzle], transfer_dtype)
       reg_idxs = [
           tiling.tile_indices(full_tiling.untile_indices(idx))
           for idx in indices.tolist()
@@ -1789,13 +1861,18 @@ def plan_tiled_transfer(
     lane_shape: Sequence[int],
     lane_strides: Sequence[int],
     layout: TiledLayout,
-    bw: int,
+    element_bits: int,
     swizzle: int,
 ) -> TransferPlan:
   i32 = ir.IntegerType.get_signless(32)
   c = lambda x: arith.constant(i32, x)
-  swizzle_tile_elems = (16 * 8) // bw
-  swizzle_group_elems = (128 * 8) // bw
+  # TODO(apaszke): Rewrite this function in terms of transfer_bytes (that we get
+  # from the caller).
+  swizzle_tile_elems = (16 * 8) // element_bits
+  swizzle_group_elems = (128 * 8) // element_bits
+  # Should be checked at the call site.
+  assert layout.vector_length * element_bits % 8 == 0
+  transfer_bytes = (layout.vector_length * element_bits) // 8
   # Below, all calculations are in elements, not in bytes, since it should
   # generalize better to sub-byte types.
   # Here, we verify two conditions:
@@ -1821,16 +1898,13 @@ def plan_tiled_transfer(
   # we simply narrow each bank to the transfer width. The truth is more likely
   # that bank conflicts only don't occur if the addresses mapping to the same
   # bank are contiguous, but that's a more complicated check to perform.
-  if (layout.vector_length * bw) % 8 != 0:
-    raise ValueError(f"Vector must be whole bytes {layout.vector_length, bw}")
-  transfer_bytes = (layout.vector_length * bw) // 8
   if transfer_bytes > SMEM_BANK_BYTES * 4:
     raise NotImplementedError
-  if bw > SMEM_BANK_BYTES * 8:
+  if element_bits > SMEM_BANK_BYTES * 8:
     raise NotImplementedError
   smem_bank_bytes = min(SMEM_BANK_BYTES, transfer_bytes)
   num_banks = SMEM_BANKS * (SMEM_BANK_BYTES // smem_bank_bytes)
-  elems_per_bank = (smem_bank_bytes * 8) // bw
+  elems_per_bank = (smem_bank_bytes * 8) // element_bits
   num_wavefronts = max(transfer_bytes // smem_bank_bytes, 1)
   wavefront_lanes = WARP_SIZE // num_wavefronts
 
