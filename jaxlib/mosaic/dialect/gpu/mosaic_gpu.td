@@ -321,10 +321,10 @@ def MosaicGPU_WGMMALayout :
   let genSpecializedAttr = 0;
 }
 
-def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", []> {
+def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
   let summary = "Multiply two matrices asyncronously using warpgroup level matrix multiply operations.";
   let description = [{
-    Schedules WGMMA operations that perform the following matrix multiple and
+    Schedules WGMMA operations that perform the following matrix multiply and
     accumulate:
 
       accumulator = a * b + accumulator
@@ -345,6 +345,8 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", []> {
       - accumulator: [groups_m * 64, groups_n * k]
     Where:
       - `k == swizzle/element_bytediwth` (for `kNoSwizzle`, `swizzle` is 16.)
+
+    The output has an identical shape and type as the input accumulator.
 
     The `accumulator` is always in registers and `b` is always in shared memory.
     The last two dimensions of any input in shared memory may be physically
@@ -372,12 +374,32 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", []> {
     // Attributes
     DefaultValuedAttr<MosaicGPU_SwizzlingModeAttr, "SwizzlingMode::k128ByteSwizzle">:$swizzle
   );
+  let results = (outs VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>);
 
   let assemblyFormat = [{
     `accumulator` `(` $accumulator `:` type($accumulator) `)`
     `a` `(` $a `:` type($a) `)`
     `b` `(` $b `:` type($b) `)`
     attr-dict
+    `->` type(results)
+  }];
+
+  let extraClassDeclaration = [{
+    static llvm::LogicalResult inferReturnTypes(
+        mlir::MLIRContext *,
+        std::optional<mlir::Location> location,
+        mlir::ValueRange operands,
+        mlir::DictionaryAttr attributes,
+        mlir::OpaqueProperties properties,
+        mlir::RegionRange regions,
+        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
+      if (operands.empty()) {
+        return ::mlir::emitOptionalError(
+          location, "expected non-empty operands");
+      }
+      inferredReturnTypes.assign({operands[0].getType()});
+      return ::mlir::success();
+    }
   }];
 
   let hasVerifier = 1;
