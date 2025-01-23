@@ -79,10 +79,17 @@ class Ty:
 class Val:
   ty : Ty
 
+  def to_runtime_buf(self):
+    raise NotImplementedError(f"{type(self).__name__}.to_runtime_buf")
+
+  def to_hlo_const(self, c):
+    raise NotImplementedError(f"{type(self).__name__}.to_hlo_const")
+
   def __add__(self, other): return self.ty._add(self, other)
   def __mul__(self, other): return self.ty._mul(self, other)
   def __radd__(self, other): return self.ty._add(other, self)
   def __rmul__(self, other): return self.ty._mul(other, self)
+  def __repr__(self): return self.__str__()
 
 class Primitive:
   arg_tys : tuple[Ty]
@@ -123,7 +130,8 @@ class Var:
   def __str__(self):
     return f"%{self.name}: {self.ty}"
 
-Atom = Union[Var, Val]
+ScalarVal = Val
+Atom = Union[Var, ScalarVal]
 
 class Eqn:
   binder : Var
@@ -171,6 +179,7 @@ class Tracer:
   def __mul__(self, other): return self.ty._mul(self, other)
   def __radd__(self, other): return self.ty._add(other, self)
   def __rmul__(self, other): return self.ty._mul(other, self)
+  def __getitem__(self, i): return self.ty._getitem(self, i)
 
 TraceVal = Union[Tracer, Val]
 
@@ -199,6 +208,13 @@ def canonicalize_arg(arg: Any) -> TraceVal:
     return ArrayVal(arg)
   elif isinstance(arg, (float, np.float64, np.float32)):
     return ArrayVal(np.array(arg))
+  elif type(arg) is tuple:
+    elts = map(canonicalize_arg, arg)
+    if all(isinstance(elt, Val) for elt in elts):
+      return TupleVal(elts)
+    else:
+      elt_tys = tuple(elt.ty for elt in elts)
+      return emit(TupleCon(elt_tys), elts)
   else:
     raise TypeError(f"Unrecognized type: {arg}")
 
@@ -232,9 +248,16 @@ class JaxprTrace(Trace):
     self.binders = []
     self.eqns = []
 
+  def to_atom(self, x:TraceVal):
+    if isinstance(x, JaxprTracer):
+      return x.var
+    elif isinstance(x, Val):
+      return x
+    else:
+      raise TypeError(f"Unexpected TraceVal: {x}")
+
   def process_primitive(self, prim, args):
-    # TODO: handle literals and other traces' tracers too
-    arg_atoms = [arg.var if isinstance(arg, Tracer) else arg for arg in args]
+    arg_atoms = map(self.to_atom, args)
     binder = Var(prim.result_ty, gensym.new())
     self.eqns.append(Eqn(binder, prim, arg_atoms))
     return JaxprTracer(binder)
@@ -245,7 +268,8 @@ class JaxprTrace(Trace):
     return JaxprTracer(v)
 
   def finalize_jaxpr(self, result:TraceVal):
-    return Jaxpr(tuple(self.binders), tuple(self.eqns), result.var)
+    result_atom = self.to_atom(result)
+    return Jaxpr(tuple(self.binders), tuple(self.eqns), result_atom)
 
 class JaxprTracer(Tracer):
   var: Var
@@ -257,10 +281,8 @@ def trace_to_jaxpr(f:Callable, arg_tys:tuple[Ty]) -> Jaxpr:
   trace = JaxprTrace()
   args = tuple(trace.new_arg(t) for t in arg_tys)
   with set_current_trace(trace):
-    result = f(*args)
-  # TODO: lift result if needed
+    result = canonicalize_arg(f(*args))
   return trace.finalize_jaxpr(result)
-
 
 # === types ===
 
@@ -308,8 +330,41 @@ class ArrayVal(Val):
   def to_runtime_buf(self):
     return xb.get_backend(None).buffer_from_pyval(self.val)
 
+
+  def to_hlo_const(c, self):
+    a = np.asarray(x)
+    if a.dtype == np.bool_:
+      return hlo.constant(ir.DenseElementsAttr.get(
+        np.packbits(a, bitorder='little'), type=ir.IntegerType.get_signless(1),
+        shape=a.shape))
+    else:
+      return hlo.constant(ir.DenseElementsAttr.get(a))
+
   def __str__(self):
     return str(self.val)
+
+# === tuples ===
+
+class TupleTy(Ty):
+  def __init__(self, elt_tys):
+    self.elt_tys = elt_tys
+
+  def __str__(self):
+    return print_args(map(str, self.elt_tys))
+
+  def _getitem(self, xs, i):
+    return tuple_proj(xs, i)
+
+class TupleVal(Val):
+  def __init__(self, elts):
+    self.elts = elts
+    self.ty = TupleTy(tuple(elt.ty for elt in elts))
+
+  def to_hlo_const(self, c):
+    return tuple(x.to_hlo_const(c) for x in self.elts)
+
+  def __str__(self):
+    return print_args(map(str, self.elts))
 
 # === linearize ===
 
@@ -370,7 +425,7 @@ def linearize(f, primals):
   with set_current_trace(lin_trace):
     ans = f(arg0_tracer, *rest_tracers)
 
-  ans = lin_trace.lift(ans)
+  ans = lin_trace.lift(canonicalize_arg(ans))
   tangent_jaxpr = tangent_trace.finalize_jaxpr(ans.tangent)
   return ans.primal, tangent_jaxpr
 
@@ -656,6 +711,24 @@ def neg_lin(x):
     x = canonicalize_arg(x)
     return emit(Neg(x.ty, is_linear=True), (x,))
 
+class TupleProj(Primitive):
+  def __init__(self, elt_tys, i):
+    self.arg_tys = TupleTy(elt_tys)
+    self.result_ty = elt_tys[i]
+
+def tuple_proj(x, i):
+  x = canonicalize_arg(x)
+  elt_tys = x.ty.elt_tys
+  return emit(TupleProj(elt_tys, i), (x,))
+
+class TupleCon(Primitive):
+  def __init__(self, elt_tys):
+    self.arg_tys = elt_tys
+    self.result_ty = TupleTy(elt_tys)
+
+  def to_hlo(self, _, *elts):
+    return tuple(elts)
+
 class Call(Primitive):
   def __init__(self, jaxpr):
     self.jaxpr = jaxpr
@@ -676,11 +749,17 @@ class Call(Primitive):
     with p.indent():
       self.jaxpr.print_lines(p)
 
+XLAVal = Any
+XLAVal = ir.Value | tuple[XLAVal]
+
 def jaxpr_subcomp(c: MlirContext, jaxpr: Jaxpr, args: list[ir.Value]) -> list[ir.Value]:
   env: dict[Var, ir.Value] = {}
 
   def read(x) -> ir.Value:
-    return env[x] if type(x) is Var else _hlo_const(np.asarray(x.val))
+    if type(x) is Var:
+      return env[x]
+    else:
+      return x.to_hlo_const(c)
 
   def write(v: Var, val: ir.Value) -> None:
     env[v] = val
@@ -723,3 +802,14 @@ print(jaxpr)
 print(backward_pass(jaxpr, 1.0))
 
 print(vmap(bar, np.arange(4.0), np.arange(4.0)))
+
+@jit
+def unpack_and_add(xy):
+  x, y = xy
+  return x + y
+
+print(unpack_and_add((1., 2.)))
+
+print(trace_to_jaxpr(foo, (float_ty,)))
+
+print(foo(1.0))
