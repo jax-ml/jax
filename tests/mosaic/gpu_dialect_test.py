@@ -17,6 +17,7 @@
 from typing import Callable
 
 from absl.testing import parameterized
+import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
@@ -29,8 +30,9 @@ from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
-import jax.experimental.mosaic.gpu as mgpu
-import jax.experimental.mosaic.gpu.utils as mgpu_utils
+from jax.experimental.mosaic import gpu as mgpu
+from jax.experimental.mosaic.gpu import layouts
+from jax.experimental.mosaic.gpu import utils as mgpu_utils
 
 _cext = mgpu.dialect._cext if mgpu.dialect is not None else None
 
@@ -84,6 +86,8 @@ class MosaicGpuTest(parameterized.TestCase):
   def setUp(self):
     if mgpu.dialect is None:
       raise self.skipTest("Test requires Mosaic GPU dialect")
+    if jax.version._version != jax.lib.__version__:
+      raise self.skipTest("Test requires matching jax and jaxlib versions")
     super().setUp()
     self.enter_context(_make_ir_context())
     self.enter_context(ir.Location.unknown())
@@ -666,9 +670,7 @@ class DialectLoweringTest(MosaicGpuTest):
       ty = ir.VectorType.get(shape, elt_ty)
       load = vector.load(ty, ref, [zero_index, zero_index])
       load.owner.attributes["out_layouts"] = ir.ArrayAttr.get([
-          mgpu.to_strided_fragmented_layout_attr(
-              mgpu.WGStridedFragLayout.from_shaped_type(ty)
-          )
+          layouts.to_layout_attr(mgpu.WGStridedFragLayout.from_shaped_type(ty))
       ])
 
     mgpu.lower_mgpu_dialect(self.module, None)
