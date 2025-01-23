@@ -324,7 +324,7 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax:experimental",
-    ],
+    ] + py_deps("cupti-python"),
 )
 
 jax_multiplatform_test(
