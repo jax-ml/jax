@@ -476,6 +476,10 @@ class AbstractMesh:
     return all(t == AxisTypes.Hidden for t in self.axis_types.keys())
 
   @functools.cached_property
+  def _are_all_axes_visible(self) -> bool:
+    return all(t == AxisTypes.Visible for t in self.axis_types.keys())
+
+  @functools.cached_property
   def _any_axis_collective(self) -> bool:
     return any(t == AxisTypes.Collective for t in self.axis_types.keys())
 

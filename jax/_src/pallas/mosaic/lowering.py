@@ -921,7 +921,8 @@ def jaxpr_subcomp(
         name_stack=ctx.name_stack + eqn.source_info.name_stack
     )
     loc = mlir._source_info_to_location(ctx, eqn.primitive, source_info)
-    with source_info_util.user_context(eqn.source_info.traceback), loc:
+    with (source_info_util.user_context(eqn.source_info.traceback), loc,
+          eqn.ctx.manager):
       if eqn.primitive in lowering_rules:
         if eqn.primitive not in skip_mlir_conversions:
           invals = [_ensure_mlir_value(x, v.aval)

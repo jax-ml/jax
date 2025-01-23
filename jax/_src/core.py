@@ -39,6 +39,7 @@ from jax._src import config
 from jax._src import effects
 from jax._src import compute_on
 from jax._src import mesh as mesh_lib
+from jax._src.mesh import AxisTypes
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
@@ -1687,7 +1688,9 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 
 # TODO(yashkatariya): Only works with User/Auto. Generalize it to work with
 # Collective too.
-def modify_spec_for_hidden(spec, mesh) -> P:
+def modify_spec_for_hidden_collective(spec, mesh) -> P:
+  if all(s is None for s in spec):
+    return spec
   new_spec = []  # type: ignore
   for s in spec:
     if s is None:
@@ -1695,13 +1698,15 @@ def modify_spec_for_hidden(spec, mesh) -> P:
     else:
       temp_s = s[0] if isinstance(s, tuple) else s
       new_spec.append(
-          None if mesh._name_to_type[temp_s] == mesh_lib.AxisTypes.Hidden else s)
+          None
+          if mesh._name_to_type[temp_s] in (AxisTypes.Hidden, AxisTypes.Collective)
+          else s)
   return P(*new_spec)
 
 def _maybe_modify_sharding(sharding):
-  if mesh_lib.AxisTypes.Hidden not in sharding.mesh.axis_types:
+  if sharding.mesh._are_all_axes_visible:
     return sharding
-  new_spec = modify_spec_for_hidden(sharding.spec, sharding.mesh)
+  new_spec = modify_spec_for_hidden_collective(sharding.spec, sharding.mesh)
   return sharding.with_spec(new_spec)
 
 

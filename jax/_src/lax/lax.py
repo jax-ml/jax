@@ -5585,7 +5585,7 @@ def _reduce_prod_jvp_rule(primals, tangents, *, axes):
 
 reduce_prod_p = standard_primitive(
   _reduce_op_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_prod'),
-  'reduce_prod')
+  'reduce_prod', sharding_rule=_reduce_op_sharding_rule)
 ad.primitive_jvps[reduce_prod_p] = _reduce_prod_jvp_rule
 batching.defreducer(reduce_prod_p, _get_prod_identity)
 pe.padding_rules[reduce_prod_p] = partial(_reducer_padding, _reduce_prod,
@@ -5613,8 +5613,9 @@ pe.padding_rules[reduce_max_p] = partial(_reducer_padding, _reduce_max,
 batching.ragged_prop_rules[reduce_max_p] = batching.ragged_mask_elementwise_rule
 
 
-reduce_min_p = standard_primitive(_reduce_op_shape_rule, _input_dtype,
-                                  'reduce_min')
+reduce_min_p = standard_primitive(
+    _reduce_op_shape_rule, _input_dtype, 'reduce_min',
+    sharding_rule=_reduce_op_sharding_rule)
 ad.defjvp2(reduce_min_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_min_p, _get_min_identity)
 pe.padding_rules[reduce_min_p] = partial(_reducer_padding, _reduce_min,
@@ -5705,22 +5706,25 @@ def _reduce_logical_shape_rule(operand, *, axes):
     raise TypeError(f"logical reduction requires operand dtype bool or int, got {operand.dtype}.")
   return tuple(np.delete(operand.shape, axes))
 
+def _reduce_logical_sharding_rule(operand, *, axes):
+  return operand.sharding.with_spec(tuple_delete(operand.sharding.spec, axes))
+
 reduce_or_p = standard_primitive(
     _reduce_logical_shape_rule, _input_dtype, 'reduce_or',
-    weak_type_rule=_strip_weak_type)
+    weak_type_rule=_strip_weak_type, sharding_rule=_reduce_logical_sharding_rule)
 batching.defreducer(reduce_or_p, _get_bitwise_or_identity)
 
 
 reduce_and_p = standard_primitive(
     _reduce_logical_shape_rule, _input_dtype, 'reduce_and',
-    weak_type_rule=_strip_weak_type)
+    weak_type_rule=_strip_weak_type, sharding_rule=_reduce_logical_sharding_rule)
 batching.defreducer(reduce_and_p, _get_bitwise_and_identity)
 batching.ragged_prop_rules[reduce_and_p] = batching.ragged_mask_elementwise_rule
 
 
 reduce_xor_p = standard_primitive(
     _reduce_logical_shape_rule, _input_dtype, 'reduce_xor',
-    weak_type_rule=_strip_weak_type)
+    weak_type_rule=_strip_weak_type, sharding_rule=_reduce_logical_sharding_rule)
 batching.defreducer(reduce_xor_p, _get_bitwise_or_identity)
 
 
