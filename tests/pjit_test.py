@@ -7171,6 +7171,51 @@ class ShardyTest(jtu.JaxTestCase):
                    ).astype(in_sds.dtype))
     gen_dummy_inputs()  # doesn't crash
 
+  @jtu.skip_on_devices('cpu')
+  def test_custom_partition_with_sharding_rule_callback(self):
+    if jtu.is_cloud_tpu():
+      raise unittest.SkipTest("Custom partitioning is not supported on libtpu.")
+
+    def partition(mesh, arg_shapes, result_shape):
+      arg_shardings = jax.tree.map(lambda s: s.sharding, arg_shapes)
+      result_sharding = result_shape.sharding
+      rank = len(arg_shapes[0].shape)
+
+      def lower_fn(x, y):
+        axis_name = arg_shardings[1].spec[rank-2][0]
+        i = jax.lax.axis_index(axis_name)
+        z = jax.lax.psum(jax.lax.dynamic_slice_in_dim(
+            jax.lax.dynamic_slice_in_dim(x, i * 0, 8, axis=rank-2),
+            i * 8, 8, axis=rank-1) @ y, (axis_name))
+        return z
+
+      return mesh, lower_fn, (result_sharding), arg_shardings
+
+    def produce_sharding_rule(mesh, arg_shapes, result_shape):
+      rank = len(arg_shapes[0].shape)
+      leading_axes = ""
+      for i in range(rank - 2):
+        leading_axes += f" b{i}"
+      return f"{leading_axes} i j, {leading_axes} j k -> {leading_axes} i k"
+
+    @partial(custom_partitioning)
+    def f(x, y):
+      return jnp.matmul(x, y)
+
+    f.def_partition(
+        infer_sharding_from_operands=None,
+        partition=partition,
+        sharding_rule=produce_sharding_rule)
+
+    mesh = jtu.create_mesh((4, 2), ('x', 'y'))
+    x = jax.device_put(np.arange(2 * 3 * 32 * 16).reshape(2, 3, 32, 16),
+                       NamedSharding(mesh, P(None, None, 'x')))
+    y = jax.device_put(np.arange(2 * 3 * 16 * 32).reshape(2, 3, 16, 32),
+                       NamedSharding(mesh, P(None, None,'y')))
+    result = jax.jit(f)(x, y)
+    expected_result = f(x, y)
+    self.assertArraysEqual(result, expected_result)
+    self.assertEqual(result.sharding, NamedSharding(mesh, P(None, None, 'x')))
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
