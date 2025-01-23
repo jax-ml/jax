@@ -565,6 +565,8 @@ def _infer_params_impl(
           "device is also specified as an argument to jit.")
 
   axes_specs = _flat_axes_specs(ji.abstracted_axes, *args, **kwargs)
+  # TODO(necula): this call to debug_info should not be necessary, we already
+  # made the call in _infer_params
   dbg = tracing_debug_info('jit', fun, args, kwargs,
                            static_argnums=ji.static_argnums,
                            static_argnames=ji.static_argnames,
