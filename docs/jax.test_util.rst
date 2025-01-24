@@ -1,5 +1,5 @@
 ``jax.test_util`` module
-===================
+========================
 
 .. currentmodule:: jax.test_util
 
