@@ -17,10 +17,16 @@
 from __future__ import annotations
 
 import io
+import re
 from typing import Any
+import zlib
 
+import jax
 import jax._src.core as jax_core
 from jax._src.interpreters import mlir
+from jax._src.lib import gpu_triton as triton_kernel_call_lib
+from jax._src.lib import triton
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.triton import lowering
@@ -51,7 +57,7 @@ def pallas_call_lowering(
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
 ):
-  del interpret, out_avals
+  del interpret, cost_estimate, out_avals
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(
         "dynamic grid bounds not supported in the Triton backend"
@@ -77,6 +83,11 @@ def pallas_call_lowering(
     print("The grid mapping for pallas_call {name_and_src_info}:")
     print(grid_mapping)
 
+  # Sanitize the name to conform to NVPTX requirements. We do this here
+  # to avoid the need to fetch the new name from PTX post compilation.
+  name_and_src_info = name_and_src_info.replace(
+      name=re.sub(r"[^a-zA-Z0-9_$]", "_", name_and_src_info.name)
+  )
   lowering_result = lowering.lower_jaxpr_to_triton_module(
       jaxpr, grid_mapping, name_and_src_info, lowering_platform
   )
@@ -86,35 +97,82 @@ def pallas_call_lowering(
     print(module_op.get_asm(enable_debug_info=True, pretty_debug_info=True))
 
   grid_x, grid_y, grid_z = normalize_grid(lowering_result.grid)
-  out_types = [
+  buf = io.BytesIO()
+  module_op.write_bytecode(buf)
+
+  if jaxlib_version < (0, 5, 1):
+    # AOT Triton compilation is only available on jaxlib 0.5.1+.
+    out_types = [
       ir.RankedTensorType.get(bm.array_shape_dtype.shape,
                               mlir.dtype_to_ir_type(bm.array_shape_dtype.dtype))
       for bm in grid_mapping.block_mappings_output
-  ]
-  buf = io.BytesIO()
-  module_op.write_bytecode(buf)
-  backend_config = dict(
-      name=ir.StringAttr.get(name_and_src_info.name),
-      ir=ir.StringAttr.get(buf.getvalue()),
-      num_stages=mlir.i32_attr(num_stages),
-      num_warps=mlir.i32_attr(num_warps),
-      grid_x=mlir.i32_attr(grid_x),
-      grid_y=mlir.i32_attr(grid_y),
-      grid_z=mlir.i32_attr(grid_z),
-      debug=ir.BoolAttr.get(debug),
+    ]
+    backend_config = dict(
+        name=ir.StringAttr.get(name_and_src_info.name),
+        ir=ir.StringAttr.get(buf.getvalue()),
+        num_stages=mlir.i32_attr(num_stages),
+        num_warps=mlir.i32_attr(num_warps),
+        grid_x=mlir.i32_attr(grid_x),
+        grid_y=mlir.i32_attr(grid_y),
+        grid_z=mlir.i32_attr(grid_z),
+        debug=ir.BoolAttr.get(debug),
+    )
+    if "serialized_metadata" in (triton_params or {}):
+      # This field is unstable and may be removed in the future.
+      if triton_params["serialized_metadata"] is not None:
+        backend_config["serialized_metadata"] = ir.StringAttr.get(
+            triton_params["serialized_metadata"]
+        )
+    return mlir.custom_call(
+        call_target_name="__gpu$xla.gpu.triton",
+        result_types=out_types,
+        operands=in_nodes,
+        backend_config=backend_config,
+        api_version=4,
+        operand_layouts=avals_to_layouts(ctx.avals_in),
+        result_layouts=avals_to_layouts(ctx.avals_out),
+        operand_output_aliases=dict(input_output_aliases),
+    ).results
+
+  gpu_device, *_ = jax.local_devices(backend="gpu")
+  compilation_result = triton.compile(
+      lowering_platform.upper(),
+      buf.getvalue(),
+      str(gpu_device.compute_capability),  # e.g. 7.0
+      num_warps=num_warps,
+      num_ctas=1,
+      num_stages=num_stages,
   )
-  if "serialized_metadata" in (triton_params or {}):
-    # This field is unstable and may be removed in the future.
-    if triton_params["serialized_metadata"] is not None:
-      backend_config["serialized_metadata"] = ir.StringAttr.get(
-          triton_params["serialized_metadata"]
-      )
+  kernel = triton_kernel_call_lib.TritonKernel(
+      name_and_src_info.name,
+      num_warps,
+      compilation_result.smem_bytes,
+      compilation_result.asm,
+      module_op.get_asm(enable_debug_info=True, pretty_debug_info=True),
+      triton_kernel_call_lib.get_compute_capability(0),
+      compilation_result.cluster_dim_x,
+      compilation_result.cluster_dim_y,
+      compilation_result.cluster_dim_z,
+  )
+  kernel_call = triton_kernel_call_lib.TritonKernelCall(
+      kernel,
+      grid_x,
+      grid_y,
+      grid_z,
+      [triton_kernel_call_lib.create_array_parameter(0, 16)]
+      * (len(ctx.avals_in) + len(ctx.avals_out)),
+  )
+  # TODO(slebedev): Migrate to ``jax.ffi``.
   return mlir.custom_call(
-      call_target_name="__gpu$xla.gpu.triton",
-      result_types=out_types,
+      call_target_name="triton_kernel_call",
+      result_types=[*map(mlir.aval_to_ir_type, ctx.avals_out)],  # type: ignore[list-item]
       operands=in_nodes,
-      backend_config=backend_config,
-      api_version=4,
+      backend_config=zlib.compress(
+          kernel_call.to_proto(
+              name_and_src_info.name,
+              triton_params.get("serialized_metadata") or b"",
+          )
+      ),
       operand_layouts=avals_to_layouts(ctx.avals_in),
       result_layouts=avals_to_layouts(ctx.avals_out),
       operand_output_aliases=dict(input_output_aliases),

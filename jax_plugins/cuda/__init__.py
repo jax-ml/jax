@@ -18,6 +18,7 @@ import logging
 import os
 import pathlib
 
+from jax._src.lib import triton
 from jax._src.lib import xla_client
 import jax._src.xla_bridge as xb
 
@@ -97,6 +98,12 @@ def initialize():
         "CUDA",
         functools.partial(
             cuda_plugin_extension.register_custom_type_id, c_api
+        ),
+    )
+    triton.register_compilation_handler(
+        "CUDA",
+        functools.partial(
+            cuda_plugin_extension.compile_triton_to_asm, c_api
         ),
     )
   else:
