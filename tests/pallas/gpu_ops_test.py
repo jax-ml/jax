@@ -33,15 +33,15 @@ if sys.platform != "win32":
   from jax.experimental.pallas.ops.gpu import layer_norm
   from jax.experimental.pallas.ops.gpu import rms_norm
   from jax.experimental.pallas.ops.gpu import softmax
+  BlockSizes = attention.BlockSizes
 else:
   attention = None
   layer_norm = None
   rms_norm = None
   softmax = None
+  BlockSizes = None
 import jax.numpy as jnp
 import numpy as np
-
-BlockSizes = attention.BlockSizes
 
 # TODO(sharadmv): Update signatures of pallas_call to correct inputs/outputs.
 # pylint: disable=no-value-for-parameter
@@ -125,6 +125,7 @@ class PallasBaseTest(jtu.JaxTestCase):
   INTERPRET = False
 
   def setUp(self):
+    print("platform: ", sys.platform)
     if jtu.test_device_matches(["cpu"]) and not self.INTERPRET:
       self.skipTest("On CPU the test works only in interpret mode")
     if jtu.test_device_matches(["cpu", "gpu"]) and jax.config.x64_enabled:
@@ -155,7 +156,7 @@ class FusedAttentionTest(PallasBaseTest):
       num_heads=(1, 2, 8),
       head_dim=(32, 64, 128),
       block_sizes=(
-        BlockSizes.get_default(),
+        BlockSizes(block_q=128,block_k=128),
         BlockSizes(block_q=64,block_k=64),
         BlockSizes(block_q=64,block_k=128),
       ),
@@ -228,7 +229,14 @@ class FusedAttentionTest(PallasBaseTest):
       num_heads=(1, 2),
       head_dim=(32, 64, 128,),
       block_sizes=(
-        BlockSizes.get_default(),
+        BlockSizes(
+          block_q=128,
+          block_k=128,
+          block_q_dkv=128,
+          block_kv_dkv=128,
+          block_q_dq=128,
+          block_kv_dq=128,
+        ),
         BlockSizes(
           block_q=128,
           block_k=128,
