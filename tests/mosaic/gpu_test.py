@@ -27,7 +27,9 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
+from jax._src.lib.mlir import passmanager
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
@@ -2115,6 +2117,23 @@ class UtilsTest(TestCase):
   def test_parse_indices_oob(self, indices):
     with self.assertRaisesRegex(IndexError, "out of bounds"):
       utils.parse_indices(indices, (2, 3, 4))
+
+
+class SerializationTest(absltest.TestCase):
+
+  def test_pass_is_registered(self):
+    if jaxlib_version < (0, 5, 1):
+      self.skipTest("Test requires jaxlib 0.5.1 or later")
+
+    ctx = mlir.make_ir_context()
+    ctx.allow_unregistered_dialects = True
+    with ir.Location.unknown(ctx):
+      module = ir.Module.create()
+      pipeline = passmanager.PassManager.parse(
+          "builtin.module(mosaic_gpu-serde{serialize=true})",
+          ctx,
+      )
+      pipeline.run(module.operation)
 
 
 if __name__ == "__main__":

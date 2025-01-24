@@ -182,7 +182,6 @@ nanobind_extension(
         "-fno-strict-aliasing",
     ],
     deps = [
-        ":mlir_capi",
         "//jaxlib:kernel_nanobind_helpers",
         "//jaxlib/cuda:cuda_vendor",
         "@com_google_absl//absl/cleanup",
