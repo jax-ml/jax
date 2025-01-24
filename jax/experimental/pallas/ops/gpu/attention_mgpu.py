@@ -190,51 +190,46 @@ def attention(q, k, v, config: TuningConfig):
         plgpu.copy_gmem_to_smem(v_ref.at[s], v_smem.at[tma_slot], v_barriers.at[tma_slot])
       lax.fori_loop(0, kv_seq_len // block_kv - max_concurrent_steps, kv_loop, None)
 
-  def run(refs):
-    q_ref, k_ref, v_ref, out_ref = refs
-
-    num_q_tiles, rem = divmod(q_seq_len, block_q * 2)
-    if rem:
-      raise NotImplementedError(f"{q_seq_len=} must be a multiple of {block_q * 2=}")
-    mesh = plgpu.GPUMesh(
-        grid=(batch_size, num_q_tiles, num_q_heads),
-        num_threads=3,
-        axis_names=("batch", "q_seq", "heads", "wg"),
+  def entry(q_ref, k_ref, v_ref, out_ref):
+    compute_wgs = 2
+    tiling = plgpu.TilingTransform((64, 64))
+    swizzle = plgpu.SwizzleTransform(128)
+    qo_scratch = plgpu.SMEM(
+        (compute_wgs, block_q, head_dim), jnp.float16,
+        transforms=(tiling, swizzle),
+    )
+    k_scratch = plgpu.SMEM(
+        (max_concurrent_steps, block_kv, head_dim), jnp.float16,
+        transforms=(tiling, plgpu.TransposeTransform((0, 2, 1, 3, 4)), swizzle),
+    )
+    v_scratch = plgpu.SMEM(
+        (max_concurrent_steps, block_kv, head_dim), jnp.float16,
+        transforms=(tiling, swizzle),
+    )
+    pl.run_scoped(
+        lambda *args: kernel(q_ref, k_ref, v_ref, out_ref, args),
+        (qo_scratch, k_scratch, v_scratch),
+        (
+            plgpu.Barrier(1, num_barriers=max_concurrent_steps),
+            plgpu.Barrier(1, num_barriers=max_concurrent_steps),
+            plgpu.Barrier(1, num_barriers=compute_wgs),
+        ),
+        (plgpu.Barrier(num_arrivals=compute_wgs, num_barriers=max_concurrent_steps),) * 2,
+        plgpu.Barrier(num_arrivals=compute_wgs),
     )
 
-    @pl.core_map(
-        mesh, compiler_params=plgpu.GPUCompilerParams(approx_math=True)
-    )
-    def _kernel_entry():
-      compute_wgs = 2
-      tiling = plgpu.TilingTransform((64, 64))
-      swizzle = plgpu.SwizzleTransform(128)
-      qo_scratch = plgpu.SMEM(
-          (compute_wgs, block_q, head_dim), jnp.float16,
-          transforms=(tiling, swizzle),
-      )
-      k_scratch = plgpu.SMEM(
-          (max_concurrent_steps, block_kv, head_dim), jnp.float16,
-          transforms=(tiling, plgpu.TransposeTransform((0, 2, 1, 3, 4)), swizzle),
-      )
-      v_scratch = plgpu.SMEM(
-          (max_concurrent_steps, block_kv, head_dim), jnp.float16,
-          transforms=(tiling, swizzle),
-      )
-      pl.run_scoped(
-          lambda *args: kernel(q_ref, k_ref, v_ref, out_ref, args),
-          (qo_scratch, k_scratch, v_scratch),
-          (
-              plgpu.Barrier(1, num_barriers=max_concurrent_steps),
-              plgpu.Barrier(1, num_barriers=max_concurrent_steps),
-              plgpu.Barrier(1, num_barriers=compute_wgs),
-          ),
-          (plgpu.Barrier(num_arrivals=compute_wgs, num_barriers=max_concurrent_steps),) * 2,
-          plgpu.Barrier(num_arrivals=compute_wgs),
-      )
+  num_q_tiles, rem = divmod(q_seq_len, block_q * 2)
+  if rem:
+    raise NotImplementedError(f"{q_seq_len=} must be a multiple of {block_q * 2=}")
 
-  _, _, _, out = pl.run_state(run)((q, k, v, jnp.full_like(q, jnp.inf)))
-  return out
+  return plgpu.kernel(
+      entry,
+      out_shape=q,
+      grid=(batch_size, num_q_tiles, num_q_heads),
+      num_threads=3,
+      axis_names=("batch", "q_seq", "heads", "wg"),
+      compiler_params=plgpu.GPUCompilerParams(approx_math=True),
+  )(q, k, v)
 
 
 @jax.jit
