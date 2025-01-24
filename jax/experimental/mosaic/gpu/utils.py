@@ -334,7 +334,8 @@ def bytewidth(ty: ir.Type):
   assert bw % 8 == 0, ty
   return bw // 8
 
-def bitwidth(ty: ir.Type):
+
+def bitwidth_impl(ty: ir.Type):
   # The actual width of TF32 is 19 bits. However, sinc we need to treat it as
   # 32 bits for compatibility reasons. TF32 used to be 32 bits wide in upstream
   # MLIR, but it changed in
@@ -348,6 +349,13 @@ def bitwidth(ty: ir.Type):
   if dialect is not None and ir.Type.parse("!mosaic_gpu.barrier"):
     return MBARRIER_BYTES * 8
   raise NotImplementedError(ty)
+
+
+def bitwidth(ty: ir.Type):
+  result = bitwidth_impl(ty)
+  if result.bit_count() != 1:
+    raise ValueError(f"Unsupported bitwidth: {result}")
+  return result
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1067,13 +1075,24 @@ def memref_ptr(memref_arg, memory_space=None):
   desc = builtin.UnrealizedConversionCastOp([desc_ty], [memref_arg])
   aligned_ptr = llvm.extractvalue(ptr_ty, desc, [1])
 
-  elem_bytewidth = bytewidth(memref_ty.element_type)
   offset_elems = llvm.extractvalue(i64, desc, [2])
-  offset_bytes = llvm.mul(
-      offset_elems,
-      c(elem_bytewidth, i64),
-      overflow_flags=llvm.IntegerOverflowFlags.none,
-  )
+  elem_bitwidth = bitwidth(memref_ty.element_type)
+  if elem_bitwidth < 8:
+    *_, static_offset = memref_ty.get_strides_and_offset()
+    if static_offset == ir.ShapedType.get_dynamic_stride_or_offset():
+      raise NotImplementedError
+    assert elem_bitwidth.bit_count() == 1
+    packing = 8 // elem_bitwidth
+    if static_offset % packing != 0:
+      raise ValueError
+    offset_bytes = c(static_offset // packing, i64)
+  else:
+    assert elem_bitwidth % 8 == 0
+    offset_bytes = llvm.mul(
+        offset_elems,
+        c(elem_bitwidth // 8, i64),
+        overflow_flags=llvm.IntegerOverflowFlags.none,
+    )
   return llvm.inttoptr(
       ptr_ty,
       llvm.add(
