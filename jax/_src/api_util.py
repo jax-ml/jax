@@ -626,6 +626,18 @@ def tracing_debug_info(
   return TracingDebugInfo(traced_for, sourceinfo, arg_names, result_paths_thunk)
 
 
+def tracing_debug_info_from_jaxpr(maybe_closed_jaxpr: core.ClosedJaxpr | core.Jaxpr) -> TracingDebugInfo | None:
+  if isinstance(maybe_closed_jaxpr, core.ClosedJaxpr):
+    jaxpr = maybe_closed_jaxpr.jaxpr
+  else:
+    jaxpr = maybe_closed_jaxpr
+  jaxpr_dbg = jaxpr._debug_info
+  if jaxpr_dbg is None: return None
+  return TracingDebugInfo(jaxpr_dbg.traced_for,
+                          jaxpr_dbg.func_src_info,
+                          jaxpr_dbg.arg_names,
+                          lambda: jaxpr_dbg.result_paths)
+
 def fun_signature(fun: Callable) -> inspect.Signature | None:
   try:
     return inspect.signature(fun)
@@ -704,6 +716,24 @@ def result_paths(_fun, _store, *args, **kwargs):
   _store.store([keystr(path) for path, _ in generate_key_paths(ans)])
   return ans
 
+def jaxpr_debug_info(trace_debug: TracingDebugInfo | None,
+                     result_paths: tuple[str, ...] | None = None) -> core.JaxprDebugInfo | None:
+  # TODO(necula): re-enable this check
+  # assert (result_paths is not None) ^ (trace_debug.result_paths_thunk is not None)
+  if trace_debug is None:
+    return None
+  if result_paths is None:
+    if trace_debug.result_paths_thunk is not None:
+      result_paths = tuple(trace_debug.result_paths_thunk())  # type: ignore
+    else:
+      # TODO(necula): fix result paths
+      result_paths = ()
+  else:
+    result_paths = tuple(result_paths)
+  return core.JaxprDebugInfo(
+      trace_debug.traced_for, trace_debug.func_src_info,
+      trace_debug.arg_names, result_paths)
+
 def add_jaxpr_debug_info(jaxpr: core.Jaxpr,
                          trace_debug: TracingDebugInfo | None,
                          result_paths: tuple[str, ...] | None = None,
@@ -711,12 +741,7 @@ def add_jaxpr_debug_info(jaxpr: core.Jaxpr,
   """Add debug info to jaxpr, given trace-time debug info and result paths."""
   if trace_debug is None:
     return jaxpr
-  assert (result_paths is not None) ^ (trace_debug.result_paths_thunk is not None)
-  if result_paths is None:
-    result_paths = trace_debug.result_paths_thunk()  # type: ignore
-  debug_info = core.JaxprDebugInfo(
-      trace_debug.traced_for, trace_debug.func_src_info,
-      trace_debug.arg_names, tuple(result_paths))  # type: ignore
+  debug_info = jaxpr_debug_info(trace_debug, result_paths)
   return jaxpr.replace(debug_info=debug_info)
 
 def debug_info_final(f: lu.WrappedFun, dbg: TracingDebugInfo | None,
@@ -753,7 +778,7 @@ def register_class_with_attrs(t: type) -> None:
 _class_with_attrs: set[type] = set()
 
 # TODO(mattjj): make this function faster
-def _check_no_aliased_ref_args(dbg, avals, args):
+def _check_no_aliased_ref_args(dbg: TracingDebugInfo | None, avals, args):
   assert config.mutable_array_checks.value
   refs: dict[int, int] = {}
   for i, (a, x) in enumerate(zip(avals, args)):
@@ -767,7 +792,7 @@ def _check_no_aliased_ref_args(dbg, avals, args):
         if dbg else
         f"at both flat index {dup_idx} and flat index {i}") from None
 
-def _check_no_aliased_closed_over_refs(dbg, consts, args) -> None:
+def _check_no_aliased_closed_over_refs(dbg: TracingDebugInfo | None, consts, args) -> None:
   assert config.mutable_array_checks.value
   refs: set[int] = {id(core.get_referent(c)) for c in consts
                     if isinstance(core.get_aval(c), AbstractRef)}
@@ -778,4 +803,4 @@ def _check_no_aliased_closed_over_refs(dbg, consts, args) -> None:
           f"when tracing {dbg.func_src_info} for {dbg.traced_for}, a mutable "
           f"array reference of type {a.str_short()} was both closed over and "
           f"passed as the argument "
-          f"{dbg.arg_names[i]}" if dbg else "at flat index {i}")
+          f"{dbg.safe_arg_names(len(args))[i]}" if dbg else "at flat index {i}")

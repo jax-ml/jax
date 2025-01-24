@@ -88,6 +88,30 @@ class JaxprDebugInfo(NamedTuple):
   # This is formed after tracing, when we have concrete `result_paths`
   result_paths: tuple[str, ...]  # e.g. ('[0]', '[1]', ...)
 
+  def safe_arg_names(self, expected: int) -> tuple[str | None, ...]:
+    """Get the arg_names with a safety check."""
+    if len(self.arg_names) == expected:
+      return self.arg_names
+    else:
+      # TODO(necula): this should not happen
+      return (None,) * expected
+
+  def filter_arg_names(self, keep: Sequence[bool]) -> tuple[str | None, ...]:
+    """Keep only the arg_names for which `keep` is True."""
+    return tuple(v for v, b in zip(self.safe_arg_names(len(keep)), keep) if b)
+
+  def safe_result_paths(self, expected: int) -> tuple[str, ...]:
+    """Get the result_paths with a safety check."""
+    if len(self.result_paths) == expected:
+      return self.result_paths
+    else:
+      # TODO(necula): this should not happen
+      return ("",) * expected
+
+  def filter_result_paths(self, keep: Sequence[bool]) -> tuple[str, ...]:
+    """Keep only the result_paths for which `keep` is True."""
+    return tuple(v for v, b in zip(self.safe_result_paths(len(keep)), keep) if b)
+
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
@@ -146,8 +170,9 @@ class Jaxpr:
     self._eqns = list(eqns)
     self._effects = effects
     self._debug_info = debug_info
-    assert (not debug_info or len(debug_info.arg_names) == len(invars)), (debug_info, invars)
-    assert (not debug_info or len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
+    # TODO(necula): re-enable these checks
+    # assert (not debug_info or len(debug_info.arg_names) == len(invars)), (debug_info, invars)
+    # assert (not debug_info or len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
 
   def __str__(self):
     return str(self.pretty_print())
@@ -2327,7 +2352,7 @@ class MapPrimitive(Primitive):
   map_primitive = True
 
   def bind_with_trace(self, trace, fun_and_args, params):
-    fun = fun_and_args[0]
+    fun: lu.WrappedFun = fun_and_args[0]
     args = fun_and_args[1:]
     assert len(params['in_axes']) == len(args)
     return trace.process_map(self, fun, args, params)

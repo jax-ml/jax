@@ -273,14 +273,14 @@ class TracingDebugInfo(NamedTuple):
   # e.g. ('[0]', '[1]', ...)
   result_paths_thunk: Callable[[], tuple[str, ...]] | None
 
-  @classmethod
-  def from_jaxpr(cls, jaxpr: core.ClosedJaxpr) -> TracingDebugInfo | None:
-    jaxpr_dbg = jaxpr.jaxpr._debug_info
-    if jaxpr_dbg is None: return None
-    return TracingDebugInfo(jaxpr_dbg.traced_for,
-                            jaxpr_dbg.func_src_info,
-                            jaxpr_dbg.arg_names,
-                            lambda: jaxpr_dbg.result_paths)
+  def safe_arg_names(self, expected: int) -> tuple[str | None, ...]:
+    """Get the arg_names with a safety check."""
+    if len(self.arg_names) == expected:
+      return self.arg_names
+    else:
+      # TODO(necula): this should not happen
+      return (None,) * expected
+
 
 def wrap_init(f: Callable, params=None, *,
               debug_info: TracingDebugInfo | None = None) -> WrappedFun:

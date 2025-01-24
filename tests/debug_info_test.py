@@ -654,7 +654,6 @@ class DebugInfoTest(jtu.JaxTestCase):
 
   def test_cond(self):
     leaked_tracers: list[core.Tracer] = []
-
     def my_f(x):
       def my_true_branch(a, b):
         leaked_tracers.append(a)
@@ -672,9 +671,8 @@ class DebugInfoTest(jtu.JaxTestCase):
         leaked_tracers=leaked_tracers,
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=my_f, arg_names=('x',), result_paths=('',)",
-            # TODO(necula): some Jaxprs without debug info
-            'None',
-            'None'],
+            "traced_for=cond, fun=my_false_branch, arg_names=('c', 'd'), result_paths=('',)",
+            "traced_for=cond, fun=my_true_branch, arg_names=('a', 'b'), result_paths=('',)"],
         expected_tracer_debug_infos=[
             "traced_for=cond, fun=my_true_branch, arg_names=('a', 'b')",
             "traced_for=cond, fun=my_false_branch, arg_names=('c', 'd')"
@@ -726,7 +724,6 @@ class DebugInfoTest(jtu.JaxTestCase):
 
   def test_while_loop(self):
     leaked_tracers: list[core.Tracer] = []
-
     def my_f(x):
       def my_cond(a):
         leaked_tracers.append(a)
@@ -744,9 +741,8 @@ class DebugInfoTest(jtu.JaxTestCase):
         leaked_tracers=leaked_tracers,
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=my_f, arg_names=('x',), result_paths=('',)",
-            # TODO(necula): some Jaxprs without debug info
-            'None',
-            'None'],
+            "traced_for=while_cond, fun=my_cond, arg_names=('a',), result_paths=('',)",
+            "traced_for=while_loop, fun=my_body, arg_names=('b',), result_paths=('',)"],
         expected_tracer_debug_infos=[
             "traced_for=while_cond, fun=my_cond, arg_names=('a',)",
             "traced_for=while_loop, fun=my_body, arg_names=('b',)"
@@ -785,7 +781,6 @@ class DebugInfoTest(jtu.JaxTestCase):
 
   def test_pmap_of_grad(self):
     leaked_tracers: list[core.Tracer] = []
-
     def my_f(x):
       leaked_tracers.append(x)
       return jnp.sin(x)
@@ -795,8 +790,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         np.ones((jax.device_count(),), dtype=np.float32),
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=my_f, arg_names=('x',), result_paths=('',)",
-            # TODO(necula): missing debug_info
-            'None'
+            "traced_for=xla_pmap, fun=my_f, arg_names=('x',), result_paths=('',)"
         ],
         leaked_tracers=leaked_tracers,
         expected_tracer_debug_infos=[
@@ -807,7 +801,6 @@ class DebugInfoTest(jtu.JaxTestCase):
 
   def test_remat(self):
     leaked_tracers: list[core.Tracer] = []
-
     def my_f(x):
       @jax.remat
       def my_g(y):
@@ -822,15 +815,13 @@ class DebugInfoTest(jtu.JaxTestCase):
         leaked_tracers=leaked_tracers,
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=my_f, arg_names=('x',), result_paths=('',)",
-            # TODO(necula): some Jaxprs without debug info
-            'None'],
+            "traced_for=checkpoint / remat, fun=my_g, arg_names=('y',), result_paths=()"],
         expected_tracer_debug_infos=[
             "traced_for=checkpoint / remat, fun=my_g, arg_names=('y',)"
         ])
 
   def test_grad_remat(self):
     leaked_tracers: list[core.Tracer] = []
-
     def my_f(x):
       @jax.remat
       def my_g(y):
@@ -877,9 +868,12 @@ class DebugInfoTest(jtu.JaxTestCase):
         jax.jit(my_f), x,
         leaked_tracers=leaked_tracers,
         expected_jaxpr_debug_infos=[
+            # TODO(necula): arg_names seem to be wrong
             "traced_for=jit, fun=my_f, arg_names=('x',), result_paths=('',)",
-            # TODO(necula): missing Jaxpr debug info
-            "None", "None", "None", "None"],
+            "traced_for=pallas_call index_map, fun=my_index_map, arg_names=('i[0]', 'i[1]'), result_paths=('[0]', '[1]')",
+            "traced_for=pallas_call index_map, fun=my_index_map, arg_names=('i[0]', 'i[1]'), result_paths=('[0]', '[1]')",
+            "traced_for=pallas_call index_map, fun=my_index_map, arg_names=('i[0]', 'i[1]'), result_paths=('[0]', '[1]')",
+            "traced_for=pallas_call, fun=my_kernel, arg_names=('x_ref', 'y_ref', 'o_ref'), result_paths=()"],
         expected_tracer_debug_infos=[
             # TODO(necula): arg_names seem to be wrong
             # One tracer from every index map
