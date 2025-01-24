@@ -64,18 +64,17 @@ class TPUCompilerParams(pallas_core.CompilerParams):
   """Mosaic TPU compiler parameters.
 
   Attributes:
-    dimension_semantics: A list of dimension semantics for each grid
-      dimension of the kernel. Either "parallel" for dimensions that can
-      execute in any order, or "arbitrary" for dimensions that must be
-      executed sequentially.
+    dimension_semantics: A list of dimension semantics for each grid dimension
+      of the kernel. Either "parallel" for dimensions that can execute in any
+      order, or "arbitrary" for dimensions that must be executed sequentially.
     allow_input_fusion: A list of booleans indicating whether input fusion is
       allowed for each argument.
-    vmem_limit_bytes: Overrides the default VMEM limit for a kernel. Note
-      that this must be used in conjunction with the
+    vmem_limit_bytes: Overrides the default VMEM limit for a kernel. Note that
+      this must be used in conjunction with the
       --xla_tpu_scoped_vmem_limit_kib=N flag with N*1kib > vmem_limit_bytes.
     collective_id: Indicates which barrier semaphore to use for the kernel.
-      Note that using the same collective_id does not guarantee that
-      the same barrier semaphore will be allocated between kernels.
+      Using the same collective_id guarantees that the same barrier semaphore
+      will be allocated between kernels.
     internal_scratch_in_bytes: The size of the internal scratch space used by
       Mosaic.
     flags: A dictionary of command line flags for the kernel.
