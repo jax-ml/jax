@@ -407,6 +407,7 @@ def _lower_tpu_kernel(
         (
             "func.func(tpu-relayout-insertion{"
             f" sublane-count={sl_cnt} lane-count={l_cnt}"
+            f" hardware-generation={hardware_generation}"
             "})"
         ),
     ]

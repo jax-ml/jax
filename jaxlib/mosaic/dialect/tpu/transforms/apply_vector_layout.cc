@@ -2172,6 +2172,74 @@ LogicalResult tpu_assume_layout_rule(RewriteContext &ctx, Operation &op,
   return success();
 }
 
+LogicalResult tpu_relayout_rule(RewriteContext &ctx, Operation &op,
+                                const ArrayRef<Layout> layouts_in,
+                                const ArrayRef<Layout> layouts_out) {
+  TPU_ASSERT_EQ_OP(op.getNumOperands(), 1);
+  TPU_ASSERT_EQ_OP(op.getNumResults(), 1);
+  TPU_ASSERT_EQ_OP(layouts_in.size(), 1);
+  TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
+  TPU_ASSERT_OP(layouts_in[0].has_value());
+  TPU_ASSERT_OP(layouts_out[0].has_value());
+  const auto& in_layout = *layouts_in[0];
+  const auto& out_layout = *layouts_out[0];
+  auto realyout_op = cast<tpu::RelayoutOp>(op);
+  auto in_bitwidth = in_layout.bitwidth();
+  auto out_bitwidth = out_layout.bitwidth();
+  auto vty = cast<VectorType>(realyout_op.getType());
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
+  if (in_layout == out_layout) {
+    realyout_op.replaceAllUsesWith(realyout_op.getInput());
+    realyout_op.erase();
+    return success();
+  }
+  FAILUREOR_ASSIGN_OR_RETURN(
+      xla::Array<Value> vals,
+      disassemble(builder, in_layout,
+                  cast<TypedValue<VectorType>>(realyout_op.getInput()),
+                  ctx.target_shape,
+                  /*use_implicit_shape=*/true));
+  // Packing vector masks from 32-bit to 16-bit.
+  if (vty.getElementType() == builder.getI1Type() && in_bitwidth == 32 &&
+      out_bitwidth == 16 &&
+      in_layout.tiling()[0] == in_layout.packing() * ctx.target_shape[0] &&
+      in_layout.tiling()[1] == ctx.target_shape[1] &&
+      in_layout.tiling() == out_layout.tiling() &&
+      in_layout.offsets() == out_layout.offsets() &&
+      in_layout.implicit_dim() == out_layout.implicit_dim()) {
+    std::vector<int64_t> vmsks_shape(vals.dimensions().begin(),
+                                     vals.dimensions().end());
+    *(vmsks_shape.end() - 1) = llvm::divideCeil(vmsks_shape.back(), 2);
+    xla::Array<Value> out_vmsks(vmsks_shape, nullptr);
+    SmallVector<int64_t> val_idx;
+    Value default_val =
+        getFullLikeVector(builder, cast<TypedValue<VectorType>>(*vals.begin()),
+                          IntegerAttr::get(builder.getI1Type(), 0));
+    out_vmsks.Each([&](absl::Span<const int64_t> idx, Value *v) {
+      val_idx.assign(idx.begin(), idx.end());
+      // TODO(jevinjiang): can be simplified when offset is replicated.
+      *(val_idx.end() - 1) *= 2;
+      Value low_part = *(val_idx.end() - 1) < *(vals.dimensions().end() - 1)
+                           ? vals(val_idx)
+                           : default_val;
+      *(val_idx.end() - 1) += 1;
+      Value high_part = *(val_idx.end() - 1) < *(vals.dimensions().end() - 1)
+                            ? vals(val_idx)
+                            : default_val;
+      const VectorType mask_ty = getNativeVregOrVmaskType(
+          builder.getI1Type(), in_bitwidth / 2, ctx.target_shape);
+      *v = builder.create<PackMaskOp>(mask_ty, low_part, high_part);
+    });
+    const RollVectorsOp rolled_op =
+        assemble(builder, vty, out_layout, out_vmsks, ctx.target_shape,
+                 /*use_implicit_shape=*/true);
+    op.replaceAllUsesWith(rolled_op);
+    op.erase();
+    return success();
+  }
+  return op.emitOpError("Not implemented: unsupported layout change");
+}
+
 // TODO(b/347016737): Deprecate tpu.rotate and only use tpu.dynamic_rotate. So
 // we do not need template for the op type and to explicitly force amount
 // argument to dynamic.
@@ -4644,9 +4712,9 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
   return success();
 }
 
-LogicalResult prng_random_bits_rule(RewriteContext &ctx, Operation &op,
-                                    const ArrayRef<Layout> layouts_in,
-                                    const ArrayRef<Layout> layouts_out) {
+LogicalResult tpu_prng_random_bits_rule(RewriteContext &ctx, Operation &op,
+                                        const ArrayRef<Layout> layouts_in,
+                                        const ArrayRef<Layout> layouts_out) {
   TPU_ASSERT_EQ_OP(layouts_in.size(), 0);
   TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
   TPU_ASSERT_OP(layouts_out.front().has_value());
@@ -4711,7 +4779,8 @@ const llvm::StringMap<rule_type> &rules() {
         {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},
         {tpu::TraceOp::getOperationName(), tpu_trace_rule},
         {tpu::AssumeLayoutOp::getOperationName(), tpu_assume_layout_rule},
-        {tpu::PRNGRandomBitsOp::getOperationName(), prng_random_bits_rule},
+        {tpu::PRNGRandomBitsOp::getOperationName(), tpu_prng_random_bits_rule},
+        {tpu::RelayoutOp::getOperationName(), tpu_relayout_rule},
         {tpu::FPToSIOp::getOperationName(), tpu_fptosi_rule},
         {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
         {vector::ExtractOp::getOperationName(), vector_extract_rule},
