@@ -29,15 +29,15 @@ import time
 from typing import Any
 
 import jax
-from jax._src import core
 from jax._src import config
+from jax._src import core
 from jax._src import sharding_impls
 from jax._src.interpreters import mlir
 from jax._src.lib import tpu
 from jax._src.lib import xla_client
 from jax.interpreters import xla
 from jaxlib.mlir import ir
-from jaxlib.mlir.dialects import mhlo
+from jaxlib.mlir.dialects import stablehlo
 from jaxlib.mlir.passmanager import PassManager
 
 try:
@@ -318,15 +318,13 @@ def _lower_tpu_kernel(
     ctx.append_dialect_registry(mlir.upstream_dialects)
     ctx.load_all_available_dialects()
     tpu.register_dialect(ctx)
-    mhlo.register_mhlo_dialect(ctx)
-    mhlo.register_mhlo_passes()
+    stablehlo.register_dialect(ctx)
     dump_mlir(module, "original", get_dump_file_prefix(), kernel_name)
 
     if _MOSAIC_ALLOW_HLO.value:
-      # Run hlo dialect conversion: hlo -> linalg -> vector.
+      # Run dialect conversion: StableHLO -> linalg -> vector.
       pipeline = [
-          "hlo-legalize-to-arithmetic",
-          "func.func(hlo-legalize-to-linalg)",
+          "func.func(stablehlo-legalize-to-linalg)",
           "func.func(linalg-vectorization)",
       ]
       pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
