@@ -2769,14 +2769,13 @@ ad.primitive_transposes[conj_p] = _conj_transpose_rule
 abs_p = unop(_complex_basetype, _signedint | _float | _complex, 'abs')
 mlir.register_lowering(abs_p, partial(_nary_lower_hlo, hlo.abs))
 
-def _abs_jvp_rule(g, ans, x):
+def _abs_jvp_rule(g, x):
   if _iscomplex(x):
-    return _maybe_real(mul(g, div(_maybe_conj(x),
-           _replace_zero(convert_element_type(ans, _dtype(x))))))
+    a = atan2(imag(x), real(x))
+    return _maybe_real(mul(g, complex(cos(a), neg(sin(a)))))
   else:
     return select(ge(x, _zero(x)), g, neg(g))
-ad.defjvp2(abs_p, _abs_jvp_rule)
-_maybe_conj = lambda x: conj(x) if _iscomplex(x) else x
+ad.defjvp(abs_p, _abs_jvp_rule)
 _maybe_real = lambda x: real(x) if _iscomplex(x) else x
 
 sqrt_p = standard_unop(_float | _complex, 'sqrt')
