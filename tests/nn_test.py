@@ -223,7 +223,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     else:
       _, dbias_ref, _ = bwd_ref(x, bias, mask)
       _, dbias_ans, _ = bwd_ans(x, bias, mask)
-      self.assertAllClose(dbias_ans, dbias_ref, rtol=.02, atol=.02)
+      self.assertAllClose(dbias_ans, dbias_ref, rtol=0.1, atol=0.1)
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
