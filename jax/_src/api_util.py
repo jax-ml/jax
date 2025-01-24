@@ -67,7 +67,8 @@ def _ensure_str_tuple(x: str | Iterable[str]) -> tuple[str, ...]:
     return tuple(map(_ensure_str, x))
 
 @lu.transformation_with_aux2
-def flatten_fun(f, store, in_tree, *args_flat):
+def flatten_fun(f: Callable, store: lu.Store,
+                in_tree: PyTreeDef, *args_flat):
   py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
   ans = f(*py_args, **py_kwargs)
   ans, out_tree = tree_flatten(ans)
@@ -587,8 +588,8 @@ def debug_info(
     args: Sequence[Any],
     kwargs: dict[str, Any],
     *,
-    static_argnums: tuple[int, ...] = (),
-    static_argnames: tuple[str, ...] = (),
+    static_argnums: Sequence[int] = (),
+    static_argnames: Sequence[str] = (),
     result_paths_thunk: Callable[[], tuple[str, ...]] | None = None,
     # TODO(necula): check if we really need this, e.g., to speed up tracing?
     sourceinfo: str | None = None,

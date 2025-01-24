@@ -983,7 +983,7 @@ def vmap(fun: F,
                        "to the positional arguments passed to the function, "
                        f"but got {len(in_axes)=}, {len(args)=}")
     args_flat, in_tree  = tree_flatten((args, kwargs), is_leaf=batching.is_vmappable)
-    f = lu.wrap_init(fun)
+    f = lu.wrap_init(fun, debug_info=debug_info("vmap", fun, args, kwargs))
     flat_fun, out_tree = batching.flatten_fun_for_vmap(f, in_tree)
     in_axes_flat = flatten_axes("vmap in_axes", in_tree, (in_axes, 0), kws=True)
     axis_size_ = (axis_size if axis_size is not None else
@@ -1715,15 +1715,15 @@ def jvp(
   0.19900084
   """
   check_callable(fun)
-  return _jvp(lu.wrap_init(fun), primals, tangents, has_aux=has_aux)
-
-def _jvp(fun: lu.WrappedFun, primals, tangents, has_aux=False):
-  """Variant of jvp() that takes an lu.WrappedFun."""
   if (not isinstance(primals, (tuple, list)) or
       not isinstance(tangents, (tuple, list))):
     raise TypeError("primal and tangent arguments to jax.jvp must be tuples or lists; "
                     f"found {type(primals).__name__} and {type(tangents).__name__}.")
+  return _jvp(lu.wrap_init(fun, debug_info=debug_info("jvp", fun, primals, {})),
+              primals, tangents, has_aux=has_aux)
 
+def _jvp(fun: lu.WrappedFun, primals, tangents, has_aux=False):
+  """Variant of jvp() that takes an lu.WrappedFun."""
   ps_flat, tree_def = tree_flatten(primals)
   ts_flat, tree_def_2 = tree_flatten(tangents)
   if tree_def != tree_def_2:
@@ -1835,7 +1835,7 @@ def linearize(fun: Callable, *primals, has_aux: bool = False
   -6.676704
   """
   check_callable(fun)
-  f = lu.wrap_init(fun)
+  f = lu.wrap_init(fun, debug_info=debug_info("linearize", fun, primals, {}))
   primals_flat, in_tree = tree_flatten(primals)
   if has_aux:
     jaxtree_fun, out_tree = flatten_fun_nokwargs2(f, in_tree)
@@ -1983,8 +1983,9 @@ def vjp(
     raise NotImplementedError("reduce_axes argument to vjp is deprecated")
   del reduce_axes
   check_callable(fun)
-  return _vjp(
-      lu.wrap_init(fun), *primals, has_aux=has_aux)
+  wrapped_fun = lu.wrap_init(fun,
+                             debug_info=debug_info("vjp", fun, primals, {}))
+  return _vjp(wrapped_fun, *primals, has_aux=has_aux)
 
 def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
   """Variant of vjp() that takes an lu.WrappedFun."""
@@ -2049,7 +2050,10 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
     raise NotImplementedError("reduce_axes argument to transpose is deprecated")
   del reduce_axes
   primals_flat, in_tree = tree_flatten(primals)
-  flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+  flat_fun, out_tree = flatten_fun_nokwargs(
+      lu.wrap_init(fun,
+                   debug_info=debug_info("linear_transpose", fun, primals, {})),
+      in_tree)
   in_avals = map(shaped_abstractify, primals_flat)
   in_dtypes = map(dtypes.dtype, in_avals)
 

@@ -361,8 +361,9 @@ def default_checkify_rule(primitive: core.Primitive, error: Error,
   else:
     jaxpr, consts = call_jaxpr, ()
   consts_ = tuple(HashableWrapper(c) for c in consts)
-  partial_checkify = lu.hashable_partial(lu.wrap_init(
-      checkify_jaxpr_flat_hashable), jaxpr, consts_, enabled_errors, err_tree)
+  partial_checkify = lu.hashable_partial(
+      lu.wrap_init(checkify_jaxpr_flat_hashable, debug_info=jaxpr.debug_info),
+      jaxpr, consts_, enabled_errors, err_tree)
   partial_checkify, metadata = _flatten_and_get_error_metadata_thunk(
       partial_checkify)
 
@@ -746,7 +747,7 @@ def jaxpr_to_checkify_jaxpr(
   checkify_jaxpr_partial = functools.partial(checkify_jaxpr_flat, jaxpr.jaxpr,
                                              jaxpr.consts, enabled_errors,
                                              err_tree)
-  fun = lu.wrap_init(checkify_jaxpr_partial)
+  fun = lu.wrap_init(checkify_jaxpr_partial, debug_info=jaxpr.jaxpr.debug_info)
   fun, metadata = _flatten_and_get_error_metadata_thunk(fun)
 
   new_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun, flat_err_and_in_vals)
