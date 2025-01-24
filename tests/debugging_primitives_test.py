@@ -1165,6 +1165,33 @@ class InspectShardingTest(jtu.JaxTestCase):
       f(arr)
 
 
+class FfiLogTest(jtu.JaxTestCase):
+  def test_basic(self):
+    debugging.ffi_log(jnp.zeros((1, 2, 3)), prefix="test logging")
+
+  @jtu.run_on_devices("gpu")
+  def test_partitioning(self):
+    if jax.device_count() < 2:
+      raise unittest.SkipTest("Test requires >= 2 devices.")
+
+    @jax.jit
+    def fun(x):
+      debugging.ffi_log(x, prefix="test logging")
+
+    mesh = jtu.create_mesh((2,), ("x",))
+    x = jax.device_put(
+        jnp.arange(4 * 5 * 6).reshape(4, 5, 6),
+        jax.sharding.NamedSharding(
+            mesh, jax.sharding.PartitionSpec("x", None, None)
+        )
+    )
+    fun(x)  # doesn't crash
+    hlo = fun.lower(x).compile().as_text()
+    self.assertNotIn("all-", hlo)
+    self.assertIn("custom-call(s64[2,5,6]{2,1,0}", hlo)
+    self.assertIn("__gpu$jax.gpu.log", hlo)
+
+
 if not rich:
   del VisualizeShardingTest
 
