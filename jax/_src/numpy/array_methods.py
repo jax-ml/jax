@@ -818,7 +818,7 @@ class _IndexUpdateRef:
     def _scatter_apply(x, indices, y, dims, **kwargs):
       return lax.scatter_apply(x, indices, func, dims, update_shape=y.shape, **kwargs)
     return scatter._scatter_update(self.array, self.index,
-                                   lax_internal._zero(self.array.dtype),
+                                   lax_internal._zero(self.array),
                                    _scatter_apply,
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode)
