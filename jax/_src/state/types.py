@@ -266,6 +266,14 @@ class TransformedRef:
         (*self.transforms, RefReshaper.from_ref_new_shape(self, *shape)),
     )
 
+  def set(self, value, idx=()):
+    from jax._src.state.primitives import ref_set  # pytype: disable=import-error
+    return ref_set(self, idx, value)
+
+  def get(self, idx=()):
+    from jax._src.state.primitives import ref_get  # pytype: disable=import-error
+    return ref_get(self, idx)
+
   def __getattr__(self, name):
     return getattr(self.ref, name)
 
