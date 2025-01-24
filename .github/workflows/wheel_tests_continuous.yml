@@ -20,6 +20,10 @@ name: CI - Wheel Tests (Continuous)
 on:
   schedule:
     - cron: "0 */2 * * *" # Run once every 2 hours
+  # DO NOT SUBMIT without removing this
+  pull_request:
+    branches:
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
