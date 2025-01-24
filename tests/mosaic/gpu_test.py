@@ -1997,7 +1997,8 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
     self.assertArraysEqual(jax.jit(kernel)(x, y), x + y)
 
-  def test_pointwise_kernel_with_tma(self):
+  @parameterized.parameters(*mgpu_dialect.SwizzlingMode)
+  def test_pointwise_kernel_with_tma(self, swizzle):
     def add(
         ctx: launch_context.LaunchContext,
         a_gmem_ref: ir.Value,
@@ -2029,6 +2030,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           transforms=ir.ArrayAttr.get([]),
           collective=ir.ArrayAttr.get([]),
           arrive=False,
+          swizzle=swizzle,
       )
       mgpu_dialect.async_load(
           source=b_gmem_ref,
@@ -2039,6 +2041,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           transforms=ir.ArrayAttr.get([]),
           collective=ir.ArrayAttr.get([]),
           arrive=False,
+          swizzle=swizzle,
       )
 
       tma_barrier.wait()
@@ -2063,12 +2066,14 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           indices=[zero_i32, zero_i32],
           slice_lengths=shape,
           transforms=ir.ArrayAttr.get([]),
+          swizzle=swizzle,
       )
       nvvm.cp_async_bulk_wait_group(0)
       utils.warpgroup_barrier()
 
     dtype = jnp.bfloat16
-    shape = (128, 128)
+    shape = (128, swizzle*8 // jnp.finfo(dtype).bits)
+
     jax_shape = jax.ShapeDtypeStruct(shape, dtype)
     kernel = mgpu.as_gpu_kernel(
         add,

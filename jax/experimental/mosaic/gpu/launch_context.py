@@ -20,6 +20,7 @@ import functools
 import math
 from typing import Any
 
+from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import func
@@ -287,6 +288,11 @@ class LaunchContext:
         )
         rank = ref_ty.rank
         assert rank * 2 == len(sizes_and_strides)
+        swizzle_arg = (
+            mgpu_dialect.SwizzlingMode.kNoSwizzle
+            if swizzle is None
+            else swizzle
+        )
         args = [
             host_ptr,
             base_ptr,
@@ -294,7 +300,7 @@ class LaunchContext:
             c(rank, i64),
             utils.pack_array([as_i64(i) for i in sizes_and_strides[:rank]]),
             utils.pack_array([as_i64(i) for i in sizes_and_strides[rank:]]),
-            c(0 if swizzle is None else swizzle, i64),
+            c(swizzle_arg, i64),
             utils.pack_array([c(v, i64) for v in transformed_slice_shape]),
         ]
         func.call([], "mosaic_gpu_init_tma_desc", args)
@@ -513,12 +519,16 @@ class LaunchContext:
           "Async copies require the number of bytes copied along the last"
           f" dimension to be divisible by 16, but got {zeroth_bw}"
       )
-    if swizzle is not None and slice_shape[-1] != (swizzle * 8) // element_bitwidth:
+    if (
+        swizzle is not None
+        and swizzle != mgpu_dialect.SwizzlingMode.kNoSwizzle
+        and slice_shape[-1] != (swizzle * 8) // element_bitwidth
+    ):
       raise ValueError(
-          f"Async copies with {swizzle=} require last dimension of the slice to"
-          f" be exactly {swizzle} bytes"
-          f" ({(swizzle * 8) // element_bitwidth} elements), but got"
-          f" {slice_shape[-1]}"
+          f"Async copies with {swizzle=} require the last dimension of the"
+          f" slice to be exactly {swizzle} bytes i.e. "
+          f" {(swizzle * 8) // element_bitwidth} elements, but got"
+          f" {slice_shape[-1]} elements."
       )
     smem_ptr = utils.memref_ptr(smem_ref, memory_space=3)
     if gmem_ref is src_ref:
