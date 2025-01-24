@@ -423,7 +423,7 @@ class BlockSpec:
     )
     with tracing_grid_env(grid, mapped_dims):
       jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(
-          flat_index_map_fun, index_map_avals, debug_info=debug
+          flat_index_map_fun, index_map_avals
       )
     mapped_block_shape = tuple(mapped if s is None else s for s in block_shape)
     if len(out_avals) != len(block_shape):

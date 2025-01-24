@@ -101,12 +101,12 @@ def _pallas_call_jvp_rule(
     primals,
     tangents,
     *,
-    jaxpr,
+    jaxpr: jax_core.Jaxpr,
     name_and_src_info,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping,
-    debug,
-    interpret,
+    debug: bool,
+    interpret: bool,
     compiler_params: Any,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
@@ -1098,13 +1098,14 @@ def pallas_call_checkify_rule(error: checkify.Error,
   retrace_in_avals = [*shaped_scalar_avals, *error_memref_aval, *input_aval,
                       *error_memref_aval, *output_aval, *scratch_aval]
   jaxpr_flat_avals, jaxpr_in_tree = tree_util.tree_flatten(retrace_in_avals)
-  wrapped_kernel_with_err, out_tree_thunk = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(checked_kernel_fn), jaxpr_in_tree)
   debug = api_util.debug_info("checkify_pallas", checked_kernel_fn,
                               retrace_in_avals, {})
+  wrapped_kernel_with_err, out_tree_thunk = api_util.flatten_fun_nokwargs(
+      lu.wrap_init(checked_kernel_fn, debug_info=debug), jaxpr_in_tree)
+
   with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
     final_jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-        wrapped_kernel_with_err, jaxpr_flat_avals, debug)
+        wrapped_kernel_with_err, jaxpr_flat_avals)
 
   # Prepare pallas_call inputs. We need to create new block specs
   # for the new error inputs and outputs.
@@ -1161,16 +1162,16 @@ def _trace_kernel_to_jaxpr(
     kernel_in_transforms: tuple[tuple[pallas_core.Transform, ...], ...],
     indexer: bool = False,
 ) -> tuple[jax_core.ClosedJaxpr, tuple[jax.Array, ...]]:
+  fake_kernel_args = kernel_in_tree.unflatten(kernel_avals)
+  debug = api_util.debug_info("pallas_call", fun, fake_kernel_args, {})
   wrapped_kernel_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(fun), kernel_in_tree)
+      lu.wrap_init(fun, debug_info=debug), kernel_in_tree)
   wrapped_kernel_fun = primitives.wrap_with_transforms(
       wrapped_kernel_fun, kernel_in_transforms
   )
-  fake_kernel_args = kernel_in_tree.unflatten(kernel_avals)
-  debug = api_util.debug_info("pallas_call", fun, fake_kernel_args, {})
   with grid_mapping.trace_env():
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_kernel_fun,
-                                                     kernel_avals, debug)
+                                                     kernel_avals)
     if consts:
       consts_avals = [jax_core.get_aval(c) for c in consts]
       if any(not isinstance(aval, state.AbstractRef) for aval in consts_avals):

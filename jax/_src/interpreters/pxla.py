@@ -33,7 +33,6 @@ import numpy as np
 import jax
 
 from jax._src import api
-from jax._src import api_util
 from jax._src import compiler
 from jax._src import config
 from jax._src import core
@@ -652,7 +651,6 @@ class ParallelCallableInfo:
   in_axes: Iterable[int | None]
   out_axes_thunk: Callable[[], Sequence[int | None]]
   avals: Sequence[core.AbstractValue]
-  debug_info: core.DebugInfo | None
 
   @cached_property
   def local_devices(self):
@@ -723,8 +721,7 @@ def stage_parallel_callable(
         "Finished tracing + transforming {fun_name} for pmap in {elapsed_time} sec",
         fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
       jaxpr, out_sharded_avals, consts, _ = pe.trace_to_jaxpr_dynamic(
-          fun, sharded_avals, pci.debug_info)
-  jaxpr = api_util.add_jaxpr_debug_info(jaxpr, pci.debug_info)
+          fun, sharded_avals)
 
   assert len(out_sharded_avals) == len(pci.out_axes), (
       len(out_sharded_avals), len(pci.out_axes))
@@ -758,7 +755,7 @@ def get_pmap_jaxpr(
 
   pci = ParallelCallableInfo(
       name, backend, axis_name, axis_size, global_axis_size, devices,
-      in_axes, out_axes_thunk, avals, fun.debug_info)
+      in_axes, out_axes_thunk, avals)
   with core.extend_axis_env_nd([(axis_name, axis_size)]):
     jaxpr, consts, replicas, shards = stage_parallel_callable(pci, fun)
   jaxpr = core.remove_named_axis_effects(jaxpr, {axis_name})
@@ -992,7 +989,7 @@ class UnloadedPmapExecutable:
 
     return PmapExecutable(
         self.compiled, self.build_execute_fun, fingerprint,
-        self.local_input_avals, self.jaxpr_debug_info, self)
+        self.local_input_avals, self)
 
   @staticmethod
   def from_hlo(hlo: ir.Module,
@@ -1119,24 +1116,23 @@ class UnloadedPmapExecutable:
 
 class PmapExecutable(stages.XlaExecutable):
   __slots__ = ["xla_executable", "_unsafe_call", "build_unsafe_call",
-               "fingerprint", "in_avals", "_jaxpr_debug_info",
-               "_unloaded_executable"]
+               "fingerprint", "in_avals", "_unloaded_executable"]
 
   def __init__(self, xla_executable, build_unsafe_call, fingerprint,
-               in_avals, jaxpr_debug_info, unloaded_executable):
+               in_avals,
+               unloaded_executable: UnloadedPmapExecutable):
     self.xla_executable = xla_executable
     self._unsafe_call = None
     self.build_unsafe_call = build_unsafe_call
     self.fingerprint = fingerprint
     self.in_avals = in_avals
-    self._jaxpr_debug_info = jaxpr_debug_info
     self._unloaded_executable = unloaded_executable
 
   @property
   def unsafe_call(self) -> Callable[..., Any]:
     if self._unsafe_call is None:
       self._unsafe_call = self.build_unsafe_call()
-    return self._unsafe_call
+    return self._unsafe_call  # type: ignore
 
   # -- stages.XlaExecutable overrides
 
@@ -1147,7 +1143,8 @@ class PmapExecutable(stages.XlaExecutable):
   def call(self, *args):
     # TODO(frostig): do we need to check sharding and sharded avals?
     arg_avals = map(core.abstractify, args)
-    check_arg_avals_for_call(self.in_avals, arg_avals, self._jaxpr_debug_info)
+    check_arg_avals_for_call(self.in_avals, arg_avals,
+                             self._unloaded_executable.jaxpr_debug_info)
     return self.unsafe_call(*args)  # pylint: disable=not-callable
 
 
@@ -3206,7 +3203,7 @@ def check_arg_avals_for_call(ref_avals, arg_avals,
         f"but called with {len(arg_avals)}")
 
   if jaxpr_debug_info is not None:
-    arg_names = [f"'{name}'" for name in jaxpr_debug_info.arg_names]
+    arg_names = [f"'{name}'" for name in jaxpr_debug_info.safe_arg_names(len(ref_avals))]
   else:
     num_args = len(ref_avals)
     arg_names = [f"{i + 1}/{num_args}" for i in range(num_args)]

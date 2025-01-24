@@ -61,7 +61,7 @@ from jax._src.api_util import (
   flatten_axes, donation_vector,
   rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
   apply_flat_fun_nokwargs, check_callable, debug_info,
-  result_paths, flat_out_axes)
+  flat_out_axes)
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
@@ -1430,7 +1430,8 @@ def _prepare_pmap(fun: Callable, in_axes, out_axes, static_broadcasted_tuple,
       "pmap", fun, args, kwargs,
       static_argnums=static_broadcasted_tuple)
 
-  f = lu.wrap_init(fun)
+  f = lu.wrap_init(fun, debug_info=dbg)
+  del dbg
   if static_broadcasted_tuple:
     if max(static_broadcasted_tuple) >= len(args):
       raise ValueError(
@@ -1477,9 +1478,6 @@ def _prepare_pmap(fun: Callable, in_axes, out_axes, static_broadcasted_tuple,
     raise ValueError(msg) from None
   local_axis_size = _mapped_axis_size(fun, in_tree, args, in_axes_flat, "pmap")
 
-  f, res_paths = result_paths(f)
-  dbg = dbg.add_result_paths(res_paths)
-  f = lu.add_debug_info(f, dbg)
   f, out_axes_thunk = flat_out_axes(f, out_axes)
   flat_fun, out_tree = flatten_fun(f, in_tree)
 

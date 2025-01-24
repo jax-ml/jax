@@ -760,7 +760,8 @@ def _batch_jaxpr2(
     axis_data,
     in_axes: tuple[int | NotMapped | RaggedAxis, ...],
   ) -> tuple[core.ClosedJaxpr, tuple[int | NotMapped, ...]]:
-  f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
+  f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr),
+                   debug_info=closed_jaxpr.jaxpr.debug_info)
   f, out_axes = _batch_jaxpr_inner(f, axis_data)
   f = _batch_jaxpr_outer(f, axis_data, in_axes)
   in_axes2, avals_in = unzip2([

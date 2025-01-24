@@ -2369,7 +2369,8 @@ class CallPrimitive(Primitive):
   def get_bind_params(self, params):
     new_params = dict(params)
     jaxpr = new_params.pop('call_jaxpr')
-    subfun = lu.hashable_partial(lu.wrap_init(eval_jaxpr), jaxpr, ())
+    subfun = lu.hashable_partial(lu.wrap_init(eval_jaxpr, debug_info=jaxpr.debug_info),
+                                 jaxpr, ())
     if config.dynamic_shapes.value:
       subfun = lu.annotate(subfun, _jaxpr_type_to_callable_annotation(jaxpr))
     return [subfun], new_params
@@ -2402,7 +2403,7 @@ class MapPrimitive(Primitive):
   map_primitive = True
 
   def bind_with_trace(self, trace, fun_and_args, params):
-    fun = fun_and_args[0]
+    fun: lu.WrappedFun = fun_and_args[0]
     args = fun_and_args[1:]
     assert len(params['in_axes']) == len(args)
     return trace.process_map(self, fun, args, params)
@@ -2412,8 +2413,9 @@ class MapPrimitive(Primitive):
 
   def get_bind_params(self, params):
     new_params = dict(params)
-    jaxpr = new_params.pop('call_jaxpr')
-    subfun = lu.hashable_partial(lu.wrap_init(eval_jaxpr), jaxpr, ())
+    jaxpr: Jaxpr = new_params.pop('call_jaxpr')
+    subfun = lu.hashable_partial(lu.wrap_init(eval_jaxpr,
+                                              debug_info=jaxpr.debug_info), jaxpr, ())
     axes = new_params.pop('out_axes')
     new_params['out_axes_thunk'] = HashableFunction(lambda: axes, closure=axes)
     return [subfun], new_params
