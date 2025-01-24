@@ -1,0 +1,86 @@
+diff --git a/build/requirements_lock_3_13_ft.txt b/build/requirements_lock_3_13_ft.txt
+index dfefaf042..2700e140e 100644
+--- a/build/requirements_lock_3_13_ft.txt
++++ b/build/requirements_lock_3_13_ft.txt
+@@ -4,6 +4,12 @@
+ #
+ #    pip-compile --allow-unsafe --generate-hashes --output-file=build/requirements_lock_3_13_ft.txt build/requirements.in
+ #
++
++--pre
++--extra-index-url https://pypi.anaconda.org/scientific-python-nightly-wheels/simple
++numpy
++
++
+ absl-py==2.1.0 \
+     --hash=sha256:526a04eadab8b4ee719ce68f204172ead1027549089702d99b9059f129ff1308 \
+     --hash=sha256:7820790efbb316739cde8b4e19357243fc3608a152024288513dd968d7d959ff
+@@ -328,68 +334,6 @@ mpmath==1.3.0 \
+     --hash=sha256:7a28eb2a9774d00c7bc92411c19a89209d5da7c4c9a9e227be8330a23a25b91f \
+     --hash=sha256:a0b2b9fe80bbcd81a6647ff13108738cfb482d481d826cc0e02f5b35e5c88d2c
+     # via -r build/test-requirements.txt
+-numpy==2.2.1 ; python_version >= "3.13" \
+-    --hash=sha256:059e6a747ae84fce488c3ee397cee7e5f905fd1bda5fb18c66bc41807ff119b2 \
+-    --hash=sha256:08ef779aed40dbc52729d6ffe7dd51df85796a702afbf68a4f4e41fafdc8bda5 \
+-    --hash=sha256:164a829b6aacf79ca47ba4814b130c4020b202522a93d7bff2202bfb33b61c60 \
+-    --hash=sha256:26c9c4382b19fcfbbed3238a14abf7ff223890ea1936b8890f058e7ba35e8d71 \
+-    --hash=sha256:27f5cdf9f493b35f7e41e8368e7d7b4bbafaf9660cba53fb21d2cd174ec09631 \
+-    --hash=sha256:31b89fa67a8042e96715c68e071a1200c4e172f93b0fbe01a14c0ff3ff820fc8 \
+-    --hash=sha256:32cb94448be47c500d2c7a95f93e2f21a01f1fd05dd2beea1ccd049bb6001cd2 \
+-    --hash=sha256:360137f8fb1b753c5cde3ac388597ad680eccbbbb3865ab65efea062c4a1fd16 \
+-    --hash=sha256:3683a8d166f2692664262fd4900f207791d005fb088d7fdb973cc8d663626faa \
+-    --hash=sha256:38efc1e56b73cc9b182fe55e56e63b044dd26a72128fd2fbd502f75555d92591 \
+-    --hash=sha256:3d03883435a19794e41f147612a77a8f56d4e52822337844fff3d4040a142964 \
+-    --hash=sha256:3ecc47cd7f6ea0336042be87d9e7da378e5c7e9b3c8ad0f7c966f714fc10d821 \
+-    --hash=sha256:40f9e544c1c56ba8f1cf7686a8c9b5bb249e665d40d626a23899ba6d5d9e1484 \
+-    --hash=sha256:4250888bcb96617e00bfa28ac24850a83c9f3a16db471eca2ee1f1714df0f957 \
+-    --hash=sha256:4511d9e6071452b944207c8ce46ad2f897307910b402ea5fa975da32e0102800 \
+-    --hash=sha256:45681fd7128c8ad1c379f0ca0776a8b0c6583d2f69889ddac01559dfe4390918 \
+-    --hash=sha256:48fd472630715e1c1c89bf1feab55c29098cb403cc184b4859f9c86d4fcb6a95 \
+-    --hash=sha256:4c86e2a209199ead7ee0af65e1d9992d1dce7e1f63c4b9a616500f93820658d0 \
+-    --hash=sha256:4dfda918a13cc4f81e9118dea249e192ab167a0bb1966272d5503e39234d694e \
+-    --hash=sha256:5062dc1a4e32a10dc2b8b13cedd58988261416e811c1dc4dbdea4f57eea61b0d \
+-    --hash=sha256:51faf345324db860b515d3f364eaa93d0e0551a88d6218a7d61286554d190d73 \
+-    --hash=sha256:526fc406ab991a340744aad7e25251dd47a6720a685fa3331e5c59fef5282a59 \
+-    --hash=sha256:53c09385ff0b72ba79d8715683c1168c12e0b6e84fb0372e97553d1ea91efe51 \
+-    --hash=sha256:55ba24ebe208344aa7a00e4482f65742969a039c2acfcb910bc6fcd776eb4355 \
+-    --hash=sha256:5b6c390bfaef8c45a260554888966618328d30e72173697e5cabe6b285fb2348 \
+-    --hash=sha256:5c5cc0cbabe9452038ed984d05ac87910f89370b9242371bd9079cb4af61811e \
+-    --hash=sha256:5edb4e4caf751c1518e6a26a83501fda79bff41cc59dac48d70e6d65d4ec4440 \
+-    --hash=sha256:61048b4a49b1c93fe13426e04e04fdf5a03f456616f6e98c7576144677598675 \
+-    --hash=sha256:676f4eebf6b2d430300f1f4f4c2461685f8269f94c89698d832cdf9277f30b84 \
+-    --hash=sha256:67d4cda6fa6ffa073b08c8372aa5fa767ceb10c9a0587c707505a6d426f4e046 \
+-    --hash=sha256:694f9e921a0c8f252980e85bce61ebbd07ed2b7d4fa72d0e4246f2f8aa6642ab \
+-    --hash=sha256:733585f9f4b62e9b3528dd1070ec4f52b8acf64215b60a845fa13ebd73cd0712 \
+-    --hash=sha256:7671dc19c7019103ca44e8d94917eba8534c76133523ca8406822efdd19c9308 \
+-    --hash=sha256:780077d95eafc2ccc3ced969db22377b3864e5b9a0ea5eb347cc93b3ea900315 \
+-    --hash=sha256:7ba9cc93a91d86365a5d270dee221fdc04fb68d7478e6bf6af650de78a8339e3 \
+-    --hash=sha256:89b16a18e7bba224ce5114db863e7029803c179979e1af6ad6a6b11f70545008 \
+-    --hash=sha256:9036d6365d13b6cbe8f27a0eaf73ddcc070cae584e5ff94bb45e3e9d729feab5 \
+-    --hash=sha256:93cf4e045bae74c90ca833cba583c14b62cb4ba2cba0abd2b141ab52548247e2 \
+-    --hash=sha256:9ad014faa93dbb52c80d8f4d3dcf855865c876c9660cb9bd7553843dd03a4b1e \
+-    --hash=sha256:9b1d07b53b78bf84a96898c1bc139ad7f10fda7423f5fd158fd0f47ec5e01ac7 \
+-    --hash=sha256:a7746f235c47abc72b102d3bce9977714c2444bdfaea7888d241b4c4bb6a78bf \
+-    --hash=sha256:aa3017c40d513ccac9621a2364f939d39e550c542eb2a894b4c8da92b38896ab \
+-    --hash=sha256:b34d87e8a3090ea626003f87f9392b3929a7bbf4104a05b6667348b6bd4bf1cd \
+-    --hash=sha256:b541032178a718c165a49638d28272b771053f628382d5e9d1c93df23ff58dbf \
+-    --hash=sha256:ba5511d8f31c033a5fcbda22dd5c813630af98c70b2661f2d2c654ae3cdfcfc8 \
+-    --hash=sha256:bc8a37ad5b22c08e2dbd27df2b3ef7e5c0864235805b1e718a235bcb200cf1cb \
+-    --hash=sha256:bff7d8ec20f5f42607599f9994770fa65d76edca264a87b5e4ea5629bce12268 \
+-    --hash=sha256:c1ad395cf254c4fbb5b2132fee391f361a6e8c1adbd28f2cd8e79308a615fe9d \
+-    --hash=sha256:f1d09e520217618e76396377c81fba6f290d5f926f50c35f3a5f72b01a0da780 \
+-    --hash=sha256:f3eac17d9ec51be534685ba877b6ab5edc3ab7ec95c8f163e5d7b39859524716 \
+-    --hash=sha256:f419290bc8968a46c4933158c91a0012b7a99bb2e465d5ef5293879742f8797e \
+-    --hash=sha256:f62aa6ee4eb43b024b0e5a01cf65a0bb078ef8c395e8713c6e8a12a697144528 \
+-    --hash=sha256:f74e6fdeb9a265624ec3a3918430205dff1df7e95a230779746a6af78bc615af \
+-    --hash=sha256:f9b57eaa3b0cd8db52049ed0330747b0364e899e8a606a624813452b8203d5f7 \
+-    --hash=sha256:fce4f615f8ca31b2e61aa0eb5865a21e14f5629515c9151850aa936c02a1ee51
+-    # via
+-    #   -r build/requirements.in
+-    #   contourpy
+-    #   matplotlib
+-    #   ml-dtypes
+-    #   scipy
+ opt-einsum==3.4.0 \
+     --hash=sha256:69bb92469f86a1565195ece4ac0323943e83477171b91d24c35afe028a90d7cd \
+     --hash=sha256:96ca72f1b886d148241348783498194c577fa30a8faac108586b14f1ba4473ac
