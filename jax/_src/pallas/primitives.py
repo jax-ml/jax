@@ -931,17 +931,20 @@ state_discharge.register_partial_discharge_rule(run_scoped_p)(
 
 @functools.partial(mlir.register_lowering, run_scoped_p)
 def _run_scoped_lowering_rule(ctx, *args, jaxpr):
-  # This lowering rule gets triggered when run_scoped is not discharged.
-  # In this case there are no stateful effects to handle.
-  should_discharge = [
-      isinstance(aval, state.AbstractRef) for aval in ctx.avals_in
-  ]
+  jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
+  num_return_values = len(jaxpr_noconst.outvars)
+  discharged_body, new_consts = state_discharge.discharge_state(
+      jaxpr_noconst, [], should_discharge=True)
+  if new_consts:    raise NotImplementedError(
+        "Cannot handle new consts created by state discharge.")
 
   def _lower_fun(*lower_fun_args):
-    updates, out = _run_scoped_discharge_rule(
-        should_discharge,
-        [], [], *lower_fun_args,
-        jaxpr=jaxpr)
-    assert len(updates) == 0, 'Cannot lower run_scoped with effects.'
-    return out
+    # Create inputs filled with uninitialized values to the body.
+    num_consts = len(lower_fun_args)
+    body_avals = [v.aval for v in discharged_body.invars[num_consts:]]
+    init_vals = [uninitialized_value(
+        aval.shape, aval.dtype) for aval in body_avals]
+    out = jax_core.eval_jaxpr(discharged_body, [], *lower_fun_args, *init_vals)
+    return out[:num_return_values]
+
   return mlir.lower_fun(_lower_fun, multiple_results=True)(ctx, *args)
