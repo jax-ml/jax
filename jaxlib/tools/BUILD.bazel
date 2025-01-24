@@ -14,10 +14,13 @@
 
 # JAX is Autograd and XLA
 
-load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
+load(
+    "@tsl//third_party/py:py_manylinux_compliance_test.bzl",
+    "verify_manylinux_compliance_test",
+)
 load("//jaxlib:jax.bzl", "if_windows", "jax_py_test", "jax_wheel")
 
 licenses(["notice"])  # Apache 2
@@ -136,48 +139,14 @@ py_binary(
     ],
 )
 
-selects.config_setting_group(
-    name = "macos",
-    match_any = [
-        "@platforms//os:osx",
-        "@platforms//os:macos",
-    ],
-)
-
-selects.config_setting_group(
-    name = "arm64",
-    match_any = [
-        "@platforms//cpu:aarch64",
-        "@platforms//cpu:arm64",
-    ],
-)
-
-selects.config_setting_group(
-    name = "macos_arm64",
-    match_all = [
-        ":arm64",
-        ":macos",
-    ],
-)
-
-selects.config_setting_group(
-    name = "win_amd64",
-    match_all = [
-        "@platforms//cpu:x86_64",
-        "@platforms//os:windows",
-    ],
-)
-
 string_flag(
     name = "jaxlib_git_hash",
     build_setting_default = "",
 )
 
-config_setting(
-    name = "jaxlib_git_hash_nightly_or_release",
-    flag_values = {
-        ":jaxlib_git_hash": "nightly",
-    },
+string_flag(
+    name = "output_path",
+    build_setting_default = "dist",
 )
 
 jax_wheel(
@@ -199,4 +168,37 @@ jax_wheel(
     # TODO(b/371217563) May use hermetic cuda version here.
     platform_version = "12",
     wheel_binary = ":build_gpu_plugin_wheel",
+)
+
+verify_manylinux_compliance_test(
+    name = "jaxlib_manylinux_compliance_test",
+    aarch64_compliance_tag = "manylinux_2_17_aarch64",
+    test_tags = [
+        "mac_excluded",
+        "windows_excluded",
+    ],
+    wheel = ":jaxlib_wheel",
+    x86_64_compliance_tag = "manylinux_2_17_x86_64",
+)
+
+verify_manylinux_compliance_test(
+    name = "jax_cuda_plugin_manylinux_compliance_test",
+    aarch64_compliance_tag = "manylinux_2_17_aarch64",
+    test_tags = [
+        "mac_excluded",
+        "windows_excluded",
+    ],
+    wheel = ":jax_cuda_plugin_wheel",
+    x86_64_compliance_tag = "manylinux_2_17_x86_64",
+)
+
+verify_manylinux_compliance_test(
+    name = "jax_cuda_pjrt_manylinux_compliance_test",
+    aarch64_compliance_tag = "manylinux_2_17_aarch64",
+    test_tags = [
+        "mac_excluded",
+        "windows_excluded",
+    ],
+    wheel = ":jax_cuda_pjrt_wheel",
+    x86_64_compliance_tag = "manylinux_2_17_x86_64",
 )

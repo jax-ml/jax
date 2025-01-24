@@ -157,6 +157,22 @@ class JaxVersionTest(unittest.TestCase):
       self.assertTrue(version.endswith("test"))
       self.assertValidVersion(version)
 
+    with jtu.set_env(JAX_RELEASE=None, JAXLIB_RELEASE="1",
+                     JAX_NIGHTLY=None, JAXLIB_NIGHTLY=None,
+                     WHEEL_BUILD_TAG ="0"):
+      with assert_no_subprocess_call():
+        version = jax.version._get_version_for_build()
+      self.assertEqual(version, base_version)
+      self.assertValidVersion(version)
+
+    with jtu.set_env(JAX_RELEASE=None, JAXLIB_RELEASE=None,
+                     JAX_NIGHTLY=None, JAXLIB_NIGHTLY="1",
+                     WHEEL_VERSION_SUFFIX=".dev20250101+1c0f1076erc1"):
+      with assert_no_subprocess_call():
+        version = jax.version._get_version_for_build()
+      self.assertEqual(version, f"{base_version}.dev20250101+1c0f1076erc1")
+      self.assertValidVersion(version)
+
   def testVersions(self):
     check_jaxlib_version(jax_version="1.2.3", jaxlib_version="1.2.3",
                          minimum_jaxlib_version="1.2.3")

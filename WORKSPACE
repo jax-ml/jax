@@ -62,6 +62,21 @@ xla_workspace0()
 load("//third_party/flatbuffers:workspace.bzl", flatbuffers = "repo")
 flatbuffers()
 
+load("//jaxlib:jax_python_wheel_version.bzl", "jax_python_wheel_version_repository")
+jax_python_wheel_version_repository(
+    name = "jax_wheel_version",
+    file_with_version = "//jax:version.py",
+    version_key = "_version",
+)
+
+load(
+    "@tsl//third_party/py:python_wheel.bzl",
+    "python_wheel_version_suffix_repository",
+)
+python_wheel_version_suffix_repository(
+    name = "jax_wheel_version_suffix",
+)
+
 load(
     "@tsl//third_party/gpus/cuda/hermetic:cuda_json_init_repository.bzl",
     "cuda_json_init_repository",

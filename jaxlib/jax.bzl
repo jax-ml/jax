@@ -14,7 +14,10 @@
 
 """Bazel macros used by the JAX build."""
 
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@com_github_google_flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_library")
+load("@jax_wheel_version//:wheel_version.bzl", "WHEEL_VERSION")
+load("@jax_wheel_version_suffix//:wheel_version_suffix.bzl", "BUILD_TAG", "WHEEL_VERSION_SUFFIX")
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
 load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
@@ -267,7 +270,7 @@ def jax_multiplatform_test(
         ]
         test_tags = list(tags) + ["jax_test_%s" % backend] + backend_tags.get(backend, [])
         if enable_backends != None and backend not in enable_backends and not any([config.startswith(backend) for config in enable_configs]):
-            test_tags += ["manual"]
+            test_tags.append("manual")
         if backend == "gpu":
             test_tags += tf_cuda_tests_tags()
         native.py_test(
@@ -308,15 +311,93 @@ def jax_generate_backend_suites(backends = []):
         tags = ["-jax_test_%s" % backend for backend in backends] + ["-manual"],
     )
 
+def _get_wheel_platform_name(platform_name, cpu_name):
+    platform = ""
+    cpu = ""
+    if platform_name == "linux":
+        platform = "manylinux2014"
+        cpu = cpu_name
+    elif platform_name == "macosx":
+        if cpu_name == "arm64":
+            cpu = "arm64"
+            platform = "macosx_11_0"
+        else:
+            cpu = "x86_64"
+            platform = "macosx_10_14"
+    elif platform_name == "win":
+        platform = "win"
+        cpu = "amd64"
+    return "{platform}_{cpu}".format(
+        platform = platform,
+        cpu = cpu,
+    )
+
+def _get_cpu(platform_name, platform_tag):
+    # Following the convention in jax/tools/build_utils.py.
+    if platform_name == "macosx" and platform_tag == "arm64":
+        return "arm64"
+    if platform_name == "win" and platform_tag == "x86_64":
+        return "AMD64"
+    return "aarch64" if platform_tag == "arm64" else platform_tag
+
+def _get_full_wheel_name(rule_name, platform_name, cpu_name, major_cuda_version, wheel_version):
+    if "pjrt" in rule_name:
+        wheel_name_template = "{package_name}-{wheel_version}-py{major_python_version}-none-{wheel_platform_tag}.whl"
+    else:
+        wheel_name_template = "{package_name}-{wheel_version}-cp{python_version}-cp{python_version}-{wheel_platform_tag}.whl"
+    python_version = HERMETIC_PYTHON_VERSION.replace(".", "")
+    package_name = rule_name.replace("_wheel", "").replace(
+        "cuda",
+        "cuda{}".format(major_cuda_version),
+    )
+    return wheel_name_template.format(
+        package_name = package_name,
+        python_version = python_version,
+        major_python_version = python_version[0],
+        wheel_version = wheel_version,
+        wheel_platform_tag = _get_wheel_platform_name(platform_name, cpu_name),
+    )
+
 def _jax_wheel_impl(ctx):
+    include_cuda_libs = ctx.attr.include_cuda_libs[BuildSettingInfo].value
+    override_include_cuda_libs = ctx.attr.override_include_cuda_libs[BuildSettingInfo].value
+    output_path = ctx.attr.output_path[BuildSettingInfo].value
+    git_hash = ctx.attr.git_hash[BuildSettingInfo].value
     executable = ctx.executable.wheel_binary
 
-    output = ctx.actions.declare_directory(ctx.label.name)
+    if include_cuda_libs and not override_include_cuda_libs:
+        fail("JAX wheel shouldn't be built with CUDA dependencies." +
+             " Please provide `--config=no_cuda_libs` for bazel build command." +
+             " If you absolutely need to add CUDA dependencies, provide" +
+             " `--@local_config_cuda//cuda:override_include_cuda_libs=true`.")
+
+    env = {}
     args = ctx.actions.args()
-    args.add("--output_path", output.path)  # required argument
-    args.add("--cpu", ctx.attr.platform_tag)  # required argument
-    jaxlib_git_hash = "" if ctx.file.git_hash == None else ctx.file.git_hash.path
-    args.add("--jaxlib_git_hash", jaxlib_git_hash)  # required argument
+
+    full_wheel_version = (WHEEL_VERSION + WHEEL_VERSION_SUFFIX)
+    env["WHEEL_VERSION_SUFFIX"] = WHEEL_VERSION_SUFFIX
+    if BUILD_TAG:
+        env["WHEEL_BUILD_TAG"] = BUILD_TAG
+        args.add("--build-tag", BUILD_TAG)
+        full_wheel_version += "-{}".format(BUILD_TAG)
+    if not WHEEL_VERSION_SUFFIX and not BUILD_TAG:
+        env["JAX_RELEASE"] = "1"
+
+    cpu = _get_cpu(ctx.attr.platform_name, ctx.attr.platform_tag)
+    wheel_name = _get_full_wheel_name(
+        ctx.label.name,
+        ctx.attr.platform_name,
+        cpu,
+        ctx.attr.platform_version,
+        full_wheel_version,
+    )
+    output_file = ctx.actions.declare_file(output_path +
+                                           "/" + wheel_name)
+    wheel_dir = output_file.path[:output_file.path.rfind("/")]
+
+    args.add("--output_path", wheel_dir)  # required argument
+    args.add("--cpu", cpu)  # required argument
+    args.add("--jaxlib_git_hash", git_hash)  # required argument
 
     if ctx.attr.enable_cuda:
         args.add("--enable-cuda", "True")
@@ -335,11 +416,13 @@ def _jax_wheel_impl(ctx):
     args.use_param_file("@%s", use_always = False)
     ctx.actions.run(
         arguments = [args],
-        inputs = [ctx.file.git_hash] if ctx.file.git_hash != None else [],
-        outputs = [output],
+        inputs = [],
+        outputs = [output_file],
         executable = executable,
+        env = env,
     )
-    return [DefaultInfo(files = depset(direct = [output]))]
+
+    return [DefaultInfo(files = depset(direct = [output_file]))]
 
 _jax_wheel = rule(
     attrs = {
@@ -350,12 +433,16 @@ _jax_wheel = rule(
             cfg = "target",
         ),
         "platform_tag": attr.string(mandatory = True),
-        "git_hash": attr.label(allow_single_file = True),
+        "platform_name": attr.string(mandatory = True),
+        "git_hash": attr.label(default = Label("//jaxlib/tools:jaxlib_git_hash")),
+        "output_path": attr.label(default = Label("//jaxlib/tools:output_path")),
         "enable_cuda": attr.bool(default = False),
         # A cuda/rocm version is required for gpu wheels; for cpu wheels, it can be an empty string.
         "platform_version": attr.string(mandatory = True, default = ""),
         "skip_gpu_kernels": attr.bool(default = False),
         "enable_rocm": attr.bool(default = False),
+        "include_cuda_libs": attr.label(default = Label("@local_config_cuda//cuda:include_cuda_libs")),
+        "override_include_cuda_libs": attr.label(default = Label("@local_config_cuda//cuda:override_include_cuda_libs")),
     },
     implementation = _jax_wheel_impl,
     executable = False,
@@ -380,19 +467,18 @@ def jax_wheel(name, wheel_binary, enable_cuda = False, platform_version = ""):
         wheel_binary = wheel_binary,
         enable_cuda = enable_cuda,
         platform_version = platform_version,
-        # Empty by default. Use `--//jaxlib/tools:jaxlib_git_hash=nightly` flag in bazel command to
-        # pass the git hash for nightly or release builds. Note that the symlink git_hash_symlink to
-        # the git hash file needs to be created first.
-        git_hash = select({
-            "//jaxlib/tools:jaxlib_git_hash_nightly_or_release": "git_hash_symlink",
-            "//conditions:default": None,
+        # git_hash is empty by default. Use `--//jaxlib/tools:jaxlib_git_hash=$(git rev-parse HEAD)`
+        # flag in bazel command to pass the git hash for nightly or release builds.
+        platform_name = select({
+            "@platforms//os:osx": "macosx",
+            "@platforms//os:macos": "macosx",
+            "@platforms//os:windows": "win",
+            "@platforms//os:linux": "linux",
         }),
-        # Following the convention in jax/tools/build_utils.py.
         # TODO(kanglan) Add @platforms//cpu:ppc64le once JAX Bazel is upgraded > 6.5.0.
         platform_tag = select({
-            "//jaxlib/tools:macos_arm64": "arm64",
-            "//jaxlib/tools:win_amd64": "AMD64",
-            "//jaxlib/tools:arm64": "aarch64",
+            "@platforms//cpu:aarch64": "arm64",
+            "@platforms//cpu:arm64": "arm64",
             "@platforms//cpu:x86_64": "x86_64",
         }),
     )

@@ -532,6 +532,7 @@ async def main():
 
   if "cuda" in args.wheels:
     wheel_build_command_base.append("--config=cuda")
+    wheel_build_command_base.append("--config=no_cuda_libs")
     if args.use_clang:
       wheel_build_command_base.append(
           f"--action_env=CLANG_CUDA_COMPILER_PATH=\"{clang_path}\""

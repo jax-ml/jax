@@ -35,6 +35,10 @@ def _get_version_string() -> str:
   # In this case we return it directly.
   if _release_version is not None:
     return _release_version
+  if os.getenv("WHEEL_BUILD_TAG"):
+    return _version
+  if os.getenv("WHEEL_VERSION_SUFFIX"):
+    return _version + os.getenv("WHEEL_VERSION_SUFFIX", "")
   return _version_from_git_tree(_version) or _version_from_todays_date(_version)
 
 
@@ -71,16 +75,23 @@ def _get_version_for_build() -> str:
   """Determine the version at build time.
 
   The returned version string depends on which environment variables are set:
-  - if JAX_RELEASE or JAXLIB_RELEASE are set: version looks like "0.4.16"
+  - if WHEEL_VERSION_SUFFIX is set: version looks like "0.5.1.dev20230906+ge58560fdc"
+  - if JAX_RELEASE, WHEEL_BUILD_TAG, or JAXLIB_RELEASE are set: version looks like "0.4.16"
   - if JAX_NIGHTLY or JAXLIB_NIGHTLY are set: version looks like "0.4.16.dev20230906"
   - if none are set: version looks like "0.4.16.dev20230906+ge58560fdc
   """
   if _release_version is not None:
     return _release_version
-  if os.environ.get('JAX_NIGHTLY') or os.environ.get('JAXLIB_NIGHTLY'):
-    return _version_from_todays_date(_version)
-  if os.environ.get('JAX_RELEASE') or os.environ.get('JAXLIB_RELEASE'):
+  if os.getenv("WHEEL_VERSION_SUFFIX"):
+    return _version + os.getenv("WHEEL_VERSION_SUFFIX", "")
+  if (
+      os.getenv("JAX_RELEASE")
+      or os.getenv("JAXLIB_RELEASE")
+      or os.getenv("WHEEL_BUILD_TAG")
+  ):
     return _version
+  if os.getenv("JAX_NIGHTLY") or os.getenv("JAXLIB_NIGHTLY"):
+    return _version_from_todays_date(_version)
   return _version_from_git_tree(_version) or _version_from_todays_date(_version)
 
 
