@@ -798,6 +798,15 @@ pytype_library(
     ],
 )
 
+pytype_library(
+    name = "experimental_transfer",
+    srcs = ["experimental/transfer.py"],
+    deps = [
+        ":jax",
+        "//jax/_src/lib",
+    ],
+)
+
 pytype_strict_library(
     name = "pickle_util",
     srcs = ["_src/pickle_util.py"],
