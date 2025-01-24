@@ -1015,7 +1015,9 @@ def _init_backend(platform: str) -> xla_client.Client:
   # factories instead of returning None.
   if backend is None:
     raise RuntimeError(f"Could not initialize backend '{platform}'")
-  if backend.device_count() == 0:
+  # TODO(b/356678989): Only check `backend.device_count()` when it counts
+  # CPU-only devices.
+  if backend.device_count() == 0 and len(backend._get_all_devices()) == 0:
     raise RuntimeError(f"Backend '{platform}' provides no devices.")
   util.distributed_debug_log(("Initialized backend", backend.platform),
                              ("process_index", backend.process_index()),
