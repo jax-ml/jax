@@ -48,6 +48,8 @@ jobs:
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
       JAXCI_ENABLE_X64: ${{ inputs.enable-x64 }}
+      # Enable writing to the Bazel remote cache bucket.
+      JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE: "1"
 
     name: "Bazel single accelerator and multi-accelerator CUDA tests (${{ inputs.runner }}, Python ${{ inputs.python }}, x64=${{ inputs.enable-x64 }})"
 
