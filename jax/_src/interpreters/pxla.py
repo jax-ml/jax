@@ -880,8 +880,8 @@ def lower_parallel_callable(
           replicated_args=replicated_args,
           arg_shardings=None,
           result_shardings=None,
-          arg_names=jaxpr._debug_info and jaxpr._debug_info.arg_names,
-          result_names=jaxpr._debug_info and jaxpr._debug_info.result_paths,
+          arg_names=jaxpr._debug_info and jaxpr._debug_info.safe_arg_names(len(jaxpr.invars)),
+          result_names=jaxpr._debug_info and jaxpr._debug_info.safe_result_paths(len(jaxpr.outvars)),
           num_replicas=replicas.num_global_replicas,
           lowering_parameters=lowering_parameters)
   return PmapComputation(lowering_result.module,
@@ -3160,7 +3160,7 @@ def check_arg_avals_for_call(ref_avals, arg_avals,
         f"but called with {len(arg_avals)}")
 
   if jaxpr_debug_info is not None:
-    arg_names = [f"'{name}'" for name in jaxpr_debug_info.arg_names]
+    arg_names = [f"'{name}'" for name in jaxpr_debug_info.safe_arg_names(len(ref_avals))]
   else:
     num_args = len(ref_avals)
     arg_names = [f"{i + 1}/{num_args}" for i in range(num_args)]
