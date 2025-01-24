@@ -33,6 +33,8 @@ if sys.platform != "win32":
   from jax.experimental.pallas.ops.gpu import layer_norm
   from jax.experimental.pallas.ops.gpu import rms_norm
   from jax.experimental.pallas.ops.gpu import softmax
+
+  BlockSizes = attention.BlockSizes
 else:
   attention = None
   layer_norm = None
@@ -40,8 +42,6 @@ else:
   softmax = None
 import jax.numpy as jnp
 import numpy as np
-
-BlockSizes = attention.BlockSizes
 
 # TODO(sharadmv): Update signatures of pallas_call to correct inputs/outputs.
 # pylint: disable=no-value-for-parameter
