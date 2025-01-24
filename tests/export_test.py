@@ -48,6 +48,11 @@ from jax._src.lib.mlir.dialects import hlo
 
 import numpy as np
 
+try:
+  import numpy.dtypes as np_dtypes
+except ImportError:
+  np_dtypes = None  # type: ignore
+
 # ruff: noqa: F401
 try:
   import flatbuffers
@@ -406,7 +411,6 @@ class JaxExportTest(jtu.JaxTestCase):
     res2 = exp2.call(x1, x2)
     self.assertEqual(tree_util.tree_structure(res2),
                      tree_util.tree_structure(res))
-
 
   def test_error_wrong_intree(self):
     def f(a_b_pair, *, c):
@@ -1002,6 +1006,12 @@ class JaxExportTest(jtu.JaxTestCase):
       for dtype in dtypes._jax_types if dtype != np.dtype("bool")
   ])
   def test_poly_numeric_dtypes(self, dtype=np.int32):
+    if hasattr(np_dtypes, "StringDType") and isinstance(
+        dtype, np_dtypes.StringDType
+    ):
+      self.skipTest(
+          "StringDType is not a numeric type"
+      )  # TODO(jmudigonda): revisit.
     if str(dtype) in {"float8_e4m3b11fnuz",
                       "float8_e4m3fnuz",
                       "float8_e5m2fnuz",
@@ -1618,7 +1628,6 @@ class JaxExportTest(jtu.JaxTestCase):
     exp = get_exported(jax.jit(jnp.sin),
                        platforms=("tpu", "cpu", "cuda", "other"))(x)
     self.assertEqual(exp.platforms, ("tpu", "cpu", "cuda", "other"))
-
 
   def test_multi_platform_with_donation(self):
     f = jax.jit(jnp.sin, donate_argnums=(0,))

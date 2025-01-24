@@ -80,7 +80,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
 
-
 traceback_util.register_exclusion(__file__)
 
 _dtype = partial(dtypes.dtype, canonicalize=True)
@@ -984,6 +983,7 @@ def vmap(fun: F,
                        "to the positional arguments passed to the function, "
                        f"but got {len(in_axes)=}, {len(args)=}")
     args_flat, in_tree  = tree_flatten((args, kwargs), is_leaf=batching.is_vmappable)
+
     f = lu.wrap_init(fun)
     flat_fun, out_tree = batching.flatten_fun_for_vmap(f, in_tree)
     in_axes_flat = flatten_axes("vmap in_axes", in_tree, (in_axes, 0), kws=True)
@@ -2194,6 +2194,19 @@ def _infer_src_sharding(src, x) -> Sharding | None:
   return None
 
 
+@lru_cache(maxsize=2048)
+def _check_string_compatible_sharding(s):
+  """Checks if target devices are compatible with string arrays."""
+  if isinstance(s, xc.Device) and s.device_kind == "cpu":
+    return
+  if isinstance(s, Sharding) and next(iter(s.device_set)).device_kind == "cpu":
+    return
+  raise TypeError(
+      "String arrays can only be sharded to CPU devices. Received"
+      f" unsupported device or sharding: {s}"
+  )
+  # TODO(jmudigonda): Add checks for Layout and TransferToMemoryKind.
+
 # TODO(yashkatariya): Generalize check_compatible_aval (maybe renamed) and use
 # that to check if shardings are compatible with the input.
 @lru_cache(maxsize=2048)
@@ -2204,6 +2217,10 @@ def _check_sharding(aval, s):
         "`jax.device_put` only accepts `None`, `jax.sharding.Sharding`,"
         " `jax.Device`, `Layout` or a pytree of these values. Received"
         f" invalid value: {s}")
+
+  if isinstance(aval, core.ShapedArray) and dtypes.is_string_dtype(aval.dtype):
+    _check_string_compatible_sharding(s)
+
   if isinstance(s, Sharding):
     if isinstance(aval, core.AbstractToken):
       aval = core.token_shaped_array

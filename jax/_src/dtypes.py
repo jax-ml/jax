@@ -33,6 +33,7 @@ import ml_dtypes
 import numpy as np
 
 from jax._src import config
+from jax._src.lib import xla_extension_version  # pylint: disable=g-importing-member
 from jax._src.typing import Array, DType, DTypeLike
 from jax._src.util import set_module, StrictABC
 
@@ -486,18 +487,41 @@ _complex_types: list[JAXType] = [
     np.dtype('complex64'),
     np.dtype('complex128'),
 ]
-_jax_types = _bool_types + _int_types + _float_types + _complex_types
-_jax_dtype_set = {float0, *_bool_types, *_int_types, *_float_types, *_complex_types}
 
+_string_types: list[JAXType] = []
+try:
+  import numpy.dtypes as np_dtypes
+  if hasattr(np_dtypes, 'StringDType') and xla_extension_version >= 304:
+    _string_types: list[JAXType] = [np_dtypes.StringDType()]  # type: ignore
+except ImportError:
+  np_dtypes = None  # type: ignore
+
+_jax_types = (
+    _bool_types + _int_types + _float_types + _complex_types + _string_types
+)
+_jax_dtype_set = {
+    float0,
+    *_bool_types,
+    *_int_types,
+    *_float_types,
+    *_complex_types,
+    *_string_types,
+}
 
 _dtype_kinds: dict[str, set] = {
-  'bool': {*_bool_types},
-  'signed integer': {*_signed_types},
-  'unsigned integer': {*_unsigned_types},
-  'integral': {*_signed_types, *_unsigned_types},
-  'real floating': {*_float_types},
-  'complex floating': {*_complex_types},
-  'numeric': {*_signed_types, *_unsigned_types, *_float_types, *_complex_types},
+    'bool': {*_bool_types},
+    'signed integer': {*_signed_types},
+    'unsigned integer': {*_unsigned_types},
+    'integral': {*_signed_types, *_unsigned_types},
+    'real floating': {*_float_types},
+    'complex floating': {*_complex_types},
+    'numeric': {
+        *_signed_types,
+        *_unsigned_types,
+        *_float_types,
+        *_complex_types,
+    },
+    'string': {*_string_types},
 }
 
 
@@ -863,8 +887,14 @@ def check_user_dtype_supported(dtype, fun_name=None):
       uint2,
       uint4
   ]
-  if np_dtype.kind not in "biufc" and not is_custom_dtype and not dtype == float0:
-    msg = f"JAX only supports number and bool dtypes, got dtype {dtype}"
+  if (
+      np_dtype.kind not in 'biufcT'
+      and not is_custom_dtype
+      and not dtype == float0
+  ):
+    msg = (
+        f'JAX only supports number, bool, and string dtypes, got dtype {dtype}'
+    )
     msg += f" in {fun_name}" if fun_name else ""
     raise TypeError(msg)
   if dtype is not None and np_dtype != canonicalize_dtype(np_dtype):
@@ -942,3 +972,7 @@ def short_dtype_name(dtype) -> str:
   else:
     return (dtype.name.replace('float', 'f').replace('uint'   , 'u')
                       .replace('int'  , 'i').replace('complex', 'c'))
+
+
+def is_string_dtype(dtype: DTypeLike | None) -> bool:
+  return dtype in _dtype_kinds['string']

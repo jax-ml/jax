@@ -1572,6 +1572,38 @@ jax_py_test(
 )
 
 jax_multiplatform_test(
+    name = "string_array_test",
+    srcs = ["string_array_test.py"],
+    disable_configs = [
+        # We only need a single config for each of cpu, gpu, and tpu device types.
+        "cpu_shardy",
+        "cpu_x32",
+        "gpu_a100",
+        "gpu_h100",
+        "gpu_p100",
+        "gpu_p100_pjrt_c_api",
+        "gpu_p100x2",
+        "gpu_v100",
+        "tpu_pjrt_c_api",
+        "tpu_v3_1x1",
+        "tpu_v4_1x1",
+        "tpu_v4_1x1_compilation_cache",
+        "tpu_v5e",
+        "tpu_v5p_1x1",
+        "tpu_v5p_2x2",
+        "tpu_v6e_1x1",
+        "gpu_h100",
+        "gpu_p100x2",
+        "tpu_v5p_2x2",
+    ],
+    enable_configs = [
+        "cpu",
+        "gpu_p100x2",
+        "tpu_v5p_2x2",
+    ],
+)
+
+jax_multiplatform_test(
     name = "cudnn_fusion_test",
     srcs = ["cudnn_fusion_test.py"],
     enable_backends = [],
@@ -1606,6 +1638,7 @@ exports_files(
         "shard_map_test.py",
         "transfer_guard_test.py",
         "layout_test.py",
+        "string_array_test.py",
     ],
     visibility = jax_test_file_visibility,
 )

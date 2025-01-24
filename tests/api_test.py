@@ -1612,7 +1612,6 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type"):
       grad(f)("foo")
 
-
     err_str = ("Error interpreting argument to .* as an abstract array. The problematic "
                "value is of type .* and was passed to the function at path x.")
     with self.assertRaisesRegex(TypeError, err_str):
@@ -2033,7 +2032,6 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaises(RuntimeError):
       result = jax.device_put(x, s2)
       result.block_until_ready()
-
 
   @jax.default_matmul_precision("float32")
   def test_jacobian(self):
@@ -3292,7 +3290,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_grad_object_array_error(self):
     x = np.array([1, 2, 3], dtype=object)
-    with self.assertRaisesRegex(TypeError, ".*is not a valid JAX type"):
+    with self.assertRaisesRegex(TypeError, ".*is not a valid JAX array type"):
       jax.grad(lambda x: x)(x)
 
   @jtu.thread_unsafe_test()  # logging isn't thread-safe
