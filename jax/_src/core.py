@@ -285,7 +285,7 @@ class JaxprEqnContext:
         (compute_on.extend_compute_type, self.compute_type),
         (config.threefry_partitionable.__call__, self.threefry_partitionable),
         (mesh_lib.set_abstract_mesh, self.cur_abstract_mesh),
-        (xla_metadata_lib.set_xla_metadata, self.xla_metadata),
+        (xla_metadata_lib.set_xla_metadata_dict, self.xla_metadata),
     ]
 
   @property
