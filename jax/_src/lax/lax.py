@@ -2117,6 +2117,10 @@ def expand_dims(array: ArrayLike, dimensions: Sequence[int]) -> Array:
 
 ### convenience wrappers around traceables
 
+def _arraylike(x):
+  return isinstance(x, (Array, np.ndarray)) or np.isscalar(x)
+
+
 def full_like(x: ArrayLike | DuckTypedArray,
               fill_value: ArrayLike, dtype: DTypeLike | None = None,
               shape: Shape | None = None, sharding: Sharding | None = None) -> Array:
@@ -2138,6 +2142,11 @@ def full_like(x: ArrayLike | DuckTypedArray,
     An ndarray with the same shape as `x` with its entries set equal to
     `fill_value`, similar to the output of np.full.
   """
+  # TODO(jakevdp): bind full_like_p even when sharding is not None
+  if sharding is None and _arraylike(x):
+    x_arr = asarray(x)  # type: ignore[arg-type]
+    return full_like_p.bind(x_arr, asarray(fill_value), dtype=dtype, shape=shape)
+
   fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)  # type: ignore[arg-type]
   weak_type = dtype is None and dtypes.is_weakly_typed(x)
   dtype = dtype or _dtype(x)
@@ -6378,6 +6387,61 @@ batching.defvectorized(copy_p)
 def _propagate_mem_kind_copy(in_mem_kind):
   return in_mem_kind
 pxla.memory_kind_propagate_rule[copy_p] = _propagate_mem_kind_copy
+
+
+# TODO(yashkatariya): add sharding argument to full_like primitive
+def _full_like_impl(x, fill_value, *, dtype, shape):
+  x = asarray(x)
+  fill_value = asarray(fill_value)
+  shape = x.shape if shape is None else shape
+  weak_type = dtypes.is_weakly_typed(x) and dtype is None
+  dtype = dtypes.canonicalize_dtype(x.dtype if dtype is None else dtype)
+  fill_value = _convert_element_type(fill_value, dtype, weak_type)
+  return full(shape=shape, fill_value=fill_value)
+
+def _full_like_shape_rule(x, _, *, dtype, shape):
+  return x.shape if shape is None else shape
+
+def _full_like_dtype_rule(x, _, *, dtype, shape):
+  return dtypes.canonicalize_dtype(x.dtype if dtype is None else dtype)
+
+def _full_like_weak_type_rule(x, _, *, dtype, shape):
+  return x.weak_type and dtype is None
+
+# def _full_like_sharding_rule(x, _, *, dtype, shape):
+#   return getattr(x, 'sharding', None) if shape == x.shape else None
+
+def _full_like_batching_rule(in_vals, in_dims, *, dtype, shape):
+  impl = partial(_full_like_impl, dtype=dtype, shape=shape)
+  return api.vmap(impl, in_axes=in_dims, out_axes=0)(*in_vals), 0
+
+def _full_like_jvp(primals, tangents, *, dtype, shape):
+  x, fill_value = primals
+  _, fill_value_t = tangents
+  _full_like = partial(full_like_p.bind, dtype=dtype, shape=shape)
+  primal_out = _full_like(x, fill_value)
+  if type(fill_value_t) is ad_util.Zero:
+    return primal_out, ad_util.Zero.from_primal_value(primal_out)
+  else:
+    return primal_out, _full_like(x, fill_value_t)
+
+def _full_like_transpose(t, x, fill_value, *, dtype, shape):
+  x_aval = x.aval if ad.is_undefined_primal(x) else core.get_aval(x)
+  fill_value_aval = fill_value.aval if ad.is_undefined_primal(fill_value) else core.get_aval(fill_value)
+  if type(t) is ad_util.Zero:
+    return [ad_util.Zero(x_aval), ad_util.Zero(fill_value_aval)]
+  else:
+    return [ad_util.Zero(x_aval), _unbroadcast(fill_value_aval, t)]
+
+full_like_p = standard_primitive(_full_like_shape_rule, _full_like_dtype_rule, "full_like",
+                                 # sharding_rule=_full_like_sharding_rule
+                                 weak_type_rule=_full_like_weak_type_rule)
+mlir.register_lowering(full_like_p, mlir.lower_fun(_full_like_impl, multiple_results=False))
+dispatch.simple_impl(full_like_p)
+batching.primitive_batchers[full_like_p] = _full_like_batching_rule
+ad.primitive_jvps[full_like_p] = _full_like_jvp
+ad.primitive_transposes[full_like_p] = _full_like_transpose
+
 
 def rng_bit_generator(key, shape, dtype=np.uint32,
                       algorithm=RandomAlgorithm.RNG_DEFAULT):
