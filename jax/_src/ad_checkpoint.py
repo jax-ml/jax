@@ -682,12 +682,13 @@ def transpose_jaxpr(jaxpr: core.ClosedJaxpr, in_linear: bool | Sequence[bool],
   return _transpose_jaxpr(jaxpr, tuple(in_linear), tuple(out_zeros))
 
 @weakref_lru_cache
-def _transpose_jaxpr(jaxpr, in_lin, out_zeros):
+def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
+                     in_lin: Sequence[bool],
+                     out_zeros: Sequence[bool]):
   in_avals = ([a for a,  lin in zip(jaxpr.in_avals,  in_lin   ) if not lin] +
               [a for a, zero in zip(jaxpr.out_avals, out_zeros) if not zero])
   cell = lambda: None
 
-  @lu.wrap_init
   def transposed(*args_flat):
     ins_flat, out_cts_flat = split_list(args_flat, [len(in_lin) - sum(in_lin)])
 
@@ -715,7 +716,10 @@ def _transpose_jaxpr(jaxpr, in_lin, out_zeros):
     in_cts_nz, _ = partition_list(in_zeros, in_cts)
     return in_cts_nz
 
-  transposed_jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(transposed, in_avals)
+  transposed_wrapped = lu.wrap_init(transposed,
+                                    debug_info=jaxpr.jaxpr.debug_info)
+  transposed_jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(
+      transposed_wrapped, in_avals)
   transposed_jaxpr = core.ClosedJaxpr(transposed_jaxpr_, consts)
   return transposed_jaxpr, cell.in_cts_zero  # pytype: disable=attribute-error
 

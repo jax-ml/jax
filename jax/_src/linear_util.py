@@ -282,6 +282,10 @@ class DebugInfo(NamedTuple):
       return self._replace(result_paths=tuple(self.result_paths()))
     return self
 
+  @property
+  def func_name(self) -> str:
+    return self.func_src_info.split(" ")[0]
+
   def safe_arg_names(self, expected: int) -> tuple[str | None, ...]:
     """Get the arg_names with a safety check."""
     if len(self.arg_names) == expected:
@@ -328,7 +332,13 @@ def wrap_init(f: Callable, params=None, *,
 @transformation_with_aux2
 def _get_result_paths_thunk(_fun: Callable, _store: Store, *args, **kwargs):
   ans = _fun(*args, **kwargs)
-  _store.store([keystr(path) for path, _ in generate_key_paths(ans)])
+  result_paths = [keystr(path) for path, _ in generate_key_paths(ans)]
+  if _store:
+    # In some instances a lu.WrappedFun is called multiple times, e.g.,
+    # the bwd function in a custom_vjp
+    assert _store.val == result_paths, (_store, result_paths)
+  else:
+    _store.store(result_paths)
   return ans
 
 def annotate(f: WrappedFun, in_type: core.InputType | None) -> WrappedFun:

@@ -564,6 +564,7 @@ pytype_strict_library(
     srcs = ["_src/interpreters/mlir.py"],
     deps = [
         ":ad_util",
+        ":api_util",
         ":config",
         ":core",
         ":dtypes",
