@@ -297,12 +297,9 @@ def _tiled_wgmma_layout(shape: tuple[int, ...]):
     raise ValueError(f"Shape {shape} is not 2D")
   if shape[0] % 64 != 0 or shape[1] % 8 != 0:
     raise ValueError(f"Shape {shape} is not a multiple of 64x8")
-  return TiledLayout(
-      Tiling(((64, 8), (16, 8), (8, 8), (1, 2))),
-      warp_dim=-8,
-      lane_dims=(-4, -3),
-      vector_dim=-1,
-  )
+  return TILED_LAYOUT_WGMMA
+
+
 def _tiled_wgmma_layout_for_upcast(shape: tuple[int, ...]):
   """Returns a tiled layout that is easy to relayout to WGMMA layout after doubling the bitwidth."""
   if len(shape) != 2:
@@ -452,6 +449,15 @@ FragmentedLayout = WGSplatFragLayout | WGStridedFragLayout | WGMMAFragLayout | W
 WGMMA_LAYOUT = WGMMAFragLayout()
 WGMMA_ROW_LAYOUT = WGMMARowFragLayout()
 
+# The tiled layout is equivalent to one described here in PTX documentation:
+# https://docs.nvidia.com/cuda/parallel-thread-execution/#wgmma-64n16-d
+# This tiled layout is equivalent to WGMMAFragLayout and will subsume it.
+TILED_LAYOUT_WGMMA = TiledLayout(
+    Tiling(((64, 8), (16, 8), (8, 8), (1, 2))),
+    warp_dim=-8,
+    lane_dims=(-4, -3),
+    vector_dim=-1,
+)
 
 @jax.tree_util.register_pytree_node_class
 @dataclasses.dataclass(init=False, eq=False, frozen=True, slots=True)
@@ -1022,7 +1028,7 @@ class FragmentedArray:
     )
 
   def __getitem__(self, idx):
-    if self.layout != WGMMA_LAYOUT:
+    if self.layout not in (WGMMA_LAYOUT, TILED_LAYOUT_WGMMA):
       raise NotImplementedError("Only WGMMA layouts support slicing")
     base_idx, slice_shape, is_squeezed = utils.parse_indices(idx, self.shape)
     if any(is_squeezed):
