@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cassert>
 #include <cstdint>
 #include <cstdio>
 
@@ -21,7 +22,7 @@ limitations under the License.
 extern "C" {
 
 void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
-                              int64_t elem_bytewidth, int64_t rank,
+                              int64_t elem_bitwidth, int64_t rank,
                               int64_t *sizes, int64_t *strides,
                               int64_t swizzle_bytes, int64_t *window_shape) {
   if (((uintptr_t)tma_desc) % 64 != 0) {
@@ -29,6 +30,28 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
             "TMA descriptor address must be 64 byte aligned, but got: %p\n",
             tma_desc);
     abort();
+  }
+
+  // Pack 4 bit types in 8 bit pairs.
+  int64_t elem_bytewidth;
+  if (elem_bitwidth < 8) {
+    // Check that it's a power of 2.
+    assert((elem_bitwidth & (elem_bitwidth - 1)) == 0);
+    int packing = 8 / elem_bitwidth;
+    assert(sizes[rank - 1] % packing == 0);
+    assert(window_shape[rank - 1] % packing == 0);
+    assert(strides[rank - 1] == 1);
+
+    // TMA requires that the last dimension be the contiguous one so we pack the
+    // elements under that assumption.
+    sizes[rank - 1] /= packing;
+    window_shape[rank - 1] /= packing;
+    for (int i = 0; i < rank - 1; i++) {
+      strides[i] /= packing;
+    }
+    elem_bytewidth = 1;
+  } else {
+    elem_bytewidth = elem_bitwidth / 8;
   }
 
   CUtensorMapDataType data_type;

@@ -1067,13 +1067,24 @@ def memref_ptr(memref_arg, memory_space=None):
   desc = builtin.UnrealizedConversionCastOp([desc_ty], [memref_arg])
   aligned_ptr = llvm.extractvalue(ptr_ty, desc, [1])
 
-  elem_bytewidth = bytewidth(memref_ty.element_type)
   offset_elems = llvm.extractvalue(i64, desc, [2])
-  offset_bytes = llvm.mul(
-      offset_elems,
-      c(elem_bytewidth, i64),
-      overflow_flags=llvm.IntegerOverflowFlags.none,
-  )
+  elem_bitwidth = bitwidth(memref_ty.element_type)
+  if elem_bitwidth < 8:
+    *_, static_offset = memref_ty.get_strides_and_offset()
+    if static_offset == ir.ShapedType.get_dynamic_stride_or_offset():
+      raise NotImplementedError
+    assert elem_bitwidth.bit_count() == 1
+    packing = 8 // elem_bitwidth
+    if static_offset % packing != 0:
+      raise ValueError
+    offset_bytes = c(static_offset // packing, i64)
+  else:
+    assert elem_bitwidth % 8 == 0
+    offset_bytes = llvm.mul(
+        offset_elems,
+        c(elem_bitwidth // 8, i64),
+        overflow_flags=llvm.IntegerOverflowFlags.none,
+    )
   return llvm.inttoptr(
       ptr_ty,
       llvm.add(

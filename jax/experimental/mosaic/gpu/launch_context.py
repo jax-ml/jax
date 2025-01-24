@@ -290,7 +290,7 @@ class LaunchContext:
         args = [
             host_ptr,
             base_ptr,
-            c(utils.bytewidth(ref_ty.element_type), i64),
+            c(utils.bitwidth(ref_ty.element_type), i64),
             c(rank, i64),
             utils.pack_array([as_i64(i) for i in sizes_and_strides[:rank]]),
             utils.pack_array([as_i64(i) for i in sizes_and_strides[rank:]]),
