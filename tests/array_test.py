@@ -1250,6 +1250,17 @@ class ShardingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, msg):
       jax.jit(f)(x)
 
+  def test_make_array_from_single_device_arrays_nonlist_error(self):
+    x = jnp.arange(10)
+    sharding = x.sharding
+
+    def f(x):
+      return jax.make_array_from_single_device_arrays(x.shape, sharding, x)
+
+    msg = "jax.make_array_from_single_device_arrays `arrays` argument"
+    with self.assertRaisesRegex(TypeError, msg):
+      jax.jit(f)(x)
+
   def test_make_array_from_single_device_arrays_bad_inputs(self):
     x = jnp.arange(10)
     mesh = jtu.create_mesh((2,), ('x',))
