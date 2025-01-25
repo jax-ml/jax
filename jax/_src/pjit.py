@@ -2712,17 +2712,17 @@ def _mesh_cast_abstract_eval(aval, src_sharding, dst_sharding):
         'Length of source sharding spec should be equal to destination'
         f' sharding spec. Got source spec={src_sharding.spec} and destination'
         f' spec={dst_sharding.spec}')
-  if src_sharding.mesh._any_axis_visible and dst_sharding.mesh._any_axis_visible:
+  if src_sharding.mesh._any_axis_explicit and dst_sharding.mesh._any_axis_explicit:
     for s, d in safe_zip(src_sharding.spec, dst_sharding.spec):
       if s is None and d is None:
         continue
       if s is None and d is not None:
-        assert (src_sharding.mesh._name_to_type[d] == mesh_lib.AxisTypes.Hidden
-                and dst_sharding.mesh._name_to_type[d] == mesh_lib.AxisTypes.Visible)
+        assert (src_sharding.mesh._name_to_type[d] == mesh_lib.AxisTypes.Auto
+                and dst_sharding.mesh._name_to_type[d] == mesh_lib.AxisTypes.Explicit)
         continue
       if s is not None and d is None:
-        assert (src_sharding.mesh._name_to_type[s] == mesh_lib.AxisTypes.Visible
-                and dst_sharding.mesh._name_to_type[s] == mesh_lib.AxisTypes.Hidden)
+        assert (src_sharding.mesh._name_to_type[s] == mesh_lib.AxisTypes.Explicit
+                and dst_sharding.mesh._name_to_type[s] == mesh_lib.AxisTypes.Auto)
         continue
       if d != s:
         raise ValueError(
@@ -2832,12 +2832,12 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
   new_mesh = cur_mesh.update_axis_types({axis_type: axes})  # type: ignore
   return new_mesh
 
-def hidden_axes(fun, *, axes: str | tuple[str, ...] | None = None,
-                out_shardings):
+def auto_axes(fun, *, axes: str | tuple[str, ...] | None = None,
+              out_shardings):
   def decorator(*args, **kwargs):
-    new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Hidden)
+    new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Auto)
     with mesh_lib.set_abstract_mesh(new_mesh):
-      in_specs = tree_map(lambda a: core.modify_spec_for_hidden_collective(
+      in_specs = tree_map(lambda a: core.modify_spec_for_auto_manual(
           a.aval.sharding.spec, new_mesh), args)
       args = mesh_cast(args, in_specs)
       out = fun(*args, **kwargs)
@@ -2845,27 +2845,27 @@ def hidden_axes(fun, *, axes: str | tuple[str, ...] | None = None,
   return decorator
 
 @contextlib.contextmanager
-def use_hidden_axes(*axes):
-  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Hidden)
+def use_auto_axes(*axes):
+  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Auto)
   with mesh_lib.set_abstract_mesh(new_mesh):
     yield
 
 
-def visible_axes(fun, *, axes: str | tuple[str, ...] | None = None,
-                 in_shardings):
+def explicit_axes(fun, *, axes: str | tuple[str, ...] | None = None,
+                  in_shardings):
   def decorator(*args, **kwargs):
-    new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Visible)
+    new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Explicit)
     with mesh_lib.set_abstract_mesh(new_mesh):
       args = mesh_cast(args, in_shardings)
       out = fun(*args, **kwargs)
-    out_specs = tree_map(lambda o: core.modify_spec_for_hidden_collective(
+    out_specs = tree_map(lambda o: core.modify_spec_for_auto_manual(
         o.aval.sharding.spec, mesh_lib.get_abstract_mesh()), out)
     return mesh_cast(out, out_specs)
   return decorator
 
 @contextlib.contextmanager
-def use_visible_axes(*axes):
-  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Visible)
+def use_explicit_axes(*axes):
+  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Explicit)
   with mesh_lib.set_abstract_mesh(new_mesh):
     yield
 

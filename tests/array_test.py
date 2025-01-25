@@ -1305,56 +1305,56 @@ class ShardingTest(jtu.JaxTestCase):
         'Number of axis names in axis_types should match the number of'
         ' axis_names'):
       jtu.create_mesh((2, 1), ('x', 'y'),
-                      axis_types={jax.sharding.AxisTypes.Hidden: 'x'})
+                      axis_types={jax.sharding.AxisTypes.Auto: 'x'})
 
     with self.assertRaisesRegex(
         ValueError,
         'Number of axis names in axis_types should match the number of'
         ' axis_names in shape_tuple'):
       jax.sharding.AbstractMesh((('x', 2), ('y', 1)),
-                                axis_types={jax.sharding.AxisTypes.Hidden: 'x'})
+                                axis_types={jax.sharding.AxisTypes.Auto: 'x'})
 
   def test_make_mesh_axis_types(self):
     mesh = jax.make_mesh((1, 1), ('x', 'y'))
-    self.assertDictEqual(mesh.axis_types, {AxisTypes.Hidden: ('x', 'y')})
+    self.assertDictEqual(mesh.axis_types, {AxisTypes.Auto: ('x', 'y')})
 
-    mesh = jax.make_mesh((1, 1, 1), ('x', 'y', 'z'), visible_axes='x',
-                         hidden_axes='y', collective_axes='z')
+    mesh = jax.make_mesh((1, 1, 1), ('x', 'y', 'z'), explicit_axes='x',
+                         auto_axes='y', manual_axes='z')
     self.assertDictEqual(
-        mesh.axis_types, {AxisTypes.Hidden: ('y',), AxisTypes.Visible: ('x',),
-                          AxisTypes.Collective: ('z',)})
+        mesh.axis_types, {AxisTypes.Auto: ('y',), AxisTypes.Explicit: ('x',),
+                          AxisTypes.Manual: ('z',)})
 
-    mesh = jax.make_mesh((1, 1, 1), ('x', 'y', 'z'), visible_axes=('x', 'y'),
-                         collective_axes='z')
-    self.assertDictEqual(mesh.axis_types, {AxisTypes.Visible: ('x', 'y'),
-                                           AxisTypes.Collective: ('z',)})
+    mesh = jax.make_mesh((1, 1, 1), ('x', 'y', 'z'), explicit_axes=('x', 'y'),
+                         manual_axes='z')
+    self.assertDictEqual(mesh.axis_types, {AxisTypes.Explicit: ('x', 'y'),
+                                           AxisTypes.Manual: ('z',)})
 
-    mesh = jax.make_mesh((1, 1), ('x', 'y'), visible_axes=('x', 'y'))
-    self.assertDictEqual(mesh.axis_types, {AxisTypes.Visible: ('x', 'y')})
+    mesh = jax.make_mesh((1, 1), ('x', 'y'), explicit_axes=('x', 'y'))
+    self.assertDictEqual(mesh.axis_types, {AxisTypes.Explicit: ('x', 'y')})
 
-    mesh = jax.make_mesh((1,), 'model', collective_axes='model')
-    self.assertDictEqual(mesh.axis_types, {AxisTypes.Collective: ('model',)})
-
-    with self.assertRaisesRegex(ValueError, "should be non-overlapping"):
-      jax.make_mesh((1, 1, 1), ('data', 'model', 'seq'),
-                    hidden_axes='data', visible_axes=('data', 'seq'),
-                    collective_axes='model')
+    mesh = jax.make_mesh((1,), 'model', manual_axes='model')
+    self.assertDictEqual(mesh.axis_types, {AxisTypes.Manual: ('model',)})
 
     with self.assertRaisesRegex(ValueError, "should be non-overlapping"):
       jax.make_mesh((1, 1, 1), ('data', 'model', 'seq'),
-                    hidden_axes='data', visible_axes='model',
-                    collective_axes='data')
+                    auto_axes='data', explicit_axes=('data', 'seq'),
+                    manual_axes='model')
 
     with self.assertRaisesRegex(ValueError, "should be non-overlapping"):
       jax.make_mesh((1, 1, 1), ('data', 'model', 'seq'),
-                    visible_axes=('data', 'seq'),
-                    collective_axes=('seq', 'model'))
+                    auto_axes='data', explicit_axes='model',
+                    manual_axes='data')
+
+    with self.assertRaisesRegex(ValueError, "should be non-overlapping"):
+      jax.make_mesh((1, 1, 1), ('data', 'model', 'seq'),
+                    explicit_axes=('data', 'seq'),
+                    manual_axes=('seq', 'model'))
 
     with self.assertRaisesRegex(
         ValueError,
         'Number of axis names in axis_types should match the number of'
         ' axis_names'):
-      jax.make_mesh((1, 1), ('data', 'model'), visible_axes='data')
+      jax.make_mesh((1, 1), ('data', 'model'), explicit_axes='data')
 
 
 @jtu.with_config(jax_use_shardy_partitioner=True)

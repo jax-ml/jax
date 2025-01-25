@@ -1688,7 +1688,7 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 
 # TODO(yashkatariya): Only works with User/Auto. Generalize it to work with
 # Collective too.
-def modify_spec_for_hidden_collective(spec, mesh) -> P:
+def modify_spec_for_auto_manual(spec, mesh) -> P:
   if all(s is None for s in spec):
     return spec
   new_spec = []  # type: ignore
@@ -1699,14 +1699,14 @@ def modify_spec_for_hidden_collective(spec, mesh) -> P:
       temp_s = s[0] if isinstance(s, tuple) else s
       new_spec.append(
           None
-          if mesh._name_to_type[temp_s] in (AxisTypes.Hidden, AxisTypes.Collective)
+          if mesh._name_to_type[temp_s] in (AxisTypes.Auto, AxisTypes.Manual)
           else s)
   return P(*new_spec)
 
 def _maybe_modify_sharding(sharding):
-  if sharding.mesh._are_all_axes_visible:
+  if sharding.mesh._are_all_axes_explicit:
     return sharding
-  new_spec = modify_spec_for_hidden_collective(sharding.spec, sharding.mesh)
+  new_spec = modify_spec_for_auto_manual(sharding.spec, sharding.mesh)
   return sharding.with_spec(new_spec)
 
 

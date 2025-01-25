@@ -51,7 +51,7 @@ def call_sharding_rule(prim, rule, num_out, *avals, **kwargs):
   if config.sharding_in_types.value:
     if rule is None:
       cur_mesh = mesh_lib.get_abstract_mesh()
-      if cur_mesh._are_all_axes_hidden or cur_mesh._are_all_axes_collective:  # type: ignore
+      if cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual:  # type: ignore
         return None if num_out is None else [None] * num_out
       else:
         raise ValueError(

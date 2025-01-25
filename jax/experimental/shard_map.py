@@ -538,7 +538,7 @@ def _shard_shaped_array(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
                     for i, sz in enumerate(aval.shape))
   if config.sharding_in_types.value:
     new_mesh = AbstractMesh(
-        mesh.shape_tuple, axis_types={AxisTypes.Collective: mesh.axis_names})
+        mesh.shape_tuple, axis_types={AxisTypes.Manual: mesh.axis_names})
     new_sharding = NamedSharding(new_mesh, P(*[None] * aval.ndim))
   else:
     new_sharding = None

@@ -2172,7 +2172,7 @@ def _concretize_abstract_out_shardings(shardings, avals, device_assignment):
     if isinstance(s, UnspecifiedValue) and a.sharding is not None:
       spec = (PartitionSpec(*[PartitionSpec.UNCONSTRAINED if sp is None else sp
                               for sp in a.sharding.spec])
-              if a.sharding.mesh._any_axis_hidden else a.sharding.spec)
+              if a.sharding.mesh._any_axis_auto else a.sharding.spec)
       out.append(NamedSharding(
           _abstract_to_concrete_mesh(a.sharding.mesh), spec))
     else:
