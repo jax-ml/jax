@@ -31,23 +31,27 @@ def current_xla_metadata():
   return thread_local_metadata.val
 
 @contextmanager
-def set_xla_metadata(*args, **kwargs):
+def set_xla_metadata(**kwargs):
+  with set_xla_metadata_dict(kwargs):
+    yield
+
+@contextmanager
+def set_xla_metadata_dict(kwargs):
+  if not kwargs:
+    yield
+    return
+
   new_metadata = thread_local_metadata.val.copy()
-  if args:
-    new_metadata.update(args[0] if args[0] else {})
-  else:
-    new_metadata.update(**kwargs)
+  new_metadata.update(**kwargs)
   prev_metadata, thread_local_metadata.val = (
       thread_local_metadata.val,
       new_metadata,
   )
-  config.xla_metadata_context_manager.set_local(
+  prev = config.xla_metadata_context_manager.swap_local(
       tuple((v, k) for k, v in sorted(new_metadata.items()))
   )
   try:
     yield
   finally:
     thread_local_metadata.val = prev_metadata
-    config.xla_metadata_context_manager.set_local(
-        tuple((v, k) for k, v in sorted(prev_metadata.items()))
-    )
+    config.xla_metadata_context_manager.set_local(prev)
