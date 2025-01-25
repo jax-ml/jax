@@ -272,21 +272,21 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   xs_avals = [core.get_aval(x) for x in xs_flat]
   x_avals = [core.mapped_aval(length, 0, aval) for aval in xs_avals]
+  dbg_body = api_util.tracing_debug_info("scan", f, (init, xs), {})
 
   if config.mutable_array_checks.value:
     in_flat, in_tree = tree_flatten((init, xs))
-    dbg = pe.tracing_debug_info(f, in_tree, None, False, 'scan')  # type: ignore
     in_avals = tuple(_map(core.get_aval, in_flat))
-    _check_no_aliased_ref_args(dbg, in_avals, in_flat)
+    _check_no_aliased_ref_args(dbg_body, in_avals, in_flat)
 
   def _create_jaxpr(init):
     init_flat, init_tree = tree_flatten(init)
     in_flat, in_tree = tree_flatten((init, xs))
     carry_avals = tuple(_map(core.get_aval, init_flat))
     jaxpr, consts, out_tree, attrs_tracked = _initial_style_jaxpr_attrs(
-        f, in_tree, (*carry_avals, *x_avals), "scan")
+        f, in_tree, (*carry_avals, *x_avals), debug_info=dbg_body)
     if config.mutable_array_checks.value:
-      _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), in_flat)
+      _check_no_aliased_closed_over_refs(dbg_body, (*jaxpr.consts, *consts), in_flat)
     out_tree_children = out_tree.children()
     if len(out_tree_children) != 2:
       msg = "scan body output must be a pair, got {}."
@@ -1355,10 +1355,12 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   def _create_jaxpr(init_val):
     init_vals, in_tree = tree_flatten((init_val,))
     init_avals = tuple(_map(core.get_aval, init_vals))
+    cond_dbg = api_util.tracing_debug_info("while_cond", cond_fun, (init_val,), {})
     cond_jaxpr, cond_consts, cond_tree = _initial_style_jaxpr(
-        cond_fun, in_tree, init_avals, "while_cond")
+        cond_fun, in_tree, init_avals, cond_dbg)
+    body_dbg = api_util.tracing_debug_info("while_body", body_fun, (init_val,), {})
     body_jaxpr, body_consts, body_tree = _initial_style_jaxpr(
-        body_fun, in_tree, init_avals, "while_loop")
+        body_fun, in_tree, init_avals, body_dbg)
     if not treedef_is_leaf(cond_tree) or len(cond_jaxpr.out_avals) != 1:
       msg = "cond_fun must return a boolean scalar, but got pytree {}."
       raise TypeError(msg.format(cond_tree))

@@ -775,10 +775,10 @@ class DebugInfoTest(jtu.JaxTestCase):
         return x0
       def my_branch1(x1):
         leaked_tracers.append(x1)
-        return x1
+        return x1 + 1
       def my_branch2(x2):
         leaked_tracers.append(x2)
-        return x2
+        return x2 + 2
       return lax.switch(x, [my_branch0, my_branch1, my_branch2], x)
 
     self._check_tracers_and_jaxprs(
@@ -889,11 +889,11 @@ class DebugInfoTest(jtu.JaxTestCase):
         leaked_tracers=leaked_tracers,
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=my_f, arg_names=('x',), result_paths=('',)",
-            # TODO(necula): some Jaxprs without debug info
-            'None'],
+            'None',  # TODO(necula): some missing debug info
+        ],
         expected_tracer_debug_infos=[
             "traced_for=while_cond, fun=my_cond, arg_names=('a',)",
-            "traced_for=while_loop, fun=my_body, arg_names=('b',)"
+            "traced_for=while_body, fun=my_body, arg_names=('b',)",
         ])
 
   def test_scan(self):
@@ -1076,25 +1076,26 @@ class DebugInfoTest(jtu.JaxTestCase):
             # TODO(necula): some Jaxprs without debug info
             'None'],
         expected_tracer_debug_infos=[
-            # TODO(necula): bad arg_names
-            "traced_for=custom_dce, fun=my_g, arg_names=('args[0]',)"
+            "traced_for=custom_dce, fun=my_g, arg_names=('x',)"
         ])
 
   def test_custom_dce_consts(self):
     leaked_tracers: list[core.Tracer] = []
     @jax.experimental.custom_dce.custom_dce
-    def f(x):
+    def my_f(x):
+      leaked_tracers.append(x)
       return np.eye(1) * jnp.sin(x), jnp.cos(x)
 
-    @f.def_dce
+    @my_f.def_dce
     def rule(used_outs, x):
+      leaked_tracers.append(x)
       return (
           np.full((1, 1), 2.0) * jnp.exp(x) if used_outs[0] else None,
           jnp.sqrt(x) if used_outs[1] else None,
       )
 
     self._check_tracers_and_jaxprs(
-        jax.jit(lambda x: f(x)[0]),
+        jax.jit(lambda x: my_f(x)[0]),
         np.array(1.1234),
         leaked_tracers=leaked_tracers,
         expected_jaxpr_debug_infos=[
@@ -1102,25 +1103,26 @@ class DebugInfoTest(jtu.JaxTestCase):
             # TODO(necula): some Jaxprs without debug info
             'None'],
         expected_tracer_debug_infos=[
-            # TODO(necula): bad arg_names
-            # "traced_for=custom_dce, fun=my_g, arg_names=('args[0]',)"
+            "traced_for=custom_dce, fun=my_f, arg_names=('x',)"
         ])
 
   def test_custom_linear_solve_complex(self):
     leaked_tracers: list[core.Tracer] = []
     def solve(a, b):
       leaked_tracers.append(a)
-      def solve(matvec, x):
+      def my_solve(matvec, x):
         leaked_tracers.append(x)
         return jsp.linalg.solve(a, x)
 
-      def high_precision_dot(a, b):
+      def my_high_precision_dot(a, b):
+        leaked_tracers.append(a)
         return lax.dot(a, b, precision=lax.Precision.HIGHEST)
 
-      def tr_solve(matvec, x):
+      def my_tr_solve(matvec, x):
+        leaked_tracers.append(x)
         return jsp.linalg.solve(a.T, x)
-      matvec = functools.partial(high_precision_dot, a)
-      return lax.custom_linear_solve(matvec, b, solve, tr_solve)
+      matvec = functools.partial(my_high_precision_dot, a)
+      return lax.custom_linear_solve(matvec, b, my_solve, my_tr_solve)
 
     rng = self.rng()
     a = 0.5 * rng.randn(2, 2) + 0.5j * rng.randn(2, 2)
@@ -1138,9 +1140,9 @@ class DebugInfoTest(jtu.JaxTestCase):
             "None",  # TODO(necula): there are missing jaxpr debug info
         ],
         expected_tracer_debug_infos=[
-            # TODO(necula): we don't see any leaks from tr_solve?
+            "traced_for=custom_linear_solve solve, fun=my_solve, arg_names=('x',)",
+            "traced_for=custom_linear_solve transpose_solve, fun=my_tr_solve, arg_names=('x',)",
             "None",  # TODO(necula): there are missing debug info
-            re.compile(r"traced_for=custom_linear_solve, fun=f at .*control_flow/solves.py:.*, arg_names=\('x',\)"),
         ])
 
   def test_custom_root_errors(self):
@@ -1148,8 +1150,15 @@ class DebugInfoTest(jtu.JaxTestCase):
     def dummy_root_usage(x):
       leaked_tracers.append(x)
       def my_f(x):
+        leaked_tracers.append(x)
         return x - 3.
-      return lax.custom_root(my_f, 0., lambda my_f, x: x, lambda my_f, x: x)
+      def my_solve(f, x):
+        leaked_tracers.append(x)
+        return x
+      def my_transpose_solve(f, x):
+        leaked_tracers.append(x)
+        return x
+      return lax.custom_root(my_f, 0., my_solve, my_transpose_solve)
 
     self._check_tracers_and_jaxprs(
         jax.jit(lambda x: jax.jvp(dummy_root_usage, (x,), (0.0,))),
@@ -1157,9 +1166,12 @@ class DebugInfoTest(jtu.JaxTestCase):
         leaked_tracers=leaked_tracers,
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=<lambda>, arg_names=('x',), result_paths=('[0]', '[1]')",
-            "None",  # TODO(necula): there are missing debug info
+            "None",  # TODO(necula): there are missing Jaxpr debug info
         ],
         expected_tracer_debug_infos=[
+            "traced_for=custom_root, fun=my_f, arg_names=('x',)",
+            "traced_for=custom_root solve, fun=my_solve, arg_names=('x',)",
+            "traced_for=custom_root tangent_solve, fun=my_transpose_solve, arg_names=('x',)",
             "None",  # TODO(necula): there are missing debug info
         ])
 
