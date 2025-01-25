@@ -2119,6 +2119,11 @@ def tracing_debug_info(
     has_kwargs: bool,
     traced_for: str
 ) -> lu.TracingDebugInfo:
+  if traced_for not in ("jit", "pmap", "cond", "custom_vmap", "while_cond",
+                        "composite", "pallas_call index_map", "pallas_call",
+                        "scan", "switch", "while_loop", "xla_pmap",
+                        "custom_dce", "custom_dce_rule", "saved_residuals"):
+    assert False, traced_for   # DO_NOT_SUBMIT
   # TODO(necula): we should not need this function, and can use api_util.tracing_debug_info instead
   # We just have to make sure we grad the debugging information when we have
   # the unflattened args

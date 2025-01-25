@@ -5830,7 +5830,7 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' sin '), 3)
     self.assertEqual(jaxpr_text.count(' cos '), 3)
     # Six calls to dot_general in the backward pass because we save the primal
-    # matmuls and only compure the backward pass ones (two for each primal one).
+    # matmuls and only compute the backward pass ones (two for each primal one).
     self.assertEqual(jaxpr_text.count(' dot_'), 6)
 
     jtu.check_grads(api.jit(f), (jnp.ones((5, 5)),), order=2,
