@@ -1203,11 +1203,7 @@ class DebugInfoTest(jtu.JaxTestCase):
             # TODO(necula): missing Jaxpr debug info
             "None"],
         expected_tracer_debug_infos=[
-            # TODO(necula): arg_names seem to be wrong
-            # One tracer from every index map
-            "traced_for=pallas_call index_map, fun=my_index_map, arg_names=('i[0]', 'i[1]')",
-            "traced_for=pallas_call index_map, fun=my_index_map, arg_names=('i[0]', 'i[1]')",
-            "traced_for=pallas_call index_map, fun=my_index_map, arg_names=('i[0]', 'i[1]')",
+            "traced_for=pallas_call index_map, fun=my_index_map, arg_names=('i', 'j')",
             "traced_for=pallas_call, fun=my_kernel, arg_names=('x_ref', 'y_ref', 'o_ref')",
         ],
         check_lowering=False,  # We need interpret mode on CPU. TODO(necula)
