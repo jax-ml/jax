@@ -1014,18 +1014,25 @@ def make_array_from_single_device_arrays(
   """
   # All input arrays should be committed. Checking it is expensive on
   # single-controller systems.
-  if any(isinstance(arr, core.Tracer) for arr in arrays):
-    raise ValueError(
-        "jax.make_array_from_single_device_arrays requires a list of concrete"
-        f" arrays as input. got types {set(map(type, arrays))}")
   aval = core.update_aval_with_sharding(
       core.ShapedArray(shape, arrays[0].dtype, weak_type=False), sharding)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     return aval.dtype._rules.make_sharded_array(aval, sharding, arrays,
                                                 committed=True)
   # TODO(phawkins): ideally the cast() could be checked.
-  return ArrayImpl(aval, sharding, cast(Sequence[ArrayImpl], arrays),
-                   committed=True)
+  try:
+    return ArrayImpl(aval, sharding, cast(Sequence[ArrayImpl], arrays),
+                    committed=True)
+  except TypeError:
+    if not isinstance(arrays, Sequence):
+      raise TypeError("jax.make_array_from_single_device_arrays `arrays` "
+                      "argument must be a Sequence (list or tuple), but got "
+                      f"{type(arrays)}.")
+    if any(isinstance(arr, core.Tracer) for arr in arrays):
+      raise ValueError(
+          "jax.make_array_from_single_device_arrays requires a list of concrete"
+          f" arrays as input, but got types {set(map(type, arrays))}")
+    raise
 
 xla.canonicalize_dtype_handlers[ArrayImpl] = pxla.identity
 
