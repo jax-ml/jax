@@ -457,7 +457,9 @@ def all_to_all(x, axis_name, split_axis, concat_axis, *, axis_index_groups=None,
 
   return tree_util.tree_map(bind, x)
 
-def ragged_all_to_all(operand, output, input_offsets, send_sizes, output_offsets, recv_sizes):
+def ragged_all_to_all(
+    operand, output, input_offsets, send_sizes, output_offsets, recv_sizes, *,
+    axis_name, axis_index_groups = None):
   """Ragged version of :func:`all_to_all`.
 
   For now, ``split_axis`` and ``concat_axis`` from `all_to_all` are equivalent
@@ -528,14 +530,26 @@ def ragged_all_to_all(operand, output, input_offsets, send_sizes, output_offsets
     send_sizes: array of ragged output data.
     output_offsets: array of ragged offsets in the target replica output.
     recv_sizes: array of ragged output receive sizes.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      :func:`jax.pmap` documentation for more details).
+    axis_index_groups: optional list of lists containing axis indices (e.g. for
+      an axis of size 4, [[0, 1], [2, 3]] would run ragged all to all over the
+      first two and last two replicas). Groups must cover all axis indices
+      exactly once, and all groups must be the same size. Otherwise, the
+      behavior is undefined.
 
   Returns:
     array with shape equal to ``output``.
   """
-  return ragged_all_to_all_p.bind(operand, output, input_offsets, send_sizes,
-                                  output_offsets, recv_sizes)
 
-ragged_all_to_all_p = core.Primitive('ragged_all_to_all')
+  if not isinstance(axis_name, (tuple, list)):
+    axis_name = (axis_name,)
+
+  axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
+  return ragged_all_to_all_p.bind(operand, output, input_offsets, send_sizes,
+                                    output_offsets, recv_sizes,
+                                    axis_name=axis_name,
+                                    axis_index_groups=axis_index_groups)
 
 
 def axis_index(axis_name):
@@ -1134,29 +1148,48 @@ batching.fancy_primitive_batchers[all_to_all_p] = _all_to_all_batched_collective
 batching.skippable_batchers[all_to_all_p] = partial(_names_in_param, 'axis_name')
 
 
-def _ragged_all_to_all_lowering(ctx, operand, output, input_offsets, send_sizes, output_offsets, recv_sizes):
-  N = input_offsets.type.shape[0]
-  backend_config = ir.DictAttr.get({
-      'replica_groups': ir.DenseIntElementsAttr.get(
-          np.arange(0, N, 1, dtype=np.int64), shape=[1, N]
-      )
-  })
+def _ragged_all_to_all_lowering(
+    ctx, operand, output, input_offsets, send_sizes, output_offsets, recv_sizes,
+    *, axis_name, axis_index_groups
+):
+  replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
+                                   axis_index_groups)
+
+  # Assumes all groups are the same size
+  split_count = len(replica_groups[0])
+  if not all(split_count == len(g) for g in replica_groups):
+    raise ValueError('Replica groups must be equally sized')
+  if len(replica_groups[0]) == 1:
+    return [operand]
+
+  backend_config = {'replica_groups': _replica_groups_hlo(replica_groups)}
+  is_spmd = isinstance(
+      ctx.module_context.axis_context, (SPMDAxisContext, ShardingContext))
+  if is_spmd:
+    backend_config['channel_id'] = ir.IntegerAttr.get(
+        ir.IntegerType.get_signless(64), ctx.module_context.new_channel()
+    )
+
   return hlo.CustomCallOp(
       result=[output.type],
-      inputs=[operand, output, input_offsets, send_sizes, output_offsets,
-              recv_sizes],
-      call_target_name=ir.StringAttr.get('ragged_all_to_all'),
-      backend_config=backend_config,
+      inputs=[
+          operand,
+          output,
+          input_offsets,
+          send_sizes,
+          output_offsets,
+          recv_sizes,
+      ],
+      call_target_name=ir.StringAttr.get("ragged_all_to_all"),
+      backend_config=ir.DictAttr.get(backend_config),
       api_version=ir.IntegerAttr.get(ir.IntegerType.get_signless(32), 4),
   ).results
 
-@ragged_all_to_all_p.def_abstract_eval
-def _ragged_all_to_all_abstract_eval(operand, output, input_offsets, send_sizes, output_offsets, recv_sizes):
-  if operand.shape[1:] != output.shape[1:]:
-    raise ValueError(
-        "ragged_all_to_all input and output shapes must be equal, except for"
-        " the outermost dimension."
-    )
+def _ragged_all_to_all_effectful_abstract_eval(
+    operand, output, input_offsets, send_sizes, output_offsets, recv_sizes,
+    axis_name, axis_index_groups
+):
+  del operand, axis_index_groups
   if not dtypes.issubdtype(input_offsets.dtype, np.integer):
     raise ValueError("ragged_all_to_all input_offsets must be integer type.")
   if not dtypes.issubdtype(send_sizes.dtype, np.integer):
@@ -1185,15 +1218,16 @@ def _ragged_all_to_all_abstract_eval(operand, output, input_offsets, send_sizes,
         "ragged_all_to_all recv_sizes must be rank 1 with positive dimension"
         " size, but got shape {}".format(recv_sizes.shape)
     )
-  return output.update(
-      shape=list(output.shape),
-      dtype=output.dtype,
-      weak_type=output.weak_type,
-  )
 
-ragged_all_to_all_p.def_impl(partial(dispatch.apply_primitive, ragged_all_to_all_p))
+  _check_axis_names(axis_name)
+  out_aval = output.update(shape=output.shape, weak_type=False)
+  effects = {*map(core.NamedAxisEffect, axis_name)}
+  return out_aval, effects
+
+ragged_all_to_all_p = core.Primitive('ragged_all_to_all')
+ragged_all_to_all_p.def_effectful_abstract_eval(_ragged_all_to_all_effectful_abstract_eval)
 mlir.register_lowering(ragged_all_to_all_p, _ragged_all_to_all_lowering)
-
+batching.skippable_batchers[ragged_all_to_all_p] = partial(_names_in_param, 'axis_name')
 
 def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):
   """Gather values of x across all replicas.
