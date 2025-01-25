@@ -639,8 +639,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         check_tracer_arg_name=True,
         expected_tracer_debug_infos=[
             "traced_for=jit, fun=my_g, arg_names=b, from b",
-            # TODO(necula): bad arg name
-            "traced_for=jit, fun=my_f, arg_names=args[0], from args[0]"
+            "traced_for=jit, fun=my_f, arg_names=a, from a",
         ])
 
   def test_jit_arg_names(self):
@@ -692,8 +691,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         tracer_spy=tracer_spy,
         check_tracer_arg_name=True,
         expected_tracer_debug_infos=[
-            # TODO(necula): the arg_names are not right, include static ones, also missing args[1]
-            "traced_for=jit, fun=my_f, arg_names=x['hi'],y,z,args[0],kwargs['t'],kwargs['w'], from kwargs['w']",
+            "traced_for=jit, fun=my_f, arg_names=y['hi'],z,args[0],args[1],kwargs['t'],kwargs['w'], from kwargs['w']",
             "None",  # TODO(necula)
         ],
         expected_lowering_lines=[
@@ -1177,8 +1175,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         tracer_spy=tracer_spy,
         check_tracer_arg_name=True,
         expected_tracer_debug_infos=[
-            # TODO(necula): bad tracer provenance
-            "traced_for=pmap, fun=my_f, arg_names=x,y,args[0],a,kwargs['b'],kwargs['d'], from args[0]",
+            "traced_for=pmap, fun=my_f, arg_names=y,args[0],args[1],a,kwargs['b'],kwargs['d'], from args[1]",
         ],
     )
 
@@ -1219,6 +1216,31 @@ class DebugInfoTest(jtu.JaxTestCase):
         expected_jaxpr_debug_infos=[
             # TODO(necula): why this?
             re.compile(r'traced_for=jit, fun=_multi_slice at .*/array_methods.py:.*, arg_names=self, result_paths=.*'),
+            "traced_for=pmap, fun=my_f, arg_names=x,y,args[0],args[1], result_paths=['u'],['v']",
+        ],
+        tracer_spy=tracer_spy,
+        expected_tracer_debug_infos=[
+            # TODO(necula): missing debug_info
+            'None'
+        ],
+    )
+
+  @jtu.ignore_warning(category=UserWarning,
+                      message=".* jitted function .* includes a pmap")
+  def test_jvp_pmap(self):
+    tracer_spy = TracerSpy()
+    def my_f(x, y):
+      tracer_spy.append(x)
+      return jnp.sin(x) + y
+
+    x = np.ones((jax.device_count(), 1), dtype=np.float32)
+    x_tan = np.full_like(x, .1)
+
+    self._check_tracers_and_jaxprs(
+        jax.jit(lambda x, x_tan: jax.jvp(jax.pmap(my_f), (x, x), (x_tan, x_tan))),
+        x, x_tan,
+        expected_jaxpr_debug_infos=[
+            'traced_for=jit, fun=<lambda>, arg_names=x,x_tan, result_paths=[0],[1]',
             "None",  # TODO(necula): missing debug info
         ],
         tracer_spy=tracer_spy,
@@ -1307,7 +1329,7 @@ class DebugInfoTest(jtu.JaxTestCase):
             "None",  # TODO(necula): missing tracer debug info
         ],
         expected_tracer_debug_infos=[
-            "traced_for=xla_pmap, fun=my_f, arg_names=my_x",
+            "traced_for=pmap, fun=my_f, arg_names=my_x",
         ],
         check_lowering=False,  # TODO(necula): warning during lowering
     )
@@ -1339,7 +1361,8 @@ class DebugInfoTest(jtu.JaxTestCase):
             # TODO(necula): some Jaxprs without debug info
             'None'],
         expected_tracer_debug_infos=[
-            "traced_for=custom_dce, fun=my_g, arg_names=x"
+            # TODO(necula): no leaked tracer from my_g_dce?
+            "traced_for=custom_dce, fun=my_g, arg_names=x",
         ])
 
   def test_custom_dce_consts(self):
@@ -1350,7 +1373,7 @@ class DebugInfoTest(jtu.JaxTestCase):
       return np.eye(1) * jnp.sin(x), jnp.cos(x)
 
     @my_f.def_dce
-    def rule(used_outs, y):
+    def my_rule(used_outs, y):
       tracer_spy.append(y)
       return (
           np.full((1, 1), 2.0) * jnp.exp(y) if used_outs[0] else None,
@@ -1367,8 +1390,8 @@ class DebugInfoTest(jtu.JaxTestCase):
             'None'],
         check_tracer_arg_name=True,
         expected_tracer_debug_infos=[
+            # TODO(necula): no leaked tracer from my_rule?
             "traced_for=custom_dce, fun=my_f, arg_names=x, from x",
-            # TODO(necula): rule.y does not have an inspected tracer?
         ])
 
   def test_custom_linear_solve_complex(self):

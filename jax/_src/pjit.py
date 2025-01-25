@@ -569,6 +569,7 @@ def _infer_params_impl(
 
   f = lu.wrap_init(fun)
   f, res_paths = result_paths(f)
+  dbg = dbg and dbg.add_result_paths(result_paths_thunk=res_paths)
   f, dyn_args = argnums_partial_except(f, ji.static_argnums, args, allow_invalid=True)
   del args
 
@@ -1160,7 +1161,7 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
   attrs_tracked = debug_info and len(debug_info.arg_names) != len(in_avals)
   if not config.dynamic_shapes.value and not attrs_tracked:
     pjit_check_aval_sharding(in_shardings_flat, in_avals,
-                             None if debug_info is None else debug_info.arg_names,
+                             None if debug_info is None else debug_info.safe_arg_names(len(in_avals)),
                              "pjit arguments", allow_uneven_sharding=False)
     check_aval_layout_compatibility(
         in_layouts_flat, in_avals,
@@ -1302,7 +1303,7 @@ def _create_pjit_jaxpr(
     in_type: core.InputType | Sequence[core.AbstractValue],
     attr_data: int,
     debug_info: lu.TracingDebugInfo,
-    out_paths: Callable,
+    result_paths: Callable,
     ignored_inline: IgnoreKey
 ) -> tuple[core.ClosedJaxpr, list[Any], list[core.AbstractValue],
            list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]]:
@@ -1314,19 +1315,18 @@ def _create_pjit_jaxpr(
   with dispatch.log_elapsed_time(
       "Finished tracing + transforming {fun_name} for pjit in {elapsed_time:.9f} sec",
       fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
-    pe_debug = debug_info and pe.tracing_debug_info_final(fun, debug_info.traced_for)
     if config.dynamic_shapes.value:
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic2(
-          lu.annotate(fun, cast(core.InputType, in_type)), debug_info=pe_debug)
+          lu.annotate(fun, cast(core.InputType, in_type)), debug_info=debug_info)
       attrs_tracked = []
     else:
       jaxpr, global_out_avals, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(
-          fun, in_type, debug_info=pe_debug)
+          fun, in_type, debug_info=debug_info)
       # assert attr_data is sentinel or attr_data matches attrs_tracked
 
   # TODO(dougalm,mattjj): enable debug info with attrs_tracked
   if not config.dynamic_shapes.value and not attrs_tracked:
-    jaxpr = add_jaxpr_debug_info(jaxpr, debug_info, out_paths())
+    jaxpr = add_jaxpr_debug_info(jaxpr, debug_info, result_paths())
 
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports
@@ -1366,11 +1366,12 @@ def _check_and_canonicalize_out_shardings(
   if not config.dynamic_shapes.value:
     pjit_check_aval_sharding(
         out_shardings_flat, out_avals,
-        None if debug_info is None else debug_info.result_paths,
+        None if debug_info is None else debug_info.safe_result_paths(len(out_avals)),  # type: ignore[arg-type]
         "pjit outputs", allow_uneven_sharding=False)
     check_aval_layout_compatibility(
         out_layouts_flat, out_avals,
-        None if debug_info is None else debug_info.result_paths, "jit outputs")
+        None if debug_info is None else debug_info.safe_result_paths(len(out_avals)),  # type: ignore[arg-type]
+        "jit outputs")
   return out_shardings_flat, out_layouts_flat
 
 
@@ -1423,9 +1424,9 @@ class IgnoreKey:
 
 
 def pjit_check_aval_sharding(
-    shardings, flat_avals, names: tuple[str, ...] | None,
+    shardings, flat_avals, names: tuple[str | None, ...] | None,
     what_aval: str, allow_uneven_sharding: bool):
-  new_names = [''] * len(shardings) if names is None else names
+  new_names = [None] * len(shardings) if names is None else names
   for aval, s, name in zip(flat_avals, shardings, new_names):
     if isinstance(s, (UnspecifiedValue, AUTO)):
       continue

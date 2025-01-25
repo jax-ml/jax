@@ -473,6 +473,9 @@ class custom_partitioning:
 
   def __call__(self, *args, **kwargs):
     args = _resolve_kwargs(self.fun, args, kwargs)
+    debug = api_util.tracing_debug_info("custom_partitioning", self.fun,
+                                        args, kwargs,
+                                        static_argnums=self.static_argnums)
     if self.static_argnums:
       static_argnums = set(self.static_argnums)
       args = tuple(x if i in static_argnums else x for i, x in enumerate(args))
@@ -491,8 +494,6 @@ class custom_partitioning:
     args_flat, in_tree = tree_util.tree_flatten(dyn_args)
     flat_fun, out_tree = api_util.flatten_fun_nokwargs(f_, in_tree)
     in_avals = [core.get_aval(x) for x in args_flat]
-    debug = pe.tracing_debug_info(self.fun, in_tree, out_tree, False,
-                          "custom_partitioning")
     mesh = mesh_lib.thread_resources.env.physical_mesh
     with core.extend_axis_env_nd(mesh.shape.items()):
       jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
