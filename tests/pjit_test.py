@@ -61,6 +61,7 @@ from jax._src.lib.mlir import dialects
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -6638,6 +6639,14 @@ class PJitErrorTest(jtu.JaxTestCase):
 
     f(arr, 2., 3.)
     f(arr, 2., 3.)  # doesn't crash
+
+  def test_named_sharding_of_none(self):
+    if xla_extension_version < 306:
+      raise unittest.SkipTest("NamedSharding does't reject None.")
+
+    mesh = jtu.create_mesh((2,), ('x',))
+    with self.assertRaisesRegex(TypeError, 'Unexpected None'):
+      jax.NamedSharding(mesh, None)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

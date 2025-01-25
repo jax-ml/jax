@@ -1257,7 +1257,7 @@ class IOCallbackTest(jtu.JaxTestCase):
       )
       mesh = jax.sharding.Mesh(np.array(devices_for_iteration), ['dev'])
       in_spec = (
-          jax.sharding.NamedSharding(mesh, None),
+          jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec()),
           jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev')),
       )
       out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
