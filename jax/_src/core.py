@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict, deque, namedtuple
 from collections.abc import (Callable, Collection, Hashable, Iterable, Iterator,
                              Sequence, MutableSet, MutableMapping)
-from contextlib import contextmanager, ExitStack
+from contextlib import contextmanager
 from dataclasses import dataclass
 import functools
 from functools import partial, total_ordering
@@ -53,6 +53,7 @@ from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            partition_list, StrictABCMeta)
 import jax._src.pretty_printer as pp
 from jax._src.lib import jax_jit
+from jax._src.lib import xla_client
 from jax._src import traceback_util
 from jax._src.typing import Array, DimSize, Shape
 from jax._src import typing
@@ -62,6 +63,8 @@ traceback_util.register_exclusion(__file__)
 
 zip, unsafe_zip = safe_zip, zip
 map, unsafe_map = safe_map, map
+
+config_ext = xla_client._xla.config
 
 
 _TRACER_ERROR_NUM_TRACEBACK_FRAMES = config.int_flag(
@@ -273,7 +276,59 @@ def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
     return eval_jaxpr(closed_jaxpr.jaxpr, closed_jaxpr.consts, *args)
 
 
+# This context manager is fairly hot, because it is frequently called for every
+# jaxpr equation.
+# This context manager is implemented as a class with explicit __enter__ and
+# __exit__ methods since a @contextlib.contextmanager is significantly slower.
+# We also in effect fuse four other context managers into one, mostly to
+# save allocations.
+class JaxprEqnContextManager:
+  __slots__ = ['context', 'prev_compute_type', 'prev_threefry_partitionable',
+               'prev_xla_metadata', 'prev_abstract_mesh']
+
+  def __init__(self, context):
+    self.context = context
+
+  def __enter__(self):
+    self.prev_compute_type = config.compute_on_context_manager.swap_local(
+        self.context.compute_type
+    )
+    if (
+        self.prev_compute_type is not None
+        and self.prev_compute_type is not config_ext.unset
+        and self.context.compute_type != self.prev_compute_type
+    ):
+      config.compute_on_context_manager.set_local(self.prev_compute_type)
+      raise NotImplementedError(
+          "Nesting `compute_on` with different compute types is not supported"
+          f" yet. Current compute_on type: {self.prev_compute_type}"
+      )
+
+    self.prev_threefry_partitionable = config.threefry_partitionable.swap_local(
+        self.context.threefry_partitionable
+    )
+    if self.context.xla_metadata:
+      self.prev_xla_metadata = config.xla_metadata_context_manager.get_local()
+      updated = xla_metadata_lib.update_metadata(
+          self.prev_xla_metadata, self.context.xla_metadata
+      )
+      config.xla_metadata_context_manager.set_local(updated)
+    self.prev_abstract_mesh = config.abstract_mesh_context_manager.swap_local(
+        self.context.cur_abstract_mesh
+    )
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    config.compute_on_context_manager.set_local(self.prev_compute_type)
+    config.threefry_partitionable.set_local(self.prev_threefry_partitionable)
+    if self.context.xla_metadata is not None:
+      config.xla_metadata_context_manager.set_local(self.prev_xla_metadata)
+    config.abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
+
+
 class JaxprEqnContext:
+
+  __slots__ = ['compute_type', 'threefry_partitionable', 'xla_metadata',
+               'cur_abstract_mesh']
 
   def __init__(self, compute_type: str | None, threefry_partitionable: bool,
                xla_metadata=None):
@@ -281,20 +336,10 @@ class JaxprEqnContext:
     self.threefry_partitionable = threefry_partitionable
     self.cur_abstract_mesh = mesh_lib.get_abstract_mesh()
     self.xla_metadata = xla_metadata
-    self._managers = [
-        (compute_on.extend_compute_type, self.compute_type),
-        (config.threefry_partitionable.__call__, self.threefry_partitionable),
-        (mesh_lib.set_abstract_mesh, self.cur_abstract_mesh),
-        (xla_metadata_lib.set_xla_metadata_dict, self.xla_metadata),
-    ]
 
   @property
-  @contextmanager
   def manager(self):
-    with ExitStack() as stack:
-      for manager, val in self._managers:
-        stack.enter_context(manager(val))
-      yield
+    return JaxprEqnContextManager(self)
 
   def __repr__(self):
     return (

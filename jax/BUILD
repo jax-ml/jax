@@ -857,6 +857,7 @@ pytype_strict_library(
     srcs = ["_src/xla_metadata.py"],
     deps = [
         ":config",
+        "//jax/_src/lib",
     ],
 )
 
