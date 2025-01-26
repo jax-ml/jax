@@ -528,14 +528,20 @@ class AbstractMesh:
 def _raise_value_error(name):
   raise ValueError(f"AbstractMesh does not implement {name}")
 
+class SetAbstractMeshContextManager:
+  __slots__ = ['mesh', 'prev']
 
-@contextlib.contextmanager
-def set_abstract_mesh(mesh: AbstractMesh):
-  prev_val = jax_config.abstract_mesh_context_manager.swap_local(mesh)
-  try:
-    yield
-  finally:
-    jax_config.abstract_mesh_context_manager.set_local(prev_val)
+  def __init__(self, mesh: AbstractMesh):
+    self.mesh = mesh
+
+  def __enter__(self):
+    self.prev = jax_config.abstract_mesh_context_manager.swap_local(self.mesh)
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    jax_config.abstract_mesh_context_manager.set_local(self.prev)
+
+set_abstract_mesh = SetAbstractMeshContextManager
+
 
 def get_abstract_mesh():
   return jax_config.abstract_mesh_context_manager.value
