@@ -1377,7 +1377,7 @@ def bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
   v = core.concrete_or_error(operator.index, v, 'Argument v of bessel_jn.')
   n_iter = core.concrete_or_error(int, n_iter, 'Argument n_iter of bessel_jn.')
 
-  bessel_jn_fun = partial(_bessel_jn, v=v, n_iter=n_iter)
+  bessel_jn_fun: Callable[[ArrayLike], Array] = partial(_bessel_jn, v=v, n_iter=n_iter)
   for _ in range(z.ndim):
     bessel_jn_fun = vmap(bessel_jn_fun)
   return jnp.moveaxis(bessel_jn_fun(z), -1, 0)
