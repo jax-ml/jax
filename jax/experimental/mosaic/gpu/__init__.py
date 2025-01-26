@@ -55,18 +55,13 @@ from .fragmented_array import (
     WGStridedFragLayout as WGStridedFragLayout,
     optimization_barrier as optimization_barrier,
 )
-from .layouts import (
-    from_strided_fragmented_layout_attr as from_strided_fragmented_layout_attr,
-    is_strided_fragmented_layout as is_strided_fragmented_layout,
-    to_splat_fragmented_layout_attr as to_splat_fragmented_layout_attr,
-    to_strided_fragmented_layout_attr as to_strided_fragmented_layout_attr,
-)
 from .utils import (
     BarrierRef as BarrierRef,
     CollectiveBarrierRef as CollectiveBarrierRef,
     DynamicSlice as DynamicSlice,
     Partition as Partition,
     Partition1D as Partition1D,
+    bitwidth as bitwidth,
     bytewidth as bytewidth,
     c as c,
     commit_shared as commit_shared,

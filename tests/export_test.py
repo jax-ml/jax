@@ -1010,6 +1010,8 @@ class JaxExportTest(jtu.JaxTestCase):
                       "uint2",
                       "uint4"}:
       self.skipTest(f"TODO: serialization not supported for {str(dtype)}")
+    if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
+      self.skipTest("TPU does not support float8_e8m0fnu.")
     @jax.jit
     def f_jax(x):
       return x + x
@@ -1317,7 +1319,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
     # Replicate the input so that the execution knows
     # that we are using multiple devices
-    a_replicated = jax.device_put(a, NamedSharding(mesh, None))
+    a_replicated = jax.device_put(a, NamedSharding(mesh, P()))
     res_r = f_r(a_replicated)
     self.assertAllClose(res_r, expected)
     self.assertLen(res_r.addressable_shards, len(devices))
@@ -1442,16 +1444,16 @@ class JaxExportTest(jtu.JaxTestCase):
       call_mesh = Mesh(jax.devices()[:2], "e")
 
     g1 = pjit.pjit(exp_vjp.call,
-                   in_shardings=(NamedSharding(call_mesh, None),
-                                 NamedSharding(call_mesh, None)))(x, x.T)
+                   in_shardings=(NamedSharding(call_mesh, P()),
+                                 NamedSharding(call_mesh, P())))(x, x.T)
     _, f_jax_vjp = jax.vjp(f_jax, x)
     xbar = f_jax_vjp(x.T)
     self.assertAllClose(xbar, g1)
 
     g2 = pjit.pjit(exp_vjp2.call,
-                   in_shardings=(NamedSharding(call_mesh, None),
-                                 NamedSharding(call_mesh, None),
-                                 NamedSharding(call_mesh, None)))(x, x.T, x)
+                   in_shardings=(NamedSharding(call_mesh, P()),
+                                 NamedSharding(call_mesh, P()),
+                                 NamedSharding(call_mesh, P())))(x, x.T, x)
     _, f_jax_vjp2 = jax.vjp(f_jax_vjp, x.T)
     xbar2, = f_jax_vjp2((x,))
     self.assertAllClose(xbar2, g2[1])
@@ -1672,7 +1674,7 @@ class JaxExportTest(jtu.JaxTestCase):
       if len(run_devices) != len(export_devices):
         continue
       run_mesh = Mesh(run_devices, ("x",))
-      a_device = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, None))
+      a_device = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P()))
       res_exp = exp.call(a_device)
       self.assertArraysAllClose(res_native, res_exp)
 

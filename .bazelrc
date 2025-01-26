@@ -120,7 +120,6 @@ build:cuda --repo_env TF_NCCL_USE_STUB=1
 build:cuda --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_80,compute_90"
 build:cuda --crosstool_top=@local_config_cuda//crosstool:toolchain
 build:cuda --@local_config_cuda//:enable_cuda
-build:cuda --@xla//xla/python:jax_cuda_pip_rpaths=true
 
 # Default hermetic CUDA and CUDNN versions.
 build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.3.2"
@@ -171,6 +170,12 @@ build:rocm --action_env=TF_HIPCC_CLANG="1"
 # #############################################################################
 # Cache options below.
 # #############################################################################
+# Public read-only cache
+build:public_cache --remote_cache="https://storage.googleapis.com/jax-bazel-cache/" --remote_upload_local_results=false
+# Cache pushes are limited to JAX's CI system.
+build:public_cache_push --config=public_cache --remote_upload_local_results=true --google_default_credentials
+
+# Note: the following cache configs are deprecated and will be removed soon.
 # Public read-only cache for Mac builds. JAX uses a GCS bucket to store cache
 # from JAX's Mac CI build. By applying --config=macos_cache, any local Mac build
 # should be able to read from this cache and potentially see a speedup. The

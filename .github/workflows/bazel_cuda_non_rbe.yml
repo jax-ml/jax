@@ -1,15 +1,15 @@
-# CI - Pytest CUDA
+# CI - Bazel CUDA tests (Non-RBE)
 #
-# This workflow runs the CUDA tests with Pytest. It can only be triggered by other workflows via
-# `workflow_call`. It is used by the `CI - Wheel Tests` workflows to run the Pytest CUDA tests.
+# This workflow runs the CUDA tests with Bazel. It can only be triggered by other workflows via
+# `workflow_call`. It is used by the `CI - Wheel Tests` workflows to run the Bazel CUDA tests.
 #
 # It consists of the following job:
 # run-tests:
 #    - Downloads the jaxlib and CUDA artifacts from a GCS bucket.
-#    - Executes the `run_pytest_cuda.sh` script, which performs the following actions:
+#    - Executes the `run_bazel_test_cuda_non_rbe.sh` script, which performs the following actions:
 #      - Installs the downloaded wheel artifacts.
-#      - Runs the CUDA tests with Pytest.
-name: CI - Pytest CUDA
+#      - Runs the CUDA tests with Bazel.
+name: CI - Bazel CUDA tests (Non-RBE)
 
 on:
   workflow_call:
@@ -24,20 +24,15 @@ on:
         type: string
         required: true
         default: "3.12"
-      cuda:
-        description: "Which CUDA version to test?"
-        type: string
-        required: true
-        default: "12.3"
       enable-x64:
         description: "Should x64 mode be enabled?"
         type: string
         required: true
         default: "0"
       gcs_download_uri:
-        description: "GCS location prefix from where the artifacts should be downloaded"
+        description: "GCS location URI from where the artifacts should be downloaded"
         required: true
-        default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+        default: 'gs://general-ml-ci-transient/jax-github-actions/jax-fork/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
         type: string
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
@@ -48,15 +43,15 @@ on:
 jobs:
   run-tests:
     runs-on: ${{ inputs.runner }}
-    # TODO: Update to the generic ML ecosystem test containers when they are ready.
-    container:  ${{ (contains(inputs.cuda, '12.3') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/nosla-cuda12.3-cudnn9.1-ubuntu20.04-manylinux2014-multipython:latest') ||
-                (contains(inputs.cuda, '12.1') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/nosla-cuda12.1-cudnn9.1-ubuntu20.04-manylinux2014-multipython:latest') }}
-    name: "Pytest CUDA (${{ inputs.runner }}, CUDA ${{ inputs.cuda }}, Python ${{ inputs.python }}, x64=${{ inputs.enable-x64 }})"
+    container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/nosla-cuda12.3-cudnn9.1-ubuntu20.04-manylinux2014-multipython:latest"
 
     env:
-      JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
-      JAXCI_PYTHON: "python${{ inputs.python }}"
-      JAXCI_ENABLE_X64: "${{ inputs.enable-x64 }}"
+      JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
+      JAXCI_ENABLE_X64: ${{ inputs.enable-x64 }}
+      # Enable writing to the Bazel remote cache bucket.
+      JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE: "1"
+
+    name: "Bazel single accelerator and multi-accelerator CUDA tests (${{ inputs.runner }}, Python ${{ inputs.python }}, x64=${{ inputs.enable-x64 }})"
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -78,13 +73,11 @@ jobs:
           gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
           gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
           gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
-      - name: Install Python dependencies
-        run: $JAXCI_PYTHON -m pip install -r build/requirements.in
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@main
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      - name: Run Pytest CUDA tests
+      - name: Run Bazel CUDA tests (Non-RBE)
         timeout-minutes: 60
-        run: ./ci/run_pytest_cuda.sh
+        run: ./ci/run_bazel_test_cuda_non_rbe.sh

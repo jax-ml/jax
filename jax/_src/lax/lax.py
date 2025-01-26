@@ -49,6 +49,7 @@ from jax._src import util
 from jax._src.abstract_arrays import array_types
 from jax._src.core import (Primitive, UnshapedArray, ShapedArray,
                            abstract_token, canonicalize_shape)
+from jax._src.errors import UnexpectedTracerError
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -657,13 +658,18 @@ def clamp(min: ArrayLike, x: ArrayLike, max: ArrayLike) -> Array:
 
 
 @weakref_lru_cache
-def _trace_composite_to_jaxpr(fun, in_tree, in_avals):
+def _trace_composite_to_jaxpr(fun, in_tree, in_avals, name: str):
   flat_fun, out_tree = api_util.flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   debug_info = pe.tracing_debug_info(fun, in_tree, out_tree, False, "composite")
   jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug_info)
-  # TODO(danfm): support const inputs to composite.
-  assert not consts
-  closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
+  if any(isinstance(c, core.Tracer) for c in consts):
+    raise UnexpectedTracerError(
+        "Found a JAX Tracer as a constant in the decomposition for the "
+        f"composite op '{name}'. This means that the decomposition function "
+        "closes over a value that is involved in a JAX transformation. "
+        "Any values that aren't explicitly known at compile time must be "
+        "explicitly passed as arguments to the composite.")
+  closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   return closed_jaxpr, out_tree
 
 
@@ -733,7 +739,7 @@ def composite(
     flat_args, in_tree = tree_util.tree_flatten(args)
     in_avals = tuple(core.get_aval(x) for x in flat_args)
     closed_jaxpr, out_tree = _trace_composite_to_jaxpr(
-        partial(decomposition, **kwargs), in_tree, in_avals
+        partial(decomposition, **kwargs), in_tree, in_avals, name
     )
     out_flat = composite_p.bind(
         *flat_args,
@@ -1199,6 +1205,8 @@ class DotAlgorithmPreset(enum.Enum):
           fp8_dtypes += [np.dtype(dtypes.float8_e3m4)]
         if dtypes.float8_e4m3 is not None:
           fp8_dtypes += [np.dtype(dtypes.float8_e4m3)]
+        if dtypes.float8_e8m0fnu is not None:
+          fp8_dtypes += [np.dtype(dtypes.float8_e8m0fnu)]
         if lhs_dtype not in fp8_dtypes or rhs_dtype not in fp8_dtypes:
           raise ValueError(
               f"The dot algorithm '{self}' requires both inputs to have float8 "
@@ -3563,6 +3571,15 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
         f"sharding, got {lhs_contracting_spec} and {rhs_contracting_spec}.")
   _check_specs_match(lhs_contracting_spec, rhs_contracting_spec, msg)
 
+  for l, r in zip(lhs_contracting_spec, rhs_contracting_spec):
+    if l is not None and r is not None:
+      raise ValueError(
+          'Contracting dimensions are sharded and it is ambiguous how the'
+          ' output should be sharded. Please specify the output sharding via'
+          ' the `out_sharding` parameter of einsum. Or reshard your input via'
+          ' `jax.experimental.shard.reshard` so that the dot is conflict free.'
+          f' Got {lhs_contracting_spec=} and {rhs_contracting_spec=}')
+
   return _dot_general_sharding_computation(
       lhs.sharding.spec, rhs.sharding.spec, dimension_numbers, lhs.sharding.mesh)
 
@@ -3950,6 +3967,8 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
       fp8_dtypes += (dtypes.float8_e3m4,)
     if dtypes.float8_e4m3 is not None:
       fp8_dtypes += (dtypes.float8_e4m3,)
+    if dtypes.float8_e8m0fnu is not None:
+      fp8_dtypes += (dtypes.float8_e8m0fnu,)
     return _lhs_dtypes in fp8_dtypes and _rhs_dtypes in fp8_dtypes
   del preferred_element_type  # Implied by the output aval
   lhs_aval, rhs_aval = ctx.avals_in
@@ -5570,7 +5589,7 @@ def _reduce_prod_jvp_rule(primals, tangents, *, axes):
 
 reduce_prod_p = standard_primitive(
   _reduce_op_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_prod'),
-  'reduce_prod')
+  'reduce_prod', sharding_rule=_reduce_op_sharding_rule)
 ad.primitive_jvps[reduce_prod_p] = _reduce_prod_jvp_rule
 batching.defreducer(reduce_prod_p, _get_prod_identity)
 pe.padding_rules[reduce_prod_p] = partial(_reducer_padding, _reduce_prod,
@@ -5598,8 +5617,9 @@ pe.padding_rules[reduce_max_p] = partial(_reducer_padding, _reduce_max,
 batching.ragged_prop_rules[reduce_max_p] = batching.ragged_mask_elementwise_rule
 
 
-reduce_min_p = standard_primitive(_reduce_op_shape_rule, _input_dtype,
-                                  'reduce_min')
+reduce_min_p = standard_primitive(
+    _reduce_op_shape_rule, _input_dtype, 'reduce_min',
+    sharding_rule=_reduce_op_sharding_rule)
 ad.defjvp2(reduce_min_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_min_p, _get_min_identity)
 pe.padding_rules[reduce_min_p] = partial(_reducer_padding, _reduce_min,
@@ -5690,22 +5710,25 @@ def _reduce_logical_shape_rule(operand, *, axes):
     raise TypeError(f"logical reduction requires operand dtype bool or int, got {operand.dtype}.")
   return tuple(np.delete(operand.shape, axes))
 
+def _reduce_logical_sharding_rule(operand, *, axes):
+  return operand.sharding.with_spec(tuple_delete(operand.sharding.spec, axes))
+
 reduce_or_p = standard_primitive(
     _reduce_logical_shape_rule, _input_dtype, 'reduce_or',
-    weak_type_rule=_strip_weak_type)
+    weak_type_rule=_strip_weak_type, sharding_rule=_reduce_logical_sharding_rule)
 batching.defreducer(reduce_or_p, _get_bitwise_or_identity)
 
 
 reduce_and_p = standard_primitive(
     _reduce_logical_shape_rule, _input_dtype, 'reduce_and',
-    weak_type_rule=_strip_weak_type)
+    weak_type_rule=_strip_weak_type, sharding_rule=_reduce_logical_sharding_rule)
 batching.defreducer(reduce_and_p, _get_bitwise_and_identity)
 batching.ragged_prop_rules[reduce_and_p] = batching.ragged_mask_elementwise_rule
 
 
 reduce_xor_p = standard_primitive(
     _reduce_logical_shape_rule, _input_dtype, 'reduce_xor',
-    weak_type_rule=_strip_weak_type)
+    weak_type_rule=_strip_weak_type, sharding_rule=_reduce_logical_sharding_rule)
 batching.defreducer(reduce_xor_p, _get_bitwise_or_identity)
 
 

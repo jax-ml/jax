@@ -23,6 +23,7 @@ import platform
 import unittest
 from unittest import mock
 from unittest import SkipTest
+import tempfile
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -197,6 +198,46 @@ class CompilationCacheTest(CompilationCacheTestCase):
     self.assertEqual(count_cache_items(), 1)
     f(1.0)
     self.assertEqual(count_cache_items(), 2)
+
+  def test_set_cache_dir_after_backends_init(self):
+    # This a regression test for #25768
+    with config.compilation_cache_dir(None):
+      cc.reset_cache()
+      backend = xla_bridge.get_backend()
+
+      a = jnp.zeros((2,3))
+      self.assertFalse(cc.is_persistent_cache_enabled())
+      cache = cc._get_cache(backend)
+      self.assertIsNone(cache)  # Not able to create cache
+
+      with tempfile.TemporaryDirectory() as tmp_cache_dir:
+        with config.compilation_cache_dir(tmp_cache_dir):
+          f = jit(lambda x: x + 1)
+          f(a)  # Compile and cache
+          self.assertTrue(cc.is_persistent_cache_enabled())
+          cache = cc._get_cache(backend)
+          self.assertIsNotNone(cache)  # Cache is created
+
+  def test_enable_compilation_cache(self):
+    with tempfile.TemporaryDirectory() as tmp_cache_dir:
+      with (
+        config.enable_compilation_cache(False),
+        config.compilation_cache_dir(tmp_cache_dir)
+      ):
+        cc.reset_cache() # reset cache before testing
+        backend = xla_bridge.get_backend()
+        f = jit(lambda x: x + 1)
+        f(1)  # Compile and cache
+        cache = cc._get_cache(backend)
+        self.assertIsNone(cache) # Cache should not exist
+
+        with config.enable_compilation_cache(True):
+          cc.reset_cache()
+          backend = xla_bridge.get_backend()
+          g = jit(lambda x: x * 3)
+          g(2)
+          cache = cc._get_cache(backend)
+          self.assertIsNotNone(cache) # Cache should be initalized
 
   def test_xla_autofdo_profile_version(self):
     original_profile_version = config.jax_xla_profile_version.value
@@ -415,8 +456,6 @@ class CompilationCacheTest(CompilationCacheTestCase):
       self.assertFalse(msg_exists_in_logs(msg, log.records, logging.WARNING))
 
   def test_persistent_cache_miss_logging_with_explain(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest("TODO(b/364547005): pure callbacks not supported by Shardy yet")
     with (config.explain_cache_misses(True),
           config.compilation_cache_dir("jax-cache")):
 
@@ -461,8 +500,6 @@ class CompilationCacheTest(CompilationCacheTestCase):
 
   def test_persistent_cache_miss_logging_with_no_explain(self):
     # test that cache failure messages do not get logged in WARNING
-    if config.use_shardy_partitioner.value:
-      self.skipTest("TODO(b/364547005): pure callbacks not supported by Shardy yet")
     with (config.explain_cache_misses(False),
           config.compilation_cache_dir("jax-cache")):
       # omitting writing to cache because compilation is too fast

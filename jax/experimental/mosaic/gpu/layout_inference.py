@@ -19,6 +19,7 @@ import enum
 from functools import partial
 from typing import cast
 
+from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import func
@@ -53,8 +54,8 @@ def _choose_representative_layout(
   """Chooses an appropriate layout from a given set of possible layouts.
 
   Given the input set of possible layouts, this function extracts a single
-  representative layout. Currently, this function only works with strided and
-  splat fragmented layouts.
+  representative layout. Currently, this function only works with strided,
+  splat, and WGMMA fragmented layouts.
 
   Returns:
     A single layout that can be used to annotate the operation, or None if the
@@ -65,20 +66,31 @@ def _choose_representative_layout(
     return None
 
   strided_layouts: list[fa.WGStridedFragLayout] = [
-      layouts_lib.from_strided_fragmented_layout_attr(layout)
+      layouts_lib.from_layout_attr(layout)
       for layout in layouts
       if layouts_lib.is_strided_fragmented_layout(layout)
   ]
 
   splat_layouts: list[fa.WGSplatFragLayout] = list(
       map(
-          layouts_lib.from_splat_fragmented_layout_attr,
+          layouts_lib.from_layout_attr,
           filter(layouts_lib.is_splat_fragmented_layout, layouts),
       )
   )
 
-  if len(splat_layouts) + len(strided_layouts) != len(layouts):
-    raise ValueError(f"Expected only strided and splat layouts, got {layouts}")
+  wgmma_layouts: list[fa.WGMMAFragLayout] = list(
+      map(
+          layouts_lib.from_layout_attr,
+          filter(layouts_lib.is_wgmma_fragmented_layout, layouts),
+      )
+  )
+
+  if len(splat_layouts) + len(strided_layouts) + len(wgmma_layouts) != len(
+      layouts
+  ):
+    raise ValueError(
+        f"Expected only strided, splat, and wgmma layouts, got {layouts}"
+    )
 
   if len(splat_layouts) > 1:
     raise NotImplementedError(
@@ -92,14 +104,20 @@ def _choose_representative_layout(
         "is not supported."
     )
 
-  if not splat_layouts:
-    return layouts_lib.to_strided_fragmented_layout_attr(strided_layouts[0])
+  if (wgmma_layouts and strided_layouts):
+    raise NotImplementedError(
+        "Mixing strided and WGMMA layouts is not supported."
+    )
 
-  if not strided_layouts:
-    return layouts_lib.to_splat_fragmented_layout_attr(splat_layouts[0])
+  if wgmma_layouts:
+    return layouts_lib.to_layout_attr(wgmma_layouts[0])
 
-  [strided_layout] = strided_layouts
-  return layouts_lib.to_strided_fragmented_layout_attr(strided_layout)
+  if strided_layouts:
+    [strided_layout] = strided_layouts
+    return layouts_lib.to_layout_attr(strided_layout)
+
+  [splat_layout] = splat_layouts
+  return layouts_lib.to_layout_attr(splat_layout)
 
 
 def _in_layout_for_operand(
@@ -280,6 +298,16 @@ def _infer_splat_op_layout(splat_op: vector.SplatOp) -> OptionalLayouts:
   )
 
   return [], [layout]
+
+
+@partial(_add_layout_inference_rule, mgpu.WGMMAOp)
+def _infer_wgmma_op_layout(wgmma_op: mgpu.WGMMAOp) -> OptionalLayouts:
+  layout = layouts_lib.to_layout_attr(fa.WGMMAFragLayout())
+
+  if ir.VectorType.isinstance(wgmma_op.a.type):
+    return [layout, layout], [layout]
+
+  return [layout], [layout]
 
 
 class TraversalOrder(enum.Enum):

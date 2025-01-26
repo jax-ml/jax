@@ -1000,7 +1000,7 @@ def map_transpose(primitive, params, call_jaxpr, args, ct, _):
   assert len(in_axes) == len(arg_cts)
   def unmap_zero(zero, in_axis):
     return (zero if in_axis is None else
-            Zero(core.unmapped_aval(params['axis_size'], params['axis_name'], in_axis, zero.aval)))
+            Zero(core.unmapped_aval(params['axis_size'], in_axis, zero.aval)))
   arg_cts = (unmap_zero(arg_ct, in_axis) if type(arg_ct) is Zero else
              arg_ct if in_axis is not None else
              arg_ct.sum(0)

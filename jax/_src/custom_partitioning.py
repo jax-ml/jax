@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from functools import partial
 import inspect
-from typing import Any
+from typing import Any, Callable
 import weakref
 
 import numpy as np
@@ -309,10 +309,10 @@ class custom_partitioning:
   * ``decode_shardings``: When set to True, convert input ``GSPMDSharding``s to
     ``NamedSharding`` if possible. This may not be possible if the user does not
     provide a contextual mesh.
-  * ``sharding_rule``: Either an SdyShardingRule object or an Einsum-like
-    notation string that describes the sharding rule. We borrow the idea from
-    the einops.rearrange string , to use a space separator between factors and
-    allow multiple letters factor names.
+  * ``sharding_rule``: an SdyShardingRule object, an Einsum-like notation string
+    that describes the sharding rule, or a Callable that produces either of
+    these. We borrow the idea from the einops.rearrange string , to use a space
+    separator between factors and allow multiple letters factor names.
 
   Positional arguments can be specified as static using static_argnums. JAX uses
   :code:`inspect.signature(fun)` to resolve these positional arguments.
@@ -463,9 +463,11 @@ class custom_partitioning:
     self.propagate_user_sharding = propagate_user_sharding
     self.infer_sharding_from_operands = infer_sharding_from_operands
     self.decode_shardings = decode_shardings
-    self.sharding_rule = None if sharding_rule is None \
-      else sharding_rule if isinstance(sharding_rule, SdyShardingRule) \
-          else str_to_sdy_sharding_rule(sharding_rule)
+    if (sharding_rule is None or isinstance(sharding_rule, Callable) or
+        isinstance(sharding_rule, SdyShardingRule)):
+      self.sharding_rule = sharding_rule
+    else:
+      self.sharding_rule = str_to_sdy_sharding_rule(sharding_rule)
     return partition
 
   def __call__(self, *args, **kwargs):
@@ -585,7 +587,16 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       result_layouts=None)
   if sharding_rule is not None:
     value_types = [mlir.aval_to_ir_type(s) for s in call.in_avals]
-    out.attributes['sdy.sharding_rule'] = sdy_sharding_rule_to_mlir(sharding_rule, value_types, result_types)
+    if callable(sharding_rule):
+      sharding_rule = sharding_rule(mesh, value_types, result_types)
+      if isinstance(sharding_rule, str):
+        sharding_rule = str_to_sdy_sharding_rule(sharding_rule)
+      elif not isinstance(sharding_rule, SdyShardingRule):
+          raise ValueError("sharding_rule callable must produce either an "
+                           "SdyShardingRule object or an Einsum-like notation "
+                           "string.")
+    out.attributes['sdy.sharding_rule'] = sdy_sharding_rule_to_mlir(
+      sharding_rule, value_types, result_types)
   return out.results
 
 mlir.register_lowering(custom_partitioning_p,

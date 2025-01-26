@@ -262,6 +262,7 @@ py_extension(
     linkopts = LINKOPTS,
     deps = [
         ":jaxlib_mlir_capi_shared_library",
+        "//jaxlib/mosaic/gpu:mlir_capi_headers",
         "@llvm-project//mlir:CAPIArithHeaders",
         "@llvm-project//mlir:CAPIGPUHeaders",
         "@llvm-project//mlir:CAPIIRHeaders",

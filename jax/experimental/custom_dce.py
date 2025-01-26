@@ -1,4 +1,4 @@
-# Copyright 2024 The JAX Authors.
+# Copyright 2025 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ruff: noqa
-
-try:
-  try:
-    from jaxlib.mosaic.gpu import _mosaic_gpu_ext  # pytype: disable=import-error
-  except ImportError:
-    from jax_cuda12_plugin import _mosaic_gpu_ext  # pytype: disable=import-error
-except ImportError as e:
-  raise ModuleNotFoundError("Failed to import the Mosaic GPU bindings") from e
+from jax._src.custom_dce import (
+    custom_dce as custom_dce,
+    custom_dce_p as custom_dce_p,
+)

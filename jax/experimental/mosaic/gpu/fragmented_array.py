@@ -1364,7 +1364,7 @@ class FragmentedArray:
         raise NotImplementedError(self.layout)
 
   def _store_untiled_splat(self, ref: ir.Value):
-    vec_size = 8 // mgpu.bytewidth(self.mlir_dtype)
+    vec_size = 64 // mgpu.bitwidth(self.mlir_dtype)
     if np.prod(self.shape) < vec_size * WARPGROUP_SIZE:
       vec_size = 1
 
@@ -1454,10 +1454,10 @@ class FragmentedArray:
     match self.layout:
       case WGMMAFragLayout():
         dtype = self.mlir_dtype
-        bw = mgpu.bytewidth(dtype)
+        bw = mgpu.bitwidth(dtype)
         m, n = self.shape
         assert m % 64 == 0  # This is implied by the layout.
-        cols_per_tile = swizzle // bw
+        cols_per_tile = (swizzle * 8) // bw
         expected_shape = [m // 64, n // cols_per_tile, 64, cols_per_tile]
         if n < cols_per_tile:  # We allow singular tiles shorter than swizzle.
           expected_shape = [m // 64, 1, 64, cols_per_tile]
@@ -1501,9 +1501,9 @@ class FragmentedArray:
         for _, update, ptr in cls.transfer_tiled2(ref, swizzle, layout, shape):
           update(registers, llvm.load(reg_ty, ptr))
       case WGMMAFragLayout():
-        bw = mgpu.bytewidth(dtype)
+        bw = mgpu.bitwidth(dtype)
         m_tiles, n_tiles, m_tile_size, n_tile_size = ref_ty.shape
-        if m_tile_size != 64 or n_tile_size != (swizzle // bw):
+        if m_tile_size != 64 or n_tile_size != ((swizzle * 8) // bw):
           raise ValueError
         m, n = m_tiles * m_tile_size, n_tiles * n_tile_size
         assert m % 64 == 0  # This is implied by the layout.
@@ -1521,10 +1521,10 @@ class FragmentedArray:
   @staticmethod
   def transfer_tiled(shape, dtype, swizzle: int | None):
     # TODO(apaszke): We could use ldmatrix/stmatrix for 16-bit types.
-    bw = mgpu.bytewidth(dtype)
+    bw = mgpu.bitwidth(dtype)
     m, n = shape
     assert m % 64 == 0 and n % 8 == 0  # Implied by the layout.
-    cols_per_tile = swizzle_elems = swizzle // bw
+    cols_per_tile = swizzle_elems = (swizzle * 8) // bw
     if n < swizzle_elems:
       cols_per_tile = n
     else:
@@ -1537,7 +1537,7 @@ class FragmentedArray:
     lane_id = arith.remui(tidx, c(32))  # {0, 1, ..., 31}
     warp_id = arith.divui(tidx, c(32))  # {0, 1, 2, 3}
     sub_row_base = arith.divui(lane_id, c(4))  # {0, 1, ..., 7}
-    if bw > 2:  # Stagger is only necessary for values larger than 16bit.
+    if bw > 16:  # Stagger is only necessary for values larger than 16bit.
       # We split the rows into two groups (left/right) and change the order in
       # which they perform accesses to avoid bank conflicts.
       # It seems that the STS.64 is 2x faster (and the hardware reports no
@@ -1574,7 +1574,7 @@ class FragmentedArray:
     col_base = arith.muli(arith.remui(lane_id, c(4)), c(2))  # {0, 2, 4, 6}
     # The swizzle pattern is constant for a given thread.
     col_swizzle_bits = arith.muli(
-        arith.divui(sub_row_base, c(128 // swizzle)), c(16 // bw),
+        arith.divui(sub_row_base, c(128 // swizzle)), c(128 // bw),
     )
     for row_group in range(m // 64):
       for col_group in range(n // cols_per_tile):
@@ -1643,9 +1643,9 @@ class FragmentedArray:
 
     if swizzle not in {32, 64, 128}:
       raise ValueError("Only swizzled transfers supported")
-    bw = mgpu.bytewidth(dtype)
-    swizzle_tile_elems = 16 // bw
-    swizzle_group_elems = 128 // bw
+    bw = mgpu.bitwidth(dtype)
+    swizzle_tile_elems = (16 * 8) // bw
+    swizzle_group_elems = (128 * 8) // bw
     swizzle_groups_per_block = swizzle // 16
     swizzle_block_elems = swizzle_groups_per_block * swizzle_group_elems
 
@@ -1794,8 +1794,8 @@ def plan_tiled_transfer(
 ) -> TransferPlan:
   i32 = ir.IntegerType.get_signless(32)
   c = lambda x: arith.constant(i32, x)
-  swizzle_tile_elems = 16 // bw
-  swizzle_group_elems = 128 // bw
+  swizzle_tile_elems = (16 * 8) // bw
+  swizzle_group_elems = (128 * 8) // bw
   # Below, all calculations are in elements, not in bytes, since it should
   # generalize better to sub-byte types.
   # Here, we verify two conditions:
@@ -1821,14 +1821,16 @@ def plan_tiled_transfer(
   # we simply narrow each bank to the transfer width. The truth is more likely
   # that bank conflicts only don't occur if the addresses mapping to the same
   # bank are contiguous, but that's a more complicated check to perform.
-  transfer_bytes = layout.vector_length * bw
+  if (layout.vector_length * bw) % 8 != 0:
+    raise ValueError(f"Vector must be whole bytes {layout.vector_length, bw}")
+  transfer_bytes = (layout.vector_length * bw) // 8
   if transfer_bytes > SMEM_BANK_BYTES * 4:
     raise NotImplementedError
-  if bw > SMEM_BANK_BYTES:
+  if bw > SMEM_BANK_BYTES * 8:
     raise NotImplementedError
   smem_bank_bytes = min(SMEM_BANK_BYTES, transfer_bytes)
   num_banks = SMEM_BANKS * (SMEM_BANK_BYTES // smem_bank_bytes)
-  elems_per_bank = smem_bank_bytes // bw
+  elems_per_bank = (smem_bank_bytes * 8) // bw
   num_wavefronts = max(transfer_bytes // smem_bank_bytes, 1)
   wavefront_lanes = WARP_SIZE // num_wavefronts
 

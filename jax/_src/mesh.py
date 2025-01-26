@@ -103,9 +103,9 @@ def _get_local_mesh(global_mesh: Mesh, process_index: int) -> Mesh:
 
 
 class AxisTypes(enum.Enum):
-  Hidden = enum.auto()
-  Visible = enum.auto()
-  Collective = enum.auto()
+  Auto = enum.auto()
+  Explicit = enum.auto()
+  Manual = enum.auto()
 
   def __repr__(self):
     return self.name
@@ -198,7 +198,7 @@ class Mesh(contextlib.ContextDecorator):
           f"devices.ndim == {devices.ndim} and "
           f"len(axis_names) == {len(axis_names)}.")
 
-    axis_types = ({AxisTypes.Hidden: axis_names} if axis_types is None else
+    axis_types = ({AxisTypes.Auto: axis_names} if axis_types is None else
                   axis_types)
     axis_types_tuple = tuple(axis_types.items())
     if len(axis_names_to_types(axis_types).keys()) != len(axis_names):
@@ -358,20 +358,20 @@ class Mesh(contextlib.ContextDecorator):
     return AbstractMesh(self.shape_tuple, axis_types=self.axis_types)
 
   @functools.cached_property
-  def _are_all_axes_collective(self) -> bool:
-    return all(t == AxisTypes.Collective for t in self.axis_types.keys())
+  def _are_all_axes_manual(self) -> bool:
+    return all(t == AxisTypes.Manual for t in self.axis_types.keys())
 
   @functools.cached_property
-  def _are_all_axes_hidden(self) -> bool:
-    return all(t == AxisTypes.Hidden for t in self.axis_types.keys())
+  def _are_all_axes_auto(self) -> bool:
+    return all(t == AxisTypes.Auto for t in self.axis_types.keys())
 
   @functools.cached_property
-  def _any_axis_collective(self) -> bool:
-    return any(t == AxisTypes.Collective for t in self.axis_types.keys())
+  def _any_axis_manual(self) -> bool:
+    return any(t == AxisTypes.Manual for t in self.axis_types.keys())
 
   @functools.cached_property
-  def _any_axis_hidden(self) -> bool:
-    return any(t == AxisTypes.Hidden for t in self.axis_types.keys())
+  def _any_axis_auto(self) -> bool:
+    return any(t == AxisTypes.Auto for t in self.axis_types.keys())
 
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
@@ -403,7 +403,7 @@ class AbstractMesh:
       self._axis_names, self._axis_sizes = list(zip(*self.shape_tuple))
     else:
       self._axis_names, self._axis_sizes = (), ()
-    self.axis_types = ({AxisTypes.Hidden: self._axis_names}
+    self.axis_types = ({AxisTypes.Auto: self._axis_names}
                        if axis_types is None else axis_types)
     self._axis_types_tuple = tuple(self.axis_types.items())
     if len(self._name_to_type.keys()) != len(self._axis_names):
@@ -468,24 +468,28 @@ class AbstractMesh:
     return self
 
   @functools.cached_property
-  def _are_all_axes_collective(self) -> bool:
-    return all(t == AxisTypes.Collective for t in self.axis_types.keys())
+  def _are_all_axes_manual(self) -> bool:
+    return all(t == AxisTypes.Manual for t in self.axis_types.keys())
 
   @functools.cached_property
-  def _are_all_axes_hidden(self) -> bool:
-    return all(t == AxisTypes.Hidden for t in self.axis_types.keys())
+  def _are_all_axes_auto(self) -> bool:
+    return all(t == AxisTypes.Auto for t in self.axis_types.keys())
 
   @functools.cached_property
-  def _any_axis_collective(self) -> bool:
-    return any(t == AxisTypes.Collective for t in self.axis_types.keys())
+  def _are_all_axes_explicit(self) -> bool:
+    return all(t == AxisTypes.Explicit for t in self.axis_types.keys())
 
   @functools.cached_property
-  def _any_axis_hidden(self) -> bool:
-    return any(t == AxisTypes.Hidden for t in self.axis_types.keys())
+  def _any_axis_manual(self) -> bool:
+    return any(t == AxisTypes.Manual for t in self.axis_types.keys())
 
   @functools.cached_property
-  def _any_axis_visible(self) -> bool:
-    return any(t == AxisTypes.Visible for t in self.axis_types.keys())
+  def _any_axis_auto(self) -> bool:
+    return any(t == AxisTypes.Auto for t in self.axis_types.keys())
+
+  @functools.cached_property
+  def _any_axis_explicit(self) -> bool:
+    return any(t == AxisTypes.Explicit for t in self.axis_types.keys())
 
   @property
   def devices(self):

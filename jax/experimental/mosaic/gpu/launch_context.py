@@ -290,7 +290,7 @@ class LaunchContext:
         args = [
             host_ptr,
             base_ptr,
-            c(utils.bytewidth(ref_ty.element_type), i64),
+            c(utils.bitwidth(ref_ty.element_type), i64),
             c(rank, i64),
             utils.pack_array([as_i64(i) for i in sizes_and_strides[:rank]]),
             utils.pack_array([as_i64(i) for i in sizes_and_strides[rank:]]),
@@ -332,7 +332,7 @@ class LaunchContext:
     src_ref_ty = ir.MemRefType(src_ref.type)
     dst_ref_ty = ir.MemRefType(dst_ref.type)
     element_type = src_ref_ty.element_type
-    element_bytewidth = utils.bytewidth(element_type)
+    element_bitwidth = utils.bitwidth(element_type)
     if element_type != dst_ref_ty.element_type:
       raise ValueError(
           f"Expected same element type, got {element_type} and"
@@ -370,7 +370,7 @@ class LaunchContext:
       raise NotImplementedError(
           "async_copy assumes the GMEM reference is contiguous"
       )
-    if any(s * element_bytewidth % 16 != 0 for s in gmem_strides[:-1]):
+    if any(s * element_bitwidth % 128 != 0 for s in gmem_strides[:-1]):
       raise ValueError(
           "async_copy requires all GMEM strides except the last one to be a"
           " multiple of 16 bytes"
@@ -508,23 +508,24 @@ class LaunchContext:
           "Async copies only support copying <=256 elements along each"
           " dimension"
       )
-    if (zeroth_bw := slice_shape[-1] * element_bytewidth) % 16 != 0:
+    if (zeroth_bw := slice_shape[-1] * element_bitwidth) % 128 != 0:
       raise ValueError(
           "Async copies require the number of bytes copied along the last"
           f" dimension to be divisible by 16, but got {zeroth_bw}"
       )
-    if swizzle is not None and slice_shape[-1] != swizzle // element_bytewidth:
+    if swizzle is not None and slice_shape[-1] != (swizzle * 8) // element_bitwidth:
       raise ValueError(
           f"Async copies with {swizzle=} require last dimension of the slice to"
           f" be exactly {swizzle} bytes"
-          f" ({swizzle // element_bytewidth} elements), but got"
+          f" ({(swizzle * 8) // element_bitwidth} elements), but got"
           f" {slice_shape[-1]}"
       )
     smem_ptr = utils.memref_ptr(smem_ref, memory_space=3)
     if gmem_ref is src_ref:
       assert barrier is not None  # for pytype
+      assert np.prod(slice_shape) * element_bitwidth * collective_size % 8 == 0
       transfer_bytes = c(
-          np.prod(slice_shape) * element_bytewidth * collective_size, i32
+          np.prod(slice_shape) * element_bitwidth * collective_size // 8, i32
       )
       barrier_ptr = barrier.get_ptr()
       with uniform_ctx():

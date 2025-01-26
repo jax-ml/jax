@@ -14,5 +14,5 @@
 
 from jax._src.pjit import (
     reshard as reshard,
-    hidden_axes as hidden_axes,
+    auto_axes as auto_axes,
 )

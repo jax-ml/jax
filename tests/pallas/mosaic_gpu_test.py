@@ -23,6 +23,7 @@ import traceback
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax import lax
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
 from jax.experimental import pallas as pl
@@ -1568,18 +1569,23 @@ class PipelineTest(PallasTest):
 
 class WarpSpecializedPipelineTest(PallasTest):
 
-  def test_pipelined_copy(self, m=512, n=512):
+  @parameterized.product(m=[512], n=[512],
+                         manual_consumed_barriers=[False, True])
+  def test_pipelined_copy(self, m, n, manual_consumed_barriers):
     x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float16)
     o = jnp.zeros((m, n), dtype=jnp.float16)
     blk_m = blk_n = 64
     o_last_block = jnp.zeros((blk_m, blk_n), dtype=jnp.float16)
 
-    def copy_kernel(x_smem, o_smem, o_last_block_smem):
+    def copy_kernel(x_smem, o_smem, o_last_block_smem, *consumed_barriers):
       # TODO(justinfu): Have each wg compute a separate slice
       # after multiple-indexers are supported.
       # This is currently a race, but the values written are the same.
       o_smem[...] = x_smem[...]
       o_last_block_smem[...] = x_smem[...]
+      if manual_consumed_barriers:
+        [x_barrier] = consumed_barriers
+        plgpu.barrier_arrive(x_barrier)
     block_spec = plgpu.GPUBlockSpec(
                 block_shape=(blk_m, blk_n),
                 index_map=lambda i, j: (i, j),
@@ -1592,6 +1598,7 @@ class WarpSpecializedPipelineTest(PallasTest):
         max_concurrent_steps=2,
         num_compute_wgs=2,
         wg_axis="wg",
+        manual_consumed_barriers=manual_consumed_barriers,
         in_specs=[block_spec],
         out_specs=[block_spec,
                    # Create an index-invariant output.
@@ -1830,6 +1837,120 @@ class CoreMapTest(PallasTest):
       y_init = jnp.zeros((2, 128), np.int32)
       return inner(y_init)
     np.testing.assert_array_equal(f(), np.repeat([0, 1], 128).reshape(2, 128))
+
+
+class ExamplesTest(PallasTest):
+
+  # Basic
+  def test_stage0(self):
+    def body(l_ref, r_ref, o_ref):
+      o_ref[...] = l_ref[...] + r_ref[...]
+
+    x = jnp.arange(128 * 128, dtype=jnp.float16).reshape(128, 128)
+    out = plgpu.kernel(body, out_shape=x)(x, x)
+    np.testing.assert_allclose(out, x + x)
+
+  # Multi-block kernels
+  def test_stage1(self):
+    row_block = 64
+    def body(l_ref, r_ref, o_ref):
+      my_slice = pl.ds(lax.axis_index("rows") * row_block, row_block)
+      o_ref[my_slice] = l_ref[my_slice] + r_ref[my_slice]
+
+    x = jnp.arange(128 * 128, dtype=jnp.float16).reshape(128, 128)
+    out = plgpu.kernel(body, out_shape=x, grid=(2,), axis_names=("rows",))(x, x)
+    np.testing.assert_allclose(out, x + x)
+
+  # Async copies
+  def test_stage3(self):
+    row_block, col_block = 64, 128
+    def body(l_ref, r_ref, o_ref):
+      my_slice = pl.ds(lax.axis_index("rows") * row_block, row_block)
+      def scoped(l_smem, r_smem, o_smem, barrier):
+        plgpu.copy_gmem_to_smem(l_ref.at[my_slice], l_smem, barrier)
+        plgpu.copy_gmem_to_smem(r_ref.at[my_slice], r_smem, barrier)
+        plgpu.barrier_wait(barrier)
+        o_smem[...] = l_smem[...] + r_smem[...]
+        plgpu.commit_smem()
+        plgpu.copy_smem_to_gmem(o_smem, o_ref.at[my_slice])
+        plgpu.wait_smem_to_gmem(0)
+      pl.run_scoped(
+          scoped,
+          *([plgpu.SMEM((row_block, col_block), jnp.float16)] * 3),
+          plgpu.Barrier(num_arrivals=2),
+      )
+
+    x = jnp.arange(128 * 128, dtype=jnp.float16).reshape(128, 128)
+    out = plgpu.kernel(body, out_shape=x, grid=(2,), axis_names=("rows",))(x, x)
+    np.testing.assert_allclose(out, x + x)
+
+  # Pipelining
+  def test_stage4(self):
+    row_block, col_block = 64, 32
+    def body(l_ref, r_ref, o_ref):
+      def compute(l_smem, r_smem, o_smem):
+        o_smem[...] = l_smem[...] + r_smem[...]
+      r = lax.axis_index("rows")
+      block = pl.BlockSpec((row_block, col_block), lambda c: (r, c))
+      plgpu.emit_pipeline(
+          compute,
+          grid=(l_ref.shape[1] // col_block,),
+          in_specs=[block] * 2,
+          out_specs=[block],
+      )(l_ref, r_ref, o_ref)
+
+    x = jnp.arange(128 * 128, dtype=jnp.float16).reshape(128, 128)
+    out = plgpu.kernel(body, out_shape=x, grid=(2,), axis_names=("rows",))(x, x)
+    np.testing.assert_allclose(out, x + x)
+
+  # Transforms
+  def test_stage5(self):
+    row_block, col_block = 64, 32
+    def body(l_ref, r_ref, o_ref):
+      def compute(l_smem, r_smem, o_smem):
+        o_smem[...] = l_smem[...] + r_smem[...]
+      r = lax.axis_index("rows")
+      block = plgpu.GPUBlockSpec(
+          (row_block, col_block), lambda c: (r, c),
+          transforms=(plgpu.TilingTransform((64, 32)), plgpu.SwizzleTransform(64)),
+      )
+      plgpu.emit_pipeline(
+          compute,
+          grid=(l_ref.shape[1] // col_block,),
+          in_specs=[block] * 2,
+          out_specs=[block],
+      )(l_ref, r_ref, o_ref)
+
+    x = jnp.arange(128 * 128, dtype=jnp.float16).reshape(128, 128)
+    out = plgpu.kernel(body, out_shape=x, grid=(2,), axis_names=("rows",))(x, x)
+    np.testing.assert_allclose(out, x + x)
+
+  # WGMMA
+  def test_stage6(self):
+    m_block = n_block = 64
+    k_block = 32
+    def body(l_ref, r_ref, o_ref):
+      def compute(l_smem, r_smem, o_smem):
+        def do_wgmma(acc_ref):
+          plgpu.wgmma(acc_ref, l_smem, r_smem)
+          return acc_ref[...]
+        o_smem[...] += pl.run_scoped(do_wgmma, plgpu.ACC((m_block, n_block), jnp.float16))
+      m, n = lax.axis_index("m"), lax.axis_index("n")
+      lo_transforms = (plgpu.TilingTransform((64, 32)), plgpu.SwizzleTransform(64))
+      r_transforms = (plgpu.TilingTransform((32, 32)), plgpu.SwizzleTransform(64))
+      plgpu.emit_pipeline(
+          compute,
+          grid=(l_ref.shape[1] // k_block,),
+          in_specs=[plgpu.GPUBlockSpec((m_block, k_block), lambda k: (m, k), transforms=lo_transforms),
+                    plgpu.GPUBlockSpec((k_block, n_block), lambda k: (k, n), transforms=r_transforms)],
+          out_specs=[plgpu.GPUBlockSpec((m_block, n_block), lambda k: (m, n), transforms=lo_transforms)],
+      )(l_ref, r_ref, o_ref)
+
+    x = jnp.arange(128 * 128, dtype=jnp.float16).reshape(128, 128)
+    out = plgpu.kernel(body, out_shape=x, grid=(2, 2), axis_names=("m", "n"))(x, x)
+    np.testing.assert_allclose(out, x @ x)
+
+  # TODO(apaszke): Clusters and multicast
 
 
 if __name__ == "__main__":

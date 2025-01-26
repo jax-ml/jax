@@ -31,6 +31,7 @@ from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import dialects, ir
 from jax._src.util import safe_zip
+from jax._src.mesh import AxisTypes
 from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (
     _op_sharding_to_pos_sharding, pmap_sharding_devices_indices_map,
@@ -1249,6 +1250,17 @@ class ShardingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, msg):
       jax.jit(f)(x)
 
+  def test_make_array_from_single_device_arrays_nonlist_error(self):
+    x = jnp.arange(10)
+    sharding = x.sharding
+
+    def f(x):
+      return jax.make_array_from_single_device_arrays(x.shape, sharding, x)
+
+    msg = "jax.make_array_from_single_device_arrays `arrays` argument"
+    with self.assertRaisesRegex(TypeError, msg):
+      jax.jit(f)(x)
+
   def test_make_array_from_single_device_arrays_bad_inputs(self):
     x = jnp.arange(10)
     mesh = jtu.create_mesh((2,), ('x',))
@@ -1304,14 +1316,56 @@ class ShardingTest(jtu.JaxTestCase):
         'Number of axis names in axis_types should match the number of'
         ' axis_names'):
       jtu.create_mesh((2, 1), ('x', 'y'),
-                      axis_types={jax.sharding.AxisTypes.Hidden: 'x'})
+                      axis_types={jax.sharding.AxisTypes.Auto: 'x'})
 
     with self.assertRaisesRegex(
         ValueError,
         'Number of axis names in axis_types should match the number of'
         ' axis_names in shape_tuple'):
       jax.sharding.AbstractMesh((('x', 2), ('y', 1)),
-                                axis_types={jax.sharding.AxisTypes.Hidden: 'x'})
+                                axis_types={jax.sharding.AxisTypes.Auto: 'x'})
+
+  def test_make_mesh_axis_types(self):
+    mesh = jax.make_mesh((1, 1), ('x', 'y'))
+    self.assertDictEqual(mesh.axis_types, {AxisTypes.Auto: ('x', 'y')})
+
+    mesh = jax.make_mesh((1, 1, 1), ('x', 'y', 'z'), explicit_axes='x',
+                         auto_axes='y', manual_axes='z')
+    self.assertDictEqual(
+        mesh.axis_types, {AxisTypes.Auto: ('y',), AxisTypes.Explicit: ('x',),
+                          AxisTypes.Manual: ('z',)})
+
+    mesh = jax.make_mesh((1, 1, 1), ('x', 'y', 'z'), explicit_axes=('x', 'y'),
+                         manual_axes='z')
+    self.assertDictEqual(mesh.axis_types, {AxisTypes.Explicit: ('x', 'y'),
+                                           AxisTypes.Manual: ('z',)})
+
+    mesh = jax.make_mesh((1, 1), ('x', 'y'), explicit_axes=('x', 'y'))
+    self.assertDictEqual(mesh.axis_types, {AxisTypes.Explicit: ('x', 'y')})
+
+    mesh = jax.make_mesh((1,), 'model', manual_axes='model')
+    self.assertDictEqual(mesh.axis_types, {AxisTypes.Manual: ('model',)})
+
+    with self.assertRaisesRegex(ValueError, "should be non-overlapping"):
+      jax.make_mesh((1, 1, 1), ('data', 'model', 'seq'),
+                    auto_axes='data', explicit_axes=('data', 'seq'),
+                    manual_axes='model')
+
+    with self.assertRaisesRegex(ValueError, "should be non-overlapping"):
+      jax.make_mesh((1, 1, 1), ('data', 'model', 'seq'),
+                    auto_axes='data', explicit_axes='model',
+                    manual_axes='data')
+
+    with self.assertRaisesRegex(ValueError, "should be non-overlapping"):
+      jax.make_mesh((1, 1, 1), ('data', 'model', 'seq'),
+                    explicit_axes=('data', 'seq'),
+                    manual_axes=('seq', 'model'))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'Number of axis names in axis_types should match the number of'
+        ' axis_names'):
+      jax.make_mesh((1, 1), ('data', 'model'), explicit_axes='data')
 
 
 @jtu.with_config(jax_use_shardy_partitioner=True)

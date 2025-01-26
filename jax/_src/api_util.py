@@ -18,6 +18,7 @@ from collections.abc import Callable, Iterable, Sequence
 import inspect
 import operator
 from functools import partial, lru_cache
+import re
 from typing import Any
 
 from jax._src import core
@@ -240,6 +241,18 @@ def argnums_partial(f, dyn_argnums, args, require_static_args_hashable=True):
                   if i not in dyn_argnums]
   dyn_args = tuple(args[i] for i in dyn_argnums)
   return _argnums_partial(f, dyn_argnums, tuple(fixed_args)), dyn_args
+
+
+def prepend_static_args(f, static_args):
+  return _prepend_static_args(f, tuple(Unhashable(arg) for arg in static_args))
+
+
+@lu.transformation2
+def _prepend_static_args(f, static_args, *args, **kwargs):
+  static_args = tuple(arg.val for arg in static_args)
+  all_args = static_args + args
+  return f(*all_args, **kwargs)
+
 
 def _ensure_inbounds(allow_invalid: bool, num_args: int, argnums: Sequence[int]
                      ) -> tuple[int, ...]:
@@ -603,15 +616,13 @@ def tracing_debug_info(
     # TODO(necula): check if we really need this, e.g., to speed up tracing.
     sourceinfo: str | None = None,
     signature: inspect.Signature | None = None,
-) -> TracingDebugInfo | None:
+) -> TracingDebugInfo:
   if sourceinfo is None:
     sourceinfo = fun_sourceinfo(fun)
   if signature is None:
     signature = fun_signature(fun)
   arg_names = _non_static_arg_names(signature, args, kwargs, static_argnums,
                                     static_argnames)
-  if arg_names is None:
-    return None
   return TracingDebugInfo(traced_for, sourceinfo, arg_names, result_paths_thunk)
 
 
@@ -624,12 +635,13 @@ def fun_signature(fun: Callable) -> inspect.Signature | None:
 def save_wrapped_fun_sourceinfo(wrapper: Callable, wrapped: Callable):
   # Prefer this to functools.wraps because it does not create a reference to
   # the wrapped function.
-  sourceinfo = fun_sourceinfo(wrapped)
-  if sourceinfo is not None:
-    setattr(wrapper, "__fun_sourceinfo__", fun_sourceinfo(wrapped))
+  setattr(wrapper, "__fun_sourceinfo__", fun_sourceinfo(wrapped))
+
+_fun_name_re = re.compile(r"(?:<built-in function (\S+)>)")
 
 # TODO(mattjj): make this function internal to this module
-def fun_sourceinfo(fun: Callable) -> str | None:
+def fun_sourceinfo(fun: Callable) -> str:
+  # See TracingDebugInfo.fun_src_info
   res = getattr(fun, "__fun_sourceinfo__", None)
   if res is not None: return res
   while isinstance(fun, partial):
@@ -639,28 +651,51 @@ def fun_sourceinfo(fun: Callable) -> str | None:
     filename = fun.__code__.co_filename
     lineno = fun.__code__.co_firstlineno
     return f"{fun.__name__} at {filename}:{lineno}"
-  except AttributeError:
-    return None
+  except AttributeError as e:
+    try:
+      fun_str = str(fun)
+    except:
+      return "<unknown>"
+    # By contract, the function name has no spaces; also, we want to avoid
+    # fun_sourceinfo of the form "<object Foo at 0x1234>", because it makes
+    # lowering non-deterministic.
+    if m := _fun_name_re.match(fun_str):
+      return m.group(1)
+    return "<unknown>"
 
-# TODO(necula): this should never return None
+
 def _non_static_arg_names(fn_signature: inspect.Signature | None,
                           args: Sequence[Any], kwargs: dict[str, Any],
                           static_argnums: Sequence[int],
                           static_argnames: Sequence[str],
-                          ) -> tuple[str | None, ...] | None:
-  if fn_signature is None:
-    return None
+                          ) -> tuple[str | None, ...]:
+  """Returns the names of the non-static arguments.
+
+  If the `fn_signature` is given then we get from it the names of the
+  top-level arguments. In other cases, including when the `args` and `kwargs`
+  do not match the signature, we use names like `args[0[]`, `args[1]`, etc.
+  """
   static = object()
   static_argnums_ = _ensure_inbounds(True, len(args), static_argnums)
   static_argnames_ = set(static_argnames)
   args_ = [static if i in static_argnums_ else x for i, x in enumerate(args)]
-  kwargs = {k:static if k in static_argnames_ else x for k, x in kwargs.items()}
-  try:
-    ba = fn_signature.bind(*args_, **kwargs)
-  except (ValueError, TypeError):
-    return None
-  return tuple(f'{name}{keystr(path)}' for name, x in ba.arguments.items()
-               for path, l in generate_key_paths(x) if l is not static)
+  kwargs_ = {k:static if k in static_argnames_ else x for k, x in kwargs.items()}
+  if fn_signature is not None:
+    try:
+      ba = fn_signature.bind(*args_, **kwargs_)
+    except (ValueError, TypeError):
+      pass
+    else:
+      return tuple(f'{name}{keystr(path)}' for name, x in ba.arguments.items()
+                   for path, l in generate_key_paths(x) if l is not static)
+  args_arg_names = tuple(f'args{keystr(path)}'
+                         for path, l in generate_key_paths(args_)
+                         if l is not static)
+  kwargs_arg_names = tuple(f'kwargs{keystr(path)}'
+                           for path, l in generate_key_paths(kwargs_)
+                           if l is not static)
+  arg_names = args_arg_names + kwargs_arg_names
+  return arg_names
 
 @lu.transformation_with_aux2
 def result_paths(_fun, _store, *args, **kwargs):

@@ -39,6 +39,7 @@ from jax._src import config
 from jax._src import effects
 from jax._src import compute_on
 from jax._src import mesh as mesh_lib
+from jax._src.mesh import AxisTypes
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
@@ -77,11 +78,16 @@ Effects = effects.Effects
 EffectTypeSet = effects.EffectTypeSet
 no_effects: Effects = effects.no_effects
 
+
+# TODO(necula): make this an extension of TracingDebugInfo
 class JaxprDebugInfo(NamedTuple):
-  traced_for: str     # e.g. 'jit', 'scan', etc
-  func_src_info: str | None  # e.g. f'{fun.__name__} at {filename}:{lineno}'
-  arg_names: tuple[str | None, ...]     # e.g. ('args[0]', ... )
+  # An extension of lu.TracingDebugInfo; see comments there
+  traced_for: str
+  func_src_info: str
+  arg_names: tuple[str | None, ...]
+  # This is formed after tracing, when we have concrete `result_paths`
   result_paths: tuple[str, ...]  # e.g. ('[0]', '[1]', ...)
+
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
@@ -140,7 +146,7 @@ class Jaxpr:
     self._eqns = list(eqns)
     self._effects = effects
     self._debug_info = debug_info
-    assert (not debug_info or debug_info.arg_names is None or len(debug_info.arg_names) == len(invars)), (debug_info, invars)
+    assert (not debug_info or len(debug_info.arg_names) == len(invars)), (debug_info, invars)
     assert (not debug_info or len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
 
   def __str__(self):
@@ -279,7 +285,7 @@ class JaxprEqnContext:
         (compute_on.extend_compute_type, self.compute_type),
         (config.threefry_partitionable.__call__, self.threefry_partitionable),
         (mesh_lib.set_abstract_mesh, self.cur_abstract_mesh),
-        (xla_metadata_lib.set_xla_metadata, self.xla_metadata),
+        (xla_metadata_lib.set_xla_metadata_dict, self.xla_metadata),
     ]
 
   @property
@@ -555,6 +561,7 @@ def check_avals_context_mesh(avals, prim_name):
 TracerType = TypeVar('TracerType', bound='Tracer')
 
 class Trace(Generic[TracerType]):
+  __slots__ = ("__weakref__", "_invalidated")
 
   def process_primitive(self, primitive, tracers, params):
     raise NotImplementedError("must override")
@@ -1681,7 +1688,9 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 
 # TODO(yashkatariya): Only works with User/Auto. Generalize it to work with
 # Collective too.
-def modify_spec_for_hidden(spec, mesh) -> P:
+def modify_spec_for_auto_manual(spec, mesh) -> P:
+  if all(s is None for s in spec):
+    return spec
   new_spec = []  # type: ignore
   for s in spec:
     if s is None:
@@ -1689,13 +1698,15 @@ def modify_spec_for_hidden(spec, mesh) -> P:
     else:
       temp_s = s[0] if isinstance(s, tuple) else s
       new_spec.append(
-          None if mesh._name_to_type[temp_s] == mesh_lib.AxisTypes.Hidden else s)
+          None
+          if mesh._name_to_type[temp_s] in (AxisTypes.Auto, AxisTypes.Manual)
+          else s)
   return P(*new_spec)
 
 def _maybe_modify_sharding(sharding):
-  if mesh_lib.AxisTypes.Hidden not in sharding.mesh.axis_types:
+  if sharding.mesh._are_all_axes_explicit:
     return sharding
-  new_spec = modify_spec_for_hidden(sharding.spec, sharding.mesh)
+  new_spec = modify_spec_for_auto_manual(sharding.spec, sharding.mesh)
   return sharding.with_spec(new_spec)
 
 
@@ -2340,11 +2351,11 @@ def mapped_aval(size: AxisSize, axis: int | None,
   else:
     raise TypeError(f"no mapping handler for {aval} of type {type(aval)}")
 
-def unmapped_aval(size: AxisSize, axis_name, axis: int | None,
+def unmapped_aval(size: AxisSize, axis: int | None,
                   aval: AbstractValue) -> AbstractValue:
   _, handler = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
-    return handler(size, axis_name, axis, aval)
+    return handler(size, axis, aval)
   else:
     raise TypeError(f"no unmapping handler for {aval} of type {type(aval)}")
 
@@ -2360,11 +2371,10 @@ def _map_shaped_array(
                      weak_type=aval.weak_type, sharding=sharding)
 
 def _unmap_shaped_array(
-    size: int, axis_name: AxisName, axis: int | None, aval: ShapedArray
-  ) -> ShapedArray:
+    size: int, axis: int | None, aval: ShapedArray) -> ShapedArray:
   if axis is None: return aval
   elif type(axis) is int:
-    sharding = (aval.sharding.with_spec(tuple_insert(aval.sharding.spec, axis, axis_name))
+    sharding = (aval.sharding.with_spec(tuple_insert(aval.sharding.spec, axis, None))
                 if config.sharding_in_types.value else None)
     return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
                        weak_type=aval.weak_type, sharding=sharding)
@@ -2377,7 +2387,7 @@ def _map_dshaped_array(
                       aval.weak_type)
 
 def _unmap_dshaped_array(
-    size: AxisSize, axis_name: AxisName, axis: int | None, aval: DShapedArray
+    size: AxisSize, axis: int | None, aval: DShapedArray
   ) -> DShapedArray:
   if axis is None: return aval
   elif type(axis) is int:
@@ -2390,7 +2400,7 @@ AvalMapHandlerPair = tuple[Callable, Callable]
 aval_mapping_handlers: dict[type, AvalMapHandlerPair] = {
     DShapedArray:   (_map_dshaped_array, _unmap_dshaped_array),
     ShapedArray:   (_map_shaped_array, _unmap_shaped_array),
-    AbstractToken: (lambda _, __, a: a, lambda _, __, ___, a: a)
+    AbstractToken: (lambda _, __, a: a, lambda _, __, a: a)
 }
 
 # When a mapped function is given no axis name, we generate a name object based
@@ -2771,7 +2781,7 @@ def _check_map(ctx_factory, prim, in_avals, params):
     raise JaxprTypeError(f"Map primitive {prim} missing 'out_axes' parameter")
   out_axes = params["out_axes"]
 
-  binder_avals = [unmapped_aval(axis_size, axis_name, in_axis, v.aval)
+  binder_avals = [unmapped_aval(axis_size, in_axis, v.aval)
                   if in_axis is not None else v.aval
                   for v, in_axis in zip(call_jaxpr.invars, in_axes)]
   for binder_aval, in_aval in zip(binder_avals, in_avals):
@@ -2783,7 +2793,7 @@ def _check_map(ctx_factory, prim, in_avals, params):
     _check_jaxpr(ctx_factory, call_jaxpr)
 
   mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
-  out_avals = [unmapped_aval(axis_size, axis_name, out_axis, aval)
+  out_avals = [unmapped_aval(axis_size, out_axis, aval)
                if out_axis is not None else aval
                for aval, out_axis in zip(mapped_out_avals, out_axes)]
   return out_avals, filter_named_axis_effects(call_jaxpr.effects, {axis_name})

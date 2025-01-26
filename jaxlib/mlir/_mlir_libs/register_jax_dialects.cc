@@ -15,6 +15,7 @@
 #include "mlir-c/Transforms.h"
 #include "mlir/Bindings/Python/NanobindAdaptors.h"
 #include "shardy/integrations/c/passes.h"
+#include "jaxlib/mosaic/gpu/integrations/c/passes.h"
 
 
 namespace nb = nanobind;
@@ -38,6 +39,7 @@ NB_MODULE(register_jax_dialects, m) {
     REGISTER_DIALECT(nvgpu);
     REGISTER_DIALECT(nvvm);
     REGISTER_DIALECT(llvm);
+    mlirMosaicGpuRegisterPasses();
     mlirRegisterTransformsPasses();
     // For Shardy
     mlirRegisterAllSdyPassesAndPipelines();

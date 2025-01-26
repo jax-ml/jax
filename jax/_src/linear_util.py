@@ -259,7 +259,10 @@ class TracingDebugInfo(NamedTuple):
   Formed just before staging to a jaxpr and read in trace-time error messages.
   """
   traced_for: str             # e.g. 'jit', 'scan', etc
-  func_src_info: str | None   # e.g. f'{fun.__name__} at {filename}:{lineno}'
+  # e.g. f'{fun.__name__} at {filename}:{lineno}' or {fun.__name__} if we have
+  # no source location information. The first word is always the function name,
+  # which may be '<unknown>'.
+  func_src_info: str
 
   # The paths of the flattened non-static argnames,
   # e.g. ('x', 'dict_arg["a"]', ... ).
@@ -347,8 +350,7 @@ def cache(call: Callable, *, explain: Callable | None = None):
 
   def memoized_fun(fun: WrappedFun, *args):
     cache = fun_caches.setdefault(fun.f, new_cache := {})  # type: ignore
-    key = (fun.transforms, fun.params, fun.in_type, args, config.enable_x64.value,
-           config.default_device.value, config.trace_context())
+    key = (fun.transforms, fun.params, fun.in_type, args, config.trace_context())
     result = cache.get(key, None)
     if result is not None:
       ans, stores = result

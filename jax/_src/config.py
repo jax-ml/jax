@@ -202,7 +202,6 @@ def trace_context():
   return (axis_env_state.value, mesh_context_manager.value,
           xla_metadata_context_manager.value,
           abstract_mesh_context_manager.value,
-          device_context.value,
           compute_on_context_manager.value, enable_x64.value,
           numpy_rank_promotion.value, default_matmul_precision.value,
           dynamic_shapes.value,

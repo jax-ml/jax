@@ -223,7 +223,7 @@ def _update_annotation(
     if isinstance(d, RaggedAxis):
       raise NotImplementedError
     else:
-      new_avals.append(core.unmapped_aval(sz, axis_name, d, a))  # type: ignore
+      new_avals.append(core.unmapped_aval(sz, d, a))  # type: ignore
 
   mentioned = {d for a in new_avals if type(a) is core.DShapedArray
                for d in a.shape if type(d) is Name}
@@ -750,7 +750,7 @@ def _batch_jaxpr2(
       handle_ragged(closed_jaxpr.in_avals, dim, aval)
       if isinstance(dim, RaggedAxis) else (dim, aval)
       for dim, aval in zip(in_axes, closed_jaxpr.in_avals)])
-  avals_in2 = [core.unmapped_aval(axis_data.size, axis_data.name, b, aval)
+  avals_in2 = [core.unmapped_aval(axis_data.size, b, aval)
                if b is not not_mapped else aval
                for aval, b in unsafe_zip(avals_in, in_axes2)]
   jaxpr_out, _, consts, () = pe.trace_to_jaxpr_dynamic(f, avals_in2)
@@ -787,7 +787,7 @@ def _batch_jaxpr_axes(closed_jaxpr, axis_data, in_axes, out_axes_dest):
   f, out_axes = _batch_jaxpr_inner(f, axis_data)
   f, out_batched = _match_axes_jaxpr(f, axis_data, out_axes_dest, out_axes)
   f = _batch_jaxpr_outer(f, axis_data, in_axes)
-  avals_in = [core.unmapped_aval(axis_data.size, axis_data.name, b, aval) if b is not not_mapped
+  avals_in = [core.unmapped_aval(axis_data.size, b, aval) if b is not not_mapped
               else aval for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes)]
   jaxpr_out, _, consts, () = pe.trace_to_jaxpr_dynamic(f, avals_in)
   return core.ClosedJaxpr(jaxpr_out, consts), out_batched()
@@ -906,9 +906,9 @@ def _matchaxis_symbolic_zeros(axis_name, sz, name, src, dst, x, sum_match=False)
       return x
     elif type(src) == type(dst) == int:
       aval = core.mapped_aval(sz, src, x.aval)
-      return Zero(core.unmapped_aval(sz, name, dst, aval))
+      return Zero(core.unmapped_aval(sz, dst, aval))
     elif src is not_mapped and dst is not not_mapped:
-      return Zero(core.unmapped_aval(sz, name, dst, x.aval))
+      return Zero(core.unmapped_aval(sz, dst, x.aval))
     elif dst is not_mapped and sum_match:
       return Zero(core.mapped_aval(sz, src, x.aval))
     else:

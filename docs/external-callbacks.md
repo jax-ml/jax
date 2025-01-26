@@ -71,7 +71,7 @@ In earlier versions of JAX, there was only one kind of callback available, imple
 
 (The {func}`jax.debug.print` function you used previously is a wrapper around {func}`jax.debug.callback`).
 
-From the user perspective, these three flavors of callback are mainly distinguished by what transformations and compiler optimizations they allow.
+From the user perspective, these three flavors of callback are mainly distinguished by what transformations and compiler optimizations they allow. All three of them must **not** include any calls back into JAX.
 
 |callback function | supports return value | `jit` | `vmap` | `grad` | `scan`/`while_loop` | guaranteed execution |
 |-------------------------------------|----|----|----|----|----|----|

@@ -461,6 +461,7 @@ def _multi_pmap(f: Callable, info: EmapInfo, names: list[core.AxisName],
 FakePrimitive = namedtuple("FakePrimitive", ["multiple_results", "bind"])
 
 class MapTrace(core.Trace):
+  __slots__ = ("axis_name", "emap_info")
 
   def __init__(self, axis_name, emap_info):
     self.emap_info = emap_info
@@ -895,9 +896,8 @@ def lower_parallel_callable(
                          shape_poly_state=lowering_result.shape_poly_state)
 
 
-def _pmap_unmap_shaped_array(
-    size: int, axis_name: core.AxisName, axis: int | None, aval: ShapedArray
-  ) -> ShapedArray:
+def _pmap_unmap_shaped_array(size: int, axis: int | None, aval: ShapedArray
+                             ) -> ShapedArray:
   if axis is None: return aval
   elif type(axis) is int:
     return ShapedArray(tuple_update(aval.shape, axis, size), aval.dtype,
@@ -910,14 +910,14 @@ _pmap_aval_mapping_handlers: dict[type, AvalMapHandlerPair] = {
     ShapedArray:   (Any, _pmap_unmap_shaped_array),
 }
 
-def _pmap_unmapped_aval(size: core.AxisSize, axis_name, axis: int | None,
+def _pmap_unmapped_aval(size: core.AxisSize, axis: int | None,
                        aval: core.AbstractValue) -> core.AbstractValue:
   if not config.pmap_no_rank_reduction.value:
-    return core.unmapped_aval(size, axis_name, axis, aval)
+    return core.unmapped_aval(size, axis, aval)
 
   _, handler = _pmap_aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
-    return handler(size, axis_name, axis, aval)
+    return handler(size, axis, aval)
   else:
     raise TypeError(f"no unmapping handler for {aval} of type {type(aval)}")
 
@@ -1085,7 +1085,7 @@ class UnloadedPmapExecutable:
 
     local_unmapped_avals = [
         _cast_to_shaped_array(
-            _pmap_unmapped_aval(pci.axis_size, pci.axis_name, out_axis, aval))
+            _pmap_unmapped_aval(pci.axis_size, out_axis, aval))
         if out_axis is not None else aval
         for aval, out_axis in safe_zip(shards.out_sharded_avals, pci.out_axes)]
     out_specs = [
@@ -1349,7 +1349,7 @@ def _pmap_partial_eval_custom_params_updater(
   return new_params_known, new_params_staged
 
 def _pmap_partial_eval_custom_res_maker(params_known, aval):
-  return core.unmapped_aval(params_known['axis_size'], core.no_axis_name, 0, aval)
+  return core.unmapped_aval(params_known['axis_size'], 0, aval)
 
 def _pmap_dce_rule(used_outputs, eqn):
   # just like pe.dce_jaxpr_call_rule, except handles in_axes / out_axes
@@ -2172,7 +2172,7 @@ def _concretize_abstract_out_shardings(shardings, avals, device_assignment):
     if isinstance(s, UnspecifiedValue) and a.sharding is not None:
       spec = (PartitionSpec(*[PartitionSpec.UNCONSTRAINED if sp is None else sp
                               for sp in a.sharding.spec])
-              if a.sharding.mesh._any_axis_hidden else a.sharding.spec)
+              if a.sharding.mesh._any_axis_auto else a.sharding.spec)
       out.append(NamedSharding(
           _abstract_to_concrete_mesh(a.sharding.mesh), spec))
     else:

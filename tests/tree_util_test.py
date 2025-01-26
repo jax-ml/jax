@@ -728,6 +728,19 @@ class TreeTest(jtu.JaxTestCase):
         ],
     )
 
+    strs = [f"{tree_util.keystr(kp, simple=True, separator='/')}: {x}"
+            for kp, x in flattened]
+    self.assertEqual(
+        strs,
+        [
+            "0/foo: 12",
+            "0/bar/cin/0: 1",
+            "0/bar/cin/1: 4",
+            "0/bar/cin/2: 10",
+            "1: [0 1 2 3 4]",
+        ],
+    )
+
   def testTreeMapWithPathWithIsLeafArgument(self):
     x = ((1, 2), [3, 4, 5])
     y = (([3], jnp.array(0)), ([0], 7, [5, 6]))

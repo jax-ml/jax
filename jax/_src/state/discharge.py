@@ -546,6 +546,9 @@ def _run_state_abstract_eval(*avals: core.AbstractValue, jaxpr: core.Jaxpr,
       nonlocal_effects.add(
           eff.replace(input_index=inner_to_outer_aval_mapping[eff.input_index])
       )
+  assert len(jaxpr.invars) == len(is_initialized)
+  if not all(is_initialized):
+    raise NotImplementedError  # Uninitialized refs are not in avals.
   return avals, nonlocal_effects
 run_state_p.def_effectful_abstract_eval(_run_state_abstract_eval)
 

@@ -372,7 +372,7 @@ class JaxprTrace(Trace['JaxprTracer']):
                          out_axes=tuple(staged_out_axes), call_jaxpr=call_jaxpr)
     del staged_params['out_axes_thunk']
     # The outputs of the staged-out call are Tracers with the new eqn as recipe.
-    out_avals = [unmapped_aval(params['axis_size'], params['axis_name'], ax, a)
+    out_avals = [unmapped_aval(params['axis_size'], ax, a)
                  for ax, a in zip(staged_out_axes, out_avals_mapped)]
     out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
                    for a in out_avals]
@@ -1545,7 +1545,7 @@ class DynamicJaxprTracer(core.Tracer):
       return ""
 
     origin = ("The error occurred while tracing the function "
-              f"{dbg.func_src_info or '<unknown>'} for {dbg.traced_for}. ")
+              f"{dbg.func_src_info} for {dbg.traced_for}. ")
     if invar_pos and dbg.arg_names:
       try:
         arg_names = [dbg.arg_names[i] for i in invar_pos]
@@ -1808,6 +1808,8 @@ def _inline_literals(
 
 
 class DynamicJaxprTrace(core.Trace):
+  __slots__ = ("frame",)
+
   def __init__(self, debug_info: lu.TracingDebugInfo | None):
     self.frame = JaxprStackFrame(debug_info)
 
@@ -1954,7 +1956,7 @@ class DynamicJaxprTrace(core.Trace):
         raise ValueError("Ordered effects not supported for "
                          f"map primitives: {ordered_effects}")
       out_axes = params['out_axes_thunk']()
-      out_avals = [core.unmapped_aval(axis_size, axis_name, out_axis, a)
+      out_avals = [core.unmapped_aval(axis_size, out_axis, a)
                   if out_axis is not None else a
                   for a, out_axis in zip(reduced_out_avals, out_axes)]
       source_info = source_info_util.current()
@@ -2116,7 +2118,7 @@ def tracing_debug_info(
     out_tree_thunk: Callable[[], PyTreeDef],
     has_kwargs: bool,
     traced_for: str
-) -> lu.TracingDebugInfo | None:
+) -> lu.TracingDebugInfo:
   # TODO(necula): we should not need this function, and can use api_util.tracing_debug_info instead
   # We just have to make sure we grad the debugging information when we have
   # the unflattened args
