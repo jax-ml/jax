@@ -846,7 +846,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "compute_on",
     srcs = ["_src/compute_on.py"],
-    deps = [":config"],
+    deps = [
+        ":config",
+        "//jax/_src/lib",
+    ],
 )
 
 pytype_strict_library(

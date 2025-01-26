@@ -2298,7 +2298,7 @@ def map_compute_type(c_type):
     return 'dense'
   elif c_type == 'tpu_sparsecore':
     return 'sparse'
-  raise ValueError('Invalid compute type received. Current supported values '
+  raise ValueError(f'Invalid compute type {c_type}. Current supported values '
                    'are `device_host`, `device` and `tpu_sparsecore')
 
 def wrap_compute_type_in_place(ctx, op):
