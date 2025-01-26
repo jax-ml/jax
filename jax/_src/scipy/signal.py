@@ -99,7 +99,7 @@ def fftconvolve(in1: ArrayLike, in2: ArrayLike, mode: str = "full",
     raise ValueError("in1 and in2 should have the same dimensionality")
   if mode not in ["same", "full", "valid"]:
     raise ValueError("mode must be one of ['same', 'full', 'valid']")
-  _fftconvolve = partial(_fftconvolve_unbatched, mode=mode)
+  _fftconvolve: Callable[[Array], Array] = partial(_fftconvolve_unbatched, mode=mode)
   if axes is None:
     return _fftconvolve(in1, in2)
   axes = _ensure_index_tuple(axes)
