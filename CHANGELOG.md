@@ -16,6 +16,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* New Features
+  * Added an experimental {func}`jax.experimental.custom_dce.custom_dce`
+    decorator to support customizing the behavior of opaque functions under
+    JAX-level dead code elimination (DCE). See {jax-issue}`#25956` for more
+    details.
+
 ## jax 0.5.0 (Jan 17, 2025)
 
 As of this release, JAX now uses
